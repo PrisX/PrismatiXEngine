@@ -1,0 +1,24 @@
+﻿# CMakeList.txt: 最上層的 CMake 專案檔，執行全域設定
+cmake_minimum_required (VERSION 3.15)
+
+# 如果支援，則為 MSVC 編譯器啟用熱重新載入。
+if (POLICY CMP0141)
+  cmake_policy(SET CMP0141 NEW)
+  set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<IF:$<AND:$<C_COMPILER_ID:MSVC>,$<CXX_COMPILER_ID:MSVC>>,$<$<CONFIG:Debug,RelWithDebInfo>:EditAndContinue>,$<$<CONFIG:Debug,RelWithDebInfo>:ProgramDatabase>>")
+endif()
+
+project ("PrismatiXEngine" LANGUAGES CXX)
+
+# C++
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# SDL2
+find_package(SDL2 CONFIG REQUIRED)
+find_package(SDL2_image CONFIG REQUIRED)
+find_package(SDL2_ttf CONFIG REQUIRED)
+find_package(SDL2_mixer CONFIG REQUIRED)
+
+# 包含子專案。
+add_subdirectory ("PrismatiXEngine")
