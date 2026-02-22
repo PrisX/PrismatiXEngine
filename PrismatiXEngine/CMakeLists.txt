@@ -3,7 +3,7 @@
 add_executable (PrismatiXEngine 
     "PrismatiXEngine.cpp" 
     "PrismatiXEngine.h"
-)
+ "main.cpp")
 
 # 設定標頭檔的搜尋路徑 (指向當前資料夾)
 target_include_directories(PrismatiXEngine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
