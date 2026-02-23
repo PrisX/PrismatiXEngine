@@ -3,7 +3,9 @@
 add_executable (PrismatiXEngine 
 "main.cpp"
 "Core/PrismatiXEngine.cpp"
+"Core/PrismatiXEngine.h"
 "Managers/TextureManager.cpp"
+"Managers/TextureManager.h"
 )
 
 # 設定標頭檔的搜尋路徑 (指向當前資料夾)

@@ -25,4 +25,5 @@ private:
     SDL_Window* window;
     SDL_Renderer* renderer;
     SDL_Texture* backgroundTex;
+	SDL_Texture* characterTex;
 };
