@@ -3,6 +3,7 @@
 #include <iostream>
 #include <SDL2/SDL.h>
 #include <string>
+#include "TextureManager.h"
 
 class PrismatiXEngine {
 public:
@@ -23,4 +24,5 @@ private:
     bool isRunning;
     SDL_Window* window;
     SDL_Renderer* renderer;
+    SDL_Texture* backgroundTex;
 };
