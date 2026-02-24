@@ -1,18 +1,20 @@
 ﻿# CMakeList.txt: PrismatiXEngine 的 CMake 專案
-# 將來源新增到此專案的可執行檔。
+
+# Executable
 add_executable (PrismatiXEngine 
 "main.cpp"
 "Core/PrismatiXEngine.cpp"
 "Core/PrismatiXEngine.h"
 "Managers/TextureManager.cpp"
 "Managers/TextureManager.h"
- "Managers/TextManager.h" "Managers/TextManager.cpp")
+ "Managers/TextManager.h" "Managers/TextManager.cpp" "Components/DialogueBox.h")
 
-# 設定標頭檔的搜尋路徑 (指向當前資料夾)
+# Header files
 target_include_directories(PrismatiXEngine PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/Core
     ${CMAKE_CURRENT_SOURCE_DIR}/Managers
+    ${CMAKE_CURRENT_SOURCE_DIR}/Components
 )
  
 # SDL2

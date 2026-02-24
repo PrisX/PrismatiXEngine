@@ -2,7 +2,7 @@
 #include <iostream>
 
 TTF_Font* TextManager::LoadFont(const std::string& fileName, int fontSize) {
-    TTF_Font* font = TTF_OpenFont(fileName.c_str(), fontSize);
+    TTF_Font* font = TTF_OpenFont(fileName.c_str(), fontSize * FONT_OVERSAMPLE);
     if (!font) {
         std::cerr << "Failed to load font (" << fileName << "): " << TTF_GetError() << std::endl;
     }
@@ -17,7 +17,7 @@ void TextManager::Draw(SDL_Renderer* ren, TTF_Font* font, const std::string& tex
 
     SDL_Texture* message = SDL_CreateTextureFromSurface(ren, surfaceMessage);
 
-	SDL_Rect messageRect = { x, y, surfaceMessage->w, surfaceMessage->h };
+	SDL_Rect messageRect = { x, y, surfaceMessage->w / FONT_OVERSAMPLE, surfaceMessage->h / FONT_OVERSAMPLE };
 
     SDL_RenderCopy(ren, message, NULL, &messageRect);
 
@@ -28,23 +28,26 @@ void TextManager::Draw(SDL_Renderer* ren, TTF_Font* font, const std::string& tex
 
 void TextManager::DrawWithOutline(SDL_Renderer* ren, TTF_Font* font, const std::string& text,
     SDL_Color textColor, SDL_Color outlineColor, int outlineSize,
-    int x, int y) {
-    if (!font) return;
+    int x, int y, Uint32 wrapLength) {
+    if (!font || text.empty()) return;
 
     // Outline background
-    TTF_SetFontOutline(font, outlineSize);
-    SDL_Surface* bgSurface = TTF_RenderUTF8_Blended(font, text.c_str(), outlineColor);
+    TTF_SetFontOutline(font, outlineSize * FONT_OVERSAMPLE);
+    SDL_Surface* bgSurface = (wrapLength > 0) ?
+        TTF_RenderUTF8_Blended_Wrapped(font, text.c_str(), outlineColor, wrapLength * FONT_OVERSAMPLE) :
+        TTF_RenderUTF8_Blended(font, text.c_str(), outlineColor);    
     SDL_Texture* bgTexture = SDL_CreateTextureFromSurface(ren, bgSurface);
-
-    SDL_Rect bgRect = { x, y, bgSurface->w, bgSurface->h };
+    SDL_Rect bgRect = { x, y, bgSurface->w / FONT_OVERSAMPLE, bgSurface->h / FONT_OVERSAMPLE };
 
 	// Foreground text
     TTF_SetFontOutline(font, 0); // 這要先關不然會炸
-    SDL_Surface* fgSurface = TTF_RenderUTF8_Blended(font, text.c_str(), textColor);
+    SDL_Surface* fgSurface = (wrapLength > 0) ?
+        TTF_RenderUTF8_Blended_Wrapped(font, text.c_str(), textColor, wrapLength * FONT_OVERSAMPLE) :
+        TTF_RenderUTF8_Blended(font, text.c_str(), textColor);
     SDL_Texture* fgTexture = SDL_CreateTextureFromSurface(ren, fgSurface);
 
 	// Align (要根據 outline size 不然整個會跑走)
-    SDL_Rect fgRect = { x + outlineSize, y + outlineSize, fgSurface->w, fgSurface->h };
+    SDL_Rect fgRect = { x + outlineSize, y + outlineSize, fgSurface->w / FONT_OVERSAMPLE, fgSurface->h / FONT_OVERSAMPLE };
 
     SDL_RenderCopy(ren, bgTexture, NULL, &bgRect);
     SDL_RenderCopy(ren, fgTexture, NULL, &fgRect);

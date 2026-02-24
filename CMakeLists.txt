@@ -9,6 +9,8 @@ endif()
 
 project ("PrismatiXEngine" LANGUAGES CXX)
 
+add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
+
 # C++
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,5 +22,5 @@ find_package(SDL2_image CONFIG REQUIRED)
 find_package(SDL2_ttf CONFIG REQUIRED)
 find_package(SDL2_mixer CONFIG REQUIRED)
 
-# 包含子專案。
+# Subdirectory
 add_subdirectory ("PrismatiXEngine")

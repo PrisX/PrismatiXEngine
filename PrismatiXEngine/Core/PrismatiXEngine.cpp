@@ -4,7 +4,7 @@
 
 #pragma execution_character_set("utf-8") // 防中文亂碼
 
-PrismatiXEngine::PrismatiXEngine() : isRunning(false), window(nullptr), renderer(nullptr), backgroundTex(nullptr), characterTex(nullptr) {} // this is very important (trust me)
+PrismatiXEngine::PrismatiXEngine() : isRunning(false), window(nullptr), renderer(nullptr) {}
 PrismatiXEngine::~PrismatiXEngine() { Clean(); }
 
 bool PrismatiXEngine::Initialize(const std::string& title, int width, int height) { // 同標頭檔裡面的解釋
@@ -27,6 +27,7 @@ bool PrismatiXEngine::Initialize(const std::string& title, int width, int height
 	window = SDL_CreateWindow(title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE); // 他不吃 std::string 所以轉 c_str
 	if (!window) {
 		std::cerr << "Failed to create window: " << SDL_GetError() << std::endl;
+		return false;
 	}
 
 	SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1"); // 改用 Linear Filtering
@@ -34,23 +35,13 @@ bool PrismatiXEngine::Initialize(const std::string& title, int width, int height
 	renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC); // 硬體加速 & VSync
 	if (!renderer) {
 		std::cerr << "Failed to create renderer: " << SDL_GetError() << std::endl;
+		return false;
 	}
 
-	backgroundTex = TextureManager::LoadTexture("bg.jpg", renderer);
-	characterTex = TextureManager::LoadTexture("girl.png", renderer);
-
-	mainFont = TextManager::LoadFont("NotoSansTC-Bold.ttf", 28);
+	// SDL_RenderSetLogicalSize(renderer, width, height);
 
 	isRunning = true;
 	return true;
-}
-
-void PrismatiXEngine::Run() {
-	while (isRunning) {
-		HandleEvents();
-		Update();
-		Render();
-	}
 }
 
 void PrismatiXEngine::HandleEvents() {
@@ -62,34 +53,24 @@ void PrismatiXEngine::HandleEvents() {
 	}
 }
 
-void PrismatiXEngine::Update() {
-	//
+void PrismatiXEngine::ClearScreen() {
+	SDL_SetRenderDrawColor(renderer, 30, 30, 50, 255);
+	SDL_RenderClear(renderer);
 }
 
-void PrismatiXEngine::Render() {
-	if (backgroundTex) {
-		TextureManager::Draw(backgroundTex, renderer, 0, 0, 1280, 720);
-	}
-
-	if (characterTex) {
-		TextureManager::Draw(characterTex, renderer, 440, 120, 0.1f);
-	}
-
-	SDL_Color textColor = { 255, 255, 255, 255 };
-	SDL_Color outlineColor = { 0, 0, 0, 255 };
-	int outlineSize = 1;
-	if (mainFont) {
-		TextManager::DrawWithOutline(renderer, mainFont, "有邊框的字", textColor, outlineColor, outlineSize, 50, 600);
-	}
+void PrismatiXEngine::PresentScreen() {
 	SDL_RenderPresent(renderer);
 }
 
 void PrismatiXEngine::Clean() {
 	TextureManager::CleanCache();
+
 	if (renderer) SDL_DestroyRenderer(renderer);
 	if (window) SDL_DestroyWindow(window);
+
 	TTF_Quit();
 	IMG_Quit();
 	SDL_Quit();
+
 	std::cout << "Application destroyed." << std::endl;
 }

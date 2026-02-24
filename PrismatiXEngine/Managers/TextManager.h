@@ -4,10 +4,13 @@
 #include <string>
 
 class TextManager {
+private:
+	static constexpr int FONT_OVERSAMPLE = 2;
+
 public:
 	static TTF_Font* LoadFont(const std::string& fileName, int fontSize);
 	static void Draw(SDL_Renderer* ren, TTF_Font* font, const std::string& text, SDL_Color color, int x, int y);
 	static void DrawWithOutline(SDL_Renderer* ren, TTF_Font* font, const std::string& text,
 		SDL_Color textColor, SDL_Color outlineColor, int outlineSize,
-		int x, int y);
+		int x, int y, Uint32 wrapLength = 0);
 };
