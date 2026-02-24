@@ -18,11 +18,9 @@ SDL_Texture* TextureManager::LoadTexture(const std::string& fileName, SDL_Render
 }
 
 void TextureManager::Draw(SDL_Texture* tex, SDL_Renderer* ren, int x, int y, int w, int h) {
-	SDL_Rect destRect;
-	destRect.x = x;
-	destRect.y = y;
-	destRect.w = w;
-	destRect.h = h;
+	if (!tex) return;
+
+	SDL_Rect destRect = { x, y, w, h };
 
 	SDL_RenderCopy(ren, tex, nullptr, &destRect);
 }
@@ -34,11 +32,7 @@ void TextureManager::Draw(SDL_Texture* tex, SDL_Renderer* ren, int x, int y, flo
 
 	SDL_QueryTexture(tex, NULL, NULL, &originalWidth, &originalHeight); // Get original width & height
 
-	SDL_Rect destRect;
-	destRect.x = x;
-	destRect.y = y;
-	destRect.w = static_cast<int>(originalWidth * scale);
-	destRect.h = static_cast<int>(originalHeight * scale);
+	SDL_Rect destRect = { x, y, static_cast<int>(originalWidth * scale), static_cast<int>(originalHeight * scale) };
 
 	SDL_RenderCopy(ren, tex, NULL, &destRect);
 }

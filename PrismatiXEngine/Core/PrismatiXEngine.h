@@ -4,6 +4,7 @@
 #include <SDL2/SDL.h>
 #include <string>
 #include "TextureManager.h"
+#include "TextManager.h"
 
 class PrismatiXEngine {
 public:
@@ -22,8 +23,11 @@ private:
     void Render(); 
 
     bool isRunning;
+
+    // Long-term resources
     SDL_Window* window;
     SDL_Renderer* renderer;
     SDL_Texture* backgroundTex;
 	SDL_Texture* characterTex;
+    TTF_Font* mainFont;
 };
