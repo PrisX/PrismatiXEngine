@@ -28,7 +28,7 @@ void TextManager::Draw(SDL_Renderer* ren, TTF_Font* font, const std::string& tex
 
 void TextManager::DrawWithOutline(SDL_Renderer* ren, TTF_Font* font, const std::string& text,
     SDL_Color textColor, SDL_Color outlineColor, int outlineSize,
-    int x, int y, Uint32 wrapLength) {
+    int x, int y, Uint32 wrapLength, Uint8 alpha) {
     if (!font || text.empty()) return;
 
     // Outline background
@@ -49,6 +49,8 @@ void TextManager::DrawWithOutline(SDL_Renderer* ren, TTF_Font* font, const std::
 	// Align (要根據 outline size 不然整個會跑走)
     SDL_Rect fgRect = { x + outlineSize, y + outlineSize, fgSurface->w / FONT_OVERSAMPLE, fgSurface->h / FONT_OVERSAMPLE };
 
+    SDL_SetTextureAlphaMod(bgTexture, alpha);
+    SDL_SetTextureAlphaMod(fgTexture, alpha);
     SDL_RenderCopy(ren, bgTexture, NULL, &bgRect);
     SDL_RenderCopy(ren, fgTexture, NULL, &fgRect);
 

@@ -9,11 +9,17 @@ class DialogueBox {
 private:
 	std::vector<std::string> parsedCharacters; // 拆字，做進入動畫owob
 	std::string currentDisplayText;
+	std::string displayedText;     // 已完全顯示的字
+	std::string currentSpeakerName;
 
 	int currentIndex = 0;
 	Uint32 lastTime = 0; // ms
 
 	int textSpeed = 50; // ms per char
+
+	Uint8 fadeAlpha = 255;
+	Uint32 fadeStartTime = 0;
+	static constexpr Uint32 fadeDuration = 150; // ms (0 -> 255)
 
 	TTF_Font* font;
 	int x, y;
@@ -43,37 +49,71 @@ public:
         y = startY;
     }
 
-    void SetText(const std::string& text, int speed = 50) {
+    void SetText(const std::string& name, const std::string& text, int speed = 50) {
         ParseUTF8(text);
+        currentSpeakerName = name;
         currentDisplayText = "";
+        displayedText = "";
         currentIndex = 0;
         textSpeed = speed;
         lastTime = SDL_GetTicks();
+        fadeAlpha = 255;
     }
 
     void Update() {
+        Uint32 currentTime = SDL_GetTicks();
         if (currentIndex < parsedCharacters.size()) {
-            Uint32 currentTime = SDL_GetTicks();
             // 如果經過的時間 > 速度 顯示下一個字
-            if (currentTime - lastTime >= textSpeed) {
+            if (currentTime - lastTime >= (Uint32)textSpeed) {
+                displayedText = currentDisplayText;
                 currentDisplayText += parsedCharacters[currentIndex];
                 currentIndex++;
                 lastTime = currentTime;
+                fadeAlpha = 0;
+                fadeStartTime = currentTime;
             }
+        }
+
+        if (fadeAlpha < 255) {
+            Uint32 elapsed = SDL_GetTicks() - fadeStartTime;
+            fadeAlpha = (elapsed >= fadeDuration) ? 255 : (Uint8)((elapsed * 255) / fadeDuration);
         }
     }
 
     void Render(SDL_Renderer * renderer) {
-        if (!currentDisplayText.empty()) {
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND); // 沒開這個 Blend mode 好像透明度沒用
+        if (!currentSpeakerName.empty()) {
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 220);
+            SDL_Rect nameRect = { 30, 510, 250, 50 };
+            SDL_RenderFillRect(renderer, &nameRect);
+        }
+
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 180);
+        SDL_Rect uiRect = { 30, 560, 1220, 140 };
+        SDL_RenderFillRect(renderer, &uiRect);
+
         SDL_Color textColor = { 255, 255, 255, 255 };
         SDL_Color outlineColor = { 0, 0, 0, 255 };
-        Uint32 textBoxWidth = 1000;
 
-        TextManager::DrawWithOutline(renderer, font, currentDisplayText, textColor, outlineColor, 1, x, y, textBoxWidth);
+        if (!currentSpeakerName.empty()) {
+            SDL_Color nameColor = { 255, 200, 200, 255 };
+            TextManager::DrawWithOutline(renderer, font, currentSpeakerName, nameColor, outlineColor, 1, 50, 515);
+        }
+
+        if (!currentDisplayText.empty()) {
+            Uint32 textBoxWidth = 1160;
+            if (fadeAlpha < 255) {
+                TextManager::DrawWithOutline(renderer, font, currentDisplayText, textColor, outlineColor, 1, x, y, textBoxWidth, fadeAlpha);
+                if (!displayedText.empty()) {
+                    TextManager::DrawWithOutline(renderer, font, displayedText, textColor, outlineColor, 1, x, y, textBoxWidth);
+                }
+            } else {
+                TextManager::DrawWithOutline(renderer, font, currentDisplayText, textColor, outlineColor, 1, x, y, textBoxWidth);
+            }
         }
     }
 
-		// If click
+	// If click
     void ShowAll() {
         if (currentIndex < parsedCharacters.size()) {
             currentDisplayText = "";
@@ -82,6 +122,12 @@ public:
             }
             currentIndex = parsedCharacters.size();
         }
+        displayedText = currentDisplayText;
+        fadeAlpha = 255;
     }
     
+    bool IsFinished() const {
+        return currentIndex >= parsedCharacters.size();
+    }
+
 };

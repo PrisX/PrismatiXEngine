@@ -4,7 +4,7 @@
 
 #pragma execution_character_set("utf-8") // 防中文亂碼
 
-PrismatiXEngine::PrismatiXEngine() : isRunning(false), window(nullptr), renderer(nullptr) {}
+PrismatiXEngine::PrismatiXEngine() : isRunning(false), window(nullptr), renderer(nullptr), leftClick(false), mouseWheelY(0) {}
 PrismatiXEngine::~PrismatiXEngine() { Clean(); }
 
 bool PrismatiXEngine::Initialize(const std::string& title, int width, int height) { // 同標頭檔裡面的解釋
@@ -45,10 +45,20 @@ bool PrismatiXEngine::Initialize(const std::string& title, int width, int height
 }
 
 void PrismatiXEngine::HandleEvents() {
+	leftClick = false;
+	mouseWheelY = 0;
 	SDL_Event event;
 	while (SDL_PollEvent(&event)) {
 		if (event.type == SDL_QUIT) {
 			isRunning = false;
+		}
+		else if (event.type == SDL_MOUSEBUTTONDOWN) {
+			if (event.button.button == SDL_BUTTON_LEFT) {
+				leftClick = true;
+			}
+		}
+		else if (event.type == SDL_MOUSEWHEEL) {
+			mouseWheelY = event.wheel.y;
 		}
 	}
 }
@@ -73,4 +83,46 @@ void PrismatiXEngine::Clean() {
 	SDL_Quit();
 
 	std::cout << "Application destroyed." << std::endl;
+}
+
+void PrismatiXEngine::DrawFullscreenBackground(SDL_Texture* bgTex) {
+	if (!bgTex) return;
+
+	int winW, winH;
+	SDL_GetWindowSize(window, &winW, &winH);
+
+	float scaleX = (float)winW / 1280.0f;
+	float scaleY = (float)winH / 720.0f;
+	float bgScale = std::max(scaleX, scaleY);
+
+	int bgW = 1280 * bgScale;
+	int bgH = 720 * bgScale;
+	int bgX = (winW - bgW) / 2;
+	int bgY = (winH - bgH) / 2;
+
+	TextureManager::Draw(bgTex, renderer, bgX, bgY, bgW, bgH);
+}
+
+void PrismatiXEngine::BeginSafeArea() {
+	int winW, winH;
+	SDL_GetWindowSize(window, &winW, &winH);
+
+	float scaleX = (float)winW / 1280.0f;
+	float scaleY = (float)winH / 720.0f;
+	float safeScale = std::min(scaleX, scaleY);
+
+	SDL_Rect safeArea = {
+		(int)((winW - 1280 * safeScale) / 2),
+		(int)((winH - 720 * safeScale) / 2),
+		(int)(1280 * safeScale),
+		(int)(720 * safeScale)
+	};
+
+	SDL_RenderSetViewport(renderer, &safeArea);
+	SDL_RenderSetScale(renderer, safeScale, safeScale);
+}
+
+void PrismatiXEngine::EndSafeArea() {
+	SDL_RenderSetViewport(renderer, NULL);
+	SDL_RenderSetScale(renderer, 1.0f, 1.0f);
 }

@@ -12,5 +12,5 @@ public:
 	static void Draw(SDL_Renderer* ren, TTF_Font* font, const std::string& text, SDL_Color color, int x, int y);
 	static void DrawWithOutline(SDL_Renderer* ren, TTF_Font* font, const std::string& text,
 		SDL_Color textColor, SDL_Color outlineColor, int outlineSize,
-		int x, int y, Uint32 wrapLength = 0);
+		int x, int y, Uint32 wrapLength = 0, Uint8 alpha = 255);
 };

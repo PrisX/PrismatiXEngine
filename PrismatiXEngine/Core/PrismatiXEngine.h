@@ -22,12 +22,19 @@ public:
     bool IsRunning() const { return isRunning; }
     SDL_Renderer* GetRenderer() const { return renderer; }
     SDL_Window* GetWindow() const { return window; }
+    bool GetLeftClick() const { return leftClick; }
+    int GetMouseWheelY() const { return mouseWheelY; }
 
     void HandleEvents();
     void ClearScreen();
     void PresentScreen();
 
+    void DrawFullscreenBackground(SDL_Texture* bgTex);
+    void BeginSafeArea();
+    void EndSafeArea();
 private:
+    bool leftClick;
+    int mouseWheelY;
     bool isRunning;
 
     // Long-term resources

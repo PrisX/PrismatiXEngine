@@ -7,7 +7,7 @@ add_executable (PrismatiXEngine
 "Core/PrismatiXEngine.h"
 "Managers/TextureManager.cpp"
 "Managers/TextureManager.h"
- "Managers/TextManager.h" "Managers/TextManager.cpp" "Components/DialogueBox.h")
+ "Managers/TextManager.h" "Managers/TextManager.cpp" "Components/DialogueBox.h" "Controllers/DialogueController.h")
 
 # Header files
 target_include_directories(PrismatiXEngine PRIVATE 
@@ -15,6 +15,7 @@ target_include_directories(PrismatiXEngine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Core
     ${CMAKE_CURRENT_SOURCE_DIR}/Managers
     ${CMAKE_CURRENT_SOURCE_DIR}/Components
+    ${CMAKE_CURRENT_SOURCE_DIR}/Controllers
 )
  
 # SDL2
