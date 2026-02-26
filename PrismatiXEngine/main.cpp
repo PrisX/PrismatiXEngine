@@ -16,43 +16,28 @@ int main(int argc, char* argv[]) {
     SDL_Renderer* renderer = engine.GetRenderer();
 
     SDL_Texture* bg = TextureManager::LoadTexture("bg.jpg", renderer);
-    SDL_Texture* girl = TextureManager::LoadTexture("girl.png", renderer);
     TTF_Font* font = TextManager::LoadFont("NotoSansTC-Bold.ttf", 28);
     DialogueBox dialog(font, 50, 600);
-	DialogueController dialogueController(&dialog);
+    DialogueController vnController(&dialog, renderer);
 
-    dialogueController.LoadScript({
-        {"owen", "Illya my wife!"},
-        {"", "一般的旁白"},
-        {"", "一般的旁白"},
-        {"", "一般的旁白"},
-        {"", "一般的旁白"},
-        {"", "一般的旁白"},
-        {"", "一般的旁白"},
-        {"", "一般的旁白"},
-        {"", "一般的旁白"},
-        {"", "一般的旁白"},
-        {"", "一般的旁白"},
-        {"", "一般的旁白"},
-        {"", "一般的旁白"},
-        });
+    std::vector<VNCommand> s = ScriptManager::ParseFile("script.pes");
+    vnController.LoadScript(s);
 
     while (engine.IsRunning()) {
         engine.HandleEvents();
         if (engine.GetLeftClick()) {
-            dialogueController.HandleClick();
+            vnController.HandleClick();
         }
 
         if (engine.GetLeftClick() || engine.GetMouseWheelY() < 0) {
-            dialogueController.HandleClick();
+            vnController.HandleClick();
         }
 
         else if (engine.GetMouseWheelY() > 0) {
             // TODO: backlog
         }
 
-        dialog.Update();
-		dialogueController.Update();
+		vnController.Update();
 
         engine.ClearScreen();
 
@@ -60,8 +45,7 @@ int main(int argc, char* argv[]) {
 
         engine.BeginSafeArea();
 
-        if (girl) TextureManager::Draw(girl, renderer, 420, 120, 0.1f);
-        dialog.Render(renderer);
+        vnController.Render(renderer);
 
         engine.EndSafeArea();
 

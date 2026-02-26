@@ -17,14 +17,6 @@ SDL_Texture* TextureManager::LoadTexture(const std::string& fileName, SDL_Render
 	return tex;
 }
 
-void TextureManager::Draw(SDL_Texture* tex, SDL_Renderer* ren, int x, int y, int w, int h) {
-	if (!tex) return;
-
-	SDL_Rect destRect = { x, y, w, h };
-
-	SDL_RenderCopy(ren, tex, nullptr, &destRect);
-}
-
 void TextureManager::Draw(SDL_Texture* tex, SDL_Renderer* ren, int x, int y, float scale) {
 	if (!tex) return;
 	int originalWidth = 0;
@@ -35,6 +27,18 @@ void TextureManager::Draw(SDL_Texture* tex, SDL_Renderer* ren, int x, int y, flo
 	SDL_Rect destRect = { x, y, static_cast<int>(originalWidth * scale), static_cast<int>(originalHeight * scale) };
 
 	SDL_RenderCopy(ren, tex, NULL, &destRect);
+}
+
+void TextureManager::Draw(SDL_Texture* tex, SDL_Renderer* ren, int x, int y, int w, int h, Uint8 alpha) {
+	if (!tex) return;
+
+	SDL_SetTextureAlphaMod(tex, alpha);
+
+	SDL_Rect destRect = { x, y, w, h };
+	SDL_RenderCopy(ren, tex, NULL, &destRect);
+
+	// 這真的要清
+	SDL_SetTextureAlphaMod(tex, 255);
 }
 
 void TextureManager::CleanCache() {
