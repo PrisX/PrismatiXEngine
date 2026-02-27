@@ -6,6 +6,7 @@
 
 #include "TextureManager.h"
 #include "TextManager.h"
+#include "AudioManager.h"
 
 #include "DialogueBox.h"
 
@@ -29,7 +30,7 @@ public:
     void ClearScreen();
     void PresentScreen();
 
-    void DrawFullscreenBackground(SDL_Texture* bgTex);
+    void DrawFullscreenBackground(SDL_Texture* bgTex, Uint8 alpha = 255);
     void BeginSafeArea();
     void EndSafeArea();
 private:

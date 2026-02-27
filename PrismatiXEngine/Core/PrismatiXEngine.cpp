@@ -14,6 +14,8 @@ bool PrismatiXEngine::Initialize(const std::string& title, int width, int height
 	}
 
 	int imgFlags = IMG_INIT_PNG | IMG_INIT_JPG;
+
+	// 幹 SDL2 能不能統一啊為什麼只有 image 是 bool 啊
 	if (!(IMG_Init(imgFlags) & imgFlags)) {
 		std::cerr << "Failed to initialize SDL2_image: " << IMG_GetError() << std::endl;
 		return false;
@@ -21,6 +23,16 @@ bool PrismatiXEngine::Initialize(const std::string& title, int width, int height
 
 	if (TTF_Init() < 0) {
 		std::cerr << "Failed to initialize SDL2_ttf: " << TTF_GetError() << std::endl;
+		return false;
+	}
+
+	if (!(Mix_Init(MIX_INIT_MP3) & MIX_INIT_MP3)) {
+		std::cerr << "Failed to initialize SDL2_mixer: " << Mix_GetError() << std::endl;
+		return false;
+	}
+
+	if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
+		std::cerr << "Failed to open SDL2_mixer audio: " << Mix_GetError() << std::endl;
 		return false;
 	}
 
@@ -78,6 +90,8 @@ void PrismatiXEngine::Clean() {
 	if (renderer) SDL_DestroyRenderer(renderer);
 	if (window) SDL_DestroyWindow(window);
 
+	Mix_CloseAudio();
+	Mix_Quit();
 	TTF_Quit();
 	IMG_Quit();
 	SDL_Quit();
@@ -85,22 +99,26 @@ void PrismatiXEngine::Clean() {
 	std::cout << "Application destroyed." << std::endl;
 }
 
-void PrismatiXEngine::DrawFullscreenBackground(SDL_Texture* bgTex) {
+void PrismatiXEngine::DrawFullscreenBackground(SDL_Texture* bgTex, Uint8 alpha) {
 	if (!bgTex) return;
 
 	int winW, winH;
 	SDL_GetWindowSize(window, &winW, &winH);
 
-	float scaleX = (float)winW / 1280.0f;
-	float scaleY = (float)winH / 720.0f;
+	int texW, texH;
+	SDL_QueryTexture(bgTex, NULL, NULL, &texW, &texH);
+
+	float scaleX = (float)winW / (float)texW;
+	float scaleY = (float)winH / (float)texH;
 	float bgScale = std::max(scaleX, scaleY);
 
-	int bgW = 1280 * bgScale;
-	int bgH = 720 * bgScale;
-	int bgX = (winW - bgW) / 2;
-	int bgY = (winH - bgH) / 2;
+	int finalW = (int)(texW * bgScale);
+	int finalH = (int)(texH * bgScale);
 
-	TextureManager::Draw(bgTex, renderer, bgX, bgY, bgW, bgH);
+	int bgX = (winW - finalW) / 2;
+	int bgY = (winH - finalH) / 2;
+
+	TextureManager::Draw(bgTex, renderer, bgX, bgY, finalW, finalH, alpha);
 }
 
 void PrismatiXEngine::BeginSafeArea() {

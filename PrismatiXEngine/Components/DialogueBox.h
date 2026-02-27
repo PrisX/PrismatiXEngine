@@ -11,6 +11,8 @@ private:
 	std::string currentDisplayText;
 	std::string displayedText;     // 已完全顯示的字
 	std::string currentSpeakerName;
+	SDL_Color currentTextColor;
+	SDL_Color currentOutlineColor;
 
 	int currentIndex = 0;
 	Uint32 lastTime = 0; // ms
@@ -48,12 +50,15 @@ public:
         x = startX;
         y = startY;
     }
-
-    void SetText(const std::string& name, const std::string& text, int speed = 50) {
+    int GetCurrentIndex() const { return currentIndex; }
+    void SetText(const std::string& name, const std::string& text, int speed, SDL_Color textColor, SDL_Color outlineColor) {
+        parsedCharacters.clear();
         ParseUTF8(text);
         currentSpeakerName = name;
         currentDisplayText = "";
         displayedText = "";
+        currentTextColor = textColor;
+		currentOutlineColor = outlineColor;
         currentIndex = 0;
         textSpeed = speed;
         lastTime = SDL_GetTicks();
@@ -92,8 +97,8 @@ public:
         SDL_Rect uiRect = { 30, 560, 1220, 140 };
         SDL_RenderFillRect(renderer, &uiRect);
 
-        SDL_Color textColor = { 255, 255, 255, 255 };
-        SDL_Color outlineColor = { 0, 0, 0, 255 };
+        SDL_Color textColor = currentTextColor;
+        SDL_Color outlineColor = currentOutlineColor;
 
         if (!currentSpeakerName.empty()) {
             SDL_Color nameColor = { 255, 200, 200, 255 };

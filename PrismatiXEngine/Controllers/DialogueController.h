@@ -7,6 +7,7 @@
 #include "DialogueBox.h"
 #include "ScriptManager.h"
 #include "TextureManager.h"
+#include "AudioManager.h"
 
 struct ActiveCharacter {
     std::string name;
@@ -25,11 +26,15 @@ class DialogueController {
 private:
     DialogueBox* dialogueBox;
     SDL_Renderer* renderer;
-
+    SDL_Texture* previousBgTexture = nullptr;
+    SDL_Texture* currentBgTexture = nullptr;
+    float bgFadeAlpha = 255.0f;
     std::vector<VNCommand> commands;
     int currentLine;
 	int clickCooldown;
     bool isFinished;
+    bool hasStarted;
+    std::string pendingVoice;
     std::map<std::string, ActiveCharacter> activeCharacters;
 public:
     DialogueController(DialogueBox* box, SDL_Renderer* ren) {
@@ -38,15 +43,19 @@ public:
         currentLine = 0;
         clickCooldown = 0;
         isFinished = false;
+        hasStarted = false;
     }
+
+    SDL_Texture* GetBackground() const { return currentBgTexture; }
 
     void LoadScript(const std::vector<VNCommand>& newScript) {
         commands = newScript;
         currentLine = 0;
         isFinished = false;
+        hasStarted = false;
+        pendingVoice.clear();
+		currentBgTexture = nullptr;
         activeCharacters.clear();
-
-        ExecuteNextCommands();
     }
 
     void RecalculateTargetPositions() {
@@ -107,14 +116,47 @@ public:
                 RecalculateTargetPositions();
                 currentLine++;
             }
+            else if (cmd.type == "bg") {
+                std::string fileName = cmd.args["file"];
+                previousBgTexture = currentBgTexture;
+                currentBgTexture = TextureManager::LoadTexture(fileName, renderer);
+                bgFadeAlpha = 0.0f;
+                currentLine++;
+            }
             else if (cmd.type == "text") {
                 std::string speaker = cmd.args.count("name") ? cmd.args["name"] : "";
                 std::string content = cmd.args["content"];
 
-                dialogueBox->SetText(speaker, content, 40);
+                std::string fx = cmd.args.count("fx") ? cmd.args["fx"] : "typewriter";
 
+                SDL_Color defaultText = { 255, 255, 255, 255 };
+                SDL_Color defaultOutline = { 0, 0, 0, 255 };
+
+                SDL_Color textColor = cmd.args.count("color") ?
+                    ScriptManager::ParseColor(cmd.args["color"], defaultText) : defaultText;
+
+                SDL_Color outlineColor = cmd.args.count("olcolor") ?
+                    ScriptManager::ParseColor(cmd.args["olcolor"], defaultOutline) : defaultOutline;
+
+                dialogueBox->SetText(speaker, content, 40, textColor, outlineColor);
+                if (cmd.args.count("voice")) {
+                    pendingVoice = cmd.args["voice"];
+                }
+                else {
+					pendingVoice.clear();
+                }
                 break;
             }
+            else if (cmd.type == "bgm") {
+                std::string fileName = cmd.args["file"];
+                AudioManager::PlayBGM(fileName);
+                currentLine++;
+			}
+            else if (cmd.type == "se") {
+                std::string fileName = cmd.args["file"];
+                AudioManager::PlaySFX(fileName);
+                currentLine++;
+			}
             else {
                 currentLine++;
             }
@@ -130,6 +172,7 @@ public:
         if (isFinished) return;
         if (clickCooldown > 0) return;
         clickCooldown = 1;
+        AudioManager::StopVoice();
         if (!dialogueBox->IsFinished()) {
             dialogueBox->ShowAll();
         }
@@ -140,15 +183,31 @@ public:
     }
 
     void Update() {
+        if (!hasStarted && !commands.empty()) {
+            hasStarted = true;
+            ExecuteNextCommands();
+        }
         if (clickCooldown > 0) {
             clickCooldown--;
         }
         if (!isFinished) {
             dialogueBox->Update();
         }
+        if (!pendingVoice.empty() && dialogueBox->GetCurrentIndex() > 0) {
+            AudioManager::PlayVoice(pendingVoice);
+            pendingVoice.clear();
+        }
 
         float fadeSpeed = 10.0f;
         float factor = 0.15f; // 線性的 Factor
+
+        if (bgFadeAlpha < 255.0f) {
+            bgFadeAlpha += fadeSpeed;
+            if (bgFadeAlpha >= 255.0f) {
+                bgFadeAlpha = 255.0f;
+                previousBgTexture = nullptr;
+            }
+        }
 
         for (auto i = activeCharacters.begin(); i != activeCharacters.end(); ) {
             ActiveCharacter& chara = i->second;
@@ -177,6 +236,14 @@ public:
         }
     }
 
+    void RenderBackground(PrismatiXEngine& engine) {
+        if (previousBgTexture) {
+            engine.DrawFullscreenBackground(previousBgTexture, 255);
+        }
+        if (currentBgTexture) {
+            engine.DrawFullscreenBackground(currentBgTexture, (Uint8)bgFadeAlpha);
+        }
+    }
 
     void Render(SDL_Renderer* renderer) {
         if (!activeCharacters.empty()) {

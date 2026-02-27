@@ -32,6 +32,7 @@ void TextureManager::Draw(SDL_Texture* tex, SDL_Renderer* ren, int x, int y, flo
 void TextureManager::Draw(SDL_Texture* tex, SDL_Renderer* ren, int x, int y, int w, int h, Uint8 alpha) {
 	if (!tex) return;
 
+	SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
 	SDL_SetTextureAlphaMod(tex, alpha);
 
 	SDL_Rect destRect = { x, y, w, h };

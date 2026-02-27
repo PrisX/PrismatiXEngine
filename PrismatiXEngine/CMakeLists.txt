@@ -7,7 +7,7 @@ add_executable (PrismatiXEngine
 "Core/PrismatiXEngine.h"
 "Managers/TextureManager.cpp"
 "Managers/TextureManager.h"
- "Managers/TextManager.h" "Managers/TextManager.cpp" "Components/DialogueBox.h" "Controllers/DialogueController.h" "Managers/ScriptManager.h")
+ "Managers/TextManager.h" "Managers/TextManager.cpp" "Components/DialogueBox.h" "Controllers/DialogueController.h" "Managers/ScriptManager.h" "Managers/AudioManager.h" "Managers/AudioManager.cpp")
 
 # Header files
 target_include_directories(PrismatiXEngine PRIVATE 

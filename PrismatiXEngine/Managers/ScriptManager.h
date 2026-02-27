@@ -5,6 +5,7 @@
 #include <sstream>
 #include <iostream>
 #include <map>
+#include <SDL2/SDL.h>
 
 struct VNCommand {
     std::string type;
@@ -29,19 +30,44 @@ public:
 
             if (line.front() == '[' && line.back() == ']') {
                 std::string content = line.substr(1, line.size() - 2);
-
-                std::stringstream ss(content);
                 VNCommand cmd;
 
-                ss >> cmd.type;
+                size_t firstSpace = content.find(' ');
+                if (firstSpace == std::string::npos) {
+                    cmd.type = content;
+                }
+                else {
+                    cmd.type = content.substr(0, firstSpace);
+                    std::string argsStr = content.substr(firstSpace + 1);
 
-                std::string token;
-                while (ss >> token) {
-                    size_t eqPos = token.find('=');
-                    if (eqPos != std::string::npos) {
-                        std::string key = token.substr(0, eqPos);
-                        std::string val = token.substr(eqPos + 1);
-                        cmd.args[key] = val;
+                    size_t pos = 0;
+                    while (pos < argsStr.length()) {
+                        while (pos < argsStr.length() && argsStr[pos] == ' ') pos++;
+                        if (pos >= argsStr.length()) break;
+
+                        size_t eqPos = argsStr.find('=', pos);
+                        if (eqPos == std::string::npos) break;
+
+                        std::string key = argsStr.substr(pos, eqPos - pos);
+                        pos = eqPos + 1;
+
+                        if (pos < argsStr.length() && argsStr[pos] == '"') {
+                            pos++;
+                            size_t endQuote = argsStr.find('"', pos);
+                            if (endQuote != std::string::npos) {
+                                cmd.args[key] = argsStr.substr(pos, endQuote - pos);
+                                pos = endQuote + 1;
+                            }
+                            else {
+                                break;
+                            }
+                        }
+                        else {
+                            size_t spacePos = argsStr.find(' ', pos);
+                            if (spacePos == std::string::npos) spacePos = argsStr.length();
+                            cmd.args[key] = argsStr.substr(pos, spacePos - pos);
+                            pos = spacePos;
+                        }
                     }
                 }
                 script.push_back(cmd);
@@ -49,5 +75,15 @@ public:
         }
         file.close();
         return script;
+    }
+
+    static SDL_Color ParseColor(const std::string& colorStr, SDL_Color defaultColor) {
+		if (colorStr.empty()) return defaultColor;
+		std::stringstream ss(colorStr);
+        std::string r, g, b;
+        if (std::getline(ss, r, ',') && std::getline(ss, g, ',') && std::getline(ss, r, ',')) {
+			return { (Uint8)std::stoi(r), (Uint8)std::stoi(g), (Uint8)std::stoi(b), 255 };
+        }
+		return defaultColor;
     }
 };

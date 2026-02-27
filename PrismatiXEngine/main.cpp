@@ -7,6 +7,11 @@
 
 #pragma execution_character_set("utf-8") // 防中文亂碼
 
+enum class GameState {
+    MainMenu,
+    InGame
+};
+
 int main(int argc, char* argv[]) {
     PrismatiXEngine engine;
     if (!engine.Initialize("PrismatiX Visual Novel Engine", 1280, 720)) {
@@ -20,35 +25,49 @@ int main(int argc, char* argv[]) {
     DialogueBox dialog(font, 50, 600);
     DialogueController vnController(&dialog, renderer);
 
-    std::vector<VNCommand> s = ScriptManager::ParseFile("script.pes");
-    vnController.LoadScript(s);
+    SDL_Texture* titleBg = TextureManager::LoadTexture("title_bg.jpg", renderer);
+    std::vector<VNCommand> script;
+    GameState currentState = GameState::MainMenu;
 
     while (engine.IsRunning()) {
         engine.HandleEvents();
-        if (engine.GetLeftClick()) {
-            vnController.HandleClick();
-        }
-
-        if (engine.GetLeftClick() || engine.GetMouseWheelY() < 0) {
-            vnController.HandleClick();
-        }
-
-        else if (engine.GetMouseWheelY() > 0) {
-            // TODO: backlog
-        }
-
-		vnController.Update();
 
         engine.ClearScreen();
 
-        engine.DrawFullscreenBackground(bg);
+        if (currentState == GameState::MainMenu) {
+            if (titleBg) {
+                engine.DrawFullscreenBackground(titleBg);
+            }
+        }
+        else if (currentState == GameState::InGame) {
+            vnController.RenderBackground(engine);
+        }
+
 
         engine.BeginSafeArea();
 
-        vnController.Render(renderer);
+        if (currentState == GameState::MainMenu) {
+            SDL_Color textColor = { 255, 255, 255, 255 };
+            SDL_Color outlineColor = { 0, 0, 0, 255 };
+            TextManager::DrawWithOutline(renderer, font, "(Click to Start)", textColor, outlineColor, 2, 400, 550);
+          
+
+            if (engine.GetLeftClick()) {
+                script = ScriptManager::ParseFile("script.pes");
+                vnController.LoadScript(script);
+                currentState = GameState::InGame;
+            }
+        }
+        else if (currentState == GameState::InGame) {
+            if (engine.GetLeftClick() || engine.GetMouseWheelY() < 0) {
+                vnController.HandleClick();
+            }
+
+            vnController.Update();
+            vnController.Render(renderer);
+        }
 
         engine.EndSafeArea();
-
         engine.PresentScreen();
     }
 
