@@ -2,8 +2,11 @@
 #include "PrismatiXEngine.h"
 #include "Managers/TextureManager.h"
 #include "Managers/TextManager.h"
+#include "Managers/AudioManager.h"
+#include "Managers/ScriptManager.h"
 #include "DialogueBox.h"
 #include "Controllers/DialogueController.h"
+#include "Managers/ArchiveManager.h"
 
 #pragma execution_character_set("utf-8") // 防中文亂碼
 
@@ -19,13 +22,20 @@ int main(int argc, char* argv[]) {
     }
 
     SDL_Renderer* renderer = engine.GetRenderer();
+    ArchiveManager::MountArchive("Data/Image/Character.pdi");
+    ArchiveManager::MountArchive("Data/Image/Background.pdi");
+    ArchiveManager::MountArchive("Data/Font.pdttf");
+    ArchiveManager::MountArchive("Data/Audio/Music.pda");
+    ArchiveManager::MountArchive("Data/Audio/SFX.pda");
+    ArchiveManager::MountArchive("Data/Audio/Voice.pda");
+    ArchiveManager::MountArchive("Data/Script/script.pds");
 
-    SDL_Texture* bg = TextureManager::LoadTexture("bg.jpg", renderer);
     TTF_Font* font = TextManager::LoadFont("NotoSansTC-Bold.ttf", 28);
     DialogueBox dialog(font, 50, 600);
     DialogueController vnController(&dialog, renderer);
 
     SDL_Texture* titleBg = TextureManager::LoadTexture("title_bg.jpg", renderer);
+
     std::vector<VNCommand> script;
     GameState currentState = GameState::MainMenu;
 

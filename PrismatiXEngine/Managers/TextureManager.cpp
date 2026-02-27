@@ -1,4 +1,5 @@
 #include "TextureManager.h"
+#include "ArchiveManager.h"
 #include <iostream>
 
 std::unordered_map<std::string, SDL_Texture*> TextureManager::textureCache; // static 要再一次
@@ -8,13 +9,22 @@ SDL_Texture* TextureManager::LoadTexture(const std::string& fileName, SDL_Render
 		return textureCache[fileName]; // Cache
 	}
 
-	SDL_Texture* tex = IMG_LoadTexture(ren, fileName.c_str());
+	std::vector<char> buffer = ArchiveManager::ExtractFile(fileName);
+	if (buffer.empty()) return nullptr;
+
+	SDL_RWops* rw = SDL_RWFromMem(buffer.data(), buffer.size());
+	if (!rw) return nullptr;
+
+	SDL_Texture* tex = IMG_LoadTexture_RW(ren, rw, 1);
+
 	if (!tex) {
 		std::cerr << "Failed to load image (" << fileName << "): " << IMG_GetError() << std::endl;
+		return nullptr;
 	}
 
 	textureCache[fileName] = tex;
 	return tex;
+
 }
 
 void TextureManager::Draw(SDL_Texture* tex, SDL_Renderer* ren, int x, int y, float scale) {

@@ -6,6 +6,7 @@
 #include <iostream>
 #include <map>
 #include <SDL2/SDL.h>
+#include "ArchiveManager.h"
 
 struct VNCommand {
     std::string type;
@@ -14,16 +15,20 @@ struct VNCommand {
 
 class ScriptManager {
 public:
-    static std::vector<VNCommand> ParseFile(const std::string& filePath) {
+    static std::vector<VNCommand> ParseFile(const std::string& fileName) {
         std::vector<VNCommand> script;
-        std::ifstream file(filePath);
 
-        if (!file.is_open()) {
-            std::cerr << "Can't open script file (" << filePath << "): " << std::endl;
+        std::vector<char> buffer = ArchiveManager::ExtractFile(fileName);
+        if (buffer.empty()) {
+            std::cerr << "Can't extract script from archive: " << fileName << std::endl;
             return script;
         }
 
+        std::string scriptContent(buffer.begin(), buffer.end());
+        std::stringstream file(scriptContent);
+
         std::string line;
+
         while (std::getline(file, line)) {
             if (!line.empty() && line.back() == '\r') line.pop_back();
             if (line.empty() || line.substr(0, 2) == "//") continue;
@@ -73,7 +78,6 @@ public:
                 script.push_back(cmd);
             }
         }
-        file.close();
         return script;
     }
 

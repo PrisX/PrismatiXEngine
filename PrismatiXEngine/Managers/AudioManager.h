@@ -21,7 +21,8 @@ public:
     static void CleanCache();
 
 private:
-    static std::unordered_map<std::string, Mix_Music*> bgmCache;
+    static std::vector<char> currentBgmBuffer;
+    static Mix_Music* currentBgm;
     static std::unordered_map<std::string, Mix_Chunk*> sfxCache;
 
     static Mix_Music* LoadBGM(const std::string& fileName);

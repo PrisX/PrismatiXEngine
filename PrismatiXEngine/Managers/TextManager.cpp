@@ -1,11 +1,34 @@
 #include "TextManager.h"
+#include "ArchiveManager.h"
 #include <iostream>
 
+std::unordered_map<std::string, TTF_Font*> TextManager::fontCache;
+std::unordered_map<std::string, std::vector<char>> TextManager::fontBuffers;
+
 TTF_Font* TextManager::LoadFont(const std::string& fileName, int fontSize) {
-    TTF_Font* font = TTF_OpenFont(fileName.c_str(), fontSize * FONT_OVERSAMPLE);
-    if (!font) {
-        std::cerr << "Failed to load font (" << fileName << "): " << TTF_GetError() << std::endl;
+    std::string cacheKey = fileName + "_" + std::to_string(fontSize);
+
+    if (fontCache.find(cacheKey) != fontCache.end()) {
+        return fontCache[cacheKey];
     }
+
+    std::vector<char> buffer = ArchiveManager::ExtractFile(fileName);
+    if (buffer.empty()) {
+        std::cerr << "Failed to extract font from archive: " << fileName << std::endl;
+        return nullptr;
+    }
+
+    fontBuffers[cacheKey] = std::move(buffer);
+
+    SDL_RWops* rw = SDL_RWFromMem(fontBuffers[cacheKey].data(), fontBuffers[cacheKey].size());
+    TTF_Font* font = TTF_OpenFontRW(rw, 1, fontSize * FONT_OVERSAMPLE);
+
+    if (!font) {
+        std::cerr << "Failed to load font from memory (" << fileName << "): " << TTF_GetError() << std::endl;
+        return nullptr;
+    }
+
+    fontCache[cacheKey] = font;
     return font;
 }
 
@@ -60,4 +83,12 @@ void TextManager::DrawWithOutline(SDL_Renderer* ren, TTF_Font* font, const std::
     SDL_DestroyTexture(bgTexture);
     SDL_FreeSurface(fgSurface);
     SDL_DestroyTexture(fgTexture);
+}
+
+void TextManager::Clean() {
+    for (auto& pair : fontCache) {
+        if (pair.second) TTF_CloseFont(pair.second);
+    }
+    fontCache.clear();
+    fontBuffers.clear();
 }

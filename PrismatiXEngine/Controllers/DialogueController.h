@@ -8,6 +8,7 @@
 #include "ScriptManager.h"
 #include "TextureManager.h"
 #include "AudioManager.h"
+#include "ArchiveManager.h"
 
 struct ActiveCharacter {
     std::string name;

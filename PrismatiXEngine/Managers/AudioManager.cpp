@@ -1,25 +1,30 @@
 #include "AudioManager.h"
+#include "ArchiveManager.h"
 #include <iostream>
 
-std::unordered_map<std::string, Mix_Music*> AudioManager::bgmCache;
+std::vector<char> AudioManager::currentBgmBuffer;
+Mix_Music* AudioManager::currentBgm = nullptr; 
 std::unordered_map<std::string, Mix_Chunk*> AudioManager::sfxCache;
 
-Mix_Music* AudioManager::LoadBGM(const std::string& fileName) {
-	if (bgmCache.find(fileName) != bgmCache.end()) {
-		return bgmCache[fileName];
-	}
-	Mix_Music* bgm = Mix_LoadMUS(fileName.c_str());
-	if (!bgm) {
-		std::cerr << "Failed to load BGM (" << fileName << "): " << Mix_GetError() << std::endl;
-	}
-	bgmCache[fileName] = bgm;
-	return bgm;
-}
-
 void AudioManager::PlayBGM(const std::string& fileName, int loops) {
-	Mix_Music* bgm = LoadBGM(fileName);
-	if (bgm) {
-		Mix_PlayMusic(bgm, loops);
+	if (currentBgm) {
+		Mix_HaltMusic();
+		Mix_FreeMusic(currentBgm);
+		currentBgm = nullptr;
+	}
+	currentBgmBuffer.clear();
+
+	currentBgmBuffer = ArchiveManager::ExtractFile(fileName);
+	if (currentBgmBuffer.empty()) return;
+
+	SDL_RWops* rw = SDL_RWFromMem(currentBgmBuffer.data(), currentBgmBuffer.size());
+	currentBgm = Mix_LoadMUS_RW(rw, 1);
+
+	if (currentBgm) {
+		Mix_PlayMusic(currentBgm, loops);
+	}
+	else {
+		std::cerr << "Failed to load BGM (" << fileName << "): " << Mix_GetError() << std::endl;
 	}
 }
 
@@ -31,11 +36,19 @@ Mix_Chunk* AudioManager::LoadSFX(const std::string& fileName) {
 	if (sfxCache.find(fileName) != sfxCache.end()) {
 		return sfxCache[fileName];
 	}
-	Mix_Chunk* sfx = Mix_LoadWAV(fileName.c_str());
+
+	std::vector<char> buffer = ArchiveManager::ExtractFile(fileName);
+	if (buffer.empty()) return nullptr;
+
+	SDL_RWops* rw = SDL_RWFromMem(buffer.data(), buffer.size());
+	Mix_Chunk* sfx = Mix_LoadWAV_RW(rw, 1);
+
 	if (!sfx) {
 		std::cerr << "Failed to load SFX (" << fileName << "): " << Mix_GetError() << std::endl;
 	}
-	sfxCache[fileName] = sfx;
+	else {
+		sfxCache[fileName] = sfx;
+	}
 	return sfx;
 }
 
@@ -60,10 +73,12 @@ void AudioManager::StopVoice() {
 }
 
 void AudioManager::CleanCache() {
-	for (auto& pair : bgmCache) {
-		if (pair.second) Mix_FreeMusic(pair.second);
+	if (currentBgm) {
+		Mix_HaltMusic();
+		Mix_FreeMusic(currentBgm);
+		currentBgm = nullptr;
 	}
-	bgmCache.clear();
+	currentBgmBuffer.clear();
 
 	for (auto& pair : sfxCache) {
 		if (pair.second) Mix_FreeChunk(pair.second);
