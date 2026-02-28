@@ -7,7 +7,28 @@ add_executable (PrismatiXEngine
 "Core/PrismatiXEngine.h"
 "Managers/TextureManager.cpp"
 "Managers/TextureManager.h"
- "Managers/TextManager.h" "Managers/TextManager.cpp" "Components/DialogueBox.h" "Controllers/DialogueController.h" "Managers/ScriptManager.h" "Managers/AudioManager.h" "Managers/AudioManager.cpp" "SecretKey.h" "Managers/ArchiveManager.h" "Managers/ArchiveManager.cpp" "Managers/ConfigManager.h" "Managers/ConfigManager.cpp" "Controllers/SplashController.h" "Managers/VariableManager.h" "Managers/UIManager.h" "Managers/BacklogManager.h")
+"Managers/TextManager.h"
+"Managers/TextManager.cpp"
+"Components/DialogueBox.h"
+"Controllers/DialogueController.h"
+"Controllers/SplashController.h"
+"Managers/ScriptManager.h"
+"Managers/ScriptManager.cpp"
+"Managers/AudioManager.h"
+"Managers/AudioManager.cpp"
+"Managers/ArchiveManager.h"
+"Managers/ArchiveManager.cpp"
+"Managers/ConfigManager.h"
+"Managers/ConfigManager.cpp"
+"Managers/VariableManager.h"
+"Managers/VariableManager.cpp"
+"Managers/UIManager.h"
+"Managers/UIManager.cpp"
+"Managers/BacklogManager.h"
+"Managers/BacklogManager.cpp"
+"Managers/SaveManager.h"
+"SecretKey.h"
+)
 
 # Header files
 target_include_directories(PrismatiXEngine PRIVATE 

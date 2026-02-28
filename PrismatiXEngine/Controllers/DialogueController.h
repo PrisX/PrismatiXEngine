@@ -353,6 +353,7 @@ public:
 
             if (!target.empty()) {
                 // AudioManager::PlaySFX("click.wav");
+                BacklogManager::AddChoice(UIManager::GetHoveredText());
                 UIManager::Clear();
 
                 if (target.front() == '*') {
@@ -480,13 +481,17 @@ public:
         for (int i = startIdx; i >= 0 && drawY > 100; --i) {
             const auto& log = BacklogManager::logs[i];
 
-            if (!log.speaker.empty()) {
-                SDL_Color nameCol = { 255, 200, 100, 255 };
-                TextManager::DrawWithOutline(renderer, uiFont, "【" + log.speaker + "】", nameCol, outlineColor, 1, 100, drawY);
+            if (log.isChoice) {
+                SDL_Color choiceCol = { 255, 215, 0, 255 };
+                TextManager::DrawWithOutline(renderer, uiFont, log.text, choiceCol, outlineColor, 1, 200, drawY, 800);
+            } else {
+                if (!log.speaker.empty()) {
+                    SDL_Color nameCol = { 255, 200, 100, 255 };
+                    TextManager::DrawWithOutline(renderer, uiFont, "【" + log.speaker + "】", nameCol, outlineColor, 1, 100, drawY);
+                }
+                SDL_Color textCol = { 220, 220, 220, 255 };
+                TextManager::DrawWithOutline(renderer, uiFont, log.text, textCol, outlineColor, 1, 300, drawY, 800);
             }
-
-            SDL_Color textCol = { 220, 220, 220, 255 };
-            TextManager::DrawWithOutline(renderer, uiFont, log.text, textCol, outlineColor, 1, 300, drawY, 800);
 
             drawY -= 80;
         }

@@ -1,4 +1,5 @@
 #include <iostream>
+#include <sstream>
 #include "PrismatiXEngine.h"
 #include "Managers/TextureManager.h"
 #include "Managers/TextManager.h"
