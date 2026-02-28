@@ -6,11 +6,11 @@
 
 class TextManager {
 private:
-	static constexpr int FONT_OVERSAMPLE = 2;
 	static std::unordered_map<std::string, TTF_Font*> fontCache;
 	static std::unordered_map<std::string, std::vector<char>> fontBuffers;
 
 public:
+	static constexpr int FONT_OVERSAMPLE = 2;
 	static TTF_Font* LoadFont(const std::string& fileName, int fontSize);
 	static void Draw(SDL_Renderer* ren, TTF_Font* font, const std::string& text, SDL_Color color, int x, int y);
 	static void DrawWithOutline(SDL_Renderer* ren, TTF_Font* font, const std::string& text,

@@ -24,6 +24,7 @@ public:
     SDL_Renderer* GetRenderer() const { return renderer; }
     SDL_Window* GetWindow() const { return window; }
     bool GetLeftClick() const { return leftClick; }
+	bool GetRightClick() const { return rightClick; }
     int GetMouseWheelY() const { return mouseWheelY; }
 
     void HandleEvents();
@@ -35,6 +36,7 @@ public:
     void EndSafeArea();
 private:
     bool leftClick;
+	bool rightClick;
     int mouseWheelY;
     bool isRunning;
 

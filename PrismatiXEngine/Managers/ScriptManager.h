@@ -28,13 +28,22 @@ public:
         std::stringstream file(scriptContent);
 
         std::string line;
-
+        std::map<std::string, std::string> lastTextArgs;
         while (std::getline(file, line)) {
             if (!line.empty() && line.back() == '\r') line.pop_back();
-            if (line.empty() || line.substr(0, 2) == "//") continue;
-
-            if (line.front() == '[' && line.back() == ']') {
-                std::string content = line.substr(1, line.size() - 2);
+            size_t startPos = line.find_first_not_of(" \t");
+            if (startPos == std::string::npos) continue;
+            std::string cleanLine = line.substr(startPos);
+            if (cleanLine.empty() || cleanLine.substr(0, 2) == "//") continue;
+            if (cleanLine.front() == '*') {
+                VNCommand cmd;
+                cmd.type = "label";
+                cmd.args["name"] = cleanLine.substr(1);
+                script.push_back(cmd);
+                continue;
+            }
+            if (cleanLine.front() == '[' && cleanLine.back() == ']') {
+                std::string content = cleanLine.substr(1, cleanLine.size() - 2);
                 VNCommand cmd;
 
                 size_t firstSpace = content.find(' ');
@@ -67,6 +76,7 @@ public:
                                 break;
                             }
                         }
+
                         else {
                             size_t spacePos = argsStr.find(' ', pos);
                             if (spacePos == std::string::npos) spacePos = argsStr.length();
@@ -75,6 +85,23 @@ public:
                         }
                     }
                 }
+                if (cmd.type == "text") {
+                    lastTextArgs = cmd.args;
+                    lastTextArgs.erase("voice");
+                    lastTextArgs.erase("content");
+                    if (cmd.args.count("content") == 0) {
+                        continue;
+                    }
+                }
+
+                script.push_back(cmd);
+            }
+            else {
+                VNCommand cmd;
+                cmd.type = "text";
+                cmd.args = lastTextArgs;
+                cmd.args["content"] = cleanLine;
+
                 script.push_back(cmd);
             }
         }
@@ -82,18 +109,18 @@ public:
     }
 
     static SDL_Color ParseColor(const std::string& colorStr, SDL_Color defaultColor) {
-		if (colorStr.empty()) return defaultColor;
-		std::stringstream ss(colorStr);
+        if (colorStr.empty()) return defaultColor;
+        std::stringstream ss(colorStr);
         std::string r, g, b;
         if (std::getline(ss, r, ',') && std::getline(ss, g, ',') && std::getline(ss, b, ',')) {
             try {
                 return { (Uint8)std::stoi(r), (Uint8)std::stoi(g), (Uint8)std::stoi(b), 255 };
-            } 
+            }
             catch (const std::exception& e) {
                 std::cerr << "Invalid color format (" << colorStr << "), using default colors instead." << std::endl;
                 return defaultColor;
             }
         }
-		return defaultColor;
+        return defaultColor;
     }
 };

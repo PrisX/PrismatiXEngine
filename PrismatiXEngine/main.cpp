@@ -21,10 +21,23 @@ enum class GameState {
 int main(int argc, char* argv[]) {
 
 
-    ArchiveManager::MountArchive("Data/Game.pdx");
+    ArchiveManager::MountArchive("Data.pdx");
     if (!ConfigManager::LoadConfig("Game")) {
         std::cerr << "Entry point not found or invalid." << std::endl;
         return -1;
+    }
+
+    std::string mountList = ConfigManager::GetString("Mount", "Data.pdx");
+
+    std::stringstream ss(mountList);
+    std::string pdxName;
+    while (std::getline(ss, pdxName, ',')) {
+        pdxName.erase(0, pdxName.find_first_not_of(" \t\r\n"));
+        pdxName.erase(pdxName.find_last_not_of(" \t\r\n") + 1);
+
+        if (!pdxName.empty()) {
+            ArchiveManager::MountArchive(pdxName);
+        }
     }
 
     std::string gameTitle = ConfigManager::GetString("Title", "PrismatiX Engine");
@@ -38,21 +51,12 @@ int main(int argc, char* argv[]) {
 
     SDL_Renderer* renderer = engine.GetRenderer();
 
-    ArchiveManager::MountArchive("Data/Image/Character.pdi");
-    ArchiveManager::MountArchive("Data/Image/Background.pdi");
-    ArchiveManager::MountArchive("Data/Image/UI.pdi");
-
-    ArchiveManager::MountArchive("Data/Font.pdttf");
-    ArchiveManager::MountArchive("Data/Audio/Music.pda");
-    ArchiveManager::MountArchive("Data/Audio/SFX.pda");
-    ArchiveManager::MountArchive("Data/Audio/Voice.pda");
-    ArchiveManager::MountArchive("Data/Script/script.pds");
 
     std::string fontName = ConfigManager::GetString("FontName", "NotoSansTC-Bold.ttf");
     int fontSize = ConfigManager::GetInt("FontSize", 28);
     TTF_Font* font = TextManager::LoadFont(fontName, fontSize);
     DialogueBox dialog(font, 50, winH - 120);
-    DialogueController vnController(&dialog, renderer);
+    DialogueController vnController(&dialog, font, renderer);
 
     std::string initBgFile = ConfigManager::GetString("InitialBg", "title_bg.jpg");
     SDL_Texture* titleBg = TextureManager::LoadTexture("title_bg.jpg", renderer);
@@ -113,8 +117,24 @@ int main(int argc, char* argv[]) {
             }
         }
         else if (currentState == GameState::InGame) {
-            if (engine.GetLeftClick() || engine.GetMouseWheelY() < 0) {
-                vnController.HandleClick();
+            int wheelY = engine.GetMouseWheelY();
+            if (vnController.IsShowingBacklog()) {
+                if (wheelY != 0) {
+                    vnController.ScrollBacklog(wheelY > 0 ? 1 : -1);
+                }
+
+                if (engine.GetRightClick()) {
+                    vnController.ToggleBacklog();
+                }
+            }
+
+            else {
+                if (engine.GetLeftClick() || wheelY < 0) {
+                    vnController.HandleClick();
+                }
+                else if (wheelY > 0) {
+                    vnController.ToggleBacklog();
+                }
             }
 
             vnController.Update();

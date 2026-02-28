@@ -4,7 +4,7 @@
 
 #pragma execution_character_set("utf-8") // 防中文亂碼
 
-PrismatiXEngine::PrismatiXEngine() : isRunning(false), window(nullptr), renderer(nullptr), leftClick(false), mouseWheelY(0) {}
+PrismatiXEngine::PrismatiXEngine() : isRunning(false), window(nullptr), renderer(nullptr), leftClick(false), rightClick(false), mouseWheelY(0) {}
 PrismatiXEngine::~PrismatiXEngine() { Clean(); }
 
 bool PrismatiXEngine::Initialize(const std::string& title, int width, int height) { // 同標頭檔裡面的解釋
@@ -58,6 +58,7 @@ bool PrismatiXEngine::Initialize(const std::string& title, int width, int height
 
 void PrismatiXEngine::HandleEvents() {
 	leftClick = false;
+	rightClick = false;
 	mouseWheelY = 0;
 	SDL_Event event;
 	while (SDL_PollEvent(&event)) {
@@ -67,6 +68,9 @@ void PrismatiXEngine::HandleEvents() {
 		else if (event.type == SDL_MOUSEBUTTONDOWN) {
 			if (event.button.button == SDL_BUTTON_LEFT) {
 				leftClick = true;
+			}
+			else if (event.button.button == SDL_BUTTON_RIGHT) {
+				rightClick = true;
 			}
 		}
 		else if (event.type == SDL_MOUSEWHEEL) {
