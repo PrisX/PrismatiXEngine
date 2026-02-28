@@ -85,8 +85,14 @@ public:
 		if (colorStr.empty()) return defaultColor;
 		std::stringstream ss(colorStr);
         std::string r, g, b;
-        if (std::getline(ss, r, ',') && std::getline(ss, g, ',') && std::getline(ss, r, ',')) {
-			return { (Uint8)std::stoi(r), (Uint8)std::stoi(g), (Uint8)std::stoi(b), 255 };
+        if (std::getline(ss, r, ',') && std::getline(ss, g, ',') && std::getline(ss, b, ',')) {
+            try {
+                return { (Uint8)std::stoi(r), (Uint8)std::stoi(g), (Uint8)std::stoi(b), 255 };
+            } 
+            catch (const std::exception& e) {
+                std::cerr << "Invalid color format (" << colorStr << "), using default colors instead." << std::endl;
+                return defaultColor;
+            }
         }
 		return defaultColor;
     }

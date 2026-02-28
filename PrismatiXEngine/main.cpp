@@ -6,12 +6,14 @@
 #include "Managers/ScriptManager.h"
 #include "DialogueBox.h"
 #include "Controllers/DialogueController.h"
+#include "Controllers/SplashController.h"
 #include "Managers/ArchiveManager.h"
 #include "Managers/ConfigManager.h"
 
 #pragma execution_character_set("utf-8") // 防中文亂碼
 
 enum class GameState {
+    SplashScreen,
     MainMenu,
     InGame
 };
@@ -38,6 +40,8 @@ int main(int argc, char* argv[]) {
 
     ArchiveManager::MountArchive("Data/Image/Character.pdi");
     ArchiveManager::MountArchive("Data/Image/Background.pdi");
+    ArchiveManager::MountArchive("Data/Image/UI.pdi");
+
     ArchiveManager::MountArchive("Data/Font.pdttf");
     ArchiveManager::MountArchive("Data/Audio/Music.pda");
     ArchiveManager::MountArchive("Data/Audio/SFX.pda");
@@ -54,16 +58,33 @@ int main(int argc, char* argv[]) {
     SDL_Texture* titleBg = TextureManager::LoadTexture("title_bg.jpg", renderer);
 
     std::vector<VNCommand> script;
-    GameState currentState = GameState::MainMenu;
+    GameState currentState = GameState::SplashScreen;
+    SplashController splashController;
+    splashController.Init(renderer);
 
+    float mainMenuAlpha = 0.0f;
+    const float MAIN_MENU_FADE_SPEED = 3.0f;
     while (engine.IsRunning()) {
         engine.HandleEvents();
 
         engine.ClearScreen();
+        if (currentState == GameState::SplashScreen) {
+            splashController.Update();
+            splashController.Render(renderer, winW, winH);
 
-        if (currentState == GameState::MainMenu) {
+            if (splashController.IsFinished()) {
+                currentState = GameState::MainMenu;
+                mainMenuAlpha = 0.0f;
+            }
+        }
+        else if (currentState == GameState::MainMenu) {
+            if (mainMenuAlpha < 255.0f) {
+                mainMenuAlpha += MAIN_MENU_FADE_SPEED;
+                if (mainMenuAlpha > 255.0f) mainMenuAlpha = 255.0f;
+            }
+
             if (titleBg) {
-                engine.DrawFullscreenBackground(titleBg);
+                engine.DrawFullscreenBackground(titleBg, (Uint8)mainMenuAlpha);
             }
         }
         else if (currentState == GameState::InGame) {
@@ -73,7 +94,12 @@ int main(int argc, char* argv[]) {
 
         engine.BeginSafeArea();
 
-        if (currentState == GameState::MainMenu) {
+        if (currentState == GameState::SplashScreen) {
+            if (engine.GetLeftClick()) {
+                splashController.HandleClick();
+            }
+        }
+        else if (currentState == GameState::MainMenu) {
             SDL_Color textColor = { 255, 255, 255, 255 };
             SDL_Color outlineColor = { 0, 0, 0, 255 };
             TextManager::DrawWithOutline(renderer, font, "(Click to Start)", textColor, outlineColor, 2, 400, 550);
@@ -99,6 +125,8 @@ int main(int argc, char* argv[]) {
         engine.PresentScreen();
     }
 
+    TextManager::Clean();
+    AudioManager::CleanCache();
     engine.Clean();
     return 0;
 }
