@@ -9,6 +9,12 @@ endif()
 
 project ("PrismatiXEngine" LANGUAGES CXX)
 
+# Homebrew prefix (for macOS)
+if(APPLE)
+    execute_process(COMMAND brew --prefix OUTPUT_VARIABLE HOMEBREW_PREFIX OUTPUT_STRIP_TRAILING_WHITESPACE)
+    list(APPEND CMAKE_PREFIX_PATH "${HOMEBREW_PREFIX}")
+endif()
+
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
 
 # C++

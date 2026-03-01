@@ -50,3 +50,14 @@ target_link_libraries(PrismatiXEngine PRIVATE
     SDL2_ttf::SDL2_ttf
     SDL2_mixer::SDL2_mixer
 )
+
+if(APPLE)
+target_include_directories(PrismatiXEngine PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core
+    ${CMAKE_CURRENT_SOURCE_DIR}/Managers
+    ${CMAKE_CURRENT_SOURCE_DIR}/Components
+    ${CMAKE_CURRENT_SOURCE_DIR}/Controllers
+    ${HOMEBREW_PREFIX}/include
+)
+endif()
