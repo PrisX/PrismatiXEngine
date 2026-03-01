@@ -31,7 +31,7 @@ add_executable (PrismatiXEngine
 "Managers/SaveManager.h"
 "Managers/SaveManager.cpp"
 "SecretKey.h"
- "Components/SaveLoadMenu.h")
+ "Components/SaveLoadMenu.h" "Components/MainMenu.h")
 
 # Header files
 target_include_directories(PrismatiXEngine PRIVATE 

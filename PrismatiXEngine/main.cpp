@@ -12,6 +12,8 @@
 #include "Managers/ConfigManager.h"
 #include "Toolbar.h"
 #include "SaveLoadMenu.h"
+#include "MainMenu.h"
+
 #pragma execution_character_set("utf-8") // 防中文亂碼
 
 enum class GameState {
@@ -66,11 +68,13 @@ int main(int argc, char* argv[]) {
     DialogueController vnController(&dialog, font, renderer);
     Toolbar bottomToolbar(font, winH);
     SaveLoadMenu slMenu(font);
+    MainMenu titleMenu(font, winW, winH);
     std::string initBgFile = ConfigManager::GetString("InitialBg", "title_bg.jpg");
     SDL_Texture* titleBg = TextureManager::LoadTexture("title_bg.jpg", renderer);
 
     std::vector<VNCommand> script;
     GameState currentState = GameState::SplashScreen;
+    GameState previousState = GameState::MainMenu;
     SplashController splashController;
     splashController.Init(renderer);
 
@@ -111,17 +115,39 @@ int main(int argc, char* argv[]) {
             }
         }
         else if (currentState == GameState::MainMenu) {
-            SDL_Color textColor = { 255, 255, 255, 255 };
-            SDL_Color outlineColor = { 0, 0, 0, 255 };
-            TextManager::DrawWithOutline(renderer, font, "(Click to Start)", textColor, outlineColor, 2, 400, 550);
-          
+            if (mainMenuAlpha < 255.0f) {
+                mainMenuAlpha += MAIN_MENU_FADE_SPEED;
+                if (mainMenuAlpha > 255.0f) mainMenuAlpha = 255.0f;
+            }
 
-            if (engine.GetLeftClick()) {
+            if (titleBg) {
+                engine.DrawFullscreenBackground(titleBg, (Uint8)mainMenuAlpha);
+            }
+
+            int mx = engine.GetMouseX();
+            int my = engine.GetMouseY();
+            bool isLeftClicked = engine.GetLeftClick();
+
+            std::string action = titleMenu.Update(mx, my, isLeftClicked);
+
+            if (action == "Start") {
+                AudioManager::PlaySFX("click.wav");
                 std::string startScriptFile = ConfigManager::GetString("StartScript", "script");
                 script = ScriptManager::ParseFile(startScriptFile);
                 vnController.LoadScript(startScriptFile, script);
                 currentState = GameState::InGame;
             }
+            else if (action == "Load") {
+                AudioManager::PlaySFX("click.wav");
+                previousState = GameState::MainMenu;
+                currentState = GameState::LoadMenu;
+                slMenu.Open(SLMode::Load);
+            }
+            else if (action == "Exit") {
+                break;
+            }
+
+            titleMenu.Render(renderer);
         }
         else if (currentState == GameState::InGame) {
             int mx = engine.GetMouseX();
@@ -135,7 +161,7 @@ int main(int argc, char* argv[]) {
                     vnController.ScrollBacklog(wheelY > 0 ? 1 : -1);
                 }
 
-                if (engine.GetRightClick()) {
+                if (engine.GetRightClick() || wheelY < 0) {
                     vnController.ToggleBacklog();
                 }
             }
@@ -143,10 +169,12 @@ int main(int argc, char* argv[]) {
                 std::string toolbarAction = bottomToolbar.Update(mx, my, isLeftClicked);
 
                 if (toolbarAction == "OpenSave") {
+                    previousState = GameState::InGame;
                     currentState = GameState::SaveMenu;
                     slMenu.Open(SLMode::Save);
                 }
                 else if (toolbarAction == "OpenLoad") {
+                    previousState = GameState::InGame;
                     currentState = GameState::LoadMenu;
                     slMenu.Open(SLMode::Load);
                 }
@@ -181,7 +209,7 @@ int main(int argc, char* argv[]) {
             int selectedSlot = slMenu.Update(mx, my, isLeftClicked);
 
             if (selectedSlot == -1 || engine.GetRightClick()) {
-                currentState = GameState::InGame;
+                currentState = previousState;
             }
             else if (selectedSlot > 0) {
                 if (currentState == GameState::SaveMenu) {
