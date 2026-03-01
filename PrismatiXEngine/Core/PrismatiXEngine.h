@@ -34,6 +34,8 @@ public:
 
     void DrawFullscreenBackground(SDL_Texture* bgTex, Uint8 alpha = 255);
 private:
+    int lastWinW = 1280;
+    int lastWinH = 720;
     bool leftClick;
 	bool rightClick;
     int mouseWheelY;

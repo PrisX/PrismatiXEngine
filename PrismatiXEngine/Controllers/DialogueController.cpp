@@ -423,6 +423,14 @@ void DialogueController::Update(int mx, int my) {
     if (backlogCooldown > 0) {
         backlogCooldown--;
     }
+    {
+        float target = isShowingBacklog ? 220.0f : 0.0f;
+        const float BACKLOG_FADE_SPEED = 15.0f;
+        if (backlogFadeAlpha < target)
+            backlogFadeAlpha = std::min(backlogFadeAlpha + BACKLOG_FADE_SPEED, target);
+        else if (backlogFadeAlpha > target)
+            backlogFadeAlpha = std::max(backlogFadeAlpha - BACKLOG_FADE_SPEED, 0.0f);
+    }
     if (!isFinished) {
         dialogueBox->Update();
     }
@@ -483,19 +491,21 @@ void DialogueController::RenderBackground(PrismatiXEngine& engine) {
 }
 
 void DialogueController::RenderBacklog(SDL_Renderer* renderer) {
-    if (!isShowingBacklog || BacklogManager::GetCount() == 0) return;
+    if (backlogFadeAlpha <= 0.0f || BacklogManager::GetCount() == 0) return;
+
+    Uint8 bgAlpha = (Uint8)backlogFadeAlpha;
+    Uint8 textAlpha = (Uint8)(backlogFadeAlpha / 220.0f * 255.0f);
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 220);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, bgAlpha);
     int w, h;
     SDL_GetRendererOutputSize(renderer, &w, &h);
     SDL_Rect bgRect = { 0, 0, w, h };
     SDL_RenderFillRect(renderer, &bgRect);
 
-    SDL_Color titleColor = { 255, 255, 255, 255 };
-    SDL_Color outlineColor = { 0, 0, 0, 255 };
-    TextManager::DrawWithOutline(renderer, uiFont, "- Backlog -", titleColor, outlineColor, 2, 50, 30);
-    TextManager::DrawWithOutline(renderer, uiFont, "(右鍵關閉)", { 150, 150, 150, 255 }, outlineColor, 1, 950, 40);
+    SDL_Color outlineColor = { 0, 0, 0, textAlpha };
+    TextManager::DrawWithOutline(renderer, uiFont, "- Backlog -", { 255, 255, 255, textAlpha }, outlineColor, 2, 50, 30, 0, textAlpha);
+    TextManager::DrawWithOutline(renderer, uiFont, "(右鍵關閉)", { 150, 150, 150, textAlpha }, outlineColor, 1, 950, 40, 0, textAlpha);
 
     int startIdx = (int)BacklogManager::GetCount() - 1 - backlogOffset;
     int drawY = 600;
@@ -504,16 +514,13 @@ void DialogueController::RenderBacklog(SDL_Renderer* renderer) {
         const auto& log = BacklogManager::logs[i];
 
         if (log.isChoice) {
-            SDL_Color choiceCol = { 255, 215, 0, 255 };
-            TextManager::DrawWithOutline(renderer, uiFont, log.text, choiceCol, outlineColor, 1, 200, drawY, 800);
+            TextManager::DrawWithOutline(renderer, uiFont, log.text, { 255, 215, 0, textAlpha }, outlineColor, 1, 200, drawY, 800, textAlpha);
         }
         else {
             if (!log.speaker.empty()) {
-                SDL_Color nameCol = { 255, 200, 100, 255 };
-                TextManager::DrawWithOutline(renderer, uiFont, "【" + log.speaker + "】", nameCol, outlineColor, 1, 100, drawY);
+                TextManager::DrawWithOutline(renderer, uiFont, "【" + log.speaker + "】", { 255, 200, 100, textAlpha }, outlineColor, 1, 100, drawY, 0, textAlpha);
             }
-            SDL_Color textCol = { 220, 220, 220, 255 };
-            TextManager::DrawWithOutline(renderer, uiFont, log.text, textCol, outlineColor, 1, 300, drawY, 800);
+            TextManager::DrawWithOutline(renderer, uiFont, log.text, { 220, 220, 220, textAlpha }, outlineColor, 1, 300, drawY, 800, textAlpha);
         }
 
         drawY -= 80;

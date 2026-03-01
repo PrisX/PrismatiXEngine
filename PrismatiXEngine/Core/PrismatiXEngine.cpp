@@ -51,7 +51,8 @@ bool PrismatiXEngine::Initialize(const std::string& title, int width, int height
 	}
 
 	SDL_RenderSetLogicalSize(renderer, width, height);
-
+	lastWinW = width;
+	lastWinH = height;
 	isRunning = true;
 	return true;
 }
@@ -72,6 +73,45 @@ void PrismatiXEngine::HandleEvents() {
 		if (event.type == SDL_QUIT) {
 			isRunning = false;
 		}
+		else if (event.type == SDL_WINDOWEVENT) {
+			if (event.window.event == SDL_WINDOWEVENT_RESIZED) {
+				int newW = event.window.data1;
+				int newH = event.window.data2;
+
+				Uint32 flags = SDL_GetWindowFlags(window);
+
+				if (flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_MAXIMIZED)) {
+					lastWinW = newW;
+					lastWinH = newH;
+					continue;
+				}
+
+				if (newW == lastWinW && newH == lastWinH) {
+					continue;
+				}
+
+				int targetW = newW;
+				int targetH = newH;
+
+				int deltaW = std::abs(newW - lastWinW);
+				int deltaH = std::abs(newH - lastWinH);
+
+				if (deltaW > deltaH) {
+					targetH = (newW * 9) / 16;
+				}
+				else if (deltaH > deltaW) {
+					targetW = (newH * 16) / 9;
+				}
+				else {
+					targetH = (newW * 9) / 16;
+				}
+
+				SDL_SetWindowSize(window, targetW, targetH);
+
+								lastWinW = targetW;
+				lastWinH = targetH;
+			}
+		}
 		else if (event.type == SDL_MOUSEBUTTONDOWN) {
 			if (event.button.button == SDL_BUTTON_LEFT) {
 				leftClick = true;
@@ -87,7 +127,7 @@ void PrismatiXEngine::HandleEvents() {
 }
 
 void PrismatiXEngine::ClearScreen() {
-	SDL_SetRenderDrawColor(renderer, 30, 30, 50, 255);
+	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
 	SDL_RenderClear(renderer);
 }
 
@@ -116,26 +156,18 @@ void PrismatiXEngine::DrawFullscreenBackground(SDL_Texture* bgTex, Uint8 alpha) 
 	int logW, logH;
 	SDL_RenderGetLogicalSize(renderer, &logW, &logH);
 
-	// 先關 logical size，才能畫到黑邊
-	SDL_RenderSetLogicalSize(renderer, 0, 0);
-
-	int winW, winH;
-	SDL_GetRendererOutputSize(renderer, &winW, &winH);
-
 	int texW, texH;
 	SDL_QueryTexture(bgTex, NULL, NULL, &texW, &texH);
 
-	float scaleX = (float)winW / (float)texW;
-	float scaleY = (float)winH / (float)texH;
+	float scaleX = (float)logW / (float)texW;
+	float scaleY = (float)logH / (float)texH;
 	float bgScale = std::max(scaleX, scaleY);
 
 	int finalW = (int)(texW * bgScale);
 	int finalH = (int)(texH * bgScale);
 
-	int bgX = (winW - finalW) / 2;
-	int bgY = (winH - finalH) / 2;
+	int bgX = (logW - finalW) / 2;
+	int bgY = (logH - finalH) / 2;
 
 	TextureManager::Draw(bgTex, renderer, bgX, bgY, finalW, finalH, alpha);
-
-	SDL_RenderSetLogicalSize(renderer, logW, logH);
 }

@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <TextManager.h>
+#include <TextureManager.h>
 
 class DialogueBox {
 private:
@@ -85,35 +86,63 @@ public:
         }
     }
 
-    void Render(SDL_Renderer * renderer) {
-        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND); // 沒開這個 Blend mode 好像透明度沒用
+    void Render(SDL_Renderer* renderer) {
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+ 
+        SDL_Texture* boxTex = TextureManager::LoadTexture("dialoguebox.png", renderer);
+
+        int boxX = 30, boxY = 560, boxW = 1220, boxH = 140;
+
+        if (boxTex) {
+            int texW, texH;
+            SDL_QueryTexture(boxTex, NULL, NULL, &texW, &texH);
+
+            float scale = 1280.0f / (float)texW;
+            boxW = 1280;
+            boxH = (int)(texH * scale);
+
+            boxX = 0;
+            boxY = 720 - boxH;
+
+            TextureManager::Draw(boxTex, renderer, boxX, boxY, boxW, boxH, 255);
+        }
+        else {
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 180);
+            SDL_Rect uiRect = { boxX, boxY, boxW, boxH };
+            SDL_RenderFillRect(renderer, &uiRect);
+        }
+
+
         if (!currentSpeakerName.empty()) {
+            int nameBoxX = boxX + 30;
+            int nameBoxY = boxY - 50;
+
             SDL_SetRenderDrawColor(renderer, 0, 0, 0, 220);
-            SDL_Rect nameRect = { 30, 510, 250, 50 };
+            SDL_Rect nameRect = { nameBoxX, nameBoxY, 250, 50 };
             SDL_RenderFillRect(renderer, &nameRect);
-        }
 
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 180);
-        SDL_Rect uiRect = { 30, 560, 1220, 140 };
-        SDL_RenderFillRect(renderer, &uiRect);
-
-        SDL_Color textColor = currentTextColor;
-        SDL_Color outlineColor = currentOutlineColor;
-
-        if (!currentSpeakerName.empty()) {
             SDL_Color nameColor = { 255, 200, 200, 255 };
-            TextManager::DrawWithOutline(renderer, font, currentSpeakerName, nameColor, outlineColor, 1, 50, 515);
+            TextManager::DrawWithOutline(renderer, font, currentSpeakerName, nameColor, currentOutlineColor, 1, nameBoxX + 20, nameBoxY + 5);
         }
+
 
         if (!currentDisplayText.empty()) {
+            SDL_Color textColor = currentTextColor;
+            SDL_Color outlineColor = currentOutlineColor;
+
+            int textDrawX = boxX + 50;
+            int textDrawY = boxY + 40;
             Uint32 textBoxWidth = 1160;
+
             if (fadeAlpha < 255) {
-                TextManager::DrawWithOutline(renderer, font, currentDisplayText, textColor, outlineColor, 1, x, y, textBoxWidth, fadeAlpha);
+                TextManager::DrawWithOutline(renderer, font, currentDisplayText, textColor, outlineColor, 1, textDrawX, textDrawY, textBoxWidth, fadeAlpha);
                 if (!displayedText.empty()) {
-                    TextManager::DrawWithOutline(renderer, font, displayedText, textColor, outlineColor, 1, x, y, textBoxWidth);
+                    TextManager::DrawWithOutline(renderer, font, displayedText, textColor, outlineColor, 1, textDrawX, textDrawY, textBoxWidth);
                 }
-            } else {
-                TextManager::DrawWithOutline(renderer, font, currentDisplayText, textColor, outlineColor, 1, x, y, textBoxWidth);
+            }
+            else {
+                TextManager::DrawWithOutline(renderer, font, currentDisplayText, textColor, outlineColor, 1, textDrawX, textDrawY, textBoxWidth);
             }
         }
     }

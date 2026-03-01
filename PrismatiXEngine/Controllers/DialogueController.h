@@ -38,6 +38,7 @@ private:
     bool isShowingBacklog = false;
     int backlogOffset = 0;
     int backlogCooldown = 0;
+    float backlogFadeAlpha = 0.0f;
     float bgFadeAlpha = 255.0f;
     std::vector<VNCommand> commands;
     int currentLine;

@@ -1,5 +1,6 @@
 #include "SaveManager.h"
 #include "VariableManager.h"
+#include "BacklogManager.h"
 #include <fstream>
 #include <iostream>
 
@@ -24,6 +25,11 @@ bool SaveManager::SaveGame(int slot, const std::string& scriptName, int line, co
         out << key << "=" << value << "\n";
     }
 
+    out << "[BACKLOG]\n";
+    for (const auto& entry : BacklogManager::logs) {
+        out << (entry.isChoice ? 1 : 0) << "|" << entry.speaker << "|" << entry.voice << "|" << entry.text << "\n";
+    }
+
     out.close();
     std::cout << "Saved game data to" << fileName << "\n";
     return true;
@@ -38,6 +44,7 @@ bool SaveManager::LoadGame(int slot, std::string& outScript, int& outLine, std::
     int currentSection = 0;
 
     VariableManager::ClearAll();
+    BacklogManager::Clear();
     outCharacters.clear();
 
     while (std::getline(in, lineStr)) {
@@ -46,6 +53,22 @@ bool SaveManager::LoadGame(int slot, std::string& outScript, int& outLine, std::
         if (lineStr == "[STATE]") { currentSection = 0; continue; }
         if (lineStr == "[CHARACTERS]") { currentSection = 1; continue; }
         if (lineStr == "[VARIABLES]") { currentSection = 2; continue; }
+        if (lineStr == "[BACKLOG]") { currentSection = 3; continue; }
+
+        if (currentSection == 3) {
+            size_t p1 = lineStr.find('|');
+            size_t p2 = (p1 != std::string::npos) ? lineStr.find('|', p1 + 1) : std::string::npos;
+            size_t p3 = (p2 != std::string::npos) ? lineStr.find('|', p2 + 1) : std::string::npos;
+            if (p3 != std::string::npos) {
+                BacklogEntry entry;
+                entry.isChoice = (lineStr.substr(0, p1) == "1");
+                entry.speaker  = lineStr.substr(p1 + 1, p2 - p1 - 1);
+                entry.voice    = lineStr.substr(p2 + 1, p3 - p2 - 1);
+                entry.text     = lineStr.substr(p3 + 1);
+                BacklogManager::logs.push_back(entry);
+            }
+            continue;
+        }
 
         size_t eqPos = lineStr.find('=');
         if (eqPos != std::string::npos) {

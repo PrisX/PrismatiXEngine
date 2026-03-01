@@ -1,5 +1,6 @@
 #include <iostream>
 #include <sstream>
+#include <functional>
 #include "PrismatiXEngine.h"
 #include "Managers/TextureManager.h"
 #include "Managers/TextManager.h"
@@ -78,10 +79,24 @@ int main(int argc, char* argv[]) {
     SplashController splashController;
     splashController.Init(renderer);
 
+    float fadeAlpha = 0.0f;
+    bool isFadingOut = false;
+    bool isFadingIn = false;
+    std::function<void()> pendingFadeAction;
+    const float SCREEN_FADE_SPEED = 8.0f;
+
+    auto StartFade = [&](std::function<void()> action) {
+        if (isFadingOut || isFadingIn) return;
+        isFadingOut = true;
+        fadeAlpha = 0.0f;
+        pendingFadeAction = std::move(action);
+    };
+
     float mainMenuAlpha = 0.0f;
     const float MAIN_MENU_FADE_SPEED = 3.0f;
     while (engine.IsRunning()) {
         engine.HandleEvents();
+        bool isFading = isFadingOut || isFadingIn;
 
         engine.ClearScreen();
         if (currentState == GameState::SplashScreen) {
@@ -124,80 +139,91 @@ int main(int argc, char* argv[]) {
                 engine.DrawFullscreenBackground(titleBg, (Uint8)mainMenuAlpha);
             }
 
-            int mx = engine.GetMouseX();
-            int my = engine.GetMouseY();
-            bool isLeftClicked = engine.GetLeftClick();
+                int mx = engine.GetMouseX();
+                int my = engine.GetMouseY();
+                bool isLeftClicked = !isFading && engine.GetLeftClick();
 
-            std::string action = titleMenu.Update(mx, my, isLeftClicked);
+                std::string action = titleMenu.Update(mx, my, isLeftClicked);
 
-            if (action == "Start") {
-                AudioManager::PlaySFX("click.wav");
-                std::string startScriptFile = ConfigManager::GetString("StartScript", "script");
-                script = ScriptManager::ParseFile(startScriptFile);
-                vnController.LoadScript(startScriptFile, script);
-                currentState = GameState::InGame;
-            }
-            else if (action == "Load") {
-                AudioManager::PlaySFX("click.wav");
-                previousState = GameState::MainMenu;
-                currentState = GameState::LoadMenu;
-                slMenu.Open(SLMode::Load);
-            }
-            else if (action == "Exit") {
-                break;
-            }
+                if (!isFading) {
+                    if (action == "Start") {
+                        AudioManager::PlaySFX("click.wav");
+                        StartFade([&]() {
+                            std::string startScriptFile = ConfigManager::GetString("StartScript", "script");
+                            script = ScriptManager::ParseFile(startScriptFile);
+                            vnController.LoadScript(startScriptFile, script);
+                            currentState = GameState::InGame;
+                        });
+                    }
+                    else if (action == "Load") {
+                        AudioManager::PlaySFX("click.wav");
+                        StartFade([&]() {
+                            previousState = GameState::MainMenu;
+                            currentState = GameState::LoadMenu;
+                            slMenu.Open(SLMode::Load);
+                        });
+                    }
+                    else if (action == "Exit") {
+                        break;
+                    }
+                }
 
-            titleMenu.Render(renderer);
-        }
+                titleMenu.Render(renderer);
+            }
         else if (currentState == GameState::InGame) {
-            int mx = engine.GetMouseX();
-            int my = engine.GetMouseY();
-            int wheelY = engine.GetMouseWheelY();
+                int mx = engine.GetMouseX();
+                int my = engine.GetMouseY();
+                int wheelY = isFading ? 0 : engine.GetMouseWheelY();
 
-            bool isLeftClicked = engine.GetLeftClick();
+                bool isLeftClicked = !isFading && engine.GetLeftClick();
 
-            if (vnController.IsShowingBacklog()) {
-                if (wheelY != 0) {
-                    vnController.ScrollBacklog(wheelY > 0 ? 1 : -1);
+                if (!isFading) {
+                    if (vnController.IsShowingBacklog()) {
+                        if (wheelY != 0) {
+                            vnController.ScrollBacklog(wheelY > 0 ? 1 : -1);
+                        }
+
+                        if (engine.GetRightClick() || wheelY < 0) {
+                            vnController.ToggleBacklog();
+                        }
+                    }
+                    else {
+                        std::string toolbarAction = bottomToolbar.Update(mx, my, isLeftClicked);
+
+                        if (toolbarAction == "OpenSave") {
+                            StartFade([&]() {
+                                previousState = GameState::InGame;
+                                currentState = GameState::SaveMenu;
+                                slMenu.Open(SLMode::Save);
+                            });
+                        }
+                        else if (toolbarAction == "OpenLoad") {
+                            StartFade([&]() {
+                                previousState = GameState::InGame;
+                                currentState = GameState::LoadMenu;
+                                slMenu.Open(SLMode::Load);
+                            });
+                        }
+                        else if (toolbarAction == "TogglePin") {
+                            AudioManager::PlaySFX("click.wav");
+                        }
+
+                        bool blockingClick = bottomToolbar.IsMouseOver(my);
+
+                        if ((isLeftClicked && !blockingClick) || wheelY < 0) {
+                            vnController.HandleClick(mx, my);
+                        }
+                        else if (wheelY > 0) {
+                            vnController.ToggleBacklog();
+                        }
+                    }
                 }
 
-                if (engine.GetRightClick() || wheelY < 0) {
-                    vnController.ToggleBacklog();
-                }
+                vnController.Update(mx, my);
+                vnController.Render(renderer);
+
+                bottomToolbar.Render(renderer);
             }
-            else {
-                std::string toolbarAction = bottomToolbar.Update(mx, my, isLeftClicked);
-
-                if (toolbarAction == "OpenSave") {
-                    previousState = GameState::InGame;
-                    currentState = GameState::SaveMenu;
-                    slMenu.Open(SLMode::Save);
-                }
-                else if (toolbarAction == "OpenLoad") {
-                    previousState = GameState::InGame;
-                    currentState = GameState::LoadMenu;
-                    slMenu.Open(SLMode::Load);
-                }
-                else if (toolbarAction == "TogglePin") {
-                    AudioManager::PlaySFX("click.wav");
-                }
-
-
-                bool blockingClick = bottomToolbar.IsMouseOver(my) && toolbarAction.empty();
-
-                if ((isLeftClicked && !blockingClick) || wheelY < 0) {
-                    vnController.HandleClick(mx, my);
-                }
-                else if (wheelY > 0) {
-                    vnController.ToggleBacklog();
-                }
-            }
-
-            vnController.Update(mx, my);
-            vnController.Render(renderer);
-
-            bottomToolbar.Render(renderer);
-        }
         else if (currentState == GameState::SaveMenu || currentState == GameState::LoadMenu) {
             int mx = engine.GetMouseX();
             int my = engine.GetMouseY();
@@ -206,42 +232,72 @@ int main(int argc, char* argv[]) {
             vnController.RenderBackground(engine);
             vnController.Render(renderer);
 
-            int selectedSlot = slMenu.Update(mx, my, isLeftClicked);
+            int selectedSlot = !isFading ? slMenu.Update(mx, my, isLeftClicked) : 0;
 
-            if (selectedSlot == -1 || engine.GetRightClick()) {
-                currentState = previousState;
-            }
-            else if (selectedSlot > 0) {
-                if (currentState == GameState::SaveMenu) {
-                    SaveManager::SaveGame(selectedSlot, vnController.GetCurrentScriptName(), vnController.GetCurrentLine(), vnController.GetCurrentBgName(), vnController.GetCurrentBgmName(), vnController.GetSavedCharacters());
-
-                    AudioManager::PlaySFX("click.wav"); 
-                    slMenu.Open(SLMode::Save);
+            if (!isFading) {
+                if (selectedSlot == -1 || engine.GetRightClick()) {
+                    StartFade([&]() { currentState = previousState; });
                 }
-                else if (currentState == GameState::LoadMenu) {
-                    std::string scriptName, bgName, bgmName;
-                    int line = 0;
-                    std::vector<SavedCharacter> chars;
-
-                    if (SaveManager::LoadGame(selectedSlot, scriptName, line, bgName, bgmName, chars)) {
-                        script = ScriptManager::ParseFile(scriptName);
-                        vnController.LoadScript(scriptName, script);
-                        vnController.SetCurrentLine(line);
-
-                        vnController.RestoreBackground(bgName);
-                        if (!bgmName.empty()) {
-                            AudioManager::PlayBGM(bgmName);
-                        }
-
-                        vnController.RestoreSavedCharacters(chars);
+                else if (selectedSlot > 0) {
+                    if (currentState == GameState::SaveMenu) {
+                        SaveManager::SaveGame(selectedSlot, vnController.GetCurrentScriptName(), vnController.GetCurrentLine(), vnController.GetCurrentBgName(), vnController.GetCurrentBgmName(), vnController.GetSavedCharacters());
 
                         AudioManager::PlaySFX("click.wav");
-                        currentState = GameState::InGame;
+                        slMenu.Open(SLMode::Save);
+                    }
+                    else if (currentState == GameState::LoadMenu) {
+                        int capturedSlot = selectedSlot;
+                        StartFade([&, capturedSlot]() {
+                            std::string scriptName, bgName, bgmName;
+                            int line = 0;
+                            std::vector<SavedCharacter> chars;
+
+                            if (SaveManager::LoadGame(capturedSlot, scriptName, line, bgName, bgmName, chars)) {
+                                script = ScriptManager::ParseFile(scriptName);
+                                vnController.LoadScript(scriptName, script);
+                                vnController.SetCurrentLine(line);
+
+                                vnController.RestoreBackground(bgName);
+                                if (!bgmName.empty()) {
+                                    AudioManager::PlayBGM(bgmName);
+                                }
+
+                                vnController.RestoreSavedCharacters(chars);
+
+                                AudioManager::PlaySFX("click.wav");
+                                currentState = GameState::InGame;
+                            }
+                        });
                     }
                 }
             }
 
             slMenu.Render(renderer);
+        }
+
+        if (isFadingOut) {
+            fadeAlpha = std::min(fadeAlpha + SCREEN_FADE_SPEED, 255.0f);
+            if (fadeAlpha >= 255.0f) {
+                if (pendingFadeAction) {
+                    pendingFadeAction();
+                    pendingFadeAction = nullptr;
+                }
+                isFadingOut = false;
+                isFadingIn = true;
+            }
+        }
+        else if (isFadingIn) {
+            fadeAlpha = std::max(fadeAlpha - SCREEN_FADE_SPEED, 0.0f);
+            if (fadeAlpha <= 0.0f) {
+                isFadingIn = false;
+            }
+        }
+
+        if (fadeAlpha > 0.0f) {
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, (Uint8)fadeAlpha);
+            SDL_Rect fullscreen = { 0, 0, winW, winH };
+            SDL_RenderFillRect(renderer, &fullscreen);
         }
 
         engine.PresentScreen();
