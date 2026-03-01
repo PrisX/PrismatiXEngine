@@ -4,6 +4,9 @@
 
 std::unordered_map<std::string, TTF_Font*> TextManager::fontCache;
 std::unordered_map<std::string, std::vector<char>> TextManager::fontBuffers;
+std::unordered_map<std::string, int> TextManager::fontSizeByKey;
+std::unordered_map<TTF_Font*, std::string> TextManager::fontReverseMap;
+std::unordered_map<std::string, TTF_Font*> TextManager::outlineFontCache;
 
 TTF_Font* TextManager::LoadFont(const std::string& fileName, int fontSize) {
     std::string cacheKey = fileName + "_" + std::to_string(fontSize);
@@ -29,6 +32,8 @@ TTF_Font* TextManager::LoadFont(const std::string& fileName, int fontSize) {
     }
 
     fontCache[cacheKey] = font;
+    fontReverseMap[font] = cacheKey;
+    fontSizeByKey[cacheKey] = fontSize;
     return font;
 }
 
@@ -49,34 +54,58 @@ void TextManager::Draw(SDL_Renderer* ren, TTF_Font* font, const std::string& tex
     SDL_DestroyTexture(message);
 }
 
+TTF_Font* TextManager::GetOrCreateOutlineFont(TTF_Font* baseFont, int outlineSize) {
+    auto keyIt = fontReverseMap.find(baseFont);
+    if (keyIt == fontReverseMap.end()) return nullptr;
+
+    const std::string& baseKey = keyIt->second;
+    std::string olKey = baseKey + "_ol" + std::to_string(outlineSize);
+
+    auto cached = outlineFontCache.find(olKey);
+    if (cached != outlineFontCache.end()) return cached->second;
+
+    auto bufIt = fontBuffers.find(baseKey);
+    auto sizeIt = fontSizeByKey.find(baseKey);
+    if (bufIt == fontBuffers.end() || sizeIt == fontSizeByKey.end()) return nullptr;
+
+    SDL_RWops* rw = SDL_RWFromMem(bufIt->second.data(), (int)bufIt->second.size());
+    TTF_Font* olFont = TTF_OpenFontRW(rw, 1, sizeIt->second * FONT_OVERSAMPLE);
+    if (!olFont) return nullptr;
+
+    TTF_SetFontOutline(olFont, outlineSize * FONT_OVERSAMPLE);
+    outlineFontCache[olKey] = olFont;
+    return olFont;
+}
+
 void TextManager::DrawWithOutline(SDL_Renderer* ren, TTF_Font* font, const std::string& text,
     SDL_Color textColor, SDL_Color outlineColor, int outlineSize,
     int x, int y, Uint32 wrapLength, Uint8 alpha) {
     if (!font || text.empty()) return;
 
-    // Outline background
-    TTF_SetFontOutline(font, outlineSize * FONT_OVERSAMPLE);
-    SDL_Surface* bgSurface = (wrapLength > 0) ?
-        TTF_RenderUTF8_Blended_Wrapped(font, text.c_str(), outlineColor, wrapLength * FONT_OVERSAMPLE) :
-        TTF_RenderUTF8_Blended(font, text.c_str(), outlineColor);    
-    SDL_Texture* bgTexture = SDL_CreateTextureFromSurface(ren, bgSurface);
-    SDL_Rect bgRect = { x, y, bgSurface->w / FONT_OVERSAMPLE, bgSurface->h / FONT_OVERSAMPLE };
+	TTF_Font* outlineFont = GetOrCreateOutlineFont(font, outlineSize);
+
+	// Outline background
+	SDL_Surface* bgSurface = outlineFont ?
+		((wrapLength > 0) ?
+			TTF_RenderUTF8_Blended_Wrapped(outlineFont, text.c_str(), outlineColor, wrapLength * FONT_OVERSAMPLE) :
+			TTF_RenderUTF8_Blended(outlineFont, text.c_str(), outlineColor))
+		: nullptr;
+	SDL_Texture* bgTexture = bgSurface ? SDL_CreateTextureFromSurface(ren, bgSurface) : nullptr;
+	SDL_Rect bgRect = bgSurface ? SDL_Rect{ x, y, bgSurface->w / FONT_OVERSAMPLE, bgSurface->h / FONT_OVERSAMPLE } : SDL_Rect{};
 
 	// Foreground text
-    TTF_SetFontOutline(font, 0); // 這要先關不然會炸
-    SDL_Surface* fgSurface = (wrapLength > 0) ?
-        TTF_RenderUTF8_Blended_Wrapped(font, text.c_str(), textColor, wrapLength * FONT_OVERSAMPLE) :
-        TTF_RenderUTF8_Blended(font, text.c_str(), textColor);
+	SDL_Surface* fgSurface = (wrapLength > 0) ?
+		TTF_RenderUTF8_Blended_Wrapped(font, text.c_str(), textColor, wrapLength * FONT_OVERSAMPLE) :
+		TTF_RenderUTF8_Blended(font, text.c_str(), textColor);
     SDL_Texture* fgTexture = SDL_CreateTextureFromSurface(ren, fgSurface);
 
 	// Align (要根據 outline size 不然整個會跑走)
     SDL_Rect fgRect = { x + outlineSize, y + outlineSize, fgSurface->w / FONT_OVERSAMPLE, fgSurface->h / FONT_OVERSAMPLE };
 
-    SDL_SetTextureAlphaMod(bgTexture, alpha);
+    if (bgTexture) SDL_SetTextureAlphaMod(bgTexture, alpha);
     SDL_SetTextureAlphaMod(fgTexture, alpha);
-    SDL_RenderCopy(ren, bgTexture, NULL, &bgRect);
+    if (bgTexture) SDL_RenderCopy(ren, bgTexture, NULL, &bgRect);
     SDL_RenderCopy(ren, fgTexture, NULL, &fgRect);
-
 
     // Clean up
     SDL_FreeSurface(bgSurface);
@@ -86,9 +115,15 @@ void TextManager::DrawWithOutline(SDL_Renderer* ren, TTF_Font* font, const std::
 }
 
 void TextManager::Clean() {
+    for (auto& pair : outlineFontCache) {
+        if (pair.second) TTF_CloseFont(pair.second);
+    }
+    outlineFontCache.clear();
     for (auto& pair : fontCache) {
         if (pair.second) TTF_CloseFont(pair.second);
     }
     fontCache.clear();
     fontBuffers.clear();
+    fontSizeByKey.clear();
+    fontReverseMap.clear();
 }

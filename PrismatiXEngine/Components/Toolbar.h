@@ -64,9 +64,10 @@ public:
 
         currentY += (targetY - currentY) * 0.15f;
 
-        btnSave.y = (int)currentY + 12;
-        btnLoad.y = (int)currentY + 12;
-        btnPin.y = (int)currentY + 12;
+        int textOffsetY = (50 - btnSave.h) / 2;
+        btnSave.y = (int)currentY + textOffsetY;
+        btnLoad.y = (int)currentY + textOffsetY;
+        btnPin.y = (int)currentY + textOffsetY;
 
         if (currentY > visibleY + 5.0f) {
             hoverSave = hoverLoad = hoverPin = false;

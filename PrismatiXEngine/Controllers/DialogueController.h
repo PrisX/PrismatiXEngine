@@ -46,6 +46,7 @@ private:
     bool isFinished;
     bool hasStarted;
     std::string pendingVoice;
+    bool skipNextLog = false;
     std::map<std::string, ActiveCharacter> activeCharacters;
 
 public:
@@ -57,6 +58,7 @@ public:
     std::string GetCurrentBgName() const;
     std::string GetCurrentBgmName() const;
     void SetCurrentLine(int line);
+    void SetSkipNextLog(bool skip);
     std::vector<SavedCharacter> GetSavedCharacters() const;
     void RestoreSavedCharacters(const std::vector<SavedCharacter>& savedChars);
     void RestoreBackground(const std::string& bgName);

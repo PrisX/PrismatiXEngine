@@ -40,6 +40,7 @@ int DialogueController::GetCurrentLine() const {
 std::string DialogueController::GetCurrentBgName() const { return currentBgName; }
 std::string DialogueController::GetCurrentBgmName() const { return currentBgmName; }
 void DialogueController::SetCurrentLine(int line) { currentLine = line; }
+void DialogueController::SetSkipNextLog(bool skip) { skipNextLog = skip; }
 
 std::vector<SavedCharacter> DialogueController::GetSavedCharacters() const {
     std::vector<SavedCharacter> chars;
@@ -216,7 +217,10 @@ void DialogueController::ExecuteNextCommands() {
             SDL_Color outlineColor = cmd.args.count("olcolor") ?
                 ScriptManager::ParseColor(cmd.args["olcolor"], defaultOutline) : defaultOutline;
 
-            BacklogManager::AddLog(speaker, content, pendingVoice);
+            if (!skipNextLog) {
+                BacklogManager::AddLog(speaker, content, pendingVoice);
+            }
+            skipNextLog = false;
             dialogueBox->SetText(speaker, content, 40, textColor, outlineColor);
 
             if (cmd.args.count("voice")) {
@@ -283,6 +287,7 @@ void DialogueController::ExecuteNextCommands() {
                 }
             }
             else {
+                BacklogManager::Clear();
                 commands = ScriptManager::ParseFile(target);
                 currentLine = 0;
                 ExecuteNextCommands();
@@ -396,6 +401,7 @@ void DialogueController::HandleClick(int mx, int my) {
                 }
             }
             else {
+                BacklogManager::Clear();
                 commands = ScriptManager::ParseFile(target);
                 currentLine = 0;
                 ExecuteNextCommands();

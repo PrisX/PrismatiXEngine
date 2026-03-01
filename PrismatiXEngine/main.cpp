@@ -256,6 +256,7 @@ int main(int argc, char* argv[]) {
                                 script = ScriptManager::ParseFile(scriptName);
                                 vnController.LoadScript(scriptName, script);
                                 vnController.SetCurrentLine(line);
+                                vnController.SetSkipNextLog(true);
 
                                 vnController.RestoreBackground(bgName);
                                 if (!bgmName.empty()) {
