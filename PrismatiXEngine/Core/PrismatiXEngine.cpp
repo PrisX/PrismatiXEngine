@@ -113,8 +113,14 @@ void PrismatiXEngine::Clean() {
 void PrismatiXEngine::DrawFullscreenBackground(SDL_Texture* bgTex, Uint8 alpha) {
 	if (!bgTex) return;
 
+	int logW, logH;
+	SDL_RenderGetLogicalSize(renderer, &logW, &logH);
+
+	// 先關 logical size，才能畫到黑邊
+	SDL_RenderSetLogicalSize(renderer, 0, 0);
+
 	int winW, winH;
-	SDL_GetWindowSize(window, &winW, &winH);
+	SDL_GetRendererOutputSize(renderer, &winW, &winH);
 
 	int texW, texH;
 	SDL_QueryTexture(bgTex, NULL, NULL, &texW, &texH);
@@ -130,28 +136,6 @@ void PrismatiXEngine::DrawFullscreenBackground(SDL_Texture* bgTex, Uint8 alpha) 
 	int bgY = (winH - finalH) / 2;
 
 	TextureManager::Draw(bgTex, renderer, bgX, bgY, finalW, finalH, alpha);
-}
 
-void PrismatiXEngine::BeginSafeArea() {
-	int winW, winH;
-	SDL_GetWindowSize(window, &winW, &winH);
-
-	float scaleX = (float)winW / 1280.0f;
-	float scaleY = (float)winH / 720.0f;
-	float safeScale = std::min(scaleX, scaleY);
-
-	SDL_Rect safeArea = {
-		(int)((winW - 1280 * safeScale) / 2),
-		(int)((winH - 720 * safeScale) / 2),
-		(int)(1280 * safeScale),
-		(int)(720 * safeScale)
-	};
-
-	SDL_RenderSetViewport(renderer, &safeArea);
-	SDL_RenderSetScale(renderer, safeScale, safeScale);
-}
-
-void PrismatiXEngine::EndSafeArea() {
-	SDL_RenderSetViewport(renderer, NULL);
-	SDL_RenderSetScale(renderer, 1.0f, 1.0f);
+	SDL_RenderSetLogicalSize(renderer, logW, logH);
 }

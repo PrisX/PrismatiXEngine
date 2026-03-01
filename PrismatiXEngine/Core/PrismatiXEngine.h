@@ -33,8 +33,6 @@ public:
     void PresentScreen();
 
     void DrawFullscreenBackground(SDL_Texture* bgTex, Uint8 alpha = 255);
-    void BeginSafeArea();
-    void EndSafeArea();
 private:
     bool leftClick;
 	bool rightClick;

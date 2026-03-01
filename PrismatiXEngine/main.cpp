@@ -104,7 +104,6 @@ int main(int argc, char* argv[]) {
         }
 
 
-        engine.BeginSafeArea();
 
         if (currentState == GameState::SplashScreen) {
             if (engine.GetLeftClick()) {
@@ -217,7 +216,6 @@ int main(int argc, char* argv[]) {
             slMenu.Render(renderer);
         }
 
-        engine.EndSafeArea();
         engine.PresentScreen();
     }
 
