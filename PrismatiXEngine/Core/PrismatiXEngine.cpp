@@ -50,13 +50,20 @@ bool PrismatiXEngine::Initialize(const std::string& title, int width, int height
 		return false;
 	}
 
-	// SDL_RenderSetLogicalSize(renderer, width, height);
+	SDL_RenderSetLogicalSize(renderer, width, height);
 
 	isRunning = true;
 	return true;
 }
 
 void PrismatiXEngine::HandleEvents() {
+	int winX, winY;
+	SDL_GetMouseState(&winX, &winY);
+	float logicalX, logicalY;
+	SDL_RenderWindowToLogical(renderer, winX, winY, &logicalX, &logicalY);
+	mouseX = static_cast<int>(logicalX);
+	mouseY = static_cast<int>(logicalY);
+
 	leftClick = false;
 	rightClick = false;
 	mouseWheelY = 0;

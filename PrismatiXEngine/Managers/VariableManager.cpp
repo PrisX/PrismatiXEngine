@@ -14,7 +14,9 @@ void VariableManager::Add(const std::string& name, int value) {
 int VariableManager::Get(const std::string& name) {
     return flags[name];
 }
-
+const std::unordered_map<std::string, int>& VariableManager::GetAllFlags() {
+    return flags;
+}
 bool VariableManager::Check(const std::string& name, const std::string& op, int compareVal) {
     int val = Get(name);
     if (op == "==") return val == compareVal;

@@ -26,7 +26,8 @@ public:
     bool GetLeftClick() const { return leftClick; }
 	bool GetRightClick() const { return rightClick; }
     int GetMouseWheelY() const { return mouseWheelY; }
-
+    int GetMouseX() const { return mouseX; }
+    int GetMouseY() const { return mouseY; }
     void HandleEvents();
     void ClearScreen();
     void PresentScreen();
@@ -39,6 +40,8 @@ private:
 	bool rightClick;
     int mouseWheelY;
     bool isRunning;
+    int mouseX = 0;
+    int mouseY = 0;
 
     // Long-term resources
     SDL_Window* window;

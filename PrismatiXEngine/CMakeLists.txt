@@ -5,13 +5,15 @@ add_executable (PrismatiXEngine
 "main.cpp"
 "Core/PrismatiXEngine.cpp"
 "Core/PrismatiXEngine.h"
+"Components/DialogueBox.h"
+"Controllers/SplashController.h"
+"Controllers/SplashController.cpp"
+"Controllers/DialogueController.h"
+"Controllers/DialogueController.cpp"
 "Managers/TextureManager.cpp"
 "Managers/TextureManager.h"
 "Managers/TextManager.h"
 "Managers/TextManager.cpp"
-"Components/DialogueBox.h"
-"Controllers/DialogueController.h"
-"Controllers/SplashController.h"
 "Managers/ScriptManager.h"
 "Managers/ScriptManager.cpp"
 "Managers/AudioManager.h"
@@ -27,8 +29,9 @@ add_executable (PrismatiXEngine
 "Managers/BacklogManager.h"
 "Managers/BacklogManager.cpp"
 "Managers/SaveManager.h"
+"Managers/SaveManager.cpp"
 "SecretKey.h"
-)
+ "Components/SaveLoadMenu.h")
 
 # Header files
 target_include_directories(PrismatiXEngine PRIVATE 

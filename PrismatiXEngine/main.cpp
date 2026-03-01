@@ -10,18 +10,24 @@
 #include "Controllers/SplashController.h"
 #include "Managers/ArchiveManager.h"
 #include "Managers/ConfigManager.h"
-
+#include "Toolbar.h"
+#include "SaveLoadMenu.h"
 #pragma execution_character_set("utf-8") // 防中文亂碼
 
 enum class GameState {
     SplashScreen,
     MainMenu,
-    InGame
+    InGame,
+    SaveMenu,
+    LoadMenu
 };
 
 int main(int argc, char* argv[]) {
 
-
+    if (!ArchiveManager::MountArchive("Engine.pdx")) {
+		std::cerr << "Failed to mount engine assets." << std::endl;
+		return -1;
+    }
     ArchiveManager::MountArchive("Data.pdx");
     if (!ConfigManager::LoadConfig("Game")) {
         std::cerr << "Entry point not found or invalid." << std::endl;
@@ -58,7 +64,8 @@ int main(int argc, char* argv[]) {
     TTF_Font* font = TextManager::LoadFont(fontName, fontSize);
     DialogueBox dialog(font, 50, winH - 120);
     DialogueController vnController(&dialog, font, renderer);
-
+    Toolbar bottomToolbar(font, winH);
+    SaveLoadMenu slMenu(font);
     std::string initBgFile = ConfigManager::GetString("InitialBg", "title_bg.jpg");
     SDL_Texture* titleBg = TextureManager::LoadTexture("title_bg.jpg", renderer);
 
@@ -113,12 +120,17 @@ int main(int argc, char* argv[]) {
             if (engine.GetLeftClick()) {
                 std::string startScriptFile = ConfigManager::GetString("StartScript", "script");
                 script = ScriptManager::ParseFile(startScriptFile);
-                vnController.LoadScript(script);
+                vnController.LoadScript(startScriptFile, script);
                 currentState = GameState::InGame;
             }
         }
         else if (currentState == GameState::InGame) {
+            int mx = engine.GetMouseX();
+            int my = engine.GetMouseY();
             int wheelY = engine.GetMouseWheelY();
+
+            bool isLeftClicked = engine.GetLeftClick();
+
             if (vnController.IsShowingBacklog()) {
                 if (wheelY != 0) {
                     vnController.ScrollBacklog(wheelY > 0 ? 1 : -1);
@@ -128,18 +140,81 @@ int main(int argc, char* argv[]) {
                     vnController.ToggleBacklog();
                 }
             }
-
             else {
-                if (engine.GetLeftClick() || wheelY < 0) {
-                    vnController.HandleClick();
+                std::string toolbarAction = bottomToolbar.Update(mx, my, isLeftClicked);
+
+                if (toolbarAction == "OpenSave") {
+                    currentState = GameState::SaveMenu;
+                    slMenu.Open(SLMode::Save);
+                }
+                else if (toolbarAction == "OpenLoad") {
+                    currentState = GameState::LoadMenu;
+                    slMenu.Open(SLMode::Load);
+                }
+                else if (toolbarAction == "TogglePin") {
+                    AudioManager::PlaySFX("click.wav");
+                }
+
+
+                bool blockingClick = bottomToolbar.IsMouseOver(my) && toolbarAction.empty();
+
+                if ((isLeftClicked && !blockingClick) || wheelY < 0) {
+                    vnController.HandleClick(mx, my);
                 }
                 else if (wheelY > 0) {
                     vnController.ToggleBacklog();
                 }
             }
 
-            vnController.Update();
+            vnController.Update(mx, my);
             vnController.Render(renderer);
+
+            bottomToolbar.Render(renderer);
+        }
+        else if (currentState == GameState::SaveMenu || currentState == GameState::LoadMenu) {
+            int mx = engine.GetMouseX();
+            int my = engine.GetMouseY();
+            bool isLeftClicked = engine.GetLeftClick();
+
+            vnController.RenderBackground(engine);
+            vnController.Render(renderer);
+
+            int selectedSlot = slMenu.Update(mx, my, isLeftClicked);
+
+            if (selectedSlot == -1 || engine.GetRightClick()) {
+                currentState = GameState::InGame;
+            }
+            else if (selectedSlot > 0) {
+                if (currentState == GameState::SaveMenu) {
+                    SaveManager::SaveGame(selectedSlot, vnController.GetCurrentScriptName(), vnController.GetCurrentLine(), vnController.GetCurrentBgName(), vnController.GetCurrentBgmName(), vnController.GetSavedCharacters());
+
+                    AudioManager::PlaySFX("click.wav"); 
+                    slMenu.Open(SLMode::Save);
+                }
+                else if (currentState == GameState::LoadMenu) {
+                    std::string scriptName, bgName, bgmName;
+                    int line = 0;
+                    std::vector<SavedCharacter> chars;
+
+                    if (SaveManager::LoadGame(selectedSlot, scriptName, line, bgName, bgmName, chars)) {
+                        script = ScriptManager::ParseFile(scriptName);
+                        vnController.LoadScript(scriptName, script);
+                        vnController.SetCurrentLine(line);
+
+                        vnController.RestoreBackground(bgName);
+                        if (!bgmName.empty()) {
+                            AudioManager::PlayBGM(bgmName);
+                        }
+
+                        vnController.RestoreSavedCharacters(chars);
+
+                        AudioManager::PlaySFX("click.wav");
+                        currentState = GameState::InGame;
+                    }
+                }
+            }
+
+            slMenu.Render(renderer);
         }
 
         engine.EndSafeArea();
