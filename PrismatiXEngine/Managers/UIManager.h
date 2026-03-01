@@ -19,7 +19,8 @@ private:
     static std::vector<UIButton> buttons;
 
 public:
-    static void AddTextButton(const std::string& text, TTF_Font* font, int x, int y, SDL_Color idle, SDL_Color hover, const std::string& target);
+    static void AddTextButton(const std::string& text, TTF_Font* font, SDL_Color idle, SDL_Color hover, const std::string& target);
+    static void RecalculateLayout(int screenW, int screenH);
     static void Clear();
     static bool HasButtons();
     static void UpdateHover(int mouseX, int mouseY);

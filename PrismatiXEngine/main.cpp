@@ -71,7 +71,7 @@ int main(int argc, char* argv[]) {
     SaveLoadMenu slMenu(font);
     MainMenu titleMenu(font, winW, winH);
     std::string initBgFile = ConfigManager::GetString("InitialBg", "title_bg.jpg");
-    SDL_Texture* titleBg = TextureManager::LoadTexture("title_bg.jpg", renderer);
+    SDL_Texture* titleBg = TextureManager::LoadTexture(initBgFile, renderer);
 
     std::vector<VNCommand> script;
     GameState currentState = GameState::SplashScreen;

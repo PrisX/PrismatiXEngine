@@ -3,9 +3,11 @@
 #include "BacklogManager.h"
 #include <fstream>
 #include <iostream>
+#include <filesystem>
 
 bool SaveManager::SaveGame(int slot, const std::string& scriptName, int line, const std::string& bgName, const std::string& bgmName, const std::vector<SavedCharacter>& characters) {
-    std::string fileName = "save_" + std::to_string(slot) + ".sav";
+    std::filesystem::create_directories("Save");
+    std::string fileName = "Save/save_" + std::to_string(slot) + ".sav";
     std::ofstream out(fileName);
     if (!out.is_open()) return false;
 
@@ -36,7 +38,7 @@ bool SaveManager::SaveGame(int slot, const std::string& scriptName, int line, co
 }
 
 bool SaveManager::LoadGame(int slot, std::string& outScript, int& outLine, std::string& outBg, std::string& outBgm, std::vector<SavedCharacter>& outCharacters) {
-    std::string fileName = "save_" + std::to_string(slot) + ".sav";
+    std::string fileName = "Save/save_" + std::to_string(slot) + ".sav";
     std::ifstream in(fileName);
     if (!in.is_open()) return false;
 

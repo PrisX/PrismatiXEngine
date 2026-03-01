@@ -26,7 +26,7 @@ private:
     bool hoverClose = false;
 
     void PeekSaveFile(SaveSlot& slot) {
-        std::string fileName = "save_" + std::to_string(slot.id) + ".sav";
+        std::string fileName = "Save/save_" + std::to_string(slot.id) + ".sav";
         std::ifstream in(fileName);
         if (!in.is_open()) {
             slot.isEmpty = true;

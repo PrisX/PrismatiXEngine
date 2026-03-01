@@ -285,6 +285,7 @@ void DialogueController::ExecuteNextCommands() {
             else {
                 commands = ScriptManager::ParseFile(target);
                 currentLine = 0;
+                ExecuteNextCommands();
                 return;
             }
         }
@@ -347,13 +348,11 @@ void DialogueController::ExecuteNextCommands() {
         else if (cmd.type == "choice") {
             std::string text = cmd.args["text"];
             std::string target = cmd.args["target"];
-            int x = std::stoi(cmd.args["x"]);
-            int y = std::stoi(cmd.args["y"]);
 
             SDL_Color idleCol = { 255, 255, 255, 255 };
             SDL_Color hoverCol = { 255, 215, 0, 255 };
 
-            UIManager::AddTextButton(text, uiFont, x, y, idleCol, hoverCol, target);
+            UIManager::AddTextButton(text, uiFont, idleCol, hoverCol, target);
             currentLine++;
 
             if (currentLine < (int)commands.size() && commands[currentLine].type != "choice") {
@@ -363,6 +362,10 @@ void DialogueController::ExecuteNextCommands() {
         else {
             currentLine++;
         }
+    }
+
+    if (UIManager::HasButtons()) {
+        UIManager::RecalculateLayout(1280, 720);
     }
 
     if (currentLine >= (int)commands.size()) {

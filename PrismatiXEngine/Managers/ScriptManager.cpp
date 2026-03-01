@@ -22,7 +22,7 @@ std::vector<VNCommand> ScriptManager::ParseFile(const std::string& fileName) {
         size_t startPos = line.find_first_not_of(" \t");
         if (startPos == std::string::npos) continue;
         std::string cleanLine = line.substr(startPos);
-        if (cleanLine.empty() || cleanLine.substr(0, 2) == "//") continue;
+        if (cleanLine.empty() || cleanLine.substr(0, 2) == "//" || cleanLine.substr(0, 1) == "#") continue;
         if (cleanLine.front() == '*') {
             VNCommand cmd;
             cmd.type = "label";

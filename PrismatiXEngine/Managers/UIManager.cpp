@@ -3,7 +3,7 @@
 
 std::vector<UIButton> UIManager::buttons;
 
-void UIManager::AddTextButton(const std::string& text, TTF_Font* font, int x, int y, SDL_Color idle, SDL_Color hover, const std::string& target) {
+void UIManager::AddTextButton(const std::string& text, TTF_Font* font, SDL_Color idle, SDL_Color hover, const std::string& target) {
     UIButton btn;
     btn.text = text;
     btn.font = font;
@@ -16,9 +16,26 @@ void UIManager::AddTextButton(const std::string& text, TTF_Font* font, int x, in
     if (font && !text.empty()) {
         TTF_SizeUTF8(font, text.c_str(), &w, &h);
     }
-    btn.rect = { x, y, w / TextManager::FONT_OVERSAMPLE, h / TextManager::FONT_OVERSAMPLE };
+    btn.rect = { 0, 0, w / TextManager::FONT_OVERSAMPLE, h / TextManager::FONT_OVERSAMPLE };
 
     buttons.push_back(btn);
+}
+
+void UIManager::RecalculateLayout(int screenW, int screenH) {
+    if (buttons.empty()) return;
+
+    const int gap = 20;
+    int totalH = 0;
+    for (const auto& btn : buttons)
+        totalH += btn.rect.h;
+    totalH += gap * ((int)buttons.size() - 1);
+
+    int curY = (screenH - totalH) / 2;
+    for (auto& btn : buttons) {
+        btn.rect.x = (screenW - btn.rect.w) / 2;
+        btn.rect.y = curY;
+        curY += btn.rect.h + gap;
+    }
 }
 
 void UIManager::Clear() { buttons.clear(); }
