@@ -6,6 +6,10 @@ add_executable (PrismatiXEngine
 "Core/PrismatiXEngine.cpp"
 "Core/PrismatiXEngine.h"
 "Components/DialogueBox.h"
+"Components/SaveLoadMenu.h" 
+"Components/MainMenu.h"
+"Components/Toolbar.h"
+"Components/Gallery.h"
 "Controllers/SplashController.h"
 "Controllers/SplashController.cpp"
 "Controllers/DialogueController.h"
@@ -31,7 +35,7 @@ add_executable (PrismatiXEngine
 "Managers/SaveManager.h"
 "Managers/SaveManager.cpp"
 "SecretKey.h"
- "Components/SaveLoadMenu.h" "Components/MainMenu.h")
+)
 
 # Header files
 target_include_directories(PrismatiXEngine PRIVATE 

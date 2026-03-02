@@ -152,22 +152,5 @@ void PrismatiXEngine::Clean() {
 
 void PrismatiXEngine::DrawFullscreenBackground(SDL_Texture* bgTex, Uint8 alpha) {
 	if (!bgTex) return;
-
-	int logW, logH;
-	SDL_RenderGetLogicalSize(renderer, &logW, &logH);
-
-	int texW, texH;
-	SDL_QueryTexture(bgTex, NULL, NULL, &texW, &texH);
-
-	float scaleX = (float)logW / (float)texW;
-	float scaleY = (float)logH / (float)texH;
-	float bgScale = std::max(scaleX, scaleY);
-
-	int finalW = (int)(texW * bgScale);
-	int finalH = (int)(texH * bgScale);
-
-	int bgX = (logW - finalW) / 2;
-	int bgY = (logH - finalH) / 2;
-
-	TextureManager::Draw(bgTex, renderer, bgX, bgY, finalW, finalH, alpha);
+	TextureManager::DrawAuto(bgTex, renderer, TextureManager::DisplayMode::Fill, alpha);
 }

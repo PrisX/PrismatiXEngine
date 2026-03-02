@@ -95,19 +95,23 @@ public:
         int boxX = 30, boxY = 560, boxW = 1220, boxH = 140;
 
         if (boxTex) {
-            int texW, texH;
-            SDL_QueryTexture(boxTex, NULL, NULL, &texW, &texH);
-
-            float scale = 1280.0f / (float)texW;
-            boxW = 1280;
-            boxH = (int)(texH * scale);
-
-            boxX = 0;
-            boxY = 720 - boxH;
-
-            TextureManager::Draw(boxTex, renderer, boxX, boxY, boxW, boxH, 255);
+            SDL_Rect boxRect = TextureManager::DrawAuto(boxTex, renderer, TextureManager::DisplayMode::FitWidthBottom, 255);
+            boxX = boxRect.x;
+            boxY = boxRect.y;
+            boxW = boxRect.w;
+            boxH = boxRect.h;
         }
         else {
+            int renderW = 0;
+            int renderH = 0;
+            SDL_RenderGetLogicalSize(renderer, &renderW, &renderH);
+            if (renderW <= 0 || renderH <= 0) {
+                SDL_GetRendererOutputSize(renderer, &renderW, &renderH);
+            }
+            if (renderW > 0) boxW = renderW;
+            if (renderH > 0) boxY = renderH - boxH;
+            boxX = 0;
+
             SDL_SetRenderDrawColor(renderer, 0, 0, 0, 180);
             SDL_Rect uiRect = { boxX, boxY, boxW, boxH };
             SDL_RenderFillRect(renderer, &uiRect);
