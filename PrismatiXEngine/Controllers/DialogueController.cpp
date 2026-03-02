@@ -10,6 +10,7 @@
 #include "BacklogManager.h"
 #include "PrismatiXEngine.h"
 #include "Utils/TransitionUtils.h"
+#include "Utils/EasingUtils.h"
 
 DialogueController::DialogueController(DialogueBox* box, TTF_Font* font, SDL_Renderer* ren) {
     dialogueBox = box;
@@ -279,6 +280,11 @@ void DialogueController::ExecuteNextCommands() {
             }
             currentLine++;
         }
+        else if (cmd.type == "bgminfo") {
+            std::string text = cmd.args.count("text") ? cmd.args["text"] : "";
+            infoBanner.Show(text, true);
+            currentLine++;
+        }
         else if (cmd.type == "label") {
             currentLine++;
         }
@@ -438,6 +444,7 @@ void DialogueController::Update(int mx, int my) {
     if (backlogCooldown > 0) {
         backlogCooldown--;
     }
+    infoBanner.Update();
     {
         float target = isShowingBacklog ? 220.0f : 0.0f;
         const float BACKLOG_FADE_SPEED = 15.0f;
@@ -470,9 +477,7 @@ void DialogueController::Update(int mx, int my) {
         TransitionUtils::MoveTowards(chara.alpha, chara.targetAlpha, fadeSpeed);
 
         if (!chara.isExiting) {
-            float dx = chara.targetX - chara.currentX;
-            chara.currentX += dx * factor;
-            if (dx * dx < 0.25f) chara.currentX = chara.targetX;
+            EasingUtils::ExpDecay(chara.currentX, chara.targetX, factor);
         }
 
         if (chara.alpha <= 0.0f && chara.isExiting) {
@@ -566,6 +571,9 @@ void DialogueController::Render(SDL_Renderer* renderer) {
         dialogueBox->Render(renderer);
     }
     UIManager::Render(renderer);
+
+    infoBanner.Render(renderer, uiFont);
+
     RenderBacklog(renderer);
 }
 

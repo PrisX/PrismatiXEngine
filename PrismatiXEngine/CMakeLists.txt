@@ -10,6 +10,7 @@ add_executable (PrismatiXEngine
 "Components/MainMenu.h"
 "Components/Toolbar.h"
 "Components/Gallery.h"
+"Components/BGMInfo.h"
 "Controllers/SplashController.h"
 "Controllers/SplashController.cpp"
 "Controllers/DialogueController.h"
@@ -35,6 +36,7 @@ add_executable (PrismatiXEngine
 "Managers/SaveManager.h"
 "Managers/SaveManager.cpp"
 "Utils/TransitionUtils.h"
+"Utils/EasingUtils.h"
 "SecretKey.h"
 )
 

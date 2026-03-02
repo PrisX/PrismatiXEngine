@@ -7,6 +7,7 @@
 #include "DialogueBox.h"
 #include "ScriptManager.h"
 #include "Managers/SaveManager.h"
+#include "BGMInfo.h"
 
 class PrismatiXEngine;
 
@@ -50,6 +51,7 @@ private:
     bool hasPendingScriptTransition = false;
     std::string pendingScriptTarget;
     std::map<std::string, ActiveCharacter> activeCharacters;
+    BGMInfo infoBanner;
 
 public:
     DialogueController(DialogueBox* box, TTF_Font* font, SDL_Renderer* ren);
