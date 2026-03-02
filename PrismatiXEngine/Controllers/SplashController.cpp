@@ -3,6 +3,7 @@
 #include "TextureManager.h"
 #include "AudioManager.h"
 #include "ScriptManager.h"
+#include "Utils/TransitionUtils.h"
 
 
 void SplashController::Init(SDL_Renderer* renderer) {
@@ -48,9 +49,7 @@ void SplashController::Update() {
             splashSfxPlayed = true;
         }
 
-        splashAlpha += SPLASH_FADE_SPEED;
-        if (splashAlpha >= 255.0f) {
-            splashAlpha = 255.0f;
+        if (TransitionUtils::FadeIn(splashAlpha, SPLASH_FADE_SPEED)) {
             splashPhase = SplashPhase::Hold;
         }
     }
@@ -61,9 +60,7 @@ void SplashController::Update() {
         }
     }
     else if (splashPhase == SplashPhase::FadeOut) {
-        splashAlpha -= SPLASH_FADE_SPEED;
-        if (splashAlpha <= 0.0f) {
-            splashAlpha = 0.0f;
+        if (TransitionUtils::FadeOut(splashAlpha, SPLASH_FADE_SPEED)) {
             currentLogoIdx++;
             splashPhase = SplashPhase::FadeIn;
             splashHoldTimer = 0;

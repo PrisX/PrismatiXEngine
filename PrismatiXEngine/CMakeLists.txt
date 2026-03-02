@@ -34,6 +34,7 @@ add_executable (PrismatiXEngine
 "Managers/BacklogManager.cpp"
 "Managers/SaveManager.h"
 "Managers/SaveManager.cpp"
+"Utils/TransitionUtils.h"
 "SecretKey.h"
 )
 
@@ -44,6 +45,7 @@ target_include_directories(PrismatiXEngine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Managers
     ${CMAKE_CURRENT_SOURCE_DIR}/Components
     ${CMAKE_CURRENT_SOURCE_DIR}/Controllers
+    ${CMAKE_CURRENT_SOURCE_DIR}/Utils
 )
  
 # SDL2
@@ -62,6 +64,7 @@ target_include_directories(PrismatiXEngine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Managers
     ${CMAKE_CURRENT_SOURCE_DIR}/Components
     ${CMAKE_CURRENT_SOURCE_DIR}/Controllers
+    ${CMAKE_CURRENT_SOURCE_DIR}/Utils
     ${HOMEBREW_PREFIX}/include
 )
 endif()

@@ -47,6 +47,8 @@ private:
     bool hasStarted;
     std::string pendingVoice;
     bool skipNextLog = false;
+    bool hasPendingScriptTransition = false;
+    std::string pendingScriptTarget;
     std::map<std::string, ActiveCharacter> activeCharacters;
 
 public:
@@ -59,6 +61,7 @@ public:
     std::string GetCurrentBgmName() const;
     void SetCurrentLine(int line);
     void SetSkipNextLog(bool skip);
+    bool ConsumePendingScriptTransition(std::string& outTargetScript);
     std::vector<SavedCharacter> GetSavedCharacters() const;
     void RestoreSavedCharacters(const std::vector<SavedCharacter>& savedChars);
     void RestoreBackground(const std::string& bgName);

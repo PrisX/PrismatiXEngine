@@ -6,6 +6,7 @@
 #include "Managers/TextManager.h"
 #include "Managers/AudioManager.h"
 #include "Managers/ScriptManager.h"
+#include "Utils/TransitionUtils.h"
 #include "DialogueBox.h"
 #include "Controllers/DialogueController.h"
 #include "Controllers/SplashController.h"
@@ -79,24 +80,14 @@ int main(int argc, char* argv[]) {
     SplashController splashController;
     splashController.Init(renderer);
 
-    float fadeAlpha = 0.0f;
-    bool isFadingOut = false;
-    bool isFadingIn = false;
-    std::function<void()> pendingFadeAction;
-    const float SCREEN_FADE_SPEED = 8.0f;
-
-    auto StartFade = [&](std::function<void()> action) {
-        if (isFadingOut || isFadingIn) return;
-        isFadingOut = true;
-        fadeAlpha = 0.0f;
-        pendingFadeAction = std::move(action);
-    };
+    TransitionUtils::Transition screenTransition;
+    screenTransition.speed = 8.0f;
 
     float mainMenuAlpha = 0.0f;
     const float MAIN_MENU_FADE_SPEED = 3.0f;
     while (engine.IsRunning()) {
         engine.HandleEvents();
-        bool isFading = isFadingOut || isFadingIn;
+        bool isFading = screenTransition.IsActive();
 
         engine.ClearScreen();
         if (currentState == GameState::SplashScreen) {
@@ -109,11 +100,6 @@ int main(int argc, char* argv[]) {
             }
         }
         else if (currentState == GameState::MainMenu) {
-            if (mainMenuAlpha < 255.0f) {
-                mainMenuAlpha += MAIN_MENU_FADE_SPEED;
-                if (mainMenuAlpha > 255.0f) mainMenuAlpha = 255.0f;
-            }
-
             if (titleBg) {
                 engine.DrawFullscreenBackground(titleBg, (Uint8)mainMenuAlpha);
             }
@@ -130,10 +116,7 @@ int main(int argc, char* argv[]) {
             }
         }
         else if (currentState == GameState::MainMenu) {
-            if (mainMenuAlpha < 255.0f) {
-                mainMenuAlpha += MAIN_MENU_FADE_SPEED;
-                if (mainMenuAlpha > 255.0f) mainMenuAlpha = 255.0f;
-            }
+            TransitionUtils::FadeIn(mainMenuAlpha, MAIN_MENU_FADE_SPEED);
 
             if (titleBg) {
                 engine.DrawFullscreenBackground(titleBg, (Uint8)mainMenuAlpha);
@@ -148,7 +131,7 @@ int main(int argc, char* argv[]) {
                 if (!isFading) {
                     if (action == "Start") {
                         AudioManager::PlaySFX("click.wav");
-                        StartFade([&]() {
+                        screenTransition.Start([&]() {
                             std::string startScriptFile = ConfigManager::GetString("StartScript", "script");
                             script = ScriptManager::ParseFile(startScriptFile);
                             vnController.LoadScript(startScriptFile, script);
@@ -157,7 +140,7 @@ int main(int argc, char* argv[]) {
                     }
                     else if (action == "Load") {
                         AudioManager::PlaySFX("click.wav");
-                        StartFade([&]() {
+                        screenTransition.Start([&]() {
                             previousState = GameState::MainMenu;
                             currentState = GameState::LoadMenu;
                             slMenu.Open(SLMode::Load);
@@ -191,14 +174,14 @@ int main(int argc, char* argv[]) {
                         std::string toolbarAction = bottomToolbar.Update(mx, my, isLeftClicked);
 
                         if (toolbarAction == "OpenSave") {
-                            StartFade([&]() {
+                            screenTransition.Start([&]() {
                                 previousState = GameState::InGame;
                                 currentState = GameState::SaveMenu;
                                 slMenu.Open(SLMode::Save);
                             });
                         }
                         else if (toolbarAction == "OpenLoad") {
-                            StartFade([&]() {
+                            screenTransition.Start([&]() {
                                 previousState = GameState::InGame;
                                 currentState = GameState::LoadMenu;
                                 slMenu.Open(SLMode::Load);
@@ -220,6 +203,14 @@ int main(int argc, char* argv[]) {
                 }
 
                 vnController.Update(mx, my);
+                std::string pendingScriptTarget;
+                if (!isFading && vnController.ConsumePendingScriptTransition(pendingScriptTarget)) {
+                    screenTransition.Start([&, pendingScriptTarget]() {
+                        script = ScriptManager::ParseFile(pendingScriptTarget);
+                        vnController.LoadScript(pendingScriptTarget, script);
+                        currentState = GameState::InGame;
+                    });
+                }
                 vnController.Render(renderer);
 
                 bottomToolbar.Render(renderer);
@@ -236,7 +227,7 @@ int main(int argc, char* argv[]) {
 
             if (!isFading) {
                 if (selectedSlot == -1 || engine.GetRightClick()) {
-                    StartFade([&]() { currentState = previousState; });
+                    screenTransition.Start([&]() { currentState = previousState; });
                 }
                 else if (selectedSlot > 0) {
                     if (currentState == GameState::SaveMenu) {
@@ -247,7 +238,7 @@ int main(int argc, char* argv[]) {
                     }
                     else if (currentState == GameState::LoadMenu) {
                         int capturedSlot = selectedSlot;
-                        StartFade([&, capturedSlot]() {
+                        screenTransition.Start([&, capturedSlot]() {
                             std::string scriptName, bgName, bgmName;
                             int line = 0;
                             std::vector<SavedCharacter> chars;
@@ -276,30 +267,9 @@ int main(int argc, char* argv[]) {
             slMenu.Render(renderer);
         }
 
-        if (isFadingOut) {
-            fadeAlpha = std::min(fadeAlpha + SCREEN_FADE_SPEED, 255.0f);
-            if (fadeAlpha >= 255.0f) {
-                if (pendingFadeAction) {
-                    pendingFadeAction();
-                    pendingFadeAction = nullptr;
-                }
-                isFadingOut = false;
-                isFadingIn = true;
-            }
-        }
-        else if (isFadingIn) {
-            fadeAlpha = std::max(fadeAlpha - SCREEN_FADE_SPEED, 0.0f);
-            if (fadeAlpha <= 0.0f) {
-                isFadingIn = false;
-            }
-        }
+        screenTransition.Update();
 
-        if (fadeAlpha > 0.0f) {
-            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, (Uint8)fadeAlpha);
-            SDL_Rect fullscreen = { 0, 0, winW, winH };
-            SDL_RenderFillRect(renderer, &fullscreen);
-        }
+        screenTransition.Draw(renderer, winW, winH);
 
         engine.PresentScreen();
     }

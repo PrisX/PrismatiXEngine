@@ -5,6 +5,7 @@
 #include <vector>
 #include <TextManager.h>
 #include <TextureManager.h>
+#include <Utils/TransitionUtils.h>
 
 class DialogueBox {
 private:
@@ -82,7 +83,7 @@ public:
 
         if (fadeAlpha < 255) {
             Uint32 elapsed = SDL_GetTicks() - fadeStartTime;
-            fadeAlpha = (elapsed >= fadeDuration) ? 255 : (Uint8)((elapsed * 255) / fadeDuration);
+            fadeAlpha = TransitionUtils::AlphaFromElapsed(elapsed, fadeDuration);
         }
     }
 

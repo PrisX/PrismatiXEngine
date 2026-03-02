@@ -9,6 +9,7 @@
 #include "UIManager.h"
 #include "BacklogManager.h"
 #include "PrismatiXEngine.h"
+#include "Utils/TransitionUtils.h"
 
 DialogueController::DialogueController(DialogueBox* box, TTF_Font* font, SDL_Renderer* ren) {
     dialogueBox = box;
@@ -41,6 +42,13 @@ std::string DialogueController::GetCurrentBgName() const { return currentBgName;
 std::string DialogueController::GetCurrentBgmName() const { return currentBgmName; }
 void DialogueController::SetCurrentLine(int line) { currentLine = line; }
 void DialogueController::SetSkipNextLog(bool skip) { skipNextLog = skip; }
+bool DialogueController::ConsumePendingScriptTransition(std::string& outTargetScript) {
+    if (!hasPendingScriptTransition) return false;
+    outTargetScript = pendingScriptTarget;
+    pendingScriptTarget.clear();
+    hasPendingScriptTransition = false;
+    return true;
+}
 
 std::vector<SavedCharacter> DialogueController::GetSavedCharacters() const {
     std::vector<SavedCharacter> chars;
@@ -288,9 +296,8 @@ void DialogueController::ExecuteNextCommands() {
             }
             else {
                 BacklogManager::Clear();
-                commands = ScriptManager::ParseFile(target);
-                currentLine = 0;
-                ExecuteNextCommands();
+                pendingScriptTarget = target;
+                hasPendingScriptTransition = true;
                 return;
             }
         }
@@ -402,9 +409,8 @@ void DialogueController::HandleClick(int mx, int my) {
             }
             else {
                 BacklogManager::Clear();
-                commands = ScriptManager::ParseFile(target);
-                currentLine = 0;
-                ExecuteNextCommands();
+                pendingScriptTarget = target;
+                hasPendingScriptTransition = true;
                 return;
             }
         }
@@ -435,10 +441,7 @@ void DialogueController::Update(int mx, int my) {
     {
         float target = isShowingBacklog ? 220.0f : 0.0f;
         const float BACKLOG_FADE_SPEED = 15.0f;
-        if (backlogFadeAlpha < target)
-            backlogFadeAlpha = std::min(backlogFadeAlpha + BACKLOG_FADE_SPEED, target);
-        else if (backlogFadeAlpha > target)
-            backlogFadeAlpha = std::max(backlogFadeAlpha - BACKLOG_FADE_SPEED, 0.0f);
+        TransitionUtils::MoveTowards(backlogFadeAlpha, target, BACKLOG_FADE_SPEED);
     }
     if (!isFinished) {
         dialogueBox->Update();
@@ -455,10 +458,8 @@ void DialogueController::Update(int mx, int my) {
     float fadeSpeed = 10.0f;
     float factor = 0.15f;
 
-    if (bgFadeAlpha < 255.0f) {
-        bgFadeAlpha += fadeSpeed;
-        if (bgFadeAlpha >= 255.0f) {
-            bgFadeAlpha = 255.0f;
+    if (currentBgTexture) {
+        if (TransitionUtils::FadeIn(bgFadeAlpha, fadeSpeed) && previousBgTexture) {
             previousBgTexture = nullptr;
         }
     }
@@ -466,14 +467,7 @@ void DialogueController::Update(int mx, int my) {
     for (auto i = activeCharacters.begin(); i != activeCharacters.end(); ) {
         ActiveCharacter& chara = i->second;
 
-        if (chara.alpha < chara.targetAlpha) {
-            chara.alpha += fadeSpeed;
-            if (chara.alpha > chara.targetAlpha) chara.alpha = chara.targetAlpha;
-        }
-        else if (chara.alpha > chara.targetAlpha) {
-            chara.alpha -= fadeSpeed;
-            if (chara.alpha < chara.targetAlpha) chara.alpha = chara.targetAlpha;
-        }
+        TransitionUtils::MoveTowards(chara.alpha, chara.targetAlpha, fadeSpeed);
 
         if (!chara.isExiting) {
             float dx = chara.targetX - chara.currentX;
