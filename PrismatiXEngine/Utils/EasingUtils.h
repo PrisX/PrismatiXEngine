@@ -45,13 +45,21 @@ namespace EasingUtils {
         return from + (to - from) * t;
     }
 
+
+    // 我為了寫這個跑去先理解指數衰減在幹嘛，還好不算太難，就大概下面這個公式
+    // current = current + (target - current) * factor
     inline bool ExpDecay(float& current, float target, float factor, float snapThresholdSq = 0.25f) {
         float dx = target - current;
         current += dx * factor;
+        // 因為 dx 不一定是正的，所以先平方
+        // 啊 snapThresholdSq 就是距離的平方 (square)，因為我原本如果直接寫 dx < 0.5 的話 dx 如果是負的就爛了
+
         if (dx * dx < snapThresholdSq) {
+            // 就是夠近就直接等於過去，雖然因為 float 精度的關係好像是會到達
             current = target;
             return true;
         }
+        
         return false;
     }
 
