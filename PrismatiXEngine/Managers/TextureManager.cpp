@@ -56,7 +56,7 @@ void TextureManager::Draw(SDL_Texture* tex, SDL_Renderer* ren, int x, int y, int
 	SDL_SetTextureAlphaMod(tex, 255);
 }
 
-SDL_Rect TextureManager::DrawAuto(SDL_Texture* tex, SDL_Renderer* ren, DisplayMode mode, Uint8 alpha) {
+SDL_Rect TextureManager::DrawAuto(SDL_Texture* tex, SDL_Renderer* ren, DisplayMode mode, Uint8 alpha, int offsetX, int offsetY, float scale) {
 	if (!tex || !ren) return SDL_Rect{ 0, 0, 0, 0 };
 
 	int texW = 0;
@@ -73,62 +73,78 @@ SDL_Rect TextureManager::DrawAuto(SDL_Texture* tex, SDL_Renderer* ren, DisplayMo
 	SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
 	SDL_SetTextureAlphaMod(tex, alpha);
 
-	SDL_Rect destRect = { 0, 0, texW, texH };
+	int scaledW = std::max(1, static_cast<int>(texW * scale));
+	int scaledH = std::max(1, static_cast<int>(texH * scale));
+	SDL_Rect destRect = { 0, 0, scaledW, scaledH };
 
 	switch (mode) {
 	case DisplayMode::TopLeft:
 		destRect.x = 0;
 		destRect.y = 0;
 		break;
+	case DisplayMode::TopRight:
+		destRect.x = renderW - scaledW;
+		destRect.y = 0;
+		break;
+	case DisplayMode::BottomLeft:
+		destRect.x = 0;
+		destRect.y = renderH - scaledH;
+		break;
+	case DisplayMode::BottomRight:
+		destRect.x = renderW - scaledW;
+		destRect.y = renderH - scaledH;
+		break;
 	case DisplayMode::Top:
-		destRect.x = (renderW - texW) / 2;
+		destRect.x = (renderW - scaledW) / 2;
 		destRect.y = 0;
 		break;
 	case DisplayMode::Bottom:
-		destRect.x = (renderW - texW) / 2;
-		destRect.y = renderH - texH;
+		destRect.x = (renderW - scaledW) / 2;
+		destRect.y = renderH - scaledH;
 		break;
 	case DisplayMode::Left:
 		destRect.x = 0;
-		destRect.y = (renderH - texH) / 2;
+		destRect.y = (renderH - scaledH) / 2;
 		break;
 	case DisplayMode::Right:
-		destRect.x = renderW - texW;
-		destRect.y = (renderH - texH) / 2;
+		destRect.x = renderW - scaledW;
+		destRect.y = (renderH - scaledH) / 2;
 		break;
 	case DisplayMode::Center:
-		destRect.x = (renderW - texW) / 2;
-		destRect.y = (renderH - texH) / 2;
+		destRect.x = (renderW - scaledW) / 2;
+		destRect.y = (renderH - scaledH) / 2;
 		break;
 	case DisplayMode::FitWidthBottom:
 	{
-		float scale = static_cast<float>(renderW) / texW;
-		destRect.w = renderW;
-		destRect.h = std::max(1, static_cast<int>(texH * scale));
+		float fitScale = static_cast<float>(renderW) / texW * scale;
+		destRect.w = std::max(1, static_cast<int>(texW * fitScale));
+		destRect.h = std::max(1, static_cast<int>(texH * fitScale));
 		destRect.x = 0;
 		destRect.y = renderH - destRect.h;
 		break;
 	}
 	case DisplayMode::Fit:
 	{
-		float scale = std::min(static_cast<float>(renderW) / texW, static_cast<float>(renderH) / texH);
-		destRect.w = std::max(1, static_cast<int>(texW * scale));
-		destRect.h = std::max(1, static_cast<int>(texH * scale));
+		float fitScale = std::min(static_cast<float>(renderW) / texW, static_cast<float>(renderH) / texH) * scale;
+		destRect.w = std::max(1, static_cast<int>(texW * fitScale));
+		destRect.h = std::max(1, static_cast<int>(texH * fitScale));
 		destRect.x = (renderW - destRect.w) / 2;
 		destRect.y = (renderH - destRect.h) / 2;
 		break;
 	}
 	case DisplayMode::Fill:
 	{
-		float scale = std::max(static_cast<float>(renderW) / texW, static_cast<float>(renderH) / texH);
-		destRect.w = std::max(1, static_cast<int>(texW * scale));
-		destRect.h = std::max(1, static_cast<int>(texH * scale));
+		float fitScale = std::max(static_cast<float>(renderW) / texW, static_cast<float>(renderH) / texH) * scale;
+		destRect.w = std::max(1, static_cast<int>(texW * fitScale));
+		destRect.h = std::max(1, static_cast<int>(texH * fitScale));
 		destRect.x = (renderW - destRect.w) / 2;
 		destRect.y = (renderH - destRect.h) / 2;
 		break;
 	}
 	}
 
+	destRect.x += offsetX;
+	destRect.y += offsetY;
 	SDL_RenderCopy(ren, tex, NULL, &destRect);
 	SDL_SetTextureAlphaMod(tex, 255);
 	return destRect;

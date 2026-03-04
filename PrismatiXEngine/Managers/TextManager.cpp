@@ -114,6 +114,25 @@ void TextManager::DrawWithOutline(SDL_Renderer* ren, TTF_Font* font, const std::
     SDL_DestroyTexture(fgTexture);
 }
 
+void TextManager::DrawCentered(SDL_Renderer* ren, TTF_Font* font, const std::string& text, SDL_Color color, SDL_Rect bounds) {
+    if (!font || text.empty()) return;
+    int w = 0, h = 0;
+    TTF_SizeUTF8(font, text.c_str(), &w, &h);
+    int x = bounds.x + (bounds.w - w / FONT_OVERSAMPLE) / 2;
+    int y = bounds.y + (bounds.h - h / FONT_OVERSAMPLE) / 2;
+    Draw(ren, font, text, color, x, y);
+}
+
+void TextManager::DrawWithOutlineCentered(SDL_Renderer* ren, TTF_Font* font, const std::string& text,
+    SDL_Color textColor, SDL_Color outlineColor, int outlineSize, SDL_Rect bounds, Uint8 alpha) {
+    if (!font || text.empty()) return;
+    int w = 0, h = 0;
+    TTF_SizeUTF8(font, text.c_str(), &w, &h);
+    int x = bounds.x + (bounds.w - w / FONT_OVERSAMPLE) / 2 - outlineSize;
+    int y = bounds.y + (bounds.h - h / FONT_OVERSAMPLE) / 2 - outlineSize;
+    DrawWithOutline(ren, font, text, textColor, outlineColor, outlineSize, x, y, 0, alpha);
+}
+
 void TextManager::Clean() {
     for (auto& pair : outlineFontCache) {
         if (pair.second) TTF_CloseFont(pair.second);

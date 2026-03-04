@@ -26,6 +26,7 @@ private:
 	static constexpr Uint32 fadeDuration = 150; // ms (0 -> 255)
 
 	TTF_Font* font;
+	TTF_Font* nameFont = nullptr;
 	int x, y;
 
     void ParseUTF8(const std::string& text) {
@@ -53,6 +54,7 @@ public:
         y = startY;
     }
     int GetCurrentIndex() const { return currentIndex; }
+    void SetNameFont(TTF_Font* f) { nameFont = f; }
     void SetText(const std::string& name, const std::string& text, int speed, SDL_Color textColor, SDL_Color outlineColor) {
         parsedCharacters.clear();
         ParseUTF8(text);
@@ -120,15 +122,14 @@ public:
 
 
         if (!currentSpeakerName.empty()) {
-            int nameBoxX = boxX + 30;
-            int nameBoxY = boxY - 50;
+            SDL_Texture* namePlateTex = TextureManager::LoadTexture("nameplate.png", renderer);
+            SDL_Rect namePlateRect = TextureManager::DrawAuto(namePlateTex, renderer, TextureManager::DisplayMode::BottomLeft, 255, 120, -180, 0.7f);
 
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 220);
-            SDL_Rect nameRect = { nameBoxX, nameBoxY, 250, 50 };
-            SDL_RenderFillRect(renderer, &nameRect);
-
-            SDL_Color nameColor = { 255, 200, 200, 255 };
-            TextManager::DrawWithOutline(renderer, font, currentSpeakerName, nameColor, currentOutlineColor, 1, nameBoxX + 20, nameBoxY + 5);
+            if (nameFont && namePlateRect.w > 0) {
+                SDL_Color nameColor = { 255, 255, 255, 255 };
+                SDL_Color nameOutline = { 60, 30, 80, 200 };
+                TextManager::DrawWithOutlineCentered(renderer, nameFont, currentSpeakerName, nameColor, nameOutline, 1, namePlateRect);
+            }
         }
 
 
@@ -136,9 +137,9 @@ public:
             SDL_Color textColor = currentTextColor;
             SDL_Color outlineColor = currentOutlineColor;
 
-            int textDrawX = boxX + 50;
-            int textDrawY = boxY + 40;
-            Uint32 textBoxWidth = 1160;
+            Uint32 textBoxWidth = 960;
+            int textDrawX = boxX + (boxW - (int)textBoxWidth) / 2;
+            int textDrawY = boxY + 20;
 
             if (fadeAlpha < 255) {
                 TextManager::DrawWithOutline(renderer, font, currentDisplayText, textColor, outlineColor, 1, textDrawX, textDrawY, textBoxWidth, fadeAlpha);

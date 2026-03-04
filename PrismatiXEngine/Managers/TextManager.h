@@ -19,8 +19,11 @@ public:
 	static constexpr int FONT_OVERSAMPLE = 2;
 	static TTF_Font* LoadFont(const std::string& fileName, int fontSize);
 	static void Draw(SDL_Renderer* ren, TTF_Font* font, const std::string& text, SDL_Color color, int x, int y);
+	static void DrawCentered(SDL_Renderer* ren, TTF_Font* font, const std::string& text, SDL_Color color, SDL_Rect bounds);
 	static void DrawWithOutline(SDL_Renderer* ren, TTF_Font* font, const std::string& text,
 		SDL_Color textColor, SDL_Color outlineColor, int outlineSize,
 		int x, int y, Uint32 wrapLength = 0, Uint8 alpha = 255);
+	static void DrawWithOutlineCentered(SDL_Renderer* ren, TTF_Font* font, const std::string& text,
+		SDL_Color textColor, SDL_Color outlineColor, int outlineSize, SDL_Rect bounds, Uint8 alpha = 255);
 	static void Clean();
 };
