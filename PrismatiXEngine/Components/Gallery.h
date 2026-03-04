@@ -14,5 +14,12 @@ public:
         if (galleryBgTex) {
             TextureManager::DrawAuto(galleryBgTex, renderer, TextureManager::DisplayMode::Fit);
         }
+        else {
+            int w = 0, h = 0;
+            SDL_GetRendererOutputSize(renderer, &w, &h);
+            SDL_SetRenderDrawColor(renderer, 15, 15, 25, 255);
+            SDL_Rect bg = { 0, 0, w, h };
+            SDL_RenderFillRect(renderer, &bg);
+        }
     }
 };

@@ -56,7 +56,7 @@ void TextureManager::Draw(SDL_Texture* tex, SDL_Renderer* ren, int x, int y, int
 	SDL_SetTextureAlphaMod(tex, 255);
 }
 
-SDL_Rect TextureManager::DrawAuto(SDL_Texture* tex, SDL_Renderer* ren, DisplayMode mode, Uint8 alpha, int offsetX, int offsetY, float scale) {
+SDL_Rect TextureManager::DrawAuto(SDL_Texture* tex, SDL_Renderer* ren, DisplayMode mode, Uint8 alpha, int offsetX, int offsetY, float scale, ShadowConfig shadow) {
 	if (!tex || !ren) return SDL_Rect{ 0, 0, 0, 0 };
 
 	int texW = 0;
@@ -145,6 +145,30 @@ SDL_Rect TextureManager::DrawAuto(SDL_Texture* tex, SDL_Renderer* ren, DisplayMo
 
 	destRect.x += offsetX;
 	destRect.y += offsetY;
+
+	if (shadow.enabled) {
+		SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+		SDL_SetTextureColorMod(tex, 0, 0, 0);
+
+		Uint8 outerAlpha = (Uint8)(shadow.alpha * 0.45f);
+		SDL_SetTextureAlphaMod(tex, outerAlpha);
+		const int outerOffsets[4][2] = {
+			{shadow.offsetX - 1, shadow.offsetY - 1}, {shadow.offsetX + 1, shadow.offsetY - 1},
+			{shadow.offsetX - 1, shadow.offsetY + 1}, {shadow.offsetX + 1, shadow.offsetY + 1}
+		};
+		for (const auto& off : outerOffsets) {
+			SDL_Rect shadowRect = { destRect.x + off[0], destRect.y + off[1], destRect.w, destRect.h };
+			SDL_RenderCopy(ren, tex, NULL, &shadowRect);
+		}
+
+		SDL_SetTextureAlphaMod(tex, shadow.alpha);
+		SDL_Rect coreRect = { destRect.x + shadow.offsetX, destRect.y + shadow.offsetY, destRect.w, destRect.h };
+		SDL_RenderCopy(ren, tex, NULL, &coreRect);
+
+		SDL_SetTextureColorMod(tex, 255, 255, 255);
+	}
+
+	SDL_SetTextureAlphaMod(tex, alpha);
 	SDL_RenderCopy(ren, tex, NULL, &destRect);
 	SDL_SetTextureAlphaMod(tex, 255);
 	return destRect;

@@ -108,6 +108,7 @@ void DialogueController::LoadScript(const std::string& scriptName, const std::ve
     isFinished = false;
     hasStarted = false;
     pendingVoice.clear();
+    currentSpeakingChar.clear();
     currentBgTexture = nullptr;
     activeCharacters.clear();
 }
@@ -232,6 +233,8 @@ void DialogueController::ExecuteNextCommands() {
             skipNextLog = false;
             dialogueBox->SetText(speaker, content, 40, textColor, outlineColor);
 
+            currentSpeakingChar = cmd.args.count("char") ? cmd.args["char"] : "";
+
             if (cmd.args.count("voice")) {
                 pendingVoice = cmd.args["voice"];
             }
@@ -283,6 +286,11 @@ void DialogueController::ExecuteNextCommands() {
         else if (cmd.type == "bgminfo") {
             std::string text = cmd.args.count("text") ? cmd.args["text"] : "";
             infoBanner.Show(text, true);
+            currentLine++;
+        }
+        else if (cmd.type == "chapter") {
+            std::string text = cmd.args.count("text") ? cmd.args["text"] : "";
+            chapterBanner.Show(text);
             currentLine++;
         }
         else if (cmd.type == "label") {
@@ -445,6 +453,7 @@ void DialogueController::Update(int mx, int my) {
         backlogCooldown--;
     }
     infoBanner.Update();
+    chapterBanner.Update();
     {
         float target = isShowingBacklog ? 220.0f : 0.0f;
         const float BACKLOG_FADE_SPEED = 15.0f;
@@ -474,7 +483,9 @@ void DialogueController::Update(int mx, int my) {
     for (auto i = activeCharacters.begin(); i != activeCharacters.end(); ) {
         ActiveCharacter& chara = i->second;
 
-        TransitionUtils::MoveTowards(chara.alpha, chara.targetAlpha, fadeSpeed);
+        float targetAlpha = chara.isExiting ? 0.0f :
+            (currentSpeakingChar.empty() || i->first == currentSpeakingChar) ? 255.0f : 180.0f;
+        EasingUtils::ExpDecay(chara.alpha, targetAlpha, 0.08f);
 
         if (!chara.isExiting) {
             EasingUtils::ExpDecay(chara.currentX, chara.targetX, factor);
@@ -512,8 +523,8 @@ void DialogueController::RenderBacklog(SDL_Renderer* renderer) {
     SDL_RenderFillRect(renderer, &bgRect);
 
     SDL_Color outlineColor = { 0, 0, 0, textAlpha };
-    TextManager::DrawWithOutline(renderer, uiFont, "- Backlog -", { 255, 255, 255, textAlpha }, outlineColor, 2, 50, 30, 0, textAlpha);
-    TextManager::DrawWithOutline(renderer, uiFont, "(右鍵關閉)", { 150, 150, 150, textAlpha }, outlineColor, 1, 950, 40, 0, textAlpha);
+    TextManager::DrawWithOutline(renderer, uiFont, "- Backlog -", { 255, 255, 255, textAlpha }, outlineColor, 2, 50, 30, 0, textAlpha, true);
+    TextManager::DrawWithOutline(renderer, uiFont, "(右鍵關閉)", { 150, 150, 150, textAlpha }, outlineColor, 1, 950, 40, 0, textAlpha, true);
 
     int startIdx = (int)BacklogManager::GetCount() - 1 - backlogOffset;
     int drawY = 600;
@@ -522,13 +533,13 @@ void DialogueController::RenderBacklog(SDL_Renderer* renderer) {
         const auto& log = BacklogManager::logs[i];
 
         if (log.isChoice) {
-            TextManager::DrawWithOutline(renderer, uiFont, log.text, { 255, 215, 0, textAlpha }, outlineColor, 1, 200, drawY, 800, textAlpha);
+            TextManager::DrawWithOutline(renderer, uiFont, log.text, { 255, 215, 0, textAlpha }, outlineColor, 1, 200, drawY, 800, textAlpha, true);
         }
         else {
             if (!log.speaker.empty()) {
-                TextManager::DrawWithOutline(renderer, uiFont, "【" + log.speaker + "】", { 255, 200, 100, textAlpha }, outlineColor, 1, 100, drawY, 0, textAlpha);
+                TextManager::DrawWithOutline(renderer, uiFont, "【" + log.speaker + "】", { 255, 200, 100, textAlpha }, outlineColor, 1, 100, drawY, 0, textAlpha, true);
             }
-            TextManager::DrawWithOutline(renderer, uiFont, log.text, { 220, 220, 220, textAlpha }, outlineColor, 1, 300, drawY, 800, textAlpha);
+            TextManager::DrawWithOutline(renderer, uiFont, log.text, { 220, 220, 220, textAlpha }, outlineColor, 1, 300, drawY, 800, textAlpha, true);
         }
 
         drawY -= 80;
@@ -573,6 +584,7 @@ void DialogueController::Render(SDL_Renderer* renderer) {
     UIManager::Render(renderer);
 
     infoBanner.Render(renderer, uiFont);
+    chapterBanner.Render(renderer, uiFont);
 
     RenderBacklog(renderer);
 }

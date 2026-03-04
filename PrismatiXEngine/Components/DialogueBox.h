@@ -123,12 +123,24 @@ public:
 
         if (!currentSpeakerName.empty()) {
             SDL_Texture* namePlateTex = TextureManager::LoadTexture("nameplate.png", renderer);
-            SDL_Rect namePlateRect = TextureManager::DrawAuto(namePlateTex, renderer, TextureManager::DisplayMode::BottomLeft, 255, 120, -180, 0.7f);
+            SDL_Rect namePlateRect = TextureManager::DrawAuto(namePlateTex, renderer, TextureManager::DisplayMode::BottomLeft, 255, 120, -180, 0.7f, { true, 1, 1, 110 });
 
-            if (nameFont && namePlateRect.w > 0) {
+            if (nameFont) {
                 SDL_Color nameColor = { 255, 255, 255, 255 };
                 SDL_Color nameOutline = { 60, 30, 80, 200 };
-                TextManager::DrawWithOutlineCentered(renderer, nameFont, currentSpeakerName, nameColor, nameOutline, 1, namePlateRect);
+
+                if (namePlateRect.w <= 0) {
+                    int textW = 0, textH = 0;
+                    TTF_SizeUTF8(nameFont, currentSpeakerName.c_str(), &textW, &textH);
+                    textW /= TextManager::FONT_OVERSAMPLE;
+                    textH /= TextManager::FONT_OVERSAMPLE;
+                    const int padX = 14, padY = 6;
+                    namePlateRect = { boxX + 20, boxY - textH - padY * 2 - 4, textW + padX * 2, textH + padY * 2 };
+                    SDL_SetRenderDrawColor(renderer, 40, 20, 60, 200);
+                    SDL_RenderFillRect(renderer, &namePlateRect);
+                }
+
+                TextManager::DrawWithOutlineCentered(renderer, nameFont, currentSpeakerName, nameColor, nameOutline, 1, namePlateRect, 255, true);
             }
         }
 
@@ -142,13 +154,13 @@ public:
             int textDrawY = boxY + 20;
 
             if (fadeAlpha < 255) {
-                TextManager::DrawWithOutline(renderer, font, currentDisplayText, textColor, outlineColor, 1, textDrawX, textDrawY, textBoxWidth, fadeAlpha);
+                TextManager::DrawWithOutline(renderer, font, currentDisplayText, textColor, outlineColor, 1, textDrawX, textDrawY, textBoxWidth, fadeAlpha, true);
                 if (!displayedText.empty()) {
-                    TextManager::DrawWithOutline(renderer, font, displayedText, textColor, outlineColor, 1, textDrawX, textDrawY, textBoxWidth);
+                    TextManager::DrawWithOutline(renderer, font, displayedText, textColor, outlineColor, 1, textDrawX, textDrawY, textBoxWidth, 255, true);
                 }
             }
             else {
-                TextManager::DrawWithOutline(renderer, font, currentDisplayText, textColor, outlineColor, 1, textDrawX, textDrawY, textBoxWidth);
+                TextManager::DrawWithOutline(renderer, font, currentDisplayText, textColor, outlineColor, 1, textDrawX, textDrawY, textBoxWidth, 255, true);
             }
         }
     }

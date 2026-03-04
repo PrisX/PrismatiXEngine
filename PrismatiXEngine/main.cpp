@@ -66,7 +66,7 @@ int main(int argc, char* argv[]) {
     std::string fontName = ConfigManager::GetString("FontName", "NotoSansTC-Bold.ttf");
     int fontSize = ConfigManager::GetInt("FontSize", 28);
     TTF_Font* font = TextManager::LoadFont(fontName, fontSize);
-    TTF_Font* nameFont = TextManager::LoadFont("NotoSerifJP-Bold.ttf", 28);
+    TTF_Font* nameFont = TextManager::LoadFont("NotoSerifTC-Bold.ttf", 28);
     DialogueBox dialog(font, 50, winH - 120);
     DialogueController vnController(&dialog, font, renderer);
     dialog.SetNameFont(nameFont);

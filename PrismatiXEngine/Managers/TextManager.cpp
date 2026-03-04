@@ -78,9 +78,44 @@ TTF_Font* TextManager::GetOrCreateOutlineFont(TTF_Font* baseFont, int outlineSiz
 }
 
 void TextManager::DrawWithOutline(SDL_Renderer* ren, TTF_Font* font, const std::string& text,
-    SDL_Color textColor, SDL_Color outlineColor, int outlineSize,
-    int x, int y, Uint32 wrapLength, Uint8 alpha) {
-    if (!font || text.empty()) return;
+	SDL_Color textColor, SDL_Color outlineColor, int outlineSize,
+	int x, int y, Uint32 wrapLength, Uint8 alpha, bool shadow) {
+	if (!font || text.empty()) return;
+
+	if (shadow) {
+		const int shadowDX = 3, shadowDY = 3;
+		SDL_Color black = { 0, 0, 0, 255 };
+		SDL_Surface* shadowSurface = (wrapLength > 0)
+			? TTF_RenderUTF8_Blended_Wrapped(font, text.c_str(), black, wrapLength * FONT_OVERSAMPLE)
+			: TTF_RenderUTF8_Blended(font, text.c_str(), black);
+
+		if (shadowSurface) {
+			int sw = shadowSurface->w / FONT_OVERSAMPLE;
+			int sh = shadowSurface->h / FONT_OVERSAMPLE;
+			SDL_Texture* shadowTex = SDL_CreateTextureFromSurface(ren, shadowSurface);
+			SDL_FreeSurface(shadowSurface);
+
+			if (shadowTex) {
+				SDL_SetTextureBlendMode(shadowTex, SDL_BLENDMODE_BLEND);
+
+				const int outerOffsets[4][2] = {
+					{shadowDX - 1, shadowDY - 1}, {shadowDX + 1, shadowDY - 1},
+					{shadowDX - 1, shadowDY + 1}, {shadowDX + 1, shadowDY + 1}
+				};
+				SDL_SetTextureAlphaMod(shadowTex, (Uint8)(alpha * 0.15f));
+				for (const auto& off : outerOffsets) {
+					SDL_Rect r = { x + off[0], y + off[1], sw, sh };
+					SDL_RenderCopy(ren, shadowTex, NULL, &r);
+				}
+
+				SDL_SetTextureAlphaMod(shadowTex, (Uint8)(alpha * 0.4f));
+				SDL_Rect coreRect = { x + shadowDX, y + shadowDY, sw, sh };
+				SDL_RenderCopy(ren, shadowTex, NULL, &coreRect);
+
+				SDL_DestroyTexture(shadowTex);
+			}
+		}
+	}
 
 	TTF_Font* outlineFont = GetOrCreateOutlineFont(font, outlineSize);
 
@@ -97,21 +132,21 @@ void TextManager::DrawWithOutline(SDL_Renderer* ren, TTF_Font* font, const std::
 	SDL_Surface* fgSurface = (wrapLength > 0) ?
 		TTF_RenderUTF8_Blended_Wrapped(font, text.c_str(), textColor, wrapLength * FONT_OVERSAMPLE) :
 		TTF_RenderUTF8_Blended(font, text.c_str(), textColor);
-    SDL_Texture* fgTexture = SDL_CreateTextureFromSurface(ren, fgSurface);
+	SDL_Texture* fgTexture = SDL_CreateTextureFromSurface(ren, fgSurface);
 
 	// Align (要根據 outline size 不然整個會跑走)
-    SDL_Rect fgRect = { x + outlineSize, y + outlineSize, fgSurface->w / FONT_OVERSAMPLE, fgSurface->h / FONT_OVERSAMPLE };
+	SDL_Rect fgRect = { x + outlineSize, y + outlineSize, fgSurface->w / FONT_OVERSAMPLE, fgSurface->h / FONT_OVERSAMPLE };
 
-    if (bgTexture) SDL_SetTextureAlphaMod(bgTexture, alpha);
-    SDL_SetTextureAlphaMod(fgTexture, alpha);
-    if (bgTexture) SDL_RenderCopy(ren, bgTexture, NULL, &bgRect);
-    SDL_RenderCopy(ren, fgTexture, NULL, &fgRect);
+	if (bgTexture) SDL_SetTextureAlphaMod(bgTexture, alpha);
+	SDL_SetTextureAlphaMod(fgTexture, alpha);
+	if (bgTexture) SDL_RenderCopy(ren, bgTexture, NULL, &bgRect);
+	SDL_RenderCopy(ren, fgTexture, NULL, &fgRect);
 
-    // Clean up
-    SDL_FreeSurface(bgSurface);
-    SDL_DestroyTexture(bgTexture);
-    SDL_FreeSurface(fgSurface);
-    SDL_DestroyTexture(fgTexture);
+	// Clean up
+	SDL_FreeSurface(bgSurface);
+	SDL_DestroyTexture(bgTexture);
+	SDL_FreeSurface(fgSurface);
+	SDL_DestroyTexture(fgTexture);
 }
 
 void TextManager::DrawCentered(SDL_Renderer* ren, TTF_Font* font, const std::string& text, SDL_Color color, SDL_Rect bounds) {
@@ -124,13 +159,13 @@ void TextManager::DrawCentered(SDL_Renderer* ren, TTF_Font* font, const std::str
 }
 
 void TextManager::DrawWithOutlineCentered(SDL_Renderer* ren, TTF_Font* font, const std::string& text,
-    SDL_Color textColor, SDL_Color outlineColor, int outlineSize, SDL_Rect bounds, Uint8 alpha) {
+    SDL_Color textColor, SDL_Color outlineColor, int outlineSize, SDL_Rect bounds, Uint8 alpha, bool shadow) {
     if (!font || text.empty()) return;
     int w = 0, h = 0;
     TTF_SizeUTF8(font, text.c_str(), &w, &h);
     int x = bounds.x + (bounds.w - w / FONT_OVERSAMPLE) / 2 - outlineSize;
     int y = bounds.y + (bounds.h - h / FONT_OVERSAMPLE) / 2 - outlineSize;
-    DrawWithOutline(ren, font, text, textColor, outlineColor, outlineSize, x, y, 0, alpha);
+    DrawWithOutline(ren, font, text, textColor, outlineColor, outlineSize, x, y, 0, alpha, shadow);
 }
 
 void TextManager::Clean() {

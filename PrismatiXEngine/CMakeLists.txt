@@ -11,6 +11,7 @@ add_executable (PrismatiXEngine
 "Components/Toolbar.h"
 "Components/Gallery.h"
 "Components/BGMInfo.h"
+"Components/ChapterBanner.h"
 "Controllers/SplashController.h"
 "Controllers/SplashController.cpp"
 "Controllers/DialogueController.h"
