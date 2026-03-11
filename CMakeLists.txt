@@ -28,5 +28,15 @@ find_package(SDL2_image CONFIG REQUIRED)
 find_package(SDL2_ttf CONFIG REQUIRED)
 find_package(SDL2_mixer CONFIG REQUIRED)
 
+# Lua & sol2
+include(FetchContent)
+FetchContent_Declare(
+    sol2
+    GIT_REPOSITORY https://github.com/ThePhD/sol2.git
+    GIT_TAG        v3.3.1
+)
+FetchContent_MakeAvailable(sol2)
+find_package(Lua REQUIRED)
+
 # Subdirectory
 add_subdirectory ("PrismatiXEngine")

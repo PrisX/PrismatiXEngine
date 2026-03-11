@@ -49,6 +49,7 @@ target_include_directories(PrismatiXEngine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Components
     ${CMAKE_CURRENT_SOURCE_DIR}/Controllers
     ${CMAKE_CURRENT_SOURCE_DIR}/Utils
+    ${LUA_INCLUDE_DIR}
 )
  
 # SDL2
@@ -58,6 +59,8 @@ target_link_libraries(PrismatiXEngine PRIVATE
     SDL2_image::SDL2_image
     SDL2_ttf::SDL2_ttf
     SDL2_mixer::SDL2_mixer
+    ${LUA_LIBRARIES}
+    sol2::sol2
 )
 
 if(APPLE)
@@ -69,5 +72,6 @@ target_include_directories(PrismatiXEngine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Controllers
     ${CMAKE_CURRENT_SOURCE_DIR}/Utils
     ${HOMEBREW_PREFIX}/include
+    ${LUA_INCLUDE_DIR}
 )
 endif()

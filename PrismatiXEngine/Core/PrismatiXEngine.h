@@ -7,7 +7,6 @@
 #include "TextureManager.h"
 #include "TextManager.h"
 #include "AudioManager.h"
-
 #include "DialogueBox.h"
 
 class PrismatiXEngine {
@@ -33,6 +32,7 @@ public:
     void PresentScreen();
 
     void DrawFullscreenBackground(SDL_Texture* bgTex, Uint8 alpha = 255);
+    void BindEngineToLua();
 private:
     int lastWinW = 1280;
     int lastWinH = 720;
@@ -46,4 +46,5 @@ private:
     // Long-term resources
     SDL_Window* window;
     SDL_Renderer* renderer;
+    sol::state lua;
 };

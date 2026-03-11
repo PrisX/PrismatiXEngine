@@ -2,6 +2,9 @@
 #include <iostream>
 #include "PrismatiXEngine.h"
 
+#include <lua.hpp>
+#include <sol/sol.hpp>
+
 #pragma execution_character_set("utf-8") // 防中文亂碼
 
 PrismatiXEngine::PrismatiXEngine() : isRunning(false), window(nullptr), renderer(nullptr), leftClick(false), rightClick(false), mouseWheelY(0) {}
@@ -53,6 +56,8 @@ bool PrismatiXEngine::Initialize(const std::string& title, int width, int height
 	SDL_RenderSetLogicalSize(renderer, width, height);
 	lastWinW = width;
 	lastWinH = height;
+
+	
 	isRunning = true;
 	return true;
 }
@@ -153,4 +158,28 @@ void PrismatiXEngine::Clean() {
 void PrismatiXEngine::DrawFullscreenBackground(SDL_Texture* bgTex, Uint8 alpha) {
 	if (!bgTex) return;
 	TextureManager::DrawAuto(bgTex, renderer, TextureManager::DisplayMode::Fill, alpha);
+}
+
+void PrismatiXEngine::BindEngineToLua() {
+	lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::string);
+
+	auto engineApi = lua.create_table("Engine");
+
+	// [this] 是 Lambda Capture，讓 renderer 之類的可以用 owo
+	// Lua 不能直接寫 SDL_Texture
+	// this->renderer 應該比較保險
+	engineApi.set_function("DrawAuto", [this](std::string& texPath, int displayMode, Uint8 alpha, int offsetX, int offsetY, float scale) {
+		SDL_Texture* tex = TextureManager::LoadTexture(texPath, this->renderer);
+		if (tex) {
+			std::cout << "Loaded texture from Lua: " << texPath << std::endl;
+		}
+		else {
+			std::cerr << "Failed to load texture from Lua: " << texPath << std::endl;
+			return SDL_Rect{ 0, 0, 0, 0 };
+		}
+		return TextureManager::DrawAuto(tex, this->renderer, static_cast<TextureManager::DisplayMode>(displayMode), alpha, offsetX, offsetY, scale);
+	});
+
+	// Lua 好像還要先註冊回去
+	lua["Engine"] = engineApi;
 }
