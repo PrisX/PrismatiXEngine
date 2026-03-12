@@ -9,6 +9,9 @@
 #include "AudioManager.h"
 #include "DialogueBox.h"
 
+#include <lua.hpp>
+#include <sol/sol.hpp>
+
 class PrismatiXEngine {
 public:
     // Constructor & Destructor
@@ -32,7 +35,9 @@ public:
     void PresentScreen();
 
     void DrawFullscreenBackground(SDL_Texture* bgTex, Uint8 alpha = 255);
+    
     void BindEngineToLua();
+    sol::state& GetLuaState() { return lua; }
 private:
     int lastWinW = 1280;
     int lastWinH = 720;

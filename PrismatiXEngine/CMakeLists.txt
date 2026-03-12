@@ -74,4 +74,5 @@ target_include_directories(PrismatiXEngine PRIVATE
     ${HOMEBREW_PREFIX}/include
     ${LUA_INCLUDE_DIR}
 )
+
 endif()

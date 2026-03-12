@@ -12,7 +12,10 @@ project ("PrismatiXEngine" LANGUAGES CXX)
 # Homebrew prefix (for macOS)
 if(APPLE)
     execute_process(COMMAND brew --prefix OUTPUT_VARIABLE HOMEBREW_PREFIX OUTPUT_STRIP_TRAILING_WHITESPACE)
-    list(APPEND CMAKE_PREFIX_PATH "${HOMEBREW_PREFIX}")
+    list(APPEND CMAKE_PREFIX_PATH
+    "${HOMEBREW_PREFIX}"
+    "/opt/homebrew/opt/lua@5.4"
+    )
 endif()
 
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")

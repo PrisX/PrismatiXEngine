@@ -2,9 +2,6 @@
 #include <iostream>
 #include "PrismatiXEngine.h"
 
-#include <lua.hpp>
-#include <sol/sol.hpp>
-
 #pragma execution_character_set("utf-8") // 防中文亂碼
 
 PrismatiXEngine::PrismatiXEngine() : isRunning(false), window(nullptr), renderer(nullptr), leftClick(false), rightClick(false), mouseWheelY(0) {}
@@ -57,7 +54,8 @@ bool PrismatiXEngine::Initialize(const std::string& title, int width, int height
 	lastWinW = width;
 	lastWinH = height;
 
-	
+	this->BindEngineToLua();
+
 	isRunning = true;
 	return true;
 }
@@ -137,6 +135,7 @@ void PrismatiXEngine::ClearScreen() {
 }
 
 void PrismatiXEngine::PresentScreen() {
+	lua.script("Engine.DrawAuto('bg.jpg', DisplayMode.Fill, 255, 0, 0, 1.0)");
 	SDL_RenderPresent(renderer);
 }
 
@@ -167,7 +166,7 @@ void PrismatiXEngine::BindEngineToLua() {
 
 	// [this] 是 Lambda Capture，讓 renderer 之類的可以用 owo
 	// Lua 不能直接寫 SDL_Texture
-	// this->renderer 應該比較保險
+	// this->renderer 應該比較保險，雖然這邊應該也是沒差啦..
 	engineApi.set_function("DrawAuto", [this](std::string& texPath, int displayMode, Uint8 alpha, int offsetX, int offsetY, float scale) {
 		SDL_Texture* tex = TextureManager::LoadTexture(texPath, this->renderer);
 		if (tex) {
@@ -180,6 +179,10 @@ void PrismatiXEngine::BindEngineToLua() {
 		return TextureManager::DrawAuto(tex, this->renderer, static_cast<TextureManager::DisplayMode>(displayMode), alpha, offsetX, offsetY, scale);
 	});
 
+	lua.new_enum("DisplayMode", 
+		"TopLeft", TextureManager::DisplayMode::TopLeft,
+		"TopRight", TextureManager::DisplayMode::TopRight, "BottomLeft", TextureManager::DisplayMode::BottomLeft, "BottomRight", TextureManager::DisplayMode::BottomRight, "Top", TextureManager::DisplayMode::Top, "Bottom", TextureManager::DisplayMode::Bottom, "Left", TextureManager::DisplayMode::Left, "Right", TextureManager::DisplayMode::Right, "Center", TextureManager::DisplayMode::Center, "FitWidthBottom", TextureManager::DisplayMode::FitWidthBottom, "Fit", TextureManager::DisplayMode::Fit, "Fill", TextureManager::DisplayMode::Fill);
 	// Lua 好像還要先註冊回去
 	lua["Engine"] = engineApi;
+
 }
