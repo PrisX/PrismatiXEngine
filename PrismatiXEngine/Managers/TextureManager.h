@@ -5,6 +5,12 @@
 #include <string>
 #include <unordered_map>
 
+struct ShadowConfig {
+	bool enabled = false;
+	int offsetX = 4;
+	int offsetY = 4;
+	Uint8 alpha = 100;
+};
 class TextureManager {
 public:
 	enum class DisplayMode {
@@ -22,12 +28,6 @@ public:
 		Fill
 	};
 
-	struct ShadowConfig {
-		bool enabled = false;
-		int offsetX = 4;
-		int offsetY = 4;
-		Uint8 alpha = 100;
-	};
 
 	static SDL_Texture* LoadTexture(const std::string& fileName, SDL_Renderer* ren); // 繼續傳址owo
 	static void Draw(SDL_Texture* tex, SDL_Renderer* ren, int x, int y, float scale); // 縮放
