@@ -4,6 +4,8 @@
 
 #include <iostream>
 
+#include "Utils/TransitionUtils.h"
+
 #pragma execution_character_set("utf-8")  // 防中文亂碼
 
 PrismatiXEngine::PrismatiXEngine() : isRunning(false), window(nullptr), renderer(nullptr), leftClick(false), rightClick(false), mouseWheelY(0) {}
@@ -168,10 +170,7 @@ void PrismatiXEngine::BindEngineToLua() {
     // this->renderer 應該比較保險，雖然這邊應該也是沒差啦..
     engineApi.set_function("DrawAuto", [this](const std::string& texPath, int displayMode, Uint8 alpha, int offsetX, int offsetY, float scale) {
         SDL_Texture* tex = TextureManager::LoadTexture(texPath, this->renderer);
-        if (tex) {
-            std::cout << "Loaded texture from Lua: " << texPath << std::endl;
-        }
-        else {
+        if (!tex) {
             std::cerr << "Failed to load texture from Lua: " << texPath << std::endl;
             return SDL_Rect{ 0, 0, 0, 0 };
         }
@@ -182,6 +181,54 @@ void PrismatiXEngine::BindEngineToLua() {
                  TextureManager::DisplayMode::Top, "Bottom", TextureManager::DisplayMode::Bottom, "Left", TextureManager::DisplayMode::Left, "Right", TextureManager::DisplayMode::Right, "Center", TextureManager::DisplayMode::Center, "FitWidthBottom",
                  TextureManager::DisplayMode::FitWidthBottom, "Fit", TextureManager::DisplayMode::Fit, "Fill", TextureManager::DisplayMode::Fill);
     // Lua 好像還要先註冊回去
+
+    engineApi.set_function("FadeInBg", [this](const std::string& texPath, int displayMode, int durationMs) {
+        SDL_Texture* tex = TextureManager::LoadTexture(texPath, this->renderer);
+        if (!tex) return;
+
+        float alpha = 0.0f;
+        float step = 255.0f * 16.0f / static_cast<float>(durationMs > 0 ? durationMs : 1);
+
+        while (true) {
+            bool done = TransitionUtils::FadeIn(alpha, step);
+            SDL_SetRenderDrawColor(this->renderer, 0, 0, 0, 255);
+            SDL_RenderClear(this->renderer);
+            TextureManager::DrawAuto(tex, this->renderer, static_cast<TextureManager::DisplayMode>(displayMode), static_cast<Uint8>(alpha));
+            SDL_RenderPresent(this->renderer);
+            if (done) break;
+            SDL_Delay(16);
+        }
+    });
+
+    engineApi.set_function("FadeOutBg", [this](const std::string& texPath, int displayMode, int durationMs) {
+        SDL_Texture* tex = TextureManager::LoadTexture(texPath, this->renderer);
+        if (!tex) return;
+
+        float alpha = 255.0f;
+        float step = 255.0f * 16.0f / static_cast<float>(durationMs > 0 ? durationMs : 1);
+
+        while (true) {
+            bool done = TransitionUtils::FadeOut(alpha, step);
+            SDL_SetRenderDrawColor(this->renderer, 0, 0, 0, 255);
+            SDL_RenderClear(this->renderer);
+            TextureManager::DrawAuto(tex, this->renderer, static_cast<TextureManager::DisplayMode>(displayMode), static_cast<Uint8>(alpha));
+            SDL_RenderPresent(this->renderer);
+            if (done) break;
+            SDL_Delay(16);
+        }
+    });
+
+    engineApi.set_function("PlaySFX", [](const std::string& sfxFile) { AudioManager::PlaySFX(sfxFile); });
+
+    engineApi.set_function("Wait", [this](int durationMs) {
+        Uint32 startTime = SDL_GetTicks();
+        Uint32 duration = static_cast<Uint32>(durationMs > 0 ? durationMs : 0);
+
+        while (SDL_GetTicks() - startTime < duration && this->IsRunning()) {
+            this->HandleEvents();
+            SDL_Delay(1);
+        }
+    });
 
     lua["Engine"] = engineApi;
 }

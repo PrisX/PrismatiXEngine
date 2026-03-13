@@ -76,3 +76,5 @@ target_include_directories(PrismatiXEngine PRIVATE
 )
 
 endif()
+
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/Scripts DESTINATION ${CMAKE_CURRENT_BINARY_DIR})

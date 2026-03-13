@@ -1,9 +1,9 @@
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <sstream>
 
 #include "Controllers/DialogueController.h"
-#include "Controllers/SplashController.h"
 #include "DialogueBox.h"
 #include "MainMenu.h"
 #include "Managers/ArchiveManager.h"
@@ -19,7 +19,60 @@
 
 #pragma execution_character_set("utf-8")  // 防中文亂碼
 
-enum class GameState { SplashScreen, MainMenu, InGame, SaveMenu, LoadMenu };
+enum class GameState { MainMenu, InGame, SaveMenu, LoadMenu };
+
+static bool RunSplashScreenLua(PrismatiXEngine& engine, const std::string& splashScriptPath, bool required) {
+    std::string scriptContent;
+
+    std::vector<char> archiveBuffer = ArchiveManager::ExtractFile(splashScriptPath);
+    if (!archiveBuffer.empty()) {
+        scriptContent.assign(archiveBuffer.begin(), archiveBuffer.end());
+    }
+    else {
+        std::ifstream in(splashScriptPath);
+        if (in) {
+            std::stringstream ss;
+            ss << in.rdbuf();
+            scriptContent = ss.str();
+        }
+    }
+
+    if (scriptContent.empty()) {
+        if (required) {
+            std::cerr << "Required splash script not found: " << splashScriptPath << std::endl;
+            return false;
+        }
+        std::cout << "Optional splash script not found, skipping: " << splashScriptPath << std::endl;
+        return true;
+    }
+
+    auto& lua = engine.GetLuaState();
+    sol::protected_function_result loadResult = lua.safe_script(scriptContent, &sol::script_pass_on_error);
+    if (!loadResult.valid()) {
+        sol::error err = loadResult;
+        std::cerr << "Failed to load splash script (" << splashScriptPath << "): " << err.what() << std::endl;
+        return false;
+    }
+
+    sol::protected_function splashScreen = lua["SplashScreen"];
+    if (!splashScreen.valid()) {
+        if (required) {
+            std::cerr << "SplashScreen() not found in required script: " << splashScriptPath << std::endl;
+            return false;
+        }
+        std::cout << "SplashScreen() not found in optional script, skipping: " << splashScriptPath << std::endl;
+        return true;
+    }
+
+    sol::protected_function_result runResult = splashScreen();
+    if (!runResult.valid()) {
+        sol::error err = runResult;
+        std::cerr << "SplashScreen() runtime error (" << splashScriptPath << "): " << err.what() << std::endl;
+        return false;
+    }
+
+    return true;
+}
 
 int main(int argc, char* argv[]) {
     if (!ArchiveManager::MountArchive("Engine.pdx")) {
@@ -71,10 +124,17 @@ int main(int argc, char* argv[]) {
     SDL_Texture* titleBg = TextureManager::LoadTexture(initBgFile, renderer);
 
     std::vector<VNCommand> script;
-    GameState currentState = GameState::SplashScreen;
+    GameState currentState = GameState::MainMenu;
     GameState previousState = GameState::MainMenu;
-    SplashController splashController;
-    splashController.Init(renderer);
+
+    std::string userSplashScript = ConfigManager::GetString("SplashScript", "");
+    if (!userSplashScript.empty() && !RunSplashScreenLua(engine, userSplashScript, false)) {
+        return -1;
+    }
+
+    if (!RunSplashScreenLua(engine, "Scripts/engine_splash.lua", true)) {
+        return -1;
+    }
 
     TransitionUtils::Transition screenTransition;
     screenTransition.speed = 8.0f;
@@ -86,16 +146,7 @@ int main(int argc, char* argv[]) {
         bool isFading = screenTransition.IsActive();
 
         engine.ClearScreen();
-        if (currentState == GameState::SplashScreen) {
-            splashController.Update();
-            splashController.Render(renderer, winW, winH);
-
-            if (splashController.IsFinished()) {
-                currentState = GameState::MainMenu;
-                mainMenuAlpha = 0.0f;
-            }
-        }
-        else if (currentState == GameState::MainMenu) {
+        if (currentState == GameState::MainMenu) {
             if (titleBg) {
                 engine.DrawFullscreenBackground(titleBg, (Uint8)mainMenuAlpha);
             }
@@ -104,12 +155,7 @@ int main(int argc, char* argv[]) {
             vnController.RenderBackground(engine);
         }
 
-        if (currentState == GameState::SplashScreen) {
-            if (engine.GetLeftClick()) {
-                splashController.HandleClick();
-            }
-        }
-        else if (currentState == GameState::MainMenu) {
+        if (currentState == GameState::MainMenu) {
             TransitionUtils::FadeIn(mainMenuAlpha, MAIN_MENU_FADE_SPEED);
 
             if (titleBg) {
