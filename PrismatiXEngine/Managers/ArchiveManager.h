@@ -1,8 +1,8 @@
 #pragma once
+#include <cstdint>  // uint64_t
 #include <string>
-#include <vector>
 #include <unordered_map>
-#include <cstdint> // uint64_t
+#include <vector>
 
 struct PDXFileEntry {
     std::string archivePath;

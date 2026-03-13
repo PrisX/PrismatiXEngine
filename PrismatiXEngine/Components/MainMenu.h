@@ -1,8 +1,10 @@
 #pragma once
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
+
 #include <string>
 #include <vector>
+
 #include "Managers/TextManager.h"
 
 struct MainMenuButton {
@@ -21,19 +23,18 @@ public:
     MainMenu(TTF_Font* uiFont, int screenW, int screenH) : font(uiFont) {
         int btnW = 250;
         int btnH = 50;
-        int startX = 100;               
-        int startY = screenH - 250;     
+        int startX = 100;
+        int startY = screenH - 250;
         int gap = 60;
 
-        buttons.push_back({ "Start Game", "Start", {startX, startY, btnW, btnH} });
-        buttons.push_back({ "Load Game", "Load", {startX, startY + gap, btnW, btnH} });
-        buttons.push_back({ "Exit", "Exit", {startX, startY + gap * 2, btnW, btnH} });
+        buttons.push_back({ "Start Game", "Start", { startX, startY, btnW, btnH } });
+        buttons.push_back({ "Load Game", "Load", { startX, startY + gap, btnW, btnH } });
+        buttons.push_back({ "Exit", "Exit", { startX, startY + gap * 2, btnW, btnH } });
     }
 
     std::string Update(int mouseX, int mouseY, bool isClicked) {
         for (auto& btn : buttons) {
-            btn.isHovered = (mouseX >= btn.rect.x && mouseX <= btn.rect.x + btn.rect.w &&
-                mouseY >= btn.rect.y && mouseY <= btn.rect.y + btn.rect.h);
+            btn.isHovered = (mouseX >= btn.rect.x && mouseX <= btn.rect.x + btn.rect.w && mouseY >= btn.rect.y && mouseY <= btn.rect.y + btn.rect.h);
 
             if (isClicked && btn.isHovered) {
                 return btn.action;
@@ -52,10 +53,10 @@ public:
                 SDL_SetRenderDrawColor(renderer, 255, 255, 255, 40);
                 SDL_RenderFillRect(renderer, &btn.rect);
 
-                TextManager::DrawWithOutline(renderer, font, btn.text, hoverCol, { 0,0,0,255 }, 2, btn.rect.x + 20, btn.rect.y + 10);
+                TextManager::DrawWithOutline(renderer, font, btn.text, hoverCol, { 0, 0, 0, 255 }, 2, btn.rect.x + 20, btn.rect.y + 10);
             }
             else {
-                TextManager::DrawWithOutline(renderer, font, btn.text, textCol, { 0,0,0,255 }, 2, btn.rect.x + 20, btn.rect.y + 10);
+                TextManager::DrawWithOutline(renderer, font, btn.text, textCol, { 0, 0, 0, 255 }, 2, btn.rect.x + 20, btn.rect.y + 10);
             }
         }
     }

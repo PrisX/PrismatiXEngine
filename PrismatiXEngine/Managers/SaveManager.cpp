@@ -1,9 +1,11 @@
 #include "SaveManager.h"
-#include "VariableManager.h"
-#include "BacklogManager.h"
+
+#include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <filesystem>
+
+#include "BacklogManager.h"
+#include "VariableManager.h"
 
 bool SaveManager::SaveGame(int slot, const std::string& scriptName, int line, const std::string& bgName, const std::string& bgmName, const std::vector<SavedCharacter>& characters) {
     std::filesystem::create_directories("Save");
@@ -52,10 +54,22 @@ bool SaveManager::LoadGame(int slot, std::string& outScript, int& outLine, std::
     while (std::getline(in, lineStr)) {
         if (lineStr.empty() || lineStr[0] == ';') continue;
 
-        if (lineStr == "[STATE]") { currentSection = 0; continue; }
-        if (lineStr == "[CHARACTERS]") { currentSection = 1; continue; }
-        if (lineStr == "[VARIABLES]") { currentSection = 2; continue; }
-        if (lineStr == "[BACKLOG]") { currentSection = 3; continue; }
+        if (lineStr == "[STATE]") {
+            currentSection = 0;
+            continue;
+        }
+        if (lineStr == "[CHARACTERS]") {
+            currentSection = 1;
+            continue;
+        }
+        if (lineStr == "[VARIABLES]") {
+            currentSection = 2;
+            continue;
+        }
+        if (lineStr == "[BACKLOG]") {
+            currentSection = 3;
+            continue;
+        }
 
         if (currentSection == 3) {
             size_t p1 = lineStr.find('|');
@@ -64,9 +78,9 @@ bool SaveManager::LoadGame(int slot, std::string& outScript, int& outLine, std::
             if (p3 != std::string::npos) {
                 BacklogEntry entry;
                 entry.isChoice = (lineStr.substr(0, p1) == "1");
-                entry.speaker  = lineStr.substr(p1 + 1, p2 - p1 - 1);
-                entry.voice    = lineStr.substr(p2 + 1, p3 - p2 - 1);
-                entry.text     = lineStr.substr(p3 + 1);
+                entry.speaker = lineStr.substr(p1 + 1, p2 - p1 - 1);
+                entry.voice = lineStr.substr(p2 + 1, p3 - p2 - 1);
+                entry.text = lineStr.substr(p3 + 1);
                 BacklogManager::logs.push_back(entry);
             }
             continue;
@@ -78,10 +92,14 @@ bool SaveManager::LoadGame(int slot, std::string& outScript, int& outLine, std::
             std::string val = lineStr.substr(eqPos + 1);
 
             if (currentSection == 0) {
-                if (key == "Script") outScript = val;
-                else if (key == "Line") outLine = std::stoi(val);
-                else if (key == "BG") outBg = val;
-                else if (key == "BGM") outBgm = val;
+                if (key == "Script")
+                    outScript = val;
+                else if (key == "Line")
+                    outLine = std::stoi(val);
+                else if (key == "BG")
+                    outBg = val;
+                else if (key == "BGM")
+                    outBgm = val;
             }
             else if (currentSection == 1) {
                 size_t commaPos = val.find(',');

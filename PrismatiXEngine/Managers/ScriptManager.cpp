@@ -1,7 +1,9 @@
 #include "ScriptManager.h"
-#include "ArchiveManager.h"
-#include <sstream>
+
 #include <iostream>
+#include <sstream>
+
+#include "ArchiveManager.h"
 
 std::vector<VNCommand> ScriptManager::ParseFile(const std::string& fileName) {
     std::vector<VNCommand> script;
@@ -102,8 +104,7 @@ SDL_Color ScriptManager::ParseColor(const std::string& colorStr, SDL_Color defau
     if (std::getline(ss, r, ',') && std::getline(ss, g, ',') && std::getline(ss, b, ',')) {
         try {
             return { (Uint8)std::stoi(r), (Uint8)std::stoi(g), (Uint8)std::stoi(b), 255 };
-        }
-        catch (const std::exception& e) {
+        } catch (const std::exception& e) {
             std::cerr << "Invalid color format (" << colorStr << "), using default colors instead." << std::endl;
             return defaultColor;
         }

@@ -1,16 +1,18 @@
 #include "DialogueController.h"
-#include <iostream>
+
 #include <algorithm>
-#include "TextureManager.h"
-#include "TextManager.h"
-#include "AudioManager.h"
+#include <iostream>
+
 #include "ArchiveManager.h"
-#include "VariableManager.h"
-#include "UIManager.h"
+#include "AudioManager.h"
 #include "BacklogManager.h"
 #include "PrismatiXEngine.h"
-#include "Utils/TransitionUtils.h"
+#include "TextManager.h"
+#include "TextureManager.h"
+#include "UIManager.h"
 #include "Utils/EasingUtils.h"
+#include "Utils/TransitionUtils.h"
+#include "VariableManager.h"
 
 DialogueController::DialogueController(DialogueBox* box, TTF_Font* font, SDL_Renderer* ren) {
     dialogueBox = box;
@@ -70,7 +72,7 @@ void DialogueController::RestoreSavedCharacters(const std::vector<SavedCharacter
         ac.diff = sc.diff;
         ac.pos = sc.pos;
         ac.alpha = 0.0f;
-        ac.targetAlpha = 255.0f; 
+        ac.targetAlpha = 255.0f;
         ac.isExiting = false;
 
         ac.currentX = 1280.0f / 2.0f;
@@ -80,10 +82,9 @@ void DialogueController::RestoreSavedCharacters(const std::vector<SavedCharacter
 
     RecalculateTargetPositions();
 
-
-    //for (auto& [name, ac] : activeCharacters) {
-    //    ac.currentX = ac.targetX;
-    //}
+    // for (auto& [name, ac] : activeCharacters) {
+    //     ac.currentX = ac.targetX;
+    // }
 }
 
 void DialogueController::RestoreBackground(const std::string& bgName) {
@@ -140,12 +141,9 @@ void DialogueController::ScrollBacklog(int direction) {
 void DialogueController::RecalculateTargetPositions() {
     std::vector<ActiveCharacter*> nonExiting;
     for (auto& [name, chara] : activeCharacters) {
-        if (!chara.isExiting)
-            nonExiting.push_back(&chara);
+        if (!chara.isExiting) nonExiting.push_back(&chara);
     }
-    std::sort(nonExiting.begin(), nonExiting.end(), [](const ActiveCharacter* a, const ActiveCharacter* b) {
-        return a->pos < b->pos;
-        });
+    std::sort(nonExiting.begin(), nonExiting.end(), [](const ActiveCharacter* a, const ActiveCharacter* b) { return a->pos < b->pos; });
 
     int total = (int)nonExiting.size();
     int screenWidth = 1280;
@@ -221,11 +219,9 @@ void DialogueController::ExecuteNextCommands() {
             SDL_Color defaultText = { 255, 255, 255, 255 };
             SDL_Color defaultOutline = { 0, 0, 0, 255 };
 
-            SDL_Color textColor = cmd.args.count("color") ?
-                ScriptManager::ParseColor(cmd.args["color"], defaultText) : defaultText;
+            SDL_Color textColor = cmd.args.count("color") ? ScriptManager::ParseColor(cmd.args["color"], defaultText) : defaultText;
 
-            SDL_Color outlineColor = cmd.args.count("olcolor") ?
-                ScriptManager::ParseColor(cmd.args["olcolor"], defaultOutline) : defaultOutline;
+            SDL_Color outlineColor = cmd.args.count("olcolor") ? ScriptManager::ParseColor(cmd.args["olcolor"], defaultOutline) : defaultOutline;
 
             if (!skipNextLog) {
                 BacklogManager::AddLog(speaker, content, pendingVoice);
@@ -252,7 +248,7 @@ void DialogueController::ExecuteNextCommands() {
         }
         else if (cmd.type == "stopbgm") {
             AudioManager::StopBGM();
-			currentBgmName.clear();
+            currentBgmName.clear();
             currentLine++;
         }
         else if (cmd.type == "se") {
@@ -262,8 +258,11 @@ void DialogueController::ExecuteNextCommands() {
         else if (cmd.type == "set") {
             std::string varName = cmd.args["var"];
             int value = 0;
-            try { if (cmd.args.count("val")) value = std::stoi(cmd.args["val"]); }
-            catch (...) { std::cerr << "Failed to parse val parameters.\n"; }
+            try {
+                if (cmd.args.count("val")) value = std::stoi(cmd.args["val"]);
+            } catch (...) {
+                std::cerr << "Failed to parse val parameters.\n";
+            }
 
             VariableManager::Set(varName, value);
             currentLine++;
@@ -271,8 +270,11 @@ void DialogueController::ExecuteNextCommands() {
         else if (cmd.type == "add") {
             std::string varName = cmd.args["var"];
             int value = 0;
-            try { if (cmd.args.count("val")) value = std::stoi(cmd.args["val"]); }
-            catch (...) { std::cerr << "Failed to parse val parameters.\n"; }
+            try {
+                if (cmd.args.count("val")) value = std::stoi(cmd.args["val"]);
+            } catch (...) {
+                std::cerr << "Failed to parse val parameters.\n";
+            }
 
             VariableManager::Add(varName, value);
             currentLine++;
@@ -320,8 +322,11 @@ void DialogueController::ExecuteNextCommands() {
             std::string op = cmd.args["op"];
             int val = 0;
 
-            try { if (cmd.args.count("val")) val = std::stoi(cmd.args["val"]); }
-            catch (...) { std::cerr << "Failed to parse val parameters.\n"; }
+            try {
+                if (cmd.args.count("val")) val = std::stoi(cmd.args["val"]);
+            } catch (...) {
+                std::cerr << "Failed to parse val parameters.\n";
+            }
 
             if (VariableManager::Check(varName, op, val)) {
                 currentLine++;
@@ -330,7 +335,8 @@ void DialogueController::ExecuteNextCommands() {
                 int depth = 0;
                 bool found = false;
                 while (++currentLine < (int)commands.size()) {
-                    if (commands[currentLine].type == "if") depth++;
+                    if (commands[currentLine].type == "if")
+                        depth++;
                     else if (commands[currentLine].type == "else" && depth == 0) {
                         currentLine++;
                         found = true;
@@ -342,7 +348,8 @@ void DialogueController::ExecuteNextCommands() {
                             found = true;
                             break;
                         }
-                        else depth--;
+                        else
+                            depth--;
                     }
                 }
                 if (!found) {
@@ -354,14 +361,16 @@ void DialogueController::ExecuteNextCommands() {
             int depth = 0;
             bool found = false;
             while (++currentLine < (int)commands.size()) {
-                if (commands[currentLine].type == "if") depth++;
+                if (commands[currentLine].type == "if")
+                    depth++;
                 else if (commands[currentLine].type == "endif") {
                     if (depth == 0) {
                         currentLine++;
                         found = true;
                         break;
                     }
-                    else depth--;
+                    else
+                        depth--;
                 }
             }
             if (!found) {
@@ -480,11 +489,10 @@ void DialogueController::Update(int mx, int my) {
         }
     }
 
-    for (auto i = activeCharacters.begin(); i != activeCharacters.end(); ) {
+    for (auto i = activeCharacters.begin(); i != activeCharacters.end();) {
         ActiveCharacter& chara = i->second;
 
-        float targetAlpha = chara.isExiting ? 0.0f :
-            (currentSpeakingChar.empty() || i->first == currentSpeakingChar) ? 255.0f : 180.0f;
+        float targetAlpha = chara.isExiting ? 0.0f : (currentSpeakingChar.empty() || i->first == currentSpeakingChar) ? 255.0f : 180.0f;
         EasingUtils::ExpDecay(chara.alpha, targetAlpha, 0.08f);
 
         if (!chara.isExiting) {
@@ -553,9 +561,7 @@ void DialogueController::Render(SDL_Renderer* renderer) {
             sortedChars.push_back(chara);
         }
 
-        std::sort(sortedChars.begin(), sortedChars.end(), [](const ActiveCharacter& a, const ActiveCharacter& b) {
-            return a.pos < b.pos;
-            });
+        std::sort(sortedChars.begin(), sortedChars.end(), [](const ActiveCharacter& a, const ActiveCharacter& b) { return a.pos < b.pos; });
 
         for (const auto& chara : sortedChars) {
             std::string fileName = chara.name + "_" + chara.diff + ".png";

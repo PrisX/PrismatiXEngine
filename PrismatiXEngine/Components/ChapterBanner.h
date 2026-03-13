@@ -2,7 +2,9 @@
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
+
 #include <string>
+
 #include "TextManager.h"
 #include "TextureManager.h"
 #include "Utils/EasingUtils.h"
@@ -33,21 +35,20 @@ struct ChapterBanner {
 
         const float slideFactor = 0.18f;
         switch (state) {
-        case State::SlideIn:
-            if (EasingUtils::ExpDecay(currentX, targetX, slideFactor)) {
-                state = State::Staying;
-                stayTimer = 300;
-            }
-            break;
-        case State::Staying:
-            if (--stayTimer <= 0)
-                state = State::FadeOut;
-            break;
-        case State::FadeOut:
-            if (TransitionUtils::FadeOut(alpha, 4.0f))
-                state = State::Idle;
-            break;
-        default: break;
+            case State::SlideIn:
+                if (EasingUtils::ExpDecay(currentX, targetX, slideFactor)) {
+                    state = State::Staying;
+                    stayTimer = 300;
+                }
+                break;
+            case State::Staying:
+                if (--stayTimer <= 0) state = State::FadeOut;
+                break;
+            case State::FadeOut:
+                if (TransitionUtils::FadeOut(alpha, 4.0f)) state = State::Idle;
+                break;
+            default:
+                break;
         }
     }
 
@@ -85,8 +86,7 @@ struct ChapterBanner {
 
             SDL_Color textColor = { 255, 240, 180, a };
             SDL_Color outlineColor = { 0, 0, 0, a };
-            TextManager::DrawWithOutline(renderer, font, text, textColor, outlineColor, 1,
-                fbX + padX, boxY + padY, 0, a);
+            TextManager::DrawWithOutline(renderer, font, text, textColor, outlineColor, 1, fbX + padX, boxY + padY, 0, a);
         }
     }
 };

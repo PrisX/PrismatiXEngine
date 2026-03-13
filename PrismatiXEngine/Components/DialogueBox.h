@@ -1,33 +1,34 @@
 #pragma once
 
 #include <SDL2/SDL.h>
-#include <string>
-#include <vector>
 #include <TextManager.h>
 #include <TextureManager.h>
 #include <Utils/TransitionUtils.h>
 
+#include <string>
+#include <vector>
+
 class DialogueBox {
 private:
-	std::vector<std::string> parsedCharacters; // 拆字，做進入動畫owob
-	std::string currentDisplayText;
-	std::string displayedText;     // 已完全顯示的字
-	std::string currentSpeakerName;
-	SDL_Color currentTextColor;
-	SDL_Color currentOutlineColor;
+    std::vector<std::string> parsedCharacters;  // 拆字，做進入動畫owob
+    std::string currentDisplayText;
+    std::string displayedText;  // 已完全顯示的字
+    std::string currentSpeakerName;
+    SDL_Color currentTextColor;
+    SDL_Color currentOutlineColor;
 
-	int currentIndex = 0;
-	Uint32 lastTime = 0; // ms
+    int currentIndex = 0;
+    Uint32 lastTime = 0;  // ms
 
-	int textSpeed = 50; // ms per char
+    int textSpeed = 50;  // ms per char
 
-	Uint8 fadeAlpha = 255;
-	Uint32 fadeStartTime = 0;
-	static constexpr Uint32 fadeDuration = 150; // ms (0 -> 255)
+    Uint8 fadeAlpha = 255;
+    Uint32 fadeStartTime = 0;
+    static constexpr Uint32 fadeDuration = 150;  // ms (0 -> 255)
 
-	TTF_Font* font;
-	TTF_Font* nameFont = nullptr;
-	int x, y;
+    TTF_Font* font;
+    TTF_Font* nameFont = nullptr;
+    int x, y;
 
     void ParseUTF8(const std::string& text) {
         parsedCharacters.clear();
@@ -36,10 +37,14 @@ private:
             unsigned char c = text[i];
             size_t len = 1;
             // UTF-8 神奇拆解，反正就是要用記憶體位置 https://stackoverflow.com/questions/45716356/utf-text-in-sdl2
-            if ((c & 0x80) == 0) len = 1;         // English / Numbers (1 Byte)
-            else if ((c & 0xE0) == 0xC0) len = 2; // Idk tf is this (2 Bytes)
-            else if ((c & 0xF0) == 0xE0) len = 3; // Chinese / Japanese (3 Bytes)
-            else if ((c & 0xF8) == 0xF0) len = 4; // Emoji (4 Bytes)
+            if ((c & 0x80) == 0)
+                len = 1;  // English / Numbers (1 Byte)
+            else if ((c & 0xE0) == 0xC0)
+                len = 2;  // Idk tf is this (2 Bytes)
+            else if ((c & 0xF0) == 0xE0)
+                len = 3;  // Chinese / Japanese (3 Bytes)
+            else if ((c & 0xF8) == 0xF0)
+                len = 4;  // Emoji (4 Bytes)
 
             parsedCharacters.push_back(text.substr(i, len));
             i += len;
@@ -62,7 +67,7 @@ public:
         currentDisplayText = "";
         displayedText = "";
         currentTextColor = textColor;
-		currentOutlineColor = outlineColor;
+        currentOutlineColor = outlineColor;
         currentIndex = 0;
         textSpeed = speed;
         lastTime = SDL_GetTicks();
@@ -92,7 +97,6 @@ public:
     void Render(SDL_Renderer* renderer) {
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
- 
         SDL_Texture* boxTex = TextureManager::LoadTexture("dialoguebox.png", renderer);
 
         int boxX = 30, boxY = 560, boxW = 1220, boxH = 140;
@@ -120,7 +124,6 @@ public:
             SDL_RenderFillRect(renderer, &uiRect);
         }
 
-
         if (!currentSpeakerName.empty()) {
             SDL_Texture* namePlateTex = TextureManager::LoadTexture("nameplate.png", renderer);
             SDL_Rect namePlateRect = TextureManager::DrawAuto(namePlateTex, renderer, TextureManager::DisplayMode::BottomLeft, 255, 120, -180, 0.7f, { true, 1, 1, 110 });
@@ -144,7 +147,6 @@ public:
             }
         }
 
-
         if (!currentDisplayText.empty()) {
             SDL_Color textColor = currentTextColor;
             SDL_Color outlineColor = currentOutlineColor;
@@ -165,7 +167,7 @@ public:
         }
     }
 
-	// If click
+    // If click
     void ShowAll() {
         if (currentIndex < parsedCharacters.size()) {
             currentDisplayText = "";
@@ -177,9 +179,6 @@ public:
         displayedText = currentDisplayText;
         fadeAlpha = 255;
     }
-    
-    bool IsFinished() const {
-        return currentIndex >= parsedCharacters.size();
-    }
 
+    bool IsFinished() const { return currentIndex >= parsedCharacters.size(); }
 };

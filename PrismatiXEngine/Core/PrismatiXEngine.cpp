@@ -77,7 +77,8 @@ void PrismatiXEngine::HandleEvents() {
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_QUIT) {
             isRunning = false;
-        } else if (event.type == SDL_WINDOWEVENT) {
+        }
+        else if (event.type == SDL_WINDOWEVENT) {
             if (event.window.event == SDL_WINDOWEVENT_RESIZED) {
                 int newW = event.window.data1;
                 int newH = event.window.data2;
@@ -102,9 +103,11 @@ void PrismatiXEngine::HandleEvents() {
 
                 if (deltaW > deltaH) {
                     targetH = (newW * 9) / 16;
-                } else if (deltaH > deltaW) {
+                }
+                else if (deltaH > deltaW) {
                     targetW = (newH * 16) / 9;
-                } else {
+                }
+                else {
                     targetH = (newW * 9) / 16;
                 }
 
@@ -113,13 +116,16 @@ void PrismatiXEngine::HandleEvents() {
                 lastWinW = targetW;
                 lastWinH = targetH;
             }
-        } else if (event.type == SDL_MOUSEBUTTONDOWN) {
+        }
+        else if (event.type == SDL_MOUSEBUTTONDOWN) {
             if (event.button.button == SDL_BUTTON_LEFT) {
                 leftClick = true;
-            } else if (event.button.button == SDL_BUTTON_RIGHT) {
+            }
+            else if (event.button.button == SDL_BUTTON_RIGHT) {
                 rightClick = true;
             }
-        } else if (event.type == SDL_MOUSEWHEEL) {
+        }
+        else if (event.type == SDL_MOUSEWHEEL) {
             mouseWheelY = event.wheel.y;
         }
     }
@@ -164,9 +170,10 @@ void PrismatiXEngine::BindEngineToLua() {
         SDL_Texture* tex = TextureManager::LoadTexture(texPath, this->renderer);
         if (tex) {
             std::cout << "Loaded texture from Lua: " << texPath << std::endl;
-        } else {
+        }
+        else {
             std::cerr << "Failed to load texture from Lua: " << texPath << std::endl;
-            return SDL_Rect{0, 0, 0, 0};
+            return SDL_Rect{ 0, 0, 0, 0 };
         }
         return TextureManager::DrawAuto(tex, this->renderer, static_cast<TextureManager::DisplayMode>(displayMode), alpha, offsetX, offsetY, scale);
     });

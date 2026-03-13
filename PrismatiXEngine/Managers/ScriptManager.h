@@ -1,8 +1,9 @@
 #pragma once
-#include <vector>
-#include <string>
-#include <map>
 #include <SDL2/SDL.h>
+
+#include <map>
+#include <string>
+#include <vector>
 
 struct VNCommand {
     std::string type;

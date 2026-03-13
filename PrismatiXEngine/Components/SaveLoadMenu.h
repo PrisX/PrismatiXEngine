@@ -1,11 +1,13 @@
 #pragma once
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
+
+#include <fstream>
 #include <string>
 #include <vector>
-#include <fstream>
-#include "Managers/TextManager.h"
+
 #include "Managers/SaveManager.h"
+#include "Managers/TextManager.h"
 
 enum class SLMode { Save, Load };
 
@@ -37,7 +39,7 @@ private:
         slot.isEmpty = false;
         std::string lineStr, scriptName, lineNum;
         while (std::getline(in, lineStr)) {
-            if (lineStr == "[VARIABLES]") break; 
+            if (lineStr == "[VARIABLES]") break;
             size_t eqPos = lineStr.find('=');
             if (eqPos != std::string::npos) {
                 std::string key = lineStr.substr(0, eqPos);
@@ -59,9 +61,7 @@ public:
         for (int i = 0; i < 9; ++i) {
             SaveSlot slot;
             slot.id = i + 1;
-            slot.rect = { startX + (i % 3) * (slotW + gapX),
-                          startY + (i / 3) * (slotH + gapY),
-                          slotW, slotH };
+            slot.rect = { startX + (i % 3) * (slotW + gapX), startY + (i / 3) * (slotH + gapY), slotW, slotH };
             slot.isHovered = false;
             slots.push_back(slot);
         }
@@ -77,14 +77,12 @@ public:
     }
 
     int Update(int mouseX, int mouseY, bool isClicked) {
-        hoverClose = (mouseX >= btnClose.x && mouseX <= btnClose.x + btnClose.w &&
-            mouseY >= btnClose.y && mouseY <= btnClose.y + btnClose.h);
+        hoverClose = (mouseX >= btnClose.x && mouseX <= btnClose.x + btnClose.w && mouseY >= btnClose.y && mouseY <= btnClose.y + btnClose.h);
 
         if (isClicked && hoverClose) return -1;
 
         for (auto& slot : slots) {
-            slot.isHovered = (mouseX >= slot.rect.x && mouseX <= slot.rect.x + slot.rect.w &&
-                mouseY >= slot.rect.y && mouseY <= slot.rect.y + slot.rect.h);
+            slot.isHovered = (mouseX >= slot.rect.x && mouseX <= slot.rect.x + slot.rect.w && mouseY >= slot.rect.y && mouseY <= slot.rect.y + slot.rect.h);
 
             if (isClicked && slot.isHovered) {
                 if (mode == SLMode::Load && slot.isEmpty) continue;
@@ -103,12 +101,14 @@ public:
         SDL_Color textCol = { 255, 255, 255, 255 };
         SDL_Color hoverCol = { 255, 215, 0, 255 };
         std::string title = (mode == SLMode::Save) ? "--- 存檔 SAVE ---" : "--- 讀檔 LOAD ---";
-        TextManager::DrawWithOutline(renderer, font, title, textCol, { 0,0,0,255 }, 2, 50, 40);
+        TextManager::DrawWithOutline(renderer, font, title, textCol, { 0, 0, 0, 255 }, 2, 50, 40);
         TextManager::Draw(renderer, font, "Return", hoverClose ? hoverCol : textCol, btnClose.x, btnClose.y);
 
         for (const auto& slot : slots) {
-            if (slot.isHovered) SDL_SetRenderDrawColor(renderer, 80, 80, 80, 255);
-            else SDL_SetRenderDrawColor(renderer, 40, 40, 40, 255);
+            if (slot.isHovered)
+                SDL_SetRenderDrawColor(renderer, 80, 80, 80, 255);
+            else
+                SDL_SetRenderDrawColor(renderer, 40, 40, 40, 255);
             SDL_RenderFillRect(renderer, &slot.rect);
 
             SDL_SetRenderDrawColor(renderer, 200, 200, 200, 255);

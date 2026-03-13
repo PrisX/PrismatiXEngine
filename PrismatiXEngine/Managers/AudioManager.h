@@ -1,13 +1,14 @@
 #pragma once
 #include <SDL_mixer.h>
+
+#include <iostream>
 #include <string>
 #include <unordered_map>
-#include <iostream>
 
 class AudioManager {
 public:
     // BGM
-    static void PlayBGM(const std::string& fileName, int loops = -1); // 無限循環
+    static void PlayBGM(const std::string& fileName, int loops = -1);  // 無限循環
     static void StopBGM();
 
     // SFX
@@ -15,7 +16,7 @@ public:
 
     // Vocal
     static void PlayVoice(const std::string& fileName);
-    static void StopVoice(); // Let characters shut the fuck up
+    static void StopVoice();  // Let characters shut the fuck up
 
     // Cache
     static void CleanCache();

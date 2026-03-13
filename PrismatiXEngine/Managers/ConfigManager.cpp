@@ -1,7 +1,9 @@
 #include "ConfigManager.h"
-#include "ArchiveManager.h"
-#include <sstream>
+
 #include <iostream>
+#include <sstream>
+
+#include "ArchiveManager.h"
 
 std::unordered_map<std::string, std::string> ConfigManager::settings;
 
@@ -17,8 +19,7 @@ bool ConfigManager::LoadConfig(const std::string& fileName) {
     std::string line;
 
     while (std::getline(ss, line)) {
-
-        if (!line.empty() && line.back() == '\r') line.pop_back(); // for windows
+        if (!line.empty() && line.back() == '\r') line.pop_back();  // for windows
 
         if (line.empty() || line.substr(0, 2) == "//" || line[0] == '#') continue;
 
@@ -45,8 +46,7 @@ int ConfigManager::GetInt(const std::string& key, int defaultValue) {
     if (settings.find(key) != settings.end()) {
         try {
             return std::stoi(settings[key]);
-        }
-        catch (...) {
+        } catch (...) {
             return defaultValue;
         }
     }

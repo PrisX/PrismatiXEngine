@@ -1,6 +1,8 @@
 #include "TextManager.h"
-#include "ArchiveManager.h"
+
 #include <iostream>
+
+#include "ArchiveManager.h"
 
 std::unordered_map<std::string, TTF_Font*> TextManager::fontCache;
 std::unordered_map<std::string, std::vector<char>> TextManager::fontBuffers;
@@ -40,16 +42,16 @@ TTF_Font* TextManager::LoadFont(const std::string& fileName, int fontSize) {
 void TextManager::Draw(SDL_Renderer* ren, TTF_Font* font, const std::string& text, SDL_Color color, int x, int y) {
     if (!font) return;
 
-    SDL_Surface* surfaceMessage = TTF_RenderUTF8_Blended(font, text.c_str(), color); // UTF8 Blended
+    SDL_Surface* surfaceMessage = TTF_RenderUTF8_Blended(font, text.c_str(), color);  // UTF8 Blended
     if (!surfaceMessage) return;
 
     SDL_Texture* message = SDL_CreateTextureFromSurface(ren, surfaceMessage);
 
-	SDL_Rect messageRect = { x, y, surfaceMessage->w / FONT_OVERSAMPLE, surfaceMessage->h / FONT_OVERSAMPLE };
+    SDL_Rect messageRect = { x, y, surfaceMessage->w / FONT_OVERSAMPLE, surfaceMessage->h / FONT_OVERSAMPLE };
 
     SDL_RenderCopy(ren, message, NULL, &messageRect);
 
-    // Clean up 
+    // Clean up
     SDL_FreeSurface(surfaceMessage);
     SDL_DestroyTexture(message);
 }
@@ -77,76 +79,63 @@ TTF_Font* TextManager::GetOrCreateOutlineFont(TTF_Font* baseFont, int outlineSiz
     return olFont;
 }
 
-void TextManager::DrawWithOutline(SDL_Renderer* ren, TTF_Font* font, const std::string& text,
-	SDL_Color textColor, SDL_Color outlineColor, int outlineSize,
-	int x, int y, Uint32 wrapLength, Uint8 alpha, bool shadow) {
-	if (!font || text.empty()) return;
+void TextManager::DrawWithOutline(SDL_Renderer* ren, TTF_Font* font, const std::string& text, SDL_Color textColor, SDL_Color outlineColor, int outlineSize, int x, int y, Uint32 wrapLength, Uint8 alpha, bool shadow) {
+    if (!font || text.empty()) return;
 
-	if (shadow) {
-		const int shadowDX = 3, shadowDY = 3;
-		SDL_Color black = { 0, 0, 0, 255 };
-		SDL_Surface* shadowSurface = (wrapLength > 0)
-			? TTF_RenderUTF8_Blended_Wrapped(font, text.c_str(), black, wrapLength * FONT_OVERSAMPLE)
-			: TTF_RenderUTF8_Blended(font, text.c_str(), black);
+    if (shadow) {
+        const int shadowDX = 3, shadowDY = 3;
+        SDL_Color black = { 0, 0, 0, 255 };
+        SDL_Surface* shadowSurface = (wrapLength > 0) ? TTF_RenderUTF8_Blended_Wrapped(font, text.c_str(), black, wrapLength * FONT_OVERSAMPLE) : TTF_RenderUTF8_Blended(font, text.c_str(), black);
 
-		if (shadowSurface) {
-			int sw = shadowSurface->w / FONT_OVERSAMPLE;
-			int sh = shadowSurface->h / FONT_OVERSAMPLE;
-			SDL_Texture* shadowTex = SDL_CreateTextureFromSurface(ren, shadowSurface);
-			SDL_FreeSurface(shadowSurface);
+        if (shadowSurface) {
+            int sw = shadowSurface->w / FONT_OVERSAMPLE;
+            int sh = shadowSurface->h / FONT_OVERSAMPLE;
+            SDL_Texture* shadowTex = SDL_CreateTextureFromSurface(ren, shadowSurface);
+            SDL_FreeSurface(shadowSurface);
 
-			if (shadowTex) {
-				SDL_SetTextureBlendMode(shadowTex, SDL_BLENDMODE_BLEND);
+            if (shadowTex) {
+                SDL_SetTextureBlendMode(shadowTex, SDL_BLENDMODE_BLEND);
 
-				const int outerOffsets[4][2] = {
-					{shadowDX - 1, shadowDY - 1}, {shadowDX + 1, shadowDY - 1},
-					{shadowDX - 1, shadowDY + 1}, {shadowDX + 1, shadowDY + 1}
-				};
-				SDL_SetTextureAlphaMod(shadowTex, (Uint8)(alpha * 0.15f));
-				for (const auto& off : outerOffsets) {
-					SDL_Rect r = { x + off[0], y + off[1], sw, sh };
-					SDL_RenderCopy(ren, shadowTex, NULL, &r);
-				}
+                const int outerOffsets[4][2] = { { shadowDX - 1, shadowDY - 1 }, { shadowDX + 1, shadowDY - 1 }, { shadowDX - 1, shadowDY + 1 }, { shadowDX + 1, shadowDY + 1 } };
+                SDL_SetTextureAlphaMod(shadowTex, (Uint8)(alpha * 0.15f));
+                for (const auto& off : outerOffsets) {
+                    SDL_Rect r = { x + off[0], y + off[1], sw, sh };
+                    SDL_RenderCopy(ren, shadowTex, NULL, &r);
+                }
 
-				SDL_SetTextureAlphaMod(shadowTex, (Uint8)(alpha * 0.4f));
-				SDL_Rect coreRect = { x + shadowDX, y + shadowDY, sw, sh };
-				SDL_RenderCopy(ren, shadowTex, NULL, &coreRect);
+                SDL_SetTextureAlphaMod(shadowTex, (Uint8)(alpha * 0.4f));
+                SDL_Rect coreRect = { x + shadowDX, y + shadowDY, sw, sh };
+                SDL_RenderCopy(ren, shadowTex, NULL, &coreRect);
 
-				SDL_DestroyTexture(shadowTex);
-			}
-		}
-	}
+                SDL_DestroyTexture(shadowTex);
+            }
+        }
+    }
 
-	TTF_Font* outlineFont = GetOrCreateOutlineFont(font, outlineSize);
+    TTF_Font* outlineFont = GetOrCreateOutlineFont(font, outlineSize);
 
-	// Outline background
-	SDL_Surface* bgSurface = outlineFont ?
-		((wrapLength > 0) ?
-			TTF_RenderUTF8_Blended_Wrapped(outlineFont, text.c_str(), outlineColor, wrapLength * FONT_OVERSAMPLE) :
-			TTF_RenderUTF8_Blended(outlineFont, text.c_str(), outlineColor))
-		: nullptr;
-	SDL_Texture* bgTexture = bgSurface ? SDL_CreateTextureFromSurface(ren, bgSurface) : nullptr;
-	SDL_Rect bgRect = bgSurface ? SDL_Rect{ x, y, bgSurface->w / FONT_OVERSAMPLE, bgSurface->h / FONT_OVERSAMPLE } : SDL_Rect{};
+    // Outline background
+    SDL_Surface* bgSurface = outlineFont ? ((wrapLength > 0) ? TTF_RenderUTF8_Blended_Wrapped(outlineFont, text.c_str(), outlineColor, wrapLength * FONT_OVERSAMPLE) : TTF_RenderUTF8_Blended(outlineFont, text.c_str(), outlineColor)) : nullptr;
+    SDL_Texture* bgTexture = bgSurface ? SDL_CreateTextureFromSurface(ren, bgSurface) : nullptr;
+    SDL_Rect bgRect = bgSurface ? SDL_Rect{ x, y, bgSurface->w / FONT_OVERSAMPLE, bgSurface->h / FONT_OVERSAMPLE } : SDL_Rect{};
 
-	// Foreground text
-	SDL_Surface* fgSurface = (wrapLength > 0) ?
-		TTF_RenderUTF8_Blended_Wrapped(font, text.c_str(), textColor, wrapLength * FONT_OVERSAMPLE) :
-		TTF_RenderUTF8_Blended(font, text.c_str(), textColor);
-	SDL_Texture* fgTexture = SDL_CreateTextureFromSurface(ren, fgSurface);
+    // Foreground text
+    SDL_Surface* fgSurface = (wrapLength > 0) ? TTF_RenderUTF8_Blended_Wrapped(font, text.c_str(), textColor, wrapLength * FONT_OVERSAMPLE) : TTF_RenderUTF8_Blended(font, text.c_str(), textColor);
+    SDL_Texture* fgTexture = SDL_CreateTextureFromSurface(ren, fgSurface);
 
-	// Align (要根據 outline size 不然整個會跑走)
-	SDL_Rect fgRect = { x + outlineSize, y + outlineSize, fgSurface->w / FONT_OVERSAMPLE, fgSurface->h / FONT_OVERSAMPLE };
+    // Align (要根據 outline size 不然整個會跑走)
+    SDL_Rect fgRect = { x + outlineSize, y + outlineSize, fgSurface->w / FONT_OVERSAMPLE, fgSurface->h / FONT_OVERSAMPLE };
 
-	if (bgTexture) SDL_SetTextureAlphaMod(bgTexture, alpha);
-	SDL_SetTextureAlphaMod(fgTexture, alpha);
-	if (bgTexture) SDL_RenderCopy(ren, bgTexture, NULL, &bgRect);
-	SDL_RenderCopy(ren, fgTexture, NULL, &fgRect);
+    if (bgTexture) SDL_SetTextureAlphaMod(bgTexture, alpha);
+    SDL_SetTextureAlphaMod(fgTexture, alpha);
+    if (bgTexture) SDL_RenderCopy(ren, bgTexture, NULL, &bgRect);
+    SDL_RenderCopy(ren, fgTexture, NULL, &fgRect);
 
-	// Clean up
-	SDL_FreeSurface(bgSurface);
-	SDL_DestroyTexture(bgTexture);
-	SDL_FreeSurface(fgSurface);
-	SDL_DestroyTexture(fgTexture);
+    // Clean up
+    SDL_FreeSurface(bgSurface);
+    SDL_DestroyTexture(bgTexture);
+    SDL_FreeSurface(fgSurface);
+    SDL_DestroyTexture(fgTexture);
 }
 
 void TextManager::DrawCentered(SDL_Renderer* ren, TTF_Font* font, const std::string& text, SDL_Color color, SDL_Rect bounds) {
@@ -158,8 +147,7 @@ void TextManager::DrawCentered(SDL_Renderer* ren, TTF_Font* font, const std::str
     Draw(ren, font, text, color, x, y);
 }
 
-void TextManager::DrawWithOutlineCentered(SDL_Renderer* ren, TTF_Font* font, const std::string& text,
-    SDL_Color textColor, SDL_Color outlineColor, int outlineSize, SDL_Rect bounds, Uint8 alpha, bool shadow) {
+void TextManager::DrawWithOutlineCentered(SDL_Renderer* ren, TTF_Font* font, const std::string& text, SDL_Color textColor, SDL_Color outlineColor, int outlineSize, SDL_Rect bounds, Uint8 alpha, bool shadow) {
     if (!font || text.empty()) return;
     int w = 0, h = 0;
     TTF_SizeUTF8(font, text.c_str(), &w, &h);

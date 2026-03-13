@@ -43,3 +43,13 @@ find_package(Lua REQUIRED)
 
 # Subdirectory
 add_subdirectory ("PrismatiXEngine")
+
+# Formatting
+file(GLOB_RECURSE ALL_CXX_SOURCE_FILES
+    "PrismatiXEngine/*.cpp"
+    "PrismatiXEngine/*.h"
+)
+
+add_custom_target(format
+    COMMAND clang-format -i -style=file ${ALL_CXX_SOURCE_FILES}
+)

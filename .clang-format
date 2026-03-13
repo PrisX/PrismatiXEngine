@@ -9,8 +9,13 @@ ColumnLimit: 256
 
 PointerAlignment: Left
 
-BreakBeforeBraces: Attach
+BreakBeforeBraces: Custom
 
+BraceWrapping:
+  BeforeElse: true
+  
 IndentCaseLabels: true
 
 AllowShortIfStatementsOnASingleLine: true
+
+Cpp11BracedListStyle: false

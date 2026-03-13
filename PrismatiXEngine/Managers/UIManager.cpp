@@ -1,4 +1,5 @@
 #include "UIManager.h"
+
 #include "TextManager.h"
 
 std::vector<UIButton> UIManager::buttons;
@@ -26,8 +27,7 @@ void UIManager::RecalculateLayout(int screenW, int screenH) {
 
     const int gap = 20;
     int totalH = 0;
-    for (const auto& btn : buttons)
-        totalH += btn.rect.h;
+    for (const auto& btn : buttons) totalH += btn.rect.h;
     totalH += gap * ((int)buttons.size() - 1);
 
     int curY = (screenH - totalH) / 2;

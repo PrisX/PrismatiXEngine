@@ -2,7 +2,9 @@
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
+
 #include <string>
+
 #include "TextManager.h"
 #include "Utils/EasingUtils.h"
 #include "Utils/TransitionUtils.h"
@@ -35,21 +37,20 @@ struct BGMInfo {
 
         const float slideFactor = 0.18f;
         switch (state) {
-        case State::SlideIn:
-            if (EasingUtils::ExpDecay(currentX, targetX, slideFactor)) {
-                state = State::Staying;
-                stayTimer = 180;
-            }
-            break;
-        case State::Staying:
-            if (--stayTimer <= 0)
-                state = State::FadeOut;
-            break;
-        case State::FadeOut:
-            if (TransitionUtils::FadeOut(alpha, 4.0f))
-                state = State::Idle;
-            break;
-        default: break;
+            case State::SlideIn:
+                if (EasingUtils::ExpDecay(currentX, targetX, slideFactor)) {
+                    state = State::Staying;
+                    stayTimer = 180;
+                }
+                break;
+            case State::Staying:
+                if (--stayTimer <= 0) state = State::FadeOut;
+                break;
+            case State::FadeOut:
+                if (TransitionUtils::FadeOut(alpha, 4.0f)) state = State::Idle;
+                break;
+            default:
+                break;
         }
     }
 
@@ -88,11 +89,8 @@ struct BGMInfo {
         SDL_Rect accentRect = { boxX, boxY, 4, boxH };
         SDL_RenderFillRect(renderer, &accentRect);
 
-        SDL_Color textColor = isMusicNotification
-            ? SDL_Color{ 180, 220, 255, a }
-            : SDL_Color{ 255, 255, 255, a };
+        SDL_Color textColor = isMusicNotification ? SDL_Color{ 180, 220, 255, a } : SDL_Color{ 255, 255, 255, a };
         SDL_Color outlineColor = { 0, 0, 0, a };
-        TextManager::DrawWithOutline(renderer, font, displayText, textColor, outlineColor, 1,
-            boxX + padX, boxY + padY, 0, a);
+        TextManager::DrawWithOutline(renderer, font, displayText, textColor, outlineColor, 1, boxX + padX, boxY + padY, 0, a);
     }
 };

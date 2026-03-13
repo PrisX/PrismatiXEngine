@@ -1,7 +1,9 @@
 #pragma once
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
+
 #include <string>
+
 #include "TextManager.h"
 
 class Toolbar {
@@ -33,7 +35,7 @@ private:
 public:
     Toolbar(TTF_Font* uiFont, int screenH) {
         font = uiFont;
-        hiddenY = (float)screenH; 
+        hiddenY = (float)screenH;
         visibleY = (float)(screenH - 50);
         currentY = hiddenY;
         targetY = hiddenY;
@@ -48,9 +50,7 @@ public:
         MeasureButton("Pin", btnPin);
     }
 
-    bool IsMouseOver(int mouseY) const {
-        return mouseY >= currentY;
-    }
+    bool IsMouseOver(int mouseY) const { return mouseY >= currentY; }
 
     std::string Update(int mouseX, int mouseY, bool isClicked) {
         bool inTriggerArea = (mouseY > visibleY - 20);
@@ -98,15 +98,17 @@ public:
         SDL_RenderFillRect(renderer, &bgRect);
 
         SDL_Color idleCol = { 200, 200, 200, 255 };
-        SDL_Color hoverCol = { 255, 215, 0, 255 };    
+        SDL_Color hoverCol = { 255, 215, 0, 255 };
         SDL_Color pinnedCol = { 100, 255, 100, 255 };
 
         TextManager::Draw(renderer, font, "Save", hoverSave ? hoverCol : idleCol, btnSave.x, btnSave.y);
         TextManager::Draw(renderer, font, "Load", hoverLoad ? hoverCol : idleCol, btnLoad.x, btnLoad.y);
 
         SDL_Color pinColor = idleCol;
-        if (isPinned) pinColor = pinnedCol;
-        else if (hoverPin) pinColor = hoverCol;
+        if (isPinned)
+            pinColor = pinnedCol;
+        else if (hoverPin)
+            pinColor = hoverCol;
 
         TextManager::Draw(renderer, font, isPinned ? "Unpin" : "Pin", pinColor, btnPin.x, btnPin.y);
     }

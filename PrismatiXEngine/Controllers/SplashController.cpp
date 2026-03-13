@@ -1,10 +1,10 @@
 #include "SplashController.h"
-#include "ConfigManager.h"
-#include "TextureManager.h"
-#include "AudioManager.h"
-#include "ScriptManager.h"
-#include "Utils/TransitionUtils.h"
 
+#include "AudioManager.h"
+#include "ConfigManager.h"
+#include "ScriptManager.h"
+#include "TextureManager.h"
+#include "Utils/TransitionUtils.h"
 
 void SplashController::Init(SDL_Renderer* renderer) {
     int logoCount = ConfigManager::GetInt("LogoCount", 0);
@@ -112,6 +112,4 @@ void SplashController::HandleClick() {
     }
 }
 
-bool SplashController::IsFinished() const {
-    return finished;
-}
+bool SplashController::IsFinished() const { return finished; }

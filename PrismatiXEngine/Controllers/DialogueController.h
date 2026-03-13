@@ -1,14 +1,16 @@
 #pragma once
-#include <vector>
-#include <string>
-#include <map>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
-#include "DialogueBox.h"
-#include "ScriptManager.h"
-#include "Managers/SaveManager.h"
+
+#include <map>
+#include <string>
+#include <vector>
+
 #include "BGMInfo.h"
 #include "ChapterBanner.h"
+#include "DialogueBox.h"
+#include "Managers/SaveManager.h"
+#include "ScriptManager.h"
 
 class PrismatiXEngine;
 

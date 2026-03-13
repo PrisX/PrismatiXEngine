@@ -1,7 +1,9 @@
 #include "ArchiveManager.h"
-#include "SecretKey.h"
+
 #include <fstream>
 #include <iostream>
+
+#include "SecretKey.h"
 
 std::unordered_map<std::string, PDXFileEntry> ArchiveManager::globalFileTable;
 
@@ -39,7 +41,6 @@ bool ArchiveManager::MountArchive(const std::string& archivePath) {
     return true;
 }
 
-
 std::vector<char> ArchiveManager::ExtractFile(const std::string& fileName) {
     if (globalFileTable.find(fileName) == globalFileTable.end()) {
         std::cerr << "File not found (" << fileName << "): " << std::endl;
@@ -55,7 +56,7 @@ std::vector<char> ArchiveManager::ExtractFile(const std::string& fileName) {
     in.read(buffer.data(), entry.size);
     in.close();
 
-	// XOR decryption
+    // XOR decryption
     int keyLen = PDX_SECRET_KEY.length();
     for (size_t i = 0; i < buffer.size(); i++) {
         buffer[i] ^= PDX_SECRET_KEY[i % keyLen];

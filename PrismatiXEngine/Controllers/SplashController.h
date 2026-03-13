@@ -1,7 +1,8 @@
 #pragma once
 #include <SDL2/SDL.h>
-#include <vector>
+
 #include <string>
+#include <vector>
 
 struct SplashLogo {
     SDL_Texture* texture = nullptr;
@@ -9,11 +10,7 @@ struct SplashLogo {
     std::string sfxFile = "";
 };
 
-enum class SplashPhase {
-    FadeIn,
-    Hold,
-    FadeOut
-};
+enum class SplashPhase { FadeIn, Hold, FadeOut };
 
 class SplashController {
 private:
