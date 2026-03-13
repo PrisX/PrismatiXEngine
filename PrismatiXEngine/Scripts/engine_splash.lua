@@ -1,6 +1,6 @@
 function SplashScreen()
     Engine.PlaySFX("PrismatiXEngine_Logo.wav")
-    Engine.FadeInBg("PrismatiXEngine_Logo.png", DisplayMode.Center, 450)
-    Engine.Wait(500)
-    Engine.FadeOutBg("PrismatiXEngine_Logo.png", DisplayMode.Center, 450)
+    Engine.FadeInBg("PrismatiXEngine_Logo.png", DisplayMode.Center, 1000)
+    Engine.Wait(1000)
+    Engine.FadeOutBg("PrismatiXEngine_Logo.png", DisplayMode.Center, 1000)
 end

@@ -128,7 +128,14 @@ int main(int argc, char* argv[]) {
     GameState previousState = GameState::MainMenu;
 
     std::string userSplashScript = ConfigManager::GetString("SplashScript", "");
-    if (!userSplashScript.empty() && !RunSplashScreenLua(engine, userSplashScript, false)) {
+    if (userSplashScript.empty()) {
+        userSplashScript = "Scripts/splash.lua";
+    }
+    else if (userSplashScript.find('/') == std::string::npos && userSplashScript.find('\\') == std::string::npos) {
+        userSplashScript = "Scripts/" + userSplashScript;
+    }
+
+    if (!RunSplashScreenLua(engine, userSplashScript, false)) {
         return -1;
     }
 
