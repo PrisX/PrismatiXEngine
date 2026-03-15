@@ -51,6 +51,13 @@ private:
     bool skipNextLog = false;
     bool hasPendingScriptTransition = false;
     std::string pendingScriptTarget;
+    std::string pendingTransitionStyle;
+    std::string pendingTransitionSpeed;
+    std::string pendingTransitionEase;
+    bool hasPendingInlineTransition = false;
+    std::string pendingInlineTransitionStyle;
+    std::string pendingInlineTransitionSpeed;
+    std::string pendingInlineTransitionEase;
     std::map<std::string, ActiveCharacter> activeCharacters;
     std::string currentSpeakingChar;
     sol::state* luaState = nullptr;
@@ -67,7 +74,11 @@ public:
     std::string GetCurrentBgmName() const;
     void SetCurrentLine(int line);
     void SetSkipNextLog(bool skip);
-    bool ConsumePendingScriptTransition(std::string& outTargetScript);
+    bool PopScriptTransition(std::string& outTargetScript, std::string& outTransitionStyle, std::string& outTransitionSpeed, std::string& outTransitionEase);
+    void QueueScriptTransition(const std::string& targetScript, const std::string& transitionStyle = "", const std::string& transitionSpeed = "", const std::string& transitionEase = "");
+    bool PopInlineTransition(std::string& outTransitionStyle, std::string& outTransitionSpeed, std::string& outTransitionEase);
+    void QueueInlineTransition(const std::string& transitionStyle = "", const std::string& transitionSpeed = "", const std::string& transitionEase = "");
+    void ContinueScript();
     std::vector<SavedCharacter> GetSavedCharacters() const;
     void RestoreSavedCharacters(const std::vector<SavedCharacter>& savedChars);
     void RestoreBackground(const std::string& bgName);

@@ -1,6 +1,7 @@
 #include "DialogueController.h"
 
 #include <algorithm>
+#include <initializer_list>
 #include <iostream>
 #include <sol/sol.hpp>
 
@@ -13,6 +14,24 @@
 #include "Utils/EasingUtils.h"
 #include "Utils/TransitionUtils.h"
 #include "VariableManager.h"
+
+namespace {
+std::string ReadFirstArg(const std::map<std::string, std::string>& args, std::initializer_list<const char*> keys) {
+    for (const char* key : keys) {
+        auto it = args.find(key);
+        if (it != args.end() && !it->second.empty()) {
+            return it->second;
+        }
+    }
+    return "";
+}
+
+std::string ReadTransitionStyleArg(const std::map<std::string, std::string>& args) { return ReadFirstArg(args, { "transition", "trans", "style" }); }
+
+std::string ReadTransitionSpeedArg(const std::map<std::string, std::string>& args) { return ReadFirstArg(args, { "transitionSpeed", "transitionspeed", "trans_speed", "tspeed", "speed" }); }
+
+std::string ReadTransitionEaseArg(const std::map<std::string, std::string>& args) { return ReadFirstArg(args, { "ease", "easing" }); }
+}  // namespace
 
 DialogueController::DialogueController(TTF_Font* dialogueFont, const std::string& dialogueFontName, int dialogueFontSize, TTF_Font* nameFont, SDL_Renderer* ren, sol::state* lua) {
     dialogueBox = std::make_unique<DialogueBox>(dialogueFont, dialogueFontName, dialogueFontSize, lua);
@@ -47,12 +66,55 @@ std::string DialogueController::GetCurrentBgName() const { return currentBgName;
 std::string DialogueController::GetCurrentBgmName() const { return currentBgmName; }
 void DialogueController::SetCurrentLine(int line) { currentLine = line; }
 void DialogueController::SetSkipNextLog(bool skip) { skipNextLog = skip; }
-bool DialogueController::ConsumePendingScriptTransition(std::string& outTargetScript) {
+bool DialogueController::PopScriptTransition(std::string& outTargetScript, std::string& outTransitionStyle, std::string& outTransitionSpeed, std::string& outTransitionEase) {
     if (!hasPendingScriptTransition) return false;
+
     outTargetScript = pendingScriptTarget;
+    outTransitionStyle = pendingTransitionStyle;
+    outTransitionSpeed = pendingTransitionSpeed;
+    outTransitionEase = pendingTransitionEase;
     pendingScriptTarget.clear();
+    pendingTransitionStyle.clear();
+    pendingTransitionSpeed.clear();
+    pendingTransitionEase.clear();
     hasPendingScriptTransition = false;
     return true;
+}
+
+bool DialogueController::PopInlineTransition(std::string& outTransitionStyle, std::string& outTransitionSpeed, std::string& outTransitionEase) {
+    if (!hasPendingInlineTransition) return false;
+
+    outTransitionStyle = pendingInlineTransitionStyle;
+    outTransitionSpeed = pendingInlineTransitionSpeed;
+    outTransitionEase = pendingInlineTransitionEase;
+    pendingInlineTransitionStyle.clear();
+    pendingInlineTransitionSpeed.clear();
+    pendingInlineTransitionEase.clear();
+    hasPendingInlineTransition = false;
+    return true;
+}
+
+void DialogueController::QueueScriptTransition(const std::string& targetScript, const std::string& transitionStyle, const std::string& transitionSpeed, const std::string& transitionEase) {
+    if (targetScript.empty()) return;
+
+    BacklogManager::Clear();
+    pendingScriptTarget = targetScript;
+    pendingTransitionStyle = transitionStyle;
+    pendingTransitionSpeed = transitionSpeed;
+    pendingTransitionEase = transitionEase;
+    hasPendingScriptTransition = true;
+}
+
+void DialogueController::QueueInlineTransition(const std::string& transitionStyle, const std::string& transitionSpeed, const std::string& transitionEase) {
+    hasPendingInlineTransition = true;
+    pendingInlineTransitionStyle = transitionStyle;
+    pendingInlineTransitionSpeed = transitionSpeed;
+    pendingInlineTransitionEase = transitionEase;
+}
+
+void DialogueController::ContinueScript() {
+    if (isFinished) return;
+    ExecuteNextCommands();
 }
 
 std::vector<SavedCharacter> DialogueController::GetSavedCharacters() const {
@@ -112,6 +174,15 @@ void DialogueController::LoadScript(const std::string& scriptName, const std::ve
     hasStarted = false;
     pendingVoice.clear();
     currentSpeakingChar.clear();
+    hasPendingScriptTransition = false;
+    pendingScriptTarget.clear();
+    pendingTransitionStyle.clear();
+    pendingTransitionSpeed.clear();
+    pendingTransitionEase.clear();
+    hasPendingInlineTransition = false;
+    pendingInlineTransitionStyle.clear();
+    pendingInlineTransitionSpeed.clear();
+    pendingInlineTransitionEase.clear();
     currentBgTexture = nullptr;
     activeCharacters.clear();
 }
@@ -365,11 +436,22 @@ void DialogueController::ExecuteNextCommands() {
 
             currentLine++;
         }
+        else if (cmd.type == "transition") {
+            std::string transitionStyle = ReadTransitionStyleArg(cmd.args);
+            std::string transitionSpeed = ReadTransitionSpeedArg(cmd.args);
+            std::string transitionEase = ReadTransitionEaseArg(cmd.args);
+            currentLine++;
+            QueueInlineTransition(transitionStyle, transitionSpeed, transitionEase);
+            return;
+        }
         else if (cmd.type == "label") {
             currentLine++;
         }
         else if (cmd.type == "jump") {
             std::string target = cmd.args["target"];
+            std::string transitionStyle = ReadTransitionStyleArg(cmd.args);
+            std::string transitionSpeed = ReadTransitionSpeedArg(cmd.args);
+            std::string transitionEase = ReadTransitionEaseArg(cmd.args);
 
             if (target.front() == '*') {
                 std::string labelName = target.substr(1);
@@ -381,9 +463,7 @@ void DialogueController::ExecuteNextCommands() {
                 }
             }
             else {
-                BacklogManager::Clear();
-                pendingScriptTarget = target;
-                hasPendingScriptTransition = true;
+                QueueScriptTransition(target, transitionStyle, transitionSpeed, transitionEase);
                 return;
             }
         }
@@ -453,11 +533,14 @@ void DialogueController::ExecuteNextCommands() {
         else if (cmd.type == "choice") {
             std::string text = cmd.args["text"];
             std::string target = cmd.args["target"];
+            std::string transitionStyle = ReadTransitionStyleArg(cmd.args);
+            std::string transitionSpeed = ReadTransitionSpeedArg(cmd.args);
+            std::string transitionEase = ReadTransitionEaseArg(cmd.args);
 
             SDL_Color idleCol = { 255, 255, 255, 255 };
             SDL_Color hoverCol = { 255, 215, 0, 255 };
 
-            UIManager::AddTextButton(text, uiFont, idleCol, hoverCol, target);
+            UIManager::AddTextButton(text, uiFont, idleCol, hoverCol, target, transitionStyle, transitionSpeed, transitionEase);
             currentLine++;
 
             if (currentLine < (int)commands.size() && commands[currentLine].type != "choice") {
@@ -484,9 +567,13 @@ void DialogueController::HandleClick(int mx, int my) {
     clickCooldown = 1;
 
     if (UIManager::HasButtons()) {
-        std::string target = UIManager::CheckClick(mx, my);
+        std::string target;
+        std::string transitionStyle;
+        std::string transitionSpeed;
+        std::string transitionEase;
+        bool hasClick = UIManager::CheckClick(mx, my, target, transitionStyle, transitionSpeed, transitionEase);
 
-        if (!target.empty()) {
+        if (hasClick && !target.empty()) {
             BacklogManager::AddChoice(UIManager::GetHoveredText());
             UIManager::Clear();
 
@@ -501,9 +588,7 @@ void DialogueController::HandleClick(int mx, int my) {
                 }
             }
             else {
-                BacklogManager::Clear();
-                pendingScriptTarget = target;
-                hasPendingScriptTransition = true;
+                QueueScriptTransition(target, transitionStyle, transitionSpeed, transitionEase);
                 return;
             }
         }

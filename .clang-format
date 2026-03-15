@@ -13,9 +13,15 @@ BreakBeforeBraces: Custom
 
 BraceWrapping:
   BeforeElse: true
-  
+
 IndentCaseLabels: true
 
 AllowShortIfStatementsOnASingleLine: true
 
 Cpp11BracedListStyle: false
+
+BinPackArguments: false
+BinPackParameters: false
+
+AllowAllArgumentsOnNextLine: true
+AlignAfterOpenBracket: BlockIndent

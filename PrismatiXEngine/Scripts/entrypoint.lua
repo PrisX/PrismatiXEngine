@@ -21,48 +21,18 @@ local function include(path) -- 建議別動，如果你不知道這在幹麻
     return moduleValue
 end
 
-local function normalize_script_path(rawPath, fallbackPath) -- 建議別動，如果你不知道這在幹麻
-    local resolved = rawPath
-    if resolved == nil or resolved == "" then
-        resolved = fallbackPath
-    end
-
-    if string.find(resolved, "/", 1, true) == nil and string.find(resolved, "\\", 1, true) == nil then
-        resolved = "Scripts/" .. resolved
-    end
-
-    return resolved
-end
-
-local function run_splash_script(path, required) -- 建議別動，如果你不知道這在幹麻
-    if not Engine.RunScript(path, required) then
-        return false
-    end
-
-    return Engine.CallGlobal("SplashScreen", required)
-end
-
-local function safe_call_global(name, ...) -- 建議別動，如果你不知道這在幹麻
-    local fn = _G[name]
-    if type(fn) ~= "function" then
-        return
-    end
-
-    local ok, err = pcall(fn, ...)
-    if not ok then
-        print("Lua callback error (" .. tostring(name) .. "): " .. tostring(err))
-    end
-end
-
 function Entrypoint()
     -- Global Functions
     _G.Ease = include("Scripts/common/easing.lua")
+    local Runtime = include("Scripts/common/runtime_helpers.lua")
+    local Transition = include("Scripts/common/transition.lua")
 
     local settings = {
         fontName = "NotoSansTC-Bold.ttf",
         fontSize = 28,
         nameFontName = "NotoSerifTC-Bold.ttf",
         nameFontSize = 28,
+        transitionStyle = "fade",
         initialBg = "bg.jpg",
         startScript = "chapter1.pds",
         splashScript = "Scripts/splash.lua"
@@ -87,12 +57,12 @@ function Entrypoint()
     local titleBg = settings.initialBg
     local startScriptFile = settings.startScript
 
-    local userSplash = normalize_script_path(settings.splashScript, "Scripts/splash.lua")
-    if not run_splash_script(userSplash, false) then
+    local userSplash = Runtime.normalize_script_path(settings.splashScript, "Scripts/splash.lua")
+    if not Runtime.run_splash_script(userSplash, false) then
         return
     end
 
-    if not run_splash_script("Scripts/engine_splash.lua", true) then
+    if not Runtime.run_splash_script("Scripts/engine_splash.lua", true) then
         return
     end
 
@@ -108,52 +78,83 @@ function Entrypoint()
     local currentState = stateMainMenu
     local previousState = stateMainMenu
 
-    local transition = {
-        alpha = 0,
-        phase = "idle",
-        speed = 8,
-        pending = nil
-    }
+    local transition = Transition.new({
+        style = settings.transitionStyle,
+        transitionSpeed = settings.transitionSpeed,
+        ease = settings.transitionEase
+    })
+    local nextTransitionOptions = nil
 
-    local function transition_active()
-        return transition.phase ~= "idle"
+    local function clone_transition_options(options)
+        if type(options) ~= "table" then
+            return nil
+        end
+
+        return {
+            style = options.style or options.transition,
+            transitionSpeed = options.transitionSpeed or options.speed,
+            ease = options.ease
+        }
     end
 
-    local function start_transition(action)
-        if transition_active() then
-            return false
+    local function build_transition_options(payload)
+        if type(payload) ~= "table" then
+            return nil
         end
-        transition.phase = "enter"
-        transition.alpha = 0
-        transition.pending = action
-        return true
+
+        local options = {}
+        local hasAny = false
+
+        if payload.transition ~= nil and payload.transition ~= "" then
+            options.style = payload.transition
+            hasAny = true
+        end
+
+        if payload.transitionSpeed ~= nil and payload.transitionSpeed ~= "" then
+            options.transitionSpeed = payload.transitionSpeed
+            hasAny = true
+        elseif payload.speed ~= nil and payload.speed ~= "" then
+            options.transitionSpeed = payload.speed
+            hasAny = true
+        end
+
+        if payload.ease ~= nil and payload.ease ~= "" then
+            options.ease = payload.ease
+            hasAny = true
+        end
+
+        return hasAny and options or nil
     end
 
-    local function update_transition()
-        if transition.phase == "enter" then
-            local reachedPeak
-            transition.alpha, reachedPeak = Ease.fade_in(transition.alpha, transition.speed, 255)
-            if reachedPeak then
-                local pending = transition.pending
-                transition.pending = nil
-                if pending then
-                    pending()
-                end
-                transition.phase = "leave"
-            end
-        elseif transition.phase == "leave" then
-            local reachedClear
-            transition.alpha, reachedClear = Ease.fade_out(transition.alpha, transition.speed, 0)
-            if reachedClear then
-                transition.phase = "idle"
-            end
-        end
+    local function consume_next_transition_options()
+        local options = nextTransitionOptions
+        nextTransitionOptions = nil
+        return options
     end
 
-    local function draw_transition()
-        if transition.alpha > 0 then
-            Engine.DrawRect(0, 0, winW, winH, 0, 0, 0, transition.alpha)
+    local function start_transition(action, overrideOptions)
+        local transitionOptions = overrideOptions
+        if transitionOptions == nil then
+            transitionOptions = consume_next_transition_options()
+        else
+            nextTransitionOptions = nil
         end
+        return transition:start(action, transitionOptions)
+    end
+
+    function _G.SetNextTransition(options)
+        nextTransitionOptions = clone_transition_options(options)
+    end
+
+    _G.VNController = controller
+    _G.VN = _G.VN or {}
+    _G.VN.controller = controller
+    _G.VN.QueueScriptTransition = function(target, transitionStyle, transitionSpeed, transitionEase)
+        local speedValue = transitionSpeed
+        if speedValue ~= nil then
+            speedValue = tostring(speedValue)
+        end
+        controller:QueueScriptTransition(target, transitionStyle, speedValue, transitionEase)
     end
 
     local mainMenuAlpha = 0.0
@@ -162,14 +163,15 @@ function Entrypoint()
     while Engine.IsRunning() do
         Engine.HandleEvents()
 
-        local isFading = transition_active()
-        local mx = Engine.GetMouseX()
-        local my = Engine.GetMouseY()
-        local leftClick = Engine.GetLeftClick()
-        local rightClick = Engine.GetRightClick()
-        local wheelY = isFading and 0 or Engine.GetMouseWheelY()
+        local isFading = transition:is_active()
+        local input = Runtime.read_input_frame(isFading)
+        local mx = input.mx
+        local my = input.my
+        local leftClick = input.leftClick
+        local rightClick = input.rightClick
+        local wheelY = input.wheelY
 
-        safe_call_global("OnEngineFrameUpdate", currentState, mx, my, leftClick, rightClick, wheelY)
+        Runtime.safe_call_global("OnEngineFrameUpdate", currentState, mx, my, leftClick, rightClick, wheelY)
 
         Engine.ClearScreen()
 
@@ -241,12 +243,23 @@ function Entrypoint()
             controller:Update(mx, my)
 
             if not isFading then
-                local pendingScriptTarget = controller:ConsumePendingScriptTransition()
-                if pendingScriptTarget then
+                local pendingInlineTransition = controller:PopInlineTransition()
+                if pendingInlineTransition then
+                    local transitionOptions = build_transition_options(pendingInlineTransition)
+
                     start_transition(function()
-                        controller:LoadScript(pendingScriptTarget)
-                        currentState = stateInGame
-                    end)
+                        controller:ContinueScript()
+                    end, transitionOptions)
+                else
+                    local pendingScriptTransition = controller:PopScriptTransition()
+                    if pendingScriptTransition then
+                        local transitionOptions = build_transition_options(pendingScriptTransition)
+
+                        start_transition(function()
+                            controller:LoadScript(pendingScriptTransition.target)
+                            currentState = stateInGame
+                        end, transitionOptions)
+                    end
                 end
             end
 
@@ -287,9 +300,9 @@ function Entrypoint()
             saveLoadMenu:render()
         end
 
-        update_transition()
-        safe_call_global("OnEngineFrameRender", currentState, winW, winH)
-        draw_transition()
+        transition:update(winW)
+        Runtime.safe_call_global("OnEngineFrameRender", currentState, winW, winH)
+        transition:draw_fullscreen(winW, winH)
         Engine.PresentScreen()
     end
 end
