@@ -2,11 +2,11 @@
 
 #include <algorithm>
 #include <iostream>
+#include <sol/sol.hpp>
 
 #include "ArchiveManager.h"
 #include "AudioManager.h"
 #include "BacklogManager.h"
-#include "PrismatiXEngine.h"
 #include "TextManager.h"
 #include "TextureManager.h"
 #include "UIManager.h"
@@ -14,10 +14,12 @@
 #include "Utils/TransitionUtils.h"
 #include "VariableManager.h"
 
-DialogueController::DialogueController(DialogueBox* box, TTF_Font* font, SDL_Renderer* ren) {
-    dialogueBox = box;
-    uiFont = font;
+DialogueController::DialogueController(TTF_Font* dialogueFont, const std::string& dialogueFontName, int dialogueFontSize, TTF_Font* nameFont, SDL_Renderer* ren, sol::state* lua) {
+    dialogueBox = std::make_unique<DialogueBox>(dialogueFont, dialogueFontName, dialogueFontSize, lua);
+    dialogueBox->SetNameFont(nameFont);
+    uiFont = dialogueFont;
     renderer = ren;
+    luaState = lua;
     currentLine = 0;
     clickCooldown = 0;
     isFinished = false;
@@ -223,11 +225,37 @@ void DialogueController::ExecuteNextCommands() {
 
             SDL_Color outlineColor = cmd.args.count("olcolor") ? ScriptManager::ParseColor(cmd.args["olcolor"], defaultOutline) : defaultOutline;
 
+            std::string textEffect;
+            if (cmd.args.count("effect")) {
+                textEffect = cmd.args["effect"];
+            }
+            else if (cmd.args.count("texteffect")) {
+                textEffect = cmd.args["texteffect"];
+            }
+            else if (cmd.args.count("txfx")) {
+                textEffect = cmd.args["txfx"];
+            }
+
+            int textSpeed = 40;
+            try {
+                if (cmd.args.count("speed")) {
+                    textSpeed = std::stoi(cmd.args["speed"]);
+                }
+                if (cmd.args.count("instant")) {
+                    const std::string& instantVal = cmd.args["instant"];
+                    if (instantVal == "1" || instantVal == "true" || instantVal == "yes") {
+                        textSpeed = 0;
+                    }
+                }
+            } catch (...) {
+                textSpeed = 40;
+            }
+
             if (!skipNextLog) {
                 BacklogManager::AddLog(speaker, content, pendingVoice);
             }
             skipNextLog = false;
-            dialogueBox->SetText(speaker, content, 40, textColor, outlineColor);
+            dialogueBox->SetText(speaker, content, textSpeed, textColor, outlineColor, textEffect);
 
             currentSpeakingChar = cmd.args.count("char") ? cmd.args["char"] : "";
 
@@ -293,6 +321,48 @@ void DialogueController::ExecuteNextCommands() {
         else if (cmd.type == "chapter") {
             std::string text = cmd.args.count("text") ? cmd.args["text"] : "";
             chapterBanner.Show(text);
+            currentLine++;
+        }
+        else if (cmd.type == "lua" || cmd.type == "luafx") {
+            if (!luaState) {
+                std::cerr << "Lua state unavailable for [" << cmd.type << "] command.\n";
+                currentLine++;
+                continue;
+            }
+
+            std::string fnName;
+            if (cmd.args.count("fn"))
+                fnName = cmd.args["fn"];
+            else if (cmd.args.count("func"))
+                fnName = cmd.args["func"];
+            else if (cmd.args.count("function"))
+                fnName = cmd.args["function"];
+
+            if (fnName.empty()) {
+                std::cerr << "Lua command missing fn/func/function parameter.\n";
+                currentLine++;
+                continue;
+            }
+
+            sol::protected_function fn = (*luaState)[fnName];
+            if (!fn.valid()) {
+                std::cerr << "Lua callback not found: " << fnName << "\n";
+                currentLine++;
+                continue;
+            }
+
+            sol::table args = luaState->create_table();
+            for (const auto& [k, v] : cmd.args) {
+                if (k == "fn" || k == "func" || k == "function") continue;
+                args[k] = v;
+            }
+
+            sol::protected_function_result luaResult = fn(args);
+            if (!luaResult.valid()) {
+                sol::error err = luaResult;
+                std::cerr << "Lua callback runtime error (" << fnName << "): " << err.what() << std::endl;
+            }
+
             currentLine++;
         }
         else if (cmd.type == "label") {
@@ -508,12 +578,12 @@ void DialogueController::Update(int mx, int my) {
     }
 }
 
-void DialogueController::RenderBackground(PrismatiXEngine& engine) {
+void DialogueController::RenderBackground() {
     if (previousBgTexture) {
-        engine.DrawFullscreenBackground(previousBgTexture, 255);
+        TextureManager::DrawAuto(previousBgTexture, renderer, TextureManager::DisplayMode::Fill, 255);
     }
     if (currentBgTexture) {
-        engine.DrawFullscreenBackground(currentBgTexture, (Uint8)bgFadeAlpha);
+        TextureManager::DrawAuto(currentBgTexture, renderer, TextureManager::DisplayMode::Fill, static_cast<Uint8>(bgFadeAlpha));
     }
 }
 

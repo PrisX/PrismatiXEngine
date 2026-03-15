@@ -1,328 +1,93 @@
 #include <fstream>
-#include <functional>
 #include <iostream>
 #include <sstream>
+#include <string>
+#include <vector>
 
-#include "Controllers/DialogueController.h"
-#include "DialogueBox.h"
-#include "MainMenu.h"
 #include "Managers/ArchiveManager.h"
 #include "Managers/AudioManager.h"
-#include "Managers/ConfigManager.h"
-#include "Managers/ScriptManager.h"
 #include "Managers/TextManager.h"
-#include "Managers/TextureManager.h"
 #include "PrismatiXEngine.h"
-#include "SaveLoadMenu.h"
-#include "Toolbar.h"
-#include "Utils/TransitionUtils.h"
 
-#pragma execution_character_set("utf-8")  // 防中文亂碼
+#pragma execution_character_set("utf-8")
 
-enum class GameState { MainMenu, InGame, SaveMenu, LoadMenu };
-
-static bool RunSplashScreenLua(PrismatiXEngine& engine, const std::string& splashScriptPath, bool required) {
-    std::string scriptContent;
-
-    std::vector<char> archiveBuffer = ArchiveManager::ExtractFile(splashScriptPath);
+namespace {
+std::string LoadTextFromArchiveOrDisk(const std::string& path) {
+    std::vector<char> archiveBuffer = ArchiveManager::ExtractFile(path);
     if (!archiveBuffer.empty()) {
-        scriptContent.assign(archiveBuffer.begin(), archiveBuffer.end());
-    }
-    else {
-        std::ifstream in(splashScriptPath);
-        if (in) {
-            std::stringstream ss;
-            ss << in.rdbuf();
-            scriptContent = ss.str();
-        }
+        return std::string(archiveBuffer.begin(), archiveBuffer.end());
     }
 
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return "";
+    }
+
+    std::stringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
+bool ExecuteLuaFile(PrismatiXEngine& engine, const std::string& scriptPath) {
+    std::string scriptContent = LoadTextFromArchiveOrDisk(scriptPath);
     if (scriptContent.empty()) {
-        if (required) {
-            std::cerr << "Required splash script not found: " << splashScriptPath << std::endl;
-            return false;
-        }
-        std::cout << "Optional splash script not found, skipping: " << splashScriptPath << std::endl;
-        return true;
+        std::cerr << "Lua script not found: " << scriptPath << std::endl;
+        return false;
     }
 
-    auto& lua = engine.GetLuaState();
-    sol::protected_function_result loadResult = lua.safe_script(scriptContent, &sol::script_pass_on_error);
+    sol::protected_function_result loadResult = engine.GetLuaState().safe_script(scriptContent, &sol::script_pass_on_error);
     if (!loadResult.valid()) {
         sol::error err = loadResult;
-        std::cerr << "Failed to load splash script (" << splashScriptPath << "): " << err.what() << std::endl;
+        std::cerr << "Failed to load Lua script (" << scriptPath << "): " << err.what() << std::endl;
         return false;
     }
-
-    sol::protected_function splashScreen = lua["SplashScreen"];
-    if (!splashScreen.valid()) {
-        if (required) {
-            std::cerr << "SplashScreen() not found in required script: " << splashScriptPath << std::endl;
-            return false;
-        }
-        std::cout << "SplashScreen() not found in optional script, skipping: " << splashScriptPath << std::endl;
-        return true;
-    }
-
-    sol::protected_function_result runResult = splashScreen();
-    if (!runResult.valid()) {
-        sol::error err = runResult;
-        std::cerr << "SplashScreen() runtime error (" << splashScriptPath << "): " << err.what() << std::endl;
-        return false;
-    }
-
     return true;
 }
+
+bool RunLuaEntrypoint(PrismatiXEngine& engine, const std::string& entryScriptPath) {
+    if (!ExecuteLuaFile(engine, entryScriptPath)) {
+        return false;
+    }
+
+    sol::protected_function entrypoint = engine.GetLuaState()["Entrypoint"];
+    if (!entrypoint.valid()) {
+        std::cerr << "Entrypoint() not found in script: " << entryScriptPath << std::endl;
+        return false;
+    }
+
+    sol::protected_function_result runResult = entrypoint();
+    if (!runResult.valid()) {
+        sol::error err = runResult;
+        std::cerr << "Entrypoint() runtime error (" << entryScriptPath << "): " << err.what() << std::endl;
+        return false;
+    }
+    return true;
+}
+}  // namespace
 
 int main(int argc, char* argv[]) {
     if (!ArchiveManager::MountArchive("Engine.pdx")) {
         std::cerr << "Failed to mount engine assets." << std::endl;
         return -1;
     }
+
     ArchiveManager::MountArchive("Data.pdx");
-    if (!ConfigManager::LoadConfig("Game")) {
-        std::cerr << "Entry point not found or invalid." << std::endl;
-        return -1;
-    }
 
-    std::string mountList = ConfigManager::GetString("Mount", "Data.pdx");
-
-    std::stringstream ss(mountList);
-    std::string pdxName;
-    while (std::getline(ss, pdxName, ',')) {
-        pdxName.erase(0, pdxName.find_first_not_of(" \t\r\n"));
-        pdxName.erase(pdxName.find_last_not_of(" \t\r\n") + 1);
-
-        if (!pdxName.empty()) {
-            ArchiveManager::MountArchive(pdxName);
-        }
-    }
-
-    std::string gameTitle = ConfigManager::GetString("Title", "PrismatiX Engine");
-    int winW = ConfigManager::GetInt("Width", 1280);
-    int winH = ConfigManager::GetInt("Height", 720);
+    const std::string gameTitle = "PrismatiX Engine";
+    const int winW = 1280;
+    const int winH = 720;
 
     PrismatiXEngine engine;
     if (!engine.Initialize(gameTitle, winW, winH)) {
         return -1;
     }
 
-    SDL_Renderer* renderer = engine.GetRenderer();
+    const std::string entryScriptPath = "Scripts/entrypoint.lua";
 
-    std::string fontName = ConfigManager::GetString("FontName", "NotoSansTC-Bold.ttf");
-    int fontSize = ConfigManager::GetInt("FontSize", 28);
-    TTF_Font* font = TextManager::LoadFont(fontName, fontSize);
-    TTF_Font* nameFont = TextManager::LoadFont("NotoSerifTC-Bold.ttf", 28);
-    DialogueBox dialog(font, 50, winH - 120);
-    DialogueController vnController(&dialog, font, renderer);
-    dialog.SetNameFont(nameFont);
-
-    Toolbar bottomToolbar(font, winH);
-    SaveLoadMenu slMenu(font);
-    MainMenu titleMenu(font, winW, winH);
-    std::string initBgFile = ConfigManager::GetString("InitialBg", "title_bg.jpg");
-    SDL_Texture* titleBg = TextureManager::LoadTexture(initBgFile, renderer);
-
-    std::vector<VNCommand> script;
-    GameState currentState = GameState::MainMenu;
-    GameState previousState = GameState::MainMenu;
-
-    std::string userSplashScript = ConfigManager::GetString("SplashScript", "");
-    if (userSplashScript.empty()) {
-        userSplashScript = "Scripts/splash.lua";
-    }
-    else if (userSplashScript.find('/') == std::string::npos && userSplashScript.find('\\') == std::string::npos) {
-        userSplashScript = "Scripts/" + userSplashScript;
-    }
-
-    if (!RunSplashScreenLua(engine, userSplashScript, false)) {
-        return -1;
-    }
-
-    if (!RunSplashScreenLua(engine, "Scripts/engine_splash.lua", true)) {
-        return -1;
-    }
-
-    TransitionUtils::Transition screenTransition;
-    screenTransition.speed = 8.0f;
-
-    float mainMenuAlpha = 0.0f;
-    const float MAIN_MENU_FADE_SPEED = 3.0f;
-    while (engine.IsRunning()) {
-        engine.HandleEvents();
-        bool isFading = screenTransition.IsActive();
-
-        engine.ClearScreen();
-        if (currentState == GameState::MainMenu) {
-            if (titleBg) {
-                engine.DrawFullscreenBackground(titleBg, (Uint8)mainMenuAlpha);
-            }
-        }
-        else if (currentState == GameState::InGame) {
-            vnController.RenderBackground(engine);
-        }
-
-        if (currentState == GameState::MainMenu) {
-            TransitionUtils::FadeIn(mainMenuAlpha, MAIN_MENU_FADE_SPEED);
-
-            if (titleBg) {
-                engine.DrawFullscreenBackground(titleBg, (Uint8)mainMenuAlpha);
-            }
-
-            int mx = engine.GetMouseX();
-            int my = engine.GetMouseY();
-            bool isLeftClicked = !isFading && engine.GetLeftClick();
-
-            std::string action = titleMenu.Update(mx, my, isLeftClicked);
-
-            if (!isFading) {
-                if (action == "Start") {
-                    AudioManager::PlaySFX("click.wav");
-                    screenTransition.Start([&]() {
-                        std::string startScriptFile = ConfigManager::GetString("StartScript", "script");
-                        script = ScriptManager::ParseFile(startScriptFile);
-                        vnController.LoadScript(startScriptFile, script);
-                        currentState = GameState::InGame;
-                    });
-                }
-                else if (action == "Load") {
-                    AudioManager::PlaySFX("click.wav");
-                    screenTransition.Start([&]() {
-                        previousState = GameState::MainMenu;
-                        currentState = GameState::LoadMenu;
-                        slMenu.Open(SLMode::Load);
-                    });
-                }
-                else if (action == "Exit") {
-                    break;
-                }
-            }
-
-            titleMenu.Render(renderer);
-        }
-        else if (currentState == GameState::InGame) {
-            int mx = engine.GetMouseX();
-            int my = engine.GetMouseY();
-            int wheelY = isFading ? 0 : engine.GetMouseWheelY();
-
-            bool isLeftClicked = !isFading && engine.GetLeftClick();
-
-            if (!isFading) {
-                if (vnController.IsShowingBacklog()) {
-                    if (wheelY != 0) {
-                        vnController.ScrollBacklog(wheelY > 0 ? 1 : -1);
-                    }
-
-                    if (engine.GetRightClick() || wheelY < 0) {
-                        vnController.ToggleBacklog();
-                    }
-                }
-                else {
-                    std::string toolbarAction = bottomToolbar.Update(mx, my, isLeftClicked);
-
-                    if (toolbarAction == "OpenSave") {
-                        screenTransition.Start([&]() {
-                            previousState = GameState::InGame;
-                            currentState = GameState::SaveMenu;
-                            slMenu.Open(SLMode::Save);
-                        });
-                    }
-                    else if (toolbarAction == "OpenLoad") {
-                        screenTransition.Start([&]() {
-                            previousState = GameState::InGame;
-                            currentState = GameState::LoadMenu;
-                            slMenu.Open(SLMode::Load);
-                        });
-                    }
-                    else if (toolbarAction == "TogglePin") {
-                        AudioManager::PlaySFX("click.wav");
-                    }
-
-                    bool blockingClick = bottomToolbar.IsMouseOver(my);
-
-                    if ((isLeftClicked && !blockingClick) || wheelY < 0) {
-                        vnController.HandleClick(mx, my);
-                    }
-                    else if (wheelY > 0) {
-                        vnController.ToggleBacklog();
-                    }
-                }
-            }
-
-            vnController.Update(mx, my);
-            std::string pendingScriptTarget;
-            if (!isFading && vnController.ConsumePendingScriptTransition(pendingScriptTarget)) {
-                screenTransition.Start([&, pendingScriptTarget]() {
-                    script = ScriptManager::ParseFile(pendingScriptTarget);
-                    vnController.LoadScript(pendingScriptTarget, script);
-                    currentState = GameState::InGame;
-                });
-            }
-            vnController.Render(renderer);
-
-            bottomToolbar.Render(renderer);
-        }
-        else if (currentState == GameState::SaveMenu || currentState == GameState::LoadMenu) {
-            int mx = engine.GetMouseX();
-            int my = engine.GetMouseY();
-            bool isLeftClicked = engine.GetLeftClick();
-
-            vnController.RenderBackground(engine);
-            vnController.Render(renderer);
-
-            int selectedSlot = !isFading ? slMenu.Update(mx, my, isLeftClicked) : 0;
-
-            if (!isFading) {
-                if (selectedSlot == -1 || engine.GetRightClick()) {
-                    screenTransition.Start([&]() { currentState = previousState; });
-                }
-                else if (selectedSlot > 0) {
-                    if (currentState == GameState::SaveMenu) {
-                        SaveManager::SaveGame(selectedSlot, vnController.GetCurrentScriptName(), vnController.GetCurrentLine(), vnController.GetCurrentBgName(), vnController.GetCurrentBgmName(), vnController.GetSavedCharacters());
-
-                        AudioManager::PlaySFX("click.wav");
-                        slMenu.Open(SLMode::Save);
-                    }
-                    else if (currentState == GameState::LoadMenu) {
-                        int capturedSlot = selectedSlot;
-                        screenTransition.Start([&, capturedSlot]() {
-                            std::string scriptName, bgName, bgmName;
-                            int line = 0;
-                            std::vector<SavedCharacter> chars;
-
-                            if (SaveManager::LoadGame(capturedSlot, scriptName, line, bgName, bgmName, chars)) {
-                                script = ScriptManager::ParseFile(scriptName);
-                                vnController.LoadScript(scriptName, script);
-                                vnController.SetCurrentLine(line);
-                                vnController.SetSkipNextLog(true);
-
-                                vnController.RestoreBackground(bgName);
-                                if (!bgmName.empty()) {
-                                    AudioManager::PlayBGM(bgmName);
-                                }
-
-                                vnController.RestoreSavedCharacters(chars);
-
-                                AudioManager::PlaySFX("click.wav");
-                                currentState = GameState::InGame;
-                            }
-                        });
-                    }
-                }
-            }
-
-            slMenu.Render(renderer);
-        }
-
-        screenTransition.Update();
-
-        screenTransition.Draw(renderer, winW, winH);
-
-        engine.PresentScreen();
-    }
+    bool ok = RunLuaEntrypoint(engine, entryScriptPath);
 
     TextManager::Clean();
     AudioManager::CleanCache();
-    engine.Clean();
-    return 0;
+
+    return ok ? 0 : -1;
 }

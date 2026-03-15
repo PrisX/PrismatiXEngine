@@ -7,15 +7,9 @@ add_executable (PrismatiXEngine
 "Core/PrismatiXEngine.h"
 "Core/LuaBindings.cpp"
 "Core/LuaBindings.h"
-"Components/DialogueBox.h"
-"Components/SaveLoadMenu.h" 
-"Components/MainMenu.h"
-"Components/Toolbar.h"
-"Components/Gallery.h"
-"Components/BGMInfo.h"
-"Components/ChapterBanner.h"
 "Controllers/DialogueController.h"
 "Controllers/DialogueController.cpp"
+"Controllers/Internal/DialogueWidgets.h"
 "Managers/TextureManager.cpp"
 "Managers/TextureManager.h"
 "Managers/TextManager.h"
@@ -26,8 +20,6 @@ add_executable (PrismatiXEngine
 "Managers/AudioManager.cpp"
 "Managers/ArchiveManager.h"
 "Managers/ArchiveManager.cpp"
-"Managers/ConfigManager.h"
-"Managers/ConfigManager.cpp"
 "Managers/VariableManager.h"
 "Managers/VariableManager.cpp"
 "Managers/UIManager.h"
@@ -46,7 +38,6 @@ target_include_directories(PrismatiXEngine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/Core
     ${CMAKE_CURRENT_SOURCE_DIR}/Managers
-    ${CMAKE_CURRENT_SOURCE_DIR}/Components
     ${CMAKE_CURRENT_SOURCE_DIR}/Controllers
     ${CMAKE_CURRENT_SOURCE_DIR}/Utils
     ${LUA_INCLUDE_DIR}
@@ -68,7 +59,6 @@ target_include_directories(PrismatiXEngine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/Core
     ${CMAKE_CURRENT_SOURCE_DIR}/Managers
-    ${CMAKE_CURRENT_SOURCE_DIR}/Components
     ${CMAKE_CURRENT_SOURCE_DIR}/Controllers
     ${CMAKE_CURRENT_SOURCE_DIR}/Utils
     ${HOMEBREW_PREFIX}/include
@@ -77,4 +67,9 @@ target_include_directories(PrismatiXEngine PRIVATE
 
 endif()
 
-file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/Scripts DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+add_custom_command(
+    TARGET PrismatiXEngine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/Scripts
+            $<TARGET_FILE_DIR:PrismatiXEngine>/Scripts
+)

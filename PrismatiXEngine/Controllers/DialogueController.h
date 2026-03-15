@@ -3,16 +3,14 @@
 #include <SDL2/SDL_ttf.h>
 
 #include <map>
+#include <memory>
+#include <sol/sol.hpp>
 #include <string>
 #include <vector>
 
-#include "BGMInfo.h"
-#include "ChapterBanner.h"
-#include "DialogueBox.h"
+#include "Controllers/Internal/DialogueWidgets.h"
 #include "Managers/SaveManager.h"
 #include "ScriptManager.h"
-
-class PrismatiXEngine;
 
 struct ActiveCharacter {
     std::string name;
@@ -34,7 +32,7 @@ private:
     std::string currentBgName;
     std::string currentBgmName;
 
-    DialogueBox* dialogueBox;
+    std::unique_ptr<DialogueBox> dialogueBox;
     SDL_Renderer* renderer;
     SDL_Texture* previousBgTexture = nullptr;
     SDL_Texture* currentBgTexture = nullptr;
@@ -55,11 +53,12 @@ private:
     std::string pendingScriptTarget;
     std::map<std::string, ActiveCharacter> activeCharacters;
     std::string currentSpeakingChar;
+    sol::state* luaState = nullptr;
     BGMInfo infoBanner;
     ChapterBanner chapterBanner;
 
 public:
-    DialogueController(DialogueBox* box, TTF_Font* font, SDL_Renderer* ren);
+    DialogueController(TTF_Font* dialogueFont, const std::string& dialogueFontName, int dialogueFontSize, TTF_Font* nameFont, SDL_Renderer* ren, sol::state* lua);
 
     // For S/L
     std::string GetCurrentScriptName() const;
@@ -82,7 +81,7 @@ public:
     void ExecuteNextCommands();
     void HandleClick(int mx, int my);
     void Update(int mx, int my);
-    void RenderBackground(PrismatiXEngine& engine);
+    void RenderBackground();
     void RenderBacklog(SDL_Renderer* renderer);
     void Render(SDL_Renderer* renderer);
     bool IsScriptFinished() const;
