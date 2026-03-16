@@ -218,6 +218,19 @@ void RegisterScriptBindings(sol::state& lua, PrismatiXEngine& engine, sol::table
         }
         textEffects[effectName] = effectFn;
     });
+
+    engineApi.set_function("RegisterPortraitAnimation", [&lua](const std::string& animationName, const sol::function& animationFn) {
+        sol::table portraitAnimations;
+        sol::object existing = lua["PortraitAnimations"];
+        if (existing.valid() && existing.get_type() == sol::type::table) {
+            portraitAnimations = existing.as<sol::table>();
+        }
+        else {
+            portraitAnimations = lua.create_table();
+            lua["PortraitAnimations"] = portraitAnimations;
+        }
+        portraitAnimations[animationName] = animationFn;
+    });
 }
 
 void RegisterRenderingBindings(sol::state& lua, PrismatiXEngine& engine, sol::table& engineApi) {

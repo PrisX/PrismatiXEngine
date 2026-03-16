@@ -26,6 +26,7 @@ function Entrypoint()
     _G.Ease = include("Scripts/common/easing.lua")
     local Runtime = include("Scripts/common/runtime_helpers.lua")
     local Transition = include("Scripts/common/transition.lua")
+    include("Scripts/common/portrait_animations.lua")
 
     local settings = {
         fontName = "NotoSansTC-Bold.ttf",

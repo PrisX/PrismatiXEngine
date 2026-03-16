@@ -23,6 +23,16 @@ struct ActiveCharacter {
 
     float currentX = 0.0f;
     float targetX = 0.0f;
+
+    std::string animation = "fade";
+    std::string animationEase;
+    std::string animationTrigger = "enter";
+    int animationDuration = 18;
+    int animationFrame = 0;
+    bool animationActive = false;
+    float renderOffsetX = 0.0f;
+    float renderOffsetY = 0.0f;
+    float renderScale = 1.0f;
 };
 
 class DialogueController {

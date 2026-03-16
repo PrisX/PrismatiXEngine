@@ -1,6 +1,8 @@
 #include "DialogueController.h"
 
 #include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <initializer_list>
 #include <iostream>
 #include <sol/sol.hpp>
@@ -16,6 +18,9 @@
 #include "VariableManager.h"
 
 namespace {
+constexpr int kScreenWidth = 1280;
+constexpr int kScreenHeight = 720;
+
 std::string ReadFirstArg(const std::map<std::string, std::string>& args, std::initializer_list<const char*> keys) {
     for (const char* key : keys) {
         auto it = args.find(key);
@@ -31,6 +36,152 @@ std::string ReadTransitionStyleArg(const std::map<std::string, std::string>& arg
 std::string ReadTransitionSpeedArg(const std::map<std::string, std::string>& args) { return ReadFirstArg(args, { "transitionSpeed", "transitionspeed", "trans_speed", "tspeed", "speed" }); }
 
 std::string ReadTransitionEaseArg(const std::map<std::string, std::string>& args) { return ReadFirstArg(args, { "ease", "easing" }); }
+
+std::string ReadCharacterAnimationArg(const std::map<std::string, std::string>& args) { return ReadFirstArg(args, { "anim", "animation", "motion" }); }
+
+std::string ReadCharacterAnimationEaseArg(const std::map<std::string, std::string>& args) { return ReadFirstArg(args, { "animease", "animationease", "ease", "easing" }); }
+
+int ReadIntArg(const std::map<std::string, std::string>& args, std::initializer_list<const char*> keys, int fallback) {
+    std::string value = ReadFirstArg(args, keys);
+    if (value.empty()) return fallback;
+
+    try {
+        return std::stoi(value);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+int ReadCharacterAnimationDurationArg(const std::map<std::string, std::string>& args) {
+    int duration = ReadIntArg(args, { "animduration", "animframes", "duration", "frames", "speed" }, 18);
+    return std::clamp(duration, 1, 120);
+}
+
+std::string ToLowerAlphaNumeric(const std::string& value) {
+    std::string lowered;
+    lowered.reserve(value.size());
+
+    for (unsigned char ch : value) {
+        if (std::isalnum(ch)) {
+            lowered.push_back(static_cast<char>(std::tolower(ch)));
+        }
+    }
+
+    return lowered;
+}
+
+std::string NormalizeCharacterAnimation(const std::string& value) {
+    std::string lowered = ToLowerAlphaNumeric(value);
+
+    if (lowered.empty() || lowered == "fade" || lowered == "default") return "fade";
+    if (lowered == "none" || lowered == "instant") return "none";
+    if (lowered == "slide" || lowered == "auto" || lowered == "slideauto") return "slide_auto";
+    if (lowered == "slideleft" || lowered == "left") return "slide_left";
+    if (lowered == "slideright" || lowered == "right") return "slide_right";
+    if (lowered == "slideup" || lowered == "up") return "slide_up";
+    if (lowered == "slidedown" || lowered == "down") return "slide_down";
+    if (lowered == "pop" || lowered == "popin") return "pop";
+    if (lowered == "bounce" || lowered == "jump") return "bounce";
+    if (lowered == "zoom" || lowered == "zoomin") return "zoom";
+
+    return "fade";
+}
+
+std::string ResolveCharacterAnimation(const ActiveCharacter& chara) {
+    if (chara.animation == "slide_auto") {
+        return (chara.targetX <= (kScreenWidth * 0.5f)) ? "slide_left" : "slide_right";
+    }
+    return chara.animation;
+}
+
+void StartCharacterAnimation(ActiveCharacter& chara, const std::map<std::string, std::string>& args) {
+    chara.animation = NormalizeCharacterAnimation(ReadCharacterAnimationArg(args));
+    chara.animationEase = ReadCharacterAnimationEaseArg(args);
+    chara.animationDuration = ReadCharacterAnimationDurationArg(args);
+    chara.animationFrame = 0;
+    chara.animationActive = (chara.animation != "none");
+    chara.renderOffsetX = 0.0f;
+    chara.renderOffsetY = 0.0f;
+    chara.renderScale = 1.0f;
+}
+
+void ApplyCharacterAnimationResult(ActiveCharacter& chara, const sol::table& result) {
+    sol::optional<float> offsetX = result["offsetX"];
+    if (offsetX) {
+        chara.renderOffsetX = *offsetX;
+    }
+
+    sol::optional<float> offsetY = result["offsetY"];
+    if (offsetY) {
+        chara.renderOffsetY = *offsetY;
+    }
+
+    sol::optional<float> scale = result["scale"];
+    if (scale) {
+        chara.renderScale = *scale;
+    }
+}
+
+void UpdateCharacterAnimation(ActiveCharacter& chara, sol::state* luaState) {
+    chara.renderOffsetX = 0.0f;
+    chara.renderOffsetY = 0.0f;
+    chara.renderScale = 1.0f;
+
+    if (!chara.animationActive) return;
+
+    float duration = static_cast<float>(std::max(1, chara.animationDuration));
+    float progress = std::clamp(static_cast<float>(chara.animationFrame) / duration, 0.0f, 1.0f);
+    std::string animation = ResolveCharacterAnimation(chara);
+
+    if (luaState) {
+        sol::object animationsObj = (*luaState)["PortraitAnimations"];
+        if (animationsObj.valid() && animationsObj.get_type() == sol::type::table) {
+            sol::table animations = animationsObj.as<sol::table>();
+            sol::protected_function fx = animations[animation];
+
+            if (fx.valid()) {
+                sol::table ctx = luaState->create_table();
+                ctx["name"] = chara.name;
+                ctx["diff"] = chara.diff;
+                ctx["animation"] = chara.animation;
+                ctx["resolvedAnimation"] = animation;
+                ctx["trigger"] = chara.animationTrigger;
+                ctx["ease"] = chara.animationEase;
+                ctx["progress"] = progress;
+                ctx["frame"] = chara.animationFrame;
+                ctx["duration"] = chara.animationDuration;
+                ctx["pos"] = chara.pos;
+                ctx["currentX"] = chara.currentX;
+                ctx["targetX"] = chara.targetX;
+                ctx["screenWidth"] = kScreenWidth;
+                ctx["screenHeight"] = kScreenHeight;
+
+                sol::protected_function_result result = fx(ctx);
+                if (!result.valid()) {
+                    sol::error err = result;
+                    std::cerr << "Portrait animation runtime error (" << animation << "): " << err.what() << std::endl;
+                    chara.animationActive = false;
+                }
+                else if (result.return_count() > 0) {
+                    sol::optional<sol::table> animResult = result;
+                    if (animResult) {
+                        ApplyCharacterAnimationResult(chara, *animResult);
+                    }
+                }
+            }
+        }
+    }
+
+    if (progress >= 1.0f) {
+        chara.animationActive = false;
+        chara.renderOffsetX = 0.0f;
+        chara.renderOffsetY = 0.0f;
+        chara.renderScale = 1.0f;
+        return;
+    }
+
+    chara.animationFrame++;
+}
 }  // namespace
 
 DialogueController::DialogueController(TTF_Font* dialogueFont, const std::string& dialogueFontName, int dialogueFontSize, TTF_Font* nameFont, SDL_Renderer* ren, sol::state* lua) {
@@ -139,7 +290,7 @@ void DialogueController::RestoreSavedCharacters(const std::vector<SavedCharacter
         ac.targetAlpha = 255.0f;
         ac.isExiting = false;
 
-        ac.currentX = 1280.0f / 2.0f;
+        ac.currentX = kScreenWidth / 2.0f;
 
         activeCharacters[ac.name] = ac;
     }
@@ -219,8 +370,7 @@ void DialogueController::RecalculateTargetPositions() {
     std::sort(nonExiting.begin(), nonExiting.end(), [](const ActiveCharacter* a, const ActiveCharacter* b) { return a->pos < b->pos; });
 
     int total = (int)nonExiting.size();
-    int screenWidth = 1280;
-    int sectionWidth = screenWidth / (total + 1);
+    int sectionWidth = kScreenWidth / (total + 1);
     for (int i = 0; i < total; i++) {
         nonExiting[i]->targetX = (float)(sectionWidth * (i + 1));
     }
@@ -232,24 +382,31 @@ void DialogueController::ExecuteNextCommands() {
 
         if (cmd.type == "charimg") {
             std::string name = cmd.args["name"];
+            int targetPos = std::stoi(cmd.args["pos"]);
 
             if (activeCharacters.find(name) == activeCharacters.end()) {
                 ActiveCharacter chara;
                 chara.name = name;
                 chara.diff = cmd.args["diff"];
-                chara.pos = std::stoi(cmd.args["pos"]);
+                chara.pos = targetPos;
                 chara.alpha = 0.0f;
                 chara.targetAlpha = 255.0f;
                 activeCharacters[name] = chara;
                 RecalculateTargetPositions();
                 activeCharacters[name].currentX = activeCharacters[name].targetX;
+                activeCharacters[name].animationTrigger = "enter";
+                StartCharacterAnimation(activeCharacters[name], cmd.args);
             }
             else {
-                activeCharacters[name].diff = cmd.args["diff"];
-                activeCharacters[name].pos = std::stoi(cmd.args["pos"]);
-                activeCharacters[name].targetAlpha = 255.0f;
-                activeCharacters[name].isExiting = false;
+                ActiveCharacter& chara = activeCharacters[name];
+                int previousPos = chara.pos;
+                chara.diff = cmd.args["diff"];
+                chara.pos = targetPos;
+                chara.targetAlpha = 255.0f;
+                chara.isExiting = false;
                 RecalculateTargetPositions();
+                chara.animationTrigger = (previousPos != targetPos) ? "move" : "refresh";
+                StartCharacterAnimation(chara, cmd.args);
             }
             currentLine++;
         }
@@ -654,6 +811,8 @@ void DialogueController::Update(int mx, int my) {
             EasingUtils::ExpDecay(chara.currentX, chara.targetX, factor);
         }
 
+        UpdateCharacterAnimation(chara, luaState);
+
         if (chara.alpha <= 0.0f && chara.isExiting) {
             i = activeCharacters.erase(i);
         }
@@ -727,12 +886,12 @@ void DialogueController::Render(SDL_Renderer* renderer) {
                 SDL_QueryTexture(tex, NULL, NULL, &texW, &texH);
 
                 float targetHeight = 600.0f;
-                float scale = targetHeight / (float)texH;
+                float scale = (targetHeight / (float)texH) * chara.renderScale;
                 int finalW = (int)(texW * scale);
                 int finalH = (int)(texH * scale);
 
-                int x = (int)chara.currentX - (finalW / 2);
-                int y = 720 - finalH;
+                int x = (int)(chara.currentX + chara.renderOffsetX) - (finalW / 2);
+                int y = (kScreenHeight - finalH) + (int)chara.renderOffsetY;
 
                 TextureManager::Draw(tex, renderer, x, y, finalW, finalH, (Uint8)chara.alpha);
             }
