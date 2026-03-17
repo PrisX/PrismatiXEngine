@@ -40,6 +40,7 @@ function Entrypoint()
     }
 
     local MainMenu = include("Scripts/components/main_menu.lua")
+    local DialogueBoxComponent = include("Scripts/components/dialogue_box.lua")
     local SaveLoadMenu = include("Scripts/components/save_load_menu.lua")
     local Toolbar = include("Scripts/components/toolbar.lua")
     Engine.RunScript("Scripts/effects.lua", false)
@@ -75,6 +76,8 @@ function Entrypoint()
     local titleMenu = MainMenu.new(winW, winH, fontName, fontSize)
     local saveLoadMenu = SaveLoadMenu.new(fontName, fontSize, winW, winH)
     local bottomToolbar = Toolbar.new(fontName, fontSize, winH)
+    local dialogueBox = DialogueBoxComponent.new(fontName, fontSize)
+    dialogueBox:set_name_font(nameFontName, nameFontSize)
 
     local currentState = stateMainMenu
     local previousState = stateMainMenu
@@ -265,10 +268,12 @@ function Entrypoint()
             end
 
             controller:Render()
+            dialogueBox:render_from_context(controller:GetDialogueBoxContext())
             bottomToolbar:render(winW)
         elseif currentState == stateSaveMenu or currentState == stateLoadMenu then
             controller:RenderBackground()
             controller:Render()
+            dialogueBox:render_from_context(controller:GetDialogueBoxContext())
 
             local selectedSlot = 0
             if not isFading then

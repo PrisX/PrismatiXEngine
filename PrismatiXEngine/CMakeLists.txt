@@ -9,7 +9,6 @@ add_executable (PrismatiXEngine
 "Core/LuaBindings.h"
 "Controllers/DialogueController.h"
 "Controllers/DialogueController.cpp"
-"Controllers/Internal/DialogueWidgets.h"
 "Managers/TextureManager.cpp"
 "Managers/TextureManager.h"
 "Managers/TextManager.h"

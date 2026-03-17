@@ -83,6 +83,10 @@ void RegisterVNControllerBindings(sol::state& lua, PrismatiXEngine& engine) {
     vn["IsShowingBacklog"] = &DialogueController::IsShowingBacklog;
     vn["ToggleBacklog"] = &DialogueController::ToggleBacklog;
     vn["ScrollBacklog"] = &DialogueController::ScrollBacklog;
+    vn["GetDialogueBoxContext"] = [&engine](DialogueController& controller, sol::this_state state) {
+        auto [w, h] = GetRendererLogicalSize(engine.GetRenderer());
+        return controller.GetDialogueBoxContext(state, w, h);
+    };
 
     vn["PopScriptTransition"] = [&lua](DialogueController& controller) -> sol::object {
         std::string outTarget;
@@ -234,13 +238,24 @@ void RegisterScriptBindings(sol::state& lua, PrismatiXEngine& engine, sol::table
 }
 
 void RegisterRenderingBindings(sol::state& lua, PrismatiXEngine& engine, sol::table& engineApi) {
-    engineApi.set_function("DrawAuto", [&engine](const std::string& texPath, int displayMode, Uint8 alpha, int offsetX, int offsetY, float scale) {
+    engineApi.set_function("DrawAuto", [&engine, &lua](const std::string& texPath, int displayMode, Uint8 alpha, int offsetX, int offsetY, float scale) {
+        auto toRectTable = [&lua](const SDL_Rect& rect) {
+            sol::table out = lua.create_table();
+            out["x"] = rect.x;
+            out["y"] = rect.y;
+            out["w"] = rect.w;
+            out["h"] = rect.h;
+            return out;
+        };
+
         SDL_Texture* tex = TextureManager::LoadTexture(texPath, engine.GetRenderer());
         if (!tex) {
             std::cerr << "Failed to load texture from Lua: " << texPath << std::endl;
-            return SDL_Rect{ 0, 0, 0, 0 };
+            return toRectTable(SDL_Rect{ 0, 0, 0, 0 });
         }
-        return TextureManager::DrawAuto(tex, engine.GetRenderer(), static_cast<TextureManager::DisplayMode>(displayMode), alpha, offsetX, offsetY, scale);
+
+        SDL_Rect rect = TextureManager::DrawAuto(tex, engine.GetRenderer(), static_cast<TextureManager::DisplayMode>(displayMode), alpha, offsetX, offsetY, scale);
+        return toRectTable(rect);
     });
 
     lua.new_enum(

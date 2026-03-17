@@ -21,6 +21,33 @@ namespace {
 constexpr int kScreenWidth = 1280;
 constexpr int kScreenHeight = 720;
 
+std::vector<std::string> SplitUtf8Chars(const std::string& text) {
+    std::vector<std::string> chars;
+    size_t i = 0;
+    // UTF-8 神奇拆解，反正就是要用記憶體位置 https://stackoverflow.com/questions/45716356/utf-text-in-sdl2
+    while (i < text.length()) {
+        unsigned char c = static_cast<unsigned char>(text[i]);
+        size_t len = 1;
+        if ((c & 0x80) == 0)
+            len = 1;
+        else if ((c & 0xE0) == 0xC0)
+            len = 2;
+        else if ((c & 0xF0) == 0xE0)
+            len = 3;
+        else if ((c & 0xF8) == 0xF0)
+            len = 4;
+
+        if (i + len > text.length()) {
+            len = 1;
+        }
+
+        chars.push_back(text.substr(i, len));
+        i += len;
+    }
+
+    return chars;
+}
+
 std::string ReadFirstArg(const std::map<std::string, std::string>& args, std::initializer_list<const char*> keys) {
     for (const char* key : keys) {
         auto it = args.find(key);
@@ -185,8 +212,9 @@ void UpdateCharacterAnimation(ActiveCharacter& chara, sol::state* luaState) {
 }  // namespace
 
 DialogueController::DialogueController(TTF_Font* dialogueFont, const std::string& dialogueFontName, int dialogueFontSize, TTF_Font* nameFont, SDL_Renderer* ren, sol::state* lua) {
-    dialogueBox = std::make_unique<DialogueBox>(dialogueFont, dialogueFontName, dialogueFontSize, lua);
-    dialogueBox->SetNameFont(nameFont);
+    (void)dialogueFontName;
+    (void)dialogueFontSize;
+    (void)nameFont;
     uiFont = dialogueFont;
     renderer = ren;
     luaState = lua;
@@ -194,6 +222,96 @@ DialogueController::DialogueController(TTF_Font* dialogueFont, const std::string
     clickCooldown = 0;
     isFinished = false;
     hasStarted = false;
+}
+
+void DialogueController::ParseDialogueUTF8(const std::string& text) { dialogueParsedCharacters = SplitUtf8Chars(text); }
+
+void DialogueController::SetDialogueText(const std::string& speaker, const std::string& text, int speed, SDL_Color textColor, SDL_Color outlineColor, const std::string& textEffect) {
+    ParseDialogueUTF8(text);
+    dialogueCurrentSpeakerName = speaker;
+    dialogueCurrentDisplayText.clear();
+    dialogueDisplayedText.clear();
+    dialogueCurrentTextColor = textColor;
+    dialogueCurrentOutlineColor = outlineColor;
+    dialogueCurrentIndex = 0;
+    dialogueTextSpeed = speed;
+    dialogueLastTime = SDL_GetTicks();
+    dialogueFadeAlpha = 255;
+    dialogueActiveTextEffect = textEffect;
+    dialogueEffectStartTime = SDL_GetTicks();
+
+    if (dialogueTextSpeed <= 0) {
+        dialogueCurrentDisplayText = text;
+        dialogueDisplayedText = text;
+        dialogueCurrentIndex = static_cast<int>(dialogueParsedCharacters.size());
+    }
+}
+
+void DialogueController::UpdateDialogueText() {
+    Uint32 currentTime = SDL_GetTicks();
+    if (dialogueCurrentIndex < static_cast<int>(dialogueParsedCharacters.size())) {
+        if (currentTime - dialogueLastTime >= static_cast<Uint32>(std::max(0, dialogueTextSpeed))) {
+            dialogueDisplayedText = dialogueCurrentDisplayText;
+            dialogueCurrentDisplayText += dialogueParsedCharacters[dialogueCurrentIndex];
+            dialogueCurrentIndex++;
+            dialogueLastTime = currentTime;
+            dialogueFadeAlpha = 0;
+            dialogueFadeStartTime = currentTime;
+        }
+    }
+
+    if (dialogueFadeAlpha < 255) {
+        Uint32 elapsed = SDL_GetTicks() - dialogueFadeStartTime;
+        dialogueFadeAlpha = TransitionUtils::AlphaFromElapsed(elapsed, kDialogueFadeDuration);
+    }
+}
+
+void DialogueController::ShowDialogueTextAll() {
+    if (dialogueCurrentIndex < static_cast<int>(dialogueParsedCharacters.size())) {
+        dialogueCurrentDisplayText.clear();
+        for (const auto& ch : dialogueParsedCharacters) {
+            dialogueCurrentDisplayText += ch;
+        }
+        dialogueCurrentIndex = static_cast<int>(dialogueParsedCharacters.size());
+    }
+
+    dialogueDisplayedText = dialogueCurrentDisplayText;
+    dialogueFadeAlpha = 255;
+}
+
+bool DialogueController::IsDialogueTextFinished() const { return dialogueCurrentIndex >= static_cast<int>(dialogueParsedCharacters.size()); }
+
+sol::table DialogueController::GetDialogueBoxContext(sol::this_state state, int screenW, int screenH) const {
+    sol::state_view lua(state);
+    sol::table ctx = lua.create_table();
+
+    ctx["visible"] = !isFinished;
+    ctx["speaker"] = dialogueCurrentSpeakerName;
+    ctx["currentText"] = dialogueCurrentDisplayText;
+    ctx["displayedText"] = dialogueDisplayedText;
+    ctx["fadeAlpha"] = dialogueFadeAlpha;
+    ctx["effect"] = dialogueActiveTextEffect;
+    ctx["elapsedMs"] = static_cast<int>(SDL_GetTicks() - dialogueEffectStartTime);
+    float progress = dialogueParsedCharacters.empty() ? 1.0f : std::clamp(static_cast<float>(dialogueCurrentIndex) / static_cast<float>(dialogueParsedCharacters.size()), 0.0f, 1.0f);
+    ctx["progress"] = progress;
+    ctx["screenW"] = screenW;
+    ctx["screenH"] = screenH;
+
+    sol::table textColor = lua.create_table();
+    textColor["r"] = dialogueCurrentTextColor.r;
+    textColor["g"] = dialogueCurrentTextColor.g;
+    textColor["b"] = dialogueCurrentTextColor.b;
+    textColor["a"] = dialogueCurrentTextColor.a;
+    ctx["textColor"] = textColor;
+
+    sol::table outlineColor = lua.create_table();
+    outlineColor["r"] = dialogueCurrentOutlineColor.r;
+    outlineColor["g"] = dialogueCurrentOutlineColor.g;
+    outlineColor["b"] = dialogueCurrentOutlineColor.b;
+    outlineColor["a"] = dialogueCurrentOutlineColor.a;
+    ctx["outlineColor"] = outlineColor;
+
+    return ctx;
 }
 
 // For S/L
@@ -336,6 +454,16 @@ void DialogueController::LoadScript(const std::string& scriptName, const std::ve
     pendingInlineTransitionEase.clear();
     currentBgTexture = nullptr;
     activeCharacters.clear();
+    dialogueParsedCharacters.clear();
+    dialogueCurrentDisplayText.clear();
+    dialogueDisplayedText.clear();
+    dialogueCurrentSpeakerName.clear();
+    dialogueCurrentTextColor = { 255, 255, 255, 255 };
+    dialogueCurrentOutlineColor = { 0, 0, 0, 255 };
+    dialogueCurrentIndex = 0;
+    dialogueFadeAlpha = 255;
+    dialogueActiveTextEffect.clear();
+    dialogueEffectStartTime = SDL_GetTicks();
 }
 
 bool DialogueController::IsShowingBacklog() const { return isShowingBacklog; }
@@ -483,7 +611,7 @@ void DialogueController::ExecuteNextCommands() {
                 BacklogManager::AddLog(speaker, content, pendingVoice);
             }
             skipNextLog = false;
-            dialogueBox->SetText(speaker, content, textSpeed, textColor, outlineColor, textEffect);
+            SetDialogueText(speaker, content, textSpeed, textColor, outlineColor, textEffect);
 
             currentSpeakingChar = cmd.args.count("char") ? cmd.args["char"] : "";
 
@@ -753,8 +881,8 @@ void DialogueController::HandleClick(int mx, int my) {
     }
 
     AudioManager::StopVoice();
-    if (!dialogueBox->IsFinished()) {
-        dialogueBox->ShowAll();
+    if (!IsDialogueTextFinished()) {
+        ShowDialogueTextAll();
     }
     else {
         currentLine++;
@@ -781,9 +909,9 @@ void DialogueController::Update(int mx, int my) {
         TransitionUtils::MoveTowards(backlogFadeAlpha, target, BACKLOG_FADE_SPEED);
     }
     if (!isFinished) {
-        dialogueBox->Update();
+        UpdateDialogueText();
     }
-    if (!pendingVoice.empty() && dialogueBox->GetCurrentIndex() > 0) {
+    if (!pendingVoice.empty() && dialogueCurrentIndex > 0) {
         AudioManager::PlayVoice(pendingVoice);
         pendingVoice.clear();
     }
@@ -898,9 +1026,6 @@ void DialogueController::Render(SDL_Renderer* renderer) {
         }
     }
 
-    if (!isFinished) {
-        dialogueBox->Render(renderer);
-    }
     UIManager::Render(renderer);
 
     infoBanner.Render(renderer, uiFont);

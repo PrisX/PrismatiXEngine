@@ -1,27 +1,83 @@
 local DialogueBox = {}
 DialogueBox.__index = DialogueBox
 
-local function utf8_chars(text)
-    local chars = {}
-    local i = 1
-    local len = #text
-    while i <= len do
-        local c = string.byte(text, i)
-        local step = 1
-        -- UTF-8 神奇拆解，反正就是要用記憶體位置 https://stackoverflow.com/questions/45716356/utf-text-in-sdl2
-        if c < 0x80 then -- English / Numbers (1 Byte)
-            step = 1
-        elseif c < 0xE0 then -- Idk tf is this (2 Bytes)
-            step = 2
-        elseif c < 0xF0 then -- Chinese / Japanese (3 Bytes)
-            step = 3
-        else -- Emoji (4 Bytes)
-            step = 4
-        end
-        chars[#chars + 1] = string.sub(text, i, i + step - 1)
-        i = i + step
+local function clamp_channel(value, fallback)
+    local n = tonumber(value)
+    if not n then
+        return fallback
     end
-    return chars
+    if n < 0 then
+        return 0
+    end
+    if n > 255 then
+        return 255
+    end
+    return math.floor(n + 0.5)
+end
+
+local function read_color(value, fallback)
+    if type(value) ~= "table" then
+        return { fallback[1], fallback[2], fallback[3] }
+    end
+
+    local r = clamp_channel(value.r or value[1], fallback[1])
+    local g = clamp_channel(value.g or value[2], fallback[2])
+    local b = clamp_channel(value.b or value[3], fallback[3])
+    return { r, g, b }
+end
+
+local function build_effect_color(color)
+    return {
+        r = clamp_channel(color[1], 255),
+        g = clamp_channel(color[2], 255),
+        b = clamp_channel(color[3], 255),
+        a = 255
+    }
+end
+
+local function try_render_text_effect(box, text, x, y, wrapLength, alpha)
+    if box.activeTextEffect == "" or text == "" then
+        return false
+    end
+
+    local effects = rawget(_G, "TextEffects")
+    if type(effects) ~= "table" then
+        return false
+    end
+
+    local fx = effects[box.activeTextEffect]
+    if type(fx) ~= "function" then
+        return false
+    end
+
+    local ctx = {
+        text = text,
+        speaker = box.currentSpeakerName,
+        x = x,
+        y = y,
+        wrapLength = wrapLength,
+        alpha = alpha,
+        fontName = box.fontName,
+        fontSize = box.fontSize,
+        effect = box.activeTextEffect,
+        elapsedMs = box.effectElapsedMs,
+        progress = box.effectProgress,
+        textColor = build_effect_color(box.textColor),
+        outlineColor = build_effect_color(box.outlineColor)
+    }
+
+    local ok, result = pcall(fx, ctx)
+    if not ok then
+        print("Text effect runtime error (" .. tostring(box.activeTextEffect) .. "): " .. tostring(result))
+        box.activeTextEffect = ""
+        return false
+    end
+
+    if result == nil then
+        return true
+    end
+
+    return result == true
 end
 
 function DialogueBox.new(fontName, fontSize)
@@ -32,21 +88,17 @@ function DialogueBox.new(fontName, fontSize)
     self.nameFontName = fontName
     self.nameFontSize = fontSize
 
-    self.parsedCharacters = {}
     self.currentDisplayText = ""
     self.displayedText = ""
     self.currentSpeakerName = ""
 
-    self.currentIndex = 0
-    self.lastTime = 0
-    self.textSpeed = 50
-
     self.fadeAlpha = 255
-    self.fadeStartTime = 0
-    self.fadeDuration = 150
 
     self.textColor = { 255, 255, 255 }
     self.outlineColor = { 0, 0, 0 }
+    self.activeTextEffect = ""
+    self.effectElapsedMs = 0
+    self.effectProgress = 1.0
 
     return self
 end
@@ -54,58 +106,6 @@ end
 function DialogueBox:set_name_font(fontName, fontSize)
     self.nameFontName = fontName
     self.nameFontSize = fontSize
-end
-
-function DialogueBox:set_text(name, text, speed, textColor, outlineColor)
-    self.parsedCharacters = utf8_chars(text)
-    self.currentSpeakerName = name or ""
-    self.currentDisplayText = ""
-    self.displayedText = ""
-    self.currentIndex = 0
-    self.textSpeed = speed or 50
-    self.lastTime = os.clock() * 1000
-    self.fadeAlpha = 255
-
-    if textColor then
-        self.textColor = textColor
-    end
-    if outlineColor then
-        self.outlineColor = outlineColor
-    end
-end
-
-function DialogueBox:update()
-    local now = os.clock() * 1000
-    if self.currentIndex < #self.parsedCharacters and (now - self.lastTime) >= self.textSpeed then
-        self.displayedText = self.currentDisplayText
-        self.currentIndex = self.currentIndex + 1
-        self.currentDisplayText = self.currentDisplayText .. self.parsedCharacters[self.currentIndex]
-        self.lastTime = now
-        self.fadeAlpha = 0
-        self.fadeStartTime = now
-    end
-
-    if self.fadeAlpha < 255 then
-        local elapsed = now - self.fadeStartTime
-        if elapsed >= self.fadeDuration then
-            self.fadeAlpha = 255
-        else
-            self.fadeAlpha = math.floor((elapsed * 255) / self.fadeDuration)
-        end
-    end
-end
-
-function DialogueBox:show_all()
-    if self.currentIndex < #self.parsedCharacters then
-        self.currentDisplayText = table.concat(self.parsedCharacters)
-        self.currentIndex = #self.parsedCharacters
-    end
-    self.displayedText = self.currentDisplayText
-    self.fadeAlpha = 255
-end
-
-function DialogueBox:is_finished()
-    return self.currentIndex >= #self.parsedCharacters
 end
 
 function DialogueBox:render(screenW, screenH)
@@ -121,24 +121,71 @@ function DialogueBox:render(screenW, screenH)
         local nameRect = Engine.DrawAuto("nameplate.png", DisplayMode.BottomLeft, 255, 120, -180, 0.7)
         local nx = nameRect.w > 0 and nameRect.x or 50
         local ny = nameRect.w > 0 and nameRect.y or (boxY - 42)
-        Engine.DrawTextOutline(self.currentSpeakerName, nx + 24, ny + 8, self.nameFontName, self.nameFontSize, 255, 255, 255, 60, 30, 80, 1)
+        local nw = nameRect.w > 0 and nameRect.w or 220
+        local nh = nameRect.h > 0 and nameRect.h or 50
+        local nameSize = Engine.MeasureText(self.currentSpeakerName, self.nameFontName, self.nameFontSize)
+        local tx = nx + math.floor((nw - nameSize.w) * 0.5)
+        local ty = ny + math.floor((nh - nameSize.h) * 0.5)
+        Engine.DrawTextOutline(self.currentSpeakerName, tx, ty, self.nameFontName, self.nameFontSize, 255, 255, 255, 60, 30, 80, 1)
     end
 
     if self.currentDisplayText ~= "" then
         local tx = math.floor((screenW - 960) / 2)
-        local ty = boxY + 20
+        local ty = boxY - 20
         local c = self.textColor
         local o = self.outlineColor
 
-        if self.fadeAlpha < 255 then
-            Engine.DrawTextOutline(self.currentDisplayText, tx, ty, self.fontName, self.fontSize, c[1], c[2], c[3], o[1], o[2], o[3], 1, 960, self.fadeAlpha, true)
-            if self.displayedText ~= "" then
-                Engine.DrawTextOutline(self.displayedText, tx, ty, self.fontName, self.fontSize, c[1], c[2], c[3], o[1], o[2], o[3], 1, 960, 255, true)
+        if self.activeTextEffect == "" then
+            if self.fadeAlpha < 255 then
+                Engine.DrawTextOutline(self.currentDisplayText, tx, ty, self.fontName, self.fontSize, c[1], c[2], c[3], o[1], o[2], o[3], 1, 960, self.fadeAlpha, true)
+                if self.displayedText ~= "" then
+                    Engine.DrawTextOutline(self.displayedText, tx, ty, self.fontName, self.fontSize, c[1], c[2], c[3], o[1], o[2], o[3], 1, 960, 255, true)
+                end
+            else
+                Engine.DrawTextOutline(self.currentDisplayText, tx, ty, self.fontName, self.fontSize, c[1], c[2], c[3], o[1], o[2], o[3], 1, 960, 255, true)
             end
         else
-            Engine.DrawTextOutline(self.currentDisplayText, tx, ty, self.fontName, self.fontSize, c[1], c[2], c[3], o[1], o[2], o[3], 1, 960, 255, true)
+            if self.fadeAlpha < 255 then
+                local handled = try_render_text_effect(self, self.currentDisplayText, tx, ty, 960, self.fadeAlpha)
+                if not handled then
+                    Engine.DrawTextOutline(self.currentDisplayText, tx, ty, self.fontName, self.fontSize, c[1], c[2], c[3], o[1], o[2], o[3], 1, 960, self.fadeAlpha, true)
+                end
+                if self.displayedText ~= "" then
+                    Engine.DrawTextOutline(self.displayedText, tx, ty, self.fontName, self.fontSize, c[1], c[2], c[3], o[1], o[2], o[3], 1, 960, 255, true)
+                end
+            else
+                local handled = try_render_text_effect(self, self.currentDisplayText, tx, ty, 960, 255)
+                if not handled then
+                    Engine.DrawTextOutline(self.currentDisplayText, tx, ty, self.fontName, self.fontSize, c[1], c[2], c[3], o[1], o[2], o[3], 1, 960, 255, true)
+                end
+            end
         end
     end
+end
+
+function DialogueBox:render_from_context(ctx)
+    if type(ctx) ~= "table" then
+        return false
+    end
+
+    if ctx.visible == false then
+        return false
+    end
+
+    self.currentSpeakerName = tostring(ctx.speaker or "")
+    self.currentDisplayText = tostring(ctx.currentText or "")
+    self.displayedText = tostring(ctx.displayedText or "")
+    self.fadeAlpha = clamp_channel(ctx.fadeAlpha, 255)
+    self.textColor = read_color(ctx.textColor, { 255, 255, 255 })
+    self.outlineColor = read_color(ctx.outlineColor, { 0, 0, 0 })
+    self.activeTextEffect = tostring(ctx.effect or "")
+    self.effectElapsedMs = tonumber(ctx.elapsedMs) or 0
+    self.effectProgress = tonumber(ctx.progress) or 1.0
+
+    local screenW = tonumber(ctx.screenW) or 1280
+    local screenH = tonumber(ctx.screenH) or 720
+    self:render(screenW, screenH)
+    return true
 end
 
 return DialogueBox
