@@ -2,9 +2,11 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 
+#include <functional>
 #include <map>
 #include <sol/sol.hpp>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "Managers/SaveManager.h"
@@ -234,6 +236,31 @@ private:
     void UpdateDialogueText();
     void ShowDialogueTextAll();
     bool IsDialogueTextFinished() const;
+
+    using CommandHandler = std::function<void(const VNCommand&)>;
+    std::unordered_map<std::string, CommandHandler> commandHandlers;
+    void InitializeCommandHandlers();
+
+    void HandleCommandCharImg(const VNCommand& cmd);
+    void HandleCommandClearCharImg(const VNCommand& cmd);
+    void HandleCommandBg(const VNCommand& cmd);
+    void HandleCommandText(const VNCommand& cmd);
+    void HandleCommandBgm(const VNCommand& cmd);
+    void HandleCommandStopBgm(const VNCommand& cmd);
+    void HandleCommandSe(const VNCommand& cmd);
+    void HandleCommandSet(const VNCommand& cmd);
+    void HandleCommandAdd(const VNCommand& cmd);
+    void HandleCommandDel(const VNCommand& cmd);
+    void HandleCommandBgmInfo(const VNCommand& cmd);
+    void HandleCommandChapter(const VNCommand& cmd);
+    void HandleCommandLua(const VNCommand& cmd);
+    void HandleCommandTransition(const VNCommand& cmd);
+    void HandleCommandLabel(const VNCommand& cmd);
+    void HandleCommandJump(const VNCommand& cmd);
+    void HandleCommandIf(const VNCommand& cmd);
+    void HandleCommandElse(const VNCommand& cmd);
+    void HandleCommandEndIf(const VNCommand& cmd);
+    void HandleCommandChoice(const VNCommand& cmd);
 
     SDL_Renderer* renderer;
     SDL_Texture* previousBgTexture = nullptr;

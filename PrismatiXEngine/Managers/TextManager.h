@@ -15,6 +15,7 @@ private:
     static std::unordered_map<std::string, TTF_Font*> outlineFontCache;
 
     static TTF_Font* GetOrCreateOutlineFont(TTF_Font* baseFont, int outlineSize);
+    static SDL_Surface* RenderTextSurface(TTF_Font* font, const std::string& text, SDL_Color color, Uint32 wrapLength);
 
 public:
     static constexpr int FONT_OVERSAMPLE = 2;

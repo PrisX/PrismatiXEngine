@@ -79,13 +79,20 @@ TTF_Font* TextManager::GetOrCreateOutlineFont(TTF_Font* baseFont, int outlineSiz
     return olFont;
 }
 
+SDL_Surface* TextManager::RenderTextSurface(TTF_Font* font, const std::string& text, SDL_Color color, Uint32 wrapLength) {
+    if (wrapLength > 0) {
+        return TTF_RenderUTF8_Blended_Wrapped(font, text.c_str(), color, wrapLength * FONT_OVERSAMPLE);
+    }
+    return TTF_RenderUTF8_Blended(font, text.c_str(), color);
+}
+
 void TextManager::DrawWithOutline(SDL_Renderer* ren, TTF_Font* font, const std::string& text, SDL_Color textColor, SDL_Color outlineColor, int outlineSize, int x, int y, Uint32 wrapLength, Uint8 alpha, bool shadow) {
     if (!font || text.empty()) return;
 
     if (shadow) {
         const int shadowDX = 3, shadowDY = 3;
         SDL_Color black = { 0, 0, 0, 255 };
-        SDL_Surface* shadowSurface = (wrapLength > 0) ? TTF_RenderUTF8_Blended_Wrapped(font, text.c_str(), black, wrapLength * FONT_OVERSAMPLE) : TTF_RenderUTF8_Blended(font, text.c_str(), black);
+        SDL_Surface* shadowSurface = RenderTextSurface(font, text, black, wrapLength);
 
         if (shadowSurface) {
             int sw = shadowSurface->w / FONT_OVERSAMPLE;
@@ -115,12 +122,12 @@ void TextManager::DrawWithOutline(SDL_Renderer* ren, TTF_Font* font, const std::
     TTF_Font* outlineFont = GetOrCreateOutlineFont(font, outlineSize);
 
     // Outline background
-    SDL_Surface* bgSurface = outlineFont ? ((wrapLength > 0) ? TTF_RenderUTF8_Blended_Wrapped(outlineFont, text.c_str(), outlineColor, wrapLength * FONT_OVERSAMPLE) : TTF_RenderUTF8_Blended(outlineFont, text.c_str(), outlineColor)) : nullptr;
+    SDL_Surface* bgSurface = outlineFont ? RenderTextSurface(outlineFont, text, outlineColor, wrapLength) : nullptr;
     SDL_Texture* bgTexture = bgSurface ? SDL_CreateTextureFromSurface(ren, bgSurface) : nullptr;
     SDL_Rect bgRect = bgSurface ? SDL_Rect{ x, y, bgSurface->w / FONT_OVERSAMPLE, bgSurface->h / FONT_OVERSAMPLE } : SDL_Rect{};
 
     // Foreground text
-    SDL_Surface* fgSurface = (wrapLength > 0) ? TTF_RenderUTF8_Blended_Wrapped(font, text.c_str(), textColor, wrapLength * FONT_OVERSAMPLE) : TTF_RenderUTF8_Blended(font, text.c_str(), textColor);
+    SDL_Surface* fgSurface = RenderTextSurface(font, text, textColor, wrapLength);
     SDL_Texture* fgTexture = SDL_CreateTextureFromSurface(ren, fgSurface);
 
     // Align (要根據 outline size 不然整個會跑走)
@@ -132,8 +139,8 @@ void TextManager::DrawWithOutline(SDL_Renderer* ren, TTF_Font* font, const std::
     SDL_RenderCopy(ren, fgTexture, NULL, &fgRect);
 
     // Clean up
-    SDL_FreeSurface(bgSurface);
-    SDL_DestroyTexture(bgTexture);
+    if (bgSurface) SDL_FreeSurface(bgSurface);
+    if (bgTexture) SDL_DestroyTexture(bgTexture);
     SDL_FreeSurface(fgSurface);
     SDL_DestroyTexture(fgTexture);
 }
