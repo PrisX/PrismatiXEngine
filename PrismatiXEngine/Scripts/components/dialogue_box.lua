@@ -1,18 +1,9 @@
 local DialogueBox = {}
 DialogueBox.__index = DialogueBox
+local Utils = _G.Utils
 
-local function clamp_channel(value, fallback)
-    local n = tonumber(value)
-    if not n then
-        return fallback
-    end
-    if n < 0 then
-        return 0
-    end
-    if n > 255 then
-        return 255
-    end
-    return math.floor(n + 0.5)
+if type(Utils) ~= "table" then
+    error("DialogueBox requires _G.Utils to be loaded before Scripts/components/dialogue_box.lua")
 end
 
 local function read_color(value, fallback)
@@ -20,17 +11,17 @@ local function read_color(value, fallback)
         return { fallback[1], fallback[2], fallback[3] }
     end
 
-    local r = clamp_channel(value.r or value[1], fallback[1])
-    local g = clamp_channel(value.g or value[2], fallback[2])
-    local b = clamp_channel(value.b or value[3], fallback[3])
+    local r = Utils.clamp_channel(value.r or value[1], fallback[1])
+    local g = Utils.clamp_channel(value.g or value[2], fallback[2])
+    local b = Utils.clamp_channel(value.b or value[3], fallback[3])
     return { r, g, b }
 end
 
 local function build_effect_color(color)
     return {
-        r = clamp_channel(color[1], 255),
-        g = clamp_channel(color[2], 255),
-        b = clamp_channel(color[3], 255),
+        r = Utils.clamp_channel(color[1], 255),
+        g = Utils.clamp_channel(color[2], 255),
+        b = Utils.clamp_channel(color[3], 255),
         a = 255
     }
 end
@@ -175,15 +166,15 @@ function DialogueBox:render_from_context(ctx)
     self.currentSpeakerName = tostring(ctx.speaker or "")
     self.currentDisplayText = tostring(ctx.currentText or "")
     self.displayedText = tostring(ctx.displayedText or "")
-    self.fadeAlpha = clamp_channel(ctx.fadeAlpha, 255)
+    self.fadeAlpha = Utils.clamp_channel(ctx.fadeAlpha, 255)
     self.textColor = read_color(ctx.textColor, { 255, 255, 255 })
     self.outlineColor = read_color(ctx.outlineColor, { 0, 0, 0 })
     self.activeTextEffect = tostring(ctx.effect or "")
-    self.effectElapsedMs = tonumber(ctx.elapsedMs) or 0
-    self.effectProgress = tonumber(ctx.progress) or 1.0
+    self.effectElapsedMs = Utils.to_number(ctx.elapsedMs, 0)
+    self.effectProgress = Utils.to_number(ctx.progress, 1.0)
 
-    local screenW = tonumber(ctx.screenW) or 1280
-    local screenH = tonumber(ctx.screenH) or 720
+    local screenW = Utils.to_number(ctx.screenW, 1280)
+    local screenH = Utils.to_number(ctx.screenH, 720)
     self:render(screenW, screenH)
     return true
 end

@@ -363,56 +363,59 @@ void RegisterRenderingBindings(sol::state& lua, PrismatiXEngine& engine, sol::ta
 }
 
 void RegisterSplashBindings(PrismatiXEngine& engine, sol::table& engineApi, const std::shared_ptr<bool>& splashSkipRequested, const std::function<bool()>& pollSplashSkipInput) {
-    auto PerformSplashFade = [&engine, splashSkipRequested, pollSplashSkipInput](const std::string& texPath, int displayMode, int durationMs, sol::optional<Uint8> bgR, sol::optional<Uint8> bgG, sol::optional<Uint8> bgB, sol::optional<Uint8> bgA, bool isFadeOut) {
-        if (isFadeOut && *splashSkipRequested) {
-            *splashSkipRequested = false;
-            return;
-        }
-        else if (!isFadeOut) {
-            *splashSkipRequested = false;
-        }
+    auto PerformSplashFade =
+        [&engine, splashSkipRequested, pollSplashSkipInput](const std::string& texPath, int displayMode, int durationMs, sol::optional<Uint8> bgR, sol::optional<Uint8> bgG, sol::optional<Uint8> bgB, sol::optional<Uint8> bgA, bool isFadeOut) {
+            if (isFadeOut && *splashSkipRequested) {
+                *splashSkipRequested = false;
+                return;
+            }
+            else if (!isFadeOut) {
+                *splashSkipRequested = false;
+            }
 
-        SDL_Texture* tex = TextureManager::LoadTexture(texPath, engine.GetRenderer());
-        if (!tex) return;
+            SDL_Texture* tex = TextureManager::LoadTexture(texPath, engine.GetRenderer());
+            if (!tex) return;
 
-        const Uint8 clearR = bgR.value_or(0);
-        const Uint8 clearG = bgG.value_or(0);
-        const Uint8 clearB = bgB.value_or(0);
-        const Uint8 clearA = bgA.value_or(255);
+            const Uint8 clearR = bgR.value_or(0);
+            const Uint8 clearG = bgG.value_or(0);
+            const Uint8 clearB = bgB.value_or(0);
+            const Uint8 clearA = bgA.value_or(255);
 
-        float alpha = isFadeOut ? 255.0f : 0.0f;
-        float step = 255.0f * 16.0f / static_cast<float>(durationMs > 0 ? durationMs : 1);
+            float alpha = isFadeOut ? 255.0f : 0.0f;
+            float step = 255.0f * 16.0f / static_cast<float>(durationMs > 0 ? durationMs : 1);
 
-        while (true) {
-            if (pollSplashSkipInput()) break;
+            while (true) {
+                if (pollSplashSkipInput()) break;
 
-            bool done = isFadeOut ? TransitionUtils::FadeOut(alpha, step) : TransitionUtils::FadeIn(alpha, step);
-            const float bgFactor = (alpha / 255.0f) * (static_cast<float>(clearA) / 255.0f);
-            const Uint8 frameR = static_cast<Uint8>(static_cast<float>(clearR) * bgFactor);
-            const Uint8 frameG = static_cast<Uint8>(static_cast<float>(clearG) * bgFactor);
-            const Uint8 frameB = static_cast<Uint8>(static_cast<float>(clearB) * bgFactor);
+                bool done = isFadeOut ? TransitionUtils::FadeOut(alpha, step) : TransitionUtils::FadeIn(alpha, step);
+                const float bgFactor = (alpha / 255.0f) * (static_cast<float>(clearA) / 255.0f);
+                const Uint8 frameR = static_cast<Uint8>(static_cast<float>(clearR) * bgFactor);
+                const Uint8 frameG = static_cast<Uint8>(static_cast<float>(clearG) * bgFactor);
+                const Uint8 frameB = static_cast<Uint8>(static_cast<float>(clearB) * bgFactor);
 
-            SDL_SetRenderDrawColor(engine.GetRenderer(), frameR, frameG, frameB, 255);
-            SDL_RenderClear(engine.GetRenderer());
-            TextureManager::DrawAuto(tex, engine.GetRenderer(), static_cast<TextureManager::DisplayMode>(displayMode), static_cast<Uint8>(alpha));
-            SDL_RenderPresent(engine.GetRenderer());
-            if (done) break;
-            SDL_Delay(16);
-        }
+                SDL_SetRenderDrawColor(engine.GetRenderer(), frameR, frameG, frameB, 255);
+                SDL_RenderClear(engine.GetRenderer());
+                TextureManager::DrawAuto(tex, engine.GetRenderer(), static_cast<TextureManager::DisplayMode>(displayMode), static_cast<Uint8>(alpha));
+                SDL_RenderPresent(engine.GetRenderer());
+                if (done) break;
+                SDL_Delay(16);
+            }
 
-        if (isFadeOut) {
-            *splashSkipRequested = false;
-        }
-    };
+            if (isFadeOut) {
+                *splashSkipRequested = false;
+            }
+        };
 
     engineApi.set_function(
-        "FadeInBg", [&engine, splashSkipRequested, pollSplashSkipInput, PerformSplashFade](const std::string& texPath, int displayMode, int durationMs, sol::optional<Uint8> bgR, sol::optional<Uint8> bgG, sol::optional<Uint8> bgB, sol::optional<Uint8> bgA) {
+        "FadeInBg",
+        [&engine, splashSkipRequested, pollSplashSkipInput, PerformSplashFade](const std::string& texPath, int displayMode, int durationMs, sol::optional<Uint8> bgR, sol::optional<Uint8> bgG, sol::optional<Uint8> bgB, sol::optional<Uint8> bgA) {
             PerformSplashFade(texPath, displayMode, durationMs, bgR, bgG, bgB, bgA, false);
         }
     );
 
     engineApi.set_function(
-        "FadeOutBg", [&engine, splashSkipRequested, pollSplashSkipInput, PerformSplashFade](const std::string& texPath, int displayMode, int durationMs, sol::optional<Uint8> bgR, sol::optional<Uint8> bgG, sol::optional<Uint8> bgB, sol::optional<Uint8> bgA) {
+        "FadeOutBg",
+        [&engine, splashSkipRequested, pollSplashSkipInput, PerformSplashFade](const std::string& texPath, int displayMode, int durationMs, sol::optional<Uint8> bgR, sol::optional<Uint8> bgG, sol::optional<Uint8> bgB, sol::optional<Uint8> bgA) {
             PerformSplashFade(texPath, displayMode, durationMs, bgR, bgG, bgB, bgA, true);
         }
     );
@@ -446,6 +449,9 @@ void RegisterSystemBindings(PrismatiXEngine& engine, sol::table& engineApi) {
     });
 
     engineApi.set_function("PresentScreen", [&engine]() { engine.PresentScreen(); });
+
+    engineApi.set_function("SetCameraOffset", [&engine](int x, int y) { engine.SetCameraOffset(x, y); });
+    engineApi.set_function("ResetCameraOffset", [&engine]() { engine.ResetCameraOffset(); });
 
     engineApi.set_function("GetMouseX", [&engine]() { return engine.GetMouseX(); });
     engineApi.set_function("GetMouseY", [&engine]() { return engine.GetMouseY(); });

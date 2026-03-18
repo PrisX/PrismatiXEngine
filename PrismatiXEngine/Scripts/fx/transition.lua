@@ -1,19 +1,12 @@
 local Transition = {}
 Transition.__index = Transition
+local Utils = _G.Utils
+
+if type(Utils) ~= "table" then
+    error("Transition requires _G.Utils to be loaded before Scripts/fx/transition.lua")
+end
 
 local DISSOLVE_CELL_SIZE = 32
-
-local function clamp(value, minValue, maxValue)
-    return math.max(minValue, math.min(maxValue, value))
-end
-
-local function to_number(value, fallback)
-    local parsed = tonumber(value)
-    if parsed == nil then
-        return fallback
-    end
-    return parsed
-end
 
 local function copy_color(color, fallback)
     if type(color) ~= "table" then
@@ -21,9 +14,9 @@ local function copy_color(color, fallback)
     end
 
     return {
-        to_number(color[1], fallback[1]),
-        to_number(color[2], fallback[2]),
-        to_number(color[3], fallback[3])
+        Utils.to_number(color[1], fallback[1]),
+        Utils.to_number(color[2], fallback[2]),
+        Utils.to_number(color[3], fallback[3])
     }
 end
 
@@ -88,7 +81,7 @@ end
 
 local function compute_fade_alpha_step(speed, peakAlpha)
     local safePeak = math.max(1, peakAlpha or 255)
-    local safeSpeed = to_number(speed, 8)
+    local safeSpeed = Utils.to_number(speed, 8)
 
     if safeSpeed == nil or safeSpeed <= 0 then
         safeSpeed = 8
@@ -153,13 +146,13 @@ function Transition:apply_options(override)
             style = normalize_style(override.style)
         end
         if override.transitionSpeed ~= nil then
-            speed = to_number(override.transitionSpeed, speed)
+            speed = Utils.to_number(override.transitionSpeed, speed)
         end
         if override.speed ~= nil then
-            speed = to_number(override.speed, speed)
+            speed = Utils.to_number(override.speed, speed)
         end
         if override.peakAlpha ~= nil then
-            peakAlpha = to_number(override.peakAlpha, peakAlpha)
+            peakAlpha = Utils.to_number(override.peakAlpha, peakAlpha)
         end
         if override.wipeColor ~= nil then
             wipeColor = copy_color(override.wipeColor, wipeColor)
@@ -225,7 +218,7 @@ function Transition:update(width)
         local progressStep = 1.0 / durationFrames
 
         if self.phase == "enter" then
-            self.wipeProgress = clamp(self.wipeProgress + progressStep, 0, 1)
+            self.wipeProgress = Utils.clamp(self.wipeProgress + progressStep, 0, 1)
             local easedT = Ease.sample(self.ease, self.wipeProgress)
             self.wipeEdge = Ease.lerp(0, safeWidth, easedT)
             if self.wipeProgress >= 1 then
@@ -240,7 +233,7 @@ function Transition:update(width)
                 self.wipeProgress = 0
             end
         elseif self.phase == "leave" then
-            self.wipeProgress = clamp(self.wipeProgress + progressStep, 0, 1)
+            self.wipeProgress = Utils.clamp(self.wipeProgress + progressStep, 0, 1)
             local easedT = Ease.sample(self.ease, self.wipeProgress)
             self.wipeEdge = Ease.lerp(0, safeWidth, easedT)
             if self.wipeProgress >= 1 then
@@ -259,7 +252,7 @@ function Transition:update(width)
         local progressStep = alphaStep / 255.0
 
         if self.phase == "enter" then
-            self.dissolveProgress = clamp(self.dissolveProgress + progressStep, 0, 1)
+            self.dissolveProgress = Utils.clamp(self.dissolveProgress + progressStep, 0, 1)
             if self.dissolveProgress >= 1 then
                 local pendingAction = self.pending
                 self.pending = nil
@@ -270,7 +263,7 @@ function Transition:update(width)
                 self.dissolveProgress = 0
             end
         elseif self.phase == "leave" then
-            self.dissolveProgress = clamp(self.dissolveProgress + progressStep, 0, 1)
+            self.dissolveProgress = Utils.clamp(self.dissolveProgress + progressStep, 0, 1)
             if self.dissolveProgress >= 1 then
                 self.phase = "idle"
                 self.dissolveProgress = 0
@@ -285,7 +278,7 @@ function Transition:update(width)
     local alphaStep = compute_fade_alpha_step(speed, peakAlpha)
 
     if self.phase == "enter" then
-        self.alpha = clamp(self.alpha + alphaStep, 0, peakAlpha)
+        self.alpha = Utils.clamp(self.alpha + alphaStep, 0, peakAlpha)
         if self.alpha >= peakAlpha then
             local pendingAction = self.pending
             self.pending = nil
@@ -295,7 +288,7 @@ function Transition:update(width)
             self.phase = "leave"
         end
     elseif self.phase == "leave" then
-        self.alpha = clamp(self.alpha - alphaStep, 0, peakAlpha)
+        self.alpha = Utils.clamp(self.alpha - alphaStep, 0, peakAlpha)
         if self.alpha <= 0 then
             self.phase = "idle"
             self.alpha = 0
@@ -310,12 +303,12 @@ function Transition:draw_fullscreen(width, height)
         local b = self.wipeColor[3] or 0
 
         if self.phase == "enter" then
-            local w = clamp(math.floor(self.wipeEdge), 0, width)
+            local w = Utils.clamp(math.floor(self.wipeEdge), 0, width)
             if w > 0 then
                 Engine.DrawRect(0, 0, w, height, r, g, b, 255)
             end
         elseif self.phase == "leave" then
-            local x = clamp(math.floor(self.wipeEdge), 0, width)
+            local x = Utils.clamp(math.floor(self.wipeEdge), 0, width)
             local w = width - x
             if w > 0 then
                 Engine.DrawRect(x, 0, w, height, r, g, b, 255)

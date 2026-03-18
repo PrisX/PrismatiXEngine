@@ -136,9 +136,37 @@ void PrismatiXEngine::HandleEvents() {
 void PrismatiXEngine::ClearScreen() {
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
+    ApplyCameraViewport();
 }
 
-void PrismatiXEngine::PresentScreen() { SDL_RenderPresent(renderer); }
+void PrismatiXEngine::PresentScreen() {
+    SDL_RenderPresent(renderer);
+    SDL_RenderSetViewport(renderer, nullptr);
+}
+
+void PrismatiXEngine::SetCameraOffset(int x, int y) {
+    cameraOffsetX = x;
+    cameraOffsetY = y;
+}
+
+void PrismatiXEngine::ResetCameraOffset() {
+    cameraOffsetX = 0;
+    cameraOffsetY = 0;
+}
+
+void PrismatiXEngine::ApplyCameraViewport() {
+    int logicalW = 0;
+    int logicalH = 0;
+    SDL_RenderGetLogicalSize(renderer, &logicalW, &logicalH);
+
+    if (logicalW <= 0 || logicalH <= 0) {
+        logicalW = lastWinW;
+        logicalH = lastWinH;
+    }
+
+    SDL_Rect viewport{ cameraOffsetX, cameraOffsetY, logicalW, logicalH };
+    SDL_RenderSetViewport(renderer, &viewport);
+}
 
 void PrismatiXEngine::Clean() {
     TextureManager::CleanCache();

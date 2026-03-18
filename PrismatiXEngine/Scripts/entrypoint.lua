@@ -24,9 +24,15 @@ end
 function Entrypoint()
     -- Global Functions
     _G.Ease = include("Scripts/common/easing.lua")
+    _G.Utils = include("Scripts/common/utils.lua")
     local Runtime = include("Scripts/common/runtime_helpers.lua")
-    local Transition = include("Scripts/common/transition.lua")
-    include("Scripts/common/portrait_animations.lua")
+
+    -- FX
+    local Transition = include("Scripts/fx/transition.lua")
+    local ScreenEffects = include("Scripts/fx/screen_fx.lua")
+    include("Scripts/fx/portrait_fx.lua")
+    Engine.RunScript("Scripts/fx/text_fx.lua", false)
+
 
     local settings = {
         fontName = "NotoSansTC-Bold.ttf",
@@ -43,7 +49,6 @@ function Entrypoint()
     local DialogueBoxComponent = include("Scripts/components/dialogue_box.lua")
     local SaveLoadMenu = include("Scripts/components/save_load_menu.lua")
     local Toolbar = include("Scripts/components/toolbar.lua")
-    Engine.RunScript("Scripts/effects.lua", false)
 
     local stateMainMenu = "MainMenu"
     local stateInGame = "InGame"
@@ -153,6 +158,7 @@ function Entrypoint()
     _G.VNController = controller
     _G.VN = _G.VN or {}
     _G.VN.controller = controller
+    _G.ScreenEffects = ScreenEffectsj
     _G.VN.QueueScriptTransition = function(target, transitionStyle, transitionSpeed, transitionEase)
         local speedValue = transitionSpeed
         if speedValue ~= nil then
@@ -176,6 +182,10 @@ function Entrypoint()
         local wheelY = input.wheelY
 
         Runtime.safe_call_global("OnEngineFrameUpdate", currentState, mx, my, leftClick, rightClick, wheelY)
+
+        ScreenEffects.update()
+        local shakeOffsetX, shakeOffsetY = ScreenEffects.get_offset()
+        Engine.SetCameraOffset(shakeOffsetX, shakeOffsetY)
 
         Engine.ClearScreen()
 

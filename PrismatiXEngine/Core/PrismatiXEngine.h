@@ -29,6 +29,8 @@ public:
     int GetMouseWheelY() const { return mouseWheelY; }
     int GetMouseX() const { return mouseX; }
     int GetMouseY() const { return mouseY; }
+    void SetCameraOffset(int x, int y);
+    void ResetCameraOffset();
     void HandleEvents();
     void ClearScreen();
     void PresentScreen();
@@ -47,9 +49,13 @@ private:
     bool isRunning;
     int mouseX = 0;
     int mouseY = 0;
+    int cameraOffsetX = 0;
+    int cameraOffsetY = 0;
 
     // Long-term resources
     SDL_Window* window;
     SDL_Renderer* renderer;
     sol::state lua;
+
+    void ApplyCameraViewport();
 };
