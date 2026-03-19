@@ -147,11 +147,13 @@ void PrismatiXEngine::PresentScreen() {
 void PrismatiXEngine::SetCameraOffset(int x, int y) {
     cameraOffsetX = x;
     cameraOffsetY = y;
+    ApplyCameraViewport();
 }
 
 void PrismatiXEngine::ResetCameraOffset() {
     cameraOffsetX = 0;
     cameraOffsetY = 0;
+    ApplyCameraViewport();
 }
 
 void PrismatiXEngine::ApplyCameraViewport() {
