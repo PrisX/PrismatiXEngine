@@ -10,8 +10,16 @@ struct VNCommand {
     std::map<std::string, std::string> args;
 };
 
+class ArchiveManager;
+
 class ScriptManager {
 public:
-    static std::vector<VNCommand> ParseFile(const std::string& fileName);
-    static SDL_Color ParseColor(const std::string& colorStr, SDL_Color defaultColor);
+    ScriptManager(ArchiveManager& archiveMgr);
+    ~ScriptManager() = default;
+
+    std::vector<VNCommand> ParseFile(const std::string& fileName);
+    SDL_Color ParseColor(const std::string& colorStr, SDL_Color defaultColor);
+
+private:
+    ArchiveManager& archiveManager;
 };

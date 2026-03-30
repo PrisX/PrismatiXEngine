@@ -2,10 +2,9 @@
 
 #include <fstream>
 #include <iostream>
+#include <sstream>
 
 #include "SecretKey.h"
-
-std::unordered_map<std::string, PDXFileEntry> ArchiveManager::globalFileTable;
 
 bool ArchiveManager::MountArchive(const std::string& archivePath) {
     std::ifstream in(archivePath, std::ios::binary);
@@ -63,4 +62,20 @@ std::vector<char> ArchiveManager::ExtractFile(const std::string& fileName) {
     }
 
     return buffer;
+}
+
+std::string ArchiveManager::LoadTextFromArchiveOrDisk(const std::string& path) {
+    std::vector<char> archiveBuffer = ExtractFile(path);
+    if (!archiveBuffer.empty()) {
+        return std::string(archiveBuffer.begin(), archiveBuffer.end());
+    }
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return "";
+    }
+
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
 }

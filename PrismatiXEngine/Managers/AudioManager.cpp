@@ -4,9 +4,7 @@
 
 #include "ArchiveManager.h"
 
-std::vector<char> AudioManager::currentBgmBuffer;
-Mix_Music* AudioManager::currentBgm = nullptr;
-std::unordered_map<std::string, Mix_Chunk*> AudioManager::sfxCache;
+AudioManager::AudioManager(ArchiveManager& archiveMgr) : archiveManager(archiveMgr) {}
 
 void AudioManager::PlayBGM(const std::string& fileName, int loops) {
     if (currentBgm) {
@@ -16,7 +14,7 @@ void AudioManager::PlayBGM(const std::string& fileName, int loops) {
     }
     currentBgmBuffer.clear();
 
-    currentBgmBuffer = ArchiveManager::ExtractFile(fileName);
+    currentBgmBuffer = archiveManager.ExtractFile(fileName);
     if (currentBgmBuffer.empty()) return;
 
     SDL_RWops* rw = SDL_RWFromMem(currentBgmBuffer.data(), currentBgmBuffer.size());
@@ -37,7 +35,7 @@ Mix_Chunk* AudioManager::LoadSFX(const std::string& fileName) {
         return sfxCache[fileName];
     }
 
-    std::vector<char> buffer = ArchiveManager::ExtractFile(fileName);
+    std::vector<char> buffer = archiveManager.ExtractFile(fileName);
     if (buffer.empty()) return nullptr;
 
     SDL_RWops* rw = SDL_RWFromMem(buffer.data(), buffer.size());

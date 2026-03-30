@@ -4,11 +4,7 @@
 
 #include "ArchiveManager.h"
 
-std::unordered_map<std::string, TTF_Font*> TextManager::fontCache;
-std::unordered_map<std::string, std::vector<char>> TextManager::fontBuffers;
-std::unordered_map<std::string, int> TextManager::fontSizeByKey;
-std::unordered_map<TTF_Font*, std::string> TextManager::fontReverseMap;
-std::unordered_map<std::string, TTF_Font*> TextManager::outlineFontCache;
+TextManager::TextManager(ArchiveManager& archiveMgr) : archiveManager(archiveMgr) {}
 
 TTF_Font* TextManager::LoadFont(const std::string& fileName, int fontSize) {
     std::string cacheKey = fileName + "_" + std::to_string(fontSize);
@@ -17,7 +13,7 @@ TTF_Font* TextManager::LoadFont(const std::string& fileName, int fontSize) {
         return fontCache[cacheKey];
     }
 
-    std::vector<char> buffer = ArchiveManager::ExtractFile(fileName);
+    std::vector<char> buffer = archiveManager.ExtractFile(fileName);
     if (buffer.empty()) {
         std::cerr << "Failed to extract font from archive: " << fileName << std::endl;
         return nullptr;

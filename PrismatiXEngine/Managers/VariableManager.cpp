@@ -2,24 +2,25 @@
 
 #include <iostream>
 
-std::unordered_map<std::string, int> VariableManager::flags;
-
 void VariableManager::Set(const std::string& name, int value) { flags[name] = value; }
 
 void VariableManager::Add(const std::string& name, int value) { flags[name] += value; }
 
-int VariableManager::Get(const std::string& name) { return flags[name]; }
-const std::unordered_map<std::string, int>& VariableManager::GetAllFlags() { return flags; }
-bool VariableManager::Check(const std::string& name, const std::string& op, int compareVal) {
-    int val = Get(name);
-    if (op == "==") return val == compareVal;
-    if (op == "!=") return val != compareVal;
-    if (op == ">") return val > compareVal;
-    if (op == "<") return val < compareVal;
-    if (op == ">=") return val >= compareVal;
-    if (op == "<=") return val <= compareVal;
+int VariableManager::Get(const std::string& name) {
+    if (flags.find(name) != flags.end()) return flags[name];
+    return 0;
+}
 
-    std::cerr << "Unknown operator (" << op << "): " << std::endl;
+const std::unordered_map<std::string, int>& VariableManager::GetAllFlags() const { return flags; }
+
+bool VariableManager::Check(const std::string& name, const std::string& op, int compareVal) {
+    int currentVal = Get(name);
+    if (op == "==") return currentVal == compareVal;
+    if (op == "!=") return currentVal != compareVal;
+    if (op == ">") return currentVal > compareVal;
+    if (op == "<") return currentVal < compareVal;
+    if (op == ">=") return currentVal >= compareVal;
+    if (op == "<=") return currentVal <= compareVal;
     return false;
 }
 

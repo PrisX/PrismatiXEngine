@@ -2,7 +2,7 @@
 
 #include "TextManager.h"
 
-std::vector<UIButton> UIManager::buttons;
+UIManager::UIManager(TextManager& textMgr) : textManager(textMgr) {}
 
 void UIManager::AddTextButton(const std::string& text, TTF_Font* font, SDL_Color idle, SDL_Color hover, const std::string& target, const std::string& transitionStyle, const std::string& transitionSpeed, const std::string& transitionEase) {
     UIButton btn;
@@ -43,7 +43,7 @@ void UIManager::RecalculateLayout(int screenW, int screenH) {
 
 void UIManager::Clear() { buttons.clear(); }
 
-bool UIManager::HasButtons() { return !buttons.empty(); }
+bool UIManager::HasButtons() const { return !buttons.empty(); }
 
 void UIManager::UpdateHover(int mouseX, int mouseY) {
     for (auto& btn : buttons) {
@@ -53,8 +53,8 @@ void UIManager::UpdateHover(int mouseX, int mouseY) {
     }
 }
 
-bool UIManager::CheckClick(int mouseX, int mouseY, std::string& outTarget, std::string& outTransitionStyle, std::string& outTransitionSpeed, std::string& outTransitionEase) {
-    for (auto& btn : buttons) {
+bool UIManager::CheckClick(int mouseX, int mouseY, std::string& outTarget, std::string& outTransitionStyle, std::string& outTransitionSpeed, std::string& outTransitionEase) const {
+    for (const auto& btn : buttons) {
         if (btn.isHovered) {
             outTarget = btn.target;
             outTransitionStyle = btn.transitionStyle;
@@ -70,7 +70,7 @@ bool UIManager::CheckClick(int mouseX, int mouseY, std::string& outTarget, std::
     return false;
 }
 
-std::string UIManager::GetHoveredText() {
+std::string UIManager::GetHoveredText() const {
     for (const auto& btn : buttons) {
         if (btn.isHovered) {
             return btn.text;
@@ -82,6 +82,6 @@ std::string UIManager::GetHoveredText() {
 void UIManager::Render(SDL_Renderer* renderer) {
     for (const auto& btn : buttons) {
         SDL_Color colorToDraw = btn.isHovered ? btn.hoverColor : btn.idleColor;
-        TextManager::DrawWithOutline(renderer, btn.font, btn.text, colorToDraw, { 0, 0, 0, 255 }, 2, btn.rect.x, btn.rect.y);
+        textManager.DrawWithOutline(renderer, btn.font, btn.text, colorToDraw, { 0, 0, 0, 255 }, 2, btn.rect.x, btn.rect.y);
     }
 }

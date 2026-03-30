@@ -7,29 +7,14 @@
 #include "Managers/ArchiveManager.h"
 #include "Managers/AudioManager.h"
 #include "Managers/TextManager.h"
-#include "PrismatiXEngine.h"
+#include "Core/PrismatiXEngine.h"
+#include "Core/EngineConfig.h"
 
 #pragma execution_character_set("utf-8")
 
 namespace {
-std::string LoadTextFromArchiveOrDisk(const std::string& path) {
-    std::vector<char> archiveBuffer = ArchiveManager::ExtractFile(path);
-    if (!archiveBuffer.empty()) {
-        return std::string(archiveBuffer.begin(), archiveBuffer.end());
-    }
-
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        return "";
-    }
-
-    std::stringstream ss;
-    ss << in.rdbuf();
-    return ss.str();
-}
-
 bool ExecuteLuaFile(PrismatiXEngine& engine, const std::string& scriptPath) {
-    std::string scriptContent = LoadTextFromArchiveOrDisk(scriptPath);
+    std::string scriptContent = engine.GetArchiveManager().LoadTextFromArchiveOrDisk(scriptPath);
     if (scriptContent.empty()) {
         std::cerr << "Lua script not found: " << scriptPath << std::endl;
         return false;
@@ -66,28 +51,20 @@ bool RunLuaEntrypoint(PrismatiXEngine& engine, const std::string& entryScriptPat
 }  // namespace
 
 int main(int argc, char* argv[]) {
-    if (!ArchiveManager::MountArchive("Engine.pdx")) {
+    PrismatiXEngine engine;
+
+    if (!engine.GetArchiveManager().MountArchive(EngineConfig::kArchiveEngine)) {
         std::cerr << "Failed to mount engine assets." << std::endl;
         return -1;
     }
+    engine.GetArchiveManager().MountArchive(EngineConfig::kArchiveData);
 
-    ArchiveManager::MountArchive("Data.pdx");
-
-    const std::string gameTitle = "PrismatiX Engine";
-    const int winW = 1280;
-    const int winH = 720;
-
-    PrismatiXEngine engine;
-    if (!engine.Initialize(gameTitle, winW, winH)) {
+    if (!engine.Initialize(EngineConfig::kGameTitle, EngineConfig::kDefaultScreenWidth, EngineConfig::kDefaultScreenHeight)) {
         return -1;
     }
 
     const std::string entryScriptPath = "Scripts/entrypoint.lua";
-
     bool ok = RunLuaEntrypoint(engine, entryScriptPath);
-
-    TextManager::Clean();
-    AudioManager::CleanCache();
 
     return ok ? 0 : -1;
 }

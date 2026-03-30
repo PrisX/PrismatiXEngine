@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <SDL2/SDL.h>
 
@@ -7,9 +7,17 @@
 #include <sol/sol.hpp>
 #include <string>
 
-#include "AudioManager.h"
-#include "TextManager.h"
-#include "TextureManager.h"
+#include "Managers/ArchiveManager.h"
+#include "Managers/AudioManager.h"
+#include "Managers/BacklogManager.h"
+#include "Managers/SaveManager.h"
+#include "Managers/ScriptManager.h"
+#include "Managers/TextManager.h"
+#include "Managers/TextureManager.h"
+#include "Managers/UIManager.h"
+#include "Managers/VariableManager.h"
+
+#include "EngineConfig.h"
 
 class PrismatiXEngine {
 public:
@@ -40,9 +48,20 @@ public:
     void BindEngineToLua();
     sol::state& GetLuaState() { return lua; }
 
+    // Managers Accessors
+    ArchiveManager& GetArchiveManager() { return archiveManager; }
+    AudioManager& GetAudioManager() { return audioManager; }
+    TextureManager& GetTextureManager() { return textureManager; }
+    TextManager& GetTextManager() { return textManager; }
+    VariableManager& GetVariableManager() { return variableManager; }
+    BacklogManager& GetBacklogManager() { return backlogManager; }
+    SaveManager& GetSaveManager() { return saveManager; }
+    ScriptManager& GetScriptManager() { return scriptManager; }
+    UIManager& GetUIManager() { return uiManager; }
+
 private:
-    int lastWinW = 1280;
-    int lastWinH = 720;
+    int lastWinW = EngineConfig::kDefaultScreenWidth;
+    int lastWinH = EngineConfig::kDefaultScreenHeight;
     bool leftClick;
     bool rightClick;
     int mouseWheelY;
@@ -53,9 +72,20 @@ private:
     int cameraOffsetY = 0;
 
     // Long-term resources
-    SDL_Window* window;
-    SDL_Renderer* renderer;
+    SDL_Window* window = nullptr;
+    SDL_Renderer* renderer = nullptr;
     sol::state lua;
 
     void ApplyCameraViewport();
+
+    // Manager Instances (Order determines initialization sequence)
+    ArchiveManager archiveManager;
+    AudioManager audioManager;
+    TextureManager textureManager;
+    TextManager textManager;
+    VariableManager variableManager;
+    BacklogManager backlogManager;
+    SaveManager saveManager;
+    ScriptManager scriptManager;
+    UIManager uiManager;
 };

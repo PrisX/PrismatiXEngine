@@ -7,15 +7,16 @@
 #include <iostream>
 #include <sol/sol.hpp>
 
-#include "ArchiveManager.h"
-#include "AudioManager.h"
-#include "BacklogManager.h"
-#include "TextManager.h"
-#include "TextureManager.h"
-#include "UIManager.h"
+#include "Core/PrismatiXEngine.h"
+#include "Managers/ArchiveManager.h"
+#include "Managers/AudioManager.h"
+#include "Managers/BacklogManager.h"
+#include "Managers/TextManager.h"
+#include "Managers/TextureManager.h"
+#include "Managers/UIManager.h"
+#include "Managers/VariableManager.h"
 #include "Utils/EasingUtils.h"
 #include "Utils/TransitionUtils.h"
-#include "VariableManager.h"
 
 namespace {
 constexpr int kScreenWidth = 1280;
@@ -149,7 +150,7 @@ void ApplyCharacterAnimationResult(ActiveCharacter& chara, const sol::table& res
     }
 }
 
-void UpdateCharacterAnimation(ActiveCharacter& chara, sol::state* luaState) {
+void UpdateCharacterAnimation(ActiveCharacter& chara, sol::state& luaState) {
     chara.renderOffsetX = 0.0f;
     chara.renderOffsetY = 0.0f;
     chara.renderScale = 1.0f;
@@ -160,14 +161,13 @@ void UpdateCharacterAnimation(ActiveCharacter& chara, sol::state* luaState) {
     float progress = std::clamp(static_cast<float>(chara.animationFrame) / duration, 0.0f, 1.0f);
     std::string animation = ResolveCharacterAnimation(chara);
 
-    if (luaState) {
-        sol::object animationsObj = (*luaState)["PortraitAnimations"];
-        if (animationsObj.valid() && animationsObj.get_type() == sol::type::table) {
-            sol::table animations = animationsObj.as<sol::table>();
-            sol::protected_function fx = animations[animation];
+    sol::object animationsObj = luaState["PortraitAnimations"];
+    if (animationsObj.valid() && animationsObj.get_type() == sol::type::table) {
+        sol::table animations = animationsObj.as<sol::table>();
+        sol::protected_function fx = animations[animation];
 
-            if (fx.valid()) {
-                sol::table ctx = luaState->create_table();
+        if (fx.valid()) {
+            sol::table ctx = luaState.create_table();
                 ctx["name"] = chara.name;
                 ctx["diff"] = chara.diff;
                 ctx["animation"] = chara.animation;
@@ -197,7 +197,6 @@ void UpdateCharacterAnimation(ActiveCharacter& chara, sol::state* luaState) {
                 }
             }
         }
-    }
 
     if (progress >= 1.0f) {
         chara.animationActive = false;
@@ -211,13 +210,12 @@ void UpdateCharacterAnimation(ActiveCharacter& chara, sol::state* luaState) {
 }
 }  // namespace
 
-DialogueController::DialogueController(TTF_Font* dialogueFont, const std::string& dialogueFontName, int dialogueFontSize, TTF_Font* nameFont, SDL_Renderer* ren, sol::state* lua) {
+DialogueController::DialogueController(PrismatiXEngine& eng, TTF_Font* dialogueFont, const std::string& dialogueFontName, int dialogueFontSize, TTF_Font* nameFont) : engine(eng) {
     (void)dialogueFontName;
     (void)dialogueFontSize;
     (void)nameFont;
     uiFont = dialogueFont;
-    renderer = ren;
-    luaState = lua;
+    renderer = engine.GetRenderer();
     currentLine = 0;
     clickCooldown = 0;
     isFinished = false;
@@ -342,7 +340,7 @@ sol::table DialogueController::GetDialogueBoxContext(sol::this_state state, int 
 // For S/L
 std::string DialogueController::GetCurrentScriptName() const { return currentScriptName; }
 int DialogueController::GetCurrentLine() const {
-    if (UIManager::HasButtons()) {
+    if (engine.GetUIManager().HasButtons()) {
         int line = currentLine - 1;
 
         while (line >= 0 && commands[line].type == "choice") {
@@ -391,7 +389,7 @@ bool DialogueController::PopInlineTransition(std::string& outTransitionStyle, st
 void DialogueController::QueueScriptTransition(const std::string& targetScript, const std::string& transitionStyle, const std::string& transitionSpeed, const std::string& transitionEase) {
     if (targetScript.empty()) return;
 
-    BacklogManager::Clear();
+    engine.GetBacklogManager().Clear();
     pendingScriptTarget = targetScript;
     pendingTransitionStyle = transitionStyle;
     pendingTransitionSpeed = transitionSpeed;
@@ -448,7 +446,7 @@ void DialogueController::RestoreSavedCharacters(const std::vector<SavedCharacter
 void DialogueController::RestoreBackground(const std::string& bgName) {
     currentBgName = bgName;
     if (!bgName.empty()) {
-        currentBgTexture = TextureManager::LoadTexture(bgName, renderer);
+        currentBgTexture = engine.GetTextureManager().LoadTexture(bgName, renderer);
         bgFadeAlpha = 0.0f;
         previousBgTexture = nullptr;
     }
@@ -460,7 +458,7 @@ void DialogueController::RestoreBackground(const std::string& bgName) {
 SDL_Texture* DialogueController::GetBackground() const { return currentBgTexture; }
 
 void DialogueController::LoadScript(const std::string& scriptName, const std::vector<VNCommand>& newScript) {
-    UIManager::Clear();
+    engine.GetUIManager().Clear();
     commands = newScript;
     currentScriptName = scriptName;
     currentLine = 0;
@@ -511,7 +509,7 @@ void DialogueController::ScrollBacklog(int direction) {
 
     if (backlogOffset < 0) backlogOffset = 0;
 
-    int maxOffset = std::max(0, (int)BacklogManager::GetCount() - 1);
+    int maxOffset = std::max(0, (int)engine.GetBacklogManager().GetCount() - 1);
     if (backlogOffset > maxOffset) backlogOffset = maxOffset;
 }
 
@@ -578,7 +576,7 @@ void DialogueController::HandleCommandBg(const VNCommand& cmd) {
     std::string fileName = cmd.args.at("file");
     currentBgName = fileName;
     previousBgTexture = currentBgTexture;
-    currentBgTexture = TextureManager::LoadTexture(fileName, renderer);
+    currentBgTexture = engine.GetTextureManager().LoadTexture(fileName, renderer);
     bgFadeAlpha = 0.0f;
     currentLine++;
 }
@@ -593,7 +591,7 @@ void DialogueController::HandleCommandText(const VNCommand& cmd) {
         if (endPos == std::string::npos) break;
 
         std::string varName = content.substr(startPos + 1, endPos - startPos - 1);
-        std::string varValue = std::to_string(VariableManager::Get(varName));
+        std::string varValue = std::to_string(engine.GetVariableManager().Get(varName));
         content.replace(startPos, endPos - startPos + 1, varValue);
         startPos += varValue.length();
     }
@@ -601,9 +599,9 @@ void DialogueController::HandleCommandText(const VNCommand& cmd) {
     SDL_Color defaultText = { 255, 255, 255, 255 };
     SDL_Color defaultOutline = { 0, 0, 0, 255 };
 
-    SDL_Color textColor = cmd.args.count("color") ? ScriptManager::ParseColor(cmd.args.at("color"), defaultText) : defaultText;
+    SDL_Color textColor = cmd.args.count("color") ? engine.GetScriptManager().ParseColor(cmd.args.at("color"), defaultText) : defaultText;
 
-    SDL_Color outlineColor = cmd.args.count("olcolor") ? ScriptManager::ParseColor(cmd.args.at("olcolor"), defaultOutline) : defaultOutline;
+    SDL_Color outlineColor = cmd.args.count("olcolor") ? engine.GetScriptManager().ParseColor(cmd.args.at("olcolor"), defaultOutline) : defaultOutline;
 
     std::string textEffect;
     if (cmd.args.count("effect")) {
@@ -632,7 +630,7 @@ void DialogueController::HandleCommandText(const VNCommand& cmd) {
     }
 
     if (!skipNextLog) {
-        BacklogManager::AddLog(speaker, content, pendingVoice);
+        engine.GetBacklogManager().AddLog(speaker, content, pendingVoice);
     }
     skipNextLog = false;
     SetDialogueText(speaker, content, textSpeed, textColor, outlineColor, textEffect);
@@ -649,19 +647,19 @@ void DialogueController::HandleCommandText(const VNCommand& cmd) {
 
 void DialogueController::HandleCommandBgm(const VNCommand& cmd) {
     std::string fileName = cmd.args.at("file");
-    AudioManager::PlayBGM(fileName);
+    engine.GetAudioManager().PlayBGM(fileName);
     currentBgmName = fileName;
     currentLine++;
 }
 
 void DialogueController::HandleCommandStopBgm(const VNCommand& cmd) {
-    AudioManager::StopBGM();
+    engine.GetAudioManager().StopBGM();
     currentBgmName.clear();
     currentLine++;
 }
 
 void DialogueController::HandleCommandSe(const VNCommand& cmd) {
-    AudioManager::PlaySFX(cmd.args.at("file"));
+    engine.GetAudioManager().PlaySFX(cmd.args.at("file"));
     currentLine++;
 }
 
@@ -674,7 +672,7 @@ void DialogueController::HandleCommandSet(const VNCommand& cmd) {
         std::cerr << "Failed to parse val parameters.\n";
     }
 
-    VariableManager::Set(varName, value);
+    engine.GetVariableManager().Set(varName, value);
     currentLine++;
 }
 
@@ -687,13 +685,13 @@ void DialogueController::HandleCommandAdd(const VNCommand& cmd) {
         std::cerr << "Failed to parse val parameters.\n";
     }
 
-    VariableManager::Add(varName, value);
+    engine.GetVariableManager().Add(varName, value);
     currentLine++;
 }
 
 void DialogueController::HandleCommandDel(const VNCommand& cmd) {
     if (cmd.args.count("var")) {
-        VariableManager::Remove(cmd.args.at("var"));
+        engine.GetVariableManager().Remove(cmd.args.at("var"));
     }
     currentLine++;
 }
@@ -711,12 +709,6 @@ void DialogueController::HandleCommandChapter(const VNCommand& cmd) {
 }
 
 void DialogueController::HandleCommandLua(const VNCommand& cmd) {
-    if (!luaState) {
-        std::cerr << "Lua state unavailable for [" << cmd.type << "] command.\n";
-        currentLine++;
-        return;
-    }
-
     std::string fnName;
     if (cmd.args.count("fn"))
         fnName = cmd.args.at("fn");
@@ -731,14 +723,14 @@ void DialogueController::HandleCommandLua(const VNCommand& cmd) {
         return;
     }
 
-    sol::protected_function fn = (*luaState)[fnName];
+    sol::protected_function fn = engine.GetLuaState()[fnName];
     if (!fn.valid()) {
         std::cerr << "Lua callback not found: " << fnName << "\n";
         currentLine++;
         return;
     }
 
-    sol::table args = luaState->create_table();
+    sol::table args = engine.GetLuaState().create_table();
     for (const auto& [k, v] : cmd.args) {
         if (k == "fn" || k == "func" || k == "function") continue;
         args[k] = v;
@@ -794,7 +786,7 @@ void DialogueController::HandleCommandIf(const VNCommand& cmd) {
         std::cerr << "Failed to parse val parameters.\n";
     }
 
-    if (VariableManager::Check(varName, op, val)) {
+    if (engine.GetVariableManager().Check(varName, op, val)) {
         currentLine++;
     }
     else {
@@ -857,7 +849,7 @@ void DialogueController::HandleCommandChoice(const VNCommand& cmd) {
     SDL_Color idleCol = { 255, 255, 255, 255 };
     SDL_Color hoverCol = { 255, 215, 0, 255 };
 
-    UIManager::AddTextButton(text, uiFont, idleCol, hoverCol, target, transitionStyle, transitionSpeed, transitionEase);
+    engine.GetUIManager().AddTextButton(text, uiFont, idleCol, hoverCol, target, transitionStyle, transitionSpeed, transitionEase);
     currentLine++;
 }
 
@@ -887,8 +879,8 @@ void DialogueController::ExecuteNextCommands() {
         }
     }
 
-    if (UIManager::HasButtons()) {
-        UIManager::RecalculateLayout(1280, 720);
+    if (engine.GetUIManager().HasButtons()) {
+        engine.GetUIManager().RecalculateLayout(1280, 720);
     }
 
     if (currentLine >= (int)commands.size()) {
@@ -901,16 +893,16 @@ void DialogueController::HandleClick(int mx, int my) {
     if (clickCooldown > 0) return;
     clickCooldown = 1;
 
-    if (UIManager::HasButtons()) {
+    if (engine.GetUIManager().HasButtons()) {
         std::string target;
         std::string transitionStyle;
         std::string transitionSpeed;
         std::string transitionEase;
-        bool hasClick = UIManager::CheckClick(mx, my, target, transitionStyle, transitionSpeed, transitionEase);
+        bool hasClick = engine.GetUIManager().CheckClick(mx, my, target, transitionStyle, transitionSpeed, transitionEase);
 
         if (hasClick && !target.empty()) {
-            BacklogManager::AddChoice(UIManager::GetHoveredText());
-            UIManager::Clear();
+            engine.GetBacklogManager().AddChoice(engine.GetUIManager().GetHoveredText());
+            engine.GetUIManager().Clear();
 
             if (target.front() == '*') {
                 std::string labelName = target.substr(1);
@@ -930,7 +922,7 @@ void DialogueController::HandleClick(int mx, int my) {
         return;
     }
 
-    AudioManager::StopVoice();
+    engine.GetAudioManager().StopVoice();
     if (!IsDialogueTextFinished()) {
         ShowDialogueTextAll();
     }
@@ -962,12 +954,12 @@ void DialogueController::Update(int mx, int my) {
         UpdateDialogueText();
     }
     if (!pendingVoice.empty() && dialogueCurrentIndex > 0) {
-        AudioManager::PlayVoice(pendingVoice);
+        engine.GetAudioManager().PlayVoice(pendingVoice);
         pendingVoice.clear();
     }
 
-    if (UIManager::HasButtons()) {
-        UIManager::UpdateHover(mx, my);
+    if (engine.GetUIManager().HasButtons()) {
+        engine.GetUIManager().UpdateHover(mx, my);
     }
 
     float fadeSpeed = 10.0f;
@@ -989,7 +981,7 @@ void DialogueController::Update(int mx, int my) {
             EasingUtils::ExpDecay(chara.currentX, chara.targetX, factor);
         }
 
-        UpdateCharacterAnimation(chara, luaState);
+        UpdateCharacterAnimation(chara, engine.GetLuaState());
 
         if (chara.alpha <= 0.0f && chara.isExiting) {
             i = activeCharacters.erase(i);
@@ -1002,15 +994,15 @@ void DialogueController::Update(int mx, int my) {
 
 void DialogueController::RenderBackground() {
     if (previousBgTexture) {
-        TextureManager::DrawAuto(previousBgTexture, renderer, TextureManager::DisplayMode::Fill, 255);
+        engine.GetTextureManager().DrawAuto(previousBgTexture, renderer, TextureManager::DisplayMode::Fill, 255);
     }
     if (currentBgTexture) {
-        TextureManager::DrawAuto(currentBgTexture, renderer, TextureManager::DisplayMode::Fill, static_cast<Uint8>(bgFadeAlpha));
+        engine.GetTextureManager().DrawAuto(currentBgTexture, renderer, TextureManager::DisplayMode::Fill, static_cast<Uint8>(bgFadeAlpha));
     }
 }
 
 void DialogueController::RenderBacklog(SDL_Renderer* renderer) {
-    if (backlogFadeAlpha <= 0.0f || BacklogManager::GetCount() == 0) return;
+    if (backlogFadeAlpha <= 0.0f || engine.GetBacklogManager().GetCount() == 0) return;
 
     Uint8 bgAlpha = (Uint8)backlogFadeAlpha;
     Uint8 textAlpha = (Uint8)(backlogFadeAlpha / 220.0f * 255.0f);
@@ -1023,23 +1015,23 @@ void DialogueController::RenderBacklog(SDL_Renderer* renderer) {
     SDL_RenderFillRect(renderer, &bgRect);
 
     SDL_Color outlineColor = { 0, 0, 0, textAlpha };
-    TextManager::DrawWithOutline(renderer, uiFont, "- Backlog -", { 255, 255, 255, textAlpha }, outlineColor, 2, 50, 30, 0, textAlpha, true);
-    TextManager::DrawWithOutline(renderer, uiFont, "(右鍵關閉)", { 150, 150, 150, textAlpha }, outlineColor, 1, 950, 40, 0, textAlpha, true);
+    engine.GetTextManager().DrawWithOutline(renderer, uiFont, "- Backlog -", { 255, 255, 255, textAlpha }, outlineColor, 2, 50, 30, 0, textAlpha, true);
+    engine.GetTextManager().DrawWithOutline(renderer, uiFont, "(右鍵關閉)", { 150, 150, 150, textAlpha }, outlineColor, 1, 950, 40, 0, textAlpha, true);
 
-    int startIdx = (int)BacklogManager::GetCount() - 1 - backlogOffset;
+    int startIdx = (int)engine.GetBacklogManager().GetCount() - 1 - backlogOffset;
     int drawY = 600;
 
     for (int i = startIdx; i >= 0 && drawY > 100; --i) {
-        const auto& log = BacklogManager::logs[i];
+        const auto& log = engine.GetBacklogManager().logs[i];
 
         if (log.isChoice) {
-            TextManager::DrawWithOutline(renderer, uiFont, log.text, { 255, 215, 0, textAlpha }, outlineColor, 1, 200, drawY, 800, textAlpha, true);
+            engine.GetTextManager().DrawWithOutline(renderer, uiFont, log.text, { 255, 215, 0, textAlpha }, outlineColor, 1, 200, drawY, 800, textAlpha, true);
         }
         else {
             if (!log.speaker.empty()) {
-                TextManager::DrawWithOutline(renderer, uiFont, "【" + log.speaker + "】", { 255, 200, 100, textAlpha }, outlineColor, 1, 100, drawY, 0, textAlpha, true);
+                engine.GetTextManager().DrawWithOutline(renderer, uiFont, "【" + log.speaker + "】", { 255, 200, 100, textAlpha }, outlineColor, 1, 100, drawY, 0, textAlpha, true);
             }
-            TextManager::DrawWithOutline(renderer, uiFont, log.text, { 220, 220, 220, textAlpha }, outlineColor, 1, 300, drawY, 800, textAlpha, true);
+            engine.GetTextManager().DrawWithOutline(renderer, uiFont, log.text, { 220, 220, 220, textAlpha }, outlineColor, 1, 300, drawY, 800, textAlpha, true);
         }
 
         drawY -= 80;
@@ -1057,7 +1049,7 @@ void DialogueController::Render(SDL_Renderer* renderer) {
 
         for (const auto& chara : sortedChars) {
             std::string fileName = chara.name + "_" + chara.diff + ".png";
-            SDL_Texture* tex = TextureManager::LoadTexture(fileName, renderer);
+            SDL_Texture* tex = engine.GetTextureManager().LoadTexture(fileName, renderer);
 
             if (tex) {
                 int texW, texH;
@@ -1071,17 +1063,104 @@ void DialogueController::Render(SDL_Renderer* renderer) {
                 int x = (int)(chara.currentX + chara.renderOffsetX) - (finalW / 2);
                 int y = (kScreenHeight - finalH) + (int)chara.renderOffsetY;
 
-                TextureManager::Draw(tex, renderer, x, y, finalW, finalH, (Uint8)chara.alpha);
+                engine.GetTextureManager().Draw(tex, renderer, x, y, finalW, finalH, (Uint8)chara.alpha);
             }
         }
     }
 
-    UIManager::Render(renderer);
+    engine.GetUIManager().Render(renderer);
 
-    infoBanner.Render(renderer, uiFont);
-    chapterBanner.Render(renderer, uiFont);
+    infoBanner.Render(engine, uiFont);
+    chapterBanner.Render(engine, uiFont);
 
     RenderBacklog(renderer);
 }
 
 bool DialogueController::IsScriptFinished() const { return isFinished; }
+
+void ChapterBanner::Render(PrismatiXEngine& engine, TTF_Font* font) const {
+    if (!IsActive() || alpha <= 0.0f || !font) return;
+
+    SDL_Renderer* renderer = engine.GetRenderer();
+    if (!renderer) return;
+
+    Uint8 a = static_cast<Uint8>(alpha);
+    int boxY = 20;
+
+    SDL_Texture* bgTex = engine.GetTextureManager().LoadTexture("chapterinfo.png", renderer);
+    if (bgTex) {
+        SDL_Rect destRect = engine.GetTextureManager().DrawAuto(bgTex, renderer, TextureManager::DisplayMode::TopLeft, a, static_cast<int>(currentX), boxY, 0.7f);
+
+        if (!text.empty()) {
+            SDL_Color textColor = { 255, 240, 180, a };
+            SDL_Color outlineColor = { 0, 0, 0, a };
+            engine.GetTextManager().DrawWithOutlineCentered(renderer, font, text, textColor, outlineColor, 1, destRect, a, true);
+        }
+    }
+    else {
+        int textW = 0;
+        int textH = 0;
+        TTF_SizeUTF8(font, text.c_str(), &textW, &textH);
+        textW /= TextManager::FONT_OVERSAMPLE;
+        textH /= TextManager::FONT_OVERSAMPLE;
+
+        const int padX = 20;
+        const int padY = 10;
+        int boxW = textW + padX * 2;
+        int boxH = textH + padY * 2;
+        int fbX = static_cast<int>(currentX);
+
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer, 20, 20, 40, static_cast<Uint8>(a * 0.85f));
+        SDL_Rect bgRect = { fbX, boxY, boxW, boxH };
+        SDL_RenderFillRect(renderer, &bgRect);
+
+        SDL_Color textColor = { 255, 240, 180, a };
+        SDL_Color outlineColor = { 0, 0, 0, a };
+        engine.GetTextManager().DrawWithOutline(renderer, font, text, textColor, outlineColor, 1, fbX + padX, boxY + padY, 0, a);
+    }
+}
+
+void BGMInfo::Render(PrismatiXEngine& engine, TTF_Font* font) const {
+    if (!IsActive() || alpha <= 0.0f || !font) return;
+
+    SDL_Renderer* renderer = engine.GetRenderer();
+    if (!renderer) return;
+
+    Uint8 a = static_cast<Uint8>(alpha);
+    std::string displayText = isMusicNotification ? "Music:  " + text : text;
+
+    int textW = 0;
+    int textH = 0;
+    TTF_SizeUTF8(font, displayText.c_str(), &textW, &textH);
+    textW /= TextManager::FONT_OVERSAMPLE;
+    textH /= TextManager::FONT_OVERSAMPLE;
+
+    const int padX = 16;
+    const int padY = 8;
+    int boxX = static_cast<int>(currentX);
+    int boxY = 20;
+    int boxW = textW + padX * 2;
+    int boxH = textH + padY * 2;
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+    Uint8 bgAlpha = static_cast<Uint8>(a * 0.82f);
+    if (isMusicNotification)
+        SDL_SetRenderDrawColor(renderer, 20, 30, 50, bgAlpha);
+    else
+        SDL_SetRenderDrawColor(renderer, 20, 20, 20, bgAlpha);
+    SDL_Rect boxRect = { boxX, boxY, boxW, boxH };
+    SDL_RenderFillRect(renderer, &boxRect);
+
+    if (isMusicNotification)
+        SDL_SetRenderDrawColor(renderer, 100, 180, 255, a);
+    else
+        SDL_SetRenderDrawColor(renderer, 255, 220, 80, a);
+    SDL_Rect accentRect = { boxX, boxY, 4, boxH };
+    SDL_RenderFillRect(renderer, &accentRect);
+
+    SDL_Color textColor = isMusicNotification ? SDL_Color{ 180, 220, 255, a } : SDL_Color{ 255, 255, 255, a };
+    SDL_Color outlineColor = { 0, 0, 0, a };
+    engine.GetTextManager().DrawWithOutline(renderer, font, displayText, textColor, outlineColor, 1, boxX + padX, boxY + padY, 0, a);
+}

@@ -1,4 +1,4 @@
-﻿#include "PrismatiXEngine.h"
+#include "PrismatiXEngine.h"
 
 #include <SDL2/SDL.h>
 
@@ -8,7 +8,10 @@
 
 #pragma execution_character_set("utf-8")  // 防中文亂碼
 
-PrismatiXEngine::PrismatiXEngine() : isRunning(false), window(nullptr), renderer(nullptr), leftClick(false), rightClick(false), mouseWheelY(0) {}
+PrismatiXEngine::PrismatiXEngine()
+    : isRunning(false), window(nullptr), renderer(nullptr), leftClick(false), rightClick(false), mouseWheelY(0),
+      audioManager(archiveManager), textureManager(archiveManager), textManager(archiveManager),
+      saveManager(variableManager, backlogManager), scriptManager(archiveManager), uiManager(textManager) {}
 PrismatiXEngine::~PrismatiXEngine() { Clean(); }
 
 bool PrismatiXEngine::Initialize(const std::string& title, int width, int height) {  // 同標頭檔裡面的解釋
@@ -171,7 +174,10 @@ void PrismatiXEngine::ApplyCameraViewport() {
 }
 
 void PrismatiXEngine::Clean() {
-    TextureManager::CleanCache();
+    textureManager.CleanCache();
+    audioManager.CleanCache();
+    textManager.Clean();
+    uiManager.Clear();
 
     if (renderer) SDL_DestroyRenderer(renderer);
     if (window) SDL_DestroyWindow(window);
@@ -187,7 +193,7 @@ void PrismatiXEngine::Clean() {
 
 void PrismatiXEngine::DrawFullscreenBackground(SDL_Texture* bgTex, Uint8 alpha) {
     if (!bgTex) return;
-    TextureManager::DrawAuto(bgTex, renderer, TextureManager::DisplayMode::Fill, alpha);
+    textureManager.DrawAuto(bgTex, renderer, TextureManager::DisplayMode::Fill, alpha);
 }
 
 void PrismatiXEngine::BindEngineToLua() { RegisterEngineLuaBindings(lua, *this); }

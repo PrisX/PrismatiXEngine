@@ -16,6 +16,8 @@
 #include "Utils/EasingUtils.h"
 #include "Utils/TransitionUtils.h"
 
+class PrismatiXEngine;
+
 struct ActiveCharacter {
     std::string name;
     std::string diff;
@@ -81,45 +83,7 @@ struct ChapterBanner {
         }
     }
 
-    void Render(SDL_Renderer* renderer, TTF_Font* font) const {
-        if (!IsActive() || alpha <= 0.0f || !renderer || !font) return;
-
-        Uint8 a = static_cast<Uint8>(alpha);
-        int boxY = 20;
-
-        SDL_Texture* bgTex = TextureManager::LoadTexture("chapterinfo.png", renderer);
-        if (bgTex) {
-            SDL_Rect destRect = TextureManager::DrawAuto(bgTex, renderer, TextureManager::DisplayMode::TopLeft, a, static_cast<int>(currentX), boxY, 0.7f);
-
-            if (!text.empty()) {
-                SDL_Color textColor = { 255, 240, 180, a };
-                SDL_Color outlineColor = { 0, 0, 0, a };
-                TextManager::DrawWithOutlineCentered(renderer, font, text, textColor, outlineColor, 1, destRect, a, true);
-            }
-        }
-        else {
-            int textW = 0;
-            int textH = 0;
-            TTF_SizeUTF8(font, text.c_str(), &textW, &textH);
-            textW /= TextManager::FONT_OVERSAMPLE;
-            textH /= TextManager::FONT_OVERSAMPLE;
-
-            const int padX = 20;
-            const int padY = 10;
-            int boxW = textW + padX * 2;
-            int boxH = textH + padY * 2;
-            int fbX = static_cast<int>(currentX);
-
-            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-            SDL_SetRenderDrawColor(renderer, 20, 20, 40, static_cast<Uint8>(a * 0.85f));
-            SDL_Rect bgRect = { fbX, boxY, boxW, boxH };
-            SDL_RenderFillRect(renderer, &bgRect);
-
-            SDL_Color textColor = { 255, 240, 180, a };
-            SDL_Color outlineColor = { 0, 0, 0, a };
-            TextManager::DrawWithOutline(renderer, font, text, textColor, outlineColor, 1, fbX + padX, boxY + padY, 0, a);
-        }
-    }
+    void Render(PrismatiXEngine& engine, TTF_Font* font) const;
 };
 
 struct BGMInfo {
@@ -167,46 +131,7 @@ struct BGMInfo {
         }
     }
 
-    void Render(SDL_Renderer* renderer, TTF_Font* font) const {
-        if (!IsActive() || alpha <= 0.0f || !renderer || !font) return;
-
-        Uint8 a = static_cast<Uint8>(alpha);
-        std::string displayText = isMusicNotification ? "Music:  " + text : text;
-
-        int textW = 0;
-        int textH = 0;
-        TTF_SizeUTF8(font, displayText.c_str(), &textW, &textH);
-        textW /= TextManager::FONT_OVERSAMPLE;
-        textH /= TextManager::FONT_OVERSAMPLE;
-
-        const int padX = 16;
-        const int padY = 8;
-        int boxX = static_cast<int>(currentX);
-        int boxY = 20;
-        int boxW = textW + padX * 2;
-        int boxH = textH + padY * 2;
-
-        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-
-        Uint8 bgAlpha = static_cast<Uint8>(a * 0.82f);
-        if (isMusicNotification)
-            SDL_SetRenderDrawColor(renderer, 20, 30, 50, bgAlpha);
-        else
-            SDL_SetRenderDrawColor(renderer, 20, 20, 20, bgAlpha);
-        SDL_Rect boxRect = { boxX, boxY, boxW, boxH };
-        SDL_RenderFillRect(renderer, &boxRect);
-
-        if (isMusicNotification)
-            SDL_SetRenderDrawColor(renderer, 100, 180, 255, a);
-        else
-            SDL_SetRenderDrawColor(renderer, 255, 220, 80, a);
-        SDL_Rect accentRect = { boxX, boxY, 4, boxH };
-        SDL_RenderFillRect(renderer, &accentRect);
-
-        SDL_Color textColor = isMusicNotification ? SDL_Color{ 180, 220, 255, a } : SDL_Color{ 255, 255, 255, a };
-        SDL_Color outlineColor = { 0, 0, 0, a };
-        TextManager::DrawWithOutline(renderer, font, displayText, textColor, outlineColor, 1, boxX + padX, boxY + padY, 0, a);
-    }
+    void Render(PrismatiXEngine& engine, TTF_Font* font) const;
 };
 
 class DialogueController {
@@ -262,7 +187,8 @@ private:
     void HandleCommandEndIf(const VNCommand& cmd);
     void HandleCommandChoice(const VNCommand& cmd);
 
-    SDL_Renderer* renderer;
+    PrismatiXEngine& engine;
+    SDL_Renderer* renderer;  // Keep this cached or just use engine.GetRenderer() owob
     SDL_Texture* previousBgTexture = nullptr;
     SDL_Texture* currentBgTexture = nullptr;
     TTF_Font* uiFont;
@@ -289,12 +215,11 @@ private:
     std::string pendingInlineTransitionEase;
     std::map<std::string, ActiveCharacter> activeCharacters;
     std::string currentSpeakingChar;
-    sol::state* luaState = nullptr;
     BGMInfo infoBanner;
     ChapterBanner chapterBanner;
 
 public:
-    DialogueController(TTF_Font* dialogueFont, const std::string& dialogueFontName, int dialogueFontSize, TTF_Font* nameFont, SDL_Renderer* ren, sol::state* lua);
+    DialogueController(PrismatiXEngine& engine, TTF_Font* dialogueFont, const std::string& dialogueFontName, int dialogueFontSize, TTF_Font* nameFont);
 
     // For S/L
     std::string GetCurrentScriptName() const;

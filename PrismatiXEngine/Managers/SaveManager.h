@@ -8,8 +8,19 @@ struct SavedCharacter {
     int pos;
 };
 
+class VariableManager;
+class BacklogManager;
+
 class SaveManager {
 public:
-    static bool SaveGame(int slot, const std::string& scriptName, int line, const std::string& bgName, const std::string& bgmName, const std::vector<SavedCharacter>& characters);
-    static bool LoadGame(int slot, std::string& outScript, int& outLine, std::string& outBg, std::string& outBgm, std::vector<SavedCharacter>& outCharacters);
+    SaveManager(VariableManager& varMgr, BacklogManager& backlogMgr);
+    ~SaveManager() = default;
+
+    bool SaveGame(int slot, const std::string& scriptName, int line, const std::string& bgName, const std::string& bgmName, const std::vector<SavedCharacter>& characters);
+    bool LoadGame(int slot, std::string& outScript, int& outLine, std::string& outBg, std::string& outBgm, std::vector<SavedCharacter>& outCharacters);
+    void PeekSaveFile(int slot, bool& outIsEmpty, std::string& outDisplayText);
+
+private:
+    VariableManager& variableManager;
+    BacklogManager& backlogManager;
 };

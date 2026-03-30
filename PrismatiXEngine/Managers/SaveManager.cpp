@@ -7,9 +7,13 @@
 #include "BacklogManager.h"
 #include "VariableManager.h"
 
+#include "Core/EngineConfig.h"
+
+SaveManager::SaveManager(VariableManager& varMgr, BacklogManager& backlogMgr) : variableManager(varMgr), backlogManager(backlogMgr) {}
+
 bool SaveManager::SaveGame(int slot, const std::string& scriptName, int line, const std::string& bgName, const std::string& bgmName, const std::vector<SavedCharacter>& characters) {
-    std::filesystem::create_directories("Save");
-    std::string fileName = "Save/save_" + std::to_string(slot) + ".sav";
+    std::filesystem::create_directories(EngineConfig::kSaveDirectory);
+    std::string fileName = EngineConfig::kSaveDirectory + "/" + EngineConfig::kSaveFilePrefix + std::to_string(slot) + EngineConfig::kSaveFileExt;
     std::ofstream out(fileName);
     if (!out.is_open()) return false;
 
@@ -25,12 +29,12 @@ bool SaveManager::SaveGame(int slot, const std::string& scriptName, int line, co
     }
 
     out << "[VARIABLES]\n";
-    for (const auto& [key, value] : VariableManager::GetAllFlags()) {
+    for (const auto& [key, value] : variableManager.GetAllFlags()) {
         out << key << "=" << value << "\n";
     }
 
     out << "[BACKLOG]\n";
-    for (const auto& entry : BacklogManager::logs) {
+    for (const auto& entry : backlogManager.logs) {
         out << (entry.isChoice ? 1 : 0) << "|" << entry.speaker << "|" << entry.voice << "|" << entry.text << "\n";
     }
 
@@ -40,15 +44,15 @@ bool SaveManager::SaveGame(int slot, const std::string& scriptName, int line, co
 }
 
 bool SaveManager::LoadGame(int slot, std::string& outScript, int& outLine, std::string& outBg, std::string& outBgm, std::vector<SavedCharacter>& outCharacters) {
-    std::string fileName = "Save/save_" + std::to_string(slot) + ".sav";
+    std::string fileName = EngineConfig::kSaveDirectory + "/" + EngineConfig::kSaveFilePrefix + std::to_string(slot) + EngineConfig::kSaveFileExt;
     std::ifstream in(fileName);
     if (!in.is_open()) return false;
 
     std::string lineStr;
     int currentSection = 0;
 
-    VariableManager::ClearAll();
-    BacklogManager::Clear();
+    variableManager.ClearAll();
+    backlogManager.Clear();
     outCharacters.clear();
 
     while (std::getline(in, lineStr)) {
@@ -81,7 +85,7 @@ bool SaveManager::LoadGame(int slot, std::string& outScript, int& outLine, std::
                 entry.speaker = lineStr.substr(p1 + 1, p2 - p1 - 1);
                 entry.voice = lineStr.substr(p2 + 1, p3 - p2 - 1);
                 entry.text = lineStr.substr(p3 + 1);
-                BacklogManager::logs.push_back(entry);
+                backlogManager.logs.push_back(entry);
             }
             continue;
         }
@@ -112,7 +116,7 @@ bool SaveManager::LoadGame(int slot, std::string& outScript, int& outLine, std::
                 }
             }
             else if (currentSection == 2) {
-                VariableManager::Set(key, std::stoi(val));
+                variableManager.Set(key, std::stoi(val));
             }
         }
     }
@@ -120,4 +124,32 @@ bool SaveManager::LoadGame(int slot, std::string& outScript, int& outLine, std::
     in.close();
     std::cout << "Loaded game data from " << fileName << "\n";
     return true;
+}
+
+void SaveManager::PeekSaveFile(int slot, bool& outIsEmpty, std::string& outDisplayText) {
+    std::string fileName = EngineConfig::kSaveDirectory + "/" + EngineConfig::kSaveFilePrefix + std::to_string(slot) + EngineConfig::kSaveFileExt;
+    std::ifstream in(fileName);
+    if (!in.is_open()) {
+        outIsEmpty = true;
+        outDisplayText = "NO DATA";
+        return;
+    }
+
+    outIsEmpty = false;
+    std::string lineStr;
+    std::string scriptName;
+    std::string lineNum;
+
+    while (std::getline(in, lineStr)) {
+        if (lineStr == "[VARIABLES]") break;
+        size_t eqPos = lineStr.find('=');
+        if (eqPos != std::string::npos) {
+            std::string key = lineStr.substr(0, eqPos);
+            std::string val = lineStr.substr(eqPos + 1);
+            if (key == "Script") scriptName = val;
+            if (key == "Line") lineNum = val;
+        }
+    }
+
+    outDisplayText = scriptName + " (Line: " + lineNum + ")";
 }

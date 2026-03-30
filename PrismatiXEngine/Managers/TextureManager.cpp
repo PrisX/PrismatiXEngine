@@ -5,14 +5,14 @@
 
 #include "ArchiveManager.h"
 
-std::unordered_map<std::string, SDL_Texture*> TextureManager::textureCache;  // static 要再一次
+TextureManager::TextureManager(ArchiveManager& archiveMgr) : archiveManager(archiveMgr) {}
 
 SDL_Texture* TextureManager::LoadTexture(const std::string& fileName, SDL_Renderer* ren) {
     if (textureCache.find(fileName) != textureCache.end()) {
         return textureCache[fileName];  // Cache
     }
 
-    std::vector<char> buffer = ArchiveManager::ExtractFile(fileName);
+    std::vector<char> buffer = archiveManager.ExtractFile(fileName);
     if (buffer.empty()) return nullptr;
 
     SDL_RWops* rw = SDL_RWFromMem(buffer.data(), buffer.size());

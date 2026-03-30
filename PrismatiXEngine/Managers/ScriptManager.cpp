@@ -5,10 +5,12 @@
 
 #include "ArchiveManager.h"
 
+ScriptManager::ScriptManager(ArchiveManager& archiveMgr) : archiveManager(archiveMgr) {}
+
 std::vector<VNCommand> ScriptManager::ParseFile(const std::string& fileName) {
     std::vector<VNCommand> script;
 
-    std::vector<char> buffer = ArchiveManager::ExtractFile(fileName);
+    std::vector<char> buffer = archiveManager.ExtractFile(fileName);
     if (buffer.empty()) {
         std::cerr << "Can't extract script from archive: " << fileName << std::endl;
         return script;

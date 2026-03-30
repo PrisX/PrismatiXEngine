@@ -11,10 +11,13 @@ struct BacklogEntry {
 
 class BacklogManager {
 public:
-    static std::vector<BacklogEntry> logs;
+    BacklogManager() = default;
+    ~BacklogManager() = default;
 
-    static void AddLog(const std::string& speaker, const std::string& text, const std::string& voice = "");
-    static void AddChoice(const std::string& text);
-    static void Clear();
-    static size_t GetCount();
+    std::vector<BacklogEntry> logs;
+
+    void AddLog(const std::string& speaker, const std::string& text, const std::string& voice = "");
+    void AddChoice(const std::string& text);
+    void Clear();
+    size_t GetCount() const;
 };

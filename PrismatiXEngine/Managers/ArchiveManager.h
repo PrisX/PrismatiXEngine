@@ -12,9 +12,13 @@ struct PDXFileEntry {
 
 class ArchiveManager {
 private:
-    static std::unordered_map<std::string, PDXFileEntry> globalFileTable;
+    std::unordered_map<std::string, PDXFileEntry> globalFileTable;
 
 public:
-    static bool MountArchive(const std::string& archivePath);
-    static std::vector<char> ExtractFile(const std::string& fileName);
+    ArchiveManager() = default;
+    ~ArchiveManager() = default;
+
+    bool MountArchive(const std::string& archivePath);
+    std::vector<char> ExtractFile(const std::string& fileName);
+    std::string LoadTextFromArchiveOrDisk(const std::string& path);
 };
