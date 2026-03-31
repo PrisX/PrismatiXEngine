@@ -110,6 +110,16 @@ void RegisterVNControllerBindings(sol::state& lua, PrismatiXEngine& engine) {
         return true;
     };
     vn["IsScriptFinished"] = &DialogueController::IsScriptFinished;
+    vn["PopPendingBgmInfo"] = [&lua](DialogueController& controller) -> sol::object {
+        std::string msg;
+        if (!controller.PopPendingBgmInfo(msg)) return sol::make_object(lua, sol::lua_nil);
+        return sol::make_object(lua, msg);
+    };
+    vn["PopPendingChapterInfo"] = [&lua](DialogueController& controller) -> sol::object {
+        std::string msg;
+        if (!controller.PopPendingChapterInfo(msg)) return sol::make_object(lua, sol::lua_nil);
+        return sol::make_object(lua, msg);
+    };
 }
 
 void RegisterScriptBindings(sol::state& lua, PrismatiXEngine& engine, sol::table& engineApi) {
@@ -196,7 +206,7 @@ void RegisterScriptBindings(sol::state& lua, PrismatiXEngine& engine, sol::table
 }
 
 void RegisterRenderingBindings(sol::state& lua, PrismatiXEngine& engine, sol::table& engineApi) {
-    engineApi.set_function("DrawAuto", [&engine, &lua](const std::string& texPath, int displayMode, Uint8 alpha, int offsetX, int offsetY, float scale) {
+    engineApi.set_function("DrawAuto", [&engine, &lua](const std::string& texPath, int displayMode, Uint8 alpha, sol::optional<int> offsetX, sol::optional<int> offsetY, sol::optional<float> scale) {
         auto toRectTable = [&lua](const SDL_Rect& rect) {
             sol::table out = lua.create_table();
             out["x"] = rect.x;
@@ -208,11 +218,10 @@ void RegisterRenderingBindings(sol::state& lua, PrismatiXEngine& engine, sol::ta
 
         SDL_Texture* tex = engine.GetTextureManager().LoadTexture(texPath, engine.GetRenderer());
         if (!tex) {
-            std::cerr << "Failed to load texture from Lua: " << texPath << std::endl;
             return toRectTable(SDL_Rect{ 0, 0, 0, 0 });
         }
 
-        SDL_Rect rect = engine.GetTextureManager().DrawAuto(tex, engine.GetRenderer(), static_cast<TextureManager::DisplayMode>(displayMode), alpha, offsetX, offsetY, scale);
+        SDL_Rect rect = engine.GetTextureManager().DrawAuto(tex, engine.GetRenderer(), static_cast<TextureManager::DisplayMode>(displayMode), alpha, offsetX.value_or(0), offsetY.value_or(0), scale.value_or(1.0f));
         return toRectTable(rect);
     });
 
@@ -416,6 +425,14 @@ void RegisterSystemBindings(PrismatiXEngine& engine, sol::table& engineApi) {
     engineApi.set_function("GetMouseWheelY", [&engine]() { return engine.GetMouseWheelY(); });
     engineApi.set_function("GetLeftClick", [&engine]() { return engine.GetLeftClick(); });
     engineApi.set_function("GetRightClick", [&engine]() { return engine.GetRightClick(); });
+
+    engineApi.set_function("GetTicks", []() { return SDL_GetTicks(); });
+
+    engineApi.set_function("IsMouseInRect", [&engine](int x, int y, int w, int h) {
+        int mx = engine.GetMouseX();
+        int my = engine.GetMouseY();
+        return (mx >= x && mx < x + w && my >= y && my < y + h);
+    });
 
     engineApi.set_function("GetLogicalSize", [&engine]() { return GetRendererLogicalSize(engine.GetRenderer()); });
 

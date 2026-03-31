@@ -9,9 +9,18 @@
 #pragma execution_character_set("utf-8")  // 防中文亂碼
 
 PrismatiXEngine::PrismatiXEngine()
-    : isRunning(false), window(nullptr), renderer(nullptr), leftClick(false), rightClick(false), mouseWheelY(0),
-      audioManager(archiveManager), textureManager(archiveManager), textManager(archiveManager),
-      saveManager(variableManager, backlogManager), scriptManager(archiveManager), uiManager(textManager) {}
+    : isRunning(false),
+      window(nullptr),
+      renderer(nullptr),
+      leftClick(false),
+      rightClick(false),
+      mouseWheelY(0),
+      audioManager(archiveManager),
+      textureManager(archiveManager),
+      textManager(archiveManager),
+      saveManager(variableManager, backlogManager),
+      scriptManager(archiveManager),
+      uiManager(textManager) {}
 PrismatiXEngine::~PrismatiXEngine() { Clean(); }
 
 bool PrismatiXEngine::Initialize(const std::string& title, int width, int height) {  // 同標頭檔裡面的解釋
@@ -84,43 +93,7 @@ void PrismatiXEngine::HandleEvents() {
             isRunning = false;
         }
         else if (event.type == SDL_WINDOWEVENT) {
-            if (event.window.event == SDL_WINDOWEVENT_RESIZED) {
-                int newW = event.window.data1;
-                int newH = event.window.data2;
-
-                Uint32 flags = SDL_GetWindowFlags(window);
-
-                if (flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_MAXIMIZED)) {
-                    lastWinW = newW;
-                    lastWinH = newH;
-                    continue;
-                }
-
-                if (newW == lastWinW && newH == lastWinH) {
-                    continue;
-                }
-
-                int targetW = newW;
-                int targetH = newH;
-
-                int deltaW = std::abs(newW - lastWinW);
-                int deltaH = std::abs(newH - lastWinH);
-
-                if (deltaW > deltaH) {
-                    targetH = (newW * 9) / 16;
-                }
-                else if (deltaH > deltaW) {
-                    targetW = (newH * 16) / 9;
-                }
-                else {
-                    targetH = (newW * 9) / 16;
-                }
-
-                SDL_SetWindowSize(window, targetW, targetH);
-
-                lastWinW = targetW;
-                lastWinH = targetH;
-            }
+            // 不用了，當時我到底在幹嘛，算了先這樣
         }
         else if (event.type == SDL_MOUSEBUTTONDOWN) {
             if (event.button.button == SDL_BUTTON_LEFT) {
@@ -139,38 +112,22 @@ void PrismatiXEngine::HandleEvents() {
 void PrismatiXEngine::ClearScreen() {
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
-    ApplyCameraViewport();
 }
 
-void PrismatiXEngine::PresentScreen() {
-    SDL_RenderPresent(renderer);
-    SDL_RenderSetViewport(renderer, nullptr);
-}
+void PrismatiXEngine::PresentScreen() { SDL_RenderPresent(renderer); }
 
 void PrismatiXEngine::SetCameraOffset(int x, int y) {
     cameraOffsetX = x;
     cameraOffsetY = y;
-    ApplyCameraViewport();
 }
 
 void PrismatiXEngine::ResetCameraOffset() {
     cameraOffsetX = 0;
     cameraOffsetY = 0;
-    ApplyCameraViewport();
 }
 
 void PrismatiXEngine::ApplyCameraViewport() {
-    int logicalW = 0;
-    int logicalH = 0;
-    SDL_RenderGetLogicalSize(renderer, &logicalW, &logicalH);
-
-    if (logicalW <= 0 || logicalH <= 0) {
-        logicalW = lastWinW;
-        logicalH = lastWinH;
-    }
-
-    SDL_Rect viewport{ cameraOffsetX, cameraOffsetY, logicalW, logicalH };
-    SDL_RenderSetViewport(renderer, &viewport);
+    // 何意味
 }
 
 void PrismatiXEngine::Clean() {

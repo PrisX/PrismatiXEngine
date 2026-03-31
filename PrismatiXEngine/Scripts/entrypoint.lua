@@ -8,317 +8,122 @@ local function include(path) -- 建議別動，如果你不知道這在幹麻
 
     local source = Engine.ReadAssetText(path, true)
     if not source then
-        error("Unable to load Lua module: " .. path)
+        error("Failed to load script: " .. path)
     end
 
     local chunk, err = load(source, "@" .. path)
     if not chunk then
-        error("Failed to compile module " .. path .. ": " .. tostring(err))
+        error("Lua parse error in " .. path .. ": " .. err)
     end
 
-    local moduleValue = chunk()
-    loadedModules[path] = moduleValue
-    return moduleValue
+    local result = chunk()
+    loadedModules[path] = result
+    return result
 end
 
-function Entrypoint()
-    -- Global Functions
-    _G.Ease = include("Scripts/common/easing.lua")
-    _G.Utils = include("Scripts/common/utils.lua")
-    local Runtime = include("Scripts/common/runtime_helpers.lua")
+-- Global Variables
+_G.include = include
+_G.Utils = include("Scripts/common/utils.lua")
+_G.Ease = include("Scripts/common/easing.lua")
+_G.Runtime = include("Scripts/common/runtime_helpers.lua")
 
-    -- FX
-    local Transition = include("Scripts/fx/transition.lua")
-    local ScreenEffects = include("Scripts/fx/screen_fx.lua")
-    include("Scripts/fx/portrait_fx.lua")
-    Engine.RunScript("Scripts/fx/text_fx.lua", false)
+-- UI Framework
+_G.UI = include("Scripts/common/ui_framework.lua")
+local Banner = include("Scripts/components/banner.lua")
 
+local DialogueBox = include("Scripts/components/dialogue_box.lua")
+local MainMenu = include("Scripts/components/main_menu.lua")
+local SaveLoadMenu = include("Scripts/components/save_load_menu.lua")
 
-    local settings = {
-        fontName = "NotoSansTC-Bold.ttf",
-        fontSize = 28,
-        nameFontName = "NotoSerifTC-Bold.ttf",
-        nameFontSize = 28,
-        transitionStyle = "fade",
-        initialBg = "bg.jpg",
-        startScript = "chapter1.pds",
-        splashScript = "Scripts/splash.lua"
-    }
+local fontName = "NotoSansTC-Bold.ttf"
+local fontSize = 32
+local dialogueBox = DialogueBox.new(fontName, 26)
+local saveLoadMenu = SaveLoadMenu.new(fontName, 24)
 
-    local MainMenu = include("Scripts/components/main_menu.lua")
-    local DialogueBoxComponent = include("Scripts/components/dialogue_box.lua")
-    local SaveLoadMenu = include("Scripts/components/save_load_menu.lua")
-    local Toolbar = include("Scripts/components/toolbar.lua")
+local bgmBanner = Banner.new({
+    y = 20,
+    stayDuration = 150,
+    bgColor = {20, 30, 50, 210},
+    textColor = {180, 220, 255}
+})
 
-    local stateMainMenu = "MainMenu"
-    local stateInGame = "InGame"
-    local stateSaveMenu = "SaveMenu"
-    local stateLoadMenu = "LoadMenu"
+local chapterBanner = Banner.new({
+    y = 100,
+    stayDuration = 200,
+    bgColor = {40, 20, 20, 220},
+    textColor = {255, 240, 180}
+})
 
+local vn = Engine.CreateVNController(fontName, fontSize, fontName, fontSize)
+local currentState = "Title" -- Title, Playing, SaveLoad
+
+-- function() Engine.PlayBGM("title.mp3")
+
+local function start_game()
+    currentState = "Playing"
+    vn:LoadScript("Scripts/entrypoint.lua") 
+    vn:LoadScript("chapter1.pds")
+end
+
+local titleMenu = MainMenu.new(1280, 720, fontName, fontSize)
+
+while Engine.IsRunning() do
+    Engine.HandleEvents()
     local winW, winH = Engine.GetLogicalSize()
-    local fontName = settings.fontName
-    local fontSize = settings.fontSize
-    local nameFontName = settings.nameFontName
-    local nameFontSize = settings.nameFontSize
+    local mx, my = Engine.GetMouseX(), Engine.GetMouseY()
+    local leftClick = Engine.GetLeftClick()
+    local rightClick = Engine.GetRightClick()
 
-    local titleBg = settings.initialBg
-    local startScriptFile = settings.startScript
+    Engine.ClearScreen(0, 0, 0, 255)
 
-    local userSplash = Runtime.normalize_script_path(settings.splashScript, "Scripts/splash.lua")
-    if not Runtime.run_splash_script(userSplash, false) then
-        return
-    end
+    if currentState == "Title" then
+        pcall(function() Engine.DrawAuto("title_bg.png", DisplayMode.Fill, 255) end)
+        local action = titleMenu:update(mx, my, leftClick)
+        if action == "start" then
+            start_game()
+        elseif action == "load" then
+            currentState = "SaveLoad"
+            saveLoadMenu:set_mode("load", "Title")
+        elseif action == "exit" then
+            break
+        end
+        titleMenu:render()
+    elseif currentState == "Playing" then
+        vn:Update(mx, my)
 
-    if not Runtime.run_splash_script("Scripts/engine_splash.lua", true) then
-        return
-    end
+        local pendingBgm = vn:PopPendingBgmInfo()
+        if pendingBgm then bgmBanner:show("Music: " .. pendingBgm) end
+        
+        local pendingChapter = vn:PopPendingChapterInfo()
+        if pendingChapter then chapterBanner:show(pendingChapter) end
 
-    local controller = Engine.CreateVNController(fontName, fontSize, nameFontName, nameFontSize)
-    if not controller then
-        error("Failed to create VNController")
-    end
+        bgmBanner:update()
+        chapterBanner:update()
 
-    local titleMenu = MainMenu.new(winW, winH, fontName, fontSize)
-    local saveLoadMenu = SaveLoadMenu.new(fontName, fontSize, winW, winH)
-    local bottomToolbar = Toolbar.new(fontName, fontSize, winH)
-    local dialogueBox = DialogueBoxComponent.new(fontName, fontSize)
-    dialogueBox:set_name_font(nameFontName, nameFontSize)
+        vn:RenderBackground()
+        vn:Render()
 
-    local currentState = stateMainMenu
-    local previousState = stateMainMenu
-
-    local transition = Transition.new({
-        style = settings.transitionStyle,
-        transitionSpeed = settings.transitionSpeed,
-        ease = settings.transitionEase
-    })
-    local nextTransitionOptions = nil
-
-    local function clone_transition_options(options)
-        if type(options) ~= "table" then
-            return nil
+        local ctx = vn:GetDialogueBoxContext()
+        dialogueBox:render_from_context(ctx)
+        
+        if rightClick then
+            vn:ToggleBacklog()
         end
 
-        return {
-            style = options.style or options.transition,
-            transitionSpeed = options.transitionSpeed or options.speed,
-            ease = options.ease
-        }
-    end
-
-    local function build_transition_options(payload)
-        if type(payload) ~= "table" then
-            return nil
+        if leftClick and not vn:IsShowingBacklog() then
+            vn:HandleClick(mx, my)
         end
 
-        local options = {}
-        local hasAny = false
-
-        if payload.transition ~= nil and payload.transition ~= "" then
-            options.style = payload.transition
-            hasAny = true
+    elseif currentState == "SaveLoad" then
+        local action = saveLoadMenu:update(mx, my, leftClick, rightClick)
+        if action == "back" then
+            currentState = saveLoadMenu.returnState
         end
-
-        if payload.transitionSpeed ~= nil and payload.transitionSpeed ~= "" then
-            options.transitionSpeed = payload.transitionSpeed
-            hasAny = true
-        elseif payload.speed ~= nil and payload.speed ~= "" then
-            options.transitionSpeed = payload.speed
-            hasAny = true
-        end
-
-        if payload.ease ~= nil and payload.ease ~= "" then
-            options.ease = payload.ease
-            hasAny = true
-        end
-
-        return hasAny and options or nil
+        saveLoadMenu:render()
     end
 
-    local function consume_next_transition_options()
-        local options = nextTransitionOptions
-        nextTransitionOptions = nil
-        return options
-    end
+    bgmBanner:render()
+    chapterBanner:render()
 
-    local function start_transition(action, overrideOptions)
-        local transitionOptions = overrideOptions
-        if transitionOptions == nil then
-            transitionOptions = consume_next_transition_options()
-        else
-            nextTransitionOptions = nil
-        end
-        return transition:start(action, transitionOptions)
-    end
-
-    function _G.SetNextTransition(options)
-        nextTransitionOptions = clone_transition_options(options)
-    end
-
-    _G.VNController = controller
-    _G.VN = _G.VN or {}
-    _G.VN.controller = controller
-    _G.ScreenEffects = ScreenEffectsj
-    _G.VN.QueueScriptTransition = function(target, transitionStyle, transitionSpeed, transitionEase)
-        local speedValue = transitionSpeed
-        if speedValue ~= nil then
-            speedValue = tostring(speedValue)
-        end
-        controller:QueueScriptTransition(target, transitionStyle, speedValue, transitionEase)
-    end
-
-    local mainMenuAlpha = 0.0
-    local mainMenuFadeSpeed = 3.0
-
-    while Engine.IsRunning() do
-        Engine.HandleEvents()
-
-        local isFading = transition:is_active()
-        local input = Runtime.read_input_frame(isFading)
-        local mx = input.mx
-        local my = input.my
-        local leftClick = input.leftClick
-        local rightClick = input.rightClick
-        local wheelY = input.wheelY
-
-        Runtime.safe_call_global("OnEngineFrameUpdate", currentState, mx, my, leftClick, rightClick, wheelY)
-
-        ScreenEffects.update()
-        local shakeOffsetX, shakeOffsetY = ScreenEffects.get_offset()
-        Engine.SetCameraOffset(shakeOffsetX, shakeOffsetY)
-
-        Engine.ClearScreen()
-
-        if currentState == stateMainMenu then
-            mainMenuAlpha = Ease.fade_in(mainMenuAlpha, mainMenuFadeSpeed, 255)
-            Engine.DrawAuto(titleBg, DisplayMode.Fill, math.floor(mainMenuAlpha), 0, 0, 1.0)
-
-            local action = titleMenu:update(mx, my, (not isFading) and leftClick)
-            if not isFading then
-                if action == "Start" then
-                    Engine.PlaySFX("click.wav")
-                    start_transition(function()
-                        controller:LoadScript(startScriptFile)
-                        currentState = stateInGame
-                    end)
-                elseif action == "Load" then
-                    Engine.PlaySFX("click.wav")
-                    start_transition(function()
-                        previousState = stateMainMenu
-                        currentState = stateLoadMenu
-                        saveLoadMenu:open("load")
-                    end)
-                elseif action == "Exit" then
-                    break
-                end
-            end
-
-            titleMenu:render()
-        elseif currentState == stateInGame then
-            controller:RenderBackground()
-
-            if not isFading then
-                if controller:IsShowingBacklog() then
-                    if wheelY ~= 0 then
-                        controller:ScrollBacklog(wheelY > 0 and 1 or -1)
-                    end
-
-                    if rightClick or wheelY < 0 then
-                        controller:ToggleBacklog()
-                    end
-                else
-                    local toolbarAction = bottomToolbar:update(mx, my, leftClick)
-
-                    if toolbarAction == "OpenSave" then
-                        start_transition(function()
-                            previousState = stateInGame
-                            currentState = stateSaveMenu
-                            saveLoadMenu:open("save")
-                        end)
-                    elseif toolbarAction == "OpenLoad" then
-                        start_transition(function()
-                            previousState = stateInGame
-                            currentState = stateLoadMenu
-                            saveLoadMenu:open("load")
-                        end)
-                    elseif toolbarAction == "TogglePin" then
-                        Engine.PlaySFX("click.wav")
-                    end
-
-                    local blockingClick = bottomToolbar:is_mouse_over(my)
-                    if (leftClick and not blockingClick) or wheelY < 0 then
-                        controller:HandleClick(mx, my)
-                    elseif wheelY > 0 then
-                        controller:ToggleBacklog()
-                    end
-                end
-            end
-
-            controller:Update(mx, my)
-
-            if not isFading then
-                local pendingInlineTransition = controller:PopInlineTransition()
-                if pendingInlineTransition then
-                    local transitionOptions = build_transition_options(pendingInlineTransition)
-
-                    start_transition(function()
-                        controller:ContinueScript()
-                    end, transitionOptions)
-                else
-                    local pendingScriptTransition = controller:PopScriptTransition()
-                    if pendingScriptTransition then
-                        local transitionOptions = build_transition_options(pendingScriptTransition)
-
-                        start_transition(function()
-                            controller:LoadScript(pendingScriptTransition.target)
-                            currentState = stateInGame
-                        end, transitionOptions)
-                    end
-                end
-            end
-
-            controller:Render()
-            dialogueBox:render_from_context(controller:GetDialogueBoxContext())
-            bottomToolbar:render(winW)
-        elseif currentState == stateSaveMenu or currentState == stateLoadMenu then
-            controller:RenderBackground()
-            controller:Render()
-            dialogueBox:render_from_context(controller:GetDialogueBoxContext())
-
-            local selectedSlot = 0
-            if not isFading then
-                selectedSlot = saveLoadMenu:update(mx, my, leftClick)
-            end
-
-            if not isFading then
-                if selectedSlot == -1 or rightClick then
-                    start_transition(function()
-                        currentState = previousState
-                    end)
-                elseif selectedSlot > 0 then
-                    if currentState == stateSaveMenu then
-                        if controller:SaveToSlot(selectedSlot) then
-                            Engine.PlaySFX("click.wav")
-                        end
-                        saveLoadMenu:open("save")
-                    else
-                        local capturedSlot = selectedSlot
-                        start_transition(function()
-                            if controller:LoadFromSlot(capturedSlot) then
-                                Engine.PlaySFX("click.wav")
-                                currentState = stateInGame
-                            end
-                        end)
-                    end
-                end
-            end
-
-            saveLoadMenu:render()
-        end
-
-        transition:update(winW)
-        Runtime.safe_call_global("OnEngineFrameRender", currentState, winW, winH)
-        transition:draw_fullscreen(winW, winH)
-        Engine.PresentScreen()
-    end
+    Engine.PresentScreen()
 end

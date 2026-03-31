@@ -215,11 +215,16 @@ private:
     std::string pendingInlineTransitionEase;
     std::map<std::string, ActiveCharacter> activeCharacters;
     std::string currentSpeakingChar;
-    BGMInfo infoBanner;
-    ChapterBanner chapterBanner;
+
+    std::string pendingBgmInfo;
+    std::string pendingChapterInfo;
 
 public:
     DialogueController(PrismatiXEngine& engine, TTF_Font* dialogueFont, const std::string& dialogueFontName, int dialogueFontSize, TTF_Font* nameFont);
+
+    // Banners
+    bool PopPendingBgmInfo(std::string& outMsg);
+    bool PopPendingChapterInfo(std::string& outMsg);
 
     // For S/L
     std::string GetCurrentScriptName() const;

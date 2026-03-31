@@ -220,7 +220,23 @@ DialogueController::DialogueController(PrismatiXEngine& eng, TTF_Font* dialogueF
     clickCooldown = 0;
     isFinished = false;
     hasStarted = false;
+    pendingBgmInfo = "";
+    pendingChapterInfo = "";
     InitializeCommandHandlers();
+}
+
+bool DialogueController::PopPendingBgmInfo(std::string& outMsg) {
+    if (pendingBgmInfo.empty()) return false;
+    outMsg = pendingBgmInfo;
+    pendingBgmInfo = "";
+    return true;
+}
+
+bool DialogueController::PopPendingChapterInfo(std::string& outMsg) {
+    if (pendingChapterInfo.empty()) return false;
+    outMsg = pendingChapterInfo;
+    pendingChapterInfo = "";
+    return true;
 }
 
 void DialogueController::InitializeCommandHandlers() {
@@ -697,14 +713,12 @@ void DialogueController::HandleCommandDel(const VNCommand& cmd) {
 }
 
 void DialogueController::HandleCommandBgmInfo(const VNCommand& cmd) {
-    std::string text = cmd.args.count("text") ? cmd.args.at("text") : "";
-    infoBanner.Show(text, true);
+    pendingBgmInfo = cmd.args.count("text") ? cmd.args.at("text") : "";
     currentLine++;
 }
 
 void DialogueController::HandleCommandChapter(const VNCommand& cmd) {
-    std::string text = cmd.args.count("text") ? cmd.args.at("text") : "";
-    chapterBanner.Show(text);
+    pendingChapterInfo = cmd.args.count("text") ? cmd.args.at("text") : "";
     currentLine++;
 }
 
@@ -943,8 +957,6 @@ void DialogueController::Update(int mx, int my) {
     if (backlogCooldown > 0) {
         backlogCooldown--;
     }
-    infoBanner.Update();
-    chapterBanner.Update();
     {
         float target = isShowingBacklog ? 220.0f : 0.0f;
         const float BACKLOG_FADE_SPEED = 15.0f;
@@ -1070,97 +1082,7 @@ void DialogueController::Render(SDL_Renderer* renderer) {
 
     engine.GetUIManager().Render(renderer);
 
-    infoBanner.Render(engine, uiFont);
-    chapterBanner.Render(engine, uiFont);
-
     RenderBacklog(renderer);
 }
 
 bool DialogueController::IsScriptFinished() const { return isFinished; }
-
-void ChapterBanner::Render(PrismatiXEngine& engine, TTF_Font* font) const {
-    if (!IsActive() || alpha <= 0.0f || !font) return;
-
-    SDL_Renderer* renderer = engine.GetRenderer();
-    if (!renderer) return;
-
-    Uint8 a = static_cast<Uint8>(alpha);
-    int boxY = 20;
-
-    SDL_Texture* bgTex = engine.GetTextureManager().LoadTexture("chapterinfo.png", renderer);
-    if (bgTex) {
-        SDL_Rect destRect = engine.GetTextureManager().DrawAuto(bgTex, renderer, TextureManager::DisplayMode::TopLeft, a, static_cast<int>(currentX), boxY, 0.7f);
-
-        if (!text.empty()) {
-            SDL_Color textColor = { 255, 240, 180, a };
-            SDL_Color outlineColor = { 0, 0, 0, a };
-            engine.GetTextManager().DrawWithOutlineCentered(renderer, font, text, textColor, outlineColor, 1, destRect, a, true);
-        }
-    }
-    else {
-        int textW = 0;
-        int textH = 0;
-        TTF_SizeUTF8(font, text.c_str(), &textW, &textH);
-        textW /= TextManager::FONT_OVERSAMPLE;
-        textH /= TextManager::FONT_OVERSAMPLE;
-
-        const int padX = 20;
-        const int padY = 10;
-        int boxW = textW + padX * 2;
-        int boxH = textH + padY * 2;
-        int fbX = static_cast<int>(currentX);
-
-        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(renderer, 20, 20, 40, static_cast<Uint8>(a * 0.85f));
-        SDL_Rect bgRect = { fbX, boxY, boxW, boxH };
-        SDL_RenderFillRect(renderer, &bgRect);
-
-        SDL_Color textColor = { 255, 240, 180, a };
-        SDL_Color outlineColor = { 0, 0, 0, a };
-        engine.GetTextManager().DrawWithOutline(renderer, font, text, textColor, outlineColor, 1, fbX + padX, boxY + padY, 0, a);
-    }
-}
-
-void BGMInfo::Render(PrismatiXEngine& engine, TTF_Font* font) const {
-    if (!IsActive() || alpha <= 0.0f || !font) return;
-
-    SDL_Renderer* renderer = engine.GetRenderer();
-    if (!renderer) return;
-
-    Uint8 a = static_cast<Uint8>(alpha);
-    std::string displayText = isMusicNotification ? "Music:  " + text : text;
-
-    int textW = 0;
-    int textH = 0;
-    TTF_SizeUTF8(font, displayText.c_str(), &textW, &textH);
-    textW /= TextManager::FONT_OVERSAMPLE;
-    textH /= TextManager::FONT_OVERSAMPLE;
-
-    const int padX = 16;
-    const int padY = 8;
-    int boxX = static_cast<int>(currentX);
-    int boxY = 20;
-    int boxW = textW + padX * 2;
-    int boxH = textH + padY * 2;
-
-    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-
-    Uint8 bgAlpha = static_cast<Uint8>(a * 0.82f);
-    if (isMusicNotification)
-        SDL_SetRenderDrawColor(renderer, 20, 30, 50, bgAlpha);
-    else
-        SDL_SetRenderDrawColor(renderer, 20, 20, 20, bgAlpha);
-    SDL_Rect boxRect = { boxX, boxY, boxW, boxH };
-    SDL_RenderFillRect(renderer, &boxRect);
-
-    if (isMusicNotification)
-        SDL_SetRenderDrawColor(renderer, 100, 180, 255, a);
-    else
-        SDL_SetRenderDrawColor(renderer, 255, 220, 80, a);
-    SDL_Rect accentRect = { boxX, boxY, 4, boxH };
-    SDL_RenderFillRect(renderer, &accentRect);
-
-    SDL_Color textColor = isMusicNotification ? SDL_Color{ 180, 220, 255, a } : SDL_Color{ 255, 255, 255, a };
-    SDL_Color outlineColor = { 0, 0, 0, a };
-    engine.GetTextManager().DrawWithOutline(renderer, font, displayText, textColor, outlineColor, 1, boxX + padX, boxY + padY, 0, a);
-}
