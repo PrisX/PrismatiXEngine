@@ -1,9 +1,27 @@
 #include "ScriptManager.h"
 
+#include <cctype>
 #include <iostream>
 #include <sstream>
 
 #include "ArchiveManager.h"
+
+namespace {
+std::string ToLowerCopy(const std::string& value) {
+    std::string lowered = value;
+    for (char& ch : lowered) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return lowered;
+}
+
+std::string CanonicalCommandType(const std::string& rawType) { return ToLowerCopy(rawType); }
+
+void CanonicalizeCommandArgs(VNCommand& cmd, const std::string& rawType) {
+    (void)cmd;
+    (void)rawType;
+}
+}  // namespace
 
 ScriptManager::ScriptManager(ArchiveManager& archiveMgr) : archiveManager(archiveMgr) {}
 
@@ -26,7 +44,12 @@ std::vector<VNCommand> ScriptManager::ParseFile(const std::string& fileName) {
         size_t startPos = line.find_first_not_of(" \t");
         if (startPos == std::string::npos) continue;
         std::string cleanLine = line.substr(startPos);
-        if (cleanLine.empty() || cleanLine.substr(0, 2) == "//" || cleanLine.substr(0, 1) == "#") continue;
+        bool isHashComment = false;
+        if (!cleanLine.empty() && cleanLine[0] == '#') {
+            isHashComment = (cleanLine.size() == 1 || std::isspace(static_cast<unsigned char>(cleanLine[1])));
+        }
+
+        if (cleanLine.empty() || cleanLine.substr(0, 2) == "//" || isHashComment) continue;
         if (cleanLine.front() == '*') {
             VNCommand cmd;
             cmd.type = "label";
@@ -37,13 +60,16 @@ std::vector<VNCommand> ScriptManager::ParseFile(const std::string& fileName) {
         if (cleanLine.front() == '[' && cleanLine.back() == ']') {
             std::string content = cleanLine.substr(1, cleanLine.size() - 2);
             VNCommand cmd;
+            std::string rawType;
 
             size_t firstSpace = content.find(' ');
             if (firstSpace == std::string::npos) {
-                cmd.type = content;
+                rawType = ToLowerCopy(content);
+                cmd.type = CanonicalCommandType(content);
             }
             else {
-                cmd.type = content.substr(0, firstSpace);
+                rawType = ToLowerCopy(content.substr(0, firstSpace));
+                cmd.type = CanonicalCommandType(content.substr(0, firstSpace));
                 std::string argsStr = content.substr(firstSpace + 1);
 
                 size_t pos = 0;
@@ -76,6 +102,8 @@ std::vector<VNCommand> ScriptManager::ParseFile(const std::string& fileName) {
                     }
                 }
             }
+            CanonicalizeCommandArgs(cmd, rawType);
+
             if (cmd.type == "text") {
                 lastTextArgs = cmd.args;
                 lastTextArgs.erase("voice");

@@ -85,6 +85,44 @@ int ReadCharacterAnimationDurationArg(const std::map<std::string, std::string>& 
     return std::clamp(duration, 1, 120);
 }
 
+std::string ToLowerAlphaNumeric(const std::string& value);
+
+std::string ReadSpeakerArg(const std::map<std::string, std::string>& args) { return ReadFirstArg(args, { "name" }); }
+
+std::string ReadTextArg(const std::map<std::string, std::string>& args) { return ReadFirstArg(args, { "content" }); }
+
+std::string ReadVarOperatorArg(const std::map<std::string, std::string>& args) { return ReadFirstArg(args, { "op" }); }
+
+std::string ReadCharacterIdArg(const std::map<std::string, std::string>& args) { return ReadFirstArg(args, { "id" }); }
+
+std::string ReadCharacterExpressionArg(const std::map<std::string, std::string>& args) { return ReadFirstArg(args, { "expression" }); }
+
+int ReadCharacterSlotArg(const std::map<std::string, std::string>& args, int fallback = 1) {
+    std::string value = ReadFirstArg(args, { "pos" });
+    if (value.empty()) return fallback;
+
+    std::string lowered = ToLowerAlphaNumeric(value);
+    if (lowered == "left" || lowered == "l") return 0;
+    if (lowered == "center" || lowered == "centre" || lowered == "middle" || lowered == "c") return 1;
+    if (lowered == "right" || lowered == "r") return 2;
+
+    try {
+        return std::stoi(value);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+bool ReadBoolArg(const std::map<std::string, std::string>& args, std::initializer_list<const char*> keys, bool fallback = false) {
+    std::string value = ToLowerAlphaNumeric(ReadFirstArg(args, keys));
+    if (value.empty()) return fallback;
+
+    if (value == "1" || value == "true" || value == "yes" || value == "on") return true;
+    if (value == "0" || value == "false" || value == "no" || value == "off") return false;
+
+    return fallback;
+}
+
 std::string ToLowerAlphaNumeric(const std::string& value) {
     std::string lowered;
     lowered.reserve(value.size());
@@ -168,35 +206,35 @@ void UpdateCharacterAnimation(ActiveCharacter& chara, sol::state& luaState) {
 
         if (fx.valid()) {
             sol::table ctx = luaState.create_table();
-                ctx["name"] = chara.name;
-                ctx["diff"] = chara.diff;
-                ctx["animation"] = chara.animation;
-                ctx["resolvedAnimation"] = animation;
-                ctx["trigger"] = chara.animationTrigger;
-                ctx["ease"] = chara.animationEase;
-                ctx["progress"] = progress;
-                ctx["frame"] = chara.animationFrame;
-                ctx["duration"] = chara.animationDuration;
-                ctx["pos"] = chara.pos;
-                ctx["currentX"] = chara.currentX;
-                ctx["targetX"] = chara.targetX;
-                ctx["screenWidth"] = kScreenWidth;
-                ctx["screenHeight"] = kScreenHeight;
+            ctx["name"] = chara.name;
+            ctx["diff"] = chara.diff;
+            ctx["animation"] = chara.animation;
+            ctx["resolvedAnimation"] = animation;
+            ctx["trigger"] = chara.animationTrigger;
+            ctx["ease"] = chara.animationEase;
+            ctx["progress"] = progress;
+            ctx["frame"] = chara.animationFrame;
+            ctx["duration"] = chara.animationDuration;
+            ctx["pos"] = chara.pos;
+            ctx["currentX"] = chara.currentX;
+            ctx["targetX"] = chara.targetX;
+            ctx["screenWidth"] = kScreenWidth;
+            ctx["screenHeight"] = kScreenHeight;
 
-                sol::protected_function_result result = fx(ctx);
-                if (!result.valid()) {
-                    sol::error err = result;
-                    std::cerr << "Portrait animation runtime error (" << animation << "): " << err.what() << std::endl;
-                    chara.animationActive = false;
-                }
-                else if (result.return_count() > 0) {
-                    sol::optional<sol::table> animResult = result;
-                    if (animResult) {
-                        ApplyCharacterAnimationResult(chara, *animResult);
-                    }
+            sol::protected_function_result result = fx(ctx);
+            if (!result.valid()) {
+                sol::error err = result;
+                std::cerr << "Portrait animation runtime error (" << animation << "): " << err.what() << std::endl;
+                chara.animationActive = false;
+            }
+            else if (result.return_count() > 0) {
+                sol::optional<sol::table> animResult = result;
+                if (animResult) {
+                    ApplyCharacterAnimationResult(chara, *animResult);
                 }
             }
         }
+    }
 
     if (progress >= 1.0f) {
         chara.animationActive = false;
@@ -207,6 +245,17 @@ void UpdateCharacterAnimation(ActiveCharacter& chara, sol::state& luaState) {
     }
 
     chara.animationFrame++;
+}
+
+int FindLabelLine(const std::vector<VNCommand>& commands, const std::string& labelName) {
+    for (size_t i = 0; i < commands.size(); ++i) {
+        auto it = commands[i].args.find("name");
+        if (commands[i].type == "label" && it != commands[i].args.end() && it->second == labelName) {
+            return static_cast<int>(i);
+        }
+    }
+
+    return -1;
 }
 }  // namespace
 
@@ -240,20 +289,17 @@ bool DialogueController::PopPendingChapterInfo(std::string& outMsg) {
 }
 
 void DialogueController::InitializeCommandHandlers() {
-    commandHandlers["charimg"] = [this](const VNCommand& cmd) { HandleCommandCharImg(cmd); };
-    commandHandlers["clearcharimg"] = [this](const VNCommand& cmd) { HandleCommandClearCharImg(cmd); };
+    commandHandlers["char"] = [this](const VNCommand& cmd) { HandleCommandCharImg(cmd); };
+    commandHandlers["char_clear"] = [this](const VNCommand& cmd) { HandleCommandClearCharImg(cmd); };
     commandHandlers["bg"] = [this](const VNCommand& cmd) { HandleCommandBg(cmd); };
     commandHandlers["text"] = [this](const VNCommand& cmd) { HandleCommandText(cmd); };
     commandHandlers["bgm"] = [this](const VNCommand& cmd) { HandleCommandBgm(cmd); };
     commandHandlers["stopbgm"] = [this](const VNCommand& cmd) { HandleCommandStopBgm(cmd); };
     commandHandlers["se"] = [this](const VNCommand& cmd) { HandleCommandSe(cmd); };
-    commandHandlers["set"] = [this](const VNCommand& cmd) { HandleCommandSet(cmd); };
-    commandHandlers["add"] = [this](const VNCommand& cmd) { HandleCommandAdd(cmd); };
-    commandHandlers["del"] = [this](const VNCommand& cmd) { HandleCommandDel(cmd); };
+    commandHandlers["var"] = [this](const VNCommand& cmd) { HandleCommandVar(cmd); };
     commandHandlers["bgminfo"] = [this](const VNCommand& cmd) { HandleCommandBgmInfo(cmd); };
     commandHandlers["chapter"] = [this](const VNCommand& cmd) { HandleCommandChapter(cmd); };
     commandHandlers["lua"] = [this](const VNCommand& cmd) { HandleCommandLua(cmd); };
-    commandHandlers["luafx"] = [this](const VNCommand& cmd) { HandleCommandLua(cmd); };
     commandHandlers["transition"] = [this](const VNCommand& cmd) { HandleCommandTransition(cmd); };
     commandHandlers["label"] = [this](const VNCommand& cmd) { HandleCommandLabel(cmd); };
     commandHandlers["jump"] = [this](const VNCommand& cmd) { HandleCommandJump(cmd); };
@@ -544,13 +590,23 @@ void DialogueController::RecalculateTargetPositions() {
 }
 
 void DialogueController::HandleCommandCharImg(const VNCommand& cmd) {
-    std::string name = cmd.args.at("name");
-    int targetPos = std::stoi(cmd.args.at("pos"));
+    std::string name = ReadCharacterIdArg(cmd.args);
+    std::string expression = ReadCharacterExpressionArg(cmd.args);
+    int targetPos = ReadCharacterSlotArg(cmd.args, 1);
+    std::string speakerName = ReadSpeakerArg(cmd.args);
+    bool focus = ReadBoolArg(cmd.args, { "focus", "speaking", "active" }, false);
+
+    if (name.empty() || expression.empty()) {
+        std::cerr << "Char command missing id/expression.\n";
+        currentLine++;
+        return;
+    }
 
     if (activeCharacters.find(name) == activeCharacters.end()) {
         ActiveCharacter chara;
         chara.name = name;
-        chara.diff = cmd.args.at("diff");
+        chara.speakerName = speakerName.empty() ? name : speakerName;
+        chara.diff = expression;
         chara.pos = targetPos;
         chara.alpha = 0.0f;
         chara.targetAlpha = 255.0f;
@@ -563,7 +619,10 @@ void DialogueController::HandleCommandCharImg(const VNCommand& cmd) {
     else {
         ActiveCharacter& chara = activeCharacters[name];
         int previousPos = chara.pos;
-        chara.diff = cmd.args.at("diff");
+        if (!speakerName.empty()) {
+            chara.speakerName = speakerName;
+        }
+        chara.diff = expression;
         chara.pos = targetPos;
         chara.targetAlpha = 255.0f;
         chara.isExiting = false;
@@ -571,19 +630,42 @@ void DialogueController::HandleCommandCharImg(const VNCommand& cmd) {
         chara.animationTrigger = (previousPos != targetPos) ? "move" : "refresh";
         StartCharacterAnimation(chara, cmd.args);
     }
+
+    if (focus) {
+        currentSpeakingChar = name;
+    }
+
     currentLine++;
 }
 
 void DialogueController::HandleCommandClearCharImg(const VNCommand& cmd) {
-    int targetPos = std::stoi(cmd.args.at("pos"));
+    std::string targetName = ReadCharacterIdArg(cmd.args);
+    bool cleared = false;
 
-    for (auto& [name, chara] : activeCharacters) {
-        if (chara.pos == targetPos) {
-            chara.targetAlpha = 0.0f;
-            chara.isExiting = true;
-            break;
+    if (!targetName.empty()) {
+        auto it = activeCharacters.find(targetName);
+        if (it != activeCharacters.end()) {
+            it->second.targetAlpha = 0.0f;
+            it->second.isExiting = true;
+            cleared = true;
         }
     }
+    else {
+        int targetPos = ReadCharacterSlotArg(cmd.args, -9999);
+        for (auto& [name, chara] : activeCharacters) {
+            if (chara.pos == targetPos) {
+                chara.targetAlpha = 0.0f;
+                chara.isExiting = true;
+                cleared = true;
+                break;
+            }
+        }
+    }
+
+    if (!cleared) {
+        std::cerr << "Char clear target not found.\n";
+    }
+
     RecalculateTargetPositions();
     currentLine++;
 }
@@ -598,8 +680,26 @@ void DialogueController::HandleCommandBg(const VNCommand& cmd) {
 }
 
 void DialogueController::HandleCommandText(const VNCommand& cmd) {
-    std::string speaker = cmd.args.count("name") ? cmd.args.at("name") : "";
-    std::string content = cmd.args.at("content");
+    bool hasText = (cmd.args.count("content") > 0);
+    std::string content = ReadTextArg(cmd.args);
+    if (!hasText) {
+        std::cerr << "Text command missing content.\n";
+        currentLine++;
+        return;
+    }
+
+    std::string speakingChar = ReadCharacterIdArg(cmd.args);
+    if (!speakingChar.empty()) {
+        currentSpeakingChar = speakingChar;
+    }
+
+    std::string speaker = ReadSpeakerArg(cmd.args);
+    if (speaker.empty() && !currentSpeakingChar.empty()) {
+        auto it = activeCharacters.find(currentSpeakingChar);
+        if (it != activeCharacters.end()) {
+            speaker = it->second.speakerName.empty() ? it->second.name : it->second.speakerName;
+        }
+    }
 
     size_t startPos = 0;
     while ((startPos = content.find('{', startPos)) != std::string::npos) {
@@ -617,17 +717,12 @@ void DialogueController::HandleCommandText(const VNCommand& cmd) {
 
     SDL_Color textColor = cmd.args.count("color") ? engine.GetScriptManager().ParseColor(cmd.args.at("color"), defaultText) : defaultText;
 
-    SDL_Color outlineColor = cmd.args.count("olcolor") ? engine.GetScriptManager().ParseColor(cmd.args.at("olcolor"), defaultOutline) : defaultOutline;
+    std::string outline = ReadFirstArg(cmd.args, { "olcolor" });
+    SDL_Color outlineColor = !outline.empty() ? engine.GetScriptManager().ParseColor(outline, defaultOutline) : defaultOutline;
 
     std::string textEffect;
-    if (cmd.args.count("effect")) {
-        textEffect = cmd.args.at("effect");
-    }
-    else if (cmd.args.count("texteffect")) {
-        textEffect = cmd.args.at("texteffect");
-    }
-    else if (cmd.args.count("txfx")) {
-        textEffect = cmd.args.at("txfx");
+    if (cmd.args.count("fx")) {
+        textEffect = cmd.args.at("fx");
     }
 
     int textSpeed = 40;
@@ -645,20 +740,21 @@ void DialogueController::HandleCommandText(const VNCommand& cmd) {
         textSpeed = 40;
     }
 
+    std::string lineVoice;
+    if (cmd.args.count("voice")) {
+        lineVoice = cmd.args.at("voice");
+    }
+
     if (!skipNextLog) {
-        engine.GetBacklogManager().AddLog(speaker, content, pendingVoice);
+        engine.GetBacklogManager().AddLog(speaker, content, lineVoice);
     }
     skipNextLog = false;
     SetDialogueText(speaker, content, textSpeed, textColor, outlineColor, textEffect);
 
-    currentSpeakingChar = cmd.args.count("char") ? cmd.args.at("char") : "";
-
-    if (cmd.args.count("voice")) {
-        pendingVoice = cmd.args.at("voice");
+    if (!speakingChar.empty()) {
+        currentSpeakingChar = speakingChar;
     }
-    else {
-        pendingVoice.clear();
-    }
+    pendingVoice = lineVoice;
 }
 
 void DialogueController::HandleCommandBgm(const VNCommand& cmd) {
@@ -679,36 +775,51 @@ void DialogueController::HandleCommandSe(const VNCommand& cmd) {
     currentLine++;
 }
 
-void DialogueController::HandleCommandSet(const VNCommand& cmd) {
-    std::string varName = cmd.args.at("var");
+void DialogueController::HandleCommandVar(const VNCommand& cmd) {
+    std::string varName = ReadFirstArg(cmd.args, { "var" });
+    if (varName.empty()) {
+        std::cerr << "Var command missing var/name.\n";
+        currentLine++;
+        return;
+    }
+
+    std::string op = ToLowerAlphaNumeric(ReadVarOperatorArg(cmd.args));
     int value = 0;
     try {
-        if (cmd.args.count("val")) value = std::stoi(cmd.args.at("val"));
+        if (cmd.args.count("val")) {
+            value = std::stoi(cmd.args.at("val"));
+        }
     } catch (...) {
-        std::cerr << "Failed to parse val parameters.\n";
+        std::cerr << "Failed to parse var val.\n";
     }
 
-    engine.GetVariableManager().Set(varName, value);
-    currentLine++;
-}
-
-void DialogueController::HandleCommandAdd(const VNCommand& cmd) {
-    std::string varName = cmd.args.at("var");
-    int value = 0;
-    try {
-        if (cmd.args.count("val")) value = std::stoi(cmd.args.at("val"));
-    } catch (...) {
-        std::cerr << "Failed to parse val parameters.\n";
+    if (op.empty()) {
+        if (cmd.args.count("val")) {
+            op = "set";
+        }
+        else {
+            std::cerr << "Var command missing op.\n";
+            currentLine++;
+            return;
+        }
     }
 
-    engine.GetVariableManager().Add(varName, value);
-    currentLine++;
-}
-
-void DialogueController::HandleCommandDel(const VNCommand& cmd) {
-    if (cmd.args.count("var")) {
-        engine.GetVariableManager().Remove(cmd.args.at("var"));
+    if (op == "set") {
+        engine.GetVariableManager().Set(varName, value);
     }
+    else if (op == "add") {
+        engine.GetVariableManager().Add(varName, value);
+    }
+    else if (op == "sub") {
+        engine.GetVariableManager().Add(varName, -value);
+    }
+    else if (op == "del" || op == "remove" || op == "clear") {
+        engine.GetVariableManager().Remove(varName);
+    }
+    else {
+        std::cerr << "Unknown var op: " << op << "\n";
+    }
+
     currentLine++;
 }
 
@@ -770,18 +881,32 @@ void DialogueController::HandleCommandTransition(const VNCommand& cmd) {
 void DialogueController::HandleCommandLabel(const VNCommand& cmd) { currentLine++; }
 
 void DialogueController::HandleCommandJump(const VNCommand& cmd) {
+    if (cmd.args.count("target") == 0) {
+        std::cerr << "Jump command missing target.\n";
+        currentLine++;
+        return;
+    }
+
     std::string target = cmd.args.at("target");
+    if (target.empty()) {
+        std::cerr << "Jump command has empty target.\n";
+        currentLine++;
+        return;
+    }
+
     std::string transitionStyle = ReadTransitionStyleArg(cmd.args);
     std::string transitionSpeed = ReadTransitionSpeedArg(cmd.args);
     std::string transitionEase = ReadTransitionEaseArg(cmd.args);
 
-    if (target.front() == '*') {
+    if (target[0] == '*') {
         std::string labelName = target.substr(1);
-        for (size_t i = 0; i < commands.size(); ++i) {
-            if (commands[i].type == "label" && commands[i].args["name"] == labelName) {
-                currentLine = (int)i;
-                break;
-            }
+        int labelLine = FindLabelLine(commands, labelName);
+        if (labelLine >= 0) {
+            currentLine = labelLine;
+        }
+        else {
+            std::cerr << "Jump target label not found: " << labelName << "\n";
+            currentLine++;
         }
     }
     else {
@@ -856,6 +981,12 @@ void DialogueController::HandleCommandEndIf(const VNCommand& cmd) { currentLine+
 void DialogueController::HandleCommandChoice(const VNCommand& cmd) {
     std::string text = cmd.args.at("text");
     std::string target = cmd.args.at("target");
+    if (target.empty()) {
+        std::cerr << "Choice command has empty target.\n";
+        currentLine++;
+        return;
+    }
+
     std::string transitionStyle = ReadTransitionStyleArg(cmd.args);
     std::string transitionSpeed = ReadTransitionSpeedArg(cmd.args);
     std::string transitionEase = ReadTransitionEaseArg(cmd.args);
@@ -881,7 +1012,7 @@ void DialogueController::ExecuteNextCommands() {
             else if (cmd.type == "transition") {
                 return;
             }
-            else if (cmd.type == "jump" && cmd.args.count("target") && cmd.args.at("target").front() != '*') {
+            else if (cmd.type == "jump" && cmd.args.count("target") && !cmd.args.at("target").empty() && cmd.args.at("target")[0] != '*') {
                 return;
             }
             else if (cmd.type == "choice" && currentLine < (int)commands.size() && commands[currentLine].type != "choice") {
@@ -918,20 +1049,27 @@ void DialogueController::HandleClick(int mx, int my) {
             engine.GetBacklogManager().AddChoice(engine.GetUIManager().GetHoveredText());
             engine.GetUIManager().Clear();
 
-            if (target.front() == '*') {
+            if (target[0] == '*') {
                 std::string labelName = target.substr(1);
-                for (size_t i = 0; i < commands.size(); ++i) {
-                    if (commands[i].type == "label" && commands[i].args["name"] == labelName) {
-                        currentLine = (int)i;
-                        ExecuteNextCommands();
-                        return;
-                    }
+                int labelLine = FindLabelLine(commands, labelName);
+                if (labelLine >= 0) {
+                    currentLine = labelLine;
+                    ExecuteNextCommands();
+                    return;
                 }
+
+                std::cerr << "Choice target label not found: " << labelName << "\n";
+                ExecuteNextCommands();
+                return;
             }
             else {
                 QueueScriptTransition(target, transitionStyle, transitionSpeed, transitionEase);
                 return;
             }
+        }
+
+        if (hasClick && target.empty()) {
+            std::cerr << "Choice target is empty.\n";
         }
         return;
     }

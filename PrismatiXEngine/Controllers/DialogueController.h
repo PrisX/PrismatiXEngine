@@ -20,6 +20,7 @@ class PrismatiXEngine;
 
 struct ActiveCharacter {
     std::string name;
+    std::string speakerName;
     std::string diff;
     int pos;
 
@@ -173,9 +174,7 @@ private:
     void HandleCommandBgm(const VNCommand& cmd);
     void HandleCommandStopBgm(const VNCommand& cmd);
     void HandleCommandSe(const VNCommand& cmd);
-    void HandleCommandSet(const VNCommand& cmd);
-    void HandleCommandAdd(const VNCommand& cmd);
-    void HandleCommandDel(const VNCommand& cmd);
+    void HandleCommandVar(const VNCommand& cmd);
     void HandleCommandBgmInfo(const VNCommand& cmd);
     void HandleCommandChapter(const VNCommand& cmd);
     void HandleCommandLua(const VNCommand& cmd);
