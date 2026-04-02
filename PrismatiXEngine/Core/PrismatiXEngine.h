@@ -8,14 +8,15 @@
 #include <string>
 
 #include "Managers/ArchiveManager.h"
-#include "Managers/AudioManager.h"
+#include "Managers/AssetManager.h"
 #include "Managers/BacklogManager.h"
 #include "Managers/SaveManager.h"
 #include "Managers/ScriptManager.h"
-#include "Managers/TextManager.h"
-#include "Managers/TextureManager.h"
 #include "Managers/UIManager.h"
 #include "Managers/VariableManager.h"
+
+#include "Systems/AudioSystem.h"
+#include "Systems/RenderSystem.h"
 
 #include "EngineConfig.h"
 
@@ -48,11 +49,11 @@ public:
     void BindEngineToLua();
     sol::state& GetLuaState() { return lua; }
 
-    // Managers Accessors
+    // Managers & Systems Accessors
     ArchiveManager& GetArchiveManager() { return archiveManager; }
-    AudioManager& GetAudioManager() { return audioManager; }
-    TextureManager& GetTextureManager() { return textureManager; }
-    TextManager& GetTextManager() { return textManager; }
+    AssetManager& GetAssetManager() { return assetManager; }
+    AudioSystem& GetAudioSystem() { return audioSystem; }
+    RenderSystem* GetRenderSystem() { return renderSystem.get(); }
     VariableManager& GetVariableManager() { return variableManager; }
     BacklogManager& GetBacklogManager() { return backlogManager; }
     SaveManager& GetSaveManager() { return saveManager; }
@@ -78,11 +79,12 @@ private:
 
     void ApplyCameraViewport();
 
-    // Manager Instances (Order determines initialization sequence)
+    // Manager & System Instances (Order determines initialization sequence)
     ArchiveManager archiveManager;
-    AudioManager audioManager;
-    TextureManager textureManager;
-    TextManager textManager;
+    AssetManager assetManager;
+    AudioSystem audioSystem;
+    std::unique_ptr<RenderSystem> renderSystem;
+
     VariableManager variableManager;
     BacklogManager backlogManager;
     SaveManager saveManager;

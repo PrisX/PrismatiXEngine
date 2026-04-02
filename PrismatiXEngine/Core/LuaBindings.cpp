@@ -13,7 +13,10 @@
 #include <vector>
 
 #include "Managers/ArchiveManager.h"
+#include "Managers/AssetManager.h"
 #include "PrismatiXEngine.h"
+#include "Systems/AudioSystem.h"
+#include "Systems/RenderSystem.h"
 #include "Utils/TransitionUtils.h"
 #include "VN/VNController.h"
 
@@ -103,7 +106,7 @@ void RegisterVNControllerBindings(sol::state& lua, PrismatiXEngine& engine) {
         controller.RestoreSavedCharacters(chars);
 
         if (!bgmName.empty()) {
-            engine.GetAudioManager().PlayBGM(bgmName);
+            engine.GetAudioSystem().PlayBGM(bgmName);
         }
 
         return true;
@@ -172,8 +175,8 @@ void RegisterScriptBindings(sol::state& lua, PrismatiXEngine& engine, sol::table
     });
 
     engineApi.set_function("CreateVNController", [&engine](const std::string& dialogueFontName, int dialogueFontSize, const std::string& nameFontName, int nameFontSize) {
-        TTF_Font* dialogueFont = engine.GetTextManager().LoadFont(dialogueFontName, dialogueFontSize);
-        TTF_Font* nameFont = engine.GetTextManager().LoadFont(nameFontName, nameFontSize);
+        TTF_Font* dialogueFont = engine.GetAssetManager().LoadFont(dialogueFontName, dialogueFontSize);
+        TTF_Font* nameFont = engine.GetAssetManager().LoadFont(nameFontName, nameFontSize);
         return std::make_unique<VNController>(engine, dialogueFont, dialogueFontName, dialogueFontSize, nameFont);
     });
 
@@ -215,41 +218,41 @@ void RegisterRenderingBindings(sol::state& lua, PrismatiXEngine& engine, sol::ta
             return out;
         };
 
-        SDL_Texture* tex = engine.GetTextureManager().LoadTexture(texPath, engine.GetRenderer());
+        SDL_Texture* tex = engine.GetAssetManager().LoadTexture(texPath, engine.GetRenderer());
         if (!tex) {
             return toRectTable(SDL_Rect{ 0, 0, 0, 0 });
         }
 
-        SDL_Rect rect = engine.GetTextureManager().DrawAuto(tex, engine.GetRenderer(), static_cast<TextureManager::DisplayMode>(displayMode), alpha, offsetX.value_or(0), offsetY.value_or(0), scale.value_or(1.0f));
+        SDL_Rect rect = engine.GetRenderSystem()->DrawTextureAuto(tex, static_cast<DisplayMode>(displayMode), alpha, offsetX.value_or(0), offsetY.value_or(0), scale.value_or(1.0f));
         return toRectTable(rect);
     });
 
     lua.new_enum(
         "DisplayMode",
         "TopLeft",
-        TextureManager::DisplayMode::TopLeft,
+        DisplayMode::TopLeft,
         "TopRight",
-        TextureManager::DisplayMode::TopRight,
+        DisplayMode::TopRight,
         "BottomLeft",
-        TextureManager::DisplayMode::BottomLeft,
+        DisplayMode::BottomLeft,
         "BottomRight",
-        TextureManager::DisplayMode::BottomRight,
+        DisplayMode::BottomRight,
         "Top",
-        TextureManager::DisplayMode::Top,
+        DisplayMode::Top,
         "Bottom",
-        TextureManager::DisplayMode::Bottom,
+        DisplayMode::Bottom,
         "Left",
-        TextureManager::DisplayMode::Left,
+        DisplayMode::Left,
         "Right",
-        TextureManager::DisplayMode::Right,
+        DisplayMode::Right,
         "Center",
-        TextureManager::DisplayMode::Center,
+        DisplayMode::Center,
         "FitWidthBottom",
-        TextureManager::DisplayMode::FitWidthBottom,
+        DisplayMode::FitWidthBottom,
         "Fit",
-        TextureManager::DisplayMode::Fit,
+        DisplayMode::Fit,
         "Fill",
-        TextureManager::DisplayMode::Fill
+        DisplayMode::Fill
     );
 
     engineApi.set_function("DrawRect", [&engine](int x, int y, int w, int h, Uint8 r, Uint8 g, Uint8 b, sol::optional<Uint8> a) {
@@ -267,9 +270,9 @@ void RegisterRenderingBindings(sol::state& lua, PrismatiXEngine& engine, sol::ta
     });
 
     engineApi.set_function("DrawText", [&engine](const std::string& text, int x, int y, const std::string& fontName, int fontSize, Uint8 r, Uint8 g, Uint8 b, sol::optional<Uint8> a) {
-        TTF_Font* font = engine.GetTextManager().LoadFont(fontName, fontSize);
+        TTF_Font* font = engine.GetAssetManager().LoadFont(fontName, fontSize);
         if (!font) return;
-        engine.GetTextManager().Draw(engine.GetRenderer(), font, text, SDL_Color{ r, g, b, a.value_or(255) }, x, y);
+        engine.GetRenderSystem()->DrawText(font, text, SDL_Color{ r, g, b, a.value_or(255) }, x, y);
     });
 
     engineApi.set_function(
@@ -291,22 +294,22 @@ void RegisterRenderingBindings(sol::state& lua, PrismatiXEngine& engine, sol::ta
             sol::optional<Uint8> alpha,
             sol::optional<bool> shadow
         ) {
-            TTF_Font* font = engine.GetTextManager().LoadFont(fontName, fontSize);
+            TTF_Font* font = engine.GetAssetManager().LoadFont(fontName, fontSize);
             if (!font) return;
             SDL_Color textColor{ textR, textG, textB, 255 };
             SDL_Color outlineColor{ outlineR, outlineG, outlineB, 255 };
-            engine.GetTextManager().DrawWithOutline(engine.GetRenderer(), font, text, textColor, outlineColor, outlineSize, x, y, wrapLength.value_or(0), alpha.value_or(255), shadow.value_or(false));
+            engine.GetRenderSystem()->DrawTextWithOutline(font, text, textColor, outlineColor, outlineSize, x, y, wrapLength.value_or(0), alpha.value_or(255), shadow.value_or(false));
         }
     );
 
     engineApi.set_function("MeasureText", [&engine, &lua](const std::string& text, const std::string& fontName, int fontSize) {
         int w = 0;
         int h = 0;
-        TTF_Font* font = engine.GetTextManager().LoadFont(fontName, fontSize);
+        TTF_Font* font = engine.GetAssetManager().LoadFont(fontName, fontSize);
         if (font && !text.empty()) {
             TTF_SizeUTF8(font, text.c_str(), &w, &h);
-            w /= TextManager::FONT_OVERSAMPLE;
-            h /= TextManager::FONT_OVERSAMPLE;
+            w /= RenderSystem::FONT_OVERSAMPLE;
+            h /= RenderSystem::FONT_OVERSAMPLE;
         }
 
         sol::table size = lua.create_table();
@@ -339,7 +342,7 @@ void RegisterSplashBindings(PrismatiXEngine& engine, sol::table& engineApi, cons
                 *splashSkipRequested = false;
             }
 
-            SDL_Texture* tex = engine.GetTextureManager().LoadTexture(texPath, engine.GetRenderer());
+            SDL_Texture* tex = engine.GetAssetManager().LoadTexture(texPath, engine.GetRenderer());
             if (!tex) return;
 
             const Uint8 clearR = bgR.value_or(0);
@@ -361,7 +364,7 @@ void RegisterSplashBindings(PrismatiXEngine& engine, sol::table& engineApi, cons
 
                 SDL_SetRenderDrawColor(engine.GetRenderer(), frameR, frameG, frameB, 255);
                 SDL_RenderClear(engine.GetRenderer());
-                engine.GetTextureManager().DrawAuto(tex, engine.GetRenderer(), static_cast<TextureManager::DisplayMode>(displayMode), static_cast<Uint8>(alpha));
+                engine.GetRenderSystem()->DrawTextureAuto(tex, static_cast<DisplayMode>(displayMode), static_cast<Uint8>(alpha));
                 SDL_RenderPresent(engine.GetRenderer());
                 if (done) break;
                 SDL_Delay(16);
@@ -400,9 +403,9 @@ void RegisterSplashBindings(PrismatiXEngine& engine, sol::table& engineApi, cons
 }
 
 void RegisterAudioBindings(PrismatiXEngine& engine, sol::table& engineApi) {
-    engineApi.set_function("PlaySFX", [&engine](const std::string& sfxFile) { engine.GetAudioManager().PlaySFX(sfxFile); });
-    engineApi.set_function("PlayBGM", [&engine](const std::string& bgmFile) { engine.GetAudioManager().PlayBGM(bgmFile); });
-    engineApi.set_function("StopBGM", [&engine]() { engine.GetAudioManager().StopBGM(); });
+    engineApi.set_function("PlaySFX", [&engine](const std::string& sfxFile) { engine.GetAudioSystem().PlaySFX(sfxFile); });
+    engineApi.set_function("PlayBGM", [&engine](const std::string& bgmFile) { engine.GetAudioSystem().PlayBGM(bgmFile); });
+    engineApi.set_function("StopBGM", [&engine]() { engine.GetAudioSystem().StopBGM(); });
 }
 
 void RegisterSystemBindings(PrismatiXEngine& engine, sol::table& engineApi) {
@@ -471,3 +474,4 @@ void RegisterEngineLuaBindings(sol::state& lua, PrismatiXEngine& engine) {
 
     lua["Engine"] = engineApi;
 }
+

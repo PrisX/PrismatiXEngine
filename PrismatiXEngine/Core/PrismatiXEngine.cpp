@@ -1,6 +1,7 @@
 #include "PrismatiXEngine.h"
 
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_image.h>
 
 #include <iostream>
 
@@ -15,12 +16,11 @@ PrismatiXEngine::PrismatiXEngine()
       leftClick(false),
       rightClick(false),
       mouseWheelY(0),
-      audioManager(archiveManager),
-      textureManager(archiveManager),
-      textManager(archiveManager),
+      assetManager(archiveManager),
+      audioSystem(assetManager),
       saveManager(variableManager, backlogManager),
       scriptManager(archiveManager),
-      uiManager(textManager) {}
+      uiManager(renderSystem) {}
 PrismatiXEngine::~PrismatiXEngine() { Clean(); }
 
 bool PrismatiXEngine::Initialize(const std::string& title, int width, int height) {  // 同標頭檔裡面的解釋
@@ -65,6 +65,8 @@ bool PrismatiXEngine::Initialize(const std::string& title, int width, int height
         std::cerr << "Failed to create renderer: " << SDL_GetError() << std::endl;
         return false;
     }
+
+    renderSystem = std::make_unique<RenderSystem>(renderer, assetManager);
 
     SDL_RenderSetLogicalSize(renderer, width, height);
     lastWinW = width;
@@ -131,9 +133,7 @@ void PrismatiXEngine::ApplyCameraViewport() {
 }
 
 void PrismatiXEngine::Clean() {
-    textureManager.CleanCache();
-    audioManager.CleanCache();
-    textManager.Clean();
+    assetManager.CleanAll();
     uiManager.Clear();
 
     if (renderer) SDL_DestroyRenderer(renderer);
@@ -149,8 +149,8 @@ void PrismatiXEngine::Clean() {
 }
 
 void PrismatiXEngine::DrawFullscreenBackground(SDL_Texture* bgTex, Uint8 alpha) {
-    if (!bgTex) return;
-    textureManager.DrawAuto(bgTex, renderer, TextureManager::DisplayMode::Fill, alpha);
+    if (!bgTex || !renderSystem) return;
+    renderSystem->DrawTextureAuto(bgTex, DisplayMode::Fill, alpha);
 }
 
 void PrismatiXEngine::BindEngineToLua() { RegisterEngineLuaBindings(lua, *this); }

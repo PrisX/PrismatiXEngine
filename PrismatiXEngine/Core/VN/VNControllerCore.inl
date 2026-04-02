@@ -247,7 +247,7 @@ void VNController::RestoreSavedCharacters(const std::vector<SavedCharacter>& sav
 void VNController::RestoreBackground(const std::string& bgName) {
     currentBgName = bgName;
     if (!bgName.empty()) {
-        currentBgTexture = engine.GetTextureManager().LoadTexture(bgName, renderer);
+        currentBgTexture = engine.GetAssetManager().LoadTexture(bgName, renderer);
         bgFadeAlpha = 0.0f;
         previousBgTexture = nullptr;
     }

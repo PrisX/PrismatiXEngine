@@ -18,11 +18,13 @@ struct UIButton {
     std::string transitionEase;
 };
 
-class TextManager;
+#include <memory>
+
+class RenderSystem;
 
 class UIManager {
 public:
-    UIManager(TextManager& textMgr);
+    UIManager(std::unique_ptr<RenderSystem>& renderSystemRef);
     ~UIManager() = default;
 
     void AddTextButton(const std::string& text, TTF_Font* font, SDL_Color idle, SDL_Color hover, const std::string& target, const std::string& transitionStyle = "", const std::string& transitionSpeed = "", const std::string& transitionEase = "");
@@ -35,6 +37,6 @@ public:
     void Render(SDL_Renderer* renderer);
 
 private:
-    TextManager& textManager;
+    std::unique_ptr<RenderSystem>& renderSystem;
     std::vector<UIButton> buttons;
 };

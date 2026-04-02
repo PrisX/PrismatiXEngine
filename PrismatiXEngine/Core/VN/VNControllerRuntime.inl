@@ -39,7 +39,7 @@ void VNController::HandleClick(int mx, int my) {
         return;
     }
 
-    engine.GetAudioManager().StopVoice();
+    engine.GetAudioSystem().StopVoice();
     if (!IsDialogueTextFinished()) {
         ShowDialogueTextAll();
     }
@@ -69,7 +69,7 @@ void VNController::Update(int mx, int my) {
         UpdateDialogueText();
     }
     if (!pendingVoice.empty() && dialogueCurrentIndex > 0) {
-        engine.GetAudioManager().PlayVoice(pendingVoice);
+        engine.GetAudioSystem().PlayVoice(pendingVoice);
         pendingVoice.clear();
     }
 
@@ -109,10 +109,10 @@ void VNController::Update(int mx, int my) {
 
 void VNController::RenderBackground() {
     if (previousBgTexture) {
-        engine.GetTextureManager().DrawAuto(previousBgTexture, renderer, TextureManager::DisplayMode::Fill, 255);
+        engine.GetRenderSystem()->DrawTextureAuto(previousBgTexture, DisplayMode::Fill, 255);
     }
     if (currentBgTexture) {
-        engine.GetTextureManager().DrawAuto(currentBgTexture, renderer, TextureManager::DisplayMode::Fill, static_cast<Uint8>(bgFadeAlpha));
+        engine.GetRenderSystem()->DrawTextureAuto(currentBgTexture, DisplayMode::Fill, static_cast<Uint8>(bgFadeAlpha));
     }
 }
 
@@ -130,8 +130,8 @@ void VNController::RenderBacklog(SDL_Renderer* renderer) {
     SDL_RenderFillRect(renderer, &bgRect);
 
     SDL_Color outlineColor = { 0, 0, 0, textAlpha };
-    engine.GetTextManager().DrawWithOutline(renderer, uiFont, "- Backlog -", { 255, 255, 255, textAlpha }, outlineColor, 2, 50, 30, 0, textAlpha, true);
-    engine.GetTextManager().DrawWithOutline(renderer, uiFont, "(右鍵關閉)", { 150, 150, 150, textAlpha }, outlineColor, 1, 950, 40, 0, textAlpha, true);
+    engine.GetRenderSystem()->DrawTextWithOutline(uiFont, "- Backlog -", { 255, 255, 255, textAlpha }, outlineColor, 2, 50, 30, 0, textAlpha, true);
+    engine.GetRenderSystem()->DrawTextWithOutline(uiFont, "(右鍵關閉)", { 150, 150, 150, textAlpha }, outlineColor, 1, 950, 40, 0, textAlpha, true);
 
     int startIdx = (int)engine.GetBacklogManager().GetCount() - 1 - backlogOffset;
     int drawY = 600;
@@ -140,13 +140,13 @@ void VNController::RenderBacklog(SDL_Renderer* renderer) {
         const auto& log = engine.GetBacklogManager().logs[i];
 
         if (log.isChoice) {
-            engine.GetTextManager().DrawWithOutline(renderer, uiFont, log.text, { 255, 215, 0, textAlpha }, outlineColor, 1, 200, drawY, 800, textAlpha, true);
+            engine.GetRenderSystem()->DrawTextWithOutline(uiFont, log.text, { 255, 215, 0, textAlpha }, outlineColor, 1, 200, drawY, 800, textAlpha, true);
         }
         else {
             if (!log.speaker.empty()) {
-                engine.GetTextManager().DrawWithOutline(renderer, uiFont, "【" + log.speaker + "】", { 255, 200, 100, textAlpha }, outlineColor, 1, 100, drawY, 0, textAlpha, true);
+                engine.GetRenderSystem()->DrawTextWithOutline(uiFont, "【" + log.speaker + "】", { 255, 200, 100, textAlpha }, outlineColor, 1, 100, drawY, 0, textAlpha, true);
             }
-            engine.GetTextManager().DrawWithOutline(renderer, uiFont, log.text, { 220, 220, 220, textAlpha }, outlineColor, 1, 300, drawY, 800, textAlpha, true);
+            engine.GetRenderSystem()->DrawTextWithOutline(uiFont, log.text, { 220, 220, 220, textAlpha }, outlineColor, 1, 300, drawY, 800, textAlpha, true);
         }
 
         drawY -= 80;
@@ -164,7 +164,7 @@ void VNController::Render(SDL_Renderer* renderer) {
 
         for (const auto& chara : sortedChars) {
             std::string fileName = chara.name + "_" + chara.diff + ".png";
-            SDL_Texture* tex = engine.GetTextureManager().LoadTexture(fileName, renderer);
+            SDL_Texture* tex = engine.GetAssetManager().LoadTexture(fileName, renderer);
 
             if (tex) {
                 int texW, texH;
@@ -178,7 +178,7 @@ void VNController::Render(SDL_Renderer* renderer) {
                 int x = (int)(chara.currentX + chara.renderOffsetX) - (finalW / 2);
                 int y = (kScreenHeight - finalH) + (int)chara.renderOffsetY;
 
-                engine.GetTextureManager().Draw(tex, renderer, x, y, finalW, finalH, (Uint8)chara.alpha);
+                engine.GetRenderSystem()->DrawTexture(tex, x, y, finalW, finalH, (Uint8)chara.alpha);
             }
         }
     }

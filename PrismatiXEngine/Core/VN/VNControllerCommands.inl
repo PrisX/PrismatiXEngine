@@ -83,7 +83,7 @@ void VNController::HandleCommandBg(const VNCommand& cmd) {
     std::string fileName = cmd.args.at("file");
     currentBgName = fileName;
     previousBgTexture = currentBgTexture;
-    currentBgTexture = engine.GetTextureManager().LoadTexture(fileName, renderer);
+    currentBgTexture = engine.GetAssetManager().LoadTexture(fileName, renderer);
     bgFadeAlpha = 0.0f;
     currentLine++;
 }
@@ -168,19 +168,19 @@ void VNController::HandleCommandText(const VNCommand& cmd) {
 
 void VNController::HandleCommandBgm(const VNCommand& cmd) {
     std::string fileName = cmd.args.at("file");
-    engine.GetAudioManager().PlayBGM(fileName);
+    engine.GetAudioSystem().PlayBGM(fileName);
     currentBgmName = fileName;
     currentLine++;
 }
 
 void VNController::HandleCommandStopBgm(const VNCommand& cmd) {
-    engine.GetAudioManager().StopBGM();
+    engine.GetAudioSystem().StopBGM();
     currentBgmName.clear();
     currentLine++;
 }
 
 void VNController::HandleCommandSe(const VNCommand& cmd) {
-    engine.GetAudioManager().PlaySFX(cmd.args.at("file"));
+    engine.GetAudioSystem().PlaySFX(cmd.args.at("file"));
     currentLine++;
 }
 

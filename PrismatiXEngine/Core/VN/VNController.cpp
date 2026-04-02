@@ -9,10 +9,10 @@
 
 #include "Core/PrismatiXEngine.h"
 #include "Managers/ArchiveManager.h"
-#include "Managers/AudioManager.h"
+#include "Managers/AssetManager.h"
 #include "Managers/BacklogManager.h"
-#include "Managers/TextManager.h"
-#include "Managers/TextureManager.h"
+#include "Core/Systems/RenderSystem.h"
+#include "Core/Systems/AudioSystem.h"
 #include "Managers/UIManager.h"
 #include "Managers/VariableManager.h"
 #include "Utils/EasingUtils.h"

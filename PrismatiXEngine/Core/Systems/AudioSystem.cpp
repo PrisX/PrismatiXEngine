@@ -1,0 +1,55 @@
+#include "AudioSystem.h"
+
+#include <iostream>
+
+#include "Managers/AssetManager.h"
+
+AudioSystem::AudioSystem(AssetManager& assetMgr) : assetManager(assetMgr) {}
+
+AudioSystem::~AudioSystem() {
+    StopBGM();
+}
+
+void AudioSystem::PlayBGM(const std::string& fileName, int loops) {
+    if (currentBgm) {
+        Mix_HaltMusic();
+        Mix_FreeMusic(currentBgm);
+        currentBgm = nullptr;
+    }
+    currentBgmBuffer.clear();
+
+    currentBgm = assetManager.LoadBGM(fileName, currentBgmBuffer);
+
+    if (currentBgm) {
+        Mix_PlayMusic(currentBgm, loops);
+    }
+}
+
+void AudioSystem::StopBGM() {
+    Mix_HaltMusic();
+    if (currentBgm) {
+        Mix_FreeMusic(currentBgm);
+        currentBgm = nullptr;
+    }
+    currentBgmBuffer.clear();
+}
+
+void AudioSystem::PlaySFX(const std::string& fileName, int loops) {
+    Mix_Chunk* sfx = assetManager.LoadSFX(fileName);
+    if (sfx) {
+        Mix_PlayChannel(-1, sfx, loops);
+    }
+}
+
+void AudioSystem::PlayVoice(const std::string& fileName) {
+    Mix_Chunk* voice = assetManager.LoadSFX(fileName);
+    if (voice) {
+        // Voice is fixed to channel 0
+        Mix_HaltChannel(0);
+        Mix_PlayChannel(0, voice, 0);
+    }
+}
+
+void AudioSystem::StopVoice() {
+    Mix_HaltChannel(0);
+}

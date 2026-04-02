@@ -1,8 +1,8 @@
 #include "UIManager.h"
 
-#include "TextManager.h"
+#include "../Core/Systems/RenderSystem.h"
 
-UIManager::UIManager(TextManager& textMgr) : textManager(textMgr) {}
+UIManager::UIManager(std::unique_ptr<RenderSystem>& renderSystemRef) : renderSystem(renderSystemRef) {}
 
 void UIManager::AddTextButton(const std::string& text, TTF_Font* font, SDL_Color idle, SDL_Color hover, const std::string& target, const std::string& transitionStyle, const std::string& transitionSpeed, const std::string& transitionEase) {
     UIButton btn;
@@ -20,7 +20,7 @@ void UIManager::AddTextButton(const std::string& text, TTF_Font* font, SDL_Color
     if (font && !text.empty()) {
         TTF_SizeUTF8(font, text.c_str(), &w, &h);
     }
-    btn.rect = { 0, 0, w / TextManager::FONT_OVERSAMPLE, h / TextManager::FONT_OVERSAMPLE };
+    btn.rect = { 0, 0, w / RenderSystem::FONT_OVERSAMPLE, h / RenderSystem::FONT_OVERSAMPLE };
 
     buttons.push_back(btn);
 }
@@ -80,8 +80,9 @@ std::string UIManager::GetHoveredText() const {
 }
 
 void UIManager::Render(SDL_Renderer* renderer) {
+    if (!renderSystem) return;
     for (const auto& btn : buttons) {
         SDL_Color colorToDraw = btn.isHovered ? btn.hoverColor : btn.idleColor;
-        textManager.DrawWithOutline(renderer, btn.font, btn.text, colorToDraw, { 0, 0, 0, 255 }, 2, btn.rect.x, btn.rect.y);
+        renderSystem->DrawTextWithOutline(btn.font, btn.text, colorToDraw, { 0, 0, 0, 255 }, 2, btn.rect.x, btn.rect.y);
     }
 }
