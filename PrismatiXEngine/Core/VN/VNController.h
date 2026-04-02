@@ -135,7 +135,7 @@ struct BGMInfo {
     void Render(PrismatiXEngine& engine, TTF_Font* font) const;
 };
 
-class DialogueController {
+class VNController {
 private:
     // For S/L
     std::string currentScriptName;
@@ -219,7 +219,7 @@ private:
     std::string pendingChapterInfo;
 
 public:
-    DialogueController(PrismatiXEngine& engine, TTF_Font* dialogueFont, const std::string& dialogueFontName, int dialogueFontSize, TTF_Font* nameFont);
+    VNController(PrismatiXEngine& engine, TTF_Font* dialogueFont, const std::string& dialogueFontName, int dialogueFontSize, TTF_Font* nameFont);
 
     // Banners
     bool PopPendingBgmInfo(std::string& outMsg);

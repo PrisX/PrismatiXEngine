@@ -7,8 +7,8 @@ add_executable (PrismatiXEngine
 "Core/PrismatiXEngine.h"
 "Core/LuaBindings.cpp"
 "Core/LuaBindings.h"
-"Controllers/DialogueController.h"
-"Controllers/DialogueController.cpp"
+"Core/VN/VNController.h"
+"Core/VN/VNController.cpp"
 "Managers/TextureManager.cpp"
 "Managers/TextureManager.h"
 "Managers/TextManager.h"
@@ -36,8 +36,8 @@ add_executable (PrismatiXEngine
 target_include_directories(PrismatiXEngine PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/Core
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/VN
     ${CMAKE_CURRENT_SOURCE_DIR}/Managers
-    ${CMAKE_CURRENT_SOURCE_DIR}/Controllers
     ${CMAKE_CURRENT_SOURCE_DIR}/Utils
     ${LUA_INCLUDE_DIR}
 )
@@ -57,8 +57,8 @@ if(APPLE)
 target_include_directories(PrismatiXEngine PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/Core
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/VN
     ${CMAKE_CURRENT_SOURCE_DIR}/Managers
-    ${CMAKE_CURRENT_SOURCE_DIR}/Controllers
     ${CMAKE_CURRENT_SOURCE_DIR}/Utils
     ${HOMEBREW_PREFIX}/include
     ${LUA_INCLUDE_DIR}

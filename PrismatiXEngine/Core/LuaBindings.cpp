@@ -12,13 +12,12 @@
 #include <tuple>
 #include <vector>
 
-#include "Controllers/DialogueController.h"
 #include "Managers/ArchiveManager.h"
 #include "PrismatiXEngine.h"
 #include "Utils/TransitionUtils.h"
+#include "VN/VNController.h"
 
 namespace {
-
 
 std::tuple<int, int> GetRendererLogicalSize(SDL_Renderer* renderer) {
     int w = 0;
@@ -31,22 +30,22 @@ std::tuple<int, int> GetRendererLogicalSize(SDL_Renderer* renderer) {
 }
 
 void RegisterVNControllerBindings(sol::state& lua, PrismatiXEngine& engine) {
-    auto vn = lua.new_usertype<DialogueController>("VNController", sol::no_constructor);
+    auto vn = lua.new_usertype<VNController>("VNController", sol::no_constructor);
 
-    vn["LoadScript"] = [&engine](DialogueController& controller, const std::string& scriptName) { controller.LoadScript(scriptName, engine.GetScriptManager().ParseFile(scriptName)); };
-    vn["Update"] = &DialogueController::Update;
-    vn["RenderBackground"] = &DialogueController::RenderBackground;
-    vn["Render"] = [&engine](DialogueController& controller) { controller.Render(engine.GetRenderer()); };
-    vn["HandleClick"] = &DialogueController::HandleClick;
-    vn["IsShowingBacklog"] = &DialogueController::IsShowingBacklog;
-    vn["ToggleBacklog"] = &DialogueController::ToggleBacklog;
-    vn["ScrollBacklog"] = &DialogueController::ScrollBacklog;
-    vn["GetDialogueBoxContext"] = [&engine](DialogueController& controller, sol::this_state state) {
+    vn["LoadScript"] = [&engine](VNController& controller, const std::string& scriptName) { controller.LoadScript(scriptName, engine.GetScriptManager().ParseFile(scriptName)); };
+    vn["Update"] = &VNController::Update;
+    vn["RenderBackground"] = &VNController::RenderBackground;
+    vn["Render"] = [&engine](VNController& controller) { controller.Render(engine.GetRenderer()); };
+    vn["HandleClick"] = &VNController::HandleClick;
+    vn["IsShowingBacklog"] = &VNController::IsShowingBacklog;
+    vn["ToggleBacklog"] = &VNController::ToggleBacklog;
+    vn["ScrollBacklog"] = &VNController::ScrollBacklog;
+    vn["GetDialogueBoxContext"] = [&engine](VNController& controller, sol::this_state state) {
         auto [w, h] = GetRendererLogicalSize(engine.GetRenderer());
         return controller.GetDialogueBoxContext(state, w, h);
     };
 
-    vn["PopScriptTransition"] = [&lua](DialogueController& controller) -> sol::object {
+    vn["PopScriptTransition"] = [&lua](VNController& controller) -> sol::object {
         std::string outTarget;
         std::string outTransitionStyle;
         std::string outTransitionSpeed;
@@ -63,7 +62,7 @@ void RegisterVNControllerBindings(sol::state& lua, PrismatiXEngine& engine) {
         return sol::make_object(lua, info);
     };
 
-    vn["PopInlineTransition"] = [&lua](DialogueController& controller) -> sol::object {
+    vn["PopInlineTransition"] = [&lua](VNController& controller) -> sol::object {
         std::string outTransitionStyle;
         std::string outTransitionSpeed;
         std::string outTransitionEase;
@@ -78,14 +77,14 @@ void RegisterVNControllerBindings(sol::state& lua, PrismatiXEngine& engine) {
         return sol::make_object(lua, info);
     };
 
-    vn["ContinueScript"] = &DialogueController::ContinueScript;
-    vn["QueueScriptTransition"] = [](DialogueController& controller, const std::string& targetScript, sol::optional<std::string> transitionStyle, sol::optional<std::string> transitionSpeed, sol::optional<std::string> transitionEase) {
+    vn["ContinueScript"] = &VNController::ContinueScript;
+    vn["QueueScriptTransition"] = [](VNController& controller, const std::string& targetScript, sol::optional<std::string> transitionStyle, sol::optional<std::string> transitionSpeed, sol::optional<std::string> transitionEase) {
         controller.QueueScriptTransition(targetScript, transitionStyle.value_or(""), transitionSpeed.value_or(""), transitionEase.value_or(""));
     };
-    vn["SaveToSlot"] = [&engine](DialogueController& controller, int slot) {
+    vn["SaveToSlot"] = [&engine](VNController& controller, int slot) {
         return engine.GetSaveManager().SaveGame(slot, controller.GetCurrentScriptName(), controller.GetCurrentLine(), controller.GetCurrentBgName(), controller.GetCurrentBgmName(), controller.GetSavedCharacters());
     };
-    vn["LoadFromSlot"] = [&engine](DialogueController& controller, int slot) {
+    vn["LoadFromSlot"] = [&engine](VNController& controller, int slot) {
         std::string scriptName;
         std::string bgName;
         std::string bgmName;
@@ -109,13 +108,13 @@ void RegisterVNControllerBindings(sol::state& lua, PrismatiXEngine& engine) {
 
         return true;
     };
-    vn["IsScriptFinished"] = &DialogueController::IsScriptFinished;
-    vn["PopPendingBgmInfo"] = [&lua](DialogueController& controller) -> sol::object {
+    vn["IsScriptFinished"] = &VNController::IsScriptFinished;
+    vn["PopPendingBgmInfo"] = [&lua](VNController& controller) -> sol::object {
         std::string msg;
         if (!controller.PopPendingBgmInfo(msg)) return sol::make_object(lua, sol::lua_nil);
         return sol::make_object(lua, msg);
     };
-    vn["PopPendingChapterInfo"] = [&lua](DialogueController& controller) -> sol::object {
+    vn["PopPendingChapterInfo"] = [&lua](VNController& controller) -> sol::object {
         std::string msg;
         if (!controller.PopPendingChapterInfo(msg)) return sol::make_object(lua, sol::lua_nil);
         return sol::make_object(lua, msg);
@@ -175,7 +174,7 @@ void RegisterScriptBindings(sol::state& lua, PrismatiXEngine& engine, sol::table
     engineApi.set_function("CreateVNController", [&engine](const std::string& dialogueFontName, int dialogueFontSize, const std::string& nameFontName, int nameFontSize) {
         TTF_Font* dialogueFont = engine.GetTextManager().LoadFont(dialogueFontName, dialogueFontSize);
         TTF_Font* nameFont = engine.GetTextManager().LoadFont(nameFontName, nameFontSize);
-        return std::make_unique<DialogueController>(engine, dialogueFont, dialogueFontName, dialogueFontSize, nameFont);
+        return std::make_unique<VNController>(engine, dialogueFont, dialogueFontName, dialogueFontSize, nameFont);
     });
 
     engineApi.set_function("RegisterTextEffect", [&lua](const std::string& effectName, const sol::function& effectFn) {
