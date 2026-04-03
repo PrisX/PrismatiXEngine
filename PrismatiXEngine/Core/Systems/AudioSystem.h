@@ -26,4 +26,10 @@ public:
     // Vocal
     void PlayVoice(const std::string& fileName);
     void StopVoice();
+
+    // Volume
+    void SetBGMVolume(int volume); // 0-128
+    void SetSFXVolume(int volume); // 0-128
+    int GetBGMVolume() const;
+    int GetSFXVolume() const;
 };

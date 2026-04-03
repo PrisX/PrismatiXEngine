@@ -5,10 +5,7 @@ local UI = _G.UI
 
 function MainMenu.new(screenW, screenH, fontName, fontSize)
     local self = setmetatable({}, MainMenu)
-
-    self.screenW = screenW
-    self.screenH = screenH
-    
+    self.screenW, self.screenH = screenW, screenH
     self.pendingAction = nil
     
     self.buttons = {
@@ -34,22 +31,17 @@ function MainMenu.new(screenW, screenH, fontName, fontSize)
             onClick = function() self.pendingAction = "exit" end
         })
     }
-
     return self
 end
 
 function MainMenu:update(mx, my, click)
     self.pendingAction = nil
-    for _, btn in ipairs(self.buttons) do
-        btn:update(mx, my, click)
-    end
+    for _, btn in ipairs(self.buttons) do btn:update(mx, my, click) end
     return self.pendingAction
 end
 
 function MainMenu:render()
-    for _, btn in ipairs(self.buttons) do
-        btn:render()
-    end
+    for _, btn in ipairs(self.buttons) do btn:render() end
 end
 
 return MainMenu

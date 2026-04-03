@@ -314,6 +314,40 @@ void VNController::ScrollBacklog(int direction) {
     if (backlogOffset > maxOffset) backlogOffset = maxOffset;
 }
 
+sol::table VNController::GetChoices(sol::this_state state) const {
+    sol::state_view lua(state);
+    sol::table list = lua.create_table();
+    for (size_t i = 0; i < pendingChoices.size(); ++i) {
+        sol::table item = lua.create_table();
+        item["text"] = pendingChoices[i].text;
+        item["index"] = (int)i + 1;
+        list[i + 1] = item;
+    }
+    return list;
+}
+
+void VNController::SelectChoice(int index) {
+    int idx = index - 1; // Lua 1-based to C++ 0-based
+    if (idx < 0 || idx >= (int)pendingChoices.size()) return;
+
+    auto choice = pendingChoices[idx];
+    engine.GetBacklogManager().AddChoice(choice.text);
+    pendingChoices.clear();
+
+    if (!choice.target.empty()) {
+        if (choice.target[0] == '*') {
+            std::string labelName = choice.target.substr(1);
+            int labelLine = FindLabelLine(commands, labelName);
+            if (labelLine >= 0) {
+                currentLine = labelLine;
+                ExecuteNextCommands();
+            }
+        } else {
+            QueueScriptTransition(choice.target, choice.transitionStyle, choice.transitionSpeed, choice.transitionEase);
+        }
+    }
+}
+
 void VNController::RecalculateTargetPositions() {
     std::vector<ActiveCharacter*> nonExiting;
     for (auto& [name, chara] : activeCharacters) {
@@ -326,4 +360,5 @@ void VNController::RecalculateTargetPositions() {
     for (int i = 0; i < total; i++) {
         nonExiting[i]->targetX = (float)(sectionWidth * (i + 1));
     }
+    characterSortDirty = true;
 }

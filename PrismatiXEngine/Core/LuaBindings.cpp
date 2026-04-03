@@ -23,210 +23,233 @@
 namespace {
 
 std::tuple<int, int> GetRendererLogicalSize(SDL_Renderer* renderer) {
-    int w = 0;
-    int h = 0;
+    int w = 0, h = 0;
     SDL_RenderGetLogicalSize(renderer, &w, &h);
-    if (w <= 0 || h <= 0) {
-        SDL_GetRendererOutputSize(renderer, &w, &h);
-    }
+    if (w <= 0 || h <= 0) SDL_GetRendererOutputSize(renderer, &w, &h);
     return { w, h };
+}
+
+template <typename T = int>
+T LInt(float val) {
+    return static_cast<T>(val);
 }
 
 void RegisterVNControllerBindings(sol::state& lua, PrismatiXEngine& engine) {
     auto vn = lua.new_usertype<VNController>("VNController", sol::no_constructor);
-
-    vn["LoadScript"] = [&engine](VNController& controller, const std::string& scriptName) { controller.LoadScript(scriptName, engine.GetScriptManager().ParseFile(scriptName)); };
-    vn["Update"] = &VNController::Update;
+    vn["LoadScript"] = [&engine](VNController& controller, const std::string& name) { controller.LoadScript(name, engine.GetScriptManager().ParseFile(name)); };
+    vn["Update"] = [](VNController& controller, float mx, float my) { controller.Update(LInt(mx), LInt(my)); };
     vn["RenderBackground"] = &VNController::RenderBackground;
     vn["Render"] = [&engine](VNController& controller) { controller.Render(engine.GetRenderer()); };
-    vn["HandleClick"] = &VNController::HandleClick;
+    vn["HandleClick"] = [](VNController& controller, float mx, float my) { controller.HandleClick(LInt(mx), LInt(my)); };
     vn["IsShowingBacklog"] = &VNController::IsShowingBacklog;
     vn["ToggleBacklog"] = &VNController::ToggleBacklog;
-    vn["ScrollBacklog"] = &VNController::ScrollBacklog;
+    vn["ScrollBacklog"] = [](VNController& controller, float dir) { controller.ScrollBacklog(LInt(dir)); };
     vn["GetDialogueBoxContext"] = [&engine](VNController& controller, sol::this_state state) {
         auto [w, h] = GetRendererLogicalSize(engine.GetRenderer());
         return controller.GetDialogueBoxContext(state, w, h);
     };
-
-    vn["PopScriptTransition"] = [&lua](VNController& controller) -> sol::object {
-        std::string outTarget;
-        std::string outTransitionStyle;
-        std::string outTransitionSpeed;
-        std::string outTransitionEase;
-        if (!controller.PopScriptTransition(outTarget, outTransitionStyle, outTransitionSpeed, outTransitionEase)) {
-            return sol::make_object(lua, sol::lua_nil);
-        }
-
-        sol::table info = lua.create_table();
-        info["target"] = outTarget;
-        info["transition"] = outTransitionStyle;
-        info["transitionSpeed"] = outTransitionSpeed;
-        info["ease"] = outTransitionEase;
-        return sol::make_object(lua, info);
-    };
-
-    vn["PopInlineTransition"] = [&lua](VNController& controller) -> sol::object {
-        std::string outTransitionStyle;
-        std::string outTransitionSpeed;
-        std::string outTransitionEase;
-        if (!controller.PopInlineTransition(outTransitionStyle, outTransitionSpeed, outTransitionEase)) {
-            return sol::make_object(lua, sol::lua_nil);
-        }
-
-        sol::table info = lua.create_table();
-        info["transition"] = outTransitionStyle;
-        info["transitionSpeed"] = outTransitionSpeed;
-        info["ease"] = outTransitionEase;
-        return sol::make_object(lua, info);
-    };
-
-    vn["ContinueScript"] = &VNController::ContinueScript;
-    vn["QueueScriptTransition"] = [](VNController& controller, const std::string& targetScript, sol::optional<std::string> transitionStyle, sol::optional<std::string> transitionSpeed, sol::optional<std::string> transitionEase) {
-        controller.QueueScriptTransition(targetScript, transitionStyle.value_or(""), transitionSpeed.value_or(""), transitionEase.value_or(""));
-    };
-    vn["SaveToSlot"] = [&engine](VNController& controller, int slot) {
-        return engine.GetSaveManager().SaveGame(slot, controller.GetCurrentScriptName(), controller.GetCurrentLine(), controller.GetCurrentBgName(), controller.GetCurrentBgmName(), controller.GetSavedCharacters());
-    };
-    vn["LoadFromSlot"] = [&engine](VNController& controller, int slot) {
-        std::string scriptName;
-        std::string bgName;
-        std::string bgmName;
-        int line = 0;
-        std::vector<SavedCharacter> chars;
-
-        if (!engine.GetSaveManager().LoadGame(slot, scriptName, line, bgName, bgmName, chars)) {
-            return false;
-        }
-
-        std::vector<VNCommand> script = engine.GetScriptManager().ParseFile(scriptName);
-        controller.LoadScript(scriptName, script);
-        controller.SetCurrentLine(line);
-        controller.SetSkipNextLog(true);
-        controller.RestoreBackground(bgName);
-        controller.RestoreSavedCharacters(chars);
-
-        if (!bgmName.empty()) {
-            engine.GetAudioSystem().PlayBGM(bgmName);
-        }
-
-        return true;
-    };
-    vn["IsScriptFinished"] = &VNController::IsScriptFinished;
+    vn["GetChoices"] = &VNController::GetChoices;
+    vn["SelectChoice"] = &VNController::SelectChoice;
     vn["PopPendingBgmInfo"] = [&lua](VNController& controller) -> sol::object {
         std::string msg;
-        if (!controller.PopPendingBgmInfo(msg)) return sol::make_object(lua, sol::lua_nil);
+        if (!controller.PopPendingBgmInfo(msg)) return sol::lua_nil;
         return sol::make_object(lua, msg);
     };
     vn["PopPendingChapterInfo"] = [&lua](VNController& controller) -> sol::object {
         std::string msg;
-        if (!controller.PopPendingChapterInfo(msg)) return sol::make_object(lua, sol::lua_nil);
+        if (!controller.PopPendingChapterInfo(msg)) return sol::lua_nil;
         return sol::make_object(lua, msg);
+    };
+    vn["PopScriptTransition"] = [&lua](VNController& controller) -> sol::object {
+        std::string t, s, sp, e;
+        if (!controller.PopScriptTransition(t, s, sp, e)) return sol::lua_nil;
+        sol::table info = lua.create_table();
+        info["target"] = t;
+        info["transition"] = s;
+        info["transitionSpeed"] = sp;
+        info["ease"] = e;
+        return info;
+    };
+    vn["PopInlineTransition"] = [&lua](VNController& controller) -> sol::object {
+        std::string s, sp, e;
+        if (!controller.PopInlineTransition(s, sp, e)) return sol::lua_nil;
+        sol::table info = lua.create_table();
+        info["transition"] = s;
+        info["transitionSpeed"] = sp;
+        info["ease"] = e;
+        return info;
+    };
+    vn["ContinueScript"] = &VNController::ContinueScript;
+    vn["QueueScriptTransition"] = [](VNController& controller, const std::string& target, sol::optional<std::string> style, sol::optional<std::string> speed, sol::optional<std::string> ease) {
+        controller.QueueScriptTransition(target, style.value_or(""), speed.value_or(""), ease.value_or(""));
     };
 }
 
 void RegisterScriptBindings(sol::state& lua, PrismatiXEngine& engine, sol::table& engineApi) {
-    engineApi.set_function("ReadAssetText", [&engine, &lua](const std::string& path, sol::optional<bool> required) -> sol::object {
-        std::string scriptContent = engine.GetArchiveManager().LoadTextFromArchiveOrDisk(path);
-        if (scriptContent.empty()) {
-            if (required.value_or(false)) {
-                std::cerr << "Lua asset not found: " << path << std::endl;
-            }
-            return sol::make_object(lua, sol::lua_nil);
-        }
-        return sol::make_object(lua, scriptContent);
+    engineApi.set_function("ReadAssetText", [&engine, &lua](const std::string& path, sol::optional<bool> req) -> sol::object {
+        std::string c = engine.GetArchiveManager().LoadTextFromArchiveOrDisk(path);
+        if (c.empty()) return sol::lua_nil;
+        return sol::make_object(lua, c);
     });
-
-    engineApi.set_function("RunScript", [&engine](const std::string& path, sol::optional<bool> required) {
-        std::string scriptContent = engine.GetArchiveManager().LoadTextFromArchiveOrDisk(path);
-        if (scriptContent.empty()) {
-            if (required.value_or(false)) {
-                std::cerr << "Lua script not found: " << path << std::endl;
-            }
-            return false;
-        }
-
-        sol::protected_function_result loadResult = engine.GetLuaState().safe_script(scriptContent, &sol::script_pass_on_error);
-        if (!loadResult.valid()) {
-            sol::error err = loadResult;
-            std::cerr << "Failed to run Lua script (" << path << "): " << err.what() << std::endl;
-            return false;
-        }
-
-        return true;
+    engineApi.set_function("RunScript", [&engine](const std::string& path, sol::optional<bool> req) {
+        std::string c = engine.GetArchiveManager().LoadTextFromArchiveOrDisk(path);
+        if (c.empty()) return false;
+        sol::protected_function_result res = engine.GetLuaState().safe_script(c, &sol::script_pass_on_error);
+        return res.valid();
     });
-
-    engineApi.set_function("CallGlobal", [&engine](const std::string& functionName, sol::optional<bool> required) {
-        sol::protected_function fn = engine.GetLuaState()[functionName];
-        if (!fn.valid()) {
-            if (required.value_or(false)) {
-                std::cerr << "Required global function not found in Lua: " << functionName << std::endl;
-            }
-            return false;
-        }
-
-        sol::protected_function_result runResult = fn();
-        if (!runResult.valid()) {
-            sol::error err = runResult;
-            std::cerr << "Lua function runtime error (" << functionName << "): " << err.what() << std::endl;
-            return false;
-        }
-
-        return true;
+    engineApi.set_function("CallGlobal", [&engine](const std::string& name) {
+        sol::protected_function fn = engine.GetLuaState()[name];
+        if (fn.valid()) fn();
     });
-
-    engineApi.set_function("CreateVNController", [&engine](const std::string& dialogueFontName, int dialogueFontSize, const std::string& nameFontName, int nameFontSize) {
-        TTF_Font* dialogueFont = engine.GetAssetManager().LoadFont(dialogueFontName, dialogueFontSize);
-        TTF_Font* nameFont = engine.GetAssetManager().LoadFont(nameFontName, nameFontSize);
-        return std::make_unique<VNController>(engine, dialogueFont, dialogueFontName, dialogueFontSize, nameFont);
+    engineApi.set_function("CreateVNController", [&engine](const std::string& dfn, float dfs, const std::string& nfn, float nfs) {
+        TTF_Font* dFont = engine.GetAssetManager().LoadFont(dfn, LInt(dfs));
+        TTF_Font* nFont = engine.GetAssetManager().LoadFont(nfn, LInt(nfs));
+        return std::make_unique<VNController>(engine, dFont, dfn, LInt(dfs), nFont);
     });
-
-    engineApi.set_function("RegisterTextEffect", [&lua](const std::string& effectName, const sol::function& effectFn) {
-        sol::table textEffects;
-        sol::object existing = lua["TextEffects"];
-        if (existing.valid() && existing.get_type() == sol::type::table) {
-            textEffects = existing.as<sol::table>();
+    engineApi.set_function("RegisterTextEffect", [&lua](const std::string& name, sol::function fn) {
+        sol::table fx = lua["TextEffects"];
+        if (!fx.valid()) {
+            fx = lua.create_table();
+            lua["TextEffects"] = fx;
         }
-        else {
-            textEffects = lua.create_table();
-            lua["TextEffects"] = textEffects;
-        }
-        textEffects[effectName] = effectFn;
-    });
-
-    engineApi.set_function("RegisterPortraitAnimation", [&lua](const std::string& animationName, const sol::function& animationFn) {
-        sol::table portraitAnimations;
-        sol::object existing = lua["PortraitAnimations"];
-        if (existing.valid() && existing.get_type() == sol::type::table) {
-            portraitAnimations = existing.as<sol::table>();
-        }
-        else {
-            portraitAnimations = lua.create_table();
-            lua["PortraitAnimations"] = portraitAnimations;
-        }
-        portraitAnimations[animationName] = animationFn;
+        fx[name] = fn;
     });
 }
 
 void RegisterRenderingBindings(sol::state& lua, PrismatiXEngine& engine, sol::table& engineApi) {
-    engineApi.set_function("DrawAuto", [&engine, &lua](const std::string& texPath, int displayMode, Uint8 alpha, sol::optional<int> offsetX, sol::optional<int> offsetY, sol::optional<float> scale) {
-        auto toRectTable = [&lua](const SDL_Rect& rect) {
-            sol::table out = lua.create_table();
-            out["x"] = rect.x;
-            out["y"] = rect.y;
-            out["w"] = rect.w;
-            out["h"] = rect.h;
-            return out;
-        };
-
-        SDL_Texture* tex = engine.GetAssetManager().LoadTexture(texPath, engine.GetRenderer());
-        if (!tex) {
-            return toRectTable(SDL_Rect{ 0, 0, 0, 0 });
-        }
-
-        SDL_Rect rect = engine.GetRenderSystem()->DrawTextureAuto(tex, static_cast<DisplayMode>(displayMode), alpha, offsetX.value_or(0), offsetY.value_or(0), scale.value_or(1.0f));
-        return toRectTable(rect);
+    engineApi.set_function("DrawAuto", [&engine, &lua](const std::string& path, float mode, float alpha, sol::optional<float> ox, sol::optional<float> oy, sol::optional<float> scale) {
+        SDL_Texture* tex = engine.GetAssetManager().LoadTexture(path, engine.GetRenderer());
+        if (!tex) return lua.create_table();
+        SDL_Rect r = engine.GetRenderSystem()->DrawTextureAuto(tex, (DisplayMode)LInt(mode), (Uint8)alpha, LInt(ox.value_or(0)), LInt(oy.value_or(0)), scale.value_or(1.0f));
+        sol::table out = lua.create_table();
+        out["x"] = r.x;
+        out["y"] = r.y;
+        out["w"] = r.w;
+        out["h"] = r.h;
+        return out;
     });
+    engineApi.set_function("DrawRect", [&engine](float x, float y, float w, float h, float r, float g, float b, sol::optional<float> a) {
+        SDL_SetRenderDrawBlendMode(engine.GetRenderer(), SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(engine.GetRenderer(), (Uint8)r, (Uint8)g, (Uint8)b, (Uint8)a.value_or(255));
+        SDL_Rect rect{ LInt(x), LInt(y), LInt(w), LInt(h) };
+        SDL_RenderFillRect(engine.GetRenderer(), &rect);
+    });
+    engineApi.set_function("DrawText", [&engine](const std::string& text, float x, float y, const std::string& fontName, float fontSize, float r, float g, float b, sol::optional<float> a) {
+        TTF_Font* font = engine.GetAssetManager().LoadFont(fontName, LInt(fontSize));
+        if (font) engine.GetRenderSystem()->DrawText(font, text, { (Uint8)r, (Uint8)g, (Uint8)b, (Uint8)a.value_or(255) }, LInt(x), LInt(y));
+    });
+    engineApi.set_function(
+        "DrawTextOutline",
+        [&engine](
+            const std::string& text, float x, float y, const std::string& fontName, float fontSize, float tr, float tg, float tb, float or_, float og, float ob, float os, sol::optional<uint32_t> wl, sol::optional<float> a, sol::optional<bool> shadow
+        ) {
+            TTF_Font* font = engine.GetAssetManager().LoadFont(fontName, LInt(fontSize));
+            if (font)
+                engine.GetRenderSystem()->DrawTextWithOutline(font, text, { (Uint8)tr, (Uint8)tg, (Uint8)tb, 255 }, { (Uint8)or_, (Uint8)og, (Uint8)ob, 255 }, LInt(os), LInt(x), LInt(y), wl.value_or(0), (Uint8)a.value_or(255), shadow.value_or(false));
+        }
+    );
+    engineApi.set_function("MeasureText", [&engine, &lua](const std::string& text, const std::string& fontName, float fontSize) {
+        int w = 0, h = 0;
+        TTF_Font* font = engine.GetAssetManager().LoadFont(fontName, LInt(fontSize));
+        if (font && !text.empty()) {
+            TTF_SizeUTF8(font, text.c_str(), &w, &h);
+            w /= RenderSystem::FONT_OVERSAMPLE;
+            h /= RenderSystem::FONT_OVERSAMPLE;
+        }
+        sol::table s = lua.create_table();
+        s["w"] = w;
+        s["h"] = h;
+        return s;
+    });
+    engineApi.set_function("FadeInBg", [&engine](const std::string& path, float mode, float ms) {
+        SDL_Texture* tex = engine.GetAssetManager().LoadTexture(path, engine.GetRenderer());
+        if (!tex) return;
+        Uint32 start = SDL_GetTicks();
+        Uint32 duration = static_cast<Uint32>(ms);
+        while (SDL_GetTicks() - start < duration && engine.IsRunning()) {
+            float progress = static_cast<float>(SDL_GetTicks() - start) / duration;
+            engine.HandleEvents();
+            SDL_SetRenderDrawColor(engine.GetRenderer(), 0, 0, 0, 255);
+            SDL_RenderClear(engine.GetRenderer());
+            engine.GetRenderSystem()->DrawTextureAuto(tex, (DisplayMode)LInt(mode), static_cast<Uint8>(progress * 255));
+            SDL_RenderPresent(engine.GetRenderer());
+            SDL_Delay(1);
+        }
+        engine.GetRenderSystem()->DrawTextureAuto(tex, (DisplayMode)LInt(mode), 255);
+        SDL_RenderPresent(engine.GetRenderer());
+    });
+    engineApi.set_function("FadeOutBg", [&engine](const std::string& path, float mode, float ms) {
+        SDL_Texture* tex = engine.GetAssetManager().LoadTexture(path, engine.GetRenderer());
+        if (!tex) return;
+        Uint32 start = SDL_GetTicks();
+        Uint32 duration = static_cast<Uint32>(ms);
+        while (SDL_GetTicks() - start < duration && engine.IsRunning()) {
+            float progress = 1.0f - (static_cast<float>(SDL_GetTicks() - start) / duration);
+            engine.HandleEvents();
+            SDL_SetRenderDrawColor(engine.GetRenderer(), 0, 0, 0, 255);
+            SDL_RenderClear(engine.GetRenderer());
+            engine.GetRenderSystem()->DrawTextureAuto(tex, (DisplayMode)LInt(mode), static_cast<Uint8>(progress * 255));
+            SDL_RenderPresent(engine.GetRenderer());
+            SDL_Delay(1);
+        }
+        SDL_RenderClear(engine.GetRenderer());
+        SDL_RenderPresent(engine.GetRenderer());
+    });
+}
 
+void RegisterAudioBindings(PrismatiXEngine& engine, sol::table& engineApi) {
+    engineApi.set_function("PlaySFX", [&engine](const std::string& f) { engine.GetAudioSystem().PlaySFX(f); });
+    engineApi.set_function("PlayBGM", [&engine](const std::string& f) { engine.GetAudioSystem().PlayBGM(f); });
+    engineApi.set_function("StopBGM", [&engine]() { engine.GetAudioSystem().StopBGM(); });
+    engineApi.set_function("SetBGMVolume", [&engine](float v) { engine.GetAudioSystem().SetBGMVolume(LInt(v * 1.28f)); });
+    engineApi.set_function("SetSFXVolume", [&engine](float v) { engine.GetAudioSystem().SetSFXVolume(LInt(v * 1.28f)); });
+}
+
+void RegisterSystemBindings(PrismatiXEngine& engine, sol::table& engineApi) {
+    engineApi.set_function("HandleEvents", [&engine]() { engine.HandleEvents(); });
+    engineApi.set_function("IsRunning", [&engine]() { return engine.IsRunning(); });
+    engineApi.set_function("ClearScreen", [&engine](sol::optional<float> r, sol::optional<float> g, sol::optional<float> b, sol::optional<float> a) {
+        SDL_SetRenderDrawColor(engine.GetRenderer(), (Uint8)r.value_or(0), (Uint8)g.value_or(0), (Uint8)b.value_or(0), (Uint8)a.value_or(255));
+        SDL_RenderClear(engine.GetRenderer());
+    });
+    engineApi.set_function("PresentScreen", [&engine]() { engine.PresentScreen(); });
+    engineApi.set_function("SetCameraOffset", [&engine](float x, float y) { engine.SetCameraOffset(LInt(x), LInt(y)); });
+    engineApi.set_function("ResetCameraOffset", [&engine]() { engine.ResetCameraOffset(); });
+    engineApi.set_function("GetMouseX", [&engine]() { return (float)engine.GetMouseX(); });
+    engineApi.set_function("GetMouseY", [&engine]() { return (float)engine.GetMouseY(); });
+    engineApi.set_function("GetMouseWheelY", [&engine]() { return (float)engine.GetMouseWheelY(); });
+    engineApi.set_function("GetLeftClick", [&engine]() { return engine.GetLeftClick(); });
+    engineApi.set_function("GetRightClick", [&engine]() { return engine.GetRightClick(); });
+    engineApi.set_function("IsMouseInRect", [&engine](float x, float y, float w, float h) {
+        int mx = engine.GetMouseX(), my = engine.GetMouseY();
+        return (mx >= LInt(x) && mx < LInt(x + w) && my >= LInt(y) && my < LInt(y + h));
+    });
+    engineApi.set_function("GetLogicalSize", [&engine]() {
+        int w, h;
+        SDL_RenderGetLogicalSize(engine.GetRenderer(), &w, &h);
+        return std::make_tuple((float)w, (float)h);
+    });
+    engineApi.set_function("GetTicks", []() { return (float)SDL_GetTicks(); });
+}
+}  // namespace
+
+void RegisterEngineLuaBindings(sol::state& lua, PrismatiXEngine& engine) {
+    lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::string, sol::lib::table, sol::lib::package);
+    RegisterVNControllerBindings(lua, engine);
+    auto api = lua.create_table("Engine");
+    RegisterScriptBindings(lua, engine, api);
+    RegisterRenderingBindings(lua, engine, api);
+    RegisterAudioBindings(engine, api);
+    RegisterSystemBindings(engine, api);
+    api.set_function("Wait", [&engine](float ms) {
+        Uint32 s = SDL_GetTicks();
+        while (SDL_GetTicks() - s < (Uint32)ms && engine.IsRunning()) {
+            engine.HandleEvents();
+            engine.PresentScreen();
+            SDL_Delay(1);
+        }
+    });
+    lua["Engine"] = api;
     lua.new_enum(
         "DisplayMode",
         "TopLeft",
@@ -254,224 +277,4 @@ void RegisterRenderingBindings(sol::state& lua, PrismatiXEngine& engine, sol::ta
         "Fill",
         DisplayMode::Fill
     );
-
-    engineApi.set_function("DrawRect", [&engine](int x, int y, int w, int h, Uint8 r, Uint8 g, Uint8 b, sol::optional<Uint8> a) {
-        SDL_SetRenderDrawBlendMode(engine.GetRenderer(), SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(engine.GetRenderer(), r, g, b, a.value_or(255));
-        SDL_Rect rect{ x, y, w, h };
-        SDL_RenderFillRect(engine.GetRenderer(), &rect);
-    });
-
-    engineApi.set_function("DrawRectOutline", [&engine](int x, int y, int w, int h, Uint8 r, Uint8 g, Uint8 b, sol::optional<Uint8> a) {
-        SDL_SetRenderDrawBlendMode(engine.GetRenderer(), SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(engine.GetRenderer(), r, g, b, a.value_or(255));
-        SDL_Rect rect{ x, y, w, h };
-        SDL_RenderDrawRect(engine.GetRenderer(), &rect);
-    });
-
-    engineApi.set_function("DrawText", [&engine](const std::string& text, int x, int y, const std::string& fontName, int fontSize, Uint8 r, Uint8 g, Uint8 b, sol::optional<Uint8> a) {
-        TTF_Font* font = engine.GetAssetManager().LoadFont(fontName, fontSize);
-        if (!font) return;
-        engine.GetRenderSystem()->DrawText(font, text, SDL_Color{ r, g, b, a.value_or(255) }, x, y);
-    });
-
-    engineApi.set_function(
-        "DrawTextOutline",
-        [&engine](
-            const std::string& text,
-            int x,
-            int y,
-            const std::string& fontName,
-            int fontSize,
-            Uint8 textR,
-            Uint8 textG,
-            Uint8 textB,
-            Uint8 outlineR,
-            Uint8 outlineG,
-            Uint8 outlineB,
-            int outlineSize,
-            sol::optional<Uint32> wrapLength,
-            sol::optional<Uint8> alpha,
-            sol::optional<bool> shadow
-        ) {
-            TTF_Font* font = engine.GetAssetManager().LoadFont(fontName, fontSize);
-            if (!font) return;
-            SDL_Color textColor{ textR, textG, textB, 255 };
-            SDL_Color outlineColor{ outlineR, outlineG, outlineB, 255 };
-            engine.GetRenderSystem()->DrawTextWithOutline(font, text, textColor, outlineColor, outlineSize, x, y, wrapLength.value_or(0), alpha.value_or(255), shadow.value_or(false));
-        }
-    );
-
-    engineApi.set_function("MeasureText", [&engine, &lua](const std::string& text, const std::string& fontName, int fontSize) {
-        int w = 0;
-        int h = 0;
-        TTF_Font* font = engine.GetAssetManager().LoadFont(fontName, fontSize);
-        if (font && !text.empty()) {
-            TTF_SizeUTF8(font, text.c_str(), &w, &h);
-            w /= RenderSystem::FONT_OVERSAMPLE;
-            h /= RenderSystem::FONT_OVERSAMPLE;
-        }
-
-        sol::table size = lua.create_table();
-        size["w"] = w;
-        size["h"] = h;
-        return size;
-    });
-
-    engineApi.set_function("PeekSaveSlot", [&engine, &lua](int slot) {
-        bool isEmpty = true;
-        std::string displayText = "NO DATA";
-        engine.GetSaveManager().PeekSaveFile(slot, isEmpty, displayText);
-
-        sol::table info = lua.create_table();
-        info["id"] = slot;
-        info["isEmpty"] = isEmpty;
-        info["displayText"] = displayText;
-        return info;
-    });
 }
-
-void RegisterSplashBindings(PrismatiXEngine& engine, sol::table& engineApi, const std::shared_ptr<bool>& splashSkipRequested, const std::function<bool()>& pollSplashSkipInput) {
-    auto PerformSplashFade =
-        [&engine, splashSkipRequested, pollSplashSkipInput](const std::string& texPath, int displayMode, int durationMs, sol::optional<Uint8> bgR, sol::optional<Uint8> bgG, sol::optional<Uint8> bgB, sol::optional<Uint8> bgA, bool isFadeOut) {
-            if (isFadeOut && *splashSkipRequested) {
-                *splashSkipRequested = false;
-                return;
-            }
-            else if (!isFadeOut) {
-                *splashSkipRequested = false;
-            }
-
-            SDL_Texture* tex = engine.GetAssetManager().LoadTexture(texPath, engine.GetRenderer());
-            if (!tex) return;
-
-            const Uint8 clearR = bgR.value_or(0);
-            const Uint8 clearG = bgG.value_or(0);
-            const Uint8 clearB = bgB.value_or(0);
-            const Uint8 clearA = bgA.value_or(255);
-
-            float alpha = isFadeOut ? 255.0f : 0.0f;
-            float step = 255.0f * 16.0f / static_cast<float>(durationMs > 0 ? durationMs : 1);
-
-            while (true) {
-                if (pollSplashSkipInput()) break;
-
-                bool done = isFadeOut ? TransitionUtils::FadeOut(alpha, step) : TransitionUtils::FadeIn(alpha, step);
-                const float bgFactor = (alpha / 255.0f) * (static_cast<float>(clearA) / 255.0f);
-                const Uint8 frameR = static_cast<Uint8>(static_cast<float>(clearR) * bgFactor);
-                const Uint8 frameG = static_cast<Uint8>(static_cast<float>(clearG) * bgFactor);
-                const Uint8 frameB = static_cast<Uint8>(static_cast<float>(clearB) * bgFactor);
-
-                SDL_SetRenderDrawColor(engine.GetRenderer(), frameR, frameG, frameB, 255);
-                SDL_RenderClear(engine.GetRenderer());
-                engine.GetRenderSystem()->DrawTextureAuto(tex, static_cast<DisplayMode>(displayMode), static_cast<Uint8>(alpha));
-                SDL_RenderPresent(engine.GetRenderer());
-                if (done) break;
-                SDL_Delay(16);
-            }
-
-            if (isFadeOut) {
-                *splashSkipRequested = false;
-            }
-        };
-
-    engineApi.set_function(
-        "FadeInBg",
-        [&engine, splashSkipRequested, pollSplashSkipInput, PerformSplashFade](const std::string& texPath, int displayMode, int durationMs, sol::optional<Uint8> bgR, sol::optional<Uint8> bgG, sol::optional<Uint8> bgB, sol::optional<Uint8> bgA) {
-            PerformSplashFade(texPath, displayMode, durationMs, bgR, bgG, bgB, bgA, false);
-        }
-    );
-
-    engineApi.set_function(
-        "FadeOutBg",
-        [&engine, splashSkipRequested, pollSplashSkipInput, PerformSplashFade](const std::string& texPath, int displayMode, int durationMs, sol::optional<Uint8> bgR, sol::optional<Uint8> bgG, sol::optional<Uint8> bgB, sol::optional<Uint8> bgA) {
-            PerformSplashFade(texPath, displayMode, durationMs, bgR, bgG, bgB, bgA, true);
-        }
-    );
-
-    engineApi.set_function("Wait", [&engine, splashSkipRequested, pollSplashSkipInput](int durationMs) {
-        if (*splashSkipRequested) return;
-
-        Uint32 startTime = SDL_GetTicks();
-        Uint32 duration = static_cast<Uint32>(durationMs > 0 ? durationMs : 0);
-
-        while (SDL_GetTicks() - startTime < duration && engine.IsRunning()) {
-            if (pollSplashSkipInput()) break;
-            SDL_Delay(1);
-        }
-    });
-}
-
-void RegisterAudioBindings(PrismatiXEngine& engine, sol::table& engineApi) {
-    engineApi.set_function("PlaySFX", [&engine](const std::string& sfxFile) { engine.GetAudioSystem().PlaySFX(sfxFile); });
-    engineApi.set_function("PlayBGM", [&engine](const std::string& bgmFile) { engine.GetAudioSystem().PlayBGM(bgmFile); });
-    engineApi.set_function("StopBGM", [&engine]() { engine.GetAudioSystem().StopBGM(); });
-}
-
-void RegisterSystemBindings(PrismatiXEngine& engine, sol::table& engineApi) {
-    engineApi.set_function("HandleEvents", [&engine]() { engine.HandleEvents(); });
-    engineApi.set_function("IsRunning", [&engine]() { return engine.IsRunning(); });
-
-    engineApi.set_function("ClearScreen", [&engine](sol::optional<Uint8> r, sol::optional<Uint8> g, sol::optional<Uint8> b, sol::optional<Uint8> a) {
-        SDL_SetRenderDrawColor(engine.GetRenderer(), r.value_or(0), g.value_or(0), b.value_or(0), a.value_or(255));
-        SDL_RenderClear(engine.GetRenderer());
-    });
-
-    engineApi.set_function("PresentScreen", [&engine]() { engine.PresentScreen(); });
-
-    engineApi.set_function("SetCameraOffset", [&engine](int x, int y) { engine.SetCameraOffset(x, y); });
-    engineApi.set_function("ResetCameraOffset", [&engine]() { engine.ResetCameraOffset(); });
-
-    engineApi.set_function("GetMouseX", [&engine]() { return engine.GetMouseX(); });
-    engineApi.set_function("GetMouseY", [&engine]() { return engine.GetMouseY(); });
-    engineApi.set_function("GetMouseWheelY", [&engine]() { return engine.GetMouseWheelY(); });
-    engineApi.set_function("GetLeftClick", [&engine]() { return engine.GetLeftClick(); });
-    engineApi.set_function("GetRightClick", [&engine]() { return engine.GetRightClick(); });
-
-    engineApi.set_function("GetTicks", []() { return SDL_GetTicks(); });
-
-    engineApi.set_function("IsMouseInRect", [&engine](int x, int y, int w, int h) {
-        int mx = engine.GetMouseX();
-        int my = engine.GetMouseY();
-        return (mx >= x && mx < x + w && my >= y && my < y + h);
-    });
-
-    engineApi.set_function("GetLogicalSize", [&engine]() { return GetRendererLogicalSize(engine.GetRenderer()); });
-
-    engineApi.set_function("BgColor", [&engine](Uint8 r, Uint8 g, Uint8 b, Uint8 alpha) {
-        SDL_SetRenderDrawColor(engine.GetRenderer(), r, g, b, alpha);
-        SDL_RenderClear(engine.GetRenderer());
-        SDL_RenderPresent(engine.GetRenderer());
-    });
-}
-}  // namespace
-
-void RegisterEngineLuaBindings(sol::state& lua, PrismatiXEngine& engine) {
-    lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::string, sol::lib::table);
-    RegisterVNControllerBindings(lua, engine);
-
-    auto engineApi = lua.create_table("Engine");
-    auto splashSkipRequested = std::make_shared<bool>(false);
-
-    auto pollSplashSkipInput = [&engine, splashSkipRequested]() {
-        engine.HandleEvents();
-        if (!engine.IsRunning()) {
-            *splashSkipRequested = true;
-            return true;
-        }
-        if (engine.GetLeftClick() || engine.GetRightClick()) {
-            *splashSkipRequested = true;
-            return true;
-        }
-        return false;
-    };
-
-    RegisterScriptBindings(lua, engine, engineApi);
-    RegisterRenderingBindings(lua, engine, engineApi);
-    RegisterSplashBindings(engine, engineApi, splashSkipRequested, pollSplashSkipInput);
-    RegisterAudioBindings(engine, engineApi);
-    RegisterSystemBindings(engine, engineApi);
-
-    lua["Engine"] = engineApi;
-}
-

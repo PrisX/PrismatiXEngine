@@ -73,7 +73,7 @@ private:
     void HandleCommandChoice(const VNCommand& cmd);
 
     PrismatiXEngine& engine;
-    SDL_Renderer* renderer;  // Keep this cached or just use engine.GetRenderer() owob
+    SDL_Renderer* renderer;
     SDL_Texture* previousBgTexture = nullptr;
     SDL_Texture* currentBgTexture = nullptr;
     TTF_Font* uiFont;
@@ -98,8 +98,21 @@ private:
     std::string pendingInlineTransitionStyle;
     std::string pendingInlineTransitionSpeed;
     std::string pendingInlineTransitionEase;
+
     std::map<std::string, ActiveCharacter> activeCharacters;
+    std::vector<ActiveCharacter*> sortedActiveCharacters;
+    bool characterSortDirty = true;
+
     std::string currentSpeakingChar;
+
+    struct PendingChoice {
+        std::string text;
+        std::string target;
+        std::string transitionStyle;
+        std::string transitionSpeed;
+        std::string transitionEase;
+    };
+    std::vector<PendingChoice> pendingChoices;
 
     std::string pendingBgmInfo;
     std::string pendingChapterInfo;
@@ -126,7 +139,10 @@ public:
     std::vector<SavedCharacter> GetSavedCharacters() const;
     void RestoreSavedCharacters(const std::vector<SavedCharacter>& savedChars);
     void RestoreBackground(const std::string& bgName);
+
     sol::table GetDialogueBoxContext(sol::this_state state, int screenW, int screenH) const;
+    sol::table GetChoices(sol::this_state state) const;
+    void SelectChoice(int index);
 
     SDL_Texture* GetBackground() const;
     void LoadScript(const std::string& scriptName, const std::vector<VNCommand>& newScript);

@@ -28,9 +28,7 @@ void VNController::HandleCommandCharImg(const VNCommand& cmd) {
     else {
         ActiveCharacter& chara = activeCharacters[name];
         int previousPos = chara.pos;
-        if (!speakerName.empty()) {
-            chara.speakerName = speakerName;
-        }
+        if (!speakerName.empty()) chara.speakerName = speakerName;
         chara.diff = expression;
         chara.pos = targetPos;
         chara.targetAlpha = 255.0f;
@@ -40,42 +38,27 @@ void VNController::HandleCommandCharImg(const VNCommand& cmd) {
         StartCharacterAnimation(chara, cmd.args);
     }
 
-    if (focus) {
-        currentSpeakingChar = name;
-    }
-
+    if (focus) currentSpeakingChar = name;
+    characterSortDirty = true;
     currentLine++;
 }
 
 void VNController::HandleCommandClearCharImg(const VNCommand& cmd) {
     std::string targetName = ReadCharacterIdArg(cmd.args);
-    bool cleared = false;
-
     if (!targetName.empty()) {
         auto it = activeCharacters.find(targetName);
         if (it != activeCharacters.end()) {
             it->second.targetAlpha = 0.0f;
             it->second.isExiting = true;
-            cleared = true;
         }
-    }
-    else {
+    } else {
         int targetPos = ReadCharacterSlotArg(cmd.args, -9999);
         for (auto& [name, chara] : activeCharacters) {
-            if (chara.pos == targetPos) {
-                chara.targetAlpha = 0.0f;
-                chara.isExiting = true;
-                cleared = true;
-                break;
-            }
+            if (chara.pos == targetPos) { chara.targetAlpha = 0.0f; chara.isExiting = true; break; }
         }
     }
-
-    if (!cleared) {
-        std::cerr << "Char clear target not found.\n";
-    }
-
     RecalculateTargetPositions();
+    characterSortDirty = true;
     currentLine++;
 }
 
@@ -89,87 +72,44 @@ void VNController::HandleCommandBg(const VNCommand& cmd) {
 }
 
 void VNController::HandleCommandText(const VNCommand& cmd) {
-    bool hasText = (cmd.args.count("content") > 0);
     std::string content = ReadTextArg(cmd.args);
-    if (!hasText) {
-        std::cerr << "Text command missing content.\n";
-        currentLine++;
-        return;
-    }
-
+    if (content.empty()) { currentLine++; return; }
     std::string speakingChar = ReadCharacterIdArg(cmd.args);
-    if (!speakingChar.empty()) {
-        currentSpeakingChar = speakingChar;
-    }
-
+    if (!speakingChar.empty()) currentSpeakingChar = speakingChar;
     std::string speaker = ReadSpeakerArg(cmd.args);
     if (speaker.empty() && !currentSpeakingChar.empty()) {
         auto it = activeCharacters.find(currentSpeakingChar);
-        if (it != activeCharacters.end()) {
-            speaker = it->second.speakerName.empty() ? it->second.name : it->second.speakerName;
-        }
+        if (it != activeCharacters.end()) speaker = it->second.speakerName.empty() ? it->second.name : it->second.speakerName;
     }
-
     size_t startPos = 0;
     while ((startPos = content.find('{', startPos)) != std::string::npos) {
         size_t endPos = content.find('}', startPos);
         if (endPos == std::string::npos) break;
-
         std::string varName = content.substr(startPos + 1, endPos - startPos - 1);
         std::string varValue = std::to_string(engine.GetVariableManager().Get(varName));
         content.replace(startPos, endPos - startPos + 1, varValue);
         startPos += varValue.length();
     }
-
-    SDL_Color defaultText = { 255, 255, 255, 255 };
-    SDL_Color defaultOutline = { 0, 0, 0, 255 };
-
+    SDL_Color defaultText = { 255, 255, 255, 255 }, defaultOutline = { 0, 0, 0, 255 };
     SDL_Color textColor = cmd.args.count("color") ? engine.GetScriptManager().ParseColor(cmd.args.at("color"), defaultText) : defaultText;
-
     std::string outline = ReadFirstArg(cmd.args, { "olcolor" });
     SDL_Color outlineColor = !outline.empty() ? engine.GetScriptManager().ParseColor(outline, defaultOutline) : defaultOutline;
-
-    std::string textEffect;
-    if (cmd.args.count("fx")) {
-        textEffect = cmd.args.at("fx");
-    }
-
+    std::string textEffect = cmd.args.count("fx") ? cmd.args.at("fx") : "";
     int textSpeed = 40;
     try {
-        if (cmd.args.count("speed")) {
-            textSpeed = std::stoi(cmd.args.at("speed"));
-        }
-        if (cmd.args.count("instant")) {
-            const std::string& instantVal = cmd.args.at("instant");
-            if (instantVal == "1" || instantVal == "true" || instantVal == "yes") {
-                textSpeed = 0;
-            }
-        }
-    } catch (...) {
-        textSpeed = 40;
-    }
-
-    std::string lineVoice;
-    if (cmd.args.count("voice")) {
-        lineVoice = cmd.args.at("voice");
-    }
-
-    if (!skipNextLog) {
-        engine.GetBacklogManager().AddLog(speaker, content, lineVoice);
-    }
+        if (cmd.args.count("speed")) textSpeed = std::stoi(cmd.args.at("speed"));
+        if (cmd.args.count("instant") && (cmd.args.at("instant") == "true" || cmd.args.at("instant") == "1")) textSpeed = 0;
+    } catch (...) {}
+    std::string lineVoice = cmd.args.count("voice") ? cmd.args.at("voice") : "";
+    if (!skipNextLog) engine.GetBacklogManager().AddLog(speaker, content, lineVoice);
     skipNextLog = false;
     SetDialogueText(speaker, content, textSpeed, textColor, outlineColor, textEffect);
-
-    if (!speakingChar.empty()) {
-        currentSpeakingChar = speakingChar;
-    }
     pendingVoice = lineVoice;
 }
 
 void VNController::HandleCommandBgm(const VNCommand& cmd) {
-    std::string fileName = cmd.args.at("file");
-    engine.GetAudioSystem().PlayBGM(fileName);
-    currentBgmName = fileName;
+    engine.GetAudioSystem().PlayBGM(cmd.args.at("file"));
+    currentBgmName = cmd.args.at("file");
     currentLine++;
 }
 
@@ -186,49 +126,13 @@ void VNController::HandleCommandSe(const VNCommand& cmd) {
 
 void VNController::HandleCommandVar(const VNCommand& cmd) {
     std::string varName = ReadFirstArg(cmd.args, { "var" });
-    if (varName.empty()) {
-        std::cerr << "Var command missing var/name.\n";
-        currentLine++;
-        return;
+    if (!varName.empty()) {
+        std::string op = ToLowerAlphaNumeric(ReadVarOperatorArg(cmd.args));
+        int val = cmd.args.count("val") ? std::stoi(cmd.args.at("val")) : 0;
+        if (op == "set") engine.GetVariableManager().Set(varName, val);
+        else if (op == "add") engine.GetVariableManager().Add(varName, val);
+        else if (op == "sub") engine.GetVariableManager().Add(varName, -val);
     }
-
-    std::string op = ToLowerAlphaNumeric(ReadVarOperatorArg(cmd.args));
-    int value = 0;
-    try {
-        if (cmd.args.count("val")) {
-            value = std::stoi(cmd.args.at("val"));
-        }
-    } catch (...) {
-        std::cerr << "Failed to parse var val.\n";
-    }
-
-    if (op.empty()) {
-        if (cmd.args.count("val")) {
-            op = "set";
-        }
-        else {
-            std::cerr << "Var command missing op.\n";
-            currentLine++;
-            return;
-        }
-    }
-
-    if (op == "set") {
-        engine.GetVariableManager().Set(varName, value);
-    }
-    else if (op == "add") {
-        engine.GetVariableManager().Add(varName, value);
-    }
-    else if (op == "sub") {
-        engine.GetVariableManager().Add(varName, -value);
-    }
-    else if (op == "del" || op == "remove" || op == "clear") {
-        engine.GetVariableManager().Remove(varName);
-    }
-    else {
-        std::cerr << "Unknown var op: " << op << "\n";
-    }
-
     currentLine++;
 }
 
@@ -243,167 +147,67 @@ void VNController::HandleCommandChapter(const VNCommand& cmd) {
 }
 
 void VNController::HandleCommandLua(const VNCommand& cmd) {
-    std::string fnName;
-    if (cmd.args.count("fn"))
-        fnName = cmd.args.at("fn");
-    else if (cmd.args.count("func"))
-        fnName = cmd.args.at("func");
-    else if (cmd.args.count("function"))
-        fnName = cmd.args.at("function");
-
-    if (fnName.empty()) {
-        std::cerr << "Lua command missing fn/func/function parameter.\n";
-        currentLine++;
-        return;
+    std::string fnName = ReadFirstArg(cmd.args, {"fn", "func", "function"});
+    if (!fnName.empty()) {
+        sol::protected_function fn = engine.GetLuaState()[fnName];
+        if (fn.valid()) {
+            sol::table args = engine.GetLuaState().create_table();
+            for (const auto& [k, v] : cmd.args) args[k] = v;
+            fn(args);
+        }
     }
-
-    sol::protected_function fn = engine.GetLuaState()[fnName];
-    if (!fn.valid()) {
-        std::cerr << "Lua callback not found: " << fnName << "\n";
-        currentLine++;
-        return;
-    }
-
-    sol::table args = engine.GetLuaState().create_table();
-    for (const auto& [k, v] : cmd.args) {
-        if (k == "fn" || k == "func" || k == "function") continue;
-        args[k] = v;
-    }
-
-    sol::protected_function_result luaResult = fn(args);
-    if (!luaResult.valid()) {
-        sol::error err = luaResult;
-        std::cerr << "Lua callback runtime error (" << fnName << "): " << err.what() << std::endl;
-    }
-
     currentLine++;
 }
 
 void VNController::HandleCommandTransition(const VNCommand& cmd) {
-    std::string transitionStyle = ReadTransitionStyleArg(cmd.args);
-    std::string transitionSpeed = ReadTransitionSpeedArg(cmd.args);
-    std::string transitionEase = ReadTransitionEaseArg(cmd.args);
+    QueueInlineTransition(ReadTransitionStyleArg(cmd.args), ReadTransitionSpeedArg(cmd.args), ReadTransitionEaseArg(cmd.args));
     currentLine++;
-    QueueInlineTransition(transitionStyle, transitionSpeed, transitionEase);
 }
 
 void VNController::HandleCommandLabel(const VNCommand& cmd) { currentLine++; }
 
 void VNController::HandleCommandJump(const VNCommand& cmd) {
-    if (cmd.args.count("target") == 0) {
-        std::cerr << "Jump command missing target.\n";
-        currentLine++;
-        return;
-    }
-
     std::string target = cmd.args.at("target");
-    if (target.empty()) {
-        std::cerr << "Jump command has empty target.\n";
-        currentLine++;
-        return;
-    }
-
-    std::string transitionStyle = ReadTransitionStyleArg(cmd.args);
-    std::string transitionSpeed = ReadTransitionSpeedArg(cmd.args);
-    std::string transitionEase = ReadTransitionEaseArg(cmd.args);
-
     if (target[0] == '*') {
-        std::string labelName = target.substr(1);
-        int labelLine = FindLabelLine(commands, labelName);
-        if (labelLine >= 0) {
-            currentLine = labelLine;
-        }
-        else {
-            std::cerr << "Jump target label not found: " << labelName << "\n";
-            currentLine++;
-        }
-    }
-    else {
-        QueueScriptTransition(target, transitionStyle, transitionSpeed, transitionEase);
+        int line = FindLabelLine(commands, target.substr(1));
+        if (line >= 0) currentLine = line;
+        else currentLine++;
+    } else {
+        QueueScriptTransition(target, ReadTransitionStyleArg(cmd.args), ReadTransitionSpeedArg(cmd.args), ReadTransitionEaseArg(cmd.args));
     }
 }
 
 void VNController::HandleCommandIf(const VNCommand& cmd) {
-    std::string varName = cmd.args.at("var");
-    std::string op = cmd.args.at("op");
-    int val = 0;
-
-    try {
-        if (cmd.args.count("val")) val = std::stoi(cmd.args.at("val"));
-    } catch (...) {
-        std::cerr << "Failed to parse val parameters.\n";
-    }
-
-    if (engine.GetVariableManager().Check(varName, op, val)) {
+    if (engine.GetVariableManager().Check(cmd.args.at("var"), cmd.args.at("op"), std::stoi(cmd.args.at("val")))) {
         currentLine++;
-    }
-    else {
+    } else {
         int depth = 0;
-        bool found = false;
         while (++currentLine < (int)commands.size()) {
-            if (commands[currentLine].type == "if")
-                depth++;
-            else if (commands[currentLine].type == "else" && depth == 0) {
-                currentLine++;
-                found = true;
-                break;
-            }
-            else if (commands[currentLine].type == "endif") {
-                if (depth == 0) {
-                    currentLine++;
-                    found = true;
-                    break;
-                }
-                else
-                    depth--;
-            }
-        }
-        if (!found) {
-            std::cerr << "Can't find [else] or [endif].\n";
+            if (commands[currentLine].type == "if") depth++;
+            else if (commands[currentLine].type == "else" && depth == 0) { currentLine++; break; }
+            else if (commands[currentLine].type == "endif") { if (depth == 0) { currentLine++; break; } else depth--; }
         }
     }
 }
 
 void VNController::HandleCommandElse(const VNCommand& cmd) {
     int depth = 0;
-    bool found = false;
     while (++currentLine < (int)commands.size()) {
-        if (commands[currentLine].type == "if")
-            depth++;
-        else if (commands[currentLine].type == "endif") {
-            if (depth == 0) {
-                currentLine++;
-                found = true;
-                break;
-            }
-            else
-                depth--;
-        }
-    }
-    if (!found) {
-        std::cerr << "Can't find [endif].\n";
+        if (commands[currentLine].type == "if") depth++;
+        else if (commands[currentLine].type == "endif") { if (depth == 0) { currentLine++; break; } else depth--; }
     }
 }
 
 void VNController::HandleCommandEndIf(const VNCommand& cmd) { currentLine++; }
 
 void VNController::HandleCommandChoice(const VNCommand& cmd) {
-    std::string text = cmd.args.at("text");
-    std::string target = cmd.args.at("target");
-    if (target.empty()) {
-        std::cerr << "Choice command has empty target.\n";
-        currentLine++;
-        return;
-    }
-
-    std::string transitionStyle = ReadTransitionStyleArg(cmd.args);
-    std::string transitionSpeed = ReadTransitionSpeedArg(cmd.args);
-    std::string transitionEase = ReadTransitionEaseArg(cmd.args);
-
-    SDL_Color idleCol = { 255, 255, 255, 255 };
-    SDL_Color hoverCol = { 255, 215, 0, 255 };
-
-    engine.GetUIManager().AddTextButton(text, uiFont, idleCol, hoverCol, target, transitionStyle, transitionSpeed, transitionEase);
+    PendingChoice pc;
+    pc.text = cmd.args.at("text");
+    pc.target = cmd.args.at("target");
+    pc.transitionStyle = ReadTransitionStyleArg(cmd.args);
+    pc.transitionSpeed = ReadTransitionSpeedArg(cmd.args);
+    pc.transitionEase = ReadTransitionEaseArg(cmd.args);
+    pendingChoices.push_back(pc);
     currentLine++;
 }
 
@@ -411,33 +215,17 @@ void VNController::ExecuteNextCommands() {
     while (currentLine < (int)commands.size()) {
         const VNCommand& cmd = commands[currentLine];
         auto it = commandHandlers.find(cmd.type);
-
         if (it != commandHandlers.end()) {
             it->second(cmd);
-
-            if (cmd.type == "text") {
-                break;
+            if (cmd.type == "text") break;
+            if (cmd.type == "transition") return;
+            if (cmd.type == "jump" && cmd.args.count("target") && !cmd.args.at("target").empty() && cmd.args.at("target")[0] != '*') return;
+            if (cmd.type == "choice") {
+                if (currentLine < (int)commands.size() && commands[currentLine].type != "choice") break; 
             }
-            else if (cmd.type == "transition") {
-                return;
-            }
-            else if (cmd.type == "jump" && cmd.args.count("target") && !cmd.args.at("target").empty() && cmd.args.at("target")[0] != '*') {
-                return;
-            }
-            else if (cmd.type == "choice" && currentLine < (int)commands.size() && commands[currentLine].type != "choice") {
-                break;
-            }
-        }
-        else {
+        } else {
             currentLine++;
         }
     }
-
-    if (engine.GetUIManager().HasButtons()) {
-        engine.GetUIManager().RecalculateLayout(1280, 720);
-    }
-
-    if (currentLine >= (int)commands.size()) {
-        isFinished = true;
-    }
+    if (currentLine >= (int)commands.size()) isFinished = true;
 }

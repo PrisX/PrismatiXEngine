@@ -6,53 +6,88 @@
 
 #include "ArchiveManager.h"
 
-AssetManager::AssetManager(ArchiveManager& archiveMgr) : archiveManager(archiveMgr) {}
+AssetManager::AssetManager(ArchiveManager& archiveMgr, size_t texLimit, size_t fontLimit, size_t sfxLimit) : archiveManager(archiveMgr) {
+    textureCache = std::make_unique<LRUCache<std::string, SDL_Texture*>>(texLimit, [](SDL_Texture* tex) {
+        if (tex) SDL_DestroyTexture(tex);
+    });
+
+    sfxCache = std::make_unique<LRUCache<std::string, Mix_Chunk*>>(sfxLimit, [](Mix_Chunk* chunk) {
+        if (chunk) Mix_FreeChunk(chunk);
+    });
+
+    fontCache = std::make_unique<LRUCache<std::string, TTF_Font*>>(fontLimit, [this](TTF_Font* font) {
+        if (font) {
+            auto it = fontReverseMap.find(font);
+            if (it != fontReverseMap.end()) {
+                std::string key = it->second;
+
+                for (auto olIt = outlineFontCache.begin(); olIt != outlineFontCache.end();) {
+                    if (olIt->first.find(key + "_ol") == 0) {
+                        TTF_CloseFont(olIt->second);
+                        olIt = outlineFontCache.erase(olIt);
+                    }
+                    else {
+                        ++olIt;
+                    }
+                }
+
+                fontReverseMap.erase(it);
+                fontSizeByKey.erase(key);
+                fontBuffers.erase(key);
+            }
+            TTF_CloseFont(font);
+        }
+    });
+}
 
 AssetManager::~AssetManager() { CleanAll(); }
 
 std::string AssetManager::GetFontKey(const std::string& fileName, int fontSize) { return fileName + "_" + std::to_string(fontSize); }
 
 SDL_Texture* AssetManager::LoadTexture(const std::string& fileName, SDL_Renderer* ren) {
-    if (textureCache.find(fileName) != textureCache.end()) {
-        return textureCache[fileName];
+    SDL_Texture* tex = nullptr;
+    if (textureCache->Get(fileName, tex)) {
+        return tex;
     }
 
     std::vector<char> buffer = archiveManager.ExtractFile(fileName);
     if (buffer.empty()) return nullptr;
 
-    SDL_RWops* rw = SDL_RWFromMem(buffer.data(), buffer.size());
+    SDL_RWops* rw = SDL_RWFromMem(buffer.data(), (int)buffer.size());
     if (!rw) return nullptr;
 
-    SDL_Texture* tex = IMG_LoadTexture_RW(ren, rw, 1);
+    tex = IMG_LoadTexture_RW(ren, rw, 1);
     if (!tex) {
         std::cerr << "AssetManager failed to load image (" << fileName << "): " << IMG_GetError() << std::endl;
         return nullptr;
     }
 
-    textureCache[fileName] = tex;
+    textureCache->Put(fileName, tex);
     return tex;
 }
 
 TTF_Font* AssetManager::LoadFont(const std::string& fileName, int fontSize) {
     std::string key = GetFontKey(fileName, fontSize);
-    if (fontCache.find(key) != fontCache.end()) {
-        return fontCache[key];
+    TTF_Font* font = nullptr;
+    if (fontCache->Get(key, font)) {
+        return font;
     }
 
     std::vector<char> buffer = archiveManager.ExtractFile(fileName);
     if (buffer.empty()) return nullptr;
 
     fontBuffers[key] = std::move(buffer);
-    SDL_RWops* rw = SDL_RWFromMem(fontBuffers[key].data(), fontBuffers[key].size());
+    SDL_RWops* rw = SDL_RWFromMem(fontBuffers[key].data(), (int)fontBuffers[key].size());
     if (!rw) return nullptr;
 
-    TTF_Font* font = TTF_OpenFontRW(rw, 1, fontSize * 2);  // temp
+    font = TTF_OpenFontRW(rw, 1, fontSize * 2);  // temp oversample
     if (!font) {
         std::cerr << "AssetManager failed to load font (" << fileName << "): " << TTF_GetError() << std::endl;
+        fontBuffers.erase(key);
         return nullptr;
     }
 
-    fontCache[key] = font;
+    fontCache->Put(key, font);
     fontReverseMap[font] = key;
     fontSizeByKey[key] = fontSize;
     return font;
@@ -73,7 +108,7 @@ TTF_Font* AssetManager::GetOutlineFont(TTF_Font* baseFont, int outlineSize) {
     if (bufIt == fontBuffers.end() || sizeIt == fontSizeByKey.end()) return nullptr;
 
     SDL_RWops* rw = SDL_RWFromMem(bufIt->second.data(), (int)bufIt->second.size());
-    TTF_Font* olFont = TTF_OpenFontRW(rw, 1, sizeIt->second * 2);  // temp
+    TTF_Font* olFont = TTF_OpenFontRW(rw, 1, sizeIt->second * 2);
     if (!olFont) return nullptr;
 
     TTF_SetFontOutline(olFont, outlineSize * 2);
@@ -82,23 +117,24 @@ TTF_Font* AssetManager::GetOutlineFont(TTF_Font* baseFont, int outlineSize) {
 }
 
 Mix_Chunk* AssetManager::LoadSFX(const std::string& fileName) {
-    if (sfxCache.find(fileName) != sfxCache.end()) {
-        return sfxCache[fileName];
+    Mix_Chunk* chunk = nullptr;
+    if (sfxCache->Get(fileName, chunk)) {
+        return chunk;
     }
 
     std::vector<char> buffer = archiveManager.ExtractFile(fileName);
     if (buffer.empty()) return nullptr;
 
-    SDL_RWops* rw = SDL_RWFromMem(buffer.data(), buffer.size());
+    SDL_RWops* rw = SDL_RWFromMem(buffer.data(), (int)buffer.size());
     if (!rw) return nullptr;
 
-    Mix_Chunk* chunk = Mix_LoadWAV_RW(rw, 1);
+    chunk = Mix_LoadWAV_RW(rw, 1);
     if (!chunk) {
         std::cerr << "AssetManager failed to load SFX (" << fileName << "): " << Mix_GetError() << std::endl;
         return nullptr;
     }
 
-    sfxCache[fileName] = chunk;
+    sfxCache->Put(fileName, chunk);
     return chunk;
 }
 
@@ -106,7 +142,7 @@ Mix_Music* AssetManager::LoadBGM(const std::string& fileName, std::vector<char>&
     outBuffer = archiveManager.ExtractFile(fileName);
     if (outBuffer.empty()) return nullptr;
 
-    SDL_RWops* rw = SDL_RWFromMem(outBuffer.data(), outBuffer.size());
+    SDL_RWops* rw = SDL_RWFromMem(outBuffer.data(), (int)outBuffer.size());
     if (!rw) return nullptr;
 
     Mix_Music* music = Mix_LoadMUS_RW(rw, 1);
@@ -117,33 +153,20 @@ Mix_Music* AssetManager::LoadBGM(const std::string& fileName, std::vector<char>&
     return music;
 }
 
-void AssetManager::CleanTextures() {
-    for (auto& pair : textureCache) {
-        if (pair.second) SDL_DestroyTexture(pair.second);
-    }
-    textureCache.clear();
-}
+void AssetManager::CleanTextures() { textureCache->Clear(); }
 
 void AssetManager::CleanFonts() {
+    fontCache->Clear();
     for (auto& pair : outlineFontCache) {
         if (pair.second) TTF_CloseFont(pair.second);
     }
     outlineFontCache.clear();
-    for (auto& pair : fontCache) {
-        if (pair.second) TTF_CloseFont(pair.second);
-    }
-    fontCache.clear();
     fontBuffers.clear();
     fontSizeByKey.clear();
     fontReverseMap.clear();
 }
 
-void AssetManager::CleanAudio() {
-    for (auto& pair : sfxCache) {
-        if (pair.second) Mix_FreeChunk(pair.second);
-    }
-    sfxCache.clear();
-}
+void AssetManager::CleanAudio() { sfxCache->Clear(); }
 
 void AssetManager::CleanAll() {
     CleanTextures();

@@ -13,9 +13,12 @@ struct PDXFileEntry {
 class ArchiveManager {
 private:
     std::unordered_map<std::string, PDXFileEntry> globalFileTable;
+    std::unordered_map<std::string, std::string> diskFileMap; // filename -> full path
+
+    void ScanDirectory(const std::string& root);
 
 public:
-    ArchiveManager() = default;
+    ArchiveManager();
     ~ArchiveManager() = default;
 
     bool MountArchive(const std::string& archivePath);
