@@ -1,47 +1,40 @@
-#include <fstream>
+#include <filesystem>
 #include <iostream>
-#include <sstream>
 #include <string>
-#include <vector>
 
-#include "Managers/ArchiveManager.h"
-#include "Core/PrismatiXEngine.h"
+#include "Core/Engine.h"
 #include "Core/EngineConfig.h"
+#include "Utils/Logger.h"
 
 #pragma execution_character_set("utf-8")
 
 namespace {
-bool ExecuteLuaFile(PrismatiXEngine& engine, const std::string& scriptPath) {
-    std::string scriptContent = engine.GetArchiveManager().LoadTextFromArchiveOrDisk(scriptPath);
-    if (scriptContent.empty()) {
-        std::cerr << "Lua script not found: " << scriptPath << std::endl;
+bool RunLuaEntrypoint(Engine& engine, const std::string& scriptPath) {
+    PX_LOG_INFO("Loading entrypoint: {}", scriptPath);
+    std::string script = engine.GetResourceManager().LoadText(scriptPath);
+    if (script.empty()) {
+        PX_LOG_ERROR("Lua script not found or empty: {}", scriptPath);
         return false;
     }
 
-    sol::protected_function_result loadResult = engine.GetLuaState().safe_script(scriptContent, &sol::script_pass_on_error);
-    if (!loadResult.valid()) {
-        sol::error err = loadResult;
-        std::cerr << "Failed to load Lua script (" << scriptPath << "): " << err.what() << std::endl;
-        return false;
-    }
-    return true;
-}
-
-bool RunLuaEntrypoint(PrismatiXEngine& engine, const std::string& entryScriptPath) {
-    if (!ExecuteLuaFile(engine, entryScriptPath)) {
+    auto result = engine.GetLuaState().safe_script(script, sol::script_pass_on_error);
+    if (!result.valid()) {
+        sol::error err = result;
+        PX_LOG_CRITICAL("Failed to execute entrypoint: {}", err.what());
         return false;
     }
 
-    sol::protected_function entrypoint = engine.GetLuaState()["Entrypoint"];
-    if (!entrypoint.valid()) {
-        std::cerr << "Entrypoint() not found in script: " << entryScriptPath << std::endl;
+    sol::protected_function entry = engine.GetLuaState()["Entrypoint"];
+    if (!entry.valid()) {
+        PX_LOG_ERROR("'Entrypoint' function not found in {}", scriptPath);
         return false;
     }
 
-    sol::protected_function_result runResult = entrypoint();
+    PX_LOG_INFO("Calling Entrypoint()...");
+    auto runResult = entry();
     if (!runResult.valid()) {
         sol::error err = runResult;
-        std::cerr << "Entrypoint() runtime error (" << entryScriptPath << "): " << err.what() << std::endl;
+        PX_LOG_CRITICAL("Lua Runtime Error: {}", err.what());
         return false;
     }
     return true;
@@ -49,20 +42,24 @@ bool RunLuaEntrypoint(PrismatiXEngine& engine, const std::string& entryScriptPat
 }  // namespace
 
 int main(int argc, char* argv[]) {
-    PrismatiXEngine engine;
+    std::filesystem::create_directories("logs");
+    Logger::Initialize();
 
-    if (!engine.GetArchiveManager().MountArchive(EngineConfig::kArchiveEngine)) {
-        std::cerr << "Failed to mount engine assets." << std::endl;
-        return -1;
-    }
-    engine.GetArchiveManager().MountArchive(EngineConfig::kArchiveData);
+    Engine engine;
 
     if (!engine.Initialize(EngineConfig::kGameTitle, EngineConfig::kDefaultScreenWidth, EngineConfig::kDefaultScreenHeight)) {
+        PX_LOG_CRITICAL("Engine initialization failed.");
         return -1;
     }
 
-    const std::string entryScriptPath = "Scripts/entrypoint.lua";
-    bool ok = RunLuaEntrypoint(engine, entryScriptPath);
+    PX_LOG_INFO("Mounting archives...");
+    engine.GetResourceManager().MountArchive(EngineConfig::kArchiveEngine);
+    engine.GetResourceManager().MountArchive(EngineConfig::kArchiveData);
 
-    return ok ? 0 : -1;
+    if (!RunLuaEntrypoint(engine, "Scripts/entrypoint.lua")) {
+        PX_LOG_CRITICAL("Entrypoint script execution failed.");
+    }
+
+    PX_LOG_INFO("Main loop finished. Shutting down.");
+    return 0;
 }

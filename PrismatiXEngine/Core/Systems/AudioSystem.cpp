@@ -2,13 +2,11 @@
 
 #include <iostream>
 
-#include "Managers/AssetManager.h"
+#include "Core/Services/ResourceManager.h"
 
-AudioSystem::AudioSystem(AssetManager& assetMgr) : assetManager(assetMgr) {}
+AudioSystem::AudioSystem(ResourceManager& resMgr) : resourceManager(resMgr) {}
 
-AudioSystem::~AudioSystem() {
-    StopBGM();
-}
+AudioSystem::~AudioSystem() { StopBGM(); }
 
 void AudioSystem::PlayBGM(const std::string& fileName, int loops) {
     if (currentBgm) {
@@ -18,7 +16,7 @@ void AudioSystem::PlayBGM(const std::string& fileName, int loops) {
     }
     currentBgmBuffer.clear();
 
-    currentBgm = assetManager.LoadBGM(fileName, currentBgmBuffer);
+    currentBgm = resourceManager.LoadBGM(fileName, currentBgmBuffer);
 
     if (currentBgm) {
         Mix_PlayMusic(currentBgm, loops);
@@ -35,37 +33,27 @@ void AudioSystem::StopBGM() {
 }
 
 void AudioSystem::PlaySFX(const std::string& fileName, int loops) {
-    Mix_Chunk* sfx = assetManager.LoadSFX(fileName);
+    Mix_Chunk* sfx = resourceManager.LoadSFX(fileName);
     if (sfx) {
         Mix_PlayChannel(-1, sfx, loops);
     }
 }
 
 void AudioSystem::PlayVoice(const std::string& fileName) {
-    Mix_Chunk* voice = assetManager.LoadSFX(fileName);
+    Mix_Chunk* voice = resourceManager.LoadSFX(fileName);
     if (voice) {
-        // Voice is fixed to channel 0
+        // 為了不要被其他蓋過去所以用 channel 0
         Mix_HaltChannel(0);
         Mix_PlayChannel(0, voice, 0);
     }
 }
 
-void AudioSystem::StopVoice() {
-    Mix_HaltChannel(0);
-}
+void AudioSystem::StopVoice() { Mix_HaltChannel(0); }
 
-void AudioSystem::SetBGMVolume(int volume) {
-    Mix_VolumeMusic(volume);
-}
+void AudioSystem::SetBGMVolume(int volume) { Mix_VolumeMusic(volume); }
 
-void AudioSystem::SetSFXVolume(int volume) {
-    Mix_Volume(-1, volume);
-}
+void AudioSystem::SetSFXVolume(int volume) { Mix_Volume(-1, volume); }
 
-int AudioSystem::GetBGMVolume() const {
-    return Mix_VolumeMusic(-1);
-}
+int AudioSystem::GetBGMVolume() const { return Mix_VolumeMusic(-1); }
 
-int AudioSystem::GetSFXVolume() const {
-    return Mix_Volume(-1, -1);
-}
+int AudioSystem::GetSFXVolume() const { return Mix_Volume(-1, -1); }

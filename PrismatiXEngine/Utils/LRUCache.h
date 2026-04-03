@@ -3,6 +3,7 @@
 #include <list>
 #include <stdexcept>
 #include <unordered_map>
+#include <functional>
 
 template <typename Key, typename Value>
 class LRUCache {

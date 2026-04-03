@@ -1,9 +1,12 @@
 #pragma once
+
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
-
 #include <string>
 #include <vector>
+#include <memory>
+
+class RenderSystem;
 
 struct UIButton {
     std::string text;
@@ -18,13 +21,9 @@ struct UIButton {
     std::string transitionEase;
 };
 
-#include <memory>
-
-class RenderSystem;
-
 class UIManager {
 public:
-    UIManager(std::unique_ptr<RenderSystem>& renderSystemRef);
+    UIManager(RenderSystem& renSys);
     ~UIManager() = default;
 
     void AddTextButton(const std::string& text, TTF_Font* font, SDL_Color idle, SDL_Color hover, const std::string& target, const std::string& transitionStyle = "", const std::string& transitionSpeed = "", const std::string& transitionEase = "");
@@ -34,9 +33,9 @@ public:
     void UpdateHover(int mouseX, int mouseY);
     bool CheckClick(int mouseX, int mouseY, std::string& outTarget, std::string& outTransitionStyle, std::string& outTransitionSpeed, std::string& outTransitionEase) const;
     std::string GetHoveredText() const;
-    void Render(SDL_Renderer* renderer);
+    void Render();
 
 private:
-    std::unique_ptr<RenderSystem>& renderSystem;
+    RenderSystem& renderSystem;
     std::vector<UIButton> buttons;
 };

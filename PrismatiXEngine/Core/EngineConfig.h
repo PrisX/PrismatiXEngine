@@ -16,4 +16,7 @@ const std::string kArchiveData = "Data.pdx";
 const std::string kSaveDirectory = "Save";
 const std::string kSaveFilePrefix = "save_";
 const std::string kSaveFileExt = ".sav";
+
+// Rendering
+inline int kFontOversample = 2;
 }  // namespace EngineConfig

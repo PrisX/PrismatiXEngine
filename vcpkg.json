@@ -2,6 +2,11 @@
   "name": "prismatix-engine",
   "version": "1.0.0",
   "dependencies": [
+    "fmt",
+    {
+      "name": "lua",
+      "version>=": "5.4.8"
+    },
     "sdl2",
     {
       "name": "sdl2-image",
@@ -16,10 +21,6 @@
       ]
     },
     "sdl2-ttf",
-    "fmt",
-    {
-      "name": "lua",
-      "version>=": "5.4.8"
-    }
+    "spdlog"
   ]
 }

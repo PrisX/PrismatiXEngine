@@ -4,16 +4,16 @@
 #include <string>
 #include <vector>
 
-class AssetManager;
+class ResourceManager;
 
 class AudioSystem {
 private:
-    AssetManager& assetManager;
+    ResourceManager& resourceManager;
     Mix_Music* currentBgm = nullptr;
     std::vector<char> currentBgmBuffer;
 
 public:
-    AudioSystem(AssetManager& assetMgr);
+    AudioSystem(ResourceManager& resMgr);
     ~AudioSystem();
 
     // BGM

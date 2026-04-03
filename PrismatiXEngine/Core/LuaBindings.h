@@ -2,6 +2,6 @@
 
 #include <sol/sol.hpp>
 
-class PrismatiXEngine;
+class Engine;
 
-void RegisterEngineLuaBindings(sol::state& lua, PrismatiXEngine& engine);
+void RegisterEngineLuaBindings(sol::state& lua, Engine& engine);

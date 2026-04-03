@@ -1,18 +1,57 @@
-#include "SaveManager.h"
+#include "GameState.h"
+
+#include <Core/EngineConfig.h>
 
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 
-#include "BacklogManager.h"
-#include "VariableManager.h"
+namespace fs = std::filesystem;
 
-#include "Core/EngineConfig.h"
+GameState::GameState() {}
 
-SaveManager::SaveManager(VariableManager& varMgr, BacklogManager& backlogMgr) : variableManager(varMgr), backlogManager(backlogMgr) {}
+// Variables (Flags)
+void GameState::SetFlag(const std::string& name, int value) { flags[name] = value; }
 
-bool SaveManager::SaveGame(int slot, const std::string& scriptName, int line, const std::string& bgName, const std::string& bgmName, const std::vector<SavedCharacter>& characters) {
-    std::filesystem::create_directories(EngineConfig::kSaveDirectory);
+void GameState::AddFlag(const std::string& name, int value) { flags[name] += value; }
+
+int GameState::GetFlag(const std::string& name) {
+    auto it = flags.find(name);
+    if (it != flags.end()) return it->second;
+    return 0;
+}
+
+const std::unordered_map<std::string, int>& GameState::GetAllFlags() const { return flags; }
+
+bool GameState::CheckFlag(const std::string& name, const std::string& op, int compareVal) {
+    int currentVal = GetFlag(name);
+    if (op == "==") return currentVal == compareVal;
+    if (op == "!=") return currentVal != compareVal;
+    if (op == ">") return currentVal > compareVal;
+    if (op == "<") return currentVal < compareVal;
+    if (op == ">=") return currentVal >= compareVal;
+    if (op == "<=") return currentVal <= compareVal;
+    return false;
+}
+
+void GameState::ClearFlags() { flags.clear(); }
+
+// Backlog (History)
+void GameState::AddLog(const std::string& speaker, const std::string& text, const std::string& voice) {
+    if (text.empty()) return;
+    logs.push_back({ speaker, text, voice, false });
+}
+
+void GameState::AddChoiceLog(const std::string& text) { logs.push_back({ "", text, "", true }); }
+
+void GameState::ClearLogs() { logs.clear(); }
+
+const std::vector<BacklogEntry>& GameState::GetLogs() const { return logs; }
+
+// Persistence (Save/Load)
+bool GameState::SaveGame(int slot, const std::string& scriptName, int line, const std::string& bgName, const std::string& bgmName, const std::vector<SavedCharacter>& characters) {
+    fs::create_directories(EngineConfig::kSaveDirectory);
     std::string fileName = EngineConfig::kSaveDirectory + "/" + EngineConfig::kSaveFilePrefix + std::to_string(slot) + EngineConfig::kSaveFileExt;
     std::ofstream out(fileName);
     if (!out.is_open()) return false;
@@ -29,30 +68,29 @@ bool SaveManager::SaveGame(int slot, const std::string& scriptName, int line, co
     }
 
     out << "[VARIABLES]\n";
-    for (const auto& [key, value] : variableManager.GetAllFlags()) {
+    for (const auto& [key, value] : flags) {
         out << key << "=" << value << "\n";
     }
 
     out << "[BACKLOG]\n";
-    for (const auto& entry : backlogManager.logs) {
+    for (const auto& entry : logs) {
         out << (entry.isChoice ? 1 : 0) << "|" << entry.speaker << "|" << entry.voice << "|" << entry.text << "\n";
     }
 
     out.close();
-    std::cout << "Saved game data to" << fileName << "\n";
     return true;
 }
 
-bool SaveManager::LoadGame(int slot, std::string& outScript, int& outLine, std::string& outBg, std::string& outBgm, std::vector<SavedCharacter>& outCharacters) {
+bool GameState::LoadGame(int slot, std::string& outScript, int& outLine, std::string& outBg, std::string& outBgm, std::vector<SavedCharacter>& outCharacters) {
     std::string fileName = EngineConfig::kSaveDirectory + "/" + EngineConfig::kSaveFilePrefix + std::to_string(slot) + EngineConfig::kSaveFileExt;
     std::ifstream in(fileName);
     if (!in.is_open()) return false;
 
     std::string lineStr;
-    int currentSection = 0;
+    int currentSection = -1;
 
-    variableManager.ClearAll();
-    backlogManager.Clear();
+    flags.clear();
+    logs.clear();
     outCharacters.clear();
 
     while (std::getline(in, lineStr)) {
@@ -85,7 +123,7 @@ bool SaveManager::LoadGame(int slot, std::string& outScript, int& outLine, std::
                 entry.speaker = lineStr.substr(p1 + 1, p2 - p1 - 1);
                 entry.voice = lineStr.substr(p2 + 1, p3 - p2 - 1);
                 entry.text = lineStr.substr(p3 + 1);
-                backlogManager.logs.push_back(entry);
+                logs.push_back(entry);
             }
             continue;
         }
@@ -116,17 +154,14 @@ bool SaveManager::LoadGame(int slot, std::string& outScript, int& outLine, std::
                 }
             }
             else if (currentSection == 2) {
-                variableManager.Set(key, std::stoi(val));
+                flags[key] = std::stoi(val);
             }
         }
     }
-
-    in.close();
-    std::cout << "Loaded game data from " << fileName << "\n";
     return true;
 }
 
-void SaveManager::PeekSaveFile(int slot, bool& outIsEmpty, std::string& outDisplayText) {
+void GameState::PeekSaveFile(int slot, bool& outIsEmpty, std::string& outDisplayText) {
     std::string fileName = EngineConfig::kSaveDirectory + "/" + EngineConfig::kSaveFilePrefix + std::to_string(slot) + EngineConfig::kSaveFileExt;
     std::ifstream in(fileName);
     if (!in.is_open()) {
@@ -137,11 +172,11 @@ void SaveManager::PeekSaveFile(int slot, bool& outIsEmpty, std::string& outDispl
 
     outIsEmpty = false;
     std::string lineStr;
-    std::string scriptName;
-    std::string lineNum;
+    std::string scriptName = "Unknown";
+    std::string lineNum = "0";
 
     while (std::getline(in, lineStr)) {
-        if (lineStr == "[VARIABLES]") break;
+        if (lineStr == "[CHARACTERS]" || lineStr == "[VARIABLES]") break;
         size_t eqPos = lineStr.find('=');
         if (eqPos != std::string::npos) {
             std::string key = lineStr.substr(0, eqPos);

@@ -41,6 +41,9 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(sol2)
 find_package(Lua REQUIRED)
 
+# Other dependencies
+find_package(spdlog CONFIG REQUIRED)
+
 # Subdirectory
 add_subdirectory ("PrismatiXEngine")
 

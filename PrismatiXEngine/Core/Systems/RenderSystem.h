@@ -2,9 +2,10 @@
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
+
 #include <string>
 
-class AssetManager;
+class ResourceManager;
 
 struct ShadowConfig {
     bool enabled = false;
@@ -16,16 +17,8 @@ struct ShadowConfig {
 enum class DisplayMode { TopLeft, TopRight, BottomLeft, BottomRight, Top, Bottom, Left, Right, Center, FitWidthBottom, Fit, Fill };
 
 class RenderSystem {
-private:
-    SDL_Renderer* renderer;
-    AssetManager& assetManager;
-
-    SDL_Surface* RenderTextSurface(TTF_Font* font, const std::string& text, SDL_Color color, Uint32 wrapLength);
-
 public:
-    static constexpr int FONT_OVERSAMPLE = 2;
-
-    RenderSystem(SDL_Renderer* ren, AssetManager& assetMgr);
+    RenderSystem(SDL_Renderer* ren, ResourceManager& resMgr);
     ~RenderSystem() = default;
 
     // Texture Rendering
@@ -38,4 +31,10 @@ public:
     void DrawTextCentered(TTF_Font* font, const std::string& text, SDL_Color color, SDL_Rect bounds);
     void DrawTextWithOutline(TTF_Font* font, const std::string& text, SDL_Color textColor, SDL_Color outlineColor, int outlineSize, int x, int y, Uint32 wrapLength = 0, Uint8 alpha = 255, bool shadow = false);
     void DrawTextWithOutlineCentered(TTF_Font* font, const std::string& text, SDL_Color textColor, SDL_Color outlineColor, int outlineSize, SDL_Rect bounds, Uint8 alpha = 255, bool shadow = false);
+
+private:
+    SDL_Renderer* renderer;
+    ResourceManager& resourceManager;
+
+    SDL_Surface* RenderTextSurface(TTF_Font* font, const std::string& text, SDL_Color color, Uint32 wrapLength);
 };

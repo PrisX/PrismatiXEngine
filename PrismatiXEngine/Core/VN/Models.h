@@ -4,11 +4,25 @@
 #include <SDL2/SDL_ttf.h>
 
 #include <string>
+#include <vector>
 
 #include "Utils/EasingUtils.h"
 #include "Utils/TransitionUtils.h"
 
-class PrismatiXEngine;
+class Engine;
+
+struct BacklogEntry {
+    std::string speaker;
+    std::string text;
+    std::string voice;
+    bool isChoice = false;
+};
+
+struct SavedCharacter {
+    std::string name;
+    std::string diff;
+    int pos;
+};
 
 struct ActiveCharacter {
     std::string name;
@@ -36,16 +50,13 @@ struct ActiveCharacter {
 
 struct ChapterBanner {
     std::string text;
-
     enum class State { Idle, SlideIn, Staying, FadeOut } state = State::Idle;
-
     float currentX = -600.0f;
     float targetX = -1.0f;
     int stayTimer = 0;
     float alpha = 255.0f;
 
     bool IsActive() const { return state != State::Idle; }
-
     void Show(const std::string& chapterText) {
         text = chapterText;
         state = State::SlideIn;
@@ -53,10 +64,8 @@ struct ChapterBanner {
         alpha = 255.0f;
         stayTimer = 0;
     }
-
     void Update() {
         if (!IsActive()) return;
-
         const float slideFactor = 0.18f;
         switch (state) {
             case State::SlideIn:
@@ -75,23 +84,19 @@ struct ChapterBanner {
                 break;
         }
     }
-
-    void Render(PrismatiXEngine& engine, TTF_Font* font) const;
+    void Render(Engine& engine, TTF_Font* font) const;
 };
 
 struct BGMInfo {
     std::string text;
     bool isMusicNotification = false;
-
     enum class State { Idle, SlideIn, Staying, FadeOut } state = State::Idle;
-
     float currentX = -400.0f;
     float targetX = 20.0f;
     int stayTimer = 0;
     float alpha = 255.0f;
 
     bool IsActive() const { return state != State::Idle; }
-
     void Show(const std::string& msg, bool isMusic = false) {
         text = msg;
         isMusicNotification = isMusic;
@@ -101,10 +106,8 @@ struct BGMInfo {
         alpha = 255.0f;
         stayTimer = 0;
     }
-
     void Update() {
         if (!IsActive()) return;
-
         const float slideFactor = 0.18f;
         switch (state) {
             case State::SlideIn:
@@ -123,6 +126,5 @@ struct BGMInfo {
                 break;
         }
     }
-
-    void Render(PrismatiXEngine& engine, TTF_Font* font) const;
+    void Render(Engine& engine, TTF_Font* font) const;
 };

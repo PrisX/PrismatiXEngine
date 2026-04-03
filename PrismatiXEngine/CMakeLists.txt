@@ -3,33 +3,32 @@
 # Executable
 add_executable (PrismatiXEngine 
 "main.cpp"
-"Core/PrismatiXEngine.cpp"
-"Core/PrismatiXEngine.h"
+"Core/Engine.cpp"
+"Core/Engine.h"
 "Core/LuaBindings.cpp"
 "Core/LuaBindings.h"
-"Core/VN/VNController.h"
-"Core/VN/VNController.cpp"
-"Core/VN/Models.h"
-"Core/Systems/RenderSystem.h"
+"Core/Services/ResourceManager.cpp"
+"Core/Services/ResourceManager.h"
+"Core/Services/ScriptingEngine.cpp"
+"Core/Services/ScriptingEngine.h"
+"Core/Services/GameState.cpp"
+"Core/Services/GameState.h"
 "Core/Systems/RenderSystem.cpp"
-"Core/Systems/AudioSystem.h"
+"Core/Systems/RenderSystem.h"
 "Core/Systems/AudioSystem.cpp"
-"Managers/AssetManager.h"
-"Managers/AssetManager.cpp"
-"Managers/ScriptManager.h"
-"Managers/ScriptManager.cpp"
-"Managers/ArchiveManager.h"
-"Managers/ArchiveManager.cpp"
-"Managers/VariableManager.h"
-"Managers/VariableManager.cpp"
-"Managers/UIManager.h"
-"Managers/UIManager.cpp"
-"Managers/BacklogManager.h"
-"Managers/BacklogManager.cpp"
-"Managers/SaveManager.h"
-"Managers/SaveManager.cpp"
+"Core/Systems/AudioSystem.h"
+"Core/VN/VNFlowController.cpp"
+"Core/VN/VNFlowController.h"
+"Core/VN/VNStage.cpp"
+"Core/VN/VNStage.h"
+"Core/VN/VNDialogueSystem.cpp"
+"Core/VN/VNDialogueSystem.h"
+"Core/VN/Models.h"
+"UI/UIManager.cpp"
+"UI/UIManager.h"
 "Utils/TransitionUtils.h"
 "Utils/EasingUtils.h"
+"Utils/Logger.h"
 "SecretKey.h"
 )
 
@@ -37,8 +36,10 @@ add_executable (PrismatiXEngine
 target_include_directories(PrismatiXEngine PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/Core
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Services
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Systems
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/VN
-    ${CMAKE_CURRENT_SOURCE_DIR}/Managers
+    ${CMAKE_CURRENT_SOURCE_DIR}/UI
     ${CMAKE_CURRENT_SOURCE_DIR}/Utils
     ${LUA_INCLUDE_DIR}
 )
@@ -50,22 +51,10 @@ target_link_libraries(PrismatiXEngine PRIVATE
     SDL2_image::SDL2_image
     SDL2_ttf::SDL2_ttf
     SDL2_mixer::SDL2_mixer
+    spdlog::spdlog
     ${LUA_LIBRARIES}
     sol2::sol2
 )
-
-if(APPLE)
-target_include_directories(PrismatiXEngine PRIVATE 
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/Core
-    ${CMAKE_CURRENT_SOURCE_DIR}/Core/VN
-    ${CMAKE_CURRENT_SOURCE_DIR}/Managers
-    ${CMAKE_CURRENT_SOURCE_DIR}/Utils
-    ${HOMEBREW_PREFIX}/include
-    ${LUA_INCLUDE_DIR}
-)
-
-endif()
 
 add_custom_command(
     TARGET PrismatiXEngine POST_BUILD
