@@ -11,7 +11,7 @@ void RenderSystem::DrawTexture(SDL_Texture* tex, int x, int y, float scale) {
     if (!tex || !renderer) return;
     int originalWidth = 0, originalHeight = 0;
     SDL_QueryTexture(tex, NULL, NULL, &originalWidth, &originalHeight);
-    SDL_Rect destRect = { x, y, static_cast<int>(originalWidth * scale), static_cast<int>(originalHeight * scale) };
+    SDL_Rect destRect = { x + cameraOffsetX, y + cameraOffsetY, static_cast<int>(originalWidth * scale), static_cast<int>(originalHeight * scale) };
     SDL_RenderCopy(renderer, tex, NULL, &destRect);
 }
 
@@ -19,7 +19,7 @@ void RenderSystem::DrawTexture(SDL_Texture* tex, int x, int y, int w, int h, Uin
     if (!tex || !renderer) return;
     SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
     SDL_SetTextureAlphaMod(tex, alpha);
-    SDL_Rect destRect = { x, y, w, h };
+    SDL_Rect destRect = { x + cameraOffsetX, y + cameraOffsetY, w, h };
     SDL_RenderCopy(renderer, tex, NULL, &destRect);
     SDL_SetTextureAlphaMod(tex, 255);
 }
@@ -101,8 +101,8 @@ SDL_Rect RenderSystem::DrawTextureAuto(SDL_Texture* tex, DisplayMode mode, Uint8
             break;
         }
     }
-    destRect.x += offsetX;
-    destRect.y += offsetY;
+    destRect.x += offsetX + cameraOffsetX;
+    destRect.y += offsetY + cameraOffsetY;
     if (shadow.enabled) {
         SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
         SDL_SetTextureColorMod(tex, 0, 0, 0);
@@ -134,7 +134,7 @@ void RenderSystem::DrawText(TTF_Font* font, const std::string& text, SDL_Color c
     SDL_Surface* surfaceMessage = TTF_RenderUTF8_Blended(font, text.c_str(), color);
     if (!surfaceMessage) return;
     SDL_Texture* message = SDL_CreateTextureFromSurface(renderer, surfaceMessage);
-    SDL_Rect messageRect = { x, y, surfaceMessage->w / EngineConfig::kFontOversample, surfaceMessage->h / EngineConfig::kFontOversample };
+    SDL_Rect messageRect = { x + cameraOffsetX, y + cameraOffsetY, surfaceMessage->w / EngineConfig::kFontOversample, surfaceMessage->h / EngineConfig::kFontOversample };
     SDL_RenderCopy(renderer, message, NULL, &messageRect);
     SDL_FreeSurface(surfaceMessage);
     SDL_DestroyTexture(message);
@@ -142,6 +142,8 @@ void RenderSystem::DrawText(TTF_Font* font, const std::string& text, SDL_Color c
 
 void RenderSystem::DrawTextWithOutline(TTF_Font* font, const std::string& text, SDL_Color textColor, SDL_Color outlineColor, int outlineSize, int x, int y, Uint32 wrapLength, Uint8 alpha, bool shadow) {
     if (!font || text.empty() || !renderer) return;
+    int renderX = x + cameraOffsetX;
+    int renderY = y + cameraOffsetY;
     if (shadow) {
         const int shadowDX = 3, shadowDY = 3;
         SDL_Color black = { 0, 0, 0, 255 };
@@ -155,11 +157,11 @@ void RenderSystem::DrawTextWithOutline(TTF_Font* font, const std::string& text, 
                 const int outerOffsets[4][2] = { { shadowDX - 1, shadowDY - 1 }, { shadowDX + 1, shadowDY - 1 }, { shadowDX - 1, shadowDY + 1 }, { shadowDX + 1, shadowDY + 1 } };
                 SDL_SetTextureAlphaMod(shadowTex, (Uint8)(alpha * 0.15f));
                 for (const auto& off : outerOffsets) {
-                    SDL_Rect r = { x + off[0], y + off[1], sw, sh };
+                    SDL_Rect r = { renderX + off[0], renderY + off[1], sw, sh };
                     SDL_RenderCopy(renderer, shadowTex, NULL, &r);
                 }
                 SDL_SetTextureAlphaMod(shadowTex, (Uint8)(alpha * 0.4f));
-                SDL_Rect coreRect = { x + shadowDX, y + shadowDY, sw, sh };
+                SDL_Rect coreRect = { renderX + shadowDX, renderY + shadowDY, sw, sh };
                 SDL_RenderCopy(renderer, shadowTex, NULL, &coreRect);
                 SDL_DestroyTexture(shadowTex);
             }
@@ -168,11 +170,11 @@ void RenderSystem::DrawTextWithOutline(TTF_Font* font, const std::string& text, 
     TTF_Font* outlineFont = resourceManager.GetOutlineFont(font, outlineSize);
     SDL_Surface* bgSurface = outlineFont ? RenderTextSurface(outlineFont, text, outlineColor, wrapLength) : nullptr;
     SDL_Texture* bgTexture = bgSurface ? SDL_CreateTextureFromSurface(renderer, bgSurface) : nullptr;
-    SDL_Rect bgRect = bgSurface ? SDL_Rect{ x, y, bgSurface->w / EngineConfig::kFontOversample, bgSurface->h / EngineConfig::kFontOversample } : SDL_Rect{};
+    SDL_Rect bgRect = bgSurface ? SDL_Rect{ renderX, renderY, bgSurface->w / EngineConfig::kFontOversample, bgSurface->h / EngineConfig::kFontOversample } : SDL_Rect{};
 
     SDL_Surface* fgSurface = RenderTextSurface(font, text, textColor, wrapLength);
     SDL_Texture* fgTexture = SDL_CreateTextureFromSurface(renderer, fgSurface);
-    SDL_Rect fgRect = { x + outlineSize, y + outlineSize, fgSurface->w / EngineConfig::kFontOversample, fgSurface->h / EngineConfig::kFontOversample };
+    SDL_Rect fgRect = { renderX + outlineSize, renderY + outlineSize, fgSurface->w / EngineConfig::kFontOversample, fgSurface->h / EngineConfig::kFontOversample };
 
     if (bgTexture) SDL_SetTextureAlphaMod(bgTexture, alpha);
     SDL_SetTextureAlphaMod(fgTexture, alpha);

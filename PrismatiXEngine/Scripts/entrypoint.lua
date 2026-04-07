@@ -19,6 +19,7 @@ _G.Runtime = include("Scripts/common/runtime_helpers.lua")
 
 -- UI Framework
 _G.UI = include("Scripts/common/ui_framework.lua")
+_G.FX = include("Scripts/fx/screen_fx.lua")
 local Banner = include("Scripts/components/banner.lua")
 local DialogueBox = include("Scripts/components/dialogue_box.lua")
 local MainMenu = include("Scripts/components/main_menu.lua")
@@ -59,6 +60,10 @@ function Entrypoint()
         local mx, my = Engine.GetMouseX(), Engine.GetMouseY()
         local leftClick = Engine.GetLeftClick()
         local rightClick = Engine.GetRightClick()
+
+        FX.update()
+        local ox, oy = FX.get_offset()
+        Engine.SetCameraOffset(ox, oy)
 
         Engine.ClearScreen(0, 0, 0, 255)
 

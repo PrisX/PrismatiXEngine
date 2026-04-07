@@ -29,6 +29,17 @@ public:
     VNDialogueSystem& GetDialogueSystem() { return dialogueSystem; }
     VNStage& GetStage() { return stage; }
 
+    // Backlog & Notifications
+    bool IsShowingBacklog() const { return isShowingBacklog; }
+    void ToggleBacklog() { isShowingBacklog = !isShowingBacklog; }
+    void ScrollBacklog(float delta) { backlogScroll += delta; }
+    float GetBacklogScroll() const { return backlogScroll; }
+
+    void PushPendingBgm(const std::string& name) { pendingBgm.push_back(name); }
+    void PushPendingChapter(const std::string& name) { pendingChapters.push_back(name); }
+    std::string PopPendingBgm();
+    std::string PopPendingChapter();
+
 private:
     Engine& engine;
     VNDialogueSystem dialogueSystem;
@@ -39,6 +50,11 @@ private:
     int currentLine = 0;
     bool isFinished = false;
     bool hasStarted = false;
+
+    bool isShowingBacklog = false;
+    float backlogScroll = 0.0f;
+    std::vector<std::string> pendingBgm;
+    std::vector<std::string> pendingChapters;
 
     // Command Handlers
     using CommandHandler = std::function<void(const VNCommand&)>;

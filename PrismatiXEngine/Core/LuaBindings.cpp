@@ -40,7 +40,7 @@ void RegisterVNControllerBindings(sol::state& lua, Engine& engine) {
     vn["LoadScript"] = [](VNFlowController& c, const std::string& n) { c.LoadScript(n); };
     vn["Update"] = [](VNFlowController& c, float mx, float my) { c.Update(LInt(mx), LInt(my)); };
     vn["Render"] = [](VNFlowController& c) { c.Render(); };
-    vn["RenderBackground"] = [](VNFlowController& c) { /* Handled in Render */ };
+    vn["RenderBackground"] = [](VNFlowController& c) { c.GetStage().Render(); };
     vn["HandleClick"] = [](VNFlowController& c, float mx, float my) { c.HandleClick(LInt(mx), LInt(my)); };
     vn["GetDialogueBoxContext"] = [&engine](VNFlowController& c, sol::this_state s) {
         auto [w, h] = GetRendererLogicalSize(engine.GetRenderer());
@@ -49,11 +49,19 @@ void RegisterVNControllerBindings(sol::state& lua, Engine& engine) {
         ctx["visible"] = true;
         return ctx;
     };
-    vn["PopPendingBgmInfo"] = [](VNFlowController& c) -> sol::object { return sol::lua_nil; };
-    vn["PopPendingChapterInfo"] = [](VNFlowController& c) -> sol::object { return sol::lua_nil; };
-    vn["IsShowingBacklog"] = [](VNFlowController& c) { return false; };
-    vn["ToggleBacklog"] = [](VNFlowController& c) {};
-    vn["ScrollBacklog"] = [](VNFlowController& c, float d) {};
+    vn["PopPendingBgmInfo"] = [](VNFlowController& c, sol::this_state s) -> sol::object {
+        std::string str = c.PopPendingBgm();
+        if (str.empty()) return sol::lua_nil;
+        return sol::make_object(s, str);
+    };
+    vn["PopPendingChapterInfo"] = [](VNFlowController& c, sol::this_state s) -> sol::object {
+        std::string str = c.PopPendingChapter();
+        if (str.empty()) return sol::lua_nil;
+        return sol::make_object(s, str);
+    };
+    vn["IsShowingBacklog"] = [](VNFlowController& c) { return c.IsShowingBacklog(); };
+    vn["ToggleBacklog"] = [](VNFlowController& c) { c.ToggleBacklog(); };
+    vn["ScrollBacklog"] = [](VNFlowController& c, float d) { c.ScrollBacklog(d); };
     vn["GetChoices"] = [&lua](VNFlowController& c) { return lua.create_table(); };
     vn["SelectChoice"] = [](int i) {};
 }
@@ -135,12 +143,15 @@ void RegisterEngineAPI(sol::state& lua, Engine& engine) {
     api.set_function("FadeInBg", [&engine](const std::string& path, float mode, float ms) {
         SDL_Texture* tex = engine.GetResourceManager().LoadTexture(path);
         if (!tex) return;
-        Uint32 start = SDL_GetTicks(), duration = (Uint32)ms;
-        while (SDL_GetTicks() - start < duration && engine.IsRunning()) {
-            float p = (float)(SDL_GetTicks() - start) / duration;
+
+        engine.FadeOut(0);
+        engine.PresentScreen();
+
+        engine.FadeIn(ms);
+        while (engine.IsFading() && engine.IsRunning()) {
             engine.HandleEvents();
             engine.ClearScreen();
-            engine.GetRenderSystem().DrawTextureAuto(tex, (DisplayMode)LInt(mode), (Uint8)(p * 255));
+            engine.GetRenderSystem().DrawTextureAuto(tex, (DisplayMode)LInt(mode), 255);
             engine.PresentScreen();
             SDL_Delay(1);
         }
@@ -148,15 +159,18 @@ void RegisterEngineAPI(sol::state& lua, Engine& engine) {
     api.set_function("FadeOutBg", [&engine](const std::string& path, float mode, float ms) {
         SDL_Texture* tex = engine.GetResourceManager().LoadTexture(path);
         if (!tex) return;
-        Uint32 start = SDL_GetTicks(), duration = (Uint32)ms;
-        while (SDL_GetTicks() - start < duration && engine.IsRunning()) {
-            float p = 1.0f - (float)(SDL_GetTicks() - start) / duration;
+
+        engine.FadeOut(ms);
+        while (engine.IsFading() && engine.IsRunning()) {
             engine.HandleEvents();
             engine.ClearScreen();
-            engine.GetRenderSystem().DrawTextureAuto(tex, (DisplayMode)LInt(mode), (Uint8)(p * 255));
+            engine.GetRenderSystem().DrawTextureAuto(tex, (DisplayMode)LInt(mode), 255);
             engine.PresentScreen();
             SDL_Delay(1);
         }
+
+        engine.FadeIn(0);
+        engine.PresentScreen();
     });
 
     // Audio
@@ -181,6 +195,9 @@ void RegisterEngineAPI(sol::state& lua, Engine& engine) {
     api.set_function("GetTicks", []() { return (float)SDL_GetTicks(); });
     api.set_function("SetCameraOffset", [&engine](float x, float y) { engine.SetCameraOffset(LInt(x), LInt(y)); });
     api.set_function("ResetCameraOffset", [&engine]() { engine.ResetCameraOffset(); });
+    api.set_function("FadeIn", [&engine](float ms) { engine.FadeIn(ms); });
+    api.set_function("FadeOut", [&engine](float ms) { engine.FadeOut(ms); });
+    api.set_function("IsFading", [&engine]() { return engine.IsFading(); });
     api.set_function("IsMouseInRect", [&engine](float x, float y, float w, float h) {
         int mx = engine.GetMouseX(), my = engine.GetMouseY();
         return (mx >= LInt(x) && mx < LInt(x + w) && my >= LInt(y) && my < LInt(y + h));

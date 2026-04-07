@@ -32,9 +32,17 @@ public:
     void DrawTextWithOutline(TTF_Font* font, const std::string& text, SDL_Color textColor, SDL_Color outlineColor, int outlineSize, int x, int y, Uint32 wrapLength = 0, Uint8 alpha = 255, bool shadow = false);
     void DrawTextWithOutlineCentered(TTF_Font* font, const std::string& text, SDL_Color textColor, SDL_Color outlineColor, int outlineSize, SDL_Rect bounds, Uint8 alpha = 255, bool shadow = false);
 
+    void SetCameraOffset(int x, int y) {
+        cameraOffsetX = x;
+        cameraOffsetY = y;
+    }
+
 private:
     SDL_Renderer* renderer;
     ResourceManager& resourceManager;
+
+    int cameraOffsetX = 0;
+    int cameraOffsetY = 0;
 
     SDL_Surface* RenderTextSurface(TTF_Font* font, const std::string& text, SDL_Color color, Uint32 wrapLength);
 };

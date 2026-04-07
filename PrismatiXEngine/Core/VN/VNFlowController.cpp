@@ -24,24 +24,8 @@ VNFlowController::VNFlowController(Engine& engine) : engine(engine), stage(engin
 
 void VNFlowController::InitHandlers() {
     handlers["text"] = [this](const VNCommand& cmd) { CmdText(cmd); };
-    handlers["bg"] = [this](const VNCommand& cmd) {
-        std::string file = GetArg(cmd.args, "file");
-        PX_LOG_DEBUG("[VN] Change BG: {}", file);
-        stage.SetBackground(file);
-        currentLine++;
-    };
-    handlers["char"] = [this](const VNCommand& cmd) {
-        std::string id = GetArg(cmd.args, "id");
-        std::string exp = GetArg(cmd.args, "expression");
-        int pos = 1;
-        try {
-            if (cmd.args.count("pos")) pos = std::stoi(cmd.args.at("pos"));
-        } catch (...) {
-        }
-        PX_LOG_DEBUG("[VN] Set Char: {} ({}) at pos {}", id, exp, pos);
-        if (!id.empty()) stage.SetCharacter(id, exp, pos);
-        currentLine++;
-    };
+    handlers["bg"] = [this](const VNCommand& cmd) { CmdBg(cmd); };
+    handlers["char"] = [this](const VNCommand& cmd) { CmdChar(cmd); };
     handlers["char_clear"] = [this](const VNCommand& cmd) {
         std::string id = GetArg(cmd.args, "id");
         PX_LOG_DEBUG("[VN] Clear Char: {}", id);
@@ -50,8 +34,16 @@ void VNFlowController::InitHandlers() {
     };
     handlers["bgm"] = [this](const VNCommand& cmd) {
         std::string file = GetArg(cmd.args, "file");
-        PX_LOG_DEBUG("[VN] Play BGM: {}", file);
+        std::string title = GetArg(cmd.args, "title", file);
+        PX_LOG_DEBUG("[VN] Play BGM: {} ({})", file, title);
         engine.GetAudioSystem().PlayBGM(file);
+        PushPendingBgm(title);
+        currentLine++;
+    };
+    handlers["chapter"] = [this](const VNCommand& cmd) {
+        std::string title = GetArg(cmd.args, "title");
+        PX_LOG_DEBUG("[VN] Chapter: {}", title);
+        PushPendingChapter(title);
         currentLine++;
     };
     handlers["stopbgm"] = [this](const VNCommand& cmd) {
@@ -64,43 +56,8 @@ void VNFlowController::InitHandlers() {
         engine.GetAudioSystem().PlaySFX(GetArg(cmd.args, "file"));
         currentLine++;
     };
-    handlers["var"] = [this](const VNCommand& cmd) {
-        std::string v = GetArg(cmd.args, "var");
-        std::string op = GetArg(cmd.args, "op");
-        int val = 0;
-        try {
-            if (cmd.args.count("val")) val = std::stoi(cmd.args.at("val"));
-        } catch (...) {
-        }
-        PX_LOG_DEBUG("[VN] Var: {} {} {}", v, op, val);
-        if (!v.empty()) {
-            if (op == "set")
-                engine.GetGameState().SetFlag(v, val);
-            else if (op == "add")
-                engine.GetGameState().AddFlag(v, val);
-        }
-        currentLine++;
-    };
-    handlers["jump"] = [this](const VNCommand& cmd) {
-        std::string target = GetArg(cmd.args, "target");
-        PX_LOG_INFO("[VN] Jump: {}", target);
-        if (target.empty()) {
-            currentLine++;
-            return;
-        }
-        if (target[0] == '*') {
-            int line = FindLabelLine(commands, target.substr(1));
-            if (line >= 0)
-                currentLine = line;
-            else {
-                PX_LOG_ERROR("[VN] Label not found: {}", target);
-                currentLine++;
-            }
-        }
-        else {
-            LoadScript(target);
-        }
-    };
+    handlers["var"] = [this](const VNCommand& cmd) { CmdVar(cmd); };
+    handlers["jump"] = [this](const VNCommand& cmd) { CmdJump(cmd); };
     handlers["choice"] = [this](const VNCommand& cmd) {
         std::string text = GetArg(cmd.args, "text", GetArg(cmd.args, "content"));
         std::string target = GetArg(cmd.args, "target");
@@ -161,7 +118,6 @@ void VNFlowController::InitHandlers() {
     handlers["label"] = [this](const VNCommand& cmd) { currentLine++; };
     handlers["lua"] = [this](const VNCommand& cmd) {
         std::string fn = GetArg(cmd.args, "fn");
-        PX_LOG_DEBUG("[VN] Call Lua: {}", fn);
         if (!fn.empty()) {
             sol::protected_function f = engine.GetLuaState()[fn];
             if (f.valid()) {
@@ -202,8 +158,19 @@ void VNFlowController::HandleClick(int mx, int my) {
     if (isFinished) return;
     std::string target, s, sp, e;
     if (engine.GetUIManager().CheckClick(mx, my, target, s, sp, e)) {
-        PX_LOG_INFO("[VN] UI Option Selected: {}", target);
+        PX_LOG_INFO("[VN] UI Option Selected: {} with transition {}", target, s);
         engine.GetUIManager().Clear();
+
+        if (!s.empty()) {
+            float speed = 500.0f;
+            try {
+                if (!sp.empty()) speed = std::stof(sp);
+            } catch (...) {
+            }
+            engine.FadeOut(speed);
+            // 暫時先這樣吧
+        }
+
         if (!target.empty()) {
             if (target[0] == '*') {
                 int line = FindLabelLine(commands, target.substr(1));
@@ -276,4 +243,77 @@ void VNFlowController::CmdText(const VNCommand& cmd) {
     PX_LOG_TRACE("[VN] Text: {} says \"{}\"", speaker, text);
     dialogueSystem.SetText(speaker, text, speed, { 255, 255, 255, 255 }, { 0, 0, 0, 255 }, GetArg(cmd.args, "effect"));
     engine.GetGameState().AddLog(speaker, text);
+}
+
+void VNFlowController::CmdBg(const VNCommand& cmd) {
+    std::string file = GetArg(cmd.args, "file");
+    PX_LOG_DEBUG("[VN] Change BG: {}", file);
+    stage.SetBackground(file);
+    currentLine++;
+}
+
+void VNFlowController::CmdChar(const VNCommand& cmd) {
+    std::string id = GetArg(cmd.args, "id");
+    std::string exp = GetArg(cmd.args, "expression");
+    int pos = 1;
+    try {
+        if (cmd.args.count("pos")) pos = std::stoi(cmd.args.at("pos"));
+    } catch (...) {
+    }
+    PX_LOG_DEBUG("[VN] Set Char: {} ({}) at pos {}", id, exp, pos);
+    if (!id.empty()) stage.SetCharacter(id, exp, pos);
+    currentLine++;
+}
+
+void VNFlowController::CmdVar(const VNCommand& cmd) {
+    std::string v = GetArg(cmd.args, "var");
+    std::string op = GetArg(cmd.args, "op");
+    int val = 0;
+    try {
+        if (cmd.args.count("val")) val = std::stoi(cmd.args.at("val"));
+    } catch (...) {
+    }
+    PX_LOG_DEBUG("[VN] Var: {} {} {}", v, op, val);
+    if (!v.empty()) {
+        if (op == "set")
+            engine.GetGameState().SetFlag(v, val);
+        else if (op == "add")
+            engine.GetGameState().AddFlag(v, val);
+    }
+    currentLine++;
+}
+
+void VNFlowController::CmdJump(const VNCommand& cmd) {
+    std::string target = GetArg(cmd.args, "target");
+    PX_LOG_INFO("[VN] Jump: {}", target);
+    if (target.empty()) {
+        currentLine++;
+        return;
+    }
+    if (target[0] == '*') {
+        int line = FindLabelLine(commands, target.substr(1));
+        if (line >= 0)
+            currentLine = line;
+        else {
+            PX_LOG_ERROR("[VN] Label not found: {}", target);
+            currentLine++;
+        }
+    }
+    else {
+        LoadScript(target);
+    }
+}
+
+std::string VNFlowController::PopPendingBgm() {
+    if (pendingBgm.empty()) return "";
+    std::string s = pendingBgm.front();
+    pendingBgm.erase(pendingBgm.begin());
+    return s;
+}
+
+std::string VNFlowController::PopPendingChapter() {
+    if (pendingChapters.empty()) return "";
+    std::string s = pendingChapters.front();
+    pendingChapters.erase(pendingChapters.begin());
+    return s;
 }

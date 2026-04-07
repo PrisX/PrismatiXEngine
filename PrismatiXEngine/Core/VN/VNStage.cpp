@@ -1,14 +1,12 @@
 #include "VNStage.h"
 
 #include <algorithm>
+#include <cmath>
+#include <numbers>
 
+#include "Core/EngineConfig.h"
 #include "Utils/EasingUtils.h"
 #include "Utils/TransitionUtils.h"
-
-namespace {
-constexpr int kScreenWidth = 1280;
-constexpr int kScreenHeight = 720;
-}  // namespace
 
 VNStage::VNStage(ResourceManager& resMgr, RenderSystem& renSys) : resourceManager(resMgr), renderSystem(renSys) {}
 
@@ -34,10 +32,13 @@ void VNStage::SetCharacter(const std::string& name, const std::string& diff, int
     chara.pos = pos;
     chara.isExiting = false;
     chara.targetAlpha = 255.0f;
+    chara.animation = transition.empty() ? "fade" : transition;
+    chara.animationActive = true;
+    chara.animationFrame = 0;
 
     if (chara.alpha <= 0.0f) {
         chara.alpha = 0.0f;
-        chara.currentX = kScreenWidth / 2.0f;
+        chara.currentX = (float)EngineConfig::kDefaultScreenWidth / 2.0f;
     }
 
     RecalculatePositions();
@@ -48,6 +49,9 @@ void VNStage::ClearCharacter(const std::string& name, const std::string& transit
     if (it != activeCharacters.end()) {
         it->second.isExiting = true;
         it->second.targetAlpha = 0.0f;
+        it->second.animation = transition.empty() ? "fade" : transition;
+        it->second.animationActive = true;
+        it->second.animationFrame = 0;
         RecalculatePositions();
     }
 }
@@ -67,6 +71,25 @@ void VNStage::Update() {
 
         EasingUtils::ExpDecay(chara.alpha, chara.targetAlpha, 0.08f);
         EasingUtils::ExpDecay(chara.currentX, chara.targetX, 0.15f);
+
+        if (chara.animationActive) {
+            chara.animationFrame++;
+            float p = (float)chara.animationFrame / chara.animationDuration;
+            if (p >= 1.0f) {
+                chara.animationActive = false;
+                chara.renderOffsetX = 0;
+                chara.renderOffsetY = 0;
+                chara.renderScale = 1.0f;
+            }
+            else {
+                if (chara.animation == "bounce") {
+                    chara.renderOffsetY = -30.0f * std::sin(p * std::numbers::pi);
+                }
+                else if (chara.animation == "shake") {
+                    chara.renderOffsetX = 5.0f * std::sin(p * std::numbers::pi * 4.0f);
+                }
+            }
+        }
 
         if (chara.isExiting && chara.alpha < 1.0f) {
             it = activeCharacters.erase(it);
@@ -110,7 +133,7 @@ void VNStage::Render() {
             int finalH = (int)(texH * scale);
 
             int x = (int)(chara->currentX + chara->renderOffsetX) - (finalW / 2);
-            int y = (kScreenHeight - finalH) + (int)chara->renderOffsetY;
+            int y = (EngineConfig::kDefaultScreenHeight - finalH) + (int)chara->renderOffsetY;
 
             renderSystem.DrawTexture(tex, x, y, finalW, finalH, (Uint8)chara->alpha);
         }
@@ -126,7 +149,7 @@ void VNStage::RecalculatePositions() {
 
     int total = (int)nonExiting.size();
     if (total > 0) {
-        int sectionWidth = kScreenWidth / (total + 1);
+        int sectionWidth = EngineConfig::kDefaultScreenWidth / (total + 1);
         for (int i = 0; i < total; i++) {
             nonExiting[i]->targetX = (float)(sectionWidth * (i + 1));
         }

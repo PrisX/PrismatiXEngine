@@ -65,11 +65,16 @@ end
 
 function _G.FX_Shake(args)
 	local payload = args or {}
+	local d = Utils.to_number(payload.duration, 20)
+	local a = Utils.to_number(payload.amplitude, 18)
+	local f = Utils.to_number(payload.frequency, 0.95)
+	local dy = Utils.to_number(payload.decay, 1.8)
+	
 	ScreenEffects.trigger_shake({
-		duration = Utils.to_number(payload.duration),
-		amplitude = Utils.to_number(payload.amplitude),
-		frequency = Utils.to_number(payload.frequency),
-		decay = Utils.to_number(payload.decay)
+		duration = d,
+		amplitude = a,
+		frequency = f,
+		decay = dy
 	})
 end
 

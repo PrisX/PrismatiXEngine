@@ -42,6 +42,11 @@ public:
     void ClearScreen();
     void PresentScreen();
 
+    // Global Fade
+    void FadeIn(float durationMs);
+    void FadeOut(float durationMs);
+    bool IsFading() const { return std::abs(fadeAlpha - fadeTarget) > 0.5f; }
+
     // Lua
     void BindEngineToLua();
     sol::state& GetLuaState() { return lua; }
@@ -65,6 +70,10 @@ private:
     int mouseY = 0;
     int cameraOffsetX = 0;
     int cameraOffsetY = 0;
+
+    float fadeAlpha = 0.0f;
+    float fadeTarget = 0.0f;
+    float fadeSpeed = 0.0f;
 
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
