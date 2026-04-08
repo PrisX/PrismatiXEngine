@@ -143,21 +143,18 @@ void VNFlowController::LoadScript(const std::string& scriptName) {
 
 void VNFlowController::Update(int mx, int my) {
     if (pendingJump.active) {
-        if (!engine.IsFading()) {
-            std::string target = pendingJump.target;
-            pendingJump.active = false;
-            pendingJump.target = "";
+        std::string target = pendingJump.target;
+        pendingJump.active = false;
+        pendingJump.target = "";
 
-            if (!target.empty()) {
-                if (target[0] == '*') {
-                    int line = FindLabelLine(commands, target.substr(1));
-                    if (line >= 0) currentLine = line;
-                } else {
-                    LoadScript(target);
-                }
-                ExecuteNext();
+        if (!target.empty()) {
+            if (target[0] == '*') {
+                int line = FindLabelLine(commands, target.substr(1));
+                if (line >= 0) currentLine = line;
+            } else {
+                LoadScript(target);
             }
-            engine.FadeIn(500.0f);
+            ExecuteNext();
         }
         return;
     }
@@ -167,17 +164,6 @@ void VNFlowController::Update(int mx, int my) {
         ExecuteNext();
     }
 
-    if (!notificationOverlay.IsActive()) {
-        if (!pendingChapters.empty()) {
-            notificationOverlay.Show(pendingChapters.front(), NotificationOverlay::Type::Chapter);
-            pendingChapters.pop();
-        } else if (!pendingBgm.empty()) {
-            notificationOverlay.Show(pendingBgm.front(), NotificationOverlay::Type::BGM);
-            pendingBgm.pop();
-        }
-    }
-    notificationOverlay.Update();
-
     dialogueSystem.Update();
     stage.Update();
     if (engine.GetUIManager().HasButtons()) engine.GetUIManager().UpdateHover(mx, my);
@@ -186,11 +172,6 @@ void VNFlowController::Update(int mx, int my) {
 void VNFlowController::Render() {
     stage.Render();
     if (engine.GetUIManager().HasButtons()) engine.GetUIManager().Render();
-
-    if (notificationOverlay.IsActive()) {
-        TTF_Font* font = engine.GetResourceManager().LoadFont("NotoSansTC-Regular.ttf", 20);
-        notificationOverlay.Render(engine, font);
-    }
 }
 
 void VNFlowController::SelectChoice(int index) {
@@ -205,9 +186,6 @@ void VNFlowController::SelectChoice(int index) {
     engine.GetUIManager().Clear();
 
     if (!s.empty()) {
-        float speed = 500.0f;
-        try { if (!sp.empty()) speed = std::stof(sp); } catch (...) {}
-        engine.FadeOut(speed);
         pendingJump.active = true;
         pendingJump.target = target;
         return;
@@ -232,9 +210,6 @@ void VNFlowController::HandleClick(int mx, int my) {
         engine.GetUIManager().Clear();
 
         if (!s.empty()) {
-            float speed = 500.0f;
-            try { if (!sp.empty()) speed = std::stof(sp); } catch (...) {}
-            engine.FadeOut(speed);
             pendingJump.active = true;
             pendingJump.target = target;
             return;
@@ -253,7 +228,7 @@ void VNFlowController::HandleClick(int mx, int my) {
     }
     if (engine.GetUIManager().HasButtons()) return;
     engine.GetAudioSystem().StopVoice();
-    if (!dialogueSystem.IsFinished())
+    if (!dialogueSystem.GetState().isFinished)
         dialogueSystem.ShowAll();
     else {
         currentLine++;

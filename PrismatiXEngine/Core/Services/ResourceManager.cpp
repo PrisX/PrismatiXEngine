@@ -46,6 +46,7 @@ ResourceManager::ResourceManager(SDL_Renderer* renderer, size_t texLimit, size_t
 
     ScanDirectory("Data");
     ScanDirectory("Engine");
+    ScanDirectory("Scripts");
 }
 
 ResourceManager::~ResourceManager() { CleanAll(); }

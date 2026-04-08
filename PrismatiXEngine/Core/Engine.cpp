@@ -105,32 +105,7 @@ void Engine::ClearScreen() {
 }
 
 void Engine::PresentScreen() {
-    if (fadeAlpha > 0.0f) {
-        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, (Uint8)fadeAlpha);
-        SDL_RenderFillRect(renderer, nullptr);
-    }
     SDL_RenderPresent(renderer);
-
-    // Update Fade
-    if (std::abs(fadeAlpha - fadeTarget) > 0.1f) {
-        if (fadeAlpha < fadeTarget) {
-            fadeAlpha = std::min(fadeTarget, fadeAlpha + fadeSpeed);
-        }
-        else {
-            fadeAlpha = std::max(fadeTarget, fadeAlpha - fadeSpeed);
-        }
-    }
-}
-
-void Engine::FadeIn(float durationMs) {
-    fadeTarget = 0.0f;
-    fadeSpeed = (durationMs > 0) ? (255.0f / (durationMs / 16.0f)) : 255.0f;
-}
-
-void Engine::FadeOut(float durationMs) {
-    fadeTarget = 255.0f;
-    fadeSpeed = (durationMs > 0) ? (255.0f / (durationMs / 16.0f)) : 255.0f;
 }
 
 void Engine::SetCameraOffset(int x, int y) {

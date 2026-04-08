@@ -3,8 +3,9 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 
-#include <string>
 #include <memory>
+#include <string>
+
 #include "Utils/LRUCache.h"
 
 class ResourceManager;
@@ -18,8 +19,7 @@ struct TextCacheKey {
     Uint32 wrapLength;
 
     bool operator==(const TextCacheKey& o) const {
-        return text == o.text && font == o.font && outlineSize == o.outlineSize && wrapLength == o.wrapLength &&
-               *((Uint32*)&color) == *((Uint32*)&o.color) && *((Uint32*)&outlineColor) == *((Uint32*)&o.outlineColor);
+        return text == o.text && font == o.font && outlineSize == o.outlineSize && wrapLength == o.wrapLength && *((Uint32*)&color) == *((Uint32*)&o.color) && *((Uint32*)&outlineColor) == *((Uint32*)&o.outlineColor);
     }
 };
 
@@ -28,6 +28,7 @@ template <>
 struct hash<TextCacheKey> {
     std::size_t operator()(const TextCacheKey& k) const {
         size_t h = std::hash<std::string>{}(k.text);
+        // Hash combine: https://stackoverflow.com/a/2595226
         h ^= std::hash<void*>{}(k.font) + 0x9e3779b9 + (h << 6) + (h >> 2);
         h ^= std::hash<Uint32>{}(*((Uint32*)&k.color)) + 0x9e3779b9 + (h << 6) + (h >> 2);
         h ^= std::hash<int>{}(k.outlineSize) + 0x9e3779b9 + (h << 6) + (h >> 2);
@@ -35,7 +36,6 @@ struct hash<TextCacheKey> {
     }
 };
 }  // namespace std
-
 
 struct CachedTexture {
     SDL_Texture* texture;
