@@ -1,4 +1,4 @@
-#include "Core/Services/ScriptingEngine.h"
+#include "Core/Services/VNScriptParser.h"
 
 #include <cctype>
 #include <iostream>
@@ -14,9 +14,9 @@ std::string ToLowerCopy(const std::string& value) {
 }
 }  // namespace
 
-ScriptingEngine::ScriptingEngine(ResourceManager& resMgr) : resourceManager(resMgr) {}
+VNScriptParser::VNScriptParser(ResourceManager& resMgr) : resourceManager(resMgr) {}
 
-std::vector<VNCommand> ScriptingEngine::ParseScript(const std::string& fileName) {
+std::vector<VNCommand> VNScriptParser::ParseScript(const std::string& fileName) {
     std::vector<VNCommand> script;
     std::vector<char> buffer = resourceManager.ExtractFile(fileName);
     if (buffer.empty()) return script;
@@ -97,7 +97,7 @@ std::vector<VNCommand> ScriptingEngine::ParseScript(const std::string& fileName)
     return script;
 }
 
-SDL_Color ScriptingEngine::ParseColor(const std::string& colorStr, SDL_Color defaultColor) {
+SDL_Color VNScriptParser::ParseColor(const std::string& colorStr, SDL_Color defaultColor) {
     if (colorStr.empty()) return defaultColor;
     std::stringstream ss(colorStr);
     std::string r, g, b;

@@ -33,6 +33,7 @@ public:
     void UpdateHover(int mouseX, int mouseY);
     bool CheckClick(int mouseX, int mouseY, std::string& outTarget, std::string& outTransitionStyle, std::string& outTransitionSpeed, std::string& outTransitionEase) const;
     std::string GetHoveredText() const;
+    const std::vector<UIButton>& GetButtons() const { return buttons; }
     void Render();
 
 private:

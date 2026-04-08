@@ -16,7 +16,7 @@
 #include "Core/EngineConfig.h"
 #include "Core/Services/GameState.h"
 #include "Core/Services/ResourceManager.h"
-#include "Core/Services/ScriptingEngine.h"
+#include "Core/Services/VNScriptParser.h"
 #include "Core/Systems/AudioSystem.h"
 #include "Core/Systems/RenderSystem.h"
 #include "Core/VN/VNFlowController.h"
@@ -62,8 +62,19 @@ void RegisterVNControllerBindings(sol::state& lua, Engine& engine) {
     vn["IsShowingBacklog"] = [](VNFlowController& c) { return c.IsShowingBacklog(); };
     vn["ToggleBacklog"] = [](VNFlowController& c) { c.ToggleBacklog(); };
     vn["ScrollBacklog"] = [](VNFlowController& c, float d) { c.ScrollBacklog(d); };
-    vn["GetChoices"] = [&lua](VNFlowController& c) { return lua.create_table(); };
-    vn["SelectChoice"] = [](int i) {};
+    vn["GetChoices"] = [&engine](VNFlowController& c, sol::this_state s) {
+        sol::state_view lua(s);
+        sol::table res = lua.create_table();
+        const auto& buttons = engine.GetUIManager().GetButtons();
+        for (size_t i = 0; i < buttons.size(); ++i) {
+            sol::table item = lua.create_table();
+            item["text"] = buttons[i].text;
+            item["target"] = buttons[i].target;
+            res[i + 1] = item;
+        }
+        return res;
+    };
+    vn["SelectChoice"] = [](VNFlowController& c, int i) { c.SelectChoice(i - 1); };  // 1-indexed is dumb af
 }
 
 void RegisterEngineAPI(sol::state& lua, Engine& engine) {

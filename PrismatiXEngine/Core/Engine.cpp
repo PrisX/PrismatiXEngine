@@ -55,7 +55,7 @@ bool Engine::Initialize(const std::string& title, int width, int height) {
 
     PX_LOG_INFO("Initializing Engine Services...");
     resourceManager = std::make_unique<ResourceManager>(renderer);
-    scriptingEngine = std::make_unique<ScriptingEngine>(*resourceManager);
+    scriptingEngine = std::make_unique<VNScriptParser>(*resourceManager);
     gameState = std::make_unique<GameState>();
 
     PX_LOG_INFO("Initializing Engine Systems...");
@@ -134,19 +134,10 @@ void Engine::FadeOut(float durationMs) {
 }
 
 void Engine::SetCameraOffset(int x, int y) {
-    cameraOffsetX = x;
-    cameraOffsetY = y;
-    ApplyCameraViewport();
+    if (renderSystem) renderSystem->SetCameraOffset(x, y);
 }
 void Engine::ResetCameraOffset() {
-    cameraOffsetX = 0;
-    cameraOffsetY = 0;
-    ApplyCameraViewport();
-}
-void Engine::ApplyCameraViewport() {
-    if (renderSystem) {
-        renderSystem->SetCameraOffset(cameraOffsetX, cameraOffsetY);
-    }
+    if (renderSystem) renderSystem->SetCameraOffset(0, 0);
 }
 
 void Engine::Clean() {

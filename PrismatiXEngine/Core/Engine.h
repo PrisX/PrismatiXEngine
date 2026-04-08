@@ -10,7 +10,7 @@
 #include "EngineConfig.h"
 #include "Services/GameState.h"
 #include "Services/ResourceManager.h"
-#include "Services/ScriptingEngine.h"
+#include "Services/VNScriptParser.h"
 #include "Systems/AudioSystem.h"
 #include "Systems/RenderSystem.h"
 #include "UI/UIManager.h"
@@ -45,7 +45,7 @@ public:
     // Global Fade
     void FadeIn(float durationMs);
     void FadeOut(float durationMs);
-    bool IsFading() const { return std::abs(fadeAlpha - fadeTarget) > 0.5f; }
+    bool IsFading() const { return std::abs(fadeAlpha - fadeTarget) > 0.1f; }
 
     // Lua
     void BindEngineToLua();
@@ -53,7 +53,7 @@ public:
 
     // Services Accessors
     ResourceManager& GetResourceManager() { return *resourceManager; }
-    ScriptingEngine& GetScriptingEngine() { return *scriptingEngine; }
+    VNScriptParser& GetScriptingEngine() { return *scriptingEngine; }
     GameState& GetGameState() { return *gameState; }
     AudioSystem& GetAudioSystem() { return *audioSystem; }
     RenderSystem& GetRenderSystem() { return *renderSystem; }
@@ -68,8 +68,6 @@ private:
     bool isRunning;
     int mouseX = 0;
     int mouseY = 0;
-    int cameraOffsetX = 0;
-    int cameraOffsetY = 0;
 
     float fadeAlpha = 0.0f;
     float fadeTarget = 0.0f;
@@ -79,11 +77,9 @@ private:
     SDL_Renderer* renderer = nullptr;
     sol::state lua;
 
-    void ApplyCameraViewport();
-
     // Core Services
     std::unique_ptr<ResourceManager> resourceManager;
-    std::unique_ptr<ScriptingEngine> scriptingEngine;
+    std::unique_ptr<VNScriptParser> scriptingEngine;
     std::unique_ptr<GameState> gameState;
 
     // Systems

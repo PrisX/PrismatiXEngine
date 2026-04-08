@@ -12,10 +12,10 @@ struct VNCommand {
 
 class ResourceManager;
 
-class ScriptingEngine {
+class VNScriptParser {
 public:
-    ScriptingEngine(ResourceManager& resMgr);
-    ~ScriptingEngine() = default;
+    VNScriptParser(ResourceManager& resMgr);
+    ~VNScriptParser() = default;
 
     std::vector<VNCommand> ParseScript(const std::string& fileName);
     SDL_Color ParseColor(const std::string& colorStr, SDL_Color defaultColor);

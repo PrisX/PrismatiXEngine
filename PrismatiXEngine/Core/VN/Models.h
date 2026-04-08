@@ -48,64 +48,33 @@ struct ActiveCharacter {
     float renderScale = 1.0f;
 };
 
-struct ChapterBanner {
+struct NotificationOverlay {
+    enum class Type { Chapter, BGM };
     std::string text;
+    Type type = Type::Chapter;
     enum class State { Idle, SlideIn, Staying, FadeOut } state = State::Idle;
     float currentX = -600.0f;
-    float targetX = -1.0f;
-    int stayTimer = 0;
-    float alpha = 255.0f;
-
-    bool IsActive() const { return state != State::Idle; }
-    void Show(const std::string& chapterText) {
-        text = chapterText;
-        state = State::SlideIn;
-        currentX = -600.0f;
-        alpha = 255.0f;
-        stayTimer = 0;
-    }
-    void Update() {
-        if (!IsActive()) return;
-        const float slideFactor = 0.18f;
-        switch (state) {
-            case State::SlideIn:
-                if (EasingUtils::ExpDecay(currentX, targetX, slideFactor)) {
-                    state = State::Staying;
-                    stayTimer = 300;
-                }
-                break;
-            case State::Staying:
-                if (--stayTimer <= 0) state = State::FadeOut;
-                break;
-            case State::FadeOut:
-                if (TransitionUtils::FadeOut(alpha, 4.0f)) state = State::Idle;
-                break;
-            default:
-                break;
-        }
-    }
-    void Render(Engine& engine, TTF_Font* font) const;
-};
-
-struct BGMInfo {
-    std::string text;
-    bool isMusicNotification = false;
-    enum class State { Idle, SlideIn, Staying, FadeOut } state = State::Idle;
-    float currentX = -400.0f;
     float targetX = 20.0f;
     int stayTimer = 0;
     float alpha = 255.0f;
 
     bool IsActive() const { return state != State::Idle; }
-    void Show(const std::string& msg, bool isMusic = false) {
+    
+    void Show(const std::string& msg, Type t) {
         text = msg;
-        isMusicNotification = isMusic;
+        type = t;
         state = State::SlideIn;
-        currentX = -400.0f;
-        targetX = 20.0f;
         alpha = 255.0f;
         stayTimer = 0;
+        if (type == Type::Chapter) {
+            currentX = -600.0f;
+            targetX = -1.0f;
+        } else {
+            currentX = -400.0f;
+            targetX = 20.0f;
+        }
     }
+
     void Update() {
         if (!IsActive()) return;
         const float slideFactor = 0.18f;
@@ -113,7 +82,7 @@ struct BGMInfo {
             case State::SlideIn:
                 if (EasingUtils::ExpDecay(currentX, targetX, slideFactor)) {
                     state = State::Staying;
-                    stayTimer = 180;
+                    stayTimer = (type == Type::Chapter) ? 300 : 180;
                 }
                 break;
             case State::Staying:

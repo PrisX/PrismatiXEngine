@@ -5,11 +5,13 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <queue>
 
 #include "Engine.h"
-#include "Services/ScriptingEngine.h"
+#include "Services/VNScriptParser.h"
 #include "VNDialogueSystem.h"
 #include "VNStage.h"
+#include "Models.h"
 
 class VNFlowController {
 public:
@@ -35,15 +37,18 @@ public:
     void ScrollBacklog(float delta) { backlogScroll += delta; }
     float GetBacklogScroll() const { return backlogScroll; }
 
-    void PushPendingBgm(const std::string& name) { pendingBgm.push_back(name); }
-    void PushPendingChapter(const std::string& name) { pendingChapters.push_back(name); }
+    void PushPendingBgm(const std::string& name) { pendingBgm.push(name); }
+    void PushPendingChapter(const std::string& name) { pendingChapters.push(name); }
     std::string PopPendingBgm();
     std::string PopPendingChapter();
+
+    void SelectChoice(int index);
 
 private:
     Engine& engine;
     VNDialogueSystem dialogueSystem;
     VNStage stage;
+    NotificationOverlay notificationOverlay;
 
     std::string currentScriptName;
     std::vector<VNCommand> commands;
@@ -53,8 +58,13 @@ private:
 
     bool isShowingBacklog = false;
     float backlogScroll = 0.0f;
-    std::vector<std::string> pendingBgm;
-    std::vector<std::string> pendingChapters;
+    std::queue<std::string> pendingBgm;
+    std::queue<std::string> pendingChapters;
+
+    struct PendingJump {
+        std::string target;
+        bool active = false;
+    } pendingJump;
 
     // Command Handlers
     using CommandHandler = std::function<void(const VNCommand&)>;

@@ -12,6 +12,12 @@ std::string GetArg(const std::map<std::string, std::string>& args, const std::st
     return (it != args.end()) ? it->second : def;
 }
 
+int ParseInt(const std::map<std::string, std::string>& args, const std::string& key, int def = 0) {
+    auto it = args.find(key);
+    if (it == args.end()) return def;
+    try { return std::stoi(it->second); } catch (...) { return def; }
+}
+
 int FindLabelLine(const std::vector<VNCommand>& commands, const std::string& labelName) {
     for (int i = 0; i < (int)commands.size(); ++i) {
         if (commands[i].type == "label" && GetArg(commands[i].args, "name") == labelName) return i;
@@ -69,11 +75,7 @@ void VNFlowController::InitHandlers() {
     };
     handlers["if"] = [this](const VNCommand& cmd) {
         std::string v = GetArg(cmd.args, "var"), op = GetArg(cmd.args, "op");
-        int val = 0;
-        try {
-            if (cmd.args.count("val")) val = std::stoi(cmd.args.at("val"));
-        } catch (...) {
-        }
+        int val = ParseInt(cmd.args, "val");
         if (engine.GetGameState().CheckFlag(v, op, val)) {
             PX_LOG_DEBUG("[VN] If {} {} {}: TRUE", v, op, val);
             currentLine++;
@@ -140,10 +142,42 @@ void VNFlowController::LoadScript(const std::string& scriptName) {
 }
 
 void VNFlowController::Update(int mx, int my) {
+    if (pendingJump.active) {
+        if (!engine.IsFading()) {
+            std::string target = pendingJump.target;
+            pendingJump.active = false;
+            pendingJump.target = "";
+
+            if (!target.empty()) {
+                if (target[0] == '*') {
+                    int line = FindLabelLine(commands, target.substr(1));
+                    if (line >= 0) currentLine = line;
+                } else {
+                    LoadScript(target);
+                }
+                ExecuteNext();
+            }
+            engine.FadeIn(500.0f);
+        }
+        return;
+    }
+
     if (!hasStarted && !commands.empty()) {
         hasStarted = true;
         ExecuteNext();
     }
+
+    if (!notificationOverlay.IsActive()) {
+        if (!pendingChapters.empty()) {
+            notificationOverlay.Show(pendingChapters.front(), NotificationOverlay::Type::Chapter);
+            pendingChapters.pop();
+        } else if (!pendingBgm.empty()) {
+            notificationOverlay.Show(pendingBgm.front(), NotificationOverlay::Type::BGM);
+            pendingBgm.pop();
+        }
+    }
+    notificationOverlay.Update();
+
     dialogueSystem.Update();
     stage.Update();
     if (engine.GetUIManager().HasButtons()) engine.GetUIManager().UpdateHover(mx, my);
@@ -152,6 +186,42 @@ void VNFlowController::Update(int mx, int my) {
 void VNFlowController::Render() {
     stage.Render();
     if (engine.GetUIManager().HasButtons()) engine.GetUIManager().Render();
+
+    if (notificationOverlay.IsActive()) {
+        TTF_Font* font = engine.GetResourceManager().LoadFont("NotoSansTC-Regular.ttf", 20);
+        notificationOverlay.Render(engine, font);
+    }
+}
+
+void VNFlowController::SelectChoice(int index) {
+    const auto& buttons = engine.GetUIManager().GetButtons();
+    if (index < 0 || index >= (int)buttons.size()) return;
+
+    const auto& btn = buttons[index];
+    std::string target = btn.target;
+    std::string s = btn.transitionStyle;
+    std::string sp = btn.transitionSpeed;
+    
+    engine.GetUIManager().Clear();
+
+    if (!s.empty()) {
+        float speed = 500.0f;
+        try { if (!sp.empty()) speed = std::stof(sp); } catch (...) {}
+        engine.FadeOut(speed);
+        pendingJump.active = true;
+        pendingJump.target = target;
+        return;
+    }
+
+    if (!target.empty()) {
+        if (target[0] == '*') {
+            int line = FindLabelLine(commands, target.substr(1));
+            if (line >= 0) currentLine = line;
+        } else {
+            LoadScript(target);
+        }
+        ExecuteNext();
+    }
 }
 
 void VNFlowController::HandleClick(int mx, int my) {
@@ -163,12 +233,11 @@ void VNFlowController::HandleClick(int mx, int my) {
 
         if (!s.empty()) {
             float speed = 500.0f;
-            try {
-                if (!sp.empty()) speed = std::stof(sp);
-            } catch (...) {
-            }
+            try { if (!sp.empty()) speed = std::stof(sp); } catch (...) {}
             engine.FadeOut(speed);
-            // 暫時先這樣吧
+            pendingJump.active = true;
+            pendingJump.target = target;
+            return;
         }
 
         if (!target.empty()) {
@@ -235,11 +304,7 @@ void VNFlowController::CmdText(const VNCommand& cmd) {
         text.replace(start, end - start + 1, val);
         start += val.length();
     }
-    int speed = 40;
-    try {
-        if (cmd.args.count("speed")) speed = std::stoi(cmd.args.at("speed"));
-    } catch (...) {
-    }
+    int speed = ParseInt(cmd.args, "speed", 40);
     PX_LOG_TRACE("[VN] Text: {} says \"{}\"", speaker, text);
     dialogueSystem.SetText(speaker, text, speed, { 255, 255, 255, 255 }, { 0, 0, 0, 255 }, GetArg(cmd.args, "effect"));
     engine.GetGameState().AddLog(speaker, text);
@@ -255,11 +320,7 @@ void VNFlowController::CmdBg(const VNCommand& cmd) {
 void VNFlowController::CmdChar(const VNCommand& cmd) {
     std::string id = GetArg(cmd.args, "id");
     std::string exp = GetArg(cmd.args, "expression");
-    int pos = 1;
-    try {
-        if (cmd.args.count("pos")) pos = std::stoi(cmd.args.at("pos"));
-    } catch (...) {
-    }
+    int pos = ParseInt(cmd.args, "pos", 1);
     PX_LOG_DEBUG("[VN] Set Char: {} ({}) at pos {}", id, exp, pos);
     if (!id.empty()) stage.SetCharacter(id, exp, pos);
     currentLine++;
@@ -268,11 +329,7 @@ void VNFlowController::CmdChar(const VNCommand& cmd) {
 void VNFlowController::CmdVar(const VNCommand& cmd) {
     std::string v = GetArg(cmd.args, "var");
     std::string op = GetArg(cmd.args, "op");
-    int val = 0;
-    try {
-        if (cmd.args.count("val")) val = std::stoi(cmd.args.at("val"));
-    } catch (...) {
-    }
+    int val = ParseInt(cmd.args, "val");
     PX_LOG_DEBUG("[VN] Var: {} {} {}", v, op, val);
     if (!v.empty()) {
         if (op == "set")
@@ -307,13 +364,13 @@ void VNFlowController::CmdJump(const VNCommand& cmd) {
 std::string VNFlowController::PopPendingBgm() {
     if (pendingBgm.empty()) return "";
     std::string s = pendingBgm.front();
-    pendingBgm.erase(pendingBgm.begin());
+    pendingBgm.pop();
     return s;
 }
 
 std::string VNFlowController::PopPendingChapter() {
     if (pendingChapters.empty()) return "";
     std::string s = pendingChapters.front();
-    pendingChapters.erase(pendingChapters.begin());
+    pendingChapters.pop();
     return s;
 }

@@ -5,7 +5,13 @@
 #include "Core/EngineConfig.h"
 #include "Core/Services/ResourceManager.h"
 
-RenderSystem::RenderSystem(SDL_Renderer* ren, ResourceManager& resMgr) : renderer(ren), resourceManager(resMgr) {}
+RenderSystem::RenderSystem(SDL_Renderer* ren, ResourceManager& resMgr) 
+    : renderer(ren), resourceManager(resMgr), 
+      textCache(200, [](CachedTexture ct) { if (ct.texture) SDL_DestroyTexture(ct.texture); }) {}
+
+RenderSystem::~RenderSystem() {
+    textCache.Clear();
+}
 
 void RenderSystem::DrawTexture(SDL_Texture* tex, int x, int y, float scale) {
     if (!tex || !renderer) return;
@@ -130,60 +136,98 @@ SDL_Surface* RenderSystem::RenderTextSurface(TTF_Font* font, const std::string& 
 }
 
 void RenderSystem::DrawText(TTF_Font* font, const std::string& text, SDL_Color color, int x, int y) {
-    if (!font || !renderer) return;
-    SDL_Surface* surfaceMessage = TTF_RenderUTF8_Blended(font, text.c_str(), color);
-    if (!surfaceMessage) return;
-    SDL_Texture* message = SDL_CreateTextureFromSurface(renderer, surfaceMessage);
-    SDL_Rect messageRect = { x + cameraOffsetX, y + cameraOffsetY, surfaceMessage->w / EngineConfig::kFontOversample, surfaceMessage->h / EngineConfig::kFontOversample };
-    SDL_RenderCopy(renderer, message, NULL, &messageRect);
-    SDL_FreeSurface(surfaceMessage);
-    SDL_DestroyTexture(message);
+    if (!font || !renderer || text.empty()) return;
+    
+    TextCacheKey key{ text, font, color, {0,0,0,0}, 0, 0 };
+    CachedTexture ct;
+    if (!textCache.Get(key, ct)) {
+        SDL_Surface* surfaceMessage = TTF_RenderUTF8_Blended(font, text.c_str(), color);
+        if (!surfaceMessage) return;
+        ct.texture = SDL_CreateTextureFromSurface(renderer, surfaceMessage);
+        ct.w = surfaceMessage->w;
+        ct.h = surfaceMessage->h;
+        SDL_FreeSurface(surfaceMessage);
+        textCache.Put(key, ct);
+    }
+
+    SDL_Rect messageRect = { x + cameraOffsetX, y + cameraOffsetY, ct.w / EngineConfig::kFontOversample, ct.h / EngineConfig::kFontOversample };
+    SDL_RenderCopy(renderer, ct.texture, NULL, &messageRect);
 }
 
 void RenderSystem::DrawTextWithOutline(TTF_Font* font, const std::string& text, SDL_Color textColor, SDL_Color outlineColor, int outlineSize, int x, int y, Uint32 wrapLength, Uint8 alpha, bool shadow) {
     if (!font || text.empty() || !renderer) return;
     int renderX = x + cameraOffsetX;
     int renderY = y + cameraOffsetY;
+
     if (shadow) {
         const int shadowDX = 3, shadowDY = 3;
         SDL_Color black = { 0, 0, 0, 255 };
-        SDL_Surface* shadowSurface = RenderTextSurface(font, text, black, wrapLength);
-        if (shadowSurface) {
-            int sw = shadowSurface->w / EngineConfig::kFontOversample, sh = shadowSurface->h / EngineConfig::kFontOversample;
-            SDL_Texture* shadowTex = SDL_CreateTextureFromSurface(renderer, shadowSurface);
-            SDL_FreeSurface(shadowSurface);
-            if (shadowTex) {
-                SDL_SetTextureBlendMode(shadowTex, SDL_BLENDMODE_BLEND);
-                const int outerOffsets[4][2] = { { shadowDX - 1, shadowDY - 1 }, { shadowDX + 1, shadowDY - 1 }, { shadowDX - 1, shadowDY + 1 }, { shadowDX + 1, shadowDY + 1 } };
-                SDL_SetTextureAlphaMod(shadowTex, (Uint8)(alpha * 0.15f));
-                for (const auto& off : outerOffsets) {
-                    SDL_Rect r = { renderX + off[0], renderY + off[1], sw, sh };
-                    SDL_RenderCopy(renderer, shadowTex, NULL, &r);
-                }
-                SDL_SetTextureAlphaMod(shadowTex, (Uint8)(alpha * 0.4f));
-                SDL_Rect coreRect = { renderX + shadowDX, renderY + shadowDY, sw, sh };
-                SDL_RenderCopy(renderer, shadowTex, NULL, &coreRect);
-                SDL_DestroyTexture(shadowTex);
+        TextCacheKey sKey{ text, font, black, {0,0,0,0}, -1, wrapLength }; // -1 for shadow
+        CachedTexture sct;
+        if (!textCache.Get(sKey, sct)) {
+            SDL_Surface* sSurf = RenderTextSurface(font, text, black, wrapLength);
+            if (sSurf) {
+                sct.texture = SDL_CreateTextureFromSurface(renderer, sSurf);
+                sct.w = sSurf->w;
+                sct.h = sSurf->h;
+                SDL_FreeSurface(sSurf);
+                textCache.Put(sKey, sct);
+            }
+        }
+        if (sct.texture) {
+            int sw = sct.w / EngineConfig::kFontOversample, sh = sct.h / EngineConfig::kFontOversample;
+            SDL_SetTextureBlendMode(sct.texture, SDL_BLENDMODE_BLEND);
+            const int outerOffsets[4][2] = { { shadowDX - 1, shadowDY - 1 }, { shadowDX + 1, shadowDY - 1 }, { shadowDX - 1, shadowDY + 1 }, { shadowDX + 1, shadowDY + 1 } };
+            SDL_SetTextureAlphaMod(sct.texture, (Uint8)(alpha * 0.15f));
+            for (const auto& off : outerOffsets) {
+                SDL_Rect r = { renderX + off[0], renderY + off[1], sw, sh };
+                SDL_RenderCopy(renderer, sct.texture, NULL, &r);
+            }
+            SDL_SetTextureAlphaMod(sct.texture, (Uint8)(alpha * 0.4f));
+            SDL_Rect coreRect = { renderX + shadowDX, renderY + shadowDY, sw, sh };
+            SDL_RenderCopy(renderer, sct.texture, NULL, &coreRect);
+        }
+    }
+
+    CachedTexture bgct = {nullptr, 0, 0};
+    TTF_Font* outlineFont = resourceManager.GetOutlineFont(font, outlineSize);
+    if (outlineFont) {
+        TextCacheKey bgKey{ text, outlineFont, outlineColor, {0,0,0,0}, outlineSize, wrapLength };
+        if (!textCache.Get(bgKey, bgct)) {
+            SDL_Surface* bgSurf = RenderTextSurface(outlineFont, text, outlineColor, wrapLength);
+            if (bgSurf) {
+                bgct.texture = SDL_CreateTextureFromSurface(renderer, bgSurf);
+                bgct.w = bgSurf->w;
+                bgct.h = bgSurf->h;
+                SDL_FreeSurface(bgSurf);
+                textCache.Put(bgKey, bgct);
             }
         }
     }
-    TTF_Font* outlineFont = resourceManager.GetOutlineFont(font, outlineSize);
-    SDL_Surface* bgSurface = outlineFont ? RenderTextSurface(outlineFont, text, outlineColor, wrapLength) : nullptr;
-    SDL_Texture* bgTexture = bgSurface ? SDL_CreateTextureFromSurface(renderer, bgSurface) : nullptr;
-    SDL_Rect bgRect = bgSurface ? SDL_Rect{ renderX, renderY, bgSurface->w / EngineConfig::kFontOversample, bgSurface->h / EngineConfig::kFontOversample } : SDL_Rect{};
 
-    SDL_Surface* fgSurface = RenderTextSurface(font, text, textColor, wrapLength);
-    SDL_Texture* fgTexture = SDL_CreateTextureFromSurface(renderer, fgSurface);
-    SDL_Rect fgRect = { renderX + outlineSize, renderY + outlineSize, fgSurface->w / EngineConfig::kFontOversample, fgSurface->h / EngineConfig::kFontOversample };
+    TextCacheKey fgKey{ text, font, textColor, {0,0,0,0}, 0, wrapLength };
+    CachedTexture fgct;
+    if (!textCache.Get(fgKey, fgct)) {
+        SDL_Surface* fgSurf = RenderTextSurface(font, text, textColor, wrapLength);
+        if (fgSurf) {
+            fgct.texture = SDL_CreateTextureFromSurface(renderer, fgSurf);
+            fgct.w = fgSurf->w;
+            fgct.h = fgSurf->h;
+            SDL_FreeSurface(fgSurf);
+            textCache.Put(fgKey, fgct);
+        }
+    }
 
-    if (bgTexture) SDL_SetTextureAlphaMod(bgTexture, alpha);
-    SDL_SetTextureAlphaMod(fgTexture, alpha);
-    if (bgTexture) SDL_RenderCopy(renderer, bgTexture, NULL, &bgRect);
-    SDL_RenderCopy(renderer, fgTexture, NULL, &fgRect);
-    if (bgSurface) SDL_FreeSurface(bgSurface);
-    if (bgTexture) SDL_DestroyTexture(bgTexture);
-    SDL_FreeSurface(fgSurface);
-    SDL_DestroyTexture(fgTexture);
+    if (bgct.texture) {
+        SDL_SetTextureAlphaMod(bgct.texture, alpha);
+        SDL_Rect bgRect = { renderX, renderY, bgct.w / EngineConfig::kFontOversample, bgct.h / EngineConfig::kFontOversample };
+        SDL_RenderCopy(renderer, bgct.texture, NULL, &bgRect);
+    }
+    if (fgct.texture) {
+        SDL_SetTextureAlphaMod(fgct.texture, alpha);
+        SDL_Rect fgRect = { renderX + outlineSize, renderY + outlineSize, fgct.w / EngineConfig::kFontOversample, fgct.h / EngineConfig::kFontOversample };
+        SDL_RenderCopy(renderer, fgct.texture, NULL, &fgRect);
+    }
 }
 
 void RenderSystem::DrawTextCentered(TTF_Font* font, const std::string& text, SDL_Color color, SDL_Rect bounds) {
