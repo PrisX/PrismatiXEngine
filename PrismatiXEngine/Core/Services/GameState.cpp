@@ -9,6 +9,9 @@
 
 namespace fs = std::filesystem;
 
+namespace PrismatiX {
+namespace Services {
+
 GameState::GameState() {}
 
 // Variables (Flags)
@@ -47,10 +50,10 @@ void GameState::AddChoiceLog(const std::string& text) { logs.push_back({ "", tex
 
 void GameState::ClearLogs() { logs.clear(); }
 
-const std::vector<BacklogEntry>& GameState::GetLogs() const { return logs; }
+const std::vector<Models::BacklogEntry>& GameState::GetLogs() const { return logs; }
 
 // Persistence (Save/Load)
-bool GameState::SaveGame(int slot, const std::string& scriptName, int line, const std::string& bgName, const std::string& bgmName, const std::vector<SavedCharacter>& characters) {
+bool GameState::SaveGame(int slot, const std::string& scriptName, int line, const std::string& bgName, const std::string& bgmName, const std::vector<Models::SavedCharacter>& characters) {
     fs::create_directories(EngineConfig::kSaveDirectory);
     std::string fileName = EngineConfig::kSaveDirectory + "/" + EngineConfig::kSaveFilePrefix + std::to_string(slot) + EngineConfig::kSaveFileExt;
     std::ofstream out(fileName);
@@ -81,7 +84,7 @@ bool GameState::SaveGame(int slot, const std::string& scriptName, int line, cons
     return true;
 }
 
-bool GameState::LoadGame(int slot, std::string& outScript, int& outLine, std::string& outBg, std::string& outBgm, std::vector<SavedCharacter>& outCharacters) {
+bool GameState::LoadGame(int slot, std::string& outScript, int& outLine, std::string& outBg, std::string& outBgm, std::vector<Models::SavedCharacter>& outCharacters) {
     std::string fileName = EngineConfig::kSaveDirectory + "/" + EngineConfig::kSaveFilePrefix + std::to_string(slot) + EngineConfig::kSaveFileExt;
     std::ifstream in(fileName);
     if (!in.is_open()) return false;
@@ -118,7 +121,7 @@ bool GameState::LoadGame(int slot, std::string& outScript, int& outLine, std::st
             size_t p2 = (p1 != std::string::npos) ? lineStr.find('|', p1 + 1) : std::string::npos;
             size_t p3 = (p2 != std::string::npos) ? lineStr.find('|', p2 + 1) : std::string::npos;
             if (p3 != std::string::npos) {
-                BacklogEntry entry;
+                Models::BacklogEntry entry;
                 entry.isChoice = (lineStr.substr(0, p1) == "1");
                 entry.speaker = lineStr.substr(p1 + 1, p2 - p1 - 1);
                 entry.voice = lineStr.substr(p2 + 1, p3 - p2 - 1);
@@ -146,7 +149,7 @@ bool GameState::LoadGame(int slot, std::string& outScript, int& outLine, std::st
             else if (currentSection == 1) {
                 size_t commaPos = val.find(',');
                 if (commaPos != std::string::npos) {
-                    SavedCharacter sc;
+                    Models::SavedCharacter sc;
                     sc.name = key;
                     sc.diff = val.substr(0, commaPos);
                     sc.pos = std::stoi(val.substr(commaPos + 1));
@@ -188,3 +191,6 @@ void GameState::PeekSaveFile(int slot, bool& outIsEmpty, std::string& outDisplay
 
     outDisplayText = scriptName + " (Line: " + lineNum + ")";
 }
+
+}  // namespace Services
+}  // namespace PrismatiX

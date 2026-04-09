@@ -12,10 +12,27 @@
 
 #include "Utils/LRUCache.h"
 
+namespace PrismatiX {
+namespace Services {
+
 struct PDXFileEntry {
     std::string archivePath;
     uint64_t offset;
     uint64_t size;
+};
+
+struct FontAsset {
+    TTF_Font* baseFont = nullptr;
+    std::vector<TTF_Font*> outlineFonts;
+    std::vector<char> buffer;
+    int size = 0;
+
+    ~FontAsset() {
+        if (baseFont) TTF_CloseFont(baseFont);
+        for (auto* font : outlineFonts) {
+            if (font) TTF_CloseFont(font);
+        }
+    }
 };
 
 class ResourceManager {
@@ -50,14 +67,15 @@ private:
     std::unordered_map<std::string, std::string> diskFileMap;  // filename -> full path
 
     // Cache data
-    std::unique_ptr<LRUCache<std::string, SDL_Texture*>> textureCache;
-    std::unique_ptr<LRUCache<std::string, TTF_Font*>> fontCache;
-    std::unordered_map<std::string, TTF_Font*> outlineFontCache;
-    std::unordered_map<std::string, int> fontSizeByKey;
-    std::unordered_map<TTF_Font*, std::string> fontReverseMap;
-    std::unique_ptr<LRUCache<std::string, Mix_Chunk*>> sfxCache;
+    std::unique_ptr<PrismatiX::Utils::LRUCache<std::string, SDL_Texture*>> textureCache;
+    std::unique_ptr<PrismatiX::Utils::LRUCache<std::string, FontAsset*>> fontCache;
+    std::unique_ptr<PrismatiX::Utils::LRUCache<std::string, Mix_Chunk*>> sfxCache;
 
-    std::unordered_map<std::string, std::vector<char>> fontBuffers;
+    // Helper map to find FontAsset by base font pointer
+    std::unordered_map<TTF_Font*, std::string> fontReverseMap;
 
     std::string GetFontKey(const std::string& fileName, int fontSize);
 };
+
+}  // namespace Services
+}  // namespace PrismatiX

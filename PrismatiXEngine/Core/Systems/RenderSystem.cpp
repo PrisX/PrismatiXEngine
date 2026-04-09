@@ -5,13 +5,15 @@
 #include "Core/EngineConfig.h"
 #include "Core/Services/ResourceManager.h"
 
-RenderSystem::RenderSystem(SDL_Renderer* ren, ResourceManager& resMgr) 
-    : renderer(ren), resourceManager(resMgr), 
-      textCache(200, [](CachedTexture ct) { if (ct.texture) SDL_DestroyTexture(ct.texture); }) {}
+namespace PrismatiX {
+namespace Systems {
 
-RenderSystem::~RenderSystem() {
-    textCache.Clear();
-}
+RenderSystem::RenderSystem(SDL_Renderer* ren, Services::ResourceManager& resMgr)
+    : renderer(ren), resourceManager(resMgr), textCache(200, [](CachedTexture ct) {
+          if (ct.texture) SDL_DestroyTexture(ct.texture);
+      }) {}
+
+RenderSystem::~RenderSystem() { textCache.Clear(); }
 
 void RenderSystem::DrawTexture(SDL_Texture* tex, int x, int y, float scale) {
     if (!tex || !renderer) return;
@@ -137,8 +139,8 @@ SDL_Surface* RenderSystem::RenderTextSurface(TTF_Font* font, const std::string& 
 
 void RenderSystem::DrawText(TTF_Font* font, const std::string& text, SDL_Color color, int x, int y) {
     if (!font || !renderer || text.empty()) return;
-    
-    TextCacheKey key{ text, font, color, {0,0,0,0}, 0, 0 };
+
+    TextCacheKey key{ text, font, color, { 0, 0, 0, 0 }, 0, 0 };
     CachedTexture ct;
     if (!textCache.Get(key, ct)) {
         SDL_Surface* surfaceMessage = TTF_RenderUTF8_Blended(font, text.c_str(), color);
@@ -162,7 +164,7 @@ void RenderSystem::DrawTextWithOutline(TTF_Font* font, const std::string& text, 
     if (shadow) {
         const int shadowDX = 3, shadowDY = 3;
         SDL_Color black = { 0, 0, 0, 255 };
-        TextCacheKey sKey{ text, font, black, {0,0,0,0}, -1, wrapLength }; // -1 for shadow
+        TextCacheKey sKey{ text, font, black, { 0, 0, 0, 0 }, -1, wrapLength };  // -1 for shadow
         CachedTexture sct;
         if (!textCache.Get(sKey, sct)) {
             SDL_Surface* sSurf = RenderTextSurface(font, text, black, wrapLength);
@@ -189,10 +191,10 @@ void RenderSystem::DrawTextWithOutline(TTF_Font* font, const std::string& text, 
         }
     }
 
-    CachedTexture bgct = {nullptr, 0, 0};
+    CachedTexture bgct = { nullptr, 0, 0 };
     TTF_Font* outlineFont = resourceManager.GetOutlineFont(font, outlineSize);
     if (outlineFont) {
-        TextCacheKey bgKey{ text, outlineFont, outlineColor, {0,0,0,0}, outlineSize, wrapLength };
+        TextCacheKey bgKey{ text, outlineFont, outlineColor, { 0, 0, 0, 0 }, outlineSize, wrapLength };
         if (!textCache.Get(bgKey, bgct)) {
             SDL_Surface* bgSurf = RenderTextSurface(outlineFont, text, outlineColor, wrapLength);
             if (bgSurf) {
@@ -205,7 +207,7 @@ void RenderSystem::DrawTextWithOutline(TTF_Font* font, const std::string& text, 
         }
     }
 
-    TextCacheKey fgKey{ text, font, textColor, {0,0,0,0}, 0, wrapLength };
+    TextCacheKey fgKey{ text, font, textColor, { 0, 0, 0, 0 }, 0, wrapLength };
     CachedTexture fgct;
     if (!textCache.Get(fgKey, fgct)) {
         SDL_Surface* fgSurf = RenderTextSurface(font, text, textColor, wrapLength);
@@ -247,3 +249,6 @@ void RenderSystem::DrawTextWithOutlineCentered(TTF_Font* font, const std::string
     int y = bounds.y + (bounds.h - h / EngineConfig::kFontOversample) / 2 - outlineSize;
     DrawTextWithOutline(font, text, textColor, outlineColor, outlineSize, x, y, 0, alpha, shadow);
 }
+
+}  // namespace Systems
+}  // namespace PrismatiX

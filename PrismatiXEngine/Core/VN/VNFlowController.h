@@ -1,21 +1,53 @@
 #pragma once
 
-#include <functional>
 #include <map>
 #include <memory>
+#include <queue>
 #include <string>
 #include <vector>
-#include <queue>
 
-#include "Engine.h"
-#include "Services/VNScriptParser.h"
-#include "VNDialogueSystem.h"
-#include "VNStage.h"
-#include "Models.h"
+#include "Core/VN/Commands/ICommandHandler.h"
+#include "Core/VN/VNDialogueSystem.h"
+#include "Core/VN/VNStage.h"
+
+namespace sol {
+class state;
+}
+
+namespace PrismatiX {
+namespace Models {
+struct VNCommand;
+}
+namespace Services {
+class ResourceManager;
+class GameState;
+}
+namespace Systems {
+class AudioSystem;
+class RenderSystem;
+}
+namespace UI {
+class UIManager;
+}
+namespace VN {
+class VNScriptParser;
+}
+}  // namespace PrismatiX
+
+namespace PrismatiX {
+namespace VN {
 
 class VNFlowController {
 public:
-    VNFlowController(Engine& engine);
+    VNFlowController(
+        Services::ResourceManager& resourceManager,
+        VNScriptParser& scriptingEngine,
+        Services::GameState& gameState,
+        Systems::AudioSystem& audioSystem,
+        Systems::RenderSystem& renderSystem,
+        UI::UIManager& uiManager,
+        sol::state& luaState
+    );
     ~VNFlowController() = default;
 
     void LoadScript(const std::string& scriptName);
@@ -39,12 +71,17 @@ public:
     void SelectChoice(int index);
 
 private:
-    Engine& engine;
+    Services::ResourceManager& resourceManager;
+    VNScriptParser& scriptingEngine;
+    Services::GameState& gameState;
+    Systems::AudioSystem& audioSystem;
+    UI::UIManager& uiManager;
+    sol::state& luaState;
     VNDialogueSystem dialogueSystem;
     VNStage stage;
 
     std::string currentScriptName;
-    std::vector<VNCommand> commands;
+    std::vector<Models::VNCommand> commands;
     int currentLine = 0;
     bool isFinished = false;
     bool hasStarted = false;
@@ -57,16 +94,11 @@ private:
         bool active = false;
     } pendingJump;
 
-    // Command Handlers
-    using CommandHandler = std::function<void(const VNCommand&)>;
-    std::map<std::string, CommandHandler> handlers;
+    std::map<std::string, std::unique_ptr<Commands::ICommandHandler>> handlers;
     void InitHandlers();
 
     void ExecuteNext();
-
-    void CmdText(const VNCommand& cmd);
-    void CmdBg(const VNCommand& cmd);
-    void CmdChar(const VNCommand& cmd);
-    void CmdVar(const VNCommand& cmd);
-    void CmdJump(const VNCommand& cmd);
 };
+
+}  // namespace VN
+}  // namespace PrismatiX

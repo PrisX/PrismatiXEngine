@@ -2,6 +2,9 @@
 
 #include <algorithm>
 
+namespace PrismatiX {
+namespace VN {
+
 namespace {
 std::vector<std::string> SplitUtf8Chars(const std::string& text) {
     std::vector<std::string> chars;
@@ -79,3 +82,6 @@ void VNDialogueSystem::ShowAll() {
     state.currentIndex = state.totalChars;
     state.isFinished = true;
 }
+
+}  // namespace VN
+}  // namespace PrismatiX

@@ -4,6 +4,7 @@ PlayScene.__index = PlayScene
 local Banner = include("Scripts/components/banner.lua")
 local DialogueBox = include("Scripts/components/dialogue_box.lua")
 local BacklogMenu = include("Scripts/components/backlog_menu.lua")
+local Toolbar = include("Scripts/components/toolbar.lua")
 
 function PlayScene.new(fontName, fontSize)
     local self = setmetatable({}, PlayScene)
@@ -12,15 +13,18 @@ function PlayScene.new(fontName, fontSize)
     self.vn = nil
     self.dialogueBox = nil
     self.backlog = nil
+    self.toolbar = nil
     self.bgmBanner = nil
     self.chapterBanner = nil
     return self
 end
 
 function PlayScene:enter()
+    local winW, winH = Engine.GetLogicalSize()
     self.vn = Engine.CreateVNController(self.fontName, self.fontSize, self.fontName, self.fontSize)
     self.dialogueBox = DialogueBox.new(self.fontName, 26)
     self.backlog = BacklogMenu.new(self.fontName, 22)
+    self.toolbar = Toolbar.new(self.fontName, 18, winH)
     
     self.bgmBanner = Banner.new({
         y = 20, stayDuration = 150,
@@ -40,6 +44,17 @@ function PlayScene:update(mx, my, leftClick, rightClick)
     self.backlog:update(mx, my, leftClick, rightClick)
 
     if self.backlog.targetAlpha > 0 then
+        return
+    end
+
+    local toolbarCmd = self.toolbar:update(mx, my, leftClick)
+    if toolbarCmd == "OpenSave" then
+        _G.Notification:notify("Save Menu Coming Soon", "info")
+    elseif toolbarCmd == "OpenLoad" then
+        _G.Notification:notify("Load Menu Coming Soon", "info")
+    end
+
+    if self.toolbar:is_mouse_over(my) then
         return
     end
 
@@ -74,6 +89,7 @@ function PlayScene:render(winW, winH)
     self.chapterBanner:render()
 
     self.backlog:render(winW, winH)
+    self.toolbar:render(winW)
 end
 
 function PlayScene:exit()

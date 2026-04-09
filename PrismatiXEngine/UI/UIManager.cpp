@@ -3,7 +3,10 @@
 #include "Core/EngineConfig.h"
 #include "Core/Systems/RenderSystem.h"
 
-UIManager::UIManager(RenderSystem& renSys) : renderSystem(renSys) {}
+namespace PrismatiX {
+namespace UI {
+
+UIManager::UIManager(Systems::RenderSystem& renSys) : renderSystem(renSys) {}
 
 void UIManager::AddTextButton(const std::string& text, TTF_Font* font, SDL_Color idle, SDL_Color hover, const std::string& target, const std::string& transitionStyle, const std::string& transitionSpeed, const std::string& transitionEase) {
     UIButton btn;
@@ -77,3 +80,6 @@ void UIManager::Render() {
         renderSystem.DrawTextWithOutline(btn.font, btn.text, col, { 0, 0, 0, 255 }, 2, btn.rect.x, btn.rect.y);
     }
 }
+
+}  // namespace UI
+}  // namespace PrismatiX

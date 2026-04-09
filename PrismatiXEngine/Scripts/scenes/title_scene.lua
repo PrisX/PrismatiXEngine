@@ -27,6 +27,7 @@ function TitleScene:update(mx, my, leftClick, rightClick)
         end)
     elseif action == "exit" then
         _G.Notification:notify("Exit requested", "info")
+        Engine.Quit()
     end
 end
 

@@ -6,7 +6,10 @@
 #include <vector>
 #include <memory>
 
-class RenderSystem;
+namespace PrismatiX { namespace Systems { class RenderSystem; } }
+
+namespace PrismatiX {
+namespace UI {
 
 struct UIButton {
     std::string text;
@@ -23,7 +26,7 @@ struct UIButton {
 
 class UIManager {
 public:
-    UIManager(RenderSystem& renSys);
+    UIManager(Systems::RenderSystem& renSys);
     ~UIManager() = default;
 
     void AddTextButton(const std::string& text, TTF_Font* font, SDL_Color idle, SDL_Color hover, const std::string& target, const std::string& transitionStyle = "", const std::string& transitionSpeed = "", const std::string& transitionEase = "");
@@ -37,6 +40,9 @@ public:
     void Render();
 
 private:
-    RenderSystem& renderSystem;
+    Systems::RenderSystem& renderSystem;
     std::vector<UIButton> buttons;
 };
+
+}  // namespace UI
+}  // namespace PrismatiX

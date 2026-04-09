@@ -3,12 +3,19 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 
+#include <cstring>
+#include <functional>
 #include <memory>
 #include <string>
 
 #include "Utils/LRUCache.h"
 
+namespace PrismatiX {
+namespace Services {
 class ResourceManager;
+}
+
+namespace Systems {
 
 struct TextCacheKey {
     std::string text;
@@ -18,24 +25,38 @@ struct TextCacheKey {
     int outlineSize;
     Uint32 wrapLength;
 
-    bool operator==(const TextCacheKey& o) const {
-        return text == o.text && font == o.font && outlineSize == o.outlineSize && wrapLength == o.wrapLength && *((Uint32*)&color) == *((Uint32*)&o.color) && *((Uint32*)&outlineColor) == *((Uint32*)&o.outlineColor);
+    bool operator==(const TextCacheKey& other) const {
+        return text == other.text && font == other.font && outlineSize == other.outlineSize && wrapLength == other.wrapLength && std::memcmp(&color, &other.color, sizeof(Uint32)) == 0 && std::memcmp(&outlineColor, &other.outlineColor, sizeof(Uint32)) == 0;
     }
 };
 
+}  // namespace Systems
+}  // namespace PrismatiX
+
 namespace std {
 template <>
-struct hash<TextCacheKey> {
-    std::size_t operator()(const TextCacheKey& k) const {
-        size_t h = std::hash<std::string>{}(k.text);
+struct hash<PrismatiX::Systems::TextCacheKey> {
+    std::size_t operator()(const PrismatiX::Systems::TextCacheKey& key) const {
+        Uint32 colorValue = 0;
+        Uint32 outlineColorValue = 0;
+        std::memcpy(&colorValue, &key.color, sizeof(Uint32));
+        std::memcpy(&outlineColorValue, &key.outlineColor, sizeof(Uint32));
+
         // Hash combine: https://stackoverflow.com/a/2595226
-        h ^= std::hash<void*>{}(k.font) + 0x9e3779b9 + (h << 6) + (h >> 2);
-        h ^= std::hash<Uint32>{}(*((Uint32*)&k.color)) + 0x9e3779b9 + (h << 6) + (h >> 2);
-        h ^= std::hash<int>{}(k.outlineSize) + 0x9e3779b9 + (h << 6) + (h >> 2);
+
+        std::size_t h = std::hash<std::string>{}(key.text);
+        h ^= std::hash<void*>{}(key.font) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        h ^= std::hash<Uint32>{}(colorValue) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        h ^= std::hash<Uint32>{}(outlineColorValue) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        h ^= std::hash<int>{}(key.outlineSize) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        h ^= std::hash<Uint32>{}(key.wrapLength) + 0x9e3779b9 + (h << 6) + (h >> 2);
         return h;
     }
 };
 }  // namespace std
+
+namespace PrismatiX {
+namespace Systems {
 
 struct CachedTexture {
     SDL_Texture* texture;
@@ -53,7 +74,7 @@ enum class DisplayMode { TopLeft, TopRight, BottomLeft, BottomRight, Top, Bottom
 
 class RenderSystem {
 public:
-    RenderSystem(SDL_Renderer* ren, ResourceManager& resMgr);
+    RenderSystem(SDL_Renderer* ren, Services::ResourceManager& resMgr);
     ~RenderSystem();
 
     // Texture Rendering
@@ -72,14 +93,19 @@ public:
         cameraOffsetY = y;
     }
 
+    SDL_Renderer* GetRenderer() const { return renderer; }
+
 private:
     SDL_Renderer* renderer;
-    ResourceManager& resourceManager;
+    Services::ResourceManager& resourceManager;
 
     int cameraOffsetX = 0;
     int cameraOffsetY = 0;
 
-    LRUCache<TextCacheKey, CachedTexture> textCache;
+    PrismatiX::Utils::LRUCache<TextCacheKey, CachedTexture> textCache;
 
     SDL_Surface* RenderTextSurface(TTF_Font* font, const std::string& text, SDL_Color color, Uint32 wrapLength);
 };
+
+}  // namespace Systems
+}  // namespace PrismatiX

@@ -10,6 +10,9 @@
 
 #pragma execution_character_set("utf-8")
 
+namespace PrismatiX {
+namespace App {
+
 Engine::Engine() : isRunning(false), window(nullptr), renderer(nullptr), leftClick(false), rightClick(false), mouseWheelY(0) {}
 
 Engine::~Engine() { Clean(); }
@@ -54,14 +57,14 @@ bool Engine::Initialize(const std::string& title, int width, int height) {
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
 
     PX_LOG_INFO("Initializing Engine Services...");
-    resourceManager = std::make_unique<ResourceManager>(renderer);
-    scriptingEngine = std::make_unique<VNScriptParser>(*resourceManager);
-    gameState = std::make_unique<GameState>();
+    resourceManager = std::make_unique<Services::ResourceManager>(renderer);
+    scriptingEngine = std::make_unique<VN::VNScriptParser>(*resourceManager);
+    gameState = std::make_unique<Services::GameState>();
 
     PX_LOG_INFO("Initializing Engine Systems...");
-    renderSystem = std::make_unique<RenderSystem>(renderer, *resourceManager);
-    audioSystem = std::make_unique<AudioSystem>(*resourceManager);
-    uiManager = std::make_unique<UIManager>(*renderSystem);
+    renderSystem = std::make_unique<Systems::RenderSystem>(renderer, *resourceManager);
+    audioSystem = std::make_unique<Systems::AudioSystem>(*resourceManager);
+    uiManager = std::make_unique<UI::UIManager>(*renderSystem);
 
     SDL_RenderSetLogicalSize(renderer, width, height);
 
@@ -104,9 +107,7 @@ void Engine::ClearScreen() {
     SDL_RenderClear(renderer);
 }
 
-void Engine::PresentScreen() {
-    SDL_RenderPresent(renderer);
-}
+void Engine::PresentScreen() { SDL_RenderPresent(renderer); }
 
 void Engine::SetCameraOffset(int x, int y) {
     if (renderSystem) renderSystem->SetCameraOffset(x, y);
@@ -130,3 +131,6 @@ void Engine::Clean() {
 }
 
 void Engine::BindEngineToLua() { RegisterEngineLuaBindings(lua, *this); }
+
+}  // namespace App
+}  // namespace PrismatiX

@@ -14,33 +14,24 @@
 
 namespace fs = std::filesystem;
 
+namespace PrismatiX {
+namespace Services {
+
 ResourceManager::ResourceManager(SDL_Renderer* renderer, size_t texLimit, size_t fontLimit, size_t sfxLimit) : renderer(renderer) {
-    textureCache = std::make_unique<LRUCache<std::string, SDL_Texture*>>(texLimit, [](SDL_Texture* tex) {
+    textureCache = std::make_unique<PrismatiX::Utils::LRUCache<std::string, SDL_Texture*>>(texLimit, [](SDL_Texture* tex) {
         if (tex) SDL_DestroyTexture(tex);
     });
 
-    sfxCache = std::make_unique<LRUCache<std::string, Mix_Chunk*>>(sfxLimit, [](Mix_Chunk* chunk) {
+    sfxCache = std::make_unique<PrismatiX::Utils::LRUCache<std::string, Mix_Chunk*>>(sfxLimit, [](Mix_Chunk* chunk) {
         if (chunk) Mix_FreeChunk(chunk);
     });
 
-    fontCache = std::make_unique<LRUCache<std::string, TTF_Font*>>(fontLimit, [this](TTF_Font* font) {
-        if (font) {
-            auto it = fontReverseMap.find(font);
-            if (it != fontReverseMap.end()) {
-                std::string key = it->second;
-                for (auto olIt = outlineFontCache.begin(); olIt != outlineFontCache.end();) {
-                    if (olIt->first.find(key + "_ol") == 0) {
-                        TTF_CloseFont(olIt->second);
-                        olIt = outlineFontCache.erase(olIt);
-                    }
-                    else
-                        ++olIt;
-                }
-                fontReverseMap.erase(it);
-                fontSizeByKey.erase(key);
-                fontBuffers.erase(key);
+    fontCache = std::make_unique<PrismatiX::Utils::LRUCache<std::string, FontAsset*>>(fontLimit, [this](FontAsset* asset) {
+        if (asset) {
+            if (asset->baseFont) {
+                fontReverseMap.erase(asset->baseFont);
             }
-            TTF_CloseFont(font);
+            delete asset;
         }
     });
 
@@ -157,41 +148,63 @@ SDL_Texture* ResourceManager::LoadTexture(const std::string& fileName) {
 
 TTF_Font* ResourceManager::LoadFont(const std::string& fileName, int fontSize) {
     std::string key = GetFontKey(fileName, fontSize);
-    TTF_Font* font = nullptr;
-    if (fontCache->Get(key, font)) return font;
+    FontAsset* asset = nullptr;
+    if (fontCache->Get(key, asset)) {
+        return asset->baseFont;
+    }
+
     PX_LOG_TRACE("Loading font: {} (Size: {})", fileName, fontSize);
     std::vector<char> buffer = ExtractFile(fileName);
     if (buffer.empty()) return nullptr;
-    fontBuffers[key] = std::move(buffer);
-    SDL_RWops* rw = SDL_RWFromMem(fontBuffers[key].data(), (int)fontBuffers[key].size());
-    if (!rw) return nullptr;
-    font = TTF_OpenFontRW(rw, 1, fontSize * EngineConfig::kFontOversample);
-    if (!font) {
-        PX_LOG_ERROR("Font load failed ({}): {}", fileName, TTF_GetError());
-        fontBuffers.erase(key);
+
+    asset = new FontAsset();
+    asset->buffer = std::move(buffer);
+    asset->size = fontSize;
+
+    SDL_RWops* rw = SDL_RWFromMem(asset->buffer.data(), (int)asset->buffer.size());
+    if (!rw) {
+        delete asset;
         return nullptr;
     }
-    fontCache->Put(key, font);
-    fontReverseMap[font] = key;
-    fontSizeByKey[key] = fontSize;
-    return font;
+
+    asset->baseFont = TTF_OpenFontRW(rw, 1, fontSize * EngineConfig::kFontOversample);
+    if (!asset->baseFont) {
+        PX_LOG_ERROR("Font load failed ({}): {}", fileName, TTF_GetError());
+        delete asset;
+        return nullptr;
+    }
+
+    fontCache->Put(key, asset);
+    fontReverseMap[asset->baseFont] = key;
+    return asset->baseFont;
 }
 
 TTF_Font* ResourceManager::GetOutlineFont(TTF_Font* baseFont, int outlineSize) {
+    if (!baseFont || outlineSize < 0) return nullptr;
+
     auto keyIt = fontReverseMap.find(baseFont);
     if (keyIt == fontReverseMap.end()) return nullptr;
-    const std::string& baseKey = keyIt->second;
-    std::string olKey = baseKey + "_ol" + std::to_string(outlineSize);
-    auto cached = outlineFontCache.find(olKey);
-    if (cached != outlineFontCache.end()) return cached->second;
-    auto bufIt = fontBuffers.find(baseKey);
-    auto sizeIt = fontSizeByKey.find(baseKey);
-    if (bufIt == fontBuffers.end() || sizeIt == fontSizeByKey.end()) return nullptr;
-    SDL_RWops* rw = SDL_RWFromMem(bufIt->second.data(), (int)bufIt->second.size());
-    TTF_Font* olFont = TTF_OpenFontRW(rw, 1, sizeIt->second * EngineConfig::kFontOversample);
+
+    FontAsset* asset = nullptr;
+    if (!fontCache->Get(keyIt->second, asset)) return nullptr;
+
+    if (asset->outlineFonts.size() <= (size_t)outlineSize) {
+        asset->outlineFonts.resize(outlineSize + 1, nullptr);
+    }
+
+    if (asset->outlineFonts[outlineSize]) {
+        return asset->outlineFonts[outlineSize];
+    }
+
+    SDL_RWops* rw = SDL_RWFromMem(asset->buffer.data(), (int)asset->buffer.size());
+    if (!rw) return nullptr;
+
+    TTF_Font* olFont = TTF_OpenFontRW(rw, 1, asset->size * EngineConfig::kFontOversample);
     if (!olFont) return nullptr;
+
     TTF_SetFontOutline(olFont, outlineSize * EngineConfig::kFontOversample);
-    outlineFontCache[olKey] = olFont;
+    asset->outlineFonts[outlineSize] = olFont;
+
     return olFont;
 }
 
@@ -228,12 +241,6 @@ Mix_Music* ResourceManager::LoadBGM(const std::string& fileName, std::vector<cha
 void ResourceManager::CleanTextures() { textureCache->Clear(); }
 void ResourceManager::CleanFonts() {
     fontCache->Clear();
-    for (auto& pair : outlineFontCache) {
-        if (pair.second) TTF_CloseFont(pair.second);
-    }
-    outlineFontCache.clear();
-    fontBuffers.clear();
-    fontSizeByKey.clear();
     fontReverseMap.clear();
 }
 void ResourceManager::CleanAudio() { sfxCache->Clear(); }
@@ -242,3 +249,6 @@ void ResourceManager::CleanAll() {
     CleanFonts();
     CleanAudio();
 }
+
+}  // namespace Services
+}  // namespace PrismatiX

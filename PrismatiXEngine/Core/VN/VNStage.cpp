@@ -5,10 +5,16 @@
 #include <numbers>
 
 #include "Core/EngineConfig.h"
+#include "Core/Services/ResourceManager.h"
+#include "Core/Systems/RenderSystem.h"
+#include "Core/VN/Models.h"
 #include "Utils/EasingUtils.h"
 #include "Utils/TransitionUtils.h"
 
-VNStage::VNStage(ResourceManager& resMgr, RenderSystem& renSys) : resourceManager(resMgr), renderSystem(renSys) {}
+namespace PrismatiX {
+namespace VN {
+
+VNStage::VNStage(Services::ResourceManager& resMgr, Systems::RenderSystem& renSys) : resourceManager(resMgr), renderSystem(renSys) {}
 
 void VNStage::SetBackground(const std::string& bgName, const std::string& transition) {
     if (currentBgName == bgName) return;
@@ -59,7 +65,7 @@ void VNStage::ClearCharacter(const std::string& name, const std::string& transit
 void VNStage::Update() {
     // Background fade
     if (currentBgTexture && bgFadeAlpha < 255.0f) {
-        TransitionUtils::FadeIn(bgFadeAlpha, 10.0f);
+        PrismatiX::Utils::FadeIn(bgFadeAlpha, 10.0f);
         if (bgFadeAlpha >= 255.0f) {
             previousBgTexture = nullptr;
         }
@@ -69,8 +75,8 @@ void VNStage::Update() {
     for (auto it = activeCharacters.begin(); it != activeCharacters.end();) {
         auto& chara = it->second;
 
-        EasingUtils::ExpDecay(chara.alpha, chara.targetAlpha, 0.08f);
-        EasingUtils::ExpDecay(chara.currentX, chara.targetX, 0.15f);
+        PrismatiX::Utils::ExpDecay(chara.alpha, chara.targetAlpha, 0.08f);
+        PrismatiX::Utils::ExpDecay(chara.currentX, chara.targetX, 0.15f);
 
         if (chara.animationActive) {
             chara.animationFrame++;
@@ -105,7 +111,7 @@ void VNStage::Update() {
         for (auto& pair : activeCharacters) {
             sortedCharacters.push_back(&pair.second);
         }
-        std::sort(sortedCharacters.begin(), sortedCharacters.end(), [](ActiveCharacter* a, ActiveCharacter* b) { return a->pos < b->pos; });
+        std::sort(sortedCharacters.begin(), sortedCharacters.end(), [](Models::ActiveCharacter* a, Models::ActiveCharacter* b) { return a->pos < b->pos; });
         sortDirty = false;
     }
 }
@@ -113,10 +119,10 @@ void VNStage::Update() {
 void VNStage::Render() {
     // Render Background
     if (previousBgTexture) {
-        renderSystem.DrawTextureAuto(previousBgTexture, DisplayMode::Fill, 255);
+        renderSystem.DrawTextureAuto(previousBgTexture, Systems::DisplayMode::Fill, 255);
     }
     if (currentBgTexture) {
-        renderSystem.DrawTextureAuto(currentBgTexture, DisplayMode::Fill, static_cast<Uint8>(bgFadeAlpha));
+        renderSystem.DrawTextureAuto(currentBgTexture, Systems::DisplayMode::Fill, static_cast<Uint8>(bgFadeAlpha));
     }
 
     // Render Characters
@@ -141,11 +147,11 @@ void VNStage::Render() {
 }
 
 void VNStage::RecalculatePositions() {
-    std::vector<ActiveCharacter*> nonExiting;
+    std::vector<Models::ActiveCharacter*> nonExiting;
     for (auto& pair : activeCharacters) {
         if (!pair.second.isExiting) nonExiting.push_back(&pair.second);
     }
-    std::sort(nonExiting.begin(), nonExiting.end(), [](ActiveCharacter* a, ActiveCharacter* b) { return a->pos < b->pos; });
+    std::sort(nonExiting.begin(), nonExiting.end(), [](Models::ActiveCharacter* a, Models::ActiveCharacter* b) { return a->pos < b->pos; });
 
     int total = (int)nonExiting.size();
     if (total > 0) {
@@ -157,8 +163,8 @@ void VNStage::RecalculatePositions() {
     sortDirty = true;
 }
 
-std::vector<SavedCharacter> VNStage::GetSavedCharacters() const {
-    std::vector<SavedCharacter> saved;
+std::vector<Models::SavedCharacter> VNStage::GetSavedCharacters() const {
+    std::vector<Models::SavedCharacter> saved;
     for (auto& pair : activeCharacters) {
         if (!pair.second.isExiting) {
             saved.push_back({ pair.second.name, pair.second.diff, pair.second.pos });
@@ -167,7 +173,7 @@ std::vector<SavedCharacter> VNStage::GetSavedCharacters() const {
     return saved;
 }
 
-void VNStage::RestoreCharacters(const std::vector<SavedCharacter>& savedChars) {
+void VNStage::RestoreCharacters(const std::vector<Models::SavedCharacter>& savedChars) {
     activeCharacters.clear();
     for (const auto& sc : savedChars) {
         auto& ac = activeCharacters[sc.name];
@@ -190,3 +196,6 @@ void VNStage::RestoreBackground(const std::string& bgName) {
     previousBgTexture = nullptr;
     bgFadeAlpha = 255.0f;
 }
+
+}  // namespace VN
+}  // namespace PrismatiX

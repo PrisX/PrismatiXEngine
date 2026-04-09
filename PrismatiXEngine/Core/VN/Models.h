@@ -6,23 +6,19 @@
 #include <string>
 #include <vector>
 
+#include "Core/Models/SaveData.h"
+#include "Core/Models/VNCommand.h"
 #include "Utils/EasingUtils.h"
 #include "Utils/TransitionUtils.h"
 
-class Engine;
+namespace PrismatiX {
+namespace Systems {
+class RenderSystem;
+}
+}  // namespace PrismatiX
 
-struct BacklogEntry {
-    std::string speaker;
-    std::string text;
-    std::string voice;
-    bool isChoice = false;
-};
-
-struct SavedCharacter {
-    std::string name;
-    std::string diff;
-    int pos;
-};
+namespace PrismatiX {
+namespace Models {
 
 struct ActiveCharacter {
     std::string name;
@@ -80,7 +76,7 @@ struct NotificationOverlay {
         const float slideFactor = 0.18f;
         switch (state) {
             case State::SlideIn:
-                if (EasingUtils::ExpDecay(currentX, targetX, slideFactor)) {
+                if (PrismatiX::Utils::ExpDecay(currentX, targetX, slideFactor)) {
                     state = State::Staying;
                     stayTimer = (type == Type::Chapter) ? 300 : 180;
                 }
@@ -89,11 +85,14 @@ struct NotificationOverlay {
                 if (--stayTimer <= 0) state = State::FadeOut;
                 break;
             case State::FadeOut:
-                if (TransitionUtils::FadeOut(alpha, 4.0f)) state = State::Idle;
+                if (PrismatiX::Utils::FadeOut(alpha, 4.0f)) state = State::Idle;
                 break;
             default:
                 break;
         }
     }
-    void Render(Engine& engine, TTF_Font* font) const;
+    void Render(Systems::RenderSystem& renderSystem, TTF_Font* font) const;
 };
+
+}  // namespace Models
+}  // namespace PrismatiX

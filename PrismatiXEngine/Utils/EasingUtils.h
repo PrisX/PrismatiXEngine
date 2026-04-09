@@ -4,7 +4,8 @@
 
 // 公式我都從 https://easings.net/zh-tw 偷來的
 
-namespace EasingUtils {
+namespace PrismatiX {
+namespace Utils {
 inline float Linear(float t) { return t; }
 
 inline float EaseInQuad(float t) { return t * t; }
@@ -48,4 +49,5 @@ inline bool ExpDecay(float& current, float target, float factor, float snapThres
     return false;
 }
 
-}  // namespace EasingUtils
+}  // namespace Utils
+}  // namespace PrismatiX

@@ -2,6 +2,8 @@
 #include <iostream>
 #include <string>
 
+#include <SDL2/SDL.h>
+
 #include "Core/Engine.h"
 #include "Core/EngineConfig.h"
 #include "Utils/Logger.h"
@@ -9,7 +11,25 @@
 #pragma execution_character_set("utf-8")
 
 namespace {
-bool RunLuaEntrypoint(Engine& engine, const std::string& scriptPath) {
+void SetWorkingDirectoryToExecutable(int argc, char* argv[]) {
+    std::filesystem::path executableDir;
+
+    char* basePath = SDL_GetBasePath();
+    if (basePath) {
+        executableDir = std::filesystem::path(basePath);
+        SDL_free(basePath);
+    }
+    else if (argc > 0 && argv && argv[0]) {
+        executableDir = std::filesystem::path(argv[0]).parent_path();
+    }
+
+    if (executableDir.empty()) return;
+
+    std::error_code ec;
+    std::filesystem::current_path(executableDir, ec);
+}
+
+bool RunLuaEntrypoint(PrismatiX::App::Engine& engine, const std::string& scriptPath) {
     PX_LOG_INFO("Loading entrypoint: {}", scriptPath);
     std::string script = engine.GetResourceManager().LoadText(scriptPath);
     if (script.empty()) {
@@ -42,10 +62,11 @@ bool RunLuaEntrypoint(Engine& engine, const std::string& scriptPath) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
+    SetWorkingDirectoryToExecutable(argc, argv);
     std::filesystem::create_directories("logs");
     Logger::Initialize();
 
-    Engine engine;
+    PrismatiX::App::Engine engine;
 
     if (!engine.Initialize(EngineConfig::kGameTitle, EngineConfig::kDefaultScreenWidth, EngineConfig::kDefaultScreenHeight)) {
         PX_LOG_CRITICAL("Engine initialization failed.");

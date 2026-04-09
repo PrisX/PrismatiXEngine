@@ -10,11 +10,33 @@
 #include "EngineConfig.h"
 #include "Services/GameState.h"
 #include "Services/ResourceManager.h"
-#include "Services/VNScriptParser.h"
 #include "Systems/AudioSystem.h"
 #include "Systems/RenderSystem.h"
 #include "UI/UIManager.h"
 #include "Utils/Logger.h"
+#include "VN/VNScriptParser.h"
+
+// Forward declarations
+namespace PrismatiX {
+namespace Services {
+class ResourceManager;
+class GameState;
+}  // namespace Services
+
+namespace Systems {
+class AudioSystem;
+class RenderSystem;
+}  // namespace Systems
+
+namespace UI {
+class UIManager;
+}
+
+namespace VN {
+class VNScriptParser;
+}
+
+namespace App {
 
 class Engine {
 public:
@@ -23,6 +45,7 @@ public:
 
     bool Initialize(const std::string& title, int width, int height);
     void Clean();
+    void Quit() { isRunning = false; }
 
     bool IsRunning() const { return isRunning; }
     SDL_Renderer* GetRenderer() const { return renderer; }
@@ -47,12 +70,12 @@ public:
     sol::state& GetLuaState() { return lua; }
 
     // Services Accessors
-    ResourceManager& GetResourceManager() { return *resourceManager; }
-    VNScriptParser& GetScriptingEngine() { return *scriptingEngine; }
-    GameState& GetGameState() { return *gameState; }
-    AudioSystem& GetAudioSystem() { return *audioSystem; }
-    RenderSystem& GetRenderSystem() { return *renderSystem; }
-    UIManager& GetUIManager() { return *uiManager; }
+    Services::ResourceManager& GetResourceManager() { return *resourceManager; }
+    VN::VNScriptParser& GetScriptingEngine() { return *scriptingEngine; }
+    Services::GameState& GetGameState() { return *gameState; }
+    Systems::AudioSystem& GetAudioSystem() { return *audioSystem; }
+    Systems::RenderSystem& GetRenderSystem() { return *renderSystem; }
+    UI::UIManager& GetUIManager() { return *uiManager; }
 
 private:
     int lastWinW = EngineConfig::kDefaultScreenWidth;
@@ -69,12 +92,15 @@ private:
     sol::state lua;
 
     // Core Services
-    std::unique_ptr<ResourceManager> resourceManager;
-    std::unique_ptr<VNScriptParser> scriptingEngine;
-    std::unique_ptr<GameState> gameState;
+    std::unique_ptr<Services::ResourceManager> resourceManager;
+    std::unique_ptr<VN::VNScriptParser> scriptingEngine;
+    std::unique_ptr<Services::GameState> gameState;
 
     // Systems
-    std::unique_ptr<AudioSystem> audioSystem;
-    std::unique_ptr<RenderSystem> renderSystem;
-    std::unique_ptr<UIManager> uiManager;
+    std::unique_ptr<Systems::AudioSystem> audioSystem;
+    std::unique_ptr<Systems::RenderSystem> renderSystem;
+    std::unique_ptr<UI::UIManager> uiManager;
 };
+
+}  // namespace App
+}  // namespace PrismatiX

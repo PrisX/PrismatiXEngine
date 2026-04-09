@@ -4,7 +4,10 @@
 #include <unordered_map>
 #include <vector>
 
-#include "Core/VN/Models.h"
+#include "Core/Models/SaveData.h"
+
+namespace PrismatiX {
+namespace Services {
 
 class GameState {
 public:
@@ -23,14 +26,17 @@ public:
     void AddLog(const std::string& speaker, const std::string& text, const std::string& voice = "");
     void AddChoiceLog(const std::string& text);
     void ClearLogs();
-    const std::vector<BacklogEntry>& GetLogs() const;
+    const std::vector<Models::BacklogEntry>& GetLogs() const;
 
     // Persistence (Save/Load)
-    bool SaveGame(int slot, const std::string& scriptName, int line, const std::string& bgName, const std::string& bgmName, const std::vector<SavedCharacter>& characters);
-    bool LoadGame(int slot, std::string& outScript, int& outLine, std::string& outBg, std::string& outBgm, std::vector<SavedCharacter>& outCharacters);
+    bool SaveGame(int slot, const std::string& scriptName, int line, const std::string& bgName, const std::string& bgmName, const std::vector<Models::SavedCharacter>& characters);
+    bool LoadGame(int slot, std::string& outScript, int& outLine, std::string& outBg, std::string& outBgm, std::vector<Models::SavedCharacter>& outCharacters);
     void PeekSaveFile(int slot, bool& outIsEmpty, std::string& outDisplayText);
 
 private:
     std::unordered_map<std::string, int> flags;
-    std::vector<BacklogEntry> logs;
+    std::vector<Models::BacklogEntry> logs;
 };
+
+}  // namespace Services
+}  // namespace PrismatiX

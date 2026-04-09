@@ -6,13 +6,23 @@
 #include <string>
 #include <vector>
 
-#include "Core/Services/ResourceManager.h"
-#include "Core/Systems/RenderSystem.h"
 #include "Core/VN/Models.h"
+
+namespace PrismatiX {
+namespace Services {
+class ResourceManager;
+}
+namespace Systems {
+class RenderSystem;
+}
+}  // namespace PrismatiX
+
+namespace PrismatiX {
+namespace VN {
 
 class VNStage {
 public:
-    VNStage(ResourceManager& resMgr, RenderSystem& renSys);
+    VNStage(Services::ResourceManager& resMgr, Systems::RenderSystem& renSys);
     ~VNStage() = default;
 
     void SetBackground(const std::string& bgName, const std::string& transition = "");
@@ -22,23 +32,26 @@ public:
     void Update();
     void Render();
 
-    std::vector<SavedCharacter> GetSavedCharacters() const;
-    void RestoreCharacters(const std::vector<SavedCharacter>& savedChars);
+    std::vector<Models::SavedCharacter> GetSavedCharacters() const;
+    void RestoreCharacters(const std::vector<Models::SavedCharacter>& savedChars);
     void RestoreBackground(const std::string& bgName);
     std::string GetCurrentBgName() const { return currentBgName; }
 
 private:
-    ResourceManager& resourceManager;
-    RenderSystem& renderSystem;
+    Services::ResourceManager& resourceManager;
+    Systems::RenderSystem& renderSystem;
 
     std::string currentBgName;
     SDL_Texture* currentBgTexture = nullptr;
     SDL_Texture* previousBgTexture = nullptr;
     float bgFadeAlpha = 255.0f;
 
-    std::map<std::string, ActiveCharacter> activeCharacters;
-    std::vector<ActiveCharacter*> sortedCharacters;
+    std::map<std::string, Models::ActiveCharacter> activeCharacters;
+    std::vector<Models::ActiveCharacter*> sortedCharacters;
     bool sortDirty = true;
 
     void RecalculatePositions();
 };
+
+}  // namespace VN
+}  // namespace PrismatiX

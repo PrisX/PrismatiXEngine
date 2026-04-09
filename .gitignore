@@ -3,6 +3,7 @@
 /out/
 /.vs/
 out/
+/PrismatiXEngine/build
 
 # CMake
 CMakeCache.txt

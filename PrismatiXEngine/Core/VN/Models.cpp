@@ -2,13 +2,15 @@
 
 #include <SDL2/SDL.h>
 
-#include "Core/Engine.h"
 #include "Core/Systems/RenderSystem.h"
 
-void NotificationOverlay::Render(Engine& engine, TTF_Font* font) const {
+namespace PrismatiX {
+namespace Models {
+
+void NotificationOverlay::Render(Systems::RenderSystem& renderSystem, TTF_Font* font) const {
     if (!IsActive()) return;
 
-    SDL_Renderer* renderer = engine.GetRenderer();
+    SDL_Renderer* renderer = renderSystem.GetRenderer();
     int winW = 0, winH = 0;
     SDL_RenderGetLogicalSize(renderer, &winW, &winH);
     if (winW <= 0 || winH <= 0) {
@@ -35,6 +37,9 @@ void NotificationOverlay::Render(Engine& engine, TTF_Font* font) const {
         SDL_Color textColor = { 255, 255, 255, static_cast<Uint8>(alpha) };
         SDL_Color outlineColor = { 0, 0, 0, static_cast<Uint8>(alpha) };
 
-        engine.GetRenderSystem().DrawTextWithOutline(font, text, textColor, outlineColor, 1, static_cast<int>(currentX) + 20, y + 10, 0, static_cast<Uint8>(alpha));
+        renderSystem.DrawTextWithOutline(font, text, textColor, outlineColor, 1, static_cast<int>(currentX) + 20, y + 10, 0, static_cast<Uint8>(alpha));
     }
 }
+
+}  // namespace Models
+}  // namespace PrismatiX

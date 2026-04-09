@@ -16,11 +16,14 @@
 #include "Core/EngineConfig.h"
 #include "Core/Services/GameState.h"
 #include "Core/Services/ResourceManager.h"
-#include "Core/Services/VNScriptParser.h"
 #include "Core/Systems/AudioSystem.h"
 #include "Core/Systems/RenderSystem.h"
 #include "Core/VN/VNFlowController.h"
+#include "Core/VN/VNScriptParser.h"
 #include "Utils/Logger.h"
+
+namespace PrismatiX {
+namespace App {
 
 namespace {
 std::tuple<int, int> GetRendererLogicalSize(SDL_Renderer* renderer) {
@@ -36,46 +39,46 @@ T LInt(float val) {
 }
 
 void RegisterVNControllerBindings(sol::state& lua, Engine& engine) {
-    lua.new_usertype<VNDialogueState>(
+    lua.new_usertype<VN::VNDialogueState>(
         "VNDialogueState",
         "speaker",
-        &VNDialogueState::speaker,
+        &VN::VNDialogueState::speaker,
         "fullText",
-        &VNDialogueState::fullText,
+        &VN::VNDialogueState::fullText,
         "currentText",
-        &VNDialogueState::currentDisplayText,
+        &VN::VNDialogueState::currentDisplayText,
         "currentIndex",
-        &VNDialogueState::currentIndex,
+        &VN::VNDialogueState::currentIndex,
         "totalChars",
-        &VNDialogueState::totalChars,
+        &VN::VNDialogueState::totalChars,
         "isFinished",
-        &VNDialogueState::isFinished,
+        &VN::VNDialogueState::isFinished,
         "effect",
-        &VNDialogueState::activeEffect,
+        &VN::VNDialogueState::activeEffect,
         "effectProgress",
-        &VNDialogueState::effectProgress
+        &VN::VNDialogueState::effectProgress
     );
 
-    auto vn = lua.new_usertype<VNFlowController>("VNController", sol::no_constructor);
-    vn["LoadScript"] = [](VNFlowController& c, const std::string& n) { c.LoadScript(n); };
-    vn["Update"] = [](VNFlowController& c, float mx, float my) { c.Update(LInt(mx), LInt(my)); };
-    vn["Render"] = [](VNFlowController& c) { c.Render(); };
-    vn["RenderBackground"] = [](VNFlowController& c) { c.GetStage().Render(); };
-    vn["HandleClick"] = [](VNFlowController& c, float mx, float my) { c.HandleClick(LInt(mx), LInt(my)); };
+    auto vn = lua.new_usertype<VN::VNFlowController>("VNController", sol::no_constructor);
+    vn["LoadScript"] = [](VN::VNFlowController& c, const std::string& n) { c.LoadScript(n); };
+    vn["Update"] = [](VN::VNFlowController& c, float mx, float my) { c.Update(LInt(mx), LInt(my)); };
+    vn["Render"] = [](VN::VNFlowController& c) { c.Render(); };
+    vn["RenderBackground"] = [](VN::VNFlowController& c) { c.GetStage().Render(); };
+    vn["HandleClick"] = [](VN::VNFlowController& c, float mx, float my) { c.HandleClick(LInt(mx), LInt(my)); };
 
-    vn["GetDialogueState"] = [](VNFlowController& c) -> const VNDialogueState& { return c.GetDialogueSystem().GetState(); };
+    vn["GetDialogueState"] = [](VN::VNFlowController& c) -> const VN::VNDialogueState& { return c.GetDialogueSystem().GetState(); };
 
-    vn["PopPendingBgmInfo"] = [](VNFlowController& c, sol::this_state s) -> sol::object {
+    vn["PopPendingBgmInfo"] = [](VN::VNFlowController& c, sol::this_state s) -> sol::object {
         std::string str = c.PopPendingBgm();
         if (str.empty()) return sol::lua_nil;
         return sol::make_object(s, str);
     };
-    vn["PopPendingChapterInfo"] = [](VNFlowController& c, sol::this_state s) -> sol::object {
+    vn["PopPendingChapterInfo"] = [](VN::VNFlowController& c, sol::this_state s) -> sol::object {
         std::string str = c.PopPendingChapter();
         if (str.empty()) return sol::lua_nil;
         return sol::make_object(s, str);
     };
-    vn["GetChoices"] = [&engine](VNFlowController& c, sol::this_state s) {
+    vn["GetChoices"] = [&engine](VN::VNFlowController& c, sol::this_state s) {
         sol::state_view lua(s);
         sol::table res = lua.create_table();
         const auto& buttons = engine.GetUIManager().GetButtons();
@@ -87,14 +90,14 @@ void RegisterVNControllerBindings(sol::state& lua, Engine& engine) {
         }
         return res;
     };
-    vn["SelectChoice"] = [](VNFlowController& c, int i) { c.SelectChoice(i - 1); };  // 1-indexed is dumb af
+    vn["SelectChoice"] = [](VN::VNFlowController& c, int i) { c.SelectChoice(i - 1); };  // 1-indexed is dumb af
 }
 
 void RegisterEngineAPI(sol::state& lua, Engine& engine) {
     auto api = lua.create_table();
 
     // GameState
-    lua.new_usertype<BacklogEntry>("BacklogEntry", "speaker", &BacklogEntry::speaker, "text", &BacklogEntry::text);
+    lua.new_usertype<Models::BacklogEntry>("BacklogEntry", "speaker", &Models::BacklogEntry::speaker, "text", &Models::BacklogEntry::text);
 
     api.set_function("GetBacklog", [&engine]() { return engine.GetGameState().GetLogs(); });
     api.set_function("ClearBacklog", [&engine]() { engine.GetGameState().ClearLogs(); });
@@ -111,7 +114,9 @@ void RegisterEngineAPI(sol::state& lua, Engine& engine) {
         auto res = engine.GetLuaState().safe_script(c, &sol::script_pass_on_error);
         return res.valid();
     });
-    api.set_function("CreateVNController", [&engine](sol::optional<std::string> f1, sol::optional<int> s1, sol::optional<std::string> f2, sol::optional<int> s2) { return std::make_unique<VNFlowController>(engine); });
+    api.set_function("CreateVNController", [&engine](sol::optional<std::string> f1, sol::optional<int> s1, sol::optional<std::string> f2, sol::optional<int> s2) {
+        return std::make_unique<VN::VNFlowController>(engine.GetResourceManager(), engine.GetScriptingEngine(), engine.GetGameState(), engine.GetAudioSystem(), engine.GetRenderSystem(), engine.GetUIManager(), engine.GetLuaState());
+    });
     api.set_function("CallGlobal", [&engine](const std::string& name) {
         sol::protected_function fn = engine.GetLuaState()[name];
         if (fn.valid()) fn();
@@ -129,7 +134,7 @@ void RegisterEngineAPI(sol::state& lua, Engine& engine) {
     api.set_function("DrawAuto", [&engine, &lua](const std::string& path, float mode, float alpha, sol::optional<float> ox, sol::optional<float> oy, sol::optional<float> scale) {
         SDL_Texture* tex = engine.GetResourceManager().LoadTexture(path);
         if (!tex) return lua.create_table();
-        SDL_Rect r = engine.GetRenderSystem().DrawTextureAuto(tex, (DisplayMode)LInt(mode), (Uint8)alpha, LInt(ox.value_or(0)), LInt(oy.value_or(0)), scale.value_or(1.0f));
+        SDL_Rect r = engine.GetRenderSystem().DrawTextureAuto(tex, (Systems::DisplayMode)LInt(mode), (Uint8)alpha, LInt(ox.value_or(0)), LInt(oy.value_or(0)), scale.value_or(1.0f));
         sol::table out = lua.create_table();
         out["x"] = r.x;
         out["y"] = r.y;
@@ -181,6 +186,7 @@ void RegisterEngineAPI(sol::state& lua, Engine& engine) {
     // System
     api.set_function("HandleEvents", [&engine]() { engine.HandleEvents(); });
     api.set_function("IsRunning", [&engine]() { return engine.IsRunning(); });
+    api.set_function("Quit", [&engine]() { engine.Quit(); });
     api.set_function("GetMouseX", [&engine]() { return (float)engine.GetMouseX(); });
     api.set_function("GetMouseY", [&engine]() { return (float)engine.GetMouseY(); });
     api.set_function("GetLeftClick", [&engine]() { return engine.GetLeftClick(); });
@@ -222,29 +228,32 @@ void RegisterEngineLuaBindings(sol::state& lua, Engine& engine) {
     lua.new_enum(
         "DisplayMode",
         "Center",
-        DisplayMode::Center,
+        Systems::DisplayMode::Center,
         "Fill",
-        DisplayMode::Fill,
+        Systems::DisplayMode::Fill,
         "Fit",
-        DisplayMode::Fit,
+        Systems::DisplayMode::Fit,
         "TopLeft",
-        DisplayMode::TopLeft,
+        Systems::DisplayMode::TopLeft,
         "TopRight",
-        DisplayMode::TopRight,
+        Systems::DisplayMode::TopRight,
         "BottomLeft",
-        DisplayMode::BottomLeft,
+        Systems::DisplayMode::BottomLeft,
         "BottomRight",
-        DisplayMode::BottomRight,
+        Systems::DisplayMode::BottomRight,
         "Top",
-        DisplayMode::Top,
+        Systems::DisplayMode::Top,
         "Bottom",
-        DisplayMode::Bottom,
+        Systems::DisplayMode::Bottom,
         "Left",
-        DisplayMode::Left,
+        Systems::DisplayMode::Left,
         "Right",
-        DisplayMode::Right,
+        Systems::DisplayMode::Right,
         "FitWidthBottom",
-        DisplayMode::FitWidthBottom
+        Systems::DisplayMode::FitWidthBottom
     );
     PX_LOG_INFO("Lua Bindings completed.");
 }
+
+}  // namespace App
+}  // namespace PrismatiX

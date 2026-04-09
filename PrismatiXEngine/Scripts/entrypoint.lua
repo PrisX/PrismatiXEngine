@@ -33,6 +33,10 @@ function Entrypoint()
     _G.Transition = Transition.new({ style = "dissolve", speed = 10 })
     _G.Notification = NotificationManager.new(fontName, 20)
     
+    -- Run Splash Screens
+    Runtime.run_splash_script("Scripts/engine_splash.lua")
+    Runtime.run_splash_script("Scripts/splash.lua")
+
     -- Load Scenes
     local TitleScene = include("Scripts/scenes/title_scene.lua")
     local PlayScene = include("Scripts/scenes/play_scene.lua")

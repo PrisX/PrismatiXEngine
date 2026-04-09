@@ -1,10 +1,13 @@
-#include "Core/Services/VNScriptParser.h"
+#include "Core/VN/VNScriptParser.h"
 
 #include <cctype>
 #include <iostream>
 #include <sstream>
 
 #include "Core/Services/ResourceManager.h"
+
+namespace PrismatiX {
+namespace VN {
 
 namespace {
 std::string ToLowerCopy(const std::string& value) {
@@ -14,10 +17,10 @@ std::string ToLowerCopy(const std::string& value) {
 }
 }  // namespace
 
-VNScriptParser::VNScriptParser(ResourceManager& resMgr) : resourceManager(resMgr) {}
+VNScriptParser::VNScriptParser(Services::ResourceManager& resMgr) : resourceManager(resMgr) {}
 
-std::vector<VNCommand> VNScriptParser::ParseScript(const std::string& fileName) {
-    std::vector<VNCommand> script;
+std::vector<Models::VNCommand> VNScriptParser::ParseScript(const std::string& fileName) {
+    std::vector<Models::VNCommand> script;
     std::vector<char> buffer = resourceManager.ExtractFile(fileName);
     if (buffer.empty()) return script;
 
@@ -35,7 +38,7 @@ std::vector<VNCommand> VNScriptParser::ParseScript(const std::string& fileName) 
         if (clean.empty() || clean.substr(0, 2) == "//" || clean[0] == '#') continue;
 
         if (clean[0] == '*') {
-            VNCommand cmd;
+            Models::VNCommand cmd;
             cmd.type = "label";
             cmd.args["name"] = clean.substr(1);
             script.push_back(cmd);
@@ -44,7 +47,7 @@ std::vector<VNCommand> VNScriptParser::ParseScript(const std::string& fileName) 
 
         if (clean[0] == '[' && clean.back() == ']') {
             std::string body = clean.substr(1, clean.size() - 2);
-            VNCommand cmd;
+            Models::VNCommand cmd;
             size_t firstSpace = body.find(' ');
             if (firstSpace == std::string::npos) {
                 cmd.type = ToLowerCopy(body);
@@ -87,7 +90,7 @@ std::vector<VNCommand> VNScriptParser::ParseScript(const std::string& fileName) 
             script.push_back(cmd);
         }
         else {
-            VNCommand cmd;
+            Models::VNCommand cmd;
             cmd.type = "text";
             cmd.args = lastTextArgs;
             cmd.args["content"] = clean;
@@ -110,3 +113,6 @@ SDL_Color VNScriptParser::ParseColor(const std::string& colorStr, SDL_Color defa
     }
     return defaultColor;
 }
+
+}  // namespace VN
+}  // namespace PrismatiX

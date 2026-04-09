@@ -4,7 +4,10 @@
 
 #include "Core/Services/ResourceManager.h"
 
-AudioSystem::AudioSystem(ResourceManager& resMgr) : resourceManager(resMgr) {}
+namespace PrismatiX {
+namespace Systems {
+
+AudioSystem::AudioSystem(Services::ResourceManager& resMgr) : resourceManager(resMgr) {}
 
 AudioSystem::~AudioSystem() { StopBGM(); }
 
@@ -57,3 +60,6 @@ void AudioSystem::SetSFXVolume(int volume) { Mix_Volume(-1, volume); }
 int AudioSystem::GetBGMVolume() const { return Mix_VolumeMusic(-1); }
 
 int AudioSystem::GetSFXVolume() const { return Mix_Volume(-1, -1); }
+
+}  // namespace Systems
+}  // namespace PrismatiX
