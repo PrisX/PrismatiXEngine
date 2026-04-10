@@ -1,0 +1,20 @@
+# Build
+build/
+bin/
+obj/
+*.exe
+*.pdb
+*.ilk
+*.log
+
+# IDEs
+.vs/
+.vscode/
+*.sln
+*.vcxproj
+*.user
+
+# Project Specific
+SecretKey.h
+Core/Interfaces/IScene.h.bak
+UI/SceneManager.h.bak

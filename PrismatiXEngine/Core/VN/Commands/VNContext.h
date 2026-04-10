@@ -18,23 +18,35 @@ class GameState;
 
 namespace Systems {
 class AudioSystem;
+class RenderSystem;
 }
 
 namespace UI {
-class UIManager;
+class VNChoiceList;
 }
 
 namespace VN {
 class VNStage;
 class VNDialogueSystem;
+class VNScriptParser;
 
 namespace Commands {
+
+struct VNServices {
+    Services::ResourceManager& resourceManager;
+    VNScriptParser& scriptingEngine;
+    Services::GameState& gameState;
+    Systems::AudioSystem& audioSystem;
+    Systems::RenderSystem& renderSystem;
+    UI::VNChoiceList& choiceList;
+    sol::state& luaState;
+};
 
 struct VNContext {
     Services::ResourceManager& resourceManager;
     Services::GameState& gameState;
     Systems::AudioSystem& audioSystem;
-    UI::UIManager& uiManager;
+    UI::VNChoiceList& choiceList;
     VN::VNStage& stage;
     VN::VNDialogueSystem& dialogueSystem;
     sol::state& luaState;

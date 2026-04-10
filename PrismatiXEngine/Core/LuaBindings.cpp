@@ -81,11 +81,11 @@ void RegisterVNControllerBindings(sol::state& lua, Engine& engine) {
     vn["GetChoices"] = [&engine](VN::VNFlowController& c, sol::this_state s) {
         sol::state_view lua(s);
         sol::table res = lua.create_table();
-        const auto& buttons = engine.GetUIManager().GetButtons();
-        for (size_t i = 0; i < buttons.size(); ++i) {
+        const auto& choices = engine.GetChoiceList().GetChoices();
+        for (size_t i = 0; i < choices.size(); ++i) {
             sol::table item = lua.create_table();
-            item["text"] = buttons[i].text;
-            item["target"] = buttons[i].target;
+            item["text"] = choices[i].text;
+            item["target"] = choices[i].target;
             res[i + 1] = item;
         }
         return res;
@@ -115,7 +115,16 @@ void RegisterEngineAPI(sol::state& lua, Engine& engine) {
         return res.valid();
     });
     api.set_function("CreateVNController", [&engine](sol::optional<std::string> f1, sol::optional<int> s1, sol::optional<std::string> f2, sol::optional<int> s2) {
-        return std::make_unique<VN::VNFlowController>(engine.GetResourceManager(), engine.GetScriptingEngine(), engine.GetGameState(), engine.GetAudioSystem(), engine.GetRenderSystem(), engine.GetUIManager(), engine.GetLuaState());
+        VN::Commands::VNServices services{
+            engine.GetResourceManager(),
+            engine.GetScriptingEngine(),
+            engine.GetGameState(),
+            engine.GetAudioSystem(),
+            engine.GetRenderSystem(),
+            engine.GetChoiceList(),
+            engine.GetLuaState()
+        };
+        return std::make_unique<VN::VNFlowController>(services);
     });
     api.set_function("CallGlobal", [&engine](const std::string& name) {
         sol::protected_function fn = engine.GetLuaState()[name];

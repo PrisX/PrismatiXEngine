@@ -7,11 +7,12 @@
 #include "Core/Systems/RenderSystem.h"
 #include "Core/VN/Commands/BuiltinCommandHandlers.h"
 #include "Core/VN/Commands/VNContext.h"
-#include "Core/VN/Models.h"
+#include "Core/Models/VNModels.h"
 #include "Core/VN/VNDialogueSystem.h"
 #include "Core/VN/VNScriptParser.h"
 #include "Core/VN/VNStage.h"
-#include "UI/UIManager.h"
+#include "Core/VN/Commands/ICommandHandler.h"
+#include "Core/VN/VNChoiceList.h"
 #include "Utils/Logger.h"
 
 namespace PrismatiX {
@@ -28,24 +29,18 @@ int FindLabelLine(const std::vector<Models::VNCommand>& commands, const std::str
 }
 }  // namespace
 
-VNFlowController::VNFlowController(
-    Services::ResourceManager& resourceManager,
-    VNScriptParser& scriptingEngine,
-    Services::GameState& gameState,
-    Systems::AudioSystem& audioSystem,
-    Systems::RenderSystem& renderSystem,
-    UI::UIManager& uiManager,
-    sol::state& luaState
-)
-    : resourceManager(resourceManager),
-      scriptingEngine(scriptingEngine),
-      gameState(gameState),
-      audioSystem(audioSystem),
-      uiManager(uiManager),
-      luaState(luaState),
-      stage(resourceManager, renderSystem) {
+VNFlowController::VNFlowController(Commands::VNServices s)
+    : resourceManager(s.resourceManager),
+      scriptingEngine(s.scriptingEngine),
+      gameState(s.gameState),
+      audioSystem(s.audioSystem),
+      choiceList(s.choiceList),
+      luaState(s.luaState),
+      stage(s.resourceManager, s.renderSystem) {
     InitHandlers();
 }
+
+VNFlowController::~VNFlowController() = default;
 
 void VNFlowController::InitHandlers() {
     handlers = Commands::CreateBuiltinHandlers();
@@ -85,24 +80,21 @@ void VNFlowController::Update(int mx, int my) {
 
     dialogueSystem.Update();
     stage.Update();
-    if (uiManager.HasButtons()) uiManager.UpdateHover(mx, my);
 }
 
 void VNFlowController::Render() {
     stage.Render();
-    if (uiManager.HasButtons()) uiManager.Render();
 }
 
 void VNFlowController::SelectChoice(int index) {
-    const auto& buttons = uiManager.GetButtons();
-    if (index < 0 || index >= (int)buttons.size()) return;
+    const auto& choices = choiceList.GetChoices();
+    if (index < 0 || index >= (int)choices.size()) return;
 
-    const auto& btn = buttons[index];
-    std::string target = btn.target;
-    std::string s = btn.transitionStyle;
-    std::string sp = btn.transitionSpeed;
+    const auto& choice = choices[index];
+    std::string target = choice.target;
+    std::string s = choice.transitionStyle;
     
-    uiManager.Clear();
+    choiceList.Clear();
 
     if (!s.empty()) {
         pendingJump.active = true;
@@ -123,29 +115,8 @@ void VNFlowController::SelectChoice(int index) {
 
 void VNFlowController::HandleClick(int mx, int my) {
     if (isFinished) return;
-    std::string target, s, sp, e;
-    if (uiManager.CheckClick(mx, my, target, s, sp, e)) {
-        PX_LOG_INFO("[VN] UI Option Selected: {} with transition {}", target, s);
-        uiManager.Clear();
+    if (choiceList.HasChoices()) return; // Logic moved to Lua, C++ just blocks script progress
 
-        if (!s.empty()) {
-            pendingJump.active = true;
-            pendingJump.target = target;
-            return;
-        }
-
-        if (!target.empty()) {
-            if (target[0] == '*') {
-                int line = FindLabelLine(commands, target.substr(1));
-                if (line >= 0) currentLine = line;
-            }
-            else
-                LoadScript(target);
-            ExecuteNext();
-        }
-        return;
-    }
-    if (uiManager.HasButtons()) return;
     audioSystem.StopVoice();
     if (!dialogueSystem.GetState().isFinished)
         dialogueSystem.ShowAll();
@@ -160,7 +131,7 @@ void VNFlowController::ExecuteNext() {
         resourceManager,
         gameState,
         audioSystem,
-        uiManager,
+        choiceList,
         stage,
         dialogueSystem,
         luaState,
@@ -177,13 +148,12 @@ void VNFlowController::ExecuteNext() {
         auto it = handlers.find(cmd.type);
         if (it != handlers.end()) {
             if (cmd.type == "choice") {
-                uiManager.Clear();
+                choiceList.Clear();
                 int next = currentLine;
                 while (next < (int)commands.size() && commands[next].type == "choice") {
                     it->second->Execute(commands[next], context);
                     next++;
                 }
-                uiManager.RecalculateLayout(EngineConfig::kDefaultScreenWidth, EngineConfig::kDefaultScreenHeight);
                 currentLine = next;
                 break;
             }

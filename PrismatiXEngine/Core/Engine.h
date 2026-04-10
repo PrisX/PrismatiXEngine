@@ -8,34 +8,16 @@
 #include <string>
 
 #include "EngineConfig.h"
+#include "ServiceContainer.h"
 #include "Services/GameState.h"
 #include "Services/ResourceManager.h"
 #include "Systems/AudioSystem.h"
 #include "Systems/RenderSystem.h"
-#include "UI/UIManager.h"
 #include "Utils/Logger.h"
+#include "VN/VNChoiceList.h"
 #include "VN/VNScriptParser.h"
 
-// Forward declarations
 namespace PrismatiX {
-namespace Services {
-class ResourceManager;
-class GameState;
-}  // namespace Services
-
-namespace Systems {
-class AudioSystem;
-class RenderSystem;
-}  // namespace Systems
-
-namespace UI {
-class UIManager;
-}
-
-namespace VN {
-class VNScriptParser;
-}
-
 namespace App {
 
 class Engine {
@@ -69,13 +51,15 @@ public:
     void BindEngineToLua();
     sol::state& GetLuaState() { return lua; }
 
-    // Services Accessors
-    Services::ResourceManager& GetResourceManager() { return *resourceManager; }
-    VN::VNScriptParser& GetScriptingEngine() { return *scriptingEngine; }
-    Services::GameState& GetGameState() { return *gameState; }
-    Systems::AudioSystem& GetAudioSystem() { return *audioSystem; }
-    Systems::RenderSystem& GetRenderSystem() { return *renderSystem; }
-    UI::UIManager& GetUIManager() { return *uiManager; }
+    // Services Accessors (ServiceContainer)
+    Services::ResourceManager& GetResourceManager() { return *serviceContainer.Resolve<Services::ResourceManager>(); }
+    VN::VNScriptParser& GetScriptingEngine() { return *serviceContainer.Resolve<VN::VNScriptParser>(); }
+    Services::GameState& GetGameState() { return *serviceContainer.Resolve<Services::GameState>(); }
+    Systems::AudioSystem& GetAudioSystem() { return *serviceContainer.Resolve<Systems::AudioSystem>(); }
+    Systems::RenderSystem& GetRenderSystem() { return *serviceContainer.Resolve<Systems::RenderSystem>(); }
+    UI::VNChoiceList& GetChoiceList() { return *serviceContainer.Resolve<UI::VNChoiceList>(); }
+
+    ServiceContainer& GetContainer() { return serviceContainer; }
 
 private:
     int lastWinW = EngineConfig::kDefaultScreenWidth;
@@ -90,6 +74,7 @@ private:
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
     sol::state lua;
+    ServiceContainer serviceContainer;
 
     // Core Services
     std::unique_ptr<Services::ResourceManager> resourceManager;
@@ -99,7 +84,7 @@ private:
     // Systems
     std::unique_ptr<Systems::AudioSystem> audioSystem;
     std::unique_ptr<Systems::RenderSystem> renderSystem;
-    std::unique_ptr<UI::UIManager> uiManager;
+    std::unique_ptr<UI::VNChoiceList> choiceList;
 };
 
 }  // namespace App

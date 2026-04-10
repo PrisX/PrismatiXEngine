@@ -6,9 +6,10 @@
 #include <string>
 #include <vector>
 
-#include "Core/VN/Commands/ICommandHandler.h"
+#include "Core/VN/VNChoiceList.h"
 #include "Core/VN/VNDialogueSystem.h"
 #include "Core/VN/VNStage.h"
+#include "Core/VN/Commands/VNContext.h"
 
 namespace sol {
 class state;
@@ -24,13 +25,12 @@ class GameState;
 }
 namespace Systems {
 class AudioSystem;
-class RenderSystem;
-}
-namespace UI {
-class UIManager;
 }
 namespace VN {
 class VNScriptParser;
+namespace Commands {
+class ICommandHandler;
+}
 }
 }  // namespace PrismatiX
 
@@ -39,16 +39,8 @@ namespace VN {
 
 class VNFlowController {
 public:
-    VNFlowController(
-        Services::ResourceManager& resourceManager,
-        VNScriptParser& scriptingEngine,
-        Services::GameState& gameState,
-        Systems::AudioSystem& audioSystem,
-        Systems::RenderSystem& renderSystem,
-        UI::UIManager& uiManager,
-        sol::state& luaState
-    );
-    ~VNFlowController() = default;
+    explicit VNFlowController(Commands::VNServices services);
+    ~VNFlowController();
 
     void LoadScript(const std::string& scriptName);
     void Update(int mx, int my);
@@ -75,7 +67,7 @@ private:
     VNScriptParser& scriptingEngine;
     Services::GameState& gameState;
     Systems::AudioSystem& audioSystem;
-    UI::UIManager& uiManager;
+    UI::VNChoiceList& choiceList;
     sol::state& luaState;
     VNDialogueSystem dialogueSystem;
     VNStage stage;

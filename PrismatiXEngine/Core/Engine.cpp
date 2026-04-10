@@ -64,7 +64,14 @@ bool Engine::Initialize(const std::string& title, int width, int height) {
     PX_LOG_INFO("Initializing Engine Systems...");
     renderSystem = std::make_unique<Systems::RenderSystem>(renderer, *resourceManager);
     audioSystem = std::make_unique<Systems::AudioSystem>(*resourceManager);
-    uiManager = std::make_unique<UI::UIManager>(*renderSystem);
+    choiceList = std::make_unique<UI::VNChoiceList>();
+
+    serviceContainer.RegisterSingleton<Services::ResourceManager>(resourceManager.get());
+    serviceContainer.RegisterSingleton<VN::VNScriptParser>(scriptingEngine.get());
+    serviceContainer.RegisterSingleton<Services::GameState>(gameState.get());
+    serviceContainer.RegisterSingleton<Systems::RenderSystem>(renderSystem.get());
+    serviceContainer.RegisterSingleton<Systems::AudioSystem>(audioSystem.get());
+    serviceContainer.RegisterSingleton<UI::VNChoiceList>(choiceList.get());
 
     SDL_RenderSetLogicalSize(renderer, width, height);
 
@@ -119,7 +126,7 @@ void Engine::ResetCameraOffset() {
 void Engine::Clean() {
     PX_LOG_INFO("Engine shutting down...");
     if (resourceManager) resourceManager->CleanAll();
-    if (uiManager) uiManager->Clear();
+    if (choiceList) choiceList->Clear();
     if (renderer) SDL_DestroyRenderer(renderer);
     if (window) SDL_DestroyWindow(window);
     Mix_CloseAudio();

@@ -12,7 +12,7 @@
 #include "Core/Systems/AudioSystem.h"
 #include "Core/VN/VNDialogueSystem.h"
 #include "Core/VN/VNStage.h"
-#include "UI/UIManager.h"
+#include "Core/VN/VNChoiceList.h"
 #include "Utils/Logger.h"
 
 namespace PrismatiX {
@@ -183,11 +183,9 @@ public:
     void Execute(const Models::VNCommand& cmd, VNContext& ctx) override {
         std::string text = GetArg(cmd.args, "text", GetArg(cmd.args, "content"));
         std::string target = GetArg(cmd.args, "target");
+        std::string style = GetArg(cmd.args, "style");
         PX_LOG_DEBUG("[VN] Add Choice: {} -> {}", text, target);
-        TTF_Font* font = ctx.resourceManager.LoadFont("NotoSansTC-Bold.ttf", 24);
-        SDL_Color idle = { 255, 255, 255, 255 };
-        SDL_Color hover = { 255, 200, 0, 255 };
-        ctx.uiManager.AddTextButton(text, font, idle, hover, target);
+        ctx.choiceList.AddChoice(text, target, style);
         ctx.currentLine++;
     }
 };

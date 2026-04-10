@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "Core/VN/Models.h"
+#include "Core/Models/VNModels.h"
 
 namespace PrismatiX {
 namespace Services {

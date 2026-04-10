@@ -7,7 +7,7 @@
 #include "Core/EngineConfig.h"
 #include "Core/Services/ResourceManager.h"
 #include "Core/Systems/RenderSystem.h"
-#include "Core/VN/Models.h"
+#include "Core/Models/VNModels.h"
 #include "Utils/EasingUtils.h"
 #include "Utils/TransitionUtils.h"
 
