@@ -1,26 +1,22 @@
 #pragma once
 
-namespace PrismatiX {
-namespace Models {
+namespace PrismatiX::Models {
 struct VNCommand;
 }
-namespace VN {
+namespace PrismatiX::VN {
 namespace Commands {
 struct VNContext;
 }
-}  // namespace VN
-}  // namespace PrismatiX
+} // namespace PrismatiX::VN
 
-namespace PrismatiX {
-namespace VN {
+namespace PrismatiX::VN {
 namespace Commands {
 
 class ICommandHandler {
 public:
     virtual ~ICommandHandler() = default;
-    virtual void Execute(const Models::VNCommand& cmd, VNContext& ctx) = 0;
+    virtual void Execute(const PrismatiX::Models::VNCommand& cmd, VNContext& ctx) = 0;
 };
 
 }  // namespace Commands
-}  // namespace VN
-}  // namespace PrismatiX
+} // namespace PrismatiX::VN

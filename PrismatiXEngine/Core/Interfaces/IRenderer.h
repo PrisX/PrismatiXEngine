@@ -3,8 +3,7 @@
 #include <SDL2/SDL_ttf.h>
 #include <string>
 
-namespace PrismatiX {
-namespace Interfaces {
+namespace PrismatiX::Interfaces {
 
 class IRenderer {
 public:
@@ -83,5 +82,4 @@ public:
     virtual void GetOutputSize(int& w, int& h) = 0;
 };
 
-} // namespace Interfaces
-} // namespace PrismatiX
+} // namespace PrismatiX::Interfaces

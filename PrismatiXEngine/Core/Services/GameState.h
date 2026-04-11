@@ -6,8 +6,7 @@
 
 #include "Core/Models/VNModels.h"
 
-namespace PrismatiX {
-namespace Services {
+namespace PrismatiX::Services {
 
 class GameState {
 public:
@@ -26,17 +25,13 @@ public:
     void AddLog(const std::string& speaker, const std::string& text, const std::string& voice = "");
     void AddChoiceLog(const std::string& text);
     void ClearLogs();
-    const std::vector<Models::BacklogEntry>& GetLogs() const;
-
-    // Persistence (Save/Load)
-    bool SaveGame(int slot, const std::string& scriptName, int line, const std::string& bgName, const std::string& bgmName, const std::vector<Models::SavedCharacter>& characters);
-    bool LoadGame(int slot, std::string& outScript, int& outLine, std::string& outBg, std::string& outBgm, std::vector<Models::SavedCharacter>& outCharacters);
-    void PeekSaveFile(int slot, bool& outIsEmpty, std::string& outDisplayText);
+    const std::vector<PrismatiX::Models::BacklogEntry>& GetLogs() const;
 
 private:
+    friend class SaveManager;
+
     std::unordered_map<std::string, int> flags;
-    std::vector<Models::BacklogEntry> logs;
+    std::vector<PrismatiX::Models::BacklogEntry> logs;
 };
 
-}  // namespace Services
-}  // namespace PrismatiX
+} // namespace PrismatiX::Services

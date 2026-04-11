@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <numbers>
 
 #include "Core/EngineConfig.h"
 #include "Core/Services/ResourceManager.h"
@@ -11,24 +10,38 @@
 #include "Utils/EasingUtils.h"
 #include "Utils/TransitionUtils.h"
 
-namespace PrismatiX {
-namespace VN {
+namespace PrismatiX::VN {
 
-VNStage::VNStage(Services::ResourceManager& resMgr, Systems::RenderSystem& renSys) : resourceManager(resMgr), renderSystem(renSys) {}
+VNStage::VNStage(PrismatiX::Services::ResourceManager& resMgr, PrismatiX::Systems::RenderSystem& renSys) : resourceManager(resMgr), renderSystem(renSys) {}
 
 void VNStage::SetBackground(const std::string& bgName, const std::string& transition) {
     if (currentBgName == bgName) return;
 
-    previousBgTexture = currentBgTexture;
-    currentBgName = bgName;
-    currentBgTexture = resourceManager.LoadTexture(bgName);
+    if (transition.empty()) {
+        previousBgTexture = currentBgTexture;
+        currentBgName = bgName;
+        currentBgTexture = resourceManager.LoadTexture(bgName);
+        if (currentBgTexture) bgFadeAlpha = 0.0f;
+        else bgFadeAlpha = 255.0f;
+        return;
+    }
 
-    if (currentBgTexture) {
-        bgFadeAlpha = 0.0f;
+    if (transition == "fast") {
+        bgTransition.speed = 15.0f;
+    } else if (transition == "slow") {
+        bgTransition.speed = 2.0f;
+    } else {
+        bgTransition.speed = 8.0f;
     }
-    else {
+
+    auto onPeak = [this, bgName]() {
+        previousBgTexture = nullptr;
+        currentBgName = bgName;
+        currentBgTexture = resourceManager.LoadTexture(bgName);
         bgFadeAlpha = 255.0f;
-    }
+    };
+    
+    bgTransition.Start(onPeak, PrismatiX::Utils::TransitionType::BlackFade);
 }
 
 void VNStage::SetCharacter(const std::string& name, const std::string& diff, int pos, const std::string& transition) {
@@ -64,7 +77,9 @@ void VNStage::ClearCharacter(const std::string& name, const std::string& transit
 
 void VNStage::Update() {
     // Background fade
-    if (currentBgTexture && bgFadeAlpha < 255.0f) {
+    if (bgTransition.IsActive()) {
+        bgTransition.Update();
+    } else if (currentBgTexture && bgFadeAlpha < 255.0f) {
         PrismatiX::Utils::FadeIn(bgFadeAlpha, 10.0f);
         if (bgFadeAlpha >= 255.0f) {
             previousBgTexture = nullptr;
@@ -89,10 +104,10 @@ void VNStage::Update() {
             }
             else {
                 if (chara.animation == "bounce") {
-                    chara.renderOffsetY = -30.0f * std::sin(p * std::numbers::pi);
+                    chara.renderOffsetY = -30.0f * std::sin(p * 3.14159265f);
                 }
                 else if (chara.animation == "shake") {
-                    chara.renderOffsetX = 5.0f * std::sin(p * std::numbers::pi * 4.0f);
+                    chara.renderOffsetX = 5.0f * std::sin(p * 3.14159265f * 4.0f);
                 }
             }
         }
@@ -111,7 +126,7 @@ void VNStage::Update() {
         for (auto& pair : activeCharacters) {
             sortedCharacters.push_back(&pair.second);
         }
-        std::sort(sortedCharacters.begin(), sortedCharacters.end(), [](Models::ActiveCharacter* a, Models::ActiveCharacter* b) { return a->pos < b->pos; });
+        std::sort(sortedCharacters.begin(), sortedCharacters.end(), [](PrismatiX::Models::ActiveCharacter* a, PrismatiX::Models::ActiveCharacter* b) { return a->pos < b->pos; });
         sortDirty = false;
     }
 }
@@ -119,16 +134,25 @@ void VNStage::Update() {
 void VNStage::Render() {
     // Render Background
     if (previousBgTexture) {
-        renderSystem.DrawTextureAuto(previousBgTexture, Systems::DisplayMode::Fill, 255);
+        renderSystem.DrawTextureAuto(previousBgTexture, PrismatiX::Systems::DisplayMode::Fill, 255);
     }
     if (currentBgTexture) {
-        renderSystem.DrawTextureAuto(currentBgTexture, Systems::DisplayMode::Fill, static_cast<Uint8>(bgFadeAlpha));
+        renderSystem.DrawTextureAuto(currentBgTexture, PrismatiX::Systems::DisplayMode::Fill, static_cast<Uint8>(bgFadeAlpha));
+    }
+
+    if (bgTransition.IsActive()) {
+        bgTransition.Draw(renderSystem.GetRenderer(), EngineConfig::kDefaultScreenWidth, EngineConfig::kDefaultScreenHeight);
     }
 
     // Render Characters
     for (auto* chara : sortedCharacters) {
-        std::string fileName = chara->name + "_" + chara->diff + ".png";
-        SDL_Texture* tex = resourceManager.LoadTexture(fileName);
+        if (!chara->cachedTexture || chara->cachedDiff != chara->diff) {
+            std::string fileName = chara->name + "_" + chara->diff + ".png";
+            chara->cachedTexture = resourceManager.LoadTexture(fileName);
+            chara->cachedDiff = chara->diff;
+        }
+        
+        SDL_Texture* tex = chara->cachedTexture;
         if (tex) {
             int texW, texH;
             SDL_QueryTexture(tex, NULL, NULL, &texW, &texH);
@@ -147,11 +171,11 @@ void VNStage::Render() {
 }
 
 void VNStage::RecalculatePositions() {
-    std::vector<Models::ActiveCharacter*> nonExiting;
+    std::vector<PrismatiX::Models::ActiveCharacter*> nonExiting;
     for (auto& pair : activeCharacters) {
         if (!pair.second.isExiting) nonExiting.push_back(&pair.second);
     }
-    std::sort(nonExiting.begin(), nonExiting.end(), [](Models::ActiveCharacter* a, Models::ActiveCharacter* b) { return a->pos < b->pos; });
+    std::sort(nonExiting.begin(), nonExiting.end(), [](PrismatiX::Models::ActiveCharacter* a, PrismatiX::Models::ActiveCharacter* b) { return a->pos < b->pos; });
 
     int total = (int)nonExiting.size();
     if (total > 0) {
@@ -163,8 +187,8 @@ void VNStage::RecalculatePositions() {
     sortDirty = true;
 }
 
-std::vector<Models::SavedCharacter> VNStage::GetSavedCharacters() const {
-    std::vector<Models::SavedCharacter> saved;
+std::vector<PrismatiX::Models::SavedCharacter> VNStage::GetSavedCharacters() const {
+    std::vector<PrismatiX::Models::SavedCharacter> saved;
     for (auto& pair : activeCharacters) {
         if (!pair.second.isExiting) {
             saved.push_back({ pair.second.name, pair.second.diff, pair.second.pos });
@@ -173,7 +197,7 @@ std::vector<Models::SavedCharacter> VNStage::GetSavedCharacters() const {
     return saved;
 }
 
-void VNStage::RestoreCharacters(const std::vector<Models::SavedCharacter>& savedChars) {
+void VNStage::RestoreCharacters(const std::vector<PrismatiX::Models::SavedCharacter>& savedChars) {
     activeCharacters.clear();
     for (const auto& sc : savedChars) {
         auto& ac = activeCharacters[sc.name];
@@ -197,5 +221,4 @@ void VNStage::RestoreBackground(const std::string& bgName) {
     bgFadeAlpha = 255.0f;
 }
 
-}  // namespace VN
-}  // namespace PrismatiX
+} // namespace PrismatiX::VN

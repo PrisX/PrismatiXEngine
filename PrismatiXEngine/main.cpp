@@ -68,14 +68,14 @@ int main(int argc, char* argv[]) {
 
     PrismatiX::App::Engine engine;
 
-    if (!engine.Initialize(EngineConfig::kGameTitle, EngineConfig::kDefaultScreenWidth, EngineConfig::kDefaultScreenHeight)) {
+    if (!engine.Initialize(std::string(EngineConfig::kGameTitle), EngineConfig::kDefaultScreenWidth, EngineConfig::kDefaultScreenHeight)) {
         PX_LOG_CRITICAL("Engine initialization failed.");
         return -1;
     }
 
     PX_LOG_INFO("Mounting archives...");
-    engine.GetResourceManager().MountArchive(EngineConfig::kArchiveEngine);
-    engine.GetResourceManager().MountArchive(EngineConfig::kArchiveData);
+    engine.GetResourceManager().MountArchive(std::string(EngineConfig::kArchiveEngine));
+    engine.GetResourceManager().MountArchive(std::string(EngineConfig::kArchiveData));
 
     if (!RunLuaEntrypoint(engine, "Scripts/entrypoint.lua")) {
         PX_LOG_CRITICAL("Entrypoint script execution failed.");

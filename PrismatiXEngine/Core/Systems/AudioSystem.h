@@ -4,21 +4,20 @@
 #include <string>
 #include <vector>
 
-namespace PrismatiX {
-namespace Services {
+namespace PrismatiX::Services {
 class ResourceManager;
 }
 
-namespace Systems {
+namespace PrismatiX::Systems {
 
 class AudioSystem {
 private:
-    Services::ResourceManager& resourceManager;
+    PrismatiX::Services::ResourceManager& resourceManager;
     Mix_Music* currentBgm = nullptr;
     std::vector<char> currentBgmBuffer;
 
 public:
-    AudioSystem(Services::ResourceManager& resMgr);
+    AudioSystem(PrismatiX::Services::ResourceManager& resMgr);
     ~AudioSystem();
 
     // BGM
@@ -39,5 +38,4 @@ public:
     int GetSFXVolume() const;
 };
 
-}  // namespace Systems
-}  // namespace PrismatiX
+} // namespace PrismatiX::Systems

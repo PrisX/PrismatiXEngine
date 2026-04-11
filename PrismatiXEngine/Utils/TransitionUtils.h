@@ -5,8 +5,7 @@
 #include <algorithm>
 #include <functional>
 
-namespace PrismatiX {
-namespace Utils {
+namespace PrismatiX::Utils {
 enum class OverlayEvent { None, ReachedPeak, ReachedClear };
 
 enum class TransitionType { BlackFade, WhiteFlash };
@@ -104,5 +103,4 @@ inline Uint8 AlphaFromElapsed(Uint32 elapsed, Uint32 duration) {
     return static_cast<Uint8>((elapsed * 255) / duration);
 }
 
-}  // namespace Utils
-}  // namespace PrismatiX
+} // namespace PrismatiX::Utils

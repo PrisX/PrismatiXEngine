@@ -1,21 +1,21 @@
 #pragma once
 
-#include <string>
+#include <string_view>
 
 namespace EngineConfig {
 // Window & Resolution
 constexpr int kDefaultScreenWidth = 1280;
 constexpr int kDefaultScreenHeight = 720;
-const std::string kGameTitle = "PrismatiX Engine";
+constexpr std::string_view kGameTitle = "PrismatiX Engine";
 
 // Paths & Archives
-const std::string kArchiveEngine = "Engine.pdx";
-const std::string kArchiveData = "Data.pdx";
+constexpr std::string_view kArchiveEngine = "Engine.pdx";
+constexpr std::string_view kArchiveData = "Data.pdx";
 
 // Save System
-const std::string kSaveDirectory = "Save";
-const std::string kSaveFilePrefix = "save_";
-const std::string kSaveFileExt = ".sav";
+constexpr std::string_view kSaveDirectory = "Save";
+constexpr std::string_view kSaveFilePrefix = "save_";
+constexpr std::string_view kSaveFileExt = ".sav";
 
 // Rendering
 inline int kFontOversample = 2;

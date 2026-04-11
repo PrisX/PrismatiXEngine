@@ -6,24 +6,13 @@
 
 #include "Core/Models/VNCommand.h"
 
-namespace PrismatiX {
-namespace Services {
+namespace PrismatiX::Services {
 class ResourceManager;
 }
 
-namespace VN {
+namespace PrismatiX::VN {
 
-class VNScriptParser {
-public:
-    explicit VNScriptParser(Services::ResourceManager& resMgr);
-    ~VNScriptParser() = default;
+std::vector<PrismatiX::Models::VNCommand> ParseScript(PrismatiX::Services::ResourceManager& resourceManager, const std::string& fileName);
+SDL_Color ParseColor(const std::string& colorStr, SDL_Color defaultColor);
 
-    std::vector<Models::VNCommand> ParseScript(const std::string& fileName);
-    SDL_Color ParseColor(const std::string& colorStr, SDL_Color defaultColor);
-
-private:
-    Services::ResourceManager& resourceManager;
-};
-
-}  // namespace VN
-}  // namespace PrismatiX
+} // namespace PrismatiX::VN

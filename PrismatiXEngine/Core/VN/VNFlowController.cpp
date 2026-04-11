@@ -15,11 +15,10 @@
 #include "Core/VN/VNChoiceList.h"
 #include "Utils/Logger.h"
 
-namespace PrismatiX {
-namespace VN {
+namespace PrismatiX::VN {
 
 namespace {
-int FindLabelLine(const std::vector<Models::VNCommand>& commands, const std::string& labelName) {
+int FindLabelLine(const std::vector<PrismatiX::Models::VNCommand>& commands, const std::string& labelName) {
     for (int i = 0; i < (int)commands.size(); ++i) {
         if (commands[i].type != "label") continue;
         auto nameIt = commands[i].args.find("name");
@@ -31,7 +30,6 @@ int FindLabelLine(const std::vector<Models::VNCommand>& commands, const std::str
 
 VNFlowController::VNFlowController(Commands::VNServices s)
     : resourceManager(s.resourceManager),
-      scriptingEngine(s.scriptingEngine),
       gameState(s.gameState),
       audioSystem(s.audioSystem),
       choiceList(s.choiceList),
@@ -49,7 +47,7 @@ void VNFlowController::InitHandlers() {
 void VNFlowController::LoadScript(const std::string& scriptName) {
     PX_LOG_INFO("[VN] Loading script: {}", scriptName);
     currentScriptName = scriptName;
-    commands = scriptingEngine.ParseScript(scriptName);
+    commands = PrismatiX::VN::ParseScript(resourceManager, scriptName);
     currentLine = 0;
     isFinished = false;
     hasStarted = false;
@@ -128,23 +126,15 @@ void VNFlowController::HandleClick(int mx, int my) {
 
 void VNFlowController::ExecuteNext() {
     Commands::VNContext context{
-        resourceManager,
-        gameState,
-        audioSystem,
-        choiceList,
-        stage,
-        dialogueSystem,
-        luaState,
-        commands,
-        currentLine,
-        pendingBgm,
-        pendingChapters,
-        [this](const std::string& scriptName) { LoadScript(scriptName); },
-        [this](const std::string& labelName) { return FindLabelLine(commands, labelName); }
+        { commands, currentLine, pendingBgm, pendingChapters,
+          [this](const std::string& scriptName) { LoadScript(scriptName); },
+          [this](const std::string& labelName) { return FindLabelLine(commands, labelName); } },
+        { stage, dialogueSystem, choiceList },
+        { resourceManager, gameState, audioSystem, luaState }
     };
 
     while (currentLine < (int)commands.size()) {
-        const Models::VNCommand& cmd = commands[currentLine];
+        const PrismatiX::Models::VNCommand& cmd = commands[currentLine];
         auto it = handlers.find(cmd.type);
         if (it != handlers.end()) {
             if (cmd.type == "choice") {
@@ -189,5 +179,4 @@ std::string VNFlowController::PopPendingChapter() {
     return s;
 }
 
-}  // namespace VN
-}  // namespace PrismatiX
+} // namespace PrismatiX::VN

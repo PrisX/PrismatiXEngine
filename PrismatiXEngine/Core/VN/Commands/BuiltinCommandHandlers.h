@@ -1,17 +1,15 @@
 #pragma once
 
-#include <map>
 #include <memory>
 #include <string>
+#include <unordered_map>
 
 #include "Core/VN/Commands/ICommandHandler.h"
 
-namespace PrismatiX {
-namespace VN {
+namespace PrismatiX::VN {
 namespace Commands {
 
-std::map<std::string, std::unique_ptr<ICommandHandler>> CreateBuiltinHandlers();
+std::unordered_map<std::string, std::unique_ptr<ICommandHandler>> CreateBuiltinHandlers();
 
 }  // namespace Commands
-}  // namespace VN
-}  // namespace PrismatiX
+} // namespace PrismatiX::VN

@@ -4,18 +4,18 @@
 
 #include <lua.hpp>
 #include <memory>
+#include <cstddef>
 #include <sol/sol.hpp>
 #include <string>
 
 #include "EngineConfig.h"
-#include "ServiceContainer.h"
 #include "Services/GameState.h"
 #include "Services/ResourceManager.h"
+#include "Services/SaveManager.h"
 #include "Systems/AudioSystem.h"
 #include "Systems/RenderSystem.h"
 #include "Utils/Logger.h"
 #include "VN/VNChoiceList.h"
-#include "VN/VNScriptParser.h"
 
 namespace PrismatiX {
 namespace App {
@@ -51,15 +51,13 @@ public:
     void BindEngineToLua();
     sol::state& GetLuaState() { return lua; }
 
-    // Services Accessors (ServiceContainer)
-    Services::ResourceManager& GetResourceManager() { return *serviceContainer.Resolve<Services::ResourceManager>(); }
-    VN::VNScriptParser& GetScriptingEngine() { return *serviceContainer.Resolve<VN::VNScriptParser>(); }
-    Services::GameState& GetGameState() { return *serviceContainer.Resolve<Services::GameState>(); }
-    Systems::AudioSystem& GetAudioSystem() { return *serviceContainer.Resolve<Systems::AudioSystem>(); }
-    Systems::RenderSystem& GetRenderSystem() { return *serviceContainer.Resolve<Systems::RenderSystem>(); }
-    UI::VNChoiceList& GetChoiceList() { return *serviceContainer.Resolve<UI::VNChoiceList>(); }
-
-    ServiceContainer& GetContainer() { return serviceContainer; }
+    // Services Accessors
+    PrismatiX::Services::ResourceManager& GetResourceManager() { return *resourceManager; }
+    PrismatiX::Services::GameState& GetGameState() { return *gameState; }
+    PrismatiX::Services::SaveManager& GetSaveManager() { return *saveManager; }
+    PrismatiX::Systems::AudioSystem& GetAudioSystem() { return *audioSystem; }
+    PrismatiX::Systems::RenderSystem& GetRenderSystem() { return *renderSystem; }
+    PrismatiX::VN::VNChoiceList& GetChoiceList() { return *choiceList; }
 
 private:
     int lastWinW = EngineConfig::kDefaultScreenWidth;
@@ -74,17 +72,16 @@ private:
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
     sol::state lua;
-    ServiceContainer serviceContainer;
 
     // Core Services
-    std::unique_ptr<Services::ResourceManager> resourceManager;
-    std::unique_ptr<VN::VNScriptParser> scriptingEngine;
-    std::unique_ptr<Services::GameState> gameState;
+    std::unique_ptr<PrismatiX::Services::ResourceManager> resourceManager;
+    std::unique_ptr<PrismatiX::Services::GameState> gameState;
+    std::unique_ptr<PrismatiX::Services::SaveManager> saveManager;
 
     // Systems
-    std::unique_ptr<Systems::AudioSystem> audioSystem;
-    std::unique_ptr<Systems::RenderSystem> renderSystem;
-    std::unique_ptr<UI::VNChoiceList> choiceList;
+    std::unique_ptr<PrismatiX::Systems::AudioSystem> audioSystem;
+    std::unique_ptr<PrismatiX::Systems::RenderSystem> renderSystem;
+    std::unique_ptr<PrismatiX::VN::VNChoiceList> choiceList;
 };
 
 }  // namespace App

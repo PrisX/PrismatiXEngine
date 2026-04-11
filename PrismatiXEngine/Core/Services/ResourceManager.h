@@ -12,8 +12,7 @@
 
 #include "Utils/LRUCache.h"
 
-namespace PrismatiX {
-namespace Services {
+namespace PrismatiX::Services {
 
 struct PDXFileEntry {
     std::string archivePath;
@@ -77,5 +76,4 @@ private:
     std::string GetFontKey(const std::string& fileName, int fontSize);
 };
 
-}  // namespace Services
-}  // namespace PrismatiX
+} // namespace PrismatiX::Services

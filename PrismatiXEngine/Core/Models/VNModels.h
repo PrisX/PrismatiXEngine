@@ -3,13 +3,17 @@
 #include <string>
 #include <vector>
 
-namespace PrismatiX {
-namespace Models {
+struct SDL_Texture;
+
+namespace PrismatiX::Models {
 
 struct ActiveCharacter {
     std::string name;
     std::string diff;
     int pos;
+
+    SDL_Texture* cachedTexture = nullptr;
+    std::string cachedDiff;
 
     float alpha = 0.0f;
     float targetAlpha = 255.0f;
@@ -19,7 +23,6 @@ struct ActiveCharacter {
     float targetX = 0.0f;
 
     std::string animation = "fade";
-    std::string animationEase;
     int animationDuration = 18;
     int animationFrame = 0;
     bool animationActive = false;
@@ -52,5 +55,4 @@ struct NotificationOverlayData {
     bool active = false;
 };
 
-}  // namespace Models
-}  // namespace PrismatiX
+} // namespace PrismatiX::Models

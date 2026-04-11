@@ -7,22 +7,20 @@
 #include <vector>
 
 #include "Core/Models/VNModels.h"
+#include "Utils/TransitionUtils.h"
 
-namespace PrismatiX {
-namespace Services {
+namespace PrismatiX::Services {
 class ResourceManager;
 }
-namespace Systems {
+namespace PrismatiX::Systems {
 class RenderSystem;
 }
-}  // namespace PrismatiX
 
-namespace PrismatiX {
-namespace VN {
+namespace PrismatiX::VN {
 
 class VNStage {
 public:
-    VNStage(Services::ResourceManager& resMgr, Systems::RenderSystem& renSys);
+    VNStage(PrismatiX::Services::ResourceManager& resMgr, PrismatiX::Systems::RenderSystem& renSys);
     ~VNStage() = default;
 
     void SetBackground(const std::string& bgName, const std::string& transition = "");
@@ -32,26 +30,26 @@ public:
     void Update();
     void Render();
 
-    std::vector<Models::SavedCharacter> GetSavedCharacters() const;
-    void RestoreCharacters(const std::vector<Models::SavedCharacter>& savedChars);
+    std::vector<PrismatiX::Models::SavedCharacter> GetSavedCharacters() const;
+    void RestoreCharacters(const std::vector<PrismatiX::Models::SavedCharacter>& savedChars);
     void RestoreBackground(const std::string& bgName);
     std::string GetCurrentBgName() const { return currentBgName; }
 
 private:
-    Services::ResourceManager& resourceManager;
-    Systems::RenderSystem& renderSystem;
+    PrismatiX::Services::ResourceManager& resourceManager;
+    PrismatiX::Systems::RenderSystem& renderSystem;
 
     std::string currentBgName;
     SDL_Texture* currentBgTexture = nullptr;
     SDL_Texture* previousBgTexture = nullptr;
     float bgFadeAlpha = 255.0f;
+    PrismatiX::Utils::Transition bgTransition;
 
-    std::map<std::string, Models::ActiveCharacter> activeCharacters;
-    std::vector<Models::ActiveCharacter*> sortedCharacters;
+    std::map<std::string, PrismatiX::Models::ActiveCharacter> activeCharacters;
+    std::vector<PrismatiX::Models::ActiveCharacter*> sortedCharacters;
     bool sortDirty = true;
 
     void RecalculatePositions();
 };
 
-}  // namespace VN
-}  // namespace PrismatiX
+} // namespace PrismatiX::VN

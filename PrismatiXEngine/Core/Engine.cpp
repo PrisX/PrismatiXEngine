@@ -58,20 +58,13 @@ bool Engine::Initialize(const std::string& title, int width, int height) {
 
     PX_LOG_INFO("Initializing Engine Services...");
     resourceManager = std::make_unique<Services::ResourceManager>(renderer);
-    scriptingEngine = std::make_unique<VN::VNScriptParser>(*resourceManager);
     gameState = std::make_unique<Services::GameState>();
+    saveManager = std::make_unique<Services::SaveManager>(*gameState);
 
     PX_LOG_INFO("Initializing Engine Systems...");
     renderSystem = std::make_unique<Systems::RenderSystem>(renderer, *resourceManager);
     audioSystem = std::make_unique<Systems::AudioSystem>(*resourceManager);
-    choiceList = std::make_unique<UI::VNChoiceList>();
-
-    serviceContainer.RegisterSingleton<Services::ResourceManager>(resourceManager.get());
-    serviceContainer.RegisterSingleton<VN::VNScriptParser>(scriptingEngine.get());
-    serviceContainer.RegisterSingleton<Services::GameState>(gameState.get());
-    serviceContainer.RegisterSingleton<Systems::RenderSystem>(renderSystem.get());
-    serviceContainer.RegisterSingleton<Systems::AudioSystem>(audioSystem.get());
-    serviceContainer.RegisterSingleton<UI::VNChoiceList>(choiceList.get());
+    choiceList = std::make_unique<VN::VNChoiceList>();
 
     SDL_RenderSetLogicalSize(renderer, width, height);
 

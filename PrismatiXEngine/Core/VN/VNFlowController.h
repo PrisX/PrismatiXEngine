@@ -1,6 +1,6 @@
 #pragma once
 
-#include <map>
+#include <unordered_map>
 #include <memory>
 #include <queue>
 #include <string>
@@ -15,27 +15,21 @@ namespace sol {
 class state;
 }
 
-namespace PrismatiX {
-namespace Models {
+namespace PrismatiX::Models {
 struct VNCommand;
 }
-namespace Services {
+namespace PrismatiX::Services {
 class ResourceManager;
 class GameState;
 }
-namespace Systems {
+namespace PrismatiX::Systems {
 class AudioSystem;
 }
-namespace VN {
-class VNScriptParser;
-namespace Commands {
+namespace PrismatiX::VN::Commands {
 class ICommandHandler;
 }
-}
-}  // namespace PrismatiX
 
-namespace PrismatiX {
-namespace VN {
+namespace PrismatiX::VN {
 
 class VNFlowController {
 public:
@@ -63,17 +57,16 @@ public:
     void SelectChoice(int index);
 
 private:
-    Services::ResourceManager& resourceManager;
-    VNScriptParser& scriptingEngine;
-    Services::GameState& gameState;
-    Systems::AudioSystem& audioSystem;
-    UI::VNChoiceList& choiceList;
+    PrismatiX::Services::ResourceManager& resourceManager;
+    PrismatiX::Services::GameState& gameState;
+    PrismatiX::Systems::AudioSystem& audioSystem;
+    PrismatiX::VN::VNChoiceList& choiceList;
     sol::state& luaState;
     VNDialogueSystem dialogueSystem;
     VNStage stage;
 
     std::string currentScriptName;
-    std::vector<Models::VNCommand> commands;
+    std::vector<PrismatiX::Models::VNCommand> commands;
     int currentLine = 0;
     bool isFinished = false;
     bool hasStarted = false;
@@ -86,11 +79,10 @@ private:
         bool active = false;
     } pendingJump;
 
-    std::map<std::string, std::unique_ptr<Commands::ICommandHandler>> handlers;
+    std::unordered_map<std::string, std::unique_ptr<Commands::ICommandHandler>> handlers;
     void InitHandlers();
 
     void ExecuteNext();
 };
 
-}  // namespace VN
-}  // namespace PrismatiX
+} // namespace PrismatiX::VN

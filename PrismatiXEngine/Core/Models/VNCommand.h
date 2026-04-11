@@ -1,15 +1,13 @@
 #pragma once
 
-#include <map>
+#include <unordered_map>
 #include <string>
 
-namespace PrismatiX {
-namespace Models {
+namespace PrismatiX::Models {
 
 struct VNCommand {
     std::string type;
-    std::map<std::string, std::string> args;
+    std::unordered_map<std::string, std::string> args;
 };
 
-}  // namespace Models
-}  // namespace PrismatiX
+} // namespace PrismatiX::Models

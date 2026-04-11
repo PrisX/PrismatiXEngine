@@ -3,6 +3,7 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 
+#include <cstddef>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -10,12 +11,11 @@
 
 #include "Utils/LRUCache.h"
 
-namespace PrismatiX {
-namespace Services {
+namespace PrismatiX::Services {
 class ResourceManager;
 }
 
-namespace Systems {
+namespace PrismatiX::Systems {
 
 struct TextCacheKey {
     std::string text;
@@ -30,8 +30,7 @@ struct TextCacheKey {
     }
 };
 
-}  // namespace Systems
-}  // namespace PrismatiX
+} // namespace PrismatiX::Systems
 
 namespace std {
 template <>
@@ -55,8 +54,7 @@ struct hash<PrismatiX::Systems::TextCacheKey> {
 };
 }  // namespace std
 
-namespace PrismatiX {
-namespace Systems {
+namespace PrismatiX::Systems {
 
 struct CachedTexture {
     SDL_Texture* texture;
@@ -74,7 +72,7 @@ enum class DisplayMode { TopLeft, TopRight, BottomLeft, BottomRight, Top, Bottom
 
 class RenderSystem {
 public:
-    RenderSystem(SDL_Renderer* ren, Services::ResourceManager& resMgr);
+    RenderSystem(SDL_Renderer* ren, PrismatiX::Services::ResourceManager& resMgr);
     ~RenderSystem();
 
     // Texture Rendering
@@ -97,7 +95,7 @@ public:
 
 private:
     SDL_Renderer* renderer;
-    Services::ResourceManager& resourceManager;
+    PrismatiX::Services::ResourceManager& resourceManager;
 
     int cameraOffsetX = 0;
     int cameraOffsetY = 0;
@@ -107,5 +105,4 @@ private:
     SDL_Surface* RenderTextSurface(TTF_Font* font, const std::string& text, SDL_Color color, Uint32 wrapLength);
 };
 
-}  // namespace Systems
-}  // namespace PrismatiX
+} // namespace PrismatiX::Systems

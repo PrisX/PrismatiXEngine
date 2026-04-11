@@ -5,10 +5,9 @@
 #include "Core/EngineConfig.h"
 #include "Core/Services/ResourceManager.h"
 
-namespace PrismatiX {
-namespace Systems {
+namespace PrismatiX::Systems {
 
-RenderSystem::RenderSystem(SDL_Renderer* ren, Services::ResourceManager& resMgr)
+RenderSystem::RenderSystem(SDL_Renderer* ren, PrismatiX::Services::ResourceManager& resMgr)
     : renderer(ren), resourceManager(resMgr), textCache(200, [](CachedTexture ct) {
           if (ct.texture) SDL_DestroyTexture(ct.texture);
       }) {}
@@ -250,5 +249,4 @@ void RenderSystem::DrawTextWithOutlineCentered(TTF_Font* font, const std::string
     DrawTextWithOutline(font, text, textColor, outlineColor, outlineSize, x, y, 0, alpha, shadow);
 }
 
-}  // namespace Systems
-}  // namespace PrismatiX
+} // namespace PrismatiX::Systems

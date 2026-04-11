@@ -9,13 +9,15 @@
 #include <sstream>
 
 #include "Core/EngineConfig.h"
-#include "SecretKey.h"
 #include "Utils/Logger.h"
+
+#ifndef PDX_SECRET_KEY
+#define PDX_SECRET_KEY "PrismatiXDEFAULT"
+#endif
 
 namespace fs = std::filesystem;
 
-namespace PrismatiX {
-namespace Services {
+namespace PrismatiX::Services {
 
 ResourceManager::ResourceManager(SDL_Renderer* renderer, size_t texLimit, size_t fontLimit, size_t sfxLimit) : renderer(renderer) {
     textureCache = std::make_unique<PrismatiX::Utils::LRUCache<std::string, SDL_Texture*>>(texLimit, [](SDL_Texture* tex) {
@@ -114,9 +116,10 @@ std::vector<char> ResourceManager::ExtractFile(const std::string& fileName) {
     std::vector<char> buffer(entry.size);
     in.read(buffer.data(), entry.size);
     in.close();
-    int keyLen = (int)PDX_SECRET_KEY.length();
+    std::string_view key = PDX_SECRET_KEY;
+    int keyLen = (int)key.length();
     if (keyLen > 0) {
-        for (size_t i = 0; i < buffer.size(); i++) buffer[i] ^= PDX_SECRET_KEY[i % keyLen];
+        for (size_t i = 0; i < buffer.size(); i++) buffer[i] ^= key[i % keyLen];
     }
     return buffer;
 }
@@ -250,5 +253,4 @@ void ResourceManager::CleanAll() {
     CleanAudio();
 }
 
-}  // namespace Services
-}  // namespace PrismatiX
+} // namespace PrismatiX::Services

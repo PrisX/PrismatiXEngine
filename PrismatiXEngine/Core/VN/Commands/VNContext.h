@@ -10,47 +10,33 @@ namespace sol {
 class state;
 }
 
-namespace PrismatiX {
-namespace Services {
+namespace PrismatiX::Services {
 class ResourceManager;
 class GameState;
 }
 
-namespace Systems {
+namespace PrismatiX::Systems {
 class AudioSystem;
 class RenderSystem;
 }
 
-namespace UI {
-class VNChoiceList;
-}
-
-namespace VN {
+namespace PrismatiX::VN {
 class VNStage;
 class VNDialogueSystem;
-class VNScriptParser;
-
+class VNChoiceList;
 namespace Commands {
 
 struct VNServices {
-    Services::ResourceManager& resourceManager;
-    VNScriptParser& scriptingEngine;
-    Services::GameState& gameState;
-    Systems::AudioSystem& audioSystem;
-    Systems::RenderSystem& renderSystem;
-    UI::VNChoiceList& choiceList;
+    PrismatiX::Services::ResourceManager& resourceManager;
+    PrismatiX::Services::GameState& gameState;
+    PrismatiX::Systems::AudioSystem& audioSystem;
+    PrismatiX::Systems::RenderSystem& renderSystem;
+    VNChoiceList& choiceList;
     sol::state& luaState;
 };
 
-struct VNContext {
-    Services::ResourceManager& resourceManager;
-    Services::GameState& gameState;
-    Systems::AudioSystem& audioSystem;
-    UI::VNChoiceList& choiceList;
-    VN::VNStage& stage;
-    VN::VNDialogueSystem& dialogueSystem;
-    sol::state& luaState;
-    std::vector<Models::VNCommand>& commands;
+struct VNScriptCtx {
+    std::vector<PrismatiX::Models::VNCommand>& commands;
     int& currentLine;
     std::queue<std::string>& pendingBgm;
     std::queue<std::string>& pendingChapters;
@@ -58,6 +44,24 @@ struct VNContext {
     std::function<int(const std::string&)> findLabelLine;
 };
 
+struct VNWorldCtx {
+    VNStage& stage;
+    VNDialogueSystem& dialogueSystem;
+    VNChoiceList& choiceList;
+};
+
+struct VNServiceCtx {
+    PrismatiX::Services::ResourceManager& resourceManager;
+    PrismatiX::Services::GameState& gameState;
+    PrismatiX::Systems::AudioSystem& audioSystem;
+    sol::state& luaState;
+};
+
+struct VNContext {
+    VNScriptCtx script;
+    VNWorldCtx world;
+    VNServiceCtx services;
+};
+
 }  // namespace Commands
-}  // namespace VN
-}  // namespace PrismatiX
+} // namespace PrismatiX::VN

@@ -2,8 +2,8 @@
 #include "Core/VN/Commands/VNContext.h"
 
 #include <charconv>
-#include <map>
 #include <string>
+#include <unordered_map>
 
 #include <sol/sol.hpp>
 
@@ -15,18 +15,17 @@
 #include "Core/VN/VNChoiceList.h"
 #include "Utils/Logger.h"
 
-namespace PrismatiX {
-namespace VN {
+namespace PrismatiX::VN {
 namespace Commands {
 
 namespace {
 
-std::string GetArg(const std::map<std::string, std::string>& args, const std::string& key, const std::string& def = "") {
+std::string GetArg(const std::unordered_map<std::string, std::string>& args, const std::string& key, const std::string& def = "") {
     auto it = args.find(key);
     return (it != args.end()) ? it->second : def;
 }
 
-int ParseInt(const std::map<std::string, std::string>& args, const std::string& key, int def = 0) {
+int ParseInt(const std::unordered_map<std::string, std::string>& args, const std::string& key, int def = 0) {
     auto it = args.find(key);
     if (it == args.end()) return def;
     int parsed = def;
@@ -39,7 +38,7 @@ int ParseInt(const std::map<std::string, std::string>& args, const std::string& 
 
 class TextCommandHandler final : public ICommandHandler {
 public:
-    void Execute(const Models::VNCommand& cmd, VNContext& ctx) override {
+    void Execute(const PrismatiX::Models::VNCommand& cmd, VNContext& ctx) override {
         std::string speaker = GetArg(cmd.args, "speaker");
         std::string text = GetArg(cmd.args, "text", GetArg(cmd.args, "content"));
         size_t start = 0;
@@ -47,94 +46,94 @@ public:
             size_t end = text.find('}', start);
             if (end == std::string::npos) break;
             std::string varName = text.substr(start + 1, end - start - 1);
-            std::string value = std::to_string(ctx.gameState.GetFlag(varName));
+            std::string value = std::to_string(ctx.services.gameState.GetFlag(varName));
             text.replace(start, end - start + 1, value);
             start += value.length();
         }
 
         int speed = ParseInt(cmd.args, "speed", 40);
         PX_LOG_TRACE("[VN] Text: {} says \"{}\"", speaker, text);
-        ctx.dialogueSystem.SetText(speaker, text, speed, { 255, 255, 255, 255 }, { 0, 0, 0, 255 }, GetArg(cmd.args, "effect"));
-        ctx.gameState.AddLog(speaker, text);
+        ctx.world.dialogueSystem.SetText(speaker, text, speed, { 255, 255, 255, 255 }, { 0, 0, 0, 255 }, GetArg(cmd.args, "effect"));
+        ctx.services.gameState.AddLog(speaker, text);
     }
 };
 
 class BgCommandHandler final : public ICommandHandler {
 public:
-    void Execute(const Models::VNCommand& cmd, VNContext& ctx) override {
+    void Execute(const PrismatiX::Models::VNCommand& cmd, VNContext& ctx) override {
         std::string file = GetArg(cmd.args, "file");
         PX_LOG_DEBUG("[VN] Change BG: {}", file);
-        ctx.stage.SetBackground(file);
-        ctx.currentLine++;
+        ctx.world.stage.SetBackground(file);
+        ctx.script.currentLine++;
     }
 };
 
 class CharCommandHandler final : public ICommandHandler {
 public:
-    void Execute(const Models::VNCommand& cmd, VNContext& ctx) override {
+    void Execute(const PrismatiX::Models::VNCommand& cmd, VNContext& ctx) override {
         std::string id = GetArg(cmd.args, "id");
         std::string expression = GetArg(cmd.args, "expression");
         int pos = ParseInt(cmd.args, "pos", 1);
         PX_LOG_DEBUG("[VN] Set Char: {} ({}) at pos {}", id, expression, pos);
-        if (!id.empty()) ctx.stage.SetCharacter(id, expression, pos);
-        ctx.currentLine++;
+        if (!id.empty()) ctx.world.stage.SetCharacter(id, expression, pos);
+        ctx.script.currentLine++;
     }
 };
 
 class CharClearCommandHandler final : public ICommandHandler {
 public:
-    void Execute(const Models::VNCommand& cmd, VNContext& ctx) override {
+    void Execute(const PrismatiX::Models::VNCommand& cmd, VNContext& ctx) override {
         std::string id = GetArg(cmd.args, "id");
         PX_LOG_DEBUG("[VN] Clear Char: {}", id);
-        ctx.stage.ClearCharacter(id);
-        ctx.currentLine++;
+        ctx.world.stage.ClearCharacter(id);
+        ctx.script.currentLine++;
     }
 };
 
 class BgmCommandHandler final : public ICommandHandler {
 public:
-    void Execute(const Models::VNCommand& cmd, VNContext& ctx) override {
+    void Execute(const PrismatiX::Models::VNCommand& cmd, VNContext& ctx) override {
         std::string file = GetArg(cmd.args, "file");
         std::string title = GetArg(cmd.args, "title", file);
         PX_LOG_DEBUG("[VN] Play BGM: {} ({})", file, title);
-        ctx.audioSystem.PlayBGM(file);
-        ctx.pendingBgm.push(title);
-        ctx.currentLine++;
+        ctx.services.audioSystem.PlayBGM(file);
+        ctx.script.pendingBgm.push(title);
+        ctx.script.currentLine++;
     }
 };
 
 class ChapterCommandHandler final : public ICommandHandler {
 public:
-    void Execute(const Models::VNCommand& cmd, VNContext& ctx) override {
+    void Execute(const PrismatiX::Models::VNCommand& cmd, VNContext& ctx) override {
         std::string title = GetArg(cmd.args, "title");
         PX_LOG_DEBUG("[VN] Chapter: {}", title);
-        ctx.pendingChapters.push(title);
-        ctx.currentLine++;
+        ctx.script.pendingChapters.push(title);
+        ctx.script.currentLine++;
     }
 };
 
 class StopBgmCommandHandler final : public ICommandHandler {
 public:
-    void Execute(const Models::VNCommand&, VNContext& ctx) override {
+    void Execute(const PrismatiX::Models::VNCommand&, VNContext& ctx) override {
         PX_LOG_DEBUG("[VN] Stop BGM");
-        ctx.audioSystem.StopBGM();
-        ctx.currentLine++;
+        ctx.services.audioSystem.StopBGM();
+        ctx.script.currentLine++;
     }
 };
 
 class SeCommandHandler final : public ICommandHandler {
 public:
-    void Execute(const Models::VNCommand& cmd, VNContext& ctx) override {
+    void Execute(const PrismatiX::Models::VNCommand& cmd, VNContext& ctx) override {
         std::string file = GetArg(cmd.args, "file");
         PX_LOG_DEBUG("[VN] Play SE: {}", file);
-        ctx.audioSystem.PlaySFX(file);
-        ctx.currentLine++;
+        ctx.services.audioSystem.PlaySFX(file);
+        ctx.script.currentLine++;
     }
 };
 
 class VarCommandHandler final : public ICommandHandler {
 public:
-    void Execute(const Models::VNCommand& cmd, VNContext& ctx) override {
+    void Execute(const PrismatiX::Models::VNCommand& cmd, VNContext& ctx) override {
         std::string var = GetArg(cmd.args, "var");
         std::string op = GetArg(cmd.args, "op");
         int value = ParseInt(cmd.args, "val");
@@ -142,78 +141,78 @@ public:
 
         if (!var.empty()) {
             if (op == "set") {
-                ctx.gameState.SetFlag(var, value);
+                ctx.services.gameState.SetFlag(var, value);
             } else if (op == "add") {
-                ctx.gameState.AddFlag(var, value);
+                ctx.services.gameState.AddFlag(var, value);
             }
         }
 
-        ctx.currentLine++;
+        ctx.script.currentLine++;
     }
 };
 
 class JumpCommandHandler final : public ICommandHandler {
 public:
-    void Execute(const Models::VNCommand& cmd, VNContext& ctx) override {
+    void Execute(const PrismatiX::Models::VNCommand& cmd, VNContext& ctx) override {
         std::string target = GetArg(cmd.args, "target");
         PX_LOG_INFO("[VN] Jump: {}", target);
 
         if (target.empty()) {
-            ctx.currentLine++;
+            ctx.script.currentLine++;
             return;
         }
 
         if (target[0] == '*') {
-            int line = ctx.findLabelLine(target.substr(1));
+            int line = ctx.script.findLabelLine(target.substr(1));
             if (line >= 0) {
-                ctx.currentLine = line;
+                ctx.script.currentLine = line;
             } else {
                 PX_LOG_ERROR("[VN] Label not found: {}", target);
-                ctx.currentLine++;
+                ctx.script.currentLine++;
             }
             return;
         }
 
-        ctx.loadScript(target);
+        ctx.script.loadScript(target);
     }
 };
 
 class ChoiceCommandHandler final : public ICommandHandler {
 public:
-    void Execute(const Models::VNCommand& cmd, VNContext& ctx) override {
+    void Execute(const PrismatiX::Models::VNCommand& cmd, VNContext& ctx) override {
         std::string text = GetArg(cmd.args, "text", GetArg(cmd.args, "content"));
         std::string target = GetArg(cmd.args, "target");
         std::string style = GetArg(cmd.args, "style");
         PX_LOG_DEBUG("[VN] Add Choice: {} -> {}", text, target);
-        ctx.choiceList.AddChoice(text, target, style);
-        ctx.currentLine++;
+        ctx.world.choiceList.AddChoice(text, target, style);
+        ctx.script.currentLine++;
     }
 };
 
 class IfCommandHandler final : public ICommandHandler {
 public:
-    void Execute(const Models::VNCommand& cmd, VNContext& ctx) override {
+    void Execute(const PrismatiX::Models::VNCommand& cmd, VNContext& ctx) override {
         std::string var = GetArg(cmd.args, "var");
         std::string op = GetArg(cmd.args, "op");
         int value = ParseInt(cmd.args, "val");
 
-        if (ctx.gameState.CheckFlag(var, op, value)) {
+        if (ctx.services.gameState.CheckFlag(var, op, value)) {
             PX_LOG_DEBUG("[VN] If {} {} {}: TRUE", var, op, value);
-            ctx.currentLine++;
+            ctx.script.currentLine++;
             return;
         }
 
         PX_LOG_DEBUG("[VN] If {} {} {}: FALSE, skipping...", var, op, value);
         int depth = 0;
-        while (++ctx.currentLine < static_cast<int>(ctx.commands.size())) {
-            if (ctx.commands[ctx.currentLine].type == "if") {
+        while (++ctx.script.currentLine < static_cast<int>(ctx.script.commands.size())) {
+            if (ctx.script.commands[ctx.script.currentLine].type == "if") {
                 depth++;
-            } else if (ctx.commands[ctx.currentLine].type == "else" && depth == 0) {
-                ctx.currentLine++;
+            } else if (ctx.script.commands[ctx.script.currentLine].type == "else" && depth == 0) {
+                ctx.script.currentLine++;
                 break;
-            } else if (ctx.commands[ctx.currentLine].type == "endif") {
+            } else if (ctx.script.commands[ctx.script.currentLine].type == "endif") {
                 if (depth == 0) {
-                    ctx.currentLine++;
+                    ctx.script.currentLine++;
                     break;
                 }
                 depth--;
@@ -224,14 +223,14 @@ public:
 
 class ElseCommandHandler final : public ICommandHandler {
 public:
-    void Execute(const Models::VNCommand&, VNContext& ctx) override {
+    void Execute(const PrismatiX::Models::VNCommand&, VNContext& ctx) override {
         int depth = 0;
-        while (++ctx.currentLine < static_cast<int>(ctx.commands.size())) {
-            if (ctx.commands[ctx.currentLine].type == "if") {
+        while (++ctx.script.currentLine < static_cast<int>(ctx.script.commands.size())) {
+            if (ctx.script.commands[ctx.script.currentLine].type == "if") {
                 depth++;
-            } else if (ctx.commands[ctx.currentLine].type == "endif") {
+            } else if (ctx.script.commands[ctx.script.currentLine].type == "endif") {
                 if (depth == 0) {
-                    ctx.currentLine++;
+                    ctx.script.currentLine++;
                     break;
                 }
                 depth--;
@@ -242,40 +241,40 @@ public:
 
 class EndIfCommandHandler final : public ICommandHandler {
 public:
-    void Execute(const Models::VNCommand&, VNContext& ctx) override {
-        ctx.currentLine++;
+    void Execute(const PrismatiX::Models::VNCommand&, VNContext& ctx) override {
+        ctx.script.currentLine++;
     }
 };
 
 class LabelCommandHandler final : public ICommandHandler {
 public:
-    void Execute(const Models::VNCommand&, VNContext& ctx) override {
-        ctx.currentLine++;
+    void Execute(const PrismatiX::Models::VNCommand&, VNContext& ctx) override {
+        ctx.script.currentLine++;
     }
 };
 
 class LuaCommandHandler final : public ICommandHandler {
 public:
-    void Execute(const Models::VNCommand& cmd, VNContext& ctx) override {
+    void Execute(const PrismatiX::Models::VNCommand& cmd, VNContext& ctx) override {
         std::string fn = GetArg(cmd.args, "fn");
         if (!fn.empty()) {
-            sol::protected_function function = ctx.luaState[fn];
+            sol::protected_function function = ctx.services.luaState[fn];
             if (function.valid()) {
-                sol::table argsTable = ctx.luaState.create_table();
+                sol::table argsTable = ctx.services.luaState.create_table();
                 for (const auto& [key, value] : cmd.args) {
                     argsTable[key] = value;
                 }
                 function(argsTable);
             }
         }
-        ctx.currentLine++;
+        ctx.script.currentLine++;
     }
 };
 
 }  // namespace
 
-std::map<std::string, std::unique_ptr<ICommandHandler>> CreateBuiltinHandlers() {
-    std::map<std::string, std::unique_ptr<ICommandHandler>> handlers;
+std::unordered_map<std::string, std::unique_ptr<ICommandHandler>> CreateBuiltinHandlers() {
+    std::unordered_map<std::string, std::unique_ptr<ICommandHandler>> handlers;
     handlers["text"] = std::make_unique<TextCommandHandler>();
     handlers["bg"] = std::make_unique<BgCommandHandler>();
     handlers["char"] = std::make_unique<CharCommandHandler>();
@@ -296,5 +295,4 @@ std::map<std::string, std::unique_ptr<ICommandHandler>> CreateBuiltinHandlers() 
 }
 
 }  // namespace Commands
-}  // namespace VN
-}  // namespace PrismatiX
+} // namespace PrismatiX::VN

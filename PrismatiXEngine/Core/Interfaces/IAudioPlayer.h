@@ -2,8 +2,7 @@
 #include <SDL_mixer.h>
 #include <string>
 
-namespace PrismatiX {
-namespace Interfaces {
+namespace PrismatiX::Interfaces {
 
 class IAudioPlayer {
 public:
@@ -37,5 +36,4 @@ public:
     virtual float GetVoiceVolume() const = 0;
 };
 
-} // namespace Interfaces
-} // namespace PrismatiX
+} // namespace PrismatiX::Interfaces

@@ -3,11 +3,11 @@
 #include <cctype>
 #include <iostream>
 #include <sstream>
+#include <map>
 
 #include "Core/Services/ResourceManager.h"
 
-namespace PrismatiX {
-namespace VN {
+namespace PrismatiX::VN {
 
 namespace {
 std::string ToLowerCopy(const std::string& value) {
@@ -17,17 +17,15 @@ std::string ToLowerCopy(const std::string& value) {
 }
 }  // namespace
 
-VNScriptParser::VNScriptParser(Services::ResourceManager& resMgr) : resourceManager(resMgr) {}
-
-std::vector<Models::VNCommand> VNScriptParser::ParseScript(const std::string& fileName) {
-    std::vector<Models::VNCommand> script;
+std::vector<PrismatiX::Models::VNCommand> ParseScript(PrismatiX::Services::ResourceManager& resourceManager, const std::string& fileName) {
+    std::vector<PrismatiX::Models::VNCommand> script;
     std::vector<char> buffer = resourceManager.ExtractFile(fileName);
     if (buffer.empty()) return script;
 
     std::string content(buffer.begin(), buffer.end());
     std::stringstream file(content);
     std::string line;
-    std::map<std::string, std::string> lastTextArgs;
+    std::unordered_map<std::string, std::string> lastTextArgs;
 
     while (std::getline(file, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -38,7 +36,7 @@ std::vector<Models::VNCommand> VNScriptParser::ParseScript(const std::string& fi
         if (clean.empty() || clean.substr(0, 2) == "//" || clean[0] == '#') continue;
 
         if (clean[0] == '*') {
-            Models::VNCommand cmd;
+            PrismatiX::Models::VNCommand cmd;
             cmd.type = "label";
             cmd.args["name"] = clean.substr(1);
             script.push_back(cmd);
@@ -47,7 +45,7 @@ std::vector<Models::VNCommand> VNScriptParser::ParseScript(const std::string& fi
 
         if (clean[0] == '[' && clean.back() == ']') {
             std::string body = clean.substr(1, clean.size() - 2);
-            Models::VNCommand cmd;
+            PrismatiX::Models::VNCommand cmd;
             size_t firstSpace = body.find(' ');
             if (firstSpace == std::string::npos) {
                 cmd.type = ToLowerCopy(body);
@@ -90,7 +88,7 @@ std::vector<Models::VNCommand> VNScriptParser::ParseScript(const std::string& fi
             script.push_back(cmd);
         }
         else {
-            Models::VNCommand cmd;
+            PrismatiX::Models::VNCommand cmd;
             cmd.type = "text";
             cmd.args = lastTextArgs;
             cmd.args["content"] = clean;
@@ -100,7 +98,7 @@ std::vector<Models::VNCommand> VNScriptParser::ParseScript(const std::string& fi
     return script;
 }
 
-SDL_Color VNScriptParser::ParseColor(const std::string& colorStr, SDL_Color defaultColor) {
+SDL_Color ParseColor(const std::string& colorStr, SDL_Color defaultColor) {
     if (colorStr.empty()) return defaultColor;
     std::stringstream ss(colorStr);
     std::string r, g, b;
@@ -114,5 +112,4 @@ SDL_Color VNScriptParser::ParseColor(const std::string& colorStr, SDL_Color defa
     return defaultColor;
 }
 
-}  // namespace VN
-}  // namespace PrismatiX
+} // namespace PrismatiX::VN

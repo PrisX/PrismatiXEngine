@@ -6,8 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace PrismatiX {
-namespace VN {
+namespace PrismatiX::VN {
 
 struct VNDialogueState {
     std::string speaker;
@@ -45,5 +44,4 @@ private:
     void ParseUTF8(const std::string& text);
 };
 
-}  // namespace VN
-}  // namespace PrismatiX
+} // namespace PrismatiX::VN

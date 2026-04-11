@@ -5,8 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace PrismatiX {
-namespace Interfaces {
+namespace PrismatiX::Interfaces {
 
 class IResourceLoader {
 public:
@@ -31,5 +30,4 @@ public:
     virtual void CleanAll() = 0;
 };
 
-} // namespace Interfaces
-} // namespace PrismatiX
+} // namespace PrismatiX::Interfaces

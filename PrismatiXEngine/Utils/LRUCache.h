@@ -5,8 +5,7 @@
 #include <unordered_map>
 #include <functional>
 
-namespace PrismatiX {
-namespace Utils {
+namespace PrismatiX::Utils {
 
 template <typename Key, typename Value>
 class LRUCache {
@@ -87,5 +86,4 @@ private:
     std::function<void(Value)> onEvict;
 };
 
-}  // namespace Utils
-}  // namespace PrismatiX
+} // namespace PrismatiX::Utils

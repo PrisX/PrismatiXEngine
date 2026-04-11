@@ -1,13 +1,22 @@
 ﻿cmake_minimum_required(VERSION 3.15)
 project(PrismatiXEngine LANGUAGES CXX)
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 # Source files
 set(PRISMATIX_SOURCES
     main.cpp
     Core/Engine.cpp
     Core/LuaBindings.cpp
+    Core/Lua/LuaEngineAPI.cpp
+    Core/Lua/LuaRenderAPI.cpp
+    Core/Lua/LuaAudioAPI.cpp
+    Core/Lua/LuaStateAPI.cpp
+    Core/Lua/LuaVNAPI.cpp
     Core/Services/ResourceManager.cpp
     Core/Services/GameState.cpp
+    Core/Services/SaveManager.cpp
     Core/Systems/RenderSystem.cpp
     Core/Systems/AudioSystem.cpp
     Core/VN/VNFlowController.cpp
@@ -20,8 +29,10 @@ set(PRISMATIX_SOURCES
 
 add_executable(PrismatiXEngine
     ${PRISMATIX_SOURCES}
-    SecretKey.h
 )
+
+option(PDX_SECRET_KEY "Secret key for PDX archives" "")
+target_compile_definitions(PrismatiXEngine PRIVATE PDX_SECRET_KEY="${PDX_SECRET_KEY}")
 
 # Header files search paths
 target_include_directories(PrismatiXEngine PRIVATE 
@@ -55,5 +66,5 @@ add_custom_command(
     TARGET PrismatiXEngine POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_CURRENT_SOURCE_DIR}/Scripts
-            $<TARGET_FILE_DIR:PrismatiXEngine>/Scripts
+            $<TARGET_FILE_DIR:PrismatiXEngine>/Data/Scripts
 )
