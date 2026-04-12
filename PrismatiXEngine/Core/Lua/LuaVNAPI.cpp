@@ -1,16 +1,15 @@
-#include "Core/Lua/LuaAPI.h"
 #include "Core/Engine.h"
-#include "Core/Services/ResourceManager.h"
+#include "Core/Lua/LuaAPI.h"
+#include "Core/Lua/LuaUtils.h"
 #include "Core/Services/GameState.h"
+#include "Core/Services/ResourceManager.h"
 #include "Core/Systems/AudioSystem.h"
 #include "Core/Systems/RenderSystem.h"
+#include "Core/VN/Commands/VNContext.h"
 #include "Core/VN/VNChoiceList.h"
 #include "Core/VN/VNFlowController.h"
-#include "Core/VN/Commands/VNContext.h"
 
 namespace PrismatiX::App {
-template <typename T = int> T LInt(float val) { return static_cast<T>(val); }
-
 void RegisterLuaVNAPI(sol::state& lua, sol::table& api, Engine& engine) {
     lua.new_usertype<PrismatiX::VN::VNDialogueState>(
         "VNDialogueState",
@@ -66,15 +65,8 @@ void RegisterLuaVNAPI(sol::state& lua, sol::table& api, Engine& engine) {
     vn["SelectChoice"] = [](PrismatiX::VN::VNFlowController& c, int i) { c.SelectChoice(i - 1); };
 
     api.set_function("CreateVNController", [&engine]() {
-        PrismatiX::VN::Commands::VNServices services{
-            engine.GetResourceManager(),
-            engine.GetGameState(),
-            engine.GetAudioSystem(),
-            engine.GetRenderSystem(),
-            engine.GetChoiceList(),
-            engine.GetLuaState()
-        };
+        PrismatiX::VN::Commands::VNServices services{ engine.GetResourceManager(), engine.GetGameState(), engine.GetAudioSystem(), engine.GetRenderSystem(), engine.GetChoiceList(), engine.GetLuaState() };
         return std::make_unique<PrismatiX::VN::VNFlowController>(services);
     });
 }
-}
+}  // namespace PrismatiX::App

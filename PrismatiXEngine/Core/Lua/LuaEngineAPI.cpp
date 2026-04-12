@@ -1,11 +1,11 @@
-#include "Utils/Logger.h"
-#include "Core/Lua/LuaAPI.h"
-#include "Core/Engine.h"
 #include <SDL2/SDL.h>
 
-namespace PrismatiX::App {
-template <typename T = int> T LInt(float val) { return static_cast<T>(val); }
+#include "Core/Engine.h"
+#include "Core/Lua/LuaAPI.h"
+#include "Core/Lua/LuaUtils.h"
+#include "Utils/Logger.h"
 
+namespace PrismatiX::App {
 void RegisterLuaEngineAPI(sol::state& lua, sol::table& api, Engine& engine) {
     api.set_function("HandleEvents", [&engine]() { engine.HandleEvents(); });
     api.set_function("IsRunning", [&engine]() { return engine.IsRunning(); });
@@ -26,8 +26,6 @@ void RegisterLuaEngineAPI(sol::state& lua, sol::table& api, Engine& engine) {
         int mx = engine.GetMouseX(), my = engine.GetMouseY();
         return (mx >= LInt(x) && mx < LInt(x + w) && my >= LInt(y) && my < LInt(y + h));
     });
-    api.set_function("Wait", [](float ms) {
-        PX_LOG_WARN("Engine.Wait({}) called but is not implemented. Use frame-based timers instead.", ms);
-    });
+    api.set_function("Wait", [](float ms) { PX_LOG_WARN("Engine.Wait({}) called but is not implemented. Use frame-based timers instead.", ms); });
 }
-}
+}  // namespace PrismatiX::App

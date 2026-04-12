@@ -1,14 +1,14 @@
-#include "Core/Lua/LuaAPI.h"
-#include "Core/Engine.h"
+#include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
+
+#include "Core/Engine.h"
+#include "Core/EngineConfig.h"
+#include "Core/Lua/LuaAPI.h"
+#include "Core/Lua/LuaUtils.h"
 #include "Core/Services/ResourceManager.h"
 #include "Core/Systems/RenderSystem.h"
-#include "Core/EngineConfig.h"
-#include <SDL2/SDL.h>
 
 namespace PrismatiX::App {
-template <typename T = int> T LInt(float val) { return static_cast<T>(val); }
-
 void RegisterLuaRenderAPI(sol::state& lua, sol::table& api, Engine& engine) {
     api.set_function("DrawAuto", [&engine, &lua](const std::string& path, float mode, float alpha, sol::optional<float> ox, sol::optional<float> oy, sol::optional<float> scale) {
         SDL_Texture* tex = engine.GetResourceManager().LoadTexture(path);
@@ -55,4 +55,4 @@ void RegisterLuaRenderAPI(sol::state& lua, sol::table& api, Engine& engine) {
     });
     api.set_function("PresentScreen", [&engine]() { engine.PresentScreen(); });
 }
-}
+}  // namespace PrismatiX::App
