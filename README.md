@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://cdn.owen0924.com/images/PrismatiXEngine_Logo.png" alt="PrismatiXEngine Logo" width="500">
+  <img src="https://cdn.owen0924.com/images/PrismatiXEngine_Logo.png" alt="PrismatiXEngine Logo">
 </p>
 
 <h1 align="center">PrismatiXEngine</h1>
