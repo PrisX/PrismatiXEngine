@@ -1,8 +1,8 @@
 #pragma once
 
+#include <optional>
 #include <unordered_map>
 #include <memory>
-#include <queue>
 #include <string>
 #include <vector>
 
@@ -11,23 +11,12 @@
 #include "Core/VN/VNStage.h"
 #include "Core/VN/Commands/VNContext.h"
 
-namespace sol {
-class state;
-}
+namespace sol { class state; }
 
-namespace PrismatiX::Models {
-struct VNCommand;
-}
-namespace PrismatiX::Services {
-class ResourceManager;
-class GameState;
-}
-namespace PrismatiX::Systems {
-class AudioSystem;
-}
-namespace PrismatiX::VN::Commands {
-class ICommandHandler;
-}
+namespace PrismatiX::Models  { struct VNCommand; }
+namespace PrismatiX::Services { class ResourceManager; class GameState; }
+namespace PrismatiX::Systems  { class AudioSystem; }
+namespace PrismatiX::VN::Commands { class ICommandHandler; }
 
 namespace PrismatiX::VN {
 
@@ -43,14 +32,15 @@ public:
 
     // Getters for S/L and UI
     std::string GetCurrentScript() const { return currentScriptName; }
-    int GetCurrentLine() const { return currentLine; }
-    void SetCurrentLine(int line) { currentLine = line; }
+    int  GetCurrentLine() const          { return currentLine; }
+    void SetCurrentLine(int line)        { currentLine = line; }
 
     VNDialogueSystem& GetDialogueSystem() { return dialogueSystem; }
-    VNStage& GetStage() { return stage; }
+    VNStage&          GetStage()          { return stage; }
 
-    void PushPendingBgm(const std::string& name) { pendingBgm.push(name); }
-    void PushPendingChapter(const std::string& name) { pendingChapters.push(name); }
+    // 使用 optional 取代 queue：每次最多只會有一筆 pending
+    void SetPendingBgm(const std::string& name)     { pendingBgm     = name; }
+    void SetPendingChapter(const std::string& name) { pendingChapters = name; }
     std::string PopPendingBgm();
     std::string PopPendingChapter();
 
@@ -58,30 +48,27 @@ public:
 
 private:
     PrismatiX::Services::ResourceManager& resourceManager;
-    PrismatiX::Services::GameState& gameState;
-    PrismatiX::Systems::AudioSystem& audioSystem;
-    PrismatiX::VN::VNChoiceList& choiceList;
-    sol::state& luaState;
+    PrismatiX::Services::GameState&       gameState;
+    PrismatiX::Systems::AudioSystem&      audioSystem;
+    PrismatiX::VN::VNChoiceList&          choiceList;
+    sol::state&                           luaState;
+
     VNDialogueSystem dialogueSystem;
-    VNStage stage;
+    VNStage          stage;
 
-    std::string currentScriptName;
-    std::vector<PrismatiX::Models::VNCommand> commands;
-    int currentLine = 0;
-    bool isFinished = false;
-    bool hasStarted = false;
+    std::string                                currentScriptName;
+    std::vector<PrismatiX::Models::VNCommand>  commands;
+    int  currentLine = 0;
+    bool isFinished  = false;
+    bool hasStarted  = false;
 
-    std::queue<std::string> pendingBgm;
-    std::queue<std::string> pendingChapters;
+    std::optional<std::string> pendingBgm;
+    std::optional<std::string> pendingChapters;
 
-    struct PendingJump {
-        std::string target;
-        bool active = false;
-    } pendingJump;
+    struct PendingJump { std::string target; bool active = false; } pendingJump;
 
     std::unordered_map<std::string, std::unique_ptr<Commands::ICommandHandler>> handlers;
     void InitHandlers();
-
     void ExecuteNext();
 };
 

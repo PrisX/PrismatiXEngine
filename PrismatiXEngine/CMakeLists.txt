@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.15)
 project(PrismatiXEngine LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -39,12 +39,10 @@ target_include_directories(PrismatiXEngine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/Core
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Models
-    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Interfaces
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Services
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Systems
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/VN
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/VN/Commands
-    ${CMAKE_CURRENT_SOURCE_DIR}/UI
     ${CMAKE_CURRENT_SOURCE_DIR}/Utils
     ${LUA_INCLUDE_DIR}
 )

@@ -1,3 +1,4 @@
+#include "Utils/Logger.h"
 #include "Core/Lua/LuaAPI.h"
 #include "Core/Engine.h"
 #include <SDL2/SDL.h>
@@ -25,6 +26,8 @@ void RegisterLuaEngineAPI(sol::state& lua, sol::table& api, Engine& engine) {
         int mx = engine.GetMouseX(), my = engine.GetMouseY();
         return (mx >= LInt(x) && mx < LInt(x + w) && my >= LInt(y) && my < LInt(y + h));
     });
-    api.set_function("Wait", [](float ms) {});
+    api.set_function("Wait", [](float ms) {
+        PX_LOG_WARN("Engine.Wait({}) called but is not implemented. Use frame-based timers instead.", ms);
+    });
 }
 }

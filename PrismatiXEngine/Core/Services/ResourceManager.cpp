@@ -36,10 +36,6 @@ ResourceManager::ResourceManager(SDL_Renderer* renderer, size_t texLimit, size_t
             delete asset;
         }
     });
-
-    ScanDirectory("Data");
-    ScanDirectory("Engine");
-    ScanDirectory("Scripts");
 }
 
 ResourceManager::~ResourceManager() { CleanAll(); }
@@ -253,4 +249,4 @@ void ResourceManager::CleanAll() {
     CleanAudio();
 }
 
-} // namespace PrismatiX::Services
+}  // namespace PrismatiX::Services

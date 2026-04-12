@@ -51,9 +51,7 @@ void VNStage::SetCharacter(const std::string& name, const std::string& diff, int
     chara.pos = pos;
     chara.isExiting = false;
     chara.targetAlpha = 255.0f;
-    chara.animation = transition.empty() ? "fade" : transition;
-    chara.animationActive = true;
-    chara.animationFrame = 0;
+    chara.anim.Start(transition.empty() ? "fade" : transition, 18);
 
     if (chara.alpha <= 0.0f) {
         chara.alpha = 0.0f;
@@ -68,9 +66,7 @@ void VNStage::ClearCharacter(const std::string& name, const std::string& transit
     if (it != activeCharacters.end()) {
         it->second.isExiting = true;
         it->second.targetAlpha = 0.0f;
-        it->second.animation = transition.empty() ? "fade" : transition;
-        it->second.animationActive = true;
-        it->second.animationFrame = 0;
+        it->second.anim.Start(transition.empty() ? "fade" : transition, 18);
         RecalculatePositions();
     }
 }
@@ -93,21 +89,20 @@ void VNStage::Update() {
         PrismatiX::Utils::ExpDecay(chara.alpha, chara.targetAlpha, 0.08f);
         PrismatiX::Utils::ExpDecay(chara.currentX, chara.targetX, 0.15f);
 
-        if (chara.animationActive) {
-            chara.animationFrame++;
-            float p = (float)chara.animationFrame / chara.animationDuration;
-            if (p >= 1.0f) {
-                chara.animationActive = false;
-                chara.renderOffsetX = 0;
-                chara.renderOffsetY = 0;
-                chara.renderScale = 1.0f;
+        if (chara.anim.IsRunning()) {
+            float p = chara.anim.Progress();
+            chara.anim.Tick();
+            if (!chara.anim.IsRunning()) {
+                chara.anim.offsetX = 0;
+                chara.anim.offsetY = 0;
+                chara.anim.scale   = 1.0f;
             }
             else {
-                if (chara.animation == "bounce") {
-                    chara.renderOffsetY = -30.0f * std::sin(p * 3.14159265f);
+                if (chara.anim.type == "bounce") {
+                    chara.anim.offsetY = -30.0f * std::sin(p * 3.14159265f);
                 }
-                else if (chara.animation == "shake") {
-                    chara.renderOffsetX = 5.0f * std::sin(p * 3.14159265f * 4.0f);
+                else if (chara.anim.type == "shake") {
+                    chara.anim.offsetX = 5.0f * std::sin(p * 3.14159265f * 4.0f);
                 }
             }
         }
@@ -158,12 +153,12 @@ void VNStage::Render() {
             SDL_QueryTexture(tex, NULL, NULL, &texW, &texH);
 
             float targetHeight = 600.0f;
-            float scale = (targetHeight / (float)texH) * chara->renderScale;
+            float scale = (targetHeight / (float)texH) * chara->anim.scale;
             int finalW = (int)(texW * scale);
             int finalH = (int)(texH * scale);
 
-            int x = (int)(chara->currentX + chara->renderOffsetX) - (finalW / 2);
-            int y = (EngineConfig::kDefaultScreenHeight - finalH) + (int)chara->renderOffsetY;
+            int x = (int)(chara->currentX + chara->anim.offsetX) - (finalW / 2);
+            int y = (EngineConfig::kDefaultScreenHeight - finalH) + (int)chara->anim.offsetY;
 
             renderSystem.DrawTexture(tex, x, y, finalW, finalH, (Uint8)chara->alpha);
         }

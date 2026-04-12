@@ -97,7 +97,7 @@ public:
         std::string title = GetArg(cmd.args, "title", file);
         PX_LOG_DEBUG("[VN] Play BGM: {} ({})", file, title);
         ctx.services.audioSystem.PlayBGM(file);
-        ctx.script.pendingBgm.push(title);
+        ctx.script.pendingBgm = title;
         ctx.script.currentLine++;
     }
 };
@@ -107,7 +107,7 @@ public:
     void Execute(const PrismatiX::Models::VNCommand& cmd, VNContext& ctx) override {
         std::string title = GetArg(cmd.args, "title");
         PX_LOG_DEBUG("[VN] Chapter: {}", title);
-        ctx.script.pendingChapters.push(title);
+        ctx.script.pendingChapters = title;
         ctx.script.currentLine++;
     }
 };

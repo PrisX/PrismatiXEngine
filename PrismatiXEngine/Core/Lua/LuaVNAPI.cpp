@@ -1,5 +1,10 @@
 #include "Core/Lua/LuaAPI.h"
 #include "Core/Engine.h"
+#include "Core/Services/ResourceManager.h"
+#include "Core/Services/GameState.h"
+#include "Core/Systems/AudioSystem.h"
+#include "Core/Systems/RenderSystem.h"
+#include "Core/VN/VNChoiceList.h"
 #include "Core/VN/VNFlowController.h"
 #include "Core/VN/Commands/VNContext.h"
 
@@ -60,7 +65,7 @@ void RegisterLuaVNAPI(sol::state& lua, sol::table& api, Engine& engine) {
     };
     vn["SelectChoice"] = [](PrismatiX::VN::VNFlowController& c, int i) { c.SelectChoice(i - 1); };
 
-    api.set_function("CreateVNController", [&engine](sol::optional<std::string> f1, sol::optional<int> s1, sol::optional<std::string> f2, sol::optional<int> s2) {
+    api.set_function("CreateVNController", [&engine]() {
         PrismatiX::VN::Commands::VNServices services{
             engine.GetResourceManager(),
             engine.GetGameState(),

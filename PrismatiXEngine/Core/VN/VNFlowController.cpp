@@ -166,16 +166,16 @@ void VNFlowController::ExecuteNext() {
 }
 
 std::string VNFlowController::PopPendingBgm() {
-    if (pendingBgm.empty()) return "";
-    std::string s = pendingBgm.front();
-    pendingBgm.pop();
+    if (!pendingBgm) return "";
+    std::string s = std::move(*pendingBgm);
+    pendingBgm.reset();
     return s;
 }
 
 std::string VNFlowController::PopPendingChapter() {
-    if (pendingChapters.empty()) return "";
-    std::string s = pendingChapters.front();
-    pendingChapters.pop();
+    if (!pendingChapters) return "";
+    std::string s = std::move(*pendingChapters);
+    pendingChapters.reset();
     return s;
 }
 

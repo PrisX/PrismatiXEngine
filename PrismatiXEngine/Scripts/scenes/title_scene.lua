@@ -14,19 +14,19 @@ end
 function TitleScene:enter()
     local winW, winH = Engine.GetLogicalSize()
     self.menu = MainMenu.new(winW, winH, self.fontName, self.fontSize)
-    _G.Notification:notify("Welcome to PrismatiX", "info")
+    _G.PX.Notification:notify("Welcome to PrismatiX", "info")
 end
 
 function TitleScene:update(mx, my, leftClick, rightClick)
     local action = self.menu:update(mx, my, leftClick)
     
     if action == "start" then
-        _G.Transition:start(function()
+        _G.PX.Transition:start(function()
             local PlayScene = include("Scripts/scenes/play_scene.lua")
-            _G.Scene:switch(PlayScene.new(self.fontName, self.fontSize))
+            _G.PX.Scene:switch(PlayScene.new(self.fontName, self.fontSize))
         end)
     elseif action == "exit" then
-        _G.Notification:notify("Exit requested", "info")
+        _G.PX.Notification:notify("Exit requested", "info")
         Engine.Quit()
     end
 end

@@ -27,11 +27,14 @@ public:
     void ClearLogs();
     const std::vector<PrismatiX::Models::BacklogEntry>& GetLogs() const;
 
-private:
-    friend class SaveManager;
+    std::string SerializeFlags() const;
+    std::string SerializeLogs() const;
+    void DeserializeFlags(const std::string& data);
+    void DeserializeLogs(const std::string& data);
 
+private:
     std::unordered_map<std::string, int> flags;
     std::vector<PrismatiX::Models::BacklogEntry> logs;
 };
 
-} // namespace PrismatiX::Services
+}  // namespace PrismatiX::Services

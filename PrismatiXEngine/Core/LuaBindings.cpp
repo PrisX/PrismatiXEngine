@@ -1,6 +1,7 @@
 #include "LuaBindings.h"
 #include "Core/Lua/LuaAPI.h"
 #include "Core/Engine.h"
+#include "Core/Systems/RenderSystem.h"
 #include "Core/EngineConfig.h"
 #include "Utils/Logger.h"
 
@@ -21,6 +22,7 @@ void RegisterEngineLuaBindings(sol::state& lua, Engine& engine) {
     lua["Engine"] = api;
     lua["FONT_OVERSAMPLE"] = std::ref(EngineConfig::kFontOversample);
     api["FONT_OVERSAMPLE"] = std::ref(EngineConfig::kFontOversample);
+
 
     lua.new_enum(
         "DisplayMode",

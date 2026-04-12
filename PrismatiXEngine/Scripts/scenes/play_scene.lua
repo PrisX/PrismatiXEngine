@@ -21,7 +21,7 @@ end
 
 function PlayScene:enter()
     local winW, winH = Engine.GetLogicalSize()
-    self.vn = Engine.CreateVNController(self.fontName, self.fontSize, self.fontName, self.fontSize)
+    self.vn = Engine.CreateVNController()
     self.dialogueBox = DialogueBox.new(self.fontName, 26)
     self.backlog = BacklogMenu.new(self.fontName, 22)
     self.toolbar = Toolbar.new(self.fontName, 18, winH)
@@ -37,7 +37,7 @@ function PlayScene:enter()
     })
 
     self.vn:LoadScript("chapter1.pds")
-    _G.Notification:notify("Chapter 1: The Beginning", "info")
+    _G.PX.Notification:notify("Chapter 1: The Beginning", "info")
 end
 
 function PlayScene:update(mx, my, leftClick, rightClick)
@@ -49,9 +49,11 @@ function PlayScene:update(mx, my, leftClick, rightClick)
 
     local toolbarCmd = self.toolbar:update(mx, my, leftClick)
     if toolbarCmd == "OpenSave" then
-        _G.Notification:notify("Save Menu Coming Soon", "info")
+        local ok = Engine.SaveGame(1, self.vn)
+        _G.PX.Notification:notify(ok and "Game Saved (Slot 1)" or "Save Failed", ok and "info" or "warn")
     elseif toolbarCmd == "OpenLoad" then
-        _G.Notification:notify("Load Menu Coming Soon", "info")
+        local ok = Engine.LoadGame(1, self.vn)
+        _G.PX.Notification:notify(ok and "Game Loaded (Slot 1)" or "No Save Data", ok and "info" or "warn")
     end
 
     if self.toolbar:is_mouse_over(my) then

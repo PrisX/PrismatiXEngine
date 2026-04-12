@@ -2,23 +2,26 @@
 
 #include <SDL2/SDL.h>
 
-#include <lua.hpp>
 #include <memory>
-#include <cstddef>
 #include <sol/sol.hpp>
 #include <string>
 
 #include "EngineConfig.h"
-#include "Services/GameState.h"
-#include "Services/ResourceManager.h"
-#include "Services/SaveManager.h"
-#include "Systems/AudioSystem.h"
-#include "Systems/RenderSystem.h"
-#include "Utils/Logger.h"
-#include "VN/VNChoiceList.h"
 
-namespace PrismatiX {
-namespace App {
+namespace PrismatiX::Services {
+class ResourceManager;
+class GameState;
+class SaveManager;
+}  // namespace PrismatiX::Services
+namespace PrismatiX::Systems {
+class AudioSystem;
+class RenderSystem;
+}  // namespace PrismatiX::Systems
+namespace PrismatiX::VN {
+class VNChoiceList;
+}
+
+namespace PrismatiX::App {
 
 class Engine {
 public:
@@ -51,21 +54,21 @@ public:
     void BindEngineToLua();
     sol::state& GetLuaState() { return lua; }
 
-    // Services Accessors
-    PrismatiX::Services::ResourceManager& GetResourceManager() { return *resourceManager; }
-    PrismatiX::Services::GameState& GetGameState() { return *gameState; }
-    PrismatiX::Services::SaveManager& GetSaveManager() { return *saveManager; }
-    PrismatiX::Systems::AudioSystem& GetAudioSystem() { return *audioSystem; }
-    PrismatiX::Systems::RenderSystem& GetRenderSystem() { return *renderSystem; }
-    PrismatiX::VN::VNChoiceList& GetChoiceList() { return *choiceList; }
+    // Service accessors
+    PrismatiX::Services::ResourceManager& GetResourceManager();
+    PrismatiX::Services::GameState& GetGameState();
+    PrismatiX::Services::SaveManager& GetSaveManager();
+    PrismatiX::Systems::AudioSystem& GetAudioSystem();
+    PrismatiX::Systems::RenderSystem& GetRenderSystem();
+    PrismatiX::VN::VNChoiceList& GetChoiceList();
 
 private:
     int lastWinW = EngineConfig::kDefaultScreenWidth;
     int lastWinH = EngineConfig::kDefaultScreenHeight;
-    bool leftClick;
-    bool rightClick;
-    int mouseWheelY;
-    bool isRunning;
+    bool leftClick = false;
+    bool rightClick = false;
+    int mouseWheelY = 0;
+    bool isRunning = false;
     int mouseX = 0;
     int mouseY = 0;
 
@@ -73,16 +76,12 @@ private:
     SDL_Renderer* renderer = nullptr;
     sol::state lua;
 
-    // Core Services
     std::unique_ptr<PrismatiX::Services::ResourceManager> resourceManager;
     std::unique_ptr<PrismatiX::Services::GameState> gameState;
     std::unique_ptr<PrismatiX::Services::SaveManager> saveManager;
-
-    // Systems
     std::unique_ptr<PrismatiX::Systems::AudioSystem> audioSystem;
     std::unique_ptr<PrismatiX::Systems::RenderSystem> renderSystem;
     std::unique_ptr<PrismatiX::VN::VNChoiceList> choiceList;
 };
 
-}  // namespace App
-}  // namespace PrismatiX
+}  // namespace PrismatiX::App

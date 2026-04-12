@@ -1,6 +1,7 @@
 #pragma once
+
 #include <functional>
-#include <queue>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -13,17 +14,17 @@ class state;
 namespace PrismatiX::Services {
 class ResourceManager;
 class GameState;
-}
-
+}  // namespace PrismatiX::Services
 namespace PrismatiX::Systems {
 class AudioSystem;
 class RenderSystem;
-}
+}  // namespace PrismatiX::Systems
 
 namespace PrismatiX::VN {
 class VNStage;
 class VNDialogueSystem;
 class VNChoiceList;
+
 namespace Commands {
 
 struct VNServices {
@@ -38,8 +39,8 @@ struct VNServices {
 struct VNScriptCtx {
     std::vector<PrismatiX::Models::VNCommand>& commands;
     int& currentLine;
-    std::queue<std::string>& pendingBgm;
-    std::queue<std::string>& pendingChapters;
+    std::optional<std::string>& pendingBgm;       // queue→optional
+    std::optional<std::string>& pendingChapters;  // queue→optional
     std::function<void(const std::string&)> loadScript;
     std::function<int(const std::string&)> findLabelLine;
 };
@@ -64,4 +65,4 @@ struct VNContext {
 };
 
 }  // namespace Commands
-} // namespace PrismatiX::VN
+}  // namespace PrismatiX::VN

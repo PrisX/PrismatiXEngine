@@ -1,5 +1,8 @@
 #include "Core/Lua/LuaAPI.h"
 #include "Core/Engine.h"
+#include <SDL2/SDL_ttf.h>
+#include "Core/Services/ResourceManager.h"
+#include "Core/Systems/RenderSystem.h"
 #include "Core/EngineConfig.h"
 #include <SDL2/SDL.h>
 

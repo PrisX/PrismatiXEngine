@@ -1,11 +1,12 @@
+#include <SDL2/SDL.h>
+
 #include <filesystem>
 #include <iostream>
 #include <string>
 
-#include <SDL2/SDL.h>
-
 #include "Core/Engine.h"
 #include "Core/EngineConfig.h"
+#include "Core/Services/ResourceManager.h"
 #include "Utils/Logger.h"
 
 #pragma execution_character_set("utf-8")
@@ -72,6 +73,11 @@ int main(int argc, char* argv[]) {
         PX_LOG_CRITICAL("Engine initialization failed.");
         return -1;
     }
+
+    PX_LOG_INFO("Scanning asset directories...");
+    engine.GetResourceManager().ScanDirectory("Data");
+    engine.GetResourceManager().ScanDirectory("Engine");
+    engine.GetResourceManager().ScanDirectory("Scripts");
 
     PX_LOG_INFO("Mounting archives...");
     engine.GetResourceManager().MountArchive(std::string(EngineConfig::kArchiveEngine));

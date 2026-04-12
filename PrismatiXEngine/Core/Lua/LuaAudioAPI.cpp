@@ -1,5 +1,6 @@
 #include "Core/Lua/LuaAPI.h"
 #include "Core/Engine.h"
+#include "Core/Systems/AudioSystem.h"
 
 namespace PrismatiX::App {
 template <typename T = int> T LInt(float val) { return static_cast<T>(val); }

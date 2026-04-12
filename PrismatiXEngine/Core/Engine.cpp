@@ -6,6 +6,12 @@
 #include <iostream>
 
 #include "Core/LuaBindings.h"
+#include "Core/Services/GameState.h"
+#include "Core/Services/ResourceManager.h"
+#include "Core/Services/SaveManager.h"
+#include "Core/Systems/AudioSystem.h"
+#include "Core/Systems/RenderSystem.h"
+#include "Core/VN/VNChoiceList.h"
 #include "Utils/Logger.h"
 
 #pragma execution_character_set("utf-8")
@@ -115,6 +121,14 @@ void Engine::SetCameraOffset(int x, int y) {
 void Engine::ResetCameraOffset() {
     if (renderSystem) renderSystem->SetCameraOffset(0, 0);
 }
+
+// Accessor definitions
+PrismatiX::Services::ResourceManager& Engine::GetResourceManager() { return *resourceManager; }
+PrismatiX::Services::GameState& Engine::GetGameState() { return *gameState; }
+PrismatiX::Services::SaveManager& Engine::GetSaveManager() { return *saveManager; }
+PrismatiX::Systems::AudioSystem& Engine::GetAudioSystem() { return *audioSystem; }
+PrismatiX::Systems::RenderSystem& Engine::GetRenderSystem() { return *renderSystem; }
+PrismatiX::VN::VNChoiceList& Engine::GetChoiceList() { return *choiceList; }
 
 void Engine::Clean() {
     PX_LOG_INFO("Engine shutting down...");

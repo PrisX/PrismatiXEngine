@@ -2,7 +2,8 @@
 
 #include <string>
 #include <vector>
-#include "Core/Models/VNModels.h"
+
+#include "Core/Models/SaveSnapshot.h"
 
 namespace PrismatiX::Services {
 class GameState;
@@ -12,8 +13,8 @@ public:
     explicit SaveManager(GameState& gameState);
     ~SaveManager() = default;
 
-    bool SaveGame(int slot, const std::string& scriptName, int line, const std::string& bgName, const std::string& bgmName, const std::vector<PrismatiX::Models::SavedCharacter>& characters);
-    bool LoadGame(int slot, std::string& outScript, int& outLine, std::string& outBg, std::string& outBgm, std::vector<PrismatiX::Models::SavedCharacter>& outCharacters);
+    bool SaveGame(int slot, const PrismatiX::Models::SaveSnapshot& snapshot);
+    bool LoadGame(int slot, PrismatiX::Models::SaveSnapshot& outSnapshot);
     void PeekSaveFile(int slot, bool& outIsEmpty, std::string& outDisplayText);
 
 private:

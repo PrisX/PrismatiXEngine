@@ -7,6 +7,31 @@ struct SDL_Texture;
 
 namespace PrismatiX::Models {
 
+struct CharacterAnimation {
+    std::string type = "fade";
+    int totalFrames = 18;
+    int currentFrame = 0;
+    bool active = false;
+    float offsetX = 0.0f;
+    float offsetY = 0.0f;
+    float scale = 1.0f;
+
+    bool IsRunning() const { return active && currentFrame < totalFrames; }
+    float Progress() const { return totalFrames > 0 ? static_cast<float>(currentFrame) / totalFrames : 1.0f; }
+    void Tick() {
+        if (active) {
+            ++currentFrame;
+            if (currentFrame >= totalFrames) active = false;
+        }
+    }
+    void Start(const std::string& animType, int frames) {
+        type = animType;
+        totalFrames = frames;
+        currentFrame = 0;
+        active = true;
+    }
+};
+
 struct ActiveCharacter {
     std::string name;
     std::string diff;
@@ -22,13 +47,7 @@ struct ActiveCharacter {
     float currentX = 0.0f;
     float targetX = 0.0f;
 
-    std::string animation = "fade";
-    int animationDuration = 18;
-    int animationFrame = 0;
-    bool animationActive = false;
-    float renderOffsetX = 0.0f;
-    float renderOffsetY = 0.0f;
-    float renderScale = 1.0f;
+    CharacterAnimation anim;
 };
 
 struct SavedCharacter {
@@ -44,15 +63,4 @@ struct BacklogEntry {
     bool isChoice = false;
 };
 
-struct NotificationOverlayData {
-    enum class Type { Chapter, BGM };
-    std::string text;
-    Type type = Type::Chapter;
-    float currentX = -600.0f;
-    float targetX = 20.0f;
-    int stayTimer = 0;
-    float alpha = 255.0f;
-    bool active = false;
-};
-
-} // namespace PrismatiX::Models
+}  // namespace PrismatiX::Models
