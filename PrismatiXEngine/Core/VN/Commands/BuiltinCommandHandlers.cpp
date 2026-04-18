@@ -2,6 +2,7 @@
 #include "Core/VN/Commands/VNContext.h"
 
 #include <charconv>
+#include <cctype>
 #include <string>
 #include <unordered_map>
 
@@ -34,6 +35,20 @@ int ParseInt(const std::unordered_map<std::string, std::string>& args, const std
     auto [ptr, ec] = std::from_chars(begin, end, parsed);
     if (ec != std::errc() || ptr != end) return def;
     return parsed;
+}
+
+bool ParseBool(const std::unordered_map<std::string, std::string>& args, const std::string& key, bool def = false) {
+    auto it = args.find(key);
+    if (it == args.end()) return def;
+
+    std::string value = it->second;
+    for (char& ch : value) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+
+    if (value == "1" || value == "true" || value == "yes" || value == "on") return true;
+    if (value == "0" || value == "false" || value == "no" || value == "off") return false;
+    return def;
 }
 
 class TextCommandHandler final : public ICommandHandler {
@@ -253,6 +268,15 @@ public:
     }
 };
 
+class WaitCommandHandler final : public ICommandHandler {
+public:
+    void Execute(const PrismatiX::Models::VNCommand& cmd, VNContext& ctx) override {
+        if (ParseBool(cmd.args, "auto_advance", false)) {
+            ctx.script.currentLine++;
+        }
+    }
+};
+
 class LuaCommandHandler final : public ICommandHandler {
 public:
     void Execute(const PrismatiX::Models::VNCommand& cmd, VNContext& ctx) override {
@@ -290,6 +314,7 @@ std::unordered_map<std::string, std::unique_ptr<ICommandHandler>> CreateBuiltinH
     handlers["else"] = std::make_unique<ElseCommandHandler>();
     handlers["endif"] = std::make_unique<EndIfCommandHandler>();
     handlers["label"] = std::make_unique<LabelCommandHandler>();
+    handlers["wait"] = std::make_unique<WaitCommandHandler>();
     handlers["lua"] = std::make_unique<LuaCommandHandler>();
     return handlers;
 }

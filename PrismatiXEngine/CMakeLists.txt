@@ -4,9 +4,7 @@ project(PrismatiXEngine LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Source files
-set(PRISMATIX_SOURCES
-    main.cpp
+set(PRISMATIX_RUNTIME_SOURCES
     Core/Engine.cpp
     Core/LuaBindings.cpp
     Core/Lua/LuaEngineAPI.cpp
@@ -27,17 +25,26 @@ set(PRISMATIX_SOURCES
     Core/VN/Commands/BuiltinCommandHandlers.cpp
 )
 
-add_executable(PrismatiXEngine
-    ${PRISMATIX_SOURCES}
+set(PRISMATIX_EDITOR_SOURCES
+    EditorMain.cpp
+    Editor/BlueprintEditor.cpp
+    Editor/BlueprintEditorDocument.cpp
+    Editor/EditorApp.cpp
+    Editor/EditorAppPanels.cpp
+    Editor/UIDesigner.cpp
 )
 
 option(PDX_SECRET_KEY "Secret key for PDX archives" "")
-target_compile_definitions(PrismatiXEngine PRIVATE PDX_SECRET_KEY="${PDX_SECRET_KEY}")
+add_library(PrismatiXRuntime STATIC
+    ${PRISMATIX_RUNTIME_SOURCES}
+)
 
-# Header files search paths
-target_include_directories(PrismatiXEngine PRIVATE 
+target_compile_definitions(PrismatiXRuntime PRIVATE PDX_SECRET_KEY="${PDX_SECRET_KEY}")
+
+target_include_directories(PrismatiXRuntime PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/Core
+    ${CMAKE_CURRENT_SOURCE_DIR}/Editor
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Models
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Services
     ${CMAKE_CURRENT_SOURCE_DIR}/Core/Systems
@@ -46,11 +53,9 @@ target_include_directories(PrismatiXEngine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Utils
     ${LUA_INCLUDE_DIR}
 )
- 
-# Libraries
-target_link_libraries(PrismatiXEngine PRIVATE
+
+target_link_libraries(PrismatiXRuntime PUBLIC
     SDL2::SDL2
-    SDL2::SDL2main
     SDL2_image::SDL2_image
     SDL2_ttf::SDL2_ttf
     SDL2_mixer::SDL2_mixer
@@ -58,6 +63,41 @@ target_link_libraries(PrismatiXEngine PRIVATE
     ${LUA_LIBRARIES}
     sol2::sol2
 )
+
+add_executable(PrismatiXEngine
+    GameMain.cpp
+)
+
+target_link_libraries(PrismatiXEngine PRIVATE
+    PrismatiXRuntime
+    SDL2::SDL2main
+)
+
+add_executable(PrismatiXEditor
+    ${PRISMATIX_EDITOR_SOURCES}
+)
+
+target_include_directories(PrismatiXEditor PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/Editor
+    ${CMAKE_CURRENT_SOURCE_DIR}/Utils
+)
+
+target_link_libraries(PrismatiXEditor PRIVATE
+    SDL2::SDL2
+    SDL2::SDL2main
+    SDL2_image::SDL2_image
+    spdlog::spdlog
+    PrismatiXImGui
+    PrismatiXNodeEditor
+)
+
+if (WIN32)
+    target_link_libraries(PrismatiXEditor PRIVATE
+        Ole32
+        Shell32
+    )
+endif()
 
 # Post-build copy scripts
 add_custom_command(

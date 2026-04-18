@@ -44,6 +44,9 @@ find_package(Lua REQUIRED)
 # Other dependencies
 find_package(spdlog CONFIG REQUIRED)
 
+# Third-party source dependencies
+add_subdirectory("ThirdParty")
+
 # Subdirectory
 add_subdirectory ("PrismatiXEngine")
 

@@ -1,7 +1,6 @@
 #include <SDL2/SDL.h>
 
 #include <filesystem>
-#include <iostream>
 #include <string>
 
 #include "Core/Engine.h"
@@ -19,12 +18,13 @@ void SetWorkingDirectoryToExecutable(int argc, char* argv[]) {
     if (basePath) {
         executableDir = std::filesystem::path(basePath);
         SDL_free(basePath);
-    }
-    else if (argc > 0 && argv && argv[0]) {
+    } else if (argc > 0 && argv && argv[0]) {
         executableDir = std::filesystem::path(argv[0]).parent_path();
     }
 
-    if (executableDir.empty()) return;
+    if (executableDir.empty()) {
+        return;
+    }
 
     std::error_code ec;
     std::filesystem::current_path(executableDir, ec);
@@ -58,6 +58,7 @@ bool RunLuaEntrypoint(PrismatiX::App::Engine& engine, const std::string& scriptP
         PX_LOG_CRITICAL("Lua Runtime Error: {}", err.what());
         return false;
     }
+
     return true;
 }
 }  // namespace

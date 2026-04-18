@@ -137,6 +137,7 @@ void VNFlowController::ExecuteNext() {
         const PrismatiX::Models::VNCommand& cmd = commands[currentLine];
         auto it = handlers.find(cmd.type);
         if (it != handlers.end()) {
+            const int lineBefore = currentLine;
             if (cmd.type == "choice") {
                 choiceList.Clear();
                 int next = currentLine;
@@ -149,6 +150,7 @@ void VNFlowController::ExecuteNext() {
             }
             it->second->Execute(cmd, context);
             if (cmd.type == "text") break;
+            if (cmd.type == "wait" && currentLine == lineBefore) break;
             if (cmd.type == "jump") {
                 auto targetIt = cmd.args.find("target");
                 if (targetIt != cmd.args.end() && !targetIt->second.empty() && targetIt->second[0] != '*') return;
