@@ -1,11 +1,27 @@
 #include "RenderSystem.h"
 
 #include <algorithm>
+#include <cmath>
+#include <vector>
 
 #include "Core/EngineConfig.h"
 #include "Core/Services/ResourceManager.h"
 
 namespace PrismatiX::Systems {
+
+namespace {
+void AppendArc(std::vector<SDL_Vertex>& vertices, float centerX, float centerY, float radius, float startAngle, float endAngle, const SDL_Color& color, int segments) {
+    for (int index = 0; index <= segments; ++index) {
+        const float t = static_cast<float>(index) / static_cast<float>(std::max(segments, 1));
+        const float angle = startAngle + (endAngle - startAngle) * t;
+        SDL_Vertex vertex{};
+        vertex.position.x = centerX + std::cos(angle) * radius;
+        vertex.position.y = centerY + std::sin(angle) * radius;
+        vertex.color = color;
+        vertices.push_back(vertex);
+    }
+}
+}  // namespace
 
 RenderSystem::RenderSystem(SDL_Renderer* ren, PrismatiX::Services::ResourceManager& resMgr)
     : renderer(ren), resourceManager(resMgr), textCache(200, [](CachedTexture ct) {
@@ -36,9 +52,13 @@ SDL_Rect RenderSystem::DrawTextureAuto(SDL_Texture* tex, DisplayMode mode, Uint8
     int texW = 0, texH = 0;
     if (SDL_QueryTexture(tex, NULL, NULL, &texW, &texH) != 0 || texW <= 0 || texH <= 0) return SDL_Rect{ 0, 0, 0, 0 };
     int renderW = 0, renderH = 0;
-    SDL_RenderGetLogicalSize(renderer, &renderW, &renderH);
-    if (renderW <= 0 || renderH <= 0) {
-        if (SDL_GetRendererOutputSize(renderer, &renderW, &renderH) != 0 || renderW <= 0 || renderH <= 0) return SDL_Rect{ 0, 0, 0, 0 };
+    if (SDL_Texture* renderTarget = SDL_GetRenderTarget(renderer)) {
+        SDL_QueryTexture(renderTarget, nullptr, nullptr, &renderW, &renderH);
+    } else {
+        SDL_RenderGetLogicalSize(renderer, &renderW, &renderH);
+        if (renderW <= 0 || renderH <= 0) {
+            if (SDL_GetRendererOutputSize(renderer, &renderW, &renderH) != 0 || renderW <= 0 || renderH <= 0) return SDL_Rect{ 0, 0, 0, 0 };
+        }
     }
     SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
     SDL_SetTextureAlphaMod(tex, alpha);
@@ -129,6 +149,57 @@ SDL_Rect RenderSystem::DrawTextureAuto(SDL_Texture* tex, DisplayMode mode, Uint8
     SDL_RenderCopy(renderer, tex, NULL, &destRect);
     SDL_SetTextureAlphaMod(tex, 255);
     return destRect;
+}
+
+void RenderSystem::DrawRoundedRect(float x, float y, float w, float h, float radius, SDL_Color color) {
+    if (!renderer || w <= 0.0f || h <= 0.0f) {
+        return;
+    }
+
+    const float clampedRadius = std::clamp(radius, 0.0f, std::min(w, h) * 0.5f);
+    if (clampedRadius <= 0.5f) {
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+        SDL_Rect rect{
+            static_cast<int>(std::round(x)) + cameraOffsetX,
+            static_cast<int>(std::round(y)) + cameraOffsetY,
+            static_cast<int>(std::round(w)),
+            static_cast<int>(std::round(h)),
+        };
+        SDL_RenderFillRect(renderer, &rect);
+        return;
+    }
+
+    std::vector<SDL_Vertex> polygon;
+    polygon.reserve(40);
+
+    const float left = x + cameraOffsetX;
+    const float top = y + cameraOffsetY;
+    const float right = left + w;
+    const float bottom = top + h;
+    const float pi = 3.14159265358979323846f;
+    const int arcSegments = 6;
+
+    AppendArc(polygon, right - clampedRadius, top + clampedRadius, clampedRadius, -pi * 0.5f, 0.0f, color, arcSegments);
+    AppendArc(polygon, right - clampedRadius, bottom - clampedRadius, clampedRadius, 0.0f, pi * 0.5f, color, arcSegments);
+    AppendArc(polygon, left + clampedRadius, bottom - clampedRadius, clampedRadius, pi * 0.5f, pi, color, arcSegments);
+    AppendArc(polygon, left + clampedRadius, top + clampedRadius, clampedRadius, pi, pi * 1.5f, color, arcSegments);
+
+    SDL_Vertex center{};
+    center.position.x = left + w * 0.5f;
+    center.position.y = top + h * 0.5f;
+    center.color = color;
+
+    std::vector<SDL_Vertex> fan;
+    fan.reserve(polygon.size() * 3);
+    for (size_t index = 0; index < polygon.size(); ++index) {
+        fan.push_back(center);
+        fan.push_back(polygon[index]);
+        fan.push_back(polygon[(index + 1) % polygon.size()]);
+    }
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_RenderGeometry(renderer, nullptr, fan.data(), static_cast<int>(fan.size()), nullptr, 0);
 }
 
 SDL_Surface* RenderSystem::RenderTextSurface(TTF_Font* font, const std::string& text, SDL_Color color, Uint32 wrapLength) {

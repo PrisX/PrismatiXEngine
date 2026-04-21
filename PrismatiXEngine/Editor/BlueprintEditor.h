@@ -1,5 +1,7 @@
 #pragma once
 
+#include <filesystem>
+
 #include <imgui.h>
 #include <imgui_node_editor.h>
 
@@ -20,6 +22,12 @@ public:
     using LogCallback = std::function<void(const std::string&)>;
     using SelectedResourceCallback = std::function<std::string()>;
 
+    struct ExportDocument {
+        std::string label;
+        std::filesystem::path relativePath;
+        std::string content;
+    };
+
     BlueprintEditor(BlueprintFlavor flavor, LogCallback logCallback = {});
     ~BlueprintEditor();
 
@@ -32,11 +40,16 @@ public:
     void ApplyAssetToSelection(const std::string& assetPath);
     void SetHeaderTexture(ImTextureID texture, int width, int height);
     void SetSelectedResourceCallback(SelectedResourceCallback callback);
+    void SetProjectRoot(const std::filesystem::path& projectRoot);
+    void ResetToDefaults();
 
     [[nodiscard]] bool HasSelection() const;
     [[nodiscard]] std::string GetSelectionSummary() const;
     [[nodiscard]] std::string GenerateLua() const;
     [[nodiscard]] std::vector<std::string> BuildPreviewLines() const;
+    [[nodiscard]] std::vector<ExportDocument> BuildExportDocuments() const;
+    [[nodiscard]] std::string CurrentDocumentRuntimePath() const;
+    [[nodiscard]] std::filesystem::path CurrentDocumentPath() const;
 
 private:
     enum class PinDataType {
@@ -115,11 +128,34 @@ private:
         ImColor color;
     };
 
+    struct SceneDocument {
+        std::filesystem::path path;
+        std::string runtimePath;
+        std::string displayName;
+        std::string source;
+        bool dirty = false;
+    };
+
     void BuildLibrary();
     void SeedDefaults();
     void SeedEntrypointGraph();
     void SeedSceneGraph();
     void EnsureEditorContext();
+    void EnsureSceneDocuments();
+    void RefreshSceneDocuments(bool force);
+    void RenderSceneWorkspace();
+    void RenderSceneDocumentList();
+    void CaptureActiveSceneDocument();
+    void LoadSceneDocument(size_t index);
+    void LoadSceneGraph(std::string_view source, std::string_view sceneName);
+    void SaveSceneDocument(size_t index);
+    void SaveAllSceneDocuments();
+    void MarkSceneDocumentDirty();
+    [[nodiscard]] const SceneDocument* ActiveSceneDocument() const;
+    [[nodiscard]] SceneDocument* ActiveSceneDocument();
+    [[nodiscard]] std::filesystem::path DataRoot() const;
+    [[nodiscard]] std::filesystem::path SceneScriptRoot() const;
+    [[nodiscard]] std::vector<std::filesystem::path> EnumerateSceneDocuments() const;
 
     NodeInstance* AddNode(const std::string& typeId, const ImVec2& position);
     void AddLink(ax::NodeEditor::PinId from, ax::NodeEditor::PinId to);
@@ -174,9 +210,13 @@ private:
     int m_headerTextureHeight = 0;
     int m_nextId = 1;
     int m_navigateCountdown = 3;
+    std::filesystem::path m_projectRoot;
     std::vector<NodeTemplate> m_library;
     std::vector<NodeInstance> m_nodes;
     std::vector<LinkInstance> m_links;
+    std::vector<SceneDocument> m_sceneDocuments;
+    size_t m_activeSceneDocumentIndex = 0;
+    bool m_sceneDocumentsNeedRefresh = false;
     ax::NodeEditor::NodeId m_selectedNodeId = 0;
     ax::NodeEditor::LinkId m_selectedLinkId = 0;
     ax::NodeEditor::NodeId m_contextNodeId = 0;

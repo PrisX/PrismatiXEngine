@@ -15,9 +15,7 @@ void RegisterLuaEngineAPI(sol::state& lua, sol::table& api, Engine& engine) {
     api.set_function("GetLeftClick", [&engine]() { return engine.GetLeftClick(); });
     api.set_function("GetRightClick", [&engine]() { return engine.GetRightClick(); });
     api.set_function("GetLogicalSize", [&engine]() {
-        int w, h;
-        SDL_RenderGetLogicalSize(engine.GetRenderer(), &w, &h);
-        return std::make_tuple((float)w, (float)h);
+        return std::make_tuple((float)engine.GetLogicalWidth(), (float)engine.GetLogicalHeight());
     });
     api.set_function("GetTicks", []() { return (float)SDL_GetTicks(); });
     api.set_function("SetCameraOffset", [&engine](float x, float y) { engine.SetCameraOffset(LInt(x), LInt(y)); });

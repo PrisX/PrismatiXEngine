@@ -66,11 +66,18 @@ function PlayScene:install_editor_hooks()
         end
 
         local ok, module = pcall(include, path)
-        if not ok or type(module) ~= "table" or type(module.build) ~= "function" then
+        if not ok or type(module) ~= "table" then
             return
         end
 
-        scene.generatedUI = module.build()
+        local winW, winH = Engine.GetLogicalSize()
+        if type(module.build) == "function" then
+            scene.generatedUI = module.build(winW, winH, scene.fontName, scene.fontSize)
+        elseif type(module.new) == "function" then
+            scene.generatedUI = module.new(winW, winH, scene.fontName, scene.fontSize)
+        else
+            scene.generatedUI = nil
+        end
     end
 end
 

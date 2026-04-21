@@ -7,7 +7,7 @@ local function resolve_play_script()
     if _G.PX and type(_G.PX.GeneratedSceneScript) == "string" and _G.PX.GeneratedSceneScript ~= "" then
         return _G.PX.GeneratedSceneScript
     end
-    return "chapter1.pds"
+    return "Script/chapter1.pds"
 end
 
 function TitleScene.new(fontName, fontSize)

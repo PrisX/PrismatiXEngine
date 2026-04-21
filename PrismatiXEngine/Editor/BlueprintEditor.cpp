@@ -10,7 +10,12 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <optional>
 #include <sstream>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace ed = ax::NodeEditor;
@@ -30,6 +35,175 @@ constexpr float kPinIconSize = 18.0f;
 constexpr float kPinLabelSpacing = 6.0f;
 constexpr float kHeaderTextureScale = 6.0f;
 constexpr const char* kGeneratedSceneScriptPath = "Scripts/Generated/editor_scene_graph.pds";
+            }
+            escaping = false;
+            continue;
+        }
+        if (ch == '\\') {
+            escaping = true;
+            continue;
+        }
+        unescaped.push_back(ch);
+    }
+    if (escaping) {
+        unescaped.push_back('\\');
+    }
+    return unescaped;
+}
+
+std::optional<ParsedPdsCommand> ParsePdsCommand(std::string_view rawLine) {
+    const std::string line = TrimCopy(rawLine);
+    if (line.size() < 2 || line.front() != '[' || line.back() != ']') {
+        return std::nullopt;
+    }
+
+    ParsedPdsCommand command;
+    const std::string body = line.substr(1, line.size() - 2);
+    size_t cursor = 0;
+    while (cursor < body.size() && std::isspace(static_cast<unsigned char>(body[cursor])) != 0) {
+        ++cursor;
+    }
+    const size_t nameStart = cursor;
+    while (cursor < body.size() && std::isspace(static_cast<unsigned char>(body[cursor])) == 0) {
+        ++cursor;
+    }
+    command.name = body.substr(nameStart, cursor - nameStart);
+
+    while (cursor < body.size()) {
+        while (cursor < body.size() && std::isspace(static_cast<unsigned char>(body[cursor])) != 0) {
+            ++cursor;
+        }
+        if (cursor >= body.size()) {
+            break;
+        }
+
+        const size_t keyStart = cursor;
+        while (cursor < body.size() && body[cursor] != '=' && std::isspace(static_cast<unsigned char>(body[cursor])) == 0) {
+            ++cursor;
+        }
+        std::string key = body.substr(keyStart, cursor - keyStart);
+        while (cursor < body.size() && std::isspace(static_cast<unsigned char>(body[cursor])) != 0) {
+            ++cursor;
+        }
+        if (cursor >= body.size() || body[cursor] != '=') {
+            command.arguments[std::move(key)] = {};
+            continue;
+        }
+
+        ++cursor;
+        while (cursor < body.size() && std::isspace(static_cast<unsigned char>(body[cursor])) != 0) {
+            ++cursor;
+        }
+        if (cursor >= body.size()) {
+            command.arguments[std::move(key)] = {};
+            break;
+        }
+
+        std::string value;
+        if (body[cursor] == '"' || body[cursor] == '\'') {
+            const char quote = body[cursor++];
+            while (cursor < body.size()) {
+                const char ch = body[cursor++];
+                if (ch == '\\' && cursor < body.size()) {
+                    value.push_back('\\');
+                    value.push_back(body[cursor++]);
+                    continue;
+                }
+                if (ch == quote) {
+                    break;
+                }
+                value.push_back(ch);
+            }
+            command.arguments[std::move(key)] = UnescapePdsValue(std::string(1, quote) + value + std::string(1, quote));
+            continue;
+        }
+
+        const size_t valueStart = cursor;
+        while (cursor < body.size() && std::isspace(static_cast<unsigned char>(body[cursor])) == 0) {
+            ++cursor;
+        }
+        command.arguments[std::move(key)] = UnescapePdsValue(body.substr(valueStart, cursor - valueStart));
+    }
+
+    return command;
+}
+
+std::string ExtractLuaArgs(std::string_view rawLine) {
+    const std::string line = TrimCopy(rawLine);
+    if (line.size() < 2 || line.front() != '[' || line.back() != ']') {
+        return {};
+    }
+
+    const std::string body = line.substr(1, line.size() - 2);
+    size_t cursor = 0;
+    while (cursor < body.size() && std::isspace(static_cast<unsigned char>(body[cursor])) != 0) {
+        ++cursor;
+    }
+    while (cursor < body.size() && std::isspace(static_cast<unsigned char>(body[cursor])) == 0) {
+        ++cursor;
+    }
+
+    std::string args;
+    bool firstToken = true;
+    while (cursor < body.size()) {
+        while (cursor < body.size() && std::isspace(static_cast<unsigned char>(body[cursor])) != 0) {
+            ++cursor;
+        }
+        if (cursor >= body.size()) {
+            break;
+        }
+
+        const size_t tokenStart = cursor;
+        bool inQuotes = false;
+        bool escaping = false;
+        char quote = '\0';
+        while (cursor < body.size()) {
+            const char ch = body[cursor];
+            if (escaping) {
+                escaping = false;
+                ++cursor;
+                continue;
+            }
+            if (inQuotes) {
+                if (ch == '\\') {
+                    escaping = true;
+                } else if (ch == quote) {
+                    inQuotes = false;
+                }
+                ++cursor;
+                continue;
+            }
+            if (ch == '"' || ch == '\'') {
+                inQuotes = true;
+                quote = ch;
+                ++cursor;
+                continue;
+            }
+            if (std::isspace(static_cast<unsigned char>(ch)) != 0) {
+                break;
+            }
+            ++cursor;
+        }
+
+        const std::string token = body.substr(tokenStart, cursor - tokenStart);
+        if (ToLowerCopy(token).rfind("fn=", 0) == 0) {
+            continue;
+        }
+        if (!firstToken) {
+            args += ' ';
+        }
+        args += token;
+        firstToken = false;
+    }
+
+    return args;
+}
+
+ImVec2 SceneNodePosition(size_t index) {
+    const float x = -760.0f + static_cast<float>(index % 4) * 330.0f;
+    const float y = -240.0f + static_cast<float>(index / 4) * 220.0f;
+    return ImVec2(x, y);
+}
 
 }  // namespace
 
@@ -43,6 +217,24 @@ BlueprintEditor::~BlueprintEditor() {
         ed::DestroyEditor(m_context);
     }
     m_context = nullptr;
+}
+
+void BlueprintEditor::ResetToDefaults() {
+    m_nodes.clear();
+    m_links.clear();
+    m_sceneDocuments.clear();
+    m_activeSceneDocumentIndex = 0;
+    m_sceneDocumentsNeedRefresh = (m_flavor == BlueprintFlavor::SceneScript);
+    m_selectedNodeId = 0;
+    m_selectedLinkId = 0;
+    m_contextNodeId = 0;
+    m_contextLinkId = 0;
+    m_pendingLinkPinId = 0;
+    m_createPopupPosition = ImVec2(0.0f, 0.0f);
+    m_createPopupOpen = false;
+    m_nextId = 1;
+    m_navigateCountdown = 3;
+    SeedDefaults();
 }
 
 void BlueprintEditor::EnsureEditorContext() {
@@ -64,6 +256,17 @@ void BlueprintEditor::SetHeaderTexture(ImTextureID texture, int width, int heigh
 
 void BlueprintEditor::SetSelectedResourceCallback(SelectedResourceCallback callback) {
     m_selectedResourceCallback = std::move(callback);
+}
+
+void BlueprintEditor::SetProjectRoot(const fs::path& projectRoot) {
+    if (m_projectRoot == projectRoot) {
+        return;
+    }
+    m_projectRoot = projectRoot;
+    if (m_flavor == BlueprintFlavor::SceneScript) {
+        m_sceneDocumentsNeedRefresh = true;
+        RefreshSceneDocuments(true);
+    }
 }
 
 void BlueprintEditor::BuildLibrary() {
@@ -230,7 +433,7 @@ void BlueprintEditor::BuildLibrary() {
     else {
         m_library.push_back(
             NodeTemplate{
-                "scene_entry", "Scene Entry", "Timeline", "Scene entry point.", ImColor(80, 184, 255), {}, { outFlow("Begin") }, { makeString("scene_name", "Scene Name", "title_scene_graph"), makeAsset("background", "Background", "title_bg.jpg") } }
+                "scene_entry", "Scene Entry", "Timeline", "Entry for a real Data/Script/*.pds document.", ImColor(80, 184, 255), {}, { outFlow("Begin") }, { makeString("scene_name", "Scene Name", "chapter1"), makeString("heading", "Heading", "第一章"), makeAsset("background", "Background", "") } }
         );
 
         m_library.push_back(
@@ -252,7 +455,7 @@ void BlueprintEditor::BuildLibrary() {
             NodeTemplate{ "show_dialogue",
                           "Show Dialogue",
                           "Timeline",
-                          "Say something.",
+                          "Emit a [text] command and the following dialogue body.",
                           ImColor(255, 186, 92),
                           { inFlow("In"), inString("Speaker", "speaker"), inString("Text", "text") },
                           { outFlow("Out") },
@@ -289,25 +492,91 @@ void BlueprintEditor::BuildLibrary() {
                           ImColor(93, 170, 255),
                           { inFlow("In"), inAsset("UI Script", "ui_script") },
                           { outFlow("Out") },
-                          { makeAsset("ui_script", "UI Script", "Scripts/Generated/editor_ui_layout.lua") } }
+                          { makeAsset("ui_script", "UI Script", "Scripts/components/ui_components.lua") } }
         );
 
         m_library.push_back(
             NodeTemplate{ "present_choice",
                           "Present Choice",
                           "Timeline",
-                          "Show options and branch the flow based on the player selection.",
+                          "Emit one or more [choice] lines.",
                           ImColor(255, 184, 92),
-                          { inFlow("In"), inString("Option A", "option_a"), inString("A Target", "option_a_target"), inString("Option B", "option_b"), inString("B Target", "option_b_target") },
+                          { inFlow("In"), inString("Option A", "option_a"), inString("A Target", "option_a_target"), inString("Option B", "option_b"), inString("B Target", "option_b_target"), inString("Option C", "option_c"), inString("C Target", "option_c_target"), inString("Option D", "option_d"), inString("D Target", "option_d_target") },
                           { outFlow("Out") },
-                          { makeString("option_a", "Option A", "Start"), makeString("option_a_target", "Option A Target", ""), makeString("option_b", "Option B", "Leave"), makeString("option_b_target", "Option B Target", "") } }
+                          { makeString("option_a", "Option A", "Start"), makeString("option_a_target", "Option A Target", ""), makeString("option_b", "Option B", "Leave"), makeString("option_b_target", "Option B Target", ""), makeString("option_c", "Option C", ""), makeString("option_c_target", "Option C Target", ""), makeString("option_d", "Option D", ""), makeString("option_d_target", "Option D Target", "") } }
         );
 
         m_library.push_back(NodeTemplate{ "wait_input", "Wait Input", "Timeline", "Wait.", ImColor(109, 124, 146), { inFlow("In"), inBool("Auto Advance", "auto_advance") }, { outFlow("Out") }, { makeBool("auto_advance", "Auto Advance", false) } });
 
         m_library.push_back(
             NodeTemplate{
-                "jump_scene", "Jump Script", "Timeline", "Jump to another .pds script.", ImColor(118, 234, 141), { inFlow("In"), inString("Target", "target_scene") }, { outFlow("Out") }, { makeString("target_scene", "Target Script", "chapter2.pds") } }
+                "jump_scene", "Jump", "Timeline", "Jump to a label or another .pds script.", ImColor(118, 234, 141), { inFlow("In"), inString("Target", "target_scene") }, { outFlow("Out") }, { makeString("target_scene", "Target", "chapter2.pds") } }
+        );
+
+        m_library.push_back(
+            NodeTemplate{ "scene_label",
+                          "Label",
+                          "Timeline",
+                          "Emit a *label marker.",
+                          ImColor(142, 153, 255),
+                          { inFlow("In"), inString("Label", "label") },
+                          { outFlow("Out") },
+                          { makeString("label", "Label", "start") } }
+        );
+
+        m_library.push_back(
+            NodeTemplate{ "character_state",
+                          "Character",
+                          "Timeline",
+                          "Emit a [char] command.",
+                          ImColor(255, 132, 132),
+                          { inFlow("In"), inString("Id", "char_id"), inString("Expression", "expression"), inString("Pos", "position") },
+                          { outFlow("Out") },
+                          { makeString("char_id", "Id", "girl"), makeString("expression", "Expression", "d"), makeString("position", "Pos", "2") } }
+        );
+
+        m_library.push_back(
+            NodeTemplate{ "set_variable",
+                          "Variable",
+                          "Timeline",
+                          "Emit a [var] command.",
+                          ImColor(109, 198, 164),
+                          { inFlow("In"), inString("Var", "var_name"), inString("Op", "op"), inString("Value", "value") },
+                          { outFlow("Out") },
+                          { makeString("var_name", "Var", "affection"), makeOption("op", "Op", "set", { "set", "add", "sub", "mul", "div" }), makeString("value", "Value", "0") } }
+        );
+
+        m_library.push_back(
+            NodeTemplate{ "run_lua",
+                          "Lua Command",
+                          "Timeline",
+                          "Emit a [lua] command with free-form arguments.",
+                          ImColor(198, 127, 255),
+                          { inFlow("In"), inString("Function", "fn"), inString("Args", "args") },
+                          { outFlow("Out") },
+                          { makeString("fn", "Function", "FX_Shake"), makeString("args", "Args", "duration=24 amplitude=18 frequency=1.0 decay=1.8") } }
+        );
+
+        m_library.push_back(
+            NodeTemplate{ "stop_bgm",
+                          "Stop BGM",
+                          "Timeline",
+                          "Emit [stopbgm].",
+                          ImColor(160, 160, 170),
+                          { inFlow("In") },
+                          { outFlow("Out") },
+                          {} }
+        );
+
+        m_library.push_back(
+            NodeTemplate{ "raw_command",
+                          "Raw Command",
+                          "Timeline",
+                          "Fallback node for unsupported commands so existing scripts still round-trip.",
+                          ImColor(124, 124, 138),
+                          { inFlow("In"), inString("Command", "command") },
+                          { outFlow("Out") },
+                          { makeString("command", "Command", "[raw]") } }
         );
     }
 
@@ -471,10 +740,459 @@ void BlueprintEditor::AddLinkByNodeIndex(size_t fromNodeIndex, size_t fromOutput
     AddLink(fromNode.outputs[fromOutputIndex].id, toNode.inputs[toInputIndex].id);
 }
 
+void BlueprintEditor::EnsureSceneDocuments() {
+    if (m_flavor != BlueprintFlavor::SceneScript) {
+        return;
+    }
+    if (m_sceneDocumentsNeedRefresh || (m_sceneDocuments.empty() && !m_projectRoot.empty())) {
+        RefreshSceneDocuments(true);
+    }
+}
+
+void BlueprintEditor::RefreshSceneDocuments(bool force) {
+    if (m_flavor != BlueprintFlavor::SceneScript) {
+        return;
+    }
+    if (!force && !m_sceneDocumentsNeedRefresh) {
+        return;
+    }
+
+    CaptureActiveSceneDocument();
+    std::unordered_map<std::string, SceneDocument> previousDocuments;
+    for (const SceneDocument& document : m_sceneDocuments) {
+        previousDocuments.emplace(document.path.string(), document);
+    }
+
+    const std::string previousPath = CurrentDocumentPath().string();
+    m_sceneDocuments.clear();
+    m_activeSceneDocumentIndex = static_cast<size_t>(-1);
+
+    for (const fs::path& path : EnumerateSceneDocuments()) {
+        SceneDocument document;
+        document.path = path;
+        document.runtimePath = fs::relative(path, DataRoot()).generic_string();
+        document.displayName = path.filename().string();
+
+        auto previous = previousDocuments.find(path.string());
+        if (previous != previousDocuments.end() && previous->second.dirty) {
+            document.source = previous->second.source;
+            document.dirty = true;
+        } else {
+            std::ifstream in(path, std::ios::binary);
+            if (in.is_open()) {
+                document.source.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+            }
+        }
+
+        m_sceneDocuments.push_back(std::move(document));
+    }
+
+    if (m_sceneDocuments.empty()) {
+        m_activeSceneDocumentIndex = 0;
+        m_nodes.clear();
+        m_links.clear();
+        m_nextId = 1;
+        SeedSceneGraph();
+        m_sceneDocumentsNeedRefresh = false;
+        return;
+    }
+
+    size_t nextIndex = 0;
+    if (!previousPath.empty()) {
+        for (size_t index = 0; index < m_sceneDocuments.size(); ++index) {
+            if (m_sceneDocuments[index].path.string() == previousPath) {
+                nextIndex = index;
+                break;
+            }
+        }
+    } else if (m_activeSceneDocumentIndex < m_sceneDocuments.size()) {
+        nextIndex = m_activeSceneDocumentIndex;
+    }
+
+    m_sceneDocumentsNeedRefresh = false;
+    LoadSceneDocument(nextIndex);
+}
+
+void BlueprintEditor::RenderSceneWorkspace() {
+    EnsureSceneDocuments();
+    RenderToolbar();
+    ImGui::Separator();
+
+    if (ImGui::BeginTable("scene-script-layout", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Story Files", ImGuiTableColumnFlags_WidthFixed, 280.0f);
+        ImGui::TableSetupColumn("Node Graph", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableNextRow();
+
+        ImGui::TableSetColumnIndex(0);
+        RenderSceneDocumentList();
+
+        ImGui::TableSetColumnIndex(1);
+        RenderGraph();
+
+        ImGui::EndTable();
+    }
+}
+
+void BlueprintEditor::RenderSceneDocumentList() {
+    ImGui::BeginChild("scene-script-documents", ImVec2(0.0f, 0.0f), false);
+    if (m_sceneDocuments.empty()) {
+        ImGui::TextDisabled("No .pds files under Data/Script.");
+        ImGui::TextDisabled("This graph editor edits Data/Script/chapter1.pds style story files.");
+        ImGui::EndChild();
+        return;
+    }
+
+    for (size_t index = 0; index < m_sceneDocuments.size(); ++index) {
+        const SceneDocument& document = m_sceneDocuments[index];
+        std::string label = document.displayName;
+        if (document.dirty) {
+            label += " *";
+        }
+        if (ImGui::Selectable(label.c_str(), index == m_activeSceneDocumentIndex)) {
+            LoadSceneDocument(index);
+        }
+    }
+    ImGui::EndChild();
+}
+
+void BlueprintEditor::CaptureActiveSceneDocument() {
+    if (m_flavor != BlueprintFlavor::SceneScript) {
+        return;
+    }
+    SceneDocument* document = ActiveSceneDocument();
+    if (!document) {
+        return;
+    }
+    const std::string content = EmitScenePds();
+    if (content != document->source) {
+        document->source = content;
+        document->dirty = true;
+    }
+}
+
+void BlueprintEditor::LoadSceneDocument(size_t index) {
+    if (m_flavor != BlueprintFlavor::SceneScript || index >= m_sceneDocuments.size()) {
+        return;
+    }
+
+    if (!m_sceneDocuments.empty() && m_activeSceneDocumentIndex < m_sceneDocuments.size()) {
+        CaptureActiveSceneDocument();
+    }
+
+    m_activeSceneDocumentIndex = index;
+    const SceneDocument& document = m_sceneDocuments[m_activeSceneDocumentIndex];
+    LoadSceneGraph(document.source, fs::path(document.displayName).stem().string());
+}
+
+void BlueprintEditor::LoadSceneGraph(std::string_view source, std::string_view sceneName) {
+    m_nodes.clear();
+    m_links.clear();
+    m_selectedNodeId = 0;
+    m_selectedLinkId = 0;
+    m_contextNodeId = 0;
+    m_contextLinkId = 0;
+    m_pendingLinkPinId = 0;
+    m_createPopupPosition = ImVec2(0.0f, 0.0f);
+    m_createPopupOpen = false;
+    m_nextId = 1;
+    m_navigateCountdown = 3;
+
+    auto setParameter = [&](NodeInstance* node, std::string_view key, const std::string& value) {
+        if (!node) {
+            return;
+        }
+        if (NodeParameter* parameter = FindParameter(*node, key)) {
+            if (parameter->kind == ParameterKind::Float) {
+                try {
+                    parameter->floatValue = std::stof(value);
+                } catch (...) {
+                    parameter->floatValue = 0.0f;
+                }
+            } else if (parameter->kind == ParameterKind::Integer) {
+                try {
+                    parameter->intValue = std::stoi(value);
+                } catch (...) {
+                    parameter->intValue = 0;
+                }
+            } else if (parameter->kind == ParameterKind::Boolean) {
+                const std::string lowered = ToLowerCopy(value);
+                parameter->boolValue = lowered == "true" || lowered == "1" || lowered == "yes";
+            } else {
+                parameter->stringValue = value;
+            }
+        }
+    };
+
+    size_t visualIndex = 0;
+    auto appendNode = [&](const std::string& typeId) {
+        return AddNode(typeId, SceneNodePosition(visualIndex++));
+    };
+
+    NodeInstance* entry = appendNode("scene_entry");
+    setParameter(entry, "scene_name", std::string(sceneName));
+
+    NodeInstance* previous = entry;
+    std::istringstream stream{std::string(source)};
+    std::vector<std::string> lines;
+    for (std::string line; std::getline(stream, line);) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        lines.push_back(line);
+    }
+
+    bool capturedHeading = false;
+    for (size_t index = 0; index < lines.size(); ++index) {
+        const std::string trimmed = TrimCopy(lines[index]);
+        if (trimmed.empty()) {
+            continue;
+        }
+
+        if (trimmed.front() == '#') {
+            if (!capturedHeading) {
+                setParameter(entry, "heading", TrimCopy(trimmed.substr(1)));
+                capturedHeading = true;
+            }
+            continue;
+        }
+
+        NodeInstance* node = nullptr;
+        if (trimmed.front() == '*') {
+            node = appendNode("scene_label");
+            setParameter(node, "label", trimmed.substr(1));
+        } else if (auto command = ParsePdsCommand(trimmed)) {
+            const std::string name = ToLowerCopy(command->name);
+            if (name == "chapter") {
+                if (const auto it = command->arguments.find("title"); it != command->arguments.end()) {
+                    setParameter(entry, "heading", it->second);
+                }
+                if (const auto it = command->arguments.find("name"); it != command->arguments.end()) {
+                    setParameter(entry, "scene_name", it->second);
+                }
+                if (const auto it = command->arguments.find("id"); it != command->arguments.end()) {
+                    setParameter(entry, "scene_name", it->second);
+                }
+                continue;
+            }
+
+            if (name == "bg") {
+                node = appendNode("set_background");
+                if (const auto it = command->arguments.find("file"); it != command->arguments.end()) {
+                    setParameter(node, "background", it->second);
+                }
+            } else if (name == "bgm") {
+                node = appendNode("play_bgm");
+                if (const auto it = command->arguments.find("file"); it != command->arguments.end()) {
+                    setParameter(node, "bgm", it->second);
+                }
+                if (const auto it = command->arguments.find("volume"); it != command->arguments.end()) {
+                    setParameter(node, "volume", it->second);
+                }
+            } else if (name == "text") {
+                node = appendNode("show_dialogue");
+                if (const auto it = command->arguments.find("speaker"); it != command->arguments.end()) {
+                    setParameter(node, "speaker", it->second);
+                }
+                if (const auto it = command->arguments.find("content"); it != command->arguments.end()) {
+                    setParameter(node, "text", it->second);
+                } else {
+                    std::vector<std::string> bodyLines;
+                    size_t lookahead = index + 1;
+                    while (lookahead < lines.size()) {
+                        const std::string nextLine = TrimCopy(lines[lookahead]);
+                        if (nextLine.empty()) {
+                            if (!bodyLines.empty()) {
+                                ++lookahead;
+                                break;
+                            }
+                            ++lookahead;
+                            continue;
+                        }
+                        if (nextLine.front() == '[' || nextLine.front() == '*' || nextLine.front() == '#') {
+                            break;
+                        }
+                        bodyLines.push_back(lines[lookahead]);
+                        ++lookahead;
+                    }
+
+                    std::ostringstream body;
+                    for (size_t bodyIndex = 0; bodyIndex < bodyLines.size(); ++bodyIndex) {
+                        if (bodyIndex > 0) {
+                            body << '\n';
+                        }
+                        body << bodyLines[bodyIndex];
+                    }
+                    setParameter(node, "text", body.str());
+                    if (!bodyLines.empty()) {
+                        index = lookahead - 1;
+                    }
+                }
+            } else if (name == "choice") {
+                node = appendNode("present_choice");
+                size_t choiceSlot = 0;
+                size_t lookahead = index;
+                while (lookahead < lines.size()) {
+                    const auto nextChoice = ParsePdsCommand(TrimCopy(lines[lookahead]));
+                    if (!nextChoice || ToLowerCopy(nextChoice->name) != "choice" || choiceSlot >= 4) {
+                        break;
+                    }
+                    const char suffix = static_cast<char>('a' + choiceSlot);
+                    if (const auto textIt = nextChoice->arguments.find("text"); textIt != nextChoice->arguments.end()) {
+                        setParameter(node, std::string("option_") + suffix, textIt->second);
+                    }
+                    if (const auto targetIt = nextChoice->arguments.find("target"); targetIt != nextChoice->arguments.end()) {
+                        setParameter(node, std::string("option_") + suffix + "_target", targetIt->second);
+                    }
+                    ++choiceSlot;
+                    ++lookahead;
+                }
+                index = lookahead - 1;
+            } else if (name == "jump") {
+                node = appendNode("jump_scene");
+                if (const auto it = command->arguments.find("target"); it != command->arguments.end()) {
+                    setParameter(node, "target_scene", it->second);
+                }
+            } else if (name == "wait") {
+                node = appendNode("wait_input");
+                if (const auto it = command->arguments.find("auto_advance"); it != command->arguments.end()) {
+                    setParameter(node, "auto_advance", it->second);
+                }
+            } else if (name == "char") {
+                node = appendNode("character_state");
+                if (const auto it = command->arguments.find("id"); it != command->arguments.end()) {
+                    setParameter(node, "char_id", it->second);
+                }
+                if (const auto it = command->arguments.find("expression"); it != command->arguments.end()) {
+                    setParameter(node, "expression", it->second);
+                }
+                if (const auto it = command->arguments.find("pos"); it != command->arguments.end()) {
+                    setParameter(node, "position", it->second);
+                }
+            } else if (name == "var") {
+                node = appendNode("set_variable");
+                if (const auto it = command->arguments.find("var"); it != command->arguments.end()) {
+                    setParameter(node, "var_name", it->second);
+                }
+                if (const auto it = command->arguments.find("op"); it != command->arguments.end()) {
+                    setParameter(node, "op", it->second);
+                }
+                if (const auto it = command->arguments.find("val"); it != command->arguments.end()) {
+                    setParameter(node, "value", it->second);
+                }
+            } else if (name == "lua") {
+                node = appendNode("run_lua");
+                if (const auto it = command->arguments.find("fn"); it != command->arguments.end()) {
+                    setParameter(node, "fn", it->second);
+                }
+                setParameter(node, "args", ExtractLuaArgs(trimmed));
+            } else if (name == "stopbgm") {
+                node = appendNode("stop_bgm");
+            } else {
+                node = appendNode("raw_command");
+                setParameter(node, "command", trimmed);
+            }
+        } else {
+            node = appendNode("show_dialogue");
+            setParameter(node, "speaker", "");
+            setParameter(node, "text", lines[index]);
+        }
+
+        if (node && previous && !previous->outputs.empty() && !node->inputs.empty()) {
+            AddLink(previous->outputs.front().id, node->inputs.front().id);
+            previous = node;
+        }
+    }
+}
+
+void BlueprintEditor::SaveSceneDocument(size_t index) {
+    if (m_flavor != BlueprintFlavor::SceneScript || index >= m_sceneDocuments.size()) {
+        return;
+    }
+    if (index == m_activeSceneDocumentIndex) {
+        CaptureActiveSceneDocument();
+    }
+
+    SceneDocument& document = m_sceneDocuments[index];
+    std::ofstream out(document.path, std::ios::binary);
+    if (!out.is_open()) {
+        Log("Failed to save " + document.path.string());
+        return;
+    }
+    out << document.source;
+    document.dirty = false;
+    Log("Saved " + document.runtimePath);
+}
+
+void BlueprintEditor::SaveAllSceneDocuments() {
+    if (m_flavor != BlueprintFlavor::SceneScript) {
+        return;
+    }
+    CaptureActiveSceneDocument();
+    for (size_t index = 0; index < m_sceneDocuments.size(); ++index) {
+        if (m_sceneDocuments[index].dirty) {
+            SaveSceneDocument(index);
+        }
+    }
+}
+
+void BlueprintEditor::MarkSceneDocumentDirty() {
+    if (m_flavor != BlueprintFlavor::SceneScript) {
+        return;
+    }
+    if (SceneDocument* document = ActiveSceneDocument()) {
+        document->source = EmitScenePds();
+        document->dirty = true;
+    }
+}
+
+const BlueprintEditor::SceneDocument* BlueprintEditor::ActiveSceneDocument() const {
+    if (m_flavor != BlueprintFlavor::SceneScript || m_sceneDocuments.empty() || m_activeSceneDocumentIndex >= m_sceneDocuments.size()) {
+        return nullptr;
+    }
+    return &m_sceneDocuments[m_activeSceneDocumentIndex];
+}
+
+BlueprintEditor::SceneDocument* BlueprintEditor::ActiveSceneDocument() {
+    if (m_flavor != BlueprintFlavor::SceneScript || m_sceneDocuments.empty() || m_activeSceneDocumentIndex >= m_sceneDocuments.size()) {
+        return nullptr;
+    }
+    return &m_sceneDocuments[m_activeSceneDocumentIndex];
+}
+
+fs::path BlueprintEditor::DataRoot() const {
+    return m_projectRoot.empty() ? fs::path{} : (m_projectRoot / "Data");
+}
+
+fs::path BlueprintEditor::SceneScriptRoot() const {
+    const fs::path dataRoot = DataRoot();
+    return dataRoot.empty() ? fs::path{} : (dataRoot / "Script");
+}
+
+std::vector<fs::path> BlueprintEditor::EnumerateSceneDocuments() const {
+    std::vector<fs::path> documents;
+    const fs::path root = SceneScriptRoot();
+    if (root.empty() || !fs::exists(root)) {
+        return documents;
+    }
+
+    for (const auto& entry : fs::recursive_directory_iterator(root)) {
+        if (entry.is_regular_file() && ToLowerCopy(entry.path().extension().string()) == ".pds") {
+            documents.push_back(entry.path());
+        }
+    }
+    std::sort(documents.begin(), documents.end());
+    return documents;
+}
+
 void BlueprintEditor::Render() {
     EnsureEditorContext();
     if (!m_context) {
         ImGui::TextDisabled("Node editor context is not ready yet.");
+        return;
+    }
+
+    if (m_flavor == BlueprintFlavor::SceneScript) {
+        RenderSceneWorkspace();
         return;
     }
 
@@ -496,8 +1214,48 @@ void BlueprintEditor::RenderToolbar() {
         ImGui::OpenPopup("Create Blueprint Node");
     }
 
+    if (m_flavor == BlueprintFlavor::SceneScript) {
+        ImGui::SameLine();
+        if (ImGui::Button("Refresh")) {
+            RefreshSceneDocuments(true);
+        }
+
+        ImGui::SameLine();
+        const bool hasActiveDocument = ActiveSceneDocument() != nullptr;
+        const bool activeDirty = hasActiveDocument && ActiveSceneDocument()->dirty;
+        if (!activeDirty) {
+            ImGui::BeginDisabled();
+        }
+        if (ImGui::Button("Save")) {
+            SaveSceneDocument(m_activeSceneDocumentIndex);
+        }
+        if (!activeDirty) {
+            ImGui::EndDisabled();
+        }
+
+        const bool hasDirtyDocument = std::any_of(m_sceneDocuments.begin(), m_sceneDocuments.end(), [](const SceneDocument& document) { return document.dirty; });
+        ImGui::SameLine();
+        if (!hasDirtyDocument) {
+            ImGui::BeginDisabled();
+        }
+        if (ImGui::Button("Save All")) {
+            SaveAllSceneDocuments();
+        }
+        if (!hasDirtyDocument) {
+            ImGui::EndDisabled();
+        }
+    }
+
     ImGui::SameLine();
-    ImGui::TextDisabled("%zu nodes / %zu links", m_nodes.size(), m_links.size());
+    if (m_flavor == BlueprintFlavor::SceneScript) {
+        if (const SceneDocument* document = ActiveSceneDocument()) {
+            ImGui::TextDisabled("%s", document->runtimePath.c_str());
+        } else {
+            ImGui::TextDisabled("No story .pds selected");
+        }
+    } else {
+        ImGui::TextDisabled("%zu nodes / %zu links", m_nodes.size(), m_links.size());
+    }
 }
 
 void BlueprintEditor::RenderGraph() {
@@ -696,6 +1454,7 @@ void BlueprintEditor::RenderCreatePopup() {
 
                 m_pendingLinkPinId = 0;
                 m_createPopupOpen = false;
+                MarkSceneDocumentDirty();
                 Log("Created node: " + definition.title);
                 ImGui::CloseCurrentPopup();
             }
@@ -758,6 +1517,7 @@ void BlueprintEditor::HandleCreateDeleteInteractions() {
                 ImGui::SetTooltip("Create link");
                 if (ed::AcceptNewItem(ImColor(148, 255, 177), 3.0f)) {
                     AddLink(startPinId, endPinId);
+                    MarkSceneDocumentDirty();
                 }
             }
             else {
@@ -807,6 +1567,7 @@ void BlueprintEditor::HandleCreateDeleteInteractions() {
                 );
 
                 m_nodes.erase(std::remove_if(m_nodes.begin(), m_nodes.end(), [&](const NodeInstance& candidate) { return candidate.id == deletedNodeId; }), m_nodes.end());
+                MarkSceneDocumentDirty();
 
                 if (m_selectedNodeId == deletedNodeId) {
                     m_selectedNodeId = 0;
@@ -818,6 +1579,7 @@ void BlueprintEditor::HandleCreateDeleteInteractions() {
         while (ed::QueryDeletedLink(&deletedLinkId)) {
             if (ed::AcceptDeletedItem()) {
                 m_links.erase(std::remove_if(m_links.begin(), m_links.end(), [&](const LinkInstance& link) { return link.id == deletedLinkId; }), m_links.end());
+                MarkSceneDocumentDirty();
 
                 if (m_selectedLinkId == deletedLinkId) {
                     m_selectedLinkId = 0;
@@ -890,6 +1652,7 @@ void BlueprintEditor::RenderPin(const NodeInstance& node, const PinInstance& pin
 
 void BlueprintEditor::RenderParameterEditor(NodeParameter& parameter, std::string_view labelSuffix, bool compact) {
     const std::string controlId = "##" + parameter.key + std::string(labelSuffix);
+    bool changed = false;
 
     if (!compact) {
         ImGui::TextUnformatted(parameter.label.c_str());
@@ -901,16 +1664,16 @@ void BlueprintEditor::RenderParameterEditor(NodeParameter& parameter, std::strin
 
     switch (parameter.kind) {
         case ParameterKind::Boolean:
-            ImGui::Checkbox(controlId.c_str(), &parameter.boolValue);
+            changed = ImGui::Checkbox(controlId.c_str(), &parameter.boolValue);
             break;
         case ParameterKind::Integer:
-            ImGui::DragInt(controlId.c_str(), &parameter.intValue, parameter.speed, static_cast<int>(parameter.minValue), static_cast<int>(parameter.maxValue));
+            changed = ImGui::DragInt(controlId.c_str(), &parameter.intValue, parameter.speed, static_cast<int>(parameter.minValue), static_cast<int>(parameter.maxValue));
             break;
         case ParameterKind::Float:
-            ImGui::DragFloat(controlId.c_str(), &parameter.floatValue, parameter.speed, parameter.minValue, parameter.maxValue, "%.2f");
+            changed = ImGui::DragFloat(controlId.c_str(), &parameter.floatValue, parameter.speed, parameter.minValue, parameter.maxValue, "%.2f");
             break;
         case ParameterKind::String:
-            ImGui::InputText(controlId.c_str(), &parameter.stringValue);
+            changed = ImGui::InputText(controlId.c_str(), &parameter.stringValue);
             break;
         case ParameterKind::Asset:
             RenderAssetParameterEditor(parameter, controlId, compact);
@@ -921,6 +1684,7 @@ void BlueprintEditor::RenderParameterEditor(NodeParameter& parameter, std::strin
                     const bool selected = option == parameter.stringValue;
                     if (ImGui::Selectable(option.c_str(), selected)) {
                         parameter.stringValue = option;
+                        changed = true;
                     }
                     if (selected) {
                         ImGui::SetItemDefaultFocus();
@@ -930,15 +1694,20 @@ void BlueprintEditor::RenderParameterEditor(NodeParameter& parameter, std::strin
             }
             break;
     }
+
+    if (changed) {
+        MarkSceneDocumentDirty();
+    }
 }
 
 void BlueprintEditor::RenderAssetParameterEditor(NodeParameter& parameter, const std::string& controlId, bool compact) {
     const std::string fieldId = controlId + "_asset";
-    ImGui::InputText(fieldId.c_str(), &parameter.stringValue, ImGuiInputTextFlags_ReadOnly);
+    bool changed = ImGui::InputText(fieldId.c_str(), &parameter.stringValue, ImGuiInputTextFlags_ReadOnly);
 
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("PX_RESOURCE_PATH")) {
             parameter.stringValue.assign(static_cast<const char*>(payload->Data), payload->DataSize > 0 ? payload->DataSize - 1 : 0);
+            changed = true;
         }
         ImGui::EndDragDropTarget();
     }
@@ -959,6 +1728,7 @@ void BlueprintEditor::RenderAssetParameterEditor(NodeParameter& parameter, const
         }
         if (ImGui::Button(("Use Explorer Selection" + controlId).c_str())) {
             parameter.stringValue = selectedResource;
+            changed = true;
         }
         if (!hasSelectedResource) {
             ImGui::EndDisabled();
@@ -966,6 +1736,10 @@ void BlueprintEditor::RenderAssetParameterEditor(NodeParameter& parameter, const
         ImGui::SameLine();
         if (ImGui::SmallButton(("Clear" + controlId).c_str())) {
             parameter.stringValue.clear();
+            changed = true;
+        }
+        if (changed) {
+            MarkSceneDocumentDirty();
         }
         return;
     }
@@ -975,6 +1749,7 @@ void BlueprintEditor::RenderAssetParameterEditor(NodeParameter& parameter, const
     }
     if (ImGui::SmallButton(("Use Selected" + controlId).c_str())) {
         parameter.stringValue = selectedResource;
+        changed = true;
     }
     if (!hasSelectedResource) {
         ImGui::EndDisabled();
@@ -982,6 +1757,10 @@ void BlueprintEditor::RenderAssetParameterEditor(NodeParameter& parameter, const
     ImGui::SameLine();
     if (ImGui::SmallButton(("X" + controlId).c_str())) {
         parameter.stringValue.clear();
+        changed = true;
+    }
+    if (changed) {
+        MarkSceneDocumentDirty();
     }
 }
 

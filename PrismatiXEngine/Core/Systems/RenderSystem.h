@@ -79,6 +79,7 @@ public:
     void DrawTexture(SDL_Texture* tex, int x, int y, float scale = 1.0f);
     void DrawTexture(SDL_Texture* tex, int x, int y, int w, int h, Uint8 alpha = 255);
     SDL_Rect DrawTextureAuto(SDL_Texture* tex, DisplayMode mode = DisplayMode::TopLeft, Uint8 alpha = 255, int offsetX = 0, int offsetY = 0, float scale = 1.0f, ShadowConfig shadow = {});
+    void DrawRoundedRect(float x, float y, float w, float h, float radius, SDL_Color color);
 
     // Text Rendering
     void DrawText(TTF_Font* font, const std::string& text, SDL_Color color, int x, int y);

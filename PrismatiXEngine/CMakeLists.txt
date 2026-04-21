@@ -31,15 +31,13 @@ set(PRISMATIX_EDITOR_SOURCES
     Editor/BlueprintEditorDocument.cpp
     Editor/EditorApp.cpp
     Editor/EditorAppPanels.cpp
+    Editor/GamePreviewHost.cpp
     Editor/UIDesigner.cpp
 )
 
-option(PDX_SECRET_KEY "Secret key for PDX archives" "")
 add_library(PrismatiXRuntime STATIC
     ${PRISMATIX_RUNTIME_SOURCES}
 )
-
-target_compile_definitions(PrismatiXRuntime PRIVATE PDX_SECRET_KEY="${PDX_SECRET_KEY}")
 
 target_include_directories(PrismatiXRuntime PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -88,6 +86,7 @@ target_link_libraries(PrismatiXEditor PRIVATE
     SDL2::SDL2main
     SDL2_image::SDL2_image
     spdlog::spdlog
+    PrismatiXRuntime
     PrismatiXImGui
     PrismatiXNodeEditor
 )

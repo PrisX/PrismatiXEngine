@@ -25,16 +25,27 @@ namespace PrismatiX::App {
 
 class Engine {
 public:
+    struct InitOptions {
+        SDL_Window* externalWindow = nullptr;
+        SDL_Renderer* externalRenderer = nullptr;
+        bool ownWindow = true;
+        bool ownRenderer = true;
+        bool ownSubsystems = true;
+        bool applyRendererLogicalSize = true;
+    };
+
     Engine();
     ~Engine();
 
-    bool Initialize(const std::string& title, int width, int height);
+    bool Initialize(const std::string& title, int width, int height, const InitOptions& options = {});
     void Clean();
     void Quit() { isRunning = false; }
 
     bool IsRunning() const { return isRunning; }
     SDL_Renderer* GetRenderer() const { return renderer; }
     SDL_Window* GetWindow() const { return window; }
+    int GetLogicalWidth() const { return logicalWidth; }
+    int GetLogicalHeight() const { return logicalHeight; }
 
     // Input
     bool GetLeftClick() const { return leftClick; }
@@ -42,6 +53,7 @@ public:
     int GetMouseWheelY() const { return mouseWheelY; }
     int GetMouseX() const { return mouseX; }
     int GetMouseY() const { return mouseY; }
+    void InjectInputState(int x, int y, bool left, bool right, int wheelY);
 
     // Viewport
     void SetCameraOffset(int x, int y);
@@ -75,6 +87,13 @@ private:
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
     sol::state lua;
+    int logicalWidth = EngineConfig::kDefaultScreenWidth;
+    int logicalHeight = EngineConfig::kDefaultScreenHeight;
+    bool ownWindow = true;
+    bool ownRenderer = true;
+    bool ownSubsystems = true;
+    bool applyRendererLogicalSize = true;
+    bool subsystemsActive = false;
 
     std::unique_ptr<PrismatiX::Services::ResourceManager> resourceManager;
     std::unique_ptr<PrismatiX::Services::GameState> gameState;

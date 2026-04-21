@@ -11,10 +11,6 @@
 #include "Core/EngineConfig.h"
 #include "Utils/Logger.h"
 
-#ifndef PDX_SECRET_KEY
-#define PDX_SECRET_KEY "PrismatiXDEFAULT"
-#endif
-
 namespace fs = std::filesystem;
 
 namespace PrismatiX::Services {
@@ -112,11 +108,6 @@ std::vector<char> ResourceManager::ExtractFile(const std::string& fileName) {
     std::vector<char> buffer(entry.size);
     in.read(buffer.data(), entry.size);
     in.close();
-    std::string_view key = PDX_SECRET_KEY;
-    int keyLen = (int)key.length();
-    if (keyLen > 0) {
-        for (size_t i = 0; i < buffer.size(); i++) buffer[i] ^= key[i % keyLen];
-    }
     return buffer;
 }
 

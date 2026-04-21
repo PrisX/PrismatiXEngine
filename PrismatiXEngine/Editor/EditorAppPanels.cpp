@@ -26,16 +26,30 @@ void EditorApp::RenderWorkspace() {
             m_entrypointEditor.Render();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Scene Script")) {
+        if (ImGui::BeginTabItem("Scene Graph")) {
             m_activeTab = WorkspaceTab::SceneScript;
             m_lastDocumentTab = WorkspaceTab::SceneScript;
             m_sceneEditor.Render();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("UI Designer")) {
+        if (ImGui::BeginTabItem("UI Editor")) {
             m_activeTab = WorkspaceTab::UIDesign;
             m_lastDocumentTab = WorkspaceTab::UIDesign;
-            m_uiDesigner.Render(0.0f);
+            m_uiDesigner.Render(0.0f, [this](const ImRect&, float, int mouseX, int mouseY, bool leftClick, bool rightClick) {
+                return RenderRuntimeScene(
+                    m_uiDesigner.GeneratedSceneScriptPath(),
+                    m_uiDesigner.SceneWidth(),
+                    m_uiDesigner.SceneHeight(),
+                    mouseX,
+                    mouseY,
+                    leftClick,
+                    rightClick);
+            });
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Game Preview")) {
+            m_activeTab = WorkspaceTab::Preview;
+            RenderGamePreviewTab();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Export")) {
@@ -46,6 +60,29 @@ void EditorApp::RenderWorkspace() {
         ImGui::EndTabBar();
     }
     ImGui::End();
+}
+
+UIDesigner::RuntimeCanvasResult EditorApp::RenderRuntimeScene(
+    const std::string& scenePath,
+    int logicalWidth,
+    int logicalHeight,
+    int mouseX,
+    int mouseY,
+    bool leftClick,
+    bool rightClick) {
+    SyncUIDesignerExports();
+
+    m_gamePreview.SetWorkspaceRoot(m_workspaceRoot);
+    m_gamePreview.SetProjectRoot(m_projectRoot);
+    m_gamePreview.SetScenePath(scenePath);
+    m_gamePreview.SetStoryScriptPath(m_sceneEditor.CurrentDocumentRuntimePath().empty() ? "Script/chapter1.pds" : m_sceneEditor.CurrentDocumentRuntimePath());
+    m_gamePreview.SetViewportSize(logicalWidth, logicalHeight);
+
+    UIDesigner::RuntimeCanvasResult result;
+    result.rendered = m_gamePreview.RenderFrame(m_window, m_renderer, mouseX, mouseY, leftClick, rightClick) && m_gamePreview.GetTexture();
+    result.texture = m_gamePreview.GetTexture();
+    result.status = m_gamePreview.Status();
+    return result;
 }
 
 void EditorApp::RenderResources() {
@@ -70,8 +107,7 @@ void EditorApp::RenderResources() {
             return true;
         }
 
-        const std::string fileName = path.filename().string();
-        std::string lowered = fileName;
+        std::string lowered = path.filename().string();
         std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
         if (lowered.find(filterLower) != std::string::npos) {
             return true;
@@ -84,7 +120,6 @@ void EditorApp::RenderResources() {
                 }
             }
         }
-
         return false;
     };
 
@@ -96,18 +131,17 @@ void EditorApp::RenderResources() {
             }
         }
 
-        std::sort(entries.begin(), entries.end(), [](const fs::directory_entry& lhs, const fs::directory_entry& rhs) {
-            if (lhs.is_directory() != rhs.is_directory()) {
-                return lhs.is_directory() > rhs.is_directory();
+        std::sort(entries.begin(), entries.end(), [](const fs::directory_entry& left, const fs::directory_entry& right) {
+            if (left.is_directory() != right.is_directory()) {
+                return left.is_directory() > right.is_directory();
             }
-            return lhs.path().filename().string() < rhs.path().filename().string();
+            return left.path().filename().string() < right.path().filename().string();
         });
 
         for (const auto& entry : entries) {
             const fs::path path = entry.path();
             if (entry.is_directory()) {
-                const ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow;
-                if (ImGui::TreeNodeEx(path.filename().string().c_str(), flags)) {
+                if (ImGui::TreeNodeEx(path.filename().string().c_str(), ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow)) {
                     drawTree(path);
                     ImGui::TreePop();
                 }
@@ -135,41 +169,45 @@ void EditorApp::RenderResources() {
         drawTree(root);
     }
 
-    if (roots.empty()) {
-        ImGui::TextDisabled("This project does not have any resource folders yet.");
-    }
-
     ImGui::Separator();
     if (!m_selectedAsset.empty()) {
         const WorkspaceTab documentTab = CurrentDocumentTab();
         const std::string runtimePath = ToRuntimePath(m_selectedAsset);
-        const std::string buttonLabel = "Apply To " + WorkspaceTabLabel(documentTab);
         ImGui::TextWrapped("%s", runtimePath.c_str());
-        if (ImGui::Button(buttonLabel.c_str())) {
-            if (documentTab == WorkspaceTab::Entrypoint) {
-                m_entrypointEditor.ApplyAssetToSelection(runtimePath);
-            } else if (documentTab == WorkspaceTab::SceneScript) {
-                m_sceneEditor.ApplyAssetToSelection(runtimePath);
-            } else {
+        if (documentTab == WorkspaceTab::UIDesign || documentTab == WorkspaceTab::Preview || documentTab == WorkspaceTab::Export) {
+            if (ImGui::Button("Apply To UI Editor")) {
                 m_uiDesigner.ApplyAssetToSelection(runtimePath);
+            }
+        } else {
+            const std::string buttonLabel = documentTab == WorkspaceTab::SceneScript
+                ? "Copy Path For Scene Graph"
+                : ("Apply To " + WorkspaceTabLabel(documentTab));
+            if (ImGui::Button(buttonLabel.c_str())) {
+                if (documentTab == WorkspaceTab::Entrypoint) {
+                    m_entrypointEditor.ApplyAssetToSelection(runtimePath);
+                } else if (documentTab == WorkspaceTab::SceneScript) {
+                    m_sceneEditor.ApplyAssetToSelection(runtimePath);
+                }
             }
         }
     } else {
-        ImGui::TextDisabled("Select a file to preview or apply it.");
+        ImGui::TextDisabled("Select a file to preview or drag into the editor.");
     }
 
+    ImGui::SeparatorText("Asset Preview");
+    RenderAssetPreview();
     ImGui::End();
 }
 
 void EditorApp::RenderInspector() {
     ImGui::Begin("Inspector");
     ImGui::PushFont(m_headingFont ? m_headingFont : ImGui::GetFont());
-    ImGui::TextUnformatted("Selection");
+    ImGui::TextUnformatted("Inspector");
     ImGui::PopFont();
     ImGui::Separator();
 
     const WorkspaceTab documentTab = CurrentDocumentTab();
-    if (m_activeTab == WorkspaceTab::Export) {
+    if (m_activeTab == WorkspaceTab::Preview || m_activeTab == WorkspaceTab::Export) {
         const std::string contextLabel = "Editing context: " + WorkspaceTabLabel(documentTab);
         ImGui::TextDisabled("%s", contextLabel.c_str());
         ImGui::Separator();
@@ -190,91 +228,99 @@ void EditorApp::RenderInspector() {
     }
 
     if (!m_selectedAsset.empty()) {
-        ImGui::SeparatorText("Explorer Asset");
+        ImGui::SeparatorText("Selected Asset");
         ImGui::TextWrapped("%s", ToRuntimePath(m_selectedAsset).c_str());
-        ImGui::TextDisabled(IsImageAsset(m_selectedAsset) ? "Image asset" : "Script or generic file");
     }
     ImGui::End();
 }
 
-void EditorApp::RenderPreview() {
-    ImGui::Begin("Preview");
+void EditorApp::RenderGamePreviewTab() {
+    SyncUIDesignerExports();
 
-    const WorkspaceTab documentTab = CurrentDocumentTab();
-    if (m_activeTab == WorkspaceTab::Export) {
-        const std::string previewLabel = "Previewing " + WorkspaceTabLabel(documentTab) + " while Export tab is active.";
-        ImGui::TextDisabled("%s", previewLabel.c_str());
-        ImGui::Separator();
+    auto scenes = AvailableSceneScripts();
+    if (scenes.empty()) {
+        ImGui::TextDisabled("No scene scripts found under %s", RuntimeSceneRoot().string().c_str());
+        return;
     }
 
-    if (documentTab == WorkspaceTab::UIDesign) {
-        m_uiDesigner.RenderPreview();
+    if (std::find(scenes.begin(), scenes.end(), m_previewScenePath) == scenes.end()) {
+        m_previewScenePath = scenes.front();
+    }
+
+    if (ImGui::BeginCombo("Scene", m_previewScenePath.c_str())) {
+        for (const std::string& scene : scenes) {
+            const bool selected = scene == m_previewScenePath;
+            if (ImGui::Selectable(scene.c_str(), selected)) {
+                m_previewScenePath = scene;
+                m_gamePreview.SetScenePath(scene);
+            }
+            if (selected) {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Use UI Scene")) {
+        m_previewScenePath = m_uiDesigner.GeneratedSceneScriptPath();
+        m_gamePreview.SetScenePath(m_previewScenePath);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reload Preview")) {
+        m_gamePreview.RequestReload();
+    }
+
+    ImGui::Spacing();
+    const ImVec2 available = ImGui::GetContentRegionAvail();
+    if (available.x <= 2.0f || available.y <= 2.0f) {
+        ImGui::TextDisabled("Preview area is too small.");
+        return;
+    }
+
+    const ImVec2 outerMin = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("preview-runtime-surface", available, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    const ImRect outer(outerMin, outerMin + available);
+    const int logicalWidth = m_previewScenePath == m_uiDesigner.GeneratedSceneScriptPath() ? m_uiDesigner.SceneWidth() : 1280;
+    const int logicalHeight = m_previewScenePath == m_uiDesigner.GeneratedSceneScriptPath() ? m_uiDesigner.SceneHeight() : 720;
+    const float scale = std::max(0.01f, std::min(outer.GetWidth() / static_cast<float>(logicalWidth), outer.GetHeight() / static_cast<float>(logicalHeight)));
+    const ImVec2 previewSize(static_cast<float>(logicalWidth) * scale, static_cast<float>(logicalHeight) * scale);
+    const ImVec2 previewMin(
+        outer.Min.x + (outer.GetWidth() - previewSize.x) * 0.5f,
+        outer.Min.y + (outer.GetHeight() - previewSize.y) * 0.5f);
+    const ImRect previewRect(previewMin, previewMin + previewSize);
+
+    int previewMouseX = -1000;
+    int previewMouseY = -1000;
+    bool leftClick = false;
+    bool rightClick = false;
+    if (previewRect.Contains(ImGui::GetMousePos())) {
+        previewMouseX = static_cast<int>((ImGui::GetMousePos().x - previewRect.Min.x) / scale);
+        previewMouseY = static_cast<int>((ImGui::GetMousePos().y - previewRect.Min.y) / scale);
+        leftClick = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+        rightClick = ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+    }
+
+    const UIDesigner::RuntimeCanvasResult runtimeCanvas = RenderRuntimeScene(
+        m_previewScenePath,
+        logicalWidth,
+        logicalHeight,
+        previewMouseX,
+        previewMouseY,
+        leftClick,
+        rightClick);
+
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    drawList->AddRectFilled(previewRect.Min, previewRect.Max, IM_COL32(0, 0, 0, 255), 18.0f);
+    drawList->AddRect(previewRect.Min, previewRect.Max, IM_COL32(64, 64, 72, 255), 18.0f, ImDrawFlags_RoundCornersAll, 1.2f);
+    if (runtimeCanvas.rendered && runtimeCanvas.texture) {
+        drawList->AddImage(runtimeCanvas.texture, previewRect.Min, previewRect.Max);
     } else {
-        ImGui::BeginChild("graph-preview", ImVec2(0.0f, 320.0f), true);
-        const auto lines = ActivePreviewLines();
-        if (documentTab == WorkspaceTab::Entrypoint) {
-            RenderEntrypointPreview(lines);
-        } else {
-            RenderScenePreview(lines);
-        }
-        ImGui::EndChild();
+        drawList->AddText(previewRect.Min + ImVec2(18.0f, 18.0f), IM_COL32(180, 180, 188, 255), runtimeCanvas.status.c_str());
     }
 
-    ImGui::SeparatorText("Asset Preview");
-    RenderAssetPreview();
-    ImGui::End();
-}
-
-void EditorApp::RenderEntrypointPreview(const std::vector<std::string>& lines) {
-    const ImRect rect(ImGui::GetWindowContentRegionMin() + ImGui::GetWindowPos(), ImGui::GetWindowContentRegionMax() + ImGui::GetWindowPos());
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-    drawList->AddRectFilled(rect.Min, rect.Max, IM_COL32(11, 16, 26, 255), 16.0f);
-    drawList->AddRect(rect.Min, rect.Max, IM_COL32(94, 132, 176, 160), 16.0f, ImDrawFlags_RoundCornersAll, 1.2f);
-
-    drawList->AddText(ImVec2(rect.Min.x + 18.0f, rect.Min.y + 18.0f), IM_COL32(241, 245, 249, 255), "Entrypoint Loop Preview");
-    drawList->AddText(ImVec2(rect.Min.x + 18.0f, rect.Min.y + 40.0f), IM_COL32(164, 178, 196, 255), "Boot chain and frame loop exported from the visual graph.");
-
-    float y = rect.Min.y + 82.0f;
-    for (size_t index = 0; index < lines.size(); ++index) {
-        const ImVec2 min(rect.Min.x + 18.0f, y);
-        const ImVec2 max(rect.Max.x - 18.0f, y + 34.0f);
-        drawList->AddRectFilled(min, max, index % 2 == 0 ? IM_COL32(26, 34, 50, 215) : IM_COL32(18, 26, 39, 215), 9.0f);
-        drawList->AddRect(min, max, IM_COL32(104, 136, 176, 120), 9.0f);
-        drawList->AddText(ImVec2(min.x + 12.0f, min.y + 8.0f), IM_COL32(232, 237, 243, 255), lines[index].c_str());
-        y += 40.0f;
-    }
-}
-
-void EditorApp::RenderScenePreview(const std::vector<std::string>& lines) {
-    std::string background = "Scene preview stage";
-    std::string speaker = "Speaker";
-    std::string line = "Use the graph to assemble beats, transitions and branching dialogue.";
-    std::string accent = "Transition: dissolve";
-
-    for (const auto& entry : lines) {
-        if (entry.rfind("Background:", 0) == 0) {
-            background = entry.substr(std::string("Background: ").size());
-        } else if (entry.rfind("Speaker:", 0) == 0) {
-            speaker = entry.substr(std::string("Speaker: ").size());
-        } else if (entry.rfind("Line:", 0) == 0) {
-            line = entry.substr(std::string("Line: ").size());
-        } else if (entry.rfind("Transition:", 0) == 0) {
-            accent = entry;
-        }
-    }
-
-    const ImRect rect(ImGui::GetWindowContentRegionMin() + ImGui::GetWindowPos(), ImGui::GetWindowContentRegionMax() + ImGui::GetWindowPos());
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-    drawList->AddRectFilledMultiColor(rect.Min, rect.Max, IM_COL32(18, 24, 38, 255), IM_COL32(30, 36, 58, 255), IM_COL32(9, 12, 20, 255), IM_COL32(14, 18, 28, 255));
-    drawList->AddText(ImVec2(rect.Min.x + 18.0f, rect.Min.y + 16.0f), IM_COL32(241, 245, 249, 255), background.c_str());
-    drawList->AddText(ImVec2(rect.Min.x + 18.0f, rect.Min.y + 40.0f), IM_COL32(164, 178, 196, 255), accent.c_str());
-
-    const ImVec2 panelMin(rect.Min.x + 32.0f, rect.Max.y - 120.0f);
-    const ImVec2 panelMax(rect.Max.x - 32.0f, rect.Max.y - 28.0f);
-    drawList->AddRectFilled(panelMin, panelMax, IM_COL32(10, 14, 22, 228), 16.0f);
-    drawList->AddRect(panelMin, panelMax, IM_COL32(255, 214, 143, 110), 16.0f, ImDrawFlags_RoundCornersAll, 1.4f);
-    drawList->AddText(ImVec2(panelMin.x + 18.0f, panelMin.y + 16.0f), IM_COL32(255, 214, 143, 255), speaker.c_str());
-    drawList->AddText(ImVec2(panelMin.x + 18.0f, panelMin.y + 44.0f), IM_COL32(238, 242, 248, 255), line.c_str());
+    drawList->AddRectFilled(previewRect.Min + ImVec2(14.0f, 14.0f), previewRect.Min + ImVec2(340.0f, 42.0f), IM_COL32(0, 0, 0, 188), 8.0f);
+    drawList->AddText(previewRect.Min + ImVec2(24.0f, 22.0f), IM_COL32(188, 188, 196, 255), runtimeCanvas.status.c_str());
 }
 
 void EditorApp::RenderAssetPreview() {
@@ -300,85 +346,104 @@ void EditorApp::RenderAssetPreview() {
 
 void EditorApp::RenderOutput() {
     ImGui::Begin("Output");
-    ImGui::TextDisabled("Recent editor activity and export history.");
+    ImGui::TextDisabled("Recent editor activity, preview state and export history.");
     ImGui::Separator();
     RenderActivityLog();
     ImGui::End();
 }
 
 void EditorApp::RenderExportManager() {
-    const WorkspaceTab documentTab = CurrentDocumentTab();
+    SyncUIDesignerExports();
     const auto artifacts = BuildExportArtifacts();
+    const fs::path runtimeExe = FindRuntimeExecutable();
+    const fs::path folderBuildRoot = RuntimeExportRoot() / "folder_build";
+    const fs::path pdxBuildRoot = RuntimeExportRoot() / "pdx_build";
+    const fs::path sharedScriptsRoot = WorkspaceScriptsRoot();
+    const auto countFiles = [](const fs::path& root) {
+        std::uintmax_t count = 0;
+        if (!fs::exists(root)) {
+            return count;
+        }
+        for (const auto& entry : fs::recursive_directory_iterator(root)) {
+            if (entry.is_regular_file()) {
+                ++count;
+            }
+        }
+        return count;
+    };
 
     ImGui::PushFont(m_headingFont ? m_headingFont : ImGui::GetFont());
-    ImGui::TextUnformatted("Export Manager");
+    ImGui::TextUnformatted("Build & Export");
     ImGui::PopFont();
-    const std::string exportRoot = HasProjectLoaded() ? (m_projectRoot / "Scripts" / "Generated").string() : std::string{};
-    ImGui::TextDisabled("Generated files follow the active project and can be exported individually or all at once.");
-    if (!exportRoot.empty()) {
-        ImGui::TextDisabled("%s", exportRoot.c_str());
-    }
+    ImGui::TextDisabled("Export the complete game package, including executable, story scripts, UI scripts, assets and engine content.");
+    ImGui::TextDisabled("%s", RuntimeExportRoot().string().c_str());
     ImGui::Spacing();
 
-    if (ImGui::Button("Export Active")) {
+    if (ImGui::Button("Export Folder Game", ImVec2(190.0f, 42.0f))) {
+        ExportGameFolder();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Export PDX Game", ImVec2(190.0f, 42.0f))) {
+        ExportGamePdx();
+    }
+
+    if (runtimeExe.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.38f, 1.0f), "Executable not found yet. Build the runtime first, otherwise export will only contain data packages.");
+    } else {
+        ImGui::TextDisabled("Runtime executable: %s", runtimeExe.string().c_str());
+    }
+
+    ImGui::Spacing();
+    ImGui::SeparatorText("Package Contents");
+    ImGui::BeginChild("export-packages", ImVec2(0.0f, 210.0f), false);
+    ImGui::BeginChild("folder-package", ImVec2(0.0f, 96.0f), true);
+    ImGui::TextUnformatted("Folder Game");
+    ImGui::TextDisabled("%s", folderBuildRoot.string().c_str());
+    ImGui::TextWrapped("Includes: `PrismatiXEngine.exe`, all sibling runtime `.dll`, project `Data/` including `Data/Script/*.pds`, plus `Engine/`.");
+    ImGui::TextDisabled("Merge snapshot: %ju project data files, %ju shared runtime script files, %ju engine files", countFiles(RuntimeDataRoot()), countFiles(sharedScriptsRoot), countFiles(RuntimeEngineRoot()));
+    ImGui::EndChild();
+
+    ImGui::BeginChild("pdx-package", ImVec2(0.0f, 96.0f), true);
+    ImGui::TextUnformatted("PDX Game");
+    ImGui::TextDisabled("%s", pdxBuildRoot.string().c_str());
+    ImGui::TextWrapped("Includes: `PrismatiXEngine.exe`, all sibling runtime `.dll`, `Data.pdx`, `Engine.pdx`.");
+    ImGui::TextDisabled("Project Data, including chapter `.pds` files, is merged with shared runtime `Scripts/`, then packaged into `Data.pdx`.");
+    ImGui::EndChild();
+    ImGui::EndChild();
+
+    ImGui::SeparatorText("Editor Documents");
+    if (ImGui::Button("Write Active Document")) {
         ExportActive();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Export All")) {
+    if (ImGui::Button("Write All Documents")) {
         ExportAll();
     }
-    ImGui::SameLine();
-    const std::string activeLabel = "Active authoring tab: " + WorkspaceTabLabel(documentTab);
-    ImGui::TextDisabled("%s", activeLabel.c_str());
 
-    const float spacing = ImGui::GetStyle().ItemSpacing.x;
-    const float availableWidth = ImGui::GetContentRegionAvail().x;
-    const float cardWidth = std::max(220.0f, (availableWidth - spacing * 2.0f) / 3.0f);
-
-    ImGui::Spacing();
     for (size_t index = 0; index < artifacts.size(); ++index) {
         const ExportArtifact& artifact = artifacts[index];
-        if (index > 0) {
-            ImGui::SameLine();
-        }
-
-        const std::string childId = "export-card-" + std::to_string(index);
-        ImGui::BeginChild(childId.c_str(), ImVec2(cardWidth, 126.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
+        const std::string childId = "export-artifact-" + std::to_string(index);
+        ImGui::BeginChild(childId.c_str(), ImVec2(0.0f, 82.0f), true);
         ImGui::TextUnformatted(artifact.label.c_str());
-        if (artifact.tab == documentTab) {
-            ImGui::SameLine();
-            ImGui::TextDisabled("(active)");
-        }
-
-        const std::string outputPath = ToRuntimePath(artifact.path);
-        ImGui::TextDisabled("%s", artifact.path.filename().string().c_str());
-        ImGui::TextWrapped("%s", outputPath.c_str());
+        ImGui::TextDisabled("%s", artifact.path.string().c_str());
         ImGui::TextDisabled("%zu bytes", artifact.content.size());
-
-        const std::string exportButton = "Export##export-" + std::to_string(index);
-        if (ImGui::Button(exportButton.c_str())) {
+        if (ImGui::Button(("Write##" + std::to_string(index)).c_str())) {
             ExportDocument(artifact.path, artifact.label, artifact.content);
         }
-
         ImGui::SameLine();
-        const std::string openButton = "Open##open-" + std::to_string(index);
-        if (ImGui::SmallButton(openButton.c_str())) {
-            m_activeTab = artifact.tab;
+        if (ImGui::SmallButton(("Open Tab##" + std::to_string(index)).c_str())) {
             m_lastDocumentTab = artifact.tab;
         }
         ImGui::EndChild();
     }
 
-    ImGui::Spacing();
-    ImGui::SeparatorText("Generated Preview");
-    if (ImGui::BeginTabBar("ExportPreviewTabs")) {
+    if (ImGui::BeginTabBar("GeneratedLuaPreview")) {
         for (size_t index = 0; index < artifacts.size(); ++index) {
             const ExportArtifact& artifact = artifacts[index];
-            const std::string tabLabel = artifact.label + "###export-preview-" + std::to_string(index);
-            if (ImGui::BeginTabItem(tabLabel.c_str())) {
+            if (ImGui::BeginTabItem((artifact.label + "###generated-" + std::to_string(index)).c_str())) {
                 std::string content = artifact.content;
-                const std::string inputId = "##export-preview-buffer-" + std::to_string(index);
-                ImGui::InputTextMultiline(inputId.c_str(), &content, ImVec2(-1.0f, -1.0f), ImGuiInputTextFlags_ReadOnly);
+                ImGui::InputTextMultiline(("##generated-content-" + std::to_string(index)).c_str(), &content, ImVec2(-1.0f, -1.0f), ImGuiInputTextFlags_ReadOnly);
                 ImGui::EndTabItem();
             }
         }
@@ -396,7 +461,28 @@ void EditorApp::RenderActivityLog() {
 
 void EditorApp::ExportActive() {
     const WorkspaceTab documentTab = CurrentDocumentTab();
-    ExportDocument(ExportPathFor(documentTab), WorkspaceTabLabel(documentTab), GenerateDocumentFor(documentTab));
+    if (documentTab == WorkspaceTab::UIDesign) {
+        const fs::path path = ExportPathFor(documentTab);
+        const std::string content = GenerateDocumentFor(documentTab);
+        if (!content.empty()) {
+            ExportDocument(path, "UI Document", content);
+        }
+        return;
+    }
+    if (documentTab == WorkspaceTab::SceneScript) {
+        const fs::path path = ExportPathFor(documentTab);
+        const std::string content = GenerateDocumentFor(documentTab);
+        if (!content.empty()) {
+            ExportDocument(path, "PDS Script", content);
+        }
+        return;
+    }
+
+    for (const ExportArtifact& artifact : BuildExportArtifacts()) {
+        if (artifact.tab == documentTab) {
+            ExportDocument(artifact.path, artifact.label, artifact.content);
+        }
+    }
 }
 
 void EditorApp::ExportAll() {
@@ -410,21 +496,6 @@ void EditorApp::ExportDocument(const fs::path& filePath, const std::string& labe
     std::ofstream out(filePath, std::ios::binary);
     out << content;
     Log("Exported " + label + " to " + filePath.string());
-}
-
-std::string EditorApp::ActiveLuaPreview() const {
-    return GenerateDocumentFor(CurrentDocumentTab());
-}
-
-std::vector<std::string> EditorApp::ActivePreviewLines() const {
-    const WorkspaceTab documentTab = CurrentDocumentTab();
-    if (documentTab == WorkspaceTab::Entrypoint) {
-        return m_entrypointEditor.BuildPreviewLines();
-    }
-    if (documentTab == WorkspaceTab::SceneScript) {
-        return m_sceneEditor.BuildPreviewLines();
-    }
-    return m_uiDesigner.BuildPreviewLines();
 }
 
 }  // namespace PrismatiX::Editor

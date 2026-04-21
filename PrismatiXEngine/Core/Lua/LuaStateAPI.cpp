@@ -7,6 +7,29 @@
 #include "Core/VN/VNFlowController.h"
 
 namespace PrismatiX::App {
+namespace {
+
+PrismatiX::VN::VNFlowController* ResolveVNController(const sol::object& value) {
+    if (!value.valid() || value.get_type() == sol::type::nil) {
+        return nullptr;
+    }
+
+    if (value.is<PrismatiX::VN::VNFlowController*>()) {
+        return value.as<PrismatiX::VN::VNFlowController*>();
+    }
+
+    if (value.is<sol::table>()) {
+        sol::table proxy = value.as<sol::table>();
+        sol::object native = proxy.raw_get<sol::object>("_px_vn_ptr");
+        if (native.valid() && native.get_type() != sol::type::nil && native.is<PrismatiX::VN::VNFlowController*>()) {
+            return native.as<PrismatiX::VN::VNFlowController*>();
+        }
+    }
+
+    return nullptr;
+}
+
+}  // namespace
 
 void RegisterLuaStateAPI(sol::state& lua, sol::table& api, Engine& engine) {
     lua.new_usertype<PrismatiX::Models::BacklogEntry>("BacklogEntry", "speaker", &PrismatiX::Models::BacklogEntry::speaker, "text", &PrismatiX::Models::BacklogEntry::text);
@@ -41,23 +64,27 @@ void RegisterLuaStateAPI(sol::state& lua, sol::table& api, Engine& engine) {
         fx[name] = fn;
     });
 
-    api.set_function("SaveGame", [&engine](int slot, PrismatiX::VN::VNFlowController& vn) {
+    api.set_function("SaveGame", [&engine](int slot, sol::object vnObject) {
+        PrismatiX::VN::VNFlowController* vn = ResolveVNController(vnObject);
+        if (!vn) return false;
         PrismatiX::Models::SaveSnapshot snap;
-        snap.scriptName = vn.GetCurrentScript();
-        snap.line = vn.GetCurrentLine();
-        snap.bgName = vn.GetStage().GetCurrentBgName();
+        snap.scriptName = vn->GetCurrentScript();
+        snap.line = vn->GetCurrentLine();
+        snap.bgName = vn->GetStage().GetCurrentBgName();
         snap.bgmName = "";
-        snap.characters = vn.GetStage().GetSavedCharacters();
+        snap.characters = vn->GetStage().GetSavedCharacters();
         return engine.GetSaveManager().SaveGame(slot, snap);
     });
 
-    api.set_function("LoadGame", [&engine](int slot, PrismatiX::VN::VNFlowController& vn) -> bool {
+    api.set_function("LoadGame", [&engine](int slot, sol::object vnObject) -> bool {
+        PrismatiX::VN::VNFlowController* vn = ResolveVNController(vnObject);
+        if (!vn) return false;
         PrismatiX::Models::SaveSnapshot snap;
         if (!engine.GetSaveManager().LoadGame(slot, snap)) return false;
-        vn.LoadScript(snap.scriptName);
-        vn.SetCurrentLine(snap.line);
-        vn.GetStage().RestoreBackground(snap.bgName);
-        vn.GetStage().RestoreCharacters(snap.characters);
+        vn->LoadScript(snap.scriptName);
+        vn->SetCurrentLine(snap.line);
+        vn->GetStage().RestoreBackground(snap.bgName);
+        vn->GetStage().RestoreCharacters(snap.characters);
         return true;
     });
 

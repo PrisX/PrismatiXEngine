@@ -27,6 +27,15 @@ void RegisterLuaRenderAPI(sol::state& lua, sol::table& api, Engine& engine) {
         SDL_Rect rect{ LInt(x), LInt(y), LInt(w), LInt(h) };
         SDL_RenderFillRect(engine.GetRenderer(), &rect);
     });
+    api.set_function("DrawRoundedRect", [&engine](float x, float y, float w, float h, float radius, float r, float g, float b, sol::optional<float> a) {
+        engine.GetRenderSystem().DrawRoundedRect(x, y, w, h, radius, { (Uint8)r, (Uint8)g, (Uint8)b, (Uint8)a.value_or(255) });
+    });
+    api.set_function("DrawImage", [&engine](const std::string& path, float x, float y, float w, float h, sol::optional<float> a) {
+        SDL_Texture* tex = engine.GetResourceManager().LoadTexture(path);
+        if (tex) {
+            engine.GetRenderSystem().DrawTexture(tex, LInt(x), LInt(y), LInt(w), LInt(h), (Uint8)a.value_or(255));
+        }
+    });
     api.set_function("DrawText", [&engine](const std::string& text, float x, float y, const std::string& fontName, float fontSize, float r, float g, float b, sol::optional<float> a) {
         TTF_Font* font = engine.GetResourceManager().LoadFont(fontName, LInt(fontSize));
         if (font) engine.GetRenderSystem().DrawText(font, text, { (Uint8)r, (Uint8)g, (Uint8)b, (Uint8)a.value_or(255) }, LInt(x), LInt(y));
