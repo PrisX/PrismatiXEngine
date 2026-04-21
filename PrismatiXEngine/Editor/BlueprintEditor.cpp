@@ -20,6 +20,7 @@
 
 namespace ed = ax::NodeEditor;
 using ax::Drawing::IconType;
+namespace fs = std::filesystem;
 
 namespace PrismatiX::Editor {
 
@@ -34,7 +35,53 @@ constexpr float kCompactParameterWidth = 176.0f;
 constexpr float kPinIconSize = 18.0f;
 constexpr float kPinLabelSpacing = 6.0f;
 constexpr float kHeaderTextureScale = 6.0f;
-constexpr const char* kGeneratedSceneScriptPath = "Scripts/Generated/editor_scene_graph.pds";
+constexpr const char* kGeneratedSceneScriptPath = "Script/chapter1.pds";
+
+struct ParsedPdsCommand {
+    std::string name;
+    std::unordered_map<std::string, std::string> arguments;
+};
+
+std::string ToLowerCopy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+std::string TrimCopy(std::string_view value) {
+    size_t start = 0;
+    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start])) != 0) {
+        ++start;
+    }
+    size_t end = value.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1])) != 0) {
+        --end;
+    }
+    return std::string(value.substr(start, end - start));
+}
+
+std::string UnescapePdsValue(std::string_view value) {
+    std::string text = TrimCopy(value);
+    if (text.size() >= 2 && ((text.front() == '"' && text.back() == '"') || (text.front() == '\'' && text.back() == '\''))) {
+        text = text.substr(1, text.size() - 2);
+    }
+
+    std::string unescaped;
+    unescaped.reserve(text.size());
+    bool escaping = false;
+    for (char ch : text) {
+        if (escaping) {
+            switch (ch) {
+                case 'n':
+                    unescaped.push_back('\n');
+                    break;
+                case 't':
+                    unescaped.push_back('\t');
+                    break;
+                default:
+                    unescaped.push_back(ch);
+                    break;
             }
             escaping = false;
             continue;
