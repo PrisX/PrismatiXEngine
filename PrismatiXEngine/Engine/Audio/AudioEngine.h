@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Engine/IO/Vfs.h"
+#include "Engine/IO/VFS.h"
 
 #include <memory>
 #include <string>
@@ -15,24 +15,24 @@ namespace px::audio {
 
 class AudioEngine {
 public:
-    explicit AudioEngine(io::Vfs& vfs);
+    explicit AudioEngine(io::VFS& vfs);
     ~AudioEngine();
 
     bool Init();
     void Shutdown();
 
-    void PlayBgm(const std::string& path, bool loop = true, int fadeMs = 0);
-    void StopBgm(int fadeMs = 0);
+    void PlayBGM(const std::string& path, bool loop = true, int fadeMs = 0);
+    void StopBGM(int fadeMs = 0);
 
-    void PlaySe(const std::string& path);
+    void PlaySE(const std::string& path);
     void PlayVoice(const std::string& path);
     void StopVoice();
 
-    void SetBgmVolume(int volume);
-    void SetSeVolume(int volume);
+    void SetBGMVolume(int volume);
+    void SetSEVolume(int volume);
     void SetVoiceVolume(int volume);
-    [[nodiscard]] int BgmVolume() const { return m_bgmVolume; }
-    [[nodiscard]] int SeVolume() const { return m_seVolume; }
+    [[nodiscard]] int BGMVolume() const { return m_bgmVolume; }
+    [[nodiscard]] int SEVolume() const { return m_seVolume; }
     [[nodiscard]] int VoiceVolume() const { return m_voiceVolume; }
 
 private:
@@ -44,7 +44,7 @@ private:
     MIX_Audio* AcquireAudio(const std::string& path, bool predecode);
     MIX_Track* AcquireSeTrack();
 
-    io::Vfs& m_vfs;
+    io::VFS& m_vfs;
     bool m_initialized = false;
     int m_sampleRate = 48000;
 

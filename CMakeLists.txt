@@ -48,6 +48,8 @@ add_subdirectory("PrismatiXEngine")
 
 # Formatting helper
 file(GLOB_RECURSE ALL_CXX_SOURCE_FILES
+    "PrismatiXEngine/Applications/*.cpp"
+    "PrismatiXEngine/Applications/*.h"
     "PrismatiXEngine/Engine/*.cpp"
     "PrismatiXEngine/Engine/*.h"
     "PrismatiXEngine/Editor/*.cpp"

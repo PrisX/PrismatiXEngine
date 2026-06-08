@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Engine/Common/Types.h"
+#include "Engine/Core/Types.h"
 
 #include <string>
 

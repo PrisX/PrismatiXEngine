@@ -1,4 +1,4 @@
-#include "Engine/UI/UiSchema.h"
+#include "Engine/UI/UISchema.h"
 
 #include <nlohmann/json.hpp>
 
@@ -64,7 +64,7 @@ Anchor AnchorFromString(const std::string& s) {
 
 namespace {
 
-Json NodeToJson(const UiNode& n) {
+Json NodeToJson(const UINode& n) {
     Json j;
     j["id"] = n.id;
     j["type"] = ToString(n.type);
@@ -114,8 +114,8 @@ Json NodeToJson(const UiNode& n) {
     return j;
 }
 
-UiNode NodeFromJson(const Json& j) {
-    UiNode n;
+UINode NodeFromJson(const Json& j) {
+    UINode n;
     n.id = j.value("id", std::string{});
     n.type = NodeTypeFromString(j.value("type", std::string{ "panel" }));
     n.layer = j.value("layer", std::string{});
@@ -171,12 +171,12 @@ UiNode NodeFromJson(const Json& j) {
 
 }
 
-std::optional<UiScene> ParsePxui(const std::string& jsonText) {
+std::optional<UIScene> ParsePXUI(const std::string& jsonText) {
     Json j = Json::parse(jsonText, nullptr, /*allow_exceptions=*/false);
     if (j.is_discarded()) {
         return std::nullopt;
     }
-    UiScene scene;
+    UIScene scene;
     if (j.contains("canvas")) {
         scene.canvasW = j["canvas"].value("w", 1280);
         scene.canvasH = j["canvas"].value("h", 720);
@@ -195,14 +195,14 @@ std::optional<UiScene> ParsePxui(const std::string& jsonText) {
     return scene;
 }
 
-std::string WritePxui(const UiScene& scene) {
+std::string WritePXUI(const UIScene& scene) {
     Json j;
     j["canvas"] = { { "w", scene.canvasW }, { "h", scene.canvasH } };
     j["background"] = { { "color", ColorToJson(scene.bgColor) },
                         { "image", scene.bgImage },
                         { "alpha", scene.bgAlpha } };
     Json nodes = Json::array();
-    for (const UiNode& n : scene.nodes) {
+    for (const UINode& n : scene.nodes) {
         nodes.push_back(NodeToJson(n));
     }
     j["nodes"] = nodes;

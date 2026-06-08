@@ -1,6 +1,6 @@
 #include "Engine/Audio/AudioEngine.h"
 
-#include "Logger.h"
+#include "Engine/Support/Logger.h"
 
 #include <SDL3/SDL.h>
 #include <SDL3_mixer/SDL_mixer.h>
@@ -16,7 +16,7 @@ float ToGain(int volume) {
 }
 }
 
-AudioEngine::AudioEngine(io::Vfs& vfs) : m_vfs(vfs) {}
+AudioEngine::AudioEngine(io::VFS& vfs) : m_vfs(vfs) {}
 
 AudioEngine::~AudioEngine() {
     Shutdown();
@@ -110,7 +110,7 @@ MIX_Track* AudioEngine::AcquireSeTrack() {
     return m_seTracks.front();
 }
 
-void AudioEngine::PlayBgm(const std::string& path, bool loop, int fadeMs) {
+void AudioEngine::PlayBGM(const std::string& path, bool loop, int fadeMs) {
     if (!m_initialized) {
         return;
     }
@@ -130,7 +130,7 @@ void AudioEngine::PlayBgm(const std::string& path, bool loop, int fadeMs) {
     SDL_DestroyProperties(props);
 }
 
-void AudioEngine::StopBgm(int fadeMs) {
+void AudioEngine::StopBGM(int fadeMs) {
     if (!m_initialized) {
         return;
     }
@@ -138,7 +138,7 @@ void AudioEngine::StopBgm(int fadeMs) {
     MIX_StopTrack(m_bgmTrack, frames);
 }
 
-void AudioEngine::PlaySe(const std::string& path) {
+void AudioEngine::PlaySE(const std::string& path) {
     if (!m_initialized) {
         return;
     }
@@ -173,14 +173,14 @@ void AudioEngine::StopVoice() {
     }
 }
 
-void AudioEngine::SetBgmVolume(int volume) {
+void AudioEngine::SetBGMVolume(int volume) {
     m_bgmVolume = volume;
     if (m_initialized) {
         MIX_SetTrackGain(m_bgmTrack, ToGain(volume));
     }
 }
 
-void AudioEngine::SetSeVolume(int volume) {
+void AudioEngine::SetSEVolume(int volume) {
     m_seVolume = volume;
 }
 

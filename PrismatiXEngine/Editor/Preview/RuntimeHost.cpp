@@ -1,18 +1,18 @@
 #include "Editor/Preview/RuntimeHost.h"
 
-#include "Engine/UI/UiSchema.h"
-#include "Logger.h"
+#include "Engine/UI/UISchema.h"
+#include "Engine/Support/Logger.h"
 
 #include <SDL3/SDL.h>
 
 namespace px::editor {
 
 RuntimeHost::RuntimeHost(SDL_Renderer* editorRenderer) : m_editorRenderer(editorRenderer) {
-    m_assets = std::make_unique<gfx::AssetCache>(editorRenderer, m_vfs);
-    m_renderer = std::make_unique<gfx::Renderer2D>(editorRenderer, *m_assets);
+    m_assets = std::make_unique<graphics::AssetCache>(editorRenderer, m_vfs);
+    m_renderer = std::make_unique<graphics::Renderer2D>(editorRenderer, *m_assets);
     m_audio = std::make_unique<audio::AudioEngine>(m_vfs);
     m_stage = std::make_unique<vn::Stage>(*m_renderer, *m_assets);
-    m_vm = std::make_unique<vn::Vm>(m_vfs, *m_audio, *m_stage, m_dialogue, m_vars, m_backlog);
+    m_vm = std::make_unique<vn::VM>(m_vfs, *m_audio, *m_stage, m_dialogue, m_vars, m_backlog);
     m_hud.SetDialogue(&m_dialogue.State());
     m_hud.SetChoices(&m_choiceTexts);
 }
@@ -40,15 +40,15 @@ void RuntimeHost::EnsureTarget() {
     }
 }
 
-void RuntimeHost::LoadUi(const std::string& vfsPath) {
+void RuntimeHost::LoadUI(const std::string& vfsPath) {
     m_uiPath = vfsPath;
-    m_mode = Mode::UiScene;
+    m_mode = Mode::UIScene;
     auto text = m_vfs.ReadText(vfsPath);
     if (!text) {
         PX_LOG_WARN("RuntimeHost: UI not found '{}'", vfsPath);
         return;
     }
-    if (auto scene = px::ui::ParsePxui(*text)) {
+    if (auto scene = px::ui::ParsePXUI(*text)) {
         m_uiStage.Load(std::move(*scene));
     }
 }
@@ -60,7 +60,7 @@ void RuntimeHost::LoadVn(const std::string& script) {
     m_vars.Reset(false);
     m_backlog.Clear();
     if (auto text = m_vfs.ReadText("Data/UI/hud.pxui")) {
-        if (auto scene = px::ui::ParsePxui(*text)) {
+        if (auto scene = px::ui::ParsePXUI(*text)) {
             m_hud.Load(std::move(*scene));
         }
     }
@@ -68,8 +68,8 @@ void RuntimeHost::LoadVn(const std::string& script) {
 }
 
 void RuntimeHost::Reload() {
-    if (m_mode == Mode::UiScene) {
-        LoadUi(m_uiPath);
+    if (m_mode == Mode::UIScene) {
+        LoadUI(m_uiPath);
     } else {
         LoadVn(m_vnScript);
     }
@@ -91,17 +91,17 @@ void RuntimeHost::Tick(float dt, std::uint64_t nowMs, bool hovered, float localX
     SDL_SetRenderDrawColor(m_editorRenderer, 12, 14, 20, 255);
     SDL_RenderClear(m_editorRenderer);
 
-    if (m_mode == Mode::UiScene) {
+    if (m_mode == Mode::UIScene) {
         m_uiStage.Update(m_input, dt);
         m_uiStage.Render(*m_renderer);
     } else {
         m_choiceTexts.clear();
-        if (m_vm->State() == vn::VmState::WaitingChoice) {
+        if (m_vm->State() == vn::VMState::WaitingChoice) {
             for (const auto& c : m_vm->Choices()) m_choiceTexts.push_back(c.text);
         }
         if (auto act = m_hud.Update(m_input, dt)) {
             if (act->type == "choice") m_vm->SelectChoice(std::atoi(act->arg.c_str()));
-        } else if (hovered && click && m_vm->State() != vn::VmState::WaitingChoice) {
+        } else if (hovered && click && m_vm->State() != vn::VMState::WaitingChoice) {
             m_vm->OnAdvance();
         }
         m_vm->Update(nowMs, dt);

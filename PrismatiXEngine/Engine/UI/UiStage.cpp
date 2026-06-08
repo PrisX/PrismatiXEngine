@@ -1,8 +1,8 @@
-#include "Engine/UI/UiStage.h"
+#include "Engine/UI/UIStage.h"
 
-#include "Engine/Gfx/Renderer2D.h"
+#include "Engine/Graphics/Renderer2D.h"
 #include "Engine/Platform/Input.h"
-#include "Engine/VN/Dialogue.h"
+#include "Engine/VN/Runtime/Dialogue.h"
 
 #include <algorithm>
 #include <cmath>
@@ -30,26 +30,26 @@ void AnchorOrigin(Anchor a, int cw, int ch, float& ox, float& oy) {
 }
 }
 
-void UiStage::Load(UiScene scene) {
+void UIStage::Load(UIScene scene) {
     m_scene = std::move(scene);
     m_anims.assign(m_scene.nodes.size(), NodeAnim{});
     TriggerEnter();
 }
 
-void UiStage::TriggerEnter() {
+void UIStage::TriggerEnter() {
     for (NodeAnim& a : m_anims) {
         a.elapsed = 0.0f;
         a.active = true;
     }
 }
 
-Rect UiStage::ScreenRect(const UiNode& node, gfx::Renderer2D& r) const {
+Rect UIStage::ScreenRect(const UINode& node, graphics::Renderer2D& r) const {
     int w = 0, h = 0;
     r.GetLogicalSize(w, h);
     return ScreenRect(node, w, h);
 }
 
-Rect UiStage::ScreenRect(const UiNode& node, int logicalW, int logicalH) const {
+Rect UIStage::ScreenRect(const UINode& node, int logicalW, int logicalH) const {
     float ox = 0, oy = 0;
     AnchorOrigin(node.anchor, m_scene.canvasW, m_scene.canvasH, ox, oy);
     const float sx = m_scene.canvasW ? static_cast<float>(logicalW) / m_scene.canvasW : 1.0f;
@@ -58,7 +58,7 @@ Rect UiStage::ScreenRect(const UiNode& node, int logicalW, int logicalH) const {
                  node.rect.h * sy };
 }
 
-void UiStage::ApplyAnim(const UiNode& node, const NodeAnim& anim, Rect& rect, float& opacity) const {
+void UIStage::ApplyAnim(const UINode& node, const NodeAnim& anim, Rect& rect, float& opacity) const {
     if (!anim.active) {
         return;
     }
@@ -103,7 +103,7 @@ void UiStage::ApplyAnim(const UiNode& node, const NodeAnim& anim, Rect& rect, fl
     }
 }
 
-std::vector<Rect> UiStage::GridCells(const UiNode& node, const Rect& area,
+std::vector<Rect> UIStage::GridCells(const UINode& node, const Rect& area,
                                      std::size_t count) const {
     const int cols = node.type == NodeType::GalleryGrid ? 4 : 2;
     const float pad = 12.0f;
@@ -119,7 +119,7 @@ std::vector<Rect> UiStage::GridCells(const UiNode& node, const Rect& area,
     return cells;
 }
 
-std::vector<std::size_t> UiStage::DrawOrder() const {
+std::vector<std::size_t> UIStage::DrawOrder() const {
     std::vector<std::size_t> order(m_scene.nodes.size());
     for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
     std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
@@ -128,7 +128,7 @@ std::vector<std::size_t> UiStage::DrawOrder() const {
     return order;
 }
 
-std::optional<UiAction> UiStage::Update(const Input& input, float dt) {
+std::optional<UIAction> UIStage::Update(const Input& input, float dt) {
     m_mx = input.MouseX();
     m_my = input.MouseY();
     for (NodeAnim& a : m_anims) {
@@ -140,17 +140,17 @@ std::optional<UiAction> UiStage::Update(const Input& input, float dt) {
 
     const std::vector<std::size_t> order = DrawOrder();
     for (auto it = order.rbegin(); it != order.rend(); ++it) {
-        const UiNode& node = m_scene.nodes[*it];
+        const UINode& node = m_scene.nodes[*it];
         if (!node.visible || node.locked) continue;
         const Rect rect = ScreenRect(node, 1280, 720);
         if (node.type == NodeType::Button && rect.Contains(m_mx, m_my)) {
-            return UiAction{ node.actionType, node.actionTarget, node.actionArg, node.id };
+            return UIAction{ node.actionType, node.actionTarget, node.actionArg, node.id };
         }
         if (node.type == NodeType::ChoiceList && m_choices) {
             for (std::size_t c = 0; c < m_choices->size(); ++c) {
                 const Rect cr{ rect.x, rect.y + c * (kChoiceH + kChoiceGap), rect.w, kChoiceH };
                 if (cr.Contains(m_mx, m_my)) {
-                    return UiAction{ "choice", "", std::to_string(c), node.id };
+                    return UIAction{ "choice", "", std::to_string(c), node.id };
                 }
             }
         }
@@ -161,7 +161,7 @@ std::optional<UiAction> UiStage::Update(const Input& input, float dt) {
                 const std::vector<Rect> cells = GridCells(node, rect, items.size());
                 for (std::size_t c = 0; c < items.size(); ++c) {
                     if (!items[c].locked && cells[c].Contains(m_mx, m_my)) {
-                        return UiAction{ items[c].actionType, "", items[c].actionArg, node.id };
+                        return UIAction{ items[c].actionType, "", items[c].actionArg, node.id };
                     }
                 }
             }
@@ -170,7 +170,7 @@ std::optional<UiAction> UiStage::Update(const Input& input, float dt) {
     return std::nullopt;
 }
 
-void UiStage::RenderNode(gfx::Renderer2D& r, const UiNode& node, std::size_t index) {
+void UIStage::RenderNode(graphics::Renderer2D& r, const UINode& node, std::size_t index) {
     if (!node.visible) {
         return;
     }
@@ -261,7 +261,7 @@ void UiStage::RenderNode(gfx::Renderer2D& r, const UiNode& node, std::size_t ind
             const std::size_t count = git != m_grids.end() ? git->second.size() : 0;
             const std::vector<Rect> cells = GridCells(node, rect, count);
             for (std::size_t c = 0; c < count; ++c) {
-                const UiStage::GridItem& item = git->second[c];
+                const UIStage::GridItem& item = git->second[c];
                 const Rect& cr = cells[c];
                 const bool h = cr.Contains(m_mx, m_my) && !item.locked;
                 if (!item.locked && !item.image.empty()) {
@@ -291,14 +291,14 @@ void UiStage::RenderNode(gfx::Renderer2D& r, const UiNode& node, std::size_t ind
     }
 }
 
-void UiStage::Render(gfx::Renderer2D& r) {
+void UIStage::Render(graphics::Renderer2D& r) {
     int w = 0, h = 0;
     r.GetLogicalSize(w, h);
     if (m_scene.bgColor.a > 0) {
         r.DrawRect(Rect{ 0, 0, static_cast<float>(w), static_cast<float>(h) }, m_scene.bgColor);
     }
     if (!m_scene.bgImage.empty()) {
-        r.DrawImageAuto(m_scene.bgImage, gfx::DisplayMode::Fill, m_scene.bgAlpha);
+        r.DrawImageAuto(m_scene.bgImage, graphics::DisplayMode::Fill, m_scene.bgAlpha);
     }
     for (std::size_t idx : DrawOrder()) {
         RenderNode(r, m_scene.nodes[idx], idx);

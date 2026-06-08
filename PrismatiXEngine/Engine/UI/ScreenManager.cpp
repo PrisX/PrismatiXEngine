@@ -1,9 +1,9 @@
 #include "Engine/UI/ScreenManager.h"
 
-#include "Engine/IO/Vfs.h"
+#include "Engine/IO/VFS.h"
 #include "Engine/Platform/Input.h"
-#include "Engine/UI/UiSchema.h"
-#include "Logger.h"
+#include "Engine/UI/UISchema.h"
+#include "Engine/Support/Logger.h"
 
 namespace px::ui {
 
@@ -11,13 +11,13 @@ namespace {
 const std::string kEmpty;
 }
 
-UiStage* ScreenManager::Open(const std::string& vfsPath) {
+UIStage* ScreenManager::Open(const std::string& vfsPath) {
     auto text = m_vfs.ReadText(vfsPath);
     if (!text) {
         PX_LOG_WARN("ScreenManager: screen not found '{}'", vfsPath);
         return nullptr;
     }
-    auto scene = ParsePxui(*text);
+    auto scene = ParsePXUI(*text);
     if (!scene) {
         PX_LOG_WARN("ScreenManager: parse failed '{}'", vfsPath);
         return nullptr;
@@ -40,7 +40,7 @@ void ScreenManager::CloseAll() {
     m_stack.clear();
 }
 
-UiStage* ScreenManager::Top() {
+UIStage* ScreenManager::Top() {
     return m_stack.empty() ? nullptr : &m_stack.back()->stage;
 }
 
@@ -61,7 +61,7 @@ void ScreenManager::HandleTriggers(const Input& input) {
     }
 }
 
-std::optional<UiAction> ScreenManager::Update(const Input& input, float dt) {
+std::optional<UIAction> ScreenManager::Update(const Input& input, float dt) {
     if (m_stack.empty()) {
         return std::nullopt;
     }
@@ -80,7 +80,7 @@ std::optional<UiAction> ScreenManager::Update(const Input& input, float dt) {
     return action;
 }
 
-void ScreenManager::Render(gfx::Renderer2D& renderer) {
+void ScreenManager::Render(graphics::Renderer2D& renderer) {
     for (auto& screen : m_stack) {
         screen->stage.Render(renderer);
     }

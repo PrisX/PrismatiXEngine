@@ -11,7 +11,7 @@
 
 namespace px::io {
 
-class Vfs {
+class VFS {
 public:
     void MountDirectory(const std::string& root);
     bool MountArchive(const std::string& archivePath, const crypto::Key* key = nullptr);

@@ -10,7 +10,6 @@ add_library(PrismatiXRuntime STATIC ${PRISMATIX_RUNTIME_SOURCES})
 target_include_directories(PrismatiXRuntime PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/Engine
-    ${CMAKE_CURRENT_SOURCE_DIR}/Utils
     ${LUA_INCLUDE_DIR}
 )
 
@@ -27,26 +26,16 @@ target_link_libraries(PrismatiXRuntime PUBLIC
     sol2::sol2
 )
 
-add_executable(PrismatiXPlayer Player/PlayerMain.cpp)
+add_executable(PrismatiXPlayer Applications/PlayerMain.cpp)
 target_link_libraries(PrismatiXPlayer PRIVATE PrismatiXRuntime)
 
 
 file(GLOB_RECURSE PRISMATIX_EDITOR_SOURCES CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/App/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/Core/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/Database/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/Flow/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/Scripting/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/Services/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/Preview/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/Panels/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/UIDesigner/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/NodeEditor/*.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/Build/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/*.cpp"
 )
 
 if(PRISMATIX_EDITOR_SOURCES)
-    add_executable(PrismatiXEditor ${PRISMATIX_EDITOR_SOURCES})
+    add_executable(PrismatiXEditor Applications/EditorMain.cpp ${PRISMATIX_EDITOR_SOURCES})
     target_include_directories(PrismatiXEditor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(PrismatiXEditor PRIVATE
         PrismatiXRuntime
@@ -60,7 +49,7 @@ if(PRISMATIX_EDITOR_SOURCES)
     add_custom_command(TARGET PrismatiXEditor POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_CURRENT_SOURCE_DIR}/../Data/Font/NotoSansTC-Bold.ttf
+                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Fonts/NotoSansTC-Bold.ttf
                 $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/UIFont.ttf
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/imgui-node-editor/assets/BlueprintBackground.png

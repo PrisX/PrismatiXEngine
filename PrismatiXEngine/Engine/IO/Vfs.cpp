@@ -1,6 +1,6 @@
-#include "Engine/IO/Vfs.h"
+#include "Engine/IO/VFS.h"
 
-#include "Logger.h"
+#include "Engine/Support/Logger.h"
 
 #include <filesystem>
 #include <fstream>
@@ -13,12 +13,12 @@ std::filesystem::path Join(const std::string& root, std::string_view rel) {
 }
 }
 
-void Vfs::MountDirectory(const std::string& root) {
+void VFS::MountDirectory(const std::string& root) {
     m_dirs.push_back(root);
-    PX_LOG_INFO("Vfs mounted directory '{}'", root);
+    PX_LOG_INFO("VFS mounted directory '{}'", root);
 }
 
-bool Vfs::MountArchive(const std::string& archivePath, const crypto::Key* key) {
+bool VFS::MountArchive(const std::string& archivePath, const crypto::Key* key) {
     auto archive = std::make_unique<Archive>();
     if (!archive->Open(archivePath, key)) {
         return false;
@@ -27,12 +27,12 @@ bool Vfs::MountArchive(const std::string& archivePath, const crypto::Key* key) {
     return true;
 }
 
-void Vfs::Clear() {
+void VFS::Clear() {
     m_dirs.clear();
     m_archives.clear();
 }
 
-bool Vfs::Exists(std::string_view path) const {
+bool VFS::Exists(std::string_view path) const {
     for (const std::string& dir : m_dirs) {
         if (std::filesystem::exists(Join(dir, path))) {
             return true;
@@ -46,7 +46,7 @@ bool Vfs::Exists(std::string_view path) const {
     return false;
 }
 
-std::optional<Bytes> Vfs::Read(std::string_view path) const {
+std::optional<Bytes> VFS::Read(std::string_view path) const {
     for (const std::string& dir : m_dirs) {
         const std::filesystem::path full = Join(dir, path);
         std::ifstream in(full, std::ios::binary | std::ios::ate);
@@ -67,7 +67,7 @@ std::optional<Bytes> Vfs::Read(std::string_view path) const {
     return std::nullopt;
 }
 
-std::optional<std::string> Vfs::ReadText(std::string_view path) const {
+std::optional<std::string> VFS::ReadText(std::string_view path) const {
     if (auto bytes = Read(path)) {
         return std::string(bytes->begin(), bytes->end());
     }

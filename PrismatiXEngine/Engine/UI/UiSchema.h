@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Engine/Common/Types.h"
+#include "Engine/Core/Types.h"
 
 #include <optional>
 #include <string>
@@ -50,7 +50,7 @@ struct AnimClip {
     std::vector<AnimKey> keys;
 };
 
-struct UiNode {
+struct UINode {
     std::string id;
     NodeType type = NodeType::Panel;
     std::string layer;
@@ -89,17 +89,17 @@ struct UiNode {
     std::vector<AnimClip> animations;
 };
 
-struct UiScene {
+struct UIScene {
     int canvasW = 1280;
     int canvasH = 720;
     Color bgColor{ 0, 0, 0, 0 };
     std::string bgImage;
     std::uint8_t bgAlpha = 255;
-    std::vector<UiNode> nodes;
+    std::vector<UINode> nodes;
 };
 
-[[nodiscard]] std::optional<UiScene> ParsePxui(const std::string& jsonText);
-[[nodiscard]] std::string WritePxui(const UiScene& scene);
+[[nodiscard]] std::optional<UIScene> ParsePXUI(const std::string& jsonText);
+[[nodiscard]] std::string WritePXUI(const UIScene& scene);
 
 [[nodiscard]] const char* ToString(NodeType type);
 [[nodiscard]] NodeType NodeTypeFromString(const std::string& s);

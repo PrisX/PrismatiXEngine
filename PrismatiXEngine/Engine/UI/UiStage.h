@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Engine/Common/Types.h"
-#include "Engine/UI/UiSchema.h"
+#include "Engine/Core/Types.h"
+#include "Engine/UI/UISchema.h"
 
 #include <optional>
 #include <string>
@@ -11,7 +11,7 @@
 namespace px {
 class Input;
 }
-namespace px::gfx {
+namespace px::graphics {
 class Renderer2D;
 }
 namespace px::vn {
@@ -20,16 +20,16 @@ struct DialogueState;
 
 namespace px::ui {
 
-struct UiAction {
+struct UIAction {
     std::string type;
     std::string target;
     std::string arg;
     std::string nodeId;
 };
 
-class UiStage {
+class UIStage {
 public:
-    void Load(UiScene scene);
+    void Load(UIScene scene);
     void TriggerEnter();
 
     void SetEditMode(bool edit) { m_editMode = edit; }
@@ -49,7 +49,7 @@ public:
         m_grids[bind] = std::move(items);
     }
     void SetNodeText(const std::string& id, const std::string& text) {
-        for (UiNode& n : m_scene.nodes) {
+        for (UINode& n : m_scene.nodes) {
             if (n.id == id) {
                 n.text = text;
                 return;
@@ -57,11 +57,11 @@ public:
         }
     }
 
-    std::optional<UiAction> Update(const Input& input, float dt);
-    void Render(gfx::Renderer2D& renderer);
+    std::optional<UIAction> Update(const Input& input, float dt);
+    void Render(graphics::Renderer2D& renderer);
 
-    [[nodiscard]] UiScene& Scene() { return m_scene; }
-    [[nodiscard]] const UiScene& Scene() const { return m_scene; }
+    [[nodiscard]] UIScene& Scene() { return m_scene; }
+    [[nodiscard]] const UIScene& Scene() const { return m_scene; }
 
 private:
     struct NodeAnim {
@@ -69,15 +69,15 @@ private:
         bool active = false;
     };
 
-    [[nodiscard]] Rect ScreenRect(const UiNode& node, gfx::Renderer2D& r) const;
-    [[nodiscard]] Rect ScreenRect(const UiNode& node, int logicalW, int logicalH) const;
-    [[nodiscard]] std::vector<Rect> GridCells(const UiNode& node, const Rect& area,
+    [[nodiscard]] Rect ScreenRect(const UINode& node, graphics::Renderer2D& r) const;
+    [[nodiscard]] Rect ScreenRect(const UINode& node, int logicalW, int logicalH) const;
+    [[nodiscard]] std::vector<Rect> GridCells(const UINode& node, const Rect& area,
                                               std::size_t count) const;
-    void ApplyAnim(const UiNode& node, const NodeAnim& anim, Rect& rect, float& opacity) const;
-    void RenderNode(gfx::Renderer2D& r, const UiNode& node, std::size_t index);
+    void ApplyAnim(const UINode& node, const NodeAnim& anim, Rect& rect, float& opacity) const;
+    void RenderNode(graphics::Renderer2D& r, const UINode& node, std::size_t index);
     [[nodiscard]] std::vector<std::size_t> DrawOrder() const;
 
-    UiScene m_scene;
+    UIScene m_scene;
     std::vector<NodeAnim> m_anims;
     const vn::DialogueState* m_dialogue = nullptr;
     const std::vector<std::string>* m_choices = nullptr;
