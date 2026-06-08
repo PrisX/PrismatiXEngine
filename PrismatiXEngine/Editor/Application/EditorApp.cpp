@@ -86,6 +86,7 @@ bool EditorApp::Init() {
     m_textures = std::make_unique<EditorTextures>(m_window.Renderer());
     m_nodeHeaderTex = m_textures->LoadId(m_basePath + "EditorAssets/NodeHeader.png", &m_nodeHeaderW, &m_nodeHeaderH);
     m_nodeEditor.SetHeaderTexture(m_nodeHeaderTex, m_nodeHeaderW, m_nodeHeaderH);
+    m_flow.SetHeaderTexture(m_nodeHeaderTex, m_nodeHeaderW, m_nodeHeaderH);
     m_nodeEditor.SetSelectedResourceCallback([this] { return m_selectedAsset; });
 
     const std::string cwd = std::filesystem::current_path().string();

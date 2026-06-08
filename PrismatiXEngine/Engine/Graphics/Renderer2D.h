@@ -1,10 +1,10 @@
 #pragma once
 
-#include "Engine/Core/Types.h"
-#include "Engine/Graphics/AssetCache.h"
-
 #include <string>
 #include <unordered_map>
+
+#include "Engine/Core/Types.h"
+#include "Engine/Graphics/AssetCache.h"
 
 struct SDL_Renderer;
 struct SDL_Texture;
@@ -47,16 +47,14 @@ public:
     void DrawRoundedRect(const Rect& rect, float radius, Color color);
 
     void DrawImage(const std::string& path, const Rect& dst, std::uint8_t alpha = 255);
-    Rect DrawImageAuto(const std::string& path, DisplayMode mode, std::uint8_t alpha = 255,
-                       int offsetX = 0, int offsetY = 0, float scale = 1.0f, Shadow shadow = {});
+    Rect DrawImageAuto(const std::string& path, DisplayMode mode, std::uint8_t alpha = 255, int offsetX = 0, int offsetY = 0, float scale = 1.0f, Shadow shadow = {});
 
-    void DrawText(const std::string& text, float x, float y, const std::string& fontPath, int size,
-                  Color color, std::uint8_t alpha = 255, int wrap = 0);
-    void DrawTextOutline(const std::string& text, float x, float y, const std::string& fontPath,
-                         int size, Color textColor, Color outlineColor, int outlineSize,
-                         std::uint8_t alpha = 255, bool shadow = false, int wrap = 0);
-    [[nodiscard]] Vec2 MeasureText(const std::string& text, const std::string& fontPath, int size,
-                                   int wrap = 0);
+    void DrawText(const std::string& text, float x, float y, const std::string& fontPath, int size, Color color, std::uint8_t alpha = 255, int wrap = 0);
+    void DrawTextOutline(const std::string& text, float x, float y, const std::string& fontPath, int size, Color textColor, Color outlineColor, int outlineSize, std::uint8_t alpha = 255, bool shadow = false, int wrap = 0);
+    [[nodiscard]] Vec2 MeasureText(const std::string& text, const std::string& fontPath, int size, int wrap = 0);
+
+    void SetTextSupersample(int factor);
+    [[nodiscard]] int TextSupersample() const { return m_textSupersample; }
 
     void ClearTextCache();
 
@@ -69,8 +67,7 @@ private:
         int h = 0;
     };
 
-    const CachedText* AcquireText(const std::string& text, const std::string& fontPath, int size,
-                                  Color color, int outline, int wrap);
+    const CachedText* AcquireText(const std::string& text, const std::string& fontPath, int size, Color color, int outline, int wrap);
     void Blit(SDL_Texture* texture, const Rect& dst, std::uint8_t alpha);
 
     SDL_Renderer* m_renderer;
@@ -79,7 +76,8 @@ private:
     int m_camY = 0;
     int m_logicalW = 1280;
     int m_logicalH = 720;
+    int m_textSupersample = 2;
     std::unordered_map<std::string, CachedText> m_textCache;
 };
 
-}
+}  // namespace px::graphics

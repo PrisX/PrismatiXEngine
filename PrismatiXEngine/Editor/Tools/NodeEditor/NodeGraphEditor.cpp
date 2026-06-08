@@ -126,7 +126,8 @@ std::vector<PDSArg> ParsePDSArgs(std::string_view args) {
                 value.push_back(ch);
                 escape = false;
             }
-        } else {
+        }
+        else {
             const size_t valueStart = pos;
             while (pos < args.size() && std::isspace(static_cast<unsigned char>(args[pos])) == 0) ++pos;
             value = std::string(args.substr(valueStart, pos - valueStart));
@@ -142,11 +143,20 @@ std::string QuotePDSValue(std::string_view value) {
     std::string out = "\"";
     for (char ch : value) {
         switch (ch) {
-            case '\\': out += "\\\\"; break;
-            case '"': out += "\\\""; break;
-            case '\n': out += "\\n"; break;
-            case '\r': break;
-            default: out.push_back(ch); break;
+            case '\\':
+                out += "\\\\";
+                break;
+            case '"':
+                out += "\\\"";
+                break;
+            case '\n':
+                out += "\\n";
+                break;
+            case '\r':
+                break;
+            default:
+                out.push_back(ch);
+                break;
         }
     }
     out += "\"";
@@ -178,6 +188,9 @@ std::vector<std::string> SplitTextLines(const std::string& text) {
             line.pop_back();
         }
         lines.push_back(std::move(line));
+    }
+    if (!text.empty() && text.back() == '\n') {
+        lines.emplace_back();
     }
     if (lines.empty()) {
         lines.emplace_back();
@@ -215,15 +228,11 @@ ImVec4 ColorFromPDSCsv(std::string_view value, ImVec4 fallback) {
 
 std::string ColorToPDSCsv(const ImVec4& color) {
     std::ostringstream out;
-    out << static_cast<int>(std::round(std::clamp(color.x, 0.0f, 1.0f) * 255.0f)) << ","
-        << static_cast<int>(std::round(std::clamp(color.y, 0.0f, 1.0f) * 255.0f)) << ","
-        << static_cast<int>(std::round(std::clamp(color.z, 0.0f, 1.0f) * 255.0f));
+    out << static_cast<int>(std::round(std::clamp(color.x, 0.0f, 1.0f) * 255.0f)) << "," << static_cast<int>(std::round(std::clamp(color.y, 0.0f, 1.0f) * 255.0f)) << "," << static_cast<int>(std::round(std::clamp(color.z, 0.0f, 1.0f) * 255.0f));
     return out.str();
 }
 
-bool SameColor(const ImVec4& a, const ImVec4& b) {
-    return std::abs(a.x - b.x) < 0.002f && std::abs(a.y - b.y) < 0.002f && std::abs(a.z - b.z) < 0.002f && std::abs(a.w - b.w) < 0.002f;
-}
+bool SameColor(const ImVec4& a, const ImVec4& b) { return std::abs(a.x - b.x) < 0.002f && std::abs(a.y - b.y) < 0.002f && std::abs(a.z - b.z) < 0.002f && std::abs(a.w - b.w) < 0.002f; }
 
 int IntFromString(const std::string& value, int fallback) {
     if (value.empty()) {
@@ -237,12 +246,14 @@ int IntFromString(const std::string& value, int fallback) {
 }
 
 Json ColorToJson(const ImVec4& color) {
-    return Json::array({
-        static_cast<int>(std::round(color.x * 255.0f)),
-        static_cast<int>(std::round(color.y * 255.0f)),
-        static_cast<int>(std::round(color.z * 255.0f)),
-        static_cast<int>(std::round(color.w * 255.0f)),
-    });
+    return Json::array(
+        {
+            static_cast<int>(std::round(color.x * 255.0f)),
+            static_cast<int>(std::round(color.y * 255.0f)),
+            static_cast<int>(std::round(color.z * 255.0f)),
+            static_cast<int>(std::round(color.w * 255.0f)),
+        }
+    );
 }
 
 ImVec4 ColorFromJson(const Json& json, ImVec4 fallback) {
@@ -253,10 +264,11 @@ ImVec4 ColorFromJson(const Json& json, ImVec4 fallback) {
         json.size() > 0 ? std::clamp(json[0].get<float>() / 255.0f, 0.0f, 1.0f) : fallback.x,
         json.size() > 1 ? std::clamp(json[1].get<float>() / 255.0f, 0.0f, 1.0f) : fallback.y,
         json.size() > 2 ? std::clamp(json[2].get<float>() / 255.0f, 0.0f, 1.0f) : fallback.z,
-        json.size() > 3 ? std::clamp(json[3].get<float>() / 255.0f, 0.0f, 1.0f) : fallback.w);
+        json.size() > 3 ? std::clamp(json[3].get<float>() / 255.0f, 0.0f, 1.0f) : fallback.w
+    );
 }
 
-}
+}  // namespace
 
 NodeGraphEditor::NodeGraphEditor(GraphKind kind, LogSink log) : m_kind(kind), m_log(std::move(log)) {
     if (m_kind == GraphKind::PDSDialogue) {
@@ -291,9 +303,7 @@ void NodeGraphEditor::SetProject(const ProjectContext* context) {
     LoadOrCreate();
 }
 
-void NodeGraphEditor::SetSelectedResourceCallback(SelectedResourceCallback callback) {
-    m_selectedResource = std::move(callback);
-}
+void NodeGraphEditor::SetSelectedResourceCallback(SelectedResourceCallback callback) { m_selectedResource = std::move(callback); }
 
 void NodeGraphEditor::SetHeaderTexture(ImTextureID texture, int width, int height) {
     m_headerTexture = texture;
@@ -301,9 +311,7 @@ void NodeGraphEditor::SetHeaderTexture(ImTextureID texture, int width, int heigh
     m_headerTextureHeight = height;
 }
 
-std::string NodeGraphEditor::Title() const {
-    return m_kind == GraphKind::PDSDialogue ? "PDS Dialogue Graph" : "Gameloop Graph";
-}
+std::string NodeGraphEditor::Title() const { return m_kind == GraphKind::PDSDialogue ? "PDS Dialogue Graph" : "Gameloop Graph"; }
 
 fs::path NodeGraphEditor::DocumentPath() const {
     if (!m_project || !m_project->IsOpen()) {
@@ -316,9 +324,7 @@ fs::path NodeGraphEditor::DocumentPath() const {
     return graphRoot / "gameloop.pxgraph";
 }
 
-std::string NodeGraphEditor::CurrentRuntimePath() const {
-    return m_kind == GraphKind::PDSDialogue ? (m_documentRuntimePath.empty() ? "Script/chapter1.pds" : m_documentRuntimePath) : "Scripts/entrypoint.lua";
-}
+std::string NodeGraphEditor::CurrentRuntimePath() const { return m_kind == GraphKind::PDSDialogue ? (m_documentRuntimePath.empty() ? "Script/chapter1.pds" : m_documentRuntimePath) : "Scripts/entrypoint.lua"; }
 
 void NodeGraphEditor::BuildLibrary() {
     m_library.clear();
@@ -378,12 +384,8 @@ void NodeGraphEditor::BuildLibrary() {
         return p;
     };
 
-    const auto in = [](std::string label, PinType type = PinType::Flow, std::string key = {}) {
-        return PinTemplate{ std::move(label), type, true, std::move(key) };
-    };
-    const auto out = [](std::string label, PinType type = PinType::Flow, std::string key = {}) {
-        return PinTemplate{ std::move(label), type, false, std::move(key) };
-    };
+    const auto in = [](std::string label, PinType type = PinType::Flow, std::string key = {}) { return PinTemplate{ std::move(label), type, true, std::move(key) }; };
+    const auto out = [](std::string label, PinType type = PinType::Flow, std::string key = {}) { return PinTemplate{ std::move(label), type, false, std::move(key) }; };
 
     if (m_kind == GraphKind::PDSDialogue) {
         m_library = {
@@ -391,15 +393,56 @@ void NodeGraphEditor::BuildLibrary() {
             { "chapter", "Chapter", "Timeline", "Emits a chapter heading.", ImColor(80, 184, 255), { in("In") }, { out("Out") }, { paramString("title", "Title", "第一章") } },
             { "background", "Background", "Stage", "Sets the current background image.", ImColor(67, 186, 255), { in("In"), in("Image", PinType::Asset, "file") }, { out("Out") }, { paramString("file", "Image", "sky.png", ParamType::Asset) } },
             { "bgm", "Play BGM", "Audio", "Starts background music.", ImColor(255, 126, 95), { in("In"), in("BGM", PinType::Asset, "file") }, { out("Out") }, { paramString("file", "Audio", "bgm1.mp3", ParamType::Asset) } },
-            { "character", "Character", "Stage", "Places a character sprite.", ImColor(255, 194, 97), { in("In") }, { out("Out") }, { paramString("id", "Character", "girl"), paramString("expression", "Expression", "d"), paramString("pos", "Position", "2") } },
-            { "dialogue", "Dialogue Text", "Dialogue", "Shows one or more speaker lines with the same text format.", ImColor(160, 132, 255), { in("In"), in("Text", PinType::String, "text") }, { out("Out") }, { paramString("speaker", "Speaker", "伊莉雅"), paramString("character", "Character", ""), paramColor("color", "Color", ImVec4(1, 1, 1, 1)), paramColor("outline", "Outline", ImVec4(0, 0, 0, 1)), paramInt("speed", "Speed", 40, 0, 240), paramOption("effect", "Effect", "none", { "none", "shake", "pulse" }), paramString("text", "Text", "新的對話", ParamType::String, true) } },
+            { "character",
+              "Character",
+              "Stage",
+              "Places a character sprite.",
+              ImColor(255, 194, 97),
+              { in("In") },
+              { out("Out") },
+              { paramString("id", "Character", "girl"), paramString("expression", "Expression", "d"), paramString("pos", "Position", "2") } },
+            { "dialogue",
+              "Dialogue Text",
+              "Dialogue",
+              "Shows one or more speaker lines with the same text format.",
+              ImColor(160, 132, 255),
+              { in("In"), in("Text", PinType::String, "text") },
+              { out("Out") },
+              { paramString("speaker", "Speaker", "伊莉雅"),
+                paramString("character", "Character", ""),
+                paramColor("color", "Color", ImVec4(1, 1, 1, 1)),
+                paramColor("outline", "Outline", ImVec4(0, 0, 0, 1)),
+                paramInt("speed", "Speed", 40, 0, 240),
+                paramOption("effect", "Effect", "none", { "none", "shake", "pulse" }),
+                paramString("text", "Text", "新的對話", ParamType::String, true) } },
             { "choice", "Choice", "Dialogue", "Adds a choice option.", ImColor(103, 219, 177), { in("In") }, { out("Out") }, { paramString("text", "Text", "選項"), paramString("target", "Target", "*end") } },
             { "label", "Label", "Flow", "Defines a jump target.", ImColor(103, 219, 177), { in("In") }, { out("Out") }, { paramString("name", "Label", "end") } },
             { "jump", "Jump", "Flow", "Jumps to a label or another script.", ImColor(103, 219, 177), { in("In"), in("Target", PinType::String, "target") }, { out("Out") }, { paramString("target", "Target", "*end") } },
-            { "variable", "Variable", "Logic", "Sets or changes a VN variable.", ImColor(232, 178, 92), { in("In") }, { out("Out") }, { paramString("var", "Name", "affection"), paramOption("op", "Operation", "set", { "set", "add" }), paramString("value", "Value", "0") } },
+            { "variable",
+              "Variable",
+              "Logic",
+              "Sets or changes a VN variable.",
+              ImColor(232, 178, 92),
+              { in("In") },
+              { out("Out") },
+              { paramString("var", "Name", "affection"), paramOption("op", "Operation", "set", { "set", "add" }), paramString("value", "Value", "0") } },
             { "lua", "Lua Command", "Logic", "Runs a Lua hook command.", ImColor(232, 178, 92), { in("In") }, { out("Out") }, { paramString("fn", "Function", "PXEditorTransition"), paramString("args", "Arguments", "style=\"fade\" speed=\"10\"") } },
-            { "transition", "Transition", "Stage", "Runs the built-in editor transition hook.", ImColor(91, 209, 244), { in("In") }, { out("Out") }, { paramOption("style", "Style", "fade", { "fade", "dissolve", "wipe" }), paramFloat("speed", "Speed", 10.0f, 1.0f, 60.0f) } },
-            { "animate_actor", "Animate Actor", "Stage", "Runs the built-in actor animation hook.", ImColor(91, 209, 244), { in("In") }, { out("Out") }, { paramString("target", "Target", "girl"), paramFloat("duration", "Duration", 24, 1, 240), paramFloat("move_x", "Move X", 0, -1280, 1280) } },
+            { "transition",
+              "Transition",
+              "Stage",
+              "Runs the built-in editor transition hook.",
+              ImColor(91, 209, 244),
+              { in("In") },
+              { out("Out") },
+              { paramOption("style", "Style", "fade", { "fade", "dissolve", "wipe" }), paramFloat("speed", "Speed", 10.0f, 1.0f, 60.0f) } },
+            { "animate_actor",
+              "Animate Actor",
+              "Stage",
+              "Runs the built-in actor animation hook.",
+              ImColor(91, 209, 244),
+              { in("In") },
+              { out("Out") },
+              { paramString("target", "Target", "girl"), paramFloat("duration", "Duration", 24, 1, 240), paramFloat("move_x", "Move X", 0, -1280, 1280) } },
             { "spawn_ui", "Spawn UI", "UI", "Mounts a generated UI script.", ImColor(88, 230, 184), { in("In"), in("UI", PinType::Asset, "ui") }, { out("Out") }, { paramString("ui", "UI Script", "Scripts/ui/generated/title_menu.lua", ParamType::Asset) } },
             { "stop_bgm", "Stop BGM", "Audio", "Stops background music.", ImColor(255, 126, 95), { in("In") }, { out("Out") }, {} },
             { "raw", "Raw PDS", "Advanced", "Writes a raw PDS command or content line.", ImColor(142, 152, 170), { in("In") }, { out("Out") }, { paramString("line", "Line", "[wait]") } },
@@ -407,13 +450,42 @@ void NodeGraphEditor::BuildLibrary() {
             { "asset", "Asset", "Literals", "Reusable asset reference.", ImColor(67, 186, 255), {}, { out("Path", PinType::Asset, "path") }, { paramString("path", "Path", "sky.png", ParamType::Asset) } },
             { "bool", "Bool", "Literals", "Reusable boolean.", ImColor(255, 104, 104), {}, { out("Value", PinType::Bool, "value") }, { paramBool("value", "Value", true) } },
         };
-    } else {
+    }
+    else {
         m_library = {
-            { "boot", "Boot Runtime", "Boot", "Defines game title and typography.", ImColor(80, 184, 255), {}, { out("Begin") }, { paramString("game_title", "Game Title", "PrismatiX Demo"), paramString("font", "Font", "NotoSansTC-Bold.ttf", ParamType::Asset), paramInt("font_size", "Font Size", 32, 14, 96) } },
-            { "configure", "Configure Systems", "Boot", "Sets transition and notification defaults.", ImColor(88, 230, 184), { in("In") }, { out("Out") }, { paramOption("transition", "Transition", "dissolve", { "dissolve", "fade", "wipe" }), paramInt("speed", "Speed", 10, 1, 60), paramInt("notification", "Notification Font", 20, 10, 48) } },
+            { "boot",
+              "Boot Runtime",
+              "Boot",
+              "Defines game title and typography.",
+              ImColor(80, 184, 255),
+              {},
+              { out("Begin") },
+              { paramString("game_title", "Game Title", "PrismatiX Demo"), paramString("font", "Font", "NotoSansTC-Bold.ttf", ParamType::Asset), paramInt("font_size", "Font Size", 32, 14, 96) } },
+            { "configure",
+              "Configure Systems",
+              "Boot",
+              "Sets transition and notification defaults.",
+              ImColor(88, 230, 184),
+              { in("In") },
+              { out("Out") },
+              { paramOption("transition", "Transition", "dissolve", { "dissolve", "fade", "wipe" }), paramInt("speed", "Speed", 10, 1, 60), paramInt("notification", "Notification Font", 20, 10, 48) } },
             { "load_modules", "Load Modules", "Boot", "Loads shared Lua modules and UI runtime.", ImColor(80, 184, 255), { in("In") }, { out("Out") }, {} },
-            { "splash", "Run Splash", "Boot", "Runs engine and game splash scripts.", ImColor(255, 194, 97), { in("In") }, { out("Out") }, { paramString("engine", "Engine Splash", "Scripts/engine_splash.lua", ParamType::Asset), paramString("game", "Game Splash", "Scripts/splash.lua", ParamType::Asset) } },
-            { "switch_scene", "Switch Scene", "Boot", "Starts the first scene and PDS script.", ImColor(160, 132, 255), { in("In") }, { out("Out") }, { paramString("scene", "Scene Module", "Scripts/scenes/title_scene.lua", ParamType::Asset), paramString("ctor", "Scene Constructor", "TitleScene"), paramString("pds", "Start PDS", "Script/chapter1.pds", ParamType::Asset) } },
+            { "splash",
+              "Run Splash",
+              "Boot",
+              "Runs engine and game splash scripts.",
+              ImColor(255, 194, 97),
+              { in("In") },
+              { out("Out") },
+              { paramString("engine", "Engine Splash", "Scripts/engine_splash.lua", ParamType::Asset), paramString("game", "Game Splash", "Scripts/splash.lua", ParamType::Asset) } },
+            { "switch_scene",
+              "Switch Scene",
+              "Boot",
+              "Starts the first scene and PDS script.",
+              ImColor(160, 132, 255),
+              { in("In") },
+              { out("Out") },
+              { paramString("scene", "Scene Module", "Scripts/scenes/title_scene.lua", ParamType::Asset), paramString("ctor", "Scene Constructor", "TitleScene"), paramString("pds", "Start PDS", "Script/chapter1.pds", ParamType::Asset) } },
             { "loop_start", "Loop Start", "Loop", "Begins the Engine.IsRunning loop.", ImColor(103, 219, 177), { in("In") }, { out("Loop") }, {} },
             { "handle_events", "Handle Events", "Loop", "Polls input and window events.", ImColor(103, 219, 177), { in("In") }, { out("Out") }, {} },
             { "update_fx", "Update FX", "Loop", "Updates screen effects and camera offset.", ImColor(91, 209, 244), { in("In") }, { out("Out") }, {} },
@@ -431,9 +503,7 @@ void NodeGraphEditor::BuildLibrary() {
             tpl.type = cmd.name;
             tpl.title = cmd.name;
             tpl.category = cmd.category.empty() ? "Custom" : cmd.category;
-            tpl.description = cmd.description.empty()
-                                  ? ("Custom Lua command (" + cmd.sourceFile + ")")
-                                  : cmd.description;
+            tpl.description = cmd.description.empty() ? ("Custom Lua command (" + cmd.sourceFile + ")") : cmd.description;
             tpl.accent = ImColor(214, 122, 255);
             tpl.inputs = { in("In") };
             tpl.outputs = { out("Out") };
@@ -691,13 +761,15 @@ Json NodeGraphEditor::SaveGraph() const {
     };
 
     for (const Link& link : m_links) {
-        graph["links"].push_back(Json{
-            { "id", link.id },
-            { "startPinId", link.startPinId },
-            { "endPinId", link.endPinId },
-            { "from", pinIndex(link.startPinId) },
-            { "to", pinIndex(link.endPinId) },
-        });
+        graph["links"].push_back(
+            Json{
+                { "id", link.id },
+                { "startPinId", link.startPinId },
+                { "endPinId", link.endPinId },
+                { "from", pinIndex(link.startPinId) },
+                { "to", pinIndex(link.endPinId) },
+            }
+        );
     }
     return graph;
 }
@@ -713,7 +785,8 @@ void NodeGraphEditor::Save() {
         std::ofstream out(path, std::ios::binary);
         if (m_kind == GraphKind::PDSDialogue) {
             out << Compile();
-        } else {
+        }
+        else {
             out << std::setw(2) << SaveGraph() << "\n";
         }
         m_dirty = false;
@@ -733,7 +806,8 @@ void NodeGraphEditor::SeedDefaultGraph() {
         for (size_t i = 0; i < types.size(); ++i) {
             AddNode(types[i], ImVec2(static_cast<float>(i) * 280.0f, (i % 2 == 0) ? 0.0f : 170.0f));
         }
-    } else {
+    }
+    else {
         std::vector<std::string> types{ "boot", "configure", "load_modules", "splash", "switch_scene", "loop_start", "handle_events", "update_fx", "update_scene", "render_scene", "render_ui", "render_transition", "present" };
         for (size_t i = 0; i < types.size(); ++i) {
             AddNode(types[i], ImVec2(static_cast<float>(i % 5) * 330.0f, static_cast<float>(i / 5) * 220.0f));
@@ -773,12 +847,7 @@ bool NodeGraphEditor::ImportPDSScript(const fs::path& path) {
 
     const auto refreshPendingSignature = [&]() {
         std::ostringstream sig;
-        sig << pendingTextSpeaker << "|"
-            << pendingTextCharacter << "|"
-            << ColorToPDSCsv(pendingTextColor) << "|"
-            << ColorToPDSCsv(pendingOutlineColor) << "|"
-            << pendingTextSpeed << "|"
-            << pendingTextEffect;
+        sig << pendingTextSpeaker << "|" << pendingTextCharacter << "|" << ColorToPDSCsv(pendingTextColor) << "|" << ColorToPDSCsv(pendingOutlineColor) << "|" << pendingTextSpeed << "|" << pendingTextEffect;
         pendingTextSignature = sig.str();
     };
     refreshPendingSignature();
@@ -833,8 +902,7 @@ bool NodeGraphEditor::ImportPDSScript(const fs::path& path) {
         }
         if (trimmed.rfind("//", 0) == 0) {
             if (trimmed.rfind("//@node", 0) == 0) {
-                pendingNodePos = ImVec2(static_cast<float>(IntFromString(ExtractArg(trimmed, "x"), 0)),
-                                        static_cast<float>(IntFromString(ExtractArg(trimmed, "y"), 0)));
+                pendingNodePos = ImVec2(static_cast<float>(IntFromString(ExtractArg(trimmed, "x"), 0)), static_cast<float>(IntFromString(ExtractArg(trimmed, "y"), 0)));
                 hasPendingNodePos = true;
             }
             continue;
@@ -843,25 +911,30 @@ bool NodeGraphEditor::ImportPDSScript(const fs::path& path) {
         if (trimmed.starts_with("#")) {
             created = AddNode("chapter", ImVec2(static_cast<float>(visualIndex) * 280.0f, 0));
             if (Parameter* p = FindParameter(*created, "title")) p->stringValue = Trim(std::string_view(trimmed).substr(1));
-        } else if (trimmed.starts_with("*")) {
+        }
+        else if (trimmed.starts_with("*")) {
             created = AddNode("label", ImVec2(static_cast<float>(visualIndex) * 280.0f, 170));
             if (Parameter* p = FindParameter(*created, "name")) p->stringValue = Trim(std::string_view(trimmed).substr(1));
-        } else if (trimmed.starts_with("[") && trimmed.ends_with("]")) {
+        }
+        else if (trimmed.starts_with("[") && trimmed.ends_with("]")) {
             const size_t separator = trimmed.find_first_of(" \t]");
             const size_t nameEnd = separator == std::string::npos ? trimmed.size() - 1 : separator;
             const std::string name = Lower(Trim(std::string_view(trimmed).substr(1, nameEnd > 0 ? nameEnd - 1 : 0)));
             if (name == "bg") {
                 created = AddNode("background", ImVec2(static_cast<float>(visualIndex) * 280.0f, 0));
                 if (Parameter* p = FindParameter(*created, "file")) p->stringValue = ExtractArg(trimmed, "file");
-            } else if (name == "bgm") {
+            }
+            else if (name == "bgm") {
                 created = AddNode("bgm", ImVec2(static_cast<float>(visualIndex) * 280.0f, 170));
                 if (Parameter* p = FindParameter(*created, "file")) p->stringValue = ExtractArg(trimmed, "file");
-            } else if (name == "char") {
+            }
+            else if (name == "char") {
                 created = AddNode("character", ImVec2(static_cast<float>(visualIndex) * 280.0f, 0));
                 if (Parameter* p = FindParameter(*created, "id")) p->stringValue = ExtractArg(trimmed, "id");
                 if (Parameter* p = FindParameter(*created, "expression")) p->stringValue = ExtractArg(trimmed, "expression");
                 if (Parameter* p = FindParameter(*created, "pos")) p->stringValue = ExtractArg(trimmed, "pos");
-            } else if (name == "text") {
+            }
+            else if (name == "text") {
                 pendingTextSpeaker = ExtractArg(trimmed, "speaker");
                 if (pendingTextSpeaker.empty()) {
                     pendingTextSpeaker = ExtractArg(trimmed, "name");
@@ -882,36 +955,44 @@ bool NodeGraphEditor::ImportPDSScript(const fs::path& path) {
                 }
                 appendDialogueText(inlineText);
                 continue;
-            } else if (name == "choice") {
+            }
+            else if (name == "choice") {
                 created = AddNode("choice", ImVec2(static_cast<float>(visualIndex) * 280.0f, 170));
                 if (Parameter* p = FindParameter(*created, "text")) p->stringValue = ExtractArg(trimmed, "text");
                 if (Parameter* p = FindParameter(*created, "target")) p->stringValue = ExtractArg(trimmed, "target");
-            } else if (name == "jump") {
+            }
+            else if (name == "jump") {
                 created = AddNode("jump", ImVec2(static_cast<float>(visualIndex) * 280.0f, 0));
                 if (Parameter* p = FindParameter(*created, "target")) p->stringValue = ExtractArg(trimmed, "target");
-            } else if (name == "var") {
+            }
+            else if (name == "var") {
                 created = AddNode("variable", ImVec2(static_cast<float>(visualIndex) * 280.0f, 170));
                 if (Parameter* p = FindParameter(*created, "var")) p->stringValue = ExtractArg(trimmed, "var");
                 if (Parameter* p = FindParameter(*created, "op")) p->stringValue = ExtractArg(trimmed, "op");
                 if (Parameter* p = FindParameter(*created, "value")) p->stringValue = ExtractArg(trimmed, "val");
-            } else if (name == "lua") {
+            }
+            else if (name == "lua") {
                 created = AddNode("lua", ImVec2(static_cast<float>(visualIndex) * 280.0f, 0));
                 if (Parameter* p = FindParameter(*created, "fn")) p->stringValue = ExtractArg(trimmed, "fn");
                 if (Parameter* p = FindParameter(*created, "args")) p->stringValue = "";
-            } else if (name == "stopbgm") {
+            }
+            else if (name == "stopbgm") {
                 created = AddNode("stop_bgm", ImVec2(static_cast<float>(visualIndex) * 280.0f, 170));
-            } else if (FindCustomCommand(name)) {
+            }
+            else if (FindCustomCommand(name)) {
                 created = AddNode(name, ImVec2(static_cast<float>(visualIndex) * 280.0f, 170));
                 if (created) {
                     for (Parameter& p : created->parameters) {
                         p.stringValue = ExtractArg(trimmed, p.key);
                     }
                 }
-            } else {
+            }
+            else {
                 created = AddNode("raw", ImVec2(static_cast<float>(visualIndex) * 280.0f, 170));
                 if (Parameter* p = FindParameter(*created, "line")) p->stringValue = trimmed;
             }
-        } else if (!pendingTextSpeaker.empty() || !trimmed.starts_with("[")) {
+        }
+        else if (!pendingTextSpeaker.empty() || !trimmed.starts_with("[")) {
             appendDialogueText(trimmed);
             continue;
         }
@@ -959,11 +1040,18 @@ NodeGraphEditor::Node* NodeGraphEditor::AddNode(const std::string& type, ImVec2 
 }
 
 void NodeGraphEditor::RemoveNode(int id) {
-    m_links.erase(std::remove_if(m_links.begin(), m_links.end(), [&](const Link& link) {
-        const Pin* start = FindPin(link.startPinId);
-        const Pin* end = FindPin(link.endPinId);
-        return (start && start->nodeId == id) || (end && end->nodeId == id);
-    }), m_links.end());
+    m_links.erase(
+        std::remove_if(
+            m_links.begin(),
+            m_links.end(),
+            [&](const Link& link) {
+                const Pin* start = FindPin(link.startPinId);
+                const Pin* end = FindPin(link.endPinId);
+                return (start && start->nodeId == id) || (end && end->nodeId == id);
+            }
+        ),
+        m_links.end()
+    );
     m_nodes.erase(std::remove_if(m_nodes.begin(), m_nodes.end(), [&](const Node& node) { return node.id == id; }), m_nodes.end());
     MarkDirty();
 }
@@ -984,6 +1072,27 @@ void NodeGraphEditor::AddLink(int startPinId, int endPinId) {
 void NodeGraphEditor::RemoveLink(int id) {
     m_links.erase(std::remove_if(m_links.begin(), m_links.end(), [&](const Link& link) { return link.id == id; }), m_links.end());
     MarkDirty();
+}
+
+void NodeGraphEditor::DeleteSelection() {
+    const int count = ed::GetSelectedObjectCount();
+    if (count <= 0) {
+        return;
+    }
+
+    std::vector<ed::LinkId> links(static_cast<size_t>(count));
+    const int linkCount = ed::GetSelectedLinks(links.data(), count);
+    for (int i = 0; i < linkCount; ++i) {
+        RemoveLink(static_cast<int>(links[static_cast<size_t>(i)].Get()));
+    }
+
+    std::vector<ed::NodeId> nodes(static_cast<size_t>(count));
+    const int nodeCount = ed::GetSelectedNodes(nodes.data(), count);
+    for (int i = 0; i < nodeCount; ++i) {
+        RemoveNode(static_cast<int>(nodes[static_cast<size_t>(i)].Get()));
+    }
+
+    ed::ClearSelection();
 }
 
 void NodeGraphEditor::CreateDefaultLinkChain() {
@@ -1009,9 +1118,7 @@ void NodeGraphEditor::UpdateNodePositions() {
     }
 }
 
-void NodeGraphEditor::MarkDirty() {
-    m_dirty = true;
-}
+void NodeGraphEditor::MarkDirty() { m_dirty = true; }
 
 void NodeGraphEditor::Render() {
     EnsureContext();
@@ -1077,10 +1184,12 @@ void NodeGraphEditor::RenderGraph() {
     if (ed::ShowNodeContextMenu(&contextNodeId)) {
         m_contextNodeId = static_cast<int>(contextNodeId.Get());
         ImGui::OpenPopup("Node Menu");
-    } else if (ed::ShowLinkContextMenu(&contextLinkId)) {
+    }
+    else if (ed::ShowLinkContextMenu(&contextLinkId)) {
         m_contextLinkId = static_cast<int>(contextLinkId.Get());
         ImGui::OpenPopup("Link Menu");
-    } else if (ed::ShowBackgroundContextMenu()) {
+    }
+    else if (ed::ShowBackgroundContextMenu()) {
         m_pendingPinId = 0;
         m_createPosition = ImGui::GetMousePos();
         m_createPopup = true;
@@ -1088,6 +1197,7 @@ void NodeGraphEditor::RenderGraph() {
     }
     RenderCreatePopup();
     RenderNodeContextMenu();
+    RenderInNodePopups();
     ed::Resume();
 
     ed::End();
@@ -1144,13 +1254,15 @@ void NodeGraphEditor::RenderNode(Node& node) {
             ImGui::TableSetColumnIndex(0);
             if (row < node.inputs.size()) {
                 RenderPin(node, node.inputs[row]);
-            } else {
+            }
+            else {
                 ImGui::Dummy(ImVec2(0.0f, 22.0f));
             }
             ImGui::TableSetColumnIndex(1);
             if (row < node.outputs.size()) {
                 RenderPin(node, node.outputs[row]);
-            } else {
+            }
+            else {
                 ImGui::Dummy(ImVec2(0.0f, 22.0f));
             }
         }
@@ -1159,7 +1271,8 @@ void NodeGraphEditor::RenderNode(Node& node) {
 
     if (node.type == "dialogue") {
         RenderDialogueTextEditor(node);
-    } else {
+    }
+    else {
         RenderUnboundParameters(node);
     }
 
@@ -1179,13 +1292,14 @@ void NodeGraphEditor::RenderNode(Node& node) {
     if (headerMax.x > headerMin.x && headerMax.y > headerMin.y) {
         if (m_headerTexture && m_headerTextureWidth > 0 && m_headerTextureHeight > 0) {
             const ImVec2 uv(
-                std::clamp((headerMax.x - headerMin.x) / (kHeaderTextureScale * static_cast<float>(m_headerTextureWidth)), 0.0f, 1.0f),
-                std::clamp((headerMax.y - headerMin.y) / (kHeaderTextureScale * static_cast<float>(m_headerTextureHeight)), 0.0f, 1.0f));
+                std::clamp((headerMax.x - headerMin.x) / (kHeaderTextureScale * static_cast<float>(m_headerTextureWidth)), 0.0f, 1.0f), std::clamp((headerMax.y - headerMin.y) / (kHeaderTextureScale * static_cast<float>(m_headerTextureHeight)), 0.0f, 1.0f)
+            );
             ImColor headerTint = definition->accent;
             headerTint.Value.w = selected ? 0.90f : 0.84f;
             draw->AddImageRounded(m_headerTexture, headerMin, headerMax, ImVec2(0.0f, 0.0f), uv, headerTint, kNodeRounding, ImDrawFlags_RoundCornersTop);
             draw->AddRectFilled(headerMin, headerMax, selected ? IM_COL32(8, 12, 20, 56) : IM_COL32(8, 12, 20, 84), kNodeRounding, ImDrawFlags_RoundCornersTop);
-        } else {
+        }
+        else {
             ImColor fallback = definition->accent;
             fallback.Value.w = selected ? 0.50f : 0.38f;
             draw->AddRectFilled(headerMin, headerMax, fallback, kNodeRounding, ImDrawFlags_RoundCornersTop);
@@ -1208,7 +1322,8 @@ void NodeGraphEditor::RenderPin(Node& node, const Pin& pin) {
             ImGui::SameLine(0.0f, kPinLabelSpacing);
             ImGui::TextUnformatted(pin.label.c_str());
         }
-    } else {
+    }
+    else {
         const float labelWidth = pin.label.empty() ? 0.0f : ImGui::CalcTextSize(pin.label.c_str()).x;
         const float totalWidth = labelWidth + (pin.label.empty() ? kPinSize : kPinSize + kPinLabelSpacing);
         const float offset = std::max(0.0f, kOutputAlignWidth - totalWidth);
@@ -1230,7 +1345,7 @@ void NodeGraphEditor::RenderPin(Node& node, const Pin& pin) {
         if (Parameter* parameter = FindParameter(node, pin.parameterKey)) {
             ImGui::Dummy(ImVec2(0.0f, 2.0f));
             ImGui::Indent(24.0f);
-            RenderParameter(*parameter, true);
+            RenderParameter(*parameter, true, node.id);
             ImGui::Unindent(24.0f);
         }
     }
@@ -1268,27 +1383,15 @@ void NodeGraphEditor::RenderDialogueTextEditor(Node& node) {
 
     ImGui::TextDisabled("Color");
     ImGui::SameLine(0.0f, 8.0f);
-    changed |= ImGui::ColorEdit4("##text-color", &color->colorValue.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreviewHalf);
+    InNodeColorButton("##text-color", node.id, *color);
     ImGui::SameLine(0.0f, 12.0f);
     ImGui::TextDisabled("Outline");
     ImGui::SameLine(0.0f, 8.0f);
-    changed |= ImGui::ColorEdit4("##outline-color", &outline->colorValue.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreviewHalf);
+    InNodeColorButton("##outline-color", node.id, *outline);
     ImGui::SameLine(0.0f, 12.0f);
     ImGui::TextDisabled("Effect");
     ImGui::SameLine(0.0f, 8.0f);
-    const std::string effectLabel = effect->stringValue.empty() ? "none" : effect->stringValue;
-    ImGui::SetNextItemWidth(112.0f);
-    if (ImGui::BeginCombo("##effect", effectLabel.c_str())) {
-        for (const std::string& option : effect->options) {
-            const bool selected = option == effectLabel;
-            if (ImGui::Selectable(option.c_str(), selected)) {
-                effect->stringValue = option;
-                changed = true;
-            }
-            if (selected) ImGui::SetItemDefaultFocus();
-        }
-        ImGui::EndCombo();
-    }
+    InNodeOptionButton(node.id, *effect, 112.0f);
 
     std::vector<std::string> lines = SplitTextLines(text->stringValue);
     int removeIndex = -1;
@@ -1336,9 +1439,7 @@ void NodeGraphEditor::RenderDialogueTextEditor(Node& node) {
 void NodeGraphEditor::RenderUnboundParameters(Node& node) {
     std::vector<Parameter*> fields;
     for (Parameter& parameter : node.parameters) {
-        const auto pinIt = std::find_if(node.inputs.begin(), node.inputs.end(), [&](const Pin& pin) {
-            return pin.parameterKey == parameter.key;
-        });
+        const auto pinIt = std::find_if(node.inputs.begin(), node.inputs.end(), [&](const Pin& pin) { return pin.parameterKey == parameter.key; });
         if (pinIt == node.inputs.end()) {
             fields.push_back(&parameter);
         }
@@ -1350,7 +1451,7 @@ void NodeGraphEditor::RenderUnboundParameters(Node& node) {
     ImGui::Dummy(ImVec2(0.0f, 4.0f));
     for (Parameter* parameter : fields) {
         ImGui::TextDisabled("%s", parameter->label.c_str());
-        RenderParameter(*parameter, true);
+        RenderParameter(*parameter, true, node.id);
     }
 }
 
@@ -1370,7 +1471,8 @@ void NodeGraphEditor::HandleInteractions() {
                 if (ed::AcceptNewItem(ImColor(136, 255, 178), 3.0f)) {
                     AddLink(static_cast<int>(start.Get()), static_cast<int>(end.Get()));
                 }
-            } else {
+            }
+            else {
                 ImGui::SetTooltip("Pins are not compatible");
                 ed::RejectNewItem(ImColor(255, 96, 96), 2.0f);
             }
@@ -1385,21 +1487,30 @@ void NodeGraphEditor::HandleInteractions() {
     }
     ed::EndCreate();
 
+    bool deleted = false;
     if (ed::BeginDelete()) {
         ed::NodeId nodeId = 0;
         while (ed::QueryDeletedNode(&nodeId)) {
             if (ed::AcceptDeletedItem()) {
                 RemoveNode(static_cast<int>(nodeId.Get()));
+                deleted = true;
             }
         }
         ed::LinkId linkId = 0;
         while (ed::QueryDeletedLink(&linkId)) {
             if (ed::AcceptDeletedItem()) {
                 RemoveLink(static_cast<int>(linkId.Get()));
+                deleted = true;
             }
         }
     }
     ed::EndDelete();
+
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool deletePressed = ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false);
+    if (!deleted && deletePressed && !io.WantTextInput && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+        DeleteSelection();
+    }
 }
 
 void NodeGraphEditor::RefreshSelection() {
@@ -1501,7 +1612,8 @@ void NodeGraphEditor::RenderInspector() {
         if (node->type == "dialogue") {
             ImGui::SeparatorText("Dialogue Text");
             ImGui::TextWrapped("Edit speaker, text args, and dialogue lines directly inside the Dialogue Text node.");
-        } else {
+        }
+        else {
             ImGui::SeparatorText("Fields");
             if (node->parameters.empty()) {
                 ImGui::TextDisabled("This node has no configurable parameters yet.");
@@ -1562,7 +1674,7 @@ void NodeGraphEditor::RenderPinSummary(const Node& node) const {
     }
 }
 
-void NodeGraphEditor::RenderParameter(Parameter& parameter, bool compact) {
+void NodeGraphEditor::RenderParameter(Parameter& parameter, bool compact, int nodeId) {
     ImGui::PushID(parameter.key.c_str());
     const std::string controlId = "##value";
     if (!compact) {
@@ -1570,7 +1682,8 @@ void NodeGraphEditor::RenderParameter(Parameter& parameter, bool compact) {
     }
     if (compact) {
         ImGui::SetNextItemWidth(kCompactParameterWidth);
-    } else {
+    }
+    else {
         ImGui::SetNextItemWidth(-1.0f);
     }
     bool changed = false;
@@ -1585,10 +1698,18 @@ void NodeGraphEditor::RenderParameter(Parameter& parameter, bool compact) {
             changed = ImGui::DragFloat(controlId.c_str(), &parameter.floatValue, 0.1f, parameter.minValue, parameter.maxValue);
             break;
         case ParamType::Color:
-            changed = ImGui::ColorEdit4(controlId.c_str(), &parameter.colorValue.x);
+            if (compact) {
+                InNodeColorButton(controlId.c_str(), nodeId, parameter);
+            }
+            else {
+                changed = ImGui::ColorEdit4(controlId.c_str(), &parameter.colorValue.x);
+            }
             break;
         case ParamType::Option:
-            if (ImGui::BeginCombo(controlId.c_str(), parameter.stringValue.c_str())) {
+            if (compact) {
+                InNodeOptionButton(nodeId, parameter, kCompactParameterWidth);
+            }
+            else if (ImGui::BeginCombo(controlId.c_str(), parameter.stringValue.c_str())) {
                 for (const std::string& option : parameter.options) {
                     const bool selected = option == parameter.stringValue;
                     if (ImGui::Selectable(option.c_str(), selected)) {
@@ -1604,7 +1725,8 @@ void NodeGraphEditor::RenderParameter(Parameter& parameter, bool compact) {
         case ParamType::Asset:
             if (parameter.multiline && parameter.type == ParamType::String) {
                 changed = ImGui::InputTextMultiline(controlId.c_str(), &parameter.stringValue, ImVec2(compact ? kCompactParameterWidth : -1.0f, compact ? 96.0f : 156.0f));
-            } else {
+            }
+            else {
                 changed = ImGui::InputText(controlId.c_str(), &parameter.stringValue, compact && parameter.type == ParamType::Asset ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_None);
             }
             if (parameter.type == ParamType::Asset) {
@@ -1629,7 +1751,8 @@ void NodeGraphEditor::RenderParameter(Parameter& parameter, bool compact) {
                         parameter.stringValue.clear();
                         changed = true;
                     }
-                } else if (!selected.empty() && ImGui::SmallButton("Use Selected Asset")) {
+                }
+                else if (!selected.empty() && ImGui::SmallButton("Use Selected Asset")) {
                     parameter.stringValue = selected;
                     changed = true;
                 }
@@ -1638,6 +1761,52 @@ void NodeGraphEditor::RenderParameter(Parameter& parameter, bool compact) {
     }
     if (changed) MarkDirty();
     ImGui::PopID();
+}
+
+void NodeGraphEditor::InNodeOptionButton(int nodeId, Parameter& parameter, float width) {
+    ImGui::PushID(parameter.key.c_str());
+    const std::string label = (parameter.stringValue.empty() ? "none" : parameter.stringValue) + "  v";
+    if (ImGui::Button(label.c_str(), ImVec2(width, 0.0f))) {
+        m_inNodePopup = InNodePopup{ nodeId, parameter.key, false, true };
+    }
+    ImGui::PopID();
+}
+
+void NodeGraphEditor::InNodeColorButton(const char* id, int nodeId, Parameter& parameter) {
+    if (ImGui::ColorButton(id, parameter.colorValue, ImGuiColorEditFlags_AlphaPreviewHalf | ImGuiColorEditFlags_NoTooltip, ImVec2(36.0f, 0.0f))) {
+        m_inNodePopup = InNodePopup{ nodeId, parameter.key, true, true };
+    }
+}
+
+void NodeGraphEditor::RenderInNodePopups() {
+    if (m_inNodePopup.requestOpen) {
+        ImGui::OpenPopup("##in-node-popup");
+        m_inNodePopup.requestOpen = false;
+    }
+    if (!ImGui::BeginPopup("##in-node-popup")) {
+        return;
+    }
+    Node* node = FindNode(m_inNodePopup.nodeId);
+    Parameter* parameter = node ? FindParameter(*node, m_inNodePopup.paramKey) : nullptr;
+    if (!parameter) {
+        ImGui::CloseCurrentPopup();
+    }
+    else if (m_inNodePopup.isColor) {
+        if (ImGui::ColorPicker4("##picker", &parameter->colorValue.x, ImGuiColorEditFlags_AlphaBar)) {
+            MarkDirty();
+        }
+    }
+    else {
+        for (const std::string& option : parameter->options) {
+            const bool selected = option == parameter->stringValue;
+            if (ImGui::Selectable(option.c_str(), selected)) {
+                parameter->stringValue = option;
+                MarkDirty();
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
+        }
+    }
+    ImGui::EndPopup();
 }
 
 void NodeGraphEditor::ApplyAssetToSelection(const std::string& runtimePath) {
@@ -1673,13 +1842,9 @@ void NodeGraphEditor::FrameSelection() {
     ed::NavigateToContent();
 }
 
-std::vector<ExportArtifact> NodeGraphEditor::BuildArtifacts() const {
-    return { ExportArtifact{ Title(), fs::path(CurrentRuntimePath()), Compile() } };
-}
+std::vector<ExportArtifact> NodeGraphEditor::BuildArtifacts() const { return { ExportArtifact{ Title(), fs::path(CurrentRuntimePath()), Compile() } }; }
 
-std::string NodeGraphEditor::Compile() const {
-    return m_kind == GraphKind::PDSDialogue ? CompilePDS() : CompileGameloop();
-}
+std::string NodeGraphEditor::Compile() const { return m_kind == GraphKind::PDSDialogue ? CompilePDS() : CompileGameloop(); }
 
 const NodeGraphEditor::NodeTemplate* NodeGraphEditor::FindTemplate(std::string_view type) const {
     auto it = std::find_if(m_library.begin(), m_library.end(), [&](const NodeTemplate& definition) { return definition.type == type; });
@@ -1698,16 +1863,20 @@ const NodeGraphEditor::Node* NodeGraphEditor::FindNode(int id) const {
 
 NodeGraphEditor::Pin* NodeGraphEditor::FindPin(int id) {
     for (Node& node : m_nodes) {
-        for (Pin& pin : node.inputs) if (pin.id == id) return &pin;
-        for (Pin& pin : node.outputs) if (pin.id == id) return &pin;
+        for (Pin& pin : node.inputs)
+            if (pin.id == id) return &pin;
+        for (Pin& pin : node.outputs)
+            if (pin.id == id) return &pin;
     }
     return nullptr;
 }
 
 const NodeGraphEditor::Pin* NodeGraphEditor::FindPin(int id) const {
     for (const Node& node : m_nodes) {
-        for (const Pin& pin : node.inputs) if (pin.id == id) return &pin;
-        for (const Pin& pin : node.outputs) if (pin.id == id) return &pin;
+        for (const Pin& pin : node.inputs)
+            if (pin.id == id) return &pin;
+        for (const Pin& pin : node.outputs)
+            if (pin.id == id) return &pin;
     }
     return nullptr;
 }
@@ -1746,9 +1915,7 @@ bool NodeGraphEditor::CanLink(const Pin* start, const Pin* end) const {
 }
 
 bool NodeGraphEditor::IsPinLinked(int id) const {
-    return std::any_of(m_links.begin(), m_links.end(), [&](const Link& link) {
-        return link.startPinId == id || link.endPinId == id;
-    });
+    return std::any_of(m_links.begin(), m_links.end(), [&](const Link& link) { return link.startPinId == id || link.endPinId == id; });
 }
 
 const NodeGraphEditor::Node* NodeGraphEditor::FindFlowStart() const {
@@ -1832,26 +1999,40 @@ bool NodeGraphEditor::ResolveBool(const Node& node, std::string_view key) const 
 
 ImColor NodeGraphEditor::PinColor(PinType type) const {
     switch (type) {
-        case PinType::Flow: return ImColor(245, 248, 255);
-        case PinType::Bool: return ImColor(255, 104, 104);
-        case PinType::Int: return ImColor(92, 220, 170);
-        case PinType::Float: return ImColor(126, 232, 106);
-        case PinType::String: return ImColor(175, 118, 255);
-        case PinType::Asset: return ImColor(80, 194, 255);
-        case PinType::Object: return ImColor(228, 188, 104);
+        case PinType::Flow:
+            return ImColor(245, 248, 255);
+        case PinType::Bool:
+            return ImColor(255, 104, 104);
+        case PinType::Int:
+            return ImColor(92, 220, 170);
+        case PinType::Float:
+            return ImColor(126, 232, 106);
+        case PinType::String:
+            return ImColor(175, 118, 255);
+        case PinType::Asset:
+            return ImColor(80, 194, 255);
+        case PinType::Object:
+            return ImColor(228, 188, 104);
     }
     return ImColor(255, 255, 255);
 }
 
 const char* NodeGraphEditor::PinTypeName(PinType type) {
     switch (type) {
-        case PinType::Flow: return "Flow";
-        case PinType::Bool: return "Bool";
-        case PinType::Int: return "Int";
-        case PinType::Float: return "Float";
-        case PinType::String: return "String";
-        case PinType::Asset: return "Asset";
-        case PinType::Object: return "Object";
+        case PinType::Flow:
+            return "Flow";
+        case PinType::Bool:
+            return "Bool";
+        case PinType::Int:
+            return "Int";
+        case PinType::Float:
+            return "Float";
+        case PinType::String:
+            return "String";
+        case PinType::Asset:
+            return "Asset";
+        case PinType::Object:
+            return "Object";
     }
     return "Unknown";
 }
@@ -1861,21 +2042,25 @@ std::string NodeGraphEditor::CompilePDS() const {
     for (const Node* node : LinearFlow()) {
         const std::string& type = node->type;
         if (type != "pds_start") {
-            script << "//@node x=\"" << static_cast<int>(node->position.x) << "\" y=\""
-                   << static_cast<int>(node->position.y) << "\"\n";
+            script << "//@node x=\"" << static_cast<int>(node->position.x) << "\" y=\"" << static_cast<int>(node->position.y) << "\"\n";
         }
         if (type == "pds_start") {
             const std::string title = ResolveString(*node, "title");
             if (!title.empty()) script << "# " << title << "\n\n";
-        } else if (type == "chapter") {
+        }
+        else if (type == "chapter") {
             script << "# " << ResolveString(*node, "title") << "\n\n";
-        } else if (type == "background") {
+        }
+        else if (type == "background") {
             script << "[bg file=" << QuoteLua(ResolveString(*node, "file")) << "]\n\n";
-        } else if (type == "bgm") {
+        }
+        else if (type == "bgm") {
             script << "[bgm file=" << QuoteLua(ResolveString(*node, "file")) << "]\n\n";
-        } else if (type == "character") {
+        }
+        else if (type == "character") {
             script << "[char id=" << QuoteLua(ResolveString(*node, "id")) << " expression=" << QuoteLua(ResolveString(*node, "expression")) << " pos=" << QuoteLua(ResolveString(*node, "pos")) << "]\n\n";
-        } else if (type == "dialogue") {
+        }
+        else if (type == "dialogue") {
             const std::string speaker = ResolveString(*node, "speaker");
             const std::string character = ResolveString(*node, "character");
             const int speed = ResolveInt(*node, "speed");
@@ -1890,30 +2075,42 @@ std::string NodeGraphEditor::CompilePDS() const {
             if (speed != 40) script << " speed=" << QuoteLua(std::to_string(speed));
             if (!effect.empty() && effect != "none") script << " effect=" << QuoteLua(effect);
             script << "]\n" << ResolveString(*node, "text") << "\n\n";
-        } else if (type == "choice") {
+        }
+        else if (type == "choice") {
             script << "[choice text=" << QuoteLua(ResolveString(*node, "text")) << " target=" << QuoteLua(ResolveString(*node, "target")) << "]\n\n";
-        } else if (type == "label") {
+        }
+        else if (type == "label") {
             script << "*" << ResolveString(*node, "name") << "\n\n";
-        } else if (type == "jump") {
+        }
+        else if (type == "jump") {
             script << "[jump target=" << QuoteLua(ResolveString(*node, "target")) << "]\n\n";
-        } else if (type == "variable") {
+        }
+        else if (type == "variable") {
             script << "[var var=" << QuoteLua(ResolveString(*node, "var")) << " op=" << QuoteLua(ResolveString(*node, "op")) << " val=" << QuoteLua(ResolveString(*node, "value")) << "]\n\n";
-        } else if (type == "lua") {
+        }
+        else if (type == "lua") {
             script << "[lua fn=" << QuoteLua(ResolveString(*node, "fn"));
             const std::string args = ResolveString(*node, "args");
             if (!args.empty()) script << " " << args;
             script << "]\n\n";
-        } else if (type == "transition") {
+        }
+        else if (type == "transition") {
             script << "[lua fn=\"PXEditorTransition\" style=" << QuoteLua(ResolveString(*node, "style")) << " speed=" << QuoteLua(std::to_string(ResolveFloat(*node, "speed"))) << "]\n\n";
-        } else if (type == "animate_actor") {
-            script << "[lua fn=\"PXEditorAnimateActor\" target=" << QuoteLua(ResolveString(*node, "target")) << " duration=" << QuoteLua(std::to_string(ResolveFloat(*node, "duration"))) << " move_x=" << QuoteLua(std::to_string(ResolveFloat(*node, "move_x"))) << "]\n\n";
-        } else if (type == "spawn_ui") {
+        }
+        else if (type == "animate_actor") {
+            script << "[lua fn=\"PXEditorAnimateActor\" target=" << QuoteLua(ResolveString(*node, "target")) << " duration=" << QuoteLua(std::to_string(ResolveFloat(*node, "duration")))
+                   << " move_x=" << QuoteLua(std::to_string(ResolveFloat(*node, "move_x"))) << "]\n\n";
+        }
+        else if (type == "spawn_ui") {
             script << "[lua fn=\"PXEditorSpawnUI\" ui_script=" << QuoteLua(ResolveString(*node, "ui")) << "]\n\n";
-        } else if (type == "stop_bgm") {
+        }
+        else if (type == "stop_bgm") {
             script << "[stopbgm]\n\n";
-        } else if (type == "raw") {
+        }
+        else if (type == "raw") {
             script << ResolveString(*node, "line") << "\n\n";
-        } else if (FindCustomCommand(type)) {
+        }
+        else if (FindCustomCommand(type)) {
             script << "[" << type;
             for (const Parameter& p : node->parameters) {
                 script << " " << p.key << "=" << QuoteLua(p.stringValue);
@@ -2009,11 +2206,20 @@ std::string NodeGraphEditor::QuoteLua(const std::string& value) {
     std::string out = "\"";
     for (char ch : value) {
         switch (ch) {
-            case '\\': out += "\\\\"; break;
-            case '"': out += "\\\""; break;
-            case '\n': out += "\\n"; break;
-            case '\r': break;
-            default: out.push_back(ch); break;
+            case '\\':
+                out += "\\\\";
+                break;
+            case '"':
+                out += "\\\"";
+                break;
+            case '\n':
+                out += "\\n";
+                break;
+            case '\r':
+                break;
+            default:
+                out.push_back(ch);
+                break;
         }
     }
     out += "\"";
@@ -2069,4 +2275,4 @@ void NodeGraphEditor::Log(const std::string& message) const {
     }
 }
 
-}
+}  // namespace px::editor

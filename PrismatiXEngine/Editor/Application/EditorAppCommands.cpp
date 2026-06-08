@@ -1,9 +1,9 @@
-#include "Editor/Application/EditorApp.h"
-
 #include <imgui.h>
 
 #include <algorithm>
 #include <cctype>
+
+#include "Editor/Application/EditorApp.h"
 
 namespace px::editor {
 void EditorApp::BuildCommands() {
@@ -57,12 +57,89 @@ void EditorApp::HandleShortcuts() {
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, ImGuiInputFlags_RouteGlobal)) {
         SaveAll();
     }
-    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_B, ImGuiInputFlags_RouteGlobal)) {
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_B, ImGuiInputFlags_RouteGlobal)) {
+        RunBuild();
+        RunPackaged();
+    }
+    else if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_B, ImGuiInputFlags_RouteGlobal)) {
         RunBuild();
     }
     if (ImGui::Shortcut(ImGuiKey_F5, ImGuiInputFlags_RouteGlobal)) {
         RunDev();
     }
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, ImGuiInputFlags_RouteGlobal) && m_undo.CanUndo()) {
+        m_undo.Undo();
+    }
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y, ImGuiInputFlags_RouteGlobal) && m_undo.CanRedo()) {
+        m_undo.Redo();
+    }
+    if (ImGui::Shortcut(ImGuiKey_F1, ImGuiInputFlags_RouteGlobal)) {
+        m_showShortcuts = !m_showShortcuts;
+    }
+}
+
+void EditorApp::RenderShortcutsWindow() {
+    if (!m_showShortcuts) {
+        return;
+    }
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(540, 0), ImGuiCond_Appearing);
+    if (ImGui::Begin("Keyboard Shortcuts", &m_showShortcuts, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking)) {
+        const auto row = [](const char* keys, const char* action) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextColored(ImVec4(0.62f, 0.78f, 1.0f, 1.0f), "%s", keys);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(action);
+        };
+        const auto beginSection = [](const char* title, const char* id) {
+            ImGui::SeparatorText(title);
+            if (ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_PadOuterX)) {
+                ImGui::TableSetupColumn("k", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+                ImGui::TableSetupColumn("a", ImGuiTableColumnFlags_WidthStretch);
+                return true;
+            }
+            return false;
+        };
+
+        if (beginSection("General", "sc-general")) {
+            row("Ctrl+P", "Command palette");
+            row("Ctrl+S", "Save all");
+            row("Ctrl+B", "Build");
+            row("Ctrl+Shift+B", "Build & run packaged");
+            row("F5", "Run (dev)");
+            row("Ctrl+Z / Ctrl+Y", "Undo / Redo");
+            row("F1", "Toggle this cheat sheet");
+            ImGui::EndTable();
+        }
+        if (beginSection("UI Designer (canvas)", "sc-ui")) {
+            row("Drag node", "Move; snaps to guides / grid");
+            row("Drag handles", "Resize from any of the 8 edges/corners");
+            row("Delete / Backspace", "Delete selected UI node");
+            row("Alt + drag", "Move/resize freely (disable snapping)");
+            row("G", "Toggle snap grid (center-snaps to cells)");
+            ImGui::EndTable();
+        }
+        if (beginSection("Node Graph", "sc-node")) {
+            row("Right-click canvas", "Create node");
+            row("Drag pin -> pin", "Link nodes");
+            row("Delete / Backspace", "Delete selected node or link");
+            row("Right-click node/link", "Context menu");
+            row("Drag from Resources", "Drop asset onto a node");
+            ImGui::EndTable();
+        }
+        if (beginSection("Flow", "sc-flow")) {
+            row("Drag pin -> pin", "Link chapters in the flow map");
+            row("Delete / Backspace", "Delete selected flow node or link");
+            row("Double-click node", "Open chapter in Story");
+            ImGui::EndTable();
+        }
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("Press F1 or close this window to dismiss.");
+    }
+    ImGui::End();
 }
 
 void EditorApp::RenderCommandPalette() {
@@ -112,6 +189,5 @@ void EditorApp::RenderCommandPalette() {
         ImGui::EndPopup();
     }
 }
-
 
 }  // namespace px::editor

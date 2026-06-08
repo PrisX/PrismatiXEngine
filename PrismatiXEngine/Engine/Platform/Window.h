@@ -1,8 +1,8 @@
 #pragma once
 
-#include "Engine/Core/Types.h"
-
 #include <string>
+
+#include "Engine/Core/Types.h"
 
 struct SDL_Window;
 struct SDL_Renderer;
@@ -26,6 +26,8 @@ public:
     void GetSize(int& width, int& height) const;
     void SetVSync(bool enabled);
 
+    void SetAspectRatio(float ratio);
+
     [[nodiscard]] SDL_Window* Handle() const { return m_window; }
     [[nodiscard]] SDL_Renderer* Renderer() const { return m_renderer; }
     [[nodiscard]] bool Valid() const { return m_window != nullptr && m_renderer != nullptr; }
@@ -35,4 +37,4 @@ private:
     SDL_Renderer* m_renderer = nullptr;
 };
 
-}
+}  // namespace px

@@ -1,11 +1,12 @@
 #pragma once
 
-#include "Engine/UI/UISchema.h"
-
 #include <imgui.h>
 
 #include <functional>
 #include <string>
+#include <vector>
+
+#include "Engine/UI/UISchema.h"
 
 namespace px::editor {
 
@@ -28,9 +29,14 @@ public:
 
 private:
     [[nodiscard]] px::Rect CanvasRect(const px::ui::UINode& node) const;
+    void AnchorOffset(const px::ui::UINode& node, float& ox, float& oy) const;
     [[nodiscard]] int HitTest(float canvasX, float canvasY) const;
     void MarkEdited(bool structural = false);
     void AddNode(px::ui::NodeType type);
+    void RemoveSelectedNode();
+
+    void SnapNode(px::ui::UINode& node, int handle, float scale);
+    [[nodiscard]] int HandleHitTest(const px::Rect& canvasRect, float cx, float cy, float scale) const;
 
     px::ui::UIScene* m_scene = nullptr;
     std::string m_path;
@@ -38,13 +44,18 @@ private:
     bool m_dirty = false;
 
     bool m_dragging = false;
-    bool m_resizing = false;
+    int m_resizeHandle = 0;
     px::Rect m_rectStart;
     float m_grabCanvasX = 0.0f;
     float m_grabCanvasY = 0.0f;
+
+    bool m_showGrid = false;
+    int m_gridSize = 20;
+    std::vector<float> m_guideX;
+    std::vector<float> m_guideY;
 
     std::function<void()> m_onEdit;
     std::function<void()> m_onStructure;
 };
 
-}
+}  // namespace px::editor

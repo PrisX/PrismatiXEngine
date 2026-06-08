@@ -74,4 +74,10 @@ void Window::SetVSync(bool enabled) {
     }
 }
 
+void Window::SetAspectRatio(float ratio) {
+    if (m_window) {
+        SDL_SetWindowAspectRatio(m_window, ratio, ratio);
+    }
+}
+
 }

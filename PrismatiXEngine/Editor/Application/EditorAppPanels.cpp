@@ -129,6 +129,7 @@ void EditorApp::BuildUI() {
     SyncDesigner();
     RenderMenuBar();
     RenderCommandPalette();
+    RenderShortcutsWindow();
     RenderHierarchy();
     RenderInspector();
     RenderAssets();
@@ -187,6 +188,10 @@ void EditorApp::RenderMenuBar() {
         }
         if (ImGui::MenuItem(("Redo " + m_undo.NextRedoLabel()).c_str(), "Ctrl+Y", false, m_undo.CanRedo())) {
             m_undo.Redo();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Keyboard Shortcuts", "F1", m_showShortcuts)) {
+            m_showShortcuts = !m_showShortcuts;
         }
         ImGui::EndMenu();
     }

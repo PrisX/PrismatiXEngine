@@ -46,6 +46,7 @@ void EditorApp::OpenProject(const std::filesystem::path& root) {
         m_dbDirty = false;
 
         m_flow.SetOpenCallback([this](const std::string& script) { m_nodeEditor.OpenDocument(script); });
+        m_flow.SetCreateChapterCallback([this](ImVec2 canvasPosition) { CreateFlowChapter(canvasPosition); });
         m_flow.Rebuild(m_database, root);
 
         m_scripts.SetOnCommandsChanged([this](const std::vector<CustomCommandDef>& cmds) { m_nodeEditor.SetCustomCommands(cmds); });
@@ -55,10 +56,58 @@ void EditorApp::OpenProject(const std::filesystem::path& root) {
     }
 }
 
+void EditorApp::CreateFlowChapter(ImVec2 canvasPosition) {
+    if (!m_project.Context().IsOpen()) {
+        Log("Flow: open a project before adding chapters.");
+        return;
+    }
+
+    int index = static_cast<int>(m_database.chapters.size()) + 1;
+    std::string id;
+    std::string title;
+    std::string script;
+    const auto used = [&](const std::string& candidateId, const std::string& candidateScript) {
+        for (const px::project::Chapter& chapter : m_database.chapters) {
+            if (chapter.id == candidateId || chapter.script == candidateScript) {
+                return true;
+            }
+        }
+        return false;
+    };
+    do {
+        id = "chapter" + std::to_string(index);
+        title = "Chapter " + std::to_string(index);
+        script = id + ".pds";
+        ++index;
+    } while (used(id, script));
+
+    m_database.chapters.push_back(px::project::Chapter{ id, title, script, false });
+    m_dbDirty = true;
+
+    const std::filesystem::path scriptDir = m_project.Context().root / "Data" / "Script";
+    std::error_code ec;
+    std::filesystem::create_directories(scriptDir, ec);
+    const std::filesystem::path scriptPath = scriptDir / script;
+    if (!std::filesystem::exists(scriptPath)) {
+        std::ofstream out(scriptPath);
+        out << "# " << title << "\n\n[text]\nNew line\n\n";
+    }
+
+    m_flow.Rebuild(m_database, m_project.Context().root);
+    m_flow.SetNodePositionByScript(script, canvasPosition);
+    RefreshProblems();
+    Log("Flow: added " + title + " (" + script + ")");
+}
+
 
 void EditorApp::SaveAll() {
     if (m_designer.Dirty()) m_designer.Save();
     if (m_nodeEditor.Dirty()) m_nodeEditor.Save();
+    if (m_dbDirty && !m_dbPath.empty()) {
+        std::ofstream out(m_dbPath);
+        out << m_database.Serialize();
+        m_dbDirty = false;
+    }
     m_project.SaveManifest();
     Log("Saved all documents.");
 }

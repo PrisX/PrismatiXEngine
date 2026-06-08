@@ -54,6 +54,7 @@ private:
     void RenderScripting();
     void RenderProblems();
     void RenderCommandPalette();
+    void RenderShortcutsWindow();
     void BuildCommands();
     void HandleShortcuts();
     void RefreshProblems();
@@ -65,6 +66,7 @@ private:
     void RunPackaged();
     void OpenInExplorer(const std::filesystem::path& path);
     void SaveAll();
+    void CreateFlowChapter(ImVec2 canvasPosition);
     void Log(const std::string& message);
 
     px::Window m_window;
@@ -109,6 +111,7 @@ private:
     std::vector<PaletteCommand> m_commands;
     bool m_paletteOpen = false;
     bool m_paletteFocus = false;
+    bool m_showShortcuts = false;
     char m_paletteFilter[128] = { 0 };
     std::vector<std::string> m_problems;
 

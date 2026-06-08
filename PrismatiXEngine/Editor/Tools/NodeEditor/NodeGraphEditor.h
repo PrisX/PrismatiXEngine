@@ -1,9 +1,5 @@
 #pragma once
 
-#include "Editor/Tools/Lua/CustomCommand.h"
-#include "Editor/Project/ProjectTypes.h"
-#include "Editor/Workspace/DocumentRegistry.h"
-
 #include <imgui.h>
 #include <imgui_node_editor.h>
 
@@ -12,6 +8,10 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "Editor/Project/ProjectTypes.h"
+#include "Editor/Tools/Lua/CustomCommand.h"
+#include "Editor/Workspace/DocumentRegistry.h"
 
 namespace px::editor {
 
@@ -144,6 +144,7 @@ private:
     void RemoveNode(int id);
     void AddLink(int startPinId, int endPinId);
     void RemoveLink(int id);
+    void DeleteSelection();
     void CreateDefaultLinkChain();
 
     void RenderToolbar();
@@ -158,7 +159,10 @@ private:
     void RefreshSelection();
     void RenderGraphOverview();
     void RenderPinSummary(const Node& node) const;
-    void RenderParameter(Parameter& parameter, bool compact);
+    void RenderParameter(Parameter& parameter, bool compact, int nodeId = 0);
+    void InNodeOptionButton(int nodeId, Parameter& parameter, float width);
+    void InNodeColorButton(const char* id, int nodeId, Parameter& parameter);
+    void RenderInNodePopups();
 
     [[nodiscard]] const NodeTemplate* FindTemplate(std::string_view type) const;
     [[nodiscard]] const CustomCommandDef* FindCustomCommand(std::string_view type) const;
@@ -208,6 +212,14 @@ private:
     int m_pendingPinId = 0;
     ImVec2 m_createPosition = ImVec2(0, 0);
     bool m_createPopup = false;
+
+    struct InNodePopup {
+        int nodeId = 0;
+        std::string paramKey;
+        bool isColor = false;
+        bool requestOpen = false;
+    };
+    InNodePopup m_inNodePopup;
     bool m_dirty = false;
     bool m_loaded = false;
     int m_navigateCountdown = 0;
@@ -219,4 +231,4 @@ private:
     int m_headerTextureHeight = 0;
 };
 
-}
+}  // namespace px::editor

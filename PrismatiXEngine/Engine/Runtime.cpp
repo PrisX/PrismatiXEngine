@@ -1,16 +1,14 @@
 #include "Engine/Runtime.h"
 
-#include "Engine/IO/Crypto.h"
-#include "Engine/Support/Logger.h"
-
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
 
+#include "Engine/IO/Crypto.h"
+#include "Engine/Support/Logger.h"
+
 namespace px {
 
-Runtime::~Runtime() {
-    Shutdown();
-}
+Runtime::~Runtime() { Shutdown(); }
 
 bool Runtime::Init(const RuntimeConfig& config) {
     m_config = config;
@@ -37,7 +35,8 @@ bool Runtime::Init(const RuntimeConfig& config) {
     for (const std::string& archive : m_config.mountArchives) {
         if (m_config.archiveKey.empty()) {
             m_vfs.MountArchive(archive);
-        } else {
+        }
+        else {
             const crypto::Key key = crypto::DeriveKey(m_config.archiveKey);
             m_vfs.MountArchive(archive, &key);
         }
@@ -46,6 +45,10 @@ bool Runtime::Init(const RuntimeConfig& config) {
     m_assets = std::make_unique<graphics::AssetCache>(m_window.Renderer(), m_vfs);
     m_renderer = std::make_unique<graphics::Renderer2D>(m_window.Renderer(), *m_assets);
     m_renderer->SetLogicalSize(m_config.logicalWidth, m_config.logicalHeight);
+
+    if (m_config.logicalHeight > 0) {
+        m_window.SetAspectRatio(static_cast<float>(m_config.logicalWidth) / static_cast<float>(m_config.logicalHeight));
+    }
 
     m_audio = std::make_unique<audio::AudioEngine>(m_vfs);
     m_audio->Init();
@@ -79,6 +82,7 @@ bool Runtime::BeginFrame() {
     m_input.NewFrame();
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
+        SDL_ConvertEventToRenderCoordinates(m_window.Renderer(), &event);
         m_input.Process(event);
     }
     if (m_input.QuitRequested()) {
@@ -90,8 +94,6 @@ bool Runtime::BeginFrame() {
     return true;
 }
 
-void Runtime::EndFrame() {
-    m_window.Present();
-}
+void Runtime::EndFrame() { m_window.Present(); }
 
-}
+}  // namespace px
