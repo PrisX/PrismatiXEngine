@@ -4,6 +4,8 @@
 /.vs/
 out/
 /PrismatiXEngine/build
+/Export
+/logs
 
 # CMake
 CMakeCache.txt

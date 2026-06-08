@@ -1,237 +1,215 @@
 #pragma once
 
+#include "EditorServices.h"
+
+#include <imgui.h>
+#include <imgui_internal.h>
+
 #include <filesystem>
 #include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include <imgui.h>
-#include <imgui_internal.h>
-
 namespace PrismatiX::Editor {
 
 class UIDesigner {
 public:
-    using LogCallback = std::function<void(const std::string&)>;
-    using SelectedResourceCallback = std::function<std::string()>;
-
-    struct RuntimeCanvasResult {
-        bool rendered = false;
-        void* texture = nullptr;
-        std::string status;
-    };
-
-    using RuntimeCanvasRenderer = std::function<RuntimeCanvasResult(const ImRect&, float, int, int, bool, bool)>;
-
     struct GeneratedDocument {
         std::string label;
         std::filesystem::path relativePath;
         std::string content;
     };
 
-    explicit UIDesigner(LogCallback logCallback = {});
+    using SelectedResourceCallback = std::function<std::string()>;
+    using TextureResolver = std::function<ImTextureID(const std::string& runtimePath, int* width, int* height)>;
+    using RuntimePreviewCallback = std::function<ImTextureID(const ImVec2& screenPos, const ImVec2& size, int* width, int* height)>;
 
-    void Render(float deltaSeconds, const RuntimeCanvasRenderer& runtimeRenderer = {});
-    void RenderInspector();
-    void RenderPreview(const RuntimeCanvasRenderer& runtimeRenderer = {});
-    void ApplyAssetToSelection(const std::string& assetPath);
+    explicit UIDesigner(LogSink log = {});
+
+    void SetProject(const ProjectContext* context);
     void SetSelectedResourceCallback(SelectedResourceCallback callback);
-    void SetProjectRoot(const std::filesystem::path& projectRoot);
-    void ResetToDefaults();
+    void SetTextureResolver(TextureResolver resolver);
+    void SetRuntimePreviewCallback(RuntimePreviewCallback callback);
 
-    [[nodiscard]] bool HasSelection() const;
-    [[nodiscard]] std::string GetSelectionSummary() const;
-    [[nodiscard]] std::string GenerateLua() const;
-    [[nodiscard]] std::vector<std::string> BuildPreviewLines() const;
-    [[nodiscard]] std::vector<GeneratedDocument> BuildGeneratedDocuments() const;
+    void Render();
+    void RenderLayerPanel();
+    void RenderInspector();
+    void RenderActionsPanel();
+    void RenderAnimationPanel();
+
+    void Save();
+    void Reload();
+    void ResetToDefaults();
+    bool OpenDocument(const std::string& runtimePath);
+    bool NewDocument(const std::string& runtimePath);
+    void ApplyAssetToSelection(const std::string& runtimePath);
+    void FrameSelection();
+
+    [[nodiscard]] bool Dirty() const { return m_dirty; }
+    [[nodiscard]] int Revision() const { return m_revision; }
+    [[nodiscard]] std::filesystem::path DocumentPath() const;
     [[nodiscard]] std::string CurrentDocumentRuntimePath() const;
     [[nodiscard]] std::string GeneratedSceneScriptPath() const;
-    [[nodiscard]] int SceneWidth() const { return 1280; }
-    [[nodiscard]] int SceneHeight() const { return 720; }
-    [[nodiscard]] int Revision() const { return m_revision; }
+    [[nodiscard]] std::string SelectionSummary() const;
+    [[nodiscard]] std::string GenerateLua() const;
+    [[nodiscard]] std::vector<GeneratedDocument> BuildGeneratedDocuments() const;
+    [[nodiscard]] std::vector<ExportArtifact> BuildArtifacts() const;
 
 private:
-    enum class DocumentKind {
-        Scene,
-        Component,
-    };
-
-    enum class ElementType {
-        Button,
-        Label,
-        Panel,
-    };
-
-    enum class PreviewInteraction {
-        None,
-        Move,
-        Resize,
-    };
-
-    struct ValueSpan {
-        size_t start = 0;
-        size_t end = 0;
-        bool valid = false;
-    };
-
-    struct ParsedElement {
-        int id = 0;
-        ElementType type = ElementType::Button;
+    struct Layer {
+        std::string id;
         std::string name;
-        size_t callStart = 0;
-        size_t callEnd = 0;
-        size_t blockStart = 0;
-        size_t blockEnd = 0;
+        bool visible = true;
+        bool locked = false;
+        bool expanded = true;
+    };
 
-        std::string text;
-        std::string imageAsset;
+    struct AnimationKey {
+        float time = 0.0f;
+        std::string property = "opacity";
+        float value = 255.0f;
+    };
+
+    struct AnimationClip {
+        std::string name = "Appear";
+        float duration = 0.45f;
+        float delay = 0.0f;
+        std::string easing = "outCubic";
+        bool loop = false;
+        std::string trigger = "scene.enter";
+        std::vector<AnimationKey> keys;
+    };
+
+    struct Node {
+        std::string id;
+        std::string type = "button";
+        std::string name;
+        std::string layerId = "content";
+        int layer = 1;
+        int order = 0;
+        bool visible = true;
+        bool locked = false;
         float x = 0.0f;
         float y = 0.0f;
-        float w = 0.0f;
-        float h = 0.0f;
-        int fontSize = 24;
-        ImVec4 color = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
-        ImVec4 accentColor = ImVec4(0.16f, 0.16f, 0.16f, 0.9f);
-        ImVec4 accentColor2 = ImVec4(1.0f, 1.0f, 1.0f, 0.18f);
-
-        ValueSpan textSpan;
-        ValueSpan imageAssetSpan;
-        ValueSpan xSpan;
-        ValueSpan ySpan;
-        ValueSpan wSpan;
-        ValueSpan hSpan;
-        ValueSpan fontSizeSpan;
-        ValueSpan colorSpan;
-        ValueSpan accentColorSpan;
-        ValueSpan accentColor2Span;
-    };
-
-    struct ScriptDocument {
-        int id = 0;
-        DocumentKind kind = DocumentKind::Scene;
-        std::filesystem::path path;
-        std::string runtimePath;
-        std::string displayName;
-        std::string source;
-        std::string parseWarning;
-        std::string backgroundAsset;
-        ValueSpan backgroundSpan;
-        bool dirty = false;
-        std::vector<std::string> linkedComponents;
-        std::vector<std::string> linkedScenes;
-        std::vector<ParsedElement> elements;
-    };
-
-    struct PreviewCommand {
-        enum class Type {
-            Rect,
-            Text,
-        };
-
-        Type type = Type::Rect;
-        ImVec2 position = ImVec2(0.0f, 0.0f);
-        ImVec2 size = ImVec2(0.0f, 0.0f);
-        ImVec4 color = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
-        ImVec4 outlineColor = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+        float w = 220.0f;
+        float h = 56.0f;
+        float opacity = 255.0f;
+        float radius = 8.0f;
         std::string text;
-        float fontSize = 24.0f;
-        int outlineSize = 0;
+        std::string image;
+        std::string hoverImage;
+        std::string component;
+        std::string font = "NotoSansTC-Bold.ttf";
+        int fontSize = 32;
+        ImVec4 bgColor = ImVec4(0.10f, 0.15f, 0.20f, 0.86f);
+        ImVec4 hoverColor = ImVec4(0.16f, 0.28f, 0.34f, 0.94f);
+        ImVec4 borderColor = ImVec4(0.46f, 0.56f, 0.72f, 0.47f);
+        ImVec4 hoverBorderColor = ImVec4(1.00f, 0.84f, 0.56f, 0.86f);
+        ImVec4 textColor = ImVec4(0.93f, 0.97f, 1.00f, 1.00f);
+        float borderTopHeight = 0.0f;
+        bool textShadow = false;
+        std::string state = "normal";
+        std::string actionType = "scene.switch";
+        std::string actionTarget = "Scripts/scenes/play_scene.lua";
+        std::string actionArgument;
+        std::vector<AnimationClip> animations;
     };
 
-    struct PreviewHitRegion {
-        DocumentKind kind = DocumentKind::Component;
-        ElementType type = ElementType::Button;
-        int documentId = 0;
-        int elementId = 0;
-        ImVec2 position = ImVec2(0.0f, 0.0f);
-        ImVec2 size = ImVec2(0.0f, 0.0f);
+    struct GuideLine {
+        bool vertical = true;
+        float pos = 0.0f;
     };
 
-    struct PreviewResult {
-        std::string targetLabel;
-        std::string error;
-        std::vector<PreviewCommand> commands;
-        std::vector<PreviewHitRegion> hitRegions;
-    };
+    void LoadOrCreate();
+    void LoadDocument(const Json& json);
+    [[nodiscard]] Json SaveDocument() const;
+    void SeedDefaultScene();
+    void SeedBlankDocument();
+    void SeedTemplateDocument(const std::string& runtimePath);
+    void MarkDirty();
 
-    void Touch();
-    void EnsureDocuments();
-    void RefreshDocuments(bool force);
-    void RenderToolbar();
-    void RenderDocumentNavigator();
-    void RenderCanvasWorkspace(const RuntimeCanvasRenderer& runtimeRenderer);
-    void RenderCodeEditor();
-    void RenderDocumentSummary(const ScriptDocument& document);
-    void RenderElementInspector(ScriptDocument& document, ParsedElement& element);
-    void RenderPreviewContents(const RuntimeCanvasRenderer& runtimeRenderer, bool embedded);
-    void DrawPreviewCommands(const ImRect& rect, const PreviewResult& preview) const;
-    void AppendDocumentPreviewCommands(const ScriptDocument& document, PreviewResult& preview, bool includeBackground) const;
+    void RenderDocumentPanel();
+    void RenderCanvasToolbar();
+    void RenderCanvas();
+    void RenderNodeOnCanvas(Node& node, const ImVec2& origin, float scale, ImDrawList* drawList, bool selected);
+    void RenderGrid(const ImVec2& origin, float scale, ImDrawList* drawList, const ImRect& clipRect) const;
+    void HandleCanvasInput(const ImVec2& origin, float scale, const ImRect& canvasRect);
+    void DrawSelectionAndGuides(const ImVec2& origin, float scale, ImDrawList* drawList);
+    void DrawResizeHandles(const ImVec2& origin, float scale, ImDrawList* drawList, Node& node);
+    void AddNodeAt(const std::string& type, const ImVec2& canvasPoint, const std::string& runtimeAsset = {});
+    void DeleteSelected();
+    void SelectNode(const std::string& id, bool append);
+    void ClearSelection();
+    void RecalculateLayerOrders();
+    void MoveLayer(int from, int to);
+    void MoveNodeOrder(Node& node, int direction);
+    void SortNodesForRuntime(std::vector<Node*>& nodes);
 
-    [[nodiscard]] PreviewResult BuildStaticPreview(const ScriptDocument& document) const;
-    [[nodiscard]] std::filesystem::path LoadDataRoot() const;
-    [[nodiscard]] std::vector<std::filesystem::path> EnumerateDocuments(DocumentKind kind) const;
-    [[nodiscard]] std::string DocumentKindLabel(DocumentKind kind) const;
-    [[nodiscard]] std::string ElementTypeLabel(ElementType type) const;
-    [[nodiscard]] std::string ResolvePreviewScenePath() const;
-    [[nodiscard]] ScriptDocument* ActiveDocument();
-    [[nodiscard]] const ScriptDocument* ActiveDocument() const;
-    [[nodiscard]] ParsedElement* ActiveElement();
-    [[nodiscard]] const ParsedElement* ActiveElement() const;
-    [[nodiscard]] ScriptDocument* FindDocumentById(DocumentKind kind, int documentId);
-    [[nodiscard]] const ScriptDocument* FindDocumentById(DocumentKind kind, int documentId) const;
-    [[nodiscard]] ScriptDocument* FindDocument(DocumentKind kind, std::string_view runtimePath);
-    [[nodiscard]] const ScriptDocument* FindDocument(DocumentKind kind, std::string_view runtimePath) const;
-    void ParseDocument(ScriptDocument& document);
-    void RebuildSceneLinks();
-    void SelectDocument(DocumentKind kind, int documentId);
-    void SetSelection(DocumentKind kind, int documentId, int elementId);
-    void SaveActiveDocument();
-    void ReplaceValue(ScriptDocument& document, const ValueSpan& span, std::string_view replacement);
-    void SetStringValue(ScriptDocument& document, ValueSpan& span, const std::string& value);
-    void SetIntValue(ScriptDocument& document, ValueSpan& span, int value);
-    void SetColorValue(ScriptDocument& document, ValueSpan& span, const ImVec4& value);
-    void ApplyElementFrame(ScriptDocument& document, const ParsedElement& element, float x, float y, float w, float h);
-    bool UpsertStringProperty(ScriptDocument& document, const ParsedElement& element, const ValueSpan& span, std::string_view key, const std::string& value);
-    bool InsertElementAfterReference(ScriptDocument& document, const ParsedElement& reference, std::string_view expression);
-    void AddElement(ElementType type, bool imageButton = false);
-    bool ReplaceBackgroundAsset(ScriptDocument& document, const std::string& assetPath);
-    [[nodiscard]] static std::string NormalizePath(std::string value);
-    [[nodiscard]] static std::string EscapeLuaString(const std::string& value);
-    [[nodiscard]] static std::string UnescapeLuaString(std::string_view value);
-    [[nodiscard]] static std::string Trim(std::string_view value);
-    [[nodiscard]] static ValueSpan FindQuotedValue(std::string_view source, std::string_view key, size_t absoluteOffset);
-    [[nodiscard]] static ValueSpan FindExpressionValue(std::string_view source, std::string_view key, size_t absoluteOffset);
-    [[nodiscard]] static ValueSpan FindTableValue(std::string_view source, std::string_view key, size_t absoluteOffset);
-    [[nodiscard]] static std::vector<float> ParseColor(ValueSpan span, const std::string& source);
-    [[nodiscard]] static std::string ReadSpan(const std::string& source, const ValueSpan& span);
-    [[nodiscard]] static bool IsWordBoundary(char ch);
-    [[nodiscard]] float EstimateTextWidth(const std::string& text, float fontSize) const;
+    [[nodiscard]] Node* FindNode(const std::string& id);
+    [[nodiscard]] const Node* FindNode(const std::string& id) const;
+    [[nodiscard]] Layer* FindLayer(const std::string& id);
+    [[nodiscard]] const Layer* FindLayer(const std::string& id) const;
+    [[nodiscard]] bool IsSelected(const std::string& id) const;
+    [[nodiscard]] Node* PrimarySelection();
+    [[nodiscard]] const Node* PrimarySelection() const;
+    [[nodiscard]] ImRect NodeRect(const Node& node) const;
+    [[nodiscard]] ImVec2 ScreenToCanvas(const ImVec2& point, const ImVec2& origin, float scale) const;
+    [[nodiscard]] ImVec2 CanvasToScreen(const ImVec2& point, const ImVec2& origin, float scale) const;
+    [[nodiscard]] std::vector<GuideLine> BuildGuides(const Node& moving, float& snapDx, float& snapDy) const;
+    [[nodiscard]] std::vector<std::string> EnumerateUiDocuments() const;
+    [[nodiscard]] static Json ColorToJson(const ImVec4& color);
+    [[nodiscard]] static ImVec4 ColorFromJson(const Json& json, ImVec4 fallback);
+    [[nodiscard]] static std::string QuoteLua(const std::string& value);
+    [[nodiscard]] static std::string SanitizeId(std::string value);
+    [[nodiscard]] static std::string NormalizeUiRuntimePath(std::string value);
+    [[nodiscard]] static std::string GeneratedScriptPathForRuntimePath(std::string runtimePath);
+    [[nodiscard]] static std::string GenerateLuaFromDocument(const Json& document, const std::string& runtimePath);
+
+    void RenderTextRow(const char* label, std::string& value);
+    void RenderNodeTypeCombo(Node& node);
+    void RenderActionTypeCombo(Node& node);
     void Log(const std::string& message) const;
 
-    LogCallback m_logCallback;
-    SelectedResourceCallback m_selectedResourceCallback;
-    std::filesystem::path m_projectRoot;
-    std::vector<ScriptDocument> m_sceneDocuments;
-    std::vector<ScriptDocument> m_componentDocuments;
-    DocumentKind m_activeKind = DocumentKind::Scene;
-    int m_activeDocumentId = 0;
-    int m_activeElementId = 0;
-    int m_nextDocumentId = 1;
-    int m_revision = 1;
-    bool m_showScenes = true;
-    bool m_showComponents = true;
-    bool m_showCodeEditor = false;
-    bool m_snapToGrid = true;
-    bool m_forceRefresh = true;
-    PreviewInteraction m_previewInteraction = PreviewInteraction::None;
-    DocumentKind m_interactionKind = DocumentKind::Component;
-    int m_interactionDocumentId = 0;
-    int m_interactionElementId = 0;
-    ImVec2 m_interactionStartMouse = ImVec2(0.0f, 0.0f);
-    ImVec2 m_interactionStartPosition = ImVec2(0.0f, 0.0f);
-    ImVec2 m_interactionStartSize = ImVec2(0.0f, 0.0f);
-    PreviewResult m_lastPreview;
+    LogSink m_log;
+    SelectedResourceCallback m_selectedResource;
+    TextureResolver m_textureResolver;
+    RuntimePreviewCallback m_runtimePreview;
+    const ProjectContext* m_project = nullptr;
+
+    std::vector<Layer> m_layers;
+    std::vector<Node> m_nodes;
+    std::vector<std::string> m_selectedIds;
+    std::string m_layerSearch;
+    std::string m_documentSearch;
+    std::string m_documentRuntimePath = "UI/title_menu.pxui";
+    std::string m_documentPathInput = "UI/title_menu.pxui";
+
+    int m_canvasW = 1280;
+    int m_canvasH = 720;
+    ImVec4 m_backgroundColor = ImVec4(0.03f, 0.05f, 0.08f, 1.0f);
+    std::string m_backgroundImage;
+    float m_zoom = 0.72f;
+    ImVec2 m_pan = ImVec2(0.0f, 0.0f);
+    float m_snapGrid = 8.0f;
+    float m_snapDistance = 7.0f;
+    bool m_snapEnabled = true;
+    bool m_gridVisible = true;
+    bool m_showGuides = true;
+    bool m_draggingNode = false;
+    bool m_draggingCanvas = false;
+    bool m_resizingNode = false;
+    bool m_boxSelecting = false;
+    ImVec2 m_dragStartMouse = ImVec2(0, 0);
+    ImVec2 m_dragStartCanvas = ImVec2(0, 0);
+    ImVec2 m_dragStartPan = ImVec2(0, 0);
+    ImVec2 m_selectionBoxStart = ImVec2(0, 0);
+    std::vector<Node> m_dragStartNodes;
+    std::vector<GuideLine> m_activeGuides;
+
+    bool m_dirty = false;
+    int m_revision = 0;
+    int m_nextNodeIndex = 1;
 };
 
-}  // namespace PrismatiX::Editor
+}

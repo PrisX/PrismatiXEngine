@@ -560,7 +560,7 @@ static void ImDrawList_AddBezierWithArrows(ImDrawList* drawList, const ImCubicBe
 
         ImDrawList_PathBezierOffset(drawList, half_thickness, curve.P3, curve.P2, curve.P1, curve.P0);
 
-        drawList->PathStroke(color, true, strokeThickness);
+        drawList->PathStroke(color, strokeThickness, ImDrawFlags_Closed);  // imgui 1.92.8+: Closed is a flag, not bool(1)
     }
 }
 

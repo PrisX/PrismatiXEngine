@@ -1,37 +1,38 @@
-﻿# CMakeList.txt: 最上層的 CMake 專案檔，執行全域設定
-cmake_minimum_required (VERSION 3.15)
+# Top-level CMake project for PrismatiXEngine
+cmake_minimum_required (VERSION 3.21)
 
-# 如果支援，則為 MSVC 編譯器啟用熱重新載入。
 if (POLICY CMP0141)
   cmake_policy(SET CMP0141 NEW)
   set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<IF:$<AND:$<C_COMPILER_ID:MSVC>,$<CXX_COMPILER_ID:MSVC>>,$<$<CONFIG:Debug,RelWithDebInfo>:EditAndContinue>,$<$<CONFIG:Debug,RelWithDebInfo>:ProgramDatabase>>")
 endif()
 
-project ("PrismatiXEngine" LANGUAGES CXX)
+project ("PrismatiXEngine" LANGUAGES C CXX)
 
-# Homebrew prefix (for macOS)
 if(APPLE)
     execute_process(COMMAND brew --prefix OUTPUT_VARIABLE HOMEBREW_PREFIX OUTPUT_STRIP_TRAILING_WHITESPACE)
     list(APPEND CMAKE_PREFIX_PATH
-    "${HOMEBREW_PREFIX}"
-    "/opt/homebrew/opt/lua@5.4"
+        "${HOMEBREW_PREFIX}"
+        "/opt/homebrew/opt/lua@5.4"
     )
 endif()
 
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
 
-# C++
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# SDL2
-find_package(SDL2 CONFIG REQUIRED)
-find_package(SDL2_image CONFIG REQUIRED)
-find_package(SDL2_ttf CONFIG REQUIRED)
-find_package(SDL2_mixer CONFIG REQUIRED)
+# Dependencies (vcpkg manifest)
+find_package(SDL3 CONFIG REQUIRED)
+find_package(SDL3_image CONFIG REQUIRED)
+find_package(SDL3_ttf CONFIG REQUIRED)
+find_package(SDL3_mixer CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
+find_package(spdlog CONFIG REQUIRED)
+find_package(MbedTLS CONFIG REQUIRED)
+find_package(zstd CONFIG REQUIRED)
 
-# Lua & sol2
+# Lua + sol2
 include(FetchContent)
 FetchContent_Declare(
     sol2
@@ -41,21 +42,17 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(sol2)
 find_package(Lua REQUIRED)
 
-# Other dependencies
-find_package(spdlog CONFIG REQUIRED)
-
-# Third-party source dependencies
+# Subdirectories
 add_subdirectory("ThirdParty")
+add_subdirectory("PrismatiXEngine")
 
-# Subdirectory
-add_subdirectory ("PrismatiXEngine")
-
-# Formatting
+# Formatting helper
 file(GLOB_RECURSE ALL_CXX_SOURCE_FILES
-    "PrismatiXEngine/*.cpp"
-    "PrismatiXEngine/*.h"
+    "PrismatiXEngine/Engine/*.cpp"
+    "PrismatiXEngine/Engine/*.h"
+    "PrismatiXEngine/Editor/*.cpp"
+    "PrismatiXEngine/Editor/*.h"
 )
-
 add_custom_target(format
     COMMAND clang-format -i -style=file ${ALL_CXX_SOURCE_FILES}
 )

@@ -21,7 +21,7 @@ inline void Initialize() {
         auto logger = std::make_shared<spdlog::logger>("PrismatiX", sinks.begin(), sinks.end());
 
         logger->set_level(spdlog::level::trace);
-        logger->flush_on(spdlog::level::err);
+        logger->flush_on(spdlog::level::info);
 
         spdlog::set_default_logger(logger);
 
@@ -30,7 +30,7 @@ inline void Initialize() {
         printf("Log initialization failed: %s\n", ex.what());
     }
 }
-}  // namespace Logger
+}
 
 #define PX_LOG_TRACE(...) spdlog::trace(__VA_ARGS__)
 #define PX_LOG_DEBUG(...) spdlog::debug(__VA_ARGS__)

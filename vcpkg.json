@@ -3,24 +3,26 @@
   "version": "1.0.0",
   "dependencies": [
     "fmt",
+    "lua",
+    "sdl3",
+    {
+      "name": "sdl3-image",
+      "features": ["png", "jpeg", "webp"]
+    },
+    "sdl3-ttf",
+    {
+      "name": "sdl3-mixer",
+      "features": ["mpg123", "libvorbis", "opusfile", "libflac"]
+    },
+    "nlohmann-json",
+    "spdlog",
+    "mbedtls",
+    "zstd"
+  ],
+  "overrides": [
     {
       "name": "lua",
-      "version>=": "5.4.8"
-    },
-    "sdl2",
-    {
-      "name": "sdl2-image",
-      "features": [
-        "libjpeg-turbo"
-      ]
-    },
-    {
-      "name": "sdl2-mixer",
-      "features": [
-        "mpg123"
-      ]
-    },
-    "sdl2-ttf",
-    "spdlog"
+      "version": "5.4.8"
+    }
   ]
 }

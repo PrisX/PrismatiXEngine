@@ -103,4 +103,4 @@ inline Uint8 AlphaFromElapsed(Uint32 elapsed, Uint32 duration) {
     return static_cast<Uint8>((elapsed * 255) / duration);
 }
 
-} // namespace PrismatiX::Utils
+}

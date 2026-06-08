@@ -50,7 +50,6 @@ public:
             return false;
         }
 
-        // Move to front
         cacheList.splice(cacheList.begin(), cacheList, it->second);
         value = it->second->second;
         return true;
@@ -86,4 +85,4 @@ private:
     std::function<void(Value)> onEvict;
 };
 
-} // namespace PrismatiX::Utils
+}

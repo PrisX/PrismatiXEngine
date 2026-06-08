@@ -6,8 +6,8 @@ add_library(PrismatiXImGui STATIC
     imgui/imgui_tables.cpp
     imgui/imgui_widgets.cpp
     imgui/misc/cpp/imgui_stdlib.cpp
-    imgui/backends/imgui_impl_sdl2.cpp
-    imgui/backends/imgui_impl_sdlrenderer2.cpp
+    imgui/backends/imgui_impl_sdl3.cpp
+    imgui/backends/imgui_impl_sdlrenderer3.cpp
 )
 
 target_include_directories(PrismatiXImGui PUBLIC
@@ -17,8 +17,7 @@ target_include_directories(PrismatiXImGui PUBLIC
 )
 
 target_link_libraries(PrismatiXImGui PUBLIC
-    SDL2::SDL2
-    SDL2::SDL2main
+    SDL3::SDL3
 )
 
 add_library(PrismatiXNodeEditor STATIC

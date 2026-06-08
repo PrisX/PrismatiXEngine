@@ -1,107 +1,69 @@
-cmake_minimum_required(VERSION 3.15)
-project(PrismatiXEngine LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.21)
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(PRISMATIX_RUNTIME_SOURCES
-    Core/Engine.cpp
-    Core/LuaBindings.cpp
-    Core/Lua/LuaEngineAPI.cpp
-    Core/Lua/LuaRenderAPI.cpp
-    Core/Lua/LuaAudioAPI.cpp
-    Core/Lua/LuaStateAPI.cpp
-    Core/Lua/LuaVNAPI.cpp
-    Core/Services/ResourceManager.cpp
-    Core/Services/GameState.cpp
-    Core/Services/SaveManager.cpp
-    Core/Systems/RenderSystem.cpp
-    Core/Systems/AudioSystem.cpp
-    Core/VN/VNFlowController.cpp
-    Core/VN/VNStage.cpp
-    Core/VN/VNDialogueSystem.cpp
-    Core/VN/VNScriptParser.cpp
-    Core/VN/VNChoiceList.cpp
-    Core/VN/Commands/BuiltinCommandHandlers.cpp
+file(GLOB_RECURSE PRISMATIX_RUNTIME_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/Engine/*.cpp"
 )
 
-set(PRISMATIX_EDITOR_SOURCES
-    EditorMain.cpp
-    Editor/BlueprintEditor.cpp
-    Editor/BlueprintEditorDocument.cpp
-    Editor/EditorApp.cpp
-    Editor/EditorAppPanels.cpp
-    Editor/GamePreviewHost.cpp
-    Editor/UIDesigner.cpp
-)
-
-add_library(PrismatiXRuntime STATIC
-    ${PRISMATIX_RUNTIME_SOURCES}
-)
+add_library(PrismatiXRuntime STATIC ${PRISMATIX_RUNTIME_SOURCES})
 
 target_include_directories(PrismatiXRuntime PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/Core
-    ${CMAKE_CURRENT_SOURCE_DIR}/Editor
-    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Models
-    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Services
-    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Systems
-    ${CMAKE_CURRENT_SOURCE_DIR}/Core/VN
-    ${CMAKE_CURRENT_SOURCE_DIR}/Core/VN/Commands
+    ${CMAKE_CURRENT_SOURCE_DIR}/Engine
     ${CMAKE_CURRENT_SOURCE_DIR}/Utils
     ${LUA_INCLUDE_DIR}
 )
 
 target_link_libraries(PrismatiXRuntime PUBLIC
-    SDL2::SDL2
-    SDL2_image::SDL2_image
-    SDL2_ttf::SDL2_ttf
-    SDL2_mixer::SDL2_mixer
+    SDL3::SDL3
+    SDL3_image::SDL3_image
+    SDL3_ttf::SDL3_ttf
+    SDL3_mixer::SDL3_mixer
     spdlog::spdlog
+    nlohmann_json::nlohmann_json
+    MbedTLS::mbedcrypto
+    zstd::libzstd
     ${LUA_LIBRARIES}
     sol2::sol2
 )
 
-add_executable(PrismatiXEngine
-    GameMain.cpp
+add_executable(PrismatiXPlayer Player/PlayerMain.cpp)
+target_link_libraries(PrismatiXPlayer PRIVATE PrismatiXRuntime)
+
+
+file(GLOB_RECURSE PRISMATIX_EDITOR_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/App/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/Core/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/Database/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/Flow/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/Scripting/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/Services/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/Preview/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/Panels/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/UIDesigner/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/NodeEditor/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Editor/Build/*.cpp"
 )
 
-target_link_libraries(PrismatiXEngine PRIVATE
-    PrismatiXRuntime
-    SDL2::SDL2main
-)
-
-add_executable(PrismatiXEditor
-    ${PRISMATIX_EDITOR_SOURCES}
-)
-
-target_include_directories(PrismatiXEditor PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/Editor
-    ${CMAKE_CURRENT_SOURCE_DIR}/Utils
-)
-
-target_link_libraries(PrismatiXEditor PRIVATE
-    SDL2::SDL2
-    SDL2::SDL2main
-    SDL2_image::SDL2_image
-    spdlog::spdlog
-    PrismatiXRuntime
-    PrismatiXImGui
-    PrismatiXNodeEditor
-)
-
-if (WIN32)
+if(PRISMATIX_EDITOR_SOURCES)
+    add_executable(PrismatiXEditor ${PRISMATIX_EDITOR_SOURCES})
+    target_include_directories(PrismatiXEditor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(PrismatiXEditor PRIVATE
-        Ole32
-        Shell32
+        PrismatiXRuntime
+        PrismatiXImGui
+        PrismatiXNodeEditor
+    )
+    if(WIN32)
+        target_link_libraries(PrismatiXEditor PRIVATE Ole32 Shell32)
+    endif()
+
+    add_custom_command(TARGET PrismatiXEditor POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_CURRENT_SOURCE_DIR}/../Data/Font/NotoSansTC-Bold.ttf
+                $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/UIFont.ttf
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/imgui-node-editor/assets/BlueprintBackground.png
+                $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/NodeHeader.png
     )
 endif()
-
-# Post-build copy scripts
-add_custom_command(
-    TARGET PrismatiXEngine POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${CMAKE_CURRENT_SOURCE_DIR}/Scripts
-            $<TARGET_FILE_DIR:PrismatiXEngine>/Data/Scripts
-)
