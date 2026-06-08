@@ -20,8 +20,9 @@ public:
     void RenderInspector(const std::string& selectedAssetPath);
     void RenderAnimation();
 
-    bool CanvasInput(ImVec2 p0, float scale, bool hovered);
+    bool CanvasInput(ImVec2 p0, float scale, bool hovered, const std::string& selectedAssetPath);
     void DrawOverlay(ImVec2 p0, float scale);
+    void AddImageAt(float canvasX, float canvasY, const std::string& image);
 
     bool Save();
     [[nodiscard]] bool Dirty() const { return m_dirty; }
@@ -33,6 +34,8 @@ private:
     [[nodiscard]] int HitTest(float canvasX, float canvasY) const;
     void MarkEdited(bool structural = false);
     void AddNode(px::ui::NodeType type);
+    void AddNodeAt(px::ui::NodeType type, float canvasX, float canvasY, const std::string& image = {});
+    void AddBackgroundImage(const std::string& image);
     void RemoveSelectedNode();
 
     void SnapNode(px::ui::UINode& node, int handle, float scale);
@@ -48,6 +51,8 @@ private:
     px::Rect m_rectStart;
     float m_grabCanvasX = 0.0f;
     float m_grabCanvasY = 0.0f;
+    float m_contextCanvasX = 0.0f;
+    float m_contextCanvasY = 0.0f;
 
     bool m_showGrid = false;
     int m_gridSize = 20;

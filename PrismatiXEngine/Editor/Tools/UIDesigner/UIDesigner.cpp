@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cfloat>
 #include <cmath>
 #include <fstream>
 #include <initializer_list>
@@ -23,6 +24,7 @@ const std::array<const char*, 11> kNodeTypes = { "frame", "panel", "button", "im
 const std::array<const char*, 9> kAnchors = { "topleft", "top", "topright", "left", "center", "right", "bottomleft", "bottom", "bottomright" };
 const std::array<const char*, 11> kActions = { "", "scene.start", "scene.switch", "save.open", "load.open", "gallery.open", "settings.open", "backlog.open", "app.quit", "choice", "lua" };
 const std::array<const char*, 4> kBinds = { "", "saves", "gallery", "music" };
+constexpr const char* kResourcePayload = "PX_RESOURCE_PATH";
 
 int IndexOf(const std::array<const char*, 11>& arr, const std::string& v) {
     for (int i = 0; i < static_cast<int>(arr.size()); ++i)
@@ -102,17 +104,46 @@ int UIDesigner::HitTest(float cx, float cy) const {
 }
 
 void UIDesigner::AddNode(NodeType type) {
+    AddNodeAt(type, 0.0f, 0.0f);
+}
+
+void UIDesigner::AddNodeAt(NodeType type, float canvasX, float canvasY, const std::string& image) {
+    if (!m_scene) {
+        return;
+    }
     UINode n;
     n.type = type;
     n.id = std::string(px::ui::ToString(type)) + "_" + std::to_string(m_scene->nodes.size());
     n.anchor = Anchor::Center;
-    n.rect = Rect{ -110, -32, 220, 64 };
+    const float w = type == NodeType::Image ? 360.0f : 220.0f;
+    const float h = type == NodeType::Image ? 200.0f : 64.0f;
+    const float centerX = canvasX == 0.0f && canvasY == 0.0f ? static_cast<float>(m_scene->canvasW) * 0.5f : canvasX;
+    const float centerY = canvasX == 0.0f && canvasY == 0.0f ? static_cast<float>(m_scene->canvasH) * 0.5f : canvasY;
+    n.rect = Rect{ std::round(centerX - static_cast<float>(m_scene->canvasW) * 0.5f - w * 0.5f),
+                   std::round(centerY - static_cast<float>(m_scene->canvasH) * 0.5f - h * 0.5f), w, h };
     n.order = static_cast<int>(m_scene->nodes.size());
     if (type == NodeType::Text) n.text = "Text";
     if (type == NodeType::Button) n.text = "Button";
+    if (type == NodeType::Image) {
+        n.image = image;
+        n.bgColor = Color{ 0, 0, 0, 0 };
+    }
     m_scene->nodes.push_back(std::move(n));
     m_selected = static_cast<int>(m_scene->nodes.size()) - 1;
     MarkEdited(true);
+}
+
+void UIDesigner::AddImageAt(float canvasX, float canvasY, const std::string& image) {
+    AddNodeAt(NodeType::Image, canvasX, canvasY, image);
+}
+
+void UIDesigner::AddBackgroundImage(const std::string& image) {
+    if (!m_scene || image.empty()) {
+        return;
+    }
+    m_scene->bgImage = image;
+    m_scene->bgAlpha = 255;
+    MarkEdited();
 }
 
 void UIDesigner::RemoveSelectedNode() {
@@ -207,12 +238,118 @@ void UIDesigner::RenderInspector(const std::string& selectedAssetPath) {
     }
     UINode& n = m_scene->nodes[m_selected];
 
+    auto acceptAssetDrop = [&](std::string& value) {
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kResourcePayload)) {
+                value.assign(static_cast<const char*>(payload->Data),
+                             payload->DataSize > 0 ? payload->DataSize - 1 : 0);
+                MarkEdited();
+            }
+            ImGui::EndDragDropTarget();
+        }
+    };
+
     auto colorField = [&](const char* label, Color& c) {
-        float v[4] = { c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, c.a / 255.0f };
-        if (ImGui::ColorEdit4(label, v, ImGuiColorEditFlags_AlphaBar)) {
-            c = { (std::uint8_t)(v[0] * 255), (std::uint8_t)(v[1] * 255), (std::uint8_t)(v[2] * 255), (std::uint8_t)(v[3] * 255) };
+        ImGui::PushID(label);
+        int rgba[4] = { static_cast<int>(c.r), static_cast<int>(c.g), static_cast<int>(c.b),
+                        static_cast<int>(c.a) };
+        bool changed = false;
+        const ImVec4 channelColors[4] = { ImVec4(0.90f, 0.32f, 0.35f, 1.0f),
+                                          ImVec4(0.28f, 0.80f, 0.45f, 1.0f),
+                                          ImVec4(0.34f, 0.46f, 0.92f, 1.0f),
+                                          ImVec4(0.86f, 0.89f, 0.94f, 1.0f) };
+        const char* ids[4] = { "##r", "##g", "##b", "##a" };
+        const char* names[4] = { "R", "G", "B", "A" };
+        auto channelField = [&](int channel, float width) {
+            ImGui::SetNextItemWidth(width);
+            ImGui::PushStyleColor(ImGuiCol_Border, channelColors[channel]);
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+            const bool fieldChanged =
+                ImGui::DragInt(ids[channel], &rgba[channel], 1.0f, 0, 255, "%d",
+                               ImGuiSliderFlags_AlwaysClamp);
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", names[channel]);
+            }
+            return fieldChanged;
+        };
+
+        if (ImGui::BeginTable("color", 6,
+                              ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_PadOuterX,
+                              ImVec2(-FLT_MIN, 0.0f))) {
+            ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed, 62.0f);
+            ImGui::TableSetupColumn("swatch", ImGuiTableColumnFlags_WidthFixed, 38.0f);
+            ImGui::TableSetupColumn("r", ImGuiTableColumnFlags_WidthFixed, 62.0f);
+            ImGui::TableSetupColumn("g", ImGuiTableColumnFlags_WidthFixed, 62.0f);
+            ImGui::TableSetupColumn("b", ImGuiTableColumnFlags_WidthFixed, 62.0f);
+            ImGui::TableSetupColumn("a", ImGuiTableColumnFlags_WidthFixed, 62.0f);
+            ImGui::TableNextRow();
+
+            ImGui::TableSetColumnIndex(0);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(label);
+
+            ImGui::TableSetColumnIndex(1);
+            const ImVec4 preview(c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, c.a / 255.0f);
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() +
+                                 std::max(0.0f, (ImGui::GetFrameHeight() - 22.0f) * 0.5f));
+            if (ImGui::ColorButton("##swatch", preview,
+                                   ImGuiColorEditFlags_NoTooltip |
+                                       ImGuiColorEditFlags_AlphaPreviewHalf,
+                                   ImVec2(28.0f, 22.0f))) {
+                ImGui::OpenPopup("picker");
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("RGBA %d, %d, %d, %d", rgba[0], rgba[1], rgba[2], rgba[3]);
+            }
+
+            for (int i = 0; i < 4; ++i) {
+                ImGui::TableSetColumnIndex(2 + i);
+                changed |= channelField(i, 56.0f);
+            }
+
+            float picker[4] = { rgba[0] / 255.0f, rgba[1] / 255.0f, rgba[2] / 255.0f,
+                                rgba[3] / 255.0f };
+            if (ImGui::BeginPopup("picker")) {
+                if (ImGui::ColorPicker4("##picker", picker,
+                                        ImGuiColorEditFlags_AlphaBar |
+                                            ImGuiColorEditFlags_NoInputs |
+                                            ImGuiColorEditFlags_NoSidePreview |
+                                            ImGuiColorEditFlags_NoSmallPreview)) {
+                    rgba[0] = static_cast<int>(std::round(std::clamp(picker[0], 0.0f, 1.0f) * 255.0f));
+                    rgba[1] = static_cast<int>(std::round(std::clamp(picker[1], 0.0f, 1.0f) * 255.0f));
+                    rgba[2] = static_cast<int>(std::round(std::clamp(picker[2], 0.0f, 1.0f) * 255.0f));
+                    rgba[3] = static_cast<int>(std::round(std::clamp(picker[3], 0.0f, 1.0f) * 255.0f));
+                    changed = true;
+                }
+                if (ImGui::BeginTable("picker-rgba", 4,
+                                      ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_PadOuterX,
+                                      ImVec2(-FLT_MIN, 0.0f))) {
+                    for (int i = 0; i < 4; ++i) {
+                        ImGui::TableSetupColumn(names[i], ImGuiTableColumnFlags_WidthFixed, 62.0f);
+                    }
+                    ImGui::TableNextRow();
+                    for (int i = 0; i < 4; ++i) {
+                        ImGui::TableSetColumnIndex(i);
+                        changed |= channelField(i, 56.0f);
+                    }
+                    ImGui::EndTable();
+                }
+                ImGui::EndPopup();
+            }
+
+            ImGui::EndTable();
+        }
+
+        if (changed) {
+            c = { static_cast<std::uint8_t>(std::clamp(rgba[0], 0, 255)),
+                  static_cast<std::uint8_t>(std::clamp(rgba[1], 0, 255)),
+                  static_cast<std::uint8_t>(std::clamp(rgba[2], 0, 255)),
+                  static_cast<std::uint8_t>(std::clamp(rgba[3], 0, 255)) };
             MarkEdited();
         }
+        ImGui::PopID();
     };
 
     if (ImGui::InputText("id", &n.id)) MarkEdited();
@@ -252,6 +389,7 @@ void UIDesigner::RenderInspector(const std::string& selectedAssetPath) {
     if (ImGui::CollapsingHeader("Text", ImGuiTreeNodeFlags_DefaultOpen)) {
         if (ImGui::InputText("text", &n.text)) MarkEdited();
         if (ImGui::InputText("font", &n.font)) MarkEdited();
+        acceptAssetDrop(n.font);
         if (ImGui::DragInt("font size", &n.fontSize, 1, 6, 200)) MarkEdited();
         int alignIdx = n.align == "left" ? 0 : 1;
         const char* aligns[] = { "left", "center" };
@@ -263,12 +401,14 @@ void UIDesigner::RenderInspector(const std::string& selectedAssetPath) {
 
     if (ImGui::CollapsingHeader("Image")) {
         if (ImGui::InputText("image", &n.image)) MarkEdited();
+        acceptAssetDrop(n.image);
         ImGui::SameLine();
         if (ImGui::SmallButton("use##img") && !selectedAssetPath.empty()) {
             n.image = selectedAssetPath;
             MarkEdited();
         }
         if (ImGui::InputText("hover image", &n.hoverImage)) MarkEdited();
+        acceptAssetDrop(n.hoverImage);
     }
 
     if (ImGui::CollapsingHeader("Action / Bind", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -490,7 +630,7 @@ void UIDesigner::SnapNode(UINode& n, int handle, float scale) {
     }
 }
 
-bool UIDesigner::CanvasInput(ImVec2 p0, float scale, bool hovered) {
+bool UIDesigner::CanvasInput(ImVec2 p0, float scale, bool hovered, const std::string& selectedAssetPath) {
     if (!m_scene || scale <= 0.0f) return false;
     m_guideX.clear();
     m_guideY.clear();
@@ -505,13 +645,65 @@ bool UIDesigner::CanvasInput(ImVec2 p0, float scale, bool hovered) {
         RemoveSelectedNode();
         return true;
     }
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        m_contextCanvasX = cx;
+        m_contextCanvasY = cy;
+        ImGui::OpenPopup("uiCanvasContext");
+    }
+
+    bool consumed = false;
+    if (ImGui::BeginPopup("uiCanvasContext")) {
+        if (ImGui::MenuItem("Add Panel")) {
+            AddNodeAt(NodeType::Panel, m_contextCanvasX, m_contextCanvasY);
+            consumed = true;
+        }
+        if (ImGui::MenuItem("Add Text")) {
+            AddNodeAt(NodeType::Text, m_contextCanvasX, m_contextCanvasY);
+            consumed = true;
+        }
+        if (ImGui::MenuItem("Add Button")) {
+            AddNodeAt(NodeType::Button, m_contextCanvasX, m_contextCanvasY);
+            consumed = true;
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Add Empty Image")) {
+            AddNodeAt(NodeType::Image, m_contextCanvasX, m_contextCanvasY);
+            consumed = true;
+        }
+        ImGui::BeginDisabled(selectedAssetPath.empty());
+        if (ImGui::MenuItem("Image from Selected Asset")) {
+            AddNodeAt(NodeType::Image, m_contextCanvasX, m_contextCanvasY, selectedAssetPath);
+            consumed = true;
+        }
+        if (ImGui::MenuItem("Set as Background")) {
+            AddBackgroundImage(selectedAssetPath);
+            consumed = true;
+        }
+        ImGui::EndDisabled();
+        if (ImGui::MenuItem("Clear Background Image", nullptr, false, !m_scene->bgImage.empty())) {
+            m_scene->bgImage.clear();
+            MarkEdited();
+            consumed = true;
+        }
+        ImGui::Separator();
+        for (const char* typeName : kNodeTypes) {
+            if (std::string(typeName) == "panel" || std::string(typeName) == "text" ||
+                std::string(typeName) == "button" || std::string(typeName) == "image") {
+                continue;
+            }
+            if (ImGui::MenuItem((std::string("Add ") + typeName).c_str())) {
+                AddNodeAt(px::ui::NodeTypeFromString(typeName), m_contextCanvasX, m_contextCanvasY);
+                consumed = true;
+            }
+        }
+        ImGui::EndPopup();
+    }
 
     if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
         m_dragging = false;
         m_resizeHandle = 0;
     }
 
-    bool consumed = false;
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         int handle = 0;
         if (m_selected >= 0 && m_selected < static_cast<int>(m_scene->nodes.size())) {

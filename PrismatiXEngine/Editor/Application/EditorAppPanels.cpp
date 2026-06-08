@@ -14,6 +14,7 @@ namespace px::editor {
 
 namespace {
 const std::array<const char*, 8> kAssetTypes = { "all", "image", "audio", "script", "ui", "font", "lua", "other" };
+constexpr const char* kResourcePayload = "PX_RESOURCE_PATH";
 }
 void EditorApp::BuildDockLayout(unsigned int dockspaceId) {
     ImGui::DockBuilderRemoveNode(dockspaceId);
@@ -173,6 +174,9 @@ void EditorApp::RenderMenuBar() {
         if (ImGui::MenuItem("Rescan Assets")) {
             m_assets.Scan(m_project.Context());
         }
+        if (ImGui::MenuItem("Import Clipboard Files", "Ctrl+V")) {
+            ImportClipboardAssets();
+        }
         if (ImGui::MenuItem("Save Project", "Ctrl+S")) {
             if (m_project.SaveManifest()) Log("Manifest saved.");
         }
@@ -275,6 +279,10 @@ void EditorApp::RenderAssets() {
             }
             ImGui::EndCombo();
         }
+        ImGui::SameLine();
+        if (ImGui::Button("Paste")) {
+            ImportClipboardAssets();
+        }
         ImGui::Separator();
 
         const bool isPds = m_selectedAsset.size() > 4 && m_selectedAsset.substr(m_selectedAsset.size() - 4) == ".pds";
@@ -301,6 +309,7 @@ void EditorApp::RenderAssets() {
         if (ImGui::BeginChild("##assetlist")) {
             for (const AssetRecord& rec : filtered) {
                 ImGui::PushID(rec.runtimePath.c_str());
+                ImGui::BeginGroup();
                 if (rec.type == "image" && m_textures) {
                     if (ImTextureID thumb = m_textures->LoadId(rec.absolutePath.string())) {
                         ImGui::Image(thumb, ImVec2(40, 24));
@@ -310,6 +319,14 @@ void EditorApp::RenderAssets() {
                 const bool selected = rec.runtimePath == m_selectedAsset;
                 if (ImGui::Selectable(rec.runtimePath.c_str(), selected)) {
                     m_selectedAsset = rec.runtimePath;
+                }
+                ImGui::EndGroup();
+                if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+                    ImGui::SetDragDropPayload(kResourcePayload, rec.runtimePath.c_str(),
+                                              rec.runtimePath.size() + 1);
+                    ImGui::TextUnformatted(rec.runtimePath.c_str());
+                    ImGui::TextDisabled("%s", rec.type.c_str());
+                    ImGui::EndDragDropSource();
                 }
                 ImGui::PopID();
             }
@@ -419,8 +436,29 @@ void EditorApp::RenderPreview() {
             ImGui::Image(reinterpret_cast<ImTextureID>(m_preview->Target()), disp);
         }
         if (uiMode) {
-            m_designer.CanvasInput(p0, scale, hovered);
+            std::string selectedImageAsset;
+            for (const AssetRecord& rec : m_assets.Assets()) {
+                if (rec.runtimePath == m_selectedAsset && rec.type == "image") {
+                    selectedImageAsset = rec.runtimePath;
+                    break;
+                }
+            }
+            m_designer.CanvasInput(p0, scale, hovered, selectedImageAsset);
             m_designer.DrawOverlay(p0, scale);
+            const ImRect canvasRect(p0, ImVec2(p0.x + disp.x, p0.y + disp.y));
+            if (ImGui::BeginDragDropTargetCustom(canvasRect, ImGui::GetID("UIDesignerCanvasDrop"))) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kResourcePayload)) {
+                    std::string asset(static_cast<const char*>(payload->Data),
+                                      payload->DataSize > 0 ? payload->DataSize - 1 : 0);
+                    if (AssetDatabase::Classify(asset) == "image" && scale > 0.0f) {
+                        const ImVec2 dropMouse = ImGui::GetMousePos();
+                        m_selectedAsset = asset;
+                        m_designer.AddImageAt((dropMouse.x - p0.x) / scale,
+                                              (dropMouse.y - p0.y) / scale, asset);
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
         }
     }
     ImGui::End();

@@ -30,6 +30,7 @@ void EditorApp::BuildCommands() {
           [this] {
               if (m_preview) m_preview->Reload();
           } },
+        { "Import Clipboard Files", "Ctrl+V", [this] { ImportClipboardAssets(); } },
         { "Rescan Assets", "", [this] { m_assets.Scan(m_project.Context()); } },
         { "Refresh Problems", "", [this] { RefreshProblems(); } },
         { "Reset Layout", "", [this] { m_buildLayout = true; } },
@@ -56,6 +57,10 @@ void EditorApp::HandleShortcuts() {
     }
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, ImGuiInputFlags_RouteGlobal)) {
         SaveAll();
+    }
+    if (!ImGui::GetIO().WantTextInput &&
+        ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_V, ImGuiInputFlags_RouteGlobal)) {
+        ImportClipboardAssets();
     }
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_B, ImGuiInputFlags_RouteGlobal)) {
         RunBuild();
@@ -110,6 +115,7 @@ void EditorApp::RenderShortcutsWindow() {
             row("Ctrl+Shift+B", "Build & run packaged");
             row("F5", "Run (dev)");
             row("Ctrl+Z / Ctrl+Y", "Undo / Redo");
+            row("Ctrl+V", "Import copied files into Assets");
             row("F1", "Toggle this cheat sheet");
             ImGui::EndTable();
         }

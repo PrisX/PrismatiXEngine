@@ -17,6 +17,7 @@
 #include "Engine/Platform/Window.h"
 
 #include <functional>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -65,6 +66,8 @@ private:
     void RunDev();
     void RunPackaged();
     void OpenInExplorer(const std::filesystem::path& path);
+    void ImportAssetFiles(const std::vector<std::filesystem::path>& paths);
+    void ImportClipboardAssets();
     void SaveAll();
     void CreateFlowChapter(ImVec2 canvasPosition);
     void Log(const std::string& message);

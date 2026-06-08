@@ -25,13 +25,91 @@
 #include <array>
 #include <cctype>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <system_error>
+#include <vector>
 
 namespace px::editor {
 
 namespace {
 const std::array<const char*, 8> kAssetTypes = { "all", "image", "audio", "script", "ui", "font", "lua", "other" };
+
+namespace fs = std::filesystem;
+
+fs::path PathFromUtf8(const char* text) {
+    if (!text) {
+        return {};
+    }
+#ifdef _WIN32
+    const int wideSize = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text, -1, nullptr, 0);
+    if (wideSize > 0) {
+        std::vector<wchar_t> wide(static_cast<size_t>(wideSize));
+        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text, -1, wide.data(), wideSize);
+        return fs::path(wide.data());
+    }
+#endif
+    return fs::path(text);
+}
+
+fs::path ImportFolderForType(const std::string& type) {
+    if (type == "image") return fs::path("Data") / "Image" / "Imported";
+    if (type == "audio") return fs::path("Data") / "Audio" / "Imported";
+    if (type == "script") return fs::path("Data") / "Script";
+    if (type == "ui") return fs::path("Data") / "UI";
+    if (type == "font") return fs::path("Data") / "Font";
+    if (type == "lua") return fs::path("Data") / "Scripts";
+    return fs::path("Data") / "Imported";
+}
+
+fs::path UniqueDestination(const fs::path& requested) {
+    if (!fs::exists(requested)) {
+        return requested;
+    }
+    const fs::path parent = requested.parent_path();
+    const std::string stem = requested.stem().string();
+    const std::string ext = requested.extension().string();
+    for (int i = 1; i < 10000; ++i) {
+        fs::path candidate = parent / (stem + "_" + std::to_string(i) + ext);
+        if (!fs::exists(candidate)) {
+            return candidate;
+        }
+    }
+    return parent / (stem + "_copy" + ext);
+}
+
+bool IsPathWithin(const fs::path& child, const fs::path& parent) {
+    std::error_code ec;
+    fs::path childAbs = fs::weakly_canonical(child, ec);
+    if (ec) {
+        ec.clear();
+        childAbs = fs::absolute(child, ec);
+    }
+    ec.clear();
+    fs::path parentAbs = fs::weakly_canonical(parent, ec);
+    if (ec) {
+        ec.clear();
+        parentAbs = fs::absolute(parent, ec);
+    }
+    ec.clear();
+    const fs::path rel = fs::relative(childAbs, parentAbs, ec);
+    if (ec) {
+        return false;
+    }
+    for (const fs::path& part : rel) {
+        if (part == "..") {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string RuntimePath(const fs::path& root, const fs::path& path) {
+    std::error_code ec;
+    const fs::path rel = fs::relative(path, root, ec);
+    return ec ? path.generic_string() : rel.generic_string();
+}
 }
 
 EditorApp::EditorApp() : m_project([this](const std::string& m) { Log(m); }), m_assets([this](const std::string& m) { Log(m); }), m_scripts([this](const std::string& m) { Log(m); }) {}
@@ -42,6 +120,122 @@ void EditorApp::Log(const std::string& message) {
         m_console.erase(m_console.begin(), m_console.begin() + (m_console.size() - 500));
     }
     PX_LOG_INFO("[editor] {}", message);
+}
+
+void EditorApp::ImportAssetFiles(const std::vector<std::filesystem::path>& paths) {
+    const ProjectContext& context = m_project.Context();
+    if (!context.IsOpen()) {
+        Log("Open a project before importing assets.");
+        return;
+    }
+
+    std::vector<fs::path> files;
+    for (const fs::path& rawPath : paths) {
+        if (rawPath.empty()) {
+            continue;
+        }
+        std::error_code ec;
+        const fs::path source = fs::absolute(rawPath, ec);
+        const fs::path path = ec ? rawPath : source;
+        if (!fs::exists(path, ec)) {
+            Log("Asset import skipped, missing file: " + path.string());
+            continue;
+        }
+        if (fs::is_directory(path, ec)) {
+            for (fs::recursive_directory_iterator it(path, ec), end; it != end; it.increment(ec)) {
+                if (ec) {
+                    break;
+                }
+                if (!it->is_regular_file(ec)) {
+                    continue;
+                }
+                if (it->path().extension() == ".meta") {
+                    continue;
+                }
+                files.push_back(it->path());
+            }
+        }
+        else if (fs::is_regular_file(path, ec) && path.extension() != ".meta") {
+            files.push_back(path);
+        }
+    }
+
+    int imported = 0;
+    int alreadyInProject = 0;
+    std::string lastRuntimePath;
+    for (const fs::path& file : files) {
+        std::error_code ec;
+        if (IsPathWithin(file, context.DataRoot())) {
+            lastRuntimePath = RuntimePath(context.root, file);
+            ++alreadyInProject;
+            continue;
+        }
+
+        const std::string type = AssetDatabase::Classify(file);
+        const fs::path destination =
+            UniqueDestination(context.root / ImportFolderForType(type) / file.filename());
+        fs::create_directories(destination.parent_path(), ec);
+        if (ec) {
+            Log("Asset import failed to create folder: " + destination.parent_path().string());
+            continue;
+        }
+        fs::copy_file(file, destination, fs::copy_options::none, ec);
+        if (ec) {
+            Log("Asset import failed: " + file.string());
+            continue;
+        }
+        lastRuntimePath = RuntimePath(context.root, destination);
+        ++imported;
+    }
+
+    if (imported == 0 && alreadyInProject == 0) {
+        Log("No importable asset files found.");
+        return;
+    }
+
+    m_assets.Scan(context);
+    if (!lastRuntimePath.empty()) {
+        m_selectedAsset = lastRuntimePath;
+        m_metaAsset.clear();
+    }
+    if (imported > 0) {
+        Log("Imported " + std::to_string(imported) + " asset(s).");
+    }
+    if (alreadyInProject > 0) {
+        Log("Selected " + std::to_string(alreadyInProject) + " existing project asset(s).");
+    }
+}
+
+void EditorApp::ImportClipboardAssets() {
+#ifdef _WIN32
+    std::vector<fs::path> paths;
+    if (!OpenClipboard(nullptr)) {
+        Log("Clipboard is not available.");
+        return;
+    }
+    if (HANDLE data = GetClipboardData(CF_HDROP)) {
+        HDROP drop = reinterpret_cast<HDROP>(data);
+        const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+        for (UINT i = 0; i < count; ++i) {
+            const UINT len = DragQueryFileW(drop, i, nullptr, 0);
+            if (len == 0) {
+                continue;
+            }
+            std::vector<wchar_t> buffer(static_cast<size_t>(len) + 1);
+            DragQueryFileW(drop, i, buffer.data(), len + 1);
+            paths.emplace_back(buffer.data());
+        }
+    }
+    CloseClipboard();
+
+    if (paths.empty()) {
+        Log("Clipboard has no copied files to import.");
+        return;
+    }
+    ImportAssetFiles(paths);
+#else
+    Log("Clipboard file import is only implemented on Windows.");
+#endif
 }
 
 bool EditorApp::Init() {
@@ -56,6 +250,7 @@ bool EditorApp::Init() {
     if (!m_window.Create("PrismatiX Editor", 1600, 960, true)) {
         return false;
     }
+    SDL_SetEventEnabled(SDL_EVENT_DROP_FILE, true);
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -104,6 +299,9 @@ void EditorApp::Run() {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             ImGui_ImplSDL3_ProcessEvent(&event);
+            if (event.type == SDL_EVENT_DROP_FILE && event.drop.data) {
+                ImportAssetFiles({ PathFromUtf8(event.drop.data) });
+            }
             if (event.type == SDL_EVENT_QUIT) {
                 m_running = false;
             }

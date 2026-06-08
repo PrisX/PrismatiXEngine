@@ -303,18 +303,23 @@ void FlowMap::Render() {
 
     const auto renderPin = [&](const FNode& node, int pinId, bool input) {
         const bool linked = IsPinLinked(pinId);
-        const ImColor color(103, 219, 177);
+        const ImColor color(245, 248, 255);
+        const IconType icon = IconType::Flow;
         ed::PushStyleVar(ed::StyleVar_PivotSize, ImVec2(0.0f, 0.0f));
         ed::PushStyleVar(ed::StyleVar_PivotAlignment, input ? ImVec2(0.0f, 0.5f) : ImVec2(1.0f, 0.5f));
         ed::BeginPin(ed::PinId(pinId), input ? ed::PinKind::Input : ed::PinKind::Output);
         if (input) {
-            ax::Widgets::Icon(ImVec2(kPinSize, kPinSize), IconType::Circle, linked, color, ImColor(25, 30, 41));
+            ax::Widgets::Icon(ImVec2(kPinSize, kPinSize), icon, linked, color, ImColor(25, 30, 41));
             ImGui::SameLine(0.0f, 6.0f);
             ImGui::TextDisabled("In");
         } else {
-            const float offset = std::max(0.0f, ImGui::GetContentRegionAvail().x - kPinSize);
+            const float labelWidth = ImGui::CalcTextSize("Out").x;
+            const float totalWidth = labelWidth + kPinSize + 6.0f;
+            const float offset = std::max(0.0f, ImGui::GetContentRegionAvail().x - totalWidth);
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offset);
-            ax::Widgets::Icon(ImVec2(kPinSize, kPinSize), IconType::Circle, linked, color, ImColor(25, 30, 41));
+            ImGui::TextDisabled("Out");
+            ImGui::SameLine(0.0f, 6.0f);
+            ax::Widgets::Icon(ImVec2(kPinSize, kPinSize), icon, linked, color, ImColor(25, 30, 41));
         }
         ed::EndPin();
         ed::PopStyleVar(2);
