@@ -20,7 +20,7 @@ target_link_libraries(PrismatiXRuntime PUBLIC
     SDL3_mixer::SDL3_mixer
     spdlog::spdlog
     nlohmann_json::nlohmann_json
-    MbedTLS::mbedcrypto
+    prismatix_mbedcrypto
     zstd::libzstd
     ${LUA_LIBRARIES}
     sol2::sol2
@@ -39,7 +39,6 @@ if(PRISMATIX_EDITOR_SOURCES)
     target_include_directories(PrismatiXEditor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(PrismatiXEditor PRIVATE
         PrismatiXRuntime
-        PrismatiXImGui
         PrismatiXNodeEditor
     )
     if(WIN32)

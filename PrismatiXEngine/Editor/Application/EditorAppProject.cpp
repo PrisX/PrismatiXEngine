@@ -13,7 +13,41 @@
 #include <fstream>
 #include <sstream>
 
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+
 namespace px::editor {
+namespace {
+std::filesystem::path PlayerExecutableName() {
+#ifdef _WIN32
+    return "PrismatiXPlayer.exe";
+#else
+    return "PrismatiXPlayer";
+#endif
+}
+
+#ifndef _WIN32
+bool LaunchDetached(const std::filesystem::path& exe, const std::filesystem::path& workingDir) {
+    const pid_t pid = fork();
+    if (pid < 0) {
+        return false;
+    }
+    if (pid == 0) {
+        if (!workingDir.empty()) {
+            const std::string cwd = workingDir.string();
+            chdir(cwd.c_str());
+        }
+        const std::string exePath = exe.string();
+        const std::string arg0 = exe.filename().string();
+        execl(exePath.c_str(), arg0.c_str(), static_cast<char*>(nullptr));
+        _exit(127);
+    }
+    return true;
+}
+#endif
+}
+
 void EditorApp::OpenWorkspace() {
     OpenProject(std::filesystem::current_path());
     m_screen = Screen::Workspace;
@@ -123,7 +157,7 @@ void EditorApp::RunBuild() {
     opt.projectRoot = m_project.Context().root;
     opt.outputDir = m_project.Context().ExportRoot();
     if (const char* base = SDL_GetBasePath()) {
-        opt.playerExe = std::filesystem::path(base) / "PrismatiXPlayer.exe";
+        opt.playerExe = std::filesystem::path(base) / PlayerExecutableName();
     }
     opt.title = m.name;
     opt.startUI = m.startUI;
@@ -132,7 +166,9 @@ void EditorApp::RunBuild() {
     opt.encrypt = m.encrypt;
     opt.gameWidth = m.gameWidth;
     opt.gameHeight = m.gameHeight;
-    builder.Build(opt);
+    if (!builder.Build(opt)) {
+        Log("Build failed.");
+    }
 }
 
 void EditorApp::RunPlayer(const std::filesystem::path& exe, const std::filesystem::path& workingDir) {
@@ -157,7 +193,12 @@ void EditorApp::RunPlayer(const std::filesystem::path& exe, const std::filesyste
         Log("Run failed: could not start the player process.");
     }
 #else
-    Log("Run player is only implemented on Windows in this build.");
+    if (LaunchDetached(exe, workingDir)) {
+        Log("Launched player (cwd=" + workingDir.string() + ")");
+    }
+    else {
+        Log("Run failed: could not start the player process.");
+    }
 #endif
 }
 
@@ -167,17 +208,31 @@ void EditorApp::RunDev() {
         return;
     }
     SaveAll();
-    RunPlayer(std::filesystem::path(m_basePath) / "PrismatiXPlayer.exe", m_project.Context().root);
+    RunPlayer(std::filesystem::path(m_basePath) / PlayerExecutableName(), m_project.Context().root);
 }
 
 void EditorApp::RunPackaged() {
     const std::filesystem::path exportRoot = m_project.Context().ExportRoot();
-    RunPlayer(exportRoot / "PrismatiXPlayer.exe", exportRoot);
+    RunPlayer(exportRoot / PlayerExecutableName(), exportRoot);
 }
 
 void EditorApp::OpenInExplorer(const std::filesystem::path& path) {
 #ifdef _WIN32
     ShellExecuteW(nullptr, L"open", path.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#elif defined(__APPLE__)
+    const pid_t pid = fork();
+    if (pid == 0) {
+        const std::string p = path.string();
+        execlp("open", "open", p.c_str(), static_cast<char*>(nullptr));
+        _exit(127);
+    }
+#else
+    const pid_t pid = fork();
+    if (pid == 0) {
+        const std::string p = path.string();
+        execlp("xdg-open", "xdg-open", p.c_str(), static_cast<char*>(nullptr));
+        _exit(127);
+    }
 #endif
     Log("Open: " + path.string());
 }

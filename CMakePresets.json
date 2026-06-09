@@ -18,6 +18,25 @@
             }
         },
         {
+            "name": "macos-base",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "installDir": "${sourceDir}/out/install/${presetName}",
+            "environment": {
+                "PATH": "/opt/homebrew/bin:/usr/local/bin:$penv{PATH}",
+                "PKG_CONFIG_PATH": "/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig:$penv{PKG_CONFIG_PATH}"
+            },
+            "cacheVariables": {
+                "CMAKE_PREFIX_PATH": "$env{HOMEBREW_PREFIX};/opt/homebrew;/usr/local;/opt/homebrew/opt/lua@5.4;/usr/local/opt/lua@5.4"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            }
+        },
+        {
             "name": "windows-x64-base",
             "hidden": true,
             "inherits": "windows-base",
@@ -94,6 +113,22 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
             }
+        },
+        {
+            "name": "macos-debug",
+            "displayName": "macOS Debug",
+            "inherits": "macos-base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "macos-release",
+            "displayName": "macOS Release",
+            "inherits": "macos-base",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
         }
     ],
     "buildPresets": [
@@ -115,6 +150,16 @@
         {
             "name": "x86-release",
             "configurePreset": "x86-release",
+            "inheritConfigureEnvironment": true
+        },
+        {
+            "name": "macos-debug",
+            "configurePreset": "macos-debug",
+            "inheritConfigureEnvironment": true
+        },
+        {
+            "name": "macos-release",
+            "configurePreset": "macos-release",
             "inheritConfigureEnvironment": true
         }
     ]

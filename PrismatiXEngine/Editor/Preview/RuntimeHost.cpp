@@ -87,6 +87,7 @@ void RuntimeHost::Tick(float dt, std::uint64_t nowMs, bool hovered, float localX
 
     SDL_Texture* prevTarget = SDL_GetRenderTarget(m_editorRenderer);
     SDL_SetRenderTarget(m_editorRenderer, m_target);
+    SDL_SetRenderScale(m_editorRenderer, 1.0f, 1.0f);
     m_renderer->SetLogicalSize(m_width, m_height);
     SDL_SetRenderDrawColor(m_editorRenderer, 12, 14, 20, 255);
     SDL_RenderClear(m_editorRenderer);

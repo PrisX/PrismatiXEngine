@@ -1,25 +1,104 @@
 #include "Engine/IO/Crypto.h"
 
-#include <mbedtls/aes.h>
-#include <mbedtls/sha256.h>
+#include <psa/crypto.h>
 
 namespace px::crypto {
 
 namespace {
 constexpr std::size_t kBlock = 16;
+
+bool EnsureCryptoInitialized() {
+    static const bool initialized = psa_crypto_init() == PSA_SUCCESS;
+    return initialized;
+}
+
+bool ComputeSha256(const std::uint8_t* data, std::size_t size, std::uint8_t* out,
+                   std::size_t outSize) {
+    if (!EnsureCryptoInitialized()) {
+        return false;
+    }
+
+    std::size_t hashSize = 0;
+    return psa_hash_compute(PSA_ALG_SHA_256, data, size, out, outSize, &hashSize) ==
+               PSA_SUCCESS &&
+           hashSize == 32;
+}
+
+bool ImportAesKey(const Key& key, psa_key_usage_t usage, mbedtls_svc_key_id_t& keyId) {
+    if (!EnsureCryptoInitialized()) {
+        return false;
+    }
+
+    psa_key_attributes_t attributes = psa_key_attributes_init();
+    psa_set_key_type(&attributes, PSA_KEY_TYPE_AES);
+    psa_set_key_bits(&attributes, key.size() * 8);
+    psa_set_key_usage_flags(&attributes, usage);
+    psa_set_key_algorithm(&attributes, PSA_ALG_CBC_NO_PADDING);
+
+    const psa_status_t status = psa_import_key(&attributes, key.data(), key.size(), &keyId);
+    psa_reset_key_attributes(&attributes);
+    return status == PSA_SUCCESS;
+}
+
+Bytes CryptAesCbcNoPadding(const Bytes& input, const Key& key, const Iv& iv,
+                           psa_key_usage_t usage) {
+    if (input.empty() || (input.size() % kBlock) != 0) {
+        return {};
+    }
+
+    mbedtls_svc_key_id_t keyId = MBEDTLS_SVC_KEY_ID_INIT;
+    if (!ImportAesKey(key, usage, keyId)) {
+        return {};
+    }
+
+    psa_cipher_operation_t operation = psa_cipher_operation_init();
+    psa_status_t status = usage == PSA_KEY_USAGE_ENCRYPT
+                              ? psa_cipher_encrypt_setup(&operation, keyId,
+                                                         PSA_ALG_CBC_NO_PADDING)
+                              : psa_cipher_decrypt_setup(&operation, keyId,
+                                                         PSA_ALG_CBC_NO_PADDING);
+
+    if (status == PSA_SUCCESS) {
+        status = psa_cipher_set_iv(&operation, iv.data(), iv.size());
+    }
+
+    Bytes out(input.size() + kBlock, 0);
+    std::size_t updateSize = 0;
+    if (status == PSA_SUCCESS) {
+        status = psa_cipher_update(&operation, input.data(), input.size(), out.data(),
+                                   out.size(), &updateSize);
+    }
+
+    std::size_t finishSize = 0;
+    if (status == PSA_SUCCESS) {
+        status = psa_cipher_finish(&operation, out.data() + updateSize,
+                                   out.size() - updateSize, &finishSize);
+    } else {
+        psa_cipher_abort(&operation);
+    }
+
+    psa_destroy_key(keyId);
+
+    if (status != PSA_SUCCESS) {
+        return {};
+    }
+
+    out.resize(updateSize + finishSize);
+    return out;
+}
 }
 
 Key DeriveKey(std::string_view passphrase) {
     Key key{};
-    mbedtls_sha256(reinterpret_cast<const unsigned char*>(passphrase.data()), passphrase.size(),
-                   key.data(), /*is224=*/0);
+    ComputeSha256(reinterpret_cast<const std::uint8_t*>(passphrase.data()), passphrase.size(),
+                  key.data(), key.size());
     return key;
 }
 
 Iv DeriveIv(std::string_view salt) {
     std::array<std::uint8_t, 32> digest{};
-    mbedtls_sha256(reinterpret_cast<const unsigned char*>(salt.data()), salt.size(), digest.data(),
-                   0);
+    ComputeSha256(reinterpret_cast<const std::uint8_t*>(salt.data()), salt.size(), digest.data(),
+                  digest.size());
     Iv iv{};
     for (std::size_t i = 0; i < kBlock; ++i) {
         iv[i] = static_cast<std::uint8_t>(digest[i] ^ digest[i + kBlock]);
@@ -32,29 +111,17 @@ Bytes Encrypt(const Bytes& plain, const Key& key, const Iv& iv) {
     Bytes padded = plain;
     padded.insert(padded.end(), pad, static_cast<std::uint8_t>(pad));
 
-    Bytes out(padded.size(), 0);
-    mbedtls_aes_context ctx;
-    mbedtls_aes_init(&ctx);
-    mbedtls_aes_setkey_enc(&ctx, key.data(), 256);
-    Iv ivCopy = iv;
-    mbedtls_aes_crypt_cbc(&ctx, MBEDTLS_AES_ENCRYPT, padded.size(), ivCopy.data(), padded.data(),
-                          out.data());
-    mbedtls_aes_free(&ctx);
-    return out;
+    return CryptAesCbcNoPadding(padded, key, iv, PSA_KEY_USAGE_ENCRYPT);
 }
 
 Bytes Decrypt(const Bytes& cipher, const Key& key, const Iv& iv) {
     if (cipher.empty() || (cipher.size() % kBlock) != 0) {
         return {};
     }
-    Bytes out(cipher.size(), 0);
-    mbedtls_aes_context ctx;
-    mbedtls_aes_init(&ctx);
-    mbedtls_aes_setkey_dec(&ctx, key.data(), 256);
-    Iv ivCopy = iv;
-    mbedtls_aes_crypt_cbc(&ctx, MBEDTLS_AES_DECRYPT, cipher.size(), ivCopy.data(), cipher.data(),
-                          out.data());
-    mbedtls_aes_free(&ctx);
+    Bytes out = CryptAesCbcNoPadding(cipher, key, iv, PSA_KEY_USAGE_DECRYPT);
+    if (out.empty()) {
+        return {};
+    }
 
     const std::uint8_t pad = out.back();
     if (pad == 0 || pad > kBlock || pad > out.size()) {

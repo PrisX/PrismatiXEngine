@@ -9,6 +9,14 @@
 #include <string>
 
 namespace {
+std::filesystem::path PlayerExecutableName() {
+#ifdef _WIN32
+    return "PrismatiXPlayer.exe";
+#else
+    return "PrismatiXPlayer";
+#endif
+}
+
 int RunHeadlessBuild(const char* argv0) {
     auto log = [](const std::string& s) { PX_LOG_INFO("[build] {}", s); };
     px::editor::ProjectService project(log);
@@ -23,7 +31,7 @@ int RunHeadlessBuild(const char* argv0) {
     opt.outputDir = project.Context().ExportRoot();
     std::error_code ec;
     opt.playerExe =
-        std::filesystem::absolute(argv0, ec).parent_path() / "PrismatiXPlayer.exe";
+        std::filesystem::absolute(argv0, ec).parent_path() / PlayerExecutableName();
     opt.title = m.name;
     opt.startUI = m.startUI;
     opt.startScript = m.startScript;

@@ -110,6 +110,16 @@ std::string RuntimePath(const fs::path& root, const fs::path& path) {
     const fs::path rel = fs::relative(path, root, ec);
     return ec ? path.generic_string() : rel.generic_string();
 }
+
+void PrepareImGuiRenderer(SDL_Renderer* renderer) {
+    const ImGuiIO& io = ImGui::GetIO();
+    const float scaleX = io.DisplayFramebufferScale.x > 0.0f ? io.DisplayFramebufferScale.x : 1.0f;
+    const float scaleY = io.DisplayFramebufferScale.y > 0.0f ? io.DisplayFramebufferScale.y : 1.0f;
+
+    SDL_SetRenderTarget(renderer, nullptr);
+    SDL_SetRenderLogicalPresentation(renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
+    SDL_SetRenderScale(renderer, scaleX, scaleY);
+}
 }
 
 EditorApp::EditorApp() : m_project([this](const std::string& m) { Log(m); }), m_assets([this](const std::string& m) { Log(m); }), m_scripts([this](const std::string& m) { Log(m); }) {}
@@ -314,6 +324,7 @@ void EditorApp::Run() {
         BuildUI();
 
         ImGui::Render();
+        PrepareImGuiRenderer(m_window.Renderer());
         m_window.Clear(Color{ 18, 20, 26, 255 });
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), m_window.Renderer());
         m_window.Present();

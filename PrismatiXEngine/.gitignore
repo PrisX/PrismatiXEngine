@@ -1,6 +1,6 @@
-build/
-bin/
-obj/
+/build/
+/bin/
+/obj/
 *.exe
 *.pdb
 *.ilk

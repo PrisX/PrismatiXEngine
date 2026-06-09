@@ -9,11 +9,41 @@ endif()
 project ("PrismatiXEngine" LANGUAGES C CXX)
 
 if(APPLE)
-    execute_process(COMMAND brew --prefix OUTPUT_VARIABLE HOMEBREW_PREFIX OUTPUT_STRIP_TRAILING_WHITESPACE)
-    list(APPEND CMAKE_PREFIX_PATH
-        "${HOMEBREW_PREFIX}"
-        "/opt/homebrew/opt/lua@5.4"
-    )
+    set(_PRISMATIX_HOMEBREW_PREFIXES)
+
+    if(DEFINED ENV{HOMEBREW_PREFIX} AND EXISTS "$ENV{HOMEBREW_PREFIX}")
+        list(APPEND _PRISMATIX_HOMEBREW_PREFIXES "$ENV{HOMEBREW_PREFIX}")
+    endif()
+
+    find_program(_PRISMATIX_BREW_EXECUTABLE brew)
+    if(_PRISMATIX_BREW_EXECUTABLE)
+        execute_process(
+            COMMAND "${_PRISMATIX_BREW_EXECUTABLE}" --prefix
+            OUTPUT_VARIABLE _PRISMATIX_BREW_PREFIX
+            RESULT_VARIABLE _PRISMATIX_BREW_PREFIX_RESULT
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        if(_PRISMATIX_BREW_PREFIX_RESULT EQUAL 0 AND EXISTS "${_PRISMATIX_BREW_PREFIX}")
+            list(APPEND _PRISMATIX_HOMEBREW_PREFIXES "${_PRISMATIX_BREW_PREFIX}")
+        endif()
+    endif()
+
+    foreach(_PRISMATIX_DEFAULT_PREFIX IN ITEMS "/opt/homebrew" "/usr/local")
+        if(EXISTS "${_PRISMATIX_DEFAULT_PREFIX}")
+            list(APPEND _PRISMATIX_HOMEBREW_PREFIXES "${_PRISMATIX_DEFAULT_PREFIX}")
+        endif()
+    endforeach()
+
+    if(_PRISMATIX_HOMEBREW_PREFIXES)
+        list(REMOVE_DUPLICATES _PRISMATIX_HOMEBREW_PREFIXES)
+        foreach(_PRISMATIX_HOMEBREW_PREFIX IN LISTS _PRISMATIX_HOMEBREW_PREFIXES)
+            list(APPEND CMAKE_PREFIX_PATH
+                "${_PRISMATIX_HOMEBREW_PREFIX}"
+                "${_PRISMATIX_HOMEBREW_PREFIX}/opt/lua@5.4"
+            )
+        endforeach()
+    endif()
 endif()
 
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
@@ -22,7 +52,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Dependencies (vcpkg manifest)
+# Dependencies (vcpkg manifest on Windows, Homebrew packages on macOS)
 find_package(SDL3 CONFIG REQUIRED)
 find_package(SDL3_image CONFIG REQUIRED)
 find_package(SDL3_ttf CONFIG REQUIRED)
@@ -32,6 +62,17 @@ find_package(spdlog CONFIG REQUIRED)
 find_package(MbedTLS CONFIG REQUIRED)
 find_package(zstd CONFIG REQUIRED)
 
+add_library(prismatix_mbedcrypto INTERFACE)
+if(TARGET MbedTLS::mbedcrypto)
+    target_link_libraries(prismatix_mbedcrypto INTERFACE MbedTLS::mbedcrypto)
+elseif(TARGET MbedTLS::tfpsacrypto)
+    target_link_libraries(prismatix_mbedcrypto INTERFACE MbedTLS::tfpsacrypto)
+elseif(TARGET MbedTLS::mbedtls)
+    target_link_libraries(prismatix_mbedcrypto INTERFACE MbedTLS::mbedtls)
+else()
+    message(FATAL_ERROR "Could not find a usable MbedTLS crypto target.")
+endif()
+
 # Lua + sol2
 include(FetchContent)
 FetchContent_Declare(
@@ -40,7 +81,7 @@ FetchContent_Declare(
     GIT_TAG        develop
 )
 FetchContent_MakeAvailable(sol2)
-find_package(Lua REQUIRED)
+find_package(Lua 5.4 REQUIRED)
 
 # Subdirectories
 add_subdirectory("ThirdParty")
