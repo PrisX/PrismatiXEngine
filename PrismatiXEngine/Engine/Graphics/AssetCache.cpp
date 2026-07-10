@@ -1,6 +1,7 @@
 #include "Engine/Graphics/AssetCache.h"
 
 #include "Engine/Support/Logger.h"
+#include "Engine/Diagnostics/Diagnostic.h"
 
 #include <SDL3/SDL.h>
 #include <SDL3_image/SDL_image.h>
@@ -16,6 +17,9 @@ namespace {
 // Soft cap on resident textures; a long VN session visits far more backgrounds
 // and sprites than are ever on screen together.
 constexpr std::size_t kMaxTextures = 128;
+void AssetDiagnostic(std::string code,const std::string& path,std::string message,std::string details={}){
+    diag::Diagnostic d{.severity=diag::Severity::Error,.code=std::move(code),.category="Asset.Load",.message=std::move(message),.details=std::move(details)};d.source.path=path;diag::Emit(std::move(d));
+}
 }
 
 AssetCache::AssetCache(SDL_Renderer* renderer, io::VFS& vfs) : m_renderer(renderer), m_vfs(vfs) {}
@@ -65,6 +69,7 @@ SDL_Texture* AssetCache::Texture(const std::string& path) {
     auto bytes = m_vfs.Read(path);
     if (!bytes) {
         PX_LOG_WARN("AssetCache: texture not found '{}'", path);
+        AssetDiagnostic("PXASSET7001",path,"Texture asset was not found");
         m_textures[path] = TextureEntry{ nullptr, m_frame };
         return nullptr;
     }
@@ -73,6 +78,7 @@ SDL_Texture* AssetCache::Texture(const std::string& path) {
     SDL_Surface* surface = io ? IMG_Load_IO(io, /*closeio=*/true) : nullptr;
     if (!surface) {
         PX_LOG_WARN("AssetCache: failed to decode image '{}': {}", path, SDL_GetError());
+        AssetDiagnostic("PXASSET7002",path,"Texture asset could not be decoded",SDL_GetError());
         m_textures[path] = TextureEntry{ nullptr, m_frame };
         return nullptr;
     }
@@ -90,12 +96,14 @@ SDL_Surface* AssetCache::LoadSurface(const std::string& path) {
     auto bytes = m_vfs.Read(path);
     if (!bytes) {
         PX_LOG_WARN("AssetCache: surface not found '{}'", path);
+        AssetDiagnostic("PXASSET7003",path,"Image surface asset was not found");
         return nullptr;
     }
     SDL_IOStream* io = SDL_IOFromConstMem(bytes->data(), bytes->size());
     SDL_Surface* surface = io ? IMG_Load_IO(io, /*closeio=*/true) : nullptr;
     if (!surface) {
         PX_LOG_WARN("AssetCache: failed to decode surface '{}': {}", path, SDL_GetError());
+        AssetDiagnostic("PXASSET7004",path,"Image surface could not be decoded",SDL_GetError());
         return nullptr;
     }
     SDL_Surface* rgba = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_RGBA32);
@@ -107,12 +115,14 @@ SDL_Texture* AssetCache::RegisterMemoryTexture(const std::string& key, const voi
                                                std::size_t size) {
     UnregisterTexture(key);
     if (!data || size == 0) {
+        AssetDiagnostic("PXASSET7005",key,"Memory texture has no data");
         return nullptr;
     }
     SDL_IOStream* io = SDL_IOFromConstMem(data, size);
     SDL_Surface* surface = io ? IMG_Load_IO(io, /*closeio=*/true) : nullptr;
     if (!surface) {
         PX_LOG_WARN("AssetCache: failed to decode memory image '{}': {}", key, SDL_GetError());
+        AssetDiagnostic("PXASSET7006",key,"Memory texture could not be decoded",SDL_GetError());
         return nullptr;
     }
     SDL_Texture* texture = SDL_CreateTextureFromSurface(m_renderer, surface);
@@ -140,8 +150,18 @@ TTF_Font* AssetCache::Font(const std::string& path, int size, int outline) {
     }
 
     auto bytes = m_vfs.Read(path);
+    std::string resolvedPath = path;
+    if (!bytes && path == "Content/Fonts/NotoSansTC-Bold.ttf") {
+        resolvedPath = "Resources/Fonts/NotoSansTC-Bold.ttf";
+        bytes = m_vfs.Read(resolvedPath);
+        if (bytes) {
+            PX_LOG_WARN("AssetCache: project font missing '{}'; using fallback '{}'", path,
+                        resolvedPath);
+        }
+    }
     if (!bytes) {
         PX_LOG_WARN("AssetCache: font not found '{}'", path);
+        AssetDiagnostic("PXASSET7007",path,"Font asset was not found");
         m_fonts[key] = {};
         return nullptr;
     }
@@ -150,7 +170,8 @@ TTF_Font* AssetCache::Font(const std::string& path, int size, int outline) {
     SDL_IOStream* io = SDL_IOFromConstMem(held->data(), held->size());
     TTF_Font* font = io ? TTF_OpenFontIO(io, /*closeio=*/true, static_cast<float>(size)) : nullptr;
     if (!font) {
-        PX_LOG_WARN("AssetCache: failed to open font '{}': {}", path, SDL_GetError());
+        PX_LOG_WARN("AssetCache: failed to open font '{}': {}", resolvedPath, SDL_GetError());
+        AssetDiagnostic("PXASSET7008",resolvedPath,"Font asset could not be opened",SDL_GetError());
         m_fonts[key] = {};
         return nullptr;
     }

@@ -41,15 +41,15 @@ struct Choice {
 };
 
 struct VMConfig {
-    std::string bgDir = "Data/Image/Background/";
-    std::string ruleDir = "Data/Image/Rule/";
-    std::string charDir = "Data/Image/Character/";
-    std::string cgDir = "Data/Image/CG/";
-    std::string bgmDir = "Data/Audio/Music/";
-    std::string seDir = "Data/Audio/SFX/";
-    std::string voiceDir = "Data/Audio/Voice/";
-    std::string videoDir = "Data/Video/";
-    std::string scriptDir = "Data/Script/";
+    std::string bgDir = "Content/Images/Background/";
+    std::string ruleDir = "Content/Images/Rules/";
+    std::string charDir = "Content/Images/Character/";
+    std::string cgDir = "Content/Images/CG/";
+    std::string bgmDir = "Content/Audio/Music/";
+    std::string seDir = "Content/Audio/SFX/";
+    std::string voiceDir = "Content/Audio/Voice/";
+    std::string videoDir = "Content/Video/";
+    std::string scriptDir = "Content/Script/";
     int defaultTextSpeed = 28;
 };
 

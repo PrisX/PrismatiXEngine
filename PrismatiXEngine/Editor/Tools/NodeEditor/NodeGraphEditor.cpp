@@ -16,6 +16,7 @@
 #include <optional>
 #include <sstream>
 #include <unordered_set>
+#include "Engine/IO/AtomicFile.h"
 
 namespace ed = ax::NodeEditor;
 namespace fs = std::filesystem;
@@ -288,7 +289,7 @@ ImVec4 ColorFromJson(const Json& json, ImVec4 fallback) {
 
 }  // namespace
 
-NodeGraphEditor::NodeGraphEditor(GraphKind kind, LogSink log) : m_kind(kind), m_log(std::move(log)) {
+NodeGraphEditor::NodeGraphEditor(GraphKind kind, LogSink log) : m_kind(kind), m_log(std::move(log)),m_editDocumentId(Uuid::Random()),m_editHistory(*this) {
     if (m_kind == GraphKind::PDSDialogue) {
         m_documentRuntimePath = "Script/chapter1.pds";
         m_documentPathInput = m_documentRuntimePath;
@@ -571,9 +572,9 @@ void NodeGraphEditor::LoadOrCreate() {
     m_groups.clear();
     m_unknownNodes.clear();
     m_unknownLinks.clear();
-    m_undoStack.clear();
-    m_redoStack.clear();
+    m_editHistory.Clear();
     m_undoArmed = false;
+    m_undoGestureDirty = false;
     m_nextId = 1;
     m_selectedNodeId = 0;
     m_selectedLinkId = 0;
@@ -845,26 +846,27 @@ Json NodeGraphEditor::SaveGraph() const {
     return graph;
 }
 
-void NodeGraphEditor::Save() {
+bool NodeGraphEditor::Save() {
     const fs::path path = DocumentPath();
     if (path.empty()) {
-        return;
+        return false;
     }
     UpdateNodePositions();
     fs::create_directories(path.parent_path());
     try {
-        std::ofstream out(path, std::ios::binary);
-        if (m_kind == GraphKind::PDSDialogue) {
-            out << Compile();
-        }
-        else {
-            out << std::setw(2) << SaveGraph() << "\n";
-        }
+        const std::string content=m_kind==GraphKind::PDSDialogue?Compile():SaveGraph().dump(2)+"\n";
+        const Status written=io::AtomicFile::WriteText(path,content);if(!written){for(const auto& diagnostic:written.Diagnostics())diag::Emit(diagnostic);return false;}
         m_dirty = false;
+        m_editHistory.MarkSaved();m_undoBaseline=SaveGraph();m_undoGestureDirty=false;m_undoArmed=true;
         m_loaded = true;
         Log("Saved " + std::string(m_kind == GraphKind::PDSDialogue ? "PDS document" : Title()) + ": " + path.string());
+        return true;
     } catch (const std::exception& exception) {
         Log(std::string("Save failed: ") + exception.what());
+        diag::Diagnostic diagnostic{.severity=diag::Severity::Error,.code="PXGRAPH8005",
+            .category="Editor.Document",.message="無法儲存文件",.details=exception.what()};
+        diagnostic.source.path=path.generic_string();diag::Emit(std::move(diagnostic));
+        return false;
     }
 }
 
@@ -1498,48 +1500,49 @@ void NodeGraphEditor::UpdateNodePositions() {
 }
 
 void NodeGraphEditor::MarkDirty() {
-    // First change of an edit gesture: push the idle-time baseline so the whole
-    // gesture (drag, typing burst, popup edit) undoes as one entry.
-    if (m_undoArmed) {
-        m_undoStack.push_back(m_undoBaseline);
-        constexpr std::size_t kMaxUndoEntries = 64;
-        if (m_undoStack.size() > kMaxUndoEntries) {
-            m_undoStack.erase(m_undoStack.begin());
-        }
-        m_redoStack.clear();
-        m_undoArmed = false;
-    }
+    m_undoGestureDirty = true;
     m_dirty = true;
+}
+
+void NodeGraphEditor::RelocateIfOpen(const std::string& oldRuntimePath,
+                                     const std::string& newRuntimePath) {
+    const std::string oldNormalized = NormalizePDSRuntimePath(oldRuntimePath);
+    if (m_kind == GraphKind::PDSDialogue &&
+        (m_documentRuntimePath == oldNormalized ||
+         fs::path(m_documentRuntimePath).filename() == fs::path(oldNormalized).filename())) {
+        m_documentRuntimePath = NormalizePDSRuntimePath(newRuntimePath);
+    }
 }
 
 void NodeGraphEditor::Undo() {
-    if (m_undoStack.empty()) {
-        return;
-    }
-    UpdateNodePositions();
-    m_redoStack.push_back(SaveGraph());
-    const Json snapshot = m_undoStack.back();
-    m_undoStack.pop_back();
-    RestoreGraph(snapshot);
+    if(!m_editHistory.CanUndo())return;const Status status=m_editHistory.Undo();if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);else m_dirty=m_editHistory.Dirty();
 }
 
 void NodeGraphEditor::Redo() {
-    if (m_redoStack.empty()) {
-        return;
-    }
-    UpdateNodePositions();
-    m_undoStack.push_back(SaveGraph());
-    const Json snapshot = m_redoStack.back();
-    m_redoStack.pop_back();
-    RestoreGraph(snapshot);
+    if(!m_editHistory.CanRedo())return;const Status status=m_editHistory.Redo();if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);else m_dirty=m_editHistory.Dirty();
 }
 
 void NodeGraphEditor::RestoreGraph(const Json& snapshot) {
-    m_undoArmed = false;  // LoadGraph rebuilds everything; don't capture mid-restore
     LoadGraph(snapshot);
     m_dirty = true;
     m_loaded = true;
+    m_undoBaseline=SaveGraph();m_undoArmed=true;m_undoGestureDirty=false;
 }
+
+Result<Variant> NodeGraphEditor::ReadProperty(const Uuid& target,const std::string& property)const{
+    if(target!=m_editDocumentId||property!="graph")return Result<Variant>::Failure(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXGRAPH8001",.category="Editor.Graph",.message="Unknown graph edit target/property"});
+    return Result<Variant>::Success(Variant(SaveGraph().dump()));
+}
+Status NodeGraphEditor::WriteProperty(const Uuid& target,const std::string& property,const Variant& value){
+    if(target!=m_editDocumentId||property!="graph")return Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXGRAPH8001",.category="Editor.Graph",.message="Unknown graph edit target/property"});
+    const auto* text=value.TryGet<std::string>();if(!text)return Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXGRAPH8002",.category="Editor.Graph",.message="Graph snapshot must be String"});
+    Json json=Json::parse(*text,nullptr,false);if(json.is_discarded())return Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXGRAPH8003",.category="Editor.Graph",.message="Graph snapshot is corrupt"});RestoreGraph(json);return Status::Ok();
+}
+Result<VariantObject> NodeGraphEditor::CaptureSubtree(const Uuid&)const{return Result<VariantObject>::Failure(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXGRAPH8004",.category="Editor.Graph",.message="Graph document does not support subtree commands"});}
+Status NodeGraphEditor::InsertSubtree(const Uuid&,std::size_t,const VariantObject&){return Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXGRAPH8004",.category="Editor.Graph",.message="Graph document does not support subtree commands"});}
+Result<VariantObject> NodeGraphEditor::RemoveSubtree(const Uuid&){return Result<VariantObject>::Failure(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXGRAPH8004",.category="Editor.Graph",.message="Graph document does not support subtree commands"});}
+Status NodeGraphEditor::Reparent(const Uuid&,const Uuid&,std::size_t){return Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXGRAPH8004",.category="Editor.Graph",.message="Graph document does not support subtree commands"});}
+Status NodeGraphEditor::MoveChild(const Uuid&,const Uuid&,std::size_t){return Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXGRAPH8004",.category="Editor.Graph",.message="Graph document does not support child-order commands"});}
 
 void NodeGraphEditor::Render() {
     EnsureContext();
@@ -1692,10 +1695,13 @@ void NodeGraphEditor::RenderGraph() {
     HandleAssetDrop(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
 
     // Re-arm undo capture once no edit gesture is in flight.
-    if (!m_undoArmed && !ImGui::IsAnyItemActive() &&
-        !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        m_undoBaseline = SaveGraph();
-        m_undoArmed = true;
+    if (!ImGui::IsAnyItemActive() && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        const Json current=SaveGraph();
+        if(m_undoArmed&&m_undoGestureDirty&&current!=m_undoBaseline){
+            auto command=std::make_unique<PropertyChangeCommand>("Edit story graph",m_editDocumentId,"graph",Variant(m_undoBaseline.dump()),Variant(current.dump()),std::chrono::steady_clock::now(),false);
+            const Status status=m_editHistory.CommitApplied(std::move(command));if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);
+        }
+        m_undoBaseline=current;m_undoArmed=true;m_undoGestureDirty=false;
     }
 }
 
@@ -2503,7 +2509,7 @@ void NodeGraphEditor::RenderInNodePopups() {
                     edited = true;
                 }
             }
-            ImGui::TextDisabled("Bare filenames resolve under Data/Audio/Voice/.");
+            ImGui::TextDisabled("Bare filenames resolve under Content/Audio/Voice/.");
             if (edited) {
                 parameter->stringValue = JoinTextLines(voices);
                 MarkDirty();
@@ -3016,8 +3022,8 @@ std::string NodeGraphEditor::NormalizePDSRuntimePath(std::string value) {
     if (value.empty()) {
         return {};
     }
-    if (value.rfind("Data/", 0) == 0) {
-        value.erase(0, 5);
+    if (value.rfind("Content/", 0) == 0) {
+        value.erase(0, 8);
     }
     if (value.find('/') == std::string::npos) {
         value = "Script/" + value;

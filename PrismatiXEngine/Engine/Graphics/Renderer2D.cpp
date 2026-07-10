@@ -92,6 +92,35 @@ void Renderer2D::DrawRoundedRect(const Rect& rect, float radius, Color color) {
     SDL_RenderGeometry(m_renderer, nullptr, fan.data(), static_cast<int>(fan.size()), nullptr, 0);
 }
 
+void Renderer2D::PushClip(const Rect& requested) {
+    Rect clip = requested;
+    if (!m_clipStack.empty()) {
+        const Rect parent = m_clipStack.back();
+        const float left = std::max(parent.x, clip.x);
+        const float top = std::max(parent.y, clip.y);
+        const float right = std::min(parent.x + parent.w, clip.x + clip.w);
+        const float bottom = std::min(parent.y + parent.h, clip.y + clip.h);
+        clip = {left, top, std::max(0.0f, right - left), std::max(0.0f, bottom - top)};
+    }
+    m_clipStack.push_back(clip);
+    const SDL_Rect value{static_cast<int>(clip.x), static_cast<int>(clip.y),
+                         static_cast<int>(clip.w), static_cast<int>(clip.h)};
+    SDL_SetRenderClipRect(m_renderer, &value);
+}
+
+void Renderer2D::PopClip() {
+    if (m_clipStack.empty()) return;
+    m_clipStack.pop_back();
+    if (m_clipStack.empty()) {
+        SDL_SetRenderClipRect(m_renderer, nullptr);
+    } else {
+        const Rect clip = m_clipStack.back();
+        const SDL_Rect value{static_cast<int>(clip.x), static_cast<int>(clip.y),
+                             static_cast<int>(clip.w), static_cast<int>(clip.h)};
+        SDL_SetRenderClipRect(m_renderer, &value);
+    }
+}
+
 void Renderer2D::Blit(SDL_Texture* texture, const Rect& dst, std::uint8_t alpha) {
     if (!texture) {
         return;

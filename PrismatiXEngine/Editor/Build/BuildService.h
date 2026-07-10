@@ -13,8 +13,8 @@ struct BuildOptions {
     std::filesystem::path outputDir;
     std::filesystem::path playerExe;
     std::string title = "PrismatiX Player";
-    std::string startUI = "Data/UI/title.pxui";
-    std::string startScript = "test_scene.pds";
+    std::string startUI = "Content/UI/Title.pxscene";
+    std::string startScript = "Content/Script/start.pds";
     std::string key = "prismatix";
     bool encrypt = true;
     int gameWidth = 1280;

@@ -15,10 +15,11 @@
 #include "Editor/Project/ProjectTypes.h"
 #include "Editor/Tools/Lua/CustomCommand.h"
 #include "Editor/Workspace/DocumentRegistry.h"
+#include "Editor/Workspace/EditHistory.h"
 
 namespace px::editor {
 
-class NodeGraphEditor {
+class NodeGraphEditor : public IEditableDocument {
 public:
     enum class GraphKind {
         PDSDialogue,
@@ -51,11 +52,13 @@ public:
     }
     void Render();
     void RenderInspector();
-    void Save();
+    [[nodiscard]] bool Save();
     void Reload();
     // Reloads the graph if `script` (filename or runtime path) is the open document
     // and it has no unsaved edits. Used when the Flow editor rewrites the file.
     void ReloadIfOpen(const std::string& script);
+    void RelocateIfOpen(const std::string& oldRuntimePath,
+                        const std::string& newRuntimePath);
     bool OpenDocument(const std::string& runtimePath);
     bool NewDocument(const std::string& runtimePath);
     void ApplyAssetToSelection(const std::string& runtimePath);
@@ -66,8 +69,17 @@ public:
 
     void Undo();
     void Redo();
-    [[nodiscard]] bool CanUndo() const { return !m_undoStack.empty(); }
-    [[nodiscard]] bool CanRedo() const { return !m_redoStack.empty(); }
+    [[nodiscard]] bool CanUndo() const { return m_editHistory.CanUndo(); }
+    [[nodiscard]] bool CanRedo() const { return m_editHistory.CanRedo(); }
+
+    [[nodiscard]] Uuid DocumentId() const override { return m_editDocumentId; }
+    [[nodiscard]] Result<Variant> ReadProperty(const Uuid& target,const std::string& property) const override;
+    Status WriteProperty(const Uuid& target,const std::string& property,const Variant& value) override;
+    [[nodiscard]] Result<VariantObject> CaptureSubtree(const Uuid& target) const override;
+    Status InsertSubtree(const Uuid& parent,std::size_t index,const VariantObject& subtree) override;
+    [[nodiscard]] Result<VariantObject> RemoveSubtree(const Uuid& target) override;
+    Status Reparent(const Uuid& target,const Uuid& parent,std::size_t index) override;
+    Status MoveChild(const Uuid& parent,const Uuid& target,std::size_t index) override;
 
     [[nodiscard]] std::string Title() const;
     [[nodiscard]] std::filesystem::path DocumentPath() const;
@@ -296,10 +308,11 @@ private:
 
     // Snapshot undo: the baseline is captured when idle; the first MarkDirty of
     // an edit gesture pushes it, so drags/typing coalesce into one entry.
-    std::vector<Json> m_undoStack;
-    std::vector<Json> m_redoStack;
     Json m_undoBaseline;
     bool m_undoArmed = false;
+    bool m_undoGestureDirty = false;
+    Uuid m_editDocumentId;
+    EditHistory m_editHistory;
 
     int m_pendingDocAction = 0;  // 1 = open, 2 = new (unsaved-changes prompt)
     std::string m_pendingDocPath;

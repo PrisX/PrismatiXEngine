@@ -21,6 +21,9 @@ vcpkg_installed/
 # user files
 *.user
 *.log
+/Data
+/Content
+
 
 # OS
 .DS_Store

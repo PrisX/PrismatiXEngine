@@ -3,16 +3,15 @@
 #include "Engine/Progression/GameSettings.h"
 #include "Engine/Progression/GlobalProfile.h"
 #include "Engine/Progression/SaveSystem.h"
-#include "Engine/Project/Database.h"
 #include "Engine/Lua/LuaHost.h"
 #include "Engine/Runtime.h"
-#include "Engine/UI/ScreenManager.h"
-#include "Engine/UI/UIStage.h"
+#include "Engine/UI/GalgameUI.h"
 #include "Engine/VN/Runtime/Backlog.h"
 #include "Engine/VN/Runtime/Dialogue.h"
 #include "Engine/VN/Runtime/Stage.h"
 #include "Engine/VN/Runtime/VariableStore.h"
 #include "Engine/VN/Runtime/VM.h"
+#include "Engine/VN/GameCatalog.h"
 #include "Engine/Video/VideoPlayer.h"
 
 #include <cstdint>
@@ -33,12 +32,10 @@ public:
 private:
     enum class AppState { Title, Game };
 
-    // Boot configuration shared by dev runs (project.prismatix.json) and
-    // packaged builds (game.prismatix).
+    // Boot configuration shared by typed dev projects and packaged builds.
     struct Boot {
         RuntimeConfig config;
-        std::string startUI = "Data/UI/title.pxui";
-        std::string startScript = "test_scene.pds";
+        std::string startScript = "Content/Script/start.pds";
         std::string saveSecret;  // per-project secret for save encryption
         bool packaged = false;
     };
@@ -62,19 +59,17 @@ private:
     void RollbackOneLine();
     bool RollbackToBacklogIndex(std::size_t index);
 
-    void RenderNVL();
-
-    void OpenScreen(const std::string& path);
-    void PopulateGallery(ui::UIStage& stage);
-    void PopulateSaves(ui::UIStage& stage);
-    void RefreshSettingsScreen(ui::UIStage& stage);
-    // Returns false when the app should quit.
-    bool HandleScreenAction(const ui::UIAction& action);
+    void OpenScreen(const std::string& route);
+    [[nodiscard]] std::vector<ui::GalgameItem> GalleryItems();
+    [[nodiscard]] std::vector<ui::GalgameItem> SaveItems(bool saveMode);
+    [[nodiscard]] std::vector<ui::GalgameItem> BacklogItems();
+    [[nodiscard]] ui::DialoguePresentation DialogueUI() const;
+    [[nodiscard]] ui::SettingsPresentation SettingsUI() const;
+    void HandleUIAction(const ui::GalgameAction& action);
 
     void TitleFrame(float dt);
     void GameFrame(float dt, std::uint64_t now);
     void ScreensFrame(float dt);
-    void BacklogFrame();
     // Returns true when it consumed the frame (a movie is on screen).
     bool VideoFrame(float dt);
 
@@ -94,21 +89,17 @@ private:
     lua::LuaServices m_luaServices;
     std::unordered_map<std::string, std::string> m_langTable;
 
-    ui::UIStage m_titleStage;
-    ui::UIStage m_hud;
-    std::unique_ptr<ui::ScreenManager> m_screens;
+    ui::GalgameUI m_ui;
     std::vector<std::string> m_choiceTexts;
-    project::Database m_db;
+    vn::GameCatalog m_catalog;
+    std::unordered_map<int, std::string> m_screenTriggers;
 
     AppState m_appState = AppState::Title;
-    bool m_titleOk = false;
     std::string m_script;
 
     bool m_autoMode = false;
     bool m_skipMode = false;
     bool m_hudHidden = false;
-    bool m_backlogOpen = false;
-    float m_backlogScroll = 0.0f;
     std::uint64_t m_autoTimerStart = 0;
 
     bool m_nvlMode = false;

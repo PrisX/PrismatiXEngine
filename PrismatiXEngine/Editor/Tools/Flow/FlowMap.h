@@ -1,7 +1,5 @@
 #pragma once
 
-#include "Engine/Project/Database.h"
-
 #include <imgui.h>
 #include <imgui_node_editor.h>
 
@@ -33,7 +31,7 @@ public:
     }
     void SetEntryScript(const std::string& script) { m_entryScript = script; }
     [[nodiscard]] const std::string& EntryScript() const { return m_entryScript; }
-    // Script filenames that exist under Data/Script (drives the picker + missing warnings).
+    // Script paths under Content/Script drive the graph; no central database is involved.
     void SetAvailableScripts(std::vector<std::string> scripts) {
         m_availableScripts = std::move(scripts);
     }
@@ -66,7 +64,7 @@ public:
     }
     void SetHeaderTexture(ImTextureID texture, int width, int height);
     void SetNodePositionByScript(const std::string& script, ImVec2 position);
-    void Rebuild(const px::project::Database& db, const std::filesystem::path& projectRoot);
+    void Rebuild(const std::vector<std::string>& scripts, const std::filesystem::path& projectRoot);
     void Render();
 
 private:

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <set>
+#include <string>
 
 union SDL_Event;
 
@@ -14,8 +15,11 @@ public:
     [[nodiscard]] float MouseX() const { return m_mouseX; }
     [[nodiscard]] float MouseY() const { return m_mouseY; }
     [[nodiscard]] float WheelY() const { return m_wheelY; }
+    [[nodiscard]] const std::string& TextInput() const { return m_textInput; }
+    [[nodiscard]] const std::set<int>& PressedKeys() const { return m_keysPressed; }
 
     [[nodiscard]] bool LeftClick() const { return m_leftClick; }
+    [[nodiscard]] bool LeftReleased() const { return m_leftReleased; }
     [[nodiscard]] bool RightClick() const { return m_rightClick; }
     [[nodiscard]] bool LeftDown() const { return m_leftDown; }
     [[nodiscard]] bool RightDown() const { return m_rightDown; }
@@ -30,11 +34,14 @@ public:
     }
 
     void InjectFrame(float mouseX, float mouseY, bool leftClick) {
+        const bool wasLeftDown = m_leftDown;
         m_keysPressed.clear();
         m_keysDown.clear();
+        m_textInput.clear();
         m_mouseX = mouseX;
         m_mouseY = mouseY;
         m_leftClick = leftClick;
+        m_leftReleased = wasLeftDown && !leftClick;
         m_leftDown = leftClick;
         m_rightClick = false;
         m_wheelY = 0.0f;
@@ -49,8 +56,10 @@ private:
     bool m_leftDown = false;
     bool m_rightDown = false;
     bool m_leftClick = false;
+    bool m_leftReleased = false;
     bool m_rightClick = false;
     bool m_quit = false;
+    std::string m_textInput;
 };
 
 }

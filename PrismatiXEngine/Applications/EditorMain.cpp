@@ -44,14 +44,17 @@ int RunHeadlessBuild(const char* argv0) {
 }
 
 int main(int argc, char* argv[]) {
-    Logger::Initialize();
+    Logger::Initialize("PrismatiXEditor");
 
     if (argc > 1 && std::string(argv[1]) == "--build") {
-        return RunHeadlessBuild(argv[0]);
+        const int result = RunHeadlessBuild(argv[0]);
+        Logger::Shutdown();
+        return result;
     }
 
     px::editor::EditorApp app;
     if (!app.Init()) {
+        Logger::Shutdown();
         return 1;
     }
     if (argc > 1 && std::string(argv[1]) == "--open") {
@@ -59,5 +62,6 @@ int main(int argc, char* argv[]) {
     }
     app.Run();
     app.Shutdown();
+    Logger::Shutdown();
     return 0;
 }

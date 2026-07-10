@@ -9,7 +9,10 @@
       "name": "sdl3-image",
       "features": ["png", "jpeg", "webp"]
     },
-    "sdl3-ttf",
+    {
+      "name": "sdl3-ttf",
+      "features": ["harfbuzz"]
+    },
     {
       "name": "sdl3-mixer",
       "features": ["mpg123", "libvorbis", "opusfile", "libflac"]

@@ -1,8 +1,9 @@
 #include "Applications/Player/PlayerApp.h"
 
 #include "Engine/Graphics/Screenshot.h"
+#include "Engine/Diagnostics/Diagnostic.h"
+#include "Engine/Resources/TypedDocument.h"
 #include "Engine/Support/Logger.h"
-#include "Engine/UI/UISchema.h"
 
 #include <SDL3/SDL.h>
 #include <nlohmann/json.hpp>
@@ -11,29 +12,16 @@
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
+#include <filesystem>
+#include <optional>
+#include <sstream>
 #include <utility>
 
 namespace px::player {
 
 namespace {
-const std::string kFont = "Data/Font/NotoSansTC-Bold.ttf";
 const std::string kSaveKey = "prismatix-demo-secret";
 constexpr int kAutoSaveSlot = -1;
-
-bool LoadStage(io::VFS& vfs, const std::string& path, ui::UIStage& stage) {
-    auto text = vfs.ReadText(path);
-    if (!text) {
-        PX_LOG_ERROR("UI scene not found '{}'", path);
-        return false;
-    }
-    auto scene = ui::ParsePXUI(*text);
-    if (!scene) {
-        PX_LOG_ERROR("UI scene parse failed '{}'", path);
-        return false;
-    }
-    stage.Load(std::move(*scene));
-    return true;
-}
 
 int ScancodeFromName(const std::string& name) {
     if (name == "Escape") return SDL_SCANCODE_ESCAPE;
@@ -50,6 +38,14 @@ int ScancodeFromName(const std::string& name) {
     }
     return SDL_SCANCODE_UNKNOWN;
 }
+
+std::optional<resource::TypedDocument> LoadTypedFile(const std::filesystem::path& path) {
+    std::ifstream stream(path,std::ios::binary);if(!stream)return std::nullopt;std::ostringstream text;text<<stream.rdbuf();
+    auto parsed=resource::ParseTypedDocument(text.str(),path.string());if(!parsed){for(const auto& d:parsed.Diagnostics())diag::Emit(d);return std::nullopt;}return std::move(parsed.Value());
+}
+std::string DocText(const resource::TypedDocument& document,const char* key,std::string fallback={}){const auto it=document.properties.find(key);if(it!=document.properties.end())if(const auto* value=it->second.TryGet<std::string>())return *value;return fallback;}
+int DocInt(const resource::TypedDocument& document,const char* key,int fallback){const auto it=document.properties.find(key);if(it!=document.properties.end())if(const auto* value=it->second.TryGet<std::int64_t>())return static_cast<int>(*value);return fallback;}
+bool DocBool(const resource::TypedDocument& document,const char* key,bool fallback){const auto it=document.properties.find(key);if(it!=document.properties.end())if(const auto* value=it->second.TryGet<bool>())return *value;return fallback;}
 }
 
 PlayerApp::Boot PlayerApp::LoadBootConfig() {
@@ -57,41 +53,34 @@ PlayerApp::Boot PlayerApp::LoadBootConfig() {
     boot.config.title = "PrismatiX Player";
     boot.config.mountDirs = { "." };
 
-    if (std::ifstream mf("game.prismatix"); mf) {
-        nlohmann::json j = nlohmann::json::parse(mf, nullptr, false);
-        if (!j.is_discarded()) {
+    if (auto package=LoadTypedFile("game.pxpackage")) {
+        if(package->kind==resource::DocumentKind::Resource&&package->type=="GamePackage"){
             boot.packaged = true;
-            boot.config.title = j.value("title", boot.config.title);
+            boot.config.title = DocText(*package,"title",boot.config.title);
             boot.config.mountDirs.clear();
-            boot.config.mountArchives = { j.value("archive", std::string{ "Data.pdx" }) };
-            if (j.value("encrypt", true)) boot.config.archiveKey = j.value("key", std::string{});
-            boot.config.width = boot.config.logicalWidth = j.value("gameWidth", 1280);
-            boot.config.height = boot.config.logicalHeight = j.value("gameHeight", 720);
-            boot.startUI = j.value("startUi", boot.startUI);
-            boot.startScript = j.value("startScript", boot.startScript);
-            boot.saveSecret = j.value("key", std::string{});
+            boot.config.mountArchives = {DocText(*package,"archive","Content.pdx")};
+            if(DocBool(*package,"encrypt",true))boot.config.archiveKey=DocText(*package,"key");
+            boot.config.width=boot.config.logicalWidth=DocInt(*package,"gameWidth",1280);
+            boot.config.height=boot.config.logicalHeight=DocInt(*package,"gameHeight",720);
+            boot.startScript=DocText(*package,"startScript",boot.startScript);
+            boot.saveSecret=DocText(*package,"key");
             if (boot.saveSecret.empty()) boot.saveSecret = boot.config.title;
             PX_LOG_INFO("Packaged build: mounting '{}'", boot.config.mountArchives[0]);
             return boot;
         }
     }
 
-    // Dev run from a project folder: honor the editor's manifest so Start
-    // launches the same entry script the Flow editor points at.
-    if (std::ifstream pf("project.prismatix.json"); pf) {
-        nlohmann::json j = nlohmann::json::parse(pf, nullptr, false);
-        if (!j.is_discarded()) {
-            boot.config.title = j.value("name", boot.config.title);
-            boot.config.width = boot.config.logicalWidth = j.value("gameWidth", 1280);
-            boot.config.height = boot.config.logicalHeight = j.value("gameHeight", 720);
-            boot.startUI = j.value("startUi", boot.startUI);
-            boot.startScript = j.value("startScript", boot.startScript);
-            boot.saveSecret = j.value("encryptKey", std::string{});
-            if (boot.saveSecret.empty()) boot.saveSecret = j.value("name", std::string{});
+    if(auto project=LoadTypedFile("project.pxproject")){
+        if(project->kind==resource::DocumentKind::Project&&project->type=="PrismatiXProject"){
+            boot.config.title=DocText(*project,"name",boot.config.title);
+            boot.config.width=boot.config.logicalWidth=DocInt(*project,"gameWidth",1280);
+            boot.config.height=boot.config.logicalHeight=DocInt(*project,"gameHeight",720);
+            boot.startScript=DocText(*project,"startScript",boot.startScript);
+            boot.saveSecret=DocText(*project,"encryptKey",boot.config.title);
             PX_LOG_INFO("Dev run: project '{}', entry '{}'", boot.config.title, boot.startScript);
         }
     } else {
-        PX_LOG_WARN("No game.prismatix or project.prismatix.json found; using defaults.");
+        diag::Diagnostic d{.severity=diag::Severity::Fatal,.code="PXPLAYER5002",.category="Player.Boot",.message="No game.pxpackage or project.pxproject was found."};diag::Emit(d);
     }
     return boot;
 }
@@ -110,6 +99,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_profile.Load("Save/profile.dat", &m_saveKey);
     m_settings.Load("Save/config.dat", &m_saveKey);
     m_saves.Configure("Save", &m_saveKey);
+    PX_LOG_DEBUG("Player boot: persistence configured");
     m_runtime.Audio().SetBGMVolume(m_settings.bgmVolume);
     m_runtime.Audio().SetSEVolume(m_settings.seVolume);
     m_runtime.Audio().SetVoiceVolume(m_settings.voiceVolume);
@@ -126,9 +116,10 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_vm = std::make_unique<vn::VM>(m_runtime.VFS(), m_runtime.Audio(), *m_stage, m_dialogue,
                                     m_vars, m_backlog);
     m_vm->SetDefaultTextSpeed(m_settings.textSpeedMs);
+    PX_LOG_DEBUG("Player boot: VN runtime constructed");
 
-    // Localization: Data/Lang/<language>.json maps source line -> translated line.
-    if (auto langText = m_runtime.VFS().ReadText("Data/Lang/" + m_settings.language + ".json")) {
+    // Localization remains a content table; UI resources themselves are fully typed.
+    if (auto langText = m_runtime.VFS().ReadText("Content/Localization/" + m_settings.language + ".json")) {
         nlohmann::json j = nlohmann::json::parse(*langText, nullptr, false);
         if (!j.is_discarded() && j.is_object()) {
             for (auto it = j.begin(); it != j.end(); ++it) {
@@ -171,8 +162,8 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         }
         return m_lua->InvokeCommand(cmd);
     });
-    if (m_runtime.VFS().Exists("Data/Scripts/extensions.lua")) {
-        m_lua->RunFile("Data/Scripts/extensions.lua");
+    if (m_runtime.VFS().Exists("Content/Extensions/extensions.lua")) {
+        m_lua->RunFile("Content/Extensions/extensions.lua");
     }
     m_vm->SetUnlockHook([this](const std::string& kind, const std::string& id) {
         if (kind == "cg") m_profile.UnlockCG(id);
@@ -192,29 +183,47 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         m_videoSkippable = skippable;
     });
 
-    m_titleOk = LoadStage(m_runtime.VFS(), m_boot.startUI, m_titleStage);
-    LoadStage(m_runtime.VFS(), "Data/UI/hud.pxui", m_hud);
-    m_hud.SetDialogue(&m_dialogue.State());
-    m_hud.SetChoices(&m_choiceTexts);
-
-    m_screens = std::make_unique<ui::ScreenManager>(m_runtime.VFS());
-
-    if (auto dbText = m_runtime.VFS().ReadText("Data/database.json")) {
-        if (!m_db.Load(*dbText)) m_db.SeedDefault();
-    } else {
-        m_db.SeedDefault();
+    m_ui.SetActionSink([this](const ui::GalgameAction& action) { HandleUIAction(action); });
+    PX_LOG_DEBUG("Player boot: registering typed UI templates");
+    const auto registerTemplate=[this](ui::GalgameUI::Screen screen,const std::string& path){
+        auto text=m_runtime.VFS().ReadText(path);if(!text){diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXPLAYER5003",.category="Player.UI",.message="Required UI template is missing: "+path};d.source.path=path;diag::Emit(d);return;}
+        const Status status=m_ui.RegisterTemplate(screen,*text,path);if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);
+    };
+    registerTemplate(ui::GalgameUI::Screen::Title,"Content/UI/Title.pxscene");
+    registerTemplate(ui::GalgameUI::Screen::HUD,"Content/UI/HUD.pxscene");
+    registerTemplate(ui::GalgameUI::Screen::Backlog,"Content/UI/Backlog.pxscene");
+    registerTemplate(ui::GalgameUI::Screen::Save,"Content/UI/SaveLoad.pxscene");
+    registerTemplate(ui::GalgameUI::Screen::Load,"Content/UI/SaveLoad.pxscene");
+    registerTemplate(ui::GalgameUI::Screen::Gallery,"Content/UI/Gallery.pxscene");
+    registerTemplate(ui::GalgameUI::Screen::Settings,"Content/UI/Settings.pxscene");
+    registerTemplate(ui::GalgameUI::Screen::Video,"Content/UI/VideoOverlay.pxscene");
+    PX_LOG_DEBUG("Player boot: typed UI templates registered");
+    if (const Status status = m_ui.ShowTitle(); !status) {
+        PX_LOG_CRITICAL("Unable to construct the title UI.");
+        return false;
     }
-    for (const auto& b : m_db.inputMap) {
-        if (b.action == "screen.open") {
-            const int sc = ScancodeFromName(b.key);
-            if (sc != SDL_SCANCODE_UNKNOWN) m_screens->SetTrigger(sc, b.target);
+    PX_LOG_DEBUG("Player boot: title UI installed");
+
+    if (auto catalog = m_runtime.VFS().ReadText("Content/Game.pxres")) {
+        const Status status = m_catalog.Load(*catalog, "Content/Game.pxres");
+        if (!status) return false;
+    } else {
+        diag::Diagnostic diagnostic{.severity=diag::Severity::Fatal,.code="PXPLAYER5001",.category="Player.Boot",
+                                    .message="Required typed GameCatalog is missing: Content/Game.pxres"};
+        diag::Emit(diagnostic); return false;
+    }
+    PX_LOG_DEBUG("Player boot: game catalog loaded");
+    for (const auto& binding : m_catalog.InputBindings()) {
+        if (binding.command == "screen.open") {
+            const int sc = ScancodeFromName(binding.key);
+            if (sc != SDL_SCANCODE_UNKNOWN) m_screenTriggers[sc] = binding.argument;
         }
     }
     std::unordered_map<std::string, std::string> voiceDirs;
-    for (const auto& ch : m_db.characters) {
-        if (ch.voiceDir.empty()) continue;
-        if (!ch.id.empty()) voiceDirs[ch.id] = ch.voiceDir;
-        if (!ch.name.empty()) voiceDirs[ch.name] = ch.voiceDir;
+    for (const auto& ch : m_catalog.Characters()) {
+        if (ch.voiceDirectory.empty()) continue;
+        if (!ch.id.empty()) voiceDirs[ch.id] = ch.voiceDirectory;
+        if (!ch.name.empty()) voiceDirs[ch.name] = ch.voiceDirectory;
     }
     m_vm->SetVoiceDirs(std::move(voiceDirs));
 
@@ -224,16 +233,16 @@ bool PlayerApp::Init(int argc, char* argv[]) {
 
 void PlayerApp::StartGame() {
     m_vars.Reset(false);
-    for (const auto& v : m_db.variables) m_vars.Set(v.name, v.defaultValue, v.persistent);
+    for (const auto& v : m_catalog.Variables()) m_vars.Set(v.name, v.defaultValue, v.persistent);
     m_backlog.Clear();
-    m_autoMode = m_skipMode = m_hudHidden = m_backlogOpen = false;
+    m_autoMode = m_skipMode = m_hudHidden = false;
     m_nvlMode = false;
     m_nvlLines.clear();
     m_rollback.clear();
     m_lastBacklogSize = 0;
     m_vm->LoadScript(m_script);
     m_appState = AppState::Game;
-    m_hud.TriggerEnter();
+    m_ui.ShowHUD(DialogueUI());
 }
 
 bool PlayerApp::LoadSlot(int slot) {
@@ -257,8 +266,8 @@ bool PlayerApp::LoadSlot(int slot) {
     m_lastBacklogSize = m_backlog.Entries().size();
     m_vm->Resume();
     m_appState = AppState::Game;
-    m_autoMode = m_skipMode = m_hudHidden = m_backlogOpen = false;
-    m_hud.TriggerEnter();
+    m_autoMode = m_skipMode = m_hudHidden = false;
+    m_ui.ShowHUD(DialogueUI());
     PX_LOG_INFO("Loaded slot {}", slot);
     return true;
 }
@@ -283,7 +292,10 @@ progress::SaveSnapshot PlayerApp::MakeSnapshot(bool includeBacklog) {
 void PlayerApp::SaveSlot(int slot, std::vector<std::uint8_t> thumbnail) {
     progress::SaveSnapshot snap = MakeSnapshot(/*includeBacklog=*/true);
     snap.thumbnailPng = std::move(thumbnail);
-    m_saves.Save(slot, snap);
+    if (!m_saves.Save(slot, snap)) {
+        diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXPLAYER6001",.category="Player.Save",
+                           .message="Could not save slot "+std::to_string(slot)};diag::Emit(d);return;
+    }
     PX_LOG_INFO("Saved slot {} (thumb {} bytes)", slot, snap.thumbnailPng.size());
 }
 
@@ -312,7 +324,7 @@ void PlayerApp::ApplyRollback(const RollbackEntry& entry) {
     m_nvlLines = s.nvlLines;
     m_lastBacklogSize = m_backlog.Entries().size();
     m_autoMode = m_skipMode = false;
-    m_backlogOpen = false;
+    m_ui.ShowHUD(DialogueUI());
     m_vm->Resume();
 }
 
@@ -338,29 +350,31 @@ bool PlayerApp::RollbackToBacklogIndex(std::size_t index) {
     return false;  // line is older than the rollback window
 }
 
-void PlayerApp::PopulateGallery(ui::UIStage& stage) {
-    std::vector<ui::UIStage::GridItem> items;
-    for (const auto& cg : m_db.gallery) {
+std::vector<ui::GalgameItem> PlayerApp::GalleryItems() {
+    std::vector<ui::GalgameItem> items;
+    for (const auto& cg : m_catalog.Gallery()) {
         const bool unlocked = m_profile.CGUnlocked(cg.id);
         const std::string thumb = cg.thumbnail.empty() ? cg.image : cg.thumbnail;
-        items.push_back({ cg.title, unlocked ? thumb : "", !unlocked, "cg.view", cg.image });
+        items.push_back({cg.id, unlocked ? cg.title : "？？？", unlocked ? "已解鎖" : "尚未解鎖",
+                         unlocked ? thumb : "", !unlocked, "cg.view", cg.image});
     }
-    stage.SetGrid("gallery", std::move(items));
+    return items;
 }
 
-void PlayerApp::PopulateSaves(ui::UIStage& stage) {
-    std::vector<ui::UIStage::GridItem> items;
+std::vector<ui::GalgameItem> PlayerApp::SaveItems(bool saveMode) {
+    std::vector<ui::GalgameItem> items;
     const auto slotItem = [&](int slot, const std::string& prefix, const std::string& action) {
         const progress::SlotInfo info = m_saves.Peek(slot);
-        std::string label = prefix + "  (空)";
+        std::string label = "空白存檔";
+        std::string subtitle;
         std::string image;
         if (info.exists) {
-            label = prefix + "  " + info.chapter;
+            label = info.chapter.empty() ? "未命名章節" : info.chapter;
             if (info.timestamp != 0) {
                 const std::time_t t = static_cast<std::time_t>(info.timestamp);
                 char buf[32];
                 if (std::strftime(buf, sizeof(buf), "  %m/%d %H:%M", std::localtime(&t))) {
-                    label += buf;
+                    subtitle = buf;
                 }
             }
             if (!info.thumbnailPng.empty()) {
@@ -371,46 +385,80 @@ void PlayerApp::PopulateSaves(ui::UIStage& stage) {
                 }
             }
         }
-        items.push_back({ label, image, false, action, std::to_string(slot) });
+        items.push_back({"slot-" + std::to_string(slot), prefix + "  " + label, subtitle, image,
+                         !saveMode && !info.exists, action, std::to_string(slot)});
     };
 
-    // The autosave (written at every choice) is load-only.
-    if (!m_slotSaveMode) {
+    if (!saveMode) {
         slotItem(kAutoSaveSlot, "AUTO", "load.slot");
     }
     for (int i = 0; i < 6; ++i) {
-        slotItem(i, "#" + std::to_string(i), m_slotSaveMode ? "save.slot" : "load.slot");
+        slotItem(i, "#" + std::to_string(i + 1), saveMode ? "save.slot" : "load.slot");
     }
-    stage.SetGrid("saves", std::move(items));
+    return items;
 }
 
-void PlayerApp::RefreshSettingsScreen(ui::UIStage& stage) {
-    stage.SetNodeText("bgm_val", std::to_string(m_settings.bgmVolume));
-    stage.SetNodeText("se_val", std::to_string(m_settings.seVolume));
-    stage.SetNodeText("voice_val", std::to_string(m_settings.voiceVolume));
-    stage.SetNodeText("speed_val", std::to_string(m_settings.textSpeedMs) + "ms");
-    stage.SetNodeText("skipread_val", m_settings.skipReadOnly ? "ON" : "OFF");
-}
-
-void PlayerApp::OpenScreen(const std::string& path) {
-    if (ui::UIStage* s = m_screens->Open(path)) {
-        if (path.find("gallery") != std::string::npos) PopulateGallery(*s);
-        else if (path.find("saveload") != std::string::npos) PopulateSaves(*s);
-        else if (path.find("settings") != std::string::npos) RefreshSettingsScreen(*s);
+std::vector<ui::GalgameItem> PlayerApp::BacklogItems() {
+    std::vector<ui::GalgameItem> items;
+    const auto& entries = m_backlog.Entries();
+    items.reserve(entries.size());
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        const auto& entry = entries[i];
+        const std::string speaker = entry.isChoice ? "▶ 選擇" : entry.speaker;
+        items.push_back({"backlog-" + std::to_string(i), speaker.empty() ? entry.text : speaker + "　" + entry.text,
+                         entry.voice.empty() ? "" : "♪ 點擊重播語音", "", false,
+                         entry.voice.empty() ? "backlog.rollback" : "backlog.voice", std::to_string(i)});
     }
+    return items;
 }
 
-bool PlayerApp::HandleScreenAction(const ui::UIAction& action) {
-    const std::string& t = action.type;
+ui::DialoguePresentation PlayerApp::DialogueUI() const {
+    ui::DialoguePresentation view;
+    view.speaker = m_dialogue.State().speaker;
+    view.text = m_dialogue.State().displayText;
+    view.choices = m_choiceTexts;
+    view.nvlMode = m_nvlMode;
+    view.autoMode = m_autoMode;
+    view.skipMode = m_skipMode;
+    for (const auto& line : m_nvlLines) view.nvlLines.push_back(line.speaker.empty() ? line.text : "【" + line.speaker + "】" + line.text);
+    if (!view.nvlLines.empty() && m_dialogue.State().fullText == m_nvlLines.back().text)
+        view.nvlLines.back() = m_dialogue.State().speaker.empty() ? m_dialogue.State().displayText : "【" + m_dialogue.State().speaker + "】" + m_dialogue.State().displayText;
+    return view;
+}
+
+ui::SettingsPresentation PlayerApp::SettingsUI() const {
+    return {m_settings.bgmVolume, m_settings.seVolume, m_settings.voiceVolume,
+            m_settings.textSpeedMs, m_settings.skipReadOnly, m_settings.fullscreen};
+}
+
+void PlayerApp::OpenScreen(const std::string& route) {
+    if (route.find("gallery") != std::string::npos) m_ui.ShowGallery(GalleryItems());
+    else if (route.find("save") != std::string::npos && route.find("load") == std::string::npos) m_ui.ShowSaveLoad(true, SaveItems(true));
+    else if (route.find("load") != std::string::npos || route.find("saveload") != std::string::npos) m_ui.ShowSaveLoad(false, SaveItems(false));
+    else if (route.find("settings") != std::string::npos) m_ui.ShowSettings(SettingsUI());
+    else if (route.find("backlog") != std::string::npos) m_ui.ShowBacklog(BacklogItems());
+}
+
+void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
+    const std::string& t = action.command;
     auto& audio = m_runtime.Audio();
     if (t == "load.slot") {
-        m_screens->CloseAll();
-        LoadSlot(std::atoi(action.arg.c_str()));
+        LoadSlot(std::atoi(action.argument.c_str()));
     } else if (t == "save.slot") {
-        SaveSlot(std::atoi(action.arg.c_str()), m_menuThumb);
-        if (ui::UIStage* top = m_screens->Top()) {
-            PopulateSaves(*top);  // show the fresh thumbnail/timestamp
-        }
+        SaveSlot(std::atoi(action.argument.c_str()), m_menuThumb);
+        m_ui.ShowSaveLoad(true, SaveItems(true));
+    } else if (t == "set.bgm.value") {
+        m_settings.bgmVolume=std::clamp(std::atoi(action.argument.c_str()),0,128);audio.SetBGMVolume(m_settings.bgmVolume);
+    } else if (t == "set.se.value") {
+        m_settings.seVolume=std::clamp(std::atoi(action.argument.c_str()),0,128);audio.SetSEVolume(m_settings.seVolume);
+    } else if (t == "set.voice.value") {
+        m_settings.voiceVolume=std::clamp(std::atoi(action.argument.c_str()),0,128);audio.SetVoiceVolume(m_settings.voiceVolume);
+    } else if (t == "set.speed.value") {
+        m_settings.textSpeedMs=std::clamp(std::atoi(action.argument.c_str()),0,120);m_vm->SetDefaultTextSpeed(m_settings.textSpeedMs);
+    } else if (t == "set.skipread.value") {
+        m_settings.skipReadOnly=action.argument=="true";
+    } else if (t == "set.fullscreen.value") {
+        m_settings.fullscreen=action.argument=="true";SDL_SetWindowFullscreen(m_runtime.GetWindow().Handle(),m_settings.fullscreen);
     } else if (t == "set.bgm.up") {
         m_settings.bgmVolume = std::min(128, m_settings.bgmVolume + 8);
         audio.SetBGMVolume(m_settings.bgmVolume);
@@ -436,155 +484,64 @@ bool PlayerApp::HandleScreenAction(const ui::UIAction& action) {
         m_settings.textSpeedMs = std::max(0, m_settings.textSpeedMs - 4);
         m_vm->SetDefaultTextSpeed(m_settings.textSpeedMs);
     } else if (t == "gallery.open") {
-        OpenScreen("Data/UI/gallery.pxui");
+        OpenScreen("gallery");
     } else if (t == "load.open") {
         m_slotSaveMode = false;
-        OpenScreen("Data/UI/saveload.pxui");
+        OpenScreen("load");
     } else if (t == "save.open") {
         m_slotSaveMode = true;
-        OpenScreen("Data/UI/saveload.pxui");
+        m_pendingSaveScreen = true;
     } else if (t == "settings.open") {
-        OpenScreen("Data/UI/settings.pxui");
+        OpenScreen("settings");
     } else if (t == "cg.view") {
-        m_viewingCG = action.arg;
+        m_viewingCG = action.argument;
     } else if (t == "set.skipread.toggle") {
         m_settings.skipReadOnly = !m_settings.skipReadOnly;
+        m_ui.ShowSettings(SettingsUI());
+    } else if (t == "set.fullscreen.toggle") {
+        m_settings.fullscreen = !m_settings.fullscreen;
+        SDL_SetWindowFullscreen(m_runtime.GetWindow().Handle(), m_settings.fullscreen);
+        m_ui.ShowSettings(SettingsUI());
+    } else if (t == "game.start") {
+        StartGame();
+    } else if (t == "choice.select") {
+        m_vm->SelectChoice(std::atoi(action.argument.c_str()));
+    } else if (t == "mode.auto") {
+        m_autoMode = !m_autoMode; if (m_autoMode) m_skipMode = false;
+    } else if (t == "mode.skip") {
+        m_skipMode = !m_skipMode; if (m_skipMode) m_autoMode = false;
+    } else if (t == "backlog.open") {
+        OpenScreen("backlog");
+    } else if (t == "backlog.voice" || t == "backlog.rollback") {
+        const std::size_t index = static_cast<std::size_t>(std::max(0, std::atoi(action.argument.c_str())));
+        if (index < m_backlog.Entries().size()) {
+            const auto& entry = m_backlog.Entries()[index];
+            if (t == "backlog.voice" && !entry.voice.empty())
+                m_runtime.Audio().PlayVoice(entry.voice.find('/') != std::string::npos ? entry.voice : m_vm->Config().voiceDir + entry.voice);
+            else RollbackToBacklogIndex(index);
+        }
+    } else if (t == "overlay.close") {
+        m_settings.Save("Save/config.dat", &m_saveKey); m_profile.Save("Save/profile.dat", &m_saveKey);
+        if (m_appState == AppState::Title) m_ui.ShowTitle(); else m_ui.ShowHUD(DialogueUI());
     } else if (t == "app.quit") {
-        return false;
+        m_quitRequested = true;
     }
-    return true;
+    if (t.ends_with(".up") || t.ends_with(".down")) m_ui.ShowSettings(SettingsUI());
 }
 
 void PlayerApp::ScreensFrame(float dt) {
     px::Input& input = m_runtime.GetInput();
-    if (m_screens->Top() && m_screens->TopPath().find("settings") != std::string::npos) {
-        RefreshSettingsScreen(*m_screens->Top());
-    }
-    if (auto act = m_screens->Update(input, dt)) {
-        if (!HandleScreenAction(*act)) {
-            m_quitRequested = true;
-        }
-    }
-    if (m_screens->Empty()) {
-        m_settings.Save("Save/config.dat", &m_saveKey);
-        m_profile.Save("Save/profile.dat", &m_saveKey);  // persist read-text flags
-    }
-    if (m_appState == AppState::Title) {
-        m_titleStage.Render(m_runtime.Renderer());
-    } else {
-        m_stage->Render();
-        if (!m_hudHidden) m_hud.Render(m_runtime.Renderer());
-    }
-    m_screens->Render(m_runtime.Renderer());
+    int w = 0, h = 0; m_runtime.Renderer().GetLogicalSize(w, h);
+    (void)m_ui.Update(input, w, h,dt);
+    if (m_appState == AppState::Game) m_stage->Render();
+    m_ui.Render(m_runtime.Renderer());
 }
 
 void PlayerApp::TitleFrame(float dt) {
     px::Input& input = m_runtime.GetInput();
-    if (!m_titleOk) {
-        // No title screen shipped: never sit on a dead black screen.
-        PX_LOG_WARN("Title UI missing — starting '{}' directly.", m_script);
-        StartGame();
-        return;
-    }
-    if (auto act = m_titleStage.Update(input, dt)) {
-        const std::string& t = act->type;
-        if (t == "scene.start") {
-            StartGame();
-            return;
-        }
-        if (!HandleScreenAction(*act)) {
-            m_quitRequested = true;
-        }
-    }
-    if (m_appState == AppState::Title) {
-        m_titleStage.Render(m_runtime.Renderer());
-    }
-}
-
-void PlayerApp::BacklogFrame() {
-    auto& r = m_runtime.Renderer();
-    const px::Input& input = m_runtime.GetInput();
-    int w = 0, h = 0;
-    r.GetLogicalSize(w, h);
-    r.DrawRect(Rect{ 0, 0, static_cast<float>(w), static_cast<float>(h) },
-               Color{ 8, 10, 16, 225 });
-    r.DrawTextOutline("Backlog  (滾輪捲動 / 右鍵關閉 / 點擊重播語音 / Ctrl+點擊回溯)", 40, 24,
-                      kFont, 26, Color{ 200, 220, 255, 255 }, Color{ 0, 0, 0, 255 }, 2);
-
-    const auto& entries = m_backlog.Entries();
-    const float lineH = 78.0f;
-    const float top = 80.0f;
-    const float bottom = static_cast<float>(h) - 30.0f;
-    const int visible = static_cast<int>((bottom - top) / lineH);
-    const int total = static_cast<int>(entries.size());
-    const int maxScroll = std::max(0, total - visible);
-    m_backlogScroll = std::clamp(m_backlogScroll, 0.0f, static_cast<float>(maxScroll));
-    const int first = std::max(0, total - visible - static_cast<int>(m_backlogScroll));
-
-    float y = top;
-    for (int i = first; i < total && y < bottom; ++i) {
-        const auto& e = entries[static_cast<std::size_t>(i)];
-        const bool hovered = input.MouseY() >= y && input.MouseY() < y + lineH;
-        if (hovered) {
-            r.DrawRect(Rect{ 28, y - 6, static_cast<float>(w) - 56, lineH - 4 },
-                       Color{ 60, 90, 130, 70 });
-            if (input.LeftClick()) {
-                const bool ctrl = input.KeyDown(SDL_SCANCODE_LCTRL) ||
-                                  input.KeyDown(SDL_SCANCODE_RCTRL);
-                if (ctrl) {
-                    if (RollbackToBacklogIndex(static_cast<std::size_t>(i))) {
-                        return;  // rollback closed the backlog
-                    }
-                } else if (!e.voice.empty()) {
-                    const std::string& v = e.voice;
-                    m_runtime.Audio().PlayVoice(
-                        v.find('/') != std::string::npos ? v : m_vm->Config().voiceDir + v);
-                }
-            }
-        }
-        const std::string speaker =
-            e.isChoice ? "▶ 選擇" : (e.voice.empty() ? e.speaker : e.speaker + "  ♪");
-        if (!speaker.empty()) {
-            r.DrawTextOutline(speaker, 40, y, kFont, 22, Color{ 255, 220, 140, 255 },
-                              Color{ 0, 0, 0, 255 }, 2);
-        }
-        r.DrawTextOutline(e.text, 40, y + 28, kFont, 24, Color{ 235, 240, 250, 255 },
-                          Color{ 0, 0, 0, 255 }, 2, 255, false, w - 80);
-        y += lineH;
-    }
-}
-
-void PlayerApp::RenderNVL() {
-    auto& r = m_runtime.Renderer();
-    int w = 0, h = 0;
-    r.GetLogicalSize(w, h);
-    r.DrawRect(Rect{ 0, 0, static_cast<float>(w), static_cast<float>(h) },
-               Color{ 10, 12, 18, 215 });
-    const float left = 90.0f;
-    const float top = 64.0f;
-    const int fontSize = 26;
-    const float lineGap = 14.0f;
-    const int wrap = w - 180;
-    float y = top;
-    for (std::size_t i = 0; i < m_nvlLines.size(); ++i) {
-        const vn::BacklogEntry& e = m_nvlLines[i];
-        std::string text = e.text;
-        // The last page line is the one currently typing.
-        if (i + 1 == m_nvlLines.size() && m_dialogue.State().fullText == e.text) {
-            text = m_dialogue.State().displayText;
-        }
-        const std::string shown = e.speaker.empty() ? text : "【" + e.speaker + "】" + text;
-        const std::string full = e.speaker.empty() ? e.text : "【" + e.speaker + "】" + e.text;
-        if (!shown.empty()) {
-            r.DrawTextOutline(shown, left, y, kFont, fontSize, Color{ 235, 240, 250, 255 },
-                              Color{ 0, 0, 0, 255 }, 2, 255, false, wrap);
-        }
-        // Advance by the full line's height so the layout doesn't jump while typing.
-        y += r.MeasureText(full.empty() ? " " : full, kFont, fontSize, wrap).y + lineGap;
-        if (y > static_cast<float>(h) - 60.0f) {
-            break;
-        }
-    }
+    int w = 0, h = 0; m_runtime.Renderer().GetLogicalSize(w, h);
+    (void)m_ui.Update(input, w, h,dt);
+    if (m_appState == AppState::Title) m_ui.Render(m_runtime.Renderer());
 }
 
 bool PlayerApp::VideoFrame(float dt) {
@@ -630,11 +587,9 @@ bool PlayerApp::VideoFrame(float dt) {
     m_runtime.Renderer().DrawRect(Rect{ 0, 0, static_cast<float>(w), static_cast<float>(h) },
                                   Color{ 0, 0, 0, 255 });
     m_video->Render(w, h);
-    if (m_videoSkippable) {
-        m_runtime.Renderer().DrawTextOutline("點擊跳過 ▶", static_cast<float>(w) - 200, 24, kFont,
-                                             20, Color{ 200, 210, 230, 180 },
-                                             Color{ 0, 0, 0, 255 }, 2);
-    }
+    if (m_ui.CurrentScreen() != ui::GalgameUI::Screen::Video) m_ui.ShowVideoOverlay(m_videoSkippable);
+    (void)m_ui.Update(input, w, h,dt);
+    m_ui.Render(m_runtime.Renderer());
     return true;
 }
 
@@ -661,8 +616,8 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         if (m_skipMode) m_autoMode = false;
     }
     if (input.KeyPressed(SDL_SCANCODE_B) || input.WheelY() > 0.0f) {
-        m_backlogOpen = true;
-        m_backlogScroll = 0.0f;
+        OpenScreen("backlog");
+        return;
     }
     if (input.KeyPressed(SDL_SCANCODE_PAGEUP)) {
         RollbackOneLine();
@@ -687,29 +642,18 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     bool advancedByClick = false;
     if (m_hudHidden) {
         if (input.LeftClick() || advanceKey) m_hudHidden = false;
-    } else if (auto act = m_hud.Update(input, dt)) {
-        if (act->type == "choice") {
-            m_vm->SelectChoice(std::atoi(act->arg.c_str()));
-        } else if (act->type == "mode.auto") {
-            m_autoMode = !m_autoMode;
-            if (m_autoMode) m_skipMode = false;
-        } else if (act->type == "mode.skip") {
-            m_skipMode = !m_skipMode;
-            if (m_skipMode) m_autoMode = false;
-        } else if (act->type == "backlog.open") {
-            m_backlogOpen = true;
-            m_backlogScroll = 0.0f;
-        } else if (act->type == "save.open") {
-            m_pendingSaveScreen = true;  // deferred so the thumbnail is the clean game frame
-        } else {
-            HandleScreenAction(*act);
-        }
-    } else if ((input.LeftClick() || advanceKey) &&
+    } else {
+        m_ui.RefreshHUD(DialogueUI());
+        int uiW = 0, uiH = 0; m_runtime.Renderer().GetLogicalSize(uiW, uiH);
+        const bool uiConsumed = m_ui.Update(input, uiW, uiH,dt);
+        if (m_ui.IsOverlay()) { m_stage->Render(); m_ui.Render(m_runtime.Renderer()); return; }
+        if (!uiConsumed && (input.LeftClick() || advanceKey) &&
                m_vm->State() != vn::VMState::WaitingChoice) {
-        m_vm->OnAdvance();
-        advancedByClick = true;
-        m_autoMode = false;
-        m_skipMode = false;
+            m_vm->OnAdvance();
+            advancedByClick = true;
+            m_autoMode = false;
+            m_skipMode = false;
+        }
     }
 
     // Skip-read-only (既讀スキップ): S-toggle skip stops at unread text;
@@ -774,27 +718,13 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     if (m_pendingSaveScreen) {
         m_menuThumb = graphics::CaptureThumbnailPng(m_runtime.Renderer().Handle(), 256, 144);
         m_slotSaveMode = true;
-        OpenScreen("Data/UI/saveload.pxui");
+        OpenScreen("save");
         m_pendingSaveScreen = false;
     }
 
     if (!m_hudHidden) {
-        if (m_nvlMode) {
-            RenderNVL();
-            if (m_vm->State() == vn::VMState::WaitingChoice) {
-                m_hud.Render(m_runtime.Renderer());
-            }
-        } else {
-            m_hud.Render(m_runtime.Renderer());
-        }
-
-        std::string info = "周目:" + std::to_string(m_profile.ClearCount()) +
-                           "  [F5 存檔][F9 讀檔][A 自動][S 快進][B 紀錄][PgUp 回溯]";
-        if (m_autoMode) info += "  ● AUTO";
-        if (skipping) info += "  ▶▶ SKIP";
-        m_runtime.Renderer().DrawTextOutline(info, 20, 16, kFont, 22,
-                                             Color{ 210, 230, 255, 255 },
-                                             Color{ 0, 0, 0, 255 }, 2);
+        m_ui.RefreshHUD(DialogueUI());
+        m_ui.Render(m_runtime.Renderer());
     }
 
     if (m_saveRequested) {
@@ -832,11 +762,15 @@ void PlayerApp::MainLoop() {
             }
         }
 
-        if (m_appState == AppState::Game && !m_backlogOpen) {
-            m_screens->HandleTriggers(input);
+        if (m_appState == AppState::Game && !m_ui.IsOverlay()) {
+            for (const auto& [scancode, route] : m_screenTriggers)
+                if (input.KeyPressed(scancode)) OpenScreen(route);
         }
 
-        if (!m_screens->Empty()) {
+        if (m_ui.IsOverlay() && m_ui.CurrentScreen() != ui::GalgameUI::Screen::Video) {
+            if (input.RightClick() || input.KeyPressed(SDL_SCANCODE_ESCAPE)) {
+                HandleUIAction({"overlay.close", {}});
+            }
             ScreensFrame(dt);
             m_runtime.EndFrame();
             continue;
@@ -851,18 +785,6 @@ void PlayerApp::MainLoop() {
         }
 
         if (VideoFrame(dt)) {
-            m_runtime.EndFrame();
-            continue;
-        }
-
-        if (m_backlogOpen) {
-            if (input.WheelY() != 0.0f) m_backlogScroll += input.WheelY() * 3.0f;
-            if (input.RightClick() || input.KeyPressed(SDL_SCANCODE_B) ||
-                input.KeyPressed(SDL_SCANCODE_ESCAPE)) {
-                m_backlogOpen = false;
-            }
-            m_stage->Render();
-            BacklogFrame();
             m_runtime.EndFrame();
             continue;
         }
@@ -887,7 +809,6 @@ void PlayerApp::Shutdown() {
     m_lua.reset();
     m_vm.reset();
     m_stage.reset();
-    m_screens.reset();
     m_runtime.Shutdown();
 }
 

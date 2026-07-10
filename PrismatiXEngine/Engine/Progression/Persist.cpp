@@ -1,6 +1,8 @@
 #include "Engine/Progression/Persist.h"
 
 #include "Engine/Support/Logger.h"
+#include "Engine/IO/AtomicFile.h"
+#include "Engine/Diagnostics/Diagnostic.h"
 
 #include <array>
 #include <filesystem>
@@ -10,6 +12,7 @@ namespace px::progress {
 
 namespace {
 constexpr char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+constexpr std::string_view kPersistMagic = "PXPERSIST3\n";
 
 std::filesystem::path AsPath(const std::string& path) {
     return std::filesystem::path(path);
@@ -65,43 +68,47 @@ bool SaveJson(const std::string& path, const Json& json, const crypto::Key* key)
     std::error_code ec;
     std::filesystem::create_directories(AsPath(path).parent_path(), ec);
 
-    const std::string text = json.dump();
+    const std::string text = std::string(kPersistMagic) + json.dump();
     crypto::Bytes bytes(text.begin(), text.end());
     if (key) {
         bytes = crypto::Encrypt(bytes, *key, crypto::DeriveIv(AsPath(path).filename().string()));
     }
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    if (!out) {
-        PX_LOG_ERROR("Persist: cannot write '{}'", path);
-        return false;
-    }
-    out.write(reinterpret_cast<const char*>(bytes.data()),
-              static_cast<std::streamsize>(bytes.size()));
-    return static_cast<bool>(out);
+    const Status status = io::AtomicFile::WriteBinary(path, bytes);
+    if (!status) for (const auto& diagnostic : status.Diagnostics()) diag::Emit(diagnostic);
+    return static_cast<bool>(status);
 }
 
 std::optional<Json> LoadJson(const std::string& path, const crypto::Key* key) {
+    // A profile, config, or save slot is optional until the user creates it.
+    // "Not present" is therefore a valid state, while an existing unreadable
+    // file is a visible persistence failure.
+    if (!std::filesystem::exists(AsPath(path))) return std::nullopt;
     std::ifstream in(path, std::ios::binary | std::ios::ate);
     if (!in) {
-        return std::nullopt;
+        diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXPERSIST6001",.category="Persistence",.message="Persistence file could not be read: "+path};d.source.path=path;diag::Emit(d);return std::nullopt;
     }
     const std::streamsize size = in.tellg();
     in.seekg(0, std::ios::beg);
     crypto::Bytes bytes(static_cast<std::size_t>(size));
     if (!in.read(reinterpret_cast<char*>(bytes.data()), size)) {
+        diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXPERSIST6005",.category="Persistence",.message="Persistence file could not be fully read: "+path};d.source.path=path;diag::Emit(d);
         return std::nullopt;
     }
     if (key) {
         bytes = crypto::Decrypt(bytes, *key, crypto::DeriveIv(AsPath(path).filename().string()));
         if (bytes.empty()) {
-            PX_LOG_ERROR("Persist: decrypt failed for '{}'", path);
-            return std::nullopt;
+            diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXPERSIST6002",.category="Persistence",.message="Persistence file could not be decrypted: "+path};d.source.path=path;diag::Emit(d);return std::nullopt;
         }
     }
-    Json json = Json::parse(bytes.begin(), bytes.end(), nullptr, /*allow_exceptions=*/false);
+    const std::string_view payload(reinterpret_cast<const char*>(bytes.data()),bytes.size());
+    if(!payload.starts_with(kPersistMagic)){
+        diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXPERSIST6003",.category="Persistence",.message="Unsupported legacy or corrupt persistence format: "+path,
+                           .details="PrismatiX 2.0 intentionally does not load old save/profile/config files."};d.source.path=path;diag::Emit(d);return std::nullopt;
+    }
+    const auto jsonBegin=bytes.begin()+static_cast<std::ptrdiff_t>(kPersistMagic.size());
+    Json json = Json::parse(jsonBegin, bytes.end(), nullptr, /*allow_exceptions=*/false);
     if (json.is_discarded()) {
-        PX_LOG_ERROR("Persist: corrupt JSON in '{}'", path);
-        return std::nullopt;
+        diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXPERSIST6004",.category="Persistence",.message="Persistence payload is corrupt: "+path};d.source.path=path;diag::Emit(d);return std::nullopt;
     }
     return json;
 }

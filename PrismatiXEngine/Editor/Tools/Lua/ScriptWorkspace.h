@@ -5,12 +5,14 @@
 
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace px::editor {
 
 class ScriptWorkspace {
 public:
+    struct DocumentSession { std::string runtimePath; std::string buffer; bool dirty=false; };
     explicit ScriptWorkspace(LogSink log = {}) : m_log(std::move(log)) {}
 
     void SetProject(const ProjectContext* context);
@@ -19,6 +21,10 @@ public:
     }
     void Render();
     void Rescan();
+    void OpenFile(const std::string& runtimePath) { LoadFile(runtimePath); }
+    bool ReloadFile(const std::string& runtimePath);
+    void SaveAll();
+    [[nodiscard]] std::vector<DocumentSession> OpenDocuments() const;
 
     [[nodiscard]] const std::vector<CustomCommandDef>& Commands() const { return m_commands; }
 
@@ -26,7 +32,8 @@ private:
     void RefreshFiles();
     void ScanCommands();
     void LoadFile(const std::string& runtimePath);
-    void SaveCurrent();
+    bool SaveCurrent();
+    bool CloseFile(const std::string& runtimePath, bool save);
     void RenderFileList();
     void RenderEditor();
     void RenderCommandList();
@@ -42,6 +49,9 @@ private:
     std::string m_currentFile;
     std::string m_buffer;
     bool m_dirty = false;
+    std::unordered_map<std::string, DocumentSession> m_inactiveDocuments;
+    std::string m_closeRequest;
+    bool m_closePopup = false;
 
     std::vector<CustomCommandDef> m_commands;
     std::function<void(const std::vector<CustomCommandDef>&)> m_onCommands;

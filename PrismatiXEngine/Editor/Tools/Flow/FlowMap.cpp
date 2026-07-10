@@ -59,7 +59,7 @@ void FlowMap::SetNodePositionByScript(const std::string& script, ImVec2 position
     }
 }
 
-void FlowMap::Rebuild(const px::project::Database& db, const std::filesystem::path& projectRoot) {
+void FlowMap::Rebuild(const std::vector<std::string>& scripts, const std::filesystem::path& projectRoot) {
     m_rebuilding = true;
     m_nodes.clear();
     m_links.clear();
@@ -71,26 +71,24 @@ void FlowMap::Rebuild(const px::project::Database& db, const std::filesystem::pa
     entry.id = m_nextId++;
     entry.pinOut = m_nextId++;
     entry.title = "START";
-    entry.pos = ImVec2(db.entryFlowX, db.entryFlowY);
+    entry.pos = ImVec2(0.0f, 80.0f);
     entry.isEntry = true;
     m_entryNodeId = entry.id;
     m_nodes.push_back(std::move(entry));
 
-    for (int i = 0; i < static_cast<int>(db.chapters.size()); ++i) {
+    for (int i = 0; i < static_cast<int>(scripts.size()); ++i) {
         FNode n;
         n.id = m_nextId++;
         n.pinIn = m_nextId++;
         n.pinOut = m_nextId++;
-        n.chapterId = db.chapters[i].id;
-        n.title = db.chapters[i].title.empty() ? db.chapters[i].id : db.chapters[i].title;
-        n.script = db.chapters[i].script;
+        n.chapterId = scripts[static_cast<std::size_t>(i)];
+        n.title = std::filesystem::path(scripts[static_cast<std::size_t>(i)]).stem().string();
+        n.script = scripts[static_cast<std::size_t>(i)];
         n.scriptMissing =
             !n.script.empty() &&
-            !std::filesystem::exists(projectRoot / "Data" / "Script" / n.script) &&
+            !std::filesystem::exists(projectRoot / "Content" / "Script" / n.script) &&
             !std::filesystem::exists(projectRoot / n.script);
-        n.pos = db.chapters[i].HasFlowPosition()
-                    ? ImVec2(db.chapters[i].flowX, db.chapters[i].flowY)
-                    : ImVec2(260.0f + (i % 4) * 460.0f, 60.0f + (i / 4) * 220.0f);
+        n.pos = ImVec2(260.0f + (i % 4) * 460.0f, 60.0f + (i / 4) * 220.0f);
         m_nodes.push_back(std::move(n));
     }
 
@@ -108,7 +106,9 @@ void FlowMap::Rebuild(const px::project::Database& db, const std::filesystem::pa
 
     for (const FNode& from : m_nodes) {
         if (from.script.empty()) continue;
-        std::ifstream in(projectRoot / "Data" / "Script" / from.script);
+        std::filesystem::path scriptPath = projectRoot / from.script;
+        if (!std::filesystem::exists(scriptPath)) scriptPath = projectRoot / "Content" / "Script" / from.script;
+        std::ifstream in(scriptPath);
         if (!in) continue;
         std::string line;
         while (std::getline(in, line)) {

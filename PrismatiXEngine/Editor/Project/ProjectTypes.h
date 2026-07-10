@@ -13,13 +13,13 @@ using LogSink = std::function<void(const std::string&)>;
 
 struct ProjectManifest {
     std::string name = "PrismatiX Project";
-    int version = 2;
+    int version = 3;
     int gameWidth = 1280;
     int gameHeight = 720;
-    std::string startUI = "Data/UI/title.pxui";
-    std::string startScript = "test_scene.pds";
+    std::string startUI = "Content/UI/Title.pxscene";
+    std::string startScript = "Content/Script/start.pds";
     std::string theme = "PrismatiX Dark";
-    std::vector<std::string> assetRoots{ "Data" };
+    std::vector<std::string> assetRoots{ "Content" };
     bool encrypt = true;
     std::string encryptKey = "prismatix";
     bool singleFile = false;
@@ -30,9 +30,9 @@ struct ProjectContext {
     ProjectManifest manifest;
 
     [[nodiscard]] bool IsOpen() const { return !root.empty(); }
-    [[nodiscard]] std::filesystem::path DataRoot() const { return root / "Data"; }
+    [[nodiscard]] std::filesystem::path DataRoot() const { return root / "Content"; }
     [[nodiscard]] std::filesystem::path ExportRoot() const { return root / "Export"; }
-    [[nodiscard]] std::filesystem::path ManifestPath() const { return root / "project.prismatix.json"; }
+    [[nodiscard]] std::filesystem::path ManifestPath() const { return root / "project.pxproject"; }
 };
 
 }

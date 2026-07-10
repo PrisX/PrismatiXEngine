@@ -35,13 +35,12 @@ void EditorApp::BuildCommands() {
         { "Refresh Problems", "", [this] { RefreshProblems(); } },
         { "Reset Layout", "", [this] { m_buildLayout = true; } },
         { "Back to Welcome", "", [this] { m_screen = Screen::Welcome; } },
-        { "Undo", "Ctrl+Z", [this] { m_undo.Undo(); } },
-        { "Redo", "Ctrl+Y", [this] { m_undo.Redo(); } },
+        { "Undo", "Ctrl+Z", [this] { if (m_previewMode == 0 && m_designer.Document()) m_designer.Undo(); else if(auto* graph=ActiveDocPtr())graph->Undo(); } },
+        { "Redo", "Ctrl+Y", [this] { if (m_previewMode == 0 && m_designer.Document()) m_designer.Redo(); else if(auto* graph=ActiveDocPtr())graph->Redo(); } },
         { "Go to: Preview", "", [focus] { focus("Preview"); } },
         { "Go to: Story (Node Editor)", "", [focus] { focus("Node Editor"); } },
         { "Go to: Flow", "", [focus] { focus("Flow"); } },
         { "Go to: Scripting", "", [focus] { focus("Scripting"); } },
-        { "Go to: Database", "", [focus] { focus("Database"); } },
         { "Go to: Animation", "", [focus] { focus("Animation"); } },
         { "Go to: Build", "", [focus] { focus("Build"); } },
         { "Go to: Assets", "", [focus] { focus("Assets"); } },
@@ -55,6 +54,25 @@ void EditorApp::HandleShortcuts() {
         m_paletteOpen = true;
         m_paletteFocus = true;
         m_paletteFilter[0] = 0;
+    }
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_K, ImGuiInputFlags_RouteGlobal)) {
+        m_quickOpenOpen = true;
+        m_quickOpenFilter[0] = 0;
+    }
+    if (!ImGui::GetIO().WantTextInput &&
+        ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Tab, ImGuiInputFlags_RouteGlobal)) {
+        const auto recent = m_docs.RecentlyUsed();
+        if (recent.size() > 1) {
+            const auto& session = m_docs.Documents()[recent[1]];
+            (void)m_docs.Activate(session.id);
+            std::error_code error;
+            const auto runtime = std::filesystem::relative(session.id.canonicalPath,
+                m_project.Context().root, error).generic_string();
+            if (!error && session.type == DocumentType::PDS) OpenDocTab(runtime);
+            else if (!error && session.type == DocumentType::UIScene && m_preview) {
+                SetWorkspace(EditorWorkspace::UI); m_preview->LoadUI(runtime); SyncDesigner();
+            } else if(!error&&session.type==DocumentType::Lua){SetWorkspace(EditorWorkspace::Script);m_scripts.OpenFile(runtime);}
+        }
     }
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, ImGuiInputFlags_RouteGlobal)) {
         SaveAll();
@@ -74,24 +92,27 @@ void EditorApp::HandleShortcuts() {
     if (ImGui::Shortcut(ImGuiKey_F5, ImGuiInputFlags_RouteGlobal)) {
         RunDev();
     }
-    // Ctrl+Z/Y go to the node graph when it has focus, otherwise to the
-    // database/flow undo stack. Text inputs keep their built-in undo.
+    // Ctrl+Z/Y route to the active per-document EditHistory.
     if (!ImGui::GetIO().WantTextInput &&
         ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, ImGuiInputFlags_RouteGlobal)) {
         NodeGraphEditor* doc = ActiveDocPtr();
-        if (m_nodeEditorFocused && doc && doc->CanUndo()) {
+        if (m_assetsFocused && m_projectHistory.CanUndo()) {
+            m_projectHistory.Undo();
+        } else if (m_nodeEditorFocused && doc && doc->CanUndo()) {
             doc->Undo();
-        } else if (m_undo.CanUndo()) {
-            m_undo.Undo();
+        } else if (m_previewMode == 0 && m_designer.Document() && m_designer.Document()->History().CanUndo()) {
+            m_designer.Undo();
         }
     }
     if (!ImGui::GetIO().WantTextInput &&
         ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y, ImGuiInputFlags_RouteGlobal)) {
         NodeGraphEditor* doc = ActiveDocPtr();
-        if (m_nodeEditorFocused && doc && doc->CanRedo()) {
+        if (m_assetsFocused && m_projectHistory.CanRedo()) {
+            m_projectHistory.Redo();
+        } else if (m_nodeEditorFocused && doc && doc->CanRedo()) {
             doc->Redo();
-        } else if (m_undo.CanRedo()) {
-            m_undo.Redo();
+        } else if (m_previewMode == 0 && m_designer.Document() && m_designer.Document()->History().CanRedo()) {
+            m_designer.Redo();
         }
     }
     if (ImGui::Shortcut(ImGuiKey_F1, ImGuiInputFlags_RouteGlobal)) {

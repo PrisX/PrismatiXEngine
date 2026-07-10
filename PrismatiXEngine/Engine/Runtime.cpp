@@ -41,7 +41,6 @@ bool Runtime::Init(const RuntimeConfig& config) {
             m_vfs.MountArchive(archive, &key);
         }
     }
-
     m_assets = std::make_unique<graphics::AssetCache>(m_window.Renderer(), m_vfs);
     m_renderer = std::make_unique<graphics::Renderer2D>(m_window.Renderer(), *m_assets);
     m_renderer->SetLogicalSize(m_config.logicalWidth, m_config.logicalHeight);
@@ -49,7 +48,6 @@ bool Runtime::Init(const RuntimeConfig& config) {
     if (m_config.logicalHeight > 0) {
         m_window.SetAspectRatio(static_cast<float>(m_config.logicalWidth) / static_cast<float>(m_config.logicalHeight));
     }
-
     m_audio = std::make_unique<audio::AudioEngine>(m_vfs);
     m_audio->Init();
 

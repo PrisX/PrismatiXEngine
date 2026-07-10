@@ -1,7 +1,8 @@
 #include "Editor/Application/EditorApp.h"
 
-#include "Editor/Assets/AssetMeta.h"
 #include "Engine/Support/Logger.h"
+#include "Engine/Resources/AssetRegistry.h"
+#include "Editor/Theme/EditorIcon.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -25,10 +26,12 @@
 #include <array>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <system_error>
+#include <unordered_set>
 #include <vector>
 
 namespace px::editor {
@@ -53,14 +56,23 @@ fs::path PathFromUtf8(const char* text) {
     return fs::path(text);
 }
 
+std::string Utf8Path(const fs::path& path) noexcept {
+    try {
+        const std::u8string value = path.generic_u8string();
+        return {reinterpret_cast<const char*>(value.data()), value.size()};
+    } catch (...) {
+        return "<無法顯示的路徑>";
+    }
+}
+
 fs::path ImportFolderForType(const std::string& type) {
-    if (type == "image") return fs::path("Data") / "Image" / "Imported";
-    if (type == "audio") return fs::path("Data") / "Audio" / "Imported";
-    if (type == "script") return fs::path("Data") / "Script";
-    if (type == "ui") return fs::path("Data") / "UI";
-    if (type == "font") return fs::path("Data") / "Font";
-    if (type == "lua") return fs::path("Data") / "Scripts";
-    return fs::path("Data") / "Imported";
+    if (type == "image") return fs::path("Content") / "Images" / "Imported";
+    if (type == "audio") return fs::path("Content") / "Audio" / "Imported";
+    if (type == "script") return fs::path("Content") / "Script";
+    if (type == "ui") return fs::path("Content") / "UI";
+    if (type == "font") return fs::path("Content") / "Fonts";
+    if (type == "lua") return fs::path("Content") / "Extensions";
+    return fs::path("Content") / "Imported";
 }
 
 fs::path UniqueDestination(const fs::path& requested) {
@@ -122,6 +134,17 @@ void PrepareImGuiRenderer(SDL_Renderer* renderer) {
 }
 }
 
+void DiagnosticToastQueue::Push(const diag::Diagnostic& diagnostic) {
+    if (diagnostic.severity < diag::Severity::Warning) return;
+    m_items.push_back({diagnostic, std::chrono::steady_clock::now()});
+    while (m_items.size() > 5) m_items.pop_front();
+}
+
+void DiagnosticToastQueue::Prune(std::chrono::steady_clock::time_point now) {
+    while (!m_items.empty() && now - m_items.front().created > std::chrono::seconds(8))
+        m_items.pop_front();
+}
+
 EditorApp::EditorApp() : m_project([this](const std::string& m) { Log(m); }), m_assets([this](const std::string& m) { Log(m); }), m_scripts([this](const std::string& m) { Log(m); }) {}
 
 void EditorApp::Log(const std::string& message) {
@@ -133,86 +156,139 @@ void EditorApp::Log(const std::string& message) {
 }
 
 void EditorApp::ImportAssetFiles(const std::vector<std::filesystem::path>& paths) {
-    const ProjectContext& context = m_project.Context();
-    if (!context.IsOpen()) {
-        Log("Open a project before importing assets.");
-        return;
-    }
+    QueueImportReview(paths);
+}
 
-    std::vector<fs::path> files;
-    for (const fs::path& rawPath : paths) {
-        if (rawPath.empty()) {
-            continue;
+void EditorApp::QueueImportReview(const std::vector<std::filesystem::path>& paths) {
+    const auto reportFailure = [](std::string code, const fs::path& path,
+                                  std::string message, std::string details = {}) {
+        diag::Diagnostic diagnostic{.severity = diag::Severity::Error,
+            .code = std::move(code), .category = "Editor.Import",
+            .message = std::move(message), .details = std::move(details)};
+        diagnostic.source.path = Utf8Path(path);
+        diag::Emit(std::move(diagnostic));
+    };
+    try {
+        const ProjectContext& context = m_project.Context();
+        if (!context.IsOpen()) {
+            reportFailure("PXIMPORT9017", {}, "請先開啟專案再匯入素材");
+            return;
         }
+        m_importSources.clear();
         std::error_code ec;
-        const fs::path source = fs::absolute(rawPath, ec);
-        const fs::path path = ec ? rawPath : source;
-        if (!fs::exists(path, ec)) {
-            Log("Asset import skipped, missing file: " + path.string());
-            continue;
-        }
-        if (fs::is_directory(path, ec)) {
-            for (fs::recursive_directory_iterator it(path, ec), end; it != end; it.increment(ec)) {
+        constexpr std::size_t kMaximumReviewItems = 50000;
+        bool reachedLimit = false;
+        for (const auto& raw : paths) {
+            if (raw.empty() || reachedLimit) continue;
+            ec.clear();
+            auto source = fs::absolute(raw, ec);
+            if (ec) { ec.clear(); source = raw; }
+            if (!fs::exists(source, ec)) {
+                reportFailure("PXIMPORT9018", source, "找不到匯入來源", ec.message());
+                ec.clear();
+                continue;
+            }
+            if (IsPathWithin(source, context.DataRoot())) {
+                if (fs::is_regular_file(source, ec)) {
+                    m_selectedAsset = RuntimePath(context.root, source);
+                    m_assetSelectionModel.selected = {m_selectedAsset};
+                }
+                ec.clear();
+                continue;
+            }
+            if (fs::is_directory(source, ec)) {
+                ec.clear();
+                fs::recursive_directory_iterator it(
+                    source, fs::directory_options::skip_permission_denied, ec), end;
                 if (ec) {
-                    break;
-                }
-                if (!it->is_regular_file(ec)) {
+                    reportFailure("PXIMPORT9019", source, "無法讀取匯入資料夾", ec.message());
+                    ec.clear();
                     continue;
                 }
-                if (it->path().extension() == ".meta") {
-                    continue;
+                std::unordered_set<std::string> visitedDirectories;
+                visitedDirectories.insert(Utf8Path(fs::weakly_canonical(source, ec)));
+                ec.clear();
+                while (it != end) {
+                    ec.clear();
+                    if (it->is_directory(ec)) {
+                        const fs::file_status linkStatus = it->symlink_status(ec);
+                        const fs::path canonical = fs::weakly_canonical(it->path(), ec);
+                        std::string key = Utf8Path(canonical);
+#ifdef _WIN32
+                        std::transform(key.begin(), key.end(), key.begin(),
+                            [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+#endif
+                        const bool repeats = !key.empty() && !visitedDirectories.insert(key).second;
+                        const bool outsideSource = ec || !IsPathWithin(canonical, source);
+                        if (ec || fs::is_symlink(linkStatus) || repeats || outsideSource)
+                            it.disable_recursion_pending();
+                        ec.clear();
+                    }
+                    bool regular = it->is_regular_file(ec);
+                    if (!ec && regular && it->path().extension() != ".pxmeta") {
+                        auto relative = fs::relative(it->path(), source, ec);
+                        if (ec) { ec.clear(); relative = it->path().filename(); }
+                        m_importSources.push_back({it->path(), relative});
+                        if (m_importSources.size() >= kMaximumReviewItems) {
+                            reachedLimit = true;
+                            break;
+                        }
+                    }
+                    ec.clear();
+                    it.increment(ec);
+                    if (ec) {
+                        // skip_permission_denied handles common access failures; other
+                        // iterator failures end this source without crashing the editor.
+                        reportFailure("PXIMPORT9020", source,
+                                      "掃描匯入資料夾時略過無法讀取的內容", ec.message());
+                        ec.clear();
+                        break;
+                    }
                 }
-                files.push_back(it->path());
+            } else {
+                ec.clear();
+                if (fs::is_regular_file(source, ec) && source.extension() != ".pxmeta")
+                    m_importSources.push_back({source, source.filename()});
+                ec.clear();
             }
         }
-        else if (fs::is_regular_file(path, ec) && path.extension() != ".meta") {
-            files.push_back(path);
+        if (reachedLimit) {
+            diag::Diagnostic diagnostic{.severity = diag::Severity::Warning,
+                .code = "PXIMPORT9021", .category = "Editor.Import",
+                .message = "單次匯入最多顯示 50,000 個檔案",
+                .details = "請分批匯入大型素材資料夾。"};
+            diag::Emit(std::move(diagnostic));
         }
-    }
-
-    int imported = 0;
-    int alreadyInProject = 0;
-    std::string lastRuntimePath;
-    for (const fs::path& file : files) {
-        std::error_code ec;
-        if (IsPathWithin(file, context.DataRoot())) {
-            lastRuntimePath = RuntimePath(context.root, file);
-            ++alreadyInProject;
-            continue;
+        std::sort(m_importSources.begin(), m_importSources.end(), [](const auto& a,const auto& b){
+            return a.path.generic_u8string() < b.path.generic_u8string();
+        });
+        m_importSources.erase(std::unique(m_importSources.begin(),m_importSources.end(),
+            [](const auto& a,const auto& b){return a.path==b.path;}),m_importSources.end());
+        if (m_importSources.empty()) {
+            if (m_selectedAsset.empty())
+                reportFailure("PXIMPORT9022", {}, "沒有可匯入的素材");
+            return;
         }
-
-        const std::string type = AssetDatabase::Classify(file);
-        const fs::path destination =
-            UniqueDestination(context.root / ImportFolderForType(type) / file.filename());
-        fs::create_directories(destination.parent_path(), ec);
-        if (ec) {
-            Log("Asset import failed to create folder: " + destination.parent_path().string());
-            continue;
-        }
-        fs::copy_file(file, destination, fs::copy_options::none, ec);
-        if (ec) {
-            Log("Asset import failed: " + file.string());
-            continue;
-        }
-        lastRuntimePath = RuntimePath(context.root, destination);
-        ++imported;
-    }
-
-    if (imported == 0 && alreadyInProject == 0) {
-        Log("No importable asset files found.");
-        return;
-    }
-
-    m_assets.Scan(context);
-    if (!lastRuntimePath.empty()) {
-        m_selectedAsset = lastRuntimePath;
-        m_metaAsset.clear();
-    }
-    if (imported > 0) {
-        Log("Imported " + std::to_string(imported) + " asset(s).");
-    }
-    if (alreadyInProject > 0) {
-        Log("Selected " + std::to_string(alreadyInProject) + " existing project asset(s).");
+        const fs::path destination = context.root /
+            (m_assetDir.empty() ? fs::path("Content") : fs::path(m_assetDir));
+        ec.clear();
+        m_importDestinationText = fs::relative(destination, context.root, ec).generic_string();
+        if (ec) m_importDestinationText = "Content";
+        auto prepared = m_importService.Prepare(context.root, destination, m_importSources,
+                                                m_importAutoOrganize,
+                                                m_importPreserveFolders);
+        if (!prepared) return;
+        m_importReview = prepared.TakeValue();
+        m_importReview->preserveIdentity = m_importPreserveIdentity;
+        m_reportedImportFailure.clear();
+        m_showImportReview = true;
+    } catch (const fs::filesystem_error& error) {
+        reportFailure("PXIMPORT9023", error.path1(),
+                      "建立匯入預覽時發生檔案系統錯誤", error.what());
+    } catch (const std::exception& error) {
+        reportFailure("PXIMPORT9024", {}, "建立匯入預覽時發生未預期錯誤", error.what());
+    } catch (...) {
+        reportFailure("PXIMPORT9025", {}, "建立匯入預覽時發生未知錯誤");
     }
 }
 
@@ -270,7 +346,16 @@ bool EditorApp::Init() {
 
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    m_iniPath = m_basePath + "PrismatiXEditor.ini";
+    std::filesystem::path settingsRoot;
+#ifdef _WIN32
+    if (const char* local = std::getenv("LOCALAPPDATA")) settingsRoot = std::filesystem::path(local) / "PrismatiXEditor";
+#endif
+    if (settingsRoot.empty()) settingsRoot = std::filesystem::path(m_basePath) / ".editor";
+    std::error_code settingsError;
+    std::filesystem::create_directories(settingsRoot, settingsError);
+    m_iniPath = (settingsRoot / "EditorLayout-v2.ini").string();
+    m_editorSettingsPath = settingsRoot / "EditorSettings.pxres";
+    m_editorSessionPath = settingsRoot / "EditorSession.pxres";
     io.IniFilename = m_iniPath.c_str();
     m_buildLayout = !std::filesystem::exists(m_iniPath);
     LoadFonts();
@@ -288,6 +373,7 @@ bool EditorApp::Init() {
     m_running = true;
 
     m_preview = std::make_unique<RuntimeHost>(m_window.Renderer());
+    ConfigureDesigner(m_designer);
     m_textures = std::make_unique<EditorTextures>(m_window.Renderer());
     m_nodeHeaderTex = m_textures->LoadId(m_basePath + "EditorAssets/NodeHeader.png", &m_nodeHeaderW, &m_nodeHeaderH);
     m_flow.SetHeaderTexture(m_nodeHeaderTex, m_nodeHeaderW, m_nodeHeaderH);
@@ -298,8 +384,24 @@ bool EditorApp::Init() {
     std::snprintf(m_newName, sizeof(m_newName), "%s", "MyGame");
     LoadRecentProjects();
     BuildCommands();
+    diag::Global().SetListener([this](const diag::Diagnostic& diagnostic) {
+        m_console.push_back("[" + diagnostic.code + "] " + diagnostic.message);
+        if (m_console.size() > 500) m_console.erase(m_console.begin(),m_console.begin()+static_cast<std::ptrdiff_t>(m_console.size()-500));
+        m_toasts.Push(diagnostic);
+    });
     Log("PrismatiX Editor started.");
     return true;
+}
+
+void EditorApp::ConfigureDesigner(UIDesigner& designer) {
+    designer.SetOnEdit([this] {
+        if (m_preview && m_designer.Document()) {
+            m_preview->LoadUIDocument(m_designer.Document()->Data(),
+                                      m_preview->CurrentUIPath());
+            m_docs.SetDirty(m_designer.Document()->Path(), m_designer.Dirty(),
+                            m_designer.Document()->History().Cursor());
+        }
+    });
 }
 
 
@@ -316,6 +418,7 @@ void EditorApp::Run() {
                 // Pick up files changed outside the editor (Unity-style refresh).
                 m_assets.Scan(m_project.Context());
                 m_flowStale = true;
+                CheckExternalDocuments();
             }
             if (event.type == SDL_EVENT_QUIT) {
                 m_running = false;
@@ -338,14 +441,21 @@ void EditorApp::Run() {
 
 void EditorApp::LoadFonts() {
     ImGuiIO& io = ImGui::GetIO();
-    const std::string candidates[] = { m_basePath + "EditorAssets/UIFont.ttf", "Resources/Fonts/NotoSansTC-Bold.ttf", "../../../Resources/Fonts/NotoSansTC-Bold.ttf" };
+    const std::string candidates[] = {
+#ifdef _WIN32
+        "C:/Windows/Fonts/msjh.ttc",
+#endif
+        m_basePath + "EditorAssets/UIFont.ttf",
+        "Resources/Fonts/NotoSansTC-Regular.ttf",
+        "Resources/Fonts/NotoSansTC-Bold.ttf",
+        "../../../Resources/Fonts/NotoSansTC-Bold.ttf" };
     ImFont* loaded = nullptr;
     for (const std::string& path : candidates) {
         if (std::filesystem::exists(path)) {
             ImFontConfig cfg;
             cfg.OversampleH = 2;
             cfg.OversampleV = 2;
-            loaded = io.Fonts->AddFontFromFileTTF(path.c_str(), 18.0f, &cfg, io.Fonts->GetGlyphRangesChineseFull());
+            loaded = io.Fonts->AddFontFromFileTTF(path.c_str(), 15.0f, &cfg, io.Fonts->GetGlyphRangesChineseFull());
             if (loaded) {
                 Log("UI font: " + path);
                 break;
@@ -356,25 +466,32 @@ void EditorApp::LoadFonts() {
         io.Fonts->AddFontDefault();
         Log("UI font: built-in (UIFont.ttf not found).");
     }
+    const std::string iconCandidates[]{m_basePath+"EditorAssets/FontAwesomeFree-Solid-900.otf",
+        m_basePath+"EditorAssets/fa-solid-900.ttf"};
+    for(const auto& path:iconCandidates)if(std::filesystem::exists(path)){
+        static const ImWchar ranges[]{0xf000,0xf8ff,0};ImFontConfig config;config.MergeMode=true;
+        config.PixelSnapH=true;config.GlyphMinAdvanceX=15.0f;
+        if(io.Fonts->AddFontFromFileTTF(path.c_str(),15.0f,&config,ranges)){m_iconFontLoaded=true;Log("Editor icon font: "+path);break;}
+    }
 }
 
 void EditorApp::ApplyTheme() {
     ImGuiStyle& s = ImGui::GetStyle();
     ImGui::StyleColorsDark();
 
-    s.WindowRounding = 7.0f;
-    s.ChildRounding = 6.0f;
-    s.FrameRounding = 6.0f;
-    s.PopupRounding = 6.0f;
-    s.GrabRounding = 5.0f;
-    s.TabRounding = 6.0f;
+    s.WindowRounding = 4.0f;
+    s.ChildRounding = 4.0f;
+    s.FrameRounding = 4.0f;
+    s.PopupRounding = 4.0f;
+    s.GrabRounding = 4.0f;
+    s.TabRounding = 4.0f;
     s.ScrollbarRounding = 8.0f;
     s.WindowBorderSize = 1.0f;
     s.FrameBorderSize = 0.0f;
     s.WindowPadding = ImVec2(12, 10);
-    s.FramePadding = ImVec2(10, 6);
-    s.ItemSpacing = ImVec2(9, 7);
-    s.ItemInnerSpacing = ImVec2(7, 5);
+    s.FramePadding = ImVec2(8, 7);
+    s.ItemSpacing = ImVec2(8, 8);
+    s.ItemInnerSpacing = ImVec2(4, 4);
     s.IndentSpacing = 18.0f;
     s.ScrollbarSize = 13.0f;
     s.GrabMinSize = 10.0f;
@@ -382,14 +499,14 @@ void EditorApp::ApplyTheme() {
     s.WindowMenuButtonPosition = ImGuiDir_None;
 
     ImVec4* c = s.Colors;
-    const ImVec4 bg0(0.043f, 0.047f, 0.059f, 1.00f);
-    const ImVec4 bg1(0.071f, 0.078f, 0.094f, 1.00f);
-    const ImVec4 bg2(0.106f, 0.118f, 0.141f, 1.00f);
-    const ImVec4 bg3(0.149f, 0.165f, 0.196f, 1.00f);
-    const ImVec4 accent(0.247f, 0.553f, 0.949f, 1.00f);
-    const ImVec4 accentDim(0.180f, 0.380f, 0.660f, 1.00f);
-    const ImVec4 text(0.870f, 0.890f, 0.920f, 1.00f);
-    const ImVec4 textDim(0.470f, 0.500f, 0.555f, 1.00f);
+    const ImVec4 bg0(0.086f, 0.102f, 0.125f, 1.00f); // #161A20
+    const ImVec4 bg1(0.125f, 0.145f, 0.176f, 1.00f); // #20252D
+    const ImVec4 bg2(0.161f, 0.184f, 0.224f, 1.00f); // #292F39
+    const ImVec4 bg3(0.204f, 0.231f, 0.278f, 1.00f); // #343B47
+    const ImVec4 accent(0.278f, 0.549f, 0.749f, 1.00f); // #478CBF
+    const ImVec4 accentDim(0.20f, 0.38f, 0.52f, 1.00f);
+    const ImVec4 text(0.847f, 0.871f, 0.914f, 1.00f); // #D8DEE9
+    const ImVec4 textDim(0.553f, 0.596f, 0.659f, 1.00f); // #8D98A8
 
     c[ImGuiCol_Text] = text;
     c[ImGuiCol_TextDisabled] = textDim;
@@ -432,6 +549,11 @@ void EditorApp::ApplyTheme() {
 
 
 void EditorApp::Shutdown() {
+    SaveEditorSession();
+    diag::Global().SetListener({});
+    if (Status recovery = m_recovery.EndSession(); !recovery) {
+        for (auto diagnostic : recovery.Diagnostics()) px::diag::Emit(std::move(diagnostic));
+    }
     if (m_imguiReady) {
         ImGui_ImplSDLRenderer3_Shutdown();
         ImGui_ImplSDL3_Shutdown();

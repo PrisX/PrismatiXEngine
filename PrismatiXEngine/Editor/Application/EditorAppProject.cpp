@@ -1,6 +1,10 @@
 #include "Editor/Application/EditorApp.h"
 
+#include "Engine/IO/AtomicFile.h"
+#include "Engine/Core/TypeRegistry.h"
+#include "Engine/Resources/TypedDocument.h"
 #include "Engine/VN/PDS/Parser.h"
+#include "Engine/UI/UITypeRegistry.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -13,8 +17,11 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cstdio>
 #include <fstream>
 #include <sstream>
+#include <unordered_set>
 
 #ifndef _WIN32
 #include <unistd.h>
@@ -22,6 +29,8 @@
 
 namespace px::editor {
 namespace {
+namespace fs = std::filesystem;
+
 std::filesystem::path PlayerExecutableName() {
 #ifdef _WIN32
     return "PrismatiXPlayer.exe";
@@ -30,6 +39,98 @@ std::filesystem::path PlayerExecutableName() {
 #endif
 }
 
+struct ReferenceSnapshot {
+    std::filesystem::path path;
+    std::string before;
+    std::string after;
+};
+
+struct ProjectUndoStorage {
+    std::filesystem::path root;
+    ~ProjectUndoStorage(){std::error_code error;if(!root.empty())std::filesystem::remove_all(root,error);}
+};
+
+diag::Diagnostic ProjectMutationError(std::string code, const std::filesystem::path& path,
+                                      std::string message, std::string details = {}) {
+    diag::Diagnostic diagnostic{.severity=diag::Severity::Error,.code=std::move(code),
+        .category="Editor.ProjectMutation",.message=std::move(message),.details=std::move(details)};
+    diagnostic.source.path=path.generic_string(); return diagnostic;
+}
+
+bool RewriteVariantReference(Variant& value, bool resourcePath,
+                             const std::string& oldRel, const std::string& newRel,
+                             const std::string& oldName, const std::string& newName) {
+    bool changed=false;
+    if(auto* text=value.TryGet<std::string>()){
+        if(resourcePath&&(*text==oldRel||*text==oldName)){*text=*text==oldRel?newRel:newName;return true;}
+    }else if(auto* array=value.AsArray()){
+        for(auto& item:*array)changed|=RewriteVariantReference(item,resourcePath,oldRel,newRel,oldName,newName);
+    }else if(auto* object=value.AsObject()){
+        for(auto& [_,item]:*object)changed|=RewriteVariantReference(item,resourcePath,oldRel,newRel,oldName,newName);
+    }
+    return changed;
+}
+
+std::string RewritePDSReferences(const std::string& source,const std::string& oldRel,
+                                 const std::string& newRel,const std::string& oldName,
+                                 const std::string& newName,bool& changed){
+    std::string output;output.reserve(source.size());std::size_t index=0;
+    while(index<source.size()){
+        if(source[index]!='"'){output.push_back(source[index++]);continue;}
+        std::size_t keyEnd=index;while(keyEnd>0&&std::isspace(static_cast<unsigned char>(source[keyEnd-1])))--keyEnd;
+        std::size_t keyStart=keyEnd;bool resourceArgument=false;
+        if(keyEnd>0&&source[keyEnd-1]=='='){--keyEnd;keyStart=keyEnd;while(keyStart>0&&(std::isalnum(static_cast<unsigned char>(source[keyStart-1]))||source[keyStart-1]=='_'))--keyStart;
+            const std::string key=source.substr(keyStart,keyEnd-keyStart);static const std::unordered_set<std::string> resourceArguments{"file","path","target","ui","script","image","voice","audio","video","theme","background","bgm","se"};resourceArgument=resourceArguments.contains(key);}
+        output.push_back(source[index++]);std::string value;bool escaped=false;
+        while(index<source.size()){
+            const char character=source[index++];
+            if(!escaped&&character=='"')break;
+            value.push_back(character);escaped=!escaped&&character=='\\';if(character!='\\')escaped=false;
+        }
+        if(resourceArgument&&value==oldRel){output+=newRel;changed=true;}else if(resourceArgument&&value==oldName){output+=newName;changed=true;}else output+=value;
+        output.push_back('"');
+    }
+    return output;
+}
+
+Result<std::vector<ReferenceSnapshot>> PlanReferenceUpdates(
+    const std::filesystem::path& root,const std::string& oldRel,const std::string& newRel){
+    ui::RegisterBuiltinUITypes();
+    std::vector<ReferenceSnapshot> snapshots;const std::string oldName=std::filesystem::path(oldRel).filename().string(),newName=std::filesystem::path(newRel).filename().string();
+    std::vector<std::filesystem::path> candidates{root/"project.pxproject"};std::error_code ec;
+    for(auto iterator=std::filesystem::recursive_directory_iterator(root/"Content",ec);!ec&&iterator!=std::filesystem::recursive_directory_iterator();iterator.increment(ec)){
+        if(!iterator->is_regular_file(ec)||iterator->path().extension()==".pxmeta")continue;const std::string extension=iterator->path().extension().string();
+        if(extension==".pxscene"||extension==".pxres"||extension==".pxtheme"||extension==".pxanim"||extension==".pds")candidates.push_back(iterator->path());
+    }
+    for(const auto& path:candidates){std::ifstream input(path,std::ios::binary);if(!input)continue;std::ostringstream stream;stream<<input.rdbuf();const std::string before=stream.str();std::string after=before;bool changed=false;
+        if(path.extension()==".pds"){after=RewritePDSReferences(before,oldRel,newRel,oldName,newName,changed);if(changed){const auto parsed=vn::ParsePDS(after);if(!parsed.errors.empty())return Result<std::vector<ReferenceSnapshot>>::Failure(ProjectMutationError("PXASSETMOVE9201",path,"更新後的 PDS 無法解析",parsed.errors.front()));}}
+        else{auto parsed=resource::ParseTypedDocument(before,path.generic_string());if(!parsed)return Result<std::vector<ReferenceSnapshot>>::Failure(parsed.Diagnostics());auto document=parsed.TakeValue();
+            static const std::unordered_set<std::string> projectResourceProperties{"startUI","startScript","archive"};
+            for(auto& [key,value]:document.properties){const auto* property=TypeRegistry::Global().FindProperty(document.type,key);const bool resourcePath=(property&&HasFlag(property->flags,PropertyFlags::ResourcePath))||(document.kind==resource::DocumentKind::Project&&projectResourceProperties.contains(key));changed|=RewriteVariantReference(value,resourcePath,oldRel,newRel,oldName,newName);}
+            for(auto& node:document.nodes)for(auto& [key,value]:node.properties){const auto* property=TypeRegistry::Global().FindProperty(node.type,key);const bool resourcePath=property&&HasFlag(property->flags,PropertyFlags::ResourcePath);changed|=RewriteVariantReference(value,resourcePath,oldRel,newRel,oldName,newName);}
+            if(changed)after=resource::WriteTypedDocument(document);
+        }
+        if(changed)snapshots.push_back({path,before,std::move(after)});
+    }
+    return Result<std::vector<ReferenceSnapshot>>::Success(std::move(snapshots));
+}
+
+Status MoveAssetPair(const std::filesystem::path& from,const std::filesystem::path& to){
+    std::error_code ec;std::filesystem::create_directories(to.parent_path(),ec);if(ec)return Status::Fail(ProjectMutationError("PXASSETMOVE9202",to,"無法建立目的資料夾",ec.message()));
+    if(std::filesystem::exists(to))return Status::Fail(ProjectMutationError("PXASSETMOVE9203",to,"目的地已存在"));
+    std::filesystem::rename(from,to,ec);if(ec)return Status::Fail(ProjectMutationError("PXASSETMOVE9204",from,"無法移動素材",ec.message()));
+    const auto fromMeta=resource::AssetRegistry::MetaPath(from),toMeta=resource::AssetRegistry::MetaPath(to);
+    if(std::filesystem::exists(fromMeta)){std::filesystem::rename(fromMeta,toMeta,ec);if(ec){std::error_code rollback;std::filesystem::rename(to,from,rollback);return Status::Fail(ProjectMutationError("PXASSETMOVE9205",fromMeta,"無法移動素材 identity",ec.message()));}}
+    return Status::Ok();
+}
+
+Status WriteReferenceSnapshots(const std::vector<ReferenceSnapshot>& snapshots,bool after,
+                               const std::filesystem::path& movedFrom={},
+                               const std::filesystem::path& movedTo={}){
+    std::vector<std::pair<std::filesystem::path,std::string>> written;
+    for(const auto& snapshot:snapshots){const auto path=!movedFrom.empty()&&snapshot.path==movedFrom?movedTo:snapshot.path;const Status status=io::AtomicFile::WriteText(path,after?snapshot.after:snapshot.before);if(!status){for(auto iterator=written.rbegin();iterator!=written.rend();++iterator)(void)io::AtomicFile::WriteText(iterator->first,iterator->second);return status;}written.emplace_back(path,after?snapshot.before:snapshot.after);}
+    return Status::Ok();
+}
 #ifndef _WIN32
 bool LaunchDetached(const std::filesystem::path& exe, const std::filesystem::path& workingDir) {
     const pid_t pid = fork();
@@ -82,51 +183,42 @@ void EditorApp::AddRecentProject(const std::filesystem::path& root) {
     if (m_recentProjects.size() > 8) {
         m_recentProjects.resize(8);
     }
-    std::ofstream out(m_basePath + "PrismatiXRecent.json");
-    if (out) {
-        out << Json(m_recentProjects).dump(2);
+    const Status written =
+        io::AtomicFile::WriteText(m_basePath + "PrismatiXRecent.json",
+                                  Json(m_recentProjects).dump(2));
+    if (!written) {
+        for (const auto& diagnostic : written.Diagnostics()) diag::Emit(diagnostic);
     }
 }
 
 void EditorApp::OpenProject(const std::filesystem::path& root) {
+    if (m_project.Context().IsOpen()) SaveEditorSession();
     if (m_project.Open(root)) {
+        m_inactiveDesigners.clear();
+        m_designer=UIDesigner{};ConfigureDesigner(m_designer);m_designerPath.clear();
+        const px::Uuid projectId =
+            px::Uuid::FromName(std::filesystem::weakly_canonical(root).generic_string());
+        if (Status recovery = m_recovery.BeginSession(projectId, root); !recovery) {
+            for (auto diagnostic : recovery.Diagnostics()) px::diag::Emit(std::move(diagnostic));
+        }
+        if (m_recovery.HadUncleanSession()) m_showRecoveryCenter = true;
         AddRecentProject(root);
         const auto scaffolded = m_project.EnsureEssentials(m_basePath + "EditorAssets/UIFont.ttf");
         if (!scaffolded.empty()) {
             Log("Scaffolded " + std::to_string(scaffolded.size()) + " missing project file(s).");
         }
         m_assets.Scan(m_project.Context());
+        const Status identityStatus = m_assetRegistry.Scan(root);
+        if (!identityStatus) m_showAssetIdentity = true;
         if (m_preview) {
             m_preview->SetProjectRoot(root.string());
             m_preview->LoadUI(m_project.Context().manifest.startUI);
         }
         m_scriptDocs.clear();
+        m_docs.Clear();
+        m_projectHistory.Clear();
         m_activeDoc = -1;
-        OpenDocTab(m_project.Context().manifest.startScript);
 
-        m_dbPath = (root / "Data" / "database.json").string();
-        if (std::ifstream dbin(m_dbPath); dbin) {
-            std::stringstream ss;
-            ss << dbin.rdbuf();
-            if (!m_database.Load(ss.str())) {
-                m_database.SeedDefault();
-            }
-        }
-        else {
-            m_database.SeedDefault();
-            // Don't seed a phantom chapter: point chapter 1 at the project's real
-            // entry script instead of the hardcoded sample.
-            if (!m_database.chapters.empty()) {
-                m_database.chapters[0].script = m_project.Context().manifest.startScript;
-            }
-            std::ofstream out(m_dbPath);
-            out << m_database.Serialize();
-            Log("Created Data/database.json");
-        }
-        m_dbDirty = false;
-        m_dbBaseline = m_database.Serialize();
-        m_dbEditPending = false;
-        m_undo.Clear();
 
         m_flow.SetOpenCallback([this](const std::string& script) { OpenDocTab(script); });
         m_flow.SetCreateChapterCallback([this](ImVec2 canvasPosition) { CreateFlowChapter(canvasPosition); });
@@ -135,34 +227,8 @@ void EditorApp::OpenProject(const std::filesystem::path& root) {
             m_project.SaveManifest();
             Log("Entry point set to " + script);
         });
-        m_flow.SetLayoutChangedCallback([this](const std::string& script, ImVec2 position) {
-            if (script.empty()) {
-                m_database.entryFlowX = position.x;
-                m_database.entryFlowY = position.y;
-            } else if (px::project::Chapter* ch = m_database.FindChapterByScript(script)) {
-                ch->flowX = position.x;
-                ch->flowY = position.y;
-            }
-            m_dbDirty = true;
-            m_dbEditPending = true;  // node drags become one undo entry on release
-        });
-        m_flow.SetScriptChangedCallback([this](const std::string& chapterId, const std::string& script) {
-            for (px::project::Chapter& ch : m_database.chapters) {
-                if (ch.id == chapterId) {
-                    const bool wasEntry = ch.script == m_project.Context().manifest.startScript;
-                    ch.script = script;
-                    if (wasEntry) {
-                        m_project.Context().manifest.startScript = script;
-                        m_project.SaveManifest();
-                        m_flow.SetEntryScript(script);
-                    }
-                    break;
-                }
-            }
-            m_dbDirty = true;
-            m_flowStale = true;
-            RefreshProblems();
-        });
+        m_flow.SetLayoutChangedCallback([](const std::string&, ImVec2) {});
+        m_flow.SetScriptChangedCallback([this](const std::string&, const std::string&) { m_flowStale = true; RefreshProblems(); });
         m_flow.SetCreateScriptCallback([this](const std::string& script) { CreateScriptFile(script); });
         m_flow.SetLinkAddedCallback([this](const std::string& from, const std::string& to) {
             AddJumpToScript(from, to);
@@ -170,30 +236,10 @@ void EditorApp::OpenProject(const std::filesystem::path& root) {
         m_flow.SetLinkRemovedCallback([this](const std::string& from, const std::string& to) {
             RemoveJumpFromScript(from, to);
         });
-        m_flow.SetChapterRemovedCallback([this](const std::string& chapterId) {
-            const std::string before = m_database.Serialize();
-            m_database.chapters.erase(
-                std::remove_if(m_database.chapters.begin(), m_database.chapters.end(),
-                               [&](const px::project::Chapter& ch) { return ch.id == chapterId; }),
-                m_database.chapters.end());
-            const std::string after = m_database.Serialize();
-            RecordDatabaseUndo("Delete chapter " + chapterId, before, after);
-            m_dbBaseline = after;
-            m_dbDirty = true;
-            RefreshProblems();
-            Log("Flow: deleted chapter " + chapterId);
-        });
-        m_flow.SetTitleChangedCallback([this](const std::string& chapterId, const std::string& title) {
-            for (px::project::Chapter& ch : m_database.chapters) {
-                if (ch.id == chapterId) {
-                    ch.title = title;
-                    break;
-                }
-            }
-            m_dbDirty = true;
-        });
+        m_flow.SetChapterRemovedCallback([this](const std::string&) { m_flowStale = true; RefreshProblems(); });
+        m_flow.SetTitleChangedCallback([](const std::string&, const std::string&) {});
         m_flow.SetEntryScript(m_project.Context().manifest.startScript);
-        m_flow.Rebuild(m_database, root);
+        m_flow.Rebuild(ScriptFileNames(), root);
 
         m_scripts.SetOnCommandsChanged([this](const std::vector<CustomCommandDef>& cmds) {
             m_customCommands = cmds;
@@ -202,6 +248,9 @@ void EditorApp::OpenProject(const std::filesystem::path& root) {
             }
         });
         m_scripts.SetProject(&m_project.Context());
+
+        RestoreEditorSession();
+        if (m_scriptDocs.empty()) OpenDocTab(m_project.Context().manifest.startScript);
 
         RefreshProblems();
     }
@@ -213,6 +262,186 @@ NodeGraphEditor* EditorApp::ActiveDocPtr() {
     }
     m_activeDoc = std::clamp(m_activeDoc, 0, static_cast<int>(m_scriptDocs.size()) - 1);
     return m_scriptDocs[static_cast<std::size_t>(m_activeDoc)].get();
+}
+
+void EditorApp::TrackDocument(const std::filesystem::path& absolutePath, DocumentType type,
+                              bool dirty) {
+    DocumentSession session;
+    session.id.canonicalPath = absolutePath;
+    if (const auto* asset = m_assetRegistry.FindPath(absolutePath)) session.id.assetGuid = asset->id;
+    session.label = absolutePath.filename().string();
+    session.type = type;
+    session.workspace = DocumentManager::WorkspaceFor(type);
+    session.dirty = dirty;
+    (void)m_docs.Open(std::move(session));
+}
+
+void EditorApp::SyncDocumentStates() {
+    if (m_designer.Document()) {
+        const auto path = m_designer.Document()->Path();
+        if (!m_docs.Find(path)) TrackDocument(path, DocumentType::UIScene, m_designer.Dirty());
+        m_docs.SetDirty(path, m_designer.Dirty(), m_designer.Document()->History().Cursor());
+        const auto& viewport = m_designer.ViewportState();
+        m_docs.SetViewport(path, {viewport.zoom, viewport.pan.x, viewport.pan.y});
+    }
+    for(const auto& [_,session]:m_inactiveDesigners){
+        if(!session.editor||!session.editor->Document())continue;
+        const auto path=session.editor->Document()->Path();
+        if(!m_docs.Find(path))TrackDocument(path,DocumentType::UIScene,session.editor->Dirty());
+        m_docs.SetDirty(path,session.editor->Dirty(),session.editor->Document()->History().Cursor());
+        const auto& viewport=session.editor->ViewportState();m_docs.SetViewport(path,{viewport.zoom,viewport.pan.x,viewport.pan.y});
+    }
+    for (const auto& document : m_scriptDocs) {
+        if (document->DocumentPath().empty()) continue;
+        if (!m_docs.Find(document->DocumentPath()))
+            TrackDocument(document->DocumentPath(), DocumentType::PDS, document->Dirty());
+        m_docs.SetDirty(document->DocumentPath(), document->Dirty());
+    }
+    std::unordered_set<std::string> openLua;
+    for(const auto& document:m_scripts.OpenDocuments()){
+        const auto path=m_project.Context().root/document.runtimePath;
+        openLua.insert(DocumentManager::Canonical(path).generic_string());
+        if(!m_docs.Find(path))TrackDocument(path,DocumentType::Lua,document.dirty);
+        m_docs.SetDirty(path,document.dirty);
+    }
+    std::vector<std::filesystem::path> closedLua;
+    for(const auto& session:m_docs.Documents())if(session.type==DocumentType::Lua&&!openLua.contains(session.id.canonicalPath.generic_string()))closedLua.push_back(session.id.canonicalPath);
+    for(const auto& path:closedLua)(void)m_docs.Close(path);
+}
+
+void EditorApp::SaveEditorSession() {
+    if (m_editorSessionPath.empty()) return;
+    SyncDocumentStates();
+    const Status status = m_docs.SaveSession(m_editorSessionPath);
+    if (!status) for (const auto& diagnostic : status.Diagnostics()) diag::Emit(diagnostic);
+    if (!m_editorSettingsPath.empty()) {
+        m_folderViewSettings[m_assetDir] = {m_fileSystemView,m_assetSortColumn,
+            m_assetSortAscending,m_assetRowHeight,m_assetThumbSize};
+        resource::TypedDocument settings;
+        settings.kind=resource::DocumentKind::Resource;settings.formatVersion=2;
+        settings.id=Uuid::FromName("PrismatiXEditor.Settings.v2");settings.type="EditorSettings";
+        settings.properties["workspace"]=Variant(static_cast<std::int64_t>(m_workspace));
+        settings.properties["asset_directory"]=Variant(m_assetDir);
+        VariantArray folders;
+        for(const auto& [path,view]:m_folderViewSettings){VariantObject item;
+            item["path"]=Variant(path);item["mode"]=Variant(static_cast<std::int64_t>(view.mode));
+            item["sort"]=Variant(static_cast<std::int64_t>(view.sort));item["ascending"]=Variant(view.ascending);
+            item["row_height"]=Variant(static_cast<double>(view.rowHeight));item["thumbnail_size"]=Variant(static_cast<double>(view.thumbnailSize));
+            folders.emplace_back(std::move(item));}
+        settings.properties["folder_views"]=Variant(std::move(folders));
+        const Status written=io::AtomicFile::WriteText(m_editorSettingsPath,resource::WriteTypedDocument(settings));
+        if(!written)for(const auto& diagnostic:written.Diagnostics())diag::Emit(diagnostic);
+    }
+}
+
+void EditorApp::RestoreEditorSession() {
+    if (m_editorSessionPath.empty()) return;
+    if(!m_editorSettingsPath.empty()&&std::filesystem::exists(m_editorSettingsPath)){
+        std::ifstream input(m_editorSettingsPath,std::ios::binary);std::ostringstream stream;stream<<input.rdbuf();
+        auto parsed=resource::ParseTypedDocument(stream.str(),m_editorSettingsPath.generic_string());
+        if(!parsed)for(const auto& diagnostic:parsed.Diagnostics())diag::Emit(diagnostic);
+        else if(parsed.Value().type=="EditorSettings"&&parsed.Value().formatVersion==2){
+            const auto& properties=parsed.Value().properties;
+            if(const auto found=properties.find("workspace");found!=properties.end())if(const auto* value=found->second.TryGet<std::int64_t>())m_workspace=static_cast<EditorWorkspace>(std::clamp<std::int64_t>(*value,0,3));
+            if(const auto found=properties.find("asset_directory");found!=properties.end())if(const auto* value=found->second.TryGet<std::string>())m_assetDir=*value;
+            m_folderViewSettings.clear();
+            if(const auto found=properties.find("folder_views");found!=properties.end())if(const auto* array=found->second.AsArray())for(const auto& value:*array){const auto* object=value.AsObject();if(!object)continue;
+                const auto pathIt=object->find("path");if(pathIt==object->end())continue;const auto* path=pathIt->second.TryGet<std::string>();if(!path)continue;FolderViewSettings view;
+                if(const auto it=object->find("mode");it!=object->end())if(const auto* number=it->second.TryGet<std::int64_t>())view.mode=static_cast<FileSystemViewMode>(std::clamp<std::int64_t>(*number,0,2));
+                if(const auto it=object->find("sort");it!=object->end())if(const auto* number=it->second.TryGet<std::int64_t>())view.sort=static_cast<AssetSortColumn>(std::clamp<std::int64_t>(*number,0,3));
+                if(const auto it=object->find("ascending");it!=object->end())if(const auto* boolean=it->second.TryGet<bool>())view.ascending=*boolean;
+                if(const auto it=object->find("row_height");it!=object->end())if(const auto* number=it->second.TryGet<double>())view.rowHeight=static_cast<float>(*number);
+                if(const auto it=object->find("thumbnail_size");it!=object->end())if(const auto* number=it->second.TryGet<double>())view.thumbnailSize=static_cast<float>(*number);
+                m_folderViewSettings[*path]=view;}
+            if(const auto view=m_folderViewSettings.find(m_assetDir);view!=m_folderViewSettings.end()){m_fileSystemView=view->second.mode;m_assetSortColumn=view->second.sort;m_assetSortAscending=view->second.ascending;m_assetRowHeight=view->second.rowHeight;m_assetThumbSize=view->second.thumbnailSize;}
+        }
+    }
+    {
+        std::error_code directoryError;
+        const bool validDirectory = (m_assetDir == "Content" || m_assetDir.starts_with("Content/")) &&
+            std::filesystem::is_directory(m_project.Context().root / m_assetDir, directoryError);
+        if (!validDirectory) m_assetDir = "Content";
+        m_assetPathInput = m_assetDir;
+        m_assetDirectoryHistory.clear();
+        m_assetDirectoryForward.clear();
+    }
+    const Status status = m_docs.RestoreSession(m_editorSessionPath);
+    if (!status) {
+        for (const auto& diagnostic : status.Diagnostics()) diag::Emit(diagnostic);
+        m_docs.Clear();
+        return;
+    }
+    const auto restored = m_docs.Documents();
+    m_docs.Clear();
+    const auto root = DocumentManager::Canonical(m_project.Context().root).generic_string();
+    for (const auto& session : restored) {
+        const auto path = DocumentManager::Canonical(session.id.canonicalPath);
+        if (!path.generic_string().starts_with(root)) continue;
+        std::error_code error;
+        const auto runtime = std::filesystem::relative(path, m_project.Context().root, error).generic_string();
+        if (error) continue;
+        if (session.type == DocumentType::PDS) {
+            if (OpenDocTab(runtime)) m_docs.SetPinned(path, session.pinned);
+        } else if (session.type == DocumentType::UIScene && m_preview) {
+            m_previewMode = 0;
+            m_preview->LoadUI(runtime);
+            SyncDesigner();
+            m_docs.SetPinned(path, session.pinned);
+        } else if(session.type==DocumentType::Lua){
+            m_scripts.OpenFile(runtime);TrackDocument(path,DocumentType::Lua,false);m_docs.SetPinned(path,session.pinned);
+        }
+    }
+}
+
+void EditorApp::CheckExternalDocuments() {
+    SyncDocumentStates();
+    const auto sessions = m_docs.Documents();
+    for (const auto& session : sessions) {
+        const auto state = m_docs.CheckExternalState(session);
+        if (state == ExternalDocumentState::Unchanged) continue;
+        if (state == ExternalDocumentState::Missing) {
+            diag::Diagnostic diagnostic{.severity=diag::Severity::Warning,.code="PXDOC2103",
+                .category="Editor.DocumentManager",.message="開啟的文件已從磁碟移除"};
+            diagnostic.source.path=session.id.canonicalPath.generic_string();diag::Emit(std::move(diagnostic));
+            continue;
+        }
+        if (state == ExternalDocumentState::LocalConflict) {
+            if (m_externalConflictPath.empty()) {
+                m_externalConflictPath = session.id.canonicalPath;
+                const auto stem = m_externalConflictPath.stem().string() + ".local-copy" +
+                                  m_externalConflictPath.extension().string();
+                const auto suggested = m_externalConflictPath.parent_path() / stem;
+                std::snprintf(m_externalSaveAsPath, sizeof(m_externalSaveAsPath), "%s",
+                              suggested.string().c_str());
+            }
+            continue;
+        }
+        std::error_code error;
+        const auto runtime = fs::relative(session.id.canonicalPath,
+                                          m_project.Context().root, error).generic_string();
+        if (error) continue;
+        bool reloaded = false;
+        if (session.type == DocumentType::UIScene && m_designer.Document() &&
+            DocumentManager::Canonical(m_designer.Document()->Path()) == session.id.canonicalPath) {
+            reloaded = static_cast<bool>(m_designer.Open(session.id.canonicalPath));
+            if (reloaded && m_preview) m_preview->LoadUIDocument(m_designer.Document()->Data(), runtime);
+        } else if(session.type==DocumentType::UIScene) {
+            if(auto found=m_inactiveDesigners.find(session.id.canonicalPath.generic_string());found!=m_inactiveDesigners.end())
+                reloaded=static_cast<bool>(found->second.editor->Open(session.id.canonicalPath));
+        } else if (session.type == DocumentType::PDS) {
+            for (auto& document : m_scriptDocs) {
+                if (DocumentManager::Canonical(document->DocumentPath()) == session.id.canonicalPath) {
+                    reloaded = document->OpenDocument(runtime); break;
+                }
+            }
+        } else if(session.type==DocumentType::Lua) {
+            reloaded=m_scripts.ReloadFile(runtime);
+        }
+        if (reloaded) {
+            m_docs.AcknowledgeDiskVersion(session.id.canonicalPath);
+            Log("已重新載入外部修改：" + runtime);
+        }
+    }
 }
 
 void EditorApp::ConfigureDoc(NodeGraphEditor& doc) {
@@ -239,6 +468,7 @@ NodeGraphEditor* EditorApp::OpenDocTab(const std::string& runtimePath) {
             std::filesystem::path(current).filename().string() == wantedName) {
             m_activeDoc = static_cast<int>(i);
             m_focusDocRequest = m_activeDoc;
+            (void)m_docs.Activate(m_scriptDocs[i]->DocumentPath());
             return m_scriptDocs[i].get();
         }
     }
@@ -253,6 +483,8 @@ NodeGraphEditor* EditorApp::OpenDocTab(const std::string& runtimePath) {
     m_scriptDocs.push_back(std::move(doc));
     m_activeDoc = static_cast<int>(m_scriptDocs.size()) - 1;
     m_focusDocRequest = m_activeDoc;
+    TrackDocument(m_scriptDocs.back()->DocumentPath(), DocumentType::PDS,
+                  m_scriptDocs.back()->Dirty());
     return m_scriptDocs.back().get();
 }
 
@@ -278,40 +510,26 @@ bool IsJumpLineTo(const std::string& line, const std::string& script) {
 }
 
 void EditorApp::AddJumpToScript(const std::string& fromScript, const std::string& toScript) {
-    const std::filesystem::path path = m_project.Context().root / "Data" / "Script" / fromScript;
-    std::ifstream in(path);
-    if (!in) {
-        Log("Flow: cannot open " + fromScript + " to add jump.");
-        return;
-    }
+    NodeGraphEditor* document=OpenDocTab(fromScript);if(!document){Log("Flow: cannot open "+fromScript+" to add jump.");return;}
+    std::string text=document->Compile();std::istringstream in(text);
     std::string line;
     while (std::getline(in, line)) {
         if (IsJumpLineTo(line, toScript)) {
             return;  // Already linked in the script.
         }
     }
-    in.close();
-
-    std::ofstream out(path, std::ios::app);
-    out << "\n[jump target=\"" << toScript << "\"]\n";
+    text += "\n[jump target=\""+toScript+"\"]\n";
+    if(!document->ImportPDSText(text))return;
     Log("Flow: added [jump] " + fromScript + " -> " + toScript);
-    for (auto& doc : m_scriptDocs) {
-        doc->ReloadIfOpen(fromScript);
-    }
 }
 
 void EditorApp::RemoveJumpFromScript(const std::string& fromScript, const std::string& toScript) {
-    const std::filesystem::path path = m_project.Context().root / "Data" / "Script" / fromScript;
-    std::ifstream in(path);
-    if (!in) {
-        return;
-    }
+    NodeGraphEditor* document=OpenDocTab(fromScript);if(!document)return;std::istringstream in(document->Compile());
     std::vector<std::string> lines;
     std::string line;
     while (std::getline(in, line)) {
         lines.push_back(line);
     }
-    in.close();
 
     std::vector<std::string> kept;
     kept.reserve(lines.size());
@@ -330,129 +548,136 @@ void EditorApp::RemoveJumpFromScript(const std::string& fromScript, const std::s
     if (!removed) {
         return;
     }
-    std::ofstream out(path, std::ios::trunc);
-    for (const std::string& l : kept) {
-        out << l << "\n";
-    }
+    std::string text;for(const auto& value:kept)text+=value+"\n";if(!document->ImportPDSText(text))return;
     Log("Flow: removed [jump] " + fromScript + " -> " + toScript);
-    for (auto& doc : m_scriptDocs) {
-        doc->ReloadIfOpen(fromScript);
-    }
 }
 
-void EditorApp::ApplyDatabaseSnapshot(const std::string& json) {
-    m_database.Load(json);
-    m_dbBaseline = json;
-    m_dbDirty = true;
+void EditorApp::RefreshAfterProjectMutation() {
+    m_assets.Scan(m_project.Context());
+    const Status identities = m_assetRegistry.Scan(m_project.Context().root);
+    if (!identities) m_showAssetIdentity = true;
     m_flowStale = true;
     RefreshProblems();
 }
 
-void EditorApp::RecordDatabaseUndo(const std::string& label, std::string before,
-                                   std::string after) {
-    if (before == after) {
-        return;
+void EditorApp::OnAssetRelocated(const std::string& fromRuntimePath,
+                                 const std::string& toRuntimePath) {
+    const auto root=m_project.Context().root;
+    const auto fromAbsolute=root/fromRuntimePath,toAbsolute=root/toRuntimePath;
+    m_designer.RelocateDocument(fromAbsolute,toAbsolute);
+    const auto inactiveKey=DocumentManager::Canonical(fromAbsolute).generic_string();
+    if(auto found=m_inactiveDesigners.find(inactiveKey);found!=m_inactiveDesigners.end()){
+        found->second.editor->RelocateDocument(fromAbsolute,toAbsolute);
+        DesignerDocumentSession relocated=std::move(found->second);m_inactiveDesigners.erase(found);
+        relocated.canonicalPath=DocumentManager::Canonical(toAbsolute);
+        m_inactiveDesigners[relocated.canonicalPath.generic_string()]=std::move(relocated);
     }
-    m_undo.Record(UndoStack::Command{
-        label,
-        [this, snapshot = std::move(before)] { ApplyDatabaseSnapshot(snapshot); },
-        [this, snapshot = std::move(after)] { ApplyDatabaseSnapshot(snapshot); },
-    });
+    (void)m_docs.Relocate(fromAbsolute, toAbsolute);
+    if(m_designerPath==fromAbsolute.string())m_designerPath=toAbsolute.string();
+    if(m_preview&&m_preview->CurrentUIPath()==fromRuntimePath)m_preview->LoadUI(toRuntimePath);
+    for(auto& document:m_scriptDocs)document->RelocateIfOpen(fromRuntimePath,toRuntimePath);
+    auto& manifest=m_project.Context().manifest;
+    const std::string fromName=fs::path(fromRuntimePath).filename().string(),toName=fs::path(toRuntimePath).filename().string();
+    if(manifest.startUI==fromRuntimePath)manifest.startUI=toRuntimePath;
+    if(manifest.startScript==fromRuntimePath||manifest.startScript==fromName)
+        manifest.startScript=manifest.startScript==fromName?toName:toRuntimePath;
+    if(m_selectedAsset==fromRuntimePath)m_selectedAsset=toRuntimePath;
+    if(m_assetSelectionModel.selected.erase(fromRuntimePath))m_assetSelectionModel.selected.insert(toRuntimePath);
+    RefreshAfterProjectMutation();
 }
 
-namespace {
-int ReplaceAll(std::string& text, const std::string& from, const std::string& to) {
-    if (from.empty() || from == to) {
-        return 0;
-    }
-    int count = 0;
-    std::size_t pos = 0;
-    while ((pos = text.find(from, pos)) != std::string::npos) {
-        text.replace(pos, from.size(), to);
-        pos += to.size();
-        ++count;
-    }
-    return count;
+Status EditorApp::MoveAssetWithHistory(const std::string& oldRuntimePath,
+                                       const std::string& newRuntimePath) {
+    if(oldRuntimePath.empty()||newRuntimePath.empty()||oldRuntimePath==newRuntimePath)
+        return Status::Ok();
+    const auto root=m_project.Context().root;
+    const auto oldAbsolute=root/oldRuntimePath,newAbsolute=root/newRuntimePath;
+    if(m_designer.Document()&&m_designer.Document()->Path()==oldAbsolute&&m_designer.Dirty())
+        return Status::Fail(ProjectMutationError("PXASSETMOVE9206",oldAbsolute,
+            "請先儲存目前的 UI 文件再移動或重新命名"));
+    if(const auto found=m_inactiveDesigners.find(DocumentManager::Canonical(oldAbsolute).generic_string());
+       found!=m_inactiveDesigners.end()&&found->second.editor&&found->second.editor->Dirty())
+        return Status::Fail(ProjectMutationError("PXASSETMOVE9206",oldAbsolute,
+            "請先儲存開啟中的 UI 文件再移動或重新命名"));
+    for(const auto& document:m_scriptDocs)if(document->DocumentPath()==oldAbsolute&&document->Dirty())
+        return Status::Fail(ProjectMutationError("PXASSETMOVE9207",oldAbsolute,
+            "請先儲存目前的劇情文件再移動或重新命名"));
+    auto planned=PlanReferenceUpdates(root,oldRuntimePath,newRuntimePath);
+    if(!planned)return Status::Fail(planned.Diagnostics());
+    const auto snapshots=planned.TakeValue();
+    auto apply=[this,oldRuntimePath,newRuntimePath,oldAbsolute,newAbsolute,snapshots]{
+        Status moved=MoveAssetPair(oldAbsolute,newAbsolute);if(!moved)return moved;
+        Status references=WriteReferenceSnapshots(snapshots,true,oldAbsolute,newAbsolute);
+        if(!references){(void)MoveAssetPair(newAbsolute,oldAbsolute);return references;}
+        OnAssetRelocated(oldRuntimePath,newRuntimePath);return Status::Ok();};
+    auto revert=[this,oldRuntimePath,newRuntimePath,oldAbsolute,newAbsolute,snapshots]{
+        Status moved=MoveAssetPair(newAbsolute,oldAbsolute);if(!moved)return moved;
+        Status references=WriteReferenceSnapshots(snapshots,false);
+        if(!references){(void)MoveAssetPair(oldAbsolute,newAbsolute);return references;}
+        OnAssetRelocated(newRuntimePath,oldRuntimePath);return Status::Ok();};
+    auto command=std::make_unique<FunctionalProjectCommand>(
+        "移動 "+fs::path(oldRuntimePath).filename().string(),std::move(apply),std::move(revert));
+    const Status status=m_projectHistory.Execute(std::move(command));
+    if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);
+    return status;
 }
+
+Status EditorApp::TrashAssetWithHistory(const std::string& runtimePath) {
+    if(runtimePath.empty())return Status::Ok();const auto root=m_project.Context().root;
+    const auto source=root/runtimePath;
+    if(m_docs.Find(source))
+        return Status::Fail(ProjectMutationError("PXASSETTRASH9301",source,
+            "請先關閉開啟中的文件再移到垃圾桶"));
+    auto references=PlanReferenceUpdates(root,runtimePath,runtimePath+".__trashed__");if(!references)return Status::Fail(references.Diagnostics());
+    const auto transaction=root/".prismatix"/"Trash"/Uuid::Random().ToString();const auto trash=transaction/runtimePath;const auto manifest=transaction/"TrashRecord.pxres";
+    VariantArray referencedBy;for(const auto& snapshot:references.Value())referencedBy.emplace_back(snapshot.path.generic_string());
+    resource::TypedDocument record;record.kind=resource::DocumentKind::Resource;record.id=Uuid::Random();record.type="TrashRecord";record.properties["original_path"]=Variant(runtimePath);record.properties["referenced_by"]=Variant(std::move(referencedBy));const std::string recordText=resource::WriteTypedDocument(record);
+    auto apply=[this,runtimePath,source,trash,manifest,recordText]{const Status moved=MoveAssetPair(source,trash);if(!moved)return moved;const Status written=io::AtomicFile::WriteText(manifest,recordText);if(!written){(void)MoveAssetPair(trash,source);return written;}if(m_selectedAsset==runtimePath)m_selectedAsset.clear();m_assetSelectionModel.selected.erase(runtimePath);RefreshAfterProjectMutation();return Status::Ok();};
+    auto revert=[this,runtimePath,source,trash,manifest]{const Status moved=MoveAssetPair(trash,source);if(!moved)return moved;std::error_code error;std::filesystem::remove(manifest,error);m_selectedAsset=runtimePath;m_assetSelectionModel.selected={runtimePath};RefreshAfterProjectMutation();return Status::Ok();};
+    auto command=std::make_unique<FunctionalProjectCommand>(
+        "移到垃圾桶 "+fs::path(runtimePath).filename().string(),std::move(apply),std::move(revert));
+    const Status status=m_projectHistory.Execute(std::move(command));if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);return status;
 }
 
-int EditorApp::UpdateAssetReferences(const std::string& oldRel, const std::string& newRel) {
-    if (oldRel.empty() || newRel.empty() || oldRel == newRel ||
-        !m_project.Context().IsOpen()) {
-        return 0;
-    }
-    const std::filesystem::path root = m_project.Context().root;
-    const std::string oldName = std::filesystem::path(oldRel).filename().string();
-    const std::string newName = std::filesystem::path(newRel).filename().string();
-    const bool isScript = std::filesystem::path(oldRel).extension() == ".pds";
-
-    int touched = 0;
-    std::vector<std::string> changedScripts;
-    std::error_code ec;
-    for (auto it = std::filesystem::recursive_directory_iterator(root / "Data", ec);
-         !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
-        if (!it->is_regular_file(ec)) continue;
-        const std::filesystem::path& file = it->path();
-        const std::string ext = file.extension().string();
-        if (ext != ".pds" && ext != ".pxui" && ext != ".lua") continue;
-        std::ifstream in(file, std::ios::binary);
-        if (!in) continue;
-        std::stringstream ss;
-        ss << in.rdbuf();
-        in.close();
-        std::string text = ss.str();
-
-        int replaced = ReplaceAll(text, oldRel, newRel);
-        // Bare-filename references (script jump targets, char/bgm shorthand).
-        if (oldName != newName) {
-            replaced += ReplaceAll(text, "\"" + oldName + "\"", "\"" + newName + "\"");
+Status EditorApp::CreateAssetWithHistory(const std::filesystem::path& absolutePath,int kind){
+    const auto root=m_project.Context().root;auto storage=std::make_shared<ProjectUndoStorage>();
+    storage->root=root/".prismatix"/"Undo"/"create"/Uuid::Random().ToString();
+    const auto backup=storage->root/absolutePath.filename();
+    auto apply=[this,root,absolutePath,backup,kind,storage]{
+        std::error_code error;std::filesystem::create_directories(absolutePath.parent_path(),error);
+        if(error)return Status::Fail(ProjectMutationError("PXASSETCREATE9401",absolutePath,"無法建立父資料夾",error.message()));
+        if(std::filesystem::exists(backup)){
+            if(kind==0){std::filesystem::rename(backup,absolutePath,error);if(error)return Status::Fail(ProjectMutationError("PXASSETCREATE9402",absolutePath,"無法重做資料夾建立",error.message()));}
+            else{const Status moved=MoveAssetPair(backup,absolutePath);if(!moved)return moved;}
+        }else if(kind==0){
+            if(!std::filesystem::create_directory(absolutePath,error)||error)return Status::Fail(ProjectMutationError("PXASSETCREATE9403",absolutePath,"無法建立資料夾",error.message()));
+        }else if(kind==1){
+            const auto name=absolutePath.stem().string();const Status written=io::AtomicFile::WriteText(absolutePath,"// "+name+"\n[name speaker=\"\"]\nNew line\n");if(!written)return written;
+        }else{
+            UISceneDocument document;const Status created=document.New(absolutePath);if(!created)return created;if(!document.Save())return Status::Fail(ProjectMutationError("PXASSETCREATE9404",absolutePath,"無法儲存新 UI Scene"));
         }
-        if (replaced == 0) continue;
-        std::ofstream out(file, std::ios::binary | std::ios::trunc);
-        out << text;
-        ++touched;
-        if (ext == ".pds") {
-            changedScripts.push_back(file.filename().string());
-        }
-    }
+        if(kind!=0){auto registered=m_assetRegistry.RegisterAsset(root,absolutePath,AssetDatabase::Classify(absolutePath));if(!registered){std::filesystem::remove(absolutePath,error);return Status::Fail(registered.Diagnostics());}}
+        RefreshAfterProjectMutation();return Status::Ok();};
+    auto revert=[this,absolutePath,backup,kind,storage]{
+        std::error_code error;std::filesystem::create_directories(backup.parent_path(),error);if(error)return Status::Fail(ProjectMutationError("PXASSETCREATE9405",backup,"無法建立 Undo 儲存區",error.message()));
+        if(kind==0){std::filesystem::rename(absolutePath,backup,error);if(error)return Status::Fail(ProjectMutationError("PXASSETCREATE9406",absolutePath,"無法復原資料夾建立",error.message()));}
+        else{const Status moved=MoveAssetPair(absolutePath,backup);if(!moved)return moved;}
+        RefreshAfterProjectMutation();return Status::Ok();};
+    auto command=std::make_unique<FunctionalProjectCommand>(kind==0?"建立資料夾":"建立素材",std::move(apply),std::move(revert));
+    const Status status=m_projectHistory.Execute(std::move(command));if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);return status;
+}
 
-    // Database and manifest live in memory; update there instead of on disk.
-    bool dbChanged = false;
-    for (auto& ch : m_database.chapters) {
-        if (isScript && (ch.script == oldName || ch.script == oldRel)) {
-            ch.script = newName;
-            dbChanged = true;
-        }
-    }
-    for (auto& g : m_database.gallery) {
-        if (g.image == oldRel) { g.image = newRel; dbChanged = true; }
-        if (g.thumbnail == oldRel) { g.thumbnail = newRel; dbChanged = true; }
-    }
-    if (dbChanged) {
-        m_dbDirty = true;
-        m_flowStale = true;
-    }
-    ProjectManifest& manifest = m_project.Context().manifest;
-    bool manifestChanged = false;
-    if (isScript && manifest.startScript == oldName) {
-        manifest.startScript = newName;
-        manifestChanged = true;
-    }
-    if (manifest.startUI == oldRel) {
-        manifest.startUI = newRel;
-        manifestChanged = true;
-    }
-    if (manifestChanged) {
-        m_project.SaveManifest();
-        m_flow.SetEntryScript(manifest.startScript);
-    }
-
-    for (const std::string& script : changedScripts) {
-        for (auto& doc : m_scriptDocs) {
-            doc->ReloadIfOpen(script);
-        }
-    }
-    return touched;
+Status EditorApp::DuplicateAssetWithHistory(const std::string& runtimePath){
+    const auto root=m_project.Context().root,source=root/runtimePath;std::filesystem::path target=source.parent_path()/(source.stem().string()+"_copy"+source.extension().string());
+    for(int index=2;std::filesystem::exists(target)&&index<10000;++index)target=source.parent_path()/(source.stem().string()+"_copy_"+std::to_string(index)+source.extension().string());
+    auto storage=std::make_shared<ProjectUndoStorage>();storage->root=root/".prismatix"/"Undo"/"duplicate"/Uuid::Random().ToString();const auto backup=storage->root/target.filename();
+    auto apply=[this,root,source,target,backup,storage]{std::error_code error;
+        if(std::filesystem::exists(backup)){const Status moved=MoveAssetPair(backup,target);if(!moved)return moved;}
+        else{std::filesystem::copy_file(source,target,std::filesystem::copy_options::none,error);if(error)return Status::Fail(ProjectMutationError("PXASSETDUP9501",source,"無法複製素材",error.message()));auto registered=m_assetRegistry.RegisterAsset(root,target,AssetDatabase::Classify(target));if(!registered){std::filesystem::remove(target,error);return Status::Fail(registered.Diagnostics());}}
+        RefreshAfterProjectMutation();return Status::Ok();};
+    auto revert=[this,target,backup,storage]{const Status moved=MoveAssetPair(target,backup);if(!moved)return moved;RefreshAfterProjectMutation();return Status::Ok();};
+    auto command=std::make_unique<FunctionalProjectCommand>("複製 "+source.filename().string(),std::move(apply),std::move(revert));
+    const Status status=m_projectHistory.Execute(std::move(command));if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);return status;
 }
 
 const std::vector<std::string>& EditorApp::ScriptFileNames() {
@@ -477,12 +702,20 @@ void EditorApp::CreateScriptFile(const std::string& script) {
     if (!m_project.Context().IsOpen() || script.empty()) {
         return;
     }
-    const std::filesystem::path path = m_project.Context().root / "Data" / "Script" / script;
+    const std::filesystem::path path = m_project.Context().root / "Content" / "Script" / script;
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);
     if (!std::filesystem::exists(path)) {
-        std::ofstream out(path);
-        out << "# " << script << "\n\n[text]\nNew line\n\n";
+        const Status written = io::AtomicFile::WriteText(
+            path, "// " + script + "\n[name speaker=\"\"]\nNew line\n");
+        if (!written) {
+            for (const auto& diagnostic : written.Diagnostics()) diag::Emit(diagnostic);
+            return;
+        }
+        auto registered = m_assetRegistry.RegisterAsset(m_project.Context().root, path, "script");
+        if (!registered) {
+            for (const auto& diagnostic : registered.Diagnostics()) diag::Emit(diagnostic);
+        }
         Log("Created script " + script);
     }
     m_assets.Scan(m_project.Context());
@@ -496,45 +729,26 @@ void EditorApp::CreateFlowChapter(ImVec2 canvasPosition) {
         return;
     }
 
-    int index = static_cast<int>(m_database.chapters.size()) + 1;
-    std::string id;
-    std::string title;
-    std::string script;
-    const auto used = [&](const std::string& candidateId, const std::string& candidateScript) {
-        for (const px::project::Chapter& chapter : m_database.chapters) {
-            if (chapter.id == candidateId || chapter.script == candidateScript) {
-                return true;
-            }
-        }
-        return false;
-    };
-    do {
-        id = "chapter" + std::to_string(index);
-        title = "Chapter " + std::to_string(index);
-        script = id + ".pds";
-        ++index;
-    } while (used(id, script));
-
-    const std::string before = m_database.Serialize();
-    px::project::Chapter chapter{ id, title, script, false };
-    chapter.flowX = canvasPosition.x;
-    chapter.flowY = canvasPosition.y;
-    m_database.chapters.push_back(std::move(chapter));
-    const std::string after = m_database.Serialize();
-    RecordDatabaseUndo("Add chapter " + id, before, after);
-    m_dbBaseline = after;
-    m_dbDirty = true;
-
-    const std::filesystem::path scriptDir = m_project.Context().root / "Data" / "Script";
+    int index = static_cast<int>(ScriptFileNames().size()) + 1;
+    std::string id, title, script;
+    do { id="chapter"+std::to_string(index);title="Chapter "+std::to_string(index);script=id+".pds";++index; }
+    while (std::filesystem::exists(m_project.Context().root/"Content"/"Script"/script));
+    const std::filesystem::path scriptDir = m_project.Context().root / "Content" / "Script";
     std::error_code ec;
     std::filesystem::create_directories(scriptDir, ec);
     const std::filesystem::path scriptPath = scriptDir / script;
     if (!std::filesystem::exists(scriptPath)) {
-        std::ofstream out(scriptPath);
-        out << "# " << title << "\n\n[text]\nNew line\n\n";
+        const Status written = io::AtomicFile::WriteText(
+            scriptPath, "// " + title + "\n[name speaker=\"\"]\nNew line\n");
+        if (!written) {
+            for (const auto& diagnostic : written.Diagnostics()) diag::Emit(diagnostic);
+            return;
+        }
     }
-
-    m_flow.Rebuild(m_database, m_project.Context().root);
+    auto registered=m_assetRegistry.RegisterAsset(m_project.Context().root,scriptPath,"script");
+    if(!registered)for(const auto& diagnostic:registered.Diagnostics())diag::Emit(diagnostic);
+    m_assets.Scan(m_project.Context());
+    m_flow.Rebuild(ScriptFileNames(), m_project.Context().root);
     m_flow.SetNodePositionByScript(script, canvasPosition);
     RefreshProblems();
     Log("Flow: added " + title + " (" + script + ")");
@@ -543,15 +757,12 @@ void EditorApp::CreateFlowChapter(ImVec2 canvasPosition) {
 
 void EditorApp::SaveAll() {
     if (m_designer.Dirty()) m_designer.Save();
+    for(auto& [_,session]:m_inactiveDesigners)if(session.editor&&session.editor->Dirty())session.editor->Save();
+    m_scripts.SaveAll();
     // Save the open script unconditionally: a freshly imported document is not
     // "dirty", but Save All should still normalize it to the compiled form.
     for (auto& doc : m_scriptDocs) {
-        if (!doc->CurrentRuntimePath().empty()) doc->Save();
-    }
-    if (m_dbDirty && !m_dbPath.empty()) {
-        std::ofstream out(m_dbPath);
-        out << m_database.Serialize();
-        m_dbDirty = false;
+        if (!doc->CurrentRuntimePath().empty()) (void)doc->Save();
     }
     m_project.SaveManifest();
     RefreshProblems();
@@ -585,7 +796,7 @@ void EditorApp::RunBuild() {
 
 void EditorApp::RunPlayer(const std::filesystem::path& exe, const std::filesystem::path& workingDir) {
     if (!std::filesystem::exists(exe)) {
-        Log("Run failed: player not found at " + exe.string());
+        diag::Diagnostic diagnostic{.severity=diag::Severity::Error,.code="PXRUN9701",.category="Editor.Run",.message="執行失敗：找不到 Player"};diagnostic.source.path=exe.generic_string();diag::Emit(std::move(diagnostic));
         return;
     }
 #ifdef _WIN32
@@ -602,14 +813,14 @@ void EditorApp::RunPlayer(const std::filesystem::path& exe, const std::filesyste
         Log("Launched player (cwd=" + workingDir.string() + ")");
     }
     else {
-        Log("Run failed: could not start the player process.");
+        diag::Diagnostic diagnostic{.severity=diag::Severity::Error,.code="PXRUN9702",.category="Editor.Run",.message="執行失敗：無法啟動 Player process"};diagnostic.source.path=exe.generic_string();diag::Emit(std::move(diagnostic));
     }
 #else
     if (LaunchDetached(exe, workingDir)) {
         Log("Launched player (cwd=" + workingDir.string() + ")");
     }
     else {
-        Log("Run failed: could not start the player process.");
+        diag::Diagnostic diagnostic{.severity=diag::Severity::Error,.code="PXRUN9702",.category="Editor.Run",.message="執行失敗：無法啟動 Player process"};diagnostic.source.path=exe.generic_string();diag::Emit(std::move(diagnostic));
     }
 #endif
 }
@@ -664,19 +875,8 @@ void EditorApp::RefreshProblems() {
         }
     };
     missing(m.startUI, "start UI");
-    if (!std::filesystem::exists(root / m.startScript) && !std::filesystem::exists(root / "Data" / "Script" / m.startScript)) {
+    if (!std::filesystem::exists(root / m.startScript) && !std::filesystem::exists(root / "Content" / "Script" / m.startScript)) {
         m_problems.push_back("Missing start script: " + m.startScript);
-    }
-    for (const auto& ch : m_database.chapters) {
-        if (ch.script.empty()) continue;
-        if (!std::filesystem::exists(root / "Data" / "Script" / ch.script) && !std::filesystem::exists(root / ch.script)) {
-            m_problems.push_back("Chapter '" + ch.id + "' script not found: " + ch.script);
-        }
-    }
-    for (const auto& g : m_database.gallery) {
-        if (!g.image.empty() && !std::filesystem::exists(root / g.image)) {
-            m_problems.push_back("Gallery '" + g.id + "' image not found: " + g.image);
-        }
     }
 
     // Validate asset references inside every script (same dir conventions as VMConfig).
@@ -687,7 +887,7 @@ void EditorApp::RefreshProblems() {
         }
         return dir + file;
     };
-    const std::filesystem::path scriptDir = root / "Data" / "Script";
+    const std::filesystem::path scriptDir = root / "Content" / "Script";
     std::error_code ec;
     constexpr std::size_t kMaxProblems = 200;
     for (std::filesystem::directory_iterator it(scriptDir, ec), end; it != end && !ec;
@@ -713,7 +913,7 @@ void EditorApp::RefreshProblems() {
         for (const px::vn::Command& cmd : parsed.commands) {
             const std::string& t = cmd.type;
             if (t == "bg") {
-                checkRef(cmd, "Data/Image/Background/", cmd.Get("file", cmd.Get("value")), "bg");
+                checkRef(cmd, "Content/Image/Background/", cmd.Get("file", cmd.Get("value")), "bg");
             } else if (t == "char") {
                 std::string file = cmd.Get("file");
                 if (file.empty()) {
@@ -722,19 +922,19 @@ void EditorApp::RefreshProblems() {
                         cmd.Get("diff", cmd.Get("expression", cmd.Get("exp", "d")));
                     file = name + "_" + diff + ".png";
                 }
-                checkRef(cmd, "Data/Image/Character/", file, "character image");
+                checkRef(cmd, "Content/Image/Character/", file, "character image");
             } else if (t == "cg") {
-                checkRef(cmd, "Data/Image/CG/", cmd.Get("image", cmd.Get("file")), "cg");
+                checkRef(cmd, "Content/Image/CG/", cmd.Get("image", cmd.Get("file")), "cg");
             } else if (t == "bgm") {
-                checkRef(cmd, "Data/Audio/Music/", cmd.Get("file", cmd.Get("value")), "bgm");
+                checkRef(cmd, "Content/Audio/Music/", cmd.Get("file", cmd.Get("value")), "bgm");
             } else if (t == "se") {
-                checkRef(cmd, "Data/Audio/SFX/", cmd.Get("file", cmd.Get("value")), "se");
+                checkRef(cmd, "Content/Audio/SFX/", cmd.Get("file", cmd.Get("value")), "se");
             } else if (t == "voice") {
-                checkRef(cmd, "Data/Audio/Voice/", cmd.Get("file", cmd.Get("value")), "voice");
+                checkRef(cmd, "Content/Audio/Voice/", cmd.Get("file", cmd.Get("value")), "voice");
             } else if (t == "video" || t == "movie") {
-                checkRef(cmd, "Data/Video/", cmd.Get("file", cmd.Get("value")), "video");
+                checkRef(cmd, "Content/Video/", cmd.Get("file", cmd.Get("value")), "video");
             } else if ((t == "say" || t == "text") && cmd.Has("voice")) {
-                checkRef(cmd, "Data/Audio/Voice/", cmd.Get("voice"), "voice");
+                checkRef(cmd, "Content/Audio/Voice/", cmd.Get("voice"), "voice");
             }
         }
     }

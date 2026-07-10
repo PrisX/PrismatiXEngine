@@ -2,6 +2,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "Engine/Core/Types.h"
 #include "Engine/Graphics/AssetCache.h"
@@ -45,6 +46,8 @@ public:
 
     void DrawRect(const Rect& rect, Color color);
     void DrawRoundedRect(const Rect& rect, float radius, Color color);
+    void PushClip(const Rect& rect);
+    void PopClip();
 
     void DrawImage(const std::string& path, const Rect& dst, std::uint8_t alpha = 255);
     // Draws a caller-owned texture (e.g. a streaming transition mask).
@@ -80,6 +83,7 @@ private:
     int m_logicalH = 720;
     int m_textSupersample = 2;
     std::unordered_map<std::string, CachedText> m_textCache;
+    std::vector<Rect> m_clipStack;
 };
 
 }  // namespace px::graphics
