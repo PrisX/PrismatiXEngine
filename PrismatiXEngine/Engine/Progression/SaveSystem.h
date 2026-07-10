@@ -19,8 +19,11 @@ struct SaveSnapshot {
     std::string bgPath;
     std::string bgmPath;
     std::vector<vn::Stage::SavedActor> actors;
+    std::vector<vn::Stage::SavedLayer> layers;
     std::unordered_map<std::string, int> variables;
     std::vector<vn::BacklogEntry> backlog;
+    bool nvlMode = false;
+    std::vector<vn::BacklogEntry> nvlLines;
     std::uint64_t timestamp = 0;
     std::uint64_t playtimeMs = 0;
     std::vector<std::uint8_t> thumbnailPng;

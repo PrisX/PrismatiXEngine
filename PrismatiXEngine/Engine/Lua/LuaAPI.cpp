@@ -4,6 +4,9 @@
 #include "Engine/Progression/GlobalProfile.h"
 #include "Engine/Lua/LuaHost.h"
 #include "Engine/Support/Logger.h"
+#include "Engine/VN/Runtime/Stage.h"
+
+#include <algorithm>
 
 namespace px::lua {
 
@@ -67,6 +70,68 @@ void LuaHost::BindApi() {
         api.set_function("SetSEVolume", [a](int v) { a->SetSEVolume(v); });
         api.set_function("SetSeVolume", [a](int v) { a->SetSEVolume(v); });
         api.set_function("SetVoiceVolume", [a](int v) { a->SetVoiceVolume(v); });
+    }
+
+    // VN stage control: the high-level escape hatch for custom commands that go
+    // beyond the built-in PDS set (custom poses, layer effects, scripted scenes).
+    if (vn::Stage* s = m_services.stage) {
+        api.set_function("SetBackground",
+                         [s](const std::string& path, sol::optional<bool> transition) {
+                             s->SetBackground(path, transition.value_or(true));
+                         });
+        api.set_function("SetCharacter",
+                         [s](const std::string& name, const std::string& image,
+                             sol::optional<int> slot, sol::optional<bool> transition,
+                             sol::optional<float> x, sol::optional<float> y,
+                             sol::optional<float> scale) {
+                             s->SetCharacter(name, image, slot.value_or(2),
+                                             transition.value_or(true), x.value_or(0.0f),
+                                             y.value_or(0.0f), scale.value_or(1.0f));
+                         });
+        api.set_function("ClearCharacter",
+                         [s](const std::string& name, sol::optional<bool> transition) {
+                             s->ClearCharacter(name, transition.value_or(true));
+                         });
+        api.set_function("MoveCharacter",
+                         [s](const std::string& name, int slot) { s->MoveCharacter(name, slot); });
+        api.set_function("SetLayer",
+                         [s](const std::string& name, const std::string& image,
+                             sol::optional<float> x, sol::optional<float> y,
+                             sol::optional<float> scale, sol::optional<int> alpha,
+                             sol::optional<int> z) {
+                             s->SetLayer(name, image, x.value_or(0.0f), y.value_or(0.0f),
+                                         scale.value_or(1.0f),
+                                         static_cast<std::uint8_t>(
+                                             std::clamp(alpha.value_or(255), 0, 255)),
+                                         z.value_or(0));
+                         });
+        api.set_function("ClearLayer", [s](const std::string& name) { s->ClearLayer(name); });
+        api.set_function("Shake", [s](sol::optional<int> ms, sol::optional<float> amp) {
+            s->Shake(ms.value_or(400), amp.value_or(12.0f));
+        });
+        // Engine.Animate("girl", { x=120, scale=1.1, alpha=255, duration=600, ease="outBack" })
+        api.set_function("Animate", [s](const std::string& target, sol::table props) {
+            vn::Stage::TweenSpec spec;
+            if (auto v = props.get<sol::optional<float>>("x")) {
+                spec.hasX = true;
+                spec.x = *v;
+            }
+            if (auto v = props.get<sol::optional<float>>("y")) {
+                spec.hasY = true;
+                spec.y = *v;
+            }
+            if (auto v = props.get<sol::optional<float>>("scale")) {
+                spec.hasScale = true;
+                spec.scale = *v;
+            }
+            if (auto v = props.get<sol::optional<float>>("alpha")) {
+                spec.hasAlpha = true;
+                spec.alpha = *v;
+            }
+            spec.durationMs = props.get_or("duration", 600);
+            spec.ease = props.get_or("ease", std::string{ "outCubic" });
+            return s->Animate(target, spec);
+        });
     }
 
     if (px::Input* in = m_services.input) {

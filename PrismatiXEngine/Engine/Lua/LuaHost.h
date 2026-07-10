@@ -20,6 +20,9 @@ class AudioEngine;
 namespace px::progress {
 class GlobalProfile;
 }
+namespace px::vn {
+class Stage;
+}
 namespace px {
 class Input;
 }
@@ -32,6 +35,7 @@ struct LuaServices {
     audio::AudioEngine* audio = nullptr;
     progress::GlobalProfile* profile = nullptr;
     px::Input* input = nullptr;
+    vn::Stage* stage = nullptr;  // VN stage control for advanced user scripts
 };
 
 class LuaHost {

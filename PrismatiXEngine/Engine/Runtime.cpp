@@ -90,6 +90,12 @@ bool Runtime::BeginFrame() {
         return false;
     }
     m_clock.Tick();
+    if (m_assets) {
+        m_assets->BeginFrame();
+    }
+    if (m_audio) {
+        m_audio->Update();
+    }
     m_window.Clear(m_config.clearColor);
     return true;
 }

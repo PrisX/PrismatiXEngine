@@ -46,6 +46,7 @@ void EditorApp::BuildCommands() {
         { "Go to: Build", "", [focus] { focus("Build"); } },
         { "Go to: Assets", "", [focus] { focus("Assets"); } },
         { "Go to: Problems", "", [focus] { focus("Problems"); } },
+        { "Go to: Localization", "", [focus] { focus("Localization"); } },
     };
 }
 
@@ -58,7 +59,8 @@ void EditorApp::HandleShortcuts() {
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, ImGuiInputFlags_RouteGlobal)) {
         SaveAll();
     }
-    if (!ImGui::GetIO().WantTextInput &&
+    // Ctrl+V pastes nodes when the graph is focused; clipboard import otherwise.
+    if (!ImGui::GetIO().WantTextInput && !m_nodeEditorFocused &&
         ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_V, ImGuiInputFlags_RouteGlobal)) {
         ImportClipboardAssets();
     }
@@ -72,11 +74,25 @@ void EditorApp::HandleShortcuts() {
     if (ImGui::Shortcut(ImGuiKey_F5, ImGuiInputFlags_RouteGlobal)) {
         RunDev();
     }
-    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, ImGuiInputFlags_RouteGlobal) && m_undo.CanUndo()) {
-        m_undo.Undo();
+    // Ctrl+Z/Y go to the node graph when it has focus, otherwise to the
+    // database/flow undo stack. Text inputs keep their built-in undo.
+    if (!ImGui::GetIO().WantTextInput &&
+        ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, ImGuiInputFlags_RouteGlobal)) {
+        NodeGraphEditor* doc = ActiveDocPtr();
+        if (m_nodeEditorFocused && doc && doc->CanUndo()) {
+            doc->Undo();
+        } else if (m_undo.CanUndo()) {
+            m_undo.Undo();
+        }
     }
-    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y, ImGuiInputFlags_RouteGlobal) && m_undo.CanRedo()) {
-        m_undo.Redo();
+    if (!ImGui::GetIO().WantTextInput &&
+        ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y, ImGuiInputFlags_RouteGlobal)) {
+        NodeGraphEditor* doc = ActiveDocPtr();
+        if (m_nodeEditorFocused && doc && doc->CanRedo()) {
+            doc->Redo();
+        } else if (m_undo.CanRedo()) {
+            m_undo.Redo();
+        }
     }
     if (ImGui::Shortcut(ImGuiKey_F1, ImGuiInputFlags_RouteGlobal)) {
         m_showShortcuts = !m_showShortcuts;

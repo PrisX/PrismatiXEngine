@@ -10,7 +10,12 @@ namespace {
 Json ActorsToJson(const std::vector<vn::Stage::SavedActor>& actors) {
     Json arr = Json::array();
     for (const auto& a : actors) {
-        arr.push_back({ { "name", a.name }, { "image", a.imagePath }, { "slot", a.slot } });
+        arr.push_back({ { "name", a.name },
+                        { "image", a.imagePath },
+                        { "slot", a.slot },
+                        { "ox", a.offsetX },
+                        { "oy", a.offsetY },
+                        { "scale", a.scale } });
     }
     return arr;
 }
@@ -20,7 +25,35 @@ std::vector<vn::Stage::SavedActor> ActorsFromJson(const Json& arr) {
     if (!arr.is_array()) return out;
     for (const auto& j : arr) {
         out.push_back(vn::Stage::SavedActor{ j.value("name", std::string{}),
-                                             j.value("image", std::string{}), j.value("slot", 2) });
+                                             j.value("image", std::string{}), j.value("slot", 2),
+                                             j.value("ox", 0.0f), j.value("oy", 0.0f),
+                                             j.value("scale", 1.0f) });
+    }
+    return out;
+}
+
+Json LayersToJson(const std::vector<vn::Stage::SavedLayer>& layers) {
+    Json arr = Json::array();
+    for (const auto& l : layers) {
+        arr.push_back({ { "name", l.name },
+                        { "image", l.imagePath },
+                        { "x", l.x },
+                        { "y", l.y },
+                        { "scale", l.scale },
+                        { "alpha", l.alpha },
+                        { "z", l.z } });
+    }
+    return arr;
+}
+
+std::vector<vn::Stage::SavedLayer> LayersFromJson(const Json& arr) {
+    std::vector<vn::Stage::SavedLayer> out;
+    if (!arr.is_array()) return out;
+    for (const auto& j : arr) {
+        out.push_back(vn::Stage::SavedLayer{ j.value("name", std::string{}),
+                                             j.value("image", std::string{}), j.value("x", 0.0f),
+                                             j.value("y", 0.0f), j.value("scale", 1.0f),
+                                             j.value("alpha", 255), j.value("z", 0) });
     }
     return out;
 }
@@ -57,7 +90,10 @@ void SaveSystem::Configure(const std::string& directory, const crypto::Key* key)
 }
 
 std::string SaveSystem::SlotPath(int slot) const {
-    return (std::filesystem::path(m_dir) / ("save_" + std::to_string(slot) + ".pxsav")).string();
+    // Negative slots are reserved for the automatic save.
+    const std::string file = slot < 0 ? "autosave.pxsav"
+                                      : "save_" + std::to_string(slot) + ".pxsav";
+    return (std::filesystem::path(m_dir) / file).string();
 }
 
 bool SaveSystem::Save(int slot, const SaveSnapshot& s) {
@@ -69,8 +105,11 @@ bool SaveSystem::Save(int slot, const SaveSnapshot& s) {
     j["bgPath"] = s.bgPath;
     j["bgmPath"] = s.bgmPath;
     j["actors"] = ActorsToJson(s.actors);
+    j["layers"] = LayersToJson(s.layers);
     j["variables"] = s.variables;
     j["backlog"] = BacklogToJson(s.backlog);
+    j["nvlMode"] = s.nvlMode;
+    j["nvlLines"] = BacklogToJson(s.nvlLines);
     j["timestamp"] = s.timestamp;
     j["playtimeMs"] = s.playtimeMs;
     if (!s.thumbnailPng.empty()) {
@@ -92,6 +131,9 @@ std::optional<SaveSnapshot> SaveSystem::Load(int slot) const {
     s.bgPath = j.value("bgPath", std::string{});
     s.bgmPath = j.value("bgmPath", std::string{});
     s.actors = ActorsFromJson(j.value("actors", Json::array()));
+    s.layers = LayersFromJson(j.value("layers", Json::array()));
+    s.nvlMode = j.value("nvlMode", false);
+    s.nvlLines = BacklogFromJson(j.value("nvlLines", Json::array()));
     if (j.contains("variables")) {
         for (auto it = j["variables"].begin(); it != j["variables"].end(); ++it) {
             s.variables[it.key()] = it.value().get<int>();

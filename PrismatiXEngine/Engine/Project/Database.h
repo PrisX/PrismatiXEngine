@@ -34,6 +34,11 @@ struct Chapter {
     std::string title;
     std::string script;
     bool alwaysUnlocked = false;
+    // Flow editor layout. NaN-like sentinel: < kFlowUnset means "auto layout".
+    float flowX = -100000.0f;
+    float flowY = -100000.0f;
+
+    [[nodiscard]] bool HasFlowPosition() const { return flowX > -99999.0f && flowY > -99999.0f; }
 };
 
 struct InputBinding {
@@ -53,6 +58,13 @@ public:
     std::vector<GalleryItem> gallery;
     std::vector<Chapter> chapters;
     std::vector<InputBinding> inputMap;
+
+    // Flow editor: position of the Start (entry) node.
+    float entryFlowX = 40.0f;
+    float entryFlowY = 200.0f;
+
+    [[nodiscard]] const Chapter* FindChapterByScript(const std::string& script) const;
+    [[nodiscard]] Chapter* FindChapterByScript(const std::string& script);
 
     [[nodiscard]] const Character* FindCharacter(const std::string& id) const;
 };

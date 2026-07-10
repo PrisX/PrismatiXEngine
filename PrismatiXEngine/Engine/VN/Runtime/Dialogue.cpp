@@ -1,25 +1,17 @@
 #include "Engine/VN/Runtime/Dialogue.h"
 
 #include <algorithm>
+#include <charconv>
 
 namespace px::vn {
 
 namespace {
-std::vector<std::string> SplitUtf8(const std::string& text) {
-    std::vector<std::string> glyphs;
-    std::size_t i = 0;
-    while (i < text.size()) {
-        const unsigned char c = static_cast<unsigned char>(text[i]);
-        std::size_t len = 1;
-        if ((c & 0x80) == 0) len = 1;
-        else if ((c & 0xE0) == 0xC0) len = 2;
-        else if ((c & 0xF0) == 0xE0) len = 3;
-        else if ((c & 0xF8) == 0xF0) len = 4;
-        if (i + len > text.size()) len = text.size() - i;
-        glyphs.push_back(text.substr(i, len));
-        i += len;
-    }
-    return glyphs;
+std::size_t Utf8Len(unsigned char c) {
+    if ((c & 0x80) == 0) return 1;
+    if ((c & 0xE0) == 0xC0) return 2;
+    if ((c & 0xF0) == 0xE0) return 3;
+    if ((c & 0xF8) == 0xF0) return 4;
+    return 1;
 }
 }
 
@@ -28,12 +20,41 @@ void Dialogue::SetText(const std::string& speaker, const std::string& text, int 
                        const std::string& effect) {
     m_state = DialogueState{};
     m_state.speaker = speaker;
-    m_state.fullText = text;
     m_state.voice = voice;
     m_state.textColor = textColor;
     m_state.outlineColor = outlineColor;
     m_state.effect = effect;
-    m_glyphs = SplitUtf8(text);
+
+    // Split into glyphs, consuming inline {w=ms} pause tags: the tag adds an
+    // extra typing delay before the following glyph and is stripped from the
+    // displayed text.
+    m_glyphs.clear();
+    m_extraDelayMs.clear();
+    std::uint64_t carry = 0;
+    std::size_t i = 0;
+    while (i < text.size()) {
+        if (text[i] == '{') {
+            const std::size_t close = text.find('}', i);
+            if (close != std::string::npos && close > i + 3 &&
+                text.compare(i + 1, 2, "w=") == 0) {
+                int ms = 0;
+                std::from_chars(text.data() + i + 3, text.data() + close, ms);
+                carry += static_cast<std::uint64_t>(std::max(0, ms));
+                i = close + 1;
+                continue;
+            }
+        }
+        std::size_t len = Utf8Len(static_cast<unsigned char>(text[i]));
+        if (i + len > text.size()) len = text.size() - i;
+        m_glyphs.push_back(text.substr(i, len));
+        m_extraDelayMs.push_back(carry);
+        carry = 0;
+        i += len;
+    }
+
+    for (const std::string& glyph : m_glyphs) {
+        m_state.fullText += glyph;
+    }
     m_state.totalChars = static_cast<int>(m_glyphs.size());
     m_speedMs = speedMs;
     m_lastStepMs = 0;
@@ -51,10 +72,15 @@ void Dialogue::Update(std::uint64_t nowMs) {
         m_lastStepMs = nowMs;
     }
     const std::uint64_t step = static_cast<std::uint64_t>(std::max(1, m_speedMs));
-    while (m_state.currentChar < m_state.totalChars && nowMs - m_lastStepMs >= step) {
-        m_state.displayText += m_glyphs[m_state.currentChar];
+    while (m_state.currentChar < m_state.totalChars) {
+        const std::size_t idx = static_cast<std::size_t>(m_state.currentChar);
+        const std::uint64_t need = step + (idx < m_extraDelayMs.size() ? m_extraDelayMs[idx] : 0);
+        if (nowMs - m_lastStepMs < need) {
+            break;
+        }
+        m_state.displayText += m_glyphs[idx];
         ++m_state.currentChar;
-        m_lastStepMs += step;
+        m_lastStepMs += need;
     }
     if (m_state.currentChar >= m_state.totalChars) {
         m_state.finished = true;

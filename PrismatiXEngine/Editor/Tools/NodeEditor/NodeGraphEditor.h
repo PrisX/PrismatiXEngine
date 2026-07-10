@@ -5,8 +5,11 @@
 
 #include <filesystem>
 #include <functional>
+#include <iosfwd>
+#include <set>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "Editor/Project/ProjectTypes.h"
@@ -34,14 +37,37 @@ public:
     void SetSelectedResourceCallback(SelectedResourceCallback callback);
     void SetCustomCommands(std::vector<CustomCommandDef> commands);
     void SetHeaderTexture(ImTextureID texture, int width, int height);
+    // Debugger hooks: query the preview VM's breakpoint lines / toggle one.
+    // Lines refer to the compiled (= saved) PDS output.
+    void SetBreakpointHooks(std::function<const std::set<int>*()> lines,
+                            std::function<void(int line)> toggle) {
+        m_breakpointLines = std::move(lines);
+        m_toggleBreakpoint = std::move(toggle);
+    }
+    // Line of the node's first command in the compiled output (0 = unknown).
+    [[nodiscard]] int CommandLineForNode(int nodeId) const {
+        auto it = m_nodeCommandLine.find(nodeId);
+        return it != m_nodeCommandLine.end() ? it->second : 0;
+    }
     void Render();
     void RenderInspector();
     void Save();
     void Reload();
+    // Reloads the graph if `script` (filename or runtime path) is the open document
+    // and it has no unsaved edits. Used when the Flow editor rewrites the file.
+    void ReloadIfOpen(const std::string& script);
     bool OpenDocument(const std::string& runtimePath);
     bool NewDocument(const std::string& runtimePath);
     void ApplyAssetToSelection(const std::string& runtimePath);
     void FrameSelection();
+    // Re-imports the current document from PDS source text (the editable
+    // "PDS Text" panel). Marks the graph dirty; does not write to disk.
+    bool ImportPDSText(const std::string& text);
+
+    void Undo();
+    void Redo();
+    [[nodiscard]] bool CanUndo() const { return !m_undoStack.empty(); }
+    [[nodiscard]] bool CanRedo() const { return !m_redoStack.empty(); }
 
     [[nodiscard]] std::string Title() const;
     [[nodiscard]] std::filesystem::path DocumentPath() const;
@@ -135,8 +161,10 @@ private:
     void LoadOrCreate();
     void LoadGraph(const Json& json);
     [[nodiscard]] Json SaveGraph() const;
+    void RestoreGraph(const Json& snapshot);
     void SeedDefaultGraph();
     bool ImportPDSScript(const std::filesystem::path& path);
+    bool ImportPDSStream(std::istream& in);
     void UpdateNodePositions();
     void MarkDirty();
 
@@ -146,6 +174,24 @@ private:
     void RemoveLink(int id);
     void DeleteSelection();
     void CreateDefaultLinkChain();
+    void CopySelection();
+    void PasteClipboard(ImVec2 canvasPosition);
+    void DuplicateSelection();
+    [[nodiscard]] Json ParamsToJson(const Node& node) const;
+    void ApplyParamsJson(Node& node, const Json& params);
+
+    // Visual group/comment boxes (ed::Group); not part of the compiled flow.
+    struct GroupNode {
+        int id = 0;
+        std::string title = "Group";
+        ImVec2 position = ImVec2(0, 0);
+        ImVec2 size = ImVec2(320, 220);
+        ImVec2 decoration = ImVec2(0, 0);  // node size minus group area (per render)
+        bool positionInitialized = true;
+    };
+    GroupNode* FindGroup(int id);
+    void AddGroup(ImVec2 position);
+    void RenderGroupNode(GroupNode& group);
 
     void RenderToolbar();
     void RenderGraph();
@@ -163,6 +209,14 @@ private:
     void InNodeOptionButton(int nodeId, Parameter& parameter, float width);
     void InNodeColorButton(const char* id, int nodeId, Parameter& parameter);
     void RenderInNodePopups();
+    void RenderUnsavedChangesModal();
+    // Drag-drop targets inside node-editor nodes never receive ImGui payloads
+    // (the canvas swallows the hover), so each asset field records its screen
+    // rect here and the drop is hit-tested after ed::End().
+    void RecordDropTarget(int nodeId, const std::string& paramKey, int lineIndex = -1);
+    void HandleAssetDrop(const ImVec2& graphMin, const ImVec2& graphMax);
+    void ApplyAssetToField(int nodeId, const std::string& paramKey, int lineIndex,
+                           const std::string& asset);
 
     [[nodiscard]] const NodeTemplate* FindTemplate(std::string_view type) const;
     [[nodiscard]] const CustomCommandDef* FindCustomCommand(std::string_view type) const;
@@ -204,6 +258,9 @@ private:
     std::vector<CustomCommandDef> m_customCommands;
     std::vector<Node> m_nodes;
     std::vector<Link> m_links;
+    std::vector<GroupNode> m_groups;
+    Json m_clipboard;  // serialized node selection for copy/paste
+    std::string m_groupRenameBuf;
     int m_nextId = 1;
     int m_selectedNodeId = 0;
     int m_selectedLinkId = 0;
@@ -218,8 +275,38 @@ private:
         std::string paramKey;
         bool isColor = false;
         bool requestOpen = false;
+        int lineIndex = -1;  // for per-line editors (dialogue voices)
     };
     InNodePopup m_inNodePopup;
+
+    struct AssetDropTarget {
+        int nodeId = 0;
+        std::string paramKey;
+        int lineIndex = -1;  // dialogue per-line voice fields
+        ImVec2 rectMin = ImVec2(0, 0);
+        ImVec2 rectMax = ImVec2(0, 0);
+    };
+    std::vector<AssetDropTarget> m_dropTargets;
+
+    // Nodes/links from saved graphs whose templates no longer exist (e.g. a
+    // removed custom command). Kept verbatim and re-emitted on save so they
+    // survive round-trips instead of silently disappearing.
+    std::vector<Json> m_unknownNodes;
+    std::vector<Json> m_unknownLinks;
+
+    // Snapshot undo: the baseline is captured when idle; the first MarkDirty of
+    // an edit gesture pushes it, so drags/typing coalesce into one entry.
+    std::vector<Json> m_undoStack;
+    std::vector<Json> m_redoStack;
+    Json m_undoBaseline;
+    bool m_undoArmed = false;
+
+    int m_pendingDocAction = 0;  // 1 = open, 2 = new (unsaved-changes prompt)
+    std::string m_pendingDocPath;
+
+    std::function<const std::set<int>*()> m_breakpointLines;
+    std::function<void(int)> m_toggleBreakpoint;
+    mutable std::unordered_map<int, int> m_nodeCommandLine;
     bool m_dirty = false;
     bool m_loaded = false;
     int m_navigateCountdown = 0;

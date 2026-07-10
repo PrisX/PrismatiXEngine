@@ -16,6 +16,10 @@ public:
                 const std::filesystem::path& fontSource = {});
     bool SaveManifest() const;
 
+    // Creates any missing essential files (title/hud UI, start script, font, folders)
+    // without touching existing ones. Returns the list of files it created.
+    std::vector<std::string> EnsureEssentials(const std::filesystem::path& fontSource = {});
+
 private:
     void Log(const std::string& msg) const {
         if (m_log) m_log(msg);

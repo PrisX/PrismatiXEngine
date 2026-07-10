@@ -142,7 +142,7 @@ std::optional<UIAction> UIStage::Update(const Input& input, float dt) {
     for (auto it = order.rbegin(); it != order.rend(); ++it) {
         const UINode& node = m_scene.nodes[*it];
         if (!node.visible || node.locked) continue;
-        const Rect rect = ScreenRect(node, 1280, 720);
+        const Rect rect = ScreenRect(node, m_logicalW, m_logicalH);
         if (node.type == NodeType::Button && rect.Contains(m_mx, m_my)) {
             return UIAction{ node.actionType, node.actionTarget, node.actionArg, node.id };
         }
@@ -294,6 +294,8 @@ void UIStage::RenderNode(graphics::Renderer2D& r, const UINode& node, std::size_
 void UIStage::Render(graphics::Renderer2D& r) {
     int w = 0, h = 0;
     r.GetLogicalSize(w, h);
+    m_logicalW = w;
+    m_logicalH = h;
     if (m_scene.bgColor.a > 0) {
         r.DrawRect(Rect{ 0, 0, static_cast<float>(w), static_cast<float>(h) }, m_scene.bgColor);
     }

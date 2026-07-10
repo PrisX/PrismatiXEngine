@@ -48,6 +48,11 @@ void Input::Process(const SDL_Event& event) {
             if (!event.key.repeat) {
                 m_keysPressed.insert(static_cast<int>(event.key.scancode));
             }
+            m_keysDown.insert(static_cast<int>(event.key.scancode));
+            break;
+
+        case SDL_EVENT_KEY_UP:
+            m_keysDown.erase(static_cast<int>(event.key.scancode));
             break;
 
         default:

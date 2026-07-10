@@ -44,6 +44,10 @@ private:
     void RenderHierarchy();
     void RenderInspector();
     void RenderAssets();
+    void RenderAssetTree(const std::filesystem::path& dir, const std::filesystem::path& root);
+    void RenderAssetEntry(const AssetRecord& rec, bool gridMode, float tile);
+    void OpenAssetByType(const AssetRecord& rec);
+    void MoveAssetTo(const std::string& runtimePath, const std::filesystem::path& targetDir);
     void RenderConsole();
     void RenderPreview();
     void RenderNodeEditor();
@@ -54,6 +58,11 @@ private:
     void RenderFlow();
     void RenderScripting();
     void RenderProblems();
+    void RenderLocalization();
+    void LocScanScripts();
+    void LocLoad();
+    void LocSave();
+    void LocExportCsv();
     void RenderCommandPalette();
     void RenderShortcutsWindow();
     void BuildCommands();
@@ -61,6 +70,17 @@ private:
     void RefreshProblems();
 
     void OpenProject(const std::filesystem::path& root);
+    // Rewrites references to a renamed/moved asset in scripts, UI screens, the
+    // database, and the manifest. Returns the number of files touched.
+    int UpdateAssetReferences(const std::string& oldRel, const std::string& newRel);
+    [[nodiscard]] const std::vector<std::string>& ScriptFileNames();
+    void CreateScriptFile(const std::string& script);
+    void AddJumpToScript(const std::string& fromScript, const std::string& toScript);
+    void RemoveJumpFromScript(const std::string& fromScript, const std::string& toScript);
+    void ApplyDatabaseSnapshot(const std::string& json);
+    void RecordDatabaseUndo(const std::string& label, std::string before, std::string after);
+    void LoadRecentProjects();
+    void AddRecentProject(const std::filesystem::path& root);
     void RunBuild();
     void RunPlayer(const std::filesystem::path& exe, const std::filesystem::path& workingDir);
     void RunDev();
@@ -86,11 +106,21 @@ private:
     UIDesigner m_designer;
     std::string m_designerPath;
     char m_newScreenName[96] = "new_screen";
-    NodeGraphEditor m_nodeEditor{ NodeGraphEditor::GraphKind::PDSDialogue };
+
+    // Open PDS documents, one NodeGraphEditor per tab.
+    std::vector<std::unique_ptr<NodeGraphEditor>> m_scriptDocs;
+    int m_activeDoc = -1;
+    int m_focusDocRequest = -1;
+    std::vector<CustomCommandDef> m_customCommands;
+    [[nodiscard]] NodeGraphEditor* ActiveDocPtr();
+    NodeGraphEditor* OpenDocTab(const std::string& runtimePath);
+    void ConfigureDoc(NodeGraphEditor& doc);
+
     px::project::Database m_database;
     DatabasePanel m_dbPanel;
     std::string m_dbPath;
     bool m_dbDirty = false;
+    bool m_flowStale = false;
     bool m_previewAnims = false;
     FlowMap m_flow;
     ScriptWorkspace m_scripts;
@@ -100,6 +130,13 @@ private:
     int m_assetTypeIndex = 0;
     std::string m_selectedAsset;
     std::string m_metaAsset;
+    std::string m_assetDir = "Data";  // current folder (relative to project root)
+    bool m_assetGridView = true;
+    float m_assetThumbSize = 84.0f;
+    std::string m_assetRenameFrom;
+    char m_assetRenameBuf[128] = { 0 };
+    char m_assetNewNameBuf[96] = { 0 };
+    int m_assetNewKind = -1;  // 0 folder, 1 script, 2 screen
     AssetImportSettings m_meta;
     int m_previewMode = 0;
     int m_buildProfile = 1;
@@ -126,6 +163,23 @@ private:
     char m_newPath[512] = { 0 };
     std::string m_basePath;
     std::string m_iniPath;
+    std::vector<std::string> m_recentProjects;
+    std::string m_assetPendingDelete;
+    int m_breakpointLine = 0;
+    int m_vmLastPc = -1;
+    std::string m_dbBaseline;
+    bool m_dbEditPending = false;
+    std::string m_pdsTextBuf;
+    bool m_pdsTextEditing = false;
+    bool m_nodeEditorFocused = false;  // routes Ctrl+Z/Y to the graph's undo
+
+    // Localization table: source line -> translation for Data/Lang/<lang>.json.
+    char m_locLang[16] = "en";
+    std::vector<std::pair<std::string, std::string>> m_locEntries;
+    bool m_locDirty = false;
+    char m_locFilter[128] = { 0 };
+    std::vector<std::string> m_scriptNameCache;
+    std::uint64_t m_scriptNameRevision = ~0ull;
 };
 
 }

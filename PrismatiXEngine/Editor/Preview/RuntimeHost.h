@@ -43,6 +43,11 @@ public:
     [[nodiscard]] const px::ui::UIStage& UIStageRef() const { return m_uiStage; }
     [[nodiscard]] px::ui::UIStage& UIStageRef() { return m_uiStage; }
     [[nodiscard]] const std::string& CurrentUIPath() const { return m_uiPath; }
+    [[nodiscard]] const vn::VM& VMRef() const { return *m_vm; }
+    [[nodiscard]] vn::VM& VMRef() { return *m_vm; }
+    [[nodiscard]] audio::AudioEngine& AudioRef() { return *m_audio; }
+    [[nodiscard]] const vn::VariableStore& Vars() const { return m_vars; }
+    [[nodiscard]] const vn::Dialogue& DialogueRef() const { return m_dialogue; }
 
 private:
     void EnsureTarget();

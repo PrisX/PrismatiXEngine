@@ -11,6 +11,7 @@ RuntimeHost::RuntimeHost(SDL_Renderer* editorRenderer) : m_editorRenderer(editor
     m_assets = std::make_unique<graphics::AssetCache>(editorRenderer, m_vfs);
     m_renderer = std::make_unique<graphics::Renderer2D>(editorRenderer, *m_assets);
     m_audio = std::make_unique<audio::AudioEngine>(m_vfs);
+    m_audio->Init();  // preview VN audio + asset-browser audition
     m_stage = std::make_unique<vn::Stage>(*m_renderer, *m_assets);
     m_vm = std::make_unique<vn::VM>(m_vfs, *m_audio, *m_stage, m_dialogue, m_vars, m_backlog);
     m_hud.SetDialogue(&m_dialogue.State());
@@ -82,6 +83,8 @@ void RuntimeHost::Tick(float dt, std::uint64_t nowMs, bool hovered, float localX
         return;
     }
 
+    m_assets->BeginFrame();
+    m_audio->Update();
     m_input.InjectFrame(hovered ? localX : -1000.0f, hovered ? localY : -1000.0f,
                         hovered && click);
 

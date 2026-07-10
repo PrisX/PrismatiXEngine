@@ -25,6 +25,7 @@ std::string AssetDatabase::Classify(const std::filesystem::path& path) {
 }
 
 void AssetDatabase::Scan(const ProjectContext& context) {
+    ++m_revision;
     m_assets.clear();
     const std::filesystem::path data = context.DataRoot();
     if (!std::filesystem::exists(data)) {
@@ -50,10 +51,15 @@ void AssetDatabase::Scan(const ProjectContext& context) {
 }
 
 std::vector<AssetRecord> AssetDatabase::Filter(std::string_view text, std::string_view type) const {
+    const auto lower = [](std::string s) {
+        for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
+    const std::string needle = lower(std::string(text));
     std::vector<AssetRecord> out;
     for (const AssetRecord& r : m_assets) {
         if (!type.empty() && type != "all" && r.type != type) continue;
-        if (!text.empty() && r.runtimePath.find(text) == std::string::npos) continue;
+        if (!needle.empty() && lower(r.runtimePath).find(needle) == std::string::npos) continue;
         out.push_back(r);
     }
     return out;

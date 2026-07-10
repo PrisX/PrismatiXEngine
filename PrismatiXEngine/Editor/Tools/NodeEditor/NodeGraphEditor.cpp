@@ -10,6 +10,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <iomanip>
 #include <optional>
@@ -245,6 +246,23 @@ int IntFromString(const std::string& value, int fallback) {
     }
 }
 
+float FloatFromString(const std::string& value, float fallback) {
+    if (value.empty()) {
+        return fallback;
+    }
+    try {
+        return std::stof(value);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+std::string FormatFloat(float value) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%g", value);
+    return buf;
+}
+
 Json ColorToJson(const ImVec4& color) {
     return Json::array(
         {
@@ -299,8 +317,9 @@ void NodeGraphEditor::SetProject(const ProjectContext* context) {
         return;
     }
     m_project = context;
+    // Loaded lazily on the next Render()/OpenDocument(): a freshly created tab
+    // must not touch the default document path on disk.
     m_loaded = false;
-    LoadOrCreate();
 }
 
 void NodeGraphEditor::SetSelectedResourceCallback(SelectedResourceCallback callback) { m_selectedResource = std::move(callback); }
@@ -400,7 +419,9 @@ void NodeGraphEditor::BuildLibrary() {
               ImColor(255, 194, 97),
               { in("In") },
               { out("Out") },
-              { paramString("id", "Character", "girl"), paramString("expression", "Expression", "d"), paramString("pos", "Position", "2") } },
+              { paramString("id", "Character", "girl"), paramString("expression", "Expression", "d"), paramString("pos", "Position", "2"),
+                paramFloat("x", "Offset X", 0.0f, -1920.0f, 1920.0f), paramFloat("y", "Offset Y", 0.0f, -1080.0f, 1080.0f),
+                paramFloat("scale", "Scale", 1.0f, 0.1f, 4.0f) } },
             { "dialogue",
               "Dialogue Text",
               "Dialogue",
@@ -414,6 +435,7 @@ void NodeGraphEditor::BuildLibrary() {
                 paramColor("outline", "Outline", ImVec4(0, 0, 0, 1)),
                 paramInt("speed", "Speed", 40, 0, 240),
                 paramOption("effect", "Effect", "none", { "none", "shake", "pulse" }),
+                paramString("voices", "Voices (per line)", "", ParamType::String, true),
                 paramString("text", "Text", "新的對話", ParamType::String, true) } },
             { "choice", "Choice", "Dialogue", "Adds a choice option.", ImColor(103, 219, 177), { in("In") }, { out("Out") }, { paramString("text", "Text", "選項"), paramString("target", "Target", "*end") } },
             { "label", "Label", "Flow", "Defines a jump target.", ImColor(103, 219, 177), { in("In") }, { out("Out") }, { paramString("name", "Label", "end") } },
@@ -428,21 +450,36 @@ void NodeGraphEditor::BuildLibrary() {
               { paramString("var", "Name", "affection"), paramOption("op", "Operation", "set", { "set", "add" }), paramString("value", "Value", "0") } },
             { "lua", "Lua Command", "Logic", "Runs a Lua hook command.", ImColor(232, 178, 92), { in("In") }, { out("Out") }, { paramString("fn", "Function", "PXEditorTransition"), paramString("args", "Arguments", "style=\"fade\" speed=\"10\"") } },
             { "transition",
-              "Transition",
+              "BG Transition",
               "Stage",
-              "Runs the built-in editor transition hook.",
+              "Switches the background through a grayscale rule image.",
               ImColor(91, 209, 244),
-              { in("In") },
+              { in("In"), in("Image", PinType::Asset, "file"), in("Rule", PinType::Asset, "rule") },
               { out("Out") },
-              { paramOption("style", "Style", "fade", { "fade", "dissolve", "wipe" }), paramFloat("speed", "Speed", 10.0f, 1.0f, 60.0f) } },
+              { paramString("file", "New Background", "sky.png", ParamType::Asset),
+                paramString("rule", "Rule Image", "wipe.png", ParamType::Asset),
+                paramInt("time", "Duration (ms)", 600, 50, 5000),
+                paramInt("vague", "Band (vague)", 64, 1, 255) } },
             { "animate_actor",
-              "Animate Actor",
+              "Animate",
               "Stage",
-              "Runs the built-in actor animation hook.",
+              "Tweens an actor or layer to the given pose ([anim]).",
               ImColor(91, 209, 244),
               { in("In") },
               { out("Out") },
-              { paramString("target", "Target", "girl"), paramFloat("duration", "Duration", 24, 1, 240), paramFloat("move_x", "Move X", 0, -1280, 1280) } },
+              { paramString("target", "Target", "girl"),
+                paramFloat("x", "Offset X", 0.0f, -1920.0f, 1920.0f),
+                paramFloat("y", "Offset Y", 0.0f, -1080.0f, 1080.0f),
+                paramFloat("scale", "Scale", 1.0f, 0.1f, 4.0f),
+                paramInt("alpha", "Alpha", 255, 0, 255),
+                paramInt("duration", "Duration (ms)", 600, 0, 10000),
+                paramOption("ease", "Easing", "outCubic",
+                            { "linear", "inQuad", "outQuad", "inOutQuad", "inCubic", "outCubic",
+                              "inOutCubic", "inQuart", "outQuart", "inOutQuart", "inSine",
+                              "outSine", "inOutSine", "inExpo", "outExpo", "inOutExpo", "inBack",
+                              "outBack", "inOutBack", "inElastic", "outElastic", "inBounce",
+                              "outBounce", "smoothstep" }),
+                paramBool("wait", "Wait for finish", false) } },
             { "spawn_ui", "Spawn UI", "UI", "Mounts a generated UI script.", ImColor(88, 230, 184), { in("In"), in("UI", PinType::Asset, "ui") }, { out("Out") }, { paramString("ui", "UI Script", "Scripts/ui/generated/title_menu.lua", ParamType::Asset) } },
             { "stop_bgm", "Stop BGM", "Audio", "Stops background music.", ImColor(255, 126, 95), { in("In") }, { out("Out") }, {} },
             { "raw", "Raw PDS", "Advanced", "Writes a raw PDS command or content line.", ImColor(142, 152, 170), { in("In") }, { out("Out") }, { paramString("line", "Line", "[wait]") } },
@@ -531,6 +568,12 @@ void NodeGraphEditor::SetCustomCommands(std::vector<CustomCommandDef> commands) 
 void NodeGraphEditor::LoadOrCreate() {
     m_nodes.clear();
     m_links.clear();
+    m_groups.clear();
+    m_unknownNodes.clear();
+    m_unknownLinks.clear();
+    m_undoStack.clear();
+    m_redoStack.clear();
+    m_undoArmed = false;
     m_nextId = 1;
     m_selectedNodeId = 0;
     m_selectedLinkId = 0;
@@ -547,6 +590,13 @@ void NodeGraphEditor::LoadOrCreate() {
             m_loaded = true;
             m_navigateCountdown = 3;
             Log("Loaded PDS document: " + path.string());
+            return;
+        }
+        if (fs::exists(path)) {
+            // The file exists but could not be read; never overwrite it with a
+            // seeded default graph.
+            Log("Could not read PDS document (file left untouched): " + path.string());
+            m_loaded = true;
             return;
         }
         SeedDefaultGraph();
@@ -579,6 +629,24 @@ void NodeGraphEditor::Reload() {
     LoadOrCreate();
 }
 
+void NodeGraphEditor::ReloadIfOpen(const std::string& script) {
+    if (m_documentRuntimePath.empty() || script.empty()) {
+        return;
+    }
+    const std::string current =
+        std::filesystem::path(m_documentRuntimePath).filename().string();
+    const std::string target = std::filesystem::path(script).filename().string();
+    if (current != target) {
+        return;
+    }
+    if (m_dirty) {
+        Log("Script changed on disk by the Flow editor; save or reload \"" + current +
+            "\" to sync.");
+        return;
+    }
+    Reload();
+}
+
 bool NodeGraphEditor::OpenDocument(const std::string& runtimePath) {
     if (m_kind != GraphKind::PDSDialogue || !m_project || !m_project->IsOpen()) {
         return false;
@@ -605,6 +673,10 @@ bool NodeGraphEditor::NewDocument(const std::string& runtimePath) {
     if (normalized.empty()) {
         return false;
     }
+    if (fs::exists(m_project->DataRoot() / fs::path(normalized))) {
+        Log("New PDS: \"" + normalized + "\" already exists; opening it instead.");
+        return OpenDocument(runtimePath);
+    }
     if (m_dirty) {
         Save();
     }
@@ -620,6 +692,9 @@ bool NodeGraphEditor::NewDocument(const std::string& runtimePath) {
 void NodeGraphEditor::LoadGraph(const Json& json) {
     m_nodes.clear();
     m_links.clear();
+    m_groups.clear();
+    m_unknownNodes.clear();
+    m_unknownLinks.clear();
     m_nextId = json.value("nextId", 1);
 
     for (const Json& item : json.value("nodes", Json::array())) {
@@ -628,6 +703,10 @@ void NodeGraphEditor::LoadGraph(const Json& json) {
         node.type = item.value("type", "");
         const NodeTemplate* definition = FindTemplate(node.type);
         if (!definition) {
+            // Unknown template (e.g. a removed custom command): keep the raw
+            // JSON so it survives the next save instead of vanishing.
+            m_unknownNodes.push_back(item);
+            m_nextId = std::max(m_nextId, node.id + 1);
             continue;
         }
         node.parameters = definition->defaults;
@@ -645,33 +724,26 @@ void NodeGraphEditor::LoadGraph(const Json& json) {
         }
 
         if (item.contains("params")) {
-            for (Parameter& parameter : node.parameters) {
-                if (!item["params"].contains(parameter.key)) {
-                    continue;
-                }
-                const Json& value = item["params"][parameter.key];
-                switch (parameter.type) {
-                    case ParamType::Bool:
-                        parameter.boolValue = value.get<bool>();
-                        break;
-                    case ParamType::Int:
-                        parameter.intValue = value.get<int>();
-                        break;
-                    case ParamType::Float:
-                        parameter.floatValue = value.get<float>();
-                        break;
-                    case ParamType::Color:
-                        parameter.colorValue = ColorFromJson(value, parameter.colorValue);
-                        break;
-                    case ParamType::String:
-                    case ParamType::Asset:
-                    case ParamType::Option:
-                        parameter.stringValue = value.get<std::string>();
-                        break;
-                }
-            }
+            ApplyParamsJson(node, item["params"]);
         }
         m_nodes.push_back(std::move(node));
+    }
+
+    for (const Json& item : json.value("groups", Json::array())) {
+        GroupNode group;
+        group.id = item.value("id", m_nextId++);
+        group.title = item.value("title", std::string{ "Group" });
+        if (item.contains("position") && item["position"].is_array() &&
+            item["position"].size() >= 2) {
+            group.position = ImVec2(item["position"][0].get<float>(),
+                                    item["position"][1].get<float>());
+        }
+        if (item.contains("size") && item["size"].is_array() && item["size"].size() >= 2) {
+            group.size = ImVec2(item["size"][0].get<float>(), item["size"][1].get<float>());
+        }
+        group.positionInitialized = true;
+        m_nextId = std::max(m_nextId, group.id + 1);
+        m_groups.push_back(std::move(group));
     }
 
     const auto pinIdByNodeAndIndex = [&](int nodeId, bool input, int index) {
@@ -698,7 +770,13 @@ void NodeGraphEditor::LoadGraph(const Json& json) {
         if (FindPin(link.startPinId) && FindPin(link.endPinId)) {
             m_links.push_back(link);
             m_nextId = std::max(m_nextId, link.id + 1);
+        } else {
+            m_unknownLinks.push_back(item);
         }
+    }
+    if (!m_unknownNodes.empty()) {
+        Log(std::to_string(m_unknownNodes.size()) +
+            " node(s) use missing templates; they are hidden but preserved on save.");
     }
     m_dirty = false;
 }
@@ -719,29 +797,16 @@ Json NodeGraphEditor::SaveGraph() const {
         item["id"] = node.id;
         item["type"] = node.type;
         item["position"] = Json::array({ node.position.x, node.position.y });
-        item["params"] = Json::object();
-        for (const Parameter& parameter : node.parameters) {
-            switch (parameter.type) {
-                case ParamType::Bool:
-                    item["params"][parameter.key] = parameter.boolValue;
-                    break;
-                case ParamType::Int:
-                    item["params"][parameter.key] = parameter.intValue;
-                    break;
-                case ParamType::Float:
-                    item["params"][parameter.key] = parameter.floatValue;
-                    break;
-                case ParamType::Color:
-                    item["params"][parameter.key] = ColorToJson(parameter.colorValue);
-                    break;
-                case ParamType::String:
-                case ParamType::Asset:
-                case ParamType::Option:
-                    item["params"][parameter.key] = parameter.stringValue;
-                    break;
-            }
-        }
+        item["params"] = ParamsToJson(node);
         graph["nodes"].push_back(std::move(item));
+    }
+    for (const GroupNode& group : m_groups) {
+        graph["groups"].push_back(Json{
+            { "id", group.id },
+            { "title", group.title },
+            { "position", Json::array({ group.position.x, group.position.y }) },
+            { "size", Json::array({ group.size.x, group.size.y }) },
+        });
     }
 
     const auto pinIndex = [&](int pinId) {
@@ -770,6 +835,12 @@ Json NodeGraphEditor::SaveGraph() const {
                 { "to", pinIndex(link.endPinId) },
             }
         );
+    }
+    for (const Json& item : m_unknownNodes) {
+        graph["nodes"].push_back(item);
+    }
+    for (const Json& item : m_unknownLinks) {
+        graph["links"].push_back(item);
     }
     return graph;
 }
@@ -800,6 +871,7 @@ void NodeGraphEditor::Save() {
 void NodeGraphEditor::SeedDefaultGraph() {
     m_nodes.clear();
     m_links.clear();
+    m_groups.clear();
     m_nextId = 1;
     if (m_kind == GraphKind::PDSDialogue) {
         std::vector<std::string> types{ "pds_start", "chapter", "background", "bgm", "character", "dialogue", "choice", "label", "dialogue", "jump", "stop_bgm" };
@@ -826,9 +898,29 @@ bool NodeGraphEditor::ImportPDSScript(const fs::path& path) {
     if (!in.is_open()) {
         return false;
     }
+    return ImportPDSStream(in);
+}
 
+bool NodeGraphEditor::ImportPDSText(const std::string& text) {
+    if (m_kind != GraphKind::PDSDialogue) {
+        return false;
+    }
+    std::istringstream in(text);
+    // Push the pre-import state onto the undo stack (the baseline was captured
+    // while idle), then replace the graph.
+    MarkDirty();
+    if (!ImportPDSStream(in)) {
+        return false;
+    }
+    m_loaded = true;
+    m_navigateCountdown = 3;
+    return true;
+}
+
+bool NodeGraphEditor::ImportPDSStream(std::istream& in) {
     m_nodes.clear();
     m_links.clear();
+    m_groups.clear();
     m_nextId = 1;
     Node* start = AddNode("pds_start", ImVec2(0, 0));
     size_t visualIndex = 1;
@@ -838,6 +930,7 @@ bool NodeGraphEditor::ImportPDSScript(const fs::path& path) {
     ImVec4 pendingOutlineColor = ImVec4(0, 0, 0, 1);
     int pendingTextSpeed = 40;
     std::string pendingTextEffect = "none";
+    std::string pendingTextVoice;
     std::string pendingTextSignature;
     std::string activeTextSpeaker;
     std::string activeTextSignature;
@@ -845,6 +938,8 @@ bool NodeGraphEditor::ImportPDSScript(const fs::path& path) {
     ImVec2 pendingNodePos(0, 0);
     bool hasPendingNodePos = false;
 
+    // Voice is intentionally NOT part of the signature: voiced lines merge into
+    // the same dialogue node, carrying their voice per line.
     const auto refreshPendingSignature = [&]() {
         std::ostringstream sig;
         sig << pendingTextSpeaker << "|" << pendingTextCharacter << "|" << ColorToPDSCsv(pendingTextColor) << "|" << ColorToPDSCsv(pendingOutlineColor) << "|" << pendingTextSpeed << "|" << pendingTextEffect;
@@ -881,7 +976,9 @@ bool NodeGraphEditor::ImportPDSScript(const fs::path& path) {
             if (Parameter* p = FindParameter(*target, "outline")) p->colorValue = pendingOutlineColor;
             if (Parameter* p = FindParameter(*target, "speed")) p->intValue = pendingTextSpeed;
             if (Parameter* p = FindParameter(*target, "effect")) p->stringValue = pendingTextEffect.empty() ? "none" : pendingTextEffect;
+            if (Parameter* p = FindParameter(*target, "voices")) p->stringValue = pendingTextVoice;
             if (Parameter* p = FindParameter(*target, "text")) p->stringValue = text;
+            pendingTextVoice.clear();  // a header voice belongs to one line only
             ++visualIndex;
             return;
         }
@@ -892,6 +989,11 @@ bool NodeGraphEditor::ImportPDSScript(const fs::path& path) {
             }
             p->stringValue += text;
         }
+        // Keep the voices parameter line-aligned with the text parameter.
+        if (Parameter* p = FindParameter(*target, "voices")) {
+            p->stringValue += "\n" + pendingTextVoice;
+        }
+        pendingTextVoice.clear();
     };
 
     std::string line;
@@ -904,6 +1006,19 @@ bool NodeGraphEditor::ImportPDSScript(const fs::path& path) {
             if (trimmed.rfind("//@node", 0) == 0) {
                 pendingNodePos = ImVec2(static_cast<float>(IntFromString(ExtractArg(trimmed, "x"), 0)), static_cast<float>(IntFromString(ExtractArg(trimmed, "y"), 0)));
                 hasPendingNodePos = true;
+            }
+            else if (trimmed.rfind("//@group", 0) == 0) {
+                GroupNode group;
+                group.id = m_nextId++;
+                group.position =
+                    ImVec2(static_cast<float>(IntFromString(ExtractArg(trimmed, "x"), 0)),
+                           static_cast<float>(IntFromString(ExtractArg(trimmed, "y"), 0)));
+                group.size = ImVec2(
+                    static_cast<float>(std::max(80, IntFromString(ExtractArg(trimmed, "w"), 320))),
+                    static_cast<float>(std::max(60, IntFromString(ExtractArg(trimmed, "h"), 220))));
+                const std::string title = ExtractArg(trimmed, "title");
+                if (!title.empty()) group.title = title;
+                m_groups.push_back(std::move(group));
             }
             continue;
         }
@@ -921,8 +1036,31 @@ bool NodeGraphEditor::ImportPDSScript(const fs::path& path) {
             const size_t nameEnd = separator == std::string::npos ? trimmed.size() - 1 : separator;
             const std::string name = Lower(Trim(std::string_view(trimmed).substr(1, nameEnd > 0 ? nameEnd - 1 : 0)));
             if (name == "bg") {
-                created = AddNode("background", ImVec2(static_cast<float>(visualIndex) * 280.0f, 0));
-                if (Parameter* p = FindParameter(*created, "file")) p->stringValue = ExtractArg(trimmed, "file");
+                const std::string rule = ExtractArg(trimmed, "rule");
+                if (!rule.empty()) {
+                    created = AddNode("transition", ImVec2(static_cast<float>(visualIndex) * 280.0f, 0));
+                    if (Parameter* p = FindParameter(*created, "file")) p->stringValue = ExtractArg(trimmed, "file");
+                    if (Parameter* p = FindParameter(*created, "rule")) p->stringValue = rule;
+                    if (Parameter* p = FindParameter(*created, "time")) p->intValue = IntFromString(ExtractArg(trimmed, "time"), 600);
+                    if (Parameter* p = FindParameter(*created, "vague")) p->intValue = IntFromString(ExtractArg(trimmed, "vague"), 64);
+                } else {
+                    created = AddNode("background", ImVec2(static_cast<float>(visualIndex) * 280.0f, 0));
+                    if (Parameter* p = FindParameter(*created, "file")) p->stringValue = ExtractArg(trimmed, "file");
+                }
+            }
+            else if (name == "anim" || name == "tween") {
+                created = AddNode("animate_actor", ImVec2(static_cast<float>(visualIndex) * 280.0f, 170));
+                if (Parameter* p = FindParameter(*created, "target")) p->stringValue = ExtractArg(trimmed, "target");
+                if (Parameter* p = FindParameter(*created, "x")) p->floatValue = FloatFromString(ExtractArg(trimmed, "x"), 0.0f);
+                if (Parameter* p = FindParameter(*created, "y")) p->floatValue = FloatFromString(ExtractArg(trimmed, "y"), 0.0f);
+                if (Parameter* p = FindParameter(*created, "scale")) p->floatValue = FloatFromString(ExtractArg(trimmed, "scale"), 1.0f);
+                if (Parameter* p = FindParameter(*created, "alpha")) p->intValue = IntFromString(ExtractArg(trimmed, "alpha"), 255);
+                if (Parameter* p = FindParameter(*created, "duration")) p->intValue = IntFromString(ExtractArg(trimmed, "duration"), 600);
+                if (Parameter* p = FindParameter(*created, "ease")) {
+                    const std::string ease = ExtractArg(trimmed, "ease");
+                    if (!ease.empty()) p->stringValue = ease;
+                }
+                if (Parameter* p = FindParameter(*created, "wait")) p->boolValue = ExtractArg(trimmed, "wait") == "true";
             }
             else if (name == "bgm") {
                 created = AddNode("bgm", ImVec2(static_cast<float>(visualIndex) * 280.0f, 170));
@@ -933,6 +1071,9 @@ bool NodeGraphEditor::ImportPDSScript(const fs::path& path) {
                 if (Parameter* p = FindParameter(*created, "id")) p->stringValue = ExtractArg(trimmed, "id");
                 if (Parameter* p = FindParameter(*created, "expression")) p->stringValue = ExtractArg(trimmed, "expression");
                 if (Parameter* p = FindParameter(*created, "pos")) p->stringValue = ExtractArg(trimmed, "pos");
+                if (Parameter* p = FindParameter(*created, "x")) p->floatValue = FloatFromString(ExtractArg(trimmed, "x"), 0.0f);
+                if (Parameter* p = FindParameter(*created, "y")) p->floatValue = FloatFromString(ExtractArg(trimmed, "y"), 0.0f);
+                if (Parameter* p = FindParameter(*created, "scale")) p->floatValue = FloatFromString(ExtractArg(trimmed, "scale"), 1.0f);
             }
             else if (name == "text") {
                 pendingTextSpeaker = ExtractArg(trimmed, "speaker");
@@ -948,6 +1089,7 @@ bool NodeGraphEditor::ImportPDSScript(const fs::path& path) {
                 if (pendingTextEffect.empty()) {
                     pendingTextEffect = "none";
                 }
+                pendingTextVoice = ExtractArg(args, "voice");
                 refreshPendingSignature();
                 std::string inlineText = ExtractArg(trimmed, "content");
                 if (inlineText.empty()) {
@@ -1009,7 +1151,7 @@ bool NodeGraphEditor::ImportPDSScript(const fs::path& path) {
             ++visualIndex;
         }
     }
-    if (!start || m_nodes.size() < 2) {
+    if (!start) {
         return false;
     }
     CreateDefaultLinkChain();
@@ -1040,6 +1182,13 @@ NodeGraphEditor::Node* NodeGraphEditor::AddNode(const std::string& type, ImVec2 
 }
 
 void NodeGraphEditor::RemoveNode(int id) {
+    const auto groupIt = std::find_if(m_groups.begin(), m_groups.end(),
+                                      [&](const GroupNode& group) { return group.id == id; });
+    if (groupIt != m_groups.end()) {
+        m_groups.erase(groupIt);
+        MarkDirty();
+        return;
+    }
     m_links.erase(
         std::remove_if(
             m_links.begin(),
@@ -1104,6 +1253,218 @@ void NodeGraphEditor::CreateDefaultLinkChain() {
     }
 }
 
+Json NodeGraphEditor::ParamsToJson(const Node& node) const {
+    Json params = Json::object();
+    for (const Parameter& parameter : node.parameters) {
+        switch (parameter.type) {
+            case ParamType::Bool:
+                params[parameter.key] = parameter.boolValue;
+                break;
+            case ParamType::Int:
+                params[parameter.key] = parameter.intValue;
+                break;
+            case ParamType::Float:
+                params[parameter.key] = parameter.floatValue;
+                break;
+            case ParamType::Color:
+                params[parameter.key] = ColorToJson(parameter.colorValue);
+                break;
+            case ParamType::String:
+            case ParamType::Asset:
+            case ParamType::Option:
+                params[parameter.key] = parameter.stringValue;
+                break;
+        }
+    }
+    return params;
+}
+
+void NodeGraphEditor::ApplyParamsJson(Node& node, const Json& params) {
+    for (Parameter& parameter : node.parameters) {
+        if (!params.contains(parameter.key)) {
+            continue;
+        }
+        const Json& value = params[parameter.key];
+        try {
+            switch (parameter.type) {
+                case ParamType::Bool:
+                    parameter.boolValue = value.get<bool>();
+                    break;
+                case ParamType::Int:
+                    parameter.intValue = value.get<int>();
+                    break;
+                case ParamType::Float:
+                    parameter.floatValue = value.get<float>();
+                    break;
+                case ParamType::Color:
+                    parameter.colorValue = ColorFromJson(value, parameter.colorValue);
+                    break;
+                case ParamType::String:
+                case ParamType::Asset:
+                case ParamType::Option:
+                    parameter.stringValue = value.get<std::string>();
+                    break;
+            }
+        } catch (...) {
+            // keep the default when the stored value has the wrong type
+        }
+    }
+}
+
+void NodeGraphEditor::CopySelection() {
+    const int count = ed::GetSelectedObjectCount();
+    if (count <= 0) {
+        return;
+    }
+    std::vector<ed::NodeId> selected(static_cast<std::size_t>(count));
+    const int nodeCount = ed::GetSelectedNodes(selected.data(), count);
+    std::vector<const Node*> nodes;
+    std::unordered_set<int> ids;
+    for (int i = 0; i < nodeCount; ++i) {
+        if (const Node* node = FindNode(static_cast<int>(selected[static_cast<std::size_t>(i)].Get()))) {
+            nodes.push_back(node);
+            ids.insert(node->id);
+        }
+    }
+    if (nodes.empty()) {
+        return;
+    }
+    UpdateNodePositions();
+
+    ImVec2 origin(nodes.front()->position);
+    for (const Node* node : nodes) {
+        origin.x = std::min(origin.x, node->position.x);
+        origin.y = std::min(origin.y, node->position.y);
+    }
+
+    Json clip;
+    clip["originX"] = origin.x;
+    clip["originY"] = origin.y;
+    clip["nodes"] = Json::array();
+    clip["links"] = Json::array();
+    for (const Node* node : nodes) {
+        Json item;
+        item["type"] = node->type;
+        item["x"] = node->position.x - origin.x;
+        item["y"] = node->position.y - origin.y;
+        item["params"] = ParamsToJson(*node);
+        clip["nodes"].push_back(std::move(item));
+    }
+    const auto nodeIndex = [&](int nodeId) {
+        for (std::size_t i = 0; i < nodes.size(); ++i) {
+            if (nodes[i]->id == nodeId) return static_cast<int>(i);
+        }
+        return -1;
+    };
+    for (const Link& link : m_links) {
+        const Pin* start = FindPin(link.startPinId);
+        const Pin* end = FindPin(link.endPinId);
+        if (!start || !end || ids.count(start->nodeId) == 0 || ids.count(end->nodeId) == 0) {
+            continue;
+        }
+        const Node* from = FindNode(start->nodeId);
+        const Node* to = FindNode(end->nodeId);
+        int fromPin = -1, toPin = -1;
+        for (std::size_t i = 0; i < from->outputs.size(); ++i) {
+            if (from->outputs[i].id == link.startPinId) fromPin = static_cast<int>(i);
+        }
+        for (std::size_t i = 0; i < to->inputs.size(); ++i) {
+            if (to->inputs[i].id == link.endPinId) toPin = static_cast<int>(i);
+        }
+        if (fromPin >= 0 && toPin >= 0) {
+            clip["links"].push_back(Json{ { "fromNode", nodeIndex(start->nodeId) },
+                                          { "fromPin", fromPin },
+                                          { "toNode", nodeIndex(end->nodeId) },
+                                          { "toPin", toPin } });
+        }
+    }
+    m_clipboard = std::move(clip);
+    Log(std::to_string(nodes.size()) + " node(s) copied.");
+}
+
+void NodeGraphEditor::PasteClipboard(ImVec2 canvasPosition) {
+    if (!m_clipboard.is_object() || !m_clipboard.contains("nodes") ||
+        m_clipboard["nodes"].empty()) {
+        return;
+    }
+    std::vector<int> createdIds;
+    for (const Json& item : m_clipboard["nodes"]) {
+        Node* node = AddNode(item.value("type", std::string{}),
+                             ImVec2(canvasPosition.x + item.value("x", 0.0f),
+                                    canvasPosition.y + item.value("y", 0.0f)));
+        if (node && item.contains("params")) {
+            ApplyParamsJson(*node, item["params"]);
+        }
+        createdIds.push_back(node ? node->id : 0);
+    }
+    for (const Json& linkItem : m_clipboard.value("links", Json::array())) {
+        const int fromIdx = linkItem.value("fromNode", -1);
+        const int toIdx = linkItem.value("toNode", -1);
+        if (fromIdx < 0 || toIdx < 0 || fromIdx >= static_cast<int>(createdIds.size()) ||
+            toIdx >= static_cast<int>(createdIds.size())) {
+            continue;
+        }
+        Node* from = FindNode(createdIds[static_cast<std::size_t>(fromIdx)]);
+        Node* to = FindNode(createdIds[static_cast<std::size_t>(toIdx)]);
+        const int fromPin = linkItem.value("fromPin", -1);
+        const int toPin = linkItem.value("toPin", -1);
+        if (from && to && fromPin >= 0 && toPin >= 0 &&
+            fromPin < static_cast<int>(from->outputs.size()) &&
+            toPin < static_cast<int>(to->inputs.size())) {
+            AddLink(from->outputs[static_cast<std::size_t>(fromPin)].id,
+                    to->inputs[static_cast<std::size_t>(toPin)].id);
+        }
+    }
+    ed::ClearSelection();
+    for (int id : createdIds) {
+        if (id != 0) {
+            ed::SelectNode(ed::NodeId(id), /*append=*/true);
+        }
+    }
+    MarkDirty();
+}
+
+void NodeGraphEditor::DuplicateSelection() {
+    CopySelection();
+    if (!m_clipboard.is_object() || !m_clipboard.contains("originX")) {
+        return;
+    }
+    PasteClipboard(ImVec2(m_clipboard.value("originX", 0.0f) + 48.0f,
+                          m_clipboard.value("originY", 0.0f) + 48.0f));
+}
+
+NodeGraphEditor::GroupNode* NodeGraphEditor::FindGroup(int id) {
+    auto it = std::find_if(m_groups.begin(), m_groups.end(),
+                           [&](const GroupNode& group) { return group.id == id; });
+    return it == m_groups.end() ? nullptr : &(*it);
+}
+
+void NodeGraphEditor::AddGroup(ImVec2 position) {
+    GroupNode group;
+    group.id = m_nextId++;
+    group.position = position;
+    m_groups.push_back(std::move(group));
+    MarkDirty();
+}
+
+void NodeGraphEditor::RenderGroupNode(GroupNode& group) {
+    if (group.positionInitialized) {
+        ed::SetNodePosition(ed::NodeId(group.id), group.position);
+        group.positionInitialized = false;
+    }
+    ed::PushStyleColor(ed::StyleColor_NodeBg, ImColor(255, 255, 255, 22));
+    ed::PushStyleColor(ed::StyleColor_NodeBorder, ImColor(255, 255, 255, 64));
+    ed::BeginNode(ed::NodeId(group.id));
+    ImGui::PushID(group.id);
+    ImGui::TextColored(ImVec4(0.85f, 0.90f, 1.0f, 0.85f), "%s", group.title.c_str());
+    ed::Group(group.size);
+    ImGui::PopID();
+    ed::EndNode();
+    const ImVec2 nodeSize = ImGui::GetItemRectSize();
+    group.decoration = ImVec2(nodeSize.x - group.size.x, nodeSize.y - group.size.y);
+    ed::PopStyleColor(2);
+}
+
 void NodeGraphEditor::UpdateNodePositions() {
     if (!m_context) {
         return;
@@ -1116,9 +1477,69 @@ void NodeGraphEditor::UpdateNodePositions() {
             MarkDirty();
         }
     }
+    for (GroupNode& group : m_groups) {
+        const ImVec2 position = ed::GetNodePosition(ed::NodeId(group.id));
+        if (std::abs(position.x - group.position.x) > 0.25f ||
+            std::abs(position.y - group.position.y) > 0.25f) {
+            group.position = position;
+            MarkDirty();
+        }
+        // The node is the group area plus its title decoration (measured at
+        // render time), so subtracting it recovers the resized group size
+        // without feedback growth.
+        const ImVec2 nodeSize = ed::GetNodeSize(ed::NodeId(group.id));
+        const ImVec2 size(nodeSize.x - group.decoration.x, nodeSize.y - group.decoration.y);
+        if (size.x > 60.0f && size.y > 40.0f &&
+            (std::abs(size.x - group.size.x) > 0.5f || std::abs(size.y - group.size.y) > 0.5f)) {
+            group.size = size;
+            MarkDirty();
+        }
+    }
 }
 
-void NodeGraphEditor::MarkDirty() { m_dirty = true; }
+void NodeGraphEditor::MarkDirty() {
+    // First change of an edit gesture: push the idle-time baseline so the whole
+    // gesture (drag, typing burst, popup edit) undoes as one entry.
+    if (m_undoArmed) {
+        m_undoStack.push_back(m_undoBaseline);
+        constexpr std::size_t kMaxUndoEntries = 64;
+        if (m_undoStack.size() > kMaxUndoEntries) {
+            m_undoStack.erase(m_undoStack.begin());
+        }
+        m_redoStack.clear();
+        m_undoArmed = false;
+    }
+    m_dirty = true;
+}
+
+void NodeGraphEditor::Undo() {
+    if (m_undoStack.empty()) {
+        return;
+    }
+    UpdateNodePositions();
+    m_redoStack.push_back(SaveGraph());
+    const Json snapshot = m_undoStack.back();
+    m_undoStack.pop_back();
+    RestoreGraph(snapshot);
+}
+
+void NodeGraphEditor::Redo() {
+    if (m_redoStack.empty()) {
+        return;
+    }
+    UpdateNodePositions();
+    m_undoStack.push_back(SaveGraph());
+    const Json snapshot = m_redoStack.back();
+    m_redoStack.pop_back();
+    RestoreGraph(snapshot);
+}
+
+void NodeGraphEditor::RestoreGraph(const Json& snapshot) {
+    m_undoArmed = false;  // LoadGraph rebuilds everything; don't capture mid-restore
+    LoadGraph(snapshot);
+    m_dirty = true;
+    m_loaded = true;
+}
 
 void NodeGraphEditor::Render() {
     EnsureContext();
@@ -1136,15 +1557,37 @@ void NodeGraphEditor::RenderToolbar() {
         ImGui::SetNextItemWidth(320.0f);
         ImGui::InputTextWithHint("##pds-document", "Script/chapter1.pds", &m_documentPathInput);
         ImGui::SameLine();
-        if (ImGui::Button("Open PDS")) OpenDocument(m_documentPathInput);
+        if (ImGui::Button("Open PDS")) {
+            if (m_dirty) {
+                m_pendingDocAction = 1;
+                m_pendingDocPath = m_documentPathInput;
+            } else {
+                OpenDocument(m_documentPathInput);
+            }
+        }
         ImGui::SameLine();
-        if (ImGui::Button("New PDS")) NewDocument(m_documentPathInput);
+        if (ImGui::Button("New PDS")) {
+            if (m_dirty) {
+                m_pendingDocAction = 2;
+                m_pendingDocPath = m_documentPathInput;
+            } else {
+                NewDocument(m_documentPathInput);
+            }
+        }
         ImGui::SameLine();
         ImGui::TextDisabled("%s%s", CurrentRuntimePath().c_str(), m_dirty ? " *" : "");
     }
     if (ImGui::Button("Save")) Save();
     ImGui::SameLine();
     if (ImGui::Button("Reload")) Reload();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!CanUndo());
+    if (ImGui::Button("Undo")) Undo();
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!CanRedo());
+    if (ImGui::Button("Redo")) Redo();
+    ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button("Frame")) FrameSelection();
     ImGui::SameLine();
@@ -1156,13 +1599,57 @@ void NodeGraphEditor::RenderToolbar() {
     if (m_kind != GraphKind::PDSDialogue) {
         ImGui::TextDisabled("%s%s", DocumentPath().filename().string().c_str(), m_dirty ? " *" : "");
     }
+    RenderUnsavedChangesModal();
     ImGui::EndChild();
 }
 
+void NodeGraphEditor::RenderUnsavedChangesModal() {
+    if (m_pendingDocAction != 0 && !ImGui::IsPopupOpen("Unsaved Changes")) {
+        ImGui::OpenPopup("Unsaved Changes");
+    }
+    if (!ImGui::BeginPopupModal("Unsaved Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        return;
+    }
+    ImGui::Text("\"%s\" has unsaved changes.", CurrentRuntimePath().c_str());
+    ImGui::TextDisabled("Save them before switching documents?");
+    ImGui::Separator();
+    const auto proceed = [&] {
+        const int action = m_pendingDocAction;
+        const std::string path = m_pendingDocPath;
+        m_pendingDocAction = 0;
+        if (action == 1) {
+            OpenDocument(path);
+        } else {
+            NewDocument(path);
+        }
+    };
+    if (ImGui::Button("Save & Continue")) {
+        Save();
+        proceed();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Discard Changes")) {
+        m_dirty = false;
+        proceed();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel")) {
+        m_pendingDocAction = 0;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
 void NodeGraphEditor::RenderGraph() {
+    m_dropTargets.clear();
     ed::SetCurrentEditor(m_context);
     ed::Begin(Title().c_str(), ImVec2(0, 0));
 
+    for (GroupNode& group : m_groups) {
+        RenderGroupNode(group);
+    }
     for (Node& node : m_nodes) {
         RenderNode(node);
     }
@@ -1202,14 +1689,94 @@ void NodeGraphEditor::RenderGraph() {
 
     ed::End();
 
-    const ImRect graphRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+    HandleAssetDrop(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+
+    // Re-arm undo capture once no edit gesture is in flight.
+    if (!m_undoArmed && !ImGui::IsAnyItemActive() &&
+        !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        m_undoBaseline = SaveGraph();
+        m_undoArmed = true;
+    }
+}
+
+void NodeGraphEditor::RecordDropTarget(int nodeId, const std::string& paramKey, int lineIndex) {
+    if (nodeId == 0) {
+        return;
+    }
+    AssetDropTarget target;
+    target.nodeId = nodeId;
+    target.paramKey = paramKey;
+    target.lineIndex = lineIndex;
+    target.rectMin = ImGui::GetItemRectMin();
+    target.rectMax = ImGui::GetItemRectMax();
+    m_dropTargets.push_back(std::move(target));
+}
+
+void NodeGraphEditor::HandleAssetDrop(const ImVec2& graphMin, const ImVec2& graphMax) {
+    const ImGuiPayload* peek = ImGui::GetDragDropPayload();
+    if (peek && peek->IsDataType(kResourcePayload)) {
+        const ImVec2 mouse = ImGui::GetMousePos();
+        for (const AssetDropTarget& target : m_dropTargets) {
+            if (mouse.x < target.rectMin.x || mouse.y < target.rectMin.y ||
+                mouse.x > target.rectMax.x || mouse.y > target.rectMax.y) {
+                continue;
+            }
+            ImGui::GetForegroundDrawList()->AddRect(target.rectMin, target.rectMax,
+                                                    IM_COL32(120, 205, 255, 255), 3.0f, 0, 2.0f);
+            const ImGuiID id =
+                ImGui::GetID(("##px-field-drop" + std::to_string(target.nodeId) + target.paramKey +
+                              std::to_string(target.lineIndex))
+                                 .c_str());
+            if (ImGui::BeginDragDropTargetCustom(ImRect(target.rectMin, target.rectMax), id)) {
+                if (const ImGuiPayload* payload =
+                        ImGui::AcceptDragDropPayload(kResourcePayload)) {
+                    ApplyAssetToField(
+                        target.nodeId, target.paramKey, target.lineIndex,
+                        std::string(static_cast<const char*>(payload->Data),
+                                    payload->DataSize > 0 ? payload->DataSize - 1 : 0));
+                }
+                ImGui::EndDragDropTarget();
+            }
+            return;  // a field consumed (or is hovering) the drag
+        }
+    }
+
+    const ImRect graphRect(graphMin, graphMax);
     if (ImGui::BeginDragDropTargetCustom(graphRect, ImGui::GetID((Title() + "Drop").c_str()))) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kResourcePayload)) {
             std::string asset(static_cast<const char*>(payload->Data), payload->DataSize > 0 ? payload->DataSize - 1 : 0);
+            m_createPosition = ImGui::GetMousePos();
             ApplyAssetToSelection(asset);
         }
         ImGui::EndDragDropTarget();
     }
+}
+
+void NodeGraphEditor::ApplyAssetToField(int nodeId, const std::string& paramKey, int lineIndex,
+                                        const std::string& asset) {
+    Node* node = FindNode(nodeId);
+    if (!node || asset.empty()) {
+        return;
+    }
+    Parameter* parameter = FindParameter(*node, paramKey);
+    if (!parameter) {
+        return;
+    }
+    if (lineIndex >= 0 && paramKey == "voices") {
+        std::vector<std::string> voices = SplitTextLines(parameter->stringValue);
+        if (Parameter* text = FindParameter(*node, "text")) {
+            voices.resize(SplitTextLines(text->stringValue).size());
+        }
+        if (static_cast<std::size_t>(lineIndex) >= voices.size()) {
+            return;
+        }
+        voices[static_cast<std::size_t>(lineIndex)] = asset;
+        parameter->stringValue = JoinTextLines(voices);
+    } else {
+        parameter->stringValue = asset;
+    }
+    MarkDirty();
+    Log("Set " + paramKey + " = " + asset);
 }
 
 void NodeGraphEditor::RenderNode(Node& node) {
@@ -1307,6 +1874,21 @@ void NodeGraphEditor::RenderNode(Node& node) {
     }
 
     draw->AddRect(rect.Min, rect.Max, nodeBorder, kNodeRounding, ImDrawFlags_RoundCornersAll, selected ? 2.0f : 1.2f);
+
+    // Debugger breakpoint marker (red dot hanging off the node's top-left corner).
+    if (m_breakpointLines) {
+        if (m_nodeCommandLine.empty() && m_kind == GraphKind::PDSDialogue) {
+            (void)CompilePDS();  // populate the node→line map lazily
+        }
+        if (const std::set<int>* lines = m_breakpointLines()) {
+            const int cmdLine = CommandLineForNode(node.id);
+            if (cmdLine > 0 && lines->count(cmdLine) != 0) {
+                const ImVec2 center(rect.Min.x + 2.0f, rect.Min.y + 2.0f);
+                draw->AddCircleFilled(center, 7.0f, IM_COL32(232, 72, 60, 255));
+                draw->AddCircle(center, 7.0f, IM_COL32(20, 12, 12, 255), 0, 1.5f);
+            }
+        }
+    }
 }
 
 void NodeGraphEditor::RenderPin(Node& node, const Pin& pin) {
@@ -1393,7 +1975,12 @@ void NodeGraphEditor::RenderDialogueTextEditor(Node& node) {
     ImGui::SameLine(0.0f, 8.0f);
     InNodeOptionButton(node.id, *effect, 112.0f);
 
+    Parameter* voicesParam = FindParameter(node, "voices");
     std::vector<std::string> lines = SplitTextLines(text->stringValue);
+    std::vector<std::string> voices =
+        voicesParam ? SplitTextLines(voicesParam->stringValue) : std::vector<std::string>{};
+    voices.resize(lines.size());
+
     int removeIndex = -1;
     int insertAfter = -1;
     for (size_t i = 0; i < lines.size(); ++i) {
@@ -1401,9 +1988,34 @@ void NodeGraphEditor::RenderDialogueTextEditor(Node& node) {
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("%02d", static_cast<int>(i + 1));
         ImGui::SameLine(0.0f, 6.0f);
-        ImGui::SetNextItemWidth(392.0f);
+        ImGui::SetNextItemWidth(360.0f);
         if (ImGui::InputText("##line", &lines[i])) {
             changed = true;
+        }
+        if (voicesParam) {
+            ImGui::SameLine(0.0f, 4.0f);
+            const bool hasVoice = !voices[i].empty();
+            ImGui::PushStyleColor(ImGuiCol_Text, hasVoice ? ImVec4(0.55f, 0.85f, 0.65f, 1.0f)
+                                                          : ImVec4(0.45f, 0.49f, 0.55f, 1.0f));
+            if (ImGui::SmallButton(hasVoice ? "V" : "v")) {
+                m_inNodePopup =
+                    InNodePopup{ node.id, "voices", false, true, static_cast<int>(i) };
+            }
+            ImGui::PopStyleColor();
+            RecordDropTarget(node.id, "voices", static_cast<int>(i));
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", hasVoice ? voices[i].c_str()
+                                                 : "Voice: none (click or drop audio)");
+            }
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload =
+                        ImGui::AcceptDragDropPayload(kResourcePayload)) {
+                    voices[i].assign(static_cast<const char*>(payload->Data),
+                                     payload->DataSize > 0 ? payload->DataSize - 1 : 0);
+                    changed = true;
+                }
+                ImGui::EndDragDropTarget();
+            }
         }
         ImGui::SameLine(0.0f, 4.0f);
         if (ImGui::SmallButton("+")) {
@@ -1423,14 +2035,19 @@ void NodeGraphEditor::RenderDialogueTextEditor(Node& node) {
 
     if (insertAfter >= 0) {
         lines.insert(lines.begin() + insertAfter + 1, std::string{});
+        voices.insert(voices.begin() + insertAfter + 1, std::string{});
         changed = true;
     }
     if (removeIndex >= 0 && lines.size() > 1) {
         lines.erase(lines.begin() + removeIndex);
+        voices.erase(voices.begin() + removeIndex);
         changed = true;
     }
     if (changed) {
         text->stringValue = JoinTextLines(lines);
+        if (voicesParam) {
+            voicesParam->stringValue = JoinTextLines(voices);
+        }
         MarkDirty();
     }
     ImGui::EndGroup();
@@ -1511,6 +2128,18 @@ void NodeGraphEditor::HandleInteractions() {
     if (!deleted && deletePressed && !io.WantTextInput && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
         DeleteSelection();
     }
+    if (io.KeyCtrl && !io.WantTextInput &&
+        ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+        if (ImGui::IsKeyPressed(ImGuiKey_C, false)) {
+            CopySelection();
+        } else if (ImGui::IsKeyPressed(ImGuiKey_V, false)) {
+            PasteClipboard(ed::ScreenToCanvas(ImGui::GetMousePos()));
+        } else if (ImGui::IsKeyPressed(ImGuiKey_D, false)) {
+            DuplicateSelection();
+        }
+    }
+    // Ctrl+Z/Y are routed here by the application when this window is focused
+    // (EditorApp::HandleShortcuts), so they are not handled again locally.
 }
 
 void NodeGraphEditor::RefreshSelection() {
@@ -1557,17 +2186,60 @@ void NodeGraphEditor::RenderCreatePopup() {
             ImGui::CloseCurrentPopup();
         }
     }
+    ImGui::SeparatorText("Canvas");
+    if (ImGui::MenuItem("Add Group")) {
+        AddGroup(canvasPosition);
+        ImGui::CloseCurrentPopup();
+    }
+    if (ImGui::MenuItem("Paste", "Ctrl+V", false,
+                        m_clipboard.is_object() && m_clipboard.contains("nodes"))) {
+        PasteClipboard(canvasPosition);
+        ImGui::CloseCurrentPopup();
+    }
     ImGui::EndPopup();
 }
 
 void NodeGraphEditor::RenderNodeContextMenu() {
     if (ImGui::BeginPopup("Node Menu")) {
+        if (GroupNode* group = FindGroup(m_contextNodeId)) {
+            ImGui::TextDisabled("Group");
+            ImGui::SetNextItemWidth(220.0f);
+            if (ImGui::InputText("##group-title", &group->title)) {
+                MarkDirty();
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Delete Group")) {
+                RemoveNode(m_contextNodeId);
+            }
+            ImGui::EndPopup();
+            return;
+        }
         if (const Node* node = FindNode(m_contextNodeId)) {
             if (const NodeTemplate* definition = FindTemplate(node->type)) {
                 ImGui::TextUnformatted(definition->title.c_str());
                 ImGui::TextDisabled("%s", definition->description.c_str());
                 ImGui::Separator();
             }
+        }
+        if (m_toggleBreakpoint) {
+            const int cmdLine = CommandLineForNode(m_contextNodeId);
+            const bool hasBp = cmdLine > 0 && m_breakpointLines && m_breakpointLines() &&
+                               m_breakpointLines()->count(cmdLine) != 0;
+            ImGui::BeginDisabled(cmdLine <= 0);
+            if (ImGui::MenuItem(hasBp ? "Remove Breakpoint" : "Set Breakpoint", nullptr, hasBp)) {
+                m_toggleBreakpoint(cmdLine);
+            }
+            ImGui::EndDisabled();
+            if (m_dirty) {
+                ImGui::TextDisabled("(unsaved edits may shift lines — Save first)");
+            }
+            ImGui::Separator();
+        }
+        if (ImGui::MenuItem("Copy", "Ctrl+C")) {
+            CopySelection();
+        }
+        if (ImGui::MenuItem("Duplicate", "Ctrl+D")) {
+            DuplicateSelection();
         }
         if (ImGui::MenuItem("Delete")) {
             RemoveNode(m_contextNodeId);
@@ -1730,6 +2402,9 @@ void NodeGraphEditor::RenderParameter(Parameter& parameter, bool compact, int no
                 changed = ImGui::InputText(controlId.c_str(), &parameter.stringValue, compact && parameter.type == ParamType::Asset ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_None);
             }
             if (parameter.type == ParamType::Asset) {
+                // In-node fields never receive payload hover (the canvas eats
+                // it); record the rect for the post-ed::End() hit test.
+                RecordDropTarget(nodeId, parameter.key);
                 if (ImGui::BeginDragDropTarget()) {
                     if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kResourcePayload)) {
                         parameter.stringValue.assign(static_cast<const char*>(payload->Data), payload->DataSize > 0 ? payload->DataSize - 1 : 0);
@@ -1791,6 +2466,50 @@ void NodeGraphEditor::RenderInNodePopups() {
     if (!parameter) {
         ImGui::CloseCurrentPopup();
     }
+    else if (m_inNodePopup.paramKey == "voices" && m_inNodePopup.lineIndex >= 0) {
+        const std::size_t idx = static_cast<std::size_t>(m_inNodePopup.lineIndex);
+        std::vector<std::string> voices = SplitTextLines(parameter->stringValue);
+        if (Parameter* textParam = FindParameter(*node, "text")) {
+            voices.resize(SplitTextLines(textParam->stringValue).size());
+        }
+        if (idx >= voices.size()) {
+            ImGui::CloseCurrentPopup();
+        } else {
+            ImGui::TextDisabled("Voice for line %d", m_inNodePopup.lineIndex + 1);
+            ImGui::SetNextItemWidth(280.0f);
+            bool edited = ImGui::InputTextWithHint("##voiceline", "(audio file or path)",
+                                                   &voices[idx]);
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload =
+                        ImGui::AcceptDragDropPayload(kResourcePayload)) {
+                    voices[idx].assign(static_cast<const char*>(payload->Data),
+                                       payload->DataSize > 0 ? payload->DataSize - 1 : 0);
+                    edited = true;
+                }
+                ImGui::EndDragDropTarget();
+            }
+            const std::string selected =
+                m_selectedResource ? m_selectedResource() : std::string{};
+            if (!selected.empty()) {
+                if (ImGui::SmallButton(("Use: " + selected).c_str())) {
+                    voices[idx] = selected;
+                    edited = true;
+                }
+            }
+            if (!voices[idx].empty()) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Clear")) {
+                    voices[idx].clear();
+                    edited = true;
+                }
+            }
+            ImGui::TextDisabled("Bare filenames resolve under Data/Audio/Voice/.");
+            if (edited) {
+                parameter->stringValue = JoinTextLines(voices);
+                MarkDirty();
+            }
+        }
+    }
     else if (m_inNodePopup.isColor) {
         if (ImGui::ColorPicker4("##picker", &parameter->colorValue.x, ImGuiColorEditFlags_AlphaBar)) {
             MarkDirty();
@@ -1818,8 +2537,10 @@ void NodeGraphEditor::ApplyAssetToSelection(const std::string& runtimePath) {
         return;
     }
     if (Node* node = FindNode(m_selectedNodeId)) {
+        // Only fill Asset-typed parameters: dropping a file must never clobber
+        // plain string fields like a speaker name.
         for (Parameter& parameter : node->parameters) {
-            if (parameter.type == ParamType::Asset || parameter.type == ParamType::String) {
+            if (parameter.type == ParamType::Asset) {
                 parameter.stringValue = runtimePath;
                 MarkDirty();
                 Log("Applied asset to node: " + runtimePath);
@@ -2039,11 +2760,24 @@ const char* NodeGraphEditor::PinTypeName(PinType type) {
 
 std::string NodeGraphEditor::CompilePDS() const {
     std::ostringstream script;
+    m_nodeCommandLine.clear();
+    for (const GroupNode& group : m_groups) {
+        script << "//@group x=\"" << static_cast<int>(group.position.x) << "\" y=\""
+               << static_cast<int>(group.position.y) << "\" w=\""
+               << static_cast<int>(group.size.x) << "\" h=\"" << static_cast<int>(group.size.y)
+               << "\" title=" << QuoteLua(group.title) << "\n";
+    }
+    int line = 1;  // 1-based line of the next character written
+    const auto emitted = [&](const std::string& sofar) {
+        line = 1 + static_cast<int>(std::count(sofar.begin(), sofar.end(), '\n'));
+    };
     for (const Node* node : LinearFlow()) {
         const std::string& type = node->type;
         if (type != "pds_start") {
             script << "//@node x=\"" << static_cast<int>(node->position.x) << "\" y=\"" << static_cast<int>(node->position.y) << "\"\n";
         }
+        emitted(script.str());
+        m_nodeCommandLine[node->id] = line;
         if (type == "pds_start") {
             const std::string title = ResolveString(*node, "title");
             if (!title.empty()) script << "# " << title << "\n\n";
@@ -2058,7 +2792,15 @@ std::string NodeGraphEditor::CompilePDS() const {
             script << "[bgm file=" << QuoteLua(ResolveString(*node, "file")) << "]\n\n";
         }
         else if (type == "character") {
-            script << "[char id=" << QuoteLua(ResolveString(*node, "id")) << " expression=" << QuoteLua(ResolveString(*node, "expression")) << " pos=" << QuoteLua(ResolveString(*node, "pos")) << "]\n\n";
+            script << "[char id=" << QuoteLua(ResolveString(*node, "id")) << " expression=" << QuoteLua(ResolveString(*node, "expression")) << " pos=" << QuoteLua(ResolveString(*node, "pos"));
+            const float ox = ResolveFloat(*node, "x");
+            const float oy = ResolveFloat(*node, "y");
+            const Parameter* scaleParam = FindParameter(*node, "scale");
+            const float sc = scaleParam ? scaleParam->floatValue : 1.0f;
+            if (ox != 0.0f) script << " x=" << QuoteLua(FormatFloat(ox));
+            if (oy != 0.0f) script << " y=" << QuoteLua(FormatFloat(oy));
+            if (sc != 1.0f) script << " scale=" << QuoteLua(FormatFloat(sc));
+            script << "]\n\n";
         }
         else if (type == "dialogue") {
             const std::string speaker = ResolveString(*node, "speaker");
@@ -2067,14 +2809,31 @@ std::string NodeGraphEditor::CompilePDS() const {
             const std::string effect = ResolveString(*node, "effect");
             const ImVec4 textColor = FindParameter(*node, "color") ? FindParameter(*node, "color")->colorValue : ImVec4(1, 1, 1, 1);
             const ImVec4 outlineColor = FindParameter(*node, "outline") ? FindParameter(*node, "outline")->colorValue : ImVec4(0, 0, 0, 1);
-            script << "[text";
-            if (!speaker.empty()) script << " speaker=" << QuoteLua(speaker);
-            if (!character.empty()) script << " char=" << QuoteLua(character);
-            if (!SameColor(textColor, ImVec4(1, 1, 1, 1))) script << " color=" << QuoteLua(ColorToPDSCsv(textColor));
-            if (!SameColor(outlineColor, ImVec4(0, 0, 0, 1))) script << " outline=" << QuoteLua(ColorToPDSCsv(outlineColor));
-            if (speed != 40) script << " speed=" << QuoteLua(std::to_string(speed));
-            if (!effect.empty() && effect != "none") script << " effect=" << QuoteLua(effect);
-            script << "]\n" << ResolveString(*node, "text") << "\n\n";
+
+            std::ostringstream attrs;
+            if (!speaker.empty()) attrs << " speaker=" << QuoteLua(speaker);
+            if (!character.empty()) attrs << " char=" << QuoteLua(character);
+            if (!SameColor(textColor, ImVec4(1, 1, 1, 1))) attrs << " color=" << QuoteLua(ColorToPDSCsv(textColor));
+            if (!SameColor(outlineColor, ImVec4(0, 0, 0, 1))) attrs << " outline=" << QuoteLua(ColorToPDSCsv(outlineColor));
+            if (speed != 40) attrs << " speed=" << QuoteLua(std::to_string(speed));
+            if (!effect.empty() && effect != "none") attrs << " effect=" << QuoteLua(effect);
+            const std::string header = attrs.str();
+
+            const std::vector<std::string> dlgLines = SplitTextLines(ResolveString(*node, "text"));
+            const std::vector<std::string> dlgVoices =
+                SplitTextLines(ResolveString(*node, "voices"));
+            // A voice on a [text] header is consumed by the next spoken line, so
+            // each voiced line gets its own header re-emitted with that voice.
+            for (std::size_t i = 0; i < dlgLines.size(); ++i) {
+                const std::string voice = i < dlgVoices.size() ? dlgVoices[i] : std::string{};
+                if (i == 0 || !voice.empty()) {
+                    script << "[text" << header;
+                    if (!voice.empty()) script << " voice=" << QuoteLua(voice);
+                    script << "]\n";
+                }
+                script << dlgLines[i] << "\n";
+            }
+            script << "\n";
         }
         else if (type == "choice") {
             script << "[choice text=" << QuoteLua(ResolveString(*node, "text")) << " target=" << QuoteLua(ResolveString(*node, "target")) << "]\n\n";
@@ -2095,11 +2854,23 @@ std::string NodeGraphEditor::CompilePDS() const {
             script << "]\n\n";
         }
         else if (type == "transition") {
-            script << "[lua fn=\"PXEditorTransition\" style=" << QuoteLua(ResolveString(*node, "style")) << " speed=" << QuoteLua(std::to_string(ResolveFloat(*node, "speed"))) << "]\n\n";
+            script << "[bg file=" << QuoteLua(ResolveString(*node, "file"))
+                   << " rule=" << QuoteLua(ResolveString(*node, "rule"))
+                   << " time=" << QuoteLua(std::to_string(ResolveInt(*node, "time")))
+                   << " vague=" << QuoteLua(std::to_string(ResolveInt(*node, "vague")))
+                   << "]\n\n";
         }
         else if (type == "animate_actor") {
-            script << "[lua fn=\"PXEditorAnimateActor\" target=" << QuoteLua(ResolveString(*node, "target")) << " duration=" << QuoteLua(std::to_string(ResolveFloat(*node, "duration")))
-                   << " move_x=" << QuoteLua(std::to_string(ResolveFloat(*node, "move_x"))) << "]\n\n";
+            // The node states the full target pose, so every property is emitted.
+            script << "[anim target=" << QuoteLua(ResolveString(*node, "target"))
+                   << " x=" << QuoteLua(FormatFloat(ResolveFloat(*node, "x")))
+                   << " y=" << QuoteLua(FormatFloat(ResolveFloat(*node, "y")))
+                   << " scale=" << QuoteLua(FormatFloat(ResolveFloat(*node, "scale")))
+                   << " alpha=" << QuoteLua(std::to_string(ResolveInt(*node, "alpha")))
+                   << " duration=" << QuoteLua(std::to_string(ResolveInt(*node, "duration")))
+                   << " ease=" << QuoteLua(ResolveString(*node, "ease"));
+            if (ResolveBool(*node, "wait")) script << " wait=\"true\"";
+            script << "]\n\n";
         }
         else if (type == "spawn_ui") {
             script << "[lua fn=\"PXEditorSpawnUI\" ui_script=" << QuoteLua(ResolveString(*node, "ui")) << "]\n\n";

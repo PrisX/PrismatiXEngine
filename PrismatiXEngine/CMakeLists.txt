@@ -12,6 +12,9 @@ target_include_directories(PrismatiXRuntime PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/Engine
     ${LUA_INCLUDE_DIR}
 )
+target_include_directories(PrismatiXRuntime PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/pl_mpeg
+)
 
 target_link_libraries(PrismatiXRuntime PUBLIC
     SDL3::SDL3
@@ -26,7 +29,10 @@ target_link_libraries(PrismatiXRuntime PUBLIC
     sol2::sol2
 )
 
-add_executable(PrismatiXPlayer Applications/PlayerMain.cpp)
+add_executable(PrismatiXPlayer
+    Applications/PlayerMain.cpp
+    Applications/Player/PlayerApp.cpp
+)
 target_link_libraries(PrismatiXPlayer PRIVATE PrismatiXRuntime)
 
 

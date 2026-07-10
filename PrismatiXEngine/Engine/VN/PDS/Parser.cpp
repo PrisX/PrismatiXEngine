@@ -37,10 +37,24 @@ void ParseCommandBody(const std::string& body, Command& cmd) {
         if (i < n && body[i] == '=') {
             ++i;
             if (i < n && body[i] == '"') {
+                // Quoted values support backslash escapes so text containing
+                // quotes/newlines round-trips with the editor's QuotePDSValue.
                 ++i;
-                std::size_t vs = i;
-                while (i < n && body[i] != '"') ++i;
-                value = body.substr(vs, i - vs);
+                bool escape = false;
+                while (i < n) {
+                    const char c = body[i];
+                    if (escape) {
+                        value.push_back(c == 'n' ? '\n' : c);
+                        escape = false;
+                    } else if (c == '\\') {
+                        escape = true;
+                    } else if (c == '"') {
+                        break;
+                    } else {
+                        value.push_back(c);
+                    }
+                    ++i;
+                }
                 if (i < n) ++i;
             } else {
                 std::size_t vs = i;
@@ -50,6 +64,21 @@ void ParseCommandBody(const std::string& body, Command& cmd) {
         }
         cmd.args.push_back(Arg{ std::move(key), std::move(value) });
     }
+}
+
+std::string EscapePDSValue(const std::string& value) {
+    std::string out;
+    out.reserve(value.size());
+    for (char ch : value) {
+        switch (ch) {
+            case '\\': out += "\\\\"; break;
+            case '"': out += "\\\""; break;
+            case '\n': out += "\\n"; break;
+            case '\r': break;
+            default: out.push_back(ch); break;
+        }
+    }
+    return out;
 }
 
 void ParseMetaFields(const std::string& body, std::unordered_map<std::string, std::string>& out) {
@@ -170,7 +199,7 @@ std::string WritePDS(const ParsedScript& script) {
 
         out << '[' << cmd.type;
         for (const Arg& a : cmd.args) {
-            out << ' ' << a.key << "=\"" << a.value << '"';
+            out << ' ' << a.key << "=\"" << EscapePDSValue(a.value) << '"';
         }
         out << "]\n";
     }

@@ -3,6 +3,7 @@
 #include <imgui.h>
 #include <imgui_stdlib.h>
 
+#include <algorithm>
 #include <sstream>
 
 namespace px::editor {
@@ -31,7 +32,7 @@ std::vector<std::string> Split(const std::string& s) {
 }
 }
 
-bool DatabasePanel::Render(Database& db) {
+bool DatabasePanel::Render(Database& db, const std::vector<std::string>& availableScripts) {
     bool edited = false;
     if (!ImGui::BeginTabBar("dbtabs")) {
         return false;
@@ -158,7 +159,24 @@ bool DatabasePanel::Render(Database& db) {
                 ImGui::PopID();
                 break;
             }
-            if (ImGui::InputText("script (.pds)", &c.script)) edited = true;
+            const bool missing = !c.script.empty() &&
+                                 std::find(availableScripts.begin(), availableScripts.end(),
+                                           c.script) == availableScripts.end();
+            ImGui::SetNextItemWidth(260);
+            if (ImGui::BeginCombo("script (.pds)",
+                                  c.script.empty() ? "(none)" : c.script.c_str())) {
+                for (const std::string& s : availableScripts) {
+                    if (ImGui::Selectable(s.c_str(), s == c.script)) {
+                        c.script = s;
+                        edited = true;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            if (missing) {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "missing!");
+            }
             ImGui::Separator();
             ImGui::PopID();
         }

@@ -249,7 +249,7 @@ void EditorApp::ImportClipboardAssets() {
 }
 
 bool EditorApp::Init() {
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS)) {
         PX_LOG_ERROR("SDL_Init failed: {}", SDL_GetError());
         return false;
     }
@@ -290,14 +290,13 @@ bool EditorApp::Init() {
     m_preview = std::make_unique<RuntimeHost>(m_window.Renderer());
     m_textures = std::make_unique<EditorTextures>(m_window.Renderer());
     m_nodeHeaderTex = m_textures->LoadId(m_basePath + "EditorAssets/NodeHeader.png", &m_nodeHeaderW, &m_nodeHeaderH);
-    m_nodeEditor.SetHeaderTexture(m_nodeHeaderTex, m_nodeHeaderW, m_nodeHeaderH);
     m_flow.SetHeaderTexture(m_nodeHeaderTex, m_nodeHeaderW, m_nodeHeaderH);
-    m_nodeEditor.SetSelectedResourceCallback([this] { return m_selectedAsset; });
 
     const std::string cwd = std::filesystem::current_path().string();
     std::snprintf(m_openPath, sizeof(m_openPath), "%s", cwd.c_str());
     std::snprintf(m_newPath, sizeof(m_newPath), "%s", cwd.c_str());
     std::snprintf(m_newName, sizeof(m_newName), "%s", "MyGame");
+    LoadRecentProjects();
     BuildCommands();
     Log("PrismatiX Editor started.");
     return true;
@@ -311,6 +310,12 @@ void EditorApp::Run() {
             ImGui_ImplSDL3_ProcessEvent(&event);
             if (event.type == SDL_EVENT_DROP_FILE && event.drop.data) {
                 ImportAssetFiles({ PathFromUtf8(event.drop.data) });
+            }
+            if (event.type == SDL_EVENT_WINDOW_FOCUS_GAINED &&
+                m_project.Context().IsOpen()) {
+                // Pick up files changed outside the editor (Unity-style refresh).
+                m_assets.Scan(m_project.Context());
+                m_flowStale = true;
             }
             if (event.type == SDL_EVENT_QUIT) {
                 m_running = false;

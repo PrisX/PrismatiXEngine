@@ -2,6 +2,7 @@
 
 #include "Editor/Project/ProjectTypes.h"
 
+#include <cstdint>
 #include <string_view>
 
 namespace px::editor {
@@ -19,6 +20,8 @@ public:
 
     void Scan(const ProjectContext& context);
     [[nodiscard]] const std::vector<AssetRecord>& Assets() const { return m_assets; }
+    // Incremented on every Scan; lets callers cache derived lists cheaply.
+    [[nodiscard]] std::uint64_t Revision() const { return m_revision; }
     [[nodiscard]] std::vector<AssetRecord> Filter(std::string_view text,
                                                   std::string_view type) const;
     [[nodiscard]] static std::string Classify(const std::filesystem::path& path);
@@ -30,6 +33,7 @@ private:
 
     LogSink m_log;
     std::vector<AssetRecord> m_assets;
+    std::uint64_t m_revision = 0;
 };
 
 }

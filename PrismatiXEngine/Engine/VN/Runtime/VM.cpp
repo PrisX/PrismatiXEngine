@@ -9,6 +9,7 @@
 #include "Engine/VN/Runtime/VariableStore.h"
 #include "Engine/Support/Logger.h"
 
+#include <algorithm>
 #include <charconv>
 #include <sstream>
 
@@ -20,6 +21,15 @@ int ParseInt(const std::string& s, int fallback = 0) {
     int v = fallback;
     std::from_chars(s.data(), s.data() + s.size(), v);
     return v;
+}
+
+float ParseFloat(const std::string& s, float fallback = 0.0f) {
+    if (s.empty()) return fallback;
+    try {
+        return std::stof(s);
+    } catch (...) {
+        return fallback;
+    }
 }
 
 Color ParseColor(const std::string& s, Color fallback) {
@@ -75,11 +85,12 @@ bool VM::LoadProgram(const std::string& scriptPath) {
     }
     m_scriptPath = scriptPath;
     m_pc = 0;
-    m_callStack.clear();
+    m_pendingVoice.clear();
     return true;
 }
 
 bool VM::LoadScript(const std::string& scriptPath) {
+    m_callStack.clear();
     if (!LoadProgram(scriptPath)) {
         m_state = VMState::Finished;
         return false;
@@ -90,15 +101,24 @@ bool VM::LoadScript(const std::string& scriptPath) {
 }
 
 void VM::SeekTo(const std::string& scriptPath, int pc) {
+    m_callStack.clear();
     if (LoadProgram(scriptPath)) {
         m_pc = pc;
         m_state = VMState::Idle;
+        // A save made mid-line points at the say itself; re-executing it
+        // re-displays the text, but its backlog entry was restored from the
+        // save, so the next push must be skipped.
+        if (pc >= 0 && pc < static_cast<int>(m_program.code.size())) {
+            const Command& c = m_program.code[pc];
+            m_skipBacklogOnce =
+                c.type == "say" || (c.type == "text" && (c.Has("value") || c.Has("text")));
+        }
     }
 }
 
 bool VM::Blocking() const {
     return m_state == VMState::WaitingClick || m_state == VMState::WaitingChoice ||
-           m_state == VMState::WaitingTimer;
+           m_state == VMState::WaitingTimer || m_state == VMState::WaitingVideo;
 }
 
 void VM::Run() {
@@ -107,7 +127,24 @@ void VM::Run() {
         const Command& cmd = code[m_pc];
         const std::string& t = cmd.type;
 
-        if (t == "say") {
+        // Debugger: pause after a single-step, or on a breakpoint line.
+        if (m_stepping) {
+            if (m_stepBudget <= 0) {
+                m_stepping = false;
+                m_state = VMState::Paused;
+                return;
+            }
+            --m_stepBudget;
+        } else if (!m_breakpoints.empty() && m_breakpoints.count(cmd.line) != 0 &&
+                   !m_skipBreakOnce) {
+            m_state = VMState::Paused;
+            return;
+        }
+        m_skipBreakOnce = false;
+
+        // "text" is the Node Editor's dialogue command. With inline text it is a
+        // full say; bare it only sets the speaker for the following plain line.
+        if (t == "say" || (t == "text" && (cmd.Has("value") || cmd.Has("text")))) {
             HandleSay(cmd);
             ++m_pc;
             m_state = VMState::WaitingClick;
@@ -124,6 +161,47 @@ void VM::Run() {
             ++m_pc;
             m_state = VMState::WaitingTimer;
             return;
+        }
+        if (t == "anim" || t == "tween") {
+            Stage::TweenSpec spec;
+            if (cmd.Has("x")) { spec.hasX = true; spec.x = ParseFloat(cmd.Get("x")); }
+            if (cmd.Has("y")) { spec.hasY = true; spec.y = ParseFloat(cmd.Get("y")); }
+            if (cmd.Has("scale") || cmd.Has("zoom")) {
+                spec.hasScale = true;
+                spec.scale = ParseFloat(cmd.Get("scale", cmd.Get("zoom")), 1.0f);
+            }
+            if (cmd.Has("alpha") || cmd.Has("opacity")) {
+                spec.hasAlpha = true;
+                spec.alpha = ParseFloat(cmd.Get("alpha", cmd.Get("opacity")), 255.0f);
+            }
+            spec.durationMs =
+                ParseInt(cmd.Get("duration", cmd.Get("time", cmd.Get("ms"))), 600);
+            spec.ease = cmd.Get("ease", "outCubic");
+            const std::string target = cmd.Get("target", cmd.Get("name"));
+            if (!m_stage.Animate(target, spec)) {
+                PX_LOG_WARN("VM: [anim] target '{}' not found (line {})", target, cmd.line);
+            }
+            ++m_pc;
+            const std::string w = cmd.Get("wait", "false");
+            if (!w.empty() && w != "false" && w != "0" && w != "no") {
+                m_timerMs = static_cast<std::uint64_t>(std::max(0, spec.durationMs));
+                m_timerStart = m_nowMs;
+                m_state = VMState::WaitingTimer;
+                return;
+            }
+            continue;
+        }
+        if (t == "video" || t == "movie") {
+            const std::string file = cmd.Get("file", cmd.Get("value"));
+            ++m_pc;
+            if (m_videoHook && !file.empty()) {
+                const std::string s = cmd.Get("skippable", "true");
+                m_state = VMState::WaitingVideo;
+                m_videoHook(Resolve(m_config.videoDir, file), s != "false" && s != "0");
+                return;
+            }
+            PX_LOG_WARN("VM: [video] ignored (no video host) at line {}", cmd.line);
+            continue;
         }
         if (t == "if") {
             const bool ok = EvaluateCondition(cmd);
@@ -143,22 +221,31 @@ void VM::Run() {
                 m_pc = m_program.branch[m_pc];
                 continue;
             }
-            JumpToTarget(cmd.Get("target", cmd.Get("name")));
+            if (!JumpToTarget(cmd.Get("target", cmd.Get("name")))) {
+                ++m_pc;
+            }
             continue;
         }
         if (t == "call") {
-            m_callStack.push_back(m_pc + 1);
+            m_callStack.push_back(CallFrame{ m_scriptPath, m_pc + 1 });
             if (m_program.branch[m_pc] >= 0) {
                 m_pc = m_program.branch[m_pc];
-            } else {
+            } else if (!JumpToTarget(cmd.Get("target", cmd.Get("name")))) {
+                PX_LOG_WARN("VM: [call] target not found (line {})", cmd.line);
+                m_callStack.pop_back();
                 ++m_pc;
             }
             continue;
         }
         if (t == "return") {
             if (!m_callStack.empty()) {
-                m_pc = m_callStack.back();
+                const CallFrame frame = m_callStack.back();
                 m_callStack.pop_back();
+                if (frame.script != m_scriptPath && !LoadProgram(frame.script)) {
+                    m_state = VMState::Finished;
+                    return;
+                }
+                m_pc = frame.pc;
             } else {
                 ++m_pc;
             }
@@ -174,14 +261,40 @@ void VM::Run() {
 void VM::ExecuteSimple(const Command& cmd) {
     const std::string& t = cmd.type;
 
-    if (t == "name" || t == "speaker") {
+    if (t == "name" || t == "speaker" || t == "text") {
         m_speaker = cmd.Get("speaker", cmd.Get("name", cmd.Get("value")));
         if (cmd.Has("color")) m_textColor = ParseColor(cmd.Get("color"), m_textColor);
+        // A voice on the header belongs to the next spoken line.
+        m_pendingVoice = cmd.Get("voice");
         return;
     }
     if (t == "bg") {
-        m_stage.SetBackground(Resolve(m_config.bgDir, cmd.Get("file", cmd.Get("value"))),
-                              TruthyFlag(cmd));
+        const std::string file = Resolve(m_config.bgDir, cmd.Get("file", cmd.Get("value")));
+        if (cmd.Has("rule")) {
+            m_stage.SetBackgroundRule(file, Resolve(m_config.ruleDir, cmd.Get("rule")),
+                                      ParseInt(cmd.Get("time", cmd.Get("ms")), 600),
+                                      ParseInt(cmd.Get("vague"), 64));
+        } else {
+            m_stage.SetBackground(file, TruthyFlag(cmd));
+        }
+        return;
+    }
+    if (t == "layer") {
+        const std::string name = cmd.Get("name", cmd.Get("id"));
+        const std::string file = cmd.Get("file", cmd.Get("value"));
+        if (cmd.Has("clear") || file == "none") {
+            m_stage.ClearLayer(name);
+            return;
+        }
+        const int alpha = ParseInt(cmd.Get("alpha", cmd.Get("opacity")), 255);
+        m_stage.SetLayer(name, Resolve(m_config.bgDir, file), ParseFloat(cmd.Get("x")),
+                         ParseFloat(cmd.Get("y")), ParseFloat(cmd.Get("scale"), 1.0f),
+                         static_cast<std::uint8_t>(std::clamp(alpha, 0, 255)),
+                         ParseInt(cmd.Get("z"), 0));
+        return;
+    }
+    if (t == "layer_clear") {
+        m_stage.ClearLayer(cmd.Get("name", cmd.Get("id")));
         return;
     }
     if (t == "char") {
@@ -192,16 +305,32 @@ void VM::ExecuteSimple(const Command& cmd) {
             file = name + "_" + diff + ".png";
         }
         const int slot = ParseInt(cmd.Get("slot", cmd.Get("pos", "2")), 2);
-        m_stage.SetCharacter(name, Resolve(m_config.charDir, file), slot, TruthyFlag(cmd));
+        const float ox = ParseFloat(cmd.Get("x"), 0.0f);
+        const float oy = ParseFloat(cmd.Get("y"), 0.0f);
+        const float scale = ParseFloat(cmd.Get("scale", cmd.Get("zoom")), 1.0f);
+        m_stage.SetCharacter(name, Resolve(m_config.charDir, file), slot, TruthyFlag(cmd), ox, oy,
+                             scale);
         return;
     }
     if (t == "char_clear") {
         m_stage.ClearCharacter(cmd.Get("name", cmd.Get("id")), TruthyFlag(cmd));
         return;
     }
+    if (t == "char_move" || t == "move") {
+        const int slot = ParseInt(cmd.Get("slot", cmd.Get("pos", "2")), 2);
+        m_stage.MoveCharacter(cmd.Get("name", cmd.Get("id")), slot);
+        return;
+    }
     if (t == "bgm") {
         m_currentBgm = Resolve(m_config.bgmDir, cmd.Get("file", cmd.Get("value")));
-        m_audio.PlayBGM(m_currentBgm, true, ParseInt(cmd.Get("fade"), 0));
+        const int fade = ParseInt(cmd.Get("fade"), 0);
+        if (cmd.Has("intro")) {
+            // Intro plays once, then the body loops (saves store the body).
+            m_audio.PlayBGMWithIntro(Resolve(m_config.bgmDir, cmd.Get("intro")), m_currentBgm,
+                                     fade);
+        } else {
+            m_audio.PlayBGM(m_currentBgm, true, fade);
+        }
         return;
     }
     if (t == "stopbgm") {
@@ -219,7 +348,8 @@ void VM::ExecuteSimple(const Command& cmd) {
     }
     if (t == "var") {
         const std::string name = cmd.Get("name");
-        const bool persistent = TruthyFlag(cmd) && cmd.Has("persistent");
+        const std::string p = cmd.Get("persistent");
+        const bool persistent = cmd.Has("persistent") && p != "false" && p != "0" && p != "no";
         if (cmd.Has("add")) {
             m_vars.Add(name, ParseInt(cmd.Get("add")), persistent);
         } else {
@@ -248,6 +378,12 @@ void VM::ExecuteSimple(const Command& cmd) {
         m_textSpeed = ParseInt(cmd.Get("value"), m_config.defaultTextSpeed);
         return;
     }
+    if (t == "shake" || t == "quake") {
+        const int ms = ParseInt(cmd.Get("ms", cmd.Get("time")), 400);
+        const int amp = ParseInt(cmd.Get("amp", cmd.Get("power")), 12);
+        m_stage.Shake(ms, static_cast<float>(amp));
+        return;
+    }
 
     if (m_commandHook && m_commandHook(cmd)) {
         return;
@@ -256,16 +392,50 @@ void VM::ExecuteSimple(const Command& cmd) {
 }
 
 void VM::HandleSay(const Command& cmd) {
+    if (m_seenHook) {
+        m_currentLineSeen = m_seenHook(m_scriptPath + ":" + std::to_string(cmd.line));
+    }
     std::string speaker = cmd.Has("speaker") ? cmd.Get("speaker") : m_speaker;
     if (cmd.Has("speaker")) m_speaker = speaker;
     if (cmd.Has("color")) m_textColor = ParseColor(cmd.Get("color"), m_textColor);
 
-    const std::string text = m_vars.Substitute(cmd.Get("value", cmd.Get("text")));
-    const std::string voice = cmd.Get("voice");
+    const std::string text = FilterText(m_vars.Substitute(cmd.Get("value", cmd.Get("text"))));
+    std::string voice = cmd.Get("voice");
+    if (voice.empty()) {
+        voice = m_pendingVoice;  // from the preceding [text voice=...] header
+    }
+    m_pendingVoice.clear();
+    if (voice.empty() && !m_voiceDirs.empty()) {
+        // Auto-voice convention: <voiceDir><scriptStem>_<line>.{ogg,wav,mp3}
+        auto it = m_voiceDirs.find(cmd.Get("char", speaker));
+        if (it == m_voiceDirs.end()) it = m_voiceDirs.find(speaker);
+        if (it != m_voiceDirs.end() && !it->second.empty()) {
+            std::string stem = m_scriptPath;
+            if (const std::size_t slash = stem.find_last_of("/\\"); slash != std::string::npos) {
+                stem = stem.substr(slash + 1);
+            }
+            if (const std::size_t dot = stem.rfind('.'); dot != std::string::npos) {
+                stem = stem.substr(0, dot);
+            }
+            std::string dir = it->second;
+            if (!dir.empty() && dir.back() != '/') dir += '/';
+            const std::string base = dir + stem + "_" + std::to_string(cmd.line);
+            for (const char* ext : { ".ogg", ".wav", ".mp3" }) {
+                if (m_vfs.Exists(base + ext)) {
+                    voice = base + ext;
+                    break;
+                }
+            }
+        }
+    }
     const int speed = cmd.Has("speed") ? ParseInt(cmd.Get("speed"), m_textSpeed) : m_textSpeed;
 
     m_dialogue.SetText(speaker, text, speed, m_textColor, m_outlineColor, voice, cmd.Get("effect"));
-    m_backlog.Push(speaker, text, voice);
+    if (!m_skipBacklogOnce) {
+        // Use the dialogue's cleaned text: inline tags like {w=300} are stripped.
+        m_backlog.Push(speaker, m_dialogue.State().fullText, voice);
+    }
+    m_skipBacklogOnce = false;
     if (!voice.empty()) {
         m_audio.PlayVoice(Resolve(m_config.voiceDir, voice));
     }
@@ -276,8 +446,9 @@ void VM::CollectChoices() {
     const auto& code = m_program.code;
     int i = m_pc;
     while (i < static_cast<int>(code.size()) && code[i].type == "choice") {
-        m_choices.push_back(Choice{ m_vars.Substitute(code[i].Get("text", code[i].Get("value"))),
-                                    code[i].Get("target") });
+        m_choices.push_back(
+            Choice{ FilterText(m_vars.Substitute(code[i].Get("text", code[i].Get("value")))),
+                    code[i].Get("target") });
         ++i;
     }
 }
@@ -289,21 +460,20 @@ bool VM::EvaluateCondition(const Command& cmd) const {
     return m_vars.Evaluate(name, op, rhs);
 }
 
-void VM::JumpToTarget(const std::string& target) {
+bool VM::JumpToTarget(const std::string& target) {
     if (target.empty()) {
-        ++m_pc;
-        return;
+        return false;
     }
     const int idx = m_program.LabelIndex(target);
     if (idx >= 0) {
         m_pc = idx;
-        return;
+        return true;
     }
     if (LoadProgram(target)) {
         m_pc = 0;
-    } else {
-        ++m_pc;
+        return true;
     }
+    return false;
 }
 
 void VM::SelectChoice(int index) {
@@ -314,6 +484,12 @@ void VM::SelectChoice(int index) {
     const Choice chosen = m_choices[index];
     m_backlog.Push("", chosen.text, "", /*isChoice=*/true);
     m_choices.clear();
+    // Step past the whole consecutive choice block first; a choice without a
+    // target then continues after the block instead of re-prompting the rest.
+    const auto& code = m_program.code;
+    while (m_pc < static_cast<int>(code.size()) && code[m_pc].type == "choice") {
+        ++m_pc;
+    }
     JumpToTarget(chosen.target);
     Run();
 }
@@ -321,6 +497,38 @@ void VM::SelectChoice(int index) {
 void VM::Resume() {
     if (m_state == VMState::Idle) {
         Run();
+    }
+}
+
+void VM::NotifyVideoDone() {
+    if (m_state == VMState::WaitingVideo) {
+        Run();
+    }
+}
+
+void VM::DebugContinue() {
+    if (m_state != VMState::Paused) {
+        return;
+    }
+    m_skipBreakOnce = true;
+    m_stepping = false;
+    m_stepBudget = 0;
+    Run();
+}
+
+void VM::DebugStep() {
+    if (m_state != VMState::Paused) {
+        return;
+    }
+    m_skipBreakOnce = true;
+    m_stepping = true;
+    m_stepBudget = 1;
+    Run();
+    if (m_state != VMState::Paused) {
+        // The stepped command entered a waiting state (say/choice/wait);
+        // don't pause again on the user's next advance.
+        m_stepping = false;
+        m_stepBudget = 0;
     }
 }
 

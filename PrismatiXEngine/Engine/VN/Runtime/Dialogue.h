@@ -37,6 +37,7 @@ public:
 private:
     DialogueState m_state;
     std::vector<std::string> m_glyphs;
+    std::vector<std::uint64_t> m_extraDelayMs;  // inline {w=ms} pause before each glyph
     int m_speedMs = 30;
     std::uint64_t m_lastStepMs = 0;
 };

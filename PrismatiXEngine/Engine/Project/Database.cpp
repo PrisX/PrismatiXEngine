@@ -53,9 +53,18 @@ bool Database::Load(const std::string& jsonText) {
                                        g.value("image", std::string{}) });
     }
     for (const Json& c : j.value("chapters", Json::array())) {
-        chapters.push_back(Chapter{ c.value("id", std::string{}), c.value("title", std::string{}),
-                                    c.value("script", std::string{}),
-                                    c.value("alwaysUnlocked", false) });
+        Chapter ch;
+        ch.id = c.value("id", std::string{});
+        ch.title = c.value("title", std::string{});
+        ch.script = c.value("script", std::string{});
+        ch.alwaysUnlocked = c.value("alwaysUnlocked", false);
+        ch.flowX = c.value("flowX", ch.flowX);
+        ch.flowY = c.value("flowY", ch.flowY);
+        chapters.push_back(std::move(ch));
+    }
+    if (j.contains("flow")) {
+        entryFlowX = j["flow"].value("entryX", entryFlowX);
+        entryFlowY = j["flow"].value("entryY", entryFlowY);
     }
     for (const Json& b : j.value("inputMap", Json::array())) {
         inputMap.push_back(InputBinding{ b.value("key", std::string{}),
@@ -92,12 +101,18 @@ std::string Database::Serialize() const {
     j["gallery"] = gal;
     Json chaps = Json::array();
     for (const Chapter& c : chapters) {
-        chaps.push_back({ { "id", c.id },
-                          { "title", c.title },
-                          { "script", c.script },
-                          { "alwaysUnlocked", c.alwaysUnlocked } });
+        Json jc = { { "id", c.id },
+                    { "title", c.title },
+                    { "script", c.script },
+                    { "alwaysUnlocked", c.alwaysUnlocked } };
+        if (c.HasFlowPosition()) {
+            jc["flowX"] = c.flowX;
+            jc["flowY"] = c.flowY;
+        }
+        chaps.push_back(std::move(jc));
     }
     j["chapters"] = chaps;
+    j["flow"] = { { "entryX", entryFlowX }, { "entryY", entryFlowY } };
     Json bindings = Json::array();
     for (const InputBinding& b : inputMap) {
         bindings.push_back({ { "key", b.key }, { "action", b.action }, { "target", b.target } });
@@ -120,6 +135,20 @@ void Database::SeedDefault() {
 const Character* Database::FindCharacter(const std::string& id) const {
     for (const Character& c : characters) {
         if (c.id == id) return &c;
+    }
+    return nullptr;
+}
+
+const Chapter* Database::FindChapterByScript(const std::string& script) const {
+    for (const Chapter& c : chapters) {
+        if (c.script == script) return &c;
+    }
+    return nullptr;
+}
+
+Chapter* Database::FindChapterByScript(const std::string& script) {
+    for (Chapter& c : chapters) {
+        if (c.script == script) return &c;
     }
     return nullptr;
 }

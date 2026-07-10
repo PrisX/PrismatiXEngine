@@ -25,9 +25,13 @@ public:
     [[nodiscard]] bool KeyPressed(int scancode) const {
         return m_keysPressed.count(scancode) != 0;
     }
+    [[nodiscard]] bool KeyDown(int scancode) const {
+        return m_keysDown.count(scancode) != 0;
+    }
 
     void InjectFrame(float mouseX, float mouseY, bool leftClick) {
         m_keysPressed.clear();
+        m_keysDown.clear();
         m_mouseX = mouseX;
         m_mouseY = mouseY;
         m_leftClick = leftClick;
@@ -38,6 +42,7 @@ public:
 
 private:
     std::set<int> m_keysPressed;
+    std::set<int> m_keysDown;
     float m_mouseX = -1000.0f;
     float m_mouseY = -1000.0f;
     float m_wheelY = 0.0f;

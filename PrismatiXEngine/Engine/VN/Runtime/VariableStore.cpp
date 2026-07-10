@@ -42,6 +42,16 @@ bool VariableStore::Evaluate(const std::string& name, const std::string& op, int
 }
 
 std::string VariableStore::Substitute(std::string_view text) const {
+    const auto isIdentifier = [](std::string_view key) {
+        if (key.empty()) return false;
+        for (char c : key) {
+            const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                            (c >= '0' && c <= '9') || c == '_';
+            if (!ok) return false;
+        }
+        return true;
+    };
+
     std::string out;
     out.reserve(text.size());
     for (std::size_t i = 0; i < text.size();) {
@@ -49,9 +59,13 @@ std::string VariableStore::Substitute(std::string_view text) const {
             const std::size_t close = text.find('}', i);
             if (close != std::string_view::npos) {
                 const std::string key(text.substr(i + 1, close - i - 1));
-                out += std::to_string(Get(key));
-                i = close + 1;
-                continue;
+                // Only substitute identifier-like keys; anything else (inline
+                // tags like {w=300}, literal braces) passes through untouched.
+                if (isIdentifier(key)) {
+                    out += std::to_string(Get(key));
+                    i = close + 1;
+                    continue;
+                }
             }
         }
         out += text[i++];

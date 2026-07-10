@@ -84,6 +84,8 @@ private:
     std::unordered_map<std::string, std::vector<GridItem>> m_grids;
     float m_mx = -1.0f;
     float m_my = -1.0f;
+    int m_logicalW = 1280;
+    int m_logicalH = 720;
     bool m_editMode = false;
 };
 

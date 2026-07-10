@@ -104,6 +104,8 @@ void Renderer2D::Blit(SDL_Texture* texture, const Rect& dst, std::uint8_t alpha)
 
 void Renderer2D::DrawImage(const std::string& path, const Rect& dst, std::uint8_t alpha) { Blit(m_assets.Texture(path), dst, alpha); }
 
+void Renderer2D::DrawTexture(SDL_Texture* texture, const Rect& dst, std::uint8_t alpha) { Blit(texture, dst, alpha); }
+
 Rect Renderer2D::DrawImageAuto(const std::string& path, DisplayMode mode, std::uint8_t alpha, int offsetX, int offsetY, float scale, Shadow shadow) {
     SDL_Texture* tex = m_assets.Texture(path);
     if (!tex) {
@@ -186,6 +188,11 @@ const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, c
         return &it->second;
     }
 
+    // Backlogs and long sessions can otherwise grow the cache without bound.
+    if (m_textCache.size() >= kTextCacheLimit) {
+        ClearTextCache();
+    }
+
     TTF_Font* font = m_assets.Font(fontPath, size * ss, outline * ss);
     if (!font || text.empty()) {
         return nullptr;
@@ -208,9 +215,6 @@ const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, c
     SDL_SetTextureBlendMode(entry.texture, SDL_BLENDMODE_BLEND);
     SDL_SetTextureScaleMode(entry.texture, SDL_SCALEMODE_LINEAR);
 
-    if (m_textCache.size() >= kTextCacheLimit) {
-        ClearTextCache();
-    }
     auto [it, _] = m_textCache.emplace(key, entry);
     return &it->second;
 }

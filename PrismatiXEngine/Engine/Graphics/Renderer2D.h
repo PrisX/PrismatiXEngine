@@ -47,6 +47,8 @@ public:
     void DrawRoundedRect(const Rect& rect, float radius, Color color);
 
     void DrawImage(const std::string& path, const Rect& dst, std::uint8_t alpha = 255);
+    // Draws a caller-owned texture (e.g. a streaming transition mask).
+    void DrawTexture(SDL_Texture* texture, const Rect& dst, std::uint8_t alpha = 255);
     Rect DrawImageAuto(const std::string& path, DisplayMode mode, std::uint8_t alpha = 255, int offsetX = 0, int offsetY = 0, float scale = 1.0f, Shadow shadow = {});
 
     void DrawText(const std::string& text, float x, float y, const std::string& fontPath, int size, Color color, std::uint8_t alpha = 255, int wrap = 0);
