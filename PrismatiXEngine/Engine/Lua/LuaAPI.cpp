@@ -4,11 +4,58 @@
 #include "Engine/Progression/GlobalProfile.h"
 #include "Engine/Lua/LuaHost.h"
 #include "Engine/Support/Logger.h"
+#include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/VN/Runtime/Stage.h"
+#include "Engine/VN/Runtime/VariableStore.h"
+#include "Engine/UI/UIRouter.h"
+#include "Engine/Animation/Timeline.h"
+#include "Engine/IO/VFS.h"
 
 #include <algorithm>
 
 namespace px::lua {
+namespace {
+vn::Value LuaToValue(const sol::object& object, const int depth = 0) {
+    if (depth > 32) throw sol::error("Lua value nesting exceeds 32 levels");
+    if (!object.valid() || object.is<sol::nil_t>()) return {};
+    if (object.is<bool>()) return object.as<bool>();
+    if (object.is<std::int64_t>()) return object.as<std::int64_t>();
+    if (object.is<double>()) return object.as<double>();
+    if (object.is<std::string>()) return object.as<std::string>();
+    if (!object.is<sol::table>()) throw sol::error("unsupported Lua value type");
+    const sol::table table = object.as<sol::table>();
+    const std::size_t sequenceSize = table.size();
+    bool sequence = true;
+    for (const auto& pair : table) {
+        if (!pair.first.is<std::int64_t>()) { sequence = false; break; }
+        const auto index = pair.first.as<std::int64_t>();
+        if (index < 1 || static_cast<std::size_t>(index) > sequenceSize) { sequence = false; break; }
+    }
+    if (sequence) {
+        vn::ValueList values; values.reserve(sequenceSize);
+        for (std::size_t index = 1; index <= sequenceSize; ++index)
+            values.push_back(LuaToValue(table.get<sol::object>(index), depth + 1));
+        return values;
+    }
+    vn::ValueMap values;
+    for (const auto& pair : table) {
+        if (!pair.first.is<std::string>()) throw sol::error("map keys must be strings");
+        values.emplace(pair.first.as<std::string>(), LuaToValue(pair.second, depth + 1));
+    }
+    return values;
+}
+
+sol::object ValueToLua(sol::state_view lua, const vn::Value& value, const int depth = 0) {
+    if (depth > 32) throw sol::error("runtime value nesting exceeds 32 levels");
+    if (const auto* item=value.TryGet<bool>()) return sol::make_object(lua,*item);
+    if (const auto* item=value.TryGet<std::int64_t>()) return sol::make_object(lua,*item);
+    if (const auto* item=value.TryGet<double>()) return sol::make_object(lua,*item);
+    if (const auto* item=value.TryGet<std::string>()) return sol::make_object(lua,*item);
+    if (const auto* items=value.AsArray()) { sol::table table=lua.create_table(static_cast<int>(items->size()),0);std::size_t index=1;for(const auto& item:*items)table[index++]=ValueToLua(lua,item,depth+1);return sol::make_object(lua,table); }
+    if (const auto* items=value.AsObject()) { sol::table table=lua.create_table();for(const auto& [key,item]:*items)table[key]=ValueToLua(lua,item,depth+1);return sol::make_object(lua,table); }
+    return sol::make_object(lua, sol::nil);
+}
+}
 
 void LuaHost::BindApi() {
     sol::table api = m_lua.create_table();
@@ -16,6 +63,10 @@ void LuaHost::BindApi() {
     api.set_function("log", [](const std::string& msg) { PX_LOG_INFO("[lua] {}", msg); });
 
     api.set_function("RegisterCommand", [this](const std::string& name, sol::protected_function fn) {
+        if (!m_activeExtension.empty() && !m_declaredCommands.contains(name)) {
+            throw sol::error("command '" + name + "' is not declared by extension '" +
+                             m_activeExtension + "'");
+        }
         m_commands[name] = std::move(fn);
     });
     api.set_function("On", [this](const std::string& event, sol::protected_function fn) {
@@ -39,6 +90,29 @@ void LuaHost::BindApi() {
         m_bus.Emit(event, args);
     });
 
+    if (vn::VariableStore* variables = m_services.variables) {
+        api.set_function("GetVariable", [this, variables](const std::string& name) -> sol::object {
+            const auto* value=variables->GetValue(name);if(!value)return sol::make_object(m_lua,sol::nil);
+            return ValueToLua(m_lua,*value);
+        });
+        api.set_function("SetVariable", [variables](const std::string& name,sol::object object,sol::optional<std::string> scope){vn::Value value=LuaToValue(object);const std::string selected=scope.value_or("save");if(selected!="save"&&selected!="persistent"&&selected!="temporary")throw sol::error("unknown variable scope: "+selected);variables->SetValue(name,std::move(value),selected=="persistent"?vn::VariableScope::Persistent:selected=="temporary"?vn::VariableScope::Temporary:vn::VariableScope::SaveLocal);});
+    }
+
+    if(ui::UIRouter* routes=m_services.routes){api.set_function("PushRoute",[routes](const std::string& route){const Status status=routes->Push(route);if(!status)throw sol::error(diag::Describe(status.Diagnostics().front()));});api.set_function("ReplaceRoute",[routes](const std::string& route){const Status status=routes->Replace(route);if(!status)throw sol::error(diag::Describe(status.Diagnostics().front()));});api.set_function("BackRoute",[routes](){return static_cast<bool>(routes->Back());});api.set_function("ShowModal",[routes](const std::string& route){return static_cast<bool>(routes->ShowModal(route));});api.set_function("CloseModal",[routes](){return static_cast<bool>(routes->CloseModal());});}
+
+    if(animation::TimelinePlayer* timeline=m_services.timeline){api.set_function("LoadAnimation",[this,timeline](const std::string& path){if(!m_services.vfs)throw sol::error("VFS unavailable");const auto text=m_services.vfs->ReadText(path);if(!text)throw sol::error("animation not found: "+path);auto clip=animation::ParseAnimationClip(*text,path);if(!clip)throw sol::error(diag::Describe(clip.Diagnostics().front()));const auto id=clip.Value().id;const Status status=timeline->Register(clip.TakeValue());if(!status)throw sol::error(diag::Describe(status.Diagnostics().front()));return id.ToString();});api.set_function("PlayAnimation",[timeline](const std::string& id,sol::optional<bool> await,sol::optional<float> speed){const auto parsed=Uuid::Parse(id);if(!parsed)throw sol::error("invalid animation ResourceId");return timeline->Play(*parsed,await.value_or(false),speed.value_or(1.0f));});api.set_function("CancelAnimation",[timeline](std::uint64_t handle){return static_cast<bool>(timeline->Cancel(handle));});api.set_function("AwaitAnimation",sol::yielding([](std::uint64_t handle){return std::make_tuple(std::string("animation"),handle);}));}
+    api.set_function("AwaitSeconds",sol::yielding([](float seconds){return std::make_tuple(std::string("timer"),std::max(0.0f,seconds));}));
+    if (m_services.vfs) {
+        api.set_function("ResourceExists", [this](const std::string& path) {
+            return m_services.vfs->Exists(path);
+        });
+        api.set_function("ReadResourceText", [this](const std::string& path) {
+            const auto text = m_services.vfs->ReadText(path);
+            if (!text) throw sol::error("resource not found or not text: " + path);
+            return *text;
+        });
+    }
+
     if (progress::GlobalProfile* p = m_services.profile) {
         api.set_function("HasSeen", [p](const std::string& k) { return p->HasSeen(k); });
         api.set_function("MarkSeen", [p](const std::string& k) { p->MarkSeen(k); });
@@ -54,26 +128,26 @@ void LuaHost::BindApi() {
 
     if (audio::AudioEngine* a = m_services.audio) {
         api.set_function("PlaySE", [a](const std::string& path) { a->PlaySE(path); });
-        api.set_function("PlaySe", [a](const std::string& path) { a->PlaySE(path); });
         api.set_function("PlayBGM", [a](const std::string& path, sol::optional<bool> loop,
                                         sol::optional<int> fade) {
             a->PlayBGM(path, loop.value_or(true), fade.value_or(0));
         });
-        api.set_function("PlayBgm", [a](const std::string& path, sol::optional<bool> loop,
-                                        sol::optional<int> fade) {
-            a->PlayBGM(path, loop.value_or(true), fade.value_or(0));
-        });
         api.set_function("StopBGM", [a](sol::optional<int> fade) { a->StopBGM(fade.value_or(0)); });
-        api.set_function("StopBgm", [a](sol::optional<int> fade) { a->StopBGM(fade.value_or(0)); });
         api.set_function("SetBGMVolume", [a](int v) { a->SetBGMVolume(v); });
-        api.set_function("SetBgmVolume", [a](int v) { a->SetBGMVolume(v); });
         api.set_function("SetSEVolume", [a](int v) { a->SetSEVolume(v); });
-        api.set_function("SetSeVolume", [a](int v) { a->SetSEVolume(v); });
         api.set_function("SetVoiceVolume", [a](int v) { a->SetVoiceVolume(v); });
+        api.set_function("SetAmbienceVolume", [a](int v) { a->SetAmbienceVolume(v); });
+        api.set_function("PlayAmbience", [a](const std::string& path, sol::optional<bool> loop,
+                                               sol::optional<int> fade) {
+            a->PlayAmbience(path, loop.value_or(true), fade.value_or(0));
+        });
+        api.set_function("StopAmbience", [a](sol::optional<int> fade) {
+            a->StopAmbience(fade.value_or(0));
+        });
     }
 
     // VN stage control: the high-level escape hatch for custom commands that go
-    // beyond the built-in PDS set (custom poses, layer effects, scripted scenes).
+    // beyond the built-in typed command set (custom poses, effects, scripted scenes).
     if (vn::Stage* s = m_services.stage) {
         api.set_function("SetBackground",
                          [s](const std::string& path, sol::optional<bool> transition) {

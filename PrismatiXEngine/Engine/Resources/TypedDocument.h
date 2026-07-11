@@ -21,8 +21,9 @@ struct NodeRecord {
 };
 
 struct TypedDocument {
+    static constexpr int CurrentVersion = 3;
     DocumentKind kind = DocumentKind::Resource;
-    int formatVersion = 1;
+    int formatVersion = CurrentVersion;
     Uuid id;
     std::string type;
     std::map<std::string, Variant> properties;

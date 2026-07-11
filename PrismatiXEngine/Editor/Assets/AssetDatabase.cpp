@@ -38,7 +38,7 @@ std::string AssetDatabase::Classify(const std::filesystem::path& path) {
         return "image";
     if (ext == ".mp3" || ext == ".ogg" || ext == ".wav" || ext == ".flac" || ext == ".opus")
         return "audio";
-    if (ext == ".pds") return "script";
+    if (ext == ".pxscenario") return "script";
     if (ext == ".pxscene") return "ui";
     if (ext == ".pxres" || ext == ".pxtheme" || ext == ".pxanim") return "resource";
     if (ext == ".ttf" || ext == ".otf") return "font";

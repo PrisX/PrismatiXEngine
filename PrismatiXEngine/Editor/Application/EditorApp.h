@@ -15,6 +15,7 @@
 #include "Editor/Workspace/ProjectHistory.h"
 #include "Engine/Platform/Window.h"
 #include "Engine/Resources/AssetRegistry.h"
+#include "Engine/Animation/Timeline.h"
 
 #include <array>
 #include <chrono>
@@ -100,7 +101,6 @@ private:
     void RenderConsole();
     void RenderPreview();
     void RenderNodeEditor();
-    void RenderPDSText();
     void RenderBuild();
     void RenderAnimation();
     void RenderTheme();
@@ -122,12 +122,10 @@ private:
     void RefreshProblems();
 
     void OpenProject(const std::filesystem::path& root);
-    // Rewrites references to a renamed/moved asset in scripts, UI screens, the
-    // database, and the manifest. Returns the number of files touched.
     [[nodiscard]] const std::vector<std::string>& ScriptFileNames();
     void CreateScriptFile(const std::string& script);
-    void AddJumpToScript(const std::string& fromScript, const std::string& toScript);
-    void RemoveJumpFromScript(const std::string& fromScript, const std::string& toScript);
+    void ConnectStoryScenarios(const std::string& fromScenario, const std::string& toScenario);
+    void DisconnectStoryScenarios(const std::string& fromScenario, const std::string& toScenario);
     void LoadRecentProjects();
     void AddRecentProject(const std::filesystem::path& root);
     void RunBuild();
@@ -162,7 +160,7 @@ private:
     std::unordered_map<std::string, DesignerDocumentSession> m_inactiveDesigners;
     char m_newScreenName[96] = "new_screen";
 
-    // Open PDS documents, one NodeGraphEditor per tab.
+    // Open Scenario documents, one synchronized workspace per tab.
     std::vector<std::unique_ptr<NodeGraphEditor>> m_scriptDocs;
     int m_activeDoc = -1;
     int m_focusDocRequest = -1;
@@ -180,6 +178,11 @@ private:
 
     bool m_flowStale = false;
     bool m_previewAnims = false;
+    std::optional<animation::AnimationClip> m_timelineClip;
+    std::string m_timelinePath;
+    float m_timelineCursor = 0.0f;
+    bool m_timelinePlaying = false;
+    int m_timelineTrack = -1;
     FlowMap m_flow;
     ScriptWorkspace m_scripts;
 
@@ -261,8 +264,6 @@ private:
     std::string m_assetPendingDelete;
     int m_breakpointLine = 0;
     int m_vmLastPc = -1;
-    std::string m_pdsTextBuf;
-    bool m_pdsTextEditing = false;
     bool m_nodeEditorFocused = false;  // routes Ctrl+Z/Y to the graph's undo
     EditorWorkspace m_workspace = EditorWorkspace::UI;
     std::array<bool, 4> m_workspaceLayoutDirty{true, true, true, true};
@@ -276,9 +277,9 @@ private:
     std::filesystem::path m_externalConflictPath;
     char m_externalSaveAsPath[512] = { 0 };
 
-    // Localization table: source line -> translation for Content/Localization/<lang>.json.
+    struct LocalizationEntry { std::string id; std::string source; std::string translation; };
     char m_locLang[16] = "en";
-    std::vector<std::pair<std::string, std::string>> m_locEntries;
+    std::vector<LocalizationEntry> m_locEntries;
     bool m_locDirty = false;
     char m_locFilter[128] = { 0 };
     std::vector<std::string> m_scriptNameCache;

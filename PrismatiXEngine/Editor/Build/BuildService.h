@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Editor/Project/ProjectTypes.h"
+#include "Editor/Build/ExportProfile.h"
 
 #include <filesystem>
 #include <string>
@@ -13,12 +14,14 @@ struct BuildOptions {
     std::filesystem::path outputDir;
     std::filesystem::path playerExe;
     std::string title = "PrismatiX Player";
-    std::string startUI = "Content/UI/Title.pxscene";
-    std::string startScript = "Content/Script/start.pds";
+    std::string startRoute = "title";
+    std::vector<ProjectManifest::Route> routes;
+    std::string startScript = "Content/Scenario/start.pxscenario";
     std::string key = "prismatix";
     bool encrypt = true;
     int gameWidth = 1280;
     int gameHeight = 720;
+    ExportProfile profile;
 };
 
 class BuildService {

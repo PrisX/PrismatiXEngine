@@ -4,6 +4,7 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace px::ui {
 
@@ -160,7 +161,8 @@ public:
     [[nodiscard]] std::string_view TypeName() const override{return "RichTextLabel";}
     void SetMarkup(std::string markup);
     [[nodiscard]] const std::string& Markup() const{return m_markup;}
-private:std::string m_markup;
+protected:void DrawSelf(graphics::Renderer2D& renderer,const Theme& theme) override;
+private:std::string m_markup;struct RubyDraw{std::string prefix,reading;};std::vector<RubyDraw> m_ruby;
 };
 
 }  // namespace px::ui

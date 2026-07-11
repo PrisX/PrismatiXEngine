@@ -18,7 +18,7 @@ struct ExportArtifact {
 };
 
 enum class EditorWorkspace { UI, Story, Flow, Script };
-enum class DocumentType { UIScene, PDS, Lua, Resource, Unknown };
+enum class DocumentType { UIScene, Scenario, Lua, Resource, Unknown };
 
 struct DocumentId {
     Uuid assetGuid;
@@ -103,9 +103,5 @@ private:
     std::optional<std::size_t> m_active;
     std::uint64_t m_sequence = 0;
 };
-
-// Transitional source compatibility for editor tools that only need the
-// manager's public session API. New code should use DocumentManager.
-using DocumentRegistry = DocumentManager;
 
 }  // namespace px::editor

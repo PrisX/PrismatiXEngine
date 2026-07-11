@@ -5,16 +5,35 @@
 #include "Engine/IO/Crypto.h"
 #include "Engine/Resources/AssetRegistry.h"
 #include "Engine/Resources/TypedDocument.h"
+#include "Engine/Animation/Timeline.h"
+#include "Engine/VN/Scenario/ScenarioDocument.h"
 
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
+#include <cctype>
 #include <fstream>
+#include <limits>
 #include <optional>
+#include <cstdlib>
+#include <memory>
 
 namespace px::editor {
 namespace {
 using Bytes=io::Bytes;
 std::string RuntimePath(const std::filesystem::path& root,const std::filesystem::path& path){std::error_code ec;return std::filesystem::relative(path,root,ec).generic_string();}
-std::optional<Bytes> ReadFile(const std::filesystem::path& path){std::ifstream in(path,std::ios::binary|std::ios::ate);if(!in)return std::nullopt;const auto size=in.tellg();in.seekg(0);Bytes bytes(static_cast<std::size_t>(size));if(size>0&&!in.read(reinterpret_cast<char*>(bytes.data()),size))return std::nullopt;return bytes;}
+std::optional<Bytes> ReadFile(const std::filesystem::path& path){std::ifstream in(path,std::ios::binary|std::ios::ate);if(!in)return std::nullopt;const auto size=in.tellg();if(size<0||static_cast<std::uintmax_t>(size)>static_cast<std::uintmax_t>((std::numeric_limits<std::size_t>::max)())||static_cast<std::uintmax_t>(size)>static_cast<std::uintmax_t>((std::numeric_limits<std::streamsize>::max)()))return std::nullopt;in.seekg(0);Bytes bytes(static_cast<std::size_t>(size));if(size>0&&!in.read(reinterpret_cast<char*>(bytes.data()),static_cast<std::streamsize>(size)))return std::nullopt;return bytes;}
 bool CopyFile(const std::filesystem::path& from,const std::filesystem::path& to,std::error_code& ec){std::filesystem::create_directories(to.parent_path(),ec);return !ec&&std::filesystem::copy_file(from,to,std::filesystem::copy_options::overwrite_existing,ec);}
+std::filesystem::path ComparablePath(const std::filesystem::path& path){std::error_code ec;auto value=std::filesystem::weakly_canonical(std::filesystem::absolute(path,ec),ec);return ec?path.lexically_normal():value.lexically_normal();}
+std::string ComparableKey(const std::filesystem::path& path){std::string key=ComparablePath(path).generic_string();
+#if defined(_WIN32)
+    std::transform(key.begin(),key.end(),key.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
+#endif
+    return key;
+}
+bool SamePath(const std::filesystem::path& a,const std::filesystem::path& b){return ComparableKey(a)==ComparableKey(b);}
+bool IsWithin(const std::filesystem::path& path,const std::filesystem::path& root){const auto child=ComparablePath(path);const auto parent=ComparablePath(root);const auto relative=child.lexically_relative(parent);if(relative.empty())return true;const auto first=relative.begin();return first!=relative.end()&&*first!=".."&&!relative.is_absolute();}
+struct DirectoryCleanup{std::filesystem::path path;bool keep=false;~DirectoryCleanup(){if(keep||path.empty())return;std::error_code ec;std::filesystem::remove_all(path,ec);}};
 bool RuntimeLibrary(const std::filesystem::path& path){
 #if defined(_WIN32)
 return path.extension()==".dll";
@@ -24,6 +43,14 @@ return path.extension()==".dylib";
 return path.extension()==".so";
 #endif
 }
+bool WildcardMatch(std::string_view pattern,std::string_view text){std::size_t p=0,t=0,star=std::string_view::npos,mark=0;while(t<text.size()){if(p<pattern.size()&&(pattern[p]=='?'||pattern[p]==text[t])){++p;++t;}else if(p<pattern.size()&&pattern[p]=='*'){star=p++;mark=t;}else if(star!=std::string_view::npos){p=star+1;t=++mark;}else return false;}while(p<pattern.size()&&pattern[p]=='*')++p;return p==pattern.size();}
+std::optional<std::filesystem::path> EnvironmentPath(const char* name){
+#if defined(_WIN32)
+    char* value=nullptr;std::size_t size=0;if(_dupenv_s(&value,&size,name)!=0||!value)return std::nullopt;std::filesystem::path result(value);std::free(value);return result;
+#else
+    if(const char* value=std::getenv(name))return std::filesystem::path(value);return std::nullopt;
+#endif
+}
 }
 
 bool BuildService::Build(const BuildOptions& options) const {
@@ -31,30 +58,113 @@ bool BuildService::Build(const BuildOptions& options) const {
     if(options.projectRoot.empty()||!std::filesystem::exists(options.projectRoot))return fail("PXBUILD9601",options.projectRoot,"Build 失敗：專案根目錄不存在");
     if(!std::filesystem::exists(options.projectRoot/"Content"))return fail("PXBUILD9602",options.projectRoot/"Content","Build 失敗：專案沒有 Content 資料夾");
     if(options.playerExe.empty()||!std::filesystem::exists(options.playerExe))return fail("PXBUILD9603",options.playerExe,"Build 失敗：找不到 Player executable");
+    if(options.outputDir.empty())return fail("PXBUILD9610",options.outputDir,"Build 已阻擋：輸出資料夾不可為空");
+    const auto projectRoot=ComparablePath(options.projectRoot),contentRoot=ComparablePath(options.projectRoot/"Content"),outputDir=ComparablePath(options.outputDir);
+    if(SamePath(outputDir,projectRoot)||IsWithin(outputDir,contentRoot)||SamePath(outputDir,outputDir.root_path()))
+        return fail("PXBUILD9611",options.outputDir,"Build 已阻擋：輸出位置會覆蓋專案或系統目錄");
+    if(const auto home=EnvironmentPath("USERPROFILE");home&&SamePath(outputDir,*home))return fail("PXBUILD9612",options.outputDir,"Build 已阻擋：不可使用使用者主目錄作為輸出");
+    if(const auto home=EnvironmentPath("HOME");home&&SamePath(outputDir,*home))return fail("PXBUILD9612",options.outputDir,"Build 已阻擋：不可使用使用者主目錄作為輸出");
     resource::AssetRegistry registry;const Status scanned=registry.Scan(options.projectRoot);
     if(!scanned||!registry.Valid())return fail("PXBUILD9604",options.projectRoot/"Content","Build 已阻擋：請先在 Asset Identity Resolver 解決缺少或重複 GUID");
+    for (const auto& entry : registry.Entries()) {
+        std::string extension = entry.sourcePath.extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+            [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+        if ((extension == ".mp4" || extension == ".webm" || extension == ".mkv" ||
+             extension == ".mov") && !options.profile.ffmpegLicenseReviewAccepted) {
+            return fail("PXBUILD9619", entry.sourcePath,
+                "Build 已阻擋：現代影片需要完成 FFmpeg 發佈審查",
+                "請確認 LGPL 動態連結、編解碼專利與商店政策後，在 Export Profile 明確設定 ffmpegLicenseReviewAccepted=true");
+        }
+        if (extension == ".pxscenario" || extension == ".pxlayout" ||
+            extension == ".pxanim" || extension == ".pxscene" ||
+            extension == ".pxres" || extension == ".pxtheme" ||
+            extension == ".pxextension" || extension == ".pxindex") {
+            const auto bytes = ReadFile(entry.sourcePath);
+            if (!bytes) return fail("PXBUILD9620", entry.sourcePath, "Build 已阻擋：無法讀取結構化資產");
+            const std::string text(bytes->begin(), bytes->end());
+            if (extension == ".pxscenario") {
+                const auto parsed = vn::scenario::ParseScenario(text, entry.sourcePath.generic_string());
+                if (!parsed) return fail("PXBUILD9621", entry.sourcePath, "Build 已阻擋：Scenario 格式無效", diag::Describe(parsed.Diagnostics().front()));
+                const auto validation = vn::scenario::ValidateScenario(parsed.Value(), vn::CommandRegistry::Global(), entry.sourcePath.generic_string());
+                if (!validation.Valid()) {
+                    const auto diagnostic = std::find_if(validation.diagnostics.begin(), validation.diagnostics.end(), [](const auto& item) { return item.BlocksBuild(); });
+                    return fail("PXBUILD9622", entry.sourcePath, "Build 已阻擋：Scenario 契約驗證失敗", diagnostic == validation.diagnostics.end() ? std::string{} : diag::Describe(*diagnostic));
+                }
+            } else if (extension == ".pxlayout") {
+                const auto parsed = vn::scenario::ParseScenarioLayout(text, entry.sourcePath.generic_string());
+                if (!parsed) return fail("PXBUILD9623", entry.sourcePath, "Build 已阻擋：Scenario layout 無效", diag::Describe(parsed.Diagnostics().front()));
+            } else if (extension == ".pxanim") {
+                const auto parsed = animation::ParseAnimationClip(text, entry.sourcePath.generic_string());
+                if (!parsed) return fail("PXBUILD9624", entry.sourcePath, "Build 已阻擋：AnimationClip 無效", diag::Describe(parsed.Diagnostics().front()));
+            } else if (extension == ".pxscene" || extension == ".pxres" || extension == ".pxtheme") {
+                const auto parsed = resource::ParseTypedDocument(text, entry.sourcePath.generic_string());
+                if (!parsed) return fail("PXBUILD9625", entry.sourcePath, "Build 已阻擋：typed asset 無效", diag::Describe(parsed.Diagnostics().front()));
+            } else if (extension == ".pxextension") {
+                const auto manifest = nlohmann::json::parse(text, nullptr, false);
+                if (manifest.is_discarded() || !manifest.is_object() ||
+                    manifest.value("format", std::string{}) != "PrismatiXExtension" ||
+                    manifest.value("version", 0) != 3 ||
+                    !manifest.contains("id") || !manifest.contains("entry") ||
+                    !manifest["id"].is_string() || !manifest["entry"].is_string())
+                    return fail("PXBUILD9626", entry.sourcePath, "Build 已阻擋：Lua extension manifest 無效");
+            } else {
+                const auto index = nlohmann::json::parse(text, nullptr, false);
+                if (index.is_discarded() || !index.is_array() || index.size() > 4096 ||
+                    !std::all_of(index.begin(), index.end(), [](const auto& item) {
+                        if (!item.is_string()) return false;
+                        const std::string path = item.template get<std::string>();
+                        return path.starts_with("Content/Extensions/") &&
+                               path.ends_with(".pxextension") && path.find("..") == std::string::npos;
+                    })) return fail("PXBUILD9627", entry.sourcePath, "Build 已阻擋：extension index 無效");
+            }
+        }
+    }
 
-    std::error_code ec;std::filesystem::remove_all(options.outputDir,ec);ec.clear();std::filesystem::create_directories(options.outputDir,ec);
-    if(ec)return fail("PXBUILD9605",options.outputDir,"Build 失敗：無法建立輸出資料夾",ec.message());
-    io::ArchiveWriter archive;archive.SetCompression(true);if(options.encrypt)archive.SetKey(crypto::DeriveKey(options.key));
+    const auto staging=outputDir.parent_path()/(outputDir.filename().string()+".staging-"+Uuid::Random().ToString());
+    const auto backup=outputDir.parent_path()/(outputDir.filename().string()+".backup-"+Uuid::Random().ToString());
+    DirectoryCleanup stagingCleanup{staging};DirectoryCleanup backupCleanup{backup};
+    std::error_code ec;std::filesystem::create_directories(staging,ec);
+    if(ec)return fail("PXBUILD9605",staging,"Build 失敗：無法建立 staging 資料夾",ec.message());
+    struct GroupArchive { ExportContentGroup group; std::unique_ptr<io::ArchiveWriter> writer; std::filesystem::path filename; std::size_t count=0; };
+    std::vector<GroupArchive> groups;
+    const bool encrypted=options.encrypt&&options.profile.encryption;
+    for(const auto& group:options.profile.contentGroups){if(group.id.empty()||group.roots.empty()||!std::all_of(group.id.begin(),group.id.end(),[](const unsigned char c){return std::isalnum(c)||c=='-'||c=='_';}))return fail("PXBUILD9617",options.projectRoot,"Build 失敗：content group id/roots 無效",group.id);auto writer=std::make_unique<io::ArchiveWriter>();writer->SetCompression(options.profile.compression);if(encrypted)writer->SetKey(crypto::DeriveKey(options.key));groups.push_back({group,std::move(writer),group.id=="base"?std::filesystem::path("Content.pdx"):std::filesystem::path("Content."+group.id+".pdx")});}
+    if(groups.empty())return fail("PXBUILD9617",options.projectRoot,"Build 失敗：Export Profile 沒有 content group");
     std::size_t count=0;
     for(const auto& entry:registry.Entries()){
         if(!entry.includeInBuild)continue;
+        const std::string sourceRuntime=RuntimePath(options.projectRoot,entry.sourcePath);if(std::any_of(options.profile.excludePatterns.begin(),options.profile.excludePatterns.end(),[&](const auto& pattern){return WildcardMatch(pattern,sourceRuntime);}))continue;
+        GroupArchive* selected=nullptr;std::size_t selectedLength=0;for(auto& group:groups)for(const auto& rawRoot:group.group.roots){std::string root=std::filesystem::path(rawRoot).lexically_normal().generic_string();while(root.ends_with('/'))root.pop_back();if(sourceRuntime==root||sourceRuntime.starts_with(root+"/")){if(!selected||root.size()>selectedLength){selected=&group;selectedLength=root.size();}}}if(!selected)return fail("PXBUILD9618",entry.sourcePath,"Build 失敗：素材沒有對應 content group",sourceRuntime);
         for(const auto& file:{entry.sourcePath,entry.metaPath}){auto bytes=ReadFile(file);if(!bytes)return fail("PXBUILD9606",file,"Build 失敗：無法讀取素材");
-            archive.Add(RuntimePath(options.projectRoot,file),*bytes);++count;}
+            selected->writer->Add(RuntimePath(options.projectRoot,file),*bytes);++selected->count;++count;}
     }
-    const auto archivePath=options.outputDir/"Content.pdx";if(!archive.Write(archivePath.string()))return fail("PXBUILD9607",archivePath,"Build 失敗：無法寫入封裝檔");
-    const auto player=options.outputDir/options.playerExe.filename();if(!CopyFile(options.playerExe,player,ec))return fail("PXBUILD9608",player,"Build 失敗：無法複製 Player",ec.message());
+    VariantArray archiveValues;for(auto& group:groups){if(group.count==0&&group.group.optional)continue;const auto stagedArchive=staging/group.filename;if(!group.writer->Write(stagedArchive.string()))return fail("PXBUILD9607",stagedArchive,"Build 失敗：無法寫入封裝檔");archiveValues.emplace_back(VariantObject{{"group",group.group.id},{"file",group.filename.generic_string()},{"optional",group.group.optional}});}
+    const auto player=staging/options.playerExe.filename();if(!CopyFile(options.playerExe,player,ec))return fail("PXBUILD9608",player,"Build 失敗：無法複製 Player",ec.message());
     std::filesystem::permissions(player,std::filesystem::perms::owner_exec|std::filesystem::perms::group_exec|std::filesystem::perms::others_exec,std::filesystem::perm_options::add,ec);
-    for(auto it=std::filesystem::directory_iterator(options.playerExe.parent_path(),ec);!ec&&it!=std::filesystem::directory_iterator();it.increment(ec))if(it->is_regular_file(ec)&&RuntimeLibrary(it->path())){std::error_code copy;CopyFile(it->path(),options.outputDir/it->path().filename(),copy);}
+    for(auto it=std::filesystem::directory_iterator(options.playerExe.parent_path(),ec);!ec&&it!=std::filesystem::directory_iterator();it.increment(ec))if(it->is_regular_file(ec)&&RuntimeLibrary(it->path())){std::error_code copy;if(!CopyFile(it->path(),staging/it->path().filename(),copy))return fail("PXBUILD9613",it->path(),"Build 失敗：無法複製 runtime library",copy.message());}
 
-    resource::TypedDocument package;package.kind=resource::DocumentKind::Resource;package.id=Uuid::Random();package.type="GamePackage";
-    package.properties={{"title",options.title},{"archive",std::string("Content.pdx")},{"encrypt",options.encrypt},{"key",options.encrypt?options.key:std::string{}},
+    resource::TypedDocument package;package.kind=resource::DocumentKind::Resource;package.id=Uuid::FromName(options.title+"/"+options.profile.id+"/"+options.profile.productVersion);package.type="GamePackage";
+    VariantArray routeValues;for(const auto& route:options.routes){const auto* sceneAsset=registry.FindPath(options.projectRoot/route.scene);if(!sceneAsset)return fail("PXBUILD9616",options.projectRoot/route.scene,"Build 失敗：Route scene 沒有 ResourceId");routeValues.emplace_back(VariantObject{{"id",route.id},{"scene",ResourceRefValue{sceneAsset->id,route.scene}},{"modal",route.modal},{"cache",route.cache}});}
+    package.properties={{"title",options.title},{"archives",Variant(std::move(archiveValues))},{"encrypt",encrypted},{"key",encrypted?options.key:std::string{}},
         {"gameWidth",static_cast<std::int64_t>(options.gameWidth)},{"gameHeight",static_cast<std::int64_t>(options.gameHeight)},
-        {"startUI",options.startUI},{"startScript",options.startScript}};
-    const Status manifest=io::AtomicFile::WriteText(options.outputDir/"game.pxpackage",resource::WriteTypedDocument(package));
-    if(!manifest)return fail("PXBUILD9609",options.outputDir/"game.pxpackage","Build 失敗：無法寫入 typed package manifest");
-    Log("Build complete: "+archivePath.string()+" ("+std::to_string(count)+" registered files, encrypted="+(options.encrypt?"true":"false")+")");return true;
+        {"startRoute",options.startRoute},{"routes",Variant(std::move(routeValues))},{"startScript",options.startScript},{"profile",options.profile.id},{"productVersion",options.profile.productVersion},{"platform",options.profile.platform},{"reproducible",options.profile.reproducible}};
+    const Status manifest=io::AtomicFile::WriteText(staging/"game.pxpackage",resource::WriteTypedDocument(package));
+    if(!manifest)return fail("PXBUILD9609",staging/"game.pxpackage","Build 失敗：無法寫入 typed package manifest");
+
+    ec.clear();
+    if(std::filesystem::exists(outputDir,ec)){
+        ec.clear();std::filesystem::rename(outputDir,backup,ec);
+        if(ec)return fail("PXBUILD9614",outputDir,"Build 失敗：無法保留現有輸出",ec.message());
+    }
+    ec.clear();std::filesystem::rename(staging,outputDir,ec);
+    if(ec){
+        std::error_code restore;if(std::filesystem::exists(backup,restore)){restore.clear();std::filesystem::rename(backup,outputDir,restore);}
+        return fail("PXBUILD9615",outputDir,"Build 失敗：無法啟用 staging 輸出",ec.message());
+    }
+    stagingCleanup.keep=true;
+    if(std::filesystem::exists(backup,ec)){ec.clear();std::filesystem::remove_all(backup,ec);if(!ec)backupCleanup.keep=true;}
+    Log("Build complete: "+outputDir.string()+" ("+std::to_string(count)+" registered files, "+std::to_string(groups.size())+" content groups, encrypted="+(encrypted?"true":"false")+", profile="+options.profile.id+")");return true;
 }
 
 }  // namespace px::editor

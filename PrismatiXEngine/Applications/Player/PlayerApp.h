@@ -5,14 +5,11 @@
 #include "Engine/Progression/SaveSystem.h"
 #include "Engine/Lua/LuaHost.h"
 #include "Engine/Runtime.h"
+#include "Engine/Session/RuntimeSession.h"
 #include "Engine/UI/GalgameUI.h"
-#include "Engine/VN/Runtime/Backlog.h"
-#include "Engine/VN/Runtime/Dialogue.h"
-#include "Engine/VN/Runtime/Stage.h"
-#include "Engine/VN/Runtime/VariableStore.h"
-#include "Engine/VN/Runtime/VM.h"
 #include "Engine/VN/GameCatalog.h"
 #include "Engine/Video/VideoPlayer.h"
+#include "Engine/Accessibility/SpeechService.h"
 
 #include <cstdint>
 #include <deque>
@@ -35,9 +32,12 @@ private:
     // Boot configuration shared by typed dev projects and packaged builds.
     struct Boot {
         RuntimeConfig config;
-        std::string startScript = "Content/Script/start.pds";
+        std::string startScript = "Content/Scenario/start.pxscenario";
+        std::string startRoute = "title";
+        std::unordered_map<std::string,std::string> routeScenes;
         std::string saveSecret;  // per-project secret for save encryption
         bool packaged = false;
+        bool valid = false;
     };
     static Boot LoadBootConfig();
 
@@ -60,6 +60,7 @@ private:
     bool RollbackToBacklogIndex(std::size_t index);
 
     void OpenScreen(const std::string& route);
+    void PresentRoute(const std::string& route, const std::string& operation);
     [[nodiscard]] std::vector<ui::GalgameItem> GalleryItems();
     [[nodiscard]] std::vector<ui::GalgameItem> SaveItems(bool saveMode);
     [[nodiscard]] std::vector<ui::GalgameItem> BacklogItems();
@@ -80,11 +81,7 @@ private:
     progress::GameSettings m_settings;
     progress::SaveSystem m_saves;
 
-    vn::Dialogue m_dialogue;
-    vn::VariableStore m_vars;
-    vn::Backlog m_backlog;
-    std::unique_ptr<vn::Stage> m_stage;
-    std::unique_ptr<vn::VM> m_vm;
+    std::unique_ptr<RuntimeSession> m_session;
     std::unique_ptr<lua::LuaHost> m_lua;
     lua::LuaServices m_luaServices;
     std::unordered_map<std::string, std::string> m_langTable;
@@ -101,6 +98,8 @@ private:
     bool m_skipMode = false;
     bool m_hudHidden = false;
     std::uint64_t m_autoTimerStart = 0;
+    std::uint64_t m_playtimeBaseMs = 0;
+    std::uint64_t m_playtimeStartedAtMs = 0;
 
     bool m_nvlMode = false;
     std::vector<vn::BacklogEntry> m_nvlLines;
@@ -119,6 +118,7 @@ private:
     bool m_videoSkippable = true;
 
     bool m_quitRequested = false;
+    accessibility::SpeechService m_speech;
 };
 
 }

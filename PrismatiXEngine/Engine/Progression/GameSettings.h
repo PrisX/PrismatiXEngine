@@ -20,6 +20,10 @@ struct GameSettings {
     int windowWidth = 1280;
     int windowHeight = 720;
     std::string language = "zh-TW";
+    float textScale = 1.0f;
+    bool highContrast = false;
+    bool reducedMotion = false;
+    bool selfVoicing = false;
 
     bool Load(const std::string& path, const crypto::Key* key);
     bool Save(const std::string& path, const crypto::Key* key) const;

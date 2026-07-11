@@ -3,6 +3,8 @@
 #include "Engine/Core/TypeRegistry.h"
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/UI/UITypeRegistry.h"
+#include "Engine/UI/ActionRegistry.h"
+#include "Engine/UI/Widgets.h"
 
 #include <fstream>
 #include <sstream>
@@ -75,33 +77,25 @@ Result<LoadedUIScene> InstantiateUIScene(const resource::TypedDocument& document
         auto* object = loaded.root->Find(record.id);
         if (!object) return Result<LoadedUIScene>::Failure(SceneError("PXUI2610", "Instantiated UI node could not be resolved", &record));
         for (const auto& [propertyName, value] : record.properties) {
-            if (propertyName.starts_with("bind.") || propertyName.starts_with("formatter.")) continue;
+            if (propertyName=="bindings" || propertyName=="events") continue;
             const auto* property = TypeRegistry::Global().FindProperty(record.type, propertyName);
             if (!property || !property->set)
                 return Result<LoadedUIScene>::Failure(SceneError("PXUI2611", "Unknown UI property " + record.type + "." + propertyName, &record, propertyName));
+            if(propertyName=="command")return Result<LoadedUIScene>::Failure(SceneError("PXUI2621","Direct command properties are forbidden; use a typed EventBinding",&record,propertyName));
             const Status set = property->set(*object, value);
             if (!set) return Result<LoadedUIScene>::Failure(set.Diagnostics());
         }
-        for (const auto& [bindingName, pathValue] : record.properties) {
-            if (!bindingName.starts_with("bind.")) continue;
-            if (!viewModel) return Result<LoadedUIScene>::Failure(SceneError("PXUI2612", "Scene contains bindings but no ViewModel was provided", &record, bindingName));
-            const auto* path = pathValue.TryGet<std::string>();
-            if (!path) return Result<LoadedUIScene>::Failure(SceneError("PXUI2613", "Binding path must be a String", &record, bindingName));
-            const std::string targetName = bindingName.substr(5);
-            const auto* property = TypeRegistry::Global().FindProperty(record.type, targetName);
-            if (!property || !property->set)
-                return Result<LoadedUIScene>::Failure(SceneError("PXUI2614", "Binding target property does not exist: " + targetName, &record, bindingName));
-            std::string formatterName;
-            if (const auto it = record.properties.find("formatter." + targetName); it != record.properties.end()) {
-                if (const auto* formatterText = it->second.TryGet<std::string>()) formatterName = *formatterText;
-                else return Result<LoadedUIScene>::Failure(SceneError("PXUI2615", "Formatter name must be a String", &record, targetName));
+        if(const auto found=record.properties.find("bindings");found!=record.properties.end()){const auto* definitions=found->second.AsObject();if(!definitions)return Result<LoadedUIScene>::Failure(SceneError("PXUI2613","bindings must be an Object",&record,"bindings"));if(!viewModel)return Result<LoadedUIScene>::Failure(SceneError("PXUI2612","Scene contains bindings but no ViewModel was provided",&record,"bindings"));for(const auto& [targetName,value]:*definitions){const auto* definition=value.AsObject();if(!definition)return Result<LoadedUIScene>::Failure(SceneError("PXUI2613","Binding descriptor must be an Object",&record,targetName));const auto pathValue=definition->find("path");const auto* path=pathValue!=definition->end()?pathValue->second.TryGet<std::string>():nullptr;if(!path)return Result<LoadedUIScene>::Failure(SceneError("PXUI2613","Binding path must be a String",&record,targetName));const auto* property=TypeRegistry::Global().FindProperty(record.type,targetName);if(!property||!property->set)return Result<LoadedUIScene>::Failure(SceneError("PXUI2614","Binding target property does not exist: "+targetName,&record,targetName));std::string formatterName;if(const auto formatter=definition->find("formatter");formatter!=definition->end()){const auto* name=formatter->second.TryGet<std::string>();if(!name)return Result<LoadedUIScene>::Failure(SceneError("PXUI2615","Formatter must be a String",&record,targetName));formatterName=*name;}BindingTarget target{property->type,record.name+"."+targetName,[object,property](const Variant& bound){return property->set(*object,bound);}};auto binding=Binding::Create(*viewModel,*path,std::move(target),formatters,std::move(formatterName));if(!binding)return Result<LoadedUIScene>::Failure(binding.Diagnostics());loaded.bindings.push_back(std::move(binding.Value()));}}
+        if(const auto found=record.properties.find("events");found!=record.properties.end()){const auto* definitions=found->second.AsObject();if(!definitions)return Result<LoadedUIScene>::Failure(SceneError("PXUI2617","events must be an Object",&record,"events"));for(const auto& [signal,value]:*definitions){const auto* definition=value.AsObject();if(!definition)return Result<LoadedUIScene>::Failure(SceneError("PXUI2617","Event binding must be an Object",&record,signal));const auto action=definition->find("action");const auto* command=action!=definition->end()?action->second.TryGet<std::string>():nullptr;if(!command||!ActionRegistry::Builtins().Find(*command))return Result<LoadedUIScene>::Failure(SceneError("PXUI2620","Unknown typed UI action",&record,signal));
+            if (signal == "activated") {
+                auto* button = dynamic_cast<Button*>(object);
+                if (!button)
+                    return Result<LoadedUIScene>::Failure(SceneError("PXUI2618", "The activated event requires a Button-compatible control", &record, signal));
+                button->SetCommand(*command);
+                continue;
             }
-            BindingTarget target{property->type, record.name + "." + targetName,
-                [object, property](const Variant& boundValue) { return property->set(*object, boundValue); }};
-            auto binding = Binding::Create(*viewModel, *path, std::move(target), formatters, std::move(formatterName));
-            if (!binding) return Result<LoadedUIScene>::Failure(binding.Diagnostics());
-            loaded.bindings.push_back(std::move(binding.Value()));
-        }
+            return Result<LoadedUIScene>::Failure(SceneError("PXUI2619", "Unsupported UI event signal: " + signal, &record, signal));
+        }}
     }
     return Result<LoadedUIScene>::Success(std::move(loaded));
 }

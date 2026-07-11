@@ -1,5 +1,8 @@
 #pragma once
 
+#include "Engine/Core/Variant.h"
+#include "Engine/Core/Result.h"
+
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -48,6 +51,10 @@ public:
         std::string ease = "outCubic";  // see px::support::Ease for names
     };
     bool Animate(const std::string& target, const TweenSpec& spec);
+    // Timeline binding endpoint. Applies an already-sampled value immediately
+    // to an actor/layer or to the camera target.
+    bool ApplyAnimationProperty(const std::string& target, const std::string& property,
+                                const Variant& value);
     // offsetX/offsetY shift the sprite from its slot anchor; scale resizes it.
     void SetCharacter(const std::string& name, const std::string& imagePath, int slot,
                       bool transition = true, float offsetX = 0.0f, float offsetY = 0.0f,
@@ -69,6 +76,13 @@ public:
         float offsetX = 0.0f;
         float offsetY = 0.0f;
         float scale = 1.0f;
+        std::string previousImagePath;
+        float alpha = 255.0f;
+        float targetAlpha = 255.0f;
+        float previousAlpha = 0.0f;
+        float x = 0.0f;
+        float targetX = 0.0f;
+        bool exiting = false;
     };
     [[nodiscard]] std::vector<SavedActor> Snapshot() const;
     void Restore(const std::vector<SavedActor>& actors);
@@ -84,6 +98,39 @@ public:
     };
     [[nodiscard]] std::vector<SavedLayer> SnapshotLayers() const;
     void RestoreLayers(const std::vector<SavedLayer>& layers);
+
+    struct SavedTween {
+        bool layer = false;
+        std::string target;
+        TweenSpec spec;
+        float fromX = 0.0f;
+        float fromY = 0.0f;
+        float fromScale = 1.0f;
+        float fromAlpha = 255.0f;
+        float elapsed = 0.0f;
+        float duration = 0.6f;
+    };
+
+    // Serializable state of every visual value that affects the next rendered
+    // frame. GPU textures are reconstructed from resource ids during restore.
+    struct RuntimeState {
+        std::string background;
+        std::string previousBackground;
+        float backgroundFade = 1.0f;
+        float cameraX = 0.0f;
+        float cameraY = 0.0f;
+        float cameraZoom = 1.0f;
+        float shakeRemaining = 0.0f;
+        float shakeDuration = 0.0f;
+        float shakeAmplitude = 0.0f;
+        float shakePhase = 0.0f;
+        std::unordered_map<std::string, float> screenEffects;
+        std::vector<SavedActor> actors;
+        std::vector<SavedLayer> layers;
+        std::vector<SavedTween> tweens;
+    };
+    [[nodiscard]] RuntimeState CaptureState() const;
+    Status RestoreState(const RuntimeState& state);
 
     [[nodiscard]] const std::string& BackgroundPath() const { return m_bgPath; }
 
@@ -139,6 +186,7 @@ private:
     [[nodiscard]] float SlotCenterX(int slot) const;
     void RenderLayers(bool front);
     void RenderRuleOverlay();
+    void RenderScreenEffects();
     void EndRuleTransition();
     void UpdateTweens(float dt);
 
@@ -157,6 +205,10 @@ private:
     float m_shakeDuration = 0.0f;
     float m_shakeAmplitude = 0.0f;
     float m_shakePhase = 0.0f;
+    float m_cameraX = 0.0f;
+    float m_cameraY = 0.0f;
+    float m_cameraZoom = 1.0f;
+    std::unordered_map<std::string,float> m_screenEffects;
 
     std::unordered_map<std::string, Actor> m_actors;
 };

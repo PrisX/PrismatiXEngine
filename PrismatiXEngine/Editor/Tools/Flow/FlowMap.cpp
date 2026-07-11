@@ -1,6 +1,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 
 #include "Editor/Tools/Flow/FlowMap.h"
+#include "Engine/VN/Scenario/StoryMap.h"
 
 #include <imgui_internal.h>
 #include <widgets.h>
@@ -10,7 +11,9 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <optional>
 #include <sstream>
+#include <unordered_map>
 
 namespace ed = ax::NodeEditor;
 using ax::Drawing::IconType;
@@ -23,13 +26,12 @@ constexpr float kNodeContentWidth = 360.0f;
 constexpr float kPinSize = 18.0f;
 constexpr float kHeaderTextureScale = 6.0f;
 
-std::string ExtractTarget(const std::string& line) {
-    const std::size_t key = line.find("target=\"");
-    if (key == std::string::npos) return {};
-    const std::size_t start = key + 8;
-    const std::size_t end = line.find('"', start);
-    if (end == std::string::npos) return {};
-    return line.substr(start, end - start);
+std::optional<px::vn::scenario::ScenarioDocument> ReadScenario(const std::filesystem::path& path) {
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) return std::nullopt;
+    std::ostringstream text; text << stream.rdbuf();
+    auto parsed = px::vn::scenario::ParseScenario(text.str(), path.generic_string());
+    return parsed ? std::optional(parsed.TakeValue()) : std::nullopt;
 }
 }
 
@@ -84,10 +86,8 @@ void FlowMap::Rebuild(const std::vector<std::string>& scripts, const std::filesy
         n.chapterId = scripts[static_cast<std::size_t>(i)];
         n.title = std::filesystem::path(scripts[static_cast<std::size_t>(i)]).stem().string();
         n.script = scripts[static_cast<std::size_t>(i)];
-        n.scriptMissing =
-            !n.script.empty() &&
-            !std::filesystem::exists(projectRoot / "Content" / "Script" / n.script) &&
-            !std::filesystem::exists(projectRoot / n.script);
+        n.scriptMissing = !n.script.empty() && !std::filesystem::exists(projectRoot / n.script);
+        if (const auto scenario = ReadScenario(projectRoot / n.script)) n.title = scenario->name;
         n.pos = ImVec2(260.0f + (i % 4) * 460.0f, 60.0f + (i / 4) * 220.0f);
         m_nodes.push_back(std::move(n));
     }
@@ -95,8 +95,7 @@ void FlowMap::Rebuild(const std::vector<std::string>& scripts, const std::filesy
     // Entry link: Start -> chapter whose script is the project's startScript.
     if (!m_entryScript.empty()) {
         for (const FNode& n : m_nodes) {
-            if (!n.isEntry && (n.script == m_entryScript ||
-                               n.script == m_entryScript + ".pds")) {
+            if (!n.isEntry && n.script == m_entryScript) {
                 m_entryLinkId = m_nextLinkId;
                 m_links.push_back(FLink{ m_nextLinkId++, FindNode(m_entryNodeId)->pinOut, n.pinIn });
                 break;
@@ -104,24 +103,15 @@ void FlowMap::Rebuild(const std::vector<std::string>& scripts, const std::filesy
         }
     }
 
-    for (const FNode& from : m_nodes) {
+    std::unordered_map<Uuid, const FNode*, UuidHash> nodesByResource;
+    for (const auto& node : m_nodes) if (!node.script.empty())
+        if (const auto scenario = ReadScenario(projectRoot / node.script)) nodesByResource[scenario->id] = &node;
+    for (const auto& from : m_nodes) {
         if (from.script.empty()) continue;
-        std::filesystem::path scriptPath = projectRoot / from.script;
-        if (!std::filesystem::exists(scriptPath)) scriptPath = projectRoot / "Content" / "Script" / from.script;
-        std::ifstream in(scriptPath);
-        if (!in) continue;
-        std::string line;
-        while (std::getline(in, line)) {
-            if (line.find("[jump") == std::string::npos && line.find("[choice") == std::string::npos) {
-                continue;
-            }
-            const std::string target = ExtractTarget(line);
-            if (target.empty() || target[0] == '*') continue;
-            for (const FNode& to : m_nodes) {
-                if (&to != &from && (to.script == target || to.script == target + ".pds")) {
-                    AddLink(from.pinOut, to.pinIn);
-                }
-            }
+        const auto scenario = ReadScenario(projectRoot / from.script); if (!scenario) continue;
+        for (const auto& link : px::vn::scenario::DeriveStoryLinks(*scenario)) {
+            const auto target = nodesByResource.find(link.target.scenario);
+            if (target != nodesByResource.end()) AddLink(from.pinOut, target->second->pinIn);
         }
     }
     m_rebuilding = false;
@@ -268,6 +258,7 @@ void FlowMap::DeleteSelection() {
 }
 
 void FlowMap::HandleInteractions() {
+    if (m_readOnly) return;
     if (ed::BeginCreate(ImColor(137, 208, 255), 2.5f)) {
         ed::PinId start = 0;
         ed::PinId end = 0;
@@ -341,6 +332,27 @@ void FlowMap::RenderContextMenus(std::string& pendingOpen, bool& pendingCreateCh
     } else if (ed::ShowBackgroundContextMenu()) {
         pendingCreatePosition = ed::ScreenToCanvas(ImGui::GetMousePos());
         ImGui::OpenPopup("Flow Create Menu");
+    }
+
+    if (m_readOnly) {
+        if (ImGui::BeginPopup("Flow Create Menu")) {
+            ImGui::TextDisabled("Story Map is currently read-only.");
+            ImGui::EndPopup();
+        }
+        if (ImGui::BeginPopup("Flow Node Menu")) {
+            if (const FNode* node = FindNode(m_contextNodeId)) {
+                ImGui::TextUnformatted(node->title.c_str());
+                if (!node->isEntry && !node->script.empty() && !node->scriptMissing &&
+                    ImGui::MenuItem("Open in Story")) pendingOpen = node->script;
+                ImGui::TextDisabled("Read-only Story Map");
+            }
+            ImGui::EndPopup();
+        }
+        if (ImGui::BeginPopup("Flow Link Menu")) {
+            ImGui::TextDisabled("This explicit Scenario target cannot be edited in read-only mode.");
+            ImGui::EndPopup();
+        }
+        return;
     }
 
     if (ImGui::BeginPopup("Flow Create Menu")) {
@@ -445,7 +457,7 @@ void FlowMap::RenderContextMenus(std::string& pendingOpen, bool& pendingCreateCh
             ImGui::TextDisabled("Script for \"%s\"", node->title.c_str());
             ImGui::Separator();
             if (m_availableScripts.empty()) {
-                ImGui::TextDisabled("(no .pds files yet)");
+                ImGui::TextDisabled("(no .pxscenario files yet)");
             }
             for (const std::string& script : m_availableScripts) {
                 const bool current = script == node->script;
@@ -470,7 +482,8 @@ void FlowMap::RenderContextMenus(std::string& pendingOpen, bool& pendingCreateCh
             ImGui::SameLine();
             if ((submit || ImGui::Button("Create")) && m_newScriptBuffer[0] != 0) {
                 std::string name = m_newScriptBuffer;
-                if (name.size() < 4 || name.substr(name.size() - 4) != ".pds") name += ".pds";
+                if (!name.ends_with(".pxscenario")) name += ".pxscenario";
+                if (!name.starts_with("Content/")) name = "Content/Scenario/" + name;
                 if (m_scriptChanged) m_scriptChanged(node->chapterId, name);
                 if (m_createScript) m_createScript(name);
                 ImGui::CloseCurrentPopup();
@@ -518,6 +531,10 @@ void FlowMap::SyncMovedNodes() {
 }
 
 void FlowMap::Render() {
+    if (m_readOnly) {
+        ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.28f, 1.0f),
+                           "Story Map is read-only for this workspace.");
+    }
     if (m_nodes.empty()) {
         ImGui::TextDisabled("No chapters. Right-click the canvas to add one.");
     } else {
@@ -576,11 +593,13 @@ void FlowMap::Render() {
         if (n.script.empty()) pickLabel = "+ Select script";
         else if (n.scriptMissing) pickLabel = n.script + "  (missing!)";
         else pickLabel = n.script;
+        ImGui::BeginDisabled(m_readOnly);
         if (ImGui::Button((pickLabel + "##pick" + std::to_string(n.id)).c_str(),
                           ImVec2(kNodeContentWidth, 0.0f))) {
             m_scriptPickerNodeId = n.id;
             m_scriptPickerOpen = true;
         }
+        ImGui::EndDisabled();
         ImGui::PopStyleColor(2);
         ImGui::Dummy(ImVec2(0.0f, 4.0f));
 

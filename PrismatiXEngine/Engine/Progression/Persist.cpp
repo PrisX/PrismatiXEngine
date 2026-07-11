@@ -13,6 +13,7 @@ namespace px::progress {
 namespace {
 constexpr char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 constexpr std::string_view kPersistMagic = "PXPERSIST3\n";
+constexpr std::uintmax_t kMaxPersistFileSize = 64ull * 1024ull * 1024ull;
 
 std::filesystem::path AsPath(const std::string& path) {
     return std::filesystem::path(path);
@@ -88,9 +89,12 @@ std::optional<Json> LoadJson(const std::string& path, const crypto::Key* key) {
         diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXPERSIST6001",.category="Persistence",.message="Persistence file could not be read: "+path};d.source.path=path;diag::Emit(d);return std::nullopt;
     }
     const std::streamsize size = in.tellg();
+    if (size < 0 || static_cast<std::uintmax_t>(size) > kMaxPersistFileSize) {
+        diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXPERSIST6006",.category="Persistence",.message="Persistence file has an invalid or excessive size: "+path};d.source.path=path;diag::Emit(d);return std::nullopt;
+    }
     in.seekg(0, std::ios::beg);
     crypto::Bytes bytes(static_cast<std::size_t>(size));
-    if (!in.read(reinterpret_cast<char*>(bytes.data()), size)) {
+    if (size > 0 && !in.read(reinterpret_cast<char*>(bytes.data()), size)) {
         diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXPERSIST6005",.category="Persistence",.message="Persistence file could not be fully read: "+path};d.source.path=path;diag::Emit(d);
         return std::nullopt;
     }
@@ -102,7 +106,7 @@ std::optional<Json> LoadJson(const std::string& path, const crypto::Key* key) {
     }
     const std::string_view payload(reinterpret_cast<const char*>(bytes.data()),bytes.size());
     if(!payload.starts_with(kPersistMagic)){
-        diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXPERSIST6003",.category="Persistence",.message="Unsupported legacy or corrupt persistence format: "+path,
+        diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXPERSIST6003",.category="Persistence",.message="Unsupported or corrupt persistence format: "+path,
                            .details="PrismatiX 2.0 intentionally does not load old save/profile/config files."};d.source.path=path;diag::Emit(d);return std::nullopt;
     }
     const auto jsonBegin=bytes.begin()+static_cast<std::ptrdiff_t>(kPersistMagic.size());

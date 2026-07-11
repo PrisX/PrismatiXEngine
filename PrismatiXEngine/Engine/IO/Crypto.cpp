@@ -5,7 +5,8 @@
 namespace px::crypto {
 
 namespace {
-constexpr std::size_t kBlock = 16;
+constexpr std::size_t kNonceSize = 12;
+constexpr std::size_t kTagSize = 16;
 
 bool EnsureCryptoInitialized() {
     static const bool initialized = psa_crypto_init() == PSA_SUCCESS;
@@ -33,58 +34,21 @@ bool ImportAesKey(const Key& key, psa_key_usage_t usage, mbedtls_svc_key_id_t& k
     psa_set_key_type(&attributes, PSA_KEY_TYPE_AES);
     psa_set_key_bits(&attributes, key.size() * 8);
     psa_set_key_usage_flags(&attributes, usage);
-    psa_set_key_algorithm(&attributes, PSA_ALG_CBC_NO_PADDING);
+    psa_set_key_algorithm(&attributes, PSA_ALG_GCM);
 
     const psa_status_t status = psa_import_key(&attributes, key.data(), key.size(), &keyId);
     psa_reset_key_attributes(&attributes);
     return status == PSA_SUCCESS;
 }
 
-Bytes CryptAesCbcNoPadding(const Bytes& input, const Key& key, const Iv& iv,
-                           psa_key_usage_t usage) {
-    if (input.empty() || (input.size() % kBlock) != 0) {
-        return {};
-    }
-
+Bytes EncryptAuthenticated(const Bytes& input,const Key& key,const Iv& iv){
+    Bytes seed(iv.begin(),iv.end());seed.insert(seed.end(),input.begin(),input.end());std::array<std::uint8_t,32> digest{};if(!ComputeSha256(seed.data(),seed.size(),digest.data(),digest.size()))return {};
     mbedtls_svc_key_id_t keyId = MBEDTLS_SVC_KEY_ID_INIT;
-    if (!ImportAesKey(key, usage, keyId)) {
-        return {};
-    }
-
-    psa_cipher_operation_t operation = psa_cipher_operation_init();
-    psa_status_t status = usage == PSA_KEY_USAGE_ENCRYPT
-                              ? psa_cipher_encrypt_setup(&operation, keyId,
-                                                         PSA_ALG_CBC_NO_PADDING)
-                              : psa_cipher_decrypt_setup(&operation, keyId,
-                                                         PSA_ALG_CBC_NO_PADDING);
-
-    if (status == PSA_SUCCESS) {
-        status = psa_cipher_set_iv(&operation, iv.data(), iv.size());
-    }
-
-    Bytes out(input.size() + kBlock, 0);
-    std::size_t updateSize = 0;
-    if (status == PSA_SUCCESS) {
-        status = psa_cipher_update(&operation, input.data(), input.size(), out.data(),
-                                   out.size(), &updateSize);
-    }
-
-    std::size_t finishSize = 0;
-    if (status == PSA_SUCCESS) {
-        status = psa_cipher_finish(&operation, out.data() + updateSize,
-                                   out.size() - updateSize, &finishSize);
-    } else {
-        psa_cipher_abort(&operation);
-    }
-
-    psa_destroy_key(keyId);
-
-    if (status != PSA_SUCCESS) {
-        return {};
-    }
-
-    out.resize(updateSize + finishSize);
-    return out;
+    if(!ImportAesKey(key,PSA_KEY_USAGE_ENCRYPT,keyId))return {};
+    Bytes output(kNonceSize+input.size()+kTagSize);std::copy_n(digest.begin(),kNonceSize,output.begin());std::size_t written=0;const psa_status_t status=psa_aead_encrypt(keyId,PSA_ALG_GCM,output.data(),kNonceSize,nullptr,0,input.data(),input.size(),output.data()+kNonceSize,output.size()-kNonceSize,&written);psa_destroy_key(keyId);if(status!=PSA_SUCCESS)return {};output.resize(kNonceSize+written);return output;
+}
+Bytes DecryptAuthenticated(const Bytes& input,const Key& key,const Iv& iv){
+    (void)iv;if(input.size()<kNonceSize+kTagSize)return {};mbedtls_svc_key_id_t keyId=MBEDTLS_SVC_KEY_ID_INIT;if(!ImportAesKey(key,PSA_KEY_USAGE_DECRYPT,keyId))return {};Bytes output(input.size()-kNonceSize-kTagSize);std::size_t written=0;const psa_status_t status=psa_aead_decrypt(keyId,PSA_ALG_GCM,input.data(),kNonceSize,nullptr,0,input.data()+kNonceSize,input.size()-kNonceSize,output.data(),output.size(),&written);psa_destroy_key(keyId);if(status!=PSA_SUCCESS)return {};output.resize(written);return output;
 }
 }
 
@@ -100,40 +64,18 @@ Iv DeriveIv(std::string_view salt) {
     ComputeSha256(reinterpret_cast<const std::uint8_t*>(salt.data()), salt.size(), digest.data(),
                   digest.size());
     Iv iv{};
-    for (std::size_t i = 0; i < kBlock; ++i) {
-        iv[i] = static_cast<std::uint8_t>(digest[i] ^ digest[i + kBlock]);
+    for (std::size_t i = 0; i < iv.size(); ++i) {
+        iv[i] = static_cast<std::uint8_t>(digest[i] ^ digest[i + iv.size()]);
     }
     return iv;
 }
 
 Bytes Encrypt(const Bytes& plain, const Key& key, const Iv& iv) {
-    const std::size_t pad = kBlock - (plain.size() % kBlock);
-    Bytes padded = plain;
-    padded.insert(padded.end(), pad, static_cast<std::uint8_t>(pad));
-
-    return CryptAesCbcNoPadding(padded, key, iv, PSA_KEY_USAGE_ENCRYPT);
+    return EncryptAuthenticated(plain,key,iv);
 }
 
 Bytes Decrypt(const Bytes& cipher, const Key& key, const Iv& iv) {
-    if (cipher.empty() || (cipher.size() % kBlock) != 0) {
-        return {};
-    }
-    Bytes out = CryptAesCbcNoPadding(cipher, key, iv, PSA_KEY_USAGE_DECRYPT);
-    if (out.empty()) {
-        return {};
-    }
-
-    const std::uint8_t pad = out.back();
-    if (pad == 0 || pad > kBlock || pad > out.size()) {
-        return {};
-    }
-    for (std::size_t i = out.size() - pad; i < out.size(); ++i) {
-        if (out[i] != pad) {
-            return {};
-        }
-    }
-    out.resize(out.size() - pad);
-    return out;
+    return DecryptAuthenticated(cipher,key,iv);
 }
 
 std::uint64_t HashPath(std::string_view path) {
@@ -150,7 +92,7 @@ std::uint32_t Crc32(const std::uint8_t* data, std::size_t size) {
     for (std::size_t i = 0; i < size; ++i) {
         crc ^= data[i];
         for (int bit = 0; bit < 8; ++bit) {
-            const std::uint32_t mask = -(crc & 1u);
+            const std::uint32_t mask = 0u - (crc & 1u);
             crc = (crc >> 1) ^ (0xEDB88320u & mask);
         }
     }

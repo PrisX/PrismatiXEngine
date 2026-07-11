@@ -235,6 +235,7 @@ Result<TypedDocument> ParseTypedDocument(std::string_view text, const std::strin
                 continue;
             }
             document.formatVersion = version;
+            if(version!=TypedDocument::CurrentVersion)diagnostics.push_back(ParseError(sourcePath,line,"Only strict typed-document version 3 is supported."));
             auto parsedId = Uuid::Parse(id);
             if (!parsedId) diagnostics.push_back(ParseError(sourcePath, line, "Invalid document UUID."));
             else document.id = *parsedId;

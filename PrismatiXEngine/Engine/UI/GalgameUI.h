@@ -3,6 +3,7 @@
 #include "Engine/Core/Result.h"
 #include "Engine/UI/UIContext.h"
 #include "Engine/Resources/TypedDocument.h"
+#include "Engine/Animation/Timeline.h"
 
 #include <functional>
 #include <memory>
@@ -30,11 +31,15 @@ struct GalgameItem {
 struct DialoguePresentation {
     std::string speaker;
     std::string text;
+    std::string effect;
+    float effectProgress = 0.0f;
     std::vector<std::string> choices;
     std::vector<std::string> nvlLines;
     bool nvlMode = false;
     bool autoMode = false;
     bool skipMode = false;
+    float textScale = 1.0f;
+    bool reducedMotion = false;
 };
 struct SettingsPresentation {
     int bgm = 128;
@@ -43,6 +48,10 @@ struct SettingsPresentation {
     int textSpeedMs = 30;
     bool skipReadOnly = true;
     bool fullscreen = false;
+    float textScale = 1.0f;
+    bool highContrast = false;
+    bool reducedMotion = false;
+    bool selfVoicing = false;
 };
 
 class GalgameUI {
@@ -66,6 +75,7 @@ public:
     void Render(graphics::Renderer2D& renderer);
     [[nodiscard]] Screen CurrentScreen() const { return m_screen; }
     [[nodiscard]] bool IsOverlay() const { return m_screen != Screen::Title && m_screen != Screen::HUD; }
+    Status ApplyAnimationProperty(const animation::TrackBinding& binding,const Variant& value);
 
 private:
     class ItemSource;
@@ -82,6 +92,8 @@ private:
     Screen m_screen = Screen::Title;
     Label* m_speaker = nullptr;
     Label* m_dialogue = nullptr;
+    Rect m_dialogueBaseOffsets{};
+    int m_dialogueBaseFontSize = 30;
     Label* m_nvlText = nullptr;
     VBoxContainer* m_choices = nullptr;
     Label* m_mode = nullptr;
@@ -90,6 +102,7 @@ private:
     std::vector<Binding> m_bindings;
     std::unordered_map<int,resource::TypedDocument> m_templates;
     std::vector<GalgameAction> m_pendingActions;
+    std::unordered_map<std::string,std::string> m_animationTextBase;
 };
 
 }  // namespace px::ui

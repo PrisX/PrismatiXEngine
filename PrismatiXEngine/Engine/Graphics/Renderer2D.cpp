@@ -31,7 +31,13 @@ std::string MakeKey(const std::string& text, const std::string& font, int size, 
 }
 }  // namespace
 
-Renderer2D::Renderer2D(SDL_Renderer* renderer, AssetCache& assets) : m_renderer(renderer), m_assets(assets) {}
+Renderer2D::Renderer2D(SDL_Renderer* renderer, AssetCache& assets)
+    : m_renderer(renderer), m_textEngine(TTF_CreateRendererTextEngine(renderer)), m_assets(assets) {}
+
+Renderer2D::~Renderer2D() {
+    ClearTextCache();
+    if (m_textEngine) TTF_DestroyRendererTextEngine(m_textEngine);
+}
 
 void Renderer2D::SetLogicalSize(int width, int height) {
     m_logicalW = width;
@@ -211,7 +217,7 @@ Rect Renderer2D::DrawImageAuto(const std::string& path, DisplayMode mode, std::u
 }
 
 const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, const std::string& fontPath, int size, Color color, int outline, int wrap) {
-    const int ss = m_textSupersample > 0 ? m_textSupersample : 1;
+    const int ss = 1; // SDL_ttf's renderer text engine maintains a shaped glyph atlas.
     const std::string key = MakeKey(text, fontPath, size, color, outline, wrap, ss);
     if (auto it = m_textCache.find(key); it != m_textCache.end()) {
         return &it->second;
@@ -227,22 +233,21 @@ const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, c
         return nullptr;
     }
 
-    const SDL_Color col{ color.r, color.g, color.b, color.a };
-    SDL_Surface* surface = wrap > 0 ? TTF_RenderText_Blended_Wrapped(font, text.c_str(), text.size(), col, wrap * ss) : TTF_RenderText_Blended(font, text.c_str(), text.size(), col);
-    if (!surface) {
+    if (!m_textEngine) {
         return nullptr;
     }
 
     CachedText entry;
-    entry.texture = SDL_CreateTextureFromSurface(m_renderer, surface);
-    entry.w = surface->w / ss;
-    entry.h = surface->h / ss;
-    SDL_DestroySurface(surface);
-    if (!entry.texture) {
+    entry.text = TTF_CreateText(m_textEngine, font, text.c_str(), text.size());
+    if (!entry.text) {
         return nullptr;
     }
-    SDL_SetTextureBlendMode(entry.texture, SDL_BLENDMODE_BLEND);
-    SDL_SetTextureScaleMode(entry.texture, SDL_SCALEMODE_LINEAR);
+    TTF_SetTextColor(entry.text, color.r, color.g, color.b, color.a);
+    if (wrap > 0) TTF_SetTextWrapWidth(entry.text, wrap);
+    if (!TTF_GetTextSize(entry.text, &entry.w, &entry.h)) {
+        TTF_DestroyText(entry.text);
+        return nullptr;
+    }
 
     auto [it, _] = m_textCache.emplace(key, entry);
     return &it->second;
@@ -251,7 +256,9 @@ const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, c
 void Renderer2D::DrawText(const std::string& text, float x, float y, const std::string& fontPath, int size, Color color, std::uint8_t alpha, int wrap) {
     const CachedText* t = AcquireText(text, fontPath, size, color, 0, wrap);
     if (t) {
-        Blit(t->texture, Rect{ x, y, static_cast<float>(t->w), static_cast<float>(t->h) }, alpha);
+        TTF_SetTextColor(t->text, color.r, color.g, color.b,
+                         static_cast<std::uint8_t>((static_cast<unsigned>(color.a) * alpha) / 255));
+        TTF_DrawRendererText(t->text, x + m_camX, y + m_camY);
     }
 }
 
@@ -261,21 +268,24 @@ void Renderer2D::DrawTextOutline(const std::string& text, float x, float y, cons
         const CachedText* s = AcquireText(text, fontPath, size, black, 0, wrap);
         if (s) {
             const auto sa = static_cast<std::uint8_t>(alpha * 0.35f);
-            Blit(s->texture, Rect{ x + 3, y + 3, static_cast<float>(s->w), static_cast<float>(s->h) }, sa);
+            TTF_SetTextColor(s->text, 0, 0, 0, sa);
+            TTF_DrawRendererText(s->text, x + 3 + m_camX, y + 3 + m_camY);
         }
     }
 
     if (outlineSize > 0) {
         const CachedText* o = AcquireText(text, fontPath, size, outlineColor, outlineSize, wrap);
         if (o) {
-            Blit(o->texture, Rect{ x, y, static_cast<float>(o->w), static_cast<float>(o->h) }, alpha);
+            TTF_SetTextColor(o->text, outlineColor.r, outlineColor.g, outlineColor.b, alpha);
+            TTF_DrawRendererText(o->text, x + m_camX, y + m_camY);
         }
     }
 
     const CachedText* f = AcquireText(text, fontPath, size, textColor, 0, wrap);
     if (f) {
         const float ox = static_cast<float>(outlineSize);
-        Blit(f->texture, Rect{ x + ox, y + ox, static_cast<float>(f->w), static_cast<float>(f->h) }, alpha);
+        TTF_SetTextColor(f->text, textColor.r, textColor.g, textColor.b, alpha);
+        TTF_DrawRendererText(f->text, x + ox + m_camX, y + ox + m_camY);
     }
 }
 
@@ -296,9 +306,7 @@ Vec2 Renderer2D::MeasureText(const std::string& text, const std::string& fontPat
 
 void Renderer2D::ClearTextCache() {
     for (auto& [key, entry] : m_textCache) {
-        if (entry.texture) {
-            SDL_DestroyTexture(entry.texture);
-        }
+        if (entry.text) TTF_DestroyText(entry.text);
     }
     m_textCache.clear();
 }

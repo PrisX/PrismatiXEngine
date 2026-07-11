@@ -20,7 +20,8 @@
     "nlohmann-json",
     "spdlog",
     "mbedtls",
-    "zstd"
+    "zstd",
+    "ffmpeg"
   ],
   "overrides": [
     {

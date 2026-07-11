@@ -28,13 +28,17 @@ Result<RecoverySnapshot> ReadHeader(const std::filesystem::path& path, const std
     std::size_t offset = sizeof(kMagic) - 1; RecoverySnapshot snapshot; std::string id, source; std::uint64_t contentSize = 0;
     if (!ReadString(bytes, offset, id) || !ReadString(bytes, offset, source) || !ReadString(bytes, offset, snapshot.baseHash) || !ReadU64(bytes, offset, snapshot.timestamp) || !ReadU64(bytes, offset, contentSize) || !ReadU64(bytes, offset, compressedSize) || offset + compressedSize > bytes.size()) return Result<RecoverySnapshot>::Failure(RecoveryError(path, "Recovery snapshot metadata is corrupt."));
     auto parsed = Uuid::Parse(id); if (!parsed) return Result<RecoverySnapshot>::Failure(RecoveryError(path, "Recovery snapshot has an invalid document ID."));
-    snapshot.documentId = *parsed; snapshot.file = path; snapshot.sourcePath = std::filesystem::u8path(source); snapshot.contentSize = static_cast<std::size_t>(contentSize); payloadOffset = offset; return Result<RecoverySnapshot>::Success(std::move(snapshot));
+    snapshot.documentId = *parsed; snapshot.file = path; snapshot.sourcePath = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(source.data()), source.size())); snapshot.contentSize = static_cast<std::size_t>(contentSize); payloadOffset = offset; return Result<RecoverySnapshot>::Success(std::move(snapshot));
 }
 }
 
 std::filesystem::path RecoveryManager::UserRecoveryRoot() {
 #ifdef _WIN32
-    if (const char* root = std::getenv("LOCALAPPDATA")) return std::filesystem::path(root) / "PrismatiX" / "Recovery";
+    char* root = nullptr; std::size_t size = 0;
+    if (_dupenv_s(&root, &size, "LOCALAPPDATA") == 0 && root) {
+        const std::filesystem::path path(root); std::free(root);
+        return path / "PrismatiX" / "Recovery";
+    }
 #else
     if (const char* root = std::getenv("HOME")) return std::filesystem::path(root) / ".local" / "share" / "PrismatiX" / "Recovery";
 #endif

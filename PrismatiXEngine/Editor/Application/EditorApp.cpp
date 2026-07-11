@@ -68,7 +68,7 @@ std::string Utf8Path(const fs::path& path) noexcept {
 fs::path ImportFolderForType(const std::string& type) {
     if (type == "image") return fs::path("Content") / "Images" / "Imported";
     if (type == "audio") return fs::path("Content") / "Audio" / "Imported";
-    if (type == "script") return fs::path("Content") / "Script";
+    if (type == "script") return fs::path("Content") / "Scenario";
     if (type == "ui") return fs::path("Content") / "UI";
     if (type == "font") return fs::path("Content") / "Fonts";
     if (type == "lua") return fs::path("Content") / "Extensions";
@@ -348,12 +348,17 @@ bool EditorApp::Init() {
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     std::filesystem::path settingsRoot;
 #ifdef _WIN32
-    if (const char* local = std::getenv("LOCALAPPDATA")) settingsRoot = std::filesystem::path(local) / "PrismatiXEditor";
+    char* local = nullptr;
+    std::size_t localLength = 0;
+    if (_dupenv_s(&local, &localLength, "LOCALAPPDATA") == 0 && local && *local) {
+        settingsRoot = std::filesystem::path(local) / "PrismatiXEditor";
+    }
+    std::free(local);
 #endif
     if (settingsRoot.empty()) settingsRoot = std::filesystem::path(m_basePath) / ".editor";
     std::error_code settingsError;
     std::filesystem::create_directories(settingsRoot, settingsError);
-    m_iniPath = (settingsRoot / "EditorLayout-v2.ini").string();
+    m_iniPath = (settingsRoot / "EditorLayout-v3.ini").string();
     m_editorSettingsPath = settingsRoot / "EditorSettings.pxres";
     m_editorSessionPath = settingsRoot / "EditorSession.pxres";
     io.IniFilename = m_iniPath.c_str();
@@ -396,8 +401,11 @@ bool EditorApp::Init() {
 void EditorApp::ConfigureDesigner(UIDesigner& designer) {
     designer.SetOnEdit([this] {
         if (m_preview && m_designer.Document()) {
+            std::error_code error;
+            const std::string runtimePath = std::filesystem::relative(
+                m_designer.Document()->Path(), m_project.Context().root, error).generic_string();
             m_preview->LoadUIDocument(m_designer.Document()->Data(),
-                                      m_preview->CurrentUIPath());
+                                      error ? m_designer.Document()->Path().generic_string() : runtimePath);
             m_docs.SetDirty(m_designer.Document()->Path(), m_designer.Dirty(),
                             m_designer.Document()->History().Cursor());
         }

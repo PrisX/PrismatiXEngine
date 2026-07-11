@@ -1,9 +1,11 @@
 #include "Editor/Application/EditorApp.h"
+#include "Engine/VN/GameCatalog.h"
 
 #include "Engine/IO/AtomicFile.h"
 #include "Engine/Core/TypeRegistry.h"
 #include "Engine/Resources/TypedDocument.h"
-#include "Engine/VN/PDS/Parser.h"
+#include "Engine/VN/Scenario/ScenarioDocument.h"
+#include "Engine/VN/Scenario/StoryMap.h"
 #include "Engine/UI/UITypeRegistry.h"
 
 #ifdef _WIN32
@@ -63,34 +65,14 @@ bool RewriteVariantReference(Variant& value, bool resourcePath,
     bool changed=false;
     if(auto* text=value.TryGet<std::string>()){
         if(resourcePath&&(*text==oldRel||*text==oldName)){*text=*text==oldRel?newRel:newName;return true;}
+    }else if(auto* reference=value.TryGet<ResourceRefValue>()){
+        if(reference->lastKnownPath==oldRel||reference->lastKnownPath==oldName){reference->lastKnownPath=reference->lastKnownPath==oldRel?newRel:newName;return true;}
     }else if(auto* array=value.AsArray()){
         for(auto& item:*array)changed|=RewriteVariantReference(item,resourcePath,oldRel,newRel,oldName,newName);
     }else if(auto* object=value.AsObject()){
         for(auto& [_,item]:*object)changed|=RewriteVariantReference(item,resourcePath,oldRel,newRel,oldName,newName);
     }
     return changed;
-}
-
-std::string RewritePDSReferences(const std::string& source,const std::string& oldRel,
-                                 const std::string& newRel,const std::string& oldName,
-                                 const std::string& newName,bool& changed){
-    std::string output;output.reserve(source.size());std::size_t index=0;
-    while(index<source.size()){
-        if(source[index]!='"'){output.push_back(source[index++]);continue;}
-        std::size_t keyEnd=index;while(keyEnd>0&&std::isspace(static_cast<unsigned char>(source[keyEnd-1])))--keyEnd;
-        std::size_t keyStart=keyEnd;bool resourceArgument=false;
-        if(keyEnd>0&&source[keyEnd-1]=='='){--keyEnd;keyStart=keyEnd;while(keyStart>0&&(std::isalnum(static_cast<unsigned char>(source[keyStart-1]))||source[keyStart-1]=='_'))--keyStart;
-            const std::string key=source.substr(keyStart,keyEnd-keyStart);static const std::unordered_set<std::string> resourceArguments{"file","path","target","ui","script","image","voice","audio","video","theme","background","bgm","se"};resourceArgument=resourceArguments.contains(key);}
-        output.push_back(source[index++]);std::string value;bool escaped=false;
-        while(index<source.size()){
-            const char character=source[index++];
-            if(!escaped&&character=='"')break;
-            value.push_back(character);escaped=!escaped&&character=='\\';if(character!='\\')escaped=false;
-        }
-        if(resourceArgument&&value==oldRel){output+=newRel;changed=true;}else if(resourceArgument&&value==oldName){output+=newName;changed=true;}else output+=value;
-        output.push_back('"');
-    }
-    return output;
 }
 
 Result<std::vector<ReferenceSnapshot>> PlanReferenceUpdates(
@@ -100,12 +82,12 @@ Result<std::vector<ReferenceSnapshot>> PlanReferenceUpdates(
     std::vector<std::filesystem::path> candidates{root/"project.pxproject"};std::error_code ec;
     for(auto iterator=std::filesystem::recursive_directory_iterator(root/"Content",ec);!ec&&iterator!=std::filesystem::recursive_directory_iterator();iterator.increment(ec)){
         if(!iterator->is_regular_file(ec)||iterator->path().extension()==".pxmeta")continue;const std::string extension=iterator->path().extension().string();
-        if(extension==".pxscene"||extension==".pxres"||extension==".pxtheme"||extension==".pxanim"||extension==".pds")candidates.push_back(iterator->path());
+        if(extension==".pxscene"||extension==".pxres"||extension==".pxtheme"||extension==".pxanim"||extension==".pxscenario")candidates.push_back(iterator->path());
     }
     for(const auto& path:candidates){std::ifstream input(path,std::ios::binary);if(!input)continue;std::ostringstream stream;stream<<input.rdbuf();const std::string before=stream.str();std::string after=before;bool changed=false;
-        if(path.extension()==".pds"){after=RewritePDSReferences(before,oldRel,newRel,oldName,newName,changed);if(changed){const auto parsed=vn::ParsePDS(after);if(!parsed.errors.empty())return Result<std::vector<ReferenceSnapshot>>::Failure(ProjectMutationError("PXASSETMOVE9201",path,"更新後的 PDS 無法解析",parsed.errors.front()));}}
+        if(path.extension()==".pxscenario"){auto parsed=vn::scenario::ParseScenario(before,path.generic_string());if(!parsed)return Result<std::vector<ReferenceSnapshot>>::Failure(parsed.Diagnostics());auto document=parsed.TakeValue();for(auto& node:document.nodes)for(auto& [_,value]:node.parameters)changed|=RewriteVariantReference(value,true,oldRel,newRel,oldName,newName);if(changed)after=vn::scenario::WriteScenario(document);}
         else{auto parsed=resource::ParseTypedDocument(before,path.generic_string());if(!parsed)return Result<std::vector<ReferenceSnapshot>>::Failure(parsed.Diagnostics());auto document=parsed.TakeValue();
-            static const std::unordered_set<std::string> projectResourceProperties{"startUI","startScript","archive"};
+            static const std::unordered_set<std::string> projectResourceProperties{"routes","startScript","archive"};
             for(auto& [key,value]:document.properties){const auto* property=TypeRegistry::Global().FindProperty(document.type,key);const bool resourcePath=(property&&HasFlag(property->flags,PropertyFlags::ResourcePath))||(document.kind==resource::DocumentKind::Project&&projectResourceProperties.contains(key));changed|=RewriteVariantReference(value,resourcePath,oldRel,newRel,oldName,newName);}
             for(auto& node:document.nodes)for(auto& [key,value]:node.properties){const auto* property=TypeRegistry::Global().FindProperty(node.type,key);const bool resourcePath=property&&HasFlag(property->flags,PropertyFlags::ResourcePath);changed|=RewriteVariantReference(value,resourcePath,oldRel,newRel,oldName,newName);}
             if(changed)after=resource::WriteTypedDocument(document);
@@ -204,6 +186,7 @@ void EditorApp::OpenProject(const std::filesystem::path& root) {
         if (m_recovery.HadUncleanSession()) m_showRecoveryCenter = true;
         AddRecentProject(root);
         const auto scaffolded = m_project.EnsureEssentials(m_basePath + "EditorAssets/UIFont.ttf");
+        (void)m_project.SaveManifest();
         if (!scaffolded.empty()) {
             Log("Scaffolded " + std::to_string(scaffolded.size()) + " missing project file(s).");
         }
@@ -212,7 +195,7 @@ void EditorApp::OpenProject(const std::filesystem::path& root) {
         if (!identityStatus) m_showAssetIdentity = true;
         if (m_preview) {
             m_preview->SetProjectRoot(root.string());
-            m_preview->LoadUI(m_project.Context().manifest.startUI);
+            m_preview->LoadUI(m_project.Context().StartScenePath());
         }
         m_scriptDocs.clear();
         m_docs.Clear();
@@ -221,6 +204,7 @@ void EditorApp::OpenProject(const std::filesystem::path& root) {
 
 
         m_flow.SetOpenCallback([this](const std::string& script) { OpenDocTab(script); });
+        m_flow.SetReadOnly(false);
         m_flow.SetCreateChapterCallback([this](ImVec2 canvasPosition) { CreateFlowChapter(canvasPosition); });
         m_flow.SetEntryChangedCallback([this](const std::string& script) {
             m_project.Context().manifest.startScript = script;
@@ -231,10 +215,10 @@ void EditorApp::OpenProject(const std::filesystem::path& root) {
         m_flow.SetScriptChangedCallback([this](const std::string&, const std::string&) { m_flowStale = true; RefreshProblems(); });
         m_flow.SetCreateScriptCallback([this](const std::string& script) { CreateScriptFile(script); });
         m_flow.SetLinkAddedCallback([this](const std::string& from, const std::string& to) {
-            AddJumpToScript(from, to);
+            ConnectStoryScenarios(from, to);
         });
         m_flow.SetLinkRemovedCallback([this](const std::string& from, const std::string& to) {
-            RemoveJumpFromScript(from, to);
+            DisconnectStoryScenarios(from, to);
         });
         m_flow.SetChapterRemovedCallback([this](const std::string&) { m_flowStale = true; RefreshProblems(); });
         m_flow.SetTitleChangedCallback([](const std::string&, const std::string&) {});
@@ -243,6 +227,15 @@ void EditorApp::OpenProject(const std::filesystem::path& root) {
 
         m_scripts.SetOnCommandsChanged([this](const std::vector<CustomCommandDef>& cmds) {
             m_customCommands = cmds;
+            for (const auto& command : cmds) if (!vn::CommandRegistry::Global().Find(command.name)) {
+                vn::CommandDescriptor descriptor; descriptor.id=command.name;
+                descriptor.displayName=command.name; descriptor.category=command.category;
+                descriptor.allowAdditionalParameters=false; descriptor.waitPolicy=vn::CommandWaitPolicy::Async;
+                descriptor.rollbackPolicy=vn::RollbackPolicy::Boundary;
+                for(const auto& parameter:command.params){vn::CommandParameterDescriptor value;value.name=parameter.key;value.label=parameter.key;value.type=VariantType::String;value.defaultValue=parameter.defaultValue;descriptor.parameters.push_back(std::move(value));}
+                const Status registered=vn::CommandRegistry::Global().Register(std::move(descriptor));
+                if(!registered)for(const auto& diagnostic:registered.Diagnostics())diag::Emit(diagnostic);
+            }
             for (auto& doc : m_scriptDocs) {
                 doc->SetCustomCommands(cmds);
             }
@@ -294,7 +287,7 @@ void EditorApp::SyncDocumentStates() {
     for (const auto& document : m_scriptDocs) {
         if (document->DocumentPath().empty()) continue;
         if (!m_docs.Find(document->DocumentPath()))
-            TrackDocument(document->DocumentPath(), DocumentType::PDS, document->Dirty());
+            TrackDocument(document->DocumentPath(), DocumentType::Scenario, document->Dirty());
         m_docs.SetDirty(document->DocumentPath(), document->Dirty());
     }
     std::unordered_set<std::string> openLua;
@@ -318,8 +311,8 @@ void EditorApp::SaveEditorSession() {
         m_folderViewSettings[m_assetDir] = {m_fileSystemView,m_assetSortColumn,
             m_assetSortAscending,m_assetRowHeight,m_assetThumbSize};
         resource::TypedDocument settings;
-        settings.kind=resource::DocumentKind::Resource;settings.formatVersion=2;
-        settings.id=Uuid::FromName("PrismatiXEditor.Settings.v2");settings.type="EditorSettings";
+        settings.kind=resource::DocumentKind::Resource;settings.formatVersion=resource::TypedDocument::CurrentVersion;
+        settings.id=Uuid::FromName("PrismatiXEditor.Settings.v3");settings.type="EditorSettings";
         settings.properties["workspace"]=Variant(static_cast<std::int64_t>(m_workspace));
         settings.properties["asset_directory"]=Variant(m_assetDir);
         VariantArray folders;
@@ -340,7 +333,7 @@ void EditorApp::RestoreEditorSession() {
         std::ifstream input(m_editorSettingsPath,std::ios::binary);std::ostringstream stream;stream<<input.rdbuf();
         auto parsed=resource::ParseTypedDocument(stream.str(),m_editorSettingsPath.generic_string());
         if(!parsed)for(const auto& diagnostic:parsed.Diagnostics())diag::Emit(diagnostic);
-        else if(parsed.Value().type=="EditorSettings"&&parsed.Value().formatVersion==2){
+        else if(parsed.Value().type=="EditorSettings"&&parsed.Value().formatVersion==resource::TypedDocument::CurrentVersion){
             const auto& properties=parsed.Value().properties;
             if(const auto found=properties.find("workspace");found!=properties.end())if(const auto* value=found->second.TryGet<std::int64_t>())m_workspace=static_cast<EditorWorkspace>(std::clamp<std::int64_t>(*value,0,3));
             if(const auto found=properties.find("asset_directory");found!=properties.end())if(const auto* value=found->second.TryGet<std::string>())m_assetDir=*value;
@@ -380,7 +373,7 @@ void EditorApp::RestoreEditorSession() {
         std::error_code error;
         const auto runtime = std::filesystem::relative(path, m_project.Context().root, error).generic_string();
         if (error) continue;
-        if (session.type == DocumentType::PDS) {
+        if (session.type == DocumentType::Scenario) {
             if (OpenDocTab(runtime)) m_docs.SetPinned(path, session.pinned);
         } else if (session.type == DocumentType::UIScene && m_preview) {
             m_previewMode = 0;
@@ -428,7 +421,7 @@ void EditorApp::CheckExternalDocuments() {
         } else if(session.type==DocumentType::UIScene) {
             if(auto found=m_inactiveDesigners.find(session.id.canonicalPath.generic_string());found!=m_inactiveDesigners.end())
                 reloaded=static_cast<bool>(found->second.editor->Open(session.id.canonicalPath));
-        } else if (session.type == DocumentType::PDS) {
+        } else if (session.type == DocumentType::Scenario) {
             for (auto& document : m_scriptDocs) {
                 if (DocumentManager::Canonical(document->DocumentPath()) == session.id.canonicalPath) {
                     reloaded = document->OpenDocument(runtime); break;
@@ -447,6 +440,53 @@ void EditorApp::CheckExternalDocuments() {
 void EditorApp::ConfigureDoc(NodeGraphEditor& doc) {
     doc.SetHeaderTexture(m_nodeHeaderTex, m_nodeHeaderW, m_nodeHeaderH);
     doc.SetSelectedResourceCallback([this] { return m_selectedAsset; });
+    doc.SetResourceResolver([this](const std::string& runtimePath)
+        -> std::optional<ResourceRefValue> {
+        if (!m_project.Context().IsOpen() || runtimePath.empty()) return std::nullopt;
+        const auto absolute = m_project.Context().root / runtimePath;
+        const auto* asset = m_assetRegistry.FindPath(absolute);
+        if (!asset) asset = m_assetRegistry.FindPath(runtimePath);
+        if (!asset) return std::nullopt;
+        return ResourceRefValue{asset->id, std::filesystem::path(runtimePath).generic_string()};
+    });
+    doc.SetFieldOptionsCallback([this](std::string_view nodeType, std::string_view key) {
+        std::vector<std::string> options;
+        if (key == "ui" || key == "route") {
+            for (const auto& route : m_project.Context().manifest.routes) options.push_back(route.id);
+            return options;
+        }
+        if (key == "preset") {
+            for (const auto& clip : animation::OfficialPresets()) options.push_back(clip.name);
+            return options;
+        }
+        if (key == "var" || key == "lhs" || key == "name" || key == "id" ||
+            key == "character" || key == "speaker") {
+            std::ifstream stream(m_project.Context().root / "Content/Game.pxres", std::ios::binary);
+            if (stream) {
+                std::ostringstream text; text << stream.rdbuf();
+                vn::GameCatalog catalog;
+                if (catalog.Load(text.str(), "Content/Game.pxres")) {
+                    if (key == "var" || key == "lhs")
+                        for (const auto& variable : catalog.Variables()) options.push_back(variable.name);
+                    else
+                        for (const auto& character : catalog.Characters())
+                            options.push_back(character.id.empty() ? character.name : character.id);
+                }
+            }
+        }
+        if (nodeType == "character" && key == "expression") {
+            for (const auto& asset : m_assets.Assets()) {
+                if (asset.runtimePath.find("Content/Images/Character/") != 0) continue;
+                const std::string stem = asset.absolutePath.stem().string();
+                const auto separator = stem.find_last_of("_-");
+                if (separator != std::string::npos && separator + 1 < stem.size())
+                    options.push_back(stem.substr(separator + 1));
+            }
+        }
+        std::sort(options.begin(), options.end());
+        options.erase(std::unique(options.begin(), options.end()), options.end());
+        return options;
+    });
     doc.SetCustomCommands(m_customCommands);
     doc.SetBreakpointHooks(
         [this]() -> const std::set<int>* {
@@ -472,7 +512,7 @@ NodeGraphEditor* EditorApp::OpenDocTab(const std::string& runtimePath) {
             return m_scriptDocs[i].get();
         }
     }
-    auto doc = std::make_unique<NodeGraphEditor>(NodeGraphEditor::GraphKind::PDSDialogue,
+    auto doc = std::make_unique<NodeGraphEditor>(NodeGraphEditor::GraphKind::Scenario,
                                                  [this](const std::string& m) { Log(m); });
     ConfigureDoc(*doc);
     doc->SetProject(&m_project.Context());
@@ -483,73 +523,9 @@ NodeGraphEditor* EditorApp::OpenDocTab(const std::string& runtimePath) {
     m_scriptDocs.push_back(std::move(doc));
     m_activeDoc = static_cast<int>(m_scriptDocs.size()) - 1;
     m_focusDocRequest = m_activeDoc;
-    TrackDocument(m_scriptDocs.back()->DocumentPath(), DocumentType::PDS,
+    TrackDocument(m_scriptDocs.back()->DocumentPath(), DocumentType::Scenario,
                   m_scriptDocs.back()->Dirty());
     return m_scriptDocs.back().get();
-}
-
-namespace {
-// Matches `[jump target="X"]` lines whose target resolves to `script` (with or
-// without the .pds extension).
-bool IsJumpLineTo(const std::string& line, const std::string& script) {
-    if (line.find("[jump") == std::string::npos) {
-        return false;
-    }
-    const std::size_t key = line.find("target=\"");
-    if (key == std::string::npos) {
-        return false;
-    }
-    const std::size_t start = key + 8;
-    const std::size_t end = line.find('"', start);
-    if (end == std::string::npos) {
-        return false;
-    }
-    const std::string target = line.substr(start, end - start);
-    return target == script || target + ".pds" == script;
-}
-}
-
-void EditorApp::AddJumpToScript(const std::string& fromScript, const std::string& toScript) {
-    NodeGraphEditor* document=OpenDocTab(fromScript);if(!document){Log("Flow: cannot open "+fromScript+" to add jump.");return;}
-    std::string text=document->Compile();std::istringstream in(text);
-    std::string line;
-    while (std::getline(in, line)) {
-        if (IsJumpLineTo(line, toScript)) {
-            return;  // Already linked in the script.
-        }
-    }
-    text += "\n[jump target=\""+toScript+"\"]\n";
-    if(!document->ImportPDSText(text))return;
-    Log("Flow: added [jump] " + fromScript + " -> " + toScript);
-}
-
-void EditorApp::RemoveJumpFromScript(const std::string& fromScript, const std::string& toScript) {
-    NodeGraphEditor* document=OpenDocTab(fromScript);if(!document)return;std::istringstream in(document->Compile());
-    std::vector<std::string> lines;
-    std::string line;
-    while (std::getline(in, line)) {
-        lines.push_back(line);
-    }
-
-    std::vector<std::string> kept;
-    kept.reserve(lines.size());
-    bool removed = false;
-    for (std::size_t i = 0; i < lines.size(); ++i) {
-        if (IsJumpLineTo(lines[i], toScript)) {
-            // Drop the //@node meta line that belongs to this jump command.
-            if (!kept.empty() && kept.back().rfind("//@node", 0) == 0) {
-                kept.pop_back();
-            }
-            removed = true;
-            continue;
-        }
-        kept.push_back(lines[i]);
-    }
-    if (!removed) {
-        return;
-    }
-    std::string text;for(const auto& value:kept)text+=value+"\n";if(!document->ImportPDSText(text))return;
-    Log("Flow: removed [jump] " + fromScript + " -> " + toScript);
 }
 
 void EditorApp::RefreshAfterProjectMutation() {
@@ -578,7 +554,7 @@ void EditorApp::OnAssetRelocated(const std::string& fromRuntimePath,
     for(auto& document:m_scriptDocs)document->RelocateIfOpen(fromRuntimePath,toRuntimePath);
     auto& manifest=m_project.Context().manifest;
     const std::string fromName=fs::path(fromRuntimePath).filename().string(),toName=fs::path(toRuntimePath).filename().string();
-    if(manifest.startUI==fromRuntimePath)manifest.startUI=toRuntimePath;
+    for(auto& route:manifest.routes)if(route.scene==fromRuntimePath)route.scene=toRuntimePath;
     if(manifest.startScript==fromRuntimePath||manifest.startScript==fromName)
         manifest.startScript=manifest.startScript==fromName?toName:toRuntimePath;
     if(m_selectedAsset==fromRuntimePath)m_selectedAsset=toRuntimePath;
@@ -652,7 +628,7 @@ Status EditorApp::CreateAssetWithHistory(const std::filesystem::path& absolutePa
         }else if(kind==0){
             if(!std::filesystem::create_directory(absolutePath,error)||error)return Status::Fail(ProjectMutationError("PXASSETCREATE9403",absolutePath,"無法建立資料夾",error.message()));
         }else if(kind==1){
-            const auto name=absolutePath.stem().string();const Status written=io::AtomicFile::WriteText(absolutePath,"// "+name+"\n[name speaker=\"\"]\nNew line\n");if(!written)return written;
+            const auto name=absolutePath.stem().string();vn::scenario::ScenarioDocument scenario;scenario.id=Uuid::Random();scenario.name=name;vn::scenario::ScenarioNode chapter{Uuid::Random(),"chapter",{{"title",name}}};vn::scenario::ScenarioNode dialogue{Uuid::Random(),"say",{{"textId",Uuid::Random().ToString()},{"speaker",std::string{}},{"value",std::string("New dialogue line")}}};scenario.entry=chapter.id;scenario.nodes={chapter,dialogue};scenario.edges.push_back({Uuid::Random(),chapter.id,"flow",dialogue.id,"in"});const Status written=io::AtomicFile::WriteText(absolutePath,vn::scenario::WriteScenario(scenario));if(!written)return written;
         }else{
             UISceneDocument document;const Status created=document.New(absolutePath);if(!created)return created;if(!document.Save())return Status::Fail(ProjectMutationError("PXASSETCREATE9404",absolutePath,"無法儲存新 UI Scene"));
         }
@@ -686,10 +662,8 @@ const std::vector<std::string>& EditorApp::ScriptFileNames() {
     }
     m_scriptNameCache.clear();
     for (const AssetRecord& rec : m_assets.Assets()) {
-        if (rec.type == "script") {
-            m_scriptNameCache.push_back(
-                std::filesystem::path(rec.runtimePath).filename().string());
-        }
+        if (rec.type == "script" && std::filesystem::path(rec.runtimePath).extension() == ".pxscenario")
+            m_scriptNameCache.push_back(rec.runtimePath);
     }
     std::sort(m_scriptNameCache.begin(), m_scriptNameCache.end());
     m_scriptNameCache.erase(std::unique(m_scriptNameCache.begin(), m_scriptNameCache.end()),
@@ -702,25 +676,84 @@ void EditorApp::CreateScriptFile(const std::string& script) {
     if (!m_project.Context().IsOpen() || script.empty()) {
         return;
     }
-    const std::filesystem::path path = m_project.Context().root / "Content" / "Script" / script;
-    std::error_code ec;
-    std::filesystem::create_directories(path.parent_path(), ec);
+    std::filesystem::path runtimePath = script;
+    if (runtimePath.extension() != ".pxscenario") runtimePath.replace_extension(".pxscenario");
+    if (!runtimePath.generic_string().starts_with("Content/"))
+        runtimePath = std::filesystem::path("Content/Scenario") / runtimePath.filename();
+    const std::filesystem::path path = m_project.Context().root / runtimePath;
     if (!std::filesystem::exists(path)) {
-        const Status written = io::AtomicFile::WriteText(
-            path, "// " + script + "\n[name speaker=\"\"]\nNew line\n");
-        if (!written) {
-            for (const auto& diagnostic : written.Diagnostics()) diag::Emit(diagnostic);
-            return;
-        }
+        NodeGraphEditor document(NodeGraphEditor::GraphKind::Scenario,
+                                 [this](const std::string& message) { Log(message); });
+        document.SetProject(&m_project.Context());
+        if (!document.NewDocument(runtimePath.generic_string())) return;
         auto registered = m_assetRegistry.RegisterAsset(m_project.Context().root, path, "script");
-        if (!registered) {
-            for (const auto& diagnostic : registered.Diagnostics()) diag::Emit(diagnostic);
-        }
-        Log("Created script " + script);
+        if (!registered) for (const auto& diagnostic : registered.Diagnostics()) diag::Emit(diagnostic);
     }
     m_assets.Scan(m_project.Context());
     m_flowStale = true;
     RefreshProblems();
+}
+
+void EditorApp::ConnectStoryScenarios(const std::string& fromScenario,
+                                      const std::string& toScenario) {
+    const auto read = [this](const std::string& runtimePath)
+        -> std::optional<vn::scenario::ScenarioDocument> {
+        std::ifstream stream(m_project.Context().root / runtimePath, std::ios::binary);
+        if (!stream) return std::nullopt;
+        std::ostringstream text; text << stream.rdbuf();
+        auto parsed = vn::scenario::ParseScenario(text.str(), runtimePath);
+        if (!parsed) { for (const auto& diagnostic : parsed.Diagnostics()) diag::Emit(diagnostic); return std::nullopt; }
+        return parsed.TakeValue();
+    };
+    auto source = read(fromScenario); const auto target = read(toScenario);
+    if (!source || !target) return;
+    vn::scenario::ScenarioNode* statement = nullptr;
+    for (auto& node : source->nodes) {
+        if ((node.command == "jump" || node.command == "call" || node.command == "choice") &&
+            !vn::scenario::GetStoryTarget(node)) { statement = &node; break; }
+    }
+    if (!statement) {
+        vn::scenario::ScenarioNode jump{Uuid::Random(), "jump", {}};
+        const Uuid previous = source->nodes.empty() ? Uuid{} : source->nodes.back().id;
+        source->nodes.push_back(std::move(jump)); statement = &source->nodes.back();
+        if (!previous.Empty()) source->edges.push_back({Uuid::Random(), previous, "flow", statement->id, "in"});
+        if (source->entry.Empty()) source->entry = statement->id;
+    }
+    const vn::scenario::StoryTarget storyTarget{target->id, target->entry, toScenario};
+    const Status connected = vn::scenario::ConnectStoryTarget(*source, statement->id, "target", storyTarget);
+    if (!connected) { for (const auto& diagnostic : connected.Diagnostics()) diag::Emit(diagnostic); return; }
+    const Status written = io::AtomicFile::WriteText(m_project.Context().root/fromScenario,
+                                                     vn::scenario::WriteScenario(*source));
+    if (!written) { for (const auto& diagnostic : written.Diagnostics()) diag::Emit(diagnostic); return; }
+    if (auto* document = OpenDocTab(fromScenario); document && !document->Dirty()) document->Reload();
+    m_flowStale = true; RefreshProblems();
+    Log("Story Map: connected " + fromScenario + " -> " + toScenario);
+}
+
+void EditorApp::DisconnectStoryScenarios(const std::string& fromScenario,
+                                         const std::string& toScenario) {
+    std::ifstream sourceStream(m_project.Context().root/fromScenario, std::ios::binary);
+    std::ifstream targetStream(m_project.Context().root/toScenario, std::ios::binary);
+    if (!sourceStream || !targetStream) return;
+    std::ostringstream sourceText, targetText; sourceText << sourceStream.rdbuf(); targetText << targetStream.rdbuf();
+    auto source = vn::scenario::ParseScenario(sourceText.str(), fromScenario);
+    auto target = vn::scenario::ParseScenario(targetText.str(), toScenario);
+    if (!source || !target) return;
+    bool removed = false;
+    for (auto& node : source.Value().nodes) {
+        const auto storyTarget = vn::scenario::GetStoryTarget(node);
+        if (storyTarget && storyTarget->scenario == target.Value().id) {
+            const Status disconnected = vn::scenario::DisconnectStoryTarget(source.Value(), node.id, "target");
+            removed = disconnected.IsOk(); break;
+        }
+    }
+    if (!removed) return;
+    const Status written = io::AtomicFile::WriteText(m_project.Context().root/fromScenario,
+                                                     vn::scenario::WriteScenario(source.Value()));
+    if (!written) { for (const auto& diagnostic : written.Diagnostics()) diag::Emit(diagnostic); return; }
+    if (auto* document = OpenDocTab(fromScenario); document && !document->Dirty()) document->Reload();
+    m_flowStale = true; RefreshProblems();
+    Log("Story Map: disconnected " + fromScenario + " -> " + toScenario);
 }
 
 void EditorApp::CreateFlowChapter(ImVec2 canvasPosition) {
@@ -731,22 +764,9 @@ void EditorApp::CreateFlowChapter(ImVec2 canvasPosition) {
 
     int index = static_cast<int>(ScriptFileNames().size()) + 1;
     std::string id, title, script;
-    do { id="chapter"+std::to_string(index);title="Chapter "+std::to_string(index);script=id+".pds";++index; }
-    while (std::filesystem::exists(m_project.Context().root/"Content"/"Script"/script));
-    const std::filesystem::path scriptDir = m_project.Context().root / "Content" / "Script";
-    std::error_code ec;
-    std::filesystem::create_directories(scriptDir, ec);
-    const std::filesystem::path scriptPath = scriptDir / script;
-    if (!std::filesystem::exists(scriptPath)) {
-        const Status written = io::AtomicFile::WriteText(
-            scriptPath, "// " + title + "\n[name speaker=\"\"]\nNew line\n");
-        if (!written) {
-            for (const auto& diagnostic : written.Diagnostics()) diag::Emit(diagnostic);
-            return;
-        }
-    }
-    auto registered=m_assetRegistry.RegisterAsset(m_project.Context().root,scriptPath,"script");
-    if(!registered)for(const auto& diagnostic:registered.Diagnostics())diag::Emit(diagnostic);
+    do { id="chapter"+std::to_string(index);title="Chapter "+std::to_string(index);script="Content/Scenario/"+id+".pxscenario";++index; }
+    while (std::filesystem::exists(m_project.Context().root/script));
+    CreateScriptFile(script);
     m_assets.Scan(m_project.Context());
     m_flow.Rebuild(ScriptFileNames(), m_project.Context().root);
     m_flow.SetNodePositionByScript(script, canvasPosition);
@@ -783,12 +803,15 @@ void EditorApp::RunBuild() {
         opt.playerExe = std::filesystem::path(base) / PlayerExecutableName();
     }
     opt.title = m.name;
-    opt.startUI = m.startUI;
+    opt.startRoute = m.startRoute;
+    opt.routes = m.routes;
     opt.startScript = m.startScript;
     opt.key = m.encryptKey;
     opt.encrypt = m.encrypt;
     opt.gameWidth = m.gameWidth;
     opt.gameHeight = m.gameHeight;
+    const auto profilePath=m_project.Context().root/".prismatix/ExportProfiles/windows-release.pxexport";
+    if(std::ifstream profileStream(profilePath,std::ios::binary);profileStream){std::ostringstream profileText;profileText<<profileStream.rdbuf();auto parsed=ParseExportProfile(profileText.str(),profilePath.generic_string());if(!parsed){for(const auto& diagnostic:parsed.Diagnostics())diag::Emit(diagnostic);Log("Build failed: export profile is invalid.");return;}opt.profile=parsed.TakeValue();}
     if (!builder.Build(opt)) {
         Log("Build failed.");
     }
@@ -874,69 +897,32 @@ void EditorApp::RefreshProblems() {
             m_problems.push_back("Missing " + what + ": " + rel.generic_string());
         }
     };
-    missing(m.startUI, "start UI");
-    if (!std::filesystem::exists(root / m.startScript) && !std::filesystem::exists(root / "Content" / "Script" / m.startScript)) {
+    if(m_project.Context().StartScenePath().empty())m_problems.push_back("Missing start route: "+m.startRoute);
+    for(const auto& route:m.routes)missing(route.scene,"route '"+route.id+"'");
+    if (!std::filesystem::exists(root / m.startScript)) {
         m_problems.push_back("Missing start script: " + m.startScript);
     }
 
-    // Validate asset references inside every script (same dir conventions as VMConfig).
-    const auto resolveRef = [&](const std::string& dir, const std::string& file) {
-        if (file.empty()) return std::string{};
-        if (file.find('/') != std::string::npos || file.find(':') != std::string::npos) {
-            return file;
-        }
-        return dir + file;
-    };
-    const std::filesystem::path scriptDir = root / "Content" / "Script";
+    const std::filesystem::path scriptDir = root / "Content" / "Scenario";
     std::error_code ec;
     constexpr std::size_t kMaxProblems = 200;
     for (std::filesystem::directory_iterator it(scriptDir, ec), end; it != end && !ec;
          it.increment(ec)) {
         if (m_problems.size() >= kMaxProblems) break;
-        if (!it->is_regular_file() || it->path().extension() != ".pds") continue;
+        if (!it->is_regular_file() || it->path().extension() != ".pxscenario") continue;
         const std::string scriptName = it->path().filename().string();
         std::ifstream in(it->path());
         if (!in) continue;
         std::stringstream ss;
         ss << in.rdbuf();
-        const px::vn::ParsedScript parsed = px::vn::ParsePDS(ss.str());
-
-        const auto checkRef = [&](const px::vn::Command& cmd, const std::string& dir,
-                                  const std::string& file, const char* what) {
-            const std::string ref = resolveRef(dir, file);
-            if (ref.empty() || std::filesystem::exists(root / ref)) return;
-            if (m_problems.size() < kMaxProblems) {
-                m_problems.push_back(scriptName + ":" + std::to_string(cmd.line) + "  missing " +
-                                     what + ": " + ref);
-            }
-        };
-        for (const px::vn::Command& cmd : parsed.commands) {
-            const std::string& t = cmd.type;
-            if (t == "bg") {
-                checkRef(cmd, "Content/Image/Background/", cmd.Get("file", cmd.Get("value")), "bg");
-            } else if (t == "char") {
-                std::string file = cmd.Get("file");
-                if (file.empty()) {
-                    const std::string name = cmd.Get("name", cmd.Get("id"));
-                    const std::string diff =
-                        cmd.Get("diff", cmd.Get("expression", cmd.Get("exp", "d")));
-                    file = name + "_" + diff + ".png";
-                }
-                checkRef(cmd, "Content/Image/Character/", file, "character image");
-            } else if (t == "cg") {
-                checkRef(cmd, "Content/Image/CG/", cmd.Get("image", cmd.Get("file")), "cg");
-            } else if (t == "bgm") {
-                checkRef(cmd, "Content/Audio/Music/", cmd.Get("file", cmd.Get("value")), "bgm");
-            } else if (t == "se") {
-                checkRef(cmd, "Content/Audio/SFX/", cmd.Get("file", cmd.Get("value")), "se");
-            } else if (t == "voice") {
-                checkRef(cmd, "Content/Audio/Voice/", cmd.Get("file", cmd.Get("value")), "voice");
-            } else if (t == "video" || t == "movie") {
-                checkRef(cmd, "Content/Video/", cmd.Get("file", cmd.Get("value")), "video");
-            } else if ((t == "say" || t == "text") && cmd.Has("voice")) {
-                checkRef(cmd, "Content/Audio/Voice/", cmd.Get("voice"), "voice");
-            }
-        }
+        auto parsed = px::vn::scenario::ParseScenario(ss.str(), it->path().generic_string());
+        if (!parsed) { for (const auto& diagnostic : parsed.Diagnostics()) m_problems.push_back(diagnostic.code+"  "+diagnostic.message); continue; }
+        const auto report = px::vn::scenario::ValidateScenario(parsed.Value(), px::vn::CommandRegistry::Builtins(), it->path().generic_string());
+        for (const auto& diagnostic : report.diagnostics) if (m_problems.size() < kMaxProblems)
+            m_problems.push_back(scriptName+":"+diagnostic.source.nodeId+"  "+diagnostic.message);
+        for (const auto& node : parsed.Value().nodes) for (const auto& [name, value] : node.parameters)
+            if (const auto* ref = value.TryGet<ResourceRefValue>(); ref && !ref->lastKnownPath.empty() && !std::filesystem::exists(root/ref->lastKnownPath) && m_problems.size()<kMaxProblems)
+                m_problems.push_back(scriptName+":"+node.id.ToString()+"  missing resource "+name+": "+ref->lastKnownPath);
     }
 }
 

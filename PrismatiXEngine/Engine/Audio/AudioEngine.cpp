@@ -51,6 +51,7 @@ bool AudioEngine::Init() {
         track = MIX_CreateTrack(m_mixer);
     }
     m_voiceTrack = MIX_CreateTrack(m_mixer);
+    m_ambienceTrack=MIX_CreateTrack(m_mixer);
     m_initialized = true;
     PX_LOG_INFO("AudioEngine initialized ({} Hz).", m_sampleRate);
     return true;
@@ -65,6 +66,7 @@ void AudioEngine::Shutdown() {
     }
     m_bgmAudio = { nullptr, nullptr };
     if (m_voiceTrack) MIX_DestroyTrack(m_voiceTrack), m_voiceTrack = nullptr;
+    if(m_ambienceTrack)MIX_DestroyTrack(m_ambienceTrack),m_ambienceTrack=nullptr;m_ambienceAudio=nullptr;
     if (m_voiceAudio.audio) {
         MIX_DestroyAudio(m_voiceAudio.audio);
         m_voiceAudio = {};
@@ -130,7 +132,7 @@ void AudioEngine::EvictAudio() {
             continue;
         }
         MIX_Audio* audio = it->second.audio;
-        if (audio && (audio == m_bgmAudio[0] || audio == m_bgmAudio[1])) {
+        if (audio && (audio == m_bgmAudio[0] || audio == m_bgmAudio[1] || audio==m_ambienceAudio)) {
             continue;  // a BGM track may still reference it
         }
         bool busy = false;
@@ -195,7 +197,7 @@ void AudioEngine::PlayBGM(const std::string& path, bool loop, int fadeMs) {
         return;
     }
     m_bgmAudio[next] = audio;
-    MIX_SetTrackGain(track, ToGain(m_bgmVolume));
+    ApplyMixGains();
 
     SDL_PropertiesID props = SDL_CreateProperties();
     SDL_SetNumberProperty(props, MIX_PROP_PLAY_LOOPS_NUMBER, loop ? -1 : 0);
@@ -204,6 +206,8 @@ void AudioEngine::PlayBGM(const std::string& path, bool loop, int fadeMs) {
     }
     MIX_PlayTrack(track, props);
     SDL_DestroyProperties(props);
+    m_bgmPath = path;
+    m_bgmLoop = loop;
 
     if (crossfade) {
         MIX_StopTrack(current, MIX_MSToFrames(m_sampleRate, fadeMs));
@@ -218,9 +222,8 @@ void AudioEngine::PlayBGMWithIntro(const std::string& introPath, const std::stri
 }
 
 void AudioEngine::Update() {
-    if (!m_initialized || m_pendingLoop.empty()) {
-        return;
-    }
+    if(!m_initialized)return;const bool duck=m_voiceTrack&&MIX_TrackPlaying(m_voiceTrack);if(duck!=m_voiceDucking){m_voiceDucking=duck;ApplyMixGains();}
+    if (m_pendingLoop.empty()) return;
     MIX_Track* track = m_bgmTracks[m_bgmActive];
     if (track && MIX_TrackPlaying(track)) {
         return;
@@ -229,6 +232,9 @@ void AudioEngine::Update() {
     m_pendingLoop.clear();
     PlayBGM(loop, /*loop=*/true, 0);
 }
+
+void AudioEngine::PlayAmbience(const std::string& path,bool loop,int fadeMs){if(!m_initialized||!m_ambienceTrack)return;MIX_Audio* audio=AcquireAudio(path,false);if(!audio||!MIX_SetTrackAudio(m_ambienceTrack,audio))return;m_ambienceAudio=audio;SDL_PropertiesID props=SDL_CreateProperties();SDL_SetNumberProperty(props,MIX_PROP_PLAY_LOOPS_NUMBER,loop?-1:0);if(fadeMs>0)SDL_SetNumberProperty(props,MIX_PROP_PLAY_FADE_IN_MILLISECONDS_NUMBER,fadeMs);ApplyMixGains();MIX_PlayTrack(m_ambienceTrack,props);SDL_DestroyProperties(props);m_ambiencePath=path;m_ambienceLoop=loop;}
+void AudioEngine::StopAmbience(int fadeMs){if(m_initialized&&m_ambienceTrack)MIX_StopTrack(m_ambienceTrack,fadeMs>0?MIX_MSToFrames(m_sampleRate,fadeMs):0);m_ambiencePath.clear();}
 
 void AudioEngine::StopBGM(int fadeMs) {
     if (!m_initialized) {
@@ -241,6 +247,7 @@ void AudioEngine::StopBGM(int fadeMs) {
             MIX_StopTrack(track, frames);
         }
     }
+    m_bgmPath.clear();
 }
 
 void AudioEngine::PlaySE(const std::string& path) {
@@ -257,7 +264,7 @@ void AudioEngine::PlaySE(const std::string& path) {
     }
     MIX_StopTrack(track, 0);
     MIX_SetTrackAudio(track, audio);
-    MIX_SetTrackGain(track, ToGain(m_seVolume));
+    ApplyMixGains();
     MIX_PlayTrack(track, 0);
 }
 
@@ -288,41 +295,83 @@ void AudioEngine::PlayVoice(const std::string& path) {
     }
     m_voiceAudio = AudioEntry{ audio, held, 0 };
     MIX_SetTrackAudio(m_voiceTrack, audio);
-    MIX_SetTrackGain(m_voiceTrack, ToGain(m_voiceVolume));
+    ApplyMixGains();
     MIX_PlayTrack(m_voiceTrack, 0);
+    m_voicePath = path;
 }
 
 void AudioEngine::StopVoice() {
     if (m_initialized) {
         MIX_StopTrack(m_voiceTrack, 0);
     }
+    m_voicePath.clear();
+}
+
+AudioEngine::RuntimeState AudioEngine::CaptureState() const {
+    const auto trackState = [](MIX_Track* track, const std::string& path, const bool loop) {
+        TrackState state{.path=path,.loop=loop};
+        if (track && !path.empty()) {
+            state.playing = MIX_TrackPlaying(track);
+            state.playbackFrame = std::max<Sint64>(0, MIX_GetTrackPlaybackPosition(track));
+        }
+        return state;
+    };
+    RuntimeState state;
+    state.music = trackState(m_bgmTracks[m_bgmActive], m_bgmPath, m_bgmLoop);
+    state.voice = trackState(m_voiceTrack, m_voicePath, false);
+    state.ambience = trackState(m_ambienceTrack, m_ambiencePath, m_ambienceLoop);
+    state.pendingMusicLoop = m_pendingLoop;
+    state.mainVolume = m_mainVolume;
+    state.musicVolume = m_bgmVolume;
+    state.voiceVolume = m_voiceVolume;
+    state.sfxVolume = m_seVolume;
+    state.ambienceVolume = m_ambienceVolume;
+    return state;
+}
+
+bool AudioEngine::RestoreState(const RuntimeState& state) {
+    if (state.mainVolume < 0 || state.mainVolume > 128 || state.musicVolume < 0 ||
+        state.musicVolume > 128 || state.voiceVolume < 0 || state.voiceVolume > 128 ||
+        state.sfxVolume < 0 || state.sfxVolume > 128 || state.ambienceVolume < 0 ||
+        state.ambienceVolume > 128 || state.music.playbackFrame < 0 ||
+        state.voice.playbackFrame < 0 || state.ambience.playbackFrame < 0) return false;
+    SetMainVolume(state.mainVolume);
+    SetBGMVolume(state.musicVolume);
+    SetVoiceVolume(state.voiceVolume);
+    SetSEVolume(state.sfxVolume);
+    SetAmbienceVolume(state.ambienceVolume);
+    StopBGM(0); StopVoice(); StopAmbience(0);
+    if (state.music.playing && !state.music.path.empty()) {
+        PlayBGM(state.music.path, state.music.loop, 0);
+        if (!MIX_SetTrackPlaybackPosition(m_bgmTracks[m_bgmActive], state.music.playbackFrame))
+            return false;
+    }
+    if (state.voice.playing && !state.voice.path.empty()) {
+        PlayVoice(state.voice.path);
+        if (!MIX_SetTrackPlaybackPosition(m_voiceTrack, state.voice.playbackFrame)) return false;
+    }
+    if (state.ambience.playing && !state.ambience.path.empty()) {
+        PlayAmbience(state.ambience.path, state.ambience.loop, 0);
+        if (!MIX_SetTrackPlaybackPosition(m_ambienceTrack, state.ambience.playbackFrame)) return false;
+    }
+    m_pendingLoop = state.pendingMusicLoop;
+    return true;
 }
 
 void AudioEngine::SetBGMVolume(int volume) {
-    m_bgmVolume = volume;
-    if (m_initialized) {
-        for (MIX_Track* track : m_bgmTracks) {
-            if (track) {
-                MIX_SetTrackGain(track, ToGain(volume));
-            }
-        }
-    }
+    m_bgmVolume = std::clamp(volume,0,128);ApplyMixGains();
 }
 
 void AudioEngine::SetSEVolume(int volume) {
-    m_seVolume = volume;
-    if (m_initialized) {
-        for (MIX_Track* t : m_seTracks) {
-            MIX_SetTrackGain(t, ToGain(volume));
-        }
-    }
+    m_seVolume = std::clamp(volume,0,128);ApplyMixGains();
 }
 
 void AudioEngine::SetVoiceVolume(int volume) {
-    m_voiceVolume = volume;
-    if (m_initialized) {
-        MIX_SetTrackGain(m_voiceTrack, ToGain(volume));
-    }
+    m_voiceVolume = std::clamp(volume,0,128);ApplyMixGains();
 }
+
+void AudioEngine::ApplyMixGains(){const float main=ToGain(m_mainVolume),duck=m_voiceDucking?0.45f:1.0f;for(auto* track:m_bgmTracks)if(track)MIX_SetTrackGain(track,ToGain(m_bgmVolume)*main*duck);for(auto* track:m_seTracks)if(track)MIX_SetTrackGain(track,ToGain(m_seVolume)*main);if(m_voiceTrack)MIX_SetTrackGain(m_voiceTrack,ToGain(m_voiceVolume)*main);if(m_ambienceTrack)MIX_SetTrackGain(m_ambienceTrack,ToGain(m_ambienceVolume)*main*duck);}
+void AudioEngine::SetAmbienceVolume(int volume){m_ambienceVolume=std::clamp(volume,0,128);ApplyMixGains();}
+void AudioEngine::SetMainVolume(int volume){m_mainVolume=std::clamp(volume,0,128);ApplyMixGains();}
 
 }

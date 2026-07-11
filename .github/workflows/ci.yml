@@ -1,0 +1,39 @@
+name: PrismatiX quality gate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: lukka/get-cmake@latest
+      - uses: lukka/run-vcpkg@v11
+      - name: Configure
+        shell: pwsh
+        run: cmake -S . -B out/ci/${{ matrix.build_type }} -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake -DBUILD_TESTING=ON -DPRISMATIX_WARNINGS_AS_ERRORS=ON
+      - name: Build
+        run: cmake --build out/ci/${{ matrix.build_type }} --parallel
+      - name: Test
+        run: ctest --test-dir out/ci/${{ matrix.build_type }} --output-on-failure --timeout 180
+
+  sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: lukka/get-cmake@latest
+      - uses: lukka/run-vcpkg@v11
+      - name: Configure ASan and UBSan
+        run: cmake -S . -B out/ci/sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake -DBUILD_TESTING=ON -DPRISMATIX_ENABLE_SANITIZERS=ON -DPRISMATIX_WARNINGS_AS_ERRORS=ON
+      - name: Build and test
+        run: cmake --build out/ci/sanitize --parallel && ctest --test-dir out/ci/sanitize --output-on-failure --timeout 180

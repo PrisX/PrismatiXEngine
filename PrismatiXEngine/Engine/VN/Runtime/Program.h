@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Engine/VN/PDS/PDSTypes.h"
+#include "Engine/VN/Commands/Command.h"
 
 #include <string>
 #include <unordered_map>
@@ -15,12 +15,12 @@ struct Program {
     std::vector<std::string> errors;
 
     [[nodiscard]] int LabelIndex(const std::string& name) const {
-        std::string key = (!name.empty() && name[0] == '*') ? name.substr(1) : name;
-        auto it = labels.find(key);
-        return it != labels.end() ? it->second : -1;
+        const std::string key = !name.empty() && name.front() == '*' ? name.substr(1) : name;
+        const auto found = labels.find(key);
+        return found == labels.end() ? -1 : found->second;
     }
 };
 
-[[nodiscard]] Program Compile(const ParsedScript& parsed);
+[[nodiscard]] Program CompileProgram(std::vector<Command> commands);
 
-}
+}  // namespace px::vn

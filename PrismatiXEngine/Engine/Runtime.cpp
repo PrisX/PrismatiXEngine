@@ -33,12 +33,18 @@ bool Runtime::Init(const RuntimeConfig& config) {
         m_vfs.MountDirectory(dir);
     }
     for (const std::string& archive : m_config.mountArchives) {
+        bool mounted = false;
         if (m_config.archiveKey.empty()) {
-            m_vfs.MountArchive(archive);
+            mounted = m_vfs.MountArchive(archive);
         }
         else {
             const crypto::Key key = crypto::DeriveKey(m_config.archiveKey);
-            m_vfs.MountArchive(archive, &key);
+            mounted = m_vfs.MountArchive(archive, &key);
+        }
+        if (!mounted) {
+            PX_LOG_ERROR("Runtime initialization failed: content group '{}' could not be mounted", archive);
+            Shutdown();
+            return false;
         }
     }
     m_assets = std::make_unique<graphics::AssetCache>(m_window.Renderer(), m_vfs);

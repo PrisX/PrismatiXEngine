@@ -22,7 +22,7 @@ diag::Diagnostic SessionError(const std::filesystem::path& path, std::string mes
 std::string TypeName(DocumentType type) {
     switch (type) {
         case DocumentType::UIScene: return "UIScene";
-        case DocumentType::PDS: return "PDS";
+        case DocumentType::Scenario: return "Scenario";
         case DocumentType::Lua: return "Lua";
         case DocumentType::Resource: return "Resource";
         default: return "Unknown";
@@ -31,7 +31,7 @@ std::string TypeName(DocumentType type) {
 
 DocumentType ParseType(const std::string& value) {
     if (value == "UIScene") return DocumentType::UIScene;
-    if (value == "PDS") return DocumentType::PDS;
+    if (value == "Scenario") return DocumentType::Scenario;
     if (value == "Lua") return DocumentType::Lua;
     if (value == "Resource") return DocumentType::Resource;
     return DocumentType::Unknown;
@@ -71,7 +71,7 @@ std::filesystem::path DocumentManager::Canonical(const std::filesystem::path& pa
 DocumentType DocumentManager::TypeFromPath(const std::filesystem::path& path) {
     const std::string extension = path.extension().string();
     if (extension == ".pxscene") return DocumentType::UIScene;
-    if (extension == ".pds") return DocumentType::PDS;
+    if (extension == ".pxscenario") return DocumentType::Scenario;
     if (extension == ".lua") return DocumentType::Lua;
     if (extension == ".pxres" || extension == ".pxtheme" || extension == ".pxanim")
         return DocumentType::Resource;
@@ -239,8 +239,8 @@ ExternalDocumentState DocumentManager::CheckExternalState(const DocumentSession&
 Status DocumentManager::SaveSession(const std::filesystem::path& path) const {
     resource::TypedDocument document;
     document.kind = resource::DocumentKind::Resource;
-    document.formatVersion = 2;
-    document.id = Uuid::FromName("PrismatiXEditor.Session.v2");
+    document.formatVersion = resource::TypedDocument::CurrentVersion;
+    document.id = Uuid::FromName("PrismatiXEditor.Session.v3");
     document.type = "EditorSession";
     document.properties["active"] = Variant(static_cast<std::int64_t>(m_active.value_or(0)));
     VariantArray sessions;
@@ -268,7 +268,7 @@ Status DocumentManager::RestoreSession(const std::filesystem::path& path) {
     std::ostringstream buffer; buffer << input.rdbuf();
     auto parsed = resource::ParseTypedDocument(buffer.str(), path.generic_string());
     if (!parsed) return Status::Fail(parsed.Diagnostics());
-    if (parsed.Value().type != "EditorSession" || parsed.Value().formatVersion != 2)
+    if (parsed.Value().type != "EditorSession" || parsed.Value().formatVersion != resource::TypedDocument::CurrentVersion)
         return Status::Fail(SessionError(path, "Editor 文件工作階段版本不相容"));
     Clear();
     const auto found = parsed.Value().properties.find("documents");

@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <functional>
 #include <iosfwd>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
@@ -16,17 +17,22 @@
 #include "Editor/Tools/Lua/CustomCommand.h"
 #include "Editor/Workspace/DocumentRegistry.h"
 #include "Editor/Workspace/EditHistory.h"
+#include "Engine/Resources/ResourceRef.h"
+#include "Engine/VN/Scenario/ScenarioDocument.h"
 
 namespace px::editor {
 
 class NodeGraphEditor : public IEditableDocument {
 public:
     enum class GraphKind {
-        PDSDialogue,
-        Gameloop,
+        Scenario,
     };
 
     using SelectedResourceCallback = std::function<std::string()>;
+    using ResourceResolver = std::function<std::optional<ResourceRefValue>(const std::string&)>;
+    using FieldOptionsCallback =
+        std::function<std::vector<std::string>(std::string_view nodeType,
+                                               std::string_view parameterKey)>;
 
     NodeGraphEditor(GraphKind kind, LogSink log = {});
     ~NodeGraphEditor();
@@ -36,10 +42,14 @@ public:
 
     void SetProject(const ProjectContext* context);
     void SetSelectedResourceCallback(SelectedResourceCallback callback);
+    void SetResourceResolver(ResourceResolver callback) { m_resourceResolver = std::move(callback); }
+    void SetFieldOptionsCallback(FieldOptionsCallback callback) {
+        m_fieldOptions = std::move(callback);
+        m_fieldOptionsCache.clear();
+    }
     void SetCustomCommands(std::vector<CustomCommandDef> commands);
     void SetHeaderTexture(ImTextureID texture, int width, int height);
-    // Debugger hooks: query the preview VM's breakpoint lines / toggle one.
-    // Lines refer to the compiled (= saved) PDS output.
+    // Debugger hooks use stable Scenario statement lines.
     void SetBreakpointHooks(std::function<const std::set<int>*()> lines,
                             std::function<void(int line)> toggle) {
         m_breakpointLines = std::move(lines);
@@ -62,10 +72,10 @@ public:
     bool OpenDocument(const std::string& runtimePath);
     bool NewDocument(const std::string& runtimePath);
     void ApplyAssetToSelection(const std::string& runtimePath);
+    void CreateNodeForAsset(const std::string& runtimePath);
     void FrameSelection();
-    // Re-imports the current document from PDS source text (the editable
-    // "PDS Text" panel). Marks the graph dirty; does not write to disk.
-    bool ImportPDSText(const std::string& text);
+    // Re-imports the strict Scenario text projection.
+    bool ImportScenarioText(const std::string& text);
 
     void Undo();
     void Redo();
@@ -160,12 +170,15 @@ private:
         std::vector<Pin> inputs;
         std::vector<Pin> outputs;
         std::vector<Parameter> parameters;
+        Uuid stableId;
+        std::vector<Uuid> dialogueLineIds;
     };
 
     struct Link {
         int id = 0;
         int startPinId = 0;
         int endPinId = 0;
+        Uuid stableId;
     };
 
     void EnsureContext();
@@ -175,8 +188,8 @@ private:
     [[nodiscard]] Json SaveGraph() const;
     void RestoreGraph(const Json& snapshot);
     void SeedDefaultGraph();
-    bool ImportPDSScript(const std::filesystem::path& path);
-    bool ImportPDSStream(std::istream& in);
+    bool ImportScenario(const std::filesystem::path& path);
+    bool ImportScenarioDocument(const vn::scenario::ScenarioDocument& document);
     void UpdateNodePositions();
     void MarkDirty();
 
@@ -216,8 +229,12 @@ private:
     void HandleInteractions();
     void RefreshSelection();
     void RenderGraphOverview();
+    void RenderMiniMap() const;
+    void AlignSelection(bool horizontal);
     void RenderPinSummary(const Node& node) const;
     void RenderParameter(Parameter& parameter, bool compact, int nodeId = 0);
+    [[nodiscard]] const std::vector<std::string>& ContextOptions(
+        std::string_view nodeType, std::string_view parameterKey) const;
     void InNodeOptionButton(int nodeId, Parameter& parameter, float width);
     void InNodeColorButton(const char* id, int nodeId, Parameter& parameter);
     void RenderInNodePopups();
@@ -252,18 +269,20 @@ private:
     [[nodiscard]] ImColor PinColor(PinType type) const;
     [[nodiscard]] static const char* PinTypeName(PinType type);
 
-    [[nodiscard]] std::string CompilePDS() const;
-    [[nodiscard]] std::string CompileGameloop() const;
+    [[nodiscard]] std::string CompileScenarioV3() const;
     [[nodiscard]] static std::string QuoteLua(const std::string& value);
     [[nodiscard]] static std::string Trim(std::string_view value);
     [[nodiscard]] static std::string Lower(std::string value);
-    [[nodiscard]] static std::string NormalizePDSRuntimePath(std::string value);
+    [[nodiscard]] static std::string NormalizeScenarioRuntimePath(std::string value);
 
     void Log(const std::string& message) const;
 
-    GraphKind m_kind = GraphKind::PDSDialogue;
+    GraphKind m_kind = GraphKind::Scenario;
     LogSink m_log;
     SelectedResourceCallback m_selectedResource;
+    ResourceResolver m_resourceResolver;
+    FieldOptionsCallback m_fieldOptions;
+    mutable std::unordered_map<std::string, std::vector<std::string>> m_fieldOptionsCache;
     const ProjectContext* m_project = nullptr;
     ax::NodeEditor::EditorContext* m_context = nullptr;
     std::vector<NodeTemplate> m_library;

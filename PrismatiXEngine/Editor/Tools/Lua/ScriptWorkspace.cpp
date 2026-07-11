@@ -3,73 +3,20 @@
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/IO/AtomicFile.h"
 #include "Engine/Resources/AssetRegistry.h"
+#include "Engine/VN/Commands/CommandRegistry.h"
 
 #include <imgui.h>
 #include <imgui_stdlib.h>
+#include <nlohmann/json.hpp>
 
 #include <array>
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
 namespace fs = std::filesystem;
 
 namespace px::editor {
-
-namespace {
-
-std::vector<std::pair<std::string, std::string>> ParseKeyValues(const std::string& s) {
-    std::vector<std::pair<std::string, std::string>> out;
-    size_t i = 0;
-    while (i < s.size()) {
-        while (i < s.size() && std::isspace(static_cast<unsigned char>(s[i]))) ++i;
-        const size_t keyStart = i;
-        while (i < s.size() && s[i] != '=' && !std::isspace(static_cast<unsigned char>(s[i]))) ++i;
-        if (i >= s.size() || s[i] != '=') {
-            while (i < s.size() && !std::isspace(static_cast<unsigned char>(s[i]))) ++i;
-            continue;
-        }
-        std::string key = s.substr(keyStart, i - keyStart);
-        ++i;
-        std::string value;
-        if (i < s.size() && s[i] == '"') {
-            ++i;
-            const size_t vs = i;
-            while (i < s.size() && s[i] != '"') ++i;
-            value = s.substr(vs, i - vs);
-            if (i < s.size()) ++i;
-        } else {
-            const size_t vs = i;
-            while (i < s.size() && !std::isspace(static_cast<unsigned char>(s[i]))) ++i;
-            value = s.substr(vs, i - vs);
-        }
-        if (!key.empty()) out.emplace_back(std::move(key), std::move(value));
-    }
-    return out;
-}
-
-std::string FindString(const std::vector<std::pair<std::string, std::string>>& kv,
-                       const std::string& key) {
-    for (const auto& [k, v] : kv) {
-        if (k == key) return v;
-    }
-    return {};
-}
-
-std::string ExtractRegisteredName(const std::string& line) {
-    const size_t call = line.find("RegisterCommand");
-    if (call == std::string::npos) return {};
-    size_t i = line.find('(', call);
-    if (i == std::string::npos) return {};
-    ++i;
-    while (i < line.size() && std::isspace(static_cast<unsigned char>(line[i]))) ++i;
-    if (i >= line.size() || (line[i] != '"' && line[i] != '\'')) return {};
-    const char quote = line[i++];
-    const size_t start = i;
-    while (i < line.size() && line[i] != quote) ++i;
-    return line.substr(start, i - start);
-}
-
-}
 
 void ScriptWorkspace::SetProject(const ProjectContext* context) {
     m_project = context;
@@ -104,47 +51,34 @@ void ScriptWorkspace::ScanCommands() {
     if (!m_project || !m_project->IsOpen()) return;
     const fs::path root = m_project->root;
 
-    for (const std::string& rel : m_files) {
-        std::ifstream in(root / rel, std::ios::binary);
-        if (!in) continue;
-
-        CustomCommandDef pending;
-        bool hasAnnotation = false;
-        std::string line;
-        while (std::getline(in, line)) {
-            const size_t at = line.find("--@");
-            if (at != std::string::npos) {
-                const std::string rest = line.substr(at + 3);
-                if (rest.rfind("command", 0) == 0) {
-                    const auto kv = ParseKeyValues(rest.substr(7));
-                    pending.name = FindString(kv, "name");
-                    pending.category = FindString(kv, "category");
-                    pending.description = FindString(kv, "desc");
-                    if (pending.category.empty()) pending.category = "Custom";
-                    hasAnnotation = true;
-                } else if (rest.rfind("param", 0) == 0) {
-                    const auto kv = ParseKeyValues(rest.substr(5));
-                    CustomCommandParam p;
-                    p.key = FindString(kv, "key");
-                    if (p.key.empty()) p.key = FindString(kv, "name");
-                    p.defaultValue = FindString(kv, "default");
-                    if (!p.key.empty()) pending.params.push_back(std::move(p));
-                    hasAnnotation = true;
-                }
-                continue;
+    std::error_code error;
+    const auto extensions = root / "Content/Extensions";
+    for (fs::recursive_directory_iterator iterator(extensions, error), end;
+         iterator != end && !error; iterator.increment(error)) {
+        if (!iterator->is_regular_file(error) || iterator->path().extension() != ".pxextension") continue;
+        std::ifstream stream(iterator->path(), std::ios::binary); std::ostringstream text; text << stream.rdbuf();
+        const auto manifest = nlohmann::json::parse(text.str(), nullptr, false);
+        if (manifest.is_discarded() || !manifest.is_object() ||
+            manifest.value("format", std::string{}) != "PrismatiXExtension" ||
+            manifest.value("version", 0) != 3) continue;
+        for (const auto& command : manifest.value("commands", nlohmann::json::array())) {
+            if (!command.is_object()) continue;
+            CustomCommandDef definition;definition.name=command.value("id",std::string{});
+            definition.category=command.value("category",std::string("Extension"));
+            definition.description=command.value("description",command.value("displayName",definition.name));
+            definition.sourceFile=fs::relative(iterator->path(),root,error).generic_string();
+            for(const auto& parameter:command.value("parameters",nlohmann::json::array())){
+                if(!parameter.is_object())continue;CustomCommandParam field;field.key=parameter.value("name",std::string{});field.label=parameter.value("label",field.key);field.type=parameter.value("type",std::string("string"));
+                if(parameter.contains("default")){if(parameter["default"].is_string())field.defaultValue=parameter["default"].get<std::string>();else field.defaultValue=parameter["default"].dump();}
+                field.options=parameter.value("options",std::vector<std::string>{});field.required=parameter.value("required",false);if(!field.key.empty())definition.params.push_back(std::move(field));
             }
-            const std::string registered = ExtractRegisteredName(line);
-            if (!registered.empty()) {
-                CustomCommandDef def = pending;
-                if (def.name.empty()) def.name = registered;
-                if (def.category.empty()) def.category = "Custom";
-                def.sourceFile = rel;
-                m_commands.push_back(std::move(def));
-                pending = CustomCommandDef{};
-                hasAnnotation = false;
-            } else if (hasAnnotation && line.find_first_not_of(" \t\r\n") == std::string::npos) {
-                pending = CustomCommandDef{};
-                hasAnnotation = false;
+            if(!definition.name.empty()){
+                if(!vn::CommandRegistry::Global().Find(definition.name)){
+                    vn::CommandDescriptor descriptor;descriptor.id=definition.name;descriptor.displayName=command.value("displayName",definition.name);descriptor.category=definition.category;descriptor.allowAdditionalParameters=false;descriptor.waitPolicy=command.value("await",false)?vn::CommandWaitPolicy::Async:vn::CommandWaitPolicy::Immediate;descriptor.rollbackPolicy=command.value("rollback",std::string("boundary"))=="reversible"?vn::RollbackPolicy::Reversible:vn::RollbackPolicy::Boundary;
+                    for(const auto& field:definition.params){vn::CommandParameterDescriptor parameter;parameter.name=field.key;parameter.label=field.label;parameter.required=field.required;parameter.options=field.options;if(field.type=="bool")parameter.type=VariantType::Bool;else if(field.type=="int")parameter.type=VariantType::Integer;else if(field.type=="number")parameter.type=VariantType::Number;else if(field.type=="resource")parameter.type=VariantType::ResourceRef;else if(field.type=="list")parameter.type=VariantType::Array;else if(field.type=="map"||field.type=="expression")parameter.type=VariantType::Object;else parameter.type=VariantType::String;descriptor.parameters.push_back(std::move(parameter));}
+                    (void)vn::CommandRegistry::Global().Register(std::move(descriptor));
+                }
+                m_commands.push_back(std::move(definition));
             }
         }
     }
@@ -248,25 +182,25 @@ void ScriptWorkspace::RenderFileList() {
             std::error_code ec;
             fs::create_directories(abs.parent_path(), ec);
             if (!fs::exists(abs)) {
+                const std::string extensionName = std::string(m_newName);
+                const std::string commandName = extensionName + ".command";
                 const std::string source =
-                       "-- " + std::string(m_newName) + ".lua  (PrismatiX extension script)\n"
-                       "-- Declare a custom VN command (it appears as a node in the Story editor):\n"
-                       "--@command name=\"shake\" category=\"Custom\" desc=\"Shake the screen\"\n"
-                       "--@param key=\"power\" default=\"8\"\n"
-                       "Engine.RegisterCommand(\"shake\", function(args)\n"
-                       "    Engine.log(\"shake power=\" .. tostring(args.power))\n"
+                       "-- " + extensionName + ".lua (PrismatiX 3.0 extension)\n"
+                       "Engine.RegisterCommand(\"" + commandName + "\", function(args)\n"
+                       "    Engine.log(\"" + commandName + " value=\" .. tostring(args.value))\n"
                        "end)\n";
                 const Status written = io::AtomicFile::WriteText(abs, source);
                 if (!written) {
                     for (const auto& diagnostic : written.Diagnostics()) diag::Emit(diagnostic);
                 } else {
-                    resource::AssetRegistry registry;
-                    auto registered = registry.RegisterAsset(m_project->root, abs, "lua-extension");
-                    if (!registered) {
-                        for (const auto& diagnostic : registered.Diagnostics()) {
-                            diag::Emit(diagnostic);
-                        }
-                    }
+                    const fs::path manifestPath = abs.parent_path() / (extensionName + ".pxextension");
+                    nlohmann::json manifest{{"format","PrismatiXExtension"},{"version",3},{"id",extensionName},{"order",0},{"entry",abs.filename().generic_string()},{"capabilities",nlohmann::json::array({"runtime"})}};
+                    manifest["commands"] = nlohmann::json::array({{{"id",commandName},{"displayName",extensionName+" Command"},{"category","Extension"},{"description","Typed custom command"},{"await",false},{"rollback","reversible"},{"parameters",nlohmann::json::array({{{"name","value"},{"label","Value"},{"type","string"},{"required",false},{"default",""}}})}}});
+                    const Status manifestWritten=io::AtomicFile::WriteText(manifestPath,manifest.dump(2)+"\n");
+                    if(!manifestWritten)for(const auto& diagnostic:manifestWritten.Diagnostics())diag::Emit(diagnostic);
+                    std::vector<std::string> manifests;for(fs::directory_iterator iterator(abs.parent_path(),ec),end;iterator!=end&&!ec;iterator.increment(ec))if(iterator->is_regular_file(ec)&&iterator->path().extension()==".pxextension")manifests.push_back("Content/Extensions/"+iterator->path().filename().generic_string());std::sort(manifests.begin(),manifests.end());
+                    const fs::path indexPath=abs.parent_path()/"extensions.pxindex";const Status indexWritten=io::AtomicFile::WriteText(indexPath,nlohmann::json(manifests).dump(2)+"\n");if(!indexWritten)for(const auto& diagnostic:indexWritten.Diagnostics())diag::Emit(diagnostic);
+                    resource::AssetRegistry registry;for(const auto& asset:{abs,manifestPath,indexPath})if(!fs::exists(resource::AssetRegistry::MetaPath(asset))){auto registered=registry.RegisterAsset(m_project->root,asset,"lua-extension");if(!registered)for(const auto& diagnostic:registered.Diagnostics())diag::Emit(diagnostic);}
                 }
             }
             Rescan();
@@ -290,8 +224,7 @@ void ScriptWorkspace::RenderFileList() {
 void ScriptWorkspace::RenderCommandList() {
     if (!ImGui::CollapsingHeader("Custom Commands", ImGuiTreeNodeFlags_DefaultOpen)) return;
     if (m_commands.empty()) {
-        ImGui::TextDisabled("None. Use Engine.RegisterCommand");
-        ImGui::TextDisabled("+ --@command annotations.");
+        ImGui::TextDisabled("None. Add typed commands to a .pxextension manifest.");
         return;
     }
     for (const CustomCommandDef& c : m_commands) {
@@ -364,13 +297,12 @@ void ScriptWorkspace::RenderEditor() {
     if (m_currentFile.empty()) {
         ImGui::TextDisabled("Select a .lua file on the left, or create one.");
         ImGui::TextWrapped(
-            "Declare custom commands with Engine.RegisterCommand(\"name\", fn). Add "
-            "--@command / --@param annotation comments above the call so the command "
-            "appears as a node (with parameters) in the Story editor.");
+            "Declare command schemas in a strict .pxextension manifest and implement them with "
+            "Engine.RegisterCommand(\"name\", fn). The schema generates typed Story nodes.");
         ImGui::Spacing();
         ImGui::TextDisabled(
-            "The player loads Content/Extensions/extensions.lua at startup — put custom "
-            "commands there (or have it require other files) so they run in-game.");
+            "The player loads declared .pxextension manifests. Modules, commands and "
+            "capabilities must be declared explicitly.");
         return;
     }
 

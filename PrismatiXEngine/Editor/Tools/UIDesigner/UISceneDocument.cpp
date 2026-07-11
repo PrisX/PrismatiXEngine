@@ -19,7 +19,7 @@ diag::Diagnostic UISceneDocument::Error(std::string code, std::string message, c
 }
 
 Status UISceneDocument::New(std::filesystem::path path, int width, int height) {
-    m_data = {}; m_data.kind = resource::DocumentKind::Scene; m_data.formatVersion = 1;
+    m_data = {}; m_data.kind = resource::DocumentKind::Scene;
     m_data.id = Uuid::Random(); m_data.type = "UIScene";
     m_data.properties["canvasSize"] = Vec2{static_cast<float>(width), static_cast<float>(height)};
     resource::NodeRecord root; root.id = Uuid::Random(); root.name = "Root"; root.type = "StackContainer";

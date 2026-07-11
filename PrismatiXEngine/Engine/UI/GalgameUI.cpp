@@ -7,7 +7,10 @@
 #include "Engine/UI/VirtualizedView.h"
 #include "Engine/UI/Widgets.h"
 #include "Engine/UI/UISceneLoader.h"
+#include "Engine/Core/TypeRegistry.h"
 
+#include <cmath>
+#include <optional>
 #include <utility>
 
 namespace px::ui {
@@ -87,7 +90,7 @@ Status GalgameUI::InstallTemplate(Screen screen){
     const auto it=m_templates.find(static_cast<int>(screen));if(it==m_templates.end())return GalgameFailure("PXUI2804","Requested Galgame UI template is not registered");
     auto loaded=InstantiateUIScene(it->second,&m_viewModel,m_context.Formatters());if(!loaded)return Status::Fail(loaded.Diagnostics());
     auto bindings=std::move(loaded.Value().bindings);auto animation=std::move(loaded.Value().animation);auto theme=std::move(loaded.Value().theme);const Status installed=Install(std::move(loaded.Value().root),screen);if(!installed)return installed;m_bindings=std::move(bindings);if(theme)m_context.SetTheme(std::move(*theme));if(animation){const Status status=m_context.SetAnimation(std::move(*animation),true);if(!status)return status;}
-    if(screen==Screen::HUD){m_speaker=FindNamed<Label>(m_context.Root(),"Speaker");m_dialogue=FindNamed<Label>(m_context.Root(),"Dialogue");m_nvlText=FindNamed<Label>(m_context.Root(),"NVLText");m_choices=FindNamed<VBoxContainer>(m_context.Root(),"Choices");m_mode=FindNamed<Label>(m_context.Root(),"ModeState");}
+    if(screen==Screen::HUD){m_speaker=FindNamed<Label>(m_context.Root(),"Speaker");m_dialogue=FindNamed<Label>(m_context.Root(),"Dialogue");m_nvlText=FindNamed<Label>(m_context.Root(),"NVLText");m_choices=FindNamed<VBoxContainer>(m_context.Root(),"Choices");m_mode=FindNamed<Label>(m_context.Root(),"ModeState");if(m_dialogue){m_dialogueBaseOffsets=m_dialogue->Offsets();m_dialogueBaseFontSize=m_dialogue->FontSize()>0?m_dialogue->FontSize():30;}}
     return Status::Ok();
 }
 void GalgameUI::Emit(std::string command, std::string argument) { m_pendingActions.push_back({std::move(command),std::move(argument)}); }
@@ -117,6 +120,8 @@ Status GalgameUI::Install(std::unique_ptr<Control> root, Screen screen) {
     const Status status = m_context.SetRoot(std::move(root)); if (!status) return status;
     m_screen = screen; return Status::Ok();
 }
+
+Status GalgameUI::ApplyAnimationProperty(const animation::TrackBinding& binding,const Variant& value){Control* control=binding.target=="$root"?m_context.Root():FindNamed<Control>(m_context.Root(),binding.target);if(!control)return GalgameFailure("PXUI2810","Animation UI target was not found: "+binding.target);const auto number=[&]()->std::optional<double>{if(const auto* real=value.TryGet<double>())return *real;if(const auto* integer=value.TryGet<std::int64_t>())return static_cast<double>(*integer);return std::nullopt;}();if(binding.kind==animation::TargetKind::Text&&number){if(auto* label=dynamic_cast<Label*>(control)){if(binding.property=="typewriter"){auto [iterator,_]=m_animationTextBase.try_emplace(binding.target,label->Text());const auto& full=iterator->second;std::size_t bytes=static_cast<std::size_t>(std::clamp(*number,0.0,1.0)*full.size());while(bytes<full.size()&&(static_cast<unsigned char>(full[bytes])&0xC0)==0x80)++bytes;label->SetText(full.substr(0,bytes));if(*number>=1.0)m_animationTextBase.erase(binding.target);return Status::Ok();}if(binding.property=="shake"||binding.property=="wave"){Rect offsets=label->Offsets();offsets.x+=static_cast<float>(std::sin(*number*37.0)*4.0);offsets.y+=static_cast<float>(std::sin(*number*23.0)*2.0);label->SetOffsets(offsets);return Status::Ok();}if(binding.property=="fade"||binding.property=="slide"||binding.property=="pop"||binding.property=="rainbow"||binding.property=="glitch")return Status::Ok();}}std::string property=binding.property;if(property=="panel-fade"||property=="modal-open"||property=="modal-close"||property=="button-hover"||property=="button-press")property="opacity";const auto* descriptor=TypeRegistry::Global().FindProperty(std::string(control->TypeName()),property);if(!descriptor||!descriptor->set)return GalgameFailure("PXUI2811","Animation UI property was not found: "+property);return descriptor->set(*control,value);}
 
 Status GalgameUI::ShowTitle() {
     if(HasTemplate(Screen::Title))return InstallTemplate(Screen::Title);
@@ -158,13 +163,26 @@ Status GalgameUI::ShowHUD(const DialoguePresentation& p) {
     if (auto status = Add(*root, std::move(quick)); !status) return status;
     if (auto status = Add(*root, std::move(mode)); !status) return status;
     const Status installed = Install(std::move(root), Screen::HUD); if (!installed) return installed;
+    if (m_dialogue) { m_dialogueBaseOffsets = m_dialogue->Offsets(); m_dialogueBaseFontSize = m_dialogue->FontSize() > 0 ? m_dialogue->FontSize() : 30; }
     return RefreshHUD(p);
 }
 
 Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
     if (m_screen != Screen::HUD || !m_context.Root()) return ShowHUD(p);
     if (m_speaker) m_speaker->SetText(p.speaker);
-    if (m_dialogue) m_dialogue->SetText(p.text);
+    if (m_dialogue) {
+        m_dialogue->SetText(p.text);
+        Rect offsets = m_dialogueBaseOffsets;
+        int fontSize = m_dialogueBaseFontSize;
+        if (!p.reducedMotion && p.effect == "shake") {
+            offsets.x += std::sin(p.effectProgress * 47.0f) * 3.0f;
+            offsets.y += std::sin(p.effectProgress * 71.0f) * 2.0f;
+        } else if (!p.reducedMotion && p.effect == "pulse") {
+            fontSize += static_cast<int>(std::lround((std::sin(p.effectProgress * 7.0f) + 1.0f) * 1.5f));
+        }
+        m_dialogue->SetOffsets(offsets);
+        m_dialogue->SetFontSize(static_cast<int>(std::lround(fontSize*std::clamp(p.textScale,.75f,2.0f))));
+    }
     (void)m_viewModel.Write("dialogue.speaker",Variant(p.speaker));(void)m_viewModel.Write("dialogue.text",Variant(p.text));
     if (m_nvlText) {
         std::string text; for (const auto& line : p.nvlLines) text += line + "\n\n"; m_nvlText->SetText(std::move(text));
@@ -225,6 +243,10 @@ Status GalgameUI::ShowSettings(const SettingsPresentation& s) {
         slider("BGM",s.bgm,128,"set.bgm.value");slider("SE",s.se,128,"set.se.value");slider("Voice",s.voice,128,"set.voice.value");slider("TextSpeed",s.textSpeedMs,120,"set.speed.value");
         if(auto* skip=FindNamed<CheckBox>(m_context.Root(),"SkipRead")){skip->SetChecked(s.skipReadOnly);skip->SetOnToggled([this](bool value){Emit("set.skipread.value",value?"true":"false");});}
         if(auto* full=FindNamed<CheckBox>(m_context.Root(),"Fullscreen")){full->SetChecked(s.fullscreen);full->SetOnToggled([this](bool value){Emit("set.fullscreen.value",value?"true":"false");});}
+        slider("TextScale",s.textScale*100.0,200,"set.textscale.value");
+        if(auto* value=FindNamed<CheckBox>(m_context.Root(),"HighContrast")){value->SetChecked(s.highContrast);value->SetOnToggled([this](bool changed){Emit("set.highcontrast.value",changed?"true":"false");});}
+        if(auto* value=FindNamed<CheckBox>(m_context.Root(),"ReducedMotion")){value->SetChecked(s.reducedMotion);value->SetOnToggled([this](bool changed){Emit("set.reducedmotion.value",changed?"true":"false");});}
+        if(auto* value=FindNamed<CheckBox>(m_context.Root(),"SelfVoicing")){value->SetChecked(s.selfVoicing);value->SetOnToggled([this](bool changed){Emit("set.selfvoicing.value",changed?"true":"false");});}
         return Status::Ok();
     }
     auto root = MakeRoot("Settings"); auto panel = std::make_unique<Panel>(); panel->SetAnchors({0.20f,0.08f,0.80f,0.92f}); panel->SetThemeVariant("Dialogue");

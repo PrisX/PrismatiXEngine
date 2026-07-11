@@ -8,6 +8,7 @@
 #include <SDL3_ttf/SDL_ttf.h>
 
 #include <algorithm>
+#include <chrono>
 #include <utility>
 #include <vector>
 
@@ -16,7 +17,6 @@ namespace px::graphics {
 namespace {
 // Soft cap on resident textures; a long VN session visits far more backgrounds
 // and sprites than are ever on screen together.
-constexpr std::size_t kMaxTextures = 128;
 void AssetDiagnostic(std::string code,const std::string& path,std::string message,std::string details={}){
     diag::Diagnostic d{.severity=diag::Severity::Error,.code=std::move(code),.category="Asset.Load",.message=std::move(message),.details=std::move(details)};d.source.path=path;diag::Emit(std::move(d));
 }
@@ -30,9 +30,8 @@ AssetCache::~AssetCache() {
 
 void AssetCache::BeginFrame() {
     ++m_frame;
-    if (m_textures.size() <= kMaxTextures) {
-        return;
-    }
+    for(auto iterator=m_pendingTextures.begin();iterator!=m_pendingTextures.end();){if(iterator->second.wait_for(std::chrono::seconds(0))!=std::future_status::ready){++iterator;continue;}SDL_Surface* surface=iterator->second.get();SDL_Texture* texture=surface?SDL_CreateTextureFromSurface(m_renderer,surface):nullptr;if(surface)SDL_DestroySurface(surface);std::size_t bytes=0;if(texture){float width=0,height=0;SDL_GetTextureSize(texture,&width,&height);bytes=static_cast<std::size_t>(width)*static_cast<std::size_t>(height)*4u;SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);}m_textures[iterator->first]={texture,m_frame,bytes};m_residentTextureBytes+=bytes;iterator=m_pendingTextures.erase(iterator);}
+    if (m_residentTextureBytes <= m_textureBudgetBytes) return;
     std::vector<std::pair<std::uint64_t, std::string>> order;
     order.reserve(m_textures.size());
     for (const auto& [path, entry] : m_textures) {
@@ -44,7 +43,7 @@ void AssetCache::BeginFrame() {
     }
     std::sort(order.begin(), order.end());
     for (const auto& [lastUse, path] : order) {
-        if (m_textures.size() <= kMaxTextures) {
+        if (m_residentTextureBytes <= m_textureBudgetBytes) {
             break;
         }
         if (lastUse + 1 >= m_frame) {
@@ -55,6 +54,7 @@ void AssetCache::BeginFrame() {
             if (it->second.texture) {
                 SDL_DestroyTexture(it->second.texture);
             }
+            m_residentTextureBytes-=std::min(m_residentTextureBytes,it->second.bytes);
             m_textures.erase(it);
         }
     }
@@ -65,12 +65,13 @@ SDL_Texture* AssetCache::Texture(const std::string& path) {
         it->second.lastUse = m_frame;
         return it->second.texture;
     }
+    if(m_pendingTextures.contains(path))return nullptr;
 
     auto bytes = m_vfs.Read(path);
     if (!bytes) {
         PX_LOG_WARN("AssetCache: texture not found '{}'", path);
         AssetDiagnostic("PXASSET7001",path,"Texture asset was not found");
-        m_textures[path] = TextureEntry{ nullptr, m_frame };
+        m_textures[path] = TextureEntry{ nullptr, m_frame,0 };
         return nullptr;
     }
 
@@ -79,7 +80,7 @@ SDL_Texture* AssetCache::Texture(const std::string& path) {
     if (!surface) {
         PX_LOG_WARN("AssetCache: failed to decode image '{}': {}", path, SDL_GetError());
         AssetDiagnostic("PXASSET7002",path,"Texture asset could not be decoded",SDL_GetError());
-        m_textures[path] = TextureEntry{ nullptr, m_frame };
+        m_textures[path] = TextureEntry{ nullptr, m_frame,0 };
         return nullptr;
     }
 
@@ -88,9 +89,12 @@ SDL_Texture* AssetCache::Texture(const std::string& path) {
     if (texture) {
         SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
     }
-    m_textures[path] = TextureEntry{ texture, m_frame };
+    std::size_t textureBytes=0;if(texture){float width=0,height=0;SDL_GetTextureSize(texture,&width,&height);textureBytes=static_cast<std::size_t>(width)*static_cast<std::size_t>(height)*4u;m_residentTextureBytes+=textureBytes;}
+    m_textures[path] = TextureEntry{ texture, m_frame,textureBytes };
     return texture;
 }
+
+void AssetCache::PreloadTexture(const std::string& path){if(path.empty()||m_textures.contains(path)||m_pendingTextures.contains(path))return;m_pendingTextures.emplace(path,std::async(std::launch::async,[this,path]()->SDL_Surface*{const auto bytes=m_vfs.Read(path);if(!bytes)return nullptr;SDL_IOStream* stream=SDL_IOFromConstMem(bytes->data(),bytes->size());return stream?IMG_Load_IO(stream,true):nullptr;}));}
 
 SDL_Surface* AssetCache::LoadSurface(const std::string& path) {
     auto bytes = m_vfs.Read(path);
@@ -130,7 +134,8 @@ SDL_Texture* AssetCache::RegisterMemoryTexture(const std::string& key, const voi
     if (texture) {
         SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
     }
-    m_textures[key] = TextureEntry{ texture, m_frame };
+    std::size_t textureBytes=0;if(texture){float width=0,height=0;SDL_GetTextureSize(texture,&width,&height);textureBytes=static_cast<std::size_t>(width)*static_cast<std::size_t>(height)*4u;m_residentTextureBytes+=textureBytes;}
+    m_textures[key] = TextureEntry{ texture, m_frame,textureBytes };
     return texture;
 }
 
@@ -139,6 +144,7 @@ void AssetCache::UnregisterTexture(const std::string& key) {
         if (it->second.texture) {
             SDL_DestroyTexture(it->second.texture);
         }
+        m_residentTextureBytes-=std::min(m_residentTextureBytes,it->second.bytes);
         m_textures.erase(it);
     }
 }
@@ -194,12 +200,14 @@ void AssetCache::TextureSize(SDL_Texture* texture, int& w, int& h) {
 }
 
 void AssetCache::Clear() {
+    for(auto& [_,future]:m_pendingTextures)if(SDL_Surface* surface=future.get())SDL_DestroySurface(surface);m_pendingTextures.clear();
     for (auto& [path, entry] : m_textures) {
         if (entry.texture) {
             SDL_DestroyTexture(entry.texture);
         }
     }
     m_textures.clear();
+    m_residentTextureBytes=0;
     for (auto& [key, entry] : m_fonts) {
         if (entry.font) {
             TTF_CloseFont(entry.font);

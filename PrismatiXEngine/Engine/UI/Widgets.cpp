@@ -1,4 +1,5 @@
 #include "Engine/UI/Widgets.h"
+#include "Engine/Text/Typography.h"
 
 #include "Engine/Graphics/Renderer2D.h"
 #include "Engine/UI/Theme.h"
@@ -126,6 +127,7 @@ Vec2 LineEdit::MeasureOverride(Vec2){return{220,44};}
 void LineEdit::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){const auto& style=theme.Resolve(ThemeVariant());DrawBox(renderer,LayoutRect(),StateBox(*this,style));const std::string& shown=m_text.empty()?m_placeholder:m_text;const Color color=m_text.empty()?style.textDisabled:style.text;renderer.DrawText(shown,LayoutRect().x+10,LayoutRect().y+8,style.font,style.fontSize,color);if(Focused()){const std::string prefix=m_text.substr(0,m_cursor);const Vec2 measured=renderer.MeasureText(prefix,style.font,style.fontSize);renderer.DrawRect({LayoutRect().x+10+measured.x,LayoutRect().y+8,1,static_cast<float>(style.fontSize+4)},style.focused.border);}}
 
 RichTextLabel::RichTextLabel(std::string markup,std::string name):Label({},std::move(name)){SetWrap(true);SetMarkup(std::move(markup));}
-void RichTextLabel::SetMarkup(std::string markup){m_markup=std::move(markup);std::string plain;bool tag=false;for(std::size_t i=0;i<m_markup.size();++i){if(m_markup[i]=='['){const auto end=m_markup.find(']',i);if(end!=std::string::npos){const auto token=m_markup.substr(i+1,end-i-1);if(token=="br")plain+='\n';i=end;continue;}}plain+=m_markup[i];}SetText(std::move(plain));}
+void RichTextLabel::SetMarkup(std::string markup){m_markup=std::move(markup);const auto parsed=text::ParseRubyMarkup(m_markup);m_ruby.clear();for(const auto& ruby:parsed.ruby)m_ruby.push_back({ruby.prefix,ruby.reading});SetText(parsed.plain);}
+void RichTextLabel::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){Label::DrawSelf(renderer,theme);const auto& style=theme.Resolve(ThemeVariant());const int baseSize=FontSize()>0?FontSize():style.fontSize;for(const auto& ruby:m_ruby){const Vec2 prefix=renderer.MeasureText(ruby.prefix,style.font,baseSize);renderer.DrawText(ruby.reading,LayoutRect().x+prefix.x,LayoutRect().y-std::max(8,baseSize/2),style.font,std::max(8,baseSize/2),style.text);}}
 
 }  // namespace px::ui

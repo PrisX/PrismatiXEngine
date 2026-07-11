@@ -9,6 +9,8 @@
 
 struct SDL_Renderer;
 struct SDL_Texture;
+struct TTF_Text;
+struct TTF_TextEngine;
 
 namespace px::graphics {
 
@@ -37,6 +39,7 @@ struct Shadow {
 class Renderer2D {
 public:
     Renderer2D(SDL_Renderer* renderer, AssetCache& assets);
+    ~Renderer2D();
 
     void SetLogicalSize(int width, int height);
     void GetLogicalSize(int& width, int& height) const;
@@ -67,7 +70,7 @@ public:
 
 private:
     struct CachedText {
-        SDL_Texture* texture = nullptr;
+        TTF_Text* text = nullptr;
         int w = 0;
         int h = 0;
     };
@@ -76,6 +79,7 @@ private:
     void Blit(SDL_Texture* texture, const Rect& dst, std::uint8_t alpha);
 
     SDL_Renderer* m_renderer;
+    TTF_TextEngine* m_textEngine = nullptr;
     AssetCache& m_assets;
     int m_camX = 0;
     int m_camY = 0;

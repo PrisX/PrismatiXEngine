@@ -31,7 +31,7 @@ public:
     }
     void SetEntryScript(const std::string& script) { m_entryScript = script; }
     [[nodiscard]] const std::string& EntryScript() const { return m_entryScript; }
-    // Script paths under Content/Script drive the graph; no central database is involved.
+    // Strict Scenario resources drive the Story Map; links are explicit typed targets.
     void SetAvailableScripts(std::vector<std::string> scripts) {
         m_availableScripts = std::move(scripts);
     }
@@ -63,6 +63,8 @@ public:
         m_chapterRemoved = std::move(cb);
     }
     void SetHeaderTexture(ImTextureID texture, int width, int height);
+    void SetReadOnly(bool value) { m_readOnly = value; }
+    [[nodiscard]] bool ReadOnly() const { return m_readOnly; }
     void SetNodePositionByScript(const std::string& script, ImVec2 position);
     void Rebuild(const std::vector<std::string>& scripts, const std::filesystem::path& projectRoot);
     void Render();
@@ -134,6 +136,7 @@ private:
     ImTextureID m_headerTexture = ImTextureID{};
     int m_headerTextureWidth = 0;
     int m_headerTextureHeight = 0;
+    bool m_readOnly = false;
 };
 
 }

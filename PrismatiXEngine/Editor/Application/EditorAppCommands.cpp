@@ -68,7 +68,7 @@ void EditorApp::HandleShortcuts() {
             std::error_code error;
             const auto runtime = std::filesystem::relative(session.id.canonicalPath,
                 m_project.Context().root, error).generic_string();
-            if (!error && session.type == DocumentType::PDS) OpenDocTab(runtime);
+            if (!error && session.type == DocumentType::Scenario) OpenDocTab(runtime);
             else if (!error && session.type == DocumentType::UIScene && m_preview) {
                 SetWorkspace(EditorWorkspace::UI); m_preview->LoadUI(runtime); SyncDesigner();
             } else if(!error&&session.type==DocumentType::Lua){SetWorkspace(EditorWorkspace::Script);m_scripts.OpenFile(runtime);}

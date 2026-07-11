@@ -144,8 +144,16 @@ Result<AssetEntry> AssetRegistry::RegisterAsset(const std::filesystem::path& pro
     if (std::filesystem::exists(metaPath)) {
         auto existing = LoadMeta(assetPath, metaPath);
         if (!existing) return existing;
+        if (const auto duplicate = m_byId.find(existing.Value().id); duplicate != m_byId.end()) {
+            return Result<AssetEntry>::Failure(AssetError(
+                "PXASSET-E1007", assetPath, "Duplicate asset GUID blocks registration.",
+                "Also used by " + m_entries[duplicate->second].sourcePath.generic_string(),
+                "asset.resolve_identity"));
+        }
+        const std::size_t index = m_entries.size();
         m_entries.push_back(existing.Value());
-        RebuildIndexes();
+        m_byId.emplace(existing.Value().id, index);
+        m_byPath.emplace(NormalPath(assetPath), index);
         return Result<AssetEntry>::Success(existing.Value());
     }
     AssetEntry entry;
@@ -156,8 +164,10 @@ Result<AssetEntry> AssetRegistry::RegisterAsset(const std::filesystem::path& pro
     entry.sourceHash = FnvHash(assetPath);
     Status saved = SaveMeta(entry);
     if (!saved) return Result<AssetEntry>::Failure(saved.Diagnostics());
+    const std::size_t index = m_entries.size();
     m_entries.push_back(entry);
-    RebuildIndexes();
+    m_byId.emplace(entry.id, index);
+    m_byPath.emplace(NormalPath(assetPath), index);
     return Result<AssetEntry>::Success(std::move(entry));
 }
 
@@ -175,8 +185,9 @@ Result<Uuid> AssetRegistry::ReassignIdentity(const std::filesystem::path& source
 }
 
 Status AssetRegistry::SetIncludeInBuild(const std::filesystem::path& sourcePath, bool include) {
-    for (AssetEntry& entry : m_entries) {
-        if (NormalPath(entry.sourcePath) != NormalPath(sourcePath)) continue;
+    const auto found = m_byPath.find(NormalPath(sourcePath));
+    if (found != m_byPath.end()) {
+        AssetEntry& entry = m_entries[found->second];
         if (entry.includeInBuild == include) return Status::Ok();
         entry.includeInBuild = include;
         return SaveMeta(entry);

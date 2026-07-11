@@ -108,6 +108,7 @@ private:
     ImportPlan m_plan;
     ImportProgress m_progress;
     std::filesystem::path m_stagingRoot;
+    std::filesystem::path m_journalPath;
     std::vector<std::filesystem::path> m_stagedFiles;
     std::vector<std::filesystem::path> m_committedPaths;
     std::vector<ImportCommitRecord> m_commitRecords;

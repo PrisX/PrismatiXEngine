@@ -22,12 +22,19 @@ struct DialogueState {
     float effectProgress = 0.0f;
 };
 
+struct DialogueSnapshot {
+    DialogueState state;
+    int speedMs = 30;
+};
+
 class Dialogue {
 public:
     void SetText(const std::string& speaker, const std::string& text, int speedMs, Color textColor,
                  Color outlineColor, const std::string& voice = "", const std::string& effect = "");
     void Update(std::uint64_t nowMs);
     void ShowAll();
+    [[nodiscard]] DialogueSnapshot CaptureState() const { return {m_state, m_speedMs}; }
+    void RestoreState(const DialogueSnapshot& snapshot);
 
     [[nodiscard]] const DialogueState& State() const { return m_state; }
     [[nodiscard]] bool Finished() const { return m_state.finished; }
@@ -40,6 +47,7 @@ private:
     std::vector<std::uint64_t> m_extraDelayMs;  // inline {w=ms} pause before each glyph
     int m_speedMs = 30;
     std::uint64_t m_lastStepMs = 0;
+    std::uint64_t m_effectStartMs = 0;
 };
 
 }

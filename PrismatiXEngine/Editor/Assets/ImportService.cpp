@@ -6,6 +6,10 @@
 #include <algorithm>
 #include <array>
 #include <fstream>
+#include <iomanip>
+#include <sstream>
+#include <atomic>
+#include <thread>
 
 namespace px::editor {
 namespace {
@@ -48,10 +52,82 @@ std::filesystem::path TypeFolder(std::string_view type) {
     if (type == "audio") return "Audio";
     if (type == "video") return "Video";
     if (type == "font") return "Fonts";
-    if (type == "script") return "Script";
+    if (type == "script") return "Scenario";
     if (type == "ui") return "UI";
     if (type == "lua") return "Extensions";
     return "Imported";
+}
+
+std::filesystem::path PathFromUtf8(const std::string& value) {
+    return std::filesystem::path(
+        std::u8string(reinterpret_cast<const char8_t*>(value.data()), value.size()));
+}
+
+void AppendJournal(const std::filesystem::path& journal, const std::string& operation,
+                   const std::filesystem::path& first = {},
+                   const std::filesystem::path& second = {}) {
+    std::ofstream stream(journal, std::ios::app);
+    if (!stream) throw std::runtime_error("could not open import transaction journal");
+    stream << operation;
+    if (!first.empty()) stream << ' ' << std::quoted(Utf8Path(first));
+    if (!second.empty()) stream << ' ' << std::quoted(Utf8Path(second));
+    stream << '\n';
+    stream.flush();
+    if (!stream) throw std::runtime_error("could not flush import transaction journal");
+}
+
+void RecoverInterruptedImports(const std::filesystem::path& projectRoot) {
+    const auto root = projectRoot / ".prismatix" / "import-staging";
+    std::error_code error;
+    if (!std::filesystem::exists(root, error)) return;
+    std::vector<std::filesystem::path> transactions;
+    for (std::filesystem::directory_iterator iterator(root, error), end;
+         iterator != end && !error; iterator.increment(error)) {
+        if (iterator->is_directory(error)) transactions.push_back(iterator->path());
+    }
+    for (const auto& transaction : transactions) {
+        error.clear();
+        const auto journal = transaction / "transaction.journal";
+        std::ifstream stream(journal);
+        if (!stream) continue;
+        struct Operation { std::string name; std::filesystem::path first, second; };
+        std::vector<Operation> operations;
+        bool committing = false;
+        bool completed = false;
+        std::string line;
+        while (std::getline(stream, line)) {
+            std::istringstream parser(line);
+            Operation operation;
+            std::string first, second;
+            parser >> operation.name;
+            if (parser >> std::quoted(first)) operation.first = PathFromUtf8(first);
+            if (parser >> std::quoted(second)) operation.second = PathFromUtf8(second);
+            if (operation.name == "committing") committing = true;
+            if (operation.name == "completed") completed = true;
+            operations.push_back(std::move(operation));
+        }
+        stream.close();
+        if (committing && !completed) {
+            for (auto operation = operations.rbegin(); operation != operations.rend(); ++operation) {
+                error.clear();
+                if (operation->name == "remove") {
+                    std::filesystem::remove(operation->first, error);
+                } else if (operation->name == "restore") {
+                    std::filesystem::remove(operation->second, error);
+                    error.clear();
+                    if (std::filesystem::exists(operation->first, error)) {
+                        std::filesystem::rename(operation->first, operation->second, error);
+                    }
+                }
+                if (error) {
+                    (void)ImportError("PXIMPORT9037", operation->first,
+                        "上次匯入交易需要手動復原", error.message());
+                    break;
+                }
+            }
+        }
+        if (!error) std::filesystem::remove_all(transaction, error);
+    }
 }
 
 }  // namespace
@@ -69,9 +145,10 @@ std::string ImportService::DetectType(const std::filesystem::path& path) {
         extension == ".webp" || extension == ".bmp") return "image";
     if (extension == ".mp3" || extension == ".ogg" || extension == ".wav" ||
         extension == ".flac" || extension == ".opus") return "audio";
-    if (extension == ".mp4" || extension == ".webm" || extension == ".mpeg") return "video";
+    if (extension == ".mp4" || extension == ".webm" || extension == ".mkv" ||
+        extension == ".mov" || extension == ".mpg" || extension == ".mpeg") return "video";
     if (extension == ".ttf" || extension == ".otf") return "font";
-    if (extension == ".pds") return "script";
+    if (extension == ".pxscenario") return "script";
     if (extension == ".pxscene") return "ui";
     if (extension == ".pxres" || extension == ".pxtheme" || extension == ".pxanim")
         return "resource";
@@ -138,6 +215,7 @@ Result<ImportPlan> ImportService::PrepareImpl(
         const std::vector<ImportSource>& sources,
         bool autoOrganize,
         bool preserveFolders) const {
+    RecoverInterruptedImports(projectRoot);
     if (projectRoot.empty() || destination.empty() || sources.empty()) {
         return Result<ImportPlan>::Failure(
             ImportError("PXIMPORT9001", destination, "匯入計畫缺少專案、目的地或來源檔案"));
@@ -231,40 +309,71 @@ void ImportService::Stage(std::stop_token stopToken) noexcept {
     std::error_code ec;
     std::filesystem::create_directories(m_stagingRoot / "files", ec);
     if (ec) return SetFailure("無法建立匯入 staging：" + ec.message());
-    std::array<char, 1024 * 1024> buffer{};
-    for (std::size_t index = 0; index < m_plan.items.size(); ++index) {
-        const auto& item = m_plan.items[index];
-        {
-            std::lock_guard lock(m_mutex);
-            m_progress.currentItem = index + 1;
-            m_progress.currentFile = Utf8Path(item.source.path.filename());
-        }
-        if (!item.enabled || item.policy == ImportConflictPolicy::Skip ||
-            item.policy == ImportConflictPolicy::UseExisting) continue;
-        if (m_cancel || stopToken.stop_requested()) {
-            std::lock_guard lock(m_mutex); m_progress.state = ImportState::Cancelled; return;
-        }
-        auto stagedName = std::filesystem::path(std::to_string(index));
-        stagedName += item.source.path.extension();
-        const auto staged = m_stagingRoot / "files" / stagedName;
-        std::ifstream input(item.source.path, std::ios::binary);
-        std::ofstream output(staged, std::ios::binary | std::ios::trunc);
-        if (!input || !output) return SetFailure("無法讀取或建立 staging 檔案：" +
-                                                 Utf8Path(item.source.path));
-        while (input) {
-            if (m_cancel || stopToken.stop_requested()) {
-                std::lock_guard lock(m_mutex); m_progress.state = ImportState::Cancelled; return;
+    m_journalPath = m_stagingRoot / "transaction.journal";
+    AppendJournal(m_journalPath, "staging");
+    std::atomic_size_t next{0};
+    std::atomic_size_t completed{0};
+    std::atomic_uintmax_t copied{0};
+    std::atomic_bool failed{false};
+    std::mutex failureMutex;
+    std::string failure;
+    const unsigned available = std::max(1u, std::thread::hardware_concurrency());
+    const std::size_t workerCount = std::min<std::size_t>({8u, available, m_plan.items.size()});
+    std::vector<std::jthread> workers;
+    workers.reserve(workerCount);
+    for (std::size_t worker = 0; worker < workerCount; ++worker) {
+        workers.emplace_back([&, stopToken](std::stop_token localToken) {
+            // Heap storage avoids the small default Windows worker stack.
+            std::vector<char> buffer(256 * 1024);
+            while (!failed && !m_cancel && !stopToken.stop_requested() &&
+                   !localToken.stop_requested()) {
+                const std::size_t index = next.fetch_add(1);
+                if (index >= m_plan.items.size()) break;
+                const auto& item = m_plan.items[index];
+                if (item.enabled && item.policy != ImportConflictPolicy::Skip &&
+                    item.policy != ImportConflictPolicy::UseExisting) {
+                    auto stagedName = std::filesystem::path(std::to_string(index));
+                    stagedName += item.source.path.extension();
+                    const auto staged = m_stagingRoot / "files" / stagedName;
+                    std::ifstream input(item.source.path, std::ios::binary);
+                    std::ofstream output(staged, std::ios::binary | std::ios::trunc);
+                    std::uintmax_t fileBytes = 0;
+                    if (input && output) {
+                        while (input && !m_cancel && !stopToken.stop_requested() &&
+                               !localToken.stop_requested()) {
+                            input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+                            const auto count = input.gcount();
+                            if (count <= 0) break;
+                            output.write(buffer.data(), count);
+                            if (!output) break;
+                            fileBytes += static_cast<std::uintmax_t>(count);
+                        }
+                    }
+                    if (!input.eof() || !output) {
+                        if (!m_cancel && !stopToken.stop_requested()) {
+                            failed = true;
+                            std::lock_guard lock(failureMutex);
+                            if (failure.empty()) failure = "無法 staging 素材：" + Utf8Path(item.source.path);
+                        }
+                        break;
+                    }
+                    m_stagedFiles[index] = staged;
+                    copied += fileBytes;
+                }
+                const auto done = ++completed;
+                std::lock_guard lock(m_mutex);
+                m_progress.currentItem = done;
+                m_progress.currentFile = Utf8Path(item.source.path.filename());
+                m_progress.copiedBytes = copied.load();
             }
-            input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-            const auto count = input.gcount();
-            if (count <= 0) break;
-            output.write(buffer.data(), count);
-            if (!output) return SetFailure("寫入 staging 失敗：" + Utf8Path(staged));
-            std::lock_guard lock(m_mutex);
-            m_progress.copiedBytes += static_cast<std::uintmax_t>(count);
-        }
-        m_stagedFiles[index] = staged;
+        });
     }
+    for (auto& worker : workers) worker.join();
+    workers.clear();
+    if (m_cancel || stopToken.stop_requested()) {
+        std::lock_guard lock(m_mutex); m_progress.state = ImportState::Cancelled; return;
+    }
+    if (failed) return SetFailure(failure.empty() ? "素材 staging 失敗" : failure);
     std::lock_guard lock(m_mutex);
     m_progress.state = ImportState::Ready;
     m_progress.message = "素材已準備完成";
@@ -319,6 +428,7 @@ Status ImportService::CommitImpl(resource::AssetRegistry& registry) {
     {
         std::lock_guard lock(m_mutex); m_progress.state = ImportState::Committing;
     }
+    AppendJournal(m_journalPath, "committing");
     struct Applied { std::filesystem::path target, backup; bool replaced = false; };
     std::vector<Applied> applied;
     std::vector<std::filesystem::path> createdMeta;
@@ -375,11 +485,13 @@ Status ImportService::CommitImpl(resource::AssetRegistry& registry) {
             std::filesystem::rename(item.target, operation.backup, ec);
             if (ec) return abort(Status::Fail(ImportError("PXIMPORT9007", item.target,
                 "無法備份被取代的素材", ec.message())));
+            AppendJournal(m_journalPath, "restore", operation.backup, item.target);
             applied.push_back(operation);
         }
         std::filesystem::rename(m_stagedFiles[index], item.target, ec);
         if (ec) return abort(Status::Fail(ImportError("PXIMPORT9008", item.target,
             "無法提交匯入素材", ec.message())));
+        AppendJournal(m_journalPath, "remove", item.target);
         if (!operation.replaced) applied.push_back(operation);
         const auto meta = resource::AssetRegistry::MetaPath(item.target);
         if (m_plan.preserveIdentity && !operation.replaced) {
@@ -404,8 +516,6 @@ Status ImportService::CommitImpl(resource::AssetRegistry& registry) {
             !inclusion) return abort(inclusion);
         m_committedPaths.push_back(item.target);
     }
-    const Status identity = registry.Scan(m_plan.projectRoot);
-    if (!identity) return abort(identity);
     std::filesystem::create_directories(m_undoRoot, ec);
     if (ec) return abort(Status::Fail(ImportError("PXIMPORT9011", m_undoRoot,
         "無法建立匯入 Undo 儲存區", ec.message())));
@@ -429,6 +539,7 @@ Status ImportService::CommitImpl(resource::AssetRegistry& registry) {
         }
         m_commitRecords.push_back(std::move(record));
     }
+    AppendJournal(m_journalPath, "completed");
     std::filesystem::remove_all(m_stagingRoot, ec);
     {
         std::lock_guard lock(m_mutex);
@@ -455,6 +566,7 @@ void ImportService::Reset() {
     if (!m_stagingRoot.empty()) std::filesystem::remove_all(m_stagingRoot, ec);
     m_plan = {};
     m_stagingRoot.clear();
+    m_journalPath.clear();
     m_stagedFiles.clear();
     m_committedPaths.clear();
     m_commitRecords.clear();

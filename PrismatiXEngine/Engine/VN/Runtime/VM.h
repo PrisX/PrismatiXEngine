@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Engine/Core/Types.h"
-#include "Engine/VN/PDS/Compiler.h"
+#include "Engine/VN/Runtime/Program.h"
 
 #include <cstdint>
 #include <functional>
@@ -31,6 +31,7 @@ enum class VMState {
     WaitingChoice,
     WaitingTimer,
     WaitingVideo,  // a [video] is playing; host calls NotifyVideoDone()
+    WaitingExternal, // an awaitable extension command resumes at a safe point
     Paused,        // stopped at a breakpoint (debugger)
     Finished,
 };
@@ -38,6 +39,29 @@ enum class VMState {
 struct Choice {
     std::string text;
     std::string target;
+};
+
+struct VMCallFrameState {
+    std::string script;
+    int pc = 0;
+};
+
+struct VMRuntimeState {
+    std::string scriptPath;
+    int pc = 0;
+    VMState state = VMState::Idle;
+    std::vector<VMCallFrameState> callStack;
+    std::vector<Choice> choices;
+    std::string speaker;
+    std::string pendingVoice;
+    Color textColor{245,248,255,255};
+    Color outlineColor{0,0,0,255};
+    int textSpeed = 28;
+    std::string textEffect;
+    std::string chapter;
+    std::string currentBgm;
+    std::uint64_t timerRemainingMs = 0;
+    bool currentLineSeen = true;
 };
 
 struct VMConfig {
@@ -49,7 +73,7 @@ struct VMConfig {
     std::string seDir = "Content/Audio/SFX/";
     std::string voiceDir = "Content/Audio/Voice/";
     std::string videoDir = "Content/Video/";
-    std::string scriptDir = "Content/Script/";
+    std::string scriptDir = "Content/Scenario/";
     int defaultTextSpeed = 28;
 };
 
@@ -68,7 +92,7 @@ public:
     void SetCommandHook(std::function<bool(const Command&)> hook) { m_commandHook = std::move(hook); }
     // Localization: maps source text to the active language. Applied to dialogue
     // lines and choice labels after variable substitution.
-    void SetTextFilter(std::function<std::string(const std::string&)> filter) {
+    void SetTextFilter(std::function<std::string(const std::string&, const std::string&)> filter) {
         m_textFilter = std::move(filter);
     }
     // Read-text tracking: called with "script:line" for every dialogue line;
@@ -88,6 +112,8 @@ public:
         m_videoHook = std::move(hook);
     }
     void NotifyVideoDone();
+    void WaitExternal() { m_state = VMState::WaitingExternal; }
+    void NotifyExternalDone();
     void SetUnlockHook(std::function<void(const std::string& kind, const std::string& id)> hook) {
         m_unlockHook = std::move(hook);
     }
@@ -125,6 +151,8 @@ public:
     }
 
     void SeekTo(const std::string& scriptPath, int pc);
+    [[nodiscard]] VMRuntimeState CaptureState() const;
+    bool RestoreState(const VMRuntimeState& state, std::uint64_t nowMs = 0);
 
 private:
     bool LoadProgram(const std::string& scriptPath);
@@ -150,13 +178,13 @@ private:
     VMConfig m_config;
     std::function<bool(const Command&)> m_commandHook;
     std::function<void(const std::string&, const std::string&)> m_unlockHook;
-    std::function<std::string(const std::string&)> m_textFilter;
+    std::function<std::string(const std::string&, const std::string&)> m_textFilter;
     std::function<bool(const std::string&)> m_seenHook;
     std::function<void(const std::string&, bool)> m_videoHook;
     bool m_currentLineSeen = true;
 
-    [[nodiscard]] std::string FilterText(const std::string& text) const {
-        return m_textFilter ? m_textFilter(text) : text;
+    [[nodiscard]] std::string FilterText(const std::string& text,const std::string& textId={}) const {
+        return m_textFilter ? m_textFilter(textId,text) : text;
     }
 
     Program m_program;
@@ -183,6 +211,7 @@ private:
     Color m_textColor{ 245, 248, 255, 255 };
     Color m_outlineColor{ 0, 0, 0, 255 };
     int m_textSpeed = 28;
+    std::string m_textEffect;
     std::string m_chapter;
     std::string m_currentBgm;
 

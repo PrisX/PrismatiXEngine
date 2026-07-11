@@ -1,10 +1,12 @@
 #include "Engine/VN/Runtime/VM.h"
 
 #include "Engine/Audio/AudioEngine.h"
+#include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/IO/VFS.h"
 #include "Engine/VN/Runtime/Backlog.h"
 #include "Engine/VN/Runtime/Dialogue.h"
-#include "Engine/VN/PDS/Parser.h"
+#include "Engine/VN/Expression/Expression.h"
+#include "Engine/VN/Scenario/ScenarioDocument.h"
 #include "Engine/VN/Runtime/Stage.h"
 #include "Engine/VN/Runtime/VariableStore.h"
 #include "Engine/Support/Logger.h"
@@ -78,11 +80,23 @@ bool VM::LoadProgram(const std::string& scriptPath) {
         PX_LOG_ERROR("VM: script not found '{}'", path);
         return false;
     }
-    ParsedScript parsed = ParsePDS(*text);
-    m_program = Compile(parsed);
-    for (const std::string& err : m_program.errors) {
-        PX_LOG_WARN("VM compile ({}) : {}", path, err);
+    if (!path.ends_with(".pxscenario")) {
+        PX_LOG_ERROR("VM: only PrismatiX 3.0 .pxscenario files are executable: '{}'", path);
+        return false;
     }
+    auto document = scenario::ParseScenario(*text, path);
+    if (!document) {
+        m_program = {};
+        for (const auto& diagnostic : document.Diagnostics()) {
+            m_program.errors.push_back(diag::Describe(diagnostic));
+        }
+    } else {
+        m_program = scenario::CompileScenario(document.Value());
+    }
+    for (const std::string& err : m_program.errors) {
+        PX_LOG_ERROR("VM compile ({}) : {}", path, err);
+    }
+    if (!m_program.errors.empty()) return false;
     m_scriptPath = scriptPath;
     m_pc = 0;
     m_pendingVoice.clear();
@@ -116,9 +130,33 @@ void VM::SeekTo(const std::string& scriptPath, int pc) {
     }
 }
 
+VMRuntimeState VM::CaptureState() const {
+    VMRuntimeState state;
+    state.scriptPath=m_scriptPath;state.pc=m_pc;state.state=m_state;state.choices=m_choices;
+    state.callStack.reserve(m_callStack.size());for(const auto& frame:m_callStack)state.callStack.push_back({frame.script,frame.pc});
+    state.speaker=m_speaker;state.pendingVoice=m_pendingVoice;state.textColor=m_textColor;
+    state.outlineColor=m_outlineColor;state.textSpeed=m_textSpeed;state.textEffect=m_textEffect;
+    state.chapter=m_chapter;state.currentBgm=m_currentBgm;state.currentLineSeen=m_currentLineSeen;
+    if(m_state==VMState::WaitingTimer){const std::uint64_t elapsed=m_nowMs>=m_timerStart?m_nowMs-m_timerStart:0;state.timerRemainingMs=elapsed>=m_timerMs?0:m_timerMs-elapsed;}
+    return state;
+}
+
+bool VM::RestoreState(const VMRuntimeState& state,std::uint64_t nowMs) {
+    if(state.scriptPath.empty()||!LoadProgram(state.scriptPath))return false;
+    if(state.pc<0||state.pc>static_cast<int>(m_program.code.size()))return false;
+    m_pc=state.pc;m_state=state.state;m_choices=state.choices;m_callStack.clear();
+    m_callStack.reserve(state.callStack.size());for(const auto& frame:state.callStack)m_callStack.push_back({frame.script,frame.pc});
+    m_speaker=state.speaker;m_pendingVoice=state.pendingVoice;m_textColor=state.textColor;
+    m_outlineColor=state.outlineColor;m_textSpeed=state.textSpeed;m_textEffect=state.textEffect;
+    m_chapter=state.chapter;m_currentBgm=state.currentBgm;m_currentLineSeen=state.currentLineSeen;
+    m_nowMs=nowMs;m_timerStart=nowMs;m_timerMs=state.timerRemainingMs;m_skipBacklogOnce=false;
+    m_skipBreakOnce=false;m_stepping=false;m_stepBudget=0;return true;
+}
+
 bool VM::Blocking() const {
     return m_state == VMState::WaitingClick || m_state == VMState::WaitingChoice ||
-           m_state == VMState::WaitingTimer || m_state == VMState::WaitingVideo;
+           m_state == VMState::WaitingTimer || m_state == VMState::WaitingVideo ||
+           m_state == VMState::WaitingExternal;
 }
 
 void VM::Run() {
@@ -203,16 +241,13 @@ void VM::Run() {
             PX_LOG_WARN("VM: [video] ignored (no video host) at line {}", cmd.line);
             continue;
         }
-        if (t == "if") {
-            const bool ok = EvaluateCondition(cmd);
-            m_pc = ok ? m_pc + 1 : (m_program.branch[m_pc] >= 0 ? m_program.branch[m_pc] : m_pc + 1);
+        if (t == "branch") {
+            const bool condition = EvaluateCondition(cmd);
+            const std::string target = condition ? cmd.Get("trueTarget") : cmd.Get("falseTarget");
+            if (!JumpToTarget(target)) ++m_pc;
             continue;
         }
-        if (t == "else") {
-            m_pc = m_program.branch[m_pc] >= 0 ? m_program.branch[m_pc] : m_pc + 1;
-            continue;
-        }
-        if (t == "endif" || t == "label") {
+        if (t == "label") {
             ++m_pc;
             continue;
         }
@@ -254,6 +289,7 @@ void VM::Run() {
 
         ExecuteSimple(cmd);
         ++m_pc;
+        if (m_state == VMState::WaitingExternal) return;
     }
     m_state = VMState::Finished;
 }
@@ -262,8 +298,14 @@ void VM::ExecuteSimple(const Command& cmd) {
     const std::string& t = cmd.type;
 
     if (t == "name" || t == "speaker" || t == "text") {
-        m_speaker = cmd.Get("speaker", cmd.Get("name", cmd.Get("value")));
+        const std::string speaker = cmd.Get("speaker", cmd.Get("name", cmd.Get("value")));
+        if (!speaker.empty()) m_speaker = speaker;
         if (cmd.Has("color")) m_textColor = ParseColor(cmd.Get("color"), m_textColor);
+        if (cmd.Has("outline")) m_outlineColor = ParseColor(cmd.Get("outline"), m_outlineColor);
+        if (cmd.Has("speed")) m_textSpeed = ParseInt(cmd.Get("speed"), m_textSpeed);
+        // Text headers describe the following dialogue block. An omitted
+        // effect intentionally clears the preceding block's effect.
+        m_textEffect = cmd.Get("effect");
         // A voice on the header belongs to the next spoken line.
         m_pendingVoice = cmd.Get("voice");
         return;
@@ -348,12 +390,23 @@ void VM::ExecuteSimple(const Command& cmd) {
     }
     if (t == "var") {
         const std::string name = cmd.Get("name");
-        const std::string p = cmd.Get("persistent");
-        const bool persistent = cmd.Has("persistent") && p != "false" && p != "0" && p != "no";
-        if (cmd.Has("add")) {
-            m_vars.Add(name, ParseInt(cmd.Get("add")), persistent);
-        } else {
-            m_vars.Set(name, ParseInt(cmd.Get("value")), persistent);
+        const bool typedPersistent = cmd.FindTyped("persistent") &&
+            cmd.FindTyped("persistent")->TryGet<bool>() &&
+            *cmd.FindTyped("persistent")->TryGet<bool>();
+        const bool persistent = typedPersistent;
+        if (cmd.FindTyped("add")) {
+            int delta = 0;
+            if (const Variant* typed = cmd.FindTyped("add")) {
+                if (const auto* integer = typed->TryGet<std::int64_t>()) {
+                    delta = static_cast<int>(*integer);
+                } else if (const auto* number = typed->TryGet<double>()) {
+                    delta = static_cast<int>(*number);
+                }
+            }
+            m_vars.Add(name, delta, persistent);
+        } else if (const Variant* value = cmd.FindTyped("value")) {
+            m_vars.SetValue(name, value->Clone(), persistent ? VariableScope::Persistent
+                                                             : VariableScope::SaveLocal);
         }
         return;
     }
@@ -399,7 +452,7 @@ void VM::HandleSay(const Command& cmd) {
     if (cmd.Has("speaker")) m_speaker = speaker;
     if (cmd.Has("color")) m_textColor = ParseColor(cmd.Get("color"), m_textColor);
 
-    const std::string text = FilterText(m_vars.Substitute(cmd.Get("value", cmd.Get("text"))));
+    const std::string text = FilterText(m_vars.Substitute(cmd.Get("value", cmd.Get("text"))),cmd.Get("textId"));
     std::string voice = cmd.Get("voice");
     if (voice.empty()) {
         voice = m_pendingVoice;  // from the preceding [text voice=...] header
@@ -430,7 +483,8 @@ void VM::HandleSay(const Command& cmd) {
     }
     const int speed = cmd.Has("speed") ? ParseInt(cmd.Get("speed"), m_textSpeed) : m_textSpeed;
 
-    m_dialogue.SetText(speaker, text, speed, m_textColor, m_outlineColor, voice, cmd.Get("effect"));
+    m_dialogue.SetText(speaker, text, speed, m_textColor, m_outlineColor, voice,
+                       cmd.Get("effect", m_textEffect));
     if (!m_skipBacklogOnce) {
         // Use the dialogue's cleaned text: inline tags like {w=300} are stripped.
         m_backlog.Push(speaker, m_dialogue.State().fullText, voice);
@@ -445,19 +499,44 @@ void VM::CollectChoices() {
     m_choices.clear();
     const auto& code = m_program.code;
     int i = m_pc;
-    while (i < static_cast<int>(code.size()) && code[i].type == "choice") {
-        m_choices.push_back(
-            Choice{ FilterText(m_vars.Substitute(code[i].Get("text", code[i].Get("value")))),
-                    code[i].Get("target") });
-        ++i;
+    while (i < static_cast<int>(code.size())) {
+        if (code[i].type == "choice") {
+            m_choices.push_back(
+                Choice{ FilterText(m_vars.Substitute(code[i].Get("text", code[i].Get("value"))),code[i].Get("textId")),
+                        code[i].Get("target") });
+            ++i;
+            continue;
+        }
+        // Scenario IR emits a stable statement label before every command.
+        // Labels between linked Choice nodes are metadata, not a block break.
+        if (!m_choices.empty() && code[i].type == "label" &&
+            i + 1 < static_cast<int>(code.size()) && code[i + 1].type == "choice") {
+            ++i;
+            continue;
+        }
+        break;
     }
 }
 
 bool VM::EvaluateCondition(const Command& cmd) const {
-    const std::string name = cmd.Get("var", cmd.Get("flag"));
-    const std::string op = cmd.Get("op");
-    const int rhs = ParseInt(cmd.Get("value"), 0);
-    return m_vars.Evaluate(name, op, rhs);
+    if (const Variant* encoded = cmd.FindTyped("expression")) {
+        const auto expression = ExpressionFromValue(*encoded, m_scriptPath);
+        if (!expression) {
+            for (const auto& diagnostic : expression.Diagnostics()) diag::Emit(diagnostic);
+            return false;
+        }
+        const auto result = m_vars.Evaluate(expression.Value());
+        if (!result) {
+            for (const auto& diagnostic : result.Diagnostics()) diag::Emit(diagnostic);
+            return false;
+        }
+        if (const bool* boolean = result.Value().TryGet<bool>()) return *boolean;
+        diag::Diagnostic diagnostic{.severity=diag::Severity::Error,.code="PXVM7601",
+                                    .category="VN.Runtime",
+                                    .message="If expression did not evaluate to bool"};
+        diagnostic.source.path=m_scriptPath;diag::Emit(std::move(diagnostic));return false;
+    }
+    return false;
 }
 
 bool VM::JumpToTarget(const std::string& target) {
@@ -469,8 +548,15 @@ bool VM::JumpToTarget(const std::string& target) {
         m_pc = idx;
         return true;
     }
-    if (LoadProgram(target)) {
-        m_pc = 0;
+    const std::size_t fragment = target.find('#');
+    const std::string script = fragment == std::string::npos ? target : target.substr(0, fragment);
+    const std::string entry = fragment == std::string::npos ? std::string{} : target.substr(fragment + 1);
+    if (LoadProgram(script)) {
+        m_pc = entry.empty() ? 0 : m_program.LabelIndex(entry);
+        if (m_pc < 0) {
+            PX_LOG_ERROR("VM: scenario entry '{}' not found in '{}'", entry, script);
+            return false;
+        }
         return true;
     }
     return false;
@@ -487,8 +573,11 @@ void VM::SelectChoice(int index) {
     // Step past the whole consecutive choice block first; a choice without a
     // target then continues after the block instead of re-prompting the rest.
     const auto& code = m_program.code;
-    while (m_pc < static_cast<int>(code.size()) && code[m_pc].type == "choice") {
-        ++m_pc;
+    while (m_pc < static_cast<int>(code.size())) {
+        if (code[m_pc].type == "choice") { ++m_pc; continue; }
+        if (code[m_pc].type == "label" && m_pc + 1 < static_cast<int>(code.size()) &&
+            code[m_pc + 1].type == "choice") { ++m_pc; continue; }
+        break;
     }
     JumpToTarget(chosen.target);
     Run();
@@ -502,6 +591,13 @@ void VM::Resume() {
 
 void VM::NotifyVideoDone() {
     if (m_state == VMState::WaitingVideo) {
+        Run();
+    }
+}
+
+void VM::NotifyExternalDone() {
+    if (m_state == VMState::WaitingExternal) {
+        m_state = VMState::Idle;
         Run();
     }
 }

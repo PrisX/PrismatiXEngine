@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <future>
 #include <string>
 #include <unordered_map>
 
@@ -23,6 +24,9 @@ public:
     AssetCache& operator=(const AssetCache&) = delete;
 
     [[nodiscard]] SDL_Texture* Texture(const std::string& path);
+    void PreloadTexture(const std::string& path);
+    void SetTextureBudget(std::size_t bytes) { m_textureBudgetBytes=bytes; }
+    [[nodiscard]] std::size_t ResidentTextureBytes() const { return m_residentTextureBytes; }
 
     // Call once per frame before any drawing: advances the LRU clock and evicts
     // textures that were not used recently (deferred so nothing in-flight on the
@@ -54,13 +58,17 @@ private:
     struct TextureEntry {
         SDL_Texture* texture = nullptr;
         std::uint64_t lastUse = 0;
+        std::size_t bytes = 0;
     };
 
     SDL_Renderer* m_renderer;
     io::VFS& m_vfs;
     std::unordered_map<std::string, TextureEntry> m_textures;
+    std::unordered_map<std::string,std::future<SDL_Surface*>> m_pendingTextures;
     std::unordered_map<std::string, FontEntry> m_fonts;
     std::uint64_t m_frame = 0;
+    std::size_t m_textureBudgetBytes=512u*1024u*1024u;
+    std::size_t m_residentTextureBytes=0;
 };
 
 }

@@ -13,6 +13,8 @@ typedef struct plm_t plm_t;
 
 namespace px::video {
 
+struct FfmpegState;
+
 // MPEG-1 (.mpg) playback via pl_mpeg: video to an SDL texture, MP2 audio
 // pushed to a dedicated SDL audio stream. Intended for OP/ED movies.
 class VideoPlayer {
@@ -30,7 +32,7 @@ public:
     // Draws letterboxed into the given logical-coordinate viewport.
     void Render(int logicalW, int logicalH);
 
-    [[nodiscard]] bool Playing() const { return m_plm != nullptr && !m_finished; }
+    [[nodiscard]] bool Playing() const { return (m_plm != nullptr || m_ffmpeg) && !m_finished; }
     [[nodiscard]] bool Finished() const { return m_finished; }
 
     // Internal decoder callbacks (pl_mpeg types are not forward-declarable).
@@ -38,6 +40,13 @@ public:
     void HandleAudioSamples(void* samples);
 
 private:
+    bool OpenFfmpeg(const std::string& vfsPath);
+    void UpdateFfmpeg(float dt);
+    bool DecodeNextFfmpegFrame();
+    void DecodeFfmpegAudio(void* packet);
+    void CloseFfmpeg();
+    static int ReadFfmpeg(void* opaque, std::uint8_t* buffer, int size);
+    static std::int64_t SeekFfmpeg(void* opaque, std::int64_t offset, int whence);
     SDL_Renderer* m_renderer;
     io::VFS& m_vfs;
 
@@ -51,6 +60,7 @@ private:
     SDL_AudioStream* m_audio = nullptr;
     float m_volume = 1.0f;
     bool m_finished = false;
+    std::unique_ptr<FfmpegState> m_ffmpeg;
 };
 
 }

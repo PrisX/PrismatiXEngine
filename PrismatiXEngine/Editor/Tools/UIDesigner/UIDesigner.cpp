@@ -4,6 +4,7 @@
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/UI/UISceneLoader.h"
 #include "Engine/UI/UITypeRegistry.h"
+#include "Engine/UI/ActionRegistry.h"
 
 #include <imgui_stdlib.h>
 
@@ -276,27 +277,21 @@ void UIDesigner::RenderInspector(const std::string& selectedAssetPath) {
     }
 
     ImGui::SeparatorText("Binding");
-    std::vector<std::string> bindingNames; for (const auto& [key, _] : node->properties) if (key.starts_with("bind.")) bindingNames.push_back(key);
-    for (const auto& key : bindingNames) {
-        std::string path = *node->properties[key].TryGet<std::string>();
-        if (ImGui::InputText(key.c_str(), &path, ImGuiInputTextFlags_EnterReturnsTrue)) EditVariant(key.c_str(), key, node->properties[key], Variant(path), true, false);
-        const std::string target=key.substr(5),formatterKey="formatter."+target;
-        std::string formatter=node->properties.contains(formatterKey)&&node->properties[formatterKey].TryGet<std::string>()?*node->properties[formatterKey].TryGet<std::string>():"";
-        if(ImGui::InputText(("formatter##"+target).c_str(),&formatter,ImGuiInputTextFlags_EnterReturnsTrue))
-            EditVariant("formatter",formatterKey,node->properties.contains(formatterKey)?node->properties[formatterKey]:Variant{},Variant(formatter),true,false);
-    }
+    VariantObject bindings;if(const auto found=node->properties.find("bindings");found!=node->properties.end()&&found->second.AsObject())bindings=*found->second.AsObject();
+    for(auto& [target,value]:bindings){auto* definition=value.AsObject();if(!definition)continue;std::string path=definition->contains("path")&&definition->at("path").TryGet<std::string>()?*definition->at("path").TryGet<std::string>():"";std::string formatter=definition->contains("formatter")&&definition->at("formatter").TryGet<std::string>()?*definition->at("formatter").TryGet<std::string>():"";bool changedBinding=ImGui::InputText((target+" path").c_str(),&path,ImGuiInputTextFlags_EnterReturnsTrue);changedBinding|=ImGui::InputText(("formatter##"+target).c_str(),&formatter,ImGuiInputTextFlags_EnterReturnsTrue);if(changedBinding){VariantObject changed=bindings;auto* changedDefinition=changed[target].AsObject();(*changedDefinition)["path"]=path;(*changedDefinition)["formatter"]=formatter;EditVariant("bindings","bindings",node->properties.contains("bindings")?node->properties["bindings"]:Variant{},Variant(std::move(changed)),true,false);}}
     if (ImGui::Button("Add typed binding")) ImGui::OpenPopup("AddBinding");
     if (ImGui::BeginPopup("AddBinding")) { for (const auto* property : properties) if (HasFlag(property->flags, PropertyFlags::Bindable) && ImGui::MenuItem(property->name.c_str())) {
-        EditVariant("binding", "bind." + property->name, Variant{}, Variant(std::string("viewModel.property")), true, false); ImGui::CloseCurrentPopup();
+        VariantObject changed=bindings;changed[property->name]=VariantObject{{"path",std::string("viewModel.property")},{"formatter",std::string{}}};EditVariant("bindings","bindings",node->properties.contains("bindings")?node->properties["bindings"]:Variant{},Variant(std::move(changed)),true,false); ImGui::CloseCurrentPopup();
     } ImGui::EndPopup(); }
     if (!selectedAssetPath.empty() && node->type == "TextureRect" && ImGui::Button("Use selected asset"))
         EditVariant("path", "path", node->properties.contains("path") ? node->properties["path"] : Variant{}, Variant(selectedAssetPath), true, false);
     ImGui::TextDisabled("條件式 UI 請繫結 ViewModel computed property；Binding 不執行表達式。");
     ImGui::SeparatorText("事件");
     type=node->type;
+    VariantObject events;if(const auto found=node->properties.find("events");found!=node->properties.end()&&found->second.AsObject())events=*found->second.AsObject();
     while(const auto* info=TypeRegistry::Global().Find(type)){
-        for(const auto& signal:info->signals){const std::string key="event."+signal.name;std::string command=node->properties.contains(key)&&node->properties[key].TryGet<std::string>()?*node->properties[key].TryGet<std::string>():"";
-            if(ImGui::InputText((signal.name+"##event").c_str(),&command,ImGuiInputTextFlags_EnterReturnsTrue))EditVariant(signal.name.c_str(),key,node->properties.contains(key)?node->properties[key]:Variant{},Variant(command),true,false);}
+        for(const auto& signal:info->signals){std::string command;if(const auto found=events.find(signal.name);found!=events.end()&&found->second.AsObject()){const auto action=found->second.AsObject()->find("action");if(action!=found->second.AsObject()->end()&&action->second.TryGet<std::string>())command=*action->second.TryGet<std::string>();}
+            if(ImGui::BeginCombo((signal.name+"##event").c_str(),command.empty()?"Select action":command.c_str())){for(const auto& action:ui::ActionRegistry::Builtins().Descriptors())if(ImGui::Selectable((action.category+" / "+action.label+"##"+action.id).c_str(),command==action.id)){VariantObject changed=events;changed[signal.name]=VariantObject{{"action",action.id},{"arguments",VariantObject{}}};EditVariant("events","events",node->properties.contains("events")?node->properties["events"]:Variant{},Variant(std::move(changed)),true,false);}ImGui::EndCombo();}}
         type=info->base;if(type.empty())break;
     }
 }
@@ -304,7 +299,7 @@ void UIDesigner::RenderInspector(const std::string& selectedAssetPath) {
 void UIDesigner::RebuildLayout() {
     m_layout.clear(); m_childPolicies.clear(); if (!m_document) return;
     resource::TypedDocument preview = m_document->Data();
-    for (auto& node : preview.nodes) std::erase_if(node.properties, [](const auto& item) { return item.first.starts_with("bind.") || item.first.starts_with("formatter."); });
+    for (auto& node : preview.nodes) node.properties.erase("bindings");
     auto scene = ui::InstantiateUIScene(preview, nullptr, m_formatters); if (!scene) return;
     Vec2 canvas{1280,720}; if (const auto it = preview.properties.find("canvasSize"); it != preview.properties.end()) if (const auto* size=it->second.TryGet<Vec2>()) canvas=*size;
     (void)scene.Value().root->Measure(canvas); scene.Value().root->Arrange({0,0,canvas.x,canvas.y});
@@ -665,7 +660,7 @@ bool UIDesigner::CanvasInput(const ImRect& viewport, ImVec2 p0, float scale, boo
 
 void UIDesigner::DrawOverlay(ImVec2 p0, float scale) {
     if (!m_document) return; ImDrawList* draw=ImGui::GetWindowDrawList();const Vec2 canvas=CanvasSize();const ImVec2 max{p0.x+canvas.x*scale,p0.y+canvas.y*scale};draw->PushClipRect(p0,max,true);
-    if(m_viewport.gridVisible){float step=m_gridSize;while(step*scale<12)step*=2;int line=0;for(float x=0;x<=canvas.x;x+=step,++line)draw->AddLine({p0.x+x*scale,p0.y},{p0.x+x*scale,max.y},line%4==0?IM_COL32(92,110,135,75):IM_COL32(72,84,102,40));line=0;for(float y=0;y<=canvas.y;y+=step,++line)draw->AddLine({p0.x,p0.y+y*scale},{max.x,p0.y+y*scale},line%4==0?IM_COL32(92,110,135,75):IM_COL32(72,84,102,40));}
+    if(m_viewport.gridVisible){float step=static_cast<float>(m_gridSize);while(step*scale<12)step*=2;int line=0;for(float x=0;x<=canvas.x;x+=step,++line)draw->AddLine({p0.x+x*scale,p0.y},{p0.x+x*scale,max.y},line%4==0?IM_COL32(92,110,135,75):IM_COL32(72,84,102,40));line=0;for(float y=0;y<=canvas.y;y+=step,++line)draw->AddLine({p0.x,p0.y+y*scale},{max.x,p0.y+y*scale},line%4==0?IM_COL32(92,110,135,75):IM_COL32(72,84,102,40));}
     if(!std::isnan(m_guideX))draw->AddLine({p0.x+m_guideX*scale,p0.y},{p0.x+m_guideX*scale,max.y},IM_COL32(255,92,180,230),1.5f);
     if(!std::isnan(m_guideY))draw->AddLine({p0.x,p0.y+m_guideY*scale},{max.x,p0.y+m_guideY*scale},IM_COL32(255,92,180,230),1.5f);
     for(const auto& node:m_document->Data().nodes){const auto it=m_layout.find(node.id);if(it==m_layout.end())continue;const bool selected=m_selection.contains(node.id),primary=node.id==m_selected,hover=node.id==m_hovered;if(!selected&&!hover&&!m_viewport.showAllOutlines)continue;const Rect r=it->second;const ImU32 color=selected?IM_COL32(71,140,191,255):IM_COL32(150,170,195,150);draw->AddRect({p0.x+r.x*scale,p0.y+r.y*scale},{p0.x+(r.x+r.w)*scale,p0.y+(r.y+r.h)*scale},color,3.0f,ImDrawFlags_None,selected?2.0f:1.0f);if(primary)draw->AddText({p0.x+r.x*scale+5,p0.y+r.y*scale-20},IM_COL32(220,232,245,255),node.name.c_str());}

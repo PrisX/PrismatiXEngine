@@ -24,7 +24,8 @@ SDL_Texture* EditorTextures::Load(const std::string& absPath, int* outW, int* ou
     if (it == m_cache.end()) {
         Entry entry;
         std::error_code error;
-        const auto path = std::filesystem::u8path(absPath);
+        const auto path = std::filesystem::path(
+            std::u8string(reinterpret_cast<const char8_t*>(absPath.data()), absPath.size()));
         const auto size = std::filesystem::file_size(path, error);
         constexpr std::uintmax_t kMaximumPreviewBytes = 512ull * 1024ull * 1024ull;
         if (error || size > kMaximumPreviewBytes) {

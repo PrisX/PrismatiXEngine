@@ -11,6 +11,23 @@ Status RouteFailure(std::string code, std::string message) {
 }
 }
 
+Status RouteTable::Register(RouteDescriptor descriptor) {
+    if (descriptor.id.empty() || descriptor.scene.Empty()) {
+        return RouteFailure("PXUI2310", "A route requires an id and scene ResourceId");
+    }
+    if (m_byId.contains(descriptor.id)) {
+        return RouteFailure("PXUI2311", "Duplicate route id: " + descriptor.id);
+    }
+    m_byId[descriptor.id] = m_routes.size();
+    m_routes.push_back(std::move(descriptor));
+    return Status::Ok();
+}
+
+const RouteDescriptor* RouteTable::Find(const std::string_view id) const {
+    const auto found = m_byId.find(std::string(id));
+    return found == m_byId.end() ? nullptr : &m_routes[found->second];
+}
+
 Status UIRouter::Register(std::string route, ScreenFactory factory) {
     if (route.empty() || !factory) return RouteFailure("PXUI2301", "Invalid UI route registration");
     if (m_factories.contains(route)) return RouteFailure("PXUI2302", "Duplicate UI route: " + route);
@@ -18,37 +35,96 @@ Status UIRouter::Register(std::string route, ScreenFactory factory) {
 }
 
 Status UIRouter::Navigate(std::string_view route, bool replace) {
-    const auto it = m_factories.find(std::string(route));
-    if (it == m_factories.end()) return RouteFailure("PXUI2303", "Unknown UI route: " + std::string(route));
-    auto created = it->second();
+    auto created = CreateEntry(route);
     if (!created) return Status::Fail(created.Diagnostics());
-    if (!created.Value()) return RouteFailure("PXUI2304", "UI route factory returned null: " + std::string(route));
     if (replace && !m_stack.empty()) m_stack.pop_back();
-    m_stack.push_back({std::string(route), std::move(created.Value())});
+    m_stack.push_back(created.TakeValue());
     return Status::Ok();
 }
 
+Status UIRouter::Push(const std::string_view route, RouteTransition) {
+    return Navigate(route, false);
+}
+
+Status UIRouter::Replace(const std::string_view route, RouteTransition) {
+    return Navigate(route, true);
+}
+
 Status UIRouter::Back() {
-    if (m_modal) return CloseModal();
+    if (!m_modals.empty()) return CloseModal();
     if (m_stack.size() <= 1) return RouteFailure("PXUI2305", "Cannot navigate back from the root route");
     m_stack.pop_back(); return Status::Ok();
 }
 
-Status UIRouter::ShowModal(std::string_view route) {
-    const auto it = m_factories.find(std::string(route));
-    if (it == m_factories.end()) return RouteFailure("PXUI2303", "Unknown UI route: " + std::string(route));
-    auto created = it->second(); if (!created) return Status::Fail(created.Diagnostics());
-    m_modal = std::move(created.Value());
-    if (!m_modal) return RouteFailure("PXUI2304", "UI modal factory returned null: " + std::string(route));
+Status UIRouter::ShowModal(std::string_view route, RouteTransition) {
+    auto created = CreateEntry(route);
+    if (!created) return Status::Fail(created.Diagnostics());
+    m_modals.push_back(created.TakeValue());
     return Status::Ok();
 }
 
 Status UIRouter::CloseModal() {
-    if (!m_modal) return RouteFailure("PXUI2306", "No modal UI is open");
-    m_modal.reset(); return Status::Ok();
+    if (m_modals.empty()) return RouteFailure("PXUI2306", "No modal UI is open");
+    m_modals.pop_back(); return Status::Ok();
 }
 
 Control* UIRouter::Current() const { return m_stack.empty() ? nullptr : m_stack.back().screen.get(); }
+Control* UIRouter::Modal() const {
+    return m_modals.empty() ? nullptr : m_modals.back().screen.get();
+}
 std::string_view UIRouter::CurrentRoute() const { return m_stack.empty() ? std::string_view{} : m_stack.back().route; }
+std::string_view UIRouter::CurrentModalRoute() const {
+    return m_modals.empty() ? std::string_view{} : m_modals.back().route;
+}
+
+RouteState UIRouter::CaptureState() const {
+    RouteState state;
+    state.stack.reserve(m_stack.size());
+    state.modals.reserve(m_modals.size());
+    for (const auto& entry : m_stack) state.stack.push_back(entry.route);
+    for (const auto& entry : m_modals) state.modals.push_back(entry.route);
+    return state;
+}
+
+Status UIRouter::RestoreState(const RouteState& state) {
+    std::vector<Entry> stack;
+    std::vector<Entry> modals;
+    stack.reserve(state.stack.size());
+    modals.reserve(state.modals.size());
+    for (const auto& route : state.stack) {
+        auto created = CreateEntry(route);
+        if (!created) return Status::Fail(created.Diagnostics());
+        stack.push_back(created.TakeValue());
+    }
+    for (const auto& route : state.modals) {
+        auto created = CreateEntry(route);
+        if (!created) return Status::Fail(created.Diagnostics());
+        modals.push_back(created.TakeValue());
+    }
+    m_stack = std::move(stack);
+    m_modals = std::move(modals);
+    return Status::Ok();
+}
+
+void UIRouter::Clear() {
+    m_stack.clear();
+    m_modals.clear();
+}
+
+Result<UIRouter::Entry> UIRouter::CreateEntry(const std::string_view route) const {
+    const auto it = m_factories.find(std::string(route));
+    if (it == m_factories.end()) {
+        return Result<Entry>::Failure(
+            RouteFailure("PXUI2303", "Unknown UI route: " + std::string(route)).Diagnostics());
+    }
+    auto created = it->second();
+    if (!created) return Result<Entry>::Failure(created.Diagnostics());
+    if (!created.Value()) {
+        return Result<Entry>::Failure(
+            RouteFailure("PXUI2304", "UI route factory returned null: " + std::string(route))
+                .Diagnostics());
+    }
+    return Result<Entry>::Success({std::string(route), std::move(created.Value())});
+}
 
 }  // namespace px::ui

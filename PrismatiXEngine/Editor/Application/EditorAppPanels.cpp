@@ -1,6 +1,6 @@
 #include "Editor/Application/EditorApp.h"
 
-#include "Engine/VN/PDS/Parser.h"
+#include "Engine/VN/Scenario/ScenarioDocument.h"
 #include "Engine/IO/AtomicFile.h"
 #include "Editor/Theme/EditorIcon.h"
 
@@ -91,7 +91,8 @@ void SDLCALL OnAssetsPicked(void*, const char* const* filelist, int) {
     try {
         if (filelist) {
             for (std::size_t index = 0; filelist[index]; ++index)
-                paths.emplace_back(std::filesystem::u8path(filelist[index]));
+                paths.emplace_back(std::u8string(
+                    reinterpret_cast<const char8_t*>(filelist[index])));
         }
     } catch (const std::exception& exception) {
         error = std::string("無法解析檔案選擇結果：") + exception.what();
@@ -227,7 +228,6 @@ void EditorApp::BuildDockLayout(unsigned int dockspaceId) {
             break;
         case EditorWorkspace::Story:
             ImGui::DockBuilderDockWindow("Node Editor", center);
-            ImGui::DockBuilderDockWindow("PDS Text", bottom);
             ImGui::DockBuilderDockWindow("Problems", bottom);
             ImGui::DockBuilderDockWindow("Console", bottom);
             break;
@@ -384,7 +384,7 @@ void EditorApp::BuildUI() {
             RenderHierarchy(); RenderPreview(); RenderAnimation(); RenderTheme();
             RenderProblems(); RenderConsole(); break;
         case EditorWorkspace::Story:
-            RenderNodeEditor(); RenderPDSText(); RenderProblems(); RenderConsole(); break;
+            RenderNodeEditor(); RenderProblems(); RenderConsole(); break;
         case EditorWorkspace::Flow:
             RenderFlow(); RenderProblems(); RenderConsole(); break;
         case EditorWorkspace::Script:
@@ -461,12 +461,22 @@ void EditorApp::SyncDesigner() {
     if (!uiMode) {
         return;
     }
-    const std::string abs = (m_project.Context().root / m_preview->CurrentUIPath()).string();
-    if (!abs.empty() && m_designerPath != abs) {
-        const Status status = ActivateUIDocument(abs, m_preview->CurrentUIPath());
+    if (!m_designer.Document()) {
+        const std::string runtimePath = m_project.Context().StartScenePath();
+        if (runtimePath.empty()) return;
+        const Status status = ActivateUIDocument(m_project.Context().root / runtimePath, runtimePath);
         if (!status) {
             for (const auto& diagnostic : status.Diagnostics()) diag::Emit(diagnostic);
         }
+        return;
+    }
+    std::error_code error;
+    const std::string runtimePath = fs::relative(m_designer.Document()->Path(),
+                                                 m_project.Context().root, error).generic_string();
+    if (!error && m_preview->CurrentUIPath() != runtimePath) {
+        // The active document is the source of truth. Preview navigation must
+        // never reactivate an older scene on the following frame.
+        m_preview->LoadUIDocument(m_designer.Document()->Data(), runtimePath);
     }
 }
 
@@ -504,7 +514,7 @@ void EditorApp::RenderMenuBar() {
             m_assets.Scan(m_project.Context());
         }
         if (ImGui::MenuItem("匯入素材…", "Ctrl+Shift+I")) {
-            static const SDL_DialogFileFilter filters[]{{"素材檔案", "png;jpg;jpeg;webp;bmp;mp3;ogg;wav;flac;opus;mp4;webm;ttf;otf;pds;pxscene;pxres;lua"}, {"所有檔案", "*"}};
+            static const SDL_DialogFileFilter filters[]{{"素材檔案", "png;jpg;jpeg;webp;bmp;mp3;ogg;wav;flac;opus;mp4;webm;ttf;otf;pxscenario;pxanim;pxscene;pxres;pxextension;lua"}, {"所有檔案", "*"}};
             if (BeginAssetPicker())
                 SDL_ShowOpenFileDialog(&OnAssetsPicked, nullptr, m_window.Handle(), filters,
                                        static_cast<int>(std::size(filters)), nullptr, true);
@@ -619,7 +629,7 @@ void EditorApp::RenderOpenDocuments() {
                 std::error_code error;
                 const auto runtime = fs::relative(session.id.canonicalPath,
                                                   m_project.Context().root, error).generic_string();
-                if (!error && session.type == DocumentType::PDS) {
+            if (!error && session.type == DocumentType::Scenario) {
                     SetWorkspace(EditorWorkspace::Story);
                     OpenDocTab(runtime);
                 } else if (!error && session.type == DocumentType::UIScene && m_preview) {
@@ -764,7 +774,7 @@ void EditorApp::RenderExternalDocumentConflict() {
             if (loaded && m_preview) m_preview->LoadUIDocument(m_designer.Document()->Data(), runtime);
         } else if(session&&session->type==DocumentType::UIScene) {
             if(auto found=m_inactiveDesigners.find(DocumentManager::Canonical(path).generic_string());found!=m_inactiveDesigners.end())loaded=static_cast<bool>(found->second.editor->Open(path));
-        } else if (session && session->type == DocumentType::PDS) {
+        } else if (session && session->type == DocumentType::Scenario) {
             for (auto& document : m_scriptDocs) if (DocumentManager::Canonical(document->DocumentPath()) == DocumentManager::Canonical(path)) {
                 loaded = document->OpenDocument(runtime); break;
             }
@@ -857,8 +867,8 @@ void EditorApp::OpenAssetByType(const AssetRecord& rec) {
     } else if (rec.type == "ui" && m_preview) {
         SetWorkspace(EditorWorkspace::UI);
         m_previewMode = 0;
-        m_preview->LoadUI(rec.runtimePath);
-        SyncDesigner();
+        const Status status = ActivateUIDocument(rec.absolutePath, rec.runtimePath);
+        if (!status) for (const auto& diagnostic : status.Diagnostics()) diag::Emit(diagnostic);
     } else if(rec.type=="lua") {
         SetWorkspace(EditorWorkspace::Script);
         m_scripts.OpenFile(rec.runtimePath);
@@ -1028,7 +1038,7 @@ void EditorApp::RenderAssetEntry(const AssetRecord& rec, bool gridMode, float ti
                            ImVec2(c.x + half.x, c.y + half.y));
         } else {
             const std::string tag = rec.type == "audio"   ? "AUDIO"
-                                    : rec.type == "script" ? "PDS"
+                                    : rec.type == "script" ? "Scenario"
                                     : rec.type == "ui"     ? "UI"
                                     : rec.type == "font"   ? "FONT"
                                     : rec.type == "lua"    ? "LUA"
@@ -1162,7 +1172,7 @@ void EditorApp::RenderAssets() {
         if (ImGui::Button(importLabel.c_str())) ImGui::OpenPopup("AssetImportMenu");
         if (ImGui::BeginPopup("AssetImportMenu")) {
             if (ImGui::MenuItem("匯入檔案…")) {
-                static const SDL_DialogFileFilter filters[]{{"素材檔案", "png;jpg;jpeg;webp;bmp;mp3;ogg;wav;flac;opus;mp4;webm;ttf;otf;pds;pxscene;pxres;lua"}, {"所有檔案", "*"}};
+                static const SDL_DialogFileFilter filters[]{{"素材檔案", "png;jpg;jpeg;webp;bmp;mp3;ogg;wav;flac;opus;mp4;webm;ttf;otf;pxscenario;pxanim;pxscene;pxres;pxextension;lua"}, {"所有檔案", "*"}};
                 if (BeginAssetPicker())
                     SDL_ShowOpenFileDialog(&OnAssetsPicked, nullptr, m_window.Handle(), filters,
                                            static_cast<int>(std::size(filters)), nullptr, true);
@@ -1200,7 +1210,7 @@ void EditorApp::RenderAssets() {
         }
         if (ImGui::BeginPopup("##assetNewMenu")) {
             if (ImGui::MenuItem("Folder")) { m_assetNewKind = 0; m_assetNewNameBuf[0] = 0; }
-            if (ImGui::MenuItem("Script (.pds)")) { m_assetNewKind = 1; m_assetNewNameBuf[0] = 0; }
+            if (ImGui::MenuItem("Scenario (.pxscenario)")) { m_assetNewKind = 1; m_assetNewNameBuf[0] = 0; }
             if (ImGui::MenuItem("UI Scene (.pxscene)")) { m_assetNewKind = 2; m_assetNewNameBuf[0] = 0; }
             ImGui::EndPopup();
         }
@@ -1465,9 +1475,9 @@ void EditorApp::RenderAssets() {
                                     std::size_t anchor=static_cast<std::size_t>(row);
                                     for(std::size_t find=0;find<files.size();++find)if(files[find]->runtimePath==m_assetSelectionModel.anchor){anchor=find;break;}
                                     if(!io.KeyCtrl)m_assetSelectionModel.selected.clear();
-                                    const std::size_t first=std::min(anchor,static_cast<std::size_t>(row));
+                                    const std::size_t rangeFirst=std::min(anchor,static_cast<std::size_t>(row));
                                     const std::size_t last=std::max(anchor,static_cast<std::size_t>(row));
-                                    for(std::size_t select=first;select<=last;++select)m_assetSelectionModel.selected.insert(files[select]->runtimePath);
+                                    for(std::size_t select=rangeFirst;select<=last;++select)m_assetSelectionModel.selected.insert(files[select]->runtimePath);
                                 }else if(io.KeyCtrl){if(selected)m_assetSelectionModel.selected.erase(rec.runtimePath);else m_assetSelectionModel.selected.insert(rec.runtimePath);}
                                 else{m_assetSelectionModel.selected.clear();m_assetSelectionModel.selected.insert(rec.runtimePath);}
                                 m_selectedAsset=rec.runtimePath;m_assetSelectionModel.anchor=rec.runtimePath;
@@ -1564,7 +1574,7 @@ void EditorApp::RenderAssets() {
             ImGui::OpenPopup("Create Asset");
         }
         if (ImGui::BeginPopupModal("Create Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            const char* kinds[] = { "Folder", "Script (.pds)", "UI Scene (.pxscene)" };
+            const char* kinds[] = { "Folder", "Scenario (.pxscenario)", "UI Scene (.pxscene)" };
             ImGui::TextDisabled("%s in %s/",
                                 kinds[std::clamp(m_assetNewKind, 0, 2)], m_assetDir.c_str());
             ImGui::SetNextItemWidth(240);
@@ -1574,7 +1584,7 @@ void EditorApp::RenderAssets() {
             if ((submit || ImGui::Button("Create")) && m_assetNewNameBuf[0] != 0) {
                 const fs::path cur = root / m_assetDir;
                 const fs::path createdPath=m_assetNewKind==0?cur/m_assetNewNameBuf:
-                    m_assetNewKind==1?cur/(std::string(m_assetNewNameBuf)+".pds"):
+                    m_assetNewKind==1?cur/(std::string(m_assetNewNameBuf)+".pxscenario"):
                     cur/(std::string(m_assetNewNameBuf)+".pxscene");
                 if(fs::exists(createdPath)){
                     diag::Diagnostic diagnostic{.severity=diag::Severity::Error,.code="PXASSETCREATE9407",.category="Editor.FileSystem",.message="同名項目已存在"};diagnostic.source.path=createdPath.generic_string();diag::Emit(std::move(diagnostic));
@@ -1695,8 +1705,12 @@ void EditorApp::RenderImportReview() {
             ImGui::TableSetupColumn("Build", ImGuiTableColumnFlags_WidthFixed, 52);
             ImGui::TableHeadersRow();
             const char* policies[]{"使用現有", "保留兩者", "取代", "略過"};
-            for (std::size_t index=0;index<m_importReview->items.size();++index) {
-                auto& item=m_importReview->items[index]; ImGui::PushID(static_cast<int>(index));
+            ImGuiListClipper clipper;
+            clipper.Begin(static_cast<int>(m_importReview->items.size()),
+                          ImGui::GetTextLineHeightWithSpacing());
+            while (clipper.Step()) for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
+                const std::size_t index = static_cast<std::size_t>(row);
+                auto& item=m_importReview->items[index]; ImGui::PushID(row);
                 ImGui::TableNextRow();ImGui::TableSetColumnIndex(0);ImGui::Checkbox("##enabled",&item.enabled);
                 ImGui::TableSetColumnIndex(1);
                 // Do not run native image decoders on external files in the review
@@ -1837,7 +1851,7 @@ void EditorApp::RenderPreview() {
         const char* modes[] = { "UI Scene", "VN Script" };
         if (ImGui::Combo("##mode", &m_previewMode, modes, 2)) {
             if (m_previewMode == 0) {
-                m_preview->LoadUI(m_project.Context().manifest.startUI);
+                SyncDesigner();
             }
             else {
                 m_preview->LoadVn(m_project.Context().manifest.startScript);
@@ -1854,7 +1868,8 @@ void EditorApp::RenderPreview() {
             if (ImGui::BeginCombo("##screen", current.empty() ? "(screen)" : current.c_str())) {
                 for (const AssetRecord& a : m_assets.Filter("", "ui")) {
                     if (ImGui::Selectable(a.runtimePath.c_str(), a.runtimePath == current)) {
-                        m_preview->LoadUI(a.runtimePath);
+                        const Status status = ActivateUIDocument(a.absolutePath, a.runtimePath);
+                        if (!status) for (const auto& diagnostic : status.Diagnostics()) diag::Emit(diagnostic);
                     }
                 }
                 ImGui::EndCombo();
@@ -1877,11 +1892,13 @@ void EditorApp::RenderPreview() {
                     std::error_code ec;
                     std::filesystem::create_directories(abs.parent_path(), ec);
                     if (!std::filesystem::exists(abs)) {
-                        const Status created = m_designer.New(abs);
-                        if (created) m_designer.Save();
+                        UIDesigner createdDesigner;
+                        const Status created = createdDesigner.New(abs);
+                        if (created) createdDesigner.Save();
                     }
                     m_assets.Scan(m_project.Context());
-                    m_preview->LoadUI(rel.generic_string());
+                    const Status activated = ActivateUIDocument(abs, rel.generic_string());
+                    if (!activated) for (const auto& diagnostic : activated.Diagnostics()) diag::Emit(diagnostic);
                     Log("Created screen " + rel.generic_string());
                     ImGui::CloseCurrentPopup();
                 }
@@ -2083,8 +2100,8 @@ void EditorApp::RenderNodeEditor() {
     if (ImGui::Begin("Node Editor")) {
         m_nodeEditorFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
         if (m_scriptDocs.empty()) {
-            ImGui::TextDisabled("Open a .pds from the Assets panel or the Flow map.");
-        } else if (ImGui::BeginTabBar("##pds-doc-tabs",
+            ImGui::TextDisabled("Open a .pxscenario from Assets or Story Map.");
+        } else if (ImGui::BeginTabBar("##scenario-doc-tabs",
                                       ImGuiTabBarFlags_Reorderable |
                                           ImGuiTabBarFlags_FittingPolicyScroll)) {
             int closeRequest = -1;
@@ -2106,6 +2123,8 @@ void EditorApp::RenderNodeEditor() {
                     m_activeDoc = i;
                     (void)m_docs.Activate(doc.DocumentPath());
                     doc.Render();
+                    const ImVec2 dropPosition=ImGui::GetWindowPos(),dropSize=ImGui::GetWindowSize();const ImRect dropArea(dropPosition,ImVec2(dropPosition.x+dropSize.x,dropPosition.y+dropSize.y));
+                    if(ImGui::BeginDragDropTargetCustom(dropArea,ImGui::GetID(("scenario-drop-"+path).c_str()))){if(const ImGuiPayload* payload=ImGui::AcceptDragDropPayload(kResourcePayload)){const std::string asset(static_cast<const char*>(payload->Data),payload->DataSize>0?payload->DataSize-1:0);doc.CreateNodeForAsset(asset);}ImGui::EndDragDropTarget();}
                     ImGui::EndTabItem();
                 }
                 if (!open) {
@@ -2162,56 +2181,53 @@ void EditorApp::RenderNodeEditor() {
     ImGui::End();
 }
 
-void EditorApp::RenderPDSText() {
-    if (ImGui::Begin("PDS Text")) {
-        NodeGraphEditor* doc = ActiveDocPtr();
-        if (!doc) {
-            ImGui::TextDisabled("No script open.");
-            ImGui::End();
-            return;
-        }
-        // Text-first editing: the buffer mirrors the compiled graph until the
-        // user types; Apply re-imports the text back into the node graph.
-        if (!m_pdsTextEditing) {
-            m_pdsTextBuf = doc->Compile();
-        }
-        ImGui::BeginDisabled(!m_pdsTextEditing);
-        if (ImGui::SmallButton("Apply to Graph")) {
-            if (doc->ImportPDSText(m_pdsTextBuf)) {
-                Log("PDS text applied to the node graph (unsaved).");
-            } else {
-                Log("PDS text apply failed.");
-            }
-            m_pdsTextEditing = false;
-        }
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Revert")) {
-            m_pdsTextEditing = false;
-        }
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        ImGui::TextDisabled("%s", m_pdsTextEditing
-                                      ? "edited — Apply writes back into the graph"
-                                      : "editable text view of the open script");
-        if (ImGui::InputTextMultiline("##pds", &m_pdsTextBuf, ImGui::GetContentRegionAvail())) {
-            m_pdsTextEditing = true;
-        }
-    }
-    ImGui::End();
-}
-
-
 void EditorApp::RenderAnimation() {
     if (ImGui::Begin("Animation")) {
-        if (m_previewMode != 0) {
-            ImGui::TextDisabled("Switch Preview to UI Scene mode to edit animations.");
-        }
-        else {
-            ImGui::Checkbox("Preview animations (play in canvas)", &m_previewAnims);
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Replay") && m_preview) m_preview->Reload();
-            ImGui::Separator();
-            m_designer.RenderAnimation();
+        if (ImGui::BeginTabBar("##animation-workspace")) {
+            if (ImGui::BeginTabItem("Timeline Clip")) {
+                const bool selectedClip = std::filesystem::path(m_selectedAsset).extension() == ".pxanim";
+                if (selectedClip && m_timelinePath != m_selectedAsset) {
+                    m_timelinePath = m_selectedAsset; m_timelineClip.reset(); m_timelineCursor = 0; m_timelineTrack = -1;
+                    std::ifstream stream(m_project.Context().root/m_timelinePath,std::ios::binary);
+                    std::ostringstream text; if(stream){text<<stream.rdbuf();auto parsed=animation::ParseAnimationClip(text.str(),m_timelinePath);if(parsed)m_timelineClip=parsed.TakeValue();else for(const auto& diagnostic:parsed.Diagnostics())diag::Emit(diagnostic);}
+                }
+                if (!m_timelineClip) {
+                    ImGui::TextDisabled("Select a .pxanim asset, or create an editable preset copy.");
+                    static int presetIndex = 0; const auto presets = animation::OfficialPresets();
+                    if (presetIndex >= static_cast<int>(presets.size())) presetIndex = 0;
+                    if (ImGui::BeginCombo("Preset",presets[static_cast<std::size_t>(presetIndex)].name.c_str())) {
+                        for(int i=0;i<static_cast<int>(presets.size());++i)if(ImGui::Selectable(presets[static_cast<std::size_t>(i)].name.c_str(),i==presetIndex))presetIndex=i;
+                        ImGui::EndCombo();
+                    }
+                    if (ImGui::Button("Create Editable Copy")) {
+                        auto clip=presets[static_cast<std::size_t>(presetIndex)];clip.id=Uuid::Random();
+                        std::string file=clip.name;std::replace(file.begin(),file.end(),'/','-');
+                        m_timelinePath="Content/Animations/"+file+".pxanim";
+                        const Status written=io::AtomicFile::WriteText(m_project.Context().root/m_timelinePath,animation::WriteAnimationClip(clip));
+                        if(written){m_timelineClip=std::move(clip);m_selectedAsset=m_timelinePath;auto registered=m_assetRegistry.RegisterAsset(m_project.Context().root,m_project.Context().root/m_timelinePath,"resource");if(!registered)for(const auto& d:registered.Diagnostics())diag::Emit(d);m_assets.Scan(m_project.Context());}
+                        else for(const auto& d:written.Diagnostics())diag::Emit(d);
+                    }
+                } else {
+                    auto& clip=*m_timelineClip; bool changed=false;
+                    changed|=ImGui::InputText("Name",&clip.name);changed|=ImGui::DragFloat("Duration",&clip.duration,.01f,.01f,3600.0f,"%.2f s");changed|=ImGui::Checkbox("Loop",&clip.loop);
+                    if(ImGui::Button(m_timelinePlaying?"Pause":"Play"))m_timelinePlaying=!m_timelinePlaying;ImGui::SameLine();if(ImGui::Button("Stop")){m_timelinePlaying=false;m_timelineCursor=0;}
+                    if(m_timelinePlaying){m_timelineCursor+=ImGui::GetIO().DeltaTime;if(m_timelineCursor>=clip.duration){if(clip.loop)m_timelineCursor=std::fmod(m_timelineCursor,std::max(.01f,clip.duration));else{m_timelineCursor=clip.duration;m_timelinePlaying=false;}}}
+                    changed|=ImGui::SliderFloat("Scrub",&m_timelineCursor,0.0f,std::max(.01f,clip.duration),"%.3f s");
+                    ImGui::SeparatorText("Tracks");
+                    for(int i=0;i<static_cast<int>(clip.tracks.size());++i){auto& track=clip.tracks[static_cast<std::size_t>(i)];const std::string label=track.binding.target+" · "+track.binding.property;if(ImGui::Selectable((label+"##track"+std::to_string(i)).c_str(),m_timelineTrack==i))m_timelineTrack=i;}
+                    if(ImGui::Button("Add Track")){clip.tracks.push_back({{animation::TargetKind::Stage,"$selection","alpha"},{{0.0f,0.0,animation::Curve::Linear},{clip.duration,1.0,animation::Curve::EaseOut}}});m_timelineTrack=static_cast<int>(clip.tracks.size())-1;changed=true;}
+                    if(m_timelineTrack>=0&&m_timelineTrack<static_cast<int>(clip.tracks.size())){auto& track=clip.tracks[static_cast<std::size_t>(m_timelineTrack)];changed|=ImGui::InputText("Target",&track.binding.target);changed|=ImGui::InputText("Property",&track.binding.property);ImGui::SeparatorText("Keyframes");for(std::size_t i=0;i<track.keys.size();++i){ImGui::PushID(static_cast<int>(i));auto& key=track.keys[i];changed|=ImGui::DragFloat("Time",&key.time,.01f,0,clip.duration);if(auto* number=key.value.TryGet<double>())changed|=ImGui::DragScalar("Value",ImGuiDataType_Double,number,.01f);else if(auto* integer=key.value.TryGet<std::int64_t>())changed|=ImGui::DragScalar("Value",ImGuiDataType_S64,integer);ImGui::Separator();ImGui::PopID();}}
+                    if(changed){for(auto& track:clip.tracks)std::sort(track.keys.begin(),track.keys.end(),[](const auto& a,const auto& b){return a.time<b.time;});}
+                    if(ImGui::Button("Save .pxanim")){const Status valid=clip.Validate(m_timelinePath);if(valid){const Status written=io::AtomicFile::WriteText(m_project.Context().root/m_timelinePath,animation::WriteAnimationClip(clip));if(!written)for(const auto& d:written.Diagnostics())diag::Emit(d);}else for(const auto& d:valid.Diagnostics())diag::Emit(d);}
+                }
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("UI Scene Animation")) {
+                ImGui::Checkbox("Preview in canvas", &m_previewAnims); ImGui::SameLine();
+                if (ImGui::SmallButton("Replay") && m_preview) m_preview->Reload();
+                m_designer.RenderAnimation(); ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
         }
     }
     ImGui::End();
@@ -2242,11 +2258,10 @@ void EditorApp::RenderProblems() {
         if (ImGui::BeginChild("##problemlist")) {
             int idx = 0;
             for (const std::string& p : m_problems) {
-                // "script.pds:NN  ..." rows open the script in the Node Editor.
-                const std::size_t ext = p.find(".pds:");
+                const std::size_t ext = p.find(".pxscenario:");
                 if (ext != std::string::npos && ext < 64) {
                     if (ImGui::Selectable((p + "##prob" + std::to_string(idx)).c_str())) {
-                        OpenDocTab(p.substr(0, ext + 4));
+                        OpenDocTab(p.substr(0, ext + 11));
                     }
                 } else {
                     ImGui::BulletText("%s", p.c_str());
@@ -2362,36 +2377,35 @@ void EditorApp::LocScanScripts() {
     }
     // Keep existing translations while re-collecting source lines.
     std::unordered_map<std::string, std::string> existing;
-    for (const auto& [source, translation] : m_locEntries) {
-        if (!translation.empty()) existing[source] = translation;
+    for (const auto& entry : m_locEntries) {
+        if (!entry.translation.empty()) existing[entry.id] = entry.translation;
     }
     m_locEntries.clear();
     std::unordered_set<std::string> seen;
-    const auto add = [&](const std::string& source) {
-        if (source.empty() || !seen.insert(source).second) {
+    const auto add = [&](const std::string& id,const std::string& source) {
+        if (id.empty() || !seen.insert(id).second) {
             return;
         }
-        const auto it = existing.find(source);
-        m_locEntries.emplace_back(source, it != existing.end() ? it->second : std::string{});
+        const auto it = existing.find(id);
+        m_locEntries.push_back({id,source,it != existing.end() ? it->second : std::string{}});
     };
 
-    const fs::path scriptDir = m_project.Context().root / "Content" / "Script";
+    const fs::path scriptDir = m_project.Context().root / "Content" / "Scenario";
     std::error_code ec;
     for (fs::directory_iterator it(scriptDir, ec), end; it != end && !ec; it.increment(ec)) {
-        if (!it->is_regular_file() || it->path().extension() != ".pds") continue;
+        if (!it->is_regular_file() || it->path().extension() != ".pxscenario") continue;
         std::ifstream in(it->path(), std::ios::binary);
         if (!in) continue;
         std::stringstream ss;
         ss << in.rdbuf();
-        const px::vn::ParsedScript parsed = px::vn::ParsePDS(ss.str());
-        for (const px::vn::Command& cmd : parsed.commands) {
-            if (cmd.type == "say") {
-                add(cmd.Get("value", cmd.Get("text")));
-            } else if (cmd.type == "text" && (cmd.Has("value") || cmd.Has("text"))) {
-                add(cmd.Get("value", cmd.Get("text")));
-            } else if (cmd.type == "choice") {
-                add(cmd.Get("text", cmd.Get("value")));
-            }
+        auto parsed = px::vn::scenario::ParseScenario(ss.str(), it->path().generic_string());
+        if (!parsed) continue;
+        for (const auto& node : parsed.Value().nodes) {
+            const char* field = node.command == "choice" ? "text" :
+                                (node.command == "say" || node.command == "text") ? "value" : nullptr;
+            if (!field) continue;
+            const auto found = node.parameters.find(field),id=node.parameters.find("textId");
+            if (found != node.parameters.end()&&id!=node.parameters.end()) if (const auto* text = found->second.TryGet<std::string>()) if(const auto* textId=id->second.TryGet<std::string>()) add(*textId,*text);
         }
     }
     Log("Localization: scanned " + std::to_string(m_locEntries.size()) + " source line(s).");
@@ -2409,22 +2423,22 @@ void EditorApp::LocLoad() {
         const Json j = Json::parse(in, nullptr, false);
         if (!j.is_discarded() && j.is_object()) {
             for (auto it = j.begin(); it != j.end(); ++it) {
-                if (it.value().is_string()) table[it.key()] = it.value().get<std::string>();
+                if (it.value().is_object()&&it.value().contains("translation")&&it.value()["translation"].is_string()) table[it.key()] = it.value()["translation"].get<std::string>();
             }
         }
     }
     LocScanScripts();
     std::unordered_set<std::string> seen;
-    for (auto& [source, translation] : m_locEntries) {
-        seen.insert(source);
-        if (const auto it = table.find(source); it != table.end()) {
-            translation = it->second;
+    for (auto& entry : m_locEntries) {
+        seen.insert(entry.id);
+        if (const auto it = table.find(entry.id); it != table.end()) {
+            entry.translation = it->second;
         }
     }
     // Keep stale entries from the file (sources no longer in any script).
-    for (const auto& [source, translation] : table) {
-        if (seen.insert(source).second) {
-            m_locEntries.emplace_back(source, translation);
+    for (const auto& [id, translation] : table) {
+        if (seen.insert(id).second) {
+            m_locEntries.push_back({id,"(source removed)",translation});
         }
     }
     m_locDirty = false;
@@ -2438,9 +2452,9 @@ void EditorApp::LocSave() {
     }
     Json j = Json::object();
     int count = 0;
-    for (const auto& [source, translation] : m_locEntries) {
-        if (!translation.empty()) {
-            j[source] = translation;
+    for (const auto& entry : m_locEntries) {
+        if (!entry.translation.empty()) {
+            j[entry.id] = Json{{"source",entry.source},{"translation",entry.translation}};
             ++count;
         }
     }
@@ -2485,9 +2499,9 @@ void EditorApp::LocExportCsv() {
     const fs::path path = dir / (std::string(m_locLang) + ".csv");
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     out << "\xEF\xBB\xBF";  // UTF-8 BOM so spreadsheet apps decode correctly
-    out << "source,translation\n";
-    for (const auto& [source, translation] : m_locEntries) {
-        out << quote(source) << ',' << quote(translation) << '\n';
+    out << "text_id,source,translation\n";
+    for (const auto& entry : m_locEntries) {
+        out << quote(entry.id) << ',' << quote(entry.source) << ',' << quote(entry.translation) << '\n';
     }
     Log("Localization: exported " + path.generic_string());
 }
@@ -2535,8 +2549,8 @@ void EditorApp::RenderLocalization() {
         ImGui::InputTextWithHint("##locfilter", "filter...", m_locFilter, sizeof(m_locFilter));
         ImGui::SameLine();
         int translated = 0;
-        for (const auto& [s, t] : m_locEntries) {
-            if (!t.empty()) ++translated;
+        for (const auto& entry : m_locEntries) {
+            if (!entry.translation.empty()) ++translated;
         }
         ImGui::TextDisabled("%d / %d translated", translated,
                             static_cast<int>(m_locEntries.size()));
@@ -2555,18 +2569,18 @@ void EditorApp::RenderLocalization() {
             ImGui::TableHeadersRow();
             const std::string filter = m_locFilter;
             for (int i = 0; i < static_cast<int>(m_locEntries.size()); ++i) {
-                auto& [source, translation] = m_locEntries[static_cast<std::size_t>(i)];
-                if (!filter.empty() && source.find(filter) == std::string::npos &&
-                    translation.find(filter) == std::string::npos) {
+                auto& entry = m_locEntries[static_cast<std::size_t>(i)];
+                if (!filter.empty() && entry.source.find(filter) == std::string::npos && entry.id.find(filter)==std::string::npos&&
+                    entry.translation.find(filter) == std::string::npos) {
                     continue;
                 }
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
                 ImGui::PushID(i);
-                ImGui::TextWrapped("%s", source.c_str());
+                ImGui::TextDisabled("%s",entry.id.c_str());ImGui::TextWrapped("%s", entry.source.c_str());
                 ImGui::TableSetColumnIndex(1);
                 ImGui::SetNextItemWidth(-1.0f);
-                if (ImGui::InputText("##tr", &translation)) {
+                if (ImGui::InputText("##tr", &entry.translation)) {
                     m_locDirty = true;
                 }
                 ImGui::PopID();
@@ -2621,10 +2635,10 @@ void EditorApp::RenderBuild() {
         manifestChanged |= ImGui::InputInt("Height", &m.gameHeight, 0, 0,
                                            ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::SetNextItemWidth(260);
-        if (ImGui::BeginCombo("Start UI", m.startUI.c_str())) {
-            for (const AssetRecord& a : m_assets.Filter("", "ui")) {
-                if (ImGui::Selectable(a.runtimePath.c_str(), a.runtimePath == m.startUI)) {
-                    m.startUI = a.runtimePath;
+        if (ImGui::BeginCombo("Start Route", m.startRoute.c_str())) {
+            for (const auto& route : m.routes) {
+                if (ImGui::Selectable(route.id.c_str(), route.id == m.startRoute)) {
+                    m.startRoute = route.id;
                     manifestChanged = true;
                 }
             }
@@ -2633,9 +2647,8 @@ void EditorApp::RenderBuild() {
         ImGui::SetNextItemWidth(260);
         if (ImGui::BeginCombo("Entry Script", m.startScript.c_str())) {
             for (const AssetRecord& a : m_assets.Filter("", "script")) {
-                const std::string name = std::filesystem::path(a.runtimePath).filename().string();
-                if (ImGui::Selectable(name.c_str(), name == m.startScript)) {
-                    m.startScript = name;
+                if (ImGui::Selectable(a.runtimePath.c_str(), a.runtimePath == m.startScript)) {
+                    m.startScript = a.runtimePath;
                     manifestChanged = true;
                     entryChanged = true;
                 }

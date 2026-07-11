@@ -58,6 +58,7 @@ void Dialogue::SetText(const std::string& speaker, const std::string& text, int 
     m_state.totalChars = static_cast<int>(m_glyphs.size());
     m_speedMs = speedMs;
     m_lastStepMs = 0;
+    m_effectStartMs = 0;
 
     if (speedMs <= 0) {
         ShowAll();
@@ -65,6 +66,8 @@ void Dialogue::SetText(const std::string& speaker, const std::string& text, int 
 }
 
 void Dialogue::Update(std::uint64_t nowMs) {
+    if (m_effectStartMs == 0) m_effectStartMs = nowMs;
+    m_state.effectProgress = static_cast<float>(nowMs - m_effectStartMs) / 1000.0f;
     if (m_state.finished) {
         return;
     }
@@ -91,6 +94,18 @@ void Dialogue::ShowAll() {
     m_state.displayText = m_state.fullText;
     m_state.currentChar = m_state.totalChars;
     m_state.finished = true;
+}
+
+void Dialogue::RestoreState(const DialogueSnapshot& snapshot) {
+    // Rebuild glyph boundaries through the normal parser, then restore the
+    // exact visible/typewriter state captured by the session.
+    SetText(snapshot.state.speaker, snapshot.state.fullText, std::max(1, snapshot.speedMs),
+            snapshot.state.textColor, snapshot.state.outlineColor, snapshot.state.voice,
+            snapshot.state.effect);
+    m_state = snapshot.state;
+    m_speedMs = snapshot.speedMs;
+    m_lastStepMs = 0;
+    m_effectStartMs = 0;
 }
 
 }
