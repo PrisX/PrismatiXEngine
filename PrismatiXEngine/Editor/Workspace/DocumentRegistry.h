@@ -29,8 +29,9 @@ struct DocumentId {
 
 struct DocumentViewportState {
     float zoom = 1.0f;
-    float panX = 0.0f;
-    float panY = 0.0f;
+    float scrollX = 0.0f;
+    float scrollY = 0.0f;
+    bool fitToViewport = true;
 };
 
 struct DocumentSession {

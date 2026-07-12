@@ -18,6 +18,42 @@ std::vector<Control*> VisibleChildren(Control& owner) {
 }
 }
 
+void EdgeRevealContainer::HandleEvent(UIEvent& event){
+    if(m_trigger!=RevealTrigger::Hover)return;
+    if(event.type==UIEventType::PointerEnter||event.type==UIEventType::PointerMove)m_pointerInside=true;
+    else if(event.type==UIEventType::PointerExit)m_pointerInside=false;
+}
+
+bool EdgeRevealContainer::HitTest(Vec2 point) const{
+    if(!IsVisibleInTree()||!Enabled()||GetMouseFilter()==MouseFilter::Ignore)return false;const Rect area=LayoutRect();
+    if(m_pinned||m_progress>.05f)return area.Contains(point.x,point.y);
+    if(m_trigger==RevealTrigger::Manual)return false;
+    Rect trigger;
+    switch(m_edge){
+    case RevealEdge::Top: trigger={area.x,area.y,area.w,std::min(area.h,m_triggerSize)};break;
+    case RevealEdge::Bottom: trigger={area.x,area.y+std::max(0.0f,area.h-m_triggerSize),area.w,std::min(area.h,m_triggerSize)};break;
+    case RevealEdge::Left: trigger={area.x,area.y,std::min(area.w,m_triggerSize),area.h};break;
+    case RevealEdge::Right: trigger={area.x+std::max(0.0f,area.w-m_triggerSize),area.y,std::min(area.w,m_triggerSize),area.h};break;
+    }
+    return trigger.Contains(point.x,point.y);
+}
+
+void EdgeRevealContainer::Update(float deltaSeconds){
+    Container::Update(deltaSeconds);
+    if(m_manualVisible&&m_holdRemaining>0.0f){m_holdRemaining=std::max(0.0f,m_holdRemaining-deltaSeconds);if(m_holdRemaining==0.0f)m_manualVisible=false;}
+    const float target=(m_pinned||(m_trigger==RevealTrigger::Hover?m_pointerInside:m_manualVisible))?1.0f:0.0f;
+    const float blend=1.0f-std::exp(-m_speed*std::max(0.0f,deltaSeconds));const float next=m_progress+(target-m_progress)*blend;
+    if(std::abs(next-m_progress)>.0001f){m_progress=next;InvalidateLayout();}else m_progress=target;
+}
+
+void EdgeRevealContainer::ArrangeOverride(Rect area){
+    const bool horizontal=m_edge==RevealEdge::Left||m_edge==RevealEdge::Right;
+    const float extent=horizontal?area.w:area.h;
+    const float direction=(m_edge==RevealEdge::Top||m_edge==RevealEdge::Left)?-1.0f:1.0f;
+    const float shift=(1.0f-m_progress)*std::max(0.0f,extent-m_triggerSize)*direction;
+    Container::ArrangeOverride(horizontal?Rect{area.x+shift,area.y,area.w,area.h}:Rect{area.x,area.y+shift,area.w,area.h});
+}
+
 Vec2 BoxContainer::MeasureOverride(Vec2 available) {
     const auto children = VisibleChildren(*this);
     Vec2 result{};

@@ -60,7 +60,7 @@ void ScriptWorkspace::ScanCommands() {
         const auto manifest = nlohmann::json::parse(text.str(), nullptr, false);
         if (manifest.is_discarded() || !manifest.is_object() ||
             manifest.value("format", std::string{}) != "PrismatiXExtension" ||
-            manifest.value("version", 0) != 3) continue;
+            manifest.value("version", 0) != 4) continue;
         for (const auto& command : manifest.value("commands", nlohmann::json::array())) {
             if (!command.is_object()) continue;
             CustomCommandDef definition;definition.name=command.value("id",std::string{});
@@ -194,7 +194,7 @@ void ScriptWorkspace::RenderFileList() {
                     for (const auto& diagnostic : written.Diagnostics()) diag::Emit(diagnostic);
                 } else {
                     const fs::path manifestPath = abs.parent_path() / (extensionName + ".pxextension");
-                    nlohmann::json manifest{{"format","PrismatiXExtension"},{"version",3},{"id",extensionName},{"order",0},{"entry",abs.filename().generic_string()},{"capabilities",nlohmann::json::array({"runtime"})}};
+                    nlohmann::json manifest{{"format","PrismatiXExtension"},{"version",4},{"id",extensionName},{"order",0},{"entry",abs.filename().generic_string()},{"capabilities",nlohmann::json::array({"runtime"})}};
                     manifest["commands"] = nlohmann::json::array({{{"id",commandName},{"displayName",extensionName+" Command"},{"category","Extension"},{"description","Typed custom command"},{"await",false},{"rollback","reversible"},{"parameters",nlohmann::json::array({{{"name","value"},{"label","Value"},{"type","string"},{"required",false},{"default",""}}})}}});
                     const Status manifestWritten=io::AtomicFile::WriteText(manifestPath,manifest.dump(2)+"\n");
                     if(!manifestWritten)for(const auto& diagnostic:manifestWritten.Diagnostics())diag::Emit(diagnostic);

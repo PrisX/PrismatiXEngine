@@ -8,6 +8,10 @@
 
 namespace px::ui {
 
+enum class HorizontalTextAlignment { Left, Center, Right };
+enum class VerticalTextAlignment { Top, Center, Bottom };
+enum class TextureScaleMode { Stretch, Fit, Fill, Original };
+
 class Panel : public Control {
 public:
     explicit Panel(std::string name = "Panel") : Control(std::move(name)) {}
@@ -31,6 +35,10 @@ public:
     void SetFontSize(int value) { m_fontSize = value; InvalidateLayout(); }
     [[nodiscard]] int FontSize() const { return m_fontSize; }
     void SetColor(Color value) { m_color = value; m_hasColor = true; }
+    void SetHorizontalAlignment(HorizontalTextAlignment value) { m_horizontalAlignment=value; }
+    void SetVerticalAlignment(VerticalTextAlignment value) { m_verticalAlignment=value; }
+    [[nodiscard]] HorizontalTextAlignment HorizontalAlignment() const { return m_horizontalAlignment; }
+    [[nodiscard]] VerticalTextAlignment VerticalAlignment() const { return m_verticalAlignment; }
 
 protected:
     Vec2 MeasureOverride(Vec2 available) override;
@@ -42,6 +50,8 @@ private:
     int m_fontSize = 0;
     Color m_color{};
     bool m_hasColor = false;
+    HorizontalTextAlignment m_horizontalAlignment = HorizontalTextAlignment::Left;
+    VerticalTextAlignment m_verticalAlignment = VerticalTextAlignment::Top;
     graphics::Renderer2D* m_measureRenderer = nullptr;
 };
 
@@ -55,6 +65,10 @@ public:
     void SetOnActivated(Activated value) { m_activated = std::move(value); }
     void SetCommand(std::string value) { m_command = std::move(value); }
     [[nodiscard]] const std::string& Command() const { return m_command; }
+    void SetHorizontalAlignment(HorizontalTextAlignment value) { m_horizontalAlignment=value; }
+    void SetVerticalAlignment(VerticalTextAlignment value) { m_verticalAlignment=value; }
+    [[nodiscard]] HorizontalTextAlignment HorizontalAlignment() const { return m_horizontalAlignment; }
+    [[nodiscard]] VerticalTextAlignment VerticalAlignment() const { return m_verticalAlignment; }
     void Activate();
     void HandleEvent(UIEvent& event) override;
 
@@ -66,6 +80,19 @@ private:
     std::string m_text;
     std::string m_command;
     Activated m_activated;
+    HorizontalTextAlignment m_horizontalAlignment = HorizontalTextAlignment::Center;
+    VerticalTextAlignment m_verticalAlignment = VerticalTextAlignment::Center;
+};
+
+// A compact button that keeps the normal button interaction and actions but
+// renders only its glyph. It is intended for HUD toolbars without button chrome.
+class IconButton final : public Button {
+public:
+    explicit IconButton(std::string icon = {}, std::string name = "IconButton") : Button(std::move(icon), std::move(name)) {}
+    [[nodiscard]] std::string_view TypeName() const override { return "IconButton"; }
+protected:
+    Vec2 MeasureOverride(Vec2 available) override;
+    void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) override;
 };
 
 class TextureRect : public Control {
@@ -77,11 +104,23 @@ public:
     [[nodiscard]] const std::string& Path() const { return m_path; }
     void SetOpacity(float value);
     [[nodiscard]] float Opacity() const { return m_opacity; }
+    void SetScaleMode(TextureScaleMode value) { m_scaleMode=value; }
+    [[nodiscard]] TextureScaleMode ScaleMode() const { return m_scaleMode; }
+    void SetHorizontalAlignment(HorizontalTextAlignment value) { m_horizontalAlignment=value; }
+    void SetVerticalAlignment(VerticalTextAlignment value) { m_verticalAlignment=value; }
+    [[nodiscard]] HorizontalTextAlignment HorizontalAlignment() const { return m_horizontalAlignment; }
+    [[nodiscard]] VerticalTextAlignment VerticalAlignment() const { return m_verticalAlignment; }
+    void SetLockAspectRatio(bool value) { m_lockAspectRatio=value; }
+    [[nodiscard]] bool LockAspectRatio() const { return m_lockAspectRatio; }
 protected:
     void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) override;
 private:
     std::string m_path;
     float m_opacity = 1.0f;
+    TextureScaleMode m_scaleMode = TextureScaleMode::Stretch;
+    HorizontalTextAlignment m_horizontalAlignment = HorizontalTextAlignment::Center;
+    VerticalTextAlignment m_verticalAlignment = VerticalTextAlignment::Center;
+    bool m_lockAspectRatio = true;
 };
 
 class ProgressBar : public Control {

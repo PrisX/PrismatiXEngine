@@ -208,6 +208,11 @@ void EditorApp::BuildDockLayout(unsigned int dockspaceId) {
     ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
     ImGui::DockBuilderSetNodeSize(dockspaceId, ImGui::GetMainViewport()->Size);
 
+    if(m_workspace==EditorWorkspace::UI){
+        ImGuiID center=dockspaceId;ImGuiID bottom=ImGui::DockBuilderSplitNode(center,ImGuiDir_Down,.24f,nullptr,&center);
+        ImGui::DockBuilderDockWindow("UI Designer",center);ImGui::DockBuilderDockWindow("Assets",bottom);ImGui::DockBuilderDockWindow("Open Documents",bottom);ImGui::DockBuilderDockWindow("Problems",bottom);ImGui::DockBuilderDockWindow("Console",bottom);ImGui::DockBuilderFinish(dockspaceId);return;
+    }
+
     ImGuiID center = dockspaceId;
     ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.20f, nullptr, &center);
     ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.26f, nullptr, &center);
@@ -218,14 +223,7 @@ void EditorApp::BuildDockLayout(unsigned int dockspaceId) {
     ImGui::DockBuilderDockWindow("Assets", leftBottom);
     ImGui::DockBuilderDockWindow("Inspector", right);
     switch (m_workspace) {
-        case EditorWorkspace::UI:
-            ImGui::DockBuilderDockWindow("Hierarchy", left);
-            ImGui::DockBuilderDockWindow("Preview", center);
-            ImGui::DockBuilderDockWindow("Theme", right);
-            ImGui::DockBuilderDockWindow("Animation", bottom);
-            ImGui::DockBuilderDockWindow("Problems", bottom);
-            ImGui::DockBuilderDockWindow("Console", bottom);
-            break;
+        case EditorWorkspace::UI: break;
         case EditorWorkspace::Story:
             ImGui::DockBuilderDockWindow("Node Editor", center);
             ImGui::DockBuilderDockWindow("Problems", bottom);
@@ -378,10 +376,10 @@ void EditorApp::BuildUI() {
     RenderOpenDocuments();
     RenderAssets();
     RenderImportReview();
-    RenderInspector();
+    if(m_workspace!=EditorWorkspace::UI)RenderInspector();
     switch (m_workspace) {
         case EditorWorkspace::UI:
-            RenderHierarchy(); RenderPreview(); RenderAnimation(); RenderTheme();
+            RenderPreview();
             RenderProblems(); RenderConsole(); break;
         case EditorWorkspace::Story:
             RenderNodeEditor(); RenderProblems(); RenderConsole(); break;
@@ -423,7 +421,7 @@ Status EditorApp::ActivateUIDocument(const std::filesystem::path& absolutePath,
     const auto canonical=DocumentManager::Canonical(absolutePath);
     const std::string key=canonical.generic_string();
     if(!m_designerPath.empty()&&DocumentManager::Canonical(m_designerPath)==canonical){
-        (void)m_docs.Activate(canonical);return Status::Ok();
+        (void)m_docs.Activate(canonical);m_uiFocusRequest=canonical;return Status::Ok();
     }
     if(m_designer.Document()){
         const auto current=DocumentManager::Canonical(m_designer.Document()->Path());
@@ -440,9 +438,14 @@ Status EditorApp::ActivateUIDocument(const std::filesystem::path& absolutePath,
     ConfigureDesigner(m_designer);
     m_designerPath=canonical.string();
     TrackDocument(canonical,DocumentType::UIScene,m_designer.Dirty());
+    (void)m_docs.Activate(canonical);
+    m_uiFocusRequest=canonical;
     if(const auto* session=m_docs.Find(canonical)){
         m_designer.ViewportState().zoom=session->viewport.zoom;
-        m_designer.ViewportState().pan={session->viewport.panX,session->viewport.panY};
+        m_designer.ViewportState().scrollX=session->viewport.scrollX;
+        m_designer.ViewportState().scrollY=session->viewport.scrollY;
+        m_designer.ViewportState().fitToViewport=session->viewport.fitToViewport;
+        m_designer.ViewportState().applyStoredScroll=true;
     }
     std::string runtimePath=requestedRuntimePath;
     if(runtimePath.empty()){
@@ -1811,13 +1814,13 @@ void EditorApp::RenderConsole() {
 }
 
 void EditorApp::RenderPreview() {
-    if (ImGui::Begin("Preview") && m_preview) {
+    if (ImGui::Begin("UI Designer") && m_preview) {
         if(ImGui::BeginTabBar("##ui-document-tabs",ImGuiTabBarFlags_Reorderable|ImGuiTabBarFlags_FittingPolicyScroll)){
             for(const auto& session:m_docs.Documents()){
                 if(session.type!=DocumentType::UIScene)continue;
                 bool open=true;ImGuiTabItemFlags flags=session.dirty?ImGuiTabItemFlags_UnsavedDocument:0;
                 const bool active=m_designer.Document()&&DocumentManager::Canonical(m_designer.Document()->Path())==session.id.canonicalPath;
-                if(active)flags|=ImGuiTabItemFlags_SetSelected;
+                if(!m_uiFocusRequest.empty()&&DocumentManager::Canonical(m_uiFocusRequest)==session.id.canonicalPath){flags|=ImGuiTabItemFlags_SetSelected;m_uiFocusRequest.clear();}
                 const std::string label=std::string(session.pinned?"◆ ":"")+session.label+(session.dirty?" ●":"")+"###ui-"+session.id.canonicalPath.generic_string();
                 if(ImGui::BeginTabItem(label.c_str(),session.pinned?nullptr:&open,flags)){
                     if(!active){std::error_code error;const auto runtime=fs::relative(session.id.canonicalPath,m_project.Context().root,error).generic_string();if(!error){const Status status=ActivateUIDocument(session.id.canonicalPath,runtime);if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);}}
@@ -1911,24 +1914,35 @@ void EditorApp::RenderPreview() {
         }
         ImGui::Separator();
 
+        const bool designerComposite=m_previewMode==0;
+        if(designerComposite){
+            ImGui::BeginTable("##ui-designer-composite",3,ImGuiTableFlags_Resizable|ImGuiTableFlags_BordersInnerV|ImGuiTableFlags_SizingStretchProp);
+            ImGui::TableSetupColumn("Layers",ImGuiTableColumnFlags_WidthFixed,260.0f);ImGui::TableSetupColumn("Canvas",ImGuiTableColumnFlags_WidthStretch);ImGui::TableSetupColumn("Inspector",ImGuiTableColumnFlags_WidthFixed,340.0f);ImGui::TableNextRow();ImGui::TableSetColumnIndex(0);
+            if(ImGui::BeginChild("##designer-layers",ImVec2(0,0))){ImGui::SeparatorText("Layers");m_designer.RenderHierarchy();}ImGui::EndChild();ImGui::TableSetColumnIndex(1);
+        }
+
         ImVec2 avail = ImGui::GetContentRegionAvail();
-        const bool vnMode = m_previewMode == 1;
+        const bool uiMode = m_previewMode == 0;
+        const bool vnMode = !uiMode;
         const float debugHeight = vnMode ? 230.0f : 0.0f;
         avail.y = std::max(80.0f, avail.y - debugHeight);
+        ImVec2 canvasCursor{};
+        if(uiMode){
+            ImGui::BeginChild("##designer-canvas-scroll",avail,ImGuiChildFlags_Borders,ImGuiWindowFlags_HorizontalScrollbar|ImGuiWindowFlags_NoNavInputs);
+            if(m_designer.ViewportState().applyStoredScroll){ImGui::SetScrollX(m_designer.ViewportState().scrollX);ImGui::SetScrollY(m_designer.ViewportState().scrollY);m_designer.ViewportState().applyStoredScroll=false;}
+            avail=ImGui::GetContentRegionAvail();canvasCursor=ImGui::GetCursorPos();
+        }
         const float gw = static_cast<float>(m_preview->Width());
         const float gh = static_cast<float>(m_preview->Height());
         const float fitScale = std::min(avail.x / gw, avail.y / gh);
-        const float scale = fitScale * (m_previewMode == 0 ? m_designer.ViewportState().zoom : 1.0f);
+        const float rawScale = uiMode?(m_designer.ViewportState().fitToViewport?fitScale:m_designer.ViewportState().zoom):fitScale;
+        const float framebufferScale=std::max(ImGui::GetIO().DisplayFramebufferScale.x,ImGui::GetIO().DisplayFramebufferScale.y);
+        const float scale=std::max(.01f,std::round(rawScale*gw*framebufferScale)/(gw*framebufferScale));
         const ImVec2 disp(gw * scale, gh * scale);
+        const ImVec2 contentSize{uiMode?std::max(avail.x,disp.x+40.0f):avail.x,uiMode?std::max(avail.y,disp.y+40.0f):avail.y};
         const ImVec2 viewportMin = ImGui::GetCursorScreenPos();
-        const ImRect viewport(viewportMin, ImVec2(viewportMin.x + avail.x, viewportMin.y + avail.y));
-        ImVec2 p0 = viewportMin;
-        p0.x += (avail.x - disp.x) * 0.5f;
-        p0.y += std::max(0.0f, (avail.y - disp.y) * 0.5f);
-        if (m_previewMode == 0) {
-            p0.x += m_designer.ViewportState().pan.x;
-            p0.y += m_designer.ViewportState().pan.y;
-        }
+        const ImRect viewport=uiMode?ImGui::GetCurrentWindow()->InnerRect:ImRect(viewportMin,ImVec2(viewportMin.x+avail.x,viewportMin.y+avail.y));
+        ImVec2 p0=viewportMin;p0.x+=std::max(20.0f,(contentSize.x-disp.x)*.5f);p0.y+=std::max(20.0f,(contentSize.y-disp.y)*.5f);
 
         const ImVec2 mouse = ImGui::GetIO().MousePos;
         const bool viewportHovered = viewport.Contains(mouse);
@@ -1936,11 +1950,10 @@ void EditorApp::RenderPreview() {
         const float localX = scale > 0 ? (mouse.x - p0.x) / scale : 0.0f;
         const float localY = scale > 0 ? (mouse.y - p0.y) / scale : 0.0f;
         const bool click = hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
-        const bool uiMode = m_previewMode == 0;
-
         const bool previewClick = uiMode
                                       ? (m_designer.ViewportState().interactivePreview && click)
                                       : click;
+        m_preview->SetDisplayScale(scale*framebufferScale,uiMode&&m_designer.ViewportState().pixelExactPreview);
         m_preview->Tick(ImGui::GetIO().DeltaTime, SDL_GetTicks(), hovered, localX, localY,
                         previewClick);
 
@@ -2089,9 +2102,11 @@ void EditorApp::RenderPreview() {
         }
         if (uiMode) {
             ImGui::PopClipRect();
-            ImGui::SetCursorScreenPos(ImVec2(viewportMin.x, viewportMin.y + avail.y));
-            ImGui::Dummy(ImVec2(avail.x, 1));
+            ImGui::SetCursorPos(canvasCursor);ImGui::Dummy(contentSize);
+            m_designer.ViewportState().scrollX=ImGui::GetScrollX();m_designer.ViewportState().scrollY=ImGui::GetScrollY();
+            ImGui::EndChild();
         }
+        if(designerComposite){ImGui::TableSetColumnIndex(2);if(ImGui::BeginChild("##designer-inspector",ImVec2(0,0))){ImGui::SeparatorText("Inspector");m_designer.RenderInspector(m_selectedAsset);if(ImGui::CollapsingHeader("Styles")){m_designer.RenderTheme();}if(ImGui::CollapsingHeader("Animation")){m_designer.RenderAnimation();}}ImGui::EndChild();ImGui::EndTable();}
     }
     ImGui::End();
 }

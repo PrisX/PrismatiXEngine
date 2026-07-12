@@ -112,6 +112,7 @@ public:
 
     [[nodiscard]] virtual bool HitTest(Vec2 point) const;
     virtual void HandleEvent(UIEvent& event);
+    virtual void Update(float deltaSeconds);
     virtual void Draw(graphics::Renderer2D& renderer, const Theme& theme);
 
     [[nodiscard]] bool Hovered() const { return m_hovered; }

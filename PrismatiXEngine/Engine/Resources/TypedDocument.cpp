@@ -126,6 +126,15 @@ Result<Variant> ParseValue(std::string_view raw, const std::string& path, int li
                     return Result<Variant>::Success(Variant(ResourceRefValue{ *id, pathText }));
         }
     }
+    if (auto args = typed("token")) {
+        if (args->size() == 1) {
+            bool ok = false;
+            std::string name = Unescape((*args)[0], ok);
+            if (ok && !name.empty())
+                return Result<Variant>::Success(Variant(TokenRefValue{std::move(name)}));
+        }
+        return Result<Variant>::Failure(ParseError(path, line, "token() requires one non-empty quoted name."));
+    }
     if (auto args = typed("array")) {
         VariantArray array;
         for (const auto& argument : *args) {
@@ -186,6 +195,7 @@ std::string ValueText(const Variant& value) {
         case VariantType::Color: { const Color c = *value.TryGet<Color>(); out << "color(" << static_cast<int>(c.r) << ", " << static_cast<int>(c.g) << ", " << static_cast<int>(c.b) << ", " << static_cast<int>(c.a) << ')'; return out.str(); }
         case VariantType::Uuid: return "uuid(" + Quote(value.TryGet<Uuid>()->ToString()) + ")";
         case VariantType::ResourceRef: { const auto& r = *value.TryGet<ResourceRefValue>(); return "res(" + Quote(r.id.ToString()) + ", " + Quote(r.lastKnownPath) + ")"; }
+        case VariantType::TokenRef: return "token(" + Quote(value.TryGet<TokenRefValue>()->name) + ")";
         case VariantType::Array: {
             std::string text="array(";const auto* array=value.AsArray();for(std::size_t i=0;array&&i<array->size();++i){if(i)text+=", ";text+=ValueText((*array)[i]);}return text+")";
         }
@@ -235,7 +245,7 @@ Result<TypedDocument> ParseTypedDocument(std::string_view text, const std::strin
                 continue;
             }
             document.formatVersion = version;
-            if(version!=TypedDocument::CurrentVersion)diagnostics.push_back(ParseError(sourcePath,line,"Only strict typed-document version 3 is supported."));
+            if(version!=TypedDocument::CurrentVersion)diagnostics.push_back(ParseError(sourcePath,line,"Only strict typed-document version 4 is supported."));
             auto parsedId = Uuid::Parse(id);
             if (!parsedId) diagnostics.push_back(ParseError(sourcePath, line, "Invalid document UUID."));
             else document.id = *parsedId;

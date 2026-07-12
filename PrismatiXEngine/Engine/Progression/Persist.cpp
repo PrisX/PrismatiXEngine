@@ -12,7 +12,7 @@ namespace px::progress {
 
 namespace {
 constexpr char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-constexpr std::string_view kPersistMagic = "PXPERSIST3\n";
+constexpr std::string_view kPersistMagic = "PXPERSIST4\n";
 constexpr std::uintmax_t kMaxPersistFileSize = 64ull * 1024ull * 1024ull;
 
 std::filesystem::path AsPath(const std::string& path) {

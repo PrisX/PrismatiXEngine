@@ -84,8 +84,8 @@ bool LuaHost::LoadExtensionManifest(const std::string& manifestPath) {
         return false;
     }
     if (json.value("format", std::string{}) != "PrismatiXExtension" ||
-        json.value("version", 0) != 3) {
-        HandleError(manifestPath, "extension manifest must be strict PrismatiXExtension version 3");
+        json.value("version", 0) != 4) {
+        HandleError(manifestPath, "extension manifest must be strict PrismatiXExtension version 4");
         return false;
     }
     try {

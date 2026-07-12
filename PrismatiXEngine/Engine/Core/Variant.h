@@ -23,6 +23,11 @@ struct ResourceRefValue {
     auto operator<=>(const ResourceRefValue&) const = default;
 };
 
+struct TokenRefValue {
+    std::string name;
+    auto operator<=>(const TokenRefValue&) const = default;
+};
+
 enum class VariantType : std::uint8_t {
     Null,
     Bool,
@@ -34,6 +39,7 @@ enum class VariantType : std::uint8_t {
     Color,
     Uuid,
     ResourceRef,
+    TokenRef,
     Array,
     Object,
 };
@@ -42,7 +48,7 @@ class Variant {
 public:
     using Storage =
         std::variant<std::monostate, bool, std::int64_t, double, std::string, Vec2, Rect, Color,
-                     Uuid, ResourceRefValue, std::shared_ptr<VariantArray>,
+                     Uuid, ResourceRefValue, TokenRefValue, std::shared_ptr<VariantArray>,
                      std::shared_ptr<VariantObject>>;
 
     Variant() = default;
@@ -58,6 +64,7 @@ public:
     Variant(Color value) : m_value(value) {}
     Variant(Uuid value) : m_value(value) {}
     Variant(ResourceRefValue value) : m_value(std::move(value)) {}
+    Variant(TokenRefValue value) : m_value(std::move(value)) {}
     Variant(VariantArray value) : m_value(std::make_shared<VariantArray>(std::move(value))) {}
     Variant(VariantObject value) : m_value(std::make_shared<VariantObject>(std::move(value))) {}
 

@@ -150,6 +150,7 @@ std::string ImportService::DetectType(const std::filesystem::path& path) {
     if (extension == ".ttf" || extension == ".otf") return "font";
     if (extension == ".pxscenario") return "script";
     if (extension == ".pxscene") return "ui";
+    if (extension == ".pxcomponent") return "ui";
     if (extension == ".pxres" || extension == ".pxtheme" || extension == ".pxanim")
         return "resource";
     if (extension == ".lua") return "lua";

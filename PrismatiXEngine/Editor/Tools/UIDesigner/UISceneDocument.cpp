@@ -33,8 +33,8 @@ Status UISceneDocument::Load(const std::filesystem::path& path) {
     std::ostringstream text; text << stream.rdbuf();
     auto parsed = resource::ParseTypedDocument(text.str(), path.string());
     if (!parsed) { for (const auto& d : parsed.Diagnostics()) diag::Emit(d); return Status::Fail(parsed.Diagnostics()); }
-    if (parsed.Value().kind != resource::DocumentKind::Scene || parsed.Value().type != "UIScene")
-        return Status::Fail(Error("PXEDUI3002", "Document is not a typed UIScene: " + path.string()));
+    if (parsed.Value().kind != resource::DocumentKind::Scene || (parsed.Value().type != "UIScene"&&parsed.Value().type!="UIComponent"))
+        return Status::Fail(Error("PXEDUI3002", "Document is not a typed UIScene or UIComponent: " + path.string()));
     m_data = std::move(parsed.Value()); m_path = path;
     const Status valid = ValidateTree(); if (!valid) return valid;
     m_history.Clear(); m_history.MarkSaved(); return Status::Ok();

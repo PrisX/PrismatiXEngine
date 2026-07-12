@@ -38,11 +38,18 @@ resource::TypedDocument ScreenDocument(std::string_view screen, std::string_view
         auto nvl=Node("NVLPanel","Panel",rootId,{{"anchors",Rect{0.055f,0.06f,0.945f,0.88f}},{"themeVariant",std::string("Dialogue")}});const Uuid nvlId=nvl.id;document.nodes.push_back(std::move(nvl));
         document.nodes.push_back(Node("NVLText","Label",nvlId,{{"anchors",Rect{0.04f,0.04f,0.96f,0.96f}},{"wrap",true}}));
         auto adv=Node("ADVPanel","Panel",rootId,{{"anchors",Rect{0.045f,0.64f,0.955f,0.955f}},{"themeVariant",std::string("Dialogue")}});const Uuid advId=adv.id;document.nodes.push_back(std::move(adv));
+        document.nodes.push_back(Node("DialogueFrame","TextureRect",advId,{{"anchors",Rect{0,0,1,1}},{"path",std::string("Content/Images/UI/HUD/dialog-stage.png")},{"scaleMode",std::string("Stretch")},{"lockAspectRatio",false}}));
         document.nodes.push_back(Node("Speaker","Label",advId,{{"anchors",Rect{0.03f,0.08f,0.97f,0.25f}},{"bindings",VariantObject{{"text",VariantObject{{"path",std::string("dialogue.speaker")}}}}}}));
         document.nodes.push_back(Node("Dialogue","RichTextLabel",advId,{{"anchors",Rect{0.03f,0.28f,0.97f,0.91f}},{"bindings",VariantObject{{"markup",VariantObject{{"path",std::string("dialogue.text")}}}}}}));
         document.nodes.push_back(Node("Choices","VBoxContainer",rootId,{{"anchors",Rect{0.20f,0.18f,0.80f,0.60f}},{"separation",std::int64_t{12}}}));
-        auto quick=Node("QuickMenu","HBoxContainer",rootId,{{"anchors",Rect{0.50f,0.025f,0.97f,0.105f}},{"separation",std::int64_t{8}}});const Uuid quickId=quick.id;document.nodes.push_back(std::move(quick));
-        button("Auto",quickId,"AUTO","mode.auto");button("Skip",quickId,"SKIP","mode.skip");button("Backlog",quickId,"LOG","backlog.open");button("Save",quickId,"SAVE","save.open");button("Load",quickId,"LOAD","load.open");button("Settings",quickId,"⚙","settings.open");
+        auto notice=Node("NoticePanel","EdgeRevealContainer",rootId,{{"anchors",Rect{0.0f,0.025f,0.31f,0.13f}},{"edge",std::string("Left")},{"revealTrigger",std::string("Manual")},{"revealSpeed",12.0},{"triggerSize",1.0},{"pinned",false}});const Uuid noticeId=notice.id;document.nodes.push_back(std::move(notice));
+        document.nodes.push_back(Node("NoticeFrame","TextureRect",noticeId,{{"anchors",Rect{0,0,1,1}},{"path",std::string("Content/Images/UI/HUD/notice.png")},{"scaleMode",std::string("Stretch")},{"lockAspectRatio",false}}));
+        document.nodes.push_back(Node("ChapterNotice","Label",noticeId,{{"anchors",Rect{0.08f,0.12f,0.90f,0.88f}},{"text",std::string("CHAPTER 01")},{"verticalAlignment",std::string("Center")},{"bindings",VariantObject{{"text",VariantObject{{"path",std::string("chapter.title")}}}}}}));
+        document.nodes.push_back(Node("MusicNotice","Label",noticeId,{{"anchors",Rect{0.08f,0.12f,0.90f,0.88f}},{"text",std::string("♪ Now Playing")},{"verticalAlignment",std::string("Center")},{"bindings",VariantObject{{"text",VariantObject{{"path",std::string("music.title")}}}}}}));
+        auto edgeToolbar=Node("EdgeToolbar","EdgeRevealContainer",rootId,{{"anchors",Rect{0.34f,0.0f,0.98f,0.085f}},{"edge",std::string("Top")},{"revealSpeed",14.0},{"triggerSize",10.0},{"pinned",false}});const Uuid edgeId=edgeToolbar.id;document.nodes.push_back(std::move(edgeToolbar));
+        auto quick=Node("QuickMenu","HBoxContainer",edgeId,{{"anchors",Rect{0.08f,0.08f,0.92f,0.92f}},{"separation",std::int64_t{12}}});const Uuid quickId=quick.id;document.nodes.push_back(std::move(quick));
+        const auto iconButton=[&](std::string name,std::string icon,std::string tooltip,std::string action){document.nodes.push_back(Node(std::move(name),"IconButton",quickId,{{"text",std::move(icon)},{"minimumSize",Vec2{44,44}},{"tooltip",std::move(tooltip)},{"events",VariantObject{{"activated",VariantObject{{"action",std::move(action)}}}}}}));};
+        iconButton("Auto","▶","自動播放","mode.auto");iconButton("Skip","»","快進","mode.skip");iconButton("Backlog","≡","歷史紀錄","backlog.open");iconButton("Save","↓","儲存","save.open");iconButton("Load","↑","讀取","load.open");iconButton("Settings","⚙","設定","settings.open");iconButton("PinToolbar","◆","固定／取消固定工具列","hud.toolbar.pin");
         document.nodes.push_back(Node("ModeState","Label",rootId,{{"anchors",Rect{0.02f,0.02f,0.45f,0.09f}}}));
         return document;
     }
@@ -81,7 +88,7 @@ bool ProjectService::Open(const std::filesystem::path& root) {
     if(stream){std::ostringstream text;text<<stream.rdbuf();auto parsed=resource::ParseTypedDocument(text.str(),m_context.ManifestPath().string());
         if(!parsed||parsed.Value().kind!=resource::DocumentKind::Project){Log("Invalid typed project manifest: "+m_context.ManifestPath().string());return false;}
         auto& m=m_context.manifest;ReadString(parsed.Value(),"name",m.name);ReadInt(parsed.Value(),"gameWidth",m.gameWidth);ReadInt(parsed.Value(),"gameHeight",m.gameHeight);
-        ReadString(parsed.Value(),"startRoute",m.startRoute);ReadString(parsed.Value(),"startScript",m.startScript);ReadString(parsed.Value(),"theme",m.theme);
+        ReadString(parsed.Value(),"startRoute",m.startRoute);ReadString(parsed.Value(),"startScript",m.startScript);ReadString(parsed.Value(),"theme",m.theme);if(const auto it=parsed.Value().properties.find("uiTheme");it!=parsed.Value().properties.end())if(const auto* reference=it->second.TryGet<ResourceRefValue>())m.uiThemePath=reference->lastKnownPath;
         if(const auto routes=parsed.Value().properties.find("routes");routes!=parsed.Value().properties.end()){const auto* array=routes->second.AsArray();if(!array)return false;m.routes.clear();for(const auto& value:*array){const auto* object=value.AsObject();if(!object)return false;const auto get=[&](const char* key)->std::string{const auto found=object->find(key);return found!=object->end()&&found->second.TryGet<std::string>()?*found->second.TryGet<std::string>():std::string{};};const auto scene=object->find("scene"),modal=object->find("modal");const auto* reference=scene!=object->end()?scene->second.TryGet<ResourceRefValue>():nullptr;if(!reference||reference->id.Empty()||reference->lastKnownPath.empty())return false;m.routes.push_back({get("id"),reference->lastKnownPath,modal!=object->end()&&modal->second.TryGet<bool>()?*modal->second.TryGet<bool>():false,get("cache")});}if(m.routes.empty())return false;}
         ReadBool(parsed.Value(),"encrypt",m.encrypt);ReadString(parsed.Value(),"encryptKey",m.encryptKey);ReadBool(parsed.Value(),"singleFile",m.singleFile);
     }else{EnsureEssentials({});if(!SaveManifest())return false;Log("Created project.pxproject with typed defaults.");}
@@ -97,6 +104,8 @@ std::vector<std::string> ProjectService::EnsureEssentials(const std::filesystem:
     std::vector<std::string> created;if(!m_context.IsOpen())return created;const auto& root=m_context.root;std::error_code ec;
     for(const char* folder:{"Content/UI","Content/Scenario","Content/Images/Background","Content/Images/Character","Content/Images/CG","Content/Images/Rules","Content/Audio/Music","Content/Audio/SFX","Content/Audio/Voice","Content/Audio/Ambience","Content/Video","Content/Fonts","Content/Localization","Content/Extensions","Content/Animations"})std::filesystem::create_directories(root/folder,ec);
     if(!std::filesystem::exists(root/kDefaultFont)&&!fontSource.empty()&&std::filesystem::exists(fontSource))if(std::filesystem::copy_file(fontSource,root/kDefaultFont,std::filesystem::copy_options::skip_existing,ec))created.push_back(kDefaultFont);
+    const auto hudSource=fontSource.parent_path()/"HUD",hudTarget=root/"Content/Images/UI/HUD";std::filesystem::create_directories(hudTarget,ec);
+    for(const char* name:{"dialog-stage.png","notice.png"}){const auto source=hudSource/name,target=hudTarget/name;if(!std::filesystem::exists(target)&&std::filesystem::exists(source)&&std::filesystem::copy_file(source,target,std::filesystem::copy_options::skip_existing,ec))created.push_back(std::filesystem::relative(target,root,ec).generic_string());ec.clear();}
     for(const char* screen:{"Title","HUD","Backlog","SaveLoad","Gallery","MusicRoom","History","Settings","Accessibility","ConfirmDialog","VideoOverlay"}){const auto relative=std::filesystem::path("Content/UI")/(std::string(screen)+".pxscene");const auto path=root/relative;
         if(!std::filesystem::exists(path)){const auto text=resource::WriteTypedDocument(ScreenDocument(screen,m_context.manifest.name));const Status status=io::AtomicFile::WriteText(path,text);if(status)created.push_back(relative.generic_string());}}
     const auto script=root/m_context.manifest.startScript;if(!std::filesystem::exists(script)){std::filesystem::create_directories(script.parent_path(),ec);if(io::AtomicFile::WriteText(script,StartScript(m_context.manifest.name)))created.push_back(m_context.manifest.startScript);}
@@ -106,6 +115,31 @@ std::vector<std::string> ProjectService::EnsureEssentials(const std::filesystem:
         auto input=Node("OpenSettings","InputBinding",{},{{"key",std::string("Escape")},{"command",std::string("screen.open")},{"argument",std::string("settings")}});catalog.nodes.push_back(std::move(input));
         if(io::AtomicFile::WriteText(catalogPath,resource::WriteTypedDocument(catalog)))created.push_back("Content/Game.pxres");
     }
+    const auto themePath = root / m_context.manifest.uiThemePath;
+    if (!std::filesystem::exists(themePath)) {
+        resource::TypedDocument theme;
+        theme.kind = resource::DocumentKind::Resource;
+        theme.id = Uuid::Random();
+        theme.type = "UITheme";
+        VariantObject tokens{
+            {"color.surface", Color{28, 31, 40, 255}},
+            {"color.border", Color{65, 72, 91, 255}},
+            {"color.text", Color{236, 239, 244, 255}},
+            {"type.body", std::int64_t{24}},
+        };
+        VariantObject defaultStyle{{"background", TokenRefValue{"color.surface"}},
+                                   {"border", TokenRefValue{"color.border"}},
+                                   {"text", TokenRefValue{"color.text"}},
+                                   {"fontSize", TokenRefValue{"type.body"}}};
+        if(std::filesystem::exists(root/kDefaultFont)){
+            tokens["font.body"]=ResourceRefValue{{},"Content/Fonts/NotoSansTC-Bold.ttf"};
+            defaultStyle["font"]=TokenRefValue{"font.body"};
+        }
+        theme.properties["tokens"] = std::move(tokens);
+        theme.properties["styles"] = VariantObject{{"Default",std::move(defaultStyle)}};
+        if (io::AtomicFile::WriteText(themePath, resource::WriteTypedDocument(theme)))
+            created.push_back(m_context.manifest.uiThemePath);
+    }
     const auto extensionScript=root/"Content/Extensions/default.lua";
     if(!std::filesystem::exists(extensionScript)){
         const std::string source="Engine.RegisterCommand(\"demo.toast\", function(args)\n    Engine.log(\"toast: \" .. tostring(args.message))\nend)\n";
@@ -113,7 +147,7 @@ std::vector<std::string> ProjectService::EnsureEssentials(const std::filesystem:
     }
     const auto extensionManifest=root/"Content/Extensions/default.pxextension";
     if(!std::filesystem::exists(extensionManifest)){
-        nlohmann::json manifest{{"format","PrismatiXExtension"},{"version",3},{"id","prismatix.default"},{"order",0},{"entry","default.lua"},{"capabilities",nlohmann::json::array({"runtime"})}};
+        nlohmann::json manifest{{"format","PrismatiXExtension"},{"version",4},{"id","prismatix.default"},{"order",0},{"entry","default.lua"},{"capabilities",nlohmann::json::array({"runtime"})}};
         manifest["commands"]=nlohmann::json::array({{{"id","demo.toast"},{"displayName","Show Toast"},{"category","Extension"},{"description","Example typed Lua command"},{"await",false},{"rollback","reversible"},{"parameters",nlohmann::json::array({{{"name","message"},{"label","Message"},{"type","string"},{"required",true},{"default","Hello from Lua"}}})}}});
         if(io::AtomicFile::WriteText(extensionManifest,manifest.dump(2)+"\n"))created.push_back("Content/Extensions/default.pxextension");
     }
@@ -135,9 +169,10 @@ bool ProjectService::SaveManifest() const {
     if(!m_context.IsOpen())return false;const auto& m=m_context.manifest;resource::TypedDocument document;document.kind=resource::DocumentKind::Project;
     document.id=Uuid::FromName(std::filesystem::absolute(m_context.root).generic_string());document.type="PrismatiXProject";
     resource::AssetRegistry registry;(void)registry.Scan(m_context.root);VariantArray routes;for(const auto& route:m.routes){const auto* asset=registry.FindPath(m_context.root/route.scene);routes.emplace_back(VariantObject{{"id",route.id},{"scene",ResourceRefValue{asset?asset->id:Uuid{},route.scene}},{"modal",route.modal},{"cache",route.cache}});}
+    const auto* themeAsset=registry.FindPath(m_context.root/m.uiThemePath);
     document.properties={{"name",m.name},{"version",static_cast<std::int64_t>(m.version)},{"gameWidth",static_cast<std::int64_t>(m.gameWidth)},
         {"gameHeight",static_cast<std::int64_t>(m.gameHeight)},{"startRoute",m.startRoute},{"routes",Variant(std::move(routes))},{"startScript",m.startScript},{"theme",m.theme},
-        {"encrypt",m.encrypt},{"encryptKey",m.encryptKey},{"singleFile",m.singleFile}};
+        {"uiTheme",ResourceRefValue{themeAsset?themeAsset->id:Uuid{},m.uiThemePath}},{"encrypt",m.encrypt},{"encryptKey",m.encryptKey},{"singleFile",m.singleFile}};
     const Status status=io::AtomicFile::WriteText(m_context.ManifestPath(),resource::WriteTypedDocument(document));
     if(!status){for(const auto& d:status.Diagnostics())diag::Emit(d);return false;}return true;
 }

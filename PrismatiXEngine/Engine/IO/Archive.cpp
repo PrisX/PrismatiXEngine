@@ -14,13 +14,13 @@ namespace px::io {
 
 namespace {
 
-constexpr char kMagic[4] = { 'P', 'D', 'X', '3' };
-constexpr std::uint32_t kVersion = 3;
+constexpr char kMagic[4] = { 'P', 'D', 'X', '4' };
+constexpr std::uint32_t kVersion = 4;
 constexpr std::size_t kHeaderSize = 28;
 constexpr std::uint8_t kEntryEncrypted = 0x01;
 constexpr std::uint8_t kEntryCompressed = 0x02;
 constexpr std::uint32_t kFlagEncrypted = 0x01;
-constexpr char kIndexSalt[] = "__pdx3_index__";
+constexpr char kIndexSalt[] = "__pdx4_index__";
 constexpr std::uint32_t kMaxEntries = 1'000'000;
 constexpr std::uint64_t kMaxIndexSize = 256ull * 1024ull * 1024ull;
 constexpr std::uint64_t kMaxEntrySize = 8ull * 1024ull * 1024ull * 1024ull;

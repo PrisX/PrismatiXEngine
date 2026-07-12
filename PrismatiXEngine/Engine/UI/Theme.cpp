@@ -41,6 +41,16 @@ const ControlStyle& Theme::Resolve(std::string_view variant) const {
     return m_styles.at("Default");
 }
 
+void Theme::SetToken(std::string name, Variant value) {
+    m_tokens.insert_or_assign(std::move(name), std::move(value));
+    ++m_revision;
+}
+
+const Variant* Theme::FindToken(std::string_view name) const {
+    const auto found = m_tokens.find(std::string(name));
+    return found == m_tokens.end() ? nullptr : &found->second;
+}
+
 Result<Theme> LoadEmbeddedTheme(const resource::TypedDocument& document){
     Theme theme;const auto it=document.properties.find("theme.styles");if(it==document.properties.end())return Result<Theme>::Success(std::move(theme));
     const auto* styles=it->second.AsObject();if(!styles){diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXUI2901",.category="UI.Theme",.message="theme.styles must be Object"};diag::Emit(d);return Result<Theme>::Failure(std::move(d));}

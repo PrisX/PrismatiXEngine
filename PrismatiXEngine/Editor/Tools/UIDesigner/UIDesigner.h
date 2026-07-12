@@ -11,6 +11,7 @@
 #include <chrono>
 #include <memory>
 #include <limits>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -18,17 +19,21 @@
 
 namespace px::editor {
 
-enum class DesignerTool { Select, Move, Resize, Anchors };
+enum class DesignerTool { Select, Anchors };
 
 struct DesignerViewportState {
     DesignerTool tool = DesignerTool::Select;
-    ImVec2 pan{};
     float zoom = 1.0f;
+    float scrollX = 0.0f;
+    float scrollY = 0.0f;
+    bool fitToViewport = true;
+    bool applyStoredScroll = true;
     bool gridVisible = false;
     bool gridSnap = false;
     bool smartGuides = true;
     bool showAllOutlines = false;
     bool interactivePreview = false;
+    bool pixelExactPreview = false;
 };
 
 class UIDesigner {
@@ -37,12 +42,17 @@ public:
     UIDesigner(const UIDesigner&) = delete;
     UIDesigner& operator=(const UIDesigner&) = delete;
     UIDesigner(UIDesigner&&) noexcept = default;
-    UIDesigner& operator=(UIDesigner&&) noexcept = default;
+    UIDesigner& operator=(UIDesigner&& other) noexcept;
 
     Status Open(const std::filesystem::path& path);
     Status New(const std::filesystem::path& path, int width = 1280, int height = 720);
     void SetOnEdit(std::function<void()> cb) { m_onEdit = std::move(cb); }
     void SetOnStructureChange(std::function<void()> cb) { m_onStructure = std::move(cb); }
+    using ComponentWriter=std::function<Result<ResourceRefValue>(const std::filesystem::path&,const std::string&)>;
+    void SetComponentWriter(ComponentWriter writer){m_componentWriter=std::move(writer);}
+    void SetOpenResource(std::function<void(const ResourceRefValue&)> callback){m_openResource=std::move(callback);}
+    using ImageSizeResolver=std::function<std::optional<Vec2>(const std::string&)>;
+    void SetImageSizeResolver(ImageSizeResolver resolver){m_imageSizeResolver=std::move(resolver);}
 
     void RenderHierarchy();
     void RenderInspector(const std::string& selectedAssetPath);
@@ -69,14 +79,27 @@ public:
     Status Redo();
     void RelocateDocument(const std::filesystem::path& oldPath,
                           const std::filesystem::path& newPath);
+    enum class LayerAction { BringForward, SendBackward, BringToFront, SendToBack };
+    enum class AlignAction { Left, HCenter, Right, Top, VCenter, Bottom, DistributeH, DistributeV };
+    void ChangeSelectedLayer(LayerAction action);
+    void AlignSelection(AlignAction action);
+    Status CreateComponentFromSelected(const std::filesystem::path& path);
 
 private:
     void RenderTreeNode(resource::NodeRecord& record);
     [[nodiscard]] bool TreeMatches(const resource::NodeRecord& record) const;
     void RebuildLayout();
     void AddNode(std::string type, Vec2 canvasPosition = {}, std::string image = {});
+    void RenderAddControlPalette(Vec2 canvasPosition = {});
     void RemoveSelected();
     void DuplicateSelected();
+    void SetSelectedAsBackground(bool lock);
+    void RestoreSelectedImageSize();
+    void CopySelected();
+    void PasteClipboard(Vec2 canvasPosition = {});
+    void ResetComponentOverride(const std::string& sourceNode = {}, const std::string& property = {});
+    void DetachSelectedComponent();
+    [[nodiscard]] Result<resource::TypedDocument> LoadReferencedUI(const ResourceRefValue& reference) const;
     void MarkEdited(bool structural = false);
     void EditVariant(const char* label, const std::string& property, Variant before, Variant value,
                      bool changed, bool continuous);
@@ -104,13 +127,17 @@ private:
     std::unique_ptr<PropertyEditTransaction> m_propertyTransaction;
     std::string m_transactionProperty;
     Uuid m_transactionTarget;
-    enum class Gesture { None, Move, Resize, Anchors, Reorder, Pan };
+    enum class Gesture { None, Move, Resize, Anchors, Reorder, Marquee, Pan };
     Gesture m_gesture = Gesture::None;
     int m_resizeHandle = 0;
     int m_anchorHandle = 0;
     Rect m_anchorsStart{};
     Rect m_anchorOffsetsStart{};
     Vec2 m_dragStart{};
+    ImVec2 m_panMouseStart{};
+    float m_panScrollX=0,m_panScrollY=0;
+    Vec2 m_marqueeCurrent{};
+    bool m_marqueeAdditive = false;
     Rect m_rectStart{};
     Rect m_offsetsStart{};
     std::unordered_map<Uuid, Rect, UuidHash> m_groupOffsetsStart;
@@ -120,12 +147,21 @@ private:
     float m_guideX = std::numeric_limits<float>::quiet_NaN();
     float m_guideY = std::numeric_limits<float>::quiet_NaN();
     std::string m_canvasHint;
+    VariantObject m_clipboardSubtree;
+    Vec2 m_contextCanvas{};
+    Uuid m_contextTarget;
     char m_treeFilter[96] = {0};
+    char m_paletteFilter[96] = {0};
     char m_treeRename[128] = {0};
     bool m_treeRenameOpen = false;
+    bool m_createComponentOpen = false;
+    char m_componentPath[260] = "Content/UI/Components/NewComponent.pxcomponent";
     DesignerViewportState m_viewport;
     std::function<void()> m_onEdit;
     std::function<void()> m_onStructure;
+    ComponentWriter m_componentWriter;
+    std::function<void(const ResourceRefValue&)> m_openResource;
+    ImageSizeResolver m_imageSizeResolver;
     ui::FormatterRegistry m_formatters;
     ui::AnimationClip m_animation;
     std::chrono::steady_clock::time_point m_lastEdit = std::chrono::steady_clock::now();

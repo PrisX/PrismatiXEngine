@@ -32,6 +32,7 @@ void UIContext::WireCommands(Control& node) {
 
 bool UIContext::Update(const Input& input, int viewportWidth, int viewportHeight,float deltaSeconds) {
     if (!m_root) return false;
+    m_root->Update(deltaSeconds);
     if (m_width != viewportWidth || m_height != viewportHeight || m_root->LayoutDirty()) {
         m_width = viewportWidth; m_height = viewportHeight;
         (void)m_root->Measure({static_cast<float>(m_width), static_cast<float>(m_height)});

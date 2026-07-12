@@ -29,7 +29,7 @@ struct ScenarioEdge {
 };
 
 struct ScenarioDocument {
-    static constexpr int CurrentVersion = 3;
+    static constexpr int CurrentVersion = 4;
     int version = CurrentVersion;
     resource::ResourceId id;
     std::string name;
@@ -46,7 +46,7 @@ struct NodeLayout {
 };
 
 struct ScenarioLayoutDocument {
-    static constexpr int CurrentVersion = 1;
+    static constexpr int CurrentVersion = 4;
     int version = CurrentVersion;
     resource::ResourceId scenario;
     std::vector<NodeLayout> nodes;

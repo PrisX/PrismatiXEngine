@@ -479,6 +479,8 @@ ui::DialoguePresentation PlayerApp::DialogueUI() const {
     ui::DialoguePresentation view;
     view.speaker = m_session->Dialogue().State().speaker;
     view.text = m_session->Dialogue().State().displayText;
+    view.chapterTitle = m_session->VM().Chapter();
+    view.musicTitle = m_session->VM().CurrentBgm();
     view.effect = m_session->Dialogue().State().effect;
     view.effectProgress = m_session->Dialogue().State().effectProgress;
     view.choices = m_choiceTexts;

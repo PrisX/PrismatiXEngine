@@ -158,6 +158,7 @@ private:
     UIDesigner m_designer;
     std::string m_designerPath;
     std::unordered_map<std::string, DesignerDocumentSession> m_inactiveDesigners;
+    std::filesystem::path m_uiFocusRequest;
     char m_newScreenName[96] = "new_screen";
 
     // Open Scenario documents, one synchronized workspace per tab.

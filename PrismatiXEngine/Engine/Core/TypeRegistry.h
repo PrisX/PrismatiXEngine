@@ -38,6 +38,18 @@ struct PropertyInfo {
     Variant defaultValue;
     std::function<Variant(const Object&)> get;
     std::function<Status(Object&, const Variant&)> set;
+    struct EditorHint {
+        std::string displayName;
+        std::string description;
+        std::vector<std::string> enumChoices;
+        double minimum = 0.0;
+        double maximum = 0.0;
+        double step = 0.1;
+        std::string resourceFilter;
+        bool hasRange = false;
+        bool multiline = false;
+        bool tokenBindable = false;
+    } editor;
 };
 
 struct SignalInfo {

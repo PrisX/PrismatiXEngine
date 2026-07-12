@@ -36,10 +36,14 @@ public:
 
     void Set(std::string variant, ControlStyle style);
     [[nodiscard]] const ControlStyle& Resolve(std::string_view variant) const;
+    void SetToken(std::string name, Variant value);
+    [[nodiscard]] const Variant* FindToken(std::string_view name) const;
+    [[nodiscard]] const std::unordered_map<std::string, Variant>& Tokens() const { return m_tokens; }
     [[nodiscard]] std::uint64_t Revision() const { return m_revision; }
 
 private:
     std::unordered_map<std::string, ControlStyle> m_styles;
+    std::unordered_map<std::string, Variant> m_tokens;
     std::uint64_t m_revision = 1;
 };
 

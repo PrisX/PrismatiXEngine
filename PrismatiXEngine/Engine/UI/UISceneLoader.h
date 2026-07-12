@@ -3,6 +3,7 @@
 #include "Engine/Resources/TypedDocument.h"
 #include "Engine/UI/Binding.h"
 #include "Engine/UI/Control.h"
+#include "Engine/UI/UIResourceResolver.h"
 
 #include <filesystem>
 #include <memory>
@@ -23,6 +24,10 @@ struct LoadedUIScene {
 [[nodiscard]] Result<LoadedUIScene> InstantiateUIScene(const resource::TypedDocument& document,
                                                        IViewModel* viewModel,
                                                        const FormatterRegistry& formatters);
+[[nodiscard]] Result<LoadedUIScene> InstantiateUIScene(const resource::TypedDocument& document,
+                                                       IViewModel* viewModel,
+                                                       const FormatterRegistry& formatters,
+                                                       const UIDocumentLoader& loader);
 [[nodiscard]] Result<LoadedUIScene> LoadUIScene(const std::filesystem::path& path,
                                                 IViewModel* viewModel,
                                                 const FormatterRegistry& formatters);

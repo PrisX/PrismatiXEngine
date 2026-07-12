@@ -7,6 +7,37 @@
 namespace px::ui {
 
 enum class Orientation { Horizontal, Vertical };
+enum class RevealEdge { Top, Bottom, Left, Right };
+enum class RevealTrigger { Hover, Manual };
+
+class EdgeRevealContainer final : public Container {
+public:
+    explicit EdgeRevealContainer(std::string name="EdgeReveal") : Container(std::move(name)) {}
+    [[nodiscard]] std::string_view TypeName() const override{return "EdgeRevealContainer";}
+    void SetEdge(RevealEdge value){m_edge=value;InvalidateLayout();}
+    [[nodiscard]] RevealEdge Edge() const{return m_edge;}
+    void SetSpeed(float value){m_speed=std::max(.1f,value);}
+    [[nodiscard]] float Speed() const{return m_speed;}
+    void SetTriggerSize(float value){m_triggerSize=std::max(1.0f,value);InvalidateLayout();}
+    [[nodiscard]] float TriggerSize() const{return m_triggerSize;}
+    void SetPinned(bool value){m_pinned=value;}
+    [[nodiscard]] bool Pinned() const{return m_pinned;}
+    void TogglePinned(){SetPinned(!m_pinned);}
+    void SetTrigger(RevealTrigger value){m_trigger=value;}
+    [[nodiscard]] RevealTrigger Trigger() const{return m_trigger;}
+    void RevealFor(float seconds){m_manualVisible=true;m_holdRemaining=std::max(0.0f,seconds);}
+    void Hide(){m_manualVisible=false;m_holdRemaining=0.0f;}
+    [[nodiscard]] bool HitTest(Vec2 point) const override;
+    void HandleEvent(UIEvent& event) override;
+    void Update(float deltaSeconds) override;
+protected:void ArrangeOverride(Rect finalRect) override;
+private:
+    RevealEdge m_edge=RevealEdge::Top;
+    float m_speed=12.0f,m_triggerSize=10.0f,m_progress=0.0f;
+    bool m_pinned=false,m_pointerInside=false,m_manualVisible=false;
+    float m_holdRemaining=0.0f;
+    RevealTrigger m_trigger=RevealTrigger::Hover;
+};
 
 class BoxContainer : public Container {
 public:

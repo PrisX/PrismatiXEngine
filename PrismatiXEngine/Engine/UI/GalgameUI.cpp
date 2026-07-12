@@ -74,8 +74,11 @@ GalgameUI::GalgameUI() {
     m_context.SetDiagnosticOverlayEnabled(true);
     (void)m_viewModel.Define("dialogue.speaker",Variant(std::string{}),true);
     (void)m_viewModel.Define("dialogue.text",Variant(std::string{}),true);
+    (void)m_viewModel.Define("chapter.title",Variant(std::string{}),true);
+    (void)m_viewModel.Define("music.title",Variant(std::string{}),true);
     const std::vector<std::string> commands={"game.start","load.open","save.open","gallery.open","settings.open","app.quit","mode.auto","mode.skip","backlog.open","overlay.close"};
     for(const auto& command:commands)(void)m_context.Commands().Register(command,[this,command](const Variant&){Emit(command);return Status::Ok();});
+    (void)m_context.Commands().Register("hud.toolbar.pin",[this](const Variant&){if(auto* toolbar=FindNamed<EdgeRevealContainer>(m_context.Root(),"EdgeToolbar"))toolbar->TogglePinned();return Status::Ok();});
 }
 
 Status GalgameUI::RegisterTemplate(Screen screen,std::string_view text,const std::string& sourcePath){
@@ -90,7 +93,7 @@ Status GalgameUI::InstallTemplate(Screen screen){
     const auto it=m_templates.find(static_cast<int>(screen));if(it==m_templates.end())return GalgameFailure("PXUI2804","Requested Galgame UI template is not registered");
     auto loaded=InstantiateUIScene(it->second,&m_viewModel,m_context.Formatters());if(!loaded)return Status::Fail(loaded.Diagnostics());
     auto bindings=std::move(loaded.Value().bindings);auto animation=std::move(loaded.Value().animation);auto theme=std::move(loaded.Value().theme);const Status installed=Install(std::move(loaded.Value().root),screen);if(!installed)return installed;m_bindings=std::move(bindings);if(theme)m_context.SetTheme(std::move(*theme));if(animation){const Status status=m_context.SetAnimation(std::move(*animation),true);if(!status)return status;}
-    if(screen==Screen::HUD){m_speaker=FindNamed<Label>(m_context.Root(),"Speaker");m_dialogue=FindNamed<Label>(m_context.Root(),"Dialogue");m_nvlText=FindNamed<Label>(m_context.Root(),"NVLText");m_choices=FindNamed<VBoxContainer>(m_context.Root(),"Choices");m_mode=FindNamed<Label>(m_context.Root(),"ModeState");if(m_dialogue){m_dialogueBaseOffsets=m_dialogue->Offsets();m_dialogueBaseFontSize=m_dialogue->FontSize()>0?m_dialogue->FontSize():30;}}
+    if(screen==Screen::HUD){m_speaker=FindNamed<Label>(m_context.Root(),"Speaker");m_dialogue=FindNamed<Label>(m_context.Root(),"Dialogue");m_nvlText=FindNamed<Label>(m_context.Root(),"NVLText");m_choices=FindNamed<VBoxContainer>(m_context.Root(),"Choices");m_mode=FindNamed<Label>(m_context.Root(),"ModeState");m_noticePanel=FindNamed<EdgeRevealContainer>(m_context.Root(),"NoticePanel");m_chapterNotice=FindNamed<Label>(m_context.Root(),"ChapterNotice");m_musicNotice=FindNamed<Label>(m_context.Root(),"MusicNotice");m_lastChapterTitle.clear();m_lastMusicTitle.clear();if(m_dialogue){m_dialogueBaseOffsets=m_dialogue->Offsets();m_dialogueBaseFontSize=m_dialogue->FontSize()>0?m_dialogue->FontSize():30;}}
     return Status::Ok();
 }
 void GalgameUI::Emit(std::string command, std::string argument) { m_pendingActions.push_back({std::move(command),std::move(argument)}); }
@@ -184,6 +187,17 @@ Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
         m_dialogue->SetFontSize(static_cast<int>(std::lround(fontSize*std::clamp(p.textScale,.75f,2.0f))));
     }
     (void)m_viewModel.Write("dialogue.speaker",Variant(p.speaker));(void)m_viewModel.Write("dialogue.text",Variant(p.text));
+    (void)m_viewModel.Write("chapter.title",Variant(p.chapterTitle));(void)m_viewModel.Write("music.title",Variant(p.musicTitle));
+    const bool chapterChanged=p.chapterTitle!=m_lastChapterTitle;
+    const bool musicChanged=p.musicTitle!=m_lastMusicTitle;
+    if(m_noticePanel&&(chapterChanged||musicChanged)){
+        const bool showChapter=chapterChanged&&!p.chapterTitle.empty();
+        const bool showMusic=!showChapter&&musicChanged&&!p.musicTitle.empty();
+        if(m_chapterNotice)m_chapterNotice->SetVisibility(showChapter?Visibility::Visible:Visibility::Collapsed);
+        if(m_musicNotice)m_musicNotice->SetVisibility(showMusic?Visibility::Visible:Visibility::Collapsed);
+        if(showChapter||showMusic)m_noticePanel->RevealFor(3.0f);
+    }
+    m_lastChapterTitle=p.chapterTitle;m_lastMusicTitle=p.musicTitle;
     if (m_nvlText) {
         std::string text; for (const auto& line : p.nvlLines) text += line + "\n\n"; m_nvlText->SetText(std::move(text));
         if (auto* panel = dynamic_cast<Control*>(m_nvlText->Parent())) panel->SetVisibility(p.nvlMode ? Visibility::Visible : Visibility::Collapsed);

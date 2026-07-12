@@ -61,12 +61,19 @@ if(PRISMATIX_EDITOR_SOURCES)
 
     add_custom_command(TARGET PrismatiXEditor POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/HUD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Fonts/NotoSansTC-Bold.ttf
                 $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/UIFont.ttf
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/imgui-node-editor/assets/BlueprintBackground.png
                 $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/NodeHeader.png
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_CURRENT_SOURCE_DIR}/../hudtemp/dialog-stage.png
+                $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/HUD/dialog-stage.png
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_CURRENT_SOURCE_DIR}/../hudtemp/notice.png
+                $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/HUD/notice.png
     )
 endif()
 
@@ -77,7 +84,8 @@ if(BUILD_TESTING)
     add_test(NAME PrismatiX.Commercial.Acceptance COMMAND PrismatiXCoreTests)
 
     add_executable(PrismatiXImportTests Tests/ImportServiceTests.cpp
-                   Editor/Assets/ImportService.cpp)
+                   Editor/Assets/ImportService.cpp
+                   Editor/Workspace/DocumentRegistry.cpp)
     target_link_libraries(PrismatiXImportTests PRIVATE PrismatiXRuntime)
     if(PRISMATIX_STRESS_TESTS)
         target_compile_definitions(PrismatiXImportTests PRIVATE PRISMATIX_STRESS_TESTS=1)

@@ -58,6 +58,13 @@ bool Boolean(const VariantObject& object, const char* key) {
     return false;
 }
 
+float Number(const VariantObject& object,const char* key,float fallback=0.0f){
+    const auto found=object.find(key);if(found==object.end())return fallback;
+    if(const auto* value=found->second.TryGet<double>())return static_cast<float>(*value);
+    if(const auto* value=found->second.TryGet<std::int64_t>())return static_cast<float>(*value);
+    return fallback;
+}
+
 }  // namespace
 
 std::filesystem::path DocumentManager::Canonical(const std::filesystem::path& path) {
@@ -70,7 +77,7 @@ std::filesystem::path DocumentManager::Canonical(const std::filesystem::path& pa
 
 DocumentType DocumentManager::TypeFromPath(const std::filesystem::path& path) {
     const std::string extension = path.extension().string();
-    if (extension == ".pxscene") return DocumentType::UIScene;
+    if (extension == ".pxscene" || extension == ".pxcomponent") return DocumentType::UIScene;
     if (extension == ".pxscenario") return DocumentType::Scenario;
     if (extension == ".lua") return DocumentType::Lua;
     if (extension == ".pxres" || extension == ".pxtheme" || extension == ".pxanim")
@@ -240,7 +247,7 @@ Status DocumentManager::SaveSession(const std::filesystem::path& path) const {
     resource::TypedDocument document;
     document.kind = resource::DocumentKind::Resource;
     document.formatVersion = resource::TypedDocument::CurrentVersion;
-    document.id = Uuid::FromName("PrismatiXEditor.Session.v3");
+    document.id = Uuid::FromName("PrismatiXEditor.Session.v4");
     document.type = "EditorSession";
     document.properties["active"] = Variant(static_cast<std::int64_t>(m_active.value_or(0)));
     VariantArray sessions;
@@ -253,8 +260,9 @@ Status DocumentManager::SaveSession(const std::filesystem::path& path) const {
         object["pinned"] = Variant(session.pinned);
         object["recent"] = Variant(static_cast<std::int64_t>(session.recentSequence));
         object["zoom"] = Variant(static_cast<double>(session.viewport.zoom));
-        object["panX"] = Variant(static_cast<double>(session.viewport.panX));
-        object["panY"] = Variant(static_cast<double>(session.viewport.panY));
+        object["scrollX"] = Variant(static_cast<double>(session.viewport.scrollX));
+        object["scrollY"] = Variant(static_cast<double>(session.viewport.scrollY));
+        object["fitToViewport"] = Variant(session.viewport.fitToViewport);
         sessions.emplace_back(std::move(object));
     }
     document.properties["documents"] = Variant(std::move(sessions));
@@ -283,8 +291,11 @@ Status DocumentManager::RestoreSession(const std::filesystem::path& path) {
                 session.type = ParseType(String(*object, "type"));
                 session.pinned = Boolean(*object, "pinned");
                 session.recentSequence = static_cast<std::uint64_t>(Integer(*object, "recent"));
-                if (const auto it = object->find("zoom"); it != object->end())
-                    if (const auto* value = it->second.TryGet<double>()) session.viewport.zoom = static_cast<float>(*value);
+                session.viewport.zoom=Number(*object,"zoom",1.0f);
+                session.viewport.scrollX=Number(*object,"scrollX");
+                session.viewport.scrollY=Number(*object,"scrollY");
+                if (const auto it = object->find("fitToViewport"); it != object->end())
+                    if (const auto* value = it->second.TryGet<bool>()) session.viewport.fitToViewport = *value;
                 if (std::filesystem::exists(session.id.canonicalPath)) (void)Open(std::move(session));
             }
         }

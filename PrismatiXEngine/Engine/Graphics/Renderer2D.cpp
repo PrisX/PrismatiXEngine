@@ -25,24 +25,24 @@ void AppendArc(std::vector<SDL_Vertex>& out, float cx, float cy, float radius, f
     }
 }
 
-std::string MakeKey(const std::string& text, const std::string& font, int size, Color c, int outline, int wrap, int ss) {
+std::string MakeKey(const std::string& text, const std::string& font, int size, Color c, int outline, int wrap, int ss, int alignment) {
     return text + "\x01" + font + "\x01" + std::to_string(size) + "\x01" + std::to_string(c.r) + "," + std::to_string(c.g) + "," + std::to_string(c.b) + "," + std::to_string(c.a) + "\x01" + std::to_string(outline) + "\x01" + std::to_string(wrap) + "\x01" +
-           std::to_string(ss);
+           std::to_string(ss)+"\x01"+std::to_string(alignment);
 }
 }  // namespace
 
 Renderer2D::Renderer2D(SDL_Renderer* renderer, AssetCache& assets)
-    : m_renderer(renderer), m_textEngine(TTF_CreateRendererTextEngine(renderer)), m_assets(assets) {}
+    : m_renderer(renderer), m_assets(assets) {}
 
 Renderer2D::~Renderer2D() {
     ClearTextCache();
-    if (m_textEngine) TTF_DestroyRendererTextEngine(m_textEngine);
 }
 
-void Renderer2D::SetLogicalSize(int width, int height) {
+void Renderer2D::SetLogicalSize(int width, int height, bool updateTextDensity) {
     m_logicalW = width;
     m_logicalH = height;
     SDL_SetRenderLogicalPresentation(m_renderer, width, height, SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    if(updateTextDensity&&m_textSamplingMode==TextSamplingMode::Auto&&width>0&&height>0){int outputW=width,outputH=height;(void)SDL_GetCurrentRenderOutputSize(m_renderer,&outputW,&outputH);const float density=std::min(static_cast<float>(outputW)/width,static_cast<float>(outputH)/height);const int effective=std::clamp(static_cast<int>(std::ceil(std::max(2.0f,density))),2,4);if(effective!=m_effectiveTextSupersample){m_effectiveTextSupersample=effective;ClearTextCache();}}
 }
 
 void Renderer2D::GetLogicalSize(int& width, int& height) const {
@@ -98,6 +98,25 @@ void Renderer2D::DrawRoundedRect(const Rect& rect, float radius, Color color) {
     SDL_RenderGeometry(m_renderer, nullptr, fan.data(), static_cast<int>(fan.size()), nullptr, 0);
 }
 
+void Renderer2D::SetPreviewContext(float displayPixelsPerLogical, bool clarityCompensation) {
+    m_displayPixelsPerLogical = std::max(0.01f, displayPixelsPerLogical);
+    m_clarityCompensation = clarityCompensation;
+}
+
+void Renderer2D::DrawBorder(const Rect& rect, float width, float, Color color) {
+    if (rect.w <= 0.0f || rect.h <= 0.0f || width <= 0.0f) return;
+    const float pixel = 1.0f / m_displayPixelsPerLogical;
+    const float stroke = m_clarityCompensation ? std::max(width, pixel) : width;
+    const auto align = [&](float value) {
+        return m_clarityCompensation ? std::round(value / pixel) * pixel : value;
+    };
+    const float left=align(rect.x),top=align(rect.y),right=align(rect.x+rect.w),bottom=align(rect.y+rect.h);
+    DrawRect({left,top,std::max(0.0f,right-left),stroke},color);
+    DrawRect({left,std::max(top,bottom-stroke),std::max(0.0f,right-left),stroke},color);
+    DrawRect({left,top+stroke,stroke,std::max(0.0f,bottom-top-stroke*2)},color);
+    DrawRect({std::max(left,right-stroke),top+stroke,stroke,std::max(0.0f,bottom-top-stroke*2)},color);
+}
+
 void Renderer2D::PushClip(const Rect& requested) {
     Rect clip = requested;
     if (!m_clipStack.empty()) {
@@ -109,8 +128,9 @@ void Renderer2D::PushClip(const Rect& requested) {
         clip = {left, top, std::max(0.0f, right - left), std::max(0.0f, bottom - top)};
     }
     m_clipStack.push_back(clip);
-    const SDL_Rect value{static_cast<int>(clip.x), static_cast<int>(clip.y),
-                         static_cast<int>(clip.w), static_cast<int>(clip.h)};
+    const int left=static_cast<int>(std::floor(clip.x)),top=static_cast<int>(std::floor(clip.y));
+    const int right=static_cast<int>(std::ceil(clip.x+clip.w)),bottom=static_cast<int>(std::ceil(clip.y+clip.h));
+    const SDL_Rect value{left,top,std::max(0,right-left),std::max(0,bottom-top)};
     SDL_SetRenderClipRect(m_renderer, &value);
 }
 
@@ -121,8 +141,9 @@ void Renderer2D::PopClip() {
         SDL_SetRenderClipRect(m_renderer, nullptr);
     } else {
         const Rect clip = m_clipStack.back();
-        const SDL_Rect value{static_cast<int>(clip.x), static_cast<int>(clip.y),
-                             static_cast<int>(clip.w), static_cast<int>(clip.h)};
+        const int left=static_cast<int>(std::floor(clip.x)),top=static_cast<int>(std::floor(clip.y));
+        const int right=static_cast<int>(std::ceil(clip.x+clip.w)),bottom=static_cast<int>(std::ceil(clip.y+clip.h));
+        const SDL_Rect value{left,top,std::max(0,right-left),std::max(0,bottom-top)};
         SDL_SetRenderClipRect(m_renderer, &value);
     }
 }
@@ -138,6 +159,21 @@ void Renderer2D::Blit(SDL_Texture* texture, const Rect& dst, std::uint8_t alpha)
 }
 
 void Renderer2D::DrawImage(const std::string& path, const Rect& dst, std::uint8_t alpha) { Blit(m_assets.Texture(path), dst, alpha); }
+
+void Renderer2D::DrawImageInRect(const std::string& path, const Rect& bounds,
+                                 ContentScaleMode mode, HorizontalAlignment horizontal,
+                                 VerticalAlignment vertical, std::uint8_t alpha) {
+    SDL_Texture* texture=m_assets.Texture(path);if(!texture||bounds.w<=0||bounds.h<=0)return;
+    int tw=0,th=0;AssetCache::TextureSize(texture,tw,th);if(tw<=0||th<=0)return;
+    if(mode==ContentScaleMode::Stretch){Blit(texture,bounds,alpha);return;}
+    float scale=1.0f;
+    if(mode==ContentScaleMode::Fit)scale=std::min(bounds.w/static_cast<float>(tw),bounds.h/static_cast<float>(th));
+    else if(mode==ContentScaleMode::Fill)scale=std::max(bounds.w/static_cast<float>(tw),bounds.h/static_cast<float>(th));
+    const float w=tw*scale,h=th*scale;float x=bounds.x,y=bounds.y;
+    if(horizontal==HorizontalAlignment::Center)x+=(bounds.w-w)*.5f;else if(horizontal==HorizontalAlignment::Right)x+=bounds.w-w;
+    if(vertical==VerticalAlignment::Center)y+=(bounds.h-h)*.5f;else if(vertical==VerticalAlignment::Bottom)y+=bounds.h-h;
+    PushClip(bounds);Blit(texture,{x,y,w,h},alpha);PopClip();
+}
 
 void Renderer2D::DrawTexture(SDL_Texture* texture, const Rect& dst, std::uint8_t alpha) { Blit(texture, dst, alpha); }
 
@@ -216,9 +252,9 @@ Rect Renderer2D::DrawImageAuto(const std::string& path, DisplayMode mode, std::u
     return dst;
 }
 
-const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, const std::string& fontPath, int size, Color color, int outline, int wrap) {
-    const int ss = 1; // SDL_ttf's renderer text engine maintains a shaped glyph atlas.
-    const std::string key = MakeKey(text, fontPath, size, color, outline, wrap, ss);
+const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, const std::string& fontPath, int size, Color color, int outline, int wrap, HorizontalAlignment alignment) {
+    const int ss = m_effectiveTextSupersample;
+    const std::string key = MakeKey(text, fontPath, size, color, outline, wrap, ss,static_cast<int>(alignment));
     if (auto it = m_textCache.find(key); it != m_textCache.end()) {
         return &it->second;
     }
@@ -233,21 +269,14 @@ const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, c
         return nullptr;
     }
 
-    if (!m_textEngine) {
-        return nullptr;
-    }
-
+    const SDL_Color col{color.r,color.g,color.b,color.a};
+    const auto wrapAlignment=alignment==HorizontalAlignment::Center?TTF_HORIZONTAL_ALIGN_CENTER:alignment==HorizontalAlignment::Right?TTF_HORIZONTAL_ALIGN_RIGHT:TTF_HORIZONTAL_ALIGN_LEFT;
+    TTF_SetFontWrapAlignment(font,wrapAlignment);
+    SDL_Surface* surface=wrap>0?TTF_RenderText_Blended_Wrapped(font,text.c_str(),text.size(),col,wrap*ss):TTF_RenderText_Blended(font,text.c_str(),text.size(),col);
+    TTF_SetFontWrapAlignment(font,TTF_HORIZONTAL_ALIGN_LEFT);
+    if(!surface)return nullptr;
     CachedText entry;
-    entry.text = TTF_CreateText(m_textEngine, font, text.c_str(), text.size());
-    if (!entry.text) {
-        return nullptr;
-    }
-    TTF_SetTextColor(entry.text, color.r, color.g, color.b, color.a);
-    if (wrap > 0) TTF_SetTextWrapWidth(entry.text, wrap);
-    if (!TTF_GetTextSize(entry.text, &entry.w, &entry.h)) {
-        TTF_DestroyText(entry.text);
-        return nullptr;
-    }
+    entry.texture=SDL_CreateTextureFromSurface(m_renderer,surface);entry.w=surface->w/ss;entry.h=surface->h/ss;SDL_DestroySurface(surface);if(!entry.texture)return nullptr;SDL_SetTextureBlendMode(entry.texture,SDL_BLENDMODE_BLEND);SDL_SetTextureScaleMode(entry.texture,SDL_SCALEMODE_LINEAR);
 
     auto [it, _] = m_textCache.emplace(key, entry);
     return &it->second;
@@ -256,9 +285,7 @@ const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, c
 void Renderer2D::DrawText(const std::string& text, float x, float y, const std::string& fontPath, int size, Color color, std::uint8_t alpha, int wrap) {
     const CachedText* t = AcquireText(text, fontPath, size, color, 0, wrap);
     if (t) {
-        TTF_SetTextColor(t->text, color.r, color.g, color.b,
-                         static_cast<std::uint8_t>((static_cast<unsigned>(color.a) * alpha) / 255));
-        TTF_DrawRendererText(t->text, x + m_camX, y + m_camY);
+        Blit(t->texture,{x,y,static_cast<float>(t->w),static_cast<float>(t->h)},alpha);
     }
 }
 
@@ -268,24 +295,21 @@ void Renderer2D::DrawTextOutline(const std::string& text, float x, float y, cons
         const CachedText* s = AcquireText(text, fontPath, size, black, 0, wrap);
         if (s) {
             const auto sa = static_cast<std::uint8_t>(alpha * 0.35f);
-            TTF_SetTextColor(s->text, 0, 0, 0, sa);
-            TTF_DrawRendererText(s->text, x + 3 + m_camX, y + 3 + m_camY);
+            Blit(s->texture,{x+3,y+3,static_cast<float>(s->w),static_cast<float>(s->h)},sa);
         }
     }
 
     if (outlineSize > 0) {
         const CachedText* o = AcquireText(text, fontPath, size, outlineColor, outlineSize, wrap);
         if (o) {
-            TTF_SetTextColor(o->text, outlineColor.r, outlineColor.g, outlineColor.b, alpha);
-            TTF_DrawRendererText(o->text, x + m_camX, y + m_camY);
+            Blit(o->texture,{x,y,static_cast<float>(o->w),static_cast<float>(o->h)},alpha);
         }
     }
 
     const CachedText* f = AcquireText(text, fontPath, size, textColor, 0, wrap);
     if (f) {
         const float ox = static_cast<float>(outlineSize);
-        TTF_SetTextColor(f->text, textColor.r, textColor.g, textColor.b, alpha);
-        TTF_DrawRendererText(f->text, x + ox + m_camX, y + ox + m_camY);
+        Blit(f->texture,{x+ox,y+ox,static_cast<float>(f->w),static_cast<float>(f->h)},alpha);
     }
 }
 
@@ -306,18 +330,33 @@ Vec2 Renderer2D::MeasureText(const std::string& text, const std::string& fontPat
 
 void Renderer2D::ClearTextCache() {
     for (auto& [key, entry] : m_textCache) {
-        if (entry.text) TTF_DestroyText(entry.text);
+        if (entry.texture) SDL_DestroyTexture(entry.texture);
     }
     m_textCache.clear();
 }
 
 void Renderer2D::SetTextSupersample(int factor) {
     factor = std::clamp(factor, 1, 4);
-    if (factor == m_textSupersample) {
+    m_textSamplingMode=TextSamplingMode::Fixed;m_fixedTextSupersample=factor;
+    if (factor == m_effectiveTextSupersample) {
         return;
     }
-    m_textSupersample = factor;
+    m_effectiveTextSupersample = factor;
     ClearTextCache();
 }
+
+void Renderer2D::DrawTextInRect(const std::string& text, const Rect& bounds,
+                                const std::string& fontPath, int size, Color color,
+                                HorizontalAlignment horizontal, VerticalAlignment vertical,
+                                bool wrap, std::uint8_t alpha) {
+    const int wrapWidth=wrap?std::max(1,static_cast<int>(std::floor(bounds.w))):0;
+    const CachedText* t=AcquireText(text,fontPath,size,color,0,wrapWidth,horizontal);if(!t)return;
+    float x=bounds.x,y=bounds.y;
+    if(horizontal==HorizontalAlignment::Center)x+=(bounds.w-t->w)*.5f;else if(horizontal==HorizontalAlignment::Right)x+=bounds.w-t->w;
+    if(vertical==VerticalAlignment::Center)y+=(bounds.h-t->h)*.5f;else if(vertical==VerticalAlignment::Bottom)y+=bounds.h-t->h;
+    PushClip(bounds);Blit(t->texture,{x,y,static_cast<float>(t->w),static_cast<float>(t->h)},alpha);PopClip();
+}
+
+void Renderer2D::SetTextSupersampleAuto(){if(m_textSamplingMode==TextSamplingMode::Auto)return;m_textSamplingMode=TextSamplingMode::Auto;SetLogicalSize(m_logicalW,m_logicalH);}
 
 }  // namespace px::graphics

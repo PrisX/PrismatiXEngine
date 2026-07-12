@@ -13,7 +13,7 @@ using LogSink = std::function<void(const std::string&)>;
 
 struct ProjectManifest {
     std::string name = "PrismatiX Project";
-    int version = 3;
+    int version = 4;
     int gameWidth = 1280;
     int gameHeight = 720;
     struct Route { std::string id; std::string scene; bool modal=false; std::string cache="recreate"; };
@@ -21,6 +21,7 @@ struct ProjectManifest {
     std::vector<Route> routes{{"title","Content/UI/Title.pxscene",false,"keep-alive"},{"hud","Content/UI/HUD.pxscene",false,"keep-alive"},{"backlog","Content/UI/Backlog.pxscene",true,"recreate"},{"save","Content/UI/SaveLoad.pxscene",true,"recreate"},{"load","Content/UI/SaveLoad.pxscene",true,"recreate"},{"gallery","Content/UI/Gallery.pxscene",true,"recreate"},{"settings","Content/UI/Settings.pxscene",true,"keep-alive"},{"video","Content/UI/VideoOverlay.pxscene",true,"recreate"},{"confirm","Content/UI/ConfirmDialog.pxscene",true,"recreate"}};
     std::string startScript = "Content/Scenario/start.pxscenario";
     std::string theme = "PrismatiX Dark";
+    std::string uiThemePath = "Content/UI/PrismatiX.pxtheme";
     std::vector<std::string> assetRoots{ "Content" };
     bool encrypt = true;
     std::string encryptKey = "prismatix";

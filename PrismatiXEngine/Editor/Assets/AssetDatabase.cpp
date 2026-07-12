@@ -40,6 +40,7 @@ std::string AssetDatabase::Classify(const std::filesystem::path& path) {
         return "audio";
     if (ext == ".pxscenario") return "script";
     if (ext == ".pxscene") return "ui";
+    if (ext == ".pxcomponent") return "ui";
     if (ext == ".pxres" || ext == ".pxtheme" || ext == ".pxanim") return "resource";
     if (ext == ".ttf" || ext == ".otf") return "font";
     if (ext == ".lua") return "lua";

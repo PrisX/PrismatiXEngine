@@ -11,6 +11,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
+#include <sstream>
+#include <new>
 #include <unordered_set>
 #include <utility>
 
@@ -34,9 +37,37 @@ const char* TypeGlyph(std::string_view type) {
     if (type == "TextureRect") return "▧";
     return "○";
 }
+
+bool AppendCapturedNodes(const VariantObject& value,const Uuid& parent,std::vector<resource::NodeRecord>& output){
+    const auto idIt=value.find("id"),nameIt=value.find("name"),typeIt=value.find("type"),propertiesIt=value.find("properties");
+    if(idIt==value.end()||nameIt==value.end()||typeIt==value.end()||propertiesIt==value.end())return false;
+    const auto* id=idIt->second.TryGet<Uuid>();const auto* name=nameIt->second.TryGet<std::string>();const auto* type=typeIt->second.TryGet<std::string>();const auto* properties=propertiesIt->second.AsObject();if(!id||!name||!type||!properties)return false;
+    output.push_back({*id,parent,*name,*type,*properties});
+    if(const auto childrenIt=value.find("children");childrenIt!=value.end())if(const auto* children=childrenIt->second.AsArray())for(const auto& child:*children){const auto* object=child.AsObject();if(!object||!AppendCapturedNodes(*object,*id,output))return false;}
+    return true;
+}
+
+VariantObject CaptureExpandedNodes(const std::vector<resource::NodeRecord>& nodes, const Uuid& id) {
+    const auto found=std::find_if(nodes.begin(),nodes.end(),[&](const auto& node){return node.id==id;});
+    if(found==nodes.end())return {};
+    VariantArray children;
+    for(const auto& child:nodes)if(child.parent==id)children.emplace_back(CaptureExpandedNodes(nodes,child.id));
+    return {{"id",found->id},{"name",found->name},{"type",found->type},
+            {"properties",VariantObject(found->properties)},{"children",std::move(children)}};
+}
 }
 
 UIDesigner::UIDesigner() { const Status status = ui::RegisterBuiltinUITypes(); if (!status) EmitStatus(status); }
+
+UIDesigner& UIDesigner::operator=(UIDesigner&& other) noexcept {
+    if(this==&other)return *this;
+    // PropertyEditTransaction refers to m_document. Destroy in normal reverse-member order
+    // before replacing the designer; default memberwise move-assignment would replace the
+    // document first and leave an active transaction pointing at freed memory.
+    this->~UIDesigner();
+    ::new (static_cast<void*>(this)) UIDesigner(std::move(other));
+    return *this;
+}
 
 Status UIDesigner::Open(const std::filesystem::path& path) {
     auto document = std::make_unique<UISceneDocument>(); const Status status = document->Load(path);
@@ -85,7 +116,7 @@ VariantObject UIDesigner::NewSubtree(std::string type, std::string name, Rect an
     VariantObject properties{{"anchors", Variant(anchors)}, {"offsets", Variant(offsets)}};
     if (type == "Label") properties["text"] = Variant(std::string("Text"));
     if (type == "Button") properties["text"] = Variant(std::string("Button"));
-    if (type == "TextureRect" && !image.empty()) properties["path"] = Variant(std::move(image));
+    if (type == "TextureRect" && !image.empty()) {properties["path"] = Variant(std::move(image));properties["scaleMode"]=Variant(std::string("Fit"));properties["lockAspectRatio"]=Variant(true);}
     return {{"id", Variant(Uuid::Random())}, {"name", Variant(std::move(name))}, {"type", Variant(std::move(type))},
             {"properties", Variant(std::move(properties))}, {"children", Variant(VariantArray{})}};
 }
@@ -97,7 +128,8 @@ void UIDesigner::RegenerateIds(VariantObject& subtree) {
 
 void UIDesigner::AddNode(std::string type, Vec2 canvas, std::string image) {
     if (!m_document) return; const Uuid parent = ParentForNewNode();
-    const float w = type == "TextureRect" ? 320.0f : 180.0f, h = type == "TextureRect" ? 180.0f : 52.0f;
+    float w = type == "TextureRect" ? 320.0f : 180.0f, h = type == "TextureRect" ? 180.0f : 52.0f;
+    if(type=="TextureRect"&&!image.empty()&&m_imageSizeResolver)if(const auto size=m_imageSizeResolver(image);size&&size->x>0&&size->y>0){w=size->x;h=size->y;const Vec2 canvasSize=CanvasSize();const float fit=std::min({1.0f,(canvasSize.x-40.0f)/w,(canvasSize.y-40.0f)/h});w*=fit;h*=fit;}
     Rect offsets{canvas.x - w * 0.5f, canvas.y - h * 0.5f, w, h};
     if (canvas == Vec2{}) offsets = {20,20,w,h};
     VariantObject subtree = NewSubtree(type, UniqueName(*m_document, type), {0,0,0,0}, offsets, std::move(image));
@@ -108,17 +140,25 @@ void UIDesigner::AddNode(std::string type, Vec2 canvas, std::string image) {
     m_selected = id; MarkEdited(true);
 }
 
+void UIDesigner::RenderAddControlPalette(Vec2 canvasPosition){
+    ImGui::InputTextWithHint("##control-search","Search controls…",m_paletteFilter,sizeof(m_paletteFilter));
+    const std::string filter=m_paletteFilter;const auto category=[](std::string_view type)->std::string_view{if(type.find("Container")!=std::string_view::npos)return "Layout";if(type=="Button"||type.find("Input")!=std::string_view::npos)return "Input";if(type=="Label"||type=="TextureRect"||type=="Panel")return "Display";return "Data";};
+    for(const char* group:{"Display","Input","Layout","Data"}){bool header=false;for(const auto* type:TypeRegistry::Global().TypesDerivedFrom("Control")){if(type->name=="Control"||category(type->name)!=group)continue;if(!filter.empty()&&type->name.find(filter)==std::string::npos)continue;if(!header){ImGui::SeparatorText(group);header=true;}if(ImGui::Selectable(type->name.c_str())){AddNode(type->name,canvasPosition);ImGui::CloseCurrentPopup();}}}
+}
+
 void UIDesigner::RemoveSelected() {
-    if (!m_document || m_selected.Empty() || m_selected == RootId()) return;
-    auto captured = m_document->CaptureSubtree(m_selected); if (!captured) return EmitStatus(Status::Fail(captured.Diagnostics()));
-    const auto* node = m_document->Find(m_selected); const Uuid parent = node->parent; const std::size_t index = m_document->ChildIndex(m_selected);
-    auto command = std::make_unique<SubtreeEditCommand>("Delete " + node->name, SubtreeOperation::Remove, m_selected, parent, index, std::move(captured.Value()));
-    const Status status = m_document->History().Execute(std::move(command)); if (!status) return EmitStatus(status);
-    m_selected = parent; m_selection={parent}; MarkEdited(true);
+    if(!m_document)return;std::unordered_set<Uuid,UuidHash> requested=m_selection;if(requested.empty()&&!m_selected.Empty())requested.insert(m_selected);requested.erase(RootId());
+    if(requested.empty()){m_canvasHint="根節點不能刪除";return;}
+    std::vector<Uuid> targets;for(const Uuid& id:requested){const auto* node=m_document->Find(id);bool covered=false;for(const auto* parent=node?m_document->Find(node->parent):nullptr;parent;parent=m_document->Find(parent->parent))if(requested.contains(parent->id)){covered=true;break;}if(node&&!covered)targets.push_back(id);}
+    auto command=std::make_unique<CompositeEditCommand>(targets.size()>1?"Delete UI controls":"Delete UI control");Uuid fallback=RootId();
+    for(const Uuid& id:targets){const auto* node=m_document->Find(id);if(!node)continue;fallback=node->parent;auto captured=m_document->CaptureSubtree(id);if(!captured){EmitStatus(Status::Fail(captured.Diagnostics()));return;}command->Add(std::make_unique<SubtreeEditCommand>("Delete "+node->name,SubtreeOperation::Remove,id,node->parent,m_document->ChildIndex(id),captured.TakeValue()));}
+    if(command->Empty())return;const Status status=m_document->History().Execute(std::move(command));if(!status)return EmitStatus(status);
+    m_selected=fallback;m_selection={fallback};m_canvasHint.clear();MarkEdited(true);
 }
 
 void UIDesigner::DuplicateSelected() {
     if (!m_document || m_selected.Empty()) return;
+    if(m_selection.size()>1){std::vector<Uuid> targets;for(const Uuid& id:m_selection){if(id==RootId())continue;const auto* node=m_document->Find(id);bool covered=false;for(const auto* parent=node?m_document->Find(node->parent):nullptr;parent;parent=m_document->Find(parent->parent))if(m_selection.contains(parent->id)){covered=true;break;}if(node&&!covered)targets.push_back(id);}auto command=std::make_unique<CompositeEditCommand>("Duplicate UI controls");std::unordered_set<Uuid,UuidHash> created;for(Uuid id:targets){const auto* node=m_document->Find(id);auto captured=m_document->CaptureSubtree(id);if(!node||!captured)continue;RegenerateIds(captured.Value());if(auto* name=captured.Value()["name"].TryGet<std::string>())*name=UniqueName(*m_document,*name+"Copy");const Uuid newId=*captured.Value()["id"].TryGet<Uuid>();created.insert(newId);command->Add(std::make_unique<SubtreeEditCommand>("Duplicate "+node->name,SubtreeOperation::Insert,newId,node->parent,m_document->ChildIndex(id)+1,captured.TakeValue()));}if(command->Empty())return;const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else{m_selection=std::move(created);if(!m_selection.empty())m_selected=*m_selection.begin();MarkEdited(true);}return;}
     const auto* node = m_document->Find(m_selected); if (!node) return;
     auto captured = m_document->CaptureSubtree(m_selected); if (!captured) return;
     RegenerateIds(captured.Value());
@@ -128,6 +168,104 @@ void UIDesigner::DuplicateSelected() {
                                                         m_document->ChildIndex(m_selected) + 1, std::move(captured.Value()));
     const Status status = m_document->History().Execute(std::move(command)); if (!status) return EmitStatus(status);
     m_selected = newId; m_selection={newId}; MarkEdited(true);
+}
+
+void UIDesigner::CopySelected() {
+    if (!m_document || m_selected.Empty()) return;
+    auto captured=m_document->CaptureSubtree(m_selected);if(captured)m_clipboardSubtree=captured.TakeValue();
+}
+
+void UIDesigner::PasteClipboard(Vec2 canvasPosition) {
+    if(!m_document||m_clipboardSubtree.empty())return;
+    VariantObject subtree=m_clipboardSubtree;RegenerateIds(subtree);
+    if(auto* name=subtree["name"].TryGet<std::string>())*name=UniqueName(*m_document,*name+"Copy");
+    if(canvasPosition!=Vec2{})if(auto* properties=subtree["properties"].AsObject())if(auto found=properties->find("offsets");found!=properties->end())if(auto* rect=found->second.TryGet<Rect>()){rect->x=canvasPosition.x;rect->y=canvasPosition.y;}
+    const Uuid id=*subtree["id"].TryGet<Uuid>();const Uuid parent=ParentForNewNode();
+    auto command=std::make_unique<SubtreeEditCommand>("Paste UI Control",SubtreeOperation::Insert,id,parent,m_document->Children(parent).size(),std::move(subtree));
+    const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else{m_selected=id;m_selection={id};MarkEdited(true);}
+}
+
+Result<resource::TypedDocument> UIDesigner::LoadReferencedUI(const ResourceRefValue& reference) const {
+    std::filesystem::path candidate=reference.lastKnownPath;
+    if(candidate.is_relative()&&m_document){auto parent=m_document->Path().parent_path();while(!parent.empty()){const auto resolved=parent/candidate;if(std::filesystem::exists(resolved)){candidate=resolved;break;}const auto next=parent.parent_path();if(next==parent)break;parent=next;}}
+    std::ifstream input(candidate,std::ios::binary);
+    if(!input)return Result<resource::TypedDocument>::Failure(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXEDUI3030",.category="Editor.UIDesigner",.message="Referenced UI resource not found: "+candidate.string()});
+    std::ostringstream buffer;buffer<<input.rdbuf();return resource::ParseTypedDocument(buffer.str(),candidate.string());
+}
+
+void UIDesigner::ResetComponentOverride(const std::string& sourceNode,const std::string& property) {
+    if(!m_document)return;const auto* node=m_document->Find(m_selected);if(!node||node->type!="ComponentInstance")return;
+    const auto found=node->properties.find("overrides");if(found==node->properties.end()||!found->second.AsObject())return;
+    VariantObject changed=*found->second.AsObject();
+    if(sourceNode.empty())changed.clear();
+    else if(auto source=changed.find(sourceNode);source!=changed.end()){
+        if(property.empty())changed.erase(source);
+        else if(auto* values=source->second.AsObject()){values->erase(property);if(values->empty())changed.erase(source);}
+    }
+    auto command=std::make_unique<PropertyChangeCommand>(property.empty()?"Reset component overrides":"Reset component override",m_selected,"overrides",found->second,Variant(std::move(changed)),std::chrono::steady_clock::now(),false);
+    const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited();
+}
+
+void UIDesigner::DetachSelectedComponent() {
+    if(!m_document)return;const auto* node=m_document->Find(m_selected);if(!node||node->type!="ComponentInstance")return;
+    resource::TypedDocument temporary=m_document->Data();temporary.nodes={*node};temporary.nodes.front().parent={};
+    const ui::UIDocumentLoader loader=[this](const ResourceRefValue& reference){return LoadReferencedUI(reference);};
+    auto expanded=ui::ExpandUIComponents(temporary,loader);if(!expanded){EmitStatus(Status::Fail(expanded.Diagnostics()));return;}
+    VariantObject materialized=CaptureExpandedNodes(expanded.Value().document.nodes,m_selected);if(materialized.empty())return;
+    auto original=m_document->CaptureSubtree(m_selected);if(!original)return;
+    const Uuid parent=node->parent;const std::size_t index=m_document->ChildIndex(m_selected);
+    auto command=std::make_unique<CompositeEditCommand>("Detach UI Component");
+    command->Add(std::make_unique<SubtreeEditCommand>("Remove component instance",SubtreeOperation::Remove,m_selected,parent,index,original.TakeValue()));
+    command->Add(std::make_unique<SubtreeEditCommand>("Materialize component",SubtreeOperation::Insert,m_selected,parent,index,std::move(materialized)));
+    const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited(true);
+}
+
+void UIDesigner::ChangeSelectedLayer(LayerAction action) {
+    if(!m_document||m_selected.Empty()||m_selected==RootId())return;const auto* node=m_document->Find(m_selected);if(!node)return;
+    const auto siblings=m_document->Children(node->parent);if(siblings.size()<2)return;const std::size_t oldIndex=m_document->ChildIndex(m_selected);std::size_t target=oldIndex;
+    switch(action){case LayerAction::BringForward:target=std::min(oldIndex+1,siblings.size()-1);break;case LayerAction::SendBackward:target=oldIndex?oldIndex-1:0;break;case LayerAction::BringToFront:target=siblings.size()-1;break;case LayerAction::SendToBack:target=0;break;}
+    if(target==oldIndex)return;auto command=std::make_unique<MoveChildEditCommand>("Change UI layer",node->parent,m_selected,oldIndex,target);const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited(true);
+}
+
+void UIDesigner::SetSelectedAsBackground(bool lock){
+    if(!m_document)return;auto* node=m_document->Find(m_selected);if(!node||node->type!="TextureRect"){m_canvasHint="請先選取圖片元件";return;}
+    const Uuid root=RootId();auto command=std::make_unique<CompositeEditCommand>(lock?"Set and lock background":"Set background");
+    if(node->parent==root){const std::size_t old=m_document->ChildIndex(node->id);if(old)command->Add(std::make_unique<MoveChildEditCommand>("Send background to back",root,node->id,old,0));}
+    else command->Add(std::make_unique<ReparentEditCommand>("Move background to root",node->id,node->parent,m_document->ChildIndex(node->id),root,0));
+    const auto add=[&](const char* property,Variant value){const Variant before=node->properties.contains(property)?node->properties.at(property):Variant{};if(before!=value)command->Add(std::make_unique<PropertyChangeCommand>("Set background",node->id,property,before,std::move(value),std::chrono::steady_clock::now(),false));};
+    add("anchors",Variant(Rect{0,0,1,1}));add("offsets",Variant(Rect{0,0,0,0}));add("scaleMode",Variant(std::string("Fill")));if(lock)add("editorLocked",Variant(true));
+    if(command->Empty())return;const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else{m_canvasHint=lock?"已設為背景並鎖定":"已設為背景";MarkEdited(true);}
+}
+
+void UIDesigner::RestoreSelectedImageSize(){
+    if(!m_document||!m_imageSizeResolver)return;auto* node=m_document->Find(m_selected);if(!node||node->type!="TextureRect")return;
+    const auto path=node->properties.find("path");if(path==node->properties.end()||!path->second.TryGet<std::string>())return;const auto size=m_imageSizeResolver(*path->second.TryGet<std::string>());if(!size){m_canvasHint="無法讀取圖片原始尺寸";return;}
+    Rect visual=SelectedRect();visual.w=size->x;visual.h=size->y;Rect anchors{};if(const auto found=node->properties.find("anchors");found!=node->properties.end())if(const auto* value=found->second.TryGet<Rect>())anchors=*value;
+    const Rect offsets=ui::ControlLayoutMath::OffsetsForRect(ParentRect(m_selected),anchors,visual);const Variant before=node->properties.contains("offsets")?node->properties.at("offsets"):Variant{};
+    auto command=std::make_unique<PropertyChangeCommand>("Restore image size",m_selected,"offsets",before,Variant(offsets),std::chrono::steady_clock::now(),false);const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited();
+}
+
+void UIDesigner::AlignSelection(AlignAction action){
+    if(!m_document||m_selected.Empty())return;const auto* primary=m_document->Find(m_selected);if(!primary||m_selected==RootId())return;
+    std::vector<Uuid> ids;for(const Uuid& id:m_selection){const auto* node=m_document->Find(id);if(!node||node->parent!=primary->parent||id==RootId())continue;const auto policy=m_childPolicies.find(node->parent);if(policy!=m_childPolicies.end()&&policy->second!=ui::ChildLayoutPolicy::Free)continue;ids.push_back(id);}
+    if(ids.empty()){m_canvasHint="此佈局不允許自由對齊";return;}if((action==AlignAction::DistributeH||action==AlignAction::DistributeV)&&ids.size()<3){m_canvasHint="平均分布至少需要三個元件";return;}
+    std::unordered_map<Uuid,Rect,UuidHash> targets;for(const Uuid& id:ids)targets[id]=m_layout.at(id);
+    const Rect reference=ids.size()==1?ParentRect(m_selected):m_layout.at(m_selected);
+    if(action==AlignAction::DistributeH){std::sort(ids.begin(),ids.end(),[&](Uuid a,Uuid b){return targets[a].x<targets[b].x;});const float left=targets[ids.front()].x,right=targets[ids.back()].x+targets[ids.back()].w;float widths=0;for(Uuid id:ids)widths+=targets[id].w;const float gap=(right-left-widths)/(ids.size()-1);float x=left;for(Uuid id:ids){targets[id].x=x;x+=targets[id].w+gap;}}
+    else if(action==AlignAction::DistributeV){std::sort(ids.begin(),ids.end(),[&](Uuid a,Uuid b){return targets[a].y<targets[b].y;});const float top=targets[ids.front()].y,bottom=targets[ids.back()].y+targets[ids.back()].h;float heights=0;for(Uuid id:ids)heights+=targets[id].h;const float gap=(bottom-top-heights)/(ids.size()-1);float y=top;for(Uuid id:ids){targets[id].y=y;y+=targets[id].h+gap;}}
+    else for(Uuid id:ids){Rect& r=targets[id];if(action==AlignAction::Left)r.x=reference.x;else if(action==AlignAction::HCenter)r.x=reference.x+(reference.w-r.w)*.5f;else if(action==AlignAction::Right)r.x=reference.x+reference.w-r.w;else if(action==AlignAction::Top)r.y=reference.y;else if(action==AlignAction::VCenter)r.y=reference.y+(reference.h-r.h)*.5f;else if(action==AlignAction::Bottom)r.y=reference.y+reference.h-r.h;}
+    auto command=std::make_unique<CompositeEditCommand>("Align UI controls");for(Uuid id:ids){const auto* node=m_document->Find(id);Rect anchors{};if(const auto found=node->properties.find("anchors");found!=node->properties.end())if(const auto* value=found->second.TryGet<Rect>())anchors=*value;const Rect offsets=ui::ControlLayoutMath::OffsetsForRect(ParentRect(id),anchors,targets[id]);const Variant before=node->properties.contains("offsets")?node->properties.at("offsets"):Variant{};if(before!=Variant(offsets))command->Add(std::make_unique<PropertyChangeCommand>("Align control",id,"offsets",before,Variant(offsets),std::chrono::steady_clock::now(),false));}
+    if(command->Empty())return;const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited();
+}
+
+Status UIDesigner::CreateComponentFromSelected(const std::filesystem::path& path){
+    if(!m_document||m_selected.Empty()||m_selected==RootId()||!m_componentWriter)return Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXEDUI3041",.category="Editor.UIDesigner",.message="Select a non-root Control before creating a component"});
+    const auto* selected=m_document->Find(m_selected);if(!selected)return Status::Ok();auto captured=m_document->CaptureSubtree(m_selected);if(!captured)return Status::Fail(captured.Diagnostics());
+    resource::TypedDocument component;component.kind=resource::DocumentKind::Scene;component.id=Uuid::Random();component.type="UIComponent";component.properties["canvasSize"]=Vec2{std::max(1.0f,SelectedRect().w),std::max(1.0f,SelectedRect().h)};if(!AppendCapturedNodes(captured.Value(),{},component.nodes))return Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXEDUI3042",.category="Editor.UIDesigner",.message="Selected subtree could not be serialized as a component"});
+    auto written=m_componentWriter(path,resource::WriteTypedDocument(component));if(!written)return Status::Fail(written.Diagnostics());
+    VariantObject instanceProperties=selected->properties;instanceProperties["component"]=written.Value();instanceProperties["overrides"]=VariantObject{};
+    VariantObject instance{{"id",m_selected},{"name",selected->name},{"type",std::string("ComponentInstance")},{"properties",std::move(instanceProperties)},{"children",VariantArray{}}};
+    const Uuid parent=selected->parent;const std::size_t index=m_document->ChildIndex(m_selected);auto command=std::make_unique<CompositeEditCommand>("Create UI Component");command->Add(std::make_unique<SubtreeEditCommand>("Remove source subtree",SubtreeOperation::Remove,m_selected,parent,index,captured.Value()));command->Add(std::make_unique<SubtreeEditCommand>("Insert component instance",SubtreeOperation::Insert,m_selected,parent,index,std::move(instance)));const Status status=m_document->History().Execute(std::move(command));if(status)MarkEdited(true);return status;
 }
 
 bool UIDesigner::TreeMatches(const resource::NodeRecord& record) const {
@@ -176,15 +314,23 @@ void UIDesigner::RenderTreeNode(resource::NodeRecord& record) {
         ImGui::EndDragDropTarget();
     }
     if(ImGui::BeginPopupContextItem("TreeNodeMenu")){
+        if(!m_selection.contains(record.id)){m_selected=record.id;m_selection={record.id};}else m_selected=record.id;
         if(ImGui::MenuItem(visible?"隱藏":"顯示")){const Variant before=record.properties.contains("visible")?record.properties["visible"]:Variant(true);auto command=std::make_unique<PropertyChangeCommand>("切換可見性",record.id,"visible",before,Variant(!visible));const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited();}
         if(ImGui::MenuItem(locked?"解除鎖定":"鎖定")){const Variant before=record.properties.contains("editorLocked")?record.properties["editorLocked"]:Variant(false);auto command=std::make_unique<PropertyChangeCommand>("切換鎖定",record.id,"editorLocked",before,Variant(!locked));const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited();}
         ImGui::Separator();
         if(ImGui::MenuItem("重新命名","F2")){m_selected=record.id;m_selection={record.id};std::snprintf(m_treeRename,sizeof(m_treeRename),"%s",record.name.c_str());m_treeRenameOpen=true;}
-        if(ImGui::MenuItem("複製","Ctrl+D")){m_selected=record.id;m_selection={record.id};DuplicateSelected();}
-        if(record.id!=RootId()&&ImGui::MenuItem("刪除","Delete")){m_selected=record.id;m_selection={record.id};RemoveSelected();}
+        if(ImGui::MenuItem("複製","Ctrl+D"))DuplicateSelected();
+        if(record.id!=RootId()&&ImGui::MenuItem("建立 Component…")){m_selected=record.id;m_selection={record.id};m_createComponentOpen=true;}
+        if(record.type=="ComponentInstance"){
+            if(const auto component=record.properties.find("component");component!=record.properties.end())if(const auto* reference=component->second.TryGet<ResourceRefValue>())if(m_openResource&&ImGui::MenuItem("Edit Main")){m_selected=record.id;m_selection={record.id};m_openResource(*reference);}
+            if(ImGui::MenuItem("Reset All Overrides")){m_selected=record.id;m_selection={record.id};ResetComponentOverride();}
+            if(ImGui::MenuItem("Detach")){m_selected=record.id;m_selection={record.id};DetachSelectedComponent();}
+        }
+        if(record.id!=RootId()&&ImGui::BeginMenu("圖層順序")){m_selected=record.id;m_selection={record.id};if(ImGui::MenuItem("置頂","Ctrl+Shift+]"))ChangeSelectedLayer(LayerAction::BringToFront);if(ImGui::MenuItem("上移一層","Ctrl+]"))ChangeSelectedLayer(LayerAction::BringForward);if(ImGui::MenuItem("下移一層","Ctrl+["))ChangeSelectedLayer(LayerAction::SendBackward);if(ImGui::MenuItem("置底","Ctrl+Shift+["))ChangeSelectedLayer(LayerAction::SendToBack);ImGui::EndMenu();}
+        if(record.id!=RootId()&&ImGui::MenuItem("刪除","Delete"))RemoveSelected();
         ImGui::EndPopup();
     }
-    if (open) { for (auto* child : children) RenderTreeNode(*child); ImGui::TreePop(); }
+    if (open) { for (auto it=children.rbegin();it!=children.rend();++it) RenderTreeNode(**it); ImGui::TreePop(); }
     ImGui::PopID();
 }
 
@@ -196,8 +342,7 @@ void UIDesigner::RenderHierarchy() {
     if (ImGui::Button("Delete")) RemoveSelected(); ImGui::SameLine();
     if (ImGui::Button(Dirty() ? "Save *" : "Save")) Save();
     if (ImGui::BeginPopup("AddUIControl")) {
-        for (const auto* type : TypeRegistry::Global().TypesDerivedFrom("Control")) if (type->name != "Control")
-            if (ImGui::MenuItem(type->name.c_str())) AddNode(type->name);
+        RenderAddControlPalette();
         ImGui::EndPopup();
     }
     if(!ImGui::GetIO().WantTextInput&&ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)&&ImGui::IsKeyPressed(ImGuiKey_F2)){
@@ -211,6 +356,8 @@ void UIDesigner::RenderHierarchy() {
         ImGui::SameLine();if(ImGui::Button("取消")){m_treeRenameOpen=false;ImGui::CloseCurrentPopup();}
         ImGui::EndPopup();
     }
+    if(m_createComponentOpen)ImGui::OpenPopup("建立 UI Component");
+    if(ImGui::BeginPopupModal("建立 UI Component",nullptr,ImGuiWindowFlags_AlwaysAutoResize)){ImGui::InputText("Path",m_componentPath,sizeof(m_componentPath));if(ImGui::Button("建立",ImVec2(100,0))){const Status status=CreateComponentFromSelected(m_componentPath);if(!status)EmitStatus(status);else{m_createComponentOpen=false;ImGui::CloseCurrentPopup();}}ImGui::SameLine();if(ImGui::Button("取消",ImVec2(100,0))){m_createComponentOpen=false;ImGui::CloseCurrentPopup();}ImGui::EndPopup();}
     ImGui::Separator();
     if (auto* root = m_document->Find(RootId())) RenderTreeNode(*root);
 }
@@ -238,6 +385,32 @@ void UIDesigner::RenderInspector(const std::string& selectedAssetPath) {
     ImGui::TextDisabled("%s", node->type.c_str());
     std::string name = node->name; if (ImGui::InputText("Name", &name, ImGuiInputTextFlags_EnterReturnsTrue))
         EditVariant("Name", "$name", Variant(node->name), Variant(name), true, false);
+    if(node->type=="TextureRect"){
+        if(ImGui::Button("設為背景"))SetSelectedAsBackground(false);ImGui::SameLine();if(ImGui::Button("原始尺寸"))RestoreSelectedImageSize();
+    }
+
+    if(node->type=="ComponentInstance"){
+        ImGui::SeparatorText("Component");
+        const auto component=node->properties.find("component");
+        const auto* reference=component==node->properties.end()?nullptr:component->second.TryGet<ResourceRefValue>();
+        ImGui::TextWrapped("%s",reference?reference->lastKnownPath.c_str():"Missing component resource");
+        if(reference&&m_openResource&&ImGui::Button("Edit Main"))m_openResource(*reference);
+        if(reference&&m_openResource)ImGui::SameLine();
+        if(ImGui::Button("Detach")){DetachSelectedComponent();return;}
+        VariantObject overrides;
+        if(const auto found=node->properties.find("overrides");found!=node->properties.end()&&found->second.AsObject())overrides=*found->second.AsObject();
+        ImGui::SameLine();ImGui::BeginDisabled(overrides.empty());
+        if(ImGui::Button("Reset All"))ResetComponentOverride();
+        ImGui::EndDisabled();
+        std::size_t overrideCount=0;for(const auto& [source,value]:overrides)if(const auto* fields=value.AsObject())overrideCount+=fields->size();
+        ImGui::TextDisabled("%zu property override(s); internal structure is locked",overrideCount);
+        for(const auto& [source,value]:overrides)if(const auto* fields=value.AsObject()){
+            if(ImGui::TreeNode(source.c_str(),"Source %s",source.substr(0,8).c_str())){
+                for(const auto& [property,unused]:*fields){(void)unused;ImGui::PushID((source+property).c_str());ImGui::TextUnformatted(property.c_str());ImGui::SameLine();if(ImGui::SmallButton("Reset")){ResetComponentOverride(source,property);ImGui::PopID();ImGui::TreePop();return;}ImGui::PopID();}
+                ImGui::TreePop();
+            }
+        }
+    }
 
     std::vector<const PropertyInfo*> properties; std::string type = node->type;
     while (const auto* info = TypeRegistry::Global().Find(type)) {
@@ -261,18 +434,29 @@ void UIDesigner::RenderInspector(const std::string& selectedAssetPath) {
         Variant value = current == node->properties.end() ? property->defaultValue : current->second;
         bool changed = false, continuous = false;
         ImGui::PushID(property->name.c_str());
-        if (auto* text = value.TryGet<std::string>()) changed = ImGui::InputText(property->name.c_str(), text);
+        const char* propertyLabel=property->editor.displayName.empty()?property->name.c_str():property->editor.displayName.c_str();
+        if (auto* text = value.TryGet<std::string>()) {
+            if(!property->editor.enumChoices.empty()){
+                if(ImGui::BeginCombo(propertyLabel,text->empty()?"(none)":text->c_str())){for(const auto& choice:property->editor.enumChoices)if(ImGui::Selectable(choice.c_str(),choice==*text)){*text=choice;changed=true;}ImGui::EndCombo();}
+            }else if(property->editor.multiline)changed=ImGui::InputTextMultiline(propertyLabel,text,ImVec2(-1,ImGui::GetTextLineHeight()*4));
+            else changed = ImGui::InputText(propertyLabel, text);
+            if(!property->editor.resourceFilter.empty()&&ImGui::BeginDragDropTarget()){if(const ImGuiPayload* payload=ImGui::AcceptDragDropPayload("PX_RESOURCE_PATH")){*text=std::string(static_cast<const char*>(payload->Data),payload->DataSize?payload->DataSize-1:0);changed=true;}ImGui::EndDragDropTarget();}
+        }
         else if (auto* boolean = value.TryGet<bool>()) changed = ImGui::Checkbox(property->name.c_str(), boolean);
-        else if (auto* integer = value.TryGet<std::int64_t>()) { int v = static_cast<int>(*integer); changed = ImGui::DragInt(property->name.c_str(), &v); *integer = v; continuous = true; }
-        else if (auto* number = value.TryGet<double>()) { float v = static_cast<float>(*number); changed = ImGui::DragFloat(property->name.c_str(), &v, 0.1f); *number = v; continuous = true; }
+        else if (auto* integer = value.TryGet<std::int64_t>()) { int v = static_cast<int>(*integer); changed = ImGui::DragInt(propertyLabel, &v,static_cast<float>(property->editor.step),property->editor.hasRange?static_cast<int>(property->editor.minimum):0,property->editor.hasRange?static_cast<int>(property->editor.maximum):0); *integer = v; continuous = true; }
+        else if (auto* number = value.TryGet<double>()) { float v = static_cast<float>(*number); changed = ImGui::DragFloat(propertyLabel, &v, static_cast<float>(property->editor.step),property->editor.hasRange?static_cast<float>(property->editor.minimum):0,property->editor.hasRange?static_cast<float>(property->editor.maximum):0); *number = v; continuous = true; }
         else if (auto* vec = value.TryGet<Vec2>()) { float v[2]{vec->x,vec->y}; changed = ImGui::DragFloat2(property->name.c_str(), v, 1); *vec={v[0],v[1]}; continuous=true; }
-        else if (auto* rect = value.TryGet<Rect>()) { float v[4]{rect->x,rect->y,rect->w,rect->h}; changed=ImGui::DragFloat4(property->name.c_str(),v,1); *rect={v[0],v[1],v[2],v[3]}; continuous=true; }
+        else if (auto* rect = value.TryGet<Rect>()) { float position[2]{rect->x,rect->y},size[2]{rect->w,rect->h};ImGui::TextUnformatted(propertyLabel);changed=ImGui::DragFloat2("X / Y",position,property->name=="anchors"?.01f:1.0f);changed|=ImGui::DragFloat2("W / H",size,property->name=="anchors"?.01f:1.0f);*rect={position[0],position[1],size[0],size[1]};continuous=true; }
         else if (auto* color = value.TryGet<Color>()) { float v[4]{color->r/255.f,color->g/255.f,color->b/255.f,color->a/255.f}; changed=ImGui::ColorEdit4(property->name.c_str(),v); *color={static_cast<uint8_t>(v[0]*255),static_cast<uint8_t>(v[1]*255),static_cast<uint8_t>(v[2]*255),static_cast<uint8_t>(v[3]*255)}; continuous=true; }
+        else if(auto* reference=value.TryGet<ResourceRefValue>()){std::string path=reference->lastKnownPath;if(ImGui::InputText(propertyLabel,&path,ImGuiInputTextFlags_EnterReturnsTrue)){reference->lastKnownPath=std::move(path);changed=true;}if(ImGui::BeginDragDropTarget()){if(const ImGuiPayload* payload=ImGui::AcceptDragDropPayload("PX_RESOURCE_PATH")){reference->id={};reference->lastKnownPath=std::string(static_cast<const char*>(payload->Data),payload->DataSize?payload->DataSize-1:0);changed=true;}ImGui::EndDragDropTarget();}}
+        else if(auto* token=value.TryGet<TokenRefValue>()){std::string tokenName=token->name;if(ImGui::InputText((std::string("Token: ")+propertyLabel).c_str(),&tokenName,ImGuiInputTextFlags_EnterReturnsTrue)){token->name=std::move(tokenName);changed=true;}}
         else ImGui::TextDisabled("%s  (unsupported value)", property->name.c_str());
+        const bool deactivated=ImGui::IsItemDeactivatedAfterEdit();
+        if(!property->editor.description.empty()&&ImGui::IsItemHovered())ImGui::SetTooltip("%s",property->editor.description.c_str());
         ImGui::SameLine();
         if(ImGui::SmallButton("↶")){value=property->defaultValue.Clone();changed=true;continuous=false;}
         EditVariant(property->name.c_str(), property->name, std::move(before), std::move(value), changed, continuous);
-        if (continuous && ImGui::IsItemDeactivatedAfterEdit() && m_propertyTransaction) { const Status status = m_propertyTransaction->Commit(); if (!status) EmitStatus(status); m_propertyTransaction.reset(); }
+        if (continuous && deactivated && m_propertyTransaction) { const Status status = m_propertyTransaction->Commit(); if (!status) EmitStatus(status); m_propertyTransaction.reset(); }
         ImGui::PopID();
     }
 
@@ -300,7 +484,8 @@ void UIDesigner::RebuildLayout() {
     m_layout.clear(); m_childPolicies.clear(); if (!m_document) return;
     resource::TypedDocument preview = m_document->Data();
     for (auto& node : preview.nodes) node.properties.erase("bindings");
-    auto scene = ui::InstantiateUIScene(preview, nullptr, m_formatters); if (!scene) return;
+    const ui::UIDocumentLoader loader=[this](const ResourceRefValue& reference){return LoadReferencedUI(reference);};
+    auto scene = ui::InstantiateUIScene(preview, nullptr, m_formatters, loader); if (!scene) return;
     Vec2 canvas{1280,720}; if (const auto it = preview.properties.find("canvasSize"); it != preview.properties.end()) if (const auto* size=it->second.TryGet<Vec2>()) canvas=*size;
     (void)scene.Value().root->Measure(canvas); scene.Value().root->Arrange({0,0,canvas.x,canvas.y});
     for (const auto& record : preview.nodes) {
@@ -352,6 +537,8 @@ Uuid UIDesigner::HitTest(Vec2 canvas) const {
     for (auto it = m_document->Data().nodes.rbegin(); it != m_document->Data().nodes.rend(); ++it) {
         const auto rect = m_layout.find(it->id);
         if (rect == m_layout.end() || !rect->second.Contains(canvas.x, canvas.y)) continue;
+        if(const auto locked=it->properties.find("editorLocked");locked!=it->properties.end())
+            if(const auto* value=locked->second.TryGet<bool>();value&&*value)continue;
         const auto visibility = it->properties.find("visibility");
         if (visibility != it->properties.end()) {
             if (const auto* value = visibility->second.TryGet<std::string>();
@@ -509,9 +696,7 @@ void UIDesigner::RenderViewportToolbar() {
         if (ImGui::Button(label)) m_viewport.tool = tool;
         if (active) ImGui::PopStyleColor();
     };
-    toolButton("選取 Q", DesignerTool::Select); ImGui::SameLine();
-    toolButton("移動 W", DesignerTool::Move); ImGui::SameLine();
-    toolButton("縮放 R", DesignerTool::Resize); ImGui::SameLine();
+    toolButton("選取 V", DesignerTool::Select); ImGui::SameLine();
     toolButton("錨點 A", DesignerTool::Anchors); ImGui::SameLine();
     if (ImGui::Button("錨點預設")) ImGui::OpenPopup("DesignerAnchorPresets");
     if (ImGui::BeginPopup("DesignerAnchorPresets")) {
@@ -531,16 +716,28 @@ void UIDesigner::RenderViewportToolbar() {
         apply("水平延展", {0,.5f,1,.5f}); apply("垂直延展", {.5f,0,.5f,1});
         apply("全區域", {0,0,1,1}); ImGui::EndPopup();
     }
-    ImGui::SameLine(); ImGui::Checkbox("參考線", &m_viewport.smartGuides);
+    ImGui::SameLine();if(ImGui::Button("對齊"))ImGui::OpenPopup("DesignerAlignmentMenu");
+    if(ImGui::BeginPopup("DesignerAlignmentMenu")){
+        if(ImGui::MenuItem("靠左"))AlignSelection(AlignAction::Left);if(ImGui::MenuItem("水平置中"))AlignSelection(AlignAction::HCenter);if(ImGui::MenuItem("靠右"))AlignSelection(AlignAction::Right);
+        if(ImGui::MenuItem("靠上"))AlignSelection(AlignAction::Top);if(ImGui::MenuItem("垂直置中"))AlignSelection(AlignAction::VCenter);if(ImGui::MenuItem("靠下"))AlignSelection(AlignAction::Bottom);
+        ImGui::Separator();if(ImGui::MenuItem("水平平均分布"))AlignSelection(AlignAction::DistributeH);if(ImGui::MenuItem("垂直平均分布"))AlignSelection(AlignAction::DistributeV);ImGui::EndPopup();}
+    ImGui::SameLine(); ImGui::Checkbox("智慧吸附", &m_viewport.smartGuides);
     ImGui::SameLine(); ImGui::Checkbox("格線 G", &m_viewport.gridVisible);
-    ImGui::SameLine(); ImGui::Checkbox("吸附", &m_viewport.gridSnap);
-    ImGui::SameLine(); ImGui::SetNextItemWidth(110);
+    ImGui::SameLine(); ImGui::Checkbox("格線吸附", &m_viewport.gridSnap);
+    ImGui::SameLine();
+    if (ImGui::Button("Fit")) { m_viewport.fitToViewport=true; m_viewport.applyStoredScroll=true; }
+    ImGui::SameLine();
+    if (ImGui::Button("100%")) { m_viewport.fitToViewport=false; m_viewport.zoom=1.0f; m_viewport.applyStoredScroll=true; }
+    ImGui::SameLine(); ImGui::SetNextItemWidth(130);
     int zoomPercent = static_cast<int>(std::round(m_viewport.zoom * 100.0f));
-    if (ImGui::SliderInt("##DesignerZoom", &zoomPercent, 25, 400, "%d%%"))
+    if (ImGui::SliderInt("##DesignerZoom", &zoomPercent, 25, 400, "%d%%")) {
+        m_viewport.fitToViewport=false;
         m_viewport.zoom = std::clamp(zoomPercent / 100.0f, .25f, 4.0f);
+    }
     ImGui::SameLine();
     if (ImGui::Button(m_viewport.interactivePreview ? "停止預覽" : "互動預覽"))
         m_viewport.interactivePreview = !m_viewport.interactivePreview;
+    ImGui::SameLine();ImGui::Checkbox("像素精確",&m_viewport.pixelExactPreview);
     ImGui::SameLine();
     ImGui::TextDisabled("%s · %s", SelectionSummary().c_str(),
                         ui::ChildLayoutPolicyName(SelectedParentPolicy()));
@@ -550,52 +747,58 @@ void UIDesigner::RenderViewportToolbar() {
 }
 
 bool UIDesigner::CanvasInput(const ImRect& viewport, ImVec2 p0, float scale, bool hovered,
-                             const std::string&) {
+                             const std::string& selectedAssetPath) {
     if (!m_document || scale <= 0.0f) return false;
     ImGuiIO& io = ImGui::GetIO(); const ImVec2 mouse = io.MousePos;
     const Vec2 canvas{(mouse.x-p0.x)/scale,(mouse.y-p0.y)/scale};
     if (hovered && !io.WantTextInput) {
-        if (ImGui::IsKeyPressed(ImGuiKey_Q)) m_viewport.tool=DesignerTool::Select;
-        if (ImGui::IsKeyPressed(ImGuiKey_W)) m_viewport.tool=DesignerTool::Move;
-        if (ImGui::IsKeyPressed(ImGuiKey_R)) m_viewport.tool=DesignerTool::Resize;
+        if (ImGui::IsKeyPressed(ImGuiKey_V)||ImGui::IsKeyPressed(ImGuiKey_Q)) m_viewport.tool=DesignerTool::Select;
         if (ImGui::IsKeyPressed(ImGuiKey_A)) m_viewport.tool=DesignerTool::Anchors;
         if (ImGui::IsKeyPressed(ImGuiKey_G)) {
             if (io.KeyShift) m_viewport.gridSnap=!m_viewport.gridSnap;
             else m_viewport.gridVisible=!m_viewport.gridVisible;
         }
         if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_0)) {
-            m_viewport.zoom=1.0f;m_viewport.pan={};return true;
+            m_viewport.zoom=1.0f;m_viewport.fitToViewport=false;m_viewport.applyStoredScroll=true;return true;
         }
         if (ImGui::IsKeyPressed(ImGuiKey_F) && !m_selected.Empty()) {
             const Rect selected=SelectedRect();
-            const ImVec2 screenCenter{p0.x+(selected.x+selected.w*.5f)*scale,
-                                      p0.y+(selected.y+selected.h*.5f)*scale};
-            const ImVec2 viewportCenter{(viewport.Min.x+viewport.Max.x)*.5f,
-                                        (viewport.Min.y+viewport.Max.y)*.5f};
-            m_viewport.pan.x+=viewportCenter.x-screenCenter.x;
-            m_viewport.pan.y+=viewportCenter.y-screenCenter.y;
+            m_viewport.scrollX=std::max(0.0f,(selected.x+selected.w*.5f)*scale-viewport.GetWidth()*.5f);
+            m_viewport.scrollY=std::max(0.0f,(selected.y+selected.h*.5f)*scale-viewport.GetHeight()*.5f);
+            m_viewport.applyStoredScroll=true;
             return true;
         }
         if (ImGui::IsKeyPressed(ImGuiKey_Delete)||ImGui::IsKeyPressed(ImGuiKey_Backspace)) RemoveSelected();
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) CancelCanvasGesture();
-        if (io.MouseWheel != 0.0f) {
-            const float oldScale=scale; const float factor=std::pow(1.12f,io.MouseWheel);
-            const float oldZoom=m_viewport.zoom; m_viewport.zoom=std::clamp(oldZoom*factor,.25f,4.0f);
-            const float ratio=m_viewport.zoom/oldZoom;
-            const ImVec2 center((viewport.Min.x+viewport.Max.x)*.5f,(viewport.Min.y+viewport.Max.y)*.5f);
-            const Vec2 size=CanvasSize(); const float newScale=oldScale*ratio;
-            m_viewport.pan.x=mouse.x-center.x+size.x*newScale*.5f-canvas.x*newScale;
-            m_viewport.pan.y=mouse.y-center.y+size.y*newScale*.5f-canvas.y*newScale;
-            return true;
+        if(io.KeyCtrl&&ImGui::IsKeyPressed(ImGuiKey_C))CopySelected();
+        if(io.KeyCtrl&&ImGui::IsKeyPressed(ImGuiKey_V))PasteClipboard(canvas);
+        if(io.KeyCtrl&&ImGui::IsKeyPressed(ImGuiKey_D))DuplicateSelected();
+        if(io.KeyCtrl&&ImGui::IsKeyPressed(ImGuiKey_A)){m_selection.clear();for(const auto& node:m_document->Data().nodes)if(node.id!=RootId())m_selection.insert(node.id);if(!m_selection.empty())m_selected=*m_selection.begin();return true;}
+        if(io.KeyCtrl&&ImGui::IsKeyPressed(ImGuiKey_RightBracket))ChangeSelectedLayer(io.KeyShift?LayerAction::BringToFront:LayerAction::BringForward);
+        if(io.KeyCtrl&&ImGui::IsKeyPressed(ImGuiKey_LeftBracket))ChangeSelectedLayer(io.KeyShift?LayerAction::SendToBack:LayerAction::SendBackward);
+        const bool left=ImGui::IsKeyPressed(ImGuiKey_LeftArrow),right=ImGui::IsKeyPressed(ImGuiKey_RightArrow),up=ImGui::IsKeyPressed(ImGuiKey_UpArrow),down=ImGui::IsKeyPressed(ImGuiKey_DownArrow);
+        if((left||right||up||down)&&!m_selection.empty()){
+            const float step=io.KeyShift?10.0f:1.0f;const Vec2 delta{(right?step:0)-(left?step:0),(down?step:0)-(up?step:0)};
+            auto command=std::make_unique<CompositeEditCommand>("Nudge UI controls");
+            for(const Uuid& id:m_selection){const auto* selected=m_document->Find(id);if(!selected||id==RootId())continue;const auto policy=m_childPolicies.find(selected->parent);if(policy!=m_childPolicies.end()&&policy->second!=ui::ChildLayoutPolicy::Free)continue;const auto found=selected->properties.find("offsets");if(found==selected->properties.end())continue;if(const auto* before=found->second.TryGet<Rect>()){Rect after=*before;after.x+=delta.x;after.y+=delta.y;command->Add(std::make_unique<PropertyChangeCommand>("Nudge control",id,"offsets",Variant(*before),Variant(after),std::chrono::steady_clock::now(),false));}}
+            if(!command->Empty()){const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited();return true;}
         }
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) CancelCanvasGesture();
     }
-    const bool spaceHeld = ImGui::IsKeyDown(ImGuiKey_Space);
-    const bool panHeld=ImGui::IsMouseDown(ImGuiMouseButton_Middle)||(spaceHeld&&ImGui::IsMouseDown(ImGuiMouseButton_Left));
-    if ((hovered||m_gesture==Gesture::Pan)&&panHeld) {
-        m_gesture=Gesture::Pan; m_viewport.pan.x+=io.MouseDelta.x; m_viewport.pan.y+=io.MouseDelta.y; return true;
-    }
-    if(m_gesture==Gesture::Pan&&!panHeld)m_gesture=Gesture::None;
+    const bool spaceHeld=ImGui::IsKeyDown(ImGuiKey_Space);
     m_hovered=hovered?HitTest(canvas):Uuid{};
+    if(hovered&&ImGui::IsMouseClicked(ImGuiMouseButton_Right)){
+        m_contextCanvas=canvas;m_contextTarget=m_hovered;if(!m_contextTarget.Empty()){if(!m_selection.contains(m_contextTarget))m_selection={m_contextTarget};m_selected=m_contextTarget;}ImGui::OpenPopup("UIDesignerCanvasContext");
+    }
+    if(ImGui::BeginPopup("UIDesignerCanvasContext")){
+        if(ImGui::BeginMenu("新增控制項")){RenderAddControlPalette(m_contextCanvas);ImGui::EndMenu();}
+        if(!selectedAssetPath.empty()&&ImGui::MenuItem("Use selected image as TextureRect"))AddNode("TextureRect",m_contextCanvas,selectedAssetPath);
+        if(!selectedAssetPath.empty()&&ImGui::MenuItem("將選取圖片設為背景")){AddNode("TextureRect",m_contextCanvas,selectedAssetPath);SetSelectedAsBackground(false);}
+        ImGui::Separator();if(ImGui::MenuItem("複製","Ctrl+C",false,!m_selected.Empty()))CopySelected();if(ImGui::MenuItem("貼上","Ctrl+V",false,!m_clipboardSubtree.empty()))PasteClipboard(m_contextCanvas);if(ImGui::MenuItem("建立副本","Ctrl+D",false,!m_selected.Empty()))DuplicateSelected();if(ImGui::MenuItem("建立 Component…",nullptr,false,!m_selected.Empty()&&m_selected!=RootId()))m_createComponentOpen=true;
+        if(const auto* context=m_document->Find(m_contextTarget);context&&context->type=="TextureRect"){if(ImGui::MenuItem("設為背景"))SetSelectedAsBackground(false);if(ImGui::MenuItem("設為背景並鎖定"))SetSelectedAsBackground(true);if(ImGui::MenuItem("恢復圖片原始尺寸"))RestoreSelectedImageSize();}
+        if(!m_contextTarget.Empty()&&m_contextTarget!=RootId()&&ImGui::BeginMenu("對齊")){if(ImGui::MenuItem("靠左"))AlignSelection(AlignAction::Left);if(ImGui::MenuItem("水平置中"))AlignSelection(AlignAction::HCenter);if(ImGui::MenuItem("靠右"))AlignSelection(AlignAction::Right);if(ImGui::MenuItem("靠上"))AlignSelection(AlignAction::Top);if(ImGui::MenuItem("垂直置中"))AlignSelection(AlignAction::VCenter);if(ImGui::MenuItem("靠下"))AlignSelection(AlignAction::Bottom);ImGui::EndMenu();}
+        if(ImGui::BeginMenu("圖層順序",!m_selected.Empty())){if(ImGui::MenuItem("置頂"))ChangeSelectedLayer(LayerAction::BringToFront);if(ImGui::MenuItem("上移一層"))ChangeSelectedLayer(LayerAction::BringForward);if(ImGui::MenuItem("下移一層"))ChangeSelectedLayer(LayerAction::SendBackward);if(ImGui::MenuItem("置底"))ChangeSelectedLayer(LayerAction::SendToBack);ImGui::EndMenu();}
+        ImGui::Separator();const bool canDelete=!m_contextTarget.Empty()&&m_contextTarget!=RootId();if(ImGui::MenuItem("刪除","Delete",false,canDelete))RemoveSelected();if(!m_contextTarget.Empty()&&!canDelete&&ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))ImGui::SetTooltip("根節點不能刪除");ImGui::EndPopup();
+    }
     if(m_viewport.interactivePreview)return false;
 
     int handle=0;
@@ -608,10 +811,13 @@ bool UIDesigner::CanvasInput(const ImRect& viewport, ImVec2 p0, float scale, boo
         const Rect parent=ParentRect(m_selected);const float hs=8.0f/scale;const Vec2 points[4]{{parent.x+parent.w*anchors.x,parent.y+parent.h*anchors.y},{parent.x+parent.w*anchors.w,parent.y+parent.h*anchors.y},{parent.x+parent.w*anchors.w,parent.y+parent.h*anchors.h},{parent.x+parent.w*anchors.x,parent.y+parent.h*anchors.h}};
         for(int index=0;index<4;++index)if(std::abs(canvas.x-points[index].x)<=hs&&std::abs(canvas.y-points[index].y)<=hs){anchorHandle=index+1;break;}
     }
+    if(hovered&&(ImGui::IsMouseClicked(ImGuiMouseButton_Middle)||(spaceHeld&&ImGui::IsMouseClicked(ImGuiMouseButton_Left)))){m_gesture=Gesture::Pan;m_panMouseStart=mouse;m_panScrollX=ImGui::GetScrollX();m_panScrollY=ImGui::GetScrollY();ImGui::SetWindowFocus();return true;}
+    if(m_gesture==Gesture::Pan){const bool held=ImGui::IsMouseDown(ImGuiMouseButton_Middle)||ImGui::IsMouseDown(ImGuiMouseButton_Left);if(held){ImGui::SetScrollX(ImGui::GetCurrentWindow(),std::max(0.0f,m_panScrollX-(mouse.x-m_panMouseStart.x)));ImGui::SetScrollY(ImGui::GetCurrentWindow(),std::max(0.0f,m_panScrollY-(mouse.y-m_panMouseStart.y)));ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);return true;}m_gesture=Gesture::None;}
+    if(hovered&&(spaceHeld||ImGui::IsMouseDown(ImGuiMouseButton_Middle)))ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);else if(handle==2||handle==6)ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);else if(handle==4||handle==8)ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);else if(handle==1||handle==5)ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);else if(handle==3||handle==7)ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNESW);
     if(hovered&&ImGui::IsMouseClicked(ImGuiMouseButton_Left)&&!spaceHeld){
         Uuid hit=(handle||anchorHandle)?m_selected:HitTest(canvas);
         if(io.KeyAlt&&!handle){
-            std::vector<Uuid> hits;for(auto iterator=m_document->Data().nodes.rbegin();iterator!=m_document->Data().nodes.rend();++iterator){const auto found=m_layout.find(iterator->id);if(found==m_layout.end())continue;const Rect rect=found->second;if(canvas.x>=rect.x&&canvas.x<=rect.x+rect.w&&canvas.y>=rect.y&&canvas.y<=rect.y+rect.h)hits.push_back(iterator->id);}
+            std::vector<Uuid> hits;for(auto iterator=m_document->Data().nodes.rbegin();iterator!=m_document->Data().nodes.rend();++iterator){if(const auto locked=iterator->properties.find("editorLocked");locked!=iterator->properties.end())if(const auto* value=locked->second.TryGet<bool>();value&&*value)continue;const auto found=m_layout.find(iterator->id);if(found==m_layout.end())continue;const Rect rect=found->second;if(canvas.x>=rect.x&&canvas.x<=rect.x+rect.w&&canvas.y>=rect.y&&canvas.y<=rect.y+rect.h)hits.push_back(iterator->id);}
             if(!hits.empty()){auto current=std::find(hits.begin(),hits.end(),m_selected);if(current==hits.end()||++current==hits.end())hit=hits.front();else hit=*current;}
         }
         if(!hit.Empty()){
@@ -621,6 +827,7 @@ bool UIDesigner::CanvasInput(const ImRect& viewport, ImVec2 p0, float scale, boo
             if(locked)m_canvasHint="此元件已在 Scene Tree 鎖定";
             else if(anchorHandle){const auto* anchorNode=m_document->Find(hit);m_anchorsStart={};m_anchorOffsetsStart={};if(anchorNode){if(const auto found=anchorNode->properties.find("anchors");found!=anchorNode->properties.end())if(const auto* value=found->second.TryGet<Rect>())m_anchorsStart=*value;if(const auto found=anchorNode->properties.find("offsets");found!=anchorNode->properties.end())if(const auto* value=found->second.TryGet<Rect>())m_anchorOffsetsStart=*value;}m_rectStart=SelectedRect();m_anchorHandle=anchorHandle;m_gesture=Gesture::Anchors;}
             else if(hit!=RootId()){if(policy==ui::ChildLayoutPolicy::Free)BeginFreeTransform(hit,canvas,handle);else{m_gesture=Gesture::Reorder;m_dragStart=canvas;m_reorderPreview=m_document->ChildIndex(hit);m_canvasHint=std::string("由 ")+ui::ChildLayoutPolicyName(policy)+" 控制；拖曳排序，Ctrl 拖曳抽離";}}}
+        else{m_gesture=Gesture::Marquee;m_dragStart=canvas;m_marqueeCurrent=canvas;m_marqueeAdditive=io.KeyCtrl;if(!m_marqueeAdditive){m_selection.clear();m_selected={};}}
     }
     m_guideX=m_guideY=std::numeric_limits<float>::quiet_NaN();
     if(m_gesture==Gesture::Anchors&&ImGui::IsMouseDown(ImGuiMouseButton_Left)){
@@ -646,11 +853,16 @@ bool UIDesigner::CanvasInput(const ImRect& viewport, ImVec2 p0, float scale, boo
         if(m_viewport.smartGuides&&m_gesture==Gesture::Move&&!io.KeyAlt){std::vector<float> xs{0,CanvasSize().x*.5f,CanvasSize().x},ys{0,CanvasSize().y*.5f,CanvasSize().y};
             const auto* selected=m_document->Find(m_selected);for(const auto& [id,r]:m_layout){if(id==m_selected)continue;const auto* other=m_document->Find(id);if(selected&&other&&selected->parent==other->parent){xs.insert(xs.end(),{r.x,r.x+r.w*.5f,r.x+r.w});ys.insert(ys.end(),{r.y,r.y+r.h*.5f,r.y+r.h});}}
             const float threshold=6.0f/scale;float bestX=threshold,bestY=threshold,adjustX=0,adjustY=0;for(float line:xs)for(float edge:{target.x,target.x+target.w*.5f,target.x+target.w})if(std::abs(line-edge)<bestX){bestX=std::abs(line-edge);adjustX=line-edge;m_guideX=line;}for(float line:ys)for(float edge:{target.y,target.y+target.h*.5f,target.y+target.h})if(std::abs(line-edge)<bestY){bestY=std::abs(line-edge);adjustY=line-edge;m_guideY=line;}target.x+=adjustX;target.y+=adjustY;}
+        if(m_viewport.smartGuides&&m_gesture==Gesture::Resize&&!io.KeyAlt){std::vector<float> xs{0,CanvasSize().x*.5f,CanvasSize().x},ys{0,CanvasSize().y*.5f,CanvasSize().y};const auto* selected=m_document->Find(m_selected);for(const auto& [id,r]:m_layout){if(id==m_selected)continue;const auto* other=m_document->Find(id);if(selected&&other&&selected->parent==other->parent){xs.insert(xs.end(),{r.x,r.x+r.w*.5f,r.x+r.w});ys.insert(ys.end(),{r.y,r.y+r.h*.5f,r.y+r.h});}}const float threshold=6.0f/scale;float left=target.x,right=target.x+target.w,top=target.y,bottom=target.y+target.h,bestX=threshold,bestY=threshold;const bool moveLeft=m_resizeHandle==1||m_resizeHandle==7||m_resizeHandle==8,moveRight=m_resizeHandle==3||m_resizeHandle==4||m_resizeHandle==5,moveTop=m_resizeHandle>=1&&m_resizeHandle<=3,moveBottom=m_resizeHandle>=5&&m_resizeHandle<=7;for(float line:xs){const float edge=moveLeft?left:right;if((moveLeft||moveRight)&&std::abs(line-edge)<bestX){bestX=std::abs(line-edge);if(moveLeft)left=line;else right=line;m_guideX=line;}}for(float line:ys){const float edge=moveTop?top:bottom;if((moveTop||moveBottom)&&std::abs(line-edge)<bestY){bestY=std::abs(line-edge);if(moveTop)top=line;else bottom=line;m_guideY=line;}}target={left,top,std::max(8.0f,right-left),std::max(8.0f,bottom-top)};}
+        if(m_gesture==Gesture::Resize&&(m_resizeHandle==1||m_resizeHandle==3||m_resizeHandle==5||m_resizeHandle==7)){const auto* selected=m_document->Find(m_selected);bool locked=selected&&selected->type=="TextureRect";if(selected)if(const auto found=selected->properties.find("lockAspectRatio");found!=selected->properties.end())if(const auto* value=found->second.TryGet<bool>())locked=*value;if(io.KeyShift)locked=!locked;if(locked){float ratio=m_rectStart.h>0?m_rectStart.w/m_rectStart.h:1.0f;if(selected&&m_imageSizeResolver)if(const auto path=selected->properties.find("path");path!=selected->properties.end()&&path->second.TryGet<std::string>())if(const auto size=m_imageSizeResolver(*path->second.TryGet<std::string>());size&&size->y>0)ratio=size->x/size->y;float left=target.x,right=target.x+target.w,top=target.y,bottom=target.y+target.h;if(std::abs(delta.x)>=std::abs(delta.y)*ratio){const float height=target.w/ratio;if(m_resizeHandle==1||m_resizeHandle==3)top=bottom-height;else bottom=top+height;}else{const float width=target.h*ratio;if(m_resizeHandle==1||m_resizeHandle==7)left=right-width;else right=left+width;}target={left,top,std::max(8.0f,right-left),std::max(8.0f,bottom-top)};}}
+        if(m_gesture==Gesture::Resize)m_canvasHint=std::to_string(static_cast<int>(std::round(target.w)))+" × "+std::to_string(static_cast<int>(std::round(target.h)));
         Rect anchors{};if(const auto* node=m_document->Find(m_selected))if(const auto it=node->properties.find("anchors");it!=node->properties.end())if(const auto* value=it->second.TryGet<Rect>())anchors=*value;
         const Rect offsets=ui::ControlLayoutMath::OffsetsForRect(ParentRect(m_selected),anchors,target);const Status status=m_propertyTransaction->Update(Variant(offsets));if(!status)EmitStatus(status);MarkEdited();return true;
     }
     if(m_gesture==Gesture::Reorder&&ImGui::IsMouseDown(ImGuiMouseButton_Left)){m_reorderPreview=InsertionIndex(m_selected,canvas);return true;}
+    if(m_gesture==Gesture::Marquee&&ImGui::IsMouseDown(ImGuiMouseButton_Left)){m_marqueeCurrent=canvas;return true;}
     if(ImGui::IsMouseReleased(ImGuiMouseButton_Left)){
+        if(m_gesture==Gesture::Marquee){const float left=std::min(m_dragStart.x,m_marqueeCurrent.x),right=std::max(m_dragStart.x,m_marqueeCurrent.x),top=std::min(m_dragStart.y,m_marqueeCurrent.y),bottom=std::max(m_dragStart.y,m_marqueeCurrent.y);for(const auto& node:m_document->Data().nodes){if(node.id==RootId())continue;if(const auto locked=node.properties.find("editorLocked");locked!=node.properties.end())if(const auto* value=locked->second.TryGet<bool>();value&&*value)continue;const auto found=m_layout.find(node.id);if(found==m_layout.end())continue;const Rect r=found->second;if(r.x<=right&&r.x+r.w>=left&&r.y<=bottom&&r.y+r.h>=top){m_selection.insert(node.id);m_selected=node.id;}}m_gesture=Gesture::None;return true;}
         if(m_gesture==Gesture::Anchors){auto anchors=m_document->ReadProperty(m_selected,"anchors"),offsets=m_document->ReadProperty(m_selected,"offsets");auto command=std::make_unique<CompositeEditCommand>("調整錨點");if(anchors)command->Add(std::make_unique<PropertyChangeCommand>("錨點",m_selected,"anchors",Variant(m_anchorsStart),anchors.Value()));if(offsets)command->Add(std::make_unique<PropertyChangeCommand>("保持位置",m_selected,"offsets",Variant(m_anchorOffsetsStart),offsets.Value()));const Status status=m_document->History().CommitApplied(std::move(command));if(!status)EmitStatus(status);m_anchorHandle=0;m_gesture=Gesture::None;MarkEdited();return true;}
         if(m_gesture==Gesture::Move&&m_groupMove){auto command=std::make_unique<CompositeEditCommand>("移動多個元件");for(const auto& [id,before]:m_groupOffsetsStart){auto after=m_document->ReadProperty(id,"offsets");if(after)command->Add(std::make_unique<PropertyChangeCommand>("移動元件",id,"offsets",Variant(before),after.Value()));}const Status status=m_document->History().CommitApplied(std::move(command));if(!status)EmitStatus(status);m_groupOffsetsStart.clear();m_groupMove=false;m_gesture=Gesture::None;MarkEdited();return true;}
         if(m_gesture==Gesture::Move||m_gesture==Gesture::Resize){if(m_propertyTransaction){const Status status=m_propertyTransaction->Commit();if(!status)EmitStatus(status);m_propertyTransaction.reset();}m_gesture=Gesture::None;return true;}
@@ -667,6 +879,8 @@ void UIDesigner::DrawOverlay(ImVec2 p0, float scale) {
     if(!m_selected.Empty()&&SelectedParentPolicy()==ui::ChildLayoutPolicy::Free){const Rect r=SelectedRect();const ImVec2 points[8]{{p0.x+r.x*scale,p0.y+r.y*scale},{p0.x+(r.x+r.w*.5f)*scale,p0.y+r.y*scale},{p0.x+(r.x+r.w)*scale,p0.y+r.y*scale},{p0.x+(r.x+r.w)*scale,p0.y+(r.y+r.h*.5f)*scale},{p0.x+(r.x+r.w)*scale,p0.y+(r.y+r.h)*scale},{p0.x+(r.x+r.w*.5f)*scale,p0.y+(r.y+r.h)*scale},{p0.x+r.x*scale,p0.y+(r.y+r.h)*scale},{p0.x+r.x*scale,p0.y+(r.y+r.h*.5f)*scale}};for(const auto& point:points)draw->AddRectFilled({point.x-4,point.y-4},{point.x+4,point.y+4},IM_COL32(225,235,248,255),1);}
     if(m_viewport.tool==DesignerTool::Anchors&&!m_selected.Empty()&&m_selected!=RootId()&&SelectedParentPolicy()==ui::ChildLayoutPolicy::Free){const auto* node=m_document->Find(m_selected);Rect anchors{};if(node)if(const auto found=node->properties.find("anchors");found!=node->properties.end())if(const auto* value=found->second.TryGet<Rect>())anchors=*value;const Rect parent=ParentRect(m_selected),selected=SelectedRect();const ImVec2 points[4]{{p0.x+(parent.x+parent.w*anchors.x)*scale,p0.y+(parent.y+parent.h*anchors.y)*scale},{p0.x+(parent.x+parent.w*anchors.w)*scale,p0.y+(parent.y+parent.h*anchors.y)*scale},{p0.x+(parent.x+parent.w*anchors.w)*scale,p0.y+(parent.y+parent.h*anchors.h)*scale},{p0.x+(parent.x+parent.w*anchors.x)*scale,p0.y+(parent.y+parent.h*anchors.h)*scale}};const ImVec2 corners[4]{{p0.x+selected.x*scale,p0.y+selected.y*scale},{p0.x+(selected.x+selected.w)*scale,p0.y+selected.y*scale},{p0.x+(selected.x+selected.w)*scale,p0.y+(selected.y+selected.h)*scale},{p0.x+selected.x*scale,p0.y+(selected.y+selected.h)*scale}};for(int index=0;index<4;++index){draw->AddLine(points[index],corners[index],IM_COL32(255,120,190,150));draw->AddQuadFilled({points[index].x,points[index].y-6},{points[index].x+6,points[index].y},{points[index].x,points[index].y+6},{points[index].x-6,points[index].y},IM_COL32(255,120,190,255));}}
     if(m_gesture==Gesture::Reorder){const auto* node=m_document->Find(m_selected);if(node){std::vector<const resource::NodeRecord*> siblings;for(const auto* sibling:std::as_const(*m_document).Children(node->parent))if(sibling->id!=m_selected)siblings.push_back(sibling);Rect marker{};const auto policy=SelectedParentPolicy();if(!siblings.empty()){if(m_reorderPreview<siblings.size()&&m_layout.contains(siblings[m_reorderPreview]->id))marker=m_layout.at(siblings[m_reorderPreview]->id);else if(m_layout.contains(siblings.back()->id)){marker=m_layout.at(siblings.back()->id);if(policy==ui::ChildLayoutPolicy::LinearX)marker.x+=marker.w;else marker.y+=marker.h;}}if(policy==ui::ChildLayoutPolicy::LinearX)draw->AddLine({p0.x+marker.x*scale,p0.y+marker.y*scale},{p0.x+marker.x*scale,p0.y+(marker.y+marker.h)*scale},IM_COL32(71,140,191,255),3);else draw->AddLine({p0.x+marker.x*scale,p0.y+marker.y*scale},{p0.x+(marker.x+marker.w)*scale,p0.y+marker.y*scale},IM_COL32(71,140,191,255),3);}}
+    if(m_gesture==Gesture::Marquee){const ImVec2 a{p0.x+m_dragStart.x*scale,p0.y+m_dragStart.y*scale},b{p0.x+m_marqueeCurrent.x*scale,p0.y+m_marqueeCurrent.y*scale};draw->AddRectFilled({std::min(a.x,b.x),std::min(a.y,b.y)},{std::max(a.x,b.x),std::max(a.y,b.y)},IM_COL32(71,140,191,35));draw->AddRect({std::min(a.x,b.x),std::min(a.y,b.y)},{std::max(a.x,b.x),std::max(a.y,b.y)},IM_COL32(71,140,191,220));}
+    if(m_gesture==Gesture::Resize&&!m_canvasHint.empty()){const ImVec2 mouse=ImGui::GetMousePos(),textSize=ImGui::CalcTextSize(m_canvasHint.c_str());const ImVec2 a{mouse.x+14,mouse.y+14},b{a.x+textSize.x+12,a.y+textSize.y+8};draw->AddRectFilled(a,b,IM_COL32(20,24,32,235),4);draw->AddText({a.x+6,a.y+4},IM_COL32(235,240,248,255),m_canvasHint.c_str());}
     draw->PopClipRect();
 }
 

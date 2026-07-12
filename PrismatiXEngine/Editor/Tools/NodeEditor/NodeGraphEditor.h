@@ -269,7 +269,7 @@ private:
     [[nodiscard]] ImColor PinColor(PinType type) const;
     [[nodiscard]] static const char* PinTypeName(PinType type);
 
-    [[nodiscard]] std::string CompileScenarioV3() const;
+    [[nodiscard]] std::string CompileScenarioV4() const;
     [[nodiscard]] static std::string QuoteLua(const std::string& value);
     [[nodiscard]] static std::string Trim(std::string_view value);
     [[nodiscard]] static std::string Lower(std::string value);

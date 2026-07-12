@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <optional>
 
 struct SDL_Renderer;
 struct SDL_Texture;
@@ -34,6 +35,8 @@ public:
     void LoadUIDocument(const resource::TypedDocument& document, const std::string& sourcePath);
     void LoadVn(const std::string& script);
     void Reload();
+    void SetDisplayScale(float scale, bool pixelExact = false);
+    [[nodiscard]] std::optional<Vec2> ImageSize(const std::string& path);
     void Tick(float dt, std::uint64_t nowMs, bool hovered, float localX, float localY, bool click);
 
     [[nodiscard]] SDL_Texture* Target() const { return m_target; }
@@ -53,6 +56,9 @@ private:
     SDL_Renderer* m_editorRenderer;
     SDL_Texture* m_target = nullptr;
     int m_width = 1280, m_height = 720;
+    int m_targetDensity = 1;
+    float m_displayScale = 1.0f;
+    bool m_pixelExactPreview = false;
     Mode m_mode = Mode::UIScene;
     io::VFS m_vfs;
     std::unique_ptr<graphics::AssetCache> m_assets;

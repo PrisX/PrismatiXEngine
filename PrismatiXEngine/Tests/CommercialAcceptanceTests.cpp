@@ -63,7 +63,7 @@ void TestArchiveBoundsAndRoundTrip() {
     const auto corruptPath = temp.path / "corrupt.pdx";
     {
         std::ofstream stream(corruptPath, std::ios::binary);
-        stream.write("PDX3", 4);
+        stream.write("PDX4", 4);
     }
     px::io::Archive corrupt;
     Check(!corrupt.Open(corruptPath.string()), "truncated archive must be rejected");
@@ -147,7 +147,7 @@ void TestSaveValidation() {
               loaded->stage.backgroundFade == 0.45f && loaded->stage.actors.size() == 1 &&
               loaded->stage.tweens.size() == 1 && loaded->audio.music.playbackFrame == 24000 &&
               loaded->luaPending.size() == 1 && loaded->luaPending.front().yieldIndex == 1,
-          "version 3 save should preserve exact VM, stage, audio, Lua, and variable state");
+          "version 4 save should preserve exact VM, stage, audio, Lua, and variable state");
 
     px::progress::Json wrongType{{"version", 2}, {"variables", {{"affection", "high"}}}};
     Check(px::progress::SaveJson(saves.SlotPath(1), wrongType, nullptr),
@@ -157,7 +157,7 @@ void TestSaveValidation() {
     px::progress::Json removedV2{{"version", 2}, {"scriptPath", "removed"}};
     Check(px::progress::SaveJson(saves.SlotPath(3), removedV2, nullptr),
           "removed v2 fixture should be written");
-    Check(!saves.Load(3), "version 2 saves must be rejected after the strict 3.0 cutover");
+    Check(!saves.Load(3), "version 2 saves must be rejected after the strict v4 cutover");
 
     px::progress::Json wrongVersion{{"version", 999}};
     Check(px::progress::SaveJson(saves.SlotPath(2), wrongVersion, nullptr),
@@ -334,9 +334,9 @@ void TestLuaExtensionSandbox() {
                  "Engine.RegisterCommand('demo.command', function(args) return true end); "
                  "Engine.RegisterCommand('demo.await', function(args) Engine.AwaitSeconds(0.01); return true end)\n";
         std::ofstream manifest(extensionDirectory / "default.pxextension");
-        manifest << R"({"format":"PrismatiXExtension","version":3,"id":"demo","entry":"demo.lua","capabilities":["runtime"],"commands":[{"id":"demo.command","displayName":"Demo","category":"Extension","await":false,"rollback":"reversible","parameters":[]},{"id":"demo.await","displayName":"Await","category":"Extension","await":true,"rollback":"boundary","parameters":[]}]})";
+        manifest << R"({"format":"PrismatiXExtension","version":4,"id":"demo","entry":"demo.lua","capabilities":["runtime"],"commands":[{"id":"demo.command","displayName":"Demo","category":"Extension","await":false,"rollback":"reversible","parameters":[]},{"id":"demo.await","displayName":"Await","category":"Extension","await":true,"rollback":"boundary","parameters":[]}]})";
         std::ofstream denied(extensionDirectory / "denied.pxextension");
-        denied << R"({"format":"PrismatiXExtension","version":3,"id":"denied","entry":"demo.lua","capabilities":["filesystem"],"commands":[]})";
+        denied << R"({"format":"PrismatiXExtension","version":4,"id":"denied","entry":"demo.lua","capabilities":["filesystem"],"commands":[]})";
     }
     px::io::VFS vfs;
     vfs.MountDirectory(temp.path.string());
@@ -395,7 +395,7 @@ void TestUnifiedTimelineAndPresets() {
     const std::string encoded = px::animation::WriteAnimationClip(clip);
     auto decoded = px::animation::ParseAnimationClip(encoded, "memory.pxanim");
     Check(decoded && decoded.Value().id == clip.id && decoded.Value().tracks.size() == 1,
-          ".pxanim version 3 should round-trip typed keyframes exactly");
+          ".pxanim version 4 should round-trip typed keyframes exactly");
     px::animation::AnimationClip child;
     child.id = px::Uuid::FromName("timeline-child"); child.name = "Child"; child.duration = 1.0f;
     child.tracks.push_back({{px::animation::TargetKind::UI, "panel", "alpha"},
@@ -483,6 +483,93 @@ void TestLargeScenarioScale(){px::vn::scenario::ScenarioDocument document;docume
 
 void TestCjkRubyAndVerticalText(){const auto rich=px::text::ParseRubyMarkup("[ruby=かんじ]漢字[/ruby][br]測試");Check(rich.plain=="漢字\n測試"&&rich.ruby.size()==1&&rich.ruby.front().reading=="かんじ","rich text should retain CJK ruby annotations");const auto wrapped=px::text::ApplyCjkKinsoku("這是一段測試，不能讓標點出現在行首。",6);Check(wrapped.find("\n，")==std::string::npos&&wrapped.find("\n。")==std::string::npos,"CJK wrapping should enforce kinsoku punctuation rules");const auto vertical=px::text::LayoutVertical("縱書ABC",4);Check(!vertical.empty()&&vertical.back().column>0&&vertical[2].rotate,"vertical layout should rotate Latin glyphs and advance columns");}
 
+void TestTypedFormatV4TokensAndComponents() {
+    px::resource::TypedDocument theme;
+    theme.kind = px::resource::DocumentKind::Resource;
+    theme.id = px::Uuid::Random();
+    theme.type = "UITheme";
+    theme.properties["tokens"] = px::VariantObject{
+        {"color.base", px::Color{10, 20, 30, 255}},
+        {"color.surface", px::TokenRefValue{"color.base"}},
+    };
+    theme.properties["styles"] = px::VariantObject{
+        {"Default", px::VariantObject{{"background", px::TokenRefValue{"color.surface"}}}},
+    };
+    const std::string encoded = px::resource::WriteTypedDocument(theme);
+    const auto parsed = px::resource::ParseTypedDocument(encoded, "theme.pxtheme");
+    Check(parsed && encoded.starts_with("@pxresource 4 "),
+          "typed resources must write and parse strict v4 headers");
+    if (parsed) {
+        const auto* tokens = parsed.Value().properties.at("tokens").AsObject();
+        const auto* alias = tokens ? tokens->at("color.surface").TryGet<px::TokenRefValue>() : nullptr;
+        const auto loadedTheme = px::ui::LoadUITheme(parsed.Value());
+        const auto* resolved = loadedTheme ? loadedTheme.Value().FindToken("color.surface") : nullptr;
+        Check(alias && alias->name == "color.base" && resolved &&
+                  resolved->TryGet<px::Color>() &&
+                  *resolved->TryGet<px::Color>() == px::Color{10, 20, 30, 255},
+              "token() must round-trip and resolve through typed theme aliases");
+    }
+    std::string legacy = encoded;
+    const auto version = legacy.find(" 4 ");
+    if (version != std::string::npos) legacy.replace(version, 3, " 3 ");
+    Check(!px::resource::ParseTypedDocument(legacy, "legacy-v3.pxtheme"),
+          "typed v3 resources must be rejected without a compatibility parser");
+
+    px::resource::TypedDocument component;
+    component.kind = px::resource::DocumentKind::Scene;
+    component.id = px::Uuid::Random();
+    component.type = "UIComponent";
+    px::resource::NodeRecord root;
+    root.id = px::Uuid::Random(); root.type = "Panel"; root.name = "Card";
+    px::resource::NodeRecord label;
+    label.id = px::Uuid::Random(); label.parent = root.id; label.type = "Label";
+    label.name = "Caption"; label.properties["text"] = std::string("Default");
+    component.nodes = {root, label};
+
+    px::resource::TypedDocument scene;
+    scene.kind = px::resource::DocumentKind::Scene;
+    scene.id = px::Uuid::Random(); scene.type = "UIScene";
+    px::resource::NodeRecord instance;
+    instance.id = px::Uuid::Random(); instance.type = "ComponentInstance"; instance.name = "Card 1";
+    instance.properties["component"] = px::ResourceRefValue{component.id, "Content/UI/Card.pxcomponent"};
+    instance.properties["overrides"] = px::VariantObject{
+        {label.id.ToString(), px::VariantObject{{"text", std::string("Overridden")}}},
+    };
+    scene.nodes.push_back(instance);
+    const px::ui::UIDocumentLoader loader = [&component](const px::ResourceRefValue& reference) {
+        (void)reference;
+        return px::Result<px::resource::TypedDocument>::Success(component);
+    };
+    const auto first = px::ui::ExpandUIComponents(scene, loader);
+    const auto second = px::ui::ExpandUIComponents(scene, loader);
+    bool stable = first && second && first.Value().document.nodes.size() == 2 &&
+                  second.Value().document.nodes.size() == 2;
+    if (stable) {
+        const auto& expandedRoot = first.Value().document.nodes[0];
+        const auto& expandedLabel = first.Value().document.nodes[1];
+        stable = expandedRoot.id == instance.id && expandedLabel.id == second.Value().document.nodes[1].id &&
+                 expandedLabel.properties.at("text").TryGet<std::string>() &&
+                 *expandedLabel.properties.at("text").TryGet<std::string>() == "Overridden";
+    }
+    Check(stable, "component expansion must apply overrides and generate stable instance UUIDs");
+
+    component.nodes.push_back(instance);
+    component.nodes.back().parent = root.id;
+    const auto cyclic = px::ui::ExpandUIComponents(scene, loader);
+    Check(!cyclic, "nested component dependency cycles must be rejected");
+}
+
+void TestDesignerImageAndTextProperties(){
+    px::resource::TypedDocument scene;scene.kind=px::resource::DocumentKind::Scene;scene.id=px::Uuid::Random();scene.type="UIScene";
+    px::resource::NodeRecord root;root.id=px::Uuid::Random();root.type="Panel";root.name="Root";
+    px::resource::NodeRecord image;image.id=px::Uuid::Random();image.parent=root.id;image.type="TextureRect";image.name="Background";image.properties={{"path",std::string("Content/bg.png")},{"scaleMode",std::string("Fill")},{"lockAspectRatio",true},{"editorLocked",true}};
+    px::resource::NodeRecord label;label.id=px::Uuid::Random();label.parent=root.id;label.type="Label";label.name="Centered";label.properties={{"text",std::string("Hello")},{"horizontalAlignment",std::string("Center")},{"verticalAlignment",std::string("Bottom")}};
+    px::resource::NodeRecord button;button.id=px::Uuid::Random();button.parent=root.id;button.type="Button";button.name="Action";button.properties={{"text",std::string("Go")},{"horizontalAlignment",std::string("Right")},{"verticalAlignment",std::string("Top")}};scene.nodes={root,image,label,button};
+    const auto loaded=px::ui::InstantiateUIScene(scene,nullptr,px::ui::FormatterRegistry{});bool valid=static_cast<bool>(loaded);
+    if(valid){const auto* texture=dynamic_cast<const px::ui::TextureRect*>(loaded.Value().root->Find(image.id));const auto* text=dynamic_cast<const px::ui::Label*>(loaded.Value().root->Find(label.id));const auto* action=dynamic_cast<const px::ui::Button*>(loaded.Value().root->Find(button.id));valid=texture&&texture->ScaleMode()==px::ui::TextureScaleMode::Fill&&texture->LockAspectRatio()&&text&&text->HorizontalAlignment()==px::ui::HorizontalTextAlignment::Center&&text->VerticalAlignment()==px::ui::VerticalTextAlignment::Bottom&&action&&action->HorizontalAlignment()==px::ui::HorizontalTextAlignment::Right&&action->VerticalAlignment()==px::ui::VerticalTextAlignment::Top;}
+    Check(valid,"designer image modes, editor-only lock metadata, and text alignment must load through typed UI scenes");
+}
+
 void TestAcceleratedEightHourSoak(){px::animation::AnimationClip clip;clip.id=px::Uuid::FromName("acceptance-soak");clip.name="Eight hour soak";clip.duration=2.0f;clip.loop=true;clip.tracks.push_back({{px::animation::TargetKind::Camera,"main","zoom"},{{0.0f,1.0,px::animation::Curve::Linear},{2.0f,1.1,px::animation::Curve::EaseInOut}}});px::animation::TimelinePlayer player;std::uint64_t samples=0;player.SetApply([&](const px::animation::TrackBinding&,const px::Variant&){++samples;return px::Status::Ok();});Check(player.Register(clip),"soak animation should register");const auto handle=player.Play(clip.id);constexpr int updates=8*60*60*4;for(int i=0;i<updates;++i)player.Update(0.25f);const auto state=player.CaptureState();Check(player.Playing(handle)&&state.size()==1&&state.front().loopIteration>=14399&&samples>=updates,"accelerated eight-hour timeline soak should remain bounded and playing");}
 
 }  // namespace
@@ -502,6 +589,8 @@ int main() {
     TestVisualGraphControlFlowContract();
     TestLargeScenarioScale();
     TestCjkRubyAndVerticalText();
+    TestTypedFormatV4TokensAndComponents();
+    TestDesignerImageAndTextProperties();
     TestAcceleratedEightHourSoak();
     if (g_failures == 0) std::cout << "All PrismatiX commercial acceptance tests passed.\n";
     return g_failures == 0 ? 0 : 1;

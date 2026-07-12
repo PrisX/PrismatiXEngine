@@ -17,6 +17,7 @@ namespace px::ui {
 
 class Label;
 class VBoxContainer;
+class EdgeRevealContainer;
 
 struct GalgameAction { std::string command; std::string argument; };
 struct GalgameItem {
@@ -31,6 +32,8 @@ struct GalgameItem {
 struct DialoguePresentation {
     std::string speaker;
     std::string text;
+    std::string chapterTitle;
+    std::string musicTitle;
     std::string effect;
     float effectProgress = 0.0f;
     std::vector<std::string> choices;
@@ -97,6 +100,11 @@ private:
     Label* m_nvlText = nullptr;
     VBoxContainer* m_choices = nullptr;
     Label* m_mode = nullptr;
+    Label* m_chapterNotice = nullptr;
+    Label* m_musicNotice = nullptr;
+    EdgeRevealContainer* m_noticePanel = nullptr;
+    std::string m_lastChapterTitle;
+    std::string m_lastMusicTitle;
     std::shared_ptr<ItemSource> m_items;
     ObservableViewModel m_viewModel;
     std::vector<Binding> m_bindings;

@@ -622,7 +622,7 @@ void NodeGraphEditor::LoadGraph(const Json& json) {
 
 Json NodeGraphEditor::SaveGraph() const {
     Json graph;
-    graph["version"] = 3;
+    graph["version"] = 4;
     graph["graphKind"] = "scenario";
     graph["output"] = CurrentRuntimePath();
     graph["nextId"] = m_nextId;
@@ -1625,7 +1625,7 @@ void NodeGraphEditor::RenderNode(Node& node) {
     // Debugger breakpoint marker (red dot hanging off the node's top-left corner).
     if (m_breakpointLines) {
         if (m_nodeCommandLine.empty() && m_kind == GraphKind::Scenario) {
-            (void)CompileScenarioV3();  // populate the node→line map lazily
+            (void)CompileScenarioV4();  // populate the node→line map lazily
         }
         if (const std::set<int>* lines = m_breakpointLines()) {
             const int cmdLine = CommandLineForNode(node.id);
@@ -2420,7 +2420,7 @@ void NodeGraphEditor::FrameSelection() {
 
 std::vector<ExportArtifact> NodeGraphEditor::BuildArtifacts() const {auto layoutPath=fs::path(CurrentRuntimePath());layoutPath.replace_extension(".pxlayout");vn::scenario::ScenarioLayoutDocument layout;layout.scenario=m_editDocumentId;for(const auto& node:m_nodes)if(node.type!="scenario_start")layout.nodes.push_back({node.type=="dialogue"&&!node.dialogueLineIds.empty()?node.dialogueLineIds.front():node.stableId,{node.position.x,node.position.y},{},{}});return {ExportArtifact{Title(),fs::path(CurrentRuntimePath()),Compile()},ExportArtifact{"Scenario Layout",layoutPath,vn::scenario::WriteScenarioLayout(layout)}};}
 
-std::string NodeGraphEditor::Compile() const { return CompileScenarioV3(); }
+std::string NodeGraphEditor::Compile() const { return CompileScenarioV4(); }
 
 const NodeGraphEditor::NodeTemplate* NodeGraphEditor::FindTemplate(std::string_view type) const {
     auto it = std::find_if(m_library.begin(), m_library.end(), [&](const NodeTemplate& definition) { return definition.type == type; });
@@ -2613,7 +2613,7 @@ const char* NodeGraphEditor::PinTypeName(PinType type) {
     return "Unknown";
 }
 
-std::string NodeGraphEditor::CompileScenarioV3() const {
+std::string NodeGraphEditor::CompileScenarioV4() const {
     vn::scenario::ScenarioDocument document;
     document.id=m_editDocumentId.Empty()?Uuid::FromName(CurrentRuntimePath()):m_editDocumentId;
     document.name=fs::path(CurrentRuntimePath()).stem().string();

@@ -44,7 +44,7 @@ Variant Variant::Clone() const {
 
 const char* ToString(VariantType type) {
     constexpr const char* names[] = { "null", "bool", "integer", "number", "string", "vec2",
-                                      "rect", "color", "uuid", "resource", "array", "object" };
+                                      "rect", "color", "uuid", "resource", "token", "array", "object" };
     const auto i = static_cast<std::size_t>(type);
     return i < std::size(names) ? names[i] : "unknown";
 }

@@ -21,12 +21,12 @@ const StyleBox& StateBox(const Control& control, const ControlStyle& style) {
 void DrawBox(graphics::Renderer2D& renderer, Rect area, const StyleBox& box) {
     renderer.DrawRoundedRect(area, box.cornerRadius, box.background);
     if (box.borderWidth <= 0.0f) return;
-    const float b = box.borderWidth;
-    renderer.DrawRect({area.x, area.y, area.w, b}, box.border);
-    renderer.DrawRect({area.x, area.y + area.h - b, area.w, b}, box.border);
-    renderer.DrawRect({area.x, area.y, b, area.h}, box.border);
-    renderer.DrawRect({area.x + area.w - b, area.y, b, area.h}, box.border);
+    renderer.DrawBorder(area,box.borderWidth,box.cornerRadius,box.border);
 }
+
+graphics::HorizontalAlignment Horizontal(HorizontalTextAlignment value){switch(value){case HorizontalTextAlignment::Center:return graphics::HorizontalAlignment::Center;case HorizontalTextAlignment::Right:return graphics::HorizontalAlignment::Right;default:return graphics::HorizontalAlignment::Left;}}
+graphics::VerticalAlignment Vertical(VerticalTextAlignment value){switch(value){case VerticalTextAlignment::Center:return graphics::VerticalAlignment::Center;case VerticalTextAlignment::Bottom:return graphics::VerticalAlignment::Bottom;default:return graphics::VerticalAlignment::Top;}}
+graphics::ContentScaleMode ToScaleMode(TextureScaleMode value){switch(value){case TextureScaleMode::Fit:return graphics::ContentScaleMode::Fit;case TextureScaleMode::Fill:return graphics::ContentScaleMode::Fill;case TextureScaleMode::Original:return graphics::ContentScaleMode::Original;default:return graphics::ContentScaleMode::Stretch;}}
 }
 
 Vec2 Panel::MeasureOverride(Vec2 available) {
@@ -50,9 +50,9 @@ Vec2 Label::MeasureOverride(Vec2 available) {
 void Label::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
     const auto& style = theme.Resolve(ThemeVariant());
     const int size = m_fontSize > 0 ? m_fontSize : style.fontSize;
-    renderer.DrawText(m_text, LayoutRect().x, LayoutRect().y, style.font, size,
-                      m_hasColor ? m_color : (Enabled() ? style.text : style.textDisabled), 255,
-                      m_wrap ? static_cast<int>(LayoutRect().w) : 0);
+    renderer.DrawTextInRect(m_text,LayoutRect(),style.font,size,
+                            m_hasColor?m_color:(Enabled()?style.text:style.textDisabled),
+                            Horizontal(m_horizontalAlignment),Vertical(m_verticalAlignment),m_wrap);
 }
 
 Button::Button(std::string text, std::string name) : Control(std::move(name)), m_text(std::move(text)) {
@@ -77,15 +77,25 @@ void Button::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
     const auto& style = theme.Resolve(ThemeVariant());
     const auto& box = StateBox(*this, style);
     DrawBox(renderer, LayoutRect(), box);
-    const Vec2 text = renderer.MeasureText(m_text, style.font, style.fontSize);
-    renderer.DrawText(m_text, LayoutRect().x + (LayoutRect().w - text.x) * 0.5f,
-                      LayoutRect().y + (LayoutRect().h - text.y) * 0.5f,
-                      style.font, style.fontSize, Enabled() ? style.text : style.textDisabled);
+    Rect textArea=LayoutRect();textArea.x+=12;textArea.w=std::max(0.0f,textArea.w-24);
+    renderer.DrawTextInRect(m_text,textArea,style.font,style.fontSize,
+                            Enabled()?style.text:style.textDisabled,
+                            Horizontal(m_horizontalAlignment),Vertical(m_verticalAlignment),false);
+}
+
+Vec2 IconButton::MeasureOverride(Vec2) { return {44.0f, 44.0f}; }
+void IconButton::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
+    const auto& style=theme.Resolve(ThemeVariant());
+    Color color=Enabled()?style.text:style.textDisabled;
+    if(Hovered()&&Enabled())color=style.focused.border;
+    renderer.DrawTextInRect(Text(),LayoutRect(),style.font,style.fontSize,color,
+                            graphics::HorizontalAlignment::Center,graphics::VerticalAlignment::Center,false);
 }
 
 void TextureRect::SetOpacity(float value) { m_opacity = std::clamp(value, 0.0f, 1.0f); }
 void TextureRect::DrawSelf(graphics::Renderer2D& renderer, const Theme&) {
-    if (!m_path.empty()) renderer.DrawImage(m_path, LayoutRect(), static_cast<std::uint8_t>(m_opacity * 255.0f));
+    if (!m_path.empty()) renderer.DrawImageInRect(m_path,LayoutRect(),ToScaleMode(m_scaleMode),
+        Horizontal(m_horizontalAlignment),Vertical(m_verticalAlignment),static_cast<std::uint8_t>(m_opacity*255.0f));
 }
 
 void ProgressBar::SetRange(double minimum, double maximum) {

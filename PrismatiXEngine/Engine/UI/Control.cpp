@@ -94,6 +94,11 @@ bool Control::HitTest(Vec2 point) const {
 
 void Control::HandleEvent(UIEvent&) {}
 
+void Control::Update(float deltaSeconds) {
+    for (const auto& child : Children())
+        if (auto* control = dynamic_cast<Control*>(child.get())) control->Update(deltaSeconds);
+}
+
 void Control::Draw(graphics::Renderer2D& renderer, const Theme& theme) {
     if (m_visibility != Visibility::Visible) return;
     DrawSelf(renderer, theme);

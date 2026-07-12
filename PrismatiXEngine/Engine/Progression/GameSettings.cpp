@@ -12,7 +12,7 @@ bool GameSettings::Load(const std::string& path, const crypto::Key* key) {
         return false;
     }
     const Json& j = *json;
-    if(j.value("format",std::string{})!="PrismatiXSettings"||j.value("version",0)!=3)return false;
+    if(j.value("format",std::string{})!="PrismatiXSettings"||j.value("version",0)!=4)return false;
     bgmVolume = j.value("bgmVolume", bgmVolume);
     seVolume = j.value("seVolume", seVolume);
     voiceVolume = j.value("voiceVolume", voiceVolume);
@@ -31,7 +31,7 @@ bool GameSettings::Load(const std::string& path, const crypto::Key* key) {
 
 bool GameSettings::Save(const std::string& path, const crypto::Key* key) const {
     Json j;
-    j["format"]="PrismatiXSettings";j["version"]=3;
+    j["format"]="PrismatiXSettings";j["version"]=4;
     j["bgmVolume"] = bgmVolume;
     j["seVolume"] = seVolume;
     j["voiceVolume"] = voiceVolume;

@@ -11,7 +11,7 @@ namespace px::editor {
 enum class ExportConfiguration : std::uint8_t { Debug, Release };
 struct ExportContentGroup { std::string id; std::vector<std::string> roots; bool optional=false; };
 struct ExportProfile {
-    static constexpr int CurrentVersion=3;
+    static constexpr int CurrentVersion=4;
     std::string id="windows-release";
     std::string platform="windows-x64";
     ExportConfiguration configuration=ExportConfiguration::Release;

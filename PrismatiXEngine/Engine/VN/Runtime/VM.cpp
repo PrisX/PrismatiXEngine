@@ -81,7 +81,7 @@ bool VM::LoadProgram(const std::string& scriptPath) {
         return false;
     }
     if (!path.ends_with(".pxscenario")) {
-        PX_LOG_ERROR("VM: only PrismatiX 3.0 .pxscenario files are executable: '{}'", path);
+        PX_LOG_ERROR("VM: only strict Typed Format v4 .pxscenario files are executable: '{}'", path);
         return false;
     }
     auto document = scenario::ParseScenario(*text, path);

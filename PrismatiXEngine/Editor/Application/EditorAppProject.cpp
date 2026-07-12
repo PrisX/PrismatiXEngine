@@ -275,14 +275,14 @@ void EditorApp::SyncDocumentStates() {
         if (!m_docs.Find(path)) TrackDocument(path, DocumentType::UIScene, m_designer.Dirty());
         m_docs.SetDirty(path, m_designer.Dirty(), m_designer.Document()->History().Cursor());
         const auto& viewport = m_designer.ViewportState();
-        m_docs.SetViewport(path, {viewport.zoom, viewport.pan.x, viewport.pan.y});
+        m_docs.SetViewport(path, {viewport.zoom, viewport.scrollX, viewport.scrollY, viewport.fitToViewport});
     }
     for(const auto& [_,session]:m_inactiveDesigners){
         if(!session.editor||!session.editor->Document())continue;
         const auto path=session.editor->Document()->Path();
         if(!m_docs.Find(path))TrackDocument(path,DocumentType::UIScene,session.editor->Dirty());
         m_docs.SetDirty(path,session.editor->Dirty(),session.editor->Document()->History().Cursor());
-        const auto& viewport=session.editor->ViewportState();m_docs.SetViewport(path,{viewport.zoom,viewport.pan.x,viewport.pan.y});
+        const auto& viewport=session.editor->ViewportState();m_docs.SetViewport(path,{viewport.zoom,viewport.scrollX,viewport.scrollY,viewport.fitToViewport});
     }
     for (const auto& document : m_scriptDocs) {
         if (document->DocumentPath().empty()) continue;
@@ -312,7 +312,7 @@ void EditorApp::SaveEditorSession() {
             m_assetSortAscending,m_assetRowHeight,m_assetThumbSize};
         resource::TypedDocument settings;
         settings.kind=resource::DocumentKind::Resource;settings.formatVersion=resource::TypedDocument::CurrentVersion;
-        settings.id=Uuid::FromName("PrismatiXEditor.Settings.v3");settings.type="EditorSettings";
+        settings.id=Uuid::FromName("PrismatiXEditor.Settings.v4");settings.type="EditorSettings";
         settings.properties["workspace"]=Variant(static_cast<std::int64_t>(m_workspace));
         settings.properties["asset_directory"]=Variant(m_assetDir);
         VariantArray folders;

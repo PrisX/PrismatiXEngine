@@ -10,7 +10,7 @@
 namespace px::progress {
 
 namespace {
-constexpr int kSaveVersion = 3;
+constexpr int kSaveVersion = 4;
 constexpr std::size_t kMaxSaveCollectionItems = 1'000'000;
 
 void SaveLoadError(const std::string& path, std::string message, std::string details = {}) {

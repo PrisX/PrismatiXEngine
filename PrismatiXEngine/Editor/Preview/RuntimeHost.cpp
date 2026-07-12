@@ -9,6 +9,9 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
+#include <cmath>
+
 namespace px::editor {
 namespace {
 Variant PreviewDefault(VariantType type){switch(type){case VariantType::Bool:return Variant(false);case VariantType::Integer:return Variant(std::int64_t{0});case VariantType::Number:return Variant(0.0);case VariantType::String:return Variant(std::string("Preview"));case VariantType::Vec2:return Variant(Vec2{});case VariantType::Rect:return Variant(Rect{});case VariantType::Color:return Variant(Color{});default:return Variant{};}}
@@ -67,8 +70,21 @@ void RuntimeHost::SetProjectRoot(const std::string& root) {
 
 void RuntimeHost::EnsureTarget() {
     if (m_target) return;
-    m_target = SDL_CreateTexture(m_editorRenderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, m_width, m_height);
+    m_target = SDL_CreateTexture(m_editorRenderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, m_width*m_targetDensity, m_height*m_targetDensity);
     if (m_target) SDL_SetTextureScaleMode(m_target, SDL_SCALEMODE_LINEAR);
+}
+
+void RuntimeHost::SetDisplayScale(float scale,bool pixelExact){
+    m_displayScale=std::max(.01f,scale);m_pixelExactPreview=pixelExact;
+    const float minimum=pixelExact?1.0f:2.0f;
+    const int density=std::clamp(static_cast<int>(std::ceil(std::max(minimum,m_displayScale))),pixelExact?1:2,4);
+    if(density==m_targetDensity)return;m_targetDensity=density;if(m_target){SDL_DestroyTexture(m_target);m_target=nullptr;}
+}
+
+std::optional<Vec2> RuntimeHost::ImageSize(const std::string& path){
+    SDL_Texture* texture=m_assets?m_assets->Texture(path):nullptr;if(!texture)return std::nullopt;
+    int width=0,height=0;graphics::AssetCache::TextureSize(texture,width,height);
+    if(width<=0||height<=0)return std::nullopt;return Vec2{static_cast<float>(width),static_cast<float>(height)};
 }
 
 void RuntimeHost::LoadUI(const std::string& path) {
@@ -86,7 +102,12 @@ void RuntimeHost::LoadUIDocument(const resource::TypedDocument& document,
     m_uiPath = sourcePath; m_mode = Mode::UIScene; m_uiBindings.clear();
     ui::RegisterBuiltinUITypes();m_previewViewModel=ui::ObservableViewModel{};
     for(const auto& node:document.nodes){const auto bindings=node.properties.find("bindings");if(bindings==node.properties.end())continue;const auto* definitions=bindings->second.AsObject();if(!definitions)continue;for(const auto& [targetName,value]:*definitions){const auto* definition=value.AsObject();if(!definition)continue;const auto pathValue=definition->find("path");const auto* bindingPath=pathValue!=definition->end()?pathValue->second.TryGet<std::string>():nullptr;if(!bindingPath||m_previewViewModel.Describe(*bindingPath))continue;const auto* property=TypeRegistry::Global().FindProperty(node.type,targetName);if(!property)continue;VariantType sourceType=property->type;if(const auto format=definition->find("formatter");format!=definition->end())if(const auto* name=format->second.TryGet<std::string>())if(const auto* formatter=m_uiScene.Formatters().Find(*name))sourceType=formatter->input;m_previewViewModel.Define(*bindingPath,PreviewDefault(sourceType),true);}}
-    auto loaded=ui::InstantiateUIScene(document,&m_previewViewModel,m_uiScene.Formatters()); if(!loaded)return;
+    const ui::UIDocumentLoader loader=[this](const ResourceRefValue& reference)->Result<resource::TypedDocument>{
+        const auto text=m_vfs.ReadText(reference.lastKnownPath);
+        if(!text)return Result<resource::TypedDocument>::Failure(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXEDPREV4002",.category="Editor.Preview",.message="Referenced UI resource not found: "+reference.lastKnownPath});
+        return resource::ParseTypedDocument(*text,reference.lastKnownPath);
+    };
+    auto loaded=ui::InstantiateUIScene(document,&m_previewViewModel,m_uiScene.Formatters(),loader); if(!loaded)return;
     auto animation=std::move(loaded.Value().animation);auto theme=std::move(loaded.Value().theme);m_uiBindings=std::move(loaded.Value().bindings); const Status status=m_uiScene.SetRoot(std::move(loaded.Value().root));
     if(!status)for(const auto& d:status.Diagnostics())diag::Emit(d);
     if(theme)m_uiScene.SetTheme(std::move(*theme));
@@ -99,13 +120,13 @@ void RuntimeHost::LoadVn(const std::string& script) {
 void RuntimeHost::Reload(){if(m_mode==Mode::UIScene)LoadUI(m_uiPath);else LoadVn(m_vnScript);}
 
 ui::DialoguePresentation RuntimeHost::DialogueUI() const {
-    const auto& dialogue=m_session->Dialogue().State();ui::DialoguePresentation view;view.speaker=dialogue.speaker;view.text=dialogue.displayText;view.choices=m_choiceTexts;view.effect=dialogue.effect;view.effectProgress=dialogue.effectProgress;return view;
+    const auto& dialogue=m_session->Dialogue().State();ui::DialoguePresentation view;view.speaker=dialogue.speaker;view.text=dialogue.displayText;view.chapterTitle=m_session->VM().Chapter();view.musicTitle=m_session->VM().CurrentBgm();view.choices=m_choiceTexts;view.effect=dialogue.effect;view.effectProgress=dialogue.effectProgress;return view;
 }
 
 void RuntimeHost::Tick(float dt,std::uint64_t nowMs,bool hovered,float x,float y,bool click){
     EnsureTarget();if(!m_target)return;m_assets->BeginFrame();m_audio->Update();m_input.InjectFrame(hovered?x:-1000,hovered?y:-1000,hovered&&click);
     SDL_Texture* previous=SDL_GetRenderTarget(m_editorRenderer);SDL_SetRenderTarget(m_editorRenderer,m_target);SDL_SetRenderScale(m_editorRenderer,1,1);
-    m_renderer->SetLogicalSize(m_width,m_height);SDL_SetRenderDrawColor(m_editorRenderer,12,14,20,255);SDL_RenderClear(m_editorRenderer);
+    m_renderer->SetLogicalSize(m_width,m_height);m_renderer->SetPreviewContext(m_displayScale,m_mode==Mode::UIScene&&!m_pixelExactPreview);SDL_SetRenderDrawColor(m_editorRenderer,12,14,20,255);SDL_RenderClear(m_editorRenderer);
     if(m_lua){const bool pending=m_lua->HasPendingCommand();m_lua->Update(dt);if(pending&&!m_lua->HasPendingCommand())m_session->VM().NotifyExternalDone();m_lua->Emit("frame.update",{{"delta",std::to_string(dt)}});}
     if(m_mode==Mode::UIScene){(void)m_uiScene.Update(m_input,m_width,m_height,dt);m_uiScene.Render(*m_renderer);}else{
         auto& vm=m_session->VM();m_choiceTexts.clear();if(vm.State()==vn::VMState::WaitingChoice)for(const auto& c:vm.Choices())m_choiceTexts.push_back(c.text);

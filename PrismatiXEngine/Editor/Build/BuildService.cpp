@@ -7,6 +7,7 @@
 #include "Engine/Resources/TypedDocument.h"
 #include "Engine/Animation/Timeline.h"
 #include "Engine/VN/Scenario/ScenarioDocument.h"
+#include "Engine/UI/UIResourceResolver.h"
 
 #include <nlohmann/json.hpp>
 
@@ -17,6 +18,8 @@
 #include <optional>
 #include <cstdlib>
 #include <memory>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace px::editor {
 namespace {
@@ -44,6 +47,14 @@ return path.extension()==".so";
 #endif
 }
 bool WildcardMatch(std::string_view pattern,std::string_view text){std::size_t p=0,t=0,star=std::string_view::npos,mark=0;while(t<text.size()){if(p<pattern.size()&&(pattern[p]=='?'||pattern[p]==text[t])){++p;++t;}else if(p<pattern.size()&&pattern[p]=='*'){star=p++;mark=t;}else if(star!=std::string_view::npos){p=star+1;t=++mark;}else return false;}while(p<pattern.size()&&pattern[p]=='*')++p;return p==pattern.size();}
+void CollectResourceRefs(const Variant& value,std::vector<ResourceRefValue>& output){
+    if(const auto* reference=value.TryGet<ResourceRefValue>()){output.push_back(*reference);return;}
+    if(const auto* values=value.AsArray())for(const auto& item:*values)CollectResourceRefs(item,output);
+    if(const auto* values=value.AsObject())for(const auto& [name,item]:*values){(void)name;CollectResourceRefs(item,output);}
+}
+std::vector<ResourceRefValue> DocumentResourceRefs(const resource::TypedDocument& document){
+    std::vector<ResourceRefValue> references;for(const auto& [name,value]:document.properties){(void)name;CollectResourceRefs(value,references);}for(const auto& node:document.nodes)for(const auto& [name,value]:node.properties){(void)name;CollectResourceRefs(value,references);}return references;
+}
 std::optional<std::filesystem::path> EnvironmentPath(const char* name){
 #if defined(_WIN32)
     char* value=nullptr;std::size_t size=0;if(_dupenv_s(&value,&size,name)!=0||!value)return std::nullopt;std::filesystem::path result(value);std::free(value);return result;
@@ -66,6 +77,7 @@ bool BuildService::Build(const BuildOptions& options) const {
     if(const auto home=EnvironmentPath("HOME");home&&SamePath(outputDir,*home))return fail("PXBUILD9612",options.outputDir,"Build 已阻擋：不可使用使用者主目錄作為輸出");
     resource::AssetRegistry registry;const Status scanned=registry.Scan(options.projectRoot);
     if(!scanned||!registry.Valid())return fail("PXBUILD9604",options.projectRoot/"Content","Build 已阻擋：請先在 Asset Identity Resolver 解決缺少或重複 GUID");
+    std::vector<std::pair<std::filesystem::path,resource::TypedDocument>> typedAssets;
     for (const auto& entry : registry.Entries()) {
         std::string extension = entry.sourcePath.extension().string();
         std::transform(extension.begin(), extension.end(), extension.begin(),
@@ -77,7 +89,7 @@ bool BuildService::Build(const BuildOptions& options) const {
                 "請確認 LGPL 動態連結、編解碼專利與商店政策後，在 Export Profile 明確設定 ffmpegLicenseReviewAccepted=true");
         }
         if (extension == ".pxscenario" || extension == ".pxlayout" ||
-            extension == ".pxanim" || extension == ".pxscene" ||
+            extension == ".pxanim" || extension == ".pxscene" || extension == ".pxcomponent" ||
             extension == ".pxres" || extension == ".pxtheme" ||
             extension == ".pxextension" || extension == ".pxindex") {
             const auto bytes = ReadFile(entry.sourcePath);
@@ -97,14 +109,16 @@ bool BuildService::Build(const BuildOptions& options) const {
             } else if (extension == ".pxanim") {
                 const auto parsed = animation::ParseAnimationClip(text, entry.sourcePath.generic_string());
                 if (!parsed) return fail("PXBUILD9624", entry.sourcePath, "Build 已阻擋：AnimationClip 無效", diag::Describe(parsed.Diagnostics().front()));
-            } else if (extension == ".pxscene" || extension == ".pxres" || extension == ".pxtheme") {
+            } else if (extension == ".pxscene" || extension == ".pxcomponent" || extension == ".pxres" || extension == ".pxtheme") {
                 const auto parsed = resource::ParseTypedDocument(text, entry.sourcePath.generic_string());
                 if (!parsed) return fail("PXBUILD9625", entry.sourcePath, "Build 已阻擋：typed asset 無效", diag::Describe(parsed.Diagnostics().front()));
+                if(extension==".pxtheme"){const auto theme=ui::LoadUITheme(parsed.Value());if(!theme)return fail("PXBUILD9628",entry.sourcePath,"Build 已阻擋：UITheme token 或 style 無效",diag::Describe(theme.Diagnostics().front()));}
+                typedAssets.emplace_back(entry.sourcePath,parsed.Value());
             } else if (extension == ".pxextension") {
                 const auto manifest = nlohmann::json::parse(text, nullptr, false);
                 if (manifest.is_discarded() || !manifest.is_object() ||
                     manifest.value("format", std::string{}) != "PrismatiXExtension" ||
-                    manifest.value("version", 0) != 3 ||
+                    manifest.value("version", 0) != 4 ||
                     !manifest.contains("id") || !manifest.contains("entry") ||
                     !manifest["id"].is_string() || !manifest["entry"].is_string())
                     return fail("PXBUILD9626", entry.sourcePath, "Build 已阻擋：Lua extension manifest 無效");
@@ -120,6 +134,24 @@ bool BuildService::Build(const BuildOptions& options) const {
             }
         }
     }
+
+    std::unordered_set<std::string> typedPaths;for(const auto& [path,document]:typedAssets){(void)document;typedPaths.insert(ComparableKey(path));}
+    std::unordered_map<std::string,std::vector<std::string>> dependencyGraph;
+    std::unordered_map<std::string,std::filesystem::path> dependencySources;
+    for(const auto& [source,document]:typedAssets){
+        const std::string sourceKey=ComparableKey(source);dependencySources[sourceKey]=source;
+        for(const auto& reference:DocumentResourceRefs(document)){
+            if(reference.lastKnownPath.empty())return fail("PXBUILD9629",source,"Build 已阻擋：UI resource reference 沒有 path");
+            const auto target=ComparablePath(options.projectRoot/reference.lastKnownPath);
+            if(!IsWithin(target,options.projectRoot)||!std::filesystem::exists(target))return fail("PXBUILD9630",source,"Build 已阻擋：UI resource dependency 遺失",reference.lastKnownPath);
+            const auto* asset=registry.FindPath(target);
+            if(!asset)return fail("PXBUILD9631",source,"Build 已阻擋：UI resource dependency 沒有 AssetMeta",reference.lastKnownPath);
+            if(!reference.id.Empty()&&asset->id!=reference.id)return fail("PXBUILD9632",source,"Build 已阻擋：UI resource GUID 與 path 不一致",reference.lastKnownPath);
+            const std::string targetKey=ComparableKey(target);if(typedPaths.contains(targetKey))dependencyGraph[sourceKey].push_back(targetKey);
+        }
+    }
+    std::unordered_set<std::string> visiting,visited;std::function<bool(const std::string&)> visit=[&](const std::string& node){if(visited.contains(node))return true;if(!visiting.insert(node).second)return false;for(const auto& target:dependencyGraph[node])if(!visit(target))return false;visiting.erase(node);visited.insert(node);return true;};
+    for(const auto& [source,targets]:dependencyGraph){(void)targets;if(!visit(source))return fail("PXBUILD9633",dependencySources[source],"Build 已阻擋：UI resource dependency cycle");}
 
     const auto staging=outputDir.parent_path()/(outputDir.filename().string()+".staging-"+Uuid::Random().ToString());
     const auto backup=outputDir.parent_path()/(outputDir.filename().string()+".backup-"+Uuid::Random().ToString());

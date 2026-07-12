@@ -21,7 +21,7 @@ struct NodeRecord {
 };
 
 struct TypedDocument {
-    static constexpr int CurrentVersion = 3;
+    static constexpr int CurrentVersion = 4;
     DocumentKind kind = DocumentKind::Resource;
     int formatVersion = CurrentVersion;
     Uuid id;

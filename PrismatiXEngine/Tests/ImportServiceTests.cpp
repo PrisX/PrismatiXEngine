@@ -1,4 +1,5 @@
 #include "Editor/Assets/ImportService.h"
+#include "Editor/Workspace/DocumentRegistry.h"
 
 #include "Engine/Core/Uuid.h"
 
@@ -107,12 +108,42 @@ void TestInterruptedCommitRecovery() {
           "next import should rollback an interrupted commit from its journal");
 }
 
+void TestUIDocumentActivationAndViewportSession() {
+    TempDirectory temp;
+    const auto title=temp.path/"Title.pxscene",hud=temp.path/"HUD.pxscene";
+    std::ofstream(title)<<"@pxscene 4 "<<px::Uuid::Random().ToString()<<" UIScene\n";
+    std::ofstream(hud)<<"@pxscene 4 "<<px::Uuid::Random().ToString()<<" UIScene\n";
+    px::editor::DocumentManager documents;
+    px::editor::DocumentSession titleSession;titleSession.id={px::Uuid::Random(),title};titleSession.label="Title";titleSession.type=px::editor::DocumentType::UIScene;
+    px::editor::DocumentSession hudSession;hudSession.id={px::Uuid::Random(),hud};hudSession.label="HUD";hudSession.type=px::editor::DocumentType::UIScene;
+    (void)documents.Open(std::move(titleSession));(void)documents.Open(std::move(hudSession));
+    Check(documents.Activate(hud),"opening HUD from Title should activate the requested document exactly once");
+    for(const auto& tab:documents.Documents())(void)tab;
+    Check(documents.Active()&&documents.Active()->id.canonicalPath==px::editor::DocumentManager::Canonical(hud),
+          "enumerating scene tabs must not pull active document back to Title");
+    documents.SetViewport(hud,{1.75f,120.0f,240.0f,false});
+    const auto sessionPath=temp.path/"EditorSession.pxres";
+    Check(static_cast<bool>(documents.SaveSession(sessionPath)),"v4 editor document session should save");
+    std::ifstream sessionInput(sessionPath);const std::string sessionText((std::istreambuf_iterator<char>(sessionInput)),{});
+    Check(sessionText.starts_with("@pxresource 4 ")&&sessionText.find("scrollX")!=std::string::npos&&sessionText.find("panX")==std::string::npos,
+          "designer session v4 should persist scroll state and remove legacy pan state");
+    px::editor::DocumentManager restored;
+    const bool restoredOk=static_cast<bool>(restored.RestoreSession(sessionPath));
+    const bool sessionMatches=restoredOk&&restored.Active()&&
+              restored.Active()->id.canonicalPath==px::editor::DocumentManager::Canonical(hud)&&
+              restored.Active()->viewport.scrollX==120.0f&&!restored.Active()->viewport.fitToViewport;
+    if(!sessionMatches&&restored.Active())std::cerr<<"restored active="<<restored.Active()->id.canonicalPath<<" scroll="<<restored.Active()->viewport.scrollX<<" fit="<<restored.Active()->viewport.fitToViewport<<'\n';
+    Check(sessionMatches,
+          "active HUD document and viewport scroll should restore without a tab-selection side effect");
+}
+
 }  // namespace
 
 int main() {
     try {
     TestBulkImportAndIncrementalRegistry();
     TestInterruptedCommitRecovery();
+    TestUIDocumentActivationAndViewportSession();
     } catch (const std::exception& error) {
         std::cerr << "UNCAUGHT: " << error.what() << '\n';
         return 2;
