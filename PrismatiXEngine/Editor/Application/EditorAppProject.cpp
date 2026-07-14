@@ -275,14 +275,14 @@ void EditorApp::SyncDocumentStates() {
         if (!m_docs.Find(path)) TrackDocument(path, DocumentType::UIScene, m_designer.Dirty());
         m_docs.SetDirty(path, m_designer.Dirty(), m_designer.Document()->History().Cursor());
         const auto& viewport = m_designer.ViewportState();
-        m_docs.SetViewport(path, {viewport.zoom, viewport.scrollX, viewport.scrollY, viewport.fitToViewport});
+        m_docs.SetViewport(path, {viewport.zoom,viewport.scrollX,viewport.scrollY,viewport.fitToViewport,viewport.leftPanelVisible,viewport.rightPanelVisible,viewport.bottomPanelVisible,viewport.leftPanelWidth,viewport.rightPanelWidth,viewport.bottomPanelHeight});
     }
     for(const auto& [_,session]:m_inactiveDesigners){
         if(!session.editor||!session.editor->Document())continue;
         const auto path=session.editor->Document()->Path();
         if(!m_docs.Find(path))TrackDocument(path,DocumentType::UIScene,session.editor->Dirty());
         m_docs.SetDirty(path,session.editor->Dirty(),session.editor->Document()->History().Cursor());
-        const auto& viewport=session.editor->ViewportState();m_docs.SetViewport(path,{viewport.zoom,viewport.scrollX,viewport.scrollY,viewport.fitToViewport});
+        const auto& viewport=session.editor->ViewportState();m_docs.SetViewport(path,{viewport.zoom,viewport.scrollX,viewport.scrollY,viewport.fitToViewport,viewport.leftPanelVisible,viewport.rightPanelVisible,viewport.bottomPanelVisible,viewport.leftPanelWidth,viewport.rightPanelWidth,viewport.bottomPanelHeight});
     }
     for (const auto& document : m_scriptDocs) {
         if (document->DocumentPath().empty()) continue;
@@ -440,6 +440,9 @@ void EditorApp::CheckExternalDocuments() {
 void EditorApp::ConfigureDoc(NodeGraphEditor& doc) {
     doc.SetHeaderTexture(m_nodeHeaderTex, m_nodeHeaderW, m_nodeHeaderH);
     doc.SetSelectedResourceCallback([this] { return m_selectedAsset; });
+    doc.SetIdentityRegistrar([this](const std::vector<std::filesystem::path>& paths) {
+        return EnsureAssetIdentities(paths);
+    });
     doc.SetResourceResolver([this](const std::string& runtimePath)
         -> std::optional<ResourceRefValue> {
         if (!m_project.Context().IsOpen() || runtimePath.empty()) return std::nullopt;
@@ -782,7 +785,8 @@ void EditorApp::SaveAll() {
     // Save the open script unconditionally: a freshly imported document is not
     // "dirty", but Save All should still normalize it to the compiled form.
     for (auto& doc : m_scriptDocs) {
-        if (!doc->CurrentRuntimePath().empty()) (void)doc->Save();
+        if (!doc->CurrentRuntimePath().empty() && doc->Save())
+            (void)EnsureAssetIdentity(doc->DocumentPath());
     }
     m_project.SaveManifest();
     RefreshProblems();

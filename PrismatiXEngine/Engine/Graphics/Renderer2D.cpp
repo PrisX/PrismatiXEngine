@@ -4,6 +4,7 @@
 #include <SDL3_ttf/SDL_ttf.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <vector>
 
@@ -51,10 +52,7 @@ void Renderer2D::GetLogicalSize(int& width, int& height) const {
 }
 
 void Renderer2D::DrawRect(const Rect& rect, Color color) {
-    SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(m_renderer, color.r, color.g, color.b, color.a);
-    SDL_FRect r{ rect.x + m_camX, rect.y + m_camY, rect.w, rect.h };
-    SDL_RenderFillRect(m_renderer, &r);
+    color=TransformColor(color);const auto p0=TransformPoint({rect.x,rect.y}),p1=TransformPoint({rect.x+rect.w,rect.y}),p2=TransformPoint({rect.x+rect.w,rect.y+rect.h}),p3=TransformPoint({rect.x,rect.y+rect.h});const SDL_FColor fc=ToFColor(color);SDL_Vertex vertices[4]{{{p0.x,p0.y},fc,{}},{{p1.x,p1.y},fc,{}},{{p2.x,p2.y},fc,{}},{{p3.x,p3.y},fc,{}}};constexpr int indices[6]{0,1,2,0,2,3};SDL_SetRenderDrawBlendMode(m_renderer,SDL_BLENDMODE_BLEND);SDL_RenderGeometry(m_renderer,nullptr,vertices,4,indices,6);
 }
 
 void Renderer2D::DrawRoundedRect(const Rect& rect, float radius, Color color) {
@@ -67,9 +65,9 @@ void Renderer2D::DrawRoundedRect(const Rect& rect, float radius, Color color) {
         return;
     }
 
-    const SDL_FColor fc = ToFColor(color);
-    const float left = rect.x + m_camX;
-    const float top = rect.y + m_camY;
+    const SDL_FColor fc = ToFColor(TransformColor(color));
+    const float left = rect.x;
+    const float top = rect.y;
     const float right = left + rect.w;
     const float bottom = top + rect.h;
     constexpr float kPi = 3.14159265358979323846f;
@@ -94,9 +92,16 @@ void Renderer2D::DrawRoundedRect(const Rect& rect, float radius, Color color) {
         fan.push_back(ring[(i + 1) % ring.size()]);
     }
 
+    for(auto& vertex:fan){const auto transformed=TransformPoint({vertex.position.x,vertex.position.y});vertex.position={transformed.x,transformed.y};}
     SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
     SDL_RenderGeometry(m_renderer, nullptr, fan.data(), static_cast<int>(fan.size()), nullptr, 0);
 }
+
+Vec2 Renderer2D::TransformPoint(const Vec2 point) const {const auto& t=m_transformStack.back();return {t.a*point.x+t.c*point.y+t.tx+m_camX,t.b*point.x+t.d*point.y+t.ty+m_camY};}
+Color Renderer2D::TransformColor(const Color color) const {const auto tint=m_transformStack.back().modulate;return {static_cast<std::uint8_t>((static_cast<unsigned>(color.r)*tint.r)/255),static_cast<std::uint8_t>((static_cast<unsigned>(color.g)*tint.g)/255),static_cast<std::uint8_t>((static_cast<unsigned>(color.b)*tint.b)/255),static_cast<std::uint8_t>((static_cast<unsigned>(color.a)*tint.a)/255)};}
+Rect Renderer2D::TransformBounds(const Rect rect) const {const std::array<Vec2,4> points{TransformPoint({rect.x,rect.y}),TransformPoint({rect.x+rect.w,rect.y}),TransformPoint({rect.x+rect.w,rect.y+rect.h}),TransformPoint({rect.x,rect.y+rect.h})};float left=points[0].x,right=left,top=points[0].y,bottom=top;for(const auto point:points){left=std::min(left,point.x);right=std::max(right,point.x);top=std::min(top,point.y);bottom=std::max(bottom,point.y);}return {left,top,right-left,bottom-top};}
+void Renderer2D::PushTransform(const Vec2 pivot,const Vec2 scale,const float rotationDegrees,const Color modulate){const float radians=rotationDegrees*3.14159265358979323846f/180.0f,cs=std::cos(radians),sn=std::sin(radians);TransformState local{cs*scale.x,sn*scale.x,-sn*scale.y,cs*scale.y,0,0,modulate};local.tx=pivot.x-(local.a*pivot.x+local.c*pivot.y);local.ty=pivot.y-(local.b*pivot.x+local.d*pivot.y);const auto& parent=m_transformStack.back();TransformState combined;combined.a=parent.a*local.a+parent.c*local.b;combined.b=parent.b*local.a+parent.d*local.b;combined.c=parent.a*local.c+parent.c*local.d;combined.d=parent.b*local.c+parent.d*local.d;combined.tx=parent.a*local.tx+parent.c*local.ty+parent.tx;combined.ty=parent.b*local.tx+parent.d*local.ty+parent.ty;combined.modulate={static_cast<std::uint8_t>((static_cast<unsigned>(parent.modulate.r)*modulate.r)/255),static_cast<std::uint8_t>((static_cast<unsigned>(parent.modulate.g)*modulate.g)/255),static_cast<std::uint8_t>((static_cast<unsigned>(parent.modulate.b)*modulate.b)/255),static_cast<std::uint8_t>((static_cast<unsigned>(parent.modulate.a)*modulate.a)/255)};m_transformStack.push_back(combined);}
+void Renderer2D::PopTransform(){if(m_transformStack.size()>1)m_transformStack.pop_back();}
 
 void Renderer2D::SetPreviewContext(float displayPixelsPerLogical, bool clarityCompensation) {
     m_displayPixelsPerLogical = std::max(0.01f, displayPixelsPerLogical);
@@ -118,7 +123,7 @@ void Renderer2D::DrawBorder(const Rect& rect, float width, float, Color color) {
 }
 
 void Renderer2D::PushClip(const Rect& requested) {
-    Rect clip = requested;
+    Rect clip = TransformBounds(requested);
     if (!m_clipStack.empty()) {
         const Rect parent = m_clipStack.back();
         const float left = std::max(parent.x, clip.x);
@@ -152,10 +157,14 @@ void Renderer2D::Blit(SDL_Texture* texture, const Rect& dst, std::uint8_t alpha)
     if (!texture) {
         return;
     }
-    SDL_SetTextureAlphaMod(texture, alpha);
-    SDL_FRect d{ dst.x + m_camX, dst.y + m_camY, dst.w, dst.h };
-    SDL_RenderTexture(m_renderer, texture, nullptr, &d);
-    SDL_SetTextureAlphaMod(texture, 255);
+    const auto p0=TransformPoint({dst.x,dst.y}),p1=TransformPoint({dst.x+dst.w,dst.y}),p2=TransformPoint({dst.x+dst.w,dst.y+dst.h}),p3=TransformPoint({dst.x,dst.y+dst.h});const Color color=TransformColor({255,255,255,alpha});const SDL_FColor fc=ToFColor(color);SDL_Vertex vertices[4]{{{p0.x,p0.y},fc,{0,0}},{{p1.x,p1.y},fc,{1,0}},{{p2.x,p2.y},fc,{1,1}},{{p3.x,p3.y},fc,{0,1}}};constexpr int indices[6]{0,1,2,0,2,3};SDL_RenderGeometry(m_renderer,texture,vertices,4,indices,6);
+}
+
+void Renderer2D::BlitRegion(SDL_Texture* texture,const Rect& sourcePixels,const Rect& dst,const std::uint8_t alpha){
+    if(!texture||dst.w<=0||dst.h<=0||sourcePixels.w<=0||sourcePixels.h<=0)return;int width=0,height=0;AssetCache::TextureSize(texture,width,height);if(width<=0||height<=0)return;
+    const float u0=sourcePixels.x/static_cast<float>(width),v0=sourcePixels.y/static_cast<float>(height),u1=(sourcePixels.x+sourcePixels.w)/static_cast<float>(width),v1=(sourcePixels.y+sourcePixels.h)/static_cast<float>(height);
+    const auto p0=TransformPoint({dst.x,dst.y}),p1=TransformPoint({dst.x+dst.w,dst.y}),p2=TransformPoint({dst.x+dst.w,dst.y+dst.h}),p3=TransformPoint({dst.x,dst.y+dst.h});const SDL_FColor color=ToFColor(TransformColor({255,255,255,alpha}));
+    SDL_Vertex vertices[4]{{{p0.x,p0.y},color,{u0,v0}},{{p1.x,p1.y},color,{u1,v0}},{{p2.x,p2.y},color,{u1,v1}},{{p3.x,p3.y},color,{u0,v1}}};constexpr int indices[6]{0,1,2,0,2,3};SDL_RenderGeometry(m_renderer,texture,vertices,4,indices,6);
 }
 
 void Renderer2D::DrawImage(const std::string& path, const Rect& dst, std::uint8_t alpha) { Blit(m_assets.Texture(path), dst, alpha); }
@@ -173,6 +182,19 @@ void Renderer2D::DrawImageInRect(const std::string& path, const Rect& bounds,
     if(horizontal==HorizontalAlignment::Center)x+=(bounds.w-w)*.5f;else if(horizontal==HorizontalAlignment::Right)x+=bounds.w-w;
     if(vertical==VerticalAlignment::Center)y+=(bounds.h-h)*.5f;else if(vertical==VerticalAlignment::Bottom)y+=bounds.h-h;
     PushClip(bounds);Blit(texture,{x,y,w,h},alpha);PopClip();
+}
+
+void Renderer2D::DrawNinePatch(const std::string& path,const Rect& bounds,Rect margins,const bool drawCenter,const std::uint8_t alpha){
+    SDL_Texture* texture=m_assets.Texture(path);if(!texture||bounds.w<=0||bounds.h<=0)return;int width=0,height=0;AssetCache::TextureSize(texture,width,height);if(width<=0||height<=0)return;
+    float left=std::clamp(margins.x,0.0f,static_cast<float>(width)),top=std::clamp(margins.y,0.0f,static_cast<float>(height));
+    float right=std::clamp(margins.w,0.0f,static_cast<float>(width)-left),bottom=std::clamp(margins.h,0.0f,static_cast<float>(height)-top);
+    const float destinationLeft=std::min(left,bounds.w*.5f),destinationRight=std::min(right,bounds.w-destinationLeft);
+    const float destinationTop=std::min(top,bounds.h*.5f),destinationBottom=std::min(bottom,bounds.h-destinationTop);
+    const float sourceX[4]{0,left,static_cast<float>(width)-right,static_cast<float>(width)};
+    const float sourceY[4]{0,top,static_cast<float>(height)-bottom,static_cast<float>(height)};
+    const float destinationX[4]{bounds.x,bounds.x+destinationLeft,bounds.x+bounds.w-destinationRight,bounds.x+bounds.w};
+    const float destinationY[4]{bounds.y,bounds.y+destinationTop,bounds.y+bounds.h-destinationBottom,bounds.y+bounds.h};
+    for(int y=0;y<3;++y)for(int x=0;x<3;++x){if(!drawCenter&&x==1&&y==1)continue;BlitRegion(texture,{sourceX[x],sourceY[y],sourceX[x+1]-sourceX[x],sourceY[y+1]-sourceY[y]},{destinationX[x],destinationY[y],destinationX[x+1]-destinationX[x],destinationY[y+1]-destinationY[y]},alpha);}
 }
 
 void Renderer2D::DrawTexture(SDL_Texture* texture, const Rect& dst, std::uint8_t alpha) { Blit(texture, dst, alpha); }

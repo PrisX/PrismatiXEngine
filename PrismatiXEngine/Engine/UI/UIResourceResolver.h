@@ -26,6 +26,8 @@ struct ExpandedUIDocument {
 
 [[nodiscard]] Result<ExpandedUIDocument> ExpandUIComponents(
     const resource::TypedDocument& source, const UIDocumentLoader& loader);
+[[nodiscard]] Status ValidateUIComponentInterface(
+    const resource::TypedDocument& component);
 
 [[nodiscard]] Result<Variant> ResolveThemeValue(
     const Variant& value, const VariantObject& tokens);

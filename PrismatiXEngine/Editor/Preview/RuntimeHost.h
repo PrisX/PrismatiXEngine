@@ -33,6 +33,13 @@ public:
     [[nodiscard]] Mode GetMode() const { return m_mode; }
     void LoadUI(const std::string& vfsPath);
     void LoadUIDocument(const resource::TypedDocument& document, const std::string& sourcePath);
+    // Applies property/layout edits in place; structural, binding, event, theme,
+    // and animation edits fall back to a safe rebuild.
+    bool ApplyUIDocumentPatch(const resource::TypedDocument& document, const std::string& sourcePath);
+    Status PreviewUIAnimation(const Uuid& clip, float time, bool playing);
+    Status SetUIAnimationParameter(std::string_view parameter, const Variant& value);
+    [[nodiscard]] ui::BehaviorRuntimeState UIBehaviorState() const { return m_uiScene.CaptureBehaviorState(); }
+    [[nodiscard]] ui::UIAnimationRuntimeState UIAnimationState() const { return m_uiScene.CaptureAnimationState(); }
     void LoadVn(const std::string& script);
     void Reload();
     void SetDisplayScale(float scale, bool pixelExact = false);
@@ -76,6 +83,7 @@ private:
     std::string m_uiPath;
     std::string m_vnScript;
     std::unordered_map<std::string, std::string> m_routeScenes;
+    std::optional<resource::TypedDocument> m_lastUIDocument;
 };
 
 }  // namespace px::editor

@@ -16,6 +16,8 @@
 #include "Engine/Platform/Window.h"
 #include "Engine/Resources/AssetRegistry.h"
 #include "Engine/Animation/Timeline.h"
+#include "Engine/Resources/TypedDocument.h"
+#include "Engine/UI/Styles/StyleDefinition.h"
 
 #include <array>
 #include <chrono>
@@ -68,6 +70,8 @@ private:
     void BuildUI();
     void SyncDesigner();
     void ConfigureDesigner(UIDesigner& designer);
+    Status EnsureAssetIdentity(const std::filesystem::path& path);
+    Status EnsureAssetIdentities(const std::vector<std::filesystem::path>& paths);
     Status ActivateUIDocument(const std::filesystem::path& absolutePath,
                               const std::string& runtimePath = {});
     void ApplyTheme();
@@ -184,6 +188,15 @@ private:
     float m_timelineCursor = 0.0f;
     bool m_timelinePlaying = false;
     int m_timelineTrack = -1;
+    std::optional<resource::TypedDocument> m_themeDocument;
+    std::optional<ui::StyleThemeData> m_themeData;
+    std::string m_themePath;
+    bool m_themeDirty = false;
+    int m_themeToken = -1;
+    int m_themeStyle = -1;
+    int m_themeAxis = -1;
+    std::string m_themeTraceControl = "Button";
+    int m_themeTraceStyle = -1;
     FlowMap m_flow;
     ScriptWorkspace m_scripts;
 

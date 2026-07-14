@@ -4,6 +4,7 @@
 #include "Engine/IO/AtomicFile.h"
 #include "Engine/Resources/AssetRegistry.h"
 #include "Engine/VN/Commands/CommandRegistry.h"
+#include "Engine/UI/Actions/ActionCatalog.h"
 
 #include <imgui.h>
 #include <imgui_stdlib.h>
@@ -17,6 +18,12 @@
 namespace fs = std::filesystem;
 
 namespace px::editor {
+
+namespace {
+std::vector<std::string> CommaSeparated(std::string value){std::vector<std::string> result;std::stringstream stream(std::move(value));for(std::string item;std::getline(stream,item,',');){const auto first=item.find_first_not_of(" \t");const auto last=item.find_last_not_of(" \t");if(first!=std::string::npos)result.push_back(item.substr(first,last-first+1));}return result;}
+std::optional<VariantType> DraftType(std::string_view type){if(type=="bool")return VariantType::Bool;if(type=="int")return VariantType::Integer;if(type=="number")return VariantType::Number;if(type=="string")return VariantType::String;if(type=="resource")return VariantType::ResourceRef;if(type=="color")return VariantType::Color;return std::nullopt;}
+ui::ActionEditorHint DraftHint(std::string_view hint){if(hint=="multiline")return ui::ActionEditorHint::Multiline;if(hint=="enum")return ui::ActionEditorHint::Enum;if(hint=="resource")return ui::ActionEditorHint::Resource;if(hint=="color")return ui::ActionEditorHint::Color;if(hint=="route")return ui::ActionEditorHint::Route;if(hint=="node")return ui::ActionEditorHint::Node;if(hint=="animation")return ui::ActionEditorHint::Animation;if(hint=="token")return ui::ActionEditorHint::Token;return ui::ActionEditorHint::Default;}
+}
 
 void ScriptWorkspace::SetProject(const ProjectContext* context) {
     m_project = context;
@@ -166,11 +173,66 @@ void ScriptWorkspace::Render() {
     ImGui::EndChild();
 }
 
+void ScriptWorkspace::RenderActionWizard(){
+    if(!m_actionWizardOpen)return;
+    bool open=true;
+    if(ImGui::BeginPopupModal("建立 Lua Action",&open,ImGuiWindowFlags_AlwaysAutoResize)){
+        ImGui::TextDisabled("建立型別化 Action descriptor，並在外部 Lua entry 產生 RegisterAction stub。");
+        ImGui::SetNextItemWidth(420);ImGui::InputText("Manifest",&m_actionManifest);
+        ImGui::SetNextItemWidth(420);ImGui::InputText("Action ID",&m_actionId);
+        ImGui::SetNextItemWidth(420);ImGui::InputText("顯示名稱",&m_actionDisplayName);
+        ImGui::SetNextItemWidth(420);ImGui::InputText("分類",&m_actionCategory);
+        ImGui::SetNextItemWidth(420);ImGui::InputTextMultiline("說明",&m_actionDescription,{420,54});
+        const char* reentry[] {"Allow","IgnoreWhileRunning","Restart"};ImGui::SetNextItemWidth(220);ImGui::Combo("Reentry",&m_actionReentry,reentry,3);
+        ImGui::SeparatorText("Capabilities");ImGui::Checkbox("runtime",&m_actionRuntime);ImGui::SameLine();ImGui::Checkbox("ui",&m_actionUi);ImGui::SameLine();ImGui::Checkbox("animation",&m_actionAnimation);ImGui::SameLine();ImGui::Checkbox("audio",&m_actionAudio);
+        ImGui::SeparatorText("Typed parameters");
+        int remove=-1;
+        for(std::size_t index=0;index<m_actionParameters.size();++index){auto& parameter=m_actionParameters[index];ImGui::PushID(static_cast<int>(index));ImGui::BeginGroup();ImGui::SetNextItemWidth(150);ImGui::InputText("Name",&parameter.name);ImGui::SameLine();ImGui::SetNextItemWidth(180);ImGui::InputText("Display",&parameter.displayName);ImGui::SameLine();
+            const char* types[]{"bool","int","number","string","resource","color"};int selected=0;for(int item=0;item<6;++item)if(parameter.type==types[item])selected=item;ImGui::SetNextItemWidth(110);if(ImGui::Combo("Type",&selected,types,6))parameter.type=types[selected];
+            ImGui::SetNextItemWidth(180);ImGui::InputText("Default",&parameter.defaultValue);ImGui::SameLine();ImGui::Checkbox("Required",&parameter.required);ImGui::SameLine();if(ImGui::SmallButton("移除"))remove=static_cast<int>(index);
+            ImGui::SetNextItemWidth(180);ImGui::InputText("Enum (逗號)",&parameter.enumValues);ImGui::SameLine();ImGui::SetNextItemWidth(130);ImGui::InputText("Resource filter",&parameter.resourceFilter);ImGui::SameLine();
+            const char* hints[]{"default","multiline","enum","resource","color","route","node","animation","token"};int hint=0;for(int item=0;item<9;++item)if(parameter.editorHint==hints[item])hint=item;ImGui::SetNextItemWidth(120);if(ImGui::Combo("Editor",&hint,hints,9))parameter.editorHint=hints[hint];
+            ImGui::Checkbox("Range",&parameter.hasRange);if(parameter.hasRange){ImGui::SameLine();ImGui::SetNextItemWidth(110);ImGui::DragFloat("Min",&parameter.minimum,.1f);ImGui::SameLine();ImGui::SetNextItemWidth(110);ImGui::DragFloat("Max",&parameter.maximum,.1f);}ImGui::EndGroup();ImGui::Separator();ImGui::PopID();}
+        if(remove>=0)m_actionParameters.erase(m_actionParameters.begin()+remove);
+        if(ImGui::Button("＋ 參數"))m_actionParameters.push_back({});
+        ImGui::Separator();
+        if(ImGui::Button("建立",{120,0})){if(CreateLuaAction()){m_actionWizardOpen=false;ImGui::CloseCurrentPopup();}}
+        ImGui::SameLine();if(ImGui::Button("取消",{120,0})){m_actionWizardOpen=false;ImGui::CloseCurrentPopup();}
+        if(!m_status.empty()){ImGui::Separator();ImGui::TextWrapped("%s",m_status.c_str());}
+        ImGui::EndPopup();
+    }
+    if(!open)m_actionWizardOpen=false;
+}
+
+bool ScriptWorkspace::CreateLuaAction(){
+    if(!m_project||!m_project->IsOpen()){m_status="沒有開啟的專案。";return false;}
+    if(m_actionId.empty()||m_actionId.find(' ')!=std::string::npos||m_actionId.find_first_of("/\\:")!=std::string::npos){m_status="Action ID 不合法。";return false;}
+    if(ui::ActionCatalog::Global().Find(m_actionId)){m_status="Action ID 已存在於 Catalog。";return false;}
+    const fs::path relativeManifest=fs::path(m_actionManifest).lexically_normal();
+    if(relativeManifest.is_absolute()||relativeManifest.empty()||relativeManifest.generic_string().starts_with("..")||relativeManifest.extension()!=".pxextension"){m_status="Manifest 必須是專案內的 .pxextension 路徑。";return false;}
+    const fs::path manifestPath=m_project->root/relativeManifest;std::ifstream manifestInput(manifestPath,std::ios::binary);if(!manifestInput){m_status="找不到 Manifest："+relativeManifest.generic_string();return false;}std::ostringstream manifestBuffer;manifestBuffer<<manifestInput.rdbuf();const std::string beforeManifest=manifestBuffer.str();auto manifest=nlohmann::json::parse(beforeManifest,nullptr,false);
+    if(manifest.is_discarded()||!manifest.is_object()||manifest.value("format",std::string{})!="PrismatiXExtension"||manifest.value("version",0)!=4){m_status="Manifest 不是嚴格的 PrismatiXExtension v4。";return false;}
+    if(!manifest.contains("actions"))manifest["actions"]=nlohmann::json::array();if(!manifest["actions"].is_array()){m_status="Manifest actions 欄位不是陣列。";return false;}for(const auto& action:manifest["actions"])if(action.is_object()&&action.value("id",std::string{})==m_actionId){m_status="Manifest 已包含相同 Action ID。";return false;}
+    nlohmann::json capabilities=nlohmann::json::array();const auto capability=[&](const char* name,bool enabled){if(!enabled)return;capabilities.push_back(name);if(!manifest.contains("capabilities")||!manifest["capabilities"].is_array())manifest["capabilities"]=nlohmann::json::array();if(std::find(manifest["capabilities"].begin(),manifest["capabilities"].end(),name)==manifest["capabilities"].end())manifest["capabilities"].push_back(name);};capability("runtime",m_actionRuntime);capability("ui",m_actionUi);capability("animation",m_actionAnimation);capability("audio",m_actionAudio);
+    nlohmann::json parameters=nlohmann::json::array();ui::ActionDescriptor catalogDescriptor;catalogDescriptor.id=m_actionId;catalogDescriptor.label=m_actionDisplayName;catalogDescriptor.displayName=m_actionDisplayName;catalogDescriptor.description=m_actionDescription;catalogDescriptor.category=m_actionCategory;catalogDescriptor.origin=ui::ActionOrigin::LuaExtension;catalogDescriptor.sourceId=manifest.value("id",std::string{});catalogDescriptor.providerId="lua";catalogDescriptor.reentryPolicy=static_cast<ui::ActionReentryPolicy>(std::clamp(m_actionReentry,0,2));for(const auto& name:capabilities)catalogDescriptor.capabilities.push_back(name.get<std::string>());
+    try{for(const auto& draft:m_actionParameters){if(draft.name.empty()){m_status="參數名稱不可為空。";return false;}const auto type=DraftType(draft.type);if(!type){m_status="參數型別不支援。";return false;}nlohmann::json parameter{{"name",draft.name},{"displayName",draft.displayName.empty()?draft.name:draft.displayName},{"type",draft.type},{"required",draft.required},{"editorHint",draft.editorHint}};ui::ActionArgumentDescriptor argument;argument.name=draft.name;argument.displayName=draft.displayName.empty()?draft.name:draft.displayName;argument.type=*type;argument.required=draft.required;argument.editorHint=DraftHint(draft.editorHint);argument.resourceType=draft.resourceFilter;
+            if(draft.type=="bool"){const bool value=draft.defaultValue=="true"||draft.defaultValue=="1";parameter["default"]=value;argument.defaultValue=Variant(value);}else if(draft.type=="int"){const auto value=static_cast<std::int64_t>(draft.defaultValue.empty()?0:std::stoll(draft.defaultValue));parameter["default"]=value;argument.defaultValue=Variant(value);}else if(draft.type=="number"){const double value=draft.defaultValue.empty()?0.0:std::stod(draft.defaultValue);parameter["default"]=value;argument.defaultValue=Variant(value);}else if(draft.type=="color"){parameter["default"]={255,255,255,255};argument.defaultValue=Variant(Color{255,255,255,255});}else if(draft.type=="resource"){parameter["default"]=draft.defaultValue;argument.defaultValue=Variant(ResourceRefValue{Uuid::FromName(draft.defaultValue),draft.defaultValue});}else{parameter["default"]=draft.defaultValue;argument.defaultValue=Variant(draft.defaultValue);}
+            const auto options=CommaSeparated(draft.enumValues);if(!options.empty()){parameter["enum"]=options;argument.enumValues=options;}if(draft.hasRange){if(draft.minimum>draft.maximum){m_status="參數 range 的最小值大於最大值。";return false;}parameter["range"]={{"minimum",draft.minimum},{"maximum",draft.maximum}};argument.minimum=draft.minimum;argument.maximum=draft.maximum;}if(!draft.resourceFilter.empty())parameter["resourceFilter"]=draft.resourceFilter;parameters.push_back(std::move(parameter));catalogDescriptor.arguments.push_back(std::move(argument));}}
+    catch(const std::exception& error){m_status=std::string("參數預設值無法解析：")+error.what();return false;}
+    const char* reentryNames[]{"Allow","IgnoreWhileRunning","Restart"};manifest["actions"].push_back({{"id",m_actionId},{"displayName",m_actionDisplayName},{"description",m_actionDescription},{"category",m_actionCategory},{"reentry",reentryNames[std::clamp(m_actionReentry,0,2)]},{"capabilities",std::move(capabilities)},{"parameters",std::move(parameters)}});
+    const std::string entryName=manifest.value("entry",std::string{});if(entryName.empty()||entryName.find("..")!=std::string::npos||entryName.find_first_of("/\\:")!=std::string::npos){m_status="Manifest entry 不安全。";return false;}const fs::path relativeEntry=relativeManifest.parent_path()/entryName;const fs::path entryPath=m_project->root/relativeEntry;
+    std::string source;if(m_currentFile==relativeEntry.generic_string()&&m_dirty)source=m_buffer;else{std::ifstream entryInput(entryPath,std::ios::binary);if(entryInput){std::ostringstream stream;stream<<entryInput.rdbuf();source=stream.str();}}if(source.find("Engine.RegisterAction(\""+m_actionId+"\"")!=std::string::npos){m_status="Lua entry 已有相同 RegisterAction。";return false;}if(!source.empty()&&source.back()!='\n')source.push_back('\n');source+="\nEngine.RegisterAction(\""+m_actionId+"\", function(args, context)\n    -- TODO: implement "+m_actionDisplayName+"\n    return true\nend)\n";
+    const Status manifestWritten=io::AtomicFile::WriteText(manifestPath,manifest.dump(2)+"\n");if(!manifestWritten){for(const auto& diagnostic:manifestWritten.Diagnostics())diag::Emit(diagnostic);m_status="無法寫入 Manifest。";return false;}const Status entryWritten=io::AtomicFile::WriteText(entryPath,source);if(!entryWritten){(void)io::AtomicFile::WriteText(manifestPath,beforeManifest);for(const auto& diagnostic:entryWritten.Diagnostics())diag::Emit(diagnostic);m_status="無法寫入 Lua entry，Manifest 已回復。";return false;}
+    const Status registered=ui::ActionCatalog::Global().Register(std::move(catalogDescriptor));if(!registered)for(const auto& diagnostic:registered.Diagnostics())diag::Emit(diagnostic);resource::AssetRegistry registry;for(const auto& asset:{manifestPath,entryPath})if(!fs::exists(resource::AssetRegistry::MetaPath(asset)))(void)registry.RegisterAsset(m_project->root,asset,"lua-extension");Rescan();LoadFile(relativeEntry.generic_string());m_buffer=source;m_dirty=false;m_status="已建立 "+m_actionId+"，並開啟 "+relativeEntry.generic_string();return true;
+}
+
 void ScriptWorkspace::RenderFileList() {
     ImGui::TextDisabled("Lua Scripts");
     if (ImGui::SmallButton("Rescan")) Rescan();
     ImGui::SameLine();
     if (ImGui::SmallButton("New")) ImGui::OpenPopup("newLua");
+    ImGui::SameLine();
+    if(ImGui::SmallButton("建立 Lua Action")){m_actionWizardOpen=true;ImGui::OpenPopup("建立 Lua Action");}
     if (ImGui::BeginPopup("newLua")) {
         ImGui::SetNextItemWidth(180);
         ImGui::InputText("name", m_newName, sizeof(m_newName));
@@ -209,6 +271,7 @@ void ScriptWorkspace::RenderFileList() {
         }
         ImGui::EndPopup();
     }
+    RenderActionWizard();
     ImGui::Separator();
 
     if (m_files.empty()) {

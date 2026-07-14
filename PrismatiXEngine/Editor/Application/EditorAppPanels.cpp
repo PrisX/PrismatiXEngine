@@ -2,6 +2,8 @@
 
 #include "Engine/VN/Scenario/ScenarioDocument.h"
 #include "Engine/IO/AtomicFile.h"
+#include "Engine/UI/Styles/StyleSerialization.h"
+#include "Engine/UI/Styles/StyleResolver.h"
 #include "Editor/Theme/EditorIcon.h"
 
 #include <SDL3/SDL.h>
@@ -445,6 +447,12 @@ Status EditorApp::ActivateUIDocument(const std::filesystem::path& absolutePath,
         m_designer.ViewportState().scrollX=session->viewport.scrollX;
         m_designer.ViewportState().scrollY=session->viewport.scrollY;
         m_designer.ViewportState().fitToViewport=session->viewport.fitToViewport;
+        m_designer.ViewportState().leftPanelVisible=session->viewport.leftPanelVisible;
+        m_designer.ViewportState().rightPanelVisible=session->viewport.rightPanelVisible;
+        m_designer.ViewportState().bottomPanelVisible=session->viewport.bottomPanelVisible;
+        m_designer.ViewportState().leftPanelWidth=session->viewport.leftPanelWidth;
+        m_designer.ViewportState().rightPanelWidth=session->viewport.rightPanelWidth;
+        m_designer.ViewportState().bottomPanelHeight=session->viewport.bottomPanelHeight;
         m_designer.ViewportState().applyStoredScroll=true;
     }
     std::string runtimePath=requestedRuntimePath;
@@ -1816,18 +1824,26 @@ void EditorApp::RenderConsole() {
 void EditorApp::RenderPreview() {
     if (ImGui::Begin("UI Designer") && m_preview) {
         if(ImGui::BeginTabBar("##ui-document-tabs",ImGuiTabBarFlags_Reorderable|ImGuiTabBarFlags_FittingPolicyScroll)){
+            const auto requestedDocument=m_uiFocusRequest.empty()
+                ? std::filesystem::path{}
+                : DocumentManager::Canonical(m_uiFocusRequest);
+            bool focusRequestHandled=false;
             for(const auto& session:m_docs.Documents()){
                 if(session.type!=DocumentType::UIScene)continue;
                 bool open=true;ImGuiTabItemFlags flags=session.dirty?ImGuiTabItemFlags_UnsavedDocument:0;
                 const bool active=m_designer.Document()&&DocumentManager::Canonical(m_designer.Document()->Path())==session.id.canonicalPath;
-                if(!m_uiFocusRequest.empty()&&DocumentManager::Canonical(m_uiFocusRequest)==session.id.canonicalPath){flags|=ImGuiTabItemFlags_SetSelected;m_uiFocusRequest.clear();}
+                const bool requested=!requestedDocument.empty()&&requestedDocument==session.id.canonicalPath;
+                if(requested){flags|=ImGuiTabItemFlags_SetSelected;focusRequestHandled=true;}
                 const std::string label=std::string(session.pinned?"◆ ":"")+session.label+(session.dirty?" ●":"")+"###ui-"+session.id.canonicalPath.generic_string();
                 if(ImGui::BeginTabItem(label.c_str(),session.pinned?nullptr:&open,flags)){
-                    if(!active){std::error_code error;const auto runtime=fs::relative(session.id.canonicalPath,m_project.Context().root,error).generic_string();if(!error){const Status status=ActivateUIDocument(session.id.canonicalPath,runtime);if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);}}
+                    // An externally requested document is selected later in this tab-bar pass.
+                    // Do not let ImGui's previously selected tab reactivate itself first.
+                    if(!active&&(requestedDocument.empty()||requested)){std::error_code error;const auto runtime=fs::relative(session.id.canonicalPath,m_project.Context().root,error).generic_string();if(!error){const Status status=ActivateUIDocument(session.id.canonicalPath,runtime);if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);}}
                     ImGui::EndTabItem();
                 }
                 if(!open){m_uiDocumentCloseRequest=session.id.canonicalPath;if(session.dirty)m_uiDocumentClosePopup=true;}
             }
+            if(focusRequestHandled)m_uiFocusRequest.clear();
             ImGui::EndTabBar();
         }
         const auto closeUiDocument=[this](const fs::path& path){
@@ -1896,6 +1912,7 @@ void EditorApp::RenderPreview() {
                     std::filesystem::create_directories(abs.parent_path(), ec);
                     if (!std::filesystem::exists(abs)) {
                         UIDesigner createdDesigner;
+                        ConfigureDesigner(createdDesigner);
                         const Status created = createdDesigner.New(abs);
                         if (created) createdDesigner.Save();
                     }
@@ -1910,17 +1927,24 @@ void EditorApp::RenderPreview() {
         }
         if (m_previewMode == 0) {
             ImGui::Separator();
-            m_designer.RenderViewportToolbar();
+            auto& panels=m_designer.ViewportState();
+            for(int mode=0;mode<3;++mode){if(mode)ImGui::SameLine();const char* label=mode==0?"Design 設計":mode==1?"Interact 互動":"Animate 動畫";if(ImGui::Selectable(label,panels.authorMode==mode,0,ImVec2(126,0))){panels.authorMode=mode;panels.interactivePreview=false;}}
+            if(panels.authorMode==2){ImGui::SameLine();ImGui::TextDisabled("│");ImGui::SameLine();if(ImGui::Selectable("Clip",panels.animateSurface==0,0,ImVec2(64,0)))panels.animateSurface=0;ImGui::SameLine();if(ImGui::Selectable("State Machine",panels.animateSurface==1,0,ImVec2(112,0)))panels.animateSurface=1;}
+            ImGui::SameLine();ImGui::TextDisabled("  面板");ImGui::SameLine();if(ImGui::SmallButton(panels.leftPanelVisible?"隱藏左側":"顯示左側"))panels.leftPanelVisible=!panels.leftPanelVisible;ImGui::SameLine();if(ImGui::SmallButton(panels.rightPanelVisible?"隱藏 Inspector":"顯示 Inspector"))panels.rightPanelVisible=!panels.rightPanelVisible;if(!(panels.authorMode==2&&panels.animateSurface==0)){ImGui::SameLine();if(ImGui::SmallButton(panels.bottomPanelVisible?"隱藏 Problems":"顯示 Problems"))panels.bottomPanelVisible=!panels.bottomPanelVisible;}
+            if(panels.authorMode==0||(panels.authorMode==2&&panels.animateSurface==0)){ImGui::Separator();m_designer.RenderViewportToolbar();}
         }
         ImGui::Separator();
 
-        const bool designerComposite=m_previewMode==0;
+        const bool designerComposite=m_previewMode==0;auto& state=m_designer.ViewportState();const ImVec2 workspace=ImGui::GetContentRegionAvail();const bool compact=workspace.x<1000.0f;const bool showLeft=designerComposite&&state.leftPanelVisible&&!compact;const bool showRight=designerComposite&&state.rightPanelVisible&&workspace.x>=760.0f;const bool clipTimeline=state.authorMode==2&&state.animateSurface==0;const bool showBottom=designerComposite&&(clipTimeline||state.bottomPanelVisible)&&workspace.y>=420.0f;const float drawerHeight=showBottom?std::clamp(state.bottomPanelHeight,150.0f,std::max(150.0f,workspace.y*.5f)):0.0f;const int canvasColumn=showLeft?1:0;const int inspectorColumn=canvasColumn+1;const int columnCount=1+(showLeft?1:0)+(showRight?1:0);
         if(designerComposite){
-            ImGui::BeginTable("##ui-designer-composite",3,ImGuiTableFlags_Resizable|ImGuiTableFlags_BordersInnerV|ImGuiTableFlags_SizingStretchProp);
-            ImGui::TableSetupColumn("Layers",ImGuiTableColumnFlags_WidthFixed,260.0f);ImGui::TableSetupColumn("Canvas",ImGuiTableColumnFlags_WidthStretch);ImGui::TableSetupColumn("Inspector",ImGuiTableColumnFlags_WidthFixed,340.0f);ImGui::TableNextRow();ImGui::TableSetColumnIndex(0);
-            if(ImGui::BeginChild("##designer-layers",ImVec2(0,0))){ImGui::SeparatorText("Layers");m_designer.RenderHierarchy();}ImGui::EndChild();ImGui::TableSetColumnIndex(1);
+            ImGui::BeginTable("##ui-designer-composite",columnCount,ImGuiTableFlags_Resizable|ImGuiTableFlags_BordersInnerV|ImGuiTableFlags_SizingStretchProp,ImVec2(0,std::max(240.0f,workspace.y-drawerHeight-(showBottom?6.0f:0.0f))));
+            if(showLeft)ImGui::TableSetupColumn("Layers",ImGuiTableColumnFlags_WidthFixed,state.leftPanelWidth);ImGui::TableSetupColumn("Canvas",ImGuiTableColumnFlags_WidthStretch);if(showRight)ImGui::TableSetupColumn("Inspector",ImGuiTableColumnFlags_WidthFixed,state.rightPanelWidth);ImGui::TableNextRow();
+            if(showLeft){ImGui::TableSetColumnIndex(0);if(ImGui::BeginChild("##designer-left",ImVec2(0,0))){if(state.authorMode==1)m_designer.RenderInteractionNavigator();else if(state.authorMode==2&&state.animateSurface==1)m_designer.RenderAnimationNavigator();else if(ImGui::BeginTabBar("##left-designer-tabs")){if(ImGui::BeginTabItem("Layers")){m_designer.RenderHierarchy();ImGui::EndTabItem();}if(ImGui::BeginTabItem("Insert")){m_designer.RenderInsert();ImGui::EndTabItem();}if(ImGui::BeginTabItem("Components")){m_designer.RenderComponents();ImGui::EndTabItem();}ImGui::EndTabBar();}}ImGui::EndChild();state.leftPanelWidth=ImGui::GetColumnWidth(0);}ImGui::TableSetColumnIndex(canvasColumn);
         }
 
+        if(designerComposite&&state.authorMode==1){if(ImGui::BeginChild("##interaction-workspace",ImVec2(0,0),ImGuiChildFlags_Borders))m_designer.RenderBehaviorGraph();ImGui::EndChild();}
+        else if(designerComposite&&state.authorMode==2&&state.animateSurface==1){if(ImGui::BeginChild("##animation-machine-workspace",ImVec2(0,0),ImGuiChildFlags_Borders))m_designer.RenderAnimationStateMachine();ImGui::EndChild();}
+        else {
         ImVec2 avail = ImGui::GetContentRegionAvail();
         const bool uiMode = m_previewMode == 0;
         const bool vnMode = !uiMode;
@@ -1934,18 +1958,24 @@ void EditorApp::RenderPreview() {
         }
         const float gw = static_cast<float>(m_preview->Width());
         const float gh = static_cast<float>(m_preview->Height());
-        const float fitScale = std::min(avail.x / gw, avail.y / gh);
+        constexpr float designerCanvasMargin = 40.0f;
+        const float fitWidth = uiMode ? std::max(1.0f, avail.x - designerCanvasMargin) : avail.x;
+        const float fitHeight = uiMode ? std::max(1.0f, avail.y - designerCanvasMargin) : avail.y;
+        const float fitScale = std::min(fitWidth / gw, fitHeight / gh);
         const float rawScale = uiMode?(m_designer.ViewportState().fitToViewport?fitScale:m_designer.ViewportState().zoom):fitScale;
         const float framebufferScale=std::max(ImGui::GetIO().DisplayFramebufferScale.x,ImGui::GetIO().DisplayFramebufferScale.y);
         const float scale=std::max(.01f,std::round(rawScale*gw*framebufferScale)/(gw*framebufferScale));
         const ImVec2 disp(gw * scale, gh * scale);
-        const ImVec2 contentSize{uiMode?std::max(avail.x,disp.x+40.0f):avail.x,uiMode?std::max(avail.y,disp.y+40.0f):avail.y};
+        const bool fittedDesignerCanvas=uiMode&&m_designer.ViewportState().fitToViewport;
+        const ImVec2 contentSize{uiMode&&!fittedDesignerCanvas?std::max(avail.x,disp.x+designerCanvasMargin):avail.x,uiMode&&!fittedDesignerCanvas?std::max(avail.y,disp.y+designerCanvasMargin):avail.y};
         const ImVec2 viewportMin = ImGui::GetCursorScreenPos();
         const ImRect viewport=uiMode?ImGui::GetCurrentWindow()->InnerRect:ImRect(viewportMin,ImVec2(viewportMin.x+avail.x,viewportMin.y+avail.y));
         ImVec2 p0=viewportMin;p0.x+=std::max(20.0f,(contentSize.x-disp.x)*.5f);p0.y+=std::max(20.0f,(contentSize.y-disp.y)*.5f);
 
         const ImVec2 mouse = ImGui::GetIO().MousePos;
         const bool viewportHovered = viewport.Contains(mouse);
+        if(uiMode&&viewportHovered&&ImGui::GetIO().KeyShift&&ImGui::GetIO().MouseWheel!=0.0f)
+            ImGui::SetScrollX(std::max(0.0f,ImGui::GetScrollX()-ImGui::GetIO().MouseWheel*48.0f));
         const bool hovered = mouse.x >= p0.x && mouse.x <= p0.x + disp.x && mouse.y >= p0.y && mouse.y <= p0.y + disp.y;
         const float localX = scale > 0 ? (mouse.x - p0.x) / scale : 0.0f;
         const float localY = scale > 0 ? (mouse.y - p0.y) / scale : 0.0f;
@@ -1962,6 +1992,7 @@ void EditorApp::RenderPreview() {
             ImGui::SetCursorScreenPos(p0);
             ImGui::Image(reinterpret_cast<ImTextureID>(m_preview->Target()), disp);
         }
+        if(uiMode&&state.interactivePreview){ImDrawList* draw=ImGui::GetWindowDrawList();const ImVec2 maximum{p0.x+disp.x,p0.y+disp.y};draw->AddRect(p0,maximum,IM_COL32(60,244,136,255),0.0f,ImDrawFlags_None,4.0f);draw->AddRectFilled(p0,{p0.x+184,p0.y+27},IM_COL32(20,82,52,245));draw->AddText({p0.x+8,p0.y+5},IM_COL32(215,255,230,255),"PREVIEW · Esc 返回 Edit");}
         if (vnMode) {
             ImGui::SetCursorScreenPos(ImVec2(ImGui::GetWindowPos().x + 8,
                                              p0.y + disp.y + 6));
@@ -2083,10 +2114,9 @@ void EditorApp::RenderPreview() {
                     break;
                 }
             }
-            m_designer.CanvasInput(viewport, p0, scale, viewportHovered, selectedImageAsset);
-            m_designer.DrawOverlay(p0, scale);
+            if(!state.interactivePreview){m_designer.HandleCanvasInteraction(viewport, p0, scale, viewportHovered, selectedImageAsset);m_designer.RenderCanvasOverlay(p0, scale);}
             const ImRect canvasRect(p0, ImVec2(p0.x + disp.x, p0.y + disp.y));
-            if (ImGui::BeginDragDropTargetCustom(canvasRect, ImGui::GetID("UIDesignerCanvasDrop"))) {
+            if (!state.interactivePreview&&ImGui::BeginDragDropTargetCustom(canvasRect, ImGui::GetID("UIDesignerCanvasDrop"))) {
                 if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kResourcePayload)) {
                     std::string asset(static_cast<const char*>(payload->Data),
                                       payload->DataSize > 0 ? payload->DataSize - 1 : 0);
@@ -2106,7 +2136,12 @@ void EditorApp::RenderPreview() {
             m_designer.ViewportState().scrollX=ImGui::GetScrollX();m_designer.ViewportState().scrollY=ImGui::GetScrollY();
             ImGui::EndChild();
         }
-        if(designerComposite){ImGui::TableSetColumnIndex(2);if(ImGui::BeginChild("##designer-inspector",ImVec2(0,0))){ImGui::SeparatorText("Inspector");m_designer.RenderInspector(m_selectedAsset);if(ImGui::CollapsingHeader("Styles")){m_designer.RenderTheme();}if(ImGui::CollapsingHeader("Animation")){m_designer.RenderAnimation();}}ImGui::EndChild();ImGui::EndTable();}
+        }
+        if(designerComposite){if(showRight){ImGui::TableSetColumnIndex(inspectorColumn);if(ImGui::BeginChild("##designer-inspector",ImVec2(0,0))){if(state.authorMode==1)m_designer.RenderInteractionInspector();else if(state.authorMode==2&&state.animateSurface==1)m_designer.RenderAnimationInspector();else m_designer.RenderInspector(m_selectedAsset);}ImGui::EndChild();state.rightPanelWidth=ImGui::GetColumnWidth(inspectorColumn);}ImGui::EndTable();
+            if(showBottom){ImGui::InvisibleButton("##designer-bottom-splitter",ImVec2(-1,6));if(ImGui::IsItemActive()){state.bottomPanelHeight=std::clamp(state.bottomPanelHeight-ImGui::GetIO().MouseDelta.y,150.0f,std::max(150.0f,workspace.y*.5f));}if(ImGui::IsItemHovered()||ImGui::IsItemActive())ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+            if(ImGui::BeginChild("##designer-bottom-drawer",ImVec2(0,drawerHeight-6.0f),ImGuiChildFlags_Borders)){
+                if(clipTimeline)m_designer.RenderAnimation();else m_designer.RenderProblems();
+            }ImGui::EndChild();}}
     }
     ImGui::End();
 }
@@ -2168,7 +2203,7 @@ void EditorApp::RenderNodeEditor() {
                 ImGui::Text("「%s」有未儲存的變更。", document->DocumentPath().filename().string().c_str());
                 ImGui::TextDisabled("關閉前要儲存嗎？此動作不會偷偷覆寫。 ");
                 if (ImGui::Button("儲存", ImVec2(110, 0))) {
-                    if (document->Save()) {
+                    if (document->Save() && EnsureAssetIdentity(document->DocumentPath())) {
                         (void)m_docs.Close(document->DocumentPath());
                         m_scriptDocs.erase(m_scriptDocs.begin() + m_documentCloseRequest);
                     }
@@ -2302,7 +2337,32 @@ void EditorApp::RenderProblems() {
     ImGui::End();
 }
 
-void EditorApp::RenderTheme(){if(ImGui::Begin("Theme")){if(m_previewMode!=0)ImGui::TextDisabled("Switch to UI Scene mode to edit themes.");else m_designer.RenderTheme();}ImGui::End();}
+void EditorApp::RenderTheme(){
+    if(!ImGui::Begin("Theme")){ImGui::End();return;}
+    const std::string selectedTheme=fs::path(m_selectedAsset).extension()==".pxtheme"?m_selectedAsset:std::string{};
+    std::string requested=!selectedTheme.empty()?selectedTheme:m_themePath;
+    if(requested.empty()&&m_project.Context().IsOpen())requested=m_project.Context().manifest.uiThemePath;
+    const auto loadTheme=[&](const std::string& path){m_themePath=path;m_themeDocument.reset();m_themeData.reset();m_themeDirty=false;m_themeToken=m_themeStyle=m_themeAxis=-1;std::ifstream input(m_project.Context().root/path,std::ios::binary);std::ostringstream text;if(!input){diag::Emit({.severity=diag::Severity::Error,.code="PXEDTHEME4101",.category="Editor.Theme",.message="Theme file could not be opened",.details=path});return;}text<<input.rdbuf();auto document=resource::ParseTypedDocument(text.str(),path);if(!document||document.Value().type!="UITheme"){for(const auto& item:document.Diagnostics())diag::Emit(item);return;}const auto value=document.Value().properties.find("styleSystem");if(value==document.Value().properties.end()){diag::Emit({.severity=diag::Severity::Error,.code="PXEDTHEME4102",.category="Editor.Theme",.message="UITheme requires Style System 3",.details=path});return;}auto parsed=ui::ParseStyleTheme(value->second);if(!parsed){for(const auto& item:parsed.Diagnostics())diag::Emit(item);return;}m_themeDocument=document.TakeValue();m_themeData=parsed.TakeValue();};
+    if(!requested.empty()&&requested!=m_themePath){if(!m_themeDirty)loadTheme(requested);else{ImGui::TextColored({1,.7f,.3f,1},"%s 尚未儲存；先儲存或捨棄才能切換。",m_themePath.c_str());if(ImGui::Button("捨棄並切換"))loadTheme(requested);}}
+    if(!m_themeData||!m_themeDocument){ImGui::TextDisabled("選取 .pxtheme 資源以開啟外部 Theme 文件編輯器。");ImGui::SeparatorText("Scene local overrides");m_designer.RenderTheme();ImGui::End();return;}
+    ImGui::Text("%s%s",m_themePath.c_str(),m_themeDirty?"  ●":"");ImGui::SameLine();
+    if(ImGui::Button("儲存 Theme")){const ui::StylePropertyRegistry registry;const Status valid=ui::StyleResolver{}.ValidateTheme(*m_themeData,registry);if(valid){m_themeDocument->properties["styleSystem"]=ui::WriteStyleTheme(*m_themeData);const Status written=io::AtomicFile::WriteText(m_project.Context().root/m_themePath,resource::WriteTypedDocument(*m_themeDocument));if(written){m_themeDirty=false;(void)EnsureAssetIdentity(m_project.Context().root/m_themePath);m_assets.Scan(m_project.Context());if(m_preview)m_preview->Reload();}else for(const auto& item:written.Diagnostics())diag::Emit(item);}else for(const auto& item:valid.Diagnostics())diag::Emit(item);}
+    ImGui::SameLine();if(ImGui::Button("重新載入")){if(!m_themeDirty)loadTheme(m_themePath);else ImGui::OpenPopup("Theme 尚未儲存");}
+    if(ImGui::BeginPopupModal("Theme 尚未儲存",nullptr,ImGuiWindowFlags_AlwaysAutoResize)){ImGui::Text("重新載入會捨棄目前 Theme 變更。");if(ImGui::Button("捨棄並重新載入")){const auto path=m_themePath;loadTheme(path);ImGui::CloseCurrentPopup();}ImGui::SameLine();if(ImGui::Button("取消"))ImGui::CloseCurrentPopup();ImGui::EndPopup();}
+    auto& theme=*m_themeData;const ui::StylePropertyRegistry propertyRegistry;
+    const auto defaultValue=[](const VariantType type)->Variant{switch(type){case VariantType::Bool:return false;case VariantType::Integer:return std::int64_t{0};case VariantType::Number:return 0.0;case VariantType::String:return std::string{};case VariantType::Vec2:return Vec2{};case VariantType::Color:return Color{255,255,255,255};default:return Variant{};}};
+    const auto editVariant=[](const char* label,Variant& value)->bool{if(auto* boolean=value.TryGet<bool>())return ImGui::Checkbox(label,boolean);if(auto* integer=value.TryGet<std::int64_t>())return ImGui::DragScalar(label,ImGuiDataType_S64,integer);if(auto* number=value.TryGet<double>())return ImGui::DragScalar(label,ImGuiDataType_Double,number);if(auto* text=value.TryGet<std::string>())return ImGui::InputText(label,text);if(auto* vector=value.TryGet<Vec2>()){float values[2]{vector->x,vector->y};if(ImGui::DragFloat2(label,values)){*vector={values[0],values[1]};return true;}return false;}if(auto* color=value.TryGet<Color>()){float values[4]{color->r/255.f,color->g/255.f,color->b/255.f,color->a/255.f};if(ImGui::ColorEdit4(label,values)){*color={static_cast<std::uint8_t>(values[0]*255),static_cast<std::uint8_t>(values[1]*255),static_cast<std::uint8_t>(values[2]*255),static_cast<std::uint8_t>(values[3]*255)};return true;}return false;}ImGui::TextDisabled("%s：無可用編輯器",label);return false;};
+    const auto editStyleValue=[&](const char* label,ui::StyleValue& styleValue,const VariantType expected)->bool{bool changed=false;int mode=styleValue.IsTokenReference()?1:0;ImGui::SetNextItemWidth(92);if(ImGui::Combo((std::string("##mode-")+label).c_str(),&mode,"Literal\0Token\0")){if(mode==0)styleValue=ui::StyleValue::Literal(defaultValue(expected));else{const auto found=std::find_if(theme.tokens.begin(),theme.tokens.end(),[&](const auto& token){return token.type==expected;});if(found!=theme.tokens.end())styleValue=ui::StyleValue::Token(found->id,found->displayName);}changed=true;}ImGui::SameLine();if(styleValue.IsTokenReference()){const auto* token=theme.FindToken(styleValue.TokenReference());const char* preview=token?token->displayName.c_str():"Missing Token";ImGui::SetNextItemWidth(-1);if(ImGui::BeginCombo(label,preview)){for(const auto& candidate:theme.tokens)if(candidate.type==expected&&ImGui::Selectable((candidate.displayName+"##"+candidate.id.ToString()).c_str(),candidate.id==styleValue.TokenReference())){styleValue=ui::StyleValue::Token(candidate.id,candidate.displayName);changed=true;}ImGui::EndCombo();}}else{Variant literal=styleValue.IsLiteral()?styleValue.LiteralValue().Clone():defaultValue(expected);if(editVariant(label,literal)){styleValue=ui::StyleValue::Literal(std::move(literal));changed=true;}}return changed;};
+    const auto renderProperties=[&](ui::StylePropertyMap& properties,const std::string& scope)->bool{bool changed=false;std::string remove;for(auto& [id,value]:properties){ImGui::PushID((scope+id).c_str());const auto* descriptor=propertyRegistry.Find(id);if(descriptor){if(editStyleValue(descriptor->displayName.c_str(),value,descriptor->valueType))changed=true;}else ImGui::TextColored({1,.4f,.35f,1},"Unknown property: %s",id.c_str());ImGui::SameLine();if(ImGui::SmallButton("×"))remove=id;ImGui::PopID();}if(!remove.empty()){properties.erase(remove);changed=true;}if(ImGui::BeginCombo(("新增屬性##"+scope).c_str(),"選擇 Style Property")){for(const auto* descriptor:propertyRegistry.Descriptors())if(!properties.contains(descriptor->id)&&ImGui::Selectable((descriptor->category+" / "+descriptor->displayName+"##"+descriptor->id).c_str())){properties[descriptor->id]=ui::StyleValue::Literal(defaultValue(descriptor->valueType));changed=true;}ImGui::EndCombo();}return changed;};
+    if(ImGui::BeginTabBar("##external-theme-tabs")){
+        if(ImGui::BeginTabItem("Tokens")){if(ImGui::BeginChild("##token-list",{220,0},ImGuiChildFlags_Borders)){for(int index=0;index<static_cast<int>(theme.tokens.size());++index)if(ImGui::Selectable((theme.tokens[static_cast<std::size_t>(index)].displayName+"##token").c_str(),m_themeToken==index))m_themeToken=index;if(ImGui::Button("＋ Token")){ui::TokenDefinition token{.id=Uuid::Random(),.displayName="New Token",.type=VariantType::Color,.value=ui::StyleValue::Literal(Color{255,255,255,255})};theme.tokens.push_back(std::move(token));m_themeToken=static_cast<int>(theme.tokens.size())-1;m_themeDirty=true;}}ImGui::EndChild();ImGui::SameLine();if(ImGui::BeginChild("##token-editor",{0,0},ImGuiChildFlags_Borders)){if(m_themeToken>=0&&m_themeToken<static_cast<int>(theme.tokens.size())){auto& token=theme.tokens[static_cast<std::size_t>(m_themeToken)];m_themeDirty|=ImGui::InputText("名稱",&token.displayName);const char* types[]{"Bool","Integer","Number","String","Color"};const VariantType values[]{VariantType::Bool,VariantType::Integer,VariantType::Number,VariantType::String,VariantType::Color};int selected=0;for(int index=0;index<5;++index)if(token.type==values[index])selected=index;if(ImGui::Combo("型別",&selected,types,5)){token.type=values[selected];token.value=ui::StyleValue::Literal(defaultValue(token.type));m_themeDirty=true;}m_themeDirty|=editStyleValue("值",token.value,token.type);if(ImGui::Button("刪除 Token")){const Status removed=theme.RemoveToken(token.id);if(removed){m_themeToken=-1;m_themeDirty=true;}else for(const auto& item:removed.Diagnostics())diag::Emit(item);}}}ImGui::EndChild();ImGui::EndTabItem();}
+        if(ImGui::BeginTabItem("Styles / States")){if(ImGui::BeginChild("##style-list",{230,0},ImGuiChildFlags_Borders)){for(int index=0;index<static_cast<int>(theme.styles.size());++index)if(ImGui::Selectable((theme.styles[static_cast<std::size_t>(index)].displayName+"##style").c_str(),m_themeStyle==index))m_themeStyle=index;if(ImGui::Button("＋ Style")){ui::StyleDefinition style;style.id=Uuid::Random();style.displayName="New Style";style.category="Custom";theme.styles.push_back(std::move(style));m_themeStyle=static_cast<int>(theme.styles.size())-1;m_themeDirty=true;}}ImGui::EndChild();ImGui::SameLine();if(ImGui::BeginChild("##style-editor",{0,0},ImGuiChildFlags_Borders)){if(m_themeStyle>=0&&m_themeStyle<static_cast<int>(theme.styles.size())){auto& style=theme.styles[static_cast<std::size_t>(m_themeStyle)];m_themeDirty|=ImGui::InputText("名稱",&style.displayName);m_themeDirty|=ImGui::InputText("分類",&style.category);ImGui::SeparatorText("Normal");m_themeDirty|=renderProperties(style.properties,"style-normal");for(const auto [state,name]:std::array<std::pair<ui::StyleStateMask,const char*>,5>{{{ui::StateMask(ui::StyleState::Hover),"Hover"},{ui::StateMask(ui::StyleState::Pressed),"Pressed"},{ui::StateMask(ui::StyleState::Focused),"Focused"},{ui::StateMask(ui::StyleState::Checked),"Checked"},{ui::StateMask(ui::StyleState::Disabled),"Disabled"}}}){auto found=style.stateOverrides.find(state);if(found!=style.stateOverrides.end()){if(ImGui::TreeNode(name)){m_themeDirty|=renderProperties(found->second,"state-"+std::to_string(state));if(ImGui::Button((std::string("刪除 ")+name).c_str())){style.stateOverrides.erase(found);m_themeDirty=true;}ImGui::TreePop();}}else if(ImGui::SmallButton((std::string("＋ ")+name).c_str())){style.stateOverrides[state]={};m_themeDirty=true;}ImGui::SameLine();}ImGui::NewLine();if(ImGui::Button("刪除 Style")){const Status removed=theme.RemoveStyle(style.id);if(removed){m_themeStyle=-1;m_themeDirty=true;}else for(const auto& item:removed.Diagnostics())diag::Emit(item);}}}ImGui::EndChild();ImGui::EndTabItem();}
+        if(ImGui::BeginTabItem("Variants")){for(int axisIndex=0;axisIndex<static_cast<int>(theme.variantAxes.size());++axisIndex){auto& axis=theme.variantAxes[static_cast<std::size_t>(axisIndex)];ImGui::PushID(axisIndex);if(ImGui::TreeNodeEx(axis.displayName.c_str(),axisIndex==m_themeAxis?ImGuiTreeNodeFlags_DefaultOpen:0)){m_themeAxis=axisIndex;m_themeDirty|=ImGui::InputText("Axis 名稱",&axis.displayName);for(auto& value:axis.values){ImGui::PushID(value.id.ToString().c_str());if(ImGui::TreeNode(value.displayName.c_str())){m_themeDirty|=ImGui::InputText("Value 名稱",&value.displayName);m_themeDirty|=renderProperties(value.properties,"variant-"+value.id.ToString());ImGui::TreePop();}ImGui::PopID();}if(ImGui::Button("＋ Variant Value")){ui::VariantValueDefinition value;value.id=Uuid::Random();value.displayName="New Value";axis.values.push_back(value);if(axis.defaultValue.Empty())axis.defaultValue=value.id;m_themeDirty=true;}ImGui::TreePop();}ImGui::PopID();}if(ImGui::Button("＋ Variant Axis")){ui::VariantAxisDefinition axis;axis.id=Uuid::Random();axis.displayName="New Axis";ui::VariantValueDefinition value;value.id=Uuid::Random();value.displayName="Default";axis.defaultValue=value.id;axis.values.push_back(value);theme.variantAxes.push_back(std::move(axis));m_themeDirty=true;}ImGui::EndTabItem();}
+        if(ImGui::BeginTabItem("Resolved Trace")){ImGui::InputText("Control type",&m_themeTraceControl);const char* preview=m_themeTraceStyle>=0&&m_themeTraceStyle<static_cast<int>(theme.styles.size())?theme.styles[static_cast<std::size_t>(m_themeTraceStyle)].displayName.c_str():"(none)";if(ImGui::BeginCombo("Base style",preview)){if(ImGui::Selectable("(none)",m_themeTraceStyle<0))m_themeTraceStyle=-1;for(int index=0;index<static_cast<int>(theme.styles.size());++index)if(ImGui::Selectable(theme.styles[static_cast<std::size_t>(index)].displayName.c_str(),m_themeTraceStyle==index))m_themeTraceStyle=index;ImGui::EndCombo();}ui::StyleResolveRequest request{.controlType=m_themeTraceControl};if(m_themeTraceStyle>=0&&m_themeTraceStyle<static_cast<int>(theme.styles.size()))request.binding.baseStyle=theme.styles[static_cast<std::size_t>(m_themeTraceStyle)].id;const auto resolved=ui::StyleResolver{}.Resolve(theme,request,propertyRegistry);if(resolved&&ImGui::BeginTable("##trace",4,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg)){ImGui::TableSetupColumn("Property");ImGui::TableSetupColumn("Resolved source");ImGui::TableSetupColumn("Overrides");ImGui::TableSetupColumn("Token chain");ImGui::TableHeadersRow();for(const auto& [id,value]:resolved.Value().properties){ImGui::TableNextRow();ImGui::TableSetColumnIndex(0);ImGui::TextUnformatted(id.c_str());ImGui::TableSetColumnIndex(1);ImGui::TextUnformatted(value.source.label.c_str());ImGui::TableSetColumnIndex(2);ImGui::Text("%zu",value.overriddenSources.size());ImGui::TableSetColumnIndex(3);ImGui::Text("%zu",value.tokenChain.size());}ImGui::EndTable();}else if(!resolved)for(const auto& item:resolved.Diagnostics())ImGui::TextColored({1,.4f,.35f,1},"%s %s",item.code.c_str(),item.message.c_str());ImGui::EndTabItem();}
+        ImGui::EndTabBar();
+    }
+    ImGui::End();
+}
 
 void EditorApp::RenderRecoveryCenter() {
     if (!m_showRecoveryCenter) return;

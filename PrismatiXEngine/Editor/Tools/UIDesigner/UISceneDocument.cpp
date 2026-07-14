@@ -24,6 +24,7 @@ Status UISceneDocument::New(std::filesystem::path path, int width, int height) {
     m_data.properties["canvasSize"] = Vec2{static_cast<float>(width), static_cast<float>(height)};
     resource::NodeRecord root; root.id = Uuid::Random(); root.name = "Root"; root.type = "StackContainer";
     root.properties["anchors"] = Rect{0,0,1,1}; m_data.nodes.push_back(std::move(root));
+    m_data.properties["uiSchemaVersion"] = std::int64_t{5};
     m_path = std::move(path); m_history.Clear(); return Status::Ok();
 }
 
@@ -36,6 +37,12 @@ Status UISceneDocument::Load(const std::filesystem::path& path) {
     if (parsed.Value().kind != resource::DocumentKind::Scene || (parsed.Value().type != "UIScene"&&parsed.Value().type!="UIComponent"))
         return Status::Fail(Error("PXEDUI3002", "Document is not a typed UIScene or UIComponent: " + path.string()));
     m_data = std::move(parsed.Value()); m_path = path;
+    const auto schema = m_data.properties.find("uiSchemaVersion");
+    const auto* version = schema == m_data.properties.end()
+                              ? nullptr : schema->second.TryGet<std::int64_t>();
+    if (!version || *version != 5)
+        return Status::Fail(Error("PXEDUI3020",
+            "UI document requires strict uiSchemaVersion 5: " + path.string()));
     const Status valid = ValidateTree(); if (!valid) return valid;
     m_history.Clear(); m_history.MarkSaved(); return Status::Ok();
 }

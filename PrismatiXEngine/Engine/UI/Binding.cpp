@@ -68,6 +68,17 @@ std::optional<PropertyPathInfo> ObservableViewModel::Describe(std::string_view p
     return std::nullopt;
 }
 
+std::vector<PropertyPathInfo> ObservableViewModel::EnumerateProperties() const {
+    std::vector<PropertyPathInfo> result;
+    result.reserve(m_entries.size());
+    for (const auto& [path, entry] : m_entries) {
+        result.push_back({path, entry.type, entry.writable});
+    }
+    std::sort(result.begin(), result.end(),
+              [](const auto& left, const auto& right) { return left.path < right.path; });
+    return result;
+}
+
 Result<Variant> ObservableViewModel::Read(std::string_view path) const {
     if (const auto it = m_entries.find(std::string(path)); it != m_entries.end()) return Result<Variant>::Success(it->second.value);
     return ResultFailure<Variant>("PXUI2108", "Unknown ViewModel property path", std::string(path));
@@ -136,6 +147,16 @@ Status FormatterRegistry::Register(Formatter formatter) {
 }
 const Formatter* FormatterRegistry::Find(std::string_view name) const {
     const auto it = m_formatters.find(std::string(name)); return it == m_formatters.end() ? nullptr : &it->second;
+}
+
+std::vector<const Formatter*> FormatterRegistry::Descriptors() const {
+    std::vector<const Formatter*> result;
+    result.reserve(m_formatters.size());
+    for (const auto& [name, formatter] : m_formatters) {
+        (void)name;
+        result.push_back(&formatter);
+    }
+    return result;
 }
 
 Binding::~Binding() { Disconnect(); }

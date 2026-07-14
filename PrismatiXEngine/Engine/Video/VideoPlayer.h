@@ -34,6 +34,9 @@ public:
 
     [[nodiscard]] bool Playing() const { return (m_plm != nullptr || m_ffmpeg) && !m_finished; }
     [[nodiscard]] bool Finished() const { return m_finished; }
+    [[nodiscard]] SDL_Texture* Texture() const { return m_texture; }
+    [[nodiscard]] int Width() const { return m_width; }
+    [[nodiscard]] int Height() const { return m_height; }
 
     // Internal decoder callbacks (pl_mpeg types are not forward-declarable).
     void HandleVideoFrame(void* frame);

@@ -1,8 +1,11 @@
 #pragma once
 
 #include "Editor/Tools/UIDesigner/UISceneDocument.h"
+#include "Editor/Tools/UIDesigner/UIDesignerSession.h"
 #include "Engine/UI/Animation.h"
+#include "Engine/UI/Behavior/BehaviorGraph.h"
 #include "Engine/UI/Binding.h"
+#include "Editor/Tools/UIDesigner/Preview/PreviewFixture.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -19,6 +22,9 @@
 
 namespace px::editor {
 
+class BehaviorGraphEditor;
+class AnimationStateMachineEditor;
+
 enum class DesignerTool { Select, Anchors };
 
 struct DesignerViewportState {
@@ -34,14 +40,23 @@ struct DesignerViewportState {
     bool showAllOutlines = false;
     bool interactivePreview = false;
     bool pixelExactPreview = false;
+    bool leftPanelVisible = true;
+    bool rightPanelVisible = true;
+    bool bottomPanelVisible = false;
+    float leftPanelWidth = 260.0f;
+    float rightPanelWidth = 340.0f;
+    float bottomPanelHeight = 240.0f;
+    int authorMode = 0;       // Design, Interact, Animate.
+    int animateSurface = 0;   // Clip, State Machine.
 };
 
 class UIDesigner {
 public:
     UIDesigner();
+    ~UIDesigner();
     UIDesigner(const UIDesigner&) = delete;
     UIDesigner& operator=(const UIDesigner&) = delete;
-    UIDesigner(UIDesigner&&) noexcept = default;
+    UIDesigner(UIDesigner&&) noexcept;
     UIDesigner& operator=(UIDesigner&& other) noexcept;
 
     Status Open(const std::filesystem::path& path);
@@ -53,21 +68,42 @@ public:
     void SetOpenResource(std::function<void(const ResourceRefValue&)> callback){m_openResource=std::move(callback);}
     using ImageSizeResolver=std::function<std::optional<Vec2>(const std::string&)>;
     void SetImageSizeResolver(ImageSizeResolver resolver){m_imageSizeResolver=std::move(resolver);}
+    using IdentityRegistrar=std::function<Status(const std::filesystem::path&)>;
+    void SetIdentityRegistrar(IdentityRegistrar registrar){m_identityRegistrar=std::move(registrar);}
+    using AnimationPreview=std::function<Status(const Uuid&,float,bool)>;
+    void SetAnimationPreview(AnimationPreview preview){m_animationPreview=std::move(preview);}
+    using BehaviorDebugProvider=std::function<ui::BehaviorRuntimeState()>;
+    void SetBehaviorDebugProvider(BehaviorDebugProvider provider){m_behaviorDebugProvider=std::move(provider);}
+    using AnimationDebugProvider=std::function<ui::UIAnimationRuntimeState()>;
+    void SetAnimationDebugProvider(AnimationDebugProvider provider){m_animationDebugProvider=std::move(provider);}
+    void SetAnimationParameterTester(std::function<Status(std::string_view,const Variant&)> tester);
+    void SetRequestAuthorMode(std::function<void(int)> request){m_requestAuthorMode=std::move(request);}
 
     void RenderHierarchy();
+    void RenderInsert();
     void RenderInspector(const std::string& selectedAssetPath);
     void RenderAnimation();
+    void RenderAnimationNavigator();
+    void RenderAnimationStateMachine();
+    void RenderAnimationInspector();
     void RenderTheme();
+    void RenderComponents();
+    void RenderEvents();
+    void RenderInteractionNavigator();
+    void RenderInteractionInspector();
+    void RenderBehaviorGraph();
+    void RenderBehaviorInspector();
+    void RenderProblems();
     void RenderViewportToolbar();
-    bool CanvasInput(const ImRect& viewport, ImVec2 p0, float scale, bool hovered,
-                     const std::string& selectedAssetPath);
-    void DrawOverlay(ImVec2 p0, float scale);
+    bool HandleCanvasInteraction(const ImRect& viewport, ImVec2 p0, float scale, bool hovered,
+                                 const std::string& selectedAssetPath);
+    void RenderCanvasOverlay(ImVec2 p0, float scale);
     void AddImageAt(float canvasX, float canvasY, const std::string& image);
 
     bool Save();
     [[nodiscard]] bool Dirty() const { return m_document && m_document->History().Dirty(); }
     [[nodiscard]] const std::string& Path() const { return m_pathText; }
-    [[nodiscard]] UISceneDocument* Document() const { return m_document.get(); }
+    [[nodiscard]] UISceneDocument* Document() const { return m_document; }
     [[nodiscard]] bool HasDocument() const { return m_document != nullptr; }
     [[nodiscard]] std::chrono::steady_clock::time_point LastEditTime() const { return m_lastEdit; }
     [[nodiscard]] const DesignerViewportState& ViewportState() const { return m_viewport; }
@@ -113,11 +149,13 @@ private:
     void BeginFreeTransform(const Uuid& node, Vec2 canvas, int handle);
     void CommitManagedDrag(Vec2 canvas, bool detach);
     void CancelCanvasGesture();
-    [[nodiscard]] static VariantObject NewSubtree(std::string type, std::string name, Rect anchors,
-                                                  Rect offsets, std::string image = {});
     static void RegenerateIds(VariantObject& subtree);
+    void RecordAnimationKey(const Uuid& node, const std::string& property, const Variant& value);
 
-    std::unique_ptr<UISceneDocument> m_document;
+    std::unique_ptr<UIDesignerSession> m_session;
+    std::unique_ptr<BehaviorGraphEditor> m_behaviorEditor;
+    std::unique_ptr<AnimationStateMachineEditor> m_animationStateEditor;
+    UISceneDocument* m_document = nullptr;
     std::string m_pathText;
     Uuid m_selected;
     std::unordered_set<Uuid, UuidHash> m_selection;
@@ -125,17 +163,21 @@ private:
     std::unordered_map<Uuid, Rect, UuidHash> m_layout;
     std::unordered_map<Uuid, ui::ChildLayoutPolicy, UuidHash> m_childPolicies;
     std::unique_ptr<PropertyEditTransaction> m_propertyTransaction;
+    std::unique_ptr<MultiPropertyEditTransaction> m_multiPropertyTransaction;
+    std::string m_multiTransactionProperty;
     std::string m_transactionProperty;
     Uuid m_transactionTarget;
-    enum class Gesture { None, Move, Resize, Anchors, Reorder, Marquee, Pan };
+    enum class Gesture { None, Move, Resize, Anchors, Pivot, Reorder, Marquee };
     Gesture m_gesture = Gesture::None;
+    bool m_gestureDragged = false;
     int m_resizeHandle = 0;
     int m_anchorHandle = 0;
     Rect m_anchorsStart{};
     Rect m_anchorOffsetsStart{};
+    Vec2 m_pivotStart{.5f,.5f};
     Vec2 m_dragStart{};
-    ImVec2 m_panMouseStart{};
-    float m_panScrollX=0,m_panScrollY=0;
+    Vec2 m_dragCurrent{};
+    float m_dragScale = 1.0f;
     Vec2 m_marqueeCurrent{};
     bool m_marqueeAdditive = false;
     Rect m_rectStart{};
@@ -152,6 +194,7 @@ private:
     Uuid m_contextTarget;
     char m_treeFilter[96] = {0};
     char m_paletteFilter[96] = {0};
+    char m_actionFilter[96] = {0};
     char m_treeRename[128] = {0};
     bool m_treeRenameOpen = false;
     bool m_createComponentOpen = false;
@@ -162,8 +205,21 @@ private:
     ComponentWriter m_componentWriter;
     std::function<void(const ResourceRefValue&)> m_openResource;
     ImageSizeResolver m_imageSizeResolver;
+    IdentityRegistrar m_identityRegistrar;
     ui::FormatterRegistry m_formatters;
-    ui::AnimationClip m_animation;
+    PreviewFixture m_previewFixture;
+    Uuid m_selectedClip;
+    float m_timelineTime = 0.0f;
+    bool m_timelinePlaying = false;
+    bool m_timelineAutoKey = false;
+    int m_timelineTrack = -1;
+    int m_timelineKey = -1;
+    std::string m_timelineProperty = "offsets";
+    std::string m_selectedSignal;
+    AnimationPreview m_animationPreview;
+    BehaviorDebugProvider m_behaviorDebugProvider;
+    AnimationDebugProvider m_animationDebugProvider;
+    std::function<void(int)> m_requestAuthorMode;
     std::chrono::steady_clock::time_point m_lastEdit = std::chrono::steady_clock::now();
 };
 

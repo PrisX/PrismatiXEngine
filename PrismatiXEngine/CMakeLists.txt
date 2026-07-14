@@ -42,6 +42,10 @@ if(WIN32)
 endif()
 prismatix_configure_target(PrismatiXPlayer)
 
+add_executable(PrismatiXUIMigrate Applications/UIMigrateMain.cpp)
+target_link_libraries(PrismatiXUIMigrate PRIVATE PrismatiXRuntime)
+prismatix_configure_target(PrismatiXUIMigrate)
+
 
 file(GLOB_RECURSE PRISMATIX_EDITOR_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/Editor/*.cpp"

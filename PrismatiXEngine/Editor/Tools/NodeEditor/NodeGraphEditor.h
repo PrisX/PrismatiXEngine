@@ -30,6 +30,8 @@ public:
 
     using SelectedResourceCallback = std::function<std::string()>;
     using ResourceResolver = std::function<std::optional<ResourceRefValue>(const std::string&)>;
+    using IdentityRegistrar =
+        std::function<Status(const std::vector<std::filesystem::path>&)>;
     using FieldOptionsCallback =
         std::function<std::vector<std::string>(std::string_view nodeType,
                                                std::string_view parameterKey)>;
@@ -43,6 +45,9 @@ public:
     void SetProject(const ProjectContext* context);
     void SetSelectedResourceCallback(SelectedResourceCallback callback);
     void SetResourceResolver(ResourceResolver callback) { m_resourceResolver = std::move(callback); }
+    void SetIdentityRegistrar(IdentityRegistrar callback) {
+        m_identityRegistrar = std::move(callback);
+    }
     void SetFieldOptionsCallback(FieldOptionsCallback callback) {
         m_fieldOptions = std::move(callback);
         m_fieldOptionsCache.clear();
@@ -281,6 +286,7 @@ private:
     LogSink m_log;
     SelectedResourceCallback m_selectedResource;
     ResourceResolver m_resourceResolver;
+    IdentityRegistrar m_identityRegistrar;
     FieldOptionsCallback m_fieldOptions;
     mutable std::unordered_map<std::string, std::vector<std::string>> m_fieldOptionsCache;
     const ProjectContext* m_project = nullptr;

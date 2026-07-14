@@ -1,14 +1,24 @@
 #include "Editor/Tools/UIDesigner/UIDesigner.h"
+#include "Editor/Tools/UIDesigner/DesignerDiagnostics.h"
+#include "Editor/Tools/UIDesigner/DesignerNodeFactory.h"
+#include "Editor/Tools/UIDesigner/BehaviorGraphEditor.h"
+#include "Editor/Tools/UIDesigner/AnimationStateMachineEditor.h"
+#include "Editor/Tools/UIDesigner/PropertyEditorRegistry.h"
+#include "Engine/UI/Actions/ActionCatalog.h"
+#include "Engine/UI/Behavior/BehaviorGraph.h"
 
 #include "Engine/Core/TypeRegistry.h"
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/UI/UISceneLoader.h"
 #include "Engine/UI/UITypeRegistry.h"
 #include "Engine/UI/ActionRegistry.h"
+#include "Engine/UI/Styles/StyleSerialization.h"
+#include "Engine/UI/Styles/StyleResolver.h"
 
 #include <imgui_stdlib.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -47,6 +57,49 @@ bool AppendCapturedNodes(const VariantObject& value,const Uuid& parent,std::vect
     return true;
 }
 
+Variant DefaultValueFor(const VariantType type) {
+    switch(type){
+        case VariantType::Bool:return false;
+        case VariantType::Integer:return std::int64_t{0};
+        case VariantType::Number:return 0.0;
+        case VariantType::String:return std::string{};
+        case VariantType::Vec2:return Vec2{};
+        case VariantType::Rect:return Rect{};
+        case VariantType::Color:return Color{255,255,255,255};
+        case VariantType::Uuid:return Uuid{};
+        case VariantType::ResourceRef:return ResourceRefValue{};
+        case VariantType::TokenRef:return TokenRefValue{};
+        case VariantType::Array:return VariantArray{};
+        case VariantType::Object:return VariantObject{};
+        default:return Variant{};
+    }
+}
+
+std::string ComponentInterfaceId(std::string value){
+    std::string result;bool upper=false;for(const unsigned char character:value){if(std::isalnum(character)){char output=static_cast<char>(character);if(result.empty())output=static_cast<char>(std::tolower(character));else if(upper)output=static_cast<char>(std::toupper(character));result.push_back(output);upper=false;}else upper=!result.empty();}if(result.empty())result="item";return result;
+}
+
+bool RenderActionArgument(const ui::ActionArgumentDescriptor& descriptor,Variant& value){
+    bool changed=false;const char* label=descriptor.displayName.empty()?descriptor.name.c_str():descriptor.displayName.c_str();
+    const auto help=[&]{if(!descriptor.description.empty()&&ImGui::IsItemHovered())ImGui::SetTooltip("%s",descriptor.description.c_str());};
+    if(!descriptor.enumValues.empty()&&value.TryGet<std::string>()){
+        auto* text=value.TryGet<std::string>();if(ImGui::BeginCombo(label,text->empty()?"(none)":text->c_str())){for(const auto& option:descriptor.enumValues)if(ImGui::Selectable(option.c_str(),option==*text)){*text=option;changed=true;}ImGui::EndCombo();}help();return changed;
+    }
+    if(auto* text=value.TryGet<std::string>()){if(descriptor.editorHint==ui::ActionEditorHint::Multiline)changed=ImGui::InputTextMultiline(label,text,ImVec2(-1,ImGui::GetTextLineHeight()*4));else changed=ImGui::InputText(label,text);}
+    else if(auto* boolean=value.TryGet<bool>())changed=ImGui::Checkbox(label,boolean);
+    else if(auto* integer=value.TryGet<std::int64_t>()){int edited=static_cast<int>(*integer);changed=ImGui::DragInt(label,&edited,1.0f,descriptor.minimum?static_cast<int>(*descriptor.minimum):0,descriptor.maximum?static_cast<int>(*descriptor.maximum):0);if(changed)*integer=edited;}
+    else if(auto* number=value.TryGet<double>()){float edited=static_cast<float>(*number);changed=ImGui::DragFloat(label,&edited,.1f,descriptor.minimum?static_cast<float>(*descriptor.minimum):0,descriptor.maximum?static_cast<float>(*descriptor.maximum):0);if(changed)*number=edited;}
+    else if(auto* vector=value.TryGet<Vec2>()){float edited[2]{vector->x,vector->y};changed=ImGui::DragFloat2(label,edited,1);if(changed)*vector={edited[0],edited[1]};}
+    else if(auto* rectangle=value.TryGet<Rect>()){float edited[4]{rectangle->x,rectangle->y,rectangle->w,rectangle->h};changed=ImGui::DragFloat4(label,edited,1);if(changed)*rectangle={edited[0],edited[1],edited[2],edited[3]};}
+    else if(auto* color=value.TryGet<Color>()){float edited[4]{color->r/255.f,color->g/255.f,color->b/255.f,color->a/255.f};changed=ImGui::ColorEdit4(label,edited);if(changed)*color={static_cast<std::uint8_t>(edited[0]*255),static_cast<std::uint8_t>(edited[1]*255),static_cast<std::uint8_t>(edited[2]*255),static_cast<std::uint8_t>(edited[3]*255)};}
+    else if(auto* resource=value.TryGet<ResourceRefValue>()){ImGui::Text("%s：%s",label,resource->lastKnownPath.empty()?"拖入資源":resource->lastKnownPath.c_str());if(ImGui::BeginDragDropTarget()){if(const ImGuiPayload* payload=ImGui::AcceptDragDropPayload("PX_RESOURCE_PATH")){resource->lastKnownPath=std::string(static_cast<const char*>(payload->Data),payload->DataSize?payload->DataSize-1:0);resource->id=Uuid::FromName(resource->lastKnownPath);changed=true;}ImGui::EndDragDropTarget();}}
+    else if(auto* token=value.TryGet<TokenRefValue>())changed=ImGui::InputText(label,&token->name);
+    else if(auto* uuid=value.TryGet<Uuid>()){std::string uuidText=uuid->Empty()?std::string{}:uuid->ToString();if(ImGui::InputText(label,&uuidText)){if(uuidText.empty()){*uuid={};changed=true;}else if(const auto parsed=Uuid::Parse(uuidText)){*uuid=*parsed;changed=true;}}}
+    else ImGui::TextDisabled("%s：尚無對應編輯器",label);
+    help();
+    return changed;
+}
+
 VariantObject CaptureExpandedNodes(const std::vector<resource::NodeRecord>& nodes, const Uuid& id) {
     const auto found=std::find_if(nodes.begin(),nodes.end(),[&](const auto& node){return node.id==id;});
     if(found==nodes.end())return {};
@@ -55,9 +108,24 @@ VariantObject CaptureExpandedNodes(const std::vector<resource::NodeRecord>& node
     return {{"id",found->id},{"name",found->name},{"type",found->type},
             {"properties",VariantObject(found->properties)},{"children",std::move(children)}};
 }
+void RegisterPropertyEditors(){static const bool once=[](){auto& registry=PropertyEditorRegistry::Global();const auto key=[](VariantType type){return "type:"+std::to_string(static_cast<int>(type));};
+    (void)registry.Register(key(VariantType::String),[](PropertyEditRequest& request){auto* value=request.value.TryGet<std::string>();if(!value)return false;const char* label=request.property.editor.displayName.empty()?request.property.name.c_str():request.property.editor.displayName.c_str();return ImGui::InputText(label,value);});
+    (void)registry.Register("multiline",[](PropertyEditRequest& request){auto* value=request.value.TryGet<std::string>();return value&&ImGui::InputTextMultiline(request.property.name.c_str(),value,ImVec2(-1,ImGui::GetTextLineHeight()*4));});
+    (void)registry.Register("enum",[](PropertyEditRequest& request){auto* value=request.value.TryGet<std::string>();if(!value)return false;bool changed=false;if(ImGui::BeginCombo(request.property.name.c_str(),value->empty()?"(none)":value->c_str())){for(const auto& choice:request.property.editor.enumChoices)if(ImGui::Selectable(choice.c_str(),choice==*value)){*value=choice;changed=true;}ImGui::EndCombo();}return changed;});
+    (void)registry.Register("resource",[](PropertyEditRequest& request){auto* value=request.value.TryGet<std::string>();if(!value)return false;ImGui::Text("%s: %s",request.property.name.c_str(),value->empty()?"Drop a resource":value->c_str());bool changed=false;if(ImGui::BeginDragDropTarget()){if(const ImGuiPayload* payload=ImGui::AcceptDragDropPayload("PX_RESOURCE_PATH")){*value=std::string(static_cast<const char*>(payload->Data),payload->DataSize?payload->DataSize-1:0);changed=true;}ImGui::EndDragDropTarget();}return changed;});
+    (void)registry.Register(key(VariantType::Bool),[](PropertyEditRequest& request){auto* value=request.value.TryGet<bool>();return value&&ImGui::Checkbox(request.property.name.c_str(),value);});
+    (void)registry.Register(key(VariantType::Integer),[](PropertyEditRequest& request){auto* value=request.value.TryGet<std::int64_t>();if(!value)return false;int edited=static_cast<int>(*value);request.continuous=true;const bool changed=ImGui::DragInt(request.property.name.c_str(),&edited,static_cast<float>(request.property.editor.step),request.property.editor.hasRange?static_cast<int>(request.property.editor.minimum):0,request.property.editor.hasRange?static_cast<int>(request.property.editor.maximum):0);*value=edited;return changed;});
+    (void)registry.Register(key(VariantType::Number),[](PropertyEditRequest& request){auto* value=request.value.TryGet<double>();if(!value)return false;float edited=static_cast<float>(*value);request.continuous=true;const bool changed=ImGui::DragFloat(request.property.name.c_str(),&edited,static_cast<float>(request.property.editor.step),request.property.editor.hasRange?static_cast<float>(request.property.editor.minimum):0,request.property.editor.hasRange?static_cast<float>(request.property.editor.maximum):0);*value=edited;return changed;});
+    (void)registry.Register(key(VariantType::Vec2),[](PropertyEditRequest& request){auto* value=request.value.TryGet<Vec2>();if(!value)return false;float edited[2]{value->x,value->y};request.continuous=true;const bool changed=ImGui::DragFloat2(request.property.name.c_str(),edited,1);*value={edited[0],edited[1]};return changed;});
+    (void)registry.Register(key(VariantType::Rect),[](PropertyEditRequest& request){auto* value=request.value.TryGet<Rect>();if(!value)return false;float edited[4]{value->x,value->y,value->w,value->h};request.continuous=true;const bool changed=ImGui::DragFloat4(request.property.name.c_str(),edited,request.property.name=="anchors"?.01f:1.0f);*value={edited[0],edited[1],edited[2],edited[3]};return changed;});
+    (void)registry.Register(key(VariantType::Color),[](PropertyEditRequest& request){auto* value=request.value.TryGet<Color>();if(!value)return false;float edited[4]{value->r/255.f,value->g/255.f,value->b/255.f,value->a/255.f};request.continuous=true;const bool changed=ImGui::ColorEdit4(request.property.name.c_str(),edited);*value={static_cast<uint8_t>(edited[0]*255),static_cast<uint8_t>(edited[1]*255),static_cast<uint8_t>(edited[2]*255),static_cast<uint8_t>(edited[3]*255)};return changed;});return true;}();(void)once;}
 }
 
-UIDesigner::UIDesigner() { const Status status = ui::RegisterBuiltinUITypes(); if (!status) EmitStatus(status); }
+UIDesigner::UIDesigner():m_session(std::make_unique<UIDesignerSession>()),m_behaviorEditor(std::make_unique<BehaviorGraphEditor>()),m_animationStateEditor(std::make_unique<AnimationStateMachineEditor>()) { const Status status = ui::RegisterBuiltinUITypes(); if (!status) EmitStatus(status); RegisterPropertyEditors(); }
+
+void UIDesigner::SetAnimationParameterTester(std::function<Status(std::string_view,const Variant&)> tester){m_animationStateEditor->SetParameterTester(std::move(tester));}
+UIDesigner::~UIDesigner()=default;
+UIDesigner::UIDesigner(UIDesigner&&) noexcept=default;
 
 UIDesigner& UIDesigner::operator=(UIDesigner&& other) noexcept {
     if(this==&other)return *this;
@@ -70,20 +138,20 @@ UIDesigner& UIDesigner::operator=(UIDesigner&& other) noexcept {
 }
 
 Status UIDesigner::Open(const std::filesystem::path& path) {
-    auto document = std::make_unique<UISceneDocument>(); const Status status = document->Load(path);
+    const Status status = m_session->Open(path);
     if (!status) return status;
-    m_document = std::move(document); m_pathText = path.string(); m_selected = RootId();
+    m_document = m_session->Document(); m_pathText = path.string(); m_selected = RootId();
     m_selection={m_selected}; RebuildLayout(); return Status::Ok();
 }
 
 Status UIDesigner::New(const std::filesystem::path& path, int width, int height) {
-    auto document = std::make_unique<UISceneDocument>(); const Status status = document->New(path, width, height);
+    const Status status = m_session->New(path,width,height);
     if (!status) return status;
-    m_document = std::move(document); m_pathText = path.string(); m_selected = RootId();
+    m_document = m_session->Document(); m_pathText = path.string(); m_selected = RootId();
     m_selection={m_selected}; RebuildLayout(); MarkEdited(true); return Status::Ok();
 }
 
-bool UIDesigner::Save() { if (!m_document) return false; const Status status = m_document->Save(); if (!status) EmitStatus(status); return static_cast<bool>(status); }
+bool UIDesigner::Save() { if (!m_document) return false; Status status = m_document->Save();if(status&&m_identityRegistrar)status=m_identityRegistrar(m_document->Path()); if (!status) EmitStatus(status); return static_cast<bool>(status); }
 Status UIDesigner::Undo() { if (!m_document) return Status::Ok(); auto status = m_document->History().Undo(); if (status) { RebuildLayout(); MarkEdited(); } return status; }
 Status UIDesigner::Redo() { if (!m_document) return Status::Ok(); auto status = m_document->History().Redo(); if (status) { RebuildLayout(); MarkEdited(); } return status; }
 void UIDesigner::RelocateDocument(const std::filesystem::path& oldPath,
@@ -109,16 +177,8 @@ Uuid UIDesigner::ParentForNewNode() const {
 
 void UIDesigner::MarkEdited(bool structural) {
     m_lastEdit = std::chrono::steady_clock::now();
+    if(m_session&&m_document){if(structural)(void)m_session->DocumentView().Rebuild(*m_document);std::vector<Uuid> ordered;if(!m_selected.Empty()&&m_selection.contains(m_selected))ordered.push_back(m_selected);for(const auto& id:m_selection)if(id!=m_selected)ordered.push_back(id);m_session->Selection().Replace(std::move(ordered),m_selected);m_session->MarkDirty(structural?DesignerDirtyFlags::Structure|DesignerDirtyFlags::Layout:DesignerDirtyFlags::Paint);}
     RebuildLayout(); if (structural && m_onStructure) m_onStructure(); if (m_onEdit) m_onEdit();
-}
-
-VariantObject UIDesigner::NewSubtree(std::string type, std::string name, Rect anchors, Rect offsets, std::string image) {
-    VariantObject properties{{"anchors", Variant(anchors)}, {"offsets", Variant(offsets)}};
-    if (type == "Label") properties["text"] = Variant(std::string("Text"));
-    if (type == "Button") properties["text"] = Variant(std::string("Button"));
-    if (type == "TextureRect" && !image.empty()) {properties["path"] = Variant(std::move(image));properties["scaleMode"]=Variant(std::string("Fit"));properties["lockAspectRatio"]=Variant(true);}
-    return {{"id", Variant(Uuid::Random())}, {"name", Variant(std::move(name))}, {"type", Variant(std::move(type))},
-            {"properties", Variant(std::move(properties))}, {"children", Variant(VariantArray{})}};
 }
 
 void UIDesigner::RegenerateIds(VariantObject& subtree) {
@@ -128,11 +188,12 @@ void UIDesigner::RegenerateIds(VariantObject& subtree) {
 
 void UIDesigner::AddNode(std::string type, Vec2 canvas, std::string image) {
     if (!m_document) return; const Uuid parent = ParentForNewNode();
-    float w = type == "TextureRect" ? 320.0f : 180.0f, h = type == "TextureRect" ? 180.0f : 52.0f;
+    const auto* info=TypeRegistry::Global().Find(type);if(!info||!info->designer)return;
+    float w=info->designer->defaultSize.x,h=info->designer->defaultSize.y;
     if(type=="TextureRect"&&!image.empty()&&m_imageSizeResolver)if(const auto size=m_imageSizeResolver(image);size&&size->x>0&&size->y>0){w=size->x;h=size->y;const Vec2 canvasSize=CanvasSize();const float fit=std::min({1.0f,(canvasSize.x-40.0f)/w,(canvasSize.y-40.0f)/h});w*=fit;h*=fit;}
     Rect offsets{canvas.x - w * 0.5f, canvas.y - h * 0.5f, w, h};
     if (canvas == Vec2{}) offsets = {20,20,w,h};
-    VariantObject subtree = NewSubtree(type, UniqueName(*m_document, type), {0,0,0,0}, offsets, std::move(image));
+    auto created=DesignerNodeFactory::Create(type,{},image);if(!created){EmitStatus(Status::Fail(created.Diagnostics()));return;}VariantObject subtree=created.TakeValue();subtree["name"]=UniqueName(*m_document,info->designer->displayName);if(auto* properties=subtree["properties"].AsObject())(*properties)["offsets"]=offsets;
     const Uuid id = *subtree["id"].TryGet<Uuid>();
     auto command = std::make_unique<SubtreeEditCommand>("Add " + type, SubtreeOperation::Insert, id, parent,
                                                         m_document->Children(parent).size(), std::move(subtree));
@@ -142,8 +203,7 @@ void UIDesigner::AddNode(std::string type, Vec2 canvas, std::string image) {
 
 void UIDesigner::RenderAddControlPalette(Vec2 canvasPosition){
     ImGui::InputTextWithHint("##control-search","Search controls…",m_paletteFilter,sizeof(m_paletteFilter));
-    const std::string filter=m_paletteFilter;const auto category=[](std::string_view type)->std::string_view{if(type.find("Container")!=std::string_view::npos)return "Layout";if(type=="Button"||type.find("Input")!=std::string_view::npos)return "Input";if(type=="Label"||type=="TextureRect"||type=="Panel")return "Display";return "Data";};
-    for(const char* group:{"Display","Input","Layout","Data"}){bool header=false;for(const auto* type:TypeRegistry::Global().TypesDerivedFrom("Control")){if(type->name=="Control"||category(type->name)!=group)continue;if(!filter.empty()&&type->name.find(filter)==std::string::npos)continue;if(!header){ImGui::SeparatorText(group);header=true;}if(ImGui::Selectable(type->name.c_str())){AddNode(type->name,canvasPosition);ImGui::CloseCurrentPopup();}}}
+    std::string category;for(const auto* type:DesignerNodeFactory::Palette(m_paletteFilter)){if(type->designer->category!=category){category=type->designer->category;ImGui::SeparatorText(category.c_str());}if(ImGui::Selectable((type->designer->displayName+"##palette-"+type->name).c_str())){AddNode(type->name,canvasPosition);ImGui::CloseCurrentPopup();}if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",type->designer->description.c_str());}
 }
 
 void UIDesigner::RemoveSelected() {
@@ -261,9 +321,9 @@ void UIDesigner::AlignSelection(AlignAction action){
 Status UIDesigner::CreateComponentFromSelected(const std::filesystem::path& path){
     if(!m_document||m_selected.Empty()||m_selected==RootId()||!m_componentWriter)return Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXEDUI3041",.category="Editor.UIDesigner",.message="Select a non-root Control before creating a component"});
     const auto* selected=m_document->Find(m_selected);if(!selected)return Status::Ok();auto captured=m_document->CaptureSubtree(m_selected);if(!captured)return Status::Fail(captured.Diagnostics());
-    resource::TypedDocument component;component.kind=resource::DocumentKind::Scene;component.id=Uuid::Random();component.type="UIComponent";component.properties["canvasSize"]=Vec2{std::max(1.0f,SelectedRect().w),std::max(1.0f,SelectedRect().h)};if(!AppendCapturedNodes(captured.Value(),{},component.nodes))return Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXEDUI3042",.category="Editor.UIDesigner",.message="Selected subtree could not be serialized as a component"});
+    resource::TypedDocument component;component.kind=resource::DocumentKind::Scene;component.id=Uuid::Random();component.type="UIComponent";component.properties["canvasSize"]=Vec2{std::max(1.0f,SelectedRect().w),std::max(1.0f,SelectedRect().h)};component.properties["uiSchemaVersion"]=std::int64_t{5};if(!AppendCapturedNodes(captured.Value(),{},component.nodes))return Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXEDUI3042",.category="Editor.UIDesigner",.message="Selected subtree could not be serialized as a component"});
     auto written=m_componentWriter(path,resource::WriteTypedDocument(component));if(!written)return Status::Fail(written.Diagnostics());
-    VariantObject instanceProperties=selected->properties;instanceProperties["component"]=written.Value();instanceProperties["overrides"]=VariantObject{};
+    VariantObject instanceProperties=selected->properties;instanceProperties["component"]=written.Value();instanceProperties["overrides"]=VariantObject{};instanceProperties["componentProperties"]=VariantObject{};instanceProperties["componentEvents"]=VariantObject{};
     VariantObject instance{{"id",m_selected},{"name",selected->name},{"type",std::string("ComponentInstance")},{"properties",std::move(instanceProperties)},{"children",VariantArray{}}};
     const Uuid parent=selected->parent;const std::size_t index=m_document->ChildIndex(m_selected);auto command=std::make_unique<CompositeEditCommand>("Create UI Component");command->Add(std::make_unique<SubtreeEditCommand>("Remove source subtree",SubtreeOperation::Remove,m_selected,parent,index,captured.Value()));command->Add(std::make_unique<SubtreeEditCommand>("Insert component instance",SubtreeOperation::Insert,m_selected,parent,index,std::move(instance)));const Status status=m_document->History().Execute(std::move(command));if(status)MarkEdited(true);return status;
 }
@@ -282,10 +342,14 @@ void UIDesigner::RenderTreeNode(resource::NodeRecord& record) {
     ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
     if (children.empty()) flags |= ImGuiTreeNodeFlags_Leaf; if (record.id == m_selected) flags |= ImGuiTreeNodeFlags_Selected;
     ImGui::PushID(record.id.ToString().c_str());
-    const bool visible=!record.properties.contains("visible")||!record.properties["visible"].TryGet<bool>()||*record.properties["visible"].TryGet<bool>();
+    std::string visibility="Visible";if(const auto found=record.properties.find("visibility");found!=record.properties.end())if(const auto* value=found->second.TryGet<std::string>())visibility=*value;
+    const bool visible=visibility=="Visible";const bool collapsed=visibility=="Collapsed";
     const bool locked=record.properties.contains("editorLocked")&&record.properties["editorLocked"].TryGet<bool>()&&*record.properties["editorLocked"].TryGet<bool>();
     const auto policy=m_childPolicies.find(record.id);const bool container=policy!=m_childPolicies.end()&&policy->second!=ui::ChildLayoutPolicy::Free;
-    const std::string badges=std::string(visible?"":"  ◌")+(locked?"  ◆":"")+(container?"  [Layout]":"");
+    const auto batchProperty=[&](const std::string& property,const Variant& value,const std::string& label){std::vector<Uuid> targets;if(m_selection.contains(record.id))targets.assign(m_selection.begin(),m_selection.end());else targets.push_back(record.id);auto command=std::make_unique<CompositeEditCommand>(label);for(const Uuid& target:targets){auto before=m_document->ReadProperty(target,property);if(before&&before.Value()!=value)command->Add(std::make_unique<PropertyChangeCommand>(label,target,property,before.Value(),value.Clone(),std::chrono::steady_clock::now(),false));}if(command->Empty())return;const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited();};
+    if(ImGui::SmallButton(visible?"◉":collapsed?"×":"○"))batchProperty("visibility",Variant(std::string(visible?"Hidden":"Visible")),"切換可見性");if(ImGui::IsItemHovered())ImGui::SetTooltip("眼睛：Visible / Hidden；右鍵選單可設為 Collapsed");ImGui::SameLine();
+    if(ImGui::SmallButton(locked?"◆":"◇"))batchProperty("editorLocked",Variant(!locked),locked?"解除鎖定":"鎖定元件");if(ImGui::IsItemHovered())ImGui::SetTooltip(locked?"解除鎖定":"鎖定（編輯模式不可拖曳）");ImGui::SameLine();
+    const std::string badges=std::string(locked?"  ◆":"")+(container?"  [Layout]":"");
     const bool open = ImGui::TreeNodeEx("node", flags, "%s  %s%s", TypeGlyph(record.type), record.name.c_str(),badges.c_str());
     if (ImGui::IsItemClicked()) {
         if (ImGui::GetIO().KeyCtrl) {
@@ -296,6 +360,7 @@ void UIDesigner::RenderTreeNode(resource::NodeRecord& record) {
     }
     if (ImGui::BeginDragDropSource()) { const std::string id = record.id.ToString(); ImGui::SetDragDropPayload(kNodePayload, id.c_str(), id.size()+1); ImGui::Text("Move %s", record.name.c_str()); ImGui::EndDragDropSource(); }
     if (ImGui::BeginDragDropTarget()) {
+        if(const ImGuiPayload* payload=ImGui::GetDragDropPayload();payload&&payload->IsDataType(kNodePayload)){const float rowHeight=ImGui::GetItemRectSize().y;const float fraction=rowHeight>0?(ImGui::GetMousePos().y-ImGui::GetItemRectMin().y)/rowHeight:.5f;if(fraction<.25f||fraction>.75f){const float y=fraction<.25f?ImGui::GetItemRectMin().y:ImGui::GetItemRectMax().y;ImGui::GetWindowDrawList()->AddLine({ImGui::GetItemRectMin().x,y},{ImGui::GetItemRectMax().x,y},IM_COL32(71,140,191,255),3.0f);}else ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(),ImGui::GetItemRectMax(),IM_COL32(71,140,191,255),3.0f,0,2.0f);}
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kNodePayload)) {
             if (auto id = Uuid::Parse(static_cast<const char*>(payload->Data)); id && *id != record.id) {
                 if (const auto* moved = m_document->Find(*id)) {
@@ -315,8 +380,9 @@ void UIDesigner::RenderTreeNode(resource::NodeRecord& record) {
     }
     if(ImGui::BeginPopupContextItem("TreeNodeMenu")){
         if(!m_selection.contains(record.id)){m_selected=record.id;m_selection={record.id};}else m_selected=record.id;
-        if(ImGui::MenuItem(visible?"隱藏":"顯示")){const Variant before=record.properties.contains("visible")?record.properties["visible"]:Variant(true);auto command=std::make_unique<PropertyChangeCommand>("切換可見性",record.id,"visible",before,Variant(!visible));const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited();}
-        if(ImGui::MenuItem(locked?"解除鎖定":"鎖定")){const Variant before=record.properties.contains("editorLocked")?record.properties["editorLocked"]:Variant(false);auto command=std::make_unique<PropertyChangeCommand>("切換鎖定",record.id,"editorLocked",before,Variant(!locked));const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited();}
+        const auto setVisibility=[&](const char* value){batchProperty("visibility",Variant(std::string(value)),"設定可見性");};
+        if(ImGui::BeginMenu("可見性")){if(ImGui::MenuItem("Visible",nullptr,visibility=="Visible"))setVisibility("Visible");if(ImGui::MenuItem("Hidden",nullptr,visibility=="Hidden"))setVisibility("Hidden");if(ImGui::MenuItem("Collapsed",nullptr,visibility=="Collapsed"))setVisibility("Collapsed");ImGui::EndMenu();}
+        if(ImGui::MenuItem(locked?"解除鎖定":"鎖定"))batchProperty("editorLocked",Variant(!locked),"切換鎖定");
         ImGui::Separator();
         if(ImGui::MenuItem("重新命名","F2")){m_selected=record.id;m_selection={record.id};std::snprintf(m_treeRename,sizeof(m_treeRename),"%s",record.name.c_str());m_treeRenameOpen=true;}
         if(ImGui::MenuItem("複製","Ctrl+D"))DuplicateSelected();
@@ -362,6 +428,12 @@ void UIDesigner::RenderHierarchy() {
     if (auto* root = m_document->Find(RootId())) RenderTreeNode(*root);
 }
 
+void UIDesigner::RenderInsert(){
+    if(!m_document){ImGui::TextDisabled("Open a UI scene to insert Controls.");return;}
+    ImGui::InputTextWithHint("##insert-filter","搜尋 Control…",m_paletteFilter,sizeof(m_paletteFilter));
+    RenderAddControlPalette();
+}
+
 void UIDesigner::EditVariant(const char*, const std::string& property, Variant before, Variant value,
                              bool changed, bool continuous) {
     if (!m_document || !changed || before == value) return;
@@ -383,6 +455,8 @@ void UIDesigner::RenderInspector(const std::string& selectedAssetPath) {
     if (!m_document) { ImGui::TextDisabled("No UI document."); return; }
     auto* node = m_document->Find(m_selected); if (!node) { ImGui::TextDisabled("Select a Control."); return; }
     ImGui::TextDisabled("%s", node->type.c_str());
+    if(m_selection.size()>1){ImGui::SameLine();ImGui::TextDisabled("· %zu 個元件",m_selection.size());}
+    ImGui::SetNextItemWidth(-1);ImGui::InputTextWithHint("##inspector-search","搜尋屬性...",&m_session->inspectorSearch);
     std::string name = node->name; if (ImGui::InputText("Name", &name, ImGuiInputTextFlags_EnterReturnsTrue))
         EditVariant("Name", "$name", Variant(node->name), Variant(name), true, false);
     if(node->type=="TextureRect"){
@@ -418,12 +492,20 @@ void UIDesigner::RenderInspector(const std::string& selectedAssetPath) {
         type = info->base; if (type.empty()) break;
     }
     std::string lastCategory;
+    bool categoryOpen = true;
     for (const auto* property : properties) {
+        if(!m_session->inspectorSearch.empty()){
+            const auto lower=[](std::string value){std::transform(value.begin(),value.end(),value.begin(),[](unsigned char character){return static_cast<char>(std::tolower(character));});return value;};
+            const std::string query=lower(m_session->inspectorSearch);const std::string searchable=lower(property->name+" "+property->editor.displayName+" "+property->category+" "+property->editor.description);if(searchable.find(query)==std::string::npos)continue;
+        }
         if (property->category != lastCategory) {
             lastCategory = property->category;
             const char* category=lastCategory=="Layout"?"配置":lastCategory=="Appearance"?"外觀":lastCategory=="Interaction"?"互動":lastCategory=="Data"?"資料":lastCategory.c_str();
-            ImGui::SeparatorText(category);
+            ImGui::PushID(lastCategory.c_str());
+            categoryOpen = ImGui::CollapsingHeader(category, ImGuiTreeNodeFlags_DefaultOpen);
+            ImGui::PopID();
         }
+        if (!categoryOpen) continue;
         if(property->name=="offsets"&&SelectedParentPolicy()!=ui::ChildLayoutPolicy::Free){
             ImGui::TextDisabled("位置與尺寸  由 %s 控制",ui::ChildLayoutPolicyName(SelectedParentPolicy()));
             if(ImGui::IsItemHovered())ImGui::SetTooltip("Container 子元件不寫入無效 offsets；請使用 minimum size、size flags 或拖曳排序。");
@@ -432,52 +514,51 @@ void UIDesigner::RenderInspector(const std::string& selectedAssetPath) {
         const auto current = node->properties.find(property->name);
         Variant before = current == node->properties.end() ? Variant{} : current->second;
         Variant value = current == node->properties.end() ? property->defaultValue : current->second;
+        std::vector<Uuid> propertyTargets;bool mixed=false;Variant effective=value.Clone();
+        for(const Uuid& selectedId:m_selection){const auto* selectedNode=m_document->Find(selectedId);if(!selectedNode)continue;const auto* selectedProperty=TypeRegistry::Global().FindProperty(selectedNode->type,property->name);if(!selectedProperty||selectedProperty->type!=property->type||!HasFlag(selectedProperty->flags,PropertyFlags::Editable))continue;propertyTargets.push_back(selectedId);const auto found=selectedNode->properties.find(property->name);const Variant selectedValue=found==selectedNode->properties.end()?selectedProperty->defaultValue:found->second;if(selectedValue!=effective)mixed=true;}
+        if(propertyTargets.empty())propertyTargets.push_back(m_selected);
         bool changed = false, continuous = false;
         ImGui::PushID(property->name.c_str());
+        if(mixed){ImGui::TextDisabled("— 混合值 (%zu)",propertyTargets.size());if(ImGui::IsItemHovered())ImGui::SetTooltip("修改後會批次套用到所有相容的已選元件。");}
         const char* propertyLabel=property->editor.displayName.empty()?property->name.c_str():property->editor.displayName.c_str();
-        if (auto* text = value.TryGet<std::string>()) {
-            if(!property->editor.enumChoices.empty()){
-                if(ImGui::BeginCombo(propertyLabel,text->empty()?"(none)":text->c_str())){for(const auto& choice:property->editor.enumChoices)if(ImGui::Selectable(choice.c_str(),choice==*text)){*text=choice;changed=true;}ImGui::EndCombo();}
-            }else if(property->editor.multiline)changed=ImGui::InputTextMultiline(propertyLabel,text,ImVec2(-1,ImGui::GetTextLineHeight()*4));
-            else changed = ImGui::InputText(propertyLabel, text);
-            if(!property->editor.resourceFilter.empty()&&ImGui::BeginDragDropTarget()){if(const ImGuiPayload* payload=ImGui::AcceptDragDropPayload("PX_RESOURCE_PATH")){*text=std::string(static_cast<const char*>(payload->Data),payload->DataSize?payload->DataSize-1:0);changed=true;}ImGui::EndDragDropTarget();}
-        }
-        else if (auto* boolean = value.TryGet<bool>()) changed = ImGui::Checkbox(property->name.c_str(), boolean);
-        else if (auto* integer = value.TryGet<std::int64_t>()) { int v = static_cast<int>(*integer); changed = ImGui::DragInt(propertyLabel, &v,static_cast<float>(property->editor.step),property->editor.hasRange?static_cast<int>(property->editor.minimum):0,property->editor.hasRange?static_cast<int>(property->editor.maximum):0); *integer = v; continuous = true; }
-        else if (auto* number = value.TryGet<double>()) { float v = static_cast<float>(*number); changed = ImGui::DragFloat(propertyLabel, &v, static_cast<float>(property->editor.step),property->editor.hasRange?static_cast<float>(property->editor.minimum):0,property->editor.hasRange?static_cast<float>(property->editor.maximum):0); *number = v; continuous = true; }
-        else if (auto* vec = value.TryGet<Vec2>()) { float v[2]{vec->x,vec->y}; changed = ImGui::DragFloat2(property->name.c_str(), v, 1); *vec={v[0],v[1]}; continuous=true; }
-        else if (auto* rect = value.TryGet<Rect>()) { float position[2]{rect->x,rect->y},size[2]{rect->w,rect->h};ImGui::TextUnformatted(propertyLabel);changed=ImGui::DragFloat2("X / Y",position,property->name=="anchors"?.01f:1.0f);changed|=ImGui::DragFloat2("W / H",size,property->name=="anchors"?.01f:1.0f);*rect={position[0],position[1],size[0],size[1]};continuous=true; }
-        else if (auto* color = value.TryGet<Color>()) { float v[4]{color->r/255.f,color->g/255.f,color->b/255.f,color->a/255.f}; changed=ImGui::ColorEdit4(property->name.c_str(),v); *color={static_cast<uint8_t>(v[0]*255),static_cast<uint8_t>(v[1]*255),static_cast<uint8_t>(v[2]*255),static_cast<uint8_t>(v[3]*255)}; continuous=true; }
-        else if(auto* reference=value.TryGet<ResourceRefValue>()){std::string path=reference->lastKnownPath;if(ImGui::InputText(propertyLabel,&path,ImGuiInputTextFlags_EnterReturnsTrue)){reference->lastKnownPath=std::move(path);changed=true;}if(ImGui::BeginDragDropTarget()){if(const ImGuiPayload* payload=ImGui::AcceptDragDropPayload("PX_RESOURCE_PATH")){reference->id={};reference->lastKnownPath=std::string(static_cast<const char*>(payload->Data),payload->DataSize?payload->DataSize-1:0);changed=true;}ImGui::EndDragDropTarget();}}
-        else if(auto* token=value.TryGet<TokenRefValue>()){std::string tokenName=token->name;if(ImGui::InputText((std::string("Token: ")+propertyLabel).c_str(),&tokenName,ImGuiInputTextFlags_EnterReturnsTrue)){token->name=std::move(tokenName);changed=true;}}
+        PropertyEditRequest editRequest{.property=*property,.value=value.Clone()};
+        if(const auto* editor=PropertyEditorRegistry::Global().Resolve(*property)){changed=(*editor)(editRequest);value=std::move(editRequest.value);continuous=editRequest.continuous;}
+        else if(auto* reference=value.TryGet<ResourceRefValue>()){ImGui::Text("%s: %s",propertyLabel,reference->lastKnownPath.empty()?"Select resource":reference->lastKnownPath.c_str());if(ImGui::BeginDragDropTarget()){if(const ImGuiPayload* payload=ImGui::AcceptDragDropPayload("PX_RESOURCE_PATH")){reference->id={};reference->lastKnownPath=std::string(static_cast<const char*>(payload->Data),payload->DataSize?payload->DataSize-1:0);changed=true;}ImGui::EndDragDropTarget();}}
+        else if(auto* token=value.TryGet<TokenRefValue>()){std::vector<std::string> tokenNames;if(const auto modern=m_document->Data().properties.find("styleSystem");modern!=m_document->Data().properties.end())if(const auto* system=modern->second.AsObject())if(const auto tokens=system->find("tokens");tokens!=system->end())if(const auto* list=tokens->second.AsArray())for(const auto& item:*list)if(const auto* definition=item.AsObject())if(const auto tokenName=definition->find("name");tokenName!=definition->end())if(const auto* text=tokenName->second.TryGet<std::string>())tokenNames.push_back(*text);if(ImGui::BeginCombo((std::string("Token: ")+propertyLabel).c_str(),token->name.empty()?"Select token":token->name.c_str())){for(const auto& tokenName:tokenNames)if(ImGui::Selectable(tokenName.c_str(),tokenName==token->name)){token->name=tokenName;changed=true;}ImGui::EndCombo();}}
         else ImGui::TextDisabled("%s  (unsupported value)", property->name.c_str());
+        if(HasFlag(property->flags,PropertyFlags::ResourcePath)&&!selectedAssetPath.empty()){ImGui::SameLine();if(ImGui::SmallButton("使用選取素材")){if(auto* path=value.TryGet<std::string>())*path=selectedAssetPath;else if(auto* reference=value.TryGet<ResourceRefValue>()){reference->id={};reference->lastKnownPath=selectedAssetPath;}changed=true;continuous=false;}}
         const bool deactivated=ImGui::IsItemDeactivatedAfterEdit();
         if(!property->editor.description.empty()&&ImGui::IsItemHovered())ImGui::SetTooltip("%s",property->editor.description.c_str());
         ImGui::SameLine();
-        if(ImGui::SmallButton("↶")){value=property->defaultValue.Clone();changed=true;continuous=false;}
-        EditVariant(property->name.c_str(), property->name, std::move(before), std::move(value), changed, continuous);
-        if (continuous && deactivated && m_propertyTransaction) { const Status status = m_propertyTransaction->Commit(); if (!status) EmitStatus(status); m_propertyTransaction.reset(); }
+        if(ImGui::SmallButton("↶")){value=property->defaultValue.Clone();changed=true;continuous=false;}if(ImGui::IsItemHovered())ImGui::SetTooltip("重設為 TypeRegistry 預設值；目前來源：%s",current==node->properties.end()?"型別預設":"本地覆寫");
+        const bool recordKey=m_timelineAutoKey&&propertyTargets.size()==1&&((changed&&!continuous)||(continuous&&deactivated));
+        Variant keyValue=recordKey?value.Clone():Variant{};
+        if(propertyTargets.size()==1){
+            EditVariant(property->name.c_str(), property->name, std::move(before), std::move(value), changed, continuous);
+            if (continuous && deactivated && m_propertyTransaction) { const Status status = m_propertyTransaction->Commit(); if (!status) EmitStatus(status); m_propertyTransaction.reset(); }
+        }else if(continuous){
+            if(changed){if(!m_multiPropertyTransaction||m_multiTransactionProperty!=property->name){if(m_multiPropertyTransaction)(void)m_multiPropertyTransaction->Cancel();m_multiPropertyTransaction=std::make_unique<MultiPropertyEditTransaction>(*m_document,m_document->History(),propertyTargets,property->name,"Batch change "+property->name);m_multiTransactionProperty=property->name;}const Status status=m_multiPropertyTransaction->Update(value);if(!status)EmitStatus(status);else MarkEdited();}
+            if(deactivated&&m_multiPropertyTransaction){const Status status=m_multiPropertyTransaction->Commit();if(!status)EmitStatus(status);m_multiPropertyTransaction.reset();m_multiTransactionProperty.clear();MarkEdited();}
+        }else if(changed){auto command=std::make_unique<CompositeEditCommand>("Batch change "+property->name);for(const Uuid& target:propertyTargets){auto original=m_document->ReadProperty(target,property->name);if(original&&original.Value()!=value)command->Add(std::make_unique<PropertyChangeCommand>("Change "+property->name,target,property->name,original.Value(),value.Clone(),std::chrono::steady_clock::now(),false));}if(!command->Empty()){const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited();}}
+        if(recordKey)RecordAnimationKey(m_selected,property->name,keyValue);
         ImGui::PopID();
     }
 
     ImGui::SeparatorText("Binding");
     VariantObject bindings;if(const auto found=node->properties.find("bindings");found!=node->properties.end()&&found->second.AsObject())bindings=*found->second.AsObject();
-    for(auto& [target,value]:bindings){auto* definition=value.AsObject();if(!definition)continue;std::string path=definition->contains("path")&&definition->at("path").TryGet<std::string>()?*definition->at("path").TryGet<std::string>():"";std::string formatter=definition->contains("formatter")&&definition->at("formatter").TryGet<std::string>()?*definition->at("formatter").TryGet<std::string>():"";bool changedBinding=ImGui::InputText((target+" path").c_str(),&path,ImGuiInputTextFlags_EnterReturnsTrue);changedBinding|=ImGui::InputText(("formatter##"+target).c_str(),&formatter,ImGuiInputTextFlags_EnterReturnsTrue);if(changedBinding){VariantObject changed=bindings;auto* changedDefinition=changed[target].AsObject();(*changedDefinition)["path"]=path;(*changedDefinition)["formatter"]=formatter;EditVariant("bindings","bindings",node->properties.contains("bindings")?node->properties["bindings"]:Variant{},Variant(std::move(changed)),true,false);}}
+    for(auto& [target,value]:bindings){auto* definition=value.AsObject();if(!definition)continue;std::string path=definition->contains("path")&&definition->at("path").TryGet<std::string>()?*definition->at("path").TryGet<std::string>():"";std::string formatter=definition->contains("formatter")&&definition->at("formatter").TryGet<std::string>()?*definition->at("formatter").TryGet<std::string>():"";bool changedBinding=false;
+        const auto* targetProperty=TypeRegistry::Global().FindProperty(node->type,target);if(ImGui::BeginCombo((target+" source").c_str(),path.empty()?"Select ViewModel property":path.c_str())){for(const auto& source:m_previewFixture.ViewModel().EnumerateProperties()){bool compatible=targetProperty&&source.type==targetProperty->type;for(const auto* candidate:m_formatters.Descriptors())if(candidate->input==source.type&&targetProperty&&candidate->output==targetProperty->type)compatible=true;if(!compatible)continue;if(ImGui::Selectable((source.path+"##binding-"+target).c_str(),path==source.path)){path=source.path;formatter.clear();changedBinding=true;}}ImGui::EndCombo();}
+        if(ImGui::BeginCombo(("Formatter##"+target).c_str(),formatter.empty()?"None":formatter.c_str())){if(ImGui::Selectable("None",formatter.empty())){formatter.clear();changedBinding=true;}const auto source=m_previewFixture.ViewModel().Describe(path);for(const auto* candidate:m_formatters.Descriptors())if(source&&targetProperty&&candidate->input==source->type&&candidate->output==targetProperty->type)if(ImGui::Selectable((candidate->name+"##formatter-"+target).c_str(),formatter==candidate->name)){formatter=candidate->name;changedBinding=true;}ImGui::EndCombo();}
+        if(changedBinding){VariantObject changed=bindings;auto* changedDefinition=changed[target].AsObject();(*changedDefinition)["path"]=path;(*changedDefinition)["formatter"]=formatter;EditVariant("bindings","bindings",node->properties.contains("bindings")?node->properties["bindings"]:Variant{},Variant(std::move(changed)),true,false);}}
     if (ImGui::Button("Add typed binding")) ImGui::OpenPopup("AddBinding");
     if (ImGui::BeginPopup("AddBinding")) { for (const auto* property : properties) if (HasFlag(property->flags, PropertyFlags::Bindable) && ImGui::MenuItem(property->name.c_str())) {
-        VariantObject changed=bindings;changed[property->name]=VariantObject{{"path",std::string("viewModel.property")},{"formatter",std::string{}}};EditVariant("bindings","bindings",node->properties.contains("bindings")?node->properties["bindings"]:Variant{},Variant(std::move(changed)),true,false); ImGui::CloseCurrentPopup();
+        VariantObject changed=bindings;changed[property->name]=VariantObject{{"path",std::string{}},{"formatter",std::string{}}};EditVariant("bindings","bindings",node->properties.contains("bindings")?node->properties["bindings"]:Variant{},Variant(std::move(changed)),true,false); ImGui::CloseCurrentPopup();
     } ImGui::EndPopup(); }
     if (!selectedAssetPath.empty() && node->type == "TextureRect" && ImGui::Button("Use selected asset"))
         EditVariant("path", "path", node->properties.contains("path") ? node->properties["path"] : Variant{}, Variant(selectedAssetPath), true, false);
     ImGui::TextDisabled("條件式 UI 請繫結 ViewModel computed property；Binding 不執行表達式。");
-    ImGui::SeparatorText("事件");
-    type=node->type;
-    VariantObject events;if(const auto found=node->properties.find("events");found!=node->properties.end()&&found->second.AsObject())events=*found->second.AsObject();
-    while(const auto* info=TypeRegistry::Global().Find(type)){
-        for(const auto& signal:info->signals){std::string command;if(const auto found=events.find(signal.name);found!=events.end()&&found->second.AsObject()){const auto action=found->second.AsObject()->find("action");if(action!=found->second.AsObject()->end()&&action->second.TryGet<std::string>())command=*action->second.TryGet<std::string>();}
-            if(ImGui::BeginCombo((signal.name+"##event").c_str(),command.empty()?"Select action":command.c_str())){for(const auto& action:ui::ActionRegistry::Builtins().Descriptors())if(ImGui::Selectable((action.category+" / "+action.label+"##"+action.id).c_str(),command==action.id)){VariantObject changed=events;changed[signal.name]=VariantObject{{"action",action.id},{"arguments",VariantObject{}}};EditVariant("events","events",node->properties.contains("events")?node->properties["events"]:Variant{},Variant(std::move(changed)),true,false);}ImGui::EndCombo();}}
-        type=info->base;if(type.empty())break;
-    }
+    if(ImGui::CollapsingHeader("Appearance · Style Binding"))RenderTheme();
+    if(ImGui::CollapsingHeader("Accessibility"))ImGui::TextWrapped("Accessibility 屬性與焦點導覽直接顯示在上方對應分類；此區保留語意與驗證摘要。");
 }
 
 void UIDesigner::RebuildLayout() {
@@ -494,6 +575,7 @@ void UIDesigner::RebuildLayout() {
             m_childPolicies[record.id] = control->ChildPolicy();
         }
     }
+    for(const auto& record:preview.nodes){const auto visibility=record.properties.find("visibility");const auto* value=visibility==record.properties.end()?nullptr:visibility->second.TryGet<std::string>();if(!value||*value!="Collapsed")continue;const Rect parent=record.parent.Empty()?Rect{0,0,canvas.x,canvas.y}:(m_layout.contains(record.parent)?m_layout.at(record.parent):Rect{0,0,canvas.x,canvas.y});Rect anchors{},offsets{0,0,120,40};Vec2 minimum{120,40};if(const auto found=record.properties.find("anchors");found!=record.properties.end()&&found->second.TryGet<Rect>())anchors=*found->second.TryGet<Rect>();if(const auto found=record.properties.find("offsets");found!=record.properties.end()&&found->second.TryGet<Rect>())offsets=*found->second.TryGet<Rect>();if(const auto found=record.properties.find("minimumSize");found!=record.properties.end()&&found->second.TryGet<Vec2>())minimum=*found->second.TryGet<Vec2>();Rect authored=ui::ControlLayoutMath::ResolveChildRect(parent,anchors,offsets,minimum);authored.w=std::max(authored.w,16.0f);authored.h=std::max(authored.h,16.0f);m_layout[record.id]=authored;}
 }
 
 Rect UIDesigner::SelectedRect() const { const auto it=m_layout.find(m_selected); return it==m_layout.end()?Rect{}:it->second; }
@@ -539,11 +621,6 @@ Uuid UIDesigner::HitTest(Vec2 canvas) const {
         if (rect == m_layout.end() || !rect->second.Contains(canvas.x, canvas.y)) continue;
         if(const auto locked=it->properties.find("editorLocked");locked!=it->properties.end())
             if(const auto* value=locked->second.TryGet<bool>();value&&*value)continue;
-        const auto visibility = it->properties.find("visibility");
-        if (visibility != it->properties.end()) {
-            if (const auto* value = visibility->second.TryGet<std::string>();
-                value && *value != "Visible") continue;
-        }
         return it->id;
     }
     return {};
@@ -597,6 +674,7 @@ void UIDesigner::BeginFreeTransform(const Uuid& nodeId, Vec2 canvas, int handle)
     m_rectStart = SelectedRect();
     m_resizeHandle = handle;
     m_gesture = handle == 0 ? Gesture::Move : Gesture::Resize;
+    m_gestureDragged = false;
     m_groupMove = false;
     m_groupOffsetsStart.clear();
     if (handle == 0 && m_selection.size() > 1) {
@@ -674,6 +752,7 @@ void UIDesigner::CommitManagedDrag(Vec2 canvas, bool detach) {
 
 void UIDesigner::CancelCanvasGesture() {
     if(m_gesture==Gesture::Anchors&&m_document){(void)m_document->WriteProperty(m_selected,"anchors",Variant(m_anchorsStart));(void)m_document->WriteProperty(m_selected,"offsets",Variant(m_anchorOffsetsStart));m_anchorHandle=0;RebuildLayout();}
+    if(m_gesture==Gesture::Pivot&&m_document)(void)m_document->WriteProperty(m_selected,"pivot",Variant(m_pivotStart));
     if (m_groupMove && m_document) {
         for (const auto& [id, value] : m_groupOffsetsStart)
             (void)m_document->WriteProperty(id, "offsets", Variant(value));
@@ -685,11 +764,19 @@ void UIDesigner::CancelCanvasGesture() {
         m_propertyTransaction.reset();
     }
     m_gesture = Gesture::None;
+    m_gestureDragged = false;
     m_resizeHandle = 0;
     m_guideX = m_guideY = std::numeric_limits<float>::quiet_NaN();
 }
 
 void UIDesigner::RenderViewportToolbar() {
+    if(m_viewport.interactivePreview&&ImGui::IsKeyPressed(ImGuiKey_Escape))m_viewport.interactivePreview=false;
+    if(m_viewport.interactivePreview){
+        ImGui::TextColored({.32f,1,.58f,1},"PREVIEW · 所有輸入交給 Runtime");ImGui::SameLine();
+        if(ImGui::Button("返回 Edit  (Esc)"))m_viewport.interactivePreview=false;
+        ImGui::SameLine();ImGui::Checkbox("像素精確",&m_viewport.pixelExactPreview);return;
+    }
+    ImGui::TextDisabled("EDIT");ImGui::SameLine();if(ImGui::Button("進入 Preview"))m_viewport.interactivePreview=true;ImGui::SameLine();
     const auto toolButton = [&](const char* label, DesignerTool tool) {
         const bool active = m_viewport.tool == tool;
         if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
@@ -735,9 +822,7 @@ void UIDesigner::RenderViewportToolbar() {
         m_viewport.zoom = std::clamp(zoomPercent / 100.0f, .25f, 4.0f);
     }
     ImGui::SameLine();
-    if (ImGui::Button(m_viewport.interactivePreview ? "停止預覽" : "互動預覽"))
-        m_viewport.interactivePreview = !m_viewport.interactivePreview;
-    ImGui::SameLine();ImGui::Checkbox("像素精確",&m_viewport.pixelExactPreview);
+    ImGui::Checkbox("像素精確",&m_viewport.pixelExactPreview);
     ImGui::SameLine();
     ImGui::TextDisabled("%s · %s", SelectionSummary().c_str(),
                         ui::ChildLayoutPolicyName(SelectedParentPolicy()));
@@ -746,8 +831,8 @@ void UIDesigner::RenderViewportToolbar() {
     }
 }
 
-bool UIDesigner::CanvasInput(const ImRect& viewport, ImVec2 p0, float scale, bool hovered,
-                             const std::string& selectedAssetPath) {
+bool UIDesigner::HandleCanvasInteraction(const ImRect& viewport, ImVec2 p0, float scale, bool hovered,
+                                         const std::string& selectedAssetPath) {
     if (!m_document || scale <= 0.0f) return false;
     ImGuiIO& io = ImGui::GetIO(); const ImVec2 mouse = io.MousePos;
     const Vec2 canvas{(mouse.x-p0.x)/scale,(mouse.y-p0.y)/scale};
@@ -784,7 +869,6 @@ bool UIDesigner::CanvasInput(const ImRect& viewport, ImVec2 p0, float scale, boo
         }
         if (ImGui::IsKeyPressed(ImGuiKey_Escape)) CancelCanvasGesture();
     }
-    const bool spaceHeld=ImGui::IsKeyDown(ImGuiKey_Space);
     m_hovered=hovered?HitTest(canvas):Uuid{};
     if(hovered&&ImGui::IsMouseClicked(ImGuiMouseButton_Right)){
         m_contextCanvas=canvas;m_contextTarget=m_hovered;if(!m_contextTarget.Empty()){if(!m_selection.contains(m_contextTarget))m_selection={m_contextTarget};m_selected=m_contextTarget;}ImGui::OpenPopup("UIDesignerCanvasContext");
@@ -811,11 +895,12 @@ bool UIDesigner::CanvasInput(const ImRect& viewport, ImVec2 p0, float scale, boo
         const Rect parent=ParentRect(m_selected);const float hs=8.0f/scale;const Vec2 points[4]{{parent.x+parent.w*anchors.x,parent.y+parent.h*anchors.y},{parent.x+parent.w*anchors.w,parent.y+parent.h*anchors.y},{parent.x+parent.w*anchors.w,parent.y+parent.h*anchors.h},{parent.x+parent.w*anchors.x,parent.y+parent.h*anchors.h}};
         for(int index=0;index<4;++index)if(std::abs(canvas.x-points[index].x)<=hs&&std::abs(canvas.y-points[index].y)<=hs){anchorHandle=index+1;break;}
     }
-    if(hovered&&(ImGui::IsMouseClicked(ImGuiMouseButton_Middle)||(spaceHeld&&ImGui::IsMouseClicked(ImGuiMouseButton_Left)))){m_gesture=Gesture::Pan;m_panMouseStart=mouse;m_panScrollX=ImGui::GetScrollX();m_panScrollY=ImGui::GetScrollY();ImGui::SetWindowFocus();return true;}
-    if(m_gesture==Gesture::Pan){const bool held=ImGui::IsMouseDown(ImGuiMouseButton_Middle)||ImGui::IsMouseDown(ImGuiMouseButton_Left);if(held){ImGui::SetScrollX(ImGui::GetCurrentWindow(),std::max(0.0f,m_panScrollX-(mouse.x-m_panMouseStart.x)));ImGui::SetScrollY(ImGui::GetCurrentWindow(),std::max(0.0f,m_panScrollY-(mouse.y-m_panMouseStart.y)));ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);return true;}m_gesture=Gesture::None;}
-    if(hovered&&(spaceHeld||ImGui::IsMouseDown(ImGuiMouseButton_Middle)))ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);else if(handle==2||handle==6)ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);else if(handle==4||handle==8)ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);else if(handle==1||handle==5)ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);else if(handle==3||handle==7)ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNESW);
-    if(hovered&&ImGui::IsMouseClicked(ImGuiMouseButton_Left)&&!spaceHeld){
-        Uuid hit=(handle||anchorHandle)?m_selected:HitTest(canvas);
+    bool pivotHandle=false;
+    if(m_viewport.tool==DesignerTool::Select&&!m_selected.Empty()&&m_selected!=RootId()&&m_selection.size()==1&&SelectedParentPolicy()==ui::ChildLayoutPolicy::Free){const auto* node=m_document->Find(m_selected);Vec2 pivot{.5f,.5f};if(node)if(const auto found=node->properties.find("pivot");found!=node->properties.end())if(const auto* value=found->second.TryGet<Vec2>())pivot=*value;const Rect selected=SelectedRect();const Vec2 point{selected.x+selected.w*pivot.x,selected.y+selected.h*pivot.y};const float hs=9.0f/scale;pivotHandle=std::abs(canvas.x-point.x)<=hs&&std::abs(canvas.y-point.y)<=hs;if(pivotHandle)handle=0;}
+    if(handle==2||handle==6)ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);else if(handle==4||handle==8)ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);else if(handle==1||handle==5)ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);else if(handle==3||handle==7)ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNESW);
+    if(hovered&&ImGui::IsMouseClicked(ImGuiMouseButton_Left)){
+        m_dragScale=std::max(scale,.01f);
+        Uuid hit=(handle||anchorHandle||pivotHandle)?m_selected:HitTest(canvas);
         if(io.KeyAlt&&!handle){
             std::vector<Uuid> hits;for(auto iterator=m_document->Data().nodes.rbegin();iterator!=m_document->Data().nodes.rend();++iterator){if(const auto locked=iterator->properties.find("editorLocked");locked!=iterator->properties.end())if(const auto* value=locked->second.TryGet<bool>();value&&*value)continue;const auto found=m_layout.find(iterator->id);if(found==m_layout.end())continue;const Rect rect=found->second;if(canvas.x>=rect.x&&canvas.x<=rect.x+rect.w&&canvas.y>=rect.y&&canvas.y<=rect.y+rect.h)hits.push_back(iterator->id);}
             if(!hits.empty()){auto current=std::find(hits.begin(),hits.end(),m_selected);if(current==hits.end()||++current==hits.end())hit=hits.front();else hit=*current;}
@@ -825,31 +910,39 @@ bool UIDesigner::CanvasInput(const ImRect& viewport, ImVec2 p0, float scale, boo
             m_selected=hit;m_canvasHint.clear();const auto policy=SelectedParentPolicy();
             const auto* selectedNode=m_document->Find(hit);const bool locked=selectedNode&&selectedNode->properties.contains("editorLocked")&&selectedNode->properties.at("editorLocked").TryGet<bool>()&&*selectedNode->properties.at("editorLocked").TryGet<bool>();
             if(locked)m_canvasHint="此元件已在 Scene Tree 鎖定";
-            else if(anchorHandle){const auto* anchorNode=m_document->Find(hit);m_anchorsStart={};m_anchorOffsetsStart={};if(anchorNode){if(const auto found=anchorNode->properties.find("anchors");found!=anchorNode->properties.end())if(const auto* value=found->second.TryGet<Rect>())m_anchorsStart=*value;if(const auto found=anchorNode->properties.find("offsets");found!=anchorNode->properties.end())if(const auto* value=found->second.TryGet<Rect>())m_anchorOffsetsStart=*value;}m_rectStart=SelectedRect();m_anchorHandle=anchorHandle;m_gesture=Gesture::Anchors;}
-            else if(hit!=RootId()){if(policy==ui::ChildLayoutPolicy::Free)BeginFreeTransform(hit,canvas,handle);else{m_gesture=Gesture::Reorder;m_dragStart=canvas;m_reorderPreview=m_document->ChildIndex(hit);m_canvasHint=std::string("由 ")+ui::ChildLayoutPolicyName(policy)+" 控制；拖曳排序，Ctrl 拖曳抽離";}}}
-        else{m_gesture=Gesture::Marquee;m_dragStart=canvas;m_marqueeCurrent=canvas;m_marqueeAdditive=io.KeyCtrl;if(!m_marqueeAdditive){m_selection.clear();m_selected={};}}
+            else if(pivotHandle){m_pivotStart={.5f,.5f};if(selectedNode)if(const auto found=selectedNode->properties.find("pivot");found!=selectedNode->properties.end())if(const auto* value=found->second.TryGet<Vec2>())m_pivotStart=*value;m_dragStart=canvas;m_dragCurrent=canvas;m_gesture=Gesture::Pivot;m_gestureDragged=false;m_canvasHint="拖曳旋轉／縮放中心";}
+            else if(anchorHandle){const auto* anchorNode=m_document->Find(hit);m_anchorsStart={};m_anchorOffsetsStart={};if(anchorNode){if(const auto found=anchorNode->properties.find("anchors");found!=anchorNode->properties.end())if(const auto* value=found->second.TryGet<Rect>())m_anchorsStart=*value;if(const auto found=anchorNode->properties.find("offsets");found!=anchorNode->properties.end())if(const auto* value=found->second.TryGet<Rect>())m_anchorOffsetsStart=*value;}m_rectStart=SelectedRect();m_dragStart=canvas;m_dragCurrent=canvas;m_anchorHandle=anchorHandle;m_gesture=Gesture::Anchors;m_gestureDragged=false;}
+            else if(hit!=RootId()){if(policy==ui::ChildLayoutPolicy::Free){BeginFreeTransform(hit,canvas,handle);m_dragCurrent=canvas;}else{m_gesture=Gesture::Reorder;m_gestureDragged=false;m_dragStart=canvas;m_dragCurrent=canvas;m_reorderPreview=m_document->ChildIndex(hit);m_canvasHint=std::string("由 ")+ui::ChildLayoutPolicyName(policy)+" 控制；拖曳只會排序";}}}
+        else{m_gesture=Gesture::Marquee;m_dragStart=canvas;m_dragCurrent=canvas;m_marqueeCurrent=canvas;m_marqueeAdditive=io.KeyCtrl;if(!m_marqueeAdditive){m_selection.clear();m_selected={};}}
     }
     m_guideX=m_guideY=std::numeric_limits<float>::quiet_NaN();
-    if(m_gesture==Gesture::Anchors&&ImGui::IsMouseDown(ImGuiMouseButton_Left)){
-        const Rect parent=ParentRect(m_selected);Rect anchors=m_anchorsStart;float x=parent.w>0?(canvas.x-parent.x)/parent.w:0,y=parent.h>0?(canvas.y-parent.y)/parent.h:0;
+    if(m_gesture==Gesture::Anchors&&ImGui::IsMouseDragging(ImGuiMouseButton_Left)){
+        m_gestureDragged=true;const ImVec2 drag=ImGui::GetMouseDragDelta(ImGuiMouseButton_Left,0.0f);m_dragCurrent={m_dragStart.x+drag.x/m_dragScale,m_dragStart.y+drag.y/m_dragScale};
+        const Rect parent=ParentRect(m_selected);Rect anchors=m_anchorsStart;float x=parent.w>0?(m_dragCurrent.x-parent.x)/parent.w:0,y=parent.h>0?(m_dragCurrent.y-parent.y)/parent.h:0;
         const auto snap=[](float value){for(float target:{0.0f,.5f,1.0f})if(std::abs(value-target)<.035f)return target;return std::clamp(value,0.0f,1.0f);};if(m_viewport.smartGuides){x=snap(x);y=snap(y);}else{x=std::clamp(x,0.0f,1.0f);y=std::clamp(y,0.0f,1.0f);}
         if(m_anchorHandle==1||m_anchorHandle==4)anchors.x=std::min(x,anchors.w);else anchors.w=std::max(x,anchors.x);if(m_anchorHandle==1||m_anchorHandle==2)anchors.y=std::min(y,anchors.h);else anchors.h=std::max(y,anchors.y);
         const Rect offsets=ui::ControlLayoutMath::OffsetsForRect(parent,anchors,m_rectStart);Status status=m_document->WriteProperty(m_selected,"anchors",Variant(anchors));if(status)status=m_document->WriteProperty(m_selected,"offsets",Variant(offsets));if(!status){EmitStatus(status);CancelCanvasGesture();}else MarkEdited();return true;
     }
-    if(m_gesture==Gesture::Move&&m_groupMove&&ImGui::IsMouseDown(ImGuiMouseButton_Left)){
-        Vec2 delta{canvas.x-m_dragStart.x,canvas.y-m_dragStart.y};
+    if(m_gesture==Gesture::Pivot&&ImGui::IsMouseDragging(ImGuiMouseButton_Left)){
+        m_gestureDragged=true;const ImVec2 drag=ImGui::GetMouseDragDelta(ImGuiMouseButton_Left,0.0f);m_dragCurrent={m_dragStart.x+drag.x/m_dragScale,m_dragStart.y+drag.y/m_dragScale};const Rect selected=SelectedRect();Vec2 pivot{selected.w>0?(m_dragCurrent.x-selected.x)/selected.w:.5f,selected.h>0?(m_dragCurrent.y-selected.y)/selected.h:.5f};const auto snap=[](float value){for(float target:{0.0f,.5f,1.0f})if(std::abs(value-target)<.035f)return target;return std::clamp(value,0.0f,1.0f);};pivot.x=snap(pivot.x);pivot.y=snap(pivot.y);const Status status=m_document->WriteProperty(m_selected,"pivot",Variant(pivot));if(!status){EmitStatus(status);CancelCanvasGesture();}else{m_canvasHint="Pivot  "+std::to_string(static_cast<int>(std::round(pivot.x*100)))+"%, "+std::to_string(static_cast<int>(std::round(pivot.y*100)))+"%";MarkEdited();}return true;
+    }
+    if(m_gesture==Gesture::Move&&m_groupMove&&ImGui::IsMouseDragging(ImGuiMouseButton_Left)){
+        m_gestureDragged=true;const ImVec2 drag=ImGui::GetMouseDragDelta(ImGuiMouseButton_Left,0.0f);m_dragCurrent={m_dragStart.x+drag.x/m_dragScale,m_dragStart.y+drag.y/m_dragScale};
+        Vec2 delta{m_dragCurrent.x-m_dragStart.x,m_dragCurrent.y-m_dragStart.y};
         if(m_viewport.gridSnap&&!io.KeyAlt){delta.x=std::round(delta.x/m_gridSize)*m_gridSize;delta.y=std::round(delta.y/m_gridSize)*m_gridSize;}
         for(const auto& [id,before]:m_groupOffsetsStart){Rect value=before;value.x+=delta.x;value.y+=delta.y;const Status status=m_document->WriteProperty(id,"offsets",Variant(value));if(!status){EmitStatus(status);CancelCanvasGesture();return true;}}
         MarkEdited();return true;
     }
-    if((m_gesture==Gesture::Move||m_gesture==Gesture::Resize)&&ImGui::IsMouseDown(ImGuiMouseButton_Left)&&m_propertyTransaction){
-        Vec2 delta{canvas.x-m_dragStart.x,canvas.y-m_dragStart.y};Rect target=m_rectStart;
+    if((m_gesture==Gesture::Move||m_gesture==Gesture::Resize)&&ImGui::IsMouseDragging(ImGuiMouseButton_Left)&&m_propertyTransaction){
+        m_gestureDragged=true;const ImVec2 drag=ImGui::GetMouseDragDelta(ImGuiMouseButton_Left,0.0f);m_dragCurrent={m_dragStart.x+drag.x/m_dragScale,m_dragStart.y+drag.y/m_dragScale};
+        Vec2 delta{m_dragCurrent.x-m_dragStart.x,m_dragCurrent.y-m_dragStart.y};Rect target=m_rectStart;
+        if(m_viewport.gridSnap&&m_gesture==Gesture::Move&&!io.KeyAlt){delta.x=std::round(delta.x/m_gridSize)*m_gridSize;delta.y=std::round(delta.y/m_gridSize)*m_gridSize;}
         if(m_gesture==Gesture::Move){target.x+=delta.x;target.y+=delta.y;}else{float left=target.x,top=target.y,right=target.x+target.w,bottom=target.y+target.h;
             if(m_resizeHandle==1||m_resizeHandle==7||m_resizeHandle==8)left+=delta.x;if(m_resizeHandle==3||m_resizeHandle==4||m_resizeHandle==5)right+=delta.x;
             if(m_resizeHandle>=1&&m_resizeHandle<=3)top+=delta.y;if(m_resizeHandle>=5&&m_resizeHandle<=7)bottom+=delta.y;
             if(right-left<8){if(m_resizeHandle==1||m_resizeHandle==7||m_resizeHandle==8)left=right-8;else right=left+8;}
             if(bottom-top<8){if(m_resizeHandle>=1&&m_resizeHandle<=3)top=bottom-8;else bottom=top+8;}target={left,top,right-left,bottom-top};}
-        if(m_viewport.gridSnap&&!io.KeyAlt){const auto snap=[&](float value){return std::round(value/m_gridSize)*m_gridSize;};if(m_gesture==Gesture::Move){target.x=snap(target.x);target.y=snap(target.y);}else{const float right=snap(target.x+target.w),bottom=snap(target.y+target.h);target.x=snap(target.x);target.y=snap(target.y);target.w=std::max(8.0f,right-target.x);target.h=std::max(8.0f,bottom-target.y);}}
+        if(m_viewport.gridSnap&&m_gesture==Gesture::Resize&&!io.KeyAlt){const auto snap=[&](float value){return std::round(value/m_gridSize)*m_gridSize;};const float right=snap(target.x+target.w),bottom=snap(target.y+target.h);target.x=snap(target.x);target.y=snap(target.y);target.w=std::max(8.0f,right-target.x);target.h=std::max(8.0f,bottom-target.y);}
         if(m_viewport.smartGuides&&m_gesture==Gesture::Move&&!io.KeyAlt){std::vector<float> xs{0,CanvasSize().x*.5f,CanvasSize().x},ys{0,CanvasSize().y*.5f,CanvasSize().y};
             const auto* selected=m_document->Find(m_selected);for(const auto& [id,r]:m_layout){if(id==m_selected)continue;const auto* other=m_document->Find(id);if(selected&&other&&selected->parent==other->parent){xs.insert(xs.end(),{r.x,r.x+r.w*.5f,r.x+r.w});ys.insert(ys.end(),{r.y,r.y+r.h*.5f,r.y+r.h});}}
             const float threshold=6.0f/scale;float bestX=threshold,bestY=threshold,adjustX=0,adjustY=0;for(float line:xs)for(float edge:{target.x,target.x+target.w*.5f,target.x+target.w})if(std::abs(line-edge)<bestX){bestX=std::abs(line-edge);adjustX=line-edge;m_guideX=line;}for(float line:ys)for(float edge:{target.y,target.y+target.h*.5f,target.y+target.h})if(std::abs(line-edge)<bestY){bestY=std::abs(line-edge);adjustY=line-edge;m_guideY=line;}target.x+=adjustX;target.y+=adjustY;}
@@ -859,24 +952,26 @@ bool UIDesigner::CanvasInput(const ImRect& viewport, ImVec2 p0, float scale, boo
         Rect anchors{};if(const auto* node=m_document->Find(m_selected))if(const auto it=node->properties.find("anchors");it!=node->properties.end())if(const auto* value=it->second.TryGet<Rect>())anchors=*value;
         const Rect offsets=ui::ControlLayoutMath::OffsetsForRect(ParentRect(m_selected),anchors,target);const Status status=m_propertyTransaction->Update(Variant(offsets));if(!status)EmitStatus(status);MarkEdited();return true;
     }
-    if(m_gesture==Gesture::Reorder&&ImGui::IsMouseDown(ImGuiMouseButton_Left)){m_reorderPreview=InsertionIndex(m_selected,canvas);return true;}
-    if(m_gesture==Gesture::Marquee&&ImGui::IsMouseDown(ImGuiMouseButton_Left)){m_marqueeCurrent=canvas;return true;}
+    if(m_gesture==Gesture::Reorder&&ImGui::IsMouseDragging(ImGuiMouseButton_Left)){m_gestureDragged=true;const ImVec2 drag=ImGui::GetMouseDragDelta(ImGuiMouseButton_Left,0.0f);m_dragCurrent={m_dragStart.x+drag.x/m_dragScale,m_dragStart.y+drag.y/m_dragScale};m_reorderPreview=InsertionIndex(m_selected,m_dragCurrent);return true;}
+    if(m_gesture==Gesture::Marquee&&ImGui::IsMouseDown(ImGuiMouseButton_Left)){const ImVec2 drag=ImGui::GetMouseDragDelta(ImGuiMouseButton_Left,0.0f);m_dragCurrent={m_dragStart.x+drag.x/m_dragScale,m_dragStart.y+drag.y/m_dragScale};m_marqueeCurrent=m_dragCurrent;return true;}
     if(ImGui::IsMouseReleased(ImGuiMouseButton_Left)){
         if(m_gesture==Gesture::Marquee){const float left=std::min(m_dragStart.x,m_marqueeCurrent.x),right=std::max(m_dragStart.x,m_marqueeCurrent.x),top=std::min(m_dragStart.y,m_marqueeCurrent.y),bottom=std::max(m_dragStart.y,m_marqueeCurrent.y);for(const auto& node:m_document->Data().nodes){if(node.id==RootId())continue;if(const auto locked=node.properties.find("editorLocked");locked!=node.properties.end())if(const auto* value=locked->second.TryGet<bool>();value&&*value)continue;const auto found=m_layout.find(node.id);if(found==m_layout.end())continue;const Rect r=found->second;if(r.x<=right&&r.x+r.w>=left&&r.y<=bottom&&r.y+r.h>=top){m_selection.insert(node.id);m_selected=node.id;}}m_gesture=Gesture::None;return true;}
-        if(m_gesture==Gesture::Anchors){auto anchors=m_document->ReadProperty(m_selected,"anchors"),offsets=m_document->ReadProperty(m_selected,"offsets");auto command=std::make_unique<CompositeEditCommand>("調整錨點");if(anchors)command->Add(std::make_unique<PropertyChangeCommand>("錨點",m_selected,"anchors",Variant(m_anchorsStart),anchors.Value()));if(offsets)command->Add(std::make_unique<PropertyChangeCommand>("保持位置",m_selected,"offsets",Variant(m_anchorOffsetsStart),offsets.Value()));const Status status=m_document->History().CommitApplied(std::move(command));if(!status)EmitStatus(status);m_anchorHandle=0;m_gesture=Gesture::None;MarkEdited();return true;}
-        if(m_gesture==Gesture::Move&&m_groupMove){auto command=std::make_unique<CompositeEditCommand>("移動多個元件");for(const auto& [id,before]:m_groupOffsetsStart){auto after=m_document->ReadProperty(id,"offsets");if(after)command->Add(std::make_unique<PropertyChangeCommand>("移動元件",id,"offsets",Variant(before),after.Value()));}const Status status=m_document->History().CommitApplied(std::move(command));if(!status)EmitStatus(status);m_groupOffsetsStart.clear();m_groupMove=false;m_gesture=Gesture::None;MarkEdited();return true;}
-        if(m_gesture==Gesture::Move||m_gesture==Gesture::Resize){if(m_propertyTransaction){const Status status=m_propertyTransaction->Commit();if(!status)EmitStatus(status);m_propertyTransaction.reset();}m_gesture=Gesture::None;return true;}
-        if(m_gesture==Gesture::Reorder){CommitManagedDrag(canvas,io.KeyCtrl);m_gesture=Gesture::None;return true;}}
+        if(m_gesture==Gesture::Anchors){if(m_gestureDragged){auto anchors=m_document->ReadProperty(m_selected,"anchors"),offsets=m_document->ReadProperty(m_selected,"offsets");auto command=std::make_unique<CompositeEditCommand>("調整錨點");if(anchors)command->Add(std::make_unique<PropertyChangeCommand>("錨點",m_selected,"anchors",Variant(m_anchorsStart),anchors.Value()));if(offsets)command->Add(std::make_unique<PropertyChangeCommand>("保持位置",m_selected,"offsets",Variant(m_anchorOffsetsStart),offsets.Value()));const Status status=m_document->History().CommitApplied(std::move(command));if(!status)EmitStatus(status);}m_anchorHandle=0;m_gesture=Gesture::None;m_gestureDragged=false;return true;}
+        if(m_gesture==Gesture::Pivot){if(m_gestureDragged){auto pivot=m_document->ReadProperty(m_selected,"pivot");if(pivot){auto command=std::make_unique<PropertyChangeCommand>("調整 Pivot",m_selected,"pivot",Variant(m_pivotStart),pivot.Value(),std::chrono::steady_clock::now(),false);const Status status=m_document->History().CommitApplied(std::move(command));if(!status)EmitStatus(status);}}m_gesture=Gesture::None;m_gestureDragged=false;return true;}
+        if(m_gesture==Gesture::Move&&m_groupMove){if(m_gestureDragged){auto command=std::make_unique<CompositeEditCommand>("移動多個元件");for(const auto& [id,before]:m_groupOffsetsStart){auto after=m_document->ReadProperty(id,"offsets");if(after)command->Add(std::make_unique<PropertyChangeCommand>("移動元件",id,"offsets",Variant(before),after.Value()));}const Status status=m_document->History().CommitApplied(std::move(command));if(!status)EmitStatus(status);}m_groupOffsetsStart.clear();m_groupMove=false;m_gesture=Gesture::None;m_gestureDragged=false;return true;}
+        if(m_gesture==Gesture::Move||m_gesture==Gesture::Resize){if(m_propertyTransaction){const Status status=m_propertyTransaction->Commit();if(!status)EmitStatus(status);m_propertyTransaction.reset();}m_gesture=Gesture::None;m_gestureDragged=false;return true;}
+        if(m_gesture==Gesture::Reorder){if(m_gestureDragged)CommitManagedDrag(m_dragCurrent,false);m_gesture=Gesture::None;m_gestureDragged=false;return true;}}
     return false;
 }
 
-void UIDesigner::DrawOverlay(ImVec2 p0, float scale) {
+void UIDesigner::RenderCanvasOverlay(ImVec2 p0, float scale) {
     if (!m_document) return; ImDrawList* draw=ImGui::GetWindowDrawList();const Vec2 canvas=CanvasSize();const ImVec2 max{p0.x+canvas.x*scale,p0.y+canvas.y*scale};draw->PushClipRect(p0,max,true);
     if(m_viewport.gridVisible){float step=static_cast<float>(m_gridSize);while(step*scale<12)step*=2;int line=0;for(float x=0;x<=canvas.x;x+=step,++line)draw->AddLine({p0.x+x*scale,p0.y},{p0.x+x*scale,max.y},line%4==0?IM_COL32(92,110,135,75):IM_COL32(72,84,102,40));line=0;for(float y=0;y<=canvas.y;y+=step,++line)draw->AddLine({p0.x,p0.y+y*scale},{max.x,p0.y+y*scale},line%4==0?IM_COL32(92,110,135,75):IM_COL32(72,84,102,40));}
     if(!std::isnan(m_guideX))draw->AddLine({p0.x+m_guideX*scale,p0.y},{p0.x+m_guideX*scale,max.y},IM_COL32(255,92,180,230),1.5f);
     if(!std::isnan(m_guideY))draw->AddLine({p0.x,p0.y+m_guideY*scale},{max.x,p0.y+m_guideY*scale},IM_COL32(255,92,180,230),1.5f);
-    for(const auto& node:m_document->Data().nodes){const auto it=m_layout.find(node.id);if(it==m_layout.end())continue;const bool selected=m_selection.contains(node.id),primary=node.id==m_selected,hover=node.id==m_hovered;if(!selected&&!hover&&!m_viewport.showAllOutlines)continue;const Rect r=it->second;const ImU32 color=selected?IM_COL32(71,140,191,255):IM_COL32(150,170,195,150);draw->AddRect({p0.x+r.x*scale,p0.y+r.y*scale},{p0.x+(r.x+r.w)*scale,p0.y+(r.y+r.h)*scale},color,3.0f,ImDrawFlags_None,selected?2.0f:1.0f);if(primary)draw->AddText({p0.x+r.x*scale+5,p0.y+r.y*scale-20},IM_COL32(220,232,245,255),node.name.c_str());}
+    for(const auto& node:m_document->Data().nodes){const auto it=m_layout.find(node.id);if(it==m_layout.end())continue;const bool selected=m_selection.contains(node.id),primary=node.id==m_selected,hover=node.id==m_hovered;if(!selected&&!hover&&!m_viewport.showAllOutlines)continue;std::string visibility="Visible";if(const auto found=node.properties.find("visibility");found!=node.properties.end()&&found->second.TryGet<std::string>())visibility=*found->second.TryGet<std::string>();const Rect r=it->second;const ImU32 color=visibility=="Collapsed"?IM_COL32(190,100,205,220):visibility=="Hidden"?IM_COL32(135,150,175,210):selected?IM_COL32(71,140,191,255):IM_COL32(150,170,195,150);draw->AddRect({p0.x+r.x*scale,p0.y+r.y*scale},{p0.x+(r.x+r.w)*scale,p0.y+(r.y+r.h)*scale},color,3.0f,ImDrawFlags_None,selected?2.0f:1.0f);if(primary){const std::string label=node.name+(visibility=="Visible"?"":"  ["+visibility+"]");draw->AddText({p0.x+r.x*scale+5,p0.y+r.y*scale-20},IM_COL32(220,232,245,255),label.c_str());}}
     if(!m_selected.Empty()&&SelectedParentPolicy()==ui::ChildLayoutPolicy::Free){const Rect r=SelectedRect();const ImVec2 points[8]{{p0.x+r.x*scale,p0.y+r.y*scale},{p0.x+(r.x+r.w*.5f)*scale,p0.y+r.y*scale},{p0.x+(r.x+r.w)*scale,p0.y+r.y*scale},{p0.x+(r.x+r.w)*scale,p0.y+(r.y+r.h*.5f)*scale},{p0.x+(r.x+r.w)*scale,p0.y+(r.y+r.h)*scale},{p0.x+(r.x+r.w*.5f)*scale,p0.y+(r.y+r.h)*scale},{p0.x+r.x*scale,p0.y+(r.y+r.h)*scale},{p0.x+r.x*scale,p0.y+(r.y+r.h*.5f)*scale}};for(const auto& point:points)draw->AddRectFilled({point.x-4,point.y-4},{point.x+4,point.y+4},IM_COL32(225,235,248,255),1);}
+    if(m_viewport.tool==DesignerTool::Select&&!m_selected.Empty()&&m_selected!=RootId()&&m_selection.size()==1&&SelectedParentPolicy()==ui::ChildLayoutPolicy::Free){const auto* node=m_document->Find(m_selected);Vec2 pivot{.5f,.5f};if(node)if(const auto found=node->properties.find("pivot");found!=node->properties.end())if(const auto* value=found->second.TryGet<Vec2>())pivot=*value;const Rect selected=SelectedRect();const ImVec2 point{p0.x+(selected.x+selected.w*pivot.x)*scale,p0.y+(selected.y+selected.h*pivot.y)*scale};draw->AddCircleFilled(point,5.5f,IM_COL32(255,185,72,255));draw->AddCircle(point,8.0f,IM_COL32(28,32,40,240),0,2.0f);draw->AddLine({point.x-11,point.y},{point.x+11,point.y},IM_COL32(255,185,72,230),1.5f);draw->AddLine({point.x,point.y-11},{point.x,point.y+11},IM_COL32(255,185,72,230),1.5f);}
     if(m_viewport.tool==DesignerTool::Anchors&&!m_selected.Empty()&&m_selected!=RootId()&&SelectedParentPolicy()==ui::ChildLayoutPolicy::Free){const auto* node=m_document->Find(m_selected);Rect anchors{};if(node)if(const auto found=node->properties.find("anchors");found!=node->properties.end())if(const auto* value=found->second.TryGet<Rect>())anchors=*value;const Rect parent=ParentRect(m_selected),selected=SelectedRect();const ImVec2 points[4]{{p0.x+(parent.x+parent.w*anchors.x)*scale,p0.y+(parent.y+parent.h*anchors.y)*scale},{p0.x+(parent.x+parent.w*anchors.w)*scale,p0.y+(parent.y+parent.h*anchors.y)*scale},{p0.x+(parent.x+parent.w*anchors.w)*scale,p0.y+(parent.y+parent.h*anchors.h)*scale},{p0.x+(parent.x+parent.w*anchors.x)*scale,p0.y+(parent.y+parent.h*anchors.h)*scale}};const ImVec2 corners[4]{{p0.x+selected.x*scale,p0.y+selected.y*scale},{p0.x+(selected.x+selected.w)*scale,p0.y+selected.y*scale},{p0.x+(selected.x+selected.w)*scale,p0.y+(selected.y+selected.h)*scale},{p0.x+selected.x*scale,p0.y+(selected.y+selected.h)*scale}};for(int index=0;index<4;++index){draw->AddLine(points[index],corners[index],IM_COL32(255,120,190,150));draw->AddQuadFilled({points[index].x,points[index].y-6},{points[index].x+6,points[index].y},{points[index].x,points[index].y+6},{points[index].x-6,points[index].y},IM_COL32(255,120,190,255));}}
     if(m_gesture==Gesture::Reorder){const auto* node=m_document->Find(m_selected);if(node){std::vector<const resource::NodeRecord*> siblings;for(const auto* sibling:std::as_const(*m_document).Children(node->parent))if(sibling->id!=m_selected)siblings.push_back(sibling);Rect marker{};const auto policy=SelectedParentPolicy();if(!siblings.empty()){if(m_reorderPreview<siblings.size()&&m_layout.contains(siblings[m_reorderPreview]->id))marker=m_layout.at(siblings[m_reorderPreview]->id);else if(m_layout.contains(siblings.back()->id)){marker=m_layout.at(siblings.back()->id);if(policy==ui::ChildLayoutPolicy::LinearX)marker.x+=marker.w;else marker.y+=marker.h;}}if(policy==ui::ChildLayoutPolicy::LinearX)draw->AddLine({p0.x+marker.x*scale,p0.y+marker.y*scale},{p0.x+marker.x*scale,p0.y+(marker.y+marker.h)*scale},IM_COL32(71,140,191,255),3);else draw->AddLine({p0.x+marker.x*scale,p0.y+marker.y*scale},{p0.x+(marker.x+marker.w)*scale,p0.y+marker.y*scale},IM_COL32(71,140,191,255),3);}}
     if(m_gesture==Gesture::Marquee){const ImVec2 a{p0.x+m_dragStart.x*scale,p0.y+m_dragStart.y*scale},b{p0.x+m_marqueeCurrent.x*scale,p0.y+m_marqueeCurrent.y*scale};draw->AddRectFilled({std::min(a.x,b.x),std::min(a.y,b.y)},{std::max(a.x,b.x),std::max(a.y,b.y)},IM_COL32(71,140,191,35));draw->AddRect({std::min(a.x,b.x),std::min(a.y,b.y)},{std::max(a.x,b.x),std::max(a.y,b.y)},IM_COL32(71,140,191,220));}
@@ -886,71 +981,174 @@ void UIDesigner::DrawOverlay(ImVec2 p0, float scale) {
 
 void UIDesigner::AddImageAt(float x,float y,const std::string& image){AddNode("TextureRect",{x,y},image);}
 
-void UIDesigner::RenderAnimation() {
-    if (!m_document) { ImGui::TextDisabled("Open a UI scene to edit animation."); return; }
-    auto durationValue=m_document->ReadProperty(m_document->DocumentId(),"animation.duration");
-    Variant durationBefore=durationValue&&durationValue.Value().Type()!=VariantType::Null?durationValue.Value():Variant(1.0);
-    float duration=durationBefore.TryGet<double>()?static_cast<float>(*durationBefore.TryGet<double>()):1.0f;
-    ImGui::TextDisabled("AnimationPlayer  •  typed tracks  •  %.2fs", duration);
-    if(ImGui::DragFloat("Duration",&duration,.05f,0,120,"%.2fs")){
-        auto command=std::make_unique<PropertyChangeCommand>("Change animation duration",m_document->DocumentId(),"animation.duration",durationBefore,Variant(static_cast<double>(duration)));
-        const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited();
-    }
-    auto loopValue=m_document->ReadProperty(m_document->DocumentId(),"animation.loop");Variant loopBefore=loopValue&&loopValue.Value().Type()!=VariantType::Null?loopValue.Value():Variant(false);bool loop=loopBefore.TryGet<bool>()?*loopBefore.TryGet<bool>():false;
-    if(ImGui::Checkbox("Loop",&loop)){auto command=std::make_unique<PropertyChangeCommand>("Toggle animation loop",m_document->DocumentId(),"animation.loop",loopBefore,Variant(loop));const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited();}
-    auto tracksValue=m_document->ReadProperty(m_document->DocumentId(),"animation.tracks");Variant tracksBefore=tracksValue&&tracksValue.Value().Type()!=VariantType::Null?tracksValue.Value():Variant(VariantArray{});
-    if (ImGui::Button("Add property track") && !m_selected.Empty()) {
-        Variant tracks=tracksBefore.Clone();auto* array=tracks.AsArray();Variant value=Rect{};if(auto current=m_document->ReadProperty(m_selected,"offsets");current&&current.Value().Type()!=VariantType::Null)value=current.Value();
-        VariantArray keys{Variant(VariantObject{{"time",Variant(0.0)},{"value",value},{"ease",Variant(std::string("Linear"))}}),
-                          Variant(VariantObject{{"time",Variant(static_cast<double>(std::max(.25f,duration)))},{"value",value},{"ease",Variant(std::string("EaseInOut"))}})};
-        array->push_back(Variant(VariantObject{{"node",Variant(m_selected)},{"property",Variant(std::string("offsets"))},{"keys",Variant(std::move(keys))}}));
-        auto command=std::make_unique<PropertyChangeCommand>("Add animation track",m_document->DocumentId(),"animation.tracks",tracksBefore,std::move(tracks));const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited();
-    }
-    const auto refreshed=m_document->ReadProperty(m_document->DocumentId(),"animation.tracks");const VariantArray* tracks=refreshed?refreshed.Value().AsArray():nullptr;
-    if (tracks) {
-        for (std::size_t i = 0; i < tracks->size(); ++i) {
-            const auto* track = (*tracks)[i].AsObject();
-            if (!track) {
-                ImGui::TextColored({1.0f, .45f, .35f, 1.0f}, "Track %zu is not an object", i);
-                continue;
-            }
-            const auto nodeIt = track->find("node");
-            const auto propertyIt = track->find("property");
-            const auto keysIt = track->find("keys");
-            const auto* node = nodeIt == track->end() ? nullptr : nodeIt->second.TryGet<Uuid>();
-            const auto* property = propertyIt == track->end()
-                                       ? nullptr
-                                       : propertyIt->second.TryGet<std::string>();
-            const auto* keys = keysIt == track->end() ? nullptr : keysIt->second.AsArray();
-            ImGui::PushID(static_cast<int>(i));
-            if (ImGui::TreeNode("track", "%s • %s",
-                                node ? node->ToString().substr(0, 8).c_str() : "invalid",
-                                property ? property->c_str() : "invalid")) {
-                if (!node || !property || !keys) {
-                    ImGui::TextColored({1.0f, .45f, .35f, 1.0f},
-                                       "Malformed typed track; see Problems for details.");
-                } else {
-                    ImGui::Text("%zu typed keys", keys->size());
-                }
-                ImGui::TreePop();
-            }
-            ImGui::PopID();
+void UIDesigner::RecordAnimationKey(const Uuid& node,const std::string& property,const Variant& value){
+    if(!m_document||node.Empty()||property.empty())return;
+    const auto found=m_document->Data().properties.find("animations");
+    if(found==m_document->Data().properties.end())return;
+    const Variant before=found->second.Clone();auto parsed=ui::ParseUIAnimationLibrary(before,m_pathText);
+    if(!parsed){EmitStatus(Status::Fail(parsed.Diagnostics()));return;}
+    auto library=parsed.TakeValue();
+    auto clip=std::find_if(library.clips.begin(),library.clips.end(),[&](const ui::AnimationClip& candidate){return candidate.id==m_selectedClip;});
+    if(clip==library.clips.end())clip=library.clips.begin();if(clip==library.clips.end())return;m_selectedClip=clip->id;
+    auto track=std::find_if(clip->tracks.begin(),clip->tracks.end(),[&](const ui::AnimationTrack& candidate){return candidate.node==node&&candidate.property==property;});
+    if(track==clip->tracks.end()){clip->tracks.push_back({.node=node,.property=property});track=std::prev(clip->tracks.end());m_timelineTrack=static_cast<int>(clip->tracks.size())-1;}
+    const float time=std::max(0.0f,m_timelineTime);auto key=std::find_if(track->keys.begin(),track->keys.end(),[&](const ui::AnimationKey& candidate){return std::abs(candidate.time-time)<.0005f;});
+    if(key==track->keys.end())track->keys.push_back({time,value.Clone(),ui::Ease::Linear,ui::KeyInterpolation::Linear});else key->value=value.Clone();
+    std::stable_sort(track->keys.begin(),track->keys.end(),[](const ui::AnimationKey& left,const ui::AnimationKey& right){return left.time<right.time;});
+    const Variant after=ui::WriteUIAnimationLibrary(library);if(after==before)return;
+    auto command=std::make_unique<PropertyChangeCommand>("Auto-key "+property,m_document->DocumentId(),"animations",before,after);
+    const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited();
+}
+
+void UIDesigner::RenderAnimation(){
+    if(!m_document){ImGui::TextDisabled("開啟 UI Scene 以編輯 Clip。");return;}
+    const auto found=m_document->Data().properties.find("animations");
+    if(found==m_document->Data().properties.end()){
+        ImGui::TextWrapped("此 Scene 尚未建立 Animation Library。建立後會同時產生 Default Clip、Entry 與 Default State。");
+        if(ImGui::Button("建立 Animation Library")){
+            ui::UIAnimationLibrary library;ui::AnimationClip clip;clip.id=Uuid::FromName(m_document->DocumentId().ToString()+"/animations/Default");clip.name="Default";clip.duration=.3f;
+            const Uuid clipId=clip.id,state=Uuid::FromName(m_document->DocumentId().ToString()+"/animations/DefaultState");library.clips.push_back(std::move(clip));library.machine.entry=state;library.machine.states.push_back({state,"Default",clipId,{80,80}});
+            auto command=std::make_unique<PropertyChangeCommand>("Create Animation Library",m_document->DocumentId(),"animations",Variant{},ui::WriteUIAnimationLibrary(library));
+            const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else{m_selectedClip=clipId;MarkEdited();}
         }
+        return;
     }
+    const Variant before=found->second.Clone();auto parsed=ui::ParseUIAnimationLibrary(before,m_pathText);if(!parsed){EmitStatus(Status::Fail(parsed.Diagnostics()));ImGui::TextColored({1,.4f,.35f,1},"Animation Library 無法解析。");return;}auto library=parsed.TakeValue();
+    if(library.clips.empty()){ImGui::TextColored({1,.4f,.35f,1},"Animation Library 沒有 Clip。");return;}
+    auto selected=std::find_if(library.clips.begin(),library.clips.end(),[&](const ui::AnimationClip& clip){return clip.id==m_selectedClip;});if(selected==library.clips.end()){selected=library.clips.begin();m_selectedClip=selected->id;m_timelineTrack=m_timelineKey=-1;}
+    bool changed=false,previewChanged=false;
+    if(ImGui::BeginCombo("Clip",selected->name.c_str())){for(auto& clip:library.clips)if(ImGui::Selectable((clip.name+"##clip-"+clip.id.ToString()).c_str(),clip.id==selected->id)){m_selectedClip=clip.id;selected=std::find_if(library.clips.begin(),library.clips.end(),[&](const ui::AnimationClip& item){return item.id==m_selectedClip;});m_timelineTrack=m_timelineKey=-1;m_timelineTime=0;previewChanged=true;}ImGui::EndCombo();}
+    ImGui::SameLine();if(ImGui::Button("＋ Clip")){ui::AnimationClip clip;clip.id=Uuid::Random();clip.name="Clip "+std::to_string(library.clips.size()+1);clip.duration=.3f;m_selectedClip=clip.id;library.clips.push_back(std::move(clip));selected=std::prev(library.clips.end());changed=true;}
+    ImGui::SetNextItemWidth(180);changed|=ImGui::InputText("Name",&selected->name);float duration=selected->duration;if(ImGui::DragFloat("Duration",&duration,.01f,0,120,"%.3fs")){selected->duration=std::max(0.0f,duration);m_timelineTime=std::min(m_timelineTime,selected->duration);changed=previewChanged=true;}changed|=ImGui::Checkbox("Loop",&selected->loop);
+    if(ImGui::Button(m_timelinePlaying?"Pause":"Play")){m_timelinePlaying=!m_timelinePlaying;previewChanged=true;}ImGui::SameLine();if(ImGui::Button("Stop")){m_timelinePlaying=false;m_timelineTime=0;previewChanged=true;}ImGui::SameLine();ImGui::Checkbox("Auto-key",&m_timelineAutoKey);
+    if(m_timelinePlaying){m_timelineTime+=ImGui::GetIO().DeltaTime;if(m_timelineTime>selected->duration){if(selected->loop&&selected->duration>0)m_timelineTime=std::fmod(m_timelineTime,selected->duration);else{m_timelineTime=selected->duration;m_timelinePlaying=false;}previewChanged=true;}}
+    ImGui::SetNextItemWidth(-1);if(ImGui::SliderFloat("##clip-scrub",&m_timelineTime,0,std::max(.001f,selected->duration),"%.3fs"))previewChanged=true;
+    const auto animatable=[](const PropertyInfo& property){return property.set&&HasFlag(property.flags,PropertyFlags::Editable)&&(property.type==VariantType::Bool||property.type==VariantType::Integer||property.type==VariantType::Number||property.type==VariantType::String||property.type==VariantType::Vec2||property.type==VariantType::Rect||property.type==VariantType::Color);};
+    const auto propertiesFor=[&](const resource::NodeRecord& record){std::vector<const PropertyInfo*> result;std::unordered_set<std::string> seen;std::string type=record.type;while(const auto* info=TypeRegistry::Global().Find(type)){for(const auto& property:info->properties)if(animatable(property)&&seen.insert(property.name).second)result.push_back(&property);type=info->base;if(type.empty())break;}return result;};
+    if(const auto* control=m_document->Find(m_selected)){const auto properties=propertiesFor(*control);if(!properties.empty()&&!TypeRegistry::Global().FindProperty(control->type,m_timelineProperty))m_timelineProperty=properties.front()->name;if(ImGui::BeginCombo("Track Property",m_timelineProperty.c_str())){for(const auto* property:properties)if(ImGui::Selectable(property->name.c_str(),property->name==m_timelineProperty))m_timelineProperty=property->name;ImGui::EndCombo();}ImGui::SameLine();if(ImGui::Button("＋ Track")&&!m_timelineProperty.empty()){auto current=m_document->ReadProperty(m_selected,m_timelineProperty);const auto* descriptor=TypeRegistry::Global().FindProperty(control->type,m_timelineProperty);ui::AnimationTrack track{.node=m_selected,.property=m_timelineProperty};track.keys.push_back({m_timelineTime,current&&current.Value().Type()!=VariantType::Null?current.Value():(descriptor?descriptor->defaultValue.Clone():Variant{}),ui::Ease::Linear,ui::KeyInterpolation::Linear});selected->tracks.push_back(std::move(track));m_timelineTrack=static_cast<int>(selected->tracks.size())-1;m_timelineKey=0;changed=previewChanged=true;}}
+    ImGui::SeparatorText("Typed Tracks");
+    for(int index=0;index<static_cast<int>(selected->tracks.size());++index){const auto& track=selected->tracks[static_cast<std::size_t>(index)];const auto* target=m_document->Find(track.node);const std::string label=(target?target->name:track.node.ToString().substr(0,8))+" · "+track.property+"  ("+std::to_string(track.keys.size())+")";if(ImGui::Selectable((label+"##track-"+std::to_string(index)).c_str(),m_timelineTrack==index)){m_timelineTrack=index;m_timelineKey=-1;}}
+    if(m_timelineTrack>=static_cast<int>(selected->tracks.size()))m_timelineTrack=selected->tracks.empty()?-1:static_cast<int>(selected->tracks.size()-1);
+    if(m_timelineTrack>=0){auto& track=selected->tracks[static_cast<std::size_t>(m_timelineTrack)];if(ImGui::Button("＋ Key")){auto current=m_document->ReadProperty(track.node,track.property);track.keys.push_back({m_timelineTime,current?current.Value():Variant{},ui::Ease::Linear,ui::KeyInterpolation::Linear});m_timelineKey=static_cast<int>(track.keys.size())-1;changed=previewChanged=true;}ImGui::SameLine();if(ImGui::Button("Delete Track")){selected->tracks.erase(selected->tracks.begin()+m_timelineTrack);m_timelineTrack=m_timelineKey=-1;changed=previewChanged=true;}else{for(int index=0;index<static_cast<int>(track.keys.size());++index){auto& key=track.keys[static_cast<std::size_t>(index)];ImGui::PushID(index);if(ImGui::Selectable((std::to_string(key.time)+"s##animation-key").c_str(),m_timelineKey==index)){m_timelineKey=index;m_timelineTime=key.time;previewChanged=true;}ImGui::PopID();}if(m_timelineKey>=static_cast<int>(track.keys.size()))m_timelineKey=track.keys.empty()?-1:static_cast<int>(track.keys.size()-1);if(m_timelineKey>=0){auto& key=track.keys[static_cast<std::size_t>(m_timelineKey)];if(ImGui::DragFloat("Key Time",&key.time,.01f,0,selected->duration,"%.3fs")){key.time=std::clamp(key.time,0.0f,selected->duration);m_timelineTime=key.time;changed=previewChanged=true;}ui::ActionArgumentDescriptor valueEditor{.name="value",.displayName="Value",.type=key.value.Type()};changed|=RenderActionArgument(valueEditor,key.value);int ease=static_cast<int>(key.ease);if(ImGui::Combo("Ease",&ease,"Linear\0Ease In\0Ease Out\0Ease In Out\0Step\0")){key.ease=static_cast<ui::Ease>(ease);changed=true;}bool discrete=key.interpolation==ui::KeyInterpolation::Discrete;if(ImGui::Checkbox("Discrete",&discrete)){key.interpolation=discrete?ui::KeyInterpolation::Discrete:ui::KeyInterpolation::Linear;changed=true;}if(ImGui::Button("Delete Key")){track.keys.erase(track.keys.begin()+m_timelineKey);m_timelineKey=-1;changed=previewChanged=true;}}}}
+    if(changed){for(auto& track:selected->tracks)std::stable_sort(track.keys.begin(),track.keys.end(),[](const ui::AnimationKey& left,const ui::AnimationKey& right){return left.time<right.time;});const Status valid=library.Validate(m_pathText);if(!valid)EmitStatus(valid);else{auto command=std::make_unique<PropertyChangeCommand>("Edit Animation Clip",m_document->DocumentId(),"animations",before,ui::WriteUIAnimationLibrary(library));const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited();}}
+    if((previewChanged||m_timelinePlaying)&&m_animationPreview){const Status status=m_animationPreview(m_selectedClip,m_timelineTime,m_timelinePlaying);if(!status)EmitStatus(status);}
 }
 
 void UIDesigner::RenderTheme(){
-    if(!m_document){ImGui::TextDisabled("Open a UI scene to edit its embedded theme.");return;}
-    auto result=m_document->ReadProperty(m_document->DocumentId(),"theme.styles");Variant before=result&&result.Value().Type()!=VariantType::Null?result.Value():Variant(VariantObject{});Variant after=before.Clone();auto* styles=after.AsObject();
-    if(!styles){ImGui::TextColored({1.0f,.45f,.35f,1.0f},"theme.styles must be a typed object; see Problems for details.");return;}
-    if(!styles->contains("Default"))(*styles)["Default"]=Variant(VariantObject{{"background",Variant(Color{28,31,40,255})},{"border",Variant(Color{65,72,91,255})},{"text",Variant(Color{236,239,244,255})},{"cornerRadius",Variant(6.0)},{"font",Variant(std::string("Content/Fonts/NotoSansTC-Bold.ttf"))},{"fontSize",Variant(std::int64_t{24})}});
-    auto* style=(*styles)["Default"].AsObject();if(!style){ImGui::TextColored({1.0f,.45f,.35f,1.0f},"Default theme style must be a typed object; see Problems for details.");return;}bool changed=false;
-    auto colorField=[&](const char* label,const char* key,Color fallback){Color color=fallback;if(const auto it=style->find(key);it!=style->end())if(const auto* typed=it->second.TryGet<Color>())color=*typed;float value[4]{color.r/255.f,color.g/255.f,color.b/255.f,color.a/255.f};if(ImGui::ColorEdit4(label,value)){(*style)[key]=Color{static_cast<uint8_t>(value[0]*255),static_cast<uint8_t>(value[1]*255),static_cast<uint8_t>(value[2]*255),static_cast<uint8_t>(value[3]*255)};changed=true;}};
-    ImGui::SeparatorText("Default style");colorField("Background","background",Color{28,31,40,255});colorField("Border","border",Color{65,72,91,255});colorField("Text","text",Color{236,239,244,255});
-    double radius=6.0;if(const auto it=style->find("cornerRadius");it!=style->end())if(const auto* typed=it->second.TryGet<double>())radius=*typed;float radiusValue=static_cast<float>(radius);if(ImGui::DragFloat("Corner radius",&radiusValue,.25f,0,64)){(*style)["cornerRadius"]=static_cast<double>(radiusValue);changed=true;}
-    std::string font="Content/Fonts/NotoSansTC-Bold.ttf";if(const auto it=style->find("font");it!=style->end())if(const auto* typed=it->second.TryGet<std::string>())font=*typed;if(ImGui::InputText("Font",&font,ImGuiInputTextFlags_EnterReturnsTrue)){(*style)["font"]=font;changed=true;}
-    if(changed){auto command=std::make_unique<PropertyChangeCommand>("Edit UI theme",m_document->DocumentId(),"theme.styles",before,std::move(after));const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited();}
-    ImGui::TextDisabled("Theme edits are embedded typed data and previewed after reload.");
+    if(!m_document){ImGui::TextDisabled("Open a UI scene to edit styles.");return;}
+    ui::StyleThemeData theme;std::string source="Embedded styleSystem";bool foundTheme=false;
+    if(const auto found=m_document->Data().properties.find("styleSystem");found!=m_document->Data().properties.end()){auto parsed=ui::ParseStyleTheme(found->second);if(parsed){theme=parsed.TakeValue();foundTheme=true;}else EmitStatus(Status::Fail(parsed.Diagnostics()));}
+    if(!foundTheme)if(const auto found=m_document->Data().properties.find("theme");found!=m_document->Data().properties.end())if(const auto* reference=found->second.TryGet<ResourceRefValue>()){auto document=LoadReferencedUI(*reference);if(document){if(const auto style=document.Value().properties.find("styleSystem");style!=document.Value().properties.end()){auto parsed=ui::ParseStyleTheme(style->second);if(parsed){theme=parsed.TakeValue();foundTheme=true;source=reference->lastKnownPath;}else EmitStatus(Status::Fail(parsed.Diagnostics()));}}}
+    ImGui::TextDisabled("Style System 3 · %s",source.c_str());if(!foundTheme)ImGui::TextColored({1,.65f,.3f,1},"No styleSystem is available; local overrides still work.");
+    auto* node=m_document->Find(m_selected);if(!node){ImGui::TextDisabled("Select a Control.");return;}
+    const Variant before=node->properties.contains("styleBinding")?node->properties.at("styleBinding"):Variant{};ui::ControlStyleBinding binding;if(before.Type()!=VariantType::Null){auto parsed=ui::ParseStyleBinding(before);if(parsed)binding=parsed.TakeValue();else{EmitStatus(Status::Fail(parsed.Diagnostics()));return;}}bool changed=false;
+    ImGui::SeparatorText((node->name+" · "+node->type).c_str());const char* base="(none)";if(binding.baseStyle)if(const auto* style=theme.FindStyle(*binding.baseStyle))base=style->displayName.c_str();if(ImGui::BeginCombo("Base Style",base)){if(ImGui::Selectable("(none)",!binding.baseStyle)){binding.baseStyle.reset();changed=true;}for(const auto& style:theme.styles)if(ui::IsStyleCompatibleWith(style.compatibleTypes,node->type))if(ImGui::Selectable((style.displayName+"##base-"+style.id.ToString()).c_str(),binding.baseStyle&&*binding.baseStyle==style.id)){binding.baseStyle=style.id;changed=true;}ImGui::EndCombo();}
+    if(ImGui::TreeNode("Applied Styles")){for(const auto& style:theme.styles)if(ui::IsStyleCompatibleWith(style.compatibleTypes,node->type)){bool selected=std::find(binding.appliedStyles.begin(),binding.appliedStyles.end(),style.id)!=binding.appliedStyles.end();if(ImGui::Checkbox((style.displayName+"##applied-"+style.id.ToString()).c_str(),&selected)){if(selected)binding.appliedStyles.push_back(style.id);else std::erase(binding.appliedStyles,style.id);changed=true;}}ImGui::TreePop();}
+    for(const auto& axis:theme.variantAxes)if(ui::IsStyleCompatibleWith(axis.compatibleTypes,node->type)){const auto selected=binding.variants.contains(axis.id)?binding.variants.at(axis.id):axis.defaultValue;const auto* value=axis.FindValue(selected);if(ImGui::BeginCombo(axis.displayName.c_str(),value?value->displayName.c_str():"Missing variant")){for(const auto& candidate:axis.values)if(ImGui::Selectable((candidate.displayName+"##variant-"+candidate.id.ToString()).c_str(),candidate.id==selected)){binding.variants[axis.id]=candidate.id;changed=true;}ImGui::EndCombo();}}
+    ui::StylePropertyRegistry registry;const auto editStyleValue=[&](const ui::StylePropertyDescriptor& descriptor,ui::StyleValue& styleValue){bool edited=false;const char* kind=styleValue.IsTokenReference()?"Token":"Literal";if(ImGui::BeginCombo((descriptor.displayName+" source").c_str(),kind)){if(ImGui::Selectable("Literal",styleValue.IsLiteral())){styleValue=ui::StyleValue::Literal(DefaultValueFor(descriptor.valueType));edited=true;}if(ImGui::Selectable("Token",styleValue.IsTokenReference())&&!theme.tokens.empty()){const auto& token=theme.tokens.front();styleValue=ui::StyleValue::Token(token.id,token.displayName);edited=true;}ImGui::EndCombo();}if(styleValue.IsTokenReference()){const auto* current=theme.FindToken(styleValue.TokenReference());if(ImGui::BeginCombo(descriptor.displayName.c_str(),current?current->displayName.c_str():"Missing token")){for(const auto& token:theme.tokens)if(ui::IsStyleValueTypeCompatible(descriptor.valueType,token.type)&&ImGui::Selectable((token.displayName+"##token-"+token.id.ToString()).c_str(),token.id==styleValue.TokenReference())){styleValue=ui::StyleValue::Token(token.id,token.displayName);edited=true;}ImGui::EndCombo();}}else{Variant literal=styleValue.IsLiteral()?styleValue.LiteralValue().Clone():DefaultValueFor(descriptor.valueType);ui::ActionArgumentDescriptor argument{.name=descriptor.id,.displayName=descriptor.displayName,.type=descriptor.valueType};if(RenderActionArgument(argument,literal)){styleValue=ui::StyleValue::Literal(std::move(literal));edited=true;}}return edited;};
+    ImGui::SeparatorText("Local Overrides");std::optional<ui::StylePropertyId> removeOverride;for(auto& [id,value]:binding.localOverrides){ImGui::PushID(id.c_str());if(const auto* descriptor=registry.Find(id))changed|=editStyleValue(*descriptor,value);else ImGui::TextColored({1,.45f,.35f,1},"Missing property: %s",id.c_str());ImGui::SameLine();if(ImGui::SmallButton("Remove"))removeOverride=id;ImGui::PopID();}if(removeOverride){binding.localOverrides.erase(*removeOverride);changed=true;}if(ImGui::Button("＋ Override"))ImGui::OpenPopup("AddStyleOverride");if(ImGui::BeginPopup("AddStyleOverride")){for(const auto* descriptor:registry.Descriptors())if(registry.Supports(descriptor->id,node->type)&&!binding.localOverrides.contains(descriptor->id))if(ImGui::MenuItem((descriptor->category+" / "+descriptor->displayName).c_str())){binding.localOverrides[descriptor->id]=ui::StyleValue::Literal(DefaultValueFor(descriptor->valueType));changed=true;ImGui::CloseCurrentPopup();}ImGui::EndPopup();}
+    ui::StyleResolveRequest request{.controlType=node->type,.binding=binding};const auto resolved=ui::StyleResolver{}.Resolve(theme,request,registry);if(ImGui::TreeNode("Resolved Source Trace")){if(resolved&&ImGui::BeginTable("##selected-style-trace",3,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg)){ImGui::TableSetupColumn("Property");ImGui::TableSetupColumn("Source");ImGui::TableSetupColumn("Token chain");ImGui::TableHeadersRow();for(const auto& [id,value]:resolved.Value().properties){ImGui::TableNextRow();ImGui::TableSetColumnIndex(0);ImGui::TextUnformatted(id.c_str());ImGui::TableSetColumnIndex(1);ImGui::TextUnformatted(value.source.label.c_str());ImGui::TableSetColumnIndex(2);ImGui::Text("%zu",value.tokenChain.size());}ImGui::EndTable();}else if(!resolved)for(const auto& diagnostic:resolved.Diagnostics())ImGui::TextColored({1,.45f,.35f,1},"%s %s",diagnostic.code.c_str(),diagnostic.message.c_str());ImGui::TreePop();}
+    if(changed){const Variant after=ui::WriteStyleBinding(binding);auto command=std::make_unique<PropertyChangeCommand>("Edit Control style binding",m_selected,"styleBinding",before,after);const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited();}
+    ImGui::TextDisabled("Theme definitions are edited in the external .pxtheme document editor.");
+}
+
+void UIDesigner::RenderComponents(){
+    if(!m_document){ImGui::TextDisabled("Open a UI scene to browse components.");return;}
+    const auto commitDocumentArray=[&](const char* property,Variant before,Variant after,const char* label){auto command=std::make_unique<PropertyChangeCommand>(label,m_document->DocumentId(),property,std::move(before),std::move(after));const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited();};
+    if(m_document->Data().type=="UIComponent"){
+        ImGui::TextDisabled("Component public API · UI schema 5");auto* selected=m_document->Find(m_selected);if(!selected){ImGui::TextDisabled("Select a source Control.");return;}
+        const auto editDefinitions=[&](const char* field,const char* title,const auto& candidates,const auto& addDefinition){Variant before=m_document->Data().properties.contains(field)?m_document->Data().properties.at(field).Clone():Variant(VariantArray{});Variant after=before.Clone();if(!after.AsArray())after=Variant(VariantArray{});auto* values=after.AsArray();bool changed=false;ImGui::SeparatorText(title);for(std::size_t index=0;index<values->size();++index){const auto* object=(*values)[index].AsObject();const auto id=object?object->find("id"):VariantObject::const_iterator{};const auto display=object?object->find("displayName"):VariantObject::const_iterator{};const std::string idText=object&&id!=object->end()&&id->second.TryGet<std::string>()?*id->second.TryGet<std::string>():"invalid";const std::string displayText=object&&display!=object->end()&&display->second.TryGet<std::string>()?*display->second.TryGet<std::string>():idText;ImGui::PushID((std::string(field)+std::to_string(index)).c_str());ImGui::Text("%s",displayText.c_str());ImGui::SameLine();ImGui::TextDisabled("%s",idText.c_str());ImGui::SameLine();if(ImGui::SmallButton("Remove")){values->erase(values->begin()+static_cast<std::ptrdiff_t>(index));changed=true;ImGui::PopID();break;}ImGui::PopID();}if(ImGui::BeginCombo((std::string("Expose##")+field).c_str(),"＋ Add")){for(const auto& candidate:candidates)if(ImGui::Selectable(candidate.first.c_str())){values->push_back(Variant(addDefinition(candidate)));changed=true;ImGui::CloseCurrentPopup();}ImGui::EndCombo();}if(changed)commitDocumentArray(field,std::move(before),std::move(after),(std::string("Edit ")+title).c_str());};
+        std::vector<std::pair<std::string,const PropertyInfo*>> properties;std::unordered_set<std::string> seen;std::string type=selected->type;while(const auto* info=TypeRegistry::Global().Find(type)){for(const auto& property:info->properties)if(HasFlag(property.flags,PropertyFlags::Editable)&&seen.insert(property.name).second)properties.push_back({property.editor.displayName.empty()?property.name:property.editor.displayName,&property});type=info->base;if(type.empty())break;}
+        editDefinitions("component.exposedProperties","Exposed Properties",properties,[&](const auto& candidate){const auto* property=candidate.second;const std::string id=ComponentInterfaceId(selected->name+" "+property->name);return VariantObject{{"id",id},{"displayName",candidate.first},{"node",selected->id},{"property",property->name},{"type",std::string(ToString(property->type))}};});
+        std::vector<std::pair<std::string,const SignalInfo*>> signals;for(const auto* signal:TypeRegistry::Global().SignalsForType(selected->type))signals.push_back({signal->displayName.empty()?signal->name:signal->displayName,signal});
+        editDefinitions("component.exposedSignals","Exposed Signals",signals,[&](const auto& candidate){const auto* signal=candidate.second;const std::string id=ComponentInterfaceId(selected->name+" "+signal->name);return VariantObject{{"id",id},{"displayName",candidate.first},{"node",selected->id},{"signal",signal->name}};});
+        std::vector<std::pair<std::string,int>> slotCandidate{{"Use selected Control",0}};editDefinitions("component.slots","Content Slots",slotCandidate,[&](const auto&){const std::string id=ComponentInterfaceId(selected->name+" content");return VariantObject{{"id",id},{"displayName",selected->name+" Content"},{"node",selected->id}};});
+        ImGui::TextWrapped("Exposed IDs are stable English schema names. Rename the displayName in the typed definition when a localized label is needed.");return;
+    }
+    if(ImGui::Button("Create component from selection"))m_createComponentOpen=true;
+    ImGui::Separator();bool any=false;
+    for(const auto& node:m_document->Data().nodes){if(node.type!="ComponentInstance")continue;any=true;
+        std::string source="Missing source";if(const auto found=node.properties.find("component");found!=node.properties.end()){
+            if(const auto* reference=found->second.TryGet<ResourceRefValue>())source=reference->lastKnownPath;}
+        if(ImGui::Selectable((node.name+"##component-"+node.id.ToString()).c_str(),node.id==m_selected)){
+            m_selected=node.id;m_selection={node.id};}
+        ImGui::SameLine();ImGui::TextDisabled("%s",source.c_str());}
+    if(!any)ImGui::TextDisabled("No component instances in this scene.");
+    auto* instance=m_document->Find(m_selected);if(!instance||instance->type!="ComponentInstance")return;const auto referenceIt=instance->properties.find("component");const auto* reference=referenceIt==instance->properties.end()?nullptr:referenceIt->second.TryGet<ResourceRefValue>();if(!reference)return;auto source=LoadReferencedUI(*reference);if(!source){EmitStatus(Status::Fail(source.Diagnostics()));return;}
+    const auto definitions=[&](const char* field){const auto found=source.Value().properties.find(field);return found==source.Value().properties.end()?static_cast<const VariantArray*>(nullptr):found->second.AsArray();};
+    if(const auto* exposed=definitions("component.exposedProperties")){ImGui::SeparatorText("Public Properties");Variant before=instance->properties.contains("componentProperties")?instance->properties.at("componentProperties").Clone():Variant(VariantObject{});Variant after=before.Clone();if(!after.AsObject())after=Variant(VariantObject{});auto* values=after.AsObject();bool changed=false;for(const auto& item:*exposed){const auto* object=item.AsObject();if(!object)continue;const auto id=object->find("id"),node=object->find("node"),property=object->find("property"),display=object->find("displayName");if(id==object->end()||node==object->end()||property==object->end()||!id->second.TryGet<std::string>()||!node->second.TryGet<Uuid>()||!property->second.TryGet<std::string>())continue;const auto sourceNode=std::find_if(source.Value().nodes.begin(),source.Value().nodes.end(),[&](const auto& candidate){return candidate.id==*node->second.TryGet<Uuid>();});if(sourceNode==source.Value().nodes.end())continue;const auto* descriptor=TypeRegistry::Global().FindProperty(sourceNode->type,*property->second.TryGet<std::string>());if(!descriptor)continue;const std::string& publicId=*id->second.TryGet<std::string>();if(!values->contains(publicId)){const auto current=sourceNode->properties.find(descriptor->name);(*values)[publicId]=current==sourceNode->properties.end()?descriptor->defaultValue.Clone():current->second.Clone();}ui::ActionArgumentDescriptor editor{.name=publicId,.displayName=display!=object->end()&&display->second.TryGet<std::string>()?*display->second.TryGet<std::string>():publicId,.type=descriptor->type};ImGui::PushID(publicId.c_str());changed|=RenderActionArgument(editor,(*values)[publicId]);ImGui::PopID();}if(changed){auto command=std::make_unique<PropertyChangeCommand>("Edit exposed Component property",instance->id,"componentProperties",std::move(before),std::move(after));const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited();}}
+    if(const auto* exposed=definitions("component.exposedSignals")){ImGui::SeparatorText("Public Signals");Variant before=instance->properties.contains("componentEvents")?instance->properties.at("componentEvents").Clone():Variant(VariantObject{});Variant after=before.Clone();if(!after.AsObject())after=Variant(VariantObject{});auto* bindings=after.AsObject();bool changed=false;for(const auto& item:*exposed){const auto* object=item.AsObject();if(!object)continue;const auto id=object->find("id"),display=object->find("displayName");if(id==object->end()||!id->second.TryGet<std::string>())continue;const std::string publicId=*id->second.TryGet<std::string>(),label=display!=object->end()&&display->second.TryGet<std::string>()?*display->second.TryGet<std::string>():publicId;ImGui::PushID(publicId.c_str());ImGui::TextUnformatted(label.c_str());auto bindingIt=bindings->find(publicId);auto* binding=bindingIt==bindings->end()?nullptr:bindingIt->second.AsObject();std::string action;if(binding)if(const auto found=binding->find("action");found!=binding->end()&&found->second.TryGet<std::string>())action=*found->second.TryGet<std::string>();if(ImGui::BeginCombo("Action",action.empty()?"(none)":action.c_str())){if(ImGui::Selectable("(none)",action.empty())){bindings->erase(publicId);changed=true;}for(const auto& descriptor:ui::ActionCatalog::Global().Descriptors())if(descriptor.available&&ImGui::Selectable((descriptor.category+" / "+descriptor.displayName+"##"+descriptor.id).c_str(),descriptor.id==action)){VariantObject arguments;for(const auto& argument:descriptor.arguments)arguments[argument.name]=argument.defaultValue?argument.defaultValue->Clone():DefaultValueFor(argument.type);(*bindings)[publicId]=VariantObject{{"kind",std::string("action")},{"action",descriptor.id},{"arguments",std::move(arguments)},{"reentry",std::string(ui::ActionReentryPolicyName(descriptor.reentryPolicy))}};binding=(*bindings)[publicId].AsObject();action=descriptor.id;changed=true;}ImGui::EndCombo();}if(binding&&!action.empty())if(const auto* descriptor=ui::ActionCatalog::Global().Find(action)){auto& arguments=(*binding)["arguments"];if(!arguments.AsObject())arguments=VariantObject{};for(const auto& argument:descriptor->arguments){auto& value=(*arguments.AsObject())[argument.name];if(value.Type()==VariantType::Null)value=argument.defaultValue?argument.defaultValue->Clone():DefaultValueFor(argument.type);changed|=RenderActionArgument(argument,value);}}ImGui::PopID();}if(changed){auto command=std::make_unique<PropertyChangeCommand>("Bind exposed Component signal",instance->id,"componentEvents",std::move(before),std::move(after));const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited();}}
+    if(const auto* slots=definitions("component.slots")){ImGui::SeparatorText("Slot Content");for(auto* child:m_document->Children(instance->id)){std::string current;if(const auto found=child->properties.find("componentSlot");found!=child->properties.end()&&found->second.TryGet<std::string>())current=*found->second.TryGet<std::string>();ImGui::PushID(child->id.ToString().c_str());if(ImGui::BeginCombo(child->name.c_str(),current.empty()?"(root)":current.c_str())){if(ImGui::Selectable("(root)",current.empty())){auto command=std::make_unique<PropertyChangeCommand>("Clear Component slot",child->id,"componentSlot",child->properties.contains("componentSlot")?child->properties.at("componentSlot"):Variant{},Variant{});const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited(true);}for(const auto& item:*slots)if(const auto* object=item.AsObject()){const auto id=object->find("id"),display=object->find("displayName");if(id!=object->end()&&id->second.TryGet<std::string>()){const std::string slot=*id->second.TryGet<std::string>(),label=display!=object->end()&&display->second.TryGet<std::string>()?*display->second.TryGet<std::string>():slot;if(ImGui::Selectable((label+"##"+slot).c_str(),slot==current)){auto command=std::make_unique<PropertyChangeCommand>("Assign Component slot",child->id,"componentSlot",child->properties.contains("componentSlot")?child->properties.at("componentSlot"):Variant{},Variant(slot));const Status status=m_document->History().Execute(std::move(command));if(!status)EmitStatus(status);else MarkEdited(true);}}}ImGui::EndCombo();}ImGui::PopID();}}
+}
+
+void UIDesigner::RenderInteractionNavigator(){
+    if(!m_document){ImGui::TextDisabled("開啟 UI Scene 以編輯 Trigger。");return;}
+    auto* selected=m_document->Find(m_selected);
+    ImGui::SeparatorText("Selected Control");
+    if(!selected){ImGui::TextDisabled("請先選取 Control。");}
+    else{
+        ImGui::Text("%s · %s",selected->name.c_str(),selected->type.c_str());
+        const auto triggersIt=selected->properties.find("triggers");const auto* triggers=triggersIt==selected->properties.end()?nullptr:triggersIt->second.AsObject();
+        for(const auto* signal:TypeRegistry::Global().SignalsForType(selected->type)){
+            std::string state="未綁定";if(triggers)if(const auto binding=triggers->find(signal->name);binding!=triggers->end())if(const auto* object=binding->second.AsObject())if(const auto kind=object->find("kind");kind!=object->end()&&kind->second.TryGet<std::string>())state=*kind->second.TryGet<std::string>()=="flow"?"Flow":"Direct Action";
+            const std::string label=(signal->displayName.empty()?signal->name:signal->displayName)+"  ["+state+"]##signal-"+signal->name;
+            if(ImGui::Selectable(label.c_str(),m_selectedSignal==signal->name)){m_selectedSignal=signal->name;m_behaviorEditor->ClearSelection();}
+        }
+    }
+    ImGui::SeparatorText("Scene Triggers");bool any=false;
+    for(const auto& node:m_document->Data().nodes){const auto found=node.properties.find("triggers");const auto* triggers=found==node.properties.end()?nullptr:found->second.AsObject();if(!triggers)continue;for(const auto& [signal,value]:*triggers){const auto* binding=value.AsObject();const auto kind=binding?binding->find("kind"):VariantObject::const_iterator{};const std::string state=binding&&kind!=binding->end()&&kind->second.TryGet<std::string>()&&*kind->second.TryGet<std::string>()=="flow"?"Flow":"Direct Action";if(ImGui::Selectable((node.name+" · "+signal+"  ["+state+"]##scene-trigger-"+node.id.ToString()+signal).c_str(),node.id==m_selected&&signal==m_selectedSignal)){m_selected=node.id;m_selection={node.id};m_selectedSignal=signal;m_behaviorEditor->ClearSelection();}any=true;}}
+    if(!any)ImGui::TextDisabled("Scene 尚未建立 Trigger binding。");
+}
+
+void UIDesigner::RenderEvents(){
+    if(!m_document||m_selected.Empty()){ImGui::TextDisabled("選取 Control 與 Signal 以設定 Trigger。");return;}
+    auto* node=m_document->Find(m_selected);if(!node)return;const auto signals=TypeRegistry::Global().SignalsForType(node->type);if(signals.empty()){ImGui::TextDisabled("此 Control 沒有可綁定的 Signal。");return;}
+    const auto signalIt=std::find_if(signals.begin(),signals.end(),[&](const SignalInfo* signal){return signal->name==m_selectedSignal;});const SignalInfo* signal=signalIt==signals.end()?signals.front():*signalIt;m_selectedSignal=signal->name;
+    ImGui::TextDisabled("WHEN");ImGui::SameLine();ImGui::Text("%s · %s",node->name.c_str(),signal->displayName.empty()?signal->name.c_str():signal->displayName.c_str());if(!signal->description.empty())ImGui::TextWrapped("%s",signal->description.c_str());
+    Variant before=node->properties.contains("triggers")?node->properties.at("triggers").Clone():Variant(VariantObject{});Variant after=before.Clone();if(!after.AsObject())after=Variant(VariantObject{});auto* triggers=after.AsObject();auto bindingIt=triggers->find(signal->name);auto* binding=bindingIt==triggers->end()?nullptr:bindingIt->second.AsObject();std::string kind,action,reentry="IgnoreWhileRunning";Uuid entry;if(binding){if(const auto found=binding->find("kind");found!=binding->end()&&found->second.TryGet<std::string>())kind=*found->second.TryGet<std::string>();if(const auto found=binding->find("action");found!=binding->end()&&found->second.TryGet<std::string>())action=*found->second.TryGet<std::string>();if(const auto found=binding->find("entry");found!=binding->end()&&found->second.TryGet<Uuid>())entry=*found->second.TryGet<Uuid>();if(const auto found=binding->find("reentry");found!=binding->end()&&found->second.TryGet<std::string>())reentry=*found->second.TryGet<std::string>();}
+    const auto firstAction=std::find_if(ui::ActionCatalog::Global().Descriptors().begin(),ui::ActionCatalog::Global().Descriptors().end(),[](const ui::ActionDescriptor& descriptor){return descriptor.available;});
+    const auto makeDirect=[&](const ui::ActionDescriptor& descriptor){VariantObject arguments;for(const auto& argument:descriptor.arguments)arguments[argument.name]=argument.defaultValue?argument.defaultValue->Clone():DefaultValueFor(argument.type);(*triggers)[signal->name]=VariantObject{{"kind",std::string("action")},{"action",descriptor.id},{"arguments",std::move(arguments)},{"reentry",std::string(ui::ActionReentryPolicyName(descriptor.reentryPolicy))}};};
+    const auto createFlow=[&](const bool includeAction){
+        const Variant graphBefore=m_document->Data().properties.contains("interactionGraph")?m_document->Data().properties.at("interactionGraph").Clone():Variant{};ui::BehaviorGraph graph;if(graphBefore.Type()!=VariantType::Null){auto parsed=ui::ParseBehaviorGraph(graphBefore,m_pathText);if(!parsed){EmitStatus(Status::Fail(parsed.Diagnostics()));return false;}graph=parsed.TakeValue();}
+        const Uuid entryId=Uuid::Random();graph.nodes.push_back({entryId,ui::BehaviorNodeKind::SignalEntry,{40,80},{{"control",node->id},{"signal",signal->name}}});
+        if(includeAction&&!action.empty()){VariantObject arguments;if(binding)if(const auto found=binding->find("arguments");found!=binding->end()&&found->second.AsObject())arguments=*found->second.AsObject();const Uuid actionId=Uuid::Random();graph.nodes.push_back({actionId,ui::BehaviorNodeKind::Action,{360,80},{{"action",action},{"arguments",arguments},{"wait",true}}});graph.links.push_back({Uuid::Random(),entryId,"out",actionId,"in"});}
+        (*triggers)[signal->name]=VariantObject{{"kind",std::string("flow")},{"entry",entryId},{"reentry",reentry}};
+        auto command=std::make_unique<CompositeEditCommand>(includeAction?"Convert Direct Action to Flow":"Create visual Flow");command->Add(std::make_unique<PropertyChangeCommand>("Create Flow entry",m_document->DocumentId(),"interactionGraph",graphBefore,ui::WriteBehaviorGraph(graph),std::chrono::steady_clock::now(),false));command->Add(std::make_unique<PropertyChangeCommand>("Bind Trigger to Flow",node->id,"triggers",before,after,std::chrono::steady_clock::now(),false));const Status status=m_document->History().Execute(std::move(command));if(!status){EmitStatus(status);return false;}MarkEdited();m_behaviorEditor->FocusNode(entryId);m_viewport.authorMode=1;if(m_requestAuthorMode)m_requestAuthorMode(1);return true;
+    };
+    if(!binding){ImGui::Spacing();ImGui::TextWrapped("選擇這個 Trigger 要執行單一步驟，或進入可加入 Delay、Branch 與非同步 Action 的視覺 Flow。");ImGui::BeginDisabled(firstAction==ui::ActionCatalog::Global().Descriptors().end());if(ImGui::Button("執行單一 Action")&&firstAction!=ui::ActionCatalog::Global().Descriptors().end()){makeDirect(*firstAction);EditVariant("Create Direct Trigger","triggers",before,after,true,false);return;}ImGui::EndDisabled();ImGui::SameLine();if(ImGui::Button("建立視覺 Flow")){(void)createFlow(false);return;}return;}
+    if(kind=="flow"){
+        ImGui::SeparatorText("DO  Visual Flow");ImGui::Text("Entry  %s",entry.Empty()?"Invalid":entry.ToString().c_str());if(ImGui::Button("在 Flow Graph 中開啟")){m_behaviorEditor->FocusNode(entry);if(m_requestAuthorMode)m_requestAuthorMode(1);}ImGui::SameLine();if(ImGui::Button("移除 Trigger")){triggers->erase(signal->name);EditVariant("Remove Flow Trigger","triggers",before,after,true,false);}return;
+    }
+    ImGui::SeparatorText("DO  Direct Action");ImGui::InputTextWithHint("##action-filter","搜尋 Action…",m_actionFilter,sizeof(m_actionFilter));const char* preview=action.empty()?"選擇 Action":action.c_str();bool changed=false;
+    if(ImGui::BeginCombo("Action",preview)){const std::string filter=m_actionFilter;for(const auto& descriptor:ui::ActionCatalog::Global().Descriptors()){if(!filter.empty()&&descriptor.id.find(filter)==std::string::npos&&descriptor.displayName.find(filter)==std::string::npos&&descriptor.category.find(filter)==std::string::npos)continue;ImGui::BeginDisabled(!descriptor.available);if(ImGui::Selectable((descriptor.category+" / "+descriptor.displayName+"##trigger-action-"+descriptor.id).c_str(),descriptor.id==action)){makeDirect(descriptor);binding=(*triggers)[signal->name].AsObject();action=descriptor.id;changed=true;}ImGui::EndDisabled();}ImGui::EndCombo();}
+    if(binding&&!action.empty())if(const auto* descriptor=ui::ActionCatalog::Global().Find(action)){auto& arguments=(*binding)["arguments"];if(!arguments.AsObject())arguments=VariantObject{};for(const auto& argument:descriptor->arguments){auto& value=(*arguments.AsObject())[argument.name];if(value.Type()==VariantType::Null)value=argument.defaultValue?argument.defaultValue->Clone():DefaultValueFor(argument.type);changed|=RenderActionArgument(argument,value);}}
+    if(binding){if(ImGui::BeginCombo("Reentry",reentry.c_str())){for(const char* option:{"Allow","IgnoreWhileRunning","Restart"})if(ImGui::Selectable(option,reentry==option)){(*binding)["reentry"]=std::string(option);reentry=option;changed=true;}ImGui::EndCombo();}}
+    if(changed)EditVariant("Edit Direct Trigger","triggers",before,after,true,false);
+    if(ImGui::Button("一鍵轉換成 Flow")){(void)createFlow(true);return;}ImGui::SameLine();if(ImGui::Button("移除 Trigger")){triggers->erase(signal->name);EditVariant("Remove Direct Trigger","triggers",before,after,true,false);}
+}
+
+void UIDesigner::RenderInteractionInspector(){if(!m_document)return;if(!m_behaviorEditor->SelectedNode().Empty()){ImGui::TextDisabled("Flow Step Inspector");RenderBehaviorInspector();return;}ImGui::TextDisabled("Trigger Inspector");RenderEvents();}
+
+void UIDesigner::RenderBehaviorGraph(){if(!m_document){ImGui::TextDisabled("Open a UI scene to edit behavior.");return;}if(m_behaviorDebugProvider)m_behaviorEditor->SetDebugState(m_behaviorDebugProvider());if(m_behaviorEditor->Render(*m_document,m_selected))MarkEdited();}
+void UIDesigner::RenderBehaviorInspector(){if(!m_document)return;if(m_behaviorDebugProvider)m_behaviorEditor->SetDebugState(m_behaviorDebugProvider());if(m_behaviorEditor->RenderInspector(*m_document,m_selected))MarkEdited();}
+void UIDesigner::RenderAnimationNavigator(){if(!m_document)return;if(m_animationDebugProvider)m_animationStateEditor->SetDebugState(m_animationDebugProvider());if(m_animationStateEditor->RenderNavigator(*m_document))MarkEdited();}
+void UIDesigner::RenderAnimationStateMachine(){if(!m_document)return;if(m_animationDebugProvider)m_animationStateEditor->SetDebugState(m_animationDebugProvider());if(m_animationStateEditor->Render(*m_document))MarkEdited();}
+void UIDesigner::RenderAnimationInspector(){if(!m_document)return;if(m_animationDebugProvider)m_animationStateEditor->SetDebugState(m_animationDebugProvider());if(m_animationStateEditor->RenderInspector(*m_document))MarkEdited();}
+
+void UIDesigner::RenderProblems(){
+    if(!m_document){ImGui::TextDisabled("No UI document is open.");return;}
+    DesignerDiagnostics diagnostics;DesignerDiagnostics::ValidationContext context;ComponentService components;components.SetLoader([this](const ResourceRefValue& reference){return LoadReferencedUI(reference);});context.components=&components;
+    context.validateAction=[](std::string_view action,const VariantObject& arguments,const diag::Source& source){std::vector<diag::Diagnostic> result;const auto* descriptor=ui::ActionCatalog::Global().Find(action);if(!descriptor){result.push_back({.severity=diag::Severity::Error,.code="PXEDUIP5022",.category="Editor.UIDesigner",.message="Action is missing or its extension is disabled",.details=std::string(action),.source=source});return result;}if(!descriptor->available){result.push_back({.severity=diag::Severity::Warning,.code="PXEDUIP5023",.category="Editor.UIDesigner",.message="Action is currently unavailable",.details=descriptor->unavailableReason,.source=source});return result;}ui::ActionInvocation invocation{.action=std::string(action),.arguments=arguments};const auto checked=ui::ActionCatalog::Global().ValidateAndNormalize(invocation);for(auto item:checked.Diagnostics()){item.source=source;result.push_back(std::move(item));}return result;};
+    diagnostics.Refresh(*m_document,context);
+    ImGui::Text("%zu errors, %zu warnings",diagnostics.ErrorCount(),diagnostics.WarningCount());
+    ImGui::Separator();if(diagnostics.Items().empty()){ImGui::TextDisabled("No designer problems.");return;}
+    for(const auto& item:diagnostics.Items()){
+        const ImVec4 color=item.severity>=diag::Severity::Error?ImVec4(1,.4f,.35f,1):ImVec4(1,.75f,.3f,1);
+        if(ImGui::Selectable((item.code+"  "+item.message+"##problem-"+item.code+item.source.nodeId).c_str())){
+            if(const auto id=Uuid::Parse(item.source.nodeId);id&&m_document->Find(*id)){m_selected=*id;m_selection={*id};}}
+        if(ImGui::IsItemHovered()&&!item.details.empty())ImGui::SetTooltip("%s",item.details.c_str());
+        ImGui::SameLine();ImGui::TextColored(color,"%s",item.source.property.c_str());
+    }
 }
 
 }  // namespace px::editor

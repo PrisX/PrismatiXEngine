@@ -4,6 +4,7 @@
 #include "Engine/Resources/TypedDocument.h"
 #include "Engine/Resources/AssetRegistry.h"
 #include "Engine/VN/Scenario/ScenarioDocument.h"
+#include "Engine/UI/Styles/StyleSerialization.h"
 #include "Editor/Build/ExportProfile.h"
 
 #include <fstream>
@@ -29,15 +30,33 @@ resource::NodeRecord Node(std::string name, std::string type, Uuid parent = {},
     return {Uuid::Random(), parent, std::move(name), std::move(type), std::move(properties)};
 }
 
+Variant DirectAction(std::string action) {
+    return VariantObject{{"action", std::move(action)}, {"arguments", VariantObject{}},
+                         {"kind", std::string("action")},
+                         {"reentry", std::string("Allow")}};
+}
+
+Variant DialogueStyle() {
+    return VariantObject{
+        {"appliedStyles", VariantArray{}}, {"componentOverrides", VariantObject{}},
+        {"localOverrides", VariantObject{
+            {"background.color", Color{14,17,25,224}},
+            {"border.color", Color{101,114,146,190}},
+            {"padding", Vec2{28,22}}, {"radius.all", 12.0}}},
+        {"variants", VariantObject{}}};
+}
+
 resource::TypedDocument ScreenDocument(std::string_view screen, std::string_view projectName) {
     resource::TypedDocument document; document.kind=resource::DocumentKind::Scene;
-    document.id=Uuid::Random(); document.type="UIScene"; document.properties["canvasSize"]=Vec2{1280,720};
+    document.id=Uuid::Random(); document.type="UIScene";
+    document.properties["canvasSize"]=Vec2{1280,720};
+    document.properties["uiSchemaVersion"]=std::int64_t{5};
     auto root=Node("Root","StackContainer",{},{{"anchors",Rect{0,0,1,1}}}); const Uuid rootId=root.id; document.nodes.push_back(std::move(root));
-    auto button=[&](std::string name,Uuid parent,std::string text,std::string command){document.nodes.push_back(Node(std::move(name),"Button",parent,{{"text",std::move(text)},{"events",VariantObject{{"activated",VariantObject{{"action",std::move(command)}}}}}}));};
+    auto button=[&](std::string name,Uuid parent,std::string text,std::string command){document.nodes.push_back(Node(std::move(name),"Button",parent,{{"text",std::move(text)},{"triggers",VariantObject{{"activated",DirectAction(std::move(command))}}}}));};
     if(screen=="HUD"){
-        auto nvl=Node("NVLPanel","Panel",rootId,{{"anchors",Rect{0.055f,0.06f,0.945f,0.88f}},{"themeVariant",std::string("Dialogue")}});const Uuid nvlId=nvl.id;document.nodes.push_back(std::move(nvl));
+        auto nvl=Node("NVLPanel","Panel",rootId,{{"anchors",Rect{0.055f,0.06f,0.945f,0.88f}},{"styleBinding",DialogueStyle()}});const Uuid nvlId=nvl.id;document.nodes.push_back(std::move(nvl));
         document.nodes.push_back(Node("NVLText","Label",nvlId,{{"anchors",Rect{0.04f,0.04f,0.96f,0.96f}},{"wrap",true}}));
-        auto adv=Node("ADVPanel","Panel",rootId,{{"anchors",Rect{0.045f,0.64f,0.955f,0.955f}},{"themeVariant",std::string("Dialogue")}});const Uuid advId=adv.id;document.nodes.push_back(std::move(adv));
+        auto adv=Node("ADVPanel","Panel",rootId,{{"anchors",Rect{0.045f,0.64f,0.955f,0.955f}},{"styleBinding",DialogueStyle()}});const Uuid advId=adv.id;document.nodes.push_back(std::move(adv));
         document.nodes.push_back(Node("DialogueFrame","TextureRect",advId,{{"anchors",Rect{0,0,1,1}},{"path",std::string("Content/Images/UI/HUD/dialog-stage.png")},{"scaleMode",std::string("Stretch")},{"lockAspectRatio",false}}));
         document.nodes.push_back(Node("Speaker","Label",advId,{{"anchors",Rect{0.03f,0.08f,0.97f,0.25f}},{"bindings",VariantObject{{"text",VariantObject{{"path",std::string("dialogue.speaker")}}}}}}));
         document.nodes.push_back(Node("Dialogue","RichTextLabel",advId,{{"anchors",Rect{0.03f,0.28f,0.97f,0.91f}},{"bindings",VariantObject{{"markup",VariantObject{{"path",std::string("dialogue.text")}}}}}}));
@@ -48,7 +67,7 @@ resource::TypedDocument ScreenDocument(std::string_view screen, std::string_view
         document.nodes.push_back(Node("MusicNotice","Label",noticeId,{{"anchors",Rect{0.08f,0.12f,0.90f,0.88f}},{"text",std::string("♪ Now Playing")},{"verticalAlignment",std::string("Center")},{"bindings",VariantObject{{"text",VariantObject{{"path",std::string("music.title")}}}}}}));
         auto edgeToolbar=Node("EdgeToolbar","EdgeRevealContainer",rootId,{{"anchors",Rect{0.34f,0.0f,0.98f,0.085f}},{"edge",std::string("Top")},{"revealSpeed",14.0},{"triggerSize",10.0},{"pinned",false}});const Uuid edgeId=edgeToolbar.id;document.nodes.push_back(std::move(edgeToolbar));
         auto quick=Node("QuickMenu","HBoxContainer",edgeId,{{"anchors",Rect{0.08f,0.08f,0.92f,0.92f}},{"separation",std::int64_t{12}}});const Uuid quickId=quick.id;document.nodes.push_back(std::move(quick));
-        const auto iconButton=[&](std::string name,std::string icon,std::string tooltip,std::string action){document.nodes.push_back(Node(std::move(name),"IconButton",quickId,{{"text",std::move(icon)},{"minimumSize",Vec2{44,44}},{"tooltip",std::move(tooltip)},{"events",VariantObject{{"activated",VariantObject{{"action",std::move(action)}}}}}}));};
+        const auto iconButton=[&](std::string name,std::string icon,std::string tooltip,std::string action){document.nodes.push_back(Node(std::move(name),"IconButton",quickId,{{"text",std::move(icon)},{"minimumSize",Vec2{44,44}},{"tooltip",std::move(tooltip)},{"triggers",VariantObject{{"activated",DirectAction(std::move(action))}}}}));};
         iconButton("Auto","▶","自動播放","mode.auto");iconButton("Skip","»","快進","mode.skip");iconButton("Backlog","≡","歷史紀錄","backlog.open");iconButton("Save","↓","儲存","save.open");iconButton("Load","↑","讀取","load.open");iconButton("Settings","⚙","設定","settings.open");iconButton("PinToolbar","◆","固定／取消固定工具列","hud.toolbar.pin");
         document.nodes.push_back(Node("ModeState","Label",rootId,{{"anchors",Rect{0.02f,0.02f,0.45f,0.09f}}}));
         return document;
@@ -57,7 +76,7 @@ resource::TypedDocument ScreenDocument(std::string_view screen, std::string_view
         document.nodes.push_back(Node("SkipHint","Label",rootId,{{"anchors",Rect{0.78f,0.03f,0.97f,0.10f}},{"text",std::string("點擊跳過 ▶")}}));
         return document;
     }
-    auto panel=Node("Surface","Panel",rootId,{{"anchors",Rect{0.03f,0.03f,0.97f,0.97f}},{"themeVariant",std::string("Dialogue")}});const Uuid panelId=panel.id;document.nodes.push_back(std::move(panel));
+    auto panel=Node("Surface","Panel",rootId,{{"anchors",Rect{0.03f,0.03f,0.97f,0.97f}},{"styleBinding",DialogueStyle()}});const Uuid panelId=panel.id;document.nodes.push_back(std::move(panel));
     auto column=Node("Content","VBoxContainer",panelId,{{"anchors",Rect{0.08f,0.08f,0.92f,0.92f}},{"separation",std::int64_t{10}}});const Uuid columnId=column.id;document.nodes.push_back(std::move(column));
     const std::string title=screen=="Title"?std::string(projectName):std::string(screen);
     document.nodes.push_back(Node("Heading","Label",columnId,{{"text",title}}));
@@ -121,22 +140,34 @@ std::vector<std::string> ProjectService::EnsureEssentials(const std::filesystem:
         theme.kind = resource::DocumentKind::Resource;
         theme.id = Uuid::Random();
         theme.type = "UITheme";
-        VariantObject tokens{
-            {"color.surface", Color{28, 31, 40, 255}},
-            {"color.border", Color{65, 72, 91, 255}},
-            {"color.text", Color{236, 239, 244, 255}},
-            {"type.body", std::int64_t{24}},
-        };
-        VariantObject defaultStyle{{"background", TokenRefValue{"color.surface"}},
-                                   {"border", TokenRefValue{"color.border"}},
-                                   {"text", TokenRefValue{"color.text"}},
-                                   {"fontSize", TokenRefValue{"type.body"}}};
-        if(std::filesystem::exists(root/kDefaultFont)){
-            tokens["font.body"]=ResourceRefValue{{},"Content/Fonts/NotoSansTC-Bold.ttf"};
-            defaultStyle["font"]=TokenRefValue{"font.body"};
-        }
-        theme.properties["tokens"] = std::move(tokens);
-        theme.properties["styles"] = VariantObject{{"Default",std::move(defaultStyle)}};
+        ui::StyleThemeData styles;
+        const auto literal=[](Variant value){return ui::StyleValue::Literal(std::move(value));};
+        styles.globalDefaults.properties={
+            {"background.color",literal(Color{28,31,40,255})},
+            {"border.color",literal(Color{65,72,91,255})},
+            {"typography.color",literal(Color{236,239,244,255})},
+            {"typography.size",literal(std::int64_t{24})},
+            {"padding",literal(Vec2{12,8})}, {"radius.all",literal(6.0)}};
+        if(std::filesystem::exists(root/kDefaultFont))
+            styles.globalDefaults.properties["typography.font"]=literal(std::string(kDefaultFont));
+        styles.controlTypeDefaults["Button"].properties["background.color"]=
+            literal(Color{47,54,72,245});
+        for(auto [name,value]:std::vector<std::pair<std::string,Variant>>{
+            {"color.surface",Color{28,31,40,255}},
+            {"color.border",Color{65,72,91,255}},
+            {"color.text",Color{236,239,244,255}},
+            {"type.body",std::int64_t{24}}})
+            (void)styles.UpsertToken({.id=Uuid::FromName("PrismatiX.Token."+name),
+                .displayName=std::move(name),.type=value.Type(),.value=literal(std::move(value))});
+        ui::StyleDefinition dialogue;
+        dialogue.id=Uuid::FromName("PrismatiX.Style.Dialogue");dialogue.displayName="Dialogue";
+        dialogue.category="Surfaces";dialogue.properties={
+            {"background.color",literal(Color{14,17,25,224})},
+            {"border.color",literal(Color{101,114,146,190})},
+            {"padding",literal(Vec2{28,22})},{"radius.all",literal(12.0)},
+            {"typography.size",literal(std::int64_t{30})}};
+        (void)styles.UpsertStyle(std::move(dialogue));
+        theme.properties["styleSystem"] = ui::WriteStyleTheme(styles);
         if (io::AtomicFile::WriteText(themePath, resource::WriteTypedDocument(theme)))
             created.push_back(m_context.manifest.uiThemePath);
     }

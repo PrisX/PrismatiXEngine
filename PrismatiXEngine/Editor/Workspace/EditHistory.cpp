@@ -209,4 +209,23 @@ Status PropertyEditTransaction::Cancel() {
     return m_document.WriteProperty(m_target, m_property, m_before);
 }
 
+MultiPropertyEditTransaction::MultiPropertyEditTransaction(
+    IEditableDocument& document,EditHistory& history,std::vector<Uuid> targets,
+    std::string property,std::string label)
+    :m_document(document),m_history(history),m_property(std::move(property)),m_label(std::move(label)){
+    for(const Uuid& target:targets){auto before=m_document.ReadProperty(target,m_property);if(!before){for(auto diagnostic:before.Diagnostics())diag::Emit(std::move(diagnostic));m_entries.clear();return;}m_entries.push_back({target,before.Value(),before.Value()});}
+    m_active=!m_entries.empty();
+}
+MultiPropertyEditTransaction::~MultiPropertyEditTransaction(){if(m_active)(void)Cancel();}
+Status MultiPropertyEditTransaction::Update(const Variant& value){
+    if(!m_active)return InvalidCommand("Multi-property transaction update");
+    std::size_t written=0;for(auto& entry:m_entries){const Status status=m_document.WriteProperty(entry.target,m_property,value);if(!status){for(std::size_t index=0;index<written;++index)(void)m_document.WriteProperty(m_entries[index].target,m_property,m_entries[index].current);return status;}entry.current=value.Clone();++written;}return Status::Ok();
+}
+Status MultiPropertyEditTransaction::Commit(){
+    if(!m_active)return Status::Ok();m_active=false;auto command=std::make_unique<CompositeEditCommand>(m_label);for(auto& entry:m_entries)if(entry.before!=entry.current)command->Add(std::make_unique<PropertyChangeCommand>(m_label,entry.target,m_property,std::move(entry.before),std::move(entry.current),std::chrono::steady_clock::now(),false));if(command->Empty())return Status::Ok();return m_history.CommitApplied(std::move(command));
+}
+Status MultiPropertyEditTransaction::Cancel(){
+    if(!m_active)return Status::Ok();m_active=false;Status result;for(const auto& entry:m_entries){const Status status=m_document.WriteProperty(entry.target,m_property,entry.before);for(const auto& diagnostic:status.Diagnostics())result.Add(diagnostic);}return result;
+}
+
 }  // namespace px::editor

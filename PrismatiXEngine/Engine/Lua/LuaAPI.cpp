@@ -69,6 +69,11 @@ void LuaHost::BindApi() {
         }
         m_commands[name] = std::move(fn);
     });
+    api.set_function("RegisterAction", [this](const std::string& name, sol::protected_function fn) {
+        if (m_activeExtension.empty() || !m_declaredActions.contains(name))
+            throw sol::error("action '" + name + "' is not declared by the active extension manifest");
+        m_actions[name] = std::move(fn);
+    });
     api.set_function("On", [this](const std::string& event, sol::protected_function fn) {
         m_bus.Subscribe(event, [this, fn](const EventArgs& args) {
             sol::table t = m_lua.create_table();

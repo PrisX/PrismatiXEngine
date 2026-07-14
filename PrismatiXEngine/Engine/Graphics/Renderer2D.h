@@ -53,6 +53,9 @@ public:
     void DrawRect(const Rect& rect, Color color);
     void DrawRoundedRect(const Rect& rect, float radius, Color color);
     void DrawBorder(const Rect& rect, float width, float radius, Color color);
+    void PushTransform(Vec2 pivot, Vec2 scale = {1,1}, float rotationDegrees = 0.0f,
+                       Color modulate = {255,255,255,255});
+    void PopTransform();
     void PushClip(const Rect& rect);
     void PopClip();
 
@@ -61,6 +64,8 @@ public:
                          HorizontalAlignment horizontal = HorizontalAlignment::Center,
                          VerticalAlignment vertical = VerticalAlignment::Center,
                          std::uint8_t alpha = 255);
+    void DrawNinePatch(const std::string& path, const Rect& bounds, Rect margins,
+                       bool drawCenter = true, std::uint8_t alpha = 255);
     // Draws a caller-owned texture (e.g. a streaming transition mask).
     void DrawTexture(SDL_Texture* texture, const Rect& dst, std::uint8_t alpha = 255);
     Rect DrawImageAuto(const std::string& path, DisplayMode mode, std::uint8_t alpha = 255, int offsetX = 0, int offsetY = 0, float scale = 1.0f, Shadow shadow = {});
@@ -83,6 +88,14 @@ public:
     [[nodiscard]] SDL_Renderer* Handle() const { return m_renderer; }
 
 private:
+    struct TransformState {
+        float a=1,b=0,c=0,d=1,tx=0,ty=0;
+        Color modulate{255,255,255,255};
+    };
+    [[nodiscard]] Vec2 TransformPoint(Vec2 point) const;
+    [[nodiscard]] Color TransformColor(Color color) const;
+    [[nodiscard]] Rect TransformBounds(Rect rect) const;
+
     struct CachedText {
         SDL_Texture* texture = nullptr;
         int w = 0;
@@ -93,6 +106,8 @@ private:
                                   Color color, int outline, int wrap,
                                   HorizontalAlignment alignment = HorizontalAlignment::Left);
     void Blit(SDL_Texture* texture, const Rect& dst, std::uint8_t alpha);
+    void BlitRegion(SDL_Texture* texture, const Rect& sourcePixels, const Rect& dst,
+                    std::uint8_t alpha);
 
     SDL_Renderer* m_renderer;
     AssetCache& m_assets;
@@ -107,6 +122,7 @@ private:
     bool m_clarityCompensation = false;
     std::unordered_map<std::string, CachedText> m_textCache;
     std::vector<Rect> m_clipStack;
+    std::vector<TransformState> m_transformStack{{}};
 };
 
 }  // namespace px::graphics

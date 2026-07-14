@@ -4,6 +4,7 @@
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/Resources/TypedDocument.h"
 #include "Engine/Support/Logger.h"
+#include "Engine/UI/Widgets.h"
 
 #include <SDL3/SDL.h>
 #include <nlohmann/json.hpp>
@@ -123,6 +124,23 @@ bool PlayerApp::Init(int argc, char* argv[]) {
 
     m_session = std::make_unique<RuntimeSession>(RuntimeSession::Services{
         m_runtime.VFS(), m_runtime.Audio(), m_runtime.Renderer(), m_runtime.Assets()});
+    m_ui.SetBehaviorVariableAccess(
+        [this](const std::string_view name)->std::optional<Variant>{
+            const auto* value=m_session->Variables().GetValue(name);
+            return value?std::optional<Variant>(value->Clone()):std::nullopt;
+        },
+        [this](const std::string_view name,const Variant& value){
+            m_session->Variables().SetValue(std::string(name),value.Clone(),
+                                            vn::VariableScope::SaveLocal);
+            return Status::Ok();
+        });
+    m_ui.SetExternalAnimationServices(
+        [this](const std::string_view path){return m_session->PlayAnimationAsset(std::string(path));},
+        [this](const std::uint64_t handle){return m_session->Timeline().Playing(handle);});
+    m_ui.SetControlRuntimeConfigurator([this](ui::Control& control){auto* rectangle=dynamic_cast<ui::VideoRect*>(&control);if(!rectangle)return;auto player=std::make_shared<video::VideoPlayer>(m_runtime.Renderer().Handle(),m_runtime.VFS());rectangle->SetPlayback({[player](const std::string_view path){return player->Open(std::string(path));},[player]{player->Close();},[player](const float delta){player->Update(delta);},[player]{return player->Playing();},[player]{return player->Texture();},[player]{return Vec2{static_cast<float>(player->Width()),static_cast<float>(player->Height())};}});});
+    m_session->SetBehaviorStateHandler(
+        [this] { return m_ui.CaptureBehaviorState(); },
+        [this](const ui::BehaviorRuntimeState& state) { return m_ui.RestoreBehaviorState(state); });
     if(m_boot.routeScenes.empty()||!m_boot.routeScenes.contains(m_boot.startRoute)){diag::Diagnostic diagnostic{.severity=diag::Severity::Fatal,.code="PXPLAYER5004",.category="Player.Boot",.message="Route table or startRoute is invalid"};diag::Emit(diagnostic);return false;}
     for(const auto& [route,_]:m_boot.routeScenes){
         const Status registered=m_session->Routes().Register(route,[route](){return Result<std::unique_ptr<ui::Control>>::Success(std::make_unique<ui::Control>(std::string("Route:")+route));});
@@ -160,6 +178,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_luaServices.routes = &m_session->Routes();
     m_luaServices.timeline = &m_session->Timeline();
     m_lua = std::make_unique<lua::LuaHost>(m_luaServices);
+    (void)m_ui.Actions().RegisterProvider(m_lua->CreateActionProvider());
     m_session->SetExtensionCommandHandler([this](const vn::Command& cmd) {
         // NVL/ADV mode switches are app-level state, handled before Lua.
         const std::string& t = cmd.type;
@@ -293,6 +312,7 @@ bool PlayerApp::LoadSlot(int slot) {
     state.routes = snap->routes;
     state.timelines = snap->timelines;
     state.animationClips = snap->animationClips;
+    state.behavior = snap->behavior;
     state.playtimeMs = snap->playtimeMs;
     const bool awaitingTimeline = std::any_of(snap->timelines.begin(), snap->timelines.end(),
         [](const animation::PlaybackState& playback) { return playback.playing && playback.awaiting; });
@@ -306,6 +326,11 @@ bool PlayerApp::LoadSlot(int slot) {
     if (m_lua) {
         const Status luaStatus = m_lua->RestorePending(snap->luaPending);
         if (!luaStatus) return false;
+        const Status luaActionStatus = m_lua->RestorePendingActions(snap->luaActions);
+        if (!luaActionStatus) return false;
+    }
+    if (!snap->behavior.fibers.empty() || !snap->behavior.actions.empty()) {
+        if (const Status uiStatus = m_ui.ShowHUD(DialogueUI()); !uiStatus) return false;
     }
     if (!m_session->RestoreState(state, m_runtime.GetClock().NowMs())) return false;
     m_lastBacklogSize = m_session->Backlog().Entries().size();
@@ -313,7 +338,7 @@ bool PlayerApp::LoadSlot(int slot) {
     m_playtimeStartedAtMs = m_runtime.GetClock().NowMs();
     m_appState = AppState::Game;
     m_autoMode = m_skipMode = m_hudHidden = false;
-    m_ui.ShowHUD(DialogueUI());
+    (void)m_ui.RefreshHUD(DialogueUI());
     if (m_lua) m_lua->Emit("save.loaded", {{"slot", std::to_string(slot)}});
     PX_LOG_INFO("Loaded slot {}", slot);
     return true;
@@ -339,7 +364,11 @@ progress::SaveSnapshot PlayerApp::MakeSnapshot(bool includeBacklog) {
     snap.routes = state.routes;
     snap.timelines = state.timelines;
     snap.animationClips = state.animationClips;
-    if (m_lua) snap.luaPending = m_lua->CapturePending();
+    snap.behavior = state.behavior;
+    if (m_lua) {
+        snap.luaPending = m_lua->CapturePending();
+        snap.luaActions = m_lua->CapturePendingActions();
+    }
     if (includeBacklog) snap.backlog = state.backlog;
     snap.nvlMode = m_nvlMode;
     snap.nvlLines = m_nvlLines;
@@ -371,18 +400,21 @@ void PlayerApp::ApplyRollback(const RollbackEntry& entry) {
     state.routes = s.routes;
     state.timelines = s.timelines;
     state.animationClips = s.animationClips;
+    state.behavior = s.behavior;
     state.backlog = m_session->Backlog().Entries();
     if (state.backlog.size() > entry.backlogSize) state.backlog.resize(entry.backlogSize);
     if (m_lua) {
         const Status luaStatus = m_lua->RestorePending(s.luaPending);
         if (!luaStatus) return;
+        const Status luaActionStatus = m_lua->RestorePendingActions(s.luaActions);
+        if (!luaActionStatus) return;
     }
     if (!m_session->RestoreState(state, m_runtime.GetClock().NowMs())) return;
     m_nvlMode = s.nvlMode;
     m_nvlLines = s.nvlLines;
     m_lastBacklogSize = m_session->Backlog().Entries().size();
     m_autoMode = m_skipMode = false;
-    m_ui.ShowHUD(DialogueUI());
+    (void)m_ui.RefreshHUD(DialogueUI());
 }
 
 void PlayerApp::RollbackOneLine() {

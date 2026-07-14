@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -45,6 +46,7 @@ struct PropertyInfo {
         double minimum = 0.0;
         double maximum = 0.0;
         double step = 0.1;
+        std::string editorId;
         std::string resourceFilter;
         bool hasRange = false;
         bool multiline = false;
@@ -52,9 +54,31 @@ struct PropertyInfo {
     } editor;
 };
 
+struct SignalArgumentInfo {
+    std::string name;
+    VariantType type = VariantType::Null;
+};
+
 struct SignalInfo {
     std::string name;
-    std::vector<VariantType> arguments;
+    std::string displayName;
+    std::string description;
+    std::vector<SignalArgumentInfo> arguments;
+};
+
+// Neutral authoring metadata shared by editor frontends.  This deliberately
+// contains no ImGui or editor-renderer types so runtime and plugin type
+// registration can describe palette behaviour without depending on Editor.
+struct DesignerTypeMetadata {
+    std::string displayName;
+    std::string description;
+    std::string category;
+    std::string iconId;
+    Vec2 defaultSize{180.0f, 52.0f};
+    VariantObject defaultProperties;
+    std::vector<std::string> acceptedAssetTypes;
+    bool canHaveChildren = false;
+    bool paletteVisible = true;
 };
 
 struct TypeInfo {
@@ -64,6 +88,7 @@ struct TypeInfo {
     std::function<std::unique_ptr<Object>()> factory;
     std::vector<PropertyInfo> properties;
     std::vector<SignalInfo> signals;
+    std::optional<DesignerTypeMetadata> designer;
 };
 
 class TypeRegistry {
@@ -72,6 +97,9 @@ public:
     [[nodiscard]] const TypeInfo* Find(const std::string& name) const;
     [[nodiscard]] const PropertyInfo* FindProperty(const std::string& type,
                                                    const std::string& property) const;
+    [[nodiscard]] const SignalInfo* FindSignal(const std::string& type,
+                                               const std::string& signal) const;
+    [[nodiscard]] std::vector<const SignalInfo*> SignalsForType(const std::string& type) const;
     [[nodiscard]] std::unique_ptr<Object> Create(const std::string& type) const;
     [[nodiscard]] std::vector<const TypeInfo*> TypesDerivedFrom(const std::string& base) const;
     [[nodiscard]] bool IsDerivedFrom(const std::string& type, const std::string& base) const;

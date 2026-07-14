@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/VN/Commands/Command.h"
+#include "Engine/UI/Actions/ActionDescriptor.h"
 
 #include <cstdint>
 #include <string>
@@ -20,5 +21,16 @@ struct PendingCommandState {
 };
 
 using PendingCommandsState = std::vector<PendingCommandState>;
+
+struct PendingActionState {
+    std::uint64_t id = 0;
+    ui::ActionInvocation invocation;
+    std::uint32_t yieldIndex = 0;
+    std::string waitKind;
+    std::uint64_t handle = 0;
+    float remainingSeconds = 0.0f;
+};
+
+using PendingActionsState = std::vector<PendingActionState>;
 
 }  // namespace px::lua

@@ -65,6 +65,26 @@ public:
     GalgameUI();
     Status RegisterTemplate(Screen screen,std::string_view typedScene,const std::string& sourcePath={});
     void SetActionSink(ActionSink sink) { m_sink = std::move(sink); }
+    void SetBehaviorVariableAccess(
+        std::function<std::optional<Variant>(std::string_view)> read,
+        std::function<Status(std::string_view, const Variant&)> write) {
+        m_context.SetBehaviorVariableAccess(std::move(read), std::move(write));
+    }
+    void SetExternalAnimationServices(
+        std::function<Result<std::uint64_t>(std::string_view)> play,
+        std::function<bool(std::uint64_t)> playing) {
+        m_context.SetExternalAnimationServices(std::move(play),std::move(playing));
+    }
+    void SetControlRuntimeConfigurator(std::function<void(Control&)> configure) {
+        m_context.SetControlRuntimeConfigurator(std::move(configure));
+    }
+    [[nodiscard]] BehaviorRuntimeState CaptureBehaviorState() const {
+        return m_context.CaptureBehaviorState();
+    }
+    Status RestoreBehaviorState(const BehaviorRuntimeState& state) {
+        return m_context.RestoreBehaviorState(state);
+    }
+    [[nodiscard]] ActionDispatcher& Actions() { return m_context.Actions(); }
     Status ShowTitle();
     Status ShowHUD(const DialoguePresentation& presentation);
     Status ShowBacklog(std::vector<GalgameItem> entries);

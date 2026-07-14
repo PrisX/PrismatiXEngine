@@ -10,18 +10,23 @@ namespace px::ui {
 
 Control* InputRouter::HitTest(Control& root, Vec2 point) const {
     if (!root.IsVisibleInTree() || !root.Enabled()) return nullptr;
-    const auto& children = root.Children();
+    std::vector<Control*> children;
+    children.reserve(root.Children().size());
+    for (const auto& child : root.Children())
+        if (auto* control = dynamic_cast<Control*>(child.get())) children.push_back(control);
+    std::stable_sort(children.begin(), children.end(), [](const Control* left, const Control* right) {
+        return left->ZOrder() < right->ZOrder();
+    });
     for (auto it = children.rbegin(); it != children.rend(); ++it) {
-        if (auto* child = dynamic_cast<Control*>(it->get())) {
-            if (auto* hit = HitTest(*child, point)) return hit;
-        }
+        if (auto* hit = HitTest(**it, point)) return hit;
     }
-    return root.HitTest(point) ? &root : nullptr;
+    return root.GetMouseFilter() != MouseFilter::Ignore && root.HitTest(point) ? &root : nullptr;
 }
 
 void InputRouter::Dispatch(Control* target, UIEvent event) {
     for (Control* node = target; node; node = dynamic_cast<Control*>(node->Parent())) {
         node->HandleEvent(event);
+        node->EmitInputSignal(event);
         if (event.stopPropagation || (event.handled && node->GetMouseFilter() == MouseFilter::Stop)) break;
     }
 }

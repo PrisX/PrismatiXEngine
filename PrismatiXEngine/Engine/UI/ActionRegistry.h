@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Core/Result.h"
+#include "Engine/UI/Actions/ActionDescriptor.h"
 
 #include <string>
 #include <string_view>
@@ -9,14 +10,8 @@
 
 namespace px::ui {
 
-enum class ActionArgumentType : std::uint8_t { None, String, Integer, Boolean, Route };
-struct ActionDescriptor {
-    std::string id;
-    std::string label;
-    std::string category;
-    ActionArgumentType argument = ActionArgumentType::None;
-};
-
+// Compatibility facade. New code should use ActionCatalog; both APIs expose the
+// same descriptor schema so older integrations cannot drift from the designer.
 class ActionRegistry {
 public:
     Status Register(ActionDescriptor descriptor);

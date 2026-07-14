@@ -7,6 +7,7 @@
 #include "Engine/Graphics/Renderer2D.h"
 #include "Engine/IO/VFS.h"
 #include "Engine/UI/UIRouter.h"
+#include "Engine/UI/Behavior/BehaviorGraph.h"
 #include "Engine/VN/Runtime/Backlog.h"
 #include "Engine/VN/Runtime/Dialogue.h"
 #include "Engine/VN/Runtime/Stage.h"
@@ -46,6 +47,7 @@ public:
         ui::RouteState routes;
         std::vector<animation::PlaybackState> timelines;
         std::vector<animation::AnimationClip> animationClips;
+        ui::BehaviorRuntimeState behavior;
         std::uint64_t playtimeMs = 0;
     };
 
@@ -73,6 +75,8 @@ public:
     [[nodiscard]] const ui::UIRouter& Routes() const { return m_routes; }
     [[nodiscard]] animation::TimelinePlayer& Timeline() { return m_timeline; }
     [[nodiscard]] const animation::TimelinePlayer& Timeline() const { return m_timeline; }
+    [[nodiscard]] Result<animation::PlaybackHandle> PlayAnimationAsset(
+        const std::string& path,bool await=false,float speed=1.0f);
     void SetAnimationTargetHandler(animation::TargetKind kind,animation::TimelinePlayer::Apply handler){m_animationHandlers[kind]=std::move(handler);}
     // RuntimeSession owns built-in command execution. Player and Preview may
     // inject presentation and extension behaviour without replacing it.
@@ -82,6 +86,12 @@ public:
     void SetRoutePresentationHandler(
         std::function<void(std::string_view route, std::string_view operation)> handler) {
         m_routePresentationHandler = std::move(handler);
+    }
+    void SetBehaviorStateHandler(
+        std::function<ui::BehaviorRuntimeState()> capture,
+        std::function<Status(const ui::BehaviorRuntimeState&)> restore) {
+        m_captureBehaviorState = std::move(capture);
+        m_restoreBehaviorState = std::move(restore);
     }
 
 private:
@@ -98,6 +108,8 @@ private:
     std::unordered_map<animation::TargetKind,animation::TimelinePlayer::Apply> m_animationHandlers;
     std::function<bool(const vn::Command&)> m_extensionCommandHandler;
     std::function<void(std::string_view, std::string_view)> m_routePresentationHandler;
+    std::function<ui::BehaviorRuntimeState()> m_captureBehaviorState;
+    std::function<Status(const ui::BehaviorRuntimeState&)> m_restoreBehaviorState;
     std::optional<animation::PlaybackHandle> m_awaitingTimeline;
     bool m_externalResumePending = false;
 

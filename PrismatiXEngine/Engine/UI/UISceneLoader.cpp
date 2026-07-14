@@ -3,8 +3,11 @@
 #include "Engine/Core/TypeRegistry.h"
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/UI/UITypeRegistry.h"
-#include "Engine/UI/ActionRegistry.h"
+#include "Engine/UI/Actions/ActionCatalog.h"
+#include "Engine/UI/Actions/TriggerBinding.h"
+#include "Engine/UI/Behavior/BehaviorGraph.h"
 #include "Engine/UI/Widgets.h"
+#include "Engine/UI/Styles/StyleSerialization.h"
 
 #include <fstream>
 #include <sstream>
@@ -41,6 +44,12 @@ Result<LoadedUIScene> InstantiateUIScene(const resource::TypedDocument& document
         return Result<LoadedUIScene>::Failure(SceneError("PXUI2603", "UI loader requires an @pxscene document"));
     if (document.type != "UIScene" && document.type != "UIComponent")
         return Result<LoadedUIScene>::Failure(SceneError("PXUI2622", "UI loader requires UIScene or UIComponent"));
+    const auto schema = document.properties.find("uiSchemaVersion");
+    const auto* schemaVersion = schema == document.properties.end()
+                                  ? nullptr : schema->second.TryGet<std::int64_t>();
+    if (!schemaVersion || *schemaVersion != 5)
+        return Result<LoadedUIScene>::Failure(SceneError(
+            "PXUI2630", "UI scene requires strict uiSchemaVersion 5"));
     auto expanded = ExpandUIComponents(document, loader);
     if (!expanded) return Result<LoadedUIScene>::Failure(expanded.Diagnostics());
     const auto& scene = expanded.Value().document;
@@ -77,22 +86,34 @@ Result<LoadedUIScene> InstantiateUIScene(const resource::TypedDocument& document
     auto root = build(*rootRecord); if (!root) return Result<LoadedUIScene>::Failure(root.Diagnostics());
 
     LoadedUIScene loaded; loaded.root = std::move(root.Value());
+    if(const auto behavior=scene.properties.find("interactionGraph");behavior!=scene.properties.end()){
+        auto graph=ParseBehaviorGraph(behavior->second);
+        if(!graph)return Result<LoadedUIScene>::Failure(graph.Diagnostics());
+        loaded.interactionGraph=graph.TakeValue();
+    }
     if (const auto themeIt=scene.properties.find("theme"); themeIt!=scene.properties.end()) {
         const auto* reference=themeIt->second.TryGet<ResourceRefValue>();
         if(!reference||!loader)return Result<LoadedUIScene>::Failure(SceneError("PXUI2623","Scene theme requires a ResourceRef and resource loader"));
         auto themeDocument=loader(*reference);if(!themeDocument)return Result<LoadedUIScene>::Failure(themeDocument.Diagnostics());
         auto theme=LoadUITheme(themeDocument.Value());if(!theme)return Result<LoadedUIScene>::Failure(theme.Diagnostics());loaded.theme=theme.TakeValue();
+    } else if(scene.properties.contains("styleSystem")) {
+        auto theme=LoadEmbeddedTheme(scene);if(!theme)return Result<LoadedUIScene>::Failure(theme.Diagnostics());loaded.theme=theme.TakeValue();
     }
-    if(scene.properties.contains("animation.tracks")){auto animation=LoadEmbeddedAnimation(scene);if(!animation)return Result<LoadedUIScene>::Failure(animation.Diagnostics());loaded.animation=std::move(animation.Value());}
+    if(const auto animations=scene.properties.find("animations");animations!=scene.properties.end()){auto parsed=ParseUIAnimationLibrary(animations->second);if(!parsed)return Result<LoadedUIScene>::Failure(parsed.Diagnostics());loaded.animations=parsed.TakeValue();}
     for (const auto& record : scene.nodes) {
+        for (const char* legacy : {"visible", "command", "themeVariant"})
+            if (record.properties.contains(legacy))
+                return Result<LoadedUIScene>::Failure(SceneError(
+                    "PXUI2631", std::string("Legacy UI property is forbidden: ") + legacy,
+                    &record, legacy));
         auto* object = loaded.root->Find(record.id);
         if (!object) return Result<LoadedUIScene>::Failure(SceneError("PXUI2610", "Instantiated UI node could not be resolved", &record));
         for (const auto& [propertyName, value] : record.properties) {
-            if (propertyName=="bindings" || propertyName=="events" || propertyName=="editorLocked") continue;
+            if (propertyName=="bindings" || propertyName=="triggers" || propertyName=="editorLocked") continue;
+            if (propertyName=="styleBinding") { auto binding=ParseStyleBinding(value);if(!binding)return Result<LoadedUIScene>::Failure(binding.Diagnostics());dynamic_cast<Control*>(object)->SetStyleBinding(binding.TakeValue());continue; }
             const auto* property = TypeRegistry::Global().FindProperty(record.type, propertyName);
             if (!property || !property->set)
                 return Result<LoadedUIScene>::Failure(SceneError("PXUI2611", "Unknown UI property " + record.type + "." + propertyName, &record, propertyName));
-            if(propertyName=="command")return Result<LoadedUIScene>::Failure(SceneError("PXUI2621","Direct command properties are forbidden; use a typed EventBinding",&record,propertyName));
             Variant resolved=value.Clone();
             if (value.Type()==VariantType::TokenRef) {
                 if(!loaded.theme)return Result<LoadedUIScene>::Failure(SceneError("PXUI2624","Token property requires a scene theme",&record,propertyName));
@@ -105,16 +126,22 @@ Result<LoadedUIScene> InstantiateUIScene(const resource::TypedDocument& document
             if (!set) return Result<LoadedUIScene>::Failure(set.Diagnostics());
         }
         if(const auto found=record.properties.find("bindings");found!=record.properties.end()){const auto* definitions=found->second.AsObject();if(!definitions)return Result<LoadedUIScene>::Failure(SceneError("PXUI2613","bindings must be an Object",&record,"bindings"));if(!viewModel)return Result<LoadedUIScene>::Failure(SceneError("PXUI2612","Scene contains bindings but no ViewModel was provided",&record,"bindings"));for(const auto& [targetName,value]:*definitions){const auto* definition=value.AsObject();if(!definition)return Result<LoadedUIScene>::Failure(SceneError("PXUI2613","Binding descriptor must be an Object",&record,targetName));const auto pathValue=definition->find("path");const auto* path=pathValue!=definition->end()?pathValue->second.TryGet<std::string>():nullptr;if(!path)return Result<LoadedUIScene>::Failure(SceneError("PXUI2613","Binding path must be a String",&record,targetName));const auto* property=TypeRegistry::Global().FindProperty(record.type,targetName);if(!property||!property->set)return Result<LoadedUIScene>::Failure(SceneError("PXUI2614","Binding target property does not exist: "+targetName,&record,targetName));std::string formatterName;if(const auto formatter=definition->find("formatter");formatter!=definition->end()){const auto* name=formatter->second.TryGet<std::string>();if(!name)return Result<LoadedUIScene>::Failure(SceneError("PXUI2615","Formatter must be a String",&record,targetName));formatterName=*name;}BindingTarget target{property->type,record.name+"."+targetName,[object,property](const Variant& bound){return property->set(*object,bound);}};auto binding=Binding::Create(*viewModel,*path,std::move(target),formatters,std::move(formatterName));if(!binding)return Result<LoadedUIScene>::Failure(binding.Diagnostics());loaded.bindings.push_back(std::move(binding.Value()));}}
-        if(const auto found=record.properties.find("events");found!=record.properties.end()){const auto* definitions=found->second.AsObject();if(!definitions)return Result<LoadedUIScene>::Failure(SceneError("PXUI2617","events must be an Object",&record,"events"));for(const auto& [signal,value]:*definitions){const auto* definition=value.AsObject();if(!definition)return Result<LoadedUIScene>::Failure(SceneError("PXUI2617","Event binding must be an Object",&record,signal));const auto action=definition->find("action");const auto* command=action!=definition->end()?action->second.TryGet<std::string>():nullptr;if(!command||!ActionRegistry::Builtins().Find(*command))return Result<LoadedUIScene>::Failure(SceneError("PXUI2620","Unknown typed UI action",&record,signal));
-            if (signal == "activated") {
-                auto* button = dynamic_cast<Button*>(object);
-                if (!button)
-                    return Result<LoadedUIScene>::Failure(SceneError("PXUI2618", "The activated event requires a Button-compatible control", &record, signal));
-                button->SetCommand(*command);
-                continue;
+        if(const auto found=record.properties.find("triggers");found!=record.properties.end()){
+            const auto* definitions=found->second.AsObject();
+            if(!definitions)return Result<LoadedUIScene>::Failure(SceneError("PXUI2617","triggers must be an Object",&record,"triggers"));
+            for(const auto& [signal,value]:*definitions){
+                if(!TypeRegistry::Global().FindSignal(record.type,signal))
+                    return Result<LoadedUIScene>::Failure(SceneError("PXUI2619","Control does not expose signal: "+signal,&record,signal));
+                auto parsed=ParseTriggerBinding(record.id,signal,value);
+                if(!parsed)return Result<LoadedUIScene>::Failure(parsed.Diagnostics());
+                TriggerBinding binding=parsed.TakeValue();
+                if(binding.kind==TriggerBindingKind::Action){const Status resolved=binding.Resolve(ActionCatalog::Global());if(!resolved)return Result<LoadedUIScene>::Failure(resolved.Diagnostics());}
+                else if(!loaded.interactionGraph||!loaded.interactionGraph->Find(binding.graphEntry)||
+                        loaded.interactionGraph->Find(binding.graphEntry)->kind!=BehaviorNodeKind::SignalEntry)
+                    return Result<LoadedUIScene>::Failure(SceneError("PXUI2632","Trigger references a missing Interaction Flow entry",&record,signal));
+                loaded.triggers.push_back(std::move(binding));
             }
-            return Result<LoadedUIScene>::Failure(SceneError("PXUI2619", "Unsupported UI event signal: " + signal, &record, signal));
-        }}
+        }
     }
     return Result<LoadedUIScene>::Success(std::move(loaded));
 }

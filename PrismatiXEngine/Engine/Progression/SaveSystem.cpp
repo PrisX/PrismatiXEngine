@@ -349,6 +349,130 @@ lua::PendingCommandsState LuaPendingFromJson(const Json& json) {
     return state;
 }
 
+Json VariantToSaveJson(const Variant& value, const int depth = 0) {
+    if (depth > 64) throw std::invalid_argument("Variant checkpoint nesting exceeds limits");
+    switch (value.Type()) {
+        case VariantType::Null: return Json{{"type", "null"}};
+        case VariantType::Bool: return Json{{"type", "bool"}, {"value", *value.TryGet<bool>()}};
+        case VariantType::Integer: return Json{{"type", "integer"}, {"value", *value.TryGet<std::int64_t>()}};
+        case VariantType::Number: return Json{{"type", "number"}, {"value", *value.TryGet<double>()}};
+        case VariantType::String: return Json{{"type", "string"}, {"value", *value.TryGet<std::string>()}};
+        case VariantType::Vec2: { const auto v=*value.TryGet<Vec2>(); return Json{{"type","vec2"},{"value",Json::array({v.x,v.y})}}; }
+        case VariantType::Rect: { const auto v=*value.TryGet<Rect>(); return Json{{"type","rect"},{"value",Json::array({v.x,v.y,v.w,v.h})}}; }
+        case VariantType::Color: return Json{{"type","color"},{"value",ColorToJson(*value.TryGet<Color>())}};
+        case VariantType::Uuid: return Json{{"type","uuid"},{"value",value.TryGet<Uuid>()->ToString()}};
+        case VariantType::ResourceRef: { const auto& ref=*value.TryGet<ResourceRefValue>(); return Json{{"type","resource"},{"id",ref.id.ToString()},{"path",ref.lastKnownPath}}; }
+        case VariantType::TokenRef: return Json{{"type","token"},{"value",value.TryGet<TokenRefValue>()->name}};
+        case VariantType::Array: {
+            const auto* array=value.AsArray();if(!array||array->size()>kMaxSaveCollectionItems)throw std::invalid_argument("Variant array exceeds save limits");
+            Json encoded=Json::array();for(const auto& item:*array)encoded.push_back(VariantToSaveJson(item,depth+1));
+            return Json{{"type","array"},{"value",std::move(encoded)}};
+        }
+        case VariantType::Object: {
+            const auto* object=value.AsObject();if(!object||object->size()>kMaxSaveCollectionItems)throw std::invalid_argument("Variant object exceeds save limits");
+            Json encoded=Json::object();for(const auto& [name,item]:*object)encoded[name]=VariantToSaveJson(item,depth+1);
+            return Json{{"type","object"},{"value",std::move(encoded)}};
+        }
+    }
+    throw std::invalid_argument("Unknown Variant type in checkpoint");
+}
+
+Uuid RequiredUuid(const Json& value, const char* field) {
+    if(!value.is_string())throw std::invalid_argument(std::string(field)+" must be a UUID string");
+    const auto parsed=Uuid::Parse(value.get<std::string>());if(!parsed)throw std::invalid_argument(std::string(field)+" is not a UUID");return *parsed;
+}
+
+Variant VariantFromSaveJson(const Json& json, const int depth = 0) {
+    if(depth>64||!json.is_object()||!json.contains("type")||!json["type"].is_string())throw std::invalid_argument("Variant checkpoint is malformed");
+    const std::string type=json["type"].get<std::string>();
+    if(type=="null")return Variant{};
+    if(type=="bool")return Variant(json.at("value").get<bool>());
+    if(type=="integer")return Variant(json.at("value").get<std::int64_t>());
+    if(type=="number")return Variant(json.at("value").get<double>());
+    if(type=="string")return Variant(json.at("value").get<std::string>());
+    if(type=="vec2"){const auto& v=json.at("value");if(!v.is_array()||v.size()!=2)throw std::invalid_argument("Vec2 checkpoint is malformed");return Variant(Vec2{v[0].get<float>(),v[1].get<float>()});}
+    if(type=="rect"){const auto& v=json.at("value");if(!v.is_array()||v.size()!=4)throw std::invalid_argument("Rect checkpoint is malformed");return Variant(Rect{v[0].get<float>(),v[1].get<float>(),v[2].get<float>(),v[3].get<float>()});}
+    if(type=="color")return Variant(ColorFromJson(json.at("value"),Color{}));
+    if(type=="uuid")return Variant(RequiredUuid(json.at("value"),"Variant UUID"));
+    if(type=="resource")return Variant(ResourceRefValue{RequiredUuid(json.at("id"),"Resource id"),json.at("path").get<std::string>()});
+    if(type=="token")return Variant(TokenRefValue{json.at("value").get<std::string>()});
+    if(type=="array"){
+        const auto& encoded=json.at("value");if(!encoded.is_array()||encoded.size()>kMaxSaveCollectionItems)throw std::invalid_argument("Variant array checkpoint is malformed");
+        VariantArray result;result.reserve(encoded.size());for(const auto& item:encoded)result.push_back(VariantFromSaveJson(item,depth+1));return Variant(std::move(result));
+    }
+    if(type=="object"){
+        const auto& encoded=json.at("value");if(!encoded.is_object()||encoded.size()>kMaxSaveCollectionItems)throw std::invalid_argument("Variant object checkpoint is malformed");
+        VariantObject result;for(auto item=encoded.begin();item!=encoded.end();++item)result.emplace(item.key(),VariantFromSaveJson(item.value(),depth+1));return Variant(std::move(result));
+    }
+    throw std::invalid_argument("Unknown Variant checkpoint type: "+type);
+}
+
+Json VariantObjectToSaveJson(const VariantObject& object) {
+    return VariantToSaveJson(Variant(object));
+}
+
+VariantObject VariantObjectFromSaveJson(const Json& json) {
+    Variant value=VariantFromSaveJson(json);const auto* object=value.AsObject();
+    if(!object)throw std::invalid_argument("Expected a Variant object checkpoint");return *object;
+}
+
+Json ActionContextToJson(const ui::ActionContext& context) {
+    return {{"sourceScene",context.sourceScene},{"sourceNode",context.sourceNode.ToString()},
+            {"signal",context.signal},{"currentRoute",context.currentRoute},{"preview",context.preview}};
+}
+
+ui::ActionContext ActionContextFromJson(const Json& json) {
+    if(!json.is_object())throw std::invalid_argument("Action context must be an object");
+    ui::ActionContext context;context.sourceScene=json.at("sourceScene").get<std::string>();
+    context.sourceNode=RequiredUuid(json.at("sourceNode"),"Action source node");
+    context.signal=json.at("signal").get<std::string>();context.currentRoute=json.at("currentRoute").get<std::string>();
+    context.preview=json.at("preview").get<bool>();return context;
+}
+
+Json LuaActionsToJson(const lua::PendingActionsState& state) {
+    Json values=Json::array();for(const auto& pending:state)values.push_back({
+        {"id",pending.id},{"action",pending.invocation.action},
+        {"arguments",VariantObjectToSaveJson(pending.invocation.arguments)},
+        {"context",ActionContextToJson(pending.invocation.context)},
+        {"yieldIndex",pending.yieldIndex},{"waitKind",pending.waitKind},
+        {"handle",pending.handle},{"remainingSeconds",pending.remainingSeconds}});return values;
+}
+
+lua::PendingActionsState LuaActionsFromJson(const Json& json) {
+    if(!json.is_array()||json.size()>kMaxSaveCollectionItems)throw std::invalid_argument("luaActions must be a bounded array");
+    lua::PendingActionsState state;state.reserve(json.size());for(const auto& value:json){if(!value.is_object())throw std::invalid_argument("Lua Action checkpoint must be an object");lua::PendingActionState pending;
+        pending.id=value.at("id").get<std::uint64_t>();pending.invocation.action=value.at("action").get<std::string>();
+        pending.invocation.arguments=VariantObjectFromSaveJson(value.at("arguments"));pending.invocation.context=ActionContextFromJson(value.at("context"));
+        pending.yieldIndex=value.at("yieldIndex").get<std::uint32_t>();pending.waitKind=value.at("waitKind").get<std::string>();
+        pending.handle=value.at("handle").get<std::uint64_t>();pending.remainingSeconds=value.at("remainingSeconds").get<float>();state.push_back(std::move(pending));}return state;
+}
+
+Json BehaviorStateToJson(const ui::BehaviorRuntimeState& state) {
+    Json fibers=Json::array();for(const auto& fiber:state.fibers){Json continuation=Json::array();for(const auto& node:fiber.continuation)continuation.push_back(node.ToString());fibers.push_back({
+        {"id",fiber.id},{"entry",fiber.entry.ToString()},{"current",fiber.current.ToString()},
+        {"continuation",std::move(continuation)},{"delayRemaining",fiber.delayRemaining},
+        {"actionExecution",fiber.actionExecution},{"animationHandle",fiber.animationHandle},
+        {"signalArguments",VariantObjectToSaveJson(fiber.signalArguments)}});}
+    Json actions=Json::array();for(const auto& action:state.actions)actions.push_back({
+        {"execution",action.execution},{"action",action.invocation.action},
+        {"arguments",VariantObjectToSaveJson(action.invocation.arguments)},
+        {"context",ActionContextToJson(action.invocation.context)},
+        {"provider",action.providerId},{"providerHandle",action.providerHandle},{"autoForget",action.autoForget}});
+    return {{"fibers",std::move(fibers)},{"actions",std::move(actions)}};
+}
+
+ui::BehaviorRuntimeState BehaviorStateFromJson(const Json& json) {
+    if(!json.is_object())throw std::invalid_argument("behavior must be an object");const auto& fibers=json.at("fibers");const auto& actions=json.at("actions");
+    if(!fibers.is_array()||!actions.is_array()||fibers.size()>kMaxSaveCollectionItems||actions.size()>kMaxSaveCollectionItems)throw std::invalid_argument("behavior collections exceed save limits");
+    ui::BehaviorRuntimeState state;for(const auto& value:fibers){if(!value.is_object())throw std::invalid_argument("Behavior fiber must be an object");ui::BehaviorFiberState fiber;
+        fiber.id=value.at("id").get<ui::BehaviorFiberId>();fiber.entry=RequiredUuid(value.at("entry"),"Behavior entry");fiber.current=RequiredUuid(value.at("current"),"Behavior current node");
+        const auto& continuation=value.at("continuation");if(!continuation.is_array()||continuation.size()>kMaxSaveCollectionItems)throw std::invalid_argument("Behavior continuation exceeds save limits");for(const auto& node:continuation)fiber.continuation.push_back(RequiredUuid(node,"Behavior continuation node"));
+        fiber.delayRemaining=value.at("delayRemaining").get<float>();fiber.actionExecution=value.at("actionExecution").get<ui::ActionExecutionId>();fiber.animationHandle=value.at("animationHandle").get<std::uint64_t>();fiber.signalArguments=VariantObjectFromSaveJson(value.at("signalArguments"));state.fibers.push_back(std::move(fiber));}
+    for(const auto& value:actions){if(!value.is_object())throw std::invalid_argument("Behavior Action checkpoint must be an object");ui::ActionExecutionCheckpoint action;
+        action.execution=value.at("execution").get<ui::ActionExecutionId>();action.invocation.action=value.at("action").get<std::string>();action.invocation.arguments=VariantObjectFromSaveJson(value.at("arguments"));action.invocation.context=ActionContextFromJson(value.at("context"));
+        action.providerId=value.at("provider").get<std::string>();action.providerHandle=value.at("providerHandle").get<std::uint64_t>();action.autoForget=value.at("autoForget").get<bool>();state.actions.push_back(std::move(action));}return state;
+}
+
 vn::DialogueSnapshot DialogueFromJson(const Json& json) {
     if (!json.is_object()) throw std::invalid_argument("dialogue must be an object");
     vn::DialogueSnapshot snapshot;
@@ -608,6 +732,8 @@ bool SaveSystem::Save(int slot, const SaveSnapshot& s) {
     j["timelines"] = TimelinesToJson(s.timelines);
     j["animationClips"] = AnimationClipsToJson(s.animationClips);
     j["luaPending"] = LuaPendingToJson(s.luaPending);
+    j["luaActions"] = LuaActionsToJson(s.luaActions);
+    j["behavior"] = BehaviorStateToJson(s.behavior);
     j["backlog"] = BacklogToJson(s.backlog);
     j["nvlMode"] = s.nvlMode;
     j["nvlLines"] = BacklogToJson(s.nvlLines);
@@ -669,7 +795,8 @@ std::optional<SaveSnapshot> SaveSystem::Load(int slot) const {
         }
         if (!j.contains("vm") || !j.contains("dialogue") || !j.contains("routes") ||
             !j.contains("timelines") || !j.contains("animationClips") || !j.contains("stage") || !j.contains("audio") ||
-            !j.contains("luaPending")) {
+            !j.contains("luaPending") || !j.contains("luaActions") ||
+            !j.contains("behavior")) {
             SaveLoadError(path, "Save is missing exact runtime state");
             return std::nullopt;
         }
@@ -681,6 +808,8 @@ std::optional<SaveSnapshot> SaveSystem::Load(int slot) const {
         s.timelines = TimelinesFromJson(j["timelines"]);
         s.animationClips = AnimationClipsFromJson(j["animationClips"]);
         s.luaPending = LuaPendingFromJson(j["luaPending"]);
+        s.luaActions = LuaActionsFromJson(j["luaActions"]);
+        s.behavior = BehaviorStateFromJson(j["behavior"]);
         s.backlog = BacklogFromJson(j.value("backlog", Json::array()));
         s.timestamp = j.value("timestamp", std::uint64_t{ 0 });
         s.playtimeMs = j.value("playtimeMs", std::uint64_t{ 0 });

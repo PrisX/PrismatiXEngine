@@ -29,6 +29,19 @@ public:
     [[nodiscard]] const std::vector<CustomCommandDef>& Commands() const { return m_commands; }
 
 private:
+    struct ActionParameterDraft {
+        std::string name = "value";
+        std::string displayName = "Value";
+        std::string type = "string";
+        std::string defaultValue;
+        std::string enumValues;
+        std::string resourceFilter;
+        std::string editorHint = "default";
+        float minimum = 0.0f;
+        float maximum = 1.0f;
+        bool required = false;
+        bool hasRange = false;
+    };
     void RefreshFiles();
     void ScanCommands();
     void LoadFile(const std::string& runtimePath);
@@ -38,6 +51,8 @@ private:
     void RenderEditor();
     void RenderCommandList();
     void RenderApiReference();
+    void RenderActionWizard();
+    bool CreateLuaAction();
     void Log(const std::string& msg) const {
         if (m_log) m_log(msg);
     }
@@ -58,6 +73,18 @@ private:
 
     char m_newName[96] = "extensions";
     std::string m_status;
+    bool m_actionWizardOpen = false;
+    std::string m_actionManifest = "Content/Extensions/default.pxextension";
+    std::string m_actionId = "game.customAction";
+    std::string m_actionDisplayName = "Custom Action";
+    std::string m_actionDescription;
+    std::string m_actionCategory = "Game";
+    int m_actionReentry = 0;
+    bool m_actionRuntime = true;
+    bool m_actionUi = true;
+    bool m_actionAnimation = false;
+    bool m_actionAudio = false;
+    std::vector<ActionParameterDraft> m_actionParameters;
 };
 
 }

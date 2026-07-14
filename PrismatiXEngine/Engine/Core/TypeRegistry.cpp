@@ -27,8 +27,47 @@ Status TypeRegistry::Register(TypeInfo type) {
                                               type.name + "." + p.name));
         }
     }
+    std::unordered_set<std::string> signalNames;
+    for (const SignalInfo& signal : type.signals) {
+        if (signal.name.empty() || !signalNames.insert(signal.name).second)
+            return Status::Fail(RegistryError("PXTYPE-E1004", "Duplicate or empty signal name.",
+                                              type.name + "." + signal.name));
+        std::unordered_set<std::string> argumentNames;
+        for (const SignalArgumentInfo& argument : signal.arguments)
+            if (argument.name.empty() || argument.type == VariantType::Null ||
+                !argumentNames.insert(argument.name).second)
+                return Status::Fail(RegistryError("PXTYPE-E1005", "Invalid signal argument.",
+                    type.name + "." + signal.name + "." + argument.name));
+    }
     m_types.emplace(type.name, std::move(type));
     return Status::Ok();
+}
+
+const SignalInfo* TypeRegistry::FindSignal(const std::string& type,
+                                           const std::string& signal) const {
+    std::lock_guard lock(m_mutex);
+    auto it = m_types.find(type);
+    while (it != m_types.end()) {
+        for (const SignalInfo& candidate : it->second.signals)
+            if (candidate.name == signal) return &candidate;
+        if (it->second.base.empty()) break;
+        it = m_types.find(it->second.base);
+    }
+    return nullptr;
+}
+
+std::vector<const SignalInfo*> TypeRegistry::SignalsForType(const std::string& type) const {
+    std::lock_guard lock(m_mutex);
+    std::vector<const SignalInfo*> result;
+    std::unordered_set<std::string> seen;
+    auto it = m_types.find(type);
+    while (it != m_types.end()) {
+        for (const SignalInfo& signal : it->second.signals)
+            if (seen.insert(signal.name).second) result.push_back(&signal);
+        if (it->second.base.empty()) break;
+        it = m_types.find(it->second.base);
+    }
+    return result;
 }
 
 const TypeInfo* TypeRegistry::Find(const std::string& name) const {

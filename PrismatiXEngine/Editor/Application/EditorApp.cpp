@@ -401,6 +401,11 @@ bool EditorApp::Init() {
 
 void EditorApp::ConfigureDesigner(UIDesigner& designer) {
     designer.SetImageSizeResolver([this](const std::string& path)->std::optional<Vec2>{return m_preview?m_preview->ImageSize(path):std::nullopt;});
+    designer.SetIdentityRegistrar([this](const std::filesystem::path& path){return EnsureAssetIdentity(path);});
+    designer.SetAnimationPreview([this](const Uuid& clip,float time,bool playing){return m_preview?m_preview->PreviewUIAnimation(clip,time,playing):Status::Ok();});
+    designer.SetBehaviorDebugProvider([this]{return m_preview?m_preview->UIBehaviorState():ui::BehaviorRuntimeState{};});
+    designer.SetAnimationDebugProvider([this]{return m_preview?m_preview->UIAnimationState():ui::UIAnimationRuntimeState{};});
+    designer.SetAnimationParameterTester([this](const std::string_view parameter,const Variant& value){return m_preview?m_preview->SetUIAnimationParameter(parameter,value):Status::Ok();});
     designer.SetComponentWriter([this](const std::filesystem::path& requested,const std::string& text)->Result<ResourceRefValue>{
         const auto absolute=requested.is_absolute()?requested:m_project.Context().root/requested;std::error_code error;std::filesystem::create_directories(absolute.parent_path(),error);if(error)return Result<ResourceRefValue>::Failure(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXEDUI3040",.category="Editor.UIDesigner",.message="Cannot create component directory",.details=error.message()});
         const Status written=io::AtomicFile::WriteText(absolute,text);if(!written)return Result<ResourceRefValue>::Failure(written.Diagnostics());auto registered=m_assetRegistry.RegisterAsset(m_project.Context().root,absolute,".pxcomponent");if(!registered)return Result<ResourceRefValue>::Failure(registered.Diagnostics());m_assets.Scan(m_project.Context());std::error_code relativeError;const auto relative=std::filesystem::relative(absolute,m_project.Context().root,relativeError).generic_string();return Result<ResourceRefValue>::Success(ResourceRefValue{registered.Value().id,relativeError?absolute.generic_string():relative});
@@ -413,12 +418,28 @@ void EditorApp::ConfigureDesigner(UIDesigner& designer) {
             std::error_code error;
             const std::string runtimePath = std::filesystem::relative(
                 m_designer.Document()->Path(), m_project.Context().root, error).generic_string();
-            m_preview->LoadUIDocument(m_designer.Document()->Data(),
-                                      error ? m_designer.Document()->Path().generic_string() : runtimePath);
+            m_preview->ApplyUIDocumentPatch(m_designer.Document()->Data(),
+                                            error ? m_designer.Document()->Path().generic_string() : runtimePath);
             m_docs.SetDirty(m_designer.Document()->Path(), m_designer.Dirty(),
                             m_designer.Document()->History().Cursor());
         }
     });
+}
+
+Status EditorApp::EnsureAssetIdentity(const std::filesystem::path& path){
+    return EnsureAssetIdentities({path});
+}
+
+Status EditorApp::EnsureAssetIdentities(const std::vector<std::filesystem::path>& paths){
+    if(!m_project.Context().IsOpen())return Status::Ok();
+    for(const auto& path:paths){
+        auto registered=m_assetRegistry.RegisterAsset(m_project.Context().root,path,AssetDatabase::Classify(path));
+        if(!registered)return Status::Fail(registered.Diagnostics());
+    }
+    m_assets.Scan(m_project.Context());
+    const Status scanned=m_assetRegistry.Scan(m_project.Context().root);
+    if(!scanned)m_showAssetIdentity=true;
+    return Status::Ok();
 }
 
 

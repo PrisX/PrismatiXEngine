@@ -4,6 +4,8 @@
 #include "Engine/UI/Binding.h"
 #include "Engine/UI/Control.h"
 #include "Engine/UI/UIResourceResolver.h"
+#include "Engine/UI/Actions/TriggerBinding.h"
+#include "Engine/UI/Behavior/BehaviorGraph.h"
 
 #include <filesystem>
 #include <memory>
@@ -17,8 +19,11 @@ namespace px::ui {
 struct LoadedUIScene {
     std::unique_ptr<Control> root;
     std::vector<Binding> bindings;
-    std::optional<AnimationClip> animation;
+    std::optional<UIAnimationLibrary> animations;
     std::optional<Theme> theme;
+    std::vector<TriggerBinding> triggers;
+    std::optional<BehaviorGraph> interactionGraph;
+    std::string sourceScene;
 };
 
 [[nodiscard]] Result<LoadedUIScene> InstantiateUIScene(const resource::TypedDocument& document,

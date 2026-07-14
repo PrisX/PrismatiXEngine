@@ -26,6 +26,7 @@ public:
     using Changed = std::function<void(const Variant&)>;
     virtual ~IViewModel() = default;
     [[nodiscard]] virtual std::optional<PropertyPathInfo> Describe(std::string_view path) const = 0;
+    [[nodiscard]] virtual std::vector<PropertyPathInfo> EnumerateProperties() const { return {}; }
     [[nodiscard]] virtual Result<Variant> Read(std::string_view path) const = 0;
     virtual Status Write(std::string_view path, const Variant& value) = 0;
     virtual std::uint64_t Subscribe(std::string path, Changed changed) = 0;
@@ -40,6 +41,7 @@ public:
     Status DefineComputed(std::string path, VariantType type, std::vector<std::string> dependencies,
                           Compute compute);
     std::optional<PropertyPathInfo> Describe(std::string_view path) const override;
+    std::vector<PropertyPathInfo> EnumerateProperties() const override;
     Result<Variant> Read(std::string_view path) const override;
     Status Write(std::string_view path, const Variant& value) override;
     std::uint64_t Subscribe(std::string path, Changed changed) override;
@@ -74,6 +76,7 @@ public:
     FormatterRegistry();
     Status Register(Formatter formatter);
     [[nodiscard]] const Formatter* Find(std::string_view name) const;
+    [[nodiscard]] std::vector<const Formatter*> Descriptors() const;
 private:
     std::map<std::string, Formatter> m_formatters;
 };

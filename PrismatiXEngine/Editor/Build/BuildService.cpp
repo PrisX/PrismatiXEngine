@@ -6,8 +6,11 @@
 #include "Engine/Resources/AssetRegistry.h"
 #include "Engine/Resources/TypedDocument.h"
 #include "Engine/Animation/Timeline.h"
+#include "Engine/Core/TypeRegistry.h"
 #include "Engine/VN/Scenario/ScenarioDocument.h"
 #include "Engine/UI/UIResourceResolver.h"
+#include "Engine/UI/UISceneLoader.h"
+#include "Engine/UI/UITypeRegistry.h"
 
 #include <nlohmann/json.hpp>
 
@@ -152,6 +155,13 @@ bool BuildService::Build(const BuildOptions& options) const {
     }
     std::unordered_set<std::string> visiting,visited;std::function<bool(const std::string&)> visit=[&](const std::string& node){if(visited.contains(node))return true;if(!visiting.insert(node).second)return false;for(const auto& target:dependencyGraph[node])if(!visit(target))return false;visiting.erase(node);visited.insert(node);return true;};
     for(const auto& [source,targets]:dependencyGraph){(void)targets;if(!visit(source))return fail("PXBUILD9633",dependencySources[source],"Build 已阻擋：UI resource dependency cycle");}
+
+    const Status uiTypes=ui::RegisterBuiltinUITypes();if(!uiTypes)return fail("PXBUILD9634",options.projectRoot,"Build 已阻擋：UI metadata 無法註冊",diag::Describe(uiTypes.Diagnostics().front()));
+    ui::FormatterRegistry uiFormatters;ui::ObservableViewModel buildViewModel;std::unordered_map<std::string,VariantType> bindingTypes;const auto defaultValue=[](const VariantType type)->Variant{switch(type){case VariantType::Bool:return false;case VariantType::Integer:return std::int64_t{0};case VariantType::Number:return 0.0;case VariantType::String:return std::string{};case VariantType::Vec2:return Vec2{};case VariantType::Rect:return Rect{};case VariantType::Color:return Color{};case VariantType::Uuid:return Uuid{};case VariantType::ResourceRef:return ResourceRefValue{};case VariantType::TokenRef:return TokenRefValue{};case VariantType::Array:return VariantArray{};case VariantType::Object:return VariantObject{};default:return Variant{};}};
+    for(const auto& [source,document]:typedAssets)for(const auto& node:document.nodes)if(const auto found=node.properties.find("bindings");found!=node.properties.end())if(const auto* bindings=found->second.AsObject())for(const auto& [target,value]:*bindings){const auto* definition=value.AsObject();const auto path=definition?definition->find("path"):VariantObject::const_iterator{};const auto* pathText=definition&&path!=definition->end()?path->second.TryGet<std::string>():nullptr;const auto* targetProperty=TypeRegistry::Global().FindProperty(node.type,target);if(!pathText||!targetProperty)continue;VariantType sourceType=targetProperty->type;if(const auto formatter=definition->find("formatter");formatter!=definition->end())if(const auto* name=formatter->second.TryGet<std::string>();name&&!name->empty())if(const auto* descriptor=uiFormatters.Find(*name))sourceType=descriptor->input;if(const auto existing=bindingTypes.find(*pathText);existing!=bindingTypes.end()&&existing->second!=sourceType)return fail("PXBUILD9639",source,"Build 已阻擋：ViewModel binding path 被宣告為不相容型別",*pathText);bindingTypes[*pathText]=sourceType;}
+    for(const auto& [path,type]:bindingTypes){const Status defined=buildViewModel.Define(path,defaultValue(type),true);if(!defined)return fail("PXBUILD9639",options.projectRoot,"Build 已阻擋：ViewModel binding path 無效",diag::Describe(defined.Diagnostics().front()));}
+    const ui::UIDocumentLoader uiLoader=[&](const ResourceRefValue& reference)->Result<resource::TypedDocument>{const auto target=ComparableKey(options.projectRoot/reference.lastKnownPath);const auto found=std::find_if(typedAssets.begin(),typedAssets.end(),[&](const auto& item){return ComparableKey(item.first)==target;});if(found==typedAssets.end())return Result<resource::TypedDocument>::Failure(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXBUILD9635",.category="Build.UI",.message="Referenced typed UI asset was not indexed",.details=reference.lastKnownPath});return Result<resource::TypedDocument>::Success(found->second);};
+    for(const auto& [source,document]:typedAssets){if(document.type=="UIComponent"){const Status interfaceStatus=ui::ValidateUIComponentInterface(document);if(!interfaceStatus)return fail("PXBUILD9636",source,"Build 已阻擋：UIComponent 公開介面無效",diag::Describe(interfaceStatus.Diagnostics().front()));const auto expanded=ui::ExpandUIComponents(document,uiLoader);if(!expanded)return fail("PXBUILD9637",source,"Build 已阻擋：UIComponent 巢狀相依或 slot 無效",diag::Describe(expanded.Diagnostics().front()));}else if(document.type=="UIScene"){const auto instantiated=ui::InstantiateUIScene(document,&buildViewModel,uiFormatters,uiLoader);if(!instantiated)return fail("PXBUILD9638",source,"Build 已阻擋：UIScene schema、signals、Behavior 或 animation 無效",diag::Describe(instantiated.Diagnostics().front()));}}
 
     const auto staging=outputDir.parent_path()/(outputDir.filename().string()+".staging-"+Uuid::Random().ToString());
     const auto backup=outputDir.parent_path()/(outputDir.filename().string()+".backup-"+Uuid::Random().ToString());

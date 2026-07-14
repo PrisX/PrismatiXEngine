@@ -707,6 +707,7 @@ bool NodeGraphEditor::Save() {
         vn::scenario::ScenarioLayoutDocument layout;layout.scenario=m_editDocumentId;
         for(const auto& node:m_nodes)if(node.type!="scenario_start")layout.nodes.push_back({node.type=="dialogue"&&!node.dialogueLineIds.empty()?node.dialogueLineIds.front():node.stableId,{node.position.x,node.position.y},{}, {}});
         auto layoutPath=path;layoutPath.replace_extension(".pxlayout");const Status layoutWritten=io::AtomicFile::WriteText(layoutPath,vn::scenario::WriteScenarioLayout(layout));if(!layoutWritten){for(const auto& diagnostic:layoutWritten.Diagnostics())diag::Emit(diagnostic);return false;}
+        if(m_identityRegistrar){const Status identities=m_identityRegistrar({path,layoutPath});if(!identities){for(const auto& diagnostic:identities.Diagnostics())diag::Emit(diagnostic);return false;}}
         m_dirty = false;
         m_editHistory.MarkSaved();m_undoBaseline=SaveGraph();m_undoGestureDirty=false;m_undoArmed=true;
         m_loaded = true;

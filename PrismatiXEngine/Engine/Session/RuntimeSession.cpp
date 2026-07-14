@@ -81,6 +81,14 @@ RuntimeSession::RuntimeSession(Services services)
     m_vm.SetCommandHook([this](const vn::Command& command) { return ExecuteCommand(command); });
 }
 
+Result<animation::PlaybackHandle> RuntimeSession::PlayAnimationAsset(
+    const std::string& path,const bool await,const float speed){
+    const auto source=m_services.vfs.ReadText(path);if(!source)return Result<animation::PlaybackHandle>::Failure(RestoreFailure("Animation clip could not be read",path).Diagnostics());
+    auto parsed=animation::ParseAnimationClip(*source,path);if(!parsed)return Result<animation::PlaybackHandle>::Failure(parsed.Diagnostics());const auto id=parsed.Value().id;
+    if(!m_timeline.Find(id)){const Status registered=m_timeline.Register(parsed.TakeValue());if(!registered)return Result<animation::PlaybackHandle>::Failure(registered.Diagnostics());}
+    const auto handle=m_timeline.Play(id,await,speed);if(!handle)return Result<animation::PlaybackHandle>::Failure(RestoreFailure("Animation clip could not be played",path).Diagnostics());return Result<animation::PlaybackHandle>::Success(handle);
+}
+
 bool RuntimeSession::ExecuteCommand(const vn::Command& command) {
     if (command.type == "ambience") {
         const std::string path = ResourcePath(command, "file");
@@ -108,31 +116,11 @@ bool RuntimeSession::ExecuteCommand(const vn::Command& command) {
     }
     if (command.type == "animation") {
         const std::string path = ResourcePath(command, "clip");
-        const auto source = m_services.vfs.ReadText(path);
-        if (!source) {
-            (void)RestoreFailure("Animation clip could not be read", path);
-            return true;
-        }
-        auto parsed = animation::ParseAnimationClip(*source, path);
-        if (!parsed) {
-            for (const auto& diagnostic : parsed.Diagnostics()) diag::Emit(diagnostic);
-            return true;
-        }
-        const auto id = parsed.Value().id;
-        if (!m_timeline.Find(id)) {
-            const Status registered = m_timeline.Register(parsed.TakeValue());
-            if (!registered) {
-                for (const auto& diagnostic : registered.Diagnostics()) diag::Emit(diagnostic);
-                return true;
-            }
-        }
         const bool await = CommandBool(command, "await");
-        const auto handle = m_timeline.Play(id, await,
-            static_cast<float>(CommandNumber(command, "speed", 1.0)));
-        if (!handle) {
-            (void)RestoreFailure("Animation clip could not be played", path);
-        } else if (await) {
-            m_awaitingTimeline = handle;
+        auto played=PlayAnimationAsset(path,await,static_cast<float>(CommandNumber(command,"speed",1.0)));
+        if(!played){for(const auto& diagnostic:played.Diagnostics())diag::Emit(diagnostic);}
+        else if (await) {
+            m_awaitingTimeline = played.Value();
             m_vm.WaitExternal();
         }
         return true;
@@ -212,6 +200,7 @@ RuntimeSession::GameState RuntimeSession::CaptureState(const std::uint64_t playt
     state.routes = m_routes.CaptureState();
     state.timelines = m_timeline.CaptureState();
     for (const auto& [_, clip] : m_timeline.RegisteredClips()) state.animationClips.push_back(clip);
+    if (m_captureBehaviorState) state.behavior = m_captureBehaviorState();
     state.playtimeMs = playtimeMs;
     return state;
 }
@@ -256,6 +245,10 @@ Status RuntimeSession::RestoreState(const GameState& state, const std::uint64_t 
                               state.vm.scriptPath);
     }
     m_vm.OverrideCurrentBgm(state.vm.currentBgm);
+    if (m_restoreBehaviorState) {
+        const Status behaviorStatus = m_restoreBehaviorState(state.behavior);
+        if (!behaviorStatus) return behaviorStatus;
+    }
     return Status::Ok();
 }
 

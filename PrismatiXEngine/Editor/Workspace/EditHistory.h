@@ -175,4 +175,25 @@ private:
     bool m_active = false;
 };
 
+class MultiPropertyEditTransaction {
+public:
+    MultiPropertyEditTransaction(IEditableDocument& document, EditHistory& history,
+                                 std::vector<Uuid> targets, std::string property,
+                                 std::string label);
+    ~MultiPropertyEditTransaction();
+    Status Update(const Variant& value);
+    Status Commit();
+    Status Cancel();
+    [[nodiscard]] bool Active() const { return m_active; }
+
+private:
+    struct Entry { Uuid target; Variant before; Variant current; };
+    IEditableDocument& m_document;
+    EditHistory& m_history;
+    std::vector<Entry> m_entries;
+    std::string m_property;
+    std::string m_label;
+    bool m_active = false;
+};
+
 }  // namespace px::editor

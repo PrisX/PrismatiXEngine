@@ -4,10 +4,13 @@
 #include "Engine/Lua/LuaState.h"
 #include "Engine/Core/Result.h"
 #include "Engine/VN/Commands/Command.h"
+#include "Engine/UI/Actions/ActionDispatcher.h"
 
 #include <sol/sol.hpp>
 
 #include <string>
+#include <memory>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -56,9 +59,11 @@ public:
         std::string entry;
         std::vector<std::string> capabilities;
         std::unordered_set<std::string> commands;
+        std::unordered_set<std::string> actions;
     };
 
     explicit LuaHost(const LuaServices& services);
+    ~LuaHost();
 
     bool RunFile(const std::string& vfsPath);
     bool RunString(const std::string& code, const std::string& chunkName = "chunk");
@@ -69,10 +74,18 @@ public:
     void Emit(const std::string& event, const EventArgs& args = {}) { m_bus.Emit(event, args); }
 
     bool InvokeCommand(const vn::Command& cmd);
+    Status InvokeAction(const ui::ActionInvocation& invocation);
+    ui::ProviderActionStart StartAction(const ui::ActionInvocation& invocation);
+    [[nodiscard]] ui::ActionExecutionState ActionState(std::uint64_t handle) const;
+    void CancelAction(std::uint64_t handle);
+    [[nodiscard]] bool HasAction(std::string_view action) const;
+    [[nodiscard]] std::shared_ptr<ui::IActionProvider> CreateActionProvider();
     void Update(float deltaSeconds);
     [[nodiscard]] bool HasPendingCommand() const { return !m_pending.empty(); }
     [[nodiscard]] PendingCommandsState CapturePending() const;
     Status RestorePending(const PendingCommandsState& state);
+    [[nodiscard]] PendingActionsState CapturePendingActions() const;
+    Status RestorePendingActions(const PendingActionsState& state);
     void CancelPending();
 
     sol::state& State() { return m_lua; }
@@ -88,8 +101,11 @@ private:
     EventBus m_bus;
     LuaServices m_services;
     std::unordered_map<std::string, sol::protected_function> m_commands;
+    std::unordered_map<std::string, sol::protected_function> m_actions;
     std::unordered_map<std::string, sol::object> m_modules;
     std::unordered_set<std::string> m_declaredCommands;
+    std::unordered_set<std::string> m_declaredActions;
+    std::unordered_set<std::string> m_loadedActionSources;
     std::string m_activeExtension;
     struct PendingCoroutine {
         sol::coroutine coroutine;
@@ -100,6 +116,19 @@ private:
         std::uint32_t yieldIndex = 0;
     };
     std::vector<PendingCoroutine> m_pending;
+    struct PendingActionCoroutine {
+        sol::coroutine coroutine;
+        std::uint64_t id = 0;
+        std::string action;
+        ui::ActionInvocation invocation;
+        std::string waitKind;
+        std::uint64_t handle = 0;
+        float remainingSeconds = 0.0f;
+        std::uint32_t yieldIndex = 0;
+    };
+    std::vector<PendingActionCoroutine> m_pendingActions;
+    std::unordered_map<std::uint64_t, ui::ActionExecutionState> m_actionTerminalStates;
+    std::uint64_t m_nextActionHandle = 1;
 };
 
 }

@@ -263,6 +263,12 @@ Status DocumentManager::SaveSession(const std::filesystem::path& path) const {
         object["scrollX"] = Variant(static_cast<double>(session.viewport.scrollX));
         object["scrollY"] = Variant(static_cast<double>(session.viewport.scrollY));
         object["fitToViewport"] = Variant(session.viewport.fitToViewport);
+        object["leftPanelVisible"] = Variant(session.viewport.leftPanelVisible);
+        object["rightPanelVisible"] = Variant(session.viewport.rightPanelVisible);
+        object["bottomPanelVisible"] = Variant(session.viewport.bottomPanelVisible);
+        object["leftPanelWidth"] = Variant(static_cast<double>(session.viewport.leftPanelWidth));
+        object["rightPanelWidth"] = Variant(static_cast<double>(session.viewport.rightPanelWidth));
+        object["bottomPanelHeight"] = Variant(static_cast<double>(session.viewport.bottomPanelHeight));
         sessions.emplace_back(std::move(object));
     }
     document.properties["documents"] = Variant(std::move(sessions));
@@ -296,6 +302,12 @@ Status DocumentManager::RestoreSession(const std::filesystem::path& path) {
                 session.viewport.scrollY=Number(*object,"scrollY");
                 if (const auto it = object->find("fitToViewport"); it != object->end())
                     if (const auto* value = it->second.TryGet<bool>()) session.viewport.fitToViewport = *value;
+                if(const auto it=object->find("leftPanelVisible");it!=object->end())if(const auto* value=it->second.TryGet<bool>())session.viewport.leftPanelVisible=*value;
+                if(const auto it=object->find("rightPanelVisible");it!=object->end())if(const auto* value=it->second.TryGet<bool>())session.viewport.rightPanelVisible=*value;
+                if(const auto it=object->find("bottomPanelVisible");it!=object->end())if(const auto* value=it->second.TryGet<bool>())session.viewport.bottomPanelVisible=*value;
+                session.viewport.leftPanelWidth=Number(*object,"leftPanelWidth",260.0f);
+                session.viewport.rightPanelWidth=Number(*object,"rightPanelWidth",340.0f);
+                session.viewport.bottomPanelHeight=Number(*object,"bottomPanelHeight",240.0f);
                 if (std::filesystem::exists(session.id.canonicalPath)) (void)Open(std::move(session));
             }
         }
