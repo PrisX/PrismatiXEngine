@@ -114,6 +114,26 @@ bool VM::LoadScript(const std::string& scriptPath) {
     return true;
 }
 
+bool VM::LoadScenarioText(const std::string_view text, const std::string& scriptPath) {
+    m_callStack.clear();
+    auto document = scenario::ParseScenario(text, scriptPath);
+    if (!document) {
+        m_program = {};
+        for (const auto& diagnostic : document.Diagnostics())
+            m_program.errors.push_back(diag::Describe(diagnostic));
+        m_state = VMState::Finished;
+        return false;
+    }
+    m_program = scenario::CompileScenario(document.Value());
+    if (!m_program.errors.empty()) { m_state = VMState::Finished; return false; }
+    m_scriptPath = scriptPath;
+    m_pc = 0;
+    m_pendingVoice.clear();
+    m_textSpeed = m_config.defaultTextSpeed;
+    Run();
+    return true;
+}
+
 void VM::SeekTo(const std::string& scriptPath, int pc) {
     m_callStack.clear();
     if (LoadProgram(scriptPath)) {
@@ -343,8 +363,22 @@ void VM::ExecuteSimple(const Command& cmd) {
         const std::string name = cmd.Get("name", cmd.Get("id"));
         std::string file = cmd.Get("file");
         if (file.empty()) {
-            const std::string diff = cmd.Get("diff", cmd.Get("expression", cmd.Get("exp", "d")));
-            file = name + "_" + diff + ".png";
+            const std::string expression = cmd.Get("diff", cmd.Get("expression", cmd.Get("exp")));
+            if (const auto image = m_catalog.ResolveCharacterImage(name, expression)) {
+                file = image->lastKnownPath;
+            } else {
+                const std::string fallbackExpression = expression.empty() ? "d" : expression;
+                if (const auto* character = m_catalog.FindCharacter(name);
+                    character && !character->expressions.empty()) {
+                    diag::Diagnostic diagnostic{.severity=diag::Severity::Warning,
+                        .code="PXVN6101",.category="VN.Character",
+                        .message="Character expression was not found; using legacy filename fallback",
+                        .details=name+" / "+fallbackExpression};
+                    diagnostic.source.path=m_scriptPath;diagnostic.source.line=cmd.line;
+                    diag::Emit(std::move(diagnostic));
+                }
+                file = name + "_" + fallbackExpression + ".png";
+            }
         }
         const int slot = ParseInt(cmd.Get("slot", cmd.Get("pos", "2")), 2);
         const float ox = ParseFloat(cmd.Get("x"), 0.0f);
@@ -448,8 +482,12 @@ void VM::HandleSay(const Command& cmd) {
     if (m_seenHook) {
         m_currentLineSeen = m_seenHook(m_scriptPath + ":" + std::to_string(cmd.line));
     }
+    const std::string character = cmd.Get("char", cmd.Get("character"));
     std::string speaker = cmd.Has("speaker") ? cmd.Get("speaker") : m_speaker;
-    if (cmd.Has("speaker")) m_speaker = speaker;
+    if (!cmd.Has("speaker") && !character.empty()) {
+        speaker = m_catalog.CharacterDisplayName(character);
+    }
+    if (cmd.Has("speaker") || !character.empty()) m_speaker = speaker;
     if (cmd.Has("color")) m_textColor = ParseColor(cmd.Get("color"), m_textColor);
 
     const std::string text = FilterText(m_vars.Substitute(cmd.Get("value", cmd.Get("text"))),cmd.Get("textId"));
@@ -460,7 +498,7 @@ void VM::HandleSay(const Command& cmd) {
     m_pendingVoice.clear();
     if (voice.empty() && !m_voiceDirs.empty()) {
         // Auto-voice convention: <voiceDir><scriptStem>_<line>.{ogg,wav,mp3}
-        auto it = m_voiceDirs.find(cmd.Get("char", speaker));
+        auto it = m_voiceDirs.find(character.empty() ? speaker : character);
         if (it == m_voiceDirs.end()) it = m_voiceDirs.find(speaker);
         if (it != m_voiceDirs.end() && !it->second.empty()) {
             std::string stem = m_scriptPath;

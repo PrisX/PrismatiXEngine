@@ -218,12 +218,18 @@ void EditorApp::BuildDockLayout(unsigned int dockspaceId) {
     ImGuiID center = dockspaceId;
     ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.20f, nullptr, &center);
     ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.26f, nullptr, &center);
+    ImGuiID storyPreview = 0;
+    if (m_workspace == EditorWorkspace::Story)
+        storyPreview = ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.46f, nullptr, &right);
     ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.30f, nullptr, &center);
     ImGuiID leftBottom = ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.55f, nullptr, &left);
 
     ImGui::DockBuilderDockWindow("Open Documents", left);
     ImGui::DockBuilderDockWindow("Assets", leftBottom);
+    if (m_workspace == EditorWorkspace::Story)
+        ImGui::DockBuilderDockWindow("Story Library", leftBottom);
     ImGui::DockBuilderDockWindow("Inspector", right);
+    if (storyPreview) ImGui::DockBuilderDockWindow("Story Preview", storyPreview);
     switch (m_workspace) {
         case EditorWorkspace::UI: break;
         case EditorWorkspace::Story:
@@ -384,7 +390,7 @@ void EditorApp::BuildUI() {
             RenderPreview();
             RenderProblems(); RenderConsole(); break;
         case EditorWorkspace::Story:
-            RenderNodeEditor(); RenderProblems(); RenderConsole(); break;
+            RenderNodeEditor(); RenderStoryLibrary(); RenderStoryPreview(); RenderProblems(); RenderConsole(); break;
         case EditorWorkspace::Flow:
             RenderFlow(); RenderProblems(); RenderConsole(); break;
         case EditorWorkspace::Script:
@@ -2307,30 +2313,41 @@ void EditorApp::RenderProblems() {
         ImGui::Separator();
         if (ImGui::BeginChild("##problemlist")) {
             int idx = 0;
-            for (const std::string& p : m_problems) {
-                const std::size_t ext = p.find(".pxscenario:");
-                if (ext != std::string::npos && ext < 64) {
-                    if (ImGui::Selectable((p + "##prob" + std::to_string(idx)).c_str())) {
-                        OpenDocTab(p.substr(0, ext + 11));
-                    }
-                } else {
-                    ImGui::BulletText("%s", p.c_str());
+            const auto navigate = [&](const diag::Diagnostic& diagnostic) {
+                if (diagnostic.source.path.empty()) return;
+                std::filesystem::path path = diagnostic.source.path;
+                if (path.extension() != ".pxscenario") return;
+                if (path.is_absolute()) path = path.lexically_relative(m_project.Context().root);
+                if (!path.has_parent_path()) path = std::filesystem::path("Content/Scenario") / path;
+                SetWorkspace(EditorWorkspace::Story);
+                if (NodeGraphEditor* document = OpenDocTab(path.generic_string());
+                    document && !diagnostic.source.nodeId.empty()) {
+                    document->FocusStatement(diagnostic.source.nodeId);
                 }
-                ++idx;
-            }
-            for (const auto& diagnostic : diagnostics) {
+            };
+            const auto renderDiagnostic = [&](const diag::Diagnostic& diagnostic,
+                                              const char* idPrefix) {
                 const ImVec4 color = diagnostic.severity >= diag::Severity::Error ? ImVec4(1.0f,.35f,.38f,1) :
                                      diagnostic.severity == diag::Severity::Warning ? ImVec4(1.0f,.72f,.25f,1) : ImVec4(.55f,.72f,1,1);
                 ImGui::PushStyleColor(ImGuiCol_Text, color);
                 const std::string row = diagnostic.code + "  " + diagnostic.message +
                     (diagnostic.source.path.empty() ? "" : "  —  " + diagnostic.source.path);
-                ImGui::Selectable((row + "##diagnostic" + std::to_string(idx++)).c_str());
+                if (ImGui::Selectable((row + "##" + idPrefix + std::to_string(idx++)).c_str()))
+                    navigate(diagnostic);
                 ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered() && (!diagnostic.details.empty() || !diagnostic.quickFix.empty())) {
-                    ImGui::BeginTooltip(); if (!diagnostic.details.empty()) ImGui::TextWrapped("%s", diagnostic.details.c_str());
-                    if (!diagnostic.quickFix.empty()) ImGui::TextColored({.5f,.8f,1,1}, "Fix: %s", diagnostic.quickFix.c_str()); ImGui::EndTooltip();
+                if (ImGui::IsItemHovered() &&
+                    (!diagnostic.details.empty() || !diagnostic.quickFix.empty() ||
+                     !diagnostic.source.nodeId.empty() || !diagnostic.source.property.empty())) {
+                    ImGui::BeginTooltip();
+                    if (!diagnostic.details.empty()) ImGui::TextWrapped("%s", diagnostic.details.c_str());
+                    if (!diagnostic.source.nodeId.empty()) ImGui::TextDisabled("Node: %s", diagnostic.source.nodeId.c_str());
+                    if (!diagnostic.source.property.empty()) ImGui::TextDisabled("Property: %s", diagnostic.source.property.c_str());
+                    if (!diagnostic.quickFix.empty()) ImGui::TextColored({.5f,.8f,1,1}, "Fix: %s", diagnostic.quickFix.c_str());
+                    ImGui::EndTooltip();
                 }
-            }
+            };
+            for (const auto& diagnostic : m_problems) renderDiagnostic(diagnostic, "project-problem");
+            for (const auto& diagnostic : diagnostics) renderDiagnostic(diagnostic, "diagnostic");
         }
         ImGui::EndChild();
     }
@@ -2361,6 +2378,77 @@ void EditorApp::RenderTheme(){
         if(ImGui::BeginTabItem("Resolved Trace")){ImGui::InputText("Control type",&m_themeTraceControl);const char* preview=m_themeTraceStyle>=0&&m_themeTraceStyle<static_cast<int>(theme.styles.size())?theme.styles[static_cast<std::size_t>(m_themeTraceStyle)].displayName.c_str():"(none)";if(ImGui::BeginCombo("Base style",preview)){if(ImGui::Selectable("(none)",m_themeTraceStyle<0))m_themeTraceStyle=-1;for(int index=0;index<static_cast<int>(theme.styles.size());++index)if(ImGui::Selectable(theme.styles[static_cast<std::size_t>(index)].displayName.c_str(),m_themeTraceStyle==index))m_themeTraceStyle=index;ImGui::EndCombo();}ui::StyleResolveRequest request{.controlType=m_themeTraceControl};if(m_themeTraceStyle>=0&&m_themeTraceStyle<static_cast<int>(theme.styles.size()))request.binding.baseStyle=theme.styles[static_cast<std::size_t>(m_themeTraceStyle)].id;const auto resolved=ui::StyleResolver{}.Resolve(theme,request,propertyRegistry);if(resolved&&ImGui::BeginTable("##trace",4,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg)){ImGui::TableSetupColumn("Property");ImGui::TableSetupColumn("Resolved source");ImGui::TableSetupColumn("Overrides");ImGui::TableSetupColumn("Token chain");ImGui::TableHeadersRow();for(const auto& [id,value]:resolved.Value().properties){ImGui::TableNextRow();ImGui::TableSetColumnIndex(0);ImGui::TextUnformatted(id.c_str());ImGui::TableSetColumnIndex(1);ImGui::TextUnformatted(value.source.label.c_str());ImGui::TableSetColumnIndex(2);ImGui::Text("%zu",value.overriddenSources.size());ImGui::TableSetColumnIndex(3);ImGui::Text("%zu",value.tokenChain.size());}ImGui::EndTable();}else if(!resolved)for(const auto& item:resolved.Diagnostics())ImGui::TextColored({1,.4f,.35f,1},"%s %s",item.code.c_str(),item.message.c_str());ImGui::EndTabItem();}
         ImGui::EndTabBar();
     }
+    ImGui::End();
+}
+
+void EditorApp::RenderStoryLibrary() {
+    if (ImGui::Begin("Story Library")) m_storyLibrary.Render();
+    ImGui::End();
+}
+
+void EditorApp::RenderStoryPreview() {
+    if (!ImGui::Begin("Story Preview")) { ImGui::End(); return; }
+    NodeGraphEditor* document = ActiveDocPtr();
+    if (!m_preview || !document) {
+        ImGui::TextDisabled("開啟一個 Scenario 後即可直接預覽。");
+        ImGui::End(); return;
+    }
+    if (m_storyPreviewCatalogRevision != m_storyLibrary.Revision()) {
+        m_preview->SetGameCatalog(m_storyLibrary.Catalog());
+        m_storyPreviewCatalogRevision = m_storyLibrary.Revision();
+    }
+    const bool pathChanged = m_storyPreviewPath != document->CurrentRuntimePath();
+    const bool contentChanged = pathChanged || m_storyPreviewGraphRevision != document->Revision();
+    const auto runDocument = [&] {
+        const std::string compiled = document->Compile();
+        if (compiled.empty()) {
+            Log("Story Preview: Scenario 驗證失敗，請先修正 Problems。");
+            return false;
+        }
+        m_preview->SetGameCatalog(m_storyLibrary.Catalog());
+        if (!m_preview->LoadVnText(compiled, document->CurrentRuntimePath())) return false;
+        m_storyPreviewText = compiled;
+        m_storyPreviewPath = document->CurrentRuntimePath();
+        m_storyPreviewGraphRevision = document->Revision();
+        return true;
+    };
+    if (ImGui::Button(m_storyPreviewText.empty() || pathChanged ? "▶ 執行目前 Scenario" : "↻ 重新開始"))
+        runDocument();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(m_storyPreviewText.empty() || pathChanged);
+    if (ImGui::Button("下一句")) m_preview->VMRef().OnAdvance();
+    ImGui::SameLine();
+    if (ImGui::Button("Step")) m_preview->VMRef().DebugStep();
+    ImGui::SameLine();
+    if (ImGui::Button("Continue")) m_preview->VMRef().DebugContinue();
+    ImGui::EndDisabled();
+    if (contentChanged && !m_storyPreviewText.empty() && !pathChanged) {
+        ImGui::SameLine();
+        ImGui::TextColored({1.0f,.72f,.25f,1.0f}, "內容已更新");
+    }
+    const auto stateName=[](vn::VMState state){switch(state){case vn::VMState::Idle:return "Idle";case vn::VMState::Running:return "Running";case vn::VMState::WaitingClick:return "Waiting Click";case vn::VMState::WaitingChoice:return "Waiting Choice";case vn::VMState::WaitingTimer:return "Waiting Timer";case vn::VMState::WaitingVideo:return "Waiting Video";case vn::VMState::WaitingExternal:return "Waiting External";case vn::VMState::Paused:return "Paused";case vn::VMState::Finished:return "Finished";}return "Unknown";};
+    ImGui::SameLine(); ImGui::TextDisabled("%s · PC %d", stateName(m_preview->VMRef().State()),
+                                           m_preview->VMRef().ProgramCounter());
+    ImGui::Separator();
+    if (m_storyPreviewText.empty() || pathChanged) {
+        ImGui::TextWrapped("預覽會直接編譯目前尚未儲存的節點內容，不會覆寫 Scenario 檔案。");
+        ImGui::End(); return;
+    }
+    const float logicalWidth=static_cast<float>(m_preview->Width());
+    const float logicalHeight=static_cast<float>(m_preview->Height());
+    const ImVec2 available=ImGui::GetContentRegionAvail();
+    const float scale=std::max(.05f,std::min(available.x/logicalWidth,
+        std::max(80.0f,available.y)/logicalHeight));
+    const ImVec2 display{logicalWidth*scale,logicalHeight*scale};
+    const ImVec2 topLeft=ImGui::GetCursorScreenPos();
+    const ImVec2 mouse=ImGui::GetMousePos();
+    const bool hovered=ImGui::IsMouseHoveringRect(topLeft,{topLeft.x+display.x,topLeft.y+display.y});
+    const bool click=hovered&&ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+    m_preview->SetDisplayScale(scale);
+    m_preview->Tick(ImGui::GetIO().DeltaTime,SDL_GetTicks(),hovered,
+        hovered?(mouse.x-topLeft.x)/scale:-1.0f,
+        hovered?(mouse.y-topLeft.y)/scale:-1.0f,click);
+    if (m_preview->Target()) ImGui::Image(reinterpret_cast<ImTextureID>(m_preview->Target()),display);
     ImGui::End();
 }
 

@@ -8,6 +8,7 @@
 #include "Engine/UI/Widgets.h"
 #include "Engine/Video/VideoPlayer.h"
 #include "Engine/Core/TypeRegistry.h"
+#include "Engine/VN/GameCatalog.h"
 
 #include <SDL3/SDL.h>
 
@@ -93,6 +94,11 @@ void RuntimeHost::SetProjectRoot(const std::string& root) {
                     }
         }
     }
+    if (const auto catalogText = m_vfs.ReadText("Content/Game.pxres")) {
+        vn::GameCatalog catalog;
+        if (catalog.Load(*catalogText, "Content/Game.pxres"))
+            m_session->VM().SetGameCatalog(catalog);
+    }
     m_session->SetRoutePresentationHandler([this](std::string_view route, std::string_view operation) {
         if (operation == "back") { if (!m_vnScript.empty()) { m_mode = Mode::Vn; m_hud.ShowHUD(DialogueUI()); } return; }
         const auto found = m_routeScenes.find(std::string(route));
@@ -177,6 +183,12 @@ Status RuntimeHost::SetUIAnimationParameter(const std::string_view parameter,con
 
 void RuntimeHost::LoadVn(const std::string& script) {
     m_vnScript=script;m_mode=Mode::Vn;m_session->StartScenario(script);m_hud.ShowHUD(DialogueUI());
+}
+bool RuntimeHost::LoadVnText(const std::string_view text,const std::string& sourcePath){
+    m_vnScript=sourcePath;m_mode=Mode::Vn;
+    const bool loaded=m_session->StartScenarioText(text,sourcePath);
+    if(loaded)m_hud.ShowHUD(DialogueUI());
+    return loaded;
 }
 void RuntimeHost::Reload(){if(m_mode==Mode::UIScene)LoadUI(m_uiPath);else LoadVn(m_vnScript);}
 

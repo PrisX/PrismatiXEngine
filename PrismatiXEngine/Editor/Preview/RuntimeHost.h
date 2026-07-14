@@ -10,6 +10,7 @@
 #include "Engine/Resources/TypedDocument.h"
 #include "Engine/Session/RuntimeSession.h"
 #include "Engine/Lua/LuaHost.h"
+#include "Engine/VN/GameCatalog.h"
 
 #include <memory>
 #include <string>
@@ -41,6 +42,8 @@ public:
     [[nodiscard]] ui::BehaviorRuntimeState UIBehaviorState() const { return m_uiScene.CaptureBehaviorState(); }
     [[nodiscard]] ui::UIAnimationRuntimeState UIAnimationState() const { return m_uiScene.CaptureAnimationState(); }
     void LoadVn(const std::string& script);
+    bool LoadVnText(std::string_view text, const std::string& sourcePath);
+    void SetGameCatalog(const vn::GameCatalog& catalog) { m_session->VM().SetGameCatalog(catalog); }
     void Reload();
     void SetDisplayScale(float scale, bool pixelExact = false);
     [[nodiscard]] std::optional<Vec2> ImageSize(const std::string& path);

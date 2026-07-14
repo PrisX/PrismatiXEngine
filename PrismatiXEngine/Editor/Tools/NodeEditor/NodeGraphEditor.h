@@ -32,8 +32,13 @@ public:
     using ResourceResolver = std::function<std::optional<ResourceRefValue>(const std::string&)>;
     using IdentityRegistrar =
         std::function<Status(const std::vector<std::filesystem::path>&)>;
+    struct FieldOption {
+        std::string value;
+        std::string label;
+        std::string detail;
+    };
     using FieldOptionsCallback =
-        std::function<std::vector<std::string>(std::string_view nodeType,
+        std::function<std::vector<FieldOption>(std::string_view nodeType,
                                                std::string_view parameterKey)>;
 
     NodeGraphEditor(GraphKind kind, LogSink log = {});
@@ -79,6 +84,9 @@ public:
     void ApplyAssetToSelection(const std::string& runtimePath);
     void CreateNodeForAsset(const std::string& runtimePath);
     void FrameSelection();
+    // Selects and frames the graph node represented by a compiled Scenario
+    // statement id. Dialogue line ids resolve back to their containing block.
+    bool FocusStatement(std::string_view statementId);
     // Re-imports the strict Scenario text projection.
     bool ImportScenarioText(const std::string& text);
 
@@ -99,6 +107,7 @@ public:
     [[nodiscard]] std::string Title() const;
     [[nodiscard]] std::filesystem::path DocumentPath() const;
     [[nodiscard]] bool Dirty() const { return m_dirty; }
+    [[nodiscard]] std::uint64_t Revision() const { return m_revision; }
     [[nodiscard]] std::vector<ExportArtifact> BuildArtifacts() const;
     [[nodiscard]] std::string Compile() const;
     [[nodiscard]] std::string CurrentRuntimePath() const;
@@ -238,7 +247,7 @@ private:
     void AlignSelection(bool horizontal);
     void RenderPinSummary(const Node& node) const;
     void RenderParameter(Parameter& parameter, bool compact, int nodeId = 0);
-    [[nodiscard]] const std::vector<std::string>& ContextOptions(
+    [[nodiscard]] const std::vector<FieldOption>& ContextOptions(
         std::string_view nodeType, std::string_view parameterKey) const;
     void InNodeOptionButton(int nodeId, Parameter& parameter, float width);
     void InNodeColorButton(const char* id, int nodeId, Parameter& parameter);
@@ -288,7 +297,8 @@ private:
     ResourceResolver m_resourceResolver;
     IdentityRegistrar m_identityRegistrar;
     FieldOptionsCallback m_fieldOptions;
-    mutable std::unordered_map<std::string, std::vector<std::string>> m_fieldOptionsCache;
+    mutable std::unordered_map<std::string, std::vector<FieldOption>> m_fieldOptionsCache;
+    mutable std::unordered_map<std::string, std::string> m_fieldOptionSearch;
     const ProjectContext* m_project = nullptr;
     ax::NodeEditor::EditorContext* m_context = nullptr;
     std::vector<NodeTemplate> m_library;
@@ -300,6 +310,7 @@ private:
     std::string m_groupRenameBuf;
     int m_nextId = 1;
     int m_selectedNodeId = 0;
+    int m_focusNodeId = 0;
     int m_selectedLinkId = 0;
     int m_contextNodeId = 0;
     int m_contextLinkId = 0;
@@ -346,6 +357,7 @@ private:
     std::function<void(int)> m_toggleBreakpoint;
     mutable std::unordered_map<int, int> m_nodeCommandLine;
     bool m_dirty = false;
+    std::uint64_t m_revision = 0;
     bool m_loaded = false;
     int m_navigateCountdown = 0;
     std::string m_search;

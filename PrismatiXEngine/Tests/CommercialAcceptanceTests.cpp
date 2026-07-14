@@ -19,6 +19,7 @@
 #include "Engine/UI/Styles/StyleResolver.h"
 #include "Engine/UI/Actions/ActionCatalog.h"
 #include "Engine/VN/Commands/CommandRegistry.h"
+#include "Engine/VN/GameCatalog.h"
 #include "Engine/VN/Expression/Expression.h"
 #include "Engine/VN/Runtime/Dialogue.h"
 #include "Engine/VN/Runtime/VariableStore.h"
@@ -285,6 +286,45 @@ void TestCommandSchemaAndScenarioRoundTrip() {
     }
     const auto program = px::vn::scenario::CompileScenario(scenario);
     Check(program.errors.empty(), "strict Scenario should compile directly to VM instructions");
+}
+
+void TestCharacterCatalogExpressions() {
+    px::resource::TypedDocument document;
+    document.kind = px::resource::DocumentKind::Resource;
+    document.id = px::Uuid::Random();
+    document.type = "GameCatalog";
+    px::resource::NodeRecord character;
+    character.id = px::Uuid::Random();
+    character.name = "Alice";
+    character.type = "Character";
+    character.properties["id"] = std::string("alice");
+    character.properties["name"] = std::string("愛麗絲");
+    character.properties["voiceDirectory"] = std::string("Content/Audio/Voice/Alice");
+    character.properties["defaultExpression"] = std::string("neutral");
+    px::resource::NodeRecord neutral;
+    neutral.id = px::Uuid::Random();
+    neutral.parent = character.id;
+    neutral.name = "Neutral";
+    neutral.type = "CharacterExpression";
+    neutral.properties["id"] = std::string("neutral");
+    neutral.properties["name"] = std::string("普通");
+    neutral.properties["image"] = px::ResourceRefValue{
+        px::Uuid::FromName("alice-neutral"), "Content/Images/Character/alice_neutral.png"};
+    document.nodes = {character, neutral};
+    const std::string encoded = px::resource::WriteTypedDocument(document);
+    px::vn::GameCatalog catalog;
+    Check(catalog.Load(encoded, "Game.pxres"),
+          "GameCatalog should load typed CharacterExpression children");
+    const auto image = catalog.ResolveCharacterImage("alice", {});
+    Check(image && image->lastKnownPath == "Content/Images/Character/alice_neutral.png",
+          "Character default expression should resolve to its ResourceRef");
+    Check(catalog.CharacterDisplayName("alice") == "愛麗絲",
+          "Character id should resolve to the author-facing display name");
+
+    document.nodes.front().properties["defaultExpression"] = std::string("missing");
+    px::vn::GameCatalog invalid;
+    Check(!invalid.Load(px::resource::WriteTypedDocument(document), "invalid.pxres"),
+          "GameCatalog must reject a missing default expression");
 }
 
 void TestTypedExpressions() {
@@ -764,6 +804,7 @@ int main() {
     TestDialogueEffects();
     TestSavedAssetIdentityRegistration();
     TestCommandSchemaAndScenarioRoundTrip();
+    TestCharacterCatalogExpressions();
     TestTypedExpressions();
     TestRouteStackAndModalState();
     TestLuaExtensionSandbox();

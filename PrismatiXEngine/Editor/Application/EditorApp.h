@@ -6,6 +6,7 @@
 #include "Editor/Assets/ImportService.h"
 #include "Editor/Tools/Flow/FlowMap.h"
 #include "Editor/Tools/NodeEditor/NodeGraphEditor.h"
+#include "Editor/Tools/Story/StoryLibrary.h"
 #include "Editor/Preview/RuntimeHost.h"
 #include "Editor/Tools/Lua/ScriptWorkspace.h"
 #include "Editor/Project/ProjectService.h"
@@ -104,7 +105,9 @@ private:
                           const std::string& toRuntimePath);
     void RenderConsole();
     void RenderPreview();
+    void RenderStoryPreview();
     void RenderNodeEditor();
+    void RenderStoryLibrary();
     void RenderBuild();
     void RenderAnimation();
     void RenderTheme();
@@ -160,6 +163,7 @@ private:
     int m_nodeHeaderW = 0;
     int m_nodeHeaderH = 0;
     UIDesigner m_designer;
+    StoryLibrary m_storyLibrary;
     std::string m_designerPath;
     std::unordered_map<std::string, DesignerDocumentSession> m_inactiveDesigners;
     std::filesystem::path m_uiFocusRequest;
@@ -183,6 +187,10 @@ private:
 
     bool m_flowStale = false;
     bool m_previewAnims = false;
+    std::string m_storyPreviewText;
+    std::string m_storyPreviewPath;
+    std::uint64_t m_storyPreviewCatalogRevision = ~0ull;
+    std::uint64_t m_storyPreviewGraphRevision = ~0ull;
     std::optional<animation::AnimationClip> m_timelineClip;
     std::string m_timelinePath;
     float m_timelineCursor = 0.0f;
@@ -262,7 +270,9 @@ private:
     bool m_showOpenDocuments = true;
     bool m_bottomDrawerExpanded = true;
     char m_paletteFilter[128] = { 0 };
-    std::vector<std::string> m_problems;
+    // Project-wide validation results retain their source location so the
+    // Problems panel can navigate to the exact Scenario node/property.
+    std::vector<diag::Diagnostic> m_problems;
 
     enum class Screen { Welcome, Workspace };
     Screen m_screen = Screen::Welcome;

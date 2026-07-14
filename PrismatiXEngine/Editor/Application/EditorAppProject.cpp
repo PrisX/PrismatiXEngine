@@ -193,6 +193,16 @@ void EditorApp::OpenProject(const std::filesystem::path& root) {
         m_assets.Scan(m_project.Context());
         const Status identityStatus = m_assetRegistry.Scan(root);
         if (!identityStatus) m_showAssetIdentity = true;
+        const Status storyLibraryStatus = m_storyLibrary.Open(
+            &m_project.Context(), &m_assets, m_textures.get(),
+            [this](const std::string& runtimePath) -> std::optional<ResourceRefValue> {
+                const auto* asset = m_assetRegistry.FindPath(m_project.Context().root / runtimePath);
+                if (!asset) asset = m_assetRegistry.FindPath(runtimePath);
+                if (!asset) return std::nullopt;
+                return ResourceRefValue{asset->id, std::filesystem::path(runtimePath).generic_string()};
+            });
+        if (!storyLibraryStatus)
+            for (const auto& diagnostic : storyLibraryStatus.Diagnostics()) diag::Emit(diagnostic);
         if (m_preview) {
             m_preview->SetProjectRoot(root.string());
             m_preview->LoadUI(m_project.Context().StartScenePath());
@@ -453,41 +463,79 @@ void EditorApp::ConfigureDoc(NodeGraphEditor& doc) {
         return ResourceRefValue{asset->id, std::filesystem::path(runtimePath).generic_string()};
     });
     doc.SetFieldOptionsCallback([this](std::string_view nodeType, std::string_view key) {
-        std::vector<std::string> options;
+        std::vector<NodeGraphEditor::FieldOption> options;
+        const std::string type(nodeType), field(key);
+        const auto add=[&](std::string value,std::string label={},std::string detail={}){
+            if(label.empty())label=value;options.push_back({std::move(value),std::move(label),std::move(detail)});
+        };
+        if (key == "target" && (type == "jump" || type == "call")) {
+            for (const auto& asset : m_assets.Assets())
+                if (asset.absolutePath.extension() == ".pxscenario")
+                    add(asset.runtimePath, asset.absolutePath.filename().string(),
+                        "切換至 Scenario：" + asset.runtimePath);
+            return options;
+        }
         if (key == "ui" || key == "route") {
-            for (const auto& route : m_project.Context().manifest.routes) options.push_back(route.id);
+            for (const auto& route : m_project.Context().manifest.routes) add(route.id,route.id,route.scene);
             return options;
         }
         if (key == "preset") {
-            for (const auto& clip : animation::OfficialPresets()) options.push_back(clip.name);
+            for (const auto& clip : animation::OfficialPresets()) add(clip.name);
             return options;
         }
-        if (key == "var" || key == "lhs" || key == "name" || key == "id" ||
-            key == "character" || key == "speaker") {
-            std::ifstream stream(m_project.Context().root / "Content/Game.pxres", std::ios::binary);
-            if (stream) {
-                std::ostringstream text; text << stream.rdbuf();
-                vn::GameCatalog catalog;
-                if (catalog.Load(text.str(), "Content/Game.pxres")) {
-                    if (key == "var" || key == "lhs")
-                        for (const auto& variable : catalog.Variables()) options.push_back(variable.name);
-                    else
-                        for (const auto& character : catalog.Characters())
-                            options.push_back(character.id.empty() ? character.name : character.id);
-                }
+        const auto& catalog=m_storyLibrary.Catalog();
+        if (key == "var" || key == "lhs" || (type=="variable"&&key=="name")) {
+            for (const auto& variable : catalog.Variables()) add(variable.name);
+            return options;
+        }
+        const bool characterField=key=="character"||key=="speaker"||
+            ((key=="id"||key=="target")&&(type=="character"||type=="char"||
+             type=="char_clear"||type=="char_move"||type=="move"||type=="animate_actor"||
+             type=="anim"||type=="tween"));
+        if(characterField){
+            for(const auto& character:catalog.Characters()){
+                const std::string id=character.id.empty()?character.name:character.id;
+                const std::string label=character.name.empty()?id:character.name;
+                add(key=="speaker"?label:id,label,id);
+            }
+            return options;
+        }
+        if(field.starts_with("expression:")){
+            const std::string characterId=field.substr(std::string("expression:").size());
+            if(const auto* character=catalog.FindCharacter(characterId)){
+                auto expressions=character->expressions;
+                std::stable_sort(expressions.begin(),expressions.end(),[&](const auto& a,const auto& b){return a.id==character->defaultExpression&&b.id!=character->defaultExpression;});
+                for(const auto& expression:expressions)
+                    add(expression.id,expression.name.empty()?expression.id:expression.name,
+                        expression.image.lastKnownPath);
+            }
+            return options;
+        }
+        if(key=="ease")for(const char* value:{"linear","inQuad","outQuad","inOutQuad","inCubic","outCubic","inOutCubic","inSine","outSine","inOutSine","inBack","outBack","inBounce","outBounce","smoothstep"})add(value);
+        if(key=="effect")for(const char* value:{"none","shake","pulse"})add(value);
+        if(key=="kind"&&type=="unlock")for(const char* value:{"gallery","cg","route"})add(value);
+        if(key=="id"&&type=="unlock")
+            for(const auto& item:catalog.Gallery())add(item.id,item.title.empty()?item.id:item.title,item.image);
+        if(!options.empty())return options;
+        const bool imageType=type=="background"||type=="bg"||type=="transition"||type=="character"||
+            type=="char"||type=="layer"||type=="cg";
+        const bool audioType=type=="bgm"||type=="se"||type=="voice"||type=="ambience"||key=="voice";
+        const bool videoType=type=="video"||type=="movie";
+        const bool animationType=type=="animation";
+        const bool genericAsset=type=="asset"&&key=="path";
+        if((imageType||audioType||videoType||animationType||genericAsset)&&
+           (key=="file"||key=="image"||key=="rule"||key=="path"||key=="clip"||key=="voice")){
+            for(const auto& asset:m_assets.Assets()){
+                const std::string extension=asset.absolutePath.extension().string();
+                if(imageType&&asset.type!="image")continue;
+                if(audioType&&asset.type!="audio")continue;
+                if(videoType&&extension!=".mp4"&&extension!=".webm"&&extension!=".mkv"&&extension!=".mov")continue;
+                if(animationType&&extension!=".pxanim")continue;
+                add(asset.runtimePath,asset.absolutePath.filename().string(),asset.runtimePath);
             }
         }
-        if (nodeType == "character" && key == "expression") {
-            for (const auto& asset : m_assets.Assets()) {
-                if (asset.runtimePath.find("Content/Images/Character/") != 0) continue;
-                const std::string stem = asset.absolutePath.stem().string();
-                const auto separator = stem.find_last_of("_-");
-                if (separator != std::string::npos && separator + 1 < stem.size())
-                    options.push_back(stem.substr(separator + 1));
-            }
-        }
-        std::sort(options.begin(), options.end());
-        options.erase(std::unique(options.begin(), options.end()), options.end());
+        std::sort(options.begin(), options.end(),[](const auto& a,const auto& b){return a.label==b.label?a.value<b.value:a.label<b.label;});
+        options.erase(std::unique(options.begin(), options.end(),[](const auto& a,const auto& b){return a.value==b.value;}), options.end());
         return options;
     });
     doc.SetCustomCommands(m_customCommands);
@@ -779,6 +827,7 @@ void EditorApp::CreateFlowChapter(ImVec2 canvasPosition) {
 
 
 void EditorApp::SaveAll() {
+    if (m_storyLibrary.Dirty()) m_storyLibrary.Save();
     if (m_designer.Dirty()) m_designer.Save();
     for(auto& [_,session]:m_inactiveDesigners)if(session.editor&&session.editor->Dirty())session.editor->Save();
     m_scripts.SaveAll();
@@ -895,38 +944,108 @@ void EditorApp::RefreshProblems() {
     }
     const std::filesystem::path root = m_project.Context().root;
     const ProjectManifest& m = m_project.Context().manifest;
+    constexpr std::size_t kMaxProblems = 200;
+
+    const auto add = [&](diag::Severity severity, std::string code, std::string message,
+                         std::string path = {}, std::string nodeId = {},
+                         std::string property = {}) {
+        if (m_problems.size() >= kMaxProblems) return;
+        diag::Diagnostic diagnostic{.severity = severity,
+                                    .code = std::move(code),
+                                    .category = "Editor.ProjectValidation",
+                                    .message = std::move(message)};
+        diagnostic.source.path = std::move(path);
+        diagnostic.source.nodeId = std::move(nodeId);
+        diagnostic.source.property = std::move(property);
+        m_problems.push_back(std::move(diagnostic));
+    };
 
     const auto missing = [&](const std::filesystem::path& rel, const std::string& what) {
         if (!std::filesystem::exists(root / rel)) {
-            m_problems.push_back("Missing " + what + ": " + rel.generic_string());
+            add(diag::Severity::Error, "PXEDPROJECT5301",
+                "Missing " + what + ": " + rel.generic_string(), rel.generic_string());
         }
     };
-    if(m_project.Context().StartScenePath().empty())m_problems.push_back("Missing start route: "+m.startRoute);
+    if (m_project.Context().StartScenePath().empty())
+        add(diag::Severity::Error, "PXEDPROJECT5302", "Missing start route: " + m.startRoute,
+            "project.pxproject", {}, "startRoute");
     for(const auto& route:m.routes)missing(route.scene,"route '"+route.id+"'");
     if (!std::filesystem::exists(root / m.startScript)) {
-        m_problems.push_back("Missing start script: " + m.startScript);
+        add(diag::Severity::Error, "PXEDPROJECT5303", "Missing start script: " + m.startScript,
+            m.startScript, {}, "startScript");
     }
 
     const std::filesystem::path scriptDir = root / "Content" / "Scenario";
     std::error_code ec;
-    constexpr std::size_t kMaxProblems = 200;
     for (std::filesystem::directory_iterator it(scriptDir, ec), end; it != end && !ec;
          it.increment(ec)) {
         if (m_problems.size() >= kMaxProblems) break;
         if (!it->is_regular_file() || it->path().extension() != ".pxscenario") continue;
-        const std::string scriptName = it->path().filename().string();
+        const std::string runtimePath = it->path().lexically_relative(root).generic_string();
         std::ifstream in(it->path());
         if (!in) continue;
         std::stringstream ss;
         ss << in.rdbuf();
         auto parsed = px::vn::scenario::ParseScenario(ss.str(), it->path().generic_string());
-        if (!parsed) { for (const auto& diagnostic : parsed.Diagnostics()) m_problems.push_back(diagnostic.code+"  "+diagnostic.message); continue; }
+        if (!parsed) {
+            for (auto diagnostic : parsed.Diagnostics()) {
+                if (m_problems.size() >= kMaxProblems) break;
+                diagnostic.source.path = runtimePath;
+                m_problems.push_back(std::move(diagnostic));
+            }
+            continue;
+        }
         const auto report = px::vn::scenario::ValidateScenario(parsed.Value(), px::vn::CommandRegistry::Builtins(), it->path().generic_string());
-        for (const auto& diagnostic : report.diagnostics) if (m_problems.size() < kMaxProblems)
-            m_problems.push_back(scriptName+":"+diagnostic.source.nodeId+"  "+diagnostic.message);
-        for (const auto& node : parsed.Value().nodes) for (const auto& [name, value] : node.parameters)
-            if (const auto* ref = value.TryGet<ResourceRefValue>(); ref && !ref->lastKnownPath.empty() && !std::filesystem::exists(root/ref->lastKnownPath) && m_problems.size()<kMaxProblems)
-                m_problems.push_back(scriptName+":"+node.id.ToString()+"  missing resource "+name+": "+ref->lastKnownPath);
+        for (auto diagnostic : report.diagnostics) {
+            if (m_problems.size() >= kMaxProblems) break;
+            diagnostic.source.path = runtimePath;
+            m_problems.push_back(std::move(diagnostic));
+        }
+        const auto& catalog = m_storyLibrary.Catalog();
+        const auto parameterText = [](const vn::scenario::ScenarioNode& node,
+                                      const std::string& key) -> std::string {
+            const auto found = node.parameters.find(key);
+            if (found == node.parameters.end()) return {};
+            const auto* text = found->second.TryGet<std::string>();
+            return text ? *text : std::string{};
+        };
+        for (const auto& node : parsed.Value().nodes) {
+            for (const auto& [name, value] : node.parameters)
+                if (const auto* ref = value.TryGet<ResourceRefValue>();
+                    ref && !ref->lastKnownPath.empty() &&
+                    !std::filesystem::exists(root / ref->lastKnownPath) &&
+                    m_problems.size() < kMaxProblems)
+                    add(diag::Severity::Error, "PXEDSTORY5304",
+                        "Missing resource " + name + ": " + ref->lastKnownPath, runtimePath,
+                        node.id.ToString(), name);
+
+            if (catalog.Characters().empty()) continue;  // Legacy name-based projects remain valid.
+            const bool characterCommand = node.command == "char";
+            const bool dialogueCommand = node.command == "say" || node.command == "text";
+            if (!characterCommand && !dialogueCommand) continue;
+            const std::string parameter = characterCommand ? "id" : "char";
+            const std::string characterId = parameterText(node, parameter);
+            if (characterId.empty()) continue;
+            const auto* character = catalog.FindCharacter(characterId);
+            if (!character) {
+                add(diag::Severity::Error, "PXEDSTORY5305",
+                    "Unknown character: " + characterId, runtimePath, node.id.ToString(),
+                    parameter);
+                continue;
+            }
+            if (!characterCommand || character->expressions.empty()) continue;
+            const std::string expressionId = parameterText(node, "expression");
+            const auto file = node.parameters.find("file");
+            const auto* overrideRef = file == node.parameters.end()
+                ? nullptr : file->second.TryGet<ResourceRefValue>();
+            const bool hasOverride = overrideRef && !overrideRef->lastKnownPath.empty();
+            const std::string selectedExpression = expressionId.empty()
+                ? character->defaultExpression : expressionId;
+            if (!hasOverride && !catalog.FindExpression(*character, selectedExpression))
+                add(diag::Severity::Error, "PXEDSTORY5306",
+                    "Unknown expression '" + selectedExpression + "' for character " + characterId,
+                    runtimePath, node.id.ToString(), "expression");
+        }
     }
 }
 

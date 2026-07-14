@@ -155,6 +155,16 @@ bool RuntimeSession::StartScenario(const std::string& scriptPath, const bool res
     return m_vm.LoadScript(scriptPath);
 }
 
+bool RuntimeSession::StartScenarioText(const std::string_view text,
+                                       const std::string& scriptPath,
+                                       const bool resetVariables) {
+    m_stage.ClearAll();
+    m_dialogue.Clear();
+    m_backlog.Clear();
+    if (resetVariables) m_variables.Reset(false);
+    return m_vm.LoadScenarioText(text, scriptPath);
+}
+
 void RuntimeSession::Update(const std::uint64_t nowMs, const float deltaSeconds) {
     m_vm.Update(nowMs, deltaSeconds);
     m_timeline.Update(deltaSeconds);

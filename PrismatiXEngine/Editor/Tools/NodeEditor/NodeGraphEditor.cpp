@@ -219,8 +219,8 @@ void NodeGraphEditor::BuildLibrary() {
         m_library = {
             { "scenario_start", "Start", "Timeline", "Entry for this Scenario document.", ImColor(80, 184, 255), {}, { out("Begin") }, { paramString("title", "Scenario Title", "第一章") } },
             { "chapter", "Chapter", "Timeline", "Emits a chapter heading.", ImColor(80, 184, 255), { in("In") }, { out("Out") }, { paramString("title", "Title", "第一章") } },
-            { "background", "Background", "Stage", "Sets the current background image.", ImColor(67, 186, 255), { in("In"), in("Image", PinType::Asset, "file") }, { out("Out") }, { paramString("file", "Image", "sky.png", ParamType::Asset) } },
-            { "bgm", "Play BGM", "Audio", "Starts background music.", ImColor(255, 126, 95), { in("In"), in("BGM", PinType::Asset, "file") }, { out("Out") }, { paramString("file", "Audio", "bgm1.mp3", ParamType::Asset) } },
+            { "background", "Background", "Stage", "Sets the current background image.", ImColor(67, 186, 255), { in("In"), in("Image", PinType::Asset, "file") }, { out("Out") }, { paramString("file", "Image", "", ParamType::Asset) } },
+            { "bgm", "Play BGM", "Audio", "Starts background music.", ImColor(255, 126, 95), { in("In"), in("BGM", PinType::Asset, "file") }, { out("Out") }, { paramString("file", "Audio", "", ParamType::Asset) } },
             { "character",
               "Character",
               "Stage",
@@ -228,7 +228,7 @@ void NodeGraphEditor::BuildLibrary() {
               ImColor(255, 194, 97),
               { in("In") },
               { out("Out") },
-              { paramString("id", "Character", "girl"), paramString("file", "Sprite", "", ParamType::Asset), paramString("expression", "Expression", "d"), paramString("pos", "Position", "2"),
+              { paramString("id", "Character", ""), paramString("file", "Sprite Override", "", ParamType::Asset), paramString("expression", "Expression", ""), paramOption("pos", "Position", "2", {"1","2","3"}),
                 paramFloat("x", "Offset X", 0.0f, -1920.0f, 1920.0f), paramFloat("y", "Offset Y", 0.0f, -1080.0f, 1080.0f),
                 paramFloat("scale", "Scale", 1.0f, 0.1f, 4.0f) } },
             { "dialogue",
@@ -238,7 +238,7 @@ void NodeGraphEditor::BuildLibrary() {
               ImColor(160, 132, 255),
               { in("In"), in("Text", PinType::String, "text") },
               { out("Out") },
-              { paramString("speaker", "Speaker", "伊莉雅"),
+              { paramString("speaker", "Speaker Override", ""),
                 paramString("character", "Character", ""),
                 paramColor("color", "Color", ImVec4(1, 1, 1, 1)),
                 paramColor("outline", "Outline", ImVec4(0, 0, 0, 1)),
@@ -248,7 +248,7 @@ void NodeGraphEditor::BuildLibrary() {
                 paramString("text", "Text", "新的對話", ParamType::String, true) } },
             { "choice", "Choice", "Dialogue", "Adds one visible option. Chain Next to another Choice and connect Choice to its result.", ImColor(103, 219, 177), { in("In") }, { out("Next"), out("Choice") }, { paramString("text", "Text", "選項") } },
             { "label", "Label", "Flow", "Defines a jump target.", ImColor(103, 219, 177), { in("In") }, { out("Out") }, { paramString("name", "Label", "end") } },
-            { "jump", "Jump", "Flow", "Jumps to a label or another script.", ImColor(103, 219, 177), { in("In"), in("Target", PinType::String, "target") }, { out("Out") }, { paramString("target", "Target", "*end") } },
+            { "jump", "Jump", "Flow", "Jumps to a label or another script.", ImColor(103, 219, 177), { in("In"), in("Target", PinType::String, "target") }, { out("Out") }, { paramString("target", "Target", "") } },
             { "variable",
               "Variable",
               "Logic",
@@ -270,8 +270,8 @@ void NodeGraphEditor::BuildLibrary() {
               ImColor(91, 209, 244),
               { in("In"), in("Image", PinType::Asset, "file"), in("Rule", PinType::Asset, "rule") },
               { out("Out") },
-              { paramString("file", "New Background", "sky.png", ParamType::Asset),
-                paramString("rule", "Rule Image", "wipe.png", ParamType::Asset),
+              { paramString("file", "New Background", "", ParamType::Asset),
+                paramString("rule", "Rule Image", "", ParamType::Asset),
                 paramInt("time", "Duration (ms)", 600, 50, 5000),
                 paramInt("vague", "Band (vague)", 64, 1, 255) } },
             { "animate_actor",
@@ -281,7 +281,7 @@ void NodeGraphEditor::BuildLibrary() {
               ImColor(91, 209, 244),
               { in("In") },
               { out("Out") },
-              { paramString("target", "Target", "girl"),
+              { paramString("target", "Target", ""),
                 paramFloat("x", "Offset X", 0.0f, -1920.0f, 1920.0f),
                 paramFloat("y", "Offset Y", 0.0f, -1080.0f, 1080.0f),
                 paramFloat("scale", "Scale", 1.0f, 0.1f, 4.0f),
@@ -297,7 +297,7 @@ void NodeGraphEditor::BuildLibrary() {
             { "spawn_ui", "UI Route", "UI", "Pushes, replaces, or opens a typed UI route.", ImColor(88, 230, 184), { in("In") }, { out("Out") }, { paramOption("ui", "Route", "title", {}), paramOption("operation", "Operation", "replace", {"push", "replace", "modal", "back"}) } },
             { "stop_bgm", "Stop BGM", "Audio", "Stops background music.", ImColor(255, 126, 95), { in("In") }, { out("Out") }, {} },
             { "string", "String", "Literals", "Reusable text value.", ImColor(160, 132, 255), {}, { out("Value", PinType::String, "value") }, { paramString("value", "Value", "text") } },
-            { "asset", "Asset", "Literals", "Reusable asset reference.", ImColor(67, 186, 255), {}, { out("Path", PinType::Asset, "path") }, { paramString("path", "Path", "sky.png", ParamType::Asset) } },
+            { "asset", "Asset", "Literals", "Reusable asset reference.", ImColor(67, 186, 255), {}, { out("Path", PinType::Asset, "path") }, { paramString("path", "Path", "", ParamType::Asset) } },
             { "bool", "Bool", "Literals", "Reusable boolean.", ImColor(255, 104, 104), {}, { out("Value", PinType::Bool, "value") }, { paramBool("value", "Value", true) } },
         };
     }
@@ -1239,6 +1239,7 @@ void NodeGraphEditor::UpdateNodePositions() {
 void NodeGraphEditor::MarkDirty() {
     m_undoGestureDirty = true;
     m_dirty = true;
+    ++m_revision;
 }
 
 void NodeGraphEditor::RelocateIfOpen(const std::string& oldRuntimePath,
@@ -1252,11 +1253,11 @@ void NodeGraphEditor::RelocateIfOpen(const std::string& oldRuntimePath,
 }
 
 void NodeGraphEditor::Undo() {
-    if(!m_editHistory.CanUndo())return;const Status status=m_editHistory.Undo();if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);else m_dirty=m_editHistory.Dirty();
+    if(!m_editHistory.CanUndo())return;const Status status=m_editHistory.Undo();if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);else{m_dirty=m_editHistory.Dirty();++m_revision;}
 }
 
 void NodeGraphEditor::Redo() {
-    if(!m_editHistory.CanRedo())return;const Status status=m_editHistory.Redo();if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);else m_dirty=m_editHistory.Dirty();
+    if(!m_editHistory.CanRedo())return;const Status status=m_editHistory.Redo();if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);else{m_dirty=m_editHistory.Dirty();++m_revision;}
 }
 
 void NodeGraphEditor::RestoreGraph(const Json& snapshot) {
@@ -1400,6 +1401,14 @@ void NodeGraphEditor::RenderGraph() {
     for (const Link& link : m_links) {
         const Pin* start = FindPin(link.startPinId);
         ed::Link(ed::LinkId(link.id), ed::PinId(link.startPinId), ed::PinId(link.endPinId), start ? PinColor(start->type) : ImColor(255, 255, 255), 2.0f);
+    }
+
+    if (m_focusNodeId != 0) {
+        ed::ClearSelection();
+        ed::SelectNode(ed::NodeId(m_focusNodeId));
+        m_selectedNodeId = m_focusNodeId;
+        ed::NavigateToSelection(true, 0.25f);
+        m_focusNodeId = 0;
     }
 
     HandleInteractions();
@@ -1706,18 +1715,13 @@ void NodeGraphEditor::RenderDialogueTextEditor(Node& node) {
     ImGui::SetNextItemWidth(112.0f);
     const auto& characters = ContextOptions("dialogue", "character");
     if (!characters.empty()) {
-        if (ImGui::BeginCombo("##character", character->stringValue.empty()
-            ? "Select..." : character->stringValue.c_str())) {
-            for (const auto& option : characters) {
-                const bool selected = option == character->stringValue;
-                if (ImGui::Selectable(option.c_str(), selected)) {
-                    character->stringValue = option;
-                    if (speaker->stringValue.empty()) speaker->stringValue = option;
-                    changed = true;
-                }
-                if (selected) ImGui::SetItemDefaultFocus();
-            }
-            ImGui::EndCombo();
+        const auto selected = std::find_if(characters.begin(), characters.end(),
+            [&](const FieldOption& option) { return option.value == character->stringValue; });
+        const std::string label = selected == characters.end()
+            ? (character->stringValue.empty() ? "Select..." : character->stringValue)
+            : selected->label;
+        if (ImGui::Button((label + "  v##character").c_str(), {112.0f, 0.0f})) {
+            m_inNodePopup = InNodePopup{node.id, "character", false, true};
         }
     } else {
         changed |= ImGui::InputText("##character", &character->stringValue);
@@ -2128,9 +2132,48 @@ void NodeGraphEditor::RenderParameter(Parameter& parameter, bool compact, int no
         ImGui::SetNextItemWidth(-1.0f);
     }
     bool changed = false;
-    const Node* owner = FindNode(nodeId);
-    const auto& contextOptions = ContextOptions(owner ? owner->type : std::string_view{},
-                                                parameter.key);
+    Node* owner = FindNode(nodeId);
+    std::string optionKey = parameter.key;
+    if (owner && parameter.key == "expression") {
+        if (const auto* character = FindParameter(*owner, "id"))
+            optionKey += ":" + character->stringValue;
+    }
+    const auto& contextOptions = ContextOptions(owner ? owner->type : std::string_view{}, optionKey);
+    const std::string searchKey = std::to_string(nodeId) + "/" + parameter.key;
+    const auto optionLabel = [&]() -> std::string {
+        const auto found = std::find_if(contextOptions.begin(), contextOptions.end(),
+            [&](const auto& option) { return option.value == parameter.stringValue; });
+        return found == contextOptions.end() ? parameter.stringValue : found->label;
+    };
+    const auto renderContextCombo = [&](const std::string& preview) -> bool {
+        bool edited = false;
+        if (ImGui::BeginCombo(controlId.c_str(), preview.c_str())) {
+            auto& search = m_fieldOptionSearch[searchKey];
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::InputTextWithHint("##filter", "搜尋…", &search);
+            const std::string needle = Lower(search);
+            for (const auto& option : contextOptions) {
+                if (!needle.empty() && Lower(option.label + " " + option.value + " " + option.detail).find(needle) == std::string::npos) continue;
+                const bool selected = option.value == parameter.stringValue;
+                if (ImGui::Selectable((option.label + "##" + option.value).c_str(), selected)) {
+                    parameter.stringValue = option.value; edited = true;
+                }
+                if (!option.detail.empty() && ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", option.detail.c_str());
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::Separator();
+            if (ImGui::Selectable("清除選擇")) { parameter.stringValue.clear(); edited = true; }
+            ImGui::EndCombo();
+        }
+        return edited;
+    };
+    const auto renderContextButton = [&](const std::string& preview) {
+        const std::string label = (preview.empty() ? "選擇…" : preview) + "  v";
+        if (ImGui::Button((label + "##context-picker").c_str(),
+                          {compact ? kCompactParameterWidth : -1.0f, 0.0f}))
+            m_inNodePopup = InNodePopup{nodeId, parameter.key, false, true};
+    };
     switch (parameter.type) {
         case ParamType::Bool:
             changed = ImGui::Checkbox(controlId.c_str(), &parameter.boolValue);
@@ -2150,7 +2193,20 @@ void NodeGraphEditor::RenderParameter(Parameter& parameter, bool compact, int no
             }
             break;
         case ParamType::Option:
-            if (compact) {
+            if (parameter.key == "pos") {
+                static const std::array<std::pair<const char*,const char*>,3> positions{{
+                    {"左","1"},{"中","2"},{"右","3"}}};
+                for(std::size_t index=0;index<positions.size();++index){
+                    if(index)ImGui::SameLine(0.0f,3.0f);
+                    const bool selected=parameter.stringValue==positions[index].second;
+                    if(selected)ImGui::PushStyleColor(ImGuiCol_Button,ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                    if(ImGui::Button(positions[index].first,{compact?46.0f:58.0f,0.0f})){
+                        parameter.stringValue=positions[index].second;changed=true;
+                    }
+                    if(selected)ImGui::PopStyleColor();
+                }
+            }
+            else if (compact) {
                 InNodeOptionButton(nodeId, parameter, kCompactParameterWidth);
             }
             else if (ImGui::BeginCombo(controlId.c_str(), parameter.stringValue.c_str())) {
@@ -2169,21 +2225,18 @@ void NodeGraphEditor::RenderParameter(Parameter& parameter, bool compact, int no
         case ParamType::Asset:
             if (parameter.type == ParamType::String && !parameter.multiline &&
                 !contextOptions.empty()) {
-                if (ImGui::BeginCombo(controlId.c_str(), parameter.stringValue.empty()
-                    ? "Select..." : parameter.stringValue.c_str())) {
-                    for (const auto& option : contextOptions) {
-                        const bool selected = option == parameter.stringValue;
-                        if (ImGui::Selectable(option.c_str(), selected)) {
-                            parameter.stringValue = option;
-                            changed = true;
-                        }
-                        if (selected) ImGui::SetItemDefaultFocus();
-                    }
-                    ImGui::EndCombo();
-                }
+                const std::string label = optionLabel();
+                if (compact) renderContextButton(label);
+                else changed = renderContextCombo(label.empty() ? "選擇…" : label);
             }
             else if (parameter.multiline && parameter.type == ParamType::String) {
                 changed = ImGui::InputTextMultiline(controlId.c_str(), &parameter.stringValue, ImVec2(compact ? kCompactParameterWidth : -1.0f, compact ? 96.0f : 156.0f));
+            }
+            else if (parameter.type == ParamType::Asset && !contextOptions.empty()) {
+                std::string label = optionLabel();
+                if (label.empty()) label = "選擇素材…";
+                if (compact) renderContextButton(label);
+                else changed = renderContextCombo(label);
             }
             else {
                 changed = ImGui::InputText(controlId.c_str(), &parameter.stringValue,
@@ -2221,6 +2274,13 @@ void NodeGraphEditor::RenderParameter(Parameter& parameter, bool compact, int no
                 }
             }
             break;
+    }
+    if (changed && owner && (owner->type == "character" || owner->type == "char") &&
+        parameter.key == "id") {
+        if (auto* expression = FindParameter(*owner, "expression")) {
+            const auto& expressions = ContextOptions(owner->type, "expression:" + parameter.stringValue);
+            expression->stringValue = expressions.empty() ? std::string{} : expressions.front().value;
+        }
     }
     if (changed) MarkDirty();
     ImGui::PopID();
@@ -2264,9 +2324,43 @@ void NodeGraphEditor::RenderInNodePopups() {
             ImGui::CloseCurrentPopup();
         } else {
             ImGui::TextDisabled("Voice for line %d", m_inNodePopup.lineIndex + 1);
+            const auto& voiceOptions = ContextOptions(node->type, "voice");
+            const auto selectedOption = std::find_if(voiceOptions.begin(), voiceOptions.end(),
+                [&](const FieldOption& option) { return option.value == voices[idx]; });
+            const std::string preview = selectedOption != voiceOptions.end()
+                ? selectedOption->label : (voices[idx].empty() ? "選擇語音…" : voices[idx]);
             ImGui::SetNextItemWidth(280.0f);
-            bool edited = ImGui::InputTextWithHint("##voiceline", "(audio file or path)",
-                                                   &voices[idx]);
+            bool edited = false;
+            if (!voiceOptions.empty() && ImGui::BeginCombo("##voice-picker", preview.c_str())) {
+                const std::string searchKey = std::to_string(node->id) + "/voices/" +
+                                              std::to_string(idx);
+                auto& search = m_fieldOptionSearch[searchKey];
+                ImGui::SetNextItemWidth(-1.0f);
+                ImGui::InputTextWithHint("##voice-search", "搜尋語音…", &search);
+                const std::string needle = Lower(search);
+                for (const auto& option : voiceOptions) {
+                    if (!needle.empty() &&
+                        Lower(option.label + " " + option.value + " " + option.detail)
+                                .find(needle) == std::string::npos)
+                        continue;
+                    if (ImGui::Selectable((option.label + "##" + option.value).c_str(),
+                                          option.value == voices[idx])) {
+                        voices[idx] = option.value;
+                        edited = true;
+                    }
+                    if (!option.detail.empty() && ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", option.detail.c_str());
+                }
+                ImGui::Separator();
+                if (ImGui::Selectable("清除語音")) {
+                    voices[idx].clear();
+                    edited = true;
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SetNextItemWidth(280.0f);
+            edited |= ImGui::InputTextWithHint("##voiceline", "或輸入檔名／路徑",
+                                               &voices[idx]);
             if (ImGui::BeginDragDropTarget()) {
                 if (const ImGuiPayload* payload =
                         ImGui::AcceptDragDropPayload(kResourcePayload)) {
@@ -2304,13 +2398,57 @@ void NodeGraphEditor::RenderInNodePopups() {
         }
     }
     else {
-        for (const std::string& option : parameter->options) {
-            const bool selected = option == parameter->stringValue;
-            if (ImGui::Selectable(option.c_str(), selected)) {
-                parameter->stringValue = option;
-                MarkDirty();
+        std::string optionKey = parameter->key;
+        if (parameter->key == "expression") {
+            if (const auto* character = FindParameter(*node, "id"))
+                optionKey += ":" + character->stringValue;
+        }
+        const auto& contextOptions = ContextOptions(node->type, optionKey);
+        if (!contextOptions.empty()) {
+            const std::string searchKey = std::to_string(node->id) + "/" + parameter->key;
+            auto& search = m_fieldOptionSearch[searchKey];
+            ImGui::SetNextItemWidth(280.0f);
+            ImGui::InputTextWithHint("##context-search", "搜尋…", &search);
+            const std::string needle = Lower(search);
+            for (const auto& option : contextOptions) {
+                if (!needle.empty() &&
+                    Lower(option.label + " " + option.value + " " + option.detail)
+                            .find(needle) == std::string::npos)
+                    continue;
+                const bool selected = option.value == parameter->stringValue;
+                if (ImGui::Selectable((option.label + "##" + option.value).c_str(), selected)) {
+                    parameter->stringValue = option.value;
+                    if ((node->type == "character" || node->type == "char") &&
+                        parameter->key == "id") {
+                        if (auto* expression = FindParameter(*node, "expression")) {
+                            const auto& expressions = ContextOptions(
+                                node->type, "expression:" + parameter->stringValue);
+                            expression->stringValue = expressions.empty()
+                                ? std::string{} : expressions.front().value;
+                        }
+                    }
+                    MarkDirty();
+                    ImGui::CloseCurrentPopup();
+                }
+                if (!option.detail.empty() && ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", option.detail.c_str());
+                if (selected) ImGui::SetItemDefaultFocus();
             }
-            if (selected) ImGui::SetItemDefaultFocus();
+            ImGui::Separator();
+            if (ImGui::Selectable("清除選擇")) {
+                parameter->stringValue.clear();
+                MarkDirty();
+                ImGui::CloseCurrentPopup();
+            }
+        } else {
+            for (const std::string& option : parameter->options) {
+                const bool selected = option == parameter->stringValue;
+                if (ImGui::Selectable(option.c_str(), selected)) {
+                    parameter->stringValue = option;
+                    MarkDirty();
+                }
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
         }
     }
     ImGui::EndPopup();
@@ -2403,20 +2541,45 @@ void NodeGraphEditor::RenderMiniMap() const {
     draw->AddText(origin + ImVec2(7.0f, 5.0f), IM_COL32(210, 220, 238, 210), "MINIMAP");
 }
 
-const std::vector<std::string>& NodeGraphEditor::ContextOptions(
+const std::vector<NodeGraphEditor::FieldOption>& NodeGraphEditor::ContextOptions(
     const std::string_view nodeType, const std::string_view parameterKey) const {
-    static const std::vector<std::string> empty;
+    static const std::vector<FieldOption> empty;
     if (!m_fieldOptions || nodeType.empty()) return empty;
     const std::string cacheKey = std::string(nodeType) + "\n" + std::string(parameterKey);
-    if (const auto found = m_fieldOptionsCache.find(cacheKey); found != m_fieldOptionsCache.end())
-        return found->second;
-    return m_fieldOptionsCache.emplace(cacheKey, m_fieldOptions(nodeType, parameterKey)).first->second;
+    m_fieldOptionsCache[cacheKey] = m_fieldOptions(nodeType, parameterKey);
+    if ((nodeType == "jump" || nodeType == "call") && parameterKey == "target") {
+        auto& options = m_fieldOptionsCache[cacheKey];
+        for (const auto& node : m_nodes) {
+            if (node.type == "scenario_start") continue;
+            const auto* definition = FindTemplate(node.type);
+            std::string label = definition ? definition->title : node.type;
+            if (const auto* title = FindParameter(node, "title"); title && !title->stringValue.empty())
+                label += " · " + title->stringValue;
+            options.push_back({"@" + node.stableId.ToString(), std::move(label),
+                               "本 Scenario 的穩定節點目標"});
+        }
+    }
+    return m_fieldOptionsCache[cacheKey];
 }
 
 void NodeGraphEditor::FrameSelection() {
     EnsureContext();
     ed::SetCurrentEditor(m_context);
     ed::NavigateToContent();
+}
+
+bool NodeGraphEditor::FocusStatement(const std::string_view statementId) {
+    const auto parsed = Uuid::Parse(statementId);
+    if (!parsed) return false;
+    const auto found = std::find_if(m_nodes.begin(), m_nodes.end(), [&](const Node& node) {
+        return node.stableId == *parsed ||
+               std::find(node.dialogueLineIds.begin(), node.dialogueLineIds.end(), *parsed) !=
+                   node.dialogueLineIds.end();
+    });
+    if (found == m_nodes.end()) return false;
+    m_focusNodeId = found->id;
+    m_selectedNodeId = found->id;
+    return true;
 }
 
 std::vector<ExportArtifact> NodeGraphEditor::BuildArtifacts() const {auto layoutPath=fs::path(CurrentRuntimePath());layoutPath.replace_extension(".pxlayout");vn::scenario::ScenarioLayoutDocument layout;layout.scenario=m_editDocumentId;for(const auto& node:m_nodes)if(node.type!="scenario_start")layout.nodes.push_back({node.type=="dialogue"&&!node.dialogueLineIds.empty()?node.dialogueLineIds.front():node.stableId,{node.position.x,node.position.y},{},{}});return {ExportArtifact{Title(),fs::path(CurrentRuntimePath()),Compile()},ExportArtifact{"Scenario Layout",layoutPath,vn::scenario::WriteScenarioLayout(layout)}};}

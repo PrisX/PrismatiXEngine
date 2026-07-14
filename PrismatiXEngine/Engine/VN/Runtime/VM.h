@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Core/Types.h"
+#include "Engine/VN/GameCatalog.h"
 #include "Engine/VN/Runtime/Program.h"
 
 #include <cstdint>
@@ -105,6 +106,17 @@ public:
     void SetVoiceDirs(std::unordered_map<std::string, std::string> dirs) {
         m_voiceDirs = std::move(dirs);
     }
+    // Character ids and expression images are resolved centrally from the
+    // typed GameCatalog. Explicit command file= still takes precedence.
+    void SetGameCatalog(const GameCatalog& catalog) {
+        m_catalog = catalog;
+        m_voiceDirs.clear();
+        for (const auto& character : m_catalog.Characters()) {
+            if (character.voiceDirectory.empty()) continue;
+            if (!character.id.empty()) m_voiceDirs[character.id] = character.voiceDirectory;
+            if (!character.name.empty()) m_voiceDirs[character.name] = character.voiceDirectory;
+        }
+    }
     [[nodiscard]] bool CurrentLineSeen() const { return m_currentLineSeen; }
     // Video: [video file="op.mpg" skippable="true"] suspends the VM and hands the
     // resolved path to the host. The host plays it and calls NotifyVideoDone().
@@ -119,6 +131,7 @@ public:
     }
 
     bool LoadScript(const std::string& scriptPath);
+    bool LoadScenarioText(std::string_view text, const std::string& scriptPath);
     void Update(std::uint64_t nowMs, float dt);
     void OnAdvance();
     void SelectChoice(int index);
@@ -207,6 +220,7 @@ private:
 
     std::string m_speaker;
     std::string m_pendingVoice;  // set by a [text voice=...] header, consumed by the next say
+    GameCatalog m_catalog;
     std::unordered_map<std::string, std::string> m_voiceDirs;
     Color m_textColor{ 245, 248, 255, 255 };
     Color m_outlineColor{ 0, 0, 0, 255 };

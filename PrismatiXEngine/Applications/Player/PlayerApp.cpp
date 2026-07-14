@@ -260,13 +260,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
             if (sc != SDL_SCANCODE_UNKNOWN) m_screenTriggers[sc] = binding.argument;
         }
     }
-    std::unordered_map<std::string, std::string> voiceDirs;
-    for (const auto& ch : m_catalog.Characters()) {
-        if (ch.voiceDirectory.empty()) continue;
-        if (!ch.id.empty()) voiceDirs[ch.id] = ch.voiceDirectory;
-        if (!ch.name.empty()) voiceDirs[ch.name] = ch.voiceDirectory;
-    }
-    m_session->VM().SetVoiceDirs(std::move(voiceDirs));
+    m_session->VM().SetGameCatalog(m_catalog);
 
     m_script = argc > 1 ? argv[1] : m_boot.startScript;
     return true;

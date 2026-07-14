@@ -54,6 +54,8 @@ public:
     explicit RuntimeSession(Services services);
 
     bool StartScenario(const std::string& scriptPath, bool resetVariables = true);
+    bool StartScenarioText(std::string_view text, const std::string& scriptPath,
+                           bool resetVariables = true);
     void Update(std::uint64_t nowMs, float deltaSeconds);
     void Advance();
     void SelectChoice(int index);

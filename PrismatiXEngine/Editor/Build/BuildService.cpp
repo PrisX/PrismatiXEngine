@@ -8,6 +8,7 @@
 #include "Engine/Animation/Timeline.h"
 #include "Engine/Core/TypeRegistry.h"
 #include "Engine/VN/Scenario/ScenarioDocument.h"
+#include "Engine/VN/GameCatalog.h"
 #include "Engine/UI/UIResourceResolver.h"
 #include "Engine/UI/UISceneLoader.h"
 #include "Engine/UI/UITypeRegistry.h"
@@ -115,6 +116,10 @@ bool BuildService::Build(const BuildOptions& options) const {
             } else if (extension == ".pxscene" || extension == ".pxcomponent" || extension == ".pxres" || extension == ".pxtheme") {
                 const auto parsed = resource::ParseTypedDocument(text, entry.sourcePath.generic_string());
                 if (!parsed) return fail("PXBUILD9625", entry.sourcePath, "Build 已阻擋：typed asset 無效", diag::Describe(parsed.Diagnostics().front()));
+                if(parsed.Value().type=="GameCatalog"){
+                    vn::GameCatalog catalog;const Status validCatalog=catalog.Load(text,entry.sourcePath.generic_string());
+                    if(!validCatalog)return fail("PXBUILD9636",entry.sourcePath,"Build 已阻擋：GameCatalog 無效",diag::Describe(validCatalog.Diagnostics().front()));
+                }
                 if(extension==".pxtheme"){const auto theme=ui::LoadUITheme(parsed.Value());if(!theme)return fail("PXBUILD9628",entry.sourcePath,"Build 已阻擋：UITheme token 或 style 無效",diag::Describe(theme.Diagnostics().front()));}
                 typedAssets.emplace_back(entry.sourcePath,parsed.Value());
             } else if (extension == ".pxextension") {
