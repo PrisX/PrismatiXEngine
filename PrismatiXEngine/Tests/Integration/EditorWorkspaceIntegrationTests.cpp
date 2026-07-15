@@ -3,6 +3,7 @@
 #include <iostream>
 
 #include "Editor/Workspace/DocumentRegistry.h"
+#include "Tests/TestSupport/TestHarness.h"
 
 namespace {
 
@@ -13,17 +14,8 @@ void Check(bool condition, const char* message) {
     std::cerr << "FAIL: " << message << '\n';
 }
 
-struct TempDirectory {
-    std::filesystem::path path = std::filesystem::temp_directory_path() / ("prismatix-workspace-tests-" + px::Uuid::Random().ToString());
-    TempDirectory() { std::filesystem::create_directories(path); }
-    ~TempDirectory() {
-        std::error_code error;
-        std::filesystem::remove_all(path, error);
-    }
-};
-
 void TestUIDocumentActivationAndViewportSession() {
-    TempDirectory temp;
+    px::test::TempDirectory temp{"editor-workspace"};
     const auto title = temp.path / "Title.pxscene";
     const auto hud = temp.path / "HUD.pxscene";
     std::ofstream(title) << "@pxscene 4 " << px::Uuid::Random().ToString() << " UIScene\n";

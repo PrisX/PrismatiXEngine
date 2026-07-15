@@ -1,15 +1,14 @@
 #include "Editor/Preview/RuntimeHost.h"
-#include "Editor/Tools/UIDesigner/Preview/PreviewChangePlanner.h"
+#include "Editor/Tools/UIDesigner/Preview/UIPreviewDocumentApplier.h"
 
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/Resources/TypedDocument.h"
 #include "Engine/Support/Logger.h"
 #include "Engine/UI/UISceneLoader.h"
-#include "Engine/UI/Styles/StyleSerialization.h"
+#include "Engine/UI/Startup/SplashSequencePlayer.h"
 #include "Engine/UI/UITypeRegistry.h"
 #include "Engine/UI/Widgets.h"
 #include "Engine/Video/VideoPlayer.h"
-#include "Engine/Core/TypeRegistry.h"
 #include "Engine/VN/GameCatalog.h"
 
 #include <SDL3/SDL.h>
@@ -18,9 +17,6 @@
 #include <cmath>
 
 namespace px::editor {
-namespace {
-Variant PreviewDefault(VariantType type){switch(type){case VariantType::Bool:return Variant(false);case VariantType::Integer:return Variant(std::int64_t{0});case VariantType::Number:return Variant(0.0);case VariantType::String:return Variant(std::string("Preview"));case VariantType::Vec2:return Variant(Vec2{});case VariantType::Rect:return Variant(Rect{});case VariantType::Color:return Variant(Color{});default:return Variant{};}}
-}
 
 RuntimeHost::RuntimeHost(SDL_Renderer* renderer) : m_editorRenderer(renderer) {
     m_assets = std::make_unique<graphics::AssetCache>(renderer, m_vfs);
@@ -32,6 +28,19 @@ RuntimeHost::RuntimeHost(SDL_Renderer* renderer) : m_editorRenderer(renderer) {
     m_luaServices.stage=&m_session->Stage();m_luaServices.variables=&m_session->Variables();
     m_luaServices.routes=&m_session->Routes();m_luaServices.timeline=&m_session->Timeline();
     m_lua=std::make_unique<lua::LuaHost>(m_luaServices);
+    m_previewApplier = std::make_unique<UIPreviewDocumentApplier>(
+        m_uiScene, [this](const ResourceRefValue& reference)
+                       -> Result<resource::TypedDocument> {
+            const auto text = m_vfs.ReadText(reference.lastKnownPath);
+            if (!text)
+                return Result<resource::TypedDocument>::Failure(diag::Diagnostic{
+                    .severity = diag::Severity::Error,
+                    .code = "PXEDPREV4002",
+                    .category = "Editor.Preview",
+                    .message = "Referenced UI resource not found: " +
+                               reference.lastKnownPath});
+            return resource::ParseTypedDocument(*text, reference.lastKnownPath);
+        });
     (void)m_uiScene.Actions().RegisterProvider(m_lua->CreateActionProvider());
     (void)m_hud.Actions().RegisterProvider(m_lua->CreateActionProvider());
     const auto readVariable=[this](const std::string_view name)->std::optional<Variant>{
@@ -139,113 +148,17 @@ void RuntimeHost::LoadUI(const std::string& path) {
 
 void RuntimeHost::LoadUIDocument(const resource::TypedDocument& document,
                                  const std::string& sourcePath) {
-    m_uiPath = sourcePath; m_mode = Mode::UIScene; m_uiBindings.clear();
-    ui::RegisterBuiltinUITypes();m_previewViewModel=ui::ObservableViewModel{};
-    for(const auto& node:document.nodes){const auto bindings=node.properties.find("bindings");if(bindings==node.properties.end())continue;const auto* definitions=bindings->second.AsObject();if(!definitions)continue;for(const auto& [targetName,value]:*definitions){const auto* definition=value.AsObject();if(!definition)continue;const auto pathValue=definition->find("path");const auto* bindingPath=pathValue!=definition->end()?pathValue->second.TryGet<std::string>():nullptr;if(!bindingPath||m_previewViewModel.Describe(*bindingPath))continue;const auto* property=TypeRegistry::Global().FindProperty(node.type,targetName);if(!property)continue;VariantType sourceType=property->type;if(const auto format=definition->find("formatter");format!=definition->end())if(const auto* name=format->second.TryGet<std::string>())if(const auto* formatter=m_uiScene.Formatters().Find(*name))sourceType=formatter->input;m_previewViewModel.Define(*bindingPath,PreviewDefault(sourceType),true);}}
-    const ui::UIDocumentLoader loader=[this](const ResourceRefValue& reference)->Result<resource::TypedDocument>{
-        const auto text=m_vfs.ReadText(reference.lastKnownPath);
-        if(!text)return Result<resource::TypedDocument>::Failure(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXEDPREV4002",.category="Editor.Preview",.message="Referenced UI resource not found: "+reference.lastKnownPath});
-        return resource::ParseTypedDocument(*text,reference.lastKnownPath);
-    };
-    auto loaded=ui::InstantiateUIScene(document,&m_previewViewModel,m_uiScene.Formatters(),loader); if(!loaded)return;
-    auto animations=std::move(loaded.Value().animations);auto theme=std::move(loaded.Value().theme);auto triggers=std::move(loaded.Value().triggers);auto interaction=std::move(loaded.Value().interactionGraph);m_uiBindings=std::move(loaded.Value().bindings); const Status status=m_uiScene.SetRoot(std::move(loaded.Value().root));
-    if(!status)for(const auto& d:status.Diagnostics())diag::Emit(d);
-    if(theme)m_uiScene.SetTheme(std::move(*theme));
-    if(animations){const Status animationStatus=m_uiScene.SetAnimations(std::move(*animations),true);if(!animationStatus)for(const auto& d:animationStatus.Diagnostics())diag::Emit(d);}
-    {const Status triggerStatus=m_uiScene.ConfigureTriggers(std::move(triggers),std::move(interaction),sourcePath);if(!triggerStatus)for(const auto& d:triggerStatus.Diagnostics())diag::Emit(d);}
-    m_lastUIDocument=document;
+    m_uiPath = sourcePath;
+    m_mode = Mode::UIScene;
+    (void)m_previewApplier->Load(document, sourcePath);
 }
 
 bool RuntimeHost::ApplyUIDocumentChange(const resource::TypedDocument& document,
                                         const std::string& sourcePath,
                                         const DocumentChangeSet& changes) {
-    const auto rebuild = [&] {
-        LoadUIDocument(document, sourcePath);
-        return false;
-    };
-    const PreviewUpdate planned = PlanPreviewUpdate(changes, document.id);
-    if (!m_lastUIDocument || !m_uiScene.Root() ||
-        HasPreviewUpdate(planned, PreviewUpdate::RebuildScene) ||
-        m_lastUIDocument->id != document.id ||
-        m_lastUIDocument->nodes.size() != document.nodes.size())
-        return rebuild();
-    if (HasPreviewUpdate(planned, PreviewUpdate::ReconnectBindings)) return rebuild();
-
-    if (changes.properties.empty()) return rebuild();
-    for (const auto& changed : changes.properties) {
-        if (changed.node == document.id) {
-            if (changed.property == "animations") {
-                const auto found = document.properties.find("animations");
-                ui::UIAnimationLibrary library;
-                if (found != document.properties.end()) {
-                    auto parsed = ui::ParseUIAnimationLibrary(found->second, sourcePath);
-                    if (!parsed) return rebuild();
-                    library = parsed.TakeValue();
-                }
-                const Status status = m_uiScene.SetAnimations(std::move(library), true);
-                if (!status) return rebuild();
-                continue;
-            }
-            if (changed.property == "styleSystem" || changed.property == "theme") {
-                ui::Theme theme;
-                const auto found = document.properties.find("styleSystem");
-                if (found != document.properties.end()) {
-                    auto parsed = ui::ParseStyleTheme(found->second);
-                    if (!parsed || !theme.SetStyleData(parsed.TakeValue())) return rebuild();
-                }
-                m_uiScene.SetTheme(std::move(theme));
-                continue;
-            }
-            // Behavior graphs, component APIs, and other document-level contracts
-            // require their associated runtime services to be reconnected atomically.
-            return rebuild();
-        }
-
-        const auto after = std::find_if(document.nodes.begin(), document.nodes.end(),
-                                        [&](const auto& node) { return node.id == changed.node; });
-        const auto before = std::find_if(m_lastUIDocument->nodes.begin(),
-                                         m_lastUIDocument->nodes.end(),
-                                         [&](const auto& node) { return node.id == changed.node; });
-        if (after == document.nodes.end() || before == m_lastUIDocument->nodes.end() ||
-            after->parent != before->parent || after->type != before->type)
-            return rebuild();
-        auto* object = dynamic_cast<ui::Control*>(m_uiScene.Root()->Find(changed.node));
-        if (!object) return rebuild();
-
-        if (changed.property == "$name") {
-            object->SetName(after->name);
-            continue;
-        }
-        if (changed.property == "bindings" || changed.property == "triggers" ||
-            changed.property == "componentProperties" ||
-            changed.property == "componentEvents" || changed.property == "componentSlot" ||
-            changed.property == "overrides")
-            return rebuild();
-        if (changed.property == "styleBinding") {
-            const auto value = after->properties.find("styleBinding");
-            if (value == after->properties.end()) object->SetStyleBinding({});
-            else {
-                auto parsed = ui::ParseStyleBinding(value->second);
-                if (!parsed) return rebuild();
-                object->SetStyleBinding(parsed.TakeValue());
-            }
-            object->InvalidateLayout();
-            continue;
-        }
-
-        const auto* property = TypeRegistry::Global().FindProperty(after->type,
-                                                                   changed.property);
-        if (!property || !property->set) return rebuild();
-        const auto value = after->properties.find(changed.property);
-        const Variant& applied = value == after->properties.end() ? property->defaultValue
-                                                                   : value->second;
-        if (!property->set(*object, applied)) return rebuild();
-    }
-
     m_uiPath = sourcePath;
     m_mode = Mode::UIScene;
-    m_lastUIDocument = document;
-    return true;
+    return m_previewApplier->Apply(document, sourcePath, changes);
 }
 
 Status RuntimeHost::PreviewUIAnimation(const Uuid& clip,float time,bool playing){
@@ -258,6 +171,41 @@ Status RuntimeHost::SetUIAnimationParameter(const std::string_view parameter,con
     return m_uiScene.SetAnimationParameter(parameter,value);
 }
 
+Status RuntimeHost::PreviewSplashSequence(
+    std::vector<ui::startup::SplashScreenEntry> entries,
+    const bool reducedMotion) {
+    m_splash = std::make_unique<ui::startup::SplashSequencePlayer>(
+        ui::startup::SplashSequencePlayer::Services{
+            .loadScene = [this](const ResourceRefValue& reference)
+                             -> Result<resource::TypedDocument> {
+                const auto text = m_vfs.ReadText(reference.lastKnownPath);
+                if (!text)
+                    return Result<resource::TypedDocument>::Failure(diag::Diagnostic{
+                        .severity = diag::Severity::Error,
+                        .code = "PXEDSPLASH5001",
+                        .category = "Editor.Splash",
+                        .message = "Splash preview scene is missing: " +
+                                   reference.lastKnownPath});
+                return resource::ParseTypedDocument(*text, reference.lastKnownPath);
+            },
+            .playAudio = [this](const ResourceRefValue& reference) {
+                if (!m_vfs.Exists(reference.lastKnownPath))
+                    return Status::Fail(diag::Diagnostic{
+                        .severity = diag::Severity::Warning,
+                        .code = "PXEDSPLASH5002",
+                        .category = "Editor.Splash",
+                        .message = "Splash preview audio is missing: " +
+                                   reference.lastKnownPath});
+                m_audio->PlaySE(reference.lastKnownPath);
+                return Status::Ok();
+            },
+            .diagnostics = [](const diag::Diagnostic& diagnostic) {
+                diag::Emit(diagnostic);
+            }});
+    m_mode = Mode::Splash;
+    return m_splash->Start(std::move(entries), reducedMotion);
+}
+
 void RuntimeHost::LoadVn(const std::string& script) {
     m_vnScript=script;m_mode=Mode::Vn;m_session->StartScenario(script);m_hud.ShowHUD(DialogueUI());
 }
@@ -267,7 +215,7 @@ bool RuntimeHost::LoadVnText(const std::string_view text,const std::string& sour
     if(loaded)m_hud.ShowHUD(DialogueUI());
     return loaded;
 }
-void RuntimeHost::Reload(){if(m_mode==Mode::UIScene)LoadUI(m_uiPath);else LoadVn(m_vnScript);}
+void RuntimeHost::Reload(){if(m_mode==Mode::UIScene)LoadUI(m_uiPath);else if(m_mode==Mode::Vn)LoadVn(m_vnScript);else if(m_splash)(void)m_splash->Start(m_splash->Entries());}
 
 ui::DialoguePresentation RuntimeHost::DialogueUI() const {
     const auto& dialogue=m_session->Dialogue().State();ui::DialoguePresentation view;view.speaker=dialogue.speaker;view.text=dialogue.displayText;view.chapterTitle=m_session->VM().Chapter();view.musicTitle=m_session->VM().CurrentBgm();view.choices=m_choiceTexts;view.effect=dialogue.effect;view.effectProgress=dialogue.effectProgress;return view;
@@ -277,9 +225,10 @@ void RuntimeHost::Tick(float dt,std::uint64_t nowMs,bool hovered,float x,float y
     EnsureTarget();if(!m_target)return;m_assets->BeginFrame();m_audio->Update();m_input.InjectFrame(hovered?x:-1000,hovered?y:-1000,hovered&&click);
     SDL_Texture* previous=SDL_GetRenderTarget(m_editorRenderer);SDL_SetRenderTarget(m_editorRenderer,m_target);SDL_SetRenderLogicalPresentation(m_editorRenderer,0,0,SDL_LOGICAL_PRESENTATION_DISABLED);SDL_SetRenderScale(m_editorRenderer,1,1);
     SDL_SetRenderDrawColor(m_editorRenderer,12,14,20,255);SDL_RenderClear(m_editorRenderer);
-    m_renderer->SetLogicalSize(m_width,m_height,false);SDL_SetRenderLogicalPresentation(m_editorRenderer,0,0,SDL_LOGICAL_PRESENTATION_DISABLED);SDL_SetRenderScale(m_editorRenderer,static_cast<float>(m_targetDensity),static_cast<float>(m_targetDensity));m_renderer->SetPreviewContext(m_displayScale,m_mode==Mode::UIScene&&!m_pixelExactPreview);
-    if(m_lua){const bool pending=m_lua->HasPendingCommand();m_lua->Update(dt);if(pending&&!m_lua->HasPendingCommand())m_session->VM().NotifyExternalDone();m_lua->Emit("frame.update",{{"delta",std::to_string(dt)}});}
-    if(m_mode==Mode::UIScene){m_session->Timeline().Update(dt);(void)m_uiScene.Update(m_input,m_width,m_height,dt);m_uiScene.Render(*m_renderer);}else{
+    m_renderer->SetLogicalSize(m_width,m_height,false);SDL_SetRenderLogicalPresentation(m_editorRenderer,0,0,SDL_LOGICAL_PRESENTATION_DISABLED);SDL_SetRenderScale(m_editorRenderer,static_cast<float>(m_targetDensity),static_cast<float>(m_targetDensity));m_renderer->SetPreviewContext(m_displayScale,(m_mode==Mode::UIScene||m_mode==Mode::Splash)&&!m_pixelExactPreview);
+    if(m_mode!=Mode::Splash&&m_lua){const bool pending=m_lua->HasPendingCommand();m_lua->Update(dt);if(pending&&!m_lua->HasPendingCommand())m_session->VM().NotifyExternalDone();m_lua->Emit("frame.update",{{"delta",std::to_string(dt)}});}
+    if(m_mode==Mode::Splash&&m_splash){(void)m_splash->Context().Update(m_input,m_width,m_height,dt);m_splash->Update(dt,hovered&&click);m_splash->Context().Render(*m_renderer);}
+    else if(m_mode==Mode::UIScene){m_session->Timeline().Update(dt);(void)m_uiScene.Update(m_input,m_width,m_height,dt);m_uiScene.Render(*m_renderer);}else{
         auto& vm=m_session->VM();m_choiceTexts.clear();if(vm.State()==vn::VMState::WaitingChoice)for(const auto& c:vm.Choices())m_choiceTexts.push_back(c.text);
         m_hud.RefreshHUD(DialogueUI());const bool consumed=m_hud.Update(m_input,m_width,m_height,dt);
         if(hovered&&click&&!consumed&&vm.State()!=vn::VMState::WaitingChoice)m_session->Advance();

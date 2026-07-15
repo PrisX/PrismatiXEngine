@@ -104,7 +104,10 @@ include(FetchContent)
 FetchContent_Declare(
     sol2
     GIT_REPOSITORY https://github.com/ThePhD/sol2.git
-    GIT_TAG        develop
+    # Exact revision already exercised by the Windows/Linux/macOS build API.
+    # Do not replace this with a mutable branch such as develop.
+    GIT_TAG        c1f95a773c6f8f4fde8ca3efe872e7286afe4444
+    GIT_SHALLOW    FALSE
 )
 FetchContent_MakeAvailable(sol2)
 find_package(Lua 5.4 REQUIRED)

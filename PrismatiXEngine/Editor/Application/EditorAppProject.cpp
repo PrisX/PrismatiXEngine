@@ -858,6 +858,7 @@ void EditorApp::RunBuild() {
     opt.title = m.name;
     opt.startRoute = m.startRoute;
     opt.routes = m.routes;
+    opt.splashes = m.splashes;
     opt.startScript = m.startScript;
     opt.key = m.encryptKey;
     opt.encrypt = m.encrypt;

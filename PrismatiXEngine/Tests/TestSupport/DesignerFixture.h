@@ -4,7 +4,6 @@
 #include "Editor/Tools/UIDesigner/UIDesignerSession.h"
 #include "Tests/TestSupport/TestHarness.h"
 
-#include <atomic>
 #include <filesystem>
 #include <string>
 
@@ -12,14 +11,15 @@ namespace px::test {
 
 class DesignerFixture {
 public:
-    explicit DesignerFixture(Suite& suite) : m_suite(suite) {
+    explicit DesignerFixture(Suite& suite)
+        : directory("designer-fixture"), path(directory.path / "document.pxscene"),
+          m_suite(suite) {
         const auto instance = ++s_counter;
-        path = std::filesystem::temp_directory_path() /
-               ("prismatix-designer-fixture-" + ProcessSuffix() + '-' +
-                std::to_string(instance) + ".pxscene");
-        m_suite.Expect(static_cast<bool>(session.New(path, 800, 600)),
-                       "fixture creates a current UI document");
+        m_suite.Require(static_cast<bool>(session.New(path, 800, 600)),
+                        "fixture creates a current UI document");
         root = session.DocumentView().Root();
+        m_suite.Require(session.Document() != nullptr && !root.Empty(),
+                        "fixture owns an indexed root document");
         parent = Uuid::FromName("PrismatiX.Test.Parent." + std::to_string(instance));
         child = Uuid::FromName("PrismatiX.Test.Child." + std::to_string(instance));
         sibling = Uuid::FromName("PrismatiX.Test.Sibling." + std::to_string(instance));
@@ -31,15 +31,13 @@ public:
                          {{"visibility", std::string("Visible")}}});
         nodes.push_back({sibling, root, "Sibling", "Panel",
                          {{"visibility", std::string("Visible")}}});
-        m_suite.Expect(static_cast<bool>(session.DocumentView().Rebuild(*session.Document())),
-                       "fixture tree is indexed");
+        m_suite.Require(static_cast<bool>(session.DocumentView().Rebuild(*session.Document())),
+                        "fixture tree is indexed");
         ResetLayout();
     }
 
     ~DesignerFixture() {
         session.Close();
-        std::error_code error;
-        std::filesystem::remove(path, error);
     }
 
     void ResetLayout() {
@@ -71,6 +69,7 @@ public:
         return roots == 1;
     }
 
+    TempDirectory directory;
     std::filesystem::path path;
     editor::UIDesignerSession session;
     Uuid root;

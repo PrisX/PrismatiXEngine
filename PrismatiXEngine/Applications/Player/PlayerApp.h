@@ -7,6 +7,7 @@
 #include "Engine/Runtime.h"
 #include "Engine/Session/RuntimeSession.h"
 #include "Engine/UI/GalgameUI.h"
+#include "Engine/UI/Startup/SplashSequencePlayer.h"
 #include "Engine/VN/GameCatalog.h"
 #include "Engine/Video/VideoPlayer.h"
 #include "Engine/Accessibility/SpeechService.h"
@@ -27,7 +28,7 @@ public:
     int Run(int argc, char* argv[]);
 
 private:
-    enum class AppState { Title, Game };
+    enum class AppState { BootSplash, Title, Game };
 
     // Boot configuration shared by typed dev projects and packaged builds.
     struct Boot {
@@ -35,6 +36,7 @@ private:
         std::string startScript = "Content/Scenario/start.pxscenario";
         std::string startRoute = "title";
         std::unordered_map<std::string,std::string> routeScenes;
+        std::vector<ui::startup::SplashScreenEntry> splashes;
         std::string saveSecret;  // per-project secret for save encryption
         bool packaged = false;
         bool valid = false;
@@ -44,6 +46,8 @@ private:
     bool Init(int argc, char* argv[]);
     void MainLoop();
     void Shutdown();
+    void FinishBootPresentation();
+    void SplashFrame(float dt);
 
     void StartGame();
     bool LoadSlot(int slot);
@@ -87,11 +91,12 @@ private:
     std::unordered_map<std::string, std::string> m_langTable;
 
     ui::GalgameUI m_ui;
+    std::unique_ptr<ui::startup::SplashSequencePlayer> m_splash;
     std::vector<std::string> m_choiceTexts;
     vn::GameCatalog m_catalog;
     std::unordered_map<int, std::string> m_screenTriggers;
 
-    AppState m_appState = AppState::Title;
+    AppState m_appState = AppState::BootSplash;
     std::string m_script;
 
     bool m_autoMode = false;

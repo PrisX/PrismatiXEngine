@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Engine/UI/Startup/SplashTypes.h"
+
 #include <filesystem>
 #include <functional>
 #include <nlohmann/json.hpp>
@@ -22,6 +24,7 @@ struct ProjectManifest {
     std::string startScript = "Content/Scenario/start.pxscenario";
     std::string theme = "PrismatiX Dark";
     std::string uiThemePath = "Content/UI/PrismatiX.pxtheme";
+    std::vector<ui::startup::SplashScreenEntry> splashes;
     std::vector<std::string> assetRoots{ "Content" };
     bool encrypt = true;
     std::string encryptKey = "prismatix";

@@ -4,6 +4,7 @@
 
 #include "Editor/Assets/ImportService.h"
 #include "Engine/Core/Uuid.h"
+#include "Tests/TestSupport/TestHarness.h"
 
 namespace {
 
@@ -14,17 +15,8 @@ void Check(const bool condition, const char* message) {
     std::cerr << "FAIL: " << message << '\n';
 }
 
-struct TempDirectory {
-    std::filesystem::path path = std::filesystem::temp_directory_path() / ("prismatix-import-tests-" + px::Uuid::Random().ToString());
-    TempDirectory() { std::filesystem::create_directories(path); }
-    ~TempDirectory() {
-        std::error_code error;
-        std::filesystem::remove_all(path, error);
-    }
-};
-
 void TestBulkImportAndIncrementalRegistry() {
-    TempDirectory temp;
+    px::test::TempDirectory temp{"asset-import-bulk"};
     const auto project = temp.path / "Project";
     const auto sources = temp.path / std::filesystem::path(std::u8string(u8"來源素材"));
     std::filesystem::create_directories(project / "Content" / "Images");
@@ -54,7 +46,7 @@ void TestBulkImportAndIncrementalRegistry() {
 }
 
 void TestInterruptedCommitRecovery() {
-    TempDirectory temp;
+    px::test::TempDirectory temp{"asset-import-recovery"};
     const auto project = temp.path / "Project";
     const auto target = project / "Content" / "Images" / "hero.txt";
     const auto transaction = project / ".prismatix" / "import-staging" / "interrupted";

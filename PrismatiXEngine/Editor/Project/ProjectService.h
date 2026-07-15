@@ -21,6 +21,7 @@ public:
     std::vector<std::string> EnsureEssentials(const std::filesystem::path& fontSource = {});
 
 private:
+    bool ConfigureDefaultSplash();
     void Log(const std::string& msg) const {
         if (m_log) m_log(msg);
     }

@@ -16,6 +16,7 @@ struct BuildOptions {
     std::string title = "PrismatiX Player";
     std::string startRoute = "title";
     std::vector<ProjectManifest::Route> routes;
+    std::vector<ui::startup::SplashScreenEntry> splashes;
     std::string startScript = "Content/Scenario/start.pxscenario";
     std::string key = "prismatix";
     bool encrypt = true;

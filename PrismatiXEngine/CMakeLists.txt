@@ -61,6 +61,7 @@ set(PRISMATIX_UI_DESIGNER_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/DesignerUiState.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Preview/PreviewFixture.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Preview/PreviewChangePlanner.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Preview/UIPreviewDocumentApplier.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/PropertyEditorRegistry.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/UIDesignerSession.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/UISceneDocument.cpp
@@ -92,6 +93,7 @@ if(PRISMATIX_EDITOR_SOURCES)
     add_custom_target(PrismatiXPrepareEditorAssets
         COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets
         COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/HUD
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/Branding
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Fonts/NotoSansTC-Bold.ttf
                 $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/UIFont.ttf
@@ -104,6 +106,12 @@ if(PRISMATIX_EDITOR_SOURCES)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Editor/HUD/notice.png
                 $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/HUD/notice.png
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/PrismatiXEngine_Logo.png
+                $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/Branding/PrismatiXEngine_Logo.png
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/logo.wav
+                $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/Branding/logo.wav
         COMMENT "Preparing versioned PrismatiX Editor assets"
         VERBATIM
     )
@@ -120,15 +128,30 @@ if(BUILD_TESTING)
         set_tests_properties(${test_name} PROPERTIES LABELS "${labels}")
     endfunction()
 
-    add_executable(PrismatiXRuntimeSubsystemIntegrationTests
-                   Tests/Integration/RuntimeSubsystemIntegrationTests.cpp)
-    target_link_libraries(PrismatiXRuntimeSubsystemIntegrationTests
-                          PRIVATE PrismatiXRuntime)
-    prismatix_configure_target(PrismatiXRuntimeSubsystemIntegrationTests)
-    add_test(NAME PrismatiX.Integration.Runtime.Subsystems
-             COMMAND PrismatiXRuntimeSubsystemIntegrationTests)
-    set_tests_properties(PrismatiX.Integration.Runtime.Subsystems PROPERTIES
-                         LABELS "integration;runtime")
+    prismatix_add_simple_test(
+        PrismatiXSaveLoadIntegrationTests
+        Tests/Integration/SaveLoadIntegrationTests.cpp
+        PrismatiX.Integration.Runtime.SaveLoad "integration;runtime;save" PrismatiXRuntime)
+    prismatix_add_simple_test(
+        PrismatiXDialogueScenarioIntegrationTests
+        Tests/Integration/DialogueScenarioIntegrationTests.cpp
+        PrismatiX.Integration.Runtime.DialogueScenario
+        "integration;runtime;dialogue;scenario" PrismatiXRuntime)
+    prismatix_add_simple_test(
+        PrismatiXBehaviorIntegrationTests
+        Tests/Integration/BehaviorIntegrationTests.cpp
+        PrismatiX.Integration.Runtime.Behavior "integration;runtime;behavior"
+        PrismatiXRuntime)
+    prismatix_add_simple_test(
+        PrismatiXAnimationIntegrationTests
+        Tests/Integration/AnimationIntegrationTests.cpp
+        PrismatiX.Integration.Runtime.Animation "integration;runtime;animation"
+        PrismatiXRuntime)
+    prismatix_add_simple_test(
+        PrismatiXRuntimeResourceIntegrationTests
+        Tests/Integration/RuntimeResourceIntegrationTests.cpp
+        PrismatiX.Integration.Runtime.Resources "integration;runtime;resource"
+        PrismatiXRuntime)
 
     add_executable(PrismatiXUIDesignerIntegrationTests
                    Tests/Integration/UIDesignerIntegrationTests.cpp)
@@ -203,10 +226,22 @@ if(BUILD_TESTING)
         PrismatiXAnimationContractTests Tests/Contract/AnimationContractTests.cpp
         PrismatiX.Contract.UI.Animation "contract;runtime" PrismatiXRuntime)
     prismatix_add_simple_test(
+        PrismatiXSplashContractTests Tests/Contract/SplashContractTests.cpp
+        PrismatiX.Contract.Runtime.Splash "contract;runtime;splash" PrismatiXRuntime)
+    prismatix_add_simple_test(
+        PrismatiXSplashSequencePlayerTests
+        Tests/Unit/Runtime/SplashSequencePlayerTests.cpp
+        PrismatiX.Unit.Runtime.Splash "unit;runtime;splash" PrismatiXRuntime)
+    prismatix_add_simple_test(
         PrismatiXUIPreviewIntegrationTests
         Tests/Integration/UIPreviewIntegrationTests.cpp
         PrismatiX.Integration.UI.Preview "integration;designer;runtime"
         PrismatiXUIDesignerCore)
+    prismatix_add_simple_test(
+        PrismatiXPlayerBootSplashIntegrationTests
+        Tests/Integration/PlayerBootSplashIntegrationTests.cpp
+        PrismatiX.Integration.Player.BootSplash "integration;runtime;splash"
+        PrismatiXRuntime)
 
     add_executable(PrismatiXEditorWorkspaceIntegrationTests
                    Tests/Integration/EditorWorkspaceIntegrationTests.cpp
@@ -240,6 +275,13 @@ if(BUILD_TESTING)
                      -DROOT=${CMAKE_CURRENT_SOURCE_DIR}
                      -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/ArchitectureGate.cmake)
     set_tests_properties(PrismatiX.Architecture.Gates PROPERTIES LABELS "architecture")
+    add_test(NAME PrismatiX.Architecture.NegativeProbe
+             COMMAND ${CMAKE_COMMAND}
+                     -DROOT=${CMAKE_CURRENT_SOURCE_DIR}
+                     -DGATE=${CMAKE_CURRENT_SOURCE_DIR}/Tests/ArchitectureGate.cmake
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/ArchitectureGateNegativeProbe.cmake)
+    set_tests_properties(PrismatiX.Architecture.NegativeProbe PROPERTIES
+                         LABELS "architecture")
 
     add_executable(PrismatiXImportTests Tests/Integration/AssetImportIntegrationTests.cpp
                    Editor/Assets/ImportService.cpp)
@@ -266,6 +308,8 @@ if(BUILD_TESTING)
     add_custom_target(PrismatiXPrepareBuildE2EAssets
         COMMAND ${CMAKE_COMMAND} -E make_directory
                 $<TARGET_FILE_DIR:PrismatiXBuildE2ETests>/EditorAssets/HUD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+                $<TARGET_FILE_DIR:PrismatiXBuildE2ETests>/EditorAssets/Branding
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Fonts/NotoSansTC-Bold.ttf
                 $<TARGET_FILE_DIR:PrismatiXBuildE2ETests>/EditorAssets/UIFont.ttf
@@ -275,6 +319,12 @@ if(BUILD_TESTING)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Editor/HUD/notice.png
                 $<TARGET_FILE_DIR:PrismatiXBuildE2ETests>/EditorAssets/HUD/notice.png
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/PrismatiXEngine_Logo.png
+                $<TARGET_FILE_DIR:PrismatiXBuildE2ETests>/EditorAssets/Branding/PrismatiXEngine_Logo.png
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/logo.wav
+                $<TARGET_FILE_DIR:PrismatiXBuildE2ETests>/EditorAssets/Branding/logo.wav
         COMMENT "Preparing versioned Build E2E fixture assets"
         VERBATIM
     )
@@ -283,7 +333,11 @@ if(BUILD_TESTING)
     set_tests_properties(PrismatiX.Build.E2E PROPERTIES LABELS "e2e")
 
     add_custom_target(PrismatiXRequiredTests DEPENDS
-        PrismatiXRuntimeSubsystemIntegrationTests
+        PrismatiXSaveLoadIntegrationTests
+        PrismatiXDialogueScenarioIntegrationTests
+        PrismatiXBehaviorIntegrationTests
+        PrismatiXAnimationIntegrationTests
+        PrismatiXRuntimeResourceIntegrationTests
         PrismatiXUIDesignerIntegrationTests
         PrismatiXDesignerSelectionTests
         PrismatiXDesignerDocumentViewTests
@@ -301,7 +355,10 @@ if(BUILD_TESTING)
         PrismatiXStyleContractTests
         PrismatiXActionContractTests
         PrismatiXAnimationContractTests
+        PrismatiXSplashContractTests
+        PrismatiXSplashSequencePlayerTests
         PrismatiXUIPreviewIntegrationTests
+        PrismatiXPlayerBootSplashIntegrationTests
         PrismatiXEditorWorkspaceIntegrationTests
         PrismatiXImportTests)
     add_custom_target(PrismatiXRegularTests DEPENDS

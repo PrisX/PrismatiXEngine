@@ -7,6 +7,7 @@
 #include "Engine/Platform/Input.h"
 #include "Engine/UI/GalgameUI.h"
 #include "Engine/UI/UIContext.h"
+#include "Engine/UI/Startup/SplashTypes.h"
 #include "Engine/Resources/TypedDocument.h"
 #include "Engine/Session/RuntimeSession.h"
 #include "Engine/Lua/LuaHost.h"
@@ -22,11 +23,17 @@
 struct SDL_Renderer;
 struct SDL_Texture;
 
+namespace px::ui::startup {
+class SplashSequencePlayer;
+}
+
 namespace px::editor {
+
+class UIPreviewDocumentApplier;
 
 class RuntimeHost {
 public:
-    enum class Mode { UIScene, Vn };
+    enum class Mode { UIScene, Vn, Splash };
     explicit RuntimeHost(SDL_Renderer* editorRenderer);
     ~RuntimeHost();
 
@@ -42,6 +49,8 @@ public:
                                const DocumentChangeSet& changes);
     Status PreviewUIAnimation(const Uuid& clip, float time, bool playing);
     Status SetUIAnimationParameter(std::string_view parameter, const Variant& value);
+    Status PreviewSplashSequence(std::vector<ui::startup::SplashScreenEntry> entries,
+                                 bool reducedMotion = false);
     [[nodiscard]] ui::BehaviorRuntimeState UIBehaviorState() const { return m_uiScene.CaptureBehaviorState(); }
     [[nodiscard]] ui::UIAnimationRuntimeState UIAnimationState() const { return m_uiScene.CaptureAnimationState(); }
     void LoadVn(const std::string& script);
@@ -82,14 +91,13 @@ private:
     lua::LuaServices m_luaServices;
     std::unique_ptr<lua::LuaHost> m_lua;
     ui::UIContext m_uiScene;
-    ui::ObservableViewModel m_previewViewModel;
-    std::vector<ui::Binding> m_uiBindings;
+    std::unique_ptr<UIPreviewDocumentApplier> m_previewApplier;
+    std::unique_ptr<ui::startup::SplashSequencePlayer> m_splash;
     ui::GalgameUI m_hud;
     std::vector<std::string> m_choiceTexts;
     std::string m_uiPath;
     std::string m_vnScript;
     std::unordered_map<std::string, std::string> m_routeScenes;
-    std::optional<resource::TypedDocument> m_lastUIDocument;
 };
 
 }  // namespace px::editor

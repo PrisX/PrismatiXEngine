@@ -1,5 +1,8 @@
 #include "Editor/Tools/UIDesigner/Preview/PreviewChangePlanner.h"
+#include "Editor/Tools/UIDesigner/Preview/UIPreviewDocumentApplier.h"
 #include "Engine/UI/Styles/StyleSerialization.h"
+#include "Engine/UI/Animation.h"
+#include "Engine/UI/UIContext.h"
 #include "Engine/UI/UISceneLoader.h"
 #include "Engine/UI/UITypeRegistry.h"
 #include "Tests/TestSupport/DesignerFixture.h"
@@ -9,20 +12,24 @@
 
 namespace {
 
-class FakePreviewHost {
+class ProductionPreview {
 public:
+    ProductionPreview() : m_applier(m_context) {}
+
     bool Load(const px::resource::TypedDocument& document) {
-        px::ui::FormatterRegistry formatters;
-        auto loaded = px::ui::InstantiateUIScene(document, nullptr, formatters);
-        if (!loaded) return false;
-        m_root = std::move(loaded.Value().root);
-        (void)m_root->Measure({800, 600});
-        m_root->Arrange({0, 0, 800, 600});
-        return true;
+        const bool loaded = m_applier.Load(document, "preview.pxscene");
+        Arrange();
+        return loaded;
+    }
+
+    void Apply(const px::resource::TypedDocument& document,
+               const px::editor::DocumentChangeSet& change) {
+        m_lastIncremental = m_applier.Apply(document, "preview.pxscene", change);
+        Arrange();
     }
 
     [[nodiscard]] px::ui::Control* Find(const px::Uuid& id) const {
-        return m_root ? dynamic_cast<px::ui::Control*>(m_root->Find(id)) : nullptr;
+        return m_applier.Find(id);
     }
 
     [[nodiscard]] std::optional<px::Rect> Layout(const px::Uuid& id) const {
@@ -30,8 +37,18 @@ public:
         return control ? std::optional<px::Rect>(control->LayoutRect()) : std::nullopt;
     }
 
+    [[nodiscard]] bool LastWasIncremental() const { return m_lastIncremental; }
+
 private:
-    std::unique_ptr<px::ui::Control> m_root;
+    void Arrange() {
+        if (!m_context.Root()) return;
+        (void)m_context.Root()->Measure({800, 600});
+        m_context.Root()->Arrange({0, 0, 800, 600});
+    }
+
+    px::ui::UIContext m_context;
+    px::editor::UIPreviewDocumentApplier m_applier;
+    bool m_lastIncremental = false;
 };
 
 void ConfigureFreeLayout(px::test::DesignerFixture& fixture) {
@@ -57,13 +74,12 @@ void ApplyLayoutChange(px::test::DesignerFixture& fixture, const px::Uuid& node)
             fixture.session.DocumentView().SetLayoutRect(node, *rect);
 }
 
-bool Parity(px::test::DesignerFixture& fixture, FakePreviewHost& preview,
+bool Parity(px::test::DesignerFixture& fixture, ProductionPreview& preview,
             const px::Uuid& node, px::Rect expected) {
     const auto authored = fixture.session.Document()->ReadProperty(node, "offsets");
     const auto* authoredRect = authored ? authored.Value().TryGet<px::Rect>() : nullptr;
     return authoredRect && *authoredRect == expected &&
            fixture.session.DocumentView().LayoutRect(node) == expected &&
-           preview.Load(fixture.session.Document()->Data()) &&
            preview.Layout(node) == expected;
 }
 
@@ -114,10 +130,22 @@ int main() {
                      "preview integration registers runtime UI metadata");
         px::test::DesignerFixture fixture(suite);
         ConfigureFreeLayout(fixture);
-        FakePreviewHost preview;
+        ProductionPreview preview;
+        suite.Require(preview.Load(fixture.session.Document()->Data()),
+                      "production preview loads the authored UIScene");
         px::editor::DocumentChangeSet lastChange;
-        fixture.session.SetChangeListener(
-            [&](const px::editor::DocumentChangeSet& change) { lastChange = change; });
+        fixture.session.SetChangeListener([&](const px::editor::DocumentChangeSet& change) {
+            lastChange = change;
+            preview.Apply(fixture.session.Document()->Data(), change);
+        });
+
+        suite.Expect(static_cast<bool>(fixture.session.Commands().SetProperty(
+                         fixture.parent, "visibility", std::string("Hidden"), "Paint",
+                         px::editor::DesignerDirtyFlags::Paint)) &&
+                         preview.LastWasIncremental() &&
+                         preview.Find(fixture.parent)->GetVisibility() ==
+                             px::ui::Visibility::Hidden,
+                     "paint-only mutation patches observable production runtime state");
 
         const px::Rect moved{100, 90, 160, 100};
         suite.Expect(static_cast<bool>(fixture.session.Commands().SetProperty(
@@ -128,8 +156,9 @@ int main() {
         suite.Expect(px::editor::HasDesignerUpdate(
                          px::editor::PlanDesignerUpdate(lastChange),
                          px::editor::DesignerUpdate::Relayout) &&
+                         preview.LastWasIncremental() &&
                          Parity(fixture, preview, fixture.parent, moved),
-                     "move yields authored == Designer cache == runtime preview rect");
+                     "move uses production patch and yields authored == Designer cache == runtime preview rect");
 
         suite.Expect(static_cast<bool>(fixture.session.Commands().Undo()),
                      "move undo succeeds");
@@ -171,7 +200,14 @@ int main() {
                      "style/structure preview registers runtime UI metadata");
         px::test::DesignerFixture fixture(suite);
         ConfigureFreeLayout(fixture);
-        FakePreviewHost preview;
+        ProductionPreview preview;
+        suite.Require(preview.Load(fixture.session.Document()->Data()),
+                      "production preview loads the style/structure UIScene");
+        px::editor::DocumentChangeSet lastChange;
+        fixture.session.SetChangeListener([&](const px::editor::DocumentChangeSet& change) {
+            lastChange = change;
+            preview.Apply(fixture.session.Document()->Data(), change);
+        });
 
         px::ui::ControlStyleBinding binding;
         const px::Color color{12, 34, 56, 255};
@@ -181,8 +217,8 @@ int main() {
                          fixture.parent, "styleBinding",
                          px::ui::WriteStyleBinding(binding), "Style edit",
                          px::editor::DesignerDirtyFlags::Theme)) &&
-                         preview.Load(fixture.session.Document()->Data()),
-                     "style edit loads into runtime preview");
+                         preview.LastWasIncremental(),
+                     "style edit patches through the production runtime preview path");
         const auto* runtimeParent = preview.Find(fixture.parent);
         bool styleMatches = false;
         if (runtimeParent) {
@@ -198,10 +234,49 @@ int main() {
         suite.Expect(static_cast<bool>(fixture.session.Commands().DuplicateSelection()),
                      "structural duplicate succeeds");
         const px::Uuid duplicate = fixture.session.Selection().Primary();
-        suite.Expect(preview.Load(fixture.session.Document()->Data()) &&
+        suite.Expect(!preview.LastWasIncremental() &&
                          preview.Find(duplicate) != nullptr &&
                          fixture.session.DocumentView().Contains(duplicate),
-                     "structure edit appears in both Designer index and runtime preview tree");
+                     "structure edit rebuilds production preview and appears in both trees");
+    });
+
+    suite.Run("BindingAndAnimation_UseProductionRebuildAndPatchPaths", [&] {
+        suite.Require(static_cast<bool>(px::ui::RegisterBuiltinUITypes()),
+                      "binding/animation preview registers runtime UI metadata");
+        px::test::DesignerFixture fixture(suite);
+        ConfigureFreeLayout(fixture);
+        ProductionPreview preview;
+        suite.Require(preview.Load(fixture.session.Document()->Data()),
+                      "production preview loads binding/animation fixture");
+        fixture.session.SetChangeListener([&](const px::editor::DocumentChangeSet& change) {
+            preview.Apply(fixture.session.Document()->Data(), change);
+        });
+
+        const px::Variant bindings = px::VariantObject{
+            {"visibility",
+             px::VariantObject{{"path", std::string("preview.visibility")}}}};
+        suite.Expect(static_cast<bool>(fixture.session.Commands().SetProperty(
+                         fixture.parent, "bindings", bindings, "Bind visibility",
+                         px::editor::DesignerDirtyFlags::Binding)) &&
+                         !preview.LastWasIncremental() && preview.Find(fixture.parent),
+                     "binding mutation rebuilds through production applier and reconnects live scene");
+
+        px::ui::AnimationClip clip;
+        clip.id = px::Uuid::FromName("Preview.Animation.Clip");
+        clip.name = "Preview";
+        clip.duration = 0.25f;
+        const px::Uuid state = px::Uuid::FromName("Preview.Animation.State");
+        px::ui::UIAnimationLibrary library;
+        library.clips.push_back(std::move(clip));
+        library.machine.entry = state;
+        library.machine.states.push_back(
+            {state, "Preview", library.clips.front().id, {0, 0}});
+        suite.Expect(static_cast<bool>(fixture.session.Commands().SetProperty(
+                         fixture.session.Document()->DocumentId(), "animations",
+                         px::ui::WriteUIAnimationLibrary(library), "Animation",
+                         px::editor::DesignerDirtyFlags::Animation)) &&
+                         preview.LastWasIncremental(),
+                     "animation library mutation updates the production controller in place");
     });
 
     return suite.Finish();

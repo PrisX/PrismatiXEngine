@@ -12,18 +12,25 @@ jobs:
   nightly-linux-gcc-relwithdebinfo:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: recursive
       - name: Environment and system dependency provisioning
         run: bash .github/scripts/install-linux-dependencies.sh
-      - uses: lukka/get-cmake@latest
-      - uses: lukka/run-vcpkg@v11
+      - uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed
+      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
       - name: vcpkg dependency resolution
         run: >-
           "$VCPKG_ROOT/vcpkg" install
           --triplet x64-linux
           --x-install-root="${{ github.workspace }}/out/ci/vcpkg/gcc"
+      - name: Dependency configure smoke
+        run: |
+          cmake -S PrismatiXEngine/Tests/CMake/DependencySmoke \
+            -B out/ci/dependency-smoke/gcc -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=x64-linux \
+            -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/gcc"
       - name: Configure GCC optimized build
         run: |
           cmake -S . -B out/ci/gcc-nightly -G Ninja \
@@ -33,8 +40,10 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=x64-linux \
             -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/gcc" \
             -DBUILD_TESTING=ON -DPRISMATIX_WARNINGS_AS_ERRORS=OFF
-      - name: Regular compile and link
-        run: cmake --build out/ci/gcc-nightly --target PrismatiXRegularTests --parallel
+      - name: Regular suite and full Editor compile/link
+        run: >-
+          cmake --build out/ci/gcc-nightly
+          --target PrismatiXRegularTests PrismatiXEditor --parallel
       - name: Test discovery
         run: ctest --test-dir out/ci/gcc-nightly -N
       - name: Full regular test execution
@@ -45,13 +54,13 @@ jobs:
   nightly-performance:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: recursive
       - name: Environment and system dependency provisioning
         run: bash .github/scripts/install-linux-dependencies.sh
-      - uses: lukka/get-cmake@latest
-      - uses: lukka/run-vcpkg@v11
+      - uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed
+      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
       - name: vcpkg dependency resolution
         run: >-
           "$VCPKG_ROOT/vcpkg" install

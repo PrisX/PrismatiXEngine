@@ -109,6 +109,7 @@ private:
     void RenderNodeEditor();
     void RenderStoryLibrary();
     void RenderBuild();
+    bool RenderSplashSettings(ProjectManifest& manifest);
     void RenderAnimation();
     void RenderTheme();
     void RenderFlow();
@@ -249,6 +250,7 @@ private:
     int m_assetNewKind = -1;  // 0 folder, 1 script, 2 screen
     int m_previewMode = 0;
     int m_buildProfile = 1;
+    int m_splashSelection = 0;
     bool m_running = false;
     bool m_imguiReady = false;
     bool m_iconFontLoaded = false;

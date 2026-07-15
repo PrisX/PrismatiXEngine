@@ -4,6 +4,7 @@
 #include "Engine/IO/AtomicFile.h"
 #include "Engine/UI/Styles/StyleSerialization.h"
 #include "Engine/UI/Styles/StyleResolver.h"
+#include "Engine/UI/Animation.h"
 #include "Editor/Theme/EditorIcon.h"
 #include "Editor/Theme/EditorTheme.h"
 #include "Editor/Theme/EditorWidgets.h"
@@ -1867,13 +1868,17 @@ void EditorApp::RenderPreview() {
             ImGui::EndPopup();
         }
         ImGui::SetNextItemWidth(140);
-        const char* modes[] = { "UI Scene", "VN Script" };
-        if (ImGui::Combo("##mode", &m_previewMode, modes, 2)) {
+        const char* modes[] = { "UI Scene", "VN Script", "Splash Sequence" };
+        if (ImGui::Combo("##mode", &m_previewMode, modes, 3)) {
             if (m_previewMode == 0) {
                 SyncDesigner();
             }
-            else {
+            else if (m_previewMode == 1) {
                 m_preview->LoadVn(m_project.Context().manifest.startScript);
+            }
+            else {
+                (void)m_preview->PreviewSplashSequence(
+                    m_project.Context().manifest.splashes);
             }
         }
         ImGui::SameLine();
@@ -1892,6 +1897,16 @@ void EditorApp::RenderPreview() {
                     }
                 }
                 ImGui::EndCombo();
+            }
+            const auto splashUses = std::count_if(
+                m_project.Context().manifest.splashes.begin(),
+                m_project.Context().manifest.splashes.end(),
+                [&](const auto& entry) { return entry.scene.lastKnownPath == current; });
+            if (splashUses > 0) {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.55f, 0.82f, 1.0f, 1.0f),
+                                   "Startup Splash × %d",
+                                   static_cast<int>(splashUses));
             }
             ImGui::SameLine();
             const std::string undoTooltip=m_designer.CanUndo()?"Undo "+m_designer.NextUndoLabel():"沒有可復原的 UI 編輯";
@@ -1961,7 +1976,7 @@ void EditorApp::RenderPreview() {
         else {
         ImVec2 avail = ImGui::GetContentRegionAvail();
         const bool uiMode = m_previewMode == 0;
-        const bool vnMode = !uiMode;
+        const bool vnMode = m_previewMode == 1;
         const float debugHeight = vnMode ? 230.0f : 0.0f;
         avail.y = std::max(80.0f, avail.y - debugHeight);
         ImVec2 canvasCursor{};
@@ -2831,6 +2846,197 @@ void EditorApp::RenderFlow() {
     ImGui::End();
 }
 
+bool EditorApp::RenderSplashSettings(ProjectManifest& manifest) {
+    auto& splashes = manifest.splashes;
+    bool changed = false;
+    if (m_splashSelection >= static_cast<int>(splashes.size()))
+        m_splashSelection = static_cast<int>(splashes.size()) - 1;
+
+    std::optional<std::pair<int, int>> pendingMove;
+    if (splashes.empty())
+        ImGui::TextDisabled("No splash screens — Player goes directly to Title.");
+    else {
+        if (ImGui::BeginChild("##splash-list", ImVec2(0, 150),
+                              ImGuiChildFlags_Borders)) {
+            for (int index = 0; index < static_cast<int>(splashes.size()); ++index) {
+                auto& entry = splashes[static_cast<std::size_t>(index)];
+                ImGui::PushID(index);
+                const std::string label = "☰  " +
+                    fs::path(entry.scene.lastKnownPath).filename().string();
+                if (ImGui::Selectable(label.c_str(), m_splashSelection == index))
+                    m_splashSelection = index;
+                ImGui::SameLine(330);
+                const std::string audio = entry.audio
+                    ? " · " + fs::path(entry.audio->lastKnownPath).filename().string()
+                    : std::string{};
+                ImGui::TextDisabled("%.1fs · %s%s", entry.minimumDuration,
+                                    entry.skippable ? "Skippable" : "Not skippable",
+                                    audio.c_str());
+                if (ImGui::BeginDragDropSource()) {
+                    ImGui::SetDragDropPayload("PX_SPLASH_INDEX", &index, sizeof(index));
+                    ImGui::TextUnformatted(label.c_str());
+                    ImGui::EndDragDropSource();
+                }
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const auto* payload =
+                            ImGui::AcceptDragDropPayload("PX_SPLASH_INDEX")) {
+                        const int from = *static_cast<const int*>(payload->Data);
+                        if (from != index) pendingMove = std::pair{from, index};
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndChild();
+    }
+    if (pendingMove) {
+        const auto [from, to] = *pendingMove;
+        if (from < to)
+            std::rotate(splashes.begin() + from, splashes.begin() + from + 1,
+                        splashes.begin() + to + 1);
+        else
+            std::rotate(splashes.begin() + to, splashes.begin() + from,
+                        splashes.begin() + from + 1);
+        m_splashSelection = to;
+        changed = true;
+    }
+
+    const bool selectedScene = fs::path(m_selectedAsset).extension() == ".pxscene";
+    ImGui::BeginDisabled(!selectedScene);
+    if (ImGui::Button("Add Existing Scene")) {
+        if (const auto* asset = m_assetRegistry.FindPath(
+                m_project.Context().root / m_selectedAsset)) {
+            ui::startup::SplashScreenEntry entry;
+            entry.scene = {asset->id, m_selectedAsset};
+            entry.enterAnimation.clear();
+            entry.exitAnimation.clear();
+            splashes.push_back(std::move(entry));
+            m_splashSelection = static_cast<int>(splashes.size()) - 1;
+            changed = true;
+        }
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Create Splash Scene")) {
+        fs::path runtime = "Content/UI/Splash/Splash.pxscene";
+        for (int suffix = 2;
+             fs::exists(m_project.Context().root / runtime) && suffix < 10000;
+             ++suffix)
+            runtime = fs::path("Content/UI/Splash") /
+                      ("Splash_" + std::to_string(suffix) + ".pxscene");
+        if (CreateAssetWithHistory(m_project.Context().root / runtime, 2)) {
+            if (const auto* asset = m_assetRegistry.FindPath(
+                    m_project.Context().root / runtime)) {
+                ui::startup::SplashScreenEntry entry;
+                entry.scene = {asset->id, runtime.generic_string()};
+                entry.enterAnimation.clear();
+                entry.exitAnimation.clear();
+                splashes.push_back(std::move(entry));
+                m_splashSelection = static_cast<int>(splashes.size()) - 1;
+                changed = true;
+            }
+        }
+    }
+    const bool hasSelection = m_splashSelection >= 0 &&
+                              m_splashSelection < static_cast<int>(splashes.size());
+    ImGui::BeginDisabled(!hasSelection);
+    ImGui::SameLine();
+    if (ImGui::Button("Duplicate Entry")) {
+        splashes.insert(splashes.begin() + m_splashSelection + 1,
+                        splashes[static_cast<std::size_t>(m_splashSelection)]);
+        ++m_splashSelection;
+        changed = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Remove")) {
+        splashes.erase(splashes.begin() + m_splashSelection);
+        m_splashSelection = std::min(m_splashSelection,
+                                     static_cast<int>(splashes.size()) - 1);
+        changed = true;
+    }
+    ImGui::EndDisabled();
+
+    if (m_splashSelection < 0 ||
+        m_splashSelection >= static_cast<int>(splashes.size()))
+        return changed;
+    auto& entry = splashes[static_cast<std::size_t>(m_splashSelection)];
+    ImGui::SeparatorText("Selected Splash");
+    std::string scenePath = entry.scene.lastKnownPath;
+    if (ImGui::InputText("Scene", &scenePath, ImGuiInputTextFlags_EnterReturnsTrue)) {
+        const auto* asset = m_assetRegistry.FindPath(m_project.Context().root / scenePath);
+        entry.scene = {asset ? asset->id : Uuid{}, scenePath};
+        changed = true;
+    }
+    std::string audioPath = entry.audio ? entry.audio->lastKnownPath : "";
+    if (ImGui::InputText("Audio", &audioPath, ImGuiInputTextFlags_EnterReturnsTrue)) {
+        if (audioPath.empty()) entry.audio.reset();
+        else {
+            const auto* asset = m_assetRegistry.FindPath(
+                m_project.Context().root / audioPath);
+            entry.audio = ResourceRefValue{asset ? asset->id : Uuid{}, audioPath};
+        }
+        changed = true;
+    }
+    changed |= ImGui::InputFloat("Minimum Duration", &entry.minimumDuration,
+                                 0.1f, 0.5f, "%.2f s");
+    changed |= ImGui::Checkbox("Skippable", &entry.skippable);
+    ImGui::BeginDisabled(!entry.skippable);
+    changed |= ImGui::InputFloat("Skip Allowed After", &entry.skipAllowedAfter,
+                                 0.1f, 0.5f, "%.2f s");
+    ImGui::EndDisabled();
+    changed |= ImGui::InputText("Enter Animation", &entry.enterAnimation);
+    changed |= ImGui::InputText("Exit Animation", &entry.exitAnimation);
+
+    const Status valid = ui::startup::ValidateSplashEntry(
+        entry, static_cast<std::size_t>(m_splashSelection),
+        m_project.Context().ManifestPath().generic_string());
+    if (!valid)
+        ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "%s",
+                           valid.Diagnostics().front().message.c_str());
+    else {
+        std::ifstream stream(m_project.Context().root / entry.scene.lastKnownPath,
+                             std::ios::binary);
+        std::ostringstream text; text << stream.rdbuf();
+        const auto document = resource::ParseTypedDocument(
+            text.str(), entry.scene.lastKnownPath);
+        if (document) {
+            const auto found = document.Value().properties.find("animations");
+            if (found != document.Value().properties.end()) {
+                const auto animations = ui::ParseUIAnimationLibrary(
+                    found->second, entry.scene.lastKnownPath);
+                for (const auto& name : {entry.enterAnimation, entry.exitAnimation})
+                    if (!name.empty() &&
+                        (!animations || !animations.Value().machine.FindState(name)))
+                        ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f),
+                                           "Animation state not found: %s",
+                                           name.c_str());
+            } else if (!entry.enterAnimation.empty() || !entry.exitAnimation.empty())
+                ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f),
+                                   "Scene has no animation library.");
+        }
+    }
+
+    if (ImGui::Button("Open in UI Designer")) {
+        m_previewMode = 0;
+        (void)ActivateUIDocument(m_project.Context().root / entry.scene.lastKnownPath,
+                                 entry.scene.lastKnownPath);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Preview Selected") && m_preview) {
+        m_previewMode = 2;
+        SetWorkspace(EditorWorkspace::UI);
+        (void)m_preview->PreviewSplashSequence({entry});
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Preview Full Sequence") && m_preview) {
+        m_previewMode = 2;
+        SetWorkspace(EditorWorkspace::UI);
+        (void)m_preview->PreviewSplashSequence(splashes);
+    }
+    return changed;
+}
+
 void EditorApp::RenderBuild() {
     if(!m_showBuildWindow)return;
     if (ImGui::Begin("Build",&m_showBuildWindow)) {
@@ -2878,6 +3084,9 @@ void EditorApp::RenderBuild() {
             m_flow.SetEntryScript(m.startScript);
             m_flow.Rebuild(ScriptFileNames(), m_project.Context().root);
         }
+
+        ImGui::SeparatorText("Startup / Splash Screens");
+        if (RenderSplashSettings(m)) m_project.SaveManifest();
 
         ImGui::SeparatorText("Play");
         if (ImGui::Button("Run (Dev)", ImVec2(150, 34))) {

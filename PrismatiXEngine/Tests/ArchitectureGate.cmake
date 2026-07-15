@@ -19,7 +19,7 @@ set(FORBIDDEN_PATTERNS
     "StableLegacy"
     "ApplyUIDocumentPatch"
     "SetZOrder"
-    "ZOrder\\(")
+    "ZOrder[(]")
 
 set(FAILURES "")
 foreach(SOURCE IN LISTS PRODUCTION_SOURCES)
@@ -31,10 +31,10 @@ foreach(SOURCE IN LISTS PRODUCTION_SOURCES)
     endforeach()
 
     if(SOURCE MATCHES "/Editor/Tools/UIDesigner/" AND
-       NOT SOURCE MATCHES "/DesignerCommandService\.cpp$" AND
-       NOT SOURCE MATCHES "/UISceneDocument\.(cpp|h)$")
+       NOT SOURCE MATCHES "/DesignerCommandService[.]cpp$" AND
+       NOT SOURCE MATCHES "/UISceneDocument[.](cpp|h)$")
         foreach(PATTERN IN ITEMS
-                "History\(\)\.(Execute|CommitApplied)"
+                "History[(][)][.](Execute|CommitApplied)"
                 "WriteProperty[(]")
             if(CONTENT MATCHES "${PATTERN}")
                 list(APPEND FAILURES
@@ -43,36 +43,36 @@ foreach(SOURCE IN LISTS PRODUCTION_SOURCES)
         endforeach()
     endif()
 
-    if(SOURCE MATCHES "/Editor/Tools/UIDesigner/(UIDesigner|BehaviorGraphEditor|AnimationStateMachineEditor|Components/ComponentService)\\.(cpp|h)$")
-        foreach(PATTERN IN ITEMS "History\\(\\)\\.(Execute|CommitApplied|Undo|Redo)" "WriteProperty\\(")
+    if(SOURCE MATCHES "/Editor/Tools/UIDesigner/(UIDesigner|BehaviorGraphEditor|AnimationStateMachineEditor|Components/ComponentService)[.](cpp|h)$")
+        foreach(PATTERN IN ITEMS "History[(][)][.](Execute|CommitApplied|Undo|Redo)" "WriteProperty[(]")
             if(CONTENT MATCHES "${PATTERN}")
                 list(APPEND FAILURES "${SOURCE}: mutation bypass ${PATTERN}")
             endif()
         endforeach()
     endif()
 
-    if(SOURCE MATCHES "/Editor/Tools/UIDesigner/UIDesigner\\.(cpp|h)$")
+    if(SOURCE MATCHES "/Editor/Tools/UIDesigner/UIDesigner[.](cpp|h)$")
         foreach(PATTERN IN ITEMS "m_document" "m_selected" "m_selection" "m_hovered" "m_layout" "m_childPolicies" "m_propertyTransaction" "m_multiPropertyTransaction" "m_gesture" "m_resizeHandle" "m_anchorHandle" "m_dragScale" "m_guideX" "m_guideY" "m_pathText" "m_clipboardSubtree" "m_contextCanvas" "m_contextTarget" "m_treeFilter" "m_treeRename" "m_createComponentOpen" "HandleCanvasInteraction" "GetMouseDragDelta")
             if(CONTENT MATCHES "(^|[^A-Za-z0-9_])${PATTERN}([^A-Za-z0-9_]|$)")
                 list(APPEND FAILURES "${SOURCE}: duplicate Designer owner ${PATTERN}")
             endif()
         endforeach()
-        foreach(PATTERN IN ITEMS "Document\\(\\)->Find\\(" "Document\\(\\)->Children\\(" "Document\\(\\)->ChildIndex\\(")
+        foreach(PATTERN IN ITEMS "Document[(][)]->Find[(]" "Document[(][)]->Children[(]" "Document[(][)]->ChildIndex[(]")
             if(CONTENT MATCHES "${PATTERN}")
                 list(APPEND FAILURES "${SOURCE}: indexed read bypass ${PATTERN}")
             endif()
         endforeach()
     endif()
 
-    if(SOURCE MATCHES "/Editor/Tools/UIDesigner/DesignerCommandService\\.(cpp|h)$")
-        foreach(PATTERN IN ITEMS "document->Find\\(" "document->Children\\(" "document->ChildIndex\\(")
+    if(SOURCE MATCHES "/Editor/Tools/UIDesigner/DesignerCommandService[.](cpp|h)$")
+        foreach(PATTERN IN ITEMS "document->Find[(]" "document->Children[(]" "document->ChildIndex[(]")
             if(CONTENT MATCHES "${PATTERN}")
                 list(APPEND FAILURES "${SOURCE}: indexed read bypass ${PATTERN}")
             endif()
         endforeach()
     endif()
 
-    if(SOURCE MATCHES "/Editor/Tools/UIDesigner/UIDesignerSession\\.(cpp|h)$")
+    if(SOURCE MATCHES "/Editor/Tools/UIDesigner/UIDesignerSession[.](cpp|h)$")
         foreach(PATTERN IN ITEMS "leftPanelVisible" "rightPanelVisible" "bottomPanelVisible" "leftPanelWidth" "rightPanelWidth" "bottomPanelHeight")
             if(CONTENT MATCHES "${PATTERN}")
                 list(APPEND FAILURES "${SOURCE}: workspace-global panel state leaked into document Session: ${PATTERN}")

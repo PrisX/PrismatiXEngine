@@ -5,6 +5,7 @@
 #include "Engine/Resources/TypedDocument.h"
 #include "Engine/Support/Logger.h"
 #include "Engine/UI/Widgets.h"
+#include "Engine/UI/Startup/SplashTypes.h"
 
 #include <SDL3/SDL.h>
 #include <nlohmann/json.hpp>
@@ -49,6 +50,7 @@ int DocInt(const resource::TypedDocument& document,const char* key,int fallback)
 bool DocBool(const resource::TypedDocument& document,const char* key,bool fallback){const auto it=document.properties.find(key);if(it!=document.properties.end())if(const auto* value=it->second.TryGet<bool>())return *value;return fallback;}
 std::vector<std::string> DocArchives(const resource::TypedDocument& document){std::vector<std::string> result;const auto found=document.properties.find("archives");if(found==document.properties.end()||!found->second.AsArray())return result;for(const auto& value:*found->second.AsArray()){const auto* object=value.AsObject();if(!object)return {};const auto file=object->find("file"),group=object->find("group"),optional=object->find("optional");const auto* path=file!=object->end()?file->second.TryGet<std::string>():nullptr;const auto* id=group!=object->end()?group->second.TryGet<std::string>():nullptr;const auto* optionalValue=optional!=object->end()?optional->second.TryGet<bool>():nullptr;if(!path||path->empty()||!id||id->empty()||!optionalValue)return {};result.push_back(*path);}return result;}
 std::unordered_map<std::string,std::string> DocRoutes(const resource::TypedDocument& document){std::unordered_map<std::string,std::string> result;const auto found=document.properties.find("routes");if(found==document.properties.end()||!found->second.AsArray())return result;for(const auto& value:*found->second.AsArray()){const auto* object=value.AsObject();if(!object)continue;const auto id=object->find("id"),scene=object->find("scene");const auto* routeId=id!=object->end()?id->second.TryGet<std::string>():nullptr;const auto* reference=scene!=object->end()?scene->second.TryGet<ResourceRefValue>():nullptr;if(routeId&&reference&&!reference->id.Empty()&&!reference->lastKnownPath.empty())result[*routeId]=reference->lastKnownPath;}return result;}
+std::optional<std::vector<ui::startup::SplashScreenEntry>> DocSplashes(const resource::TypedDocument& document){const auto found=document.properties.find("splashes");if(found==document.properties.end())return std::vector<ui::startup::SplashScreenEntry>{};auto parsed=ui::startup::ParseSplashSequence(found->second,"boot config");if(!parsed){for(const auto& diagnostic:parsed.Diagnostics())diag::Emit(diagnostic);return std::nullopt;}return parsed.TakeValue();}
 }
 
 PlayerApp::Boot PlayerApp::LoadBootConfig() {
@@ -67,7 +69,7 @@ PlayerApp::Boot PlayerApp::LoadBootConfig() {
             boot.config.width=boot.config.logicalWidth=DocInt(*package,"gameWidth",1280);
             boot.config.height=boot.config.logicalHeight=DocInt(*package,"gameHeight",720);
             boot.startScript=DocText(*package,"startScript",boot.startScript);
-            boot.startRoute=DocText(*package,"startRoute",boot.startRoute);boot.routeScenes=DocRoutes(*package);
+            boot.startRoute=DocText(*package,"startRoute",boot.startRoute);boot.routeScenes=DocRoutes(*package);const auto splashes=DocSplashes(*package);if(!splashes)return boot;boot.splashes=*splashes;
             boot.saveSecret=DocText(*package,"key");
             if (boot.saveSecret.empty()) boot.saveSecret = boot.config.title;
             boot.valid = true;
@@ -82,7 +84,7 @@ PlayerApp::Boot PlayerApp::LoadBootConfig() {
             boot.config.width=boot.config.logicalWidth=DocInt(*project,"gameWidth",1280);
             boot.config.height=boot.config.logicalHeight=DocInt(*project,"gameHeight",720);
             boot.startScript=DocText(*project,"startScript",boot.startScript);
-            boot.startRoute=DocText(*project,"startRoute",boot.startRoute);boot.routeScenes=DocRoutes(*project);
+            boot.startRoute=DocText(*project,"startRoute",boot.startRoute);boot.routeScenes=DocRoutes(*project);const auto splashes=DocSplashes(*project);if(!splashes)return boot;boot.splashes=*splashes;
             boot.saveSecret=DocText(*project,"encryptKey",boot.config.title);
             PX_LOG_INFO("Dev run: project '{}', entry '{}', route '{}'", boot.config.title,
                         boot.startScript, boot.startRoute);
@@ -146,7 +148,6 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         const Status registered=m_session->Routes().Register(route,[route](){return Result<std::unique_ptr<ui::Control>>::Success(std::make_unique<ui::Control>(std::string("Route:")+route));});
         if(!registered)return false;
     }
-    if(!m_session->Routes().Replace(m_boot.startRoute))return false;
     m_session->VM().SetDefaultTextSpeed(m_settings.textSpeedMs);
     PX_LOG_DEBUG("Player boot: VN runtime constructed");
 
@@ -239,12 +240,6 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     const auto scene=[this](const char* route)->std::string{const auto found=m_boot.routeScenes.find(route);return found==m_boot.routeScenes.end()?std::string{}:found->second;};
     if(!registerTemplate(ui::GalgameUI::Screen::Title,m_boot.routeScenes.at(m_boot.startRoute))||!registerTemplate(ui::GalgameUI::Screen::HUD,scene("hud"))||!registerTemplate(ui::GalgameUI::Screen::Backlog,scene("backlog"))||!registerTemplate(ui::GalgameUI::Screen::Save,scene("save"))||!registerTemplate(ui::GalgameUI::Screen::Load,scene("load"))||!registerTemplate(ui::GalgameUI::Screen::Gallery,scene("gallery"))||!registerTemplate(ui::GalgameUI::Screen::Settings,scene("settings"))||!registerTemplate(ui::GalgameUI::Screen::Video,scene("video")))return false;
     PX_LOG_DEBUG("Player boot: typed UI templates registered");
-    if (const Status status = m_ui.ShowTitle(); !status) {
-        PX_LOG_CRITICAL("Unable to construct the title UI.");
-        return false;
-    }
-    PX_LOG_DEBUG("Player boot: title UI installed");
-
     if (auto catalog = m_runtime.VFS().ReadText("Content/Game.pxres")) {
         const Status status = m_catalog.Load(*catalog, "Content/Game.pxres");
         if (!status) return false;
@@ -263,7 +258,44 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_session->VM().SetGameCatalog(m_catalog);
 
     m_script = argc > 1 ? argv[1] : m_boot.startScript;
+    m_splash=std::make_unique<ui::startup::SplashSequencePlayer>(
+        ui::startup::SplashSequencePlayer::Services{
+            .loadScene=[this](const ResourceRefValue& reference)->Result<resource::TypedDocument>{
+                const auto text=m_runtime.VFS().ReadText(reference.lastKnownPath);
+                if(!text){diag::Diagnostic diagnostic{.severity=diag::Severity::Error,.code="PXBOOT1201",.category="Player.Splash",.message="Splash scene is missing",.details=reference.lastKnownPath};diagnostic.source.path=reference.lastKnownPath;return Result<resource::TypedDocument>::Failure(std::move(diagnostic));}
+                return resource::ParseTypedDocument(*text,reference.lastKnownPath);
+            },
+            .playAudio=[this](const ResourceRefValue& reference){
+                if(!m_runtime.VFS().Exists(reference.lastKnownPath)){diag::Diagnostic diagnostic{.severity=diag::Severity::Warning,.code="PXBOOT1202",.category="Player.Splash",.message="Splash audio is missing; visual playback will continue",.details=reference.lastKnownPath};diagnostic.source.path=reference.lastKnownPath;return Status::Fail(std::move(diagnostic));}
+                m_runtime.Audio().PlaySE(reference.lastKnownPath);return Status::Ok();
+            },
+            .diagnostics=[](const diag::Diagnostic& diagnostic){diag::Emit(diagnostic);}});
+    m_splash->Context().SetDiagnosticOverlayEnabled(false);
+    m_splash->SetCompletionCallback([this]{FinishBootPresentation();});
+    m_appState=AppState::BootSplash;
+    const Status splashStarted=m_splash->Start(m_boot.splashes,m_settings.reducedMotion);
+    if(!splashStarted)return false;
     return true;
+}
+
+void PlayerApp::FinishBootPresentation() {
+    if(m_appState!=AppState::BootSplash)return;
+    if(!m_session->Routes().Replace(m_boot.startRoute)){m_quitRequested=true;return;}
+    const Status title=m_ui.ShowTitle();
+    if(!title){for(const auto& diagnostic:title.Diagnostics())diag::Emit(diagnostic);m_quitRequested=true;return;}
+    m_appState=AppState::Title;
+    PX_LOG_DEBUG("Player boot: splash sequence complete; title route activated");
+}
+
+void PlayerApp::SplashFrame(const float dt) {
+    if(!m_splash||m_splash->Completed()){FinishBootPresentation();return;}
+    Input& input=m_runtime.GetInput();
+    int width=0,height=0;m_runtime.Renderer().GetLogicalSize(width,height);
+    const bool skip=input.LeftClick()||input.KeyPressed(SDL_SCANCODE_RETURN)||
+        input.KeyPressed(SDL_SCANCODE_ESCAPE)||input.KeyPressed(SDL_SCANCODE_SPACE);
+    (void)m_splash->Context().Update(input,width,height,dt);
+    m_splash->Update(dt,skip);
+    if(!m_splash->Completed())m_splash->Context().Render(m_runtime.Renderer());
 }
 
 void PlayerApp::StartGame() {
@@ -862,6 +894,12 @@ void PlayerApp::MainLoop() {
             SDL_SetWindowFullscreen(m_runtime.GetWindow().Handle(), m_settings.fullscreen);
         }
 
+        if(m_appState==AppState::BootSplash){
+            SplashFrame(dt);
+            m_runtime.EndFrame();
+            continue;
+        }
+
         // Fullscreen CG viewer sits above everything; any click closes it.
         if (!m_viewingCG.empty()) {
             if (input.LeftClick() || input.RightClick() ||
@@ -925,6 +963,7 @@ void PlayerApp::Shutdown() {
     m_profile.Save("Save/profile.dat", &m_saveKey);
     // Subsystems referencing the runtime must go before Runtime::Shutdown.
     m_lua.reset();
+    m_splash.reset();
     m_session.reset();
     m_runtime.Shutdown();
 }

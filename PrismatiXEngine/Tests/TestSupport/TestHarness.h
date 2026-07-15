@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+#include <chrono>
 #include <exception>
 #include <filesystem>
 #include <functional>
@@ -15,6 +17,13 @@
 #endif
 
 namespace px::test {
+
+class RequirementFailure final : public std::exception {
+public:
+    [[nodiscard]] const char* what() const noexcept override {
+        return "test requirement failed";
+    }
+};
 
 inline std::string ProcessSuffix() {
 #ifdef _WIN32
@@ -33,6 +42,9 @@ public:
         m_current = std::move(name);
         try {
             std::invoke(std::forward<Test>(test));
+        } catch (const RequirementFailure&) {
+            // Require() already recorded the actionable setup failure. Abort only
+            // this case so the remaining cases in the executable still run.
         } catch (const std::exception& error) {
             Fail("no exception", error.what(), "uncaught exception");
         } catch (...) {
@@ -43,6 +55,13 @@ public:
     void Expect(bool condition, std::string_view contract,
                 std::string_view actual = "contract was false") {
         if (!condition) Fail("contract satisfied", actual, contract);
+    }
+
+    void Require(bool condition, std::string_view contract,
+                 std::string_view actual = "required setup was false") {
+        if (condition) return;
+        Fail("required setup satisfied", actual, contract);
+        throw RequirementFailure{};
     }
 
     void Equal(std::string_view expected, std::string_view actual,
@@ -79,12 +98,14 @@ class TempDirectory {
 public:
     explicit TempDirectory(std::string_view name)
         : path(std::filesystem::temp_directory_path() /
-               ("prismatix-" + std::string(name) + '-' + ProcessSuffix())) {
+               ("prismatix-" + std::string(name) + '-' + ProcessSuffix() + '-' +
+                std::to_string(std::chrono::steady_clock::now()
+                                   .time_since_epoch()
+                                   .count()) +
+                '-' + std::to_string(++s_counter))) {
         std::error_code error;
-        std::filesystem::remove_all(path, error);
-        error.clear();
-        std::filesystem::create_directories(path, error);
-        if (error) throw std::filesystem::filesystem_error(
+        const bool created = std::filesystem::create_directories(path, error);
+        if (error || !created) throw std::filesystem::filesystem_error(
             "create test directory", path, error);
     }
 
@@ -97,6 +118,9 @@ public:
     TempDirectory& operator=(const TempDirectory&) = delete;
 
     std::filesystem::path path;
+
+private:
+    inline static std::atomic_uint64_t s_counter = 0;
 };
 
 }  // namespace px::test

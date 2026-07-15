@@ -12,6 +12,8 @@
 #include "Engine/UI/UIResourceResolver.h"
 #include "Engine/UI/UISceneLoader.h"
 #include "Engine/UI/UITypeRegistry.h"
+#include "Engine/UI/Animation.h"
+#include "Engine/UI/Startup/SplashTypes.h"
 
 #include <nlohmann/json.hpp>
 
@@ -168,6 +170,29 @@ bool BuildService::Build(const BuildOptions& options) const {
     const ui::UIDocumentLoader uiLoader=[&](const ResourceRefValue& reference)->Result<resource::TypedDocument>{const auto target=ComparableKey(options.projectRoot/reference.lastKnownPath);const auto found=std::find_if(typedAssets.begin(),typedAssets.end(),[&](const auto& item){return ComparableKey(item.first)==target;});if(found==typedAssets.end())return Result<resource::TypedDocument>::Failure(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXBUILD9635",.category="Build.UI",.message="Referenced typed UI asset was not indexed",.details=reference.lastKnownPath});return Result<resource::TypedDocument>::Success(found->second);};
     for(const auto& [source,document]:typedAssets){if(document.type=="UIComponent"){const Status interfaceStatus=ui::ValidateUIComponentInterface(document);if(!interfaceStatus)return fail("PXBUILD9636",source,"Build 已阻擋：UIComponent 公開介面無效",diag::Describe(interfaceStatus.Diagnostics().front()));const auto expanded=ui::ExpandUIComponents(document,uiLoader);if(!expanded)return fail("PXBUILD9637",source,"Build 已阻擋：UIComponent 巢狀相依或 slot 無效",diag::Describe(expanded.Diagnostics().front()));}else if(document.type=="UIScene"){const auto instantiated=ui::InstantiateUIScene(document,&buildViewModel,uiFormatters,uiLoader);if(!instantiated)return fail("PXBUILD9638",source,"Build 已阻擋：UIScene schema、signals、Behavior 或 animation 無效",diag::Describe(instantiated.Diagnostics().front()));}}
 
+    std::vector<ui::startup::SplashScreenEntry> packagedSplashes=options.splashes;
+    for(std::size_t index=0;index<packagedSplashes.size();++index){
+        auto& splash=packagedSplashes[index];
+        const Status configured=ui::startup::ValidateSplashEntry(splash,index,"project.pxproject");
+        if(!configured)return fail("PXBUILD9640",options.projectRoot/"project.pxproject","Build 已阻擋：Splash sequence entry 無效",diag::Describe(configured.Diagnostics().front()));
+        const auto scenePath=options.projectRoot/splash.scene.lastKnownPath;
+        const auto* sceneAsset=registry.FindPath(scenePath);
+        if(!sceneAsset||sceneAsset->id!=splash.scene.id)return fail("PXBUILD9641",scenePath,"Build 已阻擋：Splash scene ResourceRef identity 無效","entry "+std::to_string(index));
+        const auto scene=std::find_if(typedAssets.begin(),typedAssets.end(),[&](const auto& item){return ComparableKey(item.first)==ComparableKey(scenePath);});
+        if(scene==typedAssets.end()||scene->second.kind!=resource::DocumentKind::Scene||scene->second.type!="UIScene")return fail("PXBUILD9642",scenePath,"Build 已阻擋：Splash scene 必須是可實例化的 typed UIScene","entry "+std::to_string(index));
+        const auto animations=scene->second.properties.find("animations");
+        std::optional<ui::UIAnimationLibrary> library;
+        if(animations!=scene->second.properties.end()){
+            auto parsed=ui::ParseUIAnimationLibrary(animations->second,scenePath.generic_string());
+            if(!parsed)return fail("PXBUILD9643",scenePath,"Build 已阻擋：Splash animation library 無效",diag::Describe(parsed.Diagnostics().front()));
+            library=parsed.TakeValue();
+        }
+        for(const auto& [kind,name]:std::vector<std::pair<std::string,std::string>>{{"enter",splash.enterAnimation},{"exit",splash.exitAnimation}})
+            if(!name.empty()&&(!library||!library->machine.FindState(name)))return fail("PXBUILD9644",scenePath,"Build 已阻擋：Splash "+kind+" animation 不存在",name+" (entry "+std::to_string(index)+")");
+        if(splash.audio){const auto audioPath=options.projectRoot/splash.audio->lastKnownPath;const auto* audioAsset=registry.FindPath(audioPath);if(!audioAsset||audioAsset->id!=splash.audio->id)return fail("PXBUILD9645",audioPath,"Build 已阻擋：Splash audio ResourceRef identity 無效","entry "+std::to_string(index));}
+        splash.scene={sceneAsset->id,splash.scene.lastKnownPath};
+    }
+
     const auto staging=outputDir.parent_path()/(outputDir.filename().string()+".staging-"+Uuid::Random().ToString());
     const auto backup=outputDir.parent_path()/(outputDir.filename().string()+".backup-"+Uuid::Random().ToString());
     DirectoryCleanup stagingCleanup{staging};DirectoryCleanup backupCleanup{backup};
@@ -195,7 +220,7 @@ bool BuildService::Build(const BuildOptions& options) const {
     VariantArray routeValues;for(const auto& route:options.routes){const auto* sceneAsset=registry.FindPath(options.projectRoot/route.scene);if(!sceneAsset)return fail("PXBUILD9616",options.projectRoot/route.scene,"Build 失敗：Route scene 沒有 ResourceId");routeValues.emplace_back(VariantObject{{"id",route.id},{"scene",ResourceRefValue{sceneAsset->id,route.scene}},{"modal",route.modal},{"cache",route.cache}});}
     package.properties={{"title",options.title},{"archives",Variant(std::move(archiveValues))},{"encrypt",encrypted},{"key",encrypted?options.key:std::string{}},
         {"gameWidth",static_cast<std::int64_t>(options.gameWidth)},{"gameHeight",static_cast<std::int64_t>(options.gameHeight)},
-        {"startRoute",options.startRoute},{"routes",Variant(std::move(routeValues))},{"startScript",options.startScript},{"profile",options.profile.id},{"productVersion",options.profile.productVersion},{"platform",options.profile.platform},{"reproducible",options.profile.reproducible}};
+        {"startRoute",options.startRoute},{"routes",Variant(std::move(routeValues))},{"splashes",ui::startup::WriteSplashSequence(packagedSplashes)},{"startScript",options.startScript},{"profile",options.profile.id},{"productVersion",options.profile.productVersion},{"platform",options.profile.platform},{"reproducible",options.profile.reproducible}};
     const Status manifest=io::AtomicFile::WriteText(staging/"game.pxpackage",resource::WriteTypedDocument(package));
     if(!manifest)return fail("PXBUILD9609",staging/"game.pxpackage","Build 失敗：無法寫入 typed package manifest");
 
