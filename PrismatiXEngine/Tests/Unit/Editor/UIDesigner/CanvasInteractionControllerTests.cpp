@@ -87,6 +87,10 @@ int main() {
                      "move updates expose winning snap guides through Session canvas state");
         interaction.Cancel();
         suite.Expect(!interaction.HasCapture() &&
+                         fixture.session.canvas.gesture ==
+                             px::editor::DesignerCanvasGesture::None &&
+                         fixture.session.canvas.snapGuides.empty() &&
+                         fixture.session.canvas.snapDistances.empty() &&
                          fixture.session.Commands().HistoryCursor() == before &&
                          fixture.session.DocumentView().LayoutRect(fixture.parent) == original &&
                          fixture.session.Document()->ReadProperty(
@@ -96,11 +100,15 @@ int main() {
 
         interaction.UpdateHover(start);
         suite.Expect(interaction.PointerDown(start) &&
-                         interaction.PointerMove(Pointer(35, 70)) &&
-                         interaction.PointerMove(Pointer(45, 80)) &&
-                         interaction.PointerUp(Pointer(45, 80)) &&
+                         interaction.PointerMove(Pointer(191, 60)) &&
+                         !fixture.session.canvas.snapGuides.empty() &&
+                         interaction.PointerUp(Pointer(191, 60)) &&
+                         fixture.session.canvas.snapGuides.empty() &&
+                         fixture.session.canvas.snapDistances.empty() &&
+                         fixture.session.canvas.gesture ==
+                             px::editor::DesignerCanvasGesture::None &&
                          fixture.session.Commands().HistoryCursor() == before + 1,
-                     "many move updates commit exactly one undo entry");
+                     "move commit clears transient guides and creates exactly one undo entry");
     });
 
     suite.Run("ResizeAnchorPivotAndMultiMove_CancelExactAuthoredState", [&] {

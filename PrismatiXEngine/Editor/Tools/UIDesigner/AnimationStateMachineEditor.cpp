@@ -183,8 +183,9 @@ bool AnimationStateMachineEditor::RenderNavigator(UISceneDocument& document,Desi
     ImGui::SeparatorText("States");for(const auto& item:library.machine.states){const bool active=m_debugState.state==item.id;const std::string label=(item.id==library.machine.entry?"▶ ":active?"● ":"")+item.name+"##state-nav-"+item.id.ToString();if(ImGui::Selectable(label.c_str(),viewState.selectedState==item.id)){viewState.selectedState=item.id;viewState.selectedTransition={};}}
     ImGui::SeparatorText("Clips");for(const auto& clip:library.clips)ImGui::BulletText("%s · %.2fs%s",clip.name.c_str(),clip.duration,clip.loop?" · Loop":"");
     ImGui::SeparatorText("Parameters");
-    for(auto& parameter:library.machine.parameters){
-        ImGui::PushID(parameter.name.c_str());
+    for(std::size_t parameterIndex=0;parameterIndex<library.machine.parameters.size();++parameterIndex){
+        auto& parameter=library.machine.parameters[parameterIndex];
+        ImGui::PushID(static_cast<int>(parameterIndex));
         ImGui::Text("%s",parameter.name.c_str());ImGui::SameLine();ImGui::TextDisabled("%s",ParameterTypeName(parameter.type));
         const auto live=m_debugState.parameters.find(parameter.name);
         if(parameter.type==ui::AnimationParameterType::Trigger){
@@ -221,7 +222,7 @@ bool AnimationStateMachineEditor::RenderInspector(UISceneDocument& document,Desi
         ImGui::Text("%s  →  %s",transition.from?(fromState?fromState->name.c_str():"Missing"):"Any State",toState?toState->name.c_str():"Missing");
         if(ImGui::BeginCombo("Target",toState?toState->name.c_str():"Missing")){
             for(const auto& state:library.machine.states){
-                if(ImGui::Selectable(state.name.c_str(),state.id==transition.to)){transition.to=state.id;changed=true;}
+                if(ImGui::Selectable((state.name+"##target-"+state.id.ToString()).c_str(),state.id==transition.to)){transition.to=state.id;changed=true;}
             }
             ImGui::EndCombo();
         }
@@ -235,8 +236,9 @@ bool AnimationStateMachineEditor::RenderInspector(UISceneDocument& document,Desi
             auto& condition=transition.conditions[index];
             ImGui::PushID(static_cast<int>(index));
             if(ImGui::BeginCombo("Parameter",condition.parameter.c_str())){
-                for(const auto& candidate:library.machine.parameters){
-                    if(ImGui::Selectable(candidate.name.c_str(),candidate.name==condition.parameter)){
+                for(std::size_t candidateIndex=0;candidateIndex<library.machine.parameters.size();++candidateIndex){
+                    const auto& candidate=library.machine.parameters[candidateIndex];
+                    if(ImGui::Selectable((candidate.name+"##parameter-"+std::to_string(candidateIndex)).c_str(),candidate.name==condition.parameter)){
                         condition.parameter=candidate.name;
                         condition.operation=candidate.type==ui::AnimationParameterType::Trigger?ui::AnimationConditionOperator::Triggered:ui::AnimationConditionOperator::Equal;
                         condition.value=candidate.type==ui::AnimationParameterType::Number?Variant(0.0):Variant(false);
@@ -294,7 +296,7 @@ bool AnimationStateMachineEditor::RenderInspector(UISceneDocument& document,Desi
         const auto* clip=library.FindClip(state.clip);
         if(ImGui::BeginCombo("Clip",clip?clip->name.c_str():"Missing")){
             for(const auto& candidate:library.clips){
-                if(ImGui::Selectable(candidate.name.c_str(),candidate.id==state.clip)){state.clip=candidate.id;changed=true;}
+                if(ImGui::Selectable((candidate.name+"##clip-"+candidate.id.ToString()).c_str(),candidate.id==state.clip)){state.clip=candidate.id;changed=true;}
             }
             ImGui::EndCombo();
         }

@@ -79,11 +79,105 @@ std::string UniqueName(const UISceneDocument& document, std::string base) {
 }
 
 const char* TypeGlyph(std::string_view type) {
-    if (type.find("Container") != std::string_view::npos) return "◇";
-    if (type == "Button") return "▣";
-    if (type == "Label") return "T";
-    if (type == "TextureRect") return "▧";
-    return "○";
+    // Keep hierarchy type markers inside the guaranteed ASCII glyph range. The
+    // editor can run without the optional icon font, in which case geometric
+    // Unicode markers are otherwise rendered as question marks.
+    if (type.find("Container") != std::string_view::npos) return "[C]";
+    if (type == "Button") return "[B]";
+    if (type == "Label") return "[T]";
+    if (type == "TextureRect") return "[I]";
+    return "[N]";
+}
+
+enum class HierarchyStateIcon { Visible, Hidden, Collapsed, Locked, Unlocked };
+
+bool HierarchyStateButton(const char* id, HierarchyStateIcon icon) {
+    constexpr float buttonSize = 20.0f;
+    const bool pressed = ImGui::Button(id, {buttonSize, buttonSize});
+    const ImVec2 minimum = ImGui::GetItemRectMin();
+    const ImVec2 maximum = ImGui::GetItemRectMax();
+    const ImVec2 center{(minimum.x + maximum.x) * 0.5f,
+                        (minimum.y + maximum.y) * 0.5f};
+    const auto& colors = EditorTheme().colors;
+    const ImVec4 iconColor =
+        icon == HierarchyStateIcon::Hidden
+            ? colors.textDisabled
+            : (icon == HierarchyStateIcon::Collapsed ||
+                       icon == HierarchyStateIcon::Locked
+                   ? colors.warning
+                   : colors.textPrimary);
+    const ImU32 packed = ImGui::ColorConvertFloat4ToU32(iconColor);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+
+    if (icon == HierarchyStateIcon::Visible ||
+        icon == HierarchyStateIcon::Hidden ||
+        icon == HierarchyStateIcon::Collapsed) {
+        const ImVec2 left{center.x - 6.0f, center.y};
+        const ImVec2 right{center.x + 6.0f, center.y};
+        draw->AddBezierCubic(left, {center.x - 3.5f, center.y - 4.0f},
+                             {center.x + 3.5f, center.y - 4.0f}, right,
+                             packed, 1.4f);
+        draw->AddBezierCubic(right, {center.x + 3.5f, center.y + 4.0f},
+                             {center.x - 3.5f, center.y + 4.0f}, left,
+                             packed, 1.4f);
+        if (icon == HierarchyStateIcon::Visible)
+            draw->AddCircleFilled(center, 2.1f, packed);
+        else if (icon == HierarchyStateIcon::Hidden)
+            draw->AddLine({center.x - 6.0f, center.y + 5.0f},
+                          {center.x + 6.0f, center.y - 5.0f}, packed, 1.7f);
+        else {
+            draw->AddLine({center.x - 5.0f, center.y - 5.0f},
+                          {center.x + 5.0f, center.y + 5.0f}, packed, 1.7f);
+            draw->AddLine({center.x + 5.0f, center.y - 5.0f},
+                          {center.x - 5.0f, center.y + 5.0f}, packed, 1.7f);
+        }
+    } else {
+        const float bodyTop = center.y - 0.5f;
+        draw->AddRect({center.x - 4.5f, bodyTop},
+                      {center.x + 4.5f, center.y + 6.0f}, packed, 1.0f, 0,
+                      1.4f);
+        const float shackleRight =
+            icon == HierarchyStateIcon::Locked ? bodyTop : bodyTop - 2.5f;
+        draw->AddBezierCubic({center.x - 3.2f, bodyTop},
+                             {center.x - 3.2f, center.y - 6.0f},
+                             {center.x + 3.2f, center.y - 6.0f},
+                             {center.x + 3.2f, shackleRight}, packed, 1.4f);
+        draw->AddCircleFilled({center.x, center.y + 2.0f}, 1.0f, packed);
+    }
+    return pressed;
+}
+
+void RenderCanvasHintBar(std::string_view hint) {
+    const auto& theme = EditorTheme();
+    const bool hasHint = !hint.empty();
+    const ImVec4 transparent{0, 0, 0, 0};
+    const float fixedHeight =
+        ImGui::GetTextLineHeight() + theme.metrics.space6 * 2.0f + 2.0f;
+    ImGui::PushStyleColor(
+        ImGuiCol_ChildBg,
+        hasHint ? WithAlpha(theme.colors.warning, 0.10f) : transparent);
+    ImGui::PushStyleColor(
+        ImGuiCol_Border,
+        hasHint ? WithAlpha(theme.colors.warning, 0.55f) : transparent);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, theme.metrics.radius);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                        {theme.metrics.space8, theme.metrics.space6});
+    ImGui::BeginChild("##canvas-hint", {0, fixedHeight},
+                      ImGuiChildFlags_Borders,
+                      ImGuiWindowFlags_NoScrollbar |
+                          ImGuiWindowFlags_NoScrollWithMouse);
+    if (hasHint) {
+        ImGui::PushStyleColor(ImGuiCol_Text, theme.colors.warning);
+        ImGui::TextUnformatted(hint.data(), hint.data() + hint.size());
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered() &&
+            ImGui::CalcTextSize(hint.data(), hint.data() + hint.size()).x >
+                ImGui::GetContentRegionAvail().x)
+            ImGui::SetTooltip("%.*s", static_cast<int>(hint.size()), hint.data());
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
 }
 
 Variant DefaultValueFor(const VariantType type) {
@@ -137,9 +231,10 @@ std::string ComponentInterfaceId(std::string value){
 
 bool RenderActionArgument(const ui::ActionArgumentDescriptor& descriptor,Variant& value){
     bool changed=false;const char* label=descriptor.displayName.empty()?descriptor.name.c_str():descriptor.displayName.c_str();
+    ImGui::PushID(descriptor.name.c_str());
     const auto help=[&]{if(!descriptor.description.empty()&&ImGui::IsItemHovered())ImGui::SetTooltip("%s",descriptor.description.c_str());};
     if(!descriptor.enumValues.empty()&&value.TryGet<std::string>()){
-        auto* text=value.TryGet<std::string>();if(ImGui::BeginCombo(label,text->empty()?"(none)":text->c_str())){for(const auto& option:descriptor.enumValues)if(ImGui::Selectable(option.c_str(),option==*text)){*text=option;changed=true;}ImGui::EndCombo();}help();return changed;
+        auto* text=value.TryGet<std::string>();if(ImGui::BeginCombo(label,text->empty()?"(none)":text->c_str())){for(std::size_t index=0;index<descriptor.enumValues.size();++index){const auto& option=descriptor.enumValues[index];if(ImGui::Selectable((option+"##enum-"+std::to_string(index)).c_str(),option==*text)){*text=option;changed=true;}}ImGui::EndCombo();}help();ImGui::PopID();return changed;
     }
     if(auto* text=value.TryGet<std::string>()){if(descriptor.editorHint==ui::ActionEditorHint::Multiline)changed=ImGui::InputTextMultiline(label,text,ImVec2(-1,ImGui::GetTextLineHeight()*4));else changed=ImGui::InputText(label,text);}
     else if(auto* boolean=value.TryGet<bool>())changed=ImGui::Checkbox(label,boolean);
@@ -153,13 +248,14 @@ bool RenderActionArgument(const ui::ActionArgumentDescriptor& descriptor,Variant
     else if(auto* uuid=value.TryGet<Uuid>()){std::string uuidText=uuid->Empty()?std::string{}:uuid->ToString();if(ImGui::InputText(label,&uuidText)){if(uuidText.empty()){*uuid={};changed=true;}else if(const auto parsed=Uuid::Parse(uuidText)){*uuid=*parsed;changed=true;}}}
     else ImGui::TextDisabled("%s：尚無對應編輯器",label);
     help();
+    ImGui::PopID();
     return changed;
 }
 
 void RegisterPropertyEditors(){static const bool once=[](){auto& registry=PropertyEditorRegistry::Global();const auto key=[](VariantType type){return "type:"+std::to_string(static_cast<int>(type));};
     (void)registry.Register(key(VariantType::String),[](PropertyEditRequest& request){auto* value=request.value.TryGet<std::string>();if(!value)return false;const char* label=request.property.editor.displayName.empty()?request.property.name.c_str():request.property.editor.displayName.c_str();return ImGui::InputText(label,value);});
     (void)registry.Register("multiline",[](PropertyEditRequest& request){auto* value=request.value.TryGet<std::string>();return value&&ImGui::InputTextMultiline(request.property.name.c_str(),value,ImVec2(-1,ImGui::GetTextLineHeight()*4));});
-    (void)registry.Register("enum",[](PropertyEditRequest& request){auto* value=request.value.TryGet<std::string>();if(!value)return false;bool changed=false;if(ImGui::BeginCombo(request.property.name.c_str(),value->empty()?"(none)":value->c_str())){for(const auto& choice:request.property.editor.enumChoices)if(ImGui::Selectable(choice.c_str(),choice==*value)){*value=choice;changed=true;}ImGui::EndCombo();}return changed;});
+    (void)registry.Register("enum",[](PropertyEditRequest& request){auto* value=request.value.TryGet<std::string>();if(!value)return false;bool changed=false;if(ImGui::BeginCombo(request.property.name.c_str(),value->empty()?"(none)":value->c_str())){for(std::size_t index=0;index<request.property.editor.enumChoices.size();++index){const auto& choice=request.property.editor.enumChoices[index];if(ImGui::Selectable((choice+"##enum-"+std::to_string(index)).c_str(),choice==*value)){*value=choice;changed=true;}}ImGui::EndCombo();}return changed;});
     (void)registry.Register("resource",[](PropertyEditRequest& request){auto* value=request.value.TryGet<std::string>();if(!value)return false;ImGui::Text("%s: %s",request.property.name.c_str(),value->empty()?"Drop a resource":value->c_str());bool changed=false;if(ImGui::BeginDragDropTarget()){if(const ImGuiPayload* payload=ImGui::AcceptDragDropPayload("PX_RESOURCE_PATH")){*value=std::string(static_cast<const char*>(payload->Data),payload->DataSize?payload->DataSize-1:0);changed=true;}ImGui::EndDragDropTarget();}return changed;});
     (void)registry.Register(key(VariantType::Bool),[](PropertyEditRequest& request){auto* value=request.value.TryGet<bool>();return value&&ImGui::Checkbox(request.property.name.c_str(),value);});
     (void)registry.Register(key(VariantType::Integer),[](PropertyEditRequest& request){auto* value=request.value.TryGet<std::int64_t>();if(!value)return false;int edited=static_cast<int>(*value);request.continuous=true;const bool changed=ImGui::DragInt(request.property.name.c_str(),&edited,static_cast<float>(request.property.editor.step),request.property.editor.hasRange?static_cast<int>(request.property.editor.minimum):0,request.property.editor.hasRange?static_cast<int>(request.property.editor.maximum):0);*value=edited;return changed;});
@@ -408,9 +504,13 @@ void UIDesigner::RenderTreeNode(resource::NodeRecord& record) {
     const bool locked=record.properties.contains("editorLocked")&&record.properties["editorLocked"].TryGet<bool>()&&*record.properties["editorLocked"].TryGet<bool>();
     const auto policy=View().ChildPolicy(record.id);const bool container=policy&&*policy!=ui::ChildLayoutPolicy::Free;
     const auto batchProperty=[&](const std::string& property,const Variant& value,const std::string& label){std::vector<Uuid> targets;if(Selection().Contains(record.id))targets.assign(Selection().OrderedItems().begin(),Selection().OrderedItems().end());else targets.push_back(record.id);const DesignerDirtyFlags dirty=property=="visibility"?DesignerDirtyFlags::Layout|DesignerDirtyFlags::Paint:DesignerDirtyFlags::Paint;const Status status=m_session->Commands().SetProperties(targets,property,value,label,dirty);if(!status)EmitStatus(status);else MarkEdited();};
-    if(ImGui::SmallButton(visible?"◉":collapsed?"×":"○"))batchProperty("visibility",Variant(std::string(visible?"Hidden":"Visible")),"切換可見性");if(ImGui::IsItemHovered())ImGui::SetTooltip("眼睛：Visible / Hidden；右鍵選單可設為 Collapsed");ImGui::SameLine();
-    if(ImGui::SmallButton(locked?"◆":"◇"))batchProperty("editorLocked",Variant(!locked),locked?"解除鎖定":"鎖定元件");if(ImGui::IsItemHovered())ImGui::SetTooltip(locked?"解除鎖定":"鎖定（編輯模式不可拖曳）");ImGui::SameLine();
-    const std::string badges=std::string(locked?"  ◆":"")+(container?"  [Layout]":"");
+    const auto visibilityIcon = visible
+                                    ? HierarchyStateIcon::Visible
+                                    : (collapsed ? HierarchyStateIcon::Collapsed
+                                                 : HierarchyStateIcon::Hidden);
+    if(HierarchyStateButton("##visibility",visibilityIcon))batchProperty("visibility",Variant(std::string(visible?"Hidden":"Visible")),"切換可見性");if(ImGui::IsItemHovered())ImGui::SetTooltip("眼睛：Visible / Hidden；右鍵選單可設為 Collapsed");ImGui::SameLine();
+    if(HierarchyStateButton("##lock",locked?HierarchyStateIcon::Locked:HierarchyStateIcon::Unlocked))batchProperty("editorLocked",Variant(!locked),locked?"解除鎖定":"鎖定元件");if(ImGui::IsItemHovered())ImGui::SetTooltip(locked?"解除鎖定":"鎖定（編輯模式不可拖曳）");ImGui::SameLine();
+    const std::string badges=std::string(locked?"  [Locked]":"")+(container?"  [Layout]":"");
     if(m_session->panels.treeFilter[0])ImGui::SetNextItemOpen(true,ImGuiCond_Always);
     else ImGui::SetNextItemOpen(m_session->expandedTreeNodes.contains(record.id),ImGuiCond_Appearing);
     const bool open = ImGui::TreeNodeEx("node", flags, "%s  %s%s", TypeGlyph(record.type), record.name.c_str(),badges.c_str());
@@ -429,8 +529,23 @@ void UIDesigner::RenderTreeNode(resource::NodeRecord& record) {
                     const float fraction=rowHeight>0?(ImGui::GetMousePos().y-ImGui::GetItemRectMin().y)/rowHeight:.5f;
                     const bool siblingDrop=fraction<.25f||fraction>.75f;
                     const Uuid targetParent=siblingDrop?record.parent:record.id;
-                    std::size_t targetIndex=siblingDrop?View().ChildIndex(record.id).value_or(0)+(fraction>.75f?1:0):View().Children(record.id).size();
-                    const Status status=moved->parent==targetParent?m_session->Commands().Reorder(*id,targetIndex):m_session->Commands().Reparent(*id,targetParent,targetIndex);if(!status)EmitStatus(status);else MarkEdited();
+                    const auto targetPolicy=View().ChildPolicy(targetParent).value_or(ui::ChildLayoutPolicy::Free);
+                    const bool reversedLayers=targetPolicy==ui::ChildLayoutPolicy::Free;
+                    Status status=Status::Ok();
+                    if(siblingDrop&&moved->parent==targetParent){
+                        // Free-layout children are displayed in reverse paint order:
+                        // dropping above a row therefore means moving after it in
+                        // canonical data/paint order. Managed layouts stay forward.
+                        const bool moveAfter=reversedLayers?(fraction<.25f):(fraction>.75f);
+                        status=moveAfter?m_session->Commands().MoveAfter(*id,record.id):m_session->Commands().MoveBefore(*id,record.id);
+                    }else{
+                        const std::size_t recordIndex=View().ChildIndex(record.id).value_or(0);
+                        const std::size_t targetIndex=siblingDrop
+                            ? recordIndex+((reversedLayers?(fraction<.25f):(fraction>.75f))?1:0)
+                            : View().Children(record.id).size();
+                        status=moved->parent==targetParent?m_session->Commands().Reorder(*id,targetIndex):m_session->Commands().Reparent(*id,targetParent,targetIndex);
+                    }
+                    if(!status)EmitStatus(status);else MarkEdited();
                 }
             }
         }
@@ -454,7 +569,19 @@ void UIDesigner::RenderTreeNode(resource::NodeRecord& record) {
         if(record.id!=RootId()&&ImGui::MenuItem("刪除","Delete"))RemoveSelected();
         ImGui::EndPopup();
     }
-    if (open) { for (const Uuid& childId : children) if(auto* child=View().Find(*Document(),childId))RenderTreeNode(*child); ImGui::TreePop(); }
+    if (open) {
+        // In free-layout containers the runtime paints later children on top, so
+        // show those children first like a conventional Layers panel. Managed
+        // layouts retain canonical order because it represents spatial/tab order.
+        if(!policy||*policy==ui::ChildLayoutPolicy::Free){
+            for(auto childId=children.rbegin();childId!=children.rend();++childId)
+                if(auto* child=View().Find(*Document(),*childId))RenderTreeNode(*child);
+        }else{
+            for(const Uuid& childId:children)
+                if(auto* child=View().Find(*Document(),childId))RenderTreeNode(*child);
+        }
+        ImGui::TreePop();
+    }
     ImGui::PopID();
 }
 
@@ -557,26 +684,33 @@ void UIDesigner::RenderInspector(const std::string& selectedAssetPath) {
         }
     }
 
-    std::vector<const PropertyInfo*> properties; std::string type = node->type;
+    std::vector<const PropertyInfo*> properties;
+    std::unordered_set<std::string> seenProperties;
+    std::string type = node->type;
     while (const auto* info = TypeRegistry::Global().Find(type)) {
-        for (const auto& property : info->properties) if (HasFlag(property.flags, PropertyFlags::Editable)) properties.push_back(&property);
+        for (const auto& property : info->properties)
+            if (HasFlag(property.flags, PropertyFlags::Editable) &&
+                seenProperties.insert(property.name).second)
+                properties.push_back(&property);
         type = info->base; if (type.empty()) break;
     }
-    std::string lastCategory;
-    bool categoryOpen = true;
-    for (const auto* property : properties) {
-        if(!m_session->inspectorSearch.empty()){
-            const auto lower=[](std::string value){std::transform(value.begin(),value.end(),value.begin(),[](unsigned char character){return static_cast<char>(std::tolower(character));});return value;};
-            const std::string query=lower(m_session->inspectorSearch);const std::string searchable=lower(property->name+" "+property->editor.displayName+" "+property->category+" "+property->editor.description);if(searchable.find(query)==std::string::npos)continue;
-        }
-        if (property->category != lastCategory) {
-            lastCategory = property->category;
-            const char* category=lastCategory=="Layout"?"配置":lastCategory=="Appearance"?"外觀":lastCategory=="Interaction"?"互動":lastCategory=="Data"?"資料":lastCategory.c_str();
-            ImGui::PushID(lastCategory.c_str());
-            categoryOpen = widgets::Section(lastCategory.c_str(),category,true);
-            ImGui::PopID();
-        }
-        if (!categoryOpen) continue;
+    const auto lower=[](std::string value){std::transform(value.begin(),value.end(),value.begin(),[](unsigned char character){return static_cast<char>(std::tolower(character));});return value;};
+    const std::string query=lower(m_session->inspectorSearch);
+    std::vector<const PropertyInfo*> visibleProperties;
+    std::vector<std::string> propertyCategories;
+    std::unordered_set<std::string> seenCategories;
+    for(const auto* property:properties){
+        const std::string searchable=lower(property->name+" "+property->editor.displayName+" "+property->category+" "+property->editor.description);
+        if(!query.empty()&&searchable.find(query)==std::string::npos)continue;
+        visibleProperties.push_back(property);
+        if(seenCategories.insert(property->category).second)propertyCategories.push_back(property->category);
+    }
+    for(const std::string& propertyCategory:propertyCategories){
+        const std::string categoryId=propertyCategory.empty()?"General":propertyCategory;
+        const char* category=propertyCategory.empty()?"一般":propertyCategory=="Layout"?"配置":propertyCategory=="Appearance"?"外觀":propertyCategory=="Interaction"?"互動":propertyCategory=="Data"?"資料":propertyCategory.c_str();
+        if(!widgets::Section(categoryId.c_str(),category,true))continue;
+        for(const auto* property:visibleProperties){
+        if(property->category!=propertyCategory)continue;
         if(property->ownership==PropertyOwnership::ParentLayout&&SelectedParentPolicy()!=ui::ChildLayoutPolicy::Free){
             ImGui::TextColored(EditorTheme().colors.warning,"位置與尺寸  由 %s 控制",ui::ChildLayoutPolicyName(SelectedParentPolicy()));
             if(ImGui::IsItemHovered())ImGui::SetTooltip("Container 子元件不寫入無效 offsets；請使用 minimum size、size flags 或拖曳排序。");
@@ -595,7 +729,7 @@ void UIDesigner::RenderInspector(const std::string& selectedAssetPath) {
         PropertyEditRequest editRequest{.property=*property,.value=value.Clone()};
         if(const auto* editor=PropertyEditorRegistry::Global().Resolve(*property)){changed=(*editor)(editRequest);value=std::move(editRequest.value);continuous=editRequest.continuous;}
         else if(auto* reference=value.TryGet<ResourceRefValue>()){ImGui::Text("%s: %s",propertyLabel,reference->lastKnownPath.empty()?"Select resource":reference->lastKnownPath.c_str());if(ImGui::BeginDragDropTarget()){if(const ImGuiPayload* payload=ImGui::AcceptDragDropPayload("PX_RESOURCE_PATH")){reference->id={};reference->lastKnownPath=std::string(static_cast<const char*>(payload->Data),payload->DataSize?payload->DataSize-1:0);changed=true;}ImGui::EndDragDropTarget();}}
-        else if(auto* token=value.TryGet<TokenRefValue>()){std::vector<std::string> tokenNames;if(const auto modern=Document()->Data().properties.find("styleSystem");modern!=Document()->Data().properties.end())if(const auto* system=modern->second.AsObject())if(const auto tokens=system->find("tokens");tokens!=system->end())if(const auto* list=tokens->second.AsArray())for(const auto& item:*list)if(const auto* definition=item.AsObject())if(const auto tokenName=definition->find("name");tokenName!=definition->end())if(const auto* text=tokenName->second.TryGet<std::string>())tokenNames.push_back(*text);if(ImGui::BeginCombo((std::string("Token: ")+propertyLabel).c_str(),token->name.empty()?"Select token":token->name.c_str())){for(const auto& tokenName:tokenNames)if(ImGui::Selectable(tokenName.c_str(),tokenName==token->name)){token->name=tokenName;changed=true;}ImGui::EndCombo();}}
+        else if(auto* token=value.TryGet<TokenRefValue>()){std::vector<std::string> tokenNames;if(const auto modern=Document()->Data().properties.find("styleSystem");modern!=Document()->Data().properties.end())if(const auto* system=modern->second.AsObject())if(const auto tokens=system->find("tokens");tokens!=system->end())if(const auto* list=tokens->second.AsArray())for(const auto& item:*list)if(const auto* definition=item.AsObject())if(const auto tokenName=definition->find("name");tokenName!=definition->end())if(const auto* text=tokenName->second.TryGet<std::string>())tokenNames.push_back(*text);if(ImGui::BeginCombo((std::string("Token: ")+propertyLabel).c_str(),token->name.empty()?"Select token":token->name.c_str())){for(std::size_t index=0;index<tokenNames.size();++index){const auto& tokenName=tokenNames[index];if(ImGui::Selectable((tokenName+"##token-"+std::to_string(index)).c_str(),tokenName==token->name)){token->name=tokenName;changed=true;}}ImGui::EndCombo();}}
         else ImGui::TextDisabled("%s  (unsupported value)", property->name.c_str());
         if(HasFlag(property->flags,PropertyFlags::ResourcePath)&&!selectedAssetPath.empty()){ImGui::SameLine();if(ImGui::SmallButton("使用選取素材")){if(auto* path=value.TryGet<std::string>())*path=selectedAssetPath;else if(auto* reference=value.TryGet<ResourceRefValue>()){reference->id={};reference->lastKnownPath=selectedAssetPath;}changed=true;continuous=false;}}
         const bool deactivated=ImGui::IsItemDeactivatedAfterEdit();
@@ -613,6 +747,7 @@ void UIDesigner::RenderInspector(const std::string& selectedAssetPath) {
         }else if(changed){const Status status=m_session->Commands().SetProperties(propertyTargets,property->name,value,"Batch change "+property->name,DirtyForProperty(*property));if(!status)EmitStatus(status);else MarkEdited();}
         if(recordKey)RecordAnimationKey(Selected(),property->name,keyValue);
         ImGui::PopID();
+        }
     }
 
     ImGui::Separator();if(widgets::Section("interaction-triggers","Interaction · Triggers",false))RenderEvents();
@@ -807,9 +942,9 @@ void UIDesigner::RenderViewportToolbar() {
     ImGui::SameLine();
     ImGui::TextDisabled("%s", SelectionSummary().c_str());ImGui::SameLine();
     widgets::StatusChip(ui::ChildLayoutPolicyName(SelectedParentPolicy()),SelectedParentPolicy()==ui::ChildLayoutPolicy::Free?widgets::MessageKind::Info:widgets::MessageKind::Warning);
-    if (!m_session->canvas.hint.empty()) {
-        widgets::InlineMessage(widgets::MessageKind::Warning,m_session->canvas.hint);
-    }
+    // This row is always reserved and has a fixed height. Resize feedback only
+    // changes its text, so per-frame digit changes cannot reflow the viewport.
+    RenderCanvasHintBar(m_session->canvas.hint);
 }
 
 bool UIDesigner::ProcessCanvasInput(const ImRect& viewport, ImVec2 p0, float scale, bool hovered,
@@ -835,6 +970,11 @@ bool UIDesigner::ProcessCanvasInput(const ImRect& viewport, ImVec2 p0, float sca
         m_session->canvas.hoveredPivotHandle = false;
     }
     bool handled = false;
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
+        (interaction.HasCapture() || (hovered && !io.WantTextInput))) {
+        interaction.Cancel();
+        handled = true;
+    }
     if (hovered && !io.WantTextInput) {
         if (ImGui::IsKeyPressed(ImGuiKey_V)||ImGui::IsKeyPressed(ImGuiKey_Q)) m_session->viewport.tool=DesignerTool::Select;
         if (ImGui::IsKeyPressed(ImGuiKey_A)) m_session->viewport.tool=DesignerTool::Anchors;
@@ -866,7 +1006,6 @@ bool UIDesigner::ProcessCanvasInput(const ImRect& viewport, ImVec2 p0, float sca
             for(const Uuid& id:Selection().OrderedItems()){const auto* selected=View().Find(*Document(),id);if(!selected||id==RootId())continue;const auto policy=View().ChildPolicy(selected->parent);if(policy&&*policy!=ui::ChildLayoutPolicy::Free)continue;const auto found=selected->properties.find("offsets");if(found==selected->properties.end())continue;if(const auto* before=found->second.TryGet<Rect>()){Rect after=*before;after.x+=delta.x;after.y+=delta.y;command->Add(std::make_unique<PropertyChangeCommand>("Nudge control",id,"offsets",Variant(*before),Variant(after),std::chrono::steady_clock::now(),false));changes.Merge(DocumentChangeSet::Property(id,"offsets",DesignerDirtyFlags::Layout|DesignerDirtyFlags::Paint));}}
             if(!command->Empty()){const Status status=m_session->Commands().Execute(std::move(command),std::move(changes));if(!status)EmitStatus(status);else MarkEdited();return true;}
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) { interaction.Cancel(); handled = true; }
     }
     if(hovered&&ImGui::IsMouseClicked(ImGuiMouseButton_Right)){
         m_session->canvas.contextPosition=canvas;m_session->canvas.contextTarget=m_session->hoveredNode;if(!m_session->canvas.contextTarget.Empty()){if(!Selection().Contains(m_session->canvas.contextTarget))SelectOnly(m_session->canvas.contextTarget);MakePrimary(m_session->canvas.contextTarget);}ImGui::OpenPopup("UIDesignerCanvasContext");
@@ -988,9 +1127,16 @@ void UIDesigner::RenderTheme(){
     const Variant before=node->properties.contains("styleBinding")?node->properties.at("styleBinding"):Variant{};ui::ControlStyleBinding binding;if(before.Type()!=VariantType::Null){auto parsed=ui::ParseStyleBinding(before);if(parsed)binding=parsed.TakeValue();else{EmitStatus(Status::Fail(parsed.Diagnostics()));return;}}const ui::ControlStyleBinding bindingBefore=binding;bool changed=false;
     ImGui::SeparatorText((node->name+" · "+node->type).c_str());const char* base="(none)";if(binding.baseStyle)if(const auto* style=theme.FindStyle(*binding.baseStyle))base=style->displayName.c_str();if(ImGui::BeginCombo("Base Style",base)){if(ImGui::Selectable("(none)",!binding.baseStyle)){binding.baseStyle.reset();changed=true;}for(const auto& style:theme.styles)if(ui::IsStyleCompatibleWith(style.compatibleTypes,node->type))if(ImGui::Selectable((style.displayName+"##base-"+style.id.ToString()).c_str(),binding.baseStyle&&*binding.baseStyle==style.id)){binding.baseStyle=style.id;changed=true;}ImGui::EndCombo();}
     if(ImGui::TreeNode("Applied Styles")){for(const auto& style:theme.styles)if(ui::IsStyleCompatibleWith(style.compatibleTypes,node->type)){bool selected=std::find(binding.appliedStyles.begin(),binding.appliedStyles.end(),style.id)!=binding.appliedStyles.end();if(ImGui::Checkbox((style.displayName+"##applied-"+style.id.ToString()).c_str(),&selected)){if(selected)binding.appliedStyles.push_back(style.id);else std::erase(binding.appliedStyles,style.id);changed=true;}}ImGui::TreePop();}
-    for(const auto& axis:theme.variantAxes)if(ui::IsStyleCompatibleWith(axis.compatibleTypes,node->type)){const auto selected=binding.variants.contains(axis.id)?binding.variants.at(axis.id):axis.defaultValue;const auto* value=axis.FindValue(selected);if(ImGui::BeginCombo(axis.displayName.c_str(),value?value->displayName.c_str():"Missing variant")){for(const auto& candidate:axis.values)if(ImGui::Selectable((candidate.displayName+"##variant-"+candidate.id.ToString()).c_str(),candidate.id==selected)){binding.variants[axis.id]=candidate.id;changed=true;}ImGui::EndCombo();}}
+    for(const auto& axis:theme.variantAxes)if(ui::IsStyleCompatibleWith(axis.compatibleTypes,node->type)){const auto selected=binding.variants.contains(axis.id)?binding.variants.at(axis.id):axis.defaultValue;const auto* value=axis.FindValue(selected);if(ImGui::BeginCombo((axis.displayName+"##axis-"+axis.id.ToString()).c_str(),value?value->displayName.c_str():"Missing variant")){for(const auto& candidate:axis.values)if(ImGui::Selectable((candidate.displayName+"##variant-"+candidate.id.ToString()).c_str(),candidate.id==selected)){binding.variants[axis.id]=candidate.id;changed=true;}ImGui::EndCombo();}}
     ui::StylePropertyRegistry registry;const auto editStyleValue=[&](const ui::StylePropertyDescriptor& descriptor,ui::StyleValue& styleValue){bool edited=false;const char* kind=styleValue.IsTokenReference()?"Token":"Literal";if(ImGui::BeginCombo((descriptor.displayName+" source").c_str(),kind)){if(ImGui::Selectable("Literal",styleValue.IsLiteral())){styleValue=ui::StyleValue::Literal(DefaultValueFor(descriptor.valueType));edited=true;}if(ImGui::Selectable("Token",styleValue.IsTokenReference())&&!theme.tokens.empty()){const auto& token=theme.tokens.front();styleValue=ui::StyleValue::Token(token.id,token.displayName);edited=true;}ImGui::EndCombo();}if(styleValue.IsTokenReference()){const auto* current=theme.FindToken(styleValue.TokenReference());if(ImGui::BeginCombo(descriptor.displayName.c_str(),current?current->displayName.c_str():"Missing token")){for(const auto& token:theme.tokens)if(ui::IsStyleValueTypeCompatible(descriptor.valueType,token.type)&&ImGui::Selectable((token.displayName+"##token-"+token.id.ToString()).c_str(),token.id==styleValue.TokenReference())){styleValue=ui::StyleValue::Token(token.id,token.displayName);edited=true;}ImGui::EndCombo();}}else{Variant literal=styleValue.IsLiteral()?styleValue.LiteralValue().Clone():DefaultValueFor(descriptor.valueType);ui::ActionArgumentDescriptor argument{.name=descriptor.id,.displayName=descriptor.displayName,.type=descriptor.valueType};if(RenderActionArgument(argument,literal)){styleValue=ui::StyleValue::Literal(std::move(literal));edited=true;}}return edited;};
-    ImGui::SeparatorText("Local Overrides");std::optional<ui::StylePropertyId> removeOverride;for(auto& [id,value]:binding.localOverrides){ImGui::PushID(id.c_str());if(const auto* descriptor=registry.Find(id);descriptor&&registry.RuntimeSupports(id,node->type))changed|=editStyleValue(*descriptor,value);else ImGui::TextColored(EditorTheme().colors.warning,"Unsupported by runtime: %s",id.c_str());ImGui::SameLine();if(ImGui::SmallButton("Remove"))removeOverride=id;ImGui::PopID();}if(removeOverride){binding.localOverrides.erase(*removeOverride);changed=true;}if(ImGui::Button("＋ Override"))ImGui::OpenPopup("AddStyleOverride");if(ImGui::BeginPopup("AddStyleOverride")){for(const auto* descriptor:registry.Descriptors())if(registry.RuntimeSupports(descriptor->id,node->type)&&!binding.localOverrides.contains(descriptor->id))if(ImGui::MenuItem((descriptor->category+" / "+descriptor->displayName).c_str())){binding.localOverrides[descriptor->id]=ui::StyleValue::Literal(DefaultValueFor(descriptor->valueType));changed=true;ImGui::CloseCurrentPopup();}ImGui::EndPopup();}
+    ImGui::SeparatorText("Local Overrides");std::optional<ui::StylePropertyId> removeOverride;
+    for(auto& [id,value]:binding.localOverrides){ImGui::PushID(id.c_str());if(const auto* descriptor=registry.Find(id);descriptor&&registry.RuntimeSupports(id,node->type))changed|=editStyleValue(*descriptor,value);else ImGui::TextColored(EditorTheme().colors.warning,"Unsupported by runtime: %s",id.c_str());ImGui::SameLine();if(ImGui::SmallButton("Remove"))removeOverride=id;ImGui::PopID();}
+    if(removeOverride){binding.localOverrides.erase(*removeOverride);changed=true;}
+    if(ImGui::Button("＋ Override"))ImGui::OpenPopup("AddStyleOverride");
+    if(ImGui::BeginPopup("AddStyleOverride")){
+        for(const auto* descriptor:registry.Descriptors())if(registry.RuntimeSupports(descriptor->id,node->type)&&!binding.localOverrides.contains(descriptor->id))if(ImGui::MenuItem((descriptor->category+" / "+descriptor->displayName+"##style-property-"+descriptor->id).c_str())){binding.localOverrides[descriptor->id]=ui::StyleValue::Literal(DefaultValueFor(descriptor->valueType));changed=true;ImGui::CloseCurrentPopup();}
+        ImGui::EndPopup();
+    }
     ui::StyleResolveRequest request{.controlType=node->type,.binding=binding};const auto resolved=ui::StyleResolver{}.Resolve(theme,request,registry);if(ImGui::TreeNode("Advanced · Resolved Source Trace")){if(resolved&&ImGui::BeginTable("##selected-style-trace",3,ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg)){ImGui::TableSetupColumn("Property");ImGui::TableSetupColumn("Source");ImGui::TableSetupColumn("Token chain");ImGui::TableHeadersRow();for(const auto& [id,value]:resolved.Value().properties){ImGui::TableNextRow();ImGui::TableSetColumnIndex(0);ImGui::TextUnformatted(id.c_str());ImGui::TableSetColumnIndex(1);ImGui::TextUnformatted(value.source.label.c_str());ImGui::TableSetColumnIndex(2);ImGui::Text("%zu",value.tokenChain.size());}ImGui::EndTable();}else if(!resolved)for(const auto& diagnostic:resolved.Diagnostics())ImGui::TextColored(EditorTheme().colors.error,"%s %s",diagnostic.code.c_str(),diagnostic.message.c_str());ImGui::TreePop();}
     if(changed){DesignerDirtyFlags dirty=DesignerDirtyFlags::Theme|DesignerDirtyFlags::Paint;if(StyleBindingAffectsLayout(bindingBefore,binding))dirty|=DesignerDirtyFlags::Layout;const Status status=m_session->Commands().SetProperty(Selected(),"styleBinding",ui::WriteStyleBinding(binding),"Edit Control style binding",dirty);if(!status)EmitStatus(status);else MarkEdited();}
     ImGui::TextDisabled("Theme definitions are edited in the external .pxtheme document editor.");
@@ -1002,7 +1148,22 @@ void UIDesigner::RenderComponents(){
     const auto commitDocumentArray=[&](const char* property,Variant before,Variant after,const char* label){(void)before;const Status status=components.SetInterfaceDefinitions(*Document(),m_session->Commands(),property,std::move(after),label);if(!status)EmitStatus(status);else MarkEdited(true);};
     if(Document()->Data().type=="UIComponent"){
         ImGui::TextDisabled("Component public API · UI schema 5");auto* selected=View().Find(*Document(),Selected());if(!selected){ImGui::TextDisabled("Select a source Control.");return;}
-        const auto editDefinitions=[&](const char* field,const char* title,const auto& candidates,const auto& addDefinition){Variant before=Document()->Data().properties.contains(field)?Document()->Data().properties.at(field).Clone():Variant(VariantArray{});Variant after=before.Clone();if(!after.AsArray())after=Variant(VariantArray{});auto* values=after.AsArray();bool changed=false;ImGui::SeparatorText(title);for(std::size_t index=0;index<values->size();++index){const auto* object=(*values)[index].AsObject();const auto id=object?object->find("id"):VariantObject::const_iterator{};const auto display=object?object->find("displayName"):VariantObject::const_iterator{};const std::string idText=object&&id!=object->end()&&id->second.TryGet<std::string>()?*id->second.TryGet<std::string>():"invalid";const std::string displayText=object&&display!=object->end()&&display->second.TryGet<std::string>()?*display->second.TryGet<std::string>():idText;ImGui::PushID((std::string(field)+std::to_string(index)).c_str());ImGui::Text("%s",displayText.c_str());ImGui::SameLine();ImGui::TextDisabled("%s",idText.c_str());ImGui::SameLine();if(ImGui::SmallButton("Remove")){values->erase(values->begin()+static_cast<std::ptrdiff_t>(index));changed=true;ImGui::PopID();break;}ImGui::PopID();}if(ImGui::BeginCombo((std::string("Expose##")+field).c_str(),"＋ Add")){for(const auto& candidate:candidates)if(ImGui::Selectable(candidate.first.c_str())){values->push_back(Variant(addDefinition(candidate)));changed=true;ImGui::CloseCurrentPopup();}ImGui::EndCombo();}if(changed)commitDocumentArray(field,std::move(before),std::move(after),(std::string("Edit ")+title).c_str());};
+        const auto editDefinitions=[&](const char* field,const char* title,const auto& candidates,const auto& addDefinition){
+            Variant before=Document()->Data().properties.contains(field)?Document()->Data().properties.at(field).Clone():Variant(VariantArray{});
+            Variant after=before.Clone();if(!after.AsArray())after=Variant(VariantArray{});auto* values=after.AsArray();bool changed=false;
+            ImGui::SeparatorText(title);
+            for(std::size_t index=0;index<values->size();++index){
+                const auto* object=(*values)[index].AsObject();const auto id=object?object->find("id"):VariantObject::const_iterator{};const auto display=object?object->find("displayName"):VariantObject::const_iterator{};
+                const std::string idText=object&&id!=object->end()&&id->second.TryGet<std::string>()?*id->second.TryGet<std::string>():"invalid";const std::string displayText=object&&display!=object->end()&&display->second.TryGet<std::string>()?*display->second.TryGet<std::string>():idText;
+                ImGui::PushID((std::string(field)+std::to_string(index)).c_str());ImGui::Text("%s",displayText.c_str());ImGui::SameLine();ImGui::TextDisabled("%s",idText.c_str());ImGui::SameLine();
+                if(ImGui::SmallButton("Remove")){values->erase(values->begin()+static_cast<std::ptrdiff_t>(index));changed=true;ImGui::PopID();break;}ImGui::PopID();
+            }
+            if(ImGui::BeginCombo((std::string("Expose##")+field).c_str(),"＋ Add")){
+                for(std::size_t candidateIndex=0;candidateIndex<candidates.size();++candidateIndex){const auto& candidate=candidates[candidateIndex];if(ImGui::Selectable((candidate.first+"##candidate-"+std::to_string(candidateIndex)).c_str())){values->push_back(Variant(addDefinition(candidate)));changed=true;ImGui::CloseCurrentPopup();}}
+                ImGui::EndCombo();
+            }
+            if(changed)commitDocumentArray(field,std::move(before),std::move(after),(std::string("Edit ")+title).c_str());
+        };
         std::vector<std::pair<std::string,const PropertyInfo*>> properties;std::unordered_set<std::string> seen;std::string type=selected->type;while(const auto* info=TypeRegistry::Global().Find(type)){for(const auto& property:info->properties)if(HasFlag(property.flags,PropertyFlags::Editable)&&seen.insert(property.name).second)properties.push_back({property.editor.displayName.empty()?property.name:property.editor.displayName,&property});type=info->base;if(type.empty())break;}
         editDefinitions("component.exposedProperties","Exposed Properties",properties,[&](const auto& candidate){const auto* property=candidate.second;const std::string id=ComponentInterfaceId(selected->name+" "+property->name);return VariantObject{{"id",id},{"displayName",candidate.first},{"node",selected->id},{"property",property->name},{"type",std::string(ToString(property->type))}};});
         std::vector<std::pair<std::string,const SignalInfo*>> signals;for(const auto* signal:TypeRegistry::Global().SignalsForType(selected->type))signals.push_back({signal->displayName.empty()?signal->name:signal->displayName,signal});

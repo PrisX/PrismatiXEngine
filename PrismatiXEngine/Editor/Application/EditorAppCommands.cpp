@@ -224,10 +224,12 @@ void EditorApp::RenderCommandPalette() {
         bool runFirst = ImGui::IsKeyPressed(ImGuiKey_Enter, false);
         bool ranOne = false;
         if (ImGui::BeginChild("##cmdlist", ImVec2(0, 300))) {
-            for (const PaletteCommand& cmd : m_commands) {
+            for (std::size_t commandIndex = 0; commandIndex < m_commands.size(); ++commandIndex) {
+                const PaletteCommand& cmd = m_commands[commandIndex];
                 if (!matches(cmd.label)) continue;
                 const std::string row = cmd.shortcut.empty() ? cmd.label : (cmd.label + "\t" + cmd.shortcut);
-                const bool clicked = ImGui::Selectable(row.c_str());
+                const bool clicked = ImGui::Selectable(
+                    (row + "##command-" + std::to_string(commandIndex)).c_str());
                 if (clicked || (runFirst && !ranOne)) {
                     if (cmd.run) cmd.run();
                     ranOne = true;

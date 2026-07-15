@@ -73,6 +73,14 @@ void InlineMessage(MessageKind kind, std::string_view text,
                    std::string_view actionLabel,
                    const std::function<void()>& action) {
     const auto& theme = EditorTheme();
+    // This helper may be emitted more than once in the same parent window. Scope
+    // its fixed child/button labels by semantic content so each message owns a
+    // stable ImGui ID instead of every instance sharing "##inline-message".
+    ImGui::PushID(static_cast<int>(kind));
+    const char* textBegin = text.empty() ? "" : text.data();
+    ImGui::PushID(textBegin, textBegin + text.size());
+    const char* actionBegin = actionLabel.empty() ? "" : actionLabel.data();
+    ImGui::PushID(actionBegin, actionBegin + actionLabel.size());
     ImGui::PushStyleColor(ImGuiCol_ChildBg,
                           WithAlpha(MessageColor(kind), 0.10f));
     ImGui::PushStyleColor(ImGuiCol_Border,
@@ -96,12 +104,19 @@ void InlineMessage(MessageKind kind, std::string_view text,
     ImGui::EndChild();
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor(2);
+    ImGui::PopID();
+    ImGui::PopID();
+    ImGui::PopID();
 }
 
 void EmptyState(std::string_view title, std::string_view description,
                 std::string_view actionLabel,
                 const std::function<void()>& action) {
     const auto& theme = EditorTheme();
+    const char* titleBegin = title.empty() ? "" : title.data();
+    const char* descriptionBegin = description.empty() ? "" : description.data();
+    ImGui::PushID(titleBegin, titleBegin + title.size());
+    ImGui::PushID(descriptionBegin, descriptionBegin + description.size());
     ImGui::Dummy(ImVec2(0, theme.metrics.space16));
     ImGui::PushStyleColor(ImGuiCol_Text, theme.colors.textPrimary);
     ImGui::TextWrapped("%.*s", static_cast<int>(title.size()), title.data());
@@ -113,6 +128,8 @@ void EmptyState(std::string_view title, std::string_view description,
     if (!actionLabel.empty() && action &&
         ImGui::Button(std::string(actionLabel).c_str()))
         action();
+    ImGui::PopID();
+    ImGui::PopID();
 }
 
 bool Section(const char* id, const char* label, bool defaultOpen,

@@ -1942,7 +1942,8 @@ void NodeGraphEditor::RenderCreatePopup() {
             ImGui::SeparatorText(currentCategory.c_str());
         }
         ImGui::PushStyleColor(ImGuiCol_Text, definition.accent.Value);
-        const bool clicked = ImGui::MenuItem(definition.title.c_str(), nullptr, false);
+        const bool clicked = ImGui::MenuItem(
+            (definition.title + "##node-type-" + definition.type).c_str(), nullptr, false);
         ImGui::PopStyleColor();
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("%s", definition.description.c_str());
@@ -2152,10 +2153,12 @@ void NodeGraphEditor::RenderParameter(Parameter& parameter, bool compact, int no
             ImGui::SetNextItemWidth(-1.0f);
             ImGui::InputTextWithHint("##filter", "搜尋…", &search);
             const std::string needle = Lower(search);
-            for (const auto& option : contextOptions) {
+            for (std::size_t optionIndex = 0; optionIndex < contextOptions.size(); ++optionIndex) {
+                const auto& option = contextOptions[optionIndex];
                 if (!needle.empty() && Lower(option.label + " " + option.value + " " + option.detail).find(needle) == std::string::npos) continue;
                 const bool selected = option.value == parameter.stringValue;
-                if (ImGui::Selectable((option.label + "##" + option.value).c_str(), selected)) {
+                if (ImGui::Selectable((option.label + "##" + option.value + "-" +
+                                       std::to_string(optionIndex)).c_str(), selected)) {
                     parameter.stringValue = option.value; edited = true;
                 }
                 if (!option.detail.empty() && ImGui::IsItemHovered())
@@ -2210,9 +2213,11 @@ void NodeGraphEditor::RenderParameter(Parameter& parameter, bool compact, int no
                 InNodeOptionButton(nodeId, parameter, kCompactParameterWidth);
             }
             else if (ImGui::BeginCombo(controlId.c_str(), parameter.stringValue.c_str())) {
-                for (const std::string& option : parameter.options) {
+                for (std::size_t optionIndex = 0; optionIndex < parameter.options.size(); ++optionIndex) {
+                    const std::string& option = parameter.options[optionIndex];
                     const bool selected = option == parameter.stringValue;
-                    if (ImGui::Selectable(option.c_str(), selected)) {
+                    if (ImGui::Selectable((option + "##option-" +
+                                           std::to_string(optionIndex)).c_str(), selected)) {
                         parameter.stringValue = option;
                         changed = true;
                     }
@@ -2338,12 +2343,14 @@ void NodeGraphEditor::RenderInNodePopups() {
                 ImGui::SetNextItemWidth(-1.0f);
                 ImGui::InputTextWithHint("##voice-search", "搜尋語音…", &search);
                 const std::string needle = Lower(search);
-                for (const auto& option : voiceOptions) {
+                for (std::size_t optionIndex = 0; optionIndex < voiceOptions.size(); ++optionIndex) {
+                    const auto& option = voiceOptions[optionIndex];
                     if (!needle.empty() &&
                         Lower(option.label + " " + option.value + " " + option.detail)
                                 .find(needle) == std::string::npos)
                         continue;
-                    if (ImGui::Selectable((option.label + "##" + option.value).c_str(),
+                    if (ImGui::Selectable((option.label + "##" + option.value + "-" +
+                                           std::to_string(optionIndex)).c_str(),
                                           option.value == voices[idx])) {
                         voices[idx] = option.value;
                         edited = true;
@@ -2410,13 +2417,15 @@ void NodeGraphEditor::RenderInNodePopups() {
             ImGui::SetNextItemWidth(280.0f);
             ImGui::InputTextWithHint("##context-search", "搜尋…", &search);
             const std::string needle = Lower(search);
-            for (const auto& option : contextOptions) {
+            for (std::size_t optionIndex = 0; optionIndex < contextOptions.size(); ++optionIndex) {
+                const auto& option = contextOptions[optionIndex];
                 if (!needle.empty() &&
                     Lower(option.label + " " + option.value + " " + option.detail)
                             .find(needle) == std::string::npos)
                     continue;
                 const bool selected = option.value == parameter->stringValue;
-                if (ImGui::Selectable((option.label + "##" + option.value).c_str(), selected)) {
+                if (ImGui::Selectable((option.label + "##" + option.value + "-" +
+                                       std::to_string(optionIndex)).c_str(), selected)) {
                     parameter->stringValue = option.value;
                     if ((node->type == "character" || node->type == "char") &&
                         parameter->key == "id") {
@@ -2441,9 +2450,11 @@ void NodeGraphEditor::RenderInNodePopups() {
                 ImGui::CloseCurrentPopup();
             }
         } else {
-            for (const std::string& option : parameter->options) {
+            for (std::size_t optionIndex = 0; optionIndex < parameter->options.size(); ++optionIndex) {
+                const std::string& option = parameter->options[optionIndex];
                 const bool selected = option == parameter->stringValue;
-                if (ImGui::Selectable(option.c_str(), selected)) {
+                if (ImGui::Selectable((option + "##option-" +
+                                       std::to_string(optionIndex)).c_str(), selected)) {
                     parameter->stringValue = option;
                     MarkDirty();
                 }

@@ -282,7 +282,7 @@ if(BUILD_TESTING)
     add_test(NAME PrismatiX.Build.E2E COMMAND PrismatiXBuildE2ETests)
     set_tests_properties(PrismatiX.Build.E2E PROPERTIES LABELS "e2e")
 
-    add_custom_target(PrismatiXRequiredPRTests DEPENDS
+    add_custom_target(PrismatiXRequiredTests DEPENDS
         PrismatiXRuntimeSubsystemIntegrationTests
         PrismatiXUIDesignerIntegrationTests
         PrismatiXDesignerSelectionTests
@@ -305,7 +305,7 @@ if(BUILD_TESTING)
         PrismatiXEditorWorkspaceIntegrationTests
         PrismatiXImportTests)
     add_custom_target(PrismatiXRegularTests DEPENDS
-        PrismatiXRequiredPRTests PrismatiXBuildE2ETests)
+        PrismatiXRequiredTests PrismatiXBuildE2ETests)
 endif()
 
 if(PRISMATIX_BUILD_FUZZERS)

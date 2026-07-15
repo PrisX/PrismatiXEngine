@@ -364,6 +364,8 @@ bool CanvasInteractionController::PointerMove(const DesignerPointerEvent& event)
 bool CanvasInteractionController::PointerUp(const DesignerPointerEvent& event) {
     if (!m_hasCapture) return false;
     const bool handled = HandlePointerUp(event);
+    m_session.canvas.snapGuides.clear();
+    m_session.canvas.snapDistances.clear();
     m_hasCapture = false;
     return handled;
 }
