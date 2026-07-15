@@ -14,9 +14,13 @@ using Json = nlohmann::json;
 
 diag::Diagnostic TimelineError(std::string code, std::string message,
                                const std::string& path = {}) {
-    diag::Diagnostic diagnostic{.severity=diag::Severity::Error,.code=std::move(code),
-                                .category="Animation.Timeline",.message=std::move(message)};
-    diagnostic.source.path=path;return diagnostic;
+    diag::Diagnostic diagnostic;
+    diagnostic.severity = diag::Severity::Error;
+    diagnostic.code = std::move(code);
+    diagnostic.category = "Animation.Timeline";
+    diagnostic.message = std::move(message);
+    diagnostic.source.path = path;
+    return diagnostic;
 }
 
 float Ease(const Curve curve, const float value) {
@@ -99,7 +103,10 @@ std::vector<AnimationClip> OfficialPresets(){std::vector<AnimationClip> clips;co
     for(const char* name:{"typewriter","fade","slide","pop","shake","wave","rainbow","glitch"})add("Text",name,name,0.0,1.0,name==std::string("typewriter")?1.2f:0.6f,name==std::string("wave")||name==std::string("rainbow"));
     for(const char* name:{"enter-left","enter-right","exit-left","exit-right","fade","hop","shake","breathing","expression-crossfade","blink","lip-sync"})add("Actor",name,name,0.0,1.0,0.55f,name==std::string("breathing")||name==std::string("blink")||name==std::string("lip-sync"));
     for(const char* name:{"shake","flash","fade","zoom","pan","blur","vignette","color-grade","rule-dissolve"})add("Screen",name,name,0.0,1.0,0.5f,false);
-    for(const char* name:{"panel-slide","panel-fade","panel-scale","modal-open","modal-close","button-hover","button-press"})add("UI",name,name,0.0,1.0,0.25f,false);return clips;}
+    for(const char* name:{"panel-slide","panel-fade","panel-scale","modal-open","modal-close","button-hover","button-press"})
+        add("UI",name,name,0.0,1.0,0.25f,false);
+    return clips;
+}
 
 std::string WriteAnimationClip(const AnimationClip& clip){Json root{{"format","PrismatiXAnimation"},{"version",4},{"id",clip.id.ToString()},{"name",clip.name},{"duration",clip.duration},{"loop",clip.loop}};root["tracks"]=Json::array();for(const auto& track:clip.tracks){Json item{{"binding",{{"kind",KindName(track.binding.kind)},{"target",track.binding.target},{"property",track.binding.property}}}};item["keys"]=Json::array();for(const auto& key:track.keys)item["keys"].push_back({{"time",key.time},{"value",ValueJson(key.value)},{"curve",CurveName(key.curve)}});root["tracks"].push_back(std::move(item));}root["markers"]=Json::array();for(const auto& marker:clip.markers){Json payload=Json::object();for(const auto& [name,value]:marker.payload)payload[name]=ValueJson(value);root["markers"].push_back({{"time",marker.time},{"name",marker.name},{"payload",std::move(payload)}});}root["nested"]=Json::array();for(const auto& nested:clip.nested)root["nested"].push_back({{"start",nested.start},{"clip",nested.clip.ToString()},{"speed",nested.speed}});return root.dump(2)+"\n";}
 

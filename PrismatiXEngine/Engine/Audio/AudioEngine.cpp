@@ -66,7 +66,11 @@ void AudioEngine::Shutdown() {
     }
     m_bgmAudio = { nullptr, nullptr };
     if (m_voiceTrack) MIX_DestroyTrack(m_voiceTrack), m_voiceTrack = nullptr;
-    if(m_ambienceTrack)MIX_DestroyTrack(m_ambienceTrack),m_ambienceTrack=nullptr;m_ambienceAudio=nullptr;
+    if (m_ambienceTrack) {
+        MIX_DestroyTrack(m_ambienceTrack);
+        m_ambienceTrack = nullptr;
+    }
+    m_ambienceAudio = nullptr;
     if (m_voiceAudio.audio) {
         MIX_DestroyAudio(m_voiceAudio.audio);
         m_voiceAudio = {};
@@ -222,7 +226,12 @@ void AudioEngine::PlayBGMWithIntro(const std::string& introPath, const std::stri
 }
 
 void AudioEngine::Update() {
-    if(!m_initialized)return;const bool duck=m_voiceTrack&&MIX_TrackPlaying(m_voiceTrack);if(duck!=m_voiceDucking){m_voiceDucking=duck;ApplyMixGains();}
+    if (!m_initialized) return;
+    const bool duck = m_voiceTrack && MIX_TrackPlaying(m_voiceTrack);
+    if (duck != m_voiceDucking) {
+        m_voiceDucking = duck;
+        ApplyMixGains();
+    }
     if (m_pendingLoop.empty()) return;
     MIX_Track* track = m_bgmTracks[m_bgmActive];
     if (track && MIX_TrackPlaying(track)) {
