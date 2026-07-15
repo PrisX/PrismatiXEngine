@@ -10,6 +10,7 @@
 #include "Engine/Resources/TypedDocument.h"
 #include "Engine/Session/RuntimeSession.h"
 #include "Engine/Lua/LuaHost.h"
+#include "Editor/Tools/UIDesigner/DocumentChangeSet.h"
 #include "Engine/VN/GameCatalog.h"
 
 #include <memory>
@@ -34,9 +35,11 @@ public:
     [[nodiscard]] Mode GetMode() const { return m_mode; }
     void LoadUI(const std::string& vfsPath);
     void LoadUIDocument(const resource::TypedDocument& document, const std::string& sourcePath);
-    // Applies property/layout edits in place; structural, binding, event, theme,
-    // and animation edits fall back to a safe rebuild.
-    bool ApplyUIDocumentPatch(const resource::TypedDocument& document, const std::string& sourcePath);
+    // Exact document changes patch safe properties in place and select the
+    // required relayout/style/animation work; structural changes rebuild.
+    bool ApplyUIDocumentChange(const resource::TypedDocument& document,
+                               const std::string& sourcePath,
+                               const DocumentChangeSet& changes);
     Status PreviewUIAnimation(const Uuid& clip, float time, bool playing);
     Status SetUIAnimationParameter(std::string_view parameter, const Variant& value);
     [[nodiscard]] ui::BehaviorRuntimeState UIBehaviorState() const { return m_uiScene.CaptureBehaviorState(); }

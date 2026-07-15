@@ -29,12 +29,4 @@ const char* StyleStateName(StyleState state) {
     return "Normal";
 }
 
-TokenId StableLegacyTokenId(std::string_view name) {
-    return Uuid::FromName(std::string("prismatix.style.token.legacy/") + std::string(name));
-}
-
-StyleId StableLegacyStyleId(std::string_view name) {
-    return Uuid::FromName(std::string("prismatix.style.definition.legacy/") + std::string(name));
-}
-
 }  // namespace px::ui

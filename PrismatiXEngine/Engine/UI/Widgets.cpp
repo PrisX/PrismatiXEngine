@@ -58,7 +58,6 @@ void Label::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
 }
 
 Button::Button(std::string text, std::string name) : Control(std::move(name)), m_text(std::move(text)) {
-    SetThemeVariant("Button");
     SetFocusMode(FocusMode::All);
 }
 
@@ -133,7 +132,7 @@ void Slider::HandleEvent(UIEvent& event){if(event.type==UIEventType::PointerDown
 Vec2 Slider::MeasureOverride(Vec2){return{180,26};}
 void Slider::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){const auto& style=theme.Resolve(*this);const Rect r=LayoutRect();const float y=r.y+r.h*.5f-3;renderer.DrawRoundedRect({r.x,y,r.w,6},3,style.normal.background);const float ratio=m_max>m_min?static_cast<float>((m_value-m_min)/(m_max-m_min)):0;renderer.DrawRoundedRect({r.x,y,r.w*ratio,6},3,style.focused.border);renderer.DrawRoundedRect({r.x+r.w*ratio-7,r.y+r.h*.5f-7,14,14},7,style.text);}
 
-LineEdit::LineEdit(std::string text,std::string name):Control(std::move(name)),m_text(std::move(text)),m_cursor(m_text.size()){SetFocusMode(FocusMode::All);SetThemeVariant("Default");}
+LineEdit::LineEdit(std::string text,std::string name):Control(std::move(name)),m_text(std::move(text)),m_cursor(m_text.size()){SetFocusMode(FocusMode::All);}
 void LineEdit::HandleEvent(UIEvent& event){
     if(event.type==UIEventType::TextInput){m_text.insert(m_cursor,event.text);m_cursor+=event.text.size();InvalidateLayout();EmitSignal("textChanged",{{"text",m_text}});event.handled=true;}
     else if(event.type==UIEventType::KeyDown){bool changed=false;if(event.key==SDL_SCANCODE_BACKSPACE&&m_cursor>0){m_text.erase(--m_cursor,1);changed=true;event.handled=true;}else if(event.key==SDL_SCANCODE_DELETE&&m_cursor<m_text.size()){m_text.erase(m_cursor,1);changed=true;event.handled=true;}else if(event.key==SDL_SCANCODE_LEFT&&m_cursor>0){--m_cursor;event.handled=true;}else if(event.key==SDL_SCANCODE_RIGHT&&m_cursor<m_text.size()){++m_cursor;event.handled=true;}if(changed){InvalidateLayout();EmitSignal("textChanged",{{"text",m_text}});}}

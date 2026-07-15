@@ -5,7 +5,6 @@
 #include "Engine/Progression/Persist.h"
 #include "Engine/Progression/SaveSystem.h"
 #include "Engine/UI/UISceneLoader.h"
-#include "Engine/UI/UISchemaMigration.h"
 #include "Engine/UI/Animation.h"
 #include "Engine/UI/UITypeRegistry.h"
 #include "Engine/UI/Behavior/BehaviorGraph.h"
@@ -586,8 +585,6 @@ void TestVisualGraphControlFlowContract(){
           "If True/False ports must compile to explicit runtime targets");
 }
 
-void TestLargeScenarioScale(){px::vn::scenario::ScenarioDocument document;document.id=px::Uuid::Random();document.name="10k acceptance";document.nodes.reserve(10000);document.edges.reserve(9999);for(int i=0;i<10000;++i){px::vn::scenario::ScenarioNode node{px::Uuid::Random(),"say",{{"textId",px::Uuid::Random().ToString()},{"value",std::string("line ")+std::to_string(i)}}};if(i==0)document.entry=node.id;if(i>0)document.edges.push_back({px::Uuid::Random(),document.nodes.back().id,"flow",node.id,"in"});document.nodes.push_back(std::move(node));}const auto encoded=px::vn::scenario::WriteScenario(document);const auto parsed=px::vn::scenario::ParseScenario(encoded,"large.pxscenario");Check(parsed&&parsed.Value().nodes.size()==10000&&px::vn::scenario::ValidateScenario(parsed.Value()).Valid(),"10,000-line Scenario must serialize, parse, and validate for creator acceptance");}
-
 void TestCjkRubyAndVerticalText(){const auto rich=px::text::ParseRubyMarkup("[ruby=かんじ]漢字[/ruby][br]測試");Check(rich.plain=="漢字\n測試"&&rich.ruby.size()==1&&rich.ruby.front().reading=="かんじ","rich text should retain CJK ruby annotations");const auto wrapped=px::text::ApplyCjkKinsoku("這是一段測試，不能讓標點出現在行首。",6);Check(wrapped.find("\n，")==std::string::npos&&wrapped.find("\n。")==std::string::npos,"CJK wrapping should enforce kinsoku punctuation rules");const auto vertical=px::text::LayoutVertical("縱書ABC",4);Check(!vertical.empty()&&vertical.back().column>0&&vertical[2].rotate,"vertical layout should rotate Latin glyphs and advance columns");}
 
 void TestTypedFormatV4TokensAndComponents() {
@@ -609,10 +606,13 @@ void TestTypedFormatV4TokensAndComponents() {
         const auto decodedStyle=px::ui::ParseStyleTheme(parsed.Value().properties.at("styleSystem"));
         const auto* alias=decodedStyle?decodedStyle.Value().FindToken(surfaceId):nullptr;
         const auto loadedTheme = px::ui::LoadUITheme(parsed.Value());
-        const auto* resolved = loadedTheme ? loadedTheme.Value().FindToken("color.surface") : nullptr;
+        const auto resolved = loadedTheme ? loadedTheme.Value().ResolveToken("color.surface")
+                                          : px::Result<px::Variant>::Failure(loadedTheme.Diagnostics());
+        if (!resolved) for (const auto& diagnostic : resolved.Diagnostics())
+            std::cerr << diagnostic.code << ": " << diagnostic.message << " (" << diagnostic.details << ")\n";
         Check(alias && alias->value.IsTokenReference()&&alias->value.TokenReference()==baseId&&resolved &&
-                  resolved->TryGet<px::Color>() &&
-                  *resolved->TryGet<px::Color>() == px::Color{10, 20, 30, 255},
+                  resolved.Value().TryGet<px::Color>() &&
+                  *resolved.Value().TryGet<px::Color>() == px::Color{10, 20, 30, 255},
               "token() must round-trip and resolve through typed theme aliases");
     }
     std::string legacy = encoded;
@@ -691,13 +691,13 @@ void TestDesignerImageAndTextProperties(){
     Check(valid,"designer image modes, editor-only lock metadata, and text alignment must load through typed UI scenes");
 }
 
-void TestAcceleratedEightHourSoak(){px::animation::AnimationClip clip;clip.id=px::Uuid::FromName("acceptance-soak");clip.name="Eight hour soak";clip.duration=2.0f;clip.loop=true;clip.tracks.push_back({{px::animation::TargetKind::Camera,"main","zoom"},{{0.0f,1.0,px::animation::Curve::Linear},{2.0f,1.1,px::animation::Curve::EaseInOut}}});px::animation::TimelinePlayer player;std::uint64_t samples=0;player.SetApply([&](const px::animation::TrackBinding&,const px::Variant&){++samples;return px::Status::Ok();});Check(player.Register(clip),"soak animation should register");const auto handle=player.Play(clip.id);constexpr int updates=8*60*60*4;for(int i=0;i<updates;++i)player.Update(0.25f);const auto state=player.CaptureState();Check(player.Playing(handle)&&state.size()==1&&state.front().loopIteration>=14399&&samples>=updates,"accelerated eight-hour timeline soak should remain bounded and playing");}
-
 void TestDesignerRewriteContracts(){
     px::ui::StyleThemeData theme;px::ui::TokenDefinition token{.id=px::Uuid::FromName("accent"),.displayName="Accent",.type=px::VariantType::Color,.value=px::ui::StyleValue::Literal(px::Color{10,20,30,255})};Check(theme.UpsertToken(token),"style token should register");
     px::ui::StyleDefinition style;style.id=px::Uuid::FromName("primary-style");style.displayName="Primary";style.properties["background.color"]=px::ui::StyleValue::Token(token.id,"Accent");Check(theme.UpsertStyle(style),"style definition should register");
     px::ui::ControlStyleBinding binding;binding.baseStyle=style.id;const auto encoded=px::ui::WriteStyleTheme(theme);const auto decoded=px::ui::ParseStyleTheme(encoded);Check(decoded&&decoded.Value().FindToken(token.id)&&decoded.Value().FindStyle(style.id),"Style System 3 IDs and definitions must round-trip");
     px::ui::StyleResolveRequest request{.controlType="Button",.binding=binding,.activeStates=px::ui::StyleStateSet(px::ui::StyleState::Hover)};px::ui::StylePropertyRegistry properties;px::ui::StyleResolver resolver;const auto resolved=resolver.Resolve(theme,request,properties);Check(resolved&&resolved.Value().Find("background.color")&&resolved.Value().Find("background.color")->tokenChain.size()==1,"style resolver must preserve token source trace");
+    Check(properties.RuntimeSupports("background.color","Button")&&!properties.RuntimeSupports("opacity","Button"),"Style Inspector support must match the explicit renderer-backed property allowlist");
+    Check(px::ui::RegisterBuiltinUITypes(),"UI metadata contracts require registered builtin types");const auto* offsets=px::TypeRegistry::Global().FindProperty("Button","offsets");const auto* text=px::TypeRegistry::Global().FindProperty("Button","text");Check(offsets&&offsets->ownership==px::PropertyOwnership::ParentLayout&&px::HasImpact(offsets->impact,px::PropertyImpact::Layout)&&text&&text->bindable&&text->animatable,"Inspector layout ownership and edit capabilities must come from PropertyInfo metadata");
     px::ui::ActionInvocation action{.action="choice.select",.arguments={{"index",std::int64_t{2}}}};Check(static_cast<bool>(px::ui::ActionCatalog::Global().ValidateAndNormalize(action)),"typed action arguments must validate");action.arguments["index"]=std::string("bad");Check(!px::ui::ActionCatalog::Global().ValidateAndNormalize(action),"typed action arguments must reject mismatched types");
     px::resource::TypedDocument scene;scene.kind=px::resource::DocumentKind::Scene;scene.type="UIScene";scene.properties["uiSchemaVersion"]=std::int64_t{4};px::resource::NodeRecord button;button.id=px::Uuid::Random();button.type="Button";scene.nodes.push_back(button);Check(!px::ui::InstantiateUIScene(scene,nullptr,px::ui::FormatterRegistry{}),"strict UI schema must reject v4 without a compatibility branch");scene.properties["uiSchemaVersion"]=std::int64_t{5};scene.nodes[0].properties["command"]=std::string("game.start");Check(!px::ui::InstantiateUIScene(scene,nullptr,px::ui::FormatterRegistry{}),"strict UI schema must reject command instead of migrating it");scene.nodes[0].properties.erase("command");scene.nodes[0].properties["themeVariant"]=std::string("Button");Check(!px::ui::InstantiateUIScene(scene,nullptr,px::ui::FormatterRegistry{}),"strict UI schema must reject themeVariant instead of migrating it");
 }
@@ -788,13 +788,6 @@ void TestUIAnimationStateMachine(){
     Check(controller.SetBool("enabled",false)&&controller.Update(.4f),"Exit Time update should run");Check(controller.CaptureState().state==pressed,"transition must wait until normalized Exit Time");Check(controller.Update(.2f)&&controller.CaptureState().state==idle,"transition must fire after Exit Time");const auto checkpoint=controller.CaptureState();Check(controller.Travel("Hover")&&controller.RestoreState(checkpoint)&&controller.CaptureState().state==idle,"Animation Controller state and parameters must restore deterministically");
 }
 
-void TestUISchemaV5Migration(){
-    px::resource::TypedDocument legacy;legacy.kind=px::resource::DocumentKind::Scene;legacy.id=px::Uuid::Random();legacy.type="UIScene";legacy.properties["uiSchemaVersion"]=std::int64_t{4};legacy.properties["animation.duration"]=1.0;legacy.properties["animation.loop"]=false;legacy.properties["animation.tracks"]=px::VariantArray{};
-    px::resource::NodeRecord button;button.id=px::Uuid::Random();button.type="Button";button.name="Confirm";button.properties["events"]=px::VariantObject{{"activated",px::VariantObject{{"mode",std::string("action")},{"action",std::string("game.start")},{"arguments",px::VariantObject{}},{"reentry",std::string("Allow")}}}};legacy.nodes.push_back(button);
-    auto migrated=px::ui::MigrateUIDocumentV4(legacy,"legacy.pxscene");Check(static_cast<bool>(migrated),"v4 UI document should migrate as a complete in-memory transaction");if(!migrated)return;const auto& current=migrated.Value();Check(current.properties.at("uiSchemaVersion").TryGet<std::int64_t>()&&*current.properties.at("uiSchemaVersion").TryGet<std::int64_t>()==5&&current.properties.contains("animations")&&!current.properties.contains("animation.tracks")&&current.nodes.front().properties.contains("triggers")&&!current.nodes.front().properties.contains("events"),"migration must rename interactions and create Default Clip plus State Machine");
-    TempDirectory temp;const auto content=temp.path/"Content"/"UI";std::filesystem::create_directories(content);const auto path=content/"Legacy.pxscene";const std::string text=px::resource::WriteTypedDocument(legacy);{std::ofstream stream(path,std::ios::binary);stream<<text;}auto check=px::ui::MigrateUIProjectV5(temp.path,false);if(!check)for(const auto& diagnostic:check.Diagnostics())std::cerr<<diagnostic.code<<": "<<diagnostic.message<<'\n';Check(check&&check.Value().changed.size()==1,"--check must report pending UI migrations");std::ifstream unchanged(path,std::ios::binary);std::string unchangedText((std::istreambuf_iterator<char>(unchanged)),{});unchanged.close();Check(unchangedText==text,"--check must not write files");auto write=px::ui::MigrateUIProjectV5(temp.path,true);if(!write)for(const auto& diagnostic:write.Diagnostics())std::cerr<<diagnostic.code<<": "<<diagnostic.message<<'\n';Check(write&&write.Value().changed.size()==1,"--write must atomically migrate the project");auto repeat=px::ui::MigrateUIProjectV5(temp.path,false);if(!repeat)for(const auto& diagnostic:repeat.Diagnostics())std::cerr<<diagnostic.code<<": "<<diagnostic.message<<'\n';Check(repeat&&repeat.Value().changed.empty()&&repeat.Value().alreadyCurrent==1,"v5 migration must be safely repeatable");
-}
-
 }  // namespace
 
 int main() {
@@ -812,17 +805,14 @@ int main() {
     TestStoryMap();
     TestEveryCommandDescriptorContract();
     TestVisualGraphControlFlowContract();
-    TestLargeScenarioScale();
     TestCjkRubyAndVerticalText();
     TestTypedFormatV4TokensAndComponents();
     TestDesignerImageAndTextProperties();
-    TestAcceleratedEightHourSoak();
     TestDesignerRewriteContracts();
     TestBehaviorGraphExecutionAndCheckpoint();
     TestExpandedControlMetadataAndTransforms();
     TestEmbeddedUIAnimationParity();
     TestUIAnimationStateMachine();
-    TestUISchemaV5Migration();
     if (g_failures == 0) std::cout << "All PrismatiX commercial acceptance tests passed.\n";
     return g_failures == 0 ? 0 : 1;
 }

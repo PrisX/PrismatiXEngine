@@ -98,7 +98,4 @@ struct VariantSelection {
     auto operator<=>(const VariantSelection&) const = default;
 };
 
-[[nodiscard]] TokenId StableLegacyTokenId(std::string_view name);
-[[nodiscard]] StyleId StableLegacyStyleId(std::string_view name);
-
 }  // namespace px::ui

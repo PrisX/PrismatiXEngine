@@ -5,8 +5,8 @@
 #include "Engine/Resources/TypedDocument.h"
 #include "Engine/UI/Styles/ResolvedStyleCache.h"
 
+#include <optional>
 #include <string>
-#include <unordered_map>
 
 namespace px::ui {
 
@@ -37,23 +37,16 @@ class Theme {
 public:
     Theme();
 
-    void Set(std::string variant, ControlStyle style);
-    [[nodiscard]] const ControlStyle& Resolve(std::string_view variant) const;
     [[nodiscard]] ControlStyle Resolve(const Control& control) const;
     [[nodiscard]] Result<ResolvedStyle> ResolveStyle(const StyleResolveRequest& request) const;
-    [[nodiscard]] StyleThemeData& StyleData() { return m_styleData; }
+    [[nodiscard]] Result<Variant> ResolveToken(
+        std::string_view name,
+        std::optional<VariantType> expectedType = std::nullopt) const;
     [[nodiscard]] const StyleThemeData& StyleData() const { return m_styleData; }
     Status SetStyleData(StyleThemeData data);
     [[nodiscard]] const StylePropertyRegistry& StyleProperties() const { return m_styleProperties; }
-    void SetToken(std::string name, Variant value);
-    [[nodiscard]] const Variant* FindToken(std::string_view name) const;
-    [[nodiscard]] const std::unordered_map<std::string, Variant>& Tokens() const { return m_tokens; }
-    [[nodiscard]] std::uint64_t Revision() const { return m_revision; }
 
 private:
-    std::unordered_map<std::string, ControlStyle> m_styles;
-    std::unordered_map<std::string, Variant> m_tokens;
-    std::uint64_t m_revision = 1;
     StyleThemeData m_styleData;
     StylePropertyRegistry m_styleProperties;
     StyleResolver m_styleResolver;
@@ -62,4 +55,9 @@ private:
 
 }  // namespace px::ui
 
-namespace px::ui { [[nodiscard]] Result<Theme> LoadEmbeddedTheme(const resource::TypedDocument& document); }
+namespace px::ui {
+
+[[nodiscard]] StyleId BuiltinDialogueStyleId();
+[[nodiscard]] Result<Theme> LoadEmbeddedTheme(const resource::TypedDocument& document);
+
+}  // namespace px::ui

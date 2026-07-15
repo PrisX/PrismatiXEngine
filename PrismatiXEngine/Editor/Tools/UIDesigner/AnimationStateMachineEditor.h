@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Editor/Tools/UIDesigner/UISceneDocument.h"
+#include "Editor/Tools/UIDesigner/DesignerCommandService.h"
 #include "Engine/UI/Animation.h"
 
 #include <cstdint>
@@ -18,9 +18,12 @@ public:
     AnimationStateMachineEditor(const AnimationStateMachineEditor&) = delete;
     AnimationStateMachineEditor& operator=(const AnimationStateMachineEditor&) = delete;
 
-    bool Render(UISceneDocument& document);
-    bool RenderNavigator(UISceneDocument& document);
-    bool RenderInspector(UISceneDocument& document);
+    bool Render(UISceneDocument& document, DesignerCommandService& commands,
+                DesignerAnimationMachineState& state);
+    bool RenderNavigator(UISceneDocument& document, DesignerCommandService& commands,
+                         DesignerAnimationMachineState& state);
+    bool RenderInspector(UISceneDocument& document, DesignerCommandService& commands,
+                         DesignerAnimationMachineState& state);
     void SetDebugState(ui::UIAnimationRuntimeState state) { m_debugState = std::move(state); }
     void SetParameterTester(std::function<Status(std::string_view, const Variant&)> tester) { m_parameterTester = std::move(tester); }
 
@@ -29,8 +32,6 @@ private:
 
     ax::NodeEditor::EditorContext* m_context = nullptr;
     std::unordered_set<Uuid, UuidHash> m_initializedNodes;
-    Uuid m_selectedState;
-    Uuid m_selectedTransition;
     ui::UIAnimationRuntimeState m_debugState;
     std::function<Status(std::string_view, const Variant&)> m_parameterTester;
 };

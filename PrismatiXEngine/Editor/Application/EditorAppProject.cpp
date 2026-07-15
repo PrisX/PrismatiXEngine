@@ -283,16 +283,16 @@ void EditorApp::SyncDocumentStates() {
     if (m_designer.Document()) {
         const auto path = m_designer.Document()->Path();
         if (!m_docs.Find(path)) TrackDocument(path, DocumentType::UIScene, m_designer.Dirty());
-        m_docs.SetDirty(path, m_designer.Dirty(), m_designer.Document()->History().Cursor());
+        m_docs.SetDirty(path, m_designer.Dirty(), m_designer.HistoryCursor());
         const auto& viewport = m_designer.ViewportState();
-        m_docs.SetViewport(path, {viewport.zoom,viewport.scrollX,viewport.scrollY,viewport.fitToViewport,viewport.leftPanelVisible,viewport.rightPanelVisible,viewport.bottomPanelVisible,viewport.leftPanelWidth,viewport.rightPanelWidth,viewport.bottomPanelHeight});
+        m_docs.SetViewport(path, {viewport.zoom,viewport.scrollX,viewport.scrollY,viewport.fitToViewport});
     }
     for(const auto& [_,session]:m_inactiveDesigners){
         if(!session.editor||!session.editor->Document())continue;
         const auto path=session.editor->Document()->Path();
         if(!m_docs.Find(path))TrackDocument(path,DocumentType::UIScene,session.editor->Dirty());
-        m_docs.SetDirty(path,session.editor->Dirty(),session.editor->Document()->History().Cursor());
-        const auto& viewport=session.editor->ViewportState();m_docs.SetViewport(path,{viewport.zoom,viewport.scrollX,viewport.scrollY,viewport.fitToViewport,viewport.leftPanelVisible,viewport.rightPanelVisible,viewport.bottomPanelVisible,viewport.leftPanelWidth,viewport.rightPanelWidth,viewport.bottomPanelHeight});
+        m_docs.SetDirty(path,session.editor->Dirty(),session.editor->HistoryCursor());
+        const auto& viewport=session.editor->ViewportState();m_docs.SetViewport(path,{viewport.zoom,viewport.scrollX,viewport.scrollY,viewport.fitToViewport});
     }
     for (const auto& document : m_scriptDocs) {
         if (document->DocumentPath().empty()) continue;

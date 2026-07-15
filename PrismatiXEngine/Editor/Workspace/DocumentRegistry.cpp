@@ -92,7 +92,7 @@ EditorWorkspace DocumentManager::WorkspaceFor(DocumentType type) {
 }
 
 void DocumentManager::Clear() {
-    m_documents.clear(); m_active.reset(); m_sequence = 0;
+    m_documents.clear(); m_active.reset(); m_sequence = 0; m_workspacePanels = {};
 }
 
 std::optional<std::size_t> DocumentManager::IndexOf(const std::filesystem::path& path) const {
@@ -247,9 +247,16 @@ Status DocumentManager::SaveSession(const std::filesystem::path& path) const {
     resource::TypedDocument document;
     document.kind = resource::DocumentKind::Resource;
     document.formatVersion = resource::TypedDocument::CurrentVersion;
-    document.id = Uuid::FromName("PrismatiXEditor.Session.v4");
+    document.id = Uuid::FromName("PrismatiXEditor.Session.v5");
     document.type = "EditorSession";
     document.properties["active"] = Variant(static_cast<std::int64_t>(m_active.value_or(0)));
+    document.properties["workspacePanels"] = Variant(VariantObject{
+        {"leftVisible", Variant(m_workspacePanels.leftPanelVisible)},
+        {"rightVisible", Variant(m_workspacePanels.rightPanelVisible)},
+        {"bottomVisible", Variant(m_workspacePanels.bottomPanelVisible)},
+        {"leftWidth", Variant(static_cast<double>(m_workspacePanels.leftPanelWidth))},
+        {"rightWidth", Variant(static_cast<double>(m_workspacePanels.rightPanelWidth))},
+        {"bottomHeight", Variant(static_cast<double>(m_workspacePanels.bottomPanelHeight))}});
     VariantArray sessions;
     for (const auto& session : m_documents) {
         VariantObject object;
@@ -263,12 +270,6 @@ Status DocumentManager::SaveSession(const std::filesystem::path& path) const {
         object["scrollX"] = Variant(static_cast<double>(session.viewport.scrollX));
         object["scrollY"] = Variant(static_cast<double>(session.viewport.scrollY));
         object["fitToViewport"] = Variant(session.viewport.fitToViewport);
-        object["leftPanelVisible"] = Variant(session.viewport.leftPanelVisible);
-        object["rightPanelVisible"] = Variant(session.viewport.rightPanelVisible);
-        object["bottomPanelVisible"] = Variant(session.viewport.bottomPanelVisible);
-        object["leftPanelWidth"] = Variant(static_cast<double>(session.viewport.leftPanelWidth));
-        object["rightPanelWidth"] = Variant(static_cast<double>(session.viewport.rightPanelWidth));
-        object["bottomPanelHeight"] = Variant(static_cast<double>(session.viewport.bottomPanelHeight));
         sessions.emplace_back(std::move(object));
     }
     document.properties["documents"] = Variant(std::move(sessions));
@@ -285,6 +286,17 @@ Status DocumentManager::RestoreSession(const std::filesystem::path& path) {
     if (parsed.Value().type != "EditorSession" || parsed.Value().formatVersion != resource::TypedDocument::CurrentVersion)
         return Status::Fail(SessionError(path, "Editor 文件工作階段版本不相容"));
     Clear();
+    if (const auto panels = parsed.Value().properties.find("workspacePanels");
+        panels != parsed.Value().properties.end()) {
+        if (const auto* object = panels->second.AsObject()) {
+            if (const auto it=object->find("leftVisible");it!=object->end())if(const auto* value=it->second.TryGet<bool>())m_workspacePanels.leftPanelVisible=*value;
+            if (const auto it=object->find("rightVisible");it!=object->end())if(const auto* value=it->second.TryGet<bool>())m_workspacePanels.rightPanelVisible=*value;
+            if (const auto it=object->find("bottomVisible");it!=object->end())if(const auto* value=it->second.TryGet<bool>())m_workspacePanels.bottomPanelVisible=*value;
+            m_workspacePanels.leftPanelWidth=Number(*object,"leftWidth",260.0f);
+            m_workspacePanels.rightPanelWidth=Number(*object,"rightWidth",340.0f);
+            m_workspacePanels.bottomPanelHeight=Number(*object,"bottomHeight",240.0f);
+        }
+    }
     const auto found = parsed.Value().properties.find("documents");
     if (found != parsed.Value().properties.end()) {
         if (const auto* array = found->second.AsArray()) {
@@ -302,12 +314,6 @@ Status DocumentManager::RestoreSession(const std::filesystem::path& path) {
                 session.viewport.scrollY=Number(*object,"scrollY");
                 if (const auto it = object->find("fitToViewport"); it != object->end())
                     if (const auto* value = it->second.TryGet<bool>()) session.viewport.fitToViewport = *value;
-                if(const auto it=object->find("leftPanelVisible");it!=object->end())if(const auto* value=it->second.TryGet<bool>())session.viewport.leftPanelVisible=*value;
-                if(const auto it=object->find("rightPanelVisible");it!=object->end())if(const auto* value=it->second.TryGet<bool>())session.viewport.rightPanelVisible=*value;
-                if(const auto it=object->find("bottomPanelVisible");it!=object->end())if(const auto* value=it->second.TryGet<bool>())session.viewport.bottomPanelVisible=*value;
-                session.viewport.leftPanelWidth=Number(*object,"leftPanelWidth",260.0f);
-                session.viewport.rightPanelWidth=Number(*object,"rightPanelWidth",340.0f);
-                session.viewport.bottomPanelHeight=Number(*object,"bottomPanelHeight",240.0f);
                 if (std::filesystem::exists(session.id.canonicalPath)) (void)Open(std::move(session));
             }
         }

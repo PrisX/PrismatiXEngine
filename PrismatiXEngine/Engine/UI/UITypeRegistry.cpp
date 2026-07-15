@@ -219,6 +219,24 @@ Status RegisterBuiltinUITypes() {
             if (const auto* metadata = BuiltinDesignerMetadata(type.name))
                 type.designer = *metadata;
         }
+        for (auto& property : type.properties) {
+            property.bindable = HasFlag(property.flags, PropertyFlags::Bindable);
+            property.animatable = property.set &&
+                (property.type == VariantType::Bool || property.type == VariantType::Integer ||
+                 property.type == VariantType::Number || property.type == VariantType::String ||
+                 property.type == VariantType::Vec2 || property.type == VariantType::Rect ||
+                 property.type == VariantType::Color);
+            if (property.category == "Layout" || property.name == "visibility")
+                property.impact = PropertyImpact::Layout | PropertyImpact::Paint;
+            else if (property.category == "Theme")
+                property.impact = PropertyImpact::Theme | PropertyImpact::Paint;
+            else
+                property.impact = PropertyImpact::Paint;
+            if (property.name == "offsets")
+                property.ownership = PropertyOwnership::ParentLayout;
+            property.advanced = property.category == "Transform" ||
+                                property.category == "Behavior";
+        }
         auto status = registry.Register(std::move(type));
         for (const auto& d : status.Diagnostics()) combined.Add(d);
     };
@@ -315,11 +333,6 @@ Status RegisterBuiltinUITypes() {
         [](Object& o, bool v) { As<Control>(o)->SetClipContent(v); return Status::Ok(); });
     clipping.editor.displayName = "裁切內容"; clipping.editor.description = "將子元件繪製結果限制在此元件的邊界內。";
     control.properties.push_back(std::move(clipping));
-    auto zOrder = IntegerProperty("zOrder", "Display", [](const Object& o) { return static_cast<std::int64_t>(As<Control>(o)->ZOrder()); },
-        [](Object& o, std::int64_t v) { As<Control>(o)->SetZOrder(static_cast<int>(v)); return Status::Ok(); });
-    zOrder.editor.displayName = "繪製順序"; zOrder.editor.description = "數值較大的同層元件會繪製在上方，並優先接收滑鼠命中。";
-    zOrder.editor.hasRange = true; zOrder.editor.minimum = -4096.0; zOrder.editor.maximum = 4096.0; zOrder.editor.step = 1.0;
-    control.properties.push_back(std::move(zOrder));
     control.signals.push_back({"pointerEntered", "滑鼠進入", "Pointer entered this Control.", {}});
     control.signals.push_back({"pointerExited", "滑鼠離開", "Pointer exited this Control.", {}});
     control.signals.push_back({"pointerDown", "按下", "Primary pointer was pressed.", {{"position", VariantType::Vec2}}});

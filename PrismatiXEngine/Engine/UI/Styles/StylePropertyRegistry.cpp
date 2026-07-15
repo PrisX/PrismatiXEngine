@@ -2,6 +2,7 @@
 #include "Engine/UI/Styles/StyleDefinition.h"
 
 #include <algorithm>
+#include <array>
 
 namespace px::ui {
 namespace {
@@ -62,6 +63,13 @@ bool StylePropertyRegistry::Supports(std::string_view property,
                                      std::string_view controlType) const {
     const auto* descriptor = Find(property);
     return descriptor && IsStyleCompatibleWith(descriptor->compatibleTypes, controlType);
+}
+
+bool StylePropertyRegistry::RuntimeSupports(std::string_view property,
+                                            std::string_view controlType) const {
+    const auto* descriptor = Find(property);
+    return descriptor && descriptor->runtimeSupported &&
+           IsStyleCompatibleWith(descriptor->compatibleTypes, controlType);
 }
 
 std::vector<const StylePropertyDescriptor*> StylePropertyRegistry::Descriptors() const {
@@ -140,6 +148,12 @@ Status StylePropertyRegistry::RegisterBuiltins() {
                                 VariantType::Number, StyleEditorHint::Number, true));
     builtins.push_back(Property("transition.easing", "Transition Easing", "Transition",
                                 VariantType::String, StyleEditorHint::Easing, false));
+    constexpr std::array<std::string_view, 8> runtimeSupported{
+        "background.color", "border.color", "border.width", "radius.all", "spacing",
+        "typography.font", "typography.size", "typography.color"};
+    for (auto& descriptor : builtins)
+        descriptor.runtimeSupported = std::find(runtimeSupported.begin(), runtimeSupported.end(),
+                                                descriptor.id) != runtimeSupported.end();
     for (auto& descriptor : builtins) {
         const Status status = Register(std::move(descriptor));
         if (!status) return status;

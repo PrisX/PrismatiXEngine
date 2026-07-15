@@ -117,10 +117,9 @@ Result<LoadedUIScene> InstantiateUIScene(const resource::TypedDocument& document
             Variant resolved=value.Clone();
             if (value.Type()==VariantType::TokenRef) {
                 if(!loaded.theme)return Result<LoadedUIScene>::Failure(SceneError("PXUI2624","Token property requires a scene theme",&record,propertyName));
-                const auto* token=loaded.theme->FindToken(value.TryGet<TokenRefValue>()->name);
-                if(!token)return Result<LoadedUIScene>::Failure(SceneError("PXUI2625","Theme token does not exist",&record,propertyName));
-                resolved=token->Clone();
-                if(resolved.Type()!=property->type)return Result<LoadedUIScene>::Failure(SceneError("PXUI2626","Theme token type does not match property",&record,propertyName));
+                auto token=loaded.theme->ResolveToken(value.TryGet<TokenRefValue>()->name,property->type);
+                if(!token)return Result<LoadedUIScene>::Failure(token.Diagnostics());
+                resolved=token.TakeValue();
             }
             const Status set = property->set(*object, resolved);
             if (!set) return Result<LoadedUIScene>::Failure(set.Diagnostics());

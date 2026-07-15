@@ -105,8 +105,6 @@ public:
     [[nodiscard]] MouseFilter GetMouseFilter() const { return m_mouseFilter; }
     void SetFocusMode(FocusMode value) { m_focusMode = value; }
     [[nodiscard]] FocusMode GetFocusMode() const { return m_focusMode; }
-    void SetThemeVariant(std::string value) { m_themeVariant = std::move(value); }
-    [[nodiscard]] const std::string& ThemeVariant() const { return m_themeVariant; }
     void SetStyleBinding(ControlStyleBinding value) { m_styleBinding = std::move(value); }
     [[nodiscard]] ControlStyleBinding& StyleBinding() { return m_styleBinding; }
     [[nodiscard]] const ControlStyleBinding& StyleBinding() const { return m_styleBinding; }
@@ -127,9 +125,6 @@ public:
     [[nodiscard]] Color Modulate() const { return m_modulate; }
     void SetClipContent(bool value) { m_clipContent = value; }
     [[nodiscard]] bool ClipContent() const { return m_clipContent; }
-    void SetZOrder(int value) { m_zOrder = value; }
-    [[nodiscard]] int ZOrder() const { return m_zOrder; }
-
     [[nodiscard]] Vec2 Measure(Vec2 available);
     void Arrange(Rect finalRect);
     [[nodiscard]] Rect LayoutRect() const { return m_layoutRect; }
@@ -177,7 +172,6 @@ private:
     bool m_hovered = false;
     bool m_pressed = false;
     bool m_focused = false;
-    std::string m_themeVariant = "Default";
     ControlStyleBinding m_styleBinding;
     bool m_visualChecked = false;
     bool m_visualSelected = false;
@@ -188,7 +182,6 @@ private:
     float m_opacity = 1.0f;
     Color m_modulate{255,255,255,255};
     bool m_clipContent = false;
-    int m_zOrder = 0;
     struct SignalSlot {
         SignalConnection id = 0;
         SignalHandler handler;

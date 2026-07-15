@@ -165,7 +165,7 @@ void Control::Draw(graphics::Renderer2D& renderer, const Theme& theme) {
     renderer.PushTransform({m_layoutRect.x+m_pivot.x*m_layoutRect.w,m_layoutRect.y+m_pivot.y*m_layoutRect.h},m_scale,m_rotation,tint);
     if(m_clipContent)renderer.PushClip(m_layoutRect);
     DrawSelf(renderer, theme);
-    std::vector<Control*> controls;for(const auto& child:Children())if(auto* control=dynamic_cast<Control*>(child.get()))controls.push_back(control);std::stable_sort(controls.begin(),controls.end(),[](const Control* left,const Control* right){return left->ZOrder()<right->ZOrder();});for(auto* control:controls)control->Draw(renderer,theme);
+    for(const auto& child:Children())if(auto* control=dynamic_cast<Control*>(child.get()))control->Draw(renderer,theme);
     if(m_clipContent)renderer.PopClip();renderer.PopTransform();
 }
 

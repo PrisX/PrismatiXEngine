@@ -90,7 +90,9 @@ Result<resource::TypedDocument> ComponentService::Load(const ResourceRefValue& r
     return m_loader(reference);
 }
 
-Status ComponentService::CreateFromSelection(UISceneDocument& document, const Uuid& selected,
+Status ComponentService::CreateFromSelection(UISceneDocument& document,
+                                             DesignerCommandService& commands,
+                                             const Uuid& selected,
                                              const Rect& visualRect,
                                              const std::filesystem::path& componentPath) const {
     const auto* selectedNode = document.Find(selected);
@@ -150,10 +152,11 @@ Status ComponentService::CreateFromSelection(UISceneDocument& document, const Uu
     command->Add(std::make_unique<SubtreeEditCommand>(
         "Insert component instance", SubtreeOperation::Insert, selected, parent, index,
         std::move(instance)));
-    return document.History().Execute(std::move(command));
+    return commands.Execute(std::move(command), DocumentChangeSet::Structure(parent));
 }
 
 Status ComponentService::Instantiate(UISceneDocument& document,
+                                     DesignerCommandService& commands,
                                      const ResourceRefValue& component, const Uuid& parent,
                                      std::size_t index, Rect offsets) const {
     auto loaded = Load(component);
@@ -183,10 +186,12 @@ Status ComponentService::Instantiate(UISceneDocument& document,
     auto command = std::make_unique<SubtreeEditCommand>(
         "Instantiate Component", SubtreeOperation::Insert, id, parent, index,
         std::move(subtree));
-    return document.History().Execute(std::move(command));
+    return commands.Execute(std::move(command), DocumentChangeSet::Structure(parent));
 }
 
-Status ComponentService::SetPropertyOverride(UISceneDocument& document, const Uuid& instance,
+Status ComponentService::SetPropertyOverride(UISceneDocument& document,
+                                             DesignerCommandService& commands,
+                                             const Uuid& instance,
                                              const Uuid& sourceNode,
                                              const std::string& property,
                                              const Variant& value) const {
@@ -239,10 +244,13 @@ Status ComponentService::SetPropertyOverride(UISceneDocument& document, const Uu
     auto command = std::make_unique<PropertyChangeCommand>(
         "Set Component Property Override", instance, "overrides", std::move(before),
         Variant(std::move(changed)), std::chrono::steady_clock::now(), false);
-    return document.History().Execute(std::move(command));
+    return commands.Execute(std::move(command), DocumentChangeSet::Property(
+        instance, "overrides", DesignerDirtyFlags::Structure | DesignerDirtyFlags::Paint));
 }
 
-Status ComponentService::ResetPropertyOverride(UISceneDocument& document, const Uuid& instance,
+Status ComponentService::ResetPropertyOverride(UISceneDocument& document,
+                                               DesignerCommandService& commands,
+                                               const Uuid& instance,
                                                const Uuid& sourceNode,
                                                const std::string& property) const {
     const auto* node = document.Find(instance);
@@ -261,10 +269,12 @@ Status ComponentService::ResetPropertyOverride(UISceneDocument& document, const 
     auto command = std::make_unique<PropertyChangeCommand>(
         "Reset Component Property Override", instance, "overrides", std::move(before),
         Variant(std::move(changed)), std::chrono::steady_clock::now(), false);
-    return document.History().Execute(std::move(command));
+    return commands.Execute(std::move(command), DocumentChangeSet::Property(
+        instance, "overrides", DesignerDirtyFlags::Structure | DesignerDirtyFlags::Paint));
 }
 
 Status ComponentService::ResetAllOverrides(UISceneDocument& document,
+                                           DesignerCommandService& commands,
                                            const Uuid& instance) const {
     const auto* node = document.Find(instance);
     if (!node || node->type != "ComponentInstance") return Status::Ok();
@@ -273,10 +283,12 @@ Status ComponentService::ResetAllOverrides(UISceneDocument& document,
     auto command = std::make_unique<PropertyChangeCommand>(
         "Reset All Component Overrides", instance, "overrides", std::move(before),
         Variant(VariantObject{}), std::chrono::steady_clock::now(), false);
-    return document.History().Execute(std::move(command));
+    return commands.Execute(std::move(command), DocumentChangeSet::Property(
+        instance, "overrides", DesignerDirtyFlags::Structure | DesignerDirtyFlags::Paint));
 }
 
-Status ComponentService::Detach(UISceneDocument& document, const Uuid& instance) const {
+Status ComponentService::Detach(UISceneDocument& document, DesignerCommandService& commands,
+                                const Uuid& instance) const {
     const auto* node = document.Find(instance);
     if (!node || node->type != "ComponentInstance") return Status::Ok();
     resource::TypedDocument temporary = document.Data();
@@ -300,7 +312,58 @@ Status ComponentService::Detach(UISceneDocument& document, const Uuid& instance)
     command->Add(std::make_unique<SubtreeEditCommand>(
         "Materialize Component Hierarchy", SubtreeOperation::Insert, instance, parent, index,
         std::move(materialized)));
-    return document.History().Execute(std::move(command));
+    return commands.Execute(std::move(command), DocumentChangeSet::Structure(parent));
+}
+
+Status ComponentService::SetInterfaceDefinitions(UISceneDocument& document,
+                                                 DesignerCommandService& commands,
+                                                 std::string field, Variant definitions,
+                                                 std::string label) const {
+    if (document.Data().type != "UIComponent" ||
+        (field != "component.exposedProperties" &&
+         field != "component.exposedSignals" && field != "component.slots"))
+        return Status::Fail(Problem(diag::Severity::Error, "PXEDCOMP4011",
+                                    "Component interface definitions require a UIComponent",
+                                    document, {}, field));
+    if (!definitions.AsArray())
+        return Status::Fail(Problem(diag::Severity::Error, "PXEDCOMP4012",
+                                    "Component interface definitions must be an Array",
+                                    document, {}, field));
+    return commands.SetProperty(document.DocumentId(), std::move(field),
+                                std::move(definitions), std::move(label),
+                                DesignerDirtyFlags::Structure | DesignerDirtyFlags::Paint);
+}
+
+Status ComponentService::SetInstanceInterface(UISceneDocument& document,
+                                              DesignerCommandService& commands,
+                                              const Uuid& instance, std::string field,
+                                              Variant value, std::string label) const {
+    const auto* node = document.Find(instance);
+    if (!node || node->type != "ComponentInstance" ||
+        (field != "componentProperties" && field != "componentEvents"))
+        return Status::Fail(Problem(diag::Severity::Error, "PXEDCOMP4013",
+                                    "Component interface values require a ComponentInstance",
+                                    document, instance, field));
+    if (!value.AsObject())
+        return Status::Fail(Problem(diag::Severity::Error, "PXEDCOMP4014",
+                                    "Component interface values must be an Object",
+                                    document, instance, field));
+    return commands.SetProperty(instance, std::move(field), std::move(value),
+                                std::move(label),
+                                DesignerDirtyFlags::Structure | DesignerDirtyFlags::Paint);
+}
+
+Status ComponentService::AssignSlot(UISceneDocument& document,
+                                    DesignerCommandService& commands, const Uuid& child,
+                                    std::string slot) const {
+    if (!document.Find(child))
+        return Status::Fail(Problem(diag::Severity::Error, "PXEDCOMP4015",
+                                    "Component slot child does not exist", document, child,
+                                    "componentSlot"));
+    return commands.SetProperty(child, "componentSlot",
+                                slot.empty() ? Variant{} : Variant(std::move(slot)),
+                                "Assign Component slot",
+                                DesignerDirtyFlags::Structure | DesignerDirtyFlags::Paint);
 }
 
 std::vector<ComponentService::OverrideInfo> ComponentService::Overrides(

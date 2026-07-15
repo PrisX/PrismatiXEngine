@@ -26,7 +26,7 @@ ed::LinkId TransitionLink(const Uuid& id){return ed::LinkId(StableId(id,"animati
 
 Variant AnimationBefore(const UISceneDocument& document){const auto found=document.Data().properties.find("animations");return found==document.Data().properties.end()?Variant{}:found->second.Clone();}
 Result<ui::UIAnimationLibrary> ReadLibrary(const UISceneDocument& document){const Variant value=AnimationBefore(document);if(value.Type()==VariantType::Null)return Result<ui::UIAnimationLibrary>::Failure(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXEDUIAN1001",.category="Editor.UIDesigner",.message="Scene has no Animation Library"});return ui::ParseUIAnimationLibrary(value,document.Path().generic_string());}
-bool Commit(UISceneDocument& document,const Variant& before,const ui::UIAnimationLibrary& library,const char* label){const Status valid=library.Validate(document.Path().generic_string());if(!valid){for(const auto& diagnostic:valid.Diagnostics())diag::Emit(diagnostic);return false;}auto command=std::make_unique<PropertyChangeCommand>(label,document.DocumentId(),"animations",before,ui::WriteUIAnimationLibrary(library),std::chrono::steady_clock::now(),false);const Status status=document.History().Execute(std::move(command));if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);return static_cast<bool>(status);}
+bool Commit(UISceneDocument& document,DesignerCommandService& commands,const Variant& before,const ui::UIAnimationLibrary& library,const char* label){const Status valid=library.Validate(document.Path().generic_string());if(!valid){for(const auto& diagnostic:valid.Diagnostics())diag::Emit(diagnostic);return false;}auto command=std::make_unique<PropertyChangeCommand>(label,document.DocumentId(),"animations",before,ui::WriteUIAnimationLibrary(library),std::chrono::steady_clock::now(),false);const Status status=commands.Execute(std::move(command),DocumentChangeSet::Property(document.DocumentId(),"animations",DesignerDirtyFlags::Animation));if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);return static_cast<bool>(status);}
 std::string UniqueName(const auto& values,const std::string& base){for(int suffix=1;suffix<10000;++suffix){const std::string candidate=suffix==1?base:base+" "+std::to_string(suffix);if(std::none_of(values.begin(),values.end(),[&](const auto& value){return value.name==candidate;}))return candidate;}return base+" Copy";}
 const char* ParameterTypeName(const ui::AnimationParameterType type){switch(type){case ui::AnimationParameterType::Trigger:return "Trigger";case ui::AnimationParameterType::Bool:return "Bool";case ui::AnimationParameterType::Number:return "Number";}return "Trigger";}
 const char* OperatorName(const ui::AnimationConditionOperator operation){switch(operation){case ui::AnimationConditionOperator::Triggered:return "Triggered";case ui::AnimationConditionOperator::Equal:return "==";case ui::AnimationConditionOperator::NotEqual:return "!=";case ui::AnimationConditionOperator::Less:return "<";case ui::AnimationConditionOperator::LessEqual:return "<=";case ui::AnimationConditionOperator::Greater:return ">";case ui::AnimationConditionOperator::GreaterEqual:return ">=";}return "Triggered";}
@@ -37,7 +37,7 @@ AnimationStateMachineEditor::AnimationStateMachineEditor(){EnsureContext();}
 AnimationStateMachineEditor::~AnimationStateMachineEditor(){if(m_context)ed::DestroyEditor(m_context);}
 void AnimationStateMachineEditor::EnsureContext(){if(m_context)return;ed::Config config;config.SettingsFile=nullptr;m_context=ed::CreateEditor(&config);}
 
-bool AnimationStateMachineEditor::Render(UISceneDocument& document){
+bool AnimationStateMachineEditor::Render(UISceneDocument& document,DesignerCommandService& commands,DesignerAnimationMachineState& viewState){
     auto parsed=ReadLibrary(document);
     if(!parsed){ImGui::TextWrapped("先在 Clip 工作面建立 Animation Library。");return false;}
     auto library=parsed.TakeValue();
@@ -55,8 +55,8 @@ bool AnimationStateMachineEditor::Render(UISceneDocument& document){
         library.clips.push_back(std::move(clip));
         library.machine.states.push_back({stateId,UniqueName(library.machine.states,"State"),clipId,{100.0f+40.0f*static_cast<float>(library.machine.states.size()),100.0f}});
         if(library.machine.entry.Empty())library.machine.entry=stateId;
-        m_selectedState=stateId;
-        m_selectedTransition={};
+        viewState.selectedState=stateId;
+        viewState.selectedTransition={};
         dirty=true;
     }
     ImGui::SameLine();
@@ -121,8 +121,8 @@ bool AnimationStateMachineEditor::Render(UISceneDocument& document){
                         transition.to=target.state;
                         transition.duration=.15f;
                         library.machine.transitions.push_back(transition);
-                        m_selectedTransition=transition.id;
-                        m_selectedState={};
+                        viewState.selectedTransition=transition.id;
+                        viewState.selectedState={};
                         dirty=true;
                     }
                 }else ed::RejectNewItem(ImColor(255,80,80),2);
@@ -136,7 +136,7 @@ bool AnimationStateMachineEditor::Render(UISceneDocument& document){
         while(ed::QueryDeletedLink(&link)){
             if(!ed::AcceptDeletedItem())continue;
             const auto found=std::find_if(library.machine.transitions.begin(),library.machine.transitions.end(),[&](const ui::AnimationTransition& transition){return TransitionLink(transition.id)==link;});
-            if(found!=library.machine.transitions.end()){library.machine.transitions.erase(found);m_selectedTransition={};dirty=true;}
+            if(found!=library.machine.transitions.end()){library.machine.transitions.erase(found);viewState.selectedTransition={};dirty=true;}
         }
         ed::NodeId node=0;
         while(ed::QueryDeletedNode(&node)){
@@ -146,7 +146,7 @@ bool AnimationStateMachineEditor::Render(UISceneDocument& document){
                 library.machine.states.erase(found);
                 std::erase_if(library.machine.transitions,[&](const ui::AnimationTransition& transition){return transition.to==id||(transition.from&&*transition.from==id);});
                 m_initializedNodes.erase(id);
-                m_selectedState={};
+                viewState.selectedState={};
                 dirty=true;
             }else ed::RejectDeletedItem();
         }
@@ -157,13 +157,13 @@ bool AnimationStateMachineEditor::Render(UISceneDocument& document){
     if(selectedCount>0){
         std::vector<ed::NodeId> nodes(static_cast<std::size_t>(selectedCount));
         if(ed::GetSelectedNodes(nodes.data(),selectedCount)>0){
-            const auto state=std::find_if(library.machine.states.begin(),library.machine.states.end(),[&](const ui::AnimationState& value){return StateNode(value.id)==nodes.front();});
-            if(state!=library.machine.states.end()){m_selectedState=state->id;m_selectedTransition={};}
+            const auto selectedState=std::find_if(library.machine.states.begin(),library.machine.states.end(),[&](const ui::AnimationState& value){return StateNode(value.id)==nodes.front();});
+            if(selectedState!=library.machine.states.end()){viewState.selectedState=selectedState->id;viewState.selectedTransition={};}
         }
         std::vector<ed::LinkId> links(static_cast<std::size_t>(selectedCount));
         if(ed::GetSelectedLinks(links.data(),selectedCount)>0){
             const auto transition=std::find_if(library.machine.transitions.begin(),library.machine.transitions.end(),[&](const ui::AnimationTransition& value){return TransitionLink(value.id)==links.front();});
-            if(transition!=library.machine.transitions.end()){m_selectedTransition=transition->id;m_selectedState={};}
+            if(transition!=library.machine.transitions.end()){viewState.selectedTransition=transition->id;viewState.selectedState={};}
         }
     }
     if(ImGui::IsMouseReleased(ImGuiMouseButton_Left)){
@@ -174,13 +174,13 @@ bool AnimationStateMachineEditor::Render(UISceneDocument& document){
     }
     ed::End();
     ed::SetCurrentEditor(nullptr);
-    return dirty&&Commit(document,before,library,"Edit Animation State Machine");
+    return dirty&&Commit(document,commands,before,library,"Edit Animation State Machine");
 }
 
-bool AnimationStateMachineEditor::RenderNavigator(UISceneDocument& document){
+bool AnimationStateMachineEditor::RenderNavigator(UISceneDocument& document,DesignerCommandService& commands,DesignerAnimationMachineState& viewState){
     auto parsed=ReadLibrary(document);if(!parsed){ImGui::TextDisabled("尚無 Animation Library。");return false;}auto library=parsed.TakeValue();const Variant before=AnimationBefore(document);bool changed=false;
     if(!m_debugState.transition.Empty())ImGui::TextColored(ImVec4(.3f,.8f,1,.9f),"Transition · %.0f%%",std::clamp(m_debugState.transitionProgress,0.0f,1.0f)*100.0f);
-    ImGui::SeparatorText("States");for(const auto& state:library.machine.states){const bool active=m_debugState.state==state.id;const std::string label=(state.id==library.machine.entry?"▶ ":active?"● ":"")+state.name+"##state-nav-"+state.id.ToString();if(ImGui::Selectable(label.c_str(),m_selectedState==state.id)){m_selectedState=state.id;m_selectedTransition={};}}
+    ImGui::SeparatorText("States");for(const auto& item:library.machine.states){const bool active=m_debugState.state==item.id;const std::string label=(item.id==library.machine.entry?"▶ ":active?"● ":"")+item.name+"##state-nav-"+item.id.ToString();if(ImGui::Selectable(label.c_str(),viewState.selectedState==item.id)){viewState.selectedState=item.id;viewState.selectedTransition={};}}
     ImGui::SeparatorText("Clips");for(const auto& clip:library.clips)ImGui::BulletText("%s · %.2fs%s",clip.name.c_str(),clip.duration,clip.loop?" · Loop":"");
     ImGui::SeparatorText("Parameters");
     for(auto& parameter:library.machine.parameters){
@@ -201,19 +201,19 @@ bool AnimationStateMachineEditor::RenderNavigator(UISceneDocument& document){
         ImGui::PopID();
     }
     if(ImGui::Button("＋ Trigger")){library.machine.parameters.push_back({UniqueName(library.machine.parameters,"Trigger"),ui::AnimationParameterType::Trigger,false});changed=true;}ImGui::SameLine();if(ImGui::Button("＋ Bool")){library.machine.parameters.push_back({UniqueName(library.machine.parameters,"Bool"),ui::AnimationParameterType::Bool,false});changed=true;}ImGui::SameLine();if(ImGui::Button("＋ Number")){library.machine.parameters.push_back({UniqueName(library.machine.parameters,"Number"),ui::AnimationParameterType::Number,0.0});changed=true;}
-    return changed&&Commit(document,before,library,"Edit Animation Parameters");
+    return changed&&Commit(document,commands,before,library,"Edit Animation Parameters");
 }
 
-bool AnimationStateMachineEditor::RenderInspector(UISceneDocument& document){
+bool AnimationStateMachineEditor::RenderInspector(UISceneDocument& document,DesignerCommandService& commands,DesignerAnimationMachineState& viewState){
     auto parsed=ReadLibrary(document);
     if(!parsed)return false;
     auto library=parsed.TakeValue();
     const Variant before=AnimationBefore(document);
     bool changed=false;
 
-    if(!m_selectedTransition.Empty()){
-        auto transitionIt=std::find_if(library.machine.transitions.begin(),library.machine.transitions.end(),[&](const ui::AnimationTransition& value){return value.id==m_selectedTransition;});
-        if(transitionIt==library.machine.transitions.end()){m_selectedTransition={};return false;}
+    if(!viewState.selectedTransition.Empty()){
+        auto transitionIt=std::find_if(library.machine.transitions.begin(),library.machine.transitions.end(),[&](const ui::AnimationTransition& value){return value.id==viewState.selectedTransition;});
+        if(transitionIt==library.machine.transitions.end()){viewState.selectedTransition={};return false;}
         auto& transition=*transitionIt;
         ImGui::TextDisabled("Transition Inspector");
         const auto* fromState=transition.from?library.machine.FindState(*transition.from):nullptr;
@@ -284,10 +284,10 @@ bool AnimationStateMachineEditor::RenderInspector(UISceneDocument& document){
             changed=true;
         }
         ImGui::EndDisabled();
-        if(ImGui::Button("Delete Transition")){library.machine.transitions.erase(transitionIt);m_selectedTransition={};changed=true;}
-    }else if(!m_selectedState.Empty()){
-        auto stateIt=std::find_if(library.machine.states.begin(),library.machine.states.end(),[&](const ui::AnimationState& value){return value.id==m_selectedState;});
-        if(stateIt==library.machine.states.end()){m_selectedState={};return false;}
+        if(ImGui::Button("Delete Transition")){library.machine.transitions.erase(transitionIt);viewState.selectedTransition={};changed=true;}
+    }else if(!viewState.selectedState.Empty()){
+        auto stateIt=std::find_if(library.machine.states.begin(),library.machine.states.end(),[&](const ui::AnimationState& value){return value.id==viewState.selectedState;});
+        if(stateIt==library.machine.states.end()){viewState.selectedState={};return false;}
         auto& state=*stateIt;
         ImGui::TextDisabled("State Inspector");
         changed|=ImGui::InputText("Name",&state.name);
@@ -310,7 +310,7 @@ bool AnimationStateMachineEditor::RenderInspector(UISceneDocument& document){
     if(!m_debugState.parameters.empty()&&ImGui::CollapsingHeader("Runtime Parameters")){
         for(const auto& [name,value]:m_debugState.parameters)ImGui::BulletText("%s · %s",name.c_str(),ToString(value.Type()));
     }
-    return changed&&Commit(document,before,library,"Edit Animation State Machine");
+    return changed&&Commit(document,commands,before,library,"Edit Animation State Machine");
 }
 
 }  // namespace px::editor

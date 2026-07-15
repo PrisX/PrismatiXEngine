@@ -25,7 +25,6 @@ ActionArgumentDescriptor Argument(std::string name, std::string label, const Var
 }
 
 ActionDescriptor Descriptor(std::string id, std::string label, std::string category,
-                            const ActionArgumentType legacy = ActionArgumentType::None,
                             std::vector<ActionArgumentDescriptor> arguments = {},
                             const bool destructive = false) {
     ActionDescriptor descriptor;
@@ -33,7 +32,6 @@ ActionDescriptor Descriptor(std::string id, std::string label, std::string categ
     descriptor.label = label;
     descriptor.displayName = std::move(label);
     descriptor.category = std::move(category);
-    descriptor.argument = legacy;
     descriptor.origin = ActionOrigin::BuiltIn;
     descriptor.sourceId = "PrismatiX";
     descriptor.providerId = "builtin";
@@ -69,24 +67,24 @@ std::vector<ActionDescriptor> BuiltInActionDescriptors() {
     std::vector<ActionDescriptor> descriptors;
     const auto add = [&](ActionDescriptor descriptor) { descriptors.push_back(std::move(descriptor)); };
     add(Descriptor("game.start", "Start Game", "Game"));
-    add(Descriptor("app.quit", "Quit", "Application", ActionArgumentType::None, {}, true));
+    add(Descriptor("app.quit", "Quit", "Application", {}, true));
     add(Descriptor("overlay.close", "Close / Back", "Navigation"));
     add(Descriptor("load.open", "Open Load", "Navigation"));
     add(Descriptor("save.open", "Open Save", "Navigation"));
     add(Descriptor("gallery.open", "Open Gallery", "Navigation"));
     add(Descriptor("settings.open", "Open Settings", "Navigation"));
     add(Descriptor("backlog.open", "Open Backlog", "Navigation"));
-    add(Descriptor("choice.select", "Select Choice", "Scenario", ActionArgumentType::Integer,
+    add(Descriptor("choice.select", "Select Choice", "Scenario",
                    {Argument("index", "Choice Index", VariantType::Integer)}));
-    add(Descriptor("load.slot", "Load Slot", "Save", ActionArgumentType::Integer,
+    add(Descriptor("load.slot", "Load Slot", "Save",
                    {Argument("slot", "Slot", VariantType::Integer)}));
-    add(Descriptor("save.slot", "Save Slot", "Save", ActionArgumentType::Integer,
+    add(Descriptor("save.slot", "Save Slot", "Save",
                    {Argument("slot", "Slot", VariantType::Integer)}));
-    add(Descriptor("cg.view", "View CG", "Gallery", ActionArgumentType::String,
+    add(Descriptor("cg.view", "View CG", "Gallery",
                    {Argument("resource", "CG", VariantType::String, ActionEditorHint::Resource)}));
-    add(Descriptor("backlog.voice", "Replay Voice", "Backlog", ActionArgumentType::Integer,
+    add(Descriptor("backlog.voice", "Replay Voice", "Backlog",
                    {Argument("index", "Backlog Index", VariantType::Integer)}));
-    add(Descriptor("backlog.rollback", "Rollback", "Backlog", ActionArgumentType::Integer,
+    add(Descriptor("backlog.rollback", "Rollback", "Backlog",
                    {Argument("index", "Backlog Index", VariantType::Integer)}));
     add(Descriptor("mode.auto", "Toggle Auto", "Game"));
     add(Descriptor("mode.skip", "Toggle Skip", "Game"));
@@ -94,18 +92,14 @@ std::vector<ActionDescriptor> BuiltInActionDescriptors() {
     add(Descriptor("set.fullscreen.toggle", "Toggle Fullscreen", "Settings"));
     add(Descriptor("hud.toolbar.pin", "Pin / unpin HUD toolbar", "HUD"));
     add(Descriptor("animation.trigger", "Set Animation Trigger", "Animation",
-                   ActionArgumentType::String,
                    {Argument("parameter", "Parameter", VariantType::String)}));
     add(Descriptor("animation.bool", "Set Animation Bool", "Animation",
-                   ActionArgumentType::None,
                    {Argument("parameter", "Parameter", VariantType::String),
                     Argument("value", "Value", VariantType::Bool)}));
     add(Descriptor("animation.number", "Set Animation Number", "Animation",
-                   ActionArgumentType::None,
                    {Argument("parameter", "Parameter", VariantType::String),
                     Argument("value", "Value", VariantType::Number)}));
     add(Descriptor("animation.travel", "Travel Animation State", "Animation",
-                   ActionArgumentType::None,
                    {Argument("state", "State", VariantType::String),
                     Argument("duration", "Transition Duration", VariantType::Number)}));
     for (const char* bus : {"bgm", "se", "voice", "speed"}) {
@@ -113,20 +107,19 @@ std::vector<ActionDescriptor> BuiltInActionDescriptors() {
         add(Descriptor("set." + name + ".up", "Increase " + name, "Settings"));
         add(Descriptor("set." + name + ".down", "Decrease " + name, "Settings"));
         add(Descriptor("set." + name + ".value", "Set " + name, "Settings",
-                       ActionArgumentType::Integer,
                        {Argument("value", "Value", VariantType::Integer)}));
     }
-    add(Descriptor("set.skipread.value", "Set Skip Read", "Settings", ActionArgumentType::Boolean,
+    add(Descriptor("set.skipread.value", "Set Skip Read", "Settings",
                    {Argument("value", "Value", VariantType::Bool)}));
-    add(Descriptor("set.fullscreen.value", "Set Fullscreen", "Settings", ActionArgumentType::Boolean,
+    add(Descriptor("set.fullscreen.value", "Set Fullscreen", "Settings",
                    {Argument("value", "Value", VariantType::Bool)}));
-    add(Descriptor("set.textscale.value", "Set Text Scale", "Accessibility", ActionArgumentType::Integer,
+    add(Descriptor("set.textscale.value", "Set Text Scale", "Accessibility",
                    {Argument("value", "Value", VariantType::Integer)}));
-    add(Descriptor("set.highcontrast.value", "Set High Contrast", "Accessibility", ActionArgumentType::Boolean,
+    add(Descriptor("set.highcontrast.value", "Set High Contrast", "Accessibility",
                    {Argument("value", "Value", VariantType::Bool)}));
-    add(Descriptor("set.reducedmotion.value", "Set Reduced Motion", "Accessibility", ActionArgumentType::Boolean,
+    add(Descriptor("set.reducedmotion.value", "Set Reduced Motion", "Accessibility",
                    {Argument("value", "Value", VariantType::Bool)}));
-    add(Descriptor("set.selfvoicing.value", "Set Self Voicing", "Accessibility", ActionArgumentType::Boolean,
+    add(Descriptor("set.selfvoicing.value", "Set Self Voicing", "Accessibility",
                    {Argument("value", "Value", VariantType::Bool)}));
     return descriptors;
 }

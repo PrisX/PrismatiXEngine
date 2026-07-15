@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Editor/Tools/UIDesigner/UISceneDocument.h"
+#include "Editor/Tools/UIDesigner/DesignerCommandService.h"
 #include "Engine/UI/Behavior/BehaviorGraph.h"
 
 #include <cstdint>
@@ -18,13 +18,19 @@ public:
     BehaviorGraphEditor(const BehaviorGraphEditor&) = delete;
     BehaviorGraphEditor& operator=(const BehaviorGraphEditor&) = delete;
 
-    bool Render(UISceneDocument& document, const Uuid& selectedControl);
-    bool RenderInspector(UISceneDocument& document, const Uuid& selectedControl);
+    bool Render(UISceneDocument& document, DesignerCommandService& commands,
+                DesignerBehaviorGraphState& state,
+                const Uuid& selectedControl);
+    bool RenderInspector(UISceneDocument& document, DesignerCommandService& commands,
+                         DesignerBehaviorGraphState& state,
+                         const Uuid& selectedControl);
     void FrameSelection();
-    void FocusNode(const Uuid& node);
-    void ClearSelection();
+    void FocusNode(DesignerBehaviorGraphState& state, const Uuid& node);
+    void ClearSelection(DesignerBehaviorGraphState& state);
     void SetDebugState(ui::BehaviorRuntimeState state){m_debugState=std::move(state);}
-    [[nodiscard]] const Uuid& SelectedNode() const { return m_selectedNode; }
+    [[nodiscard]] static const Uuid& SelectedNode(const DesignerBehaviorGraphState& state) {
+        return state.selectedNode;
+    }
 
 private:
     void EnsureContext();
@@ -33,14 +39,11 @@ private:
     std::unordered_set<Uuid, UuidHash> m_initializedNodes;
     std::unordered_set<Uuid, UuidHash> m_initializedGroups;
     ui::BehaviorGraph m_clipboard;
-    Uuid m_selectedNode;
-    Uuid m_selectedGroup;
     char m_filter[96] = {0};
     std::uintptr_t m_pendingCreatePin = 0;
     float m_pendingCreateX = 0.0f;
     float m_pendingCreateY = 0.0f;
     bool m_frameSelection = false;
-    Uuid m_focusNode;
     ui::BehaviorRuntimeState m_debugState;
 };
 

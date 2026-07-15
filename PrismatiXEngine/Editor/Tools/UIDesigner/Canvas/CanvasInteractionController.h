@@ -17,6 +17,7 @@ struct DesignerModifierKeys {
 struct DesignerPointerEvent {
     Vec2 screenPosition{};
     Vec2 canvasPosition{};
+    float zoom = 1.0f;
     DesignerMouseButton button = DesignerMouseButton::None;
     DesignerModifierKeys modifiers{};
     std::uint32_t clickCount = 1;

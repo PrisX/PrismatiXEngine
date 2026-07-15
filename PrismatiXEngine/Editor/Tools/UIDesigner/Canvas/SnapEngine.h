@@ -38,6 +38,7 @@ struct SnapRequest {
     std::span<const Uuid> ignoredNodes;
     float zoom = 1.0f;
     Rect canvasRect{};
+    bool alignmentEnabled = true;
     bool gridEnabled = false;
     float gridSize = 16.0f;
     bool snapLeft = true;
@@ -57,6 +58,7 @@ class SnapEngine {
 public:
     [[nodiscard]] SnapResult Snap(const SnapRequest& request,
                                   const DesignerDocumentView& view) const;
+    [[nodiscard]] float SnapNormalized(float value, float tolerance = 0.035f) const;
 };
 
 }  // namespace px::editor

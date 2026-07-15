@@ -29,6 +29,7 @@ struct StylePropertyDescriptor {
     StyleEditorHint editorHint = StyleEditorHint::Default;
     bool animatable = false;
     bool inherited = false;
+    bool runtimeSupported = false;
     std::vector<ControlTypeId> compatibleTypes;
 };
 
@@ -40,6 +41,8 @@ public:
     Status Unregister(std::string_view id);
     [[nodiscard]] const StylePropertyDescriptor* Find(std::string_view id) const;
     [[nodiscard]] bool Supports(std::string_view property, std::string_view controlType) const;
+    [[nodiscard]] bool RuntimeSupports(std::string_view property,
+                                       std::string_view controlType) const;
     [[nodiscard]] std::vector<const StylePropertyDescriptor*> Descriptors() const;
     [[nodiscard]] std::uint64_t Revision() const { return m_revision; }
 

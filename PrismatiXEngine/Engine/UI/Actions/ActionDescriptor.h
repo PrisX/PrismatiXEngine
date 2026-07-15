@@ -9,10 +9,6 @@
 
 namespace px::ui {
 
-// Kept here instead of ActionRegistry.h so the legacy facade and the new catalog
-// describe the same objects without maintaining two incompatible schemas.
-enum class ActionArgumentType : std::uint8_t { None, String, Integer, Boolean, Route };
-
 enum class ActionOrigin : std::uint8_t { BuiltIn, Plugin, LuaExtension };
 enum class ActionEditorHint : std::uint8_t {
     Default,
@@ -42,13 +38,9 @@ struct ActionArgumentDescriptor {
 };
 
 struct ActionDescriptor {
-    // The first four fields intentionally preserve the old aggregate layout used
-    // by ActionRegistry clients.
     std::string id;
     std::string label;
     std::string category;
-    ActionArgumentType argument = ActionArgumentType::None;
-
     std::string displayName;
     std::string description;
     ActionOrigin origin = ActionOrigin::BuiltIn;

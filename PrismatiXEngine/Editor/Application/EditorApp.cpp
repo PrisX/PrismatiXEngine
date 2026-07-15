@@ -413,15 +413,18 @@ void EditorApp::ConfigureDesigner(UIDesigner& designer) {
     designer.SetOpenResource([this](const ResourceRefValue& reference){
         if(!reference.lastKnownPath.empty())OpenDocTab(reference.lastKnownPath);
     });
-    designer.SetOnEdit([this] {
-        if (m_preview && m_designer.Document()) {
+    UIDesignerSession* session = designer.SessionIdentity();
+    designer.SetOnDocumentChange([this, session](const DocumentChangeSet& changes) {
+        if (auto* document = session->Document()) {
             std::error_code error;
             const std::string runtimePath = std::filesystem::relative(
-                m_designer.Document()->Path(), m_project.Context().root, error).generic_string();
-            m_preview->ApplyUIDocumentPatch(m_designer.Document()->Data(),
-                                            error ? m_designer.Document()->Path().generic_string() : runtimePath);
-            m_docs.SetDirty(m_designer.Document()->Path(), m_designer.Dirty(),
-                            m_designer.Document()->History().Cursor());
+                document->Path(), m_project.Context().root, error).generic_string();
+            if (m_preview && m_designer.SessionIdentity() == session)
+                m_preview->ApplyUIDocumentChange(
+                    document->Data(), error ? document->Path().generic_string() : runtimePath,
+                    changes);
+            m_docs.SetDirty(document->Path(), session->HistoryDirty(),
+                            session->HistoryCursor());
         }
     });
 }

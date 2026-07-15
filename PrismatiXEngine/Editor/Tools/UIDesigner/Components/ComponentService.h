@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Editor/Tools/UIDesigner/UISceneDocument.h"
+#include "Editor/Tools/UIDesigner/DesignerCommandService.h"
 #include "Engine/UI/UIResourceResolver.h"
 
 #include <filesystem>
@@ -30,22 +30,42 @@ public:
     void SetWriter(ComponentWriter writer) { m_writer = std::move(writer); }
     void SetLoader(ComponentLoader loader) { m_loader = std::move(loader); }
 
-    [[nodiscard]] Status CreateFromSelection(UISceneDocument& document, const Uuid& selected,
+    [[nodiscard]] Status CreateFromSelection(UISceneDocument& document,
+                                             DesignerCommandService& commands,
+                                             const Uuid& selected,
                                              const Rect& visualRect,
                                              const std::filesystem::path& componentPath) const;
-    [[nodiscard]] Status Instantiate(UISceneDocument& document, const ResourceRefValue& component,
+    [[nodiscard]] Status Instantiate(UISceneDocument& document, DesignerCommandService& commands,
+                                     const ResourceRefValue& component,
                                      const Uuid& parent, std::size_t index,
                                      Rect offsets = {20.0f, 20.0f, 180.0f, 52.0f}) const;
-    [[nodiscard]] Status SetPropertyOverride(UISceneDocument& document, const Uuid& instance,
+    [[nodiscard]] Status SetPropertyOverride(UISceneDocument& document,
+                                             DesignerCommandService& commands,
+                                             const Uuid& instance,
                                              const Uuid& sourceNode,
                                              const std::string& property,
                                              const Variant& value) const;
-    [[nodiscard]] Status ResetPropertyOverride(UISceneDocument& document, const Uuid& instance,
+    [[nodiscard]] Status ResetPropertyOverride(UISceneDocument& document,
+                                               DesignerCommandService& commands,
+                                               const Uuid& instance,
                                                const Uuid& sourceNode,
                                                const std::string& property) const;
     [[nodiscard]] Status ResetAllOverrides(UISceneDocument& document,
+                                           DesignerCommandService& commands,
                                            const Uuid& instance) const;
-    [[nodiscard]] Status Detach(UISceneDocument& document, const Uuid& instance) const;
+    [[nodiscard]] Status Detach(UISceneDocument& document, DesignerCommandService& commands,
+                                const Uuid& instance) const;
+    [[nodiscard]] Status SetInterfaceDefinitions(UISceneDocument& document,
+                                                 DesignerCommandService& commands,
+                                                 std::string field, Variant definitions,
+                                                 std::string label) const;
+    [[nodiscard]] Status SetInstanceInterface(UISceneDocument& document,
+                                              DesignerCommandService& commands,
+                                              const Uuid& instance, std::string field,
+                                              Variant value, std::string label) const;
+    [[nodiscard]] Status AssignSlot(UISceneDocument& document,
+                                    DesignerCommandService& commands, const Uuid& child,
+                                    std::string slot) const;
 
     [[nodiscard]] std::vector<OverrideInfo> Overrides(const UISceneDocument& document,
                                                       const Uuid& instance) const;

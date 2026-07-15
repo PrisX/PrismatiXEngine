@@ -4,21 +4,13 @@
 
 #include <SDL3/SDL_scancode.h>
 
-#include <algorithm>
-
 namespace px::ui {
 
 Control* InputRouter::HitTest(Control& root, Vec2 point) const {
     if (!root.IsVisibleInTree() || !root.Enabled()) return nullptr;
-    std::vector<Control*> children;
-    children.reserve(root.Children().size());
-    for (const auto& child : root.Children())
-        if (auto* control = dynamic_cast<Control*>(child.get())) children.push_back(control);
-    std::stable_sort(children.begin(), children.end(), [](const Control* left, const Control* right) {
-        return left->ZOrder() < right->ZOrder();
-    });
-    for (auto it = children.rbegin(); it != children.rend(); ++it) {
-        if (auto* hit = HitTest(**it, point)) return hit;
+    for (auto it = root.Children().rbegin(); it != root.Children().rend(); ++it) {
+        if (auto* control = dynamic_cast<Control*>(it->get()))
+            if (auto* hit = HitTest(*control, point)) return hit;
     }
     return root.GetMouseFilter() != MouseFilter::Ignore && root.HitTest(point) ? &root : nullptr;
 }

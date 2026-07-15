@@ -405,7 +405,7 @@ void EditorApp::BuildUI() {
     RenderStatusBar();
     RenderDiagnosticToasts();
 
-    if (auto* document = m_designer.Document(); document && document->History().Dirty() &&
+    if (auto* document = m_designer.Document(); document && m_designer.Dirty() &&
         m_recovery.ShouldSnapshot(document->DocumentId(), m_designer.LastEditTime())) {
         std::error_code ec;
         const auto stamp = std::filesystem::last_write_time(document->Path(), ec).time_since_epoch().count();
@@ -416,7 +416,7 @@ void EditorApp::BuildUI() {
     }
     for(const auto& [_,session]:m_inactiveDesigners){
         if(!session.editor||!session.editor->Document())continue;auto* document=session.editor->Document();
-        if(!document->History().Dirty()||!m_recovery.ShouldSnapshot(document->DocumentId(),session.editor->LastEditTime()))continue;
+        if(!session.editor->Dirty()||!m_recovery.ShouldSnapshot(document->DocumentId(),session.editor->LastEditTime()))continue;
         std::error_code error;const auto stamp=std::filesystem::last_write_time(document->Path(),error).time_since_epoch().count();
         const Status snapshot=m_recovery.SaveSnapshot(document->DocumentId(),document->Path(),error?std::string{}:std::to_string(stamp),document->Serialize());
         if(!snapshot)for(const auto& diagnostic:snapshot.Diagnostics())diag::Emit(diagnostic);
@@ -453,12 +453,6 @@ Status EditorApp::ActivateUIDocument(const std::filesystem::path& absolutePath,
         m_designer.ViewportState().scrollX=session->viewport.scrollX;
         m_designer.ViewportState().scrollY=session->viewport.scrollY;
         m_designer.ViewportState().fitToViewport=session->viewport.fitToViewport;
-        m_designer.ViewportState().leftPanelVisible=session->viewport.leftPanelVisible;
-        m_designer.ViewportState().rightPanelVisible=session->viewport.rightPanelVisible;
-        m_designer.ViewportState().bottomPanelVisible=session->viewport.bottomPanelVisible;
-        m_designer.ViewportState().leftPanelWidth=session->viewport.leftPanelWidth;
-        m_designer.ViewportState().rightPanelWidth=session->viewport.rightPanelWidth;
-        m_designer.ViewportState().bottomPanelHeight=session->viewport.bottomPanelHeight;
         m_designer.ViewportState().applyStoredScroll=true;
     }
     std::string runtimePath=requestedRuntimePath;
@@ -553,10 +547,10 @@ void EditorApp::RenderMenuBar() {
         const bool projectHistory = m_assetsFocused;
         const bool uiHistory = !projectHistory && m_previewMode == 0 && m_designer.Document();
         NodeGraphEditor* graphHistory=ActiveDocPtr();
-        const bool canUndo = projectHistory ? m_projectHistory.CanUndo() : (uiHistory ? m_designer.Document()->History().CanUndo() : (graphHistory&&graphHistory->CanUndo()));
-        const bool canRedo = projectHistory ? m_projectHistory.CanRedo() : (uiHistory ? m_designer.Document()->History().CanRedo() : (graphHistory&&graphHistory->CanRedo()));
-        const std::string undoLabel = projectHistory ? m_projectHistory.NextUndoLabel() : (uiHistory ? m_designer.Document()->History().NextUndoLabel() : std::string("劇情編輯"));
-        const std::string redoLabel = projectHistory ? m_projectHistory.NextRedoLabel() : (uiHistory ? m_designer.Document()->History().NextRedoLabel() : std::string("劇情編輯"));
+        const bool canUndo = projectHistory ? m_projectHistory.CanUndo() : (uiHistory ? m_designer.CanUndo() : (graphHistory&&graphHistory->CanUndo()));
+        const bool canRedo = projectHistory ? m_projectHistory.CanRedo() : (uiHistory ? m_designer.CanRedo() : (graphHistory&&graphHistory->CanRedo()));
+        const std::string undoLabel = projectHistory ? m_projectHistory.NextUndoLabel() : (uiHistory ? m_designer.NextUndoLabel() : std::string("劇情編輯"));
+        const std::string redoLabel = projectHistory ? m_projectHistory.NextRedoLabel() : (uiHistory ? m_designer.NextRedoLabel() : std::string("劇情編輯"));
         if (ImGui::MenuItem(("Undo " + undoLabel).c_str(), "Ctrl+Z", false, canUndo)) {
             if(projectHistory)m_projectHistory.Undo();else if (uiHistory) m_designer.Undo(); else if(graphHistory)graphHistory->Undo();
         }
@@ -1933,19 +1927,19 @@ void EditorApp::RenderPreview() {
         }
         if (m_previewMode == 0) {
             ImGui::Separator();
-            auto& panels=m_designer.ViewportState();
-            for(int mode=0;mode<3;++mode){if(mode)ImGui::SameLine();const char* label=mode==0?"Design 設計":mode==1?"Interact 互動":"Animate 動畫";if(ImGui::Selectable(label,panels.authorMode==mode,0,ImVec2(126,0))){panels.authorMode=mode;panels.interactivePreview=false;}}
-            if(panels.authorMode==2){ImGui::SameLine();ImGui::TextDisabled("│");ImGui::SameLine();if(ImGui::Selectable("Clip",panels.animateSurface==0,0,ImVec2(64,0)))panels.animateSurface=0;ImGui::SameLine();if(ImGui::Selectable("State Machine",panels.animateSurface==1,0,ImVec2(112,0)))panels.animateSurface=1;}
-            ImGui::SameLine();ImGui::TextDisabled("  面板");ImGui::SameLine();if(ImGui::SmallButton(panels.leftPanelVisible?"隱藏左側":"顯示左側"))panels.leftPanelVisible=!panels.leftPanelVisible;ImGui::SameLine();if(ImGui::SmallButton(panels.rightPanelVisible?"隱藏 Inspector":"顯示 Inspector"))panels.rightPanelVisible=!panels.rightPanelVisible;if(!(panels.authorMode==2&&panels.animateSurface==0)){ImGui::SameLine();if(ImGui::SmallButton(panels.bottomPanelVisible?"隱藏 Problems":"顯示 Problems"))panels.bottomPanelVisible=!panels.bottomPanelVisible;}
-            if(panels.authorMode==0||(panels.authorMode==2&&panels.animateSurface==0)){ImGui::Separator();m_designer.RenderViewportToolbar();}
+            auto& state=m_designer.ViewportState();auto& panels=m_docs.WorkspacePanels();
+            for(int mode=0;mode<3;++mode){if(mode)ImGui::SameLine();const char* label=mode==0?"Design 設計":mode==1?"Interact 互動":"Animate 動畫";if(ImGui::Selectable(label,state.authorMode==mode,0,ImVec2(126,0))){state.authorMode=mode;state.interactivePreview=false;}}
+            if(state.authorMode==2){ImGui::SameLine();ImGui::TextDisabled("│");ImGui::SameLine();if(ImGui::Selectable("Clip",state.animateSurface==0,0,ImVec2(64,0)))state.animateSurface=0;ImGui::SameLine();if(ImGui::Selectable("State Machine",state.animateSurface==1,0,ImVec2(112,0)))state.animateSurface=1;}
+            ImGui::SameLine();ImGui::TextDisabled("  面板");ImGui::SameLine();if(ImGui::SmallButton(panels.leftPanelVisible?"隱藏左側":"顯示左側"))panels.leftPanelVisible=!panels.leftPanelVisible;ImGui::SameLine();if(ImGui::SmallButton(panels.rightPanelVisible?"隱藏 Inspector":"顯示 Inspector"))panels.rightPanelVisible=!panels.rightPanelVisible;if(!(state.authorMode==2&&state.animateSurface==0)){ImGui::SameLine();if(ImGui::SmallButton(panels.bottomPanelVisible?"隱藏 Problems":"顯示 Problems"))panels.bottomPanelVisible=!panels.bottomPanelVisible;}
+            if(state.authorMode==0||(state.authorMode==2&&state.animateSurface==0)){ImGui::Separator();m_designer.RenderViewportToolbar();}
         }
         ImGui::Separator();
 
-        const bool designerComposite=m_previewMode==0;auto& state=m_designer.ViewportState();const ImVec2 workspace=ImGui::GetContentRegionAvail();const bool compact=workspace.x<1000.0f;const bool showLeft=designerComposite&&state.leftPanelVisible&&!compact;const bool showRight=designerComposite&&state.rightPanelVisible&&workspace.x>=760.0f;const bool clipTimeline=state.authorMode==2&&state.animateSurface==0;const bool showBottom=designerComposite&&(clipTimeline||state.bottomPanelVisible)&&workspace.y>=420.0f;const float drawerHeight=showBottom?std::clamp(state.bottomPanelHeight,150.0f,std::max(150.0f,workspace.y*.5f)):0.0f;const int canvasColumn=showLeft?1:0;const int inspectorColumn=canvasColumn+1;const int columnCount=1+(showLeft?1:0)+(showRight?1:0);
+        const bool designerComposite=m_previewMode==0;auto& state=m_designer.ViewportState();auto& panels=m_docs.WorkspacePanels();const ImVec2 workspace=ImGui::GetContentRegionAvail();const bool compact=workspace.x<1000.0f;const bool showLeft=designerComposite&&panels.leftPanelVisible&&!compact;const bool showRight=designerComposite&&panels.rightPanelVisible&&workspace.x>=760.0f;const bool clipTimeline=state.authorMode==2&&state.animateSurface==0;const bool showBottom=designerComposite&&(clipTimeline||panels.bottomPanelVisible)&&workspace.y>=420.0f;const float drawerHeight=showBottom?std::clamp(panels.bottomPanelHeight,150.0f,std::max(150.0f,workspace.y*.5f)):0.0f;const int canvasColumn=showLeft?1:0;const int inspectorColumn=canvasColumn+1;const int columnCount=1+(showLeft?1:0)+(showRight?1:0);
         if(designerComposite){
             ImGui::BeginTable("##ui-designer-composite",columnCount,ImGuiTableFlags_Resizable|ImGuiTableFlags_BordersInnerV|ImGuiTableFlags_SizingStretchProp,ImVec2(0,std::max(240.0f,workspace.y-drawerHeight-(showBottom?6.0f:0.0f))));
-            if(showLeft)ImGui::TableSetupColumn("Layers",ImGuiTableColumnFlags_WidthFixed,state.leftPanelWidth);ImGui::TableSetupColumn("Canvas",ImGuiTableColumnFlags_WidthStretch);if(showRight)ImGui::TableSetupColumn("Inspector",ImGuiTableColumnFlags_WidthFixed,state.rightPanelWidth);ImGui::TableNextRow();
-            if(showLeft){ImGui::TableSetColumnIndex(0);if(ImGui::BeginChild("##designer-left",ImVec2(0,0))){if(state.authorMode==1)m_designer.RenderInteractionNavigator();else if(state.authorMode==2&&state.animateSurface==1)m_designer.RenderAnimationNavigator();else if(ImGui::BeginTabBar("##left-designer-tabs")){if(ImGui::BeginTabItem("Layers")){m_designer.RenderHierarchy();ImGui::EndTabItem();}if(ImGui::BeginTabItem("Insert")){m_designer.RenderInsert();ImGui::EndTabItem();}if(ImGui::BeginTabItem("Components")){m_designer.RenderComponents();ImGui::EndTabItem();}ImGui::EndTabBar();}}ImGui::EndChild();state.leftPanelWidth=ImGui::GetColumnWidth(0);}ImGui::TableSetColumnIndex(canvasColumn);
+            if(showLeft)ImGui::TableSetupColumn("Layers",ImGuiTableColumnFlags_WidthFixed,panels.leftPanelWidth);ImGui::TableSetupColumn("Canvas",ImGuiTableColumnFlags_WidthStretch);if(showRight)ImGui::TableSetupColumn("Inspector",ImGuiTableColumnFlags_WidthFixed,panels.rightPanelWidth);ImGui::TableNextRow();
+            if(showLeft){ImGui::TableSetColumnIndex(0);if(ImGui::BeginChild("##designer-left",ImVec2(0,0))){if(state.authorMode==1)m_designer.RenderInteractionNavigator();else if(state.authorMode==2&&state.animateSurface==1)m_designer.RenderAnimationNavigator();else if(ImGui::BeginTabBar("##left-designer-tabs")){if(ImGui::BeginTabItem("Layers")){m_designer.RenderHierarchy();ImGui::EndTabItem();}if(ImGui::BeginTabItem("Insert")){m_designer.RenderInsert();ImGui::EndTabItem();}if(ImGui::BeginTabItem("Components")){m_designer.RenderComponents();ImGui::EndTabItem();}ImGui::EndTabBar();}}ImGui::EndChild();panels.leftPanelWidth=ImGui::GetColumnWidth(0);}ImGui::TableSetColumnIndex(canvasColumn);
         }
 
         if(designerComposite&&state.authorMode==1){if(ImGui::BeginChild("##interaction-workspace",ImVec2(0,0),ImGuiChildFlags_Borders))m_designer.RenderBehaviorGraph();ImGui::EndChild();}
@@ -2120,7 +2114,7 @@ void EditorApp::RenderPreview() {
                     break;
                 }
             }
-            if(!state.interactivePreview){m_designer.HandleCanvasInteraction(viewport, p0, scale, viewportHovered, selectedImageAsset);m_designer.RenderCanvasOverlay(p0, scale);}
+            if(!state.interactivePreview){m_designer.ProcessCanvasInput(viewport, p0, scale, viewportHovered, selectedImageAsset);m_designer.RenderCanvasOverlay(p0, scale);}
             const ImRect canvasRect(p0, ImVec2(p0.x + disp.x, p0.y + disp.y));
             if (!state.interactivePreview&&ImGui::BeginDragDropTargetCustom(canvasRect, ImGui::GetID("UIDesignerCanvasDrop"))) {
                 if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kResourcePayload)) {
@@ -2143,8 +2137,8 @@ void EditorApp::RenderPreview() {
             ImGui::EndChild();
         }
         }
-        if(designerComposite){if(showRight){ImGui::TableSetColumnIndex(inspectorColumn);if(ImGui::BeginChild("##designer-inspector",ImVec2(0,0))){if(state.authorMode==1)m_designer.RenderInteractionInspector();else if(state.authorMode==2&&state.animateSurface==1)m_designer.RenderAnimationInspector();else m_designer.RenderInspector(m_selectedAsset);}ImGui::EndChild();state.rightPanelWidth=ImGui::GetColumnWidth(inspectorColumn);}ImGui::EndTable();
-            if(showBottom){ImGui::InvisibleButton("##designer-bottom-splitter",ImVec2(-1,6));if(ImGui::IsItemActive()){state.bottomPanelHeight=std::clamp(state.bottomPanelHeight-ImGui::GetIO().MouseDelta.y,150.0f,std::max(150.0f,workspace.y*.5f));}if(ImGui::IsItemHovered()||ImGui::IsItemActive())ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        if(designerComposite){if(showRight){ImGui::TableSetColumnIndex(inspectorColumn);if(ImGui::BeginChild("##designer-inspector",ImVec2(0,0))){if(state.authorMode==1)m_designer.RenderInteractionInspector();else if(state.authorMode==2&&state.animateSurface==1)m_designer.RenderAnimationInspector();else m_designer.RenderInspector(m_selectedAsset);}ImGui::EndChild();panels.rightPanelWidth=ImGui::GetColumnWidth(inspectorColumn);}ImGui::EndTable();
+            if(showBottom){ImGui::InvisibleButton("##designer-bottom-splitter",ImVec2(-1,6));if(ImGui::IsItemActive()){panels.bottomPanelHeight=std::clamp(panels.bottomPanelHeight-ImGui::GetIO().MouseDelta.y,150.0f,std::max(150.0f,workspace.y*.5f));}if(ImGui::IsItemHovered()||ImGui::IsItemActive())ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
             if(ImGui::BeginChild("##designer-bottom-drawer",ImVec2(0,drawerHeight-6.0f),ImGuiChildFlags_Borders)){
                 if(clipTimeline)m_designer.RenderAnimation();else m_designer.RenderProblems();
             }ImGui::EndChild();}}

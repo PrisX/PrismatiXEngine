@@ -2,12 +2,32 @@
 #include "Engine/UI/Control.h"
 #include "Engine/UI/Styles/StyleSerialization.h"
 
-#include <algorithm>
-#include <functional>
-#include <unordered_set>
-
 namespace px::ui {
 namespace {
+StyleValue Literal(Variant value) { return StyleValue::Literal(std::move(value)); }
+
+StylePropertyMap BaseProperties() {
+    return {{"background.color", Literal(Color{28, 31, 40, 255})},
+            {"border.color", Literal(Color{65, 72, 91, 255})},
+            {"border.width", Literal(1.0)},
+            {"radius.all", Literal(6.0)},
+            {"padding", Literal(Vec2{12.0f, 8.0f})},
+            {"spacing", Literal(8.0)},
+            {"typography.color", Literal(Color{236, 239, 244, 255})},
+            {"typography.font", Literal(std::string("Content/Fonts/NotoSansTC-Bold.ttf"))},
+            {"typography.size", Literal(std::int64_t{24})}};
+}
+
+StyleBlock ButtonDefaults() {
+    StyleBlock block;
+    block.properties["background.color"] = Literal(Color{47, 54, 72, 245});
+    block.stateOverrides[StateMask(StyleState::Hover)]["background.color"] =
+        Literal(Color{64, 75, 101, 255});
+    block.stateOverrides[StateMask(StyleState::Pressed)]["background.color"] =
+        Literal(Color{34, 40, 54, 255});
+    return block;
+}
+
 void ApplyResolved(ControlStyle& style, const ResolvedStyle& resolved) {
     const auto color=[&](std::string_view id,Color& target){if(const auto* p=resolved.Find(id))if(const auto* v=p->value.TryGet<Color>())target=*v;};
     const auto number=[&](std::string_view id,float& target){if(const auto* p=resolved.Find(id)){if(const auto* real=p->value.TryGet<double>())target=static_cast<float>(*real);else if(const auto* integer=p->value.TryGet<std::int64_t>())target=static_cast<float>(*integer);}};
@@ -22,40 +42,31 @@ void ApplyResolved(ControlStyle& style, const ResolvedStyle& resolved) {
 }
 
 Theme::Theme() {
-    ControlStyle base;
-    base.font = "Content/Fonts/NotoSansTC-Bold.ttf";
-    base.hover.background = {40, 45, 58, 255};
-    base.pressed.background = {22, 24, 31, 255};
-    base.disabled.background = {31, 33, 40, 180};
-    base.focused = base.hover;
-    base.focused.border = {112, 162, 255, 255};
-    m_styles.emplace("Default", base);
+    m_styleData.globalDefaults.properties = BaseProperties();
+    m_styleData.globalDefaults.stateOverrides[StateMask(StyleState::Hover)]["background.color"] =
+        Literal(Color{40, 45, 58, 255});
+    m_styleData.globalDefaults.stateOverrides[StateMask(StyleState::Pressed)]["background.color"] =
+        Literal(Color{22, 24, 31, 255});
+    m_styleData.globalDefaults.stateOverrides[StateMask(StyleState::Disabled)]["background.color"] =
+        Literal(Color{31, 33, 40, 180});
+    auto& focused = m_styleData.globalDefaults.stateOverrides[StateMask(StyleState::Focused)];
+    focused["background.color"] = Literal(Color{40, 45, 58, 255});
+    focused["border.color"] = Literal(Color{112, 162, 255, 255});
 
-    ControlStyle button = base;
-    button.normal.background = {47, 54, 72, 245};
-    button.hover.background = {64, 75, 101, 255};
-    button.pressed.background = {34, 40, 54, 255};
-    m_styles.emplace("Button", button);
+    for (const char* type : {"Button", "IconButton", "CheckBox", "OptionButton", "RadioButton"})
+        m_styleData.controlTypeDefaults.emplace(type, ButtonDefaults());
 
-    ControlStyle dialogue = base;
-    dialogue.normal.background = {14, 17, 25, 224};
-    dialogue.normal.border = {101, 114, 146, 190};
-    dialogue.normal.cornerRadius = 12.0f;
-    dialogue.normal.padding = {28.0f, 22.0f};
-    dialogue.fontSize = 30;
-    m_styles.emplace("Dialogue", dialogue);
-}
-
-void Theme::Set(std::string variant, ControlStyle style) {
-    m_styles.insert_or_assign(std::move(variant), std::move(style));
-    ++m_revision;
-}
-
-const ControlStyle& Theme::Resolve(std::string_view variant) const {
-    if (const auto it = m_styles.find(std::string(variant)); it != m_styles.end()) {
-        return it->second;
-    }
-    return m_styles.at("Default");
+    StyleDefinition dialogue;
+    dialogue.id = BuiltinDialogueStyleId();
+    dialogue.displayName = "Dialogue";
+    dialogue.category = "Built-in";
+    dialogue.compatibleTypes = {"*"};
+    dialogue.properties["background.color"] = Literal(Color{14, 17, 25, 224});
+    dialogue.properties["border.color"] = Literal(Color{101, 114, 146, 190});
+    dialogue.properties["radius.all"] = Literal(12.0);
+    dialogue.properties["padding"] = Literal(Vec2{28.0f, 22.0f});
+    dialogue.properties["typography.size"] = Literal(std::int64_t{30});
+    (void)m_styleData.UpsertStyle(std::move(dialogue));
 }
 
 Result<ResolvedStyle> Theme::ResolveStyle(const StyleResolveRequest& request) const {
@@ -67,53 +78,35 @@ Result<ResolvedStyle> Theme::ResolveStyle(const StyleResolveRequest& request) co
 }
 
 ControlStyle Theme::Resolve(const Control& control) const {
-    ControlStyle style=Resolve(control.ThemeVariant());
+    ControlStyle style;
     StyleResolveRequest request{.controlType=std::string(control.TypeName()),
                                 .binding=control.StyleBinding(),
                                 .activeStates=control.ActiveStyleStates()};
     auto resolved=ResolveStyle(request);if(resolved)ApplyResolved(style,resolved.Value());return style;
 }
 
-void Theme::SetToken(std::string name, Variant value) {
-    const std::string tokenName=name;
-    m_tokens.insert_or_assign(std::move(name), value.Clone());
-    TokenDefinition token{.id=StableLegacyTokenId(tokenName),.displayName=tokenName,
-                          .type=value.Type(),.value=StyleValue::Literal(std::move(value))};
-    (void)m_styleData.UpsertToken(std::move(token));m_styleCache.InvalidateTheme();
-    ++m_revision;
-}
-
-const Variant* Theme::FindToken(std::string_view name) const {
-    const auto found = m_tokens.find(std::string(name));
-    return found == m_tokens.end() ? nullptr : &found->second;
+Result<Variant> Theme::ResolveToken(std::string_view name,
+                                    std::optional<VariantType> expectedType) const {
+    const auto* token = m_styleData.FindTokenByName(name);
+    if (!token)
+        return Result<Variant>::Failure(diag::Diagnostic{
+            .severity = diag::Severity::Error,
+            .code = "PXSTYLE3301",
+            .category = "UI.Style",
+            .message = "Theme token does not exist",
+            .details = std::string(name)});
+    return m_styleResolver.ResolveTokenValue(m_styleData, token->id, expectedType);
 }
 
 Status Theme::SetStyleData(StyleThemeData data) {
-    std::unordered_map<TokenId,Variant,UuidHash> resolved;
-    std::unordered_set<TokenId,UuidHash> visiting;
-    std::function<Result<Variant>(const TokenDefinition&)> resolve=
-        [&](const TokenDefinition& token)->Result<Variant>{
-            if(const auto found=resolved.find(token.id);found!=resolved.end())
-                return Result<Variant>::Success(found->second.Clone());
-            if(!visiting.insert(token.id).second)return Result<Variant>::Failure(diag::Diagnostic{
-                .severity=diag::Severity::Error,.code="PXSTYLE3251",
-                .category="UI.Style.Serialization",.message="Style token cycle detected",
-                .details=token.displayName});
-            Result<Variant> value=Result<Variant>::Success(Variant{});
-            if(token.value.IsLiteral())value=Result<Variant>::Success(token.value.LiteralValue().Clone());
-            else if(token.value.IsTokenReference()){
-                const auto* dependency=data.FindToken(token.value.TokenReference());
-                value=dependency?resolve(*dependency):Result<Variant>::Failure(diag::Diagnostic{
-                    .severity=diag::Severity::Error,.code="PXSTYLE3252",
-                    .category="UI.Style.Serialization",.message="Style token reference is missing",
-                    .details=token.value.LastKnownTokenName()});
-            }
-            visiting.erase(token.id);if(value)resolved.emplace(token.id,value.Value().Clone());return value;
-        };
-    std::unordered_map<std::string,Variant> named;
-    for(const auto& token:data.tokens){auto value=resolve(token);if(!value)return Status::Fail(value.Diagnostics());named.emplace(token.displayName,value.TakeValue());}
-    m_tokens=std::move(named);m_styleData=std::move(data);m_styleCache.InvalidateTheme();++m_revision;
+    const Status valid = m_styleResolver.ValidateTheme(data, m_styleProperties);
+    if (!valid) return valid;
+    m_styleData=std::move(data);m_styleCache.InvalidateTheme();
     return Status::Ok();
+}
+
+StyleId BuiltinDialogueStyleId() {
+    return Uuid::FromName("prismatix.style.builtin/Dialogue");
 }
 
 Result<Theme> LoadEmbeddedTheme(const resource::TypedDocument& document){

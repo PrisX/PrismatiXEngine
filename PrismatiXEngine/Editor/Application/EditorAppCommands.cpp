@@ -100,7 +100,7 @@ void EditorApp::HandleShortcuts() {
             m_projectHistory.Undo();
         } else if (m_nodeEditorFocused && doc && doc->CanUndo()) {
             doc->Undo();
-        } else if (m_previewMode == 0 && m_designer.Document() && m_designer.Document()->History().CanUndo()) {
+        } else if (m_previewMode == 0 && m_designer.CanUndo()) {
             m_designer.Undo();
         }
     }
@@ -111,7 +111,7 @@ void EditorApp::HandleShortcuts() {
             m_projectHistory.Redo();
         } else if (m_nodeEditorFocused && doc && doc->CanRedo()) {
             doc->Redo();
-        } else if (m_previewMode == 0 && m_designer.Document() && m_designer.Document()->History().CanRedo()) {
+        } else if (m_previewMode == 0 && m_designer.CanRedo()) {
             m_designer.Redo();
         }
     }

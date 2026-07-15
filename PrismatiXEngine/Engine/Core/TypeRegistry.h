@@ -30,6 +30,26 @@ constexpr bool HasFlag(PropertyFlags value, PropertyFlags flag) {
     return (static_cast<std::uint32_t>(value) & static_cast<std::uint32_t>(flag)) != 0;
 }
 
+enum class PropertyImpact : std::uint32_t {
+    None = 0,
+    Paint = 1u << 0,
+    Layout = 1u << 1,
+    Binding = 1u << 2,
+    Theme = 1u << 3,
+    PreviewState = 1u << 4,
+    Animation = 1u << 5,
+    Structure = 1u << 6,
+};
+constexpr PropertyImpact operator|(PropertyImpact lhs, PropertyImpact rhs) {
+    return static_cast<PropertyImpact>(static_cast<std::uint32_t>(lhs) |
+                                       static_cast<std::uint32_t>(rhs));
+}
+constexpr bool HasImpact(PropertyImpact value, PropertyImpact impact) {
+    return (static_cast<std::uint32_t>(value) & static_cast<std::uint32_t>(impact)) != 0;
+}
+
+enum class PropertyOwnership { Control, ParentLayout };
+
 struct PropertyInfo {
     std::string name;
     std::string category;
@@ -52,6 +72,11 @@ struct PropertyInfo {
         bool multiline = false;
         bool tokenBindable = false;
     } editor;
+    PropertyImpact impact = PropertyImpact::Paint;
+    bool bindable = true;
+    bool animatable = false;
+    bool advanced = false;
+    PropertyOwnership ownership = PropertyOwnership::Control;
 };
 
 struct SignalArgumentInfo {

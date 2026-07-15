@@ -35,6 +35,7 @@ private:
 };
 
 template<typename T>T* FindNamed(Control* root,std::string_view name){if(!root)return nullptr;if(root->Name()==name)return dynamic_cast<T*>(root);for(const auto& child:root->Children())if(auto* control=dynamic_cast<Control*>(child.get()))if(auto* found=FindNamed<T>(control,name))return found;return nullptr;}
+void ApplyDialogueStyle(Control& control){auto binding=control.StyleBinding();binding.baseStyle=BuiltinDialogueStyleId();control.SetStyleBinding(std::move(binding));}
 }
 
 class GalgameUI::ItemSource final : public IVirtualItemSource {
@@ -129,7 +130,7 @@ Status GalgameUI::ApplyAnimationProperty(const animation::TrackBinding& binding,
 Status GalgameUI::ShowTitle() {
     if(HasTemplate(Screen::Title))return InstallTemplate(Screen::Title);
     auto root = MakeRoot("Title");
-    auto shade = std::make_unique<Panel>("TitleShade"); shade->SetAnchors({0,0,1,1}); shade->SetThemeVariant("Dialogue");
+    auto shade = std::make_unique<Panel>("TitleShade"); shade->SetAnchors({0,0,1,1}); ApplyDialogueStyle(*shade);
     auto menu = std::make_unique<VBoxContainer>("TitleMenu"); menu->SetAnchors({0.34f,0.18f,0.66f,0.84f}); menu->SetSeparation(14);
     auto title = std::make_unique<Label>("PrismatiX", "GameTitle"); title->SetFontSize(52); title->SetSizeFlags(SizeFlag::Fill, SizeFlag::Expand);
     if (auto status = Add(*menu, std::move(title)); !status) return status;
@@ -143,12 +144,12 @@ Status GalgameUI::ShowTitle() {
 Status GalgameUI::ShowHUD(const DialoguePresentation& p) {
     if(HasTemplate(Screen::HUD)){const Status status=InstallTemplate(Screen::HUD);if(!status)return status;return RefreshHUD(p);}
     auto root = MakeRoot("HUD");
-    auto nvl = std::make_unique<Panel>("NVLPanel"); nvl->SetAnchors({0.055f,0.06f,0.945f,0.88f}); nvl->SetThemeVariant("Dialogue");
+    auto nvl = std::make_unique<Panel>("NVLPanel"); nvl->SetAnchors({0.055f,0.06f,0.945f,0.88f}); ApplyDialogueStyle(*nvl);
     auto nvlLabel = std::make_unique<Label>("", "NVLText"); m_nvlText = nvlLabel.get(); nvlLabel->SetWrap(true); nvlLabel->SetAnchors({0.04f,0.04f,0.96f,0.96f});
     if (auto status = Add(*nvl, std::move(nvlLabel)); !status) return status;
     nvl->SetVisibility(p.nvlMode ? Visibility::Visible : Visibility::Collapsed);
 
-    auto adv = std::make_unique<Panel>("ADVPanel"); adv->SetAnchors({0.045f,0.64f,0.955f,0.955f}); adv->SetThemeVariant("Dialogue");
+    auto adv = std::make_unique<Panel>("ADVPanel"); adv->SetAnchors({0.045f,0.64f,0.955f,0.955f}); ApplyDialogueStyle(*adv);
     auto speaker = std::make_unique<Label>("", "Speaker"); m_speaker = speaker.get(); speaker->SetFontSize(25); speaker->SetColor({255,220,145,255}); speaker->SetAnchors({0.03f,0.08f,0.97f,0.25f});
     auto dialogue = std::make_unique<Label>("", "Dialogue"); m_dialogue = dialogue.get(); dialogue->SetFontSize(30); dialogue->SetWrap(true); dialogue->SetAnchors({0.03f,0.28f,0.97f,0.91f});
     if (auto status = Add(*adv, std::move(speaker)); !status) return status;
@@ -216,7 +217,7 @@ Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
 
 Status GalgameUI::ShowBacklog(std::vector<GalgameItem> entries) {
     if(HasTemplate(Screen::Backlog)){const Status installed=InstallTemplate(Screen::Backlog);if(!installed)return installed;auto* list=FindNamed<ListView>(m_context.Root(),"Entries");if(!list)return GalgameFailure("PXUI2805","Backlog template requires a ListView named Entries");m_items=std::make_shared<ItemSource>(std::move(entries),*this);return list->SetSource(m_items,[]{return std::make_unique<Button>();});}
-    auto root = MakeRoot("Backlog"); auto panel = std::make_unique<Panel>(); panel->SetAnchors({0.03f,0.03f,0.97f,0.97f}); panel->SetThemeVariant("Dialogue");
+    auto root = MakeRoot("Backlog"); auto panel = std::make_unique<Panel>(); panel->SetAnchors({0.03f,0.03f,0.97f,0.97f}); ApplyDialogueStyle(*panel);
     auto list = std::make_unique<ListView>(); list->SetAnchors({0.03f,0.10f,0.97f,0.94f}); list->SetItemExtent({800,76});
     m_items = std::make_shared<ItemSource>(std::move(entries), *this);
     if (auto status = list->SetSource(m_items, [] { auto b = std::make_unique<Button>(); b->SetSizeFlags(SizeFlag::Expand | SizeFlag::Fill, SizeFlag::Fill); return b; }); !status) return status;
@@ -230,7 +231,7 @@ Status GalgameUI::ShowBacklog(std::vector<GalgameItem> entries) {
 Status GalgameUI::ShowSaveLoad(bool saveMode, std::vector<GalgameItem> slots) {
     const Screen target=saveMode?Screen::Save:Screen::Load;
     if(HasTemplate(target)){const Status installed=InstallTemplate(target);if(!installed)return installed;auto* grid=FindNamed<GridView>(m_context.Root(),"Slots");if(!grid)return GalgameFailure("PXUI2806","SaveLoad template requires a GridView named Slots");m_items=std::make_shared<ItemSource>(std::move(slots),*this);return grid->SetSource(m_items,[]{return std::make_unique<CardButton>();});}
-    auto root = MakeRoot(saveMode ? "Save" : "Load"); auto panel = std::make_unique<Panel>(); panel->SetAnchors({0.03f,0.03f,0.97f,0.97f}); panel->SetThemeVariant("Dialogue");
+    auto root = MakeRoot(saveMode ? "Save" : "Load"); auto panel = std::make_unique<Panel>(); panel->SetAnchors({0.03f,0.03f,0.97f,0.97f}); ApplyDialogueStyle(*panel);
     auto grid = std::make_unique<GridView>(3); grid->SetAnchors({0.03f,0.12f,0.97f,0.93f}); grid->SetItemExtent({320,170});
     m_items = std::make_shared<ItemSource>(std::move(slots), *this);
     if (auto status = grid->SetSource(m_items, [] { return std::make_unique<CardButton>(); }); !status) return status;
@@ -241,7 +242,7 @@ Status GalgameUI::ShowSaveLoad(bool saveMode, std::vector<GalgameItem> slots) {
 
 Status GalgameUI::ShowGallery(std::vector<GalgameItem> entries) {
     if(HasTemplate(Screen::Gallery)){const Status installed=InstallTemplate(Screen::Gallery);if(!installed)return installed;auto* grid=FindNamed<GridView>(m_context.Root(),"Items");if(!grid)return GalgameFailure("PXUI2807","Gallery template requires a GridView named Items");m_items=std::make_shared<ItemSource>(std::move(entries),*this);return grid->SetSource(m_items,[]{return std::make_unique<CardButton>();});}
-    auto root = MakeRoot("Gallery"); auto panel = std::make_unique<Panel>(); panel->SetAnchors({0.03f,0.03f,0.97f,0.97f}); panel->SetThemeVariant("Dialogue");
+    auto root = MakeRoot("Gallery"); auto panel = std::make_unique<Panel>(); panel->SetAnchors({0.03f,0.03f,0.97f,0.97f}); ApplyDialogueStyle(*panel);
     auto grid = std::make_unique<GridView>(4); grid->SetAnchors({0.03f,0.12f,0.97f,0.93f}); grid->SetItemExtent({260,180});
     m_items = std::make_shared<ItemSource>(std::move(entries), *this);
     if (auto status = grid->SetSource(m_items, [] { return std::make_unique<CardButton>(); }); !status) return status;
@@ -263,7 +264,7 @@ Status GalgameUI::ShowSettings(const SettingsPresentation& s) {
         if(auto* value=FindNamed<CheckBox>(m_context.Root(),"SelfVoicing")){value->SetChecked(s.selfVoicing);value->SetOnToggled([this](bool changed){Emit("set.selfvoicing.value",changed?"true":"false");});}
         return Status::Ok();
     }
-    auto root = MakeRoot("Settings"); auto panel = std::make_unique<Panel>(); panel->SetAnchors({0.20f,0.08f,0.80f,0.92f}); panel->SetThemeVariant("Dialogue");
+    auto root = MakeRoot("Settings"); auto panel = std::make_unique<Panel>(); panel->SetAnchors({0.20f,0.08f,0.80f,0.92f}); ApplyDialogueStyle(*panel);
     auto rows = std::make_unique<VBoxContainer>(); rows->SetAnchors({0.06f,0.08f,0.94f,0.92f}); rows->SetSeparation(10);
     auto row = [this, &rows](std::string label, int value, std::string command) -> Status {
         auto line = std::make_unique<HBoxContainer>(); line->SetSizeFlags(SizeFlag::Fill, SizeFlag::Expand); auto text = std::make_unique<Label>(label + "  " + std::to_string(value)); text->SetSizeFlags(SizeFlag::Expand | SizeFlag::Fill, SizeFlag::Fill);

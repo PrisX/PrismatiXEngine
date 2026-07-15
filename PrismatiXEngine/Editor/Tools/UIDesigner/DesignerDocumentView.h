@@ -37,6 +37,9 @@ public:
     void ClearLayout();
     [[nodiscard]] std::optional<Rect> LayoutRect(const Uuid& id) const;
     [[nodiscard]] std::optional<ui::ChildLayoutPolicy> ChildPolicy(const Uuid& id) const;
+    [[nodiscard]] const std::unordered_map<Uuid, Rect, UuidHash>& LayoutRects() const {
+        return m_layoutRects;
+    }
 
     [[nodiscard]] std::size_t NodeCount() const { return m_nodeIndex.size(); }
     [[nodiscard]] std::uint64_t Revision() const { return m_revision; }

@@ -37,17 +37,6 @@ bool ContainsInsensitive(std::string_view value, std::string_view query) {
     return query.empty() || Lower(value).find(Lower(query)) != std::string::npos;
 }
 
-VariantType LegacyType(const ActionArgumentType type) {
-    switch (type) {
-        case ActionArgumentType::String:
-        case ActionArgumentType::Route: return VariantType::String;
-        case ActionArgumentType::Integer: return VariantType::Integer;
-        case ActionArgumentType::Boolean: return VariantType::Bool;
-        case ActionArgumentType::None: return VariantType::Null;
-    }
-    return VariantType::Null;
-}
-
 bool NumericValue(const Variant& value, double& result) {
     if (const auto* number = value.TryGet<double>()) { result = *number; return true; }
     if (const auto* integer = value.TryGet<std::int64_t>()) {
@@ -69,16 +58,6 @@ Status ActionCatalog::NormalizeAndValidateDescriptor(ActionDescriptor& descripto
     if (descriptor.providerId.empty()) {
         descriptor.providerId = descriptor.origin == ActionOrigin::BuiltIn ? "builtin" :
                                 descriptor.origin == ActionOrigin::Plugin ? "plugin" : "lua";
-    }
-    if (descriptor.arguments.empty() && descriptor.argument != ActionArgumentType::None) {
-        ActionArgumentDescriptor argument;
-        argument.name = descriptor.argument == ActionArgumentType::Route ? "route" : "value";
-        argument.displayName = descriptor.argument == ActionArgumentType::Route ? "Route" : "Value";
-        argument.type = LegacyType(descriptor.argument);
-        argument.required = true;
-        argument.editorHint = descriptor.argument == ActionArgumentType::Route
-                                  ? ActionEditorHint::Route : ActionEditorHint::Default;
-        descriptor.arguments.push_back(std::move(argument));
     }
     std::unordered_set<std::string> names;
     for (auto& argument : descriptor.arguments) {

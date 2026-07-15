@@ -42,20 +42,43 @@ if(WIN32)
 endif()
 prismatix_configure_target(PrismatiXPlayer)
 
-add_executable(PrismatiXUIMigrate Applications/UIMigrateMain.cpp)
-target_link_libraries(PrismatiXUIMigrate PRIVATE PrismatiXRuntime)
-prismatix_configure_target(PrismatiXUIMigrate)
-
-
 file(GLOB_RECURSE PRISMATIX_EDITOR_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/Editor/*.cpp"
 )
+
+set(PRISMATIX_UI_DESIGNER_CORE_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Workspace/EditHistory.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Canvas/CanvasInteractionController.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Canvas/DesignerTools.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Canvas/HitTestService.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Canvas/SnapEngine.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Components/ComponentService.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/DesignerCommandService.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/DesignerDiagnostics.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/DesignerDocumentView.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/DocumentChangeSet.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/DesignerNodeFactory.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/DesignerSelection.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Preview/PreviewFixture.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Preview/PreviewChangePlanner.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/PropertyEditorRegistry.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/UIDesignerSession.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/UISceneDocument.cpp
+)
+
+add_library(PrismatiXUIDesignerCore STATIC ${PRISMATIX_UI_DESIGNER_CORE_SOURCES})
+target_include_directories(PrismatiXUIDesignerCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(PrismatiXUIDesignerCore PUBLIC PrismatiXRuntime)
+prismatix_configure_target(PrismatiXUIDesignerCore)
+
+list(REMOVE_ITEM PRISMATIX_EDITOR_SOURCES ${PRISMATIX_UI_DESIGNER_CORE_SOURCES})
 
 if(PRISMATIX_EDITOR_SOURCES)
     add_executable(PrismatiXEditor Applications/EditorMain.cpp ${PRISMATIX_EDITOR_SOURCES})
     target_include_directories(PrismatiXEditor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(PrismatiXEditor PRIVATE
         PrismatiXRuntime
+        PrismatiXUIDesignerCore
         PrismatiXNodeEditor
     )
     prismatix_configure_target(PrismatiXEditor)
@@ -82,20 +105,48 @@ if(PRISMATIX_EDITOR_SOURCES)
 endif()
 
 if(BUILD_TESTING)
-    add_executable(PrismatiXCoreTests Tests/CommercialAcceptanceTests.cpp)
-    target_link_libraries(PrismatiXCoreTests PRIVATE PrismatiXRuntime)
-    prismatix_configure_target(PrismatiXCoreTests)
-    add_test(NAME PrismatiX.Commercial.Acceptance COMMAND PrismatiXCoreTests)
+    add_executable(PrismatiXRuntimeContractTests Tests/RuntimeContractTests.cpp)
+    target_link_libraries(PrismatiXRuntimeContractTests PRIVATE PrismatiXRuntime)
+    prismatix_configure_target(PrismatiXRuntimeContractTests)
+    add_test(NAME PrismatiX.Runtime.Contracts COMMAND PrismatiXRuntimeContractTests)
+    set_tests_properties(PrismatiX.Runtime.Contracts PROPERTIES LABELS "contract;runtime")
+
+    add_executable(PrismatiXUIDesignerCoreTests Tests/UIDesignerCoreTests.cpp)
+    target_link_libraries(PrismatiXUIDesignerCoreTests PRIVATE PrismatiXUIDesignerCore)
+    prismatix_configure_target(PrismatiXUIDesignerCoreTests)
+    add_test(NAME PrismatiX.UIDesigner.Core COMMAND PrismatiXUIDesignerCoreTests)
+    set_tests_properties(PrismatiX.UIDesigner.Core PROPERTIES LABELS "unit;contract;designer")
+
+    add_executable(PrismatiXEditorWorkspaceTests Tests/EditorWorkspaceTests.cpp
+                   Editor/Workspace/DocumentRegistry.cpp)
+    target_link_libraries(PrismatiXEditorWorkspaceTests PRIVATE PrismatiXRuntime)
+    prismatix_configure_target(PrismatiXEditorWorkspaceTests)
+    add_test(NAME PrismatiX.Editor.Workspace COMMAND PrismatiXEditorWorkspaceTests)
+    set_tests_properties(PrismatiX.Editor.Workspace PROPERTIES LABELS "unit;contract;designer")
+
+    add_executable(PrismatiXPerformanceTests Tests/PerformanceTests.cpp)
+    target_link_libraries(PrismatiXPerformanceTests PRIVATE PrismatiXRuntime)
+    prismatix_configure_target(PrismatiXPerformanceTests)
+    if(PRISMATIX_STRESS_TESTS)
+        add_test(NAME PrismatiX.Performance.Scenarios COMMAND PrismatiXPerformanceTests)
+        set_tests_properties(PrismatiX.Performance.Scenarios PROPERTIES LABELS "performance;stress")
+    endif()
+
+    add_test(NAME PrismatiX.Architecture.Gates
+             COMMAND ${CMAKE_COMMAND}
+                     -DROOT=${CMAKE_CURRENT_SOURCE_DIR}
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/ArchitectureGate.cmake)
+    set_tests_properties(PrismatiX.Architecture.Gates PROPERTIES LABELS "unit;contract;designer")
 
     add_executable(PrismatiXImportTests Tests/ImportServiceTests.cpp
-                   Editor/Assets/ImportService.cpp
-                   Editor/Workspace/DocumentRegistry.cpp)
+                   Editor/Assets/ImportService.cpp)
     target_link_libraries(PrismatiXImportTests PRIVATE PrismatiXRuntime)
     if(PRISMATIX_STRESS_TESTS)
         target_compile_definitions(PrismatiXImportTests PRIVATE PRISMATIX_STRESS_TESTS=1)
     endif()
     prismatix_configure_target(PrismatiXImportTests)
     add_test(NAME PrismatiX.Editor.Import COMMAND PrismatiXImportTests)
+    set_tests_properties(PrismatiX.Editor.Import PROPERTIES LABELS "integration;designer")
 
     add_executable(PrismatiXBuildE2ETests Tests/BuildE2ETests.cpp
                    Editor/Build/BuildService.cpp Editor/Build/ExportProfile.cpp
@@ -104,6 +155,7 @@ if(BUILD_TESTING)
     prismatix_configure_target(PrismatiXBuildE2ETests)
     add_dependencies(PrismatiXBuildE2ETests PrismatiXPlayer)
     add_test(NAME PrismatiX.Build.E2E COMMAND PrismatiXBuildE2ETests)
+    set_tests_properties(PrismatiX.Build.E2E PROPERTIES LABELS "e2e")
 endif()
 
 if(PRISMATIX_BUILD_FUZZERS)

@@ -1,9 +1,11 @@
 #include "Editor/Preview/RuntimeHost.h"
+#include "Editor/Tools/UIDesigner/Preview/PreviewChangePlanner.h"
 
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/Resources/TypedDocument.h"
 #include "Engine/Support/Logger.h"
 #include "Engine/UI/UISceneLoader.h"
+#include "Engine/UI/Styles/StyleSerialization.h"
 #include "Engine/UI/UITypeRegistry.h"
 #include "Engine/UI/Widgets.h"
 #include "Engine/Video/VideoPlayer.h"
@@ -154,21 +156,96 @@ void RuntimeHost::LoadUIDocument(const resource::TypedDocument& document,
     m_lastUIDocument=document;
 }
 
-bool RuntimeHost::ApplyUIDocumentPatch(const resource::TypedDocument& document,const std::string& sourcePath){
-    if(!m_lastUIDocument||!m_uiScene.Root()||m_lastUIDocument->nodes.size()!=document.nodes.size()||
-       m_lastUIDocument->properties!=document.properties){LoadUIDocument(document,sourcePath);return false;}
-    for(std::size_t index=0;index<document.nodes.size();++index){const auto& before=m_lastUIDocument->nodes[index];const auto& after=document.nodes[index];
-        if(before.id!=after.id||before.parent!=after.parent||before.type!=after.type){LoadUIDocument(document,sourcePath);return false;}
-        if(before.properties.contains("bindings")!=after.properties.contains("bindings")||before.properties.contains("triggers")!=after.properties.contains("triggers")||
-           (before.properties.contains("bindings")&&before.properties.at("bindings")!=after.properties.at("bindings"))||
-           (before.properties.contains("triggers")&&before.properties.at("triggers")!=after.properties.at("triggers"))){LoadUIDocument(document,sourcePath);return false;}}
-    for(std::size_t index=0;index<document.nodes.size();++index){const auto& before=m_lastUIDocument->nodes[index];const auto& after=document.nodes[index];
-        auto* object=m_uiScene.Root()->Find(after.id);if(!object){LoadUIDocument(document,sourcePath);return false;}if(before.name!=after.name)object->SetName(after.name);
-        for(const auto& [name,value]:after.properties){const auto prior=before.properties.find(name);if(prior!=before.properties.end()&&prior->second==value)continue;
-            if(name=="bindings"||name=="triggers"||name=="styleBinding")continue;const auto* property=TypeRegistry::Global().FindProperty(after.type,name);
-            if(property&&property->set){const Status status=property->set(*object,value);if(!status){LoadUIDocument(document,sourcePath);return false;}}}
+bool RuntimeHost::ApplyUIDocumentChange(const resource::TypedDocument& document,
+                                        const std::string& sourcePath,
+                                        const DocumentChangeSet& changes) {
+    const auto rebuild = [&] {
+        LoadUIDocument(document, sourcePath);
+        return false;
+    };
+    const PreviewUpdate planned = PlanPreviewUpdate(changes, document.id);
+    if (!m_lastUIDocument || !m_uiScene.Root() ||
+        HasPreviewUpdate(planned, PreviewUpdate::RebuildScene) ||
+        m_lastUIDocument->id != document.id ||
+        m_lastUIDocument->nodes.size() != document.nodes.size())
+        return rebuild();
+    if (HasPreviewUpdate(planned, PreviewUpdate::ReconnectBindings)) return rebuild();
+
+    if (changes.properties.empty()) return rebuild();
+    for (const auto& changed : changes.properties) {
+        if (changed.node == document.id) {
+            if (changed.property == "animations") {
+                const auto found = document.properties.find("animations");
+                ui::UIAnimationLibrary library;
+                if (found != document.properties.end()) {
+                    auto parsed = ui::ParseUIAnimationLibrary(found->second, sourcePath);
+                    if (!parsed) return rebuild();
+                    library = parsed.TakeValue();
+                }
+                const Status status = m_uiScene.SetAnimations(std::move(library), true);
+                if (!status) return rebuild();
+                continue;
+            }
+            if (changed.property == "styleSystem" || changed.property == "theme") {
+                ui::Theme theme;
+                const auto found = document.properties.find("styleSystem");
+                if (found != document.properties.end()) {
+                    auto parsed = ui::ParseStyleTheme(found->second);
+                    if (!parsed || !theme.SetStyleData(parsed.TakeValue())) return rebuild();
+                }
+                m_uiScene.SetTheme(std::move(theme));
+                continue;
+            }
+            // Behavior graphs, component APIs, and other document-level contracts
+            // require their associated runtime services to be reconnected atomically.
+            return rebuild();
+        }
+
+        const auto after = std::find_if(document.nodes.begin(), document.nodes.end(),
+                                        [&](const auto& node) { return node.id == changed.node; });
+        const auto before = std::find_if(m_lastUIDocument->nodes.begin(),
+                                         m_lastUIDocument->nodes.end(),
+                                         [&](const auto& node) { return node.id == changed.node; });
+        if (after == document.nodes.end() || before == m_lastUIDocument->nodes.end() ||
+            after->parent != before->parent || after->type != before->type)
+            return rebuild();
+        auto* object = dynamic_cast<ui::Control*>(m_uiScene.Root()->Find(changed.node));
+        if (!object) return rebuild();
+
+        if (changed.property == "$name") {
+            object->SetName(after->name);
+            continue;
+        }
+        if (changed.property == "bindings" || changed.property == "triggers" ||
+            changed.property == "componentProperties" ||
+            changed.property == "componentEvents" || changed.property == "componentSlot" ||
+            changed.property == "overrides")
+            return rebuild();
+        if (changed.property == "styleBinding") {
+            const auto value = after->properties.find("styleBinding");
+            if (value == after->properties.end()) object->SetStyleBinding({});
+            else {
+                auto parsed = ui::ParseStyleBinding(value->second);
+                if (!parsed) return rebuild();
+                object->SetStyleBinding(parsed.TakeValue());
+            }
+            object->InvalidateLayout();
+            continue;
+        }
+
+        const auto* property = TypeRegistry::Global().FindProperty(after->type,
+                                                                   changed.property);
+        if (!property || !property->set) return rebuild();
+        const auto value = after->properties.find(changed.property);
+        const Variant& applied = value == after->properties.end() ? property->defaultValue
+                                                                   : value->second;
+        if (!property->set(*object, applied)) return rebuild();
     }
-    m_uiPath=sourcePath;m_mode=Mode::UIScene;m_lastUIDocument=document;return true;
+
+    m_uiPath = sourcePath;
+    m_mode = Mode::UIScene;
+    m_lastUIDocument = document;
+    return true;
 }
 
 Status RuntimeHost::PreviewUIAnimation(const Uuid& clip,float time,bool playing){

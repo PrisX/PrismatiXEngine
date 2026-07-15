@@ -32,9 +32,12 @@ struct DocumentViewportState {
     float scrollX = 0.0f;
     float scrollY = 0.0f;
     bool fitToViewport = true;
+};
+
+struct WorkspacePanelState {
     bool leftPanelVisible = true;
     bool rightPanelVisible = true;
-    bool bottomPanelVisible = true;
+    bool bottomPanelVisible = false;
     float leftPanelWidth = 260.0f;
     float rightPanelWidth = 340.0f;
     float bottomPanelHeight = 240.0f;
@@ -91,6 +94,8 @@ public:
     [[nodiscard]] const DocumentSession* Active() const;
     [[nodiscard]] std::optional<std::size_t> ActiveIndex() const { return m_active; }
     [[nodiscard]] const std::vector<DocumentSession>& Documents() const { return m_documents; }
+    [[nodiscard]] WorkspacePanelState& WorkspacePanels() { return m_workspacePanels; }
+    [[nodiscard]] const WorkspacePanelState& WorkspacePanels() const { return m_workspacePanels; }
     [[nodiscard]] std::vector<std::size_t> RecentlyUsed() const;
     [[nodiscard]] ExternalDocumentState CheckExternalState(const DocumentSession& session) const;
 
@@ -109,6 +114,7 @@ private:
     std::vector<DocumentSession> m_documents;
     std::optional<std::size_t> m_active;
     std::uint64_t m_sequence = 0;
+    WorkspacePanelState m_workspacePanels;
 };
 
 }  // namespace px::editor

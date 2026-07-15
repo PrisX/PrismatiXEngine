@@ -21,6 +21,7 @@ public:
     [[nodiscard]] resource::TypedDocument& Data() { return m_data; }
     [[nodiscard]] const resource::TypedDocument& Data() const { return m_data; }
     [[nodiscard]] EditHistory& History() { return m_history; }
+    [[nodiscard]] const EditHistory& History() const { return m_history; }
 
     [[nodiscard]] Uuid DocumentId() const override { return m_data.id; }
     [[nodiscard]] Result<Variant> ReadProperty(const Uuid& target, const std::string& property) const override;

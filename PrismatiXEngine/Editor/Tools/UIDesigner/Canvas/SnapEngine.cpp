@@ -29,18 +29,20 @@ SnapResult SnapEngine::Snap(const SnapRequest& request,
     std::unordered_set<Uuid, UuidHash> ignored(request.ignoredNodes.begin(),
                                                request.ignoredNodes.end());
     std::vector<Candidate> xs, ys;
-    AddRectCandidates(xs, ys, request.canvasRect, SnapGuideKind::Canvas);
-    if (const auto parent = view.LayoutRect(request.parent))
-        AddRectCandidates(xs, ys, *parent, SnapGuideKind::Parent);
-    for (const Uuid& sibling : view.Children(request.parent)) {
-        if (ignored.contains(sibling)) continue;
-        if (const auto rect = view.LayoutRect(sibling))
-            AddRectCandidates(xs, ys, *rect, SnapGuideKind::Sibling);
-    }
-    for (const auto& guide : request.userGuides) {
-        if (guide.orientation == SnapGuideOrientation::Vertical)
-            xs.push_back({guide.position, SnapGuideKind::User, {}});
-        else ys.push_back({guide.position, SnapGuideKind::User, {}});
+    if (request.alignmentEnabled) {
+        AddRectCandidates(xs, ys, request.canvasRect, SnapGuideKind::Canvas);
+        if (const auto parent = view.LayoutRect(request.parent))
+            AddRectCandidates(xs, ys, *parent, SnapGuideKind::Parent);
+        for (const Uuid& sibling : view.Children(request.parent)) {
+            if (ignored.contains(sibling)) continue;
+            if (const auto rect = view.LayoutRect(sibling))
+                AddRectCandidates(xs, ys, *rect, SnapGuideKind::Sibling);
+        }
+        for (const auto& guide : request.userGuides) {
+            if (guide.orientation == SnapGuideOrientation::Vertical)
+                xs.push_back({guide.position, SnapGuideKind::User, {}});
+            else ys.push_back({guide.position, SnapGuideKind::User, {}});
+        }
     }
 
     const auto snapAxis = [&](std::span<const Candidate> candidates,
@@ -89,32 +91,43 @@ SnapResult SnapEngine::Snap(const SnapRequest& request,
         output.rect = {left, top, std::max(1.0f, right - left),
                        std::max(1.0f, bottom - top)};
         if (request.gridEnabled && request.gridSize > 0.0f) {
-            const float snappedRight = std::round(right / request.gridSize) * request.gridSize;
-            const float snappedBottom = std::round(bottom / request.gridSize) * request.gridSize;
-            output.rect.x = std::round(left / request.gridSize) * request.gridSize;
-            output.rect.y = std::round(top / request.gridSize) * request.gridSize;
-            output.rect.w = std::max(1.0f, snappedRight - output.rect.x);
-            output.rect.h = std::max(1.0f, snappedBottom - output.rect.y);
+            const auto grid = [&](float value) {
+                return std::round(value / request.gridSize) * request.gridSize;
+            };
+            if (request.snapLeft) left = grid(left);
+            if (request.snapRight) right = grid(right);
+            if (request.snapTop) top = grid(top);
+            if (request.snapBottom) bottom = grid(bottom);
+            output.rect = {left, top, std::max(1.0f, right - left),
+                           std::max(1.0f, bottom - top)};
         }
     }
 
     // Equal-spacing feedback: when the moved rect sits between two siblings with
     // equal gaps, surface the distances and guide. Alignment remains the primary
     // snap, so this never introduces an unpredictable second adjustment.
-    std::vector<Rect> siblings;
-    for (const Uuid& id : view.Children(request.parent))
-        if (!ignored.contains(id)) if (const auto rect = view.LayoutRect(id)) siblings.push_back(*rect);
-    for (const auto& a : siblings) for (const auto& b : siblings) {
-        if (&a == &b) continue;
-        const float leftGap = output.rect.x - (a.x + a.w);
-        const float rightGap = b.x - (output.rect.x + output.rect.w);
-        if (leftGap >= 0.0f && rightGap >= 0.0f && std::abs(leftGap - rightGap) <= threshold) {
-            output.distances.push_back({{a.x + a.w, output.rect.y - 8.0f}, leftGap, true});
-            output.distances.push_back({{output.rect.x + output.rect.w, output.rect.y - 8.0f}, rightGap, true});
-            break;
+    if (request.alignmentEnabled) {
+        std::vector<Rect> siblings;
+        for (const Uuid& id : view.Children(request.parent))
+            if (!ignored.contains(id)) if (const auto rect = view.LayoutRect(id)) siblings.push_back(*rect);
+        for (const auto& a : siblings) for (const auto& b : siblings) {
+            if (&a == &b) continue;
+            const float leftGap = output.rect.x - (a.x + a.w);
+            const float rightGap = b.x - (output.rect.x + output.rect.w);
+            if (leftGap >= 0.0f && rightGap >= 0.0f && std::abs(leftGap - rightGap) <= threshold) {
+                output.distances.push_back({{a.x + a.w, output.rect.y - 8.0f}, leftGap, true});
+                output.distances.push_back({{output.rect.x + output.rect.w, output.rect.y - 8.0f}, rightGap, true});
+                break;
+            }
         }
     }
     return output;
+}
+
+float SnapEngine::SnapNormalized(float value, float tolerance) const {
+    for (const float target : {0.0f, 0.5f, 1.0f})
+        if (std::abs(value - target) < tolerance) return target;
+    return std::clamp(value, 0.0f, 1.0f);
 }
 
 }  // namespace px::editor
