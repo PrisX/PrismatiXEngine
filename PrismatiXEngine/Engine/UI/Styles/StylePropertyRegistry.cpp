@@ -7,6 +7,10 @@
 namespace px::ui {
 namespace {
 
+constexpr std::array<std::string_view, 9> kRuntimeMappedStyleProperties{
+    "background.color", "border.color", "border.width", "radius.all", "padding",
+    "spacing", "typography.font", "typography.size", "typography.color"};
+
 diag::Diagnostic RegistryError(std::string code, std::string message, std::string details = {}) {
     return diag::Diagnostic{.severity = diag::Severity::Error,
                             .code = std::move(code),
@@ -148,9 +152,7 @@ Status StylePropertyRegistry::RegisterBuiltins() {
                                 VariantType::Number, StyleEditorHint::Number, true));
     builtins.push_back(Property("transition.easing", "Transition Easing", "Transition",
                                 VariantType::String, StyleEditorHint::Easing, false));
-    constexpr std::array<std::string_view, 8> runtimeSupported{
-        "background.color", "border.color", "border.width", "radius.all", "spacing",
-        "typography.font", "typography.size", "typography.color"};
+    const auto runtimeSupported = RuntimeMappedStyleProperties();
     for (auto& descriptor : builtins)
         descriptor.runtimeSupported = std::find(runtimeSupported.begin(), runtimeSupported.end(),
                                                 descriptor.id) != runtimeSupported.end();
@@ -172,6 +174,10 @@ Variant CoerceStyleValue(Variant value, VariantType expected) {
             return Variant(static_cast<double>(*integer));
     }
     return value;
+}
+
+std::span<const std::string_view> RuntimeMappedStyleProperties() {
+    return kRuntimeMappedStyleProperties;
 }
 
 }  // namespace px::ui

@@ -1,17 +1,15 @@
 #include "Editor/Tools/UIDesigner/UIDesignerSession.h"
 
 #include "Editor/Tools/UIDesigner/Canvas/CanvasInteractionController.h"
-#include "Editor/Tools/UIDesigner/Canvas/DesignerTools.h"
 #include "Editor/Tools/UIDesigner/DesignerCommandService.h"
 
 namespace px::editor {
 
 UIDesignerSession::UIDesignerSession()
-    : m_interaction(std::make_unique<CanvasInteractionController>()),
-      m_selectTool(std::make_unique<SelectTool>()),
-      m_anchorTool(std::make_unique<AnchorTool>()),
+    : m_interaction(std::make_unique<CanvasInteractionController>(*this)),
       m_commands(std::make_unique<DesignerCommandService>(*this)) {
     m_commands->SetChanged([this](const DocumentChangeSet& changes) {
+        m_pendingChanges.Merge(changes);
         if (m_changeListener) m_changeListener(changes);
     });
 }
@@ -32,20 +30,20 @@ Status UIDesignerSession::New(const std::filesystem::path& path, int width, int 
 
 void UIDesignerSession::Close() {
     if (m_interaction) m_interaction->Cancel();
+    // Property transactions retain references to both the document and its
+    // EditHistory. They must be destroyed before the document.
+    if (m_commands) (void)m_commands->ResetForDocumentChange();
     m_document.reset();
     m_documentView.Clear();
     m_selection.Clear();
     m_selection.ClearScope();
     ResetViewState();
     m_dirtyFlags = DesignerDirtyFlags::None;
+    m_pendingChanges = {};
 }
 
 CanvasInteractionController& UIDesignerSession::Interaction() { return *m_interaction; }
 const CanvasInteractionController& UIDesignerSession::Interaction() const { return *m_interaction; }
-IDesignerTool& UIDesignerSession::CanvasTool(DesignerTool tool) {
-    return tool == DesignerTool::Anchors ? static_cast<IDesignerTool&>(*m_anchorTool)
-                                         : static_cast<IDesignerTool&>(*m_selectTool);
-}
 DesignerCommandService& UIDesignerSession::Commands() { return *m_commands; }
 const DesignerCommandService& UIDesignerSession::Commands() const { return *m_commands; }
 void UIDesignerSession::SetChangeListener(ChangeListener listener) {
@@ -60,11 +58,23 @@ DesignerDirtyFlags UIDesignerSession::ConsumeDirtyFlags() {
     return result;
 }
 
+DocumentChangeSet UIDesignerSession::ConsumeDocumentChanges() {
+    DocumentChangeSet result = std::move(m_pendingChanges);
+    result.dirty |= m_dirtyFlags;
+    m_pendingChanges = {};
+    m_dirtyFlags = DesignerDirtyFlags::None;
+    return result;
+}
+
 Status UIDesignerSession::Adopt(std::unique_ptr<UISceneDocument> document) {
     DesignerDocumentView view;
     const Status indexed = view.Rebuild(*document);
     if (!indexed) return indexed;
     if (m_interaction) m_interaction->Cancel();
+    if (m_commands) {
+        const Status shutdown = m_commands->ResetForDocumentChange();
+        if (!shutdown) return shutdown;
+    }
     m_document = std::move(document);
     m_documentView = std::move(view);
     ResetViewState();
@@ -73,6 +83,7 @@ Status UIDesignerSession::Adopt(std::unique_ptr<UISceneDocument> document) {
         expandedTreeNodes.insert(m_documentView.Root());
     }
     m_dirtyFlags = kAllDesignerContentDirty | DesignerDirtyFlags::PreviewState;
+    m_pendingChanges = DocumentChangeSet::WholeDocument(kAllDesignerContentDirty);
     return Status::Ok();
 }
 

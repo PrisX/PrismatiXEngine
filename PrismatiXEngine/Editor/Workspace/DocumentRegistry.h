@@ -41,6 +41,7 @@ struct WorkspacePanelState {
     float leftPanelWidth = 260.0f;
     float rightPanelWidth = 340.0f;
     float bottomPanelHeight = 240.0f;
+    int bottomPanelTab = 0;
 };
 
 struct DocumentSession {

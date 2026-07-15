@@ -5,6 +5,7 @@
 #include <compare>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace px::editor {
@@ -68,5 +69,34 @@ struct DocumentChangeSet {
                                            bool historyNavigation = false);
     void Merge(const DocumentChangeSet& other);
 };
+
+enum class DesignerUpdate : std::uint32_t {
+    None = 0,
+    RebuildIndex = 1u << 0,
+    RebuildLayoutScene = 1u << 1,
+    PatchLayoutProperties = 1u << 2,
+    Relayout = 1u << 3,
+    Repaint = 1u << 4,
+    InvalidateStyle = 1u << 5,
+    ReconnectBindings = 1u << 6,
+    UpdateAnimations = 1u << 7,
+};
+
+constexpr DesignerUpdate operator|(DesignerUpdate lhs, DesignerUpdate rhs) {
+    return static_cast<DesignerUpdate>(static_cast<std::uint32_t>(lhs) |
+                                       static_cast<std::uint32_t>(rhs));
+}
+constexpr DesignerUpdate& operator|=(DesignerUpdate& lhs, DesignerUpdate rhs) {
+    lhs = lhs | rhs;
+    return lhs;
+}
+[[nodiscard]] constexpr bool HasDesignerUpdate(DesignerUpdate updates,
+                                               DesignerUpdate update) {
+    return (static_cast<std::uint32_t>(updates) &
+            static_cast<std::uint32_t>(update)) != 0;
+}
+
+[[nodiscard]] DesignerUpdate PlanDesignerUpdate(const DocumentChangeSet& changes);
+[[nodiscard]] bool IsLayoutAffectingStyleProperty(std::string_view property);
 
 }  // namespace px::editor

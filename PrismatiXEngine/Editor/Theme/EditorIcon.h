@@ -4,7 +4,8 @@ namespace px::editor {
 
 enum class EditorIcon {
     Add, Import, Folder, File, Details, Compact, Thumbnails,
-    Search, Save, Play, Stop, Build, Warning, Error, Pin
+    Search, Save, Play, Stop, Build, Warning, Error, Pin,
+    Undo, Redo, Duplicate, Delete, Reset, Lock, Visible, More
 };
 
 // Font Awesome Free codepoints. LoadFonts merges the solid icon font when the
@@ -26,6 +27,14 @@ enum class EditorIcon {
         case EditorIcon::Warning: return "\xEF\x81\xB1";   // f071
         case EditorIcon::Error: return "\xEF\x81\x97";     // f057
         case EditorIcon::Pin: return "\xEF\x82\x8D";       // f08d
+        case EditorIcon::Undo: return "\xEF\x83\xA2";      // f0e2
+        case EditorIcon::Redo: return "\xEF\x80\x9E";      // f01e
+        case EditorIcon::Duplicate: return "\xEF\x83\x85"; // f0c5
+        case EditorIcon::Delete: return "\xEF\x8B\xAD";    // f2ed
+        case EditorIcon::Reset: return "\xEF\x80\xA1";     // f021
+        case EditorIcon::Lock: return "\xEF\x80\xA3";      // f023
+        case EditorIcon::Visible: return "\xEF\x81\xAE";   // f06e
+        case EditorIcon::More: return "\xEF\x85\x82";      // f142
     }
     return "";
 }

@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -20,9 +21,6 @@ namespace px::editor {
 
 class CanvasInteractionController;
 class DesignerCommandService;
-class IDesignerTool;
-class SelectTool;
-class AnchorTool;
 
 enum class DesignerTool { Select, Anchors };
 
@@ -82,6 +80,9 @@ struct DesignerCanvasState {
     Rect anchorsStart{};
     Rect anchorOffsetsStart{};
     Vec2 pivotStart{.5f, .5f};
+    Variant authoredAnchorsStart;
+    Variant authoredAnchorOffsetsStart;
+    Variant authoredPivotStart;
     Vec2 dragStart{};
     Vec2 dragCurrent{};
     Vec2 marqueeCurrent{};
@@ -92,6 +93,7 @@ struct DesignerCanvasState {
     std::size_t reorderPreview = 0;
     std::vector<SnapGuide> snapGuides;
     std::vector<SnapDistanceLabel> snapDistances;
+    std::optional<DesignerLayoutSnapshot> layoutBefore;
     std::string hint;
     Vec2 contextPosition{};
     Uuid contextTarget;
@@ -104,6 +106,7 @@ struct DesignerPanelState {
     char treeRename[128] = {0};
     bool treeRenameOpen = false;
     bool createComponentOpen = false;
+    bool detachConfirmOpen = false;
     char componentPath[260] = "Content/UI/Components/NewComponent.pxcomponent";
 };
 
@@ -131,7 +134,6 @@ public:
     [[nodiscard]] const DesignerSelection& Selection() const { return m_selection; }
     [[nodiscard]] CanvasInteractionController& Interaction();
     [[nodiscard]] const CanvasInteractionController& Interaction() const;
-    [[nodiscard]] IDesignerTool& CanvasTool(DesignerTool tool);
     [[nodiscard]] DesignerCommandService& Commands();
     [[nodiscard]] const DesignerCommandService& Commands() const;
     void SetChangeListener(ChangeListener listener);
@@ -142,6 +144,7 @@ public:
     [[nodiscard]] DesignerDirtyFlags DirtyFlags() const { return m_dirtyFlags; }
     [[nodiscard]] DesignerDirtyFlags ConsumeDirtyFlags();
     void ClearDirtyFlags() { m_dirtyFlags = DesignerDirtyFlags::None; }
+    [[nodiscard]] DocumentChangeSet ConsumeDocumentChanges();
 
     DesignerViewportState viewport;
     DesignerTimelineState timeline;
@@ -165,10 +168,9 @@ private:
     DesignerDocumentView m_documentView;
     DesignerSelection m_selection;
     std::unique_ptr<CanvasInteractionController> m_interaction;
-    std::unique_ptr<SelectTool> m_selectTool;
-    std::unique_ptr<AnchorTool> m_anchorTool;
     std::unique_ptr<DesignerCommandService> m_commands;
     DesignerDirtyFlags m_dirtyFlags = DesignerDirtyFlags::None;
+    DocumentChangeSet m_pendingChanges;
     ChangeListener m_changeListener;
 };
 

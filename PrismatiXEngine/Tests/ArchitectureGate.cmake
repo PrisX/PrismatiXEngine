@@ -39,8 +39,21 @@ foreach(SOURCE IN LISTS PRODUCTION_SOURCES)
 
     if(SOURCE MATCHES "/Editor/Tools/UIDesigner/UIDesigner\\.(cpp|h)$")
         foreach(PATTERN IN ITEMS "m_document" "m_selected" "m_selection" "m_hovered" "m_layout" "m_childPolicies" "m_propertyTransaction" "m_multiPropertyTransaction" "m_gesture" "m_resizeHandle" "m_anchorHandle" "m_dragScale" "m_guideX" "m_guideY" "m_pathText" "m_clipboardSubtree" "m_contextCanvas" "m_contextTarget" "m_treeFilter" "m_treeRename" "m_createComponentOpen" "HandleCanvasInteraction" "GetMouseDragDelta")
-            if(CONTENT MATCHES "${PATTERN}")
+            if(CONTENT MATCHES "(^|[^A-Za-z0-9_])${PATTERN}([^A-Za-z0-9_]|$)")
                 list(APPEND FAILURES "${SOURCE}: duplicate Designer owner ${PATTERN}")
+            endif()
+        endforeach()
+        foreach(PATTERN IN ITEMS "Document\\(\\)->Find\\(" "Document\\(\\)->Children\\(" "Document\\(\\)->ChildIndex\\(")
+            if(CONTENT MATCHES "${PATTERN}")
+                list(APPEND FAILURES "${SOURCE}: indexed read bypass ${PATTERN}")
+            endif()
+        endforeach()
+    endif()
+
+    if(SOURCE MATCHES "/Editor/Tools/UIDesigner/DesignerCommandService\\.(cpp|h)$")
+        foreach(PATTERN IN ITEMS "document->Find\\(" "document->Children\\(" "document->ChildIndex\\(")
+            if(CONTENT MATCHES "${PATTERN}")
+                list(APPEND FAILURES "${SOURCE}: indexed read bypass ${PATTERN}")
             endif()
         endforeach()
     endif()
@@ -60,6 +73,8 @@ foreach(DELETED_PATH IN ITEMS
         "${ROOT}/Engine/UI/UISchemaMigration.cpp"
         "${ROOT}/Engine/UI/ActionRegistry.h"
         "${ROOT}/Engine/UI/ActionRegistry.cpp"
+        "${ROOT}/Editor/Tools/UIDesigner/Canvas/DesignerTools.h"
+        "${ROOT}/Editor/Tools/UIDesigner/Canvas/DesignerTools.cpp"
         "${ROOT}/Tests/CommercialAcceptanceTests.cpp")
     if(EXISTS "${DELETED_PATH}")
         list(APPEND FAILURES "deleted compatibility path still exists: ${DELETED_PATH}")

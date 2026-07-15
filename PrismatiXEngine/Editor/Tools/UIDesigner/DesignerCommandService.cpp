@@ -15,6 +15,17 @@ diag::Diagnostic Error(std::string code, std::string message, const Uuid& node =
     return result;
 }
 
+std::string UniqueName(std::unordered_set<std::string>& names, std::string base) {
+    if (names.insert(base).second) return base;
+    for (int suffix = 2; suffix < 10000; ++suffix) {
+        std::string candidate = base + std::to_string(suffix);
+        if (names.insert(candidate).second) return candidate;
+    }
+    std::string candidate = base + "Copy";
+    names.insert(candidate);
+    return candidate;
+}
+
 }  // namespace
 
 Status DesignerCommandService::After(const DocumentChangeSet& changes) {
@@ -229,7 +240,7 @@ Status DesignerCommandService::DeleteSelection() {
         if (!captured) return Status::Fail(captured.Diagnostics());
         composite->Add(std::make_unique<SubtreeEditCommand>(
             "Delete " + node->name, SubtreeOperation::Remove, id, node->parent,
-            document->ChildIndex(id), captured.TakeValue()));
+            m_session.DocumentView().ChildIndex(id).value_or(0), captured.TakeValue()));
     }
     if (composite->Empty()) return Status::Ok();
     const Status status = Execute(std::move(composite), DocumentChangeSet::Structure(fallback));
@@ -241,7 +252,18 @@ Status DesignerCommandService::DuplicateSelection() {
     auto* document = m_session.Document();
     if (!document) return Status::Ok();
     m_session.Selection().Canonicalize(m_session.DocumentView());
-    auto composite = std::make_unique<CompositeEditCommand>("Duplicate Controls");
+    struct DuplicateCandidate {
+        Uuid root;
+        Uuid parent;
+        std::size_t childIndex = 0;
+        std::size_t parentOrder = 0;
+        std::string sourceName;
+        VariantObject subtree;
+    };
+    std::unordered_set<std::string> names;
+    for (const auto& record : document->Data().nodes) names.insert(record.name);
+    std::unordered_map<Uuid, std::size_t, UuidHash> parentOrder;
+    std::vector<DuplicateCandidate> candidates;
     std::vector<Uuid> roots;
     for (const Uuid& id : m_session.Selection().OrderedItems()) {
         if (id == m_session.DocumentView().Root()) continue;
@@ -249,17 +271,40 @@ Status DesignerCommandService::DuplicateSelection() {
         if (!node) continue;
         auto captured = document->CaptureSubtree(id);
         if (!captured) return Status::Fail(captured.Diagnostics());
-        std::vector<Uuid> generated;
-        RegenerateIds(captured.Value(), &generated);
-        if (auto* name = captured.Value()["name"].TryGet<std::string>()) *name += " Copy";
+        RegenerateIds(captured.Value());
+        if (auto* name = captured.Value()["name"].TryGet<std::string>())
+            *name = UniqueName(names, *name + "Copy");
         const Uuid root = *captured.Value()["id"].TryGet<Uuid>();
         roots.push_back(root);
-        composite->Add(std::make_unique<SubtreeEditCommand>(
-            "Duplicate " + node->name, SubtreeOperation::Insert, root, node->parent,
-            document->ChildIndex(id) + 1, captured.TakeValue()));
+        const auto [order, inserted] =
+            parentOrder.try_emplace(node->parent, parentOrder.size());
+        (void)inserted;
+        candidates.push_back({.root = root,
+                              .parent = node->parent,
+                              .childIndex =
+                                  m_session.DocumentView().ChildIndex(id).value_or(0),
+                              .parentOrder = order->second,
+                              .sourceName = node->name,
+                              .subtree = captured.TakeValue()});
     }
-    if (composite->Empty()) return Status::Ok();
-    const Status status = Execute(std::move(composite), DocumentChangeSet::Structure());
+    if (candidates.empty()) return Status::Ok();
+    std::stable_sort(candidates.begin(), candidates.end(),
+                     [](const DuplicateCandidate& left,
+                        const DuplicateCandidate& right) {
+                         if (left.parentOrder != right.parentOrder)
+                             return left.parentOrder < right.parentOrder;
+                         return left.childIndex > right.childIndex;
+                     });
+    auto composite = std::make_unique<CompositeEditCommand>("Duplicate Controls");
+    DocumentChangeSet changes;
+    for (auto& candidate : candidates) {
+        changes.Merge(DocumentChangeSet::Structure(candidate.parent));
+        composite->Add(std::make_unique<SubtreeEditCommand>(
+            "Duplicate " + candidate.sourceName, SubtreeOperation::Insert,
+            candidate.root, candidate.parent, candidate.childIndex + 1,
+            std::move(candidate.subtree)));
+    }
+    const Status status = Execute(std::move(composite), std::move(changes));
     if (status) {
         const Uuid primary = roots.empty() ? Uuid{} : roots.back();
         m_session.Selection().Replace(std::move(roots), primary);
@@ -278,7 +323,8 @@ Status DesignerCommandService::Reparent(const Uuid& target, const Uuid& newParen
         return Status::Fail(Error("PXEDCMD6005", "Component instance structure is locked", newParent));
     return Execute(std::make_unique<ReparentEditCommand>(
                        "Reparent " + node->name, target, node->parent,
-                       document->ChildIndex(target), newParent, newIndex),
+                       m_session.DocumentView().ChildIndex(target).value_or(0), newParent,
+                       newIndex),
                    DocumentChangeSet::Structure(newParent));
 }
 
@@ -289,7 +335,7 @@ Status DesignerCommandService::Reorder(const Uuid& target, std::size_t newIndex)
     if (!node || node->parent.Empty()) return Status::Ok();
     return Execute(std::make_unique<MoveChildEditCommand>(
                        "Reorder " + node->name, node->parent, target,
-                       document->ChildIndex(target), newIndex),
+                       m_session.DocumentView().ChildIndex(target).value_or(0), newIndex),
                    DocumentChangeSet::Structure(node->parent));
 }
 
@@ -302,6 +348,7 @@ Status DesignerCommandService::BeginPropertyGesture(const Uuid& target, std::str
     m_gestureTargets = {target};
     m_gestureProperty = property;
     m_gestureHistoryCursor = document->History().Cursor();
+    m_gestureLayoutBefore = m_session.DocumentView().CaptureLayout();
     m_transactionChanges = DocumentChangeSet::Property(target, property, dirty);
     m_transaction = std::make_unique<PropertyEditTransaction>(
         *document, document->History(), target, std::move(property), std::move(label));
@@ -318,6 +365,7 @@ Status DesignerCommandService::BeginPropertyGesture(std::span<const Uuid> target
     m_gestureTargets = copiedTargets;
     m_gestureProperty = property;
     m_gestureHistoryCursor = document->History().Cursor();
+    m_gestureLayoutBefore = m_session.DocumentView().CaptureLayout();
     m_transactionChanges = {};
     for (const Uuid& target : copiedTargets)
         m_transactionChanges.Merge(DocumentChangeSet::Property(target, property, dirty));
@@ -348,6 +396,7 @@ Status DesignerCommandService::CommitPropertyGesture() {
     m_transactionChanges = {};
     m_gestureTargets.clear();
     m_gestureProperty.clear();
+    m_gestureLayoutBefore.reset();
     if (!status) return status;
     if (auto* document = m_session.Document())
         RecordHistoryChange(m_gestureHistoryCursor, document->History().Cursor(), changes);
@@ -355,15 +404,28 @@ Status DesignerCommandService::CommitPropertyGesture() {
 }
 
 Status DesignerCommandService::CancelPropertyGesture() {
-    if (!m_transaction && !m_multiTransaction) return Status::Ok();
-    const Status status = m_transaction ? m_transaction->Cancel() : m_multiTransaction->Cancel();
+    Status status = Status::Ok();
+    if (m_transaction) status = m_transaction->Cancel();
+    else if (m_multiTransaction) status = m_multiTransaction->Cancel();
     m_transaction.reset();
     m_multiTransaction.reset();
+    if (status && m_gestureLayoutBefore)
+        m_session.DocumentView().RestoreLayout(std::move(*m_gestureLayoutBefore));
+    m_gestureLayoutBefore.reset();
     const auto changes = std::move(m_transactionChanges);
     m_transactionChanges = {};
     m_gestureTargets.clear();
     m_gestureProperty.clear();
-    if (status && m_changed) m_changed(changes);
+    m_gestureHistoryCursor = 0;
+    if (status && !changes.Empty() && m_changed) m_changed(changes);
+    return status;
+}
+
+Status DesignerCommandService::ResetForDocumentChange() {
+    const Status status = CancelPropertyGesture();
+    m_historyChanges.clear();
+    m_gestureHistoryCursor = 0;
+    m_gestureLayoutBefore.reset();
     return status;
 }
 

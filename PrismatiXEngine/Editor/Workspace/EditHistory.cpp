@@ -219,7 +219,7 @@ MultiPropertyEditTransaction::MultiPropertyEditTransaction(
 MultiPropertyEditTransaction::~MultiPropertyEditTransaction(){if(m_active)(void)Cancel();}
 Status MultiPropertyEditTransaction::Update(const Variant& value){
     if(!m_active)return InvalidCommand("Multi-property transaction update");
-    std::size_t written=0;for(auto& entry:m_entries){const Status status=m_document.WriteProperty(entry.target,m_property,value);if(!status){for(std::size_t index=0;index<written;++index)(void)m_document.WriteProperty(m_entries[index].target,m_property,m_entries[index].current);return status;}entry.current=value.Clone();++written;}return Status::Ok();
+    std::size_t written=0;for(const auto& entry:m_entries){const Status status=m_document.WriteProperty(entry.target,m_property,value);if(!status){Status result=status;for(std::size_t index=0;index<written;++index){const Status rollback=m_document.WriteProperty(m_entries[index].target,m_property,m_entries[index].current);for(const auto& diagnostic:rollback.Diagnostics())result.Add(diagnostic);}return result;}++written;}for(auto& entry:m_entries)entry.current=value.Clone();return Status::Ok();
 }
 Status MultiPropertyEditTransaction::Commit(){
     if(!m_active)return Status::Ok();m_active=false;auto command=std::make_unique<CompositeEditCommand>(m_label);for(auto& entry:m_entries)if(entry.before!=entry.current)command->Add(std::make_unique<PropertyChangeCommand>(m_label,entry.target,m_property,std::move(entry.before),std::move(entry.current),std::chrono::steady_clock::now(),false));if(command->Empty())return Status::Ok();return m_history.CommitApplied(std::move(command));

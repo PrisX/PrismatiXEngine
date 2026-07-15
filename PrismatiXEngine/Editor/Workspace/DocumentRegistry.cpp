@@ -256,7 +256,8 @@ Status DocumentManager::SaveSession(const std::filesystem::path& path) const {
         {"bottomVisible", Variant(m_workspacePanels.bottomPanelVisible)},
         {"leftWidth", Variant(static_cast<double>(m_workspacePanels.leftPanelWidth))},
         {"rightWidth", Variant(static_cast<double>(m_workspacePanels.rightPanelWidth))},
-        {"bottomHeight", Variant(static_cast<double>(m_workspacePanels.bottomPanelHeight))}});
+        {"bottomHeight", Variant(static_cast<double>(m_workspacePanels.bottomPanelHeight))},
+        {"bottomTab", Variant(static_cast<std::int64_t>(m_workspacePanels.bottomPanelTab))}});
     VariantArray sessions;
     for (const auto& session : m_documents) {
         VariantObject object;
@@ -295,6 +296,7 @@ Status DocumentManager::RestoreSession(const std::filesystem::path& path) {
             m_workspacePanels.leftPanelWidth=Number(*object,"leftWidth",260.0f);
             m_workspacePanels.rightPanelWidth=Number(*object,"rightWidth",340.0f);
             m_workspacePanels.bottomPanelHeight=Number(*object,"bottomHeight",240.0f);
+            if(const auto it=object->find("bottomTab");it!=object->end())if(const auto* value=it->second.TryGet<std::int64_t>())m_workspacePanels.bottomPanelTab=static_cast<int>(*value);
         }
     }
     const auto found = parsed.Value().properties.find("documents");

@@ -5,6 +5,9 @@
 #include "Engine/UI/Styles/StyleSerialization.h"
 #include "Engine/UI/Styles/StyleResolver.h"
 #include "Editor/Theme/EditorIcon.h"
+#include "Editor/Theme/EditorTheme.h"
+#include "Editor/Theme/EditorWidgets.h"
+#include "Editor/Tools/UIDesigner/DesignerUiState.h"
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
@@ -506,10 +509,8 @@ void EditorApp::RenderWorkspaceSwitcher() {
     for (int index = 0; index < 4; ++index) {
         if (index) ImGui::SameLine();
         const bool active = static_cast<int>(m_workspace) == index;
-        if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.278f, 0.549f, 0.749f, 1));
-        if (ImGui::Button(labels[index], ImVec2(64, 0)))
+        if (widgets::SegmentedButton(labels[index], active, ImVec2(64, 0)))
             SetWorkspace(static_cast<EditorWorkspace>(index));
-        if (active) ImGui::PopStyleColor();
     }
 }
 
@@ -582,9 +583,9 @@ void EditorApp::RenderMenuBar() {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("執行")) {
-        if (ImGui::MenuItem("執行專案", "F6")) RunDev();
+        if (ImGui::MenuItem("執行專案", "F5")) RunDev();
         if (ImGui::MenuItem("停止", "F8", false, false)) {}
-        if (ImGui::MenuItem("Build")) RunBuild();
+        if (ImGui::MenuItem("Build", "Ctrl+B")) RunBuild();
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("工具")) {
@@ -610,13 +611,12 @@ void EditorApp::RenderMenuBar() {
     const std::string runLabel=std::string(m_iconFontLoaded?Icon(EditorIcon::Play):"")+"  執行";
     if (ImGui::SmallButton(runLabel.c_str())) RunDev();
     const std::string stopLabel=std::string(m_iconFontLoaded?Icon(EditorIcon::Stop):"")+"  停止";
-    ImGui::SameLine(); if (ImGui::SmallButton(stopLabel.c_str())) {}
-    ImGui::SameLine(); if (ImGui::SmallButton("Build")) RunBuild();
+    ImGui::SameLine();widgets::ToolbarButton(stopLabel.c_str(),"停止目前執行中的專案",false,false,"目前尚未連接可停止的執行程序");
+    ImGui::SameLine();if(widgets::ToolbarButton("Build","建置專案 · Ctrl+B"))RunBuild();
     const auto diagnostics = diag::Global().Snapshot();
     const auto errors = std::count_if(diagnostics.begin(), diagnostics.end(), [](const auto& item) { return item.severity >= diag::Severity::Error; });
     ImGui::SameLine();
-    ImGui::TextColored(errors ? ImVec4(1,.35f,.38f,1) : ImVec4(.45f,.8f,.55f,1),
-                       errors ? "● %zu" : "● 正常", errors);
+    if(errors)ImGui::TextColored(EditorTheme().colors.error,"● %zu",errors);else widgets::StatusChip("正常",widgets::MessageKind::Success);
     ImGui::EndMainMenuBar();
 }
 
@@ -1877,7 +1877,7 @@ void EditorApp::RenderPreview() {
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button("Reload")) {
+        if (widgets::ToolbarButton("Reload","重新載入目前預覽")) {
             m_preview->Reload();
         }
         if (m_previewMode == 0) {
@@ -1894,11 +1894,16 @@ void EditorApp::RenderPreview() {
                 ImGui::EndCombo();
             }
             ImGui::SameLine();
-            if (ImGui::Button("Save Screen")) {
+            const std::string undoTooltip=m_designer.CanUndo()?"Undo "+m_designer.NextUndoLabel():"沒有可復原的 UI 編輯";
+            if(widgets::ToolbarButton(m_iconFontLoaded?Icon(EditorIcon::Undo):"Undo",undoTooltip.c_str(),false,m_designer.CanUndo(),"沒有可復原的 UI 編輯"))m_designer.Undo();
+            ImGui::SameLine();const std::string redoTooltip=m_designer.CanRedo()?"Redo "+m_designer.NextRedoLabel():"沒有可重做的 UI 編輯";
+            if(widgets::ToolbarButton(m_iconFontLoaded?Icon(EditorIcon::Redo):"Redo",redoTooltip.c_str(),false,m_designer.CanRedo(),"沒有可重做的 UI 編輯"))m_designer.Redo();
+            ImGui::SameLine();
+            if (widgets::ToolbarButton(m_designer.Dirty()?"Save Screen ●":"Save Screen","儲存目前 UI 文件 · Ctrl+S",false,m_designer.Dirty(),"目前文件沒有未儲存變更")) {
                 m_designer.Save();
             }
             ImGui::SameLine();
-            if (ImGui::Button("New Screen")) {
+            if (widgets::ToolbarButton("New Screen","建立新的 UI Scene")) {
                 ImGui::OpenPopup("newScreen");
             }
             if (ImGui::BeginPopup("newScreen")) {
@@ -1928,16 +1933,25 @@ void EditorApp::RenderPreview() {
         if (m_previewMode == 0) {
             ImGui::Separator();
             auto& state=m_designer.ViewportState();auto& panels=m_docs.WorkspacePanels();
-            for(int mode=0;mode<3;++mode){if(mode)ImGui::SameLine();const char* label=mode==0?"Design 設計":mode==1?"Interact 互動":"Animate 動畫";if(ImGui::Selectable(label,state.authorMode==mode,0,ImVec2(126,0))){state.authorMode=mode;state.interactivePreview=false;}}
-            if(state.authorMode==2){ImGui::SameLine();ImGui::TextDisabled("│");ImGui::SameLine();if(ImGui::Selectable("Clip",state.animateSurface==0,0,ImVec2(64,0)))state.animateSurface=0;ImGui::SameLine();if(ImGui::Selectable("State Machine",state.animateSurface==1,0,ImVec2(112,0)))state.animateSurface=1;}
-            ImGui::SameLine();ImGui::TextDisabled("  面板");ImGui::SameLine();if(ImGui::SmallButton(panels.leftPanelVisible?"隱藏左側":"顯示左側"))panels.leftPanelVisible=!panels.leftPanelVisible;ImGui::SameLine();if(ImGui::SmallButton(panels.rightPanelVisible?"隱藏 Inspector":"顯示 Inspector"))panels.rightPanelVisible=!panels.rightPanelVisible;if(!(state.authorMode==2&&state.animateSurface==0)){ImGui::SameLine();if(ImGui::SmallButton(panels.bottomPanelVisible?"隱藏 Problems":"顯示 Problems"))panels.bottomPanelVisible=!panels.bottomPanelVisible;}
+            for(int mode=0;mode<3;++mode){if(mode)ImGui::SameLine(0,2);const char* label=mode==0?"Design 設計":mode==1?"Interact 互動":"Animate 動畫";if(widgets::SegmentedButton(label,state.authorMode==mode,ImVec2(126,0))){state.authorMode=mode;state.interactivePreview=false;if(mode==2&&state.animateSurface==0)panels.bottomPanelTab=1;}}
+            if(state.authorMode==2){ImGui::SameLine();ImGui::TextDisabled("│");ImGui::SameLine();if(widgets::SegmentedButton("Clip",state.animateSurface==0,ImVec2(64,0))){state.animateSurface=0;panels.bottomPanelTab=1;}ImGui::SameLine(0,2);if(widgets::SegmentedButton("State Machine",state.animateSurface==1,ImVec2(112,0)))state.animateSurface=1;}
+            const bool compactHeader=ImGui::GetContentRegionAvail().x<1000.0f;
+            ImGui::SameLine();ImGui::TextDisabled("  面板");
+            if(!compactHeader){ImGui::SameLine();if(widgets::ToolbarButton(panels.leftPanelVisible?"隱藏左側":"顯示左側","顯示或隱藏 Layers / Insert / Components"))panels.leftPanelVisible=!panels.leftPanelVisible;ImGui::SameLine();if(widgets::ToolbarButton(panels.rightPanelVisible?"隱藏 Inspector":"顯示 Inspector","顯示或隱藏屬性 Inspector"))panels.rightPanelVisible=!panels.rightPanelVisible;}
+            else{ImGui::SameLine();if(widgets::ToolbarButton("導覽…","開啟 Layers / Insert / Components"))ImGui::OpenPopup("##compact-designer-navigator");ImGui::SameLine();if(widgets::ToolbarButton("Inspector…","開啟選取項目的 Inspector"))ImGui::OpenPopup("##compact-designer-inspector");}
+            if(!(state.authorMode==2&&state.animateSurface==0)){ImGui::SameLine();if(widgets::ToolbarButton(panels.bottomPanelVisible?"隱藏 Drawer":"顯示 Drawer","Problems、Animation、Style、Output 與 Debugger"))panels.bottomPanelVisible=!panels.bottomPanelVisible;}
+            if(ImGui::BeginPopup("##compact-designer-navigator")){ImGui::SetWindowSize(ImVec2(360,520),ImGuiCond_Appearing);if(state.authorMode==1)m_designer.RenderInteractionNavigator();else if(state.authorMode==2&&state.animateSurface==1)m_designer.RenderAnimationNavigator();else if(ImGui::BeginTabBar("##compact-left-tabs")){if(ImGui::BeginTabItem("Layers")){m_designer.RenderHierarchy();ImGui::EndTabItem();}if(ImGui::BeginTabItem("Insert")){m_designer.RenderInsert();ImGui::EndTabItem();}if(ImGui::BeginTabItem("Components")){m_designer.RenderComponents();ImGui::EndTabItem();}ImGui::EndTabBar();}ImGui::EndPopup();}
+            if(ImGui::BeginPopup("##compact-designer-inspector")){ImGui::SetWindowSize(ImVec2(380,560),ImGuiCond_Appearing);if(state.authorMode==1)m_designer.RenderInteractionInspector();else if(state.authorMode==2&&state.animateSurface==1)m_designer.RenderAnimationInspector();else m_designer.RenderInspector(m_selectedAsset);ImGui::EndPopup();}
             if(state.authorMode==0||(state.authorMode==2&&state.animateSurface==0)){ImGui::Separator();m_designer.RenderViewportToolbar();}
+            m_designer.RenderDialogs();
         }
         ImGui::Separator();
 
-        const bool designerComposite=m_previewMode==0;auto& state=m_designer.ViewportState();auto& panels=m_docs.WorkspacePanels();const ImVec2 workspace=ImGui::GetContentRegionAvail();const bool compact=workspace.x<1000.0f;const bool showLeft=designerComposite&&panels.leftPanelVisible&&!compact;const bool showRight=designerComposite&&panels.rightPanelVisible&&workspace.x>=760.0f;const bool clipTimeline=state.authorMode==2&&state.animateSurface==0;const bool showBottom=designerComposite&&(clipTimeline||panels.bottomPanelVisible)&&workspace.y>=420.0f;const float drawerHeight=showBottom?std::clamp(panels.bottomPanelHeight,150.0f,std::max(150.0f,workspace.y*.5f)):0.0f;const int canvasColumn=showLeft?1:0;const int inspectorColumn=canvasColumn+1;const int columnCount=1+(showLeft?1:0)+(showRight?1:0);
+        const bool designerComposite=m_previewMode==0;auto& state=m_designer.ViewportState();auto& panels=m_docs.WorkspacePanels();const ImVec2 workspace=ImGui::GetContentRegionAvail();const bool clipTimeline=state.authorMode==2&&state.animateSurface==0;
+        const auto geometry=CalculateDesignerWorkspaceGeometry({.width=workspace.x,.height=workspace.y,.leftPanelWidth=panels.leftPanelWidth,.rightPanelWidth=panels.rightPanelWidth,.bottomPanelHeight=panels.bottomPanelHeight,.composite=designerComposite,.leftPanelVisible=panels.leftPanelVisible,.rightPanelVisible=panels.rightPanelVisible,.bottomPanelVisible=panels.bottomPanelVisible,.clipTimeline=clipTimeline});
+        const bool showLeft=geometry.showLeft;const bool showRight=geometry.showRight;const bool showBottom=geometry.showBottom;const float drawerHeight=geometry.bottomDrawer.height;const int canvasColumn=showLeft?1:0;const int inspectorColumn=canvasColumn+1;const int columnCount=1+(showLeft?1:0)+(showRight?1:0);
         if(designerComposite){
-            ImGui::BeginTable("##ui-designer-composite",columnCount,ImGuiTableFlags_Resizable|ImGuiTableFlags_BordersInnerV|ImGuiTableFlags_SizingStretchProp,ImVec2(0,std::max(240.0f,workspace.y-drawerHeight-(showBottom?6.0f:0.0f))));
+            ImGui::BeginTable("##ui-designer-composite",columnCount,ImGuiTableFlags_Resizable|ImGuiTableFlags_BordersInnerV|ImGuiTableFlags_SizingStretchProp,ImVec2(0,geometry.main.height));
             if(showLeft)ImGui::TableSetupColumn("Layers",ImGuiTableColumnFlags_WidthFixed,panels.leftPanelWidth);ImGui::TableSetupColumn("Canvas",ImGuiTableColumnFlags_WidthStretch);if(showRight)ImGui::TableSetupColumn("Inspector",ImGuiTableColumnFlags_WidthFixed,panels.rightPanelWidth);ImGui::TableNextRow();
             if(showLeft){ImGui::TableSetColumnIndex(0);if(ImGui::BeginChild("##designer-left",ImVec2(0,0))){if(state.authorMode==1)m_designer.RenderInteractionNavigator();else if(state.authorMode==2&&state.animateSurface==1)m_designer.RenderAnimationNavigator();else if(ImGui::BeginTabBar("##left-designer-tabs")){if(ImGui::BeginTabItem("Layers")){m_designer.RenderHierarchy();ImGui::EndTabItem();}if(ImGui::BeginTabItem("Insert")){m_designer.RenderInsert();ImGui::EndTabItem();}if(ImGui::BeginTabItem("Components")){m_designer.RenderComponents();ImGui::EndTabItem();}ImGui::EndTabBar();}}ImGui::EndChild();panels.leftPanelWidth=ImGui::GetColumnWidth(0);}ImGui::TableSetColumnIndex(canvasColumn);
         }
@@ -1952,6 +1966,7 @@ void EditorApp::RenderPreview() {
         avail.y = std::max(80.0f, avail.y - debugHeight);
         ImVec2 canvasCursor{};
         if(uiMode){
+            ImGui::PushStyleColor(ImGuiCol_ChildBg,EditorTheme().colors.canvasBackground);
             ImGui::BeginChild("##designer-canvas-scroll",avail,ImGuiChildFlags_Borders,ImGuiWindowFlags_HorizontalScrollbar|ImGuiWindowFlags_NoNavInputs);
             if(m_designer.ViewportState().applyStoredScroll){ImGui::SetScrollX(m_designer.ViewportState().scrollX);ImGui::SetScrollY(m_designer.ViewportState().scrollY);m_designer.ViewportState().applyStoredScroll=false;}
             avail=ImGui::GetContentRegionAvail();canvasCursor=ImGui::GetCursorPos();
@@ -2135,12 +2150,21 @@ void EditorApp::RenderPreview() {
             ImGui::SetCursorPos(canvasCursor);ImGui::Dummy(contentSize);
             m_designer.ViewportState().scrollX=ImGui::GetScrollX();m_designer.ViewportState().scrollY=ImGui::GetScrollY();
             ImGui::EndChild();
+            ImGui::PopStyleColor();
         }
         }
         if(designerComposite){if(showRight){ImGui::TableSetColumnIndex(inspectorColumn);if(ImGui::BeginChild("##designer-inspector",ImVec2(0,0))){if(state.authorMode==1)m_designer.RenderInteractionInspector();else if(state.authorMode==2&&state.animateSurface==1)m_designer.RenderAnimationInspector();else m_designer.RenderInspector(m_selectedAsset);}ImGui::EndChild();panels.rightPanelWidth=ImGui::GetColumnWidth(inspectorColumn);}ImGui::EndTable();
-            if(showBottom){ImGui::InvisibleButton("##designer-bottom-splitter",ImVec2(-1,6));if(ImGui::IsItemActive()){panels.bottomPanelHeight=std::clamp(panels.bottomPanelHeight-ImGui::GetIO().MouseDelta.y,150.0f,std::max(150.0f,workspace.y*.5f));}if(ImGui::IsItemHovered()||ImGui::IsItemActive())ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
-            if(ImGui::BeginChild("##designer-bottom-drawer",ImVec2(0,drawerHeight-6.0f),ImGuiChildFlags_Borders)){
-                if(clipTimeline)m_designer.RenderAnimation();else m_designer.RenderProblems();
+            if(showBottom){ImGui::InvisibleButton("##designer-bottom-splitter",ImVec2(-1,geometry.bottomSplitter.height));if(ImGui::IsItemActive()){panels.bottomPanelHeight=std::clamp(panels.bottomPanelHeight-ImGui::GetIO().MouseDelta.y,150.0f,std::max(150.0f,std::min(workspace.y*.5f,workspace.y-246.0f)));}if(ImGui::IsItemHovered()||ImGui::IsItemActive())ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+            if(ImGui::BeginChild("##designer-bottom-drawer",ImVec2(0,drawerHeight),ImGuiChildFlags_Borders)){
+                if(ImGui::BeginTabBar("##designer-drawer-tabs",ImGuiTabBarFlags_FittingPolicyScroll)){
+                    const auto tabFlags=[&](int tab){return panels.bottomPanelTab==tab?ImGuiTabItemFlags_SetSelected:ImGuiTabItemFlags_None;};
+                    if(ImGui::BeginTabItem("Problems",nullptr,tabFlags(0))){panels.bottomPanelTab=0;m_designer.RenderProblems();ImGui::EndTabItem();}
+                    if(ImGui::BeginTabItem("Animation",nullptr,tabFlags(1))){panels.bottomPanelTab=1;m_designer.RenderAnimation();ImGui::EndTabItem();}
+                    if(ImGui::BeginTabItem("Control Style",nullptr,tabFlags(2))){panels.bottomPanelTab=2;m_designer.RenderTheme();ImGui::EndTabItem();}
+                    if(ImGui::BeginTabItem("Output",nullptr,tabFlags(3))){panels.bottomPanelTab=3;if(ImGui::SmallButton("Clear"))m_console.clear();ImGui::Separator();if(ImGui::BeginChild("##designer-output")){if(m_console.empty())widgets::EmptyState("尚無輸出","建置、匯入與預覽訊息會顯示在這裡。 ");else for(const auto& line:m_console)ImGui::TextUnformatted(line.c_str());}ImGui::EndChild();ImGui::EndTabItem();}
+                    if(ImGui::BeginTabItem("Debugger",nullptr,tabFlags(4))){panels.bottomPanelTab=4;widgets::EmptyState("UI Runtime Debugger","進入 Preview 後可驗證互動；VN 指令偵錯器位於 VN Script 模式。","開啟 VN Debugger",[this]{m_previewMode=1;});ImGui::EndTabItem();}
+                    ImGui::EndTabBar();
+                }
             }ImGui::EndChild();}}
     }
     ImGui::End();

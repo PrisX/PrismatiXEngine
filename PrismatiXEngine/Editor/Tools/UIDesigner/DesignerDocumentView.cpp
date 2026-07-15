@@ -184,4 +184,15 @@ std::optional<ui::ChildLayoutPolicy> DesignerDocumentView::ChildPolicy(const Uui
                : std::optional<ui::ChildLayoutPolicy>(found->second);
 }
 
+DesignerLayoutSnapshot DesignerDocumentView::CaptureLayout() const {
+    return {.rects = m_layoutRects, .policies = m_childPolicies};
+}
+
+void DesignerDocumentView::RestoreLayout(DesignerLayoutSnapshot snapshot) {
+    std::erase_if(snapshot.rects, [&](const auto& entry) { return !Contains(entry.first); });
+    std::erase_if(snapshot.policies, [&](const auto& entry) { return !Contains(entry.first); });
+    m_layoutRects = std::move(snapshot.rects);
+    m_childPolicies = std::move(snapshot.policies);
+}
+
 }  // namespace px::editor

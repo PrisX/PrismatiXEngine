@@ -11,6 +11,11 @@
 
 namespace px::editor {
 
+struct DesignerLayoutSnapshot {
+    std::unordered_map<Uuid, Rect, UuidHash> rects;
+    std::unordered_map<Uuid, ui::ChildLayoutPolicy, UuidHash> policies;
+};
+
 // Fast, disposable editor-side index over the canonical UISceneDocument.
 // It never owns node data and is rebuilt after structural commands.
 class DesignerDocumentView {
@@ -40,6 +45,8 @@ public:
     [[nodiscard]] const std::unordered_map<Uuid, Rect, UuidHash>& LayoutRects() const {
         return m_layoutRects;
     }
+    [[nodiscard]] DesignerLayoutSnapshot CaptureLayout() const;
+    void RestoreLayout(DesignerLayoutSnapshot snapshot);
 
     [[nodiscard]] std::size_t NodeCount() const { return m_nodeIndex.size(); }
     [[nodiscard]] std::uint64_t Revision() const { return m_revision; }

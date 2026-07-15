@@ -6,6 +6,7 @@
 
 #include <string>
 #include <string_view>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -55,5 +56,7 @@ private:
 
 [[nodiscard]] bool IsStyleValueTypeCompatible(VariantType expected, VariantType actual);
 [[nodiscard]] Variant CoerceStyleValue(Variant value, VariantType expected);
+// Authoritative IDs consumed by Theme's resolved-style-to-ControlStyle mapper.
+[[nodiscard]] std::span<const std::string_view> RuntimeMappedStyleProperties();
 
 }  // namespace px::ui

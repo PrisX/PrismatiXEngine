@@ -16,6 +16,10 @@
 #include <string>
 #include <vector>
 
+namespace px::ui {
+class Control;
+}
+
 namespace px::editor {
 
 class BehaviorGraphEditor;
@@ -42,7 +46,7 @@ public:
     void SetComponentWriter(ComponentWriter writer){m_componentWriter=std::move(writer);}
     void SetOpenResource(std::function<void(const ResourceRefValue&)> callback){m_openResource=std::move(callback);}
     using ImageSizeResolver=std::function<std::optional<Vec2>(const std::string&)>;
-    void SetImageSizeResolver(ImageSizeResolver resolver){m_imageSizeResolver=std::move(resolver);}
+    void SetImageSizeResolver(ImageSizeResolver resolver);
     using IdentityRegistrar=std::function<Status(const std::filesystem::path&)>;
     void SetIdentityRegistrar(IdentityRegistrar registrar){m_identityRegistrar=std::move(registrar);}
     using AnimationPreview=std::function<Status(const Uuid&,float,bool)>;
@@ -69,6 +73,7 @@ public:
     void RenderBehaviorGraph();
     void RenderBehaviorInspector();
     void RenderProblems();
+    void RenderDialogs();
     void RenderViewportToolbar();
     bool ProcessCanvasInput(const ImRect& viewport, ImVec2 p0, float scale, bool hovered,
                             const std::string& selectedAssetPath);
@@ -106,6 +111,8 @@ private:
     void RenderTreeNode(resource::NodeRecord& record);
     [[nodiscard]] bool TreeMatches(const resource::NodeRecord& record) const;
     void RebuildLayout();
+    void Relayout(const DocumentChangeSet& changes);
+    void UpdateLayoutCache();
     void AddNode(std::string type, Vec2 canvasPosition = {}, std::string image = {});
     void RenderAddControlPalette(Vec2 canvasPosition = {});
     void RemoveSelected();
@@ -116,6 +123,7 @@ private:
     void PasteClipboard(Vec2 canvasPosition = {});
     void ResetComponentOverride(const std::string& sourceNode = {}, const std::string& property = {});
     void DetachSelectedComponent();
+    void PerformDetachSelectedComponent();
     [[nodiscard]] Result<resource::TypedDocument> LoadReferencedUI(const ResourceRefValue& reference) const;
     void MarkEdited(bool structural = false);
     void EditVariant(const char* label, const std::string& property, Variant before, Variant value,
@@ -124,15 +132,6 @@ private:
     [[nodiscard]] Uuid ParentForNewNode() const;
     [[nodiscard]] Rect SelectedRect() const;
     [[nodiscard]] Rect ParentRect(const Uuid& node) const;
-    [[nodiscard]] Uuid HitTest(Vec2 canvas) const;
-    [[nodiscard]] Uuid NearestFreeAncestor(const Uuid& node) const;
-    [[nodiscard]] std::size_t InsertionIndex(const Uuid& node, Vec2 canvas) const;
-    void BeginFreeTransform(const Uuid& node, Vec2 canvas, int handle);
-    void CommitManagedDrag(Vec2 canvas, bool detach);
-    void CancelCanvasGesture();
-    bool HandleCanvasPointerDown(const DesignerPointerEvent& event);
-    bool HandleCanvasPointerMove(const DesignerPointerEvent& event);
-    bool HandleCanvasPointerUp(const DesignerPointerEvent& event);
     static void RegenerateIds(VariantObject& subtree);
     void RecordAnimationKey(const Uuid& node, const std::string& property, const Variant& value);
     [[nodiscard]] DesignerSelection& Selection() { return m_session->Selection(); }
@@ -153,6 +152,7 @@ private:
     ImageSizeResolver m_imageSizeResolver;
     IdentityRegistrar m_identityRegistrar;
     ui::FormatterRegistry m_formatters;
+    std::unique_ptr<ui::Control> m_layoutRoot;
     AnimationPreview m_animationPreview;
     BehaviorDebugProvider m_behaviorDebugProvider;
     AnimationDebugProvider m_animationDebugProvider;

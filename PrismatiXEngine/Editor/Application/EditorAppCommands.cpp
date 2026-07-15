@@ -37,6 +37,11 @@ void EditorApp::BuildCommands() {
         { "Back to Welcome", "", [this] { m_screen = Screen::Welcome; } },
         { "Undo", "Ctrl+Z", [this] { if (m_previewMode == 0 && m_designer.Document()) m_designer.Undo(); else if(auto* graph=ActiveDocPtr())graph->Undo(); } },
         { "Redo", "Ctrl+Y", [this] { if (m_previewMode == 0 && m_designer.Document()) m_designer.Redo(); else if(auto* graph=ActiveDocPtr())graph->Redo(); } },
+        { "UI Designer: Select Tool", "V", [this] { SetWorkspace(EditorWorkspace::UI);m_designer.ViewportState().tool=DesignerTool::Select; } },
+        { "UI Designer: Anchor Tool", "A", [this] { SetWorkspace(EditorWorkspace::UI);m_designer.ViewportState().tool=DesignerTool::Anchors; } },
+        { "UI Designer: Toggle Grid", "G", [this] { SetWorkspace(EditorWorkspace::UI);m_designer.ViewportState().gridVisible=!m_designer.ViewportState().gridVisible; } },
+        { "UI Designer: Interactive Preview", "", [this] { if(m_designer.Document()){SetWorkspace(EditorWorkspace::UI);m_designer.ViewportState().interactivePreview=true;} } },
+        { "UI Designer: Toggle Bottom Drawer", "", [this] { SetWorkspace(EditorWorkspace::UI);auto& panels=m_docs.WorkspacePanels();panels.bottomPanelVisible=!panels.bottomPanelVisible; } },
         { "Go to: Preview", "", [focus] { focus("Preview"); } },
         { "Go to: Story (Node Editor)", "", [focus] { focus("Node Editor"); } },
         { "Go to: Flow", "", [focus] { focus("Flow"); } },
@@ -157,11 +162,16 @@ void EditorApp::RenderShortcutsWindow() {
             ImGui::EndTable();
         }
         if (beginSection("UI Designer (canvas)", "sc-ui")) {
+            row("V / Q", "Select tool");
+            row("A", "Anchor tool");
             row("Drag node", "Move; snaps to guides / grid");
             row("Drag handles", "Resize from any of the 8 edges/corners");
             row("Delete / Backspace", "Delete selected UI node");
+            row("Ctrl+D", "Duplicate selected UI node(s)");
+            row("F", "Frame the primary selection");
             row("Alt + drag", "Move/resize freely (disable snapping)");
-            row("G", "Toggle snap grid (center-snaps to cells)");
+            row("G / Shift+G", "Toggle grid / grid snapping");
+            row("Esc", "Cancel gesture or leave interactive Preview");
             ImGui::EndTable();
         }
         if (beginSection("Node Graph", "sc-node")) {

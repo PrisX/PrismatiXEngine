@@ -9,6 +9,9 @@ std::vector<Uuid> HitTestService::HitStack(const UISceneDocument& document,
     // Canonical node vector order is sibling draw order; reverse iteration is
     // therefore the unique topmost-to-back hit order used by Runtime and Layers.
     for (auto it = document.Data().nodes.rbegin(); it != document.Data().nodes.rend(); ++it) {
+        // The artboard root is the Canvas background, not a selectable hit.
+        // Blank-space input must remain available for clear/marquee behavior.
+        if (it->id == view.Root()) continue;
         if (!view.IsWithin(scope, it->id)) continue;
         const auto rect = view.LayoutRect(it->id);
         if (!rect || !rect->Contains(canvasPosition.x, canvasPosition.y)) continue;

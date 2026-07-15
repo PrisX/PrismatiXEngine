@@ -49,7 +49,6 @@ file(GLOB_RECURSE PRISMATIX_EDITOR_SOURCES CONFIGURE_DEPENDS
 set(PRISMATIX_UI_DESIGNER_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Workspace/EditHistory.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Canvas/CanvasInteractionController.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Canvas/DesignerTools.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Canvas/HitTestService.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Canvas/SnapEngine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Components/ComponentService.cpp
@@ -59,6 +58,7 @@ set(PRISMATIX_UI_DESIGNER_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/DocumentChangeSet.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/DesignerNodeFactory.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/DesignerSelection.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/DesignerUiState.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Preview/PreviewFixture.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Preview/PreviewChangePlanner.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/PropertyEditorRegistry.cpp
@@ -118,7 +118,8 @@ if(BUILD_TESTING)
     set_tests_properties(PrismatiX.UIDesigner.Core PROPERTIES LABELS "unit;contract;designer")
 
     add_executable(PrismatiXEditorWorkspaceTests Tests/EditorWorkspaceTests.cpp
-                   Editor/Workspace/DocumentRegistry.cpp)
+                   Editor/Workspace/DocumentRegistry.cpp
+                   Editor/Workspace/EditHistory.cpp)
     target_link_libraries(PrismatiXEditorWorkspaceTests PRIVATE PrismatiXRuntime)
     prismatix_configure_target(PrismatiXEditorWorkspaceTests)
     add_test(NAME PrismatiX.Editor.Workspace COMMAND PrismatiXEditorWorkspaceTests)

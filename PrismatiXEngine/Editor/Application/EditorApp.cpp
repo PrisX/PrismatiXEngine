@@ -4,6 +4,7 @@
 #include "Engine/Resources/AssetRegistry.h"
 #include "Engine/IO/AtomicFile.h"
 #include "Editor/Theme/EditorIcon.h"
+#include "Editor/Theme/EditorTheme.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -519,20 +520,23 @@ void EditorApp::LoadFonts() {
 void EditorApp::ApplyTheme() {
     ImGuiStyle& s = ImGui::GetStyle();
     ImGui::StyleColorsDark();
+    const auto& theme = EditorTheme();
+    const auto& t = theme.colors;
+    const auto& m = theme.metrics;
 
-    s.WindowRounding = 4.0f;
-    s.ChildRounding = 4.0f;
-    s.FrameRounding = 4.0f;
-    s.PopupRounding = 4.0f;
-    s.GrabRounding = 4.0f;
-    s.TabRounding = 4.0f;
+    s.WindowRounding = m.radius;
+    s.ChildRounding = m.radius;
+    s.FrameRounding = m.radius;
+    s.PopupRounding = m.radius;
+    s.GrabRounding = m.radius;
+    s.TabRounding = m.radius;
     s.ScrollbarRounding = 8.0f;
     s.WindowBorderSize = 1.0f;
     s.FrameBorderSize = 0.0f;
-    s.WindowPadding = ImVec2(12, 10);
-    s.FramePadding = ImVec2(8, 7);
-    s.ItemSpacing = ImVec2(8, 8);
-    s.ItemInnerSpacing = ImVec2(4, 4);
+    s.WindowPadding = ImVec2(m.space12, 10.0f);
+    s.FramePadding = ImVec2(m.space8, m.space6);
+    s.ItemSpacing = ImVec2(m.space8, m.space8);
+    s.ItemInnerSpacing = ImVec2(m.space4, m.space4);
     s.IndentSpacing = 18.0f;
     s.ScrollbarSize = 13.0f;
     s.GrabMinSize = 10.0f;
@@ -540,52 +544,44 @@ void EditorApp::ApplyTheme() {
     s.WindowMenuButtonPosition = ImGuiDir_None;
 
     ImVec4* c = s.Colors;
-    const ImVec4 bg0(0.086f, 0.102f, 0.125f, 1.00f); // #161A20
-    const ImVec4 bg1(0.125f, 0.145f, 0.176f, 1.00f); // #20252D
-    const ImVec4 bg2(0.161f, 0.184f, 0.224f, 1.00f); // #292F39
-    const ImVec4 bg3(0.204f, 0.231f, 0.278f, 1.00f); // #343B47
-    const ImVec4 accent(0.278f, 0.549f, 0.749f, 1.00f); // #478CBF
-    const ImVec4 accentDim(0.20f, 0.38f, 0.52f, 1.00f);
-    const ImVec4 text(0.847f, 0.871f, 0.914f, 1.00f); // #D8DEE9
-    const ImVec4 textDim(0.553f, 0.596f, 0.659f, 1.00f); // #8D98A8
-
-    c[ImGuiCol_Text] = text;
-    c[ImGuiCol_TextDisabled] = textDim;
-    c[ImGuiCol_WindowBg] = bg1;
+    c[ImGuiCol_Text] = t.textPrimary;
+    c[ImGuiCol_TextDisabled] = t.textDisabled;
+    c[ImGuiCol_WindowBg] = t.surfacePrimary;
     c[ImGuiCol_ChildBg] = ImVec4(0, 0, 0, 0);
-    c[ImGuiCol_PopupBg] = bg0;
-    c[ImGuiCol_Border] = ImVec4(0.16f, 0.18f, 0.22f, 0.9f);
-    c[ImGuiCol_FrameBg] = bg2;
-    c[ImGuiCol_FrameBgHovered] = bg3;
-    c[ImGuiCol_FrameBgActive] = bg3;
-    c[ImGuiCol_TitleBg] = bg0;
-    c[ImGuiCol_TitleBgActive] = bg0;
-    c[ImGuiCol_TitleBgCollapsed] = bg0;
-    c[ImGuiCol_MenuBarBg] = bg0;
+    c[ImGuiCol_PopupBg] = t.surfaceOverlay;
+    c[ImGuiCol_Border] = t.borderSubtle;
+    c[ImGuiCol_FrameBg] = t.surfaceSecondary;
+    c[ImGuiCol_FrameBgHovered] = t.surfaceRaised;
+    c[ImGuiCol_FrameBgActive] = t.surfaceRaised;
+    c[ImGuiCol_TitleBg] = t.background;
+    c[ImGuiCol_TitleBgActive] = t.background;
+    c[ImGuiCol_TitleBgCollapsed] = t.background;
+    c[ImGuiCol_MenuBarBg] = t.background;
     c[ImGuiCol_ScrollbarBg] = ImVec4(0, 0, 0, 0);
-    c[ImGuiCol_ScrollbarGrab] = bg3;
-    c[ImGuiCol_ScrollbarGrabHovered] = accentDim;
-    c[ImGuiCol_CheckMark] = accent;
-    c[ImGuiCol_SliderGrab] = accent;
-    c[ImGuiCol_SliderGrabActive] = accent;
-    c[ImGuiCol_Button] = bg2;
-    c[ImGuiCol_ButtonHovered] = accentDim;
-    c[ImGuiCol_ButtonActive] = accent;
-    c[ImGuiCol_Header] = bg2;
-    c[ImGuiCol_HeaderHovered] = bg3;
-    c[ImGuiCol_HeaderActive] = accentDim;
-    c[ImGuiCol_Separator] = ImVec4(0.16f, 0.18f, 0.22f, 1.0f);
-    c[ImGuiCol_SeparatorHovered] = accentDim;
-    c[ImGuiCol_Tab] = bg1;
-    c[ImGuiCol_TabHovered] = accentDim;
-    c[ImGuiCol_TabSelected] = bg3;
-    c[ImGuiCol_TabDimmed] = bg1;
-    c[ImGuiCol_TabDimmedSelected] = bg2;
-    c[ImGuiCol_DockingPreview] = ImVec4(accent.x, accent.y, accent.z, 0.45f);
-    c[ImGuiCol_DockingEmptyBg] = bg0;
+    c[ImGuiCol_ScrollbarGrab] = t.surfaceRaised;
+    c[ImGuiCol_ScrollbarGrabHovered] = t.accentSubtle;
+    c[ImGuiCol_CheckMark] = t.accentDefault;
+    c[ImGuiCol_SliderGrab] = t.accentDefault;
+    c[ImGuiCol_SliderGrabActive] = t.accentActive;
+    c[ImGuiCol_Button] = t.surfaceSecondary;
+    c[ImGuiCol_ButtonHovered] = t.accentSubtle;
+    c[ImGuiCol_ButtonActive] = t.accentDefault;
+    c[ImGuiCol_Header] = t.surfaceSecondary;
+    c[ImGuiCol_HeaderHovered] = t.surfaceRaised;
+    c[ImGuiCol_HeaderActive] = t.selectionBackground;
+    c[ImGuiCol_Separator] = t.borderSubtle;
+    c[ImGuiCol_SeparatorHovered] = t.accentSubtle;
+    c[ImGuiCol_Tab] = t.surfacePrimary;
+    c[ImGuiCol_TabHovered] = t.accentSubtle;
+    c[ImGuiCol_TabSelected] = t.surfaceRaised;
+    c[ImGuiCol_TabDimmed] = t.surfacePrimary;
+    c[ImGuiCol_TabDimmedSelected] = t.surfaceSecondary;
+    c[ImGuiCol_DockingPreview] = WithAlpha(t.accentDefault, 0.45f);
+    c[ImGuiCol_DockingEmptyBg] = t.background;
     c[ImGuiCol_ResizeGrip] = ImVec4(0, 0, 0, 0);
-    c[ImGuiCol_ResizeGripHovered] = accentDim;
-    c[ImGuiCol_PlotHistogram] = accent;
+    c[ImGuiCol_ResizeGripHovered] = t.accentSubtle;
+    c[ImGuiCol_PlotHistogram] = t.accentDefault;
+    c[ImGuiCol_NavCursor] = t.focusRing;
 }
 
 

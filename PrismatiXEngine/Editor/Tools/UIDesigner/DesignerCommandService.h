@@ -4,6 +4,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -61,6 +62,10 @@ public:
         return (m_transaction && m_transaction->Active()) ||
                (m_multiTransaction && m_multiTransaction->Active());
     }
+    // Ends every transaction that retains the current document and clears
+    // document-specific history metadata. The Session must call this before
+    // destroying or replacing its UISceneDocument.
+    Status ResetForDocumentChange();
 
 private:
     Status After(const DocumentChangeSet& changes);
@@ -77,6 +82,7 @@ private:
     std::vector<Uuid> m_gestureTargets;
     std::string m_gestureProperty;
     std::size_t m_gestureHistoryCursor = 0;
+    std::optional<DesignerLayoutSnapshot> m_gestureLayoutBefore;
     std::vector<DocumentChangeSet> m_historyChanges;
 };
 
