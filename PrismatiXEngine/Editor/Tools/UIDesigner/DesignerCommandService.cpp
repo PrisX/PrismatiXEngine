@@ -10,7 +10,11 @@ diag::Diagnostic Error(std::string code, std::string message, const Uuid& node =
     diag::Diagnostic result{.severity = diag::Severity::Error,
                             .code = std::move(code),
                             .category = "Editor.UIDesigner.Command",
-                            .message = std::move(message)};
+                            .message = std::move(message),
+                            .details = {},
+                            .source = {},
+                            .operationId = {},
+                            .quickFix = {}};
     if (!node.Empty()) result.source.nodeId = node.ToString();
     return result;
 }
@@ -333,10 +337,51 @@ Status DesignerCommandService::Reorder(const Uuid& target, std::size_t newIndex)
     if (!document) return Status::Ok();
     const auto* node = m_session.DocumentView().Find(*document, target);
     if (!node || node->parent.Empty()) return Status::Ok();
+    const std::size_t oldIndex =
+        m_session.DocumentView().ChildIndex(target).value_or(0);
+    const auto siblings = m_session.DocumentView().Children(node->parent);
+    if (siblings.empty()) return Status::Ok();
+    newIndex = std::min(newIndex, siblings.size() - 1);
+    if (oldIndex == newIndex) return Status::Ok();
     return Execute(std::make_unique<MoveChildEditCommand>(
-                       "Reorder " + node->name, node->parent, target,
-                       m_session.DocumentView().ChildIndex(target).value_or(0), newIndex),
+                       "Reorder " + node->name, node->parent, target, oldIndex, newIndex),
                    DocumentChangeSet::Structure(node->parent));
+}
+
+Status DesignerCommandService::MoveBefore(const Uuid& target, const Uuid& reference) {
+    auto* document = m_session.Document();
+    if (!document) return Status::Ok();
+    const auto* targetNode = m_session.DocumentView().Find(*document, target);
+    const auto* referenceNode = m_session.DocumentView().Find(*document, reference);
+    if (!targetNode || !referenceNode || targetNode->parent != referenceNode->parent ||
+        target == reference) {
+        return Status::Fail(
+            Error("PXEDCMD6006", "MoveBefore requires distinct siblings", target));
+    }
+    const std::size_t targetIndex =
+        m_session.DocumentView().ChildIndex(target).value_or(0);
+    std::size_t referenceIndex =
+        m_session.DocumentView().ChildIndex(reference).value_or(0);
+    if (targetIndex < referenceIndex) --referenceIndex;
+    return Reorder(target, referenceIndex);
+}
+
+Status DesignerCommandService::MoveAfter(const Uuid& target, const Uuid& reference) {
+    auto* document = m_session.Document();
+    if (!document) return Status::Ok();
+    const auto* targetNode = m_session.DocumentView().Find(*document, target);
+    const auto* referenceNode = m_session.DocumentView().Find(*document, reference);
+    if (!targetNode || !referenceNode || targetNode->parent != referenceNode->parent ||
+        target == reference) {
+        return Status::Fail(
+            Error("PXEDCMD6007", "MoveAfter requires distinct siblings", target));
+    }
+    const std::size_t targetIndex =
+        m_session.DocumentView().ChildIndex(target).value_or(0);
+    std::size_t referenceIndex =
+        m_session.DocumentView().ChildIndex(reference).value_or(0);
+    if (targetIndex > referenceIndex) ++referenceIndex;
+    return Reorder(target, referenceIndex);
 }
 
 Status DesignerCommandService::BeginPropertyGesture(const Uuid& target, std::string property,

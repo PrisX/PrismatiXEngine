@@ -13,18 +13,6 @@
 namespace px::editor {
 namespace {
 
-bool Number(const Variant& value, double& output) {
-    if (const auto* number = value.TryGet<double>()) {
-        output = *number;
-        return true;
-    }
-    if (const auto* integer = value.TryGet<std::int64_t>()) {
-        output = static_cast<double>(*integer);
-        return true;
-    }
-    return false;
-}
-
 bool Compatible(VariantType target, VariantType source) {
     return target == source || (target == VariantType::Number && source == VariantType::Integer);
 }
@@ -44,7 +32,10 @@ diag::Diagnostic DesignerDiagnostics::Make(diag::Severity severity, std::string 
                             .code = std::move(code),
                             .category = "Editor.UIDesigner.Problems",
                             .message = std::move(message),
-                            .details = std::move(details)};
+                            .details = std::move(details),
+                            .source = {},
+                            .operationId = {},
+                            .quickFix = {}};
     result.source.resourceId = document.DocumentId().ToString();
     result.source.path = document.Path().generic_string();
     if (!node.Empty()) result.source.nodeId = node.ToString();
@@ -129,6 +120,10 @@ void DesignerDiagnostics::ValidateTokens(const UISceneDocument& document) {
             }
         }
     }
+}
+
+void DesignerDiagnostics::Refresh(const UISceneDocument& document) {
+    Refresh(document, ValidationContext{});
 }
 
 void DesignerDiagnostics::Refresh(const UISceneDocument& document,

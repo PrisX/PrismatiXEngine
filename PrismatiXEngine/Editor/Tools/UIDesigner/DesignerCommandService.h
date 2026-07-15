@@ -48,6 +48,8 @@ public:
     Status DuplicateSelection();
     Status Reparent(const Uuid& target, const Uuid& newParent, std::size_t newIndex);
     Status Reorder(const Uuid& target, std::size_t newIndex);
+    Status MoveBefore(const Uuid& target, const Uuid& reference);
+    Status MoveAfter(const Uuid& target, const Uuid& reference);
 
     Status BeginPropertyGesture(const Uuid& target, std::string property, std::string label,
                                 DesignerDirtyFlags dirty);

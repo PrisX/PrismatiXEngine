@@ -1,5 +1,7 @@
 #include "Editor/Tools/UIDesigner/Canvas/HitTestService.h"
 
+#include <cmath>
+
 namespace px::editor {
 
 std::vector<Uuid> HitTestService::HitStack(const UISceneDocument& document,
@@ -14,7 +16,10 @@ std::vector<Uuid> HitTestService::HitStack(const UISceneDocument& document,
         if (it->id == view.Root()) continue;
         if (!view.IsWithin(scope, it->id)) continue;
         const auto rect = view.LayoutRect(it->id);
-        if (!rect || !rect->Contains(canvasPosition.x, canvasPosition.y)) continue;
+        if (!rect || !std::isfinite(rect->x) || !std::isfinite(rect->y) ||
+            !std::isfinite(rect->w) || !std::isfinite(rect->h) || rect->w <= 0.0f ||
+            rect->h <= 0.0f || !rect->Contains(canvasPosition.x, canvasPosition.y))
+            continue;
         if (const auto locked = it->properties.find("editorLocked");
             locked != it->properties.end() && locked->second.TryGet<bool>() &&
             *locked->second.TryGet<bool>()) continue;

@@ -26,7 +26,8 @@ public:
         std::function<ui::ChildLayoutPolicy(const Uuid&)> childPolicy;
     };
 
-    void Refresh(const UISceneDocument& document, const ValidationContext& context = {});
+    void Refresh(const UISceneDocument& document);
+    void Refresh(const UISceneDocument& document, const ValidationContext& context);
     void Clear();
 
     [[nodiscard]] const std::vector<diag::Diagnostic>& Items() const { return m_items; }

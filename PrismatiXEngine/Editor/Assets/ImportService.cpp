@@ -29,7 +29,10 @@ diag::Diagnostic ImportError(std::string code, const std::filesystem::path& path
                                 .code = std::move(code),
                                 .category = "Editor.Import",
                                 .message = std::move(message),
-                                .details = std::move(details)};
+                                .details = std::move(details),
+                                .source = {},
+                                .operationId = {},
+                                .quickFix = {}};
     diagnostic.source.path = Utf8Path(path);
     diag::Emit(diagnostic);
     return diagnostic;
@@ -228,7 +231,10 @@ Result<ImportPlan> ImportService::PrepareImpl(
                         "目的地不會在確認匯入前建立。"));
     }
     ImportPlan plan{.projectRoot = projectRoot, .destination = destination,
-                    .autoOrganize = autoOrganize, .preserveFolders = preserveFolders};
+                    .autoOrganize = autoOrganize,
+                    .preserveFolders = preserveFolders,
+                    .preserveIdentity = false,
+                    .items = {}};
     for (const auto& source : sources) {
         ec.clear();
         if (!std::filesystem::is_regular_file(source.path, ec) ||
@@ -285,7 +291,12 @@ Status ImportService::Start(ImportPlan plan) {
     {
         std::lock_guard lock(m_mutex);
         m_progress = {.state = ImportState::Staging,
-                      .totalItems = m_plan.items.size()};
+                      .currentItem = 0,
+                      .totalItems = m_plan.items.size(),
+                      .copiedBytes = 0,
+                      .totalBytes = 0,
+                      .currentFile = {},
+                      .message = {}};
         for (const auto& item : m_plan.items)
             if (item.enabled && item.policy != ImportConflictPolicy::Skip &&
                 item.policy != ImportConflictPolicy::UseExisting)
@@ -393,6 +404,11 @@ void ImportService::SetFailure(std::string message) {
     m_progress.message = std::move(message);
 }
 
+ImportProgress ImportService::WaitForStaging() {
+    if (m_worker.joinable()) m_worker.join();
+    return Progress();
+}
+
 void ImportService::Cancel() {
     m_cancel = true;
     if (m_worker.joinable()) m_worker.request_stop();
@@ -477,7 +493,7 @@ Status ImportService::CommitImpl(resource::AssetRegistry& registry) {
         std::filesystem::create_directories(item.target.parent_path(), ec);
         if (ec) return abort(Status::Fail(ImportError("PXIMPORT9006", item.target,
             "無法建立素材目的地", ec.message())));
-        Applied operation{.target = item.target};
+        Applied operation{.target = item.target, .backup = {}, .replaced = false};
         if (item.policy == ImportConflictPolicy::Replace &&
             std::filesystem::exists(item.target)) {
             operation.replaced = true;
@@ -524,6 +540,9 @@ Status ImportService::CommitImpl(resource::AssetRegistry& registry) {
         auto& operation = applied[index];
         ImportCommitRecord record{.target=operation.target,
             .meta=resource::AssetRegistry::MetaPath(operation.target),
+            .originalBackup={},
+            .importedBackup={},
+            .metaBackup={},
             .replaced=operation.replaced};
         auto importedName = std::filesystem::path(std::to_string(index) + ".imported");
         importedName += operation.target.extension();

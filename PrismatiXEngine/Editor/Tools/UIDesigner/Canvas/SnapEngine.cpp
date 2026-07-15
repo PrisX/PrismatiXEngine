@@ -10,6 +10,18 @@ namespace {
 
 struct Candidate { float position; SnapGuideKind kind; Rect owner; };
 
+int CandidatePriority(SnapGuideKind kind) {
+    switch (kind) {
+    case SnapGuideKind::User: return 0;
+    case SnapGuideKind::Sibling: return 1;
+    case SnapGuideKind::Parent: return 2;
+    case SnapGuideKind::Canvas: return 3;
+    case SnapGuideKind::Grid: return 4;
+    case SnapGuideKind::EqualSpacing: return 5;
+    }
+    return 6;
+}
+
 void AddRectCandidates(std::vector<Candidate>& x, std::vector<Candidate>& y, Rect rect,
                        SnapGuideKind kind) {
     x.push_back({rect.x, kind, rect});
@@ -24,7 +36,7 @@ void AddRectCandidates(std::vector<Candidate>& x, std::vector<Candidate>& y, Rec
 
 SnapResult SnapEngine::Snap(const SnapRequest& request,
                             const DesignerDocumentView& view) const {
-    SnapResult output{.rect = request.movingRect};
+    SnapResult output{.rect = request.movingRect, .guides = {}, .distances = {}};
     const float threshold = 6.0f / std::max(0.01f, request.zoom);
     std::unordered_set<Uuid, UuidHash> ignored(request.ignoredNodes.begin(),
                                                request.ignoredNodes.end());
@@ -53,7 +65,11 @@ SnapResult SnapEngine::Snap(const SnapRequest& request,
         for (const auto& candidate : candidates) {
             for (const float edge : edges) {
                 const float distance = std::abs(candidate.position - edge);
-                if (distance < best) {
+                const bool closer = distance < best;
+                const bool tied = winner && std::abs(distance - best) <= 0.0001f;
+                if (closer ||
+                    (tied && CandidatePriority(candidate.kind) <
+                                 CandidatePriority(winner->kind))) {
                     best = distance;
                     adjustment = candidate.position - edge;
                     winner = &candidate;

@@ -15,6 +15,7 @@ set(FORBIDDEN_PATTERNS
     "ActionArgumentType"
     "LegacyType"
     "ThemeVariant"
+    "ZOrder"
     "StableLegacy"
     "ApplyUIDocumentPatch"
     "SetZOrder"
@@ -28,6 +29,19 @@ foreach(SOURCE IN LISTS PRODUCTION_SOURCES)
             list(APPEND FAILURES "${SOURCE}: ${PATTERN}")
         endif()
     endforeach()
+
+    if(SOURCE MATCHES "/Editor/Tools/UIDesigner/" AND
+       NOT SOURCE MATCHES "/DesignerCommandService\.cpp$" AND
+       NOT SOURCE MATCHES "/UISceneDocument\.(cpp|h)$")
+        foreach(PATTERN IN ITEMS
+                "History\(\)\.(Execute|CommitApplied)"
+                "WriteProperty[(]")
+            if(CONTENT MATCHES "${PATTERN}")
+                list(APPEND FAILURES
+                     "${SOURCE}: command-boundary bypass ${PATTERN}")
+            endif()
+        endforeach()
+    endif()
 
     if(SOURCE MATCHES "/Editor/Tools/UIDesigner/(UIDesigner|BehaviorGraphEditor|AnimationStateMachineEditor|Components/ComponentService)\\.(cpp|h)$")
         foreach(PATTERN IN ITEMS "History\\(\\)\\.(Execute|CommitApplied|Undo|Redo)" "WriteProperty\\(")
@@ -64,6 +78,27 @@ foreach(SOURCE IN LISTS PRODUCTION_SOURCES)
                 list(APPEND FAILURES "${SOURCE}: workspace-global panel state leaked into document Session: ${PATTERN}")
             endif()
         endforeach()
+    endif()
+endforeach()
+
+file(READ "${ROOT}/Editor/Tools/UIDesigner/DesignerDiagnostics.h"
+     DIAGNOSTICS_HEADER)
+if(DIAGNOSTICS_HEADER MATCHES
+   "const ValidationContext&[^;=]*=[ \\t\\r\\n]*\\{")
+    list(APPEND FAILURES
+         "DesignerDiagnostics default-braced nested reference regressed; use overloads")
+endif()
+
+foreach(CANONICAL_PATH IN ITEMS
+        "Editor/Tools/UIDesigner/DesignerSelection.h"
+        "Editor/Tools/UIDesigner/DesignerCommandService.h"
+        "Editor/Tools/UIDesigner/Canvas/CanvasInteractionController.h"
+        "Editor/Tools/UIDesigner/DesignerDocumentView.h"
+        "Editor/Tools/UIDesigner/Canvas/HitTestService.h"
+        "Editor/Tools/UIDesigner/Canvas/SnapEngine.h"
+        "Editor/Tools/UIDesigner/Components/ComponentService.h")
+    if(NOT EXISTS "${ROOT}/${CANONICAL_PATH}")
+        list(APPEND FAILURES "canonical architecture path is missing: ${CANONICAL_PATH}")
     endif()
 endforeach()
 

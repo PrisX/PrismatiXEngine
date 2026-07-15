@@ -1,98 +1,139 @@
-name: PrismatiX quality gate
+name: PrismatiX PR quality gate
 
 on:
   push:
   pull_request:
 
-jobs:
-  windows:
-    runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        build_type: [Debug, Release]
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-      - uses: lukka/get-cmake@latest
-      - uses: lukka/run-vcpkg@v11
-      - name: Verify build tools
-        shell: pwsh
-        run: |
-          cmake --version
-          ninja --version
-          $ninja = (Get-Command ninja -ErrorAction Stop).Source
-          $compiler = (Get-Command cl.exe -ErrorAction Stop).Source
-          Write-Host "Ninja executable: $ninja"
-          Write-Host "MSVC compiler: $compiler"
-          $toolchain = Join-Path $env:VCPKG_ROOT "scripts/buildsystems/vcpkg.cmake"
-          if (-not (Test-Path -LiteralPath $toolchain)) {
-            throw "vcpkg toolchain file not found: $toolchain"
-          }
-      - name: Configure
-        shell: pwsh
-        run: |
-          $ninja = (Get-Command ninja -ErrorAction Stop).Source
-          $compiler = (Get-Command cl.exe -ErrorAction Stop).Source
-          cmake `
-            -S . `
-            -B "out/ci/${{ matrix.build_type }}" `
-            -G Ninja `
-            "-DCMAKE_BUILD_TYPE=${{ matrix.build_type }}" `
-            "-DCMAKE_C_COMPILER=$compiler" `
-            "-DCMAKE_CXX_COMPILER=$compiler" `
-            "-DCMAKE_MAKE_PROGRAM=$ninja" `
-            "-DCMAKE_TOOLCHAIN_FILE=${env:VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" `
-            -DBUILD_TESTING=ON `
-            -DPRISMATIX_WARNINGS_AS_ERRORS=ON
-      - name: Build
-        run: cmake --build out/ci/${{ matrix.build_type }} --parallel
-      - name: Test
-        run: ctest --test-dir out/ci/${{ matrix.build_type }} --output-on-failure --timeout 180 --no-tests=error
+concurrency:
+  group: pr-quality-${{ github.ref }}
+  cancel-in-progress: true
 
-  sanitizers:
+env:
+  CTEST_OUTPUT_ON_FAILURE: "1"
+
+jobs:
+  pr-architecture-gate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Install Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            autoconf \
-            autoconf-archive \
-            automake \
-            libtool \
-            nasm \
-            pkg-config
-      - uses: lukka/get-cmake@latest
-      - uses: lukka/run-vcpkg@v11
-      - name: Verify build tools
+      - name: Architecture policy execution
+        run: >-
+          cmake
+          -DROOT="${{ github.workspace }}/PrismatiXEngine"
+          -P PrismatiXEngine/Tests/ArchitectureGate.cmake
+
+  pr-linux-clang-debug-sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Environment and system dependency provisioning
+        run: bash .github/scripts/install-linux-dependencies.sh
+      - name: CMake and Ninja provisioning
+        uses: lukka/get-cmake@latest
+      - name: vcpkg provisioning
+        uses: lukka/run-vcpkg@v11
+      - name: vcpkg dependency resolution
+        run: >-
+          "$VCPKG_ROOT/vcpkg" install
+          --triplet x64-linux
+          --x-install-root="${{ github.workspace }}/out/ci/vcpkg/clang"
+      - name: Toolchain verification
         run: |
           cmake --version
           ninja --version
-          echo "Ninja executable: $(command -v ninja)"
-          nasm -v
+          clang++ --version
           test -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
-      - name: Configure ASan and UBSan
+          dpkg-query --show libltdl-dev
+      - name: Configure
         run: |
-          NINJA="$(command -v ninja)"
-          cmake \
-            -S . \
-            -B out/ci/sanitize \
-            -G Ninja \
+          cmake -S . -B out/ci/clang-sanitize -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_C_COMPILER=clang \
             -DCMAKE_CXX_COMPILER=clang++ \
-            -DCMAKE_MAKE_PROGRAM="$NINJA" \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=x64-linux \
+            -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/clang" \
             -DBUILD_TESTING=ON \
             -DPRISMATIX_ENABLE_SANITIZERS=ON \
+            -DPRISMATIX_WARNINGS_AS_ERRORS=OFF
+      - name: Core compile and link
+        run: >-
+          cmake --build out/ci/clang-sanitize
+          --target PrismatiXRequiredPRTests --parallel
+      - name: Test discovery
+        run: >-
+          ctest --test-dir out/ci/clang-sanitize -N
+          -L "unit|designer|contract|integration|architecture"
+          --no-tests=error
+      - name: Required test execution
+        env:
+          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:halt_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: >-
+          ctest --test-dir out/ci/clang-sanitize
+          -L "unit|designer|contract|integration|architecture"
+          --output-on-failure --timeout 180 --no-tests=error
+
+  pr-windows-msvc-relwithdebinfo:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: MSVC environment provisioning
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: CMake and Ninja provisioning
+        uses: lukka/get-cmake@latest
+      - name: vcpkg provisioning
+        uses: lukka/run-vcpkg@v11
+      - name: vcpkg dependency resolution
+        shell: pwsh
+        run: |
+          $installRoot = Join-Path $env:GITHUB_WORKSPACE "out/ci/vcpkg/msvc"
+          & "$env:VCPKG_ROOT/vcpkg.exe" install --triplet x64-windows "--x-install-root=$installRoot"
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg dependency resolution failed" }
+      - name: Toolchain verification
+        shell: pwsh
+        run: |
+          cmake --version
+          ninja --version
+          cl.exe
+          $toolchain = Join-Path $env:VCPKG_ROOT "scripts/buildsystems/vcpkg.cmake"
+          if (-not (Test-Path -LiteralPath $toolchain)) { throw "Missing $toolchain" }
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B out/ci/msvc-relwithdebinfo -G Ninja `
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            "-DVCPKG_INSTALLED_DIR=$env:GITHUB_WORKSPACE/out/ci/vcpkg/msvc" `
+            -DBUILD_TESTING=ON `
             -DPRISMATIX_WARNINGS_AS_ERRORS=ON
-      - name: Build and test
-        run: cmake --build out/ci/sanitize --parallel && ctest --test-dir out/ci/sanitize --output-on-failure --timeout 180 --no-tests=error
+      - name: Regular test compile and link
+        run: >-
+          cmake --build out/ci/msvc-relwithdebinfo
+          --target PrismatiXRegularTests --parallel
+      - name: Test discovery
+        run: ctest --test-dir out/ci/msvc-relwithdebinfo -N
+      - name: Full regular test execution
+        run: >-
+          ctest --test-dir out/ci/msvc-relwithdebinfo
+          --output-on-failure --timeout 240 --no-tests=error
+      - name: Full Editor compile and link
+        run: >-
+          cmake --build out/ci/msvc-relwithdebinfo
+          --target PrismatiXEditor --parallel
+      - name: Editor asset preparation and packaging
+        run: >-
+          cmake --build out/ci/msvc-relwithdebinfo
+          --target PrismatiXPackageEditor --parallel

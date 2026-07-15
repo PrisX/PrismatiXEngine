@@ -75,6 +75,9 @@ public:
                                              bool preserveFolders) const;
     void RecalculateTargets(ImportPlan& plan) const;
     Status Start(ImportPlan plan);
+    // Deterministic synchronization boundary for command-line tools and tests.
+    // Interactive callers should continue polling Progress() without blocking.
+    [[nodiscard]] ImportProgress WaitForStaging();
     void Cancel();
     [[nodiscard]] ImportProgress Progress() const;
     Status Commit(resource::AssetRegistry& registry);

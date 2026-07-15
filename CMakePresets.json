@@ -99,6 +99,14 @@
             }
         },
         {
+            "name": "x64-relwithdebinfo",
+            "displayName": "x64 RelWithDebInfo",
+            "inherits": "x64-debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+            }
+        },
+        {
             "name": "x86-debug",
             "displayName": "x86 Debug",
             "inherits": "windows-x86-base",
@@ -140,6 +148,11 @@
         {
             "name": "x64-release",
             "configurePreset": "x64-release",
+            "inheritConfigureEnvironment": true
+        },
+        {
+            "name": "x64-relwithdebinfo",
+            "configurePreset": "x64-relwithdebinfo",
             "inheritConfigureEnvironment": true
         },
         {

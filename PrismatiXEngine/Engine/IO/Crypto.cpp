@@ -1,5 +1,6 @@
 #include "Engine/IO/Crypto.h"
 
+#include <algorithm>
 #include <psa/crypto.h>
 
 namespace px::crypto {
