@@ -16,13 +16,14 @@ jobs:
         with:
           submodules: recursive
       - uses: lukka/get-cmake@latest
-        id: cmake-tools
       - uses: lukka/run-vcpkg@v11
       - name: Verify build tools
         shell: pwsh
         run: |
           cmake --version
-          & "${{ steps.cmake-tools.outputs.ninja-path }}" --version
+          ninja --version
+          $ninja = (Get-Command ninja -ErrorAction Stop).Source
+          Write-Host "Ninja executable: $ninja"
           $toolchain = Join-Path $env:VCPKG_ROOT "scripts/buildsystems/vcpkg.cmake"
           if (-not (Test-Path -LiteralPath $toolchain)) {
             throw "vcpkg toolchain file not found: $toolchain"
@@ -30,12 +31,13 @@ jobs:
       - name: Configure
         shell: pwsh
         run: |
+          $ninja = (Get-Command ninja -ErrorAction Stop).Source
           cmake `
             -S . `
             -B "out/ci/${{ matrix.build_type }}" `
             -G Ninja `
             "-DCMAKE_BUILD_TYPE=${{ matrix.build_type }}" `
-            "-DCMAKE_MAKE_PROGRAM=${{ steps.cmake-tools.outputs.ninja-path }}" `
+            "-DCMAKE_MAKE_PROGRAM=$ninja" `
             "-DCMAKE_TOOLCHAIN_FILE=${env:VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" `
             -DBUILD_TESTING=ON `
             -DPRISMATIX_WARNINGS_AS_ERRORS=ON
@@ -55,16 +57,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes nasm
       - uses: lukka/get-cmake@latest
-        id: cmake-tools
       - uses: lukka/run-vcpkg@v11
       - name: Verify build tools
         run: |
           cmake --version
-          "${{ steps.cmake-tools.outputs.ninja-path }}" --version
+          ninja --version
+          echo "Ninja executable: $(command -v ninja)"
           nasm -v
           test -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
       - name: Configure ASan and UBSan
         run: |
+          NINJA="$(command -v ninja)"
           cmake \
             -S . \
             -B out/ci/sanitize \
@@ -72,7 +75,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_C_COMPILER=clang \
             -DCMAKE_CXX_COMPILER=clang++ \
-            -DCMAKE_MAKE_PROGRAM="${{ steps.cmake-tools.outputs.ninja-path }}" \
+            -DCMAKE_MAKE_PROGRAM="$NINJA" \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DBUILD_TESTING=ON \
             -DPRISMATIX_ENABLE_SANITIZERS=ON \
