@@ -61,6 +61,10 @@ bool GlobalProfile::Load(const std::string& path, const crypto::Key* key) {
         return false;
     }
     const Json& j = *json;
+    if (j.value("format", std::string{}) != "PrismatiXProfile" ||
+        j.value("schemaRevision", 0) != 1) {
+        return false;
+    }
     auto loadSet = [&](const char* name, std::set<std::string>& dst) {
         dst.clear();
         if (j.contains(name)) {
@@ -86,6 +90,8 @@ bool GlobalProfile::Load(const std::string& path, const crypto::Key* key) {
 
 bool GlobalProfile::Save(const std::string& path, const crypto::Key* key) const {
     Json j;
+    j["format"] = "PrismatiXProfile";
+    j["schemaRevision"] = 1;
     j["seen"] = m_seen;
     j["choicesSeen"] = m_choicesSeen;
     j["clearedRoutes"] = m_clearedRoutes;

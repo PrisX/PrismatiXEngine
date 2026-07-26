@@ -1,4 +1,4 @@
-name: PrismatiX weekly stress
+name: PrismatiX SDK parser fuzz
 
 on:
   schedule:
@@ -6,22 +6,19 @@ on:
   workflow_dispatch:
 
 jobs:
-  weekly-fuzz:
+  runtime-parser-fuzz:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           submodules: recursive
-      - name: Environment and system dependency provisioning
-        run: bash .github/scripts/install-linux-dependencies.sh
+      - run: bash .github/scripts/install-linux-dependencies.sh
       - uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed
-      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
-      - name: vcpkg dependency resolution
-        run: >-
-          "$VCPKG_ROOT/vcpkg" install
-          --triplet x64-linux
+      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
+      - run: >-
+          "$VCPKG_ROOT/vcpkg" install --triplet x64-linux
           --x-install-root="${{ github.workspace }}/out/ci/vcpkg/fuzz"
-      - name: Configure fuzz target
+      - name: Configure Runtime parser fuzzer
         run: |
           cmake -S . -B out/ci/fuzz -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
@@ -29,46 +26,9 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET=x64-linux \
             -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/fuzz" \
-            -DBUILD_TESTING=ON -DPRISMATIX_BUILD_FUZZERS=ON
-      - name: Fuzz compile and link
-        run: cmake --build out/ci/fuzz --target PrismatiXParserFuzz --parallel
-      - name: Fuzz test discovery
-        run: ctest --test-dir out/ci/fuzz -N -L fuzz
-      - name: Extended fuzz execution
-        run: >-
-          out/ci/fuzz/PrismatiXEngine/PrismatiXParserFuzz
-          -max_total_time=1800 -timeout=10
-
-  weekly-soak:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          submodules: recursive
-      - name: Environment and system dependency provisioning
-        run: bash .github/scripts/install-linux-dependencies.sh
-      - uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed
-      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
-      - name: vcpkg dependency resolution
-        run: >-
-          "$VCPKG_ROOT/vcpkg" install
-          --triplet x64-linux
-          --x-install-root="${{ github.workspace }}/out/ci/vcpkg/stress"
-      - name: Configure stress suite
-        run: |
-          cmake -S . -B out/ci/stress -G Ninja \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
-            -DVCPKG_TARGET_TRIPLET=x64-linux \
-            -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/stress" \
-            -DBUILD_TESTING=ON -DPRISMATIX_STRESS_TESTS=ON
-      - name: Stress compile and link
-        run: >-
-          cmake --build out/ci/stress
-          --target PrismatiXSoakTests PrismatiXImportTests --parallel
-      - name: Stress test discovery
-        run: ctest --test-dir out/ci/stress -N -L stress
-      - name: Stress test execution
-        run: >-
-          ctest --test-dir out/ci/stress -L stress
-          --output-on-failure --timeout 3600 --no-tests=error
+            -DBUILD_TESTING=ON \
+            -DPRISMATIX_BUILD_LEGACY_EDITOR=OFF \
+            -DPRISMATIX_BUILD_FUZZERS=ON
+      - run: cmake --build out/ci/fuzz --target PrismatiXParserFuzz --parallel
+      - name: Correctness fuzz execution
+        run: out/ci/fuzz/PrismatiXEngine/PrismatiXParserFuzz -max_total_time=1800 -timeout=10

@@ -134,6 +134,21 @@ bool VM::LoadScenarioText(const std::string_view text, const std::string& script
     return true;
 }
 
+bool VM::LoadCompiledProgram(Program program, const std::string& scriptPath) {
+    m_callStack.clear();
+    m_program = std::move(program);
+    if (!m_program.errors.empty()) {
+        m_state = VMState::Finished;
+        return false;
+    }
+    m_scriptPath = scriptPath;
+    m_pc = 0;
+    m_pendingVoice.clear();
+    m_textSpeed = m_config.defaultTextSpeed;
+    Run();
+    return true;
+}
+
 void VM::SeekTo(const std::string& scriptPath, int pc) {
     m_callStack.clear();
     if (LoadProgram(scriptPath)) {

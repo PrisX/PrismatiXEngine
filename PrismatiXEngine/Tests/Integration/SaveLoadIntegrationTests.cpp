@@ -12,6 +12,8 @@
 #include "Engine/IO/VFS.h"
 #include "Engine/Lua/LuaHost.h"
 #include "Engine/Platform/Input.h"
+#include "Engine/Progression/GameSettings.h"
+#include "Engine/Progression/GlobalProfile.h"
 #include "Engine/Progression/Persist.h"
 #include "Engine/Progression/SaveSystem.h"
 #include "Engine/Resources/AssetRegistry.h"
@@ -205,21 +207,70 @@ void TestSaveValidation() {
             loaded->stage.tweens.size() == 1 && loaded->audio.music.playbackFrame == 24000 && loaded->luaPending.size() == 1 && loaded->luaPending.front().yieldIndex == 1 && loaded->luaActions.size() == 1 && loaded->luaActions.front().yieldIndex == 2 &&
             loaded->behavior.fibers.size() == 1 && loaded->behavior.fibers.front().current == behaviorDelay && loaded->behavior.fibers.front().signalArguments.at("position").TryGet<px::Vec2>() && loaded->behavior.actions.size() == 1 &&
             loaded->behavior.actions.front().providerHandle == 73,
-        "version 4 save should preserve exact VM, stage, audio, Lua Action, Behavior, and variable state"
+        "current save schema should preserve exact VM, stage, audio, Lua Action, Behavior, and variable state"
     );
 
-    px::progress::Json wrongType{ { "version", 2 }, { "variables", { { "affection", "high" } } } };
+    px::progress::Json wrongType{ { "format", "PrismatiXSave" }, { "schemaRevision", 1 }, { "variables", { { "affection", "high" } } } };
     Check(px::progress::SaveJson(saves.SlotPath(1), wrongType, nullptr), "wrong-type fixture should be written");
     Check(!saves.Load(1), "wrong-type save must fail without throwing");
 
-    px::progress::Json removedV2{ { "version", 2 }, { "scriptPath", "removed" } };
-    Check(px::progress::SaveJson(saves.SlotPath(3), removedV2, nullptr), "removed v2 fixture should be written");
-    Check(!saves.Load(3), "version 2 saves must be rejected after the strict v4 cutover");
+    px::progress::Json legacySave{ { "version", 4 }, { "scriptPath", "removed" } };
+    Check(px::progress::SaveJson(saves.SlotPath(3), legacySave, nullptr), "legacy fixture should be written");
+    Check(!saves.Load(3), "legacy numeric save versions must be rejected");
 
-    px::progress::Json wrongVersion{ { "version", 999 } };
-    Check(px::progress::SaveJson(saves.SlotPath(2), wrongVersion, nullptr), "wrong-version fixture should be written");
-    Check(!saves.Load(2), "unsupported save version must be rejected");
+    px::progress::Json wrongSchema{ { "format", "PrismatiXSave" }, { "schemaRevision", 999 } };
+    Check(px::progress::SaveJson(saves.SlotPath(2), wrongSchema, nullptr), "wrong-schema fixture should be written");
+    Check(!saves.Load(2), "unsupported save schema must be rejected");
     Check(!saves.Peek(2).exists, "unsupported save must not appear as a valid slot");
+}
+
+void TestProfileAndSettingsSchemas() {
+    px::test::TempDirectory temp("runtime-profile-settings");
+    const auto profilePath = (temp.path / "profile.pxprofile").string();
+    const auto settingsPath = (temp.path / "settings.pxsettings").string();
+
+    px::progress::GlobalProfile profile;
+    profile.MarkSeen("scene.intro#line-1");
+    profile.MarkChoiceSeen("choice.intro#option-a");
+    profile.RegisterClear("route.alice");
+    profile.SetPersistentVar("affection", 7);
+    profile.UnlockScene("scene.after-story");
+    profile.UnlockCG("cg.sunset");
+    profile.UnlockMusic("music.ending");
+    Check(profile.Save(profilePath, nullptr), "global profile should be written with the current schema");
+
+    px::progress::GlobalProfile loadedProfile;
+    Check(loadedProfile.Load(profilePath, nullptr), "global profile should load with the current schema");
+    Check(
+        loadedProfile.HasSeen("scene.intro#line-1") && loadedProfile.HasChoiceSeen("choice.intro#option-a") && loadedProfile.ClearCount() == 1 && loadedProfile.RouteCleared("route.alice") &&
+            loadedProfile.PersistentVar("affection") == 7 && loadedProfile.SceneUnlocked("scene.after-story") && loadedProfile.CGUnlocked("cg.sunset") && loadedProfile.MusicUnlocked("music.ending"),
+        "global profile should preserve seen state, clears, persistent variables, and unlocks"
+    );
+
+    px::progress::Json legacyProfile{ { "version", 4 }, { "clearCount", 99 } };
+    Check(px::progress::SaveJson(profilePath, legacyProfile, nullptr), "legacy profile fixture should be written");
+    Check(!loadedProfile.Load(profilePath, nullptr), "legacy numeric profile versions must be rejected");
+
+    px::progress::GameSettings settings;
+    settings.bgmVolume = 64;
+    settings.voiceVolume = 96;
+    settings.language = "ja-JP";
+    settings.textScale = 1.25f;
+    settings.highContrast = true;
+    settings.reducedMotion = true;
+    settings.selfVoicing = true;
+    Check(settings.Save(settingsPath, nullptr), "game settings should be written with the current schema");
+
+    px::progress::GameSettings loadedSettings;
+    Check(loadedSettings.Load(settingsPath, nullptr), "game settings should load with the current schema");
+    Check(
+        loadedSettings.bgmVolume == 64 && loadedSettings.voiceVolume == 96 && loadedSettings.language == "ja-JP" && loadedSettings.textScale == 1.25f && loadedSettings.highContrast && loadedSettings.reducedMotion && loadedSettings.selfVoicing,
+        "game settings should preserve audio, locale, text scale, and accessibility options"
+    );
+
+    px::progress::Json legacySettings{ { "version", 4 }, { "language", "legacy" } };
+    Check(px::progress::SaveJson(settingsPath, legacySettings, nullptr), "legacy settings fixture should be written");
+    Check(!loadedSettings.Load(settingsPath, nullptr), "legacy numeric settings versions must be rejected");
 }
 
 
@@ -250,6 +301,7 @@ void TestSavedAssetIdentityRegistration() {
 int main() {
     Run("Archive_BoundsAndRoundTrip", TestArchiveBoundsAndRoundTrip);
     Run("Save_RejectsInvalidAndRoundTrips", TestSaveValidation);
+    Run("ProfileAndSettings_CurrentSchemasRoundTrip", TestProfileAndSettingsSchemas);
     Run("Assets_SavedIdentityRegisters", TestSavedAssetIdentityRegistration);
     if (g_failures == 0) std::cout << "PASS: runtime-save-load integration\n";
     return g_failures == 0 ? 0 : 1;

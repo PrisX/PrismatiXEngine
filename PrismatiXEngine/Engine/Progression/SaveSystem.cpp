@@ -10,7 +10,8 @@
 namespace px::progress {
 
 namespace {
-constexpr int kSaveVersion = 4;
+constexpr std::string_view kSaveFormat = "PrismatiXSave";
+constexpr int kSaveSchemaRevision = 1;
 constexpr std::size_t kMaxSaveCollectionItems = 1'000'000;
 
 void SaveLoadError(const std::string& path, std::string message, std::string details = {}) {
@@ -21,11 +22,8 @@ void SaveLoadError(const std::string& path, std::string message, std::string det
 }
 
 bool HasSupportedHeader(const Json& json) {
-    if (!json.is_object() || !json.contains("version") ||
-        !json["version"].is_number_integer()) {
-        return false;
-    }
-    return json["version"].get<int>() == kSaveVersion;
+    return json.is_object() && json.value("format", std::string{}) == kSaveFormat &&
+           json.value("schemaRevision", 0) == kSaveSchemaRevision;
 }
 
 Json ColorToJson(const Color color) {
@@ -713,7 +711,8 @@ std::string SaveSystem::SlotPath(int slot) const {
 bool SaveSystem::Save(int slot, const SaveSnapshot& s) {
     Json j;
     try {
-    j["version"] = kSaveVersion;
+    j["format"] = kSaveFormat;
+    j["schemaRevision"] = kSaveSchemaRevision;
     j["scriptPath"] = s.scriptPath;
     j["pc"] = s.pc;
     j["chapter"] = s.chapter;
@@ -756,7 +755,7 @@ std::optional<SaveSnapshot> SaveSystem::Load(int slot) const {
     }
     const Json& j = *json;
     const std::string path=SlotPath(slot);
-    if(!HasSupportedHeader(j)){SaveLoadError(path,"Unsupported or corrupt save version");return std::nullopt;}
+    if(!HasSupportedHeader(j)){SaveLoadError(path,"Unsupported or corrupt save schema");return std::nullopt;}
     try {
         SaveSnapshot s;
         s.scriptPath = j.value("scriptPath", std::string{});
@@ -832,7 +831,7 @@ SlotInfo SaveSystem::Peek(int slot) const {
     }
     const Json& j = *json;
     const std::string path=SlotPath(slot);
-    if(!HasSupportedHeader(j)){SaveLoadError(path,"Unsupported or corrupt save version");return info;}
+    if(!HasSupportedHeader(j)){SaveLoadError(path,"Unsupported or corrupt save schema");return info;}
     try {
         info.chapter = j.value("chapter", std::string{});
         info.timestamp = j.value("timestamp", std::uint64_t{ 0 });

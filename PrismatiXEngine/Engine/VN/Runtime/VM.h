@@ -132,6 +132,7 @@ public:
 
     bool LoadScript(const std::string& scriptPath);
     bool LoadScenarioText(std::string_view text, const std::string& scriptPath);
+    bool LoadCompiledProgram(Program program, const std::string& scriptPath);
     void Update(std::uint64_t nowMs, float dt);
     void OnAdvance();
     void SelectChoice(int index);

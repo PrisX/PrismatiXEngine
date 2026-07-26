@@ -12,7 +12,10 @@ bool GameSettings::Load(const std::string& path, const crypto::Key* key) {
         return false;
     }
     const Json& j = *json;
-    if(j.value("format",std::string{})!="PrismatiXSettings"||j.value("version",0)!=4)return false;
+    if (j.value("format", std::string{}) != "PrismatiXSettings" ||
+        j.value("schemaRevision", 0) != 1) {
+        return false;
+    }
     bgmVolume = j.value("bgmVolume", bgmVolume);
     seVolume = j.value("seVolume", seVolume);
     voiceVolume = j.value("voiceVolume", voiceVolume);
@@ -24,14 +27,17 @@ bool GameSettings::Load(const std::string& path, const crypto::Key* key) {
     windowWidth = j.value("windowWidth", windowWidth);
     windowHeight = j.value("windowHeight", windowHeight);
     language = j.value("language", language);
-    textScale = std::clamp(j.value("textScale", textScale),0.75f,2.0f);
-    highContrast=j.at("highContrast").get<bool>();reducedMotion=j.at("reducedMotion").get<bool>();selfVoicing=j.at("selfVoicing").get<bool>();
+    textScale = std::clamp(j.value("textScale", textScale), 0.75f, 2.0f);
+    highContrast = j.value("highContrast", highContrast);
+    reducedMotion = j.value("reducedMotion", reducedMotion);
+    selfVoicing = j.value("selfVoicing", selfVoicing);
     return true;
 }
 
 bool GameSettings::Save(const std::string& path, const crypto::Key* key) const {
     Json j;
-    j["format"]="PrismatiXSettings";j["version"]=4;
+    j["format"] = "PrismatiXSettings";
+    j["schemaRevision"] = 1;
     j["bgmVolume"] = bgmVolume;
     j["seVolume"] = seVolume;
     j["voiceVolume"] = voiceVolume;
@@ -43,7 +49,10 @@ bool GameSettings::Save(const std::string& path, const crypto::Key* key) const {
     j["windowWidth"] = windowWidth;
     j["windowHeight"] = windowHeight;
     j["language"] = language;
-    j["textScale"]=textScale;j["highContrast"]=highContrast;j["reducedMotion"]=reducedMotion;j["selfVoicing"]=selfVoicing;
+    j["textScale"] = textScale;
+    j["highContrast"] = highContrast;
+    j["reducedMotion"] = reducedMotion;
+    j["selfVoicing"] = selfVoicing;
     return SaveJson(path, j, key);
 }
 

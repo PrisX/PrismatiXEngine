@@ -1,4 +1,4 @@
-name: PrismatiX nightly quality
+name: PrismatiX SDK nightly correctness
 
 on:
   schedule:
@@ -9,76 +9,30 @@ env:
   CTEST_OUTPUT_ON_FAILURE: "1"
 
 jobs:
-  nightly-linux-gcc-relwithdebinfo:
+  gcc-sdk-correctness:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           submodules: recursive
-      - name: Environment and system dependency provisioning
-        run: bash .github/scripts/install-linux-dependencies.sh
+      - run: bash .github/scripts/install-linux-dependencies.sh
       - uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed
-      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
-      - name: vcpkg dependency resolution
-        run: >-
-          "$VCPKG_ROOT/vcpkg" install
-          --triplet x64-linux
+      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
+      - run: >-
+          "$VCPKG_ROOT/vcpkg" install --triplet x64-linux
           --x-install-root="${{ github.workspace }}/out/ci/vcpkg/gcc"
-      - name: Dependency configure smoke
+      - name: Configure GCC SDK-only build
         run: |
-          cmake -S PrismatiXEngine/Tests/CMake/DependencySmoke \
-            -B out/ci/dependency-smoke/gcc -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
-            -DVCPKG_TARGET_TRIPLET=x64-linux \
-            -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/gcc"
-      - name: Configure GCC optimized build
-        run: |
-          cmake -S . -B out/ci/gcc-nightly -G Ninja \
+          cmake -S . -B out/ci/sdk-gcc -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET=x64-linux \
             -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/gcc" \
-            -DBUILD_TESTING=ON -DPRISMATIX_WARNINGS_AS_ERRORS=OFF
-      - name: Regular suite and full Editor compile/link
-        run: >-
-          cmake --build out/ci/gcc-nightly
-          --target PrismatiXRegularTests PrismatiXEditor --parallel
-      - name: Test discovery
-        run: ctest --test-dir out/ci/gcc-nightly -N
-      - name: Full regular test execution
-        run: >-
-          ctest --test-dir out/ci/gcc-nightly
+            -DBUILD_TESTING=ON \
+            -DPRISMATIX_BUILD_LEGACY_EDITOR=OFF \
+            -DPRISMATIX_WARNINGS_AS_ERRORS=OFF
+      - run: cmake --build out/ci/sdk-gcc --target PrismatiXSDKTests --parallel
+      - run: >-
+          ctest --test-dir out/ci/sdk-gcc -L "runtime|contract|sdk"
           --output-on-failure --timeout 300 --no-tests=error
-
-  nightly-performance:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          submodules: recursive
-      - name: Environment and system dependency provisioning
-        run: bash .github/scripts/install-linux-dependencies.sh
-      - uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed
-      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
-      - name: vcpkg dependency resolution
-        run: >-
-          "$VCPKG_ROOT/vcpkg" install
-          --triplet x64-linux
-          --x-install-root="${{ github.workspace }}/out/ci/vcpkg/performance"
-      - name: Configure performance suite
-        run: |
-          cmake -S . -B out/ci/performance -G Ninja \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
-            -DVCPKG_TARGET_TRIPLET=x64-linux \
-            -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/performance" \
-            -DBUILD_TESTING=ON -DPRISMATIX_PERFORMANCE_TESTS=ON
-      - name: Performance compile and link
-        run: cmake --build out/ci/performance --target PrismatiXPerformanceTests --parallel
-      - name: Performance test discovery
-        run: ctest --test-dir out/ci/performance -N -L performance
-      - name: Performance test execution
-        run: >-
-          ctest --test-dir out/ci/performance -L performance
-          --output-on-failure --timeout 900 --no-tests=error

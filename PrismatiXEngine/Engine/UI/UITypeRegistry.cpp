@@ -7,6 +7,7 @@
 #include "Engine/UI/Widgets.h"
 
 #include <cstdint>
+#include <mutex>
 #include <string_view>
 #include <unordered_map>
 
@@ -211,8 +212,12 @@ bool ParseSizeFlag(const std::string_view text, SizeFlag& output) {
 }
 
 Status RegisterBuiltinUITypes() {
+    static std::mutex registrationMutex;
+    const std::lock_guard registrationLock(registrationMutex);
     auto& registry = TypeRegistry::Global();
-    if (registry.Find("Control")) return Status::Ok();
+    if (registry.Find("Button") &&
+        registry.FindProperty("Button", "opacity"))
+        return Status::Ok();
     Status combined;
     auto add = [&combined, &registry](TypeInfo type) {
         if (!type.designer) {

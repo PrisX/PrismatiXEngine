@@ -1,0 +1,11 @@
+{
+  "format": "PrismatiXSDKManifest",
+  "schemaRevision": 1,
+  "sdkVersion": "0.1.0",
+  "engineCommit": "@PRISMATIX_ENGINE_COMMIT@",
+  "contracts": {
+    "runtimeIr": "1",
+    "previewProtocol": "1",
+    "studioUi": "1"
+  }
+}

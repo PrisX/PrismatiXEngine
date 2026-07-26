@@ -1,4 +1,4 @@
-name: PrismatiX Quality Gate
+name: PrismatiX SDK Quality Gate
 
 on:
   push:
@@ -8,223 +8,142 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: quality-gate-${{ github.ref }}
+  group: sdk-quality-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   CTEST_OUTPUT_ON_FAILURE: "1"
 
 jobs:
-  architecture-gate:
+  sdk-architecture:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           submodules: recursive
-      - name: Architecture policy execution
-        run: >-
-          cmake
-          -DROOT="${{ github.workspace }}/PrismatiXEngine"
-          -P PrismatiXEngine/Tests/ArchitectureGate.cmake
+      - name: Runtime and SDK dependency boundary
+        run: cmake -DROOT="${{ github.workspace }}/PrismatiXEngine" -P PrismatiXEngine/Tests/SDKArchitectureGate.cmake
 
   linux-clang-sanitizer:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           submodules: recursive
-      - name: Environment and system dependency provisioning
-        run: bash .github/scripts/install-linux-dependencies.sh
-      - name: CMake and Ninja provisioning
-        uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed # latest resolved 2026-07-15
-      - name: vcpkg provisioning
-        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
-      - name: vcpkg dependency resolution
+      - run: bash .github/scripts/install-linux-dependencies.sh
+      - uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed
+      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
+      - name: Resolve dependencies
         run: >-
-          "$VCPKG_ROOT/vcpkg" install
-          --triplet x64-linux
+          "$VCPKG_ROOT/vcpkg" install --triplet x64-linux
           --x-install-root="${{ github.workspace }}/out/ci/vcpkg/clang"
-      - name: Toolchain verification
+      - name: Configure SDK-only sanitizer build
         run: |
-          cmake --version
-          ninja --version
-          clang++ --version
-          test -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
-          dpkg-query --show libltdl-dev
-      - name: Dependency configure smoke
-        run: |
-          cmake -S PrismatiXEngine/Tests/CMake/DependencySmoke \
-            -B out/ci/dependency-smoke/clang -G Ninja \
-            -DCMAKE_C_COMPILER=clang \
-            -DCMAKE_CXX_COMPILER=clang++ \
-            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
-            -DVCPKG_TARGET_TRIPLET=x64-linux \
-            -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/clang"
-      - name: Configure
-        run: |
-          cmake -S . -B out/ci/clang-sanitize -G Ninja \
+          cmake -S . -B out/ci/sdk-clang -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_C_COMPILER=clang \
-            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET=x64-linux \
             -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/clang" \
             -DBUILD_TESTING=ON \
+            -DPRISMATIX_BUILD_LEGACY_EDITOR=OFF \
             -DPRISMATIX_ENABLE_SANITIZERS=ON \
             -DPRISMATIX_WARNINGS_AS_ERRORS=OFF
-      - name: Core compile and link
-        run: >-
-          cmake --build out/ci/clang-sanitize
-          --target PrismatiXRequiredTests --parallel
-      - name: Test discovery
-        run: >-
-          ctest --test-dir out/ci/clang-sanitize -N
-          -L "unit|designer|contract|integration|architecture"
-          --no-tests=error
-      - name: Required test execution
+      - name: Compile Runtime SDK test surface
+        run: cmake --build out/ci/sdk-clang --target PrismatiXSDKTests --parallel
+      - name: Execute Runtime SDK tests
         env:
           ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:halt_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: >-
-          ctest --test-dir out/ci/clang-sanitize
-          -L "unit|designer|contract|integration|architecture"
+          ctest --test-dir out/ci/sdk-clang -L "runtime|contract|sdk"
           --output-on-failure --timeout 180 --no-tests=error
 
-  windows-msvc:
+  windows-msvc-sdk:
     runs-on: windows-latest
     steps:
-      - name: Checkout source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           submodules: recursive
-      - name: MSVC environment provisioning
-        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
         with:
           arch: x64
-      - name: CMake and Ninja provisioning
-        uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed # latest resolved 2026-07-15
-      - name: vcpkg provisioning
-        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
-      - name: vcpkg dependency resolution
+      - uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed
+      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
+      - name: Resolve dependencies
         shell: pwsh
         run: |
           $installRoot = Join-Path $env:GITHUB_WORKSPACE "out/ci/vcpkg/msvc"
           & "$env:VCPKG_ROOT/vcpkg.exe" install --triplet x64-windows "--x-install-root=$installRoot"
           if ($LASTEXITCODE -ne 0) { throw "vcpkg dependency resolution failed" }
-      - name: Toolchain verification
+      - name: Configure SDK-only MSVC build
         shell: pwsh
         run: |
-          cmake --version
-          ninja --version
-          cl.exe
-          $toolchain = Join-Path $env:VCPKG_ROOT "scripts/buildsystems/vcpkg.cmake"
-          if (-not (Test-Path -LiteralPath $toolchain)) { throw "Missing $toolchain" }
-      - name: Dependency configure smoke
-        shell: pwsh
-        run: |
-          cmake -S PrismatiXEngine/Tests/CMake/DependencySmoke `
-            -B out/ci/dependency-smoke/msvc -G Ninja `
-            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows `
-            "-DVCPKG_INSTALLED_DIR=$env:GITHUB_WORKSPACE/out/ci/vcpkg/msvc"
-          if ($LASTEXITCODE -ne 0) { throw "dependency configure smoke failed" }
-      - name: Configure
-        shell: pwsh
-        run: |
-          cmake -S . -B out/ci/msvc-relwithdebinfo -G Ninja `
+          cmake -S . -B out/ci/sdk-msvc -G Ninja `
             -DCMAKE_BUILD_TYPE=RelWithDebInfo `
             "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows `
             "-DVCPKG_INSTALLED_DIR=$env:GITHUB_WORKSPACE/out/ci/vcpkg/msvc" `
             -DBUILD_TESTING=ON `
+            -DPRISMATIX_BUILD_LEGACY_EDITOR=OFF `
             -DPRISMATIX_WARNINGS_AS_ERRORS=ON
-      - name: Regular test compile and link
+      - name: Compile Runtime, Player and SDK tests
+        run: cmake --build out/ci/sdk-msvc --target PrismatiXSDKTests --parallel
+      - name: Execute Runtime SDK tests
         run: >-
-          cmake --build out/ci/msvc-relwithdebinfo
-          --target PrismatiXRegularTests --parallel
-      - name: Test discovery
-        run: ctest --test-dir out/ci/msvc-relwithdebinfo -N
-      - name: Full regular test execution
-        run: >-
-          ctest --test-dir out/ci/msvc-relwithdebinfo
+          ctest --test-dir out/ci/sdk-msvc -L "runtime|contract|sdk"
           --output-on-failure --timeout 240 --no-tests=error
-      - name: Full Editor compile and link
-        run: >-
-          cmake --build out/ci/msvc-relwithdebinfo
-          --target PrismatiXEditor --parallel
-      - name: Editor asset preparation and packaging
-        run: >-
-          cmake --build out/ci/msvc-relwithdebinfo
-          --target PrismatiXPackageEditor --parallel
+      - name: Install distributable SDK and PreviewHost
+        run: cmake --install out/ci/sdk-msvc --prefix out/ci/sdk-package
+      - name: Validate installed SDK surface
+        shell: pwsh
+        run: |
+          $required = @(
+            "out/ci/sdk-package/include/PrismatiX/Engine/SDK/RuntimeIr.h",
+            "out/ci/sdk-package/PrismatiXSDKManifest.json",
+            "out/ci/sdk-package/lib/cmake/PrismatiXSDK/PrismatiXSDKConfig.cmake",
+            "out/ci/sdk-package/bin/PrismatiXPreviewHost.exe",
+            "out/ci/sdk-package/bin/SDL3.dll"
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "SDK artifact is missing $path"
+            }
+          }
+      - name: Publish pinned Windows SDK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PrismatiXSDK-Windows-x64-${{ github.sha }}
+          path: out/ci/sdk-package
+          if-no-files-found: error
+          retention-days: 14
 
-  macos-apple-clang:
+  macos-apple-clang-sdk:
     runs-on: macos-latest
     steps:
-      - name: Checkout source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           submodules: recursive
-      - name: Environment and system dependency provisioning
-        run: brew install autoconf automake libtool nasm pkg-config
-      - name: CMake and Ninja provisioning
-        uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed # latest resolved 2026-07-15
-      - name: vcpkg provisioning
-        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
-      - name: vcpkg dependency resolution
+      - run: brew install autoconf automake libtool nasm pkg-config
+      - uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed
+      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
+      - name: Resolve dependencies
         run: |
-          if [[ "$(uname -m)" == "arm64" ]]; then
-            triplet=arm64-osx
-          else
-            triplet=x64-osx
-          fi
+          if [[ "$(uname -m)" == "arm64" ]]; then triplet=arm64-osx; else triplet=x64-osx; fi
           echo "VCPKG_TARGET_TRIPLET=$triplet" >> "$GITHUB_ENV"
           "$VCPKG_ROOT/vcpkg" install --triplet "$triplet" \
             --x-install-root="${{ github.workspace }}/out/ci/vcpkg/apple-clang"
-      - name: SDL3_image WebP package contract diagnostics
+      - name: Configure SDK-only Apple Clang build
         run: |
-          share="${{ github.workspace }}/out/ci/vcpkg/apple-clang/$VCPKG_TARGET_TRIPLET/share/SDL3_image"
-          echo "runner=$(sw_vers -productVersion) arch=$(uname -m) triplet=$VCPKG_TARGET_TRIPLET"
-          clang++ --version
-          "$VCPKG_ROOT/vcpkg" version
-          test -f "$share/SDL3_imageConfig.cmake"
-          test -f "$share/Findwebp.cmake"
-          grep -n "find_dependency(webp)" "$share/SDL3_imageConfig.cmake"
-          grep -n "find_package_handle_standard_args(webp" "$share/Findwebp.cmake"
-      - name: Toolchain verification
-        run: |
-          cmake --version
-          ninja --version
-          clang++ --version
-          test -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
-      - name: Dependency configure smoke
-        run: |
-          cmake -S PrismatiXEngine/Tests/CMake/DependencySmoke \
-            -B out/ci/dependency-smoke/apple-clang -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
-            -DVCPKG_TARGET_TRIPLET="$VCPKG_TARGET_TRIPLET" \
-            -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/apple-clang"
-      - name: Configure Apple Clang
-        run: |
-          cmake -S . -B out/ci/apple-clang -G Ninja \
+          cmake -S . -B out/ci/sdk-apple-clang -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET="$VCPKG_TARGET_TRIPLET" \
             -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/apple-clang" \
             -DBUILD_TESTING=ON \
+            -DPRISMATIX_BUILD_LEGACY_EDITOR=OFF \
             -DPRISMATIX_WARNINGS_AS_ERRORS=OFF
-      - name: Regular compile and link
-        run: >-
-          cmake --build out/ci/apple-clang
-          --target PrismatiXRegularTests --parallel
-      - name: Test discovery
-        run: ctest --test-dir out/ci/apple-clang -N
-      - name: Full regular test execution
-        run: >-
-          ctest --test-dir out/ci/apple-clang
+      - run: cmake --build out/ci/sdk-apple-clang --target PrismatiXSDKTests --parallel
+      - run: >-
+          ctest --test-dir out/ci/sdk-apple-clang -L "runtime|contract|sdk"
           --output-on-failure --timeout 300 --no-tests=error
-      - name: Full Editor compile and link
-        run: >-
-          cmake --build out/ci/apple-clang
-          --target PrismatiXEditor --parallel

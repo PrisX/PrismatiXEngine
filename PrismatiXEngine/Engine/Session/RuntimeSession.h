@@ -56,6 +56,8 @@ public:
     bool StartScenario(const std::string& scriptPath, bool resetVariables = true);
     bool StartScenarioText(std::string_view text, const std::string& scriptPath,
                            bool resetVariables = true);
+    bool StartRuntimeIrText(std::string_view text, const std::string& sourcePath,
+                            bool resetVariables = true);
     void Update(std::uint64_t nowMs, float deltaSeconds);
     void Advance();
     void SelectChoice(int index);

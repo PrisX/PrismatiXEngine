@@ -1,0 +1,2 @@
+{"protocol":"PrismatiXPreviewProtocol","schemaRevision":1,"type":"hello","requestId":"hello-smoke"}
+{"protocol":"PrismatiXPreviewProtocol","schemaRevision":1,"type":"shutdown","requestId":"shutdown-smoke"}

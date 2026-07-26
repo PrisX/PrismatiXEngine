@@ -1,4 +1,6 @@
 #include "Engine/Session/RuntimeSession.h"
+#include "Engine/Session/RuntimeIrAdapter.h"
+#include "Engine/SDK/RuntimeIr.h"
 
 #include "Engine/Diagnostics/Diagnostic.h"
 
@@ -163,6 +165,18 @@ bool RuntimeSession::StartScenarioText(const std::string_view text,
     m_backlog.Clear();
     if (resetVariables) m_variables.Reset(false);
     return m_vm.LoadScenarioText(text, scriptPath);
+}
+
+bool RuntimeSession::StartRuntimeIrText(const std::string_view text,
+                                        const std::string& sourcePath,
+                                        const bool resetVariables) {
+    const sdk::RuntimeIrParseResult parsed = sdk::ParseRuntimeIr(text);
+    if (!parsed.Valid()) return false;
+    m_stage.ClearAll();
+    m_dialogue.Clear();
+    m_backlog.Clear();
+    if (resetVariables) m_variables.Reset(false);
+    return m_vm.LoadCompiledProgram(CompileRuntimeIr(parsed.document), sourcePath);
 }
 
 void RuntimeSession::Update(const std::uint64_t nowMs, const float deltaSeconds) {
