@@ -2,8 +2,10 @@
 
 #include "Engine/Support/Logger.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 
 namespace px::io {
 
@@ -34,7 +36,8 @@ void VFS::Clear() {
 
 bool VFS::Exists(std::string_view path) const {
     for (const std::string& dir : m_dirs) {
-        if (std::filesystem::exists(Join(dir, path))) {
+        std::error_code error;
+        if (std::filesystem::is_regular_file(Join(dir, path), error) && !error) {
             return true;
         }
     }
@@ -49,14 +52,28 @@ bool VFS::Exists(std::string_view path) const {
 std::optional<Bytes> VFS::Read(std::string_view path) const {
     for (const std::string& dir : m_dirs) {
         const std::filesystem::path full = Join(dir, path);
+        std::error_code error;
+        if (!std::filesystem::is_regular_file(full, error) || error) continue;
         std::ifstream in(full, std::ios::binary | std::ios::ate);
-        if (in) {
-            const std::streamsize size = in.tellg();
-            in.seekg(0, std::ios::beg);
-            Bytes data(static_cast<std::size_t>(size));
-            if (in.read(reinterpret_cast<char*>(data.data()), size)) {
-                return data;
-            }
+        if (!in) continue;
+        const std::streamoff length = static_cast<std::streamoff>(in.tellg());
+        if (length < 0 ||
+            static_cast<std::uintmax_t>(length) >
+                static_cast<std::uintmax_t>(
+                    std::numeric_limits<std::size_t>::max()) ||
+            static_cast<std::uintmax_t>(length) >
+                static_cast<std::uintmax_t>(
+                    std::numeric_limits<std::streamsize>::max())) {
+            continue;
+        }
+        in.seekg(0, std::ios::beg);
+        if (!in) continue;
+        Bytes data(static_cast<std::size_t>(length));
+        if (data.empty()) return data;
+        const auto size = static_cast<std::streamsize>(data.size());
+        if (in.read(reinterpret_cast<char*>(data.data()), size) &&
+            in.gcount() == size) {
+            return data;
         }
     }
     for (const auto& archive : m_archives) {

@@ -519,7 +519,7 @@ public:
           m_disabledOpacity(appearance.disabledOpacity) {}
 
 protected:
-    void DrawSelf(graphics::Renderer2D& renderer, const Theme&) override {
+    void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) override {
         Color fill = Hovered() ? m_hover : m_background;
         if (!Enabled()) fill.a = static_cast<std::uint8_t>(fill.a * m_disabledOpacity);
         renderer.DrawRoundedRect(LayoutRect(), 6.0f, fill);
@@ -529,7 +529,9 @@ protected:
         textArea.w = std::max(0.0f, textArea.w - 24.0f);
         Color textColor = m_text;
         if (!Enabled()) textColor.a = static_cast<std::uint8_t>(textColor.a * m_disabledOpacity);
-        renderer.DrawTextInRect(Text(), textArea, {}, 24, textColor,
+        const auto style = theme.Resolve(*this);
+        renderer.DrawTextInRect(Text(), textArea, style.font, style.fontSize,
+                                textColor,
                                 graphics::HorizontalAlignment::Center,
                                 graphics::VerticalAlignment::Center, false);
     }

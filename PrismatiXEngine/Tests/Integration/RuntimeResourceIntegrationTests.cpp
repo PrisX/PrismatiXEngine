@@ -62,6 +62,28 @@ void Run(const std::string_view name, void (*test)()) {
     }
 }
 
+void TestVfsRejectsDirectoriesAndReadsRegularFiles() {
+    px::test::TempDirectory fixture("vfs-directory-read");
+    std::ofstream(fixture.path / "empty.bin", std::ios::binary);
+    {
+        std::ofstream output(fixture.path / "payload.bin", std::ios::binary);
+        output << "payload";
+    }
+
+    px::io::VFS vfs;
+    vfs.MountDirectory(fixture.path.string());
+    Check(!vfs.Exists("") && !vfs.Read("").has_value(),
+          "VFS must not treat a mounted directory as a readable resource");
+    Check(!vfs.Exists("missing.bin") && !vfs.Read("missing.bin").has_value(),
+          "VFS must report missing directory resources without allocating");
+    const auto empty = vfs.Read("empty.bin");
+    Check(empty.has_value() && empty->empty(),
+          "VFS must preserve empty regular files");
+    const auto payload = vfs.ReadText("payload.bin");
+    Check(payload.has_value() && *payload == "payload",
+          "VFS must read the complete regular-file payload");
+}
+
 
 void TestCjkRubyAndVerticalText() {
     const auto rich = px::text::ParseRubyMarkup("[ruby=かんじ]漢字[/ruby][br]測試");
@@ -329,6 +351,7 @@ void TestExpandedControlMetadataAndTransforms() {
 }  // namespace
 
 int main() {
+    Run("VFS_DirectoryAndRegularFileReads", TestVfsRejectsDirectoriesAndReadsRegularFiles);
     Run("Typography_CjkRubyVerticalText", TestCjkRubyAndVerticalText);
     Run("UIFormat_TokensAndComponents", TestTypedFormatV4TokensAndComponents);
     Run("Designer_ImageAndTextRuntimeProperties", TestDesignerImageAndTextProperties);
