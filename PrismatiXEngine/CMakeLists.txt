@@ -190,53 +190,6 @@ if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
     )
 endif()
 
-if(PRISMATIX_BUILD_LEGACY_EDITOR)
-    file(GLOB_RECURSE PRISMATIX_EDITOR_SOURCES CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/Editor/*.cpp"
-    )
-
-if(PRISMATIX_EDITOR_SOURCES)
-    add_executable(PrismatiXEditor Applications/EditorMain.cpp ${PRISMATIX_EDITOR_SOURCES})
-    target_include_directories(PrismatiXEditor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(PrismatiXEditor PRIVATE
-        PrismatiXRuntime
-        PrismatiXImGui
-    )
-    prismatix_configure_target(PrismatiXEditor)
-    if(WIN32)
-        target_link_libraries(PrismatiXEditor PRIVATE Ole32 Shell32 Dbghelp)
-    endif()
-
-    # Compile/link and distributable asset preparation are intentionally separate.
-    # A missing package resource must be reported as packaging, not as a C++ link
-    # or test-execution failure.
-    add_custom_target(PrismatiXPrepareEditorAssets
-        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets
-        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/HUD
-        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/Branding
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Fonts/NotoSansTC-Bold.ttf
-                $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/UIFont.ttf
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Editor/HUD/dialog-stage.png
-                $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/HUD/dialog-stage.png
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Editor/HUD/notice.png
-                $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/HUD/notice.png
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/PrismatiXEngine_Logo.png
-                $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/Branding/PrismatiXEngine_Logo.png
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/logo.wav
-                $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/Branding/logo.wav
-        COMMENT "Preparing versioned PrismatiX Editor assets"
-        VERBATIM
-    )
-    add_dependencies(PrismatiXPrepareEditorAssets PrismatiXEditor)
-    add_custom_target(PrismatiXPackageEditor DEPENDS PrismatiXPrepareEditorAssets)
-endif()
-endif()
-
 if(BUILD_TESTING)
     # Contract and integration tests use assert() as their executable test
     # primitive. Keep those checks active in Release/RelWithDebInfo quality
@@ -457,46 +410,6 @@ if(BUILD_TESTING)
     set_tests_properties(PrismatiX.Architecture.SDK PROPERTIES
                          LABELS "architecture;sdk")
 
-    if(PRISMATIX_BUILD_LEGACY_EDITOR)
-    add_test(NAME PrismatiX.Architecture.Gates
-             COMMAND ${CMAKE_COMMAND}
-                     -DROOT=${CMAKE_CURRENT_SOURCE_DIR}
-                     -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/ArchitectureGate.cmake)
-    set_tests_properties(PrismatiX.Architecture.Gates PROPERTIES LABELS "architecture")
-    add_executable(PrismatiXBuildE2ETests Tests/E2E/BuildPipelineE2ETests.cpp
-                   Editor/Build/BuildService.cpp Editor/Build/ExportProfile.cpp
-                   Editor/Project/ProjectService.cpp)
-    target_link_libraries(PrismatiXBuildE2ETests PRIVATE PrismatiXRuntime)
-    prismatix_configure_target(PrismatiXBuildE2ETests)
-    add_dependencies(PrismatiXBuildE2ETests PrismatiXPlayer)
-    add_custom_target(PrismatiXPrepareBuildE2EAssets
-        COMMAND ${CMAKE_COMMAND} -E make_directory
-                $<TARGET_FILE_DIR:PrismatiXBuildE2ETests>/EditorAssets/HUD
-        COMMAND ${CMAKE_COMMAND} -E make_directory
-                $<TARGET_FILE_DIR:PrismatiXBuildE2ETests>/EditorAssets/Branding
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Fonts/NotoSansTC-Bold.ttf
-                $<TARGET_FILE_DIR:PrismatiXBuildE2ETests>/EditorAssets/UIFont.ttf
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Editor/HUD/dialog-stage.png
-                $<TARGET_FILE_DIR:PrismatiXBuildE2ETests>/EditorAssets/HUD/dialog-stage.png
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Editor/HUD/notice.png
-                $<TARGET_FILE_DIR:PrismatiXBuildE2ETests>/EditorAssets/HUD/notice.png
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/PrismatiXEngine_Logo.png
-                $<TARGET_FILE_DIR:PrismatiXBuildE2ETests>/EditorAssets/Branding/PrismatiXEngine_Logo.png
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/logo.wav
-                $<TARGET_FILE_DIR:PrismatiXBuildE2ETests>/EditorAssets/Branding/logo.wav
-        COMMENT "Preparing versioned Build E2E fixture assets"
-        VERBATIM
-    )
-    add_dependencies(PrismatiXBuildE2ETests PrismatiXPrepareBuildE2EAssets)
-    add_test(NAME PrismatiX.Build.E2E COMMAND PrismatiXBuildE2ETests)
-    set_tests_properties(PrismatiX.Build.E2E PROPERTIES LABELS "e2e")
-    endif()
-
     add_custom_target(PrismatiXSDKTests DEPENDS
         PrismatiXPackager
         PrismatiXUiTypeRegistryManifest
@@ -528,14 +441,8 @@ if(BUILD_TESTING)
                          PrismatiXPlayerCatalogNativeAcceptanceTests)
     endif()
 
-    if(PRISMATIX_BUILD_LEGACY_EDITOR)
-        add_custom_target(PrismatiXRequiredTests DEPENDS PrismatiXSDKTests)
-        add_custom_target(PrismatiXRegularTests DEPENDS
-            PrismatiXRequiredTests PrismatiXBuildE2ETests)
-    else()
-        add_custom_target(PrismatiXRequiredTests DEPENDS PrismatiXSDKTests)
-        add_custom_target(PrismatiXRegularTests DEPENDS PrismatiXRequiredTests)
-    endif()
+    add_custom_target(PrismatiXRequiredTests DEPENDS PrismatiXSDKTests)
+    add_custom_target(PrismatiXRegularTests DEPENDS PrismatiXRequiredTests)
 endif()
 
 if(PRISMATIX_BUILD_FUZZERS)

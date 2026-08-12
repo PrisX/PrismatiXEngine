@@ -48,7 +48,6 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=x64-linux \
             -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/clang" \
             -DBUILD_TESTING=ON \
-            -DPRISMATIX_BUILD_LEGACY_EDITOR=OFF \
             -DPRISMATIX_ENABLE_SANITIZERS=ON \
             -DPRISMATIX_WARNINGS_AS_ERRORS=OFF
       - name: Compile Runtime SDK test surface
@@ -91,7 +90,6 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=x64-windows `
             "-DVCPKG_INSTALLED_DIR=$env:GITHUB_WORKSPACE/out/ci/vcpkg/msvc" `
             -DBUILD_TESTING=ON `
-            -DPRISMATIX_BUILD_LEGACY_EDITOR=OFF `
             -DPRISMATIX_WARNINGS_AS_ERRORS=ON
       - name: Compile Runtime, Player and SDK tests
         run: cmake --build out/ci/sdk-msvc --target PrismatiXSDKTests --parallel
@@ -159,7 +157,6 @@ jobs:
             -DVCPKG_TARGET_TRIPLET="$VCPKG_TARGET_TRIPLET" \
             -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/apple-clang" \
             -DBUILD_TESTING=ON \
-            -DPRISMATIX_BUILD_LEGACY_EDITOR=OFF \
             -DPRISMATIX_WARNINGS_AS_ERRORS=OFF
       - run: cmake --build out/ci/sdk-apple-clang --target PrismatiXSDKTests --parallel
       - run: >-

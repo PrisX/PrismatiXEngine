@@ -18,8 +18,8 @@ file(READ "${ROOT}/CMakeLists.txt" PROJECT_CMAKE)
 if(NOT PROJECT_CMAKE MATCHES "add_custom_target\\(PrismatiXSDKTests")
     list(APPEND VIOLATIONS "CMakeLists.txt: PrismatiXSDKTests target is missing")
 endif()
-if(NOT PROJECT_CMAKE MATCHES "PRISMATIX_BUILD_LEGACY_EDITOR")
-    list(APPEND VIOLATIONS "CMakeLists.txt: legacy Editor cannot be disabled for SDK builds")
+if(PROJECT_CMAKE MATCHES "PRISMATIX_BUILD_LEGACY_EDITOR|PrismatiXEditor|PrismatiXPackageEditor")
+    list(APPEND VIOLATIONS "CMakeLists.txt: deleted Legacy Editor wiring remains")
 endif()
 
 if(VIOLATIONS)
@@ -28,4 +28,3 @@ if(VIOLATIONS)
 endif()
 
 message(STATUS "PrismatiX SDK architecture gate passed")
-

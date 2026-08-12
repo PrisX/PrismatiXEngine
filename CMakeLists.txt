@@ -14,7 +14,6 @@ option(PRISMATIX_WARNINGS_AS_ERRORS "Treat compiler warnings as release-blocking
 option(PRISMATIX_BUILD_FUZZERS "Build libFuzzer parser targets" OFF)
 option(PRISMATIX_PERFORMANCE_TESTS "Enable scheduled large-scene performance scenarios" OFF)
 option(PRISMATIX_STRESS_TESTS "Enable long-running performance and 50,000-asset stress tests" OFF)
-option(PRISMATIX_BUILD_LEGACY_EDITOR "Build the legacy C++ editor while its reference behavior is migrated to PrismatiXStudio" ON)
 
 function(prismatix_configure_target target)
     if(MSVC)
@@ -114,7 +113,6 @@ FetchContent_MakeAvailable(sol2)
 find_package(Lua 5.4 REQUIRED)
 
 # Subdirectories
-add_subdirectory("ThirdParty")
 add_subdirectory("PrismatiXEngine")
 
 # Formatting helper
