@@ -1,0 +1,49 @@
+{
+  "format": "PrismatiXPerformance",
+  "schemaRevision": 1,
+  "sceneId": "74747474-7474-4474-8474-747474747474",
+  "revision": 2,
+  "stage": {
+    "safeArea": 0.9,
+    "gridSize": 16,
+    "snapEnabled": true,
+    "nodes": [{
+      "id": "75757575-7575-4575-8575-757575757575",
+      "kind": "character",
+      "name": "Rin moved",
+      "assetId": "33333333-3333-4333-8333-333333333333",
+      "characterId": null,
+      "x": 20,
+      "y": 24,
+      "scaleX": 1,
+      "scaleY": 1,
+      "rotation": 0,
+      "anchorX": 0.5,
+      "anchorY": 1,
+      "opacity": 0.8,
+      "zOrder": 2,
+      "visible": true
+    }]
+  },
+  "timeline": {
+    "duration": 10,
+    "frameRate": 60,
+    "tracks": [{
+      "id": "76767676-7676-4676-8676-767676767676",
+      "kind": "characterTransform",
+      "name": "Rin Transform",
+      "targetId": "75757575-7575-4575-8575-757575757575",
+      "muted": false,
+      "locked": false,
+      "clips": [],
+      "keyframes": [{
+        "id": "77777777-7676-4676-8676-767676767676",
+        "time": 0,
+        "property": "x",
+        "value": 40,
+        "curve": "linear"
+      }]
+    }],
+    "markers": []
+  }
+}

@@ -41,7 +41,9 @@ struct StudioUiRuntimeTree {
 
 using StudioUiAssetResolver =
     std::function<std::optional<std::string>(std::string_view assetId)>;
-using StudioUiActionSink = std::function<void(const sdk::StudioUiAction& action)>;
+using StudioUiActionSink =
+    std::function<void(const sdk::StudioUiAction& action,
+                       std::string_view signal, std::string_view nodeId)>;
 
 // Converts the public SDK contract into actual Runtime UI Controls. This is a
 // Runtime adapter; Studio's JSON contract remains independent of Engine UI

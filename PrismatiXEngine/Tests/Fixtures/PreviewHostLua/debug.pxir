@@ -1,0 +1,30 @@
+{
+  "format": "PrismatiXRuntimeIR",
+  "schemaRevision": 1,
+  "documentId": "lua-debug-document",
+  "committedRevision": 1,
+  "operations": [
+    {
+      "operationId": "intro-operation",
+      "sourceId": "intro-source",
+      "sourceLine": 1,
+      "kind": "dialogue",
+      "text": "Debugger fixture",
+      "arguments": {
+        "speaker": "Test",
+        "text": "Debugger fixture"
+      }
+    },
+    {
+      "operationId": "action-operation",
+      "sourceId": "action-source",
+      "sourceLine": 2,
+      "kind": "customNode",
+      "text": "Run debug command",
+      "arguments": {
+        "type": "debug.command",
+        "value": "{\"amount\":2,\"asset\":{\"uuid\":\"33333333-3333-4333-8333-333333333333\",\"kind\":\"character\",\"name\":\"Rin\"}}"
+      }
+    }
+  ]
+}

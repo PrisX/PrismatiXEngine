@@ -2,6 +2,8 @@
 
 #include "Engine/Core/Result.h"
 #include "Engine/Resources/ResourceRef.h"
+#include "Engine/SDK/CharacterResources.h"
+#include "Engine/SDK/GameCatalogResources.h"
 
 #include <optional>
 #include <string>
@@ -14,21 +16,52 @@ struct CatalogVariable { std::string name; int defaultValue=0; bool persistent=f
 struct CatalogCharacterExpression {
     std::string id;
     std::string name;
+    std::vector<std::string> aliases;
     ResourceRefValue image;
 };
 struct CatalogCharacter {
     std::string id;
     std::string name;
+    std::vector<std::string> aliases;
     std::string voiceDirectory;
     std::string defaultExpression;
     std::vector<CatalogCharacterExpression> expressions;
 };
-struct CatalogGalleryItem { std::string id; std::string title; std::string image; std::string thumbnail; };
+struct CatalogGalleryItem {
+    std::string id;
+    std::string title;
+    // Resolved paths remain the presentation-facing compatibility surface;
+    // identity is carried separately and always comes from the manifest UUID.
+    std::string image;
+    std::string thumbnail;
+    ResourceRefValue imageReference;
+    std::optional<ResourceRefValue> thumbnailReference;
+};
 struct CatalogInputBinding { std::string key; std::string command; std::string argument; };
 
 class GameCatalog {
 public:
     Status Load(std::string_view typedResource, const std::string& sourcePath = {});
+    // Loads only the post-character-migration runtime entries. Character state
+    // is preserved so characterResources and the residual Game.pxres can be
+    // composed without creating two character authorities.
+    Status LoadRuntimeResources(
+        std::string_view typedResource,
+        const std::string& sourcePath = "Content/Game.pxres",
+        sdk::LegacyGameCatalogPolicy legacyPolicy =
+            sdk::LegacyGameCatalogPolicy::RejectCharacterNodes,
+        sdk::LegacyGalleryReferencePolicy galleryPolicy =
+            sdk::LegacyGalleryReferencePolicy::RejectPathStrings,
+        std::string_view projectManifest = {},
+        const sdk::GameCatalogResourceExists& exists = {});
+    // Replaces only Character semantics from the public characterResources
+    // contract. Variables, gallery items, and input bindings already loaded
+    // from an optional legacy Game.pxres remain intact during migration.
+    Status LoadCharacterResources(
+        std::string_view projectManifest,
+        const sdk::CharacterResourceReadText& readText,
+        const sdk::CharacterResourceExists& exists,
+        bool& declared);
     [[nodiscard]] const std::vector<CatalogVariable>& Variables() const { return m_variables; }
     [[nodiscard]] const std::vector<CatalogCharacter>& Characters() const { return m_characters; }
     [[nodiscard]] const std::vector<CatalogGalleryItem>& Gallery() const { return m_gallery; }

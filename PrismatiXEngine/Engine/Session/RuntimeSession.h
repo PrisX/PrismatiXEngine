@@ -56,8 +56,13 @@ public:
     bool StartScenario(const std::string& scriptPath, bool resetVariables = true);
     bool StartScenarioText(std::string_view text, const std::string& scriptPath,
                            bool resetVariables = true);
+    bool StartRuntimeIr(const std::string& sourcePath,
+                        bool resetVariables = true);
     bool StartRuntimeIrText(std::string_view text, const std::string& sourcePath,
                             bool resetVariables = true);
+    [[nodiscard]] const std::vector<diag::Diagnostic>& LastStartDiagnostics() const {
+        return m_lastStartDiagnostics;
+    }
     void Update(std::uint64_t nowMs, float deltaSeconds);
     void Advance();
     void SelectChoice(int index);
@@ -116,6 +121,7 @@ private:
     std::function<Status(const ui::BehaviorRuntimeState&)> m_restoreBehaviorState;
     std::optional<animation::PlaybackHandle> m_awaitingTimeline;
     bool m_externalResumePending = false;
+    std::vector<diag::Diagnostic> m_lastStartDiagnostics;
 
     bool ExecuteCommand(const vn::Command& command);
 };

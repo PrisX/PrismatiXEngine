@@ -89,6 +89,21 @@ const PropertyInfo* TypeRegistry::FindProperty(const std::string& type,
     return nullptr;
 }
 
+std::vector<const PropertyInfo*> TypeRegistry::PropertiesForType(
+    const std::string& type) const {
+    std::lock_guard lock(m_mutex);
+    std::vector<const PropertyInfo*> result;
+    std::unordered_set<std::string> seen;
+    auto it = m_types.find(type);
+    while (it != m_types.end()) {
+        for (const PropertyInfo& property : it->second.properties)
+            if (seen.insert(property.name).second) result.push_back(&property);
+        if (it->second.base.empty()) break;
+        it = m_types.find(it->second.base);
+    }
+    return result;
+}
+
 std::unique_ptr<Object> TypeRegistry::Create(const std::string& type) const {
     std::lock_guard lock(m_mutex);
     auto it = m_types.find(type);

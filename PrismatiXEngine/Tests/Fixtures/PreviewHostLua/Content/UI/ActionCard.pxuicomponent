@@ -1,0 +1,42 @@
+{
+  "format": "PrismatiXUIComponent",
+  "schemaRevision": 1,
+  "id": "61616161-6161-4161-8161-616161616161",
+  "revision": 3,
+  "name": "ActionCard",
+  "width": 420,
+  "height": 220,
+  "rootId": "62626262-6262-4262-8262-626262626262",
+  "nodes": [
+    {
+      "id": "62626262-6262-4262-8262-626262626262", "parentId": null, "order": 0,
+      "kind": "group", "name": "Card", "visible": true, "locked": false,
+      "layout": {"mode":"free","x":0,"y":0,"width":420,"height":220,"anchorX":0,"anchorY":0,"pivotX":0,"pivotY":0,"margin":0,"alignment":"start","sizeRule":"fixed"},
+      "content": {"text":"","assetId":null},
+      "appearance": {"backgroundColor":"#202030","textColor":"#FFFFFF","opacity":1,"styleToken":null,"hoverBackgroundColor":null,"focusColor":null,"disabledOpacity":0.5},
+      "interaction": {"onClick":null}, "accessibility": {"label":"Card","role":"group"}
+    },
+    {
+      "id": "63636363-6363-4363-8363-636363636363", "parentId": "62626262-6262-4262-8262-626262626262", "order": 0,
+      "kind": "button", "name": "Action", "visible": true, "locked": false,
+      "layout": {"mode":"free","x":20,"y":20,"width":180,"height":48,"anchorX":0,"anchorY":0,"pivotX":0,"pivotY":0,"margin":0,"alignment":"start","sizeRule":"fixed"},
+      "content": {"text":"Default","assetId":null},
+      "appearance": {"backgroundColor":"#F052A0","textColor":"#FFFFFF","opacity":1,"styleToken":null,"hoverBackgroundColor":null,"focusColor":null,"disabledOpacity":0.5},
+      "interaction": {"onClick":null}, "accessibility": {"label":"Action","role":"button"}
+    },
+    {
+      "id": "64646464-6464-4464-8464-646464646464", "parentId": "62626262-6262-4262-8262-626262626262", "order": 1,
+      "kind": "vbox", "name": "Content", "visible": true, "locked": false,
+      "layout": {"mode":"free","x":20,"y":88,"width":380,"height":112,"anchorX":0,"anchorY":0,"pivotX":0,"pivotY":0,"margin":0,"alignment":"start","sizeRule":"fixed"},
+      "content": {"text":"","assetId":null},
+      "appearance": {"backgroundColor":"#00000000","textColor":"#FFFFFF","opacity":1,"styleToken":null,"hoverBackgroundColor":null,"focusColor":null,"disabledOpacity":0.5},
+      "interaction": {"onClick":null}, "accessibility": {"label":"Content","role":"group"}
+    }
+  ],
+  "theme": [],
+  "componentInterface": {
+    "properties": [{"id":"caption","displayName":"Caption","nodeId":"63636363-6363-4363-8363-636363636363","property":"content.text","valueType":"string","defaultValue":"Default"}],
+    "signals": [{"id":"accepted","displayName":"Accepted","nodeId":"63636363-6363-4363-8363-636363636363","signal":"activated","arguments":[]}],
+    "slots": [{"id":"content","displayName":"Content","nodeId":"64646464-6464-4464-8464-646464646464"}]
+  }
+}

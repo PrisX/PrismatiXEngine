@@ -72,6 +72,8 @@ public:
     [[nodiscard]] ActionExecutionState State(ActionExecutionId execution) const;
     [[nodiscard]] Status Failure(ActionExecutionId execution) const;
     Status Cancel(ActionExecutionId execution);
+    void CancelAll();
+    void CancelSource(std::string_view sourceScene);
     void Forget(ActionExecutionId execution);
     void Update(float deltaSeconds);
     [[nodiscard]] std::vector<ActionExecutionCheckpoint> CaptureState() const;

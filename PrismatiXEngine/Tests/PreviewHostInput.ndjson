@@ -1,2 +1,3 @@
-{"protocol":"PrismatiXPreviewProtocol","schemaRevision":1,"type":"hello","requestId":"hello-smoke"}
-{"protocol":"PrismatiXPreviewProtocol","schemaRevision":1,"type":"shutdown","requestId":"shutdown-smoke"}
+{"protocol":"PrismatiXPreviewProtocol","schemaRevision":1,"protocolVersion":1,"type":"hello","sessionId":"smoke-session","requestId":"hello-smoke","documentId":"","revision":0}
+{"protocol":"PrismatiXPreviewProtocol","schemaRevision":1,"protocolVersion":1,"type":"play","sessionId":"smoke-session","requestId":"play-smoke","documentId":"document-smoke","revision":7}
+{"protocol":"PrismatiXPreviewProtocol","schemaRevision":1,"protocolVersion":1,"type":"shutdown","sessionId":"smoke-session","requestId":"shutdown-smoke","documentId":"","revision":0}

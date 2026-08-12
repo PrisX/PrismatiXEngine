@@ -1,8 +1,7 @@
 #pragma once
 
-#include "Editor/Assets/AssetDatabase.h"
-#include "Editor/Assets/EditorTextures.h"
 #include "Editor/Project/ProjectTypes.h"
+#include "Engine/Resources/AssetRegistry.h"
 #include "Engine/Resources/TypedDocument.h"
 #include "Engine/VN/GameCatalog.h"
 
@@ -15,8 +14,8 @@ class StoryLibrary {
 public:
     using ResourceResolver = std::function<std::optional<ResourceRefValue>(const std::string&)>;
 
-    Status Open(const ProjectContext* project, const AssetDatabase* assets,
-                EditorTextures* textures, ResourceResolver resolver);
+    Status Open(const ProjectContext* project, const resource::AssetRegistry* assets,
+                ResourceResolver resolver);
     void Close();
     void Render();
     bool Save();
@@ -47,8 +46,7 @@ private:
     [[nodiscard]] std::string CharacterIdError(const resource::NodeRecord& character) const;
 
     const ProjectContext* m_project = nullptr;
-    const AssetDatabase* m_assets = nullptr;
-    EditorTextures* m_textures = nullptr;
+    const resource::AssetRegistry* m_assetRegistry = nullptr;
     ResourceResolver m_resolver;
     resource::TypedDocument m_document;
     vn::GameCatalog m_catalog;

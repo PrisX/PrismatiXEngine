@@ -21,6 +21,9 @@ class UIContext {
 public:
     UIContext();
     Status SetRoot(std::unique_ptr<Control> root);
+    void SetBindings(std::vector<Binding> bindings) {
+        m_bindings = std::move(bindings);
+    }
     Status ConfigureTriggers(std::vector<TriggerBinding> triggers,
                              std::optional<BehaviorGraph> interactionGraph = std::nullopt,
                              std::string sourceScene = {});
@@ -67,6 +70,7 @@ private:
     void RenderDiagnosticOverlay(graphics::Renderer2D& renderer);
 
     std::unique_ptr<Control> m_root;
+    std::vector<Binding> m_bindings;
     std::unique_ptr<InputRouter> m_input;
     Theme m_theme;
     FormatterRegistry m_formatters;
@@ -74,6 +78,7 @@ private:
     ActionDispatcher m_actions;
     BehaviorGraphRunner m_behaviors;
     std::vector<TriggerBinding> m_triggerBindings;
+    std::string m_triggerSourceScene;
     std::function<std::optional<Variant>(std::string_view)> m_readBehaviorVariable;
     std::function<Status(std::string_view, const Variant&)> m_writeBehaviorVariable;
     std::function<Result<std::uint64_t>(std::string_view)> m_playExternalAnimation;

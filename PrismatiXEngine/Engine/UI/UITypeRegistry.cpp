@@ -334,6 +334,21 @@ Status RegisterBuiltinUITypes() {
         [](Object& o, Color v) { As<Control>(o)->SetModulate(v); return Status::Ok(); });
     modulate.editor.displayName = "調變色"; modulate.editor.description = "與元件及其子元件的最終顏色相乘。"; modulate.editor.tokenBindable = true;
     control.properties.push_back(std::move(modulate));
+    PropertyInfo styleToken{
+        "styleToken", "Theme", VariantType::TokenRef,
+        PropertyFlags::Editable | PropertyFlags::Serializable,
+        Variant(TokenRefValue{}),
+        [](const Object& o) { return Variant(As<Control>(o)->StyleToken()); },
+        [](Object& o, const Variant& value) {
+            const auto* token = value.TryGet<TokenRefValue>();
+            if (!token || token->name.empty())
+                return TypeError("styleToken expects a non-empty TokenRef");
+            As<Control>(o)->SetStyleToken(*token);
+            return Status::Ok();
+        }};
+    styleToken.editor.displayName = "Style token";
+    styleToken.editor.description = "Stable theme token identity used by this control.";
+    control.properties.push_back(std::move(styleToken));
     auto clipping = BoolProperty("clipContent", "Display", [](const Object& o) { return As<Control>(o)->ClipContent(); },
         [](Object& o, bool v) { As<Control>(o)->SetClipContent(v); return Status::Ok(); });
     clipping.editor.displayName = "裁切內容"; clipping.editor.description = "將子元件繪製結果限制在此元件的邊界內。";
@@ -419,6 +434,22 @@ Status RegisterBuiltinUITypes() {
     texturePath.flags = texturePath.flags | PropertyFlags::ResourcePath;
     texturePath.editor.displayName="Texture";texturePath.editor.resourceFilter="image";texturePath.editor.description="Image asset used by this TextureRect.";
     texture.properties.push_back(std::move(texturePath));
+    PropertyInfo textureReference{
+        "texture", "Content", VariantType::ResourceRef,
+        PropertyFlags::Editable | PropertyFlags::Serializable,
+        Variant(ResourceRefValue{}),
+        [](const Object& o) { return Variant(As<TextureRect>(o)->Texture()); },
+        [](Object& o, const Variant& value) {
+            const auto* reference = value.TryGet<ResourceRefValue>();
+            if (!reference)
+                return TypeError("texture expects a ResourceRef");
+            As<TextureRect>(o)->SetTexture(*reference);
+            return Status::Ok();
+        }};
+    textureReference.editor.displayName = "Texture asset";
+    textureReference.editor.description = "UUID-authoritative image resource.";
+    textureReference.editor.resourceFilter = "image";
+    texture.properties.push_back(std::move(textureReference));
     auto scaleMode=StringProperty("scaleMode","Display",[](const Object& o){switch(As<TextureRect>(o)->ScaleMode()){case TextureScaleMode::Fit:return std::string("Fit");case TextureScaleMode::Fill:return std::string("Fill");case TextureScaleMode::Original:return std::string("Original");default:return std::string("Stretch");}},[](Object& o,std::string v){if(v=="Stretch")As<TextureRect>(o)->SetScaleMode(TextureScaleMode::Stretch);else if(v=="Fit")As<TextureRect>(o)->SetScaleMode(TextureScaleMode::Fit);else if(v=="Fill")As<TextureRect>(o)->SetScaleMode(TextureScaleMode::Fill);else if(v=="Original")As<TextureRect>(o)->SetScaleMode(TextureScaleMode::Original);else return TypeError("scaleMode expects Stretch, Fit, Fill, or Original");return Status::Ok();});scaleMode.editor.displayName="Scale mode";scaleMode.editor.enumChoices={"Stretch","Fit","Fill","Original"};texture.properties.push_back(std::move(scaleMode));
     texture.properties.push_back(BoolProperty("lockAspectRatio","Layout",[](const Object& o){return As<TextureRect>(o)->LockAspectRatio();},[](Object& o,bool v){As<TextureRect>(o)->SetLockAspectRatio(v);return Status::Ok();}));
     auto textureH=StringProperty("horizontalAlignment","Display",[](const Object& o){switch(As<TextureRect>(o)->HorizontalAlignment()){case HorizontalTextAlignment::Left:return std::string("Left");case HorizontalTextAlignment::Right:return std::string("Right");default:return std::string("Center");}},[](Object& o,std::string v){if(v=="Left")As<TextureRect>(o)->SetHorizontalAlignment(HorizontalTextAlignment::Left);else if(v=="Center")As<TextureRect>(o)->SetHorizontalAlignment(HorizontalTextAlignment::Center);else if(v=="Right")As<TextureRect>(o)->SetHorizontalAlignment(HorizontalTextAlignment::Right);else return TypeError("horizontalAlignment expects Left, Center, or Right");return Status::Ok();});textureH.editor.displayName="Horizontal alignment";textureH.editor.enumChoices={"Left","Center","Right"};texture.properties.push_back(std::move(textureH));

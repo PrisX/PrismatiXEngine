@@ -21,6 +21,7 @@ enum class StudioUiNodeKind {
     VBox,
     Grid,
     Group,
+    Leaf,
 };
 
 enum class StudioUiLayoutMode { Free, Container };
@@ -33,6 +34,8 @@ struct StudioUiLayout {
     float height = 0.0f;
     float anchorX = 0.0f;
     float anchorY = 0.0f;
+    float anchorRight = 0.0f;
+    float anchorBottom = 0.0f;
     float pivotX = 0.0f;
     float pivotY = 0.0f;
     float margin = 0.0f;
@@ -70,10 +73,37 @@ struct StudioUiNodeReferenceValue {
     std::string nodeId;
 };
 
+// These wrappers keep semantic Runtime identities distinct from ordinary
+// authored strings. Array/object payloads remain bounded canonical JSON at the
+// dependency-free SDK boundary and are materialized as recursive Variant
+// values by StudioUiAdapter.
+struct StudioUiUuidValue {
+    std::string value;
+};
+
+struct StudioUiResourceValue {
+    std::string value;
+};
+
+struct StudioUiTokenValue {
+    std::string value;
+};
+
+struct StudioUiArrayValue {
+    std::string json;
+};
+
+struct StudioUiObjectValue {
+    std::string json;
+};
+
 using StudioUiValue = std::variant<std::monostate, bool, std::int64_t, double,
                                    std::string, StudioUiVec2Value,
                                    StudioUiRectValue, StudioUiColorValue,
-                                   StudioUiNodeReferenceValue>;
+                                   StudioUiNodeReferenceValue,
+                                   StudioUiUuidValue, StudioUiResourceValue,
+                                   StudioUiTokenValue, StudioUiArrayValue,
+                                   StudioUiObjectValue>;
 using StudioUiActionValue = StudioUiValue;
 
 struct StudioUiAction {
@@ -81,11 +111,96 @@ struct StudioUiAction {
     std::unordered_map<std::string, StudioUiActionValue> arguments;
 };
 
+enum class StudioUiComponentValueType {
+    Null,
+    Boolean,
+    Integer,
+    Number,
+    String,
+    Vec2,
+    Rect,
+    Color,
+    Uuid,
+    Resource,
+    Token,
+    Array,
+    Object,
+};
+
+// Public component values stay as canonical JSON at the SDK boundary. The
+// declared valueType remains authoritative and the shared application maps it
+// into the semantic StudioUiValue wrappers above before Runtime adaptation.
+struct StudioUiComponentPublicValue {
+    std::string json;
+};
+
+struct StudioUiComponentProperty {
+    std::string id;
+    std::string displayName;
+    std::string nodeId;
+    std::string property;
+    StudioUiComponentValueType valueType = StudioUiComponentValueType::Null;
+    StudioUiComponentPublicValue defaultValue;
+};
+
+struct StudioUiComponentSignalArgument {
+    std::string id;
+    StudioUiComponentValueType valueType = StudioUiComponentValueType::Null;
+};
+
+struct StudioUiComponentSignal {
+    std::string id;
+    std::string displayName;
+    std::string nodeId;
+    std::string signal;
+    std::vector<StudioUiComponentSignalArgument> arguments;
+};
+
+struct StudioUiComponentSlotDefinition {
+    std::string id;
+    std::string displayName;
+    std::string nodeId;
+};
+
+struct StudioUiComponentInterface {
+    std::vector<StudioUiComponentProperty> properties;
+    std::vector<StudioUiComponentSignal> signals;
+    std::vector<StudioUiComponentSlotDefinition> slots;
+};
+
+struct StudioUiComponentSignalBinding {
+    StudioUiAction action;
+    std::unordered_map<std::string, std::string> argumentBindings;
+};
+
 struct StudioUiComponentInstance {
     std::string componentId;
     std::string instanceRootId;
     std::string sourceNodeId;
+    std::vector<std::string> sourcePath;
     std::vector<std::string> overrides;
+    std::unordered_map<std::string, StudioUiComponentPublicValue>
+        publicProperties;
+    std::unordered_map<std::string,
+                       std::optional<StudioUiComponentSignalBinding>>
+        publicSignals;
+};
+
+struct StudioUiComponentSlot {
+    std::string instanceRootId;
+    std::string slotId;
+};
+
+struct StudioUiSignalActionBinding {
+    std::string signal;
+    StudioUiAction action;
+    std::vector<StudioUiComponentSignalArgument> arguments;
+    std::unordered_map<std::string, std::string> argumentBindings;
+};
+
+struct StudioUiPropertyBinding {
+    std::string path;
+    std::string formatter;
 };
 
 struct StudioUiNode {
@@ -93,6 +208,7 @@ struct StudioUiNode {
     std::optional<std::string> parentId;
     std::uint32_t order = 0;
     StudioUiNodeKind kind = StudioUiNodeKind::Control;
+    std::optional<std::string> runtimeType;
     std::string name;
     bool visible = true;
     bool locked = false;
@@ -103,7 +219,12 @@ struct StudioUiNode {
     std::optional<StudioUiAction> onClick;
     std::string accessibilityLabel;
     std::string accessibilityRole;
+    std::unordered_map<std::string, StudioUiValue> runtimeProperties;
+    std::unordered_map<std::string, StudioUiPropertyBinding> bindings;
     std::optional<StudioUiComponentInstance> componentInstance;
+    std::optional<StudioUiComponentSlot> componentSlot;
+    // Populated only by the component resolver before Runtime adaptation.
+    std::vector<StudioUiSignalActionBinding> resolvedSignalActions;
 };
 
 struct StudioUiThemeToken {
@@ -259,6 +380,7 @@ struct StudioUiAnimations {
 };
 
 struct StudioUiDocument {
+    std::uint32_t schemaRevision = 1;
     std::string id;
     std::uint64_t revision = 0;
     std::string name;
@@ -285,8 +407,25 @@ struct StudioUiParseResult {
     [[nodiscard]] bool Valid() const { return diagnostics.empty(); }
 };
 
+struct StudioUiComponentDocument {
+    StudioUiDocument content;
+    StudioUiComponentInterface componentInterface;
+};
+
+struct StudioUiComponentParseResult {
+    StudioUiComponentDocument document;
+    std::vector<StudioUiContractDiagnostic> diagnostics;
+
+    [[nodiscard]] bool Valid() const { return diagnostics.empty(); }
+};
+
 // Parses the named Studio UI contract. It intentionally does not accept or
 // translate the legacy Editor's numeric UI schema.
 [[nodiscard]] StudioUiParseResult ParseStudioUi(std::string_view json);
+
+// Parses the authoritative .pxuicomponent wire shape used by Studio. Scene
+// only Behavior/Animation fields are rejected rather than ignored.
+[[nodiscard]] StudioUiComponentParseResult ParseStudioUiComponent(
+    std::string_view json);
 
 }  // namespace px::sdk

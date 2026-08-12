@@ -1,0 +1,107 @@
+{
+  "format": "PrismatiXExtension",
+  "version": 4,
+  "id": "preview-debug-fixture",
+  "entry": "debug.lua",
+  "capabilities": ["runtime", "ui"],
+  "commands": [
+    {
+      "id": "debug.command",
+      "displayName": "Debug Command",
+      "category": "Tests",
+      "await": true,
+      "rollback": "boundary",
+      "parameters": [
+        {
+          "name": "amount",
+          "displayName": "Amount",
+          "description": "Typed numeric argument consumed by the Lua fixture.",
+          "type": "number",
+          "required": true,
+          "default": null,
+          "range": { "minimum": 0, "maximum": 10 }
+        },
+        {
+          "name": "mode",
+          "displayName": "Mode",
+          "type": "string",
+          "required": false,
+          "default": "preview",
+          "enum": ["preview", "player"],
+          "resourceFilter": "",
+          "editorHint": "enum",
+          "range": null
+        },
+        {
+          "name": "enabled",
+          "displayName": "Enabled",
+          "type": "bool",
+          "required": false,
+          "default": true,
+          "enum": [],
+          "resourceFilter": "",
+          "editorHint": "default",
+          "range": null
+        },
+        {
+          "name": "asset",
+          "displayName": "Asset",
+          "type": "resource",
+          "required": true,
+          "default": null,
+          "enum": [],
+          "resourceFilter": "image/*",
+          "editorHint": "resource",
+          "range": null
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "debug.typed-action",
+      "displayName": "Typed async Action",
+      "description": "Process-level PreviewHost Action fixture.",
+      "category": "Tests",
+      "reentry": "ignoreWhileRunning",
+      "capabilities": ["runtime", "ui"],
+      "destructiveInPreview": false,
+      "allowAdditionalArguments": false,
+      "parameters": [
+        {
+          "name": "amount",
+          "displayName": "Amount",
+          "type": "integer",
+          "required": true,
+          "default": null,
+          "enum": [],
+          "resourceFilter": "",
+          "editorHint": "default",
+          "range": { "minimum": 1, "maximum": 10 }
+        },
+        {
+          "name": "mode",
+          "displayName": "Mode",
+          "type": "string",
+          "required": false,
+          "default": "preview",
+          "enum": ["preview", "player"],
+          "resourceFilter": "",
+          "editorHint": "enum",
+          "range": null
+        },
+        {
+          "name": "enabled",
+          "displayName": "Enabled",
+          "type": "bool",
+          "required": false,
+          "default": true,
+          "enum": [],
+          "resourceFilter": "",
+          "editorHint": "default",
+          "range": null
+        }
+      ]
+    }
+  ]
+}

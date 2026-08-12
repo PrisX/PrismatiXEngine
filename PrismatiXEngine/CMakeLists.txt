@@ -15,6 +15,19 @@ if(NOT PRISMATIX_ENGINE_COMMIT_LENGTH EQUAL 40 OR
    NOT PRISMATIX_ENGINE_COMMIT MATCHES "^[0-9a-fA-F]+$")
     set(PRISMATIX_ENGINE_COMMIT "0000000000000000000000000000000000000000")
 endif()
+if(NOT DEFINED PRISMATIX_TARGET_TRIPLE OR PRISMATIX_TARGET_TRIPLE STREQUAL "")
+    if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(PRISMATIX_TARGET_TRIPLE "x86_64-pc-windows-msvc")
+    elseif(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
+        set(PRISMATIX_TARGET_TRIPLE "aarch64-apple-darwin")
+    elseif(APPLE)
+        set(PRISMATIX_TARGET_TRIPLE "x86_64-apple-darwin")
+    elseif(UNIX AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
+        set(PRISMATIX_TARGET_TRIPLE "aarch64-unknown-linux-gnu")
+    else()
+        set(PRISMATIX_TARGET_TRIPLE "x86_64-unknown-linux-gnu")
+    endif()
+endif()
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/PrismatiXSDKManifest.json.in"
     "${CMAKE_CURRENT_BINARY_DIR}/PrismatiXSDKManifest.json"
@@ -22,8 +35,12 @@ configure_file(
 )
 
 add_library(PrismatiXSDK STATIC
+    Engine/SDK/CharacterResources.cpp
+    Engine/SDK/GameCatalogResources.cpp
+    Engine/SDK/Packager.cpp
     Engine/SDK/RuntimeIr.cpp
     Engine/SDK/StudioUi.cpp
+    Engine/SDK/UiTypeRegistry.cpp
 )
 add_library(PrismatiX::SDK ALIAS PrismatiXSDK)
 prismatix_configure_target(PrismatiXSDK)
@@ -31,7 +48,17 @@ target_include_directories(PrismatiXSDK PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/PrismatiX>
 )
-target_link_libraries(PrismatiXSDK PUBLIC nlohmann_json::nlohmann_json)
+target_link_libraries(PrismatiXSDK PUBLIC
+    nlohmann_json::nlohmann_json
+    zstd::libzstd
+)
+if(TARGET MbedTLS::mbedcrypto)
+    target_link_libraries(PrismatiXSDK PUBLIC MbedTLS::mbedcrypto)
+elseif(TARGET MbedTLS::tfpsacrypto)
+    target_link_libraries(PrismatiXSDK PUBLIC MbedTLS::tfpsacrypto)
+elseif(TARGET MbedTLS::mbedtls)
+    target_link_libraries(PrismatiXSDK PUBLIC MbedTLS::mbedtls)
+endif()
 
 install(TARGETS PrismatiXSDK EXPORT PrismatiXSDKTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT PrismatiXSDK
@@ -114,13 +141,36 @@ if(WIN32)
 endif()
 prismatix_configure_target(PrismatiXPlayer)
 
+add_executable(PrismatiXPackager Applications/PackagerMain.cpp)
+target_link_libraries(PrismatiXPackager PRIVATE PrismatiXSDK)
+prismatix_configure_target(PrismatiXPackager)
+
 add_executable(PrismatiXPreviewHost Applications/PreviewHostMain.cpp)
 target_link_libraries(PrismatiXPreviewHost PRIVATE PrismatiXRuntime)
 prismatix_configure_target(PrismatiXPreviewHost)
 if(WIN32)
     target_link_libraries(PrismatiXPreviewHost PRIVATE sapi)
 endif()
-install(TARGETS PrismatiXPreviewHost
+add_executable(PrismatiXUiTypeManifest Applications/UiTypeManifestMain.cpp)
+target_link_libraries(PrismatiXUiTypeManifest PRIVATE PrismatiXRuntime)
+prismatix_configure_target(PrismatiXUiTypeManifest)
+set(PRISMATIX_UI_TYPE_MANIFEST
+    "${CMAKE_CURRENT_BINARY_DIR}/PrismatiXUiTypeRegistry.json")
+add_custom_command(
+    OUTPUT "${PRISMATIX_UI_TYPE_MANIFEST}"
+    COMMAND $<TARGET_FILE:PrismatiXUiTypeManifest>
+            "${PRISMATIX_UI_TYPE_MANIFEST}"
+    DEPENDS PrismatiXUiTypeManifest
+    COMMENT "Exporting the versioned UI TypeRegistry contract"
+    VERBATIM
+)
+add_custom_target(PrismatiXUiTypeRegistryManifest ALL
+                  DEPENDS "${PRISMATIX_UI_TYPE_MANIFEST}")
+install(FILES "${PRISMATIX_UI_TYPE_MANIFEST}"
+    DESTINATION .
+    COMPONENT PrismatiXSDK
+)
+install(TARGETS PrismatiXPackager PrismatiXPreviewHost PrismatiXPlayer
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT PrismatiXRuntime
 )
 if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
@@ -145,41 +195,12 @@ if(PRISMATIX_BUILD_LEGACY_EDITOR)
         "${CMAKE_CURRENT_SOURCE_DIR}/Editor/*.cpp"
     )
 
-set(PRISMATIX_UI_DESIGNER_CORE_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Workspace/EditHistory.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Canvas/CanvasInteractionController.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Canvas/HitTestService.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Canvas/SnapEngine.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Components/ComponentService.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/DesignerCommandService.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/DesignerDiagnostics.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/DesignerDocumentView.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/DocumentChangeSet.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/DesignerNodeFactory.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/DesignerSelection.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/DesignerUiState.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Preview/PreviewFixture.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Preview/PreviewChangePlanner.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/Preview/UIPreviewDocumentApplier.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/PropertyEditorRegistry.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/UIDesignerSession.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Editor/Tools/UIDesigner/UISceneDocument.cpp
-)
-
-add_library(PrismatiXUIDesignerCore STATIC ${PRISMATIX_UI_DESIGNER_CORE_SOURCES})
-target_include_directories(PrismatiXUIDesignerCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(PrismatiXUIDesignerCore PUBLIC PrismatiXRuntime)
-prismatix_configure_target(PrismatiXUIDesignerCore)
-
-list(REMOVE_ITEM PRISMATIX_EDITOR_SOURCES ${PRISMATIX_UI_DESIGNER_CORE_SOURCES})
-
 if(PRISMATIX_EDITOR_SOURCES)
     add_executable(PrismatiXEditor Applications/EditorMain.cpp ${PRISMATIX_EDITOR_SOURCES})
     target_include_directories(PrismatiXEditor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(PrismatiXEditor PRIVATE
         PrismatiXRuntime
-        PrismatiXUIDesignerCore
-        PrismatiXNodeEditor
+        PrismatiXImGui
     )
     prismatix_configure_target(PrismatiXEditor)
     if(WIN32)
@@ -196,9 +217,6 @@ if(PRISMATIX_EDITOR_SOURCES)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Fonts/NotoSansTC-Bold.ttf
                 $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/UIFont.ttf
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/imgui-node-editor/assets/BlueprintBackground.png
-                $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/NodeHeader.png
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Editor/HUD/dialog-stage.png
                 $<TARGET_FILE_DIR:PrismatiXEditor>/EditorAssets/HUD/dialog-stage.png
@@ -220,6 +238,63 @@ endif()
 endif()
 
 if(BUILD_TESTING)
+    add_executable(PrismatiXPackagerContractTests Tests/PackagerContractTests.cpp)
+    target_link_libraries(PrismatiXPackagerContractTests PRIVATE PrismatiXRuntime)
+    prismatix_configure_target(PrismatiXPackagerContractTests)
+    add_test(NAME PrismatiX.SDK.PackagerContract
+             COMMAND PrismatiXPackagerContractTests)
+    set_tests_properties(PrismatiX.SDK.PackagerContract
+                         PROPERTIES LABELS "sdk;contract;packager")
+
+    add_executable(PrismatiXCharacterResourcesContractTests
+                   Tests/CharacterResourcesContractTests.cpp)
+    target_link_libraries(PrismatiXCharacterResourcesContractTests
+                          PRIVATE PrismatiXRuntime)
+    prismatix_configure_target(PrismatiXCharacterResourcesContractTests)
+    add_test(NAME PrismatiX.SDK.CharacterResourcesContract
+             COMMAND PrismatiXCharacterResourcesContractTests)
+    set_tests_properties(PrismatiX.SDK.CharacterResourcesContract
+                         PROPERTIES LABELS "sdk;runtime;contract;characters")
+
+    add_executable(PrismatiXGameCatalogResourcesContractTests
+                   Tests/GameCatalogResourcesContractTests.cpp)
+    target_link_libraries(PrismatiXGameCatalogResourcesContractTests
+                          PRIVATE PrismatiXRuntime)
+    prismatix_configure_target(PrismatiXGameCatalogResourcesContractTests)
+    add_test(NAME PrismatiX.SDK.GameCatalogResourcesContract
+             COMMAND PrismatiXGameCatalogResourcesContractTests)
+    set_tests_properties(PrismatiX.SDK.GameCatalogResourcesContract
+                         PROPERTIES LABELS "sdk;runtime;contract;catalog")
+
+    if(WIN32)
+        add_executable(PrismatiXPlayerCatalogNativeAcceptanceTests
+                       Tests/PlayerCatalogNativeAcceptanceTests.cpp)
+        target_link_libraries(PrismatiXPlayerCatalogNativeAcceptanceTests
+                              PRIVATE PrismatiXRuntime user32 gdi32)
+        prismatix_configure_target(PrismatiXPlayerCatalogNativeAcceptanceTests)
+        add_dependencies(PrismatiXPlayerCatalogNativeAcceptanceTests
+                         PrismatiXPlayer)
+        add_test(
+            NAME PrismatiX.Player.CatalogNativeAcceptance
+            COMMAND PrismatiXPlayerCatalogNativeAcceptanceTests
+                    $<TARGET_FILE:PrismatiXPlayer>
+                    ${CMAKE_CURRENT_SOURCE_DIR}/../Content
+                    ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/PrismatiXEngine_Logo.png)
+        set_tests_properties(
+            PrismatiX.Player.CatalogNativeAcceptance
+            PROPERTIES
+                LABELS "native;windows;e2e;player;characters"
+                RUN_SERIAL TRUE
+                TIMEOUT 60)
+    endif()
+
+    add_test(NAME PrismatiX.SDK.PackagerCliContract
+        COMMAND ${CMAKE_COMMAND}
+            -DPACKAGER=$<TARGET_FILE:PrismatiXPackager>
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PackagerCliContract.cmake)
+    set_tests_properties(PrismatiX.SDK.PackagerCliContract
+                         PROPERTIES LABELS "sdk;contract;packager")
+
     add_executable(PrismatiXStudioUiContractTests Tests/StudioUiContractTests.cpp)
     target_link_libraries(PrismatiXStudioUiContractTests PRIVATE PrismatiXSDK)
     prismatix_configure_target(PrismatiXStudioUiContractTests)
@@ -231,6 +306,16 @@ if(BUILD_TESTING)
     prismatix_configure_target(PrismatiXStudioUiRuntimeAdapterTests)
     add_test(NAME PrismatiX.SDK.StudioUiRuntimeAdapter COMMAND PrismatiXStudioUiRuntimeAdapterTests)
     set_tests_properties(PrismatiX.SDK.StudioUiRuntimeAdapter PROPERTIES LABELS "sdk;runtime;contract;ui")
+
+    add_executable(PrismatiXUiTypeRegistryContractTests
+                   Tests/UiTypeRegistryContractTests.cpp)
+    target_link_libraries(PrismatiXUiTypeRegistryContractTests
+                          PRIVATE PrismatiXRuntime)
+    prismatix_configure_target(PrismatiXUiTypeRegistryContractTests)
+    add_test(NAME PrismatiX.SDK.UiTypeRegistryContract
+             COMMAND PrismatiXUiTypeRegistryContractTests)
+    set_tests_properties(PrismatiX.SDK.UiTypeRegistryContract
+                         PROPERTIES LABELS "sdk;runtime;contract;ui")
 
     add_executable(PrismatiXRuntimeIrContractTests Tests/RuntimeIrContractTests.cpp)
     target_link_libraries(PrismatiXRuntimeIrContractTests PRIVATE PrismatiXSDK)
@@ -247,6 +332,16 @@ if(BUILD_TESTING)
     set_tests_properties(PrismatiX.SDK.RuntimeIrRuntimeAdapter
                          PROPERTIES LABELS "sdk;runtime;contract")
 
+    add_executable(PrismatiXRuntimeAssetResolverTests
+                   Tests/RuntimeAssetResolverTests.cpp)
+    target_link_libraries(PrismatiXRuntimeAssetResolverTests
+                          PRIVATE PrismatiXRuntime)
+    prismatix_configure_target(PrismatiXRuntimeAssetResolverTests)
+    add_test(NAME PrismatiX.Runtime.AssetResolver
+             COMMAND PrismatiXRuntimeAssetResolverTests)
+    set_tests_properties(PrismatiX.Runtime.AssetResolver
+                         PROPERTIES LABELS "runtime;contract;narrative;resource")
+
     add_test(NAME PrismatiX.SDK.PreviewHostProtocol
         COMMAND ${CMAKE_COMMAND}
             -DPREVIEW_HOST=$<TARGET_FILE:PrismatiXPreviewHost>
@@ -254,6 +349,30 @@ if(BUILD_TESTING)
             -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PreviewHostSmoke.cmake)
     set_tests_properties(PrismatiX.SDK.PreviewHostProtocol
                          PROPERTIES LABELS "sdk;contract;preview")
+    add_test(NAME PrismatiX.SDK.PreviewHostLuaDebug
+        COMMAND ${CMAKE_COMMAND}
+            -DPREVIEW_HOST=$<TARGET_FILE:PrismatiXPreviewHost>
+            -DFIXTURE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/Tests/Fixtures/PreviewHostLua
+            -DINPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/PreviewHostLuaDebugInput.ndjson
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PreviewHostLuaDebug.cmake)
+    set_tests_properties(PrismatiX.SDK.PreviewHostLuaDebug
+                         PROPERTIES LABELS "sdk;contract;preview;lua;debugger")
+    add_test(NAME PrismatiX.SDK.PreviewHostLuaAction
+        COMMAND ${CMAKE_COMMAND}
+            -DPREVIEW_HOST=$<TARGET_FILE:PrismatiXPreviewHost>
+            -DFIXTURE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/Tests/Fixtures/PreviewHostLua
+            -DINPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/PreviewHostLuaActionInput.ndjson
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PreviewHostLuaAction.cmake)
+    set_tests_properties(PrismatiX.SDK.PreviewHostLuaAction
+                         PROPERTIES LABELS "sdk;contract;preview;lua;action")
+    add_test(NAME PrismatiX.SDK.PreviewHostRuntimeAssets
+        COMMAND ${CMAKE_COMMAND}
+            -DPREVIEW_HOST=$<TARGET_FILE:PrismatiXPreviewHost>
+            -DFIXTURE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/Tests/Fixtures/PreviewHostLua
+            -DINPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/PreviewHostRuntimeAssetsInput.ndjson
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PreviewHostRuntimeAssets.cmake)
+    set_tests_properties(PrismatiX.SDK.PreviewHostRuntimeAssets
+                         PROPERTIES LABELS "sdk;contract;preview;narrative;resource")
 
     function(prismatix_add_simple_test target source test_name labels link_target)
         add_executable(${target} ${source})
@@ -288,68 +407,6 @@ if(BUILD_TESTING)
         PrismatiX.Integration.Runtime.Resources "integration;runtime;resource"
         PrismatiXRuntime)
 
-    if(PRISMATIX_BUILD_LEGACY_EDITOR)
-    add_executable(PrismatiXUIDesignerIntegrationTests
-                   Tests/Integration/UIDesignerIntegrationTests.cpp)
-    target_link_libraries(PrismatiXUIDesignerIntegrationTests
-                          PRIVATE PrismatiXUIDesignerCore)
-    prismatix_configure_target(PrismatiXUIDesignerIntegrationTests)
-    add_test(NAME PrismatiX.Integration.UI.Designer
-             COMMAND PrismatiXUIDesignerIntegrationTests)
-    set_tests_properties(PrismatiX.Integration.UI.Designer PROPERTIES
-                         LABELS "integration;designer")
-
-    prismatix_add_simple_test(
-        PrismatiXDesignerSelectionTests
-        Tests/Unit/Editor/UIDesigner/DesignerSelectionTests.cpp
-        PrismatiX.Unit.Designer.Selection "unit;designer" PrismatiXUIDesignerCore)
-    prismatix_add_simple_test(
-        PrismatiXDesignerDocumentViewTests
-        Tests/Unit/Editor/UIDesigner/DesignerDocumentViewTests.cpp
-        PrismatiX.Unit.Designer.DocumentView "unit;designer" PrismatiXUIDesignerCore)
-    prismatix_add_simple_test(
-        PrismatiXDesignerCommandServiceTests
-        Tests/Unit/Editor/UIDesigner/DesignerCommandServiceTests.cpp
-        PrismatiX.Unit.Designer.Commands "unit;designer" PrismatiXUIDesignerCore)
-    prismatix_add_simple_test(
-        PrismatiXUIDesignerSessionTests
-        Tests/Unit/Editor/UIDesigner/UIDesignerSessionTests.cpp
-        PrismatiX.Unit.Designer.Session "unit;designer" PrismatiXUIDesignerCore)
-    prismatix_add_simple_test(
-        PrismatiXPropertyTransactionTests
-        Tests/Unit/Editor/UIDesigner/PropertyTransactionTests.cpp
-        PrismatiX.Unit.Designer.Transactions "unit;designer" PrismatiXUIDesignerCore)
-    prismatix_add_simple_test(
-        PrismatiXHitTestServiceTests
-        Tests/Unit/Editor/UIDesigner/HitTestServiceTests.cpp
-        PrismatiX.Unit.Designer.HitTest "unit;designer" PrismatiXUIDesignerCore)
-    prismatix_add_simple_test(
-        PrismatiXSnapEngineTests
-        Tests/Unit/Editor/UIDesigner/SnapEngineTests.cpp
-        PrismatiX.Unit.Designer.Snap "unit;designer" PrismatiXUIDesignerCore)
-    prismatix_add_simple_test(
-        PrismatiXDesignerDiagnosticsTests
-        Tests/Unit/Editor/UIDesigner/DesignerDiagnosticsTests.cpp
-        PrismatiX.Unit.Designer.Diagnostics "unit;designer" PrismatiXUIDesignerCore)
-    prismatix_add_simple_test(
-        PrismatiXCanvasInteractionControllerTests
-        Tests/Unit/Editor/UIDesigner/CanvasInteractionControllerTests.cpp
-        PrismatiX.Unit.Designer.Canvas "unit;designer" PrismatiXUIDesignerCore)
-    prismatix_add_simple_test(
-        PrismatiXComponentServiceTests
-        Tests/Unit/Editor/UIDesigner/ComponentServiceTests.cpp
-        PrismatiX.Unit.Designer.Components "unit;designer" PrismatiXUIDesignerCore)
-    prismatix_add_simple_test(
-        PrismatiXDesignerUiStateTests
-        Tests/Unit/Editor/UIDesigner/DesignerUiStateTests.cpp
-        PrismatiX.Unit.Designer.UIState "unit;designer" PrismatiXUIDesignerCore)
-    prismatix_add_simple_test(
-        PrismatiXPreviewPlanningTests
-        Tests/Unit/Editor/UIDesigner/PreviewPlanningTests.cpp
-        PrismatiX.Unit.Designer.PreviewPlanning "unit;designer"
-        PrismatiXUIDesignerCore)
-    endif()
-
     prismatix_add_simple_test(
         PrismatiXUISchemaContractTests Tests/Contract/UISchemaContractTests.cpp
         PrismatiX.Contract.UI.Schema "contract;runtime" PrismatiXRuntime)
@@ -369,39 +426,12 @@ if(BUILD_TESTING)
         PrismatiXSplashSequencePlayerTests
         Tests/Unit/Runtime/SplashSequencePlayerTests.cpp
         PrismatiX.Unit.Runtime.Splash "unit;runtime;splash" PrismatiXRuntime)
-    if(PRISMATIX_BUILD_LEGACY_EDITOR)
-    prismatix_add_simple_test(
-        PrismatiXUIPreviewIntegrationTests
-        Tests/Integration/UIPreviewIntegrationTests.cpp
-        PrismatiX.Integration.UI.Preview "integration;designer;runtime"
-        PrismatiXUIDesignerCore)
-    endif()
     prismatix_add_simple_test(
         PrismatiXPlayerBootSplashIntegrationTests
         Tests/Integration/PlayerBootSplashIntegrationTests.cpp
         PrismatiX.Integration.Player.BootSplash "integration;runtime;splash"
         PrismatiXRuntime)
 
-    if(PRISMATIX_BUILD_LEGACY_EDITOR)
-    add_executable(PrismatiXEditorWorkspaceIntegrationTests
-                   Tests/Integration/EditorWorkspaceIntegrationTests.cpp
-                   Editor/Workspace/DocumentRegistry.cpp)
-    target_link_libraries(PrismatiXEditorWorkspaceIntegrationTests
-                          PRIVATE PrismatiXRuntime)
-    prismatix_configure_target(PrismatiXEditorWorkspaceIntegrationTests)
-    add_test(NAME PrismatiX.Integration.Editor.Workspace
-             COMMAND PrismatiXEditorWorkspaceIntegrationTests)
-    set_tests_properties(PrismatiX.Integration.Editor.Workspace PROPERTIES
-                         LABELS "integration;designer")
-
-    add_executable(PrismatiXPerformanceTests Tests/PerformanceTests.cpp)
-    target_link_libraries(PrismatiXPerformanceTests PRIVATE PrismatiXUIDesignerCore)
-    prismatix_configure_target(PrismatiXPerformanceTests)
-    if(PRISMATIX_PERFORMANCE_TESTS)
-        add_test(NAME PrismatiX.Performance.Scenarios COMMAND PrismatiXPerformanceTests)
-        set_tests_properties(PrismatiX.Performance.Scenarios PROPERTIES LABELS "performance")
-    endif()
-    endif()
 
     add_executable(PrismatiXSoakTests Tests/SoakTests.cpp)
     target_link_libraries(PrismatiXSoakTests PRIVATE PrismatiXRuntime)
@@ -424,30 +454,6 @@ if(BUILD_TESTING)
                      -DROOT=${CMAKE_CURRENT_SOURCE_DIR}
                      -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/ArchitectureGate.cmake)
     set_tests_properties(PrismatiX.Architecture.Gates PROPERTIES LABELS "architecture")
-    add_test(NAME PrismatiX.Architecture.NegativeProbe
-             COMMAND ${CMAKE_COMMAND}
-                     -DROOT=${CMAKE_CURRENT_SOURCE_DIR}
-                     -DGATE=${CMAKE_CURRENT_SOURCE_DIR}/Tests/ArchitectureGate.cmake
-                     -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/ArchitectureGateNegativeProbe.cmake)
-    set_tests_properties(PrismatiX.Architecture.NegativeProbe PROPERTIES
-                         LABELS "architecture")
-
-    add_executable(PrismatiXImportTests Tests/Integration/AssetImportIntegrationTests.cpp
-                   Editor/Assets/ImportService.cpp)
-    target_link_libraries(PrismatiXImportTests PRIVATE PrismatiXRuntime)
-    if(PRISMATIX_STRESS_TESTS)
-        target_compile_definitions(PrismatiXImportTests PRIVATE PRISMATIX_STRESS_TESTS=1)
-    endif()
-    prismatix_configure_target(PrismatiXImportTests)
-    add_test(NAME PrismatiX.Editor.Import COMMAND PrismatiXImportTests)
-    if(PRISMATIX_STRESS_TESTS)
-        set_tests_properties(PrismatiX.Editor.Import PROPERTIES
-                             LABELS "integration;designer;stress")
-    else()
-        set_tests_properties(PrismatiX.Editor.Import PROPERTIES
-                             LABELS "integration;designer")
-    endif()
-
     add_executable(PrismatiXBuildE2ETests Tests/E2E/BuildPipelineE2ETests.cpp
                    Editor/Build/BuildService.cpp Editor/Build/ExportProfile.cpp
                    Editor/Project/ProjectService.cpp)
@@ -483,10 +489,15 @@ if(BUILD_TESTING)
     endif()
 
     add_custom_target(PrismatiXSDKTests DEPENDS
+        PrismatiXPackager
+        PrismatiXPackagerContractTests
+        PrismatiXCharacterResourcesContractTests
+        PrismatiXGameCatalogResourcesContractTests
         PrismatiXStudioUiContractTests
         PrismatiXStudioUiRuntimeAdapterTests
         PrismatiXRuntimeIrContractTests
         PrismatiXRuntimeIrRuntimeAdapterTests
+        PrismatiXRuntimeAssetResolverTests
         PrismatiXPreviewHost
         PrismatiXSaveLoadIntegrationTests
         PrismatiXDialogueScenarioIntegrationTests
@@ -501,26 +512,13 @@ if(BUILD_TESTING)
         PrismatiXSplashSequencePlayerTests
         PrismatiXPlayerBootSplashIntegrationTests
         PrismatiXPlayer)
+    if(WIN32)
+        add_dependencies(PrismatiXSDKTests
+                         PrismatiXPlayerCatalogNativeAcceptanceTests)
+    endif()
 
     if(PRISMATIX_BUILD_LEGACY_EDITOR)
-        add_custom_target(PrismatiXRequiredTests DEPENDS
-            PrismatiXSDKTests
-            PrismatiXUIDesignerIntegrationTests
-            PrismatiXDesignerSelectionTests
-            PrismatiXDesignerDocumentViewTests
-            PrismatiXDesignerCommandServiceTests
-            PrismatiXUIDesignerSessionTests
-            PrismatiXPropertyTransactionTests
-            PrismatiXHitTestServiceTests
-            PrismatiXSnapEngineTests
-            PrismatiXDesignerDiagnosticsTests
-            PrismatiXCanvasInteractionControllerTests
-            PrismatiXComponentServiceTests
-            PrismatiXDesignerUiStateTests
-            PrismatiXPreviewPlanningTests
-            PrismatiXUIPreviewIntegrationTests
-            PrismatiXEditorWorkspaceIntegrationTests
-            PrismatiXImportTests)
+        add_custom_target(PrismatiXRequiredTests DEPENDS PrismatiXSDKTests)
         add_custom_target(PrismatiXRegularTests DEPENDS
             PrismatiXRequiredTests PrismatiXBuildE2ETests)
     else()

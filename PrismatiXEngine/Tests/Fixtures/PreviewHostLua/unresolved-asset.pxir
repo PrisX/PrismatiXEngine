@@ -1,0 +1,18 @@
+{
+  "format": "PrismatiXRuntimeIR",
+  "schemaRevision": 1,
+  "documentId": "asset-resource-document",
+  "committedRevision": 1,
+  "operations": [
+    {
+      "operationId": "missing-background-operation",
+      "sourceId": "missing-background-source",
+      "sourceLine": 47,
+      "kind": "background",
+      "text": "Missing background",
+      "arguments": {
+        "asset": "asset:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+      }
+    }
+  ]
+}

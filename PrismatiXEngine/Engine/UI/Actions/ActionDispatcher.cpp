@@ -77,15 +77,24 @@ Result<ActionExecutionId> ActionDispatcher::Start(ActionInvocation invocation,
     if (!normalized) return Result<ActionExecutionId>::Failure(normalized.Diagnostics());
     invocation.arguments = normalized.TakeValue();
 
-    ActionExecutionId running = 0;std::vector<ActionExecutionId> runningExecutions;
-    for (const auto& [id, execution] : m_executions)
+    ActionExecutionId running = 0;
+    std::vector<ActionExecutionId> runningExecutions;
+    for (const auto& [id, execution] : m_executions) {
         if (execution.action == invocation.action && execution.state == ActionExecutionState::Running) {
-            if(!running)running=id;runningExecutions.push_back(id);
+            if (!running || id < running) running = id;
+            runningExecutions.push_back(id);
         }
+    }
     const ActionReentryPolicy reentry = options.reentryPolicy.value_or(descriptor->reentryPolicy);
     if (running && reentry == ActionReentryPolicy::IgnoreWhileRunning)
         return Result<ActionExecutionId>::Success(running);
-    if(running&&reentry==ActionReentryPolicy::Restart)for(const auto execution:runningExecutions){const Status cancelled=Cancel(execution);if(!cancelled)return Result<ActionExecutionId>::Failure(cancelled.Diagnostics());Forget(execution);}
+    if (running && reentry == ActionReentryPolicy::Restart) {
+        for (const auto execution : runningExecutions) {
+            const Status cancelled = Cancel(execution);
+            if (!cancelled)
+                return Result<ActionExecutionId>::Failure(cancelled.Diagnostics());
+        }
+    }
 
     auto provider = FindProvider(descriptor->providerId);
     if ((!provider || provider->Origin() != descriptor->origin ||
@@ -120,12 +129,13 @@ Result<ActionExecutionId> ActionDispatcher::Start(ActionInvocation invocation,
 }
 
 Status ActionDispatcher::Dispatch(ActionInvocation invocation, const ActionDispatchOptions options) {
+    const ActionExecutionId nextExecution = m_nextExecution;
     auto started = Start(std::move(invocation), options);
-    if(!started)return EmitFailure(started.Diagnostics());
-    const auto found=m_executions.find(started.Value());if(found!=m_executions.end()){
-        if(found->second.state==ActionExecutionState::Running)found->second.autoForget=true;
-        else Forget(started.Value());
-    }
+    if (!started) return EmitFailure(started.Diagnostics());
+    // IgnoreWhileRunning returns the existing execution. Its original owner may
+    // be awaiting it, so a fire-and-forget duplicate must not steal ownership.
+    if (started.Value() != nextExecution) return Status::Ok();
+    Forget(started.Value());
     return Status::Ok();
 }
 
@@ -151,8 +161,36 @@ Status ActionDispatcher::Cancel(const ActionExecutionId execution) {
     return Status::Ok();
 }
 
+void ActionDispatcher::CancelAll() {
+    for (auto& [_, execution] : m_executions) {
+        if (execution.state == ActionExecutionState::Running && execution.provider)
+            execution.provider->Cancel(execution.providerHandle);
+    }
+    m_executions.clear();
+}
+
+void ActionDispatcher::CancelSource(const std::string_view sourceScene) {
+    if (sourceScene.empty()) return;
+    for (auto iterator = m_executions.begin(); iterator != m_executions.end();) {
+        auto& execution = iterator->second;
+        if (execution.invocation.context.sourceScene != sourceScene) {
+            ++iterator;
+            continue;
+        }
+        if (execution.state == ActionExecutionState::Running && execution.provider)
+            execution.provider->Cancel(execution.providerHandle);
+        iterator = m_executions.erase(iterator);
+    }
+}
+
 void ActionDispatcher::Forget(const ActionExecutionId execution) {
-    m_executions.erase(execution);
+    const auto found = m_executions.find(execution);
+    if (found == m_executions.end()) return;
+    if (found->second.state == ActionExecutionState::Running) {
+        found->second.autoForget = true;
+        return;
+    }
+    m_executions.erase(found);
 }
 
 void ActionDispatcher::Update(const float deltaSeconds) {

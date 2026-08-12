@@ -107,6 +107,11 @@ public:
     [[nodiscard]] std::string_view TypeName() const override { return "TextureRect"; }
     void SetPath(std::string value) { m_path = std::move(value); }
     [[nodiscard]] const std::string& Path() const { return m_path; }
+    void SetTexture(ResourceRefValue value) {
+        m_texture = std::move(value);
+        m_path = m_texture.lastKnownPath;
+    }
+    [[nodiscard]] const ResourceRefValue& Texture() const { return m_texture; }
     void SetOpacity(float value);
     [[nodiscard]] float Opacity() const { return m_opacity; }
     void SetScaleMode(TextureScaleMode value) { m_scaleMode=value; }
@@ -121,6 +126,7 @@ protected:
     void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) override;
 private:
     std::string m_path;
+    ResourceRefValue m_texture;
     float m_opacity = 1.0f;
     TextureScaleMode m_scaleMode = TextureScaleMode::Stretch;
     HorizontalTextAlignment m_horizontalAlignment = HorizontalTextAlignment::Center;

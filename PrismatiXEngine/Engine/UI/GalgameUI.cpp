@@ -4,6 +4,7 @@
 #include "Engine/Graphics/Renderer2D.h"
 #include "Engine/Platform/Input.h"
 #include "Engine/UI/Layout.h"
+#include "Engine/UI/StudioUiApplication.h"
 #include "Engine/UI/VirtualizedView.h"
 #include "Engine/UI/Widgets.h"
 #include "Engine/UI/UISceneLoader.h"
@@ -83,17 +84,64 @@ GalgameUI::GalgameUI() {
 }
 
 Status GalgameUI::RegisterTemplate(Screen screen,std::string_view text,const std::string& sourcePath){
-    auto parsed=resource::ParseTypedDocument(text,sourcePath);if(!parsed){for(const auto& d:parsed.Diagnostics())diag::Emit(d);return Status::Fail(parsed.Diagnostics());}
-    if(parsed.Value().kind!=resource::DocumentKind::Scene||parsed.Value().type!="UIScene")return GalgameFailure("PXUI2803","Galgame template is not a typed UIScene: "+sourcePath);
-    m_templates[static_cast<int>(screen)]=std::move(parsed.Value());return Status::Ok();
+    auto typed=resource::ParseTypedDocument(text,sourcePath);
+    if(typed&&typed.Value().kind==resource::DocumentKind::Scene&&
+       typed.Value().type=="UIScene"){
+        Template value;
+        value.typedScene=std::move(typed.Value());
+        value.sourcePath=sourcePath;
+        m_templates[static_cast<int>(screen)]=std::move(value);
+        return Status::Ok();
+    }
+    auto studio=sdk::ParseStudioUi(text);
+    if(studio.Valid()){
+        Template value;
+        value.studioScene=std::move(studio.document);
+        value.sourcePath=sourcePath;
+        m_templates[static_cast<int>(screen)]=std::move(value);
+        return Status::Ok();
+    }
+    if(typed&&
+       (typed.Value().kind!=resource::DocumentKind::Scene||
+        typed.Value().type!="UIScene"))
+        return GalgameFailure("PXUI2803",
+            "Galgame template is neither a typed UIScene nor Studio UI: "+sourcePath);
+    for(const auto& diagnostic:typed.Diagnostics())diag::Emit(diagnostic);
+    return Status::Fail(typed.Diagnostics());
 }
 
 bool GalgameUI::HasTemplate(Screen screen)const{return m_templates.contains(static_cast<int>(screen));}
 
 Status GalgameUI::InstallTemplate(Screen screen){
     const auto it=m_templates.find(static_cast<int>(screen));if(it==m_templates.end())return GalgameFailure("PXUI2804","Requested Galgame UI template is not registered");
-    auto loaded=InstantiateUIScene(it->second,&m_viewModel,m_context.Formatters());if(!loaded)return Status::Fail(loaded.Diagnostics());
-    auto bindings=std::move(loaded.Value().bindings);auto animations=std::move(loaded.Value().animations);auto theme=std::move(loaded.Value().theme);auto triggers=std::move(loaded.Value().triggers);auto interaction=std::move(loaded.Value().interactionGraph);const Status installed=Install(std::move(loaded.Value().root),screen);if(!installed)return installed;m_bindings=std::move(bindings);if(theme)m_context.SetTheme(std::move(*theme));if(animations){const Status status=m_context.SetAnimations(std::move(*animations),true);if(!status)return status;}const Status triggerStatus=m_context.ConfigureTriggers(std::move(triggers),std::move(interaction));if(!triggerStatus)return triggerStatus;
+    if(it->second.typedScene){
+        auto loaded=InstantiateUIScene(*it->second.typedScene,&m_viewModel,m_context.Formatters());if(!loaded)return Status::Fail(loaded.Diagnostics());
+        auto bindings=std::move(loaded.Value().bindings);auto animations=std::move(loaded.Value().animations);auto theme=std::move(loaded.Value().theme);auto triggers=std::move(loaded.Value().triggers);auto interaction=std::move(loaded.Value().interactionGraph);const Status installed=Install(std::move(loaded.Value().root),screen);if(!installed)return installed;m_bindings=std::move(bindings);if(theme)m_context.SetTheme(std::move(*theme));if(animations){const Status status=m_context.SetAnimations(std::move(*animations),true);if(!status)return status;}const Status triggerStatus=m_context.ConfigureTriggers(std::move(triggers),std::move(interaction));if(!triggerStatus)return triggerStatus;
+    }else if(it->second.studioScene){
+        m_bindings.clear();
+        StudioUiApplication application(m_context);
+        auto applied=application.ApplyDocument(
+            *it->second.studioScene,
+            {.sourcePath=it->second.sourcePath,
+             .resolveAsset=m_studioAssetResolver,
+             .loadComponent=m_studioComponentLoader,
+             .viewModel=&m_viewModel,
+             .previewSafeMode=false,
+             .diagnosticOverlay=false});
+        if(!applied){
+            for(const auto& diagnostic:applied.Diagnostics())diag::Emit(diagnostic);
+            return Status::Fail(applied.Diagnostics());
+        }
+        if(screen!=Screen::HUD){
+            m_speaker=m_dialogue=m_nvlText=m_mode=m_chapterNotice=
+                m_musicNotice=nullptr;
+            m_choices=nullptr;
+            m_noticePanel=nullptr;
+        }
+        m_screen=screen;
+    }else{
+        return GalgameFailure("PXUI2805","Registered UI template has no document");
+    }
     if(screen==Screen::HUD){m_speaker=FindNamed<Label>(m_context.Root(),"Speaker");m_dialogue=FindNamed<Label>(m_context.Root(),"Dialogue");m_nvlText=FindNamed<Label>(m_context.Root(),"NVLText");m_choices=FindNamed<VBoxContainer>(m_context.Root(),"Choices");m_mode=FindNamed<Label>(m_context.Root(),"ModeState");m_noticePanel=FindNamed<EdgeRevealContainer>(m_context.Root(),"NoticePanel");m_chapterNotice=FindNamed<Label>(m_context.Root(),"ChapterNotice");m_musicNotice=FindNamed<Label>(m_context.Root(),"MusicNotice");m_lastChapterTitle.clear();m_lastMusicTitle.clear();if(m_dialogue){m_dialogueBaseOffsets=m_dialogue->Offsets();m_dialogueBaseFontSize=m_dialogue->FontSize()>0?m_dialogue->FontSize():30;}}
     return Status::Ok();
 }

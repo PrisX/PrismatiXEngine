@@ -1,13 +1,18 @@
 #pragma once
 
 #include "Engine/Core/Result.h"
+#include "Engine/SDK/StudioUi.h"
 #include "Engine/UI/UIContext.h"
+#include "Engine/UI/StudioUiAdapter.h"
+#include "Engine/UI/StudioUiApplication.h"
 #include "Engine/Resources/TypedDocument.h"
 #include "Engine/Animation/Timeline.h"
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace px { class Input; }
@@ -63,7 +68,16 @@ public:
     using ActionSink = std::function<void(const GalgameAction&)>;
 
     GalgameUI();
-    Status RegisterTemplate(Screen screen,std::string_view typedScene,const std::string& sourcePath={});
+    // Accepts either the Engine typed UIScene or the public Studio UI contract.
+    // Both formats install into the same UIContext and Action runtime.
+    Status RegisterTemplate(Screen screen,std::string_view scene,
+                            const std::string& sourcePath={});
+    void SetStudioUiAssetResolver(StudioUiAssetResolver resolver) {
+        m_studioAssetResolver = std::move(resolver);
+    }
+    void SetStudioUiComponentLoader(StudioUiComponentLoader loader) {
+        m_studioComponentLoader = std::move(loader);
+    }
     void SetActionSink(ActionSink sink) { m_sink = std::move(sink); }
     void SetBehaviorVariableAccess(
         std::function<std::optional<Variant>(std::string_view)> read,
@@ -110,6 +124,9 @@ private:
     std::unique_ptr<Control> MakeMenuButton(std::string text, std::string command, std::string argument = {});
     Status Add(Control& parent, std::unique_ptr<Control> child);
 
+    // Bindings owned by UIContext unsubscribe during context destruction, so
+    // the ViewModel must be declared first and therefore outlive it.
+    ObservableViewModel m_viewModel;
     UIContext m_context;
     ActionSink m_sink;
     Screen m_screen = Screen::Title;
@@ -126,9 +143,15 @@ private:
     std::string m_lastChapterTitle;
     std::string m_lastMusicTitle;
     std::shared_ptr<ItemSource> m_items;
-    ObservableViewModel m_viewModel;
     std::vector<Binding> m_bindings;
-    std::unordered_map<int,resource::TypedDocument> m_templates;
+    struct Template {
+        std::optional<resource::TypedDocument> typedScene;
+        std::optional<sdk::StudioUiDocument> studioScene;
+        std::string sourcePath;
+    };
+    std::unordered_map<int,Template> m_templates;
+    StudioUiAssetResolver m_studioAssetResolver;
+    StudioUiComponentLoader m_studioComponentLoader;
     std::vector<GalgameAction> m_pendingActions;
     std::unordered_map<std::string,std::string> m_animationTextBase;
 };

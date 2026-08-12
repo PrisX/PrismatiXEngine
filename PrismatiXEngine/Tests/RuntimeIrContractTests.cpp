@@ -12,6 +12,7 @@ int main() {
       "operations": [{
         "operationId": "e1b61b69-8441-44f3-99c1-7232ce273187",
         "sourceId": "e1b61b69-8441-44f3-99c1-7232ce273187",
+        "sourceLine": 23,
         "kind": "dialogue",
         "text": "@雪: 晚安🌙",
         "arguments": {"speaker":"雪", "text":"晚安🌙"}
@@ -24,6 +25,7 @@ int main() {
     assert(parsed.document.operations.size() == 1);
     assert(parsed.document.operations.front().operationId ==
            parsed.document.operations.front().sourceId);
+    assert(parsed.document.operations.front().sourceLine == 23);
 
     const std::string duplicate = R"({
       "format": "PrismatiXRuntimeIR",
@@ -38,6 +40,29 @@ int main() {
     const auto rejected = px::sdk::ParseRuntimeIr(duplicate);
     assert(!rejected.Valid());
     assert(rejected.diagnostics.back().code == "PXSDKIR1015");
+
+    const auto defaultLine = px::sdk::ParseRuntimeIr(R"({
+      "format":"PrismatiXRuntimeIR", "schemaRevision":1,
+      "documentId":"scene-01", "committedRevision":1,
+      "operations":[
+        {"operationId":"first","sourceId":"source-a","kind":"scene","text":"a","arguments":{}},
+        {"operationId":"second","sourceId":"source-b","kind":"sequence","text":"b","arguments":{}}
+      ]
+    })");
+    assert(defaultLine.Valid());
+    assert(defaultLine.document.operations.front().sourceLine == 1);
+    assert(defaultLine.document.operations.back().sourceLine == 2);
+
+    const auto invalidLine = px::sdk::ParseRuntimeIr(R"({
+      "format":"PrismatiXRuntimeIR", "schemaRevision":1,
+      "documentId":"scene-01", "committedRevision":1,
+      "operations":[
+        {"operationId":"first","sourceId":"source-a","sourceLine":0,
+         "kind":"scene","text":"a","arguments":{}}
+      ]
+    })");
+    assert(!invalidLine.Valid());
+    assert(invalidLine.diagnostics.back().code == "PXSDKIR1019");
 
     const auto future = px::sdk::ParseRuntimeIr(R"({
       "format":"PrismatiXRuntimeIR", "schemaRevision":2,

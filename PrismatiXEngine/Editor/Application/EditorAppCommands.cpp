@@ -25,30 +25,14 @@ void EditorApp::BuildCommands() {
               std::filesystem::create_directories(m_project.Context().ExportRoot(), ec);
               OpenInExplorer(m_project.Context().ExportRoot());
           } },
-        { "Reload Preview",
-          "",
-          [this] {
-              if (m_preview) m_preview->Reload();
-          } },
-        { "Import Clipboard Files", "Ctrl+V", [this] { ImportClipboardAssets(); } },
-        { "Rescan Assets", "", [this] { m_assets.Scan(m_project.Context()); } },
+        { "Rescan Asset Identities", "", [this] { const Status scanned=m_assetRegistry.Scan(m_project.Context().root);if(!scanned)m_showAssetIdentity=true; } },
         { "Refresh Problems", "", [this] { RefreshProblems(); } },
         { "Reset Layout", "", [this] { m_buildLayout = true; } },
         { "Back to Welcome", "", [this] { m_screen = Screen::Welcome; } },
-        { "Undo", "Ctrl+Z", [this] { if (m_previewMode == 0 && m_designer.Document()) m_designer.Undo(); else if(auto* graph=ActiveDocPtr())graph->Undo(); } },
-        { "Redo", "Ctrl+Y", [this] { if (m_previewMode == 0 && m_designer.Document()) m_designer.Redo(); else if(auto* graph=ActiveDocPtr())graph->Redo(); } },
-        { "UI Designer: Select Tool", "V", [this] { SetWorkspace(EditorWorkspace::UI);m_designer.ViewportState().tool=DesignerTool::Select; } },
-        { "UI Designer: Anchor Tool", "A", [this] { SetWorkspace(EditorWorkspace::UI);m_designer.ViewportState().tool=DesignerTool::Anchors; } },
-        { "UI Designer: Toggle Grid", "G", [this] { SetWorkspace(EditorWorkspace::UI);m_designer.ViewportState().gridVisible=!m_designer.ViewportState().gridVisible; } },
-        { "UI Designer: Interactive Preview", "", [this] { if(m_designer.Document()){SetWorkspace(EditorWorkspace::UI);m_designer.ViewportState().interactivePreview=true;} } },
-        { "UI Designer: Toggle Bottom Drawer", "", [this] { SetWorkspace(EditorWorkspace::UI);auto& panels=m_docs.WorkspacePanels();panels.bottomPanelVisible=!panels.bottomPanelVisible; } },
-        { "Go to: Preview", "", [focus] { focus("Preview"); } },
-        { "Go to: Story (Node Editor)", "", [focus] { focus("Node Editor"); } },
-        { "Go to: Flow", "", [focus] { focus("Flow"); } },
+        { "Go to: Narrative", "", [focus] { focus("Narrative"); } },
         { "Go to: Scripting", "", [focus] { focus("Scripting"); } },
         { "Go to: Animation", "", [focus] { focus("Animation"); } },
         { "Go to: Build", "", [focus] { focus("Build"); } },
-        { "Go to: Assets", "", [focus] { focus("Assets"); } },
         { "Go to: Problems", "", [focus] { focus("Problems"); } },
         { "Go to: Localization", "", [focus] { focus("Localization"); } },
     };
@@ -64,28 +48,8 @@ void EditorApp::HandleShortcuts() {
         m_quickOpenOpen = true;
         m_quickOpenFilter[0] = 0;
     }
-    if (!ImGui::GetIO().WantTextInput &&
-        ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Tab, ImGuiInputFlags_RouteGlobal)) {
-        const auto recent = m_docs.RecentlyUsed();
-        if (recent.size() > 1) {
-            const auto& session = m_docs.Documents()[recent[1]];
-            (void)m_docs.Activate(session.id);
-            std::error_code error;
-            const auto runtime = std::filesystem::relative(session.id.canonicalPath,
-                m_project.Context().root, error).generic_string();
-            if (!error && session.type == DocumentType::Scenario) OpenDocTab(runtime);
-            else if (!error && session.type == DocumentType::UIScene && m_preview) {
-                SetWorkspace(EditorWorkspace::UI); m_preview->LoadUI(runtime); SyncDesigner();
-            } else if(!error&&session.type==DocumentType::Lua){SetWorkspace(EditorWorkspace::Script);m_scripts.OpenFile(runtime);}
-        }
-    }
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, ImGuiInputFlags_RouteGlobal)) {
         SaveAll();
-    }
-    // Ctrl+V pastes nodes when the graph is focused; clipboard import otherwise.
-    if (!ImGui::GetIO().WantTextInput && !m_nodeEditorFocused &&
-        ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_V, ImGuiInputFlags_RouteGlobal)) {
-        ImportClipboardAssets();
     }
     if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_B, ImGuiInputFlags_RouteGlobal)) {
         RunBuild();
@@ -96,29 +60,6 @@ void EditorApp::HandleShortcuts() {
     }
     if (ImGui::Shortcut(ImGuiKey_F5, ImGuiInputFlags_RouteGlobal)) {
         RunDev();
-    }
-    // Ctrl+Z/Y route to the active per-document EditHistory.
-    if (!ImGui::GetIO().WantTextInput &&
-        ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, ImGuiInputFlags_RouteGlobal)) {
-        NodeGraphEditor* doc = ActiveDocPtr();
-        if (m_assetsFocused && m_projectHistory.CanUndo()) {
-            m_projectHistory.Undo();
-        } else if (m_nodeEditorFocused && doc && doc->CanUndo()) {
-            doc->Undo();
-        } else if (m_previewMode == 0 && m_designer.CanUndo()) {
-            m_designer.Undo();
-        }
-    }
-    if (!ImGui::GetIO().WantTextInput &&
-        ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y, ImGuiInputFlags_RouteGlobal)) {
-        NodeGraphEditor* doc = ActiveDocPtr();
-        if (m_assetsFocused && m_projectHistory.CanRedo()) {
-            m_projectHistory.Redo();
-        } else if (m_nodeEditorFocused && doc && doc->CanRedo()) {
-            doc->Redo();
-        } else if (m_previewMode == 0 && m_designer.CanRedo()) {
-            m_designer.Redo();
-        }
     }
     if (ImGui::Shortcut(ImGuiKey_F1, ImGuiInputFlags_RouteGlobal)) {
         m_showShortcuts = !m_showShortcuts;
@@ -156,22 +97,8 @@ void EditorApp::RenderShortcutsWindow() {
             row("Ctrl+B", "Build");
             row("Ctrl+Shift+B", "Build & run packaged");
             row("F5", "Run (dev)");
-            row("Ctrl+Z / Ctrl+Y", "Undo / Redo");
             row("Ctrl+V", "Import copied files into Assets");
             row("F1", "Toggle this cheat sheet");
-            ImGui::EndTable();
-        }
-        if (beginSection("UI Designer (canvas)", "sc-ui")) {
-            row("V / Q", "Select tool");
-            row("A", "Anchor tool");
-            row("Drag node", "Move; snaps to guides / grid");
-            row("Drag handles", "Resize from any of the 8 edges/corners");
-            row("Delete / Backspace", "Delete selected UI node");
-            row("Ctrl+D", "Duplicate selected UI node(s)");
-            row("F", "Frame the primary selection");
-            row("Alt + drag", "Move/resize freely (disable snapping)");
-            row("G / Shift+G", "Toggle grid / grid snapping");
-            row("Esc", "Cancel gesture or leave interactive Preview");
             ImGui::EndTable();
         }
         if (beginSection("Node Graph", "sc-node")) {
@@ -182,13 +109,6 @@ void EditorApp::RenderShortcutsWindow() {
             row("Drag from Resources", "Drop asset onto a node");
             ImGui::EndTable();
         }
-        if (beginSection("Flow", "sc-flow")) {
-            row("Drag pin -> pin", "Link chapters in the flow map");
-            row("Delete / Backspace", "Delete selected flow node or link");
-            row("Double-click node", "Open chapter in Story");
-            ImGui::EndTable();
-        }
-
         ImGui::Spacing();
         ImGui::TextDisabled("Press F1 or close this window to dismiss.");
     }

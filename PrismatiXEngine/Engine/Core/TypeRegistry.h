@@ -122,6 +122,8 @@ public:
     [[nodiscard]] const TypeInfo* Find(const std::string& name) const;
     [[nodiscard]] const PropertyInfo* FindProperty(const std::string& type,
                                                    const std::string& property) const;
+    [[nodiscard]] std::vector<const PropertyInfo*> PropertiesForType(
+        const std::string& type) const;
     [[nodiscard]] const SignalInfo* FindSignal(const std::string& type,
                                                const std::string& signal) const;
     [[nodiscard]] std::vector<const SignalInfo*> SignalsForType(const std::string& type) const;

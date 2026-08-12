@@ -105,6 +105,7 @@ bool VM::LoadProgram(const std::string& scriptPath) {
 
 bool VM::LoadScript(const std::string& scriptPath) {
     m_callStack.clear();
+    m_debugResumeState.reset();
     if (!LoadProgram(scriptPath)) {
         m_state = VMState::Finished;
         return false;
@@ -116,6 +117,7 @@ bool VM::LoadScript(const std::string& scriptPath) {
 
 bool VM::LoadScenarioText(const std::string_view text, const std::string& scriptPath) {
     m_callStack.clear();
+    m_debugResumeState.reset();
     auto document = scenario::ParseScenario(text, scriptPath);
     if (!document) {
         m_program = {};
@@ -136,6 +138,7 @@ bool VM::LoadScenarioText(const std::string_view text, const std::string& script
 
 bool VM::LoadCompiledProgram(Program program, const std::string& scriptPath) {
     m_callStack.clear();
+    m_debugResumeState.reset();
     m_program = std::move(program);
     if (!m_program.errors.empty()) {
         m_state = VMState::Finished;
@@ -151,6 +154,7 @@ bool VM::LoadCompiledProgram(Program program, const std::string& scriptPath) {
 
 void VM::SeekTo(const std::string& scriptPath, int pc) {
     m_callStack.clear();
+    m_debugResumeState.reset();
     if (LoadProgram(scriptPath)) {
         m_pc = pc;
         m_state = VMState::Idle;
@@ -185,7 +189,7 @@ bool VM::RestoreState(const VMRuntimeState& state,std::uint64_t nowMs) {
     m_outlineColor=state.outlineColor;m_textSpeed=state.textSpeed;m_textEffect=state.textEffect;
     m_chapter=state.chapter;m_currentBgm=state.currentBgm;m_currentLineSeen=state.currentLineSeen;
     m_nowMs=nowMs;m_timerStart=nowMs;m_timerMs=state.timerRemainingMs;m_skipBacklogOnce=false;
-    m_skipBreakOnce=false;m_stepping=false;m_stepBudget=0;return true;
+    m_skipBreakOnce=false;m_stepping=false;m_stepBudget=0;m_debugResumeState.reset();return true;
 }
 
 bool VM::Blocking() const {
@@ -655,8 +659,26 @@ void VM::NotifyExternalDone() {
     }
 }
 
+bool VM::DebugPause() {
+    if (m_state == VMState::Paused || m_state == VMState::Finished) {
+        return false;
+    }
+    m_debugResumeState = m_state;
+    m_state = VMState::Paused;
+    return true;
+}
+
 void VM::DebugContinue() {
     if (m_state != VMState::Paused) {
+        return;
+    }
+    if (m_debugResumeState) {
+        const VMState resumeState = *m_debugResumeState;
+        m_debugResumeState.reset();
+        m_state = resumeState;
+        if (resumeState == VMState::Idle || resumeState == VMState::Running) {
+            Run();
+        }
         return;
     }
     m_skipBreakOnce = true;
@@ -666,7 +688,7 @@ void VM::DebugContinue() {
 }
 
 void VM::DebugStep() {
-    if (m_state != VMState::Paused) {
+    if (m_state != VMState::Paused || m_debugResumeState) {
         return;
     }
     m_skipBreakOnce = true;

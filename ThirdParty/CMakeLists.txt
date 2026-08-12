@@ -19,22 +19,3 @@ target_include_directories(PrismatiXImGui PUBLIC
 target_link_libraries(PrismatiXImGui PUBLIC
     SDL3::SDL3
 )
-
-add_library(PrismatiXNodeEditor STATIC
-    imgui-node-editor/crude_json.cpp
-    imgui-node-editor/imgui_canvas.cpp
-    imgui-node-editor/imgui_node_editor.cpp
-    imgui-node-editor/imgui_node_editor_api.cpp
-    imgui-node-editor/utilities/drawing.cpp
-    imgui-node-editor/utilities/widgets.cpp
-)
-
-target_include_directories(PrismatiXNodeEditor PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/imgui
-    ${CMAKE_CURRENT_SOURCE_DIR}/imgui-node-editor
-    ${CMAKE_CURRENT_SOURCE_DIR}/imgui-node-editor/utilities
-)
-
-target_link_libraries(PrismatiXNodeEditor PUBLIC
-    PrismatiXImGui
-)

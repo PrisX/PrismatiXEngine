@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <limits>
 #include <unordered_set>
 
 namespace px::sdk {
@@ -73,6 +74,19 @@ RuntimeIrParseResult ParseRuntimeIr(const std::string_view text) {
         if (!ReadRequiredString(item, "sourceId", operation.sourceId)) {
             AddDiagnostic(result, "PXSDKIR1012", "Runtime sourceId is required", index);
             valid = false;
+        }
+        const auto sourceLine = item.find("sourceLine");
+        if (sourceLine == item.end()) {
+            operation.sourceLine = static_cast<std::uint32_t>(index + 1);
+        } else if (!sourceLine->is_number_unsigned() ||
+                   sourceLine->get<std::uint64_t>() == 0 ||
+                   sourceLine->get<std::uint64_t>() >
+                       std::numeric_limits<std::uint32_t>::max()) {
+            AddDiagnostic(result, "PXSDKIR1019",
+                          "Runtime sourceLine must be a positive 32-bit integer", index);
+            valid = false;
+        } else {
+            operation.sourceLine = sourceLine->get<std::uint32_t>();
         }
         if (!ReadRequiredString(item, "kind", operation.kind)) {
             AddDiagnostic(result, "PXSDKIR1013", "Runtime operation kind is required", index);

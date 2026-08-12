@@ -11,16 +11,66 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstring>
 #include <optional>
 #include <stdexcept>
 #include <tuple>
+#include <unordered_set>
 
 namespace px::lua {
 namespace {
 std::string Lower(std::string value){std::transform(value.begin(),value.end(),value.begin(),[](const unsigned char c){return static_cast<char>(std::tolower(c));});return value;}
 std::optional<VariantType> ManifestType(const std::string& raw){const auto type=Lower(raw);if(type=="null")return VariantType::Null;if(type=="bool"||type=="boolean")return VariantType::Bool;if(type=="int"||type=="integer")return VariantType::Integer;if(type=="number"||type=="float")return VariantType::Number;if(type=="string")return VariantType::String;if(type=="vec2"||type=="vector2")return VariantType::Vec2;if(type=="rect")return VariantType::Rect;if(type=="color")return VariantType::Color;if(type=="uuid"||type=="node")return VariantType::Uuid;if(type=="list"||type=="array")return VariantType::Array;if(type=="map"||type=="object"||type=="expression")return VariantType::Object;if(type=="resource")return VariantType::ResourceRef;if(type=="token")return VariantType::TokenRef;return std::nullopt;}
 std::optional<ui::ActionEditorHint> ManifestEditorHint(const std::string& raw){const auto hint=Lower(raw);if(hint.empty()||hint=="default")return ui::ActionEditorHint::Default;if(hint=="multiline")return ui::ActionEditorHint::Multiline;if(hint=="enum")return ui::ActionEditorHint::Enum;if(hint=="color")return ui::ActionEditorHint::Color;if(hint=="resource")return ui::ActionEditorHint::Resource;if(hint=="route")return ui::ActionEditorHint::Route;if(hint=="node")return ui::ActionEditorHint::Node;if(hint=="animation")return ui::ActionEditorHint::Animation;if(hint=="token")return ui::ActionEditorHint::Token;return std::nullopt;}
+std::optional<vn::CommandEditorWidget> ManifestCommandEditorHint(const std::string& raw){const auto hint=Lower(raw);if(hint.empty()||hint=="default")return vn::CommandEditorWidget::Default;if(hint=="multiline")return vn::CommandEditorWidget::Multiline;if(hint=="enum")return vn::CommandEditorWidget::Enum;if(hint=="color")return vn::CommandEditorWidget::Color;if(hint=="resource")return vn::CommandEditorWidget::Resource;if(hint=="route")return vn::CommandEditorWidget::Route;if(hint=="node")return vn::CommandEditorWidget::Node;if(hint=="animation")return vn::CommandEditorWidget::Animation;if(hint=="token")return vn::CommandEditorWidget::Token;if(hint=="character")return vn::CommandEditorWidget::Character;if(hint=="expression")return vn::CommandEditorWidget::Expression;if(hint=="target")return vn::CommandEditorWidget::Target;if(hint=="preset")return vn::CommandEditorWidget::Preset;if(hint=="hidden")return vn::CommandEditorWidget::Hidden;return std::nullopt;}
 bool SupportedCapability(const std::string_view capability){return capability=="runtime"||capability=="animation"||capability=="ui"||capability=="audio";}
+std::string NormalizeDebugSource(std::string source) {
+    if (!source.empty() && source.front() == '@') source.erase(0, 1);
+    std::replace(source.begin(), source.end(), '\\', '/');
+    return source;
+}
+std::string DebugValue(lua_State* state, const int index) {
+    switch (lua_type(state, index)) {
+        case LUA_TNIL: return "nil";
+        case LUA_TBOOLEAN: return lua_toboolean(state, index) ? "true" : "false";
+        case LUA_TNUMBER:
+        case LUA_TSTRING: {
+            std::size_t size = 0;
+            const char* text = lua_tolstring(state, index, &size);
+            if (!text) return {};
+            constexpr std::size_t limit = 160;
+            return std::string(text, std::min(size, limit)) +
+                   (size > limit ? "…" : "");
+        }
+        default: return std::string("<") + lua_typename(state, lua_type(state, index)) + ">";
+    }
+}
+std::string ConsoleText(lua_State* state) {
+    constexpr std::size_t limit = 4096;
+    std::string result;
+    const int count = lua_gettop(state);
+    for (int index = 1; index <= count; ++index) {
+        std::size_t size = 0;
+        const char* value = luaL_tolstring(state, index, &size);
+        if (index > 1 && result.size() < limit) result.push_back('\t');
+        if (value && result.size() < limit) {
+            const std::size_t remaining = limit - result.size();
+            result.append(value, std::min(size, remaining));
+        }
+        lua_pop(state, 1);
+    }
+    if (result.size() == limit) result.append("…");
+    return result;
+}
+std::pair<std::string, int> ConsoleSource(lua_State* state) {
+    lua_Debug caller{};
+    if (!lua_getstack(state, 1, &caller) || !lua_getinfo(state, "Sl", &caller)) {
+        return {};
+    }
+    return {NormalizeDebugSource(caller.source ? caller.source : ""),
+            caller.currentline};
+}
 std::optional<Variant> UntypedManifestValue(const nlohmann::json& value,int depth=0){if(depth>32)return std::nullopt;if(value.is_null())return Variant{};if(value.is_boolean())return Variant(value.get<bool>());if(value.is_number_integer())return Variant(value.get<std::int64_t>());if(value.is_number())return Variant(value.get<double>());if(value.is_string())return Variant(value.get<std::string>());if(value.is_array()){VariantArray result;for(const auto& item:value){auto converted=UntypedManifestValue(item,depth+1);if(!converted)return std::nullopt;result.push_back(std::move(*converted));}return Variant(std::move(result));}if(value.is_object()){VariantObject result;for(auto item=value.begin();item!=value.end();++item){auto converted=UntypedManifestValue(item.value(),depth+1);if(!converted)return std::nullopt;result.emplace(item.key(),std::move(*converted));}return Variant(std::move(result));}return std::nullopt;}
 std::optional<Variant> ManifestValue(const nlohmann::json& value,const VariantType type){
     if(type==VariantType::Bool&&value.is_boolean())return Variant(value.get<bool>());
@@ -38,6 +88,100 @@ std::optional<Variant> ManifestValue(const nlohmann::json& value,const VariantTy
     if(type==VariantType::Null&&value.is_null())return Variant{};
     return std::nullopt;
 }
+bool HasManifestDefault(const nlohmann::json& parameter, const VariantType type) {
+    const auto found = parameter.find("default");
+    if (found == parameter.end()) return false;
+    // Studio serializes an empty optional default as JSON null.  Keep an
+    // explicit null only for the null Variant type, where it is actual data.
+    return !found->is_null() || type == VariantType::Null;
+}
+bool ReadManifestRange(const nlohmann::json& parameter,
+                       std::optional<double>& minimum,
+                       std::optional<double>& maximum,
+                       std::string& error) {
+    const auto readBound = [&](const nlohmann::json& source,
+                               const char* name,
+                               std::optional<double>& destination) {
+        const auto found = source.find(name);
+        if (found == source.end() || found->is_null()) return true;
+        if (!found->is_number()) {
+            error = std::string("parameter ") + name + " must be a finite number";
+            return false;
+        }
+        const double value = found->get<double>();
+        if (!std::isfinite(value)) {
+            error = std::string("parameter ") + name + " must be a finite number";
+            return false;
+        }
+        destination = value;
+        return true;
+    };
+
+    const auto range = parameter.find("range");
+    // Studio serializes an empty optional range as JSON null.
+    if (range != parameter.end() && !range->is_null()) {
+        if (!range->is_object()) {
+            error = "parameter range must be an object or null";
+            return false;
+        }
+        if (!readBound(*range, "minimum", minimum) ||
+            !readBound(*range, "maximum", maximum)) {
+            return false;
+        }
+    }
+    return readBound(parameter, "minimum", minimum) &&
+           readBound(parameter, "maximum", maximum);
+}
+
+bool ActionHintMatchesType(const ui::ActionEditorHint hint,
+                           const VariantType type,
+                           const bool hasEnum) {
+    switch (hint) {
+        case ui::ActionEditorHint::Default: return true;
+        case ui::ActionEditorHint::Multiline: return type == VariantType::String;
+        case ui::ActionEditorHint::Enum:
+            return type == VariantType::String && hasEnum;
+        case ui::ActionEditorHint::Color: return type == VariantType::Color;
+        case ui::ActionEditorHint::Resource: return type == VariantType::ResourceRef;
+        case ui::ActionEditorHint::Route: return type == VariantType::String;
+        case ui::ActionEditorHint::Node: return type == VariantType::Uuid;
+        case ui::ActionEditorHint::Animation:
+            return type == VariantType::ResourceRef || type == VariantType::String;
+        case ui::ActionEditorHint::Token: return type == VariantType::TokenRef;
+    }
+    return false;
+}
+
+bool DefaultMatchesActionConstraints(const ui::ActionArgumentDescriptor& argument) {
+    if (!argument.defaultValue) return true;
+    if (!argument.enumValues.empty()) {
+        const auto* enumValue = argument.defaultValue->TryGet<std::string>();
+        if (!enumValue || std::ranges::find(argument.enumValues, *enumValue) ==
+                          argument.enumValues.end()) {
+            return false;
+        }
+    }
+    if (argument.minimum || argument.maximum) {
+        std::optional<double> numeric;
+        if (const auto* numberValue = argument.defaultValue->TryGet<double>()) {
+            numeric = *numberValue;
+        } else if (const auto* integerValue =
+                       argument.defaultValue->TryGet<std::int64_t>()) {
+            numeric = static_cast<double>(*integerValue);
+        }
+        if (!numeric || (argument.minimum && *numeric < *argument.minimum) ||
+            (argument.maximum && *numeric > *argument.maximum)) {
+            return false;
+        }
+    }
+    return true;
+}
+bool HasUniqueNonEmptyValues(const std::vector<std::string>& values) {
+    std::unordered_set<std::string> unique;
+    return std::ranges::all_of(values, [&](const std::string& value) {
+        return !value.empty() && unique.insert(value).second;
+    });
+}
 sol::object ToLua(sol::state_view state,const Variant& value){switch(value.Type()){case VariantType::Null:return sol::make_object(state,sol::nil);case VariantType::Bool:return sol::make_object(state,*value.TryGet<bool>());case VariantType::Integer:return sol::make_object(state,*value.TryGet<std::int64_t>());case VariantType::Number:return sol::make_object(state,*value.TryGet<double>());case VariantType::String:return sol::make_object(state,*value.TryGet<std::string>());case VariantType::Uuid:return sol::make_object(state,value.TryGet<Uuid>()->ToString());case VariantType::TokenRef:return sol::make_object(state,value.TryGet<TokenRefValue>()->name);case VariantType::ResourceRef:{const auto& reference=*value.TryGet<ResourceRefValue>();sol::table table=state.create_table();table["id"]=reference.id.ToString();table["path"]=reference.lastKnownPath;return sol::make_object(state,table);}case VariantType::Array:{sol::table table=state.create_table();std::size_t index=1;for(const auto& item:*value.AsArray())table[index++]=ToLua(state,item);return sol::make_object(state,table);}case VariantType::Object:{sol::table table=state.create_table();for(const auto& [name,item]:*value.AsObject())table[name]=ToLua(state,item);return sol::make_object(state,table);}case VariantType::Vec2:{const auto& vector=*value.TryGet<Vec2>();sol::table table=state.create_table();table["x"]=vector.x;table["y"]=vector.y;return sol::make_object(state,table);}case VariantType::Rect:{const auto& rectangle=*value.TryGet<Rect>();sol::table table=state.create_table();table["x"]=rectangle.x;table["y"]=rectangle.y;table["w"]=rectangle.w;table["h"]=rectangle.h;return sol::make_object(state,table);}case VariantType::Color:{const auto& color=*value.TryGet<Color>();sol::table table=state.create_table();table["r"]=color.r;table["g"]=color.g;table["b"]=color.b;table["a"]=color.a;return sol::make_object(state,table);}}return sol::make_object(state,sol::nil);}
 class LuaActionProvider final : public ui::IActionProvider {
 public:
@@ -54,6 +198,8 @@ private:LuaHost& m_host;
 }
 
 LuaHost::LuaHost(const LuaServices& services) : m_runner(sol::thread::create(m_lua)), m_services(services) {
+    *static_cast<LuaHost**>(lua_getextraspace(m_lua.lua_state())) = this;
+    *static_cast<LuaHost**>(lua_getextraspace(m_runner.state().lua_state())) = this;
     m_lua.open_libraries(sol::lib::base, sol::lib::math, sol::lib::string, sol::lib::table,
                          sol::lib::coroutine, sol::lib::utf8);
     // Base Lua exposes host-filesystem helpers even when io/os are not opened.
@@ -61,17 +207,257 @@ LuaHost::LuaHost(const LuaServices& services) : m_runner(sol::thread::create(m_l
     // capability provider explicitly grants a broader API.
     m_lua["dofile"] = sol::nil;
     m_lua["loadfile"] = sol::nil;
+    m_lua.set_function("print", &LuaHost::ConsolePrint);
+    m_lua.set_function("warn", &LuaHost::ConsoleWarn);
     BindVfsRequire();
     BindApi();
 }
 LuaHost::~LuaHost(){for(const auto& source:m_loadedActionSources)(void)ui::ActionCatalog::Global().RemoveSource(ui::ActionOrigin::LuaExtension,source);}
 
 void LuaHost::HandleError(const std::string& where, const std::string& message) {
-    PX_LOG_ERROR("Lua error in {}: {}", where, message);
+    EmitConsole(LuaConsoleLevel::Error, message, where);
     diag::Diagnostic diagnostic{.severity=diag::Severity::Error,.code="PXLUA7401",
                                 .category="Lua.Runtime",.message="Lua extension failed",
                                 .details=message};
     diagnostic.source.path=where;diag::Emit(std::move(diagnostic));
+}
+
+void LuaHost::EmitConsole(const LuaConsoleLevel level, std::string message,
+                          std::string source, const int line) const {
+    LuaConsoleMessage output{level, std::move(message), std::move(source), line};
+    if (m_services.console) {
+        m_services.console(output);
+        return;
+    }
+    switch (level) {
+        case LuaConsoleLevel::Info:
+            PX_LOG_INFO("[lua] {}", output.text);
+            break;
+        case LuaConsoleLevel::Warning:
+            PX_LOG_WARN("[lua] {}", output.text);
+            break;
+        case LuaConsoleLevel::Error:
+            PX_LOG_ERROR("Lua error in {}: {}", output.source, output.text);
+            break;
+    }
+}
+
+int LuaHost::ConsolePrint(lua_State* state) {
+    auto* host = *static_cast<LuaHost**>(lua_getextraspace(state));
+    if (!host) return 0;
+    auto [source, line] = ConsoleSource(state);
+    host->EmitConsole(LuaConsoleLevel::Info, ConsoleText(state),
+                      std::move(source), line);
+    return 0;
+}
+
+int LuaHost::ConsoleWarn(lua_State* state) {
+    auto* host = *static_cast<LuaHost**>(lua_getextraspace(state));
+    if (!host) return 0;
+    auto [source, line] = ConsoleSource(state);
+    host->EmitConsole(LuaConsoleLevel::Warning, ConsoleText(state),
+                      std::move(source), line);
+    return 0;
+}
+
+void LuaHost::PrepareDebugHook(lua_State* state) {
+    if (!state) return;
+    *static_cast<LuaHost**>(lua_getextraspace(state)) = this;
+    const bool enabled = !m_debugBreakpoints.empty() || m_debugPauseRequested ||
+                         m_debugStepRequested;
+    lua_sethook(state, enabled ? &LuaHost::DebugHook : nullptr,
+                enabled ? LUA_MASKLINE : 0, 0);
+}
+
+void LuaHost::CaptureDebugStack(lua_State* state, lua_Debug* event,
+                                std::string reason) {
+    m_debugSnapshot = {};
+    m_debugSnapshot.paused = true;
+    m_debugSnapshot.reason = std::move(reason);
+    m_debugPauseRequested = false;
+    m_debugStepRequested = false;
+    m_debugPausedState = state;
+
+    for (int level = 0; level < 32; ++level) {
+        lua_Debug frame{};
+        if (!lua_getstack(state, level, &frame)) break;
+        if (!lua_getinfo(state, "nSl", &frame)) continue;
+        DebugFrame captured;
+        captured.source = NormalizeDebugSource(
+            frame.source ? frame.source : (event && event->source ? event->source : ""));
+        captured.function = frame.name ? frame.name : "<anonymous>";
+        captured.line = frame.currentline;
+        for (int local = 1; local <= 128; ++local) {
+            const char* name = lua_getlocal(state, &frame, local);
+            if (!name) break;
+            if (name[0] != '(') {
+                captured.locals.push_back({name, DebugValue(state, -1)});
+            }
+            lua_pop(state, 1);
+        }
+        m_debugSnapshot.frames.push_back(std::move(captured));
+    }
+}
+
+void LuaHost::DebugHook(lua_State* state, lua_Debug* event) {
+    auto* host = *static_cast<LuaHost**>(lua_getextraspace(state));
+    if (!host || !event || event->event != LUA_HOOKLINE) return;
+    if (!lua_getinfo(state, "Sl", event)) return;
+
+    const std::string source = NormalizeDebugSource(event->source ? event->source : "");
+    if (event->currentline == host->m_debugSkipLine &&
+        source == host->m_debugSkipSource) {
+        host->m_debugSkipSource.clear();
+        host->m_debugSkipLine = 0;
+        return;
+    }
+    bool atBreakpoint = false;
+    for (const auto& [configuredSource, lines] : host->m_debugBreakpoints) {
+        const bool sourceMatches =
+            configuredSource.empty() || source == configuredSource ||
+            (source.size() > configuredSource.size() &&
+             source.ends_with(configuredSource));
+        if (sourceMatches && lines.contains(event->currentline)) {
+            atBreakpoint = true;
+            break;
+        }
+    }
+    if (!atBreakpoint && !host->m_debugPauseRequested && !host->m_debugStepRequested) {
+        return;
+    }
+    const std::string reason = atBreakpoint ? "breakpoint"
+                               : host->m_debugStepRequested ? "step"
+                                                          : "pause";
+    // A Lua line hook may yield, but must not inspect or otherwise mutate the
+    // active stack before doing so. The suspended coroutine is inspected by
+    // the caller immediately after lua_resume returns.
+    host->m_debugSnapshot = {};
+    host->m_debugSnapshot.paused = true;
+    host->m_debugSnapshot.reason = reason;
+    host->m_debugPauseRequested = false;
+    host->m_debugStepRequested = false;
+    lua_yield(state, 0);
+}
+
+std::vector<LuaHost::DebugBreakpoint> LuaHost::SetDebugBreakpoints(
+    std::vector<DebugBreakpoint> breakpoints) {
+    m_debugBreakpoints.clear();
+    std::vector<DebugBreakpoint> accepted;
+    for (auto& breakpoint : breakpoints) {
+        breakpoint.source = NormalizeDebugSource(std::move(breakpoint.source));
+        if (breakpoint.line <= 0) continue;
+        if (m_debugBreakpoints[breakpoint.source].insert(breakpoint.line).second) {
+            accepted.push_back(std::move(breakpoint));
+        }
+    }
+    PrepareDebugHook(m_runner.state().lua_state());
+    return accepted;
+}
+
+bool LuaHost::DebugPause() {
+    if (m_debugSnapshot.paused) return false;
+    m_debugPauseRequested = true;
+    PrepareDebugHook(m_runner.state().lua_state());
+    return true;
+}
+
+bool LuaHost::DebugContinue() {
+    if (!m_debugSnapshot.paused) return false;
+    if (!m_debugSnapshot.frames.empty()) {
+        m_debugSkipSource = m_debugSnapshot.frames.front().source;
+        m_debugSkipLine = m_debugSnapshot.frames.front().line;
+    }
+    m_debugSnapshot.paused = false;
+    m_debugSnapshot.reason.clear();
+    m_debugSnapshot.frames.clear();
+    m_debugPausedState = nullptr;
+    for (auto& pending : m_pending) {
+        if (pending.waitKind == "debug") pending.waitKind = "debug-resume";
+    }
+    for (auto& pending : m_pendingActions) {
+        if (pending.waitKind == "debug") pending.waitKind = "debug-resume";
+    }
+    PrepareDebugHook(m_runner.state().lua_state());
+    return true;
+}
+
+bool LuaHost::DebugStep() {
+    if (!m_debugSnapshot.paused) return false;
+    if (!m_debugSnapshot.frames.empty()) {
+        m_debugSkipSource = m_debugSnapshot.frames.front().source;
+        m_debugSkipLine = m_debugSnapshot.frames.front().line;
+    }
+    m_debugStepRequested = true;
+    m_debugSnapshot.paused = false;
+    m_debugSnapshot.reason.clear();
+    m_debugSnapshot.frames.clear();
+    m_debugPausedState = nullptr;
+    for (auto& pending : m_pending) {
+        if (pending.waitKind == "debug") pending.waitKind = "debug-resume";
+    }
+    for (auto& pending : m_pendingActions) {
+        if (pending.waitKind == "debug") pending.waitKind = "debug-resume";
+    }
+    PrepareDebugHook(m_runner.state().lua_state());
+    return true;
+}
+
+std::optional<LuaHost::DebugVariable> LuaHost::EvaluateDebugWatch(
+    const std::string_view expression) const {
+    if (!m_debugSnapshot.paused || !m_debugPausedState || expression.empty()) {
+        return std::nullopt;
+    }
+    std::vector<std::string> path;
+    std::size_t start = 0;
+    while (start < expression.size()) {
+        const std::size_t end = expression.find('.', start);
+        const std::string part(expression.substr(
+            start, end == std::string_view::npos ? expression.size() - start
+                                                  : end - start));
+        if (part.empty() ||
+            !(std::isalpha(static_cast<unsigned char>(part.front())) ||
+              part.front() == '_') ||
+            !std::ranges::all_of(part.substr(1), [](const unsigned char value) {
+                return std::isalnum(value) || value == '_';
+            })) {
+            return std::nullopt;
+        }
+        path.push_back(part);
+        if (end == std::string_view::npos) break;
+        start = end + 1;
+    }
+
+    lua_Debug frame{};
+    if (!lua_getstack(m_debugPausedState, 0, &frame)) return std::nullopt;
+    bool found = false;
+    for (int local = 1; local <= 128; ++local) {
+        const char* name = lua_getlocal(m_debugPausedState, &frame, local);
+        if (!name) break;
+        if (path.front() == name) {
+            found = true;
+            break;
+        }
+        lua_pop(m_debugPausedState, 1);
+    }
+    if (!found) return std::nullopt;
+    for (std::size_t index = 1; index < path.size(); ++index) {
+        if (!lua_istable(m_debugPausedState, -1)) {
+            lua_pop(m_debugPausedState, 1);
+            return std::nullopt;
+        }
+        lua_pushlstring(m_debugPausedState, path[index].data(),
+                        path[index].size());
+        lua_rawget(m_debugPausedState, -2);
+        lua_remove(m_debugPausedState, -2);
+        if (lua_isnil(m_debugPausedState, -1)) {
+            lua_pop(m_debugPausedState, 1);
+            return std::nullopt;
+        }
+    }
+    DebugVariable value{std::string(expression),
+                        DebugValue(m_debugPausedState, -1)};
+    lua_pop(m_debugPausedState, 1);
+    return value;
 }
 
 void LuaHost::BindVfsRequire() {
@@ -153,15 +539,104 @@ bool LuaHost::LoadExtensionManifest(const std::string& manifestPath) {
                 return false;
             }
         }
+        std::vector<vn::CommandDescriptor> commandDescriptors;
+        vn::CommandRegistry stagedCommands;
         for (const auto& command : json.value("commands", nlohmann::json::array())) {
             if (!command.is_object()) {
                 HandleError(manifestPath, "commands must be typed descriptor objects");
                 return false;
             }
-            vn::CommandDescriptor descriptor;descriptor.id=command.at("id").get<std::string>();descriptor.displayName=command.value("displayName",descriptor.id);descriptor.category=command.value("category",std::string("Extension"));descriptor.waitPolicy=command.value("await",false)?vn::CommandWaitPolicy::Async:vn::CommandWaitPolicy::Immediate;descriptor.rollbackPolicy=command.value("rollback",std::string("boundary"))=="reversible"?vn::RollbackPolicy::Reversible:vn::RollbackPolicy::Boundary;
+            vn::CommandDescriptor descriptor;descriptor.id=command.at("id").get<std::string>();descriptor.displayName=command.value("displayName",descriptor.id);descriptor.description=command.value("description",std::string{});descriptor.category=command.value("category",std::string("Extension"));descriptor.waitPolicy=command.value("await",false)?vn::CommandWaitPolicy::Async:vn::CommandWaitPolicy::Immediate;descriptor.allowAdditionalParameters=command.value("allowAdditionalParameters",false);
+            const auto rollback=Lower(command.value("rollback",std::string("boundary")));if(rollback=="reversible")descriptor.rollbackPolicy=vn::RollbackPolicy::Reversible;else if(rollback=="boundary")descriptor.rollbackPolicy=vn::RollbackPolicy::Boundary;else if(rollback=="transient")descriptor.rollbackPolicy=vn::RollbackPolicy::Transient;else{HandleError(manifestPath,"command rollback policy is invalid: "+rollback);return false;}
             if(descriptor.id.empty()){HandleError(manifestPath,"command id is empty");return false;}
-            for(const auto& parameter:command.value("parameters",nlohmann::json::array())){if(!parameter.is_object()){HandleError(manifestPath,"command parameter must be an object");return false;}const auto type=ManifestType(parameter.value("type",std::string{}));if(!type){HandleError(manifestPath,"unsupported command parameter type");return false;}vn::CommandParameterDescriptor value;value.name=parameter.at("name").get<std::string>();value.label=parameter.value("label",value.name);value.type=*type;value.required=parameter.value("required",false);if(value.name.empty()){HandleError(manifestPath,"command parameter name is empty");return false;}descriptor.parameters.push_back(std::move(value));}
-            manifest.commands.insert(descriptor.id);if(!vn::CommandRegistry::Global().Find(descriptor.id)){const Status registered=vn::CommandRegistry::Global().Register(std::move(descriptor));if(!registered){HandleError(manifestPath,diag::Describe(registered.Diagnostics().front()));return false;}}
+            for (const auto& parameter :
+                 command.value("parameters", nlohmann::json::array())) {
+                if (!parameter.is_object()) {
+                    HandleError(manifestPath,
+                                "command parameter must be an object");
+                    return false;
+                }
+                const auto type =
+                    ManifestType(parameter.value("type", std::string{}));
+                if (!type) {
+                    HandleError(manifestPath,
+                                "unsupported command parameter type");
+                    return false;
+                }
+                vn::CommandParameterDescriptor value;
+                value.name = parameter.at("name").get<std::string>();
+                value.label = parameter.value(
+                    "displayName", parameter.value("label", value.name));
+                value.description =
+                    parameter.value("description", std::string{});
+                value.type = *type;
+                value.required = parameter.value("required", false);
+                if (value.name.empty()) {
+                    HandleError(manifestPath,
+                                "command parameter name is empty");
+                    return false;
+                }
+                if (HasManifestDefault(parameter, value.type)) {
+                    const auto parsed =
+                        ManifestValue(parameter["default"], value.type);
+                    if (!parsed) {
+                        HandleError(
+                            manifestPath,
+                            "Command parameter default has the wrong type: " +
+                                descriptor.id + "." + value.name);
+                        return false;
+                    }
+                    value.defaultValue = parsed->Clone();
+                    value.hasDefault = true;
+                }
+                const auto optionsJson = parameter.contains("enum")
+                                             ? parameter["enum"]
+                                             : parameter.value(
+                                                   "options",
+                                                   nlohmann::json::array());
+                if (!optionsJson.is_array()) {
+                    HandleError(
+                        manifestPath,
+                        "Command parameter enum/options must be an array");
+                    return false;
+                }
+                for (const auto& option : optionsJson) {
+                    if (!option.is_string()) {
+                        HandleError(manifestPath,
+                                    "Command parameter options must be strings");
+                        return false;
+                    }
+                    value.options.push_back(option.get<std::string>());
+                }
+                std::string rangeError;
+                if (!ReadManifestRange(parameter, value.minimum, value.maximum,
+                                       rangeError)) {
+                    HandleError(manifestPath, "Command " + descriptor.id + "." +
+                                                  value.name + " " + rangeError);
+                    return false;
+                }
+                value.resourceType = parameter.value(
+                    "resourceFilter",
+                    parameter.value("resourceType", std::string{}));
+                const auto hint = ManifestCommandEditorHint(
+                    parameter.value("editorHint", std::string{}));
+                if (!hint) {
+                    HandleError(manifestPath,
+                                "Command parameter editorHint is unknown");
+                    return false;
+                }
+                value.widget = *hint;
+                if (!value.options.empty() &&
+                    value.widget == vn::CommandEditorWidget::Default) {
+                    value.widget = vn::CommandEditorWidget::Enum;
+                }
+                if (value.type == VariantType::ResourceRef &&
+                    value.widget == vn::CommandEditorWidget::Default) {
+                    value.widget = vn::CommandEditorWidget::Resource;
+                }
+                descriptor.parameters.push_back(std::move(value));
+            }
+            if(vn::CommandRegistry::Global().Find(descriptor.id)){HandleError(manifestPath,"command id conflicts with an existing runtime command: "+descriptor.id);return false;}if(!manifest.commands.insert(descriptor.id).second){HandleError(manifestPath,"duplicate command id in extension manifest: "+descriptor.id);return false;}const Status staged=stagedCommands.Register(descriptor);if(!staged){HandleError(manifestPath,diag::Describe(staged.Diagnostics().front()));return false;}commandDescriptors.push_back(std::move(descriptor));
         }
         std::vector<ui::ActionDescriptor> actionDescriptors;
         for (const auto& action : json.value("actions", nlohmann::json::array())) {
@@ -193,18 +668,49 @@ bool LuaHost::LoadExtensionManifest(const std::string& manifestPath) {
                 value.description=parameter.value("description",std::string{});
                 value.required=parameter.value("required",false);
                 if(value.name.empty()){HandleError(manifestPath,"action parameter name is empty");return false;}
-                if(parameter.contains("default")){const auto parsed=ManifestValue(parameter["default"],value.type);if(!parsed){HandleError(manifestPath,"Action parameter default has the wrong type: "+descriptor.id+"."+value.name);return false;}value.defaultValue=parsed->Clone();}
+                if(HasManifestDefault(parameter,value.type)){const auto parsed=ManifestValue(parameter["default"],value.type);if(!parsed){HandleError(manifestPath,"Action parameter default has the wrong type: "+descriptor.id+"."+value.name);return false;}value.defaultValue=parsed->Clone();}
                 const auto enumJson=parameter.contains("enum")?parameter["enum"]:nlohmann::json::array();
                 if(!enumJson.is_array()){HandleError(manifestPath,"Action parameter enum must be an array");return false;}
                 if(!enumJson.empty()&&value.type!=VariantType::String){HandleError(manifestPath,"Action parameter enum requires string type");return false;}
                 for(const auto& option:enumJson){if(!option.is_string()){HandleError(manifestPath,"Action enum values must be strings");return false;}value.enumValues.push_back(option.get<std::string>());}
-                if(parameter.contains("range")){const auto& range=parameter["range"];if(!range.is_object()){HandleError(manifestPath,"Action parameter range must be an object");return false;}if(range.contains("minimum"))value.minimum=range["minimum"].get<double>();if(range.contains("maximum"))value.maximum=range["maximum"].get<double>();}
-                if(parameter.contains("minimum"))value.minimum=parameter["minimum"].get<double>();if(parameter.contains("maximum"))value.maximum=parameter["maximum"].get<double>();
+                if (!HasUniqueNonEmptyValues(value.enumValues)) {
+                    HandleError(manifestPath,
+                                "Action enum values must be non-empty and unique: " +
+                                    descriptor.id + "." + value.name);
+                    return false;
+                }
+                std::string rangeError;
+                if (!ReadManifestRange(parameter, value.minimum, value.maximum,
+                                       rangeError)) {
+                    HandleError(manifestPath, "Action " + descriptor.id + "." +
+                                                  value.name + " " + rangeError);
+                    return false;
+                }
                 if((value.minimum||value.maximum)&&value.type!=VariantType::Integer&&value.type!=VariantType::Number){HandleError(manifestPath,"Action parameter range requires numeric type");return false;}
                 value.resourceType=parameter.value("resourceFilter",parameter.value("resourceType",std::string{}));
                 const auto hint=ManifestEditorHint(parameter.value("editorHint",std::string{}));if(!hint){HandleError(manifestPath,"Action parameter editorHint is unknown");return false;}value.editorHint=*hint;
                 if(!value.enumValues.empty()&&value.editorHint==ui::ActionEditorHint::Default)value.editorHint=ui::ActionEditorHint::Enum;
                 if(value.type==VariantType::ResourceRef&&value.editorHint==ui::ActionEditorHint::Default)value.editorHint=ui::ActionEditorHint::Resource;
+                if (!ActionHintMatchesType(value.editorHint, value.type,
+                                           !value.enumValues.empty())) {
+                    HandleError(manifestPath,
+                                "Action parameter editorHint does not match its type: " +
+                                    descriptor.id + "." + value.name);
+                    return false;
+                }
+                if (!value.resourceType.empty() &&
+                    value.type != VariantType::ResourceRef) {
+                    HandleError(manifestPath,
+                                "Action resourceFilter requires resource type: " +
+                                    descriptor.id + "." + value.name);
+                    return false;
+                }
+                if (!DefaultMatchesActionConstraints(value)) {
+                    HandleError(manifestPath,
+                                "Action parameter default does not satisfy its schema: " +
+                                    descriptor.id + "." + value.name);
+                    return false;
+                }
                 descriptor.arguments.push_back(std::move(value));
             }
             manifest.actions.insert(descriptor.id);actionDescriptors.push_back(std::move(descriptor));
@@ -216,12 +722,17 @@ bool LuaHost::LoadExtensionManifest(const std::string& manifestPath) {
         m_activeExtension = manifest.id;
         m_declaredCommands.insert(manifest.commands.begin(), manifest.commands.end());
         m_declaredActions.insert(manifest.actions.begin(), manifest.actions.end());
+        const auto discardManifestRegistration=[&](){for(const auto& command:manifest.commands){m_declaredCommands.erase(command);m_commands.erase(command);}for(const auto& action:manifest.actions){m_declaredActions.erase(action);m_actions.erase(action);}(void)ui::ActionCatalog::Global().RemoveSource(ui::ActionOrigin::LuaExtension,manifest.id);m_loadedActionSources.erase(manifest.id);};
         const bool loaded = RunFile("Content/Extensions/" + manifest.entry);
         m_activeExtension.clear();
-        if(!loaded)return false;
-        for(const auto& action:manifest.actions)if(!m_actions.contains(action)){
-            HandleError(manifestPath,"action '"+action+"' has no Engine.RegisterAction callback");return false;
+        if(!loaded){discardManifestRegistration();return false;}
+        for(const auto& command:manifest.commands)if(!m_commands.contains(command)){
+            discardManifestRegistration();HandleError(manifestPath,"command '"+command+"' has no Engine.RegisterCommand callback");return false;
         }
+        for(const auto& action:manifest.actions)if(!m_actions.contains(action)){
+            discardManifestRegistration();HandleError(manifestPath,"action '"+action+"' has no Engine.RegisterAction callback");return false;
+        }
+        for(auto& descriptor:commandDescriptors){const Status registered=vn::CommandRegistry::Global().Register(std::move(descriptor));if(!registered){HandleError(manifestPath,diag::Describe(registered.Diagnostics().front()));return false;}}
         return true;
     } catch (const nlohmann::json::exception& error) {
         HandleError(manifestPath, error.what());
@@ -297,13 +808,17 @@ ui::ProviderActionStart LuaHost::StartAction(const ui::ActionInvocation& invocat
     sol::table context=m_lua.create_table();context["scene"]=invocation.context.sourceScene;
     context["node"]=invocation.context.sourceNode.ToString();context["signal"]=invocation.context.signal;
     context["route"]=invocation.context.currentRoute;context["preview"]=invocation.context.preview;
-    sol::state_view runnerState=m_runner.state();sol::coroutine coroutine(runnerState,function->second);
+    auto runner = std::make_shared<sol::thread>(sol::thread::create(m_lua));
+    sol::state_view runnerState=runner->state();
+    PrepareDebugHook(runnerState.lua_state());
+    sol::coroutine coroutine(runnerState,function->second);
     sol::protected_function_result result=coroutine(args,context);
     if(!result.valid()){const sol::error error=result;HandleError("action:"+invocation.action,error.what());return {.status=Status::Fail(diag::Diagnostic{
         .severity=diag::Severity::Error,.code="PXLUA7421",.category="Lua.Action",
         .message="Lua action failed",.details=error.what()})};}
-    if(result.status()==sol::call_status::yielded){const std::uint64_t handle=m_nextActionHandle++;PendingActionCoroutine pending{std::move(coroutine)};pending.id=handle;pending.action=invocation.action;pending.invocation=invocation;pending.yieldIndex=1;
-        if(result.return_count()>=1)pending.waitKind=result.get<std::string>(0);
+    if(result.status()==sol::call_status::yielded){const std::uint64_t handle=m_nextActionHandle++;if(m_debugSnapshot.paused){CaptureDebugStack(runnerState.lua_state(),nullptr,m_debugSnapshot.reason);result.abandon();}PendingActionCoroutine pending{runner,std::move(coroutine)};pending.id=handle;pending.action=invocation.action;pending.invocation=invocation;pending.yieldIndex=1;
+        if(m_debugSnapshot.paused) pending.waitKind="debug";
+        else if(result.return_count()>=1)pending.waitKind=result.get<std::string>(0);
         if(result.return_count()>=2){if(pending.waitKind=="animation")pending.handle=result.get<std::uint64_t>(1);else if(pending.waitKind=="timer")pending.remainingSeconds=result.get<float>(1);}
         m_pendingActions.push_back(std::move(pending));return {.status=Status::Ok(),.handle=handle,.pending=true};}
     return {.status=Status::Ok()};
@@ -318,7 +833,13 @@ ui::ActionExecutionState LuaHost::ActionState(const std::uint64_t handle) const 
 
 void LuaHost::CancelAction(const std::uint64_t handle){
     const auto found=std::ranges::find(m_pendingActions,handle,&PendingActionCoroutine::id);
-    if(found!=m_pendingActions.end())m_pendingActions.erase(found);
+    if(found!=m_pendingActions.end()){
+        if(m_debugPausedState==found->runner->state().lua_state()){
+            m_debugSnapshot={};m_debugPauseRequested=false;m_debugStepRequested=false;
+            m_debugSkipSource.clear();m_debugSkipLine=0;m_debugPausedState=nullptr;
+        }
+        m_pendingActions.erase(found);
+    }
     m_actionTerminalStates[handle]=ui::ActionExecutionState::Cancelled;
 }
 
@@ -332,19 +853,151 @@ bool LuaHost::InvokeCommand(const vn::Command& cmd) {
         args[a.key] = a.value;
     }
     for (const auto& [name, value] : cmd.typedArgs) args[name] = ToLua(m_lua, value);
-    sol::state_view runnerState=m_runner.state();sol::coroutine coroutine(runnerState,it->second);
+    auto runner = std::make_shared<sol::thread>(sol::thread::create(m_lua));
+    sol::state_view runnerState=runner->state();
+    PrepareDebugHook(runnerState.lua_state());
+    sol::coroutine coroutine(runnerState,it->second);
     sol::protected_function_result result = coroutine(args);
     if (!result.valid()) {
         const sol::error err = result;
         HandleError("command:" + cmd.type, err.what());
         return true;
     }
-    if(result.status()==sol::call_status::yielded){PendingCoroutine pending{std::move(coroutine)};pending.command=cmd;pending.yieldIndex=1;if(result.return_count()>=1)pending.waitKind=result.get<std::string>(0);if(result.return_count()>=2){if(pending.waitKind=="animation")pending.handle=result.get<std::uint64_t>(1);else if(pending.waitKind=="timer")pending.remainingSeconds=result.get<float>(1);}m_pending.push_back(std::move(pending));}
+    if(result.status()==sol::call_status::yielded){if(m_debugSnapshot.paused){CaptureDebugStack(runnerState.lua_state(),nullptr,m_debugSnapshot.reason);result.abandon();}PendingCoroutine pending{runner,std::move(coroutine)};pending.command=cmd;pending.yieldIndex=1;if(m_debugSnapshot.paused)pending.waitKind="debug";else if(result.return_count()>=1)pending.waitKind=result.get<std::string>(0);if(result.return_count()>=2){if(pending.waitKind=="animation")pending.handle=result.get<std::uint64_t>(1);else if(pending.waitKind=="timer")pending.remainingSeconds=result.get<float>(1);}m_pending.push_back(std::move(pending));}
     return true;
 }
 
-void LuaHost::Update(const float deltaSeconds){for(auto iterator=m_pending.begin();iterator!=m_pending.end();){bool ready=false;if(iterator->waitKind=="animation")ready=!m_services.timeline||!m_services.timeline->Playing(iterator->handle);else if(iterator->waitKind=="timer"){iterator->remainingSeconds-=std::max(0.0f,deltaSeconds);ready=iterator->remainingSeconds<=0.0f;}else ready=true;if(!ready){++iterator;continue;}sol::protected_function_result result=iterator->coroutine();if(!result.valid()){const sol::error error=result;HandleError("await",error.what());iterator=m_pending.erase(iterator);continue;}if(result.status()==sol::call_status::yielded){++iterator->yieldIndex;iterator->waitKind=result.return_count()>=1?result.get<std::string>(0):std::string{};iterator->handle=iterator->waitKind=="animation"&&result.return_count()>=2?result.get<std::uint64_t>(1):0;iterator->remainingSeconds=iterator->waitKind=="timer"&&result.return_count()>=2?result.get<float>(1):0.0f;++iterator;}else iterator=m_pending.erase(iterator);}
-    for(auto iterator=m_pendingActions.begin();iterator!=m_pendingActions.end();){bool ready=false;if(iterator->waitKind=="animation")ready=!m_services.timeline||!m_services.timeline->Playing(iterator->handle);else if(iterator->waitKind=="timer"){iterator->remainingSeconds-=std::max(0.0f,deltaSeconds);ready=iterator->remainingSeconds<=0.0f;}else ready=true;if(!ready){++iterator;continue;}sol::protected_function_result result=iterator->coroutine();if(!result.valid()){const sol::error error=result;HandleError("action:"+iterator->action,error.what());m_actionTerminalStates[iterator->id]=ui::ActionExecutionState::Failed;iterator=m_pendingActions.erase(iterator);continue;}if(result.status()==sol::call_status::yielded){++iterator->yieldIndex;iterator->waitKind=result.return_count()>=1?result.get<std::string>(0):std::string{};iterator->handle=iterator->waitKind=="animation"&&result.return_count()>=2?result.get<std::uint64_t>(1):0;iterator->remainingSeconds=iterator->waitKind=="timer"&&result.return_count()>=2?result.get<float>(1):0.0f;++iterator;}else{m_actionTerminalStates[iterator->id]=ui::ActionExecutionState::Completed;iterator=m_pendingActions.erase(iterator);}}}
+void LuaHost::Update(const float deltaSeconds) {
+    enum class ResumeResult { Yielded, Finished, Failed };
+    const auto resumeDebug = [this](auto& pending,
+                                    const std::string& errorContext) {
+        lua_State* state = pending.runner->state().lua_state();
+        PrepareDebugHook(state);
+        int resultCount = 0;
+        const int status = lua_resume(state, nullptr, 0, &resultCount);
+        if (status != LUA_OK && status != LUA_YIELD) {
+            const char* error = lua_tostring(state, -1);
+            HandleError(errorContext, error ? error : "Lua coroutine resume failed");
+            if (lua_gettop(state) > 0) lua_pop(state, 1);
+            return ResumeResult::Failed;
+        }
+        if (status == LUA_OK) {
+            if (resultCount > 0) lua_pop(state, resultCount);
+            return ResumeResult::Finished;
+        }
+
+        ++pending.yieldIndex;
+        if (m_debugSnapshot.paused) {
+            CaptureDebugStack(state, nullptr, m_debugSnapshot.reason);
+            pending.waitKind = "debug";
+        } else {
+            const int firstResult = lua_gettop(state) - resultCount + 1;
+            pending.waitKind =
+                resultCount >= 1 && lua_isstring(state, firstResult)
+                    ? lua_tostring(state, firstResult)
+                    : "";
+            pending.handle =
+                pending.waitKind == "animation" && resultCount >= 2
+                    ? static_cast<std::uint64_t>(
+                          lua_tointeger(state, firstResult + 1))
+                    : 0;
+            pending.remainingSeconds =
+                pending.waitKind == "timer" && resultCount >= 2
+                    ? static_cast<float>(lua_tonumber(state, firstResult + 1))
+                    : 0.0f;
+        }
+        if (resultCount > 0) lua_pop(state, resultCount);
+        return ResumeResult::Yielded;
+    };
+
+    for (auto iterator = m_pending.begin(); iterator != m_pending.end();) {
+        if (iterator->waitKind == "debug") {
+            ++iterator;
+            continue;
+        }
+        if (iterator->waitKind == "debug-resume") {
+            const auto result = resumeDebug(*iterator, "await");
+            if (result == ResumeResult::Finished ||
+                result == ResumeResult::Failed) {
+                iterator = m_pending.erase(iterator);
+            } else {
+                ++iterator;
+            }
+            continue;
+        }
+        bool ready = false;
+        if (iterator->waitKind == "animation") {
+            ready = !m_services.timeline ||
+                    !m_services.timeline->Playing(iterator->handle);
+        } else if (iterator->waitKind == "timer") {
+            iterator->remainingSeconds -= std::max(0.0f, deltaSeconds);
+            ready = iterator->remainingSeconds <= 0.0f;
+        } else {
+            ready = true;
+        }
+        if (!ready) {
+            ++iterator;
+            continue;
+        }
+        const auto result = resumeDebug(*iterator, "await");
+        if (result == ResumeResult::Finished || result == ResumeResult::Failed) {
+            iterator = m_pending.erase(iterator);
+        } else {
+            ++iterator;
+        }
+    }
+
+    for (auto iterator = m_pendingActions.begin();
+         iterator != m_pendingActions.end();) {
+        if (iterator->waitKind == "debug") {
+            ++iterator;
+            continue;
+        }
+        if (iterator->waitKind == "debug-resume") {
+            const auto result =
+                resumeDebug(*iterator, "action:" + iterator->action);
+            if (result == ResumeResult::Finished) {
+                m_actionTerminalStates[iterator->id] =
+                    ui::ActionExecutionState::Completed;
+                iterator = m_pendingActions.erase(iterator);
+            } else if (result == ResumeResult::Failed) {
+                m_actionTerminalStates[iterator->id] =
+                    ui::ActionExecutionState::Failed;
+                iterator = m_pendingActions.erase(iterator);
+            } else {
+                ++iterator;
+            }
+            continue;
+        }
+        bool ready = false;
+        if (iterator->waitKind == "animation") {
+            ready = !m_services.timeline ||
+                    !m_services.timeline->Playing(iterator->handle);
+        } else if (iterator->waitKind == "timer") {
+            iterator->remainingSeconds -= std::max(0.0f, deltaSeconds);
+            ready = iterator->remainingSeconds <= 0.0f;
+        } else {
+            ready = true;
+        }
+        if (!ready) {
+            ++iterator;
+            continue;
+        }
+        const auto result =
+            resumeDebug(*iterator, "action:" + iterator->action);
+        if (result == ResumeResult::Finished) {
+            m_actionTerminalStates[iterator->id] =
+                ui::ActionExecutionState::Completed;
+            iterator = m_pendingActions.erase(iterator);
+        } else if (result == ResumeResult::Failed) {
+            m_actionTerminalStates[iterator->id] =
+                ui::ActionExecutionState::Failed;
+            iterator = m_pendingActions.erase(iterator);
+        } else {
+            ++iterator;
+        }
+    }
+}
 
 PendingCommandsState LuaHost::CapturePending() const {
     PendingCommandsState state;
@@ -362,6 +1015,7 @@ Status LuaHost::RestorePending(const PendingCommandsState& state) {
     m_pendingActions.clear();
     m_actionTerminalStates.clear();
     m_runner = sol::thread::create(m_lua);
+    PrepareDebugHook(m_runner.state().lua_state());
     for (const PendingCommandState& saved : state) {
         if (saved.yieldIndex == 0 ||
             (saved.waitKind != "timer" && saved.waitKind != "animation")) {
@@ -381,7 +1035,11 @@ Status LuaHost::RestorePending(const PendingCommandsState& state) {
         }
         sol::table args = m_lua.create_table();
         for (const vn::Arg& argument : saved.command.args) args[argument.key] = argument.value;
-        sol::state_view runnerState = m_runner.state();
+        for (const auto& [name, value] : saved.command.typedArgs) {
+            args[name] = ToLua(m_lua, value);
+        }
+        auto runner = std::make_shared<sol::thread>(sol::thread::create(m_lua));
+        sol::state_view runnerState = runner->state();
         sol::coroutine coroutine(runnerState, function->second);
         sol::protected_function_result result = coroutine(args);
         std::uint32_t yieldIndex = 1;
@@ -403,7 +1061,7 @@ Status LuaHost::RestorePending(const PendingCommandsState& state) {
                                                  .message = "Lua command await structure changed",
                                                  .details = details});
         }
-        PendingCoroutine pending{std::move(coroutine)};
+        PendingCoroutine pending{runner, std::move(coroutine)};
         pending.command = saved.command;
         pending.yieldIndex = saved.yieldIndex;
         pending.waitKind = saved.waitKind;
@@ -455,7 +1113,8 @@ Status LuaHost::RestorePendingActions(const PendingActionsState& state) {
         context["signal"]=saved.invocation.context.signal;
         context["route"]=saved.invocation.context.currentRoute;
         context["preview"]=saved.invocation.context.preview;
-        sol::state_view runnerState=m_runner.state();
+        auto runner = std::make_shared<sol::thread>(sol::thread::create(m_lua));
+        sol::state_view runnerState=runner->state();
         sol::coroutine coroutine(runnerState,function->second);
         sol::protected_function_result result=coroutine(args,context);
         std::uint32_t yieldIndex=1;
@@ -466,7 +1125,7 @@ Status LuaHost::RestorePendingActions(const PendingActionsState& state) {
                 .code="PXLUA7424",.category="Lua.Save",
                 .message="Lua Action await structure changed",.details=std::move(details)});
         }
-        PendingActionCoroutine pending{std::move(coroutine)};
+        PendingActionCoroutine pending{runner,std::move(coroutine)};
         pending.id=saved.id;pending.action=saved.invocation.action;pending.invocation=saved.invocation;
         pending.waitKind=saved.waitKind;pending.handle=saved.handle;
         pending.remainingSeconds=saved.remainingSeconds;pending.yieldIndex=saved.yieldIndex;
@@ -480,7 +1139,14 @@ void LuaHost::CancelPending() {
     m_pending.clear();
     m_pendingActions.clear();
     m_actionTerminalStates.clear();
+    m_debugSnapshot = {};
+    m_debugPauseRequested = false;
+    m_debugStepRequested = false;
+    m_debugSkipSource.clear();
+    m_debugSkipLine = 0;
+    m_debugPausedState = nullptr;
     m_runner = sol::thread::create(m_lua);
+    PrepareDebugHook(m_runner.state().lua_state());
 }
 
 }

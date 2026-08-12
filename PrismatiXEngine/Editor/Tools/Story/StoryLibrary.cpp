@@ -44,12 +44,11 @@ std::string StableStem(std::string value) {
 
 }  // namespace
 
-Status StoryLibrary::Open(const ProjectContext* project, const AssetDatabase* assets,
-                          EditorTextures* textures, ResourceResolver resolver) {
+Status StoryLibrary::Open(const ProjectContext* project, const resource::AssetRegistry* assets,
+                          ResourceResolver resolver) {
     Close();
     m_project = project;
-    m_assets = assets;
-    m_textures = textures;
+    m_assetRegistry = assets;
     m_resolver = std::move(resolver);
     if (!m_project || !m_project->IsOpen()) return Status::Ok();
     const auto path = m_project->root / "Content/Game.pxres";
@@ -78,7 +77,7 @@ Status StoryLibrary::Open(const ProjectContext* project, const AssetDatabase* as
 }
 
 void StoryLibrary::Close() {
-    m_project = nullptr; m_assets = nullptr; m_textures = nullptr; m_resolver = {};
+    m_project = nullptr; m_assetRegistry = nullptr; m_resolver = {};
     m_document = {}; m_catalog = {}; m_selectedCharacter = {}; m_selectedExpression = {};
     m_loaded = false; m_dirty = false; m_search.clear(); m_assetSearch.clear();
 }
@@ -335,19 +334,8 @@ void StoryLibrary::RenderCharacterEditor() {
         if (column && (column + 1) * (tile + 12.0f) <= available) ImGui::SameLine();
         else column = 0;
         ImGui::BeginGroup(); ImGui::PushID(expression->id.ToString().c_str());
-        ImTextureID texture{}; int width = 0, height = 0;
-        const auto image = expression->properties.find("image");
-        const auto* reference = image == expression->properties.end() ? nullptr :
-            image->second.TryGet<ResourceRefValue>();
-        if (reference && m_project && m_textures)
-            texture = m_textures->LoadId((m_project->root / reference->lastKnownPath).string(),
-                                         &width, &height);
         const bool selected = expression->id == m_selectedExpression;
-        if (texture) {
-            const float scale = std::min(tile / std::max(1, width), tile / std::max(1, height));
-            const ImVec2 size{std::max(1.0f, width * scale), std::max(1.0f, height * scale)};
-            if (ImGui::ImageButton("##expression", texture, size)) m_selectedExpression = expression->id;
-        } else if (ImGui::Button("無預覽##expression", {tile, tile})) m_selectedExpression = expression->id;
+        if (ImGui::Button("表情##expression", {tile, tile})) m_selectedExpression = expression->id;
         if (selected) ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
                                                           IM_COL32(75,160,255,255), 3.0f, 0, 2.0f);
         std::string expressionName = Text(*expression, "name");
@@ -372,18 +360,17 @@ void StoryLibrary::RenderAssetPicker() {
         const float tile = 96.0f, cell = 116.0f;
         const int columns = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / cell));
         int shown = 0;
-        if (m_assets) for (const auto& asset : m_assets->Assets()) {
-            if (asset.type != "image") continue;
-            if (!needle.empty() && Lower(asset.runtimePath).find(needle) == std::string::npos) continue;
+        if (m_assetRegistry) for (const auto& asset : m_assetRegistry->Entries()) {
+            const std::string extension=Lower(asset.sourcePath.extension().string());
+            if (extension!=".png"&&extension!=".jpg"&&extension!=".jpeg"&&extension!=".webp"&&extension!=".bmp") continue;
+            std::error_code relativeError;
+            const std::string runtimePath=std::filesystem::relative(asset.sourcePath,m_project->root,relativeError).generic_string();
+            if (relativeError || (!needle.empty() && Lower(runtimePath).find(needle) == std::string::npos)) continue;
             if (shown % columns) ImGui::SameLine();
-            ImGui::BeginGroup(); ImGui::PushID(asset.runtimePath.c_str());
-            ImTextureID texture{}; int width=0,height=0;
-            if (m_textures) texture=m_textures->LoadId(asset.absolutePath.string(),&width,&height);
-            bool chosen=false;
-            if(texture){const float scale=std::min(tile/std::max(1,width),tile/std::max(1,height));chosen=ImGui::ImageButton("##asset",texture,{std::max(1.0f,width*scale),std::max(1.0f,height*scale)});}
-            else chosen=ImGui::Button("圖片##asset",{tile,tile});
-            ImGui::TextWrapped("%s", asset.absolutePath.filename().string().c_str());
-            if(chosen){AddExpression(asset.runtimePath);ImGui::CloseCurrentPopup();}
+            ImGui::BeginGroup(); ImGui::PushID(runtimePath.c_str());
+            const bool chosen=ImGui::Button("圖片##asset",{tile,tile});
+            ImGui::TextWrapped("%s", asset.sourcePath.filename().string().c_str());
+            if(chosen){AddExpression(runtimePath);ImGui::CloseCurrentPopup();}
             ImGui::PopID(); ImGui::EndGroup(); ++shown;
         }
         if (!shown) ImGui::TextDisabled("沒有符合的圖片。");

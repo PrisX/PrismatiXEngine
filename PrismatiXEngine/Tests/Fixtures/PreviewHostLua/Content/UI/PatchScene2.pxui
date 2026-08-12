@@ -1,0 +1,23 @@
+{
+  "format": "PrismatiXUIScene",
+  "schemaRevision": 1,
+  "id": "70707070-7070-4070-8070-707070707070",
+  "revision": 2,
+  "name": "PatchScene",
+  "width": 640,
+  "height": 360,
+  "rootId": "71717171-7171-4171-8171-717171717171",
+  "nodes": [
+    {
+      "id":"71717171-7171-4171-8171-717171717171","parentId":null,"order":0,"kind":"control","name":"Root","visible":true,"locked":false,
+      "layout":{"mode":"free","x":0,"y":0,"width":640,"height":360,"anchorX":0,"anchorY":0,"pivotX":0,"pivotY":0,"margin":0,"alignment":"start","sizeRule":"fixed"},
+      "content":{"text":"","assetId":null},"appearance":{"backgroundColor":"#101018","textColor":"#FFFFFF","opacity":1,"styleToken":null,"hoverBackgroundColor":null,"focusColor":null,"disabledOpacity":0.5},"interaction":{"onClick":null},"accessibility":{"label":"","role":"presentation"}
+    },
+    {
+      "id":"72727272-7272-4272-8272-727272727272","parentId":"71717171-7171-4171-8171-717171717171","order":0,"kind":"label","name":"Caption","visible":true,"locked":false,
+      "layout":{"mode":"free","x":72,"y":50,"width":240,"height":48,"anchorX":0,"anchorY":0,"pivotX":0,"pivotY":0,"margin":0,"alignment":"start","sizeRule":"fixed"},
+      "content":{"text":"After patch","assetId":null},"appearance":{"backgroundColor":"#00000000","textColor":"#FFFFFF","opacity":0.8,"styleToken":null,"hoverBackgroundColor":null,"focusColor":null,"disabledOpacity":0.5},"interaction":{"onClick":null},"accessibility":{"label":"Caption","role":"text"}
+    }
+  ],
+  "theme": []
+}

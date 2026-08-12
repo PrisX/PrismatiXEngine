@@ -5,6 +5,7 @@
 #include "Engine/VN/Commands/Command.h"
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -23,17 +24,27 @@ enum class CommandEditorWidget : std::uint8_t {
     Target,
     Preset,
     Hidden,
+    Enum,
+    Color,
+    Route,
+    Node,
+    Animation,
+    Token,
 };
 
 struct CommandParameterDescriptor {
     std::string name;
     std::string label;
+    std::string description;
     VariantType type = VariantType::String;
     Variant defaultValue;
+    bool hasDefault = false;
     bool required = false;
     CommandEditorWidget widget = CommandEditorWidget::Default;
     std::string resourceType;
     std::vector<std::string> options;
+    std::optional<double> minimum;
+    std::optional<double> maximum;
 };
 
 struct CommandExecutionContext {
@@ -53,6 +64,7 @@ struct CommandDescriptor {
     std::string id;
     int version = 1;
     std::string displayName;
+    std::string description;
     std::string category;
     std::vector<CommandParameterDescriptor> parameters;
     CommandWaitPolicy waitPolicy = CommandWaitPolicy::Immediate;

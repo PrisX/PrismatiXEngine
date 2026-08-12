@@ -1,0 +1,29 @@
+{
+  "format": "PrismatiXPerformance",
+  "schemaRevision": 1,
+  "sceneId": "74747474-7474-4474-8474-747474747474",
+  "revision": 1,
+  "stage": {
+    "safeArea": 0.9,
+    "gridSize": 16,
+    "snapEnabled": true,
+    "nodes": [{
+      "id": "75757575-7575-4575-8575-757575757575",
+      "kind": "character",
+      "name": "Rin",
+      "assetId": "33333333-3333-4333-8333-333333333333",
+      "characterId": null,
+      "x": 10,
+      "y": 20,
+      "scaleX": 1,
+      "scaleY": 1,
+      "rotation": 0,
+      "anchorX": 0.5,
+      "anchorY": 1,
+      "opacity": 1,
+      "zOrder": 0,
+      "visible": true
+    }]
+  },
+  "timeline": { "duration": 10, "frameRate": 60, "tracks": [], "markers": [] }
+}

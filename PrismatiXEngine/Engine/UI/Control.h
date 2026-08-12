@@ -108,6 +108,8 @@ public:
     void SetStyleBinding(ControlStyleBinding value) { m_styleBinding = std::move(value); }
     [[nodiscard]] ControlStyleBinding& StyleBinding() { return m_styleBinding; }
     [[nodiscard]] const ControlStyleBinding& StyleBinding() const { return m_styleBinding; }
+    void SetStyleToken(TokenRefValue value) { m_styleToken = std::move(value); }
+    [[nodiscard]] const TokenRefValue& StyleToken() const { return m_styleToken; }
     void SetVisualChecked(bool value) { m_visualChecked = value; }
     void SetVisualSelected(bool value) { m_visualSelected = value; }
     [[nodiscard]] StyleStateSet ActiveStyleStates() const;
@@ -173,6 +175,7 @@ private:
     bool m_pressed = false;
     bool m_focused = false;
     ControlStyleBinding m_styleBinding;
+    TokenRefValue m_styleToken;
     bool m_visualChecked = false;
     bool m_visualSelected = false;
     std::string m_tooltip;

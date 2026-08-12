@@ -69,7 +69,7 @@ int main() {
         for (const auto id : mapped) runtimeMapped.emplace(id);
         for (const auto* descriptor : registry.Descriptors()) {
             if (descriptor->runtimeSupported) registrySupported.insert(descriptor->id);
-            // UIDesigner's production Add Override menu uses this exact predicate.
+            // Authoring surfaces use this predicate before offering an override.
             if (registry.RuntimeSupports(descriptor->id, "Button"))
                 inspectorExposable.insert(descriptor->id);
         }

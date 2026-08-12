@@ -1,0 +1,63 @@
+{
+  "format": "PrismatiXRuntimeIR",
+  "schemaRevision": 1,
+  "documentId": "typed-action-document",
+  "committedRevision": 1,
+  "operations": [
+    {
+      "operationId": "intro-operation",
+      "sourceId": "intro-source",
+      "sourceLine": 1,
+      "kind": "dialogue",
+      "text": "Typed Action fixture",
+      "arguments": {
+        "speaker": "Test",
+        "text": "Typed Action fixture"
+      }
+    },
+    {
+      "operationId": "valid-action-operation",
+      "sourceId": "valid-action-source",
+      "sourceLine": 2,
+      "kind": "customNode",
+      "text": "Run valid typed Action",
+      "arguments": {
+        "type": "action",
+        "value": "{\"id\":\"debug.typed-action\",\"arguments\":{\"amount\":3}}"
+      }
+    },
+    {
+      "operationId": "between-operation",
+      "sourceId": "between-source",
+      "sourceLine": 3,
+      "kind": "dialogue",
+      "text": "Valid Action complete",
+      "arguments": {
+        "speaker": "Test",
+        "text": "Valid Action complete"
+      }
+    },
+    {
+      "operationId": "invalid-action-operation",
+      "sourceId": "invalid-action-source",
+      "sourceLine": 4,
+      "kind": "customNode",
+      "text": "Reject invalid typed Action",
+      "arguments": {
+        "type": "action",
+        "value": "{\"id\":\"debug.typed-action\",\"arguments\":{\"amount\":99}}"
+      }
+    },
+    {
+      "operationId": "outro-operation",
+      "sourceId": "outro-source",
+      "sourceLine": 5,
+      "kind": "dialogue",
+      "text": "Invalid Action rejected",
+      "arguments": {
+        "speaker": "Test",
+        "text": "Invalid Action rejected"
+      }
+    }
+  ]
+}

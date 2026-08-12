@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -144,8 +145,10 @@ public:
     }
     void ClearBreakpoints() { m_breakpoints.clear(); }
     [[nodiscard]] const std::set<int>& Breakpoints() const { return m_breakpoints; }
+    bool DebugPause();     // pause without discarding the current waiting/running state
     void DebugContinue();  // resume past the current breakpoint
     void DebugStep();      // execute exactly one command, then pause again
+    [[nodiscard]] bool ManuallyPaused() const { return m_debugResumeState.has_value(); }
 
     [[nodiscard]] VMState State() const { return m_state; }
     [[nodiscard]] bool Blocking() const;
@@ -158,6 +161,20 @@ public:
     [[nodiscard]] const std::string& CurrentScript() const { return m_scriptPath; }
     [[nodiscard]] const Program& CurrentProgram() const { return m_program; }
     [[nodiscard]] int ProgramCounter() const { return m_pc; }
+    [[nodiscard]] int CurrentSourceLine() const {
+        if (m_program.code.empty()) return 0;
+        int index = m_pc;
+        if (m_state == VMState::WaitingClick && index > 0) --index;
+        if (index < 0 || index >= static_cast<int>(m_program.code.size())) return 0;
+        return m_program.code[static_cast<std::size_t>(index)].line;
+    }
+    [[nodiscard]] std::string CurrentSourceId() const {
+        if (m_program.code.empty()) return {};
+        int index = m_pc;
+        if (m_state == VMState::WaitingClick && index > 0) --index;
+        if (index < 0 || index >= static_cast<int>(m_program.code.size())) return {};
+        return m_program.code[static_cast<std::size_t>(index)].sourceId;
+    }
     // pc to store in a save: while waiting for a click it backs up onto the say
     // command so loading the save re-displays the line being read.
     [[nodiscard]] int SavePoint() const {
@@ -218,6 +235,7 @@ private:
     bool m_skipBreakOnce = false;
     bool m_stepping = false;
     int m_stepBudget = 0;
+    std::optional<VMState> m_debugResumeState;
 
     std::string m_speaker;
     std::string m_pendingVoice;  // set by a [text voice=...] header, consumed by the next say

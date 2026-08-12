@@ -60,7 +60,9 @@ sol::object ValueToLua(sol::state_view lua, const vn::Value& value, const int de
 void LuaHost::BindApi() {
     sol::table api = m_lua.create_table();
 
-    api.set_function("log", [](const std::string& msg) { PX_LOG_INFO("[lua] {}", msg); });
+    api.set_function("log", [this](const std::string& message) {
+        EmitConsole(LuaConsoleLevel::Info, message, "Engine.log");
+    });
 
     api.set_function("RegisterCommand", [this](const std::string& name, sol::protected_function fn) {
         if (!m_activeExtension.empty() && !m_declaredCommands.contains(name)) {

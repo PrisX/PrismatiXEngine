@@ -11,6 +11,7 @@ namespace px::sdk {
 struct RuntimeIrOperation {
     std::string operationId;
     std::string sourceId;
+    std::uint32_t sourceLine = 0;
     std::string kind;
     std::string text;
     std::unordered_map<std::string, std::string> arguments;

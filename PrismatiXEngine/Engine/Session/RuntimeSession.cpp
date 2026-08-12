@@ -1,4 +1,5 @@
 #include "Engine/Session/RuntimeSession.h"
+#include "Engine/Session/RuntimeAssetResolver.h"
 #include "Engine/Session/RuntimeIrAdapter.h"
 #include "Engine/SDK/RuntimeIr.h"
 
@@ -167,16 +168,86 @@ bool RuntimeSession::StartScenarioText(const std::string_view text,
     return m_vm.LoadScenarioText(text, scriptPath);
 }
 
+bool RuntimeSession::StartRuntimeIr(const std::string& sourcePath,
+                                    const bool resetVariables) {
+    const auto source = m_services.vfs.ReadText(sourcePath);
+    if (!source) {
+        m_lastStartDiagnostics.clear();
+        diag::Diagnostic diagnostic{
+            .severity = diag::Severity::Error,
+            .code = "PXRUNTIME7310",
+            .category = "Runtime.IR",
+            .message = "Compiled Story Runtime IR could not be read",
+            .details = sourcePath};
+        diagnostic.source.path = sourcePath;
+        m_lastStartDiagnostics.push_back(std::move(diagnostic));
+        diag::Emit(m_lastStartDiagnostics.front());
+        return false;
+    }
+    return StartRuntimeIrText(*source, sourcePath, resetVariables);
+}
+
 bool RuntimeSession::StartRuntimeIrText(const std::string_view text,
                                         const std::string& sourcePath,
                                         const bool resetVariables) {
+    m_lastStartDiagnostics.clear();
     const sdk::RuntimeIrParseResult parsed = sdk::ParseRuntimeIr(text);
-    if (!parsed.Valid()) return false;
+    if (!parsed.Valid()) {
+        for (const auto& issue : parsed.diagnostics) {
+            diag::Diagnostic diagnostic{
+                .severity = diag::Severity::Error,
+                .code = issue.code,
+                .category = "Runtime.IR",
+                .message = issue.message};
+            diagnostic.source.path = sourcePath;
+            if (issue.operationIndex < parsed.document.operations.size()) {
+                diagnostic.source.line = static_cast<int>(
+                    parsed.document.operations[issue.operationIndex].sourceLine);
+                diagnostic.operationId =
+                    parsed.document.operations[issue.operationIndex].operationId;
+            }
+            m_lastStartDiagnostics.push_back(std::move(diagnostic));
+        }
+        for (const auto& diagnostic : m_lastStartDiagnostics) diag::Emit(diagnostic);
+        return false;
+    }
+    vn::Program program = CompileRuntimeIr(parsed.document);
+    if (!program.errors.empty()) {
+        for (const auto& error : program.errors) {
+            diag::Diagnostic diagnostic{
+                .severity = diag::Severity::Error,
+                .code = "PXRUNTIME7309",
+                .category = "Runtime.IR",
+                .message = "Runtime IR could not be compiled",
+                .details = error};
+            diagnostic.source.path = sourcePath;
+            m_lastStartDiagnostics.push_back(std::move(diagnostic));
+        }
+        for (const auto& diagnostic : m_lastStartDiagnostics) diag::Emit(diagnostic);
+        return false;
+    }
+    if (UsesRuntimeAssetReferences(program)) {
+        const auto manifest = m_services.vfs.ReadText("project.pxproject");
+        auto resolved = ResolveRuntimeAssetReferences(
+            std::move(program), manifest.value_or(std::string{}),
+            [this](const std::string_view path) {
+                return m_services.vfs.Exists(path);
+            },
+            sourcePath);
+        if (!resolved) {
+            m_lastStartDiagnostics = resolved.Diagnostics();
+            for (const auto& diagnostic : m_lastStartDiagnostics) {
+                diag::Emit(diagnostic);
+            }
+            return false;
+        }
+        program = resolved.TakeValue();
+    }
     m_stage.ClearAll();
     m_dialogue.Clear();
     m_backlog.Clear();
     if (resetVariables) m_variables.Reset(false);
-    return m_vm.LoadCompiledProgram(CompileRuntimeIr(parsed.document), sourcePath);
+    return m_vm.LoadCompiledProgram(std::move(program), sourcePath);
 }
 
 void RuntimeSession::Update(const std::uint64_t nowMs, const float deltaSeconds) {

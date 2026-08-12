@@ -89,6 +89,8 @@ private:
     std::unique_ptr<lua::LuaHost> m_lua;
     lua::LuaServices m_luaServices;
     std::unordered_map<std::string, std::string> m_langTable;
+    std::unordered_map<std::string, std::string> m_studioUiAssets;
+    std::unordered_map<std::string, std::string> m_studioUiComponents;
 
     ui::GalgameUI m_ui;
     std::unique_ptr<ui::startup::SplashSequencePlayer> m_splash;

@@ -1,0 +1,35 @@
+{
+  "format": "PrismatiXProject",
+  "schemaRevision": 1,
+  "assets": [
+    {
+      "id": "33333333-3333-4333-8333-333333333333",
+      "name": "Rin",
+      "kind": "character",
+      "source": "Assets/rin.png",
+      "sourceFileName": "rin.png",
+      "tags": [],
+      "size": 7,
+      "fingerprint": "fixture"
+    }
+  ],
+  "uiComponents": [
+    {
+      "id": "71717171-7171-4171-8171-717171717171",
+      "name": "NestedShell",
+      "source": "Content/UI/NestedShell.pxuicomponent"
+    },
+    {
+      "id": "61616161-6161-4161-8161-616161616161",
+      "name": "ActionCard",
+      "source": "Content/UI/ActionCard.pxuicomponent"
+    }
+  ],
+  "characters": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "displayName": "凛",
+      "source": "Characters/11111111-1111-4111-8111-111111111111.pxcharacter"
+    }
+  ]
+}

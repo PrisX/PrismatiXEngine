@@ -1,5 +1,6 @@
 #include "Engine/UI/UIContext.h"
 
+#include "Engine/Core/TypeRegistry.h"
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/Graphics/Renderer2D.h"
 #include "Engine/Platform/Input.h"
@@ -29,7 +30,7 @@ Status UIContext::SetRoot(std::unique_ptr<Control> root) {
                                     .category = "UI.Runtime", .message = "UI root cannot be null"};
         diag::Emit(diagnostic); return Status::Fail(std::move(diagnostic));
     }
-    m_behaviors.CancelAll();m_triggerBindings.clear();m_root = std::move(root); m_input = std::make_unique<InputRouter>(*m_root);
+    m_behaviors.CancelAll();m_actions.CancelSource(m_triggerSourceScene);m_triggerSourceScene.clear();m_triggerBindings.clear();m_bindings.clear();m_root = std::move(root); m_input = std::make_unique<InputRouter>(*m_root);
     m_animationController=std::make_unique<UIAnimationController>(*m_root);m_animationController->SetExternalClipResolver(m_animationResolver);
     ConfigureControlRuntime();
     m_behaviors.SetServices(BehaviorServices());
@@ -83,13 +84,18 @@ Status UIContext::ConfigureTriggers(std::vector<TriggerBinding> triggers,
                                     std::string sourceScene){
     if(!m_root)return Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,
         .code="PXUI2403",.category="UI.Runtime",.message="ConfigureTriggers requires a UI root"});
-    m_behaviors.CancelAll();m_behaviors.SetServices(BehaviorServices());
+    m_behaviors.CancelAll();m_actions.CancelSource(m_triggerSourceScene);m_triggerSourceScene.clear();m_behaviors.SetServices(BehaviorServices());
     if(interactionGraph){const Status status=m_behaviors.SetGraph(std::move(*interactionGraph),sourceScene);if(!status)return status;}
     for(auto& binding:triggers){
         auto* object=m_root->Find(binding.node);auto* control=dynamic_cast<Control*>(object);
         if(!control)return Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,
             .code="PXUI2404",.category="UI.Runtime",.message="Trigger target Control is missing",
             .details=binding.node.ToString()});
+        if(!TypeRegistry::Global().FindSignal(std::string(control->TypeName()),binding.signal))
+            return Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,
+                .code="PXUI2411",.category="UI.Runtime",
+                .message="Trigger signal does not match the Runtime TypeRegistry",
+                .details=std::string(control->TypeName())+"."+binding.signal});
         binding.sourceScene=sourceScene;
         if(binding.kind==TriggerBindingKind::Action){
             (void)control->ConnectSignal(binding.signal,[this,binding](const Control::SignalArguments& signalArguments){
@@ -112,7 +118,7 @@ Status UIContext::ConfigureTriggers(std::vector<TriggerBinding> triggers,
             });
         }
     }
-    m_triggerBindings=std::move(triggers);return Status::Ok();
+    m_triggerBindings=std::move(triggers);m_triggerSourceScene=std::move(sourceScene);return Status::Ok();
 }
 
 bool UIContext::Update(const Input& input, int viewportWidth, int viewportHeight,float deltaSeconds) {

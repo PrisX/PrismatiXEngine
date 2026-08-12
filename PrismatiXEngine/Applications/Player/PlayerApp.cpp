@@ -25,6 +25,14 @@ namespace {
 const std::string kSaveKey = "prismatix-demo-secret";
 constexpr int kAutoSaveSlot = -1;
 
+std::optional<std::string> SafeVfsRelativePath(const std::string& value) {
+    const std::filesystem::path path(value);
+    if (path.empty() || path.is_absolute()) return std::nullopt;
+    for (const auto& part : path)
+        if (part == "..") return std::nullopt;
+    return path.generic_string();
+}
+
 int ScancodeFromName(const std::string& name) {
     if (name == "Escape") return SDL_SCANCODE_ESCAPE;
     if (name == "Tab") return SDL_SCANCODE_TAB;
@@ -51,6 +59,33 @@ bool DocBool(const resource::TypedDocument& document,const char* key,bool fallba
 std::vector<std::string> DocArchives(const resource::TypedDocument& document){std::vector<std::string> result;const auto found=document.properties.find("archives");if(found==document.properties.end()||!found->second.AsArray())return result;for(const auto& value:*found->second.AsArray()){const auto* object=value.AsObject();if(!object)return {};const auto file=object->find("file"),group=object->find("group"),optional=object->find("optional");const auto* path=file!=object->end()?file->second.TryGet<std::string>():nullptr;const auto* id=group!=object->end()?group->second.TryGet<std::string>():nullptr;const auto* optionalValue=optional!=object->end()?optional->second.TryGet<bool>():nullptr;if(!path||path->empty()||!id||id->empty()||!optionalValue)return {};result.push_back(*path);}return result;}
 std::unordered_map<std::string,std::string> DocRoutes(const resource::TypedDocument& document){std::unordered_map<std::string,std::string> result;const auto found=document.properties.find("routes");if(found==document.properties.end()||!found->second.AsArray())return result;for(const auto& value:*found->second.AsArray()){const auto* object=value.AsObject();if(!object)continue;const auto id=object->find("id"),scene=object->find("scene");const auto* routeId=id!=object->end()?id->second.TryGet<std::string>():nullptr;const auto* reference=scene!=object->end()?scene->second.TryGet<ResourceRefValue>():nullptr;if(routeId&&reference&&!reference->id.Empty()&&!reference->lastKnownPath.empty())result[*routeId]=reference->lastKnownPath;}return result;}
 std::optional<std::vector<ui::startup::SplashScreenEntry>> DocSplashes(const resource::TypedDocument& document){const auto found=document.properties.find("splashes");if(found==document.properties.end())return std::vector<ui::startup::SplashScreenEntry>{};auto parsed=ui::startup::ParseSplashSequence(found->second,"boot config");if(!parsed){for(const auto& diagnostic:parsed.Diagnostics())diag::Emit(diagnostic);return std::nullopt;}return parsed.TakeValue();}
+std::optional<Variant> JsonVariant(const nlohmann::json& value, const int depth = 0) {
+    if (depth > 32) return std::nullopt;
+    if (value.is_null()) return Variant{};
+    if (value.is_boolean()) return Variant(value.get<bool>());
+    if (value.is_number_integer()) return Variant(value.get<std::int64_t>());
+    if (value.is_number()) return Variant(value.get<double>());
+    if (value.is_string()) return Variant(value.get<std::string>());
+    if (value.is_array()) {
+        VariantArray result;
+        for (const auto& item : value) {
+            auto converted = JsonVariant(item, depth + 1);
+            if (!converted) return std::nullopt;
+            result.push_back(std::move(*converted));
+        }
+        return Variant(std::move(result));
+    }
+    if (value.is_object()) {
+        VariantObject result;
+        for (auto item = value.begin(); item != value.end(); ++item) {
+            auto converted = JsonVariant(item.value(), depth + 1);
+            if (!converted) return std::nullopt;
+            result.emplace(item.key(), std::move(*converted));
+        }
+        return Variant(std::move(result));
+    }
+    return std::nullopt;
+}
 }
 
 PlayerApp::Boot PlayerApp::LoadBootConfig() {
@@ -143,6 +178,55 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_session->SetBehaviorStateHandler(
         [this] { return m_ui.CaptureBehaviorState(); },
         [this](const ui::BehaviorRuntimeState& state) { return m_ui.RestoreBehaviorState(state); });
+    if (const auto projectText=m_runtime.VFS().ReadText("project.pxproject")) {
+        const auto project=nlohmann::json::parse(*projectText,nullptr,false);
+        if(!project.is_discarded()&&project.is_object()&&
+           project.contains("assets")&&project["assets"].is_array()){
+            for(const auto& asset:project["assets"]){
+                if(!asset.is_object()||!asset.contains("id")||
+                   !asset["id"].is_string()||!asset.contains("source")||
+                   !asset["source"].is_string())continue;
+                const std::string source=asset["source"].get<std::string>();
+                if(m_runtime.VFS().Exists(source))
+                    m_studioUiAssets.emplace(
+                        asset["id"].get<std::string>(),source);
+            }
+        }
+        if(!project.is_discarded()&&project.is_object()&&
+           project.contains("uiComponents")&&
+           project["uiComponents"].is_array()){
+            for(const auto& component:project["uiComponents"]){
+                if(!component.is_object()||!component.contains("id")||
+                   !component["id"].is_string()||
+                   !component.contains("source")||
+                   !component["source"].is_string())continue;
+                const auto source=SafeVfsRelativePath(
+                    component["source"].get<std::string>());
+                if(source&&m_runtime.VFS().Exists(*source))
+                    m_studioUiComponents.emplace(
+                        component["id"].get<std::string>(),*source);
+            }
+        }
+    }
+    m_ui.SetStudioUiAssetResolver(
+        [this](const std::string_view assetId)->std::optional<std::string>{
+            const auto found=m_studioUiAssets.find(std::string(assetId));
+            return found==m_studioUiAssets.end()
+                       ?std::nullopt
+                       :std::optional<std::string>{found->second};
+        });
+    m_ui.SetStudioUiComponentLoader(
+        [this](const std::string_view componentId)
+            ->std::optional<ui::StudioUiComponentSource>{
+            const auto found=
+                m_studioUiComponents.find(std::string(componentId));
+            if(found==m_studioUiComponents.end())return std::nullopt;
+            const auto source=m_runtime.VFS().ReadText(found->second);
+            return source
+                       ?std::optional<ui::StudioUiComponentSource>{
+                            ui::StudioUiComponentSource{found->second,*source}}
+                       :std::nullopt;
+        });
     if(m_boot.routeScenes.empty()||!m_boot.routeScenes.contains(m_boot.startRoute)){diag::Diagnostic diagnostic{.severity=diag::Severity::Fatal,.code="PXPLAYER5004",.category="Player.Boot",.message="Route table or startRoute is invalid"};diag::Emit(diagnostic);return false;}
     for(const auto& [route,_]:m_boot.routeScenes){
         const Status registered=m_session->Routes().Register(route,[route](){return Result<std::unique_ptr<ui::Control>>::Success(std::make_unique<ui::Control>(std::string("Route:")+route));});
@@ -197,14 +281,54 @@ bool PlayerApp::Init(int argc, char* argv[]) {
             m_nvlLines.clear();
             return true;
         }
+        if (t == "action") {
+            const auto payload =
+                nlohmann::json::parse(cmd.Get("value"), nullptr, false);
+            if (payload.is_discarded() || !payload.is_object() ||
+                !payload.contains("id") || !payload["id"].is_string() ||
+                !payload.contains("arguments") ||
+                !payload["arguments"].is_object()) {
+                return false;
+            }
+            ui::ActionInvocation invocation;
+            invocation.action = payload["id"].get<std::string>();
+            invocation.context.sourceScene = m_script;
+            invocation.context.preview = false;
+            if (const auto* typed = cmd.FindTyped("arguments")) {
+                const auto* arguments = typed->AsObject();
+                if (!arguments) return false;
+                for (const auto& [name, value] : *arguments) {
+                    invocation.arguments.emplace(name, value.Clone());
+                }
+            } else {
+                for (auto argument = payload["arguments"].begin();
+                     argument != payload["arguments"].end(); ++argument) {
+                    auto value = JsonVariant(argument.value());
+                    if (!value) return false;
+                    invocation.arguments.emplace(argument.key(), std::move(*value));
+                }
+            }
+            const auto started = m_ui.Actions().Start(std::move(invocation));
+            if (!started) {
+                for (const auto& diagnostic : started.Diagnostics()) {
+                    diag::Emit(diagnostic);
+                }
+                return false;
+            }
+            if (m_lua->HasPendingAction()) m_session->VM().WaitExternal();
+            return true;
+        }
         const bool handled=m_lua->InvokeCommand(cmd);
-        if(handled&&m_lua->HasPendingCommand())m_session->VM().WaitExternal();
+        if(handled&&(m_lua->HasPendingCommand()||m_lua->HasPendingAction()))
+            m_session->VM().WaitExternal();
         return handled;
     });
     m_session->SetRoutePresentationHandler(
         [this](std::string_view route, std::string_view operation) {
             PresentRoute(std::string(route), std::string(operation));
         });
+    // StartGame() compiles .pxir later. Load extension manifests now so every
+    // namespaced custom node is mapped against its production Command schema.
     if (m_runtime.VFS().Exists("Content/Extensions/extensions.pxindex")) {
         if (!m_lua->LoadExtensionIndex("Content/Extensions/extensions.pxindex")) return false;
     } else if (m_runtime.VFS().Exists("Content/Extensions/default.pxextension")) {
@@ -215,6 +339,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         if (kind == "cg") m_profile.UnlockCG(id);
         else m_profile.UnlockScene(id);
         m_profile.Save("Save/profile.dat", &m_saveKey);
+        PX_LOG_INFO("Player progression unlocked kind={} id={}", kind, id);
     });
     m_session->VM().SetSeenHook([this](const std::string& key) {
         const bool seen = m_profile.HasSeen(key);
@@ -238,21 +363,83 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         const Status status=m_ui.RegisterTemplate(screen,*text,path);if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);return status.IsOk();
     };
     const auto scene=[this](const char* route)->std::string{const auto found=m_boot.routeScenes.find(route);return found==m_boot.routeScenes.end()?std::string{}:found->second;};
-    if(!registerTemplate(ui::GalgameUI::Screen::Title,m_boot.routeScenes.at(m_boot.startRoute))||!registerTemplate(ui::GalgameUI::Screen::HUD,scene("hud"))||!registerTemplate(ui::GalgameUI::Screen::Backlog,scene("backlog"))||!registerTemplate(ui::GalgameUI::Screen::Save,scene("save"))||!registerTemplate(ui::GalgameUI::Screen::Load,scene("load"))||!registerTemplate(ui::GalgameUI::Screen::Gallery,scene("gallery"))||!registerTemplate(ui::GalgameUI::Screen::Settings,scene("settings"))||!registerTemplate(ui::GalgameUI::Screen::Video,scene("video")))return false;
+    const auto registerOptional=[&](ui::GalgameUI::Screen screen,const char* route){
+        const std::string path=scene(route);
+        return path.empty()||registerTemplate(screen,path);
+    };
+    if(!registerTemplate(ui::GalgameUI::Screen::Title,m_boot.routeScenes.at(m_boot.startRoute))||
+       !registerOptional(ui::GalgameUI::Screen::HUD,"hud")||
+       !registerOptional(ui::GalgameUI::Screen::Backlog,"backlog")||
+       !registerOptional(ui::GalgameUI::Screen::Save,"save")||
+       !registerOptional(ui::GalgameUI::Screen::Load,"load")||
+       !registerOptional(ui::GalgameUI::Screen::Gallery,"gallery")||
+       !registerOptional(ui::GalgameUI::Screen::Settings,"settings")||
+       !registerOptional(ui::GalgameUI::Screen::Video,"video"))return false;
     PX_LOG_DEBUG("Player boot: typed UI templates registered");
-    if (auto catalog = m_runtime.VFS().ReadText("Content/Game.pxres")) {
-        const Status status = m_catalog.Load(*catalog, "Content/Game.pxres");
-        if (!status) return false;
-    } else {
+    const auto projectManifest =
+        m_runtime.VFS().ReadText("project.pxproject");
+    if (!projectManifest) {
         diag::Diagnostic diagnostic{.severity=diag::Severity::Fatal,.code="PXPLAYER5001",.category="Player.Boot",
-                                    .message="Required typed GameCatalog is missing: Content/Game.pxres"};
+                                    .message="Required project manifest is missing: project.pxproject"};
         diag::Emit(diagnostic); return false;
     }
-    PX_LOG_DEBUG("Player boot: game catalog loaded");
+    bool characterResourcesDeclared = false;
+    const Status characterResources = m_catalog.LoadCharacterResources(
+        *projectManifest,
+        [this](const std::string_view uri) {
+            return m_runtime.VFS().ReadText(std::string(uri));
+        },
+        [this](const std::string_view uri) {
+            return m_runtime.VFS().Exists(std::string(uri));
+        },
+        characterResourcesDeclared);
+    if (!characterResources) return false;
+    const auto runtimeCatalog =
+        m_runtime.VFS().ReadText("Content/Game.pxres");
+    if (characterResourcesDeclared) {
+        if (runtimeCatalog) {
+            const Status status = m_catalog.LoadRuntimeResources(
+                *runtimeCatalog, "Content/Game.pxres",
+                sdk::LegacyGameCatalogPolicy::RejectCharacterNodes,
+                sdk::LegacyGalleryReferencePolicy::RejectPathStrings,
+                *projectManifest,
+                [this](const std::string_view uri) {
+                    return m_runtime.VFS().Exists(std::string(uri));
+                });
+            if (!status) return false;
+        }
+    } else {
+        if (runtimeCatalog) {
+            const Status status =
+                m_catalog.Load(*runtimeCatalog, "Content/Game.pxres");
+            if (!status) return false;
+        } else {
+            diag::Diagnostic diagnostic{
+                .severity = diag::Severity::Fatal,
+                .code = "PXPLAYER5006",
+                .category = "Player.Boot",
+                .message =
+                    "Project declares neither characterResources nor the legacy Content/Game.pxres fallback"};
+            diag::Emit(diagnostic);
+            return false;
+        }
+    }
+    PX_LOG_DEBUG("Player boot: {} character(s) loaded through {}",
+                 m_catalog.Characters().size(),
+                 characterResourcesDeclared ? "characterResources=1"
+                                            : "legacy Game.pxres fallback");
+    PX_LOG_DEBUG(
+        "Player boot: GameCatalog resources variables={} bindings={} gallery={}",
+        m_catalog.Variables().size(), m_catalog.InputBindings().size(),
+        m_catalog.Gallery().size());
     for (const auto& binding : m_catalog.InputBindings()) {
         if (binding.command == "screen.open") {
             const int sc = ScancodeFromName(binding.key);
-            if (sc != SDL_SCANCODE_UNKNOWN) m_screenTriggers[sc] = binding.argument;
+            if (sc != SDL_SCANCODE_UNKNOWN) {
+                m_screenTriggers[sc] = binding.argument;
+                PX_LOG_INFO("Player input binding registered key={} route={}",
+                            binding.key, binding.argument);
+            }
         }
     }
     m_session->VM().SetGameCatalog(m_catalog);
@@ -284,7 +471,7 @@ void PlayerApp::FinishBootPresentation() {
     const Status title=m_ui.ShowTitle();
     if(!title){for(const auto& diagnostic:title.Diagnostics())diag::Emit(diagnostic);m_quitRequested=true;return;}
     m_appState=AppState::Title;
-    PX_LOG_DEBUG("Player boot: splash sequence complete; title route activated");
+    PX_LOG_INFO("Player presentation ready route={}", m_boot.startRoute);
 }
 
 void PlayerApp::SplashFrame(const float dt) {
@@ -311,11 +498,30 @@ void PlayerApp::StartGame() {
     m_lastBacklogSize = 0;
     m_playtimeBaseMs = 0;
     m_playtimeStartedAtMs = m_runtime.GetClock().NowMs();
-    m_session->VM().LoadScript(m_script);
+    if (m_script.ends_with(".pxir")) {
+        if (!m_session->StartRuntimeIr(m_script)) {
+            diag::Emit(diag::Diagnostic{
+                .severity = diag::Severity::Fatal,
+                .code = "PXPLAYER5006",
+                .category = "Player.Boot",
+                .message = "Compiled Story Runtime IR could not be loaded",
+                .details = m_script});
+            m_quitRequested = true;
+            return;
+        }
+    } else {
+        m_session->VM().LoadScript(m_script);
+    }
     if (m_lua) m_lua->Emit("scenario.started", {{"resource", m_script}});
     m_appState = AppState::Game;
     (void)m_session->Routes().Replace("hud");
-    m_ui.ShowHUD(DialogueUI());
+    const Status hud = m_ui.ShowHUD(DialogueUI());
+    if (!hud) {
+        for (const auto& diagnostic : hud.Diagnostics()) diag::Emit(diagnostic);
+        m_quitRequested = true;
+        return;
+    }
+    PX_LOG_INFO("Player game started script={}", m_script);
 }
 
 bool PlayerApp::LoadSlot(int slot) {
@@ -571,7 +777,20 @@ void PlayerApp::PresentRoute(const std::string& route, const std::string& operat
         else (void)m_ui.ShowHUD(DialogueUI());
         return;
     }
-    if (target == "gallery") m_ui.ShowGallery(GalleryItems());
+    if (target == "gallery") {
+        auto items = GalleryItems();
+        const auto unlocked = static_cast<std::size_t>(std::count_if(
+            items.begin(), items.end(), [](const ui::GalgameItem& item) {
+                return !item.disabled;
+            }));
+        const Status status = m_ui.ShowGallery(std::move(items));
+        if (!status) {
+            for (const auto& diagnostic : status.Diagnostics()) diag::Emit(diagnostic);
+            return;
+        }
+        PX_LOG_INFO("Player gallery presented total={} unlocked={}",
+                    m_catalog.Gallery().size(), unlocked);
+    }
     else if (target == "save") m_ui.ShowSaveLoad(true, SaveItems(true));
     else if (target == "load") m_ui.ShowSaveLoad(false, SaveItems(false));
     else if (target == "settings") m_ui.ShowSettings(SettingsUI());
@@ -669,6 +888,7 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         (void)m_session->Routes().CloseModal();
         m_settings.Save("Save/config.dat", &m_saveKey); m_profile.Save("Save/profile.dat", &m_saveKey);
         if (m_appState == AppState::Title) m_ui.ShowTitle(); else m_ui.ShowHUD(DialogueUI());
+        PX_LOG_INFO("Player overlay closed");
     } else if (t == "app.quit") {
         m_quitRequested = true;
     }
@@ -829,7 +1049,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     }
 
     m_session->Update(now, dt);
-    if(m_lua){m_lua->Emit("frame.update",{{"delta",std::to_string(dt)}});const bool hadPending=m_lua->HasPendingCommand();m_lua->Update(dt);if(hadPending&&!m_lua->HasPendingCommand())m_session->VM().NotifyExternalDone();}
+    if(m_lua){m_lua->Emit("frame.update",{{"delta",std::to_string(dt)}});const bool hadPending=m_lua->HasPendingCommand()||m_lua->HasPendingAction();m_lua->Update(dt);if(hadPending&&!m_lua->HasPendingCommand()&&!m_lua->HasPendingAction())m_session->VM().NotifyExternalDone();}
 
     // New dialogue lines feed the NVL page and the rollback ring.
     const std::size_t backlogSize = m_session->Backlog().Entries().size();

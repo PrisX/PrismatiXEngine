@@ -1,0 +1,36 @@
+{
+  "format": "PrismatiXSourceMap",
+  "schemaRevision": 1,
+  "documentId": "preview-controls-document",
+  "committedRevision": 1,
+  "entries": [
+    {
+      "operationId": "intro-operation",
+      "sourceId": "intro-source",
+      "sourceDocumentId": "preview-controls-document",
+      "sourceUri": "Story/PreviewControls.pxstory",
+      "span": { "start": 0, "end": 10, "line": 1, "column": 1 }
+    },
+    {
+      "operationId": "choice-a-operation",
+      "sourceId": "choice-a-source",
+      "sourceDocumentId": "preview-controls-document",
+      "sourceUri": "Story/PreviewControls.pxstory",
+      "span": { "start": 11, "end": 20, "line": 2, "column": 1 }
+    },
+    {
+      "operationId": "choice-b-operation",
+      "sourceId": "choice-b-source",
+      "sourceDocumentId": "preview-controls-document",
+      "sourceUri": "Story/PreviewControls.pxstory",
+      "span": { "start": 21, "end": 30, "line": 3, "column": 1 }
+    },
+    {
+      "operationId": "outro-operation",
+      "sourceId": "outro-source",
+      "sourceDocumentId": "preview-controls-document",
+      "sourceUri": "Story/PreviewControls.pxstory",
+      "span": { "start": 31, "end": 40, "line": 4, "column": 1 }
+    }
+  ]
+}

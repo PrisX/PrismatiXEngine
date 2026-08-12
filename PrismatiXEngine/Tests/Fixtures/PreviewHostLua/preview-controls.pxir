@@ -1,0 +1,52 @@
+{
+  "format": "PrismatiXRuntimeIR",
+  "schemaRevision": 1,
+  "documentId": "preview-controls-document",
+  "committedRevision": 1,
+  "operations": [
+    {
+      "operationId": "intro-operation",
+      "sourceId": "intro-source",
+      "sourceLine": 1,
+      "kind": "dialogue",
+      "text": "Long input fixture",
+      "arguments": {
+        "speaker": "Test",
+        "text": "This deliberately long Preview input fixture remains in typewriter playback until the first correlated advance reveals the full line, allowing the second advance to enter the choice block deterministically."
+      }
+    },
+    {
+      "operationId": "choice-a-operation",
+      "sourceId": "choice-a-source",
+      "sourceLine": 2,
+      "kind": "choiceOption",
+      "text": "Choice A",
+      "arguments": {
+        "text": "Choice A",
+        "target": "outro-source"
+      }
+    },
+    {
+      "operationId": "choice-b-operation",
+      "sourceId": "choice-b-source",
+      "sourceLine": 3,
+      "kind": "choiceOption",
+      "text": "Choice B",
+      "arguments": {
+        "text": "Choice B",
+        "target": "outro-source"
+      }
+    },
+    {
+      "operationId": "outro-operation",
+      "sourceId": "outro-source",
+      "sourceLine": 4,
+      "kind": "dialogue",
+      "text": "Choice accepted",
+      "arguments": {
+        "speaker": "Test",
+        "text": "Choice accepted"
+      }
+    }
+  ]
+}

@@ -18,6 +18,7 @@ struct Command {
     std::vector<Arg> args;
     VariantObject typedArgs;
     int line = 0;
+    std::string sourceId;
 
     [[nodiscard]] const std::string* Find(std::string_view key) const {
         for (const auto& argument : args) if (argument.key == key) return &argument.value;
