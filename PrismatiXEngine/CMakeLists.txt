@@ -495,6 +495,7 @@ if(BUILD_TESTING)
         PrismatiXGameCatalogResourcesContractTests
         PrismatiXStudioUiContractTests
         PrismatiXStudioUiRuntimeAdapterTests
+        PrismatiXUiTypeRegistryContractTests
         PrismatiXRuntimeIrContractTests
         PrismatiXRuntimeIrRuntimeAdapterTests
         PrismatiXRuntimeAssetResolverTests

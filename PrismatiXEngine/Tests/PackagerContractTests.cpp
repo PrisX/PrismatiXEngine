@@ -198,6 +198,9 @@ int main() {
 #ifdef _WIN32
     Write(root / "Tools/PrismatiXPlayer.exe", "fake-player");
     Write(root / "Tools/runtime-fixture.dll", "fake-runtime");
+#elif defined(__APPLE__)
+    Write(root / "Tools/PrismatiXPlayer", "fake-player");
+    Write(root / "Tools/libruntime-fixture.dylib", "fake-runtime");
 #else
     Write(root / "Tools/PrismatiXPlayer", "fake-player");
     Write(root / "Tools/libruntime-fixture.so", "fake-runtime");
@@ -244,6 +247,10 @@ int main() {
         suite.Expect(std::filesystem::is_regular_file(output / request.playerExecutable.filename()), "Player is copied");
 #ifdef _WIN32
         suite.Expect(std::filesystem::is_regular_file(output / "runtime-fixture.dll"), "adjacent Windows runtime library is copied");
+#elif defined(__APPLE__)
+        suite.Expect(std::filesystem::is_regular_file(output /
+                                                      "libruntime-fixture.dylib"),
+                     "adjacent macOS runtime library is copied");
 #else
         suite.Expect(std::filesystem::is_regular_file(output /
                                                       "libruntime-fixture.so"),
