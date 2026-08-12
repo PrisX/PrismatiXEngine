@@ -499,6 +499,7 @@ if(BUILD_TESTING)
 
     add_custom_target(PrismatiXSDKTests DEPENDS
         PrismatiXPackager
+        PrismatiXUiTypeRegistryManifest
         PrismatiXPackagerContractTests
         PrismatiXCharacterResourcesContractTests
         PrismatiXGameCatalogResourcesContractTests
