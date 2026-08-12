@@ -56,6 +56,8 @@ jobs:
       - name: Execute Runtime SDK tests
         env:
           ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:halt_on_error=1
+          SDL_AUDIO_DRIVER: dummy
+          SDL_VIDEO_DRIVER: dummy
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: >-
           ctest --test-dir out/ci/sdk-clang -L "runtime|contract|sdk"
