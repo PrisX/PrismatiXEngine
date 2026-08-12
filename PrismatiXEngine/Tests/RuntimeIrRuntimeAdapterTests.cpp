@@ -62,7 +62,9 @@ int main() {
     addParameter("tint", px::VariantType::Color);
     addParameter("tags", px::VariantType::Array);
     addParameter("metadata", px::VariantType::Object);
-    assert(px::vn::CommandRegistry::Global().Register(std::move(typedDescriptor)));
+    const auto registration =
+        px::vn::CommandRegistry::Global().Register(std::move(typedDescriptor));
+    assert(registration.IsOk());
 
     px::sdk::RuntimeIrDocument document;
     document.documentId = "scene-document";

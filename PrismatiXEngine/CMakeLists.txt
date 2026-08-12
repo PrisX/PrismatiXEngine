@@ -238,6 +238,15 @@ endif()
 endif()
 
 if(BUILD_TESTING)
+    # Contract and integration tests use assert() as their executable test
+    # primitive. Keep those checks active in Release/RelWithDebInfo quality
+    # gates; otherwise NDEBUG removes both validation and assertion operands.
+    if(MSVC)
+        add_compile_options(/UNDEBUG)
+    else()
+        add_compile_options(-UNDEBUG)
+    endif()
+
     add_executable(PrismatiXPackagerContractTests Tests/PackagerContractTests.cpp)
     target_link_libraries(PrismatiXPackagerContractTests PRIVATE PrismatiXRuntime)
     prismatix_configure_target(PrismatiXPackagerContractTests)
