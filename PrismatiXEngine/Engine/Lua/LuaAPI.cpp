@@ -17,7 +17,7 @@ namespace px::lua {
 namespace {
 vn::Value LuaToValue(const sol::object& object, const int depth = 0) {
     if (depth > 32) throw sol::error("Lua value nesting exceeds 32 levels");
-    if (!object.valid() || object.is<sol::nil_t>()) return {};
+    if (!object.valid() || object.is<sol::lua_nil_t>()) return {};
     if (object.is<bool>()) return object.as<bool>();
     if (object.is<std::int64_t>()) return object.as<std::int64_t>();
     if (object.is<double>()) return object.as<double>();
@@ -53,7 +53,7 @@ sol::object ValueToLua(sol::state_view lua, const vn::Value& value, const int de
     if (const auto* item=value.TryGet<std::string>()) return sol::make_object(lua,*item);
     if (const auto* items=value.AsArray()) { sol::table table=lua.create_table(static_cast<int>(items->size()),0);std::size_t index=1;for(const auto& item:*items)table[index++]=ValueToLua(lua,item,depth+1);return sol::make_object(lua,table); }
     if (const auto* items=value.AsObject()) { sol::table table=lua.create_table();for(const auto& [key,item]:*items)table[key]=ValueToLua(lua,item,depth+1);return sol::make_object(lua,table); }
-    return sol::make_object(lua, sol::nil);
+    return sol::make_object(lua, sol::lua_nil);
 }
 }
 
@@ -99,7 +99,7 @@ void LuaHost::BindApi() {
 
     if (vn::VariableStore* variables = m_services.variables) {
         api.set_function("GetVariable", [this, variables](const std::string& name) -> sol::object {
-            const auto* value=variables->GetValue(name);if(!value)return sol::make_object(m_lua,sol::nil);
+            const auto* value=variables->GetValue(name);if(!value)return sol::make_object(m_lua,sol::lua_nil);
             return ValueToLua(m_lua,*value);
         });
         api.set_function("SetVariable", [variables](const std::string& name,sol::object object,sol::optional<std::string> scope){vn::Value value=LuaToValue(object);const std::string selected=scope.value_or("save");if(selected!="save"&&selected!="persistent"&&selected!="temporary")throw sol::error("unknown variable scope: "+selected);variables->SetValue(name,std::move(value),selected=="persistent"?vn::VariableScope::Persistent:selected=="temporary"?vn::VariableScope::Temporary:vn::VariableScope::SaveLocal);});
