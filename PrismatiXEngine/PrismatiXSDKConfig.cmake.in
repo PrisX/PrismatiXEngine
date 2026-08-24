@@ -21,3 +21,15 @@ if(EXISTS "${PrismatiX_PREVIEW_HOST_EXECUTABLE}")
             IMPORTED_LOCATION "${PrismatiX_PREVIEW_HOST_EXECUTABLE}")
     endif()
 endif()
+
+# TypeScript scripting declarations/facade shipped with the SDK. This is
+# authoring/build-time tooling only; the native Player still embeds the C++
+# JavaScriptHost and never depends on Node.js.
+set(PrismatiX_RUNTIME_SDK_ROOT
+    "${PACKAGE_PREFIX_DIR}/share/PrismatiX/runtime-sdk")
+set(PrismatiX_RUNTIME_SDK_AVAILABLE FALSE)
+if(EXISTS "${PrismatiX_RUNTIME_SDK_ROOT}/dist/src/index.js" AND
+   EXISTS "${PrismatiX_RUNTIME_SDK_ROOT}/dist/src/index.d.ts" AND
+   EXISTS "${PrismatiX_RUNTIME_SDK_ROOT}/package.json")
+    set(PrismatiX_RUNTIME_SDK_AVAILABLE TRUE)
+endif()
