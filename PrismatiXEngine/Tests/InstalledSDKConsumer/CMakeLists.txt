@@ -9,6 +9,13 @@ if(NOT PrismatiX_PREVIEW_HOST_AVAILABLE OR
     message(FATAL_ERROR "Installed PrismatiX SDK does not expose PreviewHost")
 endif()
 
+if(NOT PrismatiX_RUNTIME_SDK_AVAILABLE OR
+   NOT EXISTS "${PrismatiX_RUNTIME_SDK_ROOT}/dist/src/index.js" OR
+   NOT EXISTS "${PrismatiX_RUNTIME_SDK_ROOT}/dist/src/index.d.ts" OR
+   NOT EXISTS "${PrismatiX_RUNTIME_SDK_ROOT}/package.json")
+    message(FATAL_ERROR "Installed PrismatiX SDK does not expose @prismatix/runtime")
+endif()
+
 add_executable(PrismatiXInstalledSDKConsumer main.cpp)
 target_compile_features(PrismatiXInstalledSDKConsumer PRIVATE cxx_std_20)
 target_link_libraries(PrismatiXInstalledSDKConsumer PRIVATE PrismatiX::SDK)
