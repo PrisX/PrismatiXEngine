@@ -22,7 +22,7 @@
 #include <vector>
 
 #include "Engine/Diagnostics/Diagnostic.h"
-#include "Engine/Lua/LuaHost.h"
+#include "Engine/Script/ScriptHost.h"
 #include "Engine/Preview/PerformancePreview.h"
 #include "Engine/Runtime.h"
 #include "Engine/SDK/RuntimeIr.h"
@@ -611,7 +611,7 @@ private:
                 Write(Error(request, "invalid-lua-breakpoints", "setLuaBreakpoints requires source and line objects"));
                 return;
             }
-            std::vector<px::lua::LuaHost::DebugBreakpoint> verifiedBreakpoints;
+            std::vector<px::script::DebugBreakpoint> verifiedBreakpoints;
             Json verified = Json::array();
             Json unresolved = Json::array();
             for (const auto& breakpoint : *breakpoints) {
@@ -1659,20 +1659,20 @@ private:
         m_luaServices.variables = &m_session->Variables();
         m_luaServices.routes = &m_session->Routes();
         m_luaServices.timeline = &m_session->Timeline();
-        m_luaServices.console = [events = m_events](const px::lua::LuaConsoleMessage& message) {
+        m_luaServices.console = [events = m_events](const px::script::ConsoleMessage& message) {
             std::string_view level = "info";
             std::string_view stream = "stdout";
-            if (message.level == px::lua::LuaConsoleLevel::Warning) {
+            if (message.level == px::script::ConsoleLevel::Warning) {
                 level = "warning";
                 stream = "stderr";
             }
-            else if (message.level == px::lua::LuaConsoleLevel::Error) {
+            else if (message.level == px::script::ConsoleLevel::Error) {
                 level = "error";
                 stream = "stderr";
             }
             events->Push("output", Json{ { "scope", "lua" }, { "stream", stream }, { "level", level }, { "message", message.text }, { "source", message.source }, { "line", message.line } });
         };
-        m_lua = std::make_unique<px::lua::LuaHost>(m_luaServices);
+        m_lua = px::script::CreateScriptHost(m_luaServices);
         if (const auto status = m_uiPreview.Actions().RegisterProvider(m_lua->CreateActionProvider()); !status) {
             spdlog::error("Preview Lua action provider registration failed: {}", StatusMessage(status, "unknown error"));
             return false;
@@ -1779,9 +1779,9 @@ private:
     std::unique_ptr<px::Runtime> m_runtime;
     std::unique_ptr<px::RuntimeSession> m_session;
     px::vn::GameCatalog m_gameCatalog;
-    px::lua::LuaServices m_luaServices;
-    std::unique_ptr<px::lua::LuaHost> m_lua;
-    std::vector<px::lua::LuaHost::DebugBreakpoint> m_luaBreakpoints;
+    px::script::ScriptServices m_luaServices;
+    std::unique_ptr<px::script::ScriptHost> m_lua;
+    std::vector<px::script::DebugBreakpoint> m_luaBreakpoints;
     px::ui::GalgameUI m_hud;
     px::ui::ObservableViewModel m_uiPreviewViewModel;
     px::ui::UIContext m_uiPreview;

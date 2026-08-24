@@ -187,7 +187,7 @@ class LuaActionProvider final : public ui::IActionProvider {
 public:
     explicit LuaActionProvider(LuaHost& host):m_host(host){}
     std::string_view ProviderId()const override{return "lua";}
-    ui::ActionOrigin Origin()const override{return ui::ActionOrigin::LuaExtension;}
+    ui::ActionOrigin Origin()const override{return ui::ActionOrigin::ScriptExtension;}
     bool CanInvoke(std::string_view action)const override{return m_host.HasAction(action);}
     Status Invoke(const ui::ActionInvocation& invocation)override{return m_host.InvokeAction(invocation);}
     ui::ProviderActionStart Start(const ui::ActionInvocation& invocation)override{return m_host.StartAction(invocation);}
@@ -212,7 +212,7 @@ LuaHost::LuaHost(const LuaServices& services) : m_runner(sol::thread::create(m_l
     BindVfsRequire();
     BindApi();
 }
-LuaHost::~LuaHost(){for(const auto& source:m_loadedActionSources)(void)ui::ActionCatalog::Global().RemoveSource(ui::ActionOrigin::LuaExtension,source);}
+LuaHost::~LuaHost(){for(const auto& source:m_loadedActionSources)(void)ui::ActionCatalog::Global().RemoveSource(ui::ActionOrigin::ScriptExtension,source);}
 
 void LuaHost::HandleError(const std::string& where, const std::string& message) {
     EmitConsole(LuaConsoleLevel::Error, message, where);
@@ -646,7 +646,7 @@ bool LuaHost::LoadExtensionManifest(const std::string& manifestPath) {
             descriptor.label=action.value("displayName",descriptor.id);descriptor.displayName=descriptor.label;
             descriptor.description=action.value("description",std::string{});
             descriptor.category=action.value("category",std::string("Extension"));
-            descriptor.origin=ui::ActionOrigin::LuaExtension;descriptor.sourceId=manifest.id;descriptor.providerId="lua";
+            descriptor.origin=ui::ActionOrigin::ScriptExtension;descriptor.sourceId=manifest.id;descriptor.providerId="script";
             descriptor.destructiveInPreview=action.value("destructiveInPreview",false);
             descriptor.allowAdditionalArguments=action.value("allowAdditionalArguments",false);
             const auto reentry=ui::ParseActionReentryPolicy(action.value("reentry",std::string("allow")));
@@ -716,13 +716,13 @@ bool LuaHost::LoadExtensionManifest(const std::string& manifestPath) {
             manifest.actions.insert(descriptor.id);actionDescriptors.push_back(std::move(descriptor));
         }
         const Status actionRegistration=ui::ActionCatalog::Global().ReplaceSource(
-            ui::ActionOrigin::LuaExtension,manifest.id,std::move(actionDescriptors));
+            ui::ActionOrigin::ScriptExtension,manifest.id,std::move(actionDescriptors));
         if(!actionRegistration){HandleError(manifestPath,diag::Describe(actionRegistration.Diagnostics().front()));return false;}
         m_loadedActionSources.insert(manifest.id);
         m_activeExtension = manifest.id;
         m_declaredCommands.insert(manifest.commands.begin(), manifest.commands.end());
         m_declaredActions.insert(manifest.actions.begin(), manifest.actions.end());
-        const auto discardManifestRegistration=[&](){for(const auto& command:manifest.commands){m_declaredCommands.erase(command);m_commands.erase(command);}for(const auto& action:manifest.actions){m_declaredActions.erase(action);m_actions.erase(action);}(void)ui::ActionCatalog::Global().RemoveSource(ui::ActionOrigin::LuaExtension,manifest.id);m_loadedActionSources.erase(manifest.id);};
+        const auto discardManifestRegistration=[&](){for(const auto& command:manifest.commands){m_declaredCommands.erase(command);m_commands.erase(command);}for(const auto& action:manifest.actions){m_declaredActions.erase(action);m_actions.erase(action);}(void)ui::ActionCatalog::Global().RemoveSource(ui::ActionOrigin::ScriptExtension,manifest.id);m_loadedActionSources.erase(manifest.id);};
         const bool loaded = RunFile("Content/Extensions/" + manifest.entry);
         m_activeExtension.clear();
         if(!loaded){discardManifestRegistration();return false;}

@@ -263,11 +263,11 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_luaServices.variables = &m_session->Variables();
     m_luaServices.routes = &m_session->Routes();
     m_luaServices.timeline = &m_session->Timeline();
-    PX_LOG_DEBUG("Player boot: constructing Lua host");
-    m_lua = std::make_unique<lua::LuaHost>(m_luaServices);
-    PX_LOG_DEBUG("Player boot: Lua host constructed");
+    PX_LOG_DEBUG("Player boot: constructing script host");
+    m_lua = script::CreateScriptHost(m_luaServices);
+    PX_LOG_DEBUG("Player boot: script host constructed backend={}", m_lua->BackendId());
     (void)m_ui.Actions().RegisterProvider(m_lua->CreateActionProvider());
-    PX_LOG_DEBUG("Player boot: Lua Action provider registered");
+    PX_LOG_DEBUG("Player boot: script Action provider registered");
     m_session->SetExtensionCommandHandler([this](const vn::Command& cmd) {
         // NVL/ADV mode switches are app-level state, handled before Lua.
         const std::string& t = cmd.type;
@@ -586,17 +586,17 @@ bool PlayerApp::LoadSlot(int slot) {
     const bool awaitingTimeline = std::any_of(snap->timelines.begin(), snap->timelines.end(),
         [](const animation::PlaybackState& playback) { return playback.playing && playback.awaiting; });
     if ((snap->vm.state == vn::VMState::WaitingExternal) !=
-        (!snap->luaPending.empty() || awaitingTimeline)) {
+        (!snap->scriptPending.empty() || awaitingTimeline)) {
         diag::Emit(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXSAVE6110",
                                     .category="Persistence.Save",
-                                    .message="Save has inconsistent Lua await state"});
+                                    .message="Save has inconsistent script await state"});
         return false;
     }
     if (m_lua) {
-        const Status luaStatus = m_lua->RestorePending(snap->luaPending);
-        if (!luaStatus) return false;
-        const Status luaActionStatus = m_lua->RestorePendingActions(snap->luaActions);
-        if (!luaActionStatus) return false;
+        const Status scriptStatus = m_lua->RestorePending(snap->scriptPending);
+        if (!scriptStatus) return false;
+        const Status scriptActionStatus = m_lua->RestorePendingActions(snap->scriptActions);
+        if (!scriptActionStatus) return false;
     }
     if (!snap->behavior.fibers.empty() || !snap->behavior.actions.empty()) {
         if (const Status uiStatus = m_ui.ShowHUD(DialogueUI()); !uiStatus) return false;
@@ -635,8 +635,8 @@ progress::SaveSnapshot PlayerApp::MakeSnapshot(bool includeBacklog) {
     snap.animationClips = state.animationClips;
     snap.behavior = state.behavior;
     if (m_lua) {
-        snap.luaPending = m_lua->CapturePending();
-        snap.luaActions = m_lua->CapturePendingActions();
+        snap.scriptPending = m_lua->CapturePending();
+        snap.scriptActions = m_lua->CapturePendingActions();
     }
     if (includeBacklog) snap.backlog = state.backlog;
     snap.nvlMode = m_nvlMode;
@@ -673,10 +673,10 @@ void PlayerApp::ApplyRollback(const RollbackEntry& entry) {
     state.backlog = m_session->Backlog().Entries();
     if (state.backlog.size() > entry.backlogSize) state.backlog.resize(entry.backlogSize);
     if (m_lua) {
-        const Status luaStatus = m_lua->RestorePending(s.luaPending);
-        if (!luaStatus) return;
-        const Status luaActionStatus = m_lua->RestorePendingActions(s.luaActions);
-        if (!luaActionStatus) return;
+        const Status scriptStatus = m_lua->RestorePending(s.scriptPending);
+        if (!scriptStatus) return;
+        const Status scriptActionStatus = m_lua->RestorePendingActions(s.scriptActions);
+        if (!scriptActionStatus) return;
     }
     if (!m_session->RestoreState(state, m_runtime.GetClock().NowMs())) return;
     m_nvlMode = s.nvlMode;

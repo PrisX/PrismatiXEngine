@@ -57,7 +57,7 @@ Status ActionCatalog::NormalizeAndValidateDescriptor(ActionDescriptor& descripto
     if (descriptor.category.empty()) descriptor.category = "Other";
     if (descriptor.providerId.empty()) {
         descriptor.providerId = descriptor.origin == ActionOrigin::BuiltIn ? "builtin" :
-                                descriptor.origin == ActionOrigin::Plugin ? "plugin" : "lua";
+                                descriptor.origin == ActionOrigin::Plugin ? "plugin" : "script";
     }
     std::unordered_set<std::string> names;
     for (auto& argument : descriptor.arguments) {

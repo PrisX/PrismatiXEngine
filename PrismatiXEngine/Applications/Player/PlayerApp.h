@@ -3,7 +3,7 @@
 #include "Engine/Progression/GameSettings.h"
 #include "Engine/Progression/GlobalProfile.h"
 #include "Engine/Progression/SaveSystem.h"
-#include "Engine/Lua/LuaHost.h"
+#include "Engine/Script/ScriptHost.h"
 #include "Engine/Runtime.h"
 #include "Engine/Session/RuntimeSession.h"
 #include "Engine/UI/GalgameUI.h"
@@ -86,8 +86,8 @@ private:
     progress::SaveSystem m_saves;
 
     std::unique_ptr<RuntimeSession> m_session;
-    std::unique_ptr<lua::LuaHost> m_lua;
-    lua::LuaServices m_luaServices;
+    std::unique_ptr<script::ScriptHost> m_lua;
+    script::ScriptServices m_luaServices;
     std::unordered_map<std::string, std::string> m_langTable;
     std::unordered_map<std::string, std::string> m_studioUiAssets;
     std::unordered_map<std::string, std::string> m_studioUiComponents;

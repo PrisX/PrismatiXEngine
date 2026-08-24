@@ -9,7 +9,7 @@
 
 namespace px::ui {
 
-enum class ActionOrigin : std::uint8_t { BuiltIn, Plugin, LuaExtension };
+enum class ActionOrigin : std::uint8_t { BuiltIn, Plugin, ScriptExtension };
 enum class ActionEditorHint : std::uint8_t {
     Default,
     Multiline,

@@ -10,7 +10,7 @@
 #include "Engine/VN/Expression/Expression.h"
 #include "Engine/UI/UIRouter.h"
 #include "Engine/UI/Behavior/BehaviorGraph.h"
-#include "Engine/Lua/LuaState.h"
+#include "Engine/Script/ScriptState.h"
 
 #include <cstdint>
 #include <optional>
@@ -36,8 +36,8 @@ struct SaveSnapshot {
     ui::RouteState routes;
     std::vector<animation::PlaybackState> timelines;
     std::vector<animation::AnimationClip> animationClips;
-    lua::PendingCommandsState luaPending;
-    lua::PendingActionsState luaActions;
+    script::PendingCommandsState scriptPending;
+    script::PendingActionsState scriptActions;
     ui::BehaviorRuntimeState behavior;
     std::vector<vn::BacklogEntry> backlog;
     bool nvlMode = false;

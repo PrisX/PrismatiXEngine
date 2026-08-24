@@ -166,13 +166,13 @@ void TestSaveValidation() {
     tween.duration = 0.6f;
     snapshot.stage.tweens.push_back(tween);
     snapshot.audio.music = { "Content/Audio/theme.ogg", true, true, 24000 };
-    px::lua::PendingCommandState pending;
+    px::script::PendingCommandState pending;
     pending.command.type = "demo.await";
     pending.command.args.push_back({ "duration", "0.5" });
     pending.yieldIndex = 1;
     pending.waitKind = "timer";
     pending.remainingSeconds = 0.25f;
-    snapshot.luaPending.push_back(std::move(pending));
+    snapshot.scriptPending.push_back(std::move(pending));
     const px::Uuid behaviorEntry = px::Uuid::FromName("save.behavior.entry");
     const px::Uuid behaviorDelay = px::Uuid::FromName("save.behavior.delay");
     px::ui::BehaviorFiberState behaviorFiber;
@@ -190,14 +190,14 @@ void TestSaveValidation() {
     savedActionInvocation.context.sourceScene = "Content/UI/HUD.pxscene";
     savedActionInvocation.context.sourceNode = behaviorDelay;
     savedActionInvocation.context.signal = "behavior";
-    snapshot.behavior.actions.push_back({ 41, savedActionInvocation, "lua", 73, false });
-    px::lua::PendingActionState pendingAction;
+    snapshot.behavior.actions.push_back({ 41, savedActionInvocation, "script", 73, false });
+    px::script::PendingActionState pendingAction;
     pendingAction.id = 73;
     pendingAction.invocation = savedActionInvocation;
     pendingAction.yieldIndex = 2;
     pendingAction.waitKind = "timer";
     pendingAction.remainingSeconds = 0.35f;
-    snapshot.luaActions.push_back(std::move(pendingAction));
+    snapshot.scriptActions.push_back(std::move(pendingAction));
     Check(saves.Save(0, snapshot), "valid save should be written");
     const auto loaded = saves.Load(0);
     Check(loaded && loaded->pc == 7 && loaded->variables.at("affection") == 3, "valid save should round-trip");
@@ -205,11 +205,42 @@ void TestSaveValidation() {
         loaded && loaded->persistentVariables.contains("affection") && loaded->vm.state == px::vn::VMState::WaitingChoice && loaded->vm.callStack.size() == 1 && loaded->vm.choices.size() == 1 && loaded->dialogue.state.displayText == "Hel" &&
             loaded->dialogue.speedMs == 42 && loaded->typedVariables.at("route").TryGet<std::string>() && loaded->typedVariables.at("flags").AsObject() && loaded->routes.stack.size() == 2 && loaded->routes.modals.size() == 1 &&
             loaded->timelines.size() == 1 && loaded->timelines.front().awaiting && loaded->animationClips.size() == 1 && loaded->animationClips.front().name == "Custom/Save" && loaded->stage.backgroundFade == 0.45f && loaded->stage.actors.size() == 1 &&
-            loaded->stage.tweens.size() == 1 && loaded->audio.music.playbackFrame == 24000 && loaded->luaPending.size() == 1 && loaded->luaPending.front().yieldIndex == 1 && loaded->luaActions.size() == 1 && loaded->luaActions.front().yieldIndex == 2 &&
+            loaded->stage.tweens.size() == 1 && loaded->audio.music.playbackFrame == 24000 && loaded->scriptPending.size() == 1 && loaded->scriptPending.front().yieldIndex == 1 && loaded->scriptActions.size() == 1 && loaded->scriptActions.front().yieldIndex == 2 &&
             loaded->behavior.fibers.size() == 1 && loaded->behavior.fibers.front().current == behaviorDelay && loaded->behavior.fibers.front().signalArguments.at("position").TryGet<px::Vec2>() && loaded->behavior.actions.size() == 1 &&
             loaded->behavior.actions.front().providerHandle == 73,
-        "current save schema should preserve exact VM, stage, audio, Lua Action, Behavior, and variable state"
+        "current save schema should preserve exact VM, stage, audio, script Action, Behavior, and variable state"
     );
+
+    const auto currentJson = px::progress::LoadJson(saves.SlotPath(0), nullptr);
+    Check(currentJson && currentJson->value("schemaRevision", 0) == 2 &&
+              currentJson->contains("scriptPending") &&
+              currentJson->contains("scriptActions") &&
+              !currentJson->contains("luaPending") &&
+              !currentJson->contains("luaActions"),
+          "current saves must use language-neutral script checkpoint fields");
+    if (currentJson) {
+        px::progress::Json legacyEmpty = *currentJson;
+        legacyEmpty["schemaRevision"] = 1;
+        legacyEmpty["luaPending"] = px::progress::Json::array();
+        legacyEmpty["luaActions"] = px::progress::Json::array();
+        legacyEmpty.erase("scriptPending");
+        legacyEmpty.erase("scriptActions");
+        Check(px::progress::SaveJson(saves.SlotPath(4), legacyEmpty, nullptr),
+              "empty legacy script checkpoint fixture should be written");
+        Check(saves.Load(4).has_value(),
+              "legacy saves without active Lua continuations should migrate");
+
+        px::progress::Json legacyActive = *currentJson;
+        legacyActive["schemaRevision"] = 1;
+        legacyActive["luaPending"] = legacyActive["scriptPending"];
+        legacyActive["luaActions"] = legacyActive["scriptActions"];
+        legacyActive.erase("scriptPending");
+        legacyActive.erase("scriptActions");
+        Check(px::progress::SaveJson(saves.SlotPath(5), legacyActive, nullptr),
+              "active legacy script checkpoint fixture should be written");
+        Check(!saves.Load(5),
+              "legacy saves with active Lua continuations must fail closed");
+    }
 
     px::progress::Json wrongType{ { "format", "PrismatiXSave" }, { "schemaRevision", 1 }, { "variables", { { "affection", "high" } } } };
     Check(px::progress::SaveJson(saves.SlotPath(1), wrongType, nullptr), "wrong-type fixture should be written");

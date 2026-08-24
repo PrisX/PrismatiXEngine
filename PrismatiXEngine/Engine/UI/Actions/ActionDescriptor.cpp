@@ -6,7 +6,7 @@ const char* ActionOriginName(const ActionOrigin origin) {
     switch (origin) {
         case ActionOrigin::BuiltIn: return "BuiltIn";
         case ActionOrigin::Plugin: return "Plugin";
-        case ActionOrigin::LuaExtension: return "LuaExtension";
+        case ActionOrigin::ScriptExtension: return "ScriptExtension";
     }
     return "BuiltIn";
 }

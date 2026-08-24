@@ -2,9 +2,7 @@
 
 #include "Engine/Lua/EventBus.h"
 #include "Engine/Lua/LuaState.h"
-#include "Engine/Core/Result.h"
-#include "Engine/VN/Commands/Command.h"
-#include "Engine/UI/Actions/ActionDispatcher.h"
+#include "Engine/Script/ScriptHost.h"
 
 #include <sol/sol.hpp>
 
@@ -20,80 +18,18 @@
 struct lua_Debug;
 struct lua_State;
 
-namespace px::io {
-class VFS;
-}
-namespace px::graphics {
-class Renderer2D;
-}
-namespace px::audio {
-class AudioEngine;
-}
-namespace px::progress {
-class GlobalProfile;
-}
-namespace px::vn {
-class Stage;
-class VariableStore;
-}
-namespace px::ui { class UIRouter; }
-namespace px::animation { class TimelinePlayer; }
-namespace px {
-class Input;
-}
-
 namespace px::lua {
 
-enum class LuaConsoleLevel {
-    Info,
-    Warning,
-    Error,
-};
+using LuaConsoleLevel = script::ConsoleLevel;
+using LuaConsoleMessage = script::ConsoleMessage;
+using LuaServices = script::ScriptServices;
 
-struct LuaConsoleMessage {
-    LuaConsoleLevel level = LuaConsoleLevel::Info;
-    std::string text;
-    std::string source;
-    int line = 0;
-};
-
-struct LuaServices {
-    io::VFS* vfs = nullptr;
-    graphics::Renderer2D* renderer = nullptr;
-    audio::AudioEngine* audio = nullptr;
-    progress::GlobalProfile* profile = nullptr;
-    px::Input* input = nullptr;
-    vn::Stage* stage = nullptr;  // VN stage control for advanced user scripts
-    vn::VariableStore* variables = nullptr;
-    ui::UIRouter* routes = nullptr;
-    animation::TimelinePlayer* timeline = nullptr;
-    std::function<void(const LuaConsoleMessage&)> console;
-};
-
-class LuaHost {
+class LuaHost final : public script::ScriptHost {
 public:
-    struct DebugBreakpoint {
-        std::string source;
-        int line = 0;
-    };
-
-    struct DebugVariable {
-        std::string name;
-        std::string value;
-    };
-
-    struct DebugFrame {
-        std::string source;
-        std::string function;
-        int line = 0;
-        std::vector<DebugVariable> locals;
-    };
-
-    struct DebugSnapshot {
-        bool paused = false;
-        std::string reason;
-        std::vector<DebugFrame> frames;
-    };
+    using DebugBreakpoint = script::DebugBreakpoint;
+    using DebugVariable = script::DebugVariable;
+    using DebugFrame = script::DebugFrame;
+    using DebugSnapshot = script::DebugSnapshot;
 
     struct ExtensionManifest {
         std::string id;
@@ -105,39 +41,42 @@ public:
     };
 
     explicit LuaHost(const LuaServices& services);
-    ~LuaHost();
+    ~LuaHost() override;
 
     bool RunFile(const std::string& vfsPath);
     bool RunString(const std::string& code, const std::string& chunkName = "chunk");
-    bool LoadExtensionManifest(const std::string& manifestPath);
-    bool LoadExtensionIndex(const std::string& indexPath);
+    [[nodiscard]] std::string_view BackendId() const noexcept override { return "lua"; }
+    bool LoadExtensionManifest(const std::string& manifestPath) override;
+    bool LoadExtensionIndex(const std::string& indexPath) override;
 
     EventBus& Bus() { return m_bus; }
-    void Emit(const std::string& event, const EventArgs& args = {}) { m_bus.Emit(event, args); }
+    void Emit(const std::string& event, const script::EventArgs& args = {}) override {
+        m_bus.Emit(event, args);
+    }
 
-    bool InvokeCommand(const vn::Command& cmd);
+    bool InvokeCommand(const vn::Command& cmd) override;
     Status InvokeAction(const ui::ActionInvocation& invocation);
     ui::ProviderActionStart StartAction(const ui::ActionInvocation& invocation);
     [[nodiscard]] ui::ActionExecutionState ActionState(std::uint64_t handle) const;
     void CancelAction(std::uint64_t handle);
     [[nodiscard]] bool HasAction(std::string_view action) const;
-    [[nodiscard]] std::shared_ptr<ui::IActionProvider> CreateActionProvider();
-    void Update(float deltaSeconds);
-    [[nodiscard]] bool HasPendingCommand() const { return !m_pending.empty(); }
-    [[nodiscard]] bool HasPendingAction() const { return !m_pendingActions.empty(); }
-    [[nodiscard]] PendingCommandsState CapturePending() const;
-    Status RestorePending(const PendingCommandsState& state);
-    [[nodiscard]] PendingActionsState CapturePendingActions() const;
-    Status RestorePendingActions(const PendingActionsState& state);
-    void CancelPending();
+    [[nodiscard]] std::shared_ptr<ui::IActionProvider> CreateActionProvider() override;
+    void Update(float deltaSeconds) override;
+    [[nodiscard]] bool HasPendingCommand() const override { return !m_pending.empty(); }
+    [[nodiscard]] bool HasPendingAction() const override { return !m_pendingActions.empty(); }
+    [[nodiscard]] PendingCommandsState CapturePending() const override;
+    Status RestorePending(const PendingCommandsState& state) override;
+    [[nodiscard]] PendingActionsState CapturePendingActions() const override;
+    Status RestorePendingActions(const PendingActionsState& state) override;
+    void CancelPending() override;
     std::vector<DebugBreakpoint> SetDebugBreakpoints(
-        std::vector<DebugBreakpoint> breakpoints);
-    bool DebugPause();
-    bool DebugContinue();
-    bool DebugStep();
+        std::vector<DebugBreakpoint> breakpoints) override;
+    bool DebugPause() override;
+    bool DebugContinue() override;
+    bool DebugStep() override;
     [[nodiscard]] std::optional<DebugVariable> EvaluateDebugWatch(
-        std::string_view expression) const;
-    [[nodiscard]] const DebugSnapshot& CaptureDebugState() const {
+        std::string_view expression) const override;
+    [[nodiscard]] const DebugSnapshot& CaptureDebugState() const override {
         return m_debugSnapshot;
     }
 

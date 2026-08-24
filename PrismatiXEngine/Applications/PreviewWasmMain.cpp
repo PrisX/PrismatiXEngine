@@ -4,7 +4,7 @@
 #include "Engine/Preview/ProgressionPreview.h"
 
 #include "Engine/Runtime.h"
-#include "Engine/Lua/LuaHost.h"
+#include "Engine/Script/ScriptHost.h"
 #include "Engine/SDK/RuntimeIr.h"
 #include "Engine/SDK/StudioUi.h"
 #include "Engine/Session/RuntimeSession.h"
@@ -232,13 +232,13 @@ public:
         m_luaServices.routes = &m_session->Routes();
         m_luaServices.timeline = &m_session->Timeline();
         m_luaServices.console = [this](
-                                    const px::lua::LuaConsoleMessage& message) {
+                                    const px::script::ConsoleMessage& message) {
             std::string_view level = "info";
             std::string_view stream = "stdout";
-            if (message.level == px::lua::LuaConsoleLevel::Warning) {
+            if (message.level == px::script::ConsoleLevel::Warning) {
                 level = "warning";
                 stream = "stderr";
-            } else if (message.level == px::lua::LuaConsoleLevel::Error) {
+            } else if (message.level == px::script::ConsoleLevel::Error) {
                 level = "error";
                 stream = "stderr";
             }
@@ -252,7 +252,7 @@ public:
                      {"line", message.line}}
                     .dump());
         };
-        m_lua = std::make_unique<px::lua::LuaHost>(m_luaServices);
+        m_lua = px::script::CreateScriptHost(m_luaServices);
         if (const auto status =
                 m_hud.Actions().RegisterProvider(m_lua->CreateActionProvider());
             !status) {
@@ -1164,7 +1164,7 @@ public:
                     "setLuaBreakpoints requires source and line objects after a Lua extension graph is applied.");
                 return 0;
             }
-            std::vector<px::lua::LuaHost::DebugBreakpoint> acceptedBreakpoints;
+            std::vector<px::script::DebugBreakpoint> acceptedBreakpoints;
             Json verified = Json::array();
             Json unresolved = Json::array();
             for (const auto& breakpoint : *breakpoints) {
@@ -2469,9 +2469,9 @@ private:
     std::string m_performanceJson;
     std::string m_lastUiAction;
     std::string m_lastLuaDebugSignature;
-    px::lua::LuaServices m_luaServices;
-    std::unique_ptr<px::lua::LuaHost> m_lua;
-    std::vector<px::lua::LuaHost::DebugBreakpoint> m_luaBreakpoints;
+    px::script::ScriptServices m_luaServices;
+    std::unique_ptr<px::script::ScriptHost> m_lua;
+    std::vector<px::script::DebugBreakpoint> m_luaBreakpoints;
     std::string m_runtimeFilesJson = "[]";
     std::unordered_map<int, px::RuntimeSession::GameState> m_previewSaves;
     std::set<std::string> m_registeredRoutes;

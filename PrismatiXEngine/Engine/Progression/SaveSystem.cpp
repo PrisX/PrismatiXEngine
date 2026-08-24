@@ -11,7 +11,8 @@ namespace px::progress {
 
 namespace {
 constexpr std::string_view kSaveFormat = "PrismatiXSave";
-constexpr int kSaveSchemaRevision = 1;
+constexpr int kSaveSchemaRevision = 2;
+constexpr int kLegacyLuaSaveSchemaRevision = 1;
 constexpr std::size_t kMaxSaveCollectionItems = 1'000'000;
 
 void SaveLoadError(const std::string& path, std::string message, std::string details = {}) {
@@ -23,7 +24,8 @@ void SaveLoadError(const std::string& path, std::string message, std::string det
 
 bool HasSupportedHeader(const Json& json) {
     return json.is_object() && json.value("format", std::string{}) == kSaveFormat &&
-           json.value("schemaRevision", 0) == kSaveSchemaRevision;
+           (json.value("schemaRevision", 0) == kSaveSchemaRevision ||
+            json.value("schemaRevision", 0) == kLegacyLuaSaveSchemaRevision);
 }
 
 Json ColorToJson(const Color color) {
@@ -307,7 +309,7 @@ std::vector<animation::AnimationClip> AnimationClipsFromJson(const Json& json) {
     return clips;
 }
 
-Json LuaPendingToJson(const lua::PendingCommandsState& state) {
+Json ScriptPendingToJson(const script::PendingCommandsState& state) {
     Json values = Json::array();
     for (const auto& pending : state) {
         Json arguments = Json::array();
@@ -321,20 +323,20 @@ Json LuaPendingToJson(const lua::PendingCommandsState& state) {
     return values;
 }
 
-lua::PendingCommandsState LuaPendingFromJson(const Json& json) {
+script::PendingCommandsState ScriptPendingFromJson(const Json& json) {
     if (!json.is_array() || json.size() > kMaxSaveCollectionItems)
-        throw std::invalid_argument("luaPending must be a bounded array");
-    lua::PendingCommandsState state;
+        throw std::invalid_argument("scriptPending must be a bounded array");
+    script::PendingCommandsState state;
     for (const auto& value : json) {
-        if (!value.is_object()) throw std::invalid_argument("Lua checkpoint must be an object");
-        lua::PendingCommandState pending;
+        if (!value.is_object()) throw std::invalid_argument("Script checkpoint must be an object");
+        script::PendingCommandState pending;
         pending.command.type = value.at("command").get<std::string>();
         pending.command.line = value.value("line", 0);
         const auto& arguments = value.at("arguments");
         if (!arguments.is_array() || arguments.size() > kMaxSaveCollectionItems)
-            throw std::invalid_argument("Lua checkpoint arguments must be a bounded array");
+            throw std::invalid_argument("Script checkpoint arguments must be a bounded array");
         for (const auto& argument : arguments) {
-            if (!argument.is_object()) throw std::invalid_argument("Lua argument must be an object");
+            if (!argument.is_object()) throw std::invalid_argument("Script argument must be an object");
             pending.command.args.push_back({argument.at("key").get<std::string>(),
                                              argument.at("value").get<std::string>()});
         }
@@ -427,7 +429,7 @@ ui::ActionContext ActionContextFromJson(const Json& json) {
     context.preview=json.at("preview").get<bool>();return context;
 }
 
-Json LuaActionsToJson(const lua::PendingActionsState& state) {
+Json ScriptActionsToJson(const script::PendingActionsState& state) {
     Json values=Json::array();for(const auto& pending:state)values.push_back({
         {"id",pending.id},{"action",pending.invocation.action},
         {"arguments",VariantObjectToSaveJson(pending.invocation.arguments)},
@@ -436,9 +438,9 @@ Json LuaActionsToJson(const lua::PendingActionsState& state) {
         {"handle",pending.handle},{"remainingSeconds",pending.remainingSeconds}});return values;
 }
 
-lua::PendingActionsState LuaActionsFromJson(const Json& json) {
-    if(!json.is_array()||json.size()>kMaxSaveCollectionItems)throw std::invalid_argument("luaActions must be a bounded array");
-    lua::PendingActionsState state;state.reserve(json.size());for(const auto& value:json){if(!value.is_object())throw std::invalid_argument("Lua Action checkpoint must be an object");lua::PendingActionState pending;
+script::PendingActionsState ScriptActionsFromJson(const Json& json) {
+    if(!json.is_array()||json.size()>kMaxSaveCollectionItems)throw std::invalid_argument("scriptActions must be a bounded array");
+    script::PendingActionsState state;state.reserve(json.size());for(const auto& value:json){if(!value.is_object())throw std::invalid_argument("Script Action checkpoint must be an object");script::PendingActionState pending;
         pending.id=value.at("id").get<std::uint64_t>();pending.invocation.action=value.at("action").get<std::string>();
         pending.invocation.arguments=VariantObjectFromSaveJson(value.at("arguments"));pending.invocation.context=ActionContextFromJson(value.at("context"));
         pending.yieldIndex=value.at("yieldIndex").get<std::uint32_t>();pending.waitKind=value.at("waitKind").get<std::string>();
@@ -734,8 +736,8 @@ bool SaveSystem::Save(int slot, const SaveSnapshot& s) {
     j["routes"] = RouteStateToJson(s.routes);
     j["timelines"] = TimelinesToJson(s.timelines);
     j["animationClips"] = AnimationClipsToJson(s.animationClips);
-    j["luaPending"] = LuaPendingToJson(s.luaPending);
-    j["luaActions"] = LuaActionsToJson(s.luaActions);
+    j["scriptPending"] = ScriptPendingToJson(s.scriptPending);
+    j["scriptActions"] = ScriptActionsToJson(s.scriptActions);
     j["behavior"] = BehaviorStateToJson(s.behavior);
     j["backlog"] = BacklogToJson(s.backlog);
     j["nvlMode"] = s.nvlMode;
@@ -796,9 +798,16 @@ std::optional<SaveSnapshot> SaveSystem::Load(int slot) const {
                 s.persistentVariables.insert(key.get<std::string>());
             }
         }
+        const int schemaRevision = j.value("schemaRevision", 0);
+        const char* pendingField = schemaRevision == kLegacyLuaSaveSchemaRevision
+                                       ? "luaPending"
+                                       : "scriptPending";
+        const char* actionsField = schemaRevision == kLegacyLuaSaveSchemaRevision
+                                       ? "luaActions"
+                                       : "scriptActions";
         if (!j.contains("vm") || !j.contains("dialogue") || !j.contains("routes") ||
             !j.contains("timelines") || !j.contains("animationClips") || !j.contains("stage") || !j.contains("audio") ||
-            !j.contains("luaPending") || !j.contains("luaActions") ||
+            !j.contains(pendingField) || !j.contains(actionsField) ||
             !j.contains("behavior")) {
             SaveLoadError(path, "Save is missing exact runtime state");
             return std::nullopt;
@@ -810,8 +819,15 @@ std::optional<SaveSnapshot> SaveSystem::Load(int slot) const {
         s.routes = RouteStateFromJson(j["routes"]);
         s.timelines = TimelinesFromJson(j["timelines"]);
         s.animationClips = AnimationClipsFromJson(j["animationClips"]);
-        s.luaPending = LuaPendingFromJson(j["luaPending"]);
-        s.luaActions = LuaActionsFromJson(j["luaActions"]);
+        s.scriptPending = ScriptPendingFromJson(j[pendingField]);
+        s.scriptActions = ScriptActionsFromJson(j[actionsField]);
+        if (schemaRevision == kLegacyLuaSaveSchemaRevision &&
+            (!s.scriptPending.empty() || !s.scriptActions.empty())) {
+            SaveLoadError(path,
+                          "Legacy save contains active Lua continuations",
+                          "Active Lua command and Action state cannot be migrated to a language-neutral script checkpoint");
+            return std::nullopt;
+        }
         s.behavior = BehaviorStateFromJson(j["behavior"]);
         s.backlog = BacklogFromJson(j.value("backlog", Json::array()));
         s.timestamp = j.value("timestamp", std::uint64_t{ 0 });
