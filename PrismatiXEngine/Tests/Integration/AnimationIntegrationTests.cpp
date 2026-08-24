@@ -7,13 +7,17 @@
 #include <string_view>
 
 #include "Engine/Animation/Timeline.h"
+#include "Engine/Audio/AudioEngine.h"
 #include "Engine/Core/TypeRegistry.h"
+#include "Engine/Graphics/AssetCache.h"
+#include "Engine/Graphics/Renderer2D.h"
 #include "Engine/IO/Archive.h"
 #include "Engine/IO/VFS.h"
 #include "Engine/Platform/Input.h"
 #include "Engine/Progression/Persist.h"
 #include "Engine/Progression/SaveSystem.h"
 #include "Engine/Resources/AssetRegistry.h"
+#include "Engine/Session/RuntimeSession.h"
 #include "Engine/Text/Typography.h"
 #include "Engine/UI/Actions/ActionCatalog.h"
 #include "Engine/UI/Animation.h"
@@ -91,7 +95,10 @@ void TestUnifiedTimelineAndPresets() {
     Check(player.RestoreState(state) && player.Playing(handle), "timeline playback should restore its exact mid-animation state");
     const std::string encoded = px::animation::WriteAnimationClip(clip);
     auto decoded = px::animation::ParseAnimationClip(encoded, "memory.pxanim");
-    Check(decoded && decoded.Value().id == clip.id && decoded.Value().tracks.size() == 1, ".pxanim version 4 should round-trip typed keyframes exactly");
+    Check(decoded && decoded.Value().id == clip.id && decoded.Value().tracks.size() == 1 && encoded.find("\"schemaRevision\": 1") != std::string::npos && encoded.find("easeInOut") != std::string::npos, ".pxanim schema 1 version 4 should round-trip canonical typed keyframes exactly");
+    auto unknownAnimation = nlohmann::json::parse(encoded);
+    unknownAnimation["legacy"] = true;
+    Check(!px::animation::ParseAnimationClip(unknownAnimation.dump(), "unknown-field.pxanim"), ".pxanim parsing must reject unknown fields instead of silently dropping them");
     px::animation::AnimationClip child;
     child.id = px::Uuid::FromName("timeline-child");
     child.name = "Child";
@@ -107,6 +114,101 @@ void TestUnifiedTimelineAndPresets() {
     player.Update(0.75f);
     Check(nestedHandle != 0 && applied > 0.4 && applied < 0.6, "nested clips should be sampled with start offset and speed");
     Check(px::animation::OfficialPresets().size() >= 35, "official preset library should cover text, actor, screen, and UI effects");
+}
+
+void TestCanonicalTimelineRuntime() {
+    px::test::TempDirectory temp("canonical-timeline");
+    px::animation::AnimationClip child;
+    child.id = px::Uuid::FromName("canonical-timeline-child");
+    child.name = "Nested fade";
+    child.duration = 1.0f;
+    child.tracks.push_back({
+        {px::animation::TargetKind::UI, "panel", "opacity"},
+        {{0.0f, 0.0, px::animation::Curve::Linear},
+         {1.0f, 1.0, px::animation::Curve::Linear}}});
+    {
+        std::ofstream output(temp.path / "child.pxanim", std::ios::binary);
+        output << px::animation::WriteAnimationClip(child);
+    }
+    const nlohmann::json timeline{
+        {"format", "PrismatiXTimeline"},
+        {"schemaRevision", 1},
+        {"id", "chapter01.intro"},
+        {"name", "Chapter intro"},
+        {"duration", 2.0},
+        {"tracks", nlohmann::json::array()},
+        {"markers", nlohmann::json::array({
+            {{"id", "dialogue-in"}, {"time", 1.0},
+             {"name", "dialogue"},
+             {"payload", {{"route", "intro"},
+                          {"flags", nlohmann::json::array({true, false})}}}}
+        })},
+        {"nestedClips", nlohmann::json::array({
+            {{"start", 0.5}, {"clip", "child.pxanim"}, {"speed", 2.0}}
+        })}}
+    ;
+    {
+        std::ofstream output(temp.path / "intro.pxtimeline", std::ios::binary);
+        output << timeline.dump(2);
+    }
+
+    auto parsed = px::animation::ParseTimeline(timeline.dump(), "intro.pxtimeline");
+    Check(parsed && parsed.Value().id == "chapter01.intro" &&
+              parsed.Value().clip.markers.size() == 1 &&
+              parsed.Value().clip.markers.front().id == "dialogue-in" &&
+              parsed.Value().nestedClips.size() == 1,
+          "canonical .pxtimeline must adapt identities, markers, and nested resources into the unified model");
+    auto unknown = timeline;
+    unknown["legacyTimeline"] = true;
+    Check(!px::animation::ParseTimeline(unknown.dump(), "unknown.pxtimeline"),
+          "canonical Timeline parser must reject unknown fields");
+
+    px::io::VFS vfs;
+    vfs.MountDirectory(temp.path.string());
+    px::audio::AudioEngine audio(vfs);
+    px::graphics::AssetCache assets(nullptr, vfs);
+    px::graphics::Renderer2D renderer(nullptr, assets);
+    px::RuntimeSession runtime({vfs, audio, renderer, assets});
+    double applied = -1.0;
+    int markers = 0;
+    runtime.SetAnimationTargetHandler(
+        px::animation::TargetKind::UI,
+        [&](const px::animation::TrackBinding& binding,
+            const px::Variant& value) {
+            const auto* number = value.TryGet<double>();
+            if (binding.target == "panel" && binding.property == "opacity" &&
+                number)
+                applied = *number;
+            return px::Status::Ok();
+        });
+    runtime.Timeline().SetEvent([&](const px::animation::Marker& marker) {
+        if (marker.id == "dialogue-in") ++markers;
+    });
+    const auto played = runtime.PlayTimelineAsset("intro.pxtimeline");
+    Check(played && runtime.Timeline().RegisteredClips().contains(child.id),
+          "RuntimeSession must recursively load canonical Timeline nested .pxanim resources through VFS");
+    if (!played) return;
+    const auto handle = played.Value();
+    const auto registeredCount = runtime.Timeline().RegisteredClips().size();
+    for (int index = 0; index < 10'000; ++index) {
+        const float position = static_cast<float>(index % 2000) / 1000.0f;
+        Check(runtime.Timeline().Seek(handle, position),
+              "high-frequency Timeline seek must remain valid");
+    }
+    Check(runtime.Timeline().RegisteredClips().size() == registeredCount &&
+              runtime.Timeline().CaptureState().size() == 1,
+          "high-frequency Timeline scrubbing must not reload assets or restart playback");
+    Check(runtime.Timeline().Seek(handle, 0.75f) &&
+              applied > 0.49 && applied < 0.51,
+          "nested Timeline sampling must apply start offsets and speed deterministically");
+    const auto checkpoint = runtime.Timeline().CaptureState();
+    Check(runtime.Timeline().Seek(handle, 1.75f) && applied > 0.99 &&
+              runtime.Timeline().RestoreState(checkpoint) &&
+              applied > 0.49 && applied < 0.51,
+          "canonical Timeline playback must capture and restore exact sampled state");
+    Check(runtime.Timeline().Seek(handle, 0.0f) &&
+              (runtime.Timeline().Update(1.1f), markers == 1),
+          "canonical Timeline markers must fire exactly once when playback crosses them");
 }
 
 
@@ -221,6 +323,7 @@ void TestUIAnimationStateMachine() {
 
 int main() {
     Run("Timeline_PresetsAndCheckpoint", TestUnifiedTimelineAndPresets);
+    Run("Timeline_CanonicalNestedRealtimeScrub", TestCanonicalTimelineRuntime);
     Run("Animation_EmbeddedPreviewRuntimeParity", TestEmbeddedUIAnimationParity);
     Run("Animation_StateMachineCheckpoint", TestUIAnimationStateMachine);
     if (g_failures == 0) std::cout << "PASS: animation integration\n";

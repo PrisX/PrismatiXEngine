@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -37,6 +38,7 @@ struct Marker {
     float time = 0.0f;
     std::string name;
     VariantObject payload;
+    std::string id;
 };
 
 struct NestedClip {
@@ -55,6 +57,21 @@ struct AnimationClip {
     std::vector<NestedClip> nested;
 
     [[nodiscard]] Status Validate(const std::string& sourcePath = {}) const;
+};
+
+struct TimelineNestedResource {
+    float start = 0.0f;
+    ResourceRefValue clip;
+    float speed = 1.0f;
+};
+
+// Canonical .pxtimeline data adapts into AnimationClip so playback, sampling,
+// nesting and checkpoints stay on the existing TimelinePlayer path. Nested
+// resources remain unresolved until RuntimeSession can consult its VFS/catalog.
+struct TimelineDocument {
+    std::string id;
+    AnimationClip clip;
+    std::vector<TimelineNestedResource> nestedClips;
 };
 
 using PlaybackHandle = std::uint64_t;
@@ -111,5 +128,7 @@ private:
 [[nodiscard]] Result<AnimationClip> ParseAnimationClip(std::string_view text,
                                                        const std::string& sourcePath = {});
 [[nodiscard]] std::string WriteAnimationClip(const AnimationClip& clip);
+[[nodiscard]] Result<TimelineDocument> ParseTimeline(
+    std::string_view text, const std::string& sourcePath = {});
 
 }  // namespace px::animation

@@ -96,6 +96,8 @@ public:
     [[nodiscard]] const animation::TimelinePlayer& Timeline() const { return m_timeline; }
     [[nodiscard]] Result<animation::PlaybackHandle> PlayAnimationAsset(
         const std::string& path,bool await=false,float speed=1.0f);
+    [[nodiscard]] Result<animation::PlaybackHandle> PlayTimelineAsset(
+        const std::string& path,bool await=false,float speed=1.0f);
     void SetAnimationTargetHandler(animation::TargetKind kind,animation::TimelinePlayer::Apply handler){m_animationHandlers[kind]=std::move(handler);}
     // RuntimeSession owns built-in command execution. Player and Preview may
     // inject presentation and extension behaviour without replacing it.
@@ -136,6 +138,10 @@ private:
     bool ExecuteCommand(const vn::Command& command);
     std::optional<vn::Program> CompileRuntimeIrText(
         std::string_view text, const std::string& sourcePath);
+    Result<resource::ResourceId> LoadAnimationAsset(
+        const std::string& path,
+        std::optional<resource::ResourceId> expectedId,
+        std::vector<std::string>& stack);
 };
 
 }  // namespace px

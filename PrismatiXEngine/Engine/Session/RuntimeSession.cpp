@@ -86,10 +86,67 @@ RuntimeSession::RuntimeSession(Services services)
 
 Result<animation::PlaybackHandle> RuntimeSession::PlayAnimationAsset(
     const std::string& path,const bool await,const float speed){
-    const auto source=m_services.vfs.ReadText(path);if(!source)return Result<animation::PlaybackHandle>::Failure(RestoreFailure("Animation clip could not be read",path).Diagnostics());
-    auto parsed=animation::ParseAnimationClip(*source,path);if(!parsed)return Result<animation::PlaybackHandle>::Failure(parsed.Diagnostics());const auto id=parsed.Value().id;
-    if(!m_timeline.Find(id)){const Status registered=m_timeline.Register(parsed.TakeValue());if(!registered)return Result<animation::PlaybackHandle>::Failure(registered.Diagnostics());}
-    const auto handle=m_timeline.Play(id,await,speed);if(!handle)return Result<animation::PlaybackHandle>::Failure(RestoreFailure("Animation clip could not be played",path).Diagnostics());return Result<animation::PlaybackHandle>::Success(handle);
+    std::vector<std::string> stack;
+    auto loaded=LoadAnimationAsset(path,std::nullopt,stack);
+    if(!loaded)return Result<animation::PlaybackHandle>::Failure(loaded.Diagnostics());
+    const auto handle=m_timeline.Play(loaded.Value(),await,speed);if(!handle)return Result<animation::PlaybackHandle>::Failure(RestoreFailure("Animation clip could not be played",path).Diagnostics());return Result<animation::PlaybackHandle>::Success(handle);
+}
+
+Result<animation::PlaybackHandle> RuntimeSession::PlayTimelineAsset(
+    const std::string& path,const bool await,const float speed){
+    if(!path.ends_with(".pxtimeline"))return Result<animation::PlaybackHandle>::Failure(RestoreFailure("Timeline asset must use the .pxtimeline extension",path).Diagnostics());
+    return PlayAnimationAsset(path,await,speed);
+}
+
+Result<resource::ResourceId> RuntimeSession::LoadAnimationAsset(
+    const std::string& path,
+    const std::optional<resource::ResourceId> expectedId,
+    std::vector<std::string>& stack){
+    if(expectedId&&m_timeline.Find(*expectedId))
+        return Result<resource::ResourceId>::Success(*expectedId);
+    if(std::ranges::find(stack,path)!=stack.end())
+        return Result<resource::ResourceId>::Failure(
+            RestoreFailure("Nested animation resource cycle detected",path).Diagnostics());
+    const auto source=m_services.vfs.ReadText(path);
+    if(!source)return Result<resource::ResourceId>::Failure(
+        RestoreFailure("Animation asset could not be read",path).Diagnostics());
+    stack.push_back(path);
+    const auto pop=[&]{stack.pop_back();};
+    if(path.ends_with(".pxtimeline")){
+        auto parsed=animation::ParseTimeline(*source,path);
+        if(!parsed){pop();return Result<resource::ResourceId>::Failure(parsed.Diagnostics());}
+        animation::TimelineDocument document=parsed.TakeValue();
+        if(expectedId)document.clip.id=*expectedId;
+        if(m_timeline.Find(document.clip.id)){const auto id=document.clip.id;pop();return Result<resource::ResourceId>::Success(id);}
+        for(const auto& nested:document.nestedClips){
+            resource::ResourceId nestedId=nested.clip.id;
+            if(!nested.clip.lastKnownPath.empty()){
+                auto loaded=LoadAnimationAsset(nested.clip.lastKnownPath,
+                    nested.clip.id.Empty()?std::nullopt:std::optional<resource::ResourceId>{nested.clip.id},stack);
+                if(!loaded){pop();return Result<resource::ResourceId>::Failure(loaded.Diagnostics());}
+                nestedId=loaded.Value();
+            }else if(nestedId.Empty()||!m_timeline.Find(nestedId)){
+                pop();return Result<resource::ResourceId>::Failure(
+                    RestoreFailure("Nested animation resource has no resolvable path or registered id",path).Diagnostics());
+            }
+            document.clip.nested.push_back({nested.start,nestedId,nested.speed});
+        }
+        const auto id=document.clip.id;
+        const Status registered=m_timeline.Register(std::move(document.clip));
+        pop();
+        return registered?Result<resource::ResourceId>::Success(id)
+                         :Result<resource::ResourceId>::Failure(registered.Diagnostics());
+    }
+    auto parsed=animation::ParseAnimationClip(*source,path);
+    if(!parsed){pop();return Result<resource::ResourceId>::Failure(parsed.Diagnostics());}
+    animation::AnimationClip clip=parsed.TakeValue();
+    if(expectedId)clip.id=*expectedId;
+    const auto id=clip.id;
+    if(!m_timeline.Find(id)){
+        const Status registered=m_timeline.Register(std::move(clip));
+        if(!registered){pop();return Result<resource::ResourceId>::Failure(registered.Diagnostics());}
+    }
+    pop();return Result<resource::ResourceId>::Success(id);
 }
 
 bool RuntimeSession::ExecuteCommand(const vn::Command& command) {
