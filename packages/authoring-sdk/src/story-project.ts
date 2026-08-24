@@ -90,12 +90,15 @@ function fallbackSpan(path: string): SourceSpan {
   };
 }
 
+// These names deliberately remain valid .pxstory identifiers. The authoring
+// source never sees them; they exist only while bundling locale-specific scene
+// files into the single Runtime IR program consumed by the native Runtime.
 function sceneEntryTarget(sceneId: string): string {
-  return `scene:${sceneId}:entry`;
+  return `pxscene.${sceneId}.entry`;
 }
 
 function sceneLabelTarget(sceneId: string, label: string): string {
-  return `scene:${sceneId}:label:${label}`;
+  return `pxscene.${sceneId}.label.${label}`;
 }
 
 function argumentText(argument: StoryArgument | undefined): string | undefined {
@@ -104,8 +107,8 @@ function argumentText(argument: StoryArgument | undefined): string | undefined {
 }
 
 interface FlowArguments {
-  readonly scene?: StoryArgument;
-  readonly target?: StoryArgument;
+  readonly scene: StoryArgument | undefined;
+  readonly target: StoryArgument | undefined;
   readonly targetWasPositional: boolean;
 }
 
@@ -120,7 +123,7 @@ function flowArguments(node: StoryNode): FlowArguments {
   }
   if (target !== undefined) return {scene, target, targetWasPositional: false};
   if (firstPositional !== undefined) return {scene, target: firstPositional, targetWasPositional: true};
-  return {scene, targetWasPositional: false};
+  return {scene, target: undefined, targetWasPositional: false};
 }
 
 function replaceFlowTarget(node: StoryNode, flow: FlowArguments, target: string): StoryNode {
@@ -144,7 +147,7 @@ function replaceFlowTarget(node: StoryNode, flow: FlowArguments, target: string)
   return {...node, arguments: arguments_};
 }
 
-function syntheticLabel(sceneId: string, path: string, target: string, suffix: string, sourceSpan: SourceSpan): StoryNode {
+function syntheticLabel(sceneId: string, target: string, suffix: string, sourceSpan: SourceSpan): StoryNode {
   return {
     id: `story-project-${stableId(`${sceneId}:${suffix}:${target}`)}`,
     kind: "label",
@@ -154,7 +157,7 @@ function syntheticLabel(sceneId: string, path: string, target: string, suffix: s
   };
 }
 
-function syntheticEnd(sceneId: string, path: string, sourceSpan: SourceSpan): StoryNode {
+function syntheticEnd(sceneId: string, sourceSpan: SourceSpan): StoryNode {
   return {
     id: `story-project-${stableId(`${sceneId}:implicit-end`)}`,
     kind: "command",
@@ -175,7 +178,7 @@ function rewriteScene(
   const firstSpan = scene.document.nodes[0]?.span ?? fallbackSpan(scene.path);
   const lastSpan = scene.document.nodes.at(-1)?.span ?? firstSpan;
   const nodes: StoryNode[] = [
-    syntheticLabel(scene.descriptor.id, scene.path, sceneEntryTarget(scene.descriptor.id), "entry", firstSpan),
+    syntheticLabel(scene.descriptor.id, sceneEntryTarget(scene.descriptor.id), "entry", firstSpan),
   ];
 
   for (const node of scene.document.nodes) {
@@ -227,11 +230,11 @@ function rewriteScene(
   // Scenes are compiled into one Program. An implicit boundary prevents a
   // scene that omits an explicit jump/end/return from falling through into
   // the next scene merely because of bundle order.
-  nodes.push(syntheticEnd(scene.descriptor.id, scene.path, lastSpan));
+  nodes.push(syntheticEnd(scene.descriptor.id, lastSpan));
 
   const stubSourceIds = new Set<string>();
   for (const target of externalTargets) {
-    const stub = syntheticLabel(scene.descriptor.id, scene.path, target, "external-stub", lastSpan);
+    const stub = syntheticLabel(scene.descriptor.id, target, "external-stub", lastSpan);
     stubSourceIds.add(stub.id);
     nodes.push(stub);
   }
@@ -298,11 +301,11 @@ export function compileStoryProject(context: StoryProjectCompileContext): StoryC
     const rewritten = rewriteScene(scene, scenesById, sceneDiagnostics);
     const compiled = compileStory(rewritten.document, {
       documentId: `${documentId}:${descriptor.id}`,
-      committedRevision: context.committedRevision,
-      characters: context.characters,
-      game: context.game,
-      extensions: context.extensions,
-      resources: context.resources,
+      ...(context.committedRevision === undefined ? {} : {committedRevision: context.committedRevision}),
+      ...(context.characters === undefined ? {} : {characters: context.characters}),
+      ...(context.game === undefined ? {} : {game: context.game}),
+      ...(context.extensions === undefined ? {} : {extensions: context.extensions}),
+      ...(context.resources === undefined ? {} : {resources: context.resources}),
     });
     diagnostics.push(...compiled.diagnostics);
     if (!compiled.valid || compiled.runtimeIr === undefined || compiled.sourceMap === undefined) continue;
