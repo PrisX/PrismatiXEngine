@@ -5,3 +5,19 @@ find_dependency(nlohmann_json CONFIG)
 find_dependency(MbedTLS CONFIG)
 find_dependency(zstd CONFIG)
 include("${CMAKE_CURRENT_LIST_DIR}/PrismatiXSDKTargets.cmake")
+
+# Native Editor/tool consumers use the installed PreviewHost process as the
+# public Preview transport. The in-process PreviewSession factory remains an
+# Engine implementation detail so RuntimeSession and platform internals do not
+# become part of the installed SDK ABI.
+set(PrismatiX_PREVIEW_HOST_EXECUTABLE
+    "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_BINDIR@/PrismatiXPreviewHost@CMAKE_EXECUTABLE_SUFFIX@")
+set(PrismatiX_PREVIEW_HOST_AVAILABLE FALSE)
+if(EXISTS "${PrismatiX_PREVIEW_HOST_EXECUTABLE}")
+    set(PrismatiX_PREVIEW_HOST_AVAILABLE TRUE)
+    if(NOT TARGET PrismatiX::PreviewHost)
+        add_executable(PrismatiX::PreviewHost IMPORTED GLOBAL)
+        set_target_properties(PrismatiX::PreviewHost PROPERTIES
+            IMPORTED_LOCATION "${PrismatiX_PREVIEW_HOST_EXECUTABLE}")
+    endif()
+endif()
