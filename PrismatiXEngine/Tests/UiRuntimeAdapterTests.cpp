@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
@@ -7,6 +8,7 @@
 #include <string>
 
 #include "Engine/SDK/Ui.h"
+#include "Engine/Platform/Input.h"
 #include "Engine/UI/GalgameUI.h"
 #include "Engine/UI/UiAdapter.h"
 #include "Engine/UI/UiApplication.h"
@@ -617,6 +619,100 @@ int main() {
     applicationButton->Activate();
     Check(applicationActions == 1, "shared application dispatches authored Actions through UIContext");
     Check(applicationButton->Opacity() == 0.25f, "shared application installs Behavior using the same activation");
+
+    auto visualSceneJson = nlohmann::json::parse(scene);
+    visualSceneJson["schemaRevision"] = 2;
+    visualSceneJson["visualStateGroups"] = nlohmann::json::array({
+        {{"id", "interaction"},
+         {"defaultState", "normal"},
+         {"states", nlohmann::json::array({
+             {{"id", "normal"},
+              {"overrides", nlohmann::json::array({
+                  {{"nodeId", buttonId->ToString()}, {"property", "scale"},
+                   {"value", {{"type", "vec2"}, {"x", 1.0}, {"y", 1.0}}}}
+              })}},
+             {{"id", "hover"},
+              {"overrides", nlohmann::json::array({
+                  {{"nodeId", buttonId->ToString()}, {"property", "scale"},
+                   {"value", {{"type", "vec2"}, {"x", 1.2}, {"y", 1.2}}}}
+              })}}
+         })},
+         {"transitions", nlohmann::json::array({
+             {{"from", "normal"}, {"to", "hover"}, {"duration", 1.0},
+              {"easing", "linear"},
+              {"animationClipId", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}}
+         })}},
+        {{"id", "focus"},
+         {"defaultState", "unfocused"},
+         {"states", nlohmann::json::array({
+             {{"id", "unfocused"},
+              {"overrides", nlohmann::json::array({
+                  {{"nodeId", buttonId->ToString()}, {"property", "rotation"},
+                   {"value", 0.0}}
+              })}},
+             {{"id", "focused"},
+              {"overrides", nlohmann::json::array({
+                  {{"nodeId", buttonId->ToString()}, {"property", "rotation"},
+                   {"value", 15.0}}
+              })}}
+         })},
+         {"transitions", nlohmann::json::array()}}
+    });
+    const auto visualParsed = px::sdk::ParseUi(visualSceneJson.dump());
+    Check(visualParsed.Valid() &&
+              visualParsed.document.visualStateGroups.size() == 2,
+          "canonical UI parser must retain Visual State Groups");
+    px::ui::UIContext visualContext;
+    px::ui::UiApplication visualApplication(visualContext);
+    const auto visualApplied = visualApplication.ApplyDocument(
+        visualParsed.document,
+        {.sourcePath = "Content/UI/VisualStates.pxui",
+         .resolveAsset = [](const std::string_view id)
+             -> std::optional<std::string> {
+             return id == "66666666-6666-4666-8666-666666666666"
+                        ? std::optional<std::string>{"Content/logo.png"}
+                        : std::nullopt;
+         }});
+    auto* visualButton = visualApplied
+                             ? dynamic_cast<px::ui::Button*>(
+                                   visualContext.Root()->Find(*buttonId))
+                             : nullptr;
+    Check(visualApplied && visualButton &&
+              visualApplied.Value().visualStateGroupCount == 2 &&
+              visualApplied.Value().visualStateCount == 4,
+          "shared UI application must install all Visual State metadata");
+    Check(visualContext.SetVisualState("interaction", "hover") &&
+              visualContext.SetVisualState("focus", "focused"),
+          "independent Visual State Groups must activate simultaneously");
+    px::Input noInput;
+    (void)visualContext.Update(noInput, 1280, 720, 0.5f);
+    Check(std::abs(visualButton->Scale().x - 1.1f) < 0.001f &&
+              std::abs(visualButton->Rotation() - 15.0f) < 0.001f,
+          "Visual State transitions must use typed Runtime properties while another group remains active");
+    const auto visualCheckpoint = visualContext.CaptureVisualState();
+    (void)visualContext.Update(noInput, 1280, 720, 0.5f);
+    Check(std::abs(visualButton->Scale().x - 1.2f) < 0.001f &&
+              visualContext.RestoreVisualState(visualCheckpoint) &&
+              std::abs(visualButton->Scale().x - 1.1f) < 0.001f &&
+              visualContext.ActiveVisualState("focus") ==
+                  std::optional<std::string_view>{"focused"},
+          "Visual State checkpoints must restore exact transition progress and composed active groups");
+    auto invalidVisualDocument = visualParsed.document;
+    invalidVisualDocument.visualStateGroups.front().states.front()
+        .overrides.front().property = "missingProperty";
+    px::ui::UIContext invalidVisualContext;
+    px::ui::UiApplication invalidVisualApplication(invalidVisualContext);
+    const auto invalidVisual = invalidVisualApplication.ApplyDocument(
+        invalidVisualDocument,
+        {.sourcePath = "invalid-visual-state.pxui",
+         .resolveAsset = [](const std::string_view id)
+             -> std::optional<std::string> {
+             return id == "66666666-6666-4666-8666-666666666666"
+                        ? std::optional<std::string>{"Content/logo.png"}
+                        : std::nullopt;
+         }});
+    Check(!invalidVisual && HasDiagnostic(invalidVisual, "PXUISTUDIO2134"),
+          "Visual State overrides must fail closed against shared writable property metadata");
 
     auto patchedSceneJson = nlohmann::json::parse(scene);
     patchedSceneJson["revision"] = 10;

@@ -309,6 +309,17 @@ Ease RuntimeEase(const sdk::UiAnimationEase ease) {
     return Ease::Linear;
 }
 
+VisualStateEase RuntimeVisualStateEase(
+    const sdk::UiVisualStateEase ease) {
+    using Source = sdk::UiVisualStateEase;
+    if (ease == Source::Step) return VisualStateEase::Step;
+    if (ease == Source::EaseIn) return VisualStateEase::EaseIn;
+    if (ease == Source::EaseOut) return VisualStateEase::EaseOut;
+    if (ease == Source::EaseInOut) return VisualStateEase::EaseInOut;
+    if (ease == Source::BackOut) return VisualStateEase::BackOut;
+    return VisualStateEase::Linear;
+}
+
 AnimationParameterType RuntimeParameterType(
     const sdk::UiAnimationParameterType type) {
     using Source = sdk::UiAnimationParameterType;
@@ -502,6 +513,51 @@ void BuildRuntimeAnimations(const sdk::UiDocument& document,
     }
     result.animationClipCount = library.clips.size();
     result.animations = std::move(library);
+}
+
+void BuildRuntimeVisualStates(const sdk::UiDocument& document,
+                              UiRuntimeTree& result) {
+    for (const auto& sourceGroup : document.visualStateGroups) {
+        VisualStateGroup group;
+        group.id = sourceGroup.id;
+        group.defaultState = sourceGroup.defaultState;
+        for (const auto& sourceState : sourceGroup.states) {
+            VisualState state;
+            state.id = sourceState.id;
+            for (const auto& sourceOverride : sourceState.overrides) {
+                const auto node = Uuid::Parse(sourceOverride.nodeId);
+                if (!node) continue;
+                state.overrides.push_back(
+                    {*node, sourceOverride.property,
+                     RuntimeValue(sourceOverride.value, result,
+                                  sourceOverride.nodeId, true)});
+            }
+            group.states.push_back(std::move(state));
+            ++result.visualStateCount;
+        }
+        for (const auto& sourceTransition : sourceGroup.transitions) {
+            VisualStateTransition transition;
+            transition.from = sourceTransition.from;
+            transition.to = sourceTransition.to;
+            transition.duration = sourceTransition.duration;
+            transition.easing =
+                RuntimeVisualStateEase(sourceTransition.easing);
+            if (sourceTransition.animationClipId && result.animations) {
+                const auto clip = Uuid::Parse(*sourceTransition.animationClipId);
+                const auto* resolved = clip ? result.animations->FindClip(*clip)
+                                            : nullptr;
+                if (resolved) transition.animationClip = *clip;
+                else
+                    result.diagnostics.push_back(
+                        {"PXUISTUDIO2011",
+                         "Visual State transition animation Clip is missing",
+                         *sourceTransition.animationClipId});
+            }
+            group.transitions.push_back(std::move(transition));
+        }
+        result.visualStateGroups.push_back(std::move(group));
+    }
+    result.visualStateGroupCount = result.visualStateGroups.size();
 }
 
 class AuthoredButton final : public Button {
@@ -813,6 +869,7 @@ UiRuntimeTree BuildUiRuntimeTree(
         result.root->SetOffsets({0.0f, 0.0f, 0.0f, 0.0f});
         BuildRuntimeBehavior(document, result);
         BuildRuntimeAnimations(document, result);
+        BuildRuntimeVisualStates(document, result);
     }
     return result;
 }

@@ -18,6 +18,7 @@ UIContext::UIContext() {
     (void)provider->Register("animation.bool",[this](const ActionInvocation& invocation){const auto nameIt=invocation.arguments.find("parameter"),valueIt=invocation.arguments.find("value");const auto* name=nameIt==invocation.arguments.end()?nullptr:nameIt->second.TryGet<std::string>();const auto* value=valueIt==invocation.arguments.end()?nullptr:valueIt->second.TryGet<bool>();return name&&value?SetAnimationBool(*name,*value):Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXUI2408",.category="UI.Animation",.message="animation.bool requires parameter and value"});});
     (void)provider->Register("animation.number",[this](const ActionInvocation& invocation){const auto nameIt=invocation.arguments.find("parameter"),valueIt=invocation.arguments.find("value");const auto* name=nameIt==invocation.arguments.end()?nullptr:nameIt->second.TryGet<std::string>();double value=0;bool valid=false;if(valueIt!=invocation.arguments.end()){if(const auto* number=valueIt->second.TryGet<double>()){value=*number;valid=true;}else if(const auto* integer=valueIt->second.TryGet<std::int64_t>()){value=static_cast<double>(*integer);valid=true;}}return name&&valid?SetAnimationNumber(*name,value):Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXUI2409",.category="UI.Animation",.message="animation.number requires parameter and numeric value"});});
     (void)provider->Register("animation.travel",[this](const ActionInvocation& invocation){const auto stateIt=invocation.arguments.find("state"),durationIt=invocation.arguments.find("duration");const auto* state=stateIt==invocation.arguments.end()?nullptr:stateIt->second.TryGet<std::string>();double duration=0;bool valid=false;if(durationIt!=invocation.arguments.end()){if(const auto* number=durationIt->second.TryGet<double>()){duration=*number;valid=true;}else if(const auto* integer=durationIt->second.TryGet<std::int64_t>()){duration=static_cast<double>(*integer);valid=true;}}return state&&valid?TravelAnimationState(*state,static_cast<float>(std::max(0.0,duration))):Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXUI2410",.category="UI.Animation",.message="animation.travel requires state and duration"});});
+    (void)provider->Register("visualState.set",[this](const ActionInvocation& invocation){const auto groupIt=invocation.arguments.find("group"),stateIt=invocation.arguments.find("state");const auto* group=groupIt==invocation.arguments.end()?nullptr:groupIt->second.TryGet<std::string>();const auto* state=stateIt==invocation.arguments.end()?nullptr:stateIt->second.TryGet<std::string>();return group&&state?SetVisualState(*group,*state):Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXUI2412",.category="UI.VisualState",.message="visualState.set requires group and state"});});
     provider->SetFallback([this](const ActionInvocation& invocation){
         return m_commands.Execute(invocation.action,Variant(invocation.arguments));
     });
@@ -32,6 +33,8 @@ Status UIContext::SetRoot(std::unique_ptr<Control> root) {
     }
     m_behaviors.CancelAll();m_actions.CancelSource(m_triggerSourceScene);m_triggerSourceScene.clear();m_triggerBindings.clear();m_bindings.clear();m_root = std::move(root); m_input = std::make_unique<InputRouter>(*m_root);
     m_animationController=std::make_unique<UIAnimationController>(*m_root);m_animationController->SetExternalClipResolver(m_animationResolver);
+    m_visualStateController=std::make_unique<VisualStateController>(*m_root);
+    m_visualStateController->SetClipResolver([this](const Uuid& id){return m_animationController&&m_animationController->Library()?m_animationController->Library()->FindClip(id):nullptr;});
     ConfigureControlRuntime();
     m_behaviors.SetServices(BehaviorServices());
     m_width = m_height = 0; return Status::Ok();
@@ -131,6 +134,7 @@ bool UIContext::Update(const Input& input, int viewportWidth, int viewportHeight
     }
     if (m_input) m_input->Update(input);
     if(m_animationController){const Status status=m_animationController->Update(deltaSeconds);if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);}
+    if(m_visualStateController){const Status status=m_visualStateController->Update(deltaSeconds);if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);}
     m_actions.Update(deltaSeconds);
     m_behaviors.Update(deltaSeconds);
     if (m_root->LayoutDirty()) {
@@ -141,6 +145,11 @@ bool UIContext::Update(const Input& input, int viewportWidth, int viewportHeight
 }
 
 Status UIContext::SetAnimations(UIAnimationLibrary library,bool autoplay){if(!m_animationController)return Status::Ok();return m_animationController->SetLibrary(std::move(library),autoplay);}
+Status UIContext::SetVisualStateGroups(std::vector<VisualStateGroup> groups){return m_visualStateController?m_visualStateController->SetGroups(std::move(groups)):Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXUI2413",.category="UI.VisualState",.message="Visual State Controller is not configured"});}
+Status UIContext::SetVisualState(const std::string_view group,const std::string_view state){return m_visualStateController?m_visualStateController->SetState(group,state):Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXUI2413",.category="UI.VisualState",.message="Visual State Controller is not configured"});}
+std::optional<std::string_view> UIContext::ActiveVisualState(const std::string_view group)const{return m_visualStateController?m_visualStateController->ActiveState(group):std::nullopt;}
+VisualStateRuntimeState UIContext::CaptureVisualState()const{return m_visualStateController?m_visualStateController->CaptureState():VisualStateRuntimeState{};}
+Status UIContext::RestoreVisualState(const VisualStateRuntimeState& state){return m_visualStateController?m_visualStateController->RestoreState(state):Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXUI2413",.category="UI.VisualState",.message="Visual State Controller is not configured"});}
 Status UIContext::PlayAnimation(const std::string_view state){if(!m_animationController||!m_animationController->Library()){diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXUI2402",.category="UI.Animation",.message="UI scene has no Animation State Machine"};diag::Emit(d);return Status::Fail(std::move(d));}if(state.empty()||state=="default"||state=="embedded")return m_animationController->Travel(m_animationController->Library()->machine.entry);return m_animationController->Travel(state);}
 Status UIContext::SetAnimationTrigger(const std::string_view parameter){return m_animationController?m_animationController->SetTrigger(parameter):Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXUI2406",.category="UI.Animation",.message="Animation Controller is not configured"});}
 Status UIContext::SetAnimationBool(const std::string_view parameter,const bool value){return m_animationController?m_animationController->SetBool(parameter,value):Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXUI2406",.category="UI.Animation",.message="Animation Controller is not configured"});}

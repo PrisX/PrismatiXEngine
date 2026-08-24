@@ -588,7 +588,8 @@ Result<UiApplicationSummary> UiApplication::ApplyDocument(const sdk::UiDocument&
             for (const auto& track : clip.tracks) {
                 auto* target = runtimeTree.root->Find(track.node);
                 const auto* property = target ? TypeRegistry::Global().FindProperty(std::string(target->TypeName()), track.property) : nullptr;
-                if (!target || !property || !property->get || !property->set) {
+                if (!target || !property || !property->get || !property->set ||
+                    !property->animatable) {
                     return Result<UiApplicationSummary>::Failure(ApplicationError(
                         "PXUISTUDIO2102",
                         "Animation target is not a writable Runtime "
@@ -603,6 +604,32 @@ Result<UiApplicationSummary> UiApplication::ApplyDocument(const sdk::UiDocument&
         }
     }
 
+    for (const auto& group : runtimeTree.visualStateGroups) {
+        for (const auto& state : group.states) {
+            for (const auto& stateOverride : state.overrides) {
+                auto* target = runtimeTree.root->Find(stateOverride.node);
+                const auto* property = target
+                    ? TypeRegistry::Global().FindProperty(
+                          std::string(target->TypeName()),
+                          stateOverride.property)
+                    : nullptr;
+                if (!target || !property || !property->get || !property->set ||
+                    HasFlag(property->flags, PropertyFlags::ReadOnly) ||
+                    (property->type != VariantType::Null &&
+                     property->type != stateOverride.value.Type())) {
+                    return Result<UiApplicationSummary>::Failure(
+                        ApplicationError(
+                            "PXUISTUDIO2134",
+                            "Visual State target is not a matching writable Runtime property: " +
+                                stateOverride.node.ToString() + "." +
+                                stateOverride.property,
+                            sourcePath, stateOverride.node.ToString(),
+                            stateOverride.property));
+                }
+            }
+        }
+    }
+
     UiApplicationSummary summary{ .documentId = resolvedDocument.id,
                                         .revision = resolvedDocument.revision,
                                         .nodeCount = runtimeTree.nodeCount,
@@ -611,6 +638,8 @@ Result<UiApplicationSummary> UiApplication::ApplyDocument(const sdk::UiDocument&
                                         .behaviorTriggerCount = runtimeTree.behaviorTriggerCount,
                                         .animationClipCount = runtimeTree.animationClipCount,
                                         .animationTrackCount = runtimeTree.animationTrackCount,
+                                        .visualStateGroupCount = runtimeTree.visualStateGroupCount,
+                                        .visualStateCount = runtimeTree.visualStateCount,
                                         .propertyBindingCount = propertyBindings.size() };
 
     if (const auto installed = m_context.SetRoot(std::move(runtimeTree.root)); !installed) {
@@ -619,6 +648,14 @@ Result<UiApplicationSummary> UiApplication::ApplyDocument(const sdk::UiDocument&
     if (runtimeTree.animations) {
         if (const auto installed = m_context.SetAnimations(std::move(*runtimeTree.animations), true); !installed) {
             return Result<UiApplicationSummary>::Failure(installed.Diagnostics());
+        }
+    }
+    if (!runtimeTree.visualStateGroups.empty()) {
+        if (const auto installed = m_context.SetVisualStateGroups(
+                std::move(runtimeTree.visualStateGroups));
+            !installed) {
+            return Result<UiApplicationSummary>::Failure(
+                installed.Diagnostics());
         }
     }
     if (runtimeTree.behaviorGraph || !runtimeTree.behaviorTriggers.empty()) {
@@ -688,6 +725,8 @@ Result<UiApplicationSummary> UiApplication::PatchDocumentProperties(const sdk::U
           .behaviorTriggerCount = candidate.behaviorTriggerCount,
           .animationClipCount = candidate.animationClipCount,
           .animationTrackCount = candidate.animationTrackCount,
+          .visualStateGroupCount = candidate.visualStateGroupCount,
+          .visualStateCount = candidate.visualStateCount,
           .propertyBindingCount = propertyBindingCount }
     );
 }

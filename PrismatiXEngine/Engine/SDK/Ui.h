@@ -379,6 +379,41 @@ struct UiAnimations {
     UiAnimationStateMachine stateMachine;
 };
 
+enum class UiVisualStateEase {
+    Step,
+    Linear,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
+    BackOut,
+};
+
+struct UiVisualStateOverride {
+    std::string nodeId;
+    std::string property;
+    UiValue value;
+};
+
+struct UiVisualState {
+    std::string id;
+    std::vector<UiVisualStateOverride> overrides;
+};
+
+struct UiVisualStateTransition {
+    std::string from;
+    std::string to;
+    float duration = 0.0f;
+    UiVisualStateEase easing = UiVisualStateEase::Linear;
+    std::optional<std::string> animationClipId;
+};
+
+struct UiVisualStateGroup {
+    std::string id;
+    std::string defaultState;
+    std::vector<UiVisualState> states;
+    std::vector<UiVisualStateTransition> transitions;
+};
+
 struct UiDocument {
     std::uint32_t schemaRevision = 2;
     std::string id;
@@ -391,6 +426,7 @@ struct UiDocument {
     std::vector<UiThemeToken> theme;
     UiBehaviorGraph behaviorGraph;
     std::vector<UiBehaviorTrigger> behaviorTriggers;
+    std::vector<UiVisualStateGroup> visualStateGroups;
     std::optional<UiAnimations> animations;
 };
 

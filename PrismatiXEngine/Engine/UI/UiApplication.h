@@ -23,6 +23,8 @@ struct UiApplicationSummary {
     std::size_t behaviorTriggerCount = 0;
     std::size_t animationClipCount = 0;
     std::size_t animationTrackCount = 0;
+    std::size_t visualStateGroupCount = 0;
+    std::size_t visualStateCount = 0;
     std::size_t propertyBindingCount = 0;
 };
 

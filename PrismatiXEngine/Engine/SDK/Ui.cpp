@@ -321,6 +321,17 @@ std::optional<UiAnimationEase> ParseAnimationEase(
     return std::nullopt;
 }
 
+std::optional<UiVisualStateEase> ParseVisualStateEase(
+    const std::string_view value) {
+    if (value == "step") return UiVisualStateEase::Step;
+    if (value == "linear") return UiVisualStateEase::Linear;
+    if (value == "easeIn") return UiVisualStateEase::EaseIn;
+    if (value == "easeOut") return UiVisualStateEase::EaseOut;
+    if (value == "easeInOut") return UiVisualStateEase::EaseInOut;
+    if (value == "backOut") return UiVisualStateEase::BackOut;
+    return std::nullopt;
+}
+
 std::optional<UiAnimationInterpolation> ParseAnimationInterpolation(
     const std::string_view value) {
     if (value == "linear") return UiAnimationInterpolation::Linear;
@@ -836,6 +847,119 @@ void ParseBehaviorSections(
     }
 }
 
+void ParseVisualStateSection(
+    const Json& root, UiParseResult& result,
+    const std::unordered_map<std::string, const UiNode*>& uiNodes) {
+    const auto groups = root.find("visualStateGroups");
+    if (groups == root.end()) return;
+    if (!groups->is_array() || groups->size() > 10'000) {
+        AddDiagnostic(result, "PXSDKUI1066",
+                      "UI document visualStateGroups must be a bounded array");
+        return;
+    }
+    std::unordered_set<std::string> groupIds;
+    for (const auto& item : *groups) {
+        UiVisualStateGroup group;
+        const auto states = item.is_object() ? item.find("states") : item.end();
+        const auto transitions =
+            item.is_object() ? item.find("transitions") : item.end();
+        if (!item.is_object() || !ReadString(item, "id", group.id) ||
+            !IsIdentifier(group.id) || !groupIds.insert(group.id).second ||
+            !ReadString(item, "defaultState", group.defaultState) ||
+            !IsIdentifier(group.defaultState) || states == item.end() ||
+            !states->is_array() || states->empty() ||
+            transitions == item.end() || !transitions->is_array()) {
+            AddDiagnostic(result, "PXSDKUI1067",
+                          "Visual State Group fields are invalid");
+            continue;
+        }
+        std::unordered_set<std::string> stateIds;
+        for (const auto& stateValue : *states) {
+            UiVisualState state;
+            const auto overrides = stateValue.is_object()
+                                       ? stateValue.find("overrides")
+                                       : stateValue.end();
+            if (!stateValue.is_object() ||
+                !ReadString(stateValue, "id", state.id) ||
+                !IsIdentifier(state.id) ||
+                !stateIds.insert(state.id).second ||
+                overrides == stateValue.end() || !overrides->is_array()) {
+                AddDiagnostic(result, "PXSDKUI1068",
+                              "Visual State fields are invalid");
+                continue;
+            }
+            std::unordered_set<std::string> targets;
+            for (const auto& overrideValue : *overrides) {
+                UiVisualStateOverride stateOverride;
+                const auto authoredValue = overrideValue.is_object()
+                                               ? overrideValue.find("value")
+                                               : overrideValue.end();
+                if (!overrideValue.is_object() ||
+                    !ReadString(overrideValue, "nodeId",
+                                stateOverride.nodeId) ||
+                    !IsUuid(stateOverride.nodeId) ||
+                    !uiNodes.contains(stateOverride.nodeId) ||
+                    !ReadString(overrideValue, "property",
+                                stateOverride.property) ||
+                    !IsPropertyPath(stateOverride.property) ||
+                    authoredValue == overrideValue.end() ||
+                    !ParseValue(*authoredValue, stateOverride.value) ||
+                    !targets.insert(stateOverride.nodeId + "/" +
+                                    stateOverride.property)
+                         .second) {
+                    AddDiagnostic(result, "PXSDKUI1069",
+                                  "Visual State override is invalid");
+                    continue;
+                }
+                state.overrides.push_back(std::move(stateOverride));
+            }
+            group.states.push_back(std::move(state));
+        }
+        if (!stateIds.contains(group.defaultState)) {
+            AddDiagnostic(result, "PXSDKUI1067",
+                          "Visual State Group defaultState is unresolved");
+            continue;
+        }
+        for (const auto& transitionValue : *transitions) {
+            UiVisualStateTransition transition;
+            std::string easing;
+            const auto duration = transitionValue.is_object()
+                                      ? transitionValue.find("duration")
+                                      : transitionValue.end();
+            const auto animationClipId = transitionValue.is_object()
+                                             ? transitionValue.find(
+                                                   "animationClipId")
+                                             : transitionValue.end();
+            const auto parsedEase =
+                transitionValue.is_object() &&
+                        ReadString(transitionValue, "easing", easing)
+                    ? ParseVisualStateEase(easing)
+                    : std::nullopt;
+            if (!transitionValue.is_object() ||
+                !ReadString(transitionValue, "from", transition.from) ||
+                !stateIds.contains(transition.from) ||
+                !ReadString(transitionValue, "to", transition.to) ||
+                !stateIds.contains(transition.to) ||
+                duration == transitionValue.end() || !duration->is_number() ||
+                !std::isfinite(transition.duration = duration->get<float>()) ||
+                transition.duration < 0.0f || !parsedEase ||
+                (animationClipId != transitionValue.end() &&
+                 (!animationClipId->is_string() ||
+                  !IsUuid(animationClipId->get_ref<const std::string&>())))) {
+                AddDiagnostic(result, "PXSDKUI1069",
+                              "Visual State transition is invalid");
+                continue;
+            }
+            transition.easing = *parsedEase;
+            if (animationClipId != transitionValue.end())
+                transition.animationClipId =
+                    animationClipId->get<std::string>();
+            group.transitions.push_back(std::move(transition));
+        }
+        result.document.visualStateGroups.push_back(std::move(group));
+    }
+}
+
 void ParseAnimationSection(
     const Json& root, UiParseResult& result,
     std::unordered_set<std::string>& identities,
@@ -1136,8 +1260,11 @@ void ParseAnimationSection(
 void ValidateBehaviorAnimationReferences(UiParseResult& result) {
     using Kind = UiBehaviorNodeKind;
     std::unordered_set<std::string> stateNames;
+    std::unordered_set<std::string> clipIds;
     std::unordered_map<std::string, UiAnimationParameterType> parameters;
     if (result.document.animations) {
+        for (const auto& clip : result.document.animations->clips)
+            clipIds.insert(clip.id);
         for (const auto& state :
              result.document.animations->stateMachine.states)
             stateNames.insert(state.name);
@@ -1145,6 +1272,13 @@ void ValidateBehaviorAnimationReferences(UiParseResult& result) {
              result.document.animations->stateMachine.parameters)
             parameters.emplace(parameter.name, parameter.type);
     }
+    for (const auto& group : result.document.visualStateGroups)
+        for (const auto& transition : group.transitions)
+            if (transition.animationClipId &&
+                !clipIds.contains(*transition.animationClipId))
+                AddDiagnostic(
+                    result, "PXSDKUI1087",
+                    "Visual State transition animationClipId is unresolved");
     for (const auto& node : result.document.behaviorGraph.nodes) {
         if (node.kind == Kind::PlayAnimation ||
             node.kind == Kind::TravelAnimationState) {
@@ -1764,6 +1898,7 @@ UiParseResult ParseUi(const std::string_view text) {
         }
     }
     ParseBehaviorSections(root, result, identities, byId);
+    ParseVisualStateSection(root, result, byId);
     ParseAnimationSection(root, result, identities, byId);
     ValidateBehaviorAnimationReferences(result);
     const auto rootNode = byId.find(result.document.rootId);

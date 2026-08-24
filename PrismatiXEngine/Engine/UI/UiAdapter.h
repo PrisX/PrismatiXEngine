@@ -4,6 +4,7 @@
 #include "Engine/UI/Actions/TriggerBinding.h"
 #include "Engine/UI/Animation.h"
 #include "Engine/UI/Behavior/BehaviorGraph.h"
+#include "Engine/UI/VisualState.h"
 
 #include <functional>
 #include <memory>
@@ -30,9 +31,12 @@ struct UiRuntimeTree {
     std::size_t behaviorTriggerCount = 0;
     std::size_t animationClipCount = 0;
     std::size_t animationTrackCount = 0;
+    std::size_t visualStateGroupCount = 0;
+    std::size_t visualStateCount = 0;
     std::optional<BehaviorGraph> behaviorGraph;
     std::vector<TriggerBinding> behaviorTriggers;
     std::optional<UIAnimationLibrary> animations;
+    std::vector<VisualStateGroup> visualStateGroups;
     std::vector<std::string> unresolvedAssetIds;
     std::vector<UiAdapterDiagnostic> diagnostics;
 

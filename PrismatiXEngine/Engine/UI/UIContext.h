@@ -4,6 +4,7 @@
 #include "Engine/UI/InputRouter.h"
 #include "Engine/UI/Theme.h"
 #include "Engine/UI/Animation.h"
+#include "Engine/UI/VisualState.h"
 #include "Engine/UI/Actions/ActionDispatcher.h"
 #include "Engine/UI/Actions/TriggerBinding.h"
 #include "Engine/UI/Behavior/BehaviorGraph.h"
@@ -51,6 +52,12 @@ public:
 
     [[nodiscard]] bool Update(const Input& input, int viewportWidth, int viewportHeight,float deltaSeconds=0.0f);
     Status SetAnimations(UIAnimationLibrary library,bool autoplay=true);
+    Status SetVisualStateGroups(std::vector<VisualStateGroup> groups);
+    Status SetVisualState(std::string_view group, std::string_view state);
+    [[nodiscard]] std::optional<std::string_view> ActiveVisualState(
+        std::string_view group) const;
+    [[nodiscard]] VisualStateRuntimeState CaptureVisualState() const;
+    Status RestoreVisualState(const VisualStateRuntimeState& state);
     Status PlayAnimation(std::string_view state = {});
     Status SetAnimationTrigger(std::string_view parameter);
     Status SetAnimationBool(std::string_view parameter,bool value);
@@ -89,6 +96,7 @@ private:
     bool m_showDiagnostics = true;
     UIAnimationController::ExternalClipResolver m_animationResolver;
     std::unique_ptr<UIAnimationController> m_animationController;
+    std::unique_ptr<VisualStateController> m_visualStateController;
 };
 
 }  // namespace px::ui

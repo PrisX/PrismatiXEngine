@@ -81,8 +81,9 @@ Status AnimationPlayer::Play(const AnimationClip& clip, float blendSeconds) {
         auto* node = m_root.Find(track.node);
         if (!node) return Status::Fail(AnimationError("PXUI2706", "Animation target node does not exist", &track));
         const auto* property = TypeRegistry::Global().FindProperty(std::string(node->TypeName()), track.property);
-        if (!property || !property->get || !property->set)
-            return Status::Fail(AnimationError("PXUI2707", "Animation target property does not exist or is read-only", &track));
+        if (!property || !property->get || !property->set ||
+            !property->animatable)
+            return Status::Fail(AnimationError("PXUI2707", "Animation target property is not animatable Runtime metadata", &track));
         const bool captured=std::any_of(m_originals.begin(),m_originals.end(),[&](const OriginalValue& value){return value.node==track.node&&value.property==track.property;});
         if(!captured)m_originals.push_back({track.node, track.property, property->get(*node)});
     }
@@ -156,7 +157,7 @@ Status AnimationPlayer::Apply() {
         auto* node = m_root.Find(track.node);
         if (!node) return Status::Fail(AnimationError("PXUI2706", "Animation target node does not exist", &track));
         const auto* property = TypeRegistry::Global().FindProperty(std::string(node->TypeName()), track.property);
-        if (!property || !property->set) return Status::Fail(AnimationError("PXUI2707", "Animation target property does not exist or is read-only", &track));
+        if (!property || !property->set || !property->animatable) return Status::Fail(AnimationError("PXUI2707", "Animation target property is not animatable Runtime metadata", &track));
         auto sample = Sample(track, m_position); if (!sample) return Status::Fail(sample.Diagnostics());
         Variant value=sample.TakeValue();
         if(m_blendDuration>0.0f&&m_blendElapsed<m_blendDuration){const auto from=std::find_if(m_blendFrom.begin(),m_blendFrom.end(),[&](const OriginalValue& item){return item.node==track.node&&item.property==track.property;});if(from!=m_blendFrom.end()){auto blended=Interpolate(from->value,value,std::clamp(m_blendElapsed/m_blendDuration,0.0f,1.0f));if(!blended)return Status::Fail(blended.Diagnostics());value=blended.TakeValue();}}
