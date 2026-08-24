@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "Engine/Diagnostics/Diagnostic.h"
+#include "Engine/Preview/PreviewProtocolV2.h"
 #include "Engine/Script/ScriptHost.h"
 #include "Engine/Preview/PerformancePreview.h"
 #include "Engine/Runtime.h"
@@ -39,8 +40,8 @@ namespace {
 
 using Json = nlohmann::json;
 constexpr std::string_view kProtocol = "PrismatiXPreviewProtocol";
-constexpr std::uint32_t kSchemaRevision = 1;
-constexpr std::uint32_t kProtocolVersion = 1;
+constexpr std::uint32_t kSchemaRevision = px::preview::kSchemaRevision;
+constexpr std::uint32_t kProtocolVersion = px::preview::kProtocolVersion;
 constexpr std::size_t kAsyncEventCapacity = 256;
 constexpr std::size_t kRuntimeSnapshotItemLimit = 64;
 
@@ -384,8 +385,8 @@ public:
             SDL_Delay(1);
         }
         px::diag::Global().SetListener({});
-        (void)m_uiPreview.Actions().UnregisterProvider("lua");
-        m_lua.reset();
+        (void)m_uiPreview.Actions().UnregisterProvider("script");
+        m_scriptHost.reset();
         m_session.reset();
         m_runtime.reset();
         return 0;
@@ -601,14 +602,14 @@ private:
             response["unresolvedBreakpoints"] = std::move(unresolved);
             Write(response);
         }
-        else if (*type == "setLuaBreakpoints") {
-            if (!m_lua || m_projectRoot.empty()) {
-                Write(Error(request, "runtime-not-loaded", "Load a document before setting Lua breakpoints"));
+        else if (*type == "setScriptBreakpoints") {
+            if (!m_scriptHost || m_projectRoot.empty()) {
+                Write(Error(request, "runtime-not-loaded", "Load a document before setting script breakpoints"));
                 return;
             }
             const auto breakpoints = request.find("breakpoints");
             if (breakpoints == request.end() || !breakpoints->is_array()) {
-                Write(Error(request, "invalid-lua-breakpoints", "setLuaBreakpoints requires source and line objects"));
+                Write(Error(request, "invalid-script-breakpoints", "setScriptBreakpoints requires source and line objects"));
                 return;
             }
             std::vector<px::script::DebugBreakpoint> verifiedBreakpoints;
@@ -616,13 +617,13 @@ private:
             Json unresolved = Json::array();
             for (const auto& breakpoint : *breakpoints) {
                 if (!breakpoint.is_object() || !breakpoint.contains("source") || !breakpoint["source"].is_string() || !breakpoint.contains("line") || !breakpoint["line"].is_number_integer()) {
-                    Write(Error(request, "invalid-lua-breakpoints", "Lua breakpoints require a project-relative source and positive line"));
+                    Write(Error(request, "invalid-script-breakpoints", "Script breakpoints require a project-relative source and positive line"));
                     return;
                 }
                 const auto source = SafeProjectRelativePath(breakpoint["source"].get<std::string>());
                 const int line = breakpoint["line"].get<int>();
                 if (!source || line <= 0) {
-                    Write(Error(request, "invalid-lua-breakpoints", "Lua breakpoint paths and lines must be safe and positive"));
+                    Write(Error(request, "invalid-script-breakpoints", "Script breakpoint paths and lines must be safe and positive"));
                     return;
                 }
                 const auto loaded = ReadProjectFile(m_projectRoot.string(), *source);
@@ -639,63 +640,63 @@ private:
                     unresolved.push_back(item);
                 }
             }
-            m_luaBreakpoints = m_lua->SetDebugBreakpoints(std::move(verifiedBreakpoints));
-            Json response = RuntimeStateResponse(request, "luaBreakpointsSet");
-            response["luaBreakpoints"] = std::move(verified);
-            response["unresolvedLuaBreakpoints"] = std::move(unresolved);
+            m_scriptBreakpoints = m_scriptHost->SetDebugBreakpoints(std::move(verifiedBreakpoints));
+            Json response = RuntimeStateResponse(request, "scriptBreakpointsSet");
+            response["scriptBreakpoints"] = std::move(verified);
+            response["unresolvedScriptBreakpoints"] = std::move(unresolved);
             Write(response);
         }
-        else if (*type == "luaPause") {
-            if (!m_lua || !m_lua->DebugPause()) {
-                Write(Error(request, "lua-cannot-pause", "Lua is already paused or no debug session is available"));
+        else if (*type == "scriptPause") {
+            if (!m_scriptHost || !m_scriptHost->DebugPause()) {
+                Write(Error(request, "script-cannot-pause", "Script execution is already paused or no debug session is available"));
                 return;
             }
-            Write(RuntimeStateResponse(request, "luaPauseAccepted"));
+            Write(RuntimeStateResponse(request, "scriptPauseAccepted"));
         }
-        else if (*type == "luaContinue") {
-            if (!m_lua || !m_lua->DebugContinue()) {
-                Write(Error(request, "invalid-lua-debug-state", "Continue requires a paused Lua coroutine"));
+        else if (*type == "scriptContinue") {
+            if (!m_scriptHost || !m_scriptHost->DebugContinue()) {
+                Write(Error(request, "invalid-script-debug-state", "Continue requires paused script execution"));
                 return;
             }
-            Write(RuntimeStateResponse(request, "luaContinueAccepted"));
+            Write(RuntimeStateResponse(request, "scriptContinueAccepted"));
         }
-        else if (*type == "luaStep") {
-            if (!m_lua || !m_lua->DebugStep()) {
-                Write(Error(request, "invalid-lua-debug-state", "Step requires a paused Lua coroutine"));
+        else if (*type == "scriptStep") {
+            if (!m_scriptHost || !m_scriptHost->DebugStep()) {
+                Write(Error(request, "invalid-script-debug-state", "Step requires paused script execution"));
                 return;
             }
-            Write(RuntimeStateResponse(request, "luaStepAccepted"));
+            Write(RuntimeStateResponse(request, "scriptStepAccepted"));
         }
-        else if (*type == "evaluateLuaWatches") {
-            if (!m_lua || !m_lua->CaptureDebugState().paused) {
-                Write(Error(request, "invalid-lua-debug-state", "Watch evaluation requires a paused Lua coroutine"));
+        else if (*type == "evaluateScriptWatches") {
+            if (!m_scriptHost || !m_scriptHost->CaptureDebugState().paused) {
+                Write(Error(request, "invalid-script-debug-state", "Watch evaluation requires paused script execution"));
                 return;
             }
             const auto watches = request.find("watches");
             if (watches == request.end() || !watches->is_array()) {
-                Write(Error(request, "invalid-lua-watches", "evaluateLuaWatches requires an array of watch expressions"));
+                Write(Error(request, "invalid-script-watches", "evaluateScriptWatches requires an array of watch expressions"));
                 return;
             }
-            Json response = RuntimeStateResponse(request, "luaWatchesEvaluated");
-            response["luaWatches"] = Json::array();
+            Json response = RuntimeStateResponse(request, "scriptWatchesEvaluated");
+            response["scriptWatches"] = Json::array();
             for (const auto& expression : *watches) {
                 if (!expression.is_string() || expression.get_ref<const std::string&>().size() > 256) {
-                    Write(Error(request, "invalid-lua-watches", "Lua watches must be strings up to 256 characters"));
+                    Write(Error(request, "invalid-script-watches", "Script watches must be strings up to 256 characters"));
                     return;
                 }
                 const std::string value = expression.get<std::string>();
-                if (const auto result = m_lua->EvaluateDebugWatch(value)) {
-                    response["luaWatches"].push_back({ { "expression", result->name }, { "value", result->value }, { "available", true } });
+                if (const auto result = m_scriptHost->EvaluateDebugWatch(value)) {
+                    response["scriptWatches"].push_back({ { "expression", result->name }, { "value", result->value }, { "available", true } });
                 }
                 else {
-                    response["luaWatches"].push_back({ { "expression", value }, { "value", "<unavailable>" }, { "available", false } });
+                    response["scriptWatches"].push_back({ { "expression", value }, { "value", "<unavailable>" }, { "available", false } });
                 }
             }
             Write(response);
         }
         else if (*type == "stop") {
-            (void)m_uiPreview.Actions().UnregisterProvider("lua");
-            m_lua.reset();
+            (void)m_uiPreview.Actions().UnregisterProvider("script");
+            m_scriptHost.reset();
             m_session.reset();
             m_runtime.reset();
             m_projectRoot.clear();
@@ -790,17 +791,18 @@ private:
         debug["script"] = source == m_runtimeSources.end() || source->second.uri.empty()
             ? m_session->VM().CurrentScript()
             : source->second.uri;
-        if (m_lua) {
-            const auto& lua = m_lua->CaptureDebugState();
-            debug["luaPaused"] = lua.paused;
-            debug["luaPauseReason"] = lua.reason;
-            debug["luaCallStack"] = Json::array();
-            for (const auto& frame : lua.frames) {
+        if (m_scriptHost) {
+            const auto& script = m_scriptHost->CaptureDebugState();
+            debug["scriptBackend"] = m_scriptHost->BackendId();
+            debug["scriptPaused"] = script.paused;
+            debug["scriptPauseReason"] = script.reason;
+            debug["scriptCallStack"] = Json::array();
+            for (const auto& frame : script.frames) {
                 Json locals = Json::array();
                 for (const auto& local : frame.locals) {
                     locals.push_back({ { "name", local.name }, { "value", local.value } });
                 }
-                debug["luaCallStack"].push_back({ { "source", frame.source }, { "function", frame.function }, { "line", frame.line }, { "locals", std::move(locals) } });
+                debug["scriptCallStack"].push_back({ { "source", frame.source }, { "function", frame.function }, { "line", frame.line }, { "locals", std::move(locals) } });
             }
         }
         return debug;
@@ -949,9 +951,10 @@ private:
         Json response = Response(request, type);
         response.update(RuntimeStatePayload());
         const Json debug = DebugPayload();
-        response["luaPaused"] = debug.value("luaPaused", false);
-        response["luaPauseReason"] = debug.value("luaPauseReason", std::string{});
-        response["luaCallStack"] = debug.value("luaCallStack", Json::array());
+        response["scriptBackend"] = debug.value("scriptBackend", std::string{});
+        response["scriptPaused"] = debug.value("scriptPaused", false);
+        response["scriptPauseReason"] = debug.value("scriptPauseReason", std::string{});
+        response["scriptCallStack"] = debug.value("scriptCallStack", Json::array());
         return response;
     }
 
@@ -1599,8 +1602,8 @@ private:
         }
         m_runtimeStartupErrorCode.clear();
         m_runtimeStartupErrorMessage.clear();
-        (void)m_uiPreview.Actions().UnregisterProvider("lua");
-        m_lua.reset();
+        (void)m_uiPreview.Actions().UnregisterProvider("script");
+        m_scriptHost.reset();
         m_session.reset();
         m_runtime.reset();
         m_appliedRevisions.clear();
@@ -1651,15 +1654,15 @@ private:
         m_projectRoot = projectRoot;
         m_runtime = std::move(runtime);
         m_session = std::move(session);
-        m_luaServices.vfs = &m_runtime->VFS();
-        m_luaServices.renderer = &m_runtime->Renderer();
-        m_luaServices.audio = &m_runtime->Audio();
-        m_luaServices.input = &m_runtime->GetInput();
-        m_luaServices.stage = &m_session->Stage();
-        m_luaServices.variables = &m_session->Variables();
-        m_luaServices.routes = &m_session->Routes();
-        m_luaServices.timeline = &m_session->Timeline();
-        m_luaServices.console = [events = m_events](const px::script::ConsoleMessage& message) {
+        m_scriptServices.vfs = &m_runtime->VFS();
+        m_scriptServices.renderer = &m_runtime->Renderer();
+        m_scriptServices.audio = &m_runtime->Audio();
+        m_scriptServices.input = &m_runtime->GetInput();
+        m_scriptServices.stage = &m_session->Stage();
+        m_scriptServices.variables = &m_session->Variables();
+        m_scriptServices.routes = &m_session->Routes();
+        m_scriptServices.timeline = &m_session->Timeline();
+        m_scriptServices.console = [events = m_events](const px::script::ConsoleMessage& message) {
             std::string_view level = "info";
             std::string_view stream = "stdout";
             if (message.level == px::script::ConsoleLevel::Warning) {
@@ -1670,15 +1673,15 @@ private:
                 level = "error";
                 stream = "stderr";
             }
-            events->Push("output", Json{ { "scope", "lua" }, { "stream", stream }, { "level", level }, { "message", message.text }, { "source", message.source }, { "line", message.line } });
+            events->Push("output", Json{ { "scope", "script" }, { "stream", stream }, { "level", level }, { "message", message.text }, { "source", message.source }, { "line", message.line } });
         };
-        m_lua = px::script::CreateScriptHost(m_luaServices);
-        if (const auto status = m_uiPreview.Actions().RegisterProvider(m_lua->CreateActionProvider()); !status) {
-            spdlog::error("Preview Lua action provider registration failed: {}", StatusMessage(status, "unknown error"));
+        m_scriptHost = px::script::CreateScriptHost(m_scriptServices);
+        if (const auto status = m_uiPreview.Actions().RegisterProvider(m_scriptHost->CreateActionProvider()); !status) {
+            spdlog::error("Preview script Action provider registration failed: {}", StatusMessage(status, "unknown error"));
             return false;
         }
         m_session->SetExtensionCommandHandler([this](const px::vn::Command& command) {
-            if (command.type == "action" && m_lua) {
+            if (command.type == "action" && m_scriptHost) {
                 const Json payload = Json::parse(command.Get("value"), nullptr, false);
                 if (payload.is_discarded() || !payload.is_object() || !payload.contains("id") || !payload["id"].is_string() || !payload.contains("arguments") || !payload["arguments"].is_object()) {
                     return false;
@@ -1707,11 +1710,11 @@ private:
                     }
                     return false;
                 }
-                if (m_lua->HasPendingAction()) m_session->VM().WaitExternal();
+                if (m_scriptHost->HasPendingAction()) m_session->VM().WaitExternal();
                 return true;
             }
-            const bool handled = m_lua && m_lua->InvokeCommand(command);
-            if (handled && (m_lua->HasPendingCommand() || m_lua->HasPendingAction())) {
+            const bool handled = m_scriptHost && m_scriptHost->InvokeCommand(command);
+            if (handled && (m_scriptHost->HasPendingCommand() || m_scriptHost->HasPendingAction())) {
                 m_session->VM().WaitExternal();
             }
             return handled;
@@ -1720,29 +1723,29 @@ private:
         // manifest Command descriptor here so custom Runtime IR nodes are
         // typed and validated during compilation, never after execution starts.
         if (m_runtime->VFS().Exists("Content/Extensions/extensions.pxindex")) {
-            if (!m_lua->LoadExtensionIndex("Content/Extensions/extensions.pxindex")) {
+            if (!m_scriptHost->LoadExtensionIndex("Content/Extensions/extensions.pxindex")) {
                 return false;
             }
         }
         else if (m_runtime->VFS().Exists("Content/Extensions/default.pxextension")) {
-            if (!m_lua->LoadExtensionManifest("Content/Extensions/default.pxextension")) {
+            if (!m_scriptHost->LoadExtensionManifest("Content/Extensions/default.pxextension")) {
                 return false;
             }
         }
-        if (!m_luaBreakpoints.empty()) {
-            (void)m_lua->SetDebugBreakpoints(m_luaBreakpoints);
+        if (!m_scriptBreakpoints.empty()) {
+            (void)m_scriptHost->SetDebugBreakpoints(m_scriptBreakpoints);
         }
-        m_lua->Emit("engine.ready");
+        m_scriptHost->Emit("engine.ready");
         return true;
     }
 
     void Frame() {
         const float delta = m_runtime->GetClock().DeltaSeconds();
         const std::uint64_t now = m_runtime->GetClock().NowMs();
-        if (m_lua) {
-            m_lua->Update(delta);
+        if (m_scriptHost) {
+            m_scriptHost->Update(delta);
             if (!m_showUiPreview) m_uiPreview.Actions().Update(delta);
-            if (m_session->VM().State() == px::vn::VMState::WaitingExternal && !m_lua->HasPendingCommand() && !m_lua->HasPendingAction()) {
+            if (m_session->VM().State() == px::vn::VMState::WaitingExternal && !m_scriptHost->HasPendingCommand() && !m_scriptHost->HasPendingAction()) {
                 m_session->VM().NotifyExternalDone();
             }
         }
@@ -1779,9 +1782,9 @@ private:
     std::unique_ptr<px::Runtime> m_runtime;
     std::unique_ptr<px::RuntimeSession> m_session;
     px::vn::GameCatalog m_gameCatalog;
-    px::script::ScriptServices m_luaServices;
-    std::unique_ptr<px::script::ScriptHost> m_lua;
-    std::vector<px::script::DebugBreakpoint> m_luaBreakpoints;
+    px::script::ScriptServices m_scriptServices;
+    std::unique_ptr<px::script::ScriptHost> m_scriptHost;
+    std::vector<px::script::DebugBreakpoint> m_scriptBreakpoints;
     px::ui::GalgameUI m_hud;
     px::ui::ObservableViewModel m_uiPreviewViewModel;
     px::ui::UIContext m_uiPreview;

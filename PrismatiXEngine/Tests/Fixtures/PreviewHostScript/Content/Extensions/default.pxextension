@@ -1,8 +1,9 @@
 {
   "format": "PrismatiXExtension",
-  "version": 4,
+  "schemaRevision": 1,
+  "language": "javascript",
   "id": "preview-debug-fixture",
-  "entry": "debug.lua",
+  "entry": "debug.js",
   "capabilities": ["runtime", "ui"],
   "commands": [
     {
@@ -15,7 +16,7 @@
         {
           "name": "amount",
           "displayName": "Amount",
-          "description": "Typed numeric argument consumed by the Lua fixture.",
+          "description": "Typed numeric argument consumed by the JavaScript fixture.",
           "type": "number",
           "required": true,
           "default": null,

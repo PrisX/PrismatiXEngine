@@ -223,15 +223,15 @@ public:
                     .dump());
             return;
         }
-        m_luaServices.vfs = &m_runtime.VFS();
-        m_luaServices.renderer = &m_runtime.Renderer();
-        m_luaServices.audio = &m_runtime.Audio();
-        m_luaServices.input = &m_runtime.GetInput();
-        m_luaServices.stage = &m_session->Stage();
-        m_luaServices.variables = &m_session->Variables();
-        m_luaServices.routes = &m_session->Routes();
-        m_luaServices.timeline = &m_session->Timeline();
-        m_luaServices.console = [this](
+        m_scriptServices.vfs = &m_runtime.VFS();
+        m_scriptServices.renderer = &m_runtime.Renderer();
+        m_scriptServices.audio = &m_runtime.Audio();
+        m_scriptServices.input = &m_runtime.GetInput();
+        m_scriptServices.stage = &m_session->Stage();
+        m_scriptServices.variables = &m_session->Variables();
+        m_scriptServices.routes = &m_session->Routes();
+        m_scriptServices.timeline = &m_session->Timeline();
+        m_scriptServices.console = [this](
                                     const px::script::ConsoleMessage& message) {
             std::string_view level = "info";
             std::string_view stream = "stdout";
@@ -244,7 +244,7 @@ public:
             }
             m_protocol.Emit(
                 "output",
-                Json{{"scope", "lua"},
+                Json{{"scope", "script"},
                      {"stream", stream},
                      {"level", level},
                      {"message", message.text},
@@ -252,21 +252,21 @@ public:
                      {"line", message.line}}
                     .dump());
         };
-        m_lua = px::script::CreateScriptHost(m_luaServices);
+        m_scriptHost = px::script::CreateScriptHost(m_scriptServices);
         if (const auto status =
-                m_hud.Actions().RegisterProvider(m_lua->CreateActionProvider());
+                m_hud.Actions().RegisterProvider(m_scriptHost->CreateActionProvider());
             !status) {
             m_protocol.Emit(
                 "crashed",
-                Json{{"code", "PXWASM-LUA-STARTUP-001"},
-                     {"message", "WASM Lua Action provider could not initialize."},
+                Json{{"code", "PXWASM-SCRIPT-STARTUP-001"},
+                     {"message", "WASM script Action provider could not initialize."},
                      {"recoverable", true}}
                     .dump());
             return;
         }
         m_session->SetExtensionCommandHandler(
             [this](const px::vn::Command& command) {
-                if (!m_lua || !m_session) return false;
+                if (!m_scriptHost || !m_session) return false;
                 if (command.type == "action") {
                     const Json payload =
                         Json::parse(command.Get("value"), nullptr, false);
@@ -287,16 +287,16 @@ public:
                     const auto started = m_hud.Actions().Start(
                         std::move(invocation), {.previewSafeMode = true});
                     if (!started) {
-                        EmitStatusDiagnostics(started, "PXWASM-LUA-ACTION-001");
+                        EmitStatusDiagnostics(started, "PXWASM-SCRIPT-ACTION-001");
                         return false;
                     }
-                    if (m_lua->HasPendingAction())
+                    if (m_scriptHost->HasPendingAction())
                         m_session->VM().WaitExternal();
                     return true;
                 }
-                const bool handled = m_lua->InvokeCommand(command);
-                if (handled && (m_lua->HasPendingCommand() ||
-                                m_lua->HasPendingAction()))
+                const bool handled = m_scriptHost->InvokeCommand(command);
+                if (handled && (m_scriptHost->HasPendingCommand() ||
+                                m_scriptHost->HasPendingAction()))
                     m_session->VM().WaitExternal();
                 return handled;
             });
@@ -1155,13 +1155,13 @@ public:
             EmitDebugControlResult(command, false, std::move(verified),
                                    std::move(unresolved));
             return 1;
-        } else if (command == "setLuaBreakpoints") {
+        } else if (command == "setScriptBreakpoints") {
             const auto breakpoints = payload.find("breakpoints");
-            if (!m_lua || breakpoints == payload.end() ||
+            if (!m_scriptHost || breakpoints == payload.end() ||
                 !breakpoints->is_array()) {
                 EmitControlDiagnostic(
-                    "PXWASM-LUA-DEBUG-002",
-                    "setLuaBreakpoints requires source and line objects after a Lua extension graph is applied.");
+                    "PXWASM-SCRIPT-DEBUG-002",
+                    "setScriptBreakpoints requires source and line objects after a script extension graph is applied.");
                 return 0;
             }
             std::vector<px::script::DebugBreakpoint> acceptedBreakpoints;
@@ -1174,8 +1174,8 @@ public:
                     !breakpoint.contains("line") ||
                     !breakpoint["line"].is_number_integer()) {
                     EmitControlDiagnostic(
-                        "PXWASM-LUA-DEBUG-003",
-                        "Lua breakpoints require a project-relative source and positive line.");
+                        "PXWASM-SCRIPT-DEBUG-003",
+                        "Script breakpoints require a project-relative source and positive line.");
                     return 0;
                 }
                 std::string source = breakpoint["source"].get<std::string>();
@@ -1187,7 +1187,7 @@ public:
                                   !source.starts_with('/') &&
                                   source.find("..") == std::string::npos &&
                                   source.starts_with("Content/Extensions/") &&
-                                  source.ends_with(".lua");
+                                  source.ends_with(".js");
                 const auto contents = safe
                                           ? m_runtime.VFS().ReadText(source)
                                           : std::nullopt;
@@ -1203,47 +1203,47 @@ public:
                     unresolved.push_back(item);
                 }
             }
-            m_luaBreakpoints = m_lua->SetDebugBreakpoints(
+            m_scriptBreakpoints = m_scriptHost->SetDebugBreakpoints(
                 std::move(acceptedBreakpoints));
             EmitDebugControlResult(
                 command, false, nullptr, nullptr,
-                Json{{"luaBreakpoints", std::move(verified)},
-                     {"unresolvedLuaBreakpoints", std::move(unresolved)}});
+                Json{{"scriptBreakpoints", std::move(verified)},
+                     {"unresolvedScriptBreakpoints", std::move(unresolved)}});
             return 1;
-        } else if (command == "luaPause") {
-            if (!m_lua || !m_lua->DebugPause()) {
+        } else if (command == "scriptPause") {
+            if (!m_scriptHost || !m_scriptHost->DebugPause()) {
                 EmitControlDiagnostic(
-                    "PXWASM-LUA-DEBUG-004",
-                    "Lua is already paused or no Lua debug session is available.");
+                    "PXWASM-SCRIPT-DEBUG-004",
+                    "Script execution is already paused or no script debug session is available.");
                 return 0;
             }
             EmitDebugControlResult(command, false);
             return 1;
-        } else if (command == "luaContinue") {
-            if (!m_lua || !m_lua->DebugContinue()) {
+        } else if (command == "scriptContinue") {
+            if (!m_scriptHost || !m_scriptHost->DebugContinue()) {
                 EmitControlDiagnostic(
-                    "PXWASM-LUA-DEBUG-005",
-                    "Lua continue requires a paused coroutine.");
+                    "PXWASM-SCRIPT-DEBUG-005",
+                    "Script continue requires paused execution.");
                 return 0;
             }
             EmitDebugControlResult(command, false);
             return 1;
-        } else if (command == "luaStep") {
-            if (!m_lua || !m_lua->DebugStep()) {
+        } else if (command == "scriptStep") {
+            if (!m_scriptHost || !m_scriptHost->DebugStep()) {
                 EmitControlDiagnostic(
-                    "PXWASM-LUA-DEBUG-006",
-                    "Lua step requires a paused coroutine.");
+                    "PXWASM-SCRIPT-DEBUG-006",
+                    "Script step requires paused execution.");
                 return 0;
             }
             EmitDebugControlResult(command, false);
             return 1;
-        } else if (command == "evaluateLuaWatches") {
+        } else if (command == "evaluateScriptWatches") {
             const auto watches = payload.find("watches");
-            if (!m_lua || !m_lua->CaptureDebugState().paused ||
+            if (!m_scriptHost || !m_scriptHost->CaptureDebugState().paused ||
                 watches == payload.end() || !watches->is_array()) {
                 EmitControlDiagnostic(
-                    "PXWASM-LUA-DEBUG-007",
-                    "Lua watch evaluation requires a paused coroutine and an array of expressions.");
+                    "PXWASM-SCRIPT-DEBUG-007",
+                    "Script watch evaluation requires paused execution and an array of expressions.");
                 return 0;
             }
             Json results = Json::array();
@@ -1251,12 +1251,12 @@ public:
                 if (!expression.is_string() ||
                     expression.get_ref<const std::string&>().size() > 256) {
                     EmitControlDiagnostic(
-                        "PXWASM-LUA-DEBUG-008",
-                        "Lua watch expressions must be strings up to 256 characters.");
+                        "PXWASM-SCRIPT-DEBUG-008",
+                        "Script watch expressions must be strings up to 256 characters.");
                     return 0;
                 }
                 const std::string value = expression.get<std::string>();
-                if (const auto result = m_lua->EvaluateDebugWatch(value)) {
+                if (const auto result = m_scriptHost->EvaluateDebugWatch(value)) {
                     results.push_back({{"expression", result->name},
                                        {"value", result->value},
                                        {"available", true}});
@@ -1268,7 +1268,7 @@ public:
             }
             EmitDebugControlResult(
                 command, false, nullptr, nullptr,
-                Json{{"luaWatches", std::move(results)}});
+                Json{{"scriptWatches", std::move(results)}});
             return 1;
         } else if (command == "capture") {
             EmitFocus(true);
@@ -1323,12 +1323,12 @@ public:
             m_releaseInjectedPointer = true;
         }
         const float delta = m_runtime.GetClock().DeltaSeconds();
-        if (m_lua) {
-            m_lua->Update(delta);
+        if (m_scriptHost) {
+            m_scriptHost->Update(delta);
             m_hud.Actions().Update(delta);
             if (m_session->VM().State() ==
                     px::vn::VMState::WaitingExternal &&
-                !m_lua->HasPendingCommand() && !m_lua->HasPendingAction())
+                !m_scriptHost->HasPendingCommand() && !m_scriptHost->HasPendingAction())
                 m_session->VM().NotifyExternalDone();
         }
         const std::uint64_t nowMs = m_runtime.GetClock().NowMs();
@@ -1377,7 +1377,7 @@ public:
             }
         }
         UpdatePlaybackModes(nowMs);
-        EmitLuaDebugStateIfChanged();
+        EmitScriptDebugStateIfChanged();
         m_choices.clear();
         if (m_session->VM().State() == px::vn::VMState::WaitingChoice) {
             for (const auto& choice : m_session->VM().Choices())
@@ -1979,7 +1979,7 @@ private:
                               ? std::string(fallbackCode)
                               : diagnostic.code},
                  {"category", diagnostic.category.empty()
-                                  ? "Preview.Lua"
+                                  ? "Preview.Script"
                                   : diagnostic.category},
                  {"message", diagnostic.message},
                  {"details", diagnostic.details},
@@ -1994,27 +1994,27 @@ private:
             diagnostics.push_back(
                 {{"severity", "error"},
                  {"code", fallbackCode},
-                 {"category", "Preview.Lua"},
-                 {"message", "WASM Lua Runtime rejected this operation."}});
+                 {"category", "Preview.Script"},
+                 {"message", "WASM script Runtime rejected this operation."}});
         }
         m_protocol.Emit("diagnostics",
                         Json{{"diagnostics", diagnostics}}.dump());
     }
 
     bool InstallRuntimeFiles(const std::string& filesJson) {
-        if (!m_lua) return false;
+        if (!m_scriptHost) return false;
         if (m_runtimeFilesInstalled) {
             if (filesJson == m_runtimeFilesJson) return true;
             EmitControlDiagnostic(
-                "PXWASM-LUA-002",
-                "The active Lua extension graph changed. Restart Preview before applying this revision.");
+                "PXWASM-SCRIPT-002",
+                "The active script extension graph changed. Restart Preview before applying this revision.");
             return false;
         }
         const Json files = Json::parse(filesJson, nullptr, false);
         if (files.is_discarded() || !files.is_array()) {
             EmitControlDiagnostic(
-                "PXWASM-LUA-003",
-                "The active Lua extension file contract is malformed.");
+                "PXWASM-SCRIPT-003",
+                "The active script extension file contract is malformed.");
             return false;
         }
         std::vector<std::string> manifests;
@@ -2027,7 +2027,7 @@ private:
             if (!path.starts_with(projectPrefix) ||
                 !path.ends_with(".pxextension")) {
                 EmitControlDiagnostic(
-                    "PXWASM-LUA-004",
+                    "PXWASM-SCRIPT-004",
                     "A Preview extension manifest is outside the allowlisted project VFS root.");
                 return false;
             }
@@ -2036,7 +2036,7 @@ private:
                 path.find("..") != std::string::npos ||
                 !m_runtime.VFS().Exists(path)) {
                 EmitControlDiagnostic(
-                    "PXWASM-LUA-005",
+                    "PXWASM-SCRIPT-005",
                     "A declared Preview extension manifest is missing from MEMFS.");
                 return false;
             }
@@ -2045,20 +2045,20 @@ private:
         std::ranges::sort(manifests);
         if (std::ranges::adjacent_find(manifests) != manifests.end()) {
             EmitControlDiagnostic(
-                "PXWASM-LUA-006",
+                "PXWASM-SCRIPT-006",
                 "The active Preview extension graph contains duplicate manifests.");
             return false;
         }
         for (const auto& manifest : manifests) {
-            if (!m_lua->LoadExtensionManifest(manifest)) {
+            if (!m_scriptHost->LoadExtensionManifest(manifest)) {
                 EmitControlDiagnostic(
-                    "PXWASM-LUA-007",
-                    "A typed Lua extension failed validation or registration: " +
+                    "PXWASM-SCRIPT-007",
+                    "A typed script extension failed validation or registration: " +
                         manifest);
                 return false;
             }
         }
-        m_lua->Emit("engine.ready");
+        m_scriptHost->Emit("engine.ready");
         m_runtimeFilesJson = filesJson;
         m_runtimeFilesInstalled = true;
         return true;
@@ -2223,23 +2223,25 @@ private:
                       {"breakpointLines", std::move(breakpointLines)},
                       {"unresolvedBreakpoints",
                        std::move(unresolvedBreakpoints)},
-                      {"luaBreakpoints", nullptr},
-                      {"unresolvedLuaBreakpoints", nullptr},
-                      {"luaPaused", nullptr},
-                      {"luaPauseReason", nullptr},
-                      {"luaCallStack", nullptr},
-                      {"luaWatches", nullptr}};
-        if (m_lua) {
-            const auto& lua = m_lua->CaptureDebugState();
-            event["luaPaused"] = lua.paused;
-            event["luaPauseReason"] = lua.reason;
-            event["luaCallStack"] = Json::array();
-            for (const auto& frame : lua.frames) {
+                      {"scriptBreakpoints", nullptr},
+                      {"unresolvedScriptBreakpoints", nullptr},
+                      {"scriptBackend", nullptr},
+                      {"scriptPaused", nullptr},
+                      {"scriptPauseReason", nullptr},
+                      {"scriptCallStack", nullptr},
+                      {"scriptWatches", nullptr}};
+        if (m_scriptHost) {
+            const auto& script = m_scriptHost->CaptureDebugState();
+            event["scriptBackend"] = m_scriptHost->BackendId();
+            event["scriptPaused"] = script.paused;
+            event["scriptPauseReason"] = script.reason;
+            event["scriptCallStack"] = Json::array();
+            for (const auto& frame : script.frames) {
                 Json locals = Json::array();
                 for (const auto& local : frame.locals)
                     locals.push_back(
                         {{"name", local.name}, {"value", local.value}});
-                event["luaCallStack"].push_back(
+                event["scriptCallStack"].push_back(
                     {{"source", frame.source},
                      {"function", frame.function},
                      {"line", frame.line},
@@ -2265,22 +2267,22 @@ private:
         m_protocol.Emit("debug", event.dump());
     }
 
-    void EmitLuaDebugStateIfChanged() {
-        if (!m_lua || !m_session) return;
-        const auto& lua = m_lua->CaptureDebugState();
-        std::string signature = lua.paused ? "paused:" : "running:";
-        signature += lua.reason;
-        for (const auto& frame : lua.frames) {
+    void EmitScriptDebugStateIfChanged() {
+        if (!m_scriptHost || !m_session) return;
+        const auto& script = m_scriptHost->CaptureDebugState();
+        std::string signature = script.paused ? "paused:" : "running:";
+        signature += script.reason;
+        for (const auto& frame : script.frames) {
             signature += ":" + frame.source + ":" + frame.function +
                          ":" + std::to_string(frame.line);
             for (const auto& local : frame.locals)
                 signature += ":" + local.name + "=" + local.value;
         }
-        if (signature == m_lastLuaDebugSignature) return;
-        m_lastLuaDebugSignature = std::move(signature);
+        if (signature == m_lastScriptDebugSignature) return;
+        m_lastScriptDebugSignature = std::move(signature);
 
         Json frames = Json::array();
-        for (const auto& frame : lua.frames) {
+        for (const auto& frame : script.frames) {
             Json locals = Json::array();
             for (const auto& local : frame.locals)
                 locals.push_back(
@@ -2291,20 +2293,21 @@ private:
                               {"locals", std::move(locals)}});
         }
         Json breakpoints = Json::array();
-        for (const auto& breakpoint : m_luaBreakpoints)
+        for (const auto& breakpoint : m_scriptBreakpoints)
             breakpoints.push_back(
                 {{"source", breakpoint.source}, {"line", breakpoint.line}});
         m_protocol.Emit(
             "debug",
-            Json{{"kind", "luaState"},
+            Json{{"kind", "scriptState"},
                  {"scope", "debugger"},
                  {"state", StateName(m_session->VM().State())},
-                 {"luaPaused", lua.paused},
-                 {"luaPauseReason", lua.reason},
-                 {"luaCallStack", std::move(frames)},
-                 {"luaBreakpoints", std::move(breakpoints)},
-                 {"unresolvedLuaBreakpoints", Json::array()},
-                 {"luaWatches", Json::array()}}
+                 {"scriptBackend", m_scriptHost->BackendId()},
+                 {"scriptPaused", script.paused},
+                 {"scriptPauseReason", script.reason},
+                 {"scriptCallStack", std::move(frames)},
+                 {"scriptBreakpoints", std::move(breakpoints)},
+                 {"unresolvedScriptBreakpoints", Json::array()},
+                 {"scriptWatches", Json::array()}}
                 .dump());
     }
 
@@ -2468,10 +2471,10 @@ private:
     std::string m_runtimeIrJson;
     std::string m_performanceJson;
     std::string m_lastUiAction;
-    std::string m_lastLuaDebugSignature;
-    px::script::ScriptServices m_luaServices;
-    std::unique_ptr<px::script::ScriptHost> m_lua;
-    std::vector<px::script::DebugBreakpoint> m_luaBreakpoints;
+    std::string m_lastScriptDebugSignature;
+    px::script::ScriptServices m_scriptServices;
+    std::unique_ptr<px::script::ScriptHost> m_scriptHost;
+    std::vector<px::script::DebugBreakpoint> m_scriptBreakpoints;
     std::string m_runtimeFilesJson = "[]";
     std::unordered_map<int, px::RuntimeSession::GameState> m_previewSaves;
     std::set<std::string> m_registeredRoutes;

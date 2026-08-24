@@ -86,8 +86,8 @@ private:
     progress::SaveSystem m_saves;
 
     std::unique_ptr<RuntimeSession> m_session;
-    std::unique_ptr<script::ScriptHost> m_lua;
-    script::ScriptServices m_luaServices;
+    std::unique_ptr<script::ScriptHost> m_scriptHost;
+    script::ScriptServices m_scriptServices;
     std::unordered_map<std::string, std::string> m_langTable;
     std::unordered_map<std::string, std::string> m_studioUiAssets;
     std::unordered_map<std::string, std::string> m_studioUiComponents;

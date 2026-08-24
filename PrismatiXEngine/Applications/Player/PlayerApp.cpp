@@ -254,22 +254,22 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         });
     }
 
-    m_luaServices.vfs = &m_runtime.VFS();
-    m_luaServices.renderer = &m_runtime.Renderer();
-    m_luaServices.audio = &m_runtime.Audio();
-    m_luaServices.profile = &m_profile;
-    m_luaServices.input = &m_runtime.GetInput();
-    m_luaServices.stage = &m_session->Stage();
-    m_luaServices.variables = &m_session->Variables();
-    m_luaServices.routes = &m_session->Routes();
-    m_luaServices.timeline = &m_session->Timeline();
+    m_scriptServices.vfs = &m_runtime.VFS();
+    m_scriptServices.renderer = &m_runtime.Renderer();
+    m_scriptServices.audio = &m_runtime.Audio();
+    m_scriptServices.profile = &m_profile;
+    m_scriptServices.input = &m_runtime.GetInput();
+    m_scriptServices.stage = &m_session->Stage();
+    m_scriptServices.variables = &m_session->Variables();
+    m_scriptServices.routes = &m_session->Routes();
+    m_scriptServices.timeline = &m_session->Timeline();
     PX_LOG_DEBUG("Player boot: constructing script host");
-    m_lua = script::CreateScriptHost(m_luaServices);
-    PX_LOG_DEBUG("Player boot: script host constructed backend={}", m_lua->BackendId());
-    (void)m_ui.Actions().RegisterProvider(m_lua->CreateActionProvider());
+    m_scriptHost = script::CreateScriptHost(m_scriptServices);
+    PX_LOG_DEBUG("Player boot: script host constructed backend={}", m_scriptHost->BackendId());
+    (void)m_ui.Actions().RegisterProvider(m_scriptHost->CreateActionProvider());
     PX_LOG_DEBUG("Player boot: script Action provider registered");
     m_session->SetExtensionCommandHandler([this](const vn::Command& cmd) {
-        // NVL/ADV mode switches are app-level state, handled before Lua.
+        // NVL/ADV mode switches are app-level state, handled before extensions.
         const std::string& t = cmd.type;
         if (t == "nvl") {
             m_nvlMode = true;
@@ -319,11 +319,11 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                 }
                 return false;
             }
-            if (m_lua->HasPendingAction()) m_session->VM().WaitExternal();
+            if (m_scriptHost->HasPendingAction()) m_session->VM().WaitExternal();
             return true;
         }
-        const bool handled=m_lua->InvokeCommand(cmd);
-        if(handled&&(m_lua->HasPendingCommand()||m_lua->HasPendingAction()))
+        const bool handled=m_scriptHost->InvokeCommand(cmd);
+        if(handled&&(m_scriptHost->HasPendingCommand()||m_scriptHost->HasPendingAction()))
             m_session->VM().WaitExternal();
         return handled;
     });
@@ -335,7 +335,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     // namespaced custom node is mapped against its production Command schema.
     if (m_runtime.VFS().Exists("Content/Extensions/extensions.pxindex")) {
         PX_LOG_DEBUG("Player boot: loading extension index");
-        if (!m_lua->LoadExtensionIndex("Content/Extensions/extensions.pxindex")) {
+        if (!m_scriptHost->LoadExtensionIndex("Content/Extensions/extensions.pxindex")) {
             diag::Diagnostic diagnostic{
                 .severity = diag::Severity::Fatal,
                 .code = "PXPLAYER5005",
@@ -349,7 +349,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         PX_LOG_DEBUG("Player boot: extension index loaded");
     } else if (m_runtime.VFS().Exists("Content/Extensions/default.pxextension")) {
         PX_LOG_DEBUG("Player boot: loading default extension manifest");
-        if (!m_lua->LoadExtensionManifest(
+        if (!m_scriptHost->LoadExtensionManifest(
                 "Content/Extensions/default.pxextension")) {
             diag::Diagnostic diagnostic{
                 .severity = diag::Severity::Fatal,
@@ -364,7 +364,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         }
         PX_LOG_DEBUG("Player boot: default extension manifest loaded");
     }
-    m_lua->Emit("engine.ready");
+    m_scriptHost->Emit("engine.ready");
     PX_LOG_DEBUG("Player boot: engine.ready emitted");
     m_session->VM().SetUnlockHook([this](const std::string& kind, const std::string& id) {
         if (kind == "cg") m_profile.UnlockCG(id);
@@ -549,7 +549,7 @@ void PlayerApp::StartGame() {
     } else {
         m_session->VM().LoadScript(m_script);
     }
-    if (m_lua) m_lua->Emit("scenario.started", {{"resource", m_script}});
+    if (m_scriptHost) m_scriptHost->Emit("scenario.started", {{"resource", m_script}});
     m_appState = AppState::Game;
     (void)m_session->Routes().Replace("hud");
     const Status hud = m_ui.ShowHUD(DialogueUI());
@@ -592,10 +592,10 @@ bool PlayerApp::LoadSlot(int slot) {
                                     .message="Save has inconsistent script await state"});
         return false;
     }
-    if (m_lua) {
-        const Status scriptStatus = m_lua->RestorePending(snap->scriptPending);
+    if (m_scriptHost) {
+        const Status scriptStatus = m_scriptHost->RestorePending(snap->scriptPending);
         if (!scriptStatus) return false;
-        const Status scriptActionStatus = m_lua->RestorePendingActions(snap->scriptActions);
+        const Status scriptActionStatus = m_scriptHost->RestorePendingActions(snap->scriptActions);
         if (!scriptActionStatus) return false;
     }
     if (!snap->behavior.fibers.empty() || !snap->behavior.actions.empty()) {
@@ -608,7 +608,7 @@ bool PlayerApp::LoadSlot(int slot) {
     m_appState = AppState::Game;
     m_autoMode = m_skipMode = m_hudHidden = false;
     (void)m_ui.RefreshHUD(DialogueUI());
-    if (m_lua) m_lua->Emit("save.loaded", {{"slot", std::to_string(slot)}});
+    if (m_scriptHost) m_scriptHost->Emit("save.loaded", {{"slot", std::to_string(slot)}});
     PX_LOG_INFO("Loaded slot {}", slot);
     return true;
 }
@@ -634,9 +634,9 @@ progress::SaveSnapshot PlayerApp::MakeSnapshot(bool includeBacklog) {
     snap.timelines = state.timelines;
     snap.animationClips = state.animationClips;
     snap.behavior = state.behavior;
-    if (m_lua) {
-        snap.scriptPending = m_lua->CapturePending();
-        snap.scriptActions = m_lua->CapturePendingActions();
+    if (m_scriptHost) {
+        snap.scriptPending = m_scriptHost->CapturePending();
+        snap.scriptActions = m_scriptHost->CapturePendingActions();
     }
     if (includeBacklog) snap.backlog = state.backlog;
     snap.nvlMode = m_nvlMode;
@@ -652,7 +652,7 @@ void PlayerApp::SaveSlot(int slot, std::vector<std::uint8_t> thumbnail) {
         diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXPLAYER6001",.category="Player.Save",
                            .message="Could not save slot "+std::to_string(slot)};diag::Emit(d);return;
     }
-    if (m_lua) m_lua->Emit("save.written", {{"slot", std::to_string(slot)}});
+    if (m_scriptHost) m_scriptHost->Emit("save.written", {{"slot", std::to_string(slot)}});
     PX_LOG_INFO("Saved slot {} (thumb {} bytes)", slot, snap.thumbnailPng.size());
 }
 
@@ -672,10 +672,10 @@ void PlayerApp::ApplyRollback(const RollbackEntry& entry) {
     state.behavior = s.behavior;
     state.backlog = m_session->Backlog().Entries();
     if (state.backlog.size() > entry.backlogSize) state.backlog.resize(entry.backlogSize);
-    if (m_lua) {
-        const Status scriptStatus = m_lua->RestorePending(s.scriptPending);
+    if (m_scriptHost) {
+        const Status scriptStatus = m_scriptHost->RestorePending(s.scriptPending);
         if (!scriptStatus) return;
-        const Status scriptActionStatus = m_lua->RestorePendingActions(s.scriptActions);
+        const Status scriptActionStatus = m_scriptHost->RestorePendingActions(s.scriptActions);
         if (!scriptActionStatus) return;
     }
     if (!m_session->RestoreState(state, m_runtime.GetClock().NowMs())) return;
@@ -1086,7 +1086,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     }
 
     m_session->Update(now, dt);
-    if(m_lua){m_lua->Emit("frame.update",{{"delta",std::to_string(dt)}});const bool hadPending=m_lua->HasPendingCommand()||m_lua->HasPendingAction();m_lua->Update(dt);if(hadPending&&!m_lua->HasPendingCommand()&&!m_lua->HasPendingAction())m_session->VM().NotifyExternalDone();}
+    if(m_scriptHost){m_scriptHost->Emit("frame.update",{{"delta",std::to_string(dt)}});const bool hadPending=m_scriptHost->HasPendingCommand()||m_scriptHost->HasPendingAction();m_scriptHost->Update(dt);if(hadPending&&!m_scriptHost->HasPendingCommand()&&!m_scriptHost->HasPendingAction())m_session->VM().NotifyExternalDone();}
 
     // New dialogue lines feed the NVL page and the rollback ring.
     const std::size_t backlogSize = m_session->Backlog().Entries().size();
@@ -1207,7 +1207,7 @@ void PlayerApp::MainLoop() {
 }
 
 void PlayerApp::Shutdown() {
-    if (m_lua) m_lua->Emit("engine.shutdown");
+    if (m_scriptHost) m_scriptHost->Emit("engine.shutdown");
     if (!m_settings.fullscreen) {
         int w = 0, h = 0;
         SDL_GetWindowSize(m_runtime.GetWindow().Handle(), &w, &h);
@@ -1219,7 +1219,7 @@ void PlayerApp::Shutdown() {
     m_settings.Save("Save/config.dat", &m_saveKey);
     progress::SaveGlobalProfile(m_profile, "Save/profile.dat", &m_saveKey);
     // Subsystems referencing the runtime must go before Runtime::Shutdown.
-    m_lua.reset();
+    m_scriptHost.reset();
     m_splash.reset();
     m_session.reset();
     m_runtime.Shutdown();

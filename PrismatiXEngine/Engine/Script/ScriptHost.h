@@ -119,9 +119,7 @@ public:
     [[nodiscard]] virtual const DebugSnapshot& CaptureDebugState() const = 0;
 };
 
-// Creates the production embedded script backend. During the migration this
-// factory is the sole bridge to the legacy Lua adapter; it will switch to the
-// JavaScript host before the adapter and its dependencies are deleted.
+// Creates the production embedded JavaScript backend.
 [[nodiscard]] std::unique_ptr<ScriptHost> CreateScriptHost(
     const ScriptServices& services);
 

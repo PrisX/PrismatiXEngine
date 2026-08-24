@@ -487,26 +487,26 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
             -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PreviewHostSmoke.cmake)
     set_tests_properties(PrismatiX.SDK.PreviewHostProtocol
                          PROPERTIES LABELS "sdk;contract;preview")
-    add_test(NAME PrismatiX.SDK.PreviewHostLuaDebug
+    add_test(NAME PrismatiX.SDK.PreviewHostScriptDebug
         COMMAND ${CMAKE_COMMAND}
             -DPREVIEW_HOST=$<TARGET_FILE:PrismatiXPreviewHost>
-            -DFIXTURE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/Tests/Fixtures/PreviewHostLua
-            -DINPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/PreviewHostLuaDebugInput.ndjson
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PreviewHostLuaDebug.cmake)
-    set_tests_properties(PrismatiX.SDK.PreviewHostLuaDebug
-                         PROPERTIES LABELS "sdk;contract;preview;lua;debugger")
-    add_test(NAME PrismatiX.SDK.PreviewHostLuaAction
+            -DFIXTURE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/Tests/Fixtures/PreviewHostScript
+            -DINPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/PreviewHostScriptDebugInput.ndjson
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PreviewHostScriptDebug.cmake)
+    set_tests_properties(PrismatiX.SDK.PreviewHostScriptDebug
+                         PROPERTIES LABELS "sdk;contract;preview;script;javascript;debugger")
+    add_test(NAME PrismatiX.SDK.PreviewHostScriptAction
         COMMAND ${CMAKE_COMMAND}
             -DPREVIEW_HOST=$<TARGET_FILE:PrismatiXPreviewHost>
-            -DFIXTURE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/Tests/Fixtures/PreviewHostLua
-            -DINPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/PreviewHostLuaActionInput.ndjson
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PreviewHostLuaAction.cmake)
-    set_tests_properties(PrismatiX.SDK.PreviewHostLuaAction
-                         PROPERTIES LABELS "sdk;contract;preview;lua;action")
+            -DFIXTURE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/Tests/Fixtures/PreviewHostScript
+            -DINPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/PreviewHostScriptActionInput.ndjson
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PreviewHostScriptAction.cmake)
+    set_tests_properties(PrismatiX.SDK.PreviewHostScriptAction
+                         PROPERTIES LABELS "sdk;contract;preview;script;javascript;action")
     add_test(NAME PrismatiX.SDK.PreviewHostRuntimeAssets
         COMMAND ${CMAKE_COMMAND}
             -DPREVIEW_HOST=$<TARGET_FILE:PrismatiXPreviewHost>
-            -DFIXTURE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/Tests/Fixtures/PreviewHostLua
+            -DFIXTURE_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/Tests/Fixtures/PreviewHostScript
             -DINPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/PreviewHostRuntimeAssetsInput.ndjson
             -P ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PreviewHostRuntimeAssets.cmake)
     set_tests_properties(PrismatiX.SDK.PreviewHostRuntimeAssets

@@ -247,9 +247,10 @@ void CreateProjectFixture(const std::filesystem::path& root,
     Copy(imageSource, root / "Assets/ending.png");
 
     Write(root / "Content/Extensions/default.pxextension", R"({
-      "format":"PrismatiXExtension","version":4,
+      "format":"PrismatiXExtension","schemaRevision":1,
       "id":"player-catalog-native-acceptance",
-      "entry":"acceptance.lua",
+      "language":"javascript",
+      "entry":"acceptance.js",
       "capabilities":["runtime"],
       "commands":[],
       "actions":[{
@@ -271,20 +272,20 @@ void CreateProjectFixture(const std::filesystem::path& root,
         ]
       }]
     })");
-    Write(root / "Content/Extensions/acceptance.lua", R"(
-Engine.RegisterAction('acceptance.packaged-action', function(args, context)
-  assert(args.amount == 3)
-  assert(args.asset.id == '33333333-3333-4333-8333-333333333333')
-  assert(args.asset.path == 'Assets/ending.png')
-  assert(context.scene == 'Content/Runtime/start.pxir')
-  assert(context.preview == false)
-  print('packaged-action-start', args.amount, args.asset.id, args.asset.path, context.scene, context.preview)
-  Engine.AwaitSeconds(0)
-  Engine.SetVariable('packaged_action_result', args.amount * 2)
-  local result = Engine.GetVariable('packaged_action_result')
-  assert(result == 6)
-  print('packaged-action-complete', result, args.asset.id, args.asset.path, context.scene, context.preview)
-end)
+    Write(root / "Content/Extensions/acceptance.js", R"(
+Engine.RegisterAction("acceptance.packaged-action", async (args, context) => {
+  if (args.amount !== 3) throw new Error("unexpected amount");
+  if (args.asset.id !== "33333333-3333-4333-8333-333333333333") throw new Error("unexpected asset id");
+  if (args.asset.path !== "Assets/ending.png") throw new Error("unexpected asset path");
+  if (context.scene !== "Content/Runtime/start.pxir") throw new Error("unexpected scene");
+  if (context.preview !== false) throw new Error("unexpected preview mode");
+  Engine.log("packaged-action-start", args.amount, args.asset.id, args.asset.path, context.scene, context.preview);
+  await Engine.WaitSeconds(0);
+  Engine.SetVariable("packaged_action_result", args.amount * 2);
+  const result = Engine.GetVariable("packaged_action_result");
+  if (result !== 6) throw new Error("unexpected variable result");
+  Engine.log("packaged-action-complete", result, args.asset.id, args.asset.path, context.scene, context.preview);
+});
 )");
 
     Write(root / "Content/Game.pxres", R"(
@@ -354,7 +355,7 @@ px::sdk::PackageRequest PackageRequest(const std::filesystem::path& root,
     const std::vector<std::string> uris = {
         "Assets/ending.png",
         "Content/Fonts/NotoSansTC-Bold.ttf",
-        "Content/Extensions/acceptance.lua",
+        "Content/Extensions/acceptance.js",
         "Content/Extensions/default.pxextension",
         "Content/Game.pxres",
         "Content/Runtime/start.pxir",
@@ -430,8 +431,8 @@ int main(int argc, char* argv[]) {
         suite.Require(
             WaitForLog(
                 log,
-                "[lua] packaged-action-complete\t6\t33333333-3333-4333-8333-333333333333\tAssets/ending.png\tContent/Runtime/start.pxir\tfalse"),
-            "packaged Runtime IR dispatches the typed Lua Action with exact Player context, resolved UUID resource, and observable variable side effect");
+                "[javascript] packaged-action-complete 6 33333333-3333-4333-8333-333333333333 Assets/ending.png Content/Runtime/start.pxir false"),
+            "packaged Runtime IR dispatches the typed JavaScript Action with exact Player context, resolved UUID resource, and observable variable side effect");
 
         suite.Require(PostKey(window, 'G'),
                       "catalog InputBinding is delivered to the real window");

@@ -1,7 +1,7 @@
 {
   "format": "PrismatiXRuntimeIR",
   "schemaRevision": 1,
-  "documentId": "lua-debug-document",
+  "documentId": "script-debug-document",
   "committedRevision": 1,
   "operations": [
     {

@@ -18,6 +18,7 @@
 #include <quickjs.h>
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <cctype>
 #include <cmath>
@@ -342,6 +343,57 @@ public:
         else PX_LOG_INFO("[javascript] {}", output.text);
     }
 
+    [[nodiscard]] std::pair<std::string, int> CurrentLocation() {
+        JSValue error = JS_NewError(context);
+        JSValue stackValue = JS_GetPropertyStr(context, error, "stack");
+        const auto stack = String(stackValue);
+        JS_FreeValue(context, stackValue);
+        JS_FreeValue(context, error);
+        if (!stack) return {};
+
+        std::size_t offset = 0;
+        while (offset < stack->size()) {
+            const std::size_t end = stack->find('\n', offset);
+            const std::string_view frame(
+                stack->data() + offset,
+                (end == std::string::npos ? stack->size() : end) - offset);
+            offset = end == std::string::npos ? stack->size() : end + 1;
+            if (frame.find("native") != std::string_view::npos ||
+                frame.find("<prismatix-sandbox>") != std::string_view::npos)
+                continue;
+
+            std::size_t locationStart = frame.rfind('(');
+            std::size_t locationEnd = frame.rfind(')');
+            if (locationStart == std::string_view::npos ||
+                locationEnd == std::string_view::npos ||
+                locationStart >= locationEnd) {
+                locationStart = frame.find("at ");
+                if (locationStart == std::string_view::npos) continue;
+                locationStart += 2;
+                locationEnd = frame.size();
+            } else {
+                ++locationStart;
+            }
+            const auto location =
+                frame.substr(locationStart, locationEnd - locationStart);
+            const std::size_t columnSeparator = location.rfind(':');
+            if (columnSeparator == std::string_view::npos) continue;
+            const std::size_t lineSeparator =
+                location.rfind(':', columnSeparator - 1);
+            if (lineSeparator == std::string_view::npos) continue;
+            int line = 0;
+            const auto encodedLine = location.substr(
+                lineSeparator + 1, columnSeparator - lineSeparator - 1);
+            const auto parsed = std::from_chars(
+                encodedLine.data(), encodedLine.data() + encodedLine.size(), line);
+            if (parsed.ec != std::errc{} || line <= 0) continue;
+            std::string source(location.substr(0, lineSeparator));
+            if (source.empty() || source.front() == '<') continue;
+            return {NormalizeDebugSource(std::move(source)), line};
+        }
+        return {};
+    }
+
     void Error(const std::string& source, std::string message) const {
         Console(ConsoleLevel::Error, message, source);
         diag::Emit(ScriptDiagnostic("PXJS7001", "JavaScript execution failed",
@@ -360,7 +412,8 @@ public:
             if (index) text.push_back(' ');
             text.append(self->String(values[index]).value_or("<unprintable>"));
         }
-        self->Console(ConsoleLevel::Info, std::move(text), "Engine.log");
+        auto [source, line] = self->CurrentLocation();
+        self->Console(ConsoleLevel::Info, std::move(text), std::move(source), line);
         return JS_UNDEFINED;
     }
 
@@ -372,7 +425,8 @@ public:
             if (index) text.push_back(' ');
             text.append(self->String(values[index]).value_or("<unprintable>"));
         }
-        self->Console(ConsoleLevel::Warning, std::move(text), "console.warn");
+        auto [source, line] = self->CurrentLocation();
+        self->Console(ConsoleLevel::Warning, std::move(text), std::move(source), line);
         return JS_UNDEFINED;
     }
 
@@ -384,7 +438,8 @@ public:
             if (index) text.push_back(' ');
             text.append(self->String(values[index]).value_or("<unprintable>"));
         }
-        self->Console(ConsoleLevel::Error, std::move(text), "console.error");
+        auto [source, line] = self->CurrentLocation();
+        self->Console(ConsoleLevel::Error, std::move(text), std::move(source), line);
         return JS_UNDEFINED;
     }
 

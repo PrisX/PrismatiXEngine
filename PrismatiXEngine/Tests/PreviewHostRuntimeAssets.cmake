@@ -10,7 +10,7 @@ if(NOT DEFINED INPUT_FILE)
 endif()
 
 file(TO_CMAKE_PATH "${FIXTURE_ROOT}" PROJECT_ROOT)
-set(ENVELOPE "\"protocol\":\"PrismatiXPreviewProtocol\",\"schemaRevision\":1,\"protocolVersion\":1,\"sessionId\":\"asset-resource-session\"")
+set(ENVELOPE "\"protocol\":\"PrismatiXPreviewProtocol\",\"schemaRevision\":2,\"protocolVersion\":2,\"sessionId\":\"asset-resource-session\"")
 set(INPUT "{\"type\":\"hello\",${ENVELOPE},\"requestId\":\"hello-assets\",\"documentId\":\"\",\"revision\":0}\n")
 string(APPEND INPUT "{\"type\":\"applyRuntimeIr\",${ENVELOPE},\"requestId\":\"apply-assets\",\"documentId\":\"asset-resource-document\",\"revision\":1,\"projectRoot\":\"${PROJECT_ROOT}\",\"committedRevision\":1,\"irPath\":\"unresolved-asset.pxir\"}\n")
 string(APPEND INPUT "{\"type\":\"applyUiScene\",${ENVELOPE},\"requestId\":\"apply-component\",\"documentId\":\"60606060-6060-4060-8060-606060606060\",\"revision\":7,\"projectRoot\":\"${PROJECT_ROOT}\",\"sceneId\":\"60606060-6060-4060-8060-606060606060\",\"uiPath\":\"Content/UI/ComponentScene.pxui\"}\n")
@@ -36,12 +36,12 @@ string(APPEND INPUT "{\"type\":\"selectChoice\",${ENVELOPE},\"requestId\":\"sele
 string(APPEND INPUT "{\"type\":\"capture\",${ENVELOPE},\"requestId\":\"capture-story-breakpoint\",\"documentId\":\"preview-controls-document\",\"revision\":1}\n")
 string(APPEND INPUT "{\"type\":\"step\",${ENVELOPE},\"requestId\":\"step-story-breakpoint\",\"documentId\":\"preview-controls-document\",\"revision\":1}\n")
 string(APPEND INPUT "{\"type\":\"applyUiScene\",${ENVELOPE},\"requestId\":\"apply-action-signal\",\"documentId\":\"13131313-1313-4313-8313-131313131313\",\"revision\":1,\"projectRoot\":\"${PROJECT_ROOT}\",\"sceneId\":\"13131313-1313-4313-8313-131313131313\",\"uiPath\":\"Content/UI/ActionSignalScene.pxui\"}\n")
-string(APPEND INPUT "{\"type\":\"setLuaBreakpoints\",${ENVELOPE},\"requestId\":\"set-action-lua-breakpoint\",\"documentId\":\"13131313-1313-4313-8313-131313131313\",\"revision\":1,\"breakpoints\":[{\"source\":\"Content/Extensions/debug.lua\",\"line\":18}]}\n")
+string(APPEND INPUT "{\"type\":\"setScriptBreakpoints\",${ENVELOPE},\"requestId\":\"set-action-script-breakpoint\",\"documentId\":\"13131313-1313-4313-8313-131313131313\",\"revision\":1,\"breakpoints\":[{\"source\":\"Content/Extensions/debug.js\",\"line\":18}]}\n")
 string(APPEND INPUT "{\"type\":\"activateUiControl\",${ENVELOPE},\"requestId\":\"activate-action-signal\",\"documentId\":\"13131313-1313-4313-8313-131313131313\",\"revision\":1,\"nodeId\":\"14141414-1414-4414-8414-141414141414\"}\n")
 string(APPEND INPUT "{\"type\":\"capture\",${ENVELOPE},\"requestId\":\"capture-action-breakpoint\",\"documentId\":\"13131313-1313-4313-8313-131313131313\",\"revision\":1}\n")
-string(APPEND INPUT "{\"type\":\"luaStep\",${ENVELOPE},\"requestId\":\"step-action-signal\",\"documentId\":\"13131313-1313-4313-8313-131313131313\",\"revision\":1}\n")
+string(APPEND INPUT "{\"type\":\"scriptStep\",${ENVELOPE},\"requestId\":\"step-action-signal\",\"documentId\":\"13131313-1313-4313-8313-131313131313\",\"revision\":1}\n")
 string(APPEND INPUT "{\"type\":\"capture\",${ENVELOPE},\"requestId\":\"capture-action-step\",\"documentId\":\"13131313-1313-4313-8313-131313131313\",\"revision\":1}\n")
-string(APPEND INPUT "{\"type\":\"luaContinue\",${ENVELOPE},\"requestId\":\"continue-action-signal\",\"documentId\":\"13131313-1313-4313-8313-131313131313\",\"revision\":1}\n")
+string(APPEND INPUT "{\"type\":\"scriptContinue\",${ENVELOPE},\"requestId\":\"continue-action-signal\",\"documentId\":\"13131313-1313-4313-8313-131313131313\",\"revision\":1}\n")
 string(APPEND INPUT "{\"type\":\"capture\",${ENVELOPE},\"requestId\":\"capture-action-signal\",\"documentId\":\"13131313-1313-4313-8313-131313131313\",\"revision\":1}\n")
 string(APPEND INPUT "{\"type\":\"capture\",${ENVELOPE},\"requestId\":\"capture-action-complete\",\"documentId\":\"13131313-1313-4313-8313-131313131313\",\"revision\":1}\n")
 string(APPEND INPUT "{\"type\":\"shutdown\",${ENVELOPE},\"requestId\":\"shutdown-assets\",\"documentId\":\"\",\"revision\":0}\n")
@@ -90,11 +90,11 @@ set(PREVIEW_CHOICE_ACK FALSE)
 set(STORY_BREAKPOINT_DEBUG_EVENT_ACK FALSE)
 set(STORY_BREAKPOINT_CAPTURE_ACK FALSE)
 set(STORY_STEP_ACK FALSE)
-set(UI_ACTION_LUA_BREAKPOINTS_SET_ACK FALSE)
-set(UI_ACTION_LUA_BREAKPOINT_CAPTURE_ACK FALSE)
-set(UI_ACTION_LUA_STEP_ACK FALSE)
-set(UI_ACTION_LUA_STEP_CAPTURE_ACK FALSE)
-set(UI_ACTION_LUA_CONTINUE_ACK FALSE)
+set(UI_ACTION_SCRIPT_BREAKPOINTS_SET_ACK FALSE)
+set(UI_ACTION_SCRIPT_BREAKPOINT_CAPTURE_ACK FALSE)
+set(UI_ACTION_SCRIPT_STEP_ACK FALSE)
+set(UI_ACTION_SCRIPT_STEP_CAPTURE_ACK FALSE)
+set(UI_ACTION_SCRIPT_CONTINUE_ACK FALSE)
 set(SHUTDOWN_ACK FALSE)
 
 foreach(LINE IN LISTS OUTPUT_LINES)
@@ -435,18 +435,18 @@ foreach(LINE IN LISTS OUTPUT_LINES)
                     "PreviewHost action signal scene lost its typed binding: ${LINE}")
         endif()
         set(UI_ACTION_SIGNAL_APPLIED_ACK TRUE)
-    elseif(TYPE STREQUAL "luaBreakpointsSet" AND
-           REQUEST_ID STREQUAL "set-action-lua-breakpoint")
-        string(JSON BREAKPOINT_COUNT LENGTH "${LINE}" luaBreakpoints)
-        string(JSON BREAKPOINT_SOURCE GET "${LINE}" luaBreakpoints 0 source)
-        string(JSON BREAKPOINT_LINE GET "${LINE}" luaBreakpoints 0 line)
+    elseif(TYPE STREQUAL "scriptBreakpointsSet" AND
+           REQUEST_ID STREQUAL "set-action-script-breakpoint")
+        string(JSON BREAKPOINT_COUNT LENGTH "${LINE}" scriptBreakpoints)
+        string(JSON BREAKPOINT_SOURCE GET "${LINE}" scriptBreakpoints 0 source)
+        string(JSON BREAKPOINT_LINE GET "${LINE}" scriptBreakpoints 0 line)
         if(NOT BREAKPOINT_COUNT EQUAL 1 OR
-           NOT BREAKPOINT_SOURCE STREQUAL "Content/Extensions/debug.lua" OR
+           NOT BREAKPOINT_SOURCE STREQUAL "Content/Extensions/debug.js" OR
            NOT BREAKPOINT_LINE EQUAL 18)
             message(FATAL_ERROR
-                    "PreviewHost did not verify the UI Action Lua breakpoint: ${LINE}")
+                    "PreviewHost did not verify the UI Action script breakpoint: ${LINE}")
         endif()
-        set(UI_ACTION_LUA_BREAKPOINTS_SET_ACK TRUE)
+        set(UI_ACTION_SCRIPT_BREAKPOINTS_SET_ACK TRUE)
     elseif(TYPE STREQUAL "uiControlActivated" AND
            REQUEST_ID STREQUAL "activate-action-signal")
         string(JSON SCENE_ID GET "${LINE}" sceneId)
@@ -463,43 +463,43 @@ foreach(LINE IN LISTS OUTPUT_LINES)
            REQUEST_ID STREQUAL "capture-action-breakpoint")
         string(JSON DOCUMENT_ID GET "${LINE}" documentId)
         string(JSON REVISION GET "${LINE}" revision)
-        string(JSON LUA_PAUSED GET "${LINE}" luaPaused)
-        string(JSON LUA_REASON GET "${LINE}" luaPauseReason)
-        string(JSON FRAME_SOURCE GET "${LINE}" luaCallStack 0 source)
-        string(JSON FRAME_LINE GET "${LINE}" luaCallStack 0 line)
+        string(JSON SCRIPT_PAUSED GET "${LINE}" scriptPaused)
+        string(JSON SCRIPT_REASON GET "${LINE}" scriptPauseReason)
+        string(JSON FRAME_SOURCE GET "${LINE}" scriptCallStack 0 source)
+        string(JSON FRAME_LINE GET "${LINE}" scriptCallStack 0 line)
         string(JSON ACTION_COUNT GET "${LINE}" runtimeSnapshot behavior actionCount)
         if(NOT DOCUMENT_ID STREQUAL "13131313-1313-4313-8313-131313131313" OR
-           NOT REVISION EQUAL 1 OR NOT LUA_PAUSED OR
-           NOT LUA_REASON STREQUAL "breakpoint" OR
-           NOT FRAME_SOURCE STREQUAL "Content/Extensions/debug.lua" OR
+           NOT REVISION EQUAL 1 OR NOT SCRIPT_PAUSED OR
+           NOT SCRIPT_REASON STREQUAL "breakpoint" OR
+           NOT FRAME_SOURCE STREQUAL "Content/Extensions/debug.js" OR
            NOT FRAME_LINE EQUAL 18 OR NOT ACTION_COUNT EQUAL 1)
             message(FATAL_ERROR
                     "PreviewHost UI Action breakpoint lost scene/revision/source/current-statement identity: ${LINE}")
         endif()
-        set(UI_ACTION_LUA_BREAKPOINT_CAPTURE_ACK TRUE)
-    elseif(TYPE STREQUAL "luaStepAccepted" AND
+        set(UI_ACTION_SCRIPT_BREAKPOINT_CAPTURE_ACK TRUE)
+    elseif(TYPE STREQUAL "scriptStepAccepted" AND
            REQUEST_ID STREQUAL "step-action-signal")
-        set(UI_ACTION_LUA_STEP_ACK TRUE)
+        set(UI_ACTION_SCRIPT_STEP_ACK TRUE)
     elseif(TYPE STREQUAL "stateCaptured" AND
            REQUEST_ID STREQUAL "capture-action-step")
-        string(JSON LUA_PAUSED GET "${LINE}" luaPaused)
-        string(JSON LUA_REASON GET "${LINE}" luaPauseReason)
-        string(JSON FRAME_SOURCE GET "${LINE}" luaCallStack 0 source)
-        string(JSON FRAME_LINE GET "${LINE}" luaCallStack 0 line)
-        if(NOT LUA_PAUSED OR NOT LUA_REASON STREQUAL "step" OR
-           NOT FRAME_SOURCE STREQUAL "Content/Extensions/debug.lua" OR
+        string(JSON SCRIPT_PAUSED GET "${LINE}" scriptPaused)
+        string(JSON SCRIPT_REASON GET "${LINE}" scriptPauseReason)
+        string(JSON FRAME_SOURCE GET "${LINE}" scriptCallStack 0 source)
+        string(JSON FRAME_LINE GET "${LINE}" scriptCallStack 0 line)
+        if(NOT SCRIPT_PAUSED OR NOT SCRIPT_REASON STREQUAL "step" OR
+           NOT FRAME_SOURCE STREQUAL "Content/Extensions/debug.js" OR
            NOT FRAME_LINE EQUAL 19)
             message(FATAL_ERROR
-                    "PreviewHost UI Action Lua step did not recover the next current statement: ${LINE}")
+                    "PreviewHost UI Action script step did not recover the next current statement: ${LINE}")
         endif()
-        set(UI_ACTION_LUA_STEP_CAPTURE_ACK TRUE)
-    elseif(TYPE STREQUAL "luaContinueAccepted" AND
+        set(UI_ACTION_SCRIPT_STEP_CAPTURE_ACK TRUE)
+    elseif(TYPE STREQUAL "scriptContinueAccepted" AND
            REQUEST_ID STREQUAL "continue-action-signal")
-        set(UI_ACTION_LUA_CONTINUE_ACK TRUE)
+        set(UI_ACTION_SCRIPT_CONTINUE_ACK TRUE)
     elseif(TYPE STREQUAL "output" AND
            REQUEST_ID STREQUAL "capture-action-signal")
         string(JSON OUTPUT_SCOPE ERROR_VARIABLE OUTPUT_SCOPE_ERROR GET "${LINE}" scope)
-        if(NOT OUTPUT_SCOPE_ERROR AND OUTPUT_SCOPE STREQUAL "lua")
+        if(NOT OUTPUT_SCOPE_ERROR AND OUTPUT_SCOPE STREQUAL "script")
             string(JSON OUTPUT_MESSAGE GET "${LINE}" message)
             if(OUTPUT_MESSAGE MATCHES "typed-action-complete.*8")
                 set(UI_ACTION_SIGNAL_OUTPUT_ACK TRUE)
@@ -510,7 +510,7 @@ foreach(LINE IN LISTS OUTPUT_LINES)
         string(JSON ACTION_RESULT GET "${LINE}" variables typed_action_result)
         if(NOT ACTION_RESULT EQUAL 8)
             message(FATAL_ERROR
-                    "PreviewHost capture lost the UI-triggered Lua side effect: ${LINE}")
+                    "PreviewHost capture lost the UI-triggered script side effect: ${LINE}")
         endif()
         set(UI_ACTION_SIGNAL_CAPTURE_ACK TRUE)
     elseif(TYPE STREQUAL "shutdownAccepted" AND
@@ -534,9 +534,9 @@ if(NOT READY_ACK OR NOT ASSET_ERROR_ACK OR NOT COMPONENT_APPLIED_ACK OR
    NOT STORY_BREAKPOINT_DEBUG_EVENT_ACK OR
    NOT STORY_BREAKPOINT_CAPTURE_ACK OR NOT STORY_STEP_ACK OR
    NOT UI_ACTION_SIGNAL_APPLIED_ACK OR NOT UI_ACTION_SIGNAL_ACTIVATED_ACK OR
-   NOT UI_ACTION_LUA_BREAKPOINTS_SET_ACK OR
-   NOT UI_ACTION_LUA_BREAKPOINT_CAPTURE_ACK OR NOT UI_ACTION_LUA_STEP_ACK OR
-   NOT UI_ACTION_LUA_STEP_CAPTURE_ACK OR NOT UI_ACTION_LUA_CONTINUE_ACK OR
+   NOT UI_ACTION_SCRIPT_BREAKPOINTS_SET_ACK OR
+   NOT UI_ACTION_SCRIPT_BREAKPOINT_CAPTURE_ACK OR NOT UI_ACTION_SCRIPT_STEP_ACK OR
+   NOT UI_ACTION_SCRIPT_STEP_CAPTURE_ACK OR NOT UI_ACTION_SCRIPT_CONTINUE_ACK OR
    NOT UI_ACTION_SIGNAL_OUTPUT_ACK OR NOT UI_ACTION_SIGNAL_CAPTURE_ACK OR
    NOT SHUTDOWN_ACK OR APPLIED_ACK)
     message(FATAL_ERROR
