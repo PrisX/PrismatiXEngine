@@ -25,9 +25,10 @@ if(PREVIEW_SESSION_API MATCHES
          "Engine/SDK/PreviewSession.h: public Preview API leaks Runtime implementation types")
 endif()
 if(NOT PREVIEW_SESSION_API MATCHES "SeekStory" OR
+   NOT PREVIEW_SESSION_API MATCHES "ApplyTimeline" OR
    NOT PREVIEW_SESSION_API MATCHES "SeekTimeline")
     list(APPEND VIOLATIONS
-         "Engine/SDK/PreviewSession.h: Story and Timeline seek must remain distinct")
+         "Engine/SDK/PreviewSession.h: Story seek and direct Timeline apply/seek must remain distinct")
 endif()
 
 file(READ "${ROOT}/CMakeLists.txt" PROJECT_CMAKE)

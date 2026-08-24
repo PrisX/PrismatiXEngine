@@ -9,7 +9,7 @@
 #include "Engine/VN/Runtime/VM.h"
 #include "Engine/VN/Expression/Expression.h"
 #include "Engine/UI/UIRouter.h"
-#include "Engine/UI/Behavior/BehaviorGraph.h"
+#include "Engine/UI/UIRuntimeState.h"
 #include "Engine/Script/ScriptState.h"
 
 #include <cstdint>
@@ -38,7 +38,7 @@ struct SaveSnapshot {
     std::vector<animation::AnimationClip> animationClips;
     script::PendingCommandsState scriptPending;
     script::PendingActionsState scriptActions;
-    ui::BehaviorRuntimeState behavior;
+    ui::UIRuntimeState ui;
     std::vector<vn::BacklogEntry> backlog;
     bool nvlMode = false;
     std::vector<vn::BacklogEntry> nvlLines;

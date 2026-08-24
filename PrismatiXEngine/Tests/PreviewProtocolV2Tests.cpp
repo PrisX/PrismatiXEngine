@@ -177,6 +177,13 @@ int main() {
             {"time", 1.25}}));
     assert(timelineSeek.Accepted() &&
            timelineSeek.request->command == "seekTimeline");
+    const auto timelineApply = protocol.AcceptControl(ControlEnvelope(
+        7, {{"command", "applyTimeline"},
+            {"timelineDocumentId", "chapter01.intro"},
+            {"timelineRevision", 1},
+            {"timeline", {{"format", "PrismatiXTimeline"}}}}));
+    assert(timelineApply.Accepted() &&
+           timelineApply.request->command == "applyTimeline");
 
     const auto staleControl = protocol.AcceptControl(
         ControlEnvelope(6, {{"command", "pause"}}));

@@ -4,10 +4,15 @@
 #include "Engine/IO/VFS.h"
 #include "Engine/Preview/PreviewSessionFactory.h"
 #include "Engine/Session/RuntimeSession.h"
+#include "Engine/Platform/Input.h"
+#include "Engine/UI/UIContext.h"
+#include "Engine/UI/UITypeRegistry.h"
 #include "Tests/TestSupport/TestHarness.h"
 
 #include <nlohmann/json.hpp>
 
+#include <cmath>
+#include <memory>
 #include <string>
 
 namespace {
@@ -58,6 +63,74 @@ int main() {
         suite.Expect(
             preview->RestoreCheckpoint(checkpoint.checkpoint->id).accepted,
             "timeline and UI-only state restores without a VM program");
+    });
+
+    suite.Run("CompleteUIRuntimeCheckpoint", [&] {
+        RuntimeFixture fixture;
+        suite.Require(static_cast<bool>(px::ui::RegisterBuiltinUITypes()),
+                      "built-in typed UI properties register for checkpoint testing");
+        px::ui::UIContext ui;
+        auto root = std::make_unique<px::ui::Control>("CheckpointRoot");
+        const px::Uuid node = root->Id();
+        suite.Require(static_cast<bool>(ui.SetRoot(std::move(root))),
+                      "UI checkpoint root installs");
+        px::ui::AnimationClip clip;
+        clip.id = px::Uuid::FromName("preview.checkpoint.ui.clip");
+        clip.name = "Checkpoint";
+        clip.duration = 1.0f;
+        clip.tracks.push_back({
+            .node=node,.property="opacity",
+            .keys={{0.0f,1.0,px::ui::Ease::Linear,
+                    px::ui::KeyInterpolation::Linear},
+                   {1.0f,0.0,px::ui::Ease::Linear,
+                    px::ui::KeyInterpolation::Linear}}});
+        px::ui::UIAnimationLibrary library;
+        const px::Uuid clipId = clip.id;
+        const px::Uuid animationState =
+            px::Uuid::FromName("preview.checkpoint.ui.state");
+        library.clips.push_back(std::move(clip));
+        library.machine.entry = animationState;
+        library.machine.states.push_back(
+            {animationState,"Default",clipId,{}});
+        suite.Require(static_cast<bool>(
+                          ui.SetAnimations(std::move(library),true)),
+                      "UI animation state machine installs");
+        px::ui::VisualStateGroup group;
+        group.id = "interaction";
+        group.defaultState = "normal";
+        group.states = {
+            {"normal",{{node,"opacity",px::Variant(1.0)}}},
+            {"hover",{{node,"opacity",px::Variant(0.5)}}}};
+        group.transitions.push_back(
+            {"normal","hover",1.0f,px::ui::VisualStateEase::Linear,
+             std::nullopt});
+        suite.Require(ui.SetVisualStateGroups({std::move(group)}) &&
+                          ui.PreviewAnimation(clipId,0.25f,false) &&
+                          ui.SetVisualState("interaction","hover"),
+                      "UI animation and Visual State checkpoints become active");
+        px::Input input;
+        (void)ui.Update(input,640,360,0.4f);
+        fixture.runtime.SetUIStateHandler(
+            [&ui]{return ui.CaptureRuntimeState();},
+            [&ui](const px::ui::UIRuntimeState& state){
+                return ui.RestoreRuntimeState(state);
+            });
+        auto preview=px::preview::CreatePreviewSession(fixture.runtime);
+        const auto checkpoint=preview->CaptureCheckpoint();
+        suite.Require(checkpoint.accepted&&checkpoint.checkpoint,
+                      "PreviewSession captures complete UI runtime state");
+        (void)ui.PreviewAnimation(clipId,0.9f,false);
+        (void)ui.Update(input,640,360,0.6f);
+        suite.Require(preview->RestoreCheckpoint(checkpoint.checkpoint->id).accepted,
+                      "PreviewSession restores complete UI runtime state");
+        const auto restored=ui.CaptureRuntimeState();
+        suite.Expect(restored.animation&&
+                         std::abs(restored.animation->position-0.25f)<0.001f&&
+                         restored.visualState&&
+                         restored.visualState->groups.size()==1&&
+                         restored.visualState->groups.front().state=="hover"&&
+                         std::abs(restored.visualState->groups.front().elapsed-0.4f)<0.001f,
+                     "checkpoint restores UI Animation and Visual State transition progress exactly");
     });
 
     suite.Run("ApplyPatchAndMemoryCheckpointRestore", [&] {
@@ -168,6 +241,17 @@ int main() {
     suite.Run("TimelineViewportStateAndEvents", [&] {
         RuntimeFixture fixture;
         bool resized = false;
+        double sampledOpacity = -1.0;
+        fixture.runtime.SetAnimationTargetHandler(
+            px::animation::TargetKind::UI,
+            [&sampledOpacity](const px::animation::TrackBinding& binding,
+                              const px::Variant& value) {
+                if (binding.target == "panel" && binding.property == "opacity") {
+                    if (const auto* number = value.TryGet<double>())
+                        sampledOpacity = *number;
+                }
+                return px::Status::Ok();
+            });
         auto preview = px::preview::CreatePreviewSession(
             fixture.runtime,
             {.resize = [&resized](const int width, const int height,
@@ -180,17 +264,47 @@ int main() {
             Json::array({Operation("line", "narration", {{"text", "Line"}})}));
         suite.Require(preview->Apply({"timeline", 1, runtimeIr}).accepted,
                      "timeline test document applies");
-        px::animation::AnimationClip clip;
-        clip.id = px::Uuid::FromName("PreviewSession.Contract.Timeline");
-        clip.name = "Contract";
-        clip.duration = 4.0f;
-        suite.Expect(static_cast<bool>(fixture.runtime.Timeline().Register(clip)),
-                     "test timeline registers");
-        const auto handle = fixture.runtime.Timeline().Play(clip.id);
-        suite.Expect(handle != 0 &&
+        const auto beforeTimeline=preview->CaptureCheckpoint();
+        suite.Require(beforeTimeline.accepted&&beforeTimeline.checkpoint,
+                      "pre-Timeline checkpoint captures");
+        const std::string timeline = Json{
+            {"format", "PrismatiXTimeline"},
+            {"schemaRevision", 1},
+            {"id", "preview.timeline"},
+            {"duration", 4.0},
+            {"tracks", Json::array({
+                {{"id", "panel-opacity"},
+                 {"binding", {{"kind", "ui"}, {"target", "panel"},
+                              {"property", "opacity"}}},
+                 {"keyframes", Json::array({
+                     {{"time", 0.0}, {"value", 0.0}, {"easing", "linear"}},
+                     {{"time", 4.0}, {"value", 1.0}, {"easing", "linear"}}
+                 })}}
+            })},
+            {"markers", Json::array()},
+            {"nestedClips", Json::array()}}
+            .dump();
+        const auto timelineApplied = preview->ApplyTimeline(
+            {"preview.timeline", 1, timeline,
+             "memory://preview/timeline.pxtimeline", 0.25, 1.0});
+        suite.Require(timelineApplied.accepted &&
+                          timelineApplied.playbackHandle != 0,
+                      "frontend-neutral facade applies in-memory canonical Timeline content");
+        suite.Expect(!preview->RestoreCheckpoint(
+                          beforeTimeline.checkpoint->id).accepted,
+                     "Timeline hot apply invalidates checkpoints from the previous clip graph");
+        const auto handle = timelineApplied.playbackHandle;
+        suite.Expect(sampledOpacity > 0.06 && sampledOpacity < 0.07 &&
                          preview->SeekTimeline({handle, 2.5}).accepted &&
-                         preview->State().timelines.front().seconds == 2.5,
-                     "Timeline seek is distinct from Story seek");
+                         sampledOpacity > 0.62 && sampledOpacity < 0.63 &&
+                         preview->State().timelines.back().seconds == 2.5,
+                     "Timeline apply returns a high-frequency scrub handle distinct from Story seek");
+        const auto staleTimeline = preview->ApplyTimeline(
+            {"preview.timeline", 1, timeline});
+        suite.Expect(!staleTimeline.accepted &&
+                         staleTimeline.status ==
+                             px::sdk::PreviewSessionStatus::RevisionConflict,
+                     "Timeline hot apply rejects stale revisions");
         suite.Expect(preview->Resize(960, 540, 1.5f).accepted && resized &&
                          preview->State().viewportWidth == 960,
                      "resize flows through the frontend-neutral callback");

@@ -485,9 +485,10 @@ private:
         return m_scriptHost->RestorePendingActions(checkpoint->actions);
     }
 
+    template <typename PreviewResult>
     void WritePreviewFailure(const Json& request, const std::string& code,
                              const std::string& message,
-                             const px::sdk::PreviewCommandResult& result) {
+                             const PreviewResult& result) {
         Json response = Error(request, code, message);
         response["previewStatus"] = static_cast<int>(result.status);
         response["diagnostics"] = Json::array();
@@ -594,6 +595,43 @@ private:
             }
             Json response = RuntimeStateResponse(request, "storySeekAccepted");
             response["operationIndex"] = operation->get<int>();
+            Write(response);
+        }
+        else if (*type == "applyTimeline") {
+            const auto projectRoot = RequiredString(request, "projectRoot");
+            const auto documentId = RequiredString(request, "documentId");
+            const auto timeline = RequiredString(request, "timeline");
+            if (!projectRoot || !documentId || !timeline) {
+                Write(Error(request, "invalid-timeline-apply",
+                            "applyTimeline requires projectRoot, documentId, and canonical timeline text"));
+                return;
+            }
+            if (!EnsureRuntime(*projectRoot)) {
+                Write(Error(request,
+                            m_runtimeStartupErrorCode.empty()
+                                ? "runtime-start-failed"
+                                : m_runtimeStartupErrorCode,
+                            m_runtimeStartupErrorMessage.empty()
+                                ? "Native preview runtime could not start"
+                                : m_runtimeStartupErrorMessage));
+                return;
+            }
+            const double start = request.value("time", 0.0);
+            const double speed = request.value("speed", 1.0);
+            const std::string sourcePath = request.value(
+                "sourcePath", "memory://preview/timeline.pxtimeline");
+            const auto applied = m_previewSession->ApplyTimeline(
+                {*documentId, request.value("revision", std::uint64_t{0}),
+                 *timeline, sourcePath, start, speed});
+            if (!applied.accepted) {
+                WritePreviewFailure(request, "timeline-apply-rejected",
+                                    "Runtime Timeline could not be applied.",
+                                    applied);
+                return;
+            }
+            Json response = RuntimeStateResponse(request, "timelineApplied");
+            response["playbackHandle"] = applied.playbackHandle;
+            response["time"] = start;
             Write(response);
         }
         else if (*type == "seekTimeline") {
@@ -1083,7 +1121,7 @@ private:
 
         const px::ui::BehaviorRuntimeState behavior = m_showUiPreview && !m_activeUiSceneId.empty()
             ? m_uiPreview.CaptureBehaviorState()
-            : state.behavior;
+            : state.ui.behavior;
         Json fibers = Json::array();
         for (std::size_t index = 0; index < std::min(behavior.fibers.size(), kRuntimeSnapshotItemLimit); ++index) {
             const auto& fiber = behavior.fibers[index];
@@ -1903,6 +1941,11 @@ private:
         m_projectRoot = projectRoot;
         m_runtime = std::move(runtime);
         m_session = std::move(session);
+        m_session->SetUIStateHandler(
+            [this] { return m_uiPreview.CaptureRuntimeState(); },
+            [this](const px::ui::UIRuntimeState& state) {
+                return m_uiPreview.RestoreRuntimeState(state);
+            });
         m_scriptServices.vfs = &m_runtime->VFS();
         m_scriptServices.renderer = &m_runtime->Renderer();
         m_scriptServices.audio = &m_runtime->Audio();

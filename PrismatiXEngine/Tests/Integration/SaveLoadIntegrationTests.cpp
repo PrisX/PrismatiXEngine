@@ -182,14 +182,35 @@ void TestSaveValidation() {
     behaviorFiber.delayRemaining = 0.35f;
     behaviorFiber.actionExecution = 41;
     behaviorFiber.signalArguments["position"] = px::Variant(px::Vec2{ 12.0f, 24.0f });
-    snapshot.behavior.fibers.push_back(std::move(behaviorFiber));
+    snapshot.ui.behavior.fibers.push_back(std::move(behaviorFiber));
     px::ui::ActionInvocation savedActionInvocation;
     savedActionInvocation.action = "demo.async";
     savedActionInvocation.arguments["message"] = px::Variant(std::string("checkpoint"));
     savedActionInvocation.context.sourceScene = "Content/UI/HUD.pxscene";
     savedActionInvocation.context.sourceNode = behaviorDelay;
     savedActionInvocation.context.signal = "behavior";
-    snapshot.behavior.actions.push_back({ 41, savedActionInvocation, "script", 73, false });
+    snapshot.ui.behavior.actions.push_back({ 41, savedActionInvocation, "script", 73, false });
+    px::ui::UIAnimationRuntimeState uiAnimation;
+    uiAnimation.state = px::Uuid::FromName("save.ui.animation.state");
+    uiAnimation.transition = px::Uuid::FromName("save.ui.animation.transition");
+    uiAnimation.position = 0.42f;
+    uiAnimation.transitionProgress = 0.65f;
+    uiAnimation.paused = true;
+    uiAnimation.parameters["selected"] = px::Variant(true);
+    snapshot.ui.animation = std::move(uiAnimation);
+    px::ui::VisualStateGroupRuntimeState visualGroup;
+    visualGroup.group = "interaction";
+    visualGroup.state = "hover";
+    visualGroup.from = "normal";
+    visualGroup.elapsed = 0.08f;
+    visualGroup.duration = 0.12f;
+    visualGroup.easing = px::ui::VisualStateEase::EaseOut;
+    visualGroup.transitionFrom.push_back(
+        {behaviorDelay, "opacity", px::Variant(0.4)});
+    visualGroup.animationClip = px::Uuid::FromName("save.ui.visual.clip");
+    visualGroup.animationPosition = 0.08f;
+    snapshot.ui.visualState = px::ui::VisualStateRuntimeState{
+        {std::move(visualGroup)}};
     px::script::PendingActionState pendingAction;
     pendingAction.id = 73;
     pendingAction.invocation = savedActionInvocation;
@@ -205,16 +226,34 @@ void TestSaveValidation() {
             loaded->dialogue.speedMs == 42 && loaded->typedVariables.at("route").TryGet<std::string>() && loaded->typedVariables.at("flags").AsObject() && loaded->routes.stack.size() == 2 && loaded->routes.modals.size() == 1 &&
             loaded->timelines.size() == 1 && loaded->timelines.front().awaiting && loaded->animationClips.size() == 1 && loaded->animationClips.front().name == "Custom/Save" && loaded->stage.backgroundFade == 0.45f && loaded->stage.actors.size() == 1 &&
             loaded->stage.tweens.size() == 1 && loaded->audio.music.playbackFrame == 24000 && loaded->scriptPending.size() == 1 && loaded->scriptPending.front().yieldIndex == 1 && loaded->scriptActions.size() == 1 && loaded->scriptActions.front().yieldIndex == 2 &&
-            loaded->behavior.fibers.size() == 1 && loaded->behavior.fibers.front().current == behaviorDelay && loaded->behavior.fibers.front().signalArguments.at("position").TryGet<px::Vec2>() && loaded->behavior.actions.size() == 1 &&
-            loaded->behavior.actions.front().providerHandle == 73,
-        "current save schema should preserve exact VM, stage, audio, script Action, Behavior, and variable state"
+            loaded->ui.behavior.fibers.size() == 1 && loaded->ui.behavior.fibers.front().current == behaviorDelay && loaded->ui.behavior.fibers.front().signalArguments.at("position").TryGet<px::Vec2>() && loaded->ui.behavior.actions.size() == 1 &&
+            loaded->ui.behavior.actions.front().providerHandle == 73 &&
+            loaded->ui.animation && loaded->ui.animation->position == 0.42f &&
+            loaded->ui.animation->parameters.at("selected").TryGet<bool>() &&
+            loaded->ui.visualState && loaded->ui.visualState->groups.size() == 1 &&
+            loaded->ui.visualState->groups.front().state == "hover" &&
+            loaded->ui.visualState->groups.front().animationPosition == 0.08f,
+        "current save schema should preserve exact VM, stage, audio, script, UI, and variable state"
     );
 
     const auto currentJson = px::progress::LoadJson(saves.SlotPath(0), nullptr);
-    Check(currentJson && currentJson->value("schemaRevision", 0) == 2 &&
+    Check(currentJson && currentJson->value("schemaRevision", 0) == 3 &&
               currentJson->contains("scriptPending") &&
-              currentJson->contains("scriptActions"),
-          "current saves must use language-neutral script checkpoint fields");
+              currentJson->contains("scriptActions") &&
+              currentJson->contains("ui"),
+          "current saves must use language-neutral script and complete UI checkpoint fields");
+    if (currentJson) {
+        auto revision2 = *currentJson;
+        revision2["schemaRevision"] = 2;
+        revision2["behavior"] = revision2["ui"]["behavior"];
+        revision2.erase("ui");
+        Check(px::progress::SaveJson(saves.SlotPath(4), revision2, nullptr) &&
+                  saves.Load(4) &&
+                  saves.Load(4)->ui.behavior.fibers.size() == 1 &&
+                  !saves.Load(4)->ui.animation &&
+                  !saves.Load(4)->ui.visualState,
+              "save schema revision 2 migrates Behavior state into the complete UI checkpoint");
+    }
 
     px::progress::Json wrongType{ { "format", "PrismatiXSave" }, { "schemaRevision", 2 }, { "variables", { { "affection", "high" } } } };
     Check(px::progress::SaveJson(saves.SlotPath(1), wrongType, nullptr), "wrong-type fixture should be written");

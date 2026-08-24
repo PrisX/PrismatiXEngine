@@ -274,6 +274,66 @@ public:
         return Success(sdk::PreviewSessionStatus::StorySeeked);
     }
 
+    sdk::PreviewTimelineApplyResult ApplyTimeline(
+        const sdk::PreviewTimelineApplyRequest& request) override {
+        BeginCommand();
+        if (request.documentId.empty() || request.revision == 0 ||
+            !std::isfinite(request.startSeconds) || request.startSeconds < 0.0 ||
+            !std::isfinite(request.speed) || request.speed <= 0.0) {
+            AddDiagnostic(PreviewDiagnostic(
+                "PXPREVIEW1202",
+                "Timeline apply requires an identity, positive revision and finite playback values."));
+            return TimelineApplyFailure(sdk::PreviewSessionStatus::InvalidArgument);
+        }
+        const auto parsed = animation::ParseTimeline(request.timeline,
+                                                     request.sourcePath);
+        if (!parsed) {
+            for (const auto& diagnostic : parsed.Diagnostics())
+                AddDiagnostic(RuntimeDiagnostic(diagnostic));
+            return TimelineApplyFailure(
+                sdk::PreviewSessionStatus::TimelineRejected);
+        }
+        if (parsed.Value().id != request.documentId) {
+            AddDiagnostic(PreviewDiagnostic(
+                "PXPREVIEW1203",
+                "Timeline apply identity does not match the canonical document."));
+            return TimelineApplyFailure(sdk::PreviewSessionStatus::InvalidArgument);
+        }
+        const auto current = m_timelineRevisions.find(request.documentId);
+        if (current != m_timelineRevisions.end() &&
+            request.revision <= current->second) {
+            AddDiagnostic(PreviewDiagnostic(
+                "PXPREVIEW1204",
+                "Timeline revision must increase monotonically."));
+            return TimelineApplyFailure(
+                sdk::PreviewSessionStatus::RevisionConflict);
+        }
+        auto played = m_runtime.PlayTimelineText(
+            request.timeline, request.sourcePath, false,
+            static_cast<float>(request.speed));
+        if (!played) {
+            for (const auto& diagnostic : played.Diagnostics())
+                AddDiagnostic(RuntimeDiagnostic(diagnostic));
+            return TimelineApplyFailure(
+                sdk::PreviewSessionStatus::TimelineRejected);
+        }
+        const auto handle = played.Value();
+        const Status sought = m_runtime.Timeline().Seek(
+            handle, static_cast<float>(request.startSeconds));
+        if (!sought) {
+            (void)m_runtime.Timeline().Cancel(handle);
+            return TimelineApplyStatusFailure(sought);
+        }
+        m_timelineRevisions[request.documentId] = request.revision;
+        // Timeline content participates in deterministic Story/UI snapshots.
+        // A new authored revision invalidates checkpoints captured against the
+        // previous clip graph instead of restoring them with mixed semantics.
+        ClearCheckpoints();
+        (void)CaptureInternal(false);
+        EmitState(sdk::PreviewSessionStatus::TimelineApplied);
+        return {sdk::PreviewSessionStatus::TimelineApplied, true, handle, {}};
+    }
+
     sdk::PreviewCommandResult SeekTimeline(
         const sdk::PreviewTimelineSeekRequest& request) override {
         BeginCommand();
@@ -736,12 +796,29 @@ private:
         return ApplyFailure(status);
     }
 
+    sdk::PreviewTimelineApplyResult TimelineApplyFailure(
+        const sdk::PreviewSessionStatus status) const {
+        return {status, false, 0, m_diagnostics};
+    }
+
+    sdk::PreviewTimelineApplyResult TimelineApplyStatusFailure(
+        const Status& status) {
+        for (const auto& diagnostic : status.Diagnostics())
+            AddDiagnostic(RuntimeDiagnostic(diagnostic));
+        if (m_diagnostics.empty())
+            AddDiagnostic(PreviewDiagnostic(
+                "PXPREVIEW1205", "Runtime Timeline apply was rejected."));
+        return TimelineApplyFailure(
+            sdk::PreviewSessionStatus::TimelineRejected);
+    }
+
     RuntimeSession& m_runtime;
     PreviewSessionOptions m_options;
     sdk::RuntimeIrDocument m_document;
     std::string m_runtimeIr;
     std::string m_sourcePath;
     std::unordered_map<std::string, int> m_operationBySource;
+    std::unordered_map<std::string, std::uint64_t> m_timelineRevisions;
     std::vector<int> m_branchPath;
     std::vector<StoredCheckpoint> m_checkpoints;
     std::vector<sdk::PreviewSessionDiagnostic> m_diagnostics;

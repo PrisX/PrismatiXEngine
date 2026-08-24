@@ -17,6 +17,7 @@ enum class PreviewSessionStatus {
     Advanced,
     ChoiceSelected,
     StorySeeked,
+    TimelineApplied,
     TimelineSeeked,
     CheckpointCaptured,
     CheckpointRestored,
@@ -101,6 +102,22 @@ struct PreviewTimelineSeekRequest {
     double seconds = 0.0;
 };
 
+struct PreviewTimelineApplyRequest {
+    std::string documentId;
+    std::uint64_t revision = 0;
+    std::string timeline;
+    std::string sourcePath = "memory://preview/timeline.pxtimeline";
+    double startSeconds = 0.0;
+    double speed = 1.0;
+};
+
+struct PreviewTimelineApplyResult {
+    PreviewSessionStatus status = PreviewSessionStatus::TimelineRejected;
+    bool accepted = false;
+    std::uint64_t playbackHandle = 0;
+    std::vector<PreviewSessionDiagnostic> diagnostics;
+};
+
 struct PreviewCheckpoint {
     std::uint64_t id = 0;
     std::string documentId;
@@ -163,6 +180,8 @@ public:
     [[nodiscard]] virtual PreviewCommandResult SelectChoice(int index) = 0;
     [[nodiscard]] virtual PreviewCommandResult SeekStory(
         const PreviewStorySeekRequest& request) = 0;
+    [[nodiscard]] virtual PreviewTimelineApplyResult ApplyTimeline(
+        const PreviewTimelineApplyRequest& request) = 0;
     [[nodiscard]] virtual PreviewCommandResult SeekTimeline(
         const PreviewTimelineSeekRequest& request) = 0;
     [[nodiscard]] virtual PreviewCommandResult CaptureCheckpoint() = 0;

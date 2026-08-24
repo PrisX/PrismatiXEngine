@@ -11,7 +11,8 @@ namespace px::progress {
 
 namespace {
 constexpr std::string_view kSaveFormat = "PrismatiXSave";
-constexpr int kSaveSchemaRevision = 2;
+constexpr int kSaveSchemaRevision = 3;
+constexpr int kOldestSaveSchemaRevision = 2;
 constexpr std::size_t kMaxSaveCollectionItems = 1'000'000;
 
 void SaveLoadError(const std::string& path, std::string message, std::string details = {}) {
@@ -22,8 +23,12 @@ void SaveLoadError(const std::string& path, std::string message, std::string det
 }
 
 bool HasSupportedHeader(const Json& json) {
-    return json.is_object() && json.value("format", std::string{}) == kSaveFormat &&
-           json.value("schemaRevision", 0) == kSaveSchemaRevision;
+    if (!json.is_object() ||
+        json.value("format", std::string{}) != kSaveFormat)
+        return false;
+    const int revision = json.value("schemaRevision", 0);
+    return revision >= kOldestSaveSchemaRevision &&
+           revision <= kSaveSchemaRevision;
 }
 
 Json ColorToJson(const Color color) {
@@ -471,6 +476,126 @@ ui::BehaviorRuntimeState BehaviorStateFromJson(const Json& json) {
         action.providerId=value.at("provider").get<std::string>();action.providerHandle=value.at("providerHandle").get<std::uint64_t>();action.autoForget=value.at("autoForget").get<bool>();state.actions.push_back(std::move(action));}return state;
 }
 
+const char* VisualEaseName(const ui::VisualStateEase ease) {
+    switch (ease) {
+        case ui::VisualStateEase::Step: return "step";
+        case ui::VisualStateEase::Linear: return "linear";
+        case ui::VisualStateEase::EaseIn: return "easeIn";
+        case ui::VisualStateEase::EaseOut: return "easeOut";
+        case ui::VisualStateEase::EaseInOut: return "easeInOut";
+        case ui::VisualStateEase::BackOut: return "backOut";
+    }
+    return "linear";
+}
+
+ui::VisualStateEase VisualEaseFromName(const std::string_view name) {
+    if(name=="step")return ui::VisualStateEase::Step;
+    if(name=="linear")return ui::VisualStateEase::Linear;
+    if(name=="easeIn")return ui::VisualStateEase::EaseIn;
+    if(name=="easeOut")return ui::VisualStateEase::EaseOut;
+    if(name=="easeInOut")return ui::VisualStateEase::EaseInOut;
+    if(name=="backOut")return ui::VisualStateEase::BackOut;
+    throw std::invalid_argument("Visual State easing is invalid");
+}
+
+Json UIAnimationStateToJson(const ui::UIAnimationRuntimeState& state) {
+    Json parameters=Json::object();
+    for(const auto& [name,value]:state.parameters)
+        parameters[name]=VariantToSaveJson(value);
+    return {{"state",state.state.ToString()},
+            {"transition",state.transition.ToString()},
+            {"position",state.position},
+            {"transitionProgress",state.transitionProgress},
+            {"paused",state.paused},
+            {"parameters",std::move(parameters)}};
+}
+
+ui::UIAnimationRuntimeState UIAnimationStateFromJson(const Json& json) {
+    if(!json.is_object())throw std::invalid_argument("UI animation state must be an object");
+    ui::UIAnimationRuntimeState state;
+    state.state=RequiredUuid(json.at("state"),"UI animation state");
+    state.transition=RequiredUuid(json.at("transition"),"UI animation transition");
+    state.position=json.at("position").get<float>();
+    state.transitionProgress=json.at("transitionProgress").get<float>();
+    state.paused=json.at("paused").get<bool>();
+    const auto& parameters=json.at("parameters");
+    if(!parameters.is_object()||parameters.size()>kMaxSaveCollectionItems)
+        throw std::invalid_argument("UI animation parameters exceed save limits");
+    for(auto item=parameters.begin();item!=parameters.end();++item)
+        state.parameters.emplace(item.key(),VariantFromSaveJson(item.value()));
+    return state;
+}
+
+Json VisualStateToJson(const ui::VisualStateRuntimeState& state) {
+    Json groups=Json::array();
+    for(const auto& group:state.groups){
+        Json transitionFrom=Json::array();
+        for(const auto& value:group.transitionFrom)
+            transitionFrom.push_back({{"node",value.node.ToString()},
+                                      {"property",value.property},
+                                      {"value",VariantToSaveJson(value.value)}});
+        groups.push_back({{"group",group.group},{"state",group.state},
+                          {"from",group.from},{"elapsed",group.elapsed},
+                          {"duration",group.duration},
+                          {"easing",VisualEaseName(group.easing)},
+                          {"transitionFrom",std::move(transitionFrom)},
+                          {"animationClip",group.animationClip
+                              ? Json(group.animationClip->ToString()):Json(nullptr)},
+                          {"animationPosition",group.animationPosition}});
+    }
+    return {{"groups",std::move(groups)}};
+}
+
+ui::VisualStateRuntimeState VisualStateFromJson(const Json& json) {
+    if(!json.is_object()||!json.contains("groups")||!json["groups"].is_array()||
+       json["groups"].size()>kMaxSaveCollectionItems)
+        throw std::invalid_argument("Visual State checkpoint is malformed");
+    ui::VisualStateRuntimeState state;
+    for(const auto& encoded:json["groups"]){
+        if(!encoded.is_object())throw std::invalid_argument("Visual State group checkpoint must be an object");
+        ui::VisualStateGroupRuntimeState group;
+        group.group=encoded.at("group").get<std::string>();
+        group.state=encoded.at("state").get<std::string>();
+        group.from=encoded.at("from").get<std::string>();
+        group.elapsed=encoded.at("elapsed").get<float>();
+        group.duration=encoded.at("duration").get<float>();
+        group.easing=VisualEaseFromName(encoded.at("easing").get<std::string>());
+        const auto& transitionFrom=encoded.at("transitionFrom");
+        if(!transitionFrom.is_array()||transitionFrom.size()>kMaxSaveCollectionItems)
+            throw std::invalid_argument("Visual State transition checkpoint exceeds save limits");
+        for(const auto& value:transitionFrom)
+            group.transitionFrom.push_back({
+                RequiredUuid(value.at("node"),"Visual State node"),
+                value.at("property").get<std::string>(),
+                VariantFromSaveJson(value.at("value"))});
+        const auto& animationClip=encoded.at("animationClip");
+        if(!animationClip.is_null())
+            group.animationClip=RequiredUuid(animationClip,"Visual State animation clip");
+        group.animationPosition=encoded.at("animationPosition").get<float>();
+        state.groups.push_back(std::move(group));
+    }
+    return state;
+}
+
+Json UIRuntimeStateToJson(const ui::UIRuntimeState& state) {
+    return {{"behavior",BehaviorStateToJson(state.behavior)},
+            {"animation",state.animation
+                ? UIAnimationStateToJson(*state.animation):Json(nullptr)},
+            {"visualState",state.visualState
+                ? VisualStateToJson(*state.visualState):Json(nullptr)}};
+}
+
+ui::UIRuntimeState UIRuntimeStateFromJson(const Json& json) {
+    if(!json.is_object())throw std::invalid_argument("UI runtime state must be an object");
+    ui::UIRuntimeState state;
+    state.behavior=BehaviorStateFromJson(json.at("behavior"));
+    if(!json.at("animation").is_null())
+        state.animation=UIAnimationStateFromJson(json.at("animation"));
+    if(!json.at("visualState").is_null())
+        state.visualState=VisualStateFromJson(json.at("visualState"));
+    return state;
+}
+
 vn::DialogueSnapshot DialogueFromJson(const Json& json) {
     if (!json.is_object()) throw std::invalid_argument("dialogue must be an object");
     vn::DialogueSnapshot snapshot;
@@ -736,7 +861,7 @@ bool SaveSystem::Save(int slot, const SaveSnapshot& s) {
     j["animationClips"] = AnimationClipsToJson(s.animationClips);
     j["scriptPending"] = ScriptPendingToJson(s.scriptPending);
     j["scriptActions"] = ScriptActionsToJson(s.scriptActions);
-    j["behavior"] = BehaviorStateToJson(s.behavior);
+    j["ui"] = UIRuntimeStateToJson(s.ui);
     j["backlog"] = BacklogToJson(s.backlog);
     j["nvlMode"] = s.nvlMode;
     j["nvlLines"] = BacklogToJson(s.nvlLines);
@@ -799,7 +924,7 @@ std::optional<SaveSnapshot> SaveSystem::Load(int slot) const {
         if (!j.contains("vm") || !j.contains("dialogue") || !j.contains("routes") ||
             !j.contains("timelines") || !j.contains("animationClips") || !j.contains("stage") || !j.contains("audio") ||
             !j.contains("scriptPending") || !j.contains("scriptActions") ||
-            !j.contains("behavior")) {
+            (!j.contains("ui") && !j.contains("behavior"))) {
             SaveLoadError(path, "Save is missing exact runtime state");
             return std::nullopt;
         }
@@ -812,7 +937,8 @@ std::optional<SaveSnapshot> SaveSystem::Load(int slot) const {
         s.animationClips = AnimationClipsFromJson(j["animationClips"]);
         s.scriptPending = ScriptPendingFromJson(j["scriptPending"]);
         s.scriptActions = ScriptActionsFromJson(j["scriptActions"]);
-        s.behavior = BehaviorStateFromJson(j["behavior"]);
+        if(j.contains("ui"))s.ui=UIRuntimeStateFromJson(j["ui"]);
+        else s.ui.behavior=BehaviorStateFromJson(j["behavior"]);
         s.backlog = BacklogFromJson(j.value("backlog", Json::array()));
         s.timestamp = j.value("timestamp", std::uint64_t{ 0 });
         s.playtimeMs = j.value("playtimeMs", std::uint64_t{ 0 });
@@ -823,6 +949,9 @@ std::optional<SaveSnapshot> SaveSystem::Load(int slot) const {
         return s;
     } catch(const Json::exception& error) {
         SaveLoadError(path,"Save payload has invalid field types",error.what());
+        return std::nullopt;
+    } catch(const std::exception& error) {
+        SaveLoadError(path,"Save payload is invalid",error.what());
         return std::nullopt;
     }
 }

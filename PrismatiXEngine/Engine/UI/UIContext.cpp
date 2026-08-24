@@ -82,6 +82,40 @@ Status UIContext::RestoreBehaviorState(const BehaviorRuntimeState& state) {
     return m_behaviors.RestoreState(state.fibers);
 }
 
+UIRuntimeState UIContext::CaptureRuntimeState() const {
+    UIRuntimeState state;
+    state.behavior = CaptureBehaviorState();
+    if (m_animationController && m_animationController->Library())
+        state.animation = m_animationController->CaptureState();
+    if (m_visualStateController)
+        state.visualState = m_visualStateController->CaptureState();
+    return state;
+}
+
+Status UIContext::RestoreRuntimeState(const UIRuntimeState& state) {
+    if (const Status behavior = RestoreBehaviorState(state.behavior); !behavior)
+        return behavior;
+    if (state.animation) {
+        if (!m_animationController || !m_animationController->Library())
+            return Status::Fail(diag::Diagnostic{
+                .severity=diag::Severity::Error,.code="PXUI2414",
+                .category="UI.Runtime",
+                .message="UI checkpoint requires an Animation Controller"});
+        if (const Status animation=m_animationController->RestoreState(*state.animation);
+            !animation)return animation;
+    }
+    if (state.visualState) {
+        if (!m_visualStateController)
+            return Status::Fail(diag::Diagnostic{
+                .severity=diag::Severity::Error,.code="PXUI2415",
+                .category="UI.Runtime",
+                .message="UI checkpoint requires a Visual State Controller"});
+        if (const Status visual=m_visualStateController->RestoreState(*state.visualState);
+            !visual)return visual;
+    }
+    return Status::Ok();
+}
+
 Status UIContext::ConfigureTriggers(std::vector<TriggerBinding> triggers,
                                     std::optional<BehaviorGraph> interactionGraph,
                                     std::string sourceScene){

@@ -332,6 +332,7 @@ Status AnimationClip::Validate(const std::string& sourcePath) const {
 }
 
 Status TimelinePlayer::Register(AnimationClip clip) {const Status valid=clip.Validate();if(!valid)return valid;if(m_clips.contains(clip.id))return Status::Fail(TimelineError("PXANIM7510","Duplicate animation clip id"));m_clips.emplace(clip.id,std::move(clip));return Status::Ok();}
+Status TimelinePlayer::RegisterOrReplace(AnimationClip clip) {const Status valid=clip.Validate();if(!valid)return valid;const auto id=clip.id;m_clips.insert_or_assign(id,std::move(clip));return Status::Ok();}
 const AnimationClip* TimelinePlayer::Find(const resource::ResourceId& id) const {const auto found=m_clips.find(id);return found==m_clips.end()?nullptr:&found->second;}
 Status TimelinePlayer::Unregister(const resource::ResourceId& id){if(std::any_of(m_playbacks.begin(),m_playbacks.end(),[&](const auto& state){return state.clip==id&&state.playing;}))return Status::Fail(TimelineError("PXANIM7515","Cannot remove an animation while it is playing"));if(!m_clips.erase(id))return Status::Fail(TimelineError("PXANIM7516","Animation clip is not registered"));return Status::Ok();}
 

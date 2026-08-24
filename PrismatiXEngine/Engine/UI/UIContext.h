@@ -5,6 +5,7 @@
 #include "Engine/UI/Theme.h"
 #include "Engine/UI/Animation.h"
 #include "Engine/UI/VisualState.h"
+#include "Engine/UI/UIRuntimeState.h"
 #include "Engine/UI/Actions/ActionDispatcher.h"
 #include "Engine/UI/Actions/TriggerBinding.h"
 #include "Engine/UI/Behavior/BehaviorGraph.h"
@@ -49,6 +50,8 @@ public:
     [[nodiscard]] const BehaviorGraphRunner& Behaviors() const { return m_behaviors; }
     [[nodiscard]] BehaviorRuntimeState CaptureBehaviorState() const;
     Status RestoreBehaviorState(const BehaviorRuntimeState& state);
+    [[nodiscard]] UIRuntimeState CaptureRuntimeState() const;
+    Status RestoreRuntimeState(const UIRuntimeState& state);
 
     [[nodiscard]] bool Update(const Input& input, int viewportWidth, int viewportHeight,float deltaSeconds=0.0f);
     Status SetAnimations(UIAnimationLibrary library,bool autoplay=true);

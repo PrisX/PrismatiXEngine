@@ -176,9 +176,9 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         [this](const std::string_view path){return m_session->PlayAnimationAsset(std::string(path));},
         [this](const std::uint64_t handle){return m_session->Timeline().Playing(handle);});
     m_ui.SetControlRuntimeConfigurator([this](ui::Control& control){auto* rectangle=dynamic_cast<ui::VideoRect*>(&control);if(!rectangle)return;auto player=std::make_shared<video::VideoPlayer>(m_runtime.Renderer().Handle(),m_runtime.VFS());rectangle->SetPlayback({[player](const std::string_view path){return player->Open(std::string(path));},[player]{player->Close();},[player](const float delta){player->Update(delta);},[player]{return player->Playing();},[player]{return player->Texture();},[player]{return Vec2{static_cast<float>(player->Width()),static_cast<float>(player->Height())};}});});
-    m_session->SetBehaviorStateHandler(
-        [this] { return m_ui.CaptureBehaviorState(); },
-        [this](const ui::BehaviorRuntimeState& state) { return m_ui.RestoreBehaviorState(state); });
+    m_session->SetUIStateHandler(
+        [this] { return m_ui.CaptureRuntimeState(); },
+        [this](const ui::UIRuntimeState& state) { return m_ui.RestoreRuntimeState(state); });
     if (const auto projectText=m_runtime.VFS().ReadText("project.pxproject")) {
         const auto project=nlohmann::json::parse(*projectText,nullptr,false);
         if(!project.is_discarded()&&project.is_object()&&
@@ -581,7 +581,7 @@ bool PlayerApp::LoadSlot(int slot) {
     state.routes = snap->routes;
     state.timelines = snap->timelines;
     state.animationClips = snap->animationClips;
-    state.behavior = snap->behavior;
+    state.ui = snap->ui;
     state.playtimeMs = snap->playtimeMs;
     const bool awaitingTimeline = std::any_of(snap->timelines.begin(), snap->timelines.end(),
         [](const animation::PlaybackState& playback) { return playback.playing && playback.awaiting; });
@@ -598,7 +598,9 @@ bool PlayerApp::LoadSlot(int slot) {
         const Status scriptActionStatus = m_scriptHost->RestorePendingActions(snap->scriptActions);
         if (!scriptActionStatus) return false;
     }
-    if (!snap->behavior.fibers.empty() || !snap->behavior.actions.empty()) {
+    if (!snap->ui.behavior.fibers.empty() ||
+        !snap->ui.behavior.actions.empty() || snap->ui.animation ||
+        snap->ui.visualState) {
         if (const Status uiStatus = m_ui.ShowHUD(DialogueUI()); !uiStatus) return false;
     }
     if (!m_session->RestoreState(state, m_runtime.GetClock().NowMs())) return false;
@@ -633,7 +635,7 @@ progress::SaveSnapshot PlayerApp::MakeSnapshot(bool includeBacklog) {
     snap.routes = state.routes;
     snap.timelines = state.timelines;
     snap.animationClips = state.animationClips;
-    snap.behavior = state.behavior;
+    snap.ui = state.ui;
     if (m_scriptHost) {
         snap.scriptPending = m_scriptHost->CapturePending();
         snap.scriptActions = m_scriptHost->CapturePendingActions();
@@ -669,7 +671,7 @@ void PlayerApp::ApplyRollback(const RollbackEntry& entry) {
     state.routes = s.routes;
     state.timelines = s.timelines;
     state.animationClips = s.animationClips;
-    state.behavior = s.behavior;
+    state.ui = s.ui;
     state.backlog = m_session->Backlog().Entries();
     if (state.backlog.size() > entry.backlogSize) state.backlog.resize(entry.backlogSize);
     if (m_scriptHost) {

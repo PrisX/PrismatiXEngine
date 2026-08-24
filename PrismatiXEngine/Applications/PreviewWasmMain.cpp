@@ -63,6 +63,7 @@ std::string_view PreviewStatusName(const px::sdk::PreviewSessionStatus status) {
         case px::sdk::PreviewSessionStatus::Advanced: return "advanced";
         case px::sdk::PreviewSessionStatus::ChoiceSelected: return "choiceSelected";
         case px::sdk::PreviewSessionStatus::StorySeeked: return "storySeeked";
+        case px::sdk::PreviewSessionStatus::TimelineApplied: return "timelineApplied";
         case px::sdk::PreviewSessionStatus::TimelineSeeked: return "timelineSeeked";
         case px::sdk::PreviewSessionStatus::CheckpointCaptured: return "checkpointCaptured";
         case px::sdk::PreviewSessionStatus::CheckpointRestored: return "checkpointRestored";
@@ -233,10 +234,10 @@ public:
             [this](const std::uint64_t handle) {
                 return m_session->Timeline().Playing(handle);
             });
-        m_session->SetBehaviorStateHandler(
-            [this] { return m_hud.CaptureBehaviorState(); },
-            [this](const px::ui::BehaviorRuntimeState& state) {
-                return m_hud.RestoreBehaviorState(state);
+        m_session->SetUIStateHandler(
+            [this] { return m_hud.CaptureRuntimeState(); },
+            [this](const px::ui::UIRuntimeState& state) {
+                return m_hud.RestoreRuntimeState(state);
             });
         m_session->SetAnimationTargetHandler(
             px::animation::TargetKind::UI,
@@ -1067,6 +1068,43 @@ public:
                           .document.operations.size()}}
                     .dump());
             EmitFocus(true);
+        } else if (command == "applyTimeline") {
+            const auto timelineValue = payload.find("timeline");
+            const std::string timelineId = payload.value(
+                "timelineDocumentId", std::string{});
+            const std::uint64_t timelineRevision = payload.value(
+                "timelineRevision", std::uint64_t{0});
+            if (timelineValue == payload.end() ||
+                !(timelineValue->is_string() || timelineValue->is_object()) ||
+                timelineId.empty()) {
+                EmitControlDiagnostic(
+                    "PXWASM-TIMELINE-APPLY-001",
+                    "Timeline apply requires timelineDocumentId, timelineRevision, and canonical timeline content.");
+                return 0;
+            }
+            const std::string timeline = timelineValue->is_string()
+                ? timelineValue->get<std::string>() : timelineValue->dump();
+            const auto previewResult = m_previewSession->ApplyTimeline(
+                {timelineId, timelineRevision, timeline,
+                 payload.value("sourcePath",
+                               "memory://preview/timeline.pxtimeline"),
+                 payload.value("time", 0.0),
+                 payload.value("speed", 1.0)});
+            if (!previewResult.accepted) {
+                EmitPreviewDiagnostics(previewResult,
+                                       "PXWASM-TIMELINE-APPLY-002");
+                return 0;
+            }
+            m_paused = true;
+            SetPerformanceAudioPaused(true);
+            m_protocol.Emit(
+                "state",
+                Json{{"status", "paused"},
+                     {"reason", "timelineApplied"},
+                     {"timelineDocumentId", timelineId},
+                     {"timelineRevision", timelineRevision},
+                     {"playbackHandle", previewResult.playbackHandle},
+                     {"timelineTime", payload.value("time", 0.0)}}.dump());
         } else if (command == "seekTimeline" &&
                    payload.contains("playbackHandle")) {
             const auto handle = payload.find("playbackHandle");
@@ -1595,8 +1633,9 @@ private:
         return m_scriptHost->RestorePendingActions(checkpoint->actions);
     }
 
+    template <typename PreviewResult>
     void EmitPreviewDiagnostics(
-        const px::sdk::PreviewCommandResult& result,
+        const PreviewResult& result,
         const std::string_view fallbackCode) {
         Json diagnostics = Json::array();
         for (const auto& diagnostic : result.diagnostics) {
@@ -2339,7 +2378,7 @@ private:
                                  {"awaiting", playback.awaiting}});
         }
 
-        const auto& behavior = state.behavior;
+        const auto& behavior = state.ui.behavior;
         Json fibers = Json::array();
         for (std::size_t index = 0;
              index < std::min(behavior.fibers.size(), kRuntimeSnapshotItemLimit);

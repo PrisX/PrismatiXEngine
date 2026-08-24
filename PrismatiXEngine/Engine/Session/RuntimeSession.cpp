@@ -98,6 +98,35 @@ Result<animation::PlaybackHandle> RuntimeSession::PlayTimelineAsset(
     return PlayAnimationAsset(path,await,speed);
 }
 
+Result<animation::PlaybackHandle> RuntimeSession::PlayTimelineText(
+    const std::string_view text,const std::string& sourcePath,
+    const bool await,const float speed){
+    auto parsed=animation::ParseTimeline(text,sourcePath);
+    if(!parsed)return Result<animation::PlaybackHandle>::Failure(parsed.Diagnostics());
+    animation::TimelineDocument document=parsed.TakeValue();
+    std::vector<std::string> stack{sourcePath};
+    for(const auto& nested:document.nestedClips){
+        resource::ResourceId nestedId=nested.clip.id;
+        if(!nested.clip.lastKnownPath.empty()){
+            auto loaded=LoadAnimationAsset(nested.clip.lastKnownPath,
+                nested.clip.id.Empty()?std::nullopt:std::optional<resource::ResourceId>{nested.clip.id},stack);
+            if(!loaded)return Result<animation::PlaybackHandle>::Failure(loaded.Diagnostics());
+            nestedId=loaded.Value();
+        }else if(nestedId.Empty()||!m_timeline.Find(nestedId)){
+            return Result<animation::PlaybackHandle>::Failure(
+                RestoreFailure("Nested animation resource has no resolvable path or registered id",sourcePath).Diagnostics());
+        }
+        document.clip.nested.push_back({nested.start,nestedId,nested.speed});
+    }
+    const auto id=document.clip.id;
+    const Status registered=m_timeline.RegisterOrReplace(std::move(document.clip));
+    if(!registered)return Result<animation::PlaybackHandle>::Failure(registered.Diagnostics());
+    const auto handle=m_timeline.Play(id,await,speed);
+    if(!handle)return Result<animation::PlaybackHandle>::Failure(
+        RestoreFailure("Timeline could not be played",sourcePath).Diagnostics());
+    return Result<animation::PlaybackHandle>::Success(handle);
+}
+
 Result<resource::ResourceId> RuntimeSession::LoadAnimationAsset(
     const std::string& path,
     const std::optional<resource::ResourceId> expectedId,
@@ -380,7 +409,7 @@ RuntimeSession::GameState RuntimeSession::CaptureState(const std::uint64_t playt
     state.routes = m_routes.CaptureState();
     state.timelines = m_timeline.CaptureState();
     for (const auto& [_, clip] : m_timeline.RegisteredClips()) state.animationClips.push_back(clip);
-    if (m_captureBehaviorState) state.behavior = m_captureBehaviorState();
+    if (m_captureUIState) state.ui = m_captureUIState();
     state.playtimeMs = playtimeMs;
     return state;
 }
@@ -391,11 +420,10 @@ Status RuntimeSession::RestoreState(const GameState& state, const std::uint64_t 
         const Status routeStatus = m_routes.RestoreState(state.routes);
         if (!routeStatus) return routeStatus;
     }
-    for (const auto& clip : state.animationClips)
-        if (!m_timeline.Find(clip.id)) {
-            const Status registered = m_timeline.Register(clip);
-            if (!registered) return registered;
-        }
+    for (const auto& clip : state.animationClips) {
+        const Status registered = m_timeline.RegisterOrReplace(clip);
+        if (!registered) return registered;
+    }
     if (const Status timelineStatus = m_timeline.RestoreState(state.timelines);
         !timelineStatus) {
         return timelineStatus;
@@ -431,9 +459,9 @@ Status RuntimeSession::RestoreState(const GameState& state, const std::uint64_t 
                               state.vm.scriptPath);
     }
     m_vm.OverrideCurrentBgm(state.vm.currentBgm);
-    if (m_restoreBehaviorState) {
-        const Status behaviorStatus = m_restoreBehaviorState(state.behavior);
-        if (!behaviorStatus) return behaviorStatus;
+    if (m_restoreUIState) {
+        const Status uiStatus = m_restoreUIState(state.ui);
+        if (!uiStatus) return uiStatus;
     }
     return Status::Ok();
 }

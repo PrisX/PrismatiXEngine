@@ -93,6 +93,9 @@ public:
     using Completion = std::function<void(PlaybackHandle, bool cancelled)>;
 
     Status Register(AnimationClip clip);
+    // Preview authoring may replace a canonical clip while retaining the
+    // existing TimelinePlayer and target bindings.
+    Status RegisterOrReplace(AnimationClip clip);
     [[nodiscard]] const AnimationClip* Find(const resource::ResourceId& id) const;
     [[nodiscard]] const auto& RegisteredClips() const { return m_clips; }
     Status Unregister(const resource::ResourceId& id);

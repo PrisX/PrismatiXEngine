@@ -99,6 +99,12 @@ public:
     Status RestoreBehaviorState(const BehaviorRuntimeState& state) {
         return m_context.RestoreBehaviorState(state);
     }
+    [[nodiscard]] UIRuntimeState CaptureRuntimeState() const {
+        return m_context.CaptureRuntimeState();
+    }
+    Status RestoreRuntimeState(const UIRuntimeState& state) {
+        return m_context.RestoreRuntimeState(state);
+    }
     [[nodiscard]] ActionDispatcher& Actions() { return m_context.Actions(); }
     Status ShowTitle();
     Status ShowHUD(const DialoguePresentation& presentation);
