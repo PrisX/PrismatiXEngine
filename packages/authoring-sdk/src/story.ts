@@ -154,7 +154,10 @@ export function parseStory(text: string, path = "Story/untitled.pxstory"): Story
   let activeSpeaker: string | undefined;
   for (const line of sourceLines(text)) {
     const trimmed = line.text.trim();
-    if (trimmed.length === 0) continue;
+    if (trimmed.length === 0) {
+      activeSpeaker = undefined;
+      continue;
+    }
     const startColumn = line.text.indexOf(trimmed) + 1;
     const lineSpan = span(path, line, startColumn, startColumn + trimmed.length);
     const id = `story-${stableId(`${path}:${line.offset}:${trimmed}`)}`;
