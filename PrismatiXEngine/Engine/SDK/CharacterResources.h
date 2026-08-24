@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Engine/SDK/ContractVersions.h"
+
 #include <functional>
 #include <optional>
 #include <string>
@@ -7,8 +9,6 @@
 #include <vector>
 
 namespace px::sdk {
-
-inline constexpr int kCharacterResourcesContractRevision = 1;
 
 struct CharacterResourceDiagnostic {
     std::string code;

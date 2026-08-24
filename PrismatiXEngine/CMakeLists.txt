@@ -2,6 +2,16 @@ cmake_minimum_required(VERSION 3.21)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
+include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/PrismatiXContractVersions.cmake")
+
+set(PRISMATIX_GENERATED_INCLUDE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY "${PRISMATIX_GENERATED_INCLUDE_DIR}/Engine/SDK")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/Engine/SDK/ContractVersions.h.in"
+    "${PRISMATIX_GENERATED_INCLUDE_DIR}/Engine/SDK/ContractVersions.h"
+    @ONLY
+)
 
 execute_process(
     COMMAND git -c safe.directory=${CMAKE_SOURCE_DIR} rev-parse HEAD
@@ -48,6 +58,7 @@ add_library(PrismatiXRuntimeContracts STATIC
 add_library(PrismatiX::RuntimeContracts ALIAS PrismatiXRuntimeContracts)
 prismatix_configure_target(PrismatiXRuntimeContracts)
 target_include_directories(PrismatiXRuntimeContracts PUBLIC
+    $<BUILD_INTERFACE:${PRISMATIX_GENERATED_INCLUDE_DIR}>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/PrismatiX>
 )
@@ -92,6 +103,11 @@ install(DIRECTORY Engine/SDK
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/PrismatiX/Engine
     COMPONENT PrismatiXSDK
     FILES_MATCHING PATTERN "*.h"
+)
+install(FILES
+    "${PRISMATIX_GENERATED_INCLUDE_DIR}/Engine/SDK/ContractVersions.h"
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/PrismatiX/Engine/SDK
+    COMPONENT PrismatiXSDK
 )
 write_basic_package_version_file(
     "${CMAKE_CURRENT_BINARY_DIR}/PrismatiXSDKConfigVersion.cmake"
@@ -442,6 +458,18 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     set_tests_properties(PrismatiX.SDK.UiTypeRegistryContract
                          PROPERTIES LABELS "sdk;runtime;contract;ui")
 
+    add_executable(PrismatiXSDKManifestContractTests
+                   Tests/SDKManifestContractTests.cpp)
+    target_link_libraries(PrismatiXSDKManifestContractTests
+                          PRIVATE PrismatiXRuntime)
+    target_compile_definitions(PrismatiXSDKManifestContractTests PRIVATE
+        "PRISMATIX_SDK_MANIFEST_PATH=\"${CMAKE_CURRENT_BINARY_DIR}/PrismatiXSDKManifest.json\"")
+    prismatix_configure_target(PrismatiXSDKManifestContractTests)
+    add_test(NAME PrismatiX.SDK.ManifestContract
+             COMMAND PrismatiXSDKManifestContractTests)
+    set_tests_properties(PrismatiX.SDK.ManifestContract PROPERTIES
+                         LABELS "sdk;contract;architecture")
+
     add_executable(PrismatiXRuntimeIrContractTests Tests/RuntimeIrContractTests.cpp)
     target_link_libraries(PrismatiXRuntimeIrContractTests PRIVATE PrismatiXSDK)
     prismatix_configure_target(PrismatiXRuntimeIrContractTests)
@@ -608,6 +636,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         PrismatiXStudioUiContractTests
         PrismatiXStudioUiRuntimeAdapterTests
         PrismatiXUiTypeRegistryContractTests
+        PrismatiXSDKManifestContractTests
         PrismatiXRuntimeIrContractTests
         PrismatiXRuntimeIrRuntimeAdapterTests
         PrismatiXRuntimeAssetResolverTests

@@ -1,14 +1,13 @@
 #pragma once
 
+#include "Engine/SDK/ContractVersions.h"
+
 #include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace px::sdk {
-
-inline constexpr std::uint32_t kUiTypeRegistrySchemaRevision = 2;
-inline constexpr std::uint32_t kUiTypeRegistryContractRevision = 2;
 
 struct UiTypeRegistryRange {
     double minimum = 0.0;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Engine/SDK/ContractVersions.h"
+
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -8,8 +10,9 @@
 
 namespace px::preview {
 
-inline constexpr std::uint32_t kProtocolVersion = 2;
-inline constexpr std::uint32_t kSchemaRevision = 2;
+inline constexpr std::uint32_t kProtocolVersion =
+    sdk::kPreviewProtocolVersion;
+inline constexpr std::uint32_t kSchemaRevision = sdk::kPreviewSchemaRevision;
 
 struct ApplyRequest {
     std::string sessionId;

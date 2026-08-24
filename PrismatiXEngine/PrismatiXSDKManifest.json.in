@@ -7,17 +7,17 @@
   "artifactSha256": "pending-finalization",
   "manifestSha256": "pending-finalization",
   "previewProtocolRange": {
-    "min": 2,
-    "max": 2
+    "min": @PRISMATIX_PREVIEW_PROTOCOL_VERSION@,
+    "max": @PRISMATIX_PREVIEW_PROTOCOL_VERSION@
   },
   "contracts": {
-    "characterResources": "1",
-    "gameCatalogResources": "1",
-    "packager": "1",
-    "runtimeIr": "1",
-    "previewProtocol": "2",
-    "studioUi": "1",
-    "uiTypeRegistry": "1"
+    "characterResources": "@PRISMATIX_CHARACTER_RESOURCES_CONTRACT_REVISION@",
+    "gameCatalogResources": "@PRISMATIX_GAME_CATALOG_RESOURCES_CONTRACT_REVISION@",
+    "packager": "@PRISMATIX_PACKAGER_CONTRACT_REVISION@",
+    "runtimeIr": "@PRISMATIX_RUNTIME_IR_CONTRACT_REVISION@",
+    "previewProtocol": "@PRISMATIX_PREVIEW_PROTOCOL_VERSION@",
+    "studioUi": "@PRISMATIX_STUDIO_UI_CONTRACT_REVISION@",
+    "uiTypeRegistry": "@PRISMATIX_UI_TYPE_REGISTRY_CONTRACT_REVISION@"
   },
   "contractHashes": {}
 }
