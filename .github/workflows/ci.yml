@@ -121,6 +121,19 @@ jobs:
       - name: Finalize SDK artifact identity
         shell: pwsh
         run: ./scripts/finalize-sdk-manifest.ps1 -SdkRoot out/ci/sdk-package -TargetTriple x86_64-pc-windows-msvc
+      - name: Compile and run installed SDK consumer
+        shell: pwsh
+        run: |
+          cmake -S PrismatiXEngine/Tests/InstalledSDKConsumer `
+            -B out/ci/installed-sdk-consumer -G Ninja `
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo `
+            "-DCMAKE_PREFIX_PATH=$env:GITHUB_WORKSPACE/out/ci/sdk-package" `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            "-DVCPKG_INSTALLED_DIR=$env:GITHUB_WORKSPACE/out/ci/vcpkg/msvc"
+          cmake --build out/ci/installed-sdk-consumer --parallel
+          ctest --test-dir out/ci/installed-sdk-consumer -C RelWithDebInfo `
+            --output-on-failure --no-tests=error
       - name: Validate installed SDK surface
         shell: pwsh
         run: |

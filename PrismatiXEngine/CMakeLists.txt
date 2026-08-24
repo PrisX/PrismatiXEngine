@@ -56,6 +56,8 @@ add_library(PrismatiXRuntimeContracts STATIC
     Engine/SDK/Ui.cpp
 )
 add_library(PrismatiX::RuntimeContracts ALIAS PrismatiXRuntimeContracts)
+set_target_properties(PrismatiXRuntimeContracts PROPERTIES
+    EXPORT_NAME RuntimeContracts)
 prismatix_configure_target(PrismatiXRuntimeContracts)
 target_include_directories(PrismatiXRuntimeContracts PUBLIC
     $<BUILD_INTERFACE:${PRISMATIX_GENERATED_INCLUDE_DIR}>
@@ -72,6 +74,7 @@ add_library(PrismatiXSDK STATIC
     Engine/SDK/UiTypeRegistry.cpp
 )
 add_library(PrismatiX::SDK ALIAS PrismatiXSDK)
+set_target_properties(PrismatiXSDK PROPERTIES EXPORT_NAME SDK)
 prismatix_configure_target(PrismatiXSDK)
 target_include_directories(PrismatiXSDK PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>

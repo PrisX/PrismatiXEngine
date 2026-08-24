@@ -77,7 +77,7 @@ $previewContract = @(
     "schemaRevision=2",
     "protocolVersion=2",
     "envelope=protocolVersion,sessionId,requestId,documentId,revision",
-    "commands=apply,patch,play,pause,continue,step,seekStory,seekTimeline,selectChoice,input,capture,restoreCheckpoint,resize,stop",
+    "commands=apply,patch,play,pause,continue,step,seekStory,applyTimeline,seekTimeline,selectChoice,input,capture,restoreCheckpoint,resize,stop",
     "events=state,runtimeFocus,diagnostics,output,debug,audioState,unsupported,crashed"
 ) -join "`n"
 $contractHashes.previewProtocol = Get-Sha256Text $previewContract
