@@ -1,0 +1,22 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://prismatix.dev/contracts/source-map.schema.json",
+  "type":"object","additionalProperties":false,
+  "required":["format","schemaRevision","documentId","mappings"],
+  "properties":{
+    "format":{"const":"PrismatiXSourceMap"},
+    "schemaRevision":{"const":1},
+    "documentId":{"type":"string","minLength":1,"maxLength":512},
+    "mappings":{"type":"array","maxItems":1000000,"items":{
+      "type":"object","additionalProperties":false,
+      "required":["operationId","sourceId","sourceUri","startLine","startColumn","endLine","endColumn"],
+      "properties":{
+        "operationId":{"type":"string","minLength":1,"maxLength":512},
+        "sourceId":{"type":"string","minLength":1,"maxLength":512},
+        "sourceUri":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
+        "startLine":{"type":"integer","minimum":1},"startColumn":{"type":"integer","minimum":1},
+        "endLine":{"type":"integer","minimum":1},"endColumn":{"type":"integer","minimum":1}
+      }
+    }}
+  }
+}

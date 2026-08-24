@@ -1,0 +1,14 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://prismatix.dev/contracts/game.schema.json",
+  "type":"object","additionalProperties":false,
+  "required":["format","schemaRevision","variables","gallery","unlockables"],
+  "properties":{
+    "format":{"const":"PrismatiXGame"},"schemaRevision":{"const":1},
+    "variables":{"type":"array","maxItems":100000,"items":{"type":"object","additionalProperties":false,"required":["name","type","default","persistent"],"properties":{"name":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"type":{"enum":["boolean","integer","number","string"]},"default":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"},"persistent":{"type":"boolean"},"description":{"type":"string","maxLength":4096}}}},
+    "progressionFlags":{"type":"array","uniqueItems":true,"items":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"}},
+    "gallery":{"type":"array","maxItems":100000,"items":{"type":"object","additionalProperties":false,"required":["id","image"],"properties":{"id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"title":{"type":"string","maxLength":512},"image":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/resourceRef"},"thumbnail":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/resourceRef"},"unlockFlag":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"}}}},
+    "unlockables":{"type":"array","maxItems":100000,"items":{"type":"object","additionalProperties":false,"required":["id","kind","condition"],"properties":{"id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"kind":{"type":"string","minLength":1,"maxLength":128},"condition":{"type":"string","minLength":1,"maxLength":4096},"payload":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"}}}},
+    "extensions":{"type":"object","additionalProperties":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"}}
+  }
+}

@@ -105,6 +105,13 @@ cmake --build . --config Release
 
 Runtime extensions live under `Content/Extensions/`. Each extension uses a typed `.pxextension` manifest with `language: "javascript"` and a `.js` entry file.
 
+Canonical JSON Schemas live in `Contracts/`. The frontend-neutral TypeScript Authoring SDK in `packages/authoring-sdk/` parses `.pxstory`, validates project documents, and compiles deterministic Runtime IR/source maps. It is a build-time tool and is not embedded in the Player.
+
+```bash
+npm ci
+npm run check
+```
+
 ### Example Extension
 
 A basic command extension looks like this:

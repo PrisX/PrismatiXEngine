@@ -26,6 +26,9 @@ int main() {
     Check(manifest.at("contracts").at("uiTypeRegistry") ==
               std::to_string(px::sdk::kUiTypeRegistryContractRevision),
           "SDK manifest and UI TypeRegistry contract revisions must match");
+    Check(manifest.at("contracts").at("authoringSchemas") ==
+              std::to_string(px::sdk::kAuthoringContractRevision),
+          "SDK manifest and Authoring schema contract revisions must match");
     Check(manifest.at("previewProtocolRange").at("min") ==
               px::sdk::kPreviewProtocolVersion &&
               manifest.at("previewProtocolRange").at("max") ==

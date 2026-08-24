@@ -135,6 +135,22 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/PrismatiXSDKManifest.json"
     DESTINATION .
     COMPONENT PrismatiXSDK
 )
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../Contracts/"
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/PrismatiX/contracts
+    COMPONENT PrismatiXSDK
+    FILES_MATCHING PATTERN "*.json"
+)
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../packages/authoring-sdk/dist/src/"
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/PrismatiX/authoring-sdk/dist/src
+    COMPONENT PrismatiXSDK
+    OPTIONAL
+)
+install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/../packages/authoring-sdk/package.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../packages/authoring-sdk/README.md"
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/PrismatiX/authoring-sdk
+    COMPONENT PrismatiXSDK
+)
 endif()
 
 
@@ -472,6 +488,8 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
 
     add_executable(PrismatiXRuntimeIrContractTests Tests/RuntimeIrContractTests.cpp)
     target_link_libraries(PrismatiXRuntimeIrContractTests PRIVATE PrismatiXSDK)
+    target_compile_definitions(PrismatiXRuntimeIrContractTests PRIVATE
+        "PRISMATIX_STORY_GOLDEN_IR_PATH=\"${CMAKE_CURRENT_SOURCE_DIR}/../Contracts/fixtures/story-compiler-golden.pxir\"")
     prismatix_configure_target(PrismatiXRuntimeIrContractTests)
     add_test(NAME PrismatiX.SDK.RuntimeIrContract COMMAND PrismatiXRuntimeIrContractTests)
     set_tests_properties(PrismatiX.SDK.RuntimeIrContract PROPERTIES LABELS "sdk;contract")

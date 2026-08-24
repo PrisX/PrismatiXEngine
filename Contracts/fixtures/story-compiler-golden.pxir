@@ -1,0 +1,48 @@
+{
+  "committedRevision": 1,
+  "documentId": "contract.story-golden",
+  "format": "PrismatiXRuntimeIR",
+  "operations": [
+    {
+      "arguments": {
+        "target": "start"
+      },
+      "kind": "label",
+      "operationId": "op-8dbd17756da81f7b",
+      "sourceId": "story-00d7c47eba115e28",
+      "sourceLine": 1,
+      "text": "*start"
+    },
+    {
+      "arguments": {
+        "character": "yuki",
+        "speaker": "yuki",
+        "text": "Hello from the Authoring SDK."
+      },
+      "kind": "dialogue",
+      "operationId": "op-5a56ed9033f50865",
+      "sourceId": "story-2076b04d22ebeb32",
+      "sourceLine": 3,
+      "text": "Hello from the Authoring SDK."
+    },
+    {
+      "arguments": {
+        "duration": "250ms"
+      },
+      "kind": "wait",
+      "operationId": "op-98766580276a1c4b",
+      "sourceId": "story-6748c371bea2aad3",
+      "sourceLine": 4,
+      "text": "[wait 250ms]"
+    },
+    {
+      "arguments": {},
+      "kind": "endStory",
+      "operationId": "op-dc0e6a11c68ad816",
+      "sourceId": "story-6b9d45494655d158",
+      "sourceLine": 5,
+      "text": "[end]"
+    }
+  ],
+  "schemaRevision": 1
+}

@@ -1,0 +1,27 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://prismatix.dev/contracts/runtime-ir.schema.json",
+  "type":"object","additionalProperties":false,
+  "required":["format","schemaRevision","documentId","committedRevision","operations"],
+  "properties":{
+    "format":{"const":"PrismatiXRuntimeIR"},
+    "schemaRevision":{"const":1},
+    "documentId":{"type":"string","minLength":1,"maxLength":512},
+    "committedRevision":{"type":"integer","minimum":0},
+    "operations":{
+      "type":"array","maxItems":1000000,
+      "items":{
+        "type":"object","additionalProperties":false,
+        "required":["operationId","sourceId","sourceLine","kind","text","arguments"],
+        "properties":{
+          "operationId":{"type":"string","minLength":1,"maxLength":512},
+          "sourceId":{"type":"string","minLength":1,"maxLength":512},
+          "sourceLine":{"type":"integer","minimum":1,"maximum":4294967295},
+          "kind":{"enum":["scene","fragment","callFragment","return","endStory","dialogue","narration","choiceOption","background","showCharacter","hideCharacter","voice","bgm","soundEffect","setVariable","condition","else","endCondition","label","jump","wait","timeline","effect","ui","customNode","camera"]},
+          "text":{"type":"string","maxLength":1048576},
+          "arguments":{"type":"object","maxProperties":1024,"additionalProperties":{"type":"string","maxLength":1048576}}
+        }
+      }
+    }
+  }
+}

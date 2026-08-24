@@ -1,0 +1,17 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://prismatix.dev/contracts/character.schema.json",
+  "type":"object","additionalProperties":false,
+  "required":["format","schemaRevision","id","displayName","aliases","expressions"],
+  "properties":{
+    "format":{"const":"PrismatiXCharacter"},"schemaRevision":{"const":1},
+    "id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},"revision":{"type":"integer","minimum":0},
+    "displayName":{"type":"string","minLength":1,"maxLength":512},
+    "aliases":{"type":"array","minItems":1,"uniqueItems":true,"items":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"}},
+    "voiceDirectory":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
+    "voice":{"type":"object","additionalProperties":false,"properties":{"actor":{"type":"string","maxLength":512},"locale":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/locale"},"prefix":{"type":"string","maxLength":256}}},
+    "defaultExpressionId":{"oneOf":[{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},{"type":"null"}]},
+    "expressions":{"type":"array","maxItems":10000,"items":{"type":"object","additionalProperties":false,"required":["id","name","aliases","assetId"],"properties":{"id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},"name":{"type":"string","minLength":1,"maxLength":512},"aliases":{"type":"array","uniqueItems":true,"items":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"}},"assetId":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},"portraitAssetId":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},"thumbnailAssetId":{"oneOf":[{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},{"type":"null"}]},"extensions":{"type":"object","additionalProperties":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"}}}}},
+    "extensions":{"type":"object","additionalProperties":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"}}
+  }
+}

@@ -32,19 +32,25 @@ struct UnsupportedCapability {
 
 std::optional<UnsupportedCapability> Unsupported(
     const sdk::RuntimeIrOperation& operation) {
-    if (IsKind(operation.kind, {"video", "playVideo", "movie"})) {
+    std::string_view executableKind = operation.kind;
+    if (operation.kind == "customNode") {
+        const auto type = operation.arguments.find("type");
+        if (type != operation.arguments.end()) executableKind = type->second;
+    }
+    if (IsKind(executableKind, {"video", "playVideo", "movie"})) {
         return UnsupportedCapability{
             "PXWASM-VIDEO-001", "video.ffmpeg",
             "Use Ship > Native Check to validate video playback."};
     }
-    if (IsKind(operation.kind,
+    if (IsKind(executableKind,
                {"speech", "tts", "selfVoice", "platformSpeech"})) {
         return UnsupportedCapability{
             "PXWASM-SPEECH-001", "speech.platform",
             "Use Ship > Native Check to validate platform speech."};
     }
-    if (IsKind(operation.kind, {"nativeExtension", "extension.native"}) ||
-        (operation.kind == "extension" &&
+    if (IsKind(executableKind,
+               {"nativeExtension", "extension.native"}) ||
+        (operation.kind == "customNode" &&
          operation.arguments.contains("nativeLibrary"))) {
         return UnsupportedCapability{
             "PXWASM-EXTENSION-001", "extension.native",

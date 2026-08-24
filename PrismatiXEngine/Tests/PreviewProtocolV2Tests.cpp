@@ -194,7 +194,9 @@ int main() {
     (void)protocol.DrainEvents();
 
     const auto video = protocol.AcceptApply(
-        Envelope("apply", 9, RuntimeIr(9, "video", {{"file", "op.mp4"}})),
+        Envelope("apply", 9,
+                 RuntimeIr(9, "customNode",
+                           {{"type", "video"}, {"file", "op.mp4"}})),
         false);
     assert(!video.Accepted());
     events = Json::parse(protocol.DrainEvents());
@@ -215,7 +217,9 @@ int main() {
     assert(hasSource);
 
     const auto speech = protocol.AcceptApply(
-        Envelope("apply", 9, RuntimeIr(9, "tts", {{"voice", "system"}})),
+        Envelope("apply", 9,
+                 RuntimeIr(9, "customNode",
+                           {{"type", "tts"}, {"voice", "system"}})),
         false);
     assert(!speech.Accepted());
     assert(ContainsCode(Json::parse(protocol.DrainEvents()),

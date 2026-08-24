@@ -1,9 +1,23 @@
 #include "Engine/SDK/RuntimeIr.h"
 
 #include <cassert>
+#include <fstream>
+#include <sstream>
 #include <string>
 
 int main() {
+    {
+        std::ifstream fixture(PRISMATIX_STORY_GOLDEN_IR_PATH,
+                              std::ios::binary);
+        assert(fixture.good());
+        std::ostringstream text;
+        text << fixture.rdbuf();
+        const auto crossLanguage = px::sdk::ParseRuntimeIr(text.str());
+        assert(crossLanguage.Valid());
+        assert(crossLanguage.document.documentId ==
+               "contract.story-golden");
+        assert(crossLanguage.document.operations.size() == 4);
+    }
     const std::string valid = R"({
       "format": "PrismatiXRuntimeIR",
       "schemaRevision": 1,

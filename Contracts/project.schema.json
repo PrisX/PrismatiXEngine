@@ -1,0 +1,24 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://prismatix.dev/contracts/project.schema.json",
+  "type":"object","additionalProperties":false,
+  "required":["format","schemaRevision"],
+  "properties":{
+    "format":{"const":"PrismatiXProject"},"schemaRevision":{"const":1},
+    "id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
+    "name":{"type":"string","minLength":1,"maxLength":512},"version":{"type":"string","maxLength":64},
+    "engineCompatibility":{"type":"object","additionalProperties":false,"properties":{"minimum":{"type":"string"},"maximum":{"type":"string"}}},
+    "resolution":{"type":"object","additionalProperties":false,"required":["width","height"],"properties":{"width":{"type":"integer","minimum":1,"maximum":16384},"height":{"type":"integer","minimum":1,"maximum":16384}}},
+    "entry":{"type":"object","additionalProperties":false,"properties":{"story":{"type":"string","minLength":1},"scene":{"type":"string","minLength":1},"ui":{"type":"string","minLength":1}}},
+    "defaultLocale":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/locale"},
+    "supportedLocales":{"type":"array","uniqueItems":true,"maxItems":256,"items":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/locale"}},
+    "storyIndex":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
+    "gameCatalog":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
+    "extensions":{"type":"array","uniqueItems":true,"maxItems":1024,"items":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"}},
+    "uiEntryPoints":{"type":"object","maxProperties":256,"additionalProperties":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"}},
+    "assets":{"type":"array","maxItems":1000000,"items":{"type":"object","additionalProperties":false,"required":["id","kind","source"],"properties":{"id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},"name":{"type":"string","maxLength":512},"kind":{"type":"string","minLength":1,"maxLength":64},"source":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},"sourceFileName":{"type":"string","maxLength":512},"tags":{"type":"array","uniqueItems":true,"items":{"type":"string","maxLength":128}},"size":{"type":"integer","minimum":0},"fingerprint":{"type":"string","maxLength":512}}}},
+    "characters":{"type":"array","maxItems":100000,"items":{"type":"object","additionalProperties":false,"required":["id","source"],"properties":{"id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},"alias":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"displayName":{"type":"string","maxLength":512},"source":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"}}}},
+    "uiComponents":{"type":"array","maxItems":100000,"items":{"type":"object","additionalProperties":false,"required":["id","source"],"properties":{"id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},"name":{"type":"string","maxLength":512},"source":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"}}}},
+    "settings":{"type":"object","maxProperties":1024,"additionalProperties":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"}}
+  }
+}

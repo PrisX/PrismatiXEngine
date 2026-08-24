@@ -1,0 +1,14 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://prismatix.dev/contracts/timeline.schema.json",
+  "type":"object","additionalProperties":false,
+  "required":["format","schemaRevision","id","duration","tracks","markers","nestedClips"],
+  "properties":{
+    "format":{"const":"PrismatiXTimeline"},"schemaRevision":{"const":1},
+    "id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"name":{"type":"string","maxLength":512},
+    "duration":{"type":"number","minimum":0,"maximum":86400},
+    "tracks":{"type":"array","maxItems":100000,"items":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/track"}},
+    "markers":{"type":"array","maxItems":100000,"items":{"type":"object","additionalProperties":false,"required":["id","time","name","payload"],"properties":{"id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"time":{"type":"number","minimum":0},"name":{"type":"string","minLength":1,"maxLength":512},"payload":{"type":"object","additionalProperties":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"}}}}},
+    "nestedClips":{"type":"array","maxItems":100000,"items":{"type":"object","additionalProperties":false,"required":["start","clip","speed"],"properties":{"start":{"type":"number","minimum":0},"clip":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/resourceRef"},"speed":{"type":"number","exclusiveMinimum":0}}}}
+  }
+}

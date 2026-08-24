@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://prismatix.dev/contracts/ui.schema.json",
+  "$defs": {
+    "vec2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {"x": {"type": "number"}, "y": {"type": "number"}}
+    },
+    "layout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "x", "y", "width", "height", "anchorX", "anchorY", "anchorRight", "anchorBottom", "pivotX", "pivotY", "margin", "alignment", "sizeRule"],
+      "properties": {
+        "mode": {"enum": ["free", "container"]},
+        "x": {"type": "number"}, "y": {"type": "number"},
+        "width": {"type": "number", "minimum": 0}, "height": {"type": "number", "minimum": 0},
+        "anchorX": {"type": "number"}, "anchorY": {"type": "number"},
+        "anchorRight": {"type": "number"}, "anchorBottom": {"type": "number"},
+        "pivotX": {"type": "number"}, "pivotY": {"type": "number"},
+        "margin": {"type": "number"}, "alignment": {"type": "string"}, "sizeRule": {"type": "string"}
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "arguments"],
+      "properties": {
+        "id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
+        "arguments": {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"}}
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "parentId", "order", "kind", "name", "visible", "locked", "layout", "runtimeProperties", "bindings"],
+      "properties": {
+        "id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},
+        "parentId": {"oneOf": [{"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"}, {"type": "null"}]},
+        "order": {"type": "integer", "minimum": 0},
+        "kind": {"enum": ["control", "label", "button", "image", "stack", "hbox", "vbox", "grid", "group", "leaf"]},
+        "runtimeType": {"type": "string", "maxLength": 256},
+        "name": {"type": "string", "minLength": 1, "maxLength": 512},
+        "visible": {"type": "boolean"}, "locked": {"type": "boolean"},
+        "layout": {"$ref": "#/$defs/layout"},
+        "text": {"type": "string", "maxLength": 1048576},
+        "assetId": {"oneOf": [{"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"}, {"type": "null"}]},
+        "appearance": {
+          "type": "object", "additionalProperties": false,
+          "properties": {"backgroundColor": {"type": "string"}, "textColor": {"type": "string"}, "opacity": {"type": "number", "minimum": 0, "maximum": 1}, "styleToken": {"type": ["string", "null"]}}
+        },
+        "onClick": {"$ref": "#/$defs/action"},
+        "accessibilityLabel": {"type": "string", "maxLength": 1024},
+        "accessibilityRole": {"type": "string", "maxLength": 128},
+        "runtimeProperties": {"type": "object", "maxProperties": 4096, "additionalProperties": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"}},
+        "bindings": {
+          "type": "object", "maxProperties": 4096,
+          "additionalProperties": {
+            "type": "object", "additionalProperties": false, "required": ["path"],
+            "properties": {"path": {"type": "string", "minLength": 1}, "formatter": {"type": "string"}}
+          }
+        }
+      }
+    },
+    "behaviorNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "position", "properties", "arguments"],
+      "properties": {
+        "id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},
+        "kind": {"enum": ["signalEntry", "action", "sequence", "branch", "delay", "constant", "compare", "boolean", "getVariable", "setVariable", "getProperty", "setProperty", "playAnimation", "setAnimationParameter", "travelAnimationState"]},
+        "position": {"$ref": "#/$defs/vec2"},
+        "properties": {"type": "object", "additionalProperties": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"}},
+        "arguments": {"type": "object", "additionalProperties": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"}}
+      }
+    },
+    "stateOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodeId", "property", "value"],
+      "properties": {
+        "nodeId": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},
+        "property": {"type": "string", "minLength": 1, "maxLength": 512},
+        "value": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"}
+      }
+    },
+    "animationKey": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "time", "value", "easing", "interpolation"],
+      "properties": {
+        "id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},
+        "time": {"type": "number", "minimum": 0},
+        "value": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"},
+        "easing": {"enum": ["linear", "easeIn", "easeOut", "easeInOut", "step"]},
+        "interpolation": {"enum": ["linear", "discrete"]}
+      }
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "schemaRevision", "id", "revision", "name", "width", "height", "rootId", "nodes", "theme", "behaviorGraph", "behaviorTriggers", "visualStateGroups"],
+  "properties": {
+    "format": {"const": "PrismatiXUIScene"}, "schemaRevision": {"const": 2},
+    "id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},
+    "revision": {"type": "integer", "minimum": 0},
+    "name": {"type": "string", "minLength": 1, "maxLength": 512},
+    "width": {"type": "integer", "minimum": 1, "maximum": 16384},
+    "height": {"type": "integer", "minimum": 1, "maximum": 16384},
+    "rootId": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},
+    "nodes": {"type": "array", "maxItems": 1000000, "items": {"$ref": "#/$defs/node"}},
+    "theme": {
+      "type": "array", "maxItems": 100000,
+      "items": {"type": "object", "additionalProperties": false, "required": ["id", "name", "value"], "properties": {"id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"}, "name": {"type": "string"}, "value": {"type": "string"}}}
+    },
+    "visualStateGroups": {
+      "type": "array", "maxItems": 10000,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "defaultState", "states", "transitions"],
+        "properties": {
+          "id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
+          "defaultState": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
+          "states": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["id", "overrides"], "properties": {"id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"}, "overrides": {"type": "array", "items": {"$ref": "#/$defs/stateOverride"}}}}},
+          "transitions": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["from", "to", "duration", "easing"], "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "duration": {"type": "number", "minimum": 0}, "easing": {"enum": ["step", "linear", "easeIn", "easeOut", "easeInOut", "backOut"]}, "animationClipId": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"}}}}
+        }
+      }
+    },
+    "behaviorGraph": {
+      "type": "object", "additionalProperties": false, "required": ["nodes", "links", "groups"],
+      "properties": {
+        "nodes": {"type": "array", "items": {"$ref": "#/$defs/behaviorNode"}},
+        "links": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["id", "fromNodeId", "fromPin", "toNodeId", "toPin"], "properties": {"id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"}, "fromNodeId": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"}, "fromPin": {"type": "string"}, "toNodeId": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"}, "toPin": {"type": "string"}}}},
+        "groups": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["id", "title", "bounds"], "properties": {"id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"}, "title": {"type": "string"}, "bounds": {"type": "object", "additionalProperties": false, "required": ["x", "y", "width", "height"], "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "width": {"type": "number"}, "height": {"type": "number"}}}}}}
+      }
+    },
+    "behaviorTriggers": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["id", "nodeId", "signal", "entryNodeId", "reentry"], "properties": {"id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"}, "nodeId": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"}, "signal": {"type": "string"}, "entryNodeId": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"}, "reentry": {"enum": ["allow", "ignoreWhileRunning", "restart"]}}}},
+    "animations": {
+      "type": "object", "additionalProperties": false, "required": ["clips", "stateMachine"],
+      "properties": {
+        "clips": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["id", "name", "duration", "loop", "tracks"], "properties": {"id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"}, "name": {"type": "string"}, "duration": {"type": "number", "minimum": 0}, "loop": {"type": "boolean"}, "tracks": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["id", "nodeId", "property", "keys"], "properties": {"id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"}, "nodeId": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"}, "property": {"type": "string"}, "keys": {"type": "array", "items": {"$ref": "#/$defs/animationKey"}}}}}}}},
+        "stateMachine": {"type": "object", "additionalProperties": false, "required": ["entryStateId", "parameters", "states", "transitions"], "properties": {"entryStateId": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"}, "parameters": {"type": "array"}, "states": {"type": "array"}, "transitions": {"type": "array"}}}
+      }
+    }
+  }
+}

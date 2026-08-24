@@ -24,6 +24,10 @@ vcpkg_installed/
 /Data
 /Content
 
+# Node / TypeScript authoring tools
+/node_modules/
+/packages/*/dist/
+
 
 # OS
 .DS_Store

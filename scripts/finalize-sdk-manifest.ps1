@@ -54,6 +54,7 @@ $artifactIdentity = ($artifacts | ForEach-Object {
 }) -join ""
 
 $contractFiles = [ordered]@{
+    authoringSchemas = "share/PrismatiX/contracts/contracts.lock.json"
     characterResources = "include/PrismatiX/Engine/SDK/CharacterResources.h"
     gameCatalogResources = "include/PrismatiX/Engine/SDK/GameCatalogResources.h"
     packager = "include/PrismatiX/Engine/SDK/Packager.h"
