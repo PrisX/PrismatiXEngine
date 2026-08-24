@@ -69,7 +69,7 @@ export type StoryNodeKind = "label" | "speaker" | "dialogue" | "narration" | "co
 export interface StoryArgument {
   readonly name?: string;
   readonly raw: string;
-  readonly value: JsonPrimitive;
+  readonly value: JsonValue;
   readonly span: SourceSpan;
 }
 
