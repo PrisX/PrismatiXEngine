@@ -80,6 +80,60 @@ std::optional<VariantType> ManifestType(const std::string& raw) {
     return std::nullopt;
 }
 
+std::optional<vn::CommandEditorWidget> ManifestCommandEditorHint(
+    const std::string& raw) {
+    const auto hint = Lower(raw);
+    if (hint.empty() || hint == "default") return vn::CommandEditorWidget::Default;
+    if (hint == "multiline") return vn::CommandEditorWidget::Multiline;
+    if (hint == "resource") return vn::CommandEditorWidget::Resource;
+    if (hint == "character") return vn::CommandEditorWidget::Character;
+    if (hint == "expression") return vn::CommandEditorWidget::Expression;
+    if (hint == "target") return vn::CommandEditorWidget::Target;
+    if (hint == "preset") return vn::CommandEditorWidget::Preset;
+    if (hint == "hidden") return vn::CommandEditorWidget::Hidden;
+    if (hint == "enum") return vn::CommandEditorWidget::Enum;
+    if (hint == "color") return vn::CommandEditorWidget::Color;
+    if (hint == "route") return vn::CommandEditorWidget::Route;
+    if (hint == "node") return vn::CommandEditorWidget::Node;
+    if (hint == "animation") return vn::CommandEditorWidget::Animation;
+    if (hint == "token") return vn::CommandEditorWidget::Token;
+    return std::nullopt;
+}
+
+std::optional<ui::ActionEditorHint> ManifestActionEditorHint(
+    const std::string& raw) {
+    const auto hint = Lower(raw);
+    if (hint.empty() || hint == "default") return ui::ActionEditorHint::Default;
+    if (hint == "multiline") return ui::ActionEditorHint::Multiline;
+    if (hint == "enum") return ui::ActionEditorHint::Enum;
+    if (hint == "color") return ui::ActionEditorHint::Color;
+    if (hint == "resource") return ui::ActionEditorHint::Resource;
+    if (hint == "route") return ui::ActionEditorHint::Route;
+    if (hint == "node") return ui::ActionEditorHint::Node;
+    if (hint == "animation") return ui::ActionEditorHint::Animation;
+    if (hint == "token") return ui::ActionEditorHint::Token;
+    return std::nullopt;
+}
+
+bool ActionHintMatchesType(const ui::ActionEditorHint hint,
+                           const VariantType type, const bool hasEnum) {
+    switch (hint) {
+        case ui::ActionEditorHint::Default: return true;
+        case ui::ActionEditorHint::Multiline:
+        case ui::ActionEditorHint::Route: return type == VariantType::String;
+        case ui::ActionEditorHint::Enum:
+            return type == VariantType::String && hasEnum;
+        case ui::ActionEditorHint::Color: return type == VariantType::Color;
+        case ui::ActionEditorHint::Resource:
+            return type == VariantType::ResourceRef;
+        case ui::ActionEditorHint::Node: return type == VariantType::Uuid;
+        case ui::ActionEditorHint::Animation:
+            return type == VariantType::ResourceRef || type == VariantType::String;
+        case ui::ActionEditorHint::Token: return type == VariantType::TokenRef;
+    }
+    return false;
+}
+
 bool SupportedCapability(const std::string_view capability) {
     return capability == "runtime" || capability == "animation" ||
            capability == "ui" || capability == "audio";
@@ -1754,11 +1808,15 @@ bool JavaScriptHost::LoadExtensionManifest(const std::string& manifestPath) {
                 parameter.type = *type;
                 parameter.required = encodedParameter.value("required", false);
                 parameter.resourceType = encodedParameter.value("resourceFilter", std::string{});
-                if (encodedParameter.contains("default") && !encodedParameter["default"].is_null()) {
-                    const auto value = JsonVariant(encodedParameter["default"], *type);
-                    if (!value) throw std::invalid_argument("command parameter default type mismatch");
-                    parameter.defaultValue = value->Clone();
-                    parameter.hasDefault = true;
+                if (encodedParameter.contains("default")) {
+                    if (encodedParameter["default"].is_null()) {
+                        if (*type == VariantType::Null) parameter.hasDefault = true;
+                    } else {
+                        const auto value = JsonVariant(encodedParameter["default"], *type);
+                        if (!value) throw std::invalid_argument("command parameter default type mismatch");
+                        parameter.defaultValue = value->Clone();
+                        parameter.hasDefault = true;
+                    }
                 }
                 const auto options = encodedParameter.contains("enum")
                                          ? encodedParameter["enum"]
@@ -1771,6 +1829,16 @@ bool JavaScriptHost::LoadExtensionManifest(const std::string& manifestPath) {
                     parameter.minimum = FiniteNumber(*range, "minimum");
                     parameter.maximum = FiniteNumber(*range, "maximum");
                 }
+                const auto hint = ManifestCommandEditorHint(
+                    encodedParameter.value("editorHint", std::string{}));
+                if (!hint) throw std::invalid_argument("unknown command editor hint");
+                parameter.widget = *hint;
+                if (!parameter.options.empty() &&
+                    parameter.widget == vn::CommandEditorWidget::Default)
+                    parameter.widget = vn::CommandEditorWidget::Enum;
+                if (parameter.type == VariantType::ResourceRef &&
+                    parameter.widget == vn::CommandEditorWidget::Default)
+                    parameter.widget = vn::CommandEditorWidget::Resource;
                 descriptor.parameters.push_back(std::move(parameter));
             }
             commands.push_back(std::move(descriptor));
@@ -1796,6 +1864,18 @@ bool JavaScriptHost::LoadExtensionManifest(const std::string& manifestPath) {
             if (descriptor.id.empty() || !reentry || !actionIds.insert(descriptor.id).second)
                 throw std::invalid_argument("empty, duplicate, or invalid action id: " + descriptor.id);
             descriptor.reentryPolicy = *reentry;
+            std::unordered_set<std::string> actionCapabilities;
+            for (const auto& capability :
+                 encoded.value("capabilities", nlohmann::json::array())) {
+                if (!capability.is_string())
+                    throw std::invalid_argument("action capability must be a string");
+                const auto name = capability.get<std::string>();
+                if (!capabilities.contains(name) ||
+                    !actionCapabilities.insert(name).second)
+                    throw std::invalid_argument(
+                        "action capability is undeclared or duplicated: " + name);
+                descriptor.capabilities.push_back(name);
+            }
             for (const auto& encodedParameter :
                  encoded.value("parameters", nlohmann::json::array())) {
                 if (!encodedParameter.is_object())
@@ -1825,6 +1905,24 @@ bool JavaScriptHost::LoadExtensionManifest(const std::string& manifestPath) {
                     parameter.minimum = FiniteNumber(*range, "minimum");
                     parameter.maximum = FiniteNumber(*range, "maximum");
                 }
+                const auto hint = ManifestActionEditorHint(
+                    encodedParameter.value("editorHint", std::string{}));
+                if (!hint) throw std::invalid_argument("unknown action editor hint");
+                parameter.editorHint = *hint;
+                if (!parameter.enumValues.empty() &&
+                    parameter.editorHint == ui::ActionEditorHint::Default)
+                    parameter.editorHint = ui::ActionEditorHint::Enum;
+                if (parameter.type == VariantType::ResourceRef &&
+                    parameter.editorHint == ui::ActionEditorHint::Default)
+                    parameter.editorHint = ui::ActionEditorHint::Resource;
+                if (!ActionHintMatchesType(parameter.editorHint, parameter.type,
+                                           !parameter.enumValues.empty()))
+                    throw std::invalid_argument(
+                        "action editor hint does not match parameter type");
+                if (!parameter.resourceType.empty() &&
+                    parameter.type != VariantType::ResourceRef)
+                    throw std::invalid_argument(
+                        "action resource filter requires resource parameter type");
                 descriptor.arguments.push_back(std::move(parameter));
             }
             actions.push_back(std::move(descriptor));

@@ -10,7 +10,6 @@
 #include "Engine/Core/TypeRegistry.h"
 #include "Engine/IO/Archive.h"
 #include "Engine/IO/VFS.h"
-#include "Engine/Lua/LuaHost.h"
 #include "Engine/Platform/Input.h"
 #include "Engine/Progression/GameSettings.h"
 #include "Engine/Progression/GlobalProfile.h"
@@ -214,35 +213,10 @@ void TestSaveValidation() {
     const auto currentJson = px::progress::LoadJson(saves.SlotPath(0), nullptr);
     Check(currentJson && currentJson->value("schemaRevision", 0) == 2 &&
               currentJson->contains("scriptPending") &&
-              currentJson->contains("scriptActions") &&
-              !currentJson->contains("luaPending") &&
-              !currentJson->contains("luaActions"),
+              currentJson->contains("scriptActions"),
           "current saves must use language-neutral script checkpoint fields");
-    if (currentJson) {
-        px::progress::Json legacyEmpty = *currentJson;
-        legacyEmpty["schemaRevision"] = 1;
-        legacyEmpty["luaPending"] = px::progress::Json::array();
-        legacyEmpty["luaActions"] = px::progress::Json::array();
-        legacyEmpty.erase("scriptPending");
-        legacyEmpty.erase("scriptActions");
-        Check(px::progress::SaveJson(saves.SlotPath(4), legacyEmpty, nullptr),
-              "empty legacy script checkpoint fixture should be written");
-        Check(saves.Load(4).has_value(),
-              "legacy saves without active Lua continuations should migrate");
 
-        px::progress::Json legacyActive = *currentJson;
-        legacyActive["schemaRevision"] = 1;
-        legacyActive["luaPending"] = legacyActive["scriptPending"];
-        legacyActive["luaActions"] = legacyActive["scriptActions"];
-        legacyActive.erase("scriptPending");
-        legacyActive.erase("scriptActions");
-        Check(px::progress::SaveJson(saves.SlotPath(5), legacyActive, nullptr),
-              "active legacy script checkpoint fixture should be written");
-        Check(!saves.Load(5),
-              "legacy saves with active Lua continuations must fail closed");
-    }
-
-    px::progress::Json wrongType{ { "format", "PrismatiXSave" }, { "schemaRevision", 1 }, { "variables", { { "affection", "high" } } } };
+    px::progress::Json wrongType{ { "format", "PrismatiXSave" }, { "schemaRevision", 2 }, { "variables", { { "affection", "high" } } } };
     Check(px::progress::SaveJson(saves.SlotPath(1), wrongType, nullptr), "wrong-type fixture should be written");
     Check(!saves.Load(1), "wrong-type save must fail without throwing");
 

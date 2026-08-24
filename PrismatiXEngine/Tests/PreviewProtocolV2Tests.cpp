@@ -76,9 +76,9 @@ Json RuntimeFiles() {
           {"sha256", std::string(64, 'a')},
           {"kind", "extensionManifest"},
           {"byteLength", 128}},
-         {{"virtualPath", "/project/Content/Extensions/game.lua"},
+         {{"virtualPath", "/project/Content/Extensions/game.js"},
           {"sha256", std::string(64, 'b')},
-          {"kind", "luaScript"},
+          {"kind", "javascript"},
           {"byteLength", 256}}});
 }
 
@@ -125,7 +125,7 @@ int main() {
     px::preview::PreviewProtocolV2 malformedProtocol;
     const auto malformedRuntimeFiles = malformedProtocol.AcceptApply(
         Envelope("apply", 1, RuntimeIr(1), nullptr,
-                 Json{{"virtualPath", "/project/Content/Extensions/game.lua"}}),
+                 Json{{"virtualPath", "/project/Content/Extensions/game.js"}}),
         false);
     assert(!malformedRuntimeFiles.Accepted());
     assert(ContainsCode(Json::parse(malformedProtocol.DrainEvents()),
@@ -133,8 +133,8 @@ int main() {
     const auto incompleteRuntimeFile = malformedProtocol.AcceptApply(
         Envelope("apply", 1, RuntimeIr(1), nullptr,
                  Json::array({{{"virtualPath",
-                                "/project/Content/Extensions/game.lua"},
-                               {"kind", "luaScript"},
+                                "/project/Content/Extensions/game.js"},
+                               {"kind", "javascript"},
                                {"byteLength", 256}}})),
         false);
     assert(!incompleteRuntimeFile.Accepted());

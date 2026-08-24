@@ -71,7 +71,6 @@ if(APPLE)
         foreach(_PRISMATIX_HOMEBREW_PREFIX IN LISTS _PRISMATIX_HOMEBREW_PREFIXES)
             list(APPEND CMAKE_PREFIX_PATH
                 "${_PRISMATIX_HOMEBREW_PREFIX}"
-                "${_PRISMATIX_HOMEBREW_PREFIX}/opt/lua@5.4"
             )
         endforeach()
     endif()
@@ -94,7 +93,6 @@ else()
     find_package(SDL3_mixer CONFIG REQUIRED)
     find_package(nlohmann_json CONFIG REQUIRED)
     find_package(spdlog CONFIG REQUIRED)
-    find_package(Lua 5.4 REQUIRED)
 endif()
 if(NOT EMSCRIPTEN)
     find_package(MbedTLS CONFIG REQUIRED)
@@ -114,17 +112,6 @@ if(NOT EMSCRIPTEN)
         message(FATAL_ERROR "Could not find a usable MbedTLS crypto target.")
     endif()
 endif()
-
-# Lua + sol2
-FetchContent_Declare(
-    sol2
-    GIT_REPOSITORY https://github.com/ThePhD/sol2.git
-    # Exact revision already exercised by the Windows/Linux/macOS build API.
-    # Do not replace this with a mutable branch such as develop.
-    GIT_TAG        c1f95a773c6f8f4fde8ca3efe872e7286afe4444
-    GIT_SHALLOW    FALSE
-)
-FetchContent_MakeAvailable(sol2)
 
 # Embedded JavaScript runtime. Pin the exact QuickJS-NG revision exercised by
 # native and Emscripten builds, and exclude its command-line tools from the

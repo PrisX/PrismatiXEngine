@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 $engineRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\PrismatiXEngine\Engine"))
 $coreRoots = @(
-    "Animation", "Audio", "Core", "Diagnostics", "Graphics", "Lua", "Preview",
+    "Animation", "Audio", "Core", "Diagnostics", "Graphics", "Preview",
     "Scene", "Session", "Support", "Text", "UI", "VN"
 )
 $forbidden = '(windows\.h|Win32|emscripten/|emscripten::|tauri|web_sys|wasm_bindgen)'

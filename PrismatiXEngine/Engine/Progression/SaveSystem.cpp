@@ -12,7 +12,6 @@ namespace px::progress {
 namespace {
 constexpr std::string_view kSaveFormat = "PrismatiXSave";
 constexpr int kSaveSchemaRevision = 2;
-constexpr int kLegacyLuaSaveSchemaRevision = 1;
 constexpr std::size_t kMaxSaveCollectionItems = 1'000'000;
 
 void SaveLoadError(const std::string& path, std::string message, std::string details = {}) {
@@ -24,8 +23,7 @@ void SaveLoadError(const std::string& path, std::string message, std::string det
 
 bool HasSupportedHeader(const Json& json) {
     return json.is_object() && json.value("format", std::string{}) == kSaveFormat &&
-           (json.value("schemaRevision", 0) == kSaveSchemaRevision ||
-            json.value("schemaRevision", 0) == kLegacyLuaSaveSchemaRevision);
+           json.value("schemaRevision", 0) == kSaveSchemaRevision;
 }
 
 Json ColorToJson(const Color color) {
@@ -798,16 +796,9 @@ std::optional<SaveSnapshot> SaveSystem::Load(int slot) const {
                 s.persistentVariables.insert(key.get<std::string>());
             }
         }
-        const int schemaRevision = j.value("schemaRevision", 0);
-        const char* pendingField = schemaRevision == kLegacyLuaSaveSchemaRevision
-                                       ? "luaPending"
-                                       : "scriptPending";
-        const char* actionsField = schemaRevision == kLegacyLuaSaveSchemaRevision
-                                       ? "luaActions"
-                                       : "scriptActions";
         if (!j.contains("vm") || !j.contains("dialogue") || !j.contains("routes") ||
             !j.contains("timelines") || !j.contains("animationClips") || !j.contains("stage") || !j.contains("audio") ||
-            !j.contains(pendingField) || !j.contains(actionsField) ||
+            !j.contains("scriptPending") || !j.contains("scriptActions") ||
             !j.contains("behavior")) {
             SaveLoadError(path, "Save is missing exact runtime state");
             return std::nullopt;
@@ -819,15 +810,8 @@ std::optional<SaveSnapshot> SaveSystem::Load(int slot) const {
         s.routes = RouteStateFromJson(j["routes"]);
         s.timelines = TimelinesFromJson(j["timelines"]);
         s.animationClips = AnimationClipsFromJson(j["animationClips"]);
-        s.scriptPending = ScriptPendingFromJson(j[pendingField]);
-        s.scriptActions = ScriptActionsFromJson(j[actionsField]);
-        if (schemaRevision == kLegacyLuaSaveSchemaRevision &&
-            (!s.scriptPending.empty() || !s.scriptActions.empty())) {
-            SaveLoadError(path,
-                          "Legacy save contains active Lua continuations",
-                          "Active Lua command and Action state cannot be migrated to a language-neutral script checkpoint");
-            return std::nullopt;
-        }
+        s.scriptPending = ScriptPendingFromJson(j["scriptPending"]);
+        s.scriptActions = ScriptActionsFromJson(j["scriptActions"]);
         s.behavior = BehaviorStateFromJson(j["behavior"]);
         s.backlog = BacklogFromJson(j.value("backlog", Json::array()));
         s.timestamp = j.value("timestamp", std::uint64_t{ 0 });

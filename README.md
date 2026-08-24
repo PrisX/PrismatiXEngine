@@ -5,12 +5,12 @@
 <h1 align="center">PrismatiXEngine</h1>
 
 <p align="center">
-  <strong>A visual novel engine built in C++, with Lua-driven UI and gameplay logic.</strong>
+  <strong>A visual novel runtime built in C++ with sandboxed JavaScript extensions.</strong>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/C%2B%2B-20-blue.svg?style=flat-square&logo=c%2B%2B" alt="C++20">
-  <img src="https://img.shields.io/badge/Lua-5.4-blue.svg?style=flat-square&logo=lua" alt="Lua 5.4">
+  <img src="https://img.shields.io/badge/JavaScript-QuickJS--NG-f7df1e.svg?style=flat-square&logo=javascript" alt="QuickJS-NG">
   <img src="https://img.shields.io/badge/Render-SDL3-green.svg?style=flat-square&logo=sdl" alt="SDL3">
   <img src="https://img.shields.io/badge/License-MIT-lightgrey.svg?style=flat-square" alt="MIT License">
 </p>
@@ -19,36 +19,30 @@
 
 ## Overview
 
-PrismatiXEngine is a modern visual novel game engine built for flexibility and performance. It uses C++ as its core and Lua for the game loop, UI, and more.
+PrismatiXEngine is a modern visual novel runtime built around typed content contracts, deterministic execution, and an embedded QuickJS-NG scripting sandbox. Player and Preview use the same JavaScript `ScriptHost`, extension manifest, Action, async checkpoint, and debugger contracts.
 
 ## Features
 
 - **Advanced Rendering**: Built on SDL3, supporting sprite animations, transitions, and layer management.
-- **Scriptable Architecture**: Entire game logic and UI framework is written in Lua, allowing for more extensibility.
+- **Sandboxed Extensions**: Typed `.pxextension` manifests load JavaScript without Node.js, host filesystem, process, network, dynamic evaluation, wall-clock, or random APIs.
 - **Visual Novel Toolkit**: Dialogue systems, choice logic, and a custom script parser (VNScript).
 - **Multimedia Integration**: Support for music, sound effects, and voice via SDL3_mixer.
 - **Resource Management**: Efficient asset loading with LRU caching and state management.
-- **Modular UI Framework**: A component-based UI system implemented in Lua.
+- **Modular UI Framework**: Declarative scenes, reusable components, typed Actions, styles, animation, and behavior graphs.
 - **Cross-Platform**: Designed to run on multiple platforms via SDL3.
 
 ## Project Structure
 
 ```
 PrismatiXEngine/
-├── Core/                   # Core C++ Engine Implementation
-│   ├── Lua/                # Lua API Bindings (Render, Audio, VN, etc.)
-│   ├── Models/             # Data Models (Save, VNCommand)
-│   ├── Services/           # Backend Services (ResourceManager, SaveManager)
-│   ├── Systems/            # Low-level Systems (RenderSystem, AudioSystem)
-│   └── VN/                 # VN Logic (Dialogue, Parser, Flow Control)
-├── Scripts/                # Lua Script Resources
-│   ├── common/             # UI Framework and Scene Manager
-│   ├── components/         # Game UI Components (DialogueBox, Menus)
-│   ├── fx/                 # Visual Effects (Transitions, Screen FX)
-│   └── scenes/             # Game Scene Definitions
-├── Utils/                  # General Utilities (Logger, Cache, Easing)
-│
-└── main.cpp                # Application Entry Point
+├── Applications/           # Player, Native Preview, and WASM Preview entrypoints
+├── Engine/
+│   ├── Script/             # Language-neutral contracts and QuickJS-NG host
+│   ├── Preview/            # Shared Preview protocol and runtime services
+│   ├── SDK/                # Public content and packaging contracts
+│   ├── UI/                 # Declarative UI, Actions, styles, and behavior
+│   └── VN/                 # Dialogue, commands, scenario, and runtime VM
+└── Tests/                  # Contract, integration, native acceptance, and soak tests
 ```
 
 ## Requirements
@@ -59,8 +53,6 @@ Ensure the following tools and libraries are installed before building:
 - **Build System**: CMake 3.21 or higher
 - **Dependencies**:
   - SDL3 (including Image, TTF, and Mixer)
-  - Lua 5.4+
-  - sol2 (Lua bindings for C++)
   - nlohmann-json
   - spdlog (Logging)
   - MbedTLS
@@ -80,7 +72,7 @@ cd PrismatiXEngine
 On macOS, install the development packages with Homebrew:
 
 ```bash
-brew install cmake ninja lua@5.4 sdl3 sdl3_image sdl3_ttf sdl3_mixer nlohmann-json spdlog mbedtls zstd fmt
+brew install cmake ninja sdl3 sdl3_image sdl3_ttf sdl3_mixer nlohmann-json spdlog mbedtls zstd fmt
 ```
 
 ### 3. Build via CMake
@@ -99,7 +91,7 @@ cmake --preset macos-release
 cmake --build --preset macos-release
 ```
 
-The editor binary is generated under `out/build/<preset>/PrismatiXEngine/`.
+Runtime and test binaries are generated under `out/build/<preset>/PrismatiXEngine/`.
 
 #### Generic CMake build
 
@@ -111,25 +103,21 @@ cmake --build . --config Release
 
 ## Development
 
-All game development in PrismatiXEngine is handled within the `Scripts/` directory.
+Runtime extensions live under `Content/Extensions/`. Each extension uses a typed `.pxextension` manifest with `language: "javascript"` and a `.js` entry file.
 
-### Example Scene
+### Example Extension
 
-A basic scene in `Scripts/scenes/play_scene.lua` looks like this:
+A basic command extension looks like this:
 
-```lua
-local PlayScene = {}
-
-function PlayScene:init()
-    VN.setBackground("bg_city")
-end
-
-return PlayScene
+```javascript
+Engine.RegisterCommand("game.toast", (args) => {
+    Engine.log(`toast: ${args.message}`);
+});
 ```
 
 ### UI Customization
 
-UI components are located in `Scripts/components/`. Since these are written in Lua, you can modify the layout and behavior without recompiling the engine.
+UI is authored through declarative scene/component documents and typed Action bindings. JavaScript extensions can implement custom Commands and Actions without recompiling the engine.
 
 ## License
 

@@ -11,7 +11,7 @@
 #include "Engine/Core/TypeRegistry.h"
 #include "Engine/IO/Archive.h"
 #include "Engine/IO/VFS.h"
-#include "Engine/Lua/LuaHost.h"
+#include "Engine/Script/JavaScriptHost.h"
 #include "Engine/Platform/Input.h"
 #include "Engine/Progression/Persist.h"
 #include "Engine/Progression/SaveSystem.h"
@@ -79,39 +79,45 @@ void TestRouteStackAndModalState() {
     Check(router.RestoreState(captured) && router.CurrentRoute() == "game" && router.CurrentModalRoute() == "confirm", "router stack should restore atomically from runtime state");
 }
 
-void TestLuaExtensionSandbox() {
+void TestScriptExtensionIntegration() {
     px::test::TempDirectory temp("behavior");
     const auto extensionDirectory = temp.path / "Content" / "Extensions";
     std::filesystem::create_directories(extensionDirectory);
     {
-        std::ofstream module(extensionDirectory / "helper.lua");
-        module << "return { value = 42 }\n";
-        std::ofstream entry(extensionDirectory / "demo.lua");
-        entry << "local h=require('helper')\n"
-                 "assert(h.value==42)\n"
-                 "Engine.RegisterCommand('demo.command', function(args) return true end)\n"
-                 "Engine.RegisterCommand('demo.await', function(args) Engine.AwaitSeconds(0.01); return true end)\n"
-                 "Engine.RegisterAction('demo.typed', function(args, context)\n"
-                 "  local amount = args.amount\n"
-                 "  Engine.AwaitSeconds(0.01)\n"
-                 "  return amount\n"
-                 "end)\n";
+        std::ofstream entry(extensionDirectory / "demo.js");
+        entry << R"js(
+Engine.RegisterCommand("demo.command", () => true);
+Engine.RegisterCommand("demo.await", async () => {
+  await Engine.WaitSeconds(0.01);
+  return true;
+});
+Engine.RegisterAction("demo.typed", async (args) => {
+  const amount = args.amount;
+  await Engine.DebugPoint("Content/Extensions/demo.ts", 6,
+                          {args, amount}, "demoTyped");
+  await Engine.DebugPoint("Content/Extensions/demo.ts", 7,
+                          {args, amount}, "demoTyped");
+  await Engine.WaitSeconds(0.01);
+  return amount;
+});
+)js";
         std::ofstream manifest(extensionDirectory / "default.pxextension");
         manifest
-            << R"json({"format":"PrismatiXExtension","version":4,"id":"demo","entry":"demo.lua","capabilities":["runtime","ui"],"commands":[{"id":"demo.command","displayName":"Demo","description":"Typed command metadata test","category":"Story","await":false,"rollback":"transient","allowAdditionalParameters":false,"parameters":[{"name":"mode","displayName":"Mode","description":"Typed enum","type":"string","required":true,"default":"alpha","enum":["alpha","beta"],"editorHint":"enum"},{"name":"amount","displayName":"Amount","type":"number","default":1.5,"range":{"minimum":0.0,"maximum":10.0}},{"name":"asset","displayName":"Asset","type":"resource","default":"Content/Images/test.png","resourceFilter":"image","editorHint":"resource"},{"name":"tint","label":"Tint (legacy label)","type":"color","default":[255,128,64,255],"editorHint":"color"},{"name":"optionalNote","displayName":"Optional note","type":"string","default":null},{"name":"explicitNull","displayName":"Explicit null","type":"null","default":null}]},{"id":"demo.await","displayName":"Await","category":"Extension","await":true,"rollback":"boundary","parameters":[]}],"actions":[{"id":"demo.typed","displayName":"Typed Action","description":"Manifest metadata test","category":"Extension","reentry":"Restart","capabilities":["runtime","ui"],"parameters":[{"name":"mode","displayName":"Mode","description":"Typed enum","type":"string","required":true,"default":"alpha","enum":["alpha","beta"],"editorHint":"enum"},{"name":"amount","displayName":"Amount","type":"number","default":1.5,"range":{"minimum":0.0,"maximum":10.0}},{"name":"asset","displayName":"Asset","type":"resource","default":{"id":"11111111-1111-4111-8111-111111111111","path":"Assets/cg/rain.png","uuid":"11111111-1111-4111-8111-111111111111","kind":"cg","name":"Rain"},"resourceFilter":"image","editorHint":"resource"},{"name":"tint","displayName":"Tint","type":"color","default":[255,128,64,255],"editorHint":"color"},{"name":"optionalNote","displayName":"Optional note","type":"string","default":null}]}]})json";
-        std::ofstream studioEntry(extensionDirectory / "studio-shape.lua");
+            << R"json({"format":"PrismatiXExtension","schemaRevision":1,"language":"javascript","id":"demo","entry":"demo.js","capabilities":["runtime","ui"],"commands":[{"id":"demo.command","displayName":"Demo","description":"Typed command metadata test","category":"Story","await":false,"rollback":"transient","allowAdditionalParameters":false,"parameters":[{"name":"mode","displayName":"Mode","description":"Typed enum","type":"string","required":true,"default":"alpha","enum":["alpha","beta"],"editorHint":"enum"},{"name":"amount","displayName":"Amount","type":"number","default":1.5,"range":{"minimum":0.0,"maximum":10.0}},{"name":"asset","displayName":"Asset","type":"resource","default":"Content/Images/test.png","resourceFilter":"image","editorHint":"resource"},{"name":"tint","displayName":"Tint","type":"color","default":[255,128,64,255],"editorHint":"color"},{"name":"optionalNote","displayName":"Optional note","type":"string","default":null},{"name":"explicitNull","displayName":"Explicit null","type":"null","default":null}]},{"id":"demo.await","displayName":"Await","category":"Extension","await":true,"rollback":"boundary","parameters":[]}],"actions":[{"id":"demo.typed","displayName":"Typed Action","description":"Manifest metadata test","category":"Extension","reentry":"restart","capabilities":["runtime","ui"],"parameters":[{"name":"mode","displayName":"Mode","description":"Typed enum","type":"string","required":true,"default":"alpha","enum":["alpha","beta"],"editorHint":"enum"},{"name":"amount","displayName":"Amount","type":"number","default":1.5,"range":{"minimum":0.0,"maximum":10.0}},{"name":"asset","displayName":"Asset","type":"resource","default":{"id":"11111111-1111-4111-8111-111111111111","path":"Assets/cg/rain.png","uuid":"11111111-1111-4111-8111-111111111111","kind":"cg","name":"Rain"},"resourceFilter":"image","editorHint":"resource"},{"name":"tint","displayName":"Tint","type":"color","default":[255,128,64,255],"editorHint":"color"},{"name":"optionalNote","displayName":"Optional note","type":"string","default":null}]}]})json";
+        std::ofstream studioEntry(extensionDirectory / "studio-shape.js");
         studioEntry
-            << "Engine.RegisterCommand('demo.studioShape', function(args) "
-               "assert(args.optionalNote == nil); return true end)\n"
-               "Engine.RegisterCommand('demo.additional', function(args) "
-               "return args.future == true end)\n";
+            << "Engine.RegisterCommand('demo.studioShape', (args) => { "
+               "if (args.optionalNote !== undefined) throw new Error('unexpected optional'); return true; });\n"
+               "Engine.RegisterCommand('demo.additional', (args) => "
+               "args.future === true);\n";
         std::ofstream studioManifest(extensionDirectory /
                                      "studio-shape.pxextension");
         studioManifest << R"json({
   "format": "PrismatiXExtension",
-  "version": 4,
+  "schemaRevision": 1,
+  "language": "javascript",
   "id": "studio-shape",
-  "entry": "studio-shape.lua",
+  "entry": "studio-shape.js",
   "capabilities": ["runtime"],
   "commands": [
     {
@@ -136,44 +142,46 @@ void TestLuaExtensionSandbox() {
   "actions": []
 })json";
         std::ofstream denied(extensionDirectory / "denied.pxextension");
-        denied << R"({"format":"PrismatiXExtension","version":4,"id":"denied","entry":"demo.lua","capabilities":["filesystem"],"commands":[]})";
-        std::ofstream missingEntry(extensionDirectory / "missing.lua");
-        missingEntry << "return true\n";
+        denied << R"({"format":"PrismatiXExtension","schemaRevision":1,"language":"javascript","id":"denied","entry":"demo.js","capabilities":["filesystem"],"commands":[],"actions":[]})";
+        std::ofstream missingEntry(extensionDirectory / "missing.js");
+        missingEntry << "true;\n";
         std::ofstream missing(extensionDirectory / "missing.pxextension");
-        missing << R"({"format":"PrismatiXExtension","version":4,"id":"missing","entry":"missing.lua","capabilities":["runtime"],"commands":[{"id":"missing.command","parameters":[]}],"actions":[]})";
+        missing << R"({"format":"PrismatiXExtension","schemaRevision":1,"language":"javascript","id":"missing","entry":"missing.js","capabilities":["runtime"],"commands":[{"id":"missing.command","displayName":"Missing","parameters":[]}],"actions":[]})";
         std::ofstream collision(extensionDirectory / "collision.pxextension");
-        collision << R"({"format":"PrismatiXExtension","version":4,"id":"collision","entry":"missing.lua","capabilities":["runtime"],"commands":[{"id":"say","parameters":[]}],"actions":[]})";
+        collision << R"({"format":"PrismatiXExtension","schemaRevision":1,"language":"javascript","id":"collision","entry":"missing.js","capabilities":["runtime"],"commands":[{"id":"say","displayName":"Collision","parameters":[]}],"actions":[]})";
     }
     px::io::VFS vfs;
     vfs.MountDirectory(temp.path.string());
-    px::lua::LuaServices services;
+    px::script::ScriptServices services;
     services.vfs = &vfs;
-    std::vector<px::lua::LuaConsoleMessage> console;
-    services.console = [&console](const px::lua::LuaConsoleMessage& message) {
+    std::vector<px::script::ConsoleMessage> console;
+    services.console = [&console](const px::script::ConsoleMessage& message) {
         console.push_back(message);
     };
-    px::lua::LuaHost host(services);
-    Check(host.RunString("print('console', 7)\nwarn('careful')",
-                         "lua-console-output"),
-          "Lua print and warn should remain valid base-library operations");
+    px::script::JavaScriptHost host(services);
+    Check(host.RunString("console.log('console', 7);\nconsole.warn('careful');",
+                         "script-console-output"),
+          "JavaScript console methods should remain valid sandbox operations");
     Check(console.size() == 2 &&
-              console[0].level == px::lua::LuaConsoleLevel::Info &&
-              console[0].text == "console\t7" &&
-              console[0].source == "lua-console-output" &&
+              console[0].level == px::script::ConsoleLevel::Info &&
+              console[0].text == "console 7" &&
+              console[0].source == "script-console-output" &&
               console[0].line == 1 &&
-              console[1].level == px::lua::LuaConsoleLevel::Warning &&
+              console[1].level == px::script::ConsoleLevel::Warning &&
               console[1].text == "careful" &&
-              console[1].source == "lua-console-output" &&
+              console[1].source == "script-console-output" &&
               console[1].line == 2,
-          "Lua console callback should preserve level, text, source, and line");
-    Check(!host.RunString("error('console failure')", "lua-console-error") &&
+          "script console callback should preserve level, text, source, and line");
+    Check(!host.RunString("throw new Error('console failure')", "script-console-error") &&
               console.size() == 3 &&
-              console.back().level == px::lua::LuaConsoleLevel::Error &&
+              console.back().level == px::script::ConsoleLevel::Error &&
               console.back().text.find("console failure") != std::string::npos &&
-              console.back().source == "lua-console-error",
-          "protected Lua failures should reach the dedicated error console sink");
-    Check(host.RunString("assert(os == nil and io == nil and debug == nil and dofile == nil and loadfile == nil)"), "Lua should not expose host filesystem, process, or debug libraries by default");
-    Check(host.LoadExtensionManifest("Content/Extensions/default.pxextension"), "declared extension should load through VFS-aware require");
+              console.back().source == "script-console-error",
+          "protected JavaScript failures should reach the dedicated error console sink");
+    Check(host.RunString("if (typeof require !== 'undefined' || typeof process !== 'undefined' || typeof Date !== 'undefined') throw new Error('sandbox escape');"),
+          "JavaScript should not expose host filesystem, process, or nondeterministic time APIs");
+    Check(host.LoadExtensionManifest("Content/Extensions/default.pxextension"),
+          "declared JavaScript extension should load through the VFS");
     const auto* typedCommand = px::vn::CommandRegistry::Global().Find("demo.command");
     Check(
         typedCommand && typedCommand->description == "Typed command metadata test" &&
@@ -189,12 +197,12 @@ void TestLuaExtensionSandbox() {
             typedCommand->parameters[1].minimum && typedCommand->parameters[1].maximum &&
             typedCommand->parameters[2].resourceType == "image" &&
             typedCommand->parameters[2].widget == px::vn::CommandEditorWidget::Resource &&
-            typedCommand->parameters[3].label == "Tint (legacy label)" &&
+            typedCommand->parameters[3].label == "Tint" &&
             typedCommand->parameters[3].widget == px::vn::CommandEditorWidget::Color &&
             !typedCommand->parameters[4].hasDefault &&
             typedCommand->parameters[5].hasDefault &&
             typedCommand->parameters[5].defaultValue.Type() == px::VariantType::Null,
-        "Lua command manifest should populate executable CommandRegistry metadata"
+        "JavaScript command manifest should populate executable CommandRegistry metadata"
     );
     const auto* typedAction = px::ui::ActionCatalog::Global().Find("demo.typed");
     const auto* typedActionResource = typedAction && typedAction->arguments.size() > 2 &&
@@ -204,7 +212,7 @@ void TestLuaExtensionSandbox() {
     Check(
         typedAction && typedAction->reentryPolicy == px::ui::ActionReentryPolicy::Restart && typedAction->capabilities.size() == 2 && typedAction->arguments.size() == 5 && typedAction->arguments[0].enumValues.size() == 2 &&
             typedAction->arguments[1].minimum && typedAction->arguments[1].maximum && typedAction->arguments[2].resourceType == "image" && typedActionResource && typedActionResource->id.ToString() == "11111111-1111-4111-8111-111111111111" && typedActionResource->lastKnownPath == "Assets/cg/rain.png" && typedAction->arguments[3].defaultValue && typedAction->arguments[3].defaultValue->TryGet<px::Color>() && !typedAction->arguments[4].defaultValue,
-        "Lua Action manifest should preserve capabilities, defaults, enum, range, resource filter, editor hint, and reentry metadata"
+        "JavaScript Action manifest should preserve capabilities, defaults, enum, range, resource filter, editor hint, and reentry metadata"
     );
     Check(host.LoadExtensionManifest(
               "Content/Extensions/studio-shape.pxextension"),
@@ -310,104 +318,104 @@ void TestLuaExtensionSandbox() {
     actionInvocation.action = "demo.typed";
     actionInvocation.arguments = { { "mode", std::string("alpha") }, { "amount", 2.0 } };
     const auto actionStart = host.StartAction(actionInvocation);
-    Check(actionStart.status && actionStart.pending, "Lua Action should run as a tracked coroutine");
+    Check(actionStart.status && actionStart.pending, "JavaScript Action should run as a tracked continuation");
     const auto actionCheckpoint = host.CapturePendingActions();
-    Check(host.RestorePending({}) && host.RestorePendingActions(actionCheckpoint) && host.ActionState(actionStart.handle) == px::ui::ActionExecutionState::Running, "Lua Action should reconstruct its exact yield checkpoint");
+    Check(host.RestorePending({}) && host.RestorePendingActions(actionCheckpoint) && host.ActionState(actionStart.handle) == px::ui::ActionExecutionState::Running, "JavaScript Action should reconstruct its exact await checkpoint");
     host.Update(0.02f);
-    Check(host.ActionState(actionStart.handle) == px::ui::ActionExecutionState::Completed, "restored Lua Action should resume to completion");
+    Check(host.ActionState(actionStart.handle) == px::ui::ActionExecutionState::Completed, "restored JavaScript Action should resume to completion");
     const auto cancelledAction = host.StartAction(actionInvocation);
     Check(cancelledAction.status && cancelledAction.pending,
-          "Lua Action cancellation should begin from a tracked coroutine");
+          "JavaScript Action cancellation should begin from a tracked continuation");
     host.CancelAction(cancelledAction.handle);
     host.Update(0.02f);
     Check(!host.HasPendingAction() &&
               host.ActionState(cancelledAction.handle) ==
                   px::ui::ActionExecutionState::Cancelled,
-          "cancelled Lua Actions must not resume on a later frame");
-    px::ui::ActionDispatcher luaActions;
-    Check(luaActions.RegisterProvider(host.CreateActionProvider()),
-          "Lua reentry dispatcher should register the production provider");
-    const auto concurrentFirst = luaActions.Start(
+          "cancelled JavaScript Actions must not resume on a later frame");
+    px::ui::ActionDispatcher scriptActions;
+    Check(scriptActions.RegisterProvider(host.CreateActionProvider()),
+          "script reentry dispatcher should register the production provider");
+    const auto concurrentFirst = scriptActions.Start(
         actionInvocation,
         {.reentryPolicy = px::ui::ActionReentryPolicy::Allow});
-    const auto concurrentSecond = luaActions.Start(
+    const auto concurrentSecond = scriptActions.Start(
         actionInvocation,
         {.reentryPolicy = px::ui::ActionReentryPolicy::Allow});
     Check(concurrentFirst && concurrentSecond &&
               concurrentFirst.Value() != concurrentSecond.Value() &&
               host.CapturePendingActions().size() == 2,
-          "allow reentry should run independent Lua Action coroutines concurrently");
+          "allow reentry should run independent JavaScript Action continuations concurrently");
     host.Update(0.02f);
-    luaActions.Update(0.0f);
-    Check(luaActions.State(concurrentFirst.Value()) ==
+    scriptActions.Update(0.0f);
+    Check(scriptActions.State(concurrentFirst.Value()) ==
               px::ui::ActionExecutionState::Completed &&
-              luaActions.State(concurrentSecond.Value()) ==
+              scriptActions.State(concurrentSecond.Value()) ==
                   px::ui::ActionExecutionState::Completed,
-          "concurrent Lua Action coroutines should each resume to completion");
-    luaActions.Forget(concurrentFirst.Value());
-    luaActions.Forget(concurrentSecond.Value());
-    const auto replacedAction = luaActions.Start(
+          "concurrent JavaScript Action continuations should each resume to completion");
+    scriptActions.Forget(concurrentFirst.Value());
+    scriptActions.Forget(concurrentSecond.Value());
+    const auto replacedAction = scriptActions.Start(
         actionInvocation,
         {.reentryPolicy = px::ui::ActionReentryPolicy::Restart});
-    const auto replacementAction = luaActions.Start(
+    const auto replacementAction = scriptActions.Start(
         actionInvocation,
         {.reentryPolicy = px::ui::ActionReentryPolicy::Restart});
     Check(replacedAction && replacementAction &&
-              luaActions.State(replacedAction.Value()) ==
+              scriptActions.State(replacedAction.Value()) ==
                   px::ui::ActionExecutionState::Cancelled &&
-              luaActions.State(replacementAction.Value()) ==
+              scriptActions.State(replacementAction.Value()) ==
                   px::ui::ActionExecutionState::Running &&
               host.CapturePendingActions().size() == 1,
-          "restart reentry should cancel only the prior Lua Action coroutine");
+          "restart reentry should cancel only the prior JavaScript Action continuation");
     host.Update(0.02f);
-    luaActions.Update(0.0f);
-    Check(luaActions.State(replacementAction.Value()) ==
+    scriptActions.Update(0.0f);
+    Check(scriptActions.State(replacementAction.Value()) ==
               px::ui::ActionExecutionState::Completed,
-          "replacement Lua Action should complete through the production provider");
-    luaActions.Forget(replacedAction.Value());
-    luaActions.Forget(replacementAction.Value());
+          "replacement JavaScript Action should complete through the production provider");
+    scriptActions.Forget(replacedAction.Value());
+    scriptActions.Forget(replacementAction.Value());
     px::vn::Command awaitCommand;
     awaitCommand.type = "demo.await";
-    Check(host.InvokeCommand(awaitCommand) && host.HasPendingCommand(), "Lua custom commands should suspend as coroutines instead of blocking the runtime");
-    const auto luaCheckpoint = host.CapturePending();
+    Check(host.InvokeCommand(awaitCommand) && host.HasPendingCommand(), "JavaScript custom commands should suspend as continuations instead of blocking the runtime");
+    const auto scriptCheckpoint = host.CapturePending();
     host.CancelPending();
-    Check(host.RestorePending(luaCheckpoint) && host.HasPendingCommand(), "Lua commands should reconstruct the exact declared await boundary from a save");
+    Check(host.RestorePending(scriptCheckpoint) && host.HasPendingCommand(), "JavaScript commands should reconstruct the exact declared await boundary from a save");
     host.Update(0.02f);
-    Check(!host.HasPendingCommand(), "Lua timer await should resume at a frame-safe checkpoint");
+    Check(!host.HasPendingCommand(), "JavaScript timer await should resume at a frame-safe checkpoint");
     const auto breakpoints = host.SetDebugBreakpoints(
-        {{"Content/Extensions/demo.lua", 6}});
-    Check(breakpoints.size() == 1, "Lua debugger should accept a source breakpoint");
+        {{"Content/Extensions/demo.ts", 6}});
+    Check(breakpoints.size() == 1, "JavaScript debugger should accept a source breakpoint");
     const auto debugStart = host.StartAction(actionInvocation);
     const auto& firstDebugState = host.CaptureDebugState();
     Check(debugStart.status && debugStart.pending && firstDebugState.paused &&
               firstDebugState.reason == "breakpoint" && !firstDebugState.frames.empty() &&
               firstDebugState.frames.front().line == 6,
-          "Lua Action should pause at a verified source line and capture its frame");
+          "JavaScript Action should pause at a verified source line and capture its frame");
     bool foundArgs = false;
     for (const auto& local : firstDebugState.frames.front().locals) {
-        foundArgs = foundArgs || (local.name == "args" && local.value == "<table>");
+        foundArgs = foundArgs || (local.name == "args" && local.value == "<object>");
     }
-    Check(foundArgs, "Lua debugger should expose frame locals without opening the debug library");
+    Check(foundArgs, "JavaScript debugger should expose explicit frame locals");
     const auto watchedMode = host.EvaluateDebugWatch("args.mode");
     Check(watchedMode && watchedMode->value == "alpha",
-          "Lua debugger should resolve side-effect-free local table watches");
+          "JavaScript debugger should resolve side-effect-free object watches");
     Check(!host.EvaluateDebugWatch("args[mode]"),
-          "Lua debugger should reject executable watch syntax");
-    Check(host.DebugStep(), "Lua debugger should step from a paused coroutine");
+          "JavaScript debugger should reject executable watch syntax");
+    Check(host.DebugStep(), "JavaScript debugger should step from a paused continuation");
     host.Update(0.0f);
     const auto& steppedDebugState = host.CaptureDebugState();
     Check(steppedDebugState.paused && steppedDebugState.reason == "step" &&
               !steppedDebugState.frames.empty() &&
               steppedDebugState.frames.front().line == 7,
-          "Lua debugger should pause on the following executable line");
+          "JavaScript debugger should pause on the following debug probe");
     const auto watchedAmount = host.EvaluateDebugWatch("amount");
     Check(watchedAmount && watchedAmount->value.starts_with("2"),
           "stepping should refresh primitive local watches");
-    Check(host.DebugContinue(), "Lua debugger should continue the paused coroutine");
+    Check(host.DebugContinue(), "JavaScript debugger should continue the paused continuation");
     host.Update(0.0f);
     host.Update(0.02f);
     Check(host.ActionState(debugStart.handle) == px::ui::ActionExecutionState::Completed,
-          "continued Lua Action should resume through its declared await point");
+          "continued JavaScript Action should resume through its declared await point");
     Check(!host.LoadExtensionManifest("Content/Extensions/missing.pxextension") &&
               !px::vn::CommandRegistry::Global().Find("missing.command"),
           "declared commands without Engine.RegisterCommand callbacks must fail without poisoning the registry");
@@ -700,7 +708,7 @@ void TestBehaviorGraphExecutionAndCheckpoint() {
 
 int main() {
     Run("UIRouter_RouteStackAndModalState", TestRouteStackAndModalState);
-    Run("Lua_ExtensionSandbox", TestLuaExtensionSandbox);
+    Run("Script_ExtensionIntegration", TestScriptExtensionIntegration);
     Run("ActionDispatcher_ReentryAndCancellation",
         TestActionDispatcherReentryAndCancellation);
     Run("Behavior_ExecutionAndCheckpoint", TestBehaviorGraphExecutionAndCheckpoint);

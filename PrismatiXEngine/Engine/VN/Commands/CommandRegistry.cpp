@@ -175,7 +175,6 @@ CommandRegistry MakeBuiltins() {
     add(Descriptor("cg","Stage",{Param("id",VariantType::String),Param("image",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource)}));
     add(Descriptor("unlock","Progression",{Param("kind",VariantType::String),Param("id",VariantType::String,true)}));
     add(Descriptor("speed","Dialogue",{Param("value",VariantType::Integer,true)}));
-    add(Descriptor("lua","Extension",{Param("fn",VariantType::String,true)},CommandWaitPolicy::Async,RollbackPolicy::Boundary,true));
     for(const char* id:{"nvl","adv","er","nvl_clear"})add(Descriptor(id,"Dialogue"));
     return registry;
 }

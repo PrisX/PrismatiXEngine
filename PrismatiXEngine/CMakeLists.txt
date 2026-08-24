@@ -142,7 +142,6 @@ prismatix_configure_target(PrismatiXRuntimeCore)
 target_include_directories(PrismatiXRuntimeCore PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/Engine
-    ${LUA_INCLUDE_DIR}
 )
 target_include_directories(PrismatiXRuntimeCore PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/pl_mpeg
@@ -155,8 +154,6 @@ target_link_libraries(PrismatiXRuntimeCore PUBLIC
     SDL3_mixer::SDL3_mixer
     spdlog::spdlog
     nlohmann_json::nlohmann_json
-    ${LUA_LIBRARIES}
-    sol2::sol2
     PrismatiXRuntimeContracts
 )
 target_link_libraries(PrismatiXRuntimeCore PRIVATE qjs)
@@ -185,7 +182,6 @@ if(NOT EMSCRIPTEN)
     target_include_directories(PrismatiXRuntimePlatformNative PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/Engine
-        ${LUA_INCLUDE_DIR}
     )
     target_include_directories(PrismatiXRuntimePlatformNative PRIVATE
         ${FFMPEG_INCLUDE_DIRS}

@@ -106,7 +106,7 @@ inline float EaseInBounce(float t) { return 1.0f - EaseOutBounce(1.0f - t); }
 inline float SmoothStep(float t) { return t * t * (3.0f - 2.0f * t); }
 
 // Canonical easing names used by [anim ease=..], the editor node options, and
-// Engine.Animate in Lua. Unknown names fall back to linear.
+// Engine.Animate in script extensions. Unknown names fall back to linear.
 inline float Ease(std::string_view name, float t) {
     if (t <= 0.0f) return name == "outBounce" || name == "inBounce" ? 0.0f : 0.0f;
     if (t >= 1.0f) return 1.0f;

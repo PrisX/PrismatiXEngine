@@ -10,7 +10,6 @@
 #include "Engine/Core/TypeRegistry.h"
 #include "Engine/IO/Archive.h"
 #include "Engine/IO/VFS.h"
-#include "Engine/Lua/LuaHost.h"
 #include "Engine/Platform/Input.h"
 #include "Engine/Progression/Persist.h"
 #include "Engine/Progression/SaveSystem.h"

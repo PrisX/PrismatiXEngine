@@ -28,7 +28,7 @@
                 "PKG_CONFIG_PATH": "/opt/homebrew/lib/pkgconfig:/usr/local/lib/pkgconfig:$penv{PKG_CONFIG_PATH}"
             },
             "cacheVariables": {
-                "CMAKE_PREFIX_PATH": "$env{HOMEBREW_PREFIX};/opt/homebrew;/usr/local;/opt/homebrew/opt/lua@5.4;/usr/local/opt/lua@5.4"
+                "CMAKE_PREFIX_PATH": "$env{HOMEBREW_PREFIX};/opt/homebrew;/usr/local"
             },
             "condition": {
                 "type": "equals",

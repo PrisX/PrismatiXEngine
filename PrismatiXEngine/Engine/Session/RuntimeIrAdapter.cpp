@@ -464,9 +464,6 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             command.type = "route";
             Add(command, "route", Argument(operation, "route"));
             Add(command, "operation", Argument(operation, "operation"));
-        } else if (operation.kind == "lua") {
-            command.type = "lua";
-            Add(command, "fn", Argument(operation, "value"));
         } else if (operation.kind == "customNode") {
             command.type = Argument(operation, "type");
             const auto* descriptor = vn::CommandRegistry::Global().Find(command.type);
