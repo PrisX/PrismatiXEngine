@@ -44,6 +44,15 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
             await Engine.WaitAnimation(args.handle);
             Engine.log("async-animation:done");
         });
+        Engine.RegisterCommand("js.demo.debug", async (args) => {
+            const state = { score: args.score, nested: { value: "watch-ready" } };
+            await Engine.DebugPoint("Content/Extensions/demo.ts", 10,
+                                    { state, score: state.score }, "debugCommand");
+            state.score += 1;
+            await Engine.DebugPoint("Content/Extensions/demo.ts", 11,
+                                    { state, score: state.score }, "debugCommand");
+            Engine.log(`debug-done:${state.score}`);
+        });
         Engine.RegisterAction("js.demo.action", (args, context) => {
             Engine.log(`${args.message}:${context.preview}`);
         });
@@ -104,6 +113,17 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
                 "rollback": "boundary",
                 "parameters": [
                     {"name":"handle","type":"integer","required":true}
+                ]
+            },
+            {
+                "id": "js.demo.debug",
+                "displayName": "Debug",
+                "description": "Cooperative debugger probe fixture",
+                "category": "Tests",
+                "await": true,
+                "rollback": "boundary",
+                "parameters": [
+                    {"name":"score","type":"integer","required":true}
                 ]
             }
         ],
@@ -314,6 +334,51 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     suite.Expect(!host.HasPendingCommand() &&
                      console.back().text == "async-animation:done",
                  "async command should resume only after Timeline playback completes");
+
+    const auto acceptedBreakpoints = host.SetDebugBreakpoints({
+        {.source = "demo.ts", .line = 10},
+        {.source = "demo.ts", .line = 10},
+        {.source = "demo.ts", .line = 0}});
+    suite.Require(acceptedBreakpoints.size() == 1,
+                  "debugger should normalize and deduplicate valid breakpoints");
+    px::vn::Command debugCommand;
+    debugCommand.type = "js.demo.debug";
+    debugCommand.typedArgs["score"] = px::Variant(std::int64_t{4});
+    suite.Require(host.InvokeCommand(debugCommand) && host.HasPendingCommand(),
+                  "debug probe should suspend an async command at a breakpoint");
+    const auto& breakpointState = host.CaptureDebugState();
+    const auto watched = host.EvaluateDebugWatch("state.nested.value");
+    suite.Require(breakpointState.paused && breakpointState.reason == "breakpoint" &&
+                      breakpointState.frames.size() == 1 &&
+                      breakpointState.frames.front().source ==
+                          "Content/Extensions/demo.ts" &&
+                      breakpointState.frames.front().line == 10 && watched &&
+                      watched->value == "watch-ready" &&
+                      !host.EvaluateDebugWatch("state['nested']"),
+                  "breakpoint snapshot should expose source, line, locals, and safe watches");
+    suite.Require(host.DebugStep(),
+                  "step should resume a command paused at a debug probe");
+    host.Update(0.0f);
+    const auto& stepState = host.CaptureDebugState();
+    const auto steppedScore = host.EvaluateDebugWatch("state.score");
+    suite.Require(stepState.paused && stepState.reason == "step" &&
+                      stepState.frames.front().line == 11 && steppedScore &&
+                      steppedScore->value == "5",
+                  "step should stop at the next probe with refreshed locals");
+    suite.Require(host.DebugContinue(),
+                  "continue should resume a stepped JavaScript command");
+    host.Update(0.0f);
+    suite.Expect(!host.HasPendingCommand() &&
+                     !host.CaptureDebugState().paused &&
+                     console.back().text == "debug-done:5",
+                 "continued command should run to completion");
+    host.SetDebugBreakpoints({});
+    suite.Require(host.DebugPause() && host.InvokeCommand(debugCommand),
+                  "pause request should arm the next cooperative debug probe");
+    suite.Expect(host.CaptureDebugState().paused &&
+                     host.CaptureDebugState().reason == "pause",
+                 "pause request should report an explicit pause reason");
+    host.CancelPending();
 
     px::ui::ActionInvocation asynchronousAction;
     asynchronousAction.action = "js.demo.asyncAction";

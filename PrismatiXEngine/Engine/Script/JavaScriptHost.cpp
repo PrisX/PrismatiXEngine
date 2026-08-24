@@ -54,6 +54,12 @@ std::string Lower(std::string value) {
     return value;
 }
 
+std::string NormalizeDebugSource(std::string source) {
+    if (!source.empty() && source.front() == '@') source.erase(0, 1);
+    std::ranges::replace(source, '\\', '/');
+    return source;
+}
+
 std::optional<VariantType> ManifestType(const std::string& raw) {
     const auto type = Lower(raw);
     if (type == "null") return VariantType::Null;
@@ -225,6 +231,7 @@ public:
             for (auto& pending : pendingCommands) FreeContinuation(pending);
             for (auto& pending : pendingActions) FreeContinuation(pending);
             DiscardCreatedPromiseWait();
+            JS_FreeValue(context, debugLocals);
             for (auto& [_, callback] : commands) JS_FreeValue(context, callback);
             for (auto& [_, callback] : actions) JS_FreeValue(context, callback);
             for (auto& [_, callbacks] : events)
@@ -589,6 +596,82 @@ public:
         return promise;
     }
 
+    [[nodiscard]] std::string DebugValue(JSValueConst value) const {
+        if (JS_IsUndefined(value)) return "undefined";
+        if (JS_IsNull(value)) return "null";
+        if (JS_IsBool(value)) return JS_ToBool(context, value) ? "true" : "false";
+        if (JS_IsNumber(value) || JS_IsString(value)) {
+            auto text = String(value).value_or(std::string{});
+            constexpr std::size_t limit = 160;
+            const bool truncated = text.size() > limit;
+            if (text.size() > limit) text.resize(limit);
+            return text + (truncated ? "…" : "");
+        }
+        if (JS_IsFunction(context, value)) return "<function>";
+        if (JS_IsArray(value)) return "<array>";
+        if (JS_IsObject(value)) return "<object>";
+        return "<value>";
+    }
+
+    [[nodiscard]] bool BreakpointMatches(const std::string& source,
+                                         const int line) const {
+        return std::ranges::any_of(
+            debugBreakpoints, [&](const auto& configured) {
+                const auto& [configuredSource, lines] = configured;
+                const bool sourceMatches =
+                    configuredSource.empty() || source == configuredSource ||
+                    (source.size() > configuredSource.size() &&
+                     source.ends_with(configuredSource));
+                return sourceMatches && lines.contains(line);
+            });
+    }
+
+    [[nodiscard]] bool ShouldPauseAt(const std::string& source, const int line,
+                                     std::string& reason) {
+        const bool breakpoint = BreakpointMatches(source, line);
+        if (!breakpoint && !debugPauseRequested && !debugStepRequested)
+            return false;
+        reason = breakpoint ? "breakpoint"
+                            : debugStepRequested ? "step" : "pause";
+        debugPauseRequested = false;
+        debugStepRequested = false;
+        return true;
+    }
+
+    void CaptureDebugPoint(const std::string& source, const int line,
+                           JSValueConst locals, std::string function,
+                           std::string reason) {
+        debug = {};
+        debug.paused = true;
+        debug.reason = std::move(reason);
+        JS_FreeValue(context, debugLocals);
+        debugLocals = JS_IsObject(locals) ? JS_DupValue(context, locals)
+                                          : JS_NewObject(context);
+
+        DebugFrame frame;
+        frame.source = source;
+        frame.function = function.empty() ? "<anonymous>" : std::move(function);
+        frame.line = line;
+        JSPropertyEnum* properties = nullptr;
+        std::uint32_t count = 0;
+        if (JS_GetOwnPropertyNames(context, &properties, &count, debugLocals,
+                                   JS_GPN_STRING_MASK | JS_GPN_ENUM_ONLY) >= 0) {
+            count = std::min<std::uint32_t>(count, 128);
+            for (std::uint32_t index = 0; index < count; ++index) {
+                const char* name =
+                    JS_AtomToCString(context, properties[index].atom);
+                if (!name) continue;
+                JSValue value =
+                    JS_GetProperty(context, debugLocals, properties[index].atom);
+                frame.locals.push_back({name, DebugValue(value)});
+                JS_FreeValue(context, value);
+                JS_FreeCString(context, name);
+            }
+            js_free(context, properties);
+        }
+        debug.frames.push_back(std::move(frame));
+    }
+
     JSValue RuntimeOperation(const std::string_view operation, const int count,
                              JSValueConst* values) {
         std::string first;
@@ -596,6 +679,33 @@ public:
         std::int64_t integer = 0;
         bool boolean = false;
 
+        if (operation == "debug.point") {
+            if (!StringArgument(count, values, 0, first) ||
+                !IntegerArgument(count, values, 1, integer) || integer <= 0 ||
+                integer > std::numeric_limits<int>::max())
+                return JS_ThrowTypeError(
+                    context, "DebugPoint requires a source path and positive line");
+            const std::string source = NormalizeDebugSource(std::move(first));
+            std::string reason;
+            if (!ShouldPauseAt(source, static_cast<int>(integer), reason))
+                return JS_NewSettledPromise(context, false, JS_UNDEFINED);
+            if (!acceptingPromiseWait)
+                return JS_ThrowTypeError(
+                    context,
+                    "DebugPoint can only pause inside an invoked async command or Action");
+            std::string function;
+            if (count >= 4 && !JS_IsUndefined(values[3]) &&
+                !StringArgument(count, values, 3, function))
+                return JS_ThrowTypeError(context,
+                                          "DebugPoint function must be a string");
+            const JSValueConst locals = count >= 3 ? values[2] : JS_UNDEFINED;
+            if (!JS_IsUndefined(locals) && !JS_IsObject(locals))
+                return JS_ThrowTypeError(context,
+                                          "DebugPoint locals must be an object");
+            CaptureDebugPoint(source, static_cast<int>(integer), locals,
+                              std::move(function), std::move(reason));
+            return CreatePromiseWait({.kind = "debug"});
+        }
         if (operation == "await.timer") {
             double seconds = 0.0;
             if (!NumberArgument(count, values, 0, seconds) || seconds < 0.0 ||
@@ -1050,6 +1160,7 @@ public:
                 AwaitAnimation: { value: bindRuntime("await.animation") },
                 WaitSeconds: { value: bindRuntime("wait.timer") },
                 WaitAnimation: { value: bindRuntime("wait.animation") },
+                DebugPoint: { value: bindRuntime("debug.point") },
                 GetMouseX: { value: bindRuntime("input.mouseX") },
                 GetMouseY: { value: bindRuntime("input.mouseY") },
                 GetLeftClick: { value: bindRuntime("input.leftClick") },
@@ -1447,6 +1558,10 @@ public:
     bool acceptingPromiseWait = false;
     std::uint64_t nextActionHandle = 1;
     DebugSnapshot debug;
+    JSValue debugLocals = JS_UNDEFINED;
+    std::unordered_map<std::string, std::set<int>> debugBreakpoints;
+    bool debugPauseRequested = false;
+    bool debugStepRequested = false;
     bool executing = false;
     std::chrono::steady_clock::time_point deadline{};
 };
@@ -1960,6 +2075,8 @@ void JavaScriptHost::Update(const float deltaSeconds) {
     if (!m_impl->runtime) return;
 
     const auto ready = [this, deltaSeconds](Impl::WaitToken& wait) {
+        if (wait.kind == "debug") return false;
+        if (wait.kind == "debug-resume") return true;
         if (wait.kind == "animation")
             return !m_impl->services.timeline ||
                    !m_impl->services.timeline->Playing(wait.handle);
@@ -2208,20 +2325,121 @@ void JavaScriptHost::CancelPending() {
     m_impl->pendingActions.clear();
     m_impl->actionTerminalStates.clear();
     m_impl->debug = {};
+    JS_FreeValue(m_impl->context, m_impl->debugLocals);
+    m_impl->debugLocals = JS_UNDEFINED;
+    m_impl->debugPauseRequested = false;
+    m_impl->debugStepRequested = false;
 }
 
 std::vector<DebugBreakpoint> JavaScriptHost::SetDebugBreakpoints(
-    std::vector<DebugBreakpoint>) {
-    return {};
+    std::vector<DebugBreakpoint> breakpoints) {
+    m_impl->debugBreakpoints.clear();
+    std::vector<DebugBreakpoint> accepted;
+    for (auto& breakpoint : breakpoints) {
+        breakpoint.source = NormalizeDebugSource(std::move(breakpoint.source));
+        if (breakpoint.line <= 0) continue;
+        if (m_impl->debugBreakpoints[breakpoint.source]
+                .insert(breakpoint.line)
+                .second)
+            accepted.push_back(std::move(breakpoint));
+    }
+    return accepted;
 }
 
-bool JavaScriptHost::DebugPause() { return false; }
-bool JavaScriptHost::DebugContinue() { return false; }
-bool JavaScriptHost::DebugStep() { return false; }
+bool JavaScriptHost::DebugPause() {
+    if (m_impl->debug.paused) return false;
+    m_impl->debugPauseRequested = true;
+    return true;
+}
+
+bool JavaScriptHost::DebugContinue() {
+    if (!m_impl->debug.paused) return false;
+    m_impl->debugPauseRequested = false;
+    m_impl->debugStepRequested = false;
+    m_impl->debug = {};
+    JS_FreeValue(m_impl->context, m_impl->debugLocals);
+    m_impl->debugLocals = JS_UNDEFINED;
+    for (auto& pending : m_impl->pendingCommands)
+        if (pending.wait.kind == "debug") pending.wait.kind = "debug-resume";
+    for (auto& pending : m_impl->pendingActions)
+        if (pending.wait.kind == "debug") pending.wait.kind = "debug-resume";
+    return true;
+}
+
+bool JavaScriptHost::DebugStep() {
+    if (!m_impl->debug.paused) return false;
+    m_impl->debugPauseRequested = false;
+    m_impl->debugStepRequested = true;
+    m_impl->debug = {};
+    JS_FreeValue(m_impl->context, m_impl->debugLocals);
+    m_impl->debugLocals = JS_UNDEFINED;
+    for (auto& pending : m_impl->pendingCommands)
+        if (pending.wait.kind == "debug") pending.wait.kind = "debug-resume";
+    for (auto& pending : m_impl->pendingActions)
+        if (pending.wait.kind == "debug") pending.wait.kind = "debug-resume";
+    return true;
+}
 
 std::optional<DebugVariable> JavaScriptHost::EvaluateDebugWatch(
-    std::string_view) const {
-    return std::nullopt;
+    const std::string_view expression) const {
+    if (!m_impl->debug.paused || JS_IsUndefined(m_impl->debugLocals) ||
+        expression.empty())
+        return std::nullopt;
+
+    std::vector<std::string> path;
+    std::size_t start = 0;
+    while (start < expression.size()) {
+        const std::size_t end = expression.find('.', start);
+        const std::string part(expression.substr(
+            start, end == std::string_view::npos ? expression.size() - start
+                                                  : end - start));
+        if (part.empty() ||
+            !(std::isalpha(static_cast<unsigned char>(part.front())) ||
+              part.front() == '_') ||
+            !std::ranges::all_of(
+                part.substr(1), [](const unsigned char character) {
+                    return std::isalnum(character) || character == '_';
+                }))
+            return std::nullopt;
+        path.push_back(part);
+        if (end == std::string_view::npos) break;
+        start = end + 1;
+    }
+
+    JSValue current = JS_DupValue(m_impl->context, m_impl->debugLocals);
+    for (const auto& part : path) {
+        if (!JS_IsObject(current)) {
+            JS_FreeValue(m_impl->context, current);
+            return std::nullopt;
+        }
+        const JSAtom atom = JS_NewAtomLen(m_impl->context, part.data(), part.size());
+        JSPropertyDescriptor descriptor{};
+        const int present = JS_GetOwnProperty(
+            m_impl->context, &descriptor, current, atom);
+        JS_FreeAtom(m_impl->context, atom);
+        if (present <= 0) {
+            if (present < 0) {
+                JSValue exception = JS_GetException(m_impl->context);
+                JS_FreeValue(m_impl->context, exception);
+            }
+            JS_FreeValue(m_impl->context, current);
+            return std::nullopt;
+        }
+        const bool accessor = !JS_IsUndefined(descriptor.getter) ||
+                              !JS_IsUndefined(descriptor.setter);
+        JSValue next = descriptor.value;
+        JS_FreeValue(m_impl->context, descriptor.getter);
+        JS_FreeValue(m_impl->context, descriptor.setter);
+        JS_FreeValue(m_impl->context, current);
+        if (accessor || JS_IsException(next)) {
+            JS_FreeValue(m_impl->context, next);
+            return std::nullopt;
+        }
+        current = next;
+    }
+    DebugVariable value{std::string(expression), m_impl->DebugValue(current)};
+    JS_FreeValue(m_impl->context, current);
+    return value;
 }
 
 const DebugSnapshot& JavaScriptHost::CaptureDebugState() const {
