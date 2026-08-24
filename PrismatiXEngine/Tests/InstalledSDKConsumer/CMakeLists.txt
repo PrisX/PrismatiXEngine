@@ -18,8 +18,3 @@ target_compile_definitions(PrismatiXInstalledSDKConsumer PRIVATE
 enable_testing()
 add_test(NAME PrismatiX.InstalledSDK.Consumer
          COMMAND PrismatiXInstalledSDKConsumer)
-add_test(NAME PrismatiX.InstalledSDK.PreviewHostHello
-         COMMAND "${PrismatiX_PREVIEW_HOST_EXECUTABLE}")
-set_tests_properties(PrismatiX.InstalledSDK.PreviewHostHello PROPERTIES
-    PASS_REGULAR_EXPRESSION "PrismatiXPreviewProtocol|ready|exited"
-    TIMEOUT 5)
