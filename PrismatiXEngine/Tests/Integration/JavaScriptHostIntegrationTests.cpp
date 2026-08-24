@@ -10,6 +10,7 @@
 #include "Tests/TestSupport/TestHarness.h"
 
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -31,8 +32,22 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
         Engine.RegisterCommand("js.demo.echo", (args) => {
             Engine.log(`${args.message}:${args.amount}`);
         });
+        Engine.RegisterCommand("js.demo.await", function* (args) {
+            Engine.log("async-command:start");
+            yield Engine.AwaitSeconds(args.seconds);
+            Engine.log("async-command:middle");
+            yield Engine.AwaitSeconds(0.02);
+            Engine.log("async-command:done");
+        });
         Engine.RegisterAction("js.demo.action", (args, context) => {
             Engine.log(`${args.message}:${context.preview}`);
+        });
+        Engine.RegisterAction("js.demo.asyncAction", function* (args, context) {
+            Engine.log(`async-action:start:${context.scene}`);
+            yield Engine.AwaitSeconds(args.seconds);
+            Engine.log("async-action:middle");
+            yield Engine.AwaitSeconds(0.01);
+            Engine.log("async-action:done");
         });
         Engine.On("js.demo.event", (payload) => {
             Engine.log(`event:${payload.value}`);
@@ -45,26 +60,49 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
         "id": "js-demo",
         "entry": "demo.js",
         "capabilities": ["runtime", "ui"],
-        "commands": [{
-            "id": "js.demo.echo",
-            "displayName": "Echo",
-            "description": "Immediate JavaScript command",
-            "category": "Tests",
-            "await": false,
-            "rollback": "reversible",
-            "parameters": [
-                {"name":"message","type":"string","required":true},
-                {"name":"amount","type":"integer","default":1,
-                 "range":{"minimum":0,"maximum":10}}
-            ]
-        }],
-        "actions": [{
-            "id": "js.demo.action",
-            "displayName": "JavaScript Action",
-            "category": "Tests",
-            "reentry": "restart",
-            "parameters": [{"name":"message","type":"string","required":true}]
-        }]
+        "commands": [
+            {
+                "id": "js.demo.echo",
+                "displayName": "Echo",
+                "description": "Immediate JavaScript command",
+                "category": "Tests",
+                "await": false,
+                "rollback": "reversible",
+                "parameters": [
+                    {"name":"message","type":"string","required":true},
+                    {"name":"amount","type":"integer","default":1,
+                     "range":{"minimum":0,"maximum":10}}
+                ]
+            },
+            {
+                "id": "js.demo.await",
+                "displayName": "Await",
+                "description": "Checkpointed JavaScript command",
+                "category": "Tests",
+                "await": true,
+                "rollback": "boundary",
+                "parameters": [
+                    {"name":"seconds","type":"number","required":true,
+                     "range":{"minimum":0,"maximum":1}}
+                ]
+            }
+        ],
+        "actions": [
+            {
+                "id": "js.demo.action",
+                "displayName": "JavaScript Action",
+                "category": "Tests",
+                "reentry": "restart",
+                "parameters": [{"name":"message","type":"string","required":true}]
+            },
+            {
+                "id": "js.demo.asyncAction",
+                "displayName": "Asynchronous JavaScript Action",
+                "category": "Tests",
+                "reentry": "allow",
+                "parameters": [{"name":"seconds","type":"number","required":true}]
+            }
+        ]
     })json");
     Write(extensions / "denied.pxextension", R"json({
         "format":"PrismatiXExtension",
@@ -188,6 +226,77 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
                      console[console.size() - 2].text == "event:ok" &&
                      console.back().text == "action:true",
                  "command, event, and Action callbacks should receive runtime values");
+
+    px::vn::Command asynchronousCommand;
+    asynchronousCommand.type = "js.demo.await";
+    asynchronousCommand.typedArgs["seconds"] = px::Variant(0.05);
+    suite.Require(host.InvokeCommand(asynchronousCommand) &&
+                      host.HasPendingCommand(),
+                  "generator command should suspend on an engine-owned timer");
+    host.Update(0.02f);
+    const auto commandCheckpoint = host.CapturePending();
+    suite.Require(commandCheckpoint.size() == 1 &&
+                      commandCheckpoint.front().yieldIndex == 1 &&
+                      commandCheckpoint.front().waitKind == "timer" &&
+                      std::abs(commandCheckpoint.front().remainingSeconds - 0.03f) <
+                          0.001f,
+                  "command checkpoint should preserve its exact yield and timer state");
+    host.CancelPending();
+    suite.Require(!host.HasPendingCommand() &&
+                      static_cast<bool>(host.RestorePending(commandCheckpoint)),
+                  "command continuation should replay to its saved yield boundary");
+    host.Update(0.04f);
+    const auto secondCommandCheckpoint = host.CapturePending();
+    suite.Require(secondCommandCheckpoint.size() == 1 &&
+                      secondCommandCheckpoint.front().yieldIndex == 2 &&
+                      secondCommandCheckpoint.front().waitKind == "timer",
+                  "resumed command should advance to the next deterministic boundary");
+    host.Update(0.03f);
+    suite.Expect(!host.HasPendingCommand() && console.back().text == "async-command:done",
+                 "generator command should complete after all waits expire");
+
+    auto invalidCommandCheckpoint = commandCheckpoint;
+    invalidCommandCheckpoint.front().waitKind = "animation";
+    suite.Expect(!host.RestorePending(invalidCommandCheckpoint) &&
+                     !host.HasPendingCommand(),
+                 "checkpoint replay must fail closed when the await structure changes");
+
+    px::ui::ActionInvocation asynchronousAction;
+    asynchronousAction.action = "js.demo.asyncAction";
+    asynchronousAction.arguments["seconds"] = px::Variant(0.04);
+    asynchronousAction.context.sourceScene = "async-scene";
+    const auto actionStart = host.StartAction(asynchronousAction);
+    suite.Require(actionStart.status && actionStart.pending && actionStart.handle != 0 &&
+                      host.ActionState(actionStart.handle) ==
+                          px::ui::ActionExecutionState::Running,
+                  "generator Action should expose a pollable execution handle");
+    host.Update(0.02f);
+    const auto actionCheckpoint = host.CapturePendingActions();
+    suite.Require(actionCheckpoint.size() == 1 &&
+                      actionCheckpoint.front().id == actionStart.handle &&
+                      actionCheckpoint.front().yieldIndex == 1 &&
+                      std::abs(actionCheckpoint.front().remainingSeconds - 0.02f) <
+                          0.001f,
+                  "Action checkpoint should preserve provider handle and timer state");
+    host.CancelAction(actionStart.handle);
+    suite.Expect(host.ActionState(actionStart.handle) ==
+                     px::ui::ActionExecutionState::Cancelled,
+                 "cancelling a JavaScript Action should publish its terminal state");
+    suite.Require(static_cast<bool>(host.RestorePendingActions(actionCheckpoint)) &&
+                      host.ActionState(actionStart.handle) ==
+                          px::ui::ActionExecutionState::Running,
+                  "Action continuation should reconstruct the saved provider handle");
+    host.Update(0.03f);
+    const auto secondActionCheckpoint = host.CapturePendingActions();
+    suite.Require(secondActionCheckpoint.size() == 1 &&
+                      secondActionCheckpoint.front().yieldIndex == 2,
+                  "resumed Action should advance to its second await boundary");
+    host.Update(0.02f);
+    suite.Expect(!host.HasPendingAction() &&
+                     host.ActionState(actionStart.handle) ==
+                         px::ui::ActionExecutionState::Completed &&
+                     console.back().text == "async-action:done",
+                 "generator Action should report completion after its final wait");
 
     const auto started = std::chrono::steady_clock::now();
     suite.Expect(!host.RunString("while (true) {}", "javascript-budget"),

@@ -47,6 +47,9 @@ public:
 
     [[nodiscard]] bool HasAction(std::string_view action) const;
     Status InvokeAction(const ui::ActionInvocation& invocation);
+    ui::ProviderActionStart StartAction(const ui::ActionInvocation& invocation);
+    [[nodiscard]] ui::ActionExecutionState ActionState(std::uint64_t handle) const;
+    void CancelAction(std::uint64_t handle);
 
 private:
     class Impl;
