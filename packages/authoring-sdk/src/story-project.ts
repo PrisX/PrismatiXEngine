@@ -102,7 +102,7 @@ function sceneLabelTarget(sceneId: string, label: string): string {
 }
 
 function argumentText(argument: StoryArgument | undefined): string | undefined {
-  if (argument === undefined || argument.value === null) return undefined;
+  if (argument === undefined || argument.value === null || typeof argument.value === "object") return undefined;
   return String(argument.value);
 }
 
