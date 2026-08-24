@@ -18,7 +18,7 @@
 #include <unordered_set>
 
 #include "Engine/SDK/RuntimeIr.h"
-#include "Engine/SDK/StudioUi.h"
+#include "Engine/SDK/Ui.h"
 #include "Engine/SDK/CharacterResources.h"
 #include "Engine/SDK/GameCatalogResources.h"
 
@@ -400,7 +400,7 @@ std::optional<std::string> PlayerUiSceneId(const std::string_view text) {
         }
         break;
     }
-    const auto studio = ParseStudioUi(text);
+    const auto studio = ParseUi(text);
     return studio.Valid() && IsUuid(studio.document.id)
                ? std::optional<std::string>{studio.document.id}
                : std::nullopt;
@@ -784,7 +784,7 @@ ValidationResult Validate(const PackageRequest& request) {
             if (scene != result.inputs.end()) {
                 const auto text = ReadTextFile(scene->source, scene->input.size);
                 if (!text || !PlayerUiSceneId(*text)) {
-                    AddDiagnostic(diagnostics, "PXPKG1224", "route scene is neither a typed UIScene nor Studio UI: " + route.scene);
+                    AddDiagnostic(diagnostics, "PXPKG1224", "route scene is neither a typed UIScene nor UI document: " + route.scene);
                 }
             }
         }

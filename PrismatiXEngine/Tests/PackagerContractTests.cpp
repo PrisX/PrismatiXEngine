@@ -17,7 +17,7 @@
 #include "Engine/SDK/GameCatalogResources.h"
 #include "Engine/SDK/RuntimeIr.h"
 #include "Engine/Session/RuntimeSession.h"
-#include "Engine/UI/StudioUiApplication.h"
+#include "Engine/UI/UiApplication.h"
 #include "Engine/UI/UIContext.h"
 #include "Engine/UI/Widgets.h"
 #include "Tests/TestSupport/TestHarness.h"
@@ -49,7 +49,7 @@ bool HasDiagnostic(const px::sdk::PackageRunResult& result,
         [code](const auto& diagnostic) { return diagnostic.code == code; });
 }
 
-std::string StudioUiTitle() {
+std::string UiTitle() {
     return R"({
       "format":"PrismatiXUIScene","schemaRevision":1,
       "id":"4ff53084-a967-4ff1-88e5-266d083987b4","revision":4,
@@ -152,7 +152,7 @@ int main() {
         "arguments":{"speaker":"雪","text":"hello"}
       }]
     })");
-    Write(root / "Content/UI/Title.pxui", StudioUiTitle());
+    Write(root / "Content/UI/Title.pxui", UiTitle());
     Write(root / "Content/Game.pxres", RuntimeGameCatalog());
     Write(root / "Assets/rin.png", "fixture-image");
     Write(root / "Characters/11111111-1111-4111-8111-111111111111.pxcharacter",
@@ -269,7 +269,7 @@ int main() {
         const auto* routeObject = routeArray && routeArray->size() == 1 ? routeArray->front().AsObject() : nullptr;
         const auto scene = routeObject ? routeObject->find("scene") : px::VariantObject::const_iterator{};
         const auto* sceneReference = routeObject && scene != routeObject->end() ? scene->second.TryGet<px::ResourceRefValue>() : nullptr;
-        suite.Expect(sceneReference && sceneReference->id.ToString() == "4ff53084-a967-4ff1-88e5-266d083987b4" && sceneReference->lastKnownPath == "Content/UI/Title.pxui", "startRoute maps to the packaged Studio UI identity");
+        suite.Expect(sceneReference && sceneReference->id.ToString() == "4ff53084-a967-4ff1-88e5-266d083987b4" && sceneReference->lastKnownPath == "Content/UI/Title.pxui", "startRoute maps to the packaged UI document identity");
 
         px::io::Archive archive;
         const auto key = px::crypto::DeriveKey(PropertyText(manifest.Value(), "key"));
@@ -379,7 +379,7 @@ int main() {
 
         const auto packagedScene = archive.Read(sceneReference->lastKnownPath);
         suite.Require(packagedScene.has_value(),
-                      "Player can read startRoute Studio UI from Content.pdx");
+                      "Player can read startRoute UI document from Content.pdx");
         px::ui::UIContext playerContext;
         std::size_t startActions = 0;
         suite.Require(
@@ -390,13 +390,13 @@ int main() {
                 })
                 .IsOk(),
             "headless Player Action route registers");
-        px::ui::StudioUiApplication playerUi(playerContext);
+        px::ui::UiApplication playerUi(playerContext);
         const std::string packagedText(packagedScene->begin(), packagedScene->end());
         const auto booted = playerUi.ApplyText(
             packagedText,
             {.sourcePath = sceneReference->lastKnownPath});
         suite.Require(static_cast<bool>(booted),
-                      "Packager output boots through the shared Player Studio UI path");
+                      "Packager output boots through the shared Player UI document path");
         const auto startId =
             px::Uuid::Parse("22222222-2222-4222-8222-222222222222");
         auto* start = startId
@@ -407,7 +407,7 @@ int main() {
                       "headless Player boot creates the authored start button");
         start->Activate();
         suite.Expect(startActions == 1,
-                     "packaged Studio UI dispatches its authored Player Action");
+                     "packaged UI document dispatches its authored Player Action");
     });
 
     suite.Run("Cancellation_PreservesPriorSuccessfulOutput", [&] {
@@ -529,7 +529,7 @@ image = res("99999999-9999-4999-8999-999999999999", "Assets/rin.png")
         suite.Expect(result.exitCode == px::sdk::PackageExitCode::Failed && !result.diagnostics.empty() && result.diagnostics.front().code == "PXPKG1222", "non-empty startRoute cannot produce an unbootable manifest");
     });
 
-    suite.Run("MalformedStudioUiRoute_IsRejected", [&] {
+    suite.Run("MalformedUiRoute_IsRejected", [&] {
         Write(root / "Content/UI/Malformed.pxui", "{}");
         auto malformed =
             FixtureRequest(root, fixture.path / "Build/MalformedRoute");
@@ -548,7 +548,7 @@ image = res("99999999-9999-4999-8999-999999999999", "Assets/rin.png")
             result.exitCode == px::sdk::PackageExitCode::Failed &&
                 !result.diagnostics.empty() &&
                 result.diagnostics.front().code == "PXPKG1224",
-            "Packager validates Studio UI content instead of trusting the extension");
+            "Packager validates UI document content instead of trusting the extension");
     });
 
     suite.Run("MissingCharacterInput_IsRejectedBeforePackaging", [&] {

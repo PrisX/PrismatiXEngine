@@ -189,7 +189,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                    !asset["source"].is_string())continue;
                 const std::string source=asset["source"].get<std::string>();
                 if(m_runtime.VFS().Exists(source))
-                    m_studioUiAssets.emplace(
+                    m_uiAssets.emplace(
                         asset["id"].get<std::string>(),source);
             }
         }
@@ -204,28 +204,28 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                 const auto source=SafeVfsRelativePath(
                     component["source"].get<std::string>());
                 if(source&&m_runtime.VFS().Exists(*source))
-                    m_studioUiComponents.emplace(
+                    m_uiComponents.emplace(
                         component["id"].get<std::string>(),*source);
             }
         }
     }
-    m_ui.SetStudioUiAssetResolver(
+    m_ui.SetUiAssetResolver(
         [this](const std::string_view assetId)->std::optional<std::string>{
-            const auto found=m_studioUiAssets.find(std::string(assetId));
-            return found==m_studioUiAssets.end()
+            const auto found=m_uiAssets.find(std::string(assetId));
+            return found==m_uiAssets.end()
                        ?std::nullopt
                        :std::optional<std::string>{found->second};
         });
-    m_ui.SetStudioUiComponentLoader(
+    m_ui.SetUiComponentLoader(
         [this](const std::string_view componentId)
-            ->std::optional<ui::StudioUiComponentSource>{
+            ->std::optional<ui::UiComponentSource>{
             const auto found=
-                m_studioUiComponents.find(std::string(componentId));
-            if(found==m_studioUiComponents.end())return std::nullopt;
+                m_uiComponents.find(std::string(componentId));
+            if(found==m_uiComponents.end())return std::nullopt;
             const auto source=m_runtime.VFS().ReadText(found->second);
             return source
-                       ?std::optional<ui::StudioUiComponentSource>{
-                            ui::StudioUiComponentSource{found->second,*source}}
+                       ?std::optional<ui::UiComponentSource>{
+                            ui::UiComponentSource{found->second,*source}}
                        :std::nullopt;
         });
     if(m_boot.routeScenes.empty()||!m_boot.routeScenes.contains(m_boot.startRoute)){diag::Diagnostic diagnostic{.severity=diag::Severity::Fatal,.code="PXPLAYER5004",.category="Player.Boot",.message="Route table or startRoute is invalid"};diag::Emit(diagnostic);return false;}

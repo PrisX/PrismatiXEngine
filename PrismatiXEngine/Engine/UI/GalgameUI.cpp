@@ -4,7 +4,7 @@
 #include "Engine/Graphics/Renderer2D.h"
 #include "Engine/Platform/Input.h"
 #include "Engine/UI/Layout.h"
-#include "Engine/UI/StudioUiApplication.h"
+#include "Engine/UI/UiApplication.h"
 #include "Engine/UI/VirtualizedView.h"
 #include "Engine/UI/Widgets.h"
 #include "Engine/UI/UISceneLoader.h"
@@ -93,7 +93,7 @@ Status GalgameUI::RegisterTemplate(Screen screen,std::string_view text,const std
         m_templates[static_cast<int>(screen)]=std::move(value);
         return Status::Ok();
     }
-    auto studio=sdk::ParseStudioUi(text);
+    auto studio=sdk::ParseUi(text);
     if(studio.Valid()){
         Template value;
         value.studioScene=std::move(studio.document);
@@ -105,7 +105,7 @@ Status GalgameUI::RegisterTemplate(Screen screen,std::string_view text,const std
        (typed.Value().kind!=resource::DocumentKind::Scene||
         typed.Value().type!="UIScene"))
         return GalgameFailure("PXUI2803",
-            "Galgame template is neither a typed UIScene nor Studio UI: "+sourcePath);
+            "Galgame template is neither a typed UIScene nor UI document: "+sourcePath);
     for(const auto& diagnostic:typed.Diagnostics())diag::Emit(diagnostic);
     return Status::Fail(typed.Diagnostics());
 }
@@ -119,7 +119,7 @@ Status GalgameUI::InstallTemplate(Screen screen){
         auto bindings=std::move(loaded.Value().bindings);auto animations=std::move(loaded.Value().animations);auto theme=std::move(loaded.Value().theme);auto triggers=std::move(loaded.Value().triggers);auto interaction=std::move(loaded.Value().interactionGraph);const Status installed=Install(std::move(loaded.Value().root),screen);if(!installed)return installed;m_bindings=std::move(bindings);if(theme)m_context.SetTheme(std::move(*theme));if(animations){const Status status=m_context.SetAnimations(std::move(*animations),true);if(!status)return status;}const Status triggerStatus=m_context.ConfigureTriggers(std::move(triggers),std::move(interaction));if(!triggerStatus)return triggerStatus;
     }else if(it->second.studioScene){
         m_bindings.clear();
-        StudioUiApplication application(m_context);
+        UiApplication application(m_context);
         auto applied=application.ApplyDocument(
             *it->second.studioScene,
             {.sourcePath=it->second.sourcePath,
@@ -164,7 +164,7 @@ std::unique_ptr<Control> GalgameUI::MakeMenuButton(std::string text, std::string
 }
 
 Status GalgameUI::Install(std::unique_ptr<Control> root, Screen screen) {
-    ResetStudioTimelineOverrides();
+    ResetUiTimelineOverrides();
     m_bindings.clear();
     if (screen != Screen::HUD) {
         m_speaker = m_dialogue = m_nvlText = m_mode = nullptr;
@@ -190,58 +190,58 @@ Status GalgameUI::ShowTitle() {
     return Install(std::move(root), Screen::Title);
 }
 
-Status GalgameUI::ActivateStudioControl(const std::string_view nodeId) {
+Status GalgameUI::ActivateUiControl(const std::string_view nodeId) {
     const auto id = Uuid::Parse(nodeId);
     if (!id)
         return GalgameFailure("PXUI2812",
-                              "Studio UI activation requires a canonical node UUID");
+                              "UI document activation requires a canonical node UUID");
     auto* button = m_context.Root()
                        ? dynamic_cast<Button*>(m_context.Root()->Find(*id))
                        : nullptr;
     if (!button)
         return GalgameFailure(
             "PXUI2813",
-            "Studio UI activation target is not a Button-compatible control");
+            "UI document activation target is not a Button-compatible control");
     button->Activate();
     return Status::Ok();
 }
 
-Status GalgameUI::SetStudioControlVisibility(const std::string_view nodeId,
+Status GalgameUI::SetUiControlVisibility(const std::string_view nodeId,
                                              const bool visible) {
     const auto id = Uuid::Parse(nodeId);
     if (!id)
         return GalgameFailure(
             "PXUI2816",
-            "Studio UI visibility requires a canonical node UUID");
+            "UI document visibility requires a canonical node UUID");
     auto* control = m_context.Root()
                         ? dynamic_cast<Control*>(m_context.Root()->Find(*id))
                         : nullptr;
     if (!control)
         return GalgameFailure(
             "PXUI2817",
-            "Studio UI visibility target is not present in the active scene");
+            "UI document visibility target is not present in the active scene");
     m_timelineVisibilityBase.try_emplace(std::string(nodeId),
                                          control->GetVisibility());
     control->SetVisibility(visible ? Visibility::Visible : Visibility::Hidden);
     return Status::Ok();
 }
 
-Status GalgameUI::PreviewStudioAnimation(const std::string_view clipId,
+Status GalgameUI::PreviewUiAnimation(const std::string_view clipId,
                                          const float time,
                                          const bool playing) {
     const auto id = Uuid::Parse(clipId);
     if (!id)
         return GalgameFailure(
             "PXUI2818",
-            "Studio UI animation requires a canonical clip UUID");
+            "UI document animation requires a canonical clip UUID");
     return m_context.PreviewAnimation(*id, time, playing);
 }
 
-Status GalgameUI::StopStudioAnimation(const bool restoreDesignState) {
+Status GalgameUI::StopUiAnimation(const bool restoreDesignState) {
     return m_context.StopAnimation(restoreDesignState);
 }
 
-void GalgameUI::ResetStudioTimelineOverrides() {
+void GalgameUI::ResetUiTimelineOverrides() {
     for (const auto& [nodeId, visibility] : m_timelineVisibilityBase) {
         const auto id = Uuid::Parse(nodeId);
         auto* control = id && m_context.Root()

@@ -22,7 +22,7 @@ Engine.RegisterAction("debug.typed-action", async (args, context) => {
     }
     if (context.scene === "Content/UI/ActionSignalScene.pxui") {
         if (context.node !== "14141414-1414-4414-8414-141414141414" ||
-            context.signal !== "studioUi.activated") {
+            context.signal !== "ui.activated") {
             throw new Error("UI Action context was not preserved");
         }
     } else if (context.scene !== "typed-action.pxir") {

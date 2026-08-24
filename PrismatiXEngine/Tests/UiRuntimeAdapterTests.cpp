@@ -6,10 +6,10 @@
 #include <sstream>
 #include <string>
 
-#include "Engine/SDK/StudioUi.h"
+#include "Engine/SDK/Ui.h"
 #include "Engine/UI/GalgameUI.h"
-#include "Engine/UI/StudioUiAdapter.h"
-#include "Engine/UI/StudioUiApplication.h"
+#include "Engine/UI/UiAdapter.h"
+#include "Engine/UI/UiApplication.h"
 #include "Engine/UI/UIContext.h"
 #include "Engine/UI/UITypeRegistry.h"
 #include "Engine/UI/Widgets.h"
@@ -22,7 +22,7 @@ void Check(const bool condition, const char* message) {
     std::exit(1);
 }
 
-bool HasDiagnostic(const px::Result<px::ui::StudioUiApplicationSummary>& result, const std::string_view code) {
+bool HasDiagnostic(const px::Result<px::ui::UiApplicationSummary>& result, const std::string_view code) {
     return std::ranges::any_of(result.Diagnostics(), [&](const px::diag::Diagnostic& diagnostic) { return diagnostic.code == code; });
 }
 
@@ -379,21 +379,21 @@ int main() {
           "transitions":[]
         }
       })");
-    const auto parsed = px::sdk::ParseStudioUi(scene);
-    Check(parsed.Valid(), "valid Studio UI must parse before Runtime adaptation");
+    const auto parsed = px::sdk::ParseUi(scene);
+    Check(parsed.Valid(), "valid UI document must parse before Runtime adaptation");
     std::size_t actions = 0;
-    auto runtime = px::ui::BuildStudioUiRuntimeTree(
+    auto runtime = px::ui::BuildUiRuntimeTree(
         parsed.document,
         [](const std::string_view id) -> std::optional<std::string> {
             if (id == "66666666-6666-4666-8666-666666666666") return "Content/logo.png";
             return std::nullopt;
         },
-        [&actions](const px::sdk::StudioUiAction& action, std::string_view, std::string_view) {
+        [&actions](const px::sdk::UiAction& action, std::string_view, std::string_view) {
             Check(action.id == "game.start", "Runtime button must dispatch the authored typed action");
             ++actions;
         }
     );
-    Check(runtime.Valid(), "Studio UI must produce a Runtime tree");
+    Check(runtime.Valid(), "UI document must produce a Runtime tree");
     Check(runtime.nodeCount == 3, "Runtime tree must retain every authored node");
     Check(runtime.actionBindingCount == 1, "Runtime tree must bind the authored button action");
     Check(runtime.behaviorNodeCount == 3 && runtime.behaviorTriggerCount == 1, "Runtime adapter must retain Behavior Graph nodes and triggers");
@@ -454,20 +454,20 @@ int main() {
     optionScene["behaviorTriggers"].push_back(
         { { "id", "26262626-2626-4262-8262-262626262626" }, { "nodeId", "17171717-1717-4717-8717-171717171717" }, { "signal", "itemSelected" }, { "entryNodeId", "21212121-2121-4212-8212-212121212121" }, { "reentry", "restart" } }
     );
-    const auto optionParsed = px::sdk::ParseStudioUi(optionScene.dump());
+    const auto optionParsed = px::sdk::ParseUi(optionScene.dump());
     Check(optionParsed.Valid(), "dynamic OptionButton scene must satisfy the SDK contract");
     auto invalidBehaviorSignal = optionParsed.document;
     invalidBehaviorSignal.behaviorTriggers.back().signal = "missingSignal";
     const auto invalidBehaviorRuntime =
-        px::ui::BuildStudioUiRuntimeTree(invalidBehaviorSignal, [](const std::string_view id) -> std::optional<std::string> { return id == "66666666-6666-4666-8666-666666666666" ? std::optional<std::string>{ "Content/logo.png" } : std::nullopt; });
+        px::ui::BuildUiRuntimeTree(invalidBehaviorSignal, [](const std::string_view id) -> std::optional<std::string> { return id == "66666666-6666-4666-8666-666666666666" ? std::optional<std::string>{ "Content/logo.png" } : std::nullopt; });
     Check(
-        !invalidBehaviorRuntime.Valid() && std::ranges::any_of(invalidBehaviorRuntime.diagnostics, [](const px::ui::StudioUiAdapterDiagnostic& diagnostic) { return diagnostic.code == "PXUISTUDIO2010"; }),
+        !invalidBehaviorRuntime.Valid() && std::ranges::any_of(invalidBehaviorRuntime.diagnostics, [](const px::ui::UiAdapterDiagnostic& diagnostic) { return diagnostic.code == "PXUISTUDIO2010"; }),
         "dynamic Behavior signals must fail closed against the Runtime TypeRegistry"
     );
     px::ui::ObservableViewModel optionViewModel;
     px::ui::UIContext optionContext;
     Check(static_cast<bool>(optionViewModel.Define("dialogue.text", px::Variant(std::string{ "Bound Chapter" }), true)), "binding test ViewModel must define dialogue.text");
-    px::ui::StudioUiApplication optionApplication(optionContext);
+    px::ui::UiApplication optionApplication(optionContext);
     const auto optionApplied = optionApplication.ApplyDocument(
         optionParsed.document,
         { .sourcePath = "Content/UI/Option.pxui",
@@ -508,21 +508,21 @@ int main() {
         "OptionButton.itemSelected(index,text) must preserve live typed arguments in the Behavior entry context"
     );
     auto complexDocument = parsed.document;
-    auto appendConstant = [&](const std::string& id, px::sdk::StudioUiValue value) {
+    auto appendConstant = [&](const std::string& id, px::sdk::UiValue value) {
         auto node = complexDocument.behaviorGraph.nodes.front();
         node.id = id;
-        node.kind = px::sdk::StudioUiBehaviorNodeKind::Constant;
+        node.kind = px::sdk::UiBehaviorNodeKind::Constant;
         node.properties.clear();
         node.properties.emplace("value", std::move(value));
         node.arguments.clear();
         complexDocument.behaviorGraph.nodes.push_back(std::move(node));
     };
-    appendConstant("13131313-1313-4313-8313-131313131313", px::sdk::StudioUiUuidValue{ "a6c8947c-460f-42ef-a8ea-3a420e80df99" });
-    appendConstant("14141414-1414-4414-8414-141414141414", px::sdk::StudioUiResourceValue{ "a6c8947c-460f-42ef-a8ea-3a420e80df99" });
-    appendConstant("15151515-1515-4515-8515-151515151515", px::sdk::StudioUiTokenValue{ "accent.primary" });
-    appendConstant("16161616-1616-4616-8616-161616161616", px::sdk::StudioUiArrayValue{ R"([0.25,0.75])" });
-    appendConstant("17171717-1717-4717-8717-171717171717", px::sdk::StudioUiObjectValue{ R"({"difficulty":"normal","flags":[true,false]})" });
-    auto complexRuntime = px::ui::BuildStudioUiRuntimeTree(complexDocument);
+    appendConstant("13131313-1313-4313-8313-131313131313", px::sdk::UiUuidValue{ "a6c8947c-460f-42ef-a8ea-3a420e80df99" });
+    appendConstant("14141414-1414-4414-8414-141414141414", px::sdk::UiResourceValue{ "a6c8947c-460f-42ef-a8ea-3a420e80df99" });
+    appendConstant("15151515-1515-4515-8515-151515151515", px::sdk::UiTokenValue{ "accent.primary" });
+    appendConstant("16161616-1616-4616-8616-161616161616", px::sdk::UiArrayValue{ R"([0.25,0.75])" });
+    appendConstant("17171717-1717-4717-8717-171717171717", px::sdk::UiObjectValue{ R"({"difficulty":"normal","flags":[true,false]})" });
+    auto complexRuntime = px::ui::BuildUiRuntimeTree(complexDocument);
     Check(complexRuntime.Valid() && complexRuntime.behaviorGraph.has_value(), "semantic and recursive SDK values must adapt into Runtime Variants");
     const auto runtimeValueType = [&](const std::string_view id) {
         const auto parsedId = px::Uuid::Parse(id);
@@ -560,9 +560,9 @@ int main() {
     responsiveLayout["anchorY"] = 0.25;
     responsiveLayout["anchorRight"] = 0.75;
     responsiveLayout["anchorBottom"] = 0.75;
-    const auto responsiveParsed = px::sdk::ParseStudioUi(responsiveSource.dump());
+    const auto responsiveParsed = px::sdk::ParseUi(responsiveSource.dump());
     Check(responsiveParsed.Valid(), "revision-2 responsive constraint fixture must parse");
-    auto responsiveRuntime = px::ui::BuildStudioUiRuntimeTree(responsiveParsed.document);
+    auto responsiveRuntime = px::ui::BuildUiRuntimeTree(responsiveParsed.document);
     Check(responsiveRuntime.Valid(), "revision-2 edge constraints must build a Runtime tree");
     auto* responsiveButton = dynamic_cast<px::ui::Button*>(responsiveRuntime.root->Find(*buttonId));
     Check(responsiveButton != nullptr && responsiveButton->Anchors() == px::Rect{ 0.25f, 0.25f, 0.75f, 0.75f } && responsiveButton->Offsets() == px::Rect{ 0, 0, 0, 0 }, "Studio constraints must translate to Runtime anchors and offsets");
@@ -606,11 +606,11 @@ int main() {
             .IsOk(),
         "headless Player-style command route must register"
     );
-    px::ui::StudioUiApplication application(applicationContext);
+    px::ui::UiApplication application(applicationContext);
     auto applied = application.ApplyText(scene, { .sourcePath = "Content/UI/Title.pxui", .resolveAsset = [](const std::string_view id) -> std::optional<std::string> {
                                                      return id == "66666666-6666-4666-8666-666666666666" ? std::optional<std::string>{ "Content/logo.png" } : std::nullopt;
                                                  } });
-    Check(static_cast<bool>(applied), "shared Studio UI application path must install the document");
+    Check(static_cast<bool>(applied), "shared UI document application path must install the document");
     Check(applied.Value().nodeCount == 3 && applied.Value().behaviorNodeCount == 3 && applied.Value().animationClipCount == 1, "shared application reports the installed Runtime responsibilities");
     auto* applicationButton = dynamic_cast<px::ui::Button*>(applicationContext.Root()->Find(*buttonId));
     Check(applicationButton != nullptr, "shared application exposes the same typed Runtime controls");
@@ -626,8 +626,8 @@ int main() {
         node["layout"]["x"] = 84;
         node["appearance"]["opacity"] = 0.7;
     }
-    const auto patchedScene = px::sdk::ParseStudioUi(patchedSceneJson.dump());
-    Check(patchedScene.Valid(), "property patch fixture must remain a valid Studio UI document");
+    const auto patchedScene = px::sdk::ParseUi(patchedSceneJson.dump());
+    Check(patchedScene.Valid(), "property patch fixture must remain a valid UI document document");
     auto* applicationRootBeforePatch = applicationContext.Root();
     const auto propertyPatch = application.PatchDocumentProperties(patchedScene.document, { .sourcePath = "Content/UI/Title.pxui", .resolveAsset = [](const std::string_view id) -> std::optional<std::string> {
                                                                                                return id == "66666666-6666-4666-8666-666666666666" ? std::optional<std::string>{ "Content/logo.png" } : std::nullopt;
@@ -639,17 +639,17 @@ int main() {
     );
 
     px::ui::GalgameUI playerUi;
-    playerUi.SetStudioUiAssetResolver([](const std::string_view id) -> std::optional<std::string> { return id == "66666666-6666-4666-8666-666666666666" ? std::optional<std::string>{ "Content/logo.png" } : std::nullopt; });
-    Check(playerUi.RegisterTemplate(px::ui::GalgameUI::Screen::Title, scene, "Content/UI/Title.pxui").IsOk(), "Player UI entry accepts a packaged Studio UI template");
-    Check(playerUi.ShowTitle().IsOk(), "Player title route installs through the shared Studio UI application");
+    playerUi.SetUiAssetResolver([](const std::string_view id) -> std::optional<std::string> { return id == "66666666-6666-4666-8666-666666666666" ? std::optional<std::string>{ "Content/logo.png" } : std::nullopt; });
+    Check(playerUi.RegisterTemplate(px::ui::GalgameUI::Screen::Title, scene, "Content/UI/Title.pxui").IsOk(), "Player UI entry accepts a packaged UI document template");
+    Check(playerUi.ShowTitle().IsOk(), "Player title route installs through the shared UI document application");
     px::ui::ActionInvocation playerStart;
     playerStart.action = "game.start";
     playerStart.context.sourceScene = "Content/UI/Title.pxui";
-    Check(playerUi.Actions().Dispatch(std::move(playerStart)).IsOk(), "Player Studio UI route uses the production Action dispatcher");
+    Check(playerUi.Actions().Dispatch(std::move(playerStart)).IsOk(), "Player UI document route uses the production Action dispatcher");
 
-    const auto componentContract = px::sdk::ParseStudioUiComponent(ComponentSource());
+    const auto componentContract = px::sdk::ParseUiComponent(ComponentSource());
     Check(componentContract.Valid(), "reusable UI component source must satisfy the SDK contract");
-    const auto componentScene = px::sdk::ParseStudioUi(ComponentScene());
+    const auto componentScene = px::sdk::ParseUi(ComponentScene());
     Check(componentScene.Valid(), "expanded reusable component instance must satisfy the scene contract");
     px::ui::UIContext componentContext;
     std::size_t componentActions = 0;
@@ -665,23 +665,23 @@ int main() {
             .IsOk(),
         "component public signal Action route must register"
     );
-    px::ui::StudioUiApplication componentApplication(componentContext);
-    const auto componentLoader = [](const std::string_view id) -> std::optional<px::ui::StudioUiComponentSource> {
+    px::ui::UiApplication componentApplication(componentContext);
+    const auto componentLoader = [](const std::string_view id) -> std::optional<px::ui::UiComponentSource> {
         if (id != "61616161-6161-4161-8161-616161616161") return std::nullopt;
-        return px::ui::StudioUiComponentSource{ "Content/UI/ActionCard.pxuicomponent", ComponentSource() };
+        return px::ui::UiComponentSource{ "Content/UI/ActionCard.pxuicomponent", ComponentSource() };
     };
     const auto componentApplied = componentApplication.ApplyDocument(componentScene.document, { .sourcePath = "Content/UI/ComponentScene.pxui", .loadComponent = componentLoader });
     Check(static_cast<bool>(componentApplied), "shared application must resolve reusable component public APIs");
     Check(componentApplied.Value().nodeCount == 5 && componentApplied.Value().actionBindingCount == 1, "component projection and public Action binding must reach Runtime");
-    const auto complexComponentContract = px::sdk::ParseStudioUiComponent(ComplexComponentSource());
-    const auto complexComponentScene = px::sdk::ParseStudioUi(ComplexComponentScene());
+    const auto complexComponentContract = px::sdk::ParseUiComponent(ComplexComponentSource());
+    const auto complexComponentScene = px::sdk::ParseUi(ComplexComponentScene());
     Check(complexComponentContract.Valid() && complexComponentScene.Valid(), "complex component Runtime fixtures must satisfy SDK contracts");
     px::ui::UIContext complexComponentContext;
-    px::ui::StudioUiApplication complexComponentApplication(complexComponentContext);
+    px::ui::UiApplication complexComponentApplication(complexComponentContext);
     const auto complexComponentApplied =
-        complexComponentApplication.ApplyDocument(complexComponentScene.document, { .sourcePath = "Content/UI/ComplexComponentScene.pxui", .loadComponent = [](const std::string_view id) -> std::optional<px::ui::StudioUiComponentSource> {
+        complexComponentApplication.ApplyDocument(complexComponentScene.document, { .sourcePath = "Content/UI/ComplexComponentScene.pxui", .loadComponent = [](const std::string_view id) -> std::optional<px::ui::UiComponentSource> {
                                                                                        if (id != "61616161-6161-4161-8161-616161616161") return std::nullopt;
-                                                                                       return px::ui::StudioUiComponentSource{ "Content/UI/ComplexActionCard.pxuicomponent", ComplexComponentSource() };
+                                                                                       return px::ui::UiComponentSource{ "Content/UI/ComplexActionCard.pxuicomponent", ComplexComponentSource() };
                                                                                    } });
     Check(
         !complexComponentApplied && HasDiagnostic(complexComponentApplied, "PXUISTUDIO2004") && !HasDiagnostic(complexComponentApplied, "PXUISTUDIO2116"),
@@ -690,7 +690,7 @@ int main() {
     auto nonSlotDocument = componentScene.document;
     nonSlotDocument.nodes.back().componentSlot.reset();
     px::ui::UIContext nonSlotContext;
-    px::ui::StudioUiApplication nonSlotApplication(nonSlotContext);
+    px::ui::UiApplication nonSlotApplication(nonSlotContext);
     const auto nonSlotApplied = nonSlotApplication.ApplyDocument(nonSlotDocument, { .sourcePath = "Content/UI/NonSlotStructure.pxui", .loadComponent = componentLoader });
     Check(!nonSlotApplied && HasDiagnostic(nonSlotApplied, "PXUISTUDIO2127"), "programmatic Runtime application must reject non-slot local component structure");
     const auto componentButtonId = px::Uuid::Parse("63636363-7373-4373-8373-636363636363");
@@ -702,12 +702,12 @@ int main() {
     componentButton->Activate();
     Check(componentActions == 1, "Button activated public signal must dispatch its typed Action");
 
-    const auto parameterizedComponent = px::sdk::ParseStudioUiComponent(ParameterizedComponentSource());
-    const auto parameterizedScene = px::sdk::ParseStudioUi(ParameterizedComponentScene());
+    const auto parameterizedComponent = px::sdk::ParseUiComponent(ParameterizedComponentSource());
+    const auto parameterizedScene = px::sdk::ParseUi(ParameterizedComponentScene());
     Check(parameterizedComponent.Valid() && parameterizedScene.Valid(), "revision-2 OptionButton signal fixtures must satisfy SDK contracts");
     auto revisionOneSignalMapping = nlohmann::json::parse(ComponentScene());
     revisionOneSignalMapping["nodes"][1]["componentInstance"]["publicSignals"]["accepted"]["argumentBindings"] = { { "index", "index" } };
-    Check(!px::sdk::ParseStudioUi(revisionOneSignalMapping.dump()).Valid(), "revision-1 component signal bindings must reject parameter mappings");
+    Check(!px::sdk::ParseUi(revisionOneSignalMapping.dump()).Valid(), "revision-1 component signal bindings must reject parameter mappings");
     px::ui::UIContext parameterizedContext;
     std::int64_t selectedIndex = -1;
     Check(
@@ -726,11 +726,11 @@ int main() {
             .IsOk(),
         "parameterized component Action route must register"
     );
-    px::ui::StudioUiApplication parameterizedApplication(parameterizedContext);
+    px::ui::UiApplication parameterizedApplication(parameterizedContext);
     const auto parameterizedApplied =
-        parameterizedApplication.ApplyDocument(parameterizedScene.document, { .sourcePath = "Content/UI/ParameterizedComponentScene.pxui", .loadComponent = [](const std::string_view id) -> std::optional<px::ui::StudioUiComponentSource> {
+        parameterizedApplication.ApplyDocument(parameterizedScene.document, { .sourcePath = "Content/UI/ParameterizedComponentScene.pxui", .loadComponent = [](const std::string_view id) -> std::optional<px::ui::UiComponentSource> {
                                                                                  if (id != "61616161-6161-4161-8161-616161616161") return std::nullopt;
-                                                                                 return px::ui::StudioUiComponentSource{ "Content/UI/ParameterizedActionCard.pxuicomponent", ParameterizedComponentSource() };
+                                                                                 return px::ui::UiComponentSource{ "Content/UI/ParameterizedActionCard.pxuicomponent", ParameterizedComponentSource() };
                                                                              } });
     Check(static_cast<bool>(parameterizedApplied) && parameterizedApplied.Value().actionBindingCount == 1, "shared application must connect one non-Button parameterized signal");
     auto* parameterizedOption = dynamic_cast<px::ui::OptionButton*>(parameterizedContext.Root()->Find(*componentButtonId));
@@ -739,15 +739,15 @@ int main() {
     parameterizedOption->HandleEvent(selection);
     Check(selectedIndex == 1 && parameterizedOption->Text() == "Finale", "itemSelected(index,text) must map the live typed index into the Action");
 
-    const auto nestedSlotScene = px::sdk::ParseStudioUi(NestedComponentSlotScene());
+    const auto nestedSlotScene = px::sdk::ParseUi(NestedComponentSlotScene());
     if (!nestedSlotScene.Valid())
         for (const auto& diagnostic : nestedSlotScene.diagnostics) std::cerr << diagnostic.code << "[" << diagnostic.nodeIndex << "]: " << diagnostic.message << '\n';
     Check(nestedSlotScene.Valid(), "nested component roots may be projected as named slot content");
     px::ui::UIContext nestedSlotContext;
-    px::ui::StudioUiApplication nestedSlotApplication(nestedSlotContext);
-    const auto nestedSlotLoader = [](const std::string_view id) -> std::optional<px::ui::StudioUiComponentSource> {
-        if (id == "71717171-7171-4171-8171-717171717171") return px::ui::StudioUiComponentSource{ "Content/UI/NestedShell.pxuicomponent", NestedComponentSource() };
-        if (id == "61616161-6161-4161-8161-616161616161") return px::ui::StudioUiComponentSource{ "Content/UI/ActionCard.pxuicomponent", ComponentSource() };
+    px::ui::UiApplication nestedSlotApplication(nestedSlotContext);
+    const auto nestedSlotLoader = [](const std::string_view id) -> std::optional<px::ui::UiComponentSource> {
+        if (id == "71717171-7171-4171-8171-717171717171") return px::ui::UiComponentSource{ "Content/UI/NestedShell.pxuicomponent", NestedComponentSource() };
+        if (id == "61616161-6161-4161-8161-616161616161") return px::ui::UiComponentSource{ "Content/UI/ActionCard.pxuicomponent", ComponentSource() };
         return std::nullopt;
     };
     const auto nestedSlotApplied = nestedSlotApplication.ApplyDocument(nestedSlotScene.document, { .sourcePath = "Content/UI/NestedSlotScene.pxui", .loadComponent = nestedSlotLoader });
@@ -758,40 +758,40 @@ int main() {
     auto malformedSlotJson = nlohmann::json::parse(NestedComponentSlotScene());
     malformedSlotJson["nodes"][6]["componentSlot"] = { { "instanceRootId", "62626262-7272-4272-8272-626262626262" }, { "slotId", "content" } };
     px::ui::UIContext malformedSlotContext;
-    px::ui::StudioUiApplication malformedSlotApplication(malformedSlotContext);
+    px::ui::UiApplication malformedSlotApplication(malformedSlotContext);
     const auto malformedSlot = malformedSlotApplication.ApplyText(malformedSlotJson.dump(), { .sourcePath = "Content/UI/MalformedNestedSlotScene.pxui", .loadComponent = nestedSlotLoader });
     Check(!malformedSlot && HasDiagnostic(malformedSlot, "PXSDKUI1038"), "malformed non-root nested component slot placement must fail closed");
 
     px::ui::UIContext missingLoaderContext;
-    px::ui::StudioUiApplication missingLoaderApplication(missingLoaderContext);
+    px::ui::UiApplication missingLoaderApplication(missingLoaderContext);
     Check(!missingLoaderApplication.ApplyDocument(componentScene.document, { .sourcePath = "missing-loader.pxui" }), "component instances must fail closed without a production loader");
-    const auto wrongType = px::sdk::ParseStudioUi(ComponentScene(false, true));
+    const auto wrongType = px::sdk::ParseUi(ComponentScene(false, true));
     Check(wrongType.Valid(), "wrong-type fixture remains a valid wire document");
     px::ui::UIContext wrongTypeContext;
-    px::ui::StudioUiApplication wrongTypeApplication(wrongTypeContext);
+    px::ui::UiApplication wrongTypeApplication(wrongTypeContext);
     Check(!wrongTypeApplication.ApplyDocument(wrongType.document, { .sourcePath = "wrong-type.pxui", .loadComponent = componentLoader }), "public property type mismatch must fail before Runtime installation");
-    const auto wrongSlot = px::sdk::ParseStudioUi(ComponentScene(true, false));
+    const auto wrongSlot = px::sdk::ParseUi(ComponentScene(true, false));
     Check(wrongSlot.Valid(), "wrong-slot fixture remains structurally valid");
     px::ui::UIContext wrongSlotContext;
-    px::ui::StudioUiApplication wrongSlotApplication(wrongSlotContext);
+    px::ui::UiApplication wrongSlotApplication(wrongSlotContext);
     Check(!wrongSlotApplication.ApplyDocument(wrongSlot.document, { .sourcePath = "wrong-slot.pxui", .loadComponent = componentLoader }), "named slot content must fail when attached outside its declared target");
 
     const std::string recursiveComponent = DependencyComponent("61616161-6161-4161-8161-616161616161", "61616161-6161-4161-8161-616161616161");
     px::ui::UIContext recursiveContext;
-    px::ui::StudioUiApplication recursiveApplication(recursiveContext);
-    const auto recursiveApplied = recursiveApplication.ApplyDocument(componentScene.document, { .sourcePath = "recursive.pxui", .loadComponent = [&recursiveComponent](const std::string_view id) -> std::optional<px::ui::StudioUiComponentSource> {
+    px::ui::UiApplication recursiveApplication(recursiveContext);
+    const auto recursiveApplied = recursiveApplication.ApplyDocument(componentScene.document, { .sourcePath = "recursive.pxui", .loadComponent = [&recursiveComponent](const std::string_view id) -> std::optional<px::ui::UiComponentSource> {
                                                                                                    return id == "61616161-6161-4161-8161-616161616161"
-                                                                                                              ? std::optional<px::ui::StudioUiComponentSource>{ px::ui::StudioUiComponentSource{ "recursive.pxuicomponent", recursiveComponent } }
+                                                                                                              ? std::optional<px::ui::UiComponentSource>{ px::ui::UiComponentSource{ "recursive.pxuicomponent", recursiveComponent } }
                                                                                                               : std::nullopt;
                                                                                                } });
     Check(!recursiveApplied && HasDiagnostic(recursiveApplied, "PXUISTUDIO2113"), "recursive component dependency must fail with a cycle diagnostic");
 
     px::ui::GalgameUI componentPlayerUi;
-    componentPlayerUi.SetStudioUiComponentLoader(componentLoader);
+    componentPlayerUi.SetUiComponentLoader(componentLoader);
     Check(componentPlayerUi.RegisterTemplate(px::ui::GalgameUI::Screen::Title, ComponentScene(), "Content/UI/ComponentScene.pxui").IsOk() && componentPlayerUi.ShowTitle().IsOk(), "Player UI must use the shared reusable component resolver");
 
-    const auto nestedSource = px::sdk::ParseStudioUiComponent(NestedComponentSource());
-    const auto nestedScene = px::sdk::ParseStudioUi(NestedComponentScene());
+    const auto nestedSource = px::sdk::ParseUiComponent(NestedComponentSource());
+    const auto nestedScene = px::sdk::ParseUi(NestedComponentScene());
     Check(nestedSource.Valid() && nestedScene.Valid(), "nested component source and expanded scene contracts must parse");
     px::ui::UIContext nestedContext;
     std::size_t nestedActions = 0;
@@ -807,10 +807,10 @@ int main() {
             .IsOk(),
         "nested component Action route must register"
     );
-    px::ui::StudioUiApplication nestedApplication(nestedContext);
-    const auto nestedApplied = nestedApplication.ApplyDocument(nestedScene.document, { .sourcePath = "Content/UI/NestedComponentScene.pxui", .loadComponent = [](const std::string_view id) -> std::optional<px::ui::StudioUiComponentSource> {
-                                                                                          if (id == "71717171-7171-4171-8171-717171717171") return px::ui::StudioUiComponentSource{ "Content/UI/NestedShell.pxuicomponent", NestedComponentSource() };
-                                                                                          if (id == "61616161-6161-4161-8161-616161616161") return px::ui::StudioUiComponentSource{ "Content/UI/ActionCard.pxuicomponent", ComponentSource() };
+    px::ui::UiApplication nestedApplication(nestedContext);
+    const auto nestedApplied = nestedApplication.ApplyDocument(nestedScene.document, { .sourcePath = "Content/UI/NestedComponentScene.pxui", .loadComponent = [](const std::string_view id) -> std::optional<px::ui::UiComponentSource> {
+                                                                                          if (id == "71717171-7171-4171-8171-717171717171") return px::ui::UiComponentSource{ "Content/UI/NestedShell.pxuicomponent", NestedComponentSource() };
+                                                                                          if (id == "61616161-6161-4161-8161-616161616161") return px::ui::UiComponentSource{ "Content/UI/ActionCard.pxuicomponent", ComponentSource() };
                                                                                           return std::nullopt;
                                                                                       } });
     Check(static_cast<bool>(nestedApplied) && nestedApplied.Value().nodeCount == 5 && nestedApplied.Value().actionBindingCount == 1, "bounded nested component projection must install through the shared Runtime");
@@ -821,9 +821,9 @@ int main() {
     nestedButton->Activate();
     Check(nestedActions == 1, "nested public signal must dispatch through the shared typed Action path");
     px::ui::GalgameUI nestedPlayerUi;
-    nestedPlayerUi.SetStudioUiComponentLoader([](const std::string_view id) -> std::optional<px::ui::StudioUiComponentSource> {
-        if (id == "71717171-7171-4171-8171-717171717171") return px::ui::StudioUiComponentSource{ "Content/UI/NestedShell.pxuicomponent", NestedComponentSource() };
-        if (id == "61616161-6161-4161-8161-616161616161") return px::ui::StudioUiComponentSource{ "Content/UI/ActionCard.pxuicomponent", ComponentSource() };
+    nestedPlayerUi.SetUiComponentLoader([](const std::string_view id) -> std::optional<px::ui::UiComponentSource> {
+        if (id == "71717171-7171-4171-8171-717171717171") return px::ui::UiComponentSource{ "Content/UI/NestedShell.pxuicomponent", NestedComponentSource() };
+        if (id == "61616161-6161-4161-8161-616161616161") return px::ui::UiComponentSource{ "Content/UI/ActionCard.pxuicomponent", ComponentSource() };
         return std::nullopt;
     });
     Check(
@@ -832,23 +832,23 @@ int main() {
     );
 
     px::ui::UIContext missingNestedContext;
-    px::ui::StudioUiApplication missingNestedApplication(missingNestedContext);
-    const auto missingNested = missingNestedApplication.ApplyDocument(nestedScene.document, { .sourcePath = "missing-nested.pxui", .loadComponent = [](const std::string_view id) -> std::optional<px::ui::StudioUiComponentSource> {
+    px::ui::UiApplication missingNestedApplication(missingNestedContext);
+    const auto missingNested = missingNestedApplication.ApplyDocument(nestedScene.document, { .sourcePath = "missing-nested.pxui", .loadComponent = [](const std::string_view id) -> std::optional<px::ui::UiComponentSource> {
                                                                                                  return id == "71717171-7171-4171-8171-717171717171"
-                                                                                                            ? std::optional<px::ui::StudioUiComponentSource>{ px::ui::StudioUiComponentSource{ "NestedShell.pxuicomponent", NestedComponentSource() } }
+                                                                                                            ? std::optional<px::ui::UiComponentSource>{ px::ui::UiComponentSource{ "NestedShell.pxuicomponent", NestedComponentSource() } }
                                                                                                             : std::nullopt;
                                                                                              } });
     Check(!missingNested && HasDiagnostic(missingNested, "PXUISTUDIO2111"), "missing nested UUID source must produce an explicit diagnostic");
 
     nlohmann::json stalePathJson = nlohmann::json::parse(NestedComponentScene());
     stalePathJson["nodes"][3]["componentInstance"]["sourcePath"][3] = "62626262-6262-4262-8262-626262626262";
-    const auto stalePathScene = px::sdk::ParseStudioUi(stalePathJson.dump());
+    const auto stalePathScene = px::sdk::ParseUi(stalePathJson.dump());
     Check(stalePathScene.Valid(), "stale nested path fixture must remain a valid wire document");
     px::ui::UIContext stalePathContext;
-    px::ui::StudioUiApplication stalePathApplication(stalePathContext);
-    const auto stalePath = stalePathApplication.ApplyDocument(stalePathScene.document, { .sourcePath = "stale-nested-path.pxui", .loadComponent = [](const std::string_view id) -> std::optional<px::ui::StudioUiComponentSource> {
-                                                                                            if (id == "71717171-7171-4171-8171-717171717171") return px::ui::StudioUiComponentSource{ "NestedShell.pxuicomponent", NestedComponentSource() };
-                                                                                            if (id == "61616161-6161-4161-8161-616161616161") return px::ui::StudioUiComponentSource{ "ActionCard.pxuicomponent", ComponentSource() };
+    px::ui::UiApplication stalePathApplication(stalePathContext);
+    const auto stalePath = stalePathApplication.ApplyDocument(stalePathScene.document, { .sourcePath = "stale-nested-path.pxui", .loadComponent = [](const std::string_view id) -> std::optional<px::ui::UiComponentSource> {
+                                                                                            if (id == "71717171-7171-4171-8171-717171717171") return px::ui::UiComponentSource{ "NestedShell.pxuicomponent", NestedComponentSource() };
+                                                                                            if (id == "61616161-6161-4161-8161-616161616161") return px::ui::UiComponentSource{ "ActionCard.pxuicomponent", ComponentSource() };
                                                                                             return std::nullopt;
                                                                                         } });
     Check(!stalePath && HasDiagnostic(stalePath, "PXUISTUDIO2126"), "stale nested UUID sourcePath must fail before Runtime installation");
@@ -856,29 +856,29 @@ int main() {
     std::vector<std::string> dependencyIds;
     for (std::size_t index = 0; index < 33; ++index) dependencyIds.push_back(BudgetComponentId(index));
     px::ui::UIContext depthContext;
-    px::ui::StudioUiApplication depthApplication(depthContext);
-    const auto depthExceeded = depthApplication.ApplyDocument(componentScene.document, { .sourcePath = "depth-budget.pxui", .loadComponent = [&dependencyIds](const std::string_view id) -> std::optional<px::ui::StudioUiComponentSource> {
+    px::ui::UiApplication depthApplication(depthContext);
+    const auto depthExceeded = depthApplication.ApplyDocument(componentScene.document, { .sourcePath = "depth-budget.pxui", .loadComponent = [&dependencyIds](const std::string_view id) -> std::optional<px::ui::UiComponentSource> {
                                                                                             const auto found = std::ranges::find(dependencyIds, id);
                                                                                             if (found == dependencyIds.end()) return std::nullopt;
                                                                                             const auto index = static_cast<std::size_t>(std::distance(dependencyIds.begin(), found));
                                                                                             const std::optional<std::string> next = index + 1 < dependencyIds.size() ? std::optional<std::string>{ dependencyIds[index + 1] } : std::nullopt;
-                                                                                            return px::ui::StudioUiComponentSource{ "depth-" + std::to_string(index) + ".pxuicomponent", DependencyComponent(dependencyIds[index], next) };
+                                                                                            return px::ui::UiComponentSource{ "depth-" + std::to_string(index) + ".pxuicomponent", DependencyComponent(dependencyIds[index], next) };
                                                                                         } });
     Check(!depthExceeded && HasDiagnostic(depthExceeded, "PXUISTUDIO2122"), "nested component depth budget must fail closed");
 
     px::ui::UIContext byteContext;
-    px::ui::StudioUiApplication byteApplication(byteContext);
-    const auto byteExceeded = byteApplication.ApplyDocument(componentScene.document, { .sourcePath = "byte-budget.pxui", .loadComponent = [](const std::string_view) -> std::optional<px::ui::StudioUiComponentSource> {
-                                                                                          return px::ui::StudioUiComponentSource{ "oversized.pxuicomponent", std::string(8 * 1024 * 1024 + 1, ' ') };
+    px::ui::UiApplication byteApplication(byteContext);
+    const auto byteExceeded = byteApplication.ApplyDocument(componentScene.document, { .sourcePath = "byte-budget.pxui", .loadComponent = [](const std::string_view) -> std::optional<px::ui::UiComponentSource> {
+                                                                                          return px::ui::UiComponentSource{ "oversized.pxuicomponent", std::string(8 * 1024 * 1024 + 1, ' ') };
                                                                                       } });
     Check(!byteExceeded && HasDiagnostic(byteExceeded, "PXUISTUDIO2125"), "component source byte budget must fail before JSON parsing");
 
-    px::sdk::StudioUiDocument nodeBudgetDocument;
+    px::sdk::UiDocument nodeBudgetDocument;
     nodeBudgetDocument.nodes.resize(65'537);
     nodeBudgetDocument.nodes.front().componentInstance =
-        px::sdk::StudioUiComponentInstance{ .componentId = "61616161-6161-4161-8161-616161616161", .instanceRootId = "62626262-7272-4272-8272-626262626262", .sourceNodeId = "62626262-6262-4262-8262-626262626262" };
+        px::sdk::UiComponentInstance{ .componentId = "61616161-6161-4161-8161-616161616161", .instanceRootId = "62626262-7272-4272-8272-626262626262", .sourceNodeId = "62626262-6262-4262-8262-626262626262" };
     px::ui::UIContext nodeContext;
-    px::ui::StudioUiApplication nodeApplication(nodeContext);
+    px::ui::UiApplication nodeApplication(nodeContext);
     const auto nodeExceeded = nodeApplication.ApplyDocument(nodeBudgetDocument, { .sourcePath = "node-budget.pxui", .loadComponent = componentLoader });
     Check(!nodeExceeded && HasDiagnostic(nodeExceeded, "PXUISTUDIO2124"), "component projection node budget must fail before Runtime construction");
     return 0;

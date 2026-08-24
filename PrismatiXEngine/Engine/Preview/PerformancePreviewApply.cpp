@@ -81,19 +81,19 @@ void ApplyPerformancePreviewPlan(RuntimeSession& session,
 
 Status ApplyPerformancePreviewUiPlan(ui::GalgameUI& ui,
                                      const PerformancePreviewPlan& plan) {
-    ui.ResetStudioTimelineOverrides();
+    ui.ResetUiTimelineOverrides();
     for (const auto& control : plan.uiControls) {
         const Status status =
-            ui.SetStudioControlVisibility(control.targetId, control.visible);
+            ui.SetUiControlVisibility(control.targetId, control.visible);
         if (!status) return status;
     }
     if (plan.uiAnimation) {
-        return ui.PreviewStudioAnimation(
+        return ui.PreviewUiAnimation(
             plan.uiAnimation->animationClipId,
             static_cast<float>(plan.uiAnimation->offsetSeconds),
             plan.uiAnimation->playing);
     }
-    if (plan.managesUiAnimation) return ui.StopStudioAnimation(true);
+    if (plan.managesUiAnimation) return ui.StopUiAnimation(true);
     return Status::Ok();
 }
 

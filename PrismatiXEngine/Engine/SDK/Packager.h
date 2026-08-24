@@ -101,7 +101,7 @@ struct PackageRunResult {
 
 using PackageEventSink = std::function<void(const PackageEvent&)>;
 
-// Parses the strict Studio-to-Packager request contract. Paths remain native
+// Parses the strict frontend-to-Packager request contract. Paths remain native
 // filesystem paths, while input URIs are always normalized forward-slash
 // project-relative runtime paths.
 [[nodiscard]] PackageRequestParseResult ParsePackageRequest(std::string_view json);

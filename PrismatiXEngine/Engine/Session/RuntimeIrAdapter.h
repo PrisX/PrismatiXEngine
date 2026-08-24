@@ -5,7 +5,7 @@
 
 namespace px {
 
-// Converts the public Studio IR into the same VM Program consumed by Player.
+// Converts public Runtime IR into the same VM Program consumed by Player.
 // Preview-specific behavior belongs around RuntimeSession, not in this adapter.
 [[nodiscard]] vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document);
 

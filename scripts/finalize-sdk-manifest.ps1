@@ -59,6 +59,7 @@ $contractFiles = [ordered]@{
     gameCatalogResources = "include/PrismatiX/Engine/SDK/GameCatalogResources.h"
     packager = "include/PrismatiX/Engine/SDK/Packager.h"
     runtimeIr = "include/PrismatiX/Engine/SDK/RuntimeIr.h"
+    ui = "include/PrismatiX/Engine/SDK/Ui.h"
     studioUi = "include/PrismatiX/Engine/SDK/StudioUi.h"
     uiTypeRegistry = "include/PrismatiX/Engine/SDK/UiTypeRegistry.h"
 }

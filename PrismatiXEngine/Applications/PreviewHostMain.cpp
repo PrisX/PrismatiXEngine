@@ -27,11 +27,11 @@
 #include "Engine/Preview/PerformancePreview.h"
 #include "Engine/Runtime.h"
 #include "Engine/SDK/RuntimeIr.h"
-#include "Engine/SDK/StudioUi.h"
+#include "Engine/SDK/Ui.h"
 #include "Engine/Session/RuntimeSession.h"
 #include "Engine/UI/Actions/BuiltInActionProvider.h"
 #include "Engine/UI/GalgameUI.h"
-#include "Engine/UI/StudioUiApplication.h"
+#include "Engine/UI/UiApplication.h"
 #include "Engine/UI/UIContext.h"
 #include "Engine/UI/Widgets.h"
 #include "Engine/VN/GameCatalog.h"
@@ -206,7 +206,7 @@ UiPreviewUpdatePlan PlanPerformancePreviewUpdate(const Json& before, const Json&
              .reason = changedNodeCount == 0 ? "timelineOrSeekPatch" : "stagePropertyPatch" };
 }
 
-Json StudioUiDiagnostic(
+Json UiDiagnostic(
     const std::string_view severity,
     const std::string_view code,
     const std::string_view category,
@@ -1132,7 +1132,7 @@ private:
             return;
         }
         const Json authoredDocument = Json::parse(loaded->second, nullptr, false);
-        const px::sdk::StudioUiParseResult parsed = px::sdk::ParseStudioUi(loaded->second);
+        const px::sdk::UiParseResult parsed = px::sdk::ParseUi(loaded->second);
         if (!parsed.Valid()) {
             Json response = Response(request, "studioUiRejected");
             response["sceneId"] = *sceneId;
@@ -1143,7 +1143,7 @@ private:
                 if (authoredDocument.is_object() && authoredDocument.contains("nodes") && authoredDocument["nodes"].is_array() && diagnostic.nodeIndex < authoredDocument["nodes"].size()) {
                     nodeId = authoredDocument["nodes"][diagnostic.nodeIndex].value("id", std::string{});
                 }
-                response["diagnostics"].push_back(StudioUiDiagnostic("error", diagnostic.code, "SDK.UI.Contract", diagnostic.message, "nodeIndex=" + std::to_string(diagnostic.nodeIndex), *sceneId, *uiPath, nodeId));
+                response["diagnostics"].push_back(UiDiagnostic("error", diagnostic.code, "SDK.UI.Contract", diagnostic.message, "nodeIndex=" + std::to_string(diagnostic.nodeIndex), *sceneId, *uiPath, nodeId));
             }
             Write(response);
             return;
@@ -1179,7 +1179,7 @@ private:
         }
         const std::uint64_t actionCountBefore = m_uiActionCount;
         const auto previewAction = [this](const px::ui::ActionInvocation& invocation) {
-            if (invocation.context.signal != "studioUi.onClick") {
+            if (invocation.context.signal != "ui.onClick") {
                 m_lastUiAction = invocation.action;
                 ++m_uiActionCount;
             }
@@ -1198,22 +1198,22 @@ private:
             }
         }
         const auto applicationOptions = [&]() {
-            return px::ui::StudioUiApplicationOptions{ .sourcePath = *uiPath,
+            return px::ui::UiApplicationOptions{ .sourcePath = *uiPath,
                                                        .resolveAsset = [&assets](const std::string_view assetId) -> std::optional<std::string> {
                                                            const auto found = assets.find(std::string(assetId));
                                                            return found == assets.end() ? std::nullopt : std::optional<std::string>{ found->second };
                                                        },
-                                                       .loadComponent = [&components, projectRoot = *projectRoot](const std::string_view componentId) -> std::optional<px::ui::StudioUiComponentSource> {
+                                                       .loadComponent = [&components, projectRoot = *projectRoot](const std::string_view componentId) -> std::optional<px::ui::UiComponentSource> {
                                                            const auto found = components.find(std::string(componentId));
                                                            if (found == components.end()) return std::nullopt;
                                                            const auto source = ReadProjectFile(projectRoot, found->second);
-                                                           return source ? std::optional<px::ui::StudioUiComponentSource>{ px::ui::StudioUiComponentSource{ found->second, source->second } } : std::nullopt;
+                                                           return source ? std::optional<px::ui::UiComponentSource>{ px::ui::UiComponentSource{ found->second, source->second } } : std::nullopt;
                                                        },
                                                        .viewModel = &m_uiPreviewViewModel,
                                                        .previewSafeMode = true,
                                                        .diagnosticOverlay = false,
                                                        .observeAction =
-                                                           [this](const px::sdk::StudioUiAction& action, const px::Status& status) {
+                                                           [this](const px::sdk::UiAction& action, const px::Status& status) {
                                                                if (!status) {
                                                                    spdlog::warn("Native UI preview Action {} was rejected: {}", action.id, StatusMessage(status, "unknown error"));
                                                                    return;
@@ -1233,7 +1233,7 @@ private:
         else if (!m_activeUiSceneId.empty()) {
             updatePlan.reason = "activeSceneChanged";
         }
-        px::ui::StudioUiApplication application(m_uiPreview);
+        px::ui::UiApplication application(m_uiPreview);
         auto applied = updatePlan.patch ? application.PatchDocumentProperties(parsed.document, applicationOptions()) : application.ApplyDocument(parsed.document, applicationOptions());
         bool patchFallback = false;
         if (!applied && updatePlan.patch) {
@@ -1249,7 +1249,7 @@ private:
             response["requestedRevision"] = requestedRevision;
             response["diagnostics"] = Json::array();
             for (const auto& diagnostic : applied.Diagnostics()) {
-                response["diagnostics"].push_back(StudioUiDiagnostic(
+                response["diagnostics"].push_back(UiDiagnostic(
                     px::diag::ToString(diagnostic.severity),
                     diagnostic.code,
                     diagnostic.category,
@@ -1402,7 +1402,7 @@ private:
                             "The bound Performance UI scene must exist inside the project root"));
                 return;
             }
-            const auto parsedUi = px::sdk::ParseStudioUi(loadedUi->second);
+            const auto parsedUi = px::sdk::ParseUi(loadedUi->second);
             if (!parsedUi.Valid() || parsedUi.document.id != plan.uiSceneId) {
                 Write(Error(request, "performance-ui-identity-mismatch",
                             "The UI scene identity does not match stage.uiSceneId"));
@@ -1442,7 +1442,7 @@ private:
                             component["id"].get<std::string>(), *source);
                 }
             }
-            m_hud.SetStudioUiAssetResolver(
+            m_hud.SetUiAssetResolver(
                 [assets = std::move(assets)](
                     const std::string_view id) -> std::optional<std::string> {
                     const auto found = assets.find(std::string(id));
@@ -1450,16 +1450,16 @@ private:
                                ? std::nullopt
                                : std::optional<std::string>{found->second};
                 });
-            m_hud.SetStudioUiComponentLoader(
+            m_hud.SetUiComponentLoader(
                 [components = std::move(components),
                  root = *projectRoot](const std::string_view id)
-                    -> std::optional<px::ui::StudioUiComponentSource> {
+                    -> std::optional<px::ui::UiComponentSource> {
                     const auto found = components.find(std::string(id));
                     if (found == components.end()) return std::nullopt;
                     const auto source = ReadProjectFile(root, found->second);
                     return source
-                               ? std::optional<px::ui::StudioUiComponentSource>{
-                                     px::ui::StudioUiComponentSource{
+                               ? std::optional<px::ui::UiComponentSource>{
+                                     px::ui::UiComponentSource{
                                          found->second, source->second}}
                                : std::nullopt;
                 });

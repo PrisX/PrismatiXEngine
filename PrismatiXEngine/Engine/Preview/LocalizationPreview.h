@@ -23,7 +23,7 @@ struct LocalizationPreviewEntry {
 };
 
 // Immutable localization projection installed into the shared VM text filter.
-// Studio sends the canonical document; RuntimeCore owns validation, pseudo
+// The authoring frontend sends the canonical document; RuntimeCore owns validation, pseudo
 // transformation and the text actually measured and rendered by GalgameUI.
 struct LocalizationPreviewTable {
     std::string locale;

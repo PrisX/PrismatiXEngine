@@ -1,5 +1,6 @@
 #include "Engine/Preview/PreviewProtocolV2.h"
 #include "Engine/SDK/ContractVersions.h"
+#include "Engine/SDK/StudioUi.h"
 
 #include <nlohmann/json.hpp>
 
@@ -29,6 +30,14 @@ int main() {
     Check(manifest.at("contracts").at("authoringSchemas") ==
               std::to_string(px::sdk::kAuthoringContractRevision),
           "SDK manifest and Authoring schema contract revisions must match");
+    Check(manifest.at("contracts").at("ui") ==
+              std::to_string(px::sdk::kUiContractRevision),
+          "SDK manifest and UI document contract revisions must match");
+    Check(manifest.at("deprecatedContracts").at("studioUi").at(
+              "replacement") == "ui" &&
+              manifest.at("deprecatedContracts").at("studioUi").at(
+                  "removalSdkVersion") == "0.3.0",
+          "deprecated StudioUi contract must publish its replacement and removal version");
     Check(manifest.at("previewProtocolRange").at("min") ==
               px::sdk::kPreviewProtocolVersion &&
               manifest.at("previewProtocolRange").at("max") ==

@@ -6,7 +6,7 @@
 #include "Engine/Runtime.h"
 #include "Engine/Script/ScriptHost.h"
 #include "Engine/SDK/RuntimeIr.h"
-#include "Engine/SDK/StudioUi.h"
+#include "Engine/SDK/Ui.h"
 #include "Engine/Session/RuntimeSession.h"
 #include "Engine/UI/Actions/BuiltInActionProvider.h"
 #include "Engine/UI/GalgameUI.h"
@@ -517,10 +517,10 @@ public:
             performancePlan = performanceSequence->Sample(0.0);
         }
         Json uiScene = Json::parse(request.uiSceneJson, nullptr, false);
-        std::unordered_map<std::string, px::ui::StudioUiComponentSource>
+        std::unordered_map<std::string, px::ui::UiComponentSource>
             uiComponents;
         if (!request.uiSceneJson.empty()) {
-            const auto parsedUi = px::sdk::ParseStudioUi(request.uiSceneJson);
+            const auto parsedUi = px::sdk::ParseUi(request.uiSceneJson);
             if (!parsedUi.Valid()) {
                 Json diagnostics = Json::array();
                 for (const auto& diagnostic : parsedUi.diagnostics) {
@@ -579,7 +579,7 @@ public:
                                ".pxuicomponent");
                 const std::string json = component["document"].dump();
                 const auto parsedComponent =
-                    px::sdk::ParseStudioUiComponent(json);
+                    px::sdk::ParseUiComponent(json);
                 if (!parsedComponent.Valid() ||
                     parsedComponent.document.content.id != id) {
                     m_protocol.Emit(
@@ -594,7 +594,7 @@ public:
                     return 0;
                 }
                 uiComponents.emplace(
-                    id, px::ui::StudioUiComponentSource{sourcePath, json});
+                    id, px::ui::UiComponentSource{sourcePath, json});
             }
         }
         constexpr std::string_view runtimeIrPath =
@@ -660,7 +660,7 @@ public:
                                          asset["source"].get<std::string>());
                 }
             }
-            m_hud.SetStudioUiAssetResolver(
+            m_hud.SetUiAssetResolver(
                 [assets = std::move(uiAssets)](
                     const std::string_view id) -> std::optional<std::string> {
                     const auto found = assets.find(std::string(id));
@@ -668,14 +668,14 @@ public:
                                ? std::nullopt
                                : std::optional<std::string>{found->second};
                 });
-            m_hud.SetStudioUiComponentLoader(
+            m_hud.SetUiComponentLoader(
                 [components = std::move(uiComponents)](
                     const std::string_view id)
-                    -> std::optional<px::ui::StudioUiComponentSource> {
+                    -> std::optional<px::ui::UiComponentSource> {
                     const auto found = components.find(std::string(id));
                     return found == components.end()
                                ? std::nullopt
-                               : std::optional<px::ui::StudioUiComponentSource>{
+                               : std::optional<px::ui::UiComponentSource>{
                                      found->second};
                 });
             const std::string uiSource =
@@ -1046,7 +1046,7 @@ public:
             const std::string nodeId = payload.value("nodeId", std::string{});
             if (!m_uiPreviewActive || nodeId.empty()) return 0;
             m_lastUiAction.clear();
-            const auto status = m_hud.ActivateStudioControl(nodeId);
+            const auto status = m_hud.ActivateUiControl(nodeId);
             if (!status) {
                 Json diagnostics = Json::array();
                 for (const auto& diagnostic : status.Diagnostics()) {

@@ -1,10 +1,10 @@
 #pragma once
 
 #include "Engine/Core/Result.h"
-#include "Engine/SDK/StudioUi.h"
+#include "Engine/SDK/Ui.h"
 #include "Engine/UI/UIContext.h"
-#include "Engine/UI/StudioUiAdapter.h"
-#include "Engine/UI/StudioUiApplication.h"
+#include "Engine/UI/UiAdapter.h"
+#include "Engine/UI/UiApplication.h"
 #include "Engine/Resources/TypedDocument.h"
 #include "Engine/Animation/Timeline.h"
 
@@ -69,14 +69,14 @@ public:
     using ActionSink = std::function<void(const GalgameAction&)>;
 
     GalgameUI();
-    // Accepts either the Engine typed UIScene or the public Studio UI contract.
+    // Accepts either the Engine typed UIScene or the public UI document contract.
     // Both formats install into the same UIContext and Action runtime.
     Status RegisterTemplate(Screen screen,std::string_view scene,
                             const std::string& sourcePath={});
-    void SetStudioUiAssetResolver(StudioUiAssetResolver resolver) {
+    void SetUiAssetResolver(UiAssetResolver resolver) {
         m_studioAssetResolver = std::move(resolver);
     }
-    void SetStudioUiComponentLoader(StudioUiComponentLoader loader) {
+    void SetUiComponentLoader(UiComponentLoader loader) {
         m_studioComponentLoader = std::move(loader);
     }
     void SetActionSink(ActionSink sink) { m_sink = std::move(sink); }
@@ -110,15 +110,15 @@ public:
     Status RefreshHUD(const DialoguePresentation& presentation);
     Status ToggleHudToolbarPinned();
     Status ActivateChoice(std::size_t index);
-    // Studio Preview uses the same Runtime control tree for toolbar/context
+    // Preview tooling uses the same Runtime control tree for toolbar/context
     // activation as pointer input. This keeps authored Action dispatch out of
     // JavaScript while preserving exact node identity.
-    Status ActivateStudioControl(std::string_view nodeId);
-    Status SetStudioControlVisibility(std::string_view nodeId, bool visible);
-    Status PreviewStudioAnimation(std::string_view clipId, float time,
+    Status ActivateUiControl(std::string_view nodeId);
+    Status SetUiControlVisibility(std::string_view nodeId, bool visible);
+    Status PreviewUiAnimation(std::string_view clipId, float time,
                                   bool playing);
-    Status StopStudioAnimation(bool restoreDesignState);
-    void ResetStudioTimelineOverrides();
+    Status StopUiAnimation(bool restoreDesignState);
+    void ResetUiTimelineOverrides();
 
     [[nodiscard]] bool Update(const Input& input, int width, int height,float deltaSeconds=0.0f);
     void Render(graphics::Renderer2D& renderer);
@@ -158,12 +158,12 @@ private:
     std::vector<Binding> m_bindings;
     struct Template {
         std::optional<resource::TypedDocument> typedScene;
-        std::optional<sdk::StudioUiDocument> studioScene;
+        std::optional<sdk::UiDocument> studioScene;
         std::string sourcePath;
     };
     std::unordered_map<int,Template> m_templates;
-    StudioUiAssetResolver m_studioAssetResolver;
-    StudioUiComponentLoader m_studioComponentLoader;
+    UiAssetResolver m_studioAssetResolver;
+    UiComponentLoader m_studioComponentLoader;
     std::vector<GalgameAction> m_pendingActions;
     std::unordered_map<std::string,std::string> m_animationTextBase;
     std::unordered_map<std::string, Visibility> m_timelineVisibilityBase;

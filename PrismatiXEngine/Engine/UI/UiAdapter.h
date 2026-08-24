@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Engine/SDK/StudioUi.h"
+#include "Engine/SDK/Ui.h"
 #include "Engine/UI/Actions/TriggerBinding.h"
 #include "Engine/UI/Animation.h"
 #include "Engine/UI/Behavior/BehaviorGraph.h"
@@ -16,13 +16,13 @@ namespace px::ui {
 
 class Control;
 
-struct StudioUiAdapterDiagnostic {
+struct UiAdapterDiagnostic {
     std::string code;
     std::string message;
     std::string nodeId;
 };
 
-struct StudioUiRuntimeTree {
+struct UiRuntimeTree {
     std::unique_ptr<Control> root;
     std::size_t nodeCount = 0;
     std::size_t actionBindingCount = 0;
@@ -34,23 +34,23 @@ struct StudioUiRuntimeTree {
     std::vector<TriggerBinding> behaviorTriggers;
     std::optional<UIAnimationLibrary> animations;
     std::vector<std::string> unresolvedAssetIds;
-    std::vector<StudioUiAdapterDiagnostic> diagnostics;
+    std::vector<UiAdapterDiagnostic> diagnostics;
 
     [[nodiscard]] bool Valid() const { return root != nullptr && diagnostics.empty(); }
 };
 
-using StudioUiAssetResolver =
+using UiAssetResolver =
     std::function<std::optional<std::string>(std::string_view assetId)>;
-using StudioUiActionSink =
-    std::function<void(const sdk::StudioUiAction& action,
+using UiActionSink =
+    std::function<void(const sdk::UiAction& action,
                        std::string_view signal, std::string_view nodeId)>;
 
 // Converts the public SDK contract into actual Runtime UI Controls. This is a
-// Runtime adapter; Studio's JSON contract remains independent of Engine UI
+// Runtime adapter; the authored JSON contract remains independent of Engine UI
 // implementation classes.
-[[nodiscard]] StudioUiRuntimeTree BuildStudioUiRuntimeTree(
-    const sdk::StudioUiDocument& document,
-    StudioUiAssetResolver assetResolver = {},
-    StudioUiActionSink actionSink = {});
+[[nodiscard]] UiRuntimeTree BuildUiRuntimeTree(
+    const sdk::UiDocument& document,
+    UiAssetResolver assetResolver = {},
+    UiActionSink actionSink = {});
 
 }  // namespace px::ui

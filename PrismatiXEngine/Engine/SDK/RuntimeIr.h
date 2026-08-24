@@ -36,7 +36,7 @@ struct RuntimeIrParseResult {
     [[nodiscard]] bool Valid() const { return diagnostics.empty(); }
 };
 
-// Parses the public Studio-to-runtime contract. Contract revisions are strict:
+// Parses the public authoring-to-runtime contract. Contract revisions are strict:
 // callers must never guess at newer fields or silently reinterpret old data.
 [[nodiscard]] RuntimeIrParseResult ParseRuntimeIr(std::string_view json);
 

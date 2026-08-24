@@ -1,4 +1,4 @@
-#include "Engine/UI/StudioUiAdapter.h"
+#include "Engine/UI/UiAdapter.h"
 
 #include "Engine/Core/TypeRegistry.h"
 #include "Engine/Core/Uuid.h"
@@ -32,26 +32,26 @@ Color ParseColor(const std::string_view value) {
 }
 
 std::optional<VariantType> RuntimeSignalType(
-    const sdk::StudioUiComponentValueType type) {
+    const sdk::UiComponentValueType type) {
     switch (type) {
-        case sdk::StudioUiComponentValueType::Null: return VariantType::Null;
-        case sdk::StudioUiComponentValueType::Boolean: return VariantType::Bool;
-        case sdk::StudioUiComponentValueType::Integer: return VariantType::Integer;
-        case sdk::StudioUiComponentValueType::Number: return VariantType::Number;
-        case sdk::StudioUiComponentValueType::String: return VariantType::String;
-        case sdk::StudioUiComponentValueType::Vec2: return VariantType::Vec2;
-        case sdk::StudioUiComponentValueType::Rect: return VariantType::Rect;
-        case sdk::StudioUiComponentValueType::Color: return VariantType::Color;
-        case sdk::StudioUiComponentValueType::Uuid: return VariantType::Uuid;
-        case sdk::StudioUiComponentValueType::Resource: return VariantType::ResourceRef;
-        case sdk::StudioUiComponentValueType::Token: return VariantType::TokenRef;
-        case sdk::StudioUiComponentValueType::Array: return VariantType::Array;
-        case sdk::StudioUiComponentValueType::Object: return VariantType::Object;
+        case sdk::UiComponentValueType::Null: return VariantType::Null;
+        case sdk::UiComponentValueType::Boolean: return VariantType::Bool;
+        case sdk::UiComponentValueType::Integer: return VariantType::Integer;
+        case sdk::UiComponentValueType::Number: return VariantType::Number;
+        case sdk::UiComponentValueType::String: return VariantType::String;
+        case sdk::UiComponentValueType::Vec2: return VariantType::Vec2;
+        case sdk::UiComponentValueType::Rect: return VariantType::Rect;
+        case sdk::UiComponentValueType::Color: return VariantType::Color;
+        case sdk::UiComponentValueType::Uuid: return VariantType::Uuid;
+        case sdk::UiComponentValueType::Resource: return VariantType::ResourceRef;
+        case sdk::UiComponentValueType::Token: return VariantType::TokenRef;
+        case sdk::UiComponentValueType::Array: return VariantType::Array;
+        case sdk::UiComponentValueType::Object: return VariantType::Object;
     }
     return std::nullopt;
 }
 
-std::optional<sdk::StudioUiActionValue> SignalActionValue(
+std::optional<sdk::UiActionValue> SignalActionValue(
     const Variant& value) {
     if (value.Type() == VariantType::Null) return std::monostate{};
     if (const auto* item = value.TryGet<bool>()) return *item;
@@ -59,11 +59,11 @@ std::optional<sdk::StudioUiActionValue> SignalActionValue(
     if (const auto* item = value.TryGet<double>()) return *item;
     if (const auto* item = value.TryGet<std::string>()) return *item;
     if (const auto* item = value.TryGet<Vec2>())
-        return sdk::StudioUiVec2Value{item->x, item->y};
+        return sdk::UiVec2Value{item->x, item->y};
     if (const auto* item = value.TryGet<Rect>())
-        return sdk::StudioUiRectValue{item->x, item->y, item->w, item->h};
+        return sdk::UiRectValue{item->x, item->y, item->w, item->h};
     if (const auto* item = value.TryGet<Uuid>())
-        return sdk::StudioUiNodeReferenceValue{item->ToString()};
+        return sdk::UiNodeReferenceValue{item->ToString()};
     return std::nullopt;
 }
 
@@ -132,7 +132,7 @@ std::optional<Variant> RuntimeJsonValue(const std::string& json,
 }
 
 std::optional<Variant> TryRuntimeValue(
-    const sdk::StudioUiValue& value,
+    const sdk::UiValue& value,
     const bool normalizeNumber = false) {
     if (std::holds_alternative<std::monostate>(value)) return Variant{};
     if (const auto* boolean = std::get_if<bool>(&value)) return *boolean;
@@ -141,25 +141,25 @@ std::optional<Variant> TryRuntimeValue(
                                : Variant(*integer);
     if (const auto* number = std::get_if<double>(&value)) return *number;
     if (const auto* text = std::get_if<std::string>(&value)) return *text;
-    if (const auto* point = std::get_if<sdk::StudioUiVec2Value>(&value))
+    if (const auto* point = std::get_if<sdk::UiVec2Value>(&value))
         return Vec2{point->x, point->y};
-    if (const auto* rect = std::get_if<sdk::StudioUiRectValue>(&value))
+    if (const auto* rect = std::get_if<sdk::UiRectValue>(&value))
         return Rect{rect->x, rect->y, rect->width, rect->height};
-    if (const auto* color = std::get_if<sdk::StudioUiColorValue>(&value))
+    if (const auto* color = std::get_if<sdk::UiColorValue>(&value))
         return ParseColor(color->value);
     if (const auto* reference =
-            std::get_if<sdk::StudioUiNodeReferenceValue>(&value)) {
+            std::get_if<sdk::UiNodeReferenceValue>(&value)) {
         const auto parsed = Uuid::Parse(reference->nodeId);
         return parsed ? std::optional<Variant>{Variant(*parsed)}
                       : std::nullopt;
     }
-    if (const auto* uuid = std::get_if<sdk::StudioUiUuidValue>(&value)) {
+    if (const auto* uuid = std::get_if<sdk::UiUuidValue>(&value)) {
         const auto parsed = Uuid::Parse(uuid->value);
         return parsed ? std::optional<Variant>{Variant(*parsed)}
                       : std::nullopt;
     }
     if (const auto* resource =
-            std::get_if<sdk::StudioUiResourceValue>(&value)) {
+            std::get_if<sdk::UiResourceValue>(&value)) {
         if (resource->value.empty()) return Variant(ResourceRefValue{});
         const auto parsed = Uuid::Parse(resource->value);
         return parsed
@@ -167,32 +167,32 @@ std::optional<Variant> TryRuntimeValue(
                          ResourceRefValue{*parsed, std::string{}})}
                    : std::nullopt;
     }
-    if (const auto* token = std::get_if<sdk::StudioUiTokenValue>(&value))
+    if (const auto* token = std::get_if<sdk::UiTokenValue>(&value))
         return token->value.empty()
                    ? std::nullopt
                    : std::optional<Variant>{
                          Variant(TokenRefValue{token->value})};
-    if (const auto* array = std::get_if<sdk::StudioUiArrayValue>(&value))
+    if (const auto* array = std::get_if<sdk::UiArrayValue>(&value))
         return RuntimeJsonValue(array->json, true);
-    if (const auto* object = std::get_if<sdk::StudioUiObjectValue>(&value))
+    if (const auto* object = std::get_if<sdk::UiObjectValue>(&value))
         return RuntimeJsonValue(object->json, false);
     return std::nullopt;
 }
 
-Variant RuntimeValue(const sdk::StudioUiValue& value,
-                      StudioUiRuntimeTree& result,
+Variant RuntimeValue(const sdk::UiValue& value,
+                      UiRuntimeTree& result,
                       const std::string_view nodeId,
                       const bool normalizeNumber = false) {
     auto converted = TryRuntimeValue(value, normalizeNumber);
     if (converted) return std::move(*converted);
     result.diagnostics.push_back(
         {"PXUISTUDIO2005",
-         "Studio UI value cannot be converted to its declared Runtime type",
+         "UI document value cannot be converted to its declared Runtime type",
          std::string(nodeId)});
     return {};
 }
 
-using StudioUiThemeValues = std::unordered_map<std::string, std::string>;
+using UiThemeValues = std::unordered_map<std::string, std::string>;
 
 std::optional<Variant> ThemeTokenValue(const std::string_view value,
                                        const VariantType type) {
@@ -231,9 +231,9 @@ std::optional<Variant> ThemeTokenValue(const std::string_view value,
 }
 
 std::optional<Variant> RuntimePropertyValue(
-    const sdk::StudioUiValue& value, const PropertyInfo& property,
-    const StudioUiThemeValues& theme,
-    const StudioUiAssetResolver& assetResolver, StudioUiRuntimeTree& result,
+    const sdk::UiValue& value, const PropertyInfo& property,
+    const UiThemeValues& theme,
+    const UiAssetResolver& assetResolver, UiRuntimeTree& result,
     const std::string_view nodeId) {
     Variant converted = RuntimeValue(value, result, nodeId, true);
     if (const auto* token = converted.TryGet<TokenRefValue>();
@@ -267,8 +267,8 @@ std::optional<Variant> RuntimePropertyValue(
 }
 
 BehaviorNodeKind RuntimeBehaviorKind(
-    const sdk::StudioUiBehaviorNodeKind kind) {
-    using Source = sdk::StudioUiBehaviorNodeKind;
+    const sdk::UiBehaviorNodeKind kind) {
+    using Source = sdk::UiBehaviorNodeKind;
     switch (kind) {
         case Source::SignalEntry: return BehaviorNodeKind::SignalEntry;
         case Source::Action: return BehaviorNodeKind::Action;
@@ -292,16 +292,16 @@ BehaviorNodeKind RuntimeBehaviorKind(
 }
 
 ActionReentryPolicy RuntimeReentry(
-    const sdk::StudioUiBehaviorReentry reentry) {
-    using Source = sdk::StudioUiBehaviorReentry;
+    const sdk::UiBehaviorReentry reentry) {
+    using Source = sdk::UiBehaviorReentry;
     if (reentry == Source::IgnoreWhileRunning)
         return ActionReentryPolicy::IgnoreWhileRunning;
     if (reentry == Source::Restart) return ActionReentryPolicy::Restart;
     return ActionReentryPolicy::Allow;
 }
 
-Ease RuntimeEase(const sdk::StudioUiAnimationEase ease) {
-    using Source = sdk::StudioUiAnimationEase;
+Ease RuntimeEase(const sdk::UiAnimationEase ease) {
+    using Source = sdk::UiAnimationEase;
     if (ease == Source::EaseIn) return Ease::EaseIn;
     if (ease == Source::EaseOut) return Ease::EaseOut;
     if (ease == Source::EaseInOut) return Ease::EaseInOut;
@@ -310,16 +310,16 @@ Ease RuntimeEase(const sdk::StudioUiAnimationEase ease) {
 }
 
 AnimationParameterType RuntimeParameterType(
-    const sdk::StudioUiAnimationParameterType type) {
-    using Source = sdk::StudioUiAnimationParameterType;
+    const sdk::UiAnimationParameterType type) {
+    using Source = sdk::UiAnimationParameterType;
     if (type == Source::Bool) return AnimationParameterType::Bool;
     if (type == Source::Number) return AnimationParameterType::Number;
     return AnimationParameterType::Trigger;
 }
 
 AnimationConditionOperator RuntimeCondition(
-    const sdk::StudioUiAnimationConditionOperator operation) {
-    using Source = sdk::StudioUiAnimationConditionOperator;
+    const sdk::UiAnimationConditionOperator operation) {
+    using Source = sdk::UiAnimationConditionOperator;
     switch (operation) {
         case Source::Equal: return AnimationConditionOperator::Equal;
         case Source::NotEqual: return AnimationConditionOperator::NotEqual;
@@ -332,7 +332,7 @@ AnimationConditionOperator RuntimeCondition(
     }
 }
 
-void AppendStatus(const Status& status, StudioUiRuntimeTree& result,
+void AppendStatus(const Status& status, UiRuntimeTree& result,
                   const std::string& fallbackNodeId = {}) {
     for (const auto& diagnostic : status.Diagnostics()) {
         result.diagnostics.push_back(
@@ -342,8 +342,8 @@ void AppendStatus(const Status& status, StudioUiRuntimeTree& result,
     }
 }
 
-void BuildRuntimeBehavior(const sdk::StudioUiDocument& document,
-                          StudioUiRuntimeTree& result) {
+void BuildRuntimeBehavior(const sdk::UiDocument& document,
+                          UiRuntimeTree& result) {
     if (document.behaviorGraph.nodes.empty() &&
         document.behaviorGraph.links.empty() &&
         document.behaviorGraph.groups.empty() &&
@@ -422,8 +422,8 @@ void BuildRuntimeBehavior(const sdk::StudioUiDocument& document,
     result.behaviorTriggerCount = result.behaviorTriggers.size();
 }
 
-void BuildRuntimeAnimations(const sdk::StudioUiDocument& document,
-                            StudioUiRuntimeTree& result) {
+void BuildRuntimeAnimations(const sdk::UiDocument& document,
+                            UiRuntimeTree& result) {
     if (!document.animations) return;
     UIAnimationLibrary library;
     for (const auto& source : document.animations->clips) {
@@ -446,7 +446,7 @@ void BuildRuntimeAnimations(const sdk::StudioUiDocument& document,
                      RuntimeValue(sourceKey.value, result, sourceKey.id, true),
                      RuntimeEase(sourceKey.easing),
                      sourceKey.interpolation ==
-                             sdk::StudioUiAnimationInterpolation::Discrete
+                             sdk::UiAnimationInterpolation::Discrete
                          ? KeyInterpolation::Discrete
                          : KeyInterpolation::Linear});
             }
@@ -504,10 +504,10 @@ void BuildRuntimeAnimations(const sdk::StudioUiDocument& document,
     result.animations = std::move(library);
 }
 
-class StudioButton final : public Button {
+class AuthoredButton final : public Button {
 public:
-    StudioButton(std::string text, std::string name,
-                 const sdk::StudioUiAppearance& appearance)
+    AuthoredButton(std::string text, std::string name,
+                 const sdk::UiAppearance& appearance)
         : Button(std::move(text), std::move(name)),
           m_background(ParseColor(appearance.backgroundColor)),
           m_hover(appearance.hoverBackgroundColor
@@ -545,10 +545,10 @@ private:
 };
 
 std::unique_ptr<Control> CreateControl(
-    const sdk::StudioUiNode& node, const sdk::StudioUiLayout* parentLayout,
-    const StudioUiAssetResolver& assetResolver,
-    const StudioUiActionSink& actionSink, const StudioUiThemeValues& theme,
-    StudioUiRuntimeTree& result) {
+    const sdk::UiNode& node, const sdk::UiLayout* parentLayout,
+    const UiAssetResolver& assetResolver,
+    const UiActionSink& actionSink, const UiThemeValues& theme,
+    UiRuntimeTree& result) {
     std::unique_ptr<Control> control;
     if (node.runtimeType) {
         auto object = TypeRegistry::Global().Create(*node.runtimeType);
@@ -564,25 +564,25 @@ std::unique_ptr<Control> CreateControl(
         }
         control.reset(static_cast<Control*>(object.release()));
     } else switch (node.kind) {
-        case sdk::StudioUiNodeKind::Control:
-        case sdk::StudioUiNodeKind::Group:
+        case sdk::UiNodeKind::Control:
+        case sdk::UiNodeKind::Group:
             control = std::make_unique<ColorRect>(
                 ParseColor(node.appearance.backgroundColor), node.name);
             break;
-        case sdk::StudioUiNodeKind::Label: {
+        case sdk::UiNodeKind::Label: {
             auto label = std::make_unique<Label>(node.text, node.name);
             label->SetColor(ParseColor(node.appearance.textColor));
             label->SetWrap(true);
             control = std::move(label);
             break;
         }
-        case sdk::StudioUiNodeKind::Button: {
-            auto button = std::make_unique<StudioButton>(node.text, node.name,
+        case sdk::UiNodeKind::Button: {
+            auto button = std::make_unique<AuthoredButton>(node.text, node.name,
                                                         node.appearance);
             control = std::move(button);
             break;
         }
-        case sdk::StudioUiNodeKind::Image: {
+        case sdk::UiNodeKind::Image: {
             std::string path;
             if (node.assetId && assetResolver) {
                 if (const auto resolved = assetResolver(*node.assetId)) path = *resolved;
@@ -596,28 +596,28 @@ std::unique_ptr<Control> CreateControl(
             control = std::move(image);
             break;
         }
-        case sdk::StudioUiNodeKind::Stack:
+        case sdk::UiNodeKind::Stack:
             control = std::make_unique<StackContainer>(node.name);
             break;
-        case sdk::StudioUiNodeKind::HBox: {
+        case sdk::UiNodeKind::HBox: {
             auto box = std::make_unique<HBoxContainer>(node.name);
             box->SetSeparation(10.0f);
             control = std::move(box);
             break;
         }
-        case sdk::StudioUiNodeKind::VBox: {
+        case sdk::UiNodeKind::VBox: {
             auto box = std::make_unique<VBoxContainer>(node.name);
             box->SetSeparation(10.0f);
             control = std::move(box);
             break;
         }
-        case sdk::StudioUiNodeKind::Grid: {
+        case sdk::UiNodeKind::Grid: {
             auto grid = std::make_unique<GridContainer>(2, node.name);
             grid->SetGaps({10.0f, 10.0f});
             control = std::move(grid);
             break;
         }
-        case sdk::StudioUiNodeKind::Leaf:
+        case sdk::UiNodeKind::Leaf:
             return nullptr;
     }
     const auto id = Uuid::Parse(node.id);
@@ -626,10 +626,10 @@ std::unique_ptr<Control> CreateControl(
     control->SetName(node.name);
     control->SetVisibility(node.visible ? Visibility::Visible : Visibility::Hidden);
     control->SetPivot({node.layout.pivotX, node.layout.pivotY});
-    if (node.kind != sdk::StudioUiNodeKind::Image)
+    if (node.kind != sdk::UiNodeKind::Image)
         control->SetOpacity(node.appearance.opacity);
     if (node.parentId) {
-        if (node.layout.mode == sdk::StudioUiLayoutMode::Container) {
+        if (node.layout.mode == sdk::UiLayoutMode::Container) {
             control->SetCustomMinimumSize({node.layout.width, node.layout.height});
             if (node.layout.sizeRule == "fill")
                 control->SetSizeFlags(SizeFlag::Expand | SizeFlag::Fill,
@@ -706,7 +706,7 @@ std::unique_ptr<Control> CreateControl(
         }
         const auto sourceArgument = [&](const std::string_view id) {
             return std::ranges::find(binding.arguments, id,
-                                     &sdk::StudioUiComponentSignalArgument::id);
+                                     &sdk::UiComponentSignalArgument::id);
         };
         valid = valid && std::ranges::all_of(
             binding.argumentBindings, [&](const auto& mapping) {
@@ -748,12 +748,12 @@ std::unique_ptr<Control> CreateControl(
 }
 
 std::unique_ptr<Control> BuildNode(
-    const sdk::StudioUiNode& node,
-    const std::unordered_map<std::string, std::vector<const sdk::StudioUiNode*>>& children,
-    const StudioUiAssetResolver& assetResolver,
-    const StudioUiActionSink& actionSink, const StudioUiThemeValues& theme,
-    StudioUiRuntimeTree& result,
-    const sdk::StudioUiLayout* parentLayout = nullptr) {
+    const sdk::UiNode& node,
+    const std::unordered_map<std::string, std::vector<const sdk::UiNode*>>& children,
+    const UiAssetResolver& assetResolver,
+    const UiActionSink& actionSink, const UiThemeValues& theme,
+    UiRuntimeTree& result,
+    const sdk::UiLayout* parentLayout = nullptr) {
     auto control = CreateControl(node, parentLayout, assetResolver, actionSink,
                                  theme, result);
     if (!control) {
@@ -779,18 +779,18 @@ std::unique_ptr<Control> BuildNode(
 
 }  // namespace
 
-StudioUiRuntimeTree BuildStudioUiRuntimeTree(
-    const sdk::StudioUiDocument& document, StudioUiAssetResolver assetResolver,
-    StudioUiActionSink actionSink) {
-    StudioUiRuntimeTree result;
+UiRuntimeTree BuildUiRuntimeTree(
+    const sdk::UiDocument& document, UiAssetResolver assetResolver,
+    UiActionSink actionSink) {
+    UiRuntimeTree result;
     const auto registration = RegisterBuiltinUITypes();
     if (!registration) {
         AppendStatus(registration, result);
         return result;
     }
-    std::unordered_map<std::string, const sdk::StudioUiNode*> nodes;
-    std::unordered_map<std::string, std::vector<const sdk::StudioUiNode*>> children;
-    StudioUiThemeValues theme;
+    std::unordered_map<std::string, const sdk::UiNode*> nodes;
+    std::unordered_map<std::string, std::vector<const sdk::UiNode*>> children;
+    UiThemeValues theme;
     for (const auto& token : document.theme)
         theme.emplace(token.name, token.value);
     for (const auto& node : document.nodes) {
@@ -798,12 +798,12 @@ StudioUiRuntimeTree BuildStudioUiRuntimeTree(
         if (node.parentId) children[*node.parentId].push_back(&node);
     }
     for (auto& entry : children) {
-        std::ranges::sort(entry.second, {}, &sdk::StudioUiNode::order);
+        std::ranges::sort(entry.second, {}, &sdk::UiNode::order);
     }
     const auto root = nodes.find(document.rootId);
     if (root == nodes.end()) {
         result.diagnostics.push_back(
-            {"PXUISTUDIO2003", "Studio UI root is missing", document.rootId});
+            {"PXUISTUDIO2003", "UI document root is missing", document.rootId});
         return result;
     }
     result.root = BuildNode(*root->second, children, assetResolver,

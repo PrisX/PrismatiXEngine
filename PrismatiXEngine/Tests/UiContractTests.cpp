@@ -1,4 +1,4 @@
-#include "Engine/SDK/StudioUi.h"
+#include "Engine/SDK/Ui.h"
 
 #include <nlohmann/json.hpp>
 
@@ -144,7 +144,7 @@ std::string LocalComponentContentScene(const bool namedSlot) {
 std::string AdvancedScene() {
     std::string scene = ValidScene();
     const auto end = scene.rfind("\n    }");
-    Check(end != std::string::npos, "base Studio UI fixture must have an object end");
+    Check(end != std::string::npos, "base UI document fixture must have an object end");
     scene.insert(end, R"(,
       "behaviorGraph":{
         "nodes":[
@@ -285,8 +285,8 @@ std::string ComplexComponentContract() {
 }  // namespace
 
 int main() {
-    const auto parsed = px::sdk::ParseStudioUi(ValidScene());
-    Check(parsed.Valid(), "valid named Studio UI must parse");
+    const auto parsed = px::sdk::ParseUi(ValidScene());
+    Check(parsed.Valid(), "valid named UI document must parse");
     Check(parsed.document.revision == 4, "revision must round-trip");
     Check(parsed.document.nodes.size() == 2, "node count must round-trip");
     Check(parsed.document.nodes[1].onClick.has_value(), "typed action must parse");
@@ -309,19 +309,19 @@ int main() {
     dynamicSceneJson["nodes"][1]["bindings"] = {
         {"text", {{"path", "dialogue.text"}}}};
     const auto dynamicScene =
-        px::sdk::ParseStudioUi(dynamicSceneJson.dump());
+        px::sdk::ParseUi(dynamicSceneJson.dump());
     Check(dynamicScene.Valid() &&
               dynamicScene.document.schemaRevision == 2 &&
               dynamicScene.document.nodes[1].kind ==
-                  px::sdk::StudioUiNodeKind::Leaf &&
+                  px::sdk::UiNodeKind::Leaf &&
               dynamicScene.document.nodes[1].runtimeType == "OptionButton" &&
-              std::holds_alternative<px::sdk::StudioUiArrayValue>(
+              std::holds_alternative<px::sdk::UiArrayValue>(
                   dynamicScene.document.nodes[1].runtimeProperties.at(
                       "options")) &&
-              std::holds_alternative<px::sdk::StudioUiResourceValue>(
+              std::holds_alternative<px::sdk::UiResourceValue>(
                   dynamicScene.document.nodes[1].runtimeProperties.at(
                       "texture")) &&
-              std::holds_alternative<px::sdk::StudioUiTokenValue>(
+              std::holds_alternative<px::sdk::UiTokenValue>(
                   dynamicScene.document.nodes[1].runtimeProperties.at(
                       "styleToken")) &&
               dynamicScene.document.nodes[1].bindings.at("text").path ==
@@ -329,25 +329,25 @@ int main() {
           "revision-2 Runtime identity, semantic properties and bindings must parse");
     auto missingRuntimeType = dynamicSceneJson;
     missingRuntimeType["nodes"][1].erase("runtimeType");
-    Check(!px::sdk::ParseStudioUi(missingRuntimeType.dump()).Valid(),
+    Check(!px::sdk::ParseUi(missingRuntimeType.dump()).Valid(),
           "revision-2 leaf nodes must require runtimeType");
     auto revisionOneRuntimeType = nlohmann::json::parse(ValidScene());
     revisionOneRuntimeType["nodes"][1]["runtimeType"] = "OptionButton";
-    Check(!px::sdk::ParseStudioUi(revisionOneRuntimeType.dump()).Valid(),
+    Check(!px::sdk::ParseUi(revisionOneRuntimeType.dump()).Valid(),
           "revision-1 nodes must reject runtimeType instead of mis-instantiating");
     auto revisionOneBinding = nlohmann::json::parse(ValidScene());
     revisionOneBinding["nodes"][1]["bindings"] = {
         {"text", {{"path", "dialogue.text"}}}};
-    Check(!px::sdk::ParseStudioUi(revisionOneBinding.dump()).Valid(),
+    Check(!px::sdk::ParseUi(revisionOneBinding.dump()).Valid(),
           "revision-1 nodes must reject property bindings");
     auto filesystemResource = dynamicSceneJson;
     filesystemResource["nodes"][1]["runtimeProperties"]["texture"]["value"] =
         "Content/title.png";
-    Check(!px::sdk::ParseStudioUi(filesystemResource.dump()).Valid(),
+    Check(!px::sdk::ParseUi(filesystemResource.dump()).Valid(),
           "ResourceRef Runtime values must reject filesystem paths");
     auto emptyRuntimeToken = dynamicSceneJson;
     emptyRuntimeToken["nodes"][1]["runtimeProperties"]["styleToken"]["value"] = "";
-    Check(!px::sdk::ParseStudioUi(emptyRuntimeToken.dump()).Valid(),
+    Check(!px::sdk::ParseUi(emptyRuntimeToken.dump()).Valid(),
           "TokenRef Runtime values must reject empty identities");
 
     const auto complexScene = [] {
@@ -356,14 +356,14 @@ int main() {
             {"stops", nlohmann::json::array({0.25, 0.75})},
             {"settings", {{"difficulty", "normal"},
                           {"flags", nlohmann::json::array({true})}}}};
-        return px::sdk::ParseStudioUi(scene.dump());
+        return px::sdk::ParseUi(scene.dump());
     }();
     Check(complexScene.Valid(),
           "bounded array/object Runtime properties must cross the SDK contract");
     const auto& complexProperties = complexScene.document.nodes[0].runtimeProperties;
-    Check(std::holds_alternative<px::sdk::StudioUiArrayValue>(
+    Check(std::holds_alternative<px::sdk::UiArrayValue>(
               complexProperties.at("stops")) &&
-              std::holds_alternative<px::sdk::StudioUiObjectValue>(
+              std::holds_alternative<px::sdk::UiObjectValue>(
                   complexProperties.at("settings")),
           "SDK must retain array/object Runtime values as distinct typed payloads");
     auto oversizedRuntimeValue = nlohmann::json::parse(ValidScene());
@@ -371,50 +371,50 @@ int main() {
         {"items", nlohmann::json::array()}};
     oversizedRuntimeValue["nodes"][0]["runtimeProperties"]["items"] =
         std::vector<int>(1025, 1);
-    Check(!px::sdk::ParseStudioUi(oversizedRuntimeValue.dump()).Valid(),
+    Check(!px::sdk::ParseUi(oversizedRuntimeValue.dump()).Valid(),
           "SDK must reject Runtime collections beyond the shared entry budget");
 
     auto constrainedScene = nlohmann::json::parse(ValidScene());
     constrainedScene["schemaRevision"] = 2;
     constrainedScene["nodes"][1]["layout"]["anchorRight"] = 0.75;
     constrainedScene["nodes"][1]["layout"]["anchorBottom"] = 1.0;
-    const auto constrained = px::sdk::ParseStudioUi(constrainedScene.dump());
+    const auto constrained = px::sdk::ParseUi(constrainedScene.dump());
     Check(constrained.Valid() &&
               constrained.document.nodes[1].layout.anchorRight == 0.75f &&
               constrained.document.nodes[1].layout.anchorBottom == 1.0f,
           "revision-2 edge constraints must cross the SDK contract");
     constrainedScene["schemaRevision"] = 1;
-    Check(!px::sdk::ParseStudioUi(constrainedScene.dump()).Valid(),
+    Check(!px::sdk::ParseUi(constrainedScene.dump()).Valid(),
           "revision-1 documents must reject edge constraints");
     constrainedScene["schemaRevision"] = 2;
     constrainedScene["nodes"][1]["layout"]["anchorRight"] = 0.25;
-    Check(!px::sdk::ParseStudioUi(constrainedScene.dump()).Valid(),
+    Check(!px::sdk::ParseUi(constrainedScene.dump()).Valid(),
           "constraint edges must not cross their leading anchors");
 
     const auto combinedRoot =
-        px::sdk::ParseStudioUi(CombinedComponentSlotScene(false));
+        px::sdk::ParseUi(CombinedComponentSlotScene(false));
     Check(combinedRoot.Valid(),
           "component instance roots may also carry named slot metadata");
     const auto combinedNonRoot =
-        px::sdk::ParseStudioUi(CombinedComponentSlotScene(true));
+        px::sdk::ParseUi(CombinedComponentSlotScene(true));
     Check(!combinedNonRoot.Valid() &&
               std::ranges::any_of(
                   combinedNonRoot.diagnostics,
-                  [](const px::sdk::StudioUiContractDiagnostic& diagnostic) {
+                  [](const px::sdk::UiContractDiagnostic& diagnostic) {
                       return diagnostic.code == "PXSDKUI1038";
                   }),
           "non-root component projections carrying slot metadata must fail with PXSDKUI1038");
 
     const auto nonSlotContent =
-        px::sdk::ParseStudioUi(LocalComponentContentScene(false));
+        px::sdk::ParseUi(LocalComponentContentScene(false));
     Check(!nonSlotContent.Valid() &&
               std::ranges::any_of(
                   nonSlotContent.diagnostics,
-                  [](const px::sdk::StudioUiContractDiagnostic& diagnostic) {
+                  [](const px::sdk::UiContractDiagnostic& diagnostic) {
                       return diagnostic.code == "PXSDKUI1039";
                   }),
           "local component structure must fail without a named slot");
-    Check(px::sdk::ParseStudioUi(LocalComponentContentScene(true)).Valid(),
+    Check(px::sdk::ParseUi(LocalComponentContentScene(true)).Valid(),
           "declared named-slot metadata must remain the structural extension seam");
 
     std::string nestedProjection = ValidScene();
@@ -426,7 +426,7 @@ int main() {
     nestedProjection.insert(
         nestedPosition + nestedAnchor.size(),
         R"("sourcePath":["55555555-5555-4555-8555-555555555555","77777777-7777-4777-8777-777777777777","88888888-8888-4888-8888-888888888888","99999999-9999-4999-8999-999999999999"],)");
-    const auto nestedParsed = px::sdk::ParseStudioUi(nestedProjection);
+    const auto nestedParsed = px::sdk::ParseUi(nestedProjection);
     Check(nestedParsed.Valid() &&
               nestedParsed.document.nodes[1]
                       .componentInstance->sourcePath.size() == 4,
@@ -435,40 +435,40 @@ int main() {
     const auto malformedIdentity = malformedNestedProjection.find(
         "88888888-8888-4888-8888-888888888888");
     malformedNestedProjection.replace(malformedIdentity, 36, "not-a-uuid");
-    Check(!px::sdk::ParseStudioUi(malformedNestedProjection).Valid(),
+    Check(!px::sdk::ParseUi(malformedNestedProjection).Valid(),
           "nested sourcePath must reject non-UUID dependency identities");
 
     std::string future = ValidScene();
     future.replace(future.find("\"schemaRevision\":1"), 18,
                    "\"schemaRevision\":3");
-    Check(!px::sdk::ParseStudioUi(future).Valid(),
-          "future Studio UI schema revision must be rejected");
+    Check(!px::sdk::ParseUi(future).Valid(),
+          "future UI document schema revision must be rejected");
 
     std::string extensionAction = ValidScene();
     extensionAction.replace(extensionAction.find("game.start"), 10, "fake.start");
-    const auto extensionParsed = px::sdk::ParseStudioUi(extensionAction);
+    const auto extensionParsed = px::sdk::ParseUi(extensionAction);
     Check(extensionParsed.Valid() &&
               extensionParsed.document.nodes[1].onClick->id == "fake.start",
           "safe namespaced extension Actions must round-trip for runtime catalog resolution");
 
     std::string malformedAction = ValidScene();
     malformedAction.replace(malformedAction.find("game.start"), 10, "bad action");
-    Check(!px::sdk::ParseStudioUi(malformedAction).Valid(),
+    Check(!px::sdk::ParseUi(malformedAction).Valid(),
           "malformed typed Action identities must be rejected");
 
     std::string invalidBuiltinArguments = ValidScene();
     invalidBuiltinArguments.replace(invalidBuiltinArguments.find("game.start"), 10,
                                     "save.slot");
-    Check(!px::sdk::ParseStudioUi(invalidBuiltinArguments).Valid(),
+    Check(!px::sdk::ParseUi(invalidBuiltinArguments).Valid(),
           "known built-in Action argument contracts remain strict");
 
     std::string unknownOverride = ValidScene();
     unknownOverride.replace(unknownOverride.find("content.text"), 12,
                             "unknown.path");
-    Check(!px::sdk::ParseStudioUi(unknownOverride).Valid(),
+    Check(!px::sdk::ParseUi(unknownOverride).Valid(),
           "unknown component override paths must be rejected");
 
-    const auto advanced = px::sdk::ParseStudioUi(AdvancedScene());
+    const auto advanced = px::sdk::ParseUi(AdvancedScene());
     Check(advanced.Valid(),
           "named Behavior Graph and Animation contracts must parse");
     Check(advanced.document.behaviorGraph.nodes.size() == 2,
@@ -499,7 +499,7 @@ int main() {
     };
     for (const auto& [kind, properties] : inspectorShapes) {
         const auto inspector =
-            px::sdk::ParseStudioUi(BehaviorInspectorScene(kind, properties));
+            px::sdk::ParseUi(BehaviorInspectorScene(kind, properties));
         if (!inspector.Valid()) {
             std::cerr << "Behavior inspector shape failed Runtime parsing: "
                       << kind << '\n';
@@ -524,7 +524,7 @@ int main() {
         const std::string properties =
             R"({"target":{"type":"nodeReference","nodeId":"33333333-3333-4333-8333-333333333333"},"property":")" +
             std::string(property) + "\",\"value\":" + std::string(value) + "}";
-        const auto setProperty = px::sdk::ParseStudioUi(
+        const auto setProperty = px::sdk::ParseUi(
             BehaviorInspectorScene("setProperty", properties));
         if (!setProperty.Valid()) {
             std::cerr << "SetProperty inspector shape failed Runtime parsing: "
@@ -539,11 +539,11 @@ int main() {
           "unknown Behavior kind fixture must be editable");
     unknownBehaviorKind.replace(signalEntry, 20,
                                 "\"kind\":\"vendor.removedNode\"");
-    const auto unknownBehavior = px::sdk::ParseStudioUi(unknownBehaviorKind);
+    const auto unknownBehavior = px::sdk::ParseUi(unknownBehaviorKind);
     Check(!unknownBehavior.Valid() &&
               std::ranges::any_of(
                   unknownBehavior.diagnostics,
-                  [](const px::sdk::StudioUiContractDiagnostic& diagnostic) {
+                  [](const px::sdk::UiContractDiagnostic& diagnostic) {
                       return diagnostic.code == "PXSDKUI1059";
                   }),
           "unknown Behavior kinds must fail Runtime parsing with a dedicated diagnostic");
@@ -556,7 +556,7 @@ int main() {
           "Behavior endpoint fixture must be editable");
     missingGraphEndpoint.replace(
         endpoint, 36, "abababab-abab-4bab-8bab-abababababab");
-    Check(!px::sdk::ParseStudioUi(missingGraphEndpoint).Valid(),
+    Check(!px::sdk::ParseUi(missingGraphEndpoint).Valid(),
           "Behavior links to missing nodes must be rejected");
 
     std::string unorderedKeys = AdvancedScene();
@@ -564,10 +564,10 @@ int main() {
     Check(secondTime != std::string::npos,
           "Animation key fixture must be editable");
     unorderedKeys.replace(secondTime, 8, "\"time\":-1");
-    Check(!px::sdk::ParseStudioUi(unorderedKeys).Valid(),
+    Check(!px::sdk::ParseUi(unorderedKeys).Valid(),
           "unordered or negative animation keys must be rejected");
 
-    const auto component = px::sdk::ParseStudioUiComponent(ComponentContract());
+    const auto component = px::sdk::ParseUiComponent(ComponentContract());
     Check(component.Valid(),
           "typed reusable component public contract must parse");
     Check(component.document.componentInterface.properties.size() == 1 &&
@@ -579,7 +579,7 @@ int main() {
               component.document.componentInterface.slots.size() == 1,
           "component properties, signals and named slots must remain typed");
     const auto complexComponent =
-        px::sdk::ParseStudioUiComponent(ComplexComponentContract());
+        px::sdk::ParseUiComponent(ComplexComponentContract());
     if (!complexComponent.Valid())
         for (const auto& diagnostic : complexComponent.diagnostics)
             std::cerr << diagnostic.code << "[" << diagnostic.nodeIndex
@@ -592,25 +592,25 @@ int main() {
         "Content/UI/card.png";
     invalidResource["componentInterface"]["properties"][2]["defaultValue"] =
         "Content/UI/card.png";
-    Check(!px::sdk::ParseStudioUiComponent(invalidResource.dump()).Valid(),
+    Check(!px::sdk::ParseUiComponent(invalidResource.dump()).Valid(),
           "component ResourceRef values must reject filesystem paths");
     auto emptyToken = nlohmann::json::parse(ComplexComponentContract());
     emptyToken["nodes"][0]["runtimeProperties"]["style"] = "";
     emptyToken["componentInterface"]["properties"][3]["defaultValue"] = "";
-    Check(!px::sdk::ParseStudioUiComponent(emptyToken.dump()).Valid(),
+    Check(!px::sdk::ParseUiComponent(emptyToken.dump()).Valid(),
           "component TokenRef values must reject empty identities");
     std::string wrongDefault = ComponentContract();
     const auto defaultValue = wrongDefault.find("\"defaultValue\":\"開始\"");
     Check(defaultValue != std::string::npos,
           "component default fixture must be editable");
     wrongDefault.replace(defaultValue, 27, "\"defaultValue\":42");
-    Check(!px::sdk::ParseStudioUiComponent(wrongDefault).Valid(),
+    Check(!px::sdk::ParseUiComponent(wrongDefault).Valid(),
           "component default values must match their declared public type");
     std::string sceneOnlyComponent = ComponentContract();
     const auto sceneOnlyEnd = sceneOnlyComponent.rfind("\n    }");
     sceneOnlyComponent.insert(sceneOnlyEnd,
                               R"(,"behaviorTriggers":[])");
-    Check(!px::sdk::ParseStudioUiComponent(sceneOnlyComponent).Valid(),
+    Check(!px::sdk::ParseUiComponent(sceneOnlyComponent).Valid(),
           "component sources must reject scene-only Runtime behavior fields");
     return 0;
 }

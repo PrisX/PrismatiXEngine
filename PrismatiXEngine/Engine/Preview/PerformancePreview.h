@@ -181,7 +181,7 @@ struct PerformancePreviewUiClip {
     PerformancePreviewUiOperation operation =
         PerformancePreviewUiOperation::Show;
     // show/hide target a Control UUID; playAnimation targets an authored UI
-    // animation clip UUID from the bound Studio UI scene.
+    // animation clip UUID from the bound UI document scene.
     std::string targetId;
 };
 

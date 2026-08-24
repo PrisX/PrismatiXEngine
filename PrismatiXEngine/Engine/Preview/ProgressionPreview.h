@@ -22,7 +22,7 @@ struct ProgressionPreviewSimulation {
 
 // Validates and evaluates the canonical Progression document inside
 // RuntimeCore. Both the native and Emscripten compositions call this contract;
-// Studio must not reproduce these semantics in JavaScript.
+// Authoring frontends must not reproduce these semantics in JavaScript.
 [[nodiscard]] Result<ProgressionPreviewSimulation>
 SimulateProgressionPreview(std::string_view requestJson);
 

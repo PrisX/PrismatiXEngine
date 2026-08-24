@@ -53,7 +53,7 @@ add_library(PrismatiXRuntimeContracts STATIC
     Engine/SDK/CharacterResources.cpp
     Engine/SDK/GameCatalogResources.cpp
     Engine/SDK/RuntimeIr.cpp
-    Engine/SDK/StudioUi.cpp
+    Engine/SDK/Ui.cpp
 )
 add_library(PrismatiX::RuntimeContracts ALIAS PrismatiXRuntimeContracts)
 prismatix_configure_target(PrismatiXRuntimeContracts)
@@ -452,17 +452,17 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     set_tests_properties(PrismatiX.SDK.PackagerCliContract
                          PROPERTIES LABELS "sdk;contract;packager")
 
-    add_executable(PrismatiXStudioUiContractTests Tests/StudioUiContractTests.cpp)
-    target_link_libraries(PrismatiXStudioUiContractTests PRIVATE PrismatiXSDK)
-    prismatix_configure_target(PrismatiXStudioUiContractTests)
-    add_test(NAME PrismatiX.SDK.StudioUiContract COMMAND PrismatiXStudioUiContractTests)
-    set_tests_properties(PrismatiX.SDK.StudioUiContract PROPERTIES LABELS "sdk;contract;ui")
+    add_executable(PrismatiXUiContractTests Tests/UiContractTests.cpp)
+    target_link_libraries(PrismatiXUiContractTests PRIVATE PrismatiXSDK)
+    prismatix_configure_target(PrismatiXUiContractTests)
+    add_test(NAME PrismatiX.SDK.UiContract COMMAND PrismatiXUiContractTests)
+    set_tests_properties(PrismatiX.SDK.UiContract PROPERTIES LABELS "sdk;contract;ui")
 
-    add_executable(PrismatiXStudioUiRuntimeAdapterTests Tests/StudioUiRuntimeAdapterTests.cpp)
-    target_link_libraries(PrismatiXStudioUiRuntimeAdapterTests PRIVATE PrismatiXRuntime)
-    prismatix_configure_target(PrismatiXStudioUiRuntimeAdapterTests)
-    add_test(NAME PrismatiX.SDK.StudioUiRuntimeAdapter COMMAND PrismatiXStudioUiRuntimeAdapterTests)
-    set_tests_properties(PrismatiX.SDK.StudioUiRuntimeAdapter PROPERTIES LABELS "sdk;runtime;contract;ui")
+    add_executable(PrismatiXUiRuntimeAdapterTests Tests/UiRuntimeAdapterTests.cpp)
+    target_link_libraries(PrismatiXUiRuntimeAdapterTests PRIVATE PrismatiXRuntime)
+    prismatix_configure_target(PrismatiXUiRuntimeAdapterTests)
+    add_test(NAME PrismatiX.SDK.UiRuntimeAdapter COMMAND PrismatiXUiRuntimeAdapterTests)
+    set_tests_properties(PrismatiX.SDK.UiRuntimeAdapter PROPERTIES LABELS "sdk;runtime;contract;ui")
 
     add_executable(PrismatiXUiTypeRegistryContractTests
                    Tests/UiTypeRegistryContractTests.cpp)
@@ -651,8 +651,8 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         PrismatiXPackagerContractTests
         PrismatiXCharacterResourcesContractTests
         PrismatiXGameCatalogResourcesContractTests
-        PrismatiXStudioUiContractTests
-        PrismatiXStudioUiRuntimeAdapterTests
+        PrismatiXUiContractTests
+        PrismatiXUiRuntimeAdapterTests
         PrismatiXUiTypeRegistryContractTests
         PrismatiXSDKManifestContractTests
         PrismatiXRuntimeIrContractTests

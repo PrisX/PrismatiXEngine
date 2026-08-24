@@ -89,8 +89,8 @@ private:
     std::unique_ptr<script::ScriptHost> m_scriptHost;
     script::ScriptServices m_scriptServices;
     std::unordered_map<std::string, std::string> m_langTable;
-    std::unordered_map<std::string, std::string> m_studioUiAssets;
-    std::unordered_map<std::string, std::string> m_studioUiComponents;
+    std::unordered_map<std::string, std::string> m_uiAssets;
+    std::unordered_map<std::string, std::string> m_uiComponents;
 
     ui::GalgameUI m_ui;
     std::unique_ptr<ui::startup::SplashSequencePlayer> m_splash;

@@ -1,4 +1,4 @@
-#include "Engine/SDK/StudioUi.h"
+#include "Engine/SDK/Ui.h"
 
 #include <nlohmann/json.hpp>
 
@@ -12,13 +12,13 @@ namespace {
 
 using Json = nlohmann::json;
 
-void AddDiagnostic(StudioUiParseResult& result, std::string code,
+void AddDiagnostic(UiParseResult& result, std::string code,
                    std::string message, const std::size_t nodeIndex = 0) {
     result.diagnostics.push_back(
         {std::move(code), std::move(message), nodeIndex});
 }
 
-void AddDiagnostic(StudioUiComponentParseResult& result, std::string code,
+void AddDiagnostic(UiComponentParseResult& result, std::string code,
                    std::string message,
                    const std::size_t nodeIndex = 0) {
     result.diagnostics.push_back(
@@ -84,23 +84,23 @@ bool IsPropertyPath(const std::string_view value) {
     return !segmentStart;
 }
 
-std::optional<StudioUiNodeKind> ParseKind(const std::string_view value) {
-    if (value == "control") return StudioUiNodeKind::Control;
-    if (value == "label") return StudioUiNodeKind::Label;
-    if (value == "button") return StudioUiNodeKind::Button;
-    if (value == "image") return StudioUiNodeKind::Image;
-    if (value == "stack") return StudioUiNodeKind::Stack;
-    if (value == "hbox") return StudioUiNodeKind::HBox;
-    if (value == "vbox") return StudioUiNodeKind::VBox;
-    if (value == "grid") return StudioUiNodeKind::Grid;
-    if (value == "group") return StudioUiNodeKind::Group;
-    if (value == "leaf") return StudioUiNodeKind::Leaf;
+std::optional<UiNodeKind> ParseKind(const std::string_view value) {
+    if (value == "control") return UiNodeKind::Control;
+    if (value == "label") return UiNodeKind::Label;
+    if (value == "button") return UiNodeKind::Button;
+    if (value == "image") return UiNodeKind::Image;
+    if (value == "stack") return UiNodeKind::Stack;
+    if (value == "hbox") return UiNodeKind::HBox;
+    if (value == "vbox") return UiNodeKind::VBox;
+    if (value == "grid") return UiNodeKind::Grid;
+    if (value == "group") return UiNodeKind::Group;
+    if (value == "leaf") return UiNodeKind::Leaf;
     return std::nullopt;
 }
 
-bool OwnsLayout(const StudioUiNodeKind kind) {
-    return kind == StudioUiNodeKind::Stack || kind == StudioUiNodeKind::HBox ||
-           kind == StudioUiNodeKind::VBox || kind == StudioUiNodeKind::Grid;
+bool OwnsLayout(const UiNodeKind kind) {
+    return kind == UiNodeKind::Stack || kind == UiNodeKind::HBox ||
+           kind == UiNodeKind::VBox || kind == UiNodeKind::Grid;
 }
 
 bool ReadFiniteFloat(const Json& object, const char* key, float& value) {
@@ -112,7 +112,7 @@ bool ReadFiniteFloat(const Json& object, const char* key, float& value) {
 
 bool IsJsonValue(const Json& value);
 
-bool ParseValue(const Json& value, StudioUiValue& output) {
+bool ParseValue(const Json& value, UiValue& output) {
     if (value.is_null()) output = std::monostate{};
     else if (value.is_boolean()) output = value.get<bool>();
     else if (value.is_number_integer()) output = value.get<std::int64_t>();
@@ -120,7 +120,7 @@ bool ParseValue(const Json& value, StudioUiValue& output) {
     else if (value.is_string()) output = value.get<std::string>();
     else if (value.is_array()) {
         if (!IsJsonValue(value)) return false;
-        output = StudioUiArrayValue{value.dump()};
+        output = UiArrayValue{value.dump()};
     } else if (value.is_object()) {
         const auto typeValue = value.find("type");
         const std::string type =
@@ -128,51 +128,51 @@ bool ParseValue(const Json& value, StudioUiValue& output) {
                 ? typeValue->get<std::string>()
                 : std::string{};
         if (type == "vec2") {
-            StudioUiVec2Value parsed;
+            UiVec2Value parsed;
             if (value.size() != 3 || !ReadFiniteFloat(value, "x", parsed.x) ||
                 !ReadFiniteFloat(value, "y", parsed.y)) return false;
             output = parsed;
         } else if (type == "rect") {
-            StudioUiRectValue parsed;
+            UiRectValue parsed;
             if (value.size() != 5 || !ReadFiniteFloat(value, "x", parsed.x) ||
                 !ReadFiniteFloat(value, "y", parsed.y) ||
                 !ReadFiniteFloat(value, "width", parsed.width) ||
                 !ReadFiniteFloat(value, "height", parsed.height)) return false;
             output = parsed;
         } else if (type == "color") {
-            StudioUiColorValue parsed;
+            UiColorValue parsed;
             if (value.size() != 2 || !ReadString(value, "value", parsed.value) ||
                 !IsColor(parsed.value)) return false;
             output = std::move(parsed);
         } else if (type == "uuid") {
-            StudioUiUuidValue parsed;
+            UiUuidValue parsed;
             if (value.size() != 2 || !ReadString(value, "value", parsed.value) ||
                 !IsUuid(parsed.value)) return false;
             output = std::move(parsed);
         } else if (type == "resource") {
-            StudioUiResourceValue parsed;
+            UiResourceValue parsed;
             if (value.size() != 2 || !ReadString(value, "value", parsed.value) ||
                 (!parsed.value.empty() && !IsUuid(parsed.value))) return false;
             output = std::move(parsed);
         } else if (type == "token") {
-            StudioUiTokenValue parsed;
+            UiTokenValue parsed;
             if (value.size() != 2 || !ReadString(value, "value", parsed.value) ||
                 parsed.value.empty()) return false;
             output = std::move(parsed);
         } else if (type == "nodeReference") {
-            StudioUiNodeReferenceValue parsed;
+            UiNodeReferenceValue parsed;
             if (value.size() != 2 || !ReadString(value, "nodeId", parsed.nodeId) ||
                 !IsUuid(parsed.nodeId)) return false;
             output = std::move(parsed);
         } else {
             if (!IsJsonValue(value)) return false;
-            output = StudioUiObjectValue{value.dump()};
+            output = UiObjectValue{value.dump()};
         }
     } else return false;
     return true;
 }
 
-bool ParseActionValue(const Json& value, StudioUiActionValue& output) {
+bool ParseActionValue(const Json& value, UiActionValue& output) {
     if (!ParseValue(value, output)) return false;
     return output.index() <= 4;
 }
@@ -215,7 +215,7 @@ bool IsJsonValue(const Json& value) {
 
 bool ParsePublicSignalBinding(
     const Json& value, const std::uint32_t schemaRevision,
-    std::optional<StudioUiComponentSignalBinding>& output) {
+    std::optional<UiComponentSignalBinding>& output) {
     if (value.is_null()) {
         output.reset();
         return true;
@@ -227,7 +227,7 @@ bool ParsePublicSignalBinding(
         if (item.key() != "id" && item.key() != "arguments" &&
             item.key() != "argumentBindings")
             return false;
-    StudioUiComponentSignalBinding binding;
+    UiComponentSignalBinding binding;
     if (!ReadString(value, "id", binding.action.id) ||
         !KnownAction(binding.action.id))
         return false;
@@ -235,7 +235,7 @@ bool ParsePublicSignalBinding(
     if (arguments == value.end() || !arguments->is_object()) return false;
     for (auto argument = arguments->begin(); argument != arguments->end();
          ++argument) {
-        StudioUiActionValue parsed;
+        UiActionValue parsed;
         if (argument.key().empty() ||
             !ParseActionValue(argument.value(), parsed))
             return false;
@@ -270,99 +270,99 @@ bool ParsePublicSignalBinding(
 }
 
 bool ReadValueMap(const Json& value,
-                  std::unordered_map<std::string, StudioUiValue>& output) {
+                  std::unordered_map<std::string, UiValue>& output) {
     if (!value.is_object()) return false;
     for (auto item = value.begin(); item != value.end(); ++item) {
-        StudioUiValue parsed;
+        UiValue parsed;
         if (item.key().empty() || !ParseValue(item.value(), parsed)) return false;
         output.emplace(item.key(), std::move(parsed));
     }
     return true;
 }
 
-std::optional<StudioUiBehaviorNodeKind> ParseBehaviorKind(
+std::optional<UiBehaviorNodeKind> ParseBehaviorKind(
     const std::string_view value) {
-    if (value == "signalEntry") return StudioUiBehaviorNodeKind::SignalEntry;
-    if (value == "action") return StudioUiBehaviorNodeKind::Action;
-    if (value == "sequence") return StudioUiBehaviorNodeKind::Sequence;
-    if (value == "branch") return StudioUiBehaviorNodeKind::Branch;
-    if (value == "delay") return StudioUiBehaviorNodeKind::Delay;
-    if (value == "constant") return StudioUiBehaviorNodeKind::Constant;
-    if (value == "compare") return StudioUiBehaviorNodeKind::Compare;
-    if (value == "boolean") return StudioUiBehaviorNodeKind::Boolean;
-    if (value == "getVariable") return StudioUiBehaviorNodeKind::GetVariable;
-    if (value == "setVariable") return StudioUiBehaviorNodeKind::SetVariable;
-    if (value == "getProperty") return StudioUiBehaviorNodeKind::GetProperty;
-    if (value == "setProperty") return StudioUiBehaviorNodeKind::SetProperty;
-    if (value == "playAnimation") return StudioUiBehaviorNodeKind::PlayAnimation;
+    if (value == "signalEntry") return UiBehaviorNodeKind::SignalEntry;
+    if (value == "action") return UiBehaviorNodeKind::Action;
+    if (value == "sequence") return UiBehaviorNodeKind::Sequence;
+    if (value == "branch") return UiBehaviorNodeKind::Branch;
+    if (value == "delay") return UiBehaviorNodeKind::Delay;
+    if (value == "constant") return UiBehaviorNodeKind::Constant;
+    if (value == "compare") return UiBehaviorNodeKind::Compare;
+    if (value == "boolean") return UiBehaviorNodeKind::Boolean;
+    if (value == "getVariable") return UiBehaviorNodeKind::GetVariable;
+    if (value == "setVariable") return UiBehaviorNodeKind::SetVariable;
+    if (value == "getProperty") return UiBehaviorNodeKind::GetProperty;
+    if (value == "setProperty") return UiBehaviorNodeKind::SetProperty;
+    if (value == "playAnimation") return UiBehaviorNodeKind::PlayAnimation;
     if (value == "setAnimationParameter")
-        return StudioUiBehaviorNodeKind::SetAnimationParameter;
+        return UiBehaviorNodeKind::SetAnimationParameter;
     if (value == "travelAnimationState")
-        return StudioUiBehaviorNodeKind::TravelAnimationState;
+        return UiBehaviorNodeKind::TravelAnimationState;
     return std::nullopt;
 }
 
-std::optional<StudioUiBehaviorReentry> ParseBehaviorReentry(
+std::optional<UiBehaviorReentry> ParseBehaviorReentry(
     const std::string_view value) {
-    if (value == "allow") return StudioUiBehaviorReentry::Allow;
+    if (value == "allow") return UiBehaviorReentry::Allow;
     if (value == "ignoreWhileRunning")
-        return StudioUiBehaviorReentry::IgnoreWhileRunning;
-    if (value == "restart") return StudioUiBehaviorReentry::Restart;
+        return UiBehaviorReentry::IgnoreWhileRunning;
+    if (value == "restart") return UiBehaviorReentry::Restart;
     return std::nullopt;
 }
 
-std::optional<StudioUiAnimationEase> ParseAnimationEase(
+std::optional<UiAnimationEase> ParseAnimationEase(
     const std::string_view value) {
-    if (value == "linear") return StudioUiAnimationEase::Linear;
-    if (value == "easeIn") return StudioUiAnimationEase::EaseIn;
-    if (value == "easeOut") return StudioUiAnimationEase::EaseOut;
-    if (value == "easeInOut") return StudioUiAnimationEase::EaseInOut;
-    if (value == "step") return StudioUiAnimationEase::Step;
+    if (value == "linear") return UiAnimationEase::Linear;
+    if (value == "easeIn") return UiAnimationEase::EaseIn;
+    if (value == "easeOut") return UiAnimationEase::EaseOut;
+    if (value == "easeInOut") return UiAnimationEase::EaseInOut;
+    if (value == "step") return UiAnimationEase::Step;
     return std::nullopt;
 }
 
-std::optional<StudioUiAnimationInterpolation> ParseAnimationInterpolation(
+std::optional<UiAnimationInterpolation> ParseAnimationInterpolation(
     const std::string_view value) {
-    if (value == "linear") return StudioUiAnimationInterpolation::Linear;
-    if (value == "discrete") return StudioUiAnimationInterpolation::Discrete;
+    if (value == "linear") return UiAnimationInterpolation::Linear;
+    if (value == "discrete") return UiAnimationInterpolation::Discrete;
     return std::nullopt;
 }
 
-std::optional<StudioUiAnimationParameterType> ParseAnimationParameterType(
+std::optional<UiAnimationParameterType> ParseAnimationParameterType(
     const std::string_view value) {
-    if (value == "trigger") return StudioUiAnimationParameterType::Trigger;
-    if (value == "bool") return StudioUiAnimationParameterType::Bool;
-    if (value == "number") return StudioUiAnimationParameterType::Number;
+    if (value == "trigger") return UiAnimationParameterType::Trigger;
+    if (value == "bool") return UiAnimationParameterType::Bool;
+    if (value == "number") return UiAnimationParameterType::Number;
     return std::nullopt;
 }
 
-std::optional<StudioUiAnimationConditionOperator> ParseAnimationCondition(
+std::optional<UiAnimationConditionOperator> ParseAnimationCondition(
     const std::string_view value) {
     if (value == "triggered")
-        return StudioUiAnimationConditionOperator::Triggered;
-    if (value == "equal") return StudioUiAnimationConditionOperator::Equal;
-    if (value == "notEqual") return StudioUiAnimationConditionOperator::NotEqual;
-    if (value == "less") return StudioUiAnimationConditionOperator::Less;
+        return UiAnimationConditionOperator::Triggered;
+    if (value == "equal") return UiAnimationConditionOperator::Equal;
+    if (value == "notEqual") return UiAnimationConditionOperator::NotEqual;
+    if (value == "less") return UiAnimationConditionOperator::Less;
     if (value == "lessEqual")
-        return StudioUiAnimationConditionOperator::LessEqual;
-    if (value == "greater") return StudioUiAnimationConditionOperator::Greater;
+        return UiAnimationConditionOperator::LessEqual;
+    if (value == "greater") return UiAnimationConditionOperator::Greater;
     if (value == "greaterEqual")
-        return StudioUiAnimationConditionOperator::GreaterEqual;
+        return UiAnimationConditionOperator::GreaterEqual;
     return std::nullopt;
 }
 
-const StudioUiValue* Property(const StudioUiBehaviorNode& node,
+const UiValue* Property(const UiBehaviorNode& node,
                               const std::string_view name) {
     const auto found = node.properties.find(std::string(name));
     return found == node.properties.end() ? nullptr : &found->second;
 }
 
-bool IsNumber(const StudioUiValue& value) {
+bool IsNumber(const UiValue& value) {
     return std::holds_alternative<std::int64_t>(value) ||
            std::holds_alternative<double>(value);
 }
 
-std::optional<double> Number(const StudioUiValue* value) {
+std::optional<double> Number(const UiValue* value) {
     if (!value) return std::nullopt;
     if (const auto* integer = std::get_if<std::int64_t>(value))
         return static_cast<double>(*integer);
@@ -370,7 +370,7 @@ std::optional<double> Number(const StudioUiValue* value) {
     return std::nullopt;
 }
 
-const std::string* String(const StudioUiValue* value) {
+const std::string* String(const UiValue* value) {
     return value ? std::get_if<std::string>(value) : nullptr;
 }
 
@@ -400,7 +400,7 @@ bool KnownAction(const std::string_view id) {
     return segmentHasCharacter;
 }
 
-bool ValidAction(const StudioUiAction& action) {
+bool ValidAction(const UiAction& action) {
     static const std::unordered_set<std::string> noArguments = {
         "game.start", "app.quit", "overlay.close", "load.open", "save.open",
         "gallery.open", "settings.open", "backlog.open", "mode.auto", "mode.skip",
@@ -420,7 +420,7 @@ bool ValidAction(const StudioUiAction& action) {
     }
     // Extension Action identity and parameter contracts are owned by the
     // versioned runtime ActionCatalog loaded from the extension manifest. The
-    // Studio UI parser only enforces a safe namespaced identity and values it
+    // UI document parser only enforces a safe namespaced identity and values it
     // can round-trip; dispatch performs catalog/provider validation.
     return KnownAction(action.id);
 }
@@ -433,13 +433,13 @@ bool SupportedRuntimeProperty(const std::string_view property) {
 }
 
 bool RuntimePropertyValueMatches(const std::string_view property,
-                                 const StudioUiValue& value) {
+                                 const UiValue& value) {
     if (property == "opacity" || property == "rotation") return IsNumber(value);
     if (property == "scale" || property == "pivot" ||
         property == "minimumSize")
-        return std::holds_alternative<StudioUiVec2Value>(value);
+        return std::holds_alternative<UiVec2Value>(value);
     if (property == "modulate")
-        return std::holds_alternative<StudioUiColorValue>(value);
+        return std::holds_alternative<UiColorValue>(value);
     if (property == "visibility")
         return std::get_if<std::string>(&value) &&
                (*std::get_if<std::string>(&value) == "Visible" ||
@@ -447,20 +447,20 @@ bool RuntimePropertyValueMatches(const std::string_view property,
                 *std::get_if<std::string>(&value) == "Collapsed");
     if (property == "enabled") return std::holds_alternative<bool>(value);
     if (property == "offsets")
-        return std::holds_alternative<StudioUiRectValue>(value);
+        return std::holds_alternative<UiRectValue>(value);
     return false;
 }
 
-bool ValidSignal(const StudioUiNodeKind kind, const std::string_view signal) {
+bool ValidSignal(const UiNodeKind kind, const std::string_view signal) {
     static const std::unordered_set<std::string_view> controlSignals = {
         "pointerEntered", "pointerExited", "pointerDown", "pointerUp", "clicked",
         "scrolled", "focusEntered", "focusExited"};
     return controlSignals.contains(signal) ||
-           (kind == StudioUiNodeKind::Button && signal == "activated");
+           (kind == UiNodeKind::Button && signal == "activated");
 }
 
 bool AllowedProperties(
-    const StudioUiBehaviorNode& node,
+    const UiBehaviorNode& node,
     const std::initializer_list<std::string_view> allowed) {
     return std::all_of(node.properties.begin(), node.properties.end(),
                        [&](const auto& item) {
@@ -469,9 +469,9 @@ bool AllowedProperties(
                        });
 }
 
-bool ValidateBehaviorNode(const StudioUiBehaviorNode& node,
+bool ValidateBehaviorNode(const UiBehaviorNode& node,
                           const std::unordered_set<std::string>& uiNodeIds) {
-    using Kind = StudioUiBehaviorNodeKind;
+    using Kind = UiBehaviorNodeKind;
     if (!std::isfinite(node.x) || !std::isfinite(node.y)) return false;
     if (node.kind != Kind::Action && !node.arguments.empty()) return false;
     if (node.kind == Kind::SignalEntry || node.kind == Kind::Sequence)
@@ -526,7 +526,7 @@ bool ValidateBehaviorNode(const StudioUiBehaviorNode& node,
     if (node.kind == Kind::GetProperty || node.kind == Kind::SetProperty) {
         const auto* target =
             Property(node, "target")
-                ? std::get_if<StudioUiNodeReferenceValue>(
+                ? std::get_if<UiNodeReferenceValue>(
                       Property(node, "target"))
                 : nullptr;
         const auto* property = String(Property(node, "property"));
@@ -559,15 +559,15 @@ bool ValidateBehaviorNode(const StudioUiBehaviorNode& node,
            !state->empty() && (!duration || *duration >= 0.0);
 }
 
-bool SameAnimationValueType(const StudioUiValue& left,
-                            const StudioUiValue& right) {
+bool SameAnimationValueType(const UiValue& left,
+                            const UiValue& right) {
     if (IsNumber(left) && IsNumber(right)) return true;
     return left.index() == right.index();
 }
 
-bool BehaviorOutputPin(const StudioUiBehaviorNode& node,
+bool BehaviorOutputPin(const UiBehaviorNode& node,
                        const std::string_view pin) {
-    using Kind = StudioUiBehaviorNodeKind;
+    using Kind = UiBehaviorNodeKind;
     if (node.kind == Kind::SignalEntry)
         return pin == "out" || pin.starts_with("arg:");
     if (node.kind == Kind::Action || node.kind == Kind::Delay ||
@@ -585,9 +585,9 @@ bool BehaviorOutputPin(const StudioUiBehaviorNode& node,
     return false;
 }
 
-bool BehaviorInputPin(const StudioUiBehaviorNode& node,
+bool BehaviorInputPin(const UiBehaviorNode& node,
                       const std::string_view pin) {
-    using Kind = StudioUiBehaviorNodeKind;
+    using Kind = UiBehaviorNodeKind;
     if (node.kind == Kind::Action)
         return pin == "in" || pin.starts_with("arg:");
     if (node.kind == Kind::Sequence) return pin == "in";
@@ -608,9 +608,9 @@ bool BehaviorInputPin(const StudioUiBehaviorNode& node,
     return false;
 }
 
-bool FlowOutputPin(const StudioUiBehaviorNode& node,
+bool FlowOutputPin(const UiBehaviorNode& node,
                    const std::string_view pin) {
-    using Kind = StudioUiBehaviorNodeKind;
+    using Kind = UiBehaviorNodeKind;
     if (node.kind == Kind::SignalEntry || node.kind == Kind::Action ||
         node.kind == Kind::Delay || node.kind == Kind::SetVariable ||
         node.kind == Kind::SetProperty ||
@@ -624,14 +624,14 @@ bool FlowOutputPin(const StudioUiBehaviorNode& node,
 }
 
 void ParseBehaviorSections(
-    const Json& root, StudioUiParseResult& result,
+    const Json& root, UiParseResult& result,
     std::unordered_set<std::string>& identities,
-    const std::unordered_map<std::string, const StudioUiNode*>& uiNodes) {
+    const std::unordered_map<std::string, const UiNode*>& uiNodes) {
     const auto graphValue = root.find("behaviorGraph");
     if (graphValue != root.end()) {
         if (!graphValue->is_object()) {
             AddDiagnostic(result, "PXSDKUI1050",
-                          "Studio UI behaviorGraph must be an object");
+                          "UI document behaviorGraph must be an object");
         } else {
             const auto nodes = graphValue->find("nodes");
             const auto links = graphValue->find("links");
@@ -644,7 +644,7 @@ void ParseBehaviorSections(
                     "Behavior Graph requires nodes, links, and groups arrays");
             } else {
                 for (const auto& item : *nodes) {
-                    StudioUiBehaviorNode node;
+                    UiBehaviorNode node;
                     std::string kind;
                     const auto position = item.is_object()
                                               ? item.find("position")
@@ -688,7 +688,7 @@ void ParseBehaviorSections(
                         std::move(node));
                 }
                 for (const auto& item : *links) {
-                    StudioUiBehaviorLink link;
+                    UiBehaviorLink link;
                     if (!item.is_object() ||
                         !ReadString(item, "id", link.id) ||
                         !IsUuid(link.id) ||
@@ -707,7 +707,7 @@ void ParseBehaviorSections(
                         std::move(link));
                 }
                 for (const auto& item : *groups) {
-                    StudioUiBehaviorGroup group;
+                    UiBehaviorGroup group;
                     const auto bounds =
                         item.is_object() ? item.find("bounds") : item.end();
                     if (!item.is_object() ||
@@ -735,7 +735,7 @@ void ParseBehaviorSections(
         }
     }
 
-    std::unordered_map<std::string, const StudioUiBehaviorNode*> graphNodes;
+    std::unordered_map<std::string, const UiBehaviorNode*> graphNodes;
     std::unordered_set<std::string> uiNodeIds;
     for (const auto& [id, _] : uiNodes) uiNodeIds.insert(id);
     for (const auto& node : result.document.behaviorGraph.nodes) {
@@ -790,12 +790,12 @@ void ParseBehaviorSections(
     if (triggers == root.end()) return;
     if (!triggers->is_array()) {
         AddDiagnostic(result, "PXSDKUI1060",
-                      "Studio UI behaviorTriggers must be an array");
+                      "UI document behaviorTriggers must be an array");
         return;
     }
     std::unordered_set<std::string> triggerSources;
     for (const auto& item : *triggers) {
-        StudioUiBehaviorTrigger trigger;
+        UiBehaviorTrigger trigger;
         std::string reentry;
         const auto parsedReentry =
             item.is_object() && ReadString(item, "reentry", reentry)
@@ -825,7 +825,7 @@ void ParseBehaviorSections(
             !(ValidSignal(source->second->kind, trigger.signal) ||
               dynamicSignal) ||
             entry == graphNodes.end() ||
-            entry->second->kind != StudioUiBehaviorNodeKind::SignalEntry ||
+            entry->second->kind != UiBehaviorNodeKind::SignalEntry ||
             !triggerSources.insert(sourceSignal).second) {
             AddDiagnostic(
                 result, "PXSDKUI1062",
@@ -837,17 +837,17 @@ void ParseBehaviorSections(
 }
 
 void ParseAnimationSection(
-    const Json& root, StudioUiParseResult& result,
+    const Json& root, UiParseResult& result,
     std::unordered_set<std::string>& identities,
-    const std::unordered_map<std::string, const StudioUiNode*>& uiNodes) {
+    const std::unordered_map<std::string, const UiNode*>& uiNodes) {
     const auto value = root.find("animations");
     if (value == root.end() || value->is_null()) return;
     if (!value->is_object()) {
         AddDiagnostic(result, "PXSDKUI1070",
-                      "Studio UI animations must be an object or null");
+                      "UI document animations must be an object or null");
         return;
     }
-    StudioUiAnimations animations;
+    UiAnimations animations;
     const auto clips = value->find("clips");
     const auto machine = value->find("stateMachine");
     if (clips == value->end() || !clips->is_array() ||
@@ -858,11 +858,11 @@ void ParseAnimationSection(
         return;
     }
 
-    std::unordered_map<std::string, const StudioUiNode*> nodes = uiNodes;
+    std::unordered_map<std::string, const UiNode*> nodes = uiNodes;
     std::unordered_set<std::string> clipIds;
     std::unordered_set<std::string> clipNames;
     for (const auto& item : *clips) {
-        StudioUiAnimationClip clip;
+        UiAnimationClip clip;
         const auto duration = item.is_object() ? item.find("duration") : item.end();
         const auto loop = item.is_object() ? item.find("loop") : item.end();
         const auto tracks = item.is_object() ? item.find("tracks") : item.end();
@@ -882,7 +882,7 @@ void ParseAnimationSection(
         }
         clip.loop = loop->get<bool>();
         for (const auto& trackValue : *tracks) {
-            StudioUiAnimationTrack track;
+            UiAnimationTrack track;
             const auto keys = trackValue.is_object()
                                   ? trackValue.find("keys")
                                   : trackValue.end();
@@ -902,7 +902,7 @@ void ParseAnimationSection(
             }
             float previous = -1.0f;
             for (const auto& keyValue : *keys) {
-                StudioUiAnimationKey key;
+                UiAnimationKey key;
                 std::string easing;
                 std::string interpolation;
                 const auto time = keyValue.is_object()
@@ -968,10 +968,10 @@ void ParseAnimationSection(
         return;
     }
 
-    std::unordered_map<std::string, StudioUiAnimationParameterType>
+    std::unordered_map<std::string, UiAnimationParameterType>
         parameterTypes;
     for (const auto& item : *parameters) {
-        StudioUiAnimationParameter parameter;
+        UiAnimationParameter parameter;
         std::string type;
         const auto defaultValue =
             item.is_object() ? item.find("defaultValue") : item.end();
@@ -987,10 +987,10 @@ void ParseAnimationSection(
             parameterTypes.contains(parameter.name) || !parsedType ||
             defaultValue == item.end() ||
             !ParseValue(*defaultValue, parameter.defaultValue) ||
-            ((*parsedType == StudioUiAnimationParameterType::Trigger ||
-              *parsedType == StudioUiAnimationParameterType::Bool) &&
+            ((*parsedType == UiAnimationParameterType::Trigger ||
+              *parsedType == UiAnimationParameterType::Bool) &&
              !std::holds_alternative<bool>(parameter.defaultValue)) ||
-            (*parsedType == StudioUiAnimationParameterType::Number &&
+            (*parsedType == UiAnimationParameterType::Number &&
              !IsNumber(parameter.defaultValue))) {
             AddDiagnostic(result, "PXSDKUI1077",
                           "Animation parameter fields are invalid");
@@ -1004,7 +1004,7 @@ void ParseAnimationSection(
     std::unordered_set<std::string> stateIds;
     std::unordered_set<std::string> stateNames;
     for (const auto& item : *states) {
-        StudioUiAnimationState state;
+        UiAnimationState state;
         const auto position =
             item.is_object() ? item.find("position") : item.end();
         if (!item.is_object() || !ReadString(item, "id", state.id) ||
@@ -1029,7 +1029,7 @@ void ParseAnimationSection(
                       "Animation stateMachine requires a valid entry state");
 
     for (const auto& item : *transitions) {
-        StudioUiAnimationTransition transition;
+        UiAnimationTransition transition;
         const auto from =
             item.is_object() ? item.find("fromStateId") : item.end();
         const auto conditions =
@@ -1081,7 +1081,7 @@ void ParseAnimationSection(
             continue;
         }
         for (const auto& conditionValue : *conditions) {
-            StudioUiAnimationCondition condition;
+            UiAnimationCondition condition;
             std::string operation;
             const auto expected = conditionValue.is_object()
                                       ? conditionValue.find("value")
@@ -1106,19 +1106,19 @@ void ParseAnimationSection(
             }
             const auto type = parameterTypes.at(condition.parameter);
             const bool valid =
-                (type == StudioUiAnimationParameterType::Trigger &&
+                (type == UiAnimationParameterType::Trigger &&
                  *parsedOperation ==
-                     StudioUiAnimationConditionOperator::Triggered &&
+                     UiAnimationConditionOperator::Triggered &&
                  std::holds_alternative<bool>(condition.value)) ||
-                (type == StudioUiAnimationParameterType::Bool &&
+                (type == UiAnimationParameterType::Bool &&
                  (*parsedOperation ==
-                      StudioUiAnimationConditionOperator::Equal ||
+                      UiAnimationConditionOperator::Equal ||
                   *parsedOperation ==
-                      StudioUiAnimationConditionOperator::NotEqual) &&
+                      UiAnimationConditionOperator::NotEqual) &&
                  std::holds_alternative<bool>(condition.value)) ||
-                (type == StudioUiAnimationParameterType::Number &&
+                (type == UiAnimationParameterType::Number &&
                  *parsedOperation !=
-                     StudioUiAnimationConditionOperator::Triggered &&
+                     UiAnimationConditionOperator::Triggered &&
                  IsNumber(condition.value));
             if (!valid) {
                 AddDiagnostic(result, "PXSDKUI1082",
@@ -1133,10 +1133,10 @@ void ParseAnimationSection(
     result.document.animations = std::move(animations);
 }
 
-void ValidateBehaviorAnimationReferences(StudioUiParseResult& result) {
-    using Kind = StudioUiBehaviorNodeKind;
+void ValidateBehaviorAnimationReferences(UiParseResult& result) {
+    using Kind = UiBehaviorNodeKind;
     std::unordered_set<std::string> stateNames;
-    std::unordered_map<std::string, StudioUiAnimationParameterType> parameters;
+    std::unordered_map<std::string, UiAnimationParameterType> parameters;
     if (result.document.animations) {
         for (const auto& state :
              result.document.animations->stateMachine.states)
@@ -1164,10 +1164,10 @@ void ValidateBehaviorAnimationReferences(StudioUiParseResult& result) {
             const auto* value = Property(node, "value");
             const bool matches =
                 found != parameters.end() && value &&
-                ((found->second == StudioUiAnimationParameterType::Trigger) ||
-                 (found->second == StudioUiAnimationParameterType::Bool &&
+                ((found->second == UiAnimationParameterType::Trigger) ||
+                 (found->second == UiAnimationParameterType::Bool &&
                   std::holds_alternative<bool>(*value)) ||
-                 (found->second == StudioUiAnimationParameterType::Number &&
+                 (found->second == UiAnimationParameterType::Number &&
                   IsNumber(*value)));
             if (!matches)
                 AddDiagnostic(
@@ -1179,44 +1179,44 @@ void ValidateBehaviorAnimationReferences(StudioUiParseResult& result) {
 
 }  // namespace
 
-StudioUiParseResult ParseStudioUi(const std::string_view text) {
-    StudioUiParseResult result;
+UiParseResult ParseUi(const std::string_view text) {
+    UiParseResult result;
     const Json root = Json::parse(text, nullptr, false);
     if (root.is_discarded() || !root.is_object()) {
-        AddDiagnostic(result, "PXSDKUI1001", "Studio UI must be a JSON object");
+        AddDiagnostic(result, "PXSDKUI1001", "UI document must be a JSON object");
         return result;
     }
     if (root.value("format", std::string{}) != "PrismatiXUIScene")
-        AddDiagnostic(result, "PXSDKUI1002", "Studio UI format is not PrismatiXUIScene");
+        AddDiagnostic(result, "PXSDKUI1002", "UI document format is not PrismatiXUIScene");
     const auto schemaRevision = root.find("schemaRevision");
     if (schemaRevision == root.end() || !schemaRevision->is_number_unsigned() ||
         (schemaRevision->get<std::uint32_t>() != 1 &&
          schemaRevision->get<std::uint32_t>() != 2))
-        AddDiagnostic(result, "PXSDKUI1003", "Unsupported Studio UI schema revision");
+        AddDiagnostic(result, "PXSDKUI1003", "Unsupported UI document schema revision");
     else
         result.document.schemaRevision = schemaRevision->get<std::uint32_t>();
     if (!ReadString(root, "id", result.document.id) || !IsUuid(result.document.id))
-        AddDiagnostic(result, "PXSDKUI1004", "Studio UI id must be a UUID");
+        AddDiagnostic(result, "PXSDKUI1004", "UI document id must be a UUID");
     const auto revision = root.find("revision");
     if (revision == root.end() || !revision->is_number_unsigned())
-        AddDiagnostic(result, "PXSDKUI1005", "Studio UI revision is required");
+        AddDiagnostic(result, "PXSDKUI1005", "UI document revision is required");
     else result.document.revision = revision->get<std::uint64_t>();
     if (!ReadString(root, "name", result.document.name))
-        AddDiagnostic(result, "PXSDKUI1006", "Studio UI name is required");
+        AddDiagnostic(result, "PXSDKUI1006", "UI document name is required");
     const auto width = root.find("width"), height = root.find("height");
     if (width == root.end() || !width->is_number_unsigned() || width->get<std::uint32_t>() == 0 ||
         height == root.end() || !height->is_number_unsigned() || height->get<std::uint32_t>() == 0) {
-        AddDiagnostic(result, "PXSDKUI1007", "Studio UI artboard size must be positive");
+        AddDiagnostic(result, "PXSDKUI1007", "UI document artboard size must be positive");
     } else {
         result.document.width = width->get<std::uint32_t>();
         result.document.height = height->get<std::uint32_t>();
     }
     if (!ReadString(root, "rootId", result.document.rootId) || !IsUuid(result.document.rootId))
-        AddDiagnostic(result, "PXSDKUI1008", "Studio UI rootId must be a UUID");
+        AddDiagnostic(result, "PXSDKUI1008", "UI document rootId must be a UUID");
 
     const auto nodes = root.find("nodes");
     if (nodes == root.end() || !nodes->is_array()) {
-        AddDiagnostic(result, "PXSDKUI1009", "Studio UI nodes must be an array");
+        AddDiagnostic(result, "PXSDKUI1009", "UI document nodes must be an array");
         return result;
     }
     std::unordered_set<std::string> identities;
@@ -1228,7 +1228,7 @@ StudioUiParseResult ParseStudioUi(const std::string_view text) {
             AddDiagnostic(result, "PXSDKUI1010", "UI node must be an object", index);
             continue;
         }
-        StudioUiNode node;
+        UiNode node;
         bool valid = true;
         if (!ReadString(item, "id", node.id) || !IsUuid(node.id) ||
             !identities.insert(node.id).second) {
@@ -1288,7 +1288,7 @@ StudioUiParseResult ParseStudioUi(const std::string_view text) {
                 node.runtimeType = std::move(value);
             }
         }
-        if (node.kind == StudioUiNodeKind::Leaf && !node.runtimeType) {
+        if (node.kind == UiNodeKind::Leaf && !node.runtimeType) {
             AddDiagnostic(result, "PXSDKUI1018",
                           "UI leaf nodes require a revision-2 runtimeType",
                           index);
@@ -1316,7 +1316,7 @@ StudioUiParseResult ParseStudioUi(const std::string_view text) {
             bool layoutValid = true;
             std::string mode;
             if (!ReadString(*layout, "mode", mode) || (mode != "free" && mode != "container")) layoutValid = false;
-            else node.layout.mode = mode == "free" ? StudioUiLayoutMode::Free : StudioUiLayoutMode::Container;
+            else node.layout.mode = mode == "free" ? UiLayoutMode::Free : UiLayoutMode::Container;
             layoutValid = ReadFiniteFloat(*layout, "x", node.layout.x) &&
                           ReadFiniteFloat(*layout, "y", node.layout.y) &&
                           ReadFiniteFloat(*layout, "width", node.layout.width) &&
@@ -1376,7 +1376,7 @@ StudioUiParseResult ParseStudioUi(const std::string_view text) {
                 valid = false;
             } else if (assetId->is_string()) {
                 node.assetId = assetId->get<std::string>();
-                if (!IsUuid(*node.assetId) || node.kind != StudioUiNodeKind::Image) {
+                if (!IsUuid(*node.assetId) || node.kind != UiNodeKind::Image) {
                     AddDiagnostic(result, "PXSDKUI1022", "Only image nodes may reference an asset UUID", index);
                     valid = false;
                 }
@@ -1425,15 +1425,15 @@ StudioUiParseResult ParseStudioUi(const std::string_view text) {
                 AddDiagnostic(result, "PXSDKUI1024", "UI node onClick must be an action or null", index);
                 valid = false;
             } else if (onClick->is_object()) {
-                StudioUiAction action;
+                UiAction action;
                 bool actionValid =
-                                   (node.kind == StudioUiNodeKind::Button ||
+                                   (node.kind == UiNodeKind::Button ||
                                     node.runtimeType.has_value()) &&
                                    ReadString(*onClick, "id", action.id);
                 const auto arguments = onClick->find("arguments");
                 if (arguments == onClick->end() || !arguments->is_object()) actionValid = false;
                 else for (auto argument = arguments->begin(); argument != arguments->end(); ++argument) {
-                    StudioUiActionValue value;
+                    UiActionValue value;
                     if (!ParseActionValue(argument.value(), value)) actionValid = false;
                     else action.arguments.emplace(argument.key(), std::move(value));
                 }
@@ -1470,7 +1470,7 @@ StudioUiParseResult ParseStudioUi(const std::string_view text) {
             if (bindings->is_object() && bindings->size() <= 256) {
                 for (auto binding = bindings->begin(); binding != bindings->end();
                      ++binding) {
-                    StudioUiPropertyBinding descriptor;
+                    UiPropertyBinding descriptor;
                     bool descriptorValid = IsIdentifier(binding.key()) &&
                                            binding.value().is_object() &&
                                            (binding.value().size() == 1 ||
@@ -1507,7 +1507,7 @@ StudioUiParseResult ParseStudioUi(const std::string_view text) {
         }
         const auto componentInstance = item.find("componentInstance");
         if (componentInstance != item.end() && !componentInstance->is_null()) {
-            StudioUiComponentInstance instance;
+            UiComponentInstance instance;
             static const std::unordered_set<std::string> overridePaths{
                 "name", "visible", "locked", "layout.x", "layout.y",
                 "layout.width", "layout.height", "layout.anchorX",
@@ -1587,7 +1587,7 @@ StudioUiParseResult ParseStudioUi(const std::string_view text) {
                         }
                         instance.publicProperties.emplace(
                             property.key(),
-                            StudioUiComponentPublicValue{
+                            UiComponentPublicValue{
                                 property.value().dump()});
                     }
                 }
@@ -1600,7 +1600,7 @@ StudioUiParseResult ParseStudioUi(const std::string_view text) {
                 } else {
                     for (auto signal = publicSignals->begin();
                          signal != publicSignals->end(); ++signal) {
-                        std::optional<StudioUiComponentSignalBinding> binding;
+                        std::optional<UiComponentSignalBinding> binding;
                         if (signal.key().empty() ||
                             !ParsePublicSignalBinding(
                                 signal.value(), result.document.schemaRevision,
@@ -1629,7 +1629,7 @@ StudioUiParseResult ParseStudioUi(const std::string_view text) {
         }
         const auto componentSlot = item.find("componentSlot");
         if (componentSlot != item.end() && !componentSlot->is_null()) {
-            StudioUiComponentSlot slot;
+            UiComponentSlot slot;
             const bool slotValid =
                 componentSlot->is_object() && componentSlot->size() == 2 &&
                 ReadString(*componentSlot, "instanceRootId",
@@ -1650,11 +1650,11 @@ StudioUiParseResult ParseStudioUi(const std::string_view text) {
 
     const auto theme = root.find("theme");
     if (theme == root.end() || !theme->is_array()) {
-        AddDiagnostic(result, "PXSDKUI1030", "Studio UI theme must be an array");
+        AddDiagnostic(result, "PXSDKUI1030", "UI document theme must be an array");
     } else {
         std::unordered_set<std::string> names;
         for (const auto& item : *theme) {
-            StudioUiThemeToken token;
+            UiThemeToken token;
             if (!item.is_object() || !ReadString(item, "id", token.id) || !IsUuid(token.id) ||
                 !identities.insert(token.id).second || !ReadString(item, "name", token.name) ||
                 !IsIdentifier(token.name) || !names.insert(token.name).second ||
@@ -1670,7 +1670,7 @@ StudioUiParseResult ParseStudioUi(const std::string_view text) {
         }
     }
 
-    std::unordered_map<std::string, const StudioUiNode*> byId;
+    std::unordered_map<std::string, const UiNode*> byId;
     for (const auto& node : result.document.nodes) byId.emplace(node.id, &node);
     std::unordered_set<std::string> componentSources;
     for (const auto& node : result.document.nodes) {
@@ -1692,7 +1692,7 @@ StudioUiParseResult ParseStudioUi(const std::string_view text) {
             continue;
         }
         bool inside = false;
-        const StudioUiNode* cursor = &node;
+        const UiNode* cursor = &node;
         while (cursor) {
             if (cursor->id == instance.instanceRootId) {
                 inside = true;
@@ -1744,7 +1744,7 @@ StudioUiParseResult ParseStudioUi(const std::string_view text) {
     }
     for (const auto& node : result.document.nodes) {
         if (node.componentInstance || node.componentSlot || !node.parentId) continue;
-        const StudioUiNode* cursor = nullptr;
+        const UiNode* cursor = nullptr;
         if (const auto parent = byId.find(*node.parentId); parent != byId.end())
             cursor = parent->second;
         std::unordered_set<std::string> visited;
@@ -1768,12 +1768,12 @@ StudioUiParseResult ParseStudioUi(const std::string_view text) {
     ValidateBehaviorAnimationReferences(result);
     const auto rootNode = byId.find(result.document.rootId);
     if (rootNode == byId.end() || rootNode->second->parentId ||
-        rootNode->second->kind != StudioUiNodeKind::Control) {
-        AddDiagnostic(result, "PXSDKUI1040", "Studio UI root must be a parentless control");
+        rootNode->second->kind != UiNodeKind::Control) {
+        AddDiagnostic(result, "PXSDKUI1040", "UI document root must be a parentless control");
     }
     if (std::count_if(result.document.nodes.begin(), result.document.nodes.end(),
-                      [](const StudioUiNode& node) { return !node.parentId; }) != 1)
-        AddDiagnostic(result, "PXSDKUI1041", "Studio UI requires exactly one root");
+                      [](const UiNode& node) { return !node.parentId; }) != 1)
+        AddDiagnostic(result, "PXSDKUI1041", "UI document requires exactly one root");
     for (const auto& node : result.document.nodes) {
         if (!node.parentId) continue;
         const auto parent = byId.find(*node.parentId);
@@ -1781,7 +1781,7 @@ StudioUiParseResult ParseStudioUi(const std::string_view text) {
             AddDiagnostic(result, "PXSDKUI1042", "UI node references a missing parent");
             continue;
         }
-        if (OwnsLayout(parent->second->kind) && node.layout.mode != StudioUiLayoutMode::Container)
+        if (OwnsLayout(parent->second->kind) && node.layout.mode != UiLayoutMode::Container)
             AddDiagnostic(result, "PXSDKUI1043", "UI node layout must be container-owned");
         std::unordered_set<std::string> visited;
         auto cursor = node.parentId;
@@ -1797,31 +1797,31 @@ StudioUiParseResult ParseStudioUi(const std::string_view text) {
     return result;
 }
 
-StudioUiComponentParseResult ParseStudioUiComponent(
+UiComponentParseResult ParseUiComponent(
     const std::string_view text) {
-    StudioUiComponentParseResult result;
+    UiComponentParseResult result;
     Json root = Json::parse(text, nullptr, false);
     if (root.is_discarded() || !root.is_object()) {
         AddDiagnostic(result, "PXSDKUICOMP1101",
-                      "Studio UI component must be a JSON object");
+                      "UI component must be a JSON object");
         return result;
     }
     if (root.value("format", std::string{}) != "PrismatiXUIComponent") {
         AddDiagnostic(result, "PXSDKUICOMP1102",
-                      "Studio UI component format is not PrismatiXUIComponent");
+                      "UI component format is not PrismatiXUIComponent");
         return result;
     }
     for (const char* sceneOnly :
          {"behaviorGraph", "behaviorTriggers", "animations"}) {
         if (root.contains(sceneOnly))
             AddDiagnostic(result, "PXSDKUICOMP1103",
-                          std::string("Studio UI component contains scene-only field: ") +
+                          std::string("UI component contains scene-only field: ") +
                               sceneOnly);
     }
 
     Json scene = root;
     scene["format"] = "PrismatiXUIScene";
-    const StudioUiParseResult parsed = ParseStudioUi(scene.dump());
+    const UiParseResult parsed = ParseUi(scene.dump());
     result.document.content = parsed.document;
     for (const auto& diagnostic : parsed.diagnostics) {
         // A reusable component may use any structural control/container as its
@@ -1831,86 +1831,86 @@ StudioUiComponentParseResult ParseStudioUiComponent(
             result.diagnostics.push_back(diagnostic);
     }
     const auto componentRoot = std::ranges::find_if(
-        result.document.content.nodes, [&](const StudioUiNode& node) {
+        result.document.content.nodes, [&](const UiNode& node) {
             return node.id == result.document.content.rootId;
         });
     if (componentRoot == result.document.content.nodes.end() ||
         componentRoot->parentId ||
-        componentRoot->kind == StudioUiNodeKind::Button ||
-        componentRoot->kind == StudioUiNodeKind::Label ||
-        componentRoot->kind == StudioUiNodeKind::Image ||
-        componentRoot->kind == StudioUiNodeKind::Leaf) {
+        componentRoot->kind == UiNodeKind::Button ||
+        componentRoot->kind == UiNodeKind::Label ||
+        componentRoot->kind == UiNodeKind::Image ||
+        componentRoot->kind == UiNodeKind::Leaf) {
         AddDiagnostic(result, "PXSDKUICOMP1108",
-                      "Studio UI component root must be a parentless structural node");
+                      "UI component root must be a parentless structural node");
     }
 
     const auto parseValueType = [](const std::string_view name)
-        -> std::optional<StudioUiComponentValueType> {
-        if (name == "null") return StudioUiComponentValueType::Null;
-        if (name == "boolean") return StudioUiComponentValueType::Boolean;
-        if (name == "integer") return StudioUiComponentValueType::Integer;
-        if (name == "number") return StudioUiComponentValueType::Number;
-        if (name == "string") return StudioUiComponentValueType::String;
-        if (name == "vec2") return StudioUiComponentValueType::Vec2;
-        if (name == "rect") return StudioUiComponentValueType::Rect;
-        if (name == "color") return StudioUiComponentValueType::Color;
-        if (name == "uuid") return StudioUiComponentValueType::Uuid;
-        if (name == "resource") return StudioUiComponentValueType::Resource;
-        if (name == "token") return StudioUiComponentValueType::Token;
-        if (name == "array") return StudioUiComponentValueType::Array;
-        if (name == "object") return StudioUiComponentValueType::Object;
+        -> std::optional<UiComponentValueType> {
+        if (name == "null") return UiComponentValueType::Null;
+        if (name == "boolean") return UiComponentValueType::Boolean;
+        if (name == "integer") return UiComponentValueType::Integer;
+        if (name == "number") return UiComponentValueType::Number;
+        if (name == "string") return UiComponentValueType::String;
+        if (name == "vec2") return UiComponentValueType::Vec2;
+        if (name == "rect") return UiComponentValueType::Rect;
+        if (name == "color") return UiComponentValueType::Color;
+        if (name == "uuid") return UiComponentValueType::Uuid;
+        if (name == "resource") return UiComponentValueType::Resource;
+        if (name == "token") return UiComponentValueType::Token;
+        if (name == "array") return UiComponentValueType::Array;
+        if (name == "object") return UiComponentValueType::Object;
         return std::nullopt;
     };
-    const auto valueMatches = [](const StudioUiComponentValueType type,
+    const auto valueMatches = [](const UiComponentValueType type,
                                  const Json& value) {
         switch (type) {
-            case StudioUiComponentValueType::Null: return value.is_null();
-            case StudioUiComponentValueType::Boolean: return value.is_boolean();
-            case StudioUiComponentValueType::Integer:
+            case UiComponentValueType::Null: return value.is_null();
+            case UiComponentValueType::Boolean: return value.is_boolean();
+            case UiComponentValueType::Integer:
                 return value.is_number_integer();
-            case StudioUiComponentValueType::Number:
+            case UiComponentValueType::Number:
                 return value.is_number() &&
                        (!value.is_number_float() ||
                         std::isfinite(value.get<double>()));
-            case StudioUiComponentValueType::String: return value.is_string();
-            case StudioUiComponentValueType::Uuid:
+            case UiComponentValueType::String: return value.is_string();
+            case UiComponentValueType::Uuid:
                 return value.is_string() &&
                        IsUuid(value.get_ref<const std::string&>());
-            case StudioUiComponentValueType::Resource:
+            case UiComponentValueType::Resource:
                 if (value.is_string())
                     return value.get_ref<const std::string&>().empty() ||
                            IsUuid(value.get_ref<const std::string&>());
                 else {
-                    StudioUiValue parsed;
+                    UiValue parsed;
                     return ParseValue(value, parsed) &&
-                           std::holds_alternative<StudioUiResourceValue>(parsed);
+                           std::holds_alternative<UiResourceValue>(parsed);
                 }
-            case StudioUiComponentValueType::Token:
+            case UiComponentValueType::Token:
                 if (value.is_string())
                     return !value.get_ref<const std::string&>().empty();
                 else {
-                    StudioUiValue parsed;
+                    UiValue parsed;
                     return ParseValue(value, parsed) &&
-                           std::holds_alternative<StudioUiTokenValue>(parsed);
+                           std::holds_alternative<UiTokenValue>(parsed);
                 }
-            case StudioUiComponentValueType::Array:
+            case UiComponentValueType::Array:
                 return value.is_array() && IsJsonValue(value);
-            case StudioUiComponentValueType::Object:
+            case UiComponentValueType::Object:
                 return value.is_object() && IsJsonValue(value);
-            case StudioUiComponentValueType::Vec2: {
-                StudioUiValue ignored;
+            case UiComponentValueType::Vec2: {
+                UiValue ignored;
                 return ParseValue(value, ignored) &&
-                       std::holds_alternative<StudioUiVec2Value>(ignored);
+                       std::holds_alternative<UiVec2Value>(ignored);
             }
-            case StudioUiComponentValueType::Rect: {
-                StudioUiValue ignored;
+            case UiComponentValueType::Rect: {
+                UiValue ignored;
                 return ParseValue(value, ignored) &&
-                       std::holds_alternative<StudioUiRectValue>(ignored);
+                       std::holds_alternative<UiRectValue>(ignored);
             }
-            case StudioUiComponentValueType::Color: {
-                StudioUiValue ignored;
+            case UiComponentValueType::Color: {
+                UiValue ignored;
                 return ParseValue(value, ignored) &&
-                       std::holds_alternative<StudioUiColorValue>(ignored);
+                       std::holds_alternative<UiColorValue>(ignored);
             }
         }
         return false;
@@ -1924,7 +1924,7 @@ StudioUiComponentParseResult ParseStudioUiComponent(
     if (interface == root.end()) return result;
     if (!interface->is_object() || !metadataValid(*interface)) {
         AddDiagnostic(result, "PXSDKUICOMP1104",
-                      "Studio UI component interface is malformed");
+                      "UI component interface is malformed");
         return result;
     }
     const auto properties = interface->find("properties");
@@ -1934,7 +1934,7 @@ StudioUiComponentParseResult ParseStudioUiComponent(
         signals == interface->end() || !signals->is_array() ||
         slots == interface->end() || !slots->is_array()) {
         AddDiagnostic(result, "PXSDKUICOMP1104",
-                      "Studio UI component interface requires properties, signals and slots arrays");
+                      "UI component interface requires properties, signals and slots arrays");
         return result;
     }
     std::unordered_map<std::string, const Json*> sourceNodes;
@@ -1977,7 +1977,7 @@ StudioUiComponentParseResult ParseStudioUiComponent(
 
     std::unordered_set<std::string> propertyIds;
     for (const auto& item : *properties) {
-        StudioUiComponentProperty property;
+        UiComponentProperty property;
         std::string valueType;
         const bool fields = item.is_object() &&
                             ReadString(item, "id", property.id) &&
@@ -2001,7 +2001,7 @@ StudioUiComponentParseResult ParseStudioUiComponent(
             !valueMatches(*type, *defaultValue) || !authored ||
             !valueMatches(*type, *authored)) {
             AddDiagnostic(result, "PXSDKUICOMP1105",
-                          "Studio UI component exposed property is invalid" +
+                          "UI component exposed property is invalid" +
                               (property.id.empty()
                                    ? std::string{}
                                    : ": " + property.id));
@@ -2015,7 +2015,7 @@ StudioUiComponentParseResult ParseStudioUiComponent(
 
     std::unordered_set<std::string> signalIds;
     for (const auto& item : *signals) {
-        StudioUiComponentSignal signal;
+        UiComponentSignal signal;
         const bool fields = item.is_object() &&
                             ReadString(item, "id", signal.id) &&
                             publicId(signal.id) &&
@@ -2048,7 +2048,7 @@ StudioUiComponentParseResult ParseStudioUiComponent(
         std::unordered_set<std::string> argumentIds;
         if (arguments != item.end() && arguments->is_array()) {
             for (const auto& argument : *arguments) {
-                StudioUiComponentSignalArgument parsedArgument;
+                UiComponentSignalArgument parsedArgument;
                 std::string typeName;
                 const bool argumentFields =
                     argument.is_object() &&
@@ -2069,7 +2069,7 @@ StudioUiComponentParseResult ParseStudioUiComponent(
         }
         if (!valid) {
             AddDiagnostic(result, "PXSDKUICOMP1106",
-                          "Studio UI component exposed signal is invalid");
+                          "UI component exposed signal is invalid");
             continue;
         }
         result.document.componentInterface.signals.push_back(std::move(signal));
@@ -2077,7 +2077,7 @@ StudioUiComponentParseResult ParseStudioUiComponent(
 
     std::unordered_set<std::string> slotIds;
     for (const auto& item : *slots) {
-        StudioUiComponentSlotDefinition slot;
+        UiComponentSlotDefinition slot;
         const bool fields = item.is_object() &&
                             ReadString(item, "id", slot.id) &&
                             publicId(slot.id) &&
@@ -2096,7 +2096,7 @@ StudioUiComponentParseResult ParseStudioUiComponent(
         }
         if (!valid) {
             AddDiagnostic(result, "PXSDKUICOMP1107",
-                          "Studio UI component slot is invalid");
+                          "UI component slot is invalid");
             continue;
         }
         result.document.componentInterface.slots.push_back(std::move(slot));

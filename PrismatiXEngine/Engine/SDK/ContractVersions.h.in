@@ -12,8 +12,11 @@ inline constexpr std::uint32_t kPackagerContractRevision =
     @PRISMATIX_PACKAGER_CONTRACT_REVISION@;
 inline constexpr std::uint32_t kRuntimeIrContractRevision =
     @PRISMATIX_RUNTIME_IR_CONTRACT_REVISION@;
+inline constexpr std::uint32_t kUiContractRevision =
+    @PRISMATIX_UI_CONTRACT_REVISION@;
+[[deprecated("Use kUiContractRevision; StudioUi compatibility is removed in SDK 0.3.0")]]
 inline constexpr std::uint32_t kStudioUiContractRevision =
-    @PRISMATIX_STUDIO_UI_CONTRACT_REVISION@;
+    @PRISMATIX_STUDIO_UI_COMPAT_CONTRACT_REVISION@;
 inline constexpr std::uint32_t kUiTypeRegistrySchemaRevision =
     @PRISMATIX_UI_TYPE_REGISTRY_SCHEMA_REVISION@;
 inline constexpr std::uint32_t kUiTypeRegistryContractRevision =
