@@ -4,7 +4,6 @@ import type {
   CharacterDocument,
   ExtensionCommand,
   ExtensionParameter,
-  JsonPrimitive,
   JsonValue,
   RuntimeIrOperation,
   RuntimeSourceMap,
@@ -84,6 +83,8 @@ function tokenizeCommand(value: string): {tokens: Token[]; error?: string} {
     const start = index;
     let quote = "";
     let escaped = false;
+    let squareDepth = 0;
+    let objectDepth = 0;
     while (index < value.length) {
       const character = value[index]!;
       if (escaped) {
@@ -94,47 +95,73 @@ function tokenizeCommand(value: string): {tokens: Token[]; error?: string} {
         if (character === quote) quote = "";
       } else if (character === "\"" || character === "'") {
         quote = character;
-      } else if (/\s/u.test(character)) {
+      } else if (character === "[") {
+        squareDepth += 1;
+      } else if (character === "]") {
+        squareDepth -= 1;
+        if (squareDepth < 0) return {tokens, error: "Unbalanced structured command argument"};
+      } else if (character === "{") {
+        objectDepth += 1;
+      } else if (character === "}") {
+        objectDepth -= 1;
+        if (objectDepth < 0) return {tokens, error: "Unbalanced structured command argument"};
+      } else if (/\s/u.test(character) && squareDepth === 0 && objectDepth === 0) {
         break;
       }
       index += 1;
     }
     if (quote !== "") return {tokens, error: "Unterminated quoted command argument"};
+    if (squareDepth !== 0 || objectDepth !== 0) return {tokens, error: "Unbalanced structured command argument"};
     tokens.push({raw: value.slice(start, index), start, end: index});
   }
   return {tokens};
 }
 
-function decodeValue(raw: string): JsonPrimitive {
-  if (raw === "true") return true;
-  if (raw === "false") return false;
-  if (raw === "null") return null;
-  if (/^-?(?:0|[1-9]\d*)$/u.test(raw)) return Number.parseInt(raw, 10);
-  if (/^-?(?:0|[1-9]\d*)\.\d+(?:[eE][+-]?\d+)?$/u.test(raw)) return Number.parseFloat(raw);
+interface DecodedValue {
+  readonly value: JsonValue;
+  readonly error?: string;
+}
+
+function decodeValue(raw: string): DecodedValue {
+  if (raw === "true") return {value: true};
+  if (raw === "false") return {value: false};
+  if (raw === "null") return {value: null};
+  if (/^-?(?:0|[1-9]\d*)$/u.test(raw)) return {value: Number.parseInt(raw, 10)};
+  if (/^-?(?:0|[1-9]\d*)\.\d+(?:[eE][+-]?\d+)?$/u.test(raw)) return {value: Number.parseFloat(raw)};
+  if ((raw.startsWith("[") && raw.endsWith("]")) || (raw.startsWith("{") && raw.endsWith("}"))) {
+    try {
+      return {value: JSON.parse(raw) as JsonValue};
+    } catch {
+      return {value: raw, error: "Structured Story command arguments must use valid JSON"};
+    }
+  }
   if (raw.length >= 2 && raw.startsWith("\"") && raw.endsWith("\"")) {
     try {
-      return JSON.parse(raw) as string;
+      return {value: JSON.parse(raw) as string};
     } catch {
-      return raw.slice(1, -1);
+      return {value: raw.slice(1, -1)};
     }
   }
   if (raw.length >= 2 && raw.startsWith("'") && raw.endsWith("'")) {
-    return raw.slice(1, -1).replace(/\\'/gu, "'").replace(/\\\\/gu, "\\");
+    return {value: raw.slice(1, -1).replace(/\\'/gu, "'").replace(/\\\\/gu, "\\")};
   }
-  return raw;
+  return {value: raw};
 }
 
-function parseArguments(path: string, line: SourceLine, commandText: string, tokens: readonly Token[]): StoryArgument[] {
+function parseArguments(path: string, line: SourceLine, tokens: readonly Token[], diagnostics: AuthoringDiagnostic[]): StoryArgument[] {
   return tokens.map((token) => {
     const equals = token.raw.indexOf("=");
     const name = equals > 0 ? token.raw.slice(0, equals) : undefined;
     const raw = equals > 0 ? token.raw.slice(equals + 1) : token.raw;
     const start = line.text.indexOf("[") + 2 + token.start + (equals > 0 ? equals + 1 : 0);
+    const argumentSpan = span(path, line, start, start + raw.length);
+    const decoded = decodeValue(raw);
+    if (decoded.error !== undefined) diagnostics.push(error("PXSTORY1014", decoded.error, argumentSpan));
     return {
       ...(name === undefined ? {} : {name}),
       raw,
-      value: decodeValue(raw),
-      span: span(path, line, start, start + raw.length),
+      value: decoded.value,
+      span: argumentSpan,
     };
   });
 }
@@ -196,7 +223,7 @@ export function parseStory(text: string, path = "Story/untitled.pxstory"): Story
         span: lineSpan,
         raw: line.text,
         name: command!.raw,
-        arguments: parseArguments(path, line, commandText, argumentTokens),
+        arguments: parseArguments(path, line, argumentTokens, diagnostics),
       });
       continue;
     }
@@ -223,7 +250,7 @@ function argumentMap(node: StoryNode): Map<string, StoryArgument> {
 }
 
 function stringValue(argument: StoryArgument | undefined): string | undefined {
-  if (argument === undefined || argument.value === null) return undefined;
+  if (argument === undefined || argument.value === null || typeof argument.value === "object") return undefined;
   return String(argument.value);
 }
 
@@ -236,17 +263,29 @@ function characterIndex(characters: readonly CharacterDocument[]): Map<string, C
   return result;
 }
 
-function typeMatches(value: JsonPrimitive, parameter: ExtensionParameter): boolean {
+function finiteNumbers(value: JsonValue, length: number): value is number[] {
+  return Array.isArray(value) && value.length === length && value.every((item) => typeof item === "number" && Number.isFinite(item));
+}
+
+function typeMatches(value: JsonValue, parameter: ExtensionParameter): boolean {
   switch (parameter.type) {
     case "null": return value === null;
     case "boolean": return typeof value === "boolean";
     case "integer": return typeof value === "number" && Number.isInteger(value);
     case "number": return typeof value === "number" && Number.isFinite(value);
     case "string":
-    case "resource":
     case "token":
     case "uuid": return typeof value === "string";
-    default: return false;
+    case "resource":
+      return typeof value === "string" || (value !== null && !Array.isArray(value) && typeof value === "object" &&
+        (typeof value.id === "string" || typeof value.uuid === "string" || typeof value.path === "string"));
+    case "vec2":
+      return finiteNumbers(value, 2) || (value !== null && !Array.isArray(value) && typeof value === "object" &&
+        typeof value.x === "number" && Number.isFinite(value.x) && typeof value.y === "number" && Number.isFinite(value.y));
+    case "rect": return finiteNumbers(value, 4);
+    case "color": return finiteNumbers(value, 4) && value.every((channel) => Number.isInteger(channel) && channel >= 0 && channel <= 255);
+    case "array": return Array.isArray(value);
+    case "object": return value !== null && !Array.isArray(value) && typeof value === "object";
   }
 }
 
@@ -254,6 +293,7 @@ function normalizeExtensionArguments(node: StoryNode, descriptor: ExtensionComma
   const authored = argumentMap(node);
   const normalized: Record<string, JsonValue> = {};
   const known = new Set(descriptor.parameters.map((parameter) => parameter.name));
+  const initialErrors = diagnostics.filter((item) => item.severity === "error").length;
   for (const parameter of descriptor.parameters) {
     const argument = authored.get(parameter.name);
     const value = argument?.value ?? parameter.default;
@@ -261,18 +301,18 @@ function normalizeExtensionArguments(node: StoryNode, descriptor: ExtensionComma
       if (parameter.required === true) diagnostics.push(error("PXSTORY1201", `Command ${descriptor.id} requires argument ${parameter.name}`, node.span));
       continue;
     }
-    if (typeof value === "object" || !typeMatches(value as JsonPrimitive, parameter)) {
+    if (!typeMatches(value, parameter)) {
       diagnostics.push(error("PXSTORY1202", `Command ${descriptor.id} argument ${parameter.name} has the wrong type`, argument?.span ?? node.span));
       continue;
     }
-    if (parameter.enum !== undefined && !parameter.enum.some((candidate) => JSON.stringify(candidate) === JSON.stringify(value))) {
+    if (parameter.enum !== undefined && !parameter.enum.some((candidate) => canonicalJson(candidate, false) === canonicalJson(value, false))) {
       diagnostics.push(error("PXSTORY1203", `Command ${descriptor.id} argument ${parameter.name} is not an allowed value`, argument?.span ?? node.span));
     }
     if (typeof value === "number") {
       if (parameter.range?.minimum !== undefined && value < parameter.range.minimum) diagnostics.push(error("PXSTORY1204", `Command ${descriptor.id} argument ${parameter.name} is below its minimum`, argument?.span ?? node.span));
       if (parameter.range?.maximum !== undefined && value > parameter.range.maximum) diagnostics.push(error("PXSTORY1205", `Command ${descriptor.id} argument ${parameter.name} exceeds its maximum`, argument?.span ?? node.span));
     }
-    normalized[parameter.name] = value as JsonValue;
+    normalized[parameter.name] = value;
   }
   for (const [name, argument] of authored) {
     if (name.startsWith("$") || known.has(name)) continue;
@@ -282,7 +322,8 @@ function normalizeExtensionArguments(node: StoryNode, descriptor: ExtensionComma
       normalized[name] = argument.value;
     }
   }
-  return diagnostics.some((item) => item.severity === "error" && item.span === node.span) ? undefined : normalized;
+  const finalErrors = diagnostics.filter((item) => item.severity === "error").length;
+  return finalErrors === initialErrors ? normalized : undefined;
 }
 
 export function compileStory(document: StoryDocument, context: StoryCompileContext): StoryCompileResult {
@@ -399,7 +440,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         if (variableName === undefined || value === undefined) diagnostics.push(error("PXSTORY1121", "set requires a variable and value", node.span));
         else if (context.game !== undefined && descriptor === undefined) diagnostics.push(error("PXSTORY1122", `Unknown game variable: ${variableName}`, node.span));
         else {
-          const parsed = decodeValue(value);
+          const parsed = decodeValue(value).value;
           const matches = descriptor === undefined || (descriptor.type === "integer" ? typeof parsed === "number" && Number.isInteger(parsed) : typeof parsed === descriptor.type);
           if (!matches) diagnostics.push(error("PXSTORY1123", `Value for ${variableName} does not match ${descriptor!.type}`, node.span));
           else emit(node, "setVariable", {name: variableName, value});
