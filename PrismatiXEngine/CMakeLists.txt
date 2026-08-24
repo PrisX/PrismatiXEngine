@@ -159,6 +159,7 @@ target_link_libraries(PrismatiXRuntimeCore PUBLIC
     sol2::sol2
     PrismatiXRuntimeContracts
 )
+target_link_libraries(PrismatiXRuntimeCore PRIVATE qjs)
 
 if(NOT EMSCRIPTEN)
     file(GLOB_RECURSE PRISMATIX_NATIVE_PLATFORM_SOURCES CONFIGURE_DEPENDS
@@ -534,6 +535,12 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         PrismatiX.Integration.Runtime.Behavior "integration;runtime;behavior"
         PrismatiXRuntime)
     prismatix_add_simple_test(
+        PrismatiXJavaScriptHostIntegrationTests
+        Tests/Integration/JavaScriptHostIntegrationTests.cpp
+        PrismatiX.Integration.Runtime.JavaScriptHost
+        "integration;runtime;script;javascript"
+        PrismatiXRuntime)
+    prismatix_add_simple_test(
         PrismatiXAnimationIntegrationTests
         Tests/Integration/AnimationIntegrationTests.cpp
         PrismatiX.Integration.Runtime.Animation "integration;runtime;animation"
@@ -612,6 +619,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         PrismatiXSaveLoadIntegrationTests
         PrismatiXDialogueScenarioIntegrationTests
         PrismatiXBehaviorIntegrationTests
+        PrismatiXJavaScriptHostIntegrationTests
         PrismatiXAnimationIntegrationTests
         PrismatiXRuntimeResourceIntegrationTests
         PrismatiXUISchemaContractTests

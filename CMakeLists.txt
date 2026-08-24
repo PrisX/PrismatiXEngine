@@ -126,6 +126,36 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(sol2)
 
+# Embedded JavaScript runtime. Pin the exact QuickJS-NG revision exercised by
+# native and Emscripten builds, and exclude its command-line tools from the
+# default build: PrismatiX embeds only the C library and never ships Node.
+set(QJS_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+set(QJS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(QJS_BUILD_CLI_STATIC OFF CACHE BOOL "" FORCE)
+set(QJS_BUILD_LIBC OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    quickjs_ng
+    GIT_REPOSITORY https://github.com/quickjs-ng/quickjs.git
+    GIT_TAG        433941b99fb3c5e7f98b7ebd78727972bcf467ee
+    GIT_SHALLOW    FALSE
+)
+if(POLICY CMP0169)
+    cmake_policy(PUSH)
+    cmake_policy(SET CMP0169 OLD)
+endif()
+FetchContent_GetProperties(quickjs_ng)
+if(NOT quickjs_ng_POPULATED)
+    FetchContent_Populate(quickjs_ng)
+    add_subdirectory(
+        "${quickjs_ng_SOURCE_DIR}"
+        "${quickjs_ng_BINARY_DIR}"
+        EXCLUDE_FROM_ALL
+    )
+endif()
+if(POLICY CMP0169)
+    cmake_policy(POP)
+endif()
+
 # Subdirectories
 add_subdirectory("PrismatiXEngine")
 
