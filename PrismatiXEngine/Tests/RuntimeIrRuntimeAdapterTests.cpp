@@ -283,5 +283,16 @@ int main() {
         !check(parityProgram.code[5].Get("operation") == "modal", "route operation")) {
         return 1;
     }
+
+    px::sdk::RuntimeIrDocument unknownDocument;
+    unknownDocument.documentId = "unknown-operation";
+    unknownDocument.committedRevision = 1;
+    unknownDocument.operations = {
+        Operation("structural", "sequence"),
+    };
+    const px::vn::Program unknownProgram = px::CompileRuntimeIr(unknownDocument);
+    assert(!unknownProgram.errors.empty());
+    assert(unknownProgram.errors.front().find("unknown or structural") !=
+           std::string::npos);
     return 0;
 }

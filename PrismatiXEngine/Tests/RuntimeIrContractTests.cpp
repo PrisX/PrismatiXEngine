@@ -34,7 +34,7 @@ int main() {
       "committedRevision": 8,
       "operations": [
         {"operationId":"same","sourceId":"source-a","kind":"scene","text":"a","arguments":{}},
-        {"operationId":"same","sourceId":"source-b","kind":"sequence","text":"b","arguments":{}}
+        {"operationId":"same","sourceId":"source-b","kind":"dialogue","text":"b","arguments":{"text":"b"}}
       ]
     })";
     const auto rejected = px::sdk::ParseRuntimeIr(duplicate);
@@ -46,7 +46,7 @@ int main() {
       "documentId":"scene-01", "committedRevision":1,
       "operations":[
         {"operationId":"first","sourceId":"source-a","kind":"scene","text":"a","arguments":{}},
-        {"operationId":"second","sourceId":"source-b","kind":"sequence","text":"b","arguments":{}}
+        {"operationId":"second","sourceId":"source-b","kind":"narration","text":"b","arguments":{"text":"b"}}
       ]
     })");
     assert(defaultLine.Valid());
@@ -69,5 +69,29 @@ int main() {
       "documentId":"scene-01", "committedRevision":1, "operations":[]
     })");
     assert(!future.Valid());
+
+    const auto structural = px::sdk::ParseRuntimeIr(R"({
+      "format":"PrismatiXRuntimeIR", "schemaRevision":1,
+      "documentId":"scene-01", "committedRevision":1,
+      "operations":[
+        {"operationId":"structure","sourceId":"source-a","kind":"sequence",
+         "text":"structure","arguments":{}}
+      ]
+    })");
+    assert(!structural.Valid());
+    assert(structural.diagnostics.back().code == "PXSDKIR1021");
+
+    const auto unknownField = px::sdk::ParseRuntimeIr(R"({
+      "format":"PrismatiXRuntimeIR", "schemaRevision":1,
+      "documentId":"scene-01", "committedRevision":1, "editorState":{},
+      "operations":[]
+    })");
+    assert(!unknownField.Valid());
+    assert(unknownField.diagnostics.back().code == "PXSDKIR1008");
+
+    const std::string oversized(16 * 1024 * 1024 + 1, 'x');
+    const auto bounded = px::sdk::ParseRuntimeIr(oversized);
+    assert(!bounded.Valid());
+    assert(bounded.diagnostics.back().code == "PXSDKIR1007");
     return 0;
 }

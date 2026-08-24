@@ -496,6 +496,10 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             command.type = "camera";
             Add(command, "preset", Argument(operation, "value"));
         } else {
+            adapterErrors.push_back(
+                "unknown or structural Runtime operation kind '" +
+                operation.kind + "' at Runtime IR operation " +
+                std::to_string(index));
             continue;
         }
         commands.push_back(std::move(command));

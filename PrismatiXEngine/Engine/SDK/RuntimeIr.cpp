@@ -3,12 +3,47 @@
 #include <nlohmann/json.hpp>
 
 #include <limits>
+#include <string_view>
 #include <unordered_set>
 
 namespace px::sdk {
 namespace {
 
 using Json = nlohmann::json;
+
+constexpr std::size_t kMaxRuntimeIrBytes = 16U * 1024U * 1024U;
+constexpr std::size_t kMaxRuntimeOperations = 1'000'000U;
+constexpr std::size_t kMaxOperationArguments = 1'024U;
+constexpr std::size_t kMaxRuntimeStringBytes = 1U * 1024U * 1024U;
+
+bool ExecutableOperationKind(const std::string_view kind) {
+    static constexpr std::string_view kinds[] = {
+        "scene",         "fragment",      "callFragment",
+        "return",        "endStory",      "dialogue",
+        "narration",     "choiceOption",  "background",
+        "showCharacter", "hideCharacter", "voice",
+        "bgm",           "soundEffect",   "setVariable",
+        "condition",     "else",           "endCondition",
+        "label",         "jump",           "wait",
+        "timeline",      "effect",         "ui",
+        "customNode",    "camera",
+    };
+    for (const auto candidate : kinds)
+        if (candidate == kind) return true;
+    return false;
+}
+
+bool KnownRootField(const std::string_view key) {
+    return key == "format" || key == "schemaRevision" ||
+           key == "documentId" || key == "committedRevision" ||
+           key == "operations";
+}
+
+bool KnownOperationField(const std::string_view key) {
+    return key == "operationId" || key == "sourceId" ||
+           key == "sourceLine" || key == "kind" || key == "text" ||
+           key == "arguments";
+}
 
 void AddDiagnostic(RuntimeIrParseResult& result, std::string code,
                    std::string message, const std::size_t operationIndex = 0) {
@@ -27,10 +62,19 @@ bool ReadRequiredString(const Json& object, const char* key, std::string& value)
 
 RuntimeIrParseResult ParseRuntimeIr(const std::string_view text) {
     RuntimeIrParseResult result;
+    if (text.size() > kMaxRuntimeIrBytes) {
+        AddDiagnostic(result, "PXSDKIR1007", "Runtime IR exceeds the size limit");
+        return result;
+    }
     const Json root = Json::parse(text, nullptr, false);
     if (root.is_discarded() || !root.is_object()) {
         AddDiagnostic(result, "PXSDKIR1001", "Runtime IR must be a JSON object");
         return result;
+    }
+    for (auto field = root.begin(); field != root.end(); ++field) {
+        if (!KnownRootField(field.key()))
+            AddDiagnostic(result, "PXSDKIR1008",
+                          "Unknown Runtime IR field: " + field.key());
     }
     if (root.value("format", std::string{}) != "PrismatiXRuntimeIR") {
         AddDiagnostic(result, "PXSDKIR1002", "Runtime IR format is not PrismatiXRuntimeIR");
@@ -55,6 +99,11 @@ RuntimeIrParseResult ParseRuntimeIr(const std::string_view text) {
         AddDiagnostic(result, "PXSDKIR1006", "Runtime IR operations must be an array");
         return result;
     }
+    if (operations->size() > kMaxRuntimeOperations) {
+        AddDiagnostic(result, "PXSDKIR1009",
+                      "Runtime IR operation count exceeds the limit");
+        return result;
+    }
 
     std::unordered_set<std::string> operationIds;
     std::unordered_set<std::string> sourceIds;
@@ -64,6 +113,13 @@ RuntimeIrParseResult ParseRuntimeIr(const std::string_view text) {
         if (!item.is_object()) {
             AddDiagnostic(result, "PXSDKIR1010", "Runtime operation must be an object", index);
             continue;
+        }
+        for (auto field = item.begin(); field != item.end(); ++field) {
+            if (!KnownOperationField(field.key())) {
+                AddDiagnostic(result, "PXSDKIR1020",
+                              "Unknown Runtime operation field: " + field.key(),
+                              index);
+            }
         }
         RuntimeIrOperation operation;
         bool valid = true;
@@ -91,6 +147,12 @@ RuntimeIrParseResult ParseRuntimeIr(const std::string_view text) {
         if (!ReadRequiredString(item, "kind", operation.kind)) {
             AddDiagnostic(result, "PXSDKIR1013", "Runtime operation kind is required", index);
             valid = false;
+        } else if (!ExecutableOperationKind(operation.kind)) {
+            AddDiagnostic(result, "PXSDKIR1021",
+                          "Unknown or structural Runtime operation kind: " +
+                              operation.kind,
+                          index);
+            valid = false;
         }
         const auto operationText = item.find("text");
         if (operationText == item.end() || !operationText->is_string()) {
@@ -98,12 +160,23 @@ RuntimeIrParseResult ParseRuntimeIr(const std::string_view text) {
             valid = false;
         } else {
             operation.text = operationText->get<std::string>();
+            if (operation.text.size() > kMaxRuntimeStringBytes) {
+                AddDiagnostic(result, "PXSDKIR1022",
+                              "Runtime operation text exceeds the size limit", index);
+                valid = false;
+            }
         }
         const auto arguments = item.find("arguments");
         if (arguments == item.end() || !arguments->is_object()) {
             AddDiagnostic(result, "PXSDKIR1017", "Runtime operation arguments must be an object", index);
             valid = false;
         } else {
+            if (arguments->size() > kMaxOperationArguments) {
+                AddDiagnostic(result, "PXSDKIR1023",
+                              "Runtime operation argument count exceeds the limit",
+                              index);
+                valid = false;
+            }
             for (auto argument = arguments->begin(); argument != arguments->end(); ++argument) {
                 if (!argument.value().is_string()) {
                     AddDiagnostic(result, "PXSDKIR1018",
@@ -111,7 +184,16 @@ RuntimeIrParseResult ParseRuntimeIr(const std::string_view text) {
                     valid = false;
                     continue;
                 }
-                operation.arguments.emplace(argument.key(), argument.value().get<std::string>());
+                const auto value = argument.value().get<std::string>();
+                if (argument.key().size() > kMaxRuntimeStringBytes ||
+                    value.size() > kMaxRuntimeStringBytes) {
+                    AddDiagnostic(result, "PXSDKIR1024",
+                                  "Runtime operation argument exceeds the size limit",
+                                  index);
+                    valid = false;
+                    continue;
+                }
+                operation.arguments.emplace(argument.key(), value);
             }
         }
         if (!operation.operationId.empty() && !operationIds.insert(operation.operationId).second) {
