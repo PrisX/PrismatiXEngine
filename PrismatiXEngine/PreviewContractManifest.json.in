@@ -1,0 +1,26 @@
+{
+  "format": "PrismatiXPreviewContract",
+  "schemaRevision": 2,
+  "protocolVersion": 2,
+  "engineCommit": "@PRISMATIX_ENGINE_COMMIT@",
+  "runtimeCoreCommit": "@PRISMATIX_ENGINE_COMMIT@",
+  "emscriptenVersion": "@EMSCRIPTEN_VERSION@",
+  "moduleFactory": "createPrismatiXPreview",
+  "artifacts": ["prismatix-preview.mjs", "prismatix-preview.wasm"],
+  "exports": [
+    "px_preview_create",
+    "px_preview_apply",
+    "px_preview_patch",
+    "px_preview_control",
+    "px_preview_resize",
+    "px_preview_tick",
+    "px_preview_drain_events",
+    "px_preview_destroy"
+  ],
+  "capabilities": {
+    "video.ffmpeg": false,
+    "speech.platform": false,
+    "extension.native": false,
+    "save.persistence": false
+  }
+}

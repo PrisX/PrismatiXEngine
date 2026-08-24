@@ -23,6 +23,9 @@ struct RuntimeConfig {
     int logicalHeight = 720;
     bool resizable = true;
     Color clearColor = Color{ 12, 14, 20, 255 };
+    // Platform composition capability. Single-thread targets use deterministic
+    // main-thread texture preload instead of std::async.
+    bool asyncAssetPreload = true;
 
     std::vector<std::string> mountDirs = { "." };
     std::vector<std::string> mountArchives;

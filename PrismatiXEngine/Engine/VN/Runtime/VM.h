@@ -38,6 +38,24 @@ enum class VMState {
     Finished,
 };
 
+enum class ProgramPatchStatus {
+    Applied,
+    InvalidProgram,
+    ScriptMismatch,
+    UnsupportedState,
+    MissingAnchor,
+    StructuralChange,
+};
+
+enum class ProgramSeekStatus {
+    Applied,
+    InvalidProgram,
+    InvalidOperation,
+    ChoicePathRequired,
+    UnsupportedBlockingState,
+    Unreachable,
+};
+
 struct Choice {
     std::string text;
     std::string target;
@@ -134,6 +152,11 @@ public:
     bool LoadScript(const std::string& scriptPath);
     bool LoadScenarioText(std::string_view text, const std::string& scriptPath);
     bool LoadCompiledProgram(Program program, const std::string& scriptPath);
+    ProgramSeekStatus LoadCompiledProgramAt(Program program,
+                                            const std::string& scriptPath,
+                                            int operationIndex);
+    ProgramPatchStatus PatchCompiledProgram(Program program,
+                                            const std::string& scriptPath);
     void Update(std::uint64_t nowMs, float dt);
     void OnAdvance();
     void SelectChoice(int index);
@@ -189,7 +212,7 @@ private:
     bool LoadProgram(const std::string& scriptPath);
     void Run();
     void ExecuteSimple(const Command& cmd);
-    void HandleSay(const Command& cmd);
+    void HandleSay(const Command& cmd, bool recordPlayback = true);
     void CollectChoices();
     bool EvaluateCondition(const Command& cmd) const;
     // Jumps to a label in the current program or loads another script.
@@ -236,6 +259,8 @@ private:
     bool m_stepping = false;
     int m_stepBudget = 0;
     std::optional<VMState> m_debugResumeState;
+    std::optional<int> m_seekTargetPc;
+    bool m_seeking = false;
 
     std::string m_speaker;
     std::string m_pendingVoice;  // set by a [text voice=...] header, consumed by the next say

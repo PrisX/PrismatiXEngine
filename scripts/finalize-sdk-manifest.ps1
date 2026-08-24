@@ -71,9 +71,11 @@ foreach ($entry in $contractFiles.GetEnumerator()) {
 }
 $previewContract = @(
     "PrismatiXPreviewProtocol",
-    "schemaRevision=1",
-    "protocolVersion=1",
-    "envelope=protocolVersion,sessionId,requestId,documentId,revision"
+    "schemaRevision=2",
+    "protocolVersion=2",
+    "envelope=protocolVersion,sessionId,requestId,documentId,revision",
+    "commands=apply,patch,play,pause,continue,step,seek,selectChoice,input,capture,stop",
+    "events=state,runtimeFocus,diagnostics,output,debug,audioState,unsupported,crashed"
 ) -join "`n"
 $contractHashes.previewProtocol = Get-Sha256Text $previewContract
 

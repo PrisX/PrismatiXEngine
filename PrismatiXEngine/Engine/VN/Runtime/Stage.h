@@ -33,6 +33,9 @@ public:
     // actors, z >= 0 in front of the actors.
     void SetLayer(const std::string& name, const std::string& imagePath, float x, float y,
                   float scale, std::uint8_t alpha, int z);
+    void SetLayerTransform(const std::string& name, const std::string& imagePath,
+                           float x, float y, float scaleX, float scaleY,
+                           float rotation, std::uint8_t alpha, int z);
     void ClearLayer(const std::string& name);
 
     // Tweened pose animation for an actor or a layer (matched by name; actors
@@ -95,6 +98,8 @@ public:
         float scale = 1.0f;
         int alpha = 255;
         int z = 0;
+        float scaleY = 1.0f;
+        float rotation = 0.0f;
     };
     [[nodiscard]] std::vector<SavedLayer> SnapshotLayers() const;
     void RestoreLayers(const std::vector<SavedLayer>& layers);
@@ -155,6 +160,8 @@ private:
         float x = 0.0f;
         float y = 0.0f;
         float scale = 1.0f;
+        float scaleY = 1.0f;
+        float rotation = 0.0f;
         std::uint8_t alpha = 255;
         int z = 0;
     };

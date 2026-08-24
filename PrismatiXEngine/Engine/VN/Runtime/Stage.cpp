@@ -129,6 +129,13 @@ void Stage::EndRuleTransition() {
 
 void Stage::SetLayer(const std::string& name, const std::string& imagePath, float x, float y,
                      float scale, std::uint8_t alpha, int z) {
+    SetLayerTransform(name, imagePath, x, y, scale, scale, 0.0f, alpha, z);
+}
+
+void Stage::SetLayerTransform(const std::string& name, const std::string& imagePath,
+                              const float x, const float y, const float scaleX,
+                              const float scaleY, const float rotation,
+                              const std::uint8_t alpha, const int z) {
     if (name.empty()) {
         return;
     }
@@ -136,7 +143,9 @@ void Stage::SetLayer(const std::string& name, const std::string& imagePath, floa
     layer.imagePath = imagePath;
     layer.x = x;
     layer.y = y;
-    layer.scale = scale > 0.0f ? scale : 1.0f;
+    layer.scale = scaleX > 0.0f ? scaleX : 1.0f;
+    layer.scaleY = scaleY > 0.0f ? scaleY : 1.0f;
+    layer.rotation = std::isfinite(rotation) ? rotation : 0.0f;
     layer.alpha = alpha;
     layer.z = z;
 }
@@ -222,9 +231,13 @@ bool Stage::ApplyAnimationProperty(const std::string& target, const std::string&
     if (auto layer = m_layers.find(target); layer != m_layers.end()) {
         if (property == "x") layer->second.x = *number;
         else if (property == "y") layer->second.y = *number;
-        else if (property == "scale") layer->second.scale = *number;
+        else if (property == "scale" || property == "scaleX") layer->second.scale = *number;
+        else if (property == "scaleY") layer->second.scaleY = *number;
+        else if (property == "rotation") layer->second.rotation = *number;
         else if (property == "alpha") layer->second.alpha = static_cast<std::uint8_t>(
             std::clamp(*number, 0.0f, 255.0f));
+        else if (property == "opacity") layer->second.alpha = static_cast<std::uint8_t>(
+            std::clamp(*number, 0.0f, 1.0f) * 255.0f);
         else return false;
         return true;
     }
@@ -443,9 +456,13 @@ void Stage::RenderLayers(bool front) {
         if (tw <= 0 || th <= 0) {
             continue;
         }
-        m_renderer.DrawImage(layer->imagePath,
-                             Rect{ layer->x, layer->y, tw * layer->scale, th * layer->scale },
-                             layer->alpha);
+        const Rect bounds{ layer->x, layer->y, tw * layer->scale,
+                           th * layer->scaleY };
+        m_renderer.PushTransform(
+            {bounds.x + bounds.w * 0.5f, bounds.y + bounds.h * 0.5f},
+            {1.0f, 1.0f}, layer->rotation);
+        m_renderer.DrawImage(layer->imagePath, bounds, layer->alpha);
+        m_renderer.PopTransform();
     }
 }
 
@@ -526,7 +543,7 @@ std::vector<Stage::SavedLayer> Stage::SnapshotLayers() const {
     out.reserve(m_layers.size());
     for (const auto& [name, layer] : m_layers) {
         out.push_back(SavedLayer{ name, layer.imagePath, layer.x, layer.y, layer.scale,
-                                  layer.alpha, layer.z });
+                                  layer.alpha, layer.z, layer.scaleY, layer.rotation });
     }
     return out;
 }
@@ -534,8 +551,10 @@ std::vector<Stage::SavedLayer> Stage::SnapshotLayers() const {
 void Stage::RestoreLayers(const std::vector<SavedLayer>& layers) {
     m_layers.clear();
     for (const SavedLayer& s : layers) {
-        SetLayer(s.name, s.imagePath, s.x, s.y, s.scale,
-                 static_cast<std::uint8_t>(std::clamp(s.alpha, 0, 255)), s.z);
+        SetLayerTransform(s.name, s.imagePath, s.x, s.y, s.scale, s.scaleY,
+                          s.rotation,
+                          static_cast<std::uint8_t>(std::clamp(s.alpha, 0, 255)),
+                          s.z);
     }
 }
 

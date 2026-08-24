@@ -190,6 +190,37 @@ bool RuntimeSession::StartRuntimeIr(const std::string& sourcePath,
 bool RuntimeSession::StartRuntimeIrText(const std::string_view text,
                                         const std::string& sourcePath,
                                         const bool resetVariables) {
+    auto program = CompileRuntimeIrText(text, sourcePath);
+    if (!program) return false;
+    m_stage.ClearAll();
+    m_dialogue.Clear();
+    m_backlog.Clear();
+    if (resetVariables) m_variables.Reset(false);
+    return m_vm.LoadCompiledProgram(std::move(*program), sourcePath);
+}
+
+vn::ProgramPatchStatus RuntimeSession::PatchRuntimeIrText(
+    const std::string_view text, const std::string& sourcePath) {
+    auto program = CompileRuntimeIrText(text, sourcePath);
+    if (!program) return vn::ProgramPatchStatus::InvalidProgram;
+    return m_vm.PatchCompiledProgram(std::move(*program), sourcePath);
+}
+
+vn::ProgramSeekStatus RuntimeSession::SeekRuntimeIrOperation(
+    const std::string_view text, const std::string& sourcePath,
+    const int operationIndex) {
+    auto program = CompileRuntimeIrText(text, sourcePath);
+    if (!program) return vn::ProgramSeekStatus::InvalidProgram;
+    m_stage.ClearAll();
+    m_dialogue.Clear();
+    m_backlog.Clear();
+    m_variables.Reset(false);
+    return m_vm.LoadCompiledProgramAt(
+        std::move(*program), sourcePath, operationIndex);
+}
+
+std::optional<vn::Program> RuntimeSession::CompileRuntimeIrText(
+    const std::string_view text, const std::string& sourcePath) {
     m_lastStartDiagnostics.clear();
     const sdk::RuntimeIrParseResult parsed = sdk::ParseRuntimeIr(text);
     if (!parsed.Valid()) {
@@ -209,7 +240,7 @@ bool RuntimeSession::StartRuntimeIrText(const std::string_view text,
             m_lastStartDiagnostics.push_back(std::move(diagnostic));
         }
         for (const auto& diagnostic : m_lastStartDiagnostics) diag::Emit(diagnostic);
-        return false;
+        return std::nullopt;
     }
     vn::Program program = CompileRuntimeIr(parsed.document);
     if (!program.errors.empty()) {
@@ -224,7 +255,7 @@ bool RuntimeSession::StartRuntimeIrText(const std::string_view text,
             m_lastStartDiagnostics.push_back(std::move(diagnostic));
         }
         for (const auto& diagnostic : m_lastStartDiagnostics) diag::Emit(diagnostic);
-        return false;
+        return std::nullopt;
     }
     if (UsesRuntimeAssetReferences(program)) {
         const auto manifest = m_services.vfs.ReadText("project.pxproject");
@@ -239,15 +270,11 @@ bool RuntimeSession::StartRuntimeIrText(const std::string_view text,
             for (const auto& diagnostic : m_lastStartDiagnostics) {
                 diag::Emit(diagnostic);
             }
-            return false;
+            return std::nullopt;
         }
         program = resolved.TakeValue();
     }
-    m_stage.ClearAll();
-    m_dialogue.Clear();
-    m_backlog.Clear();
-    if (resetVariables) m_variables.Reset(false);
-    return m_vm.LoadCompiledProgram(std::move(program), sourcePath);
+    return program;
 }
 
 void RuntimeSession::Update(const std::uint64_t nowMs, const float deltaSeconds) {

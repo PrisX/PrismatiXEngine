@@ -80,7 +80,7 @@ GalgameUI::GalgameUI() {
     (void)m_viewModel.Define("music.title",Variant(std::string{}),true);
     const std::vector<std::string> commands={"game.start","load.open","save.open","gallery.open","settings.open","app.quit","mode.auto","mode.skip","backlog.open","overlay.close"};
     for(const auto& command:commands)(void)m_context.Commands().Register(command,[this,command](const Variant&){Emit(command);return Status::Ok();});
-    (void)m_context.Commands().Register("hud.toolbar.pin",[this](const Variant&){if(auto* toolbar=FindNamed<EdgeRevealContainer>(m_context.Root(),"EdgeToolbar"))toolbar->TogglePinned();return Status::Ok();});
+    (void)m_context.Commands().Register("hud.toolbar.pin",[this](const Variant&){return ToggleHudToolbarPinned();});
 }
 
 Status GalgameUI::RegisterTemplate(Screen screen,std::string_view text,const std::string& sourcePath){
@@ -164,6 +164,7 @@ std::unique_ptr<Control> GalgameUI::MakeMenuButton(std::string text, std::string
 }
 
 Status GalgameUI::Install(std::unique_ptr<Control> root, Screen screen) {
+    ResetStudioTimelineOverrides();
     m_bindings.clear();
     if (screen != Screen::HUD) {
         m_speaker = m_dialogue = m_nvlText = m_mode = nullptr;
@@ -187,6 +188,90 @@ Status GalgameUI::ShowTitle() {
     if (auto status = Add(*shade, std::move(menu)); !status) return status;
     if (auto status = Add(*root, std::move(shade)); !status) return status;
     return Install(std::move(root), Screen::Title);
+}
+
+Status GalgameUI::ActivateStudioControl(const std::string_view nodeId) {
+    const auto id = Uuid::Parse(nodeId);
+    if (!id)
+        return GalgameFailure("PXUI2812",
+                              "Studio UI activation requires a canonical node UUID");
+    auto* button = m_context.Root()
+                       ? dynamic_cast<Button*>(m_context.Root()->Find(*id))
+                       : nullptr;
+    if (!button)
+        return GalgameFailure(
+            "PXUI2813",
+            "Studio UI activation target is not a Button-compatible control");
+    button->Activate();
+    return Status::Ok();
+}
+
+Status GalgameUI::SetStudioControlVisibility(const std::string_view nodeId,
+                                             const bool visible) {
+    const auto id = Uuid::Parse(nodeId);
+    if (!id)
+        return GalgameFailure(
+            "PXUI2816",
+            "Studio UI visibility requires a canonical node UUID");
+    auto* control = m_context.Root()
+                        ? dynamic_cast<Control*>(m_context.Root()->Find(*id))
+                        : nullptr;
+    if (!control)
+        return GalgameFailure(
+            "PXUI2817",
+            "Studio UI visibility target is not present in the active scene");
+    m_timelineVisibilityBase.try_emplace(std::string(nodeId),
+                                         control->GetVisibility());
+    control->SetVisibility(visible ? Visibility::Visible : Visibility::Hidden);
+    return Status::Ok();
+}
+
+Status GalgameUI::PreviewStudioAnimation(const std::string_view clipId,
+                                         const float time,
+                                         const bool playing) {
+    const auto id = Uuid::Parse(clipId);
+    if (!id)
+        return GalgameFailure(
+            "PXUI2818",
+            "Studio UI animation requires a canonical clip UUID");
+    return m_context.PreviewAnimation(*id, time, playing);
+}
+
+Status GalgameUI::StopStudioAnimation(const bool restoreDesignState) {
+    return m_context.StopAnimation(restoreDesignState);
+}
+
+void GalgameUI::ResetStudioTimelineOverrides() {
+    for (const auto& [nodeId, visibility] : m_timelineVisibilityBase) {
+        const auto id = Uuid::Parse(nodeId);
+        auto* control = id && m_context.Root()
+                            ? dynamic_cast<Control*>(m_context.Root()->Find(*id))
+                            : nullptr;
+        if (control) control->SetVisibility(visibility);
+    }
+    m_timelineVisibilityBase.clear();
+}
+
+Status GalgameUI::ToggleHudToolbarPinned() {
+    auto* toolbar = FindNamed<EdgeRevealContainer>(m_context.Root(), "EdgeToolbar");
+    if (!toolbar)
+        return GalgameFailure(
+            "PXUI2814",
+            "HUD toolbar pinning requires an EdgeToolbar control on the active screen");
+    toolbar->TogglePinned();
+    return Status::Ok();
+}
+
+Status GalgameUI::ActivateChoice(const std::size_t index) {
+    if (!m_choices || index >= m_choices->Children().size())
+        return GalgameFailure("PXUI2815",
+                              "Choice activation index is outside the active HUD choices");
+    auto* button = dynamic_cast<Button*>(m_choices->Children()[index].get());
+    if (!button)
+        return GalgameFailure("PXUI2816",
+                              "Generated HUD choice is not Button-compatible");
+    button->Activate();
+    return Status::Ok();
 }
 
 Status GalgameUI::ShowHUD(const DialoguePresentation& p) {

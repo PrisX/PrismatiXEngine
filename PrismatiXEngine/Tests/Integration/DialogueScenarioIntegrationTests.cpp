@@ -5,6 +5,7 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "Engine/Animation/Timeline.h"
 #include "Engine/Core/TypeRegistry.h"
@@ -124,6 +125,19 @@ void TestDialogueEffects() {
     (void)hud.Update(input, 1280, 720);
     input.InjectFrame(640, 600, true);
     Check(!hud.Update(input, 1280, 720), "non-interactive HUD panels must not consume dialogue advance clicks");
+
+    std::vector<px::ui::GalgameAction> actions;
+    hud.SetActionSink([&actions](const px::ui::GalgameAction& action) {
+        actions.push_back(action);
+    });
+    presentation.choices = { "First choice" };
+    Check(hud.ShowHUD(presentation), "HUD should rebuild with generated choice controls");
+    Check(hud.ActivateChoice(0), "generated choice should be activatable through the Runtime control tree");
+    input.InjectFrame(-1000, -1000, false);
+    (void)hud.Update(input, 1280, 720);
+    Check(actions.size() == 1 && actions.front().command == "choice.select" &&
+              actions.front().argument == "0",
+          "generated HUD choice must dispatch the same choice.select contract as authored UI");
 }
 
 

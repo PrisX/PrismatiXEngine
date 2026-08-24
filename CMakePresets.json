@@ -137,6 +137,17 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
             }
+        },
+        {
+            "name": "wasm-preview",
+            "displayName": "Emscripten Studio Preview",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/out/build/wasm-preview",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "BUILD_TESTING": "OFF",
+                "PRISMATIX_BUILD_WASM_PREVIEW": "ON"
+            }
         }
     ],
     "buildPresets": [
@@ -174,6 +185,12 @@
             "name": "macos-release",
             "configurePreset": "macos-release",
             "inheritConfigureEnvironment": true
+        },
+        {
+            "name": "wasm-preview",
+            "configurePreset": "wasm-preview",
+            "inheritConfigureEnvironment": true,
+            "targets": ["PrismatiXPreviewWasm"]
         }
     ]
 }

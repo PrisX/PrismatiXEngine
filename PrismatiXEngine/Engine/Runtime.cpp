@@ -3,7 +3,9 @@
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
 
+#if !defined(PRISMATIX_PREVIEW_WASM)
 #include "Engine/IO/Crypto.h"
+#endif
 #include "Engine/Support/Logger.h"
 
 namespace px {
@@ -33,6 +35,12 @@ bool Runtime::Init(const RuntimeConfig& config) {
         m_vfs.MountDirectory(dir);
     }
     for (const std::string& archive : m_config.mountArchives) {
+#if defined(PRISMATIX_PREVIEW_WASM)
+        (void)archive;
+        PX_LOG_ERROR("Runtime initialization rejected an archive mount in WASM preview");
+        Shutdown();
+        return false;
+#else
         bool mounted = false;
         if (m_config.archiveKey.empty()) {
             mounted = m_vfs.MountArchive(archive);
@@ -46,8 +54,10 @@ bool Runtime::Init(const RuntimeConfig& config) {
             Shutdown();
             return false;
         }
+#endif
     }
     m_assets = std::make_unique<graphics::AssetCache>(m_window.Renderer(), m_vfs);
+    m_assets->SetAsyncPreloadEnabled(config.asyncAssetPreload);
     m_renderer = std::make_unique<graphics::Renderer2D>(m_window.Renderer(), *m_assets);
     m_renderer->SetLogicalSize(m_config.logicalWidth, m_config.logicalHeight);
 

@@ -14,6 +14,7 @@
 #include "Engine/Platform/Input.h"
 #include "Engine/Progression/GameSettings.h"
 #include "Engine/Progression/GlobalProfile.h"
+#include "Engine/Progression/GlobalProfileStore.h"
 #include "Engine/Progression/Persist.h"
 #include "Engine/Progression/SaveSystem.h"
 #include "Engine/Resources/AssetRegistry.h"
@@ -237,10 +238,10 @@ void TestProfileAndSettingsSchemas() {
     profile.UnlockScene("scene.after-story");
     profile.UnlockCG("cg.sunset");
     profile.UnlockMusic("music.ending");
-    Check(profile.Save(profilePath, nullptr), "global profile should be written with the current schema");
+    Check(px::progress::SaveGlobalProfile(profile, profilePath, nullptr), "global profile should be written with the current schema");
 
     px::progress::GlobalProfile loadedProfile;
-    Check(loadedProfile.Load(profilePath, nullptr), "global profile should load with the current schema");
+    Check(px::progress::LoadGlobalProfile(loadedProfile, profilePath, nullptr), "global profile should load with the current schema");
     Check(
         loadedProfile.HasSeen("scene.intro#line-1") && loadedProfile.HasChoiceSeen("choice.intro#option-a") && loadedProfile.ClearCount() == 1 && loadedProfile.RouteCleared("route.alice") &&
             loadedProfile.PersistentVar("affection") == 7 && loadedProfile.SceneUnlocked("scene.after-story") && loadedProfile.CGUnlocked("cg.sunset") && loadedProfile.MusicUnlocked("music.ending"),
@@ -249,7 +250,7 @@ void TestProfileAndSettingsSchemas() {
 
     px::progress::Json legacyProfile{ { "version", 4 }, { "clearCount", 99 } };
     Check(px::progress::SaveJson(profilePath, legacyProfile, nullptr), "legacy profile fixture should be written");
-    Check(!loadedProfile.Load(profilePath, nullptr), "legacy numeric profile versions must be rejected");
+    Check(!px::progress::LoadGlobalProfile(loadedProfile, profilePath, nullptr), "legacy numeric profile versions must be rejected");
 
     px::progress::GameSettings settings;
     settings.bgmVolume = 64;

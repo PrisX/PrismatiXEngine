@@ -139,6 +139,8 @@ bool VM::LoadScenarioText(const std::string_view text, const std::string& script
 bool VM::LoadCompiledProgram(Program program, const std::string& scriptPath) {
     m_callStack.clear();
     m_debugResumeState.reset();
+    m_seekTargetPc.reset();
+    m_seeking = false;
     m_program = std::move(program);
     if (!m_program.errors.empty()) {
         m_state = VMState::Finished;
@@ -150,6 +152,121 @@ bool VM::LoadCompiledProgram(Program program, const std::string& scriptPath) {
     m_textSpeed = m_config.defaultTextSpeed;
     Run();
     return true;
+}
+
+ProgramSeekStatus VM::LoadCompiledProgramAt(Program program,
+                                            const std::string& scriptPath,
+                                            const int operationIndex) {
+    if (!program.errors.empty()) return ProgramSeekStatus::InvalidProgram;
+    if (operationIndex < 0 ||
+        operationIndex >= static_cast<int>(program.code.size())) {
+        return ProgramSeekStatus::InvalidOperation;
+    }
+
+    m_callStack.clear();
+    m_debugResumeState.reset();
+    m_program = std::move(program);
+    m_scriptPath = scriptPath;
+    m_pc = 0;
+    m_pendingVoice.clear();
+    m_choices.clear();
+    m_textSpeed = m_config.defaultTextSpeed;
+    m_state = VMState::Idle;
+    m_skipBacklogOnce = false;
+    m_skipBreakOnce = false;
+    m_stepping = false;
+    m_stepBudget = 0;
+    m_seekTargetPc = operationIndex;
+    m_seeking = true;
+
+    std::set<int> retainedBreakpoints = std::move(m_breakpoints);
+    m_breakpoints.clear();
+    ProgramSeekStatus result = ProgramSeekStatus::Unreachable;
+    const int budgetLimit =
+        std::max(16, static_cast<int>(m_program.code.size()) * 4);
+
+    Run();
+    for (int budget = 0; budget < budgetLimit; ++budget) {
+        if (m_state == VMState::Paused && m_pc == operationIndex) {
+            m_seekTargetPc.reset();
+            DebugStep();
+            result = ProgramSeekStatus::Applied;
+            break;
+        }
+        if (m_state == VMState::WaitingClick) {
+            m_dialogue.ShowAll();
+            OnAdvance();
+            continue;
+        }
+        if (m_state == VMState::WaitingTimer) {
+            m_state = VMState::Idle;
+            Run();
+            continue;
+        }
+        if (m_state == VMState::WaitingChoice) {
+            result = ProgramSeekStatus::ChoicePathRequired;
+            break;
+        }
+        if (m_state == VMState::WaitingVideo ||
+            m_state == VMState::WaitingExternal) {
+            result = ProgramSeekStatus::UnsupportedBlockingState;
+            break;
+        }
+        if (m_state == VMState::Finished || m_state == VMState::Paused) break;
+        Run();
+    }
+
+    m_breakpoints = std::move(retainedBreakpoints);
+    m_seekTargetPc.reset();
+    m_seeking = false;
+    m_stepping = false;
+    m_stepBudget = 0;
+    return result;
+}
+
+ProgramPatchStatus VM::PatchCompiledProgram(Program program,
+                                            const std::string& scriptPath) {
+    if (!program.errors.empty()) return ProgramPatchStatus::InvalidProgram;
+    if (scriptPath != m_scriptPath) return ProgramPatchStatus::ScriptMismatch;
+    if (m_state == VMState::WaitingTimer ||
+        m_state == VMState::WaitingVideo ||
+        m_state == VMState::WaitingExternal) {
+        return ProgramPatchStatus::UnsupportedState;
+    }
+    if (program.code.size() != m_program.code.size())
+        return ProgramPatchStatus::StructuralChange;
+    for (std::size_t index = 0; index < program.code.size(); ++index) {
+        const Command& previous = m_program.code[index];
+        const Command& next = program.code[index];
+        if (previous.sourceId != next.sourceId || previous.type != next.type)
+            return ProgramPatchStatus::StructuralChange;
+    }
+
+    const int activeIndex =
+        m_state == VMState::WaitingClick && m_pc > 0 ? m_pc - 1 : m_pc;
+    const std::string activeSource = CurrentSourceId();
+    if (!activeSource.empty() &&
+        (activeIndex < 0 ||
+         activeIndex >= static_cast<int>(program.code.size()) ||
+         program.code[static_cast<std::size_t>(activeIndex)].sourceId !=
+             activeSource)) {
+        return ProgramPatchStatus::MissingAnchor;
+    }
+
+    m_program = std::move(program);
+    if (m_state == VMState::WaitingClick && activeIndex >= 0 &&
+        activeIndex < static_cast<int>(m_program.code.size())) {
+        const Command& active =
+            m_program.code[static_cast<std::size_t>(activeIndex)];
+        if (active.type == "say" ||
+            (active.type == "text" &&
+             (active.Has("value") || active.Has("text")))) {
+            HandleSay(active, false);
+        }
+    } else if (m_state == VMState::WaitingChoice) {
+        CollectChoices();
+    }
+    return ProgramPatchStatus::Applied;
 }
 
 void VM::SeekTo(const std::string& scriptPath, int pc) {
@@ -204,6 +321,11 @@ void VM::Run() {
         const Command& cmd = code[m_pc];
         const std::string& t = cmd.type;
 
+        if (m_seekTargetPc && m_pc == *m_seekTargetPc) {
+            m_state = VMState::Paused;
+            return;
+        }
+
         // Debugger: pause after a single-step, or on a breakpoint line.
         if (m_stepping) {
             if (m_stepBudget <= 0) {
@@ -222,7 +344,7 @@ void VM::Run() {
         // "text" is the Node Editor's dialogue command. With inline text it is a
         // full say; bare it only sets the speaker for the following plain line.
         if (t == "say" || (t == "text" && (cmd.Has("value") || cmd.Has("text")))) {
-            HandleSay(cmd);
+            HandleSay(cmd, !m_seeking);
             ++m_pc;
             m_state = VMState::WaitingClick;
             return;
@@ -497,7 +619,7 @@ void VM::ExecuteSimple(const Command& cmd) {
     PX_LOG_WARN("VM: unhandled command '{}' (line {})", t, cmd.line);
 }
 
-void VM::HandleSay(const Command& cmd) {
+void VM::HandleSay(const Command& cmd, const bool recordPlayback) {
     if (m_seenHook) {
         m_currentLineSeen = m_seenHook(m_scriptPath + ":" + std::to_string(cmd.line));
     }
@@ -542,12 +664,12 @@ void VM::HandleSay(const Command& cmd) {
 
     m_dialogue.SetText(speaker, text, speed, m_textColor, m_outlineColor, voice,
                        cmd.Get("effect", m_textEffect));
-    if (!m_skipBacklogOnce) {
+    if (recordPlayback && !m_skipBacklogOnce) {
         // Use the dialogue's cleaned text: inline tags like {w=300} are stripped.
         m_backlog.Push(speaker, m_dialogue.State().fullText, voice);
     }
     m_skipBacklogOnce = false;
-    if (!voice.empty()) {
+    if (recordPlayback && !voice.empty()) {
         m_audio.PlayVoice(Resolve(m_config.voiceDir, voice));
     }
 }

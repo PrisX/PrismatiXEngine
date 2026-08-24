@@ -68,6 +68,11 @@ void Window::GetSize(int& width, int& height) const {
     }
 }
 
+bool Window::Resize(const int width, const int height) {
+    if (!m_window || width <= 0 || height <= 0) return false;
+    return SDL_SetWindowSize(m_window, width, height);
+}
+
 void Window::SetVSync(bool enabled) {
     if (m_renderer) {
         SDL_SetRenderVSync(m_renderer, enabled ? 1 : 0);

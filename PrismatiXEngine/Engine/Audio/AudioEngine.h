@@ -67,8 +67,15 @@ public:
     [[nodiscard]] int VoiceVolume() const { return m_voiceVolume; }
     [[nodiscard]] int AmbienceVolume() const { return m_ambienceVolume; }
     [[nodiscard]] int MainVolume() const { return m_mainVolume; }
+    [[nodiscard]] int SampleRate() const { return m_sampleRate; }
     [[nodiscard]] RuntimeState CaptureState() const;
     bool RestoreState(const RuntimeState& state);
+    bool RestoreMusicTrack(const TrackState& state, int volume);
+    bool RestoreVoiceTrack(const TrackState& state, int volume);
+    bool RestoreAmbienceTrack(const TrackState& state, int volume);
+    bool SetMusicPaused(bool paused);
+    bool SetVoicePaused(bool paused);
+    bool SetAmbiencePaused(bool paused);
 
 private:
     struct AudioEntry {
@@ -83,6 +90,7 @@ private:
     // Caps decoded-audio memory; long sessions otherwise grow without bound.
     void EvictAudio();
     void ApplyMixGains();
+    static bool SetTrackPaused(MIX_Track* track, bool paused);
 
     io::VFS& m_vfs;
     bool m_initialized = false;

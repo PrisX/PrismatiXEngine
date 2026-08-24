@@ -543,6 +543,8 @@ Json LayersToJson(const std::vector<vn::Stage::SavedLayer>& layers) {
                         { "x", l.x },
                         { "y", l.y },
                         { "scale", l.scale },
+                        { "scaleY", l.scaleY },
+                        { "rotation", l.rotation },
                         { "alpha", l.alpha },
                         { "z", l.z } });
     }
@@ -558,7 +560,9 @@ std::vector<vn::Stage::SavedLayer> LayersFromJson(const Json& arr) {
         out.push_back(vn::Stage::SavedLayer{ j.value("name", std::string{}),
                                              j.value("image", std::string{}), j.value("x", 0.0f),
                                              j.value("y", 0.0f), j.value("scale", 1.0f),
-                                             j.value("alpha", 255), j.value("z", 0) });
+                                             j.value("alpha", 255), j.value("z", 0),
+                                             j.value("scaleY", j.value("scale", 1.0f)),
+                                             j.value("rotation", 0.0f) });
     }
     return out;
 }

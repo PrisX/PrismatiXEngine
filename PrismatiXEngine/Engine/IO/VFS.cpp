@@ -21,12 +21,19 @@ void VFS::MountDirectory(const std::string& root) {
 }
 
 bool VFS::MountArchive(const std::string& archivePath, const crypto::Key* key) {
+#if defined(PRISMATIX_PREVIEW_WASM)
+    (void)archivePath;
+    (void)key;
+    PX_LOG_ERROR("Archive mounts are unavailable in the WASM preview VFS");
+    return false;
+#else
     auto archive = std::make_unique<Archive>();
     if (!archive->Open(archivePath, key)) {
         return false;
     }
     m_archives.push_back(std::move(archive));
     return true;
+#endif
 }
 
 void VFS::Clear() {
@@ -41,11 +48,13 @@ bool VFS::Exists(std::string_view path) const {
             return true;
         }
     }
+#if !defined(PRISMATIX_PREVIEW_WASM)
     for (const auto& archive : m_archives) {
         if (archive->Contains(path)) {
             return true;
         }
     }
+#endif
     return false;
 }
 
@@ -76,11 +85,13 @@ std::optional<Bytes> VFS::Read(std::string_view path) const {
             return data;
         }
     }
+#if !defined(PRISMATIX_PREVIEW_WASM)
     for (const auto& archive : m_archives) {
         if (auto data = archive->Read(path)) {
             return data;
         }
     }
+#endif
     return std::nullopt;
 }
 

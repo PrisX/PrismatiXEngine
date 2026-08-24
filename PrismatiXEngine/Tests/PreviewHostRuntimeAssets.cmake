@@ -22,6 +22,8 @@ string(APPEND INPUT "{\"type\":\"seekPerformance\",${ENVELOPE},\"requestId\":\"s
 string(APPEND INPUT "{\"type\":\"seekPerformance\",${ENVELOPE},\"requestId\":\"seek-stage-patch\",\"documentId\":\"74747474-7474-4474-8474-747474747474\",\"revision\":2,\"projectRoot\":\"${PROJECT_ROOT}\",\"sceneId\":\"74747474-7474-4474-8474-747474747474\",\"performancePath\":\"Timelines/StagePatch2.pxperformance\",\"time\":1}\n")
 string(APPEND INPUT "{\"type\":\"capture\",${ENVELOPE},\"requestId\":\"capture-runtime-snapshot\",\"documentId\":\"74747474-7474-4474-8474-747474747474\",\"revision\":2}\n")
 string(APPEND INPUT "{\"type\":\"seekPerformance\",${ENVELOPE},\"requestId\":\"seek-stage-structural\",\"documentId\":\"74747474-7474-4474-8474-747474747474\",\"revision\":3,\"projectRoot\":\"${PROJECT_ROOT}\",\"sceneId\":\"74747474-7474-4474-8474-747474747474\",\"performancePath\":\"Timelines/StagePatch3.pxperformance\",\"time\":1}\n")
+string(APPEND INPUT "{\"type\":\"seekPerformance\",${ENVELOPE},\"requestId\":\"seek-stage-ui-playing\",\"documentId\":\"85858585-8585-4585-8585-858585858585\",\"revision\":1,\"projectRoot\":\"${PROJECT_ROOT}\",\"sceneId\":\"85858585-8585-4585-8585-858585858585\",\"performancePath\":\"Timelines/StageUi.pxperformance\",\"uiPath\":\"Content/UI/ComponentScene.pxui\",\"time\":0.5}\n")
+string(APPEND INPUT "{\"type\":\"seekPerformance\",${ENVELOPE},\"requestId\":\"seek-stage-ui-ended\",\"documentId\":\"85858585-8585-4585-8585-858585858585\",\"revision\":1,\"projectRoot\":\"${PROJECT_ROOT}\",\"sceneId\":\"85858585-8585-4585-8585-858585858585\",\"performancePath\":\"Timelines/StageUi.pxperformance\",\"uiPath\":\"Content/UI/ComponentScene.pxui\",\"time\":1.75}\n")
 string(APPEND INPUT "{\"type\":\"applyUiScene\",${ENVELOPE},\"requestId\":\"apply-unknown-behavior\",\"documentId\":\"90909090-9090-4090-8090-909090909090\",\"revision\":13,\"projectRoot\":\"${PROJECT_ROOT}\",\"sceneId\":\"90909090-9090-4090-8090-909090909090\",\"uiPath\":\"Content/UI/UnknownBehaviorScene.pxui\"}\n")
 string(APPEND INPUT "{\"type\":\"applyRuntimeIr\",${ENVELOPE},\"requestId\":\"apply-preview-controls\",\"documentId\":\"preview-controls-document\",\"revision\":1,\"projectRoot\":\"${PROJECT_ROOT}\",\"committedRevision\":1,\"irPath\":\"preview-controls.pxir\"}\n")
 string(APPEND INPUT "{\"type\":\"setBreakpoints\",${ENVELOPE},\"requestId\":\"set-story-breakpoint\",\"documentId\":\"preview-controls-document\",\"revision\":1,\"lines\":[4]}\n")
@@ -74,6 +76,8 @@ set(UI_STRUCTURAL_RELOAD_ACK FALSE)
 set(STAGE_INITIAL_RELOAD_ACK FALSE)
 set(STAGE_PROPERTY_PATCH_ACK FALSE)
 set(RUNTIME_SNAPSHOT_ACK FALSE)
+set(STAGE_UI_PLAYING_ACK FALSE)
+set(STAGE_UI_ENDED_ACK FALSE)
 set(STAGE_STRUCTURAL_RELOAD_ACK FALSE)
 set(UNKNOWN_BEHAVIOR_REJECTED_ACK FALSE)
 set(PREVIEW_INPUT_APPLIED_ACK FALSE)
@@ -233,6 +237,37 @@ foreach(LINE IN LISTS OUTPUT_LINES)
                     "PreviewHost capture lost its authoritative bounded runtime projection: ${LINE}")
         endif()
         set(RUNTIME_SNAPSHOT_ACK TRUE)
+    elseif(TYPE STREQUAL "performanceSeeked" AND
+           REQUEST_ID STREQUAL "seek-stage-ui-playing")
+        string(JSON UI_SCENE_ID GET "${LINE}" uiSceneId)
+        string(JSON UI_REVISION GET "${LINE}" uiRevision)
+        string(JSON UI_CONTROL_COUNT LENGTH "${LINE}" uiControls)
+        string(JSON UI_TARGET GET "${LINE}" uiControls 0 targetId)
+        string(JSON UI_VISIBLE GET "${LINE}" uiControls 0 visible)
+        string(JSON UI_ANIMATION_ID GET "${LINE}" uiAnimation animationClipId)
+        string(JSON UI_ANIMATION_PLAYING GET "${LINE}" uiAnimation playing)
+        if(NOT UI_SCENE_ID STREQUAL
+               "60606060-6060-4060-8060-606060606060" OR
+           NOT UI_REVISION EQUAL 7 OR NOT UI_CONTROL_COUNT EQUAL 1 OR
+           NOT UI_TARGET STREQUAL
+               "69696969-6969-4969-8969-696969696969" OR
+           NOT UI_VISIBLE OR
+           NOT UI_ANIMATION_ID STREQUAL
+               "b6b6b6b6-b6b6-46b6-86b6-b6b6b6b6b6b6" OR
+           NOT UI_ANIMATION_PLAYING)
+            message(FATAL_ERROR
+                    "PreviewHost did not apply the bound UI scene and active animation: ${LINE}")
+        endif()
+        set(STAGE_UI_PLAYING_ACK TRUE)
+    elseif(TYPE STREQUAL "performanceSeeked" AND
+           REQUEST_ID STREQUAL "seek-stage-ui-ended")
+        string(JSON UI_VISIBLE GET "${LINE}" uiControls 0 visible)
+        string(JSON UI_ANIMATION_PLAYING GET "${LINE}" uiAnimation playing)
+        if(UI_VISIBLE OR UI_ANIMATION_PLAYING)
+            message(FATAL_ERROR
+                    "PreviewHost did not deterministically sample ended UI clips: ${LINE}")
+        endif()
+        set(STAGE_UI_ENDED_ACK TRUE)
     elseif(TYPE STREQUAL "performanceSeeked" AND
            REQUEST_ID STREQUAL "seek-stage-structural")
         string(JSON UPDATE_KIND GET "${LINE}" updateKind)
@@ -489,7 +524,8 @@ if(NOT READY_ACK OR NOT ASSET_ERROR_ACK OR NOT COMPONENT_APPLIED_ACK OR
    NOT NESTED_COMPONENT_APPLIED_ACK OR NOT UI_INITIAL_RELOAD_ACK OR
    NOT UI_PROPERTY_PATCH_ACK OR NOT UI_STRUCTURAL_RELOAD_ACK OR
    NOT STAGE_INITIAL_RELOAD_ACK OR NOT STAGE_PROPERTY_PATCH_ACK OR
-   NOT RUNTIME_SNAPSHOT_ACK OR NOT STAGE_STRUCTURAL_RELOAD_ACK OR
+   NOT RUNTIME_SNAPSHOT_ACK OR NOT STAGE_UI_PLAYING_ACK OR
+   NOT STAGE_UI_ENDED_ACK OR NOT STAGE_STRUCTURAL_RELOAD_ACK OR
    NOT UNKNOWN_BEHAVIOR_REJECTED_ACK OR
    NOT PREVIEW_INPUT_APPLIED_ACK OR NOT STORY_BREAKPOINTS_SET_ACK OR
    NOT PREVIEW_ADVANCE_ACK OR

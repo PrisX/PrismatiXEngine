@@ -33,13 +33,31 @@ configure_file(
     "${CMAKE_CURRENT_BINARY_DIR}/PrismatiXSDKManifest.json"
     @ONLY
 )
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/PreviewContractManifest.json.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/preview-contract.json"
+    @ONLY
+)
 
-add_library(PrismatiXSDK STATIC
+add_library(PrismatiXRuntimeContracts STATIC
     Engine/SDK/CharacterResources.cpp
     Engine/SDK/GameCatalogResources.cpp
-    Engine/SDK/Packager.cpp
     Engine/SDK/RuntimeIr.cpp
     Engine/SDK/StudioUi.cpp
+)
+add_library(PrismatiX::RuntimeContracts ALIAS PrismatiXRuntimeContracts)
+prismatix_configure_target(PrismatiXRuntimeContracts)
+target_include_directories(PrismatiXRuntimeContracts PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/PrismatiX>
+)
+target_link_libraries(PrismatiXRuntimeContracts PUBLIC
+    nlohmann_json::nlohmann_json
+)
+
+if(NOT EMSCRIPTEN)
+add_library(PrismatiXSDK STATIC
+    Engine/SDK/Packager.cpp
     Engine/SDK/UiTypeRegistry.cpp
 )
 add_library(PrismatiX::SDK ALIAS PrismatiXSDK)
@@ -49,7 +67,7 @@ target_include_directories(PrismatiXSDK PUBLIC
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/PrismatiX>
 )
 target_link_libraries(PrismatiXSDK PUBLIC
-    nlohmann_json::nlohmann_json
+    PrismatiXRuntimeContracts
     zstd::libzstd
 )
 if(TARGET MbedTLS::mbedcrypto)
@@ -61,6 +79,11 @@ elseif(TARGET MbedTLS::mbedtls)
 endif()
 
 install(TARGETS PrismatiXSDK EXPORT PrismatiXSDKTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT PrismatiXSDK
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT PrismatiXSDK
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT PrismatiXSDK
+)
+install(TARGETS PrismatiXRuntimeContracts EXPORT PrismatiXSDKTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT PrismatiXSDK
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT PrismatiXSDK
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT PrismatiXSDK
@@ -96,41 +119,91 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/PrismatiXSDKManifest.json"
     DESTINATION .
     COMPONENT PrismatiXSDK
 )
+endif()
 
 
-file(GLOB_RECURSE PRISMATIX_RUNTIME_SOURCES CONFIGURE_DEPENDS
+file(GLOB_RECURSE PRISMATIX_RUNTIME_CORE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/Engine/*.cpp"
 )
-list(FILTER PRISMATIX_RUNTIME_SOURCES EXCLUDE REGEX "/Engine/SDK/")
+list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/SDK/")
+list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/Runtime\\.cpp$")
+list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/Platform/")
+list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/Accessibility/SpeechService\\.cpp$")
+list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/Video/VideoPlayer\\.cpp$")
+list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/IO/")
+list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/Progression/(GameSettings|GlobalProfileStore|Persist|SaveSystem)\\.cpp$")
+list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/Resources/AssetRegistry\\.cpp$")
+list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/UI/UITypeManifest\\.cpp$")
 
-add_library(PrismatiXRuntime STATIC ${PRISMATIX_RUNTIME_SOURCES})
-prismatix_configure_target(PrismatiXRuntime)
+add_library(PrismatiXRuntimeCore STATIC ${PRISMATIX_RUNTIME_CORE_SOURCES})
+add_library(PrismatiX::RuntimeCore ALIAS PrismatiXRuntimeCore)
+prismatix_configure_target(PrismatiXRuntimeCore)
 
-target_include_directories(PrismatiXRuntime PUBLIC
+target_include_directories(PrismatiXRuntimeCore PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/Engine
     ${LUA_INCLUDE_DIR}
 )
-target_include_directories(PrismatiXRuntime PRIVATE
+target_include_directories(PrismatiXRuntimeCore PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/pl_mpeg
 )
 
-target_link_libraries(PrismatiXRuntime PUBLIC
+target_link_libraries(PrismatiXRuntimeCore PUBLIC
     SDL3::SDL3
     SDL3_image::SDL3_image
     SDL3_ttf::SDL3_ttf
     SDL3_mixer::SDL3_mixer
     spdlog::spdlog
     nlohmann_json::nlohmann_json
-    prismatix_mbedcrypto
-    zstd::libzstd
     ${LUA_LIBRARIES}
     sol2::sol2
-    ${FFMPEG_LIBRARIES}
-    PrismatiXSDK
+    PrismatiXRuntimeContracts
 )
-target_include_directories(PrismatiXRuntime PRIVATE ${FFMPEG_INCLUDE_DIRS})
 
+if(NOT EMSCRIPTEN)
+    file(GLOB_RECURSE PRISMATIX_NATIVE_PLATFORM_SOURCES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/Engine/IO/*.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Engine/Platform/*.cpp"
+    )
+    list(APPEND PRISMATIX_NATIVE_PLATFORM_SOURCES
+        Engine/Runtime.cpp
+        Engine/Accessibility/SpeechService.cpp
+        Engine/Video/VideoPlayer.cpp
+        Engine/Resources/AssetRegistry.cpp
+        Engine/UI/UITypeManifest.cpp
+        Engine/Progression/GameSettings.cpp
+        Engine/Progression/GlobalProfileStore.cpp
+        Engine/Progression/Persist.cpp
+        Engine/Progression/SaveSystem.cpp
+    )
+    add_library(PrismatiXRuntimePlatformNative STATIC
+        ${PRISMATIX_NATIVE_PLATFORM_SOURCES})
+    add_library(PrismatiX::RuntimePlatformNative ALIAS
+        PrismatiXRuntimePlatformNative)
+    prismatix_configure_target(PrismatiXRuntimePlatformNative)
+    target_include_directories(PrismatiXRuntimePlatformNative PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/Engine
+        ${LUA_INCLUDE_DIR}
+    )
+    target_include_directories(PrismatiXRuntimePlatformNative PRIVATE
+        ${FFMPEG_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/pl_mpeg
+    )
+    target_link_libraries(PrismatiXRuntimePlatformNative PUBLIC
+        PrismatiXRuntimeCore
+        PrismatiXSDK
+        prismatix_mbedcrypto
+        zstd::libzstd
+        ${FFMPEG_LIBRARIES}
+    )
+
+    add_library(PrismatiXRuntime INTERFACE)
+    target_link_libraries(PrismatiXRuntime INTERFACE
+        PrismatiXRuntimePlatformNative)
+endif()
+
+if(NOT EMSCRIPTEN)
 add_executable(PrismatiXPlayer
     Applications/PlayerMain.cpp
     Applications/Player/PlayerApp.cpp
@@ -189,8 +262,48 @@ if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
         FILES_MATCHING PATTERN "*.dll"
     )
 endif()
+endif()
 
-if(BUILD_TESTING)
+if(PRISMATIX_BUILD_WASM_PREVIEW)
+    add_executable(PrismatiXPreviewWasm
+        Applications/PreviewWasmMain.cpp
+        Engine/Runtime.cpp
+        Engine/Platform/Input.cpp
+        Engine/Platform/Window.cpp
+        Engine/IO/VFS.cpp
+    )
+    prismatix_configure_target(PrismatiXPreviewWasm)
+    target_compile_definitions(PrismatiXPreviewWasm PRIVATE
+        PRISMATIX_PREVIEW_WASM=1)
+    target_link_libraries(PrismatiXPreviewWasm PRIVATE
+        PrismatiXRuntimeCore)
+    set_target_properties(PrismatiXPreviewWasm PROPERTIES
+        OUTPUT_NAME "prismatix-preview"
+        SUFFIX ".mjs"
+    )
+    target_link_options(PrismatiXPreviewWasm PRIVATE
+        "-sMODULARIZE=1"
+        "-sEXPORT_ES6=1"
+        "-sEXPORT_NAME=createPrismatiXPreview"
+        "-sALLOW_MEMORY_GROWTH=1"
+        "-sENVIRONMENT=web,worker"
+        "-sFILESYSTEM=1"
+        "-sNO_EXIT_RUNTIME=0"
+        "$<$<CONFIG:Release>:-O3>"
+        "$<$<CONFIG:Release>:-gsource-map>"
+        "-sEXPORTED_RUNTIME_METHODS=['cwrap','UTF8ToString','FS']"
+        "-sEXPORTED_FUNCTIONS=['_malloc','_free','_px_preview_create','_px_preview_apply','_px_preview_patch','_px_preview_control','_px_preview_resize','_px_preview_tick','_px_preview_drain_events','_px_preview_destroy']"
+        "SHELL:--embed-file \"${PROJECT_SOURCE_DIR}/Resources/Fonts/NotoSansTC-Bold.ttf@/project/Resources/Fonts/NotoSansTC-Bold.ttf\""
+        "--source-map-base" "./"
+    )
+    add_custom_command(TARGET PrismatiXPreviewWasm POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_BINARY_DIR}/preview-contract.json"
+            "$<TARGET_FILE_DIR:PrismatiXPreviewWasm>/preview-contract.json"
+        VERBATIM)
+endif()
+
+if(BUILD_TESTING AND NOT EMSCRIPTEN)
     # Contract and integration tests use assert() as their executable test
     # primitive. Keep those checks active in Release/RelWithDebInfo quality
     # gates; otherwise NDEBUG removes both validation and assertion operands.
@@ -199,6 +312,59 @@ if(BUILD_TESTING)
     else()
         add_compile_options(-UNDEBUG)
     endif()
+
+    add_executable(PrismatiXPreviewProtocolV2Tests
+                   Tests/PreviewProtocolV2Tests.cpp)
+    target_link_libraries(PrismatiXPreviewProtocolV2Tests PRIVATE
+                          PrismatiXRuntimeCore)
+    prismatix_configure_target(PrismatiXPreviewProtocolV2Tests)
+    add_test(NAME PrismatiX.Preview.WasmProtocolV2
+             COMMAND PrismatiXPreviewProtocolV2Tests)
+    set_tests_properties(PrismatiX.Preview.WasmProtocolV2
+                         PROPERTIES LABELS "preview;wasm;contract")
+
+    # Compile the real WASM entrypoint with the native toolchain as a fast
+    # syntax/link gate when Emscripten is not installed on the workstation.
+    # The Emscripten target remains the authoritative binary gate.
+    add_executable(PrismatiXPreviewWasmNativeCompileTests
+                   Applications/PreviewWasmMain.cpp)
+    target_link_libraries(PrismatiXPreviewWasmNativeCompileTests
+                          PRIVATE PrismatiXRuntime)
+    prismatix_configure_target(PrismatiXPreviewWasmNativeCompileTests)
+    add_test(NAME PrismatiX.Preview.WasmEntrypointNativeCompile
+             COMMAND PrismatiXPreviewWasmNativeCompileTests)
+    set_tests_properties(PrismatiX.Preview.WasmEntrypointNativeCompile
+                         PROPERTIES LABELS "preview;wasm;compile")
+
+    add_executable(PrismatiXPerformancePreviewContractTests
+                   Tests/PerformancePreviewContractTests.cpp)
+    target_link_libraries(PrismatiXPerformancePreviewContractTests PRIVATE
+                          PrismatiXRuntimeCore)
+    prismatix_configure_target(PrismatiXPerformancePreviewContractTests)
+    add_test(NAME PrismatiX.Preview.PerformanceContract
+             COMMAND PrismatiXPerformancePreviewContractTests)
+    set_tests_properties(PrismatiX.Preview.PerformanceContract
+                         PROPERTIES LABELS "preview;wasm;performance;contract")
+
+    add_executable(PrismatiXLocalizationPreviewContractTests
+                   Tests/LocalizationPreviewContractTests.cpp)
+    target_link_libraries(PrismatiXLocalizationPreviewContractTests PRIVATE
+                          PrismatiXRuntimeCore)
+    prismatix_configure_target(PrismatiXLocalizationPreviewContractTests)
+    add_test(NAME PrismatiX.Preview.LocalizationContract
+             COMMAND PrismatiXLocalizationPreviewContractTests)
+    set_tests_properties(PrismatiX.Preview.LocalizationContract
+                         PROPERTIES LABELS "preview;wasm;localization;contract")
+
+    add_executable(PrismatiXProgressionPreviewContractTests
+                   Tests/ProgressionPreviewContractTests.cpp)
+    target_link_libraries(PrismatiXProgressionPreviewContractTests PRIVATE
+                          PrismatiXRuntimeCore)
+    prismatix_configure_target(PrismatiXProgressionPreviewContractTests)
+    add_test(NAME PrismatiX.Preview.ProgressionContract
+             COMMAND PrismatiXProgressionPreviewContractTests)
+    set_tests_properties(PrismatiX.Preview.ProgressionContract
+                         PROPERTIES LABELS "preview;wasm;progression;contract")
 
     add_executable(PrismatiXPackagerContractTests Tests/PackagerContractTests.cpp)
     target_link_libraries(PrismatiXPackagerContractTests PRIVATE PrismatiXRuntime)
@@ -293,6 +459,15 @@ if(BUILD_TESTING)
              COMMAND PrismatiXRuntimeIrRuntimeAdapterTests)
     set_tests_properties(PrismatiX.SDK.RuntimeIrRuntimeAdapter
                          PROPERTIES LABELS "sdk;runtime;contract")
+
+    add_executable(PrismatiXRuntimeIrPatchTests
+                   Tests/RuntimeIrPatchTests.cpp)
+    target_link_libraries(PrismatiXRuntimeIrPatchTests PRIVATE PrismatiXRuntime)
+    prismatix_configure_target(PrismatiXRuntimeIrPatchTests)
+    add_test(NAME PrismatiX.Runtime.RuntimeIrPatch
+             COMMAND PrismatiXRuntimeIrPatchTests)
+    set_tests_properties(PrismatiX.Runtime.RuntimeIrPatch
+                         PROPERTIES LABELS "runtime;contract;preview;patch")
 
     add_executable(PrismatiXRuntimeAssetResolverTests
                    Tests/RuntimeAssetResolverTests.cpp)
@@ -394,13 +569,24 @@ if(BUILD_TESTING)
         PrismatiX.Integration.Player.BootSplash "integration;runtime;splash"
         PrismatiXRuntime)
 
+    if(PRISMATIX_PERFORMANCE_TESTS)
+        prismatix_add_simple_test(
+            PrismatiXPreviewPerformanceBudgetTests
+            Tests/PreviewPerformanceBudgetTests.cpp
+            PrismatiX.Performance.PreviewBudgets
+            "performance;preview;runtime;budget" PrismatiXRuntimeCore)
+        set_tests_properties(PrismatiX.Performance.PreviewBudgets
+                             PROPERTIES TIMEOUT 60)
+    endif()
 
     add_executable(PrismatiXSoakTests Tests/SoakTests.cpp)
     target_link_libraries(PrismatiXSoakTests PRIVATE PrismatiXRuntime)
     prismatix_configure_target(PrismatiXSoakTests)
     if(PRISMATIX_STRESS_TESTS)
         add_test(NAME PrismatiX.Stress.Soak COMMAND PrismatiXSoakTests)
-        set_tests_properties(PrismatiX.Stress.Soak PROPERTIES LABELS "stress")
+        set_tests_properties(PrismatiX.Stress.Soak PROPERTIES
+                             LABELS "stress;performance;assets;timeline"
+                             TIMEOUT 120)
     endif()
 
     add_test(NAME PrismatiX.Architecture.SDK

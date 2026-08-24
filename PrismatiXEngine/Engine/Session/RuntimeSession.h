@@ -60,6 +60,11 @@ public:
                         bool resetVariables = true);
     bool StartRuntimeIrText(std::string_view text, const std::string& sourcePath,
                             bool resetVariables = true);
+    vn::ProgramPatchStatus PatchRuntimeIrText(std::string_view text,
+                                              const std::string& sourcePath);
+    vn::ProgramSeekStatus SeekRuntimeIrOperation(
+        std::string_view text, const std::string& sourcePath,
+        int operationIndex);
     [[nodiscard]] const std::vector<diag::Diagnostic>& LastStartDiagnostics() const {
         return m_lastStartDiagnostics;
     }
@@ -80,6 +85,8 @@ public:
     [[nodiscard]] const vn::VariableStore& Variables() const { return m_variables; }
     [[nodiscard]] vn::Backlog& Backlog() { return m_backlog; }
     [[nodiscard]] const vn::Backlog& Backlog() const { return m_backlog; }
+    [[nodiscard]] audio::AudioEngine& Audio() { return m_services.audio; }
+    [[nodiscard]] const audio::AudioEngine& Audio() const { return m_services.audio; }
     [[nodiscard]] ui::UIRouter& Routes() { return m_routes; }
     [[nodiscard]] const ui::UIRouter& Routes() const { return m_routes; }
     [[nodiscard]] animation::TimelinePlayer& Timeline() { return m_timeline; }
@@ -124,6 +131,8 @@ private:
     std::vector<diag::Diagnostic> m_lastStartDiagnostics;
 
     bool ExecuteCommand(const vn::Command& command);
+    std::optional<vn::Program> CompileRuntimeIrText(
+        std::string_view text, const std::string& sourcePath);
 };
 
 }  // namespace px

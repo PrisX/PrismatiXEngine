@@ -367,6 +367,57 @@ bool AudioEngine::RestoreState(const RuntimeState& state) {
     return true;
 }
 
+bool AudioEngine::RestoreMusicTrack(const TrackState& state, const int volume) {
+    if (volume < 0 || volume > 128 || state.playbackFrame < 0) return false;
+    SetBGMVolume(volume);
+    StopBGM(0);
+    if (!state.playing || state.path.empty()) return true;
+    PlayBGM(state.path, state.loop, 0);
+    return MIX_SetTrackPlaybackPosition(m_bgmTracks[m_bgmActive],
+                                        state.playbackFrame);
+}
+
+bool AudioEngine::RestoreVoiceTrack(const TrackState& state, const int volume) {
+    if (volume < 0 || volume > 128 || state.playbackFrame < 0) return false;
+    SetVoiceVolume(volume);
+    StopVoice();
+    if (!state.playing || state.path.empty()) return true;
+    PlayVoice(state.path);
+    return MIX_SetTrackPlaybackPosition(m_voiceTrack, state.playbackFrame);
+}
+
+bool AudioEngine::RestoreAmbienceTrack(const TrackState& state,
+                                       const int volume) {
+    if (volume < 0 || volume > 128 || state.playbackFrame < 0) return false;
+    SetAmbienceVolume(volume);
+    StopAmbience(0);
+    if (!state.playing || state.path.empty()) return true;
+    PlayAmbience(state.path, state.loop, 0);
+    return MIX_SetTrackPlaybackPosition(m_ambienceTrack,
+                                        state.playbackFrame);
+}
+
+bool AudioEngine::SetTrackPaused(MIX_Track* track, const bool paused) {
+    if (!track) return true;
+    if (paused) {
+        if (MIX_TrackPaused(track) || !MIX_TrackPlaying(track)) return true;
+        return MIX_PauseTrack(track);
+    }
+    return !MIX_TrackPaused(track) || MIX_ResumeTrack(track);
+}
+
+bool AudioEngine::SetMusicPaused(const bool paused) {
+    return SetTrackPaused(m_bgmTracks[m_bgmActive], paused);
+}
+
+bool AudioEngine::SetVoicePaused(const bool paused) {
+    return SetTrackPaused(m_voiceTrack, paused);
+}
+
+bool AudioEngine::SetAmbiencePaused(const bool paused) {
+    return SetTrackPaused(m_ambienceTrack, paused);
+}
+
 void AudioEngine::SetBGMVolume(int volume) {
     m_bgmVolume = std::clamp(volume,0,128);ApplyMixGains();
 }

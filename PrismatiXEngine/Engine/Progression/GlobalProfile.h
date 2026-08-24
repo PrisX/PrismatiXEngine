@@ -4,7 +4,7 @@
 #include <string>
 #include <unordered_map>
 
-#include "Engine/IO/Crypto.h"
+#include <nlohmann/json_fwd.hpp>
 
 namespace px::progress {
 
@@ -38,8 +38,8 @@ public:
     [[nodiscard]] const std::set<std::string>& UnlockedCGs() const { return m_cgs; }
     [[nodiscard]] const std::set<std::string>& UnlockedMusic() const { return m_music; }
 
-    bool Load(const std::string& path, const crypto::Key* key);
-    bool Save(const std::string& path, const crypto::Key* key) const;
+    [[nodiscard]] nlohmann::json ToJson() const;
+    bool ApplyJson(const nlohmann::json& json);
 
 private:
     std::set<std::string> m_seen;

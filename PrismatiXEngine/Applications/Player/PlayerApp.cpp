@@ -2,6 +2,7 @@
 
 #include "Engine/Graphics/Screenshot.h"
 #include "Engine/Diagnostics/Diagnostic.h"
+#include "Engine/Progression/GlobalProfileStore.h"
 #include "Engine/Resources/TypedDocument.h"
 #include "Engine/Support/Logger.h"
 #include "Engine/UI/Widgets.h"
@@ -143,7 +144,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     // that ship neither a key nor a title.
     m_saveKey = crypto::DeriveKey(
         m_boot.saveSecret.empty() ? std::string(kSaveKey) : m_boot.saveSecret + "|px-save");
-    m_profile.Load("Save/profile.dat", &m_saveKey);
+    progress::LoadGlobalProfile(m_profile, "Save/profile.dat", &m_saveKey);
     m_settings.Load("Save/config.dat", &m_saveKey);
     m_saves.Configure("Save", &m_saveKey);
     PX_LOG_DEBUG("Player boot: persistence configured");
@@ -262,8 +263,11 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_luaServices.variables = &m_session->Variables();
     m_luaServices.routes = &m_session->Routes();
     m_luaServices.timeline = &m_session->Timeline();
+    PX_LOG_DEBUG("Player boot: constructing Lua host");
     m_lua = std::make_unique<lua::LuaHost>(m_luaServices);
+    PX_LOG_DEBUG("Player boot: Lua host constructed");
     (void)m_ui.Actions().RegisterProvider(m_lua->CreateActionProvider());
+    PX_LOG_DEBUG("Player boot: Lua Action provider registered");
     m_session->SetExtensionCommandHandler([this](const vn::Command& cmd) {
         // NVL/ADV mode switches are app-level state, handled before Lua.
         const std::string& t = cmd.type;
@@ -330,15 +334,42 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     // StartGame() compiles .pxir later. Load extension manifests now so every
     // namespaced custom node is mapped against its production Command schema.
     if (m_runtime.VFS().Exists("Content/Extensions/extensions.pxindex")) {
-        if (!m_lua->LoadExtensionIndex("Content/Extensions/extensions.pxindex")) return false;
+        PX_LOG_DEBUG("Player boot: loading extension index");
+        if (!m_lua->LoadExtensionIndex("Content/Extensions/extensions.pxindex")) {
+            diag::Diagnostic diagnostic{
+                .severity = diag::Severity::Fatal,
+                .code = "PXPLAYER5005",
+                .category = "Player.Extensions",
+                .message = "Extension index could not be loaded",
+                .details = "Content/Extensions/extensions.pxindex"};
+            diagnostic.source.path = "Content/Extensions/extensions.pxindex";
+            diag::Emit(std::move(diagnostic));
+            return false;
+        }
+        PX_LOG_DEBUG("Player boot: extension index loaded");
     } else if (m_runtime.VFS().Exists("Content/Extensions/default.pxextension")) {
-        if (!m_lua->LoadExtensionManifest("Content/Extensions/default.pxextension")) return false;
+        PX_LOG_DEBUG("Player boot: loading default extension manifest");
+        if (!m_lua->LoadExtensionManifest(
+                "Content/Extensions/default.pxextension")) {
+            diag::Diagnostic diagnostic{
+                .severity = diag::Severity::Fatal,
+                .code = "PXPLAYER5006",
+                .category = "Player.Extensions",
+                .message = "Default extension manifest could not be loaded",
+                .details = "Content/Extensions/default.pxextension"};
+            diagnostic.source.path =
+                "Content/Extensions/default.pxextension";
+            diag::Emit(std::move(diagnostic));
+            return false;
+        }
+        PX_LOG_DEBUG("Player boot: default extension manifest loaded");
     }
     m_lua->Emit("engine.ready");
+    PX_LOG_DEBUG("Player boot: engine.ready emitted");
     m_session->VM().SetUnlockHook([this](const std::string& kind, const std::string& id) {
         if (kind == "cg") m_profile.UnlockCG(id);
         else m_profile.UnlockScene(id);
-        m_profile.Save("Save/profile.dat", &m_saveKey);
+        progress::SaveGlobalProfile(m_profile, "Save/profile.dat", &m_saveKey);
         PX_LOG_INFO("Player progression unlocked kind={} id={}", kind, id);
     });
     m_session->VM().SetSeenHook([this](const std::string& key) {
@@ -346,8 +377,14 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         m_profile.MarkSeen(key);
         return seen;
     });
-    m_video = std::make_unique<video::VideoPlayer>(m_runtime.GetWindow().Renderer(),
-                                                   m_runtime.VFS());
+    PX_LOG_DEBUG("Player boot: constructing video player");
+    SDL_Renderer* videoRenderer = m_runtime.GetWindow().Renderer();
+    PX_LOG_DEBUG("Player boot: video renderer resolved");
+    io::VFS& videoVfs = m_runtime.VFS();
+    PX_LOG_DEBUG("Player boot: video VFS resolved");
+    m_video =
+        std::make_unique<video::VideoPlayer>(videoRenderer, videoVfs);
+    PX_LOG_DEBUG("Player boot: video player constructed");
     m_session->VM().SetVideoHook([this](const std::string& path, bool skippable) {
         // Deferred: opened on the next frame so we never re-enter VM::Run().
         m_pendingVideo = path;
@@ -886,7 +923,7 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         }
     } else if (t == "overlay.close") {
         (void)m_session->Routes().CloseModal();
-        m_settings.Save("Save/config.dat", &m_saveKey); m_profile.Save("Save/profile.dat", &m_saveKey);
+        m_settings.Save("Save/config.dat", &m_saveKey); progress::SaveGlobalProfile(m_profile, "Save/profile.dat", &m_saveKey);
         if (m_appState == AppState::Title) m_ui.ShowTitle(); else m_ui.ShowHUD(DialogueUI());
         PX_LOG_INFO("Player overlay closed");
     } else if (t == "app.quit") {
@@ -966,7 +1003,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     if (input.KeyPressed(SDL_SCANCODE_F2)) {
         m_profile.RegisterClear("demo");
         m_session->Variables().Reset(true);
-        m_profile.Save("Save/profile.dat", &m_saveKey);
+        progress::SaveGlobalProfile(m_profile, "Save/profile.dat", &m_saveKey);
         PX_LOG_INFO("NG+ clear count {}", m_profile.ClearCount());
     }
     if (input.KeyPressed(SDL_SCANCODE_F5)) m_saveRequested = true;
@@ -1180,7 +1217,7 @@ void PlayerApp::Shutdown() {
         }
     }
     m_settings.Save("Save/config.dat", &m_saveKey);
-    m_profile.Save("Save/profile.dat", &m_saveKey);
+    progress::SaveGlobalProfile(m_profile, "Save/profile.dat", &m_saveKey);
     // Subsystems referencing the runtime must go before Runtime::Shutdown.
     m_lua.reset();
     m_splash.reset();

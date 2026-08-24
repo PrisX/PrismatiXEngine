@@ -7,15 +7,15 @@
   "artifactSha256": "pending-finalization",
   "manifestSha256": "pending-finalization",
   "previewProtocolRange": {
-    "min": 1,
-    "max": 1
+    "min": 2,
+    "max": 2
   },
   "contracts": {
     "characterResources": "1",
     "gameCatalogResources": "1",
     "packager": "1",
     "runtimeIr": "1",
-    "previewProtocol": "1",
+    "previewProtocol": "2",
     "studioUi": "1",
     "uiTypeRegistry": "1"
   },

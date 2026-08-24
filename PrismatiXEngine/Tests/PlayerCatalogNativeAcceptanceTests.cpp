@@ -1,5 +1,6 @@
 #include "Engine/IO/Crypto.h"
 #include "Engine/Progression/GlobalProfile.h"
+#include "Engine/Progression/GlobalProfileStore.h"
 #include "Engine/SDK/Packager.h"
 #include "Tests/TestSupport/TestHarness.h"
 
@@ -209,6 +210,15 @@ public:
 
     [[nodiscard]] DWORD Id() const { return m_processId; }
 
+    [[nodiscard]] std::optional<DWORD> CompletedExitCode() const {
+        if (!m_process || WaitForSingleObject(m_process, 0) != WAIT_OBJECT_0) {
+            return std::nullopt;
+        }
+        DWORD exitCode = STILL_ACTIVE;
+        if (!GetExitCodeProcess(m_process, &exitCode)) return std::nullopt;
+        return exitCode;
+    }
+
     bool Close(HWND window, DWORD& exitCode) {
         if (!m_process || !window) return false;
         PostMessageW(window, WM_CLOSE, 0, 0);
@@ -391,7 +401,17 @@ int main(int argc, char* argv[]) {
         suite.Require(process.Start(packagedPlayer, output),
                       "packaged Player process launches");
         const auto log = output / "logs/PrismatiXPlayer.log";
-        suite.Require(WaitForLog(log, "Player presentation ready route=title"),
+        const bool titleReady =
+            WaitForLog(log, "Player presentation ready route=title");
+        if (!titleReady) {
+            if (const auto exitCode = process.CompletedExitCode()) {
+                std::cout << "Player exited before title route with code 0x"
+                          << std::hex << *exitCode << std::dec << '\n';
+            } else {
+                std::cout << "Player remained active before title-route timeout\n";
+            }
+        }
+        suite.Require(titleReady,
                       "native Player reaches the title route");
 
         HWND window = nullptr;
@@ -442,7 +462,7 @@ int main(int argc, char* argv[]) {
         const px::crypto::Key saveKey = px::crypto::DeriveKey(
             "PrismatiX Player Catalog Acceptance|px-save");
         px::progress::GlobalProfile profile;
-        suite.Require(profile.Load(savePath.string(), &saveKey),
+        suite.Require(px::progress::LoadGlobalProfile(profile, savePath.string(), &saveKey),
                       "saved Player profile reloads with the package identity");
         suite.Expect(profile.CGUnlocked("ending-rin"),
                      "Gallery unlock survives Player shutdown and reload");

@@ -1,0 +1,67 @@
+{
+  "format": "PrismatiXPerformance",
+  "schemaRevision": 2,
+  "sceneId": "85858585-8585-4585-8585-858585858585",
+  "revision": 1,
+  "stage": {
+    "uiSceneId": "60606060-6060-4060-8060-606060606060",
+    "safeArea": 0.9,
+    "gridSize": 16,
+    "snapEnabled": true,
+    "nodes": []
+  },
+  "timeline": {
+    "duration": 2,
+    "frameRate": 60,
+    "tracks": [
+      {
+        "id": "86868686-8686-4686-8686-868686868686",
+        "kind": "ui",
+        "name": "Component UI",
+        "targetId": null,
+        "muted": false,
+        "locked": false,
+        "clips": [
+          {
+            "id": "87878787-8787-4787-8787-878787878787",
+            "name": "Show root",
+            "start": 0,
+            "duration": 0.1,
+            "assetId": null,
+            "payload": {
+              "kind": "ui",
+              "operation": "show",
+              "targetId": "69696969-6969-4969-8969-696969696969"
+            }
+          },
+          {
+            "id": "88888888-8888-4888-8888-888888888888",
+            "name": "Pulse action",
+            "start": 0.25,
+            "duration": 1,
+            "assetId": null,
+            "payload": {
+              "kind": "ui",
+              "operation": "playAnimation",
+              "targetId": "b6b6b6b6-b6b6-46b6-86b6-b6b6b6b6b6b6"
+            }
+          },
+          {
+            "id": "89898989-8989-4989-8989-898989898989",
+            "name": "Hide root",
+            "start": 1.5,
+            "duration": 0.1,
+            "assetId": null,
+            "payload": {
+              "kind": "ui",
+              "operation": "hide",
+              "targetId": "69696969-6969-4969-8969-696969696969"
+            }
+          }
+        ],
+        "keyframes": []
+      }
+    ],
+    "markers": []
+  }
+}

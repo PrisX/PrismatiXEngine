@@ -9,6 +9,7 @@
 #include "Engine/Animation/Timeline.h"
 
 #include <functional>
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <string>
@@ -107,6 +108,17 @@ public:
     Status ShowSettings(const SettingsPresentation& settings);
     Status ShowVideoOverlay(bool skippable);
     Status RefreshHUD(const DialoguePresentation& presentation);
+    Status ToggleHudToolbarPinned();
+    Status ActivateChoice(std::size_t index);
+    // Studio Preview uses the same Runtime control tree for toolbar/context
+    // activation as pointer input. This keeps authored Action dispatch out of
+    // JavaScript while preserving exact node identity.
+    Status ActivateStudioControl(std::string_view nodeId);
+    Status SetStudioControlVisibility(std::string_view nodeId, bool visible);
+    Status PreviewStudioAnimation(std::string_view clipId, float time,
+                                  bool playing);
+    Status StopStudioAnimation(bool restoreDesignState);
+    void ResetStudioTimelineOverrides();
 
     [[nodiscard]] bool Update(const Input& input, int width, int height,float deltaSeconds=0.0f);
     void Render(graphics::Renderer2D& renderer);
@@ -154,6 +166,7 @@ private:
     StudioUiComponentLoader m_studioComponentLoader;
     std::vector<GalgameAction> m_pendingActions;
     std::unordered_map<std::string,std::string> m_animationTextBase;
+    std::unordered_map<std::string, Visibility> m_timelineVisibilityBase;
 };
 
 }  // namespace px::ui

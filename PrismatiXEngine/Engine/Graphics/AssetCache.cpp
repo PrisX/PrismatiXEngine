@@ -30,7 +30,7 @@ AssetCache::~AssetCache() {
 
 void AssetCache::BeginFrame() {
     ++m_frame;
-    for(auto iterator=m_pendingTextures.begin();iterator!=m_pendingTextures.end();){if(iterator->second.wait_for(std::chrono::seconds(0))!=std::future_status::ready){++iterator;continue;}SDL_Surface* surface=iterator->second.get();SDL_Texture* texture=surface?SDL_CreateTextureFromSurface(m_renderer,surface):nullptr;if(surface)SDL_DestroySurface(surface);std::size_t bytes=0;if(texture){float width=0,height=0;SDL_GetTextureSize(texture,&width,&height);bytes=static_cast<std::size_t>(width)*static_cast<std::size_t>(height)*4u;SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);}m_textures[iterator->first]={texture,m_frame,bytes};m_residentTextureBytes+=bytes;iterator=m_pendingTextures.erase(iterator);}
+    for(auto iterator=m_pendingTextures.begin();iterator!=m_pendingTextures.end();){if(!iterator->second.valid()){iterator=m_pendingTextures.erase(iterator);continue;}if(iterator->second.wait_for(std::chrono::seconds(0))!=std::future_status::ready){++iterator;continue;}SDL_Surface* surface=iterator->second.get();SDL_Texture* texture=surface?SDL_CreateTextureFromSurface(m_renderer,surface):nullptr;if(surface)SDL_DestroySurface(surface);std::size_t bytes=0;if(texture){float width=0,height=0;SDL_GetTextureSize(texture,&width,&height);bytes=static_cast<std::size_t>(width)*static_cast<std::size_t>(height)*4u;SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);}m_textures[iterator->first]={texture,m_frame,bytes};m_residentTextureBytes+=bytes;iterator=m_pendingTextures.erase(iterator);}
     if (m_residentTextureBytes <= m_textureBudgetBytes) return;
     std::vector<std::pair<std::uint64_t, std::string>> order;
     order.reserve(m_textures.size());
@@ -94,7 +94,7 @@ SDL_Texture* AssetCache::Texture(const std::string& path) {
     return texture;
 }
 
-void AssetCache::PreloadTexture(const std::string& path){if(path.empty()||m_textures.contains(path)||m_pendingTextures.contains(path))return;m_pendingTextures.emplace(path,std::async(std::launch::async,[this,path]()->SDL_Surface*{const auto bytes=m_vfs.Read(path);if(!bytes)return nullptr;SDL_IOStream* stream=SDL_IOFromConstMem(bytes->data(),bytes->size());return stream?IMG_Load_IO(stream,true):nullptr;}));}
+void AssetCache::PreloadTexture(const std::string& path){if(path.empty()||m_textures.contains(path)||m_pendingTextures.contains(path))return;if(!m_asyncPreloadEnabled){(void)Texture(path);return;}m_pendingTextures.emplace(path,std::async(std::launch::async,[this,path]()->SDL_Surface*{const auto bytes=m_vfs.Read(path);if(!bytes)return nullptr;SDL_IOStream* stream=SDL_IOFromConstMem(bytes->data(),bytes->size());return stream?IMG_Load_IO(stream,true):nullptr;}));}
 
 SDL_Surface* AssetCache::LoadSurface(const std::string& path) {
     auto bytes = m_vfs.Read(path);
@@ -200,7 +200,7 @@ void AssetCache::TextureSize(SDL_Texture* texture, int& w, int& h) {
 }
 
 void AssetCache::Clear() {
-    for(auto& [_,future]:m_pendingTextures)if(SDL_Surface* surface=future.get())SDL_DestroySurface(surface);m_pendingTextures.clear();
+    for(auto& [_,future]:m_pendingTextures)if(future.valid())if(SDL_Surface* surface=future.get())SDL_DestroySurface(surface);m_pendingTextures.clear();
     for (auto& [path, entry] : m_textures) {
         if (entry.texture) {
             SDL_DestroyTexture(entry.texture);

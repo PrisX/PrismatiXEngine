@@ -23,6 +23,7 @@
 
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/Lua/LuaHost.h"
+#include "Engine/Preview/PerformancePreview.h"
 #include "Engine/Runtime.h"
 #include "Engine/SDK/RuntimeIr.h"
 #include "Engine/SDK/StudioUi.h"
@@ -1349,24 +1350,127 @@ private:
             return;
         }
         Json document = Json::parse(loaded->second, nullptr, false);
-        Json manifest = Json::parse(project->second, nullptr, false);
         const std::uint64_t requestedRevision = revision->get<std::uint64_t>();
         const double requestedTime = time->get<double>();
-        if (document.is_discarded() || !document.is_object() || document.value("format", std::string{}) != "PrismatiXPerformance" || document.value("schemaRevision", 0U) != 1U || document.value("sceneId", std::string{}) != *sceneId ||
-            document.value("revision", std::uint64_t{}) != requestedRevision || !std::isfinite(requestedTime) || requestedTime < 0.0 || !document.contains("stage") || !document.contains("timeline")) {
-            Write(Error(request, "performance-identity-mismatch", "Performance identity, revision, schema, or seek time is invalid"));
-            return;
-        }
         if (const auto current = m_appliedPerformanceRevisions.find(*sceneId);
             current != m_appliedPerformanceRevisions.end() && requestedRevision < current->second) {
             Write(Error(request, "stale-performance-revision", "Performance revision is older than the applied Runtime state"));
             return;
         }
-        const double duration = document["timeline"].value("duration", 0.0);
-        const double seekTime = std::clamp(requestedTime, 0.0, duration);
         if (!EnsureRuntime(loaded->first)) {
             Write(Error(request, m_runtimeStartupErrorCode.empty() ? "runtime-start-failed" : m_runtimeStartupErrorCode, m_runtimeStartupErrorMessage.empty() ? "Native preview runtime could not start" : m_runtimeStartupErrorMessage));
             return;
+        }
+        const auto previewPlan = px::preview::BuildPerformancePreviewPlan(
+            loaded->second, project->second, m_gameCatalog, *sceneId,
+            requestedTime, [this](const std::string_view path) {
+                return m_runtime && m_runtime->VFS().Exists(std::string(path));
+            });
+        if (!previewPlan) {
+            const auto& diagnostics = previewPlan.Diagnostics();
+            Write(Error(
+                request,
+                diagnostics.empty() ? "invalid-performance-preview"
+                                    : diagnostics.front().code,
+                diagnostics.empty()
+                    ? "Performance could not be planned by RuntimeCore"
+                    : diagnostics.front().message));
+            return;
+        }
+        if (previewPlan.Value().revision != requestedRevision) {
+            Write(Error(request, "performance-identity-mismatch",
+                        "Performance revision does not match the requested revision"));
+            return;
+        }
+        const auto& plan = previewPlan.Value();
+        const double seekTime = plan.seekTime;
+
+        std::uint64_t performanceUiRevision = 0;
+        if (!plan.uiSceneId.empty()) {
+            const auto uiPath = RequiredString(request, "uiPath");
+            if (!uiPath) {
+                Write(Error(request, "missing-performance-ui-scene",
+                            "A Performance with stage.uiSceneId requires a project-relative uiPath"));
+                return;
+            }
+            const auto loadedUi = ReadProjectFile(*projectRoot, *uiPath);
+            if (!loadedUi) {
+                Write(Error(request, "invalid-performance-ui-path",
+                            "The bound Performance UI scene must exist inside the project root"));
+                return;
+            }
+            const auto parsedUi = px::sdk::ParseStudioUi(loadedUi->second);
+            if (!parsedUi.Valid() || parsedUi.document.id != plan.uiSceneId) {
+                Write(Error(request, "performance-ui-identity-mismatch",
+                            "The UI scene identity does not match stage.uiSceneId"));
+                return;
+            }
+            performanceUiRevision = parsedUi.document.revision;
+            const Json manifest = Json::parse(project->second, nullptr, false);
+            std::unordered_map<std::string, std::string> assets;
+            if (manifest.is_object() && manifest.contains("assets") &&
+                manifest["assets"].is_array()) {
+                for (const auto& asset : manifest["assets"]) {
+                    if (!asset.is_object() || !asset.contains("id") ||
+                        !asset["id"].is_string() ||
+                        !asset.contains("source") ||
+                        !asset["source"].is_string())
+                        continue;
+                    const auto source = SafeProjectRelativePath(
+                        asset["source"].get<std::string>());
+                    if (source && IsProjectRegularFile(loadedUi->first, *source))
+                        assets.emplace(asset["id"].get<std::string>(),
+                                       *source);
+                }
+            }
+            std::unordered_map<std::string, std::string> components;
+            if (manifest.is_object() && manifest.contains("uiComponents") &&
+                manifest["uiComponents"].is_array()) {
+                for (const auto& component : manifest["uiComponents"]) {
+                    if (!component.is_object() || !component.contains("id") ||
+                        !component["id"].is_string() ||
+                        !component.contains("source") ||
+                        !component["source"].is_string())
+                        continue;
+                    const auto source = SafeProjectRelativePath(
+                        component["source"].get<std::string>());
+                    if (source && IsProjectRegularFile(loadedUi->first, *source))
+                        components.emplace(
+                            component["id"].get<std::string>(), *source);
+                }
+            }
+            m_hud.SetStudioUiAssetResolver(
+                [assets = std::move(assets)](
+                    const std::string_view id) -> std::optional<std::string> {
+                    const auto found = assets.find(std::string(id));
+                    return found == assets.end()
+                               ? std::nullopt
+                               : std::optional<std::string>{found->second};
+                });
+            m_hud.SetStudioUiComponentLoader(
+                [components = std::move(components),
+                 root = *projectRoot](const std::string_view id)
+                    -> std::optional<px::ui::StudioUiComponentSource> {
+                    const auto found = components.find(std::string(id));
+                    if (found == components.end()) return std::nullopt;
+                    const auto source = ReadProjectFile(root, found->second);
+                    return source
+                               ? std::optional<px::ui::StudioUiComponentSource>{
+                                     px::ui::StudioUiComponentSource{
+                                         found->second, source->second}}
+                               : std::nullopt;
+                });
+            const auto registered = m_hud.RegisterTemplate(
+                px::ui::GalgameUI::Screen::Title, loadedUi->second, *uiPath);
+            const auto shown = registered ? m_hud.ShowTitle() : registered;
+            if (!shown) {
+                Write(Error(request, "performance-ui-apply-failed",
+                            StatusMessage(shown,
+                                          "The bound UI scene could not be installed")));
+                return;
+            }
+        } else {
+            (void)m_hud.ShowHUD(DialogueView(*m_session, m_choices));
         }
 
         m_showUiPreview = false;
@@ -1383,64 +1487,39 @@ private:
         else if (!m_activePerformanceSceneId.empty() || m_session) {
             updatePlan.reason = "activePreviewChanged";
         }
-        std::unordered_map<std::string, std::string> assets;
-        if (manifest.is_object() && manifest.contains("assets") && manifest["assets"].is_array()) {
-            for (const auto& asset : manifest["assets"]) {
-                if (asset.contains("id") && asset["id"].is_string() && asset.contains("source") && asset["source"].is_string()) {
-                    assets[asset["id"].get<std::string>()] = asset["source"].get<std::string>();
-                }
+        px::preview::ApplyPerformancePreviewPlan(*m_session, plan);
+        if (!plan.uiSceneId.empty()) {
+            const auto uiStatus =
+                px::preview::ApplyPerformancePreviewUiPlan(m_hud, plan);
+            if (!uiStatus) {
+                Write(Error(request, "performance-ui-plan-rejected",
+                            StatusMessage(uiStatus,
+                                          "The sampled UI Timeline plan was rejected")));
+                return;
             }
         }
-        std::unordered_map<std::string, std::unordered_map<std::string, Json>> sampled;
-        if (document["timeline"].contains("tracks") && document["timeline"]["tracks"].is_array()) {
-            for (const auto& track : document["timeline"]["tracks"]) {
-                if (!track.contains("targetId") || !track["targetId"].is_string() || !track.contains("keyframes") || !track["keyframes"].is_array()) continue;
-                const std::string target = track["targetId"].get<std::string>();
-                for (const auto& key : track["keyframes"]) {
-                    if (key.value("time", duration + 1.0) <= seekTime && key.contains("property") && key["property"].is_string() && key.contains("value")) {
-                        sampled[target][key["property"].get<std::string>()] = key["value"];
-                    }
-                }
-            }
-        }
-        auto sampleNumber = [&sampled](const Json& node, const std::string& id, const char* property, const double fallback) {
-            const auto target = sampled.find(id);
-            if (target != sampled.end()) {
-                const auto value = target->second.find(property);
-                if (value != target->second.end() && value->second.is_number()) return value->second.get<double>();
-            }
-            return node.value(property, fallback);
-        };
-
-        if (!updatePlan.patch) m_session->Stage().ClearAll();
-        std::size_t nodeCount = 0;
-        if (document["stage"].contains("nodes") && document["stage"]["nodes"].is_array()) {
-            for (const auto& node : document["stage"]["nodes"]) {
-                if (!node.value("visible", true)) continue;
-                const std::string id = node.value("id", std::string{});
-                const std::string kind = node.value("kind", std::string{});
-                const std::string assetId = node.value("assetId", std::string{});
-                const auto asset = assets.find(assetId);
-                if (id.empty() || asset == assets.end()) continue;
-                if (kind == "background") {
-                    m_session->Stage().SetBackground(asset->second, false);
-                }
-                else {
-                    const float x = static_cast<float>(sampleNumber(node, id, "x", 0.0));
-                    const float y = static_cast<float>(sampleNumber(node, id, "y", 0.0));
-                    const float scale = static_cast<float>(sampleNumber(node, id, "scaleX", 1.0));
-                    const float opacity = static_cast<float>(sampleNumber(node, id, "opacity", 1.0));
-                    m_session->Stage().SetLayer(id, asset->second, x, y, scale, static_cast<std::uint8_t>(std::clamp(opacity, 0.0f, 1.0f) * 255.0f), node.value("zOrder", 0));
-                }
-                ++nodeCount;
-            }
-        }
+        const std::size_t nodeCount = plan.nodes.size();
         Json response = Response(request, "performanceSeeked");
         response["sceneId"] = *sceneId;
         response["revision"] = requestedRevision;
         response["time"] = seekTime;
         response["nodeCount"] = nodeCount;
-        response["unsafeEventsSkipped"] = 0;
+        response["unsafeEventsSkipped"] = plan.unsafeEventsSkipped;
+        response["uiSceneId"] = plan.uiSceneId;
+        response["uiRevision"] = performanceUiRevision;
+        response["uiControls"] = Json::array();
+        for (const auto& control : plan.uiControls) {
+            response["uiControls"].push_back(
+                {{"clipId", control.clipId},
+                 {"targetId", control.targetId},
+                 {"visible", control.visible}});
+        }
+        response["uiAnimation"] = plan.uiAnimation
+                                      ? Json{{"clipId", plan.uiAnimation->clipId},
+                                             {"animationClipId", plan.uiAnimation->animationClipId},
+                                             {"offsetSeconds", plan.uiAnimation->offsetSeconds},
+                                             {"playing", plan.uiAnimation->playing}}
+                                      : Json(nullptr);
         response["updateKind"] = updatePlan.patch ? "patch" : "reload";
         response["changedNodeCount"] = updatePlan.changedNodeCount;
         response["reloadReason"] = updatePlan.patch ? "" : updatePlan.reason;
@@ -1512,8 +1591,9 @@ private:
             if (!LoadCharacterCatalog(*m_runtime, catalog, characterResourcesDeclared)) {
                 return false;
             }
-            m_session->VM().SetGameCatalog(catalog);
-            m_characterCount = catalog.Characters().size();
+            m_gameCatalog = std::move(catalog);
+            m_session->VM().SetGameCatalog(m_gameCatalog);
+            m_characterCount = m_gameCatalog.Characters().size();
             m_characterResourcesDeclared = characterResourcesDeclared;
             return true;
         }
@@ -1558,10 +1638,11 @@ private:
         }
         spdlog::info("Constructing runtime session");
         auto session = std::make_unique<px::RuntimeSession>(px::RuntimeSession::Services{ runtime->VFS(), runtime->Audio(), runtime->Renderer(), runtime->Assets() });
-        session->VM().SetGameCatalog(catalog);
-        m_characterCount = catalog.Characters().size();
+        m_gameCatalog = std::move(catalog);
+        session->VM().SetGameCatalog(m_gameCatalog);
+        m_characterCount = m_gameCatalog.Characters().size();
         m_characterResourcesDeclared = characterResourcesDeclared;
-        spdlog::info("Preview character catalog loaded count={} source={}", catalog.Characters().size(), characterResourcesDeclared ? "characterResources=1" : "legacy Game.pxres fallback");
+        spdlog::info("Preview character catalog loaded count={} source={}", m_gameCatalog.Characters().size(), characterResourcesDeclared ? "characterResources=1" : "legacy Game.pxres fallback");
         m_hud.SetActionSink([this](const px::ui::GalgameAction& action) {
             if (action.command == "choice.select" && m_session) {
                 m_session->SelectChoice(std::atoi(action.argument.c_str()));
@@ -1697,6 +1778,7 @@ private:
     SerialStdoutWriter m_stdout;
     std::unique_ptr<px::Runtime> m_runtime;
     std::unique_ptr<px::RuntimeSession> m_session;
+    px::vn::GameCatalog m_gameCatalog;
     px::lua::LuaServices m_luaServices;
     std::unique_ptr<px::lua::LuaHost> m_lua;
     std::vector<px::lua::LuaHost::DebugBreakpoint> m_luaBreakpoints;

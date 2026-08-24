@@ -25,6 +25,8 @@ public:
 
     [[nodiscard]] SDL_Texture* Texture(const std::string& path);
     void PreloadTexture(const std::string& path);
+    void SetAsyncPreloadEnabled(bool enabled) { m_asyncPreloadEnabled = enabled; }
+    [[nodiscard]] bool AsyncPreloadEnabled() const { return m_asyncPreloadEnabled; }
     void SetTextureBudget(std::size_t bytes) { m_textureBudgetBytes=bytes; }
     [[nodiscard]] std::size_t ResidentTextureBytes() const { return m_residentTextureBytes; }
 
@@ -69,6 +71,7 @@ private:
     std::uint64_t m_frame = 0;
     std::size_t m_textureBudgetBytes=512u*1024u*1024u;
     std::size_t m_residentTextureBytes=0;
+    bool m_asyncPreloadEnabled=true;
 };
 
 }

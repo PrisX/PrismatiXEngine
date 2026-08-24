@@ -24,6 +24,7 @@ public:
     void Present();
 
     void GetSize(int& width, int& height) const;
+    bool Resize(int width, int height);
     void SetVSync(bool enabled);
 
     void SetAspectRatio(float ratio);

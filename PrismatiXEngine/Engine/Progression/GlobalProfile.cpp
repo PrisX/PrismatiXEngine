@@ -1,6 +1,6 @@
 #include "Engine/Progression/GlobalProfile.h"
 
-#include "Engine/Progression/Persist.h"
+#include <nlohmann/json.hpp>
 
 namespace px::progress {
 
@@ -55,12 +55,22 @@ bool GlobalProfile::MusicUnlocked(const std::string& id) const {
     return m_music.count(id) != 0;
 }
 
-bool GlobalProfile::Load(const std::string& path, const crypto::Key* key) {
-    auto json = LoadJson(path, key);
-    if (!json) {
-        return false;
-    }
-    const Json& j = *json;
+nlohmann::json GlobalProfile::ToJson() const {
+    nlohmann::json j;
+    j["format"] = "PrismatiXProfile";
+    j["schemaRevision"] = 1;
+    j["seen"] = m_seen;
+    j["choicesSeen"] = m_choicesSeen;
+    j["clearedRoutes"] = m_clearedRoutes;
+    j["scenes"] = m_scenes;
+    j["cgs"] = m_cgs;
+    j["music"] = m_music;
+    j["vars"] = m_vars;
+    j["clearCount"] = m_clearCount;
+    return j;
+}
+
+bool GlobalProfile::ApplyJson(const nlohmann::json& j) {
     if (j.value("format", std::string{}) != "PrismatiXProfile" ||
         j.value("schemaRevision", 0) != 1) {
         return false;
@@ -86,21 +96,6 @@ bool GlobalProfile::Load(const std::string& path, const crypto::Key* key) {
     m_clearCount = j.value("clearCount", 0);
     m_dirty = false;
     return true;
-}
-
-bool GlobalProfile::Save(const std::string& path, const crypto::Key* key) const {
-    Json j;
-    j["format"] = "PrismatiXProfile";
-    j["schemaRevision"] = 1;
-    j["seen"] = m_seen;
-    j["choicesSeen"] = m_choicesSeen;
-    j["clearedRoutes"] = m_clearedRoutes;
-    j["scenes"] = m_scenes;
-    j["cgs"] = m_cgs;
-    j["music"] = m_music;
-    j["vars"] = m_vars;
-    j["clearCount"] = m_clearCount;
-    return SaveJson(path, j, key);
 }
 
 }
