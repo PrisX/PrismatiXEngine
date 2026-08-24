@@ -69,6 +69,20 @@ test("line-oriented parser retains source spans without indentation semantics", 
   assert.equal(firstDialogue?.span.start.column, 1);
 });
 
+test("blank lines end speaker scope so the next text paragraph is narration", () => {
+  const parsed = parseStory(`@yuki\n第一句。\n第二句。\n\n這是旁白。\n@yuki\n又是對話。\n`, "Story/paragraphs.pxstory");
+  assert.equal(parsed.diagnostics.length, 0);
+  assert.deepEqual(
+    parsed.nodes.filter((node) => node.kind === "dialogue" || node.kind === "narration").map((node) => [node.kind, node.name, node.text]),
+    [
+      ["dialogue", "yuki", "第一句。"],
+      ["dialogue", "yuki", "第二句。"],
+      ["narration", undefined, "這是旁白。"],
+      ["dialogue", "yuki", "又是對話。"],
+    ],
+  );
+});
+
 test("Story compiler emits only executable semantic operations and source maps", () => {
   const parsed = parseStory(source, "Story/zh-TW/ch01.pxstory");
   const compiled = compileStory(parsed, {
