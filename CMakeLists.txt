@@ -146,6 +146,22 @@ endif()
 # Subdirectories
 add_subdirectory("PrismatiXEngine")
 
+# The TypeScript runtime package is authoring/build-time tooling. Ship it next
+# to the Authoring SDK without making it a native Runtime dependency.
+if(NOT EMSCRIPTEN)
+    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/runtime-sdk/dist/src/"
+        DESTINATION "share/PrismatiX/runtime-sdk/dist/src"
+        COMPONENT PrismatiXSDK
+        OPTIONAL
+    )
+    install(FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/runtime-sdk/package.json"
+        "${CMAKE_CURRENT_SOURCE_DIR}/runtime-sdk/README.md"
+        DESTINATION "share/PrismatiX/runtime-sdk"
+        COMPONENT PrismatiXSDK
+    )
+endif()
+
 # Formatting helper
 file(GLOB_RECURSE ALL_CXX_SOURCE_FILES
     "PrismatiXEngine/Applications/*.cpp"
