@@ -1,10 +1,18 @@
 #include "Engine/Script/JavaScriptHost.h"
 
 #include "Engine/Diagnostics/Diagnostic.h"
+#include "Engine/Animation/Timeline.h"
+#include "Engine/Audio/AudioEngine.h"
+#include "Engine/Graphics/Renderer2D.h"
 #include "Engine/IO/VFS.h"
+#include "Engine/Platform/Input.h"
+#include "Engine/Progression/GlobalProfile.h"
 #include "Engine/Support/Logger.h"
 #include "Engine/UI/Actions/ActionCatalog.h"
+#include "Engine/UI/UIRouter.h"
 #include "Engine/VN/Commands/CommandRegistry.h"
+#include "Engine/VN/Runtime/Stage.h"
+#include "Engine/VN/Runtime/VariableStore.h"
 
 #include <nlohmann/json.hpp>
 #include <quickjs.h>
@@ -13,6 +21,7 @@
 #include <chrono>
 #include <cctype>
 #include <cmath>
+#include <limits>
 #include <ranges>
 #include <set>
 #include <tuple>
@@ -370,6 +379,484 @@ public:
         return JS_UNDEFINED;
     }
 
+    [[nodiscard]] bool StringArgument(const int count, JSValueConst* values,
+                                      const int index, std::string& result) const {
+        if (index >= count || !JS_IsString(values[index])) return false;
+        const auto converted = String(values[index]);
+        if (!converted) return false;
+        result = *converted;
+        return true;
+    }
+
+    [[nodiscard]] bool NumberArgument(const int count, JSValueConst* values,
+                                      const int index, double& result) const {
+        return index < count && JS_IsNumber(values[index]) &&
+               JS_ToFloat64(context, &result, values[index]) == 0 &&
+               std::isfinite(result);
+    }
+
+    [[nodiscard]] bool IntegerArgument(const int count, JSValueConst* values,
+                                       const int index, std::int64_t& result) const {
+        return index < count && JS_IsNumber(values[index]) &&
+               JS_ToInt64(context, &result, values[index]) == 0;
+    }
+
+    [[nodiscard]] bool BoolArgument(const int count, JSValueConst* values,
+                                    const int index, bool& result) const {
+        if (index >= count || !JS_IsBool(values[index])) return false;
+        const int converted = JS_ToBool(context, values[index]);
+        if (converted < 0) return false;
+        result = converted != 0;
+        return true;
+    }
+
+    [[nodiscard]] std::optional<Variant> FromJavaScript(
+        JSValueConst value, const int depth = 0) const {
+        if (depth > 32) return std::nullopt;
+        if (JS_IsNull(value) || JS_IsUndefined(value)) return Variant{};
+        if (JS_IsBool(value)) {
+            const int converted = JS_ToBool(context, value);
+            return converted < 0 ? std::nullopt
+                                 : std::optional<Variant>(Variant(converted != 0));
+        }
+        if (JS_IsNumber(value)) {
+            double number = 0.0;
+            if (JS_ToFloat64(context, &number, value) < 0 || !std::isfinite(number))
+                return std::nullopt;
+            if (std::trunc(number) == number &&
+                number >= static_cast<double>(std::numeric_limits<std::int64_t>::min()) &&
+                number <= static_cast<double>(std::numeric_limits<std::int64_t>::max()))
+                return Variant(static_cast<std::int64_t>(number));
+            return Variant(number);
+        }
+        if (JS_IsString(value)) {
+            const auto text = String(value);
+            return text ? std::optional<Variant>(Variant(*text)) : std::nullopt;
+        }
+        if (JS_IsArray(value)) {
+            JSValue lengthValue = JS_GetPropertyStr(context, value, "length");
+            std::uint32_t length = 0;
+            const bool validLength = JS_ToUint32(context, &length, lengthValue) == 0 &&
+                                     length <= 1'000'000;
+            JS_FreeValue(context, lengthValue);
+            if (!validLength) return std::nullopt;
+            VariantArray array;
+            array.reserve(length);
+            for (std::uint32_t index = 0; index < length; ++index) {
+                JSValue item = JS_GetPropertyUint32(context, value, index);
+                auto converted = FromJavaScript(item, depth + 1);
+                JS_FreeValue(context, item);
+                if (!converted) return std::nullopt;
+                array.push_back(std::move(*converted));
+            }
+            return Variant(std::move(array));
+        }
+        if (JS_IsObject(value)) {
+            JSPropertyEnum* properties = nullptr;
+            std::uint32_t count = 0;
+            if (JS_GetOwnPropertyNames(context, &properties, &count, value,
+                                       JS_GPN_STRING_MASK | JS_GPN_ENUM_ONLY) < 0 ||
+                count > 1'000'000) {
+                if (properties) js_free(context, properties);
+                return std::nullopt;
+            }
+            VariantObject object;
+            bool valid = true;
+            for (std::uint32_t index = 0; index < count; ++index) {
+                const char* key = JS_AtomToCString(context, properties[index].atom);
+                if (!key) {
+                    valid = false;
+                    break;
+                }
+                JSValue item = JS_GetProperty(context, value, properties[index].atom);
+                auto converted = FromJavaScript(item, depth + 1);
+                JS_FreeValue(context, item);
+                if (converted) object.emplace(key, std::move(*converted));
+                else valid = false;
+                JS_FreeCString(context, key);
+                if (!valid) break;
+            }
+            js_free(context, properties);
+            if (!valid) return std::nullopt;
+            return Variant(std::move(object));
+        }
+        return std::nullopt;
+    }
+
+    [[nodiscard]] std::optional<double> NumberProperty(JSValueConst object,
+                                                        const char* name) const {
+        JSValue value = JS_GetPropertyStr(context, object, name);
+        if (JS_IsUndefined(value) || JS_IsNull(value)) {
+            JS_FreeValue(context, value);
+            return std::nullopt;
+        }
+        double result = 0.0;
+        const bool valid = JS_IsNumber(value) &&
+                           JS_ToFloat64(context, &result, value) == 0 &&
+                           std::isfinite(result);
+        JS_FreeValue(context, value);
+        return valid ? std::optional<double>(result) : std::nullopt;
+    }
+
+    [[nodiscard]] std::optional<std::string> StringProperty(
+        JSValueConst object, const char* name) const {
+        JSValue value = JS_GetPropertyStr(context, object, name);
+        if (JS_IsUndefined(value) || JS_IsNull(value)) {
+            JS_FreeValue(context, value);
+            return std::nullopt;
+        }
+        const auto result = JS_IsString(value) ? String(value) : std::nullopt;
+        JS_FreeValue(context, value);
+        return result;
+    }
+
+    JSValue RuntimeOperation(const std::string_view operation, const int count,
+                             JSValueConst* values) {
+        std::string first;
+        std::string second;
+        std::int64_t integer = 0;
+        bool boolean = false;
+
+        if (operation == "variables.get") {
+            if (!services.variables)
+                return JS_ThrowInternalError(context, "VariableStore is unavailable");
+            if (!StringArgument(count, values, 0, first))
+                return JS_ThrowTypeError(context, "GetVariable requires a name");
+            const auto* value = services.variables->GetValue(first);
+            return value ? ToJavaScript(*value) : JS_UNDEFINED;
+        }
+        if (operation == "variables.set") {
+            if (!services.variables)
+                return JS_ThrowInternalError(context, "VariableStore is unavailable");
+            if (!StringArgument(count, values, 0, first) || count < 2)
+                return JS_ThrowTypeError(context, "SetVariable requires a name and value");
+            auto value = FromJavaScript(values[1]);
+            if (!value)
+                return JS_ThrowTypeError(context, "SetVariable received an unsupported value");
+            std::string scope = "save";
+            if (count >= 3 && !JS_IsUndefined(values[2]) &&
+                !StringArgument(count, values, 2, scope))
+                return JS_ThrowTypeError(context, "SetVariable scope must be a string");
+            vn::VariableScope selected = vn::VariableScope::SaveLocal;
+            if (scope == "persistent") selected = vn::VariableScope::Persistent;
+            else if (scope == "temporary") selected = vn::VariableScope::Temporary;
+            else if (scope != "save")
+                return JS_ThrowRangeError(context, "unknown variable scope: %s", scope.c_str());
+            services.variables->SetValue(first, std::move(*value), selected);
+            return JS_UNDEFINED;
+        }
+        if (operation == "resource.exists") {
+            if (!services.vfs) return JS_ThrowInternalError(context, "VFS is unavailable");
+            if (!StringArgument(count, values, 0, first))
+                return JS_ThrowTypeError(context, "ResourceExists requires a path");
+            return JS_NewBool(context, services.vfs->Exists(first));
+        }
+        if (operation == "resource.readText") {
+            if (!services.vfs) return JS_ThrowInternalError(context, "VFS is unavailable");
+            if (!StringArgument(count, values, 0, first))
+                return JS_ThrowTypeError(context, "ReadResourceText requires a path");
+            const auto text = services.vfs->ReadText(first);
+            if (!text) return JS_ThrowReferenceError(context, "resource was not found: %s", first.c_str());
+            return JS_NewStringLen(context, text->data(), text->size());
+        }
+        if (operation.starts_with("route.")) {
+            if (!services.routes)
+                return JS_ThrowInternalError(context, "UIRouter is unavailable");
+            if (operation == "route.back")
+                return JS_NewBool(context, static_cast<bool>(services.routes->Back()));
+            if (operation == "route.closeModal")
+                return JS_NewBool(context, static_cast<bool>(services.routes->CloseModal()));
+            if (!StringArgument(count, values, 0, first))
+                return JS_ThrowTypeError(context, "route operation requires a route id");
+            Status status;
+            if (operation == "route.push") status = services.routes->Push(first);
+            else if (operation == "route.replace") status = services.routes->Replace(first);
+            else if (operation == "route.showModal") status = services.routes->ShowModal(first);
+            else return JS_ThrowRangeError(context, "unknown route operation");
+            if (!status)
+                return JS_ThrowInternalError(context, "%s",
+                    diag::Describe(status.Diagnostics().front()).c_str());
+            return JS_TRUE;
+        }
+        if (operation.starts_with("profile.")) {
+            if (!services.profile)
+                return JS_ThrowInternalError(context, "GlobalProfile is unavailable");
+            if (operation == "profile.clearCount")
+                return JS_NewInt32(context, services.profile->ClearCount());
+            if (!StringArgument(count, values, 0, first))
+                return JS_ThrowTypeError(context, "profile operation requires an id");
+            if (operation == "profile.hasSeen")
+                return JS_NewBool(context, services.profile->HasSeen(first));
+            if (operation == "profile.markSeen") {
+                services.profile->MarkSeen(first);
+                return JS_UNDEFINED;
+            }
+            if (operation == "profile.cgUnlocked")
+                return JS_NewBool(context, services.profile->CGUnlocked(first));
+            if (operation == "profile.sceneUnlocked")
+                return JS_NewBool(context, services.profile->SceneUnlocked(first));
+            if (operation == "profile.unlockCG") {
+                services.profile->UnlockCG(first);
+                return JS_UNDEFINED;
+            }
+            if (operation == "profile.unlockScene") {
+                services.profile->UnlockScene(first);
+                return JS_UNDEFINED;
+            }
+            if (operation == "profile.persistentVar")
+                return JS_NewInt32(context, services.profile->PersistentVar(first));
+            return JS_ThrowRangeError(context, "unknown profile operation");
+        }
+        if (operation.starts_with("audio.")) {
+            if (!services.audio)
+                return JS_ThrowInternalError(context, "AudioEngine is unavailable");
+            if (operation == "audio.playSE") {
+                if (!StringArgument(count, values, 0, first))
+                    return JS_ThrowTypeError(context, "PlaySE requires a path");
+                services.audio->PlaySE(first);
+                return JS_UNDEFINED;
+            }
+            if (operation == "audio.playBGM" || operation == "audio.playAmbience") {
+                if (!StringArgument(count, values, 0, first))
+                    return JS_ThrowTypeError(context, "audio play requires a path");
+                bool loop = true;
+                std::int64_t fade = 0;
+                if (count >= 2 && !JS_IsUndefined(values[1]) &&
+                    !BoolArgument(count, values, 1, loop))
+                    return JS_ThrowTypeError(context, "audio loop must be boolean");
+                if (count >= 3 && !JS_IsUndefined(values[2]) &&
+                    !IntegerArgument(count, values, 2, fade))
+                    return JS_ThrowTypeError(context, "audio fade must be integer milliseconds");
+                if (operation == "audio.playBGM")
+                    services.audio->PlayBGM(first, loop, static_cast<int>(fade));
+                else services.audio->PlayAmbience(first, loop, static_cast<int>(fade));
+                return JS_UNDEFINED;
+            }
+            if (operation == "audio.stopBGM" || operation == "audio.stopAmbience") {
+                std::int64_t fade = 0;
+                if (count >= 1 && !JS_IsUndefined(values[0]) &&
+                    !IntegerArgument(count, values, 0, fade))
+                    return JS_ThrowTypeError(context, "audio fade must be integer milliseconds");
+                if (operation == "audio.stopBGM") services.audio->StopBGM(static_cast<int>(fade));
+                else services.audio->StopAmbience(static_cast<int>(fade));
+                return JS_UNDEFINED;
+            }
+            if (!IntegerArgument(count, values, 0, integer))
+                return JS_ThrowTypeError(context, "audio volume requires an integer");
+            if (operation == "audio.bgmVolume") services.audio->SetBGMVolume(static_cast<int>(integer));
+            else if (operation == "audio.seVolume") services.audio->SetSEVolume(static_cast<int>(integer));
+            else if (operation == "audio.voiceVolume") services.audio->SetVoiceVolume(static_cast<int>(integer));
+            else if (operation == "audio.ambienceVolume") services.audio->SetAmbienceVolume(static_cast<int>(integer));
+            else return JS_ThrowRangeError(context, "unknown audio operation");
+            return JS_UNDEFINED;
+        }
+        if (operation.starts_with("stage.")) {
+            if (!services.stage)
+                return JS_ThrowInternalError(context, "Stage is unavailable");
+            if (operation == "stage.background") {
+                if (!StringArgument(count, values, 0, first))
+                    return JS_ThrowTypeError(context, "SetBackground requires a path");
+                boolean = true;
+                if (count >= 2 && !JS_IsUndefined(values[1]) &&
+                    !BoolArgument(count, values, 1, boolean))
+                    return JS_ThrowTypeError(context, "transition must be boolean");
+                services.stage->SetBackground(first, boolean);
+                return JS_UNDEFINED;
+            }
+            if (operation == "stage.character") {
+                if (!StringArgument(count, values, 0, first) ||
+                    !StringArgument(count, values, 1, second))
+                    return JS_ThrowTypeError(context, "SetCharacter requires a name and image");
+                std::int64_t slot = 2;
+                bool transition = true;
+                double x = 0.0, y = 0.0, scale = 1.0;
+                if (count >= 3 && !JS_IsUndefined(values[2]) && !IntegerArgument(count, values, 2, slot))
+                    return JS_ThrowTypeError(context, "character slot must be integer");
+                if (count >= 4 && !JS_IsUndefined(values[3]) && !BoolArgument(count, values, 3, transition))
+                    return JS_ThrowTypeError(context, "character transition must be boolean");
+                if (count >= 5 && !JS_IsUndefined(values[4]) && !NumberArgument(count, values, 4, x))
+                    return JS_ThrowTypeError(context, "character x must be numeric");
+                if (count >= 6 && !JS_IsUndefined(values[5]) && !NumberArgument(count, values, 5, y))
+                    return JS_ThrowTypeError(context, "character y must be numeric");
+                if (count >= 7 && !JS_IsUndefined(values[6]) && !NumberArgument(count, values, 6, scale))
+                    return JS_ThrowTypeError(context, "character scale must be numeric");
+                services.stage->SetCharacter(first, second, static_cast<int>(slot), transition,
+                                             static_cast<float>(x), static_cast<float>(y),
+                                             static_cast<float>(scale));
+                return JS_UNDEFINED;
+            }
+            if (operation == "stage.clearCharacter") {
+                if (!StringArgument(count, values, 0, first))
+                    return JS_ThrowTypeError(context, "ClearCharacter requires a name");
+                boolean = true;
+                if (count >= 2 && !JS_IsUndefined(values[1]) && !BoolArgument(count, values, 1, boolean))
+                    return JS_ThrowTypeError(context, "transition must be boolean");
+                services.stage->ClearCharacter(first, boolean);
+                return JS_UNDEFINED;
+            }
+            if (operation == "stage.moveCharacter") {
+                if (!StringArgument(count, values, 0, first) ||
+                    !IntegerArgument(count, values, 1, integer))
+                    return JS_ThrowTypeError(context, "MoveCharacter requires a name and slot");
+                services.stage->MoveCharacter(first, static_cast<int>(integer));
+                return JS_UNDEFINED;
+            }
+            if (operation == "stage.layer") {
+                if (!StringArgument(count, values, 0, first) ||
+                    !StringArgument(count, values, 1, second))
+                    return JS_ThrowTypeError(context, "SetLayer requires a name and image");
+                double x = 0.0, y = 0.0, scale = 1.0;
+                std::int64_t alpha = 255, z = 0;
+                if (count >= 3 && !JS_IsUndefined(values[2]) && !NumberArgument(count, values, 2, x)) return JS_ThrowTypeError(context, "layer x must be numeric");
+                if (count >= 4 && !JS_IsUndefined(values[3]) && !NumberArgument(count, values, 3, y)) return JS_ThrowTypeError(context, "layer y must be numeric");
+                if (count >= 5 && !JS_IsUndefined(values[4]) && !NumberArgument(count, values, 4, scale)) return JS_ThrowTypeError(context, "layer scale must be numeric");
+                if (count >= 6 && !JS_IsUndefined(values[5]) && !IntegerArgument(count, values, 5, alpha)) return JS_ThrowTypeError(context, "layer alpha must be integer");
+                if (count >= 7 && !JS_IsUndefined(values[6]) && !IntegerArgument(count, values, 6, z)) return JS_ThrowTypeError(context, "layer z must be integer");
+                services.stage->SetLayer(first, second, static_cast<float>(x), static_cast<float>(y),
+                                         static_cast<float>(scale),
+                                         static_cast<std::uint8_t>(std::clamp<std::int64_t>(alpha, 0, 255)),
+                                         static_cast<int>(z));
+                return JS_UNDEFINED;
+            }
+            if (operation == "stage.clearLayer") {
+                if (!StringArgument(count, values, 0, first))
+                    return JS_ThrowTypeError(context, "ClearLayer requires a name");
+                services.stage->ClearLayer(first);
+                return JS_UNDEFINED;
+            }
+            if (operation == "stage.shake") {
+                std::int64_t milliseconds = 400;
+                double amplitude = 12.0;
+                if (count >= 1 && !JS_IsUndefined(values[0]) && !IntegerArgument(count, values, 0, milliseconds)) return JS_ThrowTypeError(context, "shake duration must be integer");
+                if (count >= 2 && !JS_IsUndefined(values[1]) && !NumberArgument(count, values, 1, amplitude)) return JS_ThrowTypeError(context, "shake amplitude must be numeric");
+                services.stage->Shake(static_cast<int>(milliseconds), static_cast<float>(amplitude));
+                return JS_UNDEFINED;
+            }
+            if (operation == "stage.animate") {
+                if (!StringArgument(count, values, 0, first) || count < 2 ||
+                    !JS_IsObject(values[1]))
+                    return JS_ThrowTypeError(context, "Animate requires a target and property object");
+                vn::Stage::TweenSpec spec;
+                if (const auto value = NumberProperty(values[1], "x")) { spec.hasX = true; spec.x = static_cast<float>(*value); }
+                if (const auto value = NumberProperty(values[1], "y")) { spec.hasY = true; spec.y = static_cast<float>(*value); }
+                if (const auto value = NumberProperty(values[1], "scale")) { spec.hasScale = true; spec.scale = static_cast<float>(*value); }
+                if (const auto value = NumberProperty(values[1], "alpha")) { spec.hasAlpha = true; spec.alpha = static_cast<float>(*value); }
+                if (const auto value = NumberProperty(values[1], "duration")) spec.durationMs = static_cast<int>(*value);
+                if (const auto value = StringProperty(values[1], "ease")) spec.ease = *value;
+                return JS_NewBool(context, services.stage->Animate(first, spec));
+            }
+            return JS_ThrowRangeError(context, "unknown stage operation");
+        }
+        if (operation.starts_with("animation.")) {
+            if (!services.timeline)
+                return JS_ThrowInternalError(context, "TimelinePlayer is unavailable");
+            if (operation == "animation.load") {
+                if (!services.vfs) return JS_ThrowInternalError(context, "VFS is unavailable");
+                if (!StringArgument(count, values, 0, first))
+                    return JS_ThrowTypeError(context, "LoadAnimation requires a path");
+                const auto text = services.vfs->ReadText(first);
+                if (!text) return JS_ThrowReferenceError(context, "animation was not found: %s", first.c_str());
+                auto clip = animation::ParseAnimationClip(*text, first);
+                if (!clip) return JS_ThrowTypeError(context, "%s",
+                    diag::Describe(clip.Diagnostics().front()).c_str());
+                const auto id = clip.Value().id;
+                const Status status = services.timeline->Register(clip.TakeValue());
+                if (!status) return JS_ThrowInternalError(context, "%s",
+                    diag::Describe(status.Diagnostics().front()).c_str());
+                return JS_NewString(context, id.ToString().c_str());
+            }
+            if (operation == "animation.play") {
+                if (!StringArgument(count, values, 0, first))
+                    return JS_ThrowTypeError(context, "PlayAnimation requires a ResourceId");
+                const auto id = Uuid::Parse(first);
+                if (!id) return JS_ThrowTypeError(context, "animation ResourceId is invalid");
+                bool await = false;
+                double speed = 1.0;
+                if (count >= 2 && !JS_IsUndefined(values[1]) && !BoolArgument(count, values, 1, await)) return JS_ThrowTypeError(context, "animation await must be boolean");
+                if (count >= 3 && !JS_IsUndefined(values[2]) && !NumberArgument(count, values, 2, speed)) return JS_ThrowTypeError(context, "animation speed must be numeric");
+                return JS_NewInt64(context, static_cast<std::int64_t>(
+                    services.timeline->Play(*id, await, static_cast<float>(speed))));
+            }
+            if (operation == "animation.cancel") {
+                if (!IntegerArgument(count, values, 0, integer))
+                    return JS_ThrowTypeError(context, "CancelAnimation requires a handle");
+                return JS_NewBool(context, static_cast<bool>(services.timeline->Cancel(
+                    static_cast<animation::PlaybackHandle>(integer))));
+            }
+            return JS_ThrowRangeError(context, "unknown animation operation");
+        }
+        if (operation.starts_with("input.")) {
+            if (!services.input) return JS_ThrowInternalError(context, "Input is unavailable");
+            if (operation == "input.mouseX") return JS_NewFloat64(context, services.input->MouseX());
+            if (operation == "input.mouseY") return JS_NewFloat64(context, services.input->MouseY());
+            if (operation == "input.leftClick") return JS_NewBool(context, services.input->LeftClick());
+            if (operation == "input.rightClick") return JS_NewBool(context, services.input->RightClick());
+            return JS_ThrowRangeError(context, "unknown input operation");
+        }
+        if (operation.starts_with("renderer.")) {
+            if (!services.renderer)
+                return JS_ThrowInternalError(context, "Renderer2D is unavailable");
+            if (operation == "renderer.logicalSize") {
+                int width = 0, height = 0;
+                services.renderer->GetLogicalSize(width, height);
+                JSValue result = JS_NewObject(context);
+                JS_SetPropertyStr(context, result, "w", JS_NewInt32(context, width));
+                JS_SetPropertyStr(context, result, "h", JS_NewInt32(context, height));
+                return result;
+            }
+            if (operation == "renderer.drawImage") {
+                if (!StringArgument(count, values, 0, first)) return JS_ThrowTypeError(context, "DrawImage requires a path");
+                double x=0,y=0,width=0,height=0;std::int64_t alpha=255;
+                if (!NumberArgument(count, values, 1, x) || !NumberArgument(count, values, 2, y) || !NumberArgument(count, values, 3, width) || !NumberArgument(count, values, 4, height)) return JS_ThrowTypeError(context, "DrawImage requires numeric bounds");
+                if (count >= 6 && !JS_IsUndefined(values[5]) && !IntegerArgument(count, values, 5, alpha)) return JS_ThrowTypeError(context, "DrawImage alpha must be integer");
+                services.renderer->DrawImage(first, Rect{static_cast<float>(x),static_cast<float>(y),static_cast<float>(width),static_cast<float>(height)}, static_cast<std::uint8_t>(std::clamp<std::int64_t>(alpha,0,255)));
+                return JS_UNDEFINED;
+            }
+            if (operation == "renderer.drawAuto") {
+                if (!StringArgument(count, values, 0, first) || !IntegerArgument(count, values, 1, integer)) return JS_ThrowTypeError(context, "DrawAuto requires a path and display mode");
+                std::int64_t alpha=255;if(count>=3&&!JS_IsUndefined(values[2])&&!IntegerArgument(count,values,2,alpha))return JS_ThrowTypeError(context,"DrawAuto alpha must be integer");
+                (void)services.renderer->DrawImageAuto(first, static_cast<graphics::DisplayMode>(integer), static_cast<std::uint8_t>(std::clamp<std::int64_t>(alpha,0,255)));
+                return JS_UNDEFINED;
+            }
+            if (operation == "renderer.drawRect" || operation == "renderer.drawRoundedRect") {
+                double x=0,y=0,width=0,height=0,radius=0;int offset=4;
+                if(!NumberArgument(count,values,0,x)||!NumberArgument(count,values,1,y)||!NumberArgument(count,values,2,width)||!NumberArgument(count,values,3,height))return JS_ThrowTypeError(context,"rectangle bounds must be numeric");
+                if(operation=="renderer.drawRoundedRect"){if(!NumberArgument(count,values,4,radius))return JS_ThrowTypeError(context,"rounded radius must be numeric");offset=5;}
+                std::int64_t red=0,green=0,blue=0,alpha=0;
+                if(!IntegerArgument(count,values,offset,red)||!IntegerArgument(count,values,offset+1,green)||!IntegerArgument(count,values,offset+2,blue)||!IntegerArgument(count,values,offset+3,alpha))return JS_ThrowTypeError(context,"rectangle color channels must be integers");
+                const Color color{static_cast<std::uint8_t>(std::clamp<std::int64_t>(red,0,255)),static_cast<std::uint8_t>(std::clamp<std::int64_t>(green,0,255)),static_cast<std::uint8_t>(std::clamp<std::int64_t>(blue,0,255)),static_cast<std::uint8_t>(std::clamp<std::int64_t>(alpha,0,255))};
+                const Rect rect{static_cast<float>(x),static_cast<float>(y),static_cast<float>(width),static_cast<float>(height)};
+                if(operation=="renderer.drawRect")services.renderer->DrawRect(rect,color);else services.renderer->DrawRoundedRect(rect,static_cast<float>(radius),color);
+                return JS_UNDEFINED;
+            }
+            if (operation == "renderer.drawText") {
+                if(!StringArgument(count,values,0,first))return JS_ThrowTypeError(context,"DrawText requires text");
+                double x=0,y=0;std::string font;std::int64_t size=0,red=0,green=0,blue=0,alpha=255;
+                if(!NumberArgument(count,values,1,x)||!NumberArgument(count,values,2,y)||!StringArgument(count,values,3,font)||!IntegerArgument(count,values,4,size)||!IntegerArgument(count,values,5,red)||!IntegerArgument(count,values,6,green)||!IntegerArgument(count,values,7,blue))return JS_ThrowTypeError(context,"DrawText arguments are invalid");
+                if(count>=9&&!JS_IsUndefined(values[8])&&!IntegerArgument(count,values,8,alpha))return JS_ThrowTypeError(context,"DrawText alpha must be integer");
+                services.renderer->DrawText(first,static_cast<float>(x),static_cast<float>(y),font,static_cast<int>(size),Color{static_cast<std::uint8_t>(std::clamp<std::int64_t>(red,0,255)),static_cast<std::uint8_t>(std::clamp<std::int64_t>(green,0,255)),static_cast<std::uint8_t>(std::clamp<std::int64_t>(blue,0,255)),static_cast<std::uint8_t>(std::clamp<std::int64_t>(alpha,0,255))});
+                return JS_UNDEFINED;
+            }
+            if (operation == "renderer.measureText") {
+                if(!StringArgument(count,values,0,first)||!StringArgument(count,values,1,second)||!IntegerArgument(count,values,2,integer))return JS_ThrowTypeError(context,"MeasureText requires text, font, and size");
+                const Vec2 measured=services.renderer->MeasureText(first,second,static_cast<int>(integer));JSValue result=JS_NewObject(context);JS_SetPropertyStr(context,result,"w",JS_NewFloat64(context,measured.x));JS_SetPropertyStr(context,result,"h",JS_NewFloat64(context,measured.y));return result;
+            }
+            return JS_ThrowRangeError(context, "unknown renderer operation");
+        }
+        return JS_ThrowRangeError(context, "unknown runtime operation: %.*s",
+                                  static_cast<int>(operation.size()), operation.data());
+    }
+
+    static JSValue RuntimeCall(JSContext* context, JSValueConst, const int count,
+                               JSValueConst* values) {
+        auto* self = From(context);
+        if (count < 1 || !JS_IsString(values[0]))
+            return JS_ThrowTypeError(context, "runtime operation id must be a string");
+        const auto operation = self->String(values[0]);
+        if (!operation) return JS_EXCEPTION;
+        return self->RuntimeOperation(*operation, count - 1, values + 1);
+    }
+
     void BindEngine() {
         JSValue global = JS_GetGlobalObject(context);
         JSValue engine = JS_NewObject(context);
@@ -383,6 +870,8 @@ public:
                           JS_NewCFunction(context, &On, "On", 2));
         JS_SetPropertyStr(context, engine, "Emit",
                           JS_NewCFunction(context, &EmitEvent, "Emit", 2));
+        JS_SetPropertyStr(context, engine, "__runtimeCall",
+                          JS_NewCFunction(context, &RuntimeCall, "__runtimeCall", 1));
         JS_SetPropertyStr(context, global, "Engine", engine);
 
         JSValue console = JS_NewObject(context);
@@ -396,7 +885,65 @@ public:
         JS_FreeValue(context, global);
 
         constexpr std::string_view sandbox = R"js(
+            const runtimeCall = Engine.__runtimeCall;
+            const bindRuntime = (operation) => (...args) => runtimeCall(operation, ...args);
+            Object.defineProperties(Engine, {
+                GetVariable: { value: bindRuntime("variables.get") },
+                SetVariable: { value: bindRuntime("variables.set") },
+                ResourceExists: { value: bindRuntime("resource.exists") },
+                ReadResourceText: { value: bindRuntime("resource.readText") },
+                PushRoute: { value: bindRuntime("route.push") },
+                ReplaceRoute: { value: bindRuntime("route.replace") },
+                BackRoute: { value: bindRuntime("route.back") },
+                ShowModal: { value: bindRuntime("route.showModal") },
+                CloseModal: { value: bindRuntime("route.closeModal") },
+                HasSeen: { value: bindRuntime("profile.hasSeen") },
+                MarkSeen: { value: bindRuntime("profile.markSeen") },
+                ClearCount: { value: bindRuntime("profile.clearCount") },
+                CGUnlocked: { value: bindRuntime("profile.cgUnlocked") },
+                SceneUnlocked: { value: bindRuntime("profile.sceneUnlocked") },
+                UnlockCG: { value: bindRuntime("profile.unlockCG") },
+                UnlockScene: { value: bindRuntime("profile.unlockScene") },
+                PersistentVar: { value: bindRuntime("profile.persistentVar") },
+                PlaySE: { value: bindRuntime("audio.playSE") },
+                PlayBGM: { value: bindRuntime("audio.playBGM") },
+                StopBGM: { value: bindRuntime("audio.stopBGM") },
+                SetBGMVolume: { value: bindRuntime("audio.bgmVolume") },
+                SetSEVolume: { value: bindRuntime("audio.seVolume") },
+                SetVoiceVolume: { value: bindRuntime("audio.voiceVolume") },
+                SetAmbienceVolume: { value: bindRuntime("audio.ambienceVolume") },
+                PlayAmbience: { value: bindRuntime("audio.playAmbience") },
+                StopAmbience: { value: bindRuntime("audio.stopAmbience") },
+                SetBackground: { value: bindRuntime("stage.background") },
+                SetCharacter: { value: bindRuntime("stage.character") },
+                ClearCharacter: { value: bindRuntime("stage.clearCharacter") },
+                MoveCharacter: { value: bindRuntime("stage.moveCharacter") },
+                SetLayer: { value: bindRuntime("stage.layer") },
+                ClearLayer: { value: bindRuntime("stage.clearLayer") },
+                Shake: { value: bindRuntime("stage.shake") },
+                Animate: { value: bindRuntime("stage.animate") },
+                LoadAnimation: { value: bindRuntime("animation.load") },
+                PlayAnimation: { value: bindRuntime("animation.play") },
+                CancelAnimation: { value: bindRuntime("animation.cancel") },
+                GetMouseX: { value: bindRuntime("input.mouseX") },
+                GetMouseY: { value: bindRuntime("input.mouseY") },
+                GetLeftClick: { value: bindRuntime("input.leftClick") },
+                GetRightClick: { value: bindRuntime("input.rightClick") },
+                GetLogicalSize: { value: bindRuntime("renderer.logicalSize") },
+                DrawImage: { value: bindRuntime("renderer.drawImage") },
+                DrawAuto: { value: bindRuntime("renderer.drawAuto") },
+                DrawRect: { value: bindRuntime("renderer.drawRect") },
+                DrawRoundedRect: { value: bindRuntime("renderer.drawRoundedRect") },
+                DrawText: { value: bindRuntime("renderer.drawText") },
+                MeasureText: { value: bindRuntime("renderer.measureText") }
+            });
+            delete Engine.__runtimeCall;
             globalThis.px = Engine;
+            globalThis.DisplayMode = Object.freeze({
+                TopLeft: 0, TopRight: 1, BottomLeft: 2, BottomRight: 3,
+                Top: 4, Bottom: 5, Left: 6, Right: 7, Center: 8,
+                FitWidthBottom: 9, Fit: 10, Fill: 11
+            });
             globalThis.Date = undefined;
             globalThis.eval = undefined;
             globalThis.Function = undefined;

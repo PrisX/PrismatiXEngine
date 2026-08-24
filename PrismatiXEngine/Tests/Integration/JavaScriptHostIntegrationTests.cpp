@@ -1,8 +1,12 @@
 #include "Engine/IO/VFS.h"
+#include "Engine/Progression/GlobalProfile.h"
 #include "Engine/Script/JavaScriptHost.h"
 #include "Engine/UI/Actions/ActionCatalog.h"
 #include "Engine/UI/Actions/ActionDispatcher.h"
+#include "Engine/UI/Control.h"
+#include "Engine/UI/UIRouter.h"
 #include "Engine/VN/Commands/CommandRegistry.h"
+#include "Engine/VN/Runtime/VariableStore.h"
 #include "Tests/TestSupport/TestHarness.h"
 
 #include <chrono>
@@ -78,8 +82,20 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     suite.Require(vfs.Exists("Content/Extensions/default.pxextension"),
                   "fixture directory should mount through the production VFS");
     std::vector<px::script::ConsoleMessage> console;
+    px::vn::VariableStore variables;
+    px::progress::GlobalProfile profile;
+    px::ui::UIRouter routes;
+    const auto routeFactory = []() -> px::Result<std::unique_ptr<px::ui::Control>> {
+        return px::Result<std::unique_ptr<px::ui::Control>>::Success(
+            std::make_unique<px::ui::Control>());
+    };
+    suite.Require(static_cast<bool>(routes.Register("title", routeFactory)),
+                  "runtime route fixture should register");
     px::script::ScriptServices services;
     services.vfs = &vfs;
+    services.variables = &variables;
+    services.profile = &profile;
+    services.routes = &routes;
     services.console = [&console](const px::script::ConsoleMessage& message) {
         console.push_back(message);
     };
@@ -103,6 +119,31 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
                      console[0].text == "sandbox-ready 7" &&
                      console[1].level == px::script::ConsoleLevel::Warning,
                  "console bridge should preserve messages and levels");
+    suite.Expect(host.RunString(R"js(
+        Engine.SetVariable("js.runtime", { score: 7, flags: [true, "ready"] }, "save");
+        const restored = Engine.GetVariable("js.runtime");
+        if (restored.score !== 7 || restored.flags[1] !== "ready") {
+            throw new Error("typed variable round-trip failed");
+        }
+        if (!Engine.ResourceExists("Content/Extensions/default.pxextension") ||
+            !Engine.ReadResourceText("Content/Extensions/default.pxextension").includes("PrismatiXExtension")) {
+            throw new Error("VFS bridge failed");
+        }
+        Engine.MarkSeen("js.scene");
+        Engine.UnlockCG("js.cg");
+        if (!Engine.HasSeen("js.scene") || !Engine.CGUnlocked("js.cg")) {
+            throw new Error("profile bridge failed");
+        }
+        if (!Engine.PushRoute("title")) throw new Error("route bridge failed");
+        Engine.log("runtime-context-ready");
+    )js", "javascript-runtime-context"),
+                 "JavaScript RuntimeContext should bridge typed engine services");
+    const auto* runtimeValue = variables.GetValue("js.runtime");
+    suite.Expect(runtimeValue && runtimeValue->AsObject() &&
+                     profile.HasSeen("js.scene") && profile.CGUnlocked("js.cg") &&
+                     routes.CurrentRoute() == "title" &&
+                     console.back().text == "runtime-context-ready",
+                 "RuntimeContext mutations should reach the C++ runtime services");
     suite.Expect(!host.LoadExtensionManifest(
                      "Content/Extensions/denied.pxextension"),
                  "undeclared host capabilities must fail closed");
