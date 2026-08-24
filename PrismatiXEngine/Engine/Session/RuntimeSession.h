@@ -37,6 +37,9 @@ public:
 
     struct GameState {
         vn::VMRuntimeState vm;
+        // Memory-applied Runtime IR has no VFS source to reload. Checkpoints
+        // retain the compiled program so restore is transport-independent.
+        vn::Program runtimeProgram;
         vn::DialogueSnapshot dialogue;
         std::unordered_map<std::string, int> variables;
         std::unordered_map<std::string, vn::Value> typedVariables;

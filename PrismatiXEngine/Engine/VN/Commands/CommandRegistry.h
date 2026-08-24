@@ -69,6 +69,10 @@ struct CommandDescriptor {
     std::vector<CommandParameterDescriptor> parameters;
     CommandWaitPolicy waitPolicy = CommandWaitPolicy::Immediate;
     RollbackPolicy rollbackPolicy = RollbackPolicy::Reversible;
+    bool previewSafe = true;
+    bool deterministic = true;
+    bool seekSafe = true;
+    bool rollbackSafe = true;
     bool allowAdditionalParameters = false;
     CommandExecutor executor;
 };

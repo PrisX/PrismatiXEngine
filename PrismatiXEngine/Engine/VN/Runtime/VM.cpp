@@ -141,6 +141,7 @@ bool VM::LoadCompiledProgram(Program program, const std::string& scriptPath) {
     m_debugResumeState.reset();
     m_seekTargetPc.reset();
     m_seeking = false;
+    m_safetyRejected = false;
     m_program = std::move(program);
     if (!m_program.errors.empty()) {
         m_state = VMState::Finished;
@@ -176,8 +177,28 @@ ProgramSeekStatus VM::LoadCompiledProgramAt(Program program,
     m_skipBreakOnce = false;
     m_stepping = false;
     m_stepBudget = 0;
+    m_safetyRejected = false;
+
+    return ReplayCompiledProgramAt(operationIndex);
+}
+
+ProgramSeekStatus VM::ReplayCompiledProgramAt(
+    const int operationIndex, const std::span<const int> branchPath,
+    std::size_t* choicesConsumed) {
+    if (operationIndex < 0 ||
+        operationIndex >= static_cast<int>(m_program.code.size())) {
+        return ProgramSeekStatus::InvalidOperation;
+    }
+    std::size_t consumedChoices = 0;
+    if (choicesConsumed) *choicesConsumed = 0;
+    if (m_state == VMState::WaitingVideo ||
+        (m_state == VMState::WaitingExternal && !m_safetyRejected)) {
+        return ProgramSeekStatus::UnsupportedBlockingState;
+    }
+
     m_seekTargetPc = operationIndex;
     m_seeking = true;
+    m_safetyRejected = false;
 
     std::set<int> retainedBreakpoints = std::move(m_breakpoints);
     m_breakpoints.clear();
@@ -190,7 +211,12 @@ ProgramSeekStatus VM::LoadCompiledProgramAt(Program program,
         if (m_state == VMState::Paused && m_pc == operationIndex) {
             m_seekTargetPc.reset();
             DebugStep();
-            result = ProgramSeekStatus::Applied;
+            result = m_safetyRejected ? ProgramSeekStatus::UnsafeOperation
+                                      : ProgramSeekStatus::Applied;
+            break;
+        }
+        if (m_safetyRejected) {
+            result = ProgramSeekStatus::UnsafeOperation;
             break;
         }
         if (m_state == VMState::WaitingClick) {
@@ -204,8 +230,19 @@ ProgramSeekStatus VM::LoadCompiledProgramAt(Program program,
             continue;
         }
         if (m_state == VMState::WaitingChoice) {
-            result = ProgramSeekStatus::ChoicePathRequired;
-            break;
+            if (consumedChoices >= branchPath.size()) {
+                result = ProgramSeekStatus::ChoicePathRequired;
+                break;
+            }
+            const int choice = branchPath[consumedChoices];
+            if (choice < 0 || choice >= static_cast<int>(m_choices.size())) {
+                result = ProgramSeekStatus::ChoicePathRequired;
+                break;
+            }
+            SelectChoice(choice);
+            ++consumedChoices;
+            if (choicesConsumed) *choicesConsumed = consumedChoices;
+            continue;
         }
         if (m_state == VMState::WaitingVideo ||
             m_state == VMState::WaitingExternal) {
@@ -299,14 +336,23 @@ VMRuntimeState VM::CaptureState() const {
 
 bool VM::RestoreState(const VMRuntimeState& state,std::uint64_t nowMs) {
     if(state.scriptPath.empty()||!LoadProgram(state.scriptPath))return false;
+    return RestoreCompiledState(state, std::move(m_program), nowMs);
+}
+
+bool VM::RestoreCompiledState(const VMRuntimeState& state, Program program,
+                              std::uint64_t nowMs) {
+    if (state.scriptPath.empty() || !program.errors.empty()) return false;
+    m_program = std::move(program);
     if(state.pc<0||state.pc>static_cast<int>(m_program.code.size()))return false;
+    m_scriptPath = state.scriptPath;
     m_pc=state.pc;m_state=state.state;m_choices=state.choices;m_callStack.clear();
     m_callStack.reserve(state.callStack.size());for(const auto& frame:state.callStack)m_callStack.push_back({frame.script,frame.pc});
     m_speaker=state.speaker;m_pendingVoice=state.pendingVoice;m_textColor=state.textColor;
     m_outlineColor=state.outlineColor;m_textSpeed=state.textSpeed;m_textEffect=state.textEffect;
     m_chapter=state.chapter;m_currentBgm=state.currentBgm;m_currentLineSeen=state.currentLineSeen;
     m_nowMs=nowMs;m_timerStart=nowMs;m_timerMs=state.timerRemainingMs;m_skipBacklogOnce=false;
-    m_skipBreakOnce=false;m_stepping=false;m_stepBudget=0;m_debugResumeState.reset();return true;
+    m_skipBreakOnce=false;m_stepping=false;m_stepBudget=0;m_debugResumeState.reset();
+    m_seekTargetPc.reset();m_seeking=false;m_safetyRejected=false;return true;
 }
 
 bool VM::Blocking() const {
@@ -323,6 +369,13 @@ void VM::Run() {
 
         if (m_seekTargetPc && m_pc == *m_seekTargetPc) {
             m_state = VMState::Paused;
+            return;
+        }
+
+        if (m_executionSafetyHook &&
+            !m_executionSafetyHook(cmd, m_seeking)) {
+            m_safetyRejected = true;
+            m_state = VMState::WaitingExternal;
             return;
         }
 

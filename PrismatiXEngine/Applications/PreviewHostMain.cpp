@@ -23,6 +23,7 @@
 
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/Preview/PreviewProtocolV2.h"
+#include "Engine/Preview/PreviewSessionFactory.h"
 #include "Engine/Script/ScriptHost.h"
 #include "Engine/Preview/PerformancePreview.h"
 #include "Engine/Runtime.h"
@@ -144,6 +145,49 @@ std::string StatusMessage(const px::Status& status, const std::string_view fallb
     if (status.Diagnostics().empty()) return std::string(fallback);
     const auto& diagnostic = status.Diagnostics().front();
     return diagnostic.code + ": " + diagnostic.message;
+}
+
+const char* PreviewSeverityName(
+    const px::sdk::PreviewDiagnosticSeverity severity) {
+    switch (severity) {
+        case px::sdk::PreviewDiagnosticSeverity::Info:
+            return "info";
+        case px::sdk::PreviewDiagnosticSeverity::Warning:
+            return "warning";
+        case px::sdk::PreviewDiagnosticSeverity::Error:
+            return "error";
+        case px::sdk::PreviewDiagnosticSeverity::Fatal:
+            return "fatal";
+    }
+    return "error";
+}
+
+Json PreviewDiagnosticJson(
+    const px::sdk::PreviewSessionDiagnostic& diagnostic) {
+    return {{"severity", PreviewSeverityName(diagnostic.severity)},
+            {"code", diagnostic.code},
+            {"category", diagnostic.category},
+            {"message", diagnostic.message},
+            {"details", diagnostic.details},
+            {"source",
+             {{"resourceId", diagnostic.source.resourceId},
+              {"path", diagnostic.source.path},
+              {"nodeId", diagnostic.source.nodeId},
+              {"property", diagnostic.source.property},
+              {"line", diagnostic.source.line},
+              {"column", diagnostic.source.column}}},
+            {"operationId", diagnostic.operationId},
+            {"quickFix", diagnostic.quickFix},
+            {"operationIndex", diagnostic.operationIndex}};
+}
+
+px::Status PreviewSessionFailure(std::string code, std::string message) {
+    px::diag::Diagnostic diagnostic{
+        .severity = px::diag::Severity::Error,
+        .code = std::move(code),
+        .category = "Preview.Session",
+        .message = std::move(message)};
+    return px::Status::Fail(std::move(diagnostic));
 }
 
 struct UiPreviewUpdatePlan {
@@ -387,12 +431,73 @@ public:
         px::diag::Global().SetListener({});
         (void)m_uiPreview.Actions().UnregisterProvider("script");
         m_scriptHost.reset();
+        m_previewSession.reset();
         m_session.reset();
         m_runtime.reset();
         return 0;
     }
 
 private:
+    struct ScriptCheckpoint {
+        px::script::PendingCommandsState commands;
+        px::script::PendingActionsState actions;
+    };
+
+    std::optional<px::sdk::PreviewSafety> InspectOperationSafety(
+        const px::vn::Command& command) {
+        if (command.type != "action") return std::nullopt;
+        const Json payload = Json::parse(command.Get("value"), nullptr, false);
+        if (payload.is_discarded() || !payload.is_object() ||
+            !payload.contains("id") || !payload["id"].is_string())
+            return px::sdk::PreviewSafety{};
+        const auto* descriptor = m_uiPreview.Actions().Catalog().Find(
+            payload["id"].get<std::string>());
+        if (!descriptor) return px::sdk::PreviewSafety{};
+        return px::sdk::PreviewSafety{
+            descriptor->previewSafe, descriptor->deterministic,
+            descriptor->seekSafe, descriptor->rollbackSafe};
+    }
+
+    std::shared_ptr<const void> CaptureExternalCheckpoint() const {
+        if (!m_scriptHost) return {};
+        return std::make_shared<ScriptCheckpoint>(ScriptCheckpoint{
+            m_scriptHost->CapturePending(),
+            m_scriptHost->CapturePendingActions()});
+    }
+
+    px::Status RestoreExternalCheckpoint(
+        const std::shared_ptr<const void>& opaque) {
+        if (!opaque) {
+            if (m_scriptHost) m_scriptHost->CancelPending();
+            return px::Status::Ok();
+        }
+        if (!m_scriptHost)
+            return PreviewSessionFailure(
+                "PXPREVIEW-NATIVE-SCRIPT-001",
+                "JavaScript checkpoint cannot be restored without the script host.");
+        const auto checkpoint =
+            std::static_pointer_cast<const ScriptCheckpoint>(opaque);
+        m_scriptHost->CancelPending();
+        if (px::Status status =
+                m_scriptHost->RestorePending(checkpoint->commands);
+            !status)
+            return status;
+        return m_scriptHost->RestorePendingActions(checkpoint->actions);
+    }
+
+    void WritePreviewFailure(const Json& request, const std::string& code,
+                             const std::string& message,
+                             const px::sdk::PreviewCommandResult& result) {
+        Json response = Error(request, code, message);
+        response["previewStatus"] = static_cast<int>(result.status);
+        response["diagnostics"] = Json::array();
+        for (const auto& diagnostic : result.diagnostics) {
+            response["diagnostics"].push_back(PreviewDiagnosticJson(diagnostic));
+        }
+        Write(response);
+        if (m_previewSession) (void)m_previewSession->Events();
+    }
+
     void ProcessRequests() {
         std::optional<Json> pending;
         {
@@ -404,6 +509,7 @@ private:
         }
         if (!pending) return;
         Handle(*pending);
+        if (m_previewSession) (void)m_previewSession->Events();
         EmitRuntimeEventsIfChanged("request");
         DrainEvents();
     }
@@ -454,6 +560,90 @@ private:
         else if (*type == "seekPerformance") {
             SeekPerformance(request);
         }
+        else if (*type == "seekStory") {
+            if (!m_previewSession) {
+                Write(Error(request, "runtime-not-loaded", "Load a document before seeking Story Preview"));
+                return;
+            }
+            const auto operation = request.find("operationIndex");
+            if (operation == request.end() || !operation->is_number_integer()) {
+                Write(Error(request, "invalid-story-seek", "seekStory requires an integer operationIndex"));
+                return;
+            }
+            std::vector<int> branchPath;
+            if (const auto encoded = request.find("branchPath");
+                encoded != request.end()) {
+                if (!encoded->is_array()) {
+                    Write(Error(request, "invalid-story-seek", "seekStory branchPath must be an array"));
+                    return;
+                }
+                for (const auto& choice : *encoded) {
+                    if (!choice.is_number_integer() || choice.get<int>() < 0) {
+                        Write(Error(request, "invalid-story-seek", "seekStory branchPath must contain non-negative choice indices"));
+                        return;
+                    }
+                    branchPath.push_back(choice.get<int>());
+                }
+            }
+            const auto sought = m_previewSession->SeekStory(
+                {operation->get<int>(), std::move(branchPath)});
+            if (!sought.accepted) {
+                WritePreviewFailure(request, "story-seek-rejected",
+                                    "Story seek could not be completed.", sought);
+                return;
+            }
+            Json response = RuntimeStateResponse(request, "storySeekAccepted");
+            response["operationIndex"] = operation->get<int>();
+            Write(response);
+        }
+        else if (*type == "seekTimeline") {
+            if (!m_previewSession) {
+                Write(Error(request, "runtime-not-loaded", "Load a document before seeking a Runtime Timeline"));
+                return;
+            }
+            const auto handle = request.find("playbackHandle");
+            const auto seconds = request.find("time");
+            if (handle == request.end() || !handle->is_number_unsigned() ||
+                seconds == request.end() || !seconds->is_number()) {
+                Write(Error(request, "invalid-timeline-seek", "seekTimeline requires playbackHandle and time"));
+                return;
+            }
+            const auto sought = m_previewSession->SeekTimeline(
+                {handle->get<std::uint64_t>(), seconds->get<double>()});
+            if (!sought.accepted) {
+                WritePreviewFailure(request, "timeline-seek-rejected",
+                                    "Runtime Timeline seek could not be completed.",
+                                    sought);
+                return;
+            }
+            Json response = RuntimeStateResponse(request, "timelineSeekAccepted");
+            response["playbackHandle"] = handle->get<std::uint64_t>();
+            response["time"] = seconds->get<double>();
+            Write(response);
+        }
+        else if (*type == "resize") {
+            if (!m_previewSession) {
+                Write(Error(request, "runtime-not-loaded", "Load a document before resizing Preview"));
+                return;
+            }
+            const auto width = request.find("width");
+            const auto height = request.find("height");
+            const double scale = request.value("scale", 1.0);
+            if (width == request.end() || !width->is_number_integer() ||
+                height == request.end() || !height->is_number_integer()) {
+                Write(Error(request, "invalid-preview-size", "resize requires integer width and height"));
+                return;
+            }
+            const auto resized = m_previewSession->Resize(
+                width->get<int>(), height->get<int>(),
+                static_cast<float>(scale));
+            if (!resized.accepted) {
+                WritePreviewFailure(request, "preview-resize-rejected",
+                                    "Preview could not be resized.", resized);
+                return;
+            }
+            Write(RuntimeStateResponse(request, "resizeAccepted"));
+        }
         else if (*type == "advance") {
             if (!m_session) {
                 Write(Error(request, "runtime-not-loaded", "Load a document before advancing Preview"));
@@ -464,7 +654,12 @@ private:
                 Write(Error(request, "preview-cannot-advance", "Advance requires a click- or timer-waiting Runtime"));
                 return;
             }
-            m_session->Advance();
+            const auto advanced = m_previewSession->Advance();
+            if (!advanced.accepted) {
+                WritePreviewFailure(request, "preview-cannot-advance",
+                                    "Preview could not advance.", advanced);
+                return;
+            }
             Write(RuntimeStateResponse(request, "advanceAccepted"));
         }
         else if (*type == "selectChoice") {
@@ -478,7 +673,14 @@ private:
                 Write(Error(request, "invalid-choice-index", "Choice index must identify a current Runtime choice"));
                 return;
             }
-            m_session->SelectChoice(index->get<int>());
+            const auto selected =
+                m_previewSession->SelectChoice(index->get<int>());
+            if (!selected.accepted) {
+                WritePreviewFailure(request, "invalid-choice-index",
+                                    "Preview could not select the choice.",
+                                    selected);
+                return;
+            }
             Write(RuntimeStateResponse(request, "choiceAccepted"));
         }
         else if (*type == "setAudioLevels") {
@@ -518,11 +720,13 @@ private:
                 Write(Error(request, "runtime-not-loaded", "Load a document before controlling Preview"));
                 return;
             }
-            if (m_session->VM().State() == px::vn::VMState::Paused) {
-                m_session->VM().DebugContinue();
-            }
-            else {
-                m_session->VM().Resume();
+            const auto controlled = *type == "play"
+                ? m_previewSession->Play()
+                : m_previewSession->Continue();
+            if (!controlled.accepted) {
+                WritePreviewFailure(request, "preview-cannot-play",
+                                    "Preview could not resume.", controlled);
+                return;
             }
             Write(RuntimeStateResponse(request, *type == "play" ? "playAccepted" : "continueAccepted"));
         }
@@ -531,8 +735,11 @@ private:
                 Write(Error(request, "runtime-not-loaded", "Load a document before controlling Preview"));
                 return;
             }
-            if (!m_session->VM().DebugPause()) {
-                Write(Error(request, "preview-cannot-pause", "Preview is already paused or has finished"));
+            const auto paused = m_previewSession->Pause();
+            if (!paused.accepted) {
+                WritePreviewFailure(request, "preview-cannot-pause",
+                                    "Preview is already paused or has finished.",
+                                    paused);
                 return;
             }
             Write(RuntimeStateResponse(request, "pauseAccepted"));
@@ -550,6 +757,13 @@ private:
                 Write(Error(request, "runtime-not-loaded", "Load a document before capturing Preview state"));
                 return;
             }
+            const auto checkpoint = m_previewSession->CaptureCheckpoint();
+            if (!checkpoint.accepted || !checkpoint.checkpoint) {
+                WritePreviewFailure(request, "capture-rejected",
+                                    "Preview checkpoint could not be captured.",
+                                    checkpoint);
+                return;
+            }
             Json response = RuntimeStateResponse(request, "stateCaptured");
             const auto state = m_session->CaptureState();
             response["variables"] = Json::object();
@@ -561,6 +775,32 @@ private:
                 response["callStack"].push_back({ { "script", frame.script }, { "programCounter", frame.pc } });
             }
             response["runtimeSnapshot"] = RuntimeSnapshotPayload(state);
+            response["checkpointId"] = checkpoint.checkpoint->id;
+            response["operationIndex"] = checkpoint.checkpoint->operationIndex;
+            response["branchPath"] = checkpoint.checkpoint->branchPath;
+            Write(response);
+        }
+        else if (*type == "restoreCheckpoint") {
+            if (!m_previewSession) {
+                Write(Error(request, "runtime-not-loaded", "Load a document before restoring Preview state"));
+                return;
+            }
+            const auto checkpointId = request.find("checkpointId");
+            if (checkpointId == request.end() ||
+                !checkpointId->is_number_unsigned()) {
+                Write(Error(request, "invalid-checkpoint", "restoreCheckpoint requires an unsigned checkpointId"));
+                return;
+            }
+            const auto restored = m_previewSession->RestoreCheckpoint(
+                checkpointId->get<std::uint64_t>());
+            if (!restored.accepted) {
+                WritePreviewFailure(request, "checkpoint-restore-rejected",
+                                    "Preview checkpoint could not be restored.",
+                                    restored);
+                return;
+            }
+            Json response = RuntimeStateResponse(request, "checkpointRestored");
+            response["checkpointId"] = checkpointId->get<std::uint64_t>();
             Write(response);
         }
         else if (*type == "setBreakpoints") {
@@ -697,6 +937,7 @@ private:
         else if (*type == "stop") {
             (void)m_uiPreview.Actions().UnregisterProvider("script");
             m_scriptHost.reset();
+            m_previewSession.reset();
             m_session.reset();
             m_runtime.reset();
             m_projectRoot.clear();
@@ -1068,19 +1309,20 @@ private:
             return;
         }
         spdlog::info("Native runtime ready");
-        if (!m_session->StartRuntimeIrText(loaded->second, *irPath)) {
+        const px::sdk::PreviewApplyRequest previewRequest{
+            *documentId, committedRevision, loaded->second, *irPath};
+        const px::sdk::PreviewApplyResult previewApply =
+            incremental ? m_previewSession->Patch(previewRequest)
+                        : m_previewSession->Apply(previewRequest);
+        if (!previewApply.accepted) {
             Json response = Error(request, "runtime-program-rejected", "RuntimeSession rejected the compiled Runtime IR program");
             response["diagnostics"] = Json::array();
-            for (const auto& diagnostic : m_session->LastStartDiagnostics()) {
+            for (const auto& diagnostic : previewApply.diagnostics) {
                 response["diagnostics"].push_back(
-                    { { "code", diagnostic.code },
-                      { "category", diagnostic.category },
-                      { "message", diagnostic.message },
-                      { "details", diagnostic.details },
-                      { "source", { { "resourceId", diagnostic.source.resourceId }, { "path", diagnostic.source.path }, { "property", diagnostic.source.property }, { "line", diagnostic.source.line } } } }
-                );
+                    PreviewDiagnosticJson(diagnostic));
             }
             Write(response);
+            (void)m_previewSession->Events();
             return;
         }
         spdlog::info("Runtime IR program started");
@@ -1097,6 +1339,10 @@ private:
         response["documentId"] = *documentId;
         response["appliedRevision"] = committedRevision;
         response["operationCount"] = parsed.document.operations.size();
+        response["applyMode"] = !incremental
+            ? "fullRuntimeRestart"
+            : previewApply.inPlace ? "inPlaceRuntimeIrPatch"
+                                   : "structuralRuntimeRestart";
         response["characterCount"] = m_characterCount;
         response["characterResourcesRevision"] = m_characterResourcesDeclared ? px::sdk::kCharacterResourcesContractRevision : 0;
         response["gameCatalogResourcesRevision"] = m_gameCatalogResourcesDeclared ? px::sdk::kGameCatalogResourcesContractRevision : 0;
@@ -1105,6 +1351,7 @@ private:
         response["gameCatalogGalleryItemCount"] = m_gameCatalogGalleryItemCount;
         response["renderMode"] = "nativeWindow";
         Write(response);
+        (void)m_previewSession->Events();
     }
 
     void ApplyUiScene(const Json& request) {
@@ -1604,6 +1851,7 @@ private:
         m_runtimeStartupErrorMessage.clear();
         (void)m_uiPreview.Actions().UnregisterProvider("script");
         m_scriptHost.reset();
+        m_previewSession.reset();
         m_session.reset();
         m_runtime.reset();
         m_appliedRevisions.clear();
@@ -1647,8 +1895,9 @@ private:
         m_characterResourcesDeclared = characterResourcesDeclared;
         spdlog::info("Preview character catalog loaded count={} source={}", m_gameCatalog.Characters().size(), characterResourcesDeclared ? "characterResources=1" : "legacy Game.pxres fallback");
         m_hud.SetActionSink([this](const px::ui::GalgameAction& action) {
-            if (action.command == "choice.select" && m_session) {
-                m_session->SelectChoice(std::atoi(action.argument.c_str()));
+            if (action.command == "choice.select" && m_previewSession) {
+                (void)m_previewSession->SelectChoice(
+                    std::atoi(action.argument.c_str()));
             }
         });
         m_projectRoot = projectRoot;
@@ -1735,6 +1984,27 @@ private:
         if (!m_scriptBreakpoints.empty()) {
             (void)m_scriptHost->SetDebugBreakpoints(m_scriptBreakpoints);
         }
+        m_previewSession = px::preview::CreatePreviewSession(
+            *m_session,
+            {.inspectSafety = [this](const px::vn::Command& command) {
+                 return InspectOperationSafety(command);
+             },
+             .resize = [this](const int width, const int height,
+                              const float scale) {
+                 if (m_runtime && m_runtime->GetWindow().Resize(
+                         std::max(1, static_cast<int>(width * scale)),
+                         std::max(1, static_cast<int>(height * scale))))
+                     return px::Status::Ok();
+                 return PreviewSessionFailure(
+                     "PXPREVIEW-NATIVE-RESIZE-001",
+                     "Native Preview window could not be resized.");
+             },
+             .captureExternalState = [this] {
+                 return CaptureExternalCheckpoint();
+             },
+             .restoreExternalState = [this](const auto& state) {
+                 return RestoreExternalCheckpoint(state);
+             }});
         m_scriptHost->Emit("engine.ready");
         return true;
     }
@@ -1758,7 +2028,14 @@ private:
             m_uiPreview.Render(m_runtime->Renderer());
             return;
         }
-        m_session->Update(now, delta);
+        const auto ticked = m_previewSession->Tick(now, delta);
+        if (!ticked.accepted) {
+            Json diagnostics = Json::array();
+            for (const auto& diagnostic : ticked.diagnostics)
+                diagnostics.push_back(PreviewDiagnosticJson(diagnostic));
+            m_events->Push("diagnostics",
+                           Json{{"diagnostics", std::move(diagnostics)}});
+        }
         m_choices.clear();
         if (m_session->VM().State() == px::vn::VMState::WaitingChoice) {
             for (const auto& choice : m_session->VM().Choices()) m_choices.push_back(choice.text);
@@ -1770,10 +2047,11 @@ private:
         m_runtime->Renderer().GetLogicalSize(width, height);
         const bool consumed = m_hud.Update(input, width, height, delta);
         if (!consumed && input.LeftClick() && m_session->VM().State() != px::vn::VMState::WaitingChoice) {
-            m_session->Advance();
+            (void)m_previewSession->Advance();
         }
         m_session->Stage().Render();
         m_hud.Render(m_runtime->Renderer());
+        (void)m_previewSession->Events();
     }
 
     RequestQueue& m_queue;
@@ -1781,6 +2059,7 @@ private:
     SerialStdoutWriter m_stdout;
     std::unique_ptr<px::Runtime> m_runtime;
     std::unique_ptr<px::RuntimeSession> m_session;
+    std::unique_ptr<px::sdk::PreviewSession> m_previewSession;
     px::vn::GameCatalog m_gameCatalog;
     px::script::ScriptServices m_scriptServices;
     std::unique_ptr<px::script::ScriptHost> m_scriptHost;

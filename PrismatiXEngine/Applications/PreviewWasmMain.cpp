@@ -2,6 +2,7 @@
 #include "Engine/Preview/LocalizationPreview.h"
 #include "Engine/Preview/PerformancePreview.h"
 #include "Engine/Preview/ProgressionPreview.h"
+#include "Engine/Preview/PreviewSessionFactory.h"
 
 #include "Engine/Runtime.h"
 #include "Engine/Script/ScriptHost.h"
@@ -52,28 +53,69 @@ std::string_view StateName(const px::vn::VMState state) {
     return "unknown";
 }
 
-std::string_view PatchStatusName(const px::vn::ProgramPatchStatus status) {
+std::string_view PreviewStatusName(const px::sdk::PreviewSessionStatus status) {
     switch (status) {
-        case px::vn::ProgramPatchStatus::Applied: return "applied";
-        case px::vn::ProgramPatchStatus::InvalidProgram: return "invalidProgram";
-        case px::vn::ProgramPatchStatus::ScriptMismatch: return "scriptMismatch";
-        case px::vn::ProgramPatchStatus::UnsupportedState: return "unsupportedState";
-        case px::vn::ProgramPatchStatus::MissingAnchor: return "missingAnchor";
-        case px::vn::ProgramPatchStatus::StructuralChange: return "structuralChange";
+        case px::sdk::PreviewSessionStatus::Applied: return "applied";
+        case px::sdk::PreviewSessionStatus::Patched: return "patched";
+        case px::sdk::PreviewSessionStatus::Restarted: return "restarted";
+        case px::sdk::PreviewSessionStatus::Running: return "running";
+        case px::sdk::PreviewSessionStatus::Paused: return "paused";
+        case px::sdk::PreviewSessionStatus::Advanced: return "advanced";
+        case px::sdk::PreviewSessionStatus::ChoiceSelected: return "choiceSelected";
+        case px::sdk::PreviewSessionStatus::StorySeeked: return "storySeeked";
+        case px::sdk::PreviewSessionStatus::TimelineSeeked: return "timelineSeeked";
+        case px::sdk::PreviewSessionStatus::CheckpointCaptured: return "checkpointCaptured";
+        case px::sdk::PreviewSessionStatus::CheckpointRestored: return "checkpointRestored";
+        case px::sdk::PreviewSessionStatus::Resized: return "resized";
+        case px::sdk::PreviewSessionStatus::Ticked: return "ticked";
+        case px::sdk::PreviewSessionStatus::InvalidArgument: return "invalidArgument";
+        case px::sdk::PreviewSessionStatus::NotReady: return "notReady";
+        case px::sdk::PreviewSessionStatus::RevisionConflict: return "revisionConflict";
+        case px::sdk::PreviewSessionStatus::RuntimeRejected: return "runtimeRejected";
+        case px::sdk::PreviewSessionStatus::ChoicePathRequired: return "choicePathRequired";
+        case px::sdk::PreviewSessionStatus::UnsafeOperation: return "unsafeOperation";
+        case px::sdk::PreviewSessionStatus::UnsupportedAsync: return "unsupportedAsync";
+        case px::sdk::PreviewSessionStatus::UnknownCheckpoint: return "unknownCheckpoint";
+        case px::sdk::PreviewSessionStatus::TimelineRejected: return "timelineRejected";
+        case px::sdk::PreviewSessionStatus::Finished: return "finished";
     }
     return "unknown";
 }
 
-std::string_view SeekStatusName(const px::vn::ProgramSeekStatus status) {
-    switch (status) {
-        case px::vn::ProgramSeekStatus::Applied: return "applied";
-        case px::vn::ProgramSeekStatus::InvalidProgram: return "invalidProgram";
-        case px::vn::ProgramSeekStatus::InvalidOperation: return "invalidOperation";
-        case px::vn::ProgramSeekStatus::ChoicePathRequired: return "choicePathRequired";
-        case px::vn::ProgramSeekStatus::UnsupportedBlockingState: return "unsupportedBlockingState";
-        case px::vn::ProgramSeekStatus::Unreachable: return "unreachable";
+std::string_view PreviewSeverityName(
+    const px::sdk::PreviewDiagnosticSeverity severity) {
+    switch (severity) {
+        case px::sdk::PreviewDiagnosticSeverity::Info: return "info";
+        case px::sdk::PreviewDiagnosticSeverity::Warning: return "warning";
+        case px::sdk::PreviewDiagnosticSeverity::Error: return "error";
+        case px::sdk::PreviewDiagnosticSeverity::Fatal: return "fatal";
     }
-    return "unknown";
+    return "error";
+}
+
+Json PreviewDiagnosticJson(
+    const px::sdk::PreviewSessionDiagnostic& diagnostic,
+    const std::string_view fallbackDocumentId = {}) {
+    const std::string documentId = diagnostic.source.resourceId.empty()
+        ? std::string(fallbackDocumentId)
+        : diagnostic.source.resourceId;
+    return {{"severity", PreviewSeverityName(diagnostic.severity)},
+            {"code", diagnostic.code},
+            {"category", diagnostic.category},
+            {"message", diagnostic.message},
+            {"details", diagnostic.details},
+            {"source",
+             {{"documentId", documentId},
+              {"resourceId", diagnostic.source.resourceId},
+              {"path", diagnostic.source.path},
+              {"blockId", diagnostic.source.nodeId},
+              {"nodeId", diagnostic.source.nodeId},
+              {"property", diagnostic.source.property},
+              {"line", diagnostic.source.line},
+              {"column", diagnostic.source.column},
+              {"operation", diagnostic.operationIndex}}},
+            {"operationId", diagnostic.operationId},
+            {"quickFix", diagnostic.quickFix}};
 }
 
 px::ui::DialoguePresentation DialogueView(
@@ -146,6 +188,32 @@ public:
             px::RuntimeSession::Services{m_runtime.VFS(), m_runtime.Audio(),
                                          m_runtime.Renderer(),
                                          m_runtime.Assets()});
+        m_previewSession = px::preview::CreatePreviewSession(
+            *m_session,
+            {.inspectSafety = [this](const px::vn::Command& command) {
+                 return InspectOperationSafety(command);
+             },
+             .resize = [this](const int width, const int height,
+                              const float scale) {
+                 const int pixelWidth = std::max(
+                     1, static_cast<int>(static_cast<float>(width) * scale));
+                 const int pixelHeight = std::max(
+                     1, static_cast<int>(static_cast<float>(height) * scale));
+                 if (m_runtime.GetWindow().Resize(pixelWidth, pixelHeight))
+                     return px::Status::Ok();
+                 px::diag::Diagnostic diagnostic;
+                 diagnostic.severity = px::diag::Severity::Error;
+                 diagnostic.code = "PXWASM-RESIZE-001";
+                 diagnostic.category = "Preview.Viewport";
+                 diagnostic.message = "Preview canvas could not be resized.";
+                 return px::Status::Fail(std::move(diagnostic));
+             },
+             .captureExternalState = [this] {
+                 return CaptureExternalCheckpoint();
+             },
+             .restoreExternalState = [this](const auto& state) {
+                 return RestoreExternalCheckpoint(state);
+             }});
         m_hud.SetBehaviorVariableAccess(
             [this](const std::string_view name) -> std::optional<px::Variant> {
                 const auto* value = m_session->Variables().GetValue(name);
@@ -490,14 +558,18 @@ public:
                     argumentsValid = static_cast<bool>(normalized);
                 }
                 if (descriptor && descriptor->available &&
-                    !descriptor->destructiveInPreview && argumentsValid)
+                    !descriptor->destructiveInPreview &&
+                    descriptor->previewSafe && descriptor->deterministic &&
+                    argumentsValid)
                     continue;
                 const std::string message = !descriptor
                     ? "Timeline event references an Action that is absent from the pinned Runtime catalog."
                     : !descriptor->available
                         ? "Timeline event Action is unavailable: " +
                               descriptor->unavailableReason
-                        : descriptor->destructiveInPreview
+                        : descriptor->destructiveInPreview ||
+                                  !descriptor->previewSafe ||
+                                  !descriptor->deterministic
                             ? "Timeline event Action is blocked by Preview Safe Mode. Run Native Check to verify it."
                             : "Timeline event arguments do not satisfy the typed Action contract.";
                 m_protocol.Emit(
@@ -599,32 +671,18 @@ public:
         }
         constexpr std::string_view runtimeIrPath =
             "memory://preview/runtime-ir.json";
-        px::vn::ProgramPatchStatus patchStatus =
-            px::vn::ProgramPatchStatus::StructuralChange;
-        bool runtimeInstalled = false;
-        if (patch) {
-            patchStatus =
-                m_session->PatchRuntimeIrText(request.runtimeIr,
-                                              std::string(runtimeIrPath));
-            runtimeInstalled =
-                patchStatus == px::vn::ProgramPatchStatus::Applied;
-        }
-        if (!runtimeInstalled &&
-            !m_session->StartRuntimeIrText(request.runtimeIr,
-                                           std::string(runtimeIrPath))) {
+        const px::sdk::PreviewApplyRequest previewRequest{
+            request.documentId, request.revision, request.runtimeIr,
+            std::string(runtimeIrPath)};
+        const px::sdk::PreviewApplyResult previewApply =
+            patch ? m_previewSession->Patch(previewRequest)
+                  : m_previewSession->Apply(previewRequest);
+        const bool runtimeInstalled = previewApply.accepted;
+        if (!runtimeInstalled) {
             Json diagnostics = Json::array();
-            for (const auto& diagnostic : m_session->LastStartDiagnostics()) {
+            for (const auto& diagnostic : previewApply.diagnostics) {
                 diagnostics.push_back(
-                    {{"severity", "error"},
-                     {"code", diagnostic.code},
-                     {"category", diagnostic.category},
-                     {"message", diagnostic.message},
-                     {"details", diagnostic.details},
-                     {"source",
-                      {{"documentId", request.documentId},
-                       {"blockId", diagnostic.source.resourceId},
-                       {"path", diagnostic.source.path},
-                       {"line", diagnostic.source.line}}}});
+                    PreviewDiagnosticJson(diagnostic, request.documentId));
             }
             m_protocol.Emit("diagnostics",
                             Json{{"diagnostics", diagnostics}}.dump());
@@ -632,7 +690,7 @@ public:
         }
         const bool performanceChanged =
             performancePlan &&
-            (!patch || !runtimeInstalled ||
+            (!patch || !previewApply.inPlace ||
              performancePlan->revision != m_performanceRevision);
         const bool performanceRemoved =
             !performancePlan && m_performanceSequence.has_value();
@@ -758,14 +816,15 @@ public:
                       : 0},
                  {"reloadPlan",
                   !patch ? "fullApply"
-                         : runtimeInstalled ? "inPlaceRuntimeIrPatch"
-                                            : "structuralRuntimeRestart"},
+                         : previewApply.inPlace ? "inPlaceRuntimeIrPatch"
+                                                : "structuralRuntimeRestart"},
                  {"patchFallbackReason",
-                  patch && !runtimeInstalled
-                      ? std::string(PatchStatusName(patchStatus))
+                  patch && !previewApply.inPlace
+                      ? std::string(PreviewStatusName(previewApply.status))
                       : std::string{}},
                  {"appliedRevision", request.revision}}
                 .dump());
+        (void)m_previewSession->Events();
         return 1;
     }
 
@@ -779,17 +838,16 @@ public:
         const std::string& command = request.command;
         if (command == "play" || command == "continue") {
             m_operationFocusOverride.reset();
-            if (command == "play" &&
-                m_session->VM().State() == px::vn::VMState::Finished) {
-                if (m_runtimeIrJson.empty() ||
-                    !m_session->StartRuntimeIrText(
-                        m_runtimeIrJson,
-                        "memory://preview/runtime-ir.json")) {
-                    EmitControlDiagnostic(
-                        "PXWASM-PLAY-001",
-                        "The applied Story could not restart from its first operation.");
-                    return 0;
-                }
+            const bool restarting = command == "play" &&
+                m_session->VM().State() == px::vn::VMState::Finished;
+            const auto previewResult = command == "play"
+                ? m_previewSession->Play()
+                : m_previewSession->Continue();
+            if (!previewResult.accepted) {
+                EmitPreviewDiagnostics(previewResult, "PXWASM-PLAY-001");
+                return 0;
+            }
+            if (restarting) {
                 m_choices.clear();
                 m_autoTimerStartedAtMs = 0;
                 m_lastFocus.clear();
@@ -809,15 +867,12 @@ public:
             }
             m_paused = false;
             SetPerformanceAudioPaused(false);
-            m_session->VM().DebugContinue();
             m_protocol.Emit("audioState",
                             Json{{"status", "unlockRequested"}}.dump());
         } else if (command == "pause") {
-            const bool vmPaused = m_session->VM().DebugPause();
-            if (!vmPaused && !m_performanceSequence) {
-                EmitControlDiagnostic(
-                    "PXWASM-DEBUG-001",
-                    "Preview is already paused or has finished.");
+            const auto previewResult = m_previewSession->Pause();
+            if (!previewResult.accepted && !m_performanceSequence) {
+                EmitPreviewDiagnostics(previewResult, "PXWASM-DEBUG-001");
                 return 0;
             }
             m_paused = true;
@@ -836,7 +891,11 @@ public:
             SetPerformanceAudioPaused(true);
         } else if (command == "advance") {
             m_operationFocusOverride.reset();
-            m_session->Advance();
+            const auto previewResult = m_previewSession->Advance();
+            if (!previewResult.accepted) {
+                EmitPreviewDiagnostics(previewResult, "PXWASM-ADVANCE-001");
+                return 0;
+            }
         } else if (command == "input") {
             m_operationFocusOverride.reset();
             if (payload.value("action", std::string{}) != "pointerClick" ||
@@ -867,7 +926,11 @@ public:
             if (index < 0 ||
                 index >= static_cast<int>(m_session->VM().Choices().size()))
                 return 0;
-            m_session->SelectChoice(index);
+            const auto previewResult = m_previewSession->SelectChoice(index);
+            if (!previewResult.accepted) {
+                EmitPreviewDiagnostics(previewResult, "PXWASM-CHOICE-001");
+                return 0;
+            }
         } else if (command == "setAudioLevels") {
             const auto levels = payload.find("levels");
             if (levels == payload.end() || !levels->is_object() ||
@@ -917,7 +980,7 @@ public:
                      {"sfx", audio.sfxVolume},
                      {"ambience", audio.ambienceVolume}}
                     .dump());
-        } else if (command == "seek" &&
+        } else if ((command == "seekStory" || command == "seek") &&
                    (payload.contains("operation") ||
                     payload.contains("blockId"))) {
             int operationIndex = -1;
@@ -933,15 +996,17 @@ public:
                 operationIndex = operation->get<int>();
             } else if (blockId != payload.end() && blockId->is_string()) {
                 const std::string requestedSourceId = blockId->get<std::string>();
-                const auto& code = m_session->VM().CurrentProgram().code;
+                const auto runtimeIr = px::sdk::ParseRuntimeIr(m_runtimeIrJson);
                 const auto found = std::find_if(
-                    code.begin(), code.end(),
-                    [&requestedSourceId](const px::vn::Command& command) {
-                        return command.sourceId == requestedSourceId;
+                    runtimeIr.document.operations.begin(),
+                    runtimeIr.document.operations.end(),
+                    [&requestedSourceId](const px::sdk::RuntimeIrOperation& item) {
+                        return item.sourceId == requestedSourceId;
                     });
-                if (found != code.end()) {
+                if (found != runtimeIr.document.operations.end()) {
                     operationIndex = static_cast<int>(
-                        std::distance(code.begin(), found));
+                        std::distance(runtimeIr.document.operations.begin(),
+                                      found));
                 }
             }
             if (m_runtimeIrJson.empty() || operationIndex < 0) {
@@ -950,33 +1015,29 @@ public:
                     "The requested Story Block does not map to an operation in the applied Runtime IR.");
                 return 0;
             }
-            const auto seekStatus = m_session->SeekRuntimeIrOperation(
-                m_runtimeIrJson, "memory://preview/runtime-ir.json",
-                operationIndex);
-            if (seekStatus != px::vn::ProgramSeekStatus::Applied) {
-                const bool choiceRequired =
-                    seekStatus == px::vn::ProgramSeekStatus::ChoicePathRequired;
-                Json source{{"documentId", request.documentId}};
-                if (blockId != payload.end() && blockId->is_string())
-                    source["blockId"] = blockId->get<std::string>();
-                Json diagnostic{
-                    {"severity", "error"},
-                    {"code", choiceRequired ? "PXWASM-OP-SEEK-003"
-                                             : "PXWASM-OP-SEEK-002"},
-                    {"category", "Preview.Story"},
-                    {"message", choiceRequired
-                                    ? "The requested operation is beyond an unresolved choice path. Select the branch in Preview first."
-                                    : "The Runtime could not deterministically seek to the requested Story operation."},
-                    {"details", std::string(SeekStatusName(seekStatus))},
-                    {"suggestion", choiceRequired
-                                       ? "Play to the choice, select a branch, then navigate within that active path."
-                                       : "Apply the latest committed revision and choose a reachable Story Block."},
-                    {"source", std::move(source)},
-                };
-                m_protocol.Emit(
-                    "diagnostics",
-                    Json{{"diagnostics", Json::array({std::move(diagnostic)})}}
-                        .dump());
+            std::vector<int> branchPath;
+            if (const auto encodedPath = payload.find("branchPath");
+                encodedPath != payload.end()) {
+                if (!encodedPath->is_array()) {
+                    EmitControlDiagnostic(
+                        "PXWASM-OP-SEEK-004",
+                        "Story seek branchPath must be an array of choice indices.");
+                    return 0;
+                }
+                for (const auto& choice : *encodedPath) {
+                    if (!choice.is_number_integer() || choice.get<int>() < 0) {
+                        EmitControlDiagnostic(
+                            "PXWASM-OP-SEEK-004",
+                            "Story seek branchPath must contain non-negative choice indices.");
+                        return 0;
+                    }
+                    branchPath.push_back(choice.get<int>());
+                }
+            }
+            const auto previewResult = m_previewSession->SeekStory(
+                {operationIndex, std::move(branchPath)});
+            if (!previewResult.accepted) {
+                EmitPreviewDiagnostics(previewResult, "PXWASM-OP-SEEK-002");
                 return 0;
             }
             m_operationFocusOverride = operationIndex;
@@ -1002,10 +1063,31 @@ public:
                      {"operation", operationIndex + 1},
                      {"operationIndex", operationIndex},
                      {"operationTotal",
-                      m_session->VM().CurrentProgram().code.size()}}
+                      px::sdk::ParseRuntimeIr(m_runtimeIrJson)
+                          .document.operations.size()}}
                     .dump());
             EmitFocus(true);
-        } else if (command == "seek") {
+        } else if (command == "seekTimeline" &&
+                   payload.contains("playbackHandle")) {
+            const auto handle = payload.find("playbackHandle");
+            const double time = payload.value(
+                "time", std::numeric_limits<double>::quiet_NaN());
+            if (handle == payload.end() || !handle->is_number_unsigned()) {
+                EmitControlDiagnostic(
+                    "PXWASM-TIMELINE-SEEK-001",
+                    "Timeline seek requires an unsigned playbackHandle.");
+                return 0;
+            }
+            const auto previewResult = m_previewSession->SeekTimeline(
+                {handle->get<std::uint64_t>(), time});
+            if (!previewResult.accepted) {
+                EmitPreviewDiagnostics(previewResult,
+                                       "PXWASM-TIMELINE-SEEK-002");
+                return 0;
+            }
+            m_paused = true;
+            SetPerformanceAudioPaused(true);
+        } else if (command == "seek" || command == "seekTimeline") {
             m_operationFocusOverride.reset();
             const double time = payload.value(
                 "time", std::numeric_limits<double>::quiet_NaN());
@@ -1271,8 +1353,42 @@ public:
                 Json{{"scriptWatches", std::move(results)}});
             return 1;
         } else if (command == "capture") {
+            const auto checkpoint = m_previewSession->CaptureCheckpoint();
+            if (!checkpoint.accepted || !checkpoint.checkpoint) {
+                EmitPreviewDiagnostics(checkpoint, "PXWASM-CAPTURE-001");
+                return 0;
+            }
             EmitFocus(true);
-            EmitDebugControlResult(command, true);
+            EmitDebugControlResult(
+                command, true, nullptr, nullptr,
+                Json{{"checkpointId", checkpoint.checkpoint->id},
+                     {"operationIndex",
+                      checkpoint.checkpoint->operationIndex},
+                     {"branchPath", checkpoint.checkpoint->branchPath}});
+            (void)m_previewSession->Events();
+            return 1;
+        } else if (command == "restoreCheckpoint") {
+            const auto checkpointId = payload.find("checkpointId");
+            if (checkpointId == payload.end() ||
+                !checkpointId->is_number_unsigned()) {
+                EmitControlDiagnostic(
+                    "PXWASM-CHECKPOINT-001",
+                    "restoreCheckpoint requires an unsigned checkpointId.");
+                return 0;
+            }
+            const auto restored = m_previewSession->RestoreCheckpoint(
+                checkpointId->get<std::uint64_t>());
+            if (!restored.accepted) {
+                EmitPreviewDiagnostics(restored,
+                                       "PXWASM-CHECKPOINT-002");
+                return 0;
+            }
+            m_paused = true;
+            SetPerformanceAudioPaused(true);
+            EmitDebugControlResult(
+                command, true, nullptr, nullptr,
+                Json{{"checkpointId", checkpointId->get<std::uint64_t>()}});
+            (void)m_previewSession->Events();
             return 1;
         } else if (command == "stop") {
             StopPerformanceAudio();
@@ -1283,8 +1399,10 @@ public:
         } else {
             return 0;
         }
-        if (command != "activateUiControl" && command != "seek")
+        if (command != "activateUiControl" && command != "seek" &&
+            command != "seekStory" && command != "seekTimeline")
             EmitDebugControlResult(command, false);
+        (void)m_previewSession->Events();
         return 1;
     }
 
@@ -1294,9 +1412,12 @@ public:
             SetPerformanceAudioPaused(!visible);
         m_visible = visible;
         if (!m_ready || width <= 0 || height <= 0 || dpr <= 0.0) return 0;
-        const int pixelWidth = std::max(1, static_cast<int>(width * dpr));
-        const int pixelHeight = std::max(1, static_cast<int>(height * dpr));
-        if (!m_runtime.GetWindow().Resize(pixelWidth, pixelHeight)) return 0;
+        const auto resized = m_previewSession->Resize(
+            width, height, static_cast<float>(dpr));
+        if (!resized.accepted) {
+            EmitPreviewDiagnostics(resized, "PXWASM-RESIZE-001");
+            return 0;
+        }
         m_protocol.Emit("state",
                         Json{{"status", "resized"},
                              {"cssWidth", width},
@@ -1304,6 +1425,7 @@ public:
                              {"devicePixelRatio", dpr},
                              {"visible", visible}}
                             .dump());
+        (void)m_previewSession->Events();
         return 1;
     }
 
@@ -1332,8 +1454,14 @@ public:
                 m_session->VM().NotifyExternalDone();
         }
         const std::uint64_t nowMs = m_runtime.GetClock().NowMs();
-        if (!m_paused)
-            m_session->Update(nowMs, delta);
+        if (!m_paused) {
+            const auto ticked = m_previewSession->Tick(nowMs, delta);
+            if (!ticked.accepted) {
+                EmitPreviewDiagnostics(ticked, "PXWASM-TICK-001");
+                m_paused = true;
+                return 0;
+            }
+        }
         if (!m_paused && m_performanceSequence) {
             const double previousPerformanceTime = m_performanceTime;
             m_performanceTime = std::min(
@@ -1394,7 +1522,7 @@ public:
         if (!consumed && m_runtime.GetInput().LeftClick() &&
             m_hud.CurrentScreen() == px::ui::GalgameUI::Screen::HUD &&
             m_session->VM().State() != px::vn::VMState::WaitingChoice) {
-            m_session->Advance();
+            (void)m_previewSession->Advance();
             m_autoMode = false;
             m_skipMode = false;
             m_autoTimerStartedAtMs = 0;
@@ -1403,6 +1531,7 @@ public:
         m_hud.Render(m_runtime.Renderer());
         m_runtime.EndFrame();
         EmitFocus(false);
+        (void)m_previewSession->Events();
         return 1;
     }
 
@@ -1413,6 +1542,80 @@ public:
 
 private:
     static constexpr std::size_t kRuntimeSnapshotItemLimit = 128;
+
+    struct ScriptCheckpoint {
+        px::script::PendingCommandsState commands;
+        px::script::PendingActionsState actions;
+    };
+
+    std::optional<px::sdk::PreviewSafety> InspectOperationSafety(
+        const px::vn::Command& command) {
+        if (command.type != "action") return std::nullopt;
+        const Json payload = Json::parse(command.Get("value"), nullptr, false);
+        if (payload.is_discarded() || !payload.is_object() ||
+            !payload.contains("id") || !payload["id"].is_string())
+            return px::sdk::PreviewSafety{};
+        const auto* descriptor = m_hud.Actions().Catalog().Find(
+            payload["id"].get<std::string>());
+        if (!descriptor) return px::sdk::PreviewSafety{};
+        return px::sdk::PreviewSafety{
+            descriptor->previewSafe, descriptor->deterministic,
+            descriptor->seekSafe, descriptor->rollbackSafe};
+    }
+
+    std::shared_ptr<const void> CaptureExternalCheckpoint() const {
+        if (!m_scriptHost) return {};
+        return std::make_shared<ScriptCheckpoint>(ScriptCheckpoint{
+            m_scriptHost->CapturePending(),
+            m_scriptHost->CapturePendingActions()});
+    }
+
+    px::Status RestoreExternalCheckpoint(
+        const std::shared_ptr<const void>& opaque) {
+        if (!opaque) {
+            if (m_scriptHost) m_scriptHost->CancelPending();
+            return px::Status::Ok();
+        }
+        if (!m_scriptHost) {
+            px::diag::Diagnostic diagnostic;
+            diagnostic.severity = px::diag::Severity::Error;
+            diagnostic.code = "PXWASM-CHECKPOINT-SCRIPT-001";
+            diagnostic.category = "Preview.Script";
+            diagnostic.message =
+                "Script checkpoint cannot be restored without the JavaScript host.";
+            return px::Status::Fail(std::move(diagnostic));
+        }
+        const auto checkpoint =
+            std::static_pointer_cast<const ScriptCheckpoint>(opaque);
+        m_scriptHost->CancelPending();
+        if (px::Status status =
+                m_scriptHost->RestorePending(checkpoint->commands);
+            !status)
+            return status;
+        return m_scriptHost->RestorePendingActions(checkpoint->actions);
+    }
+
+    void EmitPreviewDiagnostics(
+        const px::sdk::PreviewCommandResult& result,
+        const std::string_view fallbackCode) {
+        Json diagnostics = Json::array();
+        for (const auto& diagnostic : result.diagnostics) {
+            Json entry = PreviewDiagnosticJson(
+                diagnostic, m_protocol.DocumentId());
+            if (diagnostic.code.empty()) entry["code"] = fallbackCode;
+            diagnostics.push_back(std::move(entry));
+        }
+        if (diagnostics.empty())
+            diagnostics.push_back(
+                {{"severity", "error"},
+                 {"code", fallbackCode},
+                 {"category", "Preview.Session"},
+                 {"message", "Preview session operation was rejected."},
+                 {"details", PreviewStatusName(result.status)}});
+        m_protocol.Emit("diagnostics",
+                        Json{{"diagnostics", std::move(diagnostics)}}.dump());
+        (void)m_previewSession->Events();
+    }
 
     px::Status EnsurePreviewRoute(const std::string_view route) {
         if (route.empty())
@@ -1515,7 +1718,7 @@ private:
              state == px::vn::VMState::WaitingTimer)) {
             if (!m_session->Dialogue().Finished())
                 m_session->Dialogue().ShowAll();
-            m_session->Advance();
+            (void)m_previewSession->Advance();
             m_autoTimerStartedAtMs = 0;
             return;
         }
@@ -1525,7 +1728,7 @@ private:
             if (m_autoTimerStartedAtMs == 0)
                 m_autoTimerStartedAtMs = nowMs;
             else if (nowMs - m_autoTimerStartedAtMs >= kPreviewAutoWaitMs) {
-                m_session->Advance();
+                (void)m_previewSession->Advance();
                 m_autoTimerStartedAtMs = 0;
             }
             return;
@@ -1728,7 +1931,13 @@ private:
         };
 
         if (action == "advance") {
-            m_session->Advance();
+            const auto advanced = m_previewSession->Advance();
+            if (!advanced.accepted)
+                return UiFailure(
+                    "PXWASM-UI-ACTION-ADVANCE-001",
+                    advanced.diagnostics.empty()
+                        ? "Preview could not advance."
+                        : advanced.diagnostics.front().message);
             return complete(px::Status::Ok());
         }
         if (action == "choice.select") {
@@ -1740,7 +1949,13 @@ private:
                     "The selected choice no longer exists in this Runtime revision.",
                     "index=" + argument,
                     "Refresh Preview and select a current choice.");
-            m_session->SelectChoice(*index);
+            const auto selected = m_previewSession->SelectChoice(*index);
+            if (!selected.accepted)
+                return UiFailure(
+                    "PXWASM-UI-ACTION-CHOICE-001",
+                    selected.diagnostics.empty()
+                        ? "Preview could not select the choice."
+                        : selected.diagnostics.front().message);
             m_skipMode = false;
             m_autoTimerStartedAtMs = 0;
             return complete(px::Status::Ok());
@@ -2454,6 +2669,7 @@ private:
     px::preview::PreviewProtocolV2 m_protocol;
     px::Runtime m_runtime;
     std::unique_ptr<px::RuntimeSession> m_session;
+    std::unique_ptr<px::sdk::PreviewSession> m_previewSession;
     px::ui::GalgameUI m_hud;
     std::vector<std::string> m_choices;
     std::string m_lastFocus;

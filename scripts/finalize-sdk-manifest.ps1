@@ -59,6 +59,7 @@ $contractFiles = [ordered]@{
     gameCatalogResources = "include/PrismatiX/Engine/SDK/GameCatalogResources.h"
     packager = "include/PrismatiX/Engine/SDK/Packager.h"
     runtimeIr = "include/PrismatiX/Engine/SDK/RuntimeIr.h"
+    previewSession = "include/PrismatiX/Engine/SDK/PreviewSession.h"
     ui = "include/PrismatiX/Engine/SDK/Ui.h"
     studioUi = "include/PrismatiX/Engine/SDK/StudioUi.h"
     uiTypeRegistry = "include/PrismatiX/Engine/SDK/UiTypeRegistry.h"
@@ -76,7 +77,7 @@ $previewContract = @(
     "schemaRevision=2",
     "protocolVersion=2",
     "envelope=protocolVersion,sessionId,requestId,documentId,revision",
-    "commands=apply,patch,play,pause,continue,step,seek,selectChoice,input,capture,stop",
+    "commands=apply,patch,play,pause,continue,step,seekStory,seekTimeline,selectChoice,input,capture,restoreCheckpoint,resize,stop",
     "events=state,runtimeFocus,diagnostics,output,debug,audioState,unsupported,crashed"
 ) -join "`n"
 $contractHashes.previewProtocol = Get-Sha256Text $previewContract

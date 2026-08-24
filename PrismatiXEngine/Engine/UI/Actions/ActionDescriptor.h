@@ -50,6 +50,10 @@ struct ActionDescriptor {
     std::vector<ActionArgumentDescriptor> arguments;
     ActionReentryPolicy reentryPolicy = ActionReentryPolicy::Allow;
     bool destructiveInPreview = false;
+    bool previewSafe = true;
+    bool deterministic = true;
+    bool seekSafe = true;
+    bool rollbackSafe = true;
     bool available = true;
     std::string unavailableReason;
     bool allowAdditionalArguments = false;

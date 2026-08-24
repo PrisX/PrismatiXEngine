@@ -5,6 +5,12 @@
   "id": "preview-debug-fixture",
   "entry": "debug.js",
   "capabilities": ["runtime", "ui"],
+  "safety": {
+    "previewSafe": true,
+    "deterministic": true,
+    "seekSafe": false,
+    "rollbackSafe": false
+  },
   "commands": [
     {
       "id": "debug.command",
@@ -36,7 +42,7 @@
         {
           "name": "enabled",
           "displayName": "Enabled",
-          "type": "bool",
+          "type": "boolean",
           "required": false,
           "default": true,
           "enum": [],
@@ -66,8 +72,12 @@
       "category": "Tests",
       "reentry": "ignoreWhileRunning",
       "capabilities": ["runtime", "ui"],
-      "destructiveInPreview": false,
-      "allowAdditionalArguments": false,
+      "safety": {
+        "previewSafe": true,
+        "deterministic": true,
+        "seekSafe": true,
+        "rollbackSafe": true
+      },
       "parameters": [
         {
           "name": "amount",
@@ -94,7 +104,7 @@
         {
           "name": "enabled",
           "displayName": "Enabled",
-          "type": "bool",
+          "type": "boolean",
           "required": false,
           "default": true,
           "enum": [],

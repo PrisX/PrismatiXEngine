@@ -126,6 +126,7 @@ jobs:
         run: |
           $required = @(
             "out/ci/sdk-package/include/PrismatiX/Engine/SDK/RuntimeIr.h",
+            "out/ci/sdk-package/include/PrismatiX/Engine/SDK/PreviewSession.h",
             "out/ci/sdk-package/share/PrismatiX/contracts/contracts.lock.json",
             "out/ci/sdk-package/share/PrismatiX/authoring-sdk/dist/src/index.js",
              "out/ci/sdk-package/PrismatiXSDKManifest.json",

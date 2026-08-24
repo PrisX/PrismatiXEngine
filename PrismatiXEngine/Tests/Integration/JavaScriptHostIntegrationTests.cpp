@@ -78,6 +78,12 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
         "id": "js-demo",
         "entry": "demo.js",
         "capabilities": ["runtime", "ui"],
+        "safety": {
+            "previewSafe": true,
+            "deterministic": true,
+            "seekSafe": false,
+            "rollbackSafe": false
+        },
         "commands": [
             {
                 "id": "js.demo.echo",

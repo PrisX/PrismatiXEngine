@@ -352,6 +352,16 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     set_tests_properties(PrismatiX.Preview.WasmProtocolV2
                          PROPERTIES LABELS "preview;wasm;contract")
 
+    add_executable(PrismatiXPreviewSessionContractTests
+                   Tests/PreviewSessionContractTests.cpp)
+    target_link_libraries(PrismatiXPreviewSessionContractTests PRIVATE
+                          PrismatiXRuntime)
+    prismatix_configure_target(PrismatiXPreviewSessionContractTests)
+    add_test(NAME PrismatiX.SDK.PreviewSessionContract
+             COMMAND PrismatiXPreviewSessionContractTests)
+    set_tests_properties(PrismatiX.SDK.PreviewSessionContract PROPERTIES
+                         LABELS "sdk;preview;runtime;contract;checkpoint;seek")
+
     # Compile the real WASM entrypoint with the native toolchain as a fast
     # syntax/link gate when Emscripten is not installed on the workstation.
     # The Emscripten target remains the authoritative binary gate.
@@ -658,6 +668,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         PrismatiXRuntimeIrContractTests
         PrismatiXRuntimeIrRuntimeAdapterTests
         PrismatiXRuntimeAssetResolverTests
+        PrismatiXPreviewSessionContractTests
         PrismatiXPreviewHost
         PrismatiXSaveLoadIntegrationTests
         PrismatiXDialogueScenarioIntegrationTests

@@ -2,6 +2,7 @@
   "format": "PrismatiXPreviewContract",
   "schemaRevision": @PRISMATIX_PREVIEW_SCHEMA_REVISION@,
   "protocolVersion": @PRISMATIX_PREVIEW_PROTOCOL_VERSION@,
+  "previewSessionRevision": @PRISMATIX_PREVIEW_SESSION_CONTRACT_REVISION@,
   "engineCommit": "@PRISMATIX_ENGINE_COMMIT@",
   "runtimeCoreCommit": "@PRISMATIX_ENGINE_COMMIT@",
   "emscriptenVersion": "@EMSCRIPTEN_VERSION@",

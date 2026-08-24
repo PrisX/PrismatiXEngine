@@ -69,9 +69,12 @@ Result<ActionExecutionId> ActionDispatcher::Start(ActionInvocation invocation,
             "Action is unavailable: " + invocation.action +
             (descriptor->unavailableReason.empty() ? std::string{} : " (" + descriptor->unavailableReason + ")"),
             &invocation));
-    if (options.previewSafeMode && descriptor->destructiveInPreview)
+    if (options.previewSafeMode &&
+        (descriptor->destructiveInPreview || !descriptor->previewSafe ||
+         !descriptor->deterministic))
         return Result<ActionExecutionId>::Failure(DispatchError("PXUIACTION2023",
-            "Action is blocked by Preview Safe Mode: " + invocation.action, &invocation));
+            "Action is blocked by its Preview safety contract: " + invocation.action,
+            &invocation));
 
     auto normalized = m_catalog.ValidateAndNormalize(invocation);
     if (!normalized) return Result<ActionExecutionId>::Failure(normalized.Diagnostics());

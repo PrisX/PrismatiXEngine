@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -53,6 +54,7 @@ enum class ProgramSeekStatus {
     InvalidOperation,
     ChoicePathRequired,
     UnsupportedBlockingState,
+    UnsafeOperation,
     Unreachable,
 };
 
@@ -110,6 +112,10 @@ public:
         m_textSpeed = ms;
     }
     void SetCommandHook(std::function<bool(const Command&)> hook) { m_commandHook = std::move(hook); }
+    void SetExecutionSafetyHook(
+        std::function<bool(const Command&, bool seeking)> hook) {
+        m_executionSafetyHook = std::move(hook);
+    }
     // Localization: maps source text to the active language. Applied to dialogue
     // lines and choice labels after variable substitution.
     void SetTextFilter(std::function<std::string(const std::string&, const std::string&)> filter) {
@@ -155,6 +161,9 @@ public:
     ProgramSeekStatus LoadCompiledProgramAt(Program program,
                                             const std::string& scriptPath,
                                             int operationIndex);
+    ProgramSeekStatus ReplayCompiledProgramAt(
+        int operationIndex, std::span<const int> branchPath = {},
+        std::size_t* choicesConsumed = nullptr);
     ProgramPatchStatus PatchCompiledProgram(Program program,
                                             const std::string& scriptPath);
     void Update(std::uint64_t nowMs, float dt);
@@ -207,6 +216,11 @@ public:
     void SeekTo(const std::string& scriptPath, int pc);
     [[nodiscard]] VMRuntimeState CaptureState() const;
     bool RestoreState(const VMRuntimeState& state, std::uint64_t nowMs = 0);
+    bool RestoreCompiledState(const VMRuntimeState& state, Program program,
+                              std::uint64_t nowMs = 0);
+    [[nodiscard]] bool SafetyRejected() const { return m_safetyRejected; }
+    void ClearSafetyRejection() { m_safetyRejected = false; }
+    [[nodiscard]] bool Seeking() const { return m_seeking; }
 
 private:
     bool LoadProgram(const std::string& scriptPath);
@@ -261,6 +275,8 @@ private:
     std::optional<VMState> m_debugResumeState;
     std::optional<int> m_seekTargetPc;
     bool m_seeking = false;
+    bool m_safetyRejected = false;
+    std::function<bool(const Command&, bool)> m_executionSafetyHook;
 
     std::string m_speaker;
     std::string m_pendingVoice;  // set by a [text voice=...] header, consumed by the next say

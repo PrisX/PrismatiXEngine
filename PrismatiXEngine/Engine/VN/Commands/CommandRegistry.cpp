@@ -129,6 +129,10 @@ CommandDescriptor Descriptor(std::string id, std::string category,
     CommandDescriptor value;value.id=std::move(id);value.displayName=value.id;
     value.category=std::move(category);value.parameters=std::move(parameters);
     value.waitPolicy=wait;value.rollbackPolicy=rollback;
+    value.previewSafe=rollback!=RollbackPolicy::Boundary;
+    value.deterministic=true;
+    value.seekSafe=rollback==RollbackPolicy::Reversible&&wait!=CommandWaitPolicy::Async;
+    value.rollbackSafe=rollback==RollbackPolicy::Reversible;
     value.allowAdditionalParameters=additional;return value;
 }
 
@@ -173,7 +177,7 @@ CommandRegistry MakeBuiltins() {
     add(Descriptor("animation","Animation",{Param("clip",VariantType::ResourceRef,true,{},CommandEditorWidget::Preset),Param("await",VariantType::Bool),Param("speed",VariantType::Number)},CommandWaitPolicy::Async));
     add(Descriptor("screen_effect","Animation",{Param("preset",VariantType::String,true,{},CommandEditorWidget::Preset),Param("duration",VariantType::Integer),Param("await",VariantType::Bool)},CommandWaitPolicy::Async));
     add(Descriptor("cg","Stage",{Param("id",VariantType::String),Param("image",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource)}));
-    add(Descriptor("unlock","Progression",{Param("kind",VariantType::String),Param("id",VariantType::String,true)}));
+    add(Descriptor("unlock","Progression",{Param("kind",VariantType::String),Param("id",VariantType::String,true)},CommandWaitPolicy::Immediate,RollbackPolicy::Boundary));
     add(Descriptor("speed","Dialogue",{Param("value",VariantType::Integer,true)}));
     for(const char* id:{"nvl","adv","er","nvl_clear"})add(Descriptor(id,"Dialogue"));
     return registry;

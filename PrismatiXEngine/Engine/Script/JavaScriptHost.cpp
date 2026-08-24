@@ -139,6 +139,39 @@ bool SupportedCapability(const std::string_view capability) {
            capability == "ui" || capability == "audio";
 }
 
+struct ManifestSafety {
+    bool previewSafe = false;
+    bool deterministic = false;
+    bool seekSafe = false;
+    bool rollbackSafe = false;
+};
+
+ManifestSafety ReadManifestSafety(const nlohmann::json& descriptor,
+                                  const nlohmann::json& manifest) {
+    const nlohmann::json* safety = nullptr;
+    if (const auto local = descriptor.find("safety");
+        local != descriptor.end()) {
+        safety = &*local;
+    } else if (const auto inherited = manifest.find("safety");
+               inherited != manifest.end()) {
+        safety = &*inherited;
+    }
+    if (!safety || !safety->is_object())
+        throw std::invalid_argument(
+            "extension commands and actions require an explicit safety contract");
+    for (const char* field : {"previewSafe", "deterministic", "seekSafe",
+                              "rollbackSafe"}) {
+        if (!safety->contains(field) || !(*safety)[field].is_boolean())
+            throw std::invalid_argument(
+                std::string("extension safety flag is missing or invalid: ") +
+                field);
+    }
+    return {safety->at("previewSafe").get<bool>(),
+            safety->at("deterministic").get<bool>(),
+            safety->at("seekSafe").get<bool>(),
+            safety->at("rollbackSafe").get<bool>()};
+}
+
 bool SafeRelativePath(const std::string_view path) {
     return !path.empty() && path.front() != '/' && path.front() != '\\' &&
            path.find(':') == std::string_view::npos &&
@@ -1791,6 +1824,11 @@ bool JavaScriptHost::LoadExtensionManifest(const std::string& manifestPath) {
             else if (rollback == "boundary") descriptor.rollbackPolicy = vn::RollbackPolicy::Boundary;
             else if (rollback == "transient") descriptor.rollbackPolicy = vn::RollbackPolicy::Transient;
             else throw std::invalid_argument("invalid command rollback policy");
+            const ManifestSafety safety = ReadManifestSafety(encoded, json);
+            descriptor.previewSafe = safety.previewSafe;
+            descriptor.deterministic = safety.deterministic;
+            descriptor.seekSafe = safety.seekSafe;
+            descriptor.rollbackSafe = safety.rollbackSafe;
             if (descriptor.id.empty() || !commandIds.insert(descriptor.id).second ||
                 vn::CommandRegistry::Builtins().Find(descriptor.id) ||
                 vn::CommandRegistry::Global().Find(descriptor.id))
@@ -1857,8 +1895,13 @@ bool JavaScriptHost::LoadExtensionManifest(const std::string& manifestPath) {
             descriptor.origin = ui::ActionOrigin::ScriptExtension;
             descriptor.sourceId = id;
             descriptor.providerId = "script";
-            descriptor.destructiveInPreview = encoded.value("destructiveInPreview", false);
-            descriptor.allowAdditionalArguments = encoded.value("allowAdditionalArguments", false);
+            const ManifestSafety safety = ReadManifestSafety(encoded, json);
+            descriptor.previewSafe = safety.previewSafe;
+            descriptor.deterministic = safety.deterministic;
+            descriptor.seekSafe = safety.seekSafe;
+            descriptor.rollbackSafe = safety.rollbackSafe;
+            descriptor.destructiveInPreview = !safety.previewSafe;
+            descriptor.allowAdditionalArguments = false;
             const auto reentry = ui::ParseActionReentryPolicy(
                 encoded.value("reentry", std::string("allow")));
             if (descriptor.id.empty() || !reentry || !actionIds.insert(descriptor.id).second)

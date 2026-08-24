@@ -25,6 +25,8 @@ inline constexpr std::uint32_t kPreviewSchemaRevision =
     @PRISMATIX_PREVIEW_SCHEMA_REVISION@;
 inline constexpr std::uint32_t kPreviewProtocolVersion =
     @PRISMATIX_PREVIEW_PROTOCOL_VERSION@;
+inline constexpr std::uint32_t kPreviewSessionContractRevision =
+    @PRISMATIX_PREVIEW_SESSION_CONTRACT_REVISION@;
 inline constexpr std::uint32_t kAuthoringContractRevision =
     @PRISMATIX_AUTHORING_CONTRACT_REVISION@;
 

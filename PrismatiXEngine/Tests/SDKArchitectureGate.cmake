@@ -18,6 +18,18 @@ foreach(SOURCE IN LISTS RUNTIME_SOURCES)
     endif()
 endforeach()
 
+file(READ "${ROOT}/Engine/SDK/PreviewSession.h" PREVIEW_SESSION_API)
+if(PREVIEW_SESSION_API MATCHES
+   "#[ 	]*include[ 	]*[<\"]Engine/(Session|VN|Preview/PreviewSessionFactory)")
+    list(APPEND VIOLATIONS
+         "Engine/SDK/PreviewSession.h: public Preview API leaks Runtime implementation types")
+endif()
+if(NOT PREVIEW_SESSION_API MATCHES "SeekStory" OR
+   NOT PREVIEW_SESSION_API MATCHES "SeekTimeline")
+    list(APPEND VIOLATIONS
+         "Engine/SDK/PreviewSession.h: Story and Timeline seek must remain distinct")
+endif()
+
 file(READ "${ROOT}/CMakeLists.txt" PROJECT_CMAKE)
 if(NOT PROJECT_CMAKE MATCHES "add_custom_target\\(PrismatiXSDKTests")
     list(APPEND VIOLATIONS "CMakeLists.txt: PrismatiXSDKTests target is missing")

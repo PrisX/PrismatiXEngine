@@ -836,9 +836,9 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             },
             "rollback": {
               "enum": [
-                "transient",
+                "reversible",
                 "boundary",
-                "persistent"
+                "transient"
               ]
             },
             "safety": {
@@ -2410,7 +2410,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "animation.schema.json": "ef9ccdba9dbc8a08a00848e487cb2a6938c23f88b891ff0c85bf9d16783254a7",
   "character.schema.json": "d6af4d8ed7df6e3dfaaa6c078a6bc9b16bd6be4e7d1c3a15f2a4e523665c5dd8",
   "common.schema.json": "1ba66770e3cf7f90b6ffe29f7fdccd263ad2eeec4cb2cff63bc0f7839a5d57f4",
-  "extension.schema.json": "c1b3deb6b7441bab374725af903b61afe9fc0015978a24646afd4ed4a34a4452",
+  "extension.schema.json": "2ced627cae6fc4b3541aad073952f6bb5b709ec9a88b7395a45c923e2f9701fc",
   "game.schema.json": "37e76afb7bf5b7b41d0b6db9503905406d676aa493c1a916f2057c36588ce404",
   "locale.schema.json": "d3482fa91066a2ed7d279ff78ff485f50a029ffb55eaa14af3067a0cd74fa59e",
   "project.schema.json": "ea34bd07d70bb4dd377892618bfc1f19145daf82e464d8c8eaf01dd837ef1e25",

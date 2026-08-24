@@ -308,6 +308,7 @@ void RuntimeSession::SelectChoice(const int index) {
 RuntimeSession::GameState RuntimeSession::CaptureState(const std::uint64_t playtimeMs) const {
     GameState state;
     state.vm = m_vm.CaptureState();
+    state.runtimeProgram = m_vm.CurrentProgram();
     state.dialogue = m_dialogue.CaptureState();
     state.variables = m_variables.All();
     for (const auto& [name, entry] : m_variables.Values()) {
@@ -362,7 +363,13 @@ Status RuntimeSession::RestoreState(const GameState& state, const std::uint64_t 
         m_backlog.Push(entry.speaker, entry.text, entry.voice, entry.isChoice);
     }
     m_dialogue.RestoreState(state.dialogue);
-    if (!m_vm.RestoreState(state.vm, nowMs)) {
+    bool vmRestored = true;
+    if (!state.vm.scriptPath.empty() || !state.runtimeProgram.code.empty()) {
+        vmRestored = state.runtimeProgram.code.empty()
+            ? m_vm.RestoreState(state.vm, nowMs)
+            : m_vm.RestoreCompiledState(state.vm, state.runtimeProgram, nowMs);
+    }
+    if (!vmRestored) {
         return RestoreFailure("Scenario execution state could not be restored",
                               state.vm.scriptPath);
     }

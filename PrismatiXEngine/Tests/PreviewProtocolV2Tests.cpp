@@ -166,6 +166,17 @@ int main() {
     assert(seek.request->command == "seek");
     assert(Json::parse(seek.request->payloadJson).value("time", 0.0) ==
            2.5);
+    const auto storySeek = protocol.AcceptControl(ControlEnvelope(
+        7, {{"command", "seekStory"},
+            {"operation", 4},
+            {"branchPath", Json::array({1, 0})}}));
+    assert(storySeek.Accepted() && storySeek.request->command == "seekStory");
+    const auto timelineSeek = protocol.AcceptControl(ControlEnvelope(
+        7, {{"command", "seekTimeline"},
+            {"playbackHandle", 9},
+            {"time", 1.25}}));
+    assert(timelineSeek.Accepted() &&
+           timelineSeek.request->command == "seekTimeline");
 
     const auto staleControl = protocol.AcceptControl(
         ControlEnvelope(6, {{"command", "pause"}}));

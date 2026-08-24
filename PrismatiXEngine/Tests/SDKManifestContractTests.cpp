@@ -33,6 +33,9 @@ int main() {
     Check(manifest.at("contracts").at("ui") ==
               std::to_string(px::sdk::kUiContractRevision),
           "SDK manifest and UI document contract revisions must match");
+    Check(manifest.at("contracts").at("previewSession") ==
+              std::to_string(px::sdk::kPreviewSessionContractRevision),
+          "SDK manifest and PreviewSession contract revisions must match");
     Check(manifest.at("deprecatedContracts").at("studioUi").at(
               "replacement") == "ui" &&
               manifest.at("deprecatedContracts").at("studioUi").at(
