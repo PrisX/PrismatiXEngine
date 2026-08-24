@@ -222,10 +222,9 @@ public:
 
     ~Impl() {
         if (context) {
-            for (auto& pending : pendingCommands)
-                JS_FreeValue(context, pending.generator);
-            for (auto& pending : pendingActions)
-                JS_FreeValue(context, pending.generator);
+            for (auto& pending : pendingCommands) FreeContinuation(pending);
+            for (auto& pending : pendingActions) FreeContinuation(pending);
+            DiscardCreatedPromiseWait();
             for (auto& [_, callback] : commands) JS_FreeValue(context, callback);
             for (auto& [_, callback] : actions) JS_FreeValue(context, callback);
             for (auto& [_, callbacks] : events)
@@ -246,22 +245,47 @@ public:
         float remainingSeconds = 0.0f;
     };
 
-    struct PendingCommandGenerator {
-        JSValue generator = JS_UNDEFINED;
+    enum class ContinuationFlavor { Generator, Promise };
+
+    struct PendingCommandContinuation {
+        ContinuationFlavor flavor = ContinuationFlavor::Generator;
+        JSValue continuation = JS_UNDEFINED;
+        JSValue resume = JS_UNDEFINED;
         vn::Command command;
         std::uint32_t yieldIndex = 0;
         WaitToken wait;
     };
 
-    struct PendingActionGenerator {
-        JSValue generator = JS_UNDEFINED;
+    struct PendingActionContinuation {
+        ContinuationFlavor flavor = ContinuationFlavor::Generator;
+        JSValue continuation = JS_UNDEFINED;
+        JSValue resume = JS_UNDEFINED;
         std::uint64_t id = 0;
         ui::ActionInvocation invocation;
         std::uint32_t yieldIndex = 0;
         WaitToken wait;
     };
 
+    struct PromiseWaitCapability {
+        WaitToken wait;
+        JSValue resolve = JS_UNDEFINED;
+    };
+
     enum class StepResult { Yielded, Finished, Failed };
+
+    template <typename Pending>
+    void FreeContinuation(Pending& pending) {
+        JS_FreeValue(context, pending.continuation);
+        JS_FreeValue(context, pending.resume);
+        pending.continuation = JS_UNDEFINED;
+        pending.resume = JS_UNDEFINED;
+    }
+
+    void DiscardCreatedPromiseWait() {
+        if (!createdPromiseWait) return;
+        JS_FreeValue(context, createdPromiseWait->resolve);
+        createdPromiseWait.reset();
+    }
 
     static int Interrupt(JSRuntime*, void* opaque) {
         const auto* self = static_cast<Impl*>(opaque);
@@ -547,6 +571,24 @@ public:
         return result;
     }
 
+    JSValue CreatePromiseWait(WaitToken wait) {
+        if (!acceptingPromiseWait)
+            return JS_ThrowTypeError(
+                context,
+                "Wait operations are only valid inside an invoked async command or Action");
+        if (createdPromiseWait)
+            return JS_ThrowTypeError(
+                context,
+                "Only one unresolved engine wait may be created at an async boundary");
+        JSValue resolvingFunctions[2] = {JS_UNDEFINED, JS_UNDEFINED};
+        JSValue promise = JS_NewPromiseCapability(context, resolvingFunctions);
+        if (JS_IsException(promise)) return promise;
+        JS_FreeValue(context, resolvingFunctions[1]);
+        createdPromiseWait = PromiseWaitCapability{
+            .wait = std::move(wait), .resolve = resolvingFunctions[0]};
+        return promise;
+    }
+
     JSValue RuntimeOperation(const std::string_view operation, const int count,
                              JSValueConst* values) {
         std::string first;
@@ -556,7 +598,8 @@ public:
 
         if (operation == "await.timer") {
             double seconds = 0.0;
-            if (!NumberArgument(count, values, 0, seconds) || seconds < 0.0)
+            if (!NumberArgument(count, values, 0, seconds) || seconds < 0.0 ||
+                seconds > std::numeric_limits<float>::max())
                 return JS_ThrowRangeError(context,
                                           "AwaitSeconds requires non-negative seconds");
             JSValue token = JS_NewObject(context);
@@ -576,6 +619,24 @@ public:
             JS_SetPropertyStr(context, token, "handle",
                               JS_NewInt64(context, integer));
             return token;
+        }
+        if (operation == "wait.timer") {
+            double seconds = 0.0;
+            if (!NumberArgument(count, values, 0, seconds) || seconds < 0.0 ||
+                seconds > std::numeric_limits<float>::max())
+                return JS_ThrowRangeError(context,
+                                          "WaitSeconds requires non-negative seconds");
+            return CreatePromiseWait(
+                {.kind = "timer",
+                 .remainingSeconds = static_cast<float>(seconds)});
+        }
+        if (operation == "wait.animation") {
+            if (!IntegerArgument(count, values, 0, integer) || integer < 0)
+                return JS_ThrowRangeError(context,
+                                          "WaitAnimation requires a valid handle");
+            return CreatePromiseWait(
+                {.kind = "animation",
+                 .handle = static_cast<std::uint64_t>(integer)});
         }
         if (operation == "variables.get") {
             if (!services.variables)
@@ -987,6 +1048,8 @@ public:
                 CancelAnimation: { value: bindRuntime("animation.cancel") },
                 AwaitSeconds: { value: bindRuntime("await.timer") },
                 AwaitAnimation: { value: bindRuntime("await.animation") },
+                WaitSeconds: { value: bindRuntime("wait.timer") },
+                WaitAnimation: { value: bindRuntime("wait.animation") },
                 GetMouseX: { value: bindRuntime("input.mouseX") },
                 GetMouseY: { value: bindRuntime("input.mouseY") },
                 GetLeftClick: { value: bindRuntime("input.leftClick") },
@@ -1090,6 +1153,103 @@ public:
         const bool generator = JS_IsFunction(context, next);
         JS_FreeValue(context, next);
         return generator;
+    }
+
+    void BeginPromiseCapture() {
+        DiscardCreatedPromiseWait();
+        acceptingPromiseWait = true;
+    }
+
+    void EndPromiseCapture() { acceptingPromiseWait = false; }
+
+    [[nodiscard]] std::string PromiseFailure(JSValueConst promise) {
+        JSValue reason = JS_PromiseResult(context, promise);
+        std::string message = String(reason).value_or("JavaScript Promise rejected");
+        if (JS_IsObject(reason)) {
+            JSValue stack = JS_GetPropertyStr(context, reason, "stack");
+            if (!JS_IsUndefined(stack)) {
+                if (const auto trace = String(stack); trace && *trace != message)
+                    message.append("\n").append(*trace);
+            }
+            JS_FreeValue(context, stack);
+        }
+        JS_FreeValue(context, reason);
+        return message;
+    }
+
+    StepResult ObservePromise(JSValueConst promise, JSValue& resume,
+                              WaitToken& wait, const std::string& source) {
+        int jobs = 0;
+        while (JS_IsJobPending(runtime) && jobs++ < 64) {
+            JSContext* jobContext = nullptr;
+            BeginExecution();
+            const int result = JS_ExecutePendingJob(runtime, &jobContext);
+            EndExecution();
+            if (result < 0) {
+                EndPromiseCapture();
+                DiscardCreatedPromiseWait();
+                Error(source, Exception());
+                return StepResult::Failed;
+            }
+        }
+        if (JS_IsJobPending(runtime)) {
+            EndPromiseCapture();
+            DiscardCreatedPromiseWait();
+            Error(source, "JavaScript Promise exceeded the pending-job budget");
+            return StepResult::Failed;
+        }
+        EndPromiseCapture();
+
+        const auto state = JS_PromiseState(context, promise);
+        if (state == JS_PROMISE_REJECTED) {
+            DiscardCreatedPromiseWait();
+            Error(source, PromiseFailure(promise));
+            return StepResult::Failed;
+        }
+        if (state == JS_PROMISE_FULFILLED) {
+            if (createdPromiseWait) {
+                DiscardCreatedPromiseWait();
+                Error(source, "async callback created an engine wait without awaiting it");
+                return StepResult::Failed;
+            }
+            wait = {};
+            return StepResult::Finished;
+        }
+        if (state != JS_PROMISE_PENDING || !createdPromiseWait) {
+            DiscardCreatedPromiseWait();
+            Error(source,
+                  "async callback suspended outside a persistent Engine wait operation");
+            return StepResult::Failed;
+        }
+
+        wait = std::move(createdPromiseWait->wait);
+        resume = createdPromiseWait->resolve;
+        createdPromiseWait.reset();
+        return StepResult::Yielded;
+    }
+
+    StepResult StepPromise(JSValueConst promise, JSValue& resume,
+                           WaitToken& wait, const std::string& source) {
+        if (JS_IsUndefined(resume)) {
+            Error(source, "JavaScript Promise continuation has no engine resolver");
+            return StepResult::Failed;
+        }
+        BeginPromiseCapture();
+        JSValue argument = JS_UNDEFINED;
+        BeginExecution();
+        JSValue result = JS_Call(context, resume, JS_UNDEFINED, 1, &argument);
+        EndExecution();
+        JS_FreeValue(context, resume);
+        resume = JS_UNDEFINED;
+        if (JS_IsException(result)) {
+            EndPromiseCapture();
+            DiscardCreatedPromiseWait();
+            Error(source, Exception());
+            JS_FreeValue(context, result);
+            return StepResult::Failed;
+        }
+        JS_FreeValue(context, result);
+        return ObservePromise(promise, resume, wait, source);
     }
 
     StepResult StepGenerator(JSValueConst generator, WaitToken& wait,
@@ -1213,6 +1373,61 @@ public:
         return {arguments, actionContext};
     }
 
+    struct ReplayedContinuation {
+        ContinuationFlavor flavor = ContinuationFlavor::Generator;
+        JSValue continuation = JS_UNDEFINED;
+        JSValue resume = JS_UNDEFINED;
+        WaitToken wait;
+    };
+
+    [[nodiscard]] std::optional<ReplayedContinuation> ReplayToBoundary(
+        JSValueConst callback, const int argumentCount, JSValueConst* arguments,
+        const std::uint32_t yieldIndex, const std::string& source) {
+        BeginPromiseCapture();
+        BeginExecution();
+        JSValue continuation = JS_Call(context, callback, JS_UNDEFINED,
+                                       argumentCount, arguments);
+        EndExecution();
+        if (JS_IsException(continuation)) {
+            EndPromiseCapture();
+            DiscardCreatedPromiseWait();
+            Error(source, Exception());
+            JS_FreeValue(context, continuation);
+            return std::nullopt;
+        }
+
+        ReplayedContinuation replayed;
+        replayed.continuation = continuation;
+        StepResult result = StepResult::Failed;
+        if (IsGenerator(continuation)) {
+            EndPromiseCapture();
+            DiscardCreatedPromiseWait();
+            for (std::uint32_t index = 0; index < yieldIndex; ++index) {
+                result = StepGenerator(continuation, replayed.wait, source);
+                if (result != StepResult::Yielded) break;
+            }
+        } else if (JS_IsPromise(continuation)) {
+            replayed.flavor = ContinuationFlavor::Promise;
+            result = ObservePromise(continuation, replayed.resume,
+                                    replayed.wait, source);
+            for (std::uint32_t index = 1;
+                 result == StepResult::Yielded && index < yieldIndex; ++index) {
+                result = StepPromise(continuation, replayed.resume,
+                                     replayed.wait, source);
+            }
+        } else {
+            EndPromiseCapture();
+            DiscardCreatedPromiseWait();
+            Error(source,
+                  "checkpoint callback no longer returns a persistent continuation");
+        }
+
+        if (result == StepResult::Yielded) return replayed;
+        JS_FreeValue(context, replayed.continuation);
+        JS_FreeValue(context, replayed.resume);
+        return std::nullopt;
+    }
+
     JavaScriptHost& host;
     ScriptServices services;
     JSRuntime* runtime = nullptr;
@@ -1224,10 +1439,12 @@ public:
     std::unordered_set<std::string> declaredActions;
     std::unordered_set<std::string> loadedActionSources;
     std::string activeExtension;
-    std::vector<PendingCommandGenerator> pendingCommands;
-    std::vector<PendingActionGenerator> pendingActions;
+    std::vector<PendingCommandContinuation> pendingCommands;
+    std::vector<PendingActionContinuation> pendingActions;
     std::unordered_map<std::uint64_t, ui::ActionExecutionState>
         actionTerminalStates;
+    std::optional<PromiseWaitCapability> createdPromiseWait;
+    bool acceptingPromiseWait = false;
     std::uint64_t nextActionHandle = 1;
     DebugSnapshot debug;
     bool executing = false;
@@ -1556,22 +1773,27 @@ bool JavaScriptHost::InvokeCommand(const vn::Command& command) {
     const auto found = m_impl->commands.find(command.type);
     if (found == m_impl->commands.end()) return false;
     JSValue arguments = m_impl->CommandArguments(command);
+    m_impl->BeginPromiseCapture();
     m_impl->BeginExecution();
     JSValue result = JS_Call(m_impl->context, found->second, JS_UNDEFINED, 1, &arguments);
     m_impl->EndExecution();
     JS_FreeValue(m_impl->context, arguments);
     if (JS_IsException(result)) {
+        m_impl->EndPromiseCapture();
+        m_impl->DiscardCreatedPromiseWait();
         m_impl->Error("command:" + command.type, m_impl->Exception());
         JS_FreeValue(m_impl->context, result);
         return true;
     }
     if (m_impl->IsGenerator(result)) {
+        m_impl->EndPromiseCapture();
+        m_impl->DiscardCreatedPromiseWait();
         Impl::WaitToken wait;
         const auto step = m_impl->StepGenerator(
             result, wait, "command:" + command.type);
         if (step == Impl::StepResult::Yielded) {
-            Impl::PendingCommandGenerator pending;
-            pending.generator = result;
+            Impl::PendingCommandContinuation pending;
+            pending.continuation = result;
             pending.command = command;
             pending.yieldIndex = 1;
             pending.wait = std::move(wait);
@@ -1581,6 +1803,32 @@ bool JavaScriptHost::InvokeCommand(const vn::Command& command) {
         JS_FreeValue(m_impl->context, result);
         return true;
     }
+    if (JS_IsPromise(result)) {
+        JSValue resume = JS_UNDEFINED;
+        Impl::WaitToken wait;
+        const auto step = m_impl->ObservePromise(
+            result, resume, wait, "command:" + command.type);
+        if (step == Impl::StepResult::Yielded) {
+            Impl::PendingCommandContinuation pending;
+            pending.flavor = Impl::ContinuationFlavor::Promise;
+            pending.continuation = result;
+            pending.resume = resume;
+            pending.command = command;
+            pending.yieldIndex = 1;
+            pending.wait = std::move(wait);
+            m_impl->pendingCommands.push_back(std::move(pending));
+            return true;
+        }
+        JS_FreeValue(m_impl->context, resume);
+        JS_FreeValue(m_impl->context, result);
+        return true;
+    }
+    const bool orphanedWait = m_impl->createdPromiseWait.has_value();
+    m_impl->EndPromiseCapture();
+    m_impl->DiscardCreatedPromiseWait();
+    if (orphanedWait)
+        m_impl->Error("command:" + command.type,
+                      "command created an engine wait without returning an async Promise");
     JS_FreeValue(m_impl->context, result);
     return true;
 }
@@ -1606,12 +1854,15 @@ ui::ProviderActionStart JavaScriptHost::StartAction(
                     invocation.action))};
     auto [arguments, actionContext] = m_impl->ActionArguments(invocation);
     JSValue parameters[] = {arguments, actionContext};
+    m_impl->BeginPromiseCapture();
     m_impl->BeginExecution();
     JSValue result = JS_Call(m_impl->context, found->second, JS_UNDEFINED, 2, parameters);
     m_impl->EndExecution();
     JS_FreeValue(m_impl->context, arguments);
     JS_FreeValue(m_impl->context, actionContext);
     if (JS_IsException(result)) {
+        m_impl->EndPromiseCapture();
+        m_impl->DiscardCreatedPromiseWait();
         const auto error = m_impl->Exception();
         m_impl->Error("action:" + invocation.action, error);
         JS_FreeValue(m_impl->context, result);
@@ -1619,13 +1870,15 @@ ui::ProviderActionStart JavaScriptHost::StartAction(
                     "PXJS7421", "JavaScript action failed", error))};
     }
     if (m_impl->IsGenerator(result)) {
+        m_impl->EndPromiseCapture();
+        m_impl->DiscardCreatedPromiseWait();
         Impl::WaitToken wait;
         const auto step = m_impl->StepGenerator(
             result, wait, "action:" + invocation.action);
         if (step == Impl::StepResult::Yielded) {
             const std::uint64_t handle = m_impl->nextActionHandle++;
-            Impl::PendingActionGenerator pending;
-            pending.generator = result;
+            Impl::PendingActionContinuation pending;
+            pending.continuation = result;
             pending.id = handle;
             pending.invocation = invocation;
             pending.yieldIndex = 1;
@@ -1640,7 +1893,41 @@ ui::ProviderActionStart JavaScriptHost::StartAction(
                         invocation.action))};
         return {.status = Status::Ok()};
     }
+    if (JS_IsPromise(result)) {
+        JSValue resume = JS_UNDEFINED;
+        Impl::WaitToken wait;
+        const auto step = m_impl->ObservePromise(
+            result, resume, wait, "action:" + invocation.action);
+        if (step == Impl::StepResult::Yielded) {
+            const std::uint64_t handle = m_impl->nextActionHandle++;
+            Impl::PendingActionContinuation pending;
+            pending.flavor = Impl::ContinuationFlavor::Promise;
+            pending.continuation = result;
+            pending.resume = resume;
+            pending.id = handle;
+            pending.invocation = invocation;
+            pending.yieldIndex = 1;
+            pending.wait = std::move(wait);
+            m_impl->pendingActions.push_back(std::move(pending));
+            return {.status = Status::Ok(), .handle = handle, .pending = true};
+        }
+        JS_FreeValue(m_impl->context, resume);
+        JS_FreeValue(m_impl->context, result);
+        if (step == Impl::StepResult::Failed)
+            return {.status = Status::Fail(ScriptDiagnostic(
+                        "PXJS7423", "JavaScript async Action failed",
+                        invocation.action))};
+        return {.status = Status::Ok()};
+    }
+    const bool orphanedWait = m_impl->createdPromiseWait.has_value();
+    m_impl->EndPromiseCapture();
+    m_impl->DiscardCreatedPromiseWait();
     JS_FreeValue(m_impl->context, result);
+    if (orphanedWait)
+        return {.status = Status::Fail(ScriptDiagnostic(
+                    "PXJS7424",
+                    "JavaScript Action created an engine wait without returning an async Promise",
+                    invocation.action))};
     return {.status = Status::Ok()};
 }
 
@@ -1662,7 +1949,7 @@ void JavaScriptHost::CancelAction(const std::uint64_t handle) {
         m_impl->pendingActions,
         [handle](const auto& pending) { return pending.id == handle; });
     if (found != m_impl->pendingActions.end()) {
-        JS_FreeValue(m_impl->context, found->generator);
+        m_impl->FreeContinuation(*found);
         m_impl->pendingActions.erase(found);
     }
     m_impl->actionTerminalStates[handle] =
@@ -1689,15 +1976,20 @@ void JavaScriptHost::Update(const float deltaSeconds) {
             ++iterator;
             continue;
         }
-        const auto result = m_impl->StepGenerator(
-            iterator->generator, iterator->wait,
-            "command:" + iterator->command.type);
+        const auto source = "command:" + iterator->command.type;
+        const auto result = iterator->flavor == Impl::ContinuationFlavor::Promise
+                                ? m_impl->StepPromise(
+                                      iterator->continuation, iterator->resume,
+                                      iterator->wait, source)
+                                : m_impl->StepGenerator(
+                                      iterator->continuation, iterator->wait,
+                                      source);
         if (result == Impl::StepResult::Yielded) {
             ++iterator->yieldIndex;
             ++iterator;
             continue;
         }
-        JS_FreeValue(m_impl->context, iterator->generator);
+        m_impl->FreeContinuation(*iterator);
         iterator = m_impl->pendingCommands.erase(iterator);
     }
 
@@ -1707,9 +1999,14 @@ void JavaScriptHost::Update(const float deltaSeconds) {
             ++iterator;
             continue;
         }
-        const auto result = m_impl->StepGenerator(
-            iterator->generator, iterator->wait,
-            "action:" + iterator->invocation.action);
+        const auto source = "action:" + iterator->invocation.action;
+        const auto result = iterator->flavor == Impl::ContinuationFlavor::Promise
+                                ? m_impl->StepPromise(
+                                      iterator->continuation, iterator->resume,
+                                      iterator->wait, source)
+                                : m_impl->StepGenerator(
+                                      iterator->continuation, iterator->wait,
+                                      source);
         if (result == Impl::StepResult::Yielded) {
             ++iterator->yieldIndex;
             ++iterator;
@@ -1719,7 +2016,7 @@ void JavaScriptHost::Update(const float deltaSeconds) {
             result == Impl::StepResult::Finished
                 ? ui::ActionExecutionState::Completed
                 : ui::ActionExecutionState::Failed;
-        JS_FreeValue(m_impl->context, iterator->generator);
+        m_impl->FreeContinuation(*iterator);
         iterator = m_impl->pendingActions.erase(iterator);
     }
 
@@ -1773,9 +2070,9 @@ PendingActionsState JavaScriptHost::CapturePendingActions() const {
 
 Status JavaScriptHost::RestorePending(const PendingCommandsState& state) {
     for (auto& pending : m_impl->pendingCommands)
-        JS_FreeValue(m_impl->context, pending.generator);
+        m_impl->FreeContinuation(pending);
     for (auto& pending : m_impl->pendingActions)
-        JS_FreeValue(m_impl->context, pending.generator);
+        m_impl->FreeContinuation(pending);
     m_impl->pendingCommands.clear();
     m_impl->pendingActions.clear();
     m_impl->actionTerminalStates.clear();
@@ -1783,7 +2080,7 @@ Status JavaScriptHost::RestorePending(const PendingCommandsState& state) {
     const auto fail = [this](std::string code, std::string message,
                              std::string details) {
         for (auto& pending : m_impl->pendingCommands)
-            JS_FreeValue(m_impl->context, pending.generator);
+            m_impl->FreeContinuation(pending);
         m_impl->pendingCommands.clear();
         return Status::Fail(ScriptDiagnostic(
             std::move(code), std::move(message), std::move(details)));
@@ -1805,41 +2102,25 @@ Status JavaScriptHost::RestorePending(const PendingCommandsState& state) {
         }
 
         JSValue arguments = m_impl->CommandArguments(saved.command);
-        m_impl->BeginExecution();
-        JSValue generator = JS_Call(m_impl->context, callback->second,
-                                    JS_UNDEFINED, 1, &arguments);
-        m_impl->EndExecution();
+        auto replayed = m_impl->ReplayToBoundary(
+            callback->second, 1, &arguments, saved.yieldIndex,
+            "restore-command:" + saved.command.type);
         JS_FreeValue(m_impl->context, arguments);
-        if (JS_IsException(generator)) {
-            const auto details = m_impl->Exception();
-            JS_FreeValue(m_impl->context, generator);
+        if (!replayed) {
             return fail("PXJS7503", "JavaScript command checkpoint replay failed",
-                        details);
+                        saved.command.type);
         }
-        if (!m_impl->IsGenerator(generator)) {
-            JS_FreeValue(m_impl->context, generator);
+        if (replayed->wait.kind != saved.waitKind) {
+            JS_FreeValue(m_impl->context, replayed->continuation);
+            JS_FreeValue(m_impl->context, replayed->resume);
             return fail("PXJS7504", "JavaScript command await structure changed",
                         saved.command.type);
         }
 
-        Impl::WaitToken reconstructed;
-        bool matched = true;
-        for (std::uint32_t index = 0; index < saved.yieldIndex; ++index) {
-            if (m_impl->StepGenerator(generator, reconstructed,
-                                      "restore-command:" + saved.command.type) !=
-                Impl::StepResult::Yielded) {
-                matched = false;
-                break;
-            }
-        }
-        if (!matched || reconstructed.kind != saved.waitKind) {
-            JS_FreeValue(m_impl->context, generator);
-            return fail("PXJS7504", "JavaScript command await structure changed",
-                        saved.command.type);
-        }
-
-        Impl::PendingCommandGenerator pending;
-        pending.generator = generator;
+        Impl::PendingCommandContinuation pending;
+        pending.flavor = replayed->flavor;
+        pending.continuation = replayed->continuation;
+        pending.resume = replayed->resume;
         pending.command = saved.command;
         pending.yieldIndex = saved.yieldIndex;
         pending.wait = {.kind = saved.waitKind,
@@ -1852,14 +2133,14 @@ Status JavaScriptHost::RestorePending(const PendingCommandsState& state) {
 
 Status JavaScriptHost::RestorePendingActions(const PendingActionsState& state) {
     for (auto& pending : m_impl->pendingActions)
-        JS_FreeValue(m_impl->context, pending.generator);
+        m_impl->FreeContinuation(pending);
     m_impl->pendingActions.clear();
     m_impl->actionTerminalStates.clear();
 
     const auto fail = [this](std::string code, std::string message,
                              std::string details) {
         for (auto& pending : m_impl->pendingActions)
-            JS_FreeValue(m_impl->context, pending.generator);
+            m_impl->FreeContinuation(pending);
         m_impl->pendingActions.clear();
         return Status::Fail(ScriptDiagnostic(
             std::move(code), std::move(message), std::move(details)));
@@ -1885,43 +2166,26 @@ Status JavaScriptHost::RestorePendingActions(const PendingActionsState& state) {
         auto [arguments, actionContext] =
             m_impl->ActionArguments(saved.invocation);
         JSValue parameters[] = {arguments, actionContext};
-        m_impl->BeginExecution();
-        JSValue generator = JS_Call(m_impl->context, callback->second,
-                                    JS_UNDEFINED, 2, parameters);
-        m_impl->EndExecution();
+        auto replayed = m_impl->ReplayToBoundary(
+            callback->second, 2, parameters, saved.yieldIndex,
+            "restore-action:" + saved.invocation.action);
         JS_FreeValue(m_impl->context, arguments);
         JS_FreeValue(m_impl->context, actionContext);
-        if (JS_IsException(generator)) {
-            const auto details = m_impl->Exception();
-            JS_FreeValue(m_impl->context, generator);
+        if (!replayed) {
             return fail("PXJS7512", "JavaScript Action checkpoint replay failed",
-                        details);
+                        saved.invocation.action);
         }
-        if (!m_impl->IsGenerator(generator)) {
-            JS_FreeValue(m_impl->context, generator);
+        if (replayed->wait.kind != saved.waitKind) {
+            JS_FreeValue(m_impl->context, replayed->continuation);
+            JS_FreeValue(m_impl->context, replayed->resume);
             return fail("PXJS7513", "JavaScript Action await structure changed",
                         saved.invocation.action);
         }
 
-        Impl::WaitToken reconstructed;
-        bool matched = true;
-        for (std::uint32_t index = 0; index < saved.yieldIndex; ++index) {
-            if (m_impl->StepGenerator(
-                    generator, reconstructed,
-                    "restore-action:" + saved.invocation.action) !=
-                Impl::StepResult::Yielded) {
-                matched = false;
-                break;
-            }
-        }
-        if (!matched || reconstructed.kind != saved.waitKind) {
-            JS_FreeValue(m_impl->context, generator);
-            return fail("PXJS7513", "JavaScript Action await structure changed",
-                        saved.invocation.action);
-        }
-
-        Impl::PendingActionGenerator pending;
-        pending.generator = generator;
+        Impl::PendingActionContinuation pending;
+        pending.flavor = replayed->flavor;
+        pending.continuation = replayed->continuation;
+        pending.resume = replayed->resume;
         pending.id = saved.id;
         pending.invocation = saved.invocation;
         pending.yieldIndex = saved.yieldIndex;
@@ -1937,9 +2201,9 @@ Status JavaScriptHost::RestorePendingActions(const PendingActionsState& state) {
 
 void JavaScriptHost::CancelPending() {
     for (auto& pending : m_impl->pendingCommands)
-        JS_FreeValue(m_impl->context, pending.generator);
+        m_impl->FreeContinuation(pending);
     for (auto& pending : m_impl->pendingActions)
-        JS_FreeValue(m_impl->context, pending.generator);
+        m_impl->FreeContinuation(pending);
     m_impl->pendingCommands.clear();
     m_impl->pendingActions.clear();
     m_impl->actionTerminalStates.clear();

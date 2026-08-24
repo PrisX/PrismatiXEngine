@@ -1,3 +1,4 @@
+#include "Engine/Animation/Timeline.h"
 #include "Engine/IO/VFS.h"
 #include "Engine/Progression/GlobalProfile.h"
 #include "Engine/Script/JavaScriptHost.h"
@@ -32,22 +33,30 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
         Engine.RegisterCommand("js.demo.echo", (args) => {
             Engine.log(`${args.message}:${args.amount}`);
         });
-        Engine.RegisterCommand("js.demo.await", function* (args) {
+        Engine.RegisterCommand("js.demo.await", async (args) => {
             Engine.log("async-command:start");
-            yield Engine.AwaitSeconds(args.seconds);
+            await Engine.WaitSeconds(args.seconds);
             Engine.log("async-command:middle");
-            yield Engine.AwaitSeconds(0.02);
+            await Engine.WaitSeconds(0.02);
             Engine.log("async-command:done");
+        });
+        Engine.RegisterCommand("js.demo.awaitAnimation", async (args) => {
+            await Engine.WaitAnimation(args.handle);
+            Engine.log("async-animation:done");
         });
         Engine.RegisterAction("js.demo.action", (args, context) => {
             Engine.log(`${args.message}:${context.preview}`);
         });
-        Engine.RegisterAction("js.demo.asyncAction", function* (args, context) {
+        Engine.RegisterAction("js.demo.asyncAction", async (args, context) => {
             Engine.log(`async-action:start:${context.scene}`);
-            yield Engine.AwaitSeconds(args.seconds);
+            await Engine.WaitSeconds(args.seconds);
             Engine.log("async-action:middle");
-            yield Engine.AwaitSeconds(0.01);
+            await Engine.WaitSeconds(0.01);
             Engine.log("async-action:done");
+        });
+        Engine.RegisterAction("js.demo.failingAction", async () => {
+            await Engine.WaitSeconds(0);
+            throw new Error("intentional async failure");
         });
         Engine.On("js.demo.event", (payload) => {
             Engine.log(`event:${payload.value}`);
@@ -85,6 +94,17 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
                     {"name":"seconds","type":"number","required":true,
                      "range":{"minimum":0,"maximum":1}}
                 ]
+            },
+            {
+                "id": "js.demo.awaitAnimation",
+                "displayName": "Await Animation",
+                "description": "Runtime-owned animation wait",
+                "category": "Tests",
+                "await": true,
+                "rollback": "boundary",
+                "parameters": [
+                    {"name":"handle","type":"integer","required":true}
+                ]
             }
         ],
         "actions": [
@@ -101,6 +121,13 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
                 "category": "Tests",
                 "reentry": "allow",
                 "parameters": [{"name":"seconds","type":"number","required":true}]
+            },
+            {
+                "id": "js.demo.failingAction",
+                "displayName": "Failing JavaScript Action",
+                "category": "Tests",
+                "reentry": "allow",
+                "parameters": []
             }
         ]
     })json");
@@ -123,6 +150,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     px::vn::VariableStore variables;
     px::progress::GlobalProfile profile;
     px::ui::UIRouter routes;
+    px::animation::TimelinePlayer timeline;
     const auto routeFactory = []() -> px::Result<std::unique_ptr<px::ui::Control>> {
         return px::Result<std::unique_ptr<px::ui::Control>>::Success(
             std::make_unique<px::ui::Control>());
@@ -134,6 +162,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     services.variables = &variables;
     services.profile = &profile;
     services.routes = &routes;
+    services.timeline = &timeline;
     services.console = [&console](const px::script::ConsoleMessage& message) {
         console.push_back(message);
     };
@@ -232,7 +261,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     asynchronousCommand.typedArgs["seconds"] = px::Variant(0.05);
     suite.Require(host.InvokeCommand(asynchronousCommand) &&
                       host.HasPendingCommand(),
-                  "generator command should suspend on an engine-owned timer");
+                  "async command should suspend on an engine-owned timer");
     host.Update(0.02f);
     const auto commandCheckpoint = host.CapturePending();
     suite.Require(commandCheckpoint.size() == 1 &&
@@ -253,13 +282,38 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
                   "resumed command should advance to the next deterministic boundary");
     host.Update(0.03f);
     suite.Expect(!host.HasPendingCommand() && console.back().text == "async-command:done",
-                 "generator command should complete after all waits expire");
+                 "async command should complete after all waits expire");
 
     auto invalidCommandCheckpoint = commandCheckpoint;
     invalidCommandCheckpoint.front().waitKind = "animation";
     suite.Expect(!host.RestorePending(invalidCommandCheckpoint) &&
                      !host.HasPendingCommand(),
                  "checkpoint replay must fail closed when the await structure changes");
+
+    px::animation::AnimationClip animation;
+    animation.id = px::Uuid::FromName("javascript-await-animation");
+    animation.name = "JavaScript await fixture";
+    animation.duration = 0.1f;
+    suite.Require(static_cast<bool>(timeline.Register(animation)),
+                  "animation wait fixture should register");
+    const auto animationHandle = timeline.Play(animation.id, true);
+    px::vn::Command animationCommand;
+    animationCommand.type = "js.demo.awaitAnimation";
+    animationCommand.typedArgs["handle"] =
+        px::Variant(static_cast<std::int64_t>(animationHandle));
+    suite.Require(animationHandle != 0 && host.InvokeCommand(animationCommand),
+                  "async command should begin an engine-owned animation wait");
+    host.Update(0.05f);
+    const auto animationCheckpoint = host.CapturePending();
+    suite.Require(animationCheckpoint.size() == 1 &&
+                      animationCheckpoint.front().waitKind == "animation" &&
+                      animationCheckpoint.front().handle == animationHandle,
+                  "animation checkpoint should preserve the Timeline playback handle");
+    timeline.Update(0.2f);
+    host.Update(0.0f);
+    suite.Expect(!host.HasPendingCommand() &&
+                     console.back().text == "async-animation:done",
+                 "async command should resume only after Timeline playback completes");
 
     px::ui::ActionInvocation asynchronousAction;
     asynchronousAction.action = "js.demo.asyncAction";
@@ -269,7 +323,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     suite.Require(actionStart.status && actionStart.pending && actionStart.handle != 0 &&
                       host.ActionState(actionStart.handle) ==
                           px::ui::ActionExecutionState::Running,
-                  "generator Action should expose a pollable execution handle");
+                  "async Action should expose a pollable execution handle");
     host.Update(0.02f);
     const auto actionCheckpoint = host.CapturePendingActions();
     suite.Require(actionCheckpoint.size() == 1 &&
@@ -296,7 +350,20 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
                      host.ActionState(actionStart.handle) ==
                          px::ui::ActionExecutionState::Completed &&
                      console.back().text == "async-action:done",
-                 "generator Action should report completion after its final wait");
+                 "async Action should report completion after its final wait");
+
+    px::ui::ActionInvocation failingAction;
+    failingAction.action = "js.demo.failingAction";
+    const auto failingStart = host.StartAction(failingAction);
+    suite.Require(failingStart.status && failingStart.pending,
+                  "async Action rejection fixture should begin at an engine wait");
+    host.Update(0.0f);
+    suite.Expect(host.ActionState(failingStart.handle) ==
+                     px::ui::ActionExecutionState::Failed,
+                 "Promise rejection after resume should become a failed Action state");
+    suite.Expect(!host.RunString("Engine.WaitSeconds(0.1)",
+                                 "javascript-orphan-wait"),
+                 "persistent waits must be scoped to an invoked async callback");
 
     const auto started = std::chrono::steady_clock::now();
     suite.Expect(!host.RunString("while (true) {}", "javascript-budget"),
