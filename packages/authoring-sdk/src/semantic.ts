@@ -39,6 +39,15 @@ function variableDefaultMatches(variable: ObjectValue): boolean {
   }
 }
 
+function hasCompleteSafety(value: unknown): boolean {
+  const safety = object(value);
+  return safety !== undefined
+    && typeof safety.previewSafe === "boolean"
+    && typeof safety.deterministic === "boolean"
+    && typeof safety.seekSafe === "boolean"
+    && typeof safety.rollbackSafe === "boolean";
+}
+
 function timelineSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[] {
   const diagnostics: AuthoringDiagnostic[] = [];
   const duration = typeof root.duration === "number" ? root.duration : 0;
@@ -159,10 +168,14 @@ export function validateSemantics(contractId: string, value: unknown, path?: str
     case "extension": {
       const commands = objects(root.commands);
       const actions = objects(root.actions);
+      const inheritedSafety = hasCompleteSafety(root.safety);
       for (const id of duplicates([...commands, ...actions].map((item) => item.id))) diagnostics.push(issue("PXSDKSEM1107", "Extension command and Action ids must be unique", path, id));
       for (const declaration of [...commands, ...actions]) {
         const parameters = objects(declaration.parameters);
         diagnostics.push(...uniqueIdentities(parameters, "name", `Extension parameter in ${String(declaration.id)}`, path));
+        if (!inheritedSafety && !hasCompleteSafety(declaration.safety)) {
+          diagnostics.push(issue("PXSDKSEM1109", "Extension command and Action require an explicit or inherited safety contract", path, String(declaration.id ?? "")));
+        }
         for (const parameter of parameters) {
           const range = object(parameter.range);
           if (range !== undefined && typeof range.minimum === "number" && typeof range.maximum === "number" && range.minimum > range.maximum) diagnostics.push(issue("PXSDKSEM1108", "Extension parameter minimum exceeds maximum", path, `${String(declaration.id)}.${String(parameter.name)}`));
