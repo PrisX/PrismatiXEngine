@@ -115,7 +115,7 @@ export interface ExtensionCommand {
   readonly description?: string;
   readonly category?: string;
   readonly await?: boolean;
-  readonly rollback?: "transient" | "boundary" | "persistent";
+  readonly rollback?: "reversible" | "boundary" | "transient";
   readonly capabilities?: readonly string[];
   readonly safety?: ExtensionSafety;
   readonly parameters: readonly ExtensionParameter[];
