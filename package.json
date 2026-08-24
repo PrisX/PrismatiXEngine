@@ -8,8 +8,10 @@
   "scripts": {
     "contracts:generate": "node scripts/generate-contract-bundle.mjs",
     "contracts:check": "node scripts/generate-contract-bundle.mjs --check",
-    "build": "npm run contracts:check && npm run build --workspace @prismatix/authoring-sdk",
-    "test": "npm run build && npm run test --workspace @prismatix/authoring-sdk && npm run test:package",
+    "runtime:build": "npm run build --prefix runtime-sdk",
+    "runtime:test": "npm run test --prefix runtime-sdk",
+    "build": "npm run contracts:check && npm run build --workspace @prismatix/authoring-sdk && npm run runtime:build",
+    "test": "npm run build && npm run test --workspace @prismatix/authoring-sdk && npm run runtime:test && npm run test:package",
     "test:package": "node -e \"import('@prismatix/authoring-sdk').then((sdk) => { if (typeof sdk.compileStory !== 'function' || typeof sdk.validateDocument !== 'function') process.exit(1); })\"",
     "check": "npm run test"
   },
