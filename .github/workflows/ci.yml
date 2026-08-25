@@ -64,7 +64,15 @@ jobs:
             -DPRISMATIX_ENABLE_SANITIZERS=ON \
             -DPRISMATIX_WARNINGS_AS_ERRORS=OFF
       - name: Compile Runtime SDK test surface
-        run: cmake --build out/ci/sdk-clang --target PrismatiXSDKTests --parallel
+        run: >-
+          cmake --build out/ci/sdk-clang --target
+          PrismatiXSDKTests
+          PrismatiXPreviewProtocolV2Tests
+          PrismatiXPerformancePreviewContractTests
+          PrismatiXLocalizationPreviewContractTests
+          PrismatiXProgressionPreviewContractTests
+          PrismatiXRuntimeIrPatchTests
+          --parallel
       - name: Execute Runtime SDK tests
         env:
           ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:halt_on_error=1
@@ -111,7 +119,15 @@ jobs:
             -DBUILD_TESTING=ON `
             -DPRISMATIX_WARNINGS_AS_ERRORS=ON
       - name: Compile Runtime, Player and SDK tests
-        run: cmake --build out/ci/sdk-msvc --target PrismatiXSDKTests --parallel
+        run: >-
+          cmake --build out/ci/sdk-msvc --target
+          PrismatiXSDKTests
+          PrismatiXPreviewProtocolV2Tests
+          PrismatiXPerformancePreviewContractTests
+          PrismatiXLocalizationPreviewContractTests
+          PrismatiXProgressionPreviewContractTests
+          PrismatiXRuntimeIrPatchTests
+          --parallel
       - name: Execute Runtime SDK tests
         run: >-
           ctest --test-dir out/ci/sdk-msvc -L "runtime|contract|sdk"
@@ -142,8 +158,8 @@ jobs:
             "out/ci/sdk-package/include/PrismatiX/Engine/SDK/PreviewSession.h",
             "out/ci/sdk-package/share/PrismatiX/contracts/contracts.lock.json",
             "out/ci/sdk-package/share/PrismatiX/authoring-sdk/dist/src/index.js",
-             "out/ci/sdk-package/PrismatiXSDKManifest.json",
-             "out/ci/sdk-package/PrismatiXSDKManifest.sha256",
+            "out/ci/sdk-package/PrismatiXSDKManifest.json",
+            "out/ci/sdk-package/PrismatiXSDKManifest.sha256",
             "out/ci/sdk-package/lib/cmake/PrismatiXSDK/PrismatiXSDKConfig.cmake",
             "out/ci/sdk-package/bin/PrismatiXPreviewHost.exe",
             "out/ci/sdk-package/bin/SDL3.dll"
@@ -193,7 +209,16 @@ jobs:
             -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/apple-clang" \
             -DBUILD_TESTING=ON \
             -DPRISMATIX_WARNINGS_AS_ERRORS=OFF
-      - run: cmake --build out/ci/sdk-apple-clang --target PrismatiXSDKTests --parallel
+      - name: Compile Runtime SDK test surface
+        run: >-
+          cmake --build out/ci/sdk-apple-clang --target
+          PrismatiXSDKTests
+          PrismatiXPreviewProtocolV2Tests
+          PrismatiXPerformancePreviewContractTests
+          PrismatiXLocalizationPreviewContractTests
+          PrismatiXProgressionPreviewContractTests
+          PrismatiXRuntimeIrPatchTests
+          --parallel
       - run: >-
           ctest --test-dir out/ci/sdk-apple-clang -L "runtime|contract|sdk"
           --output-on-failure --timeout 300 --no-tests=error
