@@ -53,7 +53,11 @@ test("Story project compiler supports jumping directly to another scene entry", 
   const compiled = compileStoryProject({
     storyIndex: {
       ...storyIndex,
-      scenes: storyIndex.scenes.map((scene) => ({...scene, requiredLabels: scene.id === "scene02" ? ["start", "aside"] : scene.requiredLabels})),
+      scenes: storyIndex.scenes.map((scene) =>
+        scene.id === "scene02"
+          ? {...scene, requiredLabels: ["start", "aside"]}
+          : scene,
+      ),
     },
     locale: "zh-TW",
     sourceFiles: {
