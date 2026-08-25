@@ -19,7 +19,8 @@ function duplicates(values: readonly unknown[]): string[] {
   const duplicate = new Set<string>();
   for (const value of values) {
     if (typeof value !== "string") continue;
-    if (!found.add(value)) duplicate.add(value);
+    if (found.has(value)) duplicate.add(value);
+    else found.add(value);
   }
   return [...duplicate].sort();
 }
