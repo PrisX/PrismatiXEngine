@@ -73,10 +73,11 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(SDL3_ttf)
 # The pinned SDL_ttf snapshot vendors HarfBuzz with its own warning policy.
-# Appending -Wno-error after that target is created keeps warnings visible while
-# preventing upstream diagnostics from failing PrismatiX's -Werror gate.
+# Emscripten 6/Clang 24 diagnoses several intentionally-unused HarfBuzz helper
+# templates as errors even after the generic -Wno-error override, so suppress
+# that third-party-only diagnostic explicitly while keeping all other warnings.
 if(TARGET harfbuzz AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(harfbuzz PRIVATE -Wno-error)
+    target_compile_options(harfbuzz PRIVATE -Wno-error -Wno-unused-template)
 endif()
 
 # Browser audio uses codecs that compile without native dynamic libraries.
