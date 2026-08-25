@@ -56,13 +56,14 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(SDL3_image)
 
 # HarfBuzz stays enabled so Preview and Native share CJK shaping semantics.
-# Keep SDL_ttf's own -Werror policy disabled: vendored HarfBuzz warnings are
-# outside PrismatiX's control, while our targets still honor warnings-as-errors.
+# Dependency warnings must never be promoted by PrismatiX's release gate: the
+# gate owns PrismatiX targets, not vendored third-party sources.
 set(SDLTTF_VENDORED ON CACHE BOOL "" FORCE)
 set(SDLTTF_HARFBUZZ ON CACHE BOOL "" FORCE)
 set(SDLTTF_PLUTOSVG OFF CACHE BOOL "" FORCE)
 set(SDLTTF_INSTALL OFF CACHE BOOL "" FORCE)
 set(SDLTTF_SAMPLES OFF CACHE BOOL "" FORCE)
+set(SDLTTF_WERROR OFF CACHE BOOL "" FORCE)
 set(SDLTTF_STRICT OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     SDL3_ttf
@@ -71,6 +72,12 @@ FetchContent_Declare(
     GIT_SHALLOW    FALSE
 )
 FetchContent_MakeAvailable(SDL3_ttf)
+# The pinned SDL_ttf snapshot vendors HarfBuzz with its own warning policy.
+# Appending -Wno-error after that target is created keeps warnings visible while
+# preventing upstream diagnostics from failing PrismatiX's -Werror gate.
+if(TARGET harfbuzz AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(harfbuzz PRIVATE -Wno-error)
+endif()
 
 # Browser audio uses codecs that compile without native dynamic libraries.
 set(SDLMIXER_VENDORED ON CACHE BOOL "" FORCE)
