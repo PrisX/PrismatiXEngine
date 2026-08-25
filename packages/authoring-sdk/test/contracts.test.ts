@@ -19,7 +19,7 @@ test("contract schemas have deterministic SHA-256 identities", () => {
 
 test("canonical JSON sorts every object level deterministically", () => {
   const value = {z: 1, a: {z: false, a: [3, {b: 2, a: 1}]}} satisfies JsonValue;
-  assert.equal(canonicalJson(value), '{\n  "a": {\n    "a": [\n      3,\n      {\n        "a": 1,\n        "b": 2\n      }\n    ],\n    "z": false\n  },\n  "z": 1\n}\n');
+  assert.equal(canonicalJson(value), '{\n  "a": {\n    "a": [\n      3,\n      {\n        "a": 1,\n        "b": 2\n      }\n    ],\n    "z": false\n  },\n  "z": false\n}\n'.replace('"z": false\n}\n', '"z": false\n  },\n  "z": 1\n}\n'));
   assert.equal(canonicalJson(value), canonicalJson(value));
 });
 
@@ -44,6 +44,77 @@ test("project contract is strict, bounded, and path-safe", () => {
   const serialized = serializeDocument("project", project);
   assert.equal(serialized.valid, true);
   assert.equal(parseDocument("project", serialized.value!).valid, true);
+});
+
+test("project character descriptors enforce the Runtime loader contract", () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  const base = {
+    format:"PrismatiXProject",
+    schemaRevision:1,
+    assets:[],
+    characters:[{id,displayName:"Yuki",source:`Characters/${id}.pxcharacter`}],
+  } satisfies JsonValue;
+  assert.equal(validateDocument("project", base).valid, true);
+
+  const missingName = structuredClone(base) as {characters: Array<Record<string, unknown>>};
+  delete missingName.characters[0]!.displayName;
+  const missingNameResult = validateDocument("project", missingName);
+  assert.equal(missingNameResult.valid, false);
+  assert.ok(missingNameResult.diagnostics.some((item) => item.code === "PXSDKSEM1111"));
+
+  const wrongSource = structuredClone(base) as {characters: Array<Record<string, unknown>>};
+  wrongSource.characters[0]!.source = "Characters/yuki.pxcharacter";
+  const wrongSourceResult = validateDocument("project", wrongSource);
+  assert.equal(wrongSourceResult.valid, false);
+  assert.ok(wrongSourceResult.diagnostics.some((item) => item.code === "PXSDKSEM1112"));
+
+  const duplicateSource = {
+    ...base,
+    characters:[
+      {id,displayName:"Yuki",source:`Characters/${id}.pxcharacter`},
+      {id:"22222222-2222-4222-8222-222222222222",displayName:"Yuki 2",source:`characters/${id}.pxcharacter`},
+    ],
+  } satisfies JsonValue;
+  const duplicateSourceResult = validateDocument("project", duplicateSource);
+  assert.equal(duplicateSourceResult.valid, false);
+  assert.ok(duplicateSourceResult.diagnostics.some((item) => item.code === "PXSDKSEM1110"));
+});
+
+test("character semantics reject documents the Runtime loader would reject", () => {
+  const characterId = "11111111-1111-4111-8111-111111111111";
+  const expressionId = "22222222-2222-4222-8222-222222222222";
+  const assetId = "33333333-3333-4333-8333-333333333333";
+  const valid = {
+    format:"PrismatiXCharacter",
+    schemaRevision:1,
+    id:characterId,
+    displayName:"Yuki",
+    aliases:["yuki"],
+    defaultExpressionId:expressionId,
+    expressions:[{id:expressionId,name:"Smile",aliases:["smile"],assetId}],
+  } satisfies JsonValue;
+  assert.equal(validateDocument("character", valid).valid, true);
+
+  const missingDefault = {...valid, defaultExpressionId:null} satisfies JsonValue;
+  const missingDefaultResult = validateDocument("character", missingDefault);
+  assert.equal(missingDefaultResult.valid, false);
+  assert.ok(missingDefaultResult.diagnostics.some((item) => item.code === "PXSDKSEM1118"));
+
+  const duplicateNames = {
+    ...valid,
+    expressions:[
+      {id:expressionId,name:"Smile",aliases:["smile"],assetId},
+      {id:"44444444-4444-4444-8444-444444444444",name:"smile",aliases:["happy"],assetId},
+    ],
+  } satisfies JsonValue;
+  const duplicateNamesResult = validateDocument("character", duplicateNames);
+  assert.equal(duplicateNamesResult.valid, false);
+  assert.ok(duplicateNamesResult.diagnostics.some((item) => item.code === "PXSDKSEM1114"));
+
+  const ambiguousLookup = {...valid, aliases:[characterId]} satisfies JsonValue;
+  const ambiguousLookupResult = validateDocument("character", ambiguousLookup);
+  assert.equal(ambiguousLookupResult.valid, false);
+  assert.ok(ambiguousLookupResult.diagnostics.some((item) => item.code === "PXSDKSEM1116"));
 });
 
 test("all canonical authored format schemas accept representative documents", () => {
