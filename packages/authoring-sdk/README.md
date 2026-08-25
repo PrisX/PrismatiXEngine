@@ -24,4 +24,19 @@ const result = compileStory(story, {
 });
 ```
 
+## Resource identity policy
+
+PrismatiX authoring is **path-first**. Authors may use ordinary project-relative paths such as `Assets/BG/classroom.webp`; the asset catalog is not a virtual filesystem and ordinary assets do not need a UUID merely to be referenced.
+
+Stable asset identities remain available for resources that benefit from rename/move stability or are referenced by identity-bearing authored objects such as character expressions. Those references compile to the canonical `asset:<uuid>` Runtime token and are resolved against `project.pxproject` before VM execution. The Runtime keeps both the stable UUID and the resolved last-known path.
+
+```ts
+import {assetToken} from "@prismatix/authoring-sdk";
+
+const stableSprite = assetToken("33333333-3333-4333-8333-333333333333");
+// asset:33333333-3333-4333-8333-333333333333
+```
+
+This deliberately keeps the authoring surface friendly without removing the existing stable-identity layer used by character resources, runtime asset resolution, packaging, and rename-safe references.
+
 Run `npm run check` at the repository root to verify schemas, generated contract freshness, the TypeScript build, package exports, and contract tests.
