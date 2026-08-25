@@ -131,7 +131,9 @@ test("Story extension commands accept structured JSON literals and preserve type
   assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
   const operation = compiled.runtimeIr?.operations.find((item) => item.kind === "customNode");
   assert.ok(operation);
-  assert.deepEqual(JSON.parse(operation.arguments.value), {
+  const payload = operation.arguments.value;
+  assert.equal(typeof payload, "string");
+  assert.deepEqual(JSON.parse(payload), {
     asset:{path:"Assets/CG/rain.webp"},
     bounds:[0,0,1280,720],
     metadata:{strength:0.8,weather:"rain"},
