@@ -8,6 +8,7 @@ The public entrypoint provides:
 - `.pxstory` parsing with source spans, diagnostics, and recovery;
 - project-aware Story compilation to versioned Runtime IR and source maps;
 - character alias, expression, variable, resource, label, and extension-command validation;
+- project-aware character/resource graph validation matching the native CharacterResources loader;
 - structural Story localization validation;
 - UI Visual State and shared property-capability validation;
 - explicit migration entrypoints and generated contract hashes.
@@ -23,6 +24,24 @@ const result = compileStory(story, {
   extensions,
 });
 ```
+
+## Project-aware character resources
+
+Standalone schema validation cannot prove that a `.pxproject` character descriptor and its `.pxcharacter` document agree, or that expression asset UUIDs exist with a Runtime-compatible kind. Use `validateProjectCharacterResources()` once the project provider has loaded those documents.
+
+```ts
+import {validateProjectCharacterResources} from "@prismatix/authoring-sdk";
+
+const validation = validateProjectCharacterResources(
+  project,
+  {
+    "Characters/11111111-1111-4111-8111-111111111111.pxcharacter": yuki,
+  },
+  {assetExists: (path) => vfs.exists(path)},
+);
+```
+
+The validator keeps IO outside the SDK and checks descriptor/document identity, global expression identities, runtime lookup ambiguity, expression asset kind/identity, optional asset existence, and the same character alias limits enforced by the native Runtime.
 
 ## Resource identity policy
 
