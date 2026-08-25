@@ -24,6 +24,19 @@ function duplicates(values: readonly unknown[]): string[] {
   return [...duplicate].sort();
 }
 
+function caseInsensitiveDuplicates(values: readonly unknown[]): string[] {
+  const found = new Map<string, string>();
+  const duplicate = new Set<string>();
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const folded = value.toLocaleLowerCase("en-US");
+    const previous = found.get(folded);
+    if (previous !== undefined) duplicate.add(previous);
+    else found.set(folded, value);
+  }
+  return [...duplicate].sort();
+}
+
 function uniqueIdentities(items: readonly ObjectValue[], field: string, contract: string, path?: string): AuthoringDiagnostic[] {
   return duplicates(items.map((item) => item[field])).map((id) => issue("PXSDKSEM1001", `${contract} ${field} must be unique`, path, id));
 }
@@ -139,16 +152,54 @@ export function validateSemantics(contractId: string, value: unknown, path?: str
     case "project": {
       const locales = Array.isArray(root.supportedLocales) ? root.supportedLocales : [];
       if (typeof root.defaultLocale === "string" && !locales.includes(root.defaultLocale)) diagnostics.push(issue("PXSDKSEM1101", "Project defaultLocale must be listed in supportedLocales", path));
-      diagnostics.push(...uniqueIdentities(objects(root.assets), "id", "Project asset", path));
-      diagnostics.push(...uniqueIdentities(objects(root.characters), "id", "Project character", path));
+      const assets = objects(root.assets);
+      const characters = objects(root.characters);
+      diagnostics.push(...uniqueIdentities(assets, "id", "Project asset", path));
+      diagnostics.push(...uniqueIdentities(characters, "id", "Project character", path));
+      for (const source of caseInsensitiveDuplicates(characters.map((character) => character.source))) {
+        diagnostics.push(issue("PXSDKSEM1110", "Project character source must be unique ignoring case", path, source));
+      }
+      for (const character of characters) {
+        const id = typeof character.id === "string" ? character.id : undefined;
+        const displayName = typeof character.displayName === "string" ? character.displayName : undefined;
+        const source = typeof character.source === "string" ? character.source : undefined;
+        if (displayName === undefined || displayName.length === 0 || displayName.length > 256) {
+          diagnostics.push(issue("PXSDKSEM1111", "Project character displayName must be present and at most 256 characters", path, id));
+        }
+        if (id !== undefined && source !== undefined) {
+          const expected = `Characters/${id}.pxcharacter`;
+          if (source.toLocaleLowerCase("en-US") !== expected.toLocaleLowerCase("en-US")) {
+            diagnostics.push(issue("PXSDKSEM1112", "Project character source must match its stable UUID", path, expected));
+          }
+        }
+      }
       break;
     }
     case "character": {
       const expressions = objects(root.expressions);
       diagnostics.push(...uniqueIdentities(expressions, "id", "Character expression", path));
+      if (typeof root.displayName === "string" && root.displayName.length > 256) {
+        diagnostics.push(issue("PXSDKSEM1113", "Character displayName exceeds the Runtime 256-character limit", path));
+      }
+      for (const name of caseInsensitiveDuplicates(expressions.map((expression) => expression.name))) {
+        diagnostics.push(issue("PXSDKSEM1114", "Character expression names must be unique ignoring case", path, name));
+      }
+      for (const expression of expressions) {
+        if (typeof expression.name === "string" && expression.name.length > 256) {
+          diagnostics.push(issue("PXSDKSEM1115", "Character expression name exceeds the Runtime 256-character limit", path, String(expression.id ?? "")));
+        }
+      }
+      const characterLookup = [root.id, root.displayName, ...(Array.isArray(root.aliases) ? root.aliases : [])];
+      for (const key of duplicates(characterLookup)) diagnostics.push(issue("PXSDKSEM1116", "Character runtime lookup keys must be unambiguous", path, key));
+      const expressionLookup = expressions.flatMap((expression) => [expression.id, expression.name, ...(Array.isArray(expression.aliases) ? expression.aliases : [])]);
+      for (const key of duplicates(expressionLookup)) diagnostics.push(issue("PXSDKSEM1117", "Character expression runtime lookup keys must be unambiguous", path, key));
       const aliases = [...(Array.isArray(root.aliases) ? root.aliases : []), ...expressions.flatMap((expression) => Array.isArray(expression.aliases) ? expression.aliases : [])];
       for (const alias of duplicates(aliases)) diagnostics.push(issue("PXSDKSEM1102", "Character aliases must be unique", path, alias));
-      if (typeof root.defaultExpressionId === "string" && !expressions.some((expression) => expression.id === root.defaultExpressionId)) diagnostics.push(issue("PXSDKSEM1103", "Character defaultExpressionId is unresolved", path));
+      if (expressions.length > 0 && typeof root.defaultExpressionId !== "string") {
+        diagnostics.push(issue("PXSDKSEM1118", "A character with expressions requires defaultExpressionId", path));
+      } else if (typeof root.defaultExpressionId === "string" && !expressions.some((expression) => expression.id === root.defaultExpressionId)) {
+        diagnostics.push(issue("PXSDKSEM1103", "Character defaultExpressionId is unresolved", path));
+      }
       break;
     }
     case "storyIndex": {
