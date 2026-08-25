@@ -56,12 +56,14 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(SDL3_image)
 
 # HarfBuzz stays enabled so Preview and Native share CJK shaping semantics.
+# Keep SDL_ttf's own -Werror policy disabled: vendored HarfBuzz warnings are
+# outside PrismatiX's control, while our targets still honor warnings-as-errors.
 set(SDLTTF_VENDORED ON CACHE BOOL "" FORCE)
 set(SDLTTF_HARFBUZZ ON CACHE BOOL "" FORCE)
 set(SDLTTF_PLUTOSVG OFF CACHE BOOL "" FORCE)
 set(SDLTTF_INSTALL OFF CACHE BOOL "" FORCE)
 set(SDLTTF_SAMPLES OFF CACHE BOOL "" FORCE)
-set(SDLTTF_STRICT ON CACHE BOOL "" FORCE)
+set(SDLTTF_STRICT OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     SDL3_ttf
     GIT_REPOSITORY https://github.com/libsdl-org/SDL_ttf.git
