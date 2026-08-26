@@ -16,6 +16,16 @@ defineCommand<{amount: number}>("game.raiseAffection", async ({amount}) => {
 });
 ```
 
-For code that prefers the host API directly, importing the package's types also declares the existing `Engine` and `px` globals as `PrismatiXEngine`.
+For code that prefers the host API directly, importing the package's types also declares the existing `Engine`, `px`, and `DisplayMode` globals.
+
+## Build-time bundling
+
+The embedded JavaScript host executes extension entry scripts; it is not a Node.js module loader and does not resolve npm packages at runtime. TypeScript extensions may import `@prismatix/runtime` while authoring, but the project build step must transpile/bundle those imports into the JavaScript shipped with the game.
+
+In other words:
+
+- authoring/build machine: TypeScript + `@prismatix/runtime` imports are fine;
+- packaged extension: ship bundled JavaScript with no unresolved npm imports;
+- native Player / WASM Preview: execute that JavaScript through the same embedded ScriptHost API.
 
 The facade deliberately wraps the existing host instead of defining a second scripting runtime. Native Player and WASM Preview therefore keep identical ScriptHost semantics.
