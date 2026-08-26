@@ -146,6 +146,15 @@ endif()
 # Subdirectories
 add_subdirectory("PrismatiXEngine")
 
+# RuntimeCore consumes the VFS abstraction while the native VFS implementation
+# lives in RuntimePlatformNative. Declare that native-only static-library cycle
+# explicitly so CMake emits the required archive rescans on one-pass linkers
+# such as GNU ld, instead of relying on platform-specific linker behavior.
+if(NOT EMSCRIPTEN)
+    target_link_libraries(PrismatiXRuntimeCore PRIVATE
+        PrismatiXRuntimePlatformNative)
+endif()
+
 # The TypeScript runtime package is authoring/build-time tooling. Ship it next
 # to the Authoring SDK without making it a native Runtime dependency.
 if(NOT EMSCRIPTEN)
