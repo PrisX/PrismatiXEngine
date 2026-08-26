@@ -90,15 +90,15 @@ function fallbackSpan(path: string): SourceSpan {
   };
 }
 
-// These names deliberately remain valid .pxstory identifiers. The authoring
-// source never sees them; they exist only while bundling locale-specific scene
-// files into the single Runtime IR program consumed by the native Runtime.
+// Internal bundle labels intentionally do not embed author-controlled ids.
+// Hashing keeps them valid .pxstory identifiers while avoiding collisions
+// between ids such as `chapter.one` and author labels that contain dots.
 function sceneEntryTarget(sceneId: string): string {
-  return `pxscene.${sceneId}.entry`;
+  return `pxscene.entry.${stableId(`scene-entry:${sceneId}`)}`;
 }
 
 function sceneLabelTarget(sceneId: string, label: string): string {
-  return `pxscene.${sceneId}.label.${label}`;
+  return `pxscene.label.${stableId(`scene-label:${sceneId}:${label}`)}`;
 }
 
 function argumentText(argument: StoryArgument | undefined): string | undefined {
@@ -250,9 +250,10 @@ export function compileStoryProject(context: StoryProjectCompileContext): StoryC
   const indexPath = context.storyIndexPath ?? "Story/story.pxindex";
   const documentId = context.documentId ?? context.storyIndex.id;
   const scenesById = new Map<string, ParsedScene>();
+  const seenSceneIds = new Set<string>();
 
   for (const descriptor of context.storyIndex.scenes) {
-    if (scenesById.has(descriptor.id)) {
+    if (!seenSceneIds.add(descriptor.id)) {
       diagnostics.push(issue("PXSTORY1301", `Duplicate Story scene id: ${descriptor.id}`, indexPath, descriptor.id));
       continue;
     }
@@ -285,7 +286,7 @@ export function compileStoryProject(context: StoryProjectCompileContext): StoryC
 
   for (const descriptor of context.storyIndex.scenes) {
     const scene = scenesById.get(descriptor.id);
-    if (scene === undefined) continue;
+    if (scene === undefined || scene.descriptor !== descriptor) continue;
     const sceneDiagnostics: AuthoringDiagnostic[] = [];
     for (const requiredLabel of descriptor.requiredLabels ?? []) {
       if (!scene.labels.has(requiredLabel)) {
