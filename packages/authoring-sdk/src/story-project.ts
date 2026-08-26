@@ -253,10 +253,12 @@ export function compileStoryProject(context: StoryProjectCompileContext): StoryC
   const seenSceneIds = new Set<string>();
 
   for (const descriptor of context.storyIndex.scenes) {
-    if (!seenSceneIds.add(descriptor.id)) {
+    if (seenSceneIds.has(descriptor.id)) {
       diagnostics.push(issue("PXSTORY1301", `Duplicate Story scene id: ${descriptor.id}`, indexPath, descriptor.id));
       continue;
     }
+    seenSceneIds.add(descriptor.id);
+
     const sourcePath = descriptor.sources[context.locale];
     if (sourcePath === undefined) {
       diagnostics.push(issue("PXSTORY1302", `Story scene ${descriptor.id} has no ${context.locale} source`, indexPath, descriptor.id));
