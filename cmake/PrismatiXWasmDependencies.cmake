@@ -72,10 +72,41 @@ FetchContent_Declare(
     GIT_SHALLOW    FALSE
 )
 FetchContent_MakeAvailable(SDL3_ttf)
-# The pinned SDL_ttf snapshot vendors HarfBuzz with its own warning policy.
-# Emscripten 6/Clang 24 diagnoses several intentionally-unused HarfBuzz helper
-# templates more aggressively. Override that one third-party diagnostic after
-# HarfBuzz has created its target; PrismatiX targets still keep -Werror.
+
+# SDL_ttf 3.2.2 pins libsdl-org/harfbuzz@564bf981. Emscripten 6.0.5 ships
+# Clang 24, where -Wunused-template became part of -Wunused/-Wall. That exact
+# compiler still promotes HarfBuzz's intentionally-unused helper templates to
+# errors even when -Wno-unused-template is present on the command line. Apply a
+# configure-time compatibility pragma to the fetched third-party amalgamation
+# only; PrismatiX sources continue to build with the normal -Werror policy.
+if(EMSCRIPTEN AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND
+   CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 24)
+    set(prismatix_harfbuzz_amalgamation
+        "${sdl3_ttf_SOURCE_DIR}/external/harfbuzz/src/harfbuzz.cc")
+    if(EXISTS "${prismatix_harfbuzz_amalgamation}")
+        file(READ "${prismatix_harfbuzz_amalgamation}"
+             prismatix_harfbuzz_source)
+        set(prismatix_harfbuzz_clang24_marker
+            "PRISMATIX_CLANG24_UNUSED_TEMPLATE_COMPAT")
+        string(FIND "${prismatix_harfbuzz_source}"
+               "${prismatix_harfbuzz_clang24_marker}"
+               prismatix_harfbuzz_marker_pos)
+        if(prismatix_harfbuzz_marker_pos EQUAL -1)
+            file(WRITE "${prismatix_harfbuzz_amalgamation}"
+                "// ${prismatix_harfbuzz_clang24_marker}\n"
+                "#if defined(__clang__)\n"
+                "#pragma clang diagnostic ignored \"-Wunused-template\"\n"
+                "#endif\n"
+                "${prismatix_harfbuzz_source}")
+        endif()
+    else()
+        message(FATAL_ERROR
+            "Pinned SDL_ttf HarfBuzz amalgamation was not found")
+    endif()
+endif()
+
+# Keep the command-line override too for compiler versions where it behaves as
+# documented. This remains scoped to vendored HarfBuzz only.
 foreach(prismatix_harfbuzz_target IN ITEMS harfbuzz harfbuzz-subset)
     if(TARGET ${prismatix_harfbuzz_target} AND
        CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
