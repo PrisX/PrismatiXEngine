@@ -75,10 +75,16 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(SDL3_ttf)
 
-# Keep vendored dependency diagnostics isolated from PrismatiX's -Werror gate.
+# HarfBuzz's hb.hh promotes the whole -Wunused group to errors internally.
+# Clang 24 moved -Wunused-template under that umbrella, so command-line
+# -Wno-error=unused-template alone cannot win after the source pragma runs.
+# Disable HarfBuzz's own error-promotion block for this vendored dependency;
+# PrismatiX targets still use the normal warnings-as-errors policy.
 foreach(prismatix_harfbuzz_target IN ITEMS harfbuzz harfbuzz-subset)
     if(TARGET ${prismatix_harfbuzz_target} AND
        CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_definitions(${prismatix_harfbuzz_target} PRIVATE
+            HB_NO_PRAGMA_GCC_DIAGNOSTIC_ERROR=1)
         target_compile_options(${prismatix_harfbuzz_target} PRIVATE
             -Wno-error
             -Wno-error=unused-template
