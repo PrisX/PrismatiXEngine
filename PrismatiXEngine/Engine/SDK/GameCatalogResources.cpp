@@ -255,7 +255,7 @@ bool ReadAssetReference(
             path, property->line, node.id, key);
         return false;
     }
-    output = {.assetPath = std::move(legacyPath)};
+    output = {.assetId = {}, .assetPath = std::move(legacyPath)};
     return true;
 }
 
@@ -441,7 +441,7 @@ GameCatalogResourcesLoadResult LoadGameCatalogResources(
             if (!nodeIds.insert(id).second) {
                 Add(result, "PXCAT1005", "duplicate node UUID: " + id, path, line, id);
             }
-            nodes.push_back({ .id = std::move(id), .parent = std::move(parent), .name = std::move(name), .type = std::move(type), .line = line });
+            nodes.push_back({ .id = std::move(id), .parent = std::move(parent), .name = std::move(name), .type = std::move(type), .line = line, .properties = {} });
             activeNode = &nodes.back();
             continue;
         }
