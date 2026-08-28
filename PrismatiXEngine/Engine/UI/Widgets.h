@@ -57,7 +57,6 @@ private:
     bool m_hasColor = false;
     HorizontalTextAlignment m_horizontalAlignment = HorizontalTextAlignment::Left;
     VerticalTextAlignment m_verticalAlignment = VerticalTextAlignment::Top;
-    graphics::Renderer2D* m_measureRenderer = nullptr;
 };
 
 class Button : public Control {
