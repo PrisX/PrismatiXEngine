@@ -17,7 +17,7 @@ std::string Trim(std::string_view value) {
 diag::Diagnostic ParseError(const std::string& path, int line, std::string message,
                             std::string details = {}) {
     diag::Diagnostic d{ diag::Severity::Error, "PXRES-E1001", "resource-parser",
-                        std::move(message), std::move(details) };
+                        std::move(message), std::move(details), {}, {}, {} };
     d.source.path = path;
     d.source.line = line;
     return d;
@@ -270,7 +270,7 @@ Result<TypedDocument> ParseTypedDocument(std::string_view text, const std::strin
                 diagnostics.push_back(ParseError(sourcePath, line, "Invalid node header."));
                 continue;
             }
-            document.nodes.push_back(NodeRecord{ *nodeId, parentId.value_or(Uuid{}), name, type });
+            document.nodes.push_back(NodeRecord{ *nodeId, parentId.value_or(Uuid{}), name, type, {} });
             activeNode = &document.nodes.back();
             continue;
         }
