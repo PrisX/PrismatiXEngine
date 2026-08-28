@@ -34,6 +34,7 @@ Json VariantToJson(const Variant& value) {
         case VariantType::Color:{const auto& v=*value.TryGet<Color>();return Json{{"$type","color"},{"r",v.r},{"g",v.g},{"b",v.b},{"a",v.a}};}
         case VariantType::Uuid:return Json{{"$type","uuid"},{"value",value.TryGet<Uuid>()->ToString()}};
         case VariantType::ResourceRef:{const auto& v=*value.TryGet<ResourceRefValue>();return Json{{"$type","resource"},{"id",v.id.ToString()},{"path",v.lastKnownPath}};}
+        case VariantType::TokenRef:{const auto& v=*value.TryGet<TokenRefValue>();return Json{{"$type","token"},{"name",v.name}};}
         case VariantType::Array:{Json result=Json::array();for(const auto& item:*value.AsArray())result.push_back(VariantToJson(item));return result;}
         case VariantType::Object:{Json result=Json::object();for(const auto& [name,item]:*value.AsObject())result[name]=VariantToJson(item);return result;}
     }
@@ -58,6 +59,7 @@ std::optional<Variant> VariantFromJson(const Json& json,int depth=0){
             if(kind=="color")return Variant(Color{json.at("r").get<std::uint8_t>(),json.at("g").get<std::uint8_t>(),json.at("b").get<std::uint8_t>(),json.at("a").get<std::uint8_t>()});
             if(kind=="uuid"){auto id=Uuid::Parse(json.at("value").get<std::string>());if(!id)return std::nullopt;return Variant(*id);}
             if(kind=="resource"){auto id=Uuid::Parse(json.at("id").get<std::string>());if(!id)return std::nullopt;return Variant(ResourceRefValue{*id,json.value("path",std::string{})});}
+            if(kind=="token"){std::string name=json.at("name").get<std::string>();if(name.empty())return std::nullopt;return Variant(TokenRefValue{std::move(name)});}
             return std::nullopt;
         }
         VariantObject values;for(auto it=json.begin();it!=json.end();++it){auto converted=VariantFromJson(it.value(),depth+1);if(!converted)return std::nullopt;values.emplace(it.key(),std::move(*converted));}return Variant(std::move(values));
@@ -75,6 +77,7 @@ std::string ParameterText(const Variant& value){
     if(const auto* number=value.TryGet<double>())return std::to_string(*number);
     if(const auto* boolean=value.TryGet<bool>())return *boolean?"true":"false";
     if(const auto* resource=value.TryGet<ResourceRefValue>())return resource->lastKnownPath.empty()?resource->id.ToString():resource->lastKnownPath;
+    if(const auto* token=value.TryGet<TokenRefValue>())return token->name;
     if(const auto* id=value.TryGet<Uuid>())return id->ToString();return {};
 }
 
