@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace px {
@@ -77,6 +78,32 @@ struct PropertyInfo {
     bool animatable = false;
     bool advanced = false;
     PropertyOwnership ownership = PropertyOwnership::Control;
+
+    PropertyInfo() = default;
+    PropertyInfo(std::string propertyName, std::string propertyCategory,
+                 VariantType propertyType, PropertyFlags propertyFlags,
+                 Variant propertyDefaultValue,
+                 std::function<Variant(const Object&)> propertyGet = {},
+                 std::function<Status(Object&, const Variant&)> propertySet = {},
+                 EditorHint propertyEditor = {},
+                 PropertyImpact propertyImpact = PropertyImpact::Paint,
+                 bool propertyBindable = true,
+                 bool propertyAnimatable = false,
+                 bool propertyAdvanced = false,
+                 PropertyOwnership propertyOwnership = PropertyOwnership::Control)
+        : name(std::move(propertyName)),
+          category(std::move(propertyCategory)),
+          type(propertyType),
+          flags(propertyFlags),
+          defaultValue(std::move(propertyDefaultValue)),
+          get(std::move(propertyGet)),
+          set(std::move(propertySet)),
+          editor(std::move(propertyEditor)),
+          impact(propertyImpact),
+          bindable(propertyBindable),
+          animatable(propertyAnimatable),
+          advanced(propertyAdvanced),
+          ownership(propertyOwnership) {}
 };
 
 struct SignalArgumentInfo {
@@ -114,6 +141,20 @@ struct TypeInfo {
     std::vector<PropertyInfo> properties;
     std::vector<SignalInfo> signals;
     std::optional<DesignerTypeMetadata> designer;
+
+    TypeInfo() = default;
+    TypeInfo(std::string typeName, std::string baseType, std::string typeCategory,
+             std::function<std::unique_ptr<Object>()> typeFactory,
+             std::vector<PropertyInfo> typeProperties = {},
+             std::vector<SignalInfo> typeSignals = {},
+             std::optional<DesignerTypeMetadata> typeDesigner = std::nullopt)
+        : name(std::move(typeName)),
+          base(std::move(baseType)),
+          category(std::move(typeCategory)),
+          factory(std::move(typeFactory)),
+          properties(std::move(typeProperties)),
+          signals(std::move(typeSignals)),
+          designer(std::move(typeDesigner)) {}
 };
 
 class TypeRegistry {
