@@ -59,7 +59,7 @@ BehaviorRuntimeServices UIContext::BehaviorServices(){
         if(m_playExternalAnimation)return m_playExternalAnimation(name);
         return Result<std::uint64_t>::Failure({diag::Diagnostic{.severity=diag::Severity::Error,.code="PXUI2402",.category="UI.Animation",.message="Animation state or external animation does not exist: "+std::string(name)}});
     };
-    services.animationPlaying=[this,embeddedAnimation](std::uint64_t handle){if(handle==embeddedAnimation)return m_animationController&&m_animationController->ActivePlayback();return m_externalAnimationPlaying&&m_externalAnimationPlaying(handle);};
+    services.animationPlaying=[this](std::uint64_t handle){if(handle==embeddedAnimation)return m_animationController&&m_animationController->ActivePlayback();return m_externalAnimationPlaying&&m_externalAnimationPlaying(handle);};
     services.setAnimationParameter=[this](std::string_view name,const Variant& value){return m_animationController?m_animationController->SetParameter(name,value):Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXUI2406",.category="UI.Animation",.message="Animation Controller is not configured"});};
     services.travelAnimationState=[this](std::string_view state,float duration){return TravelAnimationState(state,duration);};
     return services;
