@@ -18,7 +18,7 @@ namespace {
 // Soft cap on resident textures; a long VN session visits far more backgrounds
 // and sprites than are ever on screen together.
 void AssetDiagnostic(std::string code,const std::string& path,std::string message,std::string details={}){
-    diag::Diagnostic d{.severity=diag::Severity::Error,.code=std::move(code),.category="Asset.Load",.message=std::move(message),.details=std::move(details),.source={}};d.source.path=path;diag::Emit(std::move(d));
+    diag::Diagnostic d{.severity=diag::Severity::Error,.code=std::move(code),.category="Asset.Load",.message=std::move(message),.details=std::move(details),.source={},.operationId={},.quickFix={}};d.source.path=path;diag::Emit(std::move(d));
 }
 }
 
