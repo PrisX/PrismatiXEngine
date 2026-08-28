@@ -182,18 +182,6 @@ Result<ExpandedUIDocument> ExpandDocument(const resource::TypedDocument& source,
     }
     return Result<ExpandedUIDocument>::Success(std::move(output));
 }
-
-Color ReadColor(const VariantObject& object, const char* key, Color fallback) {
-    if (const auto it=object.find(key); it!=object.end()) if (const auto* v=it->second.TryGet<Color>()) return *v;
-    return fallback;
-}
-double ReadNumber(const VariantObject& object, const char* key, double fallback) {
-    if (const auto it=object.find(key); it!=object.end()) {
-        if (const auto* v=it->second.TryGet<double>()) return *v;
-        if (const auto* v=it->second.TryGet<std::int64_t>()) return static_cast<double>(*v);
-    }
-    return fallback;
-}
 }
 
 Result<ExpandedUIDocument> ExpandUIComponents(const resource::TypedDocument& source,
