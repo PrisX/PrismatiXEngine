@@ -130,9 +130,14 @@ Result<ExpandedUIDocument> ExpandDocument(const resource::TypedDocument& source,
         if (!expanded) return expanded;
 
         const resource::NodeRecord* sourceRoot = nullptr;
-        for (const auto& node : expanded.Value().document.nodes)
-            if (node.parent.Empty()) { if (sourceRoot) return Result<ExpandedUIDocument>::Failure(
-                Error("PXUI3014", "UIComponent must have exactly one root", reference->lastKnownPath)); sourceRoot=&node; }
+        for (const auto& node : expanded.Value().document.nodes) {
+            if (!node.parent.Empty()) continue;
+            if (sourceRoot)
+                return Result<ExpandedUIDocument>::Failure(
+                    Error("PXUI3014", "UIComponent must have exactly one root",
+                          reference->lastKnownPath));
+            sourceRoot = &node;
+        }
         if (!sourceRoot) return Result<ExpandedUIDocument>::Failure(
             Error("PXUI3014", "UIComponent root is missing", reference->lastKnownPath));
 
