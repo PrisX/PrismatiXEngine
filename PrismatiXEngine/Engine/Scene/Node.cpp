@@ -7,7 +7,7 @@ namespace px::scene {
 namespace {
 diag::Diagnostic TreeError(std::string message) {
     return diag::Diagnostic{ diag::Severity::Error, "PXSCENE-E1001", "scene-tree",
-                             std::move(message) };
+                             std::move(message), {}, {}, {}, {} };
 }
 }
 
