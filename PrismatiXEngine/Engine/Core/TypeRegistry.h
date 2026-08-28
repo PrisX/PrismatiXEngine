@@ -84,26 +84,14 @@ struct PropertyInfo {
                  VariantType propertyType, PropertyFlags propertyFlags,
                  Variant propertyDefaultValue,
                  std::function<Variant(const Object&)> propertyGet = {},
-                 std::function<Status(Object&, const Variant&)> propertySet = {},
-                 EditorHint propertyEditor = {},
-                 PropertyImpact propertyImpact = PropertyImpact::Paint,
-                 bool propertyBindable = true,
-                 bool propertyAnimatable = false,
-                 bool propertyAdvanced = false,
-                 PropertyOwnership propertyOwnership = PropertyOwnership::Control)
+                 std::function<Status(Object&, const Variant&)> propertySet = {})
         : name(std::move(propertyName)),
           category(std::move(propertyCategory)),
           type(propertyType),
           flags(propertyFlags),
           defaultValue(std::move(propertyDefaultValue)),
           get(std::move(propertyGet)),
-          set(std::move(propertySet)),
-          editor(std::move(propertyEditor)),
-          impact(propertyImpact),
-          bindable(propertyBindable),
-          animatable(propertyAnimatable),
-          advanced(propertyAdvanced),
-          ownership(propertyOwnership) {}
+          set(std::move(propertySet)) {}
 };
 
 struct SignalArgumentInfo {
