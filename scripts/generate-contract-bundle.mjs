@@ -36,6 +36,10 @@ function sha256(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
+function normalizeLineEndings(value) {
+  return value.replace(/\r\n/g, "\n");
+}
+
 async function readJson(filePath) {
   const text = await readFile(filePath, "utf8");
   if (text.startsWith("\uFEFF")) throw new Error(`${filePath} must not contain a UTF-8 BOM`);
@@ -88,7 +92,10 @@ if (checkOnly) {
     readFile(lockPath, "utf8").catch(() => ""),
     readFile(generatedPath, "utf8").catch(() => ""),
   ]);
-  if (currentLock !== lockText || currentGenerated !== generatedText) {
+  if (
+    normalizeLineEndings(currentLock) !== lockText ||
+    normalizeLineEndings(currentGenerated) !== generatedText
+  ) {
     throw new Error("Generated contract bundle is stale; run npm run contracts:generate");
   }
 } else {

@@ -87,12 +87,15 @@ bool Uuid::Empty() const {
 }
 
 std::size_t UuidHash::operator()(const Uuid& value) const noexcept {
-    std::size_t hash = 1469598103934665603ull;
+    std::uint64_t hash = 1469598103934665603ull;
     for (std::uint8_t b : value.Data()) {
         hash ^= b;
         hash *= 1099511628211ull;
     }
-    return hash;
+    if constexpr (sizeof(std::size_t) < sizeof(hash)) {
+        hash ^= hash >> 32;
+    }
+    return static_cast<std::size_t>(hash);
 }
 
 }  // namespace px

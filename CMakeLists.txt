@@ -32,6 +32,15 @@ function(prismatix_configure_target target)
         if(PRISMATIX_WARNINGS_AS_ERRORS)
             target_compile_options(${target} PRIVATE -Werror)
         endif()
+        # Clang 24's Emscripten toolchain diagnoses intentionally partial C++20
+        # designated initializers more aggressively than the native compilers.
+        # Keep the diagnostic visible without making this safe default-
+        # initialization pattern release-blocking; all other warnings remain
+        # errors under PRISMATIX_WARNINGS_AS_ERRORS.
+        if(EMSCRIPTEN AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+            target_compile_options(${target} PRIVATE
+                -Wno-error=missing-designated-field-initializers)
+        endif()
     endif()
     if(PRISMATIX_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
@@ -145,6 +154,31 @@ endif()
 
 # Subdirectories
 add_subdirectory("PrismatiXEngine")
+
+# RuntimeCore consumes the VFS abstraction while the native VFS implementation
+# lives in RuntimePlatformNative. Declare that native-only static-library cycle
+# explicitly so CMake emits the required archive rescans on one-pass linkers
+# such as GNU ld, instead of relying on platform-specific linker behavior.
+if(NOT EMSCRIPTEN)
+    target_link_libraries(PrismatiXRuntimeCore PRIVATE
+        PrismatiXRuntimePlatformNative)
+endif()
+
+# The TypeScript runtime package is authoring/build-time tooling. Ship it next
+# to the Authoring SDK without making it a native Runtime dependency.
+if(NOT EMSCRIPTEN)
+    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/runtime-sdk/dist/src/"
+        DESTINATION "share/PrismatiX/runtime-sdk/dist/src"
+        COMPONENT PrismatiXSDK
+        OPTIONAL
+    )
+    install(FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/runtime-sdk/package.json"
+        "${CMAKE_CURRENT_SOURCE_DIR}/runtime-sdk/README.md"
+        DESTINATION "share/PrismatiX/runtime-sdk"
+        COMPONENT PrismatiXSDK
+    )
+endif()
 
 # Formatting helper
 file(GLOB_RECURSE ALL_CXX_SOURCE_FILES

@@ -163,8 +163,13 @@ struct PreviewSessionEvent {
     std::uint64_t checkpointId = 0;
 };
 
-// Stable, frontend-neutral Preview boundary. RuntimeSession, VM, renderer and
-// transport implementation types deliberately do not cross this interface.
+// Stable, frontend-neutral Preview semantics contract. RuntimeSession, VM,
+// renderer and platform implementation types deliberately do not cross this
+// interface. PrismatiX itself implements this interface in-process, while
+// installed native SDK consumers access the same semantics through the
+// versioned PrismatiXPreviewHost transport (and browser consumers through the
+// WASM Preview transport). The installed SDK intentionally does not expose an
+// in-process factory that would make RuntimeSession part of the public ABI.
 class PreviewSession {
 public:
     virtual ~PreviewSession() = default;

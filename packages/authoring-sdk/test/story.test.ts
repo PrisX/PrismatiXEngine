@@ -27,7 +27,17 @@ const extension: ExtensionManifest = {
   version: "1.0.0",
   entry: "weather.js",
   capabilities: ["runtime"],
-  commands: [{id:"weather",parameters:[{name:"type",type:"string",required:true,enum:["rain","snow"]},{name:"strength",type:"number",required:true,range:{minimum:0,maximum:1}}]}],
+  commands: [
+    {id:"weather",parameters:[{name:"type",type:"string",required:true,enum:["rain","snow"]},{name:"strength",type:"number",required:true,range:{minimum:0,maximum:1}}]},
+    {id:"stage.compose",parameters:[
+      {name:"offset",type:"vec2",required:true},
+      {name:"bounds",type:"rect",required:true},
+      {name:"tint",type:"color",required:true},
+      {name:"tags",type:"array",required:true},
+      {name:"metadata",type:"object",required:true},
+      {name:"asset",type:"resource",required:true},
+    ]},
+  ],
   actions: [],
 };
 
@@ -69,6 +79,20 @@ test("line-oriented parser retains source spans without indentation semantics", 
   assert.equal(firstDialogue?.span.start.column, 1);
 });
 
+test("blank lines end speaker scope so the next text paragraph is narration", () => {
+  const parsed = parseStory(`@yuki\n第一句。\n第二句。\n\n這是旁白。\n@yuki\n又是對話。\n`, "Story/paragraphs.pxstory");
+  assert.equal(parsed.diagnostics.length, 0);
+  assert.deepEqual(
+    parsed.nodes.filter((node) => node.kind === "dialogue" || node.kind === "narration").map((node) => [node.kind, node.name, node.text]),
+    [
+      ["dialogue", "yuki", "第一句。"],
+      ["dialogue", "yuki", "第二句。"],
+      ["narration", undefined, "這是旁白。"],
+      ["dialogue", "yuki", "又是對話。"],
+    ],
+  );
+});
+
 test("Story compiler emits only executable semantic operations and source maps", () => {
   const parsed = parseStory(source, "Story/zh-TW/ch01.pxstory");
   const compiled = compileStory(parsed, {
@@ -91,6 +115,47 @@ test("Story compiler emits only executable semantic operations and source maps",
   assert.equal(shown?.arguments.expression, character.expressions[0]!.id);
   assert.equal(shown?.arguments.sprite, `asset:${character.expressions[0]!.assetId}`);
   assert.equal(compiled.sourceMap!.mappings.length, compiled.runtimeIr!.operations.length);
+});
+
+test("Story extension commands accept structured JSON literals and preserve typed payloads", () => {
+  const parsed = parseStory(
+    `[stage.compose offset=[100, 200] bounds=[0,0,1280,720] tint=[255,128,64,255] tags=["night", "rain"] metadata={"weather":"rain", "strength":0.8} asset={"path":"Assets/CG/rain.webp"}]\n`,
+    "Story/structured-extension.pxstory",
+  );
+  assert.equal(parsed.diagnostics.length, 0, JSON.stringify(parsed.diagnostics));
+  const command = parsed.nodes.find((node) => node.kind === "command");
+  assert.deepEqual(command?.arguments?.find((argument) => argument.name === "offset")?.value, [100, 200]);
+  assert.deepEqual(command?.arguments?.find((argument) => argument.name === "metadata")?.value, {weather:"rain",strength:0.8});
+
+  const compiled = compileStory(parsed, {documentId:"structured-extension",extensions:[extension]});
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  const operation = compiled.runtimeIr?.operations.find((item) => item.kind === "customNode");
+  assert.ok(operation);
+  const payload = operation.arguments.value;
+  if (typeof payload !== "string") {
+    assert.fail("expected customNode payload to be a JSON string");
+  }
+  assert.deepEqual(JSON.parse(payload), {
+    asset:{path:"Assets/CG/rain.webp"},
+    bounds:[0,0,1280,720],
+    metadata:{strength:0.8,weather:"rain"},
+    offset:[100,200],
+    tags:["night","rain"],
+    tint:[255,128,64,255],
+  });
+});
+
+test("Story extension structured literals fail closed for malformed JSON and typed shapes", () => {
+  const malformed = parseStory(`[stage.compose offset=[100,] bounds=[0,0,1,1] tint=[0,0,0,255] tags=[] metadata={} asset="x"]\n`, "Story/malformed-json.pxstory");
+  assert.ok(malformed.diagnostics.some((item) => item.code === "PXSTORY1014"));
+  assert.equal(compileStory(malformed, {documentId:"malformed",extensions:[extension]}).valid, false);
+
+  const wrongShape = compileStory(
+    parseStory(`[stage.compose offset=[1,2,3] bounds=[0,0,1,1] tint=[300,0,0,255] tags={} metadata=[] asset=1]\n`, "Story/wrong-shape.pxstory"),
+    {documentId:"wrong-shape",extensions:[extension]},
+  );
+  assert.equal(wrongShape.valid, false);
+  assert.ok(wrongShape.diagnostics.filter((item) => item.code === "PXSTORY1202").length >= 5);
 });
 
 test("Story compiler fails closed for unresolved flow and extension contracts", () => {

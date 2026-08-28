@@ -6,8 +6,16 @@ namespace px {
 
 namespace {
 diag::Diagnostic RegistryError(std::string code, std::string message, std::string details = {}) {
-    return diag::Diagnostic{ diag::Severity::Error, std::move(code), "type-registry",
-                             std::move(message), std::move(details) };
+    return diag::Diagnostic{
+        .severity = diag::Severity::Error,
+        .code = std::move(code),
+        .category = "type-registry",
+        .message = std::move(message),
+        .details = std::move(details),
+        .source = {},
+        .operationId = {},
+        .quickFix = {},
+    };
 }
 }
 

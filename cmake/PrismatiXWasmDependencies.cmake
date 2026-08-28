@@ -56,19 +56,42 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(SDL3_image)
 
 # HarfBuzz stays enabled so Preview and Native share CJK shaping semantics.
+# Dependency warnings must never be promoted by PrismatiX's release gate: the
+# gate owns PrismatiX targets, not vendored third-party sources. Use a recent
+# pinned SDL_ttf snapshot whose vendored HarfBuzz supports current Clang rather
+# than source-patching the older 3.2.2 dependency during configure.
 set(SDLTTF_VENDORED ON CACHE BOOL "" FORCE)
 set(SDLTTF_HARFBUZZ ON CACHE BOOL "" FORCE)
 set(SDLTTF_PLUTOSVG OFF CACHE BOOL "" FORCE)
 set(SDLTTF_INSTALL OFF CACHE BOOL "" FORCE)
 set(SDLTTF_SAMPLES OFF CACHE BOOL "" FORCE)
-set(SDLTTF_STRICT ON CACHE BOOL "" FORCE)
+set(SDLTTF_WERROR OFF CACHE BOOL "" FORCE)
+set(SDLTTF_STRICT OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     SDL3_ttf
     GIT_REPOSITORY https://github.com/libsdl-org/SDL_ttf.git
-    GIT_TAG        a1ce3670aec736ecbf0936c43f2f0cc53aa61e5b
+    GIT_TAG        a42434b8c96daaf7650dbd0befe480c090d1c2eb
     GIT_SHALLOW    FALSE
 )
 FetchContent_MakeAvailable(SDL3_ttf)
+
+# HarfBuzz's hb.hh promotes the whole -Wunused group to errors internally.
+# Clang 24 moved -Wunused-template under that umbrella, so command-line
+# -Wno-error=unused-template alone cannot win after the source pragma runs.
+# Disable HarfBuzz's own error-promotion block for this vendored dependency;
+# PrismatiX targets still use the normal warnings-as-errors policy.
+foreach(prismatix_harfbuzz_target IN ITEMS harfbuzz harfbuzz-subset)
+    if(TARGET ${prismatix_harfbuzz_target} AND
+       CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_definitions(${prismatix_harfbuzz_target} PRIVATE
+            HB_NO_PRAGMA_GCC_DIAGNOSTIC_ERROR=1)
+        target_compile_options(${prismatix_harfbuzz_target} PRIVATE
+            -Wno-error
+            -Wno-error=unused-template
+            -Wno-unused-template
+        )
+    endif()
+endforeach()
 
 # Browser audio uses codecs that compile without native dynamic libraries.
 set(SDLMIXER_VENDORED ON CACHE BOOL "" FORCE)

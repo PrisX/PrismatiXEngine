@@ -69,7 +69,7 @@ export type StoryNodeKind = "label" | "speaker" | "dialogue" | "narration" | "co
 export interface StoryArgument {
   readonly name?: string;
   readonly raw: string;
-  readonly value: JsonPrimitive;
+  readonly value: JsonValue;
   readonly span: SourceSpan;
 }
 
@@ -115,7 +115,7 @@ export interface ExtensionCommand {
   readonly description?: string;
   readonly category?: string;
   readonly await?: boolean;
-  readonly rollback?: "transient" | "boundary" | "persistent";
+  readonly rollback?: "reversible" | "boundary" | "transient";
   readonly capabilities?: readonly string[];
   readonly safety?: ExtensionSafety;
   readonly parameters: readonly ExtensionParameter[];

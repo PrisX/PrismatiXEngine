@@ -23,11 +23,6 @@ diag::Diagnostic DispatchError(std::string code, std::string message,
     return diagnostic;
 }
 
-Status EmitFailure(diag::Diagnostic diagnostic) {
-    diag::Emit(diagnostic);
-    return Status::Fail(std::move(diagnostic));
-}
-
 Status EmitFailure(const std::vector<diag::Diagnostic>& diagnostics) {
     for (const auto& diagnostic : diagnostics) diag::Emit(diagnostic);
     return Status::Fail(diagnostics);

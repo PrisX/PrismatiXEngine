@@ -130,9 +130,14 @@ Result<ExpandedUIDocument> ExpandDocument(const resource::TypedDocument& source,
         if (!expanded) return expanded;
 
         const resource::NodeRecord* sourceRoot = nullptr;
-        for (const auto& node : expanded.Value().document.nodes)
-            if (node.parent.Empty()) { if (sourceRoot) return Result<ExpandedUIDocument>::Failure(
-                Error("PXUI3014", "UIComponent must have exactly one root", reference->lastKnownPath)); sourceRoot=&node; }
+        for (const auto& node : expanded.Value().document.nodes) {
+            if (!node.parent.Empty()) continue;
+            if (sourceRoot)
+                return Result<ExpandedUIDocument>::Failure(
+                    Error("PXUI3014", "UIComponent must have exactly one root",
+                          reference->lastKnownPath));
+            sourceRoot = &node;
+        }
         if (!sourceRoot) return Result<ExpandedUIDocument>::Failure(
             Error("PXUI3014", "UIComponent root is missing", reference->lastKnownPath));
 
@@ -176,18 +181,6 @@ Result<ExpandedUIDocument> ExpandDocument(const resource::TypedDocument& source,
         }
     }
     return Result<ExpandedUIDocument>::Success(std::move(output));
-}
-
-Color ReadColor(const VariantObject& object, const char* key, Color fallback) {
-    if (const auto it=object.find(key); it!=object.end()) if (const auto* v=it->second.TryGet<Color>()) return *v;
-    return fallback;
-}
-double ReadNumber(const VariantObject& object, const char* key, double fallback) {
-    if (const auto it=object.find(key); it!=object.end()) {
-        if (const auto* v=it->second.TryGet<double>()) return *v;
-        if (const auto* v=it->second.TryGet<std::int64_t>()) return static_cast<double>(*v);
-    }
-    return fallback;
 }
 }
 
