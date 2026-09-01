@@ -162,8 +162,8 @@ CommandRegistry MakeBuiltins() {
     add(Descriptor("layer_clear","Stage",{Param("name",VariantType::String,true)}));
     add(Descriptor("char","Stage",{Param("id",VariantType::String,true,{},CommandEditorWidget::Character),Param("file",VariantType::ResourceRef,false,{},CommandEditorWidget::Resource),Param("expression",VariantType::String),Param("pos",VariantType::Integer),Param("x",VariantType::Number),Param("y",VariantType::Number),Param("scale",VariantType::Number)}));
     add(Descriptor("char_clear","Stage",{Param("id",VariantType::String,true,{},CommandEditorWidget::Character)}));
-    add(Descriptor("char_move","Stage",{Param("id",VariantType::String,true,{},CommandEditorWidget::Character),Param("pos",VariantType::Integer)}));
-    add(Descriptor("move","Stage",{Param("id",VariantType::String,true,{},CommandEditorWidget::Character),Param("pos",VariantType::Integer)}));
+    add(Descriptor("char_move","Stage",{Param("id",VariantType::String,true,{},CommandEditorWidget::Character),Param("pos",VariantType::Integer),Param("x",VariantType::Number),Param("y",VariantType::Number),Param("scale",VariantType::Number),Param("duration",VariantType::Integer),Param("ease",VariantType::String),Param("wait",VariantType::Bool)},CommandWaitPolicy::Async));
+    add(Descriptor("move","Stage",registry.Find("char_move")->parameters,CommandWaitPolicy::Async));
     add(Descriptor("anim","Animation",{Param("target",VariantType::String,true),Param("x",VariantType::Number),Param("y",VariantType::Number),Param("scale",VariantType::Number),Param("alpha",VariantType::Number),Param("duration",VariantType::Integer),Param("ease",VariantType::String),Param("wait",VariantType::Bool)},CommandWaitPolicy::Async));
     add(Descriptor("tween","Animation",registry.Find("anim")->parameters,CommandWaitPolicy::Async));
     add(Descriptor("shake","Animation",{Param("ms",VariantType::Integer),Param("amp",VariantType::Number)}));

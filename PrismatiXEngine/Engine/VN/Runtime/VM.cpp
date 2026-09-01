@@ -446,6 +446,36 @@ VMRunResult VM::RunSlice(const std::size_t maxInstructions) {
             m_state = VMState::WaitingTimer;
             return finishSlice(VMRunStatus::AwaitingInput, true);
         }
+        if (t == "char_move" || t == "move") {
+            const std::string target = cmd.Get("name", cmd.Get("id"));
+            if (cmd.Has("slot") || cmd.Has("pos")) {
+                m_stage.MoveCharacter(target,
+                    ParseInt(cmd.Get("slot", cmd.Get("pos")), 2));
+            }
+            Stage::TweenSpec spec;
+            if (cmd.Has("x")) { spec.hasX = true; spec.x = ParseFloat(cmd.Get("x")); }
+            if (cmd.Has("y")) { spec.hasY = true; spec.y = ParseFloat(cmd.Get("y")); }
+            if (cmd.Has("scale")) {
+                spec.hasScale = true;
+                spec.scale = ParseFloat(cmd.Get("scale"), 1.0f);
+            }
+            spec.durationMs =
+                ParseInt(cmd.Get("duration", cmd.Get("time", cmd.Get("ms"))), 600);
+            spec.ease = cmd.Get("ease", "outCubic");
+            if ((spec.hasX || spec.hasY || spec.hasScale) &&
+                !m_stage.Animate(target, spec)) {
+                PX_LOG_WARN("VM: [move] target '{}' not found (line {})", target, cmd.line);
+            }
+            ++m_pc;
+            const std::string wait = cmd.Get("wait", "false");
+            if (!wait.empty() && wait != "false" && wait != "0" && wait != "no") {
+                m_timerMs = static_cast<std::uint64_t>(std::max(0, spec.durationMs));
+                m_timerStart = m_nowMs;
+                m_state = VMState::WaitingTimer;
+                return finishSlice(VMRunStatus::AwaitingInput, true);
+            }
+            continue;
+        }
         if (t == "anim" || t == "tween") {
             Stage::TweenSpec spec;
             if (cmd.Has("x")) { spec.hasX = true; spec.x = ParseFloat(cmd.Get("x")); }
@@ -618,11 +648,6 @@ void VM::ExecuteSimple(const Command& cmd) {
     }
     if (t == "char_clear") {
         m_stage.ClearCharacter(cmd.Get("name", cmd.Get("id")), TruthyFlag(cmd));
-        return;
-    }
-    if (t == "char_move" || t == "move") {
-        const int slot = ParseInt(cmd.Get("slot", cmd.Get("pos", "2")), 2);
-        m_stage.MoveCharacter(cmd.Get("name", cmd.Get("id")), slot);
         return;
     }
     if (t == "bgm") {

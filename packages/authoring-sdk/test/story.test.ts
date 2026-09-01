@@ -46,7 +46,7 @@ const source = `; Chapter 1
 
 *start
 [bg classroom]
-[show yuki expression=smile position=center]
+[show yuki expression=smile position=center x=-12 y=8 scale=0.67]
 
 @yuki
 早安。
@@ -115,7 +115,30 @@ test("Story compiler emits only executable semantic operations and source maps",
   assert.equal(shown?.arguments.character, character.id);
   assert.equal(shown?.arguments.expression, character.expressions[0]!.id);
   assert.equal(shown?.arguments.sprite, `asset:${character.expressions[0]!.assetId}`);
+  assert.equal(shown?.arguments.position, "2");
+  assert.equal(shown?.arguments.x, "-12");
+  assert.equal(shown?.arguments.y, "8");
+  assert.equal(shown?.arguments.scale, "0.67");
   assert.equal(compiled.sourceMap!.mappings.length, compiled.runtimeIr!.operations.length);
+});
+
+test("character placement names and authored moves lower to explicit Runtime commands", () => {
+  const compiled = compileStory(
+    parseStory(`[show yuki position=left x=24 scale=0.8]\n[move yuki position=right x=-48 y=32 scale=1 duration=450ms ease=easeInOut wait=true]\n`, "Story/placement.pxstory"),
+    {documentId:"placement", characters:[character]},
+  );
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  assert.deepEqual(compiled.runtimeIr?.operations.map((operation) => [operation.kind, operation.arguments]), [
+    ["showCharacter", {character:character.id, position:"1", x:"24", scale:"0.8"}],
+    ["timeline", {mode:"move", target:character.id, position:"3", x:"-48", y:"32", scale:"1", duration:"450ms", ease:"easeInOut", wait:"true"}],
+  ]);
+
+  const invalid = compileStory(
+    parseStory(`[show yuki position=somewhere]\n`, "Story/invalid-placement.pxstory"),
+    {documentId:"invalid-placement", characters:[character]},
+  );
+  assert.equal(invalid.valid, false);
+  assert.ok(invalid.diagnostics.some((diagnostic) => diagnostic.code === "PXSTORY1128"));
 });
 
 test("effect and camera commands require presets and lower to explicit RuntimeIR kinds", () => {

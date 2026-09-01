@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -104,6 +105,14 @@ int main() {
     Check(richText && vertical && vertical->valueType == "boolean" &&
               vertical->writable && verticalRows && verticalRows->hasRange,
           "RichTextLabel vertical writing and ruby layout controls must reach the generated SDK registry");
+    const auto* edgeReveal = FindControl(parsed.manifest, "edgeRevealContainer");
+    const auto* revealEasing = edgeReveal
+                                   ? FindProperty(*edgeReveal, "revealEasing")
+                                   : nullptr;
+    Check(revealEasing && revealEasing->writable &&
+              revealEasing->enumChoices ==
+                  std::vector<std::string>({"Linear", "EaseOut", "EaseInOut"}),
+          "EdgeRevealContainer easing choices must reach the generated SDK registry");
 
     constexpr std::string_view revisionOneFixture =
         R"({"format":"PrismatiXUiTypeRegistry","schemaRevision":1,"contract":"uiTypeRegistry","contractRevision":1,"contractHash":"0f2044c10f8697034577b1b09a1baa87efecda10901c912b7a4e05a91fff542d","controls":[{"id":"button","runtimeType":"Button","displayName":"Button","description":"","category":"Input","iconId":"ui.button","canHaveChildren":false,"acceptedResourceKinds":[],"properties":[],"signals":[]}]})";

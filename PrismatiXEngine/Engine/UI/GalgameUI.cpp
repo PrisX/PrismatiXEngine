@@ -247,13 +247,14 @@ Status GalgameUI::InstallTemplate(Screen screen){
             m_speaker=m_dialogue=m_nvlText=m_mode=m_chapterNotice=
                 m_musicNotice=nullptr;
             m_choices=nullptr;
+            m_presentedChoices.clear();
             m_noticePanel=nullptr;
         }
         m_screen=screen;
     }else{
         return GalgameFailure("PXUI2805","Registered UI template has no document");
     }
-    if(screen==Screen::HUD){m_speaker=FindNamed<Label>(m_context.Root(),"Speaker");m_dialogue=FindNamed<Label>(m_context.Root(),"Dialogue");m_nvlText=FindNamed<Label>(m_context.Root(),"NVLText");m_choices=FindNamed<VBoxContainer>(m_context.Root(),"Choices");m_mode=FindNamed<Label>(m_context.Root(),"ModeState");m_noticePanel=FindNamed<EdgeRevealContainer>(m_context.Root(),"NoticePanel");m_chapterNotice=FindNamed<Label>(m_context.Root(),"ChapterNotice");m_musicNotice=FindNamed<Label>(m_context.Root(),"MusicNotice");m_lastChapterTitle.clear();m_lastMusicTitle.clear();m_activeDialogueEffect.clear();m_dialogueEffectFinished=false;if(m_dialogue)m_dialogueBaseFontSize=m_dialogue->FontSize()>0?m_dialogue->FontSize():30;}
+    if(screen==Screen::HUD){m_speaker=FindNamed<Label>(m_context.Root(),"Speaker");m_dialogue=FindNamed<Label>(m_context.Root(),"Dialogue");m_nvlText=FindNamed<Label>(m_context.Root(),"NVLText");m_choices=FindNamed<VBoxContainer>(m_context.Root(),"Choices");m_presentedChoices.clear();m_mode=FindNamed<Label>(m_context.Root(),"ModeState");m_noticePanel=FindNamed<EdgeRevealContainer>(m_context.Root(),"NoticePanel");m_chapterNotice=FindNamed<Label>(m_context.Root(),"ChapterNotice");m_musicNotice=FindNamed<Label>(m_context.Root(),"MusicNotice");m_lastChapterTitle.clear();m_lastMusicTitle.clear();m_activeDialogueEffect.clear();m_dialogueEffectFinished=false;if(m_dialogue)m_dialogueBaseFontSize=m_dialogue->FontSize()>0?m_dialogue->FontSize():30;}
     return Status::Ok();
 }
 
@@ -290,6 +291,7 @@ Status GalgameUI::Install(std::unique_ptr<Control> root, Screen screen) {
     if (screen != Screen::HUD) {
         m_speaker = m_dialogue = m_nvlText = m_mode = nullptr;
         m_choices = nullptr;
+        m_presentedChoices.clear();
     }
     const Status status = m_context.SetRoot(std::move(root)); if (!status) return status;
     m_screen = screen; return Status::Ok();
@@ -395,7 +397,8 @@ Status GalgameUI::ToggleHudToolbarPinned() {
 }
 
 Status GalgameUI::ActivateChoice(const std::size_t index) {
-    if (!m_choices || index >= m_choices->Children().size())
+    if (!m_choices || index >= m_presentedChoices.size() ||
+        index >= m_choices->Children().size())
         return GalgameFailure("PXUI2815",
                               "Choice activation index is outside the active HUD choices");
     auto* button = dynamic_cast<Button*>(m_choices->Children()[index].get());
@@ -460,11 +463,31 @@ Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
     }
     if (m_dialogue) if (auto* panel = dynamic_cast<Control*>(m_dialogue->Parent())) panel->SetVisibility(p.nvlMode ? Visibility::Collapsed : Visibility::Visible);
     if (m_mode) m_mode->SetText(std::string(p.autoMode ? "● AUTO  " : "") + (p.skipMode ? "▶▶ SKIP" : ""));
-    if (m_choices) {
-        std::vector<Uuid> old; for (const auto& child : m_choices->Children()) old.push_back(child->Id());
-        for (const auto& id : old) { auto removed = m_choices->RemoveChild(id); (void)removed; }
-        for (std::size_t i = 0; i < p.choices.size(); ++i)
-            if (auto status = Add(*m_choices, MakeMenuButton(p.choices[i], "choice.select", std::to_string(i))); !status) return status;
+    if (auto* toolbar = FindNamed<EdgeRevealContainer>(m_context.Root(), "EdgeToolbar"))
+        toolbar->SetReducedMotion(p.reducedMotion);
+    if (m_choices && p.choices != m_presentedChoices) {
+        for (std::size_t i = 0; i < p.choices.size(); ++i) {
+            Button* button = i < m_choices->Children().size()
+                                 ? dynamic_cast<Button*>(m_choices->Children()[i].get())
+                                 : nullptr;
+            if (!button) {
+                if (auto status = Add(*m_choices, MakeMenuButton(
+                        p.choices[i], "choice.select", std::to_string(i)));
+                    !status)
+                    return status;
+                button = dynamic_cast<Button*>(m_choices->Children().back().get());
+            } else {
+                button->SetText(p.choices[i]);
+                button->SetOnActivated([this, i] {
+                    Emit("choice.select", std::to_string(i));
+                });
+            }
+            if (button) button->SetVisibility(Visibility::Visible);
+        }
+        for (std::size_t i = p.choices.size(); i < m_choices->Children().size(); ++i)
+            if (auto* button = dynamic_cast<Button*>(m_choices->Children()[i].get()))
+                button->SetVisibility(Visibility::Collapsed);
+        m_presentedChoices = p.choices;
         m_choices->InvalidateLayout();
     }
     return Status::Ok();

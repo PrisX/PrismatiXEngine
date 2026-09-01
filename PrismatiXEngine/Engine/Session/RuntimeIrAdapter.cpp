@@ -453,7 +453,15 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             command.type = "wait";
             Add(command, "ms", DurationMilliseconds(Argument(operation, "duration")));
         } else if (operation.kind == "timeline") {
-            if (Argument(operation, "mode") == "animate") {
+            if (Argument(operation, "mode") == "move") {
+                command.type = "char_move";
+                Add(command, "id", Argument(operation, "target"));
+                Add(command, "pos", Argument(operation, "position"));
+                for (const char* name : {"x", "y", "scale", "ease", "wait"}) {
+                    Add(command, name, Argument(operation, name));
+                }
+                Add(command, "duration", DurationMilliseconds(Argument(operation, "duration")));
+            } else if (Argument(operation, "mode") == "animate") {
                 command.type = "anim";
                 for (const char* name : {"target", "x", "y", "scale", "alpha", "ease", "wait"}) {
                     Add(command, name, Argument(operation, name));

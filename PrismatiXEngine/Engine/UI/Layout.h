@@ -9,6 +9,7 @@ namespace px::ui {
 enum class Orientation { Horizontal, Vertical };
 enum class RevealEdge { Top, Bottom, Left, Right };
 enum class RevealTrigger { Hover, Manual };
+enum class RevealEasing { Linear, EaseOut, EaseInOut };
 
 class EdgeRevealContainer final : public Container {
 public:
@@ -25,6 +26,10 @@ public:
     void TogglePinned(){SetPinned(!m_pinned);}
     void SetTrigger(RevealTrigger value){m_trigger=value;}
     [[nodiscard]] RevealTrigger Trigger() const{return m_trigger;}
+    void SetEasing(RevealEasing value){m_easing=value;InvalidateLayout();}
+    [[nodiscard]] RevealEasing Easing() const{return m_easing;}
+    void SetReducedMotion(bool value){m_reducedMotion=value;}
+    [[nodiscard]] bool ReducedMotion() const{return m_reducedMotion;}
     void RevealFor(float seconds){m_manualVisible=true;m_holdRemaining=std::max(0.0f,seconds);}
     void Hide(){m_manualVisible=false;m_holdRemaining=0.0f;}
     [[nodiscard]] bool HitTest(Vec2 point) const override;
@@ -34,9 +39,10 @@ protected:void ArrangeOverride(Rect finalRect) override;
 private:
     RevealEdge m_edge=RevealEdge::Top;
     float m_speed=12.0f,m_triggerSize=10.0f,m_progress=0.0f;
-    bool m_pinned=false,m_pointerInside=false,m_manualVisible=false;
+    bool m_pinned=false,m_pointerInside=false,m_manualVisible=false,m_reducedMotion=false;
     float m_holdRemaining=0.0f;
     RevealTrigger m_trigger=RevealTrigger::Hover;
+    RevealEasing m_easing=RevealEasing::EaseOut;
 };
 
 class BoxContainer : public Container {

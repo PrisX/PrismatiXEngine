@@ -25,6 +25,24 @@ const result = compileStory(story, {
 });
 ```
 
+## Character placement
+
+Story character placement has three readable anchors (`left`, `center`, and `right`) plus
+pixel offsets and scale. Offsets are relative to the selected anchor, so a pair can share
+the center anchor while sitting close together, while another scene can keep one actor in
+the center and one at the side.
+
+```pxstory
+[show character=illya position=center x=-150 y=180 scale=0.82]
+[show character=miyu position=center x=150 y=180 scale=0.82]
+
+; Move an existing actor to the right anchor and adjust the close-up smoothly.
+[move character=miyu position=right x=-80 y=140 scale=0.9 duration=450ms ease=easeInOut wait=true]
+```
+
+`x`, `y`, and `scale` remain fully author-controlled. Positive `y` moves a bottom-anchored
+sprite downward, which is useful for conventional upper-body visual-novel framing.
+
 ## Project-aware character resources
 
 Standalone schema validation cannot prove that a `.pxproject` character descriptor and its `.pxcharacter` document agree, or that expression asset UUIDs exist with a Runtime-compatible kind. Use `validateProjectCharacterResources()` once the project provider has loaded those documents.

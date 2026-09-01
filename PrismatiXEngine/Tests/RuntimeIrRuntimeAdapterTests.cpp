@@ -242,6 +242,16 @@ int main() {
                    {"x", "-24"},
                    {"y", "12"},
                    {"scale", "1.25"}}),
+        Operation("character-move", "timeline",
+                  {{"mode", "move"},
+                   {"target", "yuki"},
+                   {"position", "3"},
+                   {"x", "-48"},
+                   {"y", "32"},
+                   {"scale", "1"},
+                   {"duration", "450ms"},
+                   {"ease", "easeInOut"},
+                   {"wait", "true"}}),
         Operation("add", "setVariable", {{"name", "affection"}, {"add", "2"}}),
         Operation("transition", "background",
                   {{"asset", "asset:background-id"},
@@ -267,7 +277,7 @@ int main() {
         return condition;
     };
     if (!check(parityProgram.errors.empty(), "program must compile") ||
-        !check(parityProgram.code.size() == 6, "expected six commands") ||
+        !check(parityProgram.code.size() == 7, "expected seven commands") ||
         !check(parityProgram.code[0].type == "say", "dialogue command") ||
         !check(parityProgram.code[0].Get("char") == "yuki", "dialogue character") ||
         !check(parityProgram.code[0].Get("voice") == "asset:voice-id", "dialogue voice") ||
@@ -275,17 +285,22 @@ int main() {
         !check(parityProgram.code[1].type == "char", "character command") ||
         !check(parityProgram.code[1].Get("file") == "asset:sprite-id", "sprite override") ||
         !check(parityProgram.code[1].Get("pos") == "1", "position slot") ||
-        !check(parityProgram.code[2].type == "var", "variable command") ||
-        !check(parityProgram.code[2].FindTyped("add") != nullptr, "typed add") ||
-        !check(parityProgram.code[3].type == "bg", "transition command") ||
-        !check(parityProgram.code[3].Get("time") == "600", "transition duration") ||
-        !check(parityProgram.code[3].Get("vague") == "64", "transition band") ||
-        !check(parityProgram.code[4].type == "anim", "actor animation command") ||
-        !check(parityProgram.code[4].Get("alpha") == "192", "animation alpha") ||
-        !check(parityProgram.code[4].Get("wait") == "true", "animation wait") ||
-        !check(parityProgram.code[5].type == "route", "route command") ||
-        !check(parityProgram.code[5].Get("route") == "settings", "route id") ||
-        !check(parityProgram.code[5].Get("operation") == "modal", "route operation")) {
+        !check(parityProgram.code[2].type == "char_move", "character move command") ||
+        !check(parityProgram.code[2].Get("pos") == "3", "move position slot") ||
+        !check(parityProgram.code[2].Get("x") == "-48", "move horizontal offset") ||
+        !check(parityProgram.code[2].Get("duration") == "450", "move duration") ||
+        !check(parityProgram.code[2].Get("wait") == "true", "move wait policy") ||
+        !check(parityProgram.code[3].type == "var", "variable command") ||
+        !check(parityProgram.code[3].FindTyped("add") != nullptr, "typed add") ||
+        !check(parityProgram.code[4].type == "bg", "transition command") ||
+        !check(parityProgram.code[4].Get("time") == "600", "transition duration") ||
+        !check(parityProgram.code[4].Get("vague") == "64", "transition band") ||
+        !check(parityProgram.code[5].type == "anim", "actor animation command") ||
+        !check(parityProgram.code[5].Get("alpha") == "192", "animation alpha") ||
+        !check(parityProgram.code[5].Get("wait") == "true", "animation wait") ||
+        !check(parityProgram.code[6].type == "route", "route command") ||
+        !check(parityProgram.code[6].Get("route") == "settings", "route id") ||
+        !check(parityProgram.code[6].Get("operation") == "modal", "route operation")) {
         return 1;
     }
 

@@ -1669,11 +1669,15 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         m_hudHidden = !m_hudHidden;
     }
 
-    m_choiceTexts.clear();
-    if (m_session->VM().State() == vn::VMState::WaitingChoice) {
-        for (const auto& c : m_session->VM().Choices()) m_choiceTexts.push_back(c.text);
-        m_skipMode = false;  // Skip always stops at choices.
-    }
+    const auto syncChoiceTexts = [this] {
+        m_choiceTexts.clear();
+        if (m_session->VM().State() == vn::VMState::WaitingChoice) {
+            for (const auto& choice : m_session->VM().Choices())
+                m_choiceTexts.push_back(choice.text);
+            m_skipMode = false;  // Skip always stops at choices.
+        }
+    };
+    syncChoiceTexts();
 
     // Enter/Space advance like a click (KAG convention). Alt+Enter stays the
     // fullscreen toggle handled in MainLoop.
@@ -1689,6 +1693,9 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         m_ui.RefreshHUD(DialogueUI());
         int uiW = 0, uiH = 0; m_runtime.Renderer().GetLogicalSize(uiW, uiH);
         const bool uiConsumed = m_ui.Update(input, uiW, uiH,dt);
+        // UI actions may select a branch synchronously. Do not render the
+        // previous choice snapshot for the remainder of this frame.
+        syncChoiceTexts();
         if (m_ui.IsOverlay()) { m_session->Stage().Render(); m_ui.Render(m_runtime.Renderer()); return; }
         if (!uiConsumed && (input.LeftClick() || advanceKey) &&
                m_session->VM().State() != vn::VMState::WaitingChoice) {
@@ -1727,6 +1734,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
 
     m_session->Update(now, dt);
     if(m_scriptHost){m_scriptHost->Emit("frame.update",{{"delta",std::to_string(dt)}});const bool hadPending=m_scriptHost->HasPendingCommand()||m_scriptHost->HasPendingAction();m_scriptHost->Update(dt);if(hadPending&&!m_scriptHost->HasPendingCommand()&&!m_scriptHost->HasPendingAction())m_session->VM().NotifyExternalDone();}
+    syncChoiceTexts();
 
     // New dialogue lines feed the NVL page and the rollback ring.
     const std::size_t backlogSize = m_session->Backlog().Entries().size();

@@ -377,6 +377,14 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
     const positional = (index: number): string | undefined => stringValue(args.get(`$${index}`));
     const named = (name: string): string | undefined => stringValue(args.get(name));
     const target = named("target") ?? named("goto") ?? positional(0);
+    const characterPosition = (value: string | undefined): string | undefined => {
+      if (value === undefined) return undefined;
+      const normalized = value.trim().toLowerCase();
+      const positions: Readonly<Record<string, string>> = {
+        left:"1", center:"2", centre:"2", right:"3", "1":"1", "2":"2", "3":"3",
+      };
+      return positions[normalized];
+    };
     switch (node.name) {
       case "id": {
         const identity = named("value") ?? positional(0);
@@ -412,12 +420,40 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
           const expressionAlias = named("expression");
           const expression = character?.expressions.find((value) => value.id === expressionAlias || value.aliases.includes(expressionAlias ?? ""));
           if (expressionAlias !== undefined && character !== undefined && expression === undefined) diagnostics.push(error("PXSTORY1114", `Unknown expression ${expressionAlias} for ${alias}`, node.span));
+          const authoredPosition = named("position");
+          const position = characterPosition(authoredPosition);
+          if (authoredPosition !== undefined && position === undefined) diagnostics.push(error("PXSTORY1128", `Unknown character position: ${authoredPosition}; expected left, center, right, 1, 2, or 3`, node.span));
           emit(node, "showCharacter", {
             character: character?.id ?? alias,
             ...(expression === undefined ? {} : {expression: expression.id, sprite: `asset:${expression.assetId}`}),
-            ...(named("position") === undefined ? {} : {position: named("position")!}),
+            ...(position === undefined ? {} : {position}),
+            ...(named("x") === undefined ? {} : {x: named("x")!}),
+            ...(named("y") === undefined ? {} : {y: named("y")!}),
+            ...(named("scale") === undefined ? {} : {scale: named("scale")!}),
           });
         }
+        break;
+      }
+      case "move": {
+        const alias = named("character") ?? positional(0);
+        const character = alias === undefined ? undefined : characters.get(alias);
+        const authoredPosition = named("position");
+        const position = characterPosition(authoredPosition);
+        if (alias === undefined) diagnostics.push(error("PXSTORY1129", "move requires a character alias", node.span));
+        else if ((context.characters?.length ?? 0) > 0 && character === undefined) diagnostics.push(error("PXSTORY1130", `Unknown character alias: ${alias}`, node.span));
+        else if (authoredPosition !== undefined && position === undefined) diagnostics.push(error("PXSTORY1131", `Unknown character position: ${authoredPosition}; expected left, center, right, 1, 2, or 3`, node.span));
+        else if ([authoredPosition, named("x"), named("y"), named("scale")].every((value) => value === undefined)) diagnostics.push(error("PXSTORY1132", "move requires position, x, y, or scale", node.span));
+        else emit(node, "timeline", {
+          mode: "move",
+          target: character?.id ?? alias,
+          ...(position === undefined ? {} : {position}),
+          ...(named("x") === undefined ? {} : {x: named("x")!}),
+          ...(named("y") === undefined ? {} : {y: named("y")!}),
+          ...(named("scale") === undefined ? {} : {scale: named("scale")!}),
+          ...(named("duration") === undefined ? {} : {duration: named("duration")!}),
+          ...(named("ease") === undefined ? {} : {ease: named("ease")!}),
+          ...(named("wait") === undefined ? {} : {wait: named("wait")!}),
+        });
         break;
       }
       case "hide": {
@@ -536,9 +572,22 @@ export interface StoryCommandCompletion {
 }
 
 export function storyCommandCompletions(extensions: readonly ExtensionCommand[] = []): readonly StoryCommandCompletion[] {
-  const builtins = ["id", "bg", "show", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "if", "else", "endif", "voice", "bgm", "se", "timeline", "ui", "effect", "camera"];
+  const builtins = ["id", "bg", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "if", "else", "endif", "voice", "bgm", "se", "timeline", "ui", "effect", "camera"];
+  const builtinParameters: Readonly<Record<string, StoryCommandCompletion["parameters"]>> = {
+    show: [
+      {name:"character", required:true}, {name:"expression", required:false},
+      {name:"position", required:false, values:["left", "center", "right"]},
+      {name:"x", required:false}, {name:"y", required:false}, {name:"scale", required:false},
+    ],
+    move: [
+      {name:"character", required:true},
+      {name:"position", required:false, values:["left", "center", "right"]},
+      {name:"x", required:false}, {name:"y", required:false}, {name:"scale", required:false},
+      {name:"duration", required:false}, {name:"ease", required:false}, {name:"wait", required:false},
+    ],
+  };
   return [
-    ...builtins.map((id) => ({id, parameters: []})),
+    ...builtins.map((id) => ({id, parameters: builtinParameters[id] ?? []})),
     ...extensions.map((command) => ({id: command.id, parameters: command.parameters.map((parameter) => ({name: parameter.name, required: parameter.required === true, ...(parameter.enum === undefined ? {} : {values: parameter.enum})}))})),
   ];
 }

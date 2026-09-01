@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -159,12 +160,45 @@ void TestDialogueEffects() {
     });
     presentation.choices = { "First choice" };
     Check(hud.ShowHUD(presentation), "HUD should rebuild with generated choice controls");
+    input.InjectFrame(-1000, -1000, false);
+    (void)hud.Update(input, 1280, 720);
+    auto* choices = findByName(findByName, hud.Root(), "Choices");
+    Check(choices && choices->Children().size() == 1,
+          "HUD should materialize one control for one Runtime choice");
+    const auto choiceId = choices->Children().front()->Id();
+    Check(hud.RefreshHUD(presentation),
+          "the pre-render HUD refresh should accept an unchanged choice list");
+    Check(choices->Children().size() == 1 &&
+              choices->Children().front()->Id() == choiceId,
+          "an unchanged pre-render HUD refresh must preserve laid-out choice controls");
+    auto* choiceControl = dynamic_cast<px::ui::Control*>(
+        choices->Children().front().get());
+    Check(choiceControl != nullptr, "generated choice must be a Runtime control");
+    const auto choiceRect = choiceControl->LayoutRect();
+    input.InjectFrame(choiceRect.x + choiceRect.w * .5f,
+                      choiceRect.y + choiceRect.h * .5f, false);
+    (void)hud.Update(input, 1280, 720);
     Check(hud.ActivateChoice(0), "generated choice should be activatable through the Runtime control tree");
     input.InjectFrame(-1000, -1000, false);
     (void)hud.Update(input, 1280, 720);
     Check(actions.size() == 1 && actions.front().command == "choice.select" &&
               actions.front().argument == "0",
           "generated HUD choice must dispatch the same choice.select contract as authored UI");
+    presentation.choices.clear();
+    Check(hud.RefreshHUD(presentation),
+          "resolved choices should clear without destroying the hovered control");
+    Check(choices->Children().size() == 1 &&
+              choices->Children().front()->Id() == choiceId &&
+              choiceControl->GetVisibility() == px::ui::Visibility::Collapsed,
+          "resolved choices must collapse retained controls so InputRouter pointers remain valid");
+    input.InjectFrame(choiceRect.x + choiceRect.w * .5f,
+                      choiceRect.y + choiceRect.h * .5f, true);
+    (void)hud.Update(input, 1280, 720);
+    presentation.choices = {"Second prompt"};
+    Check(hud.RefreshHUD(presentation) &&
+              choices->Children().front()->Id() == choiceId &&
+              choiceControl->GetVisibility() == px::ui::Visibility::Visible,
+          "a later prompt should safely reuse the retained choice control");
 
     const px::ui::UIRuntimeState gameplayCheckpoint =
         hud.CaptureGameplayRuntimeState();
@@ -442,6 +476,49 @@ void TestEveryCommandDescriptorContract() {
           "runtime conformance must exercise every Player-owned built-in command");
 }
 
+void TestCharacterPlacementMoveRuntime() {
+    px::test::TempDirectory temp("character-placement-runtime");
+    px::io::VFS vfs;
+    vfs.MountDirectory(temp.path.string());
+    px::audio::AudioEngine audio(vfs);
+    px::graphics::AssetCache assets(nullptr, vfs);
+    px::graphics::Renderer2D renderer(nullptr, assets);
+    px::vn::Stage stage(renderer, assets);
+    px::vn::Dialogue dialogue;
+    px::vn::VariableStore variables;
+    px::vn::Backlog backlog;
+    px::vn::VM vm(vfs, audio, stage, dialogue, variables, backlog);
+
+    px::vn::Command show;
+    show.type = "char";
+    show.args = {{"id", "hero"}, {"file", "hero.png"}, {"pos", "2"},
+                 {"x", "0"}, {"y", "0"}, {"scale", "0.8"}};
+    px::vn::Command move;
+    move.type = "char_move";
+    move.args = {{"id", "hero"}, {"pos", "3"}, {"x", "-48"},
+                 {"y", "32"}, {"scale", "1"}, {"duration", "450"},
+                 {"ease", "easeInOut"}, {"wait", "true"}};
+    px::vn::Program program;
+    program.documentId = "placement-runtime";
+    program.code = {std::move(show), std::move(move)};
+    program.branch = {-1, -1};
+
+    Check(vm.LoadCompiledProgram(std::move(program), "Runtime/placement.pxir"),
+          "character placement program should load");
+    const auto during = stage.CaptureState();
+    Check(vm.State() == px::vn::VMState::WaitingTimer &&
+              during.actors.size() == 1 && during.actors.front().slot == 3 &&
+              during.tweens.size() == 1 && during.tweens.front().spec.hasX &&
+              during.tweens.front().spec.hasY && during.tweens.front().spec.hasScale,
+          "character move should change the named slot and retain a waitable transform tween");
+    stage.Update(0.45f);
+    const auto after = stage.Snapshot();
+    Check(after.size() == 1 && std::abs(after.front().offsetX + 48.0f) < 0.01f &&
+              std::abs(after.front().offsetY - 32.0f) < 0.01f &&
+              std::abs(after.front().scale - 1.0f) < 0.01f,
+          "character move tween should reach authored x, y, and scale values");
+}
+
 void TestVisualGraphControlFlowContract() {
     using namespace px::vn::scenario;
     ScenarioDocument document;
@@ -487,6 +564,7 @@ int main() {
     Run("Expression_TypedEvaluation", TestTypedExpressions);
     Run("StoryMap_SerializedGraph", TestStoryMap);
     Run("Scenario_EveryCommandDescriptor", TestEveryCommandDescriptorContract);
+    Run("Character_PlacementMoveRuntime", TestCharacterPlacementMoveRuntime);
     Run("Scenario_VisualGraphControlFlow", TestVisualGraphControlFlowContract);
     if (g_failures == 0) std::cout << "PASS: dialogue-scenario integration\n";
     return g_failures == 0 ? 0 : 1;

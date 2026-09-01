@@ -168,6 +168,7 @@ private:
     int m_dialogueBaseFontSize = 30;
     Label* m_nvlText = nullptr;
     VBoxContainer* m_choices = nullptr;
+    std::vector<std::string> m_presentedChoices;
     Label* m_mode = nullptr;
     Label* m_chapterNotice = nullptr;
     Label* m_musicNotice = nullptr;
