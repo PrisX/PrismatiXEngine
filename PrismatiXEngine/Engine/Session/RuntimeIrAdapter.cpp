@@ -514,7 +514,9 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
         commands.push_back(std::move(command));
     }
 
-    if (fragmentBoundaryInserted) {
+    if (fragmentBoundaryInserted ||
+        std::ranges::any_of(document.operations,
+                            [](const Operation& operation) { return operation.kind == "endStory"; })) {
         commands.push_back(Label("document-end", static_cast<int>(document.operations.size() + 1)));
     }
 
