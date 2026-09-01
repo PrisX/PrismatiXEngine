@@ -7,9 +7,12 @@ import {
 } from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {basename, dirname, extname, isAbsolute, join, relative, resolve, sep} from "node:path";
+import {pathToFileURL} from "node:url";
+import * as ts from "typescript-compiler";
 
 import {
   canonicalJson,
+  compileJsxUi,
   compileProject,
   migrateDocument,
   validateDocument,
@@ -28,6 +31,13 @@ class PackagerFailure extends Error {
   constructor(readonly diagnostics: readonly AuthoringDiagnostic[]) {
     super(diagnostics[0]?.message ?? "Packager failed");
     this.name = "PackagerFailure";
+  }
+}
+
+class JsxAuthoringFailure extends Error {
+  constructor(readonly diagnostics: readonly AuthoringDiagnostic[]) {
+    super(diagnostics[0]?.message ?? "JSX UI authoring failed");
+    this.name = "JsxAuthoringFailure";
   }
 }
 
@@ -364,6 +374,102 @@ async function readJson(path: string): Promise<unknown> {
   return JSON.parse(text) as unknown;
 }
 
+function isJsxUiPath(path: string): boolean {
+  return /\.(?:jsx|tsx)$/iu.test(path);
+}
+
+function canonicalUiPath(path: string, kind: "scene" | "component"): string {
+  return path.replace(/\.(?:jsx|tsx)$/iu,
+    kind === "scene" ? ".pxui" : ".pxuicomponent");
+}
+
+function sdkModuleUrl(specifier: "@prismatix/authoring-sdk" |
+  "@prismatix/authoring-sdk/jsx-runtime" |
+  "@prismatix/authoring-sdk/jsx-dev-runtime"): string {
+  return import.meta.resolve(specifier);
+}
+
+function rewriteSdkImports(output: string): string {
+  let result = output;
+  for (const specifier of [
+    "@prismatix/authoring-sdk",
+    "@prismatix/authoring-sdk/jsx-runtime",
+    "@prismatix/authoring-sdk/jsx-dev-runtime",
+  ] as const) {
+    const escaped = specifier.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    result = result.replace(new RegExp(`(["'])${escaped}\\1`, "gu"),
+      JSON.stringify(sdkModuleUrl(specifier)));
+  }
+  return result;
+}
+
+function typescriptDiagnostics(values: readonly ts.Diagnostic[], text: string,
+  path: string): AuthoringDiagnostic[] {
+  return values.filter((value) => value.category === ts.DiagnosticCategory.Error)
+    .map((value) => {
+      const start = value.start ?? 0;
+      const end = start + (value.length ?? 1);
+      return {
+        ...diagnostic("PXCLIJSX1001", "JSX/TypeScript source could not be transpiled", path),
+        details: ts.flattenDiagnosticMessageText(value.messageText, "\n"),
+        span: sourceSpan(text, path, {start, end}),
+      };
+    });
+}
+
+async function loadJsxUiDocument(root: string, virtualPath: string,
+  kind: "scene" | "component"): Promise<unknown> {
+  const sourcePath = projectFile(root, virtualPath);
+  const source = await readBoundedText(sourcePath);
+  const transpiled = ts.transpileModule(source, {
+    fileName: sourcePath,
+    reportDiagnostics: true,
+    compilerOptions: {
+      target: ts.ScriptTarget.ES2023,
+      module: ts.ModuleKind.ESNext,
+      moduleResolution: ts.ModuleResolutionKind.Bundler,
+      jsx: ts.JsxEmit.ReactJSX,
+      jsxImportSource: "@prismatix/authoring-sdk",
+      isolatedModules: true,
+      verbatimModuleSyntax: true,
+    },
+  });
+  const syntaxDiagnostics = typescriptDiagnostics(transpiled.diagnostics ?? [],
+    source, virtualPath);
+  if (syntaxDiagnostics.length > 0) throw new JsxAuthoringFailure(syntaxDiagnostics);
+
+  const fingerprint = createHash("sha256").update(sourcePath).update("\0")
+    .update(source).digest("hex").slice(0, 16);
+  const executablePath = join(dirname(sourcePath),
+    `.${basename(sourcePath)}.prismatix-${fingerprint}.mjs`);
+  try {
+    await writeFile(executablePath, rewriteSdkImports(transpiled.outputText), "utf8");
+    const module = await import(`${pathToFileURL(executablePath).href}?build=${fingerprint}-${Date.now()}`) as {
+      readonly default?: unknown;
+    };
+    let authored = module.default;
+    if (typeof authored === "function") authored = (authored as () => unknown)();
+    authored = await Promise.resolve(authored);
+    if (authored === undefined) {
+      throw new TypeError("JSX UI modules must provide a default Scene or Component export");
+    }
+    const compiled = compileJsxUi(authored as Parameters<typeof compileJsxUi>[0],
+      {path: virtualPath, kind});
+    if (!compiled.valid || compiled.value === undefined)
+      throw new JsxAuthoringFailure(compiled.diagnostics);
+    return compiled.value;
+  } catch (error) {
+    if (error instanceof JsxAuthoringFailure) throw error;
+    throw new JsxAuthoringFailure([{
+      ...diagnostic("PXCLIJSX1002", "JSX UI module could not be evaluated", virtualPath),
+      details: String(error),
+      span: firstLineSpan(source, virtualPath),
+    }]);
+  } finally {
+    await rm(executablePath, {force: true});
+  }
+}
+
 function object(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown> : undefined;
@@ -428,22 +534,55 @@ function failedPackageDiagnostics(events: readonly Record<string, unknown>[]): r
 async function loadProject(projectArgument?: string): Promise<LoadedProject> {
   const projectPath = resolve(projectArgument ?? "project.pxproject");
   const root = dirname(projectPath);
-  const project = await readJson(projectPath);
+  const authoredProject = await readJson(projectPath);
+  const authoredRaw = object(authoredProject);
+  if (authoredRaw === undefined) throw new Error("project.pxproject must be a JSON object");
+  const project = structuredClone(authoredProject);
   const raw = object(project);
   if (raw === undefined) throw new Error("project.pxproject must be a JSON object");
   const documents: Record<string, unknown> = {};
+  const documentSources = new Map<string, string>();
   const sourceFiles: Record<string, string> = {};
   const locales: Record<string, unknown> = {};
   const loadDocument = async (virtualPath: unknown): Promise<void> => {
-    if (typeof virtualPath !== "string" || documents[virtualPath] !== undefined) return;
+    if (typeof virtualPath !== "string") return;
+    const owner = documentSources.get(virtualPath);
+    if (owner === virtualPath) return;
+    if (owner !== undefined) throw new Error(`${virtualPath} is already produced by ${owner}`);
     documents[virtualPath] = await readJson(projectFile(root, virtualPath));
+    documentSources.set(virtualPath, virtualPath);
+  };
+  const loadJsxDocument = async (virtualPath: string,
+    kind: "scene" | "component"): Promise<string> => {
+    const outputPath = canonicalUiPath(virtualPath, kind);
+    const owner = documentSources.get(outputPath);
+    if (owner === virtualPath) return outputPath;
+    if (owner !== undefined) throw new Error(`${outputPath} is already produced by ${owner}`);
+    documents[outputPath] = await loadJsxUiDocument(root, virtualPath, kind);
+    documentSources.set(outputPath, virtualPath);
+    return outputPath;
   };
   await loadDocument(raw.storyIndex);
   await loadDocument(raw.gameCatalog);
   for (const value of Array.isArray(raw.extensions) ? raw.extensions : []) await loadDocument(value);
-  for (const value of Object.values(object(raw.uiEntryPoints) ?? {})) await loadDocument(value);
+  const authoredEntryPoints = object(authoredRaw.uiEntryPoints) ?? {};
+  const runtimeEntryPoints = object(raw.uiEntryPoints) ?? {};
+  for (const [id, value] of Object.entries(authoredEntryPoints)) {
+    if (typeof value === "string" && isJsxUiPath(value)) {
+      runtimeEntryPoints[id] = await loadJsxDocument(value, "scene");
+    } else await loadDocument(value);
+  }
   for (const value of Array.isArray(raw.characters) ? raw.characters : []) await loadDocument(object(value)?.source);
-  for (const value of Array.isArray(raw.uiComponents) ? raw.uiComponents : []) await loadDocument(object(value)?.source);
+  const authoredComponents = Array.isArray(authoredRaw.uiComponents) ? authoredRaw.uiComponents : [];
+  const runtimeComponents = Array.isArray(raw.uiComponents) ? raw.uiComponents : [];
+  for (let index = 0; index < authoredComponents.length; index += 1) {
+    const source = object(authoredComponents[index])?.source;
+    const runtimeDescriptor = object(runtimeComponents[index]);
+    if (typeof source === "string" && isJsxUiPath(source)) {
+      const outputPath = await loadJsxDocument(source, "component");
+      if (runtimeDescriptor !== undefined) runtimeDescriptor.source = outputPath;
+    } else await loadDocument(source);
+  }
   for (const value of Array.isArray(raw.saveMigrations) ? raw.saveMigrations : []) await loadDocument(object(value)?.asset);
   for (const value of Array.isArray(raw.effects) ? raw.effects : []) await loadDocument(object(value)?.source);
 
@@ -483,6 +622,10 @@ async function validateCommand(options: Options): Promise<number> {
     process.stdout.write(`${JSON.stringify({valid: true, engineVersion: "0.2.0", project: loaded.projectPath})}\n`);
     return 0;
   } catch (error) {
+    if (error instanceof JsxAuthoringFailure) {
+      printDiagnostics(error.diagnostics);
+      return 1;
+    }
     printDiagnostics([diagnostic("PXCLI1001", "Project could not be loaded", options.positional[0], String(error))]);
     return 1;
   }
@@ -559,6 +702,10 @@ async function buildCommand(options: Options): Promise<number> {
       runtimeIr: built.artifact.runtimeIrPath, sourceMap: built.artifact.sourceMapPath})}\n`);
     return 0;
   } catch (error) {
+    if (error instanceof JsxAuthoringFailure) {
+      printDiagnostics(error.diagnostics);
+      return 1;
+    }
     printDiagnostics([diagnostic("PXCLI1101", "Build failed", options.positional[0], String(error))]);
     return 1;
   }
@@ -658,7 +805,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
 async function packCommand(options: Options): Promise<number> {
   try { const result = await packProject(options); process.stdout.write(`${JSON.stringify({packed: true, ...result})}\n`); return 0; }
   catch (error) {
-    printDiagnostics(error instanceof PackagerFailure ? error.diagnostics :
+    printDiagnostics(error instanceof PackagerFailure || error instanceof JsxAuthoringFailure ? error.diagnostics :
       [diagnostic("PXCLI1201", "Pack failed", options.positional[0], String(error))]);
     return 1;
   }
@@ -672,7 +819,7 @@ async function runCommand(options: Options): Promise<number> {
     if (child.stderr.length > 0) process.stderr.write(child.stderr);
     return child.code;
   } catch (error) {
-    printDiagnostics(error instanceof PackagerFailure ? error.diagnostics :
+    printDiagnostics(error instanceof PackagerFailure || error instanceof JsxAuthoringFailure ? error.diagnostics :
       [diagnostic("PXCLI1301", "Run failed", options.positional[0], String(error))]);
     return 1;
   }

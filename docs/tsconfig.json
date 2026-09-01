@@ -3,6 +3,8 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "jsx": "react-jsx",
+    "jsxImportSource": "@prismatix/authoring-sdk",
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noEmitOnError": true,
@@ -11,5 +13,5 @@
     "types": ["node"],
     "skipLibCheck": true
   },
-  "include": ["examples/*.ts"]
+  "include": ["examples/*.ts", "examples/*.tsx"]
 }

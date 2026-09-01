@@ -8,6 +8,6 @@
     "build": "tsc -p tsconfig.json",
     "test": "node --test dist/test/*.test.js"
   },
-  "dependencies": {"@prismatix/authoring-sdk": "0.2.0"},
-  "devDependencies": {"@types/node": "26.2.0", "typescript": "7.0.2"}
+  "dependencies": {"@prismatix/authoring-sdk": "0.2.0", "typescript-compiler": "npm:typescript@5.9.2"},
+  "devDependencies": {"@types/node": "26.2.0"}
 }

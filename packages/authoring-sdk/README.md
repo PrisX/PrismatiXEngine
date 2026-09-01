@@ -11,6 +11,7 @@ The public entrypoint provides:
 - project-aware character/resource graph validation matching the native CharacterResources loader;
 - structural Story localization validation;
 - UI Visual State and shared property-capability validation;
+- a React-free JSX runtime and typed UI components that lower to the same canonical UI contracts;
 - explicit migration entrypoints and generated contract hashes.
 
 ```ts
@@ -24,6 +25,37 @@ const result = compileStory(story, {
   extensions,
 });
 ```
+
+## JSX UI authoring
+
+JSX and TSX are build-time syntax only. `Scene`, `VBox`, `HBox`, `Text`, `Image`,
+`Button`, and the other typed authoring components produce an in-memory tree;
+`compileJsxUi()` lowers that tree to `PrismatiXUIScene` JSON and immediately runs
+the existing contract and semantic validator. Functional components are ordinary
+functions and do not require React.
+
+```tsx
+import {Button, Scene, Text, VBox} from "@prismatix/authoring-sdk";
+
+export default (
+  <Scene id="a1000000-0000-4000-8000-000000000001"
+    name="Title" width={1280} height={720}>
+    <VBox name="Root">
+      <Text bindings={{text: {path: "locale.ui.title"}}}>Title</Text>
+      <Button onClick={{id: "game.start"}}>Start</Button>
+    </VBox>
+  </Scene>
+);
+```
+
+Use `jsx: "react-jsx"` and
+`jsxImportSource: "@prismatix/authoring-sdk"` in `tsconfig.json`. A project may
+point `uiEntryPoints` at `Content/UI/Title.tsx`; `prismatix validate/build/pack`
+evaluate it during authoring, normalize the packaged route to
+`Content/UI/Title.pxui`, and publish only canonical JSON. Existing `.pxui` and
+`.pxuicomponent` JSON sources remain supported without changes. Explicit UUIDs
+are preserved; otherwise node names, `stableId`, or JSX `key` provide stable,
+deterministic UUID seeds.
 
 ## Character placement
 

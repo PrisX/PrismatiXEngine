@@ -1,6 +1,7 @@
 export * from "./canonical-json.js";
 export * from "./contracts.js";
 export * from "./localization.js";
+export * from "./jsx-ui.js";
 export * from "./project-resources.js";
 export * from "./project.js";
 export * from "./resources.js";

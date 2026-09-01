@@ -14,10 +14,10 @@
     "cli:build": "npm run build --workspace @prismatix/cli",
     "cli:test": "npm run test --workspace @prismatix/cli",
     "docs:build": "tsc -p docs/tsconfig.json",
-    "docs:test": "npm run docs:build && node out/docs-examples/authoring-build.js && node out/docs-examples/runtime-extension.js",
+    "docs:test": "npm run docs:build && node out/docs-examples/authoring-build.js && node out/docs-examples/jsx-ui-authoring.js && node out/docs-examples/runtime-extension.js",
     "build": "npm run contracts:check && npm run build --workspace @prismatix/authoring-sdk && npm run runtime:build && npm run cli:build && npm run docs:build",
     "test": "npm run build && npm run test --workspace @prismatix/authoring-sdk && npm run runtime:test && npm run cli:test && npm run test:package && npm run docs:test",
-    "test:package": "node -e \"import('@prismatix/authoring-sdk').then((sdk) => { if (typeof sdk.compileStory !== 'function' || typeof sdk.validateDocument !== 'function') process.exit(1); })\"",
+    "test:package": "node -e \"Promise.all([import('@prismatix/authoring-sdk'), import('@prismatix/authoring-sdk/jsx-runtime')]).then(([sdk, jsx]) => { if (typeof sdk.compileStory !== 'function' || typeof sdk.validateDocument !== 'function' || typeof sdk.compileJsxUi !== 'function' || typeof jsx.jsx !== 'function') process.exit(1); })\"",
     "check": "npm run test"
   },
   "devDependencies": {

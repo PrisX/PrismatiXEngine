@@ -78,6 +78,71 @@ test("validate and build use the same canonical project compiler", async () => {
   assert.equal((await stat(join(output, "Runtime/main.pxmap"))).isFile(), true);
 });
 
+test("TSX UI authoring lowers to canonical JSON and never enters the Runtime artifact", async () => {
+  const value = await fixture();
+  const project = JSON.parse(await readFile(value.project, "utf8")) as {
+    uiEntryPoints: Record<string, string>;
+    uiComponents?: Array<{id: string; name: string; source: string}>;
+  };
+  project.uiEntryPoints.title = "Content/UI/Title.tsx";
+  project.uiComponents = [{id: "12121212-1212-4212-8212-121212121212",
+    name: "Panel", source: "Content/UI/Panel.jsx"}];
+  await write(value.project, JSON.stringify(project));
+  await write(join(value.root, "Content/UI/Title.tsx"), `
+    import {Button, Scene, Text, VBox} from "@prismatix/authoring-sdk";
+
+    const MenuButton = ({label, action}: {label: string; action: string}) => (
+      <Button name={label} onClick={{id: action, arguments: {}}}
+        bindings={{enabled: {path: "game.menuEnabled"}}}>{label}</Button>
+    );
+
+    export default (
+      <Scene id="11111111-1111-4111-8111-111111111111"
+        name="TSX Title" width={1280} height={720}>
+        <VBox name="Root">
+          <Text name="Heading">PrismatiX JSX</Text>
+          <MenuButton key="start" label="Start" action="game.start" />
+        </VBox>
+      </Scene>
+    );
+  `);
+  await write(join(value.root, "Content/UI/Panel.jsx"), `
+    import {Component, Text, VBox} from "@prismatix/authoring-sdk";
+    export default (
+      <Component id="12121212-1212-4212-8212-121212121212"
+        name="Panel" width={400} height={240}>
+        <VBox name="PanelRoot"><Text name="Caption">Panel</Text></VBox>
+      </Component>
+    );
+  `);
+
+  const validated = run(["validate", value.project]);
+  assert.equal(validated.status, 0, validated.stderr);
+  const output = join(value.root, "tsx-artifact");
+  const built = run(["build", value.project, "--output", output]);
+  assert.equal(built.status, 0, built.stderr);
+  const canonicalPath = join(output, "Content/UI/Title.pxui");
+  const canonical = JSON.parse(await readFile(canonicalPath, "utf8")) as {
+    format: string; nodes: Array<{name: string; id: string; onClick?: {id: string}}>;
+  };
+  assert.equal(canonical.format, "PrismatiXUIScene");
+  assert.equal(canonical.nodes.find((node) => node.name === "Start")?.onClick?.id,
+    "game.start");
+  const builtProject = JSON.parse(await readFile(join(output, "project.pxproject"), "utf8")) as {
+    uiEntryPoints: Record<string, string>;
+  };
+  assert.equal(builtProject.uiEntryPoints.title, "Content/UI/Title.pxui");
+  await assert.rejects(stat(join(output, "Content/UI/Title.tsx")));
+  assert.equal((await stat(join(output, "Content/UI/Panel.pxuicomponent"))).isFile(), true);
+  await assert.rejects(stat(join(output, "Content/UI/Panel.jsx")));
+
+  const secondOutput = join(value.root, "tsx-artifact-second");
+  const rebuilt = run(["build", value.project, "--output", secondOutput]);
+  assert.equal(rebuilt.status, 0, rebuilt.stderr);
+  assert.equal(await readFile(join(secondOutput, "Content/UI/Title.pxui"), "utf8"),
+    await readFile(canonicalPath, "utf8"));
+});
+
 test("pack invokes the native file-based request protocol", async () => {
   const value = await fixture();
   const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-packager-"));
@@ -322,4 +387,24 @@ test("the commercial sample compiles and publishes every release-gated capabilit
     defaultIr.operations.map(({kind, operationId, sourceId}) => ({kind, operationId, sourceId})),
     "localized programs must share stable execution identity and topology",
   );
+});
+
+test("the PrismaFamilyDemo authors every UI route in TSX and builds canonical-only UI", async () => {
+  const sample = resolve("../..", "Samples/PrismaFamilyDemo/project.pxproject");
+  const root = await mkdtemp(join(tmpdir(), "prismatix-jsx-sample-"));
+  const output = join(root, "artifact");
+  const authoredProject = JSON.parse(await readFile(sample, "utf8")) as {
+    uiEntryPoints: Record<string, string>;
+  };
+  assert.ok(Object.values(authoredProject.uiEntryPoints).every((path) => path.endsWith(".tsx")));
+  const validated = run(["validate", sample]);
+  assert.equal(validated.status, 0, validated.stderr);
+  const built = run(["build", sample, "--output", output]);
+  assert.equal(built.status, 0, built.stderr);
+  for (const name of ["Title", "HUD", "Gallery", "Backlog", "Save", "Load"])
+    assert.equal((await stat(join(output, `Content/UI/${name}.pxui`))).isFile(), true);
+  const published = await readFile(join(output, "project.pxproject"), "utf8");
+  assert.doesNotMatch(published, /\.(?:jsx|tsx)/u);
+  assert.equal((await readFile(join(output, "Content/UI/HUD.pxui"), "utf8"))
+    .includes('"format": "PrismatiXUIScene"'), true);
 });

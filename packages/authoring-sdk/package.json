@@ -8,6 +8,14 @@
     ".": {
       "types": "./dist/src/index.d.ts",
       "import": "./dist/src/index.js"
+    },
+    "./jsx-runtime": {
+      "types": "./dist/src/jsx-runtime.d.ts",
+      "import": "./dist/src/jsx-runtime.js"
+    },
+    "./jsx-dev-runtime": {
+      "types": "./dist/src/jsx-dev-runtime.d.ts",
+      "import": "./dist/src/jsx-dev-runtime.js"
     }
   },
   "files": [
