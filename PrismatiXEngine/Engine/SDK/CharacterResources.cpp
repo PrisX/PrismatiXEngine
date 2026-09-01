@@ -140,9 +140,9 @@ CharacterResourcesLoadResult LoadCharacterResources(
         return result;
     }
     if (!StringEquals(manifest, "format", "PrismatiXProject") ||
-        !IntegerEquals(manifest, "schemaRevision", 1)) {
+        !IntegerEquals(manifest, "schemaRevision", 2)) {
         Add(result, "PXCHAR1002",
-            "project.pxproject must be PrismatiXProject schema revision 1",
+            "project.pxproject must be PrismatiXProject schema revision 2",
             "project.pxproject");
         return result;
     }

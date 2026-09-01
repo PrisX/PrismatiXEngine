@@ -2,7 +2,81 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
+
 namespace px {
+
+Input::Input() {
+    BindKey(InputAction::NavigateUp,SDL_SCANCODE_UP);
+    BindKey(InputAction::NavigateUp,SDL_SCANCODE_W);
+    BindKey(InputAction::NavigateDown,SDL_SCANCODE_DOWN);
+    BindKey(InputAction::NavigateDown,SDL_SCANCODE_S);
+    BindKey(InputAction::NavigateLeft,SDL_SCANCODE_LEFT);
+    BindKey(InputAction::NavigateLeft,SDL_SCANCODE_A);
+    BindKey(InputAction::NavigateRight,SDL_SCANCODE_RIGHT);
+    BindKey(InputAction::NavigateRight,SDL_SCANCODE_D);
+    BindKey(InputAction::Accept,SDL_SCANCODE_RETURN);
+    BindKey(InputAction::Accept,SDL_SCANCODE_SPACE);
+    BindKey(InputAction::Cancel,SDL_SCANCODE_ESCAPE);
+    BindKey(InputAction::FocusNext,SDL_SCANCODE_TAB);
+    BindGamepadButton(InputAction::NavigateUp,SDL_GAMEPAD_BUTTON_DPAD_UP);
+    BindGamepadButton(InputAction::NavigateDown,SDL_GAMEPAD_BUTTON_DPAD_DOWN);
+    BindGamepadButton(InputAction::NavigateLeft,SDL_GAMEPAD_BUTTON_DPAD_LEFT);
+    BindGamepadButton(InputAction::NavigateRight,SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
+    BindGamepadButton(InputAction::Accept,SDL_GAMEPAD_BUTTON_SOUTH);
+    BindGamepadButton(InputAction::Cancel,SDL_GAMEPAD_BUTTON_EAST);
+    BindGamepadButton(InputAction::FocusNext,
+                      SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+    BindGamepadButton(InputAction::FocusPrevious,
+                      SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
+}
+
+void Input::ClearBindings(const InputAction action) {
+    m_keyBindings[ActionIndex(action)].clear();
+    m_gamepadBindings[ActionIndex(action)].clear();
+}
+
+void Input::BindKey(const InputAction action,const int scancode) {
+    if(action==InputAction::Count||scancode<0)return;
+    m_keyBindings[ActionIndex(action)].insert(scancode);
+}
+
+void Input::BindGamepadButton(const InputAction action,const int button) {
+    if(action==InputAction::Count||button<0)return;
+    m_gamepadBindings[ActionIndex(action)].insert(button);
+}
+
+bool Input::ActionPressed(const InputAction action) const {
+    if(action==InputAction::Count)return false;
+    if(m_injectedActions.contains(action))return true;
+    const auto& keys=m_keyBindings[ActionIndex(action)];
+    if(std::ranges::any_of(keys,[this](const int key){
+           return m_keysPressed.contains(key);
+       }))return true;
+    const auto& buttons=m_gamepadBindings[ActionIndex(action)];
+    return std::ranges::any_of(buttons,[this](const int button){
+        return m_gamepadButtonsPressed.contains(button);
+    });
+}
+
+bool Input::ActionPressedWithoutKeyboard(const InputAction action) const {
+    if(action==InputAction::Count)return false;
+    if(m_injectedActions.contains(action))return true;
+    const auto& buttons=m_gamepadBindings[ActionIndex(action)];
+    return std::ranges::any_of(buttons,[this](const int button){
+        return m_gamepadButtonsPressed.contains(button);
+    });
+}
+
+void Input::InjectAction(const InputAction action) {
+    if(action!=InputAction::Count)m_injectedActions.insert(action);
+}
+
+void Input::InjectKeyPress(const int scancode,const bool held) {
+    if(scancode<0)return;
+    m_keysPressed.insert(scancode);
+    if(held)m_keysDown.insert(scancode);
+}
 
 void Input::NewFrame() {
     m_leftClick = false;
@@ -10,6 +84,8 @@ void Input::NewFrame() {
     m_rightClick = false;
     m_wheelY = 0.0f;
     m_keysPressed.clear();
+    m_gamepadButtonsPressed.clear();
+    m_injectedActions.clear();
     m_textInput.clear();
 }
 
@@ -45,6 +121,58 @@ void Input::Process(const SDL_Event& event) {
 
         case SDL_EVENT_MOUSE_WHEEL:
             m_wheelY += event.wheel.y;
+            break;
+
+        case SDL_EVENT_FINGER_DOWN:
+            if(!m_primaryFinger){
+                m_primaryFinger=static_cast<std::uint64_t>(
+                    event.tfinger.fingerID);
+                int width=1,height=1;
+                if(auto* window=SDL_GetWindowFromID(event.tfinger.windowID))
+                    (void)SDL_GetWindowSize(window,&width,&height);
+                m_mouseX=event.tfinger.x*static_cast<float>(width);
+                m_mouseY=event.tfinger.y*static_cast<float>(height);
+                m_leftDown=true;
+                m_leftClick=true;
+            }
+            break;
+
+        case SDL_EVENT_FINGER_MOTION:
+            if(m_primaryFinger==static_cast<std::uint64_t>(
+                   event.tfinger.fingerID)){
+                int width=1,height=1;
+                if(auto* window=SDL_GetWindowFromID(event.tfinger.windowID))
+                    (void)SDL_GetWindowSize(window,&width,&height);
+                m_mouseX=event.tfinger.x*static_cast<float>(width);
+                m_mouseY=event.tfinger.y*static_cast<float>(height);
+            }
+            break;
+
+        case SDL_EVENT_FINGER_UP:
+        case SDL_EVENT_FINGER_CANCELED:
+            if(m_primaryFinger==static_cast<std::uint64_t>(
+                   event.tfinger.fingerID)){
+                int width=1,height=1;
+                if(auto* window=SDL_GetWindowFromID(event.tfinger.windowID))
+                    (void)SDL_GetWindowSize(window,&width,&height);
+                m_mouseX=event.tfinger.x*static_cast<float>(width);
+                m_mouseY=event.tfinger.y*static_cast<float>(height);
+                m_leftReleased=m_leftDown;
+                m_leftDown=false;
+                m_primaryFinger.reset();
+            }
+            break;
+
+        case SDL_EVENT_GAMEPAD_BUTTON_DOWN: {
+            const int button=static_cast<int>(event.gbutton.button);
+            if(!m_gamepadButtonsDown.contains(button))
+                m_gamepadButtonsPressed.insert(button);
+            m_gamepadButtonsDown.insert(button);
+            break;
+        }
+
+        case SDL_EVENT_GAMEPAD_BUTTON_UP:
+            m_gamepadButtonsDown.erase(static_cast<int>(event.gbutton.button));
             break;
 
         case SDL_EVENT_KEY_DOWN:

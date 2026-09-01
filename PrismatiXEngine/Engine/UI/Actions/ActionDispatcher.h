@@ -77,6 +77,8 @@ public:
     void Forget(ActionExecutionId execution);
     void Update(float deltaSeconds);
     [[nodiscard]] std::vector<ActionExecutionCheckpoint> CaptureState() const;
+    [[nodiscard]] Status ValidateState(
+        const std::vector<ActionExecutionCheckpoint>& state) const;
     Status RestoreState(const std::vector<ActionExecutionCheckpoint>& state);
 
     [[nodiscard]] ActionCatalog& Catalog() { return m_catalog; }

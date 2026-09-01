@@ -13,7 +13,7 @@ bool GameSettings::Load(const std::string& path, const crypto::Key* key) {
     }
     const Json& j = *json;
     if (j.value("format", std::string{}) != "PrismatiXSettings" ||
-        j.value("schemaRevision", 0) != 1) {
+        j.value("schemaRevision", 0) != 2) {
         return false;
     }
     bgmVolume = j.value("bgmVolume", bgmVolume);
@@ -37,7 +37,7 @@ bool GameSettings::Load(const std::string& path, const crypto::Key* key) {
 bool GameSettings::Save(const std::string& path, const crypto::Key* key) const {
     Json j;
     j["format"] = "PrismatiXSettings";
-    j["schemaRevision"] = 1;
+    j["schemaRevision"] = 2;
     j["bgmVolume"] = bgmVolume;
     j["seVolume"] = seVolume;
     j["voiceVolume"] = voiceVolume;

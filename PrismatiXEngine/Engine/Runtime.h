@@ -4,6 +4,7 @@
 #include "Engine/Core/Types.h"
 #include "Engine/Graphics/AssetCache.h"
 #include "Engine/Graphics/Renderer2D.h"
+#include "Engine/Graphics/CustomEffect.h"
 #include "Engine/IO/VFS.h"
 #include "Engine/Core/Clock.h"
 #include "Engine/Platform/Input.h"
@@ -26,6 +27,8 @@ struct RuntimeConfig {
     // Platform composition capability. Single-thread targets use deterministic
     // main-thread texture preload instead of std::async.
     bool asyncAssetPreload = true;
+    std::string graphicsTier = "basic";
+    std::vector<graphics::CustomEffectDescriptor> customEffects;
 
     std::vector<std::string> mountDirs = { "." };
     std::vector<std::string> mountArchives;

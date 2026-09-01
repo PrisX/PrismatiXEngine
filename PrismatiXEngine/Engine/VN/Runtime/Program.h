@@ -9,6 +9,7 @@
 namespace px::vn {
 
 struct Program {
+    std::string documentId;
     std::vector<Command> code;
     std::unordered_map<std::string, int> labels;
     std::vector<int> branch;

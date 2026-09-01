@@ -1,8 +1,10 @@
 {
   "format": "PrismatiXExtension",
-  "schemaRevision": 1,
+  "schemaRevision": 2,
   "language": "javascript",
   "id": "preview-debug-fixture",
+  "version": "1.0.0",
+  "requiredEngineVersion": ">=0.2.0 <0.3.0",
   "entry": "debug.js",
   "capabilities": ["runtime", "ui"],
   "safety": {

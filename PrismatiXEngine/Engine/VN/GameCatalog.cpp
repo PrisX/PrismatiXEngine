@@ -3,6 +3,8 @@
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/Resources/TypedDocument.h"
 
+#include <nlohmann/json.hpp>
+
 #include <unordered_map>
 #include <unordered_set>
 
@@ -13,6 +15,102 @@ diag::Diagnostic CatalogError(std::string code,std::string message,const std::st
 }
 std::string Text(const resource::NodeRecord& node,const char* key){const auto it=node.properties.find(key);if(it!=node.properties.end())if(const auto* value=it->second.TryGet<std::string>())return *value;return {};}
 ResourceRefValue Resource(const resource::NodeRecord& node,const char* key){const auto it=node.properties.find(key);if(it!=node.properties.end())if(const auto* value=it->second.TryGet<ResourceRefValue>())return *value;return {};}
+Value CatalogScalar(const sdk::GameCatalogVariable& variable) {
+    return std::visit([](const auto& value) -> Value { return Value(value); },
+                      variable.typedDefault);
+}
+std::optional<Value> JsonValue(const nlohmann::json& source, const int depth = 0) {
+    if (depth > 32) return std::nullopt;
+    if (source.is_null()) return Value{};
+    if (source.is_boolean()) return Value(source.get<bool>());
+    if (source.is_number_integer()) return Value(source.get<std::int64_t>());
+    if (source.is_number()) return Value(source.get<double>());
+    if (source.is_string()) return Value(source.get<std::string>());
+    if (source.is_array()) {
+        ValueList values;
+        for (const auto& item : source) {
+            auto value = JsonValue(item, depth + 1);
+            if (!value) return std::nullopt;
+            values.push_back(std::move(*value));
+        }
+        return Value(std::move(values));
+    }
+    if (source.is_object()) {
+        ValueMap values;
+        for (auto item = source.begin(); item != source.end(); ++item) {
+            auto value = JsonValue(item.value(), depth + 1);
+            if (!value) return std::nullopt;
+            values.emplace(item.key(), std::move(*value));
+        }
+        return Value(std::move(values));
+    }
+    return std::nullopt;
+}
+}
+
+Status GameCatalog::LoadCanonical(
+    const std::string_view json, const std::string_view projectManifest,
+    const sdk::GameCatalogResourceExists& exists,
+    const std::string& sourcePath) {
+    auto loaded = sdk::LoadCanonicalGameCatalogResources(json, sourcePath);
+    if (loaded.Valid() && !loaded.document.gallery.empty()) {
+        loaded = sdk::ResolveGameCatalogGalleryResources(
+            std::move(loaded.document), projectManifest, exists, sourcePath);
+    }
+    if (!loaded.Valid()) {
+        std::vector<diag::Diagnostic> diagnostics;
+        for (const auto& source : loaded.diagnostics) {
+            diag::Diagnostic diagnostic{.severity = diag::Severity::Error,
+                                        .code = source.code,
+                                        .category = "VN.GameCatalogResources",
+                                        .message = source.message};
+            diagnostic.source.path = source.path;
+            diagnostic.source.nodeId = source.nodeId;
+            diagnostic.source.property = source.property;
+            diag::Emit(diagnostic);
+            diagnostics.push_back(std::move(diagnostic));
+        }
+        return Status::Fail(std::move(diagnostics));
+    }
+    std::vector<CatalogVariable> variables;
+    for (const auto& source : loaded.document.variables) {
+        variables.push_back({
+            source.name, source.defaultValue, CatalogScalar(source),
+            source.scope == sdk::GameCatalogVariable::Scope::Profile
+                ? CatalogVariable::Scope::Profile
+                : CatalogVariable::Scope::Session});
+    }
+    std::vector<CatalogGalleryItem> gallery;
+    for (const auto& source : loaded.document.gallery) {
+        const auto imageId = Uuid::Parse(source.image.assetId);
+        if (!imageId) return Status::Fail(CatalogError("PXCAT1099", "Gallery image UUID is invalid", sourcePath));
+        CatalogGalleryItem item{.id = source.id, .title = source.title,
+                                .image = source.image.assetPath,
+                                .imageReference = {*imageId, source.image.assetPath}};
+        if (source.thumbnail) {
+            const auto thumbnailId = Uuid::Parse(source.thumbnail->assetId);
+            if (!thumbnailId) return Status::Fail(CatalogError("PXCAT1099", "Gallery thumbnail UUID is invalid", sourcePath));
+            item.thumbnail = source.thumbnail->assetPath;
+            item.thumbnailReference = ResourceRefValue{*thumbnailId, source.thumbnail->assetPath};
+        }
+        gallery.push_back(std::move(item));
+    }
+    std::vector<CatalogUnlockable> unlockables;
+    for (const auto& source : loaded.document.unlockables) {
+        const auto payloadJson = nlohmann::json::parse(source.payloadJson, nullptr, false);
+        auto payload = payloadJson.is_discarded() ? std::optional<Value>{}
+                                                  : JsonValue(payloadJson);
+        if (!payload) return Status::Fail(CatalogError("PXCAT1115", "Unlockable payload is invalid", sourcePath));
+        unlockables.push_back({source.id, source.kind, source.condition,
+                               std::move(*payload)});
+    }
+    m_variables = std::move(variables);
+    m_gallery = std::move(gallery);
+    m_input.clear();
+    for (const auto& source : loaded.document.inputBindings)
+        m_input.push_back({source.key, source.command, source.argument});
+    m_unlockables = std::move(unlockables);
+    return Status::Ok();
 }
 
 Status GameCatalog::Load(std::string_view text,const std::string& sourcePath){
@@ -94,8 +192,11 @@ Status GameCatalog::LoadRuntimeResources(
     std::vector<CatalogVariable> variables;
     variables.reserve(loaded.document.variables.size());
     for (const auto& source : loaded.document.variables) {
-        variables.push_back(
-            {source.name, source.defaultValue, source.persistent});
+        variables.push_back({
+            source.name, source.defaultValue, CatalogScalar(source),
+            source.scope == sdk::GameCatalogVariable::Scope::Profile
+                ? CatalogVariable::Scope::Profile
+                : CatalogVariable::Scope::Session});
     }
     std::vector<CatalogGalleryItem> gallery;
     gallery.reserve(loaded.document.gallery.size());

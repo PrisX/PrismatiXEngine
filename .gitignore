@@ -27,6 +27,8 @@ vcpkg_installed/
 # Node / TypeScript authoring tools
 /node_modules/
 /packages/*/dist/
+/runtime-sdk/dist/
+/.prismatix/
 
 
 # OS

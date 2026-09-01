@@ -338,12 +338,44 @@ AudioEngine::RuntimeState AudioEngine::CaptureState() const {
     return state;
 }
 
+bool AudioEngine::ValidateState(const RuntimeState& state,
+                                const bool requireResources) const {
+    if (state.mainVolume < 0 || state.mainVolume > 128 ||
+        state.musicVolume < 0 || state.musicVolume > 128 ||
+        state.voiceVolume < 0 || state.voiceVolume > 128 ||
+        state.sfxVolume < 0 || state.sfxVolume > 128 ||
+        state.ambienceVolume < 0 || state.ambienceVolume > 128 ||
+        state.music.playbackFrame < 0 || state.voice.playbackFrame < 0 ||
+        state.ambience.playbackFrame < 0) return false;
+    if (!requireResources) return true;
+    for (const auto* track : {&state.music, &state.voice, &state.ambience}) {
+        if (track->playing &&
+            (track->path.empty() || !m_vfs.Exists(track->path))) return false;
+    }
+    if (!state.pendingMusicLoop.empty() &&
+        !m_vfs.Exists(state.pendingMusicLoop)) return false;
+    return true;
+}
+
+bool AudioEngine::PrepareRestoreState(const RuntimeState& state) {
+    if (!ValidateState(state)) return false;
+    // Headless validation has no mixer with which to decode.  The native
+    // Player always initializes AudioEngine before constructing a session.
+    if (!m_initialized) return true;
+    for (const auto* track : {&state.music, &state.voice, &state.ambience}) {
+        if (!track->playing) continue;
+        MIX_Audio* audio = AcquireAudio(track->path, /*predecode=*/true);
+        if (!audio) return false;
+        const Sint64 duration = MIX_GetAudioDuration(audio);
+        if (duration >= 0 && track->playbackFrame > duration) return false;
+    }
+    if (!state.pendingMusicLoop.empty() &&
+        !AcquireAudio(state.pendingMusicLoop, /*predecode=*/true)) return false;
+    return true;
+}
+
 bool AudioEngine::RestoreState(const RuntimeState& state) {
-    if (state.mainVolume < 0 || state.mainVolume > 128 || state.musicVolume < 0 ||
-        state.musicVolume > 128 || state.voiceVolume < 0 || state.voiceVolume > 128 ||
-        state.sfxVolume < 0 || state.sfxVolume > 128 || state.ambienceVolume < 0 ||
-        state.ambienceVolume > 128 || state.music.playbackFrame < 0 ||
-        state.voice.playbackFrame < 0 || state.ambience.playbackFrame < 0) return false;
+    if (!PrepareRestoreState(state)) return false;
     SetMainVolume(state.mainVolume);
     SetBGMVolume(state.musicVolume);
     SetVoiceVolume(state.voiceVolume);

@@ -28,7 +28,7 @@ export interface StoryIndexScene {
 
 export interface StoryIndexDocument {
   readonly format: "PrismatiXStoryIndex";
-  readonly schemaRevision: 1;
+  readonly schemaRevision: 2;
   readonly id: string;
   readonly entryScene: string;
   readonly chapters: readonly StoryIndexChapter[];
@@ -345,14 +345,14 @@ export function compileStoryProject(context: StoryProjectCompileContext): StoryC
   return {
     runtimeIr: {
       format: "PrismatiXRuntimeIR",
-      schemaRevision: 1,
+      schemaRevision: 2,
       documentId,
       committedRevision: context.committedRevision ?? 0,
       operations: [bootstrapOperation, ...operations],
     },
     sourceMap: {
       format: "PrismatiXSourceMap",
-      schemaRevision: 1,
+      schemaRevision: 2,
       documentId,
       mappings: [bootstrapMapping, ...mappings],
     },

@@ -51,10 +51,29 @@ thumbnail = res("00000000-0000-4000-8000-000000000014", "Content/Old/rin-ending-
 
 constexpr std::string_view kProjectManifest = R"({
   "format":"PrismatiXProject",
-  "schemaRevision":1,
+  "schemaRevision":2,
   "assets":[
     {"id":"00000000-0000-4000-8000-000000000013","kind":"cg","source":"Content/CG/rin-ending.png"},
     {"id":"00000000-0000-4000-8000-000000000014","kind":"uiImage","source":"Content/CG/rin-ending-thumb.png"}
+  ]
+})";
+
+constexpr std::string_view kCanonicalCatalog = R"({
+  "format":"PrismatiXGame",
+  "schemaRevision":2,
+  "variables":[
+    {"name":"skipRead","type":"boolean","default":true,"scope":"profile"},
+    {"name":"affinity","type":"integer","default":7,"scope":"session"},
+    {"name":"textSpeed","type":"number","default":1.25,"scope":"profile"},
+    {"name":"routeName","type":"string","default":"rin","scope":"session"}
+  ],
+  "progressionFlags":["ending.rin"],
+  "gallery":[],
+  "unlockables":[
+    {"id":"extra.rin","kind":"route","condition":"ending.rin","payload":{"route":"rin","chapter":2}}
+  ],
+  "inputBindings":[
+    {"key":"Escape","command":"screen.open","argument":"settings"}
   ]
 })";
 
@@ -68,6 +87,66 @@ bool HasCode(const px::sdk::GameCatalogResourcesLoadResult& result, const std::s
 
 int main() {
     px::test::Suite suite("GameCatalogResourcesContract");
+
+    suite.Run("CanonicalCatalogPreservesTypedValuesAndScopes", [&] {
+        const auto loaded =
+            px::sdk::LoadCanonicalGameCatalogResources(kCanonicalCatalog);
+        suite.Require(loaded.Valid(), "canonical 0.2 GameCatalog loads");
+        suite.Require(loaded.document.variables.size() == 4,
+                      "all four public scalar types are retained");
+        const auto& boolean = loaded.document.variables[0];
+        const auto& integer = loaded.document.variables[1];
+        const auto& number = loaded.document.variables[2];
+        const auto& string = loaded.document.variables[3];
+        suite.Expect(
+            boolean.type == px::sdk::GameCatalogVariable::Type::Boolean &&
+                boolean.scope == px::sdk::GameCatalogVariable::Scope::Profile &&
+                std::get<bool>(boolean.typedDefault),
+            "boolean profile defaults remain typed");
+        suite.Expect(
+            integer.type == px::sdk::GameCatalogVariable::Type::Integer &&
+                integer.scope == px::sdk::GameCatalogVariable::Scope::Session &&
+                std::get<std::int64_t>(integer.typedDefault) == 7,
+            "integer session defaults remain typed");
+        suite.Expect(
+            number.type == px::sdk::GameCatalogVariable::Type::Number &&
+                number.scope == px::sdk::GameCatalogVariable::Scope::Profile &&
+                std::get<double>(number.typedDefault) == 1.25,
+            "number profile defaults remain typed");
+        suite.Expect(
+            string.type == px::sdk::GameCatalogVariable::Type::String &&
+                string.scope == px::sdk::GameCatalogVariable::Scope::Session &&
+                std::get<std::string>(string.typedDefault) == "rin",
+            "string session defaults remain typed");
+        suite.Expect(
+            loaded.document.progressionFlags.size() == 1 &&
+                loaded.document.unlockables.size() == 1 &&
+                loaded.document.unlockables.front().payloadJson ==
+                    R"({"chapter":2,"route":"rin"})" &&
+                loaded.document.inputBindings.size() == 1,
+            "progression, unlockable payloads, and input bindings survive canonical lowering");
+
+        px::vn::GameCatalog runtime;
+        const auto status = runtime.LoadCanonical(
+            kCanonicalCatalog,
+            R"({"format":"PrismatiXProject","schemaRevision":2,"assets":[]})",
+            [](std::string_view) { return false; });
+        suite.Require(status.IsOk(), "runtime consumes the canonical catalog directly");
+        suite.Expect(
+            runtime.Variables().size() == 4 &&
+                runtime.Variables()[0].scope ==
+                    px::vn::CatalogVariable::Scope::Profile &&
+                runtime.Variables()[0].typedDefault.TryGet<bool>() &&
+                *runtime.Variables()[0].typedDefault.TryGet<bool>() &&
+                runtime.Variables()[1].scope ==
+                    px::vn::CatalogVariable::Scope::Session &&
+                runtime.Variables()[2].typedDefault.TryGet<double>() &&
+                *runtime.Variables()[2].typedDefault.TryGet<double>() == 1.25 &&
+                runtime.Variables()[3].typedDefault.TryGet<std::string>() &&
+                *runtime.Variables()[3].typedDefault.TryGet<std::string>() == "rin" &&
+                runtime.Unlockables().size() == 1,
+            "SDK parsing and runtime lowering expose identical typed semantics");
+    });
 
     suite.Run("LoadsResidualRuntimeSemanticsAndStableIdentities", [&] {
         const auto loaded = px::sdk::LoadGameCatalogResources(
@@ -143,14 +222,14 @@ int main() {
         suite.Require(parsed.Valid(), "canonical catalog parses before resolution");
         const auto unknown = px::sdk::ResolveGameCatalogGalleryResources(
             parsed.document,
-            R"({"format":"PrismatiXProject","schemaRevision":1,"assets":[]})",
+            R"({"format":"PrismatiXProject","schemaRevision":2,"assets":[]})",
             [](std::string_view) { return true; });
         suite.Expect(HasCode(unknown, "PXCAT1024"),
                      "unknown Gallery UUIDs are rejected");
 
         const auto wrongKind = px::sdk::ResolveGameCatalogGalleryResources(
             parsed.document,
-            R"({"format":"PrismatiXProject","schemaRevision":1,"assets":[{"id":"00000000-0000-4000-8000-000000000013","kind":"voice","source":"Content/CG/rin-ending.png"},{"id":"00000000-0000-4000-8000-000000000014","kind":"uiImage","source":"Content/CG/rin-ending-thumb.png"}]})",
+            R"({"format":"PrismatiXProject","schemaRevision":2,"assets":[{"id":"00000000-0000-4000-8000-000000000013","kind":"voice","source":"Content/CG/rin-ending.png"},{"id":"00000000-0000-4000-8000-000000000014","kind":"uiImage","source":"Content/CG/rin-ending-thumb.png"}]})",
             [](std::string_view) { return true; });
         suite.Expect(HasCode(wrongKind, "PXCAT1025"),
                      "non-image Gallery assets are rejected");

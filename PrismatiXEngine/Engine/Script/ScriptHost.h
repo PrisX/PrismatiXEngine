@@ -40,7 +40,9 @@ class Input;
 
 namespace px::script {
 
-using EventArgs = std::unordered_map<std::string, std::string>;
+// Recursive JSON-compatible payload. Variant's non-JSON resource/token values
+// are rejected by extension event conversion, keeping this wire contract typed.
+using EventPayload = Variant;
 
 enum class ConsoleLevel {
     Info,
@@ -98,7 +100,8 @@ public:
     [[nodiscard]] virtual std::string_view BackendId() const noexcept = 0;
     virtual bool LoadExtensionManifest(const std::string& manifestPath) = 0;
     virtual bool LoadExtensionIndex(const std::string& indexPath) = 0;
-    virtual void Emit(const std::string& event, const EventArgs& args = {}) = 0;
+    virtual Status Emit(const std::string& event,
+                        const EventPayload& payload = {}) = 0;
     virtual bool InvokeCommand(const vn::Command& command) = 0;
     [[nodiscard]] virtual std::shared_ptr<ui::IActionProvider> CreateActionProvider() = 0;
     virtual void Update(float deltaSeconds) = 0;
@@ -108,6 +111,11 @@ public:
     virtual Status RestorePending(const PendingCommandsState& state) = 0;
     [[nodiscard]] virtual PendingActionsState CapturePendingActions() const = 0;
     virtual Status RestorePendingActions(const PendingActionsState& state) = 0;
+    // Restores command and Action continuations as one checkpoint. If either
+    // replay fails, every realm is returned to the exact checkpoint that was
+    // active before this call.
+    Status RestoreCheckpoint(const PendingCommandsState& commands,
+                             const PendingActionsState& actions);
     virtual void CancelPending() = 0;
     virtual std::vector<DebugBreakpoint> SetDebugBreakpoints(
         std::vector<DebugBreakpoint> breakpoints) = 0;

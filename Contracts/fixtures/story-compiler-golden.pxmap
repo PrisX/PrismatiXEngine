@@ -5,7 +5,7 @@
     {
       "endColumn": 7,
       "endLine": 1,
-      "operationId": "op-8dbd17756da81f7b",
+      "operationId": "op-9eca24b26361dd89",
       "sourceId": "story-00d7c47eba115e28",
       "sourceUri": "Contracts/fixtures/story-compiler-golden.pxstory",
       "startColumn": 1,
@@ -14,7 +14,7 @@
     {
       "endColumn": 30,
       "endLine": 3,
-      "operationId": "op-5a56ed9033f50865",
+      "operationId": "op-eecdb03dd280b048",
       "sourceId": "story-2076b04d22ebeb32",
       "sourceUri": "Contracts/fixtures/story-compiler-golden.pxstory",
       "startColumn": 1,
@@ -23,7 +23,7 @@
     {
       "endColumn": 13,
       "endLine": 4,
-      "operationId": "op-98766580276a1c4b",
+      "operationId": "op-27001b59a284b863",
       "sourceId": "story-6748c371bea2aad3",
       "sourceUri": "Contracts/fixtures/story-compiler-golden.pxstory",
       "startColumn": 1,
@@ -32,12 +32,12 @@
     {
       "endColumn": 6,
       "endLine": 5,
-      "operationId": "op-dc0e6a11c68ad816",
+      "operationId": "op-b1b430d31a6ae261",
       "sourceId": "story-6b9d45494655d158",
       "sourceUri": "Contracts/fixtures/story-compiler-golden.pxstory",
       "startColumn": 1,
       "startLine": 5
     }
   ],
-  "schemaRevision": 1
+  "schemaRevision": 2
 }

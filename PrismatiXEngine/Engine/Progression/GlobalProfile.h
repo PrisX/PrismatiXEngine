@@ -4,6 +4,8 @@
 #include <string>
 #include <unordered_map>
 
+#include "Engine/Core/Variant.h"
+
 #include <nlohmann/json_fwd.hpp>
 
 namespace px::progress {
@@ -22,9 +24,9 @@ public:
     [[nodiscard]] int ClearCount() const { return m_clearCount; }
     [[nodiscard]] bool RouteCleared(const std::string& route) const;
 
-    void SetPersistentVar(const std::string& name, int value);
-    [[nodiscard]] int PersistentVar(const std::string& name) const;
-    [[nodiscard]] const std::unordered_map<std::string, int>& PersistentVars() const { return m_vars; }
+    void SetVariable(const std::string& name, Variant value);
+    [[nodiscard]] const Variant* Variable(const std::string& name) const;
+    [[nodiscard]] const std::unordered_map<std::string, Variant>& Variables() const { return m_vars; }
 
     // 劇情鎖
     void UnlockScene(const std::string& id);
@@ -48,7 +50,7 @@ private:
     std::set<std::string> m_scenes;
     std::set<std::string> m_cgs;
     std::set<std::string> m_music;
-    std::unordered_map<std::string, int> m_vars;
+    std::unordered_map<std::string, Variant> m_vars;
     int m_clearCount = 0;
     bool m_dirty = false;
 };

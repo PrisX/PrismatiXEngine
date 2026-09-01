@@ -1,5 +1,7 @@
 #include "Engine/Resources/TypedDocument.h"
 
+#include "Engine/Core/NumberParsing.h"
+
 #include <charconv>
 #include <iomanip>
 #include <sstream>
@@ -16,8 +18,12 @@ std::string Trim(std::string_view value) {
 
 diag::Diagnostic ParseError(const std::string& path, int line, std::string message,
                             std::string details = {}) {
-    diag::Diagnostic d{ diag::Severity::Error, "PXRES-E1001", "resource-parser",
-                        std::move(message), std::move(details), {}, {}, {} };
+    diag::Diagnostic d;
+    d.severity = diag::Severity::Error;
+    d.code = "PXRES-E1001";
+    d.category = "resource-parser";
+    d.message = std::move(message);
+    d.details = std::move(details);
     d.source.path = path;
     d.source.line = line;
     return d;
@@ -86,8 +92,7 @@ Result<Variant> ParseValue(std::string_view raw, const std::string& path, int li
     auto numbers = [&](const std::vector<std::string>& args, std::vector<double>& result) {
         for (const std::string& arg : args) {
             double number = 0.0;
-            const auto parsed = std::from_chars(arg.data(), arg.data() + arg.size(), number);
-            if (parsed.ec != std::errc{} || parsed.ptr != arg.data() + arg.size()) return false;
+            if (!ParseFiniteDouble(arg, number)) return false;
             result.push_back(number);
         }
         return true;
@@ -160,8 +165,7 @@ Result<Variant> ParseValue(std::string_view raw, const std::string& path, int li
             return Result<Variant>::Success(Variant(integer));
     }
     double number = 0.0;
-    const auto parsed = std::from_chars(value.data(), value.data() + value.size(), number);
-    if (parsed.ec == std::errc{} && parsed.ptr == value.data() + value.size())
+    if (ParseFiniteDouble(value, number))
         return Result<Variant>::Success(Variant(number));
     return Result<Variant>::Failure(ParseError(path, line, "Unsupported property value.", value));
 }

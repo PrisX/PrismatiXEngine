@@ -1,6 +1,5 @@
 #include "Engine/Preview/PreviewProtocolV2.h"
 #include "Engine/SDK/ContractVersions.h"
-#include "Engine/SDK/StudioUi.h"
 
 #include <nlohmann/json.hpp>
 
@@ -24,6 +23,9 @@ int main() {
     Check(stream.good(), "configured SDK manifest must exist");
     const auto manifest = nlohmann::json::parse(stream, nullptr, false);
     Check(!manifest.is_discarded(), "configured SDK manifest must be valid JSON");
+    Check(manifest.at("sdkVersion") == "0.2.0" &&
+              manifest.at("nativeNamespace") == "px::sdk::v0_2",
+          "SDK manifest must publish the 0.2 versioned Native namespace");
     Check(manifest.at("contracts").at("uiTypeRegistry") ==
               std::to_string(px::sdk::kUiTypeRegistryContractRevision),
           "SDK manifest and UI TypeRegistry contract revisions must match");
@@ -36,11 +38,9 @@ int main() {
     Check(manifest.at("contracts").at("previewSession") ==
               std::to_string(px::sdk::kPreviewSessionContractRevision),
           "SDK manifest and PreviewSession contract revisions must match");
-    Check(manifest.at("deprecatedContracts").at("studioUi").at(
-              "replacement") == "ui" &&
-              manifest.at("deprecatedContracts").at("studioUi").at(
-                  "removalSdkVersion") == "0.3.0",
-          "deprecated StudioUi contract must publish its replacement and removal version");
+    Check(!manifest.at("contracts").contains("studioUi") &&
+              !manifest.contains("deprecatedContracts"),
+          "removed StudioUi compatibility must not remain in the 0.2 SDK manifest");
     Check(manifest.at("previewProtocolRange").at("min") ==
               px::sdk::kPreviewProtocolVersion &&
               manifest.at("previewProtocolRange").at("max") ==

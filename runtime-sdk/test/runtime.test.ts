@@ -10,10 +10,12 @@ const engine = {
   log: () => undefined,
   RegisterCommand: (_id: string, handler: (args: Record<string, RuntimeValue>) => unknown) => { commandHandler = handler; },
   RegisterAction: (_id: string, handler: (args: Record<string, RuntimeValue>, context: {preview: boolean}) => unknown) => { actionHandler = handler; },
+  on: () => undefined,
+  emit: async (_event: string, payload?: RuntimeValue) => { calls.push(`emit:${JSON.stringify(payload)}`); },
   On: () => undefined,
-  Emit: () => undefined,
+  Emit: async () => undefined,
   GetVariable: (name: string) => variables.get(name),
-  SetVariable: (name: string, value: RuntimeValue, scope?: string) => { variables.set(name, value); calls.push(`var:${name}:${scope ?? "save"}`); },
+  SetVariable: (name: string, value: RuntimeValue, scope?: string) => { variables.set(name, value); calls.push(`var:${name}:${scope ?? "session"}`); },
   ResourceExists: (path: string) => path === "Assets/ok.txt",
   ReadResourceText: () => "ok",
   PushRoute: (route: string) => { calls.push(`push:${route}`); return true; },
@@ -28,7 +30,6 @@ const engine = {
   SceneUnlocked: () => false,
   UnlockCG: () => undefined,
   UnlockScene: () => undefined,
-  PersistentVar: () => 0,
   PlaySE: () => undefined,
   PlayBGM: (path: string) => { calls.push(`bgm:${path}`); },
   StopBGM: () => undefined,
@@ -77,7 +78,7 @@ Object.defineProperty(globalThis, "DisplayMode", {
 });
 
 const ctx = createPrismatiXContext(engine);
-ctx.variables.set("affection", 12, "persistent");
+ctx.variables.set("affection", 12, "profile");
 if (ctx.variables.get("affection") !== 12) throw new Error("variables facade is not wired");
 if (!ctx.assets.exists("Assets/ok.txt")) throw new Error("asset facade is not wired");
 ctx.ui.push("settings");
@@ -88,6 +89,7 @@ if (!ctx.stage.animate("yuki", {x: 100, duration: 250, ease: "outQuad"})) throw 
 if (!ctx.animation.cancel(ctx.animation.play(ctx.animation.load("Animations/yuki.pxanim")))) throw new Error("animation facade is not wired");
 if (ctx.animation.token(7).kind !== "animation" || ctx.time.token(0.5).kind !== "timer") throw new Error("await token types are not wired");
 await ctx.time.wait(0.25);
+await ctx.events.emit("sample", {nested: {count: 2}, values: [true, "ok"]});
 if (ctx.input.mouseX() !== 12 || ctx.input.mouseY() !== 24 || !ctx.input.leftClick() || ctx.input.rightClick()) throw new Error("input facade is not wired");
 if (ctx.renderer.logicalSize().w !== 1280) throw new Error("renderer logical size is not wired");
 ctx.renderer.drawAuto("Assets/CG/test.webp", ctx.displayMode.Fit);
@@ -97,12 +99,13 @@ ctx.renderer.drawText("hello", 1, 2, "Resources/Fonts/NotoSansTC-Bold.ttf", 20, 
 if (ctx.renderer.measureText("hello", "Resources/Fonts/NotoSansTC-Bold.ttf", 20).h !== 20) throw new Error("renderer text measurement is not wired");
 
 const expected = [
-  "var:affection:persistent",
+  "var:affection:profile",
   "push:settings",
   "bgm:Assets/BGM/theme.ogg",
   "bgm-volume:80",
   "bg:Assets/BG/classroom.webp",
   "wait:0.25",
+  'emit:{"nested":{"count":2},"values":[true,"ok"]}',
   "auto:10",
   "text:Resources/Fonts/NotoSansTC-Bold.ttf:20",
 ].join("|");

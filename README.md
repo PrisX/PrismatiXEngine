@@ -108,8 +108,8 @@ Runtime extensions live under `Content/Extensions/`. Each extension uses a typed
 Canonical JSON Schemas live in `Contracts/`. The frontend-neutral TypeScript Authoring SDK in `packages/authoring-sdk/` parses `.pxstory`, validates project documents, and compiles deterministic Runtime IR/source maps. It is a build-time tool and is not embedded in the Player.
 
 The canonical public C++ UI contract is `Engine/SDK/Ui.h` and uses `Ui*`
-types. `Engine/SDK/StudioUi.h` exists only as a deprecated SDK 0.1.x source
-migration layer and is scheduled for removal in SDK 0.3.0.
+types. The 0.1 `StudioUi` compatibility surface was removed in the 0.2
+breaking release.
 
 ```bash
 npm ci

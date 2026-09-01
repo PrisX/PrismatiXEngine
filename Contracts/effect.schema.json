@@ -1,0 +1,25 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://prismatix.dev/contracts/effect.schema.json",
+  "type":"object","additionalProperties":false,
+  "required":["format","schemaRevision","id","targetLayer","shader","uniforms"],
+  "properties":{
+    "format":{"const":"PrismatiXEffect"},
+    "schemaRevision":{"const":2},
+    "id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
+    "targetLayer":{"const":"stage"},
+    "shader":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
+    "uniforms":{"type":"array","maxItems":8,"items":{
+      "type":"object","additionalProperties":false,
+      "required":["name","type","slot","default"],
+      "properties":{
+        "name":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
+        "type":{"enum":["number","vec2","color"]},
+        "slot":{"type":"integer","minimum":0,"maximum":7},
+        "default":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"},
+        "minimum":{"type":"number"},
+        "maximum":{"type":"number"}
+      }
+    }}
+  }
+}

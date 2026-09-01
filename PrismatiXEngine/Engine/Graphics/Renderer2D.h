@@ -6,6 +6,8 @@
 
 #include "Engine/Core/Types.h"
 #include "Engine/Graphics/AssetCache.h"
+#include "Engine/Graphics/Compositor2D.h"
+#include "Engine/Text/TextLayout.h"
 
 struct SDL_Renderer;
 struct SDL_Texture;
@@ -41,7 +43,8 @@ struct Shadow {
 class Renderer2D {
 public:
     enum class TextSamplingMode { Auto, Fixed };
-    Renderer2D(SDL_Renderer* renderer, AssetCache& assets);
+    Renderer2D(SDL_Renderer* renderer, AssetCache& assets,
+               bool gpuEffects = false);
     ~Renderer2D();
 
     void SetLogicalSize(int width, int height, bool updateTextDensity = true);
@@ -49,6 +52,9 @@ public:
 
     void SetCameraOffset(int x, int y) { m_camX = x, m_camY = y; }
     void ResetCamera() { m_camX = 0, m_camY = 0; }
+    [[nodiscard]] Vec2 CameraOffset() const {
+        return {static_cast<float>(m_camX), static_cast<float>(m_camY)};
+    }
 
     void DrawRect(const Rect& rect, Color color);
     void DrawRoundedRect(const Rect& rect, float radius, Color color);
@@ -66,8 +72,10 @@ public:
                          std::uint8_t alpha = 255);
     void DrawNinePatch(const std::string& path, const Rect& bounds, Rect margins,
                        bool drawCenter = true, std::uint8_t alpha = 255);
-    // Draws a caller-owned texture (e.g. a streaming transition mask).
-    void DrawTexture(SDL_Texture* texture, const Rect& dst, std::uint8_t alpha = 255);
+    // Draws a caller-owned backend-neutral texture (for example video or a
+    // streaming transition mask).
+    void DrawTexture(TextureHandle texture, const Rect& dst,
+                     std::uint8_t alpha = 255);
     Rect DrawImageAuto(const std::string& path, DisplayMode mode, std::uint8_t alpha = 255, int offsetX = 0, int offsetY = 0, float scale = 1.0f, Shadow shadow = {});
 
     void DrawText(const std::string& text, float x, float y, const std::string& fontPath, int size, Color color, std::uint8_t alpha = 255, int wrap = 0);
@@ -76,6 +84,17 @@ public:
                         VerticalAlignment vertical, bool wrap, std::uint8_t alpha = 255);
     void DrawTextOutline(const std::string& text, float x, float y, const std::string& fontPath, int size, Color textColor, Color outlineColor, int outlineSize, std::uint8_t alpha = 255, bool shadow = false, int wrap = 0);
     [[nodiscard]] Vec2 MeasureText(const std::string& text, const std::string& fontPath, int size, int wrap = 0);
+    [[nodiscard]] text::TextLayout LayoutText(
+        const std::string& text, const std::string& fontPath, int size,
+        int wrap = 0,
+        text::TextOrientation orientation = text::TextOrientation::Horizontal,
+        std::size_t verticalRows = 0) const;
+    void DrawTextLayout(const text::TextLayout& layout, Vec2 origin,
+                        const std::string& fontPath, int size, Color color,
+                        std::uint8_t alpha = 255);
+    void SetTextLocale(std::string locale,
+                       std::vector<std::string> fontFallbackChain = {});
+    [[nodiscard]] const std::string& TextLocale() const { return m_textLayout.Locale(); }
 
     void SetTextSupersample(int factor);
     void SetTextSupersampleAuto();
@@ -84,6 +103,29 @@ public:
     [[nodiscard]] TextSamplingMode TextSampling() const { return m_textSamplingMode; }
 
     void ClearTextCache();
+
+    [[nodiscard]] bool BeginStageLayer() { return m_compositor.BeginStage(); }
+    void EndStageLayer(const StagePostEffects& effects) {
+        m_compositor.EndStage(effects);
+    }
+    [[nodiscard]] bool SupportsStagePostEffects() const {
+        return m_compositor.Enabled();
+    }
+    [[nodiscard]] bool Ready() const { return m_compositor.Ready(); }
+    bool LoadCustomEffects(const std::vector<CustomEffectDescriptor>& effects,
+                           const io::VFS& vfs) {
+        return m_compositor.LoadCustomEffects(effects, vfs);
+    }
+    [[nodiscard]] bool HasCustomEffect(std::string_view id) const {
+        return m_compositor.HasCustomEffect(id);
+    }
+    [[nodiscard]] std::vector<std::string> CustomEffectIds() const {
+        return m_compositor.CustomEffectIds();
+    }
+    [[nodiscard]] std::optional<std::array<std::array<float, 4>, 8>>
+    CustomEffectDefaults(std::string_view id) const {
+        return m_compositor.CustomEffectDefaults(id);
+    }
 
     [[nodiscard]] SDL_Renderer* Handle() const { return m_renderer; }
 
@@ -104,13 +146,17 @@ private:
 
     const CachedText* AcquireText(const std::string& text, const std::string& fontPath, int size,
                                   Color color, int outline, int wrap,
-                                  HorizontalAlignment alignment = HorizontalAlignment::Left);
+                                  HorizontalAlignment alignment = HorizontalAlignment::Left,
+                                  text::TextOrientation orientation =
+                                      text::TextOrientation::Horizontal);
     void Blit(SDL_Texture* texture, const Rect& dst, std::uint8_t alpha);
     void BlitRegion(SDL_Texture* texture, const Rect& sourcePixels, const Rect& dst,
                     std::uint8_t alpha);
 
     SDL_Renderer* m_renderer;
     AssetCache& m_assets;
+    text::TextLayoutService m_textLayout;
+    Compositor2D m_compositor;
     int m_camX = 0;
     int m_camY = 0;
     int m_logicalW = 1280;

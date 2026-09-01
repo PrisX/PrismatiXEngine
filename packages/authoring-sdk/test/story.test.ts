@@ -7,7 +7,7 @@ import type {CharacterDocument, ExtensionManifest, GameDocument} from "../src/in
 
 const character: CharacterDocument = {
   format: "PrismatiXCharacter",
-  schemaRevision: 1,
+  schemaRevision: 2,
   id: "11111111-1111-4111-8111-111111111111",
   displayName: "雪",
   aliases: ["yuki"],
@@ -16,15 +16,16 @@ const character: CharacterDocument = {
 };
 const game: GameDocument = {
   format: "PrismatiXGame",
-  schemaRevision: 1,
-  variables: [{name:"affection",type:"integer",default:0,persistent:true}],
+  schemaRevision: 2,
+  variables: [{name:"affection",type:"integer",default:0,scope:"profile"}],
 };
 const extension: ExtensionManifest = {
   format: "PrismatiXExtension",
-  schemaRevision: 1,
+  schemaRevision: 2,
   language: "javascript",
   id: "weather",
   version: "1.0.0",
+  requiredEngineVersion: "^0.2.0",
   entry: "weather.js",
   capabilities: ["runtime"],
   commands: [
@@ -117,6 +118,27 @@ test("Story compiler emits only executable semantic operations and source maps",
   assert.equal(compiled.sourceMap!.mappings.length, compiled.runtimeIr!.operations.length);
 });
 
+test("effect and camera commands require presets and lower to explicit RuntimeIR kinds", () => {
+  const compiled = compileStory(
+    parseStory("[effect fade]\n[camera pan]\n", "Story/effects.pxstory"),
+    {documentId:"effects"},
+  );
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  assert.deepEqual(compiled.runtimeIr?.operations.map((operation) =>
+    [operation.kind, operation.arguments.value]), [
+    ["effect", "fade"],
+    ["camera", "pan"],
+  ]);
+
+  const missing = compileStory(
+    parseStory("[effect]\n[camera]\n", "Story/missing-effects.pxstory"),
+    {documentId:"missing-effects"},
+  );
+  assert.equal(missing.valid, false);
+  assert.ok(missing.diagnostics.some((item) => item.code === "PXSTORY1126"));
+  assert.ok(missing.diagnostics.some((item) => item.code === "PXSTORY1127"));
+});
+
 test("Story extension commands accept structured JSON literals and preserve typed payloads", () => {
   const parsed = parseStory(
     `[stage.compose offset=[100, 200] bounds=[0,0,1280,720] tint=[255,128,64,255] tags=["night", "rain"] metadata={"weather":"rain", "strength":0.8} asset={"path":"Assets/CG/rain.webp"}]\n`,
@@ -167,6 +189,36 @@ test("Story compiler fails closed for unresolved flow and extension contracts", 
   assert.ok(compiled.diagnostics.some((item) => item.code === "PXSTORY1203"));
   assert.ok(compiled.diagnostics.some((item) => item.code === "PXSTORY1205"));
   assert.ok(compiled.diagnostics.some((item) => item.code === "PXSTORY1199"));
+});
+
+test("authored Story ids survive prose edits, insertions, and source path changes", () => {
+  const compile = (text: string, path: string) => compileStory(parseStory(text, path), {
+    documentId: "commercial.prologue",
+  });
+  const first = compile(
+    "Fallback line.\n[id opening.memory]\nOld localized text.\n",
+    "Story/zh-TW/old.pxstory",
+  );
+  const second = compile(
+    "Another fallback.\nInserted line.\n[id opening.memory]\n完全不同的翻譯。\n",
+    "Story/zh-TW/renamed.pxstory",
+  );
+  assert.equal(first.valid, true, JSON.stringify(first.diagnostics));
+  assert.equal(second.valid, true, JSON.stringify(second.diagnostics));
+  const firstPinned = first.runtimeIr!.operations.at(-1)!;
+  const secondPinned = second.runtimeIr!.operations.at(-1)!;
+  assert.equal(firstPinned.sourceId, secondPinned.sourceId);
+  assert.equal(firstPinned.operationId, secondPinned.operationId);
+});
+
+test("authored Story ids fail closed when duplicated or dangling", () => {
+  const compiled = compileStory(parseStory(
+    "[id duplicated]\nOne.\n[id duplicated]\nTwo.\n[id dangling]\n",
+    "Story/invalid-identity.pxstory",
+  ), {documentId: "identity-test"});
+  assert.equal(compiled.valid, false);
+  assert.ok(compiled.diagnostics.some((diagnostic) => diagnostic.code === "PXSTORY1212"));
+  assert.ok(compiled.diagnostics.some((diagnostic) => diagnostic.code === "PXSTORY1213"));
 });
 
 test("parser recovers after malformed commands", () => {

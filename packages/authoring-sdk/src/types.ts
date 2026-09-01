@@ -19,6 +19,10 @@ export interface AuthoringDiagnostic {
   readonly path?: string;
   readonly span?: SourceSpan;
   readonly details?: string;
+  readonly documentId?: string;
+  readonly sourceId?: string;
+  readonly hint?: string;
+  readonly cause?: string;
 }
 
 export interface Result<T> {
@@ -41,7 +45,7 @@ export interface RuntimeIrOperation {
 
 export interface RuntimeIrDocument {
   readonly format: "PrismatiXRuntimeIR";
-  readonly schemaRevision: 1;
+  readonly schemaRevision: 2;
   readonly documentId: string;
   readonly committedRevision: number;
   readonly operations: readonly RuntimeIrOperation[];
@@ -59,7 +63,7 @@ export interface SourceMapEntry {
 
 export interface RuntimeSourceMap {
   readonly format: "PrismatiXSourceMap";
-  readonly schemaRevision: 1;
+  readonly schemaRevision: 2;
   readonly documentId: string;
   readonly mappings: readonly SourceMapEntry[];
 }
@@ -135,12 +139,14 @@ export interface ExtensionAction {
 
 export interface ExtensionManifest {
   readonly format: "PrismatiXExtension";
-  readonly schemaRevision: 1;
+  readonly schemaRevision: 2;
   readonly language: "javascript";
   readonly id: string;
   readonly version: string;
-  readonly requiredEngineVersion?: string;
+  readonly requiredEngineVersion: string;
   readonly entry: string;
+  /** ES modules that the entry is allowed to import, relative to this manifest. */
+  readonly modules?: readonly string[];
   readonly capabilities: readonly ("runtime" | "animation" | "ui" | "audio")[];
   readonly safety?: ExtensionSafety;
   readonly commands: readonly ExtensionCommand[];
@@ -156,7 +162,7 @@ export interface CharacterExpression {
 
 export interface CharacterDocument {
   readonly format: "PrismatiXCharacter";
-  readonly schemaRevision: 1;
+  readonly schemaRevision: 2;
   readonly id: string;
   readonly displayName: string;
   readonly aliases: readonly string[];
@@ -168,13 +174,16 @@ export interface GameVariable {
   readonly name: string;
   readonly type: "boolean" | "integer" | "number" | "string";
   readonly default: JsonPrimitive;
-  readonly persistent: boolean;
+  readonly scope: "session" | "profile";
 }
 
 export interface GameDocument {
   readonly format: "PrismatiXGame";
-  readonly schemaRevision: 1;
+  readonly schemaRevision: 2;
   readonly variables: readonly GameVariable[];
+  readonly gallery?: readonly JsonValue[];
+  readonly unlockables?: readonly JsonValue[];
+  readonly inputBindings?: readonly JsonValue[];
 }
 
 export interface StoryCompileContext {

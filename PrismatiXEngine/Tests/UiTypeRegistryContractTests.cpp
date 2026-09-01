@@ -1,11 +1,36 @@
+#include "Engine/Core/TypeRegistry.h"
 #include "Engine/SDK/UiTypeRegistry.h"
+#include "Engine/UI/Control.h"
 #include "Engine/UI/UITypeManifest.h"
+#include "Engine/UI/UITypeRegistry.h"
 
 #include <cstdlib>
 #include <iostream>
 #include <string>
 
 namespace {
+
+class TestExtensionControl final : public px::ui::Control {
+public:
+    [[nodiscard]] std::string_view TypeName() const override {
+        return "TestExtensionControl";
+    }
+};
+
+px::TypeInfo ExtensionType(std::string category) {
+    px::TypeInfo type{
+        "TestExtensionControl", "Control", std::move(category),
+        [] { return std::make_unique<TestExtensionControl>(); }};
+    type.designer=px::DesignerTypeMetadata{
+        .displayName="Test extension control",
+        .description="Source-owned integration fixture",
+        .category="Test",
+        .iconId="ui.test-extension",
+        .defaultSize={200.0f,60.0f},
+        .canHaveChildren=false,
+        .paletteVisible=true};
+    return type;
+}
 
 void Check(const bool condition, const char* message) {
     if (condition) return;
@@ -71,13 +96,20 @@ int main() {
               options->valueType == "array" &&
               options->defaultValueJson == "[]",
           "OptionButton must expose leaf identity and its stable Array default");
+    const auto* richText = FindControl(parsed.manifest, "richTextLabel");
+    const auto* vertical = richText ? FindProperty(*richText, "vertical") : nullptr;
+    const auto* verticalRows = richText
+                                   ? FindProperty(*richText, "verticalRows")
+                                   : nullptr;
+    Check(richText && vertical && vertical->valueType == "boolean" &&
+              vertical->writable && verticalRows && verticalRows->hasRange,
+          "RichTextLabel vertical writing and ruby layout controls must reach the generated SDK registry");
 
     constexpr std::string_view revisionOneFixture =
         R"({"format":"PrismatiXUiTypeRegistry","schemaRevision":1,"contract":"uiTypeRegistry","contractRevision":1,"contractHash":"0f2044c10f8697034577b1b09a1baa87efecda10901c912b7a4e05a91fff542d","controls":[{"id":"button","runtimeType":"Button","displayName":"Button","description":"","category":"Input","iconId":"ui.button","canHaveChildren":false,"acceptedResourceKinds":[],"properties":[],"signals":[]}]})";
     const auto revisionOne = px::sdk::ParseUiTypeRegistry(revisionOneFixture);
-    Check(revisionOne.Valid() && revisionOne.manifest.schemaRevision == 1 &&
-              revisionOne.manifest.controls.front().nodeKind == "button",
-          "revision-1 manifests must verify before legacy nodeKind normalization");
+    Check(!revisionOne.Valid(),
+          "revision-1 UI TypeRegistry manifests must be migrated before 0.2 consumption");
 
     auto tampered = first.Value();
     const auto display = tampered.find("\"Button\"");
@@ -96,5 +128,48 @@ int main() {
     future.replace(revision, 19, "\"schemaRevision\": 3");
     Check(!px::sdk::ParseUiTypeRegistry(future).Valid(),
           "future UI TypeRegistry revision must be rejected");
+
+    auto& registry=px::TypeRegistry::Global();
+    Check(px::ui::RegisterBuiltinUITypes().IsOk(),
+          "source-owned type lifecycle requires builtin Control metadata");
+    Check(registry.ReplaceSource("test.extension.ui",{
+              ExtensionType("UI/Test/V1")}).IsOk(),
+          "an extension UI type source must install atomically");
+    auto created=registry.Create("TestExtensionControl");
+    const auto extensionManifest=px::ui::BuildUiTypeRegistryManifest();
+    const auto parsedExtension=extensionManifest
+        ?px::sdk::ParseUiTypeRegistry(extensionManifest.Value())
+        :px::sdk::UiTypeRegistryParseResult{};
+    Check(created && created->TypeName()=="TestExtensionControl" &&
+              FindControl(parsedExtension.manifest,"testExtensionControl"),
+          "custom controls must reach construction and the generated Authoring registry");
+
+    auto invalid=ExtensionType("UI/Test/Broken");
+    invalid.properties.push_back({"duplicate","Test",px::VariantType::String,
+        px::PropertyFlags::Editable,px::Variant(std::string{})});
+    invalid.properties.push_back({"duplicate","Test",px::VariantType::String,
+        px::PropertyFlags::Editable,px::Variant(std::string{})});
+    Check(!registry.ReplaceSource("test.extension.ui",{std::move(invalid)}) &&
+              registry.Find("TestExtensionControl") &&
+              registry.Find("TestExtensionControl")->category=="UI/Test/V1",
+          "a failed hot reload must retain the complete prior type source");
+    Check(registry.ReplaceSource("test.extension.ui",{
+              ExtensionType("UI/Test/V2")}) &&
+              registry.Find("TestExtensionControl")->category=="UI/Test/V2",
+          "a valid hot reload must replace one source as a unit");
+
+    px::TypeInfo dependent{
+        "TestExtensionDependent", "TestExtensionControl", "UI/Test",
+        [] { return std::make_unique<TestExtensionControl>(); }};
+    Check(registry.ReplaceSource("test.extension.dependent",{
+              std::move(dependent)}) &&
+              !registry.RemoveSource("test.extension.ui") &&
+              registry.Find("TestExtensionControl"),
+          "unload must reject a source while foreign registered types depend on it");
+    Check(registry.RemoveSource("test.extension.dependent") &&
+              registry.RemoveSource("test.extension.ui") &&
+              !registry.Find("TestExtensionControl") &&
+              registry.TypesForSource("test.extension.ui").empty(),
+          "source unload must revoke every custom type without ghost registrations");
     return 0;
 }

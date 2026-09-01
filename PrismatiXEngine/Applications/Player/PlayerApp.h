@@ -11,6 +11,7 @@
 #include "Engine/VN/GameCatalog.h"
 #include "Engine/Video/VideoPlayer.h"
 #include "Engine/Accessibility/SpeechService.h"
+#include "Engine/Accessibility/PlatformSemanticAdapter.h"
 
 #include <cstdint>
 #include <deque>
@@ -34,10 +35,18 @@ private:
     struct Boot {
         RuntimeConfig config;
         std::string startScript = "Content/Scenario/start.pxscenario";
+        std::string sourceMap;
         std::string startRoute = "title";
         std::unordered_map<std::string,std::string> routeScenes;
         std::vector<ui::startup::SplashScreenEntry> splashes;
         std::string saveSecret;  // per-project secret for save encryption
+        std::string gameId;
+        std::string packageFingerprint;
+        std::string contentVersion;
+        std::uint32_t saveVersion = 1;
+        std::vector<progress::SaveMigrationDescriptor> saveMigrations;
+        std::vector<std::string> extensions;
+        std::string graphicsTier = "basic";
         bool packaged = false;
         bool valid = false;
     };
@@ -53,13 +62,14 @@ private:
     bool LoadSlot(int slot);
     void SaveSlot(int slot, std::vector<std::uint8_t> thumbnail);
     [[nodiscard]] progress::SaveSnapshot MakeSnapshot(bool includeBacklog);
+    bool LoadLocale(std::string locale, bool refreshPresentation);
 
     // --- Rollback (per-line snapshot ring) ---
     struct RollbackEntry {
         progress::SaveSnapshot snap;
         std::size_t backlogSize = 0;  // backlog length including this line
     };
-    void ApplyRollback(const RollbackEntry& entry);
+    [[nodiscard]] bool ApplyRollback(const RollbackEntry& entry);
     void RollbackOneLine();
     bool RollbackToBacklogIndex(std::size_t index);
 
@@ -77,6 +87,9 @@ private:
     void ScreensFrame(float dt);
     // Returns true when it consumed the frame (a movie is on screen).
     bool VideoFrame(float dt);
+    void ConfigureE2EJourney();
+    void DriveE2EJourney();
+    void CaptureE2EGalleryFrame();
 
     Runtime m_runtime;
     Boot m_boot;
@@ -89,6 +102,8 @@ private:
     std::unique_ptr<script::ScriptHost> m_scriptHost;
     script::ScriptServices m_scriptServices;
     std::unordered_map<std::string, std::string> m_langTable;
+    std::string m_defaultLocale = "zh-TW";
+    std::vector<std::string> m_supportedLocales;
     std::unordered_map<std::string, std::string> m_uiAssets;
     std::unordered_map<std::string, std::string> m_uiComponents;
 
@@ -125,7 +140,22 @@ private:
     bool m_videoSkippable = true;
 
     bool m_quitRequested = false;
+    enum class E2EStage {
+        Disabled,
+        AwaitTitle,
+        AwaitGameReady,
+        AwaitGallery,
+        CaptureGallery,
+        CloseGallery,
+        AwaitOverlayClosed,
+        Complete,
+    };
+    E2EStage m_e2eStage = E2EStage::Disabled;
+    std::uint64_t m_e2eStartedAt = 0;
+    bool m_e2eFailed = false;
+    bool m_e2eLocaleSwitched = false;
     accessibility::SpeechService m_speech;
+    std::shared_ptr<accessibility::SemanticAdapter> m_accessibilityAdapter;
 };
 
 }

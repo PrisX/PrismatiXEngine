@@ -4,6 +4,7 @@
 #include "Engine/Resources/ResourceRef.h"
 #include "Engine/SDK/CharacterResources.h"
 #include "Engine/SDK/GameCatalogResources.h"
+#include "Engine/VN/Expression/Expression.h"
 
 #include <optional>
 #include <string>
@@ -12,7 +13,13 @@
 
 namespace px::vn {
 
-struct CatalogVariable { std::string name; int defaultValue=0; bool persistent=false; };
+struct CatalogVariable {
+    enum class Scope : std::uint8_t { Session, Profile };
+    std::string name;
+    int defaultValue = 0;
+    Value typedDefault;
+    Scope scope = Scope::Session;
+};
 struct CatalogCharacterExpression {
     std::string id;
     std::string name;
@@ -38,10 +45,21 @@ struct CatalogGalleryItem {
     std::optional<ResourceRefValue> thumbnailReference;
 };
 struct CatalogInputBinding { std::string key; std::string command; std::string argument; };
+struct CatalogUnlockable {
+    std::string id;
+    std::string kind;
+    std::string condition;
+    Value payload;
+};
 
 class GameCatalog {
 public:
     Status Load(std::string_view typedResource, const std::string& sourcePath = {});
+    Status LoadCanonical(
+        std::string_view json,
+        std::string_view projectManifest,
+        const sdk::GameCatalogResourceExists& exists,
+        const std::string& sourcePath = "Content/game.pxgame");
     // Loads only the post-character-migration runtime entries. Character state
     // is preserved so characterResources and the residual Game.pxres can be
     // composed without creating two character authorities.
@@ -66,6 +84,7 @@ public:
     [[nodiscard]] const std::vector<CatalogCharacter>& Characters() const { return m_characters; }
     [[nodiscard]] const std::vector<CatalogGalleryItem>& Gallery() const { return m_gallery; }
     [[nodiscard]] const std::vector<CatalogInputBinding>& InputBindings() const { return m_input; }
+    [[nodiscard]] const std::vector<CatalogUnlockable>& Unlockables() const { return m_unlockables; }
     [[nodiscard]] const CatalogCharacter* FindCharacter(std::string_view idOrName) const;
     [[nodiscard]] const CatalogCharacterExpression* FindExpression(
         const CatalogCharacter& character, std::string_view idOrName) const;
@@ -77,6 +96,7 @@ private:
     std::vector<CatalogCharacter> m_characters;
     std::vector<CatalogGalleryItem> m_gallery;
     std::vector<CatalogInputBinding> m_input;
+    std::vector<CatalogUnlockable> m_unlockables;
 };
 
 }  // namespace px::vn

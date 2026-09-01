@@ -52,11 +52,11 @@ bool IsSafeProjectUri(const std::string_view path) {
     return true;
 }
 
-bool IsRevisionOne(const Json& manifest) {
+bool IsRevisionTwo(const Json& manifest) {
     const auto revision = manifest.find("schemaRevision");
     if (revision == manifest.end()) return false;
-    if (revision->is_number_unsigned()) return revision->get<std::uint64_t>() == 1;
-    return revision->is_number_integer() && revision->get<std::int64_t>() == 1;
+    if (revision->is_number_unsigned()) return revision->get<std::uint64_t>() == 2;
+    return revision->is_number_integer() && revision->get<std::int64_t>() == 2;
 }
 
 Result<ProjectAssets> ParseProjectAssets(const std::string_view manifestText) {
@@ -71,8 +71,8 @@ Result<ProjectAssets> ParseProjectAssets(const std::string_view manifestText) {
         return Result<ProjectAssets>::Failure(Error("PXRUNTIME7311", "project.pxproject is not valid JSON", "project.pxproject"));
     }
     const auto format = manifest.find("format");
-    if (format == manifest.end() || !format->is_string() || format->get_ref<const std::string&>() != "PrismatiXProject" || !IsRevisionOne(manifest)) {
-        return Result<ProjectAssets>::Failure(Error("PXRUNTIME7312", "project.pxproject must be PrismatiXProject schema revision 1", "project.pxproject"));
+    if (format == manifest.end() || !format->is_string() || format->get_ref<const std::string&>() != "PrismatiXProject" || !IsRevisionTwo(manifest)) {
+        return Result<ProjectAssets>::Failure(Error("PXRUNTIME7312", "project.pxproject must be PrismatiXProject schema revision 2", "project.pxproject"));
     }
     const auto descriptors = manifest.find("assets");
     if (descriptors == manifest.end() || !descriptors->is_array() || descriptors->size() > kMaxAssets) {

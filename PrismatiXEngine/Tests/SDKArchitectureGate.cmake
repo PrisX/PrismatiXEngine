@@ -12,7 +12,7 @@ foreach(SOURCE IN LISTS RUNTIME_SOURCES)
     if(CONTENT MATCHES "#[ \t]*include[ \t]*[<\"](Editor|Applications)/")
         list(APPEND VIOLATIONS "${SOURCE}: Runtime source depends on an application/editor header")
     endif()
-    if(NOT SOURCE MATCHES "/Engine/SDK/(StudioUi.h|ContractVersions.h.in)$" AND
+    if(NOT SOURCE MATCHES "/Engine/SDK/ContractVersions.h.in$" AND
        CONTENT MATCHES "Studio")
         list(APPEND VIOLATIONS "${SOURCE}: canonical Runtime/SDK code depends on Studio-specific terminology")
     endif()
@@ -23,6 +23,16 @@ if(PREVIEW_SESSION_API MATCHES
    "#[ 	]*include[ 	]*[<\"]Engine/(Session|VN|Preview/PreviewSessionFactory)")
     list(APPEND VIOLATIONS
          "Engine/SDK/PreviewSession.h: public Preview API leaks Runtime implementation types")
+endif()
+
+file(READ "${ROOT}/Engine/SDK/Packager.h" PACKAGER_API)
+if(PACKAGER_API MATCHES "PackageManifest|ParsePackageManifest")
+    list(APPEND VIOLATIONS
+         "Engine/SDK/Packager.h: public Native SDK leaks the Player package manifest")
+endif()
+if(NOT EXISTS "${ROOT}/Engine/SDK/V0_2.h")
+    list(APPEND VIOLATIONS
+         "Engine/SDK/V0_2.h: versioned Native SDK entrypoint is missing")
 endif()
 if(NOT PREVIEW_SESSION_API MATCHES "SeekStory" OR
    NOT PREVIEW_SESSION_API MATCHES "ApplyTimeline" OR

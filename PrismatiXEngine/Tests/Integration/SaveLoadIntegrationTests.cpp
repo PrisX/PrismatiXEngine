@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -80,6 +81,9 @@ void TestArchiveBoundsAndRoundTrip() {
     const auto actual = archive.Read("Content/test.txt");
     Check(actual && *actual == expected, "archive payload should round-trip");
     Check(!archive.Contains("Content/other.txt"), "archive should reject missing path");
+    Check(!archive.Contains("Content\\test.txt") &&
+              !archive.Read("Content\\test.txt").has_value(),
+          "archive reads must reject backslash aliases instead of normalizing them");
 
     const auto corruptPath = temp.path / "corrupt.pdx";
     {
@@ -92,6 +96,39 @@ void TestArchiveBoundsAndRoundTrip() {
     px::io::ArchiveWriter unsafe;
     unsafe.Add("../escape.txt", expected);
     Check(!unsafe.Write((temp.path / "unsafe.pdx").string()), "archive writer must reject traversal paths");
+    px::io::ArchiveWriter backslash;
+    backslash.Add("Content\\escape.txt", expected);
+    Check(!backslash.Write((temp.path / "backslash.pdx").string()),
+          "archive writer must reject non-canonical backslash paths");
+
+    const auto maliciousPath = temp.path / "malicious-index.pdx";
+    px::io::ArchiveWriter maliciousWriter;
+    maliciousWriter.SetCompression(false);
+    maliciousWriter.Add("Content/a.txt", expected);
+    Check(maliciousWriter.Write(maliciousPath.string()),
+          "malicious-index fixture should begin as a valid archive");
+    {
+        std::fstream stream(maliciousPath,
+                            std::ios::binary | std::ios::in | std::ios::out);
+        std::array<unsigned char, 8> encodedOffset{};
+        stream.seekg(12, std::ios::beg);
+        stream.read(reinterpret_cast<char*>(encodedOffset.data()),
+                    static_cast<std::streamsize>(encodedOffset.size()));
+        std::uint64_t indexOffset = 0;
+        for (std::size_t byte = 0; byte < encodedOffset.size(); ++byte)
+            indexOffset |= static_cast<std::uint64_t>(encodedOffset[byte]) <<
+                           (byte * 8);
+        // index count (4), hash (8), name length (2), then the 13-byte name.
+        stream.seekp(static_cast<std::streamoff>(indexOffset + 14),
+                     std::ios::beg);
+        constexpr char traversal[] = "../escape.txt";
+        static_assert(sizeof(traversal) - 1 == 13);
+        stream.write(traversal, sizeof(traversal) - 1);
+    }
+    px::io::Archive malicious;
+    Check(!malicious.Open(maliciousPath.string()),
+          "archive reader must reject traversal entries even when the index is hostile");
+
     const auto encryptedPath = temp.path / "encrypted.pdx";
     px::io::ArchiveWriter encrypted;
     const auto key = px::crypto::DeriveKey("test-key");
@@ -119,13 +156,17 @@ void TestSaveValidation() {
     saves.Configure(temp.path.string(), nullptr);
 
     px::progress::SaveSnapshot snapshot;
+    snapshot.gameId = "save-integration-game";
+    snapshot.packageFingerprint = std::string(64, 'a');
+    snapshot.contentVersion = "fixture-v1";
+    snapshot.saveVersion = 1;
+    snapshot.anchor = {"story-document", "choice-source", "choice-operation"};
     snapshot.scriptPath = "Content/Scenario/start.pxscenario";
     snapshot.pc = 7;
     snapshot.chapter = "Chapter 1";
     snapshot.variables["affection"] = 3;
     snapshot.typedVariables["route"] = px::vn::Value("alice");
     snapshot.typedVariables["flags"] = px::vn::Value(px::vn::ValueMap{ { "ending", px::vn::Value(true) }, { "scores", px::vn::Value(px::vn::ValueList{ 1, 2, 3 }) } });
-    snapshot.persistentVariables.insert("affection");
     snapshot.vm.scriptPath = snapshot.scriptPath;
     snapshot.vm.pc = 8;
     snapshot.vm.state = px::vn::VMState::WaitingChoice;
@@ -154,6 +195,13 @@ void TestSaveValidation() {
     snapshot.stage.background = "Content/Background/room.png";
     snapshot.stage.previousBackground = "Content/Background/hall.png";
     snapshot.stage.backgroundFade = 0.45f;
+    snapshot.stage.ruleActive = true;
+    snapshot.stage.ruleOldBackground = "Content/Background/hall.png";
+    snapshot.stage.ruleNewBackground = "Content/Background/room.png";
+    snapshot.stage.ruleMask = "Content/Transitions/clouds.png";
+    snapshot.stage.ruleProgress = 0.35f;
+    snapshot.stage.ruleDuration = 1.2f;
+    snapshot.stage.ruleVague = 48;
     snapshot.stage.cameraZoom = 1.15f;
     snapshot.stage.screenEffects["vignette"] = 0.3f;
     snapshot.stage.actors.push_back({ "alice", "Content/Characters/alice.png", 2, 4.0f, -2.0f, 1.0f, {}, 180.0f, 255.0f, 0.0f, 640.0f, 640.0f, false });
@@ -222,9 +270,9 @@ void TestSaveValidation() {
     const auto loaded = saves.Load(0);
     Check(loaded && loaded->pc == 7 && loaded->variables.at("affection") == 3, "valid save should round-trip");
     Check(
-        loaded && loaded->persistentVariables.contains("affection") && loaded->vm.state == px::vn::VMState::WaitingChoice && loaded->vm.callStack.size() == 1 && loaded->vm.choices.size() == 1 && loaded->dialogue.state.displayText == "Hel" &&
+        loaded && loaded->vm.state == px::vn::VMState::WaitingChoice && loaded->vm.callStack.size() == 1 && loaded->vm.choices.size() == 1 && loaded->dialogue.state.displayText == "Hel" &&
             loaded->dialogue.speedMs == 42 && loaded->typedVariables.at("route").TryGet<std::string>() && loaded->typedVariables.at("flags").AsObject() && loaded->routes.stack.size() == 2 && loaded->routes.modals.size() == 1 &&
-            loaded->timelines.size() == 1 && loaded->timelines.front().awaiting && loaded->animationClips.size() == 1 && loaded->animationClips.front().name == "Custom/Save" && loaded->stage.backgroundFade == 0.45f && loaded->stage.actors.size() == 1 &&
+            loaded->timelines.size() == 1 && loaded->timelines.front().awaiting && loaded->animationClips.size() == 1 && loaded->animationClips.front().name == "Custom/Save" && loaded->stage.backgroundFade == 0.45f && loaded->stage.ruleActive && loaded->stage.ruleMask == "Content/Transitions/clouds.png" && loaded->stage.ruleProgress == 0.35f && loaded->stage.ruleVague == 48 && loaded->stage.actors.size() == 1 &&
             loaded->stage.tweens.size() == 1 && loaded->audio.music.playbackFrame == 24000 && loaded->scriptPending.size() == 1 && loaded->scriptPending.front().yieldIndex == 1 && loaded->scriptActions.size() == 1 && loaded->scriptActions.front().yieldIndex == 2 &&
             loaded->ui.behavior.fibers.size() == 1 && loaded->ui.behavior.fibers.front().current == behaviorDelay && loaded->ui.behavior.fibers.front().signalArguments.at("position").TryGet<px::Vec2>() && loaded->ui.behavior.actions.size() == 1 &&
             loaded->ui.behavior.actions.front().providerHandle == 73 &&
@@ -237,22 +285,19 @@ void TestSaveValidation() {
     );
 
     const auto currentJson = px::progress::LoadJson(saves.SlotPath(0), nullptr);
-    Check(currentJson && currentJson->value("schemaRevision", 0) == 3 &&
-              currentJson->contains("scriptPending") &&
-              currentJson->contains("scriptActions") &&
-              currentJson->contains("ui"),
-          "current saves must use language-neutral script and complete UI checkpoint fields");
+    Check(currentJson && currentJson->value("schemaRevision", 0) == 4 &&
+              currentJson->contains("integrityHash") &&
+              currentJson->contains("anchor") && currentJson->contains("state") &&
+              (*currentJson)["state"].contains("scriptPending") &&
+              (*currentJson)["state"].contains("scriptActions") &&
+              (*currentJson)["state"].contains("ui"),
+          "current saves must use an authenticated v2 envelope and complete runtime state");
     if (currentJson) {
-        auto revision2 = *currentJson;
-        revision2["schemaRevision"] = 2;
-        revision2["behavior"] = revision2["ui"]["behavior"];
-        revision2.erase("ui");
-        Check(px::progress::SaveJson(saves.SlotPath(4), revision2, nullptr) &&
-                  saves.Load(4) &&
-                  saves.Load(4)->ui.behavior.fibers.size() == 1 &&
-                  !saves.Load(4)->ui.animation &&
-                  !saves.Load(4)->ui.visualState,
-              "save schema revision 2 migrates Behavior state into the complete UI checkpoint");
+        auto tampered = *currentJson;
+        tampered["state"]["chapter"] = "tampered";
+        Check(px::progress::SaveJson(saves.SlotPath(4), tampered, nullptr) &&
+                  !saves.Load(4),
+              "save envelope must reject payload changes that do not update integrity metadata");
     }
 
     px::progress::Json wrongType{ { "format", "PrismatiXSave" }, { "schemaRevision", 2 }, { "variables", { { "affection", "high" } } } };
@@ -278,7 +323,7 @@ void TestProfileAndSettingsSchemas() {
     profile.MarkSeen("scene.intro#line-1");
     profile.MarkChoiceSeen("choice.intro#option-a");
     profile.RegisterClear("route.alice");
-    profile.SetPersistentVar("affection", 7);
+    profile.SetVariable("affection", px::Variant(std::int64_t{7}));
     profile.UnlockScene("scene.after-story");
     profile.UnlockCG("cg.sunset");
     profile.UnlockMusic("music.ending");
@@ -288,13 +333,24 @@ void TestProfileAndSettingsSchemas() {
     Check(px::progress::LoadGlobalProfile(loadedProfile, profilePath, nullptr), "global profile should load with the current schema");
     Check(
         loadedProfile.HasSeen("scene.intro#line-1") && loadedProfile.HasChoiceSeen("choice.intro#option-a") && loadedProfile.ClearCount() == 1 && loadedProfile.RouteCleared("route.alice") &&
-            loadedProfile.PersistentVar("affection") == 7 && loadedProfile.SceneUnlocked("scene.after-story") && loadedProfile.CGUnlocked("cg.sunset") && loadedProfile.MusicUnlocked("music.ending"),
+            loadedProfile.Variable("affection") && loadedProfile.Variable("affection")->TryGet<std::int64_t>() && *loadedProfile.Variable("affection")->TryGet<std::int64_t>() == 7 && loadedProfile.SceneUnlocked("scene.after-story") && loadedProfile.CGUnlocked("cg.sunset") && loadedProfile.MusicUnlocked("music.ending"),
         "global profile should preserve seen state, clears, persistent variables, and unlocks"
     );
 
     px::progress::Json legacyProfile{ { "version", 4 }, { "clearCount", 99 } };
     Check(px::progress::SaveJson(profilePath, legacyProfile, nullptr), "legacy profile fixture should be written");
     Check(!px::progress::LoadGlobalProfile(loadedProfile, profilePath, nullptr), "legacy numeric profile versions must be rejected");
+    px::progress::Json revisionOneProfile{
+        {"format", "PrismatiXProfile"}, {"schemaRevision", 1},
+        {"seen", px::progress::Json::array()},
+        {"choicesSeen", px::progress::Json::array()},
+        {"clearedRoutes", px::progress::Json::array()},
+        {"scenes", px::progress::Json::array()},
+        {"cgs", px::progress::Json::array()},
+        {"music", px::progress::Json::array()},
+        {"vars", px::progress::Json::object()}, {"clearCount", 0}};
+    Check(!loadedProfile.ApplyJson(revisionOneProfile),
+          "revision-1 profiles with unstable seen identities must be rejected");
 
     px::progress::GameSettings settings;
     settings.bgmVolume = 64;
@@ -316,6 +372,119 @@ void TestProfileAndSettingsSchemas() {
     px::progress::Json legacySettings{ { "version", 4 }, { "language", "legacy" } };
     Check(px::progress::SaveJson(settingsPath, legacySettings, nullptr), "legacy settings fixture should be written");
     Check(!loadedSettings.Load(settingsPath, nullptr), "legacy numeric settings versions must be rejected");
+    px::progress::Json revisionOneSettings{
+        {"format", "PrismatiXSettings"}, {"schemaRevision", 1}};
+    Check(px::progress::SaveJson(settingsPath, revisionOneSettings, nullptr),
+          "revision-1 settings fixture should be written");
+    Check(!loadedSettings.Load(settingsPath, nullptr),
+          "revision-1 settings must be rejected by the 0.2 runtime");
+}
+
+void TestExplicitSaveMigrationChain() {
+    px::progress::SaveSnapshot source;
+    source.gameId = "commercial-vn";
+    source.packageFingerprint = std::string(64, 'a');
+    source.contentVersion = "chapter-1";
+    source.saveVersion = 1;
+    source.anchor = {"document-old", "line-old", "operation-old"};
+    source.scriptPath = "Content/Runtime/old.pxir";
+    source.vm.scriptPath = source.scriptPath;
+    source.typedVariables["affection"] = px::vn::Value(std::int64_t{7});
+    source.variables["affection"] = 7;
+    source.routes.stack = {"old-hud"};
+
+    const std::vector<px::progress::SaveMigrationDescriptor> migrations{
+        {"chapter-1-to-1-5", "chapter-1", 1, "chapter-1.5", 1,
+         "Content/Migrations/chapter-1.pxsave-migration"},
+        {"chapter-1-5-to-2", "chapter-1.5", 1, "chapter-2", 2,
+         "Content/Migrations/chapter-2.pxsave-migration"}};
+    const auto readMigration = [](const std::string_view asset)
+        -> std::optional<std::string> {
+        if (asset.ends_with("chapter-1.pxsave-migration")) {
+            return R"({
+              "format":"PrismatiXSaveMigration","schemaRevision":2,
+              "id":"chapter-1-to-1-5",
+              "from":{"contentVersion":"chapter-1","saveVersion":1},
+              "to":{"contentVersion":"chapter-1.5","saveVersion":1},
+              "anchor":{"policy":"preserve"},
+              "operations":[
+                {"op":"renameVariable","from":"affection","to":"rinAffinity"},
+                {"op":"setVariable","name":"routeUnlocked","value":true},
+                {"op":"renameRoute","from":"old-hud","to":"hud"}
+              ]
+            })";
+        }
+        if (asset.ends_with("chapter-2.pxsave-migration")) {
+            return R"({
+              "format":"PrismatiXSaveMigration","schemaRevision":2,
+              "id":"chapter-1-5-to-2",
+              "from":{"contentVersion":"chapter-1.5","saveVersion":1},
+              "to":{"contentVersion":"chapter-2","saveVersion":2},
+              "anchor":{"policy":"map","mappings":[{
+                "from":{"runtimeDocumentId":"document-old","sourceId":"line-old","operationId":"operation-old"},
+                "to":{"runtimeDocumentId":"document-new","sourceId":"line-new","operationId":"operation-new"}
+              }]},
+              "operations":[{"op":"setScript","path":"Content/Runtime/new.pxir"}]
+            })";
+        }
+        return std::nullopt;
+    };
+    auto migrated = px::progress::MigrateSaveSnapshot(
+        source,
+        {"commercial-vn", std::string(64, 'b'), "chapter-2", 2},
+        migrations, readMigration);
+    Check(static_cast<bool>(migrated),
+          "an explicit, deterministic multi-step migration should succeed");
+    if (migrated) {
+        const auto& value = migrated.Value();
+        Check(value.contentVersion == "chapter-2" && value.saveVersion == 2 &&
+                  value.packageFingerprint == std::string(64, 'b') &&
+                  value.anchor.runtimeDocumentId == "document-new" &&
+                  value.anchor.sourceId == "line-new" &&
+                  value.anchor.operationId == "operation-new" &&
+                  value.scriptPath == "Content/Runtime/new.pxir" &&
+                  value.vm.scriptPath == "Content/Runtime/new.pxir" &&
+                  value.typedVariables.contains("rinAffinity") &&
+                  !value.typedVariables.contains("affection") &&
+                  value.typedVariables.at("routeUnlocked").TryGet<bool>() &&
+                  *value.typedVariables.at("routeUnlocked").TryGet<bool>() &&
+                  value.routes.stack == std::vector<std::string>{"hud"},
+              "migration transforms state and stable anchor before adopting the new package identity");
+    }
+    Check(source.contentVersion == "chapter-1" &&
+              source.anchor.operationId == "operation-old" &&
+              source.typedVariables.contains("affection") &&
+              !source.typedVariables.contains("rinAffinity"),
+          "successful migration operates on an isolated copy");
+
+    auto missingChain = px::progress::MigrateSaveSnapshot(
+        source,
+        {"commercial-vn", std::string(64, 'b'), "chapter-2", 2}, {},
+        readMigration);
+    Check(!missingChain && source.anchor.operationId == "operation-old",
+          "missing migration rejects without mutating the current save candidate");
+
+    auto missingAnchor = migrations;
+    missingAnchor.erase(missingAnchor.begin());
+    missingAnchor.front().fromContentVersion = "chapter-1";
+    auto badAnchor = px::progress::MigrateSaveSnapshot(
+        source,
+        {"commercial-vn", std::string(64, 'b'), "chapter-2", 2},
+        missingAnchor,
+        [](std::string_view) -> std::optional<std::string> {
+            return R"({
+              "format":"PrismatiXSaveMigration","schemaRevision":2,
+              "id":"chapter-1-5-to-2",
+              "from":{"contentVersion":"chapter-1","saveVersion":1},
+              "to":{"contentVersion":"chapter-2","saveVersion":2},
+              "anchor":{"policy":"map","mappings":[{
+                "from":{"runtimeDocumentId":"other","sourceId":"other","operationId":"other"},
+                "to":{"runtimeDocumentId":"new","sourceId":"new","operationId":"new"}
+              }]},"operations":[]
+            })";
+        });
+    Check(!badAnchor && source.anchor.operationId == "operation-old",
+          "a migration without an exact anchor mapping is transactionally rejected");
 }
 
 
@@ -347,6 +516,7 @@ int main() {
     Run("Archive_BoundsAndRoundTrip", TestArchiveBoundsAndRoundTrip);
     Run("Save_RejectsInvalidAndRoundTrips", TestSaveValidation);
     Run("ProfileAndSettings_CurrentSchemasRoundTrip", TestProfileAndSettingsSchemas);
+    Run("Save_ExplicitMigrationChainIsTransactional", TestExplicitSaveMigrationChain);
     Run("Assets_SavedIdentityRegisters", TestSavedAssetIdentityRegistration);
     if (g_failures == 0) std::cout << "PASS: runtime-save-load integration\n";
     return g_failures == 0 ? 0 : 1;

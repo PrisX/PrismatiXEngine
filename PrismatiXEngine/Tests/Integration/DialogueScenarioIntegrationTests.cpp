@@ -3,12 +3,16 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "Engine/Animation/Timeline.h"
+#include "Engine/Audio/AudioEngine.h"
 #include "Engine/Core/TypeRegistry.h"
+#include "Engine/Graphics/AssetCache.h"
+#include "Engine/Graphics/Renderer2D.h"
 #include "Engine/IO/Archive.h"
 #include "Engine/IO/VFS.h"
 #include "Engine/Platform/Input.h"
@@ -25,11 +29,16 @@
 #include "Engine/UI/UIRouter.h"
 #include "Engine/UI/UISceneLoader.h"
 #include "Engine/UI/UITypeRegistry.h"
+#include "Engine/UI/VirtualizedView.h"
 #include "Engine/UI/Widgets.h"
 #include "Engine/VN/Commands/CommandRegistry.h"
 #include "Engine/VN/Expression/Expression.h"
 #include "Engine/VN/GameCatalog.h"
+#include "Engine/VN/Runtime/Backlog.h"
 #include "Engine/VN/Runtime/Dialogue.h"
+#include "Engine/VN/Runtime/Program.h"
+#include "Engine/VN/Runtime/Stage.h"
+#include "Engine/VN/Runtime/VM.h"
 #include "Engine/VN/Runtime/VariableStore.h"
 #include "Engine/VN/Scenario/ScenarioDocument.h"
 #include "Engine/VN/Scenario/StoryMap.h"
@@ -115,10 +124,29 @@ void TestDialogueEffects() {
     dialogue.Update(350);
     Check(dialogue.State().effect == "shake" && dialogue.State().effectProgress >= 0.24f, "dialogue effect should remain animated after typewriter completion");
 
+    dialogue.SetText("A", "👩‍👩‍👧‍👦[ruby=きおく]記憶[/ruby][br]続く", 0, {}, {});
+    Check(dialogue.State().totalChars == 5 &&
+              dialogue.State().displayText == "👩‍👩‍👧‍👦[ruby=きおく]記憶[/ruby][br]続く",
+          "typewriter should treat emoji graphemes and complete ruby markup as observable units");
+
     px::ui::GalgameUI hud;
     px::ui::DialoguePresentation presentation;
-    presentation.text = "First line";
+    presentation.text = "[ruby=きおく]記憶[/ruby] continues";
     Check(hud.ShowHUD(presentation), "HUD should be created for dialogue input regression test");
+    const auto findByName = [](auto&& self, px::ui::Control* root,
+                               const std::string_view name) -> px::ui::Control* {
+        if (!root) return nullptr;
+        if (root->Name() == name) return root;
+        for (const auto& child : root->Children())
+            if (auto* control = dynamic_cast<px::ui::Control*>(child.get()))
+                if (auto* found = self(self, control, name)) return found;
+        return nullptr;
+    };
+    const auto* richDialogue = dynamic_cast<const px::ui::RichTextLabel*>(
+        findByName(findByName, hud.Root(), "Dialogue"));
+    Check(richDialogue && richDialogue->Text() == "記憶 continues" &&
+              richDialogue->Markup() == presentation.text,
+          "runtime dialogue markup should reach the HUD RichTextLabel without becoming visible syntax");
     px::Input input;
     input.InjectFrame(-1000, -1000, false);
     (void)hud.Update(input, 1280, 720);
@@ -137,6 +165,48 @@ void TestDialogueEffects() {
     Check(actions.size() == 1 && actions.front().command == "choice.select" &&
               actions.front().argument == "0",
           "generated HUD choice must dispatch the same choice.select contract as authored UI");
+
+    const px::ui::UIRuntimeState gameplayCheckpoint =
+        hud.CaptureGameplayRuntimeState();
+    Check(gameplayCheckpoint.surfaceId == "hud",
+          "gameplay checkpoint should carry stable HUD surface identity");
+    Check(hud.ShowSettings({}) &&
+              hud.CaptureRuntimeState().surfaceId == "settings" &&
+              hud.CaptureGameplayRuntimeState().surfaceId == "hud",
+          "transient overlays must not replace the gameplay UI checkpoint");
+    Check(findByName(findByName, hud.Root(), "BGM") != nullptr &&
+              findByName(findByName, hud.Root(), "SkipRead") != nullptr &&
+              findByName(findByName, hud.Root(), "Language") != nullptr,
+          "built-in settings route must instantiate its slider, toggle, and locale controls");
+
+    Check(hud.ShowBacklog({}) &&
+              dynamic_cast<px::ui::ListView*>(
+                  findByName(findByName, hud.Root(), "Entries")) != nullptr,
+          "built-in backlog route must instantiate the production ListView contract");
+    Check(hud.ShowSaveLoad(true, {}) &&
+              hud.CaptureRuntimeState().surfaceId == "save" &&
+              dynamic_cast<px::ui::GridView*>(
+                  findByName(findByName, hud.Root(), "Slots")) != nullptr,
+          "built-in save route must instantiate the production GridView contract");
+    Check(hud.ShowSaveLoad(false, {}) &&
+              hud.CaptureRuntimeState().surfaceId == "load" &&
+              dynamic_cast<px::ui::GridView*>(
+                  findByName(findByName, hud.Root(), "Slots")) != nullptr,
+          "built-in load route must remain distinct from save while sharing its control contract");
+    Check(hud.ShowGallery({}) &&
+              dynamic_cast<px::ui::GridView*>(
+                  findByName(findByName, hud.Root(), "Items")) != nullptr,
+          "built-in gallery route must instantiate the production GridView contract");
+    Check(hud.ShowVideoOverlay(true) &&
+              findByName(findByName, hud.Root(), "SkipHint") != nullptr,
+          "built-in video route must expose its authored skip-hint control");
+    Check(hud.ShowTitle() &&
+              hud.CaptureRuntimeState().surfaceId == "title" &&
+              findByName(findByName, hud.Root(), "Start") != nullptr,
+          "built-in title route must instantiate through the same UI document application");
+    Check(hud.RestoreRuntimeState(gameplayCheckpoint) &&
+              hud.CurrentScreen() == px::ui::GalgameUI::Screen::HUD,
+          "UI restore should validate a detached HUD topology and atomically return from an overlay");
 }
 
 
@@ -233,9 +303,9 @@ void TestTypedExpressions() {
 
     px::vn::VariableStore store;
     store.SetValue("route", px::vn::Value("alice"));
-    store.SetValue("flags", px::vn::Value(px::vn::ValueList{ true, "seen" }), px::vn::VariableScope::Persistent);
+    store.SetValue("flags", px::vn::Value(px::vn::ValueList{ true, "seen" }), px::vn::VariableScope::Profile);
     const auto fromStore = store.Evaluate(px::vn::Expression::Binary(px::vn::ExpressionOperator::Equal, px::vn::Expression::Variable("route"), px::vn::Expression::Literal("alice")));
-    Check(fromStore && fromStore.Value().TryGet<bool>() && *fromStore.Value().TryGet<bool>() && store.PersistentKeys().contains("flags"), "variable store should retain typed list/map/string values with explicit scope");
+    Check(fromStore && fromStore.Value().TryGet<bool>() && *fromStore.Value().TryGet<bool>() && store.ProfileKeys().contains("flags"), "variable store should retain typed list/map/string values with explicit scope");
 }
 
 
@@ -286,6 +356,27 @@ px::Variant ContractValue(const px::vn::CommandParameterDescriptor& parameter) {
 }
 
 void TestEveryCommandDescriptorContract() {
+    px::test::TempDirectory temp("command-runtime-contract");
+    px::io::VFS vfs;
+    vfs.MountDirectory(temp.path.string());
+    px::audio::AudioEngine audio(vfs);
+    px::graphics::AssetCache assets(nullptr, vfs);
+    px::graphics::Renderer2D renderer(nullptr, assets);
+    px::vn::Stage stage(renderer, assets);
+    px::vn::Dialogue dialogue;
+    px::vn::VariableStore variables;
+    px::vn::Backlog backlog;
+    px::vn::VM vm(vfs, audio, stage, dialogue, variables, backlog);
+    const std::set<std::string> hostCommands{
+        "ambience", "stopambience", "route", "animation", "screen_effect",
+        "nvl", "adv", "er", "nvl_clear",
+    };
+    std::vector<std::string> delegated;
+    vm.SetCommandHook([&](const px::vn::Command& command) {
+        delegated.push_back(command.type);
+        return hostCommands.contains(command.type);
+    });
+
     for (const auto& descriptor : px::vn::CommandRegistry::Builtins().Descriptors()) {
         px::vn::scenario::ScenarioDocument document;
         document.id = px::Uuid::Random();
@@ -307,7 +398,48 @@ void TestEveryCommandDescriptorContract() {
         const auto encoded = px::vn::scenario::WriteScenario(document);
         const auto parsed = px::vn::scenario::ParseScenario(encoded, "contract.pxscenario");
         Check(parsed && px::vn::scenario::ValidateScenario(parsed.Value()).Valid(), ("command contract failed: " + descriptor.id).c_str());
+
+        px::vn::Command runtimeCommand;
+        runtimeCommand.type = descriptor.id;
+        runtimeCommand.line = 1;
+        runtimeCommand.sourceId = "command-" + descriptor.id;
+        runtimeCommand.operationId = "operation-" + descriptor.id;
+        for (const auto& parameter : descriptor.parameters) {
+            if (!parameter.required) continue;
+            px::Variant value = ContractValue(parameter);
+            runtimeCommand.typedArgs.emplace(parameter.name, value.Clone());
+            if (const auto* text = value.TryGet<std::string>())
+                runtimeCommand.args.push_back({parameter.name, *text});
+            else if (const auto* integer = value.TryGet<std::int64_t>())
+                runtimeCommand.args.push_back(
+                    {parameter.name, std::to_string(*integer)});
+            else if (const auto* number = value.TryGet<double>())
+                runtimeCommand.args.push_back(
+                    {parameter.name, std::to_string(*number)});
+            else if (const auto* boolean = value.TryGet<bool>())
+                runtimeCommand.args.push_back(
+                    {parameter.name, *boolean ? "true" : "false"});
+            else if (const auto* resource = value.TryGet<px::ResourceRefValue>())
+                runtimeCommand.args.push_back(
+                    {parameter.name, resource->lastKnownPath});
+        }
+        px::vn::Program runtimeProgram;
+        runtimeProgram.documentId = "command-conformance";
+        runtimeProgram.code.push_back(std::move(runtimeCommand));
+        runtimeProgram.branch.push_back(-1);
+        const std::size_t delegatedBefore = delegated.size();
+        Check(vm.LoadCompiledProgram(std::move(runtimeProgram),
+                                     "Runtime/command-conformance.pxir"),
+              ("runtime command failed to load: " + descriptor.id).c_str());
+        const bool shouldDelegate = hostCommands.contains(descriptor.id);
+        Check(delegated.size() == delegatedBefore + (shouldDelegate ? 1u : 0u),
+              ("public command has no VM/host execution path: " + descriptor.id).c_str());
+        if (shouldDelegate && delegated.size() > delegatedBefore)
+            Check(delegated.back() == descriptor.id,
+                  "host command delegation must preserve command identity");
     }
+    Check(std::set<std::string>(delegated.begin(), delegated.end()) == hostCommands,
+          "runtime conformance must exercise every Player-owned built-in command");
 }
 
 void TestVisualGraphControlFlowContract() {

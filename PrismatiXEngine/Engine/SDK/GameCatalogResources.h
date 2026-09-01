@@ -3,10 +3,12 @@
 #include "Engine/SDK/ContractVersions.h"
 
 #include <functional>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
+#include <variant>
 
 namespace px::sdk {
 
@@ -34,6 +36,12 @@ struct GameCatalogVariable {
     std::string name;
     int defaultValue = 0;
     bool persistent = false;
+    enum class Type : std::uint8_t { Boolean, Integer, Number, String };
+    enum class Scope : std::uint8_t { Session, Profile };
+    Type type = Type::Integer;
+    Scope scope = Scope::Session;
+    std::variant<bool, std::int64_t, double, std::string> typedDefault =
+        std::int64_t{0};
 };
 
 struct GameCatalogAssetReference {
@@ -57,11 +65,20 @@ struct GameCatalogInputBinding {
     std::string argument;
 };
 
+struct GameCatalogUnlockable {
+    std::string id;
+    std::string kind;
+    std::string condition;
+    std::string payloadJson;
+};
+
 struct GameCatalogResourcesDocument {
     std::string documentId;
     std::vector<GameCatalogVariable> variables;
     std::vector<GameCatalogGalleryItem> gallery;
     std::vector<GameCatalogInputBinding> inputBindings;
+    std::vector<std::string> progressionFlags;
+    std::vector<GameCatalogUnlockable> unlockables;
 };
 
 struct GameCatalogResourcesLoadResult {
@@ -86,6 +103,11 @@ using GameCatalogResourceExists =
         LegacyGameCatalogPolicy::RejectCharacterNodes,
     LegacyGalleryReferencePolicy galleryPolicy =
         LegacyGalleryReferencePolicy::RejectPathStrings);
+
+// Loads the canonical PrismatiXGame JSON document used by 0.2 packages.
+[[nodiscard]] GameCatalogResourcesLoadResult LoadCanonicalGameCatalogResources(
+    std::string_view json,
+    std::string path = "Content/game.pxgame");
 
 // Resolves UUID-authoritative GalleryItem references through the project
 // manifest and validates image kind and file availability. The manifest path

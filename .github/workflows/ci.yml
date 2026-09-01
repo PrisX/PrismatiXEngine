@@ -5,6 +5,8 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  schedule:
+    - cron: "17 19 * * 5"
   workflow_dispatch:
 
 concurrency:
@@ -52,7 +54,7 @@ jobs:
         run: >-
           "$VCPKG_ROOT/vcpkg" install --triplet x64-linux
           --x-install-root="${{ github.workspace }}/out/ci/vcpkg/clang"
-      - name: Configure SDK-only sanitizer build
+      - name: Configure complete sanitizer desktop build
         run: |
           cmake -S . -B out/ci/sdk-clang -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
@@ -62,26 +64,35 @@ jobs:
             -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/clang" \
             -DBUILD_TESTING=ON \
             -DPRISMATIX_ENABLE_SANITIZERS=ON \
-            -DPRISMATIX_WARNINGS_AS_ERRORS=OFF
-      - name: Compile Runtime SDK test surface
-        run: >-
-          cmake --build out/ci/sdk-clang --target
-          PrismatiXSDKTests
-          PrismatiXPreviewProtocolV2Tests
-          PrismatiXPerformancePreviewContractTests
-          PrismatiXLocalizationPreviewContractTests
-          PrismatiXProgressionPreviewContractTests
-          PrismatiXRuntimeIrPatchTests
-          --parallel
-      - name: Execute Runtime SDK tests
+            -DPRISMATIX_WARNINGS_AS_ERRORS=ON
+      - name: Compile complete Runtime, SDK, Player, and test surface
+        run: cmake --build out/ci/sdk-clang --parallel
+      - name: Verify and execute the packaged Player journey
         env:
           ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:halt_on_error=1
           SDL_AUDIO_DRIVER: dummy
-          SDL_VIDEO_DRIVER: dummy
+          SDL_VIDEO_DRIVER: x11
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        run: >-
-          ctest --test-dir out/ci/sdk-clang -L "runtime|contract|sdk"
-          --output-on-failure --timeout 180 --no-tests=error
+        run: |
+          ctest --test-dir out/ci/sdk-clang -N -R '^PrismatiX\.Player\.CatalogNativeAcceptance$' | tee out/ci/sdk-clang/player-e2e-list.txt
+          grep -Fq 'PrismatiX.Player.CatalogNativeAcceptance' out/ci/sdk-clang/player-e2e-list.txt
+          xvfb-run -a ctest --test-dir out/ci/sdk-clang -R '^PrismatiX\.Player\.CatalogNativeAcceptance$' --output-on-failure --timeout 180 --no-tests=error
+      - name: Execute the complete Linux test suite
+        env:
+          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:halt_on_error=1
+          PRISMATIX_VISUAL_OUTPUT_DIR: ${{ github.workspace }}/out/ci/visual/linux
+          SDL_AUDIO_DRIVER: dummy
+          SDL_VIDEO_DRIVER: x11
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: xvfb-run -a ctest --test-dir out/ci/sdk-clang -E '^PrismatiX\.Player\.CatalogNativeAcceptance$' --output-on-failure --timeout 240 --no-tests=error
+      - name: Publish Linux GPU visual matrix
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PrismatiX-GPU-Visual-Linux-${{ github.run_id }}
+          path: out/ci/visual/linux
+          if-no-files-found: error
+          retention-days: 14
 
   windows-msvc-sdk:
     runs-on: windows-latest
@@ -108,7 +119,7 @@ jobs:
           $installRoot = Join-Path $env:GITHUB_WORKSPACE "out/ci/vcpkg/msvc"
           & "$env:VCPKG_ROOT/vcpkg.exe" install --triplet x64-windows "--x-install-root=$installRoot"
           if ($LASTEXITCODE -ne 0) { throw "vcpkg dependency resolution failed" }
-      - name: Configure SDK-only MSVC build
+      - name: Configure complete MSVC desktop build
         shell: pwsh
         run: |
           cmake -S . -B out/ci/sdk-msvc -G Ninja `
@@ -118,20 +129,48 @@ jobs:
             "-DVCPKG_INSTALLED_DIR=$env:GITHUB_WORKSPACE/out/ci/vcpkg/msvc" `
             -DBUILD_TESTING=ON `
             -DPRISMATIX_WARNINGS_AS_ERRORS=ON
-      - name: Compile Runtime, Player and SDK tests
-        run: >-
-          cmake --build out/ci/sdk-msvc --target
-          PrismatiXSDKTests
-          PrismatiXPreviewProtocolV2Tests
-          PrismatiXPerformancePreviewContractTests
-          PrismatiXLocalizationPreviewContractTests
-          PrismatiXProgressionPreviewContractTests
-          PrismatiXRuntimeIrPatchTests
-          --parallel
-      - name: Execute Runtime SDK tests
-        run: >-
-          ctest --test-dir out/ci/sdk-msvc -L "runtime|contract|sdk"
-          --output-on-failure --timeout 240 --no-tests=error
+      - name: Compile complete Runtime, SDK, Player, and test surface
+        run: cmake --build out/ci/sdk-msvc --parallel
+      - name: Execute CLI to native Packager commercial journey
+        shell: pwsh
+        run: |
+          node packages/cli/dist/src/cli.js pack `
+            Samples/CommercialVN/project.pxproject `
+            --packager out/ci/sdk-msvc/PrismatiXEngine/PrismatiXPackager.exe `
+            --player out/ci/sdk-msvc/PrismatiXEngine/PrismatiXPlayer.exe `
+            --output out/ci/cli-commercial
+          if ($LASTEXITCODE -ne 0) { throw 'CLI to native Packager journey failed' }
+          foreach ($path in @(
+            'out/ci/cli-commercial/Content.pdx',
+            'out/ci/cli-commercial/Package/manifest.json',
+            'out/ci/cli-commercial/PrismatiXPlayer.exe'
+          )) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "CLI commercial package is missing $path"
+            }
+          }
+      - name: Verify and execute the packaged Player journey
+        shell: pwsh
+        run: |
+          $listing = ctest --test-dir out/ci/sdk-msvc -N -R '^PrismatiX\.Player\.CatalogNativeAcceptance$'
+          $listing | Set-Content -LiteralPath out/ci/sdk-msvc/player-e2e-list.txt
+          if ($listing -notmatch 'PrismatiX\.Player\.CatalogNativeAcceptance') { throw 'Packaged Player E2E is absent from CTest' }
+          ctest --test-dir out/ci/sdk-msvc -R '^PrismatiX\.Player\.CatalogNativeAcceptance$' --output-on-failure --timeout 240 --no-tests=error
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged Player E2E failed' }
+      - name: Execute the complete Windows test suite
+        shell: pwsh
+        run: |
+          $env:PRISMATIX_VISUAL_OUTPUT_DIR = Join-Path $env:GITHUB_WORKSPACE 'out/ci/visual/windows'
+          ctest --test-dir out/ci/sdk-msvc -E '^PrismatiX\.Player\.CatalogNativeAcceptance$' --output-on-failure --timeout 240 --no-tests=error
+          if ($LASTEXITCODE -ne 0) { throw 'Complete Windows test suite failed' }
+      - name: Publish Windows GPU visual matrix
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PrismatiX-GPU-Visual-Windows-${{ github.run_id }}
+          path: out/ci/visual/windows
+          if-no-files-found: error
+          retention-days: 14
       - name: Install distributable SDK and PreviewHost
         run: cmake --install out/ci/sdk-msvc --prefix out/ci/sdk-package
       - name: Finalize SDK artifact identity
@@ -155,7 +194,9 @@ jobs:
         run: |
           $required = @(
             "out/ci/sdk-package/include/PrismatiX/Engine/SDK/RuntimeIr.h",
+            "out/ci/sdk-package/include/PrismatiX/Engine/SDK/V0_2.h",
             "out/ci/sdk-package/include/PrismatiX/Engine/SDK/PreviewSession.h",
+            "out/ci/sdk-package/share/PrismatiX/docs/PrismatiXSDKReference.md",
             "out/ci/sdk-package/share/PrismatiX/contracts/contracts.lock.json",
             "out/ci/sdk-package/share/PrismatiX/authoring-sdk/dist/src/index.js",
             "out/ci/sdk-package/share/PrismatiX/runtime-sdk/dist/src/index.js",
@@ -174,6 +215,7 @@ jobs:
           }
           $manifest = Get-Content -LiteralPath "out/ci/sdk-package/PrismatiXSDKManifest.json" -Raw | ConvertFrom-Json
           if ($manifest.schemaRevision -ne 2 -or
+              $manifest.nativeNamespace -ne 'px::sdk::v0_2' -or
               $manifest.artifactSha256 -notmatch '^[0-9a-f]{64}$' -or
               $manifest.manifestSha256 -notmatch '^[0-9a-f]{64}$') {
             throw "Finalized SDK manifest identity is invalid"
@@ -203,7 +245,7 @@ jobs:
           echo "VCPKG_TARGET_TRIPLET=$triplet" >> "$GITHUB_ENV"
           "$VCPKG_ROOT/vcpkg" install --triplet "$triplet" \
             --x-install-root="${{ github.workspace }}/out/ci/vcpkg/apple-clang"
-      - name: Configure SDK-only Apple Clang build
+      - name: Configure complete Apple Clang desktop build
         run: |
           cmake -S . -B out/ci/sdk-apple-clang -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
@@ -211,20 +253,26 @@ jobs:
             -DVCPKG_TARGET_TRIPLET="$VCPKG_TARGET_TRIPLET" \
             -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/apple-clang" \
             -DBUILD_TESTING=ON \
-            -DPRISMATIX_WARNINGS_AS_ERRORS=OFF
-      - name: Compile Runtime SDK test surface
-        run: >-
-          cmake --build out/ci/sdk-apple-clang --target
-          PrismatiXSDKTests
-          PrismatiXPreviewProtocolV2Tests
-          PrismatiXPerformancePreviewContractTests
-          PrismatiXLocalizationPreviewContractTests
-          PrismatiXProgressionPreviewContractTests
-          PrismatiXRuntimeIrPatchTests
-          --parallel
-      - run: >-
-          ctest --test-dir out/ci/sdk-apple-clang -L "runtime|contract|sdk"
-          --output-on-failure --timeout 300 --no-tests=error
+            -DPRISMATIX_WARNINGS_AS_ERRORS=ON
+      - name: Compile complete Runtime, SDK, Player, and test surface
+        run: cmake --build out/ci/sdk-apple-clang --parallel
+      - name: Verify and execute the packaged Player journey
+        run: |
+          ctest --test-dir out/ci/sdk-apple-clang -N -R '^PrismatiX\.Player\.CatalogNativeAcceptance$' | tee out/ci/sdk-apple-clang/player-e2e-list.txt
+          grep -Fq 'PrismatiX.Player.CatalogNativeAcceptance' out/ci/sdk-apple-clang/player-e2e-list.txt
+          ctest --test-dir out/ci/sdk-apple-clang -R '^PrismatiX\.Player\.CatalogNativeAcceptance$' --output-on-failure --timeout 300 --no-tests=error
+      - name: Execute the complete macOS test suite
+        env:
+          PRISMATIX_VISUAL_OUTPUT_DIR: ${{ github.workspace }}/out/ci/visual/macos
+        run: ctest --test-dir out/ci/sdk-apple-clang -E '^PrismatiX\.Player\.CatalogNativeAcceptance$' --output-on-failure --timeout 300 --no-tests=error
+      - name: Publish macOS GPU visual matrix
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PrismatiX-GPU-Visual-macOS-${{ github.run_id }}
+          path: out/ci/visual/macos
+          if-no-files-found: error
+          retention-days: 14
 
   emscripten-preview:
     runs-on: ubuntu-latest
@@ -262,6 +310,7 @@ jobs:
           test -n "$wasm" && test -s "$wasm"
           test -n "$contract" && test -s "$contract"
           grep -q 'createPrismatiXPreview' "$module"
+          node scripts/test-wasm-preview.mjs "$module"
           echo "module=$module"
           echo "wasm=$wasm"
           echo "contract=$contract"

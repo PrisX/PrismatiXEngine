@@ -1,23 +1,100 @@
 {
+  "behaviorGraph": {
+    "groups": [],
+    "links": [],
+    "nodes": []
+  },
+  "behaviorTriggers": [],
   "format": "PrismatiXUIScene",
-  "schemaRevision": 1,
-  "id": "70707070-7070-4070-8070-707070707070",
-  "revision": 1,
-  "name": "PatchScene",
-  "width": 640,
   "height": 360,
-  "rootId": "71717171-7171-4171-8171-717171717171",
+  "id": "70707070-7070-4070-8070-707070707070",
+  "name": "PatchScene",
   "nodes": [
     {
-      "id":"71717171-7171-4171-8171-717171717171","parentId":null,"order":0,"kind":"control","name":"Root","visible":true,"locked":false,
-      "layout":{"mode":"free","x":0,"y":0,"width":640,"height":360,"anchorX":0,"anchorY":0,"pivotX":0,"pivotY":0,"margin":0,"alignment":"start","sizeRule":"fixed"},
-      "content":{"text":"","assetId":null},"appearance":{"backgroundColor":"#101018","textColor":"#FFFFFF","opacity":1,"styleToken":null,"hoverBackgroundColor":null,"focusColor":null,"disabledOpacity":0.5},"interaction":{"onClick":null},"accessibility":{"label":"","role":"presentation"}
+      "accessibilityLabel": "",
+      "accessibilityRole": "presentation",
+      "appearance": {
+        "backgroundColor": "#101018",
+        "disabledOpacity": 0.5,
+        "focusColor": null,
+        "hoverBackgroundColor": null,
+        "opacity": 1,
+        "styleToken": null,
+        "textColor": "#FFFFFF"
+      },
+      "assetId": null,
+      "bindings": {},
+      "id": "71717171-7171-4171-8171-717171717171",
+      "kind": "control",
+      "layout": {
+        "alignment": "start",
+        "anchorBottom": 0,
+        "anchorRight": 0,
+        "anchorX": 0,
+        "anchorY": 0,
+        "height": 360,
+        "margin": 0,
+        "mode": "free",
+        "pivotX": 0,
+        "pivotY": 0,
+        "sizeRule": "fixed",
+        "width": 640,
+        "x": 0,
+        "y": 0
+      },
+      "locked": false,
+      "name": "Root",
+      "order": 0,
+      "parentId": null,
+      "runtimeProperties": {},
+      "text": "",
+      "visible": true
     },
     {
-      "id":"72727272-7272-4272-8272-727272727272","parentId":"71717171-7171-4171-8171-717171717171","order":0,"kind":"label","name":"Caption","visible":true,"locked":false,
-      "layout":{"mode":"free","x":40,"y":50,"width":240,"height":48,"anchorX":0,"anchorY":0,"pivotX":0,"pivotY":0,"margin":0,"alignment":"start","sizeRule":"fixed"},
-      "content":{"text":"Before","assetId":null},"appearance":{"backgroundColor":"#00000000","textColor":"#FFFFFF","opacity":1,"styleToken":null,"hoverBackgroundColor":null,"focusColor":null,"disabledOpacity":0.5},"interaction":{"onClick":null},"accessibility":{"label":"Caption","role":"text"}
+      "accessibilityLabel": "Caption",
+      "accessibilityRole": "text",
+      "appearance": {
+        "backgroundColor": "#00000000",
+        "disabledOpacity": 0.5,
+        "focusColor": null,
+        "hoverBackgroundColor": null,
+        "opacity": 1,
+        "styleToken": null,
+        "textColor": "#FFFFFF"
+      },
+      "assetId": null,
+      "bindings": {},
+      "id": "72727272-7272-4272-8272-727272727272",
+      "kind": "label",
+      "layout": {
+        "alignment": "start",
+        "anchorBottom": 0,
+        "anchorRight": 0,
+        "anchorX": 0,
+        "anchorY": 0,
+        "height": 48,
+        "margin": 0,
+        "mode": "free",
+        "pivotX": 0,
+        "pivotY": 0,
+        "sizeRule": "fixed",
+        "width": 240,
+        "x": 40,
+        "y": 50
+      },
+      "locked": false,
+      "name": "Caption",
+      "order": 0,
+      "parentId": "71717171-7171-4171-8171-717171717171",
+      "runtimeProperties": {},
+      "text": "Before",
+      "visible": true
     }
   ],
-  "theme": []
+  "revision": 1,
+  "rootId": "71717171-7171-4171-8171-717171717171",
+  "schemaRevision": 2,
+  "theme": [],
+  "visualStateGroups": [],
+  "width": 640
 }

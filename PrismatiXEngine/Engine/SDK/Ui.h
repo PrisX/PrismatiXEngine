@@ -44,8 +44,8 @@ struct UiLayout {
 };
 
 struct UiAppearance {
-    std::string backgroundColor;
-    std::string textColor;
+    std::string backgroundColor = "#00000000";
+    std::string textColor = "#FFFFFFFF";
     float opacity = 1.0f;
     std::optional<std::string> styleToken;
     std::optional<std::string> hoverBackgroundColor;
@@ -219,6 +219,8 @@ struct UiNode {
     std::optional<UiAction> onClick;
     std::string accessibilityLabel;
     std::string accessibilityRole;
+    std::string accessibilityDescription;
+    std::int32_t accessibilityFocusOrder = 0;
     std::unordered_map<std::string, UiValue> runtimeProperties;
     std::unordered_map<std::string, UiPropertyBinding> bindings;
     std::optional<UiComponentInstance> componentInstance;

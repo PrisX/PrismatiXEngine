@@ -95,7 +95,7 @@ void TestUnifiedTimelineAndPresets() {
     Check(player.RestoreState(state) && player.Playing(handle), "timeline playback should restore its exact mid-animation state");
     const std::string encoded = px::animation::WriteAnimationClip(clip);
     auto decoded = px::animation::ParseAnimationClip(encoded, "memory.pxanim");
-    Check(decoded && decoded.Value().id == clip.id && decoded.Value().tracks.size() == 1 && encoded.find("\"schemaRevision\": 1") != std::string::npos && encoded.find("easeInOut") != std::string::npos, ".pxanim schema 1 version 4 should round-trip canonical typed keyframes exactly");
+    Check(decoded && decoded.Value().id == clip.id && decoded.Value().tracks.size() == 1 && encoded.find("\"schemaRevision\": 2") != std::string::npos && encoded.find("easeInOut") != std::string::npos, ".pxanim schema 2 version 4 should round-trip canonical typed keyframes exactly");
     auto unknownAnimation = nlohmann::json::parse(encoded);
     unknownAnimation["legacy"] = true;
     Check(!px::animation::ParseAnimationClip(unknownAnimation.dump(), "unknown-field.pxanim"), ".pxanim parsing must reject unknown fields instead of silently dropping them");
@@ -132,7 +132,7 @@ void TestCanonicalTimelineRuntime() {
     }
     const nlohmann::json timeline{
         {"format", "PrismatiXTimeline"},
-        {"schemaRevision", 1},
+        {"schemaRevision", 2},
         {"id", "chapter01.intro"},
         {"name", "Chapter intro"},
         {"duration", 2.0},
@@ -169,6 +169,61 @@ void TestCanonicalTimelineRuntime() {
     px::graphics::AssetCache assets(nullptr, vfs);
     px::graphics::Renderer2D renderer(nullptr, assets);
     px::RuntimeSession runtime({vfs, audio, renderer, assets});
+    Check(!renderer.SupportsStagePostEffects() &&
+              !runtime.Stage().ApplyAnimationProperty(
+                  "$camera", "blur", px::Variant(0.5)) &&
+              runtime.Stage().ApplyAnimationProperty(
+                  "$camera", "fade", px::Variant(0.5)),
+          "basic graphics tier must reject unsupported post effects instead of returning a visual no-op");
+    Check(runtime.Stage().ApplyAnimationProperty(
+              "$camera", "pan", px::Variant(0.5)),
+          "camera pan preset must bind to the Stage");
+    runtime.Stage().Update(0.016f);
+    Check(renderer.CameraOffset().x != 0.0f,
+          "camera pan must visibly affect Stage rendering coordinates");
+
+    std::size_t actorPresetCount = 0;
+    for (const auto& preset : px::animation::OfficialPresets()) {
+        if (!preset.name.starts_with("Actor/")) continue;
+        ++actorPresetCount;
+        Check(preset.tracks.size() == 1,
+              "each public actor preset must have one conformance track");
+        if (preset.tracks.size() != 1) continue;
+        runtime.Stage().ClearAll();
+        runtime.Stage().SetCharacter("hero", "hero.png", 2, false, 13.0f, -7.0f,
+                                     1.25f);
+        const auto authored = runtime.Stage().CaptureState().actors.front();
+        const std::string& property = preset.tracks.front().binding.property;
+        Check(runtime.Stage().ApplyAnimationProperty(
+                  "hero", property, px::Variant(0.43)),
+              "every advertised actor effect must bind to the Stage runtime");
+        const auto effected = runtime.Stage().CaptureState().actors.front();
+        const bool visibleMutation =
+            std::abs(effected.effectOffsetX - authored.effectOffsetX) > .001f ||
+            std::abs(effected.effectOffsetY - authored.effectOffsetY) > .001f ||
+            std::abs(effected.effectScale - authored.effectScale) > .001f ||
+            std::abs(effected.effectAlpha - authored.effectAlpha) > .001f;
+        Check(visibleMutation,
+              "every advertised actor effect must produce a visible transient channel");
+        Check(std::abs(effected.offsetX - 13.0f) < .001f &&
+                  std::abs(effected.offsetY + 7.0f) < .001f &&
+                  std::abs(effected.scale - 1.25f) < .001f,
+              "actor effects must compose with rather than overwrite authored pose");
+        const auto checkpoint = runtime.Stage().CaptureState();
+        runtime.Stage().ClearAll();
+        Check(runtime.Stage().RestoreState(checkpoint),
+              "actor effect channels must restore from runtime state");
+        const auto restoredEffect = runtime.Stage().CaptureState().actors.front();
+        Check(std::abs(restoredEffect.effectOffsetX - effected.effectOffsetX) < .001f &&
+                  std::abs(restoredEffect.effectOffsetY - effected.effectOffsetY) < .001f &&
+                  std::abs(restoredEffect.effectScale - effected.effectScale) < .001f &&
+                  std::abs(restoredEffect.effectAlpha - effected.effectAlpha) < .001f,
+              "mid-effect actor save/rollback must reproduce the same transient pose");
+    }
+    Check(actorPresetCount == 11,
+          "actor conformance must cover the complete published preset catalog");
+    runtime.Stage().ClearAll();
+
     double applied = -1.0;
     int markers = 0;
     runtime.SetAnimationTargetHandler(
@@ -209,6 +264,79 @@ void TestCanonicalTimelineRuntime() {
     Check(runtime.Timeline().Seek(handle, 0.0f) &&
               (runtime.Timeline().Update(1.1f), markers == 1),
           "canonical Timeline markers must fire exactly once when playback crosses them");
+
+    runtime.Variables().SetValue("restoreGuard", px::Variant(std::int64_t{7}),
+                                 px::vn::VariableScope::Session);
+    const auto beforeFailedRestore = runtime.CaptureState();
+    auto invalidRestore = beforeFailedRestore;
+    invalidRestore.typedVariables["restoreGuard"] = px::Variant(std::int64_t{99});
+    px::vn::Stage::SavedTween invalidTween;
+    invalidTween.target = "broken";
+    invalidTween.duration = 0.0f;
+    invalidRestore.stage.tweens.push_back(std::move(invalidTween));
+    Check(!runtime.RestoreState(invalidRestore),
+          "late-stage invalid restore must be rejected");
+    const auto* restoredGuard = runtime.Variables().GetValue("restoreGuard");
+    const auto afterFailedRestoreTimeline = runtime.Timeline().CaptureState();
+    Check(restoredGuard && restoredGuard->TryGet<std::int64_t>() &&
+              *restoredGuard->TryGet<std::int64_t>() == 7 &&
+              afterFailedRestoreTimeline.size() == beforeFailedRestore.timelines.size() &&
+              !afterFailedRestoreTimeline.empty() &&
+              afterFailedRestoreTimeline.front().handle ==
+                  beforeFailedRestore.timelines.front().handle &&
+              std::abs(afterFailedRestoreTimeline.front().position -
+                       beforeFailedRestore.timelines.front().position) < .001f,
+              "failed restore must roll variables and timeline back to the exact previous session");
+
+    auto preparedState = beforeFailedRestore;
+    preparedState.typedVariables["restoreGuard"] =
+        px::Variant(std::int64_t{42});
+    auto prepared = runtime.PrepareRestore(preparedState);
+    const auto* guardBeforeCommit = runtime.Variables().GetValue("restoreGuard");
+    Check(prepared && guardBeforeCommit &&
+              guardBeforeCommit->TryGet<std::int64_t>() &&
+              *guardBeforeCommit->TryGet<std::int64_t>() == 7,
+          "PrepareRestore must validate a detached candidate without mutating the live session");
+    Check(prepared && runtime.CommitRestore(prepared.TakeValue()),
+          "a prepared restore must commit through the explicit frame-boundary API");
+    const auto* guardAfterCommit = runtime.Variables().GetValue("restoreGuard");
+    Check(guardAfterCommit && guardAfterCommit->TryGet<std::int64_t>() &&
+              *guardAfterCommit->TryGet<std::int64_t>() == 42,
+          "CommitRestore must publish the prepared candidate atomically");
+
+    px::animation::AnimationClip ghostClip;
+    ghostClip.id = px::Uuid::FromName("restore.ghost.clip");
+    ghostClip.name = "Ghost";
+    ghostClip.duration = 0.1f;
+    ghostClip.tracks.push_back(
+        {{px::animation::TargetKind::Stage, "$camera", "zoom"},
+         {{0.0f, 1.0, px::animation::Curve::Linear},
+          {0.1f, 1.0, px::animation::Curve::Linear}}});
+    Check(runtime.Timeline().Register(std::move(ghostClip)) &&
+              runtime.RestoreState(beforeFailedRestore) &&
+              runtime.Timeline().Find(
+                  px::Uuid::FromName("restore.ghost.clip")) == nullptr,
+          "restore must replace the compiled Timeline library instead of retaining ghost clips");
+
+    runtime.Variables().SetValue("chapter", px::Variant(std::int64_t{1}),
+                                 px::vn::VariableScope::Session);
+    runtime.Variables().SetValue("textSpeed", px::Variant(1.0),
+                                 px::vn::VariableScope::Profile);
+    const auto scopedCheckpoint = runtime.CaptureState();
+    runtime.Variables().SetValue("chapter", px::Variant(std::int64_t{2}),
+                                 px::vn::VariableScope::Session);
+    runtime.Variables().SetValue("textSpeed", px::Variant(1.5),
+                                 px::vn::VariableScope::Profile);
+    Check(runtime.RestoreState(scopedCheckpoint),
+          "a valid scoped-variable checkpoint restores");
+    const auto* restoredSession = runtime.Variables().GetValue("chapter");
+    const auto* retainedProfile = runtime.Variables().GetValue("textSpeed");
+    Check(restoredSession && restoredSession->TryGet<std::int64_t>() &&
+              *restoredSession->TryGet<std::int64_t>() == 1 &&
+              retainedProfile && retainedProfile->TryGet<double>() &&
+              *retainedProfile->TryGet<double>() == 1.5 &&
+              !scopedCheckpoint.typedVariables.contains("textSpeed"),
+          "save and rollback rewind session values without rewinding profile values");
 }
 
 

@@ -1,6 +1,19 @@
 {
   "format": "PrismatiXProject",
-  "schemaRevision": 1,
+  "schemaRevision": 2,
+  "id": "preview-host-script-fixture",
+  "name": "Preview Host Script Fixture",
+  "version": "0.2.0",
+  "contentVersion": "fixture-v1",
+  "saveVersion": 1,
+  "resolution": {"width": 1280, "height": 720},
+  "entry": {"story": "main", "ui": "title"},
+  "defaultLocale": "en",
+  "supportedLocales": ["en"],
+  "storyIndex": "Story/story.pxindex",
+  "gameCatalog": "Content/game.pxgame",
+  "extensions": ["Content/Extensions/default.pxextension"],
+  "uiEntryPoints": {"title": "Content/UI/ComponentScene.pxui"},
   "assets": [
     {
       "id": "33333333-3333-4333-8333-333333333333",

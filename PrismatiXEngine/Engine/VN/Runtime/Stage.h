@@ -2,13 +2,13 @@
 
 #include "Engine/Core/Variant.h"
 #include "Engine/Core/Result.h"
+#include "Engine/Graphics/Texture.h"
 
 #include <cstdint>
+#include <array>
 #include <string>
 #include <unordered_map>
 #include <vector>
-
-struct SDL_Texture;
 
 namespace px::graphics {
 class Renderer2D;
@@ -86,6 +86,10 @@ public:
         float x = 0.0f;
         float targetX = 0.0f;
         bool exiting = false;
+        float effectOffsetX = 0.0f;
+        float effectOffsetY = 0.0f;
+        float effectScale = 1.0f;
+        float effectAlpha = 1.0f;
     };
     [[nodiscard]] std::vector<SavedActor> Snapshot() const;
     void Restore(const std::vector<SavedActor>& actors);
@@ -122,6 +126,13 @@ public:
         std::string background;
         std::string previousBackground;
         float backgroundFade = 1.0f;
+        bool ruleActive = false;
+        std::string ruleOldBackground;
+        std::string ruleNewBackground;
+        std::string ruleMask;
+        float ruleProgress = 0.0f;
+        float ruleDuration = 0.6f;
+        int ruleVague = 64;
         float cameraX = 0.0f;
         float cameraY = 0.0f;
         float cameraZoom = 1.0f;
@@ -130,6 +141,11 @@ public:
         float shakeAmplitude = 0.0f;
         float shakePhase = 0.0f;
         std::unordered_map<std::string, float> screenEffects;
+        std::string customEffect;
+        float customEffectProgress = 0.0f;
+        std::uint32_t customEffectSeed = 0;
+        std::uint32_t customEffectSequence = 0;
+        std::array<std::array<float, 4>, 8> customEffectParameters{};
         std::vector<SavedActor> actors;
         std::vector<SavedLayer> layers;
         std::vector<SavedTween> tweens;
@@ -152,6 +168,10 @@ private:
         float offsetX = 0.0f;
         float offsetY = 0.0f;
         float scale = 1.0f;
+        float effectOffsetX = 0.0f;
+        float effectOffsetY = 0.0f;
+        float effectScale = 1.0f;
+        float effectAlpha = 1.0f;
         bool exiting = false;
     };
 
@@ -168,6 +188,9 @@ private:
 
     struct RuleState {
         bool active = false;
+        std::string oldBackgroundPath;
+        std::string newBackgroundPath;
+        std::string rulePath;
         float progress = 0.0f;
         float duration = 0.6f;
         int vague = 64;
@@ -175,7 +198,7 @@ private:
         int h = 0;
         std::vector<std::uint8_t> oldPixels;  // RGBA of the outgoing background
         std::vector<std::uint8_t> rule;       // grayscale rule per pixel
-        SDL_Texture* texture = nullptr;
+        graphics::TextureResource texture;
     };
 
     struct Tween {
@@ -216,6 +239,11 @@ private:
     float m_cameraY = 0.0f;
     float m_cameraZoom = 1.0f;
     std::unordered_map<std::string,float> m_screenEffects;
+    std::string m_customEffect;
+    float m_customEffectProgress = 0.0f;
+    std::uint32_t m_customEffectSeed = 0x6d2b79f5u;
+    std::uint32_t m_customEffectSequence = 0;
+    std::array<std::array<float, 4>, 8> m_customEffectParameters{};
 
     std::unordered_map<std::string, Actor> m_actors;
 };

@@ -1,6 +1,7 @@
 #include "Engine/Script/JavaScriptHost.h"
 
 #include "Engine/Diagnostics/Diagnostic.h"
+#include "Engine/Core/SemanticVersion.h"
 #include "Engine/Animation/Timeline.h"
 #include "Engine/Audio/AudioEngine.h"
 #include "Engine/Graphics/Renderer2D.h"
@@ -22,12 +23,15 @@
 #include <chrono>
 #include <cctype>
 #include <cmath>
+#include <deque>
 #include <limits>
 #include <ranges>
 #include <set>
 #include <tuple>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 namespace px::script {
 namespace {
@@ -139,6 +143,33 @@ bool SupportedCapability(const std::string_view capability) {
            capability == "ui" || capability == "audio";
 }
 
+bool IsJsonValue(const Variant& value, const int depth = 0) {
+    if (depth > 32) return false;
+    switch (value.Type()) {
+        case VariantType::Null:
+        case VariantType::Bool:
+        case VariantType::Integer:
+        case VariantType::Number:
+        case VariantType::String: return true;
+        case VariantType::Array:
+            return std::ranges::all_of(*value.AsArray(), [&](const Variant& item) {
+                return IsJsonValue(item, depth + 1);
+            });
+        case VariantType::Object:
+            return std::ranges::all_of(*value.AsObject(), [&](const auto& item) {
+                return IsJsonValue(item.second, depth + 1);
+            });
+        default: return false;
+    }
+}
+
+std::string_view CapabilityForOperation(const std::string_view operation) {
+    if (operation.starts_with("route.")) return "ui";
+    if (operation.starts_with("audio.")) return "audio";
+    if (operation.starts_with("animation.")) return "animation";
+    return "runtime";
+}
+
 struct ManifestSafety {
     bool previewSafe = false;
     bool deterministic = false;
@@ -173,10 +204,75 @@ ManifestSafety ReadManifestSafety(const nlohmann::json& descriptor,
 }
 
 bool SafeRelativePath(const std::string_view path) {
-    return !path.empty() && path.front() != '/' && path.front() != '\\' &&
-           path.find(':') == std::string_view::npos &&
-           path.find("..") == std::string_view::npos &&
-           path.find('\\') == std::string_view::npos;
+    const auto normalized = io::VFS::NormalizeVirtualPath(path);
+    return normalized && *normalized == path;
+}
+
+std::optional<std::string> ManifestRelativePath(
+    const std::string_view manifestPath, const std::string_view relativePath) {
+    if (!SafeRelativePath(relativePath)) return std::nullopt;
+    const auto separator = manifestPath.find_last_of('/');
+    const std::string joined = separator == std::string_view::npos
+                                   ? std::string(relativePath)
+                                   : std::string(manifestPath.substr(0, separator + 1)) +
+                                         std::string(relativePath);
+    return io::VFS::NormalizeVirtualPath(joined);
+}
+
+std::vector<std::string> PathSegments(const std::string_view path) {
+    std::vector<std::string> result;
+    std::size_t start = 0;
+    while (start < path.size()) {
+        const auto separator = path.find('/', start);
+        const auto end = separator == std::string_view::npos ? path.size() : separator;
+        result.emplace_back(path.substr(start, end - start));
+        if (separator == std::string_view::npos) break;
+        start = separator + 1;
+    }
+    return result;
+}
+
+std::optional<std::string> ResolveExtensionImport(
+    const std::string_view packageRoot, const std::string_view baseModule,
+    const std::string_view specifier) {
+    if (!(specifier.starts_with("./") || specifier.starts_with("../")) ||
+        specifier.find('\0') != std::string_view::npos ||
+        specifier.find('\\') != std::string_view::npos ||
+        specifier.find(':') != std::string_view::npos ||
+        specifier.ends_with('/')) {
+        return std::nullopt;
+    }
+
+    auto segments = PathSegments(baseModule);
+    if (segments.empty()) return std::nullopt;
+    segments.pop_back();
+    const std::size_t rootDepth = packageRoot.empty()
+                                      ? 0
+                                      : PathSegments(packageRoot).size();
+    if (segments.size() < rootDepth) return std::nullopt;
+
+    for (const auto& segment : PathSegments(specifier)) {
+        if (segment.empty() || segment == ".") continue;
+        if (segment == "..") {
+            if (segments.size() <= rootDepth) return std::nullopt;
+            segments.pop_back();
+            continue;
+        }
+        segments.push_back(segment);
+    }
+    if (segments.empty()) return std::nullopt;
+    std::string resolved;
+    for (const auto& segment : segments) {
+        if (!resolved.empty()) resolved.push_back('/');
+        resolved.append(segment);
+    }
+    const auto normalized = io::VFS::NormalizeVirtualPath(resolved);
+    if (!normalized || !normalized->ends_with(".js")) return std::nullopt;
+    if (!packageRoot.empty() && *normalized != packageRoot &&
+        !normalized->starts_with(std::string(packageRoot) + "/")) {
+        return std::nullopt;
+    }
+    return normalized;
 }
 
 std::optional<Variant> JsonVariant(const nlohmann::json& value,
@@ -308,6 +404,7 @@ public:
         JS_SetMemoryLimit(runtime, kJavaScriptMemoryLimit);
         JS_SetMaxStackSize(runtime, kJavaScriptStackLimit);
         JS_SetInterruptHandler(runtime, &Interrupt, this);
+        JS_SetModuleLoaderFunc(runtime, &NormalizeModule, &LoadModule, this);
         context = JS_NewContext(runtime);
         if (!context) return;
         JS_SetContextOpaque(context, this);
@@ -324,9 +421,13 @@ public:
             for (auto& [_, callback] : actions) JS_FreeValue(context, callback);
             for (auto& [_, callbacks] : events)
                 for (auto& callback : callbacks) JS_FreeValue(context, callback);
-            for (const auto& source : loadedActionSources)
-                (void)ui::ActionCatalog::Global().RemoveSource(
-                    ui::ActionOrigin::ScriptExtension, source);
+            if (ownsRegistrations) {
+                for (const auto& source : loadedActionSources)
+                    (void)ui::ActionCatalog::Global().RemoveSource(
+                        ui::ActionOrigin::ScriptExtension, source);
+                for (const auto& source : loadedCommandSources)
+                    (void)vn::CommandRegistry::Global().RemoveSource(source);
+            }
             JS_FreeContext(context);
         }
         if (runtime) JS_FreeRuntime(runtime);
@@ -349,6 +450,7 @@ public:
         vn::Command command;
         std::uint32_t yieldIndex = 0;
         WaitToken wait;
+        EngineOperationJournal journal;
     };
 
     struct PendingActionContinuation {
@@ -359,6 +461,7 @@ public:
         ui::ActionInvocation invocation;
         std::uint32_t yieldIndex = 0;
         WaitToken wait;
+        EngineOperationJournal journal;
     };
 
     struct PromiseWaitCapability {
@@ -367,6 +470,43 @@ public:
     };
 
     enum class StepResult { Yielded, Finished, Failed };
+
+    class JournalScope {
+    public:
+        JournalScope(Impl& owner, EngineOperationJournal& recording)
+            : owner(owner), previousRecording(owner.recordingJournal),
+              previousReplay(owner.replayJournal),
+              previousCursor(owner.replayJournalCursor),
+              previousPersistent(owner.insidePersistentCallback) {
+            owner.recordingJournal = &recording;
+            owner.replayJournal = nullptr;
+            owner.replayJournalCursor = 0;
+            owner.insidePersistentCallback = true;
+        }
+        JournalScope(Impl& owner, const EngineOperationJournal& replay)
+            : owner(owner), previousRecording(owner.recordingJournal),
+              previousReplay(owner.replayJournal),
+              previousCursor(owner.replayJournalCursor),
+              previousPersistent(owner.insidePersistentCallback) {
+            owner.recordingJournal = nullptr;
+            owner.replayJournal = &replay;
+            owner.replayJournalCursor = 0;
+            owner.insidePersistentCallback = true;
+        }
+        ~JournalScope() {
+            owner.recordingJournal = previousRecording;
+            owner.replayJournal = previousReplay;
+            owner.replayJournalCursor = previousCursor;
+            owner.insidePersistentCallback = previousPersistent;
+        }
+
+    private:
+        Impl& owner;
+        EngineOperationJournal* previousRecording = nullptr;
+        const EngineOperationJournal* previousReplay = nullptr;
+        std::size_t previousCursor = 0;
+        bool previousPersistent = false;
+    };
 
     template <typename Pending>
     void FreeContinuation(Pending& pending) {
@@ -386,6 +526,49 @@ public:
         const auto* self = static_cast<Impl*>(opaque);
         return self && self->executing &&
                std::chrono::steady_clock::now() >= self->deadline;
+    }
+
+    static char* NormalizeModule(JSContext* context, const char* baseName,
+                                 const char* moduleName, void* opaque) {
+        auto* self = static_cast<Impl*>(opaque);
+        if (!self || !self->isExtensionRealm || !baseName || !moduleName) {
+            JS_ThrowReferenceError(context,
+                                   "module imports are only available to isolated extensions");
+            return nullptr;
+        }
+        const auto resolved = ResolveExtensionImport(
+            self->moduleRoot, baseName, moduleName);
+        if (!resolved || !self->moduleSources.contains(*resolved)) {
+            JS_ThrowReferenceError(
+                context,
+                "extension import '%s' is outside its package or not declared in modules",
+                moduleName);
+            return nullptr;
+        }
+        return js_strdup(context, resolved->c_str());
+    }
+
+    static JSModuleDef* LoadModule(JSContext* context, const char* moduleName,
+                                   void* opaque) {
+        auto* self = static_cast<Impl*>(opaque);
+        if (!self || !moduleName) {
+            JS_ThrowReferenceError(context, "invalid extension module request");
+            return nullptr;
+        }
+        const auto source = self->moduleSources.find(moduleName);
+        if (source == self->moduleSources.end()) {
+            JS_ThrowReferenceError(context,
+                                   "extension module '%s' is not declared",
+                                   moduleName);
+            return nullptr;
+        }
+        JSValue compiled = JS_Eval(
+            context, source->second.data(), source->second.size(), moduleName,
+            JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
+        if (JS_IsException(compiled)) return nullptr;
+        auto* module = static_cast<JSModuleDef*>(JS_VALUE_GET_PTR(compiled));
+        JS_FreeValue(context, compiled);
+        return module;
     }
 
     void BeginExecution() {
@@ -491,6 +674,45 @@ public:
         return static_cast<Impl*>(JS_GetContextOpaque(context));
     }
 
+    [[nodiscard]] bool HasCapability(const std::string_view capability) const {
+        return !isExtensionRealm || capabilities.contains(std::string(capability));
+    }
+
+    JSValue PermissionDenied(const std::string_view capability,
+                             const std::string_view operation) const {
+        JSValue error = JS_NewError(context);
+        JS_SetPropertyStr(context, error, "name",
+                          JS_NewString(context, "PermissionError"));
+        JS_SetPropertyStr(context, error, "code",
+                          JS_NewString(context, "PXJS7101"));
+        JS_SetPropertyStr(context, error, "capability",
+                          JS_NewStringLen(context, capability.data(), capability.size()));
+        JS_SetPropertyStr(context, error, "operation",
+                          JS_NewStringLen(context, operation.data(), operation.size()));
+        JS_SetPropertyStr(context, error, "extensionId",
+                          JS_NewString(context, extensionId.c_str()));
+        JS_SetPropertyStr(
+            context, error, "message",
+            JS_NewString(context,
+                ("Extension '" + extensionId + "' lacks capability '" +
+                 std::string(capability) + "' for " + std::string(operation)).c_str()));
+        return JS_Throw(context, error);
+    }
+
+    JSValue SettledPromise(const bool rejected, JSValueConst value) {
+        JSValue resolving[2] = {JS_UNDEFINED, JS_UNDEFINED};
+        JSValue promise = JS_NewPromiseCapability(context, resolving);
+        if (JS_IsException(promise)) return promise;
+        JSValue argument = JS_DupValue(context, value);
+        JSValue result = JS_Call(context, resolving[rejected ? 1 : 0],
+                                 JS_UNDEFINED, 1, &argument);
+        JS_FreeValue(context, argument);
+        JS_FreeValue(context, result);
+        JS_FreeValue(context, resolving[0]);
+        JS_FreeValue(context, resolving[1]);
+        return promise;
+    }
+
     static JSValue Log(JSContext* context, JSValueConst, const int count,
                        JSValueConst* values) {
         auto* self = From(context);
@@ -533,6 +755,11 @@ public:
     static JSValue RegisterCommand(JSContext* context, JSValueConst, const int count,
                                    JSValueConst* values) {
         auto* self = From(context);
+        if (self->insidePersistentCallback)
+            return JS_ThrowTypeError(
+                context, "registrations are forbidden inside a persistent callback");
+        if (!self->HasCapability("runtime"))
+            return self->PermissionDenied("runtime", "Engine.RegisterCommand");
         if (count != 2 || !JS_IsString(values[0]) ||
             !JS_IsFunction(context, values[1]))
             return JS_ThrowTypeError(context,
@@ -551,6 +778,11 @@ public:
     static JSValue RegisterAction(JSContext* context, JSValueConst, const int count,
                                   JSValueConst* values) {
         auto* self = From(context);
+        if (self->insidePersistentCallback)
+            return JS_ThrowTypeError(
+                context, "registrations are forbidden inside a persistent callback");
+        if (!self->HasCapability("ui"))
+            return self->PermissionDenied("ui", "Engine.RegisterAction");
         if (count != 2 || !JS_IsString(values[0]) ||
             !JS_IsFunction(context, values[1]))
             return JS_ThrowTypeError(context,
@@ -569,6 +801,11 @@ public:
     static JSValue On(JSContext* context, JSValueConst, const int count,
                       JSValueConst* values) {
         auto* self = From(context);
+        if (self->insidePersistentCallback)
+            return JS_ThrowTypeError(
+                context, "registrations are forbidden inside a persistent callback");
+        if (!self->HasCapability("runtime"))
+            return self->PermissionDenied("runtime", "Engine.On");
         if (count != 2 || !JS_IsString(values[0]) ||
             !JS_IsFunction(context, values[1]))
             return JS_ThrowTypeError(context, "Engine.On requires an event and function");
@@ -581,12 +818,36 @@ public:
     static JSValue EmitEvent(JSContext* context, JSValueConst, const int count,
                              JSValueConst* values) {
         auto* self = From(context);
+        if (!self->HasCapability("runtime"))
+            return self->PermissionDenied("runtime", "Engine.Emit");
         if (count < 1 || !JS_IsString(values[0]))
             return JS_ThrowTypeError(context, "Engine.Emit requires an event id");
         const auto event = self->String(values[0]);
         if (!event || event->empty()) return JS_ThrowTypeError(context, "event id is empty");
-        self->host.Emit(*event);
-        return JS_UNDEFINED;
+        EventPayload payload;
+        if (count >= 2 && !JS_IsUndefined(values[1])) {
+            const auto converted = self->FromJavaScript(values[1]);
+            if (!converted || !IsJsonValue(*converted))
+                return JS_ThrowTypeError(
+                    context, "Engine.Emit payload must be a recursive JSON value");
+            payload = converted->Clone();
+        }
+        const Status status =
+            (self->eventRoot ? self->eventRoot : &self->host)->Emit(*event, payload);
+        if (status) return self->SettledPromise(false, JS_UNDEFINED);
+        JSValue error = JS_NewError(context);
+        JS_SetPropertyStr(context, error, "name",
+                          JS_NewString(context, "EventDispatchError"));
+        JS_SetPropertyStr(context, error, "code",
+                          JS_NewString(context, "PXJS7201"));
+        const auto details = status.Diagnostics().empty()
+                                 ? std::string("event dispatch failed")
+                                 : diag::Describe(status.Diagnostics().front());
+        JS_SetPropertyStr(context, error, "message",
+                          JS_NewString(context, details.c_str()));
+        JSValue promise = self->SettledPromise(true, error);
+        JS_FreeValue(context, error);
+        return promise;
     }
 
     [[nodiscard]] bool StringArgument(const int count, JSValueConst* values,
@@ -814,8 +1075,11 @@ public:
         debug.frames.push_back(std::move(frame));
     }
 
-    JSValue RuntimeOperation(const std::string_view operation, const int count,
-                             JSValueConst* values) {
+    JSValue RuntimeOperationLive(const std::string_view operation, const int count,
+                                 JSValueConst* values) {
+        const auto capability = CapabilityForOperation(operation);
+        if (!HasCapability(capability))
+            return PermissionDenied(capability, operation);
         std::string first;
         std::string second;
         std::int64_t integer = 0;
@@ -906,14 +1170,13 @@ public:
             auto value = FromJavaScript(values[1]);
             if (!value)
                 return JS_ThrowTypeError(context, "SetVariable received an unsupported value");
-            std::string scope = "save";
+            std::string scope = "session";
             if (count >= 3 && !JS_IsUndefined(values[2]) &&
                 !StringArgument(count, values, 2, scope))
                 return JS_ThrowTypeError(context, "SetVariable scope must be a string");
-            vn::VariableScope selected = vn::VariableScope::SaveLocal;
-            if (scope == "persistent") selected = vn::VariableScope::Persistent;
-            else if (scope == "temporary") selected = vn::VariableScope::Temporary;
-            else if (scope != "save")
+            vn::VariableScope selected = vn::VariableScope::Session;
+            if (scope == "profile") selected = vn::VariableScope::Profile;
+            else if (scope != "session")
                 return JS_ThrowRangeError(context, "unknown variable scope: %s", scope.c_str());
             services.variables->SetValue(first, std::move(*value), selected);
             return JS_UNDEFINED;
@@ -976,8 +1239,6 @@ public:
                 services.profile->UnlockScene(first);
                 return JS_UNDEFINED;
             }
-            if (operation == "profile.persistentVar")
-                return JS_NewInt32(context, services.profile->PersistentVar(first));
             return JS_ThrowRangeError(context, "unknown profile operation");
         }
         if (operation.starts_with("audio.")) {
@@ -1220,6 +1481,62 @@ public:
                                   static_cast<int>(operation.size()), operation.data());
     }
 
+    [[nodiscard]] bool JournaledOperation(
+        const std::string_view operation) const {
+        return operation != "debug.point" &&
+               !operation.starts_with("await.") &&
+               !operation.starts_with("wait.");
+    }
+
+    JSValue RuntimeOperation(const std::string_view operation, const int count,
+                             JSValueConst* values) {
+        const auto capability = CapabilityForOperation(operation);
+        if (!HasCapability(capability))
+            return PermissionDenied(capability, operation);
+        if ((!recordingJournal && !replayJournal) ||
+            !JournaledOperation(operation))
+            return RuntimeOperationLive(operation, count, values);
+
+        VariantArray arguments;
+        arguments.reserve(static_cast<std::size_t>(std::max(0, count)));
+        for (int index = 0; index < count; ++index) {
+            auto converted = FromJavaScript(values[index]);
+            if (!converted)
+                return JS_ThrowTypeError(
+                    context, "engine operation arguments are not journalable");
+            arguments.push_back(converted->Clone());
+        }
+
+        if (replayJournal) {
+            if (replayJournalCursor >= replayJournal->size())
+                return JS_ThrowInternalError(
+                    context, "engine operation journal ended before replay");
+            const auto& expected = (*replayJournal)[replayJournalCursor++];
+            if (expected.operation != operation ||
+                expected.arguments != arguments)
+                return JS_ThrowInternalError(
+                    context, "engine operation journal diverged at operation %s",
+                    std::string(operation).c_str());
+            return expected.resultUndefined ? JS_UNDEFINED
+                                            : ToJavaScript(expected.result);
+        }
+
+        JSValue result = RuntimeOperationLive(operation, count, values);
+        if (JS_IsException(result)) return result;
+        const bool undefined = JS_IsUndefined(result);
+        auto converted = FromJavaScript(result);
+        if (!converted) {
+            JS_FreeValue(context, result);
+            return JS_ThrowInternalError(
+                context, "engine operation returned a non-journalable value");
+        }
+        recordingJournal->push_back({.operation = std::string(operation),
+                                     .arguments = std::move(arguments),
+                                     .result = converted->Clone(),
+                                     .resultUndefined = undefined});
+        return result;
+    }
+
     static JSValue RuntimeCall(JSContext* context, JSValueConst, const int count,
                                JSValueConst* values) {
         auto* self = From(context);
@@ -1243,6 +1560,10 @@ public:
                           JS_NewCFunction(context, &On, "On", 2));
         JS_SetPropertyStr(context, engine, "Emit",
                           JS_NewCFunction(context, &EmitEvent, "Emit", 2));
+        JS_SetPropertyStr(context, engine, "on",
+                          JS_NewCFunction(context, &On, "on", 2));
+        JS_SetPropertyStr(context, engine, "emit",
+                          JS_NewCFunction(context, &EmitEvent, "emit", 2));
         JS_SetPropertyStr(context, engine, "__runtimeCall",
                           JS_NewCFunction(context, &RuntimeCall, "__runtimeCall", 1));
         JS_SetPropertyStr(context, global, "Engine", engine);
@@ -1277,7 +1598,6 @@ public:
                 SceneUnlocked: { value: bindRuntime("profile.sceneUnlocked") },
                 UnlockCG: { value: bindRuntime("profile.unlockCG") },
                 UnlockScene: { value: bindRuntime("profile.unlockScene") },
-                PersistentVar: { value: bindRuntime("profile.persistentVar") },
                 PlaySE: { value: bindRuntime("audio.playSE") },
                 PlayBGM: { value: bindRuntime("audio.playBGM") },
                 StopBGM: { value: bindRuntime("audio.stopBGM") },
@@ -1635,7 +1955,9 @@ public:
 
     [[nodiscard]] std::optional<ReplayedContinuation> ReplayToBoundary(
         JSValueConst callback, const int argumentCount, JSValueConst* arguments,
-        const std::uint32_t yieldIndex, const std::string& source) {
+        const std::uint32_t yieldIndex, const std::string& source,
+        const EngineOperationJournal& journal) {
+        JournalScope journalScope(*this, journal);
         BeginPromiseCapture();
         BeginExecution();
         JSValue continuation = JS_Call(context, callback, JS_UNDEFINED,
@@ -1675,7 +1997,11 @@ public:
                   "checkpoint callback no longer returns a persistent continuation");
         }
 
-        if (result == StepResult::Yielded) return replayed;
+        if (result == StepResult::Yielded &&
+            replayJournalCursor == journal.size()) return replayed;
+        if (result == StepResult::Yielded)
+            Error(source,
+                  "engine operation journal contains calls beyond the restored checkpoint");
         JS_FreeValue(context, replayed.continuation);
         JS_FreeValue(context, replayed.resume);
         return std::nullopt;
@@ -1691,14 +2017,36 @@ public:
     std::unordered_set<std::string> declaredCommands;
     std::unordered_set<std::string> declaredActions;
     std::unordered_set<std::string> loadedActionSources;
+    std::unordered_set<std::string> loadedCommandSources;
     std::string activeExtension;
+    std::string extensionId;
+    std::string moduleRoot;
+    std::unordered_map<std::string, std::string> moduleSources;
+    std::unordered_set<std::string> capabilities;
+    bool isExtensionRealm = false;
+    bool ownsRegistrations = true;
+    JavaScriptHost* eventRoot = nullptr;
+    std::vector<std::unique_ptr<JavaScriptHost>> extensionRealms;
+    struct QueuedEvent {
+        std::string name;
+        EventPayload payload;
+        std::uint32_t depth = 0;
+    };
+    std::deque<QueuedEvent> eventQueue;
+    bool dispatchingEvents = false;
+    std::uint32_t currentEventDepth = 0;
     std::vector<PendingCommandContinuation> pendingCommands;
     std::vector<PendingActionContinuation> pendingActions;
     std::unordered_map<std::uint64_t, ui::ActionExecutionState>
         actionTerminalStates;
     std::optional<PromiseWaitCapability> createdPromiseWait;
+    EngineOperationJournal* recordingJournal = nullptr;
+    const EngineOperationJournal* replayJournal = nullptr;
+    std::size_t replayJournalCursor = 0;
+    bool insidePersistentCallback = false;
     bool acceptingPromiseWait = false;
     std::uint64_t nextActionHandle = 1;
+    std::uint64_t nextRealmNamespace = 1;
     DebugSnapshot debug;
     JSValue debugLocals = JS_UNDEFINED;
     std::unordered_map<std::string, std::set<int>> debugBreakpoints;
@@ -1743,7 +2091,90 @@ bool JavaScriptHost::RunFile(const std::string& vfsPath) {
     return RunString(*source, vfsPath);
 }
 
+bool JavaScriptHost::RunModuleFile(const std::string& vfsPath) {
+    if (!m_impl->Ready()) return false;
+    const auto source = m_impl->moduleSources.find(vfsPath);
+    if (source == m_impl->moduleSources.end()) {
+        m_impl->Error(vfsPath, "JavaScript module was not declared by its extension");
+        return false;
+    }
+    m_impl->BeginExecution();
+    JSValue result = JS_Eval(m_impl->context, source->second.data(),
+                             source->second.size(), vfsPath.c_str(),
+                             JS_EVAL_TYPE_MODULE);
+    m_impl->EndExecution();
+    if (JS_IsException(result)) {
+        m_impl->Error(vfsPath, m_impl->Exception());
+        JS_FreeValue(m_impl->context, result);
+        return false;
+    }
+
+    int jobs = 0;
+    while (JS_IsJobPending(m_impl->runtime) && jobs++ < 64) {
+        JSContext* jobContext = nullptr;
+        m_impl->BeginExecution();
+        const int executed = JS_ExecutePendingJob(m_impl->runtime, &jobContext);
+        m_impl->EndExecution();
+        if (executed < 0) {
+            m_impl->Error(vfsPath, m_impl->Exception());
+            JS_FreeValue(m_impl->context, result);
+            return false;
+        }
+    }
+    if (JS_IsJobPending(m_impl->runtime)) {
+        m_impl->Error(vfsPath,
+                      "extension module exceeded the pending-job budget during initialization");
+        JS_FreeValue(m_impl->context, result);
+        return false;
+    }
+    if (JS_IsPromise(result) &&
+        JS_PromiseState(m_impl->context, result) != JS_PROMISE_FULFILLED) {
+        const auto details = JS_PromiseState(m_impl->context, result) ==
+                                     JS_PROMISE_REJECTED
+                                 ? m_impl->PromiseFailure(result)
+                                 : std::string("extension module initialization did not settle");
+        m_impl->Error(vfsPath, details);
+        JS_FreeValue(m_impl->context, result);
+        return false;
+    }
+    JS_FreeValue(m_impl->context, result);
+    return true;
+}
+
 bool JavaScriptHost::LoadExtensionManifest(const std::string& manifestPath) {
+    if (m_impl->isExtensionRealm)
+        return LoadExtensionManifestIntoCurrentRealm(manifestPath);
+
+    auto candidate = std::make_unique<JavaScriptHost>(m_impl->services);
+    candidate->m_impl->isExtensionRealm = true;
+    candidate->m_impl->eventRoot = this;
+    if (m_impl->nextRealmNamespace > 0xffffU) {
+        m_impl->Error(manifestPath, "extension realm namespace limit was exceeded");
+        return false;
+    }
+    candidate->m_impl->nextActionHandle =
+        (m_impl->nextRealmNamespace++ << 48U) | 1U;
+    if (!candidate->LoadExtensionManifestIntoCurrentRealm(manifestPath))
+        return false;
+
+    const std::string id = candidate->m_impl->extensionId;
+    const auto current = std::ranges::find_if(
+        m_impl->extensionRealms, [&](const auto& realm) {
+            return realm->m_impl->extensionId == id;
+        });
+    if (current == m_impl->extensionRealms.end()) {
+        m_impl->extensionRealms.push_back(std::move(candidate));
+    } else {
+        // The candidate has already atomically replaced both descriptor
+        // sources. Prevent the retired realm from removing the new source.
+        (*current)->m_impl->ownsRegistrations = false;
+        *current = std::move(candidate);
+    }
+    return true;
+}
+
+bool JavaScriptHost::LoadExtensionManifestIntoCurrentRealm(
+    const std::string& manifestPath) {
     if (!m_impl->services.vfs) return false;
     const auto text = m_impl->services.vfs->ReadText(manifestPath);
     if (!text) {
@@ -1759,6 +2190,7 @@ bool JavaScriptHost::LoadExtensionManifest(const std::string& manifestPath) {
     std::unordered_set<std::string> stagedActionIds;
     std::string stagedExtensionId;
     bool stagedActionSource = false;
+    bool stagedCommandSource = false;
     const auto discardStagedCallbacks = [&] {
         if (!m_impl->context) return;
         for (const auto& command : stagedCommandIds) {
@@ -1782,22 +2214,77 @@ bool JavaScriptHost::LoadExtensionManifest(const std::string& manifestPath) {
                 ui::ActionOrigin::ScriptExtension, stagedExtensionId);
             m_impl->loadedActionSources.erase(stagedExtensionId);
         }
+        if (stagedCommandSource && !stagedExtensionId.empty()) {
+            (void)vn::CommandRegistry::Global().RemoveSource(stagedExtensionId);
+            m_impl->loadedCommandSources.erase(stagedExtensionId);
+        }
     };
     try {
         if (json.value("format", std::string{}) != "PrismatiXExtension" ||
-            json.value("schemaRevision", 0) != 1 ||
+            json.value("schemaRevision", 0) != 2 ||
             Lower(json.value("language", std::string{})) != "javascript") {
             m_impl->Error(manifestPath,
-                          "extension manifest must be PrismatiXExtension schemaRevision 1 with language javascript");
+                          "extension manifest must be PrismatiXExtension schemaRevision 2 with language javascript");
             return false;
         }
         const std::string id = json.at("id").get<std::string>();
+        const std::string version = json.at("version").get<std::string>();
+        const std::string requiredEngineVersion =
+            json.at("requiredEngineVersion").get<std::string>();
         const std::string entry = json.at("entry").get<std::string>();
-        if (id.empty() || !SafeRelativePath(entry) || !entry.ends_with(".js")) {
+        if (id.empty() || !semver::Parse(version) ||
+            !SafeRelativePath(entry) || !entry.ends_with(".js")) {
             m_impl->Error(manifestPath, "extension id or JavaScript entry is unsafe");
             return false;
         }
+        const auto engineCompatible = semver::Satisfies(
+            semver::Version{0, 2, 0}, requiredEngineVersion);
+        if (!engineCompatible)
+            throw std::invalid_argument("requiredEngineVersion is not a supported SemVer range");
+        if (!*engineCompatible)
+            throw std::invalid_argument(
+                "extension requires engine '" + requiredEngineVersion +
+                "' but this Player is 0.2.0");
         stagedExtensionId = id;
+        m_impl->extensionId = id;
+
+        const auto manifestSeparator = manifestPath.find_last_of('/');
+        m_impl->moduleRoot = manifestSeparator == std::string::npos
+                                 ? std::string{}
+                                 : manifestPath.substr(0, manifestSeparator);
+        const auto resolvedEntry = ManifestRelativePath(manifestPath, entry);
+        if (!resolvedEntry)
+            throw std::invalid_argument("extension entry cannot be resolved inside its package");
+        std::vector<std::string> declaredModules{entry};
+        const auto modules = json.find("modules");
+        if (modules != json.end()) {
+            if (!modules->is_array() || modules->size() > 1024)
+                throw std::invalid_argument("extension modules must be a bounded array");
+            for (const auto& module : *modules) {
+                if (!module.is_string())
+                    throw std::invalid_argument("extension module path must be a string");
+                declaredModules.push_back(module.get<std::string>());
+            }
+        }
+        std::unordered_set<std::string> uniqueModulePaths;
+        std::size_t moduleBytes = 0;
+        for (const auto& module : declaredModules) {
+            if (!SafeRelativePath(module) || !module.ends_with(".js"))
+                throw std::invalid_argument("extension module path is unsafe: " + module);
+            const auto resolved = ManifestRelativePath(manifestPath, module);
+            if (!resolved || !uniqueModulePaths.insert(*resolved).second) {
+                if (resolved && *resolved == *resolvedEntry) continue;
+                throw std::invalid_argument("extension module path is duplicated or cannot be resolved: " + module);
+            }
+            const auto moduleSource = m_impl->services.vfs->ReadText(*resolved);
+            if (!moduleSource)
+                throw std::invalid_argument("extension module is missing: " + module);
+            if (moduleSource->size() > 4U * 1024U * 1024U ||
+                moduleBytes > 16U * 1024U * 1024U - moduleSource->size())
+                throw std::invalid_argument("extension module source budget was exceeded");
+            moduleBytes += moduleSource->size();
+            m_impl->moduleSources.emplace(*resolved, *moduleSource);
+        }
         std::unordered_set<std::string> capabilities;
         for (const auto& capability : json.value("capabilities", nlohmann::json::array())) {
             if (!capability.is_string()) throw std::invalid_argument("capability must be a string");
@@ -1805,6 +2292,7 @@ bool JavaScriptHost::LoadExtensionManifest(const std::string& manifestPath) {
             if (!SupportedCapability(name) || !capabilities.insert(name).second)
                 throw std::invalid_argument("unsupported or duplicate capability: " + name);
         }
+        m_impl->capabilities = capabilities;
 
         std::vector<vn::CommandDescriptor> commands;
         std::unordered_set<std::string> commandIds;
@@ -1829,9 +2317,21 @@ bool JavaScriptHost::LoadExtensionManifest(const std::string& manifestPath) {
             descriptor.deterministic = safety.deterministic;
             descriptor.seekSafe = safety.seekSafe;
             descriptor.rollbackSafe = safety.rollbackSafe;
+            std::unordered_set<std::string> commandCapabilities;
+            for (const auto& capability :
+                 encoded.value("capabilities", nlohmann::json::array())) {
+                if (!capability.is_string())
+                    throw std::invalid_argument(
+                        "command capability must be a string");
+                const auto name = capability.get<std::string>();
+                if (!capabilities.contains(name) ||
+                    !commandCapabilities.insert(name).second)
+                    throw std::invalid_argument(
+                        "command capability is undeclared or duplicated: " + name);
+            }
             if (descriptor.id.empty() || !commandIds.insert(descriptor.id).second ||
-                vn::CommandRegistry::Builtins().Find(descriptor.id) ||
-                vn::CommandRegistry::Global().Find(descriptor.id))
+                (vn::CommandRegistry::Global().Find(descriptor.id) &&
+                 vn::CommandRegistry::Global().Find(descriptor.id)->sourceId != id))
                 throw std::invalid_argument("empty, duplicate, or conflicting command id: " + descriptor.id);
             for (const auto& encodedParameter :
                  encoded.value("parameters", nlohmann::json::array())) {
@@ -1989,17 +2489,20 @@ bool JavaScriptHost::LoadExtensionManifest(const std::string& manifestPath) {
         for (const auto& action : actionIds)
             if (m_impl->actions.contains(action))
                 throw std::invalid_argument("action callback already exists: " + action);
+        for (const auto& descriptor : actions) {
+            if (const auto* current = ui::ActionCatalog::Global().Find(descriptor.id);
+                current && !(current->origin == ui::ActionOrigin::ScriptExtension &&
+                             current->sourceId == id))
+                throw std::invalid_argument("action id conflicts with another source: " + descriptor.id);
+        }
 
         stagedCommandIds = commandIds;
         stagedActionIds = actionIds;
         m_impl->declaredCommands.insert(commandIds.begin(), commandIds.end());
         m_impl->declaredActions.insert(actionIds.begin(), actionIds.end());
         m_impl->activeExtension = id;
-        const auto separator = manifestPath.find_last_of('/');
-        const std::string scriptPath = separator == std::string::npos
-                                           ? entry
-                                           : manifestPath.substr(0, separator + 1) + entry;
-        const bool loaded = RunFile(scriptPath);
+        const std::string scriptPath = *resolvedEntry;
+        const bool loaded = RunModuleFile(scriptPath);
         m_impl->activeExtension.clear();
         if (!loaded) throw std::runtime_error("JavaScript extension entry failed");
         for (const auto& command : commandIds)
@@ -2013,10 +2516,12 @@ bool JavaScriptHost::LoadExtensionManifest(const std::string& manifestPath) {
         if (!actionStatus) throw std::invalid_argument("action catalog rejected extension descriptors");
         stagedActionSource = true;
         m_impl->loadedActionSources.insert(id);
-        for (auto& descriptor : commands) {
-            const Status commandStatus = vn::CommandRegistry::Global().Register(std::move(descriptor));
-            if (!commandStatus) throw std::invalid_argument("command registry rejected extension descriptor");
-        }
+        const Status commandStatus =
+            vn::CommandRegistry::Global().ReplaceSource(id, std::move(commands));
+        if (!commandStatus)
+            throw std::invalid_argument("command registry rejected extension descriptors");
+        stagedCommandSource = true;
+        m_impl->loadedCommandSources.insert(id);
         return true;
     } catch (const std::exception& error) {
         m_impl->activeExtension.clear();
@@ -2062,28 +2567,120 @@ bool JavaScriptHost::LoadExtensionIndex(const std::string& indexPath) {
     });
 }
 
-void JavaScriptHost::Emit(const std::string& event, const EventArgs& args) {
-    if (!m_impl->Ready()) return;
+Status JavaScriptHost::DispatchEventInCurrentRealm(
+    const std::string& event, const EventPayload& payloadValue) {
+    if (!m_impl->Ready())
+        return Status::Fail(ScriptDiagnostic(
+            "PXJS7200", "JavaScript event realm is unavailable", event));
     const auto found = m_impl->events.find(event);
-    if (found == m_impl->events.end()) return;
-    JSValue payload = JS_NewObject(m_impl->context);
-    for (const auto& [name, value] : args)
-        JS_SetPropertyStr(m_impl->context, payload, name.c_str(),
-                          JS_NewString(m_impl->context, value.c_str()));
-    for (const auto& callback : found->second) {
-        m_impl->BeginExecution();
-        JSValue result = JS_Call(m_impl->context, callback, JS_UNDEFINED, 1, &payload);
-        m_impl->EndExecution();
-        if (JS_IsException(result)) m_impl->Error("event:" + event, m_impl->Exception());
-        JS_FreeValue(m_impl->context, result);
+    if (found != m_impl->events.end()) {
+        JSValue payload = m_impl->ToJavaScript(payloadValue);
+        for (const auto& callback : found->second) {
+            m_impl->BeginExecution();
+            JSValue result = JS_Call(m_impl->context, callback, JS_UNDEFINED, 1, &payload);
+            m_impl->EndExecution();
+            if (JS_IsException(result)) {
+                const auto details = m_impl->Exception();
+                m_impl->Error("event:" + event, details);
+                JS_FreeValue(m_impl->context, result);
+                JS_FreeValue(m_impl->context, payload);
+                return Status::Fail(ScriptDiagnostic(
+                    "PXJS7202", "JavaScript event handler failed", details,
+                    m_impl->extensionId));
+            }
+            if (JS_IsPromise(result)) {
+                int jobs = 0;
+                while (JS_IsJobPending(m_impl->runtime) && jobs++ < 64) {
+                    JSContext* jobContext = nullptr;
+                    m_impl->BeginExecution();
+                    const int executed =
+                        JS_ExecutePendingJob(m_impl->runtime, &jobContext);
+                    m_impl->EndExecution();
+                    if (executed < 0) break;
+                }
+                const auto promiseState = JS_PromiseState(m_impl->context, result);
+                if (promiseState != JS_PROMISE_FULFILLED) {
+                    const auto details = promiseState == JS_PROMISE_REJECTED
+                                             ? m_impl->PromiseFailure(result)
+                                             : std::string(
+                                                   "event Promise exceeded the pending-job budget or awaited a non-event operation");
+                    m_impl->Error("event:" + event, details);
+                    JS_FreeValue(m_impl->context, result);
+                    JS_FreeValue(m_impl->context, payload);
+                    return Status::Fail(ScriptDiagnostic(
+                        "PXJS7203", "JavaScript event Promise failed", details,
+                        m_impl->extensionId));
+                }
+            }
+            JS_FreeValue(m_impl->context, result);
+        }
+        JS_FreeValue(m_impl->context, payload);
     }
-    JS_FreeValue(m_impl->context, payload);
+    return Status::Ok();
+}
+
+Status JavaScriptHost::Emit(const std::string& event,
+                            const EventPayload& payload) {
+    if (m_impl->eventRoot && m_impl->eventRoot != this)
+        return m_impl->eventRoot->Emit(event, payload);
+    if (event.empty())
+        return Status::Fail(ScriptDiagnostic(
+            "PXJS7204", "Event id cannot be empty"));
+    if (!IsJsonValue(payload))
+        return Status::Fail(ScriptDiagnostic(
+            "PXJS7205", "Event payload is not a recursive JSON value", event));
+
+    constexpr std::uint32_t kMaxEventDepth = 32;
+    constexpr std::size_t kEventDispatchBudget = 256;
+    const std::uint32_t depth =
+        m_impl->dispatchingEvents ? m_impl->currentEventDepth + 1 : 0;
+    if (depth > kMaxEventDepth)
+        return Status::Fail(ScriptDiagnostic(
+            "PXJS7206", "Event recursion depth exceeded", event));
+    m_impl->eventQueue.push_back(
+        {.name = event, .payload = payload.Clone(), .depth = depth});
+    if (m_impl->dispatchingEvents) return Status::Ok();
+
+    m_impl->dispatchingEvents = true;
+    Status status;
+    const auto merge = [&](const Status& next) {
+        for (const auto& diagnostic : next.Diagnostics()) status.Add(diagnostic);
+    };
+    std::size_t dispatched = 0;
+    while (!m_impl->eventQueue.empty() && dispatched++ < kEventDispatchBudget) {
+        auto current = std::move(m_impl->eventQueue.front());
+        m_impl->eventQueue.pop_front();
+        m_impl->currentEventDepth = current.depth;
+        merge(DispatchEventInCurrentRealm(current.name, current.payload));
+        if (!status) break;
+        for (const auto& realm : m_impl->extensionRealms) {
+            merge(realm->DispatchEventInCurrentRealm(
+                current.name, current.payload));
+            if (!status) break;
+        }
+        if (!status) break;
+    }
+    if (status && !m_impl->eventQueue.empty())
+        status.Add(ScriptDiagnostic(
+            "PXJS7207", "Event dispatch budget exceeded",
+            m_impl->eventQueue.front().name));
+    if (!status) m_impl->eventQueue.clear();
+    m_impl->currentEventDepth = 0;
+    m_impl->dispatchingEvents = false;
+    return status;
 }
 
 bool JavaScriptHost::InvokeCommand(const vn::Command& command) {
     const auto found = m_impl->commands.find(command.type);
-    if (found == m_impl->commands.end()) return false;
+    if (found == m_impl->commands.end()) {
+        for (const auto& realm : m_impl->extensionRealms)
+            if (realm->m_impl->commands.contains(command.type))
+                return realm->InvokeCommand(command);
+        return false;
+    }
     JSValue arguments = m_impl->CommandArguments(command);
+    EngineOperationJournal journal;
+    Impl::JournalScope journalScope(*m_impl, journal);
     m_impl->BeginPromiseCapture();
     m_impl->BeginExecution();
     JSValue result = JS_Call(m_impl->context, found->second, JS_UNDEFINED, 1, &arguments);
@@ -2108,6 +2705,7 @@ bool JavaScriptHost::InvokeCommand(const vn::Command& command) {
             pending.command = command;
             pending.yieldIndex = 1;
             pending.wait = std::move(wait);
+            pending.journal = std::move(journal);
             m_impl->pendingCommands.push_back(std::move(pending));
             return true;
         }
@@ -2127,6 +2725,7 @@ bool JavaScriptHost::InvokeCommand(const vn::Command& command) {
             pending.command = command;
             pending.yieldIndex = 1;
             pending.wait = std::move(wait);
+            pending.journal = std::move(journal);
             m_impl->pendingCommands.push_back(std::move(pending));
             return true;
         }
@@ -2149,7 +2748,10 @@ std::shared_ptr<ui::IActionProvider> JavaScriptHost::CreateActionProvider() {
 }
 
 bool JavaScriptHost::HasAction(const std::string_view action) const {
-    return m_impl->actions.contains(std::string(action));
+    if (m_impl->actions.contains(std::string(action))) return true;
+    return std::ranges::any_of(m_impl->extensionRealms, [&](const auto& realm) {
+        return realm->HasAction(action);
+    });
 }
 
 Status JavaScriptHost::InvokeAction(const ui::ActionInvocation& invocation) {
@@ -2159,12 +2761,18 @@ Status JavaScriptHost::InvokeAction(const ui::ActionInvocation& invocation) {
 ui::ProviderActionStart JavaScriptHost::StartAction(
     const ui::ActionInvocation& invocation) {
     const auto found = m_impl->actions.find(invocation.action);
-    if (found == m_impl->actions.end())
+    if (found == m_impl->actions.end()) {
+        for (const auto& realm : m_impl->extensionRealms)
+            if (realm->HasAction(invocation.action))
+                return realm->StartAction(invocation);
         return {.status = Status::Fail(ScriptDiagnostic(
                     "PXJS7420", "JavaScript action callback is missing",
                     invocation.action))};
+    }
     auto [arguments, actionContext] = m_impl->ActionArguments(invocation);
     JSValue parameters[] = {arguments, actionContext};
+    EngineOperationJournal journal;
+    Impl::JournalScope journalScope(*m_impl, journal);
     m_impl->BeginPromiseCapture();
     m_impl->BeginExecution();
     JSValue result = JS_Call(m_impl->context, found->second, JS_UNDEFINED, 2, parameters);
@@ -2194,6 +2802,7 @@ ui::ProviderActionStart JavaScriptHost::StartAction(
             pending.invocation = invocation;
             pending.yieldIndex = 1;
             pending.wait = std::move(wait);
+            pending.journal = std::move(journal);
             m_impl->pendingActions.push_back(std::move(pending));
             return {.status = Status::Ok(), .handle = handle, .pending = true};
         }
@@ -2219,6 +2828,7 @@ ui::ProviderActionStart JavaScriptHost::StartAction(
             pending.invocation = invocation;
             pending.yieldIndex = 1;
             pending.wait = std::move(wait);
+            pending.journal = std::move(journal);
             m_impl->pendingActions.push_back(std::move(pending));
             return {.status = Status::Ok(), .handle = handle, .pending = true};
         }
@@ -2252,6 +2862,10 @@ ui::ActionExecutionState JavaScriptHost::ActionState(
     if (const auto found = m_impl->actionTerminalStates.find(handle);
         found != m_impl->actionTerminalStates.end())
         return found->second;
+    for (const auto& realm : m_impl->extensionRealms) {
+        const auto state = realm->ActionState(handle);
+        if (state != ui::ActionExecutionState::Unknown) return state;
+    }
     return ui::ActionExecutionState::Unknown;
 }
 
@@ -2259,16 +2873,26 @@ void JavaScriptHost::CancelAction(const std::uint64_t handle) {
     const auto found = std::ranges::find_if(
         m_impl->pendingActions,
         [handle](const auto& pending) { return pending.id == handle; });
-    if (found != m_impl->pendingActions.end()) {
+    const bool local = found != m_impl->pendingActions.end();
+    if (local) {
         m_impl->FreeContinuation(*found);
         m_impl->pendingActions.erase(found);
+        m_impl->actionTerminalStates[handle] =
+            ui::ActionExecutionState::Cancelled;
+        return;
     }
-    m_impl->actionTerminalStates[handle] =
-        ui::ActionExecutionState::Cancelled;
+    for (const auto& realm : m_impl->extensionRealms)
+        if (realm->ActionState(handle) != ui::ActionExecutionState::Unknown) {
+            realm->CancelAction(handle);
+            return;
+        }
 }
 
 void JavaScriptHost::Update(const float deltaSeconds) {
     if (!m_impl->runtime) return;
+
+    for (const auto& realm : m_impl->extensionRealms)
+        realm->Update(deltaSeconds);
 
     const auto ready = [this, deltaSeconds](Impl::WaitToken& wait) {
         if (wait.kind == "debug") return false;
@@ -2290,6 +2914,7 @@ void JavaScriptHost::Update(const float deltaSeconds) {
             continue;
         }
         const auto source = "command:" + iterator->command.type;
+        Impl::JournalScope journalScope(*m_impl, iterator->journal);
         const auto result = iterator->flavor == Impl::ContinuationFlavor::Promise
                                 ? m_impl->StepPromise(
                                       iterator->continuation, iterator->resume,
@@ -2313,6 +2938,7 @@ void JavaScriptHost::Update(const float deltaSeconds) {
             continue;
         }
         const auto source = "action:" + iterator->invocation.action;
+        Impl::JournalScope journalScope(*m_impl, iterator->journal);
         const auto result = iterator->flavor == Impl::ContinuationFlavor::Promise
                                 ? m_impl->StepPromise(
                                       iterator->continuation, iterator->resume,
@@ -2347,22 +2973,35 @@ void JavaScriptHost::Update(const float deltaSeconds) {
 }
 
 bool JavaScriptHost::HasPendingCommand() const {
-    return !m_impl->pendingCommands.empty();
+    return !m_impl->pendingCommands.empty() ||
+           std::ranges::any_of(m_impl->extensionRealms, [](const auto& realm) {
+               return realm->HasPendingCommand();
+           });
 }
 
 bool JavaScriptHost::HasPendingAction() const {
-    return !m_impl->pendingActions.empty();
+    return !m_impl->pendingActions.empty() ||
+           std::ranges::any_of(m_impl->extensionRealms, [](const auto& realm) {
+               return realm->HasPendingAction();
+           });
 }
 
 PendingCommandsState JavaScriptHost::CapturePending() const {
     PendingCommandsState state;
     state.reserve(m_impl->pendingCommands.size());
     for (const auto& pending : m_impl->pendingCommands) {
-        state.push_back({.command = pending.command,
+        state.push_back({.sourceId = m_impl->extensionId,
+                         .command = pending.command,
                          .yieldIndex = pending.yieldIndex,
                          .waitKind = pending.wait.kind,
                          .handle = pending.wait.handle,
-                         .remainingSeconds = pending.wait.remainingSeconds});
+                         .remainingSeconds = pending.wait.remainingSeconds,
+                         .journal = pending.journal});
+    }
+    for (const auto& realm : m_impl->extensionRealms) {
+        auto child = realm->CapturePending();
+        state.insert(state.end(), std::make_move_iterator(child.begin()),
+                     std::make_move_iterator(child.end()));
     }
     return state;
 }
@@ -2371,30 +3010,63 @@ PendingActionsState JavaScriptHost::CapturePendingActions() const {
     PendingActionsState state;
     state.reserve(m_impl->pendingActions.size());
     for (const auto& pending : m_impl->pendingActions) {
-        state.push_back({.id = pending.id,
+        state.push_back({.sourceId = m_impl->extensionId,
+                         .id = pending.id,
                          .invocation = pending.invocation,
                          .yieldIndex = pending.yieldIndex,
                          .waitKind = pending.wait.kind,
                          .handle = pending.wait.handle,
-                         .remainingSeconds = pending.wait.remainingSeconds});
+                         .remainingSeconds = pending.wait.remainingSeconds,
+                         .journal = pending.journal});
+    }
+    for (const auto& realm : m_impl->extensionRealms) {
+        auto child = realm->CapturePendingActions();
+        state.insert(state.end(), std::make_move_iterator(child.begin()),
+                     std::make_move_iterator(child.end()));
     }
     return state;
 }
 
 Status JavaScriptHost::RestorePending(const PendingCommandsState& state) {
-    for (auto& pending : m_impl->pendingCommands)
-        m_impl->FreeContinuation(pending);
-    for (auto& pending : m_impl->pendingActions)
-        m_impl->FreeContinuation(pending);
-    m_impl->pendingCommands.clear();
-    m_impl->pendingActions.clear();
-    m_impl->actionTerminalStates.clear();
+    if (m_impl->isExtensionRealm)
+        return RestorePendingInCurrentRealm(state);
 
-    const auto fail = [this](std::string code, std::string message,
+    PendingCommandsState local;
+    std::unordered_map<JavaScriptHost*, PendingCommandsState> grouped;
+    for (const auto& saved : state) {
+        if (saved.sourceId.empty()) {
+            local.push_back(saved);
+            continue;
+        }
+        const auto realm = std::ranges::find_if(
+            m_impl->extensionRealms, [&](const auto& candidate) {
+                return candidate->m_impl->extensionId == saved.sourceId;
+            });
+        if (realm == m_impl->extensionRealms.end())
+            return Status::Fail(ScriptDiagnostic(
+                "PXJS7505", "Saved JavaScript extension realm is unavailable",
+                saved.sourceId));
+        grouped[realm->get()].push_back(saved);
+    }
+    Status status = RestorePendingInCurrentRealm(local);
+    if (!status) return status;
+    for (const auto& realm : m_impl->extensionRealms) {
+        status = realm->RestorePendingInCurrentRealm(grouped[realm.get()]);
+        if (!status) return status;
+    }
+    return Status::Ok();
+}
+
+Status JavaScriptHost::RestorePendingInCurrentRealm(
+    const PendingCommandsState& state) {
+    std::vector<Impl::PendingCommandContinuation> candidate;
+    candidate.reserve(state.size());
+
+    const auto fail = [this, &candidate](std::string code, std::string message,
                              std::string details) {
-        for (auto& pending : m_impl->pendingCommands)
+        for (auto& pending : candidate)
             m_impl->FreeContinuation(pending);
-        m_impl->pendingCommands.clear();
+        candidate.clear();
         return Status::Fail(ScriptDiagnostic(
             std::move(code), std::move(message), std::move(details)));
     };
@@ -2417,7 +3089,7 @@ Status JavaScriptHost::RestorePending(const PendingCommandsState& state) {
         JSValue arguments = m_impl->CommandArguments(saved.command);
         auto replayed = m_impl->ReplayToBoundary(
             callback->second, 1, &arguments, saved.yieldIndex,
-            "restore-command:" + saved.command.type);
+            "restore-command:" + saved.command.type, saved.journal);
         JS_FreeValue(m_impl->context, arguments);
         if (!replayed) {
             return fail("PXJS7503", "JavaScript command checkpoint replay failed",
@@ -2439,22 +3111,55 @@ Status JavaScriptHost::RestorePending(const PendingCommandsState& state) {
         pending.wait = {.kind = saved.waitKind,
                         .handle = saved.handle,
                         .remainingSeconds = saved.remainingSeconds};
-        m_impl->pendingCommands.push_back(std::move(pending));
+        pending.journal = saved.journal;
+        candidate.push_back(std::move(pending));
     }
+    for (auto& pending : m_impl->pendingCommands)
+        m_impl->FreeContinuation(pending);
+    m_impl->pendingCommands = std::move(candidate);
     return Status::Ok();
 }
 
 Status JavaScriptHost::RestorePendingActions(const PendingActionsState& state) {
-    for (auto& pending : m_impl->pendingActions)
-        m_impl->FreeContinuation(pending);
-    m_impl->pendingActions.clear();
-    m_impl->actionTerminalStates.clear();
+    if (m_impl->isExtensionRealm)
+        return RestorePendingActionsInCurrentRealm(state);
 
-    const auto fail = [this](std::string code, std::string message,
+    PendingActionsState local;
+    std::unordered_map<JavaScriptHost*, PendingActionsState> grouped;
+    for (const auto& saved : state) {
+        if (saved.sourceId.empty()) {
+            local.push_back(saved);
+            continue;
+        }
+        const auto realm = std::ranges::find_if(
+            m_impl->extensionRealms, [&](const auto& candidate) {
+                return candidate->m_impl->extensionId == saved.sourceId;
+            });
+        if (realm == m_impl->extensionRealms.end())
+            return Status::Fail(ScriptDiagnostic(
+                "PXJS7514", "Saved JavaScript Action realm is unavailable",
+                saved.sourceId));
+        grouped[realm->get()].push_back(saved);
+    }
+    Status status = RestorePendingActionsInCurrentRealm(local);
+    if (!status) return status;
+    for (const auto& realm : m_impl->extensionRealms) {
+        status = realm->RestorePendingActionsInCurrentRealm(grouped[realm.get()]);
+        if (!status) return status;
+    }
+    return Status::Ok();
+}
+
+Status JavaScriptHost::RestorePendingActionsInCurrentRealm(
+    const PendingActionsState& state) {
+    std::vector<Impl::PendingActionContinuation> candidate;
+    candidate.reserve(state.size());
+
+    const auto fail = [this, &candidate](std::string code, std::string message,
                              std::string details) {
-        for (auto& pending : m_impl->pendingActions)
+        for (auto& pending : candidate)
             m_impl->FreeContinuation(pending);
-        m_impl->pendingActions.clear();
+        candidate.clear();
         return Status::Fail(ScriptDiagnostic(
             std::move(code), std::move(message), std::move(details)));
     };
@@ -2481,7 +3186,7 @@ Status JavaScriptHost::RestorePendingActions(const PendingActionsState& state) {
         JSValue parameters[] = {arguments, actionContext};
         auto replayed = m_impl->ReplayToBoundary(
             callback->second, 2, parameters, saved.yieldIndex,
-            "restore-action:" + saved.invocation.action);
+            "restore-action:" + saved.invocation.action, saved.journal);
         JS_FreeValue(m_impl->context, arguments);
         JS_FreeValue(m_impl->context, actionContext);
         if (!replayed) {
@@ -2505,14 +3210,21 @@ Status JavaScriptHost::RestorePendingActions(const PendingActionsState& state) {
         pending.wait = {.kind = saved.waitKind,
                         .handle = saved.handle,
                         .remainingSeconds = saved.remainingSeconds};
-        m_impl->pendingActions.push_back(std::move(pending));
-        m_impl->nextActionHandle =
-            std::max(m_impl->nextActionHandle, saved.id + 1);
+        pending.journal = saved.journal;
+        candidate.push_back(std::move(pending));
     }
+    for (auto& pending : m_impl->pendingActions)
+        m_impl->FreeContinuation(pending);
+    m_impl->pendingActions = std::move(candidate);
+    m_impl->actionTerminalStates.clear();
+    for (const auto& pending : m_impl->pendingActions)
+        m_impl->nextActionHandle =
+            std::max(m_impl->nextActionHandle, pending.id + 1);
     return Status::Ok();
 }
 
 void JavaScriptHost::CancelPending() {
+    for (const auto& realm : m_impl->extensionRealms) realm->CancelPending();
     for (auto& pending : m_impl->pendingCommands)
         m_impl->FreeContinuation(pending);
     for (auto& pending : m_impl->pendingActions)
@@ -2539,17 +3251,29 @@ std::vector<DebugBreakpoint> JavaScriptHost::SetDebugBreakpoints(
                 .second)
             accepted.push_back(std::move(breakpoint));
     }
+    for (const auto& realm : m_impl->extensionRealms)
+        (void)realm->SetDebugBreakpoints(accepted);
     return accepted;
 }
 
 bool JavaScriptHost::DebugPause() {
-    if (m_impl->debug.paused) return false;
-    m_impl->debugPauseRequested = true;
-    return true;
+    bool armed = false;
+    if (!m_impl->debug.paused) {
+        m_impl->debugPauseRequested = true;
+        armed = true;
+    }
+    for (const auto& realm : m_impl->extensionRealms)
+        armed = realm->DebugPause() || armed;
+    return armed;
 }
 
 bool JavaScriptHost::DebugContinue() {
-    if (!m_impl->debug.paused) return false;
+    if (!m_impl->debug.paused) {
+        for (const auto& realm : m_impl->extensionRealms)
+            if (realm->CaptureDebugState().paused)
+                return realm->DebugContinue();
+        return false;
+    }
     m_impl->debugPauseRequested = false;
     m_impl->debugStepRequested = false;
     m_impl->debug = {};
@@ -2563,7 +3287,12 @@ bool JavaScriptHost::DebugContinue() {
 }
 
 bool JavaScriptHost::DebugStep() {
-    if (!m_impl->debug.paused) return false;
+    if (!m_impl->debug.paused) {
+        for (const auto& realm : m_impl->extensionRealms)
+            if (realm->CaptureDebugState().paused)
+                return realm->DebugStep();
+        return false;
+    }
     m_impl->debugPauseRequested = false;
     m_impl->debugStepRequested = true;
     m_impl->debug = {};
@@ -2578,9 +3307,12 @@ bool JavaScriptHost::DebugStep() {
 
 std::optional<DebugVariable> JavaScriptHost::EvaluateDebugWatch(
     const std::string_view expression) const {
-    if (!m_impl->debug.paused || JS_IsUndefined(m_impl->debugLocals) ||
-        expression.empty())
+    if (!m_impl->debug.paused || JS_IsUndefined(m_impl->debugLocals)) {
+        for (const auto& realm : m_impl->extensionRealms)
+            if (auto result = realm->EvaluateDebugWatch(expression)) return result;
         return std::nullopt;
+    }
+    if (expression.empty()) return std::nullopt;
 
     std::vector<std::string> path;
     std::size_t start = 0;
@@ -2639,6 +3371,8 @@ std::optional<DebugVariable> JavaScriptHost::EvaluateDebugWatch(
 }
 
 const DebugSnapshot& JavaScriptHost::CaptureDebugState() const {
+    for (const auto& realm : m_impl->extensionRealms)
+        if (realm->CaptureDebugState().paused) return realm->CaptureDebugState();
     return m_impl->debug;
 }
 

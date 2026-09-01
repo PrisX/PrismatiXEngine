@@ -175,7 +175,7 @@ Result<ProgressionPreviewSimulation> SimulateProgressionPreview(
     const std::string documentId =
         document.value("id", std::string{});
     if (document.value("format", std::string{}) != "PrismatiXProgression" ||
-        document.value("schemaRevision", 0) != 1 || documentId.empty() ||
+        document.value("schemaRevision", 0) != 2 || documentId.empty() ||
         !document.contains("revision") ||
         !document["revision"].is_number_unsigned() ||
         !document.contains("nodes") || !document["nodes"].is_array() ||

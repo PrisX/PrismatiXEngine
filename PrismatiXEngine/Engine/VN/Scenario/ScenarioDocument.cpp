@@ -195,12 +195,16 @@ Program CompileScenario(const ScenarioDocument& document, const CommandRegistry&
         Command label;
         label.type = "label";
         label.line = static_cast<int>(index + 1);
+        label.sourceId = node.id.ToString();
+        label.operationId = node.id.ToString();
         label.args.push_back({"name", labelName(node.id)});
         commands.push_back(std::move(label));
 
         Command command;
         command.type = node.command;
         command.line = static_cast<int>(index + 1);
+        command.sourceId = node.id.ToString();
+        command.operationId = node.id.ToString();
         for (const auto& [name, value] : node.parameters) {
             command.typedArgs.emplace(name, value.Clone());
             const std::string text = ParameterText(value);
@@ -253,11 +257,14 @@ Program CompileScenario(const ScenarioDocument& document, const CommandRegistry&
             Command jump;
             jump.type = "jump";
             jump.line = static_cast<int>(index + 1);
+            jump.sourceId = node.id.ToString();
+            jump.operationId = node.id.ToString();
             jump.args.push_back({"target", labelName(flow->toNode)});
             commands.push_back(std::move(jump));
         }
     }
     Program program = CompileProgram(std::move(commands));
+    program.documentId = document.id.ToString();
     const ValidationReport validation = ValidateScenario(document, registry);
     for (const auto& diagnostic : validation.diagnostics) {
         if (diagnostic.BlocksBuild()) program.errors.push_back(diag::Describe(diagnostic));

@@ -6,7 +6,7 @@ import type {StoryIndexDocument} from "../src/index.js";
 
 const storyIndex: StoryIndexDocument = {
   format: "PrismatiXStoryIndex",
-  schemaRevision: 1,
+  schemaRevision: 2,
   id: "main-story",
   entryScene: "scene01",
   chapters: [{id: "chapter01", title: "Chapter 1", scenes: ["scene01", "scene02"]}],
@@ -97,7 +97,7 @@ test("Story project compiler hashes author-controlled scene and label ids into i
   const compiled = compileStoryProject({
     storyIndex: {
       format: "PrismatiXStoryIndex",
-      schemaRevision: 1,
+      schemaRevision: 2,
       id: "collision-story",
       entryScene: "chapter.one",
       chapters: [{id: "chapter", title: "Chapter", scenes: ["chapter.one"]}],

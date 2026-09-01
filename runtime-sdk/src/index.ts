@@ -7,7 +7,7 @@ export interface ResourceRef {
   readonly path: string;
 }
 
-export type VariableScope = "save" | "persistent" | "temporary";
+export type VariableScope = "session" | "profile";
 
 export interface ScriptActionContext {
   readonly preview: boolean;
@@ -84,8 +84,12 @@ export interface PrismatiXEngine {
   log(...values: unknown[]): void;
   RegisterCommand<TArgs extends Record<string, RuntimeValue> = Record<string, RuntimeValue>, TResult = unknown>(id: string, handler: ScriptCommandHandler<TArgs, TResult>): void;
   RegisterAction<TArgs extends Record<string, RuntimeValue> = Record<string, RuntimeValue>>(id: string, handler: ScriptActionHandler<TArgs>): void;
+  on(event: string, handler: (payload: RuntimeValue) => void | Promise<void>): void;
+  emit(event: string, payload?: RuntimeValue): Promise<void>;
+  /** @deprecated Use on. */
   On(event: string, handler: (payload: RuntimeValue) => void | Promise<void>): void;
-  Emit(event: string, payload?: RuntimeValue): void;
+  /** @deprecated Use emit. */
+  Emit(event: string, payload?: RuntimeValue): Promise<void>;
 
   GetVariable(name: string): RuntimeValue | undefined;
   SetVariable(name: string, value: RuntimeValue, scope?: VariableScope): void;
@@ -106,7 +110,6 @@ export interface PrismatiXEngine {
   SceneUnlocked(id: string): boolean;
   UnlockCG(id: string): void;
   UnlockScene(id: string): void;
-  PersistentVar(id: string): number;
 
   PlaySE(path: string): void;
   PlayBGM(path: string, loop?: boolean, fadeMilliseconds?: number): void;
@@ -155,6 +158,8 @@ export const ENGINE_HOST_BINDINGS = [
   "log",
   "RegisterCommand",
   "RegisterAction",
+  "on",
+  "emit",
   "On",
   "Emit",
   "GetVariable",
@@ -173,7 +178,6 @@ export const ENGINE_HOST_BINDINGS = [
   "SceneUnlocked",
   "UnlockCG",
   "UnlockScene",
-  "PersistentVar",
   "PlaySE",
   "PlayBGM",
   "StopBGM",
@@ -250,7 +254,6 @@ export interface PrismatiXContext {
     sceneUnlocked(id: string): boolean;
     unlockCG(id: string): void;
     unlockScene(id: string): void;
-    persistentVar(id: string): number;
   };
   readonly audio: {
     playSE(path: string): void;
@@ -286,7 +289,7 @@ export interface PrismatiXContext {
   };
   readonly events: {
     on(event: string, handler: (payload: RuntimeValue) => void | Promise<void>): void;
-    emit(event: string, payload?: RuntimeValue): void;
+    emit(event: string, payload?: RuntimeValue): Promise<void>;
   };
   readonly input: {
     mouseX(): number;
@@ -354,7 +357,6 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
       sceneUnlocked: (id) => engine.SceneUnlocked(id),
       unlockCG: (id) => engine.UnlockCG(id),
       unlockScene: (id) => engine.UnlockScene(id),
-      persistentVar: (id) => engine.PersistentVar(id),
     },
     audio: {
       playSE: (path) => engine.PlaySE(path),
@@ -389,8 +391,8 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
       token: (seconds) => engine.AwaitSeconds(seconds),
     },
     events: {
-      on: (event, handler) => engine.On(event, handler),
-      emit: (event, payload) => engine.Emit(event, payload),
+      on: (event, handler) => engine.on(event, handler),
+      emit: (event, payload) => engine.emit(event, payload),
     },
     input: {
       mouseX: () => engine.GetMouseX(),

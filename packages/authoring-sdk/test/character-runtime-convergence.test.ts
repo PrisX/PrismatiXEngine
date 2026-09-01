@@ -8,7 +8,13 @@ test("project character descriptors enforce the Runtime loader contract", () => 
   const id = "11111111-1111-4111-8111-111111111111";
   const base = {
     format:"PrismatiXProject",
-    schemaRevision:1,
+    schemaRevision:2,
+    id:"character-convergence",name:"Character Convergence",version:"0.2.0",
+    contentVersion:"test-v1",saveVersion:1,
+    resolution:{width:1280,height:720},entry:{story:"scene01",ui:"title"},
+    defaultLocale:"en-US",supportedLocales:["en-US"],
+    storyIndex:"Story/story.pxindex",gameCatalog:"Content/game.pxgame",
+    extensions:[],uiEntryPoints:{title:"Content/UI/Title.pxui"},
     assets:[],
     characters:[{id,displayName:"Yuki",source:`Characters/${id}.pxcharacter`}],
   } satisfies JsonValue;
@@ -48,7 +54,7 @@ test("character semantics reject documents the Runtime loader would reject", () 
   const assetId = "33333333-3333-4333-8333-333333333333";
   const valid = {
     format:"PrismatiXCharacter",
-    schemaRevision:1,
+    schemaRevision:2,
     id:characterId,
     displayName:"Yuki",
     aliases:["yuki"],

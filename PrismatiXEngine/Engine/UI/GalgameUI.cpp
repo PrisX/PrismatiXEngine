@@ -1,4 +1,5 @@
 #include "Engine/UI/GalgameUI.h"
+#include "Engine/UI/BuiltinUiPackage.h"
 
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/Graphics/Renderer2D.h"
@@ -8,8 +9,8 @@
 #include "Engine/UI/VirtualizedView.h"
 #include "Engine/UI/Widgets.h"
 #include "Engine/UI/UISceneLoader.h"
-#include "Engine/Core/TypeRegistry.h"
 
+#include <algorithm>
 #include <cmath>
 #include <optional>
 #include <utility>
@@ -36,7 +37,33 @@ private:
 };
 
 template<typename T>T* FindNamed(Control* root,std::string_view name){if(!root)return nullptr;if(root->Name()==name)return dynamic_cast<T*>(root);for(const auto& child:root->Children())if(auto* control=dynamic_cast<Control*>(child.get()))if(auto* found=FindNamed<T>(control,name))return found;return nullptr;}
-void ApplyDialogueStyle(Control& control){auto binding=control.StyleBinding();binding.baseStyle=BuiltinDialogueStyleId();control.SetStyleBinding(std::move(binding));}
+void SetPresentationText(Label* label, std::string value) {
+    if (auto* rich = dynamic_cast<RichTextLabel*>(label))
+        rich->SetMarkup(std::move(value));
+    else if (label)
+        label->SetText(std::move(value));
+}
+std::string_view ScreenId(const GalgameUI::Screen screen) {
+    switch (screen) {
+        case GalgameUI::Screen::Title: return "title";
+        case GalgameUI::Screen::HUD: return "hud";
+        case GalgameUI::Screen::Backlog: return "backlog";
+        case GalgameUI::Screen::Save: return "save";
+        case GalgameUI::Screen::Load: return "load";
+        case GalgameUI::Screen::Gallery: return "gallery";
+        case GalgameUI::Screen::Settings: return "settings";
+        case GalgameUI::Screen::Video: return "video";
+    }
+    return {};
+}
+std::optional<GalgameUI::Screen> ScreenFromId(const std::string_view id) {
+    for (const auto screen : {GalgameUI::Screen::Title, GalgameUI::Screen::HUD,
+                              GalgameUI::Screen::Backlog, GalgameUI::Screen::Save,
+                              GalgameUI::Screen::Load, GalgameUI::Screen::Gallery,
+                              GalgameUI::Screen::Settings, GalgameUI::Screen::Video})
+        if (ScreenId(screen) == id) return screen;
+    return std::nullopt;
+}
 }
 
 class GalgameUI::ItemSource final : public IVirtualItemSource {
@@ -81,6 +108,88 @@ GalgameUI::GalgameUI() {
     const std::vector<std::string> commands={"game.start","load.open","save.open","gallery.open","settings.open","app.quit","mode.auto","mode.skip","backlog.open","overlay.close"};
     for(const auto& command:commands)(void)m_context.Commands().Register(command,[this,command](const Variant&){Emit(command);return Status::Ok();});
     (void)m_context.Commands().Register("hud.toolbar.pin",[this](const Variant&){return ToggleHudToolbarPinned();});
+    for (auto& entry : CreateBuiltinUiPackage()) {
+        const auto screen = ScreenFromId(entry.route);
+        if (!screen) continue;
+        Template value;
+        value.studioScene = std::move(entry.document);
+        value.sourcePath = "BuiltinUI/" + std::string(entry.route) + ".pxui";
+        m_templates.emplace(static_cast<int>(*screen), std::move(value));
+    }
+}
+
+UIRuntimeState GalgameUI::CaptureRuntimeState() const {
+    UIRuntimeState state = m_context.CaptureRuntimeState();
+    state.surfaceId = std::string(ScreenId(m_screen));
+    return state;
+}
+
+UIRuntimeState GalgameUI::CaptureGameplayRuntimeState() const {
+    if (m_screen == Screen::HUD) return CaptureRuntimeState();
+    if (m_lastGameplayState) return *m_lastGameplayState;
+    UIRuntimeState empty;
+    empty.surfaceId = "hud";
+    return empty;
+}
+
+void GalgameUI::RememberGameplayCheckpoint(const Screen target) {
+    if (target == m_screen || m_screen != Screen::HUD || !m_context.Root()) return;
+    m_lastGameplayState = CaptureRuntimeState();
+    m_lastGameplayState->surfaceId = "hud";
+}
+
+Status GalgameUI::ValidateRuntimeState(const UIRuntimeState& state) {
+    const auto target = ScreenFromId(state.surfaceId);
+    if (!target)
+        return GalgameFailure("PXUI2817",
+                              "UI checkpoint references an unknown surface: " +
+                                  state.surfaceId);
+    if (*target == m_screen) return m_context.ValidateRuntimeState(state);
+    // Build the complete target document in an isolated UI runtime.  Action
+    // providers are source-owned by the live ScriptHost, so validate those
+    // handles against the live dispatcher and all topology/controller state
+    // against the detached candidate.
+    if (const Status actions =
+            m_context.Actions().ValidateState(state.behavior.actions);
+        !actions)
+        return actions;
+    GalgameUI candidate;
+    candidate.m_templates = m_templates;
+    candidate.m_studioAssetResolver = m_studioAssetResolver;
+    candidate.m_studioComponentLoader = m_studioComponentLoader;
+    if (const Status installed = candidate.InstallCheckpointSurface(*target);
+        !installed)
+        return installed;
+    UIRuntimeState candidateState = state;
+    candidateState.behavior.actions.clear();
+    return candidate.m_context.ValidateRuntimeState(candidateState);
+}
+
+Status GalgameUI::RestoreRuntimeState(const UIRuntimeState& state) {
+    if (const Status valid = ValidateRuntimeState(state); !valid) return valid;
+    const Screen previousScreen = m_screen;
+    const UIRuntimeState previousState = CaptureRuntimeState();
+    const Screen target = *ScreenFromId(state.surfaceId);
+    if (target != m_screen) {
+        if (const Status installed = InstallCheckpointSurface(target); !installed)
+            return installed;
+    }
+    if (const Status restored = m_context.RestoreRuntimeState(state); restored) {
+        if (target == Screen::HUD) m_lastGameplayState = state;
+        return restored;
+    } else {
+        Status rollback = Status::Ok();
+        if (previousScreen != m_screen) {
+            rollback = InstallCheckpointSurface(previousScreen);
+        }
+        if (rollback) rollback = m_context.RestoreRuntimeState(previousState);
+        if (!rollback)
+            diag::Emit(diag::Diagnostic{
+                .severity=diag::Severity::Fatal,.code="PXUI2820",
+                .category="UI.Galgame",
+                .message="UI surface restore failed and the previous surface could not be recovered"});
+        return restored;
+    }
 }
 
 Status GalgameUI::RegisterTemplate(Screen screen,std::string_view text,const std::string& sourcePath){
@@ -114,6 +223,8 @@ bool GalgameUI::HasTemplate(Screen screen)const{return m_templates.contains(stat
 
 Status GalgameUI::InstallTemplate(Screen screen){
     const auto it=m_templates.find(static_cast<int>(screen));if(it==m_templates.end())return GalgameFailure("PXUI2804","Requested Galgame UI template is not registered");
+    RememberGameplayCheckpoint(screen);
+    ResetUiTimelineOverrides();
     if(it->second.typedScene){
         auto loaded=InstantiateUIScene(*it->second.typedScene,&m_viewModel,m_context.Formatters());if(!loaded)return Status::Fail(loaded.Diagnostics());
         auto bindings=std::move(loaded.Value().bindings);auto animations=std::move(loaded.Value().animations);auto theme=std::move(loaded.Value().theme);auto triggers=std::move(loaded.Value().triggers);auto interaction=std::move(loaded.Value().interactionGraph);const Status installed=Install(std::move(loaded.Value().root),screen);if(!installed)return installed;m_bindings=std::move(bindings);if(theme)m_context.SetTheme(std::move(*theme));if(animations){const Status status=m_context.SetAnimations(std::move(*animations),true);if(!status)return status;}const Status triggerStatus=m_context.ConfigureTriggers(std::move(triggers),std::move(interaction));if(!triggerStatus)return triggerStatus;
@@ -142,19 +253,28 @@ Status GalgameUI::InstallTemplate(Screen screen){
     }else{
         return GalgameFailure("PXUI2805","Registered UI template has no document");
     }
-    if(screen==Screen::HUD){m_speaker=FindNamed<Label>(m_context.Root(),"Speaker");m_dialogue=FindNamed<Label>(m_context.Root(),"Dialogue");m_nvlText=FindNamed<Label>(m_context.Root(),"NVLText");m_choices=FindNamed<VBoxContainer>(m_context.Root(),"Choices");m_mode=FindNamed<Label>(m_context.Root(),"ModeState");m_noticePanel=FindNamed<EdgeRevealContainer>(m_context.Root(),"NoticePanel");m_chapterNotice=FindNamed<Label>(m_context.Root(),"ChapterNotice");m_musicNotice=FindNamed<Label>(m_context.Root(),"MusicNotice");m_lastChapterTitle.clear();m_lastMusicTitle.clear();if(m_dialogue){m_dialogueBaseOffsets=m_dialogue->Offsets();m_dialogueBaseFontSize=m_dialogue->FontSize()>0?m_dialogue->FontSize():30;}}
+    if(screen==Screen::HUD){m_speaker=FindNamed<Label>(m_context.Root(),"Speaker");m_dialogue=FindNamed<Label>(m_context.Root(),"Dialogue");m_nvlText=FindNamed<Label>(m_context.Root(),"NVLText");m_choices=FindNamed<VBoxContainer>(m_context.Root(),"Choices");m_mode=FindNamed<Label>(m_context.Root(),"ModeState");m_noticePanel=FindNamed<EdgeRevealContainer>(m_context.Root(),"NoticePanel");m_chapterNotice=FindNamed<Label>(m_context.Root(),"ChapterNotice");m_musicNotice=FindNamed<Label>(m_context.Root(),"MusicNotice");m_lastChapterTitle.clear();m_lastMusicTitle.clear();m_activeDialogueEffect.clear();m_dialogueEffectFinished=false;if(m_dialogue)m_dialogueBaseFontSize=m_dialogue->FontSize()>0?m_dialogue->FontSize():30;}
     return Status::Ok();
+}
+
+Status GalgameUI::InstallCheckpointSurface(const Screen screen) {
+    if (HasTemplate(screen)) return InstallTemplate(screen);
+    switch (screen) {
+        case Screen::Title: return ShowTitle();
+        case Screen::HUD: return ShowHUD({});
+        case Screen::Backlog: return ShowBacklog({});
+        case Screen::Save: return ShowSaveLoad(true, {});
+        case Screen::Load: return ShowSaveLoad(false, {});
+        case Screen::Gallery: return ShowGallery({});
+        case Screen::Settings: return ShowSettings({});
+        case Screen::Video: return ShowVideoOverlay(false);
+    }
+    return GalgameFailure("PXUI2818", "UI checkpoint surface is unsupported");
 }
 void GalgameUI::Emit(std::string command, std::string argument) { m_pendingActions.push_back({std::move(command),std::move(argument)}); }
 
 Status GalgameUI::Add(Control& parent, std::unique_ptr<Control> child) {
     const Status status = parent.AddChild(std::move(child)); return status ? status : EmitStatus(status);
-}
-
-std::unique_ptr<Control> GalgameUI::MakeRoot(std::string name) {
-    auto root = std::make_unique<StackContainer>(std::move(name));
-    root->SetMouseFilter(MouseFilter::Pass);
-    return root;
 }
 
 std::unique_ptr<Control> GalgameUI::MakeMenuButton(std::string text, std::string command, std::string argument) {
@@ -164,6 +284,7 @@ std::unique_ptr<Control> GalgameUI::MakeMenuButton(std::string text, std::string
 }
 
 Status GalgameUI::Install(std::unique_ptr<Control> root, Screen screen) {
+    RememberGameplayCheckpoint(screen);
     ResetUiTimelineOverrides();
     m_bindings.clear();
     if (screen != Screen::HUD) {
@@ -174,20 +295,30 @@ Status GalgameUI::Install(std::unique_ptr<Control> root, Screen screen) {
     m_screen = screen; return Status::Ok();
 }
 
-Status GalgameUI::ApplyAnimationProperty(const animation::TrackBinding& binding,const Variant& value){Control* control=binding.target=="$root"?m_context.Root():FindNamed<Control>(m_context.Root(),binding.target);if(!control)return GalgameFailure("PXUI2810","Animation UI target was not found: "+binding.target);const auto number=[&]()->std::optional<double>{if(const auto* real=value.TryGet<double>())return *real;if(const auto* integer=value.TryGet<std::int64_t>())return static_cast<double>(*integer);return std::nullopt;}();if(binding.kind==animation::TargetKind::Text&&number){if(auto* label=dynamic_cast<Label*>(control)){if(binding.property=="typewriter"){auto [iterator,_]=m_animationTextBase.try_emplace(binding.target,label->Text());const auto& full=iterator->second;std::size_t bytes=static_cast<std::size_t>(std::clamp(*number,0.0,1.0)*full.size());while(bytes<full.size()&&(static_cast<unsigned char>(full[bytes])&0xC0)==0x80)++bytes;label->SetText(full.substr(0,bytes));if(*number>=1.0)m_animationTextBase.erase(binding.target);return Status::Ok();}if(binding.property=="shake"||binding.property=="wave"){Rect offsets=label->Offsets();offsets.x+=static_cast<float>(std::sin(*number*37.0)*4.0);offsets.y+=static_cast<float>(std::sin(*number*23.0)*2.0);label->SetOffsets(offsets);return Status::Ok();}if(binding.property=="fade"||binding.property=="slide"||binding.property=="pop"||binding.property=="rainbow"||binding.property=="glitch")return Status::Ok();}}std::string property=binding.property;if(property=="panel-fade"||property=="modal-open"||property=="modal-close"||property=="button-hover"||property=="button-press")property="opacity";const auto* descriptor=TypeRegistry::Global().FindProperty(std::string(control->TypeName()),property);if(!descriptor||!descriptor->set)return GalgameFailure("PXUI2811","Animation UI property was not found: "+property);return descriptor->set(*control,value);}
+Status GalgameUI::ApplyAnimationProperty(
+    const animation::TrackBinding& binding, const Variant& value) {
+    return m_context.ApplyAnimationProperty(binding, value);
+}
+
+Status GalgameUI::ValidateAnimationProperty(
+    const animation::TrackBinding& binding, const Variant& value,
+    const UIRuntimeState& state) {
+    const auto target = ScreenFromId(state.surfaceId);
+    if (!target)
+        return GalgameFailure("PXUI2817",
+                              "Animation checkpoint references an unknown UI surface");
+    GalgameUI candidate;
+    candidate.m_templates = m_templates;
+    candidate.m_studioAssetResolver = m_studioAssetResolver;
+    candidate.m_studioComponentLoader = m_studioComponentLoader;
+    if (const Status installed = candidate.InstallCheckpointSurface(*target);
+        !installed)
+        return installed;
+    return candidate.ApplyAnimationProperty(binding, value);
+}
 
 Status GalgameUI::ShowTitle() {
-    if(HasTemplate(Screen::Title))return InstallTemplate(Screen::Title);
-    auto root = MakeRoot("Title");
-    auto shade = std::make_unique<Panel>("TitleShade"); shade->SetAnchors({0,0,1,1}); ApplyDialogueStyle(*shade);
-    auto menu = std::make_unique<VBoxContainer>("TitleMenu"); menu->SetAnchors({0.34f,0.18f,0.66f,0.84f}); menu->SetSeparation(14);
-    auto title = std::make_unique<Label>("PrismatiX", "GameTitle"); title->SetFontSize(52); title->SetSizeFlags(SizeFlag::Fill, SizeFlag::Expand);
-    if (auto status = Add(*menu, std::move(title)); !status) return status;
-    for (auto [text, command] : std::vector<std::pair<std::string,std::string>>{{"開始遊戲","game.start"},{"讀取遊戲","load.open"},{"CG 鑑賞","gallery.open"},{"設定","settings.open"},{"離開","app.quit"}})
-        if (auto status = Add(*menu, MakeMenuButton(std::move(text), std::move(command))); !status) return status;
-    if (auto status = Add(*shade, std::move(menu)); !status) return status;
-    if (auto status = Add(*root, std::move(shade)); !status) return status;
-    return Install(std::move(root), Screen::Title);
+    return InstallTemplate(Screen::Title);
 }
 
 Status GalgameUI::ActivateUiControl(const std::string_view nodeId) {
@@ -242,6 +373,7 @@ Status GalgameUI::StopUiAnimation(const bool restoreDesignState) {
 }
 
 void GalgameUI::ResetUiTimelineOverrides() {
+    m_context.ResetAnimationPropertyOverrides();
     for (const auto& [nodeId, visibility] : m_timelineVisibilityBase) {
         const auto id = Uuid::Parse(nodeId);
         auto* control = id && m_context.Root()
@@ -275,32 +407,7 @@ Status GalgameUI::ActivateChoice(const std::size_t index) {
 }
 
 Status GalgameUI::ShowHUD(const DialoguePresentation& p) {
-    if(HasTemplate(Screen::HUD)){const Status status=InstallTemplate(Screen::HUD);if(!status)return status;return RefreshHUD(p);}
-    auto root = MakeRoot("HUD");
-    auto nvl = std::make_unique<Panel>("NVLPanel"); nvl->SetAnchors({0.055f,0.06f,0.945f,0.88f}); ApplyDialogueStyle(*nvl);
-    auto nvlLabel = std::make_unique<Label>("", "NVLText"); m_nvlText = nvlLabel.get(); nvlLabel->SetWrap(true); nvlLabel->SetAnchors({0.04f,0.04f,0.96f,0.96f});
-    if (auto status = Add(*nvl, std::move(nvlLabel)); !status) return status;
-    nvl->SetVisibility(p.nvlMode ? Visibility::Visible : Visibility::Collapsed);
-
-    auto adv = std::make_unique<Panel>("ADVPanel"); adv->SetAnchors({0.045f,0.64f,0.955f,0.955f}); ApplyDialogueStyle(*adv);
-    auto speaker = std::make_unique<Label>("", "Speaker"); m_speaker = speaker.get(); speaker->SetFontSize(25); speaker->SetColor({255,220,145,255}); speaker->SetAnchors({0.03f,0.08f,0.97f,0.25f});
-    auto dialogue = std::make_unique<Label>("", "Dialogue"); m_dialogue = dialogue.get(); dialogue->SetFontSize(30); dialogue->SetWrap(true); dialogue->SetAnchors({0.03f,0.28f,0.97f,0.91f});
-    if (auto status = Add(*adv, std::move(speaker)); !status) return status;
-    if (auto status = Add(*adv, std::move(dialogue)); !status) return status;
-    adv->SetVisibility(p.nvlMode ? Visibility::Collapsed : Visibility::Visible);
-
-    auto choices = std::make_unique<VBoxContainer>("Choices"); m_choices = choices.get(); choices->SetAnchors({0.20f,0.18f,0.80f,0.60f}); choices->SetSeparation(12);
-    auto quick = std::make_unique<HBoxContainer>("QuickMenu"); quick->SetAnchors({0.50f,0.025f,0.97f,0.105f}); quick->SetSeparation(8);
-    for (auto [text, command] : std::vector<std::pair<std::string,std::string>>{{"AUTO","mode.auto"},{"SKIP","mode.skip"},{"LOG","backlog.open"},{"SAVE","save.open"},{"LOAD","load.open"},{"⚙","settings.open"}})
-        if (auto status = Add(*quick, MakeMenuButton(std::move(text), std::move(command))); !status) return status;
-    auto mode = std::make_unique<Label>("", "ModeState"); m_mode = mode.get(); mode->SetAnchors({0.02f,0.02f,0.45f,0.09f}); mode->SetFontSize(20);
-    if (auto status = Add(*root, std::move(nvl)); !status) return status;
-    if (auto status = Add(*root, std::move(adv)); !status) return status;
-    if (auto status = Add(*root, std::move(choices)); !status) return status;
-    if (auto status = Add(*root, std::move(quick)); !status) return status;
-    if (auto status = Add(*root, std::move(mode)); !status) return status;
-    const Status installed = Install(std::move(root), Screen::HUD); if (!installed) return installed;
-    if (m_dialogue) { m_dialogueBaseOffsets = m_dialogue->Offsets(); m_dialogueBaseFontSize = m_dialogue->FontSize() > 0 ? m_dialogue->FontSize() : 30; }
+    const Status status=InstallTemplate(Screen::HUD);if(!status)return status;
     return RefreshHUD(p);
 }
 
@@ -308,17 +415,32 @@ Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
     if (m_screen != Screen::HUD || !m_context.Root()) return ShowHUD(p);
     if (m_speaker) m_speaker->SetText(p.speaker);
     if (m_dialogue) {
-        m_dialogue->SetText(p.text);
-        Rect offsets = m_dialogueBaseOffsets;
-        int fontSize = m_dialogueBaseFontSize;
-        if (!p.reducedMotion && p.effect == "shake") {
-            offsets.x += std::sin(p.effectProgress * 47.0f) * 3.0f;
-            offsets.y += std::sin(p.effectProgress * 71.0f) * 2.0f;
-        } else if (!p.reducedMotion && p.effect == "pulse") {
-            fontSize += static_cast<int>(std::lround((std::sin(p.effectProgress * 7.0f) + 1.0f) * 1.5f));
+        SetPresentationText(m_dialogue, p.text);
+        m_dialogue->SetFontSize(static_cast<int>(std::lround(
+            m_dialogueBaseFontSize * std::clamp(p.textScale, .75f, 2.0f))));
+        const std::string desiredEffect = p.reducedMotion ? std::string{} : p.effect;
+        if (desiredEffect != m_activeDialogueEffect) {
+            if (!m_activeDialogueEffect.empty())
+                m_context.ResetAnimationPropertyOverrides("Dialogue");
+            m_activeDialogueEffect = desiredEffect;
+            m_dialogueEffectFinished = false;
         }
-        m_dialogue->SetOffsets(offsets);
-        m_dialogue->SetFontSize(static_cast<int>(std::lround(fontSize*std::clamp(p.textScale,.75f,2.0f))));
+        const bool looping = desiredEffect == "wave" || desiredEffect == "rainbow";
+        if (!desiredEffect.empty() &&
+            (looping || !m_dialogueEffectFinished)) {
+            const float elapsed = std::max(0.0f, p.effectProgress) / 0.6f;
+            const float progress = looping ? std::fmod(elapsed, 1.0f)
+                                           : std::min(elapsed, 1.0f);
+            animation::TrackBinding binding{
+                .kind = animation::TargetKind::Text,
+                .target = "Dialogue",
+                .property = desiredEffect};
+            if (const Status applied =
+                    m_context.ApplyAnimationProperty(binding, Variant(progress));
+                !applied)
+                return applied;
+            m_dialogueEffectFinished = !looping && progress >= 1.0f;
+        }
     }
     (void)m_viewModel.Write("dialogue.speaker",Variant(p.speaker));(void)m_viewModel.Write("dialogue.text",Variant(p.text));
     (void)m_viewModel.Write("chapter.title",Variant(p.chapterTitle));(void)m_viewModel.Write("music.title",Variant(p.musicTitle));
@@ -333,7 +455,7 @@ Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
     }
     m_lastChapterTitle=p.chapterTitle;m_lastMusicTitle=p.musicTitle;
     if (m_nvlText) {
-        std::string text; for (const auto& line : p.nvlLines) text += line + "\n\n"; m_nvlText->SetText(std::move(text));
+        std::string text; for (const auto& line : p.nvlLines) text += line + "[br][br]"; SetPresentationText(m_nvlText, std::move(text));
         if (auto* panel = dynamic_cast<Control*>(m_nvlText->Parent())) panel->SetVisibility(p.nvlMode ? Visibility::Visible : Visibility::Collapsed);
     }
     if (m_dialogue) if (auto* panel = dynamic_cast<Control*>(m_dialogue->Parent())) panel->SetVisibility(p.nvlMode ? Visibility::Collapsed : Visibility::Visible);
@@ -349,81 +471,39 @@ Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
 }
 
 Status GalgameUI::ShowBacklog(std::vector<GalgameItem> entries) {
-    if(HasTemplate(Screen::Backlog)){const Status installed=InstallTemplate(Screen::Backlog);if(!installed)return installed;auto* list=FindNamed<ListView>(m_context.Root(),"Entries");if(!list)return GalgameFailure("PXUI2805","Backlog template requires a ListView named Entries");m_items=std::make_shared<ItemSource>(std::move(entries),*this);return list->SetSource(m_items,[]{return std::make_unique<Button>();});}
-    auto root = MakeRoot("Backlog"); auto panel = std::make_unique<Panel>(); panel->SetAnchors({0.03f,0.03f,0.97f,0.97f}); ApplyDialogueStyle(*panel);
-    auto list = std::make_unique<ListView>(); list->SetAnchors({0.03f,0.10f,0.97f,0.94f}); list->SetItemExtent({800,76});
-    m_items = std::make_shared<ItemSource>(std::move(entries), *this);
-    if (auto status = list->SetSource(m_items, [] { auto b = std::make_unique<Button>(); b->SetSizeFlags(SizeFlag::Expand | SizeFlag::Fill, SizeFlag::Fill); return b; }); !status) return status;
-    auto close = MakeMenuButton("返回", "overlay.close"); close->SetAnchors({0.82f,0.02f,0.97f,0.09f});
-    if (auto status = Add(*panel, std::move(list)); !status) return status;
-    if (auto status = Add(*panel, std::move(close)); !status) return status;
-    if (auto status = Add(*root, std::move(panel)); !status) return status;
-    return Install(std::move(root), Screen::Backlog);
+    const Status installed=InstallTemplate(Screen::Backlog);if(!installed)return installed;auto* list=FindNamed<ListView>(m_context.Root(),"Entries");if(!list)return GalgameFailure("PXUI2805","Backlog template requires a ListView named Entries");m_items=std::make_shared<ItemSource>(std::move(entries),*this);return list->SetSource(m_items,[]{return std::make_unique<Button>();});
 }
 
 Status GalgameUI::ShowSaveLoad(bool saveMode, std::vector<GalgameItem> slots) {
     const Screen target=saveMode?Screen::Save:Screen::Load;
-    if(HasTemplate(target)){const Status installed=InstallTemplate(target);if(!installed)return installed;auto* grid=FindNamed<GridView>(m_context.Root(),"Slots");if(!grid)return GalgameFailure("PXUI2806","SaveLoad template requires a GridView named Slots");m_items=std::make_shared<ItemSource>(std::move(slots),*this);return grid->SetSource(m_items,[]{return std::make_unique<CardButton>();});}
-    auto root = MakeRoot(saveMode ? "Save" : "Load"); auto panel = std::make_unique<Panel>(); panel->SetAnchors({0.03f,0.03f,0.97f,0.97f}); ApplyDialogueStyle(*panel);
-    auto grid = std::make_unique<GridView>(3); grid->SetAnchors({0.03f,0.12f,0.97f,0.93f}); grid->SetItemExtent({320,170});
-    m_items = std::make_shared<ItemSource>(std::move(slots), *this);
-    if (auto status = grid->SetSource(m_items, [] { return std::make_unique<CardButton>(); }); !status) return status;
-    auto close = MakeMenuButton("返回", "overlay.close"); close->SetAnchors({0.82f,0.02f,0.97f,0.10f});
-    if (auto status = Add(*panel, std::move(grid)); !status) return status; if (auto status = Add(*panel, std::move(close)); !status) return status;
-    if (auto status = Add(*root, std::move(panel)); !status) return status; return Install(std::move(root), saveMode ? Screen::Save : Screen::Load);
+    const Status installed=InstallTemplate(target);if(!installed)return installed;auto* grid=FindNamed<GridView>(m_context.Root(),"Slots");if(!grid)return GalgameFailure("PXUI2806","SaveLoad template requires a GridView named Slots");m_items=std::make_shared<ItemSource>(std::move(slots),*this);return grid->SetSource(m_items,[]{return std::make_unique<CardButton>();});
 }
 
 Status GalgameUI::ShowGallery(std::vector<GalgameItem> entries) {
-    if(HasTemplate(Screen::Gallery)){const Status installed=InstallTemplate(Screen::Gallery);if(!installed)return installed;auto* grid=FindNamed<GridView>(m_context.Root(),"Items");if(!grid)return GalgameFailure("PXUI2807","Gallery template requires a GridView named Items");m_items=std::make_shared<ItemSource>(std::move(entries),*this);return grid->SetSource(m_items,[]{return std::make_unique<CardButton>();});}
-    auto root = MakeRoot("Gallery"); auto panel = std::make_unique<Panel>(); panel->SetAnchors({0.03f,0.03f,0.97f,0.97f}); ApplyDialogueStyle(*panel);
-    auto grid = std::make_unique<GridView>(4); grid->SetAnchors({0.03f,0.12f,0.97f,0.93f}); grid->SetItemExtent({260,180});
-    m_items = std::make_shared<ItemSource>(std::move(entries), *this);
-    if (auto status = grid->SetSource(m_items, [] { return std::make_unique<CardButton>(); }); !status) return status;
-    auto close = MakeMenuButton("返回", "overlay.close"); close->SetAnchors({0.82f,0.02f,0.97f,0.10f});
-    if (auto status = Add(*panel, std::move(grid)); !status) return status; if (auto status = Add(*panel, std::move(close)); !status) return status;
-    if (auto status = Add(*root, std::move(panel)); !status) return status; return Install(std::move(root), Screen::Gallery);
+    const Status installed=InstallTemplate(Screen::Gallery);if(!installed)return installed;auto* grid=FindNamed<GridView>(m_context.Root(),"Items");if(!grid)return GalgameFailure("PXUI2807","Gallery template requires a GridView named Items");m_items=std::make_shared<ItemSource>(std::move(entries),*this);return grid->SetSource(m_items,[]{return std::make_unique<CardButton>();});
 }
 
 Status GalgameUI::ShowSettings(const SettingsPresentation& s) {
-    if(HasTemplate(Screen::Settings)){
-        const Status installed=InstallTemplate(Screen::Settings);if(!installed)return installed;
-        auto slider=[this](const char* name,double value,double maximum,const char* command){if(auto* control=FindNamed<Slider>(m_context.Root(),name)){control->SetRange(0,maximum,maximum<=128?4:1);control->SetValue(value);control->SetOnChanged([this,command](double changed){Emit(command,std::to_string(static_cast<int>(changed)));});}};
-        slider("BGM",s.bgm,128,"set.bgm.value");slider("SE",s.se,128,"set.se.value");slider("Voice",s.voice,128,"set.voice.value");slider("TextSpeed",s.textSpeedMs,120,"set.speed.value");
-        if(auto* skip=FindNamed<CheckBox>(m_context.Root(),"SkipRead")){skip->SetChecked(s.skipReadOnly);skip->SetOnToggled([this](bool value){Emit("set.skipread.value",value?"true":"false");});}
-        if(auto* full=FindNamed<CheckBox>(m_context.Root(),"Fullscreen")){full->SetChecked(s.fullscreen);full->SetOnToggled([this](bool value){Emit("set.fullscreen.value",value?"true":"false");});}
-        slider("TextScale",s.textScale*100.0,200,"set.textscale.value");
-        if(auto* value=FindNamed<CheckBox>(m_context.Root(),"HighContrast")){value->SetChecked(s.highContrast);value->SetOnToggled([this](bool changed){Emit("set.highcontrast.value",changed?"true":"false");});}
-        if(auto* value=FindNamed<CheckBox>(m_context.Root(),"ReducedMotion")){value->SetChecked(s.reducedMotion);value->SetOnToggled([this](bool changed){Emit("set.reducedmotion.value",changed?"true":"false");});}
-        if(auto* value=FindNamed<CheckBox>(m_context.Root(),"SelfVoicing")){value->SetChecked(s.selfVoicing);value->SetOnToggled([this](bool changed){Emit("set.selfvoicing.value",changed?"true":"false");});}
-        return Status::Ok();
-    }
-    auto root = MakeRoot("Settings"); auto panel = std::make_unique<Panel>(); panel->SetAnchors({0.20f,0.08f,0.80f,0.92f}); ApplyDialogueStyle(*panel);
-    auto rows = std::make_unique<VBoxContainer>(); rows->SetAnchors({0.06f,0.08f,0.94f,0.92f}); rows->SetSeparation(10);
-    auto row = [this, &rows](std::string label, int value, std::string command) -> Status {
-        auto line = std::make_unique<HBoxContainer>(); line->SetSizeFlags(SizeFlag::Fill, SizeFlag::Expand); auto text = std::make_unique<Label>(label + "  " + std::to_string(value)); text->SetSizeFlags(SizeFlag::Expand | SizeFlag::Fill, SizeFlag::Fill);
-        if (auto status = Add(*line, std::move(text)); !status) return status; if (auto status = Add(*line, MakeMenuButton("−", command + ".down")); !status) return status;
-        if (auto status = Add(*line, MakeMenuButton("＋", command + ".up")); !status) return status; return Add(*rows, std::move(line));
-    };
-    if (auto st = row("BGM",s.bgm,"set.bgm"); !st) return st; if (auto st = row("SE",s.se,"set.se"); !st) return st;
-    if (auto st = row("VOICE",s.voice,"set.voice"); !st) return st; if (auto st = row("文字速度",s.textSpeedMs,"set.speed"); !st) return st;
-    if (auto st = Add(*rows, MakeMenuButton(std::string("只快進已讀：") + (s.skipReadOnly ? "是" : "否"), "set.skipread.toggle")); !st) return st;
-    if (auto st = Add(*rows, MakeMenuButton(std::string("全螢幕：") + (s.fullscreen ? "是" : "否"), "set.fullscreen.toggle")); !st) return st;
-    if (auto st = Add(*rows, MakeMenuButton("完成", "overlay.close")); !st) return st;
-    if (auto st = Add(*panel, std::move(rows)); !st) return st; if (auto st = Add(*root, std::move(panel)); !st) return st;
-    return Install(std::move(root), Screen::Settings);
+    const Status installed=InstallTemplate(Screen::Settings);if(!installed)return installed;
+    auto slider=[this](const char* name,double value,double maximum,const char* command){if(auto* control=FindNamed<Slider>(m_context.Root(),name)){control->SetRange(0,maximum,maximum<=128?4:1);control->SetValue(value);control->SetOnChanged([this,command](double changed){Emit(command,std::to_string(static_cast<int>(changed)));});}};
+    slider("BGM",s.bgm,128,"set.bgm.value");slider("SE",s.se,128,"set.se.value");slider("Voice",s.voice,128,"set.voice.value");slider("TextSpeed",s.textSpeedMs,120,"set.speed.value");
+    if(auto* skip=FindNamed<CheckBox>(m_context.Root(),"SkipRead")){skip->SetChecked(s.skipReadOnly);skip->SetOnToggled([this](bool value){Emit("set.skipread.value",value?"true":"false");});}
+    if(auto* full=FindNamed<CheckBox>(m_context.Root(),"Fullscreen")){full->SetChecked(s.fullscreen);full->SetOnToggled([this](bool value){Emit("set.fullscreen.value",value?"true":"false");});}
+    slider("TextScale",s.textScale*100.0,200,"set.textscale.value");
+    if(auto* value=FindNamed<CheckBox>(m_context.Root(),"HighContrast")){value->SetChecked(s.highContrast);value->SetOnToggled([this](bool changed){Emit("set.highcontrast.value",changed?"true":"false");});}
+    if(auto* value=FindNamed<CheckBox>(m_context.Root(),"ReducedMotion")){value->SetChecked(s.reducedMotion);value->SetOnToggled([this](bool changed){Emit("set.reducedmotion.value",changed?"true":"false");});}
+    if(auto* value=FindNamed<CheckBox>(m_context.Root(),"SelfVoicing")){value->SetChecked(s.selfVoicing);value->SetOnToggled([this](bool changed){Emit("set.selfvoicing.value",changed?"true":"false");});}
+    if(auto* value=FindNamed<OptionButton>(m_context.Root(),"Language")){value->SetOptions(s.languages);const auto selected=std::find(s.languages.begin(),s.languages.end(),s.language);value->SetSelected(selected==s.languages.end()?0:static_cast<int>(std::distance(s.languages.begin(),selected)));value->SetOnActivated([this,value](){if(value->Selected()>=0&&static_cast<std::size_t>(value->Selected())<value->Options().size())Emit("set.language.value",value->Options()[static_cast<std::size_t>(value->Selected())]);});}
+    return Status::Ok();
 }
 
 Status GalgameUI::ShowVideoOverlay(bool skippable) {
-    if (HasTemplate(Screen::Video)) {
-        const Status installed = InstallTemplate(Screen::Video);
-        if (!installed) return installed;
-        auto* hint = FindNamed<Label>(m_context.Root(), "SkipHint");
-        if (!hint) return GalgameFailure("PXUI2808", "Video template requires a Label named SkipHint");
-        hint->SetText(skippable ? "點擊跳過 ▶" : "");
-        return Status::Ok();
-    }
-    auto root = MakeRoot("VideoOverlay"); auto label = std::make_unique<Label>(skippable ? "點擊跳過 ▶" : ""); label->SetAnchors({0.78f,0.03f,0.97f,0.10f});
-    if (auto st = Add(*root, std::move(label)); !st) return st; return Install(std::move(root), Screen::Video);
+    const Status installed = InstallTemplate(Screen::Video);
+    if (!installed) return installed;
+    auto* hint = FindNamed<Label>(m_context.Root(), "SkipHint");
+    if (!hint) return GalgameFailure("PXUI2808", "Video template requires a Label named SkipHint");
+    hint->SetText(skippable ? "點擊跳過 ▶" : "");
+    return Status::Ok();
 }
 
 bool GalgameUI::Update(const Input& input, int width, int height,float deltaSeconds) { const bool consumed=m_context.Update(input,width,height,deltaSeconds);auto actions=std::move(m_pendingActions);m_pendingActions.clear();for(const auto& action:actions)if(m_sink)m_sink(action);return consumed; }

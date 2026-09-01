@@ -19,6 +19,9 @@ class VFS;
 namespace px::audio {
 class AudioEngine;
 }
+namespace px::diag {
+struct Diagnostic;
+}
 
 namespace px::vn {
 
@@ -58,9 +61,23 @@ enum class ProgramSeekStatus {
     Unreachable,
 };
 
+enum class VMRunStatus {
+    Yielded,
+    AwaitingInput,
+    Completed,
+    Faulted,
+};
+
+struct VMRunResult {
+    VMRunStatus status = VMRunStatus::Completed;
+    std::size_t instructions = 0;
+};
+
 struct Choice {
     std::string text;
     std::string target;
+    std::string sourceId;
+    std::string operationId;
 };
 
 struct VMCallFrameState {
@@ -97,6 +114,8 @@ struct VMConfig {
     std::string videoDir = "Content/Video/";
     std::string scriptDir = "Content/Scenario/";
     int defaultTextSpeed = 28;
+    std::size_t maxInstructionsPerTick = 10'000;
+    std::uint64_t maxInstructionsWithoutYield = 1'000'000;
 };
 
 class VM {
@@ -116,6 +135,10 @@ public:
         std::function<bool(const Command&, bool seeking)> hook) {
         m_executionSafetyHook = std::move(hook);
     }
+    void SetDiagnosticSourceResolver(
+        std::function<void(diag::Diagnostic&, const Command&)> resolver) {
+        m_diagnosticSourceResolver = std::move(resolver);
+    }
     // Localization: maps source text to the active language. Applied to dialogue
     // lines and choice labels after variable substitution.
     void SetTextFilter(std::function<std::string(const std::string&, const std::string&)> filter) {
@@ -125,6 +148,9 @@ public:
     // returns whether that line was already seen (既讀). Drives skip-read-only.
     void SetSeenHook(std::function<bool(const std::string& key)> hook) {
         m_seenHook = std::move(hook);
+    }
+    void SetChoiceSeenHook(std::function<void(const std::string& key)> hook) {
+        m_choiceSeenHook = std::move(hook);
     }
     // Auto-voice convention: character id/display-name -> voice directory.
     // A say without an explicit voice tries "<dir><scriptStem>_<line>.{ogg,wav,mp3}".
@@ -167,6 +193,7 @@ public:
     ProgramPatchStatus PatchCompiledProgram(Program program,
                                             const std::string& scriptPath);
     void Update(std::uint64_t nowMs, float dt);
+    [[nodiscard]] VMRunResult RunSlice(std::size_t maxInstructions);
     void OnAdvance();
     void SelectChoice(int index);
     void Resume();
@@ -203,9 +230,23 @@ public:
     [[nodiscard]] std::string CurrentSourceId() const {
         if (m_program.code.empty()) return {};
         int index = m_pc;
-        if (m_state == VMState::WaitingClick && index > 0) --index;
+        if ((m_state == VMState::WaitingClick || m_state == VMState::WaitingTimer ||
+             m_state == VMState::WaitingVideo || m_state == VMState::WaitingExternal) &&
+            index > 0) --index;
         if (index < 0 || index >= static_cast<int>(m_program.code.size())) return {};
         return m_program.code[static_cast<std::size_t>(index)].sourceId;
+    }
+    [[nodiscard]] std::string CurrentOperationId() const {
+        if (m_program.code.empty()) return {};
+        int index = m_pc;
+        if ((m_state == VMState::WaitingClick || m_state == VMState::WaitingTimer ||
+             m_state == VMState::WaitingVideo || m_state == VMState::WaitingExternal) &&
+            index > 0) --index;
+        if (index < 0 || index >= static_cast<int>(m_program.code.size())) return {};
+        return m_program.code[static_cast<std::size_t>(index)].operationId;
+    }
+    [[nodiscard]] const std::string& CurrentDocumentId() const {
+        return m_program.documentId;
     }
     // pc to store in a save: while waiting for a click it backs up onto the say
     // command so loading the save re-displays the line being read.
@@ -221,14 +262,17 @@ public:
     [[nodiscard]] bool SafetyRejected() const { return m_safetyRejected; }
     void ClearSafetyRejection() { m_safetyRejected = false; }
     [[nodiscard]] bool Seeking() const { return m_seeking; }
+    [[nodiscard]] VMRunResult LastRunResult() const { return m_lastRunResult; }
 
 private:
     bool LoadProgram(const std::string& scriptPath);
-    void Run();
+    VMRunResult Run();
     void ExecuteSimple(const Command& cmd);
     void HandleSay(const Command& cmd, bool recordPlayback = true);
     void CollectChoices();
     bool EvaluateCondition(const Command& cmd) const;
+    void ApplyDiagnosticSource(diag::Diagnostic& diagnostic,
+                               const Command& command) const;
     // Jumps to a label in the current program or loads another script.
     // Returns false (leaving the pc untouched) when the target is empty or
     // cannot be resolved; callers decide how to advance.
@@ -248,6 +292,7 @@ private:
     std::function<void(const std::string&, const std::string&)> m_unlockHook;
     std::function<std::string(const std::string&, const std::string&)> m_textFilter;
     std::function<bool(const std::string&)> m_seenHook;
+    std::function<void(const std::string&)> m_choiceSeenHook;
     std::function<void(const std::string&, bool)> m_videoHook;
     bool m_currentLineSeen = true;
 
@@ -276,7 +321,11 @@ private:
     std::optional<int> m_seekTargetPc;
     bool m_seeking = false;
     bool m_safetyRejected = false;
+    std::uint64_t m_instructionsWithoutObservableYield = 0;
+    VMRunResult m_lastRunResult{};
     std::function<bool(const Command&, bool)> m_executionSafetyHook;
+    std::function<void(diag::Diagnostic&, const Command&)>
+        m_diagnosticSourceResolver;
 
     std::string m_speaker;
     std::string m_pendingVoice;  // set by a [text voice=...] header, consumed by the next say

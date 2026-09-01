@@ -19,7 +19,9 @@
         "anchorX": {"type": "number"}, "anchorY": {"type": "number"},
         "anchorRight": {"type": "number"}, "anchorBottom": {"type": "number"},
         "pivotX": {"type": "number"}, "pivotY": {"type": "number"},
-        "margin": {"type": "number"}, "alignment": {"type": "string"}, "sizeRule": {"type": "string"}
+        "margin": {"type": "number"},
+        "alignment": {"enum": ["start", "center", "end", "fill"]},
+        "sizeRule": {"enum": ["fixed", "fill", "content"]}
       }
     },
     "action": {
@@ -48,11 +50,13 @@
         "assetId": {"oneOf": [{"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"}, {"type": "null"}]},
         "appearance": {
           "type": "object", "additionalProperties": false,
-          "properties": {"backgroundColor": {"type": "string"}, "textColor": {"type": "string"}, "opacity": {"type": "number", "minimum": 0, "maximum": 1}, "styleToken": {"type": ["string", "null"]}}
+          "properties": {"backgroundColor": {"type": "string"}, "textColor": {"type": "string"}, "opacity": {"type": "number", "minimum": 0, "maximum": 1}, "styleToken": {"type": ["string", "null"]}, "hoverBackgroundColor": {"type": ["string", "null"]}, "focusColor": {"type": ["string", "null"]}, "disabledOpacity": {"type": "number", "minimum": 0, "maximum": 1}}
         },
         "onClick": {"$ref": "#/$defs/action"},
         "accessibilityLabel": {"type": "string", "maxLength": 1024},
         "accessibilityRole": {"type": "string", "maxLength": 128},
+        "accessibilityDescription": {"type": "string", "maxLength": 4096},
+        "accessibilityFocusOrder": {"type": "integer", "minimum": -1000000, "maximum": 1000000},
         "runtimeProperties": {"type": "object", "maxProperties": 4096, "additionalProperties": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"}},
         "bindings": {
           "type": "object", "maxProperties": 4096,
@@ -60,7 +64,40 @@
             "type": "object", "additionalProperties": false, "required": ["path"],
             "properties": {"path": {"type": "string", "minLength": 1}, "formatter": {"type": "string"}}
           }
-        }
+        },
+        "componentInstance": {"$ref": "#/$defs/componentInstance"},
+        "componentSlot": {"$ref": "#/$defs/componentSlot"}
+      }
+    },
+    "componentSignalBinding": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["id", "arguments"],
+      "properties": {
+        "id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
+        "arguments": {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"}},
+        "argumentBindings": {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"}}
+      }
+    },
+    "componentInstance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["componentId", "instanceRootId", "sourceNodeId", "sourcePath", "overrides"],
+      "properties": {
+        "componentId": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},
+        "instanceRootId": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},
+        "sourceNodeId": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},
+        "sourcePath": {"type": "array", "minItems": 2, "maxItems": 96, "items": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"}},
+        "overrides": {"type": "array", "uniqueItems": true, "maxItems": 4096, "items": {"type": "string", "minLength": 1, "maxLength": 512}},
+        "publicProperties": {"type": "object", "maxProperties": 4096, "additionalProperties": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"}},
+        "publicSignals": {"type": "object", "maxProperties": 4096, "additionalProperties": {"$ref": "#/$defs/componentSignalBinding"}}
+      }
+    },
+    "componentSlot": {
+      "type": "object", "additionalProperties": false,
+      "required": ["instanceRootId", "slotId"],
+      "properties": {
+        "instanceRootId": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},
+        "slotId": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"}
       }
     },
     "behaviorNode": {

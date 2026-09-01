@@ -4,7 +4,7 @@
   "type":"object","additionalProperties":false,
   "required":["format","schemaRevision","version","id","name","duration","loop","tracks","markers","nested"],
   "properties":{
-    "format":{"const":"PrismatiXAnimation"},"schemaRevision":{"const":1},"version":{"const":4},
+    "format":{"const":"PrismatiXAnimation"},"schemaRevision":{"const":2},"version":{"const":4},
     "id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},"name":{"type":"string","maxLength":512},
     "duration":{"type":"number","minimum":0},"loop":{"type":"boolean"},
     "tracks":{"type":"array","maxItems":100000,"items":{"type":"object","additionalProperties":false,"required":["binding","keys"],"properties":{"binding":{"type":"object","additionalProperties":false,"required":["kind","target","property"],"properties":{"kind":{"enum":["stage","ui","camera","text","audio","shader"]},"target":{"type":"string","minLength":1},"property":{"type":"string","minLength":1}}},"keys":{"type":"array","maxItems":100000,"items":{"type":"object","additionalProperties":false,"required":["time","value","curve"],"properties":{"time":{"type":"number","minimum":0},"value":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"},"curve":{"enum":["step","linear","easeIn","easeOut","easeInOut","backOut"]}}}}}}},

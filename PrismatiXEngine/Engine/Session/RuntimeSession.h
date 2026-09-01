@@ -6,6 +6,7 @@
 #include "Engine/Graphics/AssetCache.h"
 #include "Engine/Graphics/Renderer2D.h"
 #include "Engine/IO/VFS.h"
+#include "Engine/SDK/SourceMap.h"
 #include "Engine/UI/UIRouter.h"
 #include "Engine/UI/UIRuntimeState.h"
 #include "Engine/VN/Runtime/Backlog.h"
@@ -16,9 +17,11 @@
 
 #include <set>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace px {
@@ -39,11 +42,10 @@ public:
         vn::VMRuntimeState vm;
         // Memory-applied Runtime IR has no VFS source to reload. Checkpoints
         // retain the compiled program so restore is transport-independent.
-        vn::Program runtimeProgram;
+        std::shared_ptr<const vn::Program> runtimeProgram;
         vn::DialogueSnapshot dialogue;
         std::unordered_map<std::string, int> variables;
         std::unordered_map<std::string, vn::Value> typedVariables;
-        std::set<std::string> persistentVariables;
         vn::Stage::RuntimeState stage;
         audio::AudioEngine::RuntimeState audio;
         std::vector<vn::BacklogEntry> backlog;
@@ -52,6 +54,11 @@ public:
         std::vector<animation::AnimationClip> animationClips;
         ui::UIRuntimeState ui;
         std::uint64_t playtimeMs = 0;
+    };
+
+    struct PreparedRestore {
+        GameState state;
+        std::uint64_t nowMs = 0;
     };
 
     explicit RuntimeSession(Services services);
@@ -63,6 +70,21 @@ public:
                         bool resetVariables = true);
     bool StartRuntimeIrText(std::string_view text, const std::string& sourcePath,
                             bool resetVariables = true);
+    [[nodiscard]] std::shared_ptr<const vn::Program> PrepareRuntimeIr(
+        const std::string& sourcePath);
+    Status LoadSourceMap(const std::string& sourcePath);
+    Status SetSourceMapText(std::string_view text,
+                            const std::string& sourcePath);
+    // Commits an already strictly parsed source map. Used with transactional
+    // program replacement so no fallible parsing remains after state commit.
+    void CommitSourceMap(sdk::SourceMapDocument document,
+                         std::string sourcePath) {
+        m_sourceMap = std::move(document);
+        m_sourceMapPath = std::move(sourcePath);
+    }
+    [[nodiscard]] std::shared_ptr<const vn::Program> RuntimeProgramIdentity() const {
+        return m_runtimeProgramIdentity;
+    }
     vn::ProgramPatchStatus PatchRuntimeIrText(std::string_view text,
                                               const std::string& sourcePath);
     vn::ProgramSeekStatus SeekRuntimeIrOperation(
@@ -76,6 +98,9 @@ public:
     void SelectChoice(int index);
 
     [[nodiscard]] GameState CaptureState(std::uint64_t playtimeMs = 0) const;
+    [[nodiscard]] Result<PreparedRestore> PrepareRestore(
+        const GameState& state, std::uint64_t nowMs = 0);
+    Status CommitRestore(PreparedRestore prepared);
     Status RestoreState(const GameState& state, std::uint64_t nowMs = 0);
 
     [[nodiscard]] vn::VM& VM() { return m_vm; }
@@ -90,6 +115,10 @@ public:
     [[nodiscard]] const vn::Backlog& Backlog() const { return m_backlog; }
     [[nodiscard]] audio::AudioEngine& Audio() { return m_services.audio; }
     [[nodiscard]] const audio::AudioEngine& Audio() const { return m_services.audio; }
+    [[nodiscard]] graphics::AssetCache& Assets() { return m_services.assets; }
+    [[nodiscard]] const graphics::AssetCache& Assets() const {
+        return m_services.assets;
+    }
     [[nodiscard]] ui::UIRouter& Routes() { return m_routes; }
     [[nodiscard]] const ui::UIRouter& Routes() const { return m_routes; }
     [[nodiscard]] animation::TimelinePlayer& Timeline() { return m_timeline; }
@@ -101,7 +130,16 @@ public:
     [[nodiscard]] Result<animation::PlaybackHandle> PlayTimelineText(
         std::string_view text, const std::string& sourcePath,
         bool await=false, float speed=1.0f);
-    void SetAnimationTargetHandler(animation::TargetKind kind,animation::TimelinePlayer::Apply handler){m_animationHandlers[kind]=std::move(handler);}
+    using AnimationTargetValidator = std::function<Status(
+        const animation::TrackBinding&, const Variant&,
+        const ui::UIRuntimeState&)>;
+    void SetAnimationTargetHandler(
+        animation::TargetKind kind, animation::TimelinePlayer::Apply handler,
+        AnimationTargetValidator validator = {}) {
+        m_animationHandlers[kind] = std::move(handler);
+        if (validator) m_animationValidators[kind] = std::move(validator);
+        else m_animationValidators.erase(kind);
+    }
     // RuntimeSession owns built-in command execution. Player and Preview may
     // inject presentation and extension behaviour without replacing it.
     void SetExtensionCommandHandler(std::function<bool(const vn::Command&)> handler) {
@@ -113,9 +151,11 @@ public:
     }
     void SetUIStateHandler(
         std::function<ui::UIRuntimeState()> capture,
-        std::function<Status(const ui::UIRuntimeState&)> restore) {
+        std::function<Status(const ui::UIRuntimeState&)> restore,
+        std::function<Status(const ui::UIRuntimeState&)> validate = {}) {
         m_captureUIState = std::move(capture);
         m_restoreUIState = std::move(restore);
+        m_validateUIState = std::move(validate);
     }
 
 private:
@@ -130,15 +170,21 @@ private:
     std::string m_preloadScript;
     int m_preloadPc=-1;
     std::unordered_map<animation::TargetKind,animation::TimelinePlayer::Apply> m_animationHandlers;
+    std::unordered_map<animation::TargetKind,AnimationTargetValidator> m_animationValidators;
     std::function<bool(const vn::Command&)> m_extensionCommandHandler;
     std::function<void(std::string_view, std::string_view)> m_routePresentationHandler;
     std::function<ui::UIRuntimeState()> m_captureUIState;
     std::function<Status(const ui::UIRuntimeState&)> m_restoreUIState;
+    std::function<Status(const ui::UIRuntimeState&)> m_validateUIState;
     std::optional<animation::PlaybackHandle> m_awaitingTimeline;
     bool m_externalResumePending = false;
     std::vector<diag::Diagnostic> m_lastStartDiagnostics;
+    std::shared_ptr<const vn::Program> m_runtimeProgramIdentity;
+    std::optional<sdk::SourceMapDocument> m_sourceMap;
+    std::string m_sourceMapPath;
 
     bool ExecuteCommand(const vn::Command& command);
+    Status ApplyState(const GameState& state, std::uint64_t nowMs);
     std::optional<vn::Program> CompileRuntimeIrText(
         std::string_view text, const std::string& sourcePath);
     Result<resource::ResourceId> LoadAnimationAsset(

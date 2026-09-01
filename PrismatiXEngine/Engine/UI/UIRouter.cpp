@@ -86,6 +86,18 @@ RouteState UIRouter::CaptureState() const {
     return state;
 }
 
+Status UIRouter::ValidateState(const RouteState& state) const {
+    for (const auto& route : state.stack) {
+        auto created = CreateEntry(route);
+        if (!created) return Status::Fail(created.Diagnostics());
+    }
+    for (const auto& route : state.modals) {
+        auto created = CreateEntry(route);
+        if (!created) return Status::Fail(created.Diagnostics());
+    }
+    return Status::Ok();
+}
+
 Status UIRouter::RestoreState(const RouteState& state) {
     std::vector<Entry> stack;
     std::vector<Entry> modals;

@@ -53,6 +53,17 @@ RuntimeSession::RuntimeSession(Services services)
       m_stage(services.renderer, services.assets),
       m_vm(services.vfs, services.audio, m_stage, m_dialogue, m_variables, m_backlog) {
     for (auto& preset : animation::OfficialPresets()) (void)m_timeline.Register(std::move(preset));
+    for (const auto& id : services.renderer.CustomEffectIds()) {
+        animation::AnimationClip clip;
+        clip.id = Uuid::FromName("PrismatiX.CustomEffect." + id);
+        clip.name = "Screen/" + id;
+        clip.duration = 0.5f;
+        clip.tracks.push_back(
+            {{animation::TargetKind::Shader, "$selection", id},
+             {{0.0f, Variant(0.0), animation::Curve::Linear},
+              {clip.duration, Variant(1.0), animation::Curve::EaseOut}}});
+        (void)m_timeline.Register(std::move(clip));
+    }
     m_timeline.SetApply([this](const animation::TrackBinding& binding,
                               const Variant& value) -> Status {
         if (binding.kind == animation::TargetKind::Stage ||
@@ -82,6 +93,66 @@ RuntimeSession::RuntimeSession(Services services)
         }
     });
     m_vm.SetCommandHook([this](const vn::Command& command) { return ExecuteCommand(command); });
+    m_vm.SetDiagnosticSourceResolver(
+        [this](diag::Diagnostic& diagnostic, const vn::Command& command) {
+            if (!m_sourceMap ||
+                m_sourceMap->documentId != m_vm.CurrentDocumentId() ||
+                command.operationId.empty()) {
+                return;
+            }
+            const auto* mapping = m_sourceMap->Find(command.operationId);
+            if (!mapping || mapping->sourceId != command.sourceId) return;
+            diagnostic.source.path = mapping->sourceUri;
+            diagnostic.source.resourceId = mapping->sourceId;
+            diagnostic.source.nodeId = mapping->sourceId;
+            diagnostic.source.line = static_cast<int>(mapping->startLine);
+            diagnostic.source.column = static_cast<int>(mapping->startColumn);
+            diagnostic.source.endLine = static_cast<int>(mapping->endLine);
+            diagnostic.source.endColumn = static_cast<int>(mapping->endColumn);
+            diagnostic.operationId = mapping->operationId;
+            diagnostic.documentId = m_sourceMap->documentId;
+            diagnostic.sourceId = mapping->sourceId;
+        });
+}
+
+Status RuntimeSession::LoadSourceMap(const std::string& sourcePath) {
+    const auto text = m_services.vfs.ReadText(sourcePath);
+    if (!text) {
+        diag::Diagnostic diagnostic{
+            .severity = diag::Severity::Error,
+            .code = "PXRUNTIME7313",
+            .category = "Runtime.SourceMap",
+            .message = "Published source map could not be read",
+            .details = sourcePath};
+        diagnostic.source.path = sourcePath;
+        diag::Emit(diagnostic);
+        return Status::Fail(std::move(diagnostic));
+    }
+    return SetSourceMapText(*text, sourcePath);
+}
+
+Status RuntimeSession::SetSourceMapText(const std::string_view text,
+                                        const std::string& sourcePath) {
+    auto parsed = sdk::ParseSourceMap(text);
+    if (!parsed.Valid()) {
+        std::vector<diag::Diagnostic> diagnostics;
+        diagnostics.reserve(parsed.diagnostics.size());
+        for (const auto& issue : parsed.diagnostics) {
+            diag::Diagnostic diagnostic{
+                .severity = diag::Severity::Error,
+                .code = issue.code,
+                .category = "Runtime.SourceMap",
+                .message = issue.message,
+                .details = "mapping " + std::to_string(issue.mappingIndex)};
+            diagnostic.source.path = sourcePath;
+            diagnostics.push_back(std::move(diagnostic));
+        }
+        for (const auto& diagnostic : diagnostics) diag::Emit(diagnostic);
+        return Status::Fail(std::move(diagnostics));
+    }
+    m_sourceMap = std::move(parsed.document);
+    m_sourceMapPath = sourcePath;
+    return Status::Ok();
 }
 
 Result<animation::PlaybackHandle> RuntimeSession::PlayAnimationAsset(
@@ -237,6 +308,7 @@ bool RuntimeSession::ExecuteCommand(const vn::Command& command) {
 }
 
 bool RuntimeSession::StartScenario(const std::string& scriptPath, const bool resetVariables) {
+    m_runtimeProgramIdentity.reset();
     m_stage.ClearAll();
     m_dialogue.Clear();
     m_backlog.Clear();
@@ -247,6 +319,7 @@ bool RuntimeSession::StartScenario(const std::string& scriptPath, const bool res
 bool RuntimeSession::StartScenarioText(const std::string_view text,
                                        const std::string& scriptPath,
                                        const bool resetVariables) {
+    m_runtimeProgramIdentity.reset();
     m_stage.ClearAll();
     m_dialogue.Clear();
     m_backlog.Clear();
@@ -256,6 +329,19 @@ bool RuntimeSession::StartScenarioText(const std::string_view text,
 
 bool RuntimeSession::StartRuntimeIr(const std::string& sourcePath,
                                     const bool resetVariables) {
+    const auto program = PrepareRuntimeIr(sourcePath);
+    if (!program) return false;
+    m_stage.ClearAll();
+    m_dialogue.Clear();
+    m_backlog.Clear();
+    if (resetVariables) m_variables.Reset(false);
+    if (!m_vm.LoadCompiledProgram(*program, sourcePath)) return false;
+    m_runtimeProgramIdentity = program;
+    return true;
+}
+
+std::shared_ptr<const vn::Program> RuntimeSession::PrepareRuntimeIr(
+    const std::string& sourcePath) {
     const auto source = m_services.vfs.ReadText(sourcePath);
     if (!source) {
         m_lastStartDiagnostics.clear();
@@ -268,9 +354,11 @@ bool RuntimeSession::StartRuntimeIr(const std::string& sourcePath,
         diagnostic.source.path = sourcePath;
         m_lastStartDiagnostics.push_back(std::move(diagnostic));
         diag::Emit(m_lastStartDiagnostics.front());
-        return false;
+        return {};
     }
-    return StartRuntimeIrText(*source, sourcePath, resetVariables);
+    auto program = CompileRuntimeIrText(*source, sourcePath);
+    return program ? std::make_shared<const vn::Program>(std::move(*program))
+                   : std::shared_ptr<const vn::Program>{};
 }
 
 bool RuntimeSession::StartRuntimeIrText(const std::string_view text,
@@ -278,18 +366,27 @@ bool RuntimeSession::StartRuntimeIrText(const std::string_view text,
                                         const bool resetVariables) {
     auto program = CompileRuntimeIrText(text, sourcePath);
     if (!program) return false;
+    const auto identity =
+        std::make_shared<const vn::Program>(std::move(*program));
     m_stage.ClearAll();
     m_dialogue.Clear();
     m_backlog.Clear();
     if (resetVariables) m_variables.Reset(false);
-    return m_vm.LoadCompiledProgram(std::move(*program), sourcePath);
+    if (!m_vm.LoadCompiledProgram(*identity, sourcePath)) return false;
+    m_runtimeProgramIdentity = identity;
+    return true;
 }
 
 vn::ProgramPatchStatus RuntimeSession::PatchRuntimeIrText(
     const std::string_view text, const std::string& sourcePath) {
     auto program = CompileRuntimeIrText(text, sourcePath);
     if (!program) return vn::ProgramPatchStatus::InvalidProgram;
-    return m_vm.PatchCompiledProgram(std::move(*program), sourcePath);
+    const auto result = m_vm.PatchCompiledProgram(std::move(*program), sourcePath);
+    if (result == vn::ProgramPatchStatus::Applied) {
+        m_runtimeProgramIdentity =
+            std::make_shared<const vn::Program>(m_vm.CurrentProgram());
+    }
+    return result;
 }
 
 vn::ProgramSeekStatus RuntimeSession::SeekRuntimeIrOperation(
@@ -327,6 +424,50 @@ std::optional<vn::Program> RuntimeSession::CompileRuntimeIrText(
         }
         for (const auto& diagnostic : m_lastStartDiagnostics) diag::Emit(diagnostic);
         return std::nullopt;
+    }
+    if (m_sourceMap) {
+        const auto sourceMapFailure = [this, &sourcePath](
+                                          std::string message,
+                                          std::string details = {}) {
+            diag::Diagnostic diagnostic{
+                .severity = diag::Severity::Error,
+                .code = "PXRUNTIME7314",
+                .category = "Runtime.SourceMap",
+                .message = std::move(message),
+                .details = std::move(details)};
+            diagnostic.source.path = m_sourceMapPath.empty()
+                                         ? sourcePath
+                                         : m_sourceMapPath;
+            m_lastStartDiagnostics.push_back(std::move(diagnostic));
+        };
+        if (m_sourceMap->documentId != parsed.document.documentId) {
+            sourceMapFailure("Source map documentId does not match Runtime IR",
+                             m_sourceMap->documentId + " != " +
+                                 parsed.document.documentId);
+        } else if (m_sourceMap->mappings.size() !=
+                   parsed.document.operations.size()) {
+            sourceMapFailure("Source map must contain exactly one mapping per Runtime IR operation");
+        } else {
+            for (const auto& operation : parsed.document.operations) {
+                const auto* mapping = m_sourceMap->Find(operation.operationId);
+                if (!mapping) {
+                    sourceMapFailure("Source map is missing a Runtime IR operation",
+                                     operation.operationId);
+                    continue;
+                }
+                if (mapping->sourceId != operation.sourceId ||
+                    mapping->startLine != operation.sourceLine) {
+                    sourceMapFailure("Source map identity or source line disagrees with Runtime IR",
+                                     operation.operationId);
+                }
+            }
+        }
+        if (!m_lastStartDiagnostics.empty()) {
+            for (const auto& diagnostic : m_lastStartDiagnostics) {
+                diag::Emit(diagnostic);
+            }
+            return std::nullopt;
+        }
     }
     vn::Program program = CompileRuntimeIr(parsed.document);
     if (!program.errors.empty()) {
@@ -394,15 +535,16 @@ void RuntimeSession::SelectChoice(const int index) {
 RuntimeSession::GameState RuntimeSession::CaptureState(const std::uint64_t playtimeMs) const {
     GameState state;
     state.vm = m_vm.CaptureState();
-    state.runtimeProgram = m_vm.CurrentProgram();
+    state.runtimeProgram = m_runtimeProgramIdentity;
     state.dialogue = m_dialogue.CaptureState();
-    state.variables = m_variables.All();
     for (const auto& [name, entry] : m_variables.Values()) {
-        if (entry.scope != vn::VariableScope::Temporary) {
+        if (entry.scope == vn::VariableScope::Session) {
             state.typedVariables.emplace(name, entry.value.Clone());
+            if (const auto found = m_variables.All().find(name);
+                found != m_variables.All().end())
+                state.variables.emplace(name, found->second);
         }
     }
-    state.persistentVariables = m_variables.PersistentKeys();
     state.stage = m_stage.CaptureState();
     state.audio = m_services.audio.CaptureState();
     state.backlog = m_backlog.Entries();
@@ -414,29 +556,186 @@ RuntimeSession::GameState RuntimeSession::CaptureState(const std::uint64_t playt
     return state;
 }
 
+Result<RuntimeSession::PreparedRestore> RuntimeSession::PrepareRestore(
+    const GameState& state, const std::uint64_t nowMs) {
+    constexpr std::size_t kRestoreCollectionLimit = 1'000'000;
+    if (state.typedVariables.size() > kRestoreCollectionLimit ||
+        state.backlog.size() > kRestoreCollectionLimit ||
+        state.animationClips.size() > kRestoreCollectionLimit ||
+        state.timelines.size() > kRestoreCollectionLimit ||
+        state.stage.actors.size() > kRestoreCollectionLimit ||
+        state.stage.layers.size() > kRestoreCollectionLimit ||
+        state.stage.tweens.size() > kRestoreCollectionLimit) {
+        return Result<PreparedRestore>::Failure(
+            RestoreFailure("Restore candidate exceeds runtime collection limits")
+                .Diagnostics());
+    }
+    if ((!state.vm.scriptPath.empty() || state.runtimeProgram) &&
+        !state.runtimeProgram && !m_services.vfs.Exists(state.vm.scriptPath)) {
+        return Result<PreparedRestore>::Failure(
+            RestoreFailure("Scenario execution source is unavailable",
+                           state.vm.scriptPath)
+                .Diagnostics());
+    }
+    if (state.runtimeProgram &&
+        (!state.runtimeProgram->errors.empty() || state.vm.pc < 0 ||
+         state.vm.pc > static_cast<int>(state.runtimeProgram->code.size()))) {
+        return Result<PreparedRestore>::Failure(
+            RestoreFailure("Compiled scenario execution state is invalid",
+                           state.vm.scriptPath)
+                .Diagnostics());
+    }
+    if (const Status routes = m_routes.ValidateState(state.routes); !routes)
+        return Result<PreparedRestore>::Failure(routes.Diagnostics());
+    if (!m_services.audio.PrepareRestoreState(state.audio)) {
+        return Result<PreparedRestore>::Failure(
+            RestoreFailure("Audio restore candidate is invalid, undecodable, or has an out-of-range seek position")
+                .Diagnostics());
+    }
+
+    vn::Stage candidateStage(m_services.renderer, m_services.assets);
+    if (const Status stage = candidateStage.RestoreState(state.stage); !stage)
+        return Result<PreparedRestore>::Failure(stage.Diagnostics());
+
+    const auto requireTexture = [this](const std::string& path) -> Status {
+        if (path.empty()) return Status::Ok();
+        if (!m_services.vfs.Exists(path))
+            return RestoreFailure("Stage restore candidate references a missing asset", path);
+        m_services.assets.PreloadTexture(path);
+        return Status::Ok();
+    };
+    for (const auto* path : {&state.stage.background,
+                             &state.stage.previousBackground,
+                             &state.stage.ruleOldBackground,
+                             &state.stage.ruleNewBackground,
+                             &state.stage.ruleMask})
+        if (const Status asset = requireTexture(*path); !asset)
+            return Result<PreparedRestore>::Failure(asset.Diagnostics());
+    for (const auto& actor : state.stage.actors) {
+        if (const Status asset = requireTexture(actor.imagePath); !asset)
+            return Result<PreparedRestore>::Failure(asset.Diagnostics());
+        if (const Status asset = requireTexture(actor.previousImagePath); !asset)
+            return Result<PreparedRestore>::Failure(asset.Diagnostics());
+    }
+    for (const auto& layer : state.stage.layers)
+        if (const Status asset = requireTexture(layer.imagePath); !asset)
+            return Result<PreparedRestore>::Failure(asset.Diagnostics());
+
+    vn::Dialogue candidateDialogue;
+    vn::VariableStore candidateVariables;
+    vn::Backlog candidateBacklog;
+    for (const auto& [name, value] : state.typedVariables)
+        candidateVariables.SetValue(name, value.Clone(),
+                                    vn::VariableScope::Session);
+    for (const auto& entry : state.backlog)
+        candidateBacklog.Push(entry.speaker, entry.text, entry.voice,
+                              entry.isChoice, entry.sourceId,
+                              entry.operationId);
+    candidateDialogue.RestoreState(state.dialogue);
+    vn::VM candidateVm(m_services.vfs, m_services.audio, candidateStage,
+                       candidateDialogue, candidateVariables, candidateBacklog);
+    candidateVm.SetConfig(m_vm.Config());
+    bool vmValid = true;
+    if (!state.vm.scriptPath.empty() || state.runtimeProgram) {
+        vmValid = state.runtimeProgram
+                      ? candidateVm.RestoreCompiledState(
+                            state.vm, *state.runtimeProgram, nowMs)
+                      : candidateVm.RestoreState(state.vm, nowMs);
+    }
+    if (!vmValid)
+        return Result<PreparedRestore>::Failure(
+            RestoreFailure("Scenario execution state could not be prepared",
+                           state.vm.scriptPath)
+                .Diagnostics());
+
+    animation::TimelinePlayer candidateTimeline;
+    if (const Status registered =
+            candidateTimeline.ReplaceRegisteredClips(state.animationClips);
+        !registered)
+        return Result<PreparedRestore>::Failure(registered.Diagnostics());
+    candidateTimeline.SetApply(
+        [&candidateStage, this, &state](const animation::TrackBinding& binding,
+                                const Variant& value) -> Status {
+            if (binding.kind == animation::TargetKind::Stage ||
+                binding.kind == animation::TargetKind::Camera ||
+                binding.kind == animation::TargetKind::Shader) {
+                const std::string target =
+                    binding.kind == animation::TargetKind::Camera ||
+                            binding.kind == animation::TargetKind::Shader
+                        ? "$camera"
+                        : binding.target;
+                return candidateStage.ApplyAnimationProperty(
+                           target, binding.property, value)
+                           ? Status::Ok()
+                           : RestoreFailure(
+                                 "Timeline restore target is incompatible",
+                                 target + "." + binding.property);
+            }
+            if (binding.kind == animation::TargetKind::Audio) {
+                const bool numeric = value.TryGet<double>() ||
+                                     value.TryGet<std::int64_t>();
+                return numeric ? Status::Ok()
+                               : RestoreFailure(
+                                     "Timeline audio restore value is invalid",
+                                     binding.property);
+            }
+            if (const auto validator=m_animationValidators.find(binding.kind);
+                validator!=m_animationValidators.end())
+                return validator->second(binding,value,state.ui);
+            return m_animationHandlers.contains(binding.kind)
+                ? Status::Ok()
+                : RestoreFailure("Timeline restore target has no runtime binding",
+                                 binding.target + "." + binding.property);
+        });
+    if (const Status timeline =
+            candidateTimeline.RestoreState(state.timelines, true);
+        !timeline)
+        return Result<PreparedRestore>::Failure(timeline.Diagnostics());
+    if (m_validateUIState) {
+        const Status ui = m_validateUIState(state.ui);
+        if (!ui) return Result<PreparedRestore>::Failure(ui.Diagnostics());
+    }
+    return Result<PreparedRestore>::Success(PreparedRestore{state, nowMs});
+}
+
+Status RuntimeSession::CommitRestore(PreparedRestore prepared) {
+    const GameState previous = CaptureState();
+    const Status restored = ApplyState(prepared.state, prepared.nowMs);
+    if (restored) return restored;
+    const Status rolledBack = ApplyState(previous, prepared.nowMs);
+    if (!rolledBack) {
+        diag::Diagnostic diagnostic{
+            .severity = diag::Severity::Fatal,
+            .code = "PXRUNTIME7312",
+            .category = "Runtime.Session",
+            .message = "Runtime restore failed and the previous session could not be recovered"};
+        diag::Emit(std::move(diagnostic));
+    }
+    return restored;
+}
+
 Status RuntimeSession::RestoreState(const GameState& state, const std::uint64_t nowMs) {
-    // Construct all fallible route state before mutating gameplay state.
-    if ((!state.routes.stack.empty() || !state.routes.modals.empty())) {
-        const Status routeStatus = m_routes.RestoreState(state.routes);
-        if (!routeStatus) return routeStatus;
-    }
-    for (const auto& clip : state.animationClips) {
-        const Status registered = m_timeline.RegisterOrReplace(clip);
-        if (!registered) return registered;
-    }
-    if (const Status timelineStatus = m_timeline.RestoreState(state.timelines);
-        !timelineStatus) {
-        return timelineStatus;
-    }
-    m_awaitingTimeline.reset();
-    for (const auto& playback : state.timelines)
-        if (playback.playing && playback.awaiting) { m_awaitingTimeline = playback.handle; break; }
+    auto prepared = PrepareRestore(state, nowMs);
+    return prepared ? CommitRestore(prepared.TakeValue())
+                    : Status::Fail(prepared.Diagnostics());
+}
+
+Status RuntimeSession::ApplyState(const GameState& state,
+                                  const std::uint64_t nowMs) {
+    if (const Status registered =
+            m_timeline.ReplaceRegisteredClips(state.animationClips);
+        !registered)
+        return registered;
+    std::vector<std::pair<std::string, vn::Value>> profileVariables;
+    for (const auto& [name, entry] : m_variables.Values())
+        if (entry.scope == vn::VariableScope::Profile)
+            profileVariables.emplace_back(name, entry.value.Clone());
     m_variables.Reset(false);
     for (const auto& [name, value] : state.typedVariables) {
-        m_variables.SetValue(name, value.Clone(), state.persistentVariables.contains(name)
-                                                   ? vn::VariableScope::Persistent
-                                                   : vn::VariableScope::SaveLocal);
+        m_variables.SetValue(name, value.Clone(), vn::VariableScope::Session);
     }
+    for (auto& [name, value] : profileVariables)
+        m_variables.SetValue(name, std::move(value), vn::VariableScope::Profile);
     if (const Status stageStatus = m_stage.RestoreState(state.stage); !stageStatus) {
         return stageStatus;
     }
@@ -445,24 +744,39 @@ Status RuntimeSession::RestoreState(const GameState& state, const std::uint64_t 
     }
     m_backlog.Clear();
     for (const auto& entry : state.backlog) {
-        m_backlog.Push(entry.speaker, entry.text, entry.voice, entry.isChoice);
+        m_backlog.Push(entry.speaker, entry.text, entry.voice, entry.isChoice,
+                       entry.sourceId, entry.operationId);
     }
     m_dialogue.RestoreState(state.dialogue);
     bool vmRestored = true;
-    if (!state.vm.scriptPath.empty() || !state.runtimeProgram.code.empty()) {
-        vmRestored = state.runtimeProgram.code.empty()
+    if (!state.vm.scriptPath.empty() || state.runtimeProgram) {
+        vmRestored = !state.runtimeProgram
             ? m_vm.RestoreState(state.vm, nowMs)
-            : m_vm.RestoreCompiledState(state.vm, state.runtimeProgram, nowMs);
+            : m_vm.RestoreCompiledState(state.vm, *state.runtimeProgram, nowMs);
     }
     if (!vmRestored) {
         return RestoreFailure("Scenario execution state could not be restored",
                               state.vm.scriptPath);
     }
     m_vm.OverrideCurrentBgm(state.vm.currentBgm);
+    m_runtimeProgramIdentity = state.runtimeProgram;
+    if (const Status routeStatus = m_routes.RestoreState(state.routes);
+        !routeStatus) return routeStatus;
     if (m_restoreUIState) {
         const Status uiStatus = m_restoreUIState(state.ui);
         if (!uiStatus) return uiStatus;
     }
+    // UI topology must be live before Timeline sampling applies UI/Text tracks.
+    if (const Status timelineStatus = m_timeline.RestoreState(state.timelines);
+        !timelineStatus) {
+        return timelineStatus;
+    }
+    m_awaitingTimeline.reset();
+    for (const auto& playback : state.timelines)
+        if (playback.playing && playback.awaiting) {
+            m_awaitingTimeline = playback.handle;
+            break;
+        }
     return Status::Ok();
 }
 

@@ -1,49 +1,94 @@
 {
-  "format": "PrismatiXUIScene",
-  "schemaRevision": 1,
-  "id": "90909090-9090-4090-8090-909090909090",
-  "revision": 13,
-  "name": "UnknownBehaviorScene",
-  "width": 1280,
-  "height": 720,
-  "rootId": "91919191-9191-4191-8191-919191919191",
-  "nodes": [
-    {
-      "id": "91919191-9191-4191-8191-919191919191",
-      "parentId": null,
-      "order": 0,
-      "kind": "control",
-      "name": "Root",
-      "visible": true,
-      "locked": false,
-      "layout": {"mode":"free","x":0,"y":0,"width":1280,"height":720,"anchorX":0,"anchorY":0,"pivotX":0,"pivotY":0,"margin":0,"alignment":"start","sizeRule":"fixed"},
-      "content": {"text":"","assetId":null},
-      "appearance": {"backgroundColor":"#101018","textColor":"#FFFFFF","opacity":1,"styleToken":null,"hoverBackgroundColor":null,"focusColor":null,"disabledOpacity":0.5},
-      "interaction": {"onClick":null},
-      "accessibility": {"label":"","role":"presentation"}
-    }
-  ],
-  "theme": [],
   "behaviorGraph": {
+    "groups": [],
+    "links": [],
     "nodes": [
       {
+        "arguments": {
+          "futureArgument": {
+            "resource": {
+              "uuid": "93939393-9393-4393-8393-939393939393"
+            }
+          }
+        },
         "id": "92929292-9292-4292-8292-929292929292",
         "kind": "vendor.removedNode",
-        "position": {"x":80,"y":120},
-        "properties": {"futureProperty":{"version":7,"values":[1,true,"three"]}},
-        "arguments": {"futureArgument":{"resource":{"uuid":"93939393-9393-4393-8393-939393939393"}}}
+        "position": {
+          "x": 80,
+          "y": 120
+        },
+        "properties": {
+          "futureProperty": {
+            "values": [
+              1,
+              true,
+              "three"
+            ],
+            "version": 7
+          }
+        }
       }
-    ],
-    "links": [],
-    "groups": []
+    ]
   },
   "behaviorTriggers": [
     {
+      "entryNodeId": "92929292-9292-4292-8292-929292929292",
       "id": "94949494-9494-4494-8494-949494949494",
       "nodeId": "91919191-9191-4191-8191-919191919191",
-      "signal": "clicked",
-      "entryNodeId": "92929292-9292-4292-8292-929292929292",
-      "reentry": "restart"
+      "reentry": "restart",
+      "signal": "clicked"
     }
-  ]
+  ],
+  "format": "PrismatiXUIScene",
+  "height": 720,
+  "id": "90909090-9090-4090-8090-909090909090",
+  "name": "UnknownBehaviorScene",
+  "nodes": [
+    {
+      "accessibilityLabel": "",
+      "accessibilityRole": "presentation",
+      "appearance": {
+        "backgroundColor": "#101018",
+        "disabledOpacity": 0.5,
+        "focusColor": null,
+        "hoverBackgroundColor": null,
+        "opacity": 1,
+        "styleToken": null,
+        "textColor": "#FFFFFF"
+      },
+      "assetId": null,
+      "bindings": {},
+      "id": "91919191-9191-4191-8191-919191919191",
+      "kind": "control",
+      "layout": {
+        "alignment": "start",
+        "anchorBottom": 0,
+        "anchorRight": 0,
+        "anchorX": 0,
+        "anchorY": 0,
+        "height": 720,
+        "margin": 0,
+        "mode": "free",
+        "pivotX": 0,
+        "pivotY": 0,
+        "sizeRule": "fixed",
+        "width": 1280,
+        "x": 0,
+        "y": 0
+      },
+      "locked": false,
+      "name": "Root",
+      "order": 0,
+      "parentId": null,
+      "runtimeProperties": {},
+      "text": "",
+      "visible": true
+    }
+  ],
+  "revision": 13,
+  "rootId": "91919191-9191-4191-8191-919191919191",
+  "schemaRevision": 2,
+  "theme": [],
+  "visualStateGroups": [],
+  "width": 1280
 }

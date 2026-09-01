@@ -1,7 +1,8 @@
 {
   "format": "PrismatiXSDKManifest",
   "schemaRevision": 2,
-  "sdkVersion": "0.1.0",
+  "sdkVersion": "0.2.0",
+  "nativeNamespace": "px::sdk::v0_2",
   "engineCommit": "@PRISMATIX_ENGINE_COMMIT@",
   "target": "@PRISMATIX_TARGET_TRIPLE@",
   "artifactSha256": "pending-finalization",
@@ -19,14 +20,7 @@
     "previewProtocol": "@PRISMATIX_PREVIEW_PROTOCOL_VERSION@",
     "previewSession": "@PRISMATIX_PREVIEW_SESSION_CONTRACT_REVISION@",
     "ui": "@PRISMATIX_UI_CONTRACT_REVISION@",
-    "studioUi": "@PRISMATIX_STUDIO_UI_COMPAT_CONTRACT_REVISION@",
     "uiTypeRegistry": "@PRISMATIX_UI_TYPE_REGISTRY_CONTRACT_REVISION@"
-  },
-  "deprecatedContracts": {
-    "studioUi": {
-      "replacement": "ui",
-      "removalSdkVersion": "0.3.0"
-    }
   },
   "contractHashes": {}
 }

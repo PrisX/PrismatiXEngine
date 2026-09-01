@@ -220,6 +220,7 @@ Status RegisterBuiltinUITypes() {
         return Status::Ok();
     Status combined;
     auto add = [&combined, &registry](TypeInfo type) {
+        type.sourceId = "PrismatiX.Builtin.UI";
         if (!type.designer) {
             if (const auto* metadata = BuiltinDesignerMetadata(type.name))
                 type.designer = *metadata;
@@ -317,6 +318,17 @@ Status RegisterBuiltinUITypes() {
     control.properties.push_back(std::move(focusMode));
     control.properties.push_back(StringProperty("tooltip", "Interaction", [](const Object& o) { return As<Control>(o)->Tooltip(); },
         [](Object& o, std::string v) { As<Control>(o)->SetTooltip(std::move(v)); return Status::Ok(); }));
+    control.properties.push_back(StringProperty("accessibilityLabel", "Accessibility", [](const Object& o) { return As<Control>(o)->AccessibilityLabel(); },
+        [](Object& o, std::string v) { As<Control>(o)->SetAccessibilityLabel(std::move(v)); return Status::Ok(); }));
+    control.properties.push_back(StringProperty("accessibilityRole", "Accessibility", [](const Object& o) { return As<Control>(o)->AccessibilityRole(); },
+        [](Object& o, std::string v) { As<Control>(o)->SetAccessibilityRole(std::move(v)); return Status::Ok(); }));
+    control.properties.push_back(StringProperty("accessibilityDescription", "Accessibility", [](const Object& o) { return As<Control>(o)->AccessibilityDescription(); },
+        [](Object& o, std::string v) { As<Control>(o)->SetAccessibilityDescription(std::move(v)); return Status::Ok(); }));
+    control.properties.push_back(IntegerProperty("accessibilityFocusOrder", "Accessibility", [](const Object& o) { return static_cast<std::int64_t>(As<Control>(o)->AccessibilityFocusOrder()); },
+        [](Object& o, std::int64_t v) {
+            if (v < -1000000 || v > 1000000) return TypeError("accessibilityFocusOrder is out of range");
+            As<Control>(o)->SetAccessibilityFocusOrder(static_cast<std::int32_t>(v)); return Status::Ok();
+        }));
     control.properties.push_back(Vec2Property("pivot", "Transform", [](const Object& o) { return As<Control>(o)->Pivot(); },
         [](Object& o, Vec2 v) { As<Control>(o)->SetPivot(v); return Status::Ok(); }));
     control.properties.push_back(Vec2Property("scale", "Transform", [](const Object& o) { return As<Control>(o)->Scale(); },
@@ -485,7 +497,9 @@ Status RegisterBuiltinUITypes() {
     lineEdit.signals.push_back({"textChanged", "文字變更", "Text content changed.", {{"text", VariantType::String}}});
     lineEdit.signals.push_back({"submitted", "送出", "Text was submitted.", {{"text", VariantType::String}}});add(std::move(lineEdit));
     TypeInfo rich{"RichTextLabel","Label","UI/Display",[]{return std::make_unique<RichTextLabel>();}};
-    rich.properties.push_back(StringProperty("markup","Content",[](const Object& o){return As<RichTextLabel>(o)->Markup();},[](Object& o,std::string v){As<RichTextLabel>(o)->SetMarkup(std::move(v));return Status::Ok();}));add(std::move(rich));
+    rich.properties.push_back(StringProperty("markup","Content",[](const Object& o){return As<RichTextLabel>(o)->Markup();},[](Object& o,std::string v){As<RichTextLabel>(o)->SetMarkup(std::move(v));return Status::Ok();}));
+    rich.properties.push_back(BoolProperty("vertical","Content",[](const Object& o){return As<RichTextLabel>(o)->Vertical();},[](Object& o,bool v){As<RichTextLabel>(o)->SetVertical(v);return Status::Ok();}));
+    auto verticalRows=NumberProperty("verticalRows","Content",[](const Object& o){return static_cast<double>(As<RichTextLabel>(o)->VerticalRows());},[](Object& o,double v){As<RichTextLabel>(o)->SetVerticalRows(static_cast<std::size_t>(std::max(0.0,v)));return Status::Ok();});verticalRows.editor.hasRange=true;verticalRows.editor.minimum=0;verticalRows.editor.maximum=4096;verticalRows.editor.step=1;rich.properties.push_back(std::move(verticalRows));add(std::move(rich));
     TypeInfo ninePatch{"NinePatchRect","Control","UI/Display",[]{return std::make_unique<NinePatchRect>();}};
     auto ninePatchPath=StringProperty("path","Content",[](const Object& o){return As<NinePatchRect>(o)->Path();},[](Object& o,std::string v){As<NinePatchRect>(o)->SetPath(std::move(v));return Status::Ok();});
     ninePatchPath.flags=ninePatchPath.flags|PropertyFlags::ResourcePath;ninePatchPath.editor.displayName="圖片";ninePatchPath.editor.resourceFilter="image";ninePatch.properties.push_back(std::move(ninePatchPath));

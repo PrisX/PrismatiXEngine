@@ -9,8 +9,8 @@ namespace px::vn {
 void VariableStore::SetValue(const std::string& name, Value value, const VariableScope scope) {
     if (name.empty()) return;
     m_typedValues[name] = {value.Clone(), scope};
-    if (scope == VariableScope::Persistent) m_persistent.insert(name);
-    else m_persistent.erase(name);
+    if (scope == VariableScope::Profile) m_profileKeys.insert(name);
+    else m_profileKeys.erase(name);
     if (const auto* integer = value.TryGet<std::int64_t>();
         integer && *integer >= (std::numeric_limits<int>::min)() &&
         *integer <= (std::numeric_limits<int>::max)()) {
@@ -18,6 +18,8 @@ void VariableStore::SetValue(const std::string& name, Value value, const Variabl
     } else {
         m_values.erase(name);
     }
+    if (scope == VariableScope::Profile && m_profileWrite)
+        m_profileWrite(name, m_typedValues.at(name).value);
 }
 
 const Value* VariableStore::GetValue(const std::string_view name) const {
@@ -32,13 +34,15 @@ Result<Value> VariableStore::Evaluate(const Expression& expression) const {
     });
 }
 
-void VariableStore::Set(const std::string& name, int value, bool persistent) {
-    SetValue(name, Value(value),
-             persistent ? VariableScope::Persistent : VariableScope::SaveLocal);
+void VariableStore::Set(const std::string& name, const int value,
+                        const VariableScope scope) {
+    SetValue(name, Value(value), scope);
 }
 
-void VariableStore::Add(const std::string& name, int delta, bool persistent) {
-    Set(name, Get(name) + delta, persistent || m_persistent.contains(name));
+void VariableStore::Add(const std::string& name, const int delta,
+                        const VariableScope scope) {
+    Set(name, Get(name) + delta,
+        m_profileKeys.contains(name) ? VariableScope::Profile : scope);
 }
 
 int VariableStore::Get(const std::string& name) const {
@@ -116,17 +120,17 @@ void VariableStore::Reset(bool keepPersistent) {
     if (!keepPersistent) {
         m_values.clear();
         m_typedValues.clear();
-        m_persistent.clear();
+        m_profileKeys.clear();
         return;
     }
     std::unordered_map<std::string, int> kept;
     std::unordered_map<std::string, VariableEntry> typedKept;
-    for (const std::string& key : m_persistent) {
+    for (const std::string& key : m_profileKeys) {
         if (auto it = m_values.find(key); it != m_values.end()) {
             kept[key] = it->second;
         }
         if (auto it = m_typedValues.find(key); it != m_typedValues.end()) {
-            typedKept.emplace(key, VariableEntry{it->second.value.Clone(), VariableScope::Persistent});
+            typedKept.emplace(key, VariableEntry{it->second.value.Clone(), VariableScope::Profile});
         }
     }
     m_values = std::move(kept);

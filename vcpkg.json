@@ -1,9 +1,13 @@
 {
   "name": "prismatix-engine",
-  "version": "1.0.0",
+  "version": "0.2.0",
   "dependencies": [
     "fmt",
     "sdl3",
+    {
+      "name": "sdl3-shadercross",
+      "host": true
+    },
     {
       "name": "sdl3-image",
       "features": ["png", "jpeg", "webp"]
@@ -17,6 +21,9 @@
       "features": ["mpg123", "libvorbis", "opusfile", "libflac"]
     },
     "nlohmann-json",
+    "utf8proc",
+    "fribidi",
+    "libunibreak",
     "spdlog",
     "mbedtls",
     "zstd",

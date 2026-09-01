@@ -1,8 +1,13 @@
 #include "Engine/Session/RuntimeIrAdapter.h"
 #include "Engine/VN/Commands/CommandRegistry.h"
 
+#include <algorithm>
 #include <cassert>
+#include <fstream>
 #include <iostream>
+#include <set>
+
+#include <nlohmann/json.hpp>
 
 namespace {
 
@@ -283,6 +288,77 @@ int main() {
         !check(parityProgram.code[5].Get("operation") == "modal", "route operation")) {
         return 1;
     }
+
+    // Keep this list mechanically tied to the published schema.  Adding a
+    // RuntimeIR kind without an executable lowering case must make CI red.
+    std::ifstream schemaInput(PRISMATIX_RUNTIME_IR_SCHEMA_PATH,
+                              std::ios::binary);
+    assert(schemaInput.good());
+    nlohmann::json schema;
+    schemaInput >> schema;
+    std::set<std::string> schemaKinds;
+    for (const auto& kind : schema.at("properties").at("operations")
+                                .at("items").at("properties").at("kind")
+                                .at("enum")) {
+        schemaKinds.insert(kind.get<std::string>());
+    }
+    const std::set<std::string> exercisedKinds{
+        "scene",          "fragment",       "callFragment", "return",
+        "endStory",       "dialogue",       "narration",    "choiceOption",
+        "background",     "showCharacter",  "hideCharacter", "voice",
+        "bgm",            "soundEffect",    "setVariable",  "condition",
+        "else",           "endCondition",   "label",        "jump",
+        "wait",           "timeline",       "effect",       "ui",
+        "customNode",     "camera",
+    };
+    assert(schemaKinds == exercisedKinds);
+
+    px::sdk::RuntimeIrDocument allKindsDocument;
+    allKindsDocument.documentId = "all-runtime-kinds";
+    allKindsDocument.committedRevision = 1;
+    allKindsDocument.operations = {
+        Operation("all-scene", "scene", {{"title", "Conformance"}}),
+        Operation("all-dialogue", "dialogue", {{"speaker", "A"}, {"text", "D"}}),
+        Operation("all-narration", "narration", {{"text", "N"}}),
+        Operation("all-choice", "choiceOption", {{"text", "Continue"}, {"target", "end"}}),
+        Operation("all-background", "background", {{"asset", "bg.png"}}),
+        Operation("all-show", "showCharacter", {{"character", "hero"}, {"sprite", "hero.png"}}),
+        Operation("all-hide", "hideCharacter", {{"character", "hero"}}),
+        Operation("all-voice", "voice", {{"asset", "voice.ogg"}}),
+        Operation("all-bgm", "bgm", {{"asset", "music.ogg"}}),
+        Operation("all-se", "soundEffect", {{"asset", "click.wav"}}),
+        Operation("all-set", "setVariable", {{"name", "flag"}, {"value", "true"}}),
+        Operation("all-if", "condition", {{"expression", "true"}}),
+        Operation("all-if-body", "narration", {{"text", "yes"}}),
+        Operation("all-else", "else"),
+        Operation("all-else-body", "narration", {{"text", "no"}}),
+        Operation("all-endif", "endCondition"),
+        Operation("all-label", "label", {{"target", "end"}}),
+        Operation("all-jump", "jump", {{"target", "end"}}),
+        Operation("all-wait", "wait", {{"duration", "1ms"}}),
+        Operation("all-timeline-asset", "timeline", {{"timeline", "intro.pxanim"}}),
+        Operation("all-timeline-inline", "timeline", {{"mode", "animate"}, {"target", "hero"}, {"x", "4"}, {"duration", "1ms"}}),
+        Operation("all-effect", "effect", {{"value", "fade"}}),
+        Operation("all-ui", "ui", {{"route", "title"}, {"operation", "replace"}}),
+        Operation("all-custom", "customNode", {{"type", "nvl"}, {"value", "{}"}}),
+        Operation("all-camera", "camera", {{"value", "pan"}}),
+        Operation("all-call", "callFragment", {{"target", "fragment"}}),
+        Operation("all-end-story", "endStory"),
+        Operation("all-fragment", "fragment", {{"target", "fragment"}}),
+        Operation("all-return", "return"),
+    };
+    const px::vn::Program allKindsProgram =
+        px::CompileRuntimeIr(allKindsDocument);
+    for (const auto& error : allKindsProgram.errors) std::cerr << error << '\n';
+    assert(allKindsProgram.errors.empty());
+    assert(std::count_if(allKindsProgram.code.begin(), allKindsProgram.code.end(),
+                         [](const auto& command) {
+                             return command.type == "screen_effect";
+                         }) == 2);
+    assert(std::none_of(allKindsProgram.code.begin(), allKindsProgram.code.end(),
+                        [](const auto& command) {
+                            return command.type == "camera";
+                        }));
 
     px::sdk::RuntimeIrDocument unknownDocument;
     unknownDocument.documentId = "unknown-operation";

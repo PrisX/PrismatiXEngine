@@ -4,6 +4,9 @@
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/Progression/GlobalProfileStore.h"
 #include "Engine/Resources/TypedDocument.h"
+#include "Engine/SDK/Packager.h"
+#include "Engine/Package/PackageManifest.h"
+#include "Engine/SDK/SourceMap.h"
 #include "Engine/Support/Logger.h"
 #include "Engine/UI/Widgets.h"
 #include "Engine/UI/Startup/SplashTypes.h"
@@ -17,6 +20,7 @@
 #include <fstream>
 #include <filesystem>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <utility>
 
@@ -27,11 +31,117 @@ const std::string kSaveKey = "prismatix-demo-secret";
 constexpr int kAutoSaveSlot = -1;
 
 std::optional<std::string> SafeVfsRelativePath(const std::string& value) {
-    const std::filesystem::path path(value);
-    if (path.empty() || path.is_absolute()) return std::nullopt;
-    for (const auto& part : path)
-        if (part == "..") return std::nullopt;
-    return path.generic_string();
+    return io::VFS::NormalizeVirtualPath(value);
+}
+
+std::string LocaleRuntimeIrPath(const std::string_view locale) {
+    return "Runtime/Locales/" + std::string(locale) + "/main.pxir";
+}
+
+std::string LocaleSourceMapPath(const std::string_view locale) {
+    return "Runtime/Locales/" + std::string(locale) + "/main.pxmap";
+}
+
+const vn::Command* FindOperation(const vn::Program& program,
+                                 const std::string_view operationId) {
+    const auto found = std::ranges::find_if(
+        program.code, [operationId](const vn::Command& command) {
+            return command.operationId == operationId;
+        });
+    return found == program.code.end() ? nullptr : &*found;
+}
+
+std::string LocalizedCommandText(
+    const vn::Command& command, const std::string_view field,
+    const std::unordered_map<std::string, std::string>& translations,
+    const vn::VariableStore& variables) {
+    const std::string textId = command.Get("textId", command.sourceId);
+    const auto translated = translations.find(textId);
+    return variables.Substitute(translated == translations.end()
+                                    ? command.Get(field)
+                                    : translated->second);
+}
+
+bool LocaleProgramsAlign(const vn::Program& current,
+                         const vn::Program& candidate) {
+    if (current.documentId != candidate.documentId ||
+        current.code.size() != candidate.code.size())
+        return false;
+    for (std::size_t index = 0; index < current.code.size(); ++index) {
+        const auto& before = current.code[index];
+        const auto& after = candidate.code[index];
+        if (before.operationId != after.operationId ||
+            before.sourceId != after.sourceId || before.type != after.type)
+            return false;
+    }
+    return true;
+}
+
+bool RelocalizeRuntimeState(
+    RuntimeSession::GameState& state,
+    std::shared_ptr<const vn::Program> candidate,
+    const std::string& candidatePath,
+    const std::unordered_map<std::string, std::string>& translations,
+    const vn::VariableStore& currentVariables) {
+    if (!state.runtimeProgram || !candidate ||
+        !LocaleProgramsAlign(*state.runtimeProgram, *candidate))
+        return false;
+
+    vn::VariableStore variables;
+    for (const auto& [name, entry] : currentVariables.Values())
+        if (entry.scope == vn::VariableScope::Profile)
+            variables.SetValue(name, entry.value.Clone(), entry.scope);
+    for (const auto& [name, value] : state.typedVariables)
+        variables.SetValue(name, value.Clone(), vn::VariableScope::Session);
+
+    for (auto& choice : state.vm.choices) {
+        const vn::Command* command = FindOperation(*candidate,
+                                                   choice.operationId);
+        if (!command || command->type != "choice") return false;
+        choice.text = LocalizedCommandText(*command, "text", translations,
+                                           variables);
+    }
+    for (auto& entry : state.backlog) {
+        if (entry.operationId.empty()) continue;  // pre-0.2.0 development save
+        const vn::Command* command = FindOperation(*candidate,
+                                                   entry.operationId);
+        if (!command) return false;
+        if (entry.isChoice && command->type == "choice") {
+            entry.text = LocalizedCommandText(*command, "text", translations,
+                                              variables);
+        } else if (!entry.isChoice && command->type == "say") {
+            entry.speaker = command->Get("speaker");
+            entry.text = LocalizedCommandText(*command, "value", translations,
+                                              variables);
+        } else {
+            return false;
+        }
+    }
+
+    int current = state.vm.pc;
+    if ((state.vm.state == vn::VMState::WaitingClick ||
+         state.vm.state == vn::VMState::WaitingTimer ||
+         state.vm.state == vn::VMState::WaitingVideo ||
+         state.vm.state == vn::VMState::WaitingExternal) &&
+        current > 0)
+        --current;
+    if (current >= 0 && current < static_cast<int>(candidate->code.size())) {
+        const auto& command = candidate->code[static_cast<std::size_t>(current)];
+        if (command.type == "say" && !state.dialogue.state.fullText.empty()) {
+            vn::Dialogue localizedDialogue;
+            localizedDialogue.RestoreState(state.dialogue);
+            const std::string speaker = command.Get("speaker",
+                                                    state.dialogue.state.speaker);
+            localizedDialogue.Relocalize(
+                speaker, LocalizedCommandText(command, "value", translations,
+                                              variables));
+            state.dialogue = localizedDialogue.CaptureState();
+            state.vm.speaker = speaker;
+        }
+    }
+    state.runtimeProgram = std::move(candidate);
+    state.vm.scriptPath = candidatePath;
+    return true;
 }
 
 int ScancodeFromName(const std::string& name) {
@@ -50,16 +160,18 @@ int ScancodeFromName(const std::string& name) {
     return SDL_SCANCODE_UNKNOWN;
 }
 
-std::optional<resource::TypedDocument> LoadTypedFile(const std::filesystem::path& path) {
-    std::ifstream stream(path,std::ios::binary);if(!stream)return std::nullopt;std::ostringstream text;text<<stream.rdbuf();
-    auto parsed=resource::ParseTypedDocument(text.str(),path.string());if(!parsed){for(const auto& d:parsed.Diagnostics())diag::Emit(d);return std::nullopt;}return std::move(parsed.Value());
+std::optional<std::string> ReadBoundedTextFile(const std::filesystem::path& path,
+                                               const std::uintmax_t limit) {
+    std::error_code error;
+    const auto size = std::filesystem::file_size(path, error);
+    if (error || size == 0 || size > limit) return std::nullopt;
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) return std::nullopt;
+    std::string text(static_cast<std::size_t>(size), '\0');
+    stream.read(text.data(), static_cast<std::streamsize>(text.size()));
+    if (!stream) return std::nullopt;
+    return text;
 }
-std::string DocText(const resource::TypedDocument& document,const char* key,std::string fallback={}){const auto it=document.properties.find(key);if(it!=document.properties.end())if(const auto* value=it->second.TryGet<std::string>())return *value;return fallback;}
-int DocInt(const resource::TypedDocument& document,const char* key,int fallback){const auto it=document.properties.find(key);if(it!=document.properties.end())if(const auto* value=it->second.TryGet<std::int64_t>())return static_cast<int>(*value);return fallback;}
-bool DocBool(const resource::TypedDocument& document,const char* key,bool fallback){const auto it=document.properties.find(key);if(it!=document.properties.end())if(const auto* value=it->second.TryGet<bool>())return *value;return fallback;}
-std::vector<std::string> DocArchives(const resource::TypedDocument& document){std::vector<std::string> result;const auto found=document.properties.find("archives");if(found==document.properties.end()||!found->second.AsArray())return result;for(const auto& value:*found->second.AsArray()){const auto* object=value.AsObject();if(!object)return {};const auto file=object->find("file"),group=object->find("group"),optional=object->find("optional");const auto* path=file!=object->end()?file->second.TryGet<std::string>():nullptr;const auto* id=group!=object->end()?group->second.TryGet<std::string>():nullptr;const auto* optionalValue=optional!=object->end()?optional->second.TryGet<bool>():nullptr;if(!path||path->empty()||!id||id->empty()||!optionalValue)return {};result.push_back(*path);}return result;}
-std::unordered_map<std::string,std::string> DocRoutes(const resource::TypedDocument& document){std::unordered_map<std::string,std::string> result;const auto found=document.properties.find("routes");if(found==document.properties.end()||!found->second.AsArray())return result;for(const auto& value:*found->second.AsArray()){const auto* object=value.AsObject();if(!object)continue;const auto id=object->find("id"),scene=object->find("scene");const auto* routeId=id!=object->end()?id->second.TryGet<std::string>():nullptr;const auto* reference=scene!=object->end()?scene->second.TryGet<ResourceRefValue>():nullptr;if(routeId&&reference&&!reference->id.Empty()&&!reference->lastKnownPath.empty())result[*routeId]=reference->lastKnownPath;}return result;}
-std::optional<std::vector<ui::startup::SplashScreenEntry>> DocSplashes(const resource::TypedDocument& document){const auto found=document.properties.find("splashes");if(found==document.properties.end())return std::vector<ui::startup::SplashScreenEntry>{};auto parsed=ui::startup::ParseSplashSequence(found->second,"boot config");if(!parsed){for(const auto& diagnostic:parsed.Diagnostics())diag::Emit(diagnostic);return std::nullopt;}return parsed.TakeValue();}
 std::optional<Variant> JsonVariant(const nlohmann::json& value, const int depth = 0) {
     if (depth > 32) return std::nullopt;
     if (value.is_null()) return Variant{};
@@ -92,50 +204,320 @@ std::optional<Variant> JsonVariant(const nlohmann::json& value, const int depth 
 PlayerApp::Boot PlayerApp::LoadBootConfig() {
     Boot boot;
     boot.config.title = "PrismatiX Player";
-    boot.config.mountDirs = { "." };
-
-    if (auto package=LoadTypedFile("game.pxpackage")) {
-        if(package->kind==resource::DocumentKind::Resource&&package->type=="GamePackage"){
-            boot.packaged = true;
-            boot.config.title = DocText(*package,"title",boot.config.title);
-            boot.config.mountDirs.clear();
-            boot.config.mountArchives = DocArchives(*package);
-            if(boot.config.mountArchives.empty()){diag::Emit(diag::Diagnostic{.severity=diag::Severity::Fatal,.code="PXPLAYER5005",.category="Player.Boot",.message="Package archive list is missing or invalid"});return boot;}
-            if(DocBool(*package,"encrypt",true))boot.config.archiveKey=DocText(*package,"key");
-            boot.config.width=boot.config.logicalWidth=DocInt(*package,"gameWidth",1280);
-            boot.config.height=boot.config.logicalHeight=DocInt(*package,"gameHeight",720);
-            boot.startScript=DocText(*package,"startScript",boot.startScript);
-            boot.startRoute=DocText(*package,"startRoute",boot.startRoute);boot.routeScenes=DocRoutes(*package);const auto splashes=DocSplashes(*package);if(!splashes)return boot;boot.splashes=*splashes;
-            boot.saveSecret=DocText(*package,"key");
-            if (boot.saveSecret.empty()) boot.saveSecret = boot.config.title;
-            boot.valid = true;
-            PX_LOG_INFO("Packaged build: mounting {} content group(s)", boot.config.mountArchives.size());
-            return boot;
-        }
+    boot.config.mountDirs.clear();
+    const auto text = ReadBoundedTextFile("Package/manifest.json", 4 * 1024 * 1024);
+    if (!text) {
+        diag::Emit(diag::Diagnostic{.severity = diag::Severity::Fatal,
+                                    .code = "PXPLAYER5002",
+                                    .category = "Player.Boot",
+                                    .message = "Package/manifest.json is missing or unreadable"});
+        return boot;
     }
-
-    if(auto project=LoadTypedFile("project.pxproject")){
-        if(project->kind==resource::DocumentKind::Project&&project->type=="PrismatiXProject"){
-            boot.config.title=DocText(*project,"name",boot.config.title);
-            boot.config.width=boot.config.logicalWidth=DocInt(*project,"gameWidth",1280);
-            boot.config.height=boot.config.logicalHeight=DocInt(*project,"gameHeight",720);
-            boot.startScript=DocText(*project,"startScript",boot.startScript);
-            boot.startRoute=DocText(*project,"startRoute",boot.startRoute);boot.routeScenes=DocRoutes(*project);const auto splashes=DocSplashes(*project);if(!splashes)return boot;boot.splashes=*splashes;
-            boot.saveSecret=DocText(*project,"encryptKey",boot.config.title);
-            PX_LOG_INFO("Dev run: project '{}', entry '{}', route '{}'", boot.config.title,
-                        boot.startScript, boot.startRoute);
-            boot.valid = true;
+    const auto parsed = sdk::detail::ParsePackageManifest(*text);
+    if (!parsed.Valid()) {
+        for (const auto& diagnostic : parsed.diagnostics) {
+            diag::Emit(diag::Diagnostic{.severity = diag::Severity::Fatal,
+                                        .code = diagnostic.code,
+                                        .category = "Player.Boot",
+                                        .message = diagnostic.message});
         }
-    } else {
-        diag::Diagnostic d{.severity=diag::Severity::Fatal,.code="PXPLAYER5002",.category="Player.Boot",.message="No game.pxpackage or project.pxproject was found."};diag::Emit(d);
+        return boot;
     }
+    const auto& package = parsed.manifest;
+    boot.packaged = true;
+    boot.config.title = package.title;
+    boot.gameId = package.gameId;
+    boot.packageFingerprint = package.packageFingerprint;
+    boot.contentVersion = package.contentVersion;
+    boot.saveVersion = package.saveVersion;
+    for (const auto& migration : package.saveMigrations) {
+        boot.saveMigrations.push_back(
+            {migration.id, migration.fromContentVersion,
+             migration.fromSaveVersion, migration.toContentVersion,
+             migration.toSaveVersion, migration.asset});
+    }
+    boot.extensions = package.extensions;
+    boot.graphicsTier = package.graphicsTier;
+    boot.config.graphicsTier = package.graphicsTier;
+    for (const auto& effect : package.customEffects) {
+        graphics::CustomEffectDescriptor descriptor;
+        descriptor.id = effect.id;
+        descriptor.targetLayer = effect.targetLayer;
+        descriptor.samplerCount = effect.samplerCount;
+        descriptor.uniformBufferCount = effect.uniformBufferCount;
+        for (const auto& uniform : effect.uniforms)
+            descriptor.uniforms.push_back(
+                {uniform.name, uniform.type, uniform.slot,
+                 uniform.defaultValue, uniform.minimum, uniform.maximum});
+        for (const auto& artifact : effect.artifacts)
+            descriptor.artifacts.push_back(
+                {artifact.format, artifact.asset, artifact.fingerprint});
+        boot.config.customEffects.push_back(std::move(descriptor));
+    }
+    for (const auto& archive : package.archives)
+        boot.config.mountArchives.push_back(archive.file);
+    boot.config.archiveKey = package.archiveKey;
+    boot.config.width = boot.config.logicalWidth = package.width;
+    boot.config.height = boot.config.logicalHeight = package.height;
+    boot.startScript = package.startRuntimeIr;
+    boot.sourceMap = package.sourceMap;
+    boot.startRoute = package.startRoute;
+    for (const auto& route : package.routes)
+        boot.routeScenes.emplace(route.id, route.scene);
+    boot.saveSecret = package.archiveKey.empty() ? package.packageFingerprint
+                                                 : package.archiveKey;
+    boot.valid = true;
+    PX_LOG_INFO("Packaged build: mounting {} content group(s)",
+                boot.config.mountArchives.size());
     return boot;
+}
+
+bool PlayerApp::LoadLocale(std::string locale, const bool refreshPresentation) {
+    if (std::find(m_supportedLocales.begin(), m_supportedLocales.end(), locale) ==
+        m_supportedLocales.end()) {
+        diag::Emit(diag::Diagnostic{.severity = diag::Severity::Error,
+                                    .code = "PXPLAYER5013",
+                                    .category = "Player.Localization",
+                                    .message = "Requested locale is not supported",
+                                    .details = locale});
+        return false;
+    }
+
+    const std::string localePath = "Content/Localization/" + locale + ".json";
+    const auto langText = m_runtime.VFS().ReadText(localePath);
+    if (!langText) {
+        diag::Emit(diag::Diagnostic{.severity = diag::Severity::Error,
+                                    .code = "PXPLAYER5012",
+                                    .category = "Player.Localization",
+                                    .message = "Selected locale document is missing",
+                                    .details = localePath});
+        return false;
+    }
+    const auto document = nlohmann::json::parse(*langText, nullptr, false);
+    if (document.is_discarded() || !document.is_object() ||
+        document.value("format", std::string{}) != "PrismatiXLocale" ||
+        document.value("schemaRevision", 0) != 2 ||
+        document.value("locale", std::string{}) != locale ||
+        !document.contains("strings") || !document["strings"].is_object()) {
+        diag::Emit(diag::Diagnostic{.severity = diag::Severity::Error,
+                                    .code = "PXPLAYER5010",
+                                    .category = "Player.Localization",
+                                    .message = "Canonical locale document is invalid",
+                                    .details = localePath});
+        return false;
+    }
+
+    std::unordered_map<std::string, std::string> candidate;
+    for (auto it = document["strings"].begin(); it != document["strings"].end(); ++it) {
+        if (!it.value().is_string()) {
+            diag::Emit(diag::Diagnostic{.severity = diag::Severity::Error,
+                                        .code = "PXPLAYER5011",
+                                        .category = "Player.Localization",
+                                        .message = "Locale strings must contain only text values",
+                                        .details = it.key()});
+            return false;
+        }
+        candidate.emplace(it.key(), it.value().get<std::string>());
+    }
+    std::vector<std::string> fontChain;
+    if (const auto fonts = document.find("fontChain");
+        fonts != document.end()) {
+        if (!fonts->is_array() || fonts->size() > 16) {
+            diag::Emit(diag::Diagnostic{.severity = diag::Severity::Error,
+                                        .code = "PXPLAYER5014",
+                                        .category = "Player.Localization",
+                                        .message = "Locale fontChain must be a bounded array",
+                                        .details = localePath});
+            return false;
+        }
+        std::set<std::string> uniqueFonts;
+        for (const auto& value : *fonts) {
+            if (!value.is_string()) {
+                diag::Emit(diag::Diagnostic{
+                    .severity = diag::Severity::Error,
+                    .code = "PXPLAYER5015",
+                    .category = "Player.Localization",
+                    .message = "Locale fallback font entries must be paths",
+                    .details = localePath});
+                return false;
+            }
+            const auto safe = SafeVfsRelativePath(value.get<std::string>());
+            if (!safe || (!safe->ends_with(".ttf") &&
+                          !safe->ends_with(".otf")) ||
+                !m_runtime.VFS().Exists(*safe) ||
+                !uniqueFonts.insert(*safe).second) {
+                diag::Emit(diag::Diagnostic{.severity = diag::Severity::Error,
+                                            .code = "PXPLAYER5015",
+                                            .category = "Player.Localization",
+                                            .message = "Locale fallback font is missing, unsafe, duplicated, or unsupported",
+                                            .details = value.is_string() ? value.get<std::string>() : localePath});
+                return false;
+            }
+            fontChain.push_back(*safe);
+        }
+    }
+
+    const std::string runtimePath = LocaleRuntimeIrPath(locale);
+    const std::string sourceMapPath = LocaleSourceMapPath(locale);
+    const auto sourceMapText = m_runtime.VFS().ReadText(sourceMapPath);
+    auto runtimeProgram = m_session->PrepareRuntimeIr(runtimePath);
+    if (!runtimeProgram || !sourceMapText) {
+        diag::Emit(diag::Diagnostic{
+            .severity = diag::Severity::Error,
+            .code = "PXPLAYER5016",
+            .category = "Player.Localization",
+            .message = "Locale-specific RuntimeIR or source map is missing",
+            .details = runtimePath});
+        return false;
+    }
+    const auto parsedSourceMap = sdk::ParseSourceMap(*sourceMapText);
+    if (!parsedSourceMap.Valid() ||
+        parsedSourceMap.document.documentId != runtimeProgram->documentId) {
+        diag::Emit(diag::Diagnostic{
+            .severity = diag::Severity::Error,
+            .code = "PXPLAYER5017",
+            .category = "Player.Localization",
+            .message = "Locale-specific source map is invalid or mismatched",
+            .details = sourceMapPath});
+        return false;
+    }
+
+    std::optional<RuntimeSession::PreparedRestore> preparedRuntime;
+    std::vector<vn::BacklogEntry> localizedNvl;
+    std::deque<RollbackEntry> localizedRollback = m_rollback;
+    if (m_appState == AppState::Game && m_session->RuntimeProgramIdentity()) {
+        auto state = m_session->CaptureState();
+        if (!RelocalizeRuntimeState(state, runtimeProgram, runtimePath,
+                                    candidate, m_session->Variables())) {
+            diag::Emit(diag::Diagnostic{
+                .severity = diag::Severity::Error,
+                .code = "PXPLAYER5018",
+                .category = "Player.Localization",
+                .message = "Localized Story topology does not match the running Story",
+                .details = runtimePath});
+            return false;
+        }
+        auto nvlState = state;
+        nvlState.backlog = m_nvlLines;
+        if (!RelocalizeRuntimeState(nvlState, runtimeProgram, runtimePath,
+                                    candidate, m_session->Variables()))
+            return false;
+        localizedNvl = std::move(nvlState.backlog);
+        for (auto& rollback : localizedRollback) {
+            auto& snapshot = rollback.snap;
+            RuntimeSession::GameState rollbackState;
+            rollbackState.vm = snapshot.vm;
+            rollbackState.dialogue = snapshot.dialogue;
+            rollbackState.typedVariables = snapshot.typedVariables;
+            rollbackState.stage = snapshot.stage;
+            rollbackState.audio = snapshot.audio;
+            rollbackState.backlog = snapshot.backlog;
+            rollbackState.routes = snapshot.routes;
+            rollbackState.timelines = snapshot.timelines;
+            rollbackState.animationClips = snapshot.animationClips;
+            rollbackState.ui = snapshot.ui;
+            rollbackState.runtimeProgram = snapshot.runtimeProgram;
+            if (!RelocalizeRuntimeState(rollbackState, runtimeProgram,
+                                        runtimePath, candidate,
+                                        m_session->Variables())) {
+                diag::Emit(diag::Diagnostic{
+                    .severity = diag::Severity::Error,
+                    .code = "PXPLAYER5019",
+                    .category = "Player.Localization",
+                    .message = "Rollback history cannot be mapped to the requested locale",
+                    .details = snapshot.anchor.operationId});
+                return false;
+            }
+            snapshot.vm = rollbackState.vm;
+            snapshot.dialogue = rollbackState.dialogue;
+            snapshot.backlog = rollbackState.backlog;
+            snapshot.runtimeProgram = rollbackState.runtimeProgram;
+            snapshot.scriptPath = runtimePath;
+            snapshot.pc = rollbackState.vm.pc;
+            auto rollbackNvl = rollbackState;
+            rollbackNvl.backlog = snapshot.nvlLines;
+            if (!RelocalizeRuntimeState(rollbackNvl, runtimeProgram,
+                                        runtimePath, candidate,
+                                        m_session->Variables()))
+                return false;
+            snapshot.nvlLines = std::move(rollbackNvl.backlog);
+        }
+        auto prepared = m_session->PrepareRestore(
+            state, m_runtime.GetClock().NowMs());
+        if (!prepared) {
+            for (const auto& diagnostic : prepared.Diagnostics())
+                diag::Emit(diagnostic);
+            return false;
+        }
+        preparedRuntime = prepared.TakeValue();
+    }
+
+    if (preparedRuntime &&
+        !m_session->CommitRestore(std::move(*preparedRuntime)))
+        return false;
+    // Parsing was completed before the runtime transaction, so this commit
+    // cannot expose a half-switched program/source-map pair.
+    m_session->CommitSourceMap(parsedSourceMap.document, sourceMapPath);
+
+    m_langTable = std::move(candidate);
+    m_settings.language = std::move(locale);
+    m_script = runtimePath;
+    if (!localizedNvl.empty() || m_nvlLines.empty())
+        m_nvlLines = std::move(localizedNvl);
+    m_rollback = std::move(localizedRollback);
+    m_runtime.Renderer().SetTextLocale(m_settings.language,
+                                       std::move(fontChain));
+    // Locale and font-chain changes invalidate both render and measurement
+    // layouts before the next UI transaction.
+    m_ui.SetTextRenderer(&m_runtime.Renderer());
+    m_session->VM().SetTextFilter(
+        [this](const std::string& textId, const std::string& fallback) {
+            const auto found = m_langTable.find(textId);
+            return found == m_langTable.end() ? fallback : found->second;
+        });
+    PX_LOG_INFO("Localization: {} entries for '{}'", m_langTable.size(),
+                m_settings.language);
+
+    if (!refreshPresentation) return true;
+    switch (m_ui.CurrentScreen()) {
+        case ui::GalgameUI::Screen::HUD:
+            (void)m_ui.ShowHUD(DialogueUI());
+            break;
+        case ui::GalgameUI::Screen::Backlog:
+            (void)m_ui.ShowBacklog(BacklogItems());
+            break;
+        case ui::GalgameUI::Screen::Save:
+            (void)m_ui.ShowSaveLoad(true, SaveItems(true));
+            break;
+        case ui::GalgameUI::Screen::Load:
+            (void)m_ui.ShowSaveLoad(false, SaveItems(false));
+            break;
+        case ui::GalgameUI::Screen::Gallery:
+            (void)m_ui.ShowGallery(GalleryItems());
+            break;
+        case ui::GalgameUI::Screen::Settings:
+            (void)m_ui.ShowSettings(SettingsUI());
+            break;
+        case ui::GalgameUI::Screen::Title:
+            (void)m_ui.ShowTitle();
+            break;
+        case ui::GalgameUI::Screen::Video:
+            break;
+    }
+    return true;
 }
 
 bool PlayerApp::Init(int argc, char* argv[]) {
     m_boot = LoadBootConfig();
     if (!m_boot.valid) return false;
     if (!m_runtime.Init(m_boot.config)) {
+        if (m_boot.graphicsTier == "gpu-effects")
+            diag::Emit(diag::Diagnostic{
+                .severity = diag::Severity::Fatal,
+                .code = "PXPLAYER5010",
+                .category = "Player.Graphics",
+                .message = "The required SDL_GPU effects tier could not initialize",
+                .details = "The device must support D3D12, Metal, or Vulkan and a packaged shader format"});
         PX_LOG_CRITICAL("Failed to initialize runtime.");
         return false;
     }
@@ -162,6 +544,15 @@ bool PlayerApp::Init(int argc, char* argv[]) {
 
     m_session = std::make_unique<RuntimeSession>(RuntimeSession::Services{
         m_runtime.VFS(), m_runtime.Audio(), m_runtime.Renderer(), m_runtime.Assets()});
+    m_ui.SetTextRenderer(&m_runtime.Renderer());
+    if (const Status sourceMap = m_session->LoadSourceMap(m_boot.sourceMap);
+        !sourceMap) {
+        return false;
+    }
+    m_session->Variables().SetProfileWriteHandler(
+        [this](const std::string_view name, const vn::Value& value) {
+            m_profile.SetVariable(std::string(name), value.Clone());
+        });
     m_ui.SetBehaviorVariableAccess(
         [this](const std::string_view name)->std::optional<Variant>{
             const auto* value=m_session->Variables().GetValue(name);
@@ -169,7 +560,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         },
         [this](const std::string_view name,const Variant& value){
             m_session->Variables().SetValue(std::string(name),value.Clone(),
-                                            vn::VariableScope::SaveLocal);
+                                            vn::VariableScope::Session);
             return Status::Ok();
         });
     m_ui.SetExternalAnimationServices(
@@ -177,8 +568,9 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         [this](const std::uint64_t handle){return m_session->Timeline().Playing(handle);});
     m_ui.SetControlRuntimeConfigurator([this](ui::Control& control){auto* rectangle=dynamic_cast<ui::VideoRect*>(&control);if(!rectangle)return;auto player=std::make_shared<video::VideoPlayer>(m_runtime.Renderer().Handle(),m_runtime.VFS());rectangle->SetPlayback({[player](const std::string_view path){return player->Open(std::string(path));},[player]{player->Close();},[player](const float delta){player->Update(delta);},[player]{return player->Playing();},[player]{return player->Texture();},[player]{return Vec2{static_cast<float>(player->Width()),static_cast<float>(player->Height())};}});});
     m_session->SetUIStateHandler(
-        [this] { return m_ui.CaptureRuntimeState(); },
-        [this](const ui::UIRuntimeState& state) { return m_ui.RestoreRuntimeState(state); });
+        [this] { return m_ui.CaptureGameplayRuntimeState(); },
+        [this](const ui::UIRuntimeState& state) { return m_ui.RestoreRuntimeState(state); },
+        [this](const ui::UIRuntimeState& state) { return m_ui.ValidateRuntimeState(state); });
     if (const auto projectText=m_runtime.VFS().ReadText("project.pxproject")) {
         const auto project=nlohmann::json::parse(*projectText,nullptr,false);
         if(!project.is_discarded()&&project.is_object()&&
@@ -236,23 +628,23 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_session->VM().SetDefaultTextSpeed(m_settings.textSpeedMs);
     PX_LOG_DEBUG("Player boot: VN runtime constructed");
 
-    // Localization remains a content table; UI resources themselves are fully typed.
-    if (auto langText = m_runtime.VFS().ReadText("Content/Localization/" + m_settings.language + ".json")) {
-        nlohmann::json j = nlohmann::json::parse(*langText, nullptr, false);
-        if (!j.is_discarded() && j.is_object()) {
-            for (auto it = j.begin(); it != j.end(); ++it) {
-                if (it.value().is_object()&&it.value().contains("translation")&&it.value()["translation"].is_string()) m_langTable[it.key()] = it.value()["translation"].get<std::string>();
+    // Canonical locale documents are the only translation authority.
+    m_supportedLocales.clear();
+    if (const auto projectText = m_runtime.VFS().ReadText("project.pxproject")) {
+        const auto project = nlohmann::json::parse(*projectText, nullptr, false);
+        if (!project.is_discarded() && project.is_object()) {
+            m_defaultLocale = project.value("defaultLocale", m_defaultLocale);
+            const auto locales = project.find("supportedLocales");
+            if (locales != project.end() && locales->is_array()) {
+                for (const auto& locale : *locales)
+                    if (locale.is_string()) m_supportedLocales.push_back(locale.get<std::string>());
             }
-            PX_LOG_INFO("Localization: {} entries for '{}'", m_langTable.size(),
-                        m_settings.language);
         }
     }
-    if (!m_langTable.empty()) {
-        m_session->VM().SetTextFilter([this](const std::string& textId,const std::string& text) {
-            auto it = m_langTable.find(textId);
-            return it != m_langTable.end() ? it->second : text;
-        });
-    }
+    if (std::find(m_supportedLocales.begin(), m_supportedLocales.end(),
+                  m_settings.language) == m_supportedLocales.end())
+        m_settings.language = m_defaultLocale;
+    if (!LoadLocale(m_settings.language, false)) return false;
 
     m_scriptServices.vfs = &m_runtime.VFS();
     m_scriptServices.renderer = &m_runtime.Renderer();
@@ -331,40 +723,27 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         [this](std::string_view route, std::string_view operation) {
             PresentRoute(std::string(route), std::string(operation));
         });
-    // StartGame() compiles .pxir later. Load extension manifests now so every
-    // namespaced custom node is mapped against its production Command schema.
-    if (m_runtime.VFS().Exists("Content/Extensions/extensions.pxindex")) {
-        PX_LOG_DEBUG("Player boot: loading extension index");
-        if (!m_scriptHost->LoadExtensionIndex("Content/Extensions/extensions.pxindex")) {
+    // Load exactly the ordered extension set sealed into the package
+    // manifest. No filename convention or working-directory fallback is part
+    // of the formal Player path.
+    for (const auto& extension : m_boot.extensions) {
+        PX_LOG_DEBUG("Player boot: loading extension {}", extension);
+        if (!m_scriptHost->LoadExtensionManifest(extension)) {
             diag::Diagnostic diagnostic{
                 .severity = diag::Severity::Fatal,
                 .code = "PXPLAYER5005",
                 .category = "Player.Extensions",
-                .message = "Extension index could not be loaded",
-                .details = "Content/Extensions/extensions.pxindex"};
-            diagnostic.source.path = "Content/Extensions/extensions.pxindex";
+                .message = "Declared extension manifest could not be loaded",
+                .details = extension};
+            diagnostic.source.path = extension;
             diag::Emit(std::move(diagnostic));
             return false;
         }
-        PX_LOG_DEBUG("Player boot: extension index loaded");
-    } else if (m_runtime.VFS().Exists("Content/Extensions/default.pxextension")) {
-        PX_LOG_DEBUG("Player boot: loading default extension manifest");
-        if (!m_scriptHost->LoadExtensionManifest(
-                "Content/Extensions/default.pxextension")) {
-            diag::Diagnostic diagnostic{
-                .severity = diag::Severity::Fatal,
-                .code = "PXPLAYER5006",
-                .category = "Player.Extensions",
-                .message = "Default extension manifest could not be loaded",
-                .details = "Content/Extensions/default.pxextension"};
-            diagnostic.source.path =
-                "Content/Extensions/default.pxextension";
-            diag::Emit(std::move(diagnostic));
-            return false;
-        }
-        PX_LOG_DEBUG("Player boot: default extension manifest loaded");
     }
-    m_scriptHost->Emit("engine.ready");
+    if (const Status ready = m_scriptHost->Emit("engine.ready"); !ready) {
+        for (const auto& diagnostic : ready.Diagnostics()) diag::Emit(diagnostic);
+        return false;
+    }
     PX_LOG_DEBUG("Player boot: engine.ready emitted");
     m_session->VM().SetUnlockHook([this](const std::string& kind, const std::string& id) {
         if (kind == "cg") m_profile.UnlockCG(id);
@@ -376,6 +755,9 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         const bool seen = m_profile.HasSeen(key);
         m_profile.MarkSeen(key);
         return seen;
+    });
+    m_session->VM().SetChoiceSeenHook([this](const std::string& key) {
+        m_profile.MarkChoiceSeen(key);
     });
     PX_LOG_DEBUG("Player boot: constructing video player");
     SDL_Renderer* videoRenderer = m_runtime.GetWindow().Renderer();
@@ -392,8 +774,19 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     });
 
     m_ui.SetActionSink([this](const ui::GalgameAction& action) { HandleUIAction(action); });
-    m_session->SetAnimationTargetHandler(animation::TargetKind::UI,[this](const auto& binding,const Variant& value){return m_ui.ApplyAnimationProperty(binding,value);});
-    m_session->SetAnimationTargetHandler(animation::TargetKind::Text,[this](const auto& binding,const Variant& value){return m_ui.ApplyAnimationProperty(binding,value);});
+    const auto validateUiAnimation =
+        [this](const auto& binding, const Variant& value,
+               const ui::UIRuntimeState& state) {
+            return m_ui.ValidateAnimationProperty(binding, value, state);
+        };
+    m_session->SetAnimationTargetHandler(
+        animation::TargetKind::UI,
+        [this](const auto& binding,const Variant& value){return m_ui.ApplyAnimationProperty(binding,value);},
+        validateUiAnimation);
+    m_session->SetAnimationTargetHandler(
+        animation::TargetKind::Text,
+        [this](const auto& binding,const Variant& value){return m_ui.ApplyAnimationProperty(binding,value);},
+        validateUiAnimation);
     PX_LOG_DEBUG("Player boot: registering typed UI templates");
     const auto registerTemplate=[this](ui::GalgameUI::Screen screen,const std::string& path){
         auto text=m_runtime.VFS().ReadText(path);if(!text){diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXPLAYER5003",.category="Player.UI",.message="Required UI template is missing: "+path};d.source.path=path;diag::Emit(d);return false;}
@@ -412,6 +805,17 @@ bool PlayerApp::Init(int argc, char* argv[]) {
        !registerOptional(ui::GalgameUI::Screen::Gallery,"gallery")||
        !registerOptional(ui::GalgameUI::Screen::Settings,"settings")||
        !registerOptional(ui::GalgameUI::Screen::Video,"video"))return false;
+    m_accessibilityAdapter = accessibility::CreatePlatformSemanticAdapter(
+        m_runtime.GetWindow().Handle());
+    if (!m_accessibilityAdapter) {
+        diag::Emit(diag::Diagnostic{
+            .severity=diag::Severity::Fatal,.code="PXACCESS9001",
+            .category="Accessibility.Platform",
+            .message=std::string(accessibility::PlatformAccessibilityBackend()) +
+                     " could not attach to the Player window"});
+        return false;
+    }
+    m_ui.SetAccessibilityAdapter(m_accessibilityAdapter);
     PX_LOG_DEBUG("Player boot: typed UI templates registered");
     const auto projectManifest =
         m_runtime.VFS().ReadText("project.pxproject");
@@ -431,40 +835,33 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         },
         characterResourcesDeclared);
     if (!characterResources) return false;
-    const auto runtimeCatalog =
-        m_runtime.VFS().ReadText("Content/Game.pxres");
-    if (characterResourcesDeclared) {
-        if (runtimeCatalog) {
-            const Status status = m_catalog.LoadRuntimeResources(
-                *runtimeCatalog, "Content/Game.pxres",
-                sdk::LegacyGameCatalogPolicy::RejectCharacterNodes,
-                sdk::LegacyGalleryReferencePolicy::RejectPathStrings,
-                *projectManifest,
-                [this](const std::string_view uri) {
-                    return m_runtime.VFS().Exists(std::string(uri));
-                });
-            if (!status) return false;
-        }
-    } else {
-        if (runtimeCatalog) {
-            const Status status =
-                m_catalog.Load(*runtimeCatalog, "Content/Game.pxres");
-            if (!status) return false;
-        } else {
-            diag::Diagnostic diagnostic{
-                .severity = diag::Severity::Fatal,
-                .code = "PXPLAYER5006",
-                .category = "Player.Boot",
-                .message =
-                    "Project declares neither characterResources nor the legacy Content/Game.pxres fallback"};
-            diag::Emit(diagnostic);
-            return false;
-        }
+    const auto projectJson = nlohmann::json::parse(*projectManifest, nullptr, false);
+    const std::string catalogPath =
+        projectJson.is_object()
+            ? projectJson.value("gameCatalog", std::string{})
+            : std::string{};
+    const auto runtimeCatalog = catalogPath.empty()
+                                    ? std::optional<std::string>{}
+                                    : m_runtime.VFS().ReadText(catalogPath);
+    if (!runtimeCatalog) {
+        diag::Emit(diag::Diagnostic{.severity = diag::Severity::Fatal,
+                                    .code = "PXPLAYER5006",
+                                    .category = "Player.Boot",
+                                    .message = "Canonical gameCatalog is missing",
+                                    .details = catalogPath});
+        return false;
     }
+    if (const Status status = m_catalog.LoadCanonical(
+            *runtimeCatalog, *projectManifest,
+            [this](const std::string_view uri) {
+                return m_runtime.VFS().Exists(std::string(uri));
+            },
+            catalogPath);
+        !status) return false;
     PX_LOG_DEBUG("Player boot: {} character(s) loaded through {}",
                  m_catalog.Characters().size(),
-                 characterResourcesDeclared ? "characterResources=1"
-                                            : "legacy Game.pxres fallback");
+                 characterResourcesDeclared ? "characterResources=2"
+                                            : "canonical project without characters");
     PX_LOG_DEBUG(
         "Player boot: GameCatalog resources variables={} bindings={} gallery={}",
         m_catalog.Variables().size(), m_catalog.InputBindings().size(),
@@ -481,7 +878,8 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     }
     m_session->VM().SetGameCatalog(m_catalog);
 
-    m_script = argc > 1 ? argv[1] : m_boot.startScript;
+    m_script = argc > 1 ? argv[1]
+                        : (m_script.empty() ? m_boot.startScript : m_script);
     m_splash=std::make_unique<ui::startup::SplashSequencePlayer>(
         ui::startup::SplashSequencePlayer::Services{
             .loadScene=[this](const ResourceRefValue& reference)->Result<resource::TypedDocument>{
@@ -494,11 +892,13 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                 m_runtime.Audio().PlaySE(reference.lastKnownPath);return Status::Ok();
             },
             .diagnostics=[](const diag::Diagnostic& diagnostic){diag::Emit(diagnostic);}});
+    m_splash->Context().SetTextRenderer(&m_runtime.Renderer());
     m_splash->Context().SetDiagnosticOverlayEnabled(false);
     m_splash->SetCompletionCallback([this]{FinishBootPresentation();});
     m_appState=AppState::BootSplash;
     const Status splashStarted=m_splash->Start(m_boot.splashes,m_settings.reducedMotion);
     if(!splashStarted)return false;
+    ConfigureE2EJourney();
     return true;
 }
 
@@ -525,7 +925,15 @@ void PlayerApp::SplashFrame(const float dt) {
 void PlayerApp::StartGame() {
     m_session->Variables().Reset(false);
     for (const auto& v : m_catalog.Variables()) {
-        m_session->Variables().Set(v.name, v.defaultValue, v.persistent);
+        if (v.scope == vn::CatalogVariable::Scope::Profile) {
+            const Variant* stored = m_profile.Variable(v.name);
+            m_session->Variables().SetValue(
+                v.name, stored ? stored->Clone() : v.typedDefault.Clone(),
+                vn::VariableScope::Profile);
+        } else {
+            m_session->Variables().SetValue(
+                v.name, v.typedDefault.Clone(), vn::VariableScope::Session);
+        }
     }
     m_session->Backlog().Clear();
     m_autoMode = m_skipMode = m_hudHidden = false;
@@ -536,7 +944,7 @@ void PlayerApp::StartGame() {
     m_playtimeBaseMs = 0;
     m_playtimeStartedAtMs = m_runtime.GetClock().NowMs();
     if (m_script.ends_with(".pxir")) {
-        if (!m_session->StartRuntimeIr(m_script)) {
+        if (!m_session->StartRuntimeIr(m_script, /*resetVariables=*/false)) {
             diag::Emit(diag::Diagnostic{
                 .severity = diag::Severity::Fatal,
                 .code = "PXPLAYER5006",
@@ -566,15 +974,86 @@ bool PlayerApp::LoadSlot(int slot) {
     if (!snap) {
         return false;
     }
-    m_nvlMode = snap->nvlMode;
-    m_nvlLines = snap->nvlLines;
-    m_rollback.clear();
+    if (snap->gameId != m_boot.gameId) {
+        diag::Emit(diag::Diagnostic{
+            .severity = diag::Severity::Error,
+            .code = "PXSAVE6111",
+            .category = "Persistence.Save",
+            .message = "Save belongs to a different game"});
+        return false;
+    }
+    const bool sameContent = snap->contentVersion == m_boot.contentVersion &&
+                             snap->saveVersion == m_boot.saveVersion;
+    if (sameContent &&
+        snap->packageFingerprint != m_boot.packageFingerprint) {
+        diag::Emit(diag::Diagnostic{
+            .severity = diag::Severity::Error,
+            .code = "PXSAVE6111",
+            .category = "Persistence.Save",
+            .message = "Package fingerprint changed without a content/save version migration"});
+        return false;
+    }
+    if (!sameContent) {
+        auto migrated = progress::MigrateSaveSnapshot(
+            *snap,
+            {m_boot.gameId, m_boot.packageFingerprint, m_boot.contentVersion,
+             m_boot.saveVersion},
+            m_boot.saveMigrations,
+            [this](const std::string_view asset) {
+                return m_runtime.VFS().ReadText(std::string(asset));
+            });
+        if (!migrated) {
+            for (const auto& diagnostic : migrated.Diagnostics())
+                diag::Emit(diagnostic);
+            return false;
+        }
+        *snap = migrated.TakeValue();
+    }
+    const std::string activeLocaleScript =
+        LocaleRuntimeIrPath(m_settings.language);
+    const std::string candidateScript =
+        m_runtime.VFS().Exists(activeLocaleScript)
+            ? activeLocaleScript
+            : (snap->scriptPath.empty() ? m_script : snap->scriptPath);
+    const auto runtimeProgram = m_session->PrepareRuntimeIr(candidateScript);
+    if (!runtimeProgram ||
+        runtimeProgram->documentId != snap->anchor.runtimeDocumentId) {
+        diag::Emit(diag::Diagnostic{
+            .severity = diag::Severity::Error,
+            .code = "PXSAVE6112",
+            .category = "Persistence.Save",
+            .message = "Save execution document is unavailable"});
+        return false;
+    }
+    const auto anchor = std::find_if(
+        runtimeProgram->code.begin(), runtimeProgram->code.end(),
+        [&snap](const vn::Command& command) {
+            return command.sourceId == snap->anchor.sourceId &&
+                   command.operationId == snap->anchor.operationId;
+        });
+    if (anchor == runtimeProgram->code.end()) {
+        diag::Emit(diag::Diagnostic{
+            .severity = diag::Severity::Error,
+            .code = "PXSAVE6113",
+            .category = "Persistence.Save",
+            .message = "Save execution anchor no longer exists"});
+        return false;
+    }
+    const int anchorPc = static_cast<int>(
+        std::distance(runtimeProgram->code.begin(), anchor));
+    const bool resumesAfterAnchor =
+        snap->vm.state == vn::VMState::WaitingClick ||
+        snap->vm.state == vn::VMState::WaitingTimer ||
+        snap->vm.state == vn::VMState::WaitingVideo ||
+        snap->vm.state == vn::VMState::WaitingExternal;
+    snap->vm.pc = anchorPc + (resumesAfterAnchor ? 1 : 0);
+    snap->vm.scriptPath = candidateScript;
+    snap->pc = snap->vm.pc;
     RuntimeSession::GameState state;
     state.vm = snap->vm;
     state.dialogue = snap->dialogue;
     state.variables = snap->variables;
     state.typedVariables = snap->typedVariables;
-    state.persistentVariables = snap->persistentVariables;
     state.stage = snap->stage;
     state.audio = snap->audio;
     state.backlog = snap->backlog;
@@ -583,6 +1062,17 @@ bool PlayerApp::LoadSlot(int slot) {
     state.animationClips = snap->animationClips;
     state.ui = snap->ui;
     state.playtimeMs = snap->playtimeMs;
+    state.runtimeProgram = runtimeProgram;
+    if (!RelocalizeRuntimeState(state, runtimeProgram, candidateScript,
+                                m_langTable, m_session->Variables())) {
+        diag::Emit(diag::Diagnostic{
+            .severity = diag::Severity::Error,
+            .code = "PXSAVE6114",
+            .category = "Persistence.Save",
+            .message = "Save Story state cannot be mapped to the active locale",
+            .details = candidateScript});
+        return false;
+    }
     const bool awaitingTimeline = std::any_of(snap->timelines.begin(), snap->timelines.end(),
         [](const animation::PlaybackState& playback) { return playback.playing && playback.awaiting; });
     if ((snap->vm.state == vn::VMState::WaitingExternal) !=
@@ -592,21 +1082,50 @@ bool PlayerApp::LoadSlot(int slot) {
                                     .message="Save has inconsistent script await state"});
         return false;
     }
+    const std::uint64_t restoreNow = m_runtime.GetClock().NowMs();
+    auto preparedRuntime = m_session->PrepareRestore(state, restoreNow);
+    if (!preparedRuntime) {
+        for (const auto& diagnostic : preparedRuntime.Diagnostics())
+            diag::Emit(diagnostic);
+        return false;
+    }
+    script::PendingCommandsState previousPending;
+    script::PendingActionsState previousActions;
+    const ui::UIRuntimeState previousUi = m_ui.CaptureRuntimeState();
+    const auto rollbackPresentation = [this, &previousPending, &previousActions,
+                                       &previousUi] {
+        if (m_scriptHost) {
+            (void)m_scriptHost->RestoreCheckpoint(previousPending, previousActions);
+        }
+        (void)m_ui.RestoreRuntimeState(previousUi);
+    };
     if (m_scriptHost) {
-        const Status scriptStatus = m_scriptHost->RestorePending(snap->scriptPending);
-        if (!scriptStatus) return false;
-        const Status scriptActionStatus = m_scriptHost->RestorePendingActions(snap->scriptActions);
-        if (!scriptActionStatus) return false;
+        previousPending = m_scriptHost->CapturePending();
+        previousActions = m_scriptHost->CapturePendingActions();
+        const Status scriptStatus = m_scriptHost->RestoreCheckpoint(
+            snap->scriptPending, snap->scriptActions);
+        if (!scriptStatus) {
+            rollbackPresentation();
+            return false;
+        }
     }
-    if (!snap->ui.behavior.fibers.empty() ||
-        !snap->ui.behavior.actions.empty() || snap->ui.animation ||
-        snap->ui.visualState) {
-        if (const Status uiStatus = m_ui.ShowHUD(DialogueUI()); !uiStatus) return false;
+    if (!m_session->CommitRestore(preparedRuntime.TakeValue())) {
+        rollbackPresentation();
+        return false;
     }
-    if (!m_session->RestoreState(state, m_runtime.GetClock().NowMs())) return false;
+    m_nvlMode = snap->nvlMode;
+    RuntimeSession::GameState nvlState = state;
+    nvlState.backlog = snap->nvlLines;
+    if (RelocalizeRuntimeState(nvlState, runtimeProgram, candidateScript,
+                               m_langTable, m_session->Variables()))
+        m_nvlLines = std::move(nvlState.backlog);
+    else
+        m_nvlLines = snap->nvlLines;
+    m_rollback.clear();
     m_lastBacklogSize = m_session->Backlog().Entries().size();
     m_playtimeBaseMs = snap->playtimeMs;
     m_playtimeStartedAtMs = m_runtime.GetClock().NowMs();
+    m_script = candidateScript;
     m_appState = AppState::Game;
     m_autoMode = m_skipMode = m_hudHidden = false;
     (void)m_ui.RefreshHUD(DialogueUI());
@@ -621,6 +1140,14 @@ progress::SaveSnapshot PlayerApp::MakeSnapshot(bool includeBacklog) {
     snap.playtimeMs = m_playtimeBaseMs +
         (now >= m_playtimeStartedAtMs ? now - m_playtimeStartedAtMs : 0);
     const RuntimeSession::GameState state = m_session->CaptureState(snap.playtimeMs);
+    snap.gameId = m_boot.gameId;
+    snap.packageFingerprint = m_boot.packageFingerprint;
+    snap.contentVersion = m_boot.contentVersion;
+    snap.saveVersion = m_boot.saveVersion;
+    snap.anchor = {m_session->VM().CurrentDocumentId(),
+                   m_session->VM().CurrentSourceId(),
+                   m_session->VM().CurrentOperationId()};
+    snap.runtimeProgram = state.runtimeProgram;
     snap.scriptPath = state.vm.scriptPath;
     snap.pc = m_session->VM().SavePoint();
     snap.chapter = state.vm.chapter;
@@ -629,7 +1156,6 @@ progress::SaveSnapshot PlayerApp::MakeSnapshot(bool includeBacklog) {
     snap.audio = state.audio;
     snap.variables = state.variables;
     snap.typedVariables = state.typedVariables;
-    snap.persistentVariables = state.persistentVariables;
     snap.vm = state.vm;
     snap.dialogue = state.dialogue;
     snap.routes = state.routes;
@@ -658,42 +1184,64 @@ void PlayerApp::SaveSlot(int slot, std::vector<std::uint8_t> thumbnail) {
     PX_LOG_INFO("Saved slot {} (thumb {} bytes)", slot, snap.thumbnailPng.size());
 }
 
-void PlayerApp::ApplyRollback(const RollbackEntry& entry) {
+bool PlayerApp::ApplyRollback(const RollbackEntry& entry) {
     const progress::SaveSnapshot& s = entry.snap;
     RuntimeSession::GameState state;
     state.vm = s.vm;
     state.dialogue = s.dialogue;
     state.variables = s.variables;
     state.typedVariables = s.typedVariables;
-    state.persistentVariables = s.persistentVariables;
     state.stage = s.stage;
     state.audio = s.audio;
     state.routes = s.routes;
     state.timelines = s.timelines;
     state.animationClips = s.animationClips;
     state.ui = s.ui;
+    state.runtimeProgram = s.runtimeProgram;
     state.backlog = m_session->Backlog().Entries();
     if (state.backlog.size() > entry.backlogSize) state.backlog.resize(entry.backlogSize);
-    if (m_scriptHost) {
-        const Status scriptStatus = m_scriptHost->RestorePending(s.scriptPending);
-        if (!scriptStatus) return;
-        const Status scriptActionStatus = m_scriptHost->RestorePendingActions(s.scriptActions);
-        if (!scriptActionStatus) return;
+    auto preparedRuntime = m_session->PrepareRestore(
+        state, m_runtime.GetClock().NowMs());
+    if (!preparedRuntime) {
+        for (const auto& diagnostic : preparedRuntime.Diagnostics())
+            diag::Emit(diagnostic);
+        return false;
     }
-    if (!m_session->RestoreState(state, m_runtime.GetClock().NowMs())) return;
+    script::PendingCommandsState previousPending;
+    script::PendingActionsState previousActions;
+    const ui::UIRuntimeState previousUi = m_ui.CaptureRuntimeState();
+    const auto rollbackPresentation = [this, &previousPending, &previousActions,
+                                       &previousUi] {
+        if (m_scriptHost) {
+            (void)m_scriptHost->RestoreCheckpoint(previousPending, previousActions);
+        }
+        (void)m_ui.RestoreRuntimeState(previousUi);
+    };
+    if (m_scriptHost) {
+        previousPending = m_scriptHost->CapturePending();
+        previousActions = m_scriptHost->CapturePendingActions();
+        const Status scriptStatus = m_scriptHost->RestoreCheckpoint(
+            s.scriptPending, s.scriptActions);
+        if (!scriptStatus) { rollbackPresentation(); return false; }
+    }
+    if (!m_session->CommitRestore(preparedRuntime.TakeValue())) {
+        rollbackPresentation();
+        return false;
+    }
     m_nvlMode = s.nvlMode;
     m_nvlLines = s.nvlLines;
     m_lastBacklogSize = m_session->Backlog().Entries().size();
     m_autoMode = m_skipMode = false;
     (void)m_ui.RefreshHUD(DialogueUI());
+    return true;
 }
 
 void PlayerApp::RollbackOneLine() {
     if (m_rollback.size() < 2) {
         return;  // back() is the line currently on screen
     }
-    m_rollback.pop_back();
-    ApplyRollback(m_rollback.back());
+    const RollbackEntry target = m_rollback[m_rollback.size() - 2];
+    if (ApplyRollback(target)) m_rollback.pop_back();
 }
 
 bool PlayerApp::RollbackToBacklogIndex(std::size_t index) {
@@ -701,9 +1249,9 @@ bool PlayerApp::RollbackToBacklogIndex(std::size_t index) {
         const RollbackEntry& entry = m_rollback[i - 1];
         if (entry.backlogSize == index + 1) {
             const RollbackEntry target = entry;
+            if (!ApplyRollback(target)) return false;
             m_rollback.erase(m_rollback.begin() + static_cast<std::ptrdiff_t>(i),
                              m_rollback.end());
-            ApplyRollback(target);
             return true;
         }
     }
@@ -800,7 +1348,8 @@ ui::DialoguePresentation PlayerApp::DialogueUI() const {
 ui::SettingsPresentation PlayerApp::SettingsUI() const {
     return {m_settings.bgmVolume, m_settings.seVolume, m_settings.voiceVolume,
             m_settings.textSpeedMs, m_settings.skipReadOnly, m_settings.fullscreen,
-            m_settings.textScale,m_settings.highContrast,m_settings.reducedMotion,m_settings.selfVoicing};
+            m_settings.textScale,m_settings.highContrast,m_settings.reducedMotion,m_settings.selfVoicing,
+            m_settings.language,m_supportedLocales};
 }
 
 void PlayerApp::OpenScreen(const std::string& route) {
@@ -862,6 +1411,7 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
     } else if(t=="set.highcontrast.value") { m_settings.highContrast=action.argument=="true";
     } else if(t=="set.reducedmotion.value") { m_settings.reducedMotion=action.argument=="true";
     } else if(t=="set.selfvoicing.value") { m_settings.selfVoicing=action.argument=="true";if(!m_settings.selfVoicing)m_speech.Stop();
+    } else if(t=="set.language.value") { if(LoadLocale(action.argument,true))(void)m_settings.Save("Save/config.dat",&m_saveKey);
     } else if (t == "set.bgm.up") {
         m_settings.bgmVolume = std::min(128, m_settings.bgmVolume + 8);
         audio.SetBGMVolume(m_settings.bgmVolume);
@@ -940,6 +1490,94 @@ void PlayerApp::ScreensFrame(float dt) {
     (void)m_ui.Update(input, w, h,dt);
     if (m_appState == AppState::Game) m_session->Stage().Render();
     m_ui.Render(m_runtime.Renderer());
+    CaptureE2EGalleryFrame();
+}
+
+void PlayerApp::ConfigureE2EJourney() {
+    const char* journey=SDL_getenv("PRISMATIX_E2E_JOURNEY");
+    if(!journey||std::string_view(journey)!="catalog")return;
+    m_e2eStage=E2EStage::AwaitTitle;
+    m_e2eStartedAt=SDL_GetTicks();
+    PX_LOG_INFO("Player E2E journey armed name=catalog");
+}
+
+void PlayerApp::DriveE2EJourney() {
+    if(m_e2eStage==E2EStage::Disabled||m_e2eStage==E2EStage::Complete)
+        return;
+    if(SDL_GetTicks()-m_e2eStartedAt>30'000){
+        PX_LOG_ERROR("Player E2E journey timed out stage={}",
+                     static_cast<int>(m_e2eStage));
+        m_e2eFailed=true;
+        m_e2eStage=E2EStage::Complete;
+        m_quitRequested=true;
+        return;
+    }
+    auto& input=m_runtime.GetInput();
+    switch(m_e2eStage){
+        case E2EStage::AwaitTitle:
+            if(m_appState==AppState::Title){
+                input.InjectAction(InputAction::FocusNext);
+                input.InjectAction(InputAction::Accept);
+                m_e2eStage=E2EStage::AwaitGameReady;
+            }
+            break;
+        case E2EStage::AwaitGameReady:
+            if(m_appState==AppState::Game&&m_profile.CGUnlocked("ending-rin")&&
+               m_scriptHost&&!m_scriptHost->HasPendingCommand()&&
+               !m_scriptHost->HasPendingAction()&&
+               m_session->Dialogue().Active()){
+                if(!m_e2eLocaleSwitched&&m_supportedLocales.size()>1){
+                    const std::string target=m_supportedLocales[1];
+                    if(!LoadLocale(target,true)){
+                        PX_LOG_ERROR("Player E2E locale switch failed locale={}",target);
+                        m_e2eFailed=true;m_e2eStage=E2EStage::Complete;
+                        m_quitRequested=true;break;
+                    }
+                    m_e2eLocaleSwitched=true;
+                    PX_LOG_INFO("Player E2E locale switched locale={} text={}",
+                                target,m_session->Dialogue().State().fullText);
+                    break;
+                }
+                input.InjectKeyPress(SDL_SCANCODE_G);
+                m_e2eStage=E2EStage::AwaitGallery;
+            }
+            break;
+        case E2EStage::AwaitGallery:
+            if(m_ui.IsOverlay()&&
+               m_ui.CurrentScreen()==ui::GalgameUI::Screen::Gallery)
+                m_e2eStage=E2EStage::CaptureGallery;
+            break;
+        case E2EStage::CloseGallery:
+            input.InjectAction(InputAction::Cancel);
+            input.InjectKeyPress(SDL_SCANCODE_ESCAPE);
+            m_e2eStage=E2EStage::AwaitOverlayClosed;
+            break;
+        case E2EStage::AwaitOverlayClosed:
+            if(!m_ui.IsOverlay()){
+                PX_LOG_INFO("Player E2E journey complete name=catalog");
+                m_e2eStage=E2EStage::Complete;
+                m_quitRequested=true;
+            }
+            break;
+        default:break;
+    }
+}
+
+void PlayerApp::CaptureE2EGalleryFrame() {
+    if(m_e2eStage!=E2EStage::CaptureGallery)return;
+    const auto capture=graphics::CaptureFrameSummary(
+        m_runtime.Renderer().Handle());
+    PX_LOG_INFO("Player E2E gallery frame width={} height={} colors={} hash={}",
+                capture.width,capture.height,capture.sampledColors,capture.hash);
+    if(!capture.Valid()||capture.width<640||capture.height<360||
+       capture.sampledColors<8){
+        PX_LOG_ERROR("Player E2E gallery frame is blank or undersized");
+        m_e2eFailed=true;
+        m_e2eStage=E2EStage::Complete;
+        m_quitRequested=true;
+        return;
+    }
+    m_e2eStage=E2EStage::CloseGallery;
 }
 
 void PlayerApp::TitleFrame(float dt) {
@@ -1146,6 +1784,7 @@ void PlayerApp::MainLoop() {
         px::Input& input = m_runtime.GetInput();
         const float dt = m_runtime.GetClock().DeltaSeconds();
         const std::uint64_t now = m_runtime.GetClock().NowMs();
+        DriveE2EJourney();
 
         if (input.KeyPressed(SDL_SCANCODE_RETURN) &&
             (input.KeyDown(SDL_SCANCODE_LALT) || input.KeyDown(SDL_SCANCODE_RALT))) {
@@ -1233,7 +1872,7 @@ int PlayerApp::Run(int argc, char* argv[]) {
     }
     MainLoop();
     Shutdown();
-    return 0;
+    return m_e2eFailed?2:0;
 }
 
 }

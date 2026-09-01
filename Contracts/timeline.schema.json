@@ -4,7 +4,7 @@
   "type":"object","additionalProperties":false,
   "required":["format","schemaRevision","id","duration","tracks","markers","nestedClips"],
   "properties":{
-    "format":{"const":"PrismatiXTimeline"},"schemaRevision":{"const":1},
+    "format":{"const":"PrismatiXTimeline"},"schemaRevision":{"const":2},
     "id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"name":{"type":"string","maxLength":512},
     "duration":{"type":"number","minimum":0,"maximum":86400},
     "tracks":{"type":"array","maxItems":100000,"items":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/track"}},

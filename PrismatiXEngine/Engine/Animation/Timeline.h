@@ -96,6 +96,9 @@ public:
     // Preview authoring may replace a canonical clip while retaining the
     // existing TimelinePlayer and target bindings.
     Status RegisterOrReplace(AnimationClip clip);
+    // Transactionally replaces the complete compiled clip library. Restore
+    // uses this so clips from a newer/older session cannot survive as ghosts.
+    Status ReplaceRegisteredClips(std::vector<AnimationClip> clips);
     [[nodiscard]] const AnimationClip* Find(const resource::ResourceId& id) const;
     [[nodiscard]] const auto& RegisteredClips() const { return m_clips; }
     Status Unregister(const resource::ResourceId& id);

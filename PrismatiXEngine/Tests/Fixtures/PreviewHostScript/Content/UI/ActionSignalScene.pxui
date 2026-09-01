@@ -1,23 +1,106 @@
 {
+  "behaviorGraph": {
+    "groups": [],
+    "links": [],
+    "nodes": []
+  },
+  "behaviorTriggers": [],
   "format": "PrismatiXUIScene",
-  "schemaRevision": 1,
-  "id": "13131313-1313-4313-8313-131313131313",
-  "revision": 1,
-  "name": "ActionSignalScene",
-  "width": 1280,
   "height": 720,
-  "rootId": "12121212-1212-4212-8212-121212121212",
+  "id": "13131313-1313-4313-8313-131313131313",
+  "name": "ActionSignalScene",
   "nodes": [
     {
-      "id":"12121212-1212-4212-8212-121212121212","parentId":null,"order":0,"kind":"control","name":"Root","visible":true,"locked":false,
-      "layout":{"mode":"free","x":0,"y":0,"width":1280,"height":720,"anchorX":0,"anchorY":0,"pivotX":0,"pivotY":0,"margin":0,"alignment":"start","sizeRule":"fixed"},
-      "content":{"text":"","assetId":null},"appearance":{"backgroundColor":"#101018","textColor":"#FFFFFF","opacity":1,"styleToken":null,"hoverBackgroundColor":null,"focusColor":null,"disabledOpacity":0.5},"interaction":{"onClick":null},"accessibility":{"label":"","role":"presentation"}
+      "accessibilityLabel": "",
+      "accessibilityRole": "presentation",
+      "appearance": {
+        "backgroundColor": "#101018",
+        "disabledOpacity": 0.5,
+        "focusColor": null,
+        "hoverBackgroundColor": null,
+        "opacity": 1,
+        "styleToken": null,
+        "textColor": "#FFFFFF"
+      },
+      "assetId": null,
+      "bindings": {},
+      "id": "12121212-1212-4212-8212-121212121212",
+      "kind": "control",
+      "layout": {
+        "alignment": "start",
+        "anchorBottom": 0,
+        "anchorRight": 0,
+        "anchorX": 0,
+        "anchorY": 0,
+        "height": 720,
+        "margin": 0,
+        "mode": "free",
+        "pivotX": 0,
+        "pivotY": 0,
+        "sizeRule": "fixed",
+        "width": 1280,
+        "x": 0,
+        "y": 0
+      },
+      "locked": false,
+      "name": "Root",
+      "order": 0,
+      "parentId": null,
+      "runtimeProperties": {},
+      "text": "",
+      "visible": true
     },
     {
-      "id":"14141414-1414-4414-8414-141414141414","parentId":"12121212-1212-4212-8212-121212121212","order":0,"kind":"button","name":"RunTypedAction","visible":true,"locked":false,
-      "layout":{"mode":"free","x":100,"y":100,"width":240,"height":56,"anchorX":0,"anchorY":0,"pivotX":0,"pivotY":0,"margin":0,"alignment":"start","sizeRule":"fixed"},
-      "content":{"text":"Run typed Action","assetId":null},"appearance":{"backgroundColor":"#F052A0","textColor":"#FFFFFF","opacity":1,"styleToken":null,"hoverBackgroundColor":null,"focusColor":null,"disabledOpacity":0.5},"interaction":{"onClick":{"id":"debug.typed-action","arguments":{"amount":4}}},"accessibility":{"label":"Run typed Action","role":"button"}
+      "accessibilityLabel": "Run typed Action",
+      "accessibilityRole": "button",
+      "appearance": {
+        "backgroundColor": "#F052A0",
+        "disabledOpacity": 0.5,
+        "focusColor": null,
+        "hoverBackgroundColor": null,
+        "opacity": 1,
+        "styleToken": null,
+        "textColor": "#FFFFFF"
+      },
+      "assetId": null,
+      "bindings": {},
+      "id": "14141414-1414-4414-8414-141414141414",
+      "kind": "button",
+      "layout": {
+        "alignment": "start",
+        "anchorBottom": 0,
+        "anchorRight": 0,
+        "anchorX": 0,
+        "anchorY": 0,
+        "height": 56,
+        "margin": 0,
+        "mode": "free",
+        "pivotX": 0,
+        "pivotY": 0,
+        "sizeRule": "fixed",
+        "width": 240,
+        "x": 100,
+        "y": 100
+      },
+      "locked": false,
+      "name": "RunTypedAction",
+      "onClick": {
+        "arguments": {
+          "amount": 4
+        },
+        "id": "debug.typed-action"
+      },
+      "order": 0,
+      "parentId": "12121212-1212-4212-8212-121212121212",
+      "runtimeProperties": {},
+      "text": "Run typed Action",
+      "visible": true
     }
   ],
-  "theme": []
+  "revision": 1,
+  "rootId": "12121212-1212-4212-8212-121212121212",
+  "schemaRevision": 2,
+  "theme": [],
+  "visualStateGroups": [],
+  "width": 1280
 }

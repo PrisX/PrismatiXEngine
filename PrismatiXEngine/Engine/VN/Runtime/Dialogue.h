@@ -33,6 +33,9 @@ public:
                  Color outlineColor, const std::string& voice = "", const std::string& effect = "");
     void Update(std::uint64_t nowMs);
     void ShowAll();
+    // Rebuilds shaping/typewriter input for another locale while retaining the
+    // user's visible progress through the current line.
+    void Relocalize(const std::string& speaker, const std::string& text);
     [[nodiscard]] DialogueSnapshot CaptureState() const { return {m_state, m_speedMs}; }
     void RestoreState(const DialogueSnapshot& snapshot);
 

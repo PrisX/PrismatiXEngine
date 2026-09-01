@@ -56,7 +56,7 @@ int main() {
         }
         const std::string runtimeIr =
             Json{{"format", "PrismatiXRuntimeIR"},
-                 {"schemaRevision", 1},
+                 {"schemaRevision", 2},
                  {"documentId", "stress-scene"},
                  {"committedRevision", 1},
                  {"operations", Json::array()}}

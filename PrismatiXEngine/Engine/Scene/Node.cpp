@@ -6,8 +6,12 @@ namespace px::scene {
 
 namespace {
 diag::Diagnostic TreeError(std::string message) {
-    return diag::Diagnostic{ diag::Severity::Error, "PXSCENE-E1001", "scene-tree",
-                             std::move(message), {}, {}, {}, {} };
+    diag::Diagnostic diagnostic;
+    diagnostic.severity = diag::Severity::Error;
+    diagnostic.code = "PXSCENE-E1001";
+    diagnostic.category = "scene-tree";
+    diagnostic.message = std::move(message);
+    return diagnostic;
 }
 }
 

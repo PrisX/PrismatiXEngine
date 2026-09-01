@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -27,8 +28,18 @@ struct PackageRoute {
     std::string scene;
 };
 
+struct PackageSaveMigration {
+    std::string id;
+    std::string fromContentVersion;
+    std::uint32_t fromSaveVersion = 0;
+    std::string toContentVersion;
+    std::uint32_t toSaveVersion = 0;
+    std::string asset;
+};
+
 struct PackageRequest {
     std::string requestId;
+    std::string gameId;
     std::filesystem::path projectRoot;
     std::filesystem::path outputDir;
     std::filesystem::path playerExecutable;
@@ -36,9 +47,14 @@ struct PackageRequest {
     int width = 1280;
     int height = 720;
     std::string startScript;
+    std::string sourceMap;
     std::string startRoute;
     std::vector<PackageRoute> routes;
+    std::vector<PackageSaveMigration> saveMigrations;
+    std::vector<std::string> extensions;
     std::string contentVersion;
+    std::uint32_t saveVersion = 1;
+    std::string graphicsTier = "basic";
     bool encryption = false;
     PackageCompression compression = PackageCompression::Balanced;
     std::vector<PackageInput> inputs;
@@ -49,6 +65,22 @@ struct PackageDiagnostic {
     std::string code;
     std::string message;
     bool retryable = false;
+    std::string severity = "error";
+    std::string documentId;
+    std::string sourceId;
+    struct SourceSpan {
+        struct Position {
+            std::uint32_t line = 0;
+            std::uint32_t column = 0;
+            std::uint64_t offset = 0;
+        };
+        std::string path;
+        Position start;
+        Position end;
+    };
+    std::optional<SourceSpan> span;
+    std::string hint;
+    std::string cause;
 };
 
 struct PackageRequestParseResult {
@@ -84,6 +116,7 @@ struct PackageEvent {
     // failed
     std::string code;
     bool retryable = false;
+    std::vector<PackageDiagnostic> diagnostics;
 };
 
 enum class PackageExitCode : int {

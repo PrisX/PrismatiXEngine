@@ -1,5 +1,6 @@
 #include "Engine/IO/Archive.h"
 
+#include "Engine/IO/VFS.h"
 #include "Engine/Support/Logger.h"
 
 #include <zstd.h>
@@ -82,23 +83,10 @@ Bytes Decompress(const Bytes& src, std::size_t rawSize) {
     return out;
 }
 
-std::string NormalizePath(std::string_view path) {
-    std::string s(path);
-    for (char& c : s) {
-        if (c == '\\') c = '/';
-    }
-    return s;
-}
-
 bool IsSafeLogicalPath(std::string_view path) {
-    if (path.empty() || path.size() > kMaxNameLength || path.front() == '/' ||
-        path.find(':') != std::string_view::npos) return false;
-    const std::filesystem::path parsed(path);
-    if (parsed.is_absolute()) return false;
-    for (const auto& component : parsed) {
-        if (component == "." || component == ".." || component.empty()) return false;
-    }
-    return true;
+    if (path.size() > kMaxNameLength) return false;
+    const auto normalized = VFS::NormalizeVirtualPath(path);
+    return normalized && *normalized == path;
 }
 
 }
@@ -191,7 +179,7 @@ bool Archive::Open(const std::string& path, const crypto::Key* key) {
         e.storedSize = ic.U64();
         e.crc = ic.U32();
         e.flags = *ic.p++;
-        if (NormalizePath(e.name) != e.name || !IsSafeLogicalPath(e.name) ||
+        if (!IsSafeLogicalPath(e.name) ||
             e.pathHash != crypto::HashPath(e.name) || (e.flags & ~(kEntryEncrypted | kEntryCompressed)) != 0 ||
             e.rawSize > kMaxEntrySize || e.storedSize > kMaxEntrySize ||
             e.rawSize > static_cast<std::uint64_t>((std::numeric_limits<std::size_t>::max)()) ||
@@ -227,23 +215,23 @@ void Archive::Close() {
 
 bool Archive::Contains(std::string_view path) const {
     if (!m_open) return false;
-    const std::string normalized = NormalizePath(path);
-    const auto found = m_index.find(crypto::HashPath(normalized));
+    if (!IsSafeLogicalPath(path)) return false;
+    const auto found = m_index.find(crypto::HashPath(path));
     return found != m_index.end() && found->second < m_entries.size() &&
-           m_entries[found->second].name == normalized;
+           m_entries[found->second].name == path;
 }
 
 std::optional<Bytes> Archive::Read(std::string_view path) const {
     if (!m_open) {
         return std::nullopt;
     }
-    const std::string normalized = NormalizePath(path);
-    auto it = m_index.find(crypto::HashPath(normalized));
+    if (!IsSafeLogicalPath(path)) return std::nullopt;
+    auto it = m_index.find(crypto::HashPath(path));
     if (it == m_index.end()) {
         return std::nullopt;
     }
     const Entry& e = m_entries[it->second];
-    if (e.name != normalized) return std::nullopt;
+    if (e.name != path) return std::nullopt;
 
     std::ifstream in(m_path, std::ios::binary);
     if (!in) {
@@ -283,7 +271,7 @@ void ArchiveWriter::SetKey(const crypto::Key& key) {
 }
 
 void ArchiveWriter::Add(const std::string& logicalPath, const Bytes& data) {
-    m_pending.push_back({ NormalizePath(logicalPath), data });
+    m_pending.push_back({ logicalPath, data });
 }
 
 bool ArchiveWriter::Write(const std::string& outPath) const {

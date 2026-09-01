@@ -31,6 +31,8 @@ std::string Describe(const Diagnostic& diagnostic) {
     if (!diagnostic.source.nodeId.empty()) out << " node=" << diagnostic.source.nodeId;
     if (!diagnostic.source.property.empty()) out << " property=" << diagnostic.source.property;
     if (!diagnostic.details.empty()) out << " — " << diagnostic.details;
+    if (!diagnostic.hint.empty()) out << " hint=" << diagnostic.hint;
+    if (!diagnostic.cause.empty()) out << " cause=" << diagnostic.cause;
     return out.str();
 }
 

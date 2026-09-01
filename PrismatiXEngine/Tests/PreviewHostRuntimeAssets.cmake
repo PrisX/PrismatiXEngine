@@ -127,7 +127,7 @@ foreach(LINE IN LISTS OUTPUT_LINES)
                     "PreviewHost runtime asset diagnostic lost identity or source mapping: ${LINE}")
         endif()
         set(ASSET_ERROR_ACK TRUE)
-    elseif(TYPE STREQUAL "studioUiApplied" AND
+    elseif(TYPE STREQUAL "uiApplied" AND
            REQUEST_ID STREQUAL "apply-component")
         string(JSON NODE_COUNT GET "${LINE}" nodeCount)
         string(JSON ACTION_BINDING_COUNT GET "${LINE}" actionBindingCount)
@@ -156,7 +156,7 @@ foreach(LINE IN LISTS OUTPUT_LINES)
             endif()
             set(UI_RUNTIME_DEBUG_ACK TRUE)
         endif()
-    elseif(TYPE STREQUAL "studioUiApplied" AND
+    elseif(TYPE STREQUAL "uiApplied" AND
            REQUEST_ID STREQUAL "apply-nested-component")
         string(JSON NODE_COUNT GET "${LINE}" nodeCount)
         string(JSON ACTION_BINDING_COUNT GET "${LINE}" actionBindingCount)
@@ -168,7 +168,7 @@ foreach(LINE IN LISTS OUTPUT_LINES)
                     "PreviewHost nested component application diverged from the shared Runtime: ${LINE}")
         endif()
         set(NESTED_COMPONENT_APPLIED_ACK TRUE)
-    elseif(TYPE STREQUAL "studioUiApplied" AND
+    elseif(TYPE STREQUAL "uiApplied" AND
            REQUEST_ID STREQUAL "apply-patch-initial")
         string(JSON UPDATE_KIND GET "${LINE}" updateKind)
         string(JSON RELOAD_REASON GET "${LINE}" reloadReason)
@@ -178,7 +178,7 @@ foreach(LINE IN LISTS OUTPUT_LINES)
                     "PreviewHost initial UI update did not report its reload plan: ${LINE}")
         endif()
         set(UI_INITIAL_RELOAD_ACK TRUE)
-    elseif(TYPE STREQUAL "studioUiApplied" AND
+    elseif(TYPE STREQUAL "uiApplied" AND
            REQUEST_ID STREQUAL "apply-patch-properties")
         string(JSON UPDATE_KIND GET "${LINE}" updateKind)
         string(JSON CHANGED_NODE_COUNT GET "${LINE}" changedNodeCount)
@@ -188,7 +188,7 @@ foreach(LINE IN LISTS OUTPUT_LINES)
                     "PreviewHost did not patch a property-only UI revision: ${LINE}")
         endif()
         set(UI_PROPERTY_PATCH_ACK TRUE)
-    elseif(TYPE STREQUAL "studioUiApplied" AND
+    elseif(TYPE STREQUAL "uiApplied" AND
            REQUEST_ID STREQUAL "apply-patch-structural")
         string(JSON UPDATE_KIND GET "${LINE}" updateKind)
         string(JSON RELOAD_REASON GET "${LINE}" reloadReason)
@@ -281,7 +281,7 @@ foreach(LINE IN LISTS OUTPUT_LINES)
                     "PreviewHost did not reload a structural Stage revision: ${LINE}")
         endif()
         set(STAGE_STRUCTURAL_RELOAD_ACK TRUE)
-    elseif(TYPE STREQUAL "studioUiRejected" AND
+    elseif(TYPE STREQUAL "uiRejected" AND
            REQUEST_ID STREQUAL "apply-unknown-behavior")
         string(JSON DIAGNOSTIC_COUNT LENGTH "${LINE}" diagnostics)
         set(FOUND_UNKNOWN_KIND FALSE)
@@ -427,7 +427,7 @@ foreach(LINE IN LISTS OUTPUT_LINES)
                     "PreviewHost Story step lost the authored current statement: ${LINE}")
         endif()
         set(STORY_STEP_ACK TRUE)
-    elseif(TYPE STREQUAL "studioUiApplied" AND
+    elseif(TYPE STREQUAL "uiApplied" AND
            REQUEST_ID STREQUAL "apply-action-signal")
         string(JSON ACTION_BINDING_COUNT GET "${LINE}" actionBindingCount)
         if(NOT ACTION_BINDING_COUNT EQUAL 1)

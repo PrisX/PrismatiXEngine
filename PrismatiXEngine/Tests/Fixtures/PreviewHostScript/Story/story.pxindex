@@ -1,0 +1,8 @@
+{
+  "format": "PrismatiXStoryIndex",
+  "schemaRevision": 2,
+  "id": "main",
+  "entryScene": "main",
+  "chapters": [{"id": "main", "title": "Main", "scenes": ["main"]}],
+  "scenes": [{"id": "main", "sources": {"en": "Story/main.pxstory"}}]
+}

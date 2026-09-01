@@ -220,6 +220,7 @@ std::vector<ActionExecutionCheckpoint> ActionDispatcher::CaptureState() const {
 }
 
 Status ActionDispatcher::RestoreState(const std::vector<ActionExecutionCheckpoint>& state) {
+    if (const Status valid = ValidateState(state); !valid) return valid;
     std::unordered_map<ActionExecutionId, Execution> restored;
     std::unordered_set<ActionExecutionId> ids;
     ActionExecutionId next = 1;
@@ -256,6 +257,40 @@ Status ActionDispatcher::RestoreState(const std::vector<ActionExecutionCheckpoin
     }
     m_executions = std::move(restored);
     m_nextExecution = next;
+    return Status::Ok();
+}
+
+Status ActionDispatcher::ValidateState(
+    const std::vector<ActionExecutionCheckpoint>& state) const {
+    std::unordered_set<ActionExecutionId> ids;
+    for (const auto& checkpoint : state) {
+        if (!checkpoint.execution || checkpoint.invocation.action.empty() ||
+            !ids.insert(checkpoint.execution).second) {
+            return Status::Fail(DispatchError(
+                "PXUIACTION2027",
+                "Action checkpoint has an invalid or duplicate execution id",
+                &checkpoint.invocation));
+        }
+        const auto* descriptor = m_catalog.Find(checkpoint.invocation.action);
+        auto provider = FindProvider(checkpoint.providerId);
+        if (!descriptor || !provider ||
+            !provider->CanInvoke(checkpoint.invocation.action)) {
+            return Status::Fail(DispatchError(
+                "PXUIACTION2028",
+                "Action checkpoint provider is unavailable: " +
+                    checkpoint.invocation.action,
+                &checkpoint.invocation));
+        }
+        const auto providerState = provider->Poll(checkpoint.providerHandle);
+        if (providerState != ActionExecutionState::Running &&
+            providerState != ActionExecutionState::Completed) {
+            return Status::Fail(DispatchError(
+                "PXUIACTION2029",
+                "Action provider checkpoint could not be restored: " +
+                    checkpoint.invocation.action,
+                &checkpoint.invocation));
+        }
+    }
     return Status::Ok();
 }
 

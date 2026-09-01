@@ -169,6 +169,7 @@ public:
     [[nodiscard]] bool Paused() const { return m_player.Paused(); }
     [[nodiscard]] const UIAnimationLibrary* Library() const { return m_library ? &*m_library : nullptr; }
     [[nodiscard]] UIAnimationRuntimeState CaptureState() const;
+    [[nodiscard]] Status ValidateState(const UIAnimationRuntimeState& state);
     Status RestoreState(const UIAnimationRuntimeState& state);
 
 private:

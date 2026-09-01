@@ -1,60 +1,32 @@
 {
-  "format": "PrismatiXUIScene",
-  "schemaRevision": 1,
-  "id": "60606060-6060-4060-8060-606060606060",
-  "revision": 7,
-  "name": "ComponentScene",
-  "width": 1280,
-  "height": 720,
-  "rootId": "69696969-6969-4969-8969-696969696969",
-  "nodes": [
-    {
-      "id":"69696969-6969-4969-8969-696969696969","parentId":null,"order":0,"kind":"control","name":"Root","visible":true,"locked":false,
-      "layout":{"mode":"free","x":0,"y":0,"width":1280,"height":720,"anchorX":0,"anchorY":0,"pivotX":0,"pivotY":0,"margin":0,"alignment":"start","sizeRule":"fixed"},
-      "content":{"text":"","assetId":null},"appearance":{"backgroundColor":"#101018","textColor":"#FFFFFF","opacity":1,"styleToken":null,"hoverBackgroundColor":null,"focusColor":null,"disabledOpacity":0.5},"interaction":{"onClick":null},"accessibility":{"label":"","role":"presentation"}
-    },
-    {
-      "id":"62626262-7272-4272-8272-626262626262","parentId":"69696969-6969-4969-8969-696969696969","order":0,"kind":"group","name":"Card","visible":true,"locked":false,
-      "layout":{"mode":"free","x":100,"y":100,"width":420,"height":220,"anchorX":0,"anchorY":0,"pivotX":0,"pivotY":0,"margin":0,"alignment":"start","sizeRule":"fixed"},
-      "content":{"text":"","assetId":null},"appearance":{"backgroundColor":"#202030","textColor":"#FFFFFF","opacity":1,"styleToken":null,"hoverBackgroundColor":null,"focusColor":null,"disabledOpacity":0.5},"interaction":{"onClick":null},"accessibility":{"label":"Card","role":"group"},
-      "componentInstance":{"componentId":"61616161-6161-4161-8161-616161616161","instanceRootId":"62626262-7272-4272-8272-626262626262","sourceNodeId":"62626262-6262-4262-8262-626262626262","sourcePath":["61616161-6161-4161-8161-616161616161","62626262-6262-4262-8262-626262626262"],"overrides":[],"publicProperties":{"caption":"Continue"},"publicSignals":{"accepted":{"id":"game.start","arguments":{}}}}
-    },
-    {
-      "id":"63636363-7373-4373-8373-636363636363","parentId":"62626262-7272-4272-8272-626262626262","order":0,"kind":"button","name":"Action","visible":true,"locked":false,
-      "layout":{"mode":"free","x":20,"y":20,"width":180,"height":48,"anchorX":0,"anchorY":0,"pivotX":0,"pivotY":0,"margin":0,"alignment":"start","sizeRule":"fixed"},
-      "content":{"text":"Default","assetId":null},"appearance":{"backgroundColor":"#F052A0","textColor":"#FFFFFF","opacity":1,"styleToken":null,"hoverBackgroundColor":null,"focusColor":null,"disabledOpacity":0.5},"interaction":{"onClick":null},"accessibility":{"label":"Action","role":"button"},
-      "componentInstance":{"componentId":"61616161-6161-4161-8161-616161616161","instanceRootId":"62626262-7272-4272-8272-626262626262","sourceNodeId":"63636363-6363-4363-8363-636363636363","sourcePath":["61616161-6161-4161-8161-616161616161","63636363-6363-4363-8363-636363636363"],"overrides":[]}
-    },
-    {
-      "id":"64646464-7474-4474-8474-646464646464","parentId":"62626262-7272-4272-8272-626262626262","order":1,"kind":"vbox","name":"Content","visible":true,"locked":false,
-      "layout":{"mode":"free","x":20,"y":88,"width":380,"height":112,"anchorX":0,"anchorY":0,"pivotX":0,"pivotY":0,"margin":0,"alignment":"start","sizeRule":"fixed"},
-      "content":{"text":"","assetId":null},"appearance":{"backgroundColor":"#00000000","textColor":"#FFFFFF","opacity":1,"styleToken":null,"hoverBackgroundColor":null,"focusColor":null,"disabledOpacity":0.5},"interaction":{"onClick":null},"accessibility":{"label":"Content","role":"group"},
-      "componentInstance":{"componentId":"61616161-6161-4161-8161-616161616161","instanceRootId":"62626262-7272-4272-8272-626262626262","sourceNodeId":"64646464-6464-4464-8464-646464646464","sourcePath":["61616161-6161-4161-8161-616161616161","64646464-6464-4464-8464-646464646464"],"overrides":[]}
-    },
-    {
-      "id":"65656565-7575-4575-8575-656565656565","parentId":"64646464-7474-4474-8474-646464646464","order":0,"kind":"label","name":"LocalSlotContent","visible":true,"locked":false,
-      "layout":{"mode":"container","x":0,"y":0,"width":120,"height":24,"anchorX":0,"anchorY":0,"pivotX":0,"pivotY":0,"margin":0,"alignment":"start","sizeRule":"fixed"},
-      "content":{"text":"Local","assetId":null},"appearance":{"backgroundColor":"#00000000","textColor":"#FFFFFF","opacity":1,"styleToken":null,"hoverBackgroundColor":null,"focusColor":null,"disabledOpacity":0.5},"interaction":{"onClick":null},"accessibility":{"label":"Local","role":"text"},
-      "componentSlot":{"instanceRootId":"62626262-7272-4272-8272-626262626262","slotId":"content"}
-    }
-  ],
-  "theme": [],
   "animations": {
     "clips": [
       {
-        "id": "b6b6b6b6-b6b6-46b6-86b6-b6b6b6b6b6b6",
-        "name": "PreviewPulse",
         "duration": 1,
+        "id": "b6b6b6b6-b6b6-46b6-86b6-b6b6b6b6b6b6",
         "loop": true,
+        "name": "PreviewPulse",
         "tracks": [
           {
             "id": "c6c6c6c6-c6c6-46c6-86c6-c6c6c6c6c6c6",
-            "nodeId": "63636363-7373-4373-8373-636363636363",
-            "property": "opacity",
             "keys": [
-              {"id":"d6d6d6d6-d6d6-46d6-86d6-d6d6d6d6d6d6","time":0,"value":1,"easing":"linear","interpolation":"linear"},
-              {"id":"e6e6e6e6-e6e6-46e6-86e6-e6e6e6e6e6e6","time":1,"value":0.6,"easing":"easeInOut","interpolation":"linear"}
-            ]
+              {
+                "easing": "linear",
+                "id": "d6d6d6d6-d6d6-46d6-86d6-d6d6d6d6d6d6",
+                "interpolation": "linear",
+                "time": 0,
+                "value": 1
+              },
+              {
+                "easing": "easeInOut",
+                "id": "e6e6e6e6-e6e6-46e6-86e6-e6e6e6e6e6e6",
+                "interpolation": "linear",
+                "time": 1,
+                "value": 0.6
+              }
+            ],
+            "nodeId": "63636363-7373-4373-8373-636363636363",
+            "property": "opacity"
           }
         ]
       }
@@ -64,13 +36,277 @@
       "parameters": [],
       "states": [
         {
+          "clipId": "b6b6b6b6-b6b6-46b6-86b6-b6b6b6b6b6b6",
           "id": "16161616-1616-4616-8616-161616161616",
           "name": "PreviewIdle",
-          "clipId": "b6b6b6b6-b6b6-46b6-86b6-b6b6b6b6b6b6",
-          "position": {"x":80,"y":80}
+          "position": {
+            "x": 80,
+            "y": 80
+          }
         }
       ],
       "transitions": []
     }
-  }
+  },
+  "behaviorGraph": {
+    "groups": [],
+    "links": [],
+    "nodes": []
+  },
+  "behaviorTriggers": [],
+  "format": "PrismatiXUIScene",
+  "height": 720,
+  "id": "60606060-6060-4060-8060-606060606060",
+  "name": "ComponentScene",
+  "nodes": [
+    {
+      "accessibilityLabel": "",
+      "accessibilityRole": "presentation",
+      "appearance": {
+        "backgroundColor": "#101018",
+        "disabledOpacity": 0.5,
+        "focusColor": null,
+        "hoverBackgroundColor": null,
+        "opacity": 1,
+        "styleToken": null,
+        "textColor": "#FFFFFF"
+      },
+      "assetId": null,
+      "bindings": {},
+      "id": "69696969-6969-4969-8969-696969696969",
+      "kind": "control",
+      "layout": {
+        "alignment": "start",
+        "anchorBottom": 0,
+        "anchorRight": 0,
+        "anchorX": 0,
+        "anchorY": 0,
+        "height": 720,
+        "margin": 0,
+        "mode": "free",
+        "pivotX": 0,
+        "pivotY": 0,
+        "sizeRule": "fixed",
+        "width": 1280,
+        "x": 0,
+        "y": 0
+      },
+      "locked": false,
+      "name": "Root",
+      "order": 0,
+      "parentId": null,
+      "runtimeProperties": {},
+      "text": "",
+      "visible": true
+    },
+    {
+      "accessibilityLabel": "Card",
+      "accessibilityRole": "group",
+      "appearance": {
+        "backgroundColor": "#202030",
+        "disabledOpacity": 0.5,
+        "focusColor": null,
+        "hoverBackgroundColor": null,
+        "opacity": 1,
+        "styleToken": null,
+        "textColor": "#FFFFFF"
+      },
+      "assetId": null,
+      "bindings": {},
+      "componentInstance": {
+        "componentId": "61616161-6161-4161-8161-616161616161",
+        "instanceRootId": "62626262-7272-4272-8272-626262626262",
+        "overrides": [],
+        "publicProperties": {
+          "caption": "Continue"
+        },
+        "publicSignals": {
+          "accepted": {
+            "arguments": {},
+            "id": "game.start"
+          }
+        },
+        "sourceNodeId": "62626262-6262-4262-8262-626262626262",
+        "sourcePath": [
+          "61616161-6161-4161-8161-616161616161",
+          "62626262-6262-4262-8262-626262626262"
+        ]
+      },
+      "id": "62626262-7272-4272-8272-626262626262",
+      "kind": "group",
+      "layout": {
+        "alignment": "start",
+        "anchorBottom": 0,
+        "anchorRight": 0,
+        "anchorX": 0,
+        "anchorY": 0,
+        "height": 220,
+        "margin": 0,
+        "mode": "free",
+        "pivotX": 0,
+        "pivotY": 0,
+        "sizeRule": "fixed",
+        "width": 420,
+        "x": 100,
+        "y": 100
+      },
+      "locked": false,
+      "name": "Card",
+      "order": 0,
+      "parentId": "69696969-6969-4969-8969-696969696969",
+      "runtimeProperties": {},
+      "text": "",
+      "visible": true
+    },
+    {
+      "accessibilityLabel": "Action",
+      "accessibilityRole": "button",
+      "appearance": {
+        "backgroundColor": "#F052A0",
+        "disabledOpacity": 0.5,
+        "focusColor": null,
+        "hoverBackgroundColor": null,
+        "opacity": 1,
+        "styleToken": null,
+        "textColor": "#FFFFFF"
+      },
+      "assetId": null,
+      "bindings": {},
+      "componentInstance": {
+        "componentId": "61616161-6161-4161-8161-616161616161",
+        "instanceRootId": "62626262-7272-4272-8272-626262626262",
+        "overrides": [],
+        "sourceNodeId": "63636363-6363-4363-8363-636363636363",
+        "sourcePath": [
+          "61616161-6161-4161-8161-616161616161",
+          "63636363-6363-4363-8363-636363636363"
+        ]
+      },
+      "id": "63636363-7373-4373-8373-636363636363",
+      "kind": "button",
+      "layout": {
+        "alignment": "start",
+        "anchorBottom": 0,
+        "anchorRight": 0,
+        "anchorX": 0,
+        "anchorY": 0,
+        "height": 48,
+        "margin": 0,
+        "mode": "free",
+        "pivotX": 0,
+        "pivotY": 0,
+        "sizeRule": "fixed",
+        "width": 180,
+        "x": 20,
+        "y": 20
+      },
+      "locked": false,
+      "name": "Action",
+      "order": 0,
+      "parentId": "62626262-7272-4272-8272-626262626262",
+      "runtimeProperties": {},
+      "text": "Default",
+      "visible": true
+    },
+    {
+      "accessibilityLabel": "Content",
+      "accessibilityRole": "group",
+      "appearance": {
+        "backgroundColor": "#00000000",
+        "disabledOpacity": 0.5,
+        "focusColor": null,
+        "hoverBackgroundColor": null,
+        "opacity": 1,
+        "styleToken": null,
+        "textColor": "#FFFFFF"
+      },
+      "assetId": null,
+      "bindings": {},
+      "componentInstance": {
+        "componentId": "61616161-6161-4161-8161-616161616161",
+        "instanceRootId": "62626262-7272-4272-8272-626262626262",
+        "overrides": [],
+        "sourceNodeId": "64646464-6464-4464-8464-646464646464",
+        "sourcePath": [
+          "61616161-6161-4161-8161-616161616161",
+          "64646464-6464-4464-8464-646464646464"
+        ]
+      },
+      "id": "64646464-7474-4474-8474-646464646464",
+      "kind": "vbox",
+      "layout": {
+        "alignment": "start",
+        "anchorBottom": 0,
+        "anchorRight": 0,
+        "anchorX": 0,
+        "anchorY": 0,
+        "height": 112,
+        "margin": 0,
+        "mode": "free",
+        "pivotX": 0,
+        "pivotY": 0,
+        "sizeRule": "fixed",
+        "width": 380,
+        "x": 20,
+        "y": 88
+      },
+      "locked": false,
+      "name": "Content",
+      "order": 1,
+      "parentId": "62626262-7272-4272-8272-626262626262",
+      "runtimeProperties": {},
+      "text": "",
+      "visible": true
+    },
+    {
+      "accessibilityLabel": "Local",
+      "accessibilityRole": "text",
+      "appearance": {
+        "backgroundColor": "#00000000",
+        "disabledOpacity": 0.5,
+        "focusColor": null,
+        "hoverBackgroundColor": null,
+        "opacity": 1,
+        "styleToken": null,
+        "textColor": "#FFFFFF"
+      },
+      "assetId": null,
+      "bindings": {},
+      "componentSlot": {
+        "instanceRootId": "62626262-7272-4272-8272-626262626262",
+        "slotId": "content"
+      },
+      "id": "65656565-7575-4575-8575-656565656565",
+      "kind": "label",
+      "layout": {
+        "alignment": "start",
+        "anchorBottom": 0,
+        "anchorRight": 0,
+        "anchorX": 0,
+        "anchorY": 0,
+        "height": 24,
+        "margin": 0,
+        "mode": "container",
+        "pivotX": 0,
+        "pivotY": 0,
+        "sizeRule": "fixed",
+        "width": 120,
+        "x": 0,
+        "y": 0
+      },
+      "locked": false,
+      "name": "LocalSlotContent",
+      "order": 0,
+      "parentId": "64646464-7474-4474-8474-646464646464",
+      "runtimeProperties": {},
+      "text": "Local",
+      "visible": true
+    }
+  ],
+  "revision": 7,
+  "rootId": "69696969-6969-4969-8969-696969696969",
+  "schemaRevision": 2,
+  "theme": [],
+  "visualStateGroups": [],
+  "width": 1280
 }

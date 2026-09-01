@@ -20,7 +20,7 @@ int main() {
     }
     const std::string valid = R"({
       "format": "PrismatiXRuntimeIR",
-      "schemaRevision": 1,
+      "schemaRevision": 2,
       "documentId": "scene-01",
       "committedRevision": 7,
       "operations": [{
@@ -43,7 +43,7 @@ int main() {
 
     const std::string duplicate = R"({
       "format": "PrismatiXRuntimeIR",
-      "schemaRevision": 1,
+      "schemaRevision": 2,
       "documentId": "scene-01",
       "committedRevision": 8,
       "operations": [
@@ -56,7 +56,7 @@ int main() {
     assert(rejected.diagnostics.back().code == "PXSDKIR1015");
 
     const auto defaultLine = px::sdk::ParseRuntimeIr(R"({
-      "format":"PrismatiXRuntimeIR", "schemaRevision":1,
+      "format":"PrismatiXRuntimeIR", "schemaRevision":2,
       "documentId":"scene-01", "committedRevision":1,
       "operations":[
         {"operationId":"first","sourceId":"source-a","kind":"scene","text":"a","arguments":{}},
@@ -68,7 +68,7 @@ int main() {
     assert(defaultLine.document.operations.back().sourceLine == 2);
 
     const auto invalidLine = px::sdk::ParseRuntimeIr(R"({
-      "format":"PrismatiXRuntimeIR", "schemaRevision":1,
+      "format":"PrismatiXRuntimeIR", "schemaRevision":2,
       "documentId":"scene-01", "committedRevision":1,
       "operations":[
         {"operationId":"first","sourceId":"source-a","sourceLine":0,
@@ -78,14 +78,14 @@ int main() {
     assert(!invalidLine.Valid());
     assert(invalidLine.diagnostics.back().code == "PXSDKIR1019");
 
-    const auto future = px::sdk::ParseRuntimeIr(R"({
-      "format":"PrismatiXRuntimeIR", "schemaRevision":2,
+    const auto legacy = px::sdk::ParseRuntimeIr(R"({
+      "format":"PrismatiXRuntimeIR", "schemaRevision":1,
       "documentId":"scene-01", "committedRevision":1, "operations":[]
     })");
-    assert(!future.Valid());
+    assert(!legacy.Valid());
 
     const auto structural = px::sdk::ParseRuntimeIr(R"({
-      "format":"PrismatiXRuntimeIR", "schemaRevision":1,
+      "format":"PrismatiXRuntimeIR", "schemaRevision":2,
       "documentId":"scene-01", "committedRevision":1,
       "operations":[
         {"operationId":"structure","sourceId":"source-a","kind":"sequence",
@@ -96,7 +96,7 @@ int main() {
     assert(structural.diagnostics.back().code == "PXSDKIR1021");
 
     const auto unknownField = px::sdk::ParseRuntimeIr(R"({
-      "format":"PrismatiXRuntimeIR", "schemaRevision":1,
+      "format":"PrismatiXRuntimeIR", "schemaRevision":2,
       "documentId":"scene-01", "committedRevision":1, "editorState":{},
       "operations":[]
     })");

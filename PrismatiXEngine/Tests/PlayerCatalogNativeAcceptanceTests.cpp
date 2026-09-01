@@ -2,18 +2,23 @@
 #include "Engine/Progression/GlobalProfile.h"
 #include "Engine/Progression/GlobalProfileStore.h"
 #include "Engine/SDK/Packager.h"
+#include "Engine/Package/PackageManifest.h"
 #include "Tests/TestSupport/TestHarness.h"
 
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#endif
 
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <functional>
 #include <iostream>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -89,6 +94,7 @@ bool WaitForLog(const std::filesystem::path& log,
     });
 }
 
+#if defined(_WIN32)
 struct WindowSearch {
     DWORD processId = 0;
     HWND window = nullptr;
@@ -230,6 +236,68 @@ private:
     HANDLE m_process = nullptr;
     DWORD m_processId = 0;
 };
+#endif
+
+std::string ShellQuote(const std::filesystem::path& path) {
+#if defined(_WIN32)
+    std::string value=path.string();
+    std::string escaped;
+    escaped.reserve(value.size()+2);
+    escaped.push_back('"');
+    for(const char character:value){
+        if(character=='"')escaped.push_back('\\');
+        escaped.push_back(character);
+    }
+    escaped.push_back('"');
+    return escaped;
+#else
+    std::string value=path.string();
+    std::string escaped="'";
+    for(const char character:value){
+        if(character=='\'')escaped+="'\\''";
+        else escaped.push_back(character);
+    }
+    escaped.push_back('\'');
+    return escaped;
+#endif
+}
+
+class AutomatedChildProcess {
+public:
+    ~AutomatedChildProcess(){
+        if(m_result.valid())m_result.wait();
+    }
+
+    bool Start(const std::filesystem::path& executable,
+               const std::filesystem::path& workingDirectory) {
+        if(m_result.valid())return false;
+#if defined(_WIN32)
+        const std::string command="cd /d "+ShellQuote(workingDirectory)+
+            " && set PRISMATIX_E2E_JOURNEY=catalog&& "+ShellQuote(executable);
+#else
+        const std::string command="cd "+ShellQuote(workingDirectory)+
+            " && PRISMATIX_E2E_JOURNEY=catalog "+ShellQuote(executable);
+#endif
+        m_result=std::async(std::launch::async,[command]{
+            return std::system(command.c_str());
+        });
+        return true;
+    }
+
+    [[nodiscard]] std::optional<int> CompletedExitCode(){
+        if(m_completed)return m_exitCode;
+        if(!m_result.valid()||m_result.wait_for(0ms)!=std::future_status::ready)
+            return std::nullopt;
+        m_exitCode=m_result.get();
+        m_completed=true;
+        return m_exitCode;
+    }
+
+private:
+    std::future<int> m_result;
+    std::optional<int> m_exitCode;
+    bool m_completed=false;
+};
 
 void CreateProjectFixture(const std::filesystem::path& root,
                           const std::filesystem::path& contentRoot,
@@ -247,11 +315,12 @@ void CreateProjectFixture(const std::filesystem::path& root,
     Copy(imageSource, root / "Assets/ending.png");
 
     Write(root / "Content/Extensions/default.pxextension", R"({
-      "format":"PrismatiXExtension","schemaRevision":1,
+      "format":"PrismatiXExtension","schemaRevision":2,
       "id":"player-catalog-native-acceptance",
+      "version":"1.0.0","requiredEngineVersion":"^0.2.0",
       "language":"javascript",
        "entry":"acceptance.js",
-       "capabilities":["runtime"],
+       "capabilities":["runtime","ui"],
        "safety":{"previewSafe":true,"deterministic":true,
                  "seekSafe":false,"rollbackSafe":false},
        "commands":[],
@@ -261,9 +330,7 @@ void CreateProjectFixture(const std::filesystem::path& root,
         "description":"Packaged Player typed Action acceptance fixture.",
         "category":"Tests",
         "reentry":"ignoreWhileRunning",
-        "capabilities":["runtime"],
-        "destructiveInPreview":false,
-        "allowAdditionalArguments":false,
+        "capabilities":["runtime","ui"],
         "parameters":[
           {"name":"amount","displayName":"Amount","type":"integer",
            "required":true,"default":null,"enum":[],"resourceFilter":"",
@@ -279,7 +346,7 @@ Engine.RegisterAction("acceptance.packaged-action", async (args, context) => {
   if (args.amount !== 3) throw new Error("unexpected amount");
   if (args.asset.id !== "33333333-3333-4333-8333-333333333333") throw new Error("unexpected asset id");
   if (args.asset.path !== "Assets/ending.png") throw new Error("unexpected asset path");
-  if (context.scene !== "Content/Runtime/start.pxir") throw new Error("unexpected scene");
+  if (context.scene !== "Runtime/Locales/zh-TW/main.pxir") throw new Error("unexpected scene");
   if (context.preview !== false) throw new Error("unexpected preview mode");
   Engine.log("packaged-action-start", args.amount, args.asset.id, args.asset.path, context.scene, context.preview);
   await Engine.WaitSeconds(0);
@@ -290,25 +357,23 @@ Engine.RegisterAction("acceptance.packaged-action", async (args, context) => {
 });
 )");
 
-    Write(root / "Content/Game.pxres", R"(
-@pxresource 4 00000000-0000-4000-8000-000000000001 GameCatalog
-[node "00000000-0000-4000-8000-000000000010", "", "OpenGallery", "InputBinding"]
-key = "G"
-command = "screen.open"
-argument = "gallery"
-[node "00000000-0000-4000-8000-000000000011", "", "Affinity", "Variable"]
-name = "affinity"
-default = 7
-persistent = true
-[node "00000000-0000-4000-8000-000000000012", "", "EndingCG", "GalleryItem"]
-id = "ending-rin"
-title = "Rin Ending"
-image = res("33333333-3333-4333-8333-333333333333", "Assets/ending.png")
-thumbnail = res("33333333-3333-4333-8333-333333333333", "Assets/ending.png")
-)");
+    Write(root / "Content/game.pxgame", R"({
+      "format":"PrismatiXGame","schemaRevision":2,
+      "variables":[
+        {"name":"affinity","type":"integer","default":7,"scope":"profile"},
+        {"name":"routeName","type":"string","default":"common","scope":"session"}
+      ],
+      "inputBindings":[{"key":"G","command":"screen.open","argument":"gallery"}],
+      "gallery":[{
+        "id":"ending-rin","title":"Rin Ending",
+        "image":{"id":"33333333-3333-4333-8333-333333333333","path":"Assets/ending.png"},
+        "thumbnail":{"id":"33333333-3333-4333-8333-333333333333","path":"Assets/ending.png"}
+      }],
+      "unlockables":[]
+    })");
 
     Write(root / "Content/Runtime/start.pxir", R"({
-      "format":"PrismatiXRuntimeIR","schemaRevision":1,
+      "format":"PrismatiXRuntimeIR","schemaRevision":2,
       "documentId":"99999999-9999-4999-8999-999999999999",
       "committedRevision":1,
       "operations":[
@@ -323,15 +388,70 @@ thumbnail = res("33333333-3333-4333-8333-333333333333", "Assets/ending.png")
          "arguments":{"speaker":"Rin","text":"hello"}}
       ]
     })");
+    Write(root / "Content/Runtime/start.pxmap", R"({
+      "format":"PrismatiXSourceMap","schemaRevision":2,
+      "documentId":"99999999-9999-4999-8999-999999999999",
+      "mappings":[
+        {"operationId":"unlock-ending","sourceId":"unlock-ending","sourceUri":"Story/Entry.pxstory","startLine":1,"startColumn":1,"endLine":1,"endColumn":10},
+        {"operationId":"typed-action","sourceId":"typed-action","sourceUri":"Story/Entry.pxstory","startLine":2,"startColumn":1,"endLine":2,"endColumn":10},
+        {"operationId":"line-1","sourceId":"line-1","sourceUri":"Story/Entry.pxstory","startLine":3,"startColumn":1,"endLine":3,"endColumn":5}
+      ]
+    })");
+    Copy(root / "Content/Runtime/start.pxir",
+         root / "Runtime/Locales/zh-TW/main.pxir");
+    Copy(root / "Content/Runtime/start.pxmap",
+         root / "Runtime/Locales/zh-TW/main.pxmap");
+    std::string japaneseIr = Read(root / "Content/Runtime/start.pxir");
+    for (std::size_t offset = 0;
+         (offset = japaneseIr.find("hello", offset)) != std::string::npos;
+         offset += std::string_view("こんにちは").size())
+        japaneseIr.replace(offset, std::string_view("hello").size(),
+                           "こんにちは");
+    Write(root / "Runtime/Locales/ja-JP/main.pxir", japaneseIr);
+    std::string japaneseMap = Read(root / "Content/Runtime/start.pxmap");
+    for (std::size_t offset = 0;
+         (offset = japaneseMap.find("Story/Entry.pxstory", offset)) !=
+         std::string::npos;
+         offset += std::string_view("Story/Entry.ja.pxstory").size())
+        japaneseMap.replace(offset,
+                            std::string_view("Story/Entry.pxstory").size(),
+                            "Story/Entry.ja.pxstory");
+    Write(root / "Runtime/Locales/ja-JP/main.pxmap", japaneseMap);
 
     Write(root / "project.pxproject", R"({
-      "format":"PrismatiXProject","schemaRevision":1,
+      "format":"PrismatiXProject","schemaRevision":2,
+      "id":"player-catalog-native-acceptance","name":"Player Catalog Acceptance",
+      "version":"0.2.0","contentVersion":"player-catalog-native-acceptance-v1","saveVersion":1,
+      "resolution":{"width":1280,"height":720},
+      "entry":{"story":"main","ui":"title"},
+      "defaultLocale":"zh-TW","supportedLocales":["zh-TW","ja-JP"],
+      "storyIndex":"Story/story.pxindex","gameCatalog":"Content/game.pxgame",
+      "extensions":["Content/Extensions/default.pxextension"],
+      "uiEntryPoints":{"title":"Content/UI/Title.pxscene"},
       "assets":[{
         "id":"33333333-3333-4333-8333-333333333333",
         "name":"Ending","kind":"cg","source":"Assets/ending.png",
         "sourceFileName":"ending.png","tags":[],"size":1,"fingerprint":"fixture"
       }],
       "characters":[]
+    })");
+    Write(root / "Content/Localization/zh-TW.json", R"({
+      "format":"PrismatiXLocale","schemaRevision":2,"locale":"zh-TW",
+      "fontChain":["Content/Fonts/NotoSansTC-Bold.ttf"],
+      "strings":{}
+    })");
+    Write(root / "Content/Localization/ja-JP.json", R"({
+      "format":"PrismatiXLocale","schemaRevision":2,"locale":"ja-JP",
+      "fontChain":["Content/Fonts/NotoSansTC-Bold.ttf"],
+      "strings":{}
+    })");
+    Write(root / "Story/Entry.pxstory", "Rin: hello\n[end]\n");
+    Write(root / "Story/Entry.ja.pxstory", "Rin: こんにちは\n[end]\n");
+    Write(root / "Story/story.pxindex", R"({
+      "format":"PrismatiXStoryIndex","schemaRevision":2,"id":"main",
+      "entryScene":"main",
+      "chapters":[{"id":"chapter-1","title":"Chapter 1","scenes":["main"]}],
+      "scenes":[{"id":"main","sources":{"zh-TW":"Story/Entry.pxstory","ja-JP":"Story/Entry.ja.pxstory"}}]
     })");
 }
 
@@ -340,18 +460,22 @@ px::sdk::PackageRequest PackageRequest(const std::filesystem::path& root,
                                        const std::filesystem::path& player) {
     px::sdk::PackageRequest request;
     request.requestId = "player-catalog-native-acceptance";
+    request.gameId = "player-catalog-native-acceptance";
     request.projectRoot = root;
     request.outputDir = output;
     request.playerExecutable = player;
     request.title = "PrismatiX Player Catalog Acceptance";
-    request.width = 960;
-    request.height = 540;
+    request.width = 1280;
+    request.height = 720;
     request.startScript = "Content/Runtime/start.pxir";
+    request.sourceMap = "Content/Runtime/start.pxmap";
+    request.extensions = {"Content/Extensions/default.pxextension"};
     request.startRoute = "title";
     request.routes = {{"title", "Content/UI/Title.pxscene"},
                       {"hud", "Content/UI/HUD.pxscene"},
                       {"gallery", "Content/UI/Gallery.pxscene"}};
     request.contentVersion = "player-catalog-native-acceptance-v1";
+    request.saveVersion = 1;
     request.encryption = false;
     request.compression = px::sdk::PackageCompression::Fast;
     const std::vector<std::string> uris = {
@@ -359,12 +483,22 @@ px::sdk::PackageRequest PackageRequest(const std::filesystem::path& root,
         "Content/Fonts/NotoSansTC-Bold.ttf",
         "Content/Extensions/acceptance.js",
         "Content/Extensions/default.pxextension",
-        "Content/Game.pxres",
+        "Content/game.pxgame",
+        "Content/Localization/ja-JP.json",
+        "Content/Localization/zh-TW.json",
         "Content/Runtime/start.pxir",
+        "Content/Runtime/start.pxmap",
+        "Runtime/Locales/zh-TW/main.pxir",
+        "Runtime/Locales/zh-TW/main.pxmap",
+        "Runtime/Locales/ja-JP/main.pxir",
+        "Runtime/Locales/ja-JP/main.pxmap",
+        "Story/Entry.ja.pxstory",
         "Content/UI/Gallery.pxscene",
         "Content/UI/HUD.pxscene",
         "Content/UI/PrismatiX.pxtheme",
         "Content/UI/Title.pxscene",
+        "Story/Entry.pxstory",
+        "Story/story.pxindex",
         "project.pxproject",
     };
     for (const auto& uri : uris) request.inputs.push_back(Input(root, uri));
@@ -386,7 +520,7 @@ int main(int argc, char* argv[]) {
         const std::filesystem::path imageSource =
             std::filesystem::absolute(std::filesystem::path(argv[3]));
         suite.Require(std::filesystem::is_regular_file(player),
-                      "built Windows Player exists");
+                      "built native Player exists");
         suite.Require(std::filesystem::is_regular_file(imageSource),
                       "native Gallery image fixture exists");
 
@@ -396,11 +530,21 @@ int main(int argc, char* argv[]) {
         CreateProjectFixture(root, contentRoot, imageSource);
         const auto packaged = px::sdk::RunPackager(
             PackageRequest(root, output, player));
+        if (!packaged.Completed()) {
+            for (const auto& diagnostic : packaged.diagnostics)
+                std::cerr << diagnostic.code << ": " << diagnostic.message
+                          << '\n';
+        }
         suite.Require(packaged.Completed(),
                       "Packager produces the native Player fixture");
+        suite.Require(std::filesystem::is_regular_file(
+                          output / "Package/manifest.json"),
+                      "packaged output contains its explicit package manifest");
+        suite.Require(std::filesystem::is_regular_file(output / "Content.pdx"),
+                      "packaged output contains its content archive");
 
         const auto packagedPlayer = output / player.filename();
-        ChildProcess process;
+        AutomatedChildProcess process;
         suite.Require(process.Start(packagedPlayer, output),
                       "packaged Player process launches");
         const auto log = output / "logs/PrismatiXPlayer.log";
@@ -417,53 +561,49 @@ int main(int argc, char* argv[]) {
         suite.Require(titleReady,
                       "native Player reaches the title route");
 
-        HWND window = nullptr;
-        suite.Require(WaitUntil(10s, [&] {
-                          window = FindWindowForProcess(process.Id());
-                          return window != nullptr;
-                      }),
-                      "native Player creates a visible Windows window");
-        suite.Require(PostKey(window, VK_TAB) && PostKey(window, VK_RETURN),
-                      "keyboard input activates Start through the real window");
-        suite.Require(WaitForLog(log, "Player game started script=Content/Runtime/start.pxir"),
-                      "native Player starts packaged Runtime IR");
+        suite.Require(WaitForLog(log, "Player game started script=Runtime/Locales/zh-TW/main.pxir"),
+                      "automated native input activates Start and runs packaged Runtime IR");
         suite.Require(WaitForLog(log,
                                  "Player progression unlocked kind=cg id=ending-rin"),
                       "Runtime IR unlock reaches Player persistence");
         suite.Require(
             WaitForLog(
                 log,
-                "[javascript] packaged-action-complete 6 33333333-3333-4333-8333-333333333333 Assets/ending.png Content/Runtime/start.pxir false"),
+                "[javascript] packaged-action-complete 6 33333333-3333-4333-8333-333333333333 Assets/ending.png Runtime/Locales/zh-TW/main.pxir false"),
             "packaged Runtime IR dispatches the typed JavaScript Action with exact Player context, resolved UUID resource, and observable variable side effect");
+        suite.Require(
+            WaitForLog(log,
+                       "Player E2E locale switched locale=ja-JP text=こんにちは"),
+            "running Player transactionally switches to aligned localized Story IR without restarting");
 
-        suite.Require(PostKey(window, 'G'),
-                      "catalog InputBinding is delivered to the real window");
         suite.Require(WaitForLog(log,
                                  "Player gallery presented total=1 unlocked=1"),
-                      "InputBinding opens Gallery with the unlocked UUID asset");
-        const CaptureSummary capture = CaptureWindow(window);
-        suite.Expect(capture.width >= 640 && capture.height >= 360 &&
-                         capture.sampledColors >= 8,
-                     "Gallery renders a non-blank native Player frame");
-        std::cout << "Native Gallery capture " << capture.width << 'x'
-                  << capture.height << " colors=" << capture.sampledColors
-                  << " hash=" << capture.hash << '\n';
-
-        suite.Require(PostKey(window, VK_ESCAPE),
-                      "keyboard closes the Gallery overlay");
+                      "catalog InputBinding opens Gallery with the unlocked UUID asset");
+        suite.Require(WaitForLog(log, "Player E2E gallery frame width="),
+                      "Gallery is read back from the real native framebuffer");
         suite.Require(WaitForLog(log, "Player overlay closed"),
-                      "Player returns from the Gallery overlay");
-        DWORD exitCode = 1;
-        suite.Require(process.Close(window, exitCode),
+                      "automated native cancel input closes the Gallery overlay");
+        suite.Require(WaitForLog(log, "Player E2E journey complete name=catalog"),
+                      "Player completes the deterministic packaged journey");
+        std::optional<int> exitCode;
+        suite.Require(WaitUntil(35s, [&] {
+                          exitCode = process.CompletedExitCode();
+                          return exitCode.has_value();
+                      }),
                       "native Player exits within the bounded deadline");
-        suite.Expect(exitCode == 0, "native Player exits cleanly");
+        suite.Expect(exitCode.has_value() && *exitCode == 0,
+                     "native Player exits cleanly");
 
         const auto savePath = output / "Save/profile.dat";
         suite.Require(std::filesystem::is_regular_file(savePath) &&
                           std::filesystem::file_size(savePath) > 0,
                       "Player writes the encrypted global profile");
+        const auto manifest = px::sdk::detail::ParsePackageManifest(
+            Read(output / "Package/manifest.json"));
+        suite.Require(manifest.Valid(),
+                      "packaged manifest can derive the same save identity as Player");
         const px::crypto::Key saveKey = px::crypto::DeriveKey(
-            "PrismatiX Player Catalog Acceptance|px-save");
+            manifest.manifest.packageFingerprint + "|px-save");
         px::progress::GlobalProfile profile;
         suite.Require(px::progress::LoadGlobalProfile(profile, savePath.string(), &saveKey),
                       "saved Player profile reloads with the package identity");

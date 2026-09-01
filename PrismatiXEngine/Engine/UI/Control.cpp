@@ -1,6 +1,7 @@
 #include "Engine/UI/Control.h"
 
 #include "Engine/Graphics/Renderer2D.h"
+#include "Engine/Core/TypeRegistry.h"
 #include "Engine/UI/Theme.h"
 
 #include <algorithm>
@@ -68,6 +69,115 @@ void Control::SetMaximumSize(Vec2 value) { m_maximum = value; InvalidateLayout()
 void Control::SetSizeFlags(SizeFlag h, SizeFlag v) { m_horizontalFlags = h; m_verticalFlags = v; InvalidateLayout(); }
 void Control::SetStretchRatio(float value) { m_stretchRatio = std::max(0.001f, value); InvalidateLayout(); }
 void Control::SetVisibility(Visibility value) { m_visibility = value; InvalidateLayout(); }
+
+AccessibilitySemantics Control::DescribeAccessibility() const {
+    AccessibilitySemantics semantics{
+        .id = Id(),
+        .role = m_accessibilityRole,
+        .label = m_accessibilityLabel,
+        .description = m_accessibilityDescription,
+        .bounds = m_layoutRect,
+        .focusOrder = m_accessibilityFocusOrder,
+        .focusable = m_focusMode != FocusMode::None,
+        .hidden = !IsVisibleInTree(),
+    };
+
+    const std::string type(TypeName());
+    if (semantics.role.empty()) {
+        if (type == "Button" || type == "IconButton") semantics.role = "button";
+        else if (type == "CheckBox") semantics.role = "checkbox";
+        else if (type == "RadioButton") semantics.role = "radio";
+        else if (type == "Slider" || type == "ScrollBar" || type == "SpinBox") semantics.role = "slider";
+        else if (type == "OptionButton") semantics.role = "combobox";
+        else if (type == "LineEdit" || type == "TextEdit") semantics.role = "textbox";
+        else if (type == "Label" || type == "RichTextLabel") semantics.role = "text";
+        else if (type == "TextureRect" || type == "VideoRect") semantics.role = "image";
+        else if (type == "ProgressBar") semantics.role = "progressbar";
+        else if (type == "ListView" || type == "GridView") semantics.role = "list";
+        else semantics.role = Children().empty() ? "presentation" : "group";
+    }
+
+    const auto propertyText = [this, &type](const std::string_view name) -> std::string {
+        const auto* property = TypeRegistry::Global().FindProperty(type, std::string(name));
+        if (!property || !property->get) return {};
+        const Variant value = property->get(*this);
+        if (const auto* text = value.TryGet<std::string>()) return *text;
+        if (const auto* number = value.TryGet<double>()) return std::to_string(*number);
+        if (const auto* integer = value.TryGet<std::int64_t>()) return std::to_string(*integer);
+        if (const auto* boolean = value.TryGet<bool>()) return *boolean ? "true" : "false";
+        return {};
+    };
+    const auto propertyNumber = [this, &type](const std::string_view name)
+        -> std::optional<double> {
+        const auto* property =
+            TypeRegistry::Global().FindProperty(type, std::string(name));
+        if (!property || !property->get) return std::nullopt;
+        const Variant value = property->get(*this);
+        if (const auto* number = value.TryGet<double>()) return *number;
+        if (const auto* integer = value.TryGet<std::int64_t>())
+            return static_cast<double>(*integer);
+        return std::nullopt;
+    };
+    if (semantics.label.empty()) semantics.label = propertyText("text");
+    if (semantics.label.empty() && semantics.role != "presentation" && semantics.role != "group")
+        semantics.label = Name();
+    if (semantics.value.empty()) {
+        semantics.value = propertyText("value");
+        if (semantics.value.empty() && semantics.role == "textbox") semantics.value = propertyText("text");
+        if (semantics.value.empty() && semantics.role == "combobox") semantics.value = propertyText("selected");
+    }
+    if (!m_enabled) semantics.states.emplace_back("disabled");
+    if (m_focused) semantics.states.emplace_back("focused");
+    if (const std::string checked = propertyText("checked"); !checked.empty())
+        semantics.states.emplace_back(checked == "true" ? "checked" : "unchecked");
+    if (semantics.role == "button" || semantics.role == "checkbox" ||
+        semantics.role == "radio" || semantics.role == "combobox")
+        semantics.actions.emplace_back("activate");
+    if (semantics.role == "slider") {
+        const auto minimum = propertyNumber("minimum");
+        const auto maximum = propertyNumber("maximum");
+        const auto step = propertyNumber("step");
+        if (minimum && maximum) {
+            semantics.minimum = *minimum;
+            semantics.maximum = *maximum;
+            semantics.step = step.value_or(0.0);
+            semantics.hasRange = true;
+        }
+        semantics.actions.emplace_back("setValue");
+        semantics.actions.emplace_back("increment");
+        semantics.actions.emplace_back("decrement");
+    }
+    if (semantics.role == "textbox") {
+        semantics.readOnly = propertyText("readOnly") == "true";
+        semantics.actions.emplace_back("setValue");
+        if (type == "LineEdit") semantics.actions.emplace_back("submit");
+    }
+    if (semantics.role == "text" || semantics.role == "heading" ||
+        semantics.role == "log" || semantics.role == "textbox") {
+        const std::string content = propertyText("text");
+        const int wrap = propertyText("wrap") == "true"
+                             ? std::max(1, static_cast<int>(m_layoutRect.w))
+                             : 0;
+        text::TextLayout layout = MeasureTextLayout(content, 0, wrap)
+                                      .value_or(text::TextLayout(
+                                          content, "und", {}, {}));
+        semantics.text = AccessibilityTextSemantics{
+            .layout = std::move(layout),
+            .editable = semantics.role == "textbox" && !semantics.readOnly,
+            .multiline = type == "TextEdit",
+        };
+    }
+    return semantics;
+}
+
+bool Control::PerformAccessibilityAction(const std::string_view action,
+                                         const std::string_view) {
+    if (!Enabled() || !IsVisibleInTree() || action != "activate") return false;
+    UIEvent event;
+    event.type = UIEventType::Activate;
+    HandleEvent(event);
+    return event.handled;
+}
 
 bool Control::IsVisibleInTree() const {
     if (m_visibility != Visibility::Visible) return false;

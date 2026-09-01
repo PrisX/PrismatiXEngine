@@ -11,12 +11,17 @@ struct BacklogEntry {
     std::string text;
     std::string voice;
     bool isChoice = false;
+    // Stable content identity allows runtime locale switching and save
+    // migration to re-resolve backlog text without guessing from line text.
+    std::string sourceId;
+    std::string operationId;
 };
 
 class Backlog {
 public:
     void Push(const std::string& speaker, const std::string& text, const std::string& voice = "",
-              bool isChoice = false);
+              bool isChoice = false, const std::string& sourceId = {},
+              const std::string& operationId = {});
     void Clear() { m_entries.clear(); }
     // Drops entries past `size` (rollback rewinds the log in place).
     void Truncate(std::size_t size) {

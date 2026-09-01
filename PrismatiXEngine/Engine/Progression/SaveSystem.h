@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/IO/Crypto.h"
+#include "Engine/Core/Result.h"
 #include "Engine/Audio/AudioEngine.h"
 #include "Engine/Animation/Timeline.h"
 #include "Engine/VN/Runtime/Backlog.h"
@@ -13,6 +14,8 @@
 #include "Engine/Script/ScriptState.h"
 
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -21,7 +24,22 @@
 
 namespace px::progress {
 
+struct ExecutionAnchor {
+    std::string runtimeDocumentId;
+    std::string sourceId;
+    std::string operationId;
+};
+
 struct SaveSnapshot {
+    std::string engineVersion = "0.2.0";
+    std::string gameId;
+    std::string packageFingerprint;
+    std::string contentVersion;
+    std::uint32_t saveVersion = 1;
+    ExecutionAnchor anchor;
+    // In-memory only. Rollback entries share the immutable compiled program;
+    // disk saves reconstruct it from the verified package.
+    std::shared_ptr<const vn::Program> runtimeProgram;
     std::string scriptPath;
     int pc = 0;
     std::string chapter;
@@ -30,7 +48,6 @@ struct SaveSnapshot {
     audio::AudioEngine::RuntimeState audio;
     std::unordered_map<std::string, int> variables;
     std::unordered_map<std::string, vn::Value> typedVariables;
-    std::set<std::string> persistentVariables;
     vn::VMRuntimeState vm;
     vn::DialogueSnapshot dialogue;
     ui::RouteState routes;
@@ -53,6 +70,42 @@ struct SlotInfo {
     std::uint64_t timestamp = 0;
     std::vector<std::uint8_t> thumbnailPng;
 };
+
+// Save migrations are deliberately pure-data transforms. The Player reads
+// migration documents from the already verified package VFS; migration code
+// never receives Engine, filesystem, network, or native bindings.
+struct SaveMigrationDescriptor {
+    std::string id;
+    std::string fromContentVersion;
+    std::uint32_t fromSaveVersion = 0;
+    std::string toContentVersion;
+    std::uint32_t toSaveVersion = 0;
+    std::string asset;
+};
+
+struct SaveMigrationTarget {
+    std::string gameId;
+    std::string packageFingerprint;
+    std::string contentVersion;
+    std::uint32_t saveVersion = 0;
+};
+
+using SaveMigrationReadText =
+    std::function<std::optional<std::string>(std::string_view asset)>;
+
+// Strict in-memory decoder used by the Player, save inspector, and fuzzers.
+// The input is the authenticated JSON envelope (without the persistence-file
+// magic/encryption wrapper).  Keeping this public avoids tools growing a
+// second, weaker interpretation of SaveEnvelopeV2.
+[[nodiscard]] std::optional<SaveSnapshot> ParseSaveEnvelopeV2(
+    std::string_view json, std::string_view sourcePath = "<memory-save>");
+
+// Finds one unambiguous ordered chain and applies it to an isolated copy.
+// Failure never mutates the source snapshot or the live RuntimeSession.
+[[nodiscard]] Result<SaveSnapshot> MigrateSaveSnapshot(
+    const SaveSnapshot& source, const SaveMigrationTarget& target,
+    const std::vector<SaveMigrationDescriptor>& migrations,
+    const SaveMigrationReadText& readText);
 
 class SaveSystem {
 public:

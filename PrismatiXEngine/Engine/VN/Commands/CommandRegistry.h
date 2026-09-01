@@ -66,6 +66,9 @@ struct CommandDescriptor {
     std::string displayName;
     std::string description;
     std::string category;
+    // Empty for engine built-ins. Third-party registrations must carry the
+    // manifest id so reload/unload can replace the complete source atomically.
+    std::string sourceId;
     std::vector<CommandParameterDescriptor> parameters;
     CommandWaitPolicy waitPolicy = CommandWaitPolicy::Immediate;
     RollbackPolicy rollbackPolicy = RollbackPolicy::Reversible;
@@ -80,6 +83,9 @@ struct CommandDescriptor {
 class CommandRegistry {
 public:
     Status Register(CommandDescriptor descriptor);
+    Status ReplaceSource(std::string_view sourceId,
+                         std::vector<CommandDescriptor> descriptors);
+    Status RemoveSource(std::string_view sourceId);
     [[nodiscard]] const CommandDescriptor* Find(std::string_view id) const;
     [[nodiscard]] const std::vector<CommandDescriptor>& Descriptors() const {
         return m_descriptors;
@@ -95,6 +101,9 @@ public:
     [[nodiscard]] static CommandRegistry& Global();
 
 private:
+    static Status NormalizeAndValidateDescriptor(CommandDescriptor& descriptor);
+    void Reindex();
+
     std::vector<CommandDescriptor> m_descriptors;
     std::unordered_map<std::string, std::size_t> m_byId;
 };

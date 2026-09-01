@@ -1,6 +1,7 @@
 #include "Engine/IO/Crypto.h"
 
 #include <algorithm>
+#include <string>
 #include <psa/crypto.h>
 
 namespace px::crypto {
@@ -98,6 +99,22 @@ std::uint32_t Crc32(const std::uint8_t* data, std::size_t size) {
         }
     }
     return ~crc;
+}
+
+std::string Sha256Hex(const std::string_view value) {
+    std::array<std::uint8_t, 32> digest{};
+    if (!ComputeSha256(reinterpret_cast<const std::uint8_t*>(value.data()),
+                       value.size(), digest.data(), digest.size())) {
+        return {};
+    }
+    static constexpr char hex[] = "0123456789abcdef";
+    std::string result;
+    result.reserve(digest.size() * 2);
+    for (const std::uint8_t byte : digest) {
+        result.push_back(hex[byte >> 4u]);
+        result.push_back(hex[byte & 0x0fu]);
+    }
+    return result;
 }
 
 }

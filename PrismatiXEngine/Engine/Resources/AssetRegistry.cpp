@@ -47,8 +47,12 @@ std::string FnvHash(const std::filesystem::path& path) {
 diag::Diagnostic AssetError(std::string code, const std::filesystem::path& path,
                             std::string message, std::string details = {},
                             std::string quickFix = {}) {
-    diag::Diagnostic d{ diag::Severity::Error, std::move(code), "asset-registry",
-                        std::move(message), std::move(details) };
+    diag::Diagnostic d;
+    d.severity = diag::Severity::Error;
+    d.code = std::move(code);
+    d.category = "asset-registry";
+    d.message = std::move(message);
+    d.details = std::move(details);
     d.source.path = NormalPath(path);
     d.quickFix = std::move(quickFix);
     return d;

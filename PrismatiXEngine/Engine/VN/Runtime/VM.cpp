@@ -361,22 +361,54 @@ bool VM::Blocking() const {
            m_state == VMState::WaitingExternal;
 }
 
-void VM::Run() {
+VMRunResult VM::Run() {
+    return RunSlice(m_config.maxInstructionsPerTick);
+}
+
+VMRunResult VM::RunSlice(const std::size_t maxInstructions) {
     const auto& code = m_program.code;
+    const std::size_t sliceBudget = std::max<std::size_t>(1, maxInstructions);
+    std::size_t executed = 0;
+    const auto finishSlice = [this, &executed](const VMRunStatus status,
+                                               const bool observableYield) {
+        if (observableYield) m_instructionsWithoutObservableYield = 0;
+        m_lastRunResult = {status, executed};
+        return m_lastRunResult;
+    };
     while (m_pc >= 0 && m_pc < static_cast<int>(code.size())) {
+        if (executed >= sliceBudget) {
+            m_instructionsWithoutObservableYield += executed;
+            if (m_instructionsWithoutObservableYield >=
+                m_config.maxInstructionsWithoutYield) {
+                const Command& stalled = code[static_cast<std::size_t>(m_pc)];
+                diag::Diagnostic diagnostic{
+                    .severity = diag::Severity::Fatal,
+                    .code = "PXRUNTIME7311",
+                    .category = "Runtime.VM",
+                    .message = "Scenario exceeded the execution limit without yielding",
+                    .details = "Add a dialogue, wait, choice, video, or asynchronous command to the loop."};
+                ApplyDiagnosticSource(diagnostic, stalled);
+                diag::Emit(std::move(diagnostic));
+                m_state = VMState::Finished;
+                return finishSlice(VMRunStatus::Faulted, true);
+            }
+            m_state = VMState::Running;
+            return finishSlice(VMRunStatus::Yielded, false);
+        }
+        ++executed;
         const Command& cmd = code[m_pc];
         const std::string& t = cmd.type;
 
         if (m_seekTargetPc && m_pc == *m_seekTargetPc) {
             m_state = VMState::Paused;
-            return;
+            return finishSlice(VMRunStatus::AwaitingInput, true);
         }
 
         if (m_executionSafetyHook &&
             !m_executionSafetyHook(cmd, m_seeking)) {
             m_safetyRejected = true;
             m_state = VMState::WaitingExternal;
-            return;
+            return finishSlice(VMRunStatus::AwaitingInput, true);
         }
 
         // Debugger: pause after a single-step, or on a breakpoint line.
@@ -384,13 +416,13 @@ void VM::Run() {
             if (m_stepBudget <= 0) {
                 m_stepping = false;
                 m_state = VMState::Paused;
-                return;
+                return finishSlice(VMRunStatus::AwaitingInput, true);
             }
             --m_stepBudget;
         } else if (!m_breakpoints.empty() && m_breakpoints.count(cmd.line) != 0 &&
                    !m_skipBreakOnce) {
             m_state = VMState::Paused;
-            return;
+            return finishSlice(VMRunStatus::AwaitingInput, true);
         }
         m_skipBreakOnce = false;
 
@@ -400,19 +432,19 @@ void VM::Run() {
             HandleSay(cmd, !m_seeking);
             ++m_pc;
             m_state = VMState::WaitingClick;
-            return;
+            return finishSlice(VMRunStatus::AwaitingInput, true);
         }
         if (t == "choice") {
             CollectChoices();
             m_state = VMState::WaitingChoice;
-            return;
+            return finishSlice(VMRunStatus::AwaitingInput, true);
         }
         if (t == "wait") {
             m_timerMs = static_cast<std::uint64_t>(ParseInt(cmd.Get("ms"), 800));
             m_timerStart = m_nowMs;
             ++m_pc;
             m_state = VMState::WaitingTimer;
-            return;
+            return finishSlice(VMRunStatus::AwaitingInput, true);
         }
         if (t == "anim" || t == "tween") {
             Stage::TweenSpec spec;
@@ -439,7 +471,7 @@ void VM::Run() {
                 m_timerMs = static_cast<std::uint64_t>(std::max(0, spec.durationMs));
                 m_timerStart = m_nowMs;
                 m_state = VMState::WaitingTimer;
-                return;
+                return finishSlice(VMRunStatus::AwaitingInput, true);
             }
             continue;
         }
@@ -450,7 +482,7 @@ void VM::Run() {
                 const std::string s = cmd.Get("skippable", "true");
                 m_state = VMState::WaitingVideo;
                 m_videoHook(Resolve(m_config.videoDir, file), s != "false" && s != "0");
-                return;
+                return finishSlice(VMRunStatus::AwaitingInput, true);
             }
             PX_LOG_WARN("VM: [video] ignored (no video host) at line {}", cmd.line);
             continue;
@@ -492,7 +524,7 @@ void VM::Run() {
                 m_callStack.pop_back();
                 if (frame.script != m_scriptPath && !LoadProgram(frame.script)) {
                     m_state = VMState::Finished;
-                    return;
+                    return finishSlice(VMRunStatus::Completed, true);
                 }
                 m_pc = frame.pc;
             } else {
@@ -503,9 +535,11 @@ void VM::Run() {
 
         ExecuteSimple(cmd);
         ++m_pc;
-        if (m_state == VMState::WaitingExternal) return;
+        if (m_state == VMState::WaitingExternal)
+            return finishSlice(VMRunStatus::AwaitingInput, true);
     }
     m_state = VMState::Finished;
+    return finishSlice(VMRunStatus::Completed, true);
 }
 
 void VM::ExecuteSimple(const Command& cmd) {
@@ -568,7 +602,7 @@ void VM::ExecuteSimple(const Command& cmd) {
                         .code="PXVN6101",.category="VN.Character",
                         .message="Character expression was not found; using legacy filename fallback",
                         .details=name+" / "+fallbackExpression};
-                    diagnostic.source.path=m_scriptPath;diagnostic.source.line=cmd.line;
+                    ApplyDiagnosticSource(diagnostic, cmd);
                     diag::Emit(std::move(diagnostic));
                 }
                 file = name + "_" + fallbackExpression + ".png";
@@ -618,10 +652,12 @@ void VM::ExecuteSimple(const Command& cmd) {
     }
     if (t == "var") {
         const std::string name = cmd.Get("name");
-        const bool typedPersistent = cmd.FindTyped("persistent") &&
-            cmd.FindTyped("persistent")->TryGet<bool>() &&
-            *cmd.FindTyped("persistent")->TryGet<bool>();
-        const bool persistent = typedPersistent;
+        VariableScope scope = VariableScope::Session;
+        if (const auto* encodedScope = cmd.FindTyped("scope"); encodedScope) {
+            if (const auto* value = encodedScope->TryGet<std::string>();
+                value && *value == "profile")
+                scope = VariableScope::Profile;
+        }
         if (cmd.FindTyped("add")) {
             int delta = 0;
             if (const Variant* typed = cmd.FindTyped("add")) {
@@ -631,10 +667,9 @@ void VM::ExecuteSimple(const Command& cmd) {
                     delta = static_cast<int>(*number);
                 }
             }
-            m_vars.Add(name, delta, persistent);
+            m_vars.Add(name, delta, scope);
         } else if (const Variant* value = cmd.FindTyped("value")) {
-            m_vars.SetValue(name, value->Clone(), persistent ? VariableScope::Persistent
-                                                             : VariableScope::SaveLocal);
+            m_vars.SetValue(name, value->Clone(), scope);
         }
         return;
     }
@@ -674,7 +709,14 @@ void VM::ExecuteSimple(const Command& cmd) {
 
 void VM::HandleSay(const Command& cmd, const bool recordPlayback) {
     if (m_seenHook) {
-        m_currentLineSeen = m_seenHook(m_scriptPath + ":" + std::to_string(cmd.line));
+        const std::string source = cmd.sourceId.empty()
+                                       ? std::to_string(cmd.line)
+                                       : cmd.sourceId;
+        const std::string operation = cmd.operationId.empty()
+                                          ? source
+                                          : cmd.operationId;
+        m_currentLineSeen = m_seenHook(
+            m_program.documentId + ":" + source + ":" + operation);
     }
     const std::string character = cmd.Get("char", cmd.Get("character"));
     std::string speaker = cmd.Has("speaker") ? cmd.Get("speaker") : m_speaker;
@@ -719,7 +761,8 @@ void VM::HandleSay(const Command& cmd, const bool recordPlayback) {
                        cmd.Get("effect", m_textEffect));
     if (recordPlayback && !m_skipBacklogOnce) {
         // Use the dialogue's cleaned text: inline tags like {w=300} are stripped.
-        m_backlog.Push(speaker, m_dialogue.State().fullText, voice);
+        m_backlog.Push(speaker, m_dialogue.State().fullText, voice, false,
+                       cmd.sourceId, cmd.operationId);
     }
     m_skipBacklogOnce = false;
     if (recordPlayback && !voice.empty()) {
@@ -735,7 +778,8 @@ void VM::CollectChoices() {
         if (code[i].type == "choice") {
             m_choices.push_back(
                 Choice{ FilterText(m_vars.Substitute(code[i].Get("text", code[i].Get("value"))),code[i].Get("textId")),
-                        code[i].Get("target") });
+                        code[i].Get("target"), code[i].sourceId,
+                        code[i].operationId });
             ++i;
             continue;
         }
@@ -766,7 +810,8 @@ bool VM::EvaluateCondition(const Command& cmd) const {
         diag::Diagnostic diagnostic{.severity=diag::Severity::Error,.code="PXVM7601",
                                     .category="VN.Runtime",
                                     .message="If expression did not evaluate to bool"};
-        diagnostic.source.path=m_scriptPath;diag::Emit(std::move(diagnostic));return false;
+        ApplyDiagnosticSource(diagnostic, cmd);
+        diag::Emit(std::move(diagnostic));return false;
     }
     return false;
 }
@@ -800,7 +845,17 @@ void VM::SelectChoice(int index) {
         return;
     }
     const Choice chosen = m_choices[index];
-    m_backlog.Push("", chosen.text, "", /*isChoice=*/true);
+    if (m_choiceSeenHook) {
+        const std::string source = chosen.sourceId.empty()
+                                       ? std::to_string(index)
+                                       : chosen.sourceId;
+        const std::string operation = chosen.operationId.empty()
+                                          ? source
+                                          : chosen.operationId;
+        m_choiceSeenHook(m_program.documentId + ":" + source + ":" + operation);
+    }
+    m_backlog.Push("", chosen.text, "", /*isChoice=*/true, chosen.sourceId,
+                   chosen.operationId);
     m_choices.clear();
     // Step past the whole consecutive choice block first; a choice without a
     // target then continues after the block instead of re-prompting the rest.
@@ -831,6 +886,20 @@ void VM::NotifyExternalDone() {
     if (m_state == VMState::WaitingExternal) {
         m_state = VMState::Idle;
         Run();
+    }
+}
+
+void VM::ApplyDiagnosticSource(diag::Diagnostic& diagnostic,
+                               const Command& command) const {
+    diagnostic.source.path = m_scriptPath;
+    diagnostic.source.resourceId = command.sourceId;
+    diagnostic.source.nodeId = command.sourceId;
+    diagnostic.source.line = command.line;
+    diagnostic.operationId = command.operationId;
+    diagnostic.documentId = m_program.documentId;
+    diagnostic.sourceId = command.sourceId;
+    if (m_diagnosticSourceResolver) {
+        m_diagnosticSourceResolver(diagnostic, command);
     }
 }
 
@@ -893,7 +962,9 @@ void VM::OnAdvance() {
 void VM::Update(std::uint64_t nowMs, float dt) {
     m_nowMs = nowMs;
     m_stage.Update(dt);
-    if (m_state == VMState::WaitingClick) {
+    if (m_state == VMState::Running) {
+        Run();
+    } else if (m_state == VMState::WaitingClick) {
         m_dialogue.Update(nowMs);
     } else if (m_state == VMState::WaitingTimer) {
         if (nowMs - m_timerStart >= m_timerMs) {

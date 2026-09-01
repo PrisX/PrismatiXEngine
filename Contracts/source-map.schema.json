@@ -5,7 +5,7 @@
   "required":["format","schemaRevision","documentId","mappings"],
   "properties":{
     "format":{"const":"PrismatiXSourceMap"},
-    "schemaRevision":{"const":1},
+    "schemaRevision":{"const":2},
     "documentId":{"type":"string","minLength":1,"maxLength":512},
     "mappings":{"type":"array","maxItems":1000000,"items":{
       "type":"object","additionalProperties":false,

@@ -62,6 +62,8 @@ struct PreviewDiagnosticSource {
     std::string property;
     int line = 0;
     int column = 0;
+    int endLine = 0;
+    int endColumn = 0;
 };
 
 struct PreviewSessionDiagnostic {
@@ -74,6 +76,10 @@ struct PreviewSessionDiagnostic {
     std::string category = "Preview.Session";
     std::string operationId;
     std::string quickFix;
+    std::string documentId;
+    std::string sourceId;
+    std::string hint;
+    std::string cause;
 };
 
 struct PreviewApplyRequest {

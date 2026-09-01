@@ -26,15 +26,20 @@ test("canonical JSON sorts every object level deterministically", () => {
 test("project contract is strict, bounded, and path-safe", () => {
   const project = {
     format: "PrismatiXProject",
-    schemaRevision: 1,
+    schemaRevision: 2,
     id: "rain-demo",
     name: "Rain Demo",
+    version: "0.2.0",
+    contentVersion: "chapter-1",
+    saveVersion: 1,
     resolution: {width: 1280, height: 720},
+    entry: {story: "chapter01.scene01", ui: "title"},
     defaultLocale: "zh-TW",
     supportedLocales: ["zh-TW", "ja-JP"],
     storyIndex: "Story/story.pxindex",
     gameCatalog: "Content/game.pxgame",
     extensions: ["Content/Extensions/weather.pxextension"],
+    uiEntryPoints: {title: "Content/UI/Title.pxui"},
   } satisfies JsonValue;
   assert.equal(validateDocument("project", project).valid, true);
   assert.equal(validateDocument("project", {...project, editorPanel: {x: 10}}).valid, false);
@@ -50,14 +55,16 @@ test("all canonical authored format schemas accept representative documents", ()
   const uuid = "11111111-1111-4111-8111-111111111111";
   const uuid2 = "22222222-2222-4222-8222-222222222222";
   const documents: ReadonlyArray<readonly [string, JsonValue]> = [
-    ["character", {format:"PrismatiXCharacter",schemaRevision:1,id:uuid,displayName:"Yuki",aliases:["yuki"],defaultExpressionId:uuid2,expressions:[{id:uuid2,name:"Smile",aliases:["smile"],assetId:uuid}]}],
-    ["storyIndex", {format:"PrismatiXStoryIndex",schemaRevision:1,id:"main",entryScene:"chapter01.scene01",chapters:[{id:"chapter01",title:"Chapter 1",scenes:["chapter01.scene01"]}],scenes:[{id:"chapter01.scene01",sources:{"zh-TW":"Story/zh-TW/ch01/scene01.pxstory","ja-JP":"Story/ja-JP/ch01/scene01.pxstory"},requiredLabels:["start"]}]}],
-    ["game", {format:"PrismatiXGame",schemaRevision:1,variables:[{name:"affection",type:"integer",default:0,persistent:true}],progressionFlags:["route.yuki"],gallery:[],unlockables:[]}],
-    ["extension", {format:"PrismatiXExtension",schemaRevision:1,language:"javascript",id:"weather",version:"1.0.0",entry:"weather.js",capabilities:["runtime"],safety:{previewSafe:true,deterministic:true,seekSafe:true,rollbackSafe:true},commands:[{id:"weather",parameters:[{name:"type",type:"string",required:true,enum:["rain","snow"],editorHint:"enum"},{name:"strength",type:"number",range:{minimum:0,maximum:1}}]}],actions:[]}],
-    ["timeline", {format:"PrismatiXTimeline",schemaRevision:1,id:"intro",duration:5,tracks:[{id:"move",binding:{kind:"stage",target:"yuki",property:"position.x"},keyframes:[{time:0,value:0,easing:"linear"},{time:5,value:100,easing:"easeOut"}]}],markers:[{id:"bell",time:2,name:"bell",payload:{}}],nestedClips:[]}],
-    ["animation", {format:"PrismatiXAnimation",schemaRevision:1,version:4,id:uuid,name:"Fade",duration:1,loop:false,tracks:[],markers:[],nested:[]}],
-    ["locale", {format:"PrismatiXLocale",schemaRevision:1,locale:"zh-TW",strings:{"ui.settings":"設定"}}],
-    ["sourceMap", {format:"PrismatiXSourceMap",schemaRevision:1,documentId:"scene",mappings:[{operationId:"op-1",sourceId:"source-1",sourceUri:"Story/zh-TW/scene.pxstory",startLine:1,startColumn:1,endLine:1,endColumn:5}]}],
+    ["character", {format:"PrismatiXCharacter",schemaRevision:2,id:uuid,displayName:"Yuki",aliases:["yuki"],defaultExpressionId:uuid2,expressions:[{id:uuid2,name:"Smile",aliases:["smile"],assetId:uuid}]}],
+    ["storyIndex", {format:"PrismatiXStoryIndex",schemaRevision:2,id:"main",entryScene:"chapter01.scene01",chapters:[{id:"chapter01",title:"Chapter 1",scenes:["chapter01.scene01"]}],scenes:[{id:"chapter01.scene01",sources:{"zh-TW":"Story/zh-TW/ch01/scene01.pxstory","ja-JP":"Story/ja-JP/ch01/scene01.pxstory"},requiredLabels:["start"]}]}],
+    ["game", {format:"PrismatiXGame",schemaRevision:2,variables:[{name:"affection",type:"integer",default:0,scope:"profile"}],progressionFlags:["route.yuki"],gallery:[],unlockables:[]}],
+    ["extension", {format:"PrismatiXExtension",schemaRevision:2,language:"javascript",id:"weather",version:"1.0.0",requiredEngineVersion:">=0.2.0 <0.3.0",entry:"weather.js",capabilities:["runtime"],safety:{previewSafe:true,deterministic:true,seekSafe:true,rollbackSafe:true},commands:[{id:"weather",parameters:[{name:"type",type:"string",required:true,enum:["rain","snow"],editorHint:"enum"},{name:"strength",type:"number",range:{minimum:0,maximum:1}}]}],actions:[]}],
+    ["timeline", {format:"PrismatiXTimeline",schemaRevision:2,id:"intro",duration:5,tracks:[{id:"move",binding:{kind:"stage",target:"yuki",property:"position.x"},keyframes:[{time:0,value:0,easing:"linear"},{time:5,value:100,easing:"easeOut"}]}],markers:[{id:"bell",time:2,name:"bell",payload:{}}],nestedClips:[]}],
+    ["animation", {format:"PrismatiXAnimation",schemaRevision:2,version:4,id:uuid,name:"Fade",duration:1,loop:false,tracks:[],markers:[],nested:[]}],
+    ["locale", {format:"PrismatiXLocale",schemaRevision:2,locale:"zh-TW",fontChain:["Content/Fonts/NotoSansTC.ttf"],strings:{"ui.settings":"設定"}}],
+    ["sourceMap", {format:"PrismatiXSourceMap",schemaRevision:2,documentId:"scene",mappings:[{operationId:"op-1",sourceId:"source-1",sourceUri:"Story/zh-TW/scene.pxstory",startLine:1,startColumn:1,endLine:1,endColumn:5}]}],
+    ["effect", {format:"PrismatiXEffect",schemaRevision:2,id:"dream-tone",targetLayer:"stage",shader:"Effects/dream-tone.frag.hlsl",uniforms:[{name:"amount",type:"number",slot:0,default:0.5,minimum:0,maximum:1}]}],
+    ["uiComponent", {format:"PrismatiXUIComponent",schemaRevision:2,id:uuid,revision:1,name:"Panel",width:320,height:180,rootId:uuid,nodes:[{id:uuid,parentId:null,order:0,kind:"group",runtimeType:"Panel",name:"Root",visible:true,locked:false,layout:{mode:"free",x:0,y:0,width:320,height:180,anchorX:0,anchorY:0,anchorRight:0,anchorBottom:0,pivotX:0,pivotY:0,margin:0,alignment:"start",sizeRule:"fixed"},accessibilityLabel:"Panel",accessibilityRole:"group",runtimeProperties:{},bindings:{}}],theme:[],componentInterface:{properties:[],signals:[],slots:[]}}],
   ];
   for (const [contract, document] of documents) {
     const result = validateDocument(contract, document);
@@ -69,7 +76,7 @@ test("legacy version-4 animation migration adds schemaRevision explicitly", () =
   const legacy = {format:"PrismatiXAnimation",version:4,id:"11111111-1111-4111-8111-111111111111",name:"Fade",duration:1,loop:false,tracks:[],markers:[],nested:[]};
   const migrated = migrateDocument("animation", legacy);
   assert.equal(migrated.valid, true);
-  assert.equal((migrated.value as {schemaRevision: number}).schemaRevision, 1);
+  assert.equal((migrated.value as {schemaRevision: number}).schemaRevision, 2);
   assert.equal(migrateDocument("animation", {...legacy, schemaRevision: 99}).valid, false);
 });
 
@@ -104,18 +111,39 @@ test("UI contract models simultaneous Visual State Groups through shared propert
 
 test("UI revision-1 migration normalizes legacy presentation fields", () => {
   const root = "11111111-1111-4111-8111-111111111111";
+  const sourceNode = "22222222-2222-4222-8222-222222222222";
   const legacy = {
     format:"PrismatiXUIScene",schemaRevision:1,id:"33333333-3333-4333-8333-333333333333",revision:1,name:"Legacy",width:1280,height:720,rootId:root,
-    nodes:[{id:root,parentId:null,order:0,kind:"control",name:"Root",visible:true,locked:false,layout:{mode:"free",x:0,y:0,width:1280,height:720,anchorX:0,anchorY:0,pivotX:0,pivotY:0,margin:0,alignment:"start",sizeRule:"fixed"},content:{text:"",assetId:null},appearance:{backgroundColor:"#000000",textColor:"#ffffff",opacity:1,styleToken:null},interaction:{onClick:null},accessibility:{label:"Root",role:"presentation"}}],
+    nodes:[{id:root,parentId:null,order:0,kind:"control",name:"Root",visible:true,locked:false,layout:{mode:"free",x:0,y:0,width:1280,height:720,anchorX:0,anchorY:0,pivotX:0,pivotY:0,margin:0,alignment:"start",sizeRule:"fixed"},content:{text:"",assetId:null},appearance:{backgroundColor:"#000000",textColor:"#ffffff",opacity:1,styleToken:null,hoverBackgroundColor:"#111111",focusColor:"#222222",disabledOpacity:0.4},interaction:{onClick:null},accessibility:{label:"Root",role:"presentation",description:"Legacy root",focusOrder:7},componentInstance:{componentId:sourceNode,instanceRootId:root,sourceNodeId:sourceNode,sourcePath:[sourceNode,sourceNode],overrides:[],publicProperties:{caption:"Title"},publicSignals:{}},componentSlot:{instanceRootId:root,slotId:"content"}}],
     theme:[],behaviorGraph:{nodes:[],links:[],groups:[]},behaviorTriggers:[],
   };
   const migrated = migrateDocument("ui", legacy);
   assert.equal(migrated.valid, true, JSON.stringify(migrated.diagnostics));
-  assert.equal((migrated.value as {schemaRevision: number}).schemaRevision, 2);
+  const value = migrated.value as {schemaRevision: number; nodes: Array<Record<string, unknown>>};
+  assert.equal(value.schemaRevision, 2);
+  assert.deepEqual(value.nodes[0]?.componentInstance, legacy.nodes[0]?.componentInstance);
+  assert.deepEqual(value.nodes[0]?.componentSlot, legacy.nodes[0]?.componentSlot);
+  assert.deepEqual(value.nodes[0]?.appearance, legacy.nodes[0]?.appearance);
+  assert.equal(value.nodes[0]?.accessibilityDescription, "Legacy root");
+  assert.equal(value.nodes[0]?.accessibilityFocusOrder, 7);
+});
+
+test("UI component contract rejects scene-only fields and migrates canonical property paths", () => {
+  const root = "11111111-1111-4111-8111-111111111111";
+  const legacy = {
+    format:"PrismatiXUIComponent",schemaRevision:1,id:root,revision:1,name:"Panel",width:320,height:180,rootId:root,
+    nodes:[{id:root,parentId:null,order:0,kind:"group",name:"Root",visible:true,locked:false,layout:{mode:"free",x:0,y:0,width:320,height:180,anchorX:0,anchorY:0,pivotX:0,pivotY:0,margin:0,alignment:"start",sizeRule:"fixed"},content:{text:"Panel",assetId:null},appearance:{backgroundColor:"#000000",textColor:"#ffffff",opacity:1,styleToken:null},interaction:{onClick:null},accessibility:{label:"Panel",role:"group"}}],theme:[],
+    componentInterface:{properties:[{id:"caption",displayName:"Caption",nodeId:root,property:"content.text",valueType:"string",defaultValue:"Panel"}],signals:[],slots:[]},
+  };
+  const migrated = migrateDocument("uiComponent", legacy);
+  assert.equal(migrated.valid, true, JSON.stringify(migrated.diagnostics));
+  const value = migrated.value as {componentInterface: {properties: {property: string}[]}};
+  assert.equal(value.componentInterface.properties[0]!.property, "text");
+  assert.equal(validateDocument("uiComponent", {...migrated.value as object, behaviorGraph:{nodes:[],links:[],groups:[]}}).valid, false);
 });
 
 test("Timeline semantic validation rejects unordered or out-of-range samples", () => {
-  const invalid = {format:"PrismatiXTimeline",schemaRevision:1,id:"bad",duration:1,tracks:[{id:"track",binding:{kind:"stage",target:"yuki",property:"opacity"},keyframes:[{time:0.8,value:1,easing:"linear"},{time:0.4,value:0,easing:"linear"}]}],markers:[],nestedClips:[]} satisfies JsonValue;
+  const invalid = {format:"PrismatiXTimeline",schemaRevision:2,id:"bad",duration:1,tracks:[{id:"track",binding:{kind:"stage",target:"yuki",property:"opacity"},keyframes:[{time:0.8,value:1,easing:"linear"},{time:0.4,value:0,easing:"linear"}]}],markers:[],nestedClips:[]} satisfies JsonValue;
   const result = validateDocument("timeline", invalid);
   assert.equal(result.valid, false);
   assert.ok(result.diagnostics.some((item) => item.code === "PXSDKSEM1201"));

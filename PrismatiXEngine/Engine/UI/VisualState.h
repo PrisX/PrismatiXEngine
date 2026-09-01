@@ -91,6 +91,7 @@ public:
     [[nodiscard]] std::optional<std::string_view> ActiveState(
         std::string_view group) const;
     [[nodiscard]] VisualStateRuntimeState CaptureState() const;
+    [[nodiscard]] Status ValidateState(const VisualStateRuntimeState& state) const;
     Status RestoreState(const VisualStateRuntimeState& state);
 
 private:

@@ -49,7 +49,7 @@ async function readJson(filePath) {
 const manifest = await readJson(path.join(contractsRoot, "contract-manifest.json"));
 if (
   manifest.format !== "PrismatiXContractManifest" ||
-  manifest.schemaRevision !== 1 ||
+  manifest.schemaRevision !== 2 ||
   !Array.isArray(manifest.contracts)
 ) {
   throw new Error("Contracts/contract-manifest.json has an unsupported shape");
@@ -77,7 +77,7 @@ for (const contract of manifest.contracts) {
 
 const lock = sortValue({
   format: "PrismatiXContractLock",
-  schemaRevision: 1,
+  schemaRevision: 2,
   manifestSha256: sha256(canonicalJson(manifest)),
   schemas: hashes,
 });

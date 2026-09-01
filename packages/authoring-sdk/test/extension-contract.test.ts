@@ -14,10 +14,11 @@ const safety = {
 function manifest(overrides: Partial<ExtensionManifest> = {}): ExtensionManifest {
   return {
     format: "PrismatiXExtension",
-    schemaRevision: 1,
+    schemaRevision: 2,
     language: "javascript",
     id: "contract-test",
     version: "1.0.0",
+    requiredEngineVersion: "^0.2.0",
     entry: "extension.js",
     capabilities: ["runtime"],
     commands: [],
@@ -70,4 +71,17 @@ test("declaration-level safety remains valid without manifest-level safety", () 
 
   const result = validateDocument<ExtensionManifest>("extension", value, "Extensions/test.pxextension");
   assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+});
+
+test("extension ES modules are explicit, path-safe JavaScript inputs", () => {
+  const valid = validateDocument<ExtensionManifest>("extension", manifest({
+    modules: ["lib/messages.js", "lib/runtime.js"],
+  }), "Extensions/test.pxextension");
+  assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
+
+  const invalid = validateDocument<ExtensionManifest>("extension", {
+    ...manifest(),
+    modules: ["../foreign.js"],
+  }, "Extensions/test.pxextension");
+  assert.equal(invalid.valid, false);
 });

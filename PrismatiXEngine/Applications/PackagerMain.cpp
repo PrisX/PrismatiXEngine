@@ -20,6 +20,22 @@ px::sdk::PackageEvent FailedEvent(std::string requestId, std::string code, std::
     event.code = std::move(code);
     event.message = std::move(message);
     event.retryable = retryable;
+    event.diagnostics.push_back({event.code, event.message, event.retryable});
+    return event;
+}
+
+px::sdk::PackageEvent FailedEvent(
+    std::string requestId,
+    std::vector<px::sdk::PackageDiagnostic> diagnostics) {
+    px::sdk::PackageEvent event;
+    event.kind = px::sdk::PackageEventKind::Failed;
+    event.requestId = std::move(requestId);
+    event.diagnostics = std::move(diagnostics);
+    if (!event.diagnostics.empty()) {
+        event.code = event.diagnostics.front().code;
+        event.message = event.diagnostics.front().message;
+        event.retryable = event.diagnostics.front().retryable;
+    }
     return event;
 }
 
@@ -51,8 +67,7 @@ int main(int argc, char** argv) {
 
     auto parsed = px::sdk::ParsePackageRequest(text.str());
     if (!parsed.Valid()) {
-        const auto& diagnostic = parsed.diagnostics.front();
-        Emit(FailedEvent(parsed.request.requestId, diagnostic.code, diagnostic.message, diagnostic.retryable));
+        Emit(FailedEvent(parsed.request.requestId, std::move(parsed.diagnostics)));
         return static_cast<int>(px::sdk::PackageExitCode::Failed);
     }
 

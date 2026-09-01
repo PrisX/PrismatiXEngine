@@ -13,6 +13,13 @@ namespace px::io {
 
 class VFS {
 public:
+    // PrismatiX virtual paths are portable, package-relative UTF-8 paths.  All
+    // callers (directory mounts, archives, scripts and assets) pass through
+    // this grammar so a path cannot acquire different security semantics from
+    // a different backing store.
+    [[nodiscard]] static std::optional<std::string> NormalizeVirtualPath(
+        std::string_view path);
+
     void MountDirectory(const std::string& root);
     bool MountArchive(const std::string& archivePath, const crypto::Key* key = nullptr);
     void Clear();

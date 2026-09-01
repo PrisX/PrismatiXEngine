@@ -287,8 +287,19 @@ Status UIAnimationController::Update(const float deltaSeconds){if(!m_library||m_
 Status UIAnimationController::PreviewClip(const Uuid& clipId,const float time,const bool playing){if(!m_library)return Status::Fail(LibraryError("PXUI2784","Animation library is not configured"));const auto* clip=ResolveClip(clipId);if(!clip)return Status::Fail(LibraryError("PXUI2787","Animation preview clip does not exist"));if(m_player.CurrentClip()!=clip){const Status started=m_player.Play(*clip);if(!started)return started;}const Status seek=m_player.Seek(time,true);if(!seek)return seek;return playing?m_player.Resume():m_player.Pause();}
 Status UIAnimationController::Stop(const bool restoreDesignState){m_state={};m_transition={};m_transitionElapsed=0.0f;m_transitionDuration=0.0f;return m_player.Stop(restoreDesignState);}
 UIAnimationRuntimeState UIAnimationController::CaptureState()const{UIAnimationRuntimeState result{.state=m_state,.transition=m_transition,.position=m_player.Position(),.transitionProgress=m_transitionDuration>0.0f?std::clamp(m_transitionElapsed/m_transitionDuration,0.0f,1.0f):0.0f,.paused=m_player.Paused()};for(const auto& [name,value]:m_parameters)result.parameters[name]=value.Clone();return result;}
+Status UIAnimationController::ValidateState(const UIAnimationRuntimeState& state){
+    if(!m_library)return Status::Fail(LibraryError("PXUI2788","Animation checkpoint requires a configured library"));
+    const auto* animationState=m_library->machine.FindState(state.state);
+    if(!animationState)return Status::Fail(LibraryError("PXUI2788","Animation checkpoint references a missing state"));
+    if(!state.transition.Empty()&&std::ranges::find_if(m_library->machine.transitions,[&](const AnimationTransition& transition){return transition.id==state.transition;})==m_library->machine.transitions.end())return Status::Fail(LibraryError("PXUI2790","Animation checkpoint references a missing transition"));
+    if(!std::isfinite(state.position)||state.position<0.0f||!std::isfinite(state.transitionProgress)||state.transitionProgress<0.0f||state.transitionProgress>1.0f)return Status::Fail(LibraryError("PXUI2791","Animation checkpoint timing is invalid"));
+    const auto* clip=ResolveClip(animationState->clip);
+    if(!clip||state.position>clip->duration)return Status::Fail(LibraryError("PXUI2792","Animation checkpoint clip or position is invalid"));
+    for(const auto& [name,value]:state.parameters){const auto* descriptor=Parameter(name);double number=0;if(!descriptor||(descriptor->type==AnimationParameterType::Bool&&!value.TryGet<bool>())||(descriptor->type==AnimationParameterType::Trigger&&!value.TryGet<bool>())||(descriptor->type==AnimationParameterType::Number&&!Numeric(value,number)))return Status::Fail(LibraryError("PXUI2789","Animation checkpoint parameter is missing or has the wrong type: "+name));}
+    return Status::Ok();
+}
 Status UIAnimationController::RestoreState(const UIAnimationRuntimeState& state){
-    if(!m_library||!m_library->machine.FindState(state.state))return Status::Fail(LibraryError("PXUI2788","Animation checkpoint references a missing state"));
+    if(const Status valid=ValidateState(state);!valid)return valid;
     const AnimationTransition* restoredTransition=nullptr;
     if(!state.transition.Empty()){
         const auto found=std::find_if(m_library->machine.transitions.begin(),m_library->machine.transitions.end(),[&](const AnimationTransition& transition){return transition.id==state.transition;});

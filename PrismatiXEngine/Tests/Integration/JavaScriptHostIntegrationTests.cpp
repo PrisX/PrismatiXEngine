@@ -34,8 +34,12 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
             Engine.log(`${args.message}:${args.amount}`);
         });
         Engine.RegisterCommand("js.demo.await", async (args) => {
+            Engine.SetVariable("replay.before",
+                (Engine.GetVariable("replay.before") ?? 0) + 1, "session");
             Engine.log("async-command:start");
             await Engine.WaitSeconds(args.seconds);
+            Engine.SetVariable("replay.middle",
+                (Engine.GetVariable("replay.middle") ?? 0) + 1, "session");
             Engine.log("async-command:middle");
             await Engine.WaitSeconds(0.02);
             Engine.log("async-command:done");
@@ -67,15 +71,20 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
             await Engine.WaitSeconds(0);
             throw new Error("intentional async failure");
         });
-        Engine.On("js.demo.event", (payload) => {
-            Engine.log(`event:${payload.value}`);
+        Engine.On("js.demo.event", async (payload) => {
+            await Promise.resolve();
+            Engine.log(`event:${payload.value}:${payload.nested.count}:${payload.flags[1]}`);
         });
+        Engine.On("js.demo.event", () => Engine.log("event:second"));
+        Engine.On("js.demo.recursive", () => Engine.Emit("js.demo.recursive"));
     )js");
     Write(extensions / "default.pxextension", R"json({
         "format": "PrismatiXExtension",
-        "schemaRevision": 1,
+        "schemaRevision": 2,
         "language": "javascript",
         "id": "js-demo",
+        "version": "1.0.0",
+        "requiredEngineVersion": ">=0.2.0 <0.3.0",
         "entry": "demo.js",
         "capabilities": ["runtime", "ui"],
         "safety": {
@@ -159,13 +168,114 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     })json");
     Write(extensions / "denied.pxextension", R"json({
         "format":"PrismatiXExtension",
-        "schemaRevision":1,
+        "schemaRevision":2,
         "language":"javascript",
         "id":"denied",
+        "version":"1.0.0",
+        "requiredEngineVersion":"^0.2.0",
         "entry":"demo.js",
         "capabilities":["filesystem"],
         "commands":[],
         "actions":[]
+    })json");
+    Write(extensions / "incompatible.js",
+          "Engine.SetVariable('version.executed', true, 'session');\n");
+    Write(extensions / "incompatible.pxextension", R"json({
+        "format":"PrismatiXExtension","schemaRevision":2,
+        "language":"javascript","id":"incompatible","version":"1.0.0",
+        "requiredEngineVersion":">=0.3.0","entry":"incompatible.js",
+        "capabilities":["runtime"],"commands":[],"actions":[]
+    })json");
+    Write(extensions / "capability.js", R"js(
+        Engine.RegisterAction("capability.denied", () => {
+            Engine.SetVariable("capability.executed", true, "session");
+        });
+    )js");
+    Write(extensions / "capability.pxextension", R"json({
+        "format":"PrismatiXExtension","schemaRevision":2,
+        "language":"javascript","id":"capability","version":"1.0.0",
+        "requiredEngineVersion":"^0.2.0","entry":"capability.js",
+        "capabilities":["ui"],
+        "safety":{"previewSafe":true,"deterministic":true,"seekSafe":true,"rollbackSafe":true},
+        "commands":[],"actions":[{"id":"capability.denied","parameters":[]}]
+    })json");
+    Write(extensions / "ghost.js", R"js(
+        Engine.RegisterCommand("ghost.command", () => {});
+        throw new Error("load must roll back");
+    )js");
+    Write(extensions / "ghost.pxextension", R"json({
+        "format":"PrismatiXExtension","schemaRevision":2,
+        "language":"javascript","id":"ghost","version":"1.0.0",
+        "requiredEngineVersion":"^0.2.0","entry":"ghost.js",
+        "capabilities":["runtime"],
+        "safety":{"previewSafe":true,"deterministic":true,"seekSafe":true,"rollbackSafe":true},
+        "commands":[{"id":"ghost.command","parameters":[]}],"actions":[]
+    })json");
+    Write(extensions / "realm-a.js", R"js(
+        globalThis.privateValue = "realm-a";
+        Engine.RegisterCommand("realm.a", () => Engine.log(privateValue));
+    )js");
+    Write(extensions / "realm-b.js", R"js(
+        globalThis.privateValue = "realm-b";
+        Engine.RegisterCommand("realm.b", () => Engine.log(privateValue));
+    )js");
+    const auto realmManifest = [](const std::string_view id,
+                                  const std::string_view entry,
+                                  const std::string_view command) {
+        return std::string("{\"format\":\"PrismatiXExtension\",\"schemaRevision\":2,") +
+            "\"language\":\"javascript\",\"id\":\"" + std::string(id) +
+            "\",\"version\":\"1.0.0\",\"requiredEngineVersion\":\"^0.2.0\"," +
+            "\"entry\":\"" + std::string(entry) +
+            "\",\"capabilities\":[\"runtime\"]," +
+            "\"safety\":{\"previewSafe\":true,\"deterministic\":true," +
+            "\"seekSafe\":true,\"rollbackSafe\":true},\"commands\":[{" +
+            "\"id\":\"" + std::string(command) +
+            "\",\"parameters\":[]}],\"actions\":[]}";
+    };
+    Write(extensions / "realm-a.pxextension",
+          realmManifest("realm-a", "realm-a.js", "realm.a"));
+    Write(extensions / "realm-b.pxextension",
+          realmManifest("realm-b", "realm-b.js", "realm.b"));
+    Write(extensions / "module-helper.js",
+          "export const moduleMessage = 'module-isolated';\n");
+    Write(extensions / "module-entry.js", R"js(
+        import { moduleMessage } from "./module-helper.js";
+        Engine.RegisterCommand("module.command", () => Engine.log(moduleMessage));
+    )js");
+    Write(extensions / "module.pxextension", R"json({
+        "format":"PrismatiXExtension","schemaRevision":2,
+        "language":"javascript","id":"module","version":"1.0.0",
+        "requiredEngineVersion":"^0.2.0","entry":"module-entry.js",
+        "modules":["module-helper.js"],"capabilities":["runtime"],
+        "safety":{"previewSafe":true,"deterministic":true,"seekSafe":true,"rollbackSafe":true},
+        "commands":[{"id":"module.command","parameters":[]}],"actions":[]
+    })json");
+    Write(extensions / "undeclared.js", "export const value = true;\n");
+    Write(extensions / "bad-module-entry.js", R"js(
+        import { value } from "./undeclared.js";
+        Engine.RegisterCommand("bad-module.command", () => value);
+    )js");
+    Write(extensions / "bad-module.pxextension", R"json({
+        "format":"PrismatiXExtension","schemaRevision":2,
+        "language":"javascript","id":"bad-module","version":"1.0.0",
+        "requiredEngineVersion":"^0.2.0","entry":"bad-module-entry.js",
+        "capabilities":["runtime"],
+        "safety":{"previewSafe":true,"deterministic":true,"seekSafe":true,"rollbackSafe":true},
+        "commands":[{"id":"bad-module.command","parameters":[]}],"actions":[]
+    })json");
+    Write(temp.path / "Content" / "foreign.js",
+          "export const escaped = true;\n");
+    Write(extensions / "traversal-entry.js", R"js(
+        import { escaped } from "../foreign.js";
+        Engine.RegisterCommand("traversal.command", () => escaped);
+    )js");
+    Write(extensions / "traversal.pxextension", R"json({
+        "format":"PrismatiXExtension","schemaRevision":2,
+        "language":"javascript","id":"traversal","version":"1.0.0",
+        "requiredEngineVersion":"^0.2.0","entry":"traversal-entry.js",
+        "capabilities":["runtime"],
+        "safety":{"previewSafe":true,"deterministic":true,"seekSafe":true,"rollbackSafe":true},
+        "commands":[{"id":"traversal.command","parameters":[]}],"actions":[]
     })json");
 
     px::io::VFS vfs;
@@ -213,7 +323,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
                      console[1].level == px::script::ConsoleLevel::Warning,
                  "console bridge should preserve messages and levels");
     suite.Expect(host.RunString(R"js(
-        Engine.SetVariable("js.runtime", { score: 7, flags: [true, "ready"] }, "save");
+        Engine.SetVariable("js.runtime", { score: 7, flags: [true, "ready"] }, "session");
         const restored = Engine.GetVariable("js.runtime");
         if (restored.score !== 7 || restored.flags[1] !== "ready") {
             throw new Error("typed variable round-trip failed");
@@ -240,6 +350,60 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     suite.Expect(!host.LoadExtensionManifest(
                      "Content/Extensions/denied.pxextension"),
                  "undeclared host capabilities must fail closed");
+    suite.Expect(!host.LoadExtensionManifest(
+                     "Content/Extensions/incompatible.pxextension") &&
+                     !variables.GetValue("version.executed"),
+                 "requiredEngineVersion must reject before evaluating extension code");
+    suite.Require(host.LoadExtensionManifest(
+                      "Content/Extensions/capability.pxextension"),
+                  "a UI-only extension should load its declared Action");
+    px::ui::ActionInvocation deniedInvocation;
+    deniedInvocation.action = "capability.denied";
+    suite.Expect(!host.InvokeAction(deniedInvocation) &&
+                     !variables.GetValue("capability.executed"),
+                 "undeclared runtime capability must reject the actual Engine API call");
+    suite.Expect(!host.LoadExtensionManifest(
+                     "Content/Extensions/ghost.pxextension") &&
+                     !px::vn::CommandRegistry::Global().Find("ghost.command"),
+                 "failed extension evaluation must not leave a ghost command");
+    suite.Require(host.LoadExtensionManifest(
+                      "Content/Extensions/realm-a.pxextension") &&
+                      host.LoadExtensionManifest(
+                          "Content/Extensions/realm-b.pxextension"),
+                  "independent extension realms should load");
+    px::vn::Command realmA;
+    realmA.type = "realm.a";
+    px::vn::Command realmB;
+    realmB.type = "realm.b";
+    suite.Require(host.InvokeCommand(realmA) && host.InvokeCommand(realmB) &&
+                      console[console.size() - 2].text == "realm-a" &&
+                      console.back().text == "realm-b",
+                  "extension globals must be isolated by JSRuntime");
+    suite.Require(host.LoadExtensionManifest(
+                      "Content/Extensions/module.pxextension"),
+                  "declared relative ES modules should load in the extension realm");
+    px::vn::Command moduleCommand;
+    moduleCommand.type = "module.command";
+    suite.Expect(host.InvokeCommand(moduleCommand) &&
+                     console.back().text == "module-isolated",
+                 "an extension should execute exports from its declared module graph");
+    suite.Expect(!host.LoadExtensionManifest(
+                     "Content/Extensions/bad-module.pxextension") &&
+                     !px::vn::CommandRegistry::Global().Find("bad-module.command"),
+                 "undeclared imports must fail before registration without ghost commands");
+    suite.Expect(!host.LoadExtensionManifest(
+                     "Content/Extensions/traversal.pxextension") &&
+                     !px::vn::CommandRegistry::Global().Find("traversal.command"),
+                 "extension imports must not escape their package root or leave ghost commands");
+    Write(extensions / "realm-a.js", R"js(
+        globalThis.privateValue = "realm-a-reloaded";
+        Engine.RegisterCommand("realm.a", () => Engine.log(privateValue));
+    )js");
+    suite.Require(host.LoadExtensionManifest(
+                      "Content/Extensions/realm-a.pxextension") &&
+                      host.InvokeCommand(realmA) &&
+                      console.back().text == "realm-a-reloaded",
+                  "hot reload must atomically replace a source and its realm");
     suite.Require(host.LoadExtensionManifest(
                       "Content/Extensions/default.pxextension"),
                   "strict JavaScript extension manifest should load");
@@ -264,7 +428,16 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     command.typedArgs["amount"] = px::Variant(std::int64_t{3});
     suite.Expect(host.InvokeCommand(command),
                  "typed JavaScript command should execute through ScriptHost");
-    host.Emit("js.demo.event", {{"value", "ok"}});
+    suite.Require(static_cast<bool>(host.Emit(
+                      "js.demo.event",
+                      px::Variant(px::VariantObject{
+                          {"value", px::Variant(std::string("ok"))},
+                          {"nested", px::Variant(px::VariantObject{
+                              {"count", px::Variant(std::int64_t{2})}})},
+                          {"flags", px::Variant(px::VariantArray{
+                              px::Variant(true),
+                              px::Variant(std::string("typed"))})}}))),
+                  "typed JavaScript event should dispatch successfully");
 
     px::ui::ActionDispatcher actions;
     suite.Require(static_cast<bool>(
@@ -276,11 +449,16 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     invocation.context.preview = true;
     suite.Expect(static_cast<bool>(actions.Dispatch(std::move(invocation))),
                  "typed JavaScript Action should execute through ActionDispatcher");
-    suite.Expect(console.size() >= 5 &&
-                     console[console.size() - 3].text == "hello:3" &&
-                     console[console.size() - 2].text == "event:ok" &&
+    suite.Expect(console.size() >= 6 &&
+                     console[console.size() - 4].text == "hello:3" &&
+                     console[console.size() - 3].text == "event:ok:2:typed" &&
+                     console[console.size() - 2].text == "event:second" &&
                      console.back().text == "action:true",
                  "command, event, and Action callbacks should receive runtime values");
+    suite.Expect(!host.Emit("js.demo.recursive") &&
+                     host.RunString("Engine.log('responsive-after-event-budget')",
+                                    "event-budget-recovery"),
+                 "recursive event emission must be budgeted without freezing the host");
 
     px::vn::Command asynchronousCommand;
     asynchronousCommand.type = "js.demo.await";
@@ -296,16 +474,38 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
                       std::abs(commandCheckpoint.front().remainingSeconds - 0.03f) <
                           0.001f,
                   "command checkpoint should preserve its exact yield and timer state");
+    px::script::PendingActionState incompatibleAction;
+    incompatibleAction.id = 99;
+    incompatibleAction.invocation.action = "js.missing.action";
+    incompatibleAction.yieldIndex = 1;
+    incompatibleAction.waitKind = "timer";
+    incompatibleAction.remainingSeconds = 0.01f;
+    suite.Expect(
+        !host.RestoreCheckpoint(commandCheckpoint, {incompatibleAction}) &&
+            host.CapturePending().size() == 1 &&
+            host.CapturePending().front().command.type ==
+                commandCheckpoint.front().command.type &&
+            host.CapturePending().front().yieldIndex ==
+                commandCheckpoint.front().yieldIndex,
+        "combined JavaScript checkpoint failure must preserve the active command continuation");
     host.CancelPending();
     suite.Require(!host.HasPendingCommand() &&
                       static_cast<bool>(host.RestorePending(commandCheckpoint)),
                   "command continuation should replay to its saved yield boundary");
+    suite.Require(variables.GetValue("replay.before") &&
+                      *variables.GetValue("replay.before")->TryGet<std::int64_t>() == 1,
+                  "checkpoint replay must not repeat variable side effects before the await");
     host.Update(0.04f);
     const auto secondCommandCheckpoint = host.CapturePending();
     suite.Require(secondCommandCheckpoint.size() == 1 &&
                       secondCommandCheckpoint.front().yieldIndex == 2 &&
                       secondCommandCheckpoint.front().waitKind == "timer",
                   "resumed command should advance to the next deterministic boundary");
+    host.CancelPending();
+    suite.Require(static_cast<bool>(host.RestorePending(secondCommandCheckpoint)) &&
+                      variables.GetValue("replay.middle") &&
+                      *variables.GetValue("replay.middle")->TryGet<std::int64_t>() == 1,
+                  "later checkpoint replay must validate its full journal without replaying mutations");
     host.Update(0.03f);
     suite.Expect(!host.HasPendingCommand() && console.back().text == "async-command:done",
                  "async command should complete after all waits expire");

@@ -1,0 +1,19 @@
+{
+  "format": "PrismatiXGame",
+  "schemaRevision": 2,
+  "variables": [
+    {"name": "affinity", "type": "integer", "default": 7, "scope": "profile"}
+  ],
+  "inputBindings": [
+    {"key": "Escape", "command": "screen.open", "argument": "settings"}
+  ],
+  "gallery": [
+    {
+      "id": "ending-rin",
+      "title": "Rin Ending",
+      "image": {"id": "33333333-3333-4333-8333-333333333333", "path": "Assets/rin.png"},
+      "thumbnail": {"id": "33333333-3333-4333-8333-333333333333", "path": "Assets/rin.png"}
+    }
+  ],
+  "unlockables": []
+}

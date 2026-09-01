@@ -264,14 +264,14 @@ bool ImageKind(const std::string_view kind) {
            kind == "uiImage";
 }
 
-bool JsonRevisionOne(const Json& manifest) {
+bool JsonRevisionTwo(const Json& manifest) {
     const auto revision = manifest.find("schemaRevision");
     if (revision == manifest.end()) return false;
     if (revision->is_number_unsigned()) {
-        return revision->get<std::uint64_t>() == 1;
+        return revision->get<std::uint64_t>() == 2;
     }
     return revision->is_number_integer() &&
-           revision->get<std::int64_t>() == 1;
+           revision->get<std::int64_t>() == 2;
 }
 
 std::optional<std::unordered_map<std::string, ProjectAsset>> ParseProjectAssets(
@@ -290,9 +290,9 @@ std::optional<std::unordered_map<std::string, ProjectAsset>> ParseProjectAssets(
     if (manifest.is_discarded() || !manifest.is_object() ||
         format == manifest.end() || !format->is_string() ||
         format->get_ref<const std::string&>() != "PrismatiXProject" ||
-        !JsonRevisionOne(manifest)) {
+        !JsonRevisionTwo(manifest)) {
         Add(result, "PXCAT1020",
-            "project.pxproject must be PrismatiXProject schema revision 1",
+            "project.pxproject must be PrismatiXProject schema revision 2",
             "project.pxproject");
         return std::nullopt;
     }
@@ -506,6 +506,11 @@ GameCatalogResourcesLoadResult LoadGameCatalogResources(
                 Add(result, "PXCAT1016", "duplicate Variable name: " + value.name, path, node.line, node.id, "name");
             }
             else if (name && defaultValue && persistent) {
+                value.type = GameCatalogVariable::Type::Integer;
+                value.scope = value.persistent
+                                  ? GameCatalogVariable::Scope::Profile
+                                  : GameCatalogVariable::Scope::Session;
+                value.typedDefault = static_cast<std::int64_t>(value.defaultValue);
                 result.document.variables.push_back(std::move(value));
             }
             continue;
@@ -530,6 +535,197 @@ GameCatalogResourcesLoadResult LoadGameCatalogResources(
         else if (id && title && image && thumbnail) {
             result.document.gallery.push_back(std::move(value));
         }
+    }
+    return result;
+}
+
+GameCatalogResourcesLoadResult LoadCanonicalGameCatalogResources(
+    const std::string_view text, std::string path) {
+    GameCatalogResourcesLoadResult result;
+    if (text.empty() || text.size() > kMaxCatalogBytes) {
+        Add(result, "PXCAT1100", "Canonical GameCatalog is empty or exceeds 16 MiB", path);
+        return result;
+    }
+    const Json root = Json::parse(text, nullptr, false);
+    if (root.is_discarded() || !root.is_object()) {
+        Add(result, "PXCAT1101", "Canonical GameCatalog must be a JSON object", path);
+        return result;
+    }
+    static const std::unordered_set<std::string> allowed{
+        "format", "schemaRevision", "variables", "progressionFlags", "gallery",
+        "unlockables", "inputBindings", "extensions"};
+    for (auto item = root.begin(); item != root.end(); ++item) {
+        if (!allowed.contains(item.key()))
+            Add(result, "PXCAT1102", "Unknown canonical GameCatalog field: " + item.key(), path);
+    }
+    try {
+        if (root.value("format", std::string{}) != "PrismatiXGame" ||
+            root.value("schemaRevision", 0) != 2) {
+            Add(result, "PXCAT1103", "Canonical GameCatalog format or revision is unsupported", path);
+            return result;
+        }
+        const auto variables = root.find("variables");
+        const auto gallery = root.find("gallery");
+        const auto unlockables = root.find("unlockables");
+        if (variables == root.end() || !variables->is_array() ||
+            gallery == root.end() || !gallery->is_array() ||
+            unlockables == root.end() || !unlockables->is_array() ||
+            variables->size() > kMaxEntries || gallery->size() > kMaxEntries ||
+            unlockables->size() > kMaxEntries) {
+            Add(result, "PXCAT1104", "Canonical variables, gallery, and unlockables must be bounded arrays", path);
+            return result;
+        }
+        std::unordered_set<std::string> variableNames;
+        for (const auto& source : *variables) {
+            if (!source.is_object()) {
+                Add(result, "PXCAT1105", "Canonical variable must be an object", path);
+                continue;
+            }
+            GameCatalogVariable variable;
+            variable.name = source.value("name", std::string{});
+            const std::string type = source.value("type", std::string{});
+            const std::string scope = source.value("scope", std::string{});
+            if (variable.name.empty() || !variableNames.insert(variable.name).second ||
+                !source.contains("default")) {
+                Add(result, "PXCAT1106", "Canonical variable identity/default is missing or duplicated", path, 0, variable.name);
+                continue;
+            }
+            const auto& value = source["default"];
+            bool valid = true;
+            if (type == "boolean" && value.is_boolean()) {
+                variable.type = GameCatalogVariable::Type::Boolean;
+                variable.typedDefault = value.get<bool>();
+                variable.defaultValue = value.get<bool>() ? 1 : 0;
+            } else if (type == "integer" && value.is_number_integer()) {
+                const auto integer = value.get<std::int64_t>();
+                variable.type = GameCatalogVariable::Type::Integer;
+                variable.typedDefault = integer;
+                if (integer >= (std::numeric_limits<int>::min)() &&
+                    integer <= (std::numeric_limits<int>::max)())
+                    variable.defaultValue = static_cast<int>(integer);
+            } else if (type == "number" && value.is_number()) {
+                variable.type = GameCatalogVariable::Type::Number;
+                variable.typedDefault = value.get<double>();
+                variable.defaultValue = static_cast<int>(value.get<double>());
+            } else if (type == "string" && value.is_string()) {
+                variable.type = GameCatalogVariable::Type::String;
+                variable.typedDefault = value.get<std::string>();
+            } else {
+                valid = false;
+            }
+            if (scope == "session") {
+                variable.scope = GameCatalogVariable::Scope::Session;
+                variable.persistent = false;
+            } else if (scope == "profile") {
+                variable.scope = GameCatalogVariable::Scope::Profile;
+                variable.persistent = true;
+            } else {
+                valid = false;
+            }
+            if (!valid) {
+                Add(result, "PXCAT1107", "Canonical variable default does not match type or scope", path, 0, variable.name);
+                continue;
+            }
+            result.document.variables.push_back(std::move(variable));
+        }
+        const auto readReference = [&](const Json& source,
+                                       GameCatalogAssetReference& reference,
+                                       const std::string& itemId,
+                                       const char* property) {
+            if (!source.is_object() || !source.contains("id") ||
+                !source["id"].is_string()) {
+                Add(result, "PXCAT1108", "Canonical gallery reference requires a stable asset id", path, 0, itemId, property);
+                return false;
+            }
+            reference.assetId = source["id"].get<std::string>();
+            reference.assetPath = source.value("path", std::string{});
+            if (!IsUuid(reference.assetId) ||
+                (!reference.assetPath.empty() && !IsSafeUri(reference.assetPath))) {
+                Add(result, "PXCAT1108", "Canonical gallery reference identity/path is invalid", path, 0, itemId, property);
+                return false;
+            }
+            return true;
+        };
+        std::unordered_set<std::string> galleryIds;
+        for (const auto& source : *gallery) {
+            if (!source.is_object()) {
+                Add(result, "PXCAT1109", "Canonical gallery item must be an object", path);
+                continue;
+            }
+            GameCatalogGalleryItem item;
+            item.id = source.value("id", std::string{});
+            item.title = source.value("title", std::string{});
+            if (item.id.empty() || !galleryIds.insert(item.id).second ||
+                !source.contains("image") ||
+                !readReference(source["image"], item.image, item.id, "image")) {
+                Add(result, "PXCAT1110", "Canonical gallery identity/image is missing or duplicated", path, 0, item.id);
+                continue;
+            }
+            if (source.contains("thumbnail")) {
+                GameCatalogAssetReference thumbnail;
+                if (!readReference(source["thumbnail"], thumbnail, item.id, "thumbnail")) continue;
+                item.thumbnail = std::move(thumbnail);
+            }
+            result.document.gallery.push_back(std::move(item));
+        }
+        if (const auto flags = root.find("progressionFlags"); flags != root.end()) {
+            if (!flags->is_array() || flags->size() > kMaxEntries) {
+                Add(result, "PXCAT1111", "progressionFlags must be a bounded array", path);
+            } else {
+                std::unordered_set<std::string> identities;
+                for (const auto& flag : *flags) {
+                    if (!flag.is_string() || flag.get<std::string>().empty() ||
+                        !identities.insert(flag.get<std::string>()).second) {
+                        Add(result, "PXCAT1111", "progressionFlags contains an invalid or duplicate identity", path);
+                        continue;
+                    }
+                    result.document.progressionFlags.push_back(flag.get<std::string>());
+                }
+            }
+        }
+        std::unordered_set<std::string> unlockIds;
+        for (const auto& source : *unlockables) {
+            if (!source.is_object()) {
+                Add(result, "PXCAT1112", "Canonical unlockable must be an object", path);
+                continue;
+            }
+            GameCatalogUnlockable unlockable;
+            unlockable.id = source.value("id", std::string{});
+            unlockable.kind = source.value("kind", std::string{});
+            unlockable.condition = source.value("condition", std::string{});
+            unlockable.payloadJson = source.contains("payload") ? source["payload"].dump() : "null";
+            if (unlockable.id.empty() || unlockable.kind.empty() ||
+                unlockable.condition.empty() || !unlockIds.insert(unlockable.id).second) {
+                Add(result, "PXCAT1113", "Canonical unlockable is invalid or duplicated", path, 0, unlockable.id);
+                continue;
+            }
+            result.document.unlockables.push_back(std::move(unlockable));
+        }
+        if (const auto bindings = root.find("inputBindings"); bindings != root.end()) {
+            if (!bindings->is_array() || bindings->size() > kMaxEntries) {
+                Add(result, "PXCAT1116", "inputBindings must be a bounded array", path);
+            } else {
+                std::unordered_set<std::string> keys;
+                for (const auto& source : *bindings) {
+                    if (!source.is_object()) {
+                        Add(result, "PXCAT1116", "input binding must be an object", path);
+                        continue;
+                    }
+                    GameCatalogInputBinding binding;
+                    binding.key = source.value("key", std::string{});
+                    binding.command = source.value("command", std::string{});
+                    binding.argument = source.value("argument", std::string{});
+                    if (binding.key.empty() || binding.command.empty() ||
+                        !keys.insert(binding.key).second) {
+                        Add(result, "PXCAT1117", "input binding is invalid or duplicates a key", path, 0, binding.key);
+                        continue;
+                    }
+                    result.document.inputBindings.push_back(std::move(binding));
+                }
+            }
+        }
+    } catch (const Json::exception& error) {
+        Add(result, "PXCAT1114", std::string("Canonical GameCatalog field has the wrong type: ") + error.what(), path);
     }
     return result;
 }

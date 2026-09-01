@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Engine/Graphics/Texture.h"
 #include "Engine/IO/VFS.h"
 
 #include <cstdint>
@@ -7,7 +8,6 @@
 #include <string>
 
 struct SDL_Renderer;
-struct SDL_Texture;
 struct SDL_AudioStream;
 typedef struct plm_t plm_t;
 
@@ -34,7 +34,9 @@ public:
 
     [[nodiscard]] bool Playing() const { return (m_plm != nullptr || m_ffmpeg) && !m_finished; }
     [[nodiscard]] bool Finished() const { return m_finished; }
-    [[nodiscard]] SDL_Texture* Texture() const { return m_texture; }
+    [[nodiscard]] graphics::TextureHandle Texture() const {
+        return m_texture.Handle();
+    }
     [[nodiscard]] int Width() const { return m_width; }
     [[nodiscard]] int Height() const { return m_height; }
 
@@ -55,7 +57,7 @@ private:
 
     plm_t* m_plm = nullptr;
     io::Bytes m_data;
-    SDL_Texture* m_texture = nullptr;
+    graphics::TextureResource m_texture;
     std::unique_ptr<std::uint8_t[]> m_rgb;
     int m_width = 0;
     int m_height = 0;

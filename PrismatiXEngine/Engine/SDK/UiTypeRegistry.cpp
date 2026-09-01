@@ -8,7 +8,6 @@
 #include <iomanip>
 #include <limits>
 #include <nlohmann/json.hpp>
-#include <optional>
 #include <sstream>
 #include <unordered_set>
 
@@ -51,11 +50,6 @@ bool ValidHash(const std::string& value) {
 
 bool ValidNodeKind(const std::string_view value) {
     return std::ranges::find(kNodeKinds, value) != kNodeKinds.end();
-}
-
-std::optional<std::string> LegacyNodeKind(const std::string_view id) {
-    if (id == "leaf" || !ValidNodeKind(id)) return std::nullopt;
-    return std::string(id);
 }
 
 std::string Sha256(const std::string_view text) {
@@ -215,9 +209,8 @@ UiTypeRegistryParseResult ParseUiTypeRegistry(const std::string_view source) {
     const auto schemaRevision = root.value("schemaRevision", 0u);
     const auto contractRevision = root.value("contractRevision", 0u);
     const bool supportedRevision =
-        (schemaRevision == 1 && contractRevision == 1) ||
-        (schemaRevision == kUiTypeRegistrySchemaRevision &&
-         contractRevision == kUiTypeRegistryContractRevision);
+        schemaRevision == kUiTypeRegistrySchemaRevision &&
+        contractRevision == kUiTypeRegistryContractRevision;
     if (!ExactKeys(root, rootKeys) ||
         root.value("format", "") != "PrismatiXUiTypeRegistry" ||
         !supportedRevision ||
@@ -243,22 +236,15 @@ UiTypeRegistryParseResult ParseUiTypeRegistry(const std::string_view source) {
     std::unordered_set<std::string> controlIds;
     std::string previousControl;
     for (const auto& sourceControl : root["controls"]) {
-        static const std::unordered_set<std::string> revisionOneControlKeys{
-            "id", "runtimeType", "displayName", "description", "category",
-            "iconId", "canHaveChildren", "acceptedResourceKinds", "properties",
-            "signals"};
-        static const std::unordered_set<std::string> revisionTwoControlKeys{
+        static const std::unordered_set<std::string> controlKeys{
             "id", "runtimeType", "nodeKind", "displayName", "description",
             "category", "iconId", "canHaveChildren", "acceptedResourceKinds",
             "properties", "signals"};
         UiTypeRegistryControl control;
-        if (!ExactKeys(sourceControl, schemaRevision == 1
-                                          ? revisionOneControlKeys
-                                          : revisionTwoControlKeys) ||
+        if (!ExactKeys(sourceControl, controlKeys) ||
             !ReadString(sourceControl, "id", control.id) ||
             !ReadString(sourceControl, "runtimeType", control.runtimeType) ||
-            (schemaRevision == 2 &&
-             !ReadString(sourceControl, "nodeKind", control.nodeKind)) ||
+            !ReadString(sourceControl, "nodeKind", control.nodeKind) ||
             !ReadString(sourceControl, "displayName", control.displayName) ||
             !ReadString(sourceControl, "description", control.description, true) ||
             !ReadString(sourceControl, "category", control.category) ||
@@ -276,15 +262,6 @@ UiTypeRegistryParseResult ParseUiTypeRegistry(const std::string_view source) {
             Diagnostic(result, "PXSDKUITYPE1010",
                        "UI control descriptor is malformed or non-deterministic");
             return result;
-        }
-        if (schemaRevision == 1) {
-            const auto nodeKind = LegacyNodeKind(control.id);
-            if (!nodeKind) {
-                Diagnostic(result, "PXSDKUITYPE1010",
-                           "Revision-1 UI controls require a legacy node identity");
-                return result;
-            }
-            control.nodeKind = *nodeKind;
         }
         if (!ValidNodeKind(control.nodeKind)) {
             Diagnostic(result, "PXSDKUITYPE1010",

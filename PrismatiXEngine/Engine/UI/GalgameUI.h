@@ -61,6 +61,8 @@ struct SettingsPresentation {
     bool highContrast = false;
     bool reducedMotion = false;
     bool selfVoicing = false;
+    std::string language;
+    std::vector<std::string> languages;
 };
 
 class GalgameUI {
@@ -93,18 +95,25 @@ public:
     void SetControlRuntimeConfigurator(std::function<void(Control&)> configure) {
         m_context.SetControlRuntimeConfigurator(std::move(configure));
     }
+    void SetTextRenderer(graphics::Renderer2D* renderer) {
+        m_context.SetTextRenderer(renderer);
+    }
+    void SetAccessibilityAdapter(
+        std::shared_ptr<accessibility::SemanticAdapter> adapter) {
+        m_context.SetAccessibilityAdapter(std::move(adapter));
+    }
     [[nodiscard]] BehaviorRuntimeState CaptureBehaviorState() const {
         return m_context.CaptureBehaviorState();
     }
     Status RestoreBehaviorState(const BehaviorRuntimeState& state) {
         return m_context.RestoreBehaviorState(state);
     }
-    [[nodiscard]] UIRuntimeState CaptureRuntimeState() const {
-        return m_context.CaptureRuntimeState();
-    }
-    Status RestoreRuntimeState(const UIRuntimeState& state) {
-        return m_context.RestoreRuntimeState(state);
-    }
+    [[nodiscard]] UIRuntimeState CaptureRuntimeState() const;
+    // Save/rollback checkpoints always describe gameplay HUD state, even when
+    // the user opened a transient save, backlog, gallery, or settings surface.
+    [[nodiscard]] UIRuntimeState CaptureGameplayRuntimeState() const;
+    Status ValidateRuntimeState(const UIRuntimeState& state);
+    Status RestoreRuntimeState(const UIRuntimeState& state);
     [[nodiscard]] ActionDispatcher& Actions() { return m_context.Actions(); }
     Status ShowTitle();
     Status ShowHUD(const DialoguePresentation& presentation);
@@ -131,16 +140,22 @@ public:
     [[nodiscard]] Screen CurrentScreen() const { return m_screen; }
     [[nodiscard]] bool IsOverlay() const { return m_screen != Screen::Title && m_screen != Screen::HUD; }
     Status ApplyAnimationProperty(const animation::TrackBinding& binding,const Variant& value);
+    Status ValidateAnimationProperty(const animation::TrackBinding& binding,
+                                     const Variant& value,
+                                     const UIRuntimeState& state);
+    [[nodiscard]] Control* Root() { return m_context.Root(); }
+    [[nodiscard]] const Control* Root() const { return m_context.Root(); }
 
 private:
     class ItemSource;
     void Emit(std::string command, std::string argument = {});
     Status Install(std::unique_ptr<Control> root, Screen screen);
     Status InstallTemplate(Screen screen);
+    Status InstallCheckpointSurface(Screen screen);
     [[nodiscard]] bool HasTemplate(Screen screen) const;
-    std::unique_ptr<Control> MakeRoot(std::string name);
     std::unique_ptr<Control> MakeMenuButton(std::string text, std::string command, std::string argument = {});
     Status Add(Control& parent, std::unique_ptr<Control> child);
+    void RememberGameplayCheckpoint(Screen target);
 
     // Bindings owned by UIContext unsubscribe during context destruction, so
     // the ViewModel must be declared first and therefore outlive it.
@@ -150,7 +165,6 @@ private:
     Screen m_screen = Screen::Title;
     Label* m_speaker = nullptr;
     Label* m_dialogue = nullptr;
-    Rect m_dialogueBaseOffsets{};
     int m_dialogueBaseFontSize = 30;
     Label* m_nvlText = nullptr;
     VBoxContainer* m_choices = nullptr;
@@ -160,6 +174,8 @@ private:
     EdgeRevealContainer* m_noticePanel = nullptr;
     std::string m_lastChapterTitle;
     std::string m_lastMusicTitle;
+    std::string m_activeDialogueEffect;
+    bool m_dialogueEffectFinished = false;
     std::shared_ptr<ItemSource> m_items;
     std::vector<Binding> m_bindings;
     struct Template {
@@ -171,7 +187,7 @@ private:
     UiAssetResolver m_studioAssetResolver;
     UiComponentLoader m_studioComponentLoader;
     std::vector<GalgameAction> m_pendingActions;
-    std::unordered_map<std::string,std::string> m_animationTextBase;
+    std::optional<UIRuntimeState> m_lastGameplayState;
     std::unordered_map<std::string, Visibility> m_timelineVisibilityBase;
 };
 

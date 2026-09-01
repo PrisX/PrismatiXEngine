@@ -32,7 +32,7 @@ Json Operation(const std::string& id, const std::string& kind,
 std::string Document(const std::string& id, const std::uint64_t revision,
                      Json operations) {
     return Json{{"format", "PrismatiXRuntimeIR"},
-                {"schemaRevision", 1},
+                {"schemaRevision", 2},
                 {"documentId", id},
                 {"committedRevision", revision},
                 {"operations", std::move(operations)}}
@@ -144,10 +144,12 @@ int main() {
                          Operation("set", "setVariable",
                                    {{"name", "score"}, {"value", "7"}}),
                          Operation("line-2", "narration", {{"text", "Two"}})}));
+        const std::uint64_t initialAssetSession = fixture.assets.AssetSession();
         const auto applied = preview->Apply({"linear", 1, first});
         suite.Require(applied.accepted &&
-                         applied.status == px::sdk::PreviewSessionStatus::Applied,
-                     "Apply installs Runtime IR through the stable facade");
+                          applied.status == px::sdk::PreviewSessionStatus::Applied &&
+                          fixture.assets.AssetSession() == initialAssetSession + 1,
+                      "Apply installs Runtime IR and starts a new asset generation");
         const auto checkpoint = preview->CaptureCheckpoint();
         suite.Require(checkpoint.accepted && checkpoint.checkpoint.has_value(),
                      "facade captures an opaque checkpoint identity");
@@ -168,19 +170,33 @@ int main() {
                          Operation("line-2", "narration", {{"text", "Two+"}})}));
         const auto patched = preview->Patch({"linear", 2, second});
         suite.Expect(patched.accepted && patched.inPlace &&
-                         patched.status == px::sdk::PreviewSessionStatus::Patched,
-                     "compatible patch preserves execution state in place");
+                         patched.status == px::sdk::PreviewSessionStatus::Patched &&
+                         fixture.assets.AssetSession() == initialAssetSession + 1,
+                     "compatible patch preserves execution and asset state in place");
         suite.Expect(preview->Advance().accepted && preview->Advance().accepted &&
                          fixture.runtime.Variables().Get("score") == 9 &&
                          fixture.runtime.Dialogue().State().fullText == "Two+",
                      "patched checkpoint state references the new compiled program");
+        const std::string structural = Document(
+            "linear", 3,
+            Json::array({Operation("line-1", "narration", {{"text", "One+"}}),
+                         Operation("inserted", "narration", {{"text", "New"}}),
+                         Operation("set", "setVariable",
+                                   {{"name", "score"}, {"value", "9"}}),
+                         Operation("line-2", "narration", {{"text", "Two+"}})}));
+        const auto restarted = preview->Patch({"linear", 3, structural});
+        suite.Expect(restarted.accepted && !restarted.inPlace &&
+                         restarted.status ==
+                             px::sdk::PreviewSessionStatus::Restarted &&
+                         fixture.assets.AssetSession() == initialAssetSession + 2,
+                     "structural patch restarts a detached asset generation");
         const std::string staleIr = Document(
-            "linear", 4,
+            "linear", 5,
             Json::array({Operation("line-1", "narration", {{"text", "One+"}}),
                          Operation("set", "setVariable",
                                    {{"name", "score"}, {"value", "9"}}),
                          Operation("line-2", "narration", {{"text", "Two+"}})}));
-        const auto stale = preview->Patch({"linear", 4, staleIr});
+        const auto stale = preview->Patch({"linear", 5, staleIr});
         suite.Expect(!stale.accepted &&
                          stale.status ==
                              px::sdk::PreviewSessionStatus::RevisionConflict,
@@ -269,7 +285,7 @@ int main() {
                       "pre-Timeline checkpoint captures");
         const std::string timeline = Json{
             {"format", "PrismatiXTimeline"},
-            {"schemaRevision", 1},
+            {"schemaRevision", 2},
             {"id", "preview.timeline"},
             {"duration", 4.0},
             {"tracks", Json::array({

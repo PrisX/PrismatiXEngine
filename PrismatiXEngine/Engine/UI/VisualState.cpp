@@ -368,19 +368,10 @@ VisualStateRuntimeState VisualStateController::CaptureState() const {
 
 Status VisualStateController::RestoreState(
     const VisualStateRuntimeState& state) {
-    if (state.groups.size() != m_groups.size())
-        return Status::Fail(StateError(
-            "PXUI2812", "Visual State checkpoint group count does not match"));
+    if (const Status valid = ValidateState(state); !valid) return valid;
     for (std::size_t index = 0; index < state.groups.size(); ++index) {
         const auto& saved = state.groups[index];
         auto& group = m_groups[index];
-        if (saved.group != group.definition.id ||
-            !FindState(group, saved.state) ||
-            !std::isfinite(saved.elapsed) ||
-            !std::isfinite(saved.duration) || saved.elapsed < 0.0f ||
-            saved.duration < 0.0f || saved.elapsed > saved.duration)
-            return Status::Fail(StateError(
-                "PXUI2813", "Visual State checkpoint is incompatible"));
         group.active = saved.state;
         group.from = saved.from;
         group.elapsed = saved.elapsed;
@@ -395,17 +386,9 @@ Status VisualStateController::RestoreState(
                     return candidate.animationClip &&
                            *candidate.animationClip == *saved.animationClip;
                 });
-            if (transition == group.definition.transitions.end())
-                return Status::Fail(StateError(
-                    "PXUI2814",
-                    "Visual State checkpoint animation clip is missing"));
             const auto* clip = m_clipResolver
                                    ? m_clipResolver(*transition->animationClip)
                                    : nullptr;
-            if (!clip)
-                return Status::Fail(StateError(
-                    "PXUI2814",
-                    "Visual State checkpoint animation clip is missing"));
             const Status played = group.animation->Play(*clip);
             if (!played) return played;
             const Status seek = group.animation->Seek(saved.animationPosition);
@@ -419,6 +402,46 @@ Status VisualStateController::RestoreState(
             const Status seek = group.animation->Seek(group.animation->Position());
             if (!seek) return seek;
         }
+    return Status::Ok();
+}
+
+Status VisualStateController::ValidateState(
+    const VisualStateRuntimeState& state) const {
+    if (state.groups.size() != m_groups.size())
+        return Status::Fail(StateError(
+            "PXUI2812", "Visual State checkpoint group count does not match"));
+    for (std::size_t index = 0; index < state.groups.size(); ++index) {
+        const auto& saved = state.groups[index];
+        const auto& group = m_groups[index];
+        if (saved.group != group.definition.id ||
+            !FindState(group, saved.state) ||
+            !std::isfinite(saved.elapsed) ||
+            !std::isfinite(saved.duration) || saved.elapsed < 0.0f ||
+            saved.duration < 0.0f || saved.elapsed > saved.duration)
+            return Status::Fail(StateError(
+                "PXUI2813", "Visual State checkpoint is incompatible"));
+        if (saved.animationClip) {
+            const auto transition = std::ranges::find_if(
+                group.definition.transitions,
+                [&](const VisualStateTransition& candidate) {
+                    return candidate.animationClip &&
+                           *candidate.animationClip == *saved.animationClip;
+                });
+            if (transition == group.definition.transitions.end())
+                return Status::Fail(StateError(
+                    "PXUI2814",
+                    "Visual State checkpoint animation clip is missing"));
+            const auto* clip = m_clipResolver
+                                   ? m_clipResolver(*transition->animationClip)
+                                   : nullptr;
+            if (!clip || !std::isfinite(saved.animationPosition) ||
+                saved.animationPosition < 0.0f ||
+                saved.animationPosition > clip->duration)
+                return Status::Fail(StateError(
+                    "PXUI2814",
+                    "Visual State checkpoint animation clip is missing"));
+        }
+    }
     return Status::Ok();
 }
 

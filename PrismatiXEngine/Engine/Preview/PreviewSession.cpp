@@ -39,7 +39,8 @@ sdk::PreviewSessionDiagnostic RuntimeDiagnostic(
         source.code, source.message, source.details, operationIndex);
     result.source = {source.source.resourceId, source.source.path,
                      source.source.nodeId, source.source.property,
-                     source.source.line, source.source.column};
+                     source.source.line, source.source.column,
+                     source.source.endLine, source.source.endColumn};
     switch (source.severity) {
         case diag::Severity::Info:
             result.severity = sdk::PreviewDiagnosticSeverity::Info;
@@ -57,6 +58,10 @@ sdk::PreviewSessionDiagnostic RuntimeDiagnostic(
     result.category = source.category;
     result.operationId = source.operationId;
     result.quickFix = source.quickFix;
+    result.documentId = source.documentId;
+    result.sourceId = source.sourceId;
+    result.hint = source.hint;
+    result.cause = source.cause;
     return result;
 }
 
@@ -509,6 +514,11 @@ private:
                 return RuntimeApplyFailure(
                     sdk::PreviewSessionStatus::RuntimeRejected);
             }
+            // A structural restart is a new presentation generation. Running
+            // decode jobs from the previous document may finish, but cannot
+            // publish into this one. In-place patches keep their resident
+            // assets and generation.
+            m_runtime.Assets().BeginAssetSession();
             ClearCheckpoints();
             m_branchPath.clear();
             (void)CaptureInternal(false);
@@ -516,7 +526,7 @@ private:
             for (auto& checkpoint : m_checkpoints) {
                 checkpoint.info.revision = request.revision;
                 checkpoint.runtime.runtimeProgram =
-                    m_runtime.VM().CurrentProgram();
+                    m_runtime.RuntimeProgramIdentity();
             }
         }
 

@@ -144,3 +144,94 @@ FetchContent_Declare(
     GIT_SHALLOW    FALSE
 )
 FetchContent_MakeAvailable(spdlog)
+
+# Native and browser Preview must use the same Unicode algorithms. Build the
+# small Unicode libraries from pinned source instead of silently selecting the
+# byte-oriented Runtime fallbacks under Emscripten.
+set(UTF8PROC_INSTALL OFF CACHE BOOL "" FORCE)
+set(UTF8PROC_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    utf8proc
+    GIT_REPOSITORY https://github.com/JuliaStrings/utf8proc.git
+    GIT_TAG        e5e799221b45bbb90f5fdc5c69b6b8dfbf017e78
+    GIT_SHALLOW    FALSE
+)
+FetchContent_MakeAvailable(utf8proc)
+if(TARGET utf8proc AND NOT TARGET utf8proc::utf8proc)
+    add_library(utf8proc::utf8proc ALIAS utf8proc)
+endif()
+
+FetchContent_Declare(
+    prismatix_unibreak_source
+    URL      https://github.com/adah1972/libunibreak/releases/download/libunibreak_6_1/libunibreak-6.1.tar.gz
+    URL_HASH SHA256=cc4de0099cf7ff05005ceabff4afed4c582a736abc38033e70fdac86335ce93f
+)
+FetchContent_GetProperties(prismatix_unibreak_source)
+if(NOT prismatix_unibreak_source_POPULATED)
+    FetchContent_Populate(prismatix_unibreak_source)
+endif()
+add_library(prismatix_unibreak_wasm STATIC
+    ${prismatix_unibreak_source_SOURCE_DIR}/src/unibreakbase.c
+    ${prismatix_unibreak_source_SOURCE_DIR}/src/unibreakdef.c
+    ${prismatix_unibreak_source_SOURCE_DIR}/src/linebreak.c
+    ${prismatix_unibreak_source_SOURCE_DIR}/src/linebreakdata.c
+    ${prismatix_unibreak_source_SOURCE_DIR}/src/linebreakdef.c
+    ${prismatix_unibreak_source_SOURCE_DIR}/src/eastasianwidthdef.c
+    ${prismatix_unibreak_source_SOURCE_DIR}/src/emojidef.c
+    ${prismatix_unibreak_source_SOURCE_DIR}/src/graphemebreak.c
+    ${prismatix_unibreak_source_SOURCE_DIR}/src/wordbreak.c
+)
+target_include_directories(prismatix_unibreak_wasm PUBLIC
+    ${prismatix_unibreak_source_SOURCE_DIR}/src)
+add_library(libunibreak::libunibreak ALIAS prismatix_unibreak_wasm)
+
+# FriBidi's release build generates Unicode tables with a build-machine C
+# compiler. Its Autotools distribution already separates CC_FOR_BUILD from
+# the target compiler, which is the safe cross-compilation path for WASM.
+include(ExternalProject)
+find_program(PRISMATIX_WASM_MAKE_EXECUTABLE NAMES make gmake REQUIRED)
+find_program(PRISMATIX_WASM_HOST_CC NAMES cc clang gcc REQUIRED)
+set(PRISMATIX_WASM_FRIBIDI_INSTALL
+    "${CMAKE_BINARY_DIR}/wasm-deps/fribidi")
+file(MAKE_DIRECTORY "${PRISMATIX_WASM_FRIBIDI_INSTALL}/include")
+ExternalProject_Add(prismatix_fribidi_external
+    URL      https://github.com/fribidi/fribidi/releases/download/v1.0.16/fribidi-1.0.16.tar.xz
+    URL_HASH SHA256=1b1cde5b235d40479e91be2f0e88a309e3214c8ab470ec8a2744d82a5a9ea05c
+    PREFIX "${CMAKE_BINARY_DIR}/wasm-deps/fribidi-build"
+    CONFIGURE_COMMAND
+        ${CMAKE_COMMAND} -E env
+            "CC=${CMAKE_C_COMPILER}"
+            "AR=${CMAKE_AR}"
+            "RANLIB=${CMAKE_RANLIB}"
+            "NM=${CMAKE_NM}"
+            "CC_FOR_BUILD=${PRISMATIX_WASM_HOST_CC}"
+        <SOURCE_DIR>/configure
+            --host=wasm32-unknown-emscripten
+            --prefix=${PRISMATIX_WASM_FRIBIDI_INSTALL}
+            --disable-shared
+            --enable-static
+            --disable-docs
+            --disable-bin
+            --disable-dependency-tracking
+    BUILD_COMMAND
+        ${CMAKE_COMMAND} -E env
+            "CC=${CMAKE_C_COMPILER}"
+            "AR=${CMAKE_AR}"
+            "RANLIB=${CMAKE_RANLIB}"
+        ${PRISMATIX_WASM_MAKE_EXECUTABLE} -C <BINARY_DIR> -j2
+    INSTALL_COMMAND
+        ${CMAKE_COMMAND} -E env
+            "CC=${CMAKE_C_COMPILER}"
+            "AR=${CMAKE_AR}"
+            "RANLIB=${CMAKE_RANLIB}"
+        ${PRISMATIX_WASM_MAKE_EXECUTABLE} -C <BINARY_DIR> install
+    BUILD_BYPRODUCTS
+        "${PRISMATIX_WASM_FRIBIDI_INSTALL}/lib/libfribidi.a"
+)
+add_library(prismatix_fribidi_wasm STATIC IMPORTED GLOBAL)
+set_target_properties(prismatix_fribidi_wasm PROPERTIES
+    IMPORTED_LOCATION
+        "${PRISMATIX_WASM_FRIBIDI_INSTALL}/lib/libfribidi.a"
+    INTERFACE_INCLUDE_DIRECTORIES
+        "${PRISMATIX_WASM_FRIBIDI_INSTALL}/include")
+add_dependencies(prismatix_fribidi_wasm prismatix_fribidi_external)

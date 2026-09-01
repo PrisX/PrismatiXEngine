@@ -13,6 +13,11 @@ namespace px::graphics {
 namespace {
 constexpr std::size_t kTextCacheLimit = 600;
 
+SDL_Texture* NativeTexture(const TextureHandle texture) {
+    return static_cast<SDL_Texture*>(
+        texture.Native(TextureBackend::SdlRenderer));
+}
+
 SDL_FColor ToFColor(Color c, float alphaScale = 1.0f) { return SDL_FColor{ c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, (c.a / 255.0f) * alphaScale }; }
 
 void AppendArc(std::vector<SDL_Vertex>& out, float cx, float cy, float radius, float a0, float a1, SDL_FColor color, int segments) {
@@ -26,14 +31,16 @@ void AppendArc(std::vector<SDL_Vertex>& out, float cx, float cy, float radius, f
     }
 }
 
-std::string MakeKey(const std::string& text, const std::string& font, int size, Color c, int outline, int wrap, int ss, int alignment) {
+std::string MakeKey(const std::string& text, const std::string& font, int size, Color c, int outline, int wrap, int ss, int alignment, const std::string& locale) {
     return text + "\x01" + font + "\x01" + std::to_string(size) + "\x01" + std::to_string(c.r) + "," + std::to_string(c.g) + "," + std::to_string(c.b) + "," + std::to_string(c.a) + "\x01" + std::to_string(outline) + "\x01" + std::to_string(wrap) + "\x01" +
-           std::to_string(ss)+"\x01"+std::to_string(alignment);
+           std::to_string(ss)+"\x01"+std::to_string(alignment)+"\x01"+locale;
 }
 }  // namespace
 
-Renderer2D::Renderer2D(SDL_Renderer* renderer, AssetCache& assets)
-    : m_renderer(renderer), m_assets(assets) {}
+Renderer2D::Renderer2D(SDL_Renderer* renderer, AssetCache& assets,
+                       const bool gpuEffects)
+    : m_renderer(renderer), m_assets(assets), m_textLayout(assets),
+      m_compositor(renderer, gpuEffects) {}
 
 Renderer2D::~Renderer2D() {
     ClearTextCache();
@@ -43,6 +50,7 @@ void Renderer2D::SetLogicalSize(int width, int height, bool updateTextDensity) {
     m_logicalW = width;
     m_logicalH = height;
     SDL_SetRenderLogicalPresentation(m_renderer, width, height, SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    m_compositor.SetLogicalSize(width, height);
     if(updateTextDensity&&m_textSamplingMode==TextSamplingMode::Auto&&width>0&&height>0){int outputW=width,outputH=height;(void)SDL_GetCurrentRenderOutputSize(m_renderer,&outputW,&outputH);const float density=std::min(static_cast<float>(outputW)/width,static_cast<float>(outputH)/height);const int effective=std::clamp(static_cast<int>(std::ceil(std::max(2.0f,density))),2,4);if(effective!=m_effectiveTextSupersample){m_effectiveTextSupersample=effective;ClearTextCache();}}
 }
 
@@ -161,19 +169,22 @@ void Renderer2D::Blit(SDL_Texture* texture, const Rect& dst, std::uint8_t alpha)
 }
 
 void Renderer2D::BlitRegion(SDL_Texture* texture,const Rect& sourcePixels,const Rect& dst,const std::uint8_t alpha){
-    if(!texture||dst.w<=0||dst.h<=0||sourcePixels.w<=0||sourcePixels.h<=0)return;int width=0,height=0;AssetCache::TextureSize(texture,width,height);if(width<=0||height<=0)return;
+    if(!texture||dst.w<=0||dst.h<=0||sourcePixels.w<=0||sourcePixels.h<=0)return;float nativeWidth=0,nativeHeight=0;if(!SDL_GetTextureSize(texture,&nativeWidth,&nativeHeight)||nativeWidth<=0||nativeHeight<=0)return;const int width=static_cast<int>(nativeWidth),height=static_cast<int>(nativeHeight);
     const float u0=sourcePixels.x/static_cast<float>(width),v0=sourcePixels.y/static_cast<float>(height),u1=(sourcePixels.x+sourcePixels.w)/static_cast<float>(width),v1=(sourcePixels.y+sourcePixels.h)/static_cast<float>(height);
     const auto p0=TransformPoint({dst.x,dst.y}),p1=TransformPoint({dst.x+dst.w,dst.y}),p2=TransformPoint({dst.x+dst.w,dst.y+dst.h}),p3=TransformPoint({dst.x,dst.y+dst.h});const SDL_FColor color=ToFColor(TransformColor({255,255,255,alpha}));
     SDL_Vertex vertices[4]{{{p0.x,p0.y},color,{u0,v0}},{{p1.x,p1.y},color,{u1,v0}},{{p2.x,p2.y},color,{u1,v1}},{{p3.x,p3.y},color,{u0,v1}}};constexpr int indices[6]{0,1,2,0,2,3};SDL_RenderGeometry(m_renderer,texture,vertices,4,indices,6);
 }
 
-void Renderer2D::DrawImage(const std::string& path, const Rect& dst, std::uint8_t alpha) { Blit(m_assets.Texture(path), dst, alpha); }
+void Renderer2D::DrawImage(const std::string& path, const Rect& dst,
+                           const std::uint8_t alpha) {
+    Blit(NativeTexture(m_assets.Texture(path)), dst, alpha);
+}
 
 void Renderer2D::DrawImageInRect(const std::string& path, const Rect& bounds,
                                  ContentScaleMode mode, HorizontalAlignment horizontal,
                                  VerticalAlignment vertical, std::uint8_t alpha) {
-    SDL_Texture* texture=m_assets.Texture(path);if(!texture||bounds.w<=0||bounds.h<=0)return;
-    int tw=0,th=0;AssetCache::TextureSize(texture,tw,th);if(tw<=0||th<=0)return;
+    const TextureHandle handle=m_assets.Texture(path);SDL_Texture* texture=NativeTexture(handle);if(!texture||bounds.w<=0||bounds.h<=0)return;
+    int tw=0,th=0;AssetCache::TextureSize(handle,tw,th);if(tw<=0||th<=0)return;
     if(mode==ContentScaleMode::Stretch){Blit(texture,bounds,alpha);return;}
     float scale=1.0f;
     if(mode==ContentScaleMode::Fit)scale=std::min(bounds.w/static_cast<float>(tw),bounds.h/static_cast<float>(th));
@@ -185,7 +196,7 @@ void Renderer2D::DrawImageInRect(const std::string& path, const Rect& bounds,
 }
 
 void Renderer2D::DrawNinePatch(const std::string& path,const Rect& bounds,Rect margins,const bool drawCenter,const std::uint8_t alpha){
-    SDL_Texture* texture=m_assets.Texture(path);if(!texture||bounds.w<=0||bounds.h<=0)return;int width=0,height=0;AssetCache::TextureSize(texture,width,height);if(width<=0||height<=0)return;
+    const TextureHandle handle=m_assets.Texture(path);SDL_Texture* texture=NativeTexture(handle);if(!texture||bounds.w<=0||bounds.h<=0)return;int width=0,height=0;AssetCache::TextureSize(handle,width,height);if(width<=0||height<=0)return;
     float left=std::clamp(margins.x,0.0f,static_cast<float>(width)),top=std::clamp(margins.y,0.0f,static_cast<float>(height));
     float right=std::clamp(margins.w,0.0f,static_cast<float>(width)-left),bottom=std::clamp(margins.h,0.0f,static_cast<float>(height)-top);
     const float destinationLeft=std::min(left,bounds.w*.5f),destinationRight=std::min(right,bounds.w-destinationLeft);
@@ -197,15 +208,19 @@ void Renderer2D::DrawNinePatch(const std::string& path,const Rect& bounds,Rect m
     for(int y=0;y<3;++y)for(int x=0;x<3;++x){if(!drawCenter&&x==1&&y==1)continue;BlitRegion(texture,{sourceX[x],sourceY[y],sourceX[x+1]-sourceX[x],sourceY[y+1]-sourceY[y]},{destinationX[x],destinationY[y],destinationX[x+1]-destinationX[x],destinationY[y+1]-destinationY[y]},alpha);}
 }
 
-void Renderer2D::DrawTexture(SDL_Texture* texture, const Rect& dst, std::uint8_t alpha) { Blit(texture, dst, alpha); }
+void Renderer2D::DrawTexture(const TextureHandle texture, const Rect& dst,
+                             const std::uint8_t alpha) {
+    Blit(NativeTexture(texture), dst, alpha);
+}
 
 Rect Renderer2D::DrawImageAuto(const std::string& path, DisplayMode mode, std::uint8_t alpha, int offsetX, int offsetY, float scale, Shadow shadow) {
-    SDL_Texture* tex = m_assets.Texture(path);
+    const TextureHandle handle = m_assets.Texture(path);
+    SDL_Texture* tex = NativeTexture(handle);
     if (!tex) {
         return {};
     }
     int tw = 0, th = 0;
-    AssetCache::TextureSize(tex, tw, th);
+    AssetCache::TextureSize(handle, tw, th);
     if (tw <= 0 || th <= 0) {
         return {};
     }
@@ -274,9 +289,12 @@ Rect Renderer2D::DrawImageAuto(const std::string& path, DisplayMode mode, std::u
     return dst;
 }
 
-const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, const std::string& fontPath, int size, Color color, int outline, int wrap, HorizontalAlignment alignment) {
+const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, const std::string& fontPath, int size, Color color, int outline, int wrap, HorizontalAlignment alignment, const text::TextOrientation orientation) {
     const int ss = m_effectiveTextSupersample;
-    const std::string key = MakeKey(text, fontPath, size, color, outline, wrap, ss,static_cast<int>(alignment));
+    const std::string key = MakeKey(text, fontPath, size, color, outline, wrap, ss,static_cast<int>(alignment),m_textLayout.Locale()) +
+                            (orientation == text::TextOrientation::Vertical
+                                 ? "|vertical"
+                                 : "|horizontal");
     if (auto it = m_textCache.find(key); it != m_textCache.end()) {
         return &it->second;
     }
@@ -290,6 +308,9 @@ const Renderer2D::CachedText* Renderer2D::AcquireText(const std::string& text, c
     if (!font || text.empty()) {
         return nullptr;
     }
+    m_textLayout.ConfigureFont(font, text);
+    if (orientation == text::TextOrientation::Vertical)
+        (void)TTF_SetFontDirection(font, TTF_DIRECTION_TTB);
 
     const SDL_Color col{color.r,color.g,color.b,color.a};
     const auto wrapAlignment=alignment==HorizontalAlignment::Center?TTF_HORIZONTAL_ALIGN_CENTER:alignment==HorizontalAlignment::Right?TTF_HORIZONTAL_ALIGN_RIGHT:TTF_HORIZONTAL_ALIGN_LEFT;
@@ -336,18 +357,65 @@ void Renderer2D::DrawTextOutline(const std::string& text, float x, float y, cons
 }
 
 Vec2 Renderer2D::MeasureText(const std::string& text, const std::string& fontPath, int size, int wrap) {
-    TTF_Font* font = m_assets.Font(fontPath, size, 0);
-    if (!font) {
-        return {};
+    return LayoutText(text, fontPath, size, wrap).Size();
+}
+
+text::TextLayout Renderer2D::LayoutText(
+    const std::string& value, const std::string& fontPath, const int size,
+    const int wrap, const text::TextOrientation orientation,
+    const std::size_t verticalRows) const {
+    return m_textLayout.Layout(value, fontPath, size, wrap, orientation,
+                               verticalRows);
+}
+
+void Renderer2D::DrawTextLayout(const text::TextLayout& layout,
+                                const Vec2 origin,
+                                const std::string& fontPath, const int size,
+                                const Color color, const std::uint8_t alpha) {
+    if (layout.Orientation() == text::TextOrientation::Horizontal) {
+        DrawText(layout.Text(), origin.x, origin.y, fontPath, size, color,
+                 alpha);
+        return;
     }
-    int w = 0, h = 0;
-    if (wrap > 0) {
-        TTF_GetStringSizeWrapped(font, text.c_str(), text.size(), wrap, &w, &h);
+    for (const auto& cluster : layout.Clusters()) {
+        if (cluster.byteStart + cluster.byteLength > layout.Text().size())
+            continue;
+        const std::string glyph = layout.Text().substr(cluster.byteStart,
+                                                       cluster.byteLength);
+        const Rect cell{origin.x + cluster.bounds.x,
+                        origin.y + cluster.bounds.y, cluster.bounds.w,
+                        cluster.bounds.h};
+        const CachedText* rendered = AcquireText(
+            glyph, fontPath, size, color, 0, 0, HorizontalAlignment::Left,
+            cluster.rotated ? text::TextOrientation::Horizontal
+                            : text::TextOrientation::Vertical);
+        if (!rendered) continue;
+        const Vec2 extent{static_cast<float>(rendered->w),
+                          static_cast<float>(rendered->h)};
+        const Vec2 draw{cell.x + (cell.w - extent.x) * 0.5f,
+                        cell.y + (cell.h - extent.y) * 0.5f};
+        if (cluster.rotated) {
+            const Vec2 center{cell.x + cell.w * 0.5f,
+                              cell.y + cell.h * 0.5f};
+            PushTransform(center, {1.0f, 1.0f}, 90.0f);
+            Blit(rendered->texture,
+                 {draw.x, draw.y, extent.x, extent.y}, alpha);
+            PopTransform();
+        } else {
+            Blit(rendered->texture,
+                 {draw.x, draw.y, extent.x, extent.y}, alpha);
+        }
     }
-    else {
-        TTF_GetStringSize(font, text.c_str(), text.size(), &w, &h);
-    }
-    return Vec2{ static_cast<float>(w), static_cast<float>(h) };
+}
+
+void Renderer2D::SetTextLocale(
+    std::string locale, std::vector<std::string> fontFallbackChain) {
+    if (locale.empty()) locale = "und";
+    const bool localeChanged = m_textLayout.Locale() != locale;
+    const bool fontsChanged =
+        m_assets.SetFontFallbackChain(std::move(fontFallbackChain));
+    if (localeChanged) m_textLayout.SetLocale(std::move(locale));
+    if (localeChanged || fontsChanged) ClearTextCache();
 }
 
 void Renderer2D::ClearTextCache() {

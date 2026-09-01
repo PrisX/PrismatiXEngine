@@ -1,17 +1,20 @@
 {
   "format": "PrismatiXContractManifest",
-  "schemaRevision": 1,
+  "schemaRevision": 2,
   "contracts": [
-    {"id":"runtimeIr","extension":".pxir","schema":"runtime-ir.schema.json","schemaRevision":1,"migration":"reject-future"},
-    {"id":"sourceMap","extension":".pxmap","schema":"source-map.schema.json","schemaRevision":1,"migration":"reject-future"},
-    {"id":"project","extension":".pxproject","schema":"project.schema.json","schemaRevision":1,"migration":"reject-future"},
-    {"id":"character","extension":".pxcharacter","schema":"character.schema.json","schemaRevision":1,"migration":"reject-future"},
+    {"id":"runtimeIr","extension":".pxir","schema":"runtime-ir.schema.json","schemaRevision":2,"migration":"reject-legacy"},
+    {"id":"sourceMap","extension":".pxmap","schema":"source-map.schema.json","schemaRevision":2,"migration":"reject-legacy"},
+    {"id":"project","extension":".pxproject","schema":"project.schema.json","schemaRevision":2,"migration":"cli-only"},
+    {"id":"character","extension":".pxcharacter","schema":"character.schema.json","schemaRevision":2,"migration":"migrate-previous"},
     {"id":"ui","extension":".pxui","schema":"ui.schema.json","schemaRevision":2,"migration":"migrate-previous"},
-    {"id":"timeline","extension":".pxtimeline","schema":"timeline.schema.json","schemaRevision":1,"migration":"reject-future"},
-    {"id":"animation","extension":".pxanim","schema":"animation.schema.json","schemaRevision":1,"migration":"migrate-version-4"},
-    {"id":"extension","extension":".pxextension","schema":"extension.schema.json","schemaRevision":1,"migration":"reject-future"},
-    {"id":"storyIndex","extension":"story.pxindex","schema":"story-index.schema.json","schemaRevision":1,"migration":"reject-future"},
-    {"id":"game","extension":"game.pxgame","schema":"game.schema.json","schemaRevision":1,"migration":"reject-future"},
-    {"id":"locale","extension":".json","schema":"locale.schema.json","schemaRevision":1,"migration":"reject-future"}
+    {"id":"uiComponent","extension":".pxuicomponent","schema":"ui-component.schema.json","schemaRevision":2,"migration":"cli-only"},
+    {"id":"timeline","extension":".pxtimeline","schema":"timeline.schema.json","schemaRevision":2,"migration":"cli-only"},
+    {"id":"animation","extension":".pxanim","schema":"animation.schema.json","schemaRevision":2,"migration":"cli-only"},
+    {"id":"extension","extension":".pxextension","schema":"extension.schema.json","schemaRevision":2,"migration":"reject-future"},
+    {"id":"storyIndex","extension":"story.pxindex","schema":"story-index.schema.json","schemaRevision":2,"migration":"cli-only"},
+    {"id":"game","extension":"game.pxgame","schema":"game.schema.json","schemaRevision":2,"migration":"cli-only"},
+    {"id":"locale","extension":".json","schema":"locale.schema.json","schemaRevision":2,"migration":"cli-only"},
+    {"id":"saveMigration","extension":".pxsave-migration","schema":"save-migration.schema.json","schemaRevision":2,"migration":"reject-legacy"}
+    ,{"id":"effect","extension":".pxeffect","schema":"effect.schema.json","schemaRevision":2,"migration":"reject-legacy"}
   ]
 }

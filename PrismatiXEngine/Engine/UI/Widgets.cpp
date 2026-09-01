@@ -5,9 +5,11 @@
 #include "Engine/UI/Theme.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <iomanip>
 #include <sstream>
+#include <SDL3/SDL_clipboard.h>
 #include <SDL3/SDL_scancode.h>
 
 namespace px::ui {
@@ -28,6 +30,49 @@ void DrawBox(graphics::Renderer2D& renderer, Rect area, const StyleBox& box) {
 
 graphics::HorizontalAlignment Horizontal(HorizontalTextAlignment value){switch(value){case HorizontalTextAlignment::Center:return graphics::HorizontalAlignment::Center;case HorizontalTextAlignment::Right:return graphics::HorizontalAlignment::Right;default:return graphics::HorizontalAlignment::Left;}}
 graphics::VerticalAlignment Vertical(VerticalTextAlignment value){switch(value){case VerticalTextAlignment::Center:return graphics::VerticalAlignment::Center;case VerticalTextAlignment::Bottom:return graphics::VerticalAlignment::Bottom;default:return graphics::VerticalAlignment::Top;}}
+std::size_t PreviousGrapheme(std::string_view value,std::size_t cursor){const auto boundaries=text::GraphemeBoundaries(value);const auto found=std::lower_bound(boundaries.begin(),boundaries.end(),cursor);return found==boundaries.begin()?0:*(found-1);}
+std::size_t NextGrapheme(std::string_view value,std::size_t cursor){const auto boundaries=text::GraphemeBoundaries(value);const auto found=std::upper_bound(boundaries.begin(),boundaries.end(),cursor);return found==boundaries.end()?value.size():*found;}
+std::size_t SnapGrapheme(std::string_view value, std::size_t cursor) {
+    cursor = std::min(cursor, value.size());
+    const auto boundaries = text::GraphemeBoundaries(value);
+    const auto found = std::lower_bound(boundaries.begin(), boundaries.end(), cursor);
+    if (found == boundaries.end()) return value.size();
+    if (*found == cursor || found == boundaries.begin()) return *found;
+    const auto previous = *std::prev(found);
+    return cursor - previous <= *found - cursor ? previous : *found;
+}
+bool ParseByteRange(std::string_view value, std::size_t& start,
+                    std::size_t& end) {
+    const auto separator = value.find(':');
+    if (separator == std::string_view::npos) return false;
+    const auto parse = [](std::string_view part, std::size_t& output) {
+        if (part.empty()) return false;
+        const auto result = std::from_chars(part.data(), part.data() + part.size(),
+                                            output);
+        return result.ec == std::errc{} && result.ptr == part.data() + part.size();
+    };
+    return parse(value.substr(0, separator), start) &&
+           parse(value.substr(separator + 1), end);
+}
+bool ParseByteOffset(std::string_view value, std::size_t& output) {
+    if (value.empty()) return false;
+    const auto result = std::from_chars(value.data(), value.data() + value.size(),
+                                        output);
+    return result.ec == std::errc{} && result.ptr == value.data() + value.size();
+}
+void DrawSelection(graphics::Renderer2D& renderer,
+                   const text::TextLayout& layout, const Vec2 origin,
+                   const std::size_t start, const std::size_t end) {
+    if (start >= end) return;
+    for (const auto& cluster : layout.Clusters()) {
+        const std::size_t clusterEnd = cluster.byteStart + cluster.byteLength;
+        if (clusterEnd <= start || cluster.byteStart >= end) continue;
+        renderer.DrawRect({origin.x + cluster.bounds.x,
+                           origin.y + cluster.bounds.y,
+                           cluster.bounds.w, cluster.bounds.h},
+                          {70, 120, 210, 125});
+    }
+}
 graphics::ContentScaleMode ToScaleMode(TextureScaleMode value){switch(value){case TextureScaleMode::Fit:return graphics::ContentScaleMode::Fit;case TextureScaleMode::Fill:return graphics::ContentScaleMode::Fill;case TextureScaleMode::Original:return graphics::ContentScaleMode::Original;default:return graphics::ContentScaleMode::Stretch;}}
 }
 
@@ -43,6 +88,11 @@ void Panel::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
 
 Vec2 Label::MeasureOverride(Vec2 available) {
     const int size = m_fontSize > 0 ? m_fontSize : 24;
+    const int wrap = m_wrap && available.x > 0.0f
+                         ? std::max(1, static_cast<int>(std::floor(available.x)))
+                         : 0;
+    if (const auto layout = MeasureTextLayout(m_text, m_fontSize, wrap))
+        return layout->Size();
     const float estimatedWidth = static_cast<float>(m_text.size()) * static_cast<float>(size) * 0.55f;
     if (!m_wrap || available.x <= 0.0f) return {estimatedWidth, static_cast<float>(size) * 1.35f};
     const float lines = std::max(1.0f, std::ceil(estimatedWidth / available.x));
@@ -74,7 +124,10 @@ void Button::HandleEvent(UIEvent& event) {
 }
 
 Vec2 Button::MeasureOverride(Vec2) {
-    const float size = 24.0f;
+    if (const auto layout = MeasureTextLayout(m_text, 0))
+        return {std::max(88.0f, layout->Size().x + 28.0f),
+                std::max(48.0f, layout->Size().y + 16.0f)};
+    constexpr float size = 24.0f;
     return {std::max(88.0f, static_cast<float>(m_text.size()) * size * 0.58f + 28.0f), 48.0f};
 }
 
@@ -129,39 +182,410 @@ void Slider::SetRange(double minimum,double maximum,double step){m_min=minimum;m
 void Slider::SetValue(double value){value=std::clamp(value,m_min,m_max);if(m_step>0)value=m_min+std::round((value-m_min)/m_step)*m_step;if(value==m_value)return;m_value=value;EmitSignal("valueChanged",{{"value",m_value}});if(m_changed)m_changed(m_value);}
 void Slider::SetFromPosition(float x){const Rect r=LayoutRect();const double ratio=r.w>0?std::clamp((x-r.x)/r.w,0.0f,1.0f):0;SetValue(m_min+(m_max-m_min)*ratio);}
 void Slider::HandleEvent(UIEvent& event){if(event.type==UIEventType::PointerDown||(event.type==UIEventType::PointerMove&&Pressed())){SetFromPosition(event.position.x);event.handled=true;}else if(event.type==UIEventType::KeyDown){if(event.key==SDL_SCANCODE_LEFT)SetValue(m_value-(m_step>0?m_step:(m_max-m_min)/100));else if(event.key==SDL_SCANCODE_RIGHT)SetValue(m_value+(m_step>0?m_step:(m_max-m_min)/100));else return;event.handled=true;}}
+bool Slider::PerformAccessibilityAction(const std::string_view action,
+                                        const std::string_view value) {
+    if (!Enabled() || !IsVisibleInTree()) return false;
+    const double step = m_step > 0.0 ? m_step : (m_max - m_min) / 100.0;
+    if (action == "increment") SetValue(m_value + step);
+    else if (action == "decrement") SetValue(m_value - step);
+    else if (action == "setValue") {
+        try {
+            std::size_t consumed = 0;
+            const double parsed = std::stod(std::string(value), &consumed);
+            if (consumed != value.size() || !std::isfinite(parsed)) return false;
+            SetValue(parsed);
+        } catch (...) { return false; }
+    } else return Control::PerformAccessibilityAction(action, value);
+    return true;
+}
 Vec2 Slider::MeasureOverride(Vec2){return{180,26};}
 void Slider::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){const auto& style=theme.Resolve(*this);const Rect r=LayoutRect();const float y=r.y+r.h*.5f-3;renderer.DrawRoundedRect({r.x,y,r.w,6},3,style.normal.background);const float ratio=m_max>m_min?static_cast<float>((m_value-m_min)/(m_max-m_min)):0;renderer.DrawRoundedRect({r.x,y,r.w*ratio,6},3,style.focused.border);renderer.DrawRoundedRect({r.x+r.w*ratio-7,r.y+r.h*.5f-7,14,14},7,style.text);}
 
-LineEdit::LineEdit(std::string text,std::string name):Control(std::move(name)),m_text(std::move(text)),m_cursor(m_text.size()){SetFocusMode(FocusMode::All);}
-void LineEdit::HandleEvent(UIEvent& event){
-    if(event.type==UIEventType::TextInput){m_text.insert(m_cursor,event.text);m_cursor+=event.text.size();InvalidateLayout();EmitSignal("textChanged",{{"text",m_text}});event.handled=true;}
-    else if(event.type==UIEventType::KeyDown){bool changed=false;if(event.key==SDL_SCANCODE_BACKSPACE&&m_cursor>0){m_text.erase(--m_cursor,1);changed=true;event.handled=true;}else if(event.key==SDL_SCANCODE_DELETE&&m_cursor<m_text.size()){m_text.erase(m_cursor,1);changed=true;event.handled=true;}else if(event.key==SDL_SCANCODE_LEFT&&m_cursor>0){--m_cursor;event.handled=true;}else if(event.key==SDL_SCANCODE_RIGHT&&m_cursor<m_text.size()){++m_cursor;event.handled=true;}if(changed){InvalidateLayout();EmitSignal("textChanged",{{"text",m_text}});}}
-    else if(event.type==UIEventType::Activate){EmitSignal("submitted",{{"text",m_text}});if(m_submitted)m_submitted(m_text);event.handled=true;}
+LineEdit::LineEdit(std::string text,std::string name)
+    : Control(std::move(name)), m_text(std::move(text)),
+      m_cursor(m_text.size()), m_selectionAnchor(m_cursor) {
+    SetFocusMode(FocusMode::All);
+}
+void LineEdit::SetSelectionBytes(const std::size_t start,
+                                 const std::size_t end) {
+    m_selectionAnchor = SnapGrapheme(m_text, start);
+    m_cursor = SnapGrapheme(m_text, end);
+}
+void LineEdit::MoveCaret(const std::size_t value, const bool extend) {
+    const std::size_t next = SnapGrapheme(m_text, value);
+    if (!extend) m_selectionAnchor = next;
+    m_cursor = next;
+}
+bool LineEdit::DeleteSelection() {
+    const std::size_t start = SelectionStartByteOffset();
+    const std::size_t end = SelectionEndByteOffset();
+    if (start == end) return false;
+    m_text.erase(start, end - start);
+    m_cursor = m_selectionAnchor = start;
+    return true;
+}
+void LineEdit::SetCaretFromPoint(const Vec2 point, const bool extend) {
+    const auto layout = MeasureTextLayout(m_text, 0);
+    const std::size_t target = layout
+        ? layout->ByteOffsetAt({point.x - LayoutRect().x - 10.0f,
+                                point.y - LayoutRect().y - 8.0f})
+        : m_text.size();
+    MoveCaret(target, extend);
+}
+void LineEdit::HandleEvent(UIEvent& event) {
+    if (event.type == UIEventType::PointerDown) {
+        SetCaretFromPoint(event.position, event.shift);
+        m_pointerSelecting = true;
+        event.handled = true;
+        return;
+    }
+    if (event.type == UIEventType::PointerMove && m_pointerSelecting) {
+        SetCaretFromPoint(event.position, true);
+        event.handled = true;
+        return;
+    }
+    if (event.type == UIEventType::PointerUp ||
+        event.type == UIEventType::FocusLost)
+        m_pointerSelecting = false;
+    if (event.type == UIEventType::TextInput) {
+        (void)DeleteSelection();
+        m_text.insert(m_cursor, event.text);
+        m_cursor += event.text.size();
+        m_selectionAnchor = m_cursor;
+        InvalidateLayout();
+        EmitSignal("textChanged", {{"text", m_text}});
+        event.handled = true;
+        return;
+    }
+    if (event.type == UIEventType::Activate) {
+        EmitSignal("submitted", {{"text", m_text}});
+        if (m_submitted) m_submitted(m_text);
+        event.handled = true;
+        return;
+    }
+    if (event.type != UIEventType::KeyDown) return;
+    bool changed = false;
+    if (event.control && event.key == SDL_SCANCODE_A) {
+        SetSelectionBytes(0, m_text.size());
+    } else if (event.key == SDL_SCANCODE_BACKSPACE) {
+        changed = DeleteSelection();
+        if (!changed && m_cursor > 0) {
+            const auto previous = PreviousGrapheme(m_text, m_cursor);
+            m_text.erase(previous, m_cursor - previous);
+            m_cursor = m_selectionAnchor = previous;
+            changed = true;
+        }
+    } else if (event.key == SDL_SCANCODE_DELETE) {
+        changed = DeleteSelection();
+        if (!changed && m_cursor < m_text.size()) {
+            const auto next = NextGrapheme(m_text, m_cursor);
+            m_text.erase(m_cursor, next - m_cursor);
+            m_selectionAnchor = m_cursor;
+            changed = true;
+        }
+    } else if (event.key == SDL_SCANCODE_LEFT) {
+        if (!event.shift && SelectionStartByteOffset() != SelectionEndByteOffset())
+            MoveCaret(SelectionStartByteOffset(), false);
+        else
+            MoveCaret(PreviousGrapheme(m_text, m_cursor), event.shift);
+    } else if (event.key == SDL_SCANCODE_RIGHT) {
+        if (!event.shift && SelectionStartByteOffset() != SelectionEndByteOffset())
+            MoveCaret(SelectionEndByteOffset(), false);
+        else
+            MoveCaret(NextGrapheme(m_text, m_cursor), event.shift);
+    } else if (event.key == SDL_SCANCODE_HOME) {
+        MoveCaret(0, event.shift);
+    } else if (event.key == SDL_SCANCODE_END) {
+        MoveCaret(m_text.size(), event.shift);
+    } else {
+        return;
+    }
+    if (changed) {
+        InvalidateLayout();
+        EmitSignal("textChanged", {{"text", m_text}});
+    }
+    event.handled = true;
+}
+AccessibilitySemantics LineEdit::DescribeAccessibility() const {
+    auto semantics = Control::DescribeAccessibility();
+    text::TextLayout layout = MeasureTextLayout(m_text, 0)
+                                  .value_or(text::TextLayout(m_text, "und", {}, {}));
+    semantics.text = AccessibilityTextSemantics{
+        .layout = std::move(layout),
+        .origin = {10.0f, 8.0f},
+        .caretByteOffset = m_cursor,
+        .selectionStartByteOffset = SelectionStartByteOffset(),
+        .selectionEndByteOffset = SelectionEndByteOffset(),
+        .editable = true,
+        .multiline = false,
+    };
+    semantics.actions.emplace_back("setCaret");
+    semantics.actions.emplace_back("setSelection");
+    return semantics;
+}
+bool LineEdit::PerformAccessibilityAction(const std::string_view action,
+                                          const std::string_view value) {
+    if (!Enabled() || !IsVisibleInTree()) return false;
+    if (action == "setValue") {
+        SetText(std::string(value));
+        EmitSignal("textChanged", {{"text", m_text}});
+        return true;
+    }
+    if (action == "setCaret") {
+        std::size_t offset = 0;
+        if (!ParseByteOffset(value, offset) || offset > m_text.size()) return false;
+        MoveCaret(offset, false);
+        return true;
+    }
+    if (action == "setSelection") {
+        std::size_t start = 0, end = 0;
+        if (!ParseByteRange(value, start, end) || start > m_text.size() ||
+            end > m_text.size()) return false;
+        SetSelectionBytes(start, end);
+        return true;
+    }
+    if (action == "copyText") {
+        std::size_t start = 0, end = 0;
+        if (!ParseByteRange(value, start, end) || start > end ||
+            end > m_text.size()) return false;
+        return SDL_SetClipboardText(
+            m_text.substr(start, end - start).c_str());
+    }
+    if (action == "pasteText") {
+        std::size_t offset = 0;
+        if (!ParseByteOffset(value, offset) || offset > m_text.size()) return false;
+        char* clipboard = SDL_GetClipboardText();
+        if (!clipboard) return false;
+        const std::string inserted(clipboard);
+        SDL_free(clipboard);
+        m_text.insert(offset, inserted);
+        m_cursor = m_selectionAnchor = offset + inserted.size();
+        InvalidateLayout();
+        EmitSignal("textChanged", {{"text", m_text}});
+        return true;
+    }
+    if (action == "submit") {
+        UIEvent event{.type = UIEventType::Activate};
+        HandleEvent(event);
+        return event.handled;
+    }
+    return Control::PerformAccessibilityAction(action, value);
 }
 Vec2 LineEdit::MeasureOverride(Vec2){return{220,44};}
-void LineEdit::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){const auto& style=theme.Resolve(*this);DrawBox(renderer,LayoutRect(),StateBox(*this,style));const std::string& shown=m_text.empty()?m_placeholder:m_text;const Color color=m_text.empty()?style.textDisabled:style.text;renderer.DrawText(shown,LayoutRect().x+10,LayoutRect().y+8,style.font,style.fontSize,color);if(Focused()){const std::string prefix=m_text.substr(0,m_cursor);const Vec2 measured=renderer.MeasureText(prefix,style.font,style.fontSize);renderer.DrawRect({LayoutRect().x+10+measured.x,LayoutRect().y+8,1,static_cast<float>(style.fontSize+4)},style.focused.border);}}
+void LineEdit::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme) {
+    const auto& style=theme.Resolve(*this);
+    DrawBox(renderer,LayoutRect(),StateBox(*this,style));
+    const bool placeholder = m_text.empty();
+    const std::string& shown=placeholder?m_placeholder:m_text;
+    const Color color=placeholder?style.textDisabled:style.text;
+    const Vec2 origin{LayoutRect().x+10,LayoutRect().y+8};
+    const auto shownLayout=renderer.LayoutText(shown,style.font,style.fontSize);
+    if (!placeholder)
+        DrawSelection(renderer, shownLayout, origin, SelectionStartByteOffset(),
+                      SelectionEndByteOffset());
+    renderer.DrawTextLayout(shownLayout, origin, style.font, style.fontSize, color);
+    if(Focused()){
+        const auto layout=placeholder
+                              ? renderer.LayoutText("",style.font,style.fontSize)
+                              : shownLayout;
+        const Vec2 caret=layout.CaretPosition(m_cursor);
+        renderer.DrawRect({origin.x+caret.x,origin.y+caret.y,1,
+                           static_cast<float>(style.fontSize+4)},
+                          style.focused.border);
+    }
+}
 
 RichTextLabel::RichTextLabel(std::string markup,std::string name):Label({},std::move(name)){SetWrap(true);SetMarkup(std::move(markup));}
-void RichTextLabel::SetMarkup(std::string markup){m_markup=std::move(markup);const auto parsed=text::ParseRubyMarkup(m_markup);m_ruby.clear();for(const auto& ruby:parsed.ruby)m_ruby.push_back({ruby.prefix,ruby.reading});SetText(parsed.plain);}
-void RichTextLabel::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){Label::DrawSelf(renderer,theme);const auto& style=theme.Resolve(*this);const int baseSize=FontSize()>0?FontSize():style.fontSize;for(const auto& ruby:m_ruby){const Vec2 prefix=renderer.MeasureText(ruby.prefix,style.font,baseSize);renderer.DrawText(ruby.reading,LayoutRect().x+prefix.x,LayoutRect().y-std::max(8,baseSize/2),style.font,std::max(8,baseSize/2),style.text);}}
+void RichTextLabel::SetMarkup(std::string markup){m_markup=std::move(markup);const auto parsed=text::ParseRubyMarkup(m_markup);m_ruby.clear();for(const auto& ruby:parsed.ruby)m_ruby.push_back({ruby.prefix,ruby.base,ruby.reading});SetText(parsed.plain);}
+AccessibilitySemantics RichTextLabel::DescribeAccessibility() const {
+    auto semantics = Label::DescribeAccessibility();
+    const int wrap = m_vertical
+                         ? std::max(1, static_cast<int>(LayoutRect().h))
+                         : (Wrap() ? std::max(1, static_cast<int>(LayoutRect().w))
+                                   : 0);
+    const auto orientation = m_vertical ? text::TextOrientation::Vertical
+                                        : text::TextOrientation::Horizontal;
+    text::TextLayout layout = MeasureTextLayout(
+        Text(), FontSize(), wrap, orientation, m_verticalRows)
+                                  .value_or(text::TextLayout(
+                                      Text(), "und", {}, {}, orientation));
+    semantics.text = AccessibilityTextSemantics{.layout = std::move(layout)};
+    if (m_vertical)
+        semantics.text->origin.x =
+            (LayoutRect().w - semantics.text->layout.Size().x) * 0.5f;
+    return semantics;
+}
+Vec2 RichTextLabel::MeasureOverride(const Vec2 available){if(!m_vertical)return Label::MeasureOverride(available);const int height=available.y>0.0f?std::max(1,static_cast<int>(std::floor(available.y))):0;if(const auto layout=MeasureTextLayout(Text(),FontSize(),height,text::TextOrientation::Vertical,m_verticalRows))return layout->Size();return Label::MeasureOverride(available);}
+void RichTextLabel::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){const auto& style=theme.Resolve(*this);const int baseSize=FontSize()>0?FontSize():style.fontSize;if(!m_vertical){Label::DrawSelf(renderer,theme);for(const auto& ruby:m_ruby){const auto layout=renderer.LayoutText(ruby.prefix+ruby.base,style.font,baseSize);const Rect base=layout.BoundsForRange(ruby.prefix.size(),ruby.base.size());const int rubySize=std::max(8,baseSize/2);const Vec2 reading=renderer.MeasureText(ruby.reading,style.font,rubySize);const float center=base.w>0?base.x+base.w*.5f:renderer.MeasureText(ruby.prefix,style.font,baseSize).x;renderer.DrawText(ruby.reading,LayoutRect().x+center-reading.x*.5f,LayoutRect().y-rubySize,style.font,rubySize,style.text);}return;}const auto layout=renderer.LayoutText(Text(),style.font,baseSize,std::max(1,static_cast<int>(std::floor(LayoutRect().h))),text::TextOrientation::Vertical,m_verticalRows);const Vec2 origin{LayoutRect().x+(LayoutRect().w-layout.Size().x)*.5f,LayoutRect().y};renderer.PushClip(LayoutRect());renderer.DrawTextLayout(layout,origin,style.font,baseSize,style.text);for(const auto& ruby:m_ruby){const Rect base=layout.BoundsForRange(ruby.prefix.size(),ruby.base.size());const int rubySize=std::max(8,baseSize/2);const auto rubyLayout=renderer.LayoutText(ruby.reading,style.font,rubySize,0,text::TextOrientation::Vertical);renderer.DrawTextLayout(rubyLayout,{origin.x+base.x+base.w,origin.y+base.y},style.font,rubySize,style.text);}renderer.PopClip();}
 
 void NinePatchRect::DrawSelf(graphics::Renderer2D& renderer,const Theme&){if(!m_path.empty())renderer.DrawNinePatch(m_path,LayoutRect(),m_margins,m_drawCenter);}
 
-TextEdit::TextEdit(std::string text,std::string name):Control(std::move(name)),m_text(std::move(text)),m_cursor(m_text.size()){SetFocusMode(FocusMode::All);}
+TextEdit::TextEdit(std::string text,std::string name)
+    :Control(std::move(name)),m_text(std::move(text)),m_cursor(m_text.size()),
+     m_selectionAnchor(m_cursor){SetFocusMode(FocusMode::All);}
 void TextEdit::Changed(){InvalidateLayout();EmitSignal("textChanged",{{"text",m_text}});}
-void TextEdit::HandleEvent(UIEvent& event){if(m_readOnly)return;
-    if(event.type==UIEventType::TextInput){m_text.insert(m_cursor,event.text);m_cursor+=event.text.size();Changed();event.handled=true;return;}
-    if(event.type==UIEventType::Activate){m_text.insert(m_cursor,"\n");++m_cursor;Changed();event.handled=true;return;}
-    if(event.type!=UIEventType::KeyDown)return;bool changed=false;
-    if(event.key==SDL_SCANCODE_BACKSPACE&&m_cursor>0){m_text.erase(--m_cursor,1);changed=true;}
-    else if(event.key==SDL_SCANCODE_DELETE&&m_cursor<m_text.size()){m_text.erase(m_cursor,1);changed=true;}
-    else if(event.key==SDL_SCANCODE_LEFT&&m_cursor>0)--m_cursor;
-    else if(event.key==SDL_SCANCODE_RIGHT&&m_cursor<m_text.size())++m_cursor;
-    else if(event.key==SDL_SCANCODE_HOME)m_cursor=0;else if(event.key==SDL_SCANCODE_END)m_cursor=m_text.size();else return;
+void TextEdit::SetSelectionBytes(const std::size_t start,
+                                 const std::size_t end) {
+    m_selectionAnchor = SnapGrapheme(m_text, start);
+    m_cursor = SnapGrapheme(m_text, end);
+}
+void TextEdit::MoveCaret(const std::size_t value, const bool extend) {
+    const std::size_t next = SnapGrapheme(m_text, value);
+    if (!extend) m_selectionAnchor = next;
+    m_cursor = next;
+}
+bool TextEdit::DeleteSelection() {
+    const std::size_t start = SelectionStartByteOffset();
+    const std::size_t end = SelectionEndByteOffset();
+    if (start == end) return false;
+    m_text.erase(start, end - start);
+    m_cursor = m_selectionAnchor = start;
+    return true;
+}
+void TextEdit::SetCaretFromPoint(const Vec2 point, const bool extend) {
+    const int wrap = std::max(1, static_cast<int>(LayoutRect().w - 20.0f));
+    const auto layout = MeasureTextLayout(m_text, 0, wrap);
+    const std::size_t target = layout
+        ? layout->ByteOffsetAt({point.x - LayoutRect().x - 10.0f,
+                                point.y - LayoutRect().y - 8.0f})
+        : m_text.size();
+    MoveCaret(target, extend);
+}
+void TextEdit::HandleEvent(UIEvent& event) {
+    if (event.type == UIEventType::PointerDown) {
+        SetCaretFromPoint(event.position, event.shift);
+        m_pointerSelecting = true;
+        event.handled = true;
+        return;
+    }
+    if (event.type == UIEventType::PointerMove && m_pointerSelecting) {
+        SetCaretFromPoint(event.position, true);
+        event.handled = true;
+        return;
+    }
+    if (event.type == UIEventType::PointerUp ||
+        event.type == UIEventType::FocusLost)
+        m_pointerSelecting = false;
+    if (event.type == UIEventType::TextInput) {
+        if (m_readOnly) return;
+        (void)DeleteSelection();
+        m_text.insert(m_cursor,event.text);
+        m_cursor+=event.text.size();
+        m_selectionAnchor=m_cursor;
+        Changed();event.handled=true;return;
+    }
+    if(event.type==UIEventType::Activate){
+        if (m_readOnly) return;
+        (void)DeleteSelection();
+        m_text.insert(m_cursor,"\n");++m_cursor;m_selectionAnchor=m_cursor;
+        Changed();event.handled=true;return;
+    }
+    if(event.type!=UIEventType::KeyDown)return;
+    bool changed=false;
+    if(event.control&&event.key==SDL_SCANCODE_A){SetSelectionBytes(0,m_text.size());}
+    else if(event.key==SDL_SCANCODE_BACKSPACE&&!m_readOnly){
+        changed=DeleteSelection();
+        if(!changed&&m_cursor>0){const auto previous=PreviousGrapheme(m_text,m_cursor);m_text.erase(previous,m_cursor-previous);m_cursor=m_selectionAnchor=previous;changed=true;}
+    }
+    else if(event.key==SDL_SCANCODE_DELETE&&!m_readOnly){
+        changed=DeleteSelection();
+        if(!changed&&m_cursor<m_text.size()){const auto next=NextGrapheme(m_text,m_cursor);m_text.erase(m_cursor,next-m_cursor);m_selectionAnchor=m_cursor;changed=true;}
+    }
+    else if(event.key==SDL_SCANCODE_LEFT){
+        if(!event.shift&&SelectionStartByteOffset()!=SelectionEndByteOffset())MoveCaret(SelectionStartByteOffset(),false);
+        else MoveCaret(PreviousGrapheme(m_text,m_cursor),event.shift);
+    }
+    else if(event.key==SDL_SCANCODE_RIGHT){
+        if(!event.shift&&SelectionStartByteOffset()!=SelectionEndByteOffset())MoveCaret(SelectionEndByteOffset(),false);
+        else MoveCaret(NextGrapheme(m_text,m_cursor),event.shift);
+    }
+    else if(event.key==SDL_SCANCODE_UP||event.key==SDL_SCANCODE_DOWN){
+        const int wrap=std::max(1,static_cast<int>(LayoutRect().w-20.0f));
+        if(const auto layout=MeasureTextLayout(m_text,0,wrap)){
+            Vec2 position=layout->CaretPosition(m_cursor);
+            const float step=std::max(1.0f,layout->Size().y/
+                static_cast<float>(std::max(1,layout->Clusters().empty()?1:
+                    1+std::ranges::max_element(layout->Clusters(),{},&text::TextClusterLayout::line)->line)));
+            position.y+=event.key==SDL_SCANCODE_UP?-step:step;
+            MoveCaret(layout->ByteOffsetAt(position),event.shift);
+        }
+    }
+    else if(event.key==SDL_SCANCODE_HOME)MoveCaret(0,event.shift);
+    else if(event.key==SDL_SCANCODE_END)MoveCaret(m_text.size(),event.shift);
+    else return;
     if(changed)Changed();event.handled=true;
 }
+AccessibilitySemantics TextEdit::DescribeAccessibility() const {
+    auto semantics=Control::DescribeAccessibility();
+    const int wrap=std::max(1,static_cast<int>(LayoutRect().w-20.0f));
+    text::TextLayout layout=MeasureTextLayout(m_text,0,wrap)
+        .value_or(text::TextLayout(m_text,"und",{},{}));
+    semantics.readOnly=m_readOnly;
+    semantics.text=AccessibilityTextSemantics{
+        .layout=std::move(layout),
+        .origin={10.0f,8.0f},
+        .caretByteOffset=m_cursor,
+        .selectionStartByteOffset=SelectionStartByteOffset(),
+        .selectionEndByteOffset=SelectionEndByteOffset(),
+        .editable=!m_readOnly,
+        .multiline=true,
+    };
+    semantics.actions.emplace_back("setCaret");
+    semantics.actions.emplace_back("setSelection");
+    return semantics;
+}
+bool TextEdit::PerformAccessibilityAction(const std::string_view action,
+                                          const std::string_view value) {
+    if(!Enabled()||!IsVisibleInTree())return false;
+    if(action=="setValue"){
+        if(m_readOnly)return false;
+        SetText(std::string(value));Changed();return true;
+    }
+    if(action=="setCaret"){
+        std::size_t offset=0;
+        if(!ParseByteOffset(value,offset)||offset>m_text.size())return false;
+        MoveCaret(offset,false);return true;
+    }
+    if(action=="setSelection"){
+        std::size_t start=0,end=0;
+        if(!ParseByteRange(value,start,end)||start>m_text.size()||end>m_text.size())return false;
+        SetSelectionBytes(start,end);return true;
+    }
+    if(action=="copyText"){
+        std::size_t start=0,end=0;
+        if(!ParseByteRange(value,start,end)||start>end||end>m_text.size())return false;
+        return SDL_SetClipboardText(m_text.substr(start,end-start).c_str());
+    }
+    if(action=="pasteText"){
+        if(m_readOnly)return false;
+        std::size_t offset=0;
+        if(!ParseByteOffset(value,offset)||offset>m_text.size())return false;
+        char* clipboard=SDL_GetClipboardText();
+        if(!clipboard)return false;
+        const std::string inserted(clipboard);SDL_free(clipboard);
+        m_text.insert(offset,inserted);m_cursor=m_selectionAnchor=offset+inserted.size();
+        Changed();return true;
+    }
+    return Control::PerformAccessibilityAction(action,value);
+}
 Vec2 TextEdit::MeasureOverride(Vec2 available){return{std::min(360.0f,std::max(180.0f,available.x)),std::min(180.0f,std::max(88.0f,available.y))};}
-void TextEdit::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){const auto& style=theme.Resolve(*this);DrawBox(renderer,LayoutRect(),StateBox(*this,style));Rect content=LayoutRect();content.x+=10;content.y+=8;content.w=std::max(0.0f,content.w-20);content.h=std::max(0.0f,content.h-16);const bool placeholder=m_text.empty();renderer.DrawTextInRect(placeholder?m_placeholder:m_text,content,style.font,style.fontSize,placeholder?style.textDisabled:style.text,graphics::HorizontalAlignment::Left,graphics::VerticalAlignment::Top,true);}
+void TextEdit::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){
+    const auto& style=theme.Resolve(*this);DrawBox(renderer,LayoutRect(),StateBox(*this,style));
+    Rect content=LayoutRect();content.x+=10;content.y+=8;content.w=std::max(0.0f,content.w-20);content.h=std::max(0.0f,content.h-16);
+    const bool placeholder=m_text.empty();const std::string& shown=placeholder?m_placeholder:m_text;
+    const auto layout=renderer.LayoutText(shown,style.font,style.fontSize,
+        std::max(1,static_cast<int>(content.w)));
+    renderer.PushClip(content);
+    if(!placeholder)DrawSelection(renderer,layout,{content.x,content.y},SelectionStartByteOffset(),SelectionEndByteOffset());
+    renderer.DrawTextLayout(layout,{content.x,content.y},style.font,style.fontSize,
+        placeholder?style.textDisabled:style.text);
+    if(Focused()){
+        const Vec2 caret=placeholder?Vec2{}:layout.CaretPosition(m_cursor);
+        renderer.DrawRect({content.x+caret.x,content.y+caret.y,1,
+                           static_cast<float>(style.fontSize+4)},style.focused.border);
+    }
+    renderer.PopClip();
+}
 
 OptionButton::OptionButton(std::string name):Button({},std::move(name)){}
 void OptionButton::SetOptions(std::vector<std::string> options){m_options=std::move(options);if(m_options.empty())m_selected=-1;else m_selected=std::clamp(m_selected<0?0:m_selected,0,static_cast<int>(m_options.size()-1));SetText(m_selected>=0?m_options[static_cast<std::size_t>(m_selected)]:std::string{});}
@@ -197,6 +621,6 @@ void VideoRect::SetPlayback(Playback playback){if(m_playback.close)m_playback.cl
 void VideoRect::SetPlaying(const bool value){if(!value){if(!m_playing)return;if(m_playback.close)m_playback.close();m_playing=false;EmitSignal("playbackStopped");return;}if(m_playing&&(!m_playback.playing||m_playback.playing()))return;const bool opened=!m_path.empty()&&m_playback.open&&m_playback.open(m_path);m_playing=opened;if(opened)EmitSignal("playbackStarted");}
 void VideoRect::Update(const float deltaSeconds){Control::Update(deltaSeconds);if(!m_playing)return;if(m_playback.update)m_playback.update(deltaSeconds);if(m_playback.playing&&m_playback.playing())return;if(m_loop&&m_playback.open&&m_playback.open(m_path))return;m_playing=false;EmitSignal("playbackStopped");}
 Vec2 VideoRect::MeasureOverride(Vec2){return{320,180};}
-void VideoRect::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){if(m_playing&&m_playback.texture){SDL_Texture* texture=m_playback.texture();const Vec2 size=m_playback.size?m_playback.size():Vec2{};if(texture&&size.x>0&&size.y>0){const Rect area=LayoutRect();const float scale=std::min(area.w/size.x,area.h/size.y);const Rect target{area.x+(area.w-size.x*scale)*.5f,area.y+(area.h-size.y*scale)*.5f,size.x*scale,size.y*scale};renderer.DrawTexture(texture,target);return;}}if(!m_poster.empty()){renderer.DrawImageInRect(m_poster,LayoutRect(),graphics::ContentScaleMode::Fit);return;}renderer.DrawRect(LayoutRect(),{8,10,14,255});renderer.DrawTextInRect(m_path.empty()?"Video":"Video · "+m_path,LayoutRect(),theme.Resolve(*this).font,16,{150,158,174,255},graphics::HorizontalAlignment::Center,graphics::VerticalAlignment::Center,true);}
+void VideoRect::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){if(m_playing&&m_playback.texture){const graphics::TextureHandle texture=m_playback.texture();const Vec2 size=m_playback.size?m_playback.size():Vec2{};if(texture&&size.x>0&&size.y>0){const Rect area=LayoutRect();const float scale=std::min(area.w/size.x,area.h/size.y);const Rect target{area.x+(area.w-size.x*scale)*.5f,area.y+(area.h-size.y*scale)*.5f,size.x*scale,size.y*scale};renderer.DrawTexture(texture,target);return;}}if(!m_poster.empty()){renderer.DrawImageInRect(m_poster,LayoutRect(),graphics::ContentScaleMode::Fit);return;}renderer.DrawRect(LayoutRect(),{8,10,14,255});renderer.DrawTextInRect(m_path.empty()?"Video":"Video · "+m_path,LayoutRect(),theme.Resolve(*this).font,16,{150,158,174,255},graphics::HorizontalAlignment::Center,graphics::VerticalAlignment::Center,true);}
 
 }  // namespace px::ui

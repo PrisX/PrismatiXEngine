@@ -333,6 +333,25 @@ Status AnimationClip::Validate(const std::string& sourcePath) const {
 
 Status TimelinePlayer::Register(AnimationClip clip) {const Status valid=clip.Validate();if(!valid)return valid;if(m_clips.contains(clip.id))return Status::Fail(TimelineError("PXANIM7510","Duplicate animation clip id"));m_clips.emplace(clip.id,std::move(clip));return Status::Ok();}
 Status TimelinePlayer::RegisterOrReplace(AnimationClip clip) {const Status valid=clip.Validate();if(!valid)return valid;const auto id=clip.id;m_clips.insert_or_assign(id,std::move(clip));return Status::Ok();}
+Status TimelinePlayer::ReplaceRegisteredClips(std::vector<AnimationClip> clips) {
+    std::unordered_map<resource::ResourceId, AnimationClip, UuidHash> candidate;
+    candidate.reserve(clips.size());
+    for (auto& clip : clips) {
+        if (const Status valid = clip.Validate(); !valid) return valid;
+        const auto id = clip.id;
+        if (!candidate.emplace(id, std::move(clip)).second)
+            return Status::Fail(TimelineError(
+                "PXANIM7510", "Duplicate animation clip id in restore library"));
+    }
+    for (const auto& [_, clip] : candidate)
+        for (const auto& nested : clip.nested)
+            if (!candidate.contains(nested.clip))
+                return Status::Fail(TimelineError(
+                    "PXANIM7518",
+                    "Nested animation clip is missing from restore library"));
+    m_clips = std::move(candidate);
+    return Status::Ok();
+}
 const AnimationClip* TimelinePlayer::Find(const resource::ResourceId& id) const {const auto found=m_clips.find(id);return found==m_clips.end()?nullptr:&found->second;}
 Status TimelinePlayer::Unregister(const resource::ResourceId& id){if(std::any_of(m_playbacks.begin(),m_playbacks.end(),[&](const auto& state){return state.clip==id&&state.playing;}))return Status::Fail(TimelineError("PXANIM7515","Cannot remove an animation while it is playing"));if(!m_clips.erase(id))return Status::Fail(TimelineError("PXANIM7516","Animation clip is not registered"));return Status::Ok();}
 
@@ -361,7 +380,7 @@ std::vector<AnimationClip> OfficialPresets(){std::vector<AnimationClip> clips;co
 
 std::string WriteAnimationClip(const AnimationClip& clip) {
     Json root{{"format", "PrismatiXAnimation"},
-              {"schemaRevision", 1},
+              {"schemaRevision", 2},
               {"version", 4},
               {"id", clip.id.ToString()},
               {"name", clip.name},
@@ -406,10 +425,10 @@ Result<AnimationClip> ParseAnimationClip(const std::string_view text,
                            "nested"}) ||
         root.size() != 10 ||
         root.value("format", std::string{}) != "PrismatiXAnimation" ||
-        root.value("schemaRevision", 0) != 1 || root.value("version", 0) != 4)
+        root.value("schemaRevision", 0) != 2 || root.value("version", 0) != 4)
         return Result<AnimationClip>::Failure(TimelineError(
             "PXANIM7520",
-            "Animation must be strict PrismatiXAnimation schema 1 version 4",
+            "Animation must be strict PrismatiXAnimation schema 2 version 4",
             sourcePath));
     try {
         if (!root["name"].is_string() ||
@@ -520,12 +539,12 @@ Result<TimelineDocument> ParseTimeline(const std::string_view text,
         !OnlyFields(root, {"format", "schemaRevision", "id", "name",
                            "duration", "tracks", "markers", "nestedClips"}) ||
         root.value("format", std::string{}) != "PrismatiXTimeline" ||
-        root.value("schemaRevision", 0) != 1 || !root.contains("id") ||
+        root.value("schemaRevision", 0) != 2 || !root.contains("id") ||
         !root.contains("duration") || !root.contains("tracks") ||
         !root.contains("markers") || !root.contains("nestedClips"))
         return Result<TimelineDocument>::Failure(TimelineError(
             "PXTIMELINE7601",
-            "Timeline must be strict PrismatiXTimeline schema 1", sourcePath));
+            "Timeline must be strict PrismatiXTimeline schema 2", sourcePath));
     try {
         if (!root["id"].is_string() ||
             !Identifier(root["id"].get_ref<const std::string&>()) ||

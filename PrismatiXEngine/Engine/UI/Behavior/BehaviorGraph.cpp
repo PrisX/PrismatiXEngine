@@ -191,7 +191,19 @@ Result<BehaviorFiberId> BehaviorGraphRunner::Start(const Uuid& entry,VariantObje
 
 void BehaviorGraphRunner::Update(const float deltaSeconds){for(auto iterator=m_fibers.begin();iterator!=m_fibers.end();){auto& fiber=*iterator;if(fiber.delayRemaining>0){fiber.delayRemaining=std::max(0.0f,fiber.delayRemaining-std::max(0.0f,deltaSeconds));if(fiber.delayRemaining>0){++iterator;continue;}Advance(fiber);}if(fiber.actionExecution){const auto state=m_services.actions?m_services.actions->State(fiber.actionExecution):ActionExecutionState::Failed;if(state==ActionExecutionState::Running){++iterator;continue;}if(m_services.actions)m_services.actions->Forget(fiber.actionExecution);fiber.actionExecution=0;if(state==ActionExecutionState::Failed||state==ActionExecutionState::Cancelled){Fail(Status::Fail(Error("PXUIBEH4041","Awaited Action did not complete",m_sourceScene,fiber.current)));iterator=m_fibers.erase(iterator);continue;}Advance(fiber);}if(fiber.animationHandle){if(m_services.animationPlaying&&m_services.animationPlaying(fiber.animationHandle)){++iterator;continue;}fiber.animationHandle=0;Advance(fiber);}const Status status=Run(fiber,{});if(!status){Fail(status);iterator=m_fibers.erase(iterator);continue;}if(fiber.current.Empty())iterator=m_fibers.erase(iterator);else ++iterator;}}
 void BehaviorGraphRunner::CancelAll(){if(m_services.actions)for(const auto& fiber:m_fibers)if(fiber.actionExecution)(void)m_services.actions->Cancel(fiber.actionExecution);m_fibers.clear();}
-Status BehaviorGraphRunner::RestoreState(std::vector<BehaviorFiberState> state){for(const auto& fiber:state)if(!m_graph.Find(fiber.entry)||(!fiber.current.Empty()&&!m_graph.Find(fiber.current)))return Status::Fail(Error("PXUIBEH4042","Behavior checkpoint references a missing node",m_sourceScene,fiber.current));m_fibers=std::move(state);for(const auto& fiber:m_fibers)m_nextFiber=std::max(m_nextFiber,fiber.id+1);return Status::Ok();}
+Status BehaviorGraphRunner::ValidateState(
+    const std::vector<BehaviorFiberState>& state) const {
+    std::unordered_set<BehaviorFiberId> ids;
+    for (const auto& fiber : state)
+        if (!fiber.id || !ids.insert(fiber.id).second ||
+            !m_graph.Find(fiber.entry) ||
+            (!fiber.current.Empty() && !m_graph.Find(fiber.current)))
+            return Status::Fail(Error(
+                "PXUIBEH4042", "Behavior checkpoint references a missing node",
+                m_sourceScene, fiber.current));
+    return Status::Ok();
+}
+Status BehaviorGraphRunner::RestoreState(std::vector<BehaviorFiberState> state){const Status valid=ValidateState(state);if(!valid)return valid;m_fibers=std::move(state);for(const auto& fiber:m_fibers)m_nextFiber=std::max(m_nextFiber,fiber.id+1);return Status::Ok();}
 void BehaviorGraphRunner::Fail(Status status){m_lastFailure=status;for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);}
 
 }  // namespace px::ui

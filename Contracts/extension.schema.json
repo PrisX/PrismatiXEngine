@@ -22,11 +22,12 @@
     }
   },
   "type":"object","additionalProperties":false,
-  "required":["format","schemaRevision","language","id","version","entry","capabilities","commands","actions"],
+  "required":["format","schemaRevision","language","id","version","requiredEngineVersion","entry","capabilities","commands","actions"],
   "properties":{
-    "format":{"const":"PrismatiXExtension"},"schemaRevision":{"const":1},"language":{"const":"javascript"},
-    "id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"version":{"type":"string","minLength":1,"maxLength":64},
-    "requiredEngineVersion":{"type":"string","maxLength":128},"entry":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
+    "format":{"const":"PrismatiXExtension"},"schemaRevision":{"const":2},"language":{"const":"javascript"},
+    "id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"version":{"type":"string","pattern":"^[vV]?[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$","maxLength":64},
+    "requiredEngineVersion":{"type":"string","minLength":1,"maxLength":128},"entry":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
+    "modules":{"type":"array","uniqueItems":true,"maxItems":1024,"items":{"allOf":[{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},{"type":"string","pattern":"\\.js$"}]}},
     "capabilities":{"type":"array","uniqueItems":true,"maxItems":64,"items":{"enum":["runtime","animation","ui","audio"]}},
     "safety":{"$ref":"#/$defs/safety"},
     "commands":{"type":"array","maxItems":10000,"items":{"type":"object","additionalProperties":false,"required":["id","parameters"],"properties":{"id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"displayName":{"type":"string","maxLength":512},"description":{"type":"string","maxLength":4096},"category":{"type":"string","maxLength":256},"await":{"type":"boolean"},"rollback":{"enum":["reversible","boundary","transient"]},"allowAdditionalParameters":{"type":"boolean"},"capabilities":{"type":"array","uniqueItems":true,"items":{"type":"string"}},"safety":{"$ref":"#/$defs/safety"},"parameters":{"type":"array","maxItems":1024,"items":{"$ref":"#/$defs/parameter"}}}}},

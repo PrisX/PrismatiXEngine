@@ -1,5 +1,7 @@
 #include "Engine/Session/RuntimeIrAdapter.h"
 
+#include "Engine/Core/NumberParsing.h"
+
 #include "Engine/VN/Commands/CommandRegistry.h"
 #include "Engine/VN/Expression/Expression.h"
 
@@ -224,9 +226,7 @@ Variant ParseLiteral(const std::string& text) {
         return Variant(integer);
     }
     double number = 0.0;
-    const auto numberResult =
-        std::from_chars(value.data(), value.data() + value.size(), number);
-    if (numberResult.ec == std::errc{} && numberResult.ptr == value.data() + value.size()) {
+    if (ParseFiniteDouble(value, number)) {
         return Variant(number);
     }
     return Variant(value);
@@ -273,8 +273,7 @@ std::string DurationMilliseconds(const std::string& value) {
         scale = 1000.0;
     }
     double parsed = 0.0;
-    const auto result = std::from_chars(number.data(), number.data() + number.size(), parsed);
-    if (result.ec != std::errc{} || result.ptr != number.data() + number.size() || parsed < 0.0) {
+    if (!ParseFiniteDouble(number, parsed) || parsed < 0.0) {
         return {};
     }
     return std::to_string(static_cast<std::uint64_t>(parsed * scale));
@@ -305,11 +304,13 @@ std::unordered_map<std::size_t, ConditionBoundaries> FindConditionBoundaries(
     return boundaries;
 }
 
-vn::Command Label(std::string name, const int line, std::string sourceId = {}) {
+vn::Command Label(std::string name, const int line, std::string sourceId = {},
+                  std::string operationId = {}) {
     vn::Command command;
     command.type = "label";
     command.line = line;
     command.sourceId = std::move(sourceId);
+    command.operationId = std::move(operationId);
     command.args.push_back({"name", LabelTarget(name)});
     return command;
 }
@@ -331,6 +332,7 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
         vn::Command command;
         command.line = line;
         command.sourceId = operation.sourceId;
+        command.operationId = operation.operationId;
 
         if (operation.kind == "scene") {
             command.type = "chapter";
@@ -341,11 +343,13 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
                 skipFragments.type = "jump";
                 skipFragments.line = line;
                 skipFragments.sourceId = operation.sourceId;
+                skipFragments.operationId = operation.operationId;
                 Add(skipFragments, "target", "@document-end");
                 commands.push_back(std::move(skipFragments));
                 fragmentBoundaryInserted = true;
             }
-            commands.push_back(Label(Argument(operation, "target"), line, operation.sourceId));
+            commands.push_back(Label(Argument(operation, "target"), line,
+                                     operation.sourceId, operation.operationId));
             continue;
         } else if (operation.kind == "callFragment") {
             command.type = "call";
@@ -418,7 +422,8 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
                     ? "@if-end-" + suffix
                     : "@if-else-" + suffix);
             commands.push_back(std::move(command));
-            commands.push_back(Label("if-true-" + suffix, line, operation.sourceId));
+            commands.push_back(Label("if-true-" + suffix, line, operation.sourceId,
+                                     operation.operationId));
             continue;
         } else if (operation.kind == "else") {
             const auto owner = ownerByBoundary.find(index);
@@ -427,14 +432,15 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             command.type = "jump";
             Add(command, "target", "@if-end-" + suffix);
             commands.push_back(std::move(command));
-            commands.push_back(Label("if-else-" + suffix, line, operation.sourceId));
+            commands.push_back(Label("if-else-" + suffix, line, operation.sourceId,
+                                     operation.operationId));
             continue;
         } else if (operation.kind == "endCondition") {
             const auto owner = ownerByBoundary.find(index);
             if (owner != ownerByBoundary.end()) {
                 commands.push_back(
                     Label("if-end-" + document.operations[owner->second].sourceId, line,
-                          operation.sourceId));
+                          operation.sourceId, operation.operationId));
             }
             continue;
         } else if (operation.kind == "label") {
@@ -493,7 +499,10 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
                 }
             }
         } else if (operation.kind == "camera") {
-            command.type = "camera";
+            // Camera presets are implemented by the same ordered Stage effect
+            // timeline as [effect].  Keeping a second VM command here used to
+            // compile successfully and then fall through as an unhandled no-op.
+            command.type = "screen_effect";
             Add(command, "preset", Argument(operation, "value"));
         } else {
             adapterErrors.push_back(
@@ -510,6 +519,7 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
     }
 
     vn::Program program = vn::CompileProgram(std::move(commands));
+    program.documentId = document.documentId;
     program.errors.insert(program.errors.end(), adapterErrors.begin(), adapterErrors.end());
     return program;
 }

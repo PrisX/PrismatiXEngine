@@ -11,7 +11,20 @@ const source = `Characters/${characterId}.pxcharacter`;
 function project() {
   return {
     format: "PrismatiXProject",
-    schemaRevision: 1,
+    schemaRevision: 2,
+    id: "project-resources",
+    name: "Project Resources",
+    version: "0.2.0",
+    contentVersion: "test-v1",
+    saveVersion: 1,
+    resolution: {width: 1280, height: 720},
+    entry: {story: "scene01", ui: "title"},
+    defaultLocale: "en-US",
+    supportedLocales: ["en-US"],
+    storyIndex: "Story/story.pxindex",
+    gameCatalog: "Content/game.pxgame",
+    extensions: [],
+    uiEntryPoints: {title: "Content/UI/Title.pxui"},
     assets: [
       {id: spriteId, kind: "character", source: "Assets/Characters/yuki-smile.webp"},
     ],
@@ -24,7 +37,7 @@ function project() {
 function character() {
   return {
     format: "PrismatiXCharacter",
-    schemaRevision: 1,
+    schemaRevision: 2,
     id: characterId,
     displayName: "Yuki",
     aliases: ["yuki"],

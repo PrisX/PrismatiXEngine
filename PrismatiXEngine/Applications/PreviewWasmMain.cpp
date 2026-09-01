@@ -9,6 +9,7 @@
 #include "Engine/SDK/RuntimeIr.h"
 #include "Engine/SDK/Ui.h"
 #include "Engine/Session/RuntimeSession.h"
+#include "Engine/Text/Typography.h"
 #include "Engine/UI/Actions/BuiltInActionProvider.h"
 #include "Engine/UI/GalgameUI.h"
 #include "Engine/VN/GameCatalog.h"
@@ -114,9 +115,16 @@ Json PreviewDiagnosticJson(
               {"property", diagnostic.source.property},
               {"line", diagnostic.source.line},
               {"column", diagnostic.source.column},
+              {"endLine", diagnostic.source.endLine},
+              {"endColumn", diagnostic.source.endColumn},
               {"operation", diagnostic.operationIndex}}},
+            {"documentId", diagnostic.documentId.empty()
+                               ? documentId : diagnostic.documentId},
+            {"sourceId", diagnostic.sourceId},
             {"operationId", diagnostic.operationId},
-            {"quickFix", diagnostic.quickFix}};
+            {"quickFix", diagnostic.quickFix},
+            {"hint", diagnostic.hint},
+            {"cause", diagnostic.cause}};
 }
 
 px::ui::DialoguePresentation DialogueView(
@@ -189,6 +197,7 @@ public:
             px::RuntimeSession::Services{m_runtime.VFS(), m_runtime.Audio(),
                                          m_runtime.Renderer(),
                                          m_runtime.Assets()});
+        m_hud.SetTextRenderer(&m_runtime.Renderer());
         m_previewSession = px::preview::CreatePreviewSession(
             *m_session,
             {.inspectSafety = [this](const px::vn::Command& command) {
@@ -224,7 +233,7 @@ public:
             [this](const std::string_view name, const px::Variant& value) {
                 m_session->Variables().SetValue(
                     std::string(name), value.Clone(),
-                    px::vn::VariableScope::SaveLocal);
+                    px::vn::VariableScope::Session);
                 return px::Status::Ok();
             });
         m_hud.SetExternalAnimationServices(
@@ -431,6 +440,47 @@ public:
                             Json{{"diagnostics", diagnostics}}.dump());
             return 0;
         }
+        const Json project = Json::parse(*projectManifest, nullptr, false);
+        const std::string catalogPath =
+            project.is_object()
+                ? project.value("gameCatalog", std::string{})
+                : std::string{};
+        const auto catalogText = catalogPath.empty()
+                                     ? std::optional<std::string>{}
+                                     : m_runtime.VFS().ReadText(catalogPath);
+        if (!catalogText || !catalogPath.ends_with(".pxgame")) {
+            m_protocol.Emit(
+                "diagnostics",
+                Json{{"diagnostics",
+                      Json::array({{{"severity", "error"},
+                                    {"code", "PXWASM-ASSET-003"},
+                                    {"category", "Preview.Assets"},
+                                    {"message", "Canonical GameCatalog is missing from the Preview BuildArtifact."},
+                                    {"source", {{"documentId", request.documentId}}}}})}}
+                    .dump());
+            return 0;
+        }
+        const auto catalogStatus = catalog.LoadCanonical(
+            *catalogText, *projectManifest,
+            [this](const std::string_view uri) {
+                return m_runtime.VFS().Exists(std::string(uri));
+            }, catalogPath);
+        if (!catalogStatus) {
+            Json diagnostics = Json::array();
+            for (const auto& value : catalogStatus.Diagnostics()) {
+                diagnostics.push_back(
+                    {{"severity", "error"},
+                     {"code", value.code},
+                     {"category", value.category},
+                     {"message", value.message},
+                     {"details", value.details},
+                     {"source", {{"documentId", request.documentId},
+                                  {"path", value.source.path}}}});
+            }
+            m_protocol.Emit("diagnostics",
+                            Json{{"diagnostics", diagnostics}}.dump());
+            return 0;
+        }
         m_session->VM().SetGameCatalog(catalog);
         if (!InstallRuntimeFiles(request.runtimeFilesJson)) return 0;
         std::optional<px::preview::LocalizationPreviewTable>
@@ -459,6 +509,9 @@ public:
                 return 0;
             }
             localizationTable = localized.TakeValue();
+            m_previewSettings.language = localizationTable->locale;
+            m_previewSettings.languages = {localizationTable->locale};
+            m_runtime.Renderer().SetTextLocale(localizationTable->locale);
             if (!localizationTable->diagnostics.empty()) {
                 Json diagnostics = Json::array();
                 for (const auto& diagnostic :
@@ -489,6 +542,9 @@ public:
                 });
         } else {
             m_session->VM().SetTextFilter({});
+            m_previewSettings.language.clear();
+            m_previewSettings.languages.clear();
+            m_runtime.Renderer().SetTextLocale("und");
         }
         const bool uiPreviewRequested = !request.uiSceneJson.empty();
         std::optional<px::preview::PerformancePreviewSequence>
@@ -2034,6 +2090,18 @@ private:
         }
         if (action == "settings.open")
             return complete(OpenPreviewOverlay("settings"));
+        if (action == "set.language.value") {
+            if (m_previewSettings.languages.size() != 1 ||
+                argument != m_previewSettings.languages.front())
+                return UiFailure(
+                    "PXWASM-UI-SETTINGS-003",
+                    "The requested locale is not installed in this Preview session.",
+                    "locale=" + argument,
+                    "Select a locale in Studio to rebuild the canonical Preview artifact.");
+            m_previewSettings.language = argument;
+            m_runtime.Renderer().SetTextLocale(argument);
+            return complete(m_hud.ShowSettings(m_previewSettings));
+        }
         if (action == "set.bgm.value" || action == "set.se.value" ||
             action == "set.voice.value" || action == "set.speed.value" ||
             action == "set.textscale.value") {
@@ -2794,6 +2862,69 @@ EMSCRIPTEN_KEEPALIVE int px_preview_tick(const std::uintptr_t handle,
 EMSCRIPTEN_KEEPALIVE const char* px_preview_drain_events(
     const std::uintptr_t handle) {
     return Instance(handle) ? Instance(handle)->DrainEvents() : "[]";
+}
+
+// Private CI probe: executes the code compiled into the actual Preview module
+// without requiring a browser canvas. It is deliberately absent from the
+// public preview contract and only covers deterministic protocol/text logic.
+EMSCRIPTEN_KEEPALIVE const char* px_preview_test_conformance(
+    const char* requestUtf8) {
+    static std::string response;
+    try {
+        const Json request = Json::parse(requestUtf8 ? requestUtf8 : "{}",
+                                         nullptr, false);
+        if (!request.is_object()) {
+            response = Json{{"ok", false}, {"error", "invalid request"}}.dump();
+            return response.c_str();
+        }
+        const std::string kind = request.value("kind", std::string{});
+        if (kind == "unicode") {
+            const std::string value = request.value("text", std::string{});
+            const std::string language =
+                request.value("language", std::string("und"));
+            const auto graphemes = px::text::GraphemeBoundaries(value);
+            const auto lineBreaks =
+                px::text::LineBreakBoundaries(value, language);
+            const auto bidi = px::text::ResolveBidiDirections(
+                value, request.value("localeRightToLeft", false));
+            Json clusters = Json::array();
+            for (std::size_t index = 0; index + 1 < graphemes.size(); ++index)
+                clusters.push_back(value.substr(
+                    graphemes[index], graphemes[index + 1] - graphemes[index]));
+            Json directions = Json::array();
+            for (const auto& direction : bidi.directions)
+                directions.push_back({{"byteStart", direction.byteStart},
+                                      {"rightToLeft", direction.rightToLeft}});
+            response = Json{{"ok", true},
+                            {"kind", kind},
+                            {"graphemeBoundaries", graphemes},
+                            {"clusters", std::move(clusters)},
+                            {"lineBreakBoundaries", lineBreaks},
+                            {"baseRightToLeft", bidi.baseRightToLeft},
+                            {"directions", std::move(directions)}}
+                           .dump();
+            return response.c_str();
+        }
+        if (kind == "protocol" && request.contains("envelope")) {
+            px::preview::PreviewProtocolV2 protocol;
+            const bool patch = request.value("patch", false);
+            const auto accepted = protocol.AcceptApply(
+                request.at("envelope").dump(), patch);
+            if (accepted.Accepted()) protocol.CommitApply(*accepted.request);
+            response = Json{{"ok", true},
+                            {"kind", kind},
+                            {"accepted", accepted.Accepted()},
+                            {"resyncRequired", accepted.resyncRequired},
+                            {"revision", protocol.Revision()},
+                            {"events", Json::parse(protocol.DrainEvents())}}
+                           .dump();
+            return response.c_str();
+        }
+        response = Json{{"ok", false}, {"error", "unknown probe kind"}}.dump();
+    } catch (const std::exception& error) {
+        response = Json{{"ok", false}, {"error", error.what()}}.dump();
+    }
+    return response.c_str();
 }
 
 EMSCRIPTEN_KEEPALIVE void px_preview_destroy(const std::uintptr_t handle) {

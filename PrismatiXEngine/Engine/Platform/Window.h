@@ -1,8 +1,10 @@
 #pragma once
 
 #include <string>
+#include <memory>
 
 #include "Engine/Core/Types.h"
+#include "Engine/Graphics/GraphicsDevice.h"
 
 struct SDL_Window;
 struct SDL_Renderer;
@@ -17,7 +19,9 @@ public:
     Window(const Window&) = delete;
     Window& operator=(const Window&) = delete;
 
-    bool Create(const std::string& title, int width, int height, bool resizable = true);
+    bool Create(const std::string& title, int width, int height,
+                bool resizable = true,
+                graphics::GraphicsTier graphicsTier = graphics::GraphicsTier::Basic);
     void Destroy();
 
     void Clear(Color color);
@@ -30,12 +34,13 @@ public:
     void SetAspectRatio(float ratio);
 
     [[nodiscard]] SDL_Window* Handle() const { return m_window; }
-    [[nodiscard]] SDL_Renderer* Renderer() const { return m_renderer; }
-    [[nodiscard]] bool Valid() const { return m_window != nullptr && m_renderer != nullptr; }
+    [[nodiscard]] SDL_Renderer* Renderer() const;
+    [[nodiscard]] graphics::GraphicsDevice* Graphics() const { return m_graphics.get(); }
+    [[nodiscard]] bool Valid() const;
 
 private:
     SDL_Window* m_window = nullptr;
-    SDL_Renderer* m_renderer = nullptr;
+    std::unique_ptr<graphics::GraphicsDevice> m_graphics;
 };
 
 }  // namespace px

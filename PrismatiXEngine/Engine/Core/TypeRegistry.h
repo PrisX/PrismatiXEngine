@@ -125,6 +125,9 @@ struct TypeInfo {
     std::string name;
     std::string base;
     std::string category;
+    // Registration ownership is Runtime metadata rather than part of the
+    // authored type identity. It enables atomic extension hot reload/unload.
+    std::string sourceId;
     std::function<std::unique_ptr<Object>()> factory;
     std::vector<PropertyInfo> properties;
     std::vector<SignalInfo> signals;
@@ -148,6 +151,10 @@ struct TypeInfo {
 class TypeRegistry {
 public:
     Status Register(TypeInfo type);
+    Status ReplaceSource(std::string sourceId, std::vector<TypeInfo> types);
+    Status RemoveSource(std::string_view sourceId);
+    [[nodiscard]] std::vector<std::string> TypesForSource(
+        std::string_view sourceId) const;
     [[nodiscard]] const TypeInfo* Find(const std::string& name) const;
     [[nodiscard]] const PropertyInfo* FindProperty(const std::string& type,
                                                    const std::string& property) const;

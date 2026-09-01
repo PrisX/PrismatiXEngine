@@ -55,17 +55,18 @@ bool IsColor(const std::string_view value) {
 }
 
 bool IsIdentifier(const std::string_view value) {
-    if (value.empty()) return false;
+    if (value.empty() || value.size() > 256) return false;
     const auto first = static_cast<unsigned char>(value.front());
-    if (value.front() != '_' && !std::isalpha(first)) return false;
+    if (!std::isalnum(first)) return false;
     return std::all_of(value.begin() + 1, value.end(), [](const char value) {
         const auto byte = static_cast<unsigned char>(value);
-        return value == '_' || std::isalnum(byte) != 0;
+        return value == '_' || value == '-' || value == '.' ||
+               std::isalnum(byte) != 0;
     });
 }
 
 bool IsPropertyPath(const std::string_view value) {
-    if (value.empty() || value.size() > 256) return false;
+    if (value.empty() || value.size() > 512) return false;
     bool segmentStart = true;
     for (const char character : value) {
         if (character == '.') {
@@ -100,6 +101,12 @@ std::optional<UiNodeKind> ParseKind(const std::string_view value) {
 
 bool OwnsLayout(const UiNodeKind kind) {
     return kind == UiNodeKind::Stack || kind == UiNodeKind::HBox ||
+           kind == UiNodeKind::VBox || kind == UiNodeKind::Grid;
+}
+
+bool IsStructuralRoot(const UiNodeKind kind) {
+    return kind == UiNodeKind::Control || kind == UiNodeKind::Group ||
+           kind == UiNodeKind::Stack || kind == UiNodeKind::HBox ||
            kind == UiNodeKind::VBox || kind == UiNodeKind::Grid;
 }
 
@@ -214,14 +221,12 @@ bool IsJsonValue(const Json& value) {
 }
 
 bool ParsePublicSignalBinding(
-    const Json& value, const std::uint32_t schemaRevision,
-    std::optional<UiComponentSignalBinding>& output) {
+    const Json& value, std::optional<UiComponentSignalBinding>& output) {
     if (value.is_null()) {
         output.reset();
         return true;
     }
-    if (!value.is_object() || value.size() < 2 || value.size() > 3 ||
-        (schemaRevision == 1 && value.size() != 2))
+    if (!value.is_object() || value.size() < 2 || value.size() > 3)
         return false;
     for (auto item = value.begin(); item != value.end(); ++item)
         if (item.key() != "id" && item.key() != "arguments" &&
@@ -253,8 +258,7 @@ bool ParsePublicSignalBinding(
                        character == '_' || character == '.' || character == '-';
             });
         };
-        if (schemaRevision != 2 || !mappings->is_object() ||
-            mappings->size() > 256)
+        if (!mappings->is_object() || mappings->size() > 256)
             return false;
         for (auto mapping = mappings->begin(); mapping != mappings->end();
              ++mapping) {
@@ -1324,8 +1328,7 @@ UiParseResult ParseUi(const std::string_view text) {
         AddDiagnostic(result, "PXSDKUI1002", "UI document format is not PrismatiXUIScene");
     const auto schemaRevision = root.find("schemaRevision");
     if (schemaRevision == root.end() || !schemaRevision->is_number_unsigned() ||
-        (schemaRevision->get<std::uint32_t>() != 1 &&
-         schemaRevision->get<std::uint32_t>() != 2))
+        schemaRevision->get<std::uint32_t>() != 2)
         AddDiagnostic(result, "PXSDKUI1003", "Unsupported UI document schema revision");
     else
         result.document.schemaRevision = schemaRevision->get<std::uint32_t>();
@@ -1364,6 +1367,19 @@ UiParseResult ParseUi(const std::string_view text) {
         }
         UiNode node;
         bool valid = true;
+        static const std::unordered_set<std::string> canonicalNodeFields{
+            "id", "parentId", "order", "kind", "runtimeType", "name",
+            "visible", "locked", "layout", "text", "assetId", "appearance",
+            "onClick", "accessibilityLabel", "accessibilityRole",
+            "accessibilityDescription", "accessibilityFocusOrder",
+            "runtimeProperties", "bindings", "componentInstance", "componentSlot"};
+        for (auto field = item.begin(); field != item.end(); ++field) {
+            if (!canonicalNodeFields.contains(field.key())) {
+                AddDiagnostic(result, "PXSDKUI1066",
+                              "UI node contains a removed or unknown field: " + field.key(), index);
+                valid = false;
+            }
+        }
         if (!ReadString(item, "id", node.id) || !IsUuid(node.id) ||
             !identities.insert(node.id).second) {
             AddDiagnostic(result, "PXSDKUI1011", "UI node id must be a unique UUID", index);
@@ -1399,14 +1415,7 @@ UiParseResult ParseUi(const std::string_view text) {
             valid = false;
         } else node.kind = *parsedKind;
         const auto runtimeType = item.find("runtimeType");
-        if (result.document.schemaRevision == 1) {
-            if (runtimeType != item.end()) {
-                AddDiagnostic(result, "PXSDKUI1018",
-                              "Revision-1 UI nodes cannot declare runtimeType",
-                              index);
-                valid = false;
-            }
-        } else if (runtimeType != item.end()) {
+        if (runtimeType != item.end()) {
             std::string value;
             if (!runtimeType->is_string() ||
                 !ReadString(item, "runtimeType", value) ||
@@ -1466,20 +1475,11 @@ UiParseResult ParseUi(const std::string_view text) {
                           layoutValid;
             node.layout.anchorRight = node.layout.anchorX;
             node.layout.anchorBottom = node.layout.anchorY;
-            const auto anchorRight = layout->find("anchorRight");
-            const auto anchorBottom = layout->find("anchorBottom");
-            if (anchorRight != layout->end()) {
-                layoutValid = result.document.schemaRevision == 2 &&
-                              ReadFiniteFloat(*layout, "anchorRight",
-                                              node.layout.anchorRight) &&
-                              layoutValid;
-            }
-            if (anchorBottom != layout->end()) {
-                layoutValid = result.document.schemaRevision == 2 &&
-                              ReadFiniteFloat(*layout, "anchorBottom",
-                                              node.layout.anchorBottom) &&
-                              layoutValid;
-            }
+            layoutValid = ReadFiniteFloat(*layout, "anchorRight",
+                                          node.layout.anchorRight) &&
+                          ReadFiniteFloat(*layout, "anchorBottom",
+                                          node.layout.anchorBottom) &&
+                          layoutValid;
             if (!layoutValid || node.layout.width <= 0.0f || node.layout.height <= 0.0f ||
                 node.layout.anchorX < 0.0f || node.layout.anchorX > 1.0f ||
                 node.layout.anchorY < 0.0f || node.layout.anchorY > 1.0f ||
@@ -1490,7 +1490,7 @@ UiParseResult ParseUi(const std::string_view text) {
                 node.layout.pivotX < 0.0f || node.layout.pivotX > 1.0f ||
                 node.layout.pivotY < 0.0f || node.layout.pivotY > 1.0f ||
                 (node.layout.alignment != "start" && node.layout.alignment != "center" &&
-                 node.layout.alignment != "end" && node.layout.alignment != "stretch") ||
+                 node.layout.alignment != "end" && node.layout.alignment != "fill") ||
                 (node.layout.sizeRule != "fixed" && node.layout.sizeRule != "fill" &&
                  node.layout.sizeRule != "content")) {
                 AddDiagnostic(result, "PXSDKUI1021", "UI node layout is invalid", index);
@@ -1498,34 +1498,25 @@ UiParseResult ParseUi(const std::string_view text) {
             }
         }
 
-        const auto content = item.find("content");
-        if (content == item.end() || !content->is_object() ||
-            !ReadString(*content, "text", node.text, true)) {
-            AddDiagnostic(result, "PXSDKUI1022", "UI node content is invalid", index);
+        const auto nodeText = item.find("text");
+        if (nodeText != item.end() && (!nodeText->is_string() ||
+            nodeText->get_ref<const std::string&>().size() > 1048576)) {
+            AddDiagnostic(result, "PXSDKUI1022", "UI node text is invalid", index);
             valid = false;
-        } else {
-            const auto assetId = content->find("assetId");
-            if (assetId == content->end() || (!assetId->is_null() && !assetId->is_string())) {
+        } else if (nodeText != item.end()) node.text = nodeText->get<std::string>();
+        const auto assetId = item.find("assetId");
+        if (assetId != item.end() && !assetId->is_null()) {
+            if (!assetId->is_string() || !IsUuid(assetId->get_ref<const std::string&>())) {
                 AddDiagnostic(result, "PXSDKUI1022", "UI node assetId must be a UUID or null", index);
                 valid = false;
-            } else if (assetId->is_string()) {
-                node.assetId = assetId->get<std::string>();
-                if (!IsUuid(*node.assetId) || node.kind != UiNodeKind::Image) {
-                    AddDiagnostic(result, "PXSDKUI1022", "Only image nodes may reference an asset UUID", index);
-                    valid = false;
-                }
-            }
+            } else node.assetId = assetId->get<std::string>();
         }
 
         const auto appearance = item.find("appearance");
-        if (appearance == item.end() || !appearance->is_object() ||
-            !ReadString(*appearance, "backgroundColor", node.appearance.backgroundColor) ||
-            !ReadString(*appearance, "textColor", node.appearance.textColor) ||
-            !ReadFiniteFloat(*appearance, "opacity", node.appearance.opacity) ||
-            !ReadFiniteFloat(*appearance, "disabledOpacity", node.appearance.disabledOpacity)) {
+        if (appearance != item.end() && !appearance->is_object()) {
             AddDiagnostic(result, "PXSDKUI1023", "UI node appearance is invalid", index);
             valid = false;
-        } else {
+        } else if (appearance != item.end()) {
             bool appearanceValid = true;
             const auto readOptionalColor = [&](const char* key, std::optional<std::string>& output) {
                 const auto found = appearance->find(key);
@@ -1534,11 +1525,27 @@ UiParseResult ParseUi(const std::string_view text) {
                 output = found->get<std::string>();
                 return IsColor(*output);
             };
+            const auto readColor = [&](const char* key, std::string& output) {
+                const auto found = appearance->find(key);
+                if (found == appearance->end()) return true;
+                if (!found->is_string() || !IsColor(found->get_ref<const std::string&>())) return false;
+                output = found->get<std::string>(); return true;
+            };
             const auto styleToken = appearance->find("styleToken");
-            if (styleToken == appearance->end() ||
-                (!styleToken->is_null() && !styleToken->is_string())) appearanceValid = false;
-            else if (styleToken->is_string()) node.appearance.styleToken = styleToken->get<std::string>();
-            if (!IsColor(node.appearance.backgroundColor) || !IsColor(node.appearance.textColor) ||
+            if (styleToken != appearance->end() &&
+                !styleToken->is_null() && !styleToken->is_string()) appearanceValid = false;
+            else if (styleToken != appearance->end() && styleToken->is_string())
+                node.appearance.styleToken = styleToken->get<std::string>();
+            const auto opacity = appearance->find("opacity");
+            if (opacity != appearance->end() &&
+                (!opacity->is_number() || !ReadFiniteFloat(*appearance, "opacity", node.appearance.opacity)))
+                appearanceValid = false;
+            const auto disabledOpacity = appearance->find("disabledOpacity");
+            if (disabledOpacity != appearance->end() &&
+                (!disabledOpacity->is_number() || !ReadFiniteFloat(*appearance, "disabledOpacity", node.appearance.disabledOpacity)))
+                appearanceValid = false;
+            if (!readColor("backgroundColor", node.appearance.backgroundColor) ||
+                !readColor("textColor", node.appearance.textColor) ||
                 node.appearance.opacity < 0.0f || node.appearance.opacity > 1.0f ||
                 node.appearance.disabledOpacity < 0.0f || node.appearance.disabledOpacity > 1.0f ||
                 !readOptionalColor("hoverBackgroundColor", node.appearance.hoverBackgroundColor) ||
@@ -1549,16 +1556,12 @@ UiParseResult ParseUi(const std::string_view text) {
             }
         }
 
-        const auto interaction = item.find("interaction");
-        if (interaction == item.end() || !interaction->is_object()) {
-            AddDiagnostic(result, "PXSDKUI1024", "UI node interaction is required", index);
-            valid = false;
-        } else {
-            const auto onClick = interaction->find("onClick");
-            if (onClick == interaction->end() || (!onClick->is_null() && !onClick->is_object())) {
-                AddDiagnostic(result, "PXSDKUI1024", "UI node onClick must be an action or null", index);
+        const auto onClick = item.find("onClick");
+        if (onClick != item.end()) {
+            if (!onClick->is_object()) {
+                AddDiagnostic(result, "PXSDKUI1024", "UI node onClick must be an action", index);
                 valid = false;
-            } else if (onClick->is_object()) {
+            } else {
                 UiAction action;
                 bool actionValid =
                                    (node.kind == UiNodeKind::Button ||
@@ -1579,17 +1582,30 @@ UiParseResult ParseUi(const std::string_view text) {
             }
         }
 
-        const auto accessibility = item.find("accessibility");
-        if (accessibility == item.end() || !accessibility->is_object() ||
-            !ReadString(*accessibility, "label", node.accessibilityLabel, true) ||
-            !ReadString(*accessibility, "role", node.accessibilityRole)) {
-            AddDiagnostic(result, "PXSDKUI1026", "UI node accessibility is invalid", index);
+        const auto readAccessibilityText = [&](const char* key, std::string& output,
+                                               const std::size_t limit) {
+            const auto found = item.find(key);
+            if (found == item.end()) return true;
+            if (!found->is_string() || found->get_ref<const std::string&>().size() > limit) return false;
+            output = found->get<std::string>(); return true;
+        };
+        if (!readAccessibilityText("accessibilityLabel", node.accessibilityLabel, 1024) ||
+            !readAccessibilityText("accessibilityRole", node.accessibilityRole, 128) ||
+            !readAccessibilityText("accessibilityDescription", node.accessibilityDescription, 4096)) {
+            AddDiagnostic(result, "PXSDKUI1026", "UI node accessibility metadata is invalid", index);
             valid = false;
         }
+        const auto focusOrder = item.find("accessibilityFocusOrder");
+        if (focusOrder != item.end()) {
+            if (!focusOrder->is_number_integer() || *focusOrder < -1000000 || *focusOrder > 1000000) {
+                AddDiagnostic(result, "PXSDKUI1026", "UI accessibility focus order is invalid", index);
+                valid = false;
+            } else node.accessibilityFocusOrder = focusOrder->get<std::int32_t>();
+        }
         const auto runtimeProperties = item.find("runtimeProperties");
-        if (runtimeProperties != item.end() &&
-            (!ReadValueMap(*runtimeProperties, node.runtimeProperties) ||
-             node.runtimeProperties.size() > 256)) {
+        if (runtimeProperties == item.end() ||
+            !ReadValueMap(*runtimeProperties, node.runtimeProperties) ||
+             node.runtimeProperties.size() > 256) {
             AddDiagnostic(
                 result, "PXSDKUI1028",
                 "UI node runtimeProperties must be a bounded typed value map",
@@ -1638,6 +1654,9 @@ UiParseResult ParseUi(const std::string_view text) {
                     index);
                 valid = false;
             }
+        } else {
+            AddDiagnostic(result, "PXSDKUI1065", "Revision-2 UI property bindings are required", index);
+            valid = false;
         }
         const auto componentInstance = item.find("componentInstance");
         if (componentInstance != item.end() && !componentInstance->is_null()) {
@@ -1648,12 +1667,13 @@ UiParseResult ParseUi(const std::string_view text) {
                 "layout.anchorY", "layout.anchorRight", "layout.anchorBottom",
                 "layout.pivotX", "layout.pivotY",
                 "layout.margin", "layout.alignment", "layout.sizeRule",
-                "content.text", "content.assetId",
+                "text", "assetId",
                 "appearance.backgroundColor", "appearance.textColor",
                 "appearance.opacity", "appearance.styleToken",
                 "appearance.hoverBackgroundColor", "appearance.focusColor",
-                "appearance.disabledOpacity", "interaction.onClick",
-                "accessibility.label", "accessibility.role"};
+                "appearance.disabledOpacity", "onClick",
+                "accessibilityLabel", "accessibilityRole",
+                "accessibilityDescription", "accessibilityFocusOrder"};
             bool instanceValid = componentInstance->is_object() &&
                                  ReadString(*componentInstance, "componentId",
                                             instance.componentId) &&
@@ -1736,9 +1756,7 @@ UiParseResult ParseUi(const std::string_view text) {
                          signal != publicSignals->end(); ++signal) {
                         std::optional<UiComponentSignalBinding> binding;
                         if (signal.key().empty() ||
-                            !ParsePublicSignalBinding(
-                                signal.value(), result.document.schemaRevision,
-                                binding)) {
+                            !ParsePublicSignalBinding(signal.value(), binding)) {
                             AddDiagnostic(
                                 result, "PXSDKUI1029",
                                 "UI component public signal binding requires a "
@@ -1786,20 +1804,22 @@ UiParseResult ParseUi(const std::string_view text) {
     if (theme == root.end() || !theme->is_array()) {
         AddDiagnostic(result, "PXSDKUI1030", "UI document theme must be an array");
     } else {
-        std::unordered_set<std::string> names;
+        std::unordered_set<std::string> tokenIds;
         for (const auto& item : *theme) {
             UiThemeToken token;
-            if (!item.is_object() || !ReadString(item, "id", token.id) || !IsUuid(token.id) ||
-                !identities.insert(token.id).second || !ReadString(item, "name", token.name) ||
-                !IsIdentifier(token.name) || !names.insert(token.name).second ||
+            if (!item.is_object() || !ReadString(item, "id", token.id) ||
+                !IsIdentifier(token.id) || !tokenIds.insert(token.id).second ||
+                !ReadString(item, "name", token.name) ||
                 !ReadString(item, "value", token.value)) {
-                AddDiagnostic(result, "PXSDKUI1031", "UI theme tokens require unique UUIDs, identifiers, and values");
+                AddDiagnostic(result, "PXSDKUI1031",
+                              "UI theme tokens require unique identifiers, display names, and values");
                 continue;
             }
             result.document.theme.push_back(std::move(token));
         }
         for (const auto& node : result.document.nodes) {
-            if (node.appearance.styleToken && !names.contains(*node.appearance.styleToken))
+            if (node.appearance.styleToken &&
+                !tokenIds.contains(*node.appearance.styleToken))
                 AddDiagnostic(result, "PXSDKUI1032", "UI node references a missing style token");
         }
     }
@@ -1903,8 +1923,9 @@ UiParseResult ParseUi(const std::string_view text) {
     ValidateBehaviorAnimationReferences(result);
     const auto rootNode = byId.find(result.document.rootId);
     if (rootNode == byId.end() || rootNode->second->parentId ||
-        rootNode->second->kind != UiNodeKind::Control) {
-        AddDiagnostic(result, "PXSDKUI1040", "UI document root must be a parentless control");
+        !IsStructuralRoot(rootNode->second->kind)) {
+        AddDiagnostic(result, "PXSDKUI1040",
+                      "UI document root must be a parentless structural control");
     }
     if (std::count_if(result.document.nodes.begin(), result.document.nodes.end(),
                       [](const UiNode& node) { return !node.parentId; }) != 1)
@@ -1971,10 +1992,7 @@ UiComponentParseResult ParseUiComponent(
         });
     if (componentRoot == result.document.content.nodes.end() ||
         componentRoot->parentId ||
-        componentRoot->kind == UiNodeKind::Button ||
-        componentRoot->kind == UiNodeKind::Label ||
-        componentRoot->kind == UiNodeKind::Image ||
-        componentRoot->kind == UiNodeKind::Leaf) {
+        !IsStructuralRoot(componentRoot->kind)) {
         AddDiagnostic(result, "PXSDKUICOMP1108",
                       "UI component root must be a parentless structural node");
     }
@@ -2101,13 +2119,7 @@ UiComponentParseResult ParseUiComponent(
         return current;
     };
     const auto publicId = [](const std::string_view value) {
-        if (value.empty() || value.size() > 128 ||
-            !std::isalpha(static_cast<unsigned char>(value.front())))
-            return false;
-        return std::ranges::all_of(value, [](const unsigned char character) {
-            return std::isalnum(character) || character == '_' ||
-                   character == '-' || character == '.';
-        });
+        return IsIdentifier(value);
     };
 
     std::unordered_set<std::string> propertyIds;
@@ -2123,6 +2135,7 @@ UiComponentParseResult ParseUiComponent(
                             ReadString(item, "nodeId", property.nodeId) &&
                             IsUuid(property.nodeId) &&
                             ReadString(item, "property", property.property) &&
+                            IsPropertyPath(property.property) &&
                             ReadString(item, "valueType", valueType) &&
                             metadataValid(item);
         const auto type = fields ? parseValueType(valueType) : std::nullopt;

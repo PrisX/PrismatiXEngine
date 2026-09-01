@@ -1,19 +1,12 @@
 #include "Engine/VN/Runtime/Dialogue.h"
 
+#include "Engine/Text/Typography.h"
+
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 
 namespace px::vn {
-
-namespace {
-std::size_t Utf8Len(unsigned char c) {
-    if ((c & 0x80) == 0) return 1;
-    if ((c & 0xE0) == 0xC0) return 2;
-    if ((c & 0xF0) == 0xE0) return 3;
-    if ((c & 0xF8) == 0xF0) return 4;
-    return 1;
-}
-}
 
 void Dialogue::SetText(const std::string& speaker, const std::string& text, int speedMs,
                        Color textColor, Color outlineColor, const std::string& voice,
@@ -25,9 +18,9 @@ void Dialogue::SetText(const std::string& speaker, const std::string& text, int 
     m_state.outlineColor = outlineColor;
     m_state.effect = effect;
 
-    // Split into glyphs, consuming inline {w=ms} pause tags: the tag adds an
-    // extra typing delay before the following glyph and is stripped from the
-    // displayed text.
+    // Split into observable grapheme/rich-text tokens, consuming inline
+    // {w=ms} pauses. Ruby markup is one atomic token so an incomplete tag is
+    // never exposed by the typewriter and then interpreted as visible text.
     m_glyphs.clear();
     m_extraDelayMs.clear();
     std::uint64_t carry = 0;
@@ -44,8 +37,30 @@ void Dialogue::SetText(const std::string& speaker, const std::string& text, int 
                 continue;
             }
         }
-        std::size_t len = Utf8Len(static_cast<unsigned char>(text[i]));
-        if (i + len > text.size()) len = text.size() - i;
+        if (text.compare(i, 6, "[ruby=") == 0) {
+            const std::size_t header = text.find(']', i + 6);
+            const std::size_t close = header == std::string::npos
+                                          ? std::string::npos
+                                          : text.find("[/ruby]", header + 1);
+            if (close != std::string::npos) {
+                const std::size_t len = close + 7 - i;
+                m_glyphs.push_back(text.substr(i, len));
+                m_extraDelayMs.push_back(carry);
+                carry = 0;
+                i += len;
+                continue;
+            }
+        }
+        if (text.compare(i, 4, "[br]") == 0) {
+            m_glyphs.emplace_back("[br]");
+            m_extraDelayMs.push_back(carry);
+            carry = 0;
+            i += 4;
+            continue;
+        }
+        const std::string_view remaining(text.data() + i, text.size() - i);
+        const auto boundaries = text::GraphemeBoundaries(remaining);
+        const std::size_t len = boundaries.size() > 1 ? boundaries[1] : 1;
         m_glyphs.push_back(text.substr(i, len));
         m_extraDelayMs.push_back(carry);
         carry = 0;
@@ -94,6 +109,30 @@ void Dialogue::ShowAll() {
     m_state.displayText = m_state.fullText;
     m_state.currentChar = m_state.totalChars;
     m_state.finished = true;
+}
+
+void Dialogue::Relocalize(const std::string& speaker, const std::string& text) {
+    const DialogueState previous = m_state;
+    const int previousTotal = std::max(1, previous.totalChars);
+    const float progress = previous.finished
+                               ? 1.0f
+                               : std::clamp(
+                                     static_cast<float>(previous.currentChar) /
+                                         static_cast<float>(previousTotal),
+                                     0.0f, 1.0f);
+    SetText(speaker, text, m_speedMs, previous.textColor,
+            previous.outlineColor, previous.voice, previous.effect);
+    m_state.effectProgress = previous.effectProgress;
+    const int visible = previous.finished
+                            ? m_state.totalChars
+                            : std::clamp(static_cast<int>(
+                                             std::lround(progress * m_state.totalChars)),
+                                         0, m_state.totalChars);
+    m_state.displayText.clear();
+    for (int index = 0; index < visible; ++index)
+        m_state.displayText += m_glyphs[static_cast<std::size_t>(index)];
+    m_state.currentChar = visible;
+    m_state.finished = visible >= m_state.totalChars;
 }
 
 void Dialogue::RestoreState(const DialogueSnapshot& snapshot) {

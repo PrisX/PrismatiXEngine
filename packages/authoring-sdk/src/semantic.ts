@@ -85,12 +85,123 @@ function timelineSemantics(root: ObjectValue, path?: string): AuthoringDiagnosti
   return diagnostics;
 }
 
+const structuralUiKinds = new Set(["control", "group", "stack", "hbox", "vbox", "grid"]);
+const layoutOwningUiKinds = new Set(["stack", "hbox", "vbox", "grid"]);
+
+function boundedJsonValue(value: unknown, depth = 0, budget = {nodes: 0}): boolean {
+  if (depth > 32 || ++budget.nodes > 8192) return false;
+  if (value === null || typeof value === "boolean" || typeof value === "string") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.length <= 1024 && value.every((item) => boundedJsonValue(item, depth + 1, budget));
+  const record = object(value);
+  if (record === undefined || Object.keys(record).length > 256) return false;
+  return Object.values(record).every((item) => boundedJsonValue(item, depth + 1, budget));
+}
+
+function componentValueMatches(valueType: unknown, value: unknown): boolean {
+  const record = object(value);
+  const exactKeys = (expected: readonly string[]) => record !== undefined &&
+    Object.keys(record).length === expected.length && expected.every((key) => key in record);
+  const finite = (candidate: unknown) => typeof candidate === "number" && Number.isFinite(candidate);
+  const uuid = (candidate: unknown) => typeof candidate === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(candidate);
+  switch (valueType) {
+    case "null": return value === null;
+    case "boolean": return typeof value === "boolean";
+    case "integer": return typeof value === "number" && Number.isInteger(value);
+    case "number": return finite(value);
+    case "string": return typeof value === "string";
+    case "uuid": return uuid(value);
+    case "resource": return (typeof value === "string" && (value.length === 0 || uuid(value))) ||
+      (exactKeys(["type", "value"]) && record?.type === "resource" &&
+        typeof record.value === "string" && (record.value.length === 0 || uuid(record.value)));
+    case "token": return (typeof value === "string" && value.length > 0) ||
+      (exactKeys(["type", "value"]) && record?.type === "token" &&
+        typeof record.value === "string" && record.value.length > 0);
+    case "array": return Array.isArray(value) && boundedJsonValue(value);
+    case "object": return record !== undefined && boundedJsonValue(value);
+    case "vec2": return exactKeys(["type", "x", "y"]) && record?.type === "vec2" &&
+      finite(record.x) && finite(record.y);
+    case "rect": return exactKeys(["type", "x", "y", "width", "height"]) &&
+      record?.type === "rect" && finite(record.x) && finite(record.y) &&
+      finite(record.width) && finite(record.height);
+    case "color": return exactKeys(["type", "value"]) && record?.type === "color" &&
+      typeof record.value === "string" && /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/iu.test(record.value);
+    default: return false;
+  }
+}
+
+function propertyAtPath(root: ObjectValue, propertyPath: unknown): unknown {
+  if (typeof propertyPath !== "string" ||
+      !/^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/u.test(propertyPath)) return undefined;
+  let current: unknown = root;
+  for (const segment of propertyPath.split(".")) {
+    const record = object(current);
+    if (record === undefined || !(segment in record)) return undefined;
+    current = record[segment];
+  }
+  return current;
+}
+
+function uiComponentSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[] {
+  const diagnostics: AuthoringDiagnostic[] = [];
+  const nodes = objects(root.nodes);
+  const byId = new Map(nodes.flatMap((node) => typeof node.id === "string" ? [[node.id, node] as const] : []));
+  const componentInterface = object(root.componentInterface);
+  if (componentInterface === undefined) return diagnostics;
+
+  const properties = objects(componentInterface.properties);
+  diagnostics.push(...uniqueIdentities(properties, "id", "UI component exposed property", path));
+  for (const property of properties) {
+    const node = typeof property.nodeId === "string" ? byId.get(property.nodeId) : undefined;
+    const authored = node === undefined ? undefined : propertyAtPath(node, property.property);
+    if (authored === undefined ||
+        !componentValueMatches(property.valueType, authored) ||
+        !componentValueMatches(property.valueType, property.defaultValue)) {
+      diagnostics.push(issue("PXSDKUICOMP1105", "UI component exposed property is invalid", path, String(property.id ?? "")));
+    }
+  }
+
+  const controlSignals = new Set(["pointerEntered", "pointerExited", "pointerDown", "pointerUp", "clicked", "scrolled", "focusEntered", "focusExited"]);
+  const signals = objects(componentInterface.signals);
+  diagnostics.push(...uniqueIdentities(signals, "id", "UI component exposed signal", path));
+  for (const signal of signals) {
+    const node = typeof signal.nodeId === "string" ? byId.get(signal.nodeId) : undefined;
+    const signalName = typeof signal.signal === "string" ? signal.signal : "";
+    const dynamic = node !== undefined && typeof node.runtimeType === "string";
+    const validBuiltIn = node !== undefined &&
+      (controlSignals.has(signalName) || (node.kind === "button" && signalName === "activated"));
+    const arguments_ = objects(signal.arguments);
+    if (node === undefined || (!dynamic && !validBuiltIn) ||
+        duplicates(arguments_.map((argument) => argument.id)).length > 0) {
+      diagnostics.push(issue("PXSDKUICOMP1106", "UI component exposed signal is invalid", path, String(signal.id ?? "")));
+    }
+  }
+
+  const slots = objects(componentInterface.slots);
+  diagnostics.push(...uniqueIdentities(slots, "id", "UI component slot", path));
+  for (const slot of slots) {
+    const node = typeof slot.nodeId === "string" ? byId.get(slot.nodeId) : undefined;
+    if (node === undefined || node.kind === "button" || node.kind === "label" || node.kind === "image") {
+      diagnostics.push(issue("PXSDKUICOMP1107", "UI component slot is invalid", path, String(slot.id ?? "")));
+    }
+  }
+  return diagnostics;
+}
+
 function uiSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[] {
   const diagnostics: AuthoringDiagnostic[] = [];
   const nodes = objects(root.nodes);
   diagnostics.push(...uniqueIdentities(nodes, "id", "UI node", path));
   const nodeIds = new Set(nodes.map((node) => node.id).filter((id): id is string => typeof id === "string"));
   if (!nodeIds.has(root.rootId as string)) diagnostics.push(issue("PXSDKSEM1301", "UI rootId must identify a node", path));
+  const rootNode = nodes.find((node) => node.id === root.rootId);
+  if (rootNode !== undefined && (rootNode.parentId !== null || !structuralUiKinds.has(String(rootNode.kind)))) {
+    diagnostics.push(issue("PXSDKUI1040", "UI document root must be a parentless structural control", path));
+  }
+  if (nodes.filter((node) => node.parentId === null).length !== 1) {
+    diagnostics.push(issue("PXSDKUI1041", "UI document requires exactly one root", path));
+  }
   const parentById = new Map<string, string | null>();
   const siblingOrders = new Set<string>();
   for (const node of nodes) {
@@ -98,6 +209,16 @@ function uiSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[] {
     const parent = typeof node.parentId === "string" ? node.parentId : null;
     parentById.set(node.id, parent);
     if (parent !== null && !nodeIds.has(parent)) diagnostics.push(issue("PXSDKSEM1302", "UI node parentId is unresolved", path, node.id));
+    const parentNode = parent === null ? undefined : nodes.find((candidate) => candidate.id === parent);
+    if (parentNode !== undefined && layoutOwningUiKinds.has(String(parentNode.kind)) && object(node.layout)?.mode !== "container") {
+      diagnostics.push(issue("PXSDKUI1043", "UI node layout must be container-owned", path, node.id));
+    }
+    if (node.kind === "leaf" && typeof node.runtimeType !== "string") {
+      diagnostics.push(issue("PXSDKUI1018", "UI leaf nodes require a revision-2 runtimeType", path, node.id));
+    }
+    if (typeof node.runtimeType === "string" && !/^[A-Za-z0-9_.-]*$/u.test(node.runtimeType)) {
+      diagnostics.push(issue("PXSDKUI1018", "UI node runtimeType is invalid", path, node.id));
+    }
     const orderKey = `${parent ?? "<root>"}:${String(node.order)}`;
     if (siblingOrders.has(orderKey)) diagnostics.push(issue("PXSDKSEM1303", "Sibling UI order must be unique", path, orderKey));
     siblingOrders.add(orderKey);
@@ -153,6 +274,9 @@ export function validateSemantics(contractId: string, value: unknown, path?: str
     case "project": {
       const locales = Array.isArray(root.supportedLocales) ? root.supportedLocales : [];
       if (typeof root.defaultLocale === "string" && !locales.includes(root.defaultLocale)) diagnostics.push(issue("PXSDKSEM1101", "Project defaultLocale must be listed in supportedLocales", path));
+      const entry = root.entry !== null && typeof root.entry === "object" && !Array.isArray(root.entry) ? root.entry as ObjectValue : {};
+      const uiEntryPoints = root.uiEntryPoints !== null && typeof root.uiEntryPoints === "object" && !Array.isArray(root.uiEntryPoints) ? root.uiEntryPoints as ObjectValue : {};
+      if (typeof entry.ui === "string" && typeof uiEntryPoints[entry.ui] !== "string") diagnostics.push(issue("PXSDKSEM1120", "Project entry.ui must identify a declared UI entry point", path, entry.ui));
       const assets = objects(root.assets);
       const characters = objects(root.characters);
       diagnostics.push(...uniqueIdentities(assets, "id", "Project asset", path));
@@ -238,6 +362,10 @@ export function validateSemantics(contractId: string, value: unknown, path?: str
     case "timeline":
     case "animation": diagnostics.push(...timelineSemantics(root, path)); break;
     case "ui": diagnostics.push(...uiSemantics(root, path)); break;
+    case "uiComponent":
+      diagnostics.push(...uiSemantics(root, path));
+      diagnostics.push(...uiComponentSemantics(root, path));
+      break;
   }
   return diagnostics;
 }

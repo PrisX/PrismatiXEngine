@@ -69,6 +69,13 @@ public:
     [[nodiscard]] int MainVolume() const { return m_mainVolume; }
     [[nodiscard]] int SampleRate() const { return m_sampleRate; }
     [[nodiscard]] RuntimeState CaptureState() const;
+    [[nodiscard]] bool ValidateState(const RuntimeState& state,
+                                     bool requireResources = true) const;
+    // Decodes every referenced track and checks seek bounds without stopping
+    // or replacing currently audible tracks.  Restore coordinators call this
+    // during PrepareRestore so malformed media cannot fail after live state
+    // mutation has started.
+    bool PrepareRestoreState(const RuntimeState& state);
     bool RestoreState(const RuntimeState& state);
     bool RestoreMusicTrack(const TrackState& state, int volume);
     bool RestoreVoiceTrack(const TrackState& state, int volume);

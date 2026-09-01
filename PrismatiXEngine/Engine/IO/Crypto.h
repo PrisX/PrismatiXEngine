@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -21,5 +22,7 @@ using Iv = std::array<std::uint8_t, 16>;
 [[nodiscard]] std::uint64_t HashPath(std::string_view path);
 
 [[nodiscard]] std::uint32_t Crc32(const std::uint8_t* data, std::size_t size);
+
+[[nodiscard]] std::string Sha256Hex(std::string_view value);
 
 }

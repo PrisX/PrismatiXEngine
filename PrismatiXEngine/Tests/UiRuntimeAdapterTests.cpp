@@ -28,8 +28,58 @@ bool HasDiagnostic(const px::Result<px::ui::UiApplicationSummary>& result, const
     return std::ranges::any_of(result.Diagnostics(), [&](const px::diag::Diagnostic& diagnostic) { return diagnostic.code == code; });
 }
 
+nlohmann::json CanonicalUi(nlohmann::json document) {
+    document["schemaRevision"] = 2;
+    const bool component = document.value("format", std::string{}) == "PrismatiXUIComponent";
+    if (!component && !document.contains("behaviorGraph"))
+        document["behaviorGraph"] = {{"nodes", nlohmann::json::array()},
+                                      {"links", nlohmann::json::array()},
+                                      {"groups", nlohmann::json::array()}};
+    if (!component && !document.contains("behaviorTriggers")) document["behaviorTriggers"] = nlohmann::json::array();
+    if (!component && !document.contains("visualStateGroups")) document["visualStateGroups"] = nlohmann::json::array();
+    for (auto& node : document["nodes"]) {
+        auto& layout = node["layout"];
+        if (!layout.contains("anchorRight")) layout["anchorRight"] = layout.value("anchorX", 0.0);
+        if (!layout.contains("anchorBottom")) layout["anchorBottom"] = layout.value("anchorY", 0.0);
+        if (const auto content = node.find("content"); content != node.end()) {
+            if (content->contains("text") && !(*content)["text"].get<std::string>().empty())
+                node["text"] = (*content)["text"];
+            if (content->contains("assetId") && !(*content)["assetId"].is_null())
+                node["assetId"] = (*content)["assetId"];
+            node.erase("content");
+        }
+        if (const auto interaction = node.find("interaction"); interaction != node.end()) {
+            if (interaction->contains("onClick") && !(*interaction)["onClick"].is_null())
+                node["onClick"] = (*interaction)["onClick"];
+            node.erase("interaction");
+        }
+        if (const auto accessibility = node.find("accessibility"); accessibility != node.end()) {
+            if (accessibility->contains("label")) node["accessibilityLabel"] = (*accessibility)["label"];
+            if (accessibility->contains("role")) node["accessibilityRole"] = (*accessibility)["role"];
+            node.erase("accessibility");
+        }
+        if (!node.contains("runtimeProperties")) node["runtimeProperties"] = nlohmann::json::object();
+        if (!node.contains("bindings")) node["bindings"] = nlohmann::json::object();
+    }
+    if (document.contains("componentInterface")) {
+        for (auto& property : document["componentInterface"]["properties"]) {
+            auto path = property["property"].get<std::string>();
+            if (path == "content.text") path = "text";
+            else if (path == "content.assetId") path = "assetId";
+            else if (path == "accessibility.label") path = "accessibilityLabel";
+            else if (path == "accessibility.role") path = "accessibilityRole";
+            property["property"] = path;
+        }
+    }
+    return document;
+}
+
+std::string CanonicalUiText(const std::string_view text) {
+    return CanonicalUi(nlohmann::json::parse(text)).dump();
+}
+
 std::string ComponentSource() {
-    return R"({
+    return CanonicalUiText(R"({
       "format":"PrismatiXUIComponent","schemaRevision":1,
       "id":"61616161-6161-4161-8161-616161616161","revision":3,
       "name":"ActionCard","width":420,"height":220,
@@ -56,7 +106,7 @@ std::string ComponentSource() {
         "signals":[{"id":"accepted","displayName":"Accepted","nodeId":"63636363-6363-4363-8363-636363636363","signal":"activated","arguments":[]}],
         "slots":[{"id":"content","displayName":"Content","nodeId":"64646464-6464-4464-8464-646464646464"}]
       }
-    })";
+    })");
 }
 
 std::string ComplexComponentSource() {
@@ -111,7 +161,7 @@ std::string ParameterizedComponentScene() {
 std::string ComponentScene(const bool wrongSlotTarget = false, const bool wrongPropertyType = false) {
     const std::string slotParent = wrongSlotTarget ? "62626262-7272-4272-8272-626262626262" : "64646464-7474-4474-8474-646464646464";
     const std::string propertyValue = wrongPropertyType ? "42" : "\"Continue\"";
-    return std::string{
+    return CanonicalUiText(std::string{
         R"({
       "format":"PrismatiXUIScene","schemaRevision":1,
       "id":"60606060-6060-4060-8060-606060606060","revision":7,
@@ -152,7 +202,7 @@ std::string ComponentScene(const bool wrongSlotTarget = false, const bool wrongP
          "interaction":{"onClick":null},"accessibility":{"label":"Local","role":"text"},
          "componentSlot":{"instanceRootId":"62626262-7272-4272-8272-626262626262","slotId":"content"}}
       ],"theme":[]
-    })";
+    })");
 }
 
 std::string NestedComponentSource() {
@@ -381,6 +431,7 @@ int main() {
           "transitions":[]
         }
       })");
+    scene = CanonicalUiText(scene);
     const auto parsed = px::sdk::ParseUi(scene);
     Check(parsed.Valid(), "valid UI document must parse before Runtime adaptation");
     std::size_t actions = 0;
@@ -402,8 +453,8 @@ int main() {
     Check(runtime.animationClipCount == 1 && runtime.animationTrackCount == 1, "Runtime adapter must retain Animation clips and tracks");
     auto optionScene = nlohmann::json::parse(scene);
     optionScene["schemaRevision"] = 2;
-    optionScene["theme"].push_back({ { "id", "19191919-1919-4919-8919-191919191919" }, { "name", "opacity_soft" }, { "value", "0.35" } });
-    optionScene["theme"].push_back({ { "id", "20202020-2020-4020-8020-202020202020" }, { "name", "tint_soft" }, { "value", "#336699" } });
+    optionScene["theme"].push_back({ { "id", "opacity_soft" }, { "name", "Soft opacity" }, { "value", "0.35" } });
+    optionScene["theme"].push_back({ { "id", "tint_soft" }, { "name", "Soft tint" }, { "value", "#336699" } });
     optionScene["nodes"].push_back(
         { { "id", "17171717-1717-4717-8717-171717171717" },
           { "parentId", "22222222-2222-4222-8222-222222222222" },
@@ -456,6 +507,7 @@ int main() {
     optionScene["behaviorTriggers"].push_back(
         { { "id", "26262626-2626-4262-8262-262626262626" }, { "nodeId", "17171717-1717-4717-8717-171717171717" }, { "signal", "itemSelected" }, { "entryNodeId", "21212121-2121-4212-8212-212121212121" }, { "reentry", "restart" } }
     );
+    optionScene = CanonicalUi(std::move(optionScene));
     const auto optionParsed = px::sdk::ParseUi(optionScene.dump());
     Check(optionParsed.Valid(), "dynamic OptionButton scene must satisfy the SDK contract");
     auto invalidBehaviorSignal = optionParsed.document;
@@ -714,11 +766,35 @@ int main() {
     Check(!invalidVisual && HasDiagnostic(invalidVisual, "PXUISTUDIO2134"),
           "Visual State overrides must fail closed against shared writable property metadata");
 
+    auto invalidInstallation = visualParsed.document;
+    Check(invalidInstallation.animations.has_value(),
+          "transactional installation fixture must contain an animation library");
+    invalidInstallation.animations->stateMachine.entryStateId =
+        "abababab-abab-4bab-8bab-abababababab";
+    auto* rootBeforeRejectedInstallation = applicationContext.Root();
+    auto* buttonBeforeRejectedInstallation = applicationButton;
+    const auto rejectedInstallation = application.ApplyDocument(
+        invalidInstallation,
+        {.sourcePath = "Content/UI/RejectedInstallation.pxui",
+         .resolveAsset = [](const std::string_view id)
+             -> std::optional<std::string> {
+             return id == "66666666-6666-4666-8666-666666666666"
+                        ? std::optional<std::string>{"Content/logo.png"}
+                        : std::nullopt;
+         }});
+    buttonBeforeRejectedInstallation->Activate();
+    Check(!rejectedInstallation &&
+              applicationContext.Root() == rootBeforeRejectedInstallation &&
+              applicationContext.Root()->Find(*buttonId) ==
+                  buttonBeforeRejectedInstallation &&
+              applicationActions == 2,
+          "failed full document installation must retain the previous tree, Actions, and trigger connections");
+
     auto patchedSceneJson = nlohmann::json::parse(scene);
     patchedSceneJson["revision"] = 10;
     for (auto& node : patchedSceneJson["nodes"]) {
         if (node["id"] != buttonId->ToString()) continue;
-        node["content"]["text"] = "Patched title";
+        node["text"] = "Patched title";
         node["layout"]["x"] = 84;
         node["appearance"]["opacity"] = 0.7;
     }
@@ -734,6 +810,30 @@ int main() {
         "shared property patch must preserve Runtime identity and update authored values"
     );
 
+    auto rejectedPatchJson = patchedSceneJson;
+    rejectedPatchJson["revision"] = 11;
+    for (auto& node : rejectedPatchJson["nodes"]) {
+        if (node["id"] == buttonId->ToString())
+            node["text"] = "MUST NOT COMMIT";
+        if (node["kind"] == "image")
+            node["id"] = "abababab-abab-4bab-8bab-abababababab";
+    }
+    const auto rejectedPatchDocument = px::sdk::ParseUi(rejectedPatchJson.dump());
+    Check(rejectedPatchDocument.Valid(),
+          "transaction rejection fixture remains a valid detached UI document");
+    const auto rejectedPatch = application.PatchDocumentProperties(
+        rejectedPatchDocument.document,
+        {.sourcePath = "Content/UI/Title.pxui",
+         .resolveAsset = [](const std::string_view id) -> std::optional<std::string> {
+             return id == "66666666-6666-4666-8666-666666666666"
+                        ? std::optional<std::string>{"Content/logo.png"}
+                        : std::nullopt;
+         }});
+    Check(!rejectedPatch && applicationButton->Text() == "Patched title" &&
+              applicationButton->Offsets().x == 84.0f &&
+              applicationButton->Opacity() == 0.7f,
+          "failed detached property patch leaves every live Runtime property unchanged");
+
     px::ui::GalgameUI playerUi;
     playerUi.SetUiAssetResolver([](const std::string_view id) -> std::optional<std::string> { return id == "66666666-6666-4666-8666-666666666666" ? std::optional<std::string>{ "Content/logo.png" } : std::nullopt; });
     Check(playerUi.RegisterTemplate(px::ui::GalgameUI::Screen::Title, scene, "Content/UI/Title.pxui").IsOk(), "Player UI entry accepts a packaged UI document template");
@@ -744,6 +844,9 @@ int main() {
     Check(playerUi.Actions().Dispatch(std::move(playerStart)).IsOk(), "Player UI document route uses the production Action dispatcher");
 
     const auto componentContract = px::sdk::ParseUiComponent(ComponentSource());
+    if (!componentContract.Valid())
+        for (const auto& diagnostic : componentContract.diagnostics)
+            std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     Check(componentContract.Valid(), "reusable UI component source must satisfy the SDK contract");
     const auto componentScene = px::sdk::ParseUi(ComponentScene());
     Check(componentScene.Valid(), "expanded reusable component instance must satisfy the scene contract");
@@ -802,8 +905,9 @@ int main() {
     const auto parameterizedScene = px::sdk::ParseUi(ParameterizedComponentScene());
     Check(parameterizedComponent.Valid() && parameterizedScene.Valid(), "revision-2 OptionButton signal fixtures must satisfy SDK contracts");
     auto revisionOneSignalMapping = nlohmann::json::parse(ComponentScene());
+    revisionOneSignalMapping["schemaRevision"] = 1;
     revisionOneSignalMapping["nodes"][1]["componentInstance"]["publicSignals"]["accepted"]["argumentBindings"] = { { "index", "index" } };
-    Check(!px::sdk::ParseUi(revisionOneSignalMapping.dump()).Valid(), "revision-1 component signal bindings must reject parameter mappings");
+    Check(!px::sdk::ParseUi(revisionOneSignalMapping.dump()).Valid(), "legacy revision-1 UI must be rejected before component signal registration");
     px::ui::UIContext parameterizedContext;
     std::int64_t selectedIndex = -1;
     Check(

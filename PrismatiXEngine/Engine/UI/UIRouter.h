@@ -60,6 +60,7 @@ public:
     [[nodiscard]] std::string_view CurrentRoute() const;
     [[nodiscard]] std::string_view CurrentModalRoute() const;
     [[nodiscard]] RouteState CaptureState() const;
+    [[nodiscard]] Status ValidateState(const RouteState& state) const;
     Status RestoreState(const RouteState& state);
     void Clear();
 

@@ -113,6 +113,8 @@ std::vector<ActionDescriptor> BuiltInActionDescriptors() {
                    {Argument("value", "Value", VariantType::Bool)}));
     add(Descriptor("set.fullscreen.value", "Set Fullscreen", "Settings",
                    {Argument("value", "Value", VariantType::Bool)}));
+    add(Descriptor("set.language.value", "Set Language", "Settings",
+                   {Argument("locale", "Locale", VariantType::String)}));
     add(Descriptor("set.textscale.value", "Set Text Scale", "Accessibility",
                    {Argument("value", "Value", VariantType::Integer)}));
     add(Descriptor("set.highcontrast.value", "Set High Contrast", "Accessibility",

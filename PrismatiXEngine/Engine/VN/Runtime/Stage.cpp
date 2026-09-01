@@ -58,6 +58,7 @@ void Stage::SetBackgroundRule(const std::string& newBgPath, const std::string& r
     if (newBgPath == m_bgPath) {
         return;
     }
+    const std::string oldBackgroundPath = m_bgPath;
     int w = 0, h = 0;
     m_renderer.GetLogicalSize(w, h);
     SDL_Surface* oldSurf = m_bgPath.empty() ? nullptr : m_assets.LoadSurface(m_bgPath);
@@ -100,16 +101,20 @@ void Stage::SetBackgroundRule(const std::string& newBgPath, const std::string& r
     SDL_DestroySurface(oldScaled);
     SDL_DestroySurface(ruleScaled);
 
-    rs.texture = SDL_CreateTexture(m_renderer.Handle(), SDL_PIXELFORMAT_RGBA32,
-                                   SDL_TEXTUREACCESS_STREAMING, w, h);
+    rs.texture = graphics::TextureResource::CreateStreaming(
+        graphics::TextureBackend::SdlRenderer, m_renderer.Handle(),
+        graphics::StreamingTextureFormat::Rgba32, w, h);
     if (!rs.texture) {
         rs = RuleState{};
         SetBackground(newBgPath, true);
         return;
     }
-    SDL_SetTextureBlendMode(rs.texture, SDL_BLENDMODE_BLEND);
-    SDL_SetTextureScaleMode(rs.texture, SDL_SCALEMODE_LINEAR);
+    (void)rs.texture.SetAlphaBlend();
+    (void)rs.texture.SetLinearSampling();
     rs.active = true;
+    rs.oldBackgroundPath = oldBackgroundPath;
+    rs.newBackgroundPath = newBgPath;
+    rs.rulePath = rulePath;
     rs.progress = 0.0f;
     rs.duration = std::max(0.05f, static_cast<float>(durationMs) / 1000.0f);
     rs.vague = std::max(1, vague);
@@ -121,9 +126,6 @@ void Stage::SetBackgroundRule(const std::string& newBgPath, const std::string& r
 }
 
 void Stage::EndRuleTransition() {
-    if (m_ruleState.texture) {
-        SDL_DestroyTexture(m_ruleState.texture);
-    }
     m_ruleState = RuleState{};
 }
 
@@ -208,7 +210,27 @@ bool Stage::ApplyAnimationProperty(const std::string& target, const std::string&
         else if(property=="zoom")m_cameraZoom=std::max(.01f,*number);
         else if(property=="shake"){m_screenEffects[property]=*number;if(*number>0)Shake(120,*number*18.0f);}
         else if(property=="pan")m_cameraX=*number*120.0f;
-        else if(property=="flash"||property=="fade"||property=="blur"||property=="vignette"||property=="color-grade"||property=="rule-dissolve")m_screenEffects[property]=std::clamp(*number,0.0f,1.0f);
+        else if(property=="flash"||property=="fade")m_screenEffects[property]=std::clamp(*number,0.0f,1.0f);
+        else if(property=="blur"||property=="vignette"||property=="color-grade"){
+            if(!m_renderer.SupportsStagePostEffects())return false;
+            m_screenEffects[property]=std::clamp(*number,0.0f,1.0f);
+        }
+        else if(property=="rule-dissolve"){
+            if(!m_ruleState.active)return false;
+            m_ruleState.progress=std::clamp(*number,0.0f,.999999f);
+        }
+        else if (m_renderer.HasCustomEffect(property)) {
+            if (m_customEffect != property) {
+                const auto defaults = m_renderer.CustomEffectDefaults(property);
+                if (!defaults) return false;
+                m_customEffect = property;
+                m_customEffectParameters = *defaults;
+                ++m_customEffectSequence;
+                m_customEffectSeed = m_customEffectSeed * 1664525u +
+                                     1013904223u + m_customEffectSequence;
+            }
+            m_customEffectProgress = std::clamp(*number, 0.0f, 1.0f);
+        }
         else return false;
         return true;
     }
@@ -217,14 +239,29 @@ bool Stage::ApplyAnimationProperty(const std::string& target, const std::string&
         else if (property == "y") actor->second.offsetY = *number;
         else if (property == "scale") actor->second.scale = *number;
         else if (property == "alpha") actor->second.alpha = std::clamp(*number, 0.0f, 255.0f);
-        else if(property=="fade"||property=="expression-crossfade")actor->second.alpha=std::clamp(*number*255.0f,0.0f,255.0f);
-        else if(property=="enter-left")actor->second.offsetX=(*number-1.0f)*500.0f;
-        else if(property=="enter-right")actor->second.offsetX=(1.0f-*number)*500.0f;
-        else if(property=="exit-left")actor->second.offsetX=-*number*500.0f;
-        else if(property=="exit-right")actor->second.offsetX=*number*500.0f;
-        else if(property=="hop"||property=="shake")actor->second.offsetY=std::sin(*number*18.8495559f)*(property=="hop"?-24.0f:7.0f);
-        else if(property=="breathing")actor->second.scale=1.0f+std::sin(*number*6.2831853f)*.018f;
-        else if(property=="blink"||property=="lip-sync")actor->second.alpha=255.0f;
+        else if (property == "fade" || property == "expression-crossfade")
+            actor->second.effectAlpha = std::clamp(*number, 0.0f, 1.0f);
+        else if (property == "enter-left")
+            actor->second.effectOffsetX = (*number - 1.0f) * 500.0f;
+        else if (property == "enter-right")
+            actor->second.effectOffsetX = (1.0f - *number) * 500.0f;
+        else if (property == "exit-left")
+            actor->second.effectOffsetX = -*number * 500.0f;
+        else if (property == "exit-right")
+            actor->second.effectOffsetX = *number * 500.0f;
+        else if (property == "hop" || property == "shake")
+            actor->second.effectOffsetY =
+                std::sin(*number * 18.8495559f) * (property == "hop" ? -24.0f : 7.0f);
+        else if (property == "breathing")
+            actor->second.effectScale = 1.0f + std::sin(*number * 6.2831853f) * .018f;
+        else if (property == "blink") {
+            const float phase = std::sin(std::clamp(*number, 0.0f, 1.0f) * 3.14159265f);
+            actor->second.effectAlpha = 1.0f - std::pow(std::abs(phase), 8.0f) * .92f;
+        } else if (property == "lip-sync") {
+            const float mouth = std::abs(std::sin(*number * 18.8495559f));
+            actor->second.effectScale = 1.0f + mouth * .018f;
+            actor->second.effectOffsetY = -mouth * 2.5f;
+        }
         else return false;
         return true;
     }
@@ -351,6 +388,11 @@ void Stage::ClearAll() {
     m_cameraX = m_cameraY = 0.0f;
     m_cameraZoom = 1.0f;
     m_screenEffects.clear();
+    m_customEffect.clear();
+    m_customEffectProgress = 0.0f;
+    m_customEffectSeed = 0x6d2b79f5u;
+    m_customEffectSequence = 0;
+    m_customEffectParameters = {};
     m_renderer.ResetCamera();
 }
 
@@ -429,9 +471,11 @@ void Stage::RenderRuleOverlay() {
                         invVague;
         px[i * 4 + 3] = static_cast<std::uint8_t>(std::clamp(a, 0.0f, 255.0f));
     }
-    SDL_UpdateTexture(rs.texture, nullptr, rs.oldPixels.data(), rs.w * 4);
-    m_renderer.DrawTexture(rs.texture, Rect{ 0.0f, 0.0f, static_cast<float>(rs.w),
-                                             static_cast<float>(rs.h) });
+    (void)rs.texture.Update(rs.oldPixels.data(),
+                            static_cast<std::size_t>(rs.w) * 4u);
+    m_renderer.DrawTexture(rs.texture.Handle(),
+                           Rect{0.0f, 0.0f, static_cast<float>(rs.w),
+                                static_cast<float>(rs.h)});
 }
 
 void Stage::RenderLayers(bool front) {
@@ -447,12 +491,13 @@ void Stage::RenderLayers(bool front) {
     std::sort(ordered.begin(), ordered.end(),
               [](const Layer* a, const Layer* b) { return a->z < b->z; });
     for (const Layer* layer : ordered) {
-        SDL_Texture* tex = m_assets.Texture(layer->imagePath);
-        if (!tex) {
+        const graphics::TextureHandle texture =
+            m_assets.Texture(layer->imagePath);
+        if (!texture) {
             continue;
         }
         int tw = 0, th = 0;
-        graphics::AssetCache::TextureSize(tex, tw, th);
+        graphics::AssetCache::TextureSize(texture, tw, th);
         if (tw <= 0 || th <= 0) {
             continue;
         }
@@ -467,6 +512,13 @@ void Stage::RenderLayers(bool front) {
 }
 
 void Stage::Render() {
+    const bool compositing = m_renderer.BeginStageLayer();
+    int logicalW = 0, logicalH = 0;
+    m_renderer.GetLogicalSize(logicalW, logicalH);
+    m_renderer.PushTransform(
+        {static_cast<float>(logicalW) * 0.5f,
+         static_cast<float>(logicalH) * 0.5f},
+        {m_cameraZoom, m_cameraZoom});
     if (!m_prevBgPath.empty() && m_bgFade < 1.0f) {
         m_renderer.DrawImageAuto(m_prevBgPath, graphics::DisplayMode::Fill, 255);
     }
@@ -485,24 +537,25 @@ void Stage::Render() {
     std::sort(ordered.begin(), ordered.end(),
               [](const Actor* a, const Actor* b) { return a->slot < b->slot; });
 
-    int logicalW = 0, logicalH = 0;
-    m_renderer.GetLogicalSize(logicalW, logicalH);
     const auto drawSprite = [&](const std::string& path, const Actor& actor, float alpha) {
-        SDL_Texture* tex = m_assets.Texture(path);
-        if (!tex) {
+        const graphics::TextureHandle texture = m_assets.Texture(path);
+        if (!texture) {
             return;
         }
         int tw = 0, th = 0;
-        graphics::AssetCache::TextureSize(tex, tw, th);
+        graphics::AssetCache::TextureSize(texture, tw, th);
         if (tw <= 0 || th <= 0) {
             return;
         }
-        const float w = tw * actor.scale;
-        const float h = th * actor.scale;
-        const float drawX = actor.x - w * 0.5f + actor.offsetX;
-        const float drawY = static_cast<float>(logicalH) - h + actor.offsetY;
+        const float effectScale = std::max(.01f, actor.effectScale);
+        const float w = tw * actor.scale * effectScale;
+        const float h = th * actor.scale * effectScale;
+        const float drawX = actor.x - w * 0.5f + actor.offsetX + actor.effectOffsetX;
+        const float drawY = static_cast<float>(logicalH) - h + actor.offsetY +
+                            actor.effectOffsetY;
         m_renderer.DrawImage(path, Rect{ drawX, drawY, w, h },
-                             static_cast<std::uint8_t>(std::clamp(alpha, 0.0f, 255.0f)));
+                             static_cast<std::uint8_t>(std::clamp(
+                                 alpha * actor.effectAlpha, 0.0f, 255.0f)));
     };
     for (const Actor* a : ordered) {
         if (!a->prevImagePath.empty()) {
@@ -511,10 +564,29 @@ void Stage::Render() {
         drawSprite(a->imagePath, *a, a->alpha);
     }
     RenderLayers(/*front=*/true);
+    m_renderer.PopTransform();
+    // Camera and shake belong to the Stage layer. Dialogue/UI is rendered by
+    // the host after this call and must remain stable.
+    m_renderer.ResetCamera();
     RenderScreenEffects();
+    if (compositing) {
+        const auto effect = [this](const char* name) {
+            const auto found = m_screenEffects.find(name);
+            return found == m_screenEffects.end() ? 0.0f : found->second;
+        };
+        graphics::StagePostEffects effects{
+            .blur = effect("blur"),
+            .vignette = effect("vignette"),
+            .colorGrade = effect("color-grade")};
+        effects.randomSeed = static_cast<float>(m_customEffectSeed);
+        effects.customEffect = m_customEffect;
+        effects.customProgress = m_customEffectProgress;
+        effects.customParameters = m_customEffectParameters;
+        m_renderer.EndStageLayer(effects);
+    }
 }
 
-void Stage::RenderScreenEffects(){int width=0,height=0;m_renderer.GetLogicalSize(width,height);const auto effect=[this](const char* name){const auto found=m_screenEffects.find(name);return found==m_screenEffects.end()?0.0f:found->second;};const float fade=effect("fade"),flash=effect("flash"),blur=effect("blur"),grade=effect("color-grade"),vignette=effect("vignette");if(fade>0)m_renderer.DrawRect({0,0,static_cast<float>(width),static_cast<float>(height)},{0,0,0,static_cast<std::uint8_t>(fade*255)});if(flash>0)m_renderer.DrawRect({0,0,static_cast<float>(width),static_cast<float>(height)},{255,255,255,static_cast<std::uint8_t>(flash*230)});if(blur>0||grade>0)m_renderer.DrawRect({0,0,static_cast<float>(width),static_cast<float>(height)},{110,120,135,static_cast<std::uint8_t>(std::clamp(blur+grade,0.0f,1.0f)*70)});if(vignette>0){const float band=std::min(width,height)*.13f*vignette;const auto alpha=static_cast<std::uint8_t>(vignette*150);m_renderer.DrawRect({0,0,static_cast<float>(width),band},{0,0,0,alpha});m_renderer.DrawRect({0,static_cast<float>(height)-band,static_cast<float>(width),band},{0,0,0,alpha});m_renderer.DrawRect({0,band,band,static_cast<float>(height)-2*band},{0,0,0,alpha});m_renderer.DrawRect({static_cast<float>(width)-band,band,band,static_cast<float>(height)-2*band},{0,0,0,alpha});}}
+void Stage::RenderScreenEffects(){int width=0,height=0;m_renderer.GetLogicalSize(width,height);const auto effect=[this](const char* name){const auto found=m_screenEffects.find(name);return found==m_screenEffects.end()?0.0f:found->second;};const float fade=effect("fade"),flash=effect("flash");if(fade>0)m_renderer.DrawRect({0,0,static_cast<float>(width),static_cast<float>(height)},{0,0,0,static_cast<std::uint8_t>(fade*255)});if(flash>0)m_renderer.DrawRect({0,0,static_cast<float>(width),static_cast<float>(height)},{255,255,255,static_cast<std::uint8_t>(flash*230)});}
 
 std::vector<Stage::SavedActor> Stage::Snapshot() const {
     std::vector<SavedActor> out;
@@ -524,7 +596,9 @@ std::vector<Stage::SavedActor> Stage::Snapshot() const {
             out.push_back(SavedActor{ name, actor.imagePath, actor.slot, actor.offsetX,
                                       actor.offsetY, actor.scale, actor.prevImagePath,
                                       actor.alpha, actor.targetAlpha, actor.prevAlpha,
-                                      actor.x, actor.targetX, actor.exiting });
+                                      actor.x, actor.targetX, actor.exiting,
+                                      actor.effectOffsetX, actor.effectOffsetY,
+                                      actor.effectScale, actor.effectAlpha });
         }
     }
     return out;
@@ -535,6 +609,12 @@ void Stage::Restore(const std::vector<SavedActor>& actors) {
     for (const SavedActor& s : actors) {
         SetCharacter(s.name, s.imagePath, s.slot, /*transition=*/false, s.offsetX, s.offsetY,
                      s.scale);
+        auto restored = m_actors.find(s.name);
+        if (restored == m_actors.end()) continue;
+        restored->second.effectOffsetX = s.effectOffsetX;
+        restored->second.effectOffsetY = s.effectOffsetY;
+        restored->second.effectScale = s.effectScale;
+        restored->second.effectAlpha = s.effectAlpha;
     }
 }
 
@@ -563,6 +643,13 @@ Stage::RuntimeState Stage::CaptureState() const {
     state.background = m_bgPath;
     state.previousBackground = m_prevBgPath;
     state.backgroundFade = m_bgFade;
+    state.ruleActive = m_ruleState.active;
+    state.ruleOldBackground = m_ruleState.oldBackgroundPath;
+    state.ruleNewBackground = m_ruleState.newBackgroundPath;
+    state.ruleMask = m_ruleState.rulePath;
+    state.ruleProgress = m_ruleState.progress;
+    state.ruleDuration = m_ruleState.duration;
+    state.ruleVague = m_ruleState.vague;
     state.cameraX = m_cameraX;
     state.cameraY = m_cameraY;
     state.cameraZoom = m_cameraZoom;
@@ -571,6 +658,11 @@ Stage::RuntimeState Stage::CaptureState() const {
     state.shakeAmplitude = m_shakeAmplitude;
     state.shakePhase = m_shakePhase;
     state.screenEffects = m_screenEffects;
+    state.customEffect = m_customEffect;
+    state.customEffectProgress = m_customEffectProgress;
+    state.customEffectSeed = m_customEffectSeed;
+    state.customEffectSequence = m_customEffectSequence;
+    state.customEffectParameters = m_customEffectParameters;
     state.actors = Snapshot();
     // Exiting actors still affect the next frame and therefore must not be
     // discarded by the creator-oriented Snapshot() helper.
@@ -579,7 +671,9 @@ Stage::RuntimeState Stage::CaptureState() const {
         state.actors.push_back(SavedActor{name, actor.imagePath, actor.slot, actor.offsetX,
                                            actor.offsetY, actor.scale, actor.prevImagePath,
                                            actor.alpha, actor.targetAlpha, actor.prevAlpha,
-                                           actor.x, actor.targetX, true});
+                                           actor.x, actor.targetX, true,
+                                           actor.effectOffsetX, actor.effectOffsetY,
+                                           actor.effectScale, actor.effectAlpha});
     }
     state.layers = SnapshotLayers();
     state.tweens.reserve(m_tweens.size());
@@ -593,10 +687,21 @@ Stage::RuntimeState Stage::CaptureState() const {
 
 Status Stage::RestoreState(const RuntimeState& state) {
     const auto finite = [](const float value) { return std::isfinite(value); };
-    if (!finite(state.backgroundFade) || !finite(state.cameraX) ||
+    if (!finite(state.backgroundFade) || !finite(state.ruleProgress) ||
+        !finite(state.ruleDuration) ||
+        (state.ruleActive &&
+         (state.ruleOldBackground.empty() || state.ruleNewBackground.empty() ||
+          state.ruleMask.empty() || state.ruleProgress < 0.0f ||
+          state.ruleProgress >= 1.0f || state.ruleDuration <= 0.0f ||
+          state.ruleVague < 1)) ||
+        !finite(state.cameraX) ||
         !finite(state.cameraY) || !finite(state.cameraZoom) || state.cameraZoom <= 0.0f ||
         !finite(state.shakeRemaining) || !finite(state.shakeDuration) ||
-        !finite(state.shakeAmplitude) || !finite(state.shakePhase)) {
+        !finite(state.shakeAmplitude) || !finite(state.shakePhase) ||
+        !finite(state.customEffectProgress) ||
+        state.customEffectProgress < 0.0f || state.customEffectProgress > 1.0f ||
+        (!state.customEffect.empty() &&
+         !m_renderer.HasCustomEffect(state.customEffect))) {
         return Status::Fail(diag::Diagnostic{.severity = diag::Severity::Error,
                                              .code = "PXSTAGE7510",
                                              .category = "Runtime.Stage",
@@ -614,11 +719,27 @@ Status Stage::RestoreState(const RuntimeState& state) {
     m_shakeAmplitude = state.shakeAmplitude;
     m_shakePhase = state.shakePhase;
     m_screenEffects = state.screenEffects;
+    m_customEffect = state.customEffect;
+    m_customEffectProgress = state.customEffectProgress;
+    m_customEffectSeed = state.customEffectSeed;
+    m_customEffectSequence = state.customEffectSequence;
+    m_customEffectParameters = state.customEffectParameters;
+    for (const auto& slot : m_customEffectParameters)
+        for (const float component : slot)
+            if (!finite(component))
+                return Status::Fail(diag::Diagnostic{
+                    .severity = diag::Severity::Error,
+                    .code = "PXSTAGE7510",
+                    .category = "Runtime.Stage",
+                    .message = "Saved custom effect parameters contain invalid numbers"});
     for (const SavedActor& saved : state.actors) {
         if (saved.name.empty() || !finite(saved.alpha) || !finite(saved.targetAlpha) ||
             !finite(saved.previousAlpha) || !finite(saved.x) || !finite(saved.targetX) ||
             !finite(saved.offsetX) || !finite(saved.offsetY) || !finite(saved.scale) ||
-            saved.scale <= 0.0f) {
+            saved.scale <= 0.0f || !finite(saved.effectOffsetX) ||
+            !finite(saved.effectOffsetY) || !finite(saved.effectScale) ||
+            saved.effectScale <= 0.0f || !finite(saved.effectAlpha) ||
+            saved.effectAlpha < 0.0f || saved.effectAlpha > 1.0f) {
             return Status::Fail(diag::Diagnostic{.severity = diag::Severity::Error,
                                                  .code = "PXSTAGE7511",
                                                  .category = "Runtime.Stage",
@@ -637,6 +758,10 @@ Status Stage::RestoreState(const RuntimeState& state) {
         actor.offsetX = saved.offsetX;
         actor.offsetY = saved.offsetY;
         actor.scale = saved.scale;
+        actor.effectOffsetX = saved.effectOffsetX;
+        actor.effectOffsetY = saved.effectOffsetY;
+        actor.effectScale = saved.effectScale;
+        actor.effectAlpha = saved.effectAlpha;
         actor.exiting = saved.exiting;
         m_actors.emplace(saved.name, std::move(actor));
     }
@@ -654,6 +779,20 @@ Status Stage::RestoreState(const RuntimeState& state) {
         m_tweens.push_back(Tween{saved.layer, saved.target, saved.spec, saved.fromX,
                                   saved.fromY, saved.fromScale, saved.fromAlpha,
                                   saved.elapsed, saved.duration});
+    }
+    if (state.ruleActive) {
+        m_bgPath = state.ruleOldBackground;
+        SetBackgroundRule(state.ruleNewBackground, state.ruleMask,
+                          std::max(1, static_cast<int>(std::lround(state.ruleDuration * 1000.0f))),
+                          state.ruleVague);
+        if (!m_ruleState.active) {
+            return Status::Fail(diag::Diagnostic{.severity = diag::Severity::Error,
+                                                 .code = "PXSTAGE7513",
+                                                 .category = "Runtime.Stage",
+                                                 .message = "Saved rule transition assets cannot be restored",
+                                                 .details = state.ruleMask});
+        }
+        m_ruleState.progress = state.ruleProgress;
     }
     return Status::Ok();
 }

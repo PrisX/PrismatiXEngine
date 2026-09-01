@@ -24,7 +24,7 @@ std::string Manifest(const std::string_view characters = R"([
   ])") {
     return std::string(R"({
   "format":"PrismatiXProject",
-  "schemaRevision":1,
+  "schemaRevision":2,
   "assets":[
     {"id":"33333333-3333-4333-8333-333333333333",
      "kind":"character","source":"Assets/rin.png"}
@@ -45,7 +45,7 @@ std::string Character(
   ])") {
     return std::string(R"({
   "format":"PrismatiXCharacter",
-  "schemaRevision":1,
+  "schemaRevision":2,
   "id":"11111111-1111-4111-8111-111111111111",
   "revision":0,
   "displayName":"凛",
@@ -89,7 +89,7 @@ int main() {
             Load(Manifest(), {{std::string(kCharacterPath), Character()},
                               {std::string(kAssetPath), "png"}});
         suite.Require(loaded.Valid(),
-                      "characterResources revision 1 loads");
+                      "characterResources revision 2 loads");
         suite.Require(loaded.document.characters.size() == 1,
                       "one character is retained");
         const auto& character = loaded.document.characters.front();
@@ -111,12 +111,12 @@ int main() {
             "stable expression and resource UUIDs resolve to runtime paths");
     });
 
-    suite.Run("LegacyManifestRemainsAnExplicitFallback", [&] {
+    suite.Run("LegacyManifestIsRejectedByRuntime", [&] {
         const auto loaded = Load(
             R"({"format":"PrismatiXProject","schemaRevision":1,"assets":[]})",
             {});
-        suite.Expect(!loaded.declared && loaded.diagnostics.empty(),
-                     "missing characters member is not silently treated as the new contract");
+        suite.Expect(HasCode(loaded, "PXCHAR1002"),
+                     "0.1 project manifests require the migration CLI");
     });
 
     suite.Run("RuntimeCatalogResolvesMigratedAliases", [&] {
@@ -139,7 +139,7 @@ int main() {
             },
             declared);
         suite.Require(status.IsOk() && declared,
-                      "runtime adapter accepts characterResources revision 1");
+                      "runtime adapter accepts characterResources revision 2");
         const auto* character = catalog.FindCharacter("rin");
         suite.Require(character != nullptr && character->id == kCharacterId,
                       "legacy character alias resolves to stable UUID");
@@ -214,7 +214,7 @@ int main() {
                      "missing expression asset file is explicit");
         const auto thumbnailKind = Load(
             R"({
-              "format":"PrismatiXProject","schemaRevision":1,
+              "format":"PrismatiXProject","schemaRevision":2,
               "assets":[
                 {"id":"33333333-3333-4333-8333-333333333333",
                  "kind":"character","source":"Assets/rin.png"},
@@ -229,7 +229,7 @@ int main() {
             })",
             {{std::string(kCharacterPath),
               R"({
-                "format":"PrismatiXCharacter","schemaRevision":1,
+                "format":"PrismatiXCharacter","schemaRevision":2,
                 "id":"11111111-1111-4111-8111-111111111111",
                 "displayName":"凛",
                 "defaultExpressionId":"22222222-2222-4222-8222-222222222222",

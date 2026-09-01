@@ -6,6 +6,8 @@
 #include <SDL3_image/SDL_image.h>
 
 #include <cstring>
+#include <algorithm>
+#include <unordered_set>
 
 namespace px::graphics {
 
@@ -37,6 +39,40 @@ std::vector<std::uint8_t> CaptureThumbnailPng(SDL_Renderer* renderer, int w, int
     }
     SDL_DestroySurface(small);
     return out;
+}
+
+FrameCaptureSummary CaptureFrameSummary(SDL_Renderer* renderer,
+                                        const std::size_t maximumSamples) {
+    FrameCaptureSummary summary;
+    if(!renderer||maximumSamples==0)return summary;
+    SDL_Surface* captured=SDL_RenderReadPixels(renderer,nullptr);
+    if(!captured){
+        PX_LOG_WARN("CaptureFrameSummary: RenderReadPixels failed: {}",
+                    SDL_GetError());
+        return summary;
+    }
+    SDL_Surface* rgba=SDL_ConvertSurface(captured,SDL_PIXELFORMAT_RGBA32);
+    SDL_DestroySurface(captured);
+    if(!rgba)return summary;
+    summary.width=rgba->w;
+    summary.height=rgba->h;
+    const std::size_t count=static_cast<std::size_t>(rgba->w)*
+                            static_cast<std::size_t>(rgba->h);
+    const std::size_t stride=std::max<std::size_t>(1,count/maximumSamples);
+    std::unordered_set<std::uint32_t> colors;
+    const auto* bytes=static_cast<const std::uint8_t*>(rgba->pixels);
+    for(std::size_t index=0;index<count;index+=stride){
+        const auto* row=bytes+(index/static_cast<std::size_t>(rgba->w))*
+                              static_cast<std::size_t>(rgba->pitch);
+        const auto pixel=reinterpret_cast<const std::uint32_t*>(row)
+            [index%static_cast<std::size_t>(rgba->w)];
+        colors.insert(pixel);
+        summary.hash^=pixel;
+        summary.hash*=1099511628211ull;
+    }
+    summary.sampledColors=colors.size();
+    SDL_DestroySurface(rgba);
+    return summary;
 }
 
 SDL_Texture* DecodePngTexture(SDL_Renderer* renderer, const std::vector<std::uint8_t>& png) {

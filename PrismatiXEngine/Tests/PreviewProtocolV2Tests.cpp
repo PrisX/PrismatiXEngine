@@ -13,7 +13,7 @@ std::string RuntimeIr(const std::uint64_t revision,
                       const Json& arguments =
                           Json{{"speaker", "雪"}, {"text", "晚安"}}) {
     return Json{{"format", "PrismatiXRuntimeIR"},
-                {"schemaRevision", 1},
+                {"schemaRevision", 2},
                 {"documentId", "scene-01"},
                 {"committedRevision", revision},
                 {"operations",

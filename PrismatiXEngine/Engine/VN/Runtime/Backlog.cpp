@@ -3,8 +3,10 @@
 namespace px::vn {
 
 void Backlog::Push(const std::string& speaker, const std::string& text, const std::string& voice,
-                   bool isChoice) {
-    m_entries.push_back(BacklogEntry{ speaker, text, voice, isChoice });
+                   const bool isChoice, const std::string& sourceId,
+                   const std::string& operationId) {
+    m_entries.push_back(
+        BacklogEntry{speaker, text, voice, isChoice, sourceId, operationId});
     if (m_entries.size() > m_capacity) {
         m_entries.erase(m_entries.begin(),
                         m_entries.begin() + (m_entries.size() - m_capacity));

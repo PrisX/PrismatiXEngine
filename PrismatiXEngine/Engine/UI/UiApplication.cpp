@@ -212,13 +212,13 @@ bool ApplyComponentProperty(sdk::UiNode& target, const std::string_view path, co
         target.layout.alignment = *text;
     else if (path == "layout.sizeRule" && text)
         target.layout.sizeRule = *text;
-    else if (path == "content.text" && text)
+    else if (path == "text" && text)
         target.text = *text;
-    else if (path == "content.assetId" && resource && resource->value.empty())
+    else if (path == "assetId" && resource && resource->value.empty())
         target.assetId.reset();
-    else if (path == "content.assetId" && text)
+    else if (path == "assetId" && text)
         target.assetId = *text;
-    else if (path == "content.assetId" && nullValue)
+    else if (path == "assetId" && nullValue)
         target.assetId.reset();
     else if (path == "appearance.backgroundColor" && text)
         target.appearance.backgroundColor = *text;
@@ -240,10 +240,17 @@ bool ApplyComponentProperty(sdk::UiNode& target, const std::string_view path, co
         target.appearance.focusColor.reset();
     else if (path == "appearance.disabledOpacity" && number)
         target.appearance.disabledOpacity = static_cast<float>(*number);
-    else if (path == "accessibility.label" && text)
+    else if (path == "accessibilityLabel" && text)
         target.accessibilityLabel = *text;
-    else if (path == "accessibility.role" && text)
+    else if (path == "accessibilityRole" && text)
         target.accessibilityRole = *text;
+    else if (path == "accessibilityDescription" && text)
+        target.accessibilityDescription = *text;
+    else if (path == "accessibilityFocusOrder") {
+        const auto* integer = std::get_if<std::int64_t>(&value);
+        if (!integer || *integer < -1000000 || *integer > 1000000) return false;
+        target.accessibilityFocusOrder = static_cast<std::int32_t>(*integer);
+    }
     else if (path.starts_with("runtimeProperties.") && path.size() > std::string_view("runtimeProperties.").size()) {
         target.runtimeProperties[std::string(path.substr(std::string_view("runtimeProperties.").size()))] = value;
     }
@@ -536,7 +543,7 @@ Result<UiApplicationSummary> UiApplication::ApplyDocument(const sdk::UiDocument&
                             name,
                         sourcePath,
                         {},
-                        "interaction.onClick.arguments." + name
+                        "onClick.arguments." + name
                     ));
                     for (const auto& diagnostic : status.Diagnostics()) diag::Emit(diagnostic);
                     if (observer) observer(action, status);
@@ -553,7 +560,7 @@ Result<UiApplicationSummary> UiApplication::ApplyDocument(const sdk::UiDocument&
         diagnostics.push_back(ApplicationError(source.code, source.message, sourcePath, source.nodeId));
     }
     for (const auto& assetId : runtimeTree.unresolvedAssetIds) {
-        diagnostics.push_back(ApplicationError("PXUISTUDIO2004", "UI document image asset could not be resolved: " + assetId, sourcePath, {}, "content.assetId"));
+        diagnostics.push_back(ApplicationError("PXUISTUDIO2004", "UI document image asset could not be resolved: " + assetId, sourcePath, {}, "assetId"));
     }
     if (!runtimeTree.root && diagnostics.empty()) {
         diagnostics.push_back(ApplicationError("PXUISTUDIO2101", "UI document did not produce a Runtime root", sourcePath));
@@ -642,29 +649,19 @@ Result<UiApplicationSummary> UiApplication::ApplyDocument(const sdk::UiDocument&
                                         .visualStateCount = runtimeTree.visualStateCount,
                                         .propertyBindingCount = propertyBindings.size() };
 
-    if (const auto installed = m_context.SetRoot(std::move(runtimeTree.root)); !installed) {
+    UIDocumentInstallation installation;
+    installation.root=std::move(runtimeTree.root);
+    installation.bindings=std::move(propertyBindings);
+    installation.animations=std::move(runtimeTree.animations);
+    installation.visualStateGroups=std::move(runtimeTree.visualStateGroups);
+    installation.triggers=std::move(runtimeTree.behaviorTriggers);
+    installation.behaviorGraph=std::move(runtimeTree.behaviorGraph);
+    installation.sourceScene=sourcePath;
+    installation.autoplayAnimations=true;
+    installation.diagnosticOverlay=options.diagnosticOverlay;
+    if(const auto installed=m_context.InstallDocument(std::move(installation));
+       !installed)
         return Result<UiApplicationSummary>::Failure(installed.Diagnostics());
-    }
-    if (runtimeTree.animations) {
-        if (const auto installed = m_context.SetAnimations(std::move(*runtimeTree.animations), true); !installed) {
-            return Result<UiApplicationSummary>::Failure(installed.Diagnostics());
-        }
-    }
-    if (!runtimeTree.visualStateGroups.empty()) {
-        if (const auto installed = m_context.SetVisualStateGroups(
-                std::move(runtimeTree.visualStateGroups));
-            !installed) {
-            return Result<UiApplicationSummary>::Failure(
-                installed.Diagnostics());
-        }
-    }
-    if (runtimeTree.behaviorGraph || !runtimeTree.behaviorTriggers.empty()) {
-        if (const auto configured = m_context.ConfigureTriggers(std::move(runtimeTree.behaviorTriggers), std::move(runtimeTree.behaviorGraph), sourcePath); !configured) {
-            return Result<UiApplicationSummary>::Failure(configured.Diagnostics());
-        }
-    }
-    m_context.SetBindings(std::move(propertyBindings));
-    m_context.SetDiagnosticOverlayEnabled(options.diagnosticOverlay);
     return Result<UiApplicationSummary>::Success(std::move(summary));
 }
 
@@ -687,13 +684,31 @@ Result<UiApplicationSummary> UiApplication::PatchDocumentProperties(const sdk::U
         diagnostics.push_back(ApplicationError(source.code, source.message, options.sourcePath, source.nodeId));
     }
     for (const auto& assetId : candidate.unresolvedAssetIds) {
-        diagnostics.push_back(ApplicationError("PXUISTUDIO2004", "UI document image asset could not be resolved: " + assetId, options.sourcePath, {}, "content.assetId"));
+        diagnostics.push_back(ApplicationError("PXUISTUDIO2004", "UI document image asset could not be resolved: " + assetId, options.sourcePath, {}, "assetId"));
     }
     if (!candidate.root && diagnostics.empty()) {
         diagnostics.push_back(ApplicationError("PXUISTUDIO2131", "UI document property patch did not produce a candidate Runtime root", options.sourcePath));
     }
     if (!diagnostics.empty()) return Result<UiApplicationSummary>::Failure(std::move(diagnostics));
 
+    struct MetadataPatch {
+        Control* target = nullptr;
+        std::string oldName;
+        std::string newName;
+        TokenRefValue oldStyle;
+        TokenRefValue newStyle;
+    };
+    struct PropertyPatch {
+        Control* target = nullptr;
+        const PropertyInfo* property = nullptr;
+        Variant oldValue;
+        Variant newValue;
+    };
+    std::vector<MetadataPatch> metadataPatches;
+    std::vector<PropertyPatch> propertyPatches;
+
+    // Complete topology, type, range, resource, and setter validation against
+    // the detached candidate before touching the installed tree.
     for (const auto& node : resolvedDocument.nodes) {
         const auto nodeId = Uuid::Parse(node.id);
         auto* installed = nodeId ? dynamic_cast<Control*>(installedRoot->Find(*nodeId)) : nullptr;
@@ -701,15 +716,50 @@ Result<UiApplicationSummary> UiApplication::PatchDocumentProperties(const sdk::U
         if (!installed || !source || installed->TypeName() != source->TypeName()) {
             return Result<UiApplicationSummary>::Failure(ApplicationError("PXUISTUDIO2132", "UI document property patch topology does not match the installed Runtime tree", options.sourcePath, node.id));
         }
-        installed->SetName(source->Name());
-        installed->SetStyleToken(source->StyleToken());
+        metadataPatches.push_back({installed, installed->Name(), source->Name(),
+                                   installed->StyleToken(), source->StyleToken()});
         for (const auto* property : TypeRegistry::Global().PropertiesForType(std::string(source->TypeName()))) {
             if (!property || !property->get || !property->set) continue;
             const Variant value = property->get(*source);
             if (property->get(*installed) == value) continue;
-            if (const auto status = property->set(*installed, value); !status) {
-                return Result<UiApplicationSummary>::Failure(ApplicationError("PXUISTUDIO2133", "UI document Runtime property patch failed: " + property->name, options.sourcePath, node.id, property->name));
+            if (property->type != VariantType::Null && value.Type() != property->type) {
+                return Result<UiApplicationSummary>::Failure(ApplicationError(
+                    "PXUISTUDIO2133", "UI document Runtime property patch type does not match metadata: " + property->name,
+                    options.sourcePath, node.id, property->name));
             }
+            if (property->editor.hasRange) {
+                double numeric = 0.0;
+                bool valid = false;
+                if (const auto* number = value.TryGet<double>()) { numeric = *number; valid = true; }
+                else if (const auto* integer = value.TryGet<std::int64_t>()) { numeric = static_cast<double>(*integer); valid = true; }
+                if (!valid || numeric < property->editor.minimum || numeric > property->editor.maximum)
+                    return Result<UiApplicationSummary>::Failure(ApplicationError(
+                        "PXUISTUDIO2133", "UI document Runtime property patch is outside its declared range: " + property->name,
+                        options.sourcePath, node.id, property->name));
+            }
+            propertyPatches.push_back({installed, property, property->get(*installed), value.Clone()});
+        }
+    }
+
+    std::size_t committedProperties = 0;
+    for (auto& patch : metadataPatches) {
+        patch.target->SetName(patch.newName);
+        patch.target->SetStyleToken(patch.newStyle);
+    }
+    for (; committedProperties < propertyPatches.size(); ++committedProperties) {
+        auto& patch = propertyPatches[committedProperties];
+        if (const auto status = patch.property->set(*patch.target, patch.newValue); !status) {
+            for (std::size_t rollback = committedProperties; rollback > 0; --rollback) {
+                auto& previous = propertyPatches[rollback - 1];
+                (void)previous.property->set(*previous.target, previous.oldValue);
+            }
+            for (auto& metadata : metadataPatches) {
+                metadata.target->SetName(metadata.oldName);
+                metadata.target->SetStyleToken(metadata.oldStyle);
+            }
+            auto failure = ApplicationError("PXUISTUDIO2133", "UI document Runtime property patch failed transactionally: " + patch.property->name, options.sourcePath, patch.target->Id().ToString(), patch.property->name);
+            failure.details = status.Diagnostics().empty() ? std::string{} : status.Diagnostics().front().message;
+            return Result<UiApplicationSummary>::Failure(std::move(failure));
         }
     }
 

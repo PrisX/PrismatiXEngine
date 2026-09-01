@@ -29,7 +29,14 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=x64-linux \
             -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/fuzz" \
             -DBUILD_TESTING=ON \
-            -DPRISMATIX_BUILD_FUZZERS=ON
-      - run: cmake --build out/ci/fuzz --target PrismatiXParserFuzz --parallel
+            -DPRISMATIX_BUILD_FUZZERS=ON \
+            -DPRISMATIX_STRESS_TESTS=ON
+      - run: >-
+          cmake --build out/ci/fuzz
+          --target PrismatiXParserFuzz PrismatiXSoakTests --parallel
       - name: Correctness fuzz execution
         run: out/ci/fuzz/PrismatiXEngine/PrismatiXParserFuzz -max_total_time=1800 -timeout=10
+      - name: 50,000-asset and accelerated timeline soak
+        run: >-
+          ctest --test-dir out/ci/fuzz -C RelWithDebInfo
+          --output-on-failure -L stress

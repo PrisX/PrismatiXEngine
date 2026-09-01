@@ -1,5 +1,6 @@
 #include "Engine/Platform/Window.h"
 
+#include "Engine/Graphics/GraphicsDevice.h"
 #include "Engine/Support/Logger.h"
 
 #include <SDL3/SDL.h>
@@ -10,7 +11,8 @@ Window::~Window() {
     Destroy();
 }
 
-bool Window::Create(const std::string& title, int width, int height, bool resizable) {
+bool Window::Create(const std::string& title, int width, int height, bool resizable,
+                    const graphics::GraphicsTier graphicsTier) {
     SDL_WindowFlags flags = SDL_WINDOW_HIGH_PIXEL_DENSITY;
     if (resizable) {
         flags |= SDL_WINDOW_RESIZABLE;
@@ -22,24 +24,21 @@ bool Window::Create(const std::string& title, int width, int height, bool resiza
         return false;
     }
 
-    m_renderer = SDL_CreateRenderer(m_window, nullptr);
-    if (!m_renderer) {
-        PX_LOG_ERROR("SDL_CreateRenderer failed: {}", SDL_GetError());
+    m_graphics = std::make_unique<graphics::GraphicsDevice>();
+    if (!m_graphics->Create(m_window, graphicsTier)) {
         SDL_DestroyWindow(m_window);
         m_window = nullptr;
+        m_graphics.reset();
         return false;
     }
 
-    SDL_SetRenderVSync(m_renderer, 1);
+    SDL_SetRenderVSync(Renderer(), 1);
     PX_LOG_INFO("Window created: {}x{} ('{}')", width, height, title);
     return true;
 }
 
 void Window::Destroy() {
-    if (m_renderer) {
-        SDL_DestroyRenderer(m_renderer);
-        m_renderer = nullptr;
-    }
+    m_graphics.reset();
     if (m_window) {
         SDL_DestroyWindow(m_window);
         m_window = nullptr;
@@ -47,16 +46,17 @@ void Window::Destroy() {
 }
 
 void Window::Clear(Color color) {
-    if (!m_renderer) {
+    SDL_Renderer* renderer = Renderer();
+    if (!renderer) {
         return;
     }
-    SDL_SetRenderDrawColor(m_renderer, color.r, color.g, color.b, color.a);
-    SDL_RenderClear(m_renderer);
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+    SDL_RenderClear(renderer);
 }
 
 void Window::Present() {
-    if (m_renderer) {
-        SDL_RenderPresent(m_renderer);
+    if (Renderer()) {
+        SDL_RenderPresent(Renderer());
     }
 }
 
@@ -74,8 +74,8 @@ bool Window::Resize(const int width, const int height) {
 }
 
 void Window::SetVSync(bool enabled) {
-    if (m_renderer) {
-        SDL_SetRenderVSync(m_renderer, enabled ? 1 : 0);
+    if (Renderer()) {
+        SDL_SetRenderVSync(Renderer(), enabled ? 1 : 0);
     }
 }
 
@@ -84,5 +84,11 @@ void Window::SetAspectRatio(float ratio) {
         SDL_SetWindowAspectRatio(m_window, ratio, ratio);
     }
 }
+
+SDL_Renderer* Window::Renderer() const {
+    return m_graphics ? m_graphics->Renderer() : nullptr;
+}
+
+bool Window::Valid() const { return m_window != nullptr && Renderer() != nullptr; }
 
 }

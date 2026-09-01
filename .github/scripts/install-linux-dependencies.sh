@@ -8,7 +8,7 @@ sudo apt-get install --yes --no-install-recommends \
   libasound2-dev libpulse-dev libaudio-dev libjack-dev libsndio-dev \
   libdbus-1-dev libibus-1.0-dev libudev-dev libpipewire-0.3-dev \
   libgl1-mesa-dev libgles2-mesa-dev libegl1-mesa-dev \
-  libdrm-dev libgbm-dev \
+  libdrm-dev libgbm-dev libvulkan1 mesa-vulkan-drivers xvfb \
   libx11-dev libxft-dev libxext-dev libxfixes-dev libxi-dev libxrandr-dev \
   libxrender-dev libxcursor-dev libxss-dev libxtst-dev \
   libxkbcommon-dev libwayland-dev libdecor-0-dev liburing-dev

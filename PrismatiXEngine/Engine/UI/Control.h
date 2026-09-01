@@ -3,12 +3,14 @@
 #include "Engine/Core/Types.h"
 #include "Engine/Core/Variant.h"
 #include "Engine/Scene/Node.h"
+#include "Engine/Text/TextLayout.h"
 #include "Engine/UI/Styles/StyleDefinition.h"
 
 #include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -69,12 +71,50 @@ struct UIEvent {
     float wheel = 0.0f;
     int key = 0;
     std::string text;
+    bool shift = false;
+    bool control = false;
     bool handled = false;
     bool stopPropagation = false;
 };
 
+// Backend-neutral accessibility description. Platform adapters and the CI
+// mock adapter consume this same semantic data instead of rediscovering UI
+// meaning from pixels or control implementation details.
+struct AccessibilityTextSemantics {
+    text::TextLayout layout;
+    Vec2 origin{};
+    std::size_t caretByteOffset = 0;
+    std::size_t selectionStartByteOffset = 0;
+    std::size_t selectionEndByteOffset = 0;
+    bool editable = false;
+    bool multiline = false;
+};
+
+struct AccessibilitySemantics {
+    Uuid id;
+    std::string role;
+    std::string label;
+    std::string value;
+    std::string description;
+    std::vector<std::string> states;
+    std::vector<std::string> actions;
+    Rect bounds{};
+    double minimum = 0.0;
+    double maximum = 0.0;
+    double step = 0.0;
+    bool hasRange = false;
+    bool readOnly = false;
+    std::int32_t focusOrder = 0;
+    bool focusable = false;
+    bool hidden = false;
+    std::optional<AccessibilityTextSemantics> text;
+};
+
 class Control : public scene::Node {
 public:
+    using TextLayoutProvider = std::function<text::TextLayout(
+        const Control&, std::string_view, int, int, text::TextOrientation,
+        std::size_t)>;
     using SignalArguments = VariantObject;
     using SignalHandler = std::function<void(const SignalArguments&)>;
     using SignalConnection = std::uint64_t;
@@ -127,6 +167,26 @@ public:
     [[nodiscard]] Color Modulate() const { return m_modulate; }
     void SetClipContent(bool value) { m_clipContent = value; }
     [[nodiscard]] bool ClipContent() const { return m_clipContent; }
+    void SetAccessibilityLabel(std::string value) { m_accessibilityLabel = std::move(value); }
+    [[nodiscard]] const std::string& AccessibilityLabel() const { return m_accessibilityLabel; }
+    void SetAccessibilityRole(std::string value) { m_accessibilityRole = std::move(value); }
+    [[nodiscard]] const std::string& AccessibilityRole() const { return m_accessibilityRole; }
+    void SetAccessibilityDescription(std::string value) { m_accessibilityDescription = std::move(value); }
+    [[nodiscard]] const std::string& AccessibilityDescription() const { return m_accessibilityDescription; }
+    void SetAccessibilityFocusOrder(std::int32_t value) { m_accessibilityFocusOrder = value; }
+    [[nodiscard]] std::int32_t AccessibilityFocusOrder() const { return m_accessibilityFocusOrder; }
+    void SetTextLayoutProvider(TextLayoutProvider provider) {
+        m_textLayoutProvider = std::move(provider);
+        InvalidateLayout();
+    }
+    // Custom controls may override this to expose domain-specific value,
+    // state, and actions while retaining the shared semantic-tree lifecycle.
+    [[nodiscard]] virtual AccessibilitySemantics DescribeAccessibility() const;
+    virtual bool PerformAccessibilityAction(std::string_view action,
+                                            std::string_view value = {});
+    // Text controls capture directional and Accept bindings before global
+    // focus navigation so ordinary typing cannot move focus or submit on Space.
+    [[nodiscard]] virtual bool CapturesTextInput() const { return false; }
     [[nodiscard]] Vec2 Measure(Vec2 available);
     void Arrange(Rect finalRect);
     [[nodiscard]] Rect LayoutRect() const { return m_layoutRect; }
@@ -152,6 +212,14 @@ public:
     void SetInteractionState(bool hovered, bool pressed, bool focused);
 
 protected:
+    [[nodiscard]] std::optional<text::TextLayout> MeasureTextLayout(
+        std::string_view value, int size, int wrap = 0,
+        text::TextOrientation orientation = text::TextOrientation::Horizontal,
+        std::size_t verticalRows = 0) const {
+        if (!m_textLayoutProvider) return std::nullopt;
+        return m_textLayoutProvider(*this, value, size, wrap, orientation,
+                                    verticalRows);
+    }
     [[nodiscard]] virtual Vec2 MeasureOverride(Vec2 available);
     virtual void ArrangeOverride(Rect finalRect);
     virtual void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme);
@@ -185,6 +253,11 @@ private:
     float m_opacity = 1.0f;
     Color m_modulate{255,255,255,255};
     bool m_clipContent = false;
+    std::string m_accessibilityLabel;
+    std::string m_accessibilityRole;
+    std::string m_accessibilityDescription;
+    std::int32_t m_accessibilityFocusOrder = 0;
+    TextLayoutProvider m_textLayoutProvider;
     struct SignalSlot {
         SignalConnection id = 0;
         SignalHandler handler;

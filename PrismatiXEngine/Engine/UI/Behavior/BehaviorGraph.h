@@ -111,6 +111,8 @@ public:
     void CancelAll();
     [[nodiscard]] const std::vector<BehaviorFiberState>& ActiveFibers() const { return m_fibers; }
     [[nodiscard]] std::vector<BehaviorFiberState> CaptureState() const { return m_fibers; }
+    [[nodiscard]] Status ValidateState(
+        const std::vector<BehaviorFiberState>& state) const;
     Status RestoreState(std::vector<BehaviorFiberState> state);
     [[nodiscard]] const Status& LastFailure() const { return m_lastFailure; }
 

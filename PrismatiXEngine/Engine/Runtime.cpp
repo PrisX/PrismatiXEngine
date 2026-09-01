@@ -25,7 +25,12 @@ bool Runtime::Init(const RuntimeConfig& config) {
         return false;
     }
 
-    if (!m_window.Create(m_config.title, m_config.width, m_config.height, m_config.resizable)) {
+    const graphics::GraphicsTier graphicsTier =
+        m_config.graphicsTier == "gpu-effects"
+            ? graphics::GraphicsTier::GpuEffects
+            : graphics::GraphicsTier::Basic;
+    if (!m_window.Create(m_config.title, m_config.width, m_config.height,
+                         m_config.resizable, graphicsTier)) {
         TTF_Quit();
         SDL_Quit();
         return false;
@@ -58,7 +63,19 @@ bool Runtime::Init(const RuntimeConfig& config) {
     }
     m_assets = std::make_unique<graphics::AssetCache>(m_window.Renderer(), m_vfs);
     m_assets->SetAsyncPreloadEnabled(config.asyncAssetPreload);
-    m_renderer = std::make_unique<graphics::Renderer2D>(m_window.Renderer(), *m_assets);
+    m_renderer = std::make_unique<graphics::Renderer2D>(
+        m_window.Renderer(), *m_assets,
+        graphicsTier == graphics::GraphicsTier::GpuEffects);
+    if (!m_renderer->Ready()) {
+        PX_LOG_ERROR("Runtime initialization failed: required GPU compositor shader is unavailable");
+        Shutdown();
+        return false;
+    }
+    if (!m_renderer->LoadCustomEffects(config.customEffects, m_vfs)) {
+        PX_LOG_ERROR("Runtime initialization failed: packaged custom effect artifacts are invalid or unsupported");
+        Shutdown();
+        return false;
+    }
     m_renderer->SetLogicalSize(m_config.logicalWidth, m_config.logicalHeight);
 
     if (m_config.logicalHeight > 0) {
@@ -74,7 +91,8 @@ bool Runtime::Init(const RuntimeConfig& config) {
 }
 
 void Runtime::Shutdown() {
-    if (!m_initialized) {
+    if (!m_initialized && !m_audio && !m_renderer && !m_assets &&
+        !m_window.Valid() && SDL_WasInit(0) == 0) {
         return;
     }
     m_audio.reset();
@@ -82,8 +100,8 @@ void Runtime::Shutdown() {
     m_assets.reset();
     m_vfs.Clear();
     m_window.Destroy();
-    TTF_Quit();
-    SDL_Quit();
+    if (TTF_WasInit()) TTF_Quit();
+    if (SDL_WasInit(0) != 0) SDL_Quit();
     m_initialized = false;
     m_running = false;
     PX_LOG_INFO("Runtime shut down.");

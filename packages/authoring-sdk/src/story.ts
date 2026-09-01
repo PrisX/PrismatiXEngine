@@ -187,6 +187,9 @@ export function parseStory(text: string, path = "Story/untitled.pxstory"): Story
     }
     const startColumn = line.text.indexOf(trimmed) + 1;
     const lineSpan = span(path, line, startColumn, startColumn + trimmed.length);
+    // Deterministic fallback for unannotated source. Published save/seen
+    // identity can be pinned independently of path, offset, and prose with
+    // an [id ...] directive immediately before an observable operation.
     const id = `story-${stableId(`${path}:${line.offset}:${trimmed}`)}`;
     if (trimmed.startsWith(";")) {
       nodes.push({id, kind: "comment", span: lineSpan, raw: line.text, text: trimmed.slice(1).trim()});
@@ -340,10 +343,15 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
   for (const extension of context.extensions ?? []) for (const command of extension.commands) extensions.set(command.id, command);
   const operations: RuntimeIrOperation[] = [];
   const mappings: RuntimeSourceMap["mappings"][number][] = [];
+  const authoredSourceIds = new Set<string>();
+  let pendingAuthoredSourceId: string | undefined;
 
   const emit = (node: StoryNode, kind: string, args: Record<string, string>, text = node.text ?? node.raw.trim()): void => {
-    const sourceId = node.id;
-    const operationId = `op-${stableId(`${context.documentId}:${sourceId}:${kind}:${operations.length}`)}`;
+    const sourceId = pendingAuthoredSourceId === undefined
+      ? node.id
+      : `story-${stableId(`${context.documentId}:${pendingAuthoredSourceId}`)}`;
+    pendingAuthoredSourceId = undefined;
+    const operationId = `op-${stableId(`${context.documentId}:${sourceId}:${kind}`)}`;
     operations.push({operationId, sourceId, sourceLine: node.span.start.line, kind, text, arguments: args});
     mappings.push({operationId, sourceId, sourceUri: document.path, startLine: node.span.start.line, startColumn: node.span.start.column, endLine: node.span.end.line, endColumn: node.span.end.column});
   };
@@ -370,6 +378,20 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
     const named = (name: string): string | undefined => stringValue(args.get(name));
     const target = named("target") ?? named("goto") ?? positional(0);
     switch (node.name) {
+      case "id": {
+        const identity = named("value") ?? positional(0);
+        if (identity === undefined || !identifierPattern.test(identity)) {
+          diagnostics.push(error("PXSTORY1210", "id requires a stable identifier", node.span));
+        } else if (pendingAuthoredSourceId !== undefined) {
+          diagnostics.push(error("PXSTORY1211", "id must be followed by one observable Story operation", node.span));
+        } else if (authoredSourceIds.has(identity)) {
+          diagnostics.push(error("PXSTORY1212", `Duplicate authored Story id: ${identity}`, node.span));
+        } else {
+          authoredSourceIds.add(identity);
+          pendingAuthoredSourceId = identity;
+        }
+        break;
+      }
       case "choice.wait": break;
       case "bg": {
         const assetName = named("asset") ?? positional(0);
@@ -465,8 +487,20 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         break;
       }
       case "ui": emit(node, "ui", {route: named("route") ?? positional(0) ?? "", operation: named("operation") ?? "push"}); break;
-      case "effect": emit(node, "effect", {value: named("value") ?? positional(0) ?? ""}); break;
-      case "camera": emit(node, "camera", {value: named("value") ?? positional(0) ?? ""}); break;
+      case "effect": {
+        const value = named("value") ?? positional(0);
+        if (value === undefined || value.length === 0)
+          diagnostics.push(error("PXSTORY1126", "effect requires a preset", node.span));
+        else emit(node, "effect", {value});
+        break;
+      }
+      case "camera": {
+        const value = named("value") ?? positional(0);
+        if (value === undefined || value.length === 0)
+          diagnostics.push(error("PXSTORY1127", "camera requires a preset", node.span));
+        else emit(node, "camera", {value});
+        break;
+      }
       default: {
         const descriptor = extensions.get(node.name);
         if (descriptor === undefined) {
@@ -479,11 +513,18 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
     }
   }
 
+  if (pendingAuthoredSourceId !== undefined) {
+    diagnostics.push(error(
+      "PXSTORY1213",
+      `Story id ${pendingAuthoredSourceId} is not followed by an observable operation`,
+    ));
+  }
+
   const valid = !diagnostics.some((item) => item.severity === "error");
   if (!valid) return {diagnostics, valid: false};
   return {
-    runtimeIr: {format: "PrismatiXRuntimeIR", schemaRevision: 1, documentId: context.documentId, committedRevision: context.committedRevision ?? 0, operations},
-    sourceMap: {format: "PrismatiXSourceMap", schemaRevision: 1, documentId: context.documentId, mappings},
+    runtimeIr: {format: "PrismatiXRuntimeIR", schemaRevision: 2, documentId: context.documentId, committedRevision: context.committedRevision ?? 0, operations},
+    sourceMap: {format: "PrismatiXSourceMap", schemaRevision: 2, documentId: context.documentId, mappings},
     diagnostics,
     valid: true,
   };
@@ -495,7 +536,7 @@ export interface StoryCommandCompletion {
 }
 
 export function storyCommandCompletions(extensions: readonly ExtensionCommand[] = []): readonly StoryCommandCompletion[] {
-  const builtins = ["bg", "show", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "if", "else", "endif", "voice", "bgm", "se", "timeline", "ui", "effect", "camera"];
+  const builtins = ["id", "bg", "show", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "if", "else", "endif", "voice", "bgm", "se", "timeline", "ui", "effect", "camera"];
   return [
     ...builtins.map((id) => ({id, parameters: []})),
     ...extensions.map((command) => ({id: command.id, parameters: command.parameters.map((parameter) => ({name: parameter.name, required: parameter.required === true, ...(parameter.enum === undefined ? {} : {values: parameter.enum})}))})),

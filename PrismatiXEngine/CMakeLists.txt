@@ -50,9 +50,12 @@ configure_file(
 )
 
 add_library(PrismatiXRuntimeContracts STATIC
+    Engine/Core/SemanticVersion.cpp
     Engine/SDK/CharacterResources.cpp
     Engine/SDK/GameCatalogResources.cpp
+    Engine/SDK/PackageManifest.cpp
     Engine/SDK/RuntimeIr.cpp
+    Engine/SDK/SourceMap.cpp
     Engine/SDK/Ui.cpp
 )
 add_library(PrismatiX::RuntimeContracts ALIAS PrismatiXRuntimeContracts)
@@ -83,6 +86,11 @@ target_include_directories(PrismatiXSDK PUBLIC
 target_link_libraries(PrismatiXSDK PUBLIC
     PrismatiXRuntimeContracts
     zstd::libzstd
+    SDL3::SDL3
+    SDL3_ttf::SDL3_ttf
+)
+target_include_directories(PrismatiXSDK PRIVATE
+    $<TARGET_PROPERTY:SDL3_shadercross::SDL3_shadercross,INTERFACE_INCLUDE_DIRECTORIES>
 )
 if(TARGET MbedTLS::mbedcrypto)
     target_link_libraries(PrismatiXSDK PUBLIC MbedTLS::mbedcrypto)
@@ -92,7 +100,15 @@ elseif(TARGET MbedTLS::mbedtls)
     target_link_libraries(PrismatiXSDK PUBLIC MbedTLS::mbedtls)
 endif()
 
-install(TARGETS PrismatiXSDK EXPORT PrismatiXSDKTargets
+add_library(PrismatiXPackagerSDK INTERFACE)
+add_library(PrismatiX::PackagerSDK ALIAS PrismatiXPackagerSDK)
+set_target_properties(PrismatiXPackagerSDK PROPERTIES EXPORT_NAME PackagerSDK)
+target_link_libraries(PrismatiXPackagerSDK INTERFACE
+    PrismatiXSDK
+    SDL3_shadercross::SDL3_shadercross
+)
+
+install(TARGETS PrismatiXSDK PrismatiXPackagerSDK EXPORT PrismatiXSDKTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT PrismatiXSDK
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT PrismatiXSDK
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT PrismatiXSDK
@@ -114,8 +130,8 @@ install(FILES
 )
 write_basic_package_version_file(
     "${CMAKE_CURRENT_BINARY_DIR}/PrismatiXSDKConfigVersion.cmake"
-    VERSION 0.1.0
-    COMPATIBILITY SameMajorVersion
+    VERSION 0.2.0
+    COMPATIBILITY SameMinorVersion
 )
 configure_package_config_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/PrismatiXSDKConfig.cmake.in"
@@ -160,10 +176,77 @@ endif()
 file(GLOB_RECURSE PRISMATIX_RUNTIME_CORE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/Engine/*.cpp"
 )
+
+if(NOT EMSCRIPTEN)
+    find_program(PRISMATIX_SHADERCROSS_EXECUTABLE
+        NAMES shadercross
+        REQUIRED
+    )
+    set(PRISMATIX_BUILTIN_SHADER_SOURCE
+        "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/Builtin/compositor.frag.hlsl")
+    set(PRISMATIX_BUILTIN_SHADER_DIR
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/shaders")
+    set(PRISMATIX_BUILTIN_SHADER_SPIRV
+        "${PRISMATIX_BUILTIN_SHADER_DIR}/compositor.frag.spv")
+    set(PRISMATIX_BUILTIN_SHADER_DXIL
+        "${PRISMATIX_BUILTIN_SHADER_DIR}/compositor.frag.dxil")
+    set(PRISMATIX_BUILTIN_SHADER_MSL
+        "${PRISMATIX_BUILTIN_SHADER_DIR}/compositor.frag.msl")
+    set(PRISMATIX_BUILTIN_SHADER_CPP
+        "${PRISMATIX_BUILTIN_SHADER_DIR}/BuiltInCompositorShaders.generated.cpp")
+
+    add_custom_command(
+        OUTPUT
+            "${PRISMATIX_BUILTIN_SHADER_SPIRV}"
+            "${PRISMATIX_BUILTIN_SHADER_DXIL}"
+            "${PRISMATIX_BUILTIN_SHADER_MSL}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+                "${PRISMATIX_BUILTIN_SHADER_DIR}"
+        COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}"
+                "${PRISMATIX_BUILTIN_SHADER_SOURCE}"
+                --source HLSL --dest SPIRV --stage fragment
+                --entrypoint main --output "${PRISMATIX_BUILTIN_SHADER_SPIRV}"
+        COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}"
+                "${PRISMATIX_BUILTIN_SHADER_SOURCE}"
+                --source HLSL --dest DXIL --stage fragment
+                --entrypoint main --output "${PRISMATIX_BUILTIN_SHADER_DXIL}"
+        COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}"
+                "${PRISMATIX_BUILTIN_SHADER_SOURCE}"
+                --source HLSL --dest MSL --stage fragment
+                --entrypoint main --output "${PRISMATIX_BUILTIN_SHADER_MSL}"
+        DEPENDS "${PRISMATIX_BUILTIN_SHADER_SOURCE}"
+        COMMENT "Offline-compiling PrismatiX built-in compositor shader"
+        VERBATIM
+    )
+    add_custom_command(
+        OUTPUT "${PRISMATIX_BUILTIN_SHADER_CPP}"
+        COMMAND "${CMAKE_COMMAND}"
+                -DINPUT_SPIRV=${PRISMATIX_BUILTIN_SHADER_SPIRV}
+                -DINPUT_DXIL=${PRISMATIX_BUILTIN_SHADER_DXIL}
+                -DINPUT_MSL=${PRISMATIX_BUILTIN_SHADER_MSL}
+                -DOUTPUT=${PRISMATIX_BUILTIN_SHADER_CPP}
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/GenerateBuiltInShaders.cmake"
+        DEPENDS
+            "${PRISMATIX_BUILTIN_SHADER_SPIRV}"
+            "${PRISMATIX_BUILTIN_SHADER_DXIL}"
+            "${PRISMATIX_BUILTIN_SHADER_MSL}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/GenerateBuiltInShaders.cmake"
+        COMMENT "Embedding offline-compiled PrismatiX compositor shaders"
+        VERBATIM
+    )
+    set_source_files_properties("${PRISMATIX_BUILTIN_SHADER_CPP}"
+        PROPERTIES GENERATED TRUE)
+    list(APPEND PRISMATIX_RUNTIME_CORE_SOURCES
+        "${PRISMATIX_BUILTIN_SHADER_CPP}")
+endif()
 list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/SDK/")
+list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/Core/SemanticVersion\.cpp$")
 list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/Runtime\\.cpp$")
 list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/Platform/")
 list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/Accessibility/SpeechService\\.cpp$")
+list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/Accessibility/PlatformSemanticAdapter\\.cpp$")
+list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/Accessibility/PlatformSemanticAdapterMac\\.mm$")
+list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/Accessibility/PlatformSemanticAdapterLinux\\.cpp$")
 list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/Video/VideoPlayer\\.cpp$")
 list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/IO/")
 list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/Progression/(GameSettings|GlobalProfileStore|Persist|SaveSystem)\\.cpp$")
@@ -192,6 +275,22 @@ target_link_libraries(PrismatiXRuntimeCore PUBLIC
     PrismatiXRuntimeContracts
 )
 target_link_libraries(PrismatiXRuntimeCore PRIVATE qjs)
+if(EMSCRIPTEN)
+    target_link_libraries(PrismatiXRuntimeCore PRIVATE
+        utf8proc::utf8proc
+        libunibreak::libunibreak
+        prismatix_fribidi_wasm
+    )
+    add_dependencies(PrismatiXRuntimeCore prismatix_fribidi_external)
+else()
+    target_link_libraries(PrismatiXRuntimeCore PRIVATE
+        utf8proc::utf8proc
+        libunibreak::libunibreak
+        PkgConfig::FRIBIDI
+    )
+endif()
+target_compile_definitions(PrismatiXRuntimeCore PRIVATE
+    PRISMATIX_UNICODE_TEXT_LIBS=1)
 
 if(NOT EMSCRIPTEN)
     file(GLOB_RECURSE PRISMATIX_NATIVE_PLATFORM_SOURCES CONFIGURE_DEPENDS
@@ -201,6 +300,7 @@ if(NOT EMSCRIPTEN)
     list(APPEND PRISMATIX_NATIVE_PLATFORM_SOURCES
         Engine/Runtime.cpp
         Engine/Accessibility/SpeechService.cpp
+        Engine/Accessibility/PlatformSemanticAdapter.cpp
         Engine/Video/VideoPlayer.cpp
         Engine/Resources/AssetRegistry.cpp
         Engine/UI/UITypeManifest.cpp
@@ -209,6 +309,13 @@ if(NOT EMSCRIPTEN)
         Engine/Progression/Persist.cpp
         Engine/Progression/SaveSystem.cpp
     )
+    if(APPLE)
+        list(APPEND PRISMATIX_NATIVE_PLATFORM_SOURCES
+            Engine/Accessibility/PlatformSemanticAdapterMac.mm)
+    elseif(UNIX)
+        list(APPEND PRISMATIX_NATIVE_PLATFORM_SOURCES
+            Engine/Accessibility/PlatformSemanticAdapterLinux.cpp)
+    endif()
     add_library(PrismatiXRuntimePlatformNative STATIC
         ${PRISMATIX_NATIVE_PLATFORM_SOURCES})
     add_library(PrismatiX::RuntimePlatformNative ALIAS
@@ -229,6 +336,19 @@ if(NOT EMSCRIPTEN)
         zstd::libzstd
         ${FFMPEG_LIBRARIES}
     )
+    if(WIN32)
+        target_link_libraries(PrismatiXRuntimePlatformNative PUBLIC
+            uiautomationcore oleaut32 ole32)
+    elseif(APPLE)
+        target_link_libraries(PrismatiXRuntimePlatformNative PUBLIC
+            "-framework AppKit" "-framework Foundation")
+        set_source_files_properties(
+            Engine/Accessibility/PlatformSemanticAdapterMac.mm
+            PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+    elseif(UNIX)
+        target_link_libraries(PrismatiXRuntimePlatformNative PUBLIC
+            PkgConfig::DBUS)
+    endif()
 
     add_library(PrismatiXRuntime INTERFACE)
     target_link_libraries(PrismatiXRuntime INTERFACE
@@ -247,7 +367,7 @@ endif()
 prismatix_configure_target(PrismatiXPlayer)
 
 add_executable(PrismatiXPackager Applications/PackagerMain.cpp)
-target_link_libraries(PrismatiXPackager PRIVATE PrismatiXSDK)
+target_link_libraries(PrismatiXPackager PRIVATE PrismatiXPackagerSDK)
 prismatix_configure_target(PrismatiXPackager)
 
 add_executable(PrismatiXPreviewHost Applications/PreviewHostMain.cpp)
@@ -273,6 +393,29 @@ add_custom_target(PrismatiXUiTypeRegistryManifest ALL
                   DEPENDS "${PRISMATIX_UI_TYPE_MANIFEST}")
 install(FILES "${PRISMATIX_UI_TYPE_MANIFEST}"
     DESTINATION .
+    COMPONENT PrismatiXSDK
+)
+add_executable(PrismatiXSDKReference Applications/SDKReferenceMain.cpp)
+target_link_libraries(PrismatiXSDKReference PRIVATE PrismatiXSDK)
+prismatix_configure_target(PrismatiXSDKReference)
+set(PRISMATIX_SDK_REFERENCE
+    "${CMAKE_CURRENT_BINARY_DIR}/PrismatiXSDKReference.md")
+add_custom_command(
+    OUTPUT "${PRISMATIX_SDK_REFERENCE}"
+    COMMAND $<TARGET_FILE:PrismatiXSDKReference>
+            "${CMAKE_CURRENT_SOURCE_DIR}/../Contracts/contract-manifest.json"
+            "${PRISMATIX_UI_TYPE_MANIFEST}"
+            "${PRISMATIX_SDK_REFERENCE}"
+    DEPENDS PrismatiXSDKReference
+            "${CMAKE_CURRENT_SOURCE_DIR}/../Contracts/contract-manifest.json"
+            "${PRISMATIX_UI_TYPE_MANIFEST}"
+    COMMENT "Generating the SDK reference from contracts and UI TypeRegistry"
+    VERBATIM
+)
+add_custom_target(PrismatiXSDKReferenceDocument ALL
+                  DEPENDS "${PRISMATIX_SDK_REFERENCE}")
+install(FILES "${PRISMATIX_SDK_REFERENCE}"
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/PrismatiX/docs
     COMPONENT PrismatiXSDK
 )
 install(TARGETS PrismatiXPackager PrismatiXPreviewHost PrismatiXPlayer
@@ -318,13 +461,13 @@ if(PRISMATIX_BUILD_WASM_PREVIEW)
         "-sEXPORT_ES6=1"
         "-sEXPORT_NAME=createPrismatiXPreview"
         "-sALLOW_MEMORY_GROWTH=1"
-        "-sENVIRONMENT=web,worker"
+        "-sENVIRONMENT=web,worker,node"
         "-sFILESYSTEM=1"
         "-sNO_EXIT_RUNTIME=0"
         "$<$<CONFIG:Release>:-O3>"
         "$<$<CONFIG:Release>:-gsource-map>"
         "-sEXPORTED_RUNTIME_METHODS=['cwrap','UTF8ToString','FS']"
-        "-sEXPORTED_FUNCTIONS=['_malloc','_free','_px_preview_create','_px_preview_apply','_px_preview_patch','_px_preview_control','_px_preview_resize','_px_preview_tick','_px_preview_drain_events','_px_preview_destroy']"
+        "-sEXPORTED_FUNCTIONS=['_malloc','_free','_px_preview_create','_px_preview_apply','_px_preview_patch','_px_preview_control','_px_preview_resize','_px_preview_tick','_px_preview_drain_events','_px_preview_test_conformance','_px_preview_destroy']"
         "SHELL:--embed-file \"${PROJECT_SOURCE_DIR}/Resources/Fonts/NotoSansTC-Bold.ttf@/project/Resources/Fonts/NotoSansTC-Bold.ttf\""
         "--source-map-base" "./"
     )
@@ -409,12 +552,15 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
                          PROPERTIES LABELS "preview;wasm;progression;contract")
 
     add_executable(PrismatiXPackagerContractTests Tests/PackagerContractTests.cpp)
-    target_link_libraries(PrismatiXPackagerContractTests PRIVATE PrismatiXRuntime)
+    target_link_libraries(PrismatiXPackagerContractTests PRIVATE
+                          PrismatiXRuntime PrismatiXPackagerSDK)
+    target_compile_definitions(PrismatiXPackagerContractTests PRIVATE
+        PRISMATIX_RESOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../Resources")
     prismatix_configure_target(PrismatiXPackagerContractTests)
     add_test(NAME PrismatiX.SDK.PackagerContract
              COMMAND PrismatiXPackagerContractTests)
     set_tests_properties(PrismatiX.SDK.PackagerContract
-                         PROPERTIES LABELS "sdk;contract;packager")
+                         PROPERTIES LABELS "sdk;contract;packager;gpu;native")
 
     add_executable(PrismatiXCharacterResourcesContractTests
                    Tests/CharacterResourcesContractTests.cpp)
@@ -436,27 +582,29 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     set_tests_properties(PrismatiX.SDK.GameCatalogResourcesContract
                          PROPERTIES LABELS "sdk;runtime;contract;catalog")
 
+    add_executable(PrismatiXPlayerCatalogNativeAcceptanceTests
+                   Tests/PlayerCatalogNativeAcceptanceTests.cpp)
+    target_link_libraries(PrismatiXPlayerCatalogNativeAcceptanceTests
+                          PRIVATE PrismatiXRuntime PrismatiXPackagerSDK)
     if(WIN32)
-        add_executable(PrismatiXPlayerCatalogNativeAcceptanceTests
-                       Tests/PlayerCatalogNativeAcceptanceTests.cpp)
         target_link_libraries(PrismatiXPlayerCatalogNativeAcceptanceTests
-                              PRIVATE PrismatiXRuntime user32 gdi32)
-        prismatix_configure_target(PrismatiXPlayerCatalogNativeAcceptanceTests)
-        add_dependencies(PrismatiXPlayerCatalogNativeAcceptanceTests
-                         PrismatiXPlayer)
-        add_test(
-            NAME PrismatiX.Player.CatalogNativeAcceptance
-            COMMAND PrismatiXPlayerCatalogNativeAcceptanceTests
-                    $<TARGET_FILE:PrismatiXPlayer>
-                    ${CMAKE_CURRENT_SOURCE_DIR}/../Content
-                    ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/PrismatiXEngine_Logo.png)
-        set_tests_properties(
-            PrismatiX.Player.CatalogNativeAcceptance
-            PROPERTIES
-                LABELS "native;windows;e2e;player;characters"
-                RUN_SERIAL TRUE
-                TIMEOUT 60)
+                              PRIVATE user32 gdi32)
     endif()
+    prismatix_configure_target(PrismatiXPlayerCatalogNativeAcceptanceTests)
+    add_dependencies(PrismatiXPlayerCatalogNativeAcceptanceTests
+                     PrismatiXPlayer)
+    add_test(
+        NAME PrismatiX.Player.CatalogNativeAcceptance
+        COMMAND PrismatiXPlayerCatalogNativeAcceptanceTests
+                $<TARGET_FILE:PrismatiXPlayer>
+                ${CMAKE_CURRENT_SOURCE_DIR}/../Content
+                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/PrismatiXEngine_Logo.png)
+    set_tests_properties(
+        PrismatiX.Player.CatalogNativeAcceptance
+        PROPERTIES
+            LABELS "native;e2e;player;characters"
+            RUN_SERIAL TRUE
+            TIMEOUT 60)
 
     add_test(NAME PrismatiX.SDK.PackagerCliContract
         COMMAND ${CMAKE_COMMAND}
@@ -487,6 +635,14 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     set_tests_properties(PrismatiX.SDK.UiTypeRegistryContract
                          PROPERTIES LABELS "sdk;runtime;contract;ui")
 
+    add_test(NAME PrismatiX.SDK.ReferenceContract
+             COMMAND PrismatiXSDKReference --check
+                     "${CMAKE_CURRENT_SOURCE_DIR}/../Contracts/contract-manifest.json"
+                     "${PRISMATIX_UI_TYPE_MANIFEST}"
+                     "${PRISMATIX_SDK_REFERENCE}")
+    set_tests_properties(PrismatiX.SDK.ReferenceContract
+                         PROPERTIES LABELS "sdk;contract;documentation")
+
     add_executable(PrismatiXSDKManifestContractTests
                    Tests/SDKManifestContractTests.cpp)
     target_link_libraries(PrismatiXSDKManifestContractTests
@@ -510,6 +666,8 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_executable(PrismatiXRuntimeIrRuntimeAdapterTests
         Tests/RuntimeIrRuntimeAdapterTests.cpp)
     target_link_libraries(PrismatiXRuntimeIrRuntimeAdapterTests PRIVATE PrismatiXRuntime)
+    target_compile_definitions(PrismatiXRuntimeIrRuntimeAdapterTests PRIVATE
+        PRISMATIX_RUNTIME_IR_SCHEMA_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../Contracts/runtime-ir.schema.json")
     prismatix_configure_target(PrismatiXRuntimeIrRuntimeAdapterTests)
     add_test(NAME PrismatiX.SDK.RuntimeIrRuntimeAdapter
              COMMAND PrismatiXRuntimeIrRuntimeAdapterTests)
@@ -605,6 +763,45 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         Tests/Integration/RuntimeResourceIntegrationTests.cpp
         PrismatiX.Integration.Runtime.Resources "integration;runtime;resource"
         PrismatiXRuntime)
+    prismatix_add_simple_test(
+        PrismatiXGraphicsIntegrationTests
+        Tests/Integration/GraphicsIntegrationTests.cpp
+        PrismatiX.Integration.Runtime.Graphics
+        "integration;runtime;graphics;gpu;native" PrismatiXRuntime)
+    target_compile_definitions(PrismatiXGraphicsIntegrationTests PRIVATE
+        PRISMATIX_RESOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../Resources")
+    prismatix_add_simple_test(
+        PrismatiXAssetPreloadIntegrationTests
+        Tests/Integration/AssetPreloadIntegrationTests.cpp
+        PrismatiX.Integration.Runtime.AssetPreload
+        "integration;runtime;graphics;asset;native" PrismatiXRuntime)
+    prismatix_add_simple_test(
+        PrismatiXAccessibilityIntegrationTests
+        Tests/Integration/AccessibilityIntegrationTests.cpp
+        PrismatiX.Integration.Runtime.Accessibility
+        "integration;runtime;ui;accessibility" PrismatiXRuntime)
+    if(WIN32)
+        set(PRISMATIX_PLATFORM_ACCESSIBILITY_TEST
+            PrismatiX.Integration.Runtime.Accessibility.WindowsUIA)
+        set(PRISMATIX_PLATFORM_ACCESSIBILITY_LABELS
+            "integration;runtime;ui;accessibility;native;windows")
+    elseif(APPLE)
+        set(PRISMATIX_PLATFORM_ACCESSIBILITY_TEST
+            PrismatiX.Integration.Runtime.Accessibility.NSAccessibility)
+        set(PRISMATIX_PLATFORM_ACCESSIBILITY_LABELS
+            "integration;runtime;ui;accessibility;native;macos")
+    else()
+        set(PRISMATIX_PLATFORM_ACCESSIBILITY_TEST
+            PrismatiX.Integration.Runtime.Accessibility.ATSPI)
+        set(PRISMATIX_PLATFORM_ACCESSIBILITY_LABELS
+            "integration;runtime;ui;accessibility;native;linux")
+    endif()
+    prismatix_add_simple_test(
+        PrismatiXPlatformAccessibilityIntegrationTests
+        Tests/Integration/PlatformAccessibilityIntegrationTests.cpp
+        "${PRISMATIX_PLATFORM_ACCESSIBILITY_TEST}"
+        "${PRISMATIX_PLATFORM_ACCESSIBILITY_LABELS}"
+        PrismatiXRuntime)
 
     prismatix_add_simple_test(
         PrismatiXUISchemaContractTests Tests/Contract/UISchemaContractTests.cpp
@@ -658,9 +855,19 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     set_tests_properties(PrismatiX.Architecture.SDK PROPERTIES
                          LABELS "architecture;sdk")
 
+    # A crashed assertion can open a native debug dialog on Windows and leave
+    # the process alive forever. Every registered release-gate test therefore
+    # has an explicit upper bound; long stress coverage gets its own budget.
+    get_property(PRISMATIX_REGISTERED_TESTS DIRECTORY PROPERTY TESTS)
+    set_tests_properties(${PRISMATIX_REGISTERED_TESTS} PROPERTIES TIMEOUT 60)
+    if(PRISMATIX_STRESS_TESTS)
+        set_tests_properties(PrismatiX.Stress.Soak PROPERTIES TIMEOUT 120)
+    endif()
+
     add_custom_target(PrismatiXSDKTests DEPENDS
         PrismatiXPackager
         PrismatiXUiTypeRegistryManifest
+        PrismatiXSDKReferenceDocument
         PrismatiXPackagerContractTests
         PrismatiXCharacterResourcesContractTests
         PrismatiXGameCatalogResourcesContractTests
@@ -679,6 +886,9 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         PrismatiXJavaScriptHostIntegrationTests
         PrismatiXAnimationIntegrationTests
         PrismatiXRuntimeResourceIntegrationTests
+        PrismatiXGraphicsIntegrationTests
+        PrismatiXAssetPreloadIntegrationTests
+        PrismatiXAccessibilityIntegrationTests
         PrismatiXUISchemaContractTests
         PrismatiXStyleContractTests
         PrismatiXActionContractTests
@@ -687,10 +897,12 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         PrismatiXSplashSequencePlayerTests
         PrismatiXPlayerBootSplashIntegrationTests
         PrismatiXPlayer)
-    if(WIN32)
+    if(TARGET PrismatiXPlatformAccessibilityIntegrationTests)
         add_dependencies(PrismatiXSDKTests
-                         PrismatiXPlayerCatalogNativeAcceptanceTests)
+                         PrismatiXPlatformAccessibilityIntegrationTests)
     endif()
+    add_dependencies(PrismatiXSDKTests
+                     PrismatiXPlayerCatalogNativeAcceptanceTests)
 
     add_custom_target(PrismatiXRequiredTests DEPENDS PrismatiXSDKTests)
     add_custom_target(PrismatiXRegularTests DEPENDS PrismatiXRequiredTests)

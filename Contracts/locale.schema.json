@@ -4,8 +4,9 @@
   "type":"object","additionalProperties":false,
   "required":["format","schemaRevision","locale","strings"],
   "properties":{
-    "format":{"const":"PrismatiXLocale"},"schemaRevision":{"const":1},
+    "format":{"const":"PrismatiXLocale"},"schemaRevision":{"const":2},
     "locale":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/locale"},
+    "fontChain":{"type":"array","maxItems":16,"uniqueItems":true,"items":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"}},
     "strings":{"type":"object","maxProperties":1000000,"propertyNames":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"additionalProperties":{"type":"string","maxLength":1048576}}
   }
 }

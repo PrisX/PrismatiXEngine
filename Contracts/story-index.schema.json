@@ -4,7 +4,7 @@
   "type":"object","additionalProperties":false,
   "required":["format","schemaRevision","id","entryScene","chapters","scenes"],
   "properties":{
-    "format":{"const":"PrismatiXStoryIndex"},"schemaRevision":{"const":1},
+    "format":{"const":"PrismatiXStoryIndex"},"schemaRevision":{"const":2},
     "id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
     "entryScene":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
     "chapters":{"type":"array","maxItems":10000,"items":{"type":"object","additionalProperties":false,"required":["id","title","scenes"],"properties":{"id":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"title":{"type":"string","maxLength":512},"scenes":{"type":"array","uniqueItems":true,"items":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"}}}}},

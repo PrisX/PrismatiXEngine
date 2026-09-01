@@ -1,6 +1,11 @@
 #include "Engine/SDK/Packager.h"
 
+#include "Engine/Package/PackageManifest.h"
+
 #include <psa/crypto.h>
+#include <SDL3/SDL.h>
+#include <SDL3_shadercross/SDL_shadercross.h>
+#include <SDL3_ttf/SDL_ttf.h>
 #include <zstd.h>
 
 #include <algorithm>
@@ -10,6 +15,10 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <cmath>
+#include <cstring>
+#include <memory>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <set>
@@ -18,6 +27,8 @@
 #include <unordered_set>
 
 #include "Engine/SDK/RuntimeIr.h"
+#include "Engine/SDK/SourceMap.h"
+#include "Engine/Core/SemanticVersion.h"
 #include "Engine/SDK/Ui.h"
 #include "Engine/SDK/CharacterResources.h"
 #include "Engine/SDK/GameCatalogResources.h"
@@ -68,7 +79,15 @@ struct ValidationResult {
 
 std::filesystem::path Utf8Path(const std::string_view value) { return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(value.data()), value.size())); }
 
-void AddDiagnostic(std::vector<PackageDiagnostic>& diagnostics, std::string code, std::string message, const bool retryable = false) { diagnostics.push_back({ std::move(code), std::move(message), retryable }); }
+void AddDiagnostic(std::vector<PackageDiagnostic>& diagnostics, std::string code,
+                   std::string message, const bool retryable = false,
+                   std::string path = {}) {
+    PackageDiagnostic diagnostic{std::move(code), std::move(message), retryable};
+    if (!path.empty()) {
+        diagnostic.span = PackageDiagnostic::SourceSpan{.path = std::move(path)};
+    }
+    diagnostics.push_back(std::move(diagnostic));
+}
 
 std::filesystem::path JsonPath(const Json& root, const char* key) {
     const auto found = root.find(key);
@@ -104,6 +123,33 @@ std::optional<int> JsonInt(const Json& value) {
 
 bool IsRequestId(const std::string_view value) {
     return !value.empty() && value.size() <= 128 && std::all_of(value.begin(), value.end(), [](const unsigned char c) { return std::isalnum(c) != 0 || c == '-' || c == '_' || c == '.'; });
+}
+
+bool IsLocaleId(const std::string_view value) {
+    std::size_t offset = 0;
+    const auto separator = value.find('-');
+    const auto language = value.substr(0, separator);
+    if (language.size() < 2 || language.size() > 3 ||
+        !std::ranges::all_of(language, [](const unsigned char character) {
+            return std::isalpha(character) != 0;
+        }))
+        return false;
+    if (separator == std::string_view::npos) return true;
+    offset = separator + 1;
+    while (offset < value.size()) {
+        const auto next = value.find('-', offset);
+        const auto segment = value.substr(
+            offset, next == std::string_view::npos ? value.size() - offset
+                                                    : next - offset);
+        if (segment.size() < 2 || segment.size() > 8 ||
+            !std::ranges::all_of(segment, [](const unsigned char character) {
+                return std::isalnum(character) != 0;
+            }))
+            return false;
+        if (next == std::string_view::npos) return true;
+        offset = next + 1;
+    }
+    return false;
 }
 
 std::string Lower(std::string value) {
@@ -370,6 +416,168 @@ std::optional<std::string> ReadTextFile(const std::filesystem::path& path, const
     return std::string(bytes->begin(), bytes->end());
 }
 
+bool DecodeUtf8(const std::string_view text, std::set<std::uint32_t>& output) {
+    for (std::size_t offset = 0; offset < text.size();) {
+        const auto first = static_cast<std::uint8_t>(text[offset]);
+        std::uint32_t codepoint = 0;
+        std::size_t count = 0;
+        if (first <= 0x7Fu) {
+            codepoint = first;
+            count = 1;
+        } else if (first >= 0xC2u && first <= 0xDFu) {
+            codepoint = first & 0x1Fu;
+            count = 2;
+        } else if (first >= 0xE0u && first <= 0xEFu) {
+            codepoint = first & 0x0Fu;
+            count = 3;
+        } else if (first >= 0xF0u && first <= 0xF4u) {
+            codepoint = first & 0x07u;
+            count = 4;
+        } else {
+            return false;
+        }
+        if (offset + count > text.size()) return false;
+        for (std::size_t index = 1; index < count; ++index) {
+            const auto continuation =
+                static_cast<std::uint8_t>(text[offset + index]);
+            if ((continuation & 0xC0u) != 0x80u) return false;
+            codepoint = (codepoint << 6u) | (continuation & 0x3Fu);
+        }
+        if ((count == 3 && codepoint < 0x800u) ||
+            (count == 4 && codepoint < 0x10000u) ||
+            codepoint > 0x10FFFFu ||
+            (codepoint >= 0xD800u && codepoint <= 0xDFFFu))
+            return false;
+        // Layout controls, whitespace and variation selectors do not require
+        // an outline glyph. Combining marks and visible spacing characters do.
+        const bool layoutControl = codepoint <= 0x20u ||
+            (codepoint >= 0x7Fu && codepoint <= 0x9Fu) ||
+            (codepoint >= 0x200Bu && codepoint <= 0x200Fu) ||
+            (codepoint >= 0x202Au && codepoint <= 0x202Eu) ||
+            (codepoint >= 0x2060u && codepoint <= 0x206Fu) ||
+            (codepoint >= 0xFE00u && codepoint <= 0xFE0Fu) ||
+            (codepoint >= 0xE0100u && codepoint <= 0xE01EFu) ||
+            codepoint == 0xFEFFu;
+        if (!layoutControl) output.insert(codepoint);
+        offset += count;
+    }
+    return true;
+}
+
+std::string CodepointName(const std::uint32_t codepoint) {
+    std::ostringstream output;
+    output << "U+" << std::uppercase << std::hex << std::setfill('0')
+           << std::setw(codepoint <= 0xFFFFu ? 4 : 6) << codepoint;
+    return output.str();
+}
+
+void ValidateLocaleFontCoverage(
+    const Json& localeDocument, const std::string_view locale,
+    const RuntimeIrDocument* runtime,
+    const std::unordered_map<std::string, const ValidatedInput*>& inputs,
+    std::vector<PackageDiagnostic>& diagnostics) {
+    const auto chain = localeDocument.find("fontChain");
+    if (chain == localeDocument.end()) return;
+    if (!chain->is_array() || chain->empty() || chain->size() > 16) {
+        AddDiagnostic(diagnostics, "PXPKG1264",
+                      "locale fontChain must contain 1 to 16 font assets: " +
+                          std::string(locale));
+        return;
+    }
+
+    std::set<std::string> fontPaths;
+    std::vector<const ValidatedInput*> fontInputs;
+    for (const auto& value : *chain) {
+        if (!value.is_string()) {
+            AddDiagnostic(diagnostics, "PXPKG1264",
+                          "locale fontChain entries must be font asset paths: " +
+                              std::string(locale));
+            continue;
+        }
+        const std::string path = value.get<std::string>();
+        const auto found = inputs.find(path);
+        if (!IsSafeUri(path) ||
+            (!path.ends_with(".ttf") && !path.ends_with(".otf")) ||
+            !fontPaths.insert(path).second || found == inputs.end()) {
+            AddDiagnostic(diagnostics, "PXPKG1265",
+                          "locale font is unsafe, duplicated, unsupported, or missing from package inputs: " +
+                              std::string(locale) + " -> " + path);
+            continue;
+        }
+        fontInputs.push_back(found->second);
+    }
+    if (fontInputs.size() != chain->size()) return;
+
+    std::set<std::uint32_t> codepoints;
+    bool validText = true;
+    for (auto entry = localeDocument["strings"].begin();
+         entry != localeDocument["strings"].end(); ++entry) {
+        if (!entry.value().is_string() ||
+            !DecodeUtf8(entry.value().get_ref<const std::string&>(), codepoints)) {
+            validText = false;
+            AddDiagnostic(diagnostics, "PXPKG1266",
+                          "locale strings must contain valid UTF-8 text values: " +
+                              std::string(locale) + " -> " + entry.key());
+        }
+    }
+    if (runtime) {
+        for (const auto& operation : runtime->operations) {
+            validText = DecodeUtf8(operation.text, codepoints) && validText;
+            for (const auto& [name, value] : operation.arguments) {
+                (void)name;
+                validText = DecodeUtf8(value, codepoints) && validText;
+            }
+        }
+    }
+    if (!validText) return;
+
+    static const bool ttfReady = TTF_Init();
+    if (!ttfReady) {
+        AddDiagnostic(diagnostics, "PXPKG1267",
+                      "font coverage preflight could not initialize SDL_ttf", true);
+        return;
+    }
+    struct FontCloser {
+        void operator()(TTF_Font* font) const { TTF_CloseFont(font); }
+    };
+    std::vector<std::unique_ptr<TTF_Font, FontCloser>> fonts;
+    for (const auto* input : fontInputs) {
+        const auto encoded = input->source.generic_u8string();
+        const std::string path(reinterpret_cast<const char*>(encoded.data()),
+                               encoded.size());
+        std::unique_ptr<TTF_Font, FontCloser> font(
+            TTF_OpenFont(path.c_str(), 16.0f));
+        if (!font) {
+            AddDiagnostic(diagnostics, "PXPKG1267",
+                          "locale font cannot be opened: " +
+                              std::string(locale) + " -> " + input->input.uri);
+            continue;
+        }
+        fonts.push_back(std::move(font));
+    }
+    if (fonts.size() != fontInputs.size()) return;
+
+    std::vector<std::uint32_t> missing;
+    for (const auto codepoint : codepoints) {
+        if (!std::ranges::any_of(fonts, [codepoint](const auto& font) {
+                return TTF_FontHasGlyph(font.get(), codepoint);
+            }))
+            missing.push_back(codepoint);
+    }
+    if (!missing.empty()) {
+        std::ostringstream message;
+        message << "locale fontChain does not cover " << missing.size()
+                << " required glyph(s): " << locale << " -> ";
+        const auto shown = (std::min)(missing.size(), std::size_t{16});
+        for (std::size_t index = 0; index < shown; ++index) {
+            if (index != 0) message << ", ";
+            message << CodepointName(missing[index]);
+        }
+        if (shown != missing.size()) message << ", ...";
+        AddDiagnostic(diagnostics, "PXPKG1268", message.str());
+    }
+}
+
 bool IsUuid(const std::string_view value) {
     if (value.size() != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-') {
         return false;
@@ -472,42 +680,310 @@ std::string PlatformText() {
 #endif
 }
 
-std::string PackageManifest(const PackageRequest& request, const std::string& packageFingerprint, const std::string& encryptionKey, const std::vector<ArchiveEntry>& entries) {
+const ArchiveEntry* FindArchiveEntry(const std::vector<ArchiveEntry>& entries,
+                                     const std::string_view uri) {
+    const auto found = std::ranges::find_if(entries, [&](const auto& entry) {
+        return entry.uri == uri;
+    });
+    return found == entries.end() ? nullptr : &*found;
+}
+
+bool ShaderCrossReady() {
+    static std::once_flag once;
+    static bool ready = false;
+    std::call_once(once, [] { ready = SDL_ShaderCross_Init(); });
+    return ready;
+}
+
+std::optional<std::array<float, 4>> EffectDefault(
+    const Json& value, const std::string_view type) {
+    std::array<float, 4> result{};
+    const auto finite = [](const Json& item, float& output) {
+        if (!item.is_number()) return false;
+        const double number = item.get<double>();
+        if (!std::isfinite(number) ||
+            number < -(std::numeric_limits<float>::max)() ||
+            number > (std::numeric_limits<float>::max)())
+            return false;
+        output = static_cast<float>(number);
+        return true;
+    };
+    if (type == "number") {
+        return finite(value, result[0])
+                   ? std::optional<std::array<float, 4>>(result)
+                   : std::nullopt;
+    }
+    const std::size_t required = type == "vec2" ? 2 : type == "color" ? 4 : 0;
+    if (required == 0 || !value.is_array() || value.size() != required)
+        return std::nullopt;
+    for (std::size_t index = 0; index < required; ++index) {
+        if (!finite(value[index], result[index])) return std::nullopt;
+        if (type == "color" &&
+            (result[index] < 0.0f || result[index] > 1.0f))
+            return std::nullopt;
+    }
+    return result;
+}
+
+struct CompiledEffects {
+    std::vector<detail::PackageCustomEffect> manifests;
+    std::vector<ArchiveEntry> artifacts;
+    std::set<std::string> sourceAssets;
+    std::vector<PackageDiagnostic> diagnostics;
+};
+
+CompiledEffects CompileCustomEffects(const std::vector<ArchiveEntry>& entries) {
+    CompiledEffects result;
+    const ArchiveEntry* projectEntry = FindArchiveEntry(entries, "project.pxproject");
+    if (!projectEntry) return result;
+    const Json project = Json::parse(
+        std::string(projectEntry->data.begin(), projectEntry->data.end()),
+        nullptr, false);
+    const auto effects = project.find("effects");
+    if (effects == project.end()) return result;
+    if (!effects->is_array() || effects->size() > 64) {
+        AddDiagnostic(result.diagnostics, "PXPKG1500",
+                      "Project effects must be a bounded array");
+        return result;
+    }
+    if (!effects->empty() &&
+        project.value("graphicsTier", std::string("basic")) != "gpu-effects") {
+        AddDiagnostic(result.diagnostics, "PXPKG1501",
+                      "Custom effects require graphicsTier gpu-effects");
+        return result;
+    }
+    if (!effects->empty() && !ShaderCrossReady()) {
+        AddDiagnostic(result.diagnostics, "PXPKG1502",
+                      std::string("Offline shader compiler failed to initialize: ") +
+                          SDL_GetError());
+        return result;
+    }
+
+    std::set<std::string> ids;
+    for (const Json& descriptor : *effects) {
+        if (!descriptor.is_object() || descriptor.size() != 2 ||
+            !descriptor.contains("id") || !descriptor["id"].is_string() ||
+            !descriptor.contains("source") || !descriptor["source"].is_string()) {
+            AddDiagnostic(result.diagnostics, "PXPKG1503",
+                          "Custom effect descriptor is invalid");
+            continue;
+        }
+        const std::string id = descriptor["id"].get<std::string>();
+        const std::string manifestPath = descriptor["source"].get<std::string>();
+        if (!IsRequestId(id) || !IsSafeUri(manifestPath) ||
+            !manifestPath.ends_with(".pxeffect") || !ids.insert(id).second) {
+            AddDiagnostic(result.diagnostics, "PXPKG1503",
+                          "Custom effect identity/path is invalid or duplicated: " + id);
+            continue;
+        }
+        const ArchiveEntry* manifestEntry = FindArchiveEntry(entries, manifestPath);
+        const Json effect = manifestEntry
+                                ? Json::parse(std::string(manifestEntry->data.begin(),
+                                                         manifestEntry->data.end()),
+                                              nullptr, false)
+                                : Json(Json::value_t::discarded);
+        if (!manifestEntry || effect.is_discarded() || !effect.is_object() ||
+            effect.size() != 6 ||
+            effect.value("format", std::string{}) != "PrismatiXEffect" ||
+            effect.value("schemaRevision", 0) != 2 ||
+            effect.value("id", std::string{}) != id ||
+            effect.value("targetLayer", std::string{}) != "stage" ||
+            !effect.contains("shader") || !effect["shader"].is_string() ||
+            !effect.contains("uniforms") || !effect["uniforms"].is_array() ||
+            effect["uniforms"].size() > 8) {
+            AddDiagnostic(result.diagnostics, "PXPKG1504",
+                          "Custom effect manifest is missing or invalid: " + manifestPath);
+            continue;
+        }
+        const std::string shaderPath = effect["shader"].get<std::string>();
+        const ArchiveEntry* shaderEntry = FindArchiveEntry(entries, shaderPath);
+        if (!IsSafeUri(shaderPath) || !shaderPath.ends_with(".hlsl") ||
+            !shaderEntry || shaderEntry->data.empty() ||
+            shaderEntry->data.size() > 1024 * 1024) {
+            AddDiagnostic(result.diagnostics, "PXPKG1505",
+                          "Custom effect HLSL is missing, unsafe, or over 1 MiB: " +
+                              shaderPath);
+            continue;
+        }
+        std::string hlsl(shaderEntry->data.begin(), shaderEntry->data.end());
+        if (hlsl.find('\0') != std::string::npos ||
+            hlsl.find("cbuffer PrismatiXEffectContext") == std::string::npos ||
+            hlsl.find("register(b0, space3)") == std::string::npos ||
+            hlsl.find("float4 parameters[8]") == std::string::npos ||
+            hlsl.find("register(t0, space2)") == std::string::npos ||
+            hlsl.find("register(s0, space2)") == std::string::npos) {
+            AddDiagnostic(result.diagnostics, "PXPKG1506",
+                          "Custom effect must use the fixed PrismatiXEffectContext, texture, and sampler bindings: " +
+                              shaderPath);
+            continue;
+        }
+
+        detail::PackageCustomEffect compiled;
+        compiled.id = id;
+        compiled.targetLayer = "stage";
+        std::set<std::string> uniformNames;
+        std::set<std::uint32_t> uniformSlots;
+        bool uniformsValid = true;
+        for (const Json& value : effect["uniforms"]) {
+            if (!value.is_object() || value.size() < 4 || value.size() > 6 ||
+                !value.contains("name") || !value["name"].is_string() ||
+                !value.contains("type") || !value["type"].is_string() ||
+                !value.contains("slot") || !value["slot"].is_number_unsigned() ||
+                !value.contains("default")) {
+                uniformsValid = false;
+                break;
+            }
+            detail::PackageEffectUniform uniform;
+            uniform.name = value["name"].get<std::string>();
+            uniform.type = value["type"].get<std::string>();
+            uniform.slot = value["slot"].get<std::uint32_t>();
+            const auto defaultValue = EffectDefault(value["default"], uniform.type);
+            const double minimum = value.value("minimum", 0.0);
+            const double maximum = value.value("maximum", 1.0);
+            if (!IsRequestId(uniform.name) || uniform.slot > 7 || !defaultValue ||
+                !std::isfinite(minimum) || !std::isfinite(maximum) ||
+                minimum > maximum || !uniformNames.insert(uniform.name).second ||
+                !uniformSlots.insert(uniform.slot).second) {
+                uniformsValid = false;
+                break;
+            }
+            uniform.defaultValue = *defaultValue;
+            uniform.minimum = static_cast<float>(minimum);
+            uniform.maximum = static_cast<float>(maximum);
+            compiled.uniforms.push_back(std::move(uniform));
+        }
+        if (!uniformsValid) {
+            AddDiagnostic(result.diagnostics, "PXPKG1507",
+                          "Custom effect uniform schema is invalid: " + manifestPath);
+            continue;
+        }
+
+        SDL_ShaderCross_HLSL_Info hlslInfo{};
+        hlslInfo.source = hlsl.c_str();
+        hlslInfo.entrypoint = "main";
+        hlslInfo.shader_stage = SDL_SHADERCROSS_SHADERSTAGE_FRAGMENT;
+        std::size_t spirvSize = 0;
+        void* spirv = SDL_ShaderCross_CompileSPIRVFromHLSL(&hlslInfo, &spirvSize);
+        if (!spirv || spirvSize == 0 || spirvSize > 4 * 1024 * 1024) {
+            AddDiagnostic(result.diagnostics, "PXPKG1508",
+                          "Custom effect did not compile to bounded SPIR-V: " +
+                              shaderPath + " (" + SDL_GetError() + ")");
+            if (spirv) SDL_free(spirv);
+            continue;
+        }
+        SDL_ShaderCross_GraphicsShaderMetadata* metadata =
+            SDL_ShaderCross_ReflectGraphicsSPIRV(
+                static_cast<const Uint8*>(spirv), spirvSize, 0);
+        if (!metadata || metadata->resource_info.num_samplers != 1 ||
+            metadata->resource_info.num_storage_textures != 0 ||
+            metadata->resource_info.num_storage_buffers != 0 ||
+            metadata->resource_info.num_uniform_buffers != 1 ||
+            metadata->num_outputs != 1) {
+            AddDiagnostic(result.diagnostics, "PXPKG1509",
+                          "Custom effect reflection exceeds the fixed resource schema: " +
+                              shaderPath);
+            if (metadata) SDL_free(metadata);
+            SDL_free(spirv);
+            continue;
+        }
+        compiled.samplerCount = metadata->resource_info.num_samplers;
+        compiled.uniformBufferCount = metadata->resource_info.num_uniform_buffers;
+        SDL_free(metadata);
+
+        SDL_ShaderCross_SPIRV_Info spirvInfo{};
+        spirvInfo.bytecode = static_cast<const Uint8*>(spirv);
+        spirvInfo.bytecode_size = spirvSize;
+        spirvInfo.entrypoint = "main";
+        spirvInfo.shader_stage = SDL_SHADERCROSS_SHADERSTAGE_FRAGMENT;
+        std::size_t dxilSize = 0;
+        void* dxil = SDL_ShaderCross_CompileDXILFromSPIRV(&spirvInfo, &dxilSize);
+        void* msl = SDL_ShaderCross_TranspileMSLFromSPIRV(&spirvInfo);
+        const std::size_t mslSize = msl ? std::strlen(static_cast<const char*>(msl)) + 1 : 0;
+        if (!dxil || dxilSize == 0 || dxilSize > 4 * 1024 * 1024 ||
+            !msl || mslSize <= 1 || mslSize > 4 * 1024 * 1024) {
+            AddDiagnostic(result.diagnostics, "PXPKG1510",
+                          "Custom effect did not compile to all release shader formats: " +
+                              shaderPath + " (" + SDL_GetError() + ")");
+            if (dxil) SDL_free(dxil);
+            if (msl) SDL_free(msl);
+            SDL_free(spirv);
+            continue;
+        }
+
+        const auto appendArtifact = [&](const std::string& format,
+                                        const std::string& extension,
+                                        const void* bytes,
+                                        const std::size_t size) {
+            const std::string asset = "Shaders/" + id + "/fragment." + extension;
+            Bytes data(static_cast<const std::uint8_t*>(bytes),
+                       static_cast<const std::uint8_t*>(bytes) + size);
+            const auto digest = Sha256Bytes(data.data(), data.size());
+            compiled.artifacts.push_back(
+                {format, asset, digest ? Hex(*digest) : std::string{}});
+            result.artifacts.push_back({asset, std::move(data)});
+        };
+        appendArtifact("spirv", "spv", spirv, spirvSize);
+        appendArtifact("dxil", "dxil", dxil, dxilSize);
+        appendArtifact("msl", "msl", msl, mslSize);
+        SDL_free(dxil);
+        SDL_free(msl);
+        SDL_free(spirv);
+        result.sourceAssets.insert(shaderPath);
+        result.manifests.push_back(std::move(compiled));
+    }
+    std::ranges::sort(result.manifests, {}, &detail::PackageCustomEffect::id);
+    std::ranges::sort(result.artifacts, {}, &ArchiveEntry::uri);
+    return result;
+}
+
+detail::PackageManifest BuildPackageManifest(const PackageRequest& request,
+                                     const std::string& packageFingerprint,
+                                     const std::string& encryptionKey,
+                                     const std::vector<ArchiveEntry>& entries,
+                                     std::vector<detail::PackageCustomEffect> customEffects) {
     auto routesInOrder = request.routes;
     std::sort(routesInOrder.begin(), routesInOrder.end(), [](const auto& left, const auto& right) { return left.id < right.id; });
-    std::string routes = "array(";
-    for (std::size_t index = 0; index < routesInOrder.size(); ++index) {
-        if (index != 0) routes += ", ";
-        const auto archived = std::find_if(entries.begin(), entries.end(), [&](const auto& entry) { return entry.uri == routesInOrder[index].scene; });
+    detail::PackageManifest manifest;
+    manifest.engineVersion = "0.2.0";
+    manifest.gameId = request.gameId;
+    manifest.title = request.title;
+    manifest.width = request.width;
+    manifest.height = request.height;
+    manifest.startRuntimeIr = request.startScript;
+    manifest.sourceMap = request.sourceMap;
+    manifest.startRoute = request.startRoute;
+    manifest.contentVersion = request.contentVersion;
+    manifest.saveVersion = request.saveVersion;
+    manifest.graphicsTier = request.graphicsTier;
+    manifest.saveMigrations = request.saveMigrations;
+    manifest.extensions = request.extensions;
+    manifest.customEffects = std::move(customEffects);
+    manifest.packageFingerprint = packageFingerprint;
+    manifest.encrypted = request.encryption;
+    manifest.archiveKey = request.encryption ? encryptionKey : std::string{};
+    manifest.archives.push_back({"Content.pdx", "base", false});
+    for (const auto& route : routesInOrder) {
+        const auto archived = std::find_if(entries.begin(), entries.end(), [&](const auto& entry) { return entry.uri == route.scene; });
         const auto sceneText = archived == entries.end() ? std::optional<std::string>{} : std::optional<std::string>(std::string(archived->data.begin(), archived->data.end()));
         const auto sceneId = sceneText ? PlayerUiSceneId(*sceneText) : std::optional<std::string>{};
-        routes += "object(\"id\", " + Quote(routesInOrder[index].id) + ", \"scene\", res(" + Quote(sceneId.value_or(UuidFromFingerprint(packageFingerprint))) + ", " + Quote(routesInOrder[index].scene) + "), \"modal\", false, \"cache\", true)";
+        manifest.routes.push_back(
+            {route.id, sceneId.value_or(UuidFromFingerprint(packageFingerprint)),
+             route.scene});
     }
-    routes += ")";
-
-    std::ostringstream output;
-    output << "@pxresource 4 " << UuidFromFingerprint(packageFingerprint) << " GamePackage\n\n";
-    output << "archives = array(object(\"file\", \"Content.pdx\", \"group\", "
-              "\"base\", \"optional\", false))\n";
-    output << "compression = " << Quote(CompressionText(request.compression)) << '\n';
-    output << "contentVersion = " << Quote(request.contentVersion) << '\n';
-    output << "encrypt = " << (request.encryption ? "true" : "false") << '\n';
-    output << "gameHeight = " << request.height << '\n';
-    output << "gameWidth = " << request.width << '\n';
-    output << "key = " << Quote(request.encryption ? encryptionKey : std::string{}) << '\n';
-    output << "platform = " << Quote(PlatformText()) << '\n';
-    output << "productVersion = " << Quote(request.contentVersion) << '\n';
-    output << "profile = \"studio\"\n";
-    output << "reproducible = true\n";
-    output << "routes = " << routes << '\n';
-    output << "splashes = array()\n";
-    output << "startRoute = " << Quote(request.startRoute) << '\n';
-    output << "startScript = " << Quote(request.startScript) << '\n';
-    output << "title = " << Quote(request.title) << '\n';
-    return output.str();
+    return manifest;
 }
 
 bool RuntimeLibrary(const std::filesystem::path& path) {
+    const std::string filename = Lower(path.filename().string());
+    // Build-time shader toolchains may live beside the Packager and Player in
+    // developer builds, but are never Player runtime dependencies.  Excluding
+    // them here prevents production distributions from silently acquiring a
+    // shader compiler or its native backends.
+    if (filename.find("shadercross") != std::string::npos ||
+        filename.find("dxcompiler") != std::string::npos ||
+        filename == "dxil.dll" ||
+        filename.find("spirv-cross") != std::string::npos)
+        return false;
     const std::string extension = Lower(path.extension().string());
 #ifdef _WIN32
     return extension == ".dll";
@@ -539,16 +1015,36 @@ void EmitProgress(const PackageRequest& request, const PackageEventSink& sink, s
 }
 
 PackageRunResult Fail(const PackageRequest& request, const PackageEventSink& sink, std::string code, std::string message, const bool retryable = false) {
+    PackageDiagnostic diagnostic{std::move(code), std::move(message), retryable};
     PackageEvent event;
     event.kind = PackageEventKind::Failed;
     event.requestId = request.requestId;
-    event.code = code;
-    event.message = message;
-    event.retryable = retryable;
+    event.code = diagnostic.code;
+    event.message = diagnostic.message;
+    event.retryable = diagnostic.retryable;
+    event.diagnostics.push_back(diagnostic);
     Emit(sink, std::move(event));
     PackageRunResult result;
     result.exitCode = PackageExitCode::Failed;
-    result.diagnostics.push_back({ std::move(code), std::move(message), retryable });
+    result.diagnostics.push_back(std::move(diagnostic));
+    return result;
+}
+
+PackageRunResult Fail(const PackageRequest& request, const PackageEventSink& sink,
+                      std::vector<PackageDiagnostic> diagnostics) {
+    PackageRunResult result;
+    result.exitCode = PackageExitCode::Failed;
+    result.diagnostics = std::move(diagnostics);
+    PackageEvent event;
+    event.kind = PackageEventKind::Failed;
+    event.requestId = request.requestId;
+    event.diagnostics = result.diagnostics;
+    if (!event.diagnostics.empty()) {
+        event.code = event.diagnostics.front().code;
+        event.message = event.diagnostics.front().message;
+        event.retryable = event.diagnostics.front().retryable;
+    }
+    Emit(sink, std::move(event));
     return result;
 }
 
@@ -566,8 +1062,17 @@ PackageRunResult Cancel(const PackageRequest& request, const PackageEventSink& s
 ValidationResult Validate(const PackageRequest& request) {
     ValidationResult result;
     auto& diagnostics = result.diagnostics;
+    struct LocalizedProgram {
+        std::string locale;
+        RuntimeIrDocument runtimeIr;
+        SourceMapDocument sourceMap;
+    };
+    std::vector<LocalizedProgram> localizedPrograms;
     if (!IsRequestId(request.requestId)) {
         AddDiagnostic(diagnostics, "PXPKG1201", "requestId contains unsupported characters");
+    }
+    if (!IsRequestId(request.gameId)) {
+        AddDiagnostic(diagnostics, "PXPKG1226", "gameId is invalid");
     }
     if (!request.projectRoot.is_absolute() || !request.outputDir.is_absolute() || !request.playerExecutable.is_absolute() || !request.cancelFile.is_absolute()) {
         AddDiagnostic(
@@ -586,8 +1091,15 @@ ValidationResult Validate(const PackageRequest& request) {
     if (!IsSafeUri(request.startScript) || !request.startScript.ends_with(".pxir")) {
         AddDiagnostic(diagnostics, "PXPKG1205", "startScript must be a project-relative .pxir runtime URI");
     }
+    if (!IsSafeUri(request.sourceMap) || !request.sourceMap.ends_with(".pxmap")) {
+        AddDiagnostic(diagnostics, "PXPKG1237",
+                      "sourceMap must be a project-relative .pxmap URI");
+    }
     if (request.contentVersion.empty() || request.contentVersion.size() > 128) {
         AddDiagnostic(diagnostics, "PXPKG1206", "contentVersion is invalid");
+    }
+    if (request.saveVersion == 0 || request.saveVersion > 1'000'000) {
+        AddDiagnostic(diagnostics, "PXPKG1227", "saveVersion is invalid");
     }
     if (request.inputs.empty() || request.inputs.size() > kMaxInputs) {
         AddDiagnostic(diagnostics, "PXPKG1207", "inputs count is invalid");
@@ -654,6 +1166,100 @@ ValidationResult Validate(const PackageRequest& request) {
         }
         result.inputs.push_back({ input, source });
     }
+    std::set<std::string> migrationIds;
+    std::unordered_map<std::string, const PackageSaveMigration*>
+        migrationBySource;
+    const auto migrationKey = [](const std::string_view content,
+                                 const std::uint32_t version) {
+        return std::string(content) + "\n" + std::to_string(version);
+    };
+    for (const auto& migration : request.saveMigrations) {
+        const bool identityValid =
+            IsRequestId(migration.id) &&
+            !migration.fromContentVersion.empty() &&
+            migration.fromContentVersion.size() <= 128 &&
+            !migration.toContentVersion.empty() &&
+            migration.toContentVersion.size() <= 128 &&
+            migration.fromSaveVersion > 0 &&
+            migration.fromSaveVersion <= 1'000'000 &&
+            migration.toSaveVersion > 0 &&
+            migration.toSaveVersion <= 1'000'000 &&
+            IsSafeUri(migration.asset) &&
+            migration.asset.ends_with(".pxsave-migration") &&
+            migrationIds.insert(migration.id).second;
+        const std::string sourceKey =
+            migrationKey(migration.fromContentVersion,
+                         migration.fromSaveVersion);
+        if (!identityValid ||
+            !migrationBySource.emplace(sourceKey, &migration).second) {
+            AddDiagnostic(diagnostics, "PXPKG1232",
+                          "save migration identity, endpoints, or asset is invalid or ambiguous");
+            continue;
+        }
+        if (!uris.contains(migration.asset)) {
+            AddDiagnostic(diagnostics, "PXPKG1233",
+                          "save migration asset must be present in inputs: " +
+                              migration.asset);
+            continue;
+        }
+        const auto input = std::find_if(
+            result.inputs.begin(), result.inputs.end(),
+            [&](const auto& value) {
+                return value.input.uri == migration.asset;
+            });
+        const auto text = input == result.inputs.end()
+                              ? std::optional<std::string>{}
+                              : ReadTextFile(input->source, input->input.size);
+        const Json document = text
+                                  ? Json::parse(*text, nullptr, false)
+                                  : Json(Json::value_t::discarded);
+        if (!text || document.is_discarded() || !document.is_object() ||
+            document.value("format", std::string{}) !=
+                "PrismatiXSaveMigration" ||
+            document.value("schemaRevision", 0) != 2 ||
+            document.value("id", std::string{}) != migration.id ||
+            !document.contains("from") || !document["from"].is_object() ||
+            !document.contains("to") || !document["to"].is_object() ||
+            !document.contains("anchor") ||
+            !document["anchor"].is_object() ||
+            !document.contains("operations") ||
+            !document["operations"].is_array() ||
+            document["operations"].size() > 100'000 ||
+            document["from"].value("contentVersion", std::string{}) !=
+                migration.fromContentVersion ||
+            document["from"].value("saveVersion", std::uint32_t{0}) !=
+                migration.fromSaveVersion ||
+            document["to"].value("contentVersion", std::string{}) !=
+                migration.toContentVersion ||
+            document["to"].value("saveVersion", std::uint32_t{0}) !=
+                migration.toSaveVersion) {
+            AddDiagnostic(diagnostics, "PXPKG1234",
+                          "save migration asset does not match its manifest descriptor: " +
+                              migration.asset);
+        }
+    }
+    const std::string targetMigrationKey =
+        migrationKey(request.contentVersion, request.saveVersion);
+    for (const auto& migration : request.saveMigrations) {
+        std::unordered_set<std::string> visited;
+        std::string current = migrationKey(migration.fromContentVersion,
+                                           migration.fromSaveVersion);
+        for (std::size_t step = 0; current != targetMigrationKey; ++step) {
+            if (step >= 64 || !visited.insert(current).second) {
+                AddDiagnostic(diagnostics, "PXPKG1235",
+                              "save migration chain contains a cycle or exceeds 64 steps");
+                break;
+            }
+            const auto next = migrationBySource.find(current);
+            if (next == migrationBySource.end()) {
+                AddDiagnostic(diagnostics, "PXPKG1236",
+                              "save migration chain does not reach the package content/save version");
+                break;
+            }
+            current = migrationKey(next->second->toContentVersion,
+                                   next->second->toSaveVersion);
+        }
+    }
     const auto projectInput = std::find_if(
         result.inputs.begin(), result.inputs.end(), [](const auto& input) {
             return input.input.uri == "project.pxproject";
@@ -683,6 +1289,315 @@ ValidationResult Validate(const PackageRequest& request) {
             AddDiagnostic(diagnostics, "PXPKG1227",
                           "project.pxproject could not be read", true);
         } else {
+            const Json canonicalProject =
+                Json::parse(*projectText, nullptr, false);
+            bool projectValid = canonicalProject.is_object();
+            static const std::set<std::string> projectFields{
+                "format", "schemaRevision", "id", "name", "version",
+                "contentVersion", "saveVersion", "graphicsTier",
+                "effects",
+                "saveMigrations", "engineCompatibility", "resolution",
+                "entry", "defaultLocale", "supportedLocales", "storyIndex",
+                "gameCatalog", "extensions", "uiEntryPoints", "assets",
+                "characters", "uiComponents", "settings"};
+            if (projectValid) {
+                for (auto item = canonicalProject.begin();
+                     item != canonicalProject.end(); ++item) {
+                    if (!projectFields.contains(item.key())) projectValid = false;
+                }
+            }
+            const auto requiredObject = [&canonicalProject](const char* name) {
+                return canonicalProject.contains(name) &&
+                       canonicalProject[name].is_object();
+            };
+            const auto requiredArray = [&canonicalProject](const char* name) {
+                return canonicalProject.contains(name) &&
+                       canonicalProject[name].is_array();
+            };
+            projectValid = projectValid &&
+                canonicalProject.value("format", std::string{}) ==
+                    "PrismatiXProject" &&
+                canonicalProject.value("schemaRevision", 0) == 2 &&
+                canonicalProject.value("id", std::string{}) == request.gameId &&
+                !canonicalProject.value("name", std::string{}).empty() &&
+                !canonicalProject.value("version", std::string{}).empty() &&
+                canonicalProject.value("contentVersion", std::string{}) ==
+                    request.contentVersion &&
+                canonicalProject.value("saveVersion", std::uint32_t{0}) ==
+                    request.saveVersion &&
+                canonicalProject.value("graphicsTier", std::string("basic")) ==
+                    request.graphicsTier &&
+                requiredObject("resolution") && requiredObject("entry") &&
+                requiredArray("supportedLocales") &&
+                requiredArray("extensions") &&
+                requiredObject("uiEntryPoints") &&
+                canonicalProject.contains("storyIndex") &&
+                canonicalProject["storyIndex"].is_string() &&
+                canonicalProject.contains("gameCatalog") &&
+                canonicalProject["gameCatalog"].is_string() &&
+                canonicalProject.contains("defaultLocale") &&
+                canonicalProject["defaultLocale"].is_string();
+            if (projectValid) {
+                const auto& resolution = canonicalProject["resolution"];
+                const auto& entry = canonicalProject["entry"];
+                projectValid = resolution.value("width", 0) == request.width &&
+                    resolution.value("height", 0) == request.height &&
+                    !entry.value("story", std::string{}).empty() &&
+                    !entry.value("ui", std::string{}).empty();
+            }
+            if (!projectValid) {
+                AddDiagnostic(
+                    diagnostics, "PXPKG1240",
+                    "project.pxproject is not the canonical 0.2 project contract or disagrees with the package request");
+            } else {
+                const std::string storyIndex =
+                    canonicalProject["storyIndex"].get<std::string>();
+                if (!IsSafeUri(storyIndex) ||
+                    !storyIndex.ends_with(".pxindex") ||
+                    !packagedInputs.contains(storyIndex)) {
+                    AddDiagnostic(diagnostics, "PXPKG1241",
+                                  "canonical project storyIndex is missing from package inputs");
+                }
+                const std::string defaultLocale =
+                    canonicalProject["defaultLocale"].get<std::string>();
+                bool defaultDeclared = false;
+                std::set<std::string> localeIds;
+                for (const auto& locale : canonicalProject["supportedLocales"]) {
+                    if (!locale.is_string() ||
+                        !IsLocaleId(locale.get<std::string>()) ||
+                        !localeIds.insert(locale.get<std::string>()).second) {
+                        AddDiagnostic(diagnostics, "PXPKG1242",
+                                      "supportedLocales contains an invalid or duplicate locale");
+                        continue;
+                    }
+                    const std::string id = locale.get<std::string>();
+                    if (id == defaultLocale) defaultDeclared = true;
+                    const std::string localePath =
+                        "Content/Localization/" + id + ".json";
+                    const auto localeText = readPackaged(localePath);
+                    const Json localeDocument =
+                        localeText ? Json::parse(*localeText, nullptr, false)
+                                   : Json(Json::value_t::discarded);
+                    if (!localeText || localeDocument.is_discarded() ||
+                        !localeDocument.is_object() ||
+                        localeDocument.value("format", std::string{}) !=
+                            "PrismatiXLocale" ||
+                        localeDocument.value("schemaRevision", 0) != 2 ||
+                        localeDocument.value("locale", std::string{}) != id ||
+                        !localeDocument.contains("strings") ||
+                        !localeDocument["strings"].is_object()) {
+                        AddDiagnostic(diagnostics, "PXPKG1243",
+                                      "canonical locale is missing or has mismatched identity: " + id);
+                    }
+                    const std::string runtimePath =
+                        "Runtime/Locales/" + id + "/main.pxir";
+                    const std::string sourceMapPath =
+                        "Runtime/Locales/" + id + "/main.pxmap";
+                    const auto runtimeText = readPackaged(runtimePath);
+                    const auto mapText = readPackaged(sourceMapPath);
+                    const auto runtime = runtimeText
+                                             ? ParseRuntimeIr(*runtimeText)
+                                             : RuntimeIrParseResult{};
+                    const auto map = mapText ? ParseSourceMap(*mapText)
+                                             : SourceMapParseResult{};
+                    if (!runtimeText || !mapText || !runtime.Valid() ||
+                        !map.Valid() ||
+                        runtime.document.documentId != map.document.documentId ||
+                        runtime.document.operations.size() !=
+                            map.document.mappings.size()) {
+                        AddDiagnostic(
+                            diagnostics, "PXPKG1260",
+                            "locale RuntimeIR/source-map pair is missing or invalid: " +
+                                id);
+                    } else {
+                        bool identitiesValid = true;
+                        for (const auto& operation : runtime.document.operations) {
+                            const auto* mapping =
+                                map.document.Find(operation.operationId);
+                            if (!mapping ||
+                                mapping->sourceId != operation.sourceId ||
+                                !packagedInputs.contains(mapping->sourceUri)) {
+                                identitiesValid = false;
+                                break;
+                            }
+                        }
+                        if (!identitiesValid) {
+                            AddDiagnostic(
+                                diagnostics, "PXPKG1261",
+                                "locale RuntimeIR source identities are not fully packaged: " +
+                                    id);
+                        } else {
+                            ValidateLocaleFontCoverage(
+                                localeDocument, id, &runtime.document,
+                                packagedInputs, diagnostics);
+                            localizedPrograms.push_back(
+                                {id, runtime.document, map.document});
+                        }
+                    }
+                }
+                if (!defaultDeclared) {
+                    AddDiagnostic(diagnostics, "PXPKG1244",
+                                  "defaultLocale is not present in supportedLocales");
+                }
+                std::vector<std::string> projectExtensions;
+                for (const auto& extension : canonicalProject["extensions"]) {
+                    if (!extension.is_string() ||
+                        !IsSafeUri(extension.get<std::string>()) ||
+                        !extension.get<std::string>().ends_with(".pxextension") ||
+                        !packagedInputs.contains(extension.get<std::string>())) {
+                        AddDiagnostic(diagnostics, "PXPKG1245",
+                                      "project extension is invalid or missing from package inputs");
+                        continue;
+                    }
+                    const std::string manifestPath = extension.get<std::string>();
+                    projectExtensions.push_back(manifestPath);
+                    const auto manifestText = readPackaged(manifestPath);
+                    const Json extensionManifest = manifestText
+                        ? Json::parse(*manifestText, nullptr, false)
+                        : Json(Json::value_t::discarded);
+                    if (!manifestText || extensionManifest.is_discarded() ||
+                        !extensionManifest.is_object() ||
+                        extensionManifest.value("format", std::string{}) !=
+                            "PrismatiXExtension" ||
+                        extensionManifest.value("schemaRevision", 0) != 2 ||
+                        extensionManifest.value("language", std::string{}) !=
+                            "javascript" ||
+                        !semver::Parse(extensionManifest.value(
+                            "version", std::string{}))) {
+                        AddDiagnostic(diagnostics, "PXPKG1247",
+                                      "extension manifest is not a canonical 0.2 JavaScript extension: " + manifestPath);
+                        continue;
+                    }
+                    const auto compatible = semver::Satisfies(
+                        semver::Version{0, 2, 0},
+                        extensionManifest.value("requiredEngineVersion",
+                                                std::string{}));
+                    if (!compatible || !*compatible) {
+                        AddDiagnostic(diagnostics, "PXPKG1248",
+                                      "extension requiredEngineVersion is invalid or incompatible: " + manifestPath);
+                    }
+                    const auto capabilities = extensionManifest.find("capabilities");
+                    std::set<std::string> declaredCapabilities;
+                    if (capabilities == extensionManifest.end() ||
+                        !capabilities->is_array()) {
+                        AddDiagnostic(diagnostics, "PXPKG1249",
+                                      "extension capabilities must be an array: " + manifestPath);
+                    } else {
+                        for (const auto& capability : *capabilities) {
+                            if (!capability.is_string() ||
+                                !std::set<std::string>{"runtime", "animation", "ui", "audio"}
+                                     .contains(capability.get<std::string>()) ||
+                                !declaredCapabilities.insert(
+                                    capability.get<std::string>()).second) {
+                                AddDiagnostic(diagnostics, "PXPKG1249",
+                                              "extension capability is unsupported or duplicated: " + manifestPath);
+                            }
+                        }
+                    }
+                    const std::string entryPath =
+                        extensionManifest.value("entry", std::string{});
+                    const auto separator = manifestPath.find_last_of('/');
+                    const std::string resolvedEntry =
+                        separator == std::string::npos
+                            ? entryPath
+                            : manifestPath.substr(0, separator + 1) + entryPath;
+                    if (!IsSafeUri(entryPath) || !entryPath.ends_with(".js") ||
+                        !IsSafeUri(resolvedEntry) ||
+                        !packagedInputs.contains(resolvedEntry)) {
+                        AddDiagnostic(diagnostics, "PXPKG1250",
+                                      "extension entry is unsafe or missing from package inputs: " + manifestPath);
+                    }
+                    const auto modules = extensionManifest.find("modules");
+                    if (modules != extensionManifest.end()) {
+                        if (!modules->is_array() || modules->size() > 1024) {
+                            AddDiagnostic(diagnostics, "PXPKG1252",
+                                          "extension modules must be a bounded array: " + manifestPath);
+                        } else {
+                            std::set<std::string> uniqueModules;
+                            for (const auto& module : *modules) {
+                                if (!module.is_string()) {
+                                    AddDiagnostic(diagnostics, "PXPKG1252",
+                                                  "extension module path must be a string: " + manifestPath);
+                                    continue;
+                                }
+                                const std::string modulePath = module.get<std::string>();
+                                const std::string resolvedModule =
+                                    separator == std::string::npos
+                                        ? modulePath
+                                        : manifestPath.substr(0, separator + 1) + modulePath;
+                                if (!IsSafeUri(modulePath) ||
+                                    !modulePath.ends_with(".js") ||
+                                    !IsSafeUri(resolvedModule) ||
+                                    !uniqueModules.insert(resolvedModule).second ||
+                                    !packagedInputs.contains(resolvedModule)) {
+                                    AddDiagnostic(diagnostics, "PXPKG1252",
+                                                  "extension module is unsafe, duplicated, or missing from package inputs: " +
+                                                      manifestPath + " -> " + modulePath);
+                                }
+                            }
+                        }
+                    }
+                }
+                if (projectExtensions != request.extensions) {
+                    AddDiagnostic(diagnostics, "PXPKG1251",
+                                  "package request extensions do not exactly match project.pxproject");
+                }
+                for (auto ui = canonicalProject["uiEntryPoints"].begin();
+                     ui != canonicalProject["uiEntryPoints"].end(); ++ui) {
+                    if (!ui.value().is_string() ||
+                        !IsSafeUri(ui.value().get<std::string>()) ||
+                        !packagedInputs.contains(ui.value().get<std::string>())) {
+                        AddDiagnostic(diagnostics, "PXPKG1246",
+                                      "project UI entry point is invalid or missing from package inputs");
+                    }
+                }
+                if (const auto components = canonicalProject.find("uiComponents");
+                    components != canonicalProject.end()) {
+                    if (!components->is_array() || components->size() > 100'000) {
+                        AddDiagnostic(diagnostics, "PXPKG1257",
+                                      "project uiComponents must be a bounded array");
+                    } else {
+                        std::set<std::string> componentIds;
+                        for (const auto& descriptor : *components) {
+                            if (!descriptor.is_object() ||
+                                !descriptor.contains("id") ||
+                                !descriptor["id"].is_string() ||
+                                !descriptor.contains("source") ||
+                                !descriptor["source"].is_string()) {
+                                AddDiagnostic(diagnostics, "PXPKG1258",
+                                              "UI component descriptor is malformed");
+                                continue;
+                            }
+                            const std::string id = descriptor["id"].get<std::string>();
+                            const std::string path = descriptor["source"].get<std::string>();
+                            const auto source = packagedInputs.find(path);
+                            if (!componentIds.insert(id).second ||
+                                !IsSafeUri(path) || source == packagedInputs.end()) {
+                                AddDiagnostic(diagnostics, "PXPKG1259",
+                                              "UI component identity is duplicated or its source is missing");
+                                continue;
+                            }
+                            const auto componentText = ReadTextFile(
+                                source->second->source, source->second->input.size);
+                            const auto component = componentText
+                                ? ParseUiComponent(*componentText)
+                                : UiComponentParseResult{};
+                            if (!componentText) {
+                                AddDiagnostic(diagnostics, "PXPKG1260",
+                                              "UI component document could not be read: " + path,
+                                              true);
+                            } else if (!component.Valid()) {
+                                for (const auto& issue : component.diagnostics)
+                                    AddDiagnostic(diagnostics, issue.code,
+                                                  issue.message, false, path);
+                            } else if (component.document.content.id != id) {
+                                AddDiagnostic(diagnostics, "PXPKG1260",
+                                              "UI component document identity disagrees with its descriptor: " + path);
+                            }
+                        }
+                    }
+                }
+            }
             const auto characters = LoadCharacterResources(
                 *projectText, readPackaged, packagedExists);
             for (const auto& diagnostic : characters.diagnostics) {
@@ -694,74 +1609,142 @@ ValidationResult Validate(const PackageRequest& request) {
                              : std::string(" [") + diagnostic.path + "]"));
             }
             if (characters.diagnostics.empty()) {
-                const auto catalog =
-                    packagedInputs.find("Content/Game.pxres");
-                if (catalog == packagedInputs.end()) {
-                    if (!characters.declared) {
-                        AddDiagnostic(
-                            diagnostics, "PXPKG1228",
-                            "legacy project without characterResources requires Content/Game.pxres");
+                const Json projectDocument = Json::parse(*projectText, nullptr, false);
+                const std::string canonicalCatalog =
+                    projectDocument.is_object()
+                        ? projectDocument.value("gameCatalog", std::string{})
+                        : std::string{};
+                if (!canonicalCatalog.empty()) {
+                    const auto catalog = packagedInputs.find(canonicalCatalog);
+                    if (!IsSafeUri(canonicalCatalog) ||
+                        !canonicalCatalog.ends_with(".pxgame") ||
+                        catalog == packagedInputs.end()) {
+                        AddDiagnostic(diagnostics, "PXPKG1230",
+                                      "canonical project gameCatalog must identify a packaged .pxgame document");
+                    } else {
+                        const auto catalogText = ReadTextFile(
+                            catalog->second->source, catalog->second->input.size);
+                        if (!catalogText) {
+                            AddDiagnostic(diagnostics, "PXPKG1231",
+                                          "canonical gameCatalog could not be read", true);
+                        } else {
+                            auto runtimeCatalog = LoadCanonicalGameCatalogResources(
+                                *catalogText, canonicalCatalog);
+                            if (runtimeCatalog.Valid() &&
+                                !runtimeCatalog.document.gallery.empty()) {
+                                runtimeCatalog = ResolveGameCatalogGalleryResources(
+                                    std::move(runtimeCatalog.document), *projectText,
+                                    packagedExists, canonicalCatalog);
+                            }
+                            for (const auto& diagnostic : runtimeCatalog.diagnostics)
+                                AddDiagnostic(diagnostics, diagnostic.code,
+                                              diagnostic.message);
+                        }
                     }
                 } else {
-                    const auto catalogText = ReadTextFile(
-                        catalog->second->source, catalog->second->input.size);
-                    if (!catalogText) {
-                        AddDiagnostic(
-                            diagnostics, "PXPKG1229",
-                            "Content/Game.pxres could not be read", true);
-                    } else {
-                        const auto runtimeCatalog = LoadGameCatalogResources(
-                            *catalogText, "Content/Game.pxres",
-                            characters.declared
-                                ? LegacyGameCatalogPolicy::RejectCharacterNodes
-                                : LegacyGameCatalogPolicy::AllowCharacterNodes,
-                            characters.declared
-                                ? LegacyGalleryReferencePolicy::RejectPathStrings
-                                : LegacyGalleryReferencePolicy::AllowPathStrings);
-                        for (const auto& diagnostic :
-                             runtimeCatalog.diagnostics) {
-                            AddDiagnostic(
-                                diagnostics, diagnostic.code,
-                                diagnostic.message +
-                                    (diagnostic.nodeId.empty()
-                                         ? std::string{}
-                                         : std::string(" [node ") +
-                                               diagnostic.nodeId + "]"));
-                        }
-                        if (runtimeCatalog.Valid() && characters.declared) {
-                            const auto resolvedCatalog =
-                                ResolveGameCatalogGalleryResources(
-                                    runtimeCatalog.document, *projectText,
-                                    packagedExists, "Content/Game.pxres");
-                            for (const auto& diagnostic :
-                                 resolvedCatalog.diagnostics) {
-                                AddDiagnostic(
-                                    diagnostics, diagnostic.code,
-                                    diagnostic.message +
-                                        (diagnostic.nodeId.empty()
-                                             ? std::string{}
-                                             : std::string(" [node ") +
-                                                   diagnostic.nodeId + "]"));
-                            }
-                        }
-                    }
+                    AddDiagnostic(
+                        diagnostics, "PXPKG1228",
+                        "0.2 project must declare a canonical gameCatalog .pxgame document");
                 }
             }
         }
     }
+    std::optional<RuntimeIrDocument> packagedRuntimeIr;
+    std::optional<SourceMapDocument> packagedSourceMap;
     if (!uris.contains(request.startScript)) {
         AddDiagnostic(diagnostics, "PXPKG1217", "startScript must be present in inputs");
-    }
-    else {
+    } else {
         const auto script = std::find_if(result.inputs.begin(), result.inputs.end(), [&](const auto& input) { return input.input.uri == request.startScript; });
         if (script != result.inputs.end()) {
             const auto text = ReadTextFile(script->source, script->input.size);
-            if (!text || !ParseRuntimeIr(*text).Valid()) {
+            const auto parsed = text ? ParseRuntimeIr(*text)
+                                     : RuntimeIrParseResult{};
+            if (!text || !parsed.Valid()) {
                 AddDiagnostic(diagnostics, "PXPKG1223", "startScript is not valid compiled Runtime IR");
+            } else {
+                packagedRuntimeIr = parsed.document;
             }
         }
     }
-
+    if (!uris.contains(request.sourceMap)) {
+        AddDiagnostic(diagnostics, "PXPKG1238",
+                      "sourceMap must be present in inputs");
+    } else {
+        const auto sourceMap = std::find_if(
+            result.inputs.begin(), result.inputs.end(), [&](const auto& input) {
+                return input.input.uri == request.sourceMap;
+            });
+        const auto text = sourceMap == result.inputs.end()
+                              ? std::optional<std::string>{}
+                              : ReadTextFile(sourceMap->source,
+                                             sourceMap->input.size);
+        const auto parsed = text ? ParseSourceMap(*text)
+                                 : SourceMapParseResult{};
+        if (!text || !parsed.Valid()) {
+            AddDiagnostic(diagnostics, "PXPKG1239",
+                          "sourceMap is not a valid canonical source map");
+            for (const auto& issue : parsed.diagnostics) {
+                AddDiagnostic(diagnostics, issue.code, issue.message);
+            }
+        } else {
+            packagedSourceMap = parsed.document;
+        }
+    }
+    if (packagedRuntimeIr && packagedSourceMap) {
+        if (packagedRuntimeIr->documentId != packagedSourceMap->documentId) {
+            AddDiagnostic(diagnostics, "PXPKG1252",
+                          "sourceMap documentId does not match startScript Runtime IR");
+        }
+        if (packagedRuntimeIr->operations.size() !=
+            packagedSourceMap->mappings.size()) {
+            AddDiagnostic(diagnostics, "PXPKG1253",
+                          "sourceMap must contain exactly one mapping per Runtime IR operation");
+        }
+        for (const auto& operation : packagedRuntimeIr->operations) {
+            const auto* mapping = packagedSourceMap->Find(operation.operationId);
+            if (!mapping) {
+                AddDiagnostic(diagnostics, "PXPKG1254",
+                              "sourceMap is missing operationId: " + operation.operationId);
+                continue;
+            }
+            if (mapping->sourceId != operation.sourceId ||
+                mapping->startLine != operation.sourceLine) {
+                AddDiagnostic(diagnostics, "PXPKG1255",
+                              "sourceMap identity or source line disagrees with Runtime IR: " +
+                                  operation.operationId);
+            }
+            if (!uris.contains(mapping->sourceUri)) {
+                AddDiagnostic(diagnostics, "PXPKG1256",
+                              "sourceMap sourceUri is not packaged: " +
+                                  mapping->sourceUri);
+            }
+        }
+        for (const auto& localized : localizedPrograms) {
+            if (localized.runtimeIr.documentId !=
+                    packagedRuntimeIr->documentId ||
+                localized.runtimeIr.operations.size() !=
+                    packagedRuntimeIr->operations.size()) {
+                AddDiagnostic(diagnostics, "PXPKG1262",
+                              "locale Story topology differs from package entry: " +
+                                  localized.locale);
+                continue;
+            }
+            for (std::size_t index = 0;
+                 index < packagedRuntimeIr->operations.size(); ++index) {
+                const auto& canonical = packagedRuntimeIr->operations[index];
+                const auto& translated = localized.runtimeIr.operations[index];
+                if (canonical.operationId != translated.operationId ||
+                    canonical.sourceId != translated.sourceId ||
+                    canonical.kind != translated.kind) {
+                    AddDiagnostic(
+                        diagnostics, "PXPKG1263",
+                        "locale Story stable identity differs at operation " +
+                            std::to_string(index) + ": " + localized.locale);
+                    break;
+                }
+            }
+        }
+    }
     std::set<std::string> routeIds;
     for (const auto& route : request.routes) {
         if (route.id.empty() || route.id.size() > 128 || !std::all_of(route.id.begin(), route.id.end(), [](const unsigned char c) { return std::isalnum(c) != 0 || c == '-' || c == '_' || c == '.'; })) {
@@ -783,8 +1766,19 @@ ValidationResult Validate(const PackageRequest& request) {
             const auto scene = std::find_if(result.inputs.begin(), result.inputs.end(), [&](const auto& input) { return input.input.uri == route.scene; });
             if (scene != result.inputs.end()) {
                 const auto text = ReadTextFile(scene->source, scene->input.size);
-                if (!text || !PlayerUiSceneId(*text)) {
+                if (!text) {
                     AddDiagnostic(diagnostics, "PXPKG1224", "route scene is neither a typed UIScene nor UI document: " + route.scene);
+                } else if (route.scene.ends_with(".pxui")) {
+                    const auto parsed = ParseUi(*text);
+                    if (!parsed.Valid()) {
+                        for (const auto& issue : parsed.diagnostics)
+                            AddDiagnostic(diagnostics, issue.code,
+                                          issue.message, false, route.scene);
+                    }
+                } else if (!PlayerUiSceneId(*text)) {
+                    AddDiagnostic(diagnostics, "PXPKG1224",
+                                  "route scene is not a typed UIScene: " +
+                                      route.scene);
                 }
             }
         }
@@ -803,6 +1797,88 @@ std::filesystem::path UniqueSibling(const std::filesystem::path& output, const s
 
 }  // namespace
 
+std::string detail::SerializePackageManifest(
+    const detail::PackageManifest& manifest) {
+    Json routes = Json::array();
+    for (const auto& route : manifest.routes) {
+        routes.push_back({{"id", route.id}, {"sceneId", route.sceneId},
+                          {"scene", route.scene}});
+    }
+    Json archives = Json::array();
+    for (const auto& archive : manifest.archives) {
+        archives.push_back({{"file", archive.file}, {"group", archive.group},
+                            {"optional", archive.optional}});
+    }
+    Json migrations = Json::array();
+    for (const auto& migration : manifest.saveMigrations) {
+        migrations.push_back(
+            {{"id", migration.id},
+             {"from", {{"contentVersion", migration.fromContentVersion},
+                       {"saveVersion", migration.fromSaveVersion}}},
+             {"to", {{"contentVersion", migration.toContentVersion},
+                     {"saveVersion", migration.toSaveVersion}}},
+             {"asset", migration.asset}});
+    }
+    const Json extensions = manifest.extensions;
+    Json customEffects = Json::array();
+    for (const auto& effect : manifest.customEffects) {
+        Json uniforms = Json::array();
+        for (const auto& uniform : effect.uniforms) {
+            Json defaultValue = uniform.defaultValue[0];
+            if (uniform.type == "vec2")
+                defaultValue = Json::array(
+                    {uniform.defaultValue[0], uniform.defaultValue[1]});
+            else if (uniform.type == "color")
+                defaultValue = Json::array(
+                    {uniform.defaultValue[0], uniform.defaultValue[1],
+                     uniform.defaultValue[2], uniform.defaultValue[3]});
+            uniforms.push_back({{"name", uniform.name},
+                                {"type", uniform.type},
+                                {"slot", uniform.slot},
+                                {"default", std::move(defaultValue)},
+                                {"minimum", uniform.minimum},
+                                {"maximum", uniform.maximum}});
+        }
+        Json artifacts = Json::array();
+        for (const auto& artifact : effect.artifacts)
+            artifacts.push_back({{"format", artifact.format},
+                                 {"asset", artifact.asset},
+                                 {"fingerprint", artifact.fingerprint}});
+        customEffects.push_back(
+            {{"id", effect.id},
+             {"targetLayer", effect.targetLayer},
+             {"uniforms", std::move(uniforms)},
+             {"artifacts", std::move(artifacts)},
+             {"reflection", {{"samplers", effect.samplerCount},
+                              {"uniformBuffers", effect.uniformBufferCount},
+                              {"storageTextures", 0},
+                              {"storageBuffers", 0}}}});
+    }
+    const Json root{
+        {"format", "PrismatiXPackageManifest"},
+        {"schemaRevision", 2},
+        {"engineVersion", manifest.engineVersion},
+        {"gameId", manifest.gameId},
+        {"title", manifest.title},
+        {"resolution", {{"width", manifest.width}, {"height", manifest.height}}},
+        {"entry", {{"runtimeIr", manifest.startRuntimeIr},
+                   {"sourceMap", manifest.sourceMap},
+                   {"route", manifest.startRoute}}},
+        {"routes", std::move(routes)},
+        {"archives", std::move(archives)},
+        {"saveMigrations", std::move(migrations)},
+        {"extensions", extensions},
+        {"customEffects", std::move(customEffects)},
+        {"contentVersion", manifest.contentVersion},
+        {"saveVersion", manifest.saveVersion},
+        {"packageFingerprint", manifest.packageFingerprint},
+        {"encryption", {{"enabled", manifest.encrypted},
+                        {"archiveKey", manifest.archiveKey}}},
+        {"graphicsTier", manifest.graphicsTier}};
+    return root.dump(2) + "\n";
+}
+
+
 PackageRequestParseResult ParsePackageRequest(const std::string_view text) {
     PackageRequestParseResult result;
     if (text.size() > 16 * 1024 * 1024) {
@@ -820,17 +1896,35 @@ PackageRequestParseResult ParsePackageRequest(const std::string_view text) {
     }
     const auto revision = root.find("schemaRevision");
     const auto revisionValue = revision == root.end() ? std::optional<int>{} : JsonInt(*revision);
-    if (!revisionValue || *revisionValue != 1) {
-        AddDiagnostic(result.diagnostics, "PXPKG1103", "schemaRevision must be 1");
+    if (!revisionValue || *revisionValue != 2) {
+        AddDiagnostic(result.diagnostics, "PXPKG1103", "schemaRevision must be 2");
     }
     RequiredString(root, "requestId", result.request.requestId, result.diagnostics);
+    RequiredString(root, "gameId", result.request.gameId, result.diagnostics);
     result.request.projectRoot = JsonPath(root, "projectRoot");
     result.request.outputDir = JsonPath(root, "outputDir");
     result.request.playerExecutable = JsonPath(root, "playerExecutable");
     result.request.cancelFile = JsonPath(root, "cancelFile");
     RequiredString(root, "title", result.request.title, result.diagnostics);
     RequiredString(root, "startScript", result.request.startScript, result.diagnostics);
+    RequiredString(root, "sourceMap", result.request.sourceMap, result.diagnostics);
     RequiredString(root, "contentVersion", result.request.contentVersion, result.diagnostics);
+    RequiredString(root, "graphicsTier", result.request.graphicsTier,
+                   result.diagnostics);
+    if (result.request.graphicsTier != "basic" &&
+        result.request.graphicsTier != "gpu-effects")
+        AddDiagnostic(result.diagnostics, "PXPKG1120",
+                      "graphicsTier must be basic or gpu-effects");
+    const auto saveVersion = root.find("saveVersion");
+    const auto saveVersionValue = saveVersion == root.end()
+                                      ? std::optional<int>{}
+                                      : JsonInt(*saveVersion);
+    if (!saveVersionValue || *saveVersionValue <= 0) {
+        AddDiagnostic(result.diagnostics, "PXPKG1114",
+                      "saveVersion must be a positive integer");
+    } else {
+        result.request.saveVersion = static_cast<std::uint32_t>(*saveVersionValue);
+    }
 
     const auto startRoute = root.find("startRoute");
     if (startRoute == root.end() || !startRoute->is_string()) {
@@ -918,6 +2012,54 @@ PackageRequestParseResult ParsePackageRequest(const std::string_view text) {
             }
         }
     }
+    const auto extensions = root.find("extensions");
+    if (extensions == root.end() || !extensions->is_array() ||
+        extensions->size() > 1024) {
+        AddDiagnostic(result.diagnostics, "PXPKG1118",
+                      "extensions must be a bounded array");
+    } else {
+        std::set<std::string> paths;
+        for (const auto& value : *extensions) {
+            if (!value.is_string() ||
+                !IsSafeUri(value.get<std::string>()) ||
+                !value.get<std::string>().ends_with(".pxextension") ||
+                !paths.insert(value.get<std::string>()).second) {
+                AddDiagnostic(result.diagnostics, "PXPKG1119",
+                              "extension path is unsafe or duplicated");
+                continue;
+            }
+            result.request.extensions.push_back(value.get<std::string>());
+        }
+    }
+    const auto migrations = root.find("saveMigrations");
+    if (migrations != root.end()) {
+        if (!migrations->is_array() || migrations->size() > 64) {
+            AddDiagnostic(result.diagnostics, "PXPKG1115",
+                          "saveMigrations must be an array with at most 64 entries");
+        } else {
+            for (const auto& item : *migrations) {
+                if (!item.is_object() || !item.contains("from") ||
+                    !item["from"].is_object() || !item.contains("to") ||
+                    !item["to"].is_object()) {
+                    AddDiagnostic(result.diagnostics, "PXPKG1116",
+                                  "each save migration requires from and to objects");
+                    continue;
+                }
+                PackageSaveMigration migration;
+                migration.id = item.value("id", std::string{});
+                migration.asset = item.value("asset", std::string{});
+                migration.fromContentVersion =
+                    item["from"].value("contentVersion", std::string{});
+                migration.fromSaveVersion =
+                    item["from"].value("saveVersion", std::uint32_t{0});
+                migration.toContentVersion =
+                    item["to"].value("contentVersion", std::string{});
+                migration.toSaveVersion =
+                    item["to"].value("saveVersion", std::uint32_t{0});
+                result.request.saveMigrations.push_back(std::move(migration));
+            }
+        }
+    }
     return result;
 }
 
@@ -947,6 +2089,44 @@ std::string SerializePackageEvent(const PackageEvent& event) {
             object["code"] = event.code;
             object["message"] = event.message;
             object["retryable"] = event.retryable;
+            {
+                const auto diagnosticJson = [](const PackageDiagnostic& diagnostic) {
+                    Json span = nullptr;
+                    if (diagnostic.span) {
+                        span = {{"path", diagnostic.span->path},
+                                {"start", {{"line", diagnostic.span->start.line},
+                                           {"column", diagnostic.span->start.column},
+                                           {"offset", diagnostic.span->start.offset}}},
+                                {"end", {{"line", diagnostic.span->end.line},
+                                         {"column", diagnostic.span->end.column},
+                                         {"offset", diagnostic.span->end.offset}}}};
+                    }
+                    return Json{{"severity", diagnostic.severity},
+                                {"code", diagnostic.code},
+                                {"message", diagnostic.message},
+                                {"documentId", diagnostic.documentId},
+                                {"sourceId", diagnostic.sourceId},
+                                {"span", std::move(span)},
+                                {"hint", diagnostic.hint},
+                                {"cause", diagnostic.cause},
+                                {"retryable", diagnostic.retryable}};
+                };
+                std::vector<PackageDiagnostic> diagnostics = event.diagnostics;
+                if (diagnostics.empty())
+                    diagnostics.push_back(
+                        {event.code, event.message, event.retryable});
+                object["diagnostic"] = diagnosticJson(diagnostics.front());
+                object["diagnostics"] = Json::array();
+                for (const auto& diagnostic : diagnostics)
+                    object["diagnostics"].push_back(diagnosticJson(diagnostic));
+                const auto& primary = diagnostics.front();
+                object["severity"] = primary.severity;
+                object["documentId"] = primary.documentId;
+                object["sourceId"] = primary.sourceId;
+                object["span"] = object["diagnostic"]["span"];
+                object["hint"] = primary.hint;
+                object["cause"] = primary.cause;
+            }
             break;
     }
     return object.dump();
@@ -985,8 +2165,7 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
     EmitProgress(request, eventSink, "validate", 0, request.inputs.size(), "Validating package request");
     auto validated = Validate(request);
     if (!validated.diagnostics.empty()) {
-        const auto& first = validated.diagnostics.front();
-        return Fail(request, eventSink, first.code, first.message, first.retryable);
+        return Fail(request, eventSink, std::move(validated.diagnostics));
     }
     if (Cancelled(request)) {
         return Cancel(request, eventSink, "Packaging was cancelled before staging");
@@ -1015,7 +2194,35 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
     std::sort(validated.inputs.begin(), validated.inputs.end(), [](const auto& left, const auto& right) { return left.input.uri < right.input.uri; });
     std::vector<ArchiveEntry> entries;
     entries.reserve(validated.inputs.size());
-    std::string identityMaterial = request.contentVersion;
+    std::string identityMaterial =
+        "PrismatiXPackageManifest|2|0.2.0|" + request.gameId + "|" +
+        request.contentVersion + "|" + std::to_string(request.saveVersion) + "|" +
+        request.startScript + "|" + request.sourceMap + "|" + request.startRoute + "|" +
+        request.graphicsTier + "|" +
+        std::to_string(request.width) + "x" + std::to_string(request.height);
+    auto identityRoutes = request.routes;
+    std::sort(identityRoutes.begin(), identityRoutes.end(), [](const auto& left,
+                                                               const auto& right) {
+        return left.id < right.id;
+    });
+    for (const auto& route : identityRoutes)
+        identityMaterial += "|route|" + route.id + "|" + route.scene;
+    for (const auto& extension : request.extensions)
+        identityMaterial += "|extension|" + extension;
+    auto identityMigrations = request.saveMigrations;
+    std::sort(identityMigrations.begin(), identityMigrations.end(),
+              [](const auto& left, const auto& right) {
+                  return left.id < right.id;
+              });
+    for (const auto& migration : identityMigrations) {
+        identityMaterial +=
+            "|save-migration|" + migration.id + "|" +
+            migration.fromContentVersion + "|" +
+            std::to_string(migration.fromSaveVersion) + "|" +
+            migration.toContentVersion + "|" +
+            std::to_string(migration.toSaveVersion) + "|" +
+            migration.asset;
+    }
     for (std::size_t index = 0; index < validated.inputs.size(); ++index) {
         if (Cancelled(request)) {
             return Cancel(request, eventSink, "Packaging was cancelled while reading inputs");
@@ -1030,9 +2237,41 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
         if (!readFingerprint || Hex(*readFingerprint) != Lower(input.input.fingerprint)) {
             return Fail(request, eventSink, "PXPKG1305", "An input changed while packaging: " + input.input.uri, true);
         }
+        std::string contentFingerprint = Lower(input.input.fingerprint);
+        const Json normalized = Json::parse(
+            std::string(bytes->begin(), bytes->end()), nullptr, false);
+        if (!normalized.is_discarded()) {
+            const std::string canonical = normalized.dump();
+            if (const auto digest = Sha256Text(canonical))
+                contentFingerprint = Hex(*digest);
+        }
         entries.push_back({ input.input.uri, std::move(*bytes) });
-        identityMaterial += "|" + input.input.uri + "|" + Lower(input.input.fingerprint);
+        identityMaterial += "|" + input.input.uri + "|" + contentFingerprint;
     }
+    auto customEffects = CompileCustomEffects(entries);
+    if (!customEffects.diagnostics.empty()) {
+        const auto& first = customEffects.diagnostics.front();
+        return Fail(request, eventSink, first.code, first.message,
+                    first.retryable);
+    }
+    entries.erase(
+        std::remove_if(entries.begin(), entries.end(), [&](const auto& entry) {
+            return customEffects.sourceAssets.contains(entry.uri);
+        }),
+        entries.end());
+    for (auto& artifact : customEffects.artifacts) {
+        if (FindArchiveEntry(entries, artifact.uri))
+            return Fail(request, eventSink, "PXPKG1511",
+                        "Generated shader artifact collides with a project input: " +
+                            artifact.uri);
+        const auto digest = Sha256Bytes(artifact.data.data(), artifact.data.size());
+        if (!digest)
+            return Fail(request, eventSink, "PXPKG1306",
+                        "SHA-256 is unavailable");
+        identityMaterial += "|shader-artifact|" + artifact.uri + "|" + Hex(*digest);
+        entries.push_back(std::move(artifact));
+    }
+    std::ranges::sort(entries, {}, &ArchiveEntry::uri);
     const auto packageDigest = Sha256Text(identityMaterial);
     if (!packageDigest) {
         return Fail(request, eventSink, "PXPKG1306", "SHA-256 is unavailable");
@@ -1076,12 +2315,27 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
         }
     }
 
-    const std::string manifest = PackageManifest(request, packageFingerprint, encryptionKey, entries);
+    const std::string manifest = detail::SerializePackageManifest(
+        BuildPackageManifest(request, packageFingerprint, encryptionKey, entries,
+                             std::move(customEffects.manifests)));
+    // Package output is verified by the exact parser used by the shipped
+    // Player. A private approximation here would allow Packager and Player to
+    // disagree about the artifact that is about to be promoted.
+    const auto manifestSelfCheck = detail::ParsePackageManifest(manifest);
+    if (!manifestSelfCheck.Valid()) {
+        const auto& diagnostic = manifestSelfCheck.diagnostics.front();
+        return Fail(request, eventSink, diagnostic.code, diagnostic.message);
+    }
     {
-        std::ofstream output(staging / "game.pxpackage", std::ios::binary | std::ios::trunc);
+        std::filesystem::create_directories(staging / "Package", error);
+        if (error) {
+            return Fail(request, eventSink, "PXPKG1311",
+                        "Package manifest directory could not be created", true);
+        }
+        std::ofstream output(staging / "Package/manifest.json", std::ios::binary | std::ios::trunc);
         output << manifest;
         if (!output) {
-            return Fail(request, eventSink, "PXPKG1311", "game.pxpackage could not be written", true);
+            return Fail(request, eventSink, "PXPKG1311", "Package/manifest.json could not be written", true);
         }
     }
     if (Cancelled(request)) {
@@ -1132,7 +2386,7 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
     completed.requestId = request.requestId;
     completed.outputDir = request.outputDir;
     completed.playerExecutable = request.outputDir / request.playerExecutable.filename();
-    completed.manifestPath = request.outputDir / "game.pxpackage";
+    completed.manifestPath = request.outputDir / "Package/manifest.json";
     completed.inputCount = request.inputs.size();
     Emit(eventSink, std::move(completed));
     PackageRunResult result;

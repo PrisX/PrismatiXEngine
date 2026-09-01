@@ -4,30 +4,30 @@ export const contractManifest: Readonly<Record<string, unknown>> = {
     {
       "extension": ".pxir",
       "id": "runtimeIr",
-      "migration": "reject-future",
+      "migration": "reject-legacy",
       "schema": "runtime-ir.schema.json",
-      "schemaRevision": 1
+      "schemaRevision": 2
     },
     {
       "extension": ".pxmap",
       "id": "sourceMap",
-      "migration": "reject-future",
+      "migration": "reject-legacy",
       "schema": "source-map.schema.json",
-      "schemaRevision": 1
+      "schemaRevision": 2
     },
     {
       "extension": ".pxproject",
       "id": "project",
-      "migration": "reject-future",
+      "migration": "cli-only",
       "schema": "project.schema.json",
-      "schemaRevision": 1
+      "schemaRevision": 2
     },
     {
       "extension": ".pxcharacter",
       "id": "character",
-      "migration": "reject-future",
+      "migration": "migrate-previous",
       "schema": "character.schema.json",
-      "schemaRevision": 1
+      "schemaRevision": 2
     },
     {
       "extension": ".pxui",
@@ -37,50 +37,71 @@ export const contractManifest: Readonly<Record<string, unknown>> = {
       "schemaRevision": 2
     },
     {
+      "extension": ".pxuicomponent",
+      "id": "uiComponent",
+      "migration": "cli-only",
+      "schema": "ui-component.schema.json",
+      "schemaRevision": 2
+    },
+    {
       "extension": ".pxtimeline",
       "id": "timeline",
-      "migration": "reject-future",
+      "migration": "cli-only",
       "schema": "timeline.schema.json",
-      "schemaRevision": 1
+      "schemaRevision": 2
     },
     {
       "extension": ".pxanim",
       "id": "animation",
-      "migration": "migrate-version-4",
+      "migration": "cli-only",
       "schema": "animation.schema.json",
-      "schemaRevision": 1
+      "schemaRevision": 2
     },
     {
       "extension": ".pxextension",
       "id": "extension",
       "migration": "reject-future",
       "schema": "extension.schema.json",
-      "schemaRevision": 1
+      "schemaRevision": 2
     },
     {
       "extension": "story.pxindex",
       "id": "storyIndex",
-      "migration": "reject-future",
+      "migration": "cli-only",
       "schema": "story-index.schema.json",
-      "schemaRevision": 1
+      "schemaRevision": 2
     },
     {
       "extension": "game.pxgame",
       "id": "game",
-      "migration": "reject-future",
+      "migration": "cli-only",
       "schema": "game.schema.json",
-      "schemaRevision": 1
+      "schemaRevision": 2
     },
     {
       "extension": ".json",
       "id": "locale",
-      "migration": "reject-future",
+      "migration": "cli-only",
       "schema": "locale.schema.json",
-      "schemaRevision": 1
+      "schemaRevision": 2
+    },
+    {
+      "extension": ".pxsave-migration",
+      "id": "saveMigration",
+      "migration": "reject-legacy",
+      "schema": "save-migration.schema.json",
+      "schemaRevision": 2
+    },
+    {
+      "extension": ".pxeffect",
+      "id": "effect",
+      "migration": "reject-legacy",
+      "schema": "effect.schema.json",
+      "schemaRevision": 2
     }
   ],
   "format": "PrismatiXContractManifest",
-  "schemaRevision": 1
+  "schemaRevision": 2
 };
 
 export const contractSchemas: Readonly<Record<string, object>> = {
@@ -162,7 +183,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "type": "array"
       },
       "schemaRevision": {
-        "const": 1
+        "const": 2
       },
       "tracks": {
         "items": {
@@ -355,7 +376,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "type": "integer"
       },
       "schemaRevision": {
-        "const": 1
+        "const": 2
       },
       "voice": {
         "additionalProperties": false,
@@ -607,6 +628,77 @@ export const contractSchemas: Readonly<Record<string, object>> = {
     },
     "$id": "https://prismatix.dev/contracts/common.schema.json",
     "$schema": "https://json-schema.org/draft/2020-12/schema"
+  },
+  "effect.schema.json": {
+    "$id": "https://prismatix.dev/contracts/effect.schema.json",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "format": {
+        "const": "PrismatiXEffect"
+      },
+      "id": {
+        "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+      },
+      "schemaRevision": {
+        "const": 2
+      },
+      "shader": {
+        "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+      },
+      "targetLayer": {
+        "const": "stage"
+      },
+      "uniforms": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "default": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"
+            },
+            "maximum": {
+              "type": "number"
+            },
+            "minimum": {
+              "type": "number"
+            },
+            "name": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+            },
+            "slot": {
+              "maximum": 7,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "enum": [
+                "number",
+                "vec2",
+                "color"
+              ]
+            }
+          },
+          "required": [
+            "name",
+            "type",
+            "slot",
+            "default"
+          ],
+          "type": "object"
+        },
+        "maxItems": 8,
+        "type": "array"
+      }
+    },
+    "required": [
+      "format",
+      "schemaRevision",
+      "id",
+      "targetLayer",
+      "shader",
+      "uniforms"
+    ],
+    "type": "object"
   },
   "extension.schema.json": {
     "$defs": {
@@ -866,19 +958,36 @@ export const contractSchemas: Readonly<Record<string, object>> = {
       "language": {
         "const": "javascript"
       },
+      "modules": {
+        "items": {
+          "allOf": [
+            {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+            },
+            {
+              "pattern": "\\.js$",
+              "type": "string"
+            }
+          ]
+        },
+        "maxItems": 1024,
+        "type": "array",
+        "uniqueItems": true
+      },
       "requiredEngineVersion": {
         "maxLength": 128,
+        "minLength": 1,
         "type": "string"
       },
       "safety": {
         "$ref": "#/$defs/safety"
       },
       "schemaRevision": {
-        "const": 1
+        "const": 2
       },
       "version": {
         "maxLength": 64,
-        "minLength": 1,
+        "pattern": "^[vV]?[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$",
         "type": "string"
       }
     },
@@ -888,6 +997,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
       "language",
       "id",
       "version",
+      "requiredEngineVersion",
       "entry",
       "capabilities",
       "commands",
@@ -939,6 +1049,32 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "maxItems": 100000,
         "type": "array"
       },
+      "inputBindings": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "argument": {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            "command": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+            },
+            "key": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "key",
+            "command"
+          ],
+          "type": "object"
+        },
+        "maxItems": 100000,
+        "type": "array"
+      },
       "progressionFlags": {
         "items": {
           "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
@@ -947,7 +1083,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "uniqueItems": true
       },
       "schemaRevision": {
-        "const": 1
+        "const": 2
       },
       "unlockables": {
         "items": {
@@ -994,8 +1130,11 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             "name": {
               "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
             },
-            "persistent": {
-              "type": "boolean"
+            "scope": {
+              "enum": [
+                "session",
+                "profile"
+              ]
             },
             "type": {
               "enum": [
@@ -1010,7 +1149,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             "name",
             "type",
             "default",
-            "persistent"
+            "scope"
           ],
           "type": "object"
         },
@@ -1032,6 +1171,14 @@ export const contractSchemas: Readonly<Record<string, object>> = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
     "properties": {
+      "fontChain": {
+        "items": {
+          "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+        },
+        "maxItems": 16,
+        "type": "array",
+        "uniqueItems": true
+      },
       "format": {
         "const": "PrismatiXLocale"
       },
@@ -1039,7 +1186,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/locale"
       },
       "schemaRevision": {
-        "const": 1
+        "const": 2
       },
       "strings": {
         "additionalProperties": {
@@ -1143,8 +1290,34 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "maxItems": 100000,
         "type": "array"
       },
+      "contentVersion": {
+        "maxLength": 128,
+        "minLength": 1,
+        "type": "string"
+      },
       "defaultLocale": {
         "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/locale"
+      },
+      "effects": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+            },
+            "source": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+            }
+          },
+          "required": [
+            "id",
+            "source"
+          ],
+          "type": "object"
+        },
+        "maxItems": 64,
+        "type": "array",
+        "uniqueItems": true
       },
       "engineCompatibility": {
         "additionalProperties": false,
@@ -1161,10 +1334,6 @@ export const contractSchemas: Readonly<Record<string, object>> = {
       "entry": {
         "additionalProperties": false,
         "properties": {
-          "scene": {
-            "minLength": 1,
-            "type": "string"
-          },
           "story": {
             "minLength": 1,
             "type": "string"
@@ -1174,6 +1343,10 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             "type": "string"
           }
         },
+        "required": [
+          "story",
+          "ui"
+        ],
         "type": "object"
       },
       "extensions": {
@@ -1189,6 +1362,12 @@ export const contractSchemas: Readonly<Record<string, object>> = {
       },
       "gameCatalog": {
         "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+      },
+      "graphicsTier": {
+        "enum": [
+          "basic",
+          "gpu-effects"
+        ]
       },
       "id": {
         "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
@@ -1218,8 +1397,41 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         ],
         "type": "object"
       },
+      "saveMigrations": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "asset": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+            },
+            "from": {
+              "$ref": "https://prismatix.dev/contracts/save-migration.schema.json#/$defs/version"
+            },
+            "id": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+            },
+            "to": {
+              "$ref": "https://prismatix.dev/contracts/save-migration.schema.json#/$defs/version"
+            }
+          },
+          "required": [
+            "id",
+            "from",
+            "to",
+            "asset"
+          ],
+          "type": "object"
+        },
+        "maxItems": 64,
+        "type": "array"
+      },
+      "saveVersion": {
+        "maximum": 1000000,
+        "minimum": 1,
+        "type": "integer"
+      },
       "schemaRevision": {
-        "const": 1
+        "const": 2
       },
       "settings": {
         "additionalProperties": {
@@ -1272,12 +1484,26 @@ export const contractSchemas: Readonly<Record<string, object>> = {
       },
       "version": {
         "maxLength": 64,
+        "minLength": 1,
         "type": "string"
       }
     },
     "required": [
       "format",
-      "schemaRevision"
+      "schemaRevision",
+      "id",
+      "name",
+      "version",
+      "contentVersion",
+      "saveVersion",
+      "resolution",
+      "entry",
+      "defaultLocale",
+      "supportedLocales",
+      "storyIndex",
+      "gameCatalog",
+      "extensions",
+      "uiEntryPoints"
     ],
     "type": "object"
   },
@@ -1374,7 +1600,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "type": "array"
       },
       "schemaRevision": {
-        "const": 1
+        "const": 2
       }
     },
     "required": [
@@ -1382,6 +1608,236 @@ export const contractSchemas: Readonly<Record<string, object>> = {
       "schemaRevision",
       "documentId",
       "committedRevision",
+      "operations"
+    ],
+    "type": "object"
+  },
+  "save-migration.schema.json": {
+    "$defs": {
+      "anchor": {
+        "additionalProperties": false,
+        "properties": {
+          "operationId": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "runtimeDocumentId": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "sourceId": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "runtimeDocumentId",
+          "sourceId",
+          "operationId"
+        ],
+        "type": "object"
+      },
+      "version": {
+        "additionalProperties": false,
+        "properties": {
+          "contentVersion": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "saveVersion": {
+            "maximum": 1000000,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "contentVersion",
+          "saveVersion"
+        ],
+        "type": "object"
+      }
+    },
+    "$id": "https://prismatix.dev/contracts/save-migration.schema.json",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "anchor": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "policy": {
+                "const": "preserve"
+              }
+            },
+            "required": [
+              "policy"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "mappings": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "from": {
+                      "$ref": "#/$defs/anchor"
+                    },
+                    "to": {
+                      "$ref": "#/$defs/anchor"
+                    }
+                  },
+                  "required": [
+                    "from",
+                    "to"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 100000,
+                "minItems": 1,
+                "type": "array"
+              },
+              "policy": {
+                "const": "map"
+              }
+            },
+            "required": [
+              "policy",
+              "mappings"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "format": {
+        "const": "PrismatiXSaveMigration"
+      },
+      "from": {
+        "$ref": "#/$defs/version"
+      },
+      "id": {
+        "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+      },
+      "operations": {
+        "items": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "from": {
+                  "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+                },
+                "op": {
+                  "const": "renameVariable"
+                },
+                "to": {
+                  "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+                }
+              },
+              "required": [
+                "op",
+                "from",
+                "to"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+                },
+                "op": {
+                  "const": "removeVariable"
+                }
+              },
+              "required": [
+                "op",
+                "name"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+                },
+                "op": {
+                  "const": "setVariable"
+                },
+                "value": {
+                  "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"
+                }
+              },
+              "required": [
+                "op",
+                "name",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "from": {
+                  "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+                },
+                "op": {
+                  "const": "renameRoute"
+                },
+                "to": {
+                  "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+                }
+              },
+              "required": [
+                "op",
+                "from",
+                "to"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "op": {
+                  "const": "setScript"
+                },
+                "path": {
+                  "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+                }
+              },
+              "required": [
+                "op",
+                "path"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "maxItems": 100000,
+        "type": "array"
+      },
+      "schemaRevision": {
+        "const": 2
+      },
+      "to": {
+        "$ref": "#/$defs/version"
+      }
+    },
+    "required": [
+      "format",
+      "schemaRevision",
+      "id",
+      "from",
+      "to",
+      "anchor",
       "operations"
     ],
     "type": "object"
@@ -1448,7 +1904,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "type": "array"
       },
       "schemaRevision": {
-        "const": 1
+        "const": 2
       }
     },
     "required": [
@@ -1542,7 +1998,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "type": "array"
       },
       "schemaRevision": {
-        "const": 1
+        "const": 2
       }
     },
     "required": [
@@ -1636,7 +2092,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "type": "array"
       },
       "schemaRevision": {
-        "const": 1
+        "const": 2
       },
       "tracks": {
         "items": {
@@ -1654,6 +2110,253 @@ export const contractSchemas: Readonly<Record<string, object>> = {
       "tracks",
       "markers",
       "nestedClips"
+    ],
+    "type": "object"
+  },
+  "ui-component.schema.json": {
+    "$defs": {
+      "metadata": {
+        "additionalProperties": {
+          "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"
+        },
+        "type": "object"
+      },
+      "valueType": {
+        "enum": [
+          "null",
+          "boolean",
+          "integer",
+          "number",
+          "string",
+          "vec2",
+          "rect",
+          "color",
+          "uuid",
+          "resource",
+          "token",
+          "array",
+          "object"
+        ]
+      }
+    },
+    "$id": "https://prismatix.dev/contracts/ui-component.schema.json",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "componentInterface": {
+        "additionalProperties": false,
+        "properties": {
+          "metadata": {
+            "$ref": "#/$defs/metadata"
+          },
+          "properties": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "defaultValue": {
+                  "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"
+                },
+                "displayName": {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "id": {
+                  "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+                },
+                "metadata": {
+                  "$ref": "#/$defs/metadata"
+                },
+                "nodeId": {
+                  "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"
+                },
+                "property": {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "valueType": {
+                  "$ref": "#/$defs/valueType"
+                }
+              },
+              "required": [
+                "id",
+                "displayName",
+                "nodeId",
+                "property",
+                "valueType",
+                "defaultValue"
+              ],
+              "type": "object"
+            },
+            "maxItems": 4096,
+            "type": "array"
+          },
+          "signals": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "arguments": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+                      },
+                      "valueType": {
+                        "$ref": "#/$defs/valueType"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "valueType"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 128,
+                  "type": "array"
+                },
+                "displayName": {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "id": {
+                  "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+                },
+                "metadata": {
+                  "$ref": "#/$defs/metadata"
+                },
+                "nodeId": {
+                  "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"
+                },
+                "signal": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "displayName",
+                "nodeId",
+                "signal",
+                "arguments"
+              ],
+              "type": "object"
+            },
+            "maxItems": 4096,
+            "type": "array"
+          },
+          "slots": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "displayName": {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "id": {
+                  "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+                },
+                "metadata": {
+                  "$ref": "#/$defs/metadata"
+                },
+                "nodeId": {
+                  "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"
+                }
+              },
+              "required": [
+                "id",
+                "displayName",
+                "nodeId"
+              ],
+              "type": "object"
+            },
+            "maxItems": 4096,
+            "type": "array"
+          }
+        },
+        "required": [
+          "properties",
+          "signals",
+          "slots"
+        ],
+        "type": "object"
+      },
+      "format": {
+        "const": "PrismatiXUIComponent"
+      },
+      "height": {
+        "maximum": 16384,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "id": {
+        "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"
+      },
+      "name": {
+        "maxLength": 512,
+        "minLength": 1,
+        "type": "string"
+      },
+      "nodes": {
+        "items": {
+          "$ref": "https://prismatix.dev/contracts/ui.schema.json#/$defs/node"
+        },
+        "maxItems": 1000000,
+        "type": "array"
+      },
+      "revision": {
+        "minimum": 0,
+        "type": "integer"
+      },
+      "rootId": {
+        "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"
+      },
+      "schemaRevision": {
+        "const": 2
+      },
+      "theme": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+            },
+            "name": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "value"
+          ],
+          "type": "object"
+        },
+        "maxItems": 100000,
+        "type": "array"
+      },
+      "width": {
+        "maximum": 16384,
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "format",
+      "schemaRevision",
+      "id",
+      "revision",
+      "name",
+      "width",
+      "height",
+      "rootId",
+      "nodes",
+      "theme",
+      "componentInterface"
     ],
     "type": "object"
   },
@@ -1767,11 +2470,116 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         ],
         "type": "object"
       },
+      "componentInstance": {
+        "additionalProperties": false,
+        "properties": {
+          "componentId": {
+            "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"
+          },
+          "instanceRootId": {
+            "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"
+          },
+          "overrides": {
+            "items": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 4096,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "publicProperties": {
+            "additionalProperties": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"
+            },
+            "maxProperties": 4096,
+            "type": "object"
+          },
+          "publicSignals": {
+            "additionalProperties": {
+              "$ref": "#/$defs/componentSignalBinding"
+            },
+            "maxProperties": 4096,
+            "type": "object"
+          },
+          "sourceNodeId": {
+            "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"
+          },
+          "sourcePath": {
+            "items": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"
+            },
+            "maxItems": 96,
+            "minItems": 2,
+            "type": "array"
+          }
+        },
+        "required": [
+          "componentId",
+          "instanceRootId",
+          "sourceNodeId",
+          "sourcePath",
+          "overrides"
+        ],
+        "type": "object"
+      },
+      "componentSignalBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "argumentBindings": {
+            "additionalProperties": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+            },
+            "maxProperties": 1024,
+            "type": "object"
+          },
+          "arguments": {
+            "additionalProperties": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"
+            },
+            "maxProperties": 1024,
+            "type": "object"
+          },
+          "id": {
+            "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+          }
+        },
+        "required": [
+          "id",
+          "arguments"
+        ],
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "componentSlot": {
+        "additionalProperties": false,
+        "properties": {
+          "instanceRootId": {
+            "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"
+          },
+          "slotId": {
+            "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+          }
+        },
+        "required": [
+          "instanceRootId",
+          "slotId"
+        ],
+        "type": "object"
+      },
       "layout": {
         "additionalProperties": false,
         "properties": {
           "alignment": {
-            "type": "string"
+            "enum": [
+              "start",
+              "center",
+              "end",
+              "fill"
+            ]
           },
           "anchorBottom": {
             "type": "number"
@@ -1805,7 +2613,11 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             "type": "number"
           },
           "sizeRule": {
-            "type": "string"
+            "enum": [
+              "fixed",
+              "fill",
+              "content"
+            ]
           },
           "width": {
             "minimum": 0,
@@ -1839,6 +2651,15 @@ export const contractSchemas: Readonly<Record<string, object>> = {
       "node": {
         "additionalProperties": false,
         "properties": {
+          "accessibilityDescription": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "accessibilityFocusOrder": {
+            "maximum": 1000000,
+            "minimum": -1000000,
+            "type": "integer"
+          },
           "accessibilityLabel": {
             "maxLength": 1024,
             "type": "string"
@@ -1852,6 +2673,23 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             "properties": {
               "backgroundColor": {
                 "type": "string"
+              },
+              "disabledOpacity": {
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "focusColor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "hoverBackgroundColor": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "opacity": {
                 "maximum": 1,
@@ -1899,6 +2737,12 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             },
             "maxProperties": 4096,
             "type": "object"
+          },
+          "componentInstance": {
+            "$ref": "#/$defs/componentInstance"
+          },
+          "componentSlot": {
+            "$ref": "#/$defs/componentSlot"
           },
           "id": {
             "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"
@@ -2407,16 +3251,19 @@ export const contractSchemas: Readonly<Record<string, object>> = {
 };
 
 export const contractHashes: Readonly<Record<string, string>> = {
-  "animation.schema.json": "ef9ccdba9dbc8a08a00848e487cb2a6938c23f88b891ff0c85bf9d16783254a7",
-  "character.schema.json": "d6af4d8ed7df6e3dfaaa6c078a6bc9b16bd6be4e7d1c3a15f2a4e523665c5dd8",
+  "animation.schema.json": "350ac0431be758205b25b425155a920cbf626f918d3be410950e2717c69b8ec8",
+  "character.schema.json": "aadcf4c9e6d8e141581293dde1ffd1ef004f5423c4e8d450f7c2b0c880a5f64e",
   "common.schema.json": "1ba66770e3cf7f90b6ffe29f7fdccd263ad2eeec4cb2cff63bc0f7839a5d57f4",
-  "extension.schema.json": "2ced627cae6fc4b3541aad073952f6bb5b709ec9a88b7395a45c923e2f9701fc",
-  "game.schema.json": "37e76afb7bf5b7b41d0b6db9503905406d676aa493c1a916f2057c36588ce404",
-  "locale.schema.json": "d3482fa91066a2ed7d279ff78ff485f50a029ffb55eaa14af3067a0cd74fa59e",
-  "project.schema.json": "ea34bd07d70bb4dd377892618bfc1f19145daf82e464d8c8eaf01dd837ef1e25",
-  "runtime-ir.schema.json": "f8dc49127f73b493d796065b98f4fb0cae2a6324ae93ad57dd29c3e3c83c1a57",
-  "source-map.schema.json": "7870837298e9d117b988fb06889627dfb7a62ab42007e99b43e0bd42e092f223",
-  "story-index.schema.json": "b0bd44940c40789084bec7be8f42aca9f2611edb2e7d04207359783b19a62bb3",
-  "timeline.schema.json": "c38698ec2cb9567e750581d5846198f1a99c08fcbebb0ad3dd6b3e620876d420",
-  "ui.schema.json": "549f4c930603f10190e97874387a215e6aff07ed4de336f4132b794b753dc956"
+  "effect.schema.json": "12b6be0b325683ba82b6b2cc8cc48971cc953ac9d0dcf53f837b3d3c1726f83f",
+  "extension.schema.json": "a39f8a55fc564850feadcca4af041d7e707a5b2074bf7508df2b24c909821c01",
+  "game.schema.json": "f0592fc75a4deb4aed7f192c076165012ef480196a07cd7d2136be390821dcba",
+  "locale.schema.json": "d9fc4deae726d556c7bc7fb51a1d7a25e8db065147cb79450e31326dd81f4d79",
+  "project.schema.json": "8a7ed01b49ac02f5b1c6b2bf6c74267fd058f8e92763ec7de1ba0c7cee034ac1",
+  "runtime-ir.schema.json": "951ce9f24b2c0ec13a536c6ee8f657796b5c90792f71587cf24ed181239d35d1",
+  "save-migration.schema.json": "fd9f89119a4e8a70324f95bb6e0261e5d78b0ea173e2755422c36e5e2379b6cf",
+  "source-map.schema.json": "1a0d20fbc5ed639fcb33bf7e8b81f78caf9af091a4d245cee2e5e66eb80d3e62",
+  "story-index.schema.json": "1f88e0ed708fcf0edc47dddf80fd6617c40e746b6779105516d463f85191a4bb",
+  "timeline.schema.json": "48f267a0d203fc813879304be8df079b965785d71258cbcf358b51db269265be",
+  "ui-component.schema.json": "d91e1ee59871449dfb898409aadaf054adc2f39c3df0df911ce993122e3a281a",
+  "ui.schema.json": "d02ad777cd9bc272981ed65073bfbe9ecf10ddee9b2297f87b8e3273a24b8631"
 };

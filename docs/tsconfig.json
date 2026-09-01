@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmitOnError": true,
+    "outDir": "../out/docs-examples",
+    "rootDir": "examples",
+    "types": ["node"],
+    "skipLibCheck": true
+  },
+  "include": ["examples/*.ts"]
+}

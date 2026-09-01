@@ -1,6 +1,7 @@
 #include "Engine/UI/UiAdapter.h"
 
 #include "Engine/Core/TypeRegistry.h"
+#include "Engine/Core/NumberParsing.h"
 #include "Engine/Core/Uuid.h"
 #include "Engine/Graphics/Renderer2D.h"
 #include "Engine/UI/Layout.h"
@@ -211,10 +212,7 @@ std::optional<Variant> ThemeTokenValue(const std::string_view value,
         }
         case VariantType::Number: {
             double parsed = 0.0;
-            const auto [end, error] =
-                std::from_chars(value.data(), value.data() + value.size(), parsed);
-            return error == std::errc{} && end == value.data() + value.size() &&
-                           std::isfinite(parsed)
+            return ParseFiniteDouble(value, parsed)
                        ? std::optional<Variant>{Variant(parsed)}
                        : std::nullopt;
         }
@@ -680,6 +678,10 @@ std::unique_ptr<Control> CreateControl(
     if (!control || !id) return nullptr;
     control->SetId(*id);
     control->SetName(node.name);
+    control->SetAccessibilityLabel(node.accessibilityLabel);
+    control->SetAccessibilityRole(node.accessibilityRole);
+    control->SetAccessibilityDescription(node.accessibilityDescription);
+    control->SetAccessibilityFocusOrder(node.accessibilityFocusOrder);
     control->SetVisibility(node.visible ? Visibility::Visible : Visibility::Hidden);
     control->SetPivot({node.layout.pivotX, node.layout.pivotY});
     if (node.kind != sdk::UiNodeKind::Image)
@@ -848,7 +850,7 @@ UiRuntimeTree BuildUiRuntimeTree(
     std::unordered_map<std::string, std::vector<const sdk::UiNode*>> children;
     UiThemeValues theme;
     for (const auto& token : document.theme)
-        theme.emplace(token.name, token.value);
+        theme.emplace(token.id, token.value);
     for (const auto& node : document.nodes) {
         nodes.emplace(node.id, &node);
         if (node.parentId) children[*node.parentId].push_back(&node);

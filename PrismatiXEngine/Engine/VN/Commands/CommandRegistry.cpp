@@ -1,4 +1,6 @@
 #include "Engine/VN/Commands/CommandRegistry.h"
+
+#include "Engine/Core/NumberParsing.h"
 #include "Engine/VN/Expression/Expression.h"
 
 #include <algorithm>
@@ -38,8 +40,7 @@ bool StringMatchesType(std::string_view value, const CommandParameterDescriptor&
                (!parameter.maximum||numeric<=*parameter.maximum);
     }
     if (parameter.type == VariantType::Number) {
-        double parsed=0;const auto result=std::from_chars(value.data(),value.data()+value.size(),parsed);
-        if(result.ec!=std::errc{}||result.ptr!=value.data()+value.size())return false;
+        double parsed=0;if(!ParseFiniteDouble(value,parsed))return false;
         return (!parameter.minimum||parsed>=*parameter.minimum)&&
                (!parameter.maximum||parsed<=*parameter.maximum);
     }
@@ -155,7 +156,7 @@ CommandRegistry MakeBuiltins() {
     add(Descriptor("call","Flow",{Param("target",VariantType::String,false,{},CommandEditorWidget::Target)},CommandWaitPolicy::Immediate,RollbackPolicy::Reversible,true));
     add(Descriptor("return","Flow",{},CommandWaitPolicy::Immediate,RollbackPolicy::Reversible,false));
     add(Descriptor("branch","Logic",{Param("expression",VariantType::Object,true,{},CommandEditorWidget::Expression),Param("trueTarget",VariantType::String,false,{},CommandEditorWidget::Target),Param("falseTarget",VariantType::String,false,{},CommandEditorWidget::Target)},CommandWaitPolicy::Immediate,RollbackPolicy::Reversible,false));
-    add(Descriptor("var","Logic",{Param("name",VariantType::String,true),Param("value",VariantType::Null),Param("add",VariantType::Number),Param("persistent",VariantType::Bool)},CommandWaitPolicy::Immediate,RollbackPolicy::Reversible,false));
+    add(Descriptor("var","Logic",{Param("name",VariantType::String,true),Param("value",VariantType::Null),Param("add",VariantType::Number),Param("scope",VariantType::String,false,Variant("session"),CommandEditorWidget::Default,{"session","profile"})},CommandWaitPolicy::Immediate,RollbackPolicy::Reversible,false));
     add(Descriptor("bg","Stage",{Param("file",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource),Param("rule",VariantType::ResourceRef,false,{},CommandEditorWidget::Resource),Param("time",VariantType::Integer),Param("vague",VariantType::Integer)}));
     add(Descriptor("layer","Stage",{Param("name",VariantType::String,true),Param("file",VariantType::ResourceRef,false,{},CommandEditorWidget::Resource),Param("x",VariantType::Number),Param("y",VariantType::Number),Param("scale",VariantType::Number),Param("alpha",VariantType::Integer),Param("z",VariantType::Integer)}));
     add(Descriptor("layer_clear","Stage",{Param("name",VariantType::String,true)}));
@@ -185,9 +186,8 @@ CommandRegistry MakeBuiltins() {
 
 }  // namespace
 
-Status CommandRegistry::Register(CommandDescriptor descriptor) {
+Status CommandRegistry::NormalizeAndValidateDescriptor(CommandDescriptor& descriptor) {
     if(descriptor.id.empty())return Status::Fail(SchemaError("PXSCHEMA7001","Command id cannot be empty",{}));
-    if(m_byId.contains(descriptor.id))return Status::Fail(SchemaError("PXSCHEMA7002","Duplicate command id: "+descriptor.id,{}));
     std::unordered_set<std::string> names;
     for(const auto& parameter:descriptor.parameters){
         if(parameter.name.empty()||!names.insert(parameter.name).second)
@@ -212,7 +212,55 @@ Status CommandRegistry::Register(CommandDescriptor descriptor) {
                                   !VariantMatchesConstraints(parameter.defaultValue,parameter)))
             return Status::Fail(SchemaError("PXSCHEMA7014","Parameter default does not satisfy its schema in command "+descriptor.id,{},0,parameter.name));
     }
+    return Status::Ok();
+}
+
+Status CommandRegistry::Register(CommandDescriptor descriptor) {
+    const Status valid = NormalizeAndValidateDescriptor(descriptor);
+    if (!valid) return valid;
+    if(m_byId.contains(descriptor.id))return Status::Fail(SchemaError("PXSCHEMA7002","Duplicate command id: "+descriptor.id,{}));
     m_byId[descriptor.id]=m_descriptors.size();m_descriptors.push_back(std::move(descriptor));return Status::Ok();
+}
+
+Status CommandRegistry::ReplaceSource(const std::string_view sourceId,
+                                      std::vector<CommandDescriptor> descriptors) {
+    if (sourceId.empty())
+        return Status::Fail(SchemaError("PXSCHEMA7020", "Command source id cannot be empty", {}));
+    std::unordered_set<std::string> incoming;
+    for (auto& descriptor : descriptors) {
+        descriptor.sourceId = std::string(sourceId);
+        const Status valid = NormalizeAndValidateDescriptor(descriptor);
+        if (!valid) return valid;
+        if (!incoming.insert(descriptor.id).second)
+            return Status::Fail(SchemaError("PXSCHEMA7002", "Duplicate command id: " + descriptor.id, {}));
+        if (const auto* current = Find(descriptor.id);
+            current && current->sourceId != sourceId)
+            return Status::Fail(SchemaError("PXSCHEMA7002", "Duplicate command id: " + descriptor.id, {}));
+    }
+
+    std::vector<CommandDescriptor> next;
+    next.reserve(m_descriptors.size() + descriptors.size());
+    for (auto& descriptor : m_descriptors)
+        if (descriptor.sourceId != sourceId) next.push_back(std::move(descriptor));
+    for (auto& descriptor : descriptors) next.push_back(std::move(descriptor));
+    m_descriptors = std::move(next);
+    Reindex();
+    return Status::Ok();
+}
+
+Status CommandRegistry::RemoveSource(const std::string_view sourceId) {
+    if (sourceId.empty()) return Status::Ok();
+    std::erase_if(m_descriptors, [&](const CommandDescriptor& descriptor) {
+        return descriptor.sourceId == sourceId;
+    });
+    Reindex();
+    return Status::Ok();
+}
+
+void CommandRegistry::Reindex() {
+    m_byId.clear();
+    for (std::size_t index = 0; index < m_descriptors.size(); ++index)
+        m_byId[m_descriptors[index].id] = index;
 }
 
 const CommandDescriptor* CommandRegistry::Find(std::string_view id) const {

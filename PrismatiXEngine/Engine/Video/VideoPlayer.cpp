@@ -124,14 +124,15 @@ bool VideoPlayer::Open(const std::string& vfsPath, float volume) {
         Close();
         return false;
     }
-    m_texture = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGB24,
-                                  SDL_TEXTUREACCESS_STREAMING, m_width, m_height);
+    m_texture = graphics::TextureResource::CreateStreaming(
+        graphics::TextureBackend::SdlRenderer, m_renderer,
+        graphics::StreamingTextureFormat::Rgb24, m_width, m_height);
     if (!m_texture) {
         PX_LOG_ERROR("VideoPlayer: texture creation failed: {}", SDL_GetError());
         Close();
         return false;
     }
-    SDL_SetTextureScaleMode(m_texture, SDL_SCALEMODE_LINEAR);
+    (void)m_texture.SetLinearSampling();
     m_rgb = std::make_unique<std::uint8_t[]>(static_cast<std::size_t>(m_width) * m_height * 3);
 
     plm_set_video_decode_callback(m_plm, &OnVideoCb, this);
@@ -246,15 +247,16 @@ bool VideoPlayer::OpenFfmpeg(const std::string& vfsPath) {
     state.frame = av_frame_alloc();
     state.scaler = sws_getContext(m_width, m_height, state.codec->pix_fmt, m_width, m_height,
                                   AV_PIX_FMT_RGB24, SWS_BILINEAR, nullptr, nullptr, nullptr);
-    m_texture = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGB24,
-                                  SDL_TEXTUREACCESS_STREAMING, m_width, m_height);
+    m_texture = graphics::TextureResource::CreateStreaming(
+        graphics::TextureBackend::SdlRenderer, m_renderer,
+        graphics::StreamingTextureFormat::Rgb24, m_width, m_height);
     m_rgb = std::make_unique<std::uint8_t[]>(static_cast<std::size_t>(m_width) * m_height * 3);
     if (!state.packet || !state.frame || !state.scaler || !m_texture || !m_rgb) {
         PX_LOG_ERROR("VideoPlayer: FFmpeg frame resources could not be created");
         CloseFfmpeg();
         return false;
     }
-    SDL_SetTextureScaleMode(m_texture, SDL_SCALEMODE_LINEAR);
+    (void)m_texture.SetLinearSampling();
     m_finished = false;
     if (!DecodeNextFfmpegFrame()) {
         PX_LOG_WARN("VideoPlayer: '{}' contains no decodable video frames", vfsPath);
@@ -349,7 +351,8 @@ void VideoPlayer::UpdateFfmpeg(const float dt) {
     state.clock += std::clamp(static_cast<double>(dt), 0.0, 0.25);
     int decoded = 0;
     while (state.pending && state.pendingTime <= state.clock + 0.001 && decoded < 8) {
-        SDL_UpdateTexture(m_texture, nullptr, m_rgb.get(), m_width * 3);
+        (void)m_texture.Update(m_rgb.get(),
+                               static_cast<std::size_t>(m_width) * 3u);
         state.pending = false;
         ++decoded;
         if (!DecodeNextFfmpegFrame()) break;
@@ -381,10 +384,7 @@ void VideoPlayer::Close() {
         SDL_DestroyAudioStream(m_audio);
         m_audio = nullptr;
     }
-    if (m_texture) {
-        SDL_DestroyTexture(m_texture);
-        m_texture = nullptr;
-    }
+    m_texture.Reset();
     if (m_plm) {
         plm_destroy(m_plm);
         m_plm = nullptr;
@@ -399,7 +399,8 @@ void VideoPlayer::Close() {
 void VideoPlayer::HandleVideoFrame(void* framePtr) {
     auto* frame = static_cast<plm_frame_t*>(framePtr);
     plm_frame_to_rgb(frame, m_rgb.get(), m_width * 3);
-    SDL_UpdateTexture(m_texture, nullptr, m_rgb.get(), m_width * 3);
+    (void)m_texture.Update(m_rgb.get(),
+                           static_cast<std::size_t>(m_width) * 3u);
 }
 
 void VideoPlayer::HandleAudioSamples(void* samplesPtr) {
@@ -442,7 +443,11 @@ void VideoPlayer::Render(int logicalW, int logicalH) {
     dst.h = m_height * scale;
     dst.x = (logicalW - dst.w) * 0.5f;
     dst.y = (logicalH - dst.h) * 0.5f;
-    SDL_RenderTexture(m_renderer, m_texture, nullptr, &dst);
+    SDL_RenderTexture(
+        m_renderer,
+        static_cast<SDL_Texture*>(m_texture.Native(
+            graphics::TextureBackend::SdlRenderer)),
+        nullptr, &dst);
 }
 
 }

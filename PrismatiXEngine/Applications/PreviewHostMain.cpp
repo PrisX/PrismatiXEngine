@@ -28,6 +28,7 @@
 #include "Engine/Preview/PerformancePreview.h"
 #include "Engine/Runtime.h"
 #include "Engine/SDK/RuntimeIr.h"
+#include "Engine/SDK/SourceMap.h"
 #include "Engine/SDK/Ui.h"
 #include "Engine/Session/RuntimeSession.h"
 #include "Engine/UI/Actions/BuiltInActionProvider.h"
@@ -175,9 +176,15 @@ Json PreviewDiagnosticJson(
               {"nodeId", diagnostic.source.nodeId},
               {"property", diagnostic.source.property},
               {"line", diagnostic.source.line},
-              {"column", diagnostic.source.column}}},
+              {"column", diagnostic.source.column},
+              {"endLine", diagnostic.source.endLine},
+              {"endColumn", diagnostic.source.endColumn}}},
+            {"documentId", diagnostic.documentId},
+            {"sourceId", diagnostic.sourceId},
             {"operationId", diagnostic.operationId},
             {"quickFix", diagnostic.quickFix},
+            {"hint", diagnostic.hint},
+            {"cause", diagnostic.cause},
             {"operationIndex", diagnostic.operationIndex}};
 }
 
@@ -221,7 +228,16 @@ UiPreviewUpdatePlan PlanUiPreviewUpdate(const Json& before, const Json& after) {
         // Only ordinary authored layout, content, appearance, visibility and
         // TypeRegistry-backed property changes are safe in-place. Everything
         // that owns callbacks, bindings, components, or hierarchy reloads.
-        if (WithoutKeys(oldNode, { "name", "visible", "locked", "layout", "content", "appearance", "runtimeProperties" }) != WithoutKeys(newNode, { "name", "visible", "locked", "layout", "content", "appearance", "runtimeProperties" }))
+        if (WithoutKeys(oldNode,
+                        {"name", "visible", "locked", "layout", "text",
+                         "assetId", "appearance", "accessibilityLabel",
+                         "accessibilityRole", "accessibilityDescription",
+                         "accessibilityFocusOrder", "runtimeProperties"}) !=
+            WithoutKeys(newNode,
+                        {"name", "visible", "locked", "layout", "text",
+                         "assetId", "appearance", "accessibilityLabel",
+                         "accessibilityRole", "accessibilityDescription",
+                         "accessibilityFocusOrder", "runtimeProperties"}))
             return { .reason = "nodeStructureOrInteractionChanged" };
     }
     return { .patch = true, .changedNodeCount = changedNodeCount, .reason = changedNodeCount == 0 ? "revisionOnly" : "propertyPatch" };
@@ -534,7 +550,7 @@ private:
         if (*type == "hello") {
             Json response = Response(request, "ready");
             response["runtimeIrSchemaRevision"] = 1;
-            response["studioUiSchemaRevision"] = 1;
+            response["uiSchemaRevision"] = 2;
             response["renderMode"] = "nativeWindow";
             Write(response);
             spdlog::info("PreviewHost protocol session is ready");
@@ -1289,6 +1305,8 @@ private:
             return;
         }
         std::unordered_map<std::string, RuntimeSourceLocation> runtimeSources;
+        std::optional<std::string> runtimeSourceMapText;
+        std::string runtimeSourceMapPath;
         std::filesystem::path sourceMapPath(*irPath);
         sourceMapPath.replace_extension(".pxmap");
         std::error_code sourceMapError;
@@ -1296,54 +1314,47 @@ private:
             std::filesystem::path(*projectRoot) / sourceMapPath, sourceMapError);
         if (!sourceMapError && sourceMapExists) {
             const auto sourceMapFile = ReadProjectFile(*projectRoot, sourceMapPath.generic_string());
-            const Json sourceMap = sourceMapFile
-                ? Json::parse(sourceMapFile->second, nullptr, false)
-                : Json(Json::value_t::discarded);
-            const bool validHeader = sourceMap.is_object() &&
-                sourceMap.value("format", std::string{}) == "PrismatiXSourceMap" &&
-                sourceMap.value("schemaRevision", 0U) == 1 &&
-                sourceMap.value("documentId", std::string{}) == *documentId &&
-                sourceMap.value("committedRevision", 0ULL) == committedRevision &&
-                sourceMap.contains("entries") && sourceMap["entries"].is_array();
-            if (!validHeader) {
+            const auto sourceMap = sourceMapFile
+                ? px::sdk::ParseSourceMap(sourceMapFile->second)
+                : px::sdk::SourceMapParseResult{};
+            if (!sourceMapFile || !sourceMap.Valid() ||
+                sourceMap.document.documentId != *documentId ||
+                sourceMap.document.mappings.size() !=
+                    parsed.document.operations.size()) {
                 Write(Error(request, "source-map-rejected", "Runtime source map identity or schema is invalid"));
                 return;
             }
-            for (const auto& entry : sourceMap["entries"]) {
-                if (!entry.is_object() || !entry.contains("sourceId") || !entry["sourceId"].is_string() ||
-                    entry["sourceId"].empty() || !entry.contains("sourceDocumentId") ||
-                    !entry["sourceDocumentId"].is_string() || entry["sourceDocumentId"].empty() ||
-                    !entry.contains("sourceUri") || !(entry["sourceUri"].is_null() || entry["sourceUri"].is_string())) {
-                    Write(Error(request, "source-map-rejected", "Runtime source map contains an invalid entry"));
-                    return;
-                }
-                std::string uri;
-                if (entry["sourceUri"].is_string()) {
-                    const auto safeUri = SafeProjectRelativePath(entry["sourceUri"].get<std::string>());
-                    if (!safeUri) {
-                        Write(Error(request, "source-map-rejected", "Runtime source map contains an unsafe source URI"));
-                        return;
-                    }
-                    uri = *safeUri;
-                }
-                const std::string sourceId = entry["sourceId"].get<std::string>();
+            for (const auto& entry : sourceMap.document.mappings) {
                 if (!runtimeSources.emplace(
-                        sourceId,
-                        RuntimeSourceLocation{ entry["sourceDocumentId"].get<std::string>(), std::move(uri) })
+                        entry.sourceId,
+                        RuntimeSourceLocation{sourceMap.document.documentId,
+                                              entry.sourceUri})
                          .second) {
                     Write(Error(request, "source-map-rejected", "Runtime source map sourceId values must be unique"));
                     return;
                 }
             }
             for (const auto& operation : parsed.document.operations) {
-                if (!runtimeSources.contains(operation.sourceId)) {
+                const auto* mapping =
+                    sourceMap.document.Find(operation.operationId);
+                if (!mapping || mapping->sourceId != operation.sourceId ||
+                    mapping->startLine != operation.sourceLine) {
                     Write(Error(request, "source-map-rejected", "Runtime source map does not cover every Runtime IR operation"));
                     return;
                 }
             }
+            runtimeSourceMapText = sourceMapFile->second;
+            runtimeSourceMapPath = sourceMapPath.generic_string();
         }
         if (!EnsureRuntime(loaded->first)) {
             Write(Error(request, m_runtimeStartupErrorCode.empty() ? "runtime-start-failed" : m_runtimeStartupErrorCode, m_runtimeStartupErrorMessage.empty() ? "Native preview runtime could not start" : m_runtimeStartupErrorMessage));
+            return;
+        }
+        if (runtimeSourceMapText &&
+            !m_session->SetSourceMapText(*runtimeSourceMapText,
+                                         runtimeSourceMapPath)) {
+            Write(Error(request, "source-map-rejected",
+                        "Runtime session rejected the canonical source map"));
             return;
         }
         spdlog::info("Native runtime ready");
@@ -1419,7 +1430,7 @@ private:
         const Json authoredDocument = Json::parse(loaded->second, nullptr, false);
         const px::sdk::UiParseResult parsed = px::sdk::ParseUi(loaded->second);
         if (!parsed.Valid()) {
-            Json response = Response(request, "studioUiRejected");
+            Json response = Response(request, "uiRejected");
             response["sceneId"] = *sceneId;
             response["requestedRevision"] = requestedRevision;
             response["diagnostics"] = Json::array();
@@ -1529,7 +1540,7 @@ private:
             applied = application.ApplyDocument(parsed.document, applicationOptions());
         }
         if (!applied) {
-            Json response = Response(request, "studioUiRejected");
+            Json response = Response(request, "uiRejected");
             response["sceneId"] = *sceneId;
             response["requestedRevision"] = requestedRevision;
             response["diagnostics"] = Json::array();
@@ -1559,7 +1570,7 @@ private:
         m_lastUiDebugState.clear();
         m_appliedUiRevisions[*sceneId] = requestedRevision;
         m_appliedUiDocuments[*sceneId] = authoredDocument;
-        Json response = Response(request, "studioUiApplied");
+        Json response = Response(request, "uiApplied");
         response["sceneId"] = *sceneId;
         response["appliedRevision"] = requestedRevision;
         response["nodeCount"] = summary.nodeCount;
@@ -1837,43 +1848,171 @@ private:
             m_runtimeStartupErrorMessage = StatusMessage(characterResources, "characterResources validation failed");
             return false;
         }
-        const auto runtimeCatalog = runtime.VFS().ReadText("Content/Game.pxres");
-        if (characterResourcesDeclared) {
-            if (runtimeCatalog) {
-                const auto status = catalog.LoadRuntimeResources(
-                    *runtimeCatalog, "Content/Game.pxres", px::sdk::LegacyGameCatalogPolicy::RejectCharacterNodes, px::sdk::LegacyGalleryReferencePolicy::RejectPathStrings, *projectManifest, [&runtime](const std::string_view uri) {
-                        return runtime.VFS().Exists(std::string(uri));
-                    }
-                );
-                if (!status) {
-                    m_runtimeStartupErrorCode = status.Diagnostics().empty() ? "invalid-game-catalog-resources" : status.Diagnostics().front().code;
-                    m_runtimeStartupErrorMessage = StatusMessage(status, "Game.pxres runtime resources are invalid");
-                    return false;
-                }
-            }
+        const Json project = Json::parse(*projectManifest, nullptr, false);
+        const std::string catalogPath =
+            project.is_object()
+                ? project.value("gameCatalog", std::string{})
+                : std::string{};
+        const auto runtimeCatalog = catalogPath.empty()
+                                        ? std::optional<std::string>{}
+                                        : runtime.VFS().ReadText(catalogPath);
+        if (!runtimeCatalog || !catalogPath.ends_with(".pxgame")) {
+            m_runtimeStartupErrorCode = "PXCAT1120";
+            m_runtimeStartupErrorMessage =
+                "Canonical project gameCatalog is missing from Preview BuildArtifact";
+            return false;
         }
-        else {
-            if (!runtimeCatalog) {
-                m_runtimeStartupErrorCode = "PXCHAR1033";
-                m_runtimeStartupErrorMessage = "Project declares neither characterResources nor the legacy Content/Game.pxres fallback";
-                return false;
-            }
-            const auto status = catalog.Load(*runtimeCatalog, "Content/Game.pxres");
-            if (!status) {
-                m_runtimeStartupErrorCode = status.Diagnostics().empty() ? "invalid-legacy-game-catalog" : status.Diagnostics().front().code;
-                m_runtimeStartupErrorMessage = StatusMessage(status, "Legacy Game.pxres is invalid");
-                return false;
-            }
+        const auto catalogStatus = catalog.LoadCanonical(
+            *runtimeCatalog, *projectManifest,
+            [&runtime](const std::string_view uri) {
+                return runtime.VFS().Exists(std::string(uri));
+            },
+            catalogPath);
+        if (!catalogStatus) {
+            m_runtimeStartupErrorCode =
+                catalogStatus.Diagnostics().empty()
+                    ? "invalid-game-catalog"
+                    : catalogStatus.Diagnostics().front().code;
+            m_runtimeStartupErrorMessage =
+                StatusMessage(catalogStatus,
+                              "Canonical GameCatalog is invalid");
+            return false;
         }
-        m_gameCatalogResourcesDeclared = runtimeCatalog.has_value();
+        m_gameCatalogResourcesDeclared = true;
         m_gameCatalogVariableCount = catalog.Variables().size();
         m_gameCatalogInputBindingCount = catalog.InputBindings().size();
         m_gameCatalogGalleryItemCount = catalog.Gallery().size();
         return true;
     }
 
+    struct PreviewExtensionSet {
+        std::vector<std::string> manifests;
+        std::string buildIdentity;
+    };
+
+    std::optional<PreviewExtensionSet> ReadPreviewExtensions(px::Runtime& runtime) {
+        const auto projectText = runtime.VFS().ReadText("project.pxproject");
+        const Json project = projectText
+                                 ? Json::parse(*projectText, nullptr, false)
+                                 : Json(Json::value_t::discarded);
+        if (!projectText || project.is_discarded() || !project.is_object() ||
+            project.value("format", std::string{}) != "PrismatiXProject" ||
+            project.value("schemaRevision", 0) != 2 ||
+            !project.contains("extensions") || !project["extensions"].is_array() ||
+            project["extensions"].size() > 1024) {
+            m_runtimeStartupErrorCode = "PXPREVIEW-EXT-001";
+            m_runtimeStartupErrorMessage =
+                "Preview requires the canonical project extension list";
+            return std::nullopt;
+        }
+
+        PreviewExtensionSet result;
+        std::set<std::string> uniqueManifests;
+        const auto appendIdentity = [&result](const std::string_view label,
+                                              const std::string_view value) {
+            result.buildIdentity.append(std::to_string(label.size()))
+                .push_back(':');
+            result.buildIdentity.append(label).push_back('=');
+            result.buildIdentity.append(std::to_string(value.size()))
+                .push_back(':');
+            result.buildIdentity.append(value).push_back(';');
+        };
+        for (const auto& encodedPath : project["extensions"]) {
+            if (!encodedPath.is_string()) {
+                m_runtimeStartupErrorCode = "PXPREVIEW-EXT-002";
+                m_runtimeStartupErrorMessage =
+                    "Project extension paths must be strings";
+                return std::nullopt;
+            }
+            const std::string manifestPath = encodedPath.get<std::string>();
+            const auto normalized = px::io::VFS::NormalizeVirtualPath(manifestPath);
+            if (!normalized || *normalized != manifestPath ||
+                !manifestPath.ends_with(".pxextension") ||
+                !uniqueManifests.insert(manifestPath).second) {
+                m_runtimeStartupErrorCode = "PXPREVIEW-EXT-003";
+                m_runtimeStartupErrorMessage =
+                    "Project extension paths must be unique canonical .pxextension paths";
+                return std::nullopt;
+            }
+            const auto manifestText = runtime.VFS().ReadText(manifestPath);
+            const Json manifest = manifestText
+                                      ? Json::parse(*manifestText, nullptr, false)
+                                      : Json(Json::value_t::discarded);
+            if (!manifestText || manifest.is_discarded() || !manifest.is_object() ||
+                !manifest.contains("entry") || !manifest["entry"].is_string()) {
+                m_runtimeStartupErrorCode = "PXPREVIEW-EXT-004";
+                m_runtimeStartupErrorMessage =
+                    "A declared Preview extension manifest is missing or corrupt: " +
+                    manifestPath;
+                return std::nullopt;
+            }
+            result.manifests.push_back(manifestPath);
+            appendIdentity(manifestPath, *manifestText);
+
+            std::vector<std::string> modules{
+                manifest["entry"].get<std::string>()};
+            if (const auto declared = manifest.find("modules");
+                declared != manifest.end()) {
+                if (!declared->is_array() || declared->size() > 1024) {
+                    m_runtimeStartupErrorCode = "PXPREVIEW-EXT-005";
+                    m_runtimeStartupErrorMessage =
+                        "Extension modules must be a bounded array: " + manifestPath;
+                    return std::nullopt;
+                }
+                for (const auto& module : *declared) {
+                    if (!module.is_string()) {
+                        m_runtimeStartupErrorCode = "PXPREVIEW-EXT-006";
+                        m_runtimeStartupErrorMessage =
+                            "Extension module paths must be strings: " + manifestPath;
+                        return std::nullopt;
+                    }
+                    modules.push_back(module.get<std::string>());
+                }
+            }
+            const auto separator = manifestPath.find_last_of('/');
+            std::set<std::string> uniqueModules;
+            for (const auto& module : modules) {
+                const auto relative = px::io::VFS::NormalizeVirtualPath(module);
+                const std::string resolved =
+                    separator == std::string::npos
+                        ? module
+                        : manifestPath.substr(0, separator + 1) + module;
+                const auto normalizedModule =
+                    px::io::VFS::NormalizeVirtualPath(resolved);
+                if (!relative || *relative != module || !module.ends_with(".js") ||
+                    !normalizedModule ||
+                    (!uniqueModules.insert(*normalizedModule).second &&
+                     *normalizedModule !=
+                         (separator == std::string::npos
+                              ? manifest["entry"].get<std::string>()
+                              : manifestPath.substr(0, separator + 1) +
+                                    manifest["entry"].get<std::string>()))) {
+                    m_runtimeStartupErrorCode = "PXPREVIEW-EXT-007";
+                    m_runtimeStartupErrorMessage =
+                        "Extension module path is unsafe or duplicated: " + module;
+                    return std::nullopt;
+                }
+                const auto source = runtime.VFS().ReadText(*normalizedModule);
+                if (!source) {
+                    m_runtimeStartupErrorCode = "PXPREVIEW-EXT-008";
+                    m_runtimeStartupErrorMessage =
+                        "Extension module is missing: " + *normalizedModule;
+                    return std::nullopt;
+                }
+                appendIdentity(*normalizedModule, *source);
+            }
+        }
+        return result;
+    }
+
     bool EnsureRuntime(const std::filesystem::path& projectRoot) {
         if (m_runtime && m_projectRoot == projectRoot) {
+            const auto extensions = ReadPreviewExtensions(*m_runtime);
+            if (!extensions) return false;
+            if (extensions->buildIdentity != m_extensionBuildIdentity) {
+                spdlog::info(
+                    "Preview extension graph changed; rebuilding candidate Runtime session");
+            } else {
             px::vn::GameCatalog catalog;
             bool characterResourcesDeclared = false;
             if (!LoadCharacterCatalog(*m_runtime, catalog, characterResourcesDeclared)) {
@@ -1884,6 +2023,7 @@ private:
             m_characterCount = m_gameCatalog.Characters().size();
             m_characterResourcesDeclared = characterResourcesDeclared;
             return true;
+            }
         }
         m_runtimeStartupErrorCode.clear();
         m_runtimeStartupErrorMessage.clear();
@@ -1911,6 +2051,7 @@ private:
         m_gameCatalogVariableCount = 0;
         m_gameCatalogInputBindingCount = 0;
         m_gameCatalogGalleryItemCount = 0;
+        m_extensionBuildIdentity.clear();
         auto runtime = std::make_unique<px::Runtime>();
         px::RuntimeConfig config;
         config.title = "PrismatiX Preview";
@@ -1925,13 +2066,17 @@ private:
         if (!LoadCharacterCatalog(*runtime, catalog, characterResourcesDeclared)) {
             return false;
         }
+        const auto previewExtensions = ReadPreviewExtensions(*runtime);
+        if (!previewExtensions) return false;
         spdlog::info("Constructing runtime session");
         auto session = std::make_unique<px::RuntimeSession>(px::RuntimeSession::Services{ runtime->VFS(), runtime->Audio(), runtime->Renderer(), runtime->Assets() });
         m_gameCatalog = std::move(catalog);
         session->VM().SetGameCatalog(m_gameCatalog);
         m_characterCount = m_gameCatalog.Characters().size();
         m_characterResourcesDeclared = characterResourcesDeclared;
-        spdlog::info("Preview character catalog loaded count={} source={}", m_gameCatalog.Characters().size(), characterResourcesDeclared ? "characterResources=1" : "legacy Game.pxres fallback");
+        spdlog::info("Preview canonical catalog loaded characters={} variables={}",
+                     m_gameCatalog.Characters().size(),
+                     m_gameCatalog.Variables().size());
         m_hud.SetActionSink([this](const px::ui::GalgameAction& action) {
             if (action.command == "choice.select" && m_previewSession) {
                 (void)m_previewSession->SelectChoice(
@@ -1941,6 +2086,8 @@ private:
         m_projectRoot = projectRoot;
         m_runtime = std::move(runtime);
         m_session = std::move(session);
+        m_hud.SetTextRenderer(&m_runtime->Renderer());
+        m_uiPreview.SetTextRenderer(&m_runtime->Renderer());
         m_session->SetUIStateHandler(
             [this] { return m_uiPreview.CaptureRuntimeState(); },
             [this](const px::ui::UIRuntimeState& state) {
@@ -2011,19 +2158,15 @@ private:
             }
             return handled;
         });
-        // Apply() calls EnsureRuntime before StartRuntimeIrText. Register every
-        // manifest Command descriptor here so custom Runtime IR nodes are
-        // typed and validated during compilation, never after execution starts.
-        if (m_runtime->VFS().Exists("Content/Extensions/extensions.pxindex")) {
-            if (!m_scriptHost->LoadExtensionIndex("Content/Extensions/extensions.pxindex")) {
+        // Apply() calls EnsureRuntime before StartRuntimeIrText. Register the
+        // exact ordered canonical project list so Preview and packaged Player
+        // compile against identical extension descriptors.
+        for (const auto& manifest : previewExtensions->manifests) {
+            if (!m_scriptHost->LoadExtensionManifest(manifest)) {
                 return false;
             }
         }
-        else if (m_runtime->VFS().Exists("Content/Extensions/default.pxextension")) {
-            if (!m_scriptHost->LoadExtensionManifest("Content/Extensions/default.pxextension")) {
-                return false;
-            }
-        }
+        m_extensionBuildIdentity = previewExtensions->buildIdentity;
         if (!m_scriptBreakpoints.empty()) {
             (void)m_scriptHost->SetDebugBreakpoints(m_scriptBreakpoints);
         }
@@ -2111,6 +2254,7 @@ private:
     px::ui::ObservableViewModel m_uiPreviewViewModel;
     px::ui::UIContext m_uiPreview;
     std::filesystem::path m_projectRoot;
+    std::string m_extensionBuildIdentity;
     std::unordered_map<std::string, std::uint64_t> m_appliedRevisions;
     std::unordered_map<std::string, std::uint64_t> m_appliedUiRevisions;
     std::unordered_map<std::string, Json> m_appliedUiDocuments;

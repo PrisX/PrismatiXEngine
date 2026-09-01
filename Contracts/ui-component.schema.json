@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://prismatix.dev/contracts/ui-component.schema.json",
+  "$defs": {
+    "valueType": {"enum": ["null", "boolean", "integer", "number", "string", "vec2", "rect", "color", "uuid", "resource", "token", "array", "object"]},
+    "metadata": {"type": "object", "additionalProperties": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"}}
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "schemaRevision", "id", "revision", "name", "width", "height", "rootId", "nodes", "theme", "componentInterface"],
+  "properties": {
+    "format": {"const": "PrismatiXUIComponent"},
+    "schemaRevision": {"const": 2},
+    "id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},
+    "revision": {"type": "integer", "minimum": 0},
+    "name": {"type": "string", "minLength": 1, "maxLength": 512},
+    "width": {"type": "integer", "minimum": 1, "maximum": 16384},
+    "height": {"type": "integer", "minimum": 1, "maximum": 16384},
+    "rootId": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"},
+    "nodes": {"type": "array", "maxItems": 1000000, "items": {"$ref": "https://prismatix.dev/contracts/ui.schema.json#/$defs/node"}},
+    "theme": {
+      "type": "array", "maxItems": 100000,
+      "items": {"type": "object", "additionalProperties": false, "required": ["id", "name", "value"], "properties": {"id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"}, "name": {"type": "string"}, "value": {"type": "string"}}}
+    },
+    "componentInterface": {
+      "type": "object", "additionalProperties": false,
+      "required": ["properties", "signals", "slots"],
+      "properties": {
+        "metadata": {"$ref": "#/$defs/metadata"},
+        "properties": {"type": "array", "maxItems": 4096, "items": {
+          "type": "object", "additionalProperties": false,
+          "required": ["id", "displayName", "nodeId", "property", "valueType", "defaultValue"],
+          "properties": {"id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"}, "displayName": {"type": "string", "maxLength": 512}, "nodeId": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"}, "property": {"type": "string", "minLength": 1, "maxLength": 512}, "valueType": {"$ref": "#/$defs/valueType"}, "defaultValue": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"}, "metadata": {"$ref": "#/$defs/metadata"}}
+        }},
+        "signals": {"type": "array", "maxItems": 4096, "items": {
+          "type": "object", "additionalProperties": false,
+          "required": ["id", "displayName", "nodeId", "signal", "arguments"],
+          "properties": {"id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"}, "displayName": {"type": "string", "maxLength": 512}, "nodeId": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"}, "signal": {"type": "string", "minLength": 1, "maxLength": 128}, "arguments": {"type": "array", "maxItems": 128, "items": {"type": "object", "additionalProperties": false, "required": ["id", "valueType"], "properties": {"id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"}, "valueType": {"$ref": "#/$defs/valueType"}}}}, "metadata": {"$ref": "#/$defs/metadata"}}
+        }},
+        "slots": {"type": "array", "maxItems": 4096, "items": {
+          "type": "object", "additionalProperties": false,
+          "required": ["id", "displayName", "nodeId"],
+          "properties": {"id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"}, "displayName": {"type": "string", "maxLength": 512}, "nodeId": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"}, "metadata": {"$ref": "#/$defs/metadata"}}
+        }}
+      }
+    }
+  }
+}

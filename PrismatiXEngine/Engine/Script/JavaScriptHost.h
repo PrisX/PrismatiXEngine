@@ -25,7 +25,8 @@ public:
                    const std::string& sourceName = "<script>");
     bool LoadExtensionManifest(const std::string& manifestPath) override;
     bool LoadExtensionIndex(const std::string& indexPath) override;
-    void Emit(const std::string& event, const EventArgs& args = {}) override;
+    Status Emit(const std::string& event,
+                const EventPayload& payload = {}) override;
     bool InvokeCommand(const vn::Command& command) override;
     [[nodiscard]] std::shared_ptr<ui::IActionProvider> CreateActionProvider() override;
     void Update(float deltaSeconds) override;
@@ -52,6 +53,13 @@ public:
     void CancelAction(std::uint64_t handle);
 
 private:
+    bool RunModuleFile(const std::string& vfsPath);
+    bool LoadExtensionManifestIntoCurrentRealm(const std::string& manifestPath);
+    Status RestorePendingInCurrentRealm(const PendingCommandsState& state);
+    Status RestorePendingActionsInCurrentRealm(const PendingActionsState& state);
+    Status DispatchEventInCurrentRealm(const std::string& event,
+                                       const EventPayload& payload);
+
     class Impl;
     std::unique_ptr<Impl> m_impl;
 };

@@ -128,7 +128,7 @@ Result<LocalizationPreviewTable> BuildLocalizationPreviewTable(
     const std::string focusSourceId =
         request["focusSourceId"].get<std::string>();
     if (document.value("format", std::string{}) != "PrismatiXLocalization" ||
-        document.value("schemaRevision", 0) != 1 ||
+        document.value("schemaRevision", 0) != 2 ||
         !document.contains("revision") ||
         !document["revision"].is_number_unsigned() ||
         !document.contains("locales") || !document["locales"].is_array() ||

@@ -11,8 +11,8 @@ namespace px::progress {
 
 namespace {
 constexpr std::string_view kSaveFormat = "PrismatiXSave";
-constexpr int kSaveSchemaRevision = 3;
-constexpr int kOldestSaveSchemaRevision = 2;
+constexpr int kSaveSchemaRevision = 4;
+constexpr int kOldestSaveSchemaRevision = 4;
 constexpr std::size_t kMaxSaveCollectionItems = 1'000'000;
 
 void SaveLoadError(const std::string& path, std::string message, std::string details = {}) {
@@ -90,7 +90,9 @@ Json VMStateToJson(const vn::VMRuntimeState& state) {
     }
     Json choices = Json::array();
     for (const auto& choice : state.choices) {
-        choices.push_back({{"text", choice.text}, {"target", choice.target}});
+        choices.push_back({{"text", choice.text}, {"target", choice.target},
+                           {"sourceId", choice.sourceId},
+                           {"operationId", choice.operationId}});
     }
     return {{"scriptPath", state.scriptPath},
             {"pc", state.pc},
@@ -131,7 +133,9 @@ vn::VMRuntimeState VMStateFromJson(const Json& json) {
     for (const auto& choice : choices) {
         if (!choice.is_object()) throw std::invalid_argument("VM choice must be an object");
         state.choices.push_back(
-            {choice.value("text", std::string{}), choice.value("target", std::string{})});
+            {choice.value("text", std::string{}), choice.value("target", std::string{}),
+             choice.value("sourceId", std::string{}),
+             choice.value("operationId", std::string{})});
     }
     state.speaker = json.value("speaker", std::string{});
     state.pendingVoice = json.value("pendingVoice", std::string{});
@@ -312,16 +316,59 @@ std::vector<animation::AnimationClip> AnimationClipsFromJson(const Json& json) {
     return clips;
 }
 
+Json VariantToSaveJson(const Variant& value, int depth);
+Variant VariantFromSaveJson(const Json& json, int depth);
+
+Json ScriptJournalToJson(const script::EngineOperationJournal& journal) {
+    Json values = Json::array();
+    for (const auto& entry : journal) {
+        values.push_back({
+            {"operation", entry.operation},
+            {"arguments", VariantToSaveJson(Variant(entry.arguments), 0)},
+            {"result", VariantToSaveJson(entry.result, 0)},
+            {"resultUndefined", entry.resultUndefined}});
+    }
+    return values;
+}
+
+script::EngineOperationJournal ScriptJournalFromJson(const Json& json) {
+    if (!json.is_array() || json.size() > kMaxSaveCollectionItems)
+        throw std::invalid_argument(
+            "Script operation journal must be a bounded array");
+    script::EngineOperationJournal journal;
+    journal.reserve(json.size());
+    for (const auto& encoded : json) {
+        if (!encoded.is_object())
+            throw std::invalid_argument(
+                "Script operation journal entry must be an object");
+        script::EngineOperationJournalEntry entry;
+        entry.operation = encoded.at("operation").get<std::string>();
+        Variant arguments = VariantFromSaveJson(encoded.at("arguments"), 0);
+        if (!arguments.AsArray())
+            throw std::invalid_argument(
+                "Script journal arguments must be an array");
+        entry.arguments = *arguments.AsArray();
+        entry.result = VariantFromSaveJson(encoded.at("result"), 0);
+        entry.resultUndefined = encoded.at("resultUndefined").get<bool>();
+        journal.push_back(std::move(entry));
+    }
+    return journal;
+}
+
 Json ScriptPendingToJson(const script::PendingCommandsState& state) {
     Json values = Json::array();
     for (const auto& pending : state) {
         Json arguments = Json::array();
         for (const auto& argument : pending.command.args)
             arguments.push_back({{"key", argument.key}, {"value", argument.value}});
-        values.push_back({{"command", pending.command.type}, {"arguments", std::move(arguments)},
+        values.push_back({{"sourceId", pending.sourceId},
+                          {"command", pending.command.type}, {"arguments", std::move(arguments)},
+                          {"typedArguments", VariantToSaveJson(
+                              Variant(pending.command.typedArgs), 0)},
                           {"line", pending.command.line}, {"yieldIndex", pending.yieldIndex},
                           {"waitKind", pending.waitKind}, {"handle", pending.handle},
-                          {"remainingSeconds", pending.remainingSeconds}});
+                          {"remainingSeconds", pending.remainingSeconds},
+                          {"journal", ScriptJournalToJson(pending.journal)}});
     }
     return values;
 }
@@ -333,6 +380,7 @@ script::PendingCommandsState ScriptPendingFromJson(const Json& json) {
     for (const auto& value : json) {
         if (!value.is_object()) throw std::invalid_argument("Script checkpoint must be an object");
         script::PendingCommandState pending;
+        pending.sourceId = value.at("sourceId").get<std::string>();
         pending.command.type = value.at("command").get<std::string>();
         pending.command.line = value.value("line", 0);
         const auto& arguments = value.at("arguments");
@@ -343,10 +391,17 @@ script::PendingCommandsState ScriptPendingFromJson(const Json& json) {
             pending.command.args.push_back({argument.at("key").get<std::string>(),
                                              argument.at("value").get<std::string>()});
         }
+        Variant typedArguments =
+            VariantFromSaveJson(value.at("typedArguments"), 0);
+        if (!typedArguments.AsObject())
+            throw std::invalid_argument(
+                "Script checkpoint typedArguments must be an object");
+        pending.command.typedArgs = *typedArguments.AsObject();
         pending.yieldIndex = value.at("yieldIndex").get<std::uint32_t>();
         pending.waitKind = value.at("waitKind").get<std::string>();
         pending.handle = value.value("handle", std::uint64_t{0});
         pending.remainingSeconds = value.value("remainingSeconds", 0.0f);
+        pending.journal = ScriptJournalFromJson(value.at("journal"));
         state.push_back(std::move(pending));
     }
     return state;
@@ -434,20 +489,21 @@ ui::ActionContext ActionContextFromJson(const Json& json) {
 
 Json ScriptActionsToJson(const script::PendingActionsState& state) {
     Json values=Json::array();for(const auto& pending:state)values.push_back({
-        {"id",pending.id},{"action",pending.invocation.action},
+        {"sourceId",pending.sourceId},{"id",pending.id},{"action",pending.invocation.action},
         {"arguments",VariantObjectToSaveJson(pending.invocation.arguments)},
         {"context",ActionContextToJson(pending.invocation.context)},
         {"yieldIndex",pending.yieldIndex},{"waitKind",pending.waitKind},
-        {"handle",pending.handle},{"remainingSeconds",pending.remainingSeconds}});return values;
+        {"handle",pending.handle},{"remainingSeconds",pending.remainingSeconds},
+        {"journal",ScriptJournalToJson(pending.journal)}});return values;
 }
 
 script::PendingActionsState ScriptActionsFromJson(const Json& json) {
     if(!json.is_array()||json.size()>kMaxSaveCollectionItems)throw std::invalid_argument("scriptActions must be a bounded array");
     script::PendingActionsState state;state.reserve(json.size());for(const auto& value:json){if(!value.is_object())throw std::invalid_argument("Script Action checkpoint must be an object");script::PendingActionState pending;
-        pending.id=value.at("id").get<std::uint64_t>();pending.invocation.action=value.at("action").get<std::string>();
+        pending.sourceId=value.at("sourceId").get<std::string>();pending.id=value.at("id").get<std::uint64_t>();pending.invocation.action=value.at("action").get<std::string>();
         pending.invocation.arguments=VariantObjectFromSaveJson(value.at("arguments"));pending.invocation.context=ActionContextFromJson(value.at("context"));
         pending.yieldIndex=value.at("yieldIndex").get<std::uint32_t>();pending.waitKind=value.at("waitKind").get<std::string>();
-        pending.handle=value.at("handle").get<std::uint64_t>();pending.remainingSeconds=value.at("remainingSeconds").get<float>();state.push_back(std::move(pending));}return state;
+        pending.handle=value.at("handle").get<std::uint64_t>();pending.remainingSeconds=value.at("remainingSeconds").get<float>();pending.journal=ScriptJournalFromJson(value.at("journal"));state.push_back(std::move(pending));}return state;
 }
 
 Json BehaviorStateToJson(const ui::BehaviorRuntimeState& state) {
@@ -578,7 +634,8 @@ ui::VisualStateRuntimeState VisualStateFromJson(const Json& json) {
 }
 
 Json UIRuntimeStateToJson(const ui::UIRuntimeState& state) {
-    return {{"behavior",BehaviorStateToJson(state.behavior)},
+    return {{"surfaceId",state.surfaceId},
+            {"behavior",BehaviorStateToJson(state.behavior)},
             {"animation",state.animation
                 ? UIAnimationStateToJson(*state.animation):Json(nullptr)},
             {"visualState",state.visualState
@@ -588,6 +645,9 @@ Json UIRuntimeStateToJson(const ui::UIRuntimeState& state) {
 ui::UIRuntimeState UIRuntimeStateFromJson(const Json& json) {
     if(!json.is_object())throw std::invalid_argument("UI runtime state must be an object");
     ui::UIRuntimeState state;
+    state.surfaceId=json.at("surfaceId").get<std::string>();
+    if(state.surfaceId.empty()||state.surfaceId.size()>128)
+        throw std::invalid_argument("UI surface identity is invalid");
     state.behavior=BehaviorStateFromJson(json.at("behavior"));
     if(!json.at("animation").is_null())
         state.animation=UIAnimationStateFromJson(json.at("animation"));
@@ -635,7 +695,11 @@ Json ActorsToJson(const std::vector<vn::Stage::SavedActor>& actors) {
                         { "previousAlpha", a.previousAlpha },
                         { "x", a.x },
                         { "targetX", a.targetX },
-                        { "exiting", a.exiting } });
+                        { "exiting", a.exiting },
+                        { "effectOffsetX", a.effectOffsetX },
+                        { "effectOffsetY", a.effectOffsetY },
+                        { "effectScale", a.effectScale },
+                        { "effectAlpha", a.effectAlpha } });
     }
     return arr;
 }
@@ -655,7 +719,11 @@ std::vector<vn::Stage::SavedActor> ActorsFromJson(const Json& arr) {
                                              j.value("targetAlpha", 255.0f),
                                              j.value("previousAlpha", 0.0f),
                                              j.value("x", 0.0f), j.value("targetX", 0.0f),
-                                             j.value("exiting", false) });
+                                             j.value("exiting", false),
+                                             j.value("effectOffsetX", 0.0f),
+                                             j.value("effectOffsetY", 0.0f),
+                                             j.value("effectScale", 1.0f),
+                                             j.value("effectAlpha", 1.0f) });
     }
     return out;
 }
@@ -722,9 +790,21 @@ Json StageToJson(const vn::Stage::RuntimeState& state) {
     return {{"background", state.background},
             {"previousBackground", state.previousBackground},
             {"backgroundFade", state.backgroundFade},
+            {"ruleTransition", {{"active", state.ruleActive},
+                                {"oldBackground", state.ruleOldBackground},
+                                {"newBackground", state.ruleNewBackground},
+                                {"mask", state.ruleMask},
+                                {"progress", state.ruleProgress},
+                                {"duration", state.ruleDuration},
+                                {"vague", state.ruleVague}}},
             {"camera", {{"x", state.cameraX}, {"y", state.cameraY}, {"zoom", state.cameraZoom}}},
             {"shake", {{"remaining", state.shakeRemaining}, {"duration", state.shakeDuration},
                         {"amplitude", state.shakeAmplitude}, {"phase", state.shakePhase}}},
+            {"customEffect", {{"id", state.customEffect},
+                              {"progress", state.customEffectProgress},
+                              {"seed", state.customEffectSeed},
+                              {"sequence", state.customEffectSequence},
+                              {"parameters", state.customEffectParameters}}},
             {"effects", state.screenEffects}, {"actors", ActorsToJson(state.actors)},
             {"layers", LayersToJson(state.layers)}, {"tweens", std::move(tweens)}};
 }
@@ -735,16 +815,37 @@ vn::Stage::RuntimeState StageFromJson(const Json& json) {
     state.background = json.value("background", std::string{});
     state.previousBackground = json.value("previousBackground", std::string{});
     state.backgroundFade = json.value("backgroundFade", 1.0f);
+    const auto& rule = json.at("ruleTransition");
     const auto& camera = json.at("camera");
     const auto& shake = json.at("shake");
-    if (!camera.is_object() || !shake.is_object())
-        throw std::invalid_argument("stage camera/shake must be objects");
+    if (!rule.is_object() || !camera.is_object() || !shake.is_object())
+        throw std::invalid_argument("stage rule/camera/shake must be objects");
+    state.ruleActive = rule.value("active", false);
+    state.ruleOldBackground = rule.value("oldBackground", std::string{});
+    state.ruleNewBackground = rule.value("newBackground", std::string{});
+    state.ruleMask = rule.value("mask", std::string{});
+    state.ruleProgress = rule.value("progress", 0.0f);
+    state.ruleDuration = rule.value("duration", 0.6f);
+    state.ruleVague = rule.value("vague", 64);
     state.cameraX = camera.value("x", 0.0f); state.cameraY = camera.value("y", 0.0f);
     state.cameraZoom = camera.value("zoom", 1.0f);
     state.shakeRemaining = shake.value("remaining", 0.0f);
     state.shakeDuration = shake.value("duration", 0.0f);
     state.shakeAmplitude = shake.value("amplitude", 0.0f);
     state.shakePhase = shake.value("phase", 0.0f);
+    if (const auto custom = json.find("customEffect"); custom != json.end()) {
+        if (!custom->is_object())
+            throw std::invalid_argument("stage customEffect must be an object");
+        state.customEffect = custom->value("id", std::string{});
+        state.customEffectProgress = custom->value("progress", 0.0f);
+        state.customEffectSeed = custom->value("seed", std::uint32_t{0});
+        state.customEffectSequence =
+            custom->value("sequence", std::uint32_t{0});
+        if (custom->contains("parameters"))
+            state.customEffectParameters =
+                custom->at("parameters")
+                    .get<std::array<std::array<float, 4>, 8>>();
+    }
     if (!json.at("effects").is_object()) throw std::invalid_argument("stage effects must be an object");
     state.screenEffects = json.at("effects").get<std::unordered_map<std::string, float>>();
     state.actors = ActorsFromJson(json.at("actors"));
@@ -805,7 +906,9 @@ Json BacklogToJson(const std::vector<vn::BacklogEntry>& log) {
         arr.push_back({ { "speaker", e.speaker },
                         { "text", e.text },
                         { "voice", e.voice },
-                        { "choice", e.isChoice } });
+                        { "choice", e.isChoice },
+                        { "sourceId", e.sourceId },
+                        { "operationId", e.operationId } });
     }
     return arr;
 }
@@ -816,7 +919,10 @@ std::vector<vn::BacklogEntry> BacklogFromJson(const Json& arr) {
     for (const auto& j : arr) {
         out.push_back(vn::BacklogEntry{ j.value("speaker", std::string{}),
                                         j.value("text", std::string{}),
-                                        j.value("voice", std::string{}), j.value("choice", false) });
+                                        j.value("voice", std::string{}),
+                                        j.value("choice", false),
+                                        j.value("sourceId", std::string{}),
+                                        j.value("operationId", std::string{}) });
     }
     return out;
 }
@@ -840,36 +946,54 @@ std::string SaveSystem::SlotPath(int slot) const {
 bool SaveSystem::Save(int slot, const SaveSnapshot& s) {
     Json j;
     try {
+    if (s.engineVersion.empty() || s.gameId.empty() ||
+        s.packageFingerprint.empty() || s.contentVersion.empty() ||
+        s.anchor.runtimeDocumentId.empty() || s.anchor.sourceId.empty() ||
+        s.anchor.operationId.empty()) {
+        SaveLoadError(SlotPath(slot),
+                      "Save identity or stable execution anchor is missing");
+        return false;
+    }
     j["format"] = kSaveFormat;
     j["schemaRevision"] = kSaveSchemaRevision;
-    j["scriptPath"] = s.scriptPath;
-    j["pc"] = s.pc;
-    j["chapter"] = s.chapter;
-    j["bgmPath"] = s.bgmPath;
-    j["stage"] = StageToJson(s.stage);
-    j["audio"] = AudioToJson(s.audio);
-    j["variables"] = s.variables;
+    j["engineVersion"] = s.engineVersion;
+    j["gameId"] = s.gameId;
+    j["packageFingerprint"] = s.packageFingerprint;
+    j["contentVersion"] = s.contentVersion;
+    j["saveVersion"] = s.saveVersion;
+    j["anchor"] = {{"runtimeDocumentId", s.anchor.runtimeDocumentId},
+                   {"sourceId", s.anchor.sourceId},
+                   {"operationId", s.anchor.operationId}};
+    Json state;
+    state["scriptPath"] = s.scriptPath;
+    state["pc"] = s.pc;
+    state["chapter"] = s.chapter;
+    state["bgmPath"] = s.bgmPath;
+    state["stage"] = StageToJson(s.stage);
+    state["audio"] = AudioToJson(s.audio);
+    state["variables"] = s.variables;
     Json typedVariables = Json::object();
     for (const auto& [name, value] : s.typedVariables)
         typedVariables[name] = RuntimeValueToJson(value);
-    j["values"] = std::move(typedVariables);
-    j["persistentVariables"] = s.persistentVariables;
-    j["vm"] = VMStateToJson(s.vm);
-    j["dialogue"] = DialogueToJson(s.dialogue);
-    j["routes"] = RouteStateToJson(s.routes);
-    j["timelines"] = TimelinesToJson(s.timelines);
-    j["animationClips"] = AnimationClipsToJson(s.animationClips);
-    j["scriptPending"] = ScriptPendingToJson(s.scriptPending);
-    j["scriptActions"] = ScriptActionsToJson(s.scriptActions);
-    j["ui"] = UIRuntimeStateToJson(s.ui);
-    j["backlog"] = BacklogToJson(s.backlog);
-    j["nvlMode"] = s.nvlMode;
-    j["nvlLines"] = BacklogToJson(s.nvlLines);
-    j["timestamp"] = s.timestamp;
-    j["playtimeMs"] = s.playtimeMs;
+    state["values"] = std::move(typedVariables);
+    state["vm"] = VMStateToJson(s.vm);
+    state["dialogue"] = DialogueToJson(s.dialogue);
+    state["routes"] = RouteStateToJson(s.routes);
+    state["timelines"] = TimelinesToJson(s.timelines);
+    state["animationClips"] = AnimationClipsToJson(s.animationClips);
+    state["scriptPending"] = ScriptPendingToJson(s.scriptPending);
+    state["scriptActions"] = ScriptActionsToJson(s.scriptActions);
+    state["ui"] = UIRuntimeStateToJson(s.ui);
+    state["backlog"] = BacklogToJson(s.backlog);
+    state["nvlMode"] = s.nvlMode;
+    state["nvlLines"] = BacklogToJson(s.nvlLines);
+    state["timestamp"] = s.timestamp;
+    state["playtimeMs"] = s.playtimeMs;
     if (!s.thumbnailPng.empty()) {
-        j["thumb"] = Base64Encode(s.thumbnailPng);
+        state["thumb"] = Base64Encode(s.thumbnailPng);
     }
+    j["state"] = std::move(state);
+    j["integrityHash"] = crypto::Sha256Hex(j.dump());
     return SaveJson(SlotPath(slot), j, m_encrypt ? &m_key : nullptr);
     } catch (const std::exception& error) {
         SaveLoadError(SlotPath(slot), "Save contains unsupported runtime state", error.what());
@@ -877,74 +1001,97 @@ bool SaveSystem::Save(int slot, const SaveSnapshot& s) {
     }
 }
 
-std::optional<SaveSnapshot> SaveSystem::Load(int slot) const {
-    auto json = LoadJson(SlotPath(slot), m_encrypt ? &m_key : nullptr);
-    if (!json) {
+std::optional<SaveSnapshot> ParseSaveEnvelopeV2(
+    const std::string_view text, const std::string_view sourcePath) {
+    constexpr std::size_t kMaxSaveEnvelopeBytes = 64u * 1024u * 1024u;
+    const std::string path(sourcePath);
+    if (text.empty() || text.size() > kMaxSaveEnvelopeBytes) {
+        SaveLoadError(path, "Save envelope has an invalid or excessive size");
         return std::nullopt;
     }
-    const Json& j = *json;
-    const std::string path=SlotPath(slot);
+    const Json j = Json::parse(text, nullptr, /*allow_exceptions=*/false);
+    if (j.is_discarded()) {
+        SaveLoadError(path, "Save envelope is not valid JSON");
+        return std::nullopt;
+    }
     if(!HasSupportedHeader(j)){SaveLoadError(path,"Unsupported or corrupt save schema");return std::nullopt;}
     try {
+        if (!j.contains("integrityHash") || !j["integrityHash"].is_string() ||
+            !j.contains("state") || !j["state"].is_object() ||
+            !j.contains("anchor") || !j["anchor"].is_object()) {
+            SaveLoadError(path, "Save envelope is incomplete");
+            return std::nullopt;
+        }
+        Json authenticated = j;
+        const std::string expectedHash = authenticated["integrityHash"].get<std::string>();
+        authenticated.erase("integrityHash");
+        if (expectedHash.empty() ||
+            crypto::Sha256Hex(authenticated.dump()) != expectedHash) {
+            SaveLoadError(path, "Save integrity verification failed");
+            return std::nullopt;
+        }
+        const Json& payload = j["state"];
+        const Json& anchor = j["anchor"];
         SaveSnapshot s;
-        s.scriptPath = j.value("scriptPath", std::string{});
-        s.pc = j.value("pc", 0);
-        s.chapter = j.value("chapter", std::string{});
-        s.bgmPath = j.value("bgmPath", std::string{});
-        s.nvlMode = j.value("nvlMode", false);
-        s.nvlLines = BacklogFromJson(j.value("nvlLines", Json::array()));
-        if (j.contains("variables")) {
-            if(!j["variables"].is_object()){SaveLoadError(path,"Save variables field must be an object");return std::nullopt;}
-            for (auto it = j["variables"].begin(); it != j["variables"].end(); ++it) {
+        s.engineVersion = j.value("engineVersion", std::string{});
+        s.gameId = j.value("gameId", std::string{});
+        s.packageFingerprint = j.value("packageFingerprint", std::string{});
+        s.contentVersion = j.value("contentVersion", std::string{});
+        s.saveVersion = j.value("saveVersion", std::uint32_t{0});
+        s.anchor.runtimeDocumentId = anchor.value("runtimeDocumentId", std::string{});
+        s.anchor.sourceId = anchor.value("sourceId", std::string{});
+        s.anchor.operationId = anchor.value("operationId", std::string{});
+        if (s.engineVersion.empty() || s.gameId.empty() ||
+            s.packageFingerprint.empty() || s.contentVersion.empty() ||
+            s.saveVersion == 0 || s.anchor.runtimeDocumentId.empty() ||
+            s.anchor.sourceId.empty() || s.anchor.operationId.empty()) {
+            SaveLoadError(path, "Save identity or stable execution anchor is invalid");
+            return std::nullopt;
+        }
+        s.scriptPath = payload.value("scriptPath", std::string{});
+        s.pc = payload.value("pc", 0);
+        s.chapter = payload.value("chapter", std::string{});
+        s.bgmPath = payload.value("bgmPath", std::string{});
+        s.nvlMode = payload.value("nvlMode", false);
+        s.nvlLines = BacklogFromJson(payload.value("nvlLines", Json::array()));
+        if (payload.contains("variables")) {
+            if(!payload["variables"].is_object()){SaveLoadError(path,"Save variables field must be an object");return std::nullopt;}
+            for (auto it = payload["variables"].begin(); it != payload["variables"].end(); ++it) {
                 if(!it.value().is_number_integer()){SaveLoadError(path,"Save variable values must be integers",it.key());return std::nullopt;}
                 s.variables[it.key()] = it.value().get<int>();
             }
         }
-        if (!j.contains("values") || !j["values"].is_object() ||
-            j["values"].size() > kMaxSaveCollectionItems) {
+        if (!payload.contains("values") || !payload["values"].is_object() ||
+            payload["values"].size() > kMaxSaveCollectionItems) {
             SaveLoadError(path, "Save values field must be a bounded object");
             return std::nullopt;
         }
-        for (auto value = j["values"].begin(); value != j["values"].end(); ++value)
+        for (auto value = payload["values"].begin(); value != payload["values"].end(); ++value)
             s.typedVariables.emplace(value.key(), RuntimeValueFromJson(value.value()));
-        if (j.contains("persistentVariables")) {
-            const auto& persistent = j["persistentVariables"];
-            if (!persistent.is_array() || persistent.size() > kMaxSaveCollectionItems) {
-                SaveLoadError(path, "Save persistentVariables field must be a bounded array");
-                return std::nullopt;
-            }
-            for (const auto& key : persistent) {
-                if (!key.is_string()) {
-                    SaveLoadError(path, "Persistent variable keys must be strings");
-                    return std::nullopt;
-                }
-                s.persistentVariables.insert(key.get<std::string>());
-            }
-        }
-        if (!j.contains("vm") || !j.contains("dialogue") || !j.contains("routes") ||
-            !j.contains("timelines") || !j.contains("animationClips") || !j.contains("stage") || !j.contains("audio") ||
-            !j.contains("scriptPending") || !j.contains("scriptActions") ||
-            (!j.contains("ui") && !j.contains("behavior"))) {
+        if (!payload.contains("vm") || !payload.contains("dialogue") || !payload.contains("routes") ||
+            !payload.contains("timelines") || !payload.contains("animationClips") || !payload.contains("stage") || !payload.contains("audio") ||
+            !payload.contains("scriptPending") || !payload.contains("scriptActions") ||
+            (!payload.contains("ui") && !payload.contains("behavior"))) {
             SaveLoadError(path, "Save is missing exact runtime state");
             return std::nullopt;
         }
-        s.vm = VMStateFromJson(j["vm"]);
-        s.stage = StageFromJson(j["stage"]);
-        s.audio = AudioFromJson(j["audio"]);
-        s.dialogue = DialogueFromJson(j["dialogue"]);
-        s.routes = RouteStateFromJson(j["routes"]);
-        s.timelines = TimelinesFromJson(j["timelines"]);
-        s.animationClips = AnimationClipsFromJson(j["animationClips"]);
-        s.scriptPending = ScriptPendingFromJson(j["scriptPending"]);
-        s.scriptActions = ScriptActionsFromJson(j["scriptActions"]);
-        if(j.contains("ui"))s.ui=UIRuntimeStateFromJson(j["ui"]);
-        else s.ui.behavior=BehaviorStateFromJson(j["behavior"]);
-        s.backlog = BacklogFromJson(j.value("backlog", Json::array()));
-        s.timestamp = j.value("timestamp", std::uint64_t{ 0 });
-        s.playtimeMs = j.value("playtimeMs", std::uint64_t{ 0 });
-        if (j.contains("thumb")) {
-            if(!j["thumb"].is_string()){SaveLoadError(path,"Save thumbnail must be a string");return std::nullopt;}
-            s.thumbnailPng = Base64Decode(j["thumb"].get<std::string>());
+        s.vm = VMStateFromJson(payload["vm"]);
+        s.stage = StageFromJson(payload["stage"]);
+        s.audio = AudioFromJson(payload["audio"]);
+        s.dialogue = DialogueFromJson(payload["dialogue"]);
+        s.routes = RouteStateFromJson(payload["routes"]);
+        s.timelines = TimelinesFromJson(payload["timelines"]);
+        s.animationClips = AnimationClipsFromJson(payload["animationClips"]);
+        s.scriptPending = ScriptPendingFromJson(payload["scriptPending"]);
+        s.scriptActions = ScriptActionsFromJson(payload["scriptActions"]);
+        if(payload.contains("ui"))s.ui=UIRuntimeStateFromJson(payload["ui"]);
+        else s.ui.behavior=BehaviorStateFromJson(payload["behavior"]);
+        s.backlog = BacklogFromJson(payload.value("backlog", Json::array()));
+        s.timestamp = payload.value("timestamp", std::uint64_t{ 0 });
+        s.playtimeMs = payload.value("playtimeMs", std::uint64_t{ 0 });
+        if (payload.contains("thumb")) {
+            if(!payload["thumb"].is_string()){SaveLoadError(path,"Save thumbnail must be a string");return std::nullopt;}
+            s.thumbnailPng = Base64Decode(payload["thumb"].get<std::string>());
         }
         return s;
     } catch(const Json::exception& error) {
@@ -954,6 +1101,12 @@ std::optional<SaveSnapshot> SaveSystem::Load(int slot) const {
         SaveLoadError(path,"Save payload is invalid",error.what());
         return std::nullopt;
     }
+}
+
+std::optional<SaveSnapshot> SaveSystem::Load(int slot) const {
+    auto json = LoadJson(SlotPath(slot), m_encrypt ? &m_key : nullptr);
+    if (!json) return std::nullopt;
+    return ParseSaveEnvelopeV2(json->dump(), SlotPath(slot));
 }
 
 SlotInfo SaveSystem::Peek(int slot) const {
@@ -966,11 +1119,24 @@ SlotInfo SaveSystem::Peek(int slot) const {
     const std::string path=SlotPath(slot);
     if(!HasSupportedHeader(j)){SaveLoadError(path,"Unsupported or corrupt save schema");return info;}
     try {
-        info.chapter = j.value("chapter", std::string{});
-        info.timestamp = j.value("timestamp", std::uint64_t{ 0 });
-        if (j.contains("thumb")) {
-            if(!j["thumb"].is_string()){SaveLoadError(path,"Save thumbnail must be a string");return info;}
-            info.thumbnailPng = Base64Decode(j["thumb"].get<std::string>());
+        if (!j.contains("integrityHash") || !j["integrityHash"].is_string() ||
+            !j.contains("state") || !j["state"].is_object()) {
+            SaveLoadError(path, "Save envelope is incomplete");
+            return info;
+        }
+        Json authenticated = j;
+        const std::string expectedHash = authenticated["integrityHash"].get<std::string>();
+        authenticated.erase("integrityHash");
+        if (crypto::Sha256Hex(authenticated.dump()) != expectedHash) {
+            SaveLoadError(path, "Save integrity verification failed");
+            return info;
+        }
+        const Json& payload = j["state"];
+        info.chapter = payload.value("chapter", std::string{});
+        info.timestamp = payload.value("timestamp", std::uint64_t{ 0 });
+        if (payload.contains("thumb")) {
+            if(!payload["thumb"].is_string()){SaveLoadError(path,"Save thumbnail must be a string");return info;}
+            info.thumbnailPng = Base64Decode(payload["thumb"].get<std::string>());
         }
         info.exists = true;
     } catch(const Json::exception& error) {

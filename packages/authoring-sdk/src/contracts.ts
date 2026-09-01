@@ -105,9 +105,27 @@ export function migrateDocument(contractId: string, value: unknown): Result<unkn
     return {diagnostics: [diagnostic("PXSDKMIG1001", "Migration input must be an object")], valid: false};
   }
   const source = value as Record<string, unknown>;
+  if (contractId === "character" && source.schemaRevision === 1) {
+    return validateDocument(contractId, {...source, schemaRevision: 2});
+  }
+  if (contractId === "game" && source.schemaRevision === 1 && Array.isArray(source.variables)) {
+    const variables = source.variables.map((value) => {
+      if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+      const variable = value as Record<string, unknown>;
+      if (typeof variable.persistent !== "boolean") return variable;
+      const {persistent, ...rest} = variable;
+      return {...rest, scope: persistent ? "profile" : "session"};
+    });
+    return validateDocument(contractId, {...source, schemaRevision: 2, variables});
+  }
   if (contractId === "animation" && source.version === 4 && source.schemaRevision === undefined) {
-    const migrated = {...source, schemaRevision: 1};
+    const migrated = {...source, schemaRevision: 2};
     return validateDocument(contractId, migrated);
+  }
+  if (["runtimeIr", "sourceMap", "project", "timeline", "animation",
+       "storyIndex", "locale", "saveMigration"].includes(contractId) &&
+      source.schemaRevision === 1) {
+    return validateDocument(contractId, {...source, schemaRevision: 2});
   }
   if (contractId === "ui" && source.schemaRevision === 1) {
     const nodes = Array.isArray(source.nodes) ? source.nodes.map((value) => {
@@ -144,12 +162,19 @@ export function migrateDocument(contractId: string, value: unknown): Result<unkn
           ...(appearance.textColor === undefined ? {} : {textColor: appearance.textColor}),
           ...(appearance.opacity === undefined ? {} : {opacity: appearance.opacity}),
           ...(appearance.styleToken === undefined ? {} : {styleToken: appearance.styleToken}),
+          ...(appearance.hoverBackgroundColor === undefined ? {} : {hoverBackgroundColor: appearance.hoverBackgroundColor}),
+          ...(appearance.focusColor === undefined ? {} : {focusColor: appearance.focusColor}),
+          ...(appearance.disabledOpacity === undefined ? {} : {disabledOpacity: appearance.disabledOpacity}),
         },
         ...(interaction.onClick === null || interaction.onClick === undefined ? {} : {onClick: interaction.onClick}),
         ...(typeof accessibility.label === "string" ? {accessibilityLabel: accessibility.label} : {}),
         ...(typeof accessibility.role === "string" ? {accessibilityRole: accessibility.role} : {}),
+        ...(typeof accessibility.description === "string" ? {accessibilityDescription: accessibility.description} : {}),
+        ...(typeof accessibility.focusOrder === "number" ? {accessibilityFocusOrder: accessibility.focusOrder} : {}),
         runtimeProperties: node.runtimeProperties ?? {},
         bindings: node.bindings ?? {},
+        ...(node.componentInstance === undefined ? {} : {componentInstance: node.componentInstance}),
+        ...(node.componentSlot === undefined ? {} : {componentSlot: node.componentSlot}),
       };
       return migratedNode;
     }) : [];
@@ -170,6 +195,37 @@ export function migrateDocument(contractId: string, value: unknown): Result<unkn
       ...(source.animations === undefined ? {} : {animations: source.animations}),
     };
     return validateDocument(contractId, migrated);
+  }
+  if (contractId === "uiComponent" && source.schemaRevision === 1) {
+    const {componentInterface, ...sceneSource} = source;
+    const migratedScene = migrateDocument("ui", {
+      ...sceneSource, format: "PrismatiXUIScene", schemaRevision: 1,
+    });
+    if (!migratedScene.valid || migratedScene.value === undefined) return migratedScene;
+    const mappedInterface = componentInterface !== null && typeof componentInterface === "object" && !Array.isArray(componentInterface)
+      ? structuredClone(componentInterface as Record<string, unknown>) : componentInterface;
+    if (mappedInterface !== null && typeof mappedInterface === "object" && !Array.isArray(mappedInterface)) {
+      const properties = (mappedInterface as Record<string, unknown>).properties;
+      if (Array.isArray(properties)) for (const item of properties) {
+        if (item === null || typeof item !== "object" || Array.isArray(item)) continue;
+        const property = item as Record<string, unknown>;
+        if (property.property === "content.text") property.property = "text";
+        else if (property.property === "content.assetId") property.property = "assetId";
+        else if (property.property === "accessibility.label") property.property = "accessibilityLabel";
+        else if (property.property === "accessibility.role") property.property = "accessibilityRole";
+      }
+    }
+    const {
+      behaviorGraph: _behaviorGraph,
+      behaviorTriggers: _behaviorTriggers,
+      visualStateGroups: _visualStateGroups,
+      animations: _animations,
+      ...componentDocument
+    } = migratedScene.value as Record<string, unknown>;
+    return validateDocument(contractId, {
+      ...componentDocument,
+      format: "PrismatiXUIComponent", componentInterface: mappedInterface,
+    });
   }
   return validateDocument(contractId, value);
 }

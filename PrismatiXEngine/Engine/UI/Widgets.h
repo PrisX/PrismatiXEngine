@@ -2,12 +2,11 @@
 #include "Engine/UI/Actions/ActionDescriptor.h"
 
 #include "Engine/UI/Control.h"
+#include "Engine/Graphics/Texture.h"
 
 #include <functional>
 #include <string>
 #include <vector>
-
-struct SDL_Texture;
 
 namespace px::ui {
 
@@ -185,6 +184,8 @@ public:
     [[nodiscard]] double Step() const{return m_step;}
     void SetOnChanged(Changed value){m_changed=std::move(value);}
     void HandleEvent(UIEvent& event) override;
+    bool PerformAccessibilityAction(std::string_view action,
+                                    std::string_view value = {}) override;
 protected:Vec2 MeasureOverride(Vec2 available) override;void DrawSelf(graphics::Renderer2D& renderer,const Theme& theme) override;
 private:void SetFromPosition(float x);double m_min=0,m_max=1,m_step=0,m_value=0;Changed m_changed;
 };
@@ -194,14 +195,30 @@ public:
     using Submitted=std::function<void(const std::string&)>;
     explicit LineEdit(std::string text={},std::string name="LineEdit");
     [[nodiscard]] std::string_view TypeName() const override{return "LineEdit";}
-    void SetText(std::string value){m_text=std::move(value);m_cursor=m_text.size();InvalidateLayout();}
+    [[nodiscard]] bool CapturesTextInput() const override { return true; }
+    void SetText(std::string value){m_text=std::move(value);m_cursor=m_text.size();m_selectionAnchor=m_cursor;InvalidateLayout();}
     [[nodiscard]] const std::string& Text() const{return m_text;}
+    [[nodiscard]] std::size_t CaretByteOffset() const { return m_cursor; }
+    [[nodiscard]] std::size_t SelectionStartByteOffset() const { return std::min(m_cursor, m_selectionAnchor); }
+    [[nodiscard]] std::size_t SelectionEndByteOffset() const { return std::max(m_cursor, m_selectionAnchor); }
+    void SetSelectionBytes(std::size_t start, std::size_t end);
     void SetPlaceholder(std::string value){m_placeholder=std::move(value);}
     [[nodiscard]] const std::string& Placeholder() const{return m_placeholder;}
     void SetOnSubmitted(Submitted value){m_submitted=std::move(value);}
     void HandleEvent(UIEvent& event) override;
+    [[nodiscard]] AccessibilitySemantics DescribeAccessibility() const override;
+    bool PerformAccessibilityAction(std::string_view action,
+                                    std::string_view value = {}) override;
 protected:Vec2 MeasureOverride(Vec2 available) override;void DrawSelf(graphics::Renderer2D& renderer,const Theme& theme) override;
-private:std::string m_text,m_placeholder;std::size_t m_cursor=0;Submitted m_submitted;
+private:
+    void MoveCaret(std::size_t value, bool extend);
+    bool DeleteSelection();
+    void SetCaretFromPoint(Vec2 point, bool extend);
+    std::string m_text,m_placeholder;
+    std::size_t m_cursor=0;
+    std::size_t m_selectionAnchor=0;
+    bool m_pointerSelecting=false;
+    Submitted m_submitted;
 };
 
 class RichTextLabel : public Label {
@@ -210,8 +227,20 @@ public:
     [[nodiscard]] std::string_view TypeName() const override{return "RichTextLabel";}
     void SetMarkup(std::string markup);
     [[nodiscard]] const std::string& Markup() const{return m_markup;}
-protected:void DrawSelf(graphics::Renderer2D& renderer,const Theme& theme) override;
-private:std::string m_markup;struct RubyDraw{std::string prefix,reading;};std::vector<RubyDraw> m_ruby;
+    void SetVertical(bool value){m_vertical=value;InvalidateLayout();}
+    [[nodiscard]] bool Vertical() const{return m_vertical;}
+    void SetVerticalRows(std::size_t value){m_verticalRows=value;InvalidateLayout();}
+    [[nodiscard]] std::size_t VerticalRows() const{return m_verticalRows;}
+    [[nodiscard]] AccessibilitySemantics DescribeAccessibility() const override;
+protected:
+    Vec2 MeasureOverride(Vec2 available) override;
+    void DrawSelf(graphics::Renderer2D& renderer,const Theme& theme) override;
+private:
+    std::string m_markup;
+    struct RubyDraw{std::string prefix,base,reading;};
+    std::vector<RubyDraw> m_ruby;
+    bool m_vertical=false;
+    std::size_t m_verticalRows=0;
 };
 
 class NinePatchRect : public Control {
@@ -233,15 +262,32 @@ class TextEdit : public Control {
 public:
     explicit TextEdit(std::string text={},std::string name="TextEdit");
     [[nodiscard]] std::string_view TypeName()const override{return "TextEdit";}
-    void SetText(std::string value){m_text=std::move(value);m_cursor=m_text.size();InvalidateLayout();}
+    [[nodiscard]] bool CapturesTextInput() const override { return true; }
+    void SetText(std::string value){m_text=std::move(value);m_cursor=m_text.size();m_selectionAnchor=m_cursor;InvalidateLayout();}
     [[nodiscard]] const std::string& Text()const{return m_text;}
+    [[nodiscard]] std::size_t CaretByteOffset() const { return m_cursor; }
+    [[nodiscard]] std::size_t SelectionStartByteOffset() const { return std::min(m_cursor, m_selectionAnchor); }
+    [[nodiscard]] std::size_t SelectionEndByteOffset() const { return std::max(m_cursor, m_selectionAnchor); }
+    void SetSelectionBytes(std::size_t start, std::size_t end);
     void SetPlaceholder(std::string value){m_placeholder=std::move(value);}
     [[nodiscard]] const std::string& Placeholder()const{return m_placeholder;}
     void SetReadOnly(bool value){m_readOnly=value;}
     [[nodiscard]] bool ReadOnly()const{return m_readOnly;}
     void HandleEvent(UIEvent& event)override;
+    [[nodiscard]] AccessibilitySemantics DescribeAccessibility() const override;
+    bool PerformAccessibilityAction(std::string_view action,
+                                    std::string_view value = {}) override;
 protected:Vec2 MeasureOverride(Vec2 available)override;void DrawSelf(graphics::Renderer2D& renderer,const Theme& theme)override;
-private:void Changed();std::string m_text,m_placeholder;std::size_t m_cursor=0;bool m_readOnly=false;
+private:
+    void Changed();
+    void MoveCaret(std::size_t value, bool extend);
+    bool DeleteSelection();
+    void SetCaretFromPoint(Vec2 point, bool extend);
+    std::string m_text,m_placeholder;
+    std::size_t m_cursor=0;
+    std::size_t m_selectionAnchor=0;
+    bool m_pointerSelecting=false;
+    bool m_readOnly=false;
 };
 
 class OptionButton : public Button {
@@ -314,7 +360,7 @@ public:
         std::function<void()> close;
         std::function<void(float)> update;
         std::function<bool()> playing;
-        std::function<SDL_Texture*()> texture;
+        std::function<graphics::TextureHandle()> texture;
         std::function<Vec2()> size;
     };
     explicit VideoRect(std::string path={},std::string name="VideoRect"):Control(std::move(name)),m_path(std::move(path)){SetMouseFilter(MouseFilter::Ignore);}
