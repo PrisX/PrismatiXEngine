@@ -8,13 +8,12 @@ import {
 } from "@prismatix/authoring-sdk";
 
 const authored = (
-  <Scene id="a1000000-0000-4000-8000-000000000001"
-    name="JSX UI Example" width={1280} height={720}>
-    <VBox name="Root" appearance={{backgroundColor: "#16182AFF"}}>
-      <Text name="Heading" bindings={{text: {path: "locale.ui.welcome"}}}>
+  <Scene name="JSX UI Example" width={1280} height={720}>
+    <VBox name="Root" fill style={{background: "#16182AFF"}}>
+      <Text name="Heading" bind={{text: "locale.ui.welcome"}}>
         Welcome
       </Text>
-      <Button name="Start" onClick={{id: "game.start"}}>Start</Button>
+      <Button name="Start" size={[240, 64]} action="game.start">Start</Button>
     </VBox>
   </Scene>
 );

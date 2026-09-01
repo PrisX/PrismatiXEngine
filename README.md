@@ -105,7 +105,7 @@ cmake --build . --config Release
 
 Runtime extensions live under `Content/Extensions/`. Each extension uses a typed `.pxextension` manifest with `language: "javascript"` and a `.js` entry file.
 
-Canonical JSON Schemas live in `Contracts/`. The frontend-neutral TypeScript Authoring SDK in `packages/authoring-sdk/` parses `.pxstory`, validates project documents, compiles deterministic Runtime IR/source maps, and lowers React-free `.jsx` / `.tsx` UI authoring sources to canonical `PrismatiXUIScene` JSON. It is a build-time tool and is not embedded in the Player; packaged C++ Runtime content never includes the JSX source or a JavaScript UI runtime.
+Canonical JSON Schemas live in `Contracts/`. The frontend-neutral TypeScript Authoring SDK in `packages/authoring-sdk/` parses `.pxstory`, validates project documents, compiles deterministic Runtime IR/source maps, and lowers React-free `.jsx` / `.tsx` UI authoring module graphs to canonical `PrismatiXUIScene` JSON after TypeScript semantic checking. It is a build-time tool and is not embedded in the Player; packaged C++ Runtime content never includes the JSX source or a JavaScript UI runtime.
 
 The canonical public C++ UI contract is `Engine/SDK/Ui.h` and uses `Ui*`
 types. The 0.1 `StudioUi` compatibility surface was removed in the 0.2

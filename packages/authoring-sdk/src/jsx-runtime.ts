@@ -44,7 +44,11 @@ export function jsx(
   if (!isUiElement(rendered)) {
     throw new TypeError("PrismatiX JSX components must return one UI element");
   }
-  return rendered;
+  // Keep a key on the rendered authoring element even when a local function
+  // component does not explicitly forward it. The lowering pass can then use
+  // the call-site key as a stable identity seed, matching author expectations.
+  return key === undefined || rendered.key !== undefined
+    ? rendered : {...rendered, key};
 }
 
 export const jsxs = jsx;

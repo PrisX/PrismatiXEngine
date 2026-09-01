@@ -38,11 +38,10 @@ functions and do not require React.
 import {Button, Scene, Text, VBox} from "@prismatix/authoring-sdk";
 
 export default (
-  <Scene id="a1000000-0000-4000-8000-000000000001"
-    name="Title" width={1280} height={720}>
-    <VBox name="Root">
-      <Text bindings={{text: {path: "locale.ui.title"}}}>Title</Text>
-      <Button onClick={{id: "game.start"}}>Start</Button>
+  <Scene name="Title" width={1280} height={720}>
+    <VBox name="Root" fill style={{token: "menu", background: "#16182a"}}>
+      <Text name="Heading" bind={{text: "locale.ui.title"}}>Title</Text>
+      <Button name="Start" size={[240, 64]} action="game.start">Start</Button>
     </VBox>
   </Scene>
 );
@@ -54,8 +53,17 @@ point `uiEntryPoints` at `Content/UI/Title.tsx`; `prismatix validate/build/pack`
 evaluate it during authoring, normalize the packaged route to
 `Content/UI/Title.pxui`, and publish only canonical JSON. Existing `.pxui` and
 `.pxuicomponent` JSON sources remain supported without changes. Explicit UUIDs
-are preserved; otherwise node names, `stableId`, or JSX `key` provide stable,
-deterministic UUID seeds.
+are an advanced escape hatch; normally the source path plus scene name and each
+node's `name`, `stableId`, or JSX `key` provide stable, deterministic UUID seeds.
+Duplicate sibling names are deterministically disambiguated. Direct layout props
+such as `position`, `size`, `anchor`, `align`, and `fill`, plus CSS-like `style`,
+`bind`, and `action` aliases, lower to the unchanged canonical fields.
+
+Local `.jsx`/`.tsx` modules may be imported normally, so authoring components can
+live in separate files. `prismatix validate` and `build` construct a real strict
+TypeScript program for each authoring module graph and report syntactic and
+semantic diagnostics before build-time evaluation. The emitted temporary modules
+are deleted afterward and never enter Runtime artifacts.
 
 ## Character placement
 

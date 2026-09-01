@@ -88,18 +88,21 @@ test("TSX UI authoring lowers to canonical JSON and never enters the Runtime art
   project.uiComponents = [{id: "12121212-1212-4212-8212-121212121212",
     name: "Panel", source: "Content/UI/Panel.jsx"}];
   await write(value.project, JSON.stringify(project));
-  await write(join(value.root, "Content/UI/Title.tsx"), `
-    import {Button, Scene, Text, VBox} from "@prismatix/authoring-sdk";
+  await write(join(value.root, "Content/UI/components/MenuButton.tsx"), `
+    import {Button} from "@prismatix/authoring-sdk";
 
-    const MenuButton = ({label, action}: {label: string; action: string}) => (
-      <Button name={label} onClick={{id: action, arguments: {}}}
-        bindings={{enabled: {path: "game.menuEnabled"}}}>{label}</Button>
-    );
+    export function MenuButton({label, action}: {label: string; action: string}) {
+      return <Button name={label} action={action}
+        bind={{enabled: "game.menuEnabled"}}>{label}</Button>;
+    }
+  `);
+  await write(join(value.root, "Content/UI/Title.tsx"), `
+    import {Scene, Text, VBox} from "@prismatix/authoring-sdk";
+    import {MenuButton} from "./components/MenuButton.tsx";
 
     export default (
-      <Scene id="11111111-1111-4111-8111-111111111111"
-        name="TSX Title" width={1280} height={720}>
-        <VBox name="Root">
+      <Scene name="TSX Title" width={1280} height={720}>
+        <VBox name="Root" fill>
           <Text name="Heading">PrismatiX JSX</Text>
           <MenuButton key="start" label="Start" action="game.start" />
         </VBox>
@@ -141,6 +144,28 @@ test("TSX UI authoring lowers to canonical JSON and never enters the Runtime art
   assert.equal(rebuilt.status, 0, rebuilt.stderr);
   assert.equal(await readFile(join(secondOutput, "Content/UI/Title.pxui"), "utf8"),
     await readFile(canonicalPath, "utf8"));
+});
+
+test("validate reports semantic TypeScript prop errors before JSX evaluation", async () => {
+  const value = await fixture();
+  const project = JSON.parse(await readFile(value.project, "utf8")) as {
+    uiEntryPoints: Record<string, string>;
+  };
+  project.uiEntryPoints.title = "Content/UI/Invalid.tsx";
+  await write(value.project, JSON.stringify(project));
+  await write(join(value.root, "Content/UI/Invalid.tsx"), `
+    import {Scene, Text, VBox} from "@prismatix/authoring-sdk";
+    export default (
+      <Scene name="Invalid" width={1280} height={720}>
+        <VBox name="Root"><Text name="Bad" width="very wide">Bad</Text></VBox>
+      </Scene>
+    );
+  `);
+
+  const validated = run(["validate", value.project]);
+  assert.notEqual(validated.status, 0);
+  assert.match(validated.stderr, /PXCLIJSX1001/u);
+  assert.match(validated.stderr, /TS2322/u);
 });
 
 test("pack invokes the native file-based request protocol", async () => {

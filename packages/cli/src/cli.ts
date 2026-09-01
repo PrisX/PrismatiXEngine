@@ -7,7 +7,7 @@ import {
 } from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {basename, dirname, extname, isAbsolute, join, relative, resolve, sep} from "node:path";
-import {pathToFileURL} from "node:url";
+import {fileURLToPath, pathToFileURL} from "node:url";
 import * as ts from "typescript-compiler";
 
 import {
@@ -389,6 +389,18 @@ function sdkModuleUrl(specifier: "@prismatix/authoring-sdk" |
   return import.meta.resolve(specifier);
 }
 
+type SdkModuleSpecifier = Parameters<typeof sdkModuleUrl>[0];
+
+function isSdkModuleSpecifier(value: string): value is SdkModuleSpecifier {
+  return value === "@prismatix/authoring-sdk" ||
+    value === "@prismatix/authoring-sdk/jsx-runtime" ||
+    value === "@prismatix/authoring-sdk/jsx-dev-runtime";
+}
+
+function sdkDeclarationPath(specifier: SdkModuleSpecifier): string {
+  return fileURLToPath(sdkModuleUrl(specifier)).replace(/\.js$/u, ".d.ts");
+}
+
 function rewriteSdkImports(output: string): string {
   let result = output;
   for (const specifier of [
@@ -403,48 +415,152 @@ function rewriteSdkImports(output: string): string {
   return result;
 }
 
-function typescriptDiagnostics(values: readonly ts.Diagnostic[], text: string,
-  path: string): AuthoringDiagnostic[] {
+function projectSourcePath(root: string, path: string): string | undefined {
+  const value = relative(root, resolve(path)).replaceAll("\\", "/");
+  return value === "" || value === ".." || value.startsWith("../") || isAbsolute(value)
+    ? undefined : value;
+}
+
+function typescriptDiagnostics(values: readonly ts.Diagnostic[], root: string,
+  entryPath: string, entryText: string): AuthoringDiagnostic[] {
   return values.filter((value) => value.category === ts.DiagnosticCategory.Error)
     .map((value) => {
+      const source = value.file;
+      const path = source === undefined
+        ? entryPath : projectSourcePath(root, source.fileName) ?? source.fileName;
+      const text = source?.text ?? entryText;
       const start = value.start ?? 0;
       const end = start + (value.length ?? 1);
       return {
-        ...diagnostic("PXCLIJSX1001", "JSX/TypeScript source could not be transpiled", path),
-        details: ts.flattenDiagnosticMessageText(value.messageText, "\n"),
-        span: sourceSpan(text, path, {start, end}),
+        ...diagnostic("PXCLIJSX1001", "JSX/TypeScript type-check failed", path),
+        details: `TS${value.code}: ${ts.flattenDiagnosticMessageText(value.messageText, "\n")}`,
+        ...(source === undefined ? {} : {span: sourceSpan(text, path, {start, end})}),
       };
     });
+}
+
+function jsxCompilerOptions(): ts.CompilerOptions {
+  return {
+    target: ts.ScriptTarget.ES2023,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    jsx: ts.JsxEmit.ReactJSX,
+    jsxImportSource: "@prismatix/authoring-sdk",
+    strict: true,
+    noEmit: true,
+    allowJs: true,
+    checkJs: true,
+    allowImportingTsExtensions: true,
+    isolatedModules: true,
+    verbatimModuleSyntax: true,
+    skipLibCheck: true,
+  };
+}
+
+interface JsxProgram {
+  readonly program: ts.Program;
+  readonly options: ts.CompilerOptions;
+  readonly host: ts.CompilerHost;
+  readonly sourceFiles: readonly ts.SourceFile[];
+}
+
+function createJsxProgram(root: string, sourcePath: string): JsxProgram {
+  const options = jsxCompilerOptions();
+  const host = ts.createCompilerHost(options);
+  const cache = ts.createModuleResolutionCache(root,
+    (value) => ts.sys.useCaseSensitiveFileNames ? value : value.toLowerCase(), options);
+  host.resolveModuleNames = (names, containingFile) => names.map((name) => {
+    if (isSdkModuleSpecifier(name)) {
+      return {
+        resolvedFileName: sdkDeclarationPath(name),
+        extension: ts.Extension.Dts,
+        isExternalLibraryImport: true,
+      };
+    }
+    return ts.resolveModuleName(name, containingFile, options, host, cache).resolvedModule;
+  });
+  const program = ts.createProgram({rootNames: [sourcePath], options, host});
+  const sourceFiles = program.getSourceFiles().filter((source) =>
+    !source.isDeclarationFile && projectSourcePath(root, source.fileName) !== undefined);
+  return {program, options, host, sourceFiles};
+}
+
+function moduleOutputPath(temp: string, root: string, sourcePath: string): string {
+  const virtualPath = projectSourcePath(root, sourcePath);
+  if (virtualPath === undefined) throw new Error(`Imported authoring module is outside the project: ${sourcePath}`);
+  return join(temp, ...virtualPath.replace(/\.(?:[cm]?[jt]sx?)$/iu, ".mjs").split("/"));
+}
+
+function pathKey(value: string): string {
+  const absolute = resolve(value);
+  return ts.sys.useCaseSensitiveFileNames ? absolute : absolute.toLowerCase();
+}
+
+function rewriteModuleImport(output: string, specifier: string, replacement: string): string {
+  const escaped = specifier.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return output.replace(new RegExp(`(["'])${escaped}\\1`, "gu"), JSON.stringify(replacement));
+}
+
+function executableRelativeImport(from: string, to: string): string {
+  const value = relative(dirname(from), to).replaceAll("\\", "/");
+  return value.startsWith(".") ? value : `./${value}`;
+}
+
+async function emitJsxProgram(root: string, sourcePath: string, value: JsxProgram,
+  temp: string): Promise<string> {
+  const outputs = new Map(value.sourceFiles.map((source) =>
+    [pathKey(source.fileName), moduleOutputPath(temp, root, source.fileName)]));
+  for (const source of value.sourceFiles) {
+    const outputPath = outputs.get(pathKey(source.fileName))!;
+    const transpiled = ts.transpileModule(source.text, {
+      fileName: source.fileName,
+      reportDiagnostics: true,
+      compilerOptions: {
+        target: ts.ScriptTarget.ES2023,
+        module: ts.ModuleKind.ESNext,
+        moduleResolution: ts.ModuleResolutionKind.Bundler,
+        jsx: ts.JsxEmit.ReactJSX,
+        jsxImportSource: "@prismatix/authoring-sdk",
+        isolatedModules: true,
+        verbatimModuleSyntax: true,
+      },
+    });
+    const emittedDiagnostics = typescriptDiagnostics(transpiled.diagnostics ?? [], root,
+      projectSourcePath(root, sourcePath)!, value.program.getSourceFile(sourcePath)?.text ?? "");
+    if (emittedDiagnostics.length > 0) throw new JsxAuthoringFailure(emittedDiagnostics);
+    let output = rewriteSdkImports(transpiled.outputText);
+    for (const imported of ts.preProcessFile(source.text, true, true).importedFiles) {
+      if (!imported.fileName.startsWith(".")) continue;
+      const resolvedModule = ts.resolveModuleName(imported.fileName, source.fileName,
+        value.options, value.host).resolvedModule;
+      if (resolvedModule === undefined) continue;
+      const target = outputs.get(pathKey(resolvedModule.resolvedFileName));
+      if (target === undefined) {
+        throw new TypeError(`Local authoring import is outside the emitted module graph: ${imported.fileName}`);
+      }
+      output = rewriteModuleImport(output, imported.fileName,
+        executableRelativeImport(outputPath, target));
+    }
+    await mkdir(dirname(outputPath), {recursive: true});
+    await writeFile(outputPath, output, "utf8");
+  }
+  const entry = outputs.get(pathKey(sourcePath));
+  if (entry === undefined) throw new Error(`JSX entry module was not emitted: ${sourcePath}`);
+  return entry;
 }
 
 async function loadJsxUiDocument(root: string, virtualPath: string,
   kind: "scene" | "component"): Promise<unknown> {
   const sourcePath = projectFile(root, virtualPath);
   const source = await readBoundedText(sourcePath);
-  const transpiled = ts.transpileModule(source, {
-    fileName: sourcePath,
-    reportDiagnostics: true,
-    compilerOptions: {
-      target: ts.ScriptTarget.ES2023,
-      module: ts.ModuleKind.ESNext,
-      moduleResolution: ts.ModuleResolutionKind.Bundler,
-      jsx: ts.JsxEmit.ReactJSX,
-      jsxImportSource: "@prismatix/authoring-sdk",
-      isolatedModules: true,
-      verbatimModuleSyntax: true,
-    },
-  });
-  const syntaxDiagnostics = typescriptDiagnostics(transpiled.diagnostics ?? [],
-    source, virtualPath);
-  if (syntaxDiagnostics.length > 0) throw new JsxAuthoringFailure(syntaxDiagnostics);
-
-  const fingerprint = createHash("sha256").update(sourcePath).update("\0")
-    .update(source).digest("hex").slice(0, 16);
-  const executablePath = join(dirname(sourcePath),
-    `.${basename(sourcePath)}.prismatix-${fingerprint}.mjs`);
+  const program = createJsxProgram(root, sourcePath);
+  const checked = typescriptDiagnostics(ts.getPreEmitDiagnostics(program.program),
+    root, virtualPath, source);
+  if (checked.length > 0) throw new JsxAuthoringFailure(checked);
+  const temp = await mkdtemp(join(tmpdir(), "prismatix-jsx-"));
   try {
-    await writeFile(executablePath, rewriteSdkImports(transpiled.outputText), "utf8");
-    const module = await import(`${pathToFileURL(executablePath).href}?build=${fingerprint}-${Date.now()}`) as {
+    const executablePath = await emitJsxProgram(root, sourcePath, program, temp);
+    const module = await import(`${pathToFileURL(executablePath).href}?build=${Date.now()}`) as {
       readonly default?: unknown;
     };
     let authored = module.default;
@@ -466,7 +582,7 @@ async function loadJsxUiDocument(root: string, virtualPath: string,
       span: firstLineSpan(source, virtualPath),
     }]);
   } finally {
-    await rm(executablePath, {force: true});
+    await rm(temp, {recursive: true, force: true});
   }
 }
 
