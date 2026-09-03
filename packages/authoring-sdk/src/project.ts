@@ -419,9 +419,14 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
         (uniform.type !== "color" ||
           components.every((component) => (component as number) >= 0 &&
             (component as number) <= 1));
+      const validRange = finiteNumber(minimum) && finiteNumber(maximum) &&
+        Math.abs(minimum) <= 3.402823466e38 &&
+        Math.abs(maximum) <= 3.402823466e38 && minimum <= maximum;
+      const defaultInRange = validDefault && validRange &&
+        components.every((component) => (component as number) >= minimum &&
+          (component as number) <= maximum);
       if (!uniformNames.add(uniform.name) || !uniformSlots.add(uniform.slot) ||
-          !finiteNumber(minimum) || !finiteNumber(maximum) ||
-          minimum > maximum || !validDefault) {
+          !validRange || !defaultInRange) {
         diagnostics.push(issue("PXBUILD1023", "Custom effect uniforms must have unique names/slots and valid ranges", descriptor.source, uniform.name));
       }
     }

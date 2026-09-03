@@ -1,12 +1,14 @@
 #include "Engine/Graphics/Compositor2D.h"
 
 #include "Engine/Graphics/BuiltInShaders.h"
+#include "Engine/IO/Crypto.h"
 #include "Engine/IO/VFS.h"
 #include "Engine/Support/Logger.h"
 
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cmath>
 #include <ranges>
 
 namespace px::graphics {
@@ -94,13 +96,21 @@ bool Compositor2D::LoadCustomEffects(
     if (!device) return false;
     const SDL_GPUShaderFormat supported = SDL_GetGPUShaderFormats(device);
     std::unordered_map<std::string, CustomEffectState> candidate;
+    const auto rejectCandidate = [&candidate, device] {
+        for (auto& [_, built] : candidate) {
+            if (built.state) SDL_DestroyGPURenderState(built.state);
+            if (built.shader) SDL_ReleaseGPUShader(device, built.shader);
+        }
+        candidate.clear();
+        return false;
+    };
     for (const auto& descriptor : effects) {
         if (descriptor.id.empty() || descriptor.targetLayer != "stage" ||
             descriptor.samplerCount != 1 ||
             descriptor.uniformBufferCount != 1 ||
             descriptor.uniforms.size() > 8 || descriptor.artifacts.size() != 3 ||
             candidate.contains(descriptor.id))
-            return false;
+            return rejectCandidate();
         const CustomEffectArtifactDescriptor* selected = nullptr;
         SDL_GPUShaderFormat selectedFormat = SDL_GPU_SHADERFORMAT_INVALID;
         const auto select = [&](const std::string_view name,
@@ -117,10 +127,17 @@ bool Compositor2D::LoadCustomEffects(
         select("spirv", SDL_GPU_SHADERFORMAT_SPIRV);
         select("dxil", SDL_GPU_SHADERFORMAT_DXIL);
         select("msl", SDL_GPU_SHADERFORMAT_MSL);
-        if (!selected) return false;
+        if (!selected) return rejectCandidate();
         const auto bytes = vfs.Read(selected->asset);
         if (!bytes || bytes->empty() || bytes->size() > 4 * 1024 * 1024)
-            return false;
+            return rejectCandidate();
+        const std::string_view artifactBytes(
+            reinterpret_cast<const char*>(bytes->data()), bytes->size());
+        if (crypto::Sha256Hex(artifactBytes) != selected->fingerprint) {
+            PX_LOG_ERROR("Custom effect '{}' artifact fingerprint mismatch",
+                         descriptor.id);
+            return rejectCandidate();
+        }
         SDL_GPUShaderCreateInfo shaderInfo{};
         shaderInfo.code = bytes->data();
         shaderInfo.code_size = bytes->size();
@@ -135,22 +152,14 @@ bool Compositor2D::LoadCustomEffects(
         if (!shader) {
             PX_LOG_ERROR("Custom effect '{}' shader was rejected: {}",
                          descriptor.id, SDL_GetError());
-            for (auto& [_, built] : candidate) {
-                if (built.state) SDL_DestroyGPURenderState(built.state);
-                if (built.shader) SDL_ReleaseGPUShader(device, built.shader);
-            }
-            return false;
+            return rejectCandidate();
         }
         SDL_GPURenderStateCreateInfo stateInfo{};
         stateInfo.fragment_shader = shader;
         SDL_GPURenderState* state = SDL_CreateGPURenderState(m_renderer, &stateInfo);
         if (!state) {
             SDL_ReleaseGPUShader(device, shader);
-            for (auto& [_, built] : candidate) {
-                if (built.state) SDL_DestroyGPURenderState(built.state);
-                if (built.shader) SDL_ReleaseGPUShader(device, built.shader);
-            }
-            return false;
+            return rejectCandidate();
         }
         candidate.emplace(descriptor.id,
                           CustomEffectState{descriptor, shader, state});
@@ -184,6 +193,41 @@ Compositor2D::CustomEffectDefaults(const std::string_view id) const {
     for (const auto& uniform : found->second.descriptor.uniforms) {
         if (uniform.slot >= result.size()) return std::nullopt;
         result[uniform.slot] = uniform.defaultValue;
+    }
+    return result;
+}
+
+std::optional<std::array<std::array<float, 4>, 8>>
+Compositor2D::ResolveCustomEffectParameters(
+    const std::string_view id,
+    const CustomEffectNamedParameters& parameters) const {
+    const auto found = m_customEffects.find(std::string(id));
+    if (found == m_customEffects.end() ||
+        parameters.size() > found->second.descriptor.uniforms.size())
+        return std::nullopt;
+    auto result = CustomEffectDefaults(id);
+    if (!result) return std::nullopt;
+    for (const auto& [name, values] : parameters) {
+        const auto uniform = std::ranges::find(
+            found->second.descriptor.uniforms, name,
+            &CustomEffectUniformDescriptor::name);
+        if (uniform == found->second.descriptor.uniforms.end() ||
+            uniform->slot >= result->size())
+            return std::nullopt;
+        const std::size_t components = uniform->type == "number" ? 1u
+                                     : uniform->type == "vec2" ? 2u
+                                     : uniform->type == "color" ? 4u : 0u;
+        if (components == 0 || values.size() != components) return std::nullopt;
+        std::array<float, 4> slot{};
+        for (std::size_t component = 0; component < components; ++component) {
+            const float value = values[component];
+            if (!std::isfinite(value) || value < uniform->minimum ||
+                value > uniform->maximum ||
+                (uniform->type == "color" && (value < 0.0f || value > 1.0f)))
+                return std::nullopt;
+            slot[component] = value;
+        }
+        (*result)[uniform->slot] = slot;
     }
     return result;
 }

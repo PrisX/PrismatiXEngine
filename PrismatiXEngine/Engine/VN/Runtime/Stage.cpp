@@ -10,6 +10,8 @@
 #include <cmath>
 #include <cstring>
 #include <optional>
+#include <ranges>
+#include <unordered_set>
 
 namespace px::vn {
 
@@ -18,6 +20,7 @@ constexpr float kBgFadeSpeed = 2.5f;
 constexpr float kAlphaSpeed = 6.0f;
 constexpr float kSlideSpeed = 9.0f;
 constexpr float kSlideOffset = 40.0f;
+constexpr int kNodeOrderLimit = 1'000'000;
 
 float Approach(float value, float target, float rate, float dt) {
     const float t = std::min(1.0f, rate * dt);
@@ -26,7 +29,7 @@ float Approach(float value, float target, float rate, float dt) {
 }
 
 Stage::Stage(graphics::Renderer2D& renderer, graphics::AssetCache& assets)
-    : m_renderer(renderer), m_assets(assets) {}
+    : m_renderer(renderer), m_assets(assets), m_particles(renderer) {}
 
 Stage::~Stage() {
     EndRuleTransition();
@@ -150,10 +153,211 @@ void Stage::SetLayerTransform(const std::string& name, const std::string& imageP
     layer.rotation = std::isfinite(rotation) ? rotation : 0.0f;
     layer.alpha = alpha;
     layer.z = z;
+    Node& node = EnsureNode(name, NodeKind::Image);
+    node.transform = NodeTransform{layer.x, layer.y, layer.scale, layer.scaleY,
+                                   layer.rotation,
+                                   static_cast<float>(layer.alpha) / 255.0f};
+    node.z = layer.z;
 }
 
 void Stage::ClearLayer(const std::string& name) {
-    m_layers.erase(name);
+    if (const auto found = m_nodes.find(name);
+        found != m_nodes.end() && found->second.kind == NodeKind::Image) {
+        RemoveNode(name);
+    } else {
+        m_layers.erase(name);
+    }
+}
+
+Stage::Node& Stage::EnsureNode(const std::string& name, const NodeKind kind) {
+    const auto [found, inserted] = m_nodes.try_emplace(name);
+    if (inserted) found->second.order = m_nextNodeOrder++;
+    found->second.kind = kind;
+    return found->second;
+}
+
+bool Stage::WouldCreateNodeCycle(const std::string& name,
+                                 const std::string& parent) const {
+    std::string cursor = parent;
+    for (std::size_t depth = 0; !cursor.empty() && depth <= m_nodes.size(); ++depth) {
+        if (cursor == name) return true;
+        const auto found = m_nodes.find(cursor);
+        if (found == m_nodes.end()) return false;
+        cursor = found->second.parent;
+    }
+    return !cursor.empty();
+}
+
+bool Stage::SetGroupNode(const std::string& name, const std::string& parent) {
+    if (name.empty() || name.size() > 128) return false;
+    const bool existed = m_nodes.contains(name);
+    if (const auto found = m_nodes.find(name);
+        found != m_nodes.end() && found->second.kind != NodeKind::Group)
+        return false;
+    EnsureNode(name, NodeKind::Group);
+    if (!SetNodeParent(name, parent)) {
+        if (!existed) m_nodes.erase(name);
+        return false;
+    }
+    return true;
+}
+
+bool Stage::SetNodeParent(const std::string& name, const std::string& parent) {
+    auto found = m_nodes.find(name);
+    if (found == m_nodes.end() || name == parent) return false;
+    if (!parent.empty()) {
+        const auto target = m_nodes.find(parent);
+        if (target == m_nodes.end() || target->second.kind != NodeKind::Group ||
+            WouldCreateNodeCycle(name, parent))
+            return false;
+    }
+    if (!found->second.parent.empty()) {
+        if (auto old = m_nodes.find(found->second.parent); old != m_nodes.end()) {
+            std::erase(old->second.children, name);
+        }
+    }
+    found->second.parent = parent;
+    if (!parent.empty()) {
+        auto& children = m_nodes.at(parent).children;
+        if (std::ranges::find(children, name) == children.end())
+            children.push_back(name);
+    }
+    return true;
+}
+
+bool Stage::SetNodeTransform(const std::string& name,
+                             const NodeTransform& transform) {
+    auto found = m_nodes.find(name);
+    if (found == m_nodes.end() || !std::isfinite(transform.x) ||
+        !std::isfinite(transform.y) || !std::isfinite(transform.scaleX) ||
+        !std::isfinite(transform.scaleY) || !std::isfinite(transform.rotation) ||
+        !std::isfinite(transform.opacity) || transform.scaleX <= 0.0f ||
+        transform.scaleY <= 0.0f || transform.opacity < 0.0f ||
+        transform.opacity > 1.0f)
+        return false;
+    found->second.transform = transform;
+    if (found->second.kind == NodeKind::Image) {
+        if (auto layer = m_layers.find(name); layer != m_layers.end()) {
+            layer->second.x = transform.x;
+            layer->second.y = transform.y;
+            layer->second.scale = transform.scaleX;
+            layer->second.scaleY = transform.scaleY;
+            layer->second.rotation = transform.rotation;
+            layer->second.alpha = static_cast<std::uint8_t>(
+                std::lround(transform.opacity * 255.0f));
+        }
+    }
+    return true;
+}
+
+bool Stage::SetNodeOrder(const std::string& name, const int z,
+                         const int order) {
+    auto found = m_nodes.find(name);
+    if (found == m_nodes.end() || z < -kNodeOrderLimit ||
+        z > kNodeOrderLimit || order < -kNodeOrderLimit ||
+        order > kNodeOrderLimit)
+        return false;
+    found->second.z = z;
+    found->second.order = order;
+    m_nextNodeOrder = std::max(m_nextNodeOrder, order + 1);
+    if (found->second.kind == NodeKind::Image) {
+        if (auto layer = m_layers.find(name); layer != m_layers.end())
+            layer->second.z = z;
+    }
+    return true;
+}
+
+bool Stage::SetNodeVisibility(const std::string& name, const bool visible) {
+    auto found = m_nodes.find(name);
+    if (found == m_nodes.end()) return false;
+    found->second.visible = visible;
+    return true;
+}
+
+void Stage::RemoveNode(const std::string& name) {
+    auto found = m_nodes.find(name);
+    if (found == m_nodes.end()) return;
+    const std::vector<std::string> children = found->second.children;
+    for (const auto& child : children) RemoveNode(child);
+    if (!found->second.parent.empty()) {
+        if (auto parent = m_nodes.find(found->second.parent);
+            parent != m_nodes.end())
+            std::erase(parent->second.children, name);
+    }
+    if (found->second.kind == NodeKind::Image) m_layers.erase(name);
+    if (found->second.kind == NodeKind::Character) m_actors.erase(name);
+    std::erase_if(m_tweens,
+                  [&name](const Tween& tween) { return tween.name == name; });
+    m_nodes.erase(found);
+}
+
+std::vector<Stage::SavedNode> Stage::SnapshotNodes() const {
+    std::vector<SavedNode> out;
+    out.reserve(m_nodes.size());
+    for (const auto& [name, node] : m_nodes) {
+        out.push_back({name, node.kind, node.parent, node.children, node.transform,
+                       node.z, node.order, node.visible});
+    }
+    std::ranges::sort(out, [](const SavedNode& left, const SavedNode& right) {
+        if (left.order != right.order) return left.order < right.order;
+        return left.name < right.name;
+    });
+    return out;
+}
+
+bool Stage::SetParticleEmitter(const std::string& name,
+                               const ParticleEmitterSpec& spec) {
+    return m_particles.Set(name, spec);
+}
+
+void Stage::ClearParticleEmitter(const std::string_view name) {
+    m_particles.Clear(name);
+}
+
+std::vector<ParticleSample> Stage::SampleParticles(
+    const std::string_view name, const int width, const int height) const {
+    return m_particles.Samples(name, width, height);
+}
+
+Stage::WorldNodeTransform Stage::ResolveNodeTransform(
+    const std::string& name) const {
+    WorldNodeTransform world;
+    std::vector<const Node*> chain;
+    std::string cursor = name;
+    while (!cursor.empty() && chain.size() <= m_nodes.size()) {
+        const auto found = m_nodes.find(cursor);
+        if (found == m_nodes.end()) break;
+        chain.push_back(&found->second);
+        cursor = found->second.parent;
+    }
+    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+        const Node& node = **it;
+        const float radians = world.rotation * 0.0174532925f;
+        const float localX = node.transform.x * world.scaleX;
+        const float localY = node.transform.y * world.scaleY;
+        world.x += std::cos(radians) * localX - std::sin(radians) * localY;
+        world.y += std::sin(radians) * localX + std::cos(radians) * localY;
+        world.scaleX *= node.transform.scaleX;
+        world.scaleY *= node.transform.scaleY;
+        world.rotation += node.transform.rotation;
+        world.opacity *= node.transform.opacity;
+        world.visible = world.visible && node.visible;
+    }
+    return world;
+}
+
+Stage::NodeSortKey Stage::ResolveNodeSortKey(const std::string& name) const {
+    NodeSortKey key;
+    std::string cursor = name;
+    while (!cursor.empty() && key.path.size() <= m_nodes.size()) {
+        const auto found = m_nodes.find(cursor);
+        if (found == m_nodes.end()) break;
+        key.z += found->second.z;
+        key.path.emplace_back(found->second.order, cursor);
+        cursor = found->second.parent;
+    }
+    std::ranges::reverse(key.path);
+    return key;
 }
 
 bool Stage::Animate(const std::string& target, const TweenSpec& spec) {
@@ -276,6 +480,15 @@ bool Stage::ApplyAnimationProperty(const std::string& target, const std::string&
         else if (property == "opacity") layer->second.alpha = static_cast<std::uint8_t>(
             std::clamp(*number, 0.0f, 1.0f) * 255.0f);
         else return false;
+        if (auto node = m_nodes.find(target); node != m_nodes.end()) {
+            node->second.transform.x = layer->second.x;
+            node->second.transform.y = layer->second.y;
+            node->second.transform.scaleX = layer->second.scale;
+            node->second.transform.scaleY = layer->second.scaleY;
+            node->second.transform.rotation = layer->second.rotation;
+            node->second.transform.opacity =
+                static_cast<float>(layer->second.alpha) / 255.0f;
+        }
         return true;
     }
     return false;
@@ -314,6 +527,14 @@ void Stage::UpdateTweens(float dt) {
                     layer.alpha = static_cast<std::uint8_t>(
                         std::clamp(support::Lerp(tween.fromAlpha, spec.alpha, t), 0.0f, 255.0f));
                 }
+                if (auto node = m_nodes.find(tween.name); node != m_nodes.end()) {
+                    node->second.transform.x = layer.x;
+                    node->second.transform.y = layer.y;
+                    node->second.transform.scaleX = layer.scale;
+                    node->second.transform.scaleY = layer.scaleY;
+                    node->second.transform.opacity =
+                        static_cast<float>(layer.alpha) / 255.0f;
+                }
             }
         }
 
@@ -327,7 +548,10 @@ void Stage::UpdateTweens(float dt) {
 
 void Stage::SetCharacter(const std::string& name, const std::string& imagePath, int slot,
                          bool transition, float offsetX, float offsetY, float scale) {
+    if (name.empty()) return;
     Actor& actor = m_actors[name];
+    Node& node = EnsureNode(name, NodeKind::Character);
+    node.z = slot;
     const bool isNew = actor.imagePath.empty();
     const bool imageChanged = !isNew && actor.imagePath != imagePath;
     if (imageChanged && transition) {
@@ -360,7 +584,7 @@ void Stage::ClearCharacter(const std::string& name, bool transition) {
         return;
     }
     if (!transition) {
-        m_actors.erase(it);
+        RemoveNode(name);
         return;
     }
     it->second.exiting = true;
@@ -374,11 +598,15 @@ void Stage::MoveCharacter(const std::string& name, int slot) {
     }
     it->second.slot = slot;
     it->second.targetX = SlotCenterX(slot);
+    if (auto node = m_nodes.find(name); node != m_nodes.end()) node->second.z = slot;
 }
 
 void Stage::ClearAll() {
     m_actors.clear();
     m_layers.clear();
+    m_nodes.clear();
+    m_nextNodeOrder = 1;
+    m_particles.ClearAll();
     m_tweens.clear();
     EndRuleTransition();
     m_bgPath.clear();
@@ -453,6 +681,14 @@ bool Stage::SetCustomEffect(
     return true;
 }
 
+bool Stage::SetCustomEffect(
+    const std::string_view effect, const float progress,
+    const graphics::CustomEffectNamedParameters& parameters) {
+    const auto resolved =
+        m_renderer.ResolveCustomEffectParameters(effect, parameters);
+    return resolved && SetCustomEffect(effect, progress, &*resolved);
+}
+
 void Stage::ClearCustomEffect() {
     m_customEffect.clear();
     m_customEffectProgress = 0.0f;
@@ -490,6 +726,7 @@ void Stage::Update(float dt) {
         }
     }
 
+    std::vector<std::string> expiredActors;
     for (auto it = m_actors.begin(); it != m_actors.end();) {
         Actor& a = it->second;
         a.alpha = Approach(a.alpha, a.targetAlpha, kAlphaSpeed, dt);
@@ -502,14 +739,17 @@ void Stage::Update(float dt) {
             }
         }
         if (a.exiting && a.alpha <= 1.0f) {
+            expiredActors.push_back(it->first);
             it = m_actors.erase(it);
         } else {
             ++it;
         }
     }
+    for (const auto& name : expiredActors) RemoveNode(name);
 
     // Tweens run last so an animated property wins over the slot Approach.
     UpdateTweens(dt);
+    m_particles.Update(dt);
 }
 
 void Stage::RenderRuleOverlay() {
@@ -539,15 +779,30 @@ void Stage::RenderLayers(bool front) {
     if (m_layers.empty()) {
         return;
     }
-    std::vector<const Layer*> ordered;
+    struct Entry {
+        std::string_view name;
+        const Layer* layer = nullptr;
+        NodeSortKey key;
+    };
+    std::vector<Entry> ordered;
     for (const auto& [name, layer] : m_layers) {
-        if (front ? layer.z >= 0 : layer.z < 0) {
-            ordered.push_back(&layer);
-        }
+        const auto node = m_nodes.find(name);
+        NodeSortKey key = node == m_nodes.end()
+                              ? NodeSortKey{layer.z, {{0, name}}}
+                              : ResolveNodeSortKey(name);
+        if (front ? key.z >= 0 : key.z < 0)
+            ordered.push_back({name, &layer, std::move(key)});
     }
-    std::sort(ordered.begin(), ordered.end(),
-              [](const Layer* a, const Layer* b) { return a->z < b->z; });
-    for (const Layer* layer : ordered) {
+    std::ranges::sort(ordered, [](const Entry& left, const Entry& right) {
+        if (left.key.z != right.key.z) return left.key.z < right.key.z;
+        if (left.key.path != right.key.path)
+            return left.key.path < right.key.path;
+        return left.name < right.name;
+    });
+    for (const Entry& entry : ordered) {
+        const Layer* layer = entry.layer;
+        const auto world = ResolveNodeTransform(std::string(entry.name));
+        if (!world.visible || world.opacity <= 0.0f) continue;
         const graphics::TextureHandle texture =
             m_assets.Texture(layer->imagePath);
         if (!texture) {
@@ -558,12 +813,15 @@ void Stage::RenderLayers(bool front) {
         if (tw <= 0 || th <= 0) {
             continue;
         }
-        const Rect bounds{ layer->x, layer->y, tw * layer->scale,
-                           th * layer->scaleY };
+        const Rect bounds{world.x, world.y, tw * world.scaleX,
+                          th * world.scaleY};
         m_renderer.PushTransform(
             {bounds.x + bounds.w * 0.5f, bounds.y + bounds.h * 0.5f},
-            {1.0f, 1.0f}, layer->rotation);
-        m_renderer.DrawImage(layer->imagePath, bounds, layer->alpha);
+            {1.0f, 1.0f}, world.rotation);
+        m_renderer.DrawImage(
+            layer->imagePath, bounds,
+            static_cast<std::uint8_t>(
+                std::clamp(world.opacity, 0.0f, 1.0f) * 255.0f));
         m_renderer.PopTransform();
     }
 }
@@ -585,16 +843,34 @@ void Stage::Render() {
     }
     RenderRuleOverlay();
     RenderLayers(/*front=*/false);
+    m_particles.Render(/*front=*/false);
 
-    std::vector<const Actor*> ordered;
+    struct ActorEntry {
+        std::string_view name;
+        const Actor* actor = nullptr;
+        NodeSortKey key;
+    };
+    std::vector<ActorEntry> ordered;
     ordered.reserve(m_actors.size());
     for (const auto& [name, actor] : m_actors) {
-        ordered.push_back(&actor);
+        const auto node = m_nodes.find(name);
+        NodeSortKey key = node == m_nodes.end()
+                              ? NodeSortKey{actor.slot, {{0, name}}}
+                              : ResolveNodeSortKey(name);
+        ordered.push_back({name, &actor, std::move(key)});
     }
-    std::sort(ordered.begin(), ordered.end(),
-              [](const Actor* a, const Actor* b) { return a->slot < b->slot; });
+    std::ranges::sort(ordered, [](const ActorEntry& left,
+                                  const ActorEntry& right) {
+        if (left.key.z != right.key.z) return left.key.z < right.key.z;
+        if (left.key.path != right.key.path)
+            return left.key.path < right.key.path;
+        return left.name < right.name;
+    });
 
-    const auto drawSprite = [&](const std::string& path, const Actor& actor, float alpha) {
+    const auto drawSprite = [&](const std::string& name, const std::string& path,
+                                const Actor& actor, float alpha) {
+        const auto world = ResolveNodeTransform(name);
+        if (!world.visible || world.opacity <= 0.0f) return;
         const graphics::TextureHandle texture = m_assets.Texture(path);
         if (!texture) {
             return;
@@ -605,22 +881,30 @@ void Stage::Render() {
             return;
         }
         const float effectScale = std::max(.01f, actor.effectScale);
-        const float w = tw * actor.scale * effectScale;
-        const float h = th * actor.scale * effectScale;
-        const float drawX = actor.x - w * 0.5f + actor.offsetX + actor.effectOffsetX;
+        const float w = tw * actor.scale * effectScale * world.scaleX;
+        const float h = th * actor.scale * effectScale * world.scaleY;
+        const float drawX = actor.x - w * 0.5f + actor.offsetX +
+                            actor.effectOffsetX + world.x;
         const float drawY = static_cast<float>(logicalH) - h + actor.offsetY +
-                            actor.effectOffsetY;
+                            actor.effectOffsetY + world.y;
+        m_renderer.PushTransform({drawX + w * 0.5f, drawY + h * 0.5f},
+                                 {1.0f, 1.0f}, world.rotation);
         m_renderer.DrawImage(path, Rect{ drawX, drawY, w, h },
                              static_cast<std::uint8_t>(std::clamp(
-                                 alpha * actor.effectAlpha, 0.0f, 255.0f)));
+                                 alpha * actor.effectAlpha * world.opacity,
+                                 0.0f, 255.0f)));
+        m_renderer.PopTransform();
     };
-    for (const Actor* a : ordered) {
+    for (const ActorEntry& entry : ordered) {
+        const Actor* a = entry.actor;
         if (!a->prevImagePath.empty()) {
-            drawSprite(a->prevImagePath, *a, a->prevAlpha);
+            drawSprite(std::string(entry.name), a->prevImagePath, *a,
+                       a->prevAlpha);
         }
-        drawSprite(a->imagePath, *a, a->alpha);
+        drawSprite(std::string(entry.name), a->imagePath, *a, a->alpha);
     }
     RenderLayers(/*front=*/true);
+    m_particles.Render(/*front=*/true);
     m_renderer.PopTransform();
     // Camera and shake belong to the Stage layer. Dialogue/UI is rendered by
     // the host after this call and must remain stable.
@@ -662,6 +946,15 @@ std::vector<Stage::SavedActor> Stage::Snapshot() const {
 }
 
 void Stage::Restore(const std::vector<SavedActor>& actors) {
+    for (auto it = m_nodes.begin(); it != m_nodes.end();) {
+        if (it->second.kind == NodeKind::Character) it = m_nodes.erase(it);
+        else ++it;
+    }
+    for (auto& [_, node] : m_nodes) {
+        std::erase_if(node.children, [this](const std::string& child) {
+            return !m_nodes.contains(child);
+        });
+    }
     m_actors.clear();
     for (const SavedActor& s : actors) {
         SetCharacter(s.name, s.imagePath, s.slot, /*transition=*/false, s.offsetX, s.offsetY,
@@ -686,6 +979,15 @@ std::vector<Stage::SavedLayer> Stage::SnapshotLayers() const {
 }
 
 void Stage::RestoreLayers(const std::vector<SavedLayer>& layers) {
+    for (auto it = m_nodes.begin(); it != m_nodes.end();) {
+        if (it->second.kind == NodeKind::Image) it = m_nodes.erase(it);
+        else ++it;
+    }
+    for (auto& [_, node] : m_nodes) {
+        std::erase_if(node.children, [this](const std::string& child) {
+            return !m_nodes.contains(child);
+        });
+    }
     m_layers.clear();
     for (const SavedLayer& s : layers) {
         SetLayerTransform(s.name, s.imagePath, s.x, s.y, s.scale, s.scaleY,
@@ -693,6 +995,129 @@ void Stage::RestoreLayers(const std::vector<SavedLayer>& layers) {
                           static_cast<std::uint8_t>(std::clamp(s.alpha, 0, 255)),
                           s.z);
     }
+}
+
+Status Stage::RestoreNodes(const std::vector<SavedNode>& nodes) {
+    if (nodes.size() > 4'096) {
+        return Status::Fail(diag::Diagnostic{
+            .severity = diag::Severity::Error,
+            .code = "PXSTAGE7521",
+            .category = "Runtime.Stage",
+            .message = "Saved stage graph exceeds the node limit"});
+    }
+    const auto finite = [](const float value) { return std::isfinite(value); };
+    std::unordered_map<std::string, Node> candidate;
+    int nextOrder = 1;
+    for (const SavedNode& saved : nodes) {
+        const auto& t = saved.transform;
+        const bool validKind = saved.kind == NodeKind::Group ||
+                               saved.kind == NodeKind::Image ||
+                               saved.kind == NodeKind::Character;
+        if (!validKind || saved.name.empty() || saved.name.size() > 128 ||
+            saved.parent.size() > 128 || !finite(t.x) || !finite(t.y) ||
+            !finite(t.scaleX) || !finite(t.scaleY) || !finite(t.rotation) ||
+            !finite(t.opacity) || t.scaleX <= 0.0f || t.scaleY <= 0.0f ||
+            t.opacity < 0.0f || t.opacity > 1.0f ||
+            saved.z < -kNodeOrderLimit || saved.z > kNodeOrderLimit ||
+            saved.order < -kNodeOrderLimit ||
+            saved.order > kNodeOrderLimit ||
+            !candidate.emplace(saved.name,
+                               Node{saved.kind, saved.parent, saved.children,
+                                    saved.transform, saved.z, saved.order,
+                                    saved.visible})
+                 .second) {
+            return Status::Fail(diag::Diagnostic{
+                .severity = diag::Severity::Error,
+                .code = "PXSTAGE7522",
+                .category = "Runtime.Stage",
+                .message = "Saved stage node is invalid",
+                .details = saved.name});
+        }
+        nextOrder = std::max(nextOrder, saved.order + 1);
+    }
+    std::unordered_map<std::string, std::unordered_set<std::string>> derived;
+    for (const auto& [name, node] : candidate) {
+        if (!node.parent.empty()) {
+            const auto parent = candidate.find(node.parent);
+            if (parent == candidate.end() || parent->second.kind != NodeKind::Group ||
+                !derived[node.parent].insert(name).second) {
+                return Status::Fail(diag::Diagnostic{
+                    .severity = diag::Severity::Error,
+                    .code = "PXSTAGE7523",
+                    .category = "Runtime.Stage",
+                    .message = "Saved stage node parent is invalid",
+                    .details = name});
+            }
+        }
+    }
+    for (const auto& [name, node] : candidate) {
+        if (node.kind == NodeKind::Image && !m_layers.contains(name)) {
+            return Status::Fail(diag::Diagnostic{
+                .severity = diag::Severity::Error, .code = "PXSTAGE7524",
+                .category = "Runtime.Stage",
+                .message = "Saved image node has no layer payload", .details = name});
+        }
+        if (node.kind == NodeKind::Character && !m_actors.contains(name)) {
+            return Status::Fail(diag::Diagnostic{
+                .severity = diag::Severity::Error, .code = "PXSTAGE7525",
+                .category = "Runtime.Stage",
+                .message = "Saved character node has no actor payload", .details = name});
+        }
+        std::unordered_set<std::string> declared;
+        for (const auto& child : node.children) {
+            if (!declared.insert(child).second) {
+                return Status::Fail(diag::Diagnostic{
+                    .severity = diag::Severity::Error, .code = "PXSTAGE7526",
+                    .category = "Runtime.Stage",
+                    .message = "Saved stage node repeats a child", .details = name});
+            }
+        }
+        if (declared != derived[name]) {
+            return Status::Fail(diag::Diagnostic{
+                .severity = diag::Severity::Error, .code = "PXSTAGE7527",
+                .category = "Runtime.Stage",
+                .message = "Saved stage parent/children links disagree",
+                .details = name});
+        }
+        std::string cursor = node.parent;
+        for (std::size_t depth = 0; !cursor.empty() && depth <= candidate.size();
+             ++depth) {
+            if (cursor == name) {
+                return Status::Fail(diag::Diagnostic{
+                    .severity = diag::Severity::Error, .code = "PXSTAGE7528",
+                    .category = "Runtime.Stage",
+                    .message = "Saved stage graph contains a cycle",
+                    .details = name});
+            }
+            cursor = candidate.at(cursor).parent;
+        }
+        if (!cursor.empty()) {
+            return Status::Fail(diag::Diagnostic{
+                .severity = diag::Severity::Error, .code = "PXSTAGE7528",
+                .category = "Runtime.Stage",
+                .message = "Saved stage graph contains a cycle",
+                .details = name});
+        }
+    }
+    for (const auto& [name, _] : m_layers) {
+        if (!candidate.contains(name) ||
+            candidate.at(name).kind != NodeKind::Image)
+            return Status::Fail(diag::Diagnostic{
+                .severity = diag::Severity::Error, .code = "PXSTAGE7529",
+                .category = "Runtime.Stage",
+                .message = "Saved stage graph omits a layer", .details = name});
+    }
+    for (const auto& [name, _] : m_actors) {
+        if (!candidate.contains(name) ||
+            candidate.at(name).kind != NodeKind::Character)
+            return Status::Fail(diag::Diagnostic{
+                .severity = diag::Severity::Error, .code = "PXSTAGE7530",
+                .category = "Runtime.Stage",
+                .message = "Saved stage graph omits an actor", .details = name});
+    }
+    m_nodes = std::move(candidate);
+    m_nextNodeOrder = nextOrder;
+    return Status::Ok();
 }
 
 Stage::RuntimeState Stage::CaptureState() const {
@@ -733,6 +1158,8 @@ Stage::RuntimeState Stage::CaptureState() const {
                                            actor.effectScale, actor.effectAlpha});
     }
     state.layers = SnapshotLayers();
+    state.nodes = SnapshotNodes();
+    state.particleEmitters = m_particles.Capture();
     state.tweens.reserve(m_tweens.size());
     for (const Tween& tween : m_tweens) {
         state.tweens.push_back(SavedTween{tween.isLayer, tween.name, tween.spec,
@@ -821,8 +1248,15 @@ Status Stage::RestoreState(const RuntimeState& state) {
         actor.effectAlpha = saved.effectAlpha;
         actor.exiting = saved.exiting;
         m_actors.emplace(saved.name, std::move(actor));
+        Node& node = EnsureNode(saved.name, NodeKind::Character);
+        node.z = saved.slot;
     }
     RestoreLayers(state.layers);
+    if (!state.nodes.empty()) {
+        if (Status restored = RestoreNodes(state.nodes); !restored) return restored;
+    }
+    if (Status particles = m_particles.Restore(state.particleEmitters); !particles)
+        return particles;
     m_tweens.clear();
     for (const SavedTween& saved : state.tweens) {
         if (saved.target.empty() || !finite(saved.elapsed) || !finite(saved.duration) ||

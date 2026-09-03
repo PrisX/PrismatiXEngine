@@ -30,6 +30,62 @@ In other words:
 
 The facade deliberately wraps the existing host instead of defining a second scripting runtime. Native Player and WASM Preview therefore keep identical ScriptHost semantics.
 
+## Production runtime services
+
+Long-running media and persistent state are exposed as typed engine services. Video
+handles are thenable and also expose explicit lifecycle control; awaiting one uses
+the native scheduler rather than blocking the update thread.
+
+```ts
+ctx.audio.playVoice("Content/Voice/chapter-01/001.ogg");
+ctx.audio.stopVoice();
+
+const opening = ctx.video.play("Content/Video/opening.mp4", {
+  volume: 0.8,
+  skippable: true,
+});
+opening.pause();
+opening.resume();
+await opening; // stop(), skip(), status(), error(), and token() are also available
+
+ctx.saves.save(3);
+ctx.saves.autosave();
+const slot = ctx.saves.query(3);
+const occupied = ctx.saves.list().filter((entry) => entry.exists);
+ctx.saves.load(slot.slot);
+```
+
+Keyboard, controller, and pointer bindings converge on logical actions, so
+extensions do not need device-specific branches:
+
+```ts
+if (ctx.input.actionPressed("advance")) {
+  // advance dialogue
+}
+if (ctx.input.actionDown("toggle-skip")) {
+  // held logical action
+}
+```
+
+Extension-owned state participates in save, seek, and rollback through a
+versioned, deterministic JSON provider. Capture, restore, and migration are
+synchronous and may not call back into engine operations.
+
+```ts
+let state = {affection: 0};
+ctx.state.registerProvider("game.relationships", 2, {
+  capture: () => state,
+  restore: (saved) => { state = {...saved}; },
+  migrate: (saved, fromVersion) => fromVersion === 1
+    ? {affection: Number((saved as {score?: number}).score ?? 0)}
+    : saved as typeof state,
+});
+```
+
+The embedded sandbox remains intentionally capability-limited: these services do
+not expose Node.js, host filesystem, network, process, wall-clock, dynamic code
+evaluation, or unrestricted randomness.
+
 ## Stage capability parity
 
 The stable facade exposes the presentation properties that are serializable by the native Stage. Existing calls remain valid; the additional options only opt into the richer transform and compositor paths.
@@ -49,11 +105,23 @@ ctx.stage.layer("petals", "Content/Images/petals.png", {
 ctx.stage.camera({x: -24, y: 10, zoom: 1.08});
 ctx.stage.screenEffect("vignette", 0.4);
 
-// A packaged native shader/post effect. Parameters are at most eight vec4s.
-ctx.stage.customEffect("dream-tone", 0.65, [[0.8, 0.2, 0, 0]]);
+// A packaged native shader/post effect. Names and ranges come from .pxeffect.
+ctx.stage.customEffect("dream-tone", 0.65, {
+  amount: 0.8,
+  tint: [1, 0.8, 0.65, 1],
+});
+
+ctx.stage.group("weather");
+ctx.stage.particles("snow", "snow", {
+  parent: "weather", seed: 42, rate: 90, maxParticles: 600,
+});
 ```
 
-`flash` and `fade` are available on every graphics tier. `blur`, `vignette`, `color-grade`, and packaged shader effects require the GPU-effects tier, matching the native Stage behavior. Stage state—including camera, transforms, background-rule progress, and post-effect values—continues to use the existing save/checkpoint path.
+Named values are checked by the native runtime against the packaged `number`,
+`vec2`, or `color` declaration before a GPU uniform is updated. The older
+positional `vec4[]` form remains accepted for existing extensions.
+
+`flash` and `fade` are available on every graphics tier. `blur`, `vignette`, `color-grade`, and packaged shader effects require the GPU-effects tier, matching the native Stage behavior. Stage nodes (`Group`, compatibility image layers, and characters) inherit transform, visibility, and opacity from their parent. Particle presets (`rain`, `snow`, `sakura`, and `dust`/`light`) are native, fixed-step, and seeded. Stage state—including hierarchy, particles, camera, transforms, background-rule progress, and post-effect values—continues to use the existing save/checkpoint path.
 
 ## Screen and route transitions
 

@@ -72,7 +72,40 @@ export interface LayerTransformOptions {
   readonly z?: number;
 }
 
+export interface StageNodeTransform {
+  readonly x?: number;
+  readonly y?: number;
+  readonly scaleX?: number;
+  readonly scaleY?: number;
+  /** Degrees, composed through the parent hierarchy. */
+  readonly rotation?: number;
+  /** Local opacity in the inclusive range 0..1. */
+  readonly opacity?: number;
+}
+
+export type ParticlePreset = "rain" | "snow" | "sakura" | "dust" | "light" | "motes";
+
+export interface ParticleEmitterOptions {
+  /** Required to be a non-zero uint32. Defaults to 1. */
+  readonly seed?: number;
+  readonly rate?: number;
+  readonly maxParticles?: number;
+  readonly z?: number;
+  readonly opacity?: number;
+  readonly wind?: number;
+  readonly speed?: number;
+  readonly size?: number;
+}
+
 export type StageScreenEffect = "flash" | "fade" | "blur" | "vignette" | "color-grade";
+export type CustomEffectParameterValue =
+  number | readonly [number, number] |
+  readonly [number, number, number, number];
+export type CustomEffectNamedParameters =
+  Readonly<Record<string, CustomEffectParameterValue>>;
+/** Positional slots remain supported for compatibility with pre-schema scripts. */
+export type CustomEffectParameters = CustomEffectNamedParameters |
+  readonly (readonly number[])[];
 export type ScreenEffectStatus = "unknown" | "playing" | "completed" | "stopped" | "cancelled";
 
 export interface ScreenTextureReference {
@@ -131,7 +164,60 @@ export interface ScreenEffectAwaitToken {
   readonly handle: number;
 }
 
-export type EngineAwaitToken = TimerAwaitToken | AnimationAwaitToken | ScreenEffectAwaitToken;
+export interface VideoAwaitToken {
+  readonly kind: "video";
+  readonly handle: number;
+}
+
+export type VideoStatus = "unknown" | "playing" | "paused" | "completed" | "stopped" | "failed" | "unavailable";
+
+export interface VideoPlayOptions {
+  readonly volume?: number;
+  readonly skippable?: boolean;
+}
+
+/** Awaiting this object suspends only at the native video wait boundary. */
+export interface VideoHandle extends PromiseLike<void> {
+  readonly id: number;
+  pause(): boolean;
+  resume(): boolean;
+  stop(): boolean;
+  skip(): boolean;
+  status(): VideoStatus;
+  error(): string;
+  wait(): Promise<void>;
+  token(): VideoAwaitToken;
+}
+
+export interface SaveSlotInfo {
+  readonly slot: number;
+  readonly exists: boolean;
+  readonly chapter: string;
+  readonly timestamp: number;
+  readonly hasThumbnail: boolean;
+}
+
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { readonly [key: string]: JsonValue };
+
+export interface ExtensionStateProvider<T extends JsonValue = JsonValue> {
+  capture(): T;
+  restore(state: T): void;
+  migrate?(state: JsonValue, fromVersion: number, toVersion: number): T;
+}
+
+export type LogicalInputAction =
+  | "navigate-up" | "navigate-down" | "navigate-left" | "navigate-right"
+  | "accept" | "cancel" | "focus-next" | "focus-previous"
+  | "advance" | "menu" | "backlog" | "toggle-auto" | "toggle-skip"
+  | "toggle-ui" | "quick-save" | "quick-load" | "rollback" | "pause";
+
+export type EngineAwaitToken = TimerAwaitToken | AnimationAwaitToken | ScreenEffectAwaitToken | VideoAwaitToken;
 
 export interface DisplayModeTable {
   readonly TopLeft: 0;
@@ -183,6 +269,8 @@ export interface PrismatiXEngine {
   UnlockScene(id: string): void;
 
   PlaySE(path: string): void;
+  PlayVoice(path: string): void;
+  StopVoice(): void;
   PlayBGM(path: string, loop?: boolean, fadeMilliseconds?: number): void;
   StopBGM(fadeMilliseconds?: number): void;
   SetBGMVolume(volume: number): void;
@@ -192,6 +280,21 @@ export interface PrismatiXEngine {
   PlayAmbience(path: string, loop?: boolean, fadeMilliseconds?: number): void;
   StopAmbience(fadeMilliseconds?: number): void;
 
+  Save(slot: number): boolean;
+  Load(slot: number): boolean;
+  Autosave(): boolean;
+  DeleteSave(slot: number): boolean;
+  QuerySave(slot: number): SaveSlotInfo;
+  ListSaves(count?: number): readonly SaveSlotInfo[];
+
+  PlayVideo(path: string, volume?: number, skippable?: boolean): number;
+  PauseVideo(handle: number): boolean;
+  ResumeVideo(handle: number): boolean;
+  StopVideo(handle: number): boolean;
+  SkipVideo(handle: number): boolean;
+  GetVideoStatus(handle: number): VideoStatus;
+  GetVideoError(handle: number): string;
+
   SetBackground(path: string, transition?: boolean): void;
   SetBackgroundRule(path: string, rulePath: string, durationMilliseconds?: number, vague?: number): void;
   SetCharacter(name: string, image: string, slot?: number, transition?: boolean, x?: number, y?: number, scale?: number): void;
@@ -200,11 +303,19 @@ export interface PrismatiXEngine {
   SetLayer(name: string, image: string, x?: number, y?: number, scale?: number, alpha?: number, z?: number): void;
   SetLayerTransform(name: string, image: string, x?: number, y?: number, scaleX?: number, scaleY?: number, rotation?: number, alpha?: number, z?: number): void;
   ClearLayer(name: string): void;
+  SetStageGroup(name: string, parent?: string): boolean;
+  SetStageNodeParent(name: string, parent: string): boolean;
+  SetStageNodeTransform(name: string, transform: StageNodeTransform): boolean;
+  SetStageNodeOrder(name: string, z: number, order: number): boolean;
+  SetStageNodeVisibility(name: string, visible: boolean): boolean;
+  RemoveStageNode(name: string): void;
+  SetParticleEmitter(name: string, preset: ParticlePreset, options?: ParticleEmitterOptions): boolean;
+  ClearParticleEmitter(name: string): void;
   Shake(milliseconds?: number, amplitude?: number): void;
   SetCamera(x: number, y: number, zoom: number): void;
   SetScreenEffect(effect: StageScreenEffect, amount: number): void;
   ClearScreenEffect(effect: StageScreenEffect): void;
-  SetCustomEffect(effect: string, progress: number, parameters?: readonly (readonly number[])[]): void;
+  SetCustomEffect(effect: string, progress: number, parameters?: CustomEffectParameters): void;
   ClearCustomEffect(): void;
   Animate(target: string, properties: StageTweenSpec): boolean;
 
@@ -220,9 +331,11 @@ export interface PrismatiXEngine {
   AwaitSeconds(seconds: number): TimerAwaitToken;
   AwaitAnimation(handle: number): AnimationAwaitToken;
   AwaitScreenEffect(handle: number): ScreenEffectAwaitToken;
+  AwaitVideo(handle: number): VideoAwaitToken;
   WaitSeconds(seconds: number): Promise<void>;
   WaitAnimation(handle: number): Promise<void>;
   WaitScreenEffect(handle: number): Promise<void>;
+  WaitVideo(handle: number): Promise<void>;
 
   DebugPoint(source: string, line: number, locals?: Record<string, RuntimeValue>, functionName?: string): Promise<void>;
 
@@ -230,6 +343,13 @@ export interface PrismatiXEngine {
   GetMouseY(): number;
   GetLeftClick(): boolean;
   GetRightClick(): boolean;
+  IsInputActionPressed(action: LogicalInputAction): boolean;
+  IsInputActionDown(action: LogicalInputAction): boolean;
+  RegisterStateProvider<T extends JsonValue>(
+    id: string,
+    version: number,
+    provider: ExtensionStateProvider<T>,
+  ): void;
 
   GetLogicalSize(): LogicalSize;
   DrawImage(path: string, x: number, y: number, width: number, height: number, alpha?: number): void;
@@ -266,6 +386,8 @@ export const ENGINE_HOST_BINDINGS = [
   "UnlockCG",
   "UnlockScene",
   "PlaySE",
+  "PlayVoice",
+  "StopVoice",
   "PlayBGM",
   "StopBGM",
   "SetBGMVolume",
@@ -274,6 +396,19 @@ export const ENGINE_HOST_BINDINGS = [
   "SetAmbienceVolume",
   "PlayAmbience",
   "StopAmbience",
+  "Save",
+  "Load",
+  "Autosave",
+  "DeleteSave",
+  "QuerySave",
+  "ListSaves",
+  "PlayVideo",
+  "PauseVideo",
+  "ResumeVideo",
+  "StopVideo",
+  "SkipVideo",
+  "GetVideoStatus",
+  "GetVideoError",
   "SetBackground",
   "SetBackgroundRule",
   "SetCharacter",
@@ -282,6 +417,14 @@ export const ENGINE_HOST_BINDINGS = [
   "SetLayer",
   "SetLayerTransform",
   "ClearLayer",
+  "SetStageGroup",
+  "SetStageNodeParent",
+  "SetStageNodeTransform",
+  "SetStageNodeOrder",
+  "SetStageNodeVisibility",
+  "RemoveStageNode",
+  "SetParticleEmitter",
+  "ClearParticleEmitter",
   "Shake",
   "SetCamera",
   "SetScreenEffect",
@@ -301,14 +444,19 @@ export const ENGINE_HOST_BINDINGS = [
   "AwaitSeconds",
   "AwaitAnimation",
   "AwaitScreenEffect",
+  "AwaitVideo",
   "WaitSeconds",
   "WaitAnimation",
   "WaitScreenEffect",
+  "WaitVideo",
   "DebugPoint",
   "GetMouseX",
   "GetMouseY",
   "GetLeftClick",
   "GetRightClick",
+  "IsInputActionPressed",
+  "IsInputActionDown",
+  "RegisterStateProvider",
   "GetLogicalSize",
   "DrawImage",
   "DrawAuto",
@@ -360,6 +508,8 @@ export interface PrismatiXContext {
   };
   readonly audio: {
     playSE(path: string): void;
+    playVoice(path: string): void;
+    stopVoice(): void;
     playBGM(path: string, options?: {readonly loop?: boolean; readonly fadeMilliseconds?: number}): void;
     stopBGM(fadeMilliseconds?: number): void;
     setBGMVolume(volume: number): void;
@@ -369,6 +519,18 @@ export interface PrismatiXContext {
     playAmbience(path: string, options?: {readonly loop?: boolean; readonly fadeMilliseconds?: number}): void;
     stopAmbience(fadeMilliseconds?: number): void;
   };
+  readonly saves: {
+    save(slot: number): boolean;
+    load(slot: number): boolean;
+    autosave(): boolean;
+    delete(slot: number): boolean;
+    query(slot: number): SaveSlotInfo;
+    list(count?: number): readonly SaveSlotInfo[];
+  };
+  readonly video: {
+    play(path: string, options?: VideoPlayOptions): VideoHandle;
+    from(handle: number): VideoHandle;
+  };
   readonly stage: {
     background(path: string, transition?: boolean): void;
     backgroundRule(path: string, rulePath: string, options?: BackgroundRuleOptions): void;
@@ -377,11 +539,19 @@ export interface PrismatiXContext {
     moveCharacter(name: string, slot: number): void;
     layer(name: string, image: string, options?: LayerTransformOptions & {readonly scale?: number}): void;
     clearLayer(name: string): void;
+    group(name: string, parent?: string): boolean;
+    parent(name: string, parent: string): boolean;
+    transform(name: string, transform: StageNodeTransform): boolean;
+    order(name: string, z: number, order: number): boolean;
+    visible(name: string, visible: boolean): boolean;
+    remove(name: string): void;
+    particles(name: string, preset: ParticlePreset, options?: ParticleEmitterOptions): boolean;
+    clearParticles(name: string): void;
     shake(options?: {readonly milliseconds?: number; readonly amplitude?: number}): void;
     camera(options: {readonly x?: number; readonly y?: number; readonly zoom?: number}): void;
     screenEffect(effect: StageScreenEffect, amount: number): void;
     clearScreenEffect(effect: StageScreenEffect): void;
-    customEffect(effect: string, progress: number, parameters?: readonly (readonly number[])[]): void;
+    customEffect(effect: string, progress: number, parameters?: CustomEffectParameters): void;
     clearCustomEffect(): void;
     animate(target: string, properties: StageTweenSpec): boolean;
   };
@@ -415,6 +585,15 @@ export interface PrismatiXContext {
     mouseY(): number;
     leftClick(): boolean;
     rightClick(): boolean;
+    actionPressed(action: LogicalInputAction): boolean;
+    actionDown(action: LogicalInputAction): boolean;
+  };
+  readonly state: {
+    registerProvider<T extends JsonValue>(
+      id: string,
+      version: number,
+      provider: ExtensionStateProvider<T>,
+    ): void;
   };
   readonly renderer: {
     logicalSize(): LogicalSize;
@@ -460,6 +639,25 @@ function resolveScreenEffectPlan(effect: ScreenEffectPlan | ScreenEffectFactory)
   return typeof effect === "function" ? effect(screenEffectContext) : effect;
 }
 
+function videoHandle(engine: PrismatiXEngine, id: number): VideoHandle {
+  const wait = () => engine.WaitVideo(id);
+  return Object.freeze({
+    id,
+    pause: () => engine.PauseVideo(id),
+    resume: () => engine.ResumeVideo(id),
+    stop: () => engine.StopVideo(id),
+    skip: () => engine.SkipVideo(id),
+    status: () => engine.GetVideoStatus(id),
+    error: () => engine.GetVideoError(id),
+    wait,
+    token: () => engine.AwaitVideo(id),
+    then: <TResult1 = void, TResult2 = never>(
+      onfulfilled?: ((value: void) => TResult1 | PromiseLike<TResult1>) | null,
+      onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+    ) => wait().then(onfulfilled, onrejected),
+  });
+}
+
 export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engine): PrismatiXContext {
   return {
     raw: engine,
@@ -491,6 +689,8 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
     },
     audio: {
       playSE: (path) => engine.PlaySE(path),
+      playVoice: (path) => engine.PlayVoice(path),
+      stopVoice: () => engine.StopVoice(),
       playBGM: (path, options) => engine.PlayBGM(path, options?.loop, options?.fadeMilliseconds),
       stopBGM: (fadeMilliseconds) => engine.StopBGM(fadeMilliseconds),
       setBGMVolume: (volume) => engine.SetBGMVolume(volume),
@@ -499,6 +699,20 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
       setAmbienceVolume: (volume) => engine.SetAmbienceVolume(volume),
       playAmbience: (path, options) => engine.PlayAmbience(path, options?.loop, options?.fadeMilliseconds),
       stopAmbience: (fadeMilliseconds) => engine.StopAmbience(fadeMilliseconds),
+    },
+    saves: {
+      save: (slot) => engine.Save(slot),
+      load: (slot) => engine.Load(slot),
+      autosave: () => engine.Autosave(),
+      delete: (slot) => engine.DeleteSave(slot),
+      query: (slot) => engine.QuerySave(slot),
+      list: (count) => engine.ListSaves(count),
+    },
+    video: {
+      play: (path, options) => videoHandle(
+        engine, engine.PlayVideo(path, options?.volume, options?.skippable),
+      ),
+      from: (handle) => videoHandle(engine, handle),
     },
     stage: {
       background: (path, transition) => engine.SetBackground(path, transition),
@@ -513,6 +727,14 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
           engine.SetLayer(name, image, options?.x, options?.y, options?.scale, options?.alpha, options?.z);
       },
       clearLayer: (name) => engine.ClearLayer(name),
+      group: (name, parent) => engine.SetStageGroup(name, parent),
+      parent: (name, parent) => engine.SetStageNodeParent(name, parent),
+      transform: (name, transform) => engine.SetStageNodeTransform(name, transform),
+      order: (name, z, order) => engine.SetStageNodeOrder(name, z, order),
+      visible: (name, visible) => engine.SetStageNodeVisibility(name, visible),
+      remove: (name) => engine.RemoveStageNode(name),
+      particles: (name, preset, options) => engine.SetParticleEmitter(name, preset, options),
+      clearParticles: (name) => engine.ClearParticleEmitter(name),
       shake: (options) => engine.Shake(options?.milliseconds, options?.amplitude),
       camera: (options) => engine.SetCamera(options.x ?? 0, options.y ?? 0, options.zoom ?? 1),
       screenEffect: (effect, amount) => engine.SetScreenEffect(effect, amount),
@@ -551,6 +773,12 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
       mouseY: () => engine.GetMouseY(),
       leftClick: () => engine.GetLeftClick(),
       rightClick: () => engine.GetRightClick(),
+      actionPressed: (action) => engine.IsInputActionPressed(action),
+      actionDown: (action) => engine.IsInputActionDown(action),
+    },
+    state: {
+      registerProvider: (id, version, provider) =>
+        engine.RegisterStateProvider(id, version, provider),
     },
     renderer: {
       logicalSize: () => engine.GetLogicalSize(),

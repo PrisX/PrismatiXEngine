@@ -506,6 +506,50 @@ script::PendingActionsState ScriptActionsFromJson(const Json& json) {
         pending.handle=value.at("handle").get<std::uint64_t>();pending.remainingSeconds=value.at("remainingSeconds").get<float>();pending.journal=ScriptJournalFromJson(value.at("journal"));state.push_back(std::move(pending));}return state;
 }
 
+Json ExtensionStateToJson(const script::ExtensionStates& state) {
+    if (state.size() > kMaxSaveCollectionItems)
+        throw std::invalid_argument(
+            "Extension state provider collection exceeds save limits");
+    Json values = Json::array();
+    for (const auto& provider : state) {
+        if (provider.providerId.empty() || provider.providerId.size() > 128 ||
+            provider.sourceId.size() > 128 || provider.version == 0)
+            throw std::invalid_argument(
+                "Extension state provider identity is invalid");
+        values.push_back({{"sourceId", provider.sourceId},
+                          {"providerId", provider.providerId},
+                          {"version", provider.version},
+                          {"state", RuntimeValueToJson(provider.state, 0)}});
+    }
+    return values;
+}
+
+script::ExtensionStates ExtensionStateFromJson(const Json& json) {
+    if (!json.is_array() || json.size() > kMaxSaveCollectionItems)
+        throw std::invalid_argument(
+            "extensionState must be a bounded array");
+    script::ExtensionStates state;
+    state.reserve(json.size());
+    std::set<std::pair<std::string, std::string>> identities;
+    for (const auto& value : json) {
+        if (!value.is_object())
+            throw std::invalid_argument(
+                "Extension state provider must be an object");
+        script::ExtensionStateSnapshot provider;
+        provider.sourceId = value.at("sourceId").get<std::string>();
+        provider.providerId = value.at("providerId").get<std::string>();
+        provider.version = value.at("version").get<std::uint32_t>();
+        provider.state = RuntimeValueFromJson(value.at("state"), 0);
+        if (provider.sourceId.size() > 128 || provider.providerId.empty() ||
+            provider.providerId.size() > 128 || provider.version == 0 ||
+            !identities.emplace(provider.sourceId, provider.providerId).second)
+            throw std::invalid_argument(
+                "Extension state provider identity is invalid or duplicated");
+        state.push_back(std::move(provider));
+    }
+    return state;
+}
+
 Json BehaviorStateToJson(const ui::BehaviorRuntimeState& state) {
     Json fibers=Json::array();for(const auto& fiber:state.fibers){Json continuation=Json::array();for(const auto& node:fiber.continuation)continuation.push_back(node.ToString());fibers.push_back({
         {"id",fiber.id},{"entry",fiber.entry.ToString()},{"current",fiber.current.ToString()},
@@ -778,6 +822,116 @@ vn::Stage::TweenSpec TweenSpecFromJson(const Json& json) {
     return spec;
 }
 
+std::string_view NodeKindName(const vn::Stage::NodeKind kind) {
+    switch (kind) {
+        case vn::Stage::NodeKind::Group: return "group";
+        case vn::Stage::NodeKind::Image: return "image";
+        case vn::Stage::NodeKind::Character: return "character";
+    }
+    return "group";
+}
+
+vn::Stage::NodeKind NodeKindFromJson(const Json& json) {
+    if (!json.is_string()) throw std::invalid_argument("stage node kind must be a string");
+    const auto kind = json.get<std::string>();
+    if (kind == "group") return vn::Stage::NodeKind::Group;
+    if (kind == "image") return vn::Stage::NodeKind::Image;
+    if (kind == "character") return vn::Stage::NodeKind::Character;
+    throw std::invalid_argument("stage node kind is unsupported");
+}
+
+Json NodesToJson(const std::vector<vn::Stage::SavedNode>& nodes) {
+    Json values = Json::array();
+    for (const auto& node : nodes) {
+        values.push_back({
+            {"name", node.name}, {"kind", NodeKindName(node.kind)},
+            {"parent", node.parent}, {"children", node.children},
+            {"transform", {{"x", node.transform.x}, {"y", node.transform.y},
+                           {"scaleX", node.transform.scaleX},
+                           {"scaleY", node.transform.scaleY},
+                           {"rotation", node.transform.rotation},
+                           {"opacity", node.transform.opacity}}},
+            {"z", node.z}, {"order", node.order}, {"visible", node.visible}});
+    }
+    return values;
+}
+
+std::vector<vn::Stage::SavedNode> NodesFromJson(const Json& values) {
+    if (!values.is_array() || values.size() > kMaxSaveCollectionItems)
+        throw std::invalid_argument("stage nodes must be a bounded array");
+    std::vector<vn::Stage::SavedNode> nodes;
+    for (const auto& value : values) {
+        if (!value.is_object() || !value.contains("kind") ||
+            !value.contains("transform") || !value.at("transform").is_object())
+            throw std::invalid_argument("stage node must be an object");
+        const auto& transform = value.at("transform");
+        vn::Stage::SavedNode node;
+        node.name = value.value("name", std::string{});
+        node.kind = NodeKindFromJson(value.at("kind"));
+        node.parent = value.value("parent", std::string{});
+        if (!value.value("children", Json::array()).is_array())
+            throw std::invalid_argument("stage node children must be an array");
+        node.children = value.value("children", Json::array())
+                            .get<std::vector<std::string>>();
+        node.transform = {transform.value("x", 0.0f),
+                          transform.value("y", 0.0f),
+                          transform.value("scaleX", 1.0f),
+                          transform.value("scaleY", 1.0f),
+                          transform.value("rotation", 0.0f),
+                          transform.value("opacity", 1.0f)};
+        node.z = value.value("z", 0);
+        node.order = value.value("order", 0);
+        node.visible = value.value("visible", true);
+        nodes.push_back(std::move(node));
+    }
+    return nodes;
+}
+
+Json ParticleEmittersToJson(
+    const std::vector<vn::ParticleEmitterState>& emitters) {
+    Json values = Json::array();
+    for (const auto& emitter : emitters) {
+        const auto& spec = emitter.spec;
+        values.push_back({{"name", emitter.name},
+                          {"preset", vn::ParticlePresetName(spec.preset)},
+                          {"seed", spec.seed}, {"rate", spec.rate},
+                          {"maxParticles", spec.maxParticles}, {"z", spec.z},
+                          {"opacity", spec.opacity}, {"wind", spec.wind},
+                          {"speed", spec.speed}, {"size", spec.size},
+                          {"ticks", emitter.ticks},
+                          {"tickRemainder", emitter.tickRemainder}});
+    }
+    return values;
+}
+
+std::vector<vn::ParticleEmitterState> ParticleEmittersFromJson(
+    const Json& values) {
+    if (!values.is_array() || values.size() > kMaxSaveCollectionItems)
+        throw std::invalid_argument("particle emitters must be a bounded array");
+    std::vector<vn::ParticleEmitterState> emitters;
+    for (const auto& value : values) {
+        if (!value.is_object())
+            throw std::invalid_argument("particle emitter must be an object");
+        const auto preset = vn::ParticlePresetFromName(
+            value.value("preset", std::string{}));
+        if (!preset) throw std::invalid_argument("particle preset is unsupported");
+        vn::ParticleEmitterSpec spec;
+        spec.preset = *preset;
+        spec.seed = value.value("seed", std::uint32_t{0});
+        spec.rate = value.value("rate", 0.0f);
+        spec.maxParticles = value.value("maxParticles", std::uint32_t{0});
+        spec.z = value.value("z", 0);
+        spec.opacity = value.value("opacity", 1.0f);
+        spec.wind = value.value("wind", 0.0f);
+        spec.speed = value.value("speed", 1.0f);
+        spec.size = value.value("size", 1.0f);
+        emitters.push_back({value.value("name", std::string{}), spec,
+                            value.value("ticks", std::uint64_t{0}),
+                            value.value("tickRemainder", 0.0)});
+    }
+    return emitters;
+}
+
 Json StageToJson(const vn::Stage::RuntimeState& state) {
     Json tweens = Json::array();
     for (const auto& tween : state.tweens) {
@@ -806,7 +960,10 @@ Json StageToJson(const vn::Stage::RuntimeState& state) {
                               {"sequence", state.customEffectSequence},
                               {"parameters", state.customEffectParameters}}},
             {"effects", state.screenEffects}, {"actors", ActorsToJson(state.actors)},
-            {"layers", LayersToJson(state.layers)}, {"tweens", std::move(tweens)}};
+            {"layers", LayersToJson(state.layers)},
+            {"nodes", NodesToJson(state.nodes)},
+            {"particleEmitters", ParticleEmittersToJson(state.particleEmitters)},
+            {"tweens", std::move(tweens)}};
 }
 
 vn::Stage::RuntimeState StageFromJson(const Json& json) {
@@ -850,6 +1007,10 @@ vn::Stage::RuntimeState StageFromJson(const Json& json) {
     state.screenEffects = json.at("effects").get<std::unordered_map<std::string, float>>();
     state.actors = ActorsFromJson(json.at("actors"));
     state.layers = LayersFromJson(json.at("layers"));
+    if (const auto nodes = json.find("nodes"); nodes != json.end())
+        state.nodes = NodesFromJson(*nodes);
+    if (const auto emitters = json.find("particleEmitters"); emitters != json.end())
+        state.particleEmitters = ParticleEmittersFromJson(*emitters);
     const auto& tweens = json.at("tweens");
     if (!tweens.is_array() || tweens.size() > kMaxSaveCollectionItems)
         throw std::invalid_argument("stage tweens must be a bounded array");
@@ -983,6 +1144,7 @@ bool SaveSystem::Save(int slot, const SaveSnapshot& s) {
     state["animationClips"] = AnimationClipsToJson(s.animationClips);
     state["scriptPending"] = ScriptPendingToJson(s.scriptPending);
     state["scriptActions"] = ScriptActionsToJson(s.scriptActions);
+    state["extensionState"] = ExtensionStateToJson(s.extensionState);
     state["ui"] = UIRuntimeStateToJson(s.ui);
     state["backlog"] = BacklogToJson(s.backlog);
     state["nvlMode"] = s.nvlMode;
@@ -1084,6 +1246,8 @@ std::optional<SaveSnapshot> ParseSaveEnvelopeV2(
         s.animationClips = AnimationClipsFromJson(payload["animationClips"]);
         s.scriptPending = ScriptPendingFromJson(payload["scriptPending"]);
         s.scriptActions = ScriptActionsFromJson(payload["scriptActions"]);
+        s.extensionState = ExtensionStateFromJson(
+            payload.value("extensionState", Json::array()));
         if(payload.contains("ui"))s.ui=UIRuntimeStateFromJson(payload["ui"]);
         else s.ui.behavior=BehaviorStateFromJson(payload["behavior"]);
         s.backlog = BacklogFromJson(payload.value("backlog", Json::array()));

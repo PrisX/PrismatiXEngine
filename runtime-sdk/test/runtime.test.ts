@@ -32,6 +32,8 @@ const engine = {
   UnlockCG: () => undefined,
   UnlockScene: () => undefined,
   PlaySE: () => undefined,
+  PlayVoice: (path: string) => { calls.push(`voice:${path}`); },
+  StopVoice: () => { calls.push("voice-stop"); },
   PlayBGM: (path: string) => { calls.push(`bgm:${path}`); },
   StopBGM: () => undefined,
   SetBGMVolume: (volume: number) => { calls.push(`bgm-volume:${volume}`); },
@@ -40,6 +42,19 @@ const engine = {
   SetAmbienceVolume: () => undefined,
   PlayAmbience: () => undefined,
   StopAmbience: () => undefined,
+  Save: (slot: number) => { calls.push(`save:${slot}`); return true; },
+  Load: (slot: number) => slot === 3,
+  Autosave: () => true,
+  DeleteSave: () => true,
+  QuerySave: (slot: number) => ({slot, exists: true, chapter: "chapter-1", timestamp: 7, hasThumbnail: true}),
+  ListSaves: () => [],
+  PlayVideo: (path: string) => { calls.push(`video:${path}`); return 11; },
+  PauseVideo: () => true,
+  ResumeVideo: () => true,
+  StopVideo: () => true,
+  SkipVideo: () => true,
+  GetVideoStatus: () => "completed" as const,
+  GetVideoError: () => "",
   SetBackground: (path: string) => { calls.push(`bg:${path}`); },
   SetBackgroundRule: (_path: string, _rule: string, duration?: number) => { calls.push(`rule:${duration}`); },
   SetCharacter: () => undefined,
@@ -48,11 +63,21 @@ const engine = {
   SetLayer: () => undefined,
   SetLayerTransform: (_name: string, _image: string, _x?: number, _y?: number, scaleX?: number, scaleY?: number, rotation?: number) => { calls.push(`layer:${scaleX}:${scaleY}:${rotation}`); },
   ClearLayer: () => undefined,
+  SetStageGroup: () => true,
+  SetStageNodeParent: () => true,
+  SetStageNodeTransform: () => true,
+  SetStageNodeOrder: () => true,
+  SetStageNodeVisibility: () => true,
+  RemoveStageNode: () => undefined,
+  SetParticleEmitter: () => true,
+  ClearParticleEmitter: () => undefined,
   Shake: () => undefined,
   SetCamera: (x: number, y: number, zoom: number) => { calls.push(`camera:${x}:${y}:${zoom}`); },
   SetScreenEffect: (effect: string, amount: number) => { calls.push(`stage-effect:${effect}:${amount}`); },
   ClearScreenEffect: () => undefined,
-  SetCustomEffect: () => undefined,
+  SetCustomEffect: (effect: string, progress: number, parameters?: unknown) => {
+    calls.push(`custom-effect:${effect}:${progress}:${JSON.stringify(parameters)}`);
+  },
   ClearCustomEffect: () => undefined,
   Animate: (target: string) => target === "yuki",
   LoadAnimation: () => "11111111-1111-4111-8111-111111111111",
@@ -67,14 +92,19 @@ const engine = {
   AwaitSeconds: (seconds: number) => ({kind: "timer", seconds} as const),
   AwaitAnimation: (handle: number) => ({kind: "animation", handle} as const),
   AwaitScreenEffect: (handle: number) => ({kind: "screen-effect", handle} as const),
+  AwaitVideo: (handle: number) => ({kind: "video", handle} as const),
   WaitAnimation: async () => undefined,
   WaitScreenEffect: async () => undefined,
+  WaitVideo: async (handle: number) => { calls.push(`video-wait:${handle}`); },
   WaitSeconds: async (seconds: number) => { calls.push(`wait:${seconds}`); },
   DebugPoint: async () => undefined,
   GetMouseX: () => 12,
   GetMouseY: () => 24,
   GetLeftClick: () => true,
   GetRightClick: () => false,
+  IsInputActionPressed: (action: string) => action === "advance",
+  IsInputActionDown: () => false,
+  RegisterStateProvider: () => undefined,
   GetLogicalSize: () => ({w: 1280, h: 720}),
   DrawImage: () => undefined,
   DrawAuto: (_path: string, mode: number) => { calls.push(`auto:${mode}`); },
@@ -100,12 +130,24 @@ if (!ctx.assets.exists("Assets/ok.txt")) throw new Error("asset facade is not wi
 ctx.ui.push("settings");
 ctx.ui.setTransition("title", "hud", {preset: "tile", durationSeconds: 0.8});
 ctx.audio.playBGM("Assets/BGM/theme.ogg");
+ctx.audio.playVoice("Assets/Voice/001.ogg");
+ctx.audio.stopVoice();
 ctx.audio.setBGMVolume(80);
+if (!ctx.saves.save(3) || !ctx.saves.load(3) || ctx.saves.query(3).chapter !== "chapter-1") throw new Error("save facade is not wired");
+const video = ctx.video.play("Assets/Video/op.mp4", {volume: 0.8, skippable: true});
+if (video.id !== 11 || video.status() !== "completed" || video.token().kind !== "video") throw new Error("video handle is not wired");
+await video;
 ctx.stage.background("Assets/BG/classroom.webp");
 ctx.stage.backgroundRule("Assets/BG/night.webp", "Assets/Rules/clouds.webp", {durationMilliseconds: 700});
 ctx.stage.layer("mist", "Assets/FX/mist.webp", {scaleX: 1.2, scaleY: 0.8, rotation: 12});
+if (!ctx.stage.group("weather") || !ctx.stage.parent("mist", "weather") ||
+    !ctx.stage.transform("weather", {x: 4, opacity: 0.8}) ||
+    !ctx.stage.order("mist", -1, 2) || !ctx.stage.visible("mist", true) ||
+    !ctx.stage.particles("rain", "rain", {seed: 7, maxParticles: 128}))
+  throw new Error("stage graph/particle facade is not wired");
 ctx.stage.camera({x: 4, y: -2, zoom: 1.1});
 ctx.stage.screenEffect("fade", 0.3);
+ctx.stage.customEffect("dream-tone", 0.65, {amount: 0.8, tint: [1, 0.5, 0, 1]});
 if (!ctx.stage.animate("yuki", {x: 100, duration: 250, ease: "outQuad"})) throw new Error("stage animation facade is not wired");
 if (!ctx.animation.cancel(ctx.animation.play(ctx.animation.load("Animations/yuki.pxanim")))) throw new Error("animation facade is not wired");
 if (ctx.animation.token(7).kind !== "animation" || ctx.time.token(0.5).kind !== "timer") throw new Error("await token types are not wired");
@@ -118,6 +160,11 @@ await ctx.effects.wait(screenEffect);
 await ctx.time.wait(0.25);
 await ctx.events.emit("sample", {nested: {count: 2}, values: [true, "ok"]});
 if (ctx.input.mouseX() !== 12 || ctx.input.mouseY() !== 24 || !ctx.input.leftClick() || ctx.input.rightClick()) throw new Error("input facade is not wired");
+if (!ctx.input.actionPressed("advance") || ctx.input.actionDown("pause")) throw new Error("logical input facade is not wired");
+ctx.state.registerProvider("sample", 1, {
+  capture: () => ({value: 1}),
+  restore: () => undefined,
+});
 if (ctx.renderer.logicalSize().w !== 1280) throw new Error("renderer logical size is not wired");
 ctx.renderer.drawAuto("Assets/CG/test.webp", ctx.displayMode.Fit);
 ctx.renderer.drawRect({x: 0, y: 0, w: 10, h: 10}, {r: 1, g: 2, b: 3, a: 4});
@@ -130,12 +177,18 @@ const expected = [
   "push:settings",
   "route-effect:title:hud",
   "bgm:Assets/BGM/theme.ogg",
+  "voice:Assets/Voice/001.ogg",
+  "voice-stop",
   "bgm-volume:80",
+  "save:3",
+  "video:Assets/Video/op.mp4",
+  "video-wait:11",
   "bg:Assets/BG/classroom.webp",
   "rule:700",
   "layer:1.2:0.8:12",
   "camera:4:-2:1.1",
   "stage-effect:fade:0.3",
+  'custom-effect:dream-tone:0.65:{"amount":0.8,"tint":[1,0.5,0,1]}',
   "register-effect:tile:tiles",
   "wait:0.25",
   'emit:{"nested":{"count":2},"values":[true,"ok"]}',

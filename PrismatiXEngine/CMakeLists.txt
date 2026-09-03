@@ -764,12 +764,24 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         PrismatiX.Integration.Runtime.Resources "integration;runtime;resource"
         PrismatiXRuntime)
     prismatix_add_simple_test(
+        PrismatiXVideoPlayerAcceptanceTests
+        Tests/Integration/VideoPlayerAcceptanceTests.cpp
+        PrismatiX.Acceptance.Runtime.Video
+        "acceptance;runtime;video;ffmpeg;native" PrismatiXRuntime)
+    target_compile_definitions(PrismatiXVideoPlayerAcceptanceTests PRIVATE
+        PRISMATIX_VIDEO_FIXTURE_BASE64="${CMAKE_CURRENT_SOURCE_DIR}/Tests/Fixtures/Video/h264-aac.mp4.b64")
+    prismatix_add_simple_test(
         PrismatiXGraphicsIntegrationTests
         Tests/Integration/GraphicsIntegrationTests.cpp
         PrismatiX.Integration.Runtime.Graphics
         "integration;runtime;graphics;gpu;native" PrismatiXRuntime)
     target_compile_definitions(PrismatiXGraphicsIntegrationTests PRIVATE
         PRISMATIX_RESOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../Resources")
+    prismatix_add_simple_test(
+        PrismatiXStageGraphParticleIntegrationTests
+        Tests/Integration/StageGraphParticleIntegrationTests.cpp
+        PrismatiX.Integration.Runtime.StageGraphParticles
+        "integration;runtime;graphics;stage;particles;save" PrismatiXRuntime)
     prismatix_add_simple_test(
         PrismatiXAssetPreloadIntegrationTests
         Tests/Integration/AssetPreloadIntegrationTests.cpp
@@ -848,6 +860,19 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
                              TIMEOUT 120)
     endif()
 
+    add_executable(PrismatiXCommercialMegaVNTortureTests
+                   Tests/CommercialMegaVNTortureTests.cpp)
+    target_link_libraries(PrismatiXCommercialMegaVNTortureTests PRIVATE
+                          PrismatiXRuntime PrismatiXPackagerSDK)
+    prismatix_configure_target(PrismatiXCommercialMegaVNTortureTests)
+    if(PRISMATIX_STRESS_TESTS)
+        add_test(NAME PrismatiX.Stress.CommercialMegaVN
+                 COMMAND PrismatiXCommercialMegaVNTortureTests)
+        set_tests_properties(PrismatiX.Stress.CommercialMegaVN PROPERTIES
+                             LABELS "stress;commercial;packager;runtime;save;rollback;locale;soak"
+                             TIMEOUT 180)
+    endif()
+
     add_test(NAME PrismatiX.Architecture.SDK
              COMMAND ${CMAKE_COMMAND}
                      -DROOT=${CMAKE_CURRENT_SOURCE_DIR}
@@ -862,6 +887,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     set_tests_properties(${PRISMATIX_REGISTERED_TESTS} PROPERTIES TIMEOUT 60)
     if(PRISMATIX_STRESS_TESTS)
         set_tests_properties(PrismatiX.Stress.Soak PROPERTIES TIMEOUT 120)
+        set_tests_properties(PrismatiX.Stress.CommercialMegaVN PROPERTIES TIMEOUT 180)
     endif()
 
     add_custom_target(PrismatiXSDKTests DEPENDS
@@ -886,7 +912,9 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         PrismatiXJavaScriptHostIntegrationTests
         PrismatiXAnimationIntegrationTests
         PrismatiXRuntimeResourceIntegrationTests
+        PrismatiXVideoPlayerAcceptanceTests
         PrismatiXGraphicsIntegrationTests
+        PrismatiXStageGraphParticleIntegrationTests
         PrismatiXAssetPreloadIntegrationTests
         PrismatiXAccessibilityIntegrationTests
         PrismatiXUISchemaContractTests

@@ -19,6 +19,7 @@
 #include <ctime>
 #include <fstream>
 #include <filesystem>
+#include <limits>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -509,6 +510,23 @@ bool PlayerApp::LoadLocale(std::string locale, const bool refreshPresentation) {
     return true;
 }
 
+void PlayerApp::RecordScriptVideoTerminal(const std::uint64_t handle,
+                                          std::string status,
+                                          std::string error) {
+    if (handle == 0) return;
+    constexpr std::size_t kRetainedTerminalVideoHandles = 256;
+    m_scriptVideoStates[handle] = std::move(status);
+    if (error.empty()) m_scriptVideoErrors.erase(handle);
+    else m_scriptVideoErrors[handle] = std::move(error);
+    m_scriptVideoTerminalOrder.push_back(handle);
+    while (m_scriptVideoTerminalOrder.size() > kRetainedTerminalVideoHandles) {
+        const std::uint64_t expired = m_scriptVideoTerminalOrder.front();
+        m_scriptVideoTerminalOrder.pop_front();
+        m_scriptVideoStates.erase(expired);
+        m_scriptVideoErrors.erase(expired);
+    }
+}
+
 bool PlayerApp::Init(int argc, char* argv[]) {
     m_boot = LoadBootConfig();
     if (!m_boot.valid) return false;
@@ -648,6 +666,9 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         m_settings.language = m_defaultLocale;
     if (!LoadLocale(m_settings.language, false)) return false;
 
+    PX_LOG_DEBUG("Player boot: constructing video player");
+    m_video = std::make_unique<video::VideoPlayer>(
+        m_runtime.GetWindow().Renderer(), m_runtime.VFS());
     m_scriptServices.vfs = &m_runtime.VFS();
     m_scriptServices.renderer = &m_runtime.Renderer();
     m_scriptServices.audio = &m_runtime.Audio();
@@ -657,6 +678,112 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_scriptServices.variables = &m_session->Variables();
     m_scriptServices.routes = &m_session->Routes();
     m_scriptServices.timeline = &m_session->Timeline();
+    m_scriptServices.requestSave = [this](const int slot) {
+        if (m_appState != AppState::Game || slot < -1 || slot > 999)
+            return false;
+        m_pendingScriptSave = slot;
+        return true;
+    };
+    m_scriptServices.requestLoad = [this](const int slot) {
+        if (slot < 0 || slot > 999 || !m_saves.Peek(slot).exists)
+            return false;
+        m_pendingScriptLoad = slot;
+        return true;
+    };
+    m_scriptServices.deleteSave = [this](const int slot) {
+        return slot >= 0 && slot <= 999 && m_saves.Delete(slot);
+    };
+    m_scriptServices.querySave = [this](const int slot) {
+        const progress::SlotInfo info = m_saves.Peek(slot);
+        VariantObject value;
+        value.emplace("slot", Variant(static_cast<std::int64_t>(slot)));
+        value.emplace("exists", Variant(info.exists));
+        value.emplace("chapter", Variant(info.chapter));
+        value.emplace("timestamp",
+                      Variant(static_cast<std::int64_t>(std::min<std::uint64_t>(
+                          info.timestamp,
+                          static_cast<std::uint64_t>(
+                              (std::numeric_limits<std::int64_t>::max)())))));
+        value.emplace("hasThumbnail", Variant(!info.thumbnailPng.empty()));
+        return Variant(std::move(value));
+    };
+    m_scriptServices.listSaves = [this](const int count) {
+        VariantArray values;
+        const auto slots = m_saves.List(count);
+        values.reserve(slots.size());
+        for (std::size_t index = 0; index < slots.size(); ++index) {
+            const auto& info = slots[index];
+            VariantObject value;
+            value.emplace("slot",
+                          Variant(static_cast<std::int64_t>(index)));
+            value.emplace("exists", Variant(info.exists));
+            value.emplace("chapter", Variant(info.chapter));
+            value.emplace(
+                "timestamp",
+                Variant(static_cast<std::int64_t>(std::min<std::uint64_t>(
+                    info.timestamp,
+                    static_cast<std::uint64_t>(
+                        (std::numeric_limits<std::int64_t>::max)())))));
+            value.emplace("hasThumbnail", Variant(!info.thumbnailPng.empty()));
+            values.emplace_back(std::move(value));
+        }
+        return Variant(std::move(values));
+    };
+    m_scriptServices.playVideo =
+        [this](const std::string& path, const float volume,
+               const bool skippable) -> std::uint64_t {
+        if (!m_video || !m_runtime.VFS().Exists(path)) return 0;
+        if (m_scriptVideoHandle != 0) {
+            m_video->Stop();
+            RecordScriptVideoTerminal(m_scriptVideoHandle, "stopped");
+            m_scriptVideoHandle = 0;
+        }
+        const std::uint64_t handle = m_nextScriptVideoHandle++;
+        if (handle == 0 || !m_video->Open(path, volume)) {
+            RecordScriptVideoTerminal(handle, "failed", m_video->LastError());
+            return 0;
+        }
+        m_scriptVideoHandle = handle;
+        m_videoSkippable = skippable;
+        m_scriptVideoStates[handle] = "playing";
+        return handle;
+    };
+    m_scriptServices.pauseVideo = [this](const std::uint64_t handle) {
+        if (!m_video || handle != m_scriptVideoHandle || !m_video->Pause())
+            return false;
+        m_scriptVideoStates[handle] = "paused";
+        return true;
+    };
+    m_scriptServices.resumeVideo = [this](const std::uint64_t handle) {
+        if (!m_video || handle != m_scriptVideoHandle || !m_video->Resume())
+            return false;
+        m_scriptVideoStates[handle] = "playing";
+        return true;
+    };
+    m_scriptServices.stopVideo = [this](const std::uint64_t handle) {
+        if (!m_video || handle != m_scriptVideoHandle) return false;
+        m_video->Stop();
+        RecordScriptVideoTerminal(handle, "stopped");
+        m_scriptVideoHandle = 0;
+        return true;
+    };
+    m_scriptServices.skipVideo = [this](const std::uint64_t handle) {
+        if (!m_video || handle != m_scriptVideoHandle || !m_videoSkippable)
+            return false;
+        m_video->Skip();
+        RecordScriptVideoTerminal(handle, "stopped");
+        m_scriptVideoHandle = 0;
+        return true;
+    };
+    m_scriptServices.videoStatus = [this](const std::uint64_t handle) {
+        const auto found = m_scriptVideoStates.find(handle);
+        return found == m_scriptVideoStates.end() ? std::string("unknown")
+                                                  : found->second;
+    };
+    m_scriptServices.videoError = [this](const std::uint64_t handle) {
+        const auto found = m_scriptVideoErrors.find(handle);
+        return found == m_scriptVideoErrors.end() ? std::string{} : found->second;
+    };
     PX_LOG_DEBUG("Player boot: constructing script host");
     m_scriptHost = script::CreateScriptHost(m_scriptServices);
     PX_LOG_DEBUG("Player boot: script host constructed backend={}", m_scriptHost->BackendId());
@@ -761,14 +888,6 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_session->VM().SetChoiceSeenHook([this](const std::string& key) {
         m_profile.MarkChoiceSeen(key);
     });
-    PX_LOG_DEBUG("Player boot: constructing video player");
-    SDL_Renderer* videoRenderer = m_runtime.GetWindow().Renderer();
-    PX_LOG_DEBUG("Player boot: video renderer resolved");
-    io::VFS& videoVfs = m_runtime.VFS();
-    PX_LOG_DEBUG("Player boot: video VFS resolved");
-    m_video =
-        std::make_unique<video::VideoPlayer>(videoRenderer, videoVfs);
-    PX_LOG_DEBUG("Player boot: video player constructed");
     m_session->VM().SetVideoHook([this](const std::string& path, bool skippable) {
         // Deferred: opened on the next frame so we never re-enter VM::Run().
         m_pendingVideo = path;
@@ -1089,20 +1208,35 @@ bool PlayerApp::LoadSlot(int slot) {
     }
     script::PendingCommandsState previousPending;
     script::PendingActionsState previousActions;
+    script::ExtensionStates previousExtensionState;
     const ui::UIRuntimeState previousUi = m_ui.CaptureRuntimeState();
     const auto rollbackPresentation = [this, &previousPending, &previousActions,
-                                       &previousUi] {
+                                       &previousExtensionState, &previousUi] {
         if (m_scriptHost) {
             (void)m_scriptHost->RestoreCheckpoint(previousPending, previousActions);
+            (void)m_scriptHost->RestoreExtensionState(previousExtensionState);
         }
         (void)m_ui.RestoreRuntimeState(previousUi);
     };
     if (m_scriptHost) {
         previousPending = m_scriptHost->CapturePending();
         previousActions = m_scriptHost->CapturePendingActions();
+        auto capturedExtensionState = m_scriptHost->CaptureExtensionState();
+        if (!capturedExtensionState) {
+            for (const auto& diagnostic : capturedExtensionState.Diagnostics())
+                diag::Emit(diagnostic);
+            return false;
+        }
+        previousExtensionState = capturedExtensionState.TakeValue();
         const Status scriptStatus = m_scriptHost->RestoreCheckpoint(
             snap->scriptPending, snap->scriptActions);
         if (!scriptStatus) {
+            rollbackPresentation();
+            return false;
+        }
+        const Status extensionStatus =
+            m_scriptHost->RestoreExtensionState(snap->extensionState);
+        if (!extensionStatus) {
             rollbackPresentation();
             return false;
         }
@@ -1132,7 +1266,8 @@ bool PlayerApp::LoadSlot(int slot) {
     return true;
 }
 
-progress::SaveSnapshot PlayerApp::MakeSnapshot(bool includeBacklog) {
+std::optional<progress::SaveSnapshot> PlayerApp::MakeSnapshot(
+    bool includeBacklog) {
     progress::SaveSnapshot snap;
     const std::uint64_t now = m_runtime.GetClock().NowMs();
     snap.playtimeMs = m_playtimeBaseMs +
@@ -1163,6 +1298,13 @@ progress::SaveSnapshot PlayerApp::MakeSnapshot(bool includeBacklog) {
     if (m_scriptHost) {
         snap.scriptPending = m_scriptHost->CapturePending();
         snap.scriptActions = m_scriptHost->CapturePendingActions();
+        auto extensionState = m_scriptHost->CaptureExtensionState();
+        if (!extensionState) {
+            for (const auto& diagnostic : extensionState.Diagnostics())
+                diag::Emit(diagnostic);
+            return std::nullopt;
+        }
+        snap.extensionState = extensionState.TakeValue();
     }
     if (includeBacklog) snap.backlog = state.backlog;
     snap.nvlMode = m_nvlMode;
@@ -1171,15 +1313,18 @@ progress::SaveSnapshot PlayerApp::MakeSnapshot(bool includeBacklog) {
     return snap;
 }
 
-void PlayerApp::SaveSlot(int slot, std::vector<std::uint8_t> thumbnail) {
-    progress::SaveSnapshot snap = MakeSnapshot(/*includeBacklog=*/true);
+bool PlayerApp::SaveSlot(int slot, std::vector<std::uint8_t> thumbnail) {
+    auto captured = MakeSnapshot(/*includeBacklog=*/true);
+    if (!captured) return false;
+    progress::SaveSnapshot snap = std::move(*captured);
     snap.thumbnailPng = std::move(thumbnail);
     if (!m_saves.Save(slot, snap)) {
         diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXPLAYER6001",.category="Player.Save",
-                           .message="Could not save slot "+std::to_string(slot)};diag::Emit(d);return;
+                           .message="Could not save slot "+std::to_string(slot)};diag::Emit(d);return false;
     }
     if (m_scriptHost) m_scriptHost->Emit("save.written", {{"slot", std::to_string(slot)}});
     PX_LOG_INFO("Saved slot {} (thumb {} bytes)", slot, snap.thumbnailPng.size());
+    return true;
 }
 
 bool PlayerApp::ApplyRollback(const RollbackEntry& entry) {
@@ -1207,20 +1352,28 @@ bool PlayerApp::ApplyRollback(const RollbackEntry& entry) {
     }
     script::PendingCommandsState previousPending;
     script::PendingActionsState previousActions;
+    script::ExtensionStates previousExtensionState;
     const ui::UIRuntimeState previousUi = m_ui.CaptureRuntimeState();
     const auto rollbackPresentation = [this, &previousPending, &previousActions,
-                                       &previousUi] {
+                                       &previousExtensionState, &previousUi] {
         if (m_scriptHost) {
             (void)m_scriptHost->RestoreCheckpoint(previousPending, previousActions);
+            (void)m_scriptHost->RestoreExtensionState(previousExtensionState);
         }
         (void)m_ui.RestoreRuntimeState(previousUi);
     };
     if (m_scriptHost) {
         previousPending = m_scriptHost->CapturePending();
         previousActions = m_scriptHost->CapturePendingActions();
+        auto capturedExtensionState = m_scriptHost->CaptureExtensionState();
+        if (!capturedExtensionState) return false;
+        previousExtensionState = capturedExtensionState.TakeValue();
         const Status scriptStatus = m_scriptHost->RestoreCheckpoint(
             s.scriptPending, s.scriptActions);
         if (!scriptStatus) { rollbackPresentation(); return false; }
+        const Status extensionStatus =
+            m_scriptHost->RestoreExtensionState(s.extensionState);
+        if (!extensionStatus) { rollbackPresentation(); return false; }
     }
     if (!m_session->CommitRestore(preparedRuntime.TakeValue())) {
         rollbackPresentation();
@@ -1587,9 +1740,9 @@ void PlayerApp::TitleFrame(float dt) {
 }
 
 bool PlayerApp::VideoFrame(float dt) {
-    if (m_session->VM().State() != vn::VMState::WaitingVideo) {
-        return false;
-    }
+    const bool vmWaiting =
+        m_session->VM().State() == vn::VMState::WaitingVideo;
+    if (!vmWaiting && m_scriptVideoHandle == 0) return false;
     px::Input& input = m_runtime.GetInput();
 
     if (!m_pendingVideo.empty()) {
@@ -1608,19 +1761,47 @@ bool PlayerApp::VideoFrame(float dt) {
             Rect{ 0, 0, static_cast<float>(w), static_cast<float>(h) }, Color{ 0, 0, 0, 255 });
         return true;
     }
-    if (!m_video->Playing()) {
-        m_session->VM().NotifyVideoDone();  // safety: never leave the VM stuck
-        return false;
-    }
 
     m_video->Update(dt);
+    const auto updateScript = [&] {
+        if (!m_scriptHost) return;
+        (void)m_scriptHost->Emit(
+            "frame.update", {{"delta", std::to_string(dt)}});
+        const bool hadPending = m_scriptHost->HasPendingCommand() ||
+                                m_scriptHost->HasPendingAction();
+        m_scriptHost->Update(dt);
+        if (hadPending && !m_scriptHost->HasPendingCommand() &&
+            !m_scriptHost->HasPendingAction() &&
+            m_session->VM().State() == vn::VMState::WaitingExternal)
+            m_session->VM().NotifyExternalDone();
+    };
+
     const bool skipRequested =
         m_videoSkippable &&
-        (input.LeftClick() || input.KeyPressed(SDL_SCANCODE_RETURN) ||
-         input.KeyPressed(SDL_SCANCODE_ESCAPE) || input.KeyPressed(SDL_SCANCODE_SPACE));
-    if (skipRequested || m_video->Finished()) {
+        (input.ActionPressed(InputAction::Advance) ||
+         input.ActionPressed(InputAction::Cancel));
+    if (skipRequested) m_video->Skip();
+
+    updateScript();
+    const video::PlaybackState state = m_video->State();
+    if (state == video::PlaybackState::Finished ||
+        state == video::PlaybackState::Stopped ||
+        state == video::PlaybackState::Failed ||
+        state == video::PlaybackState::Idle) {
+        if (m_scriptVideoHandle != 0) {
+            std::string status = "stopped";
+            if (state == video::PlaybackState::Finished) status = "completed";
+            else if (state == video::PlaybackState::Failed) status = "failed";
+            RecordScriptVideoTerminal(
+                m_scriptVideoHandle, std::move(status),
+                state == video::PlaybackState::Failed ? m_video->LastError()
+                                                      : std::string{});
+            m_scriptVideoHandle = 0;
+            // Resolve an await after publishing the terminal handle state.
+            updateScript();
+        }
         m_video->Close();
-        m_session->VM().NotifyVideoDone();
+        if (vmWaiting) m_session->VM().NotifyVideoDone();
         return false;
     }
 
@@ -1636,6 +1817,19 @@ bool PlayerApp::VideoFrame(float dt) {
 }
 
 void PlayerApp::GameFrame(float dt, std::uint64_t now) {
+    if (m_pendingScriptLoad) {
+        const int slot = *m_pendingScriptLoad;
+        m_pendingScriptLoad.reset();
+        (void)LoadSlot(slot);
+        return;
+    }
+    if (m_pendingScriptSave) {
+        const int slot = *m_pendingScriptSave;
+        m_pendingScriptSave.reset();
+        (void)SaveSlot(
+            slot, graphics::CaptureThumbnailPng(
+                      m_runtime.Renderer().Handle(), 256, 144));
+    }
     px::Input& input = m_runtime.GetInput();
 
     if (input.KeyPressed(SDL_SCANCODE_F9)) LoadSlot(0);
@@ -1744,11 +1938,13 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
             if (m_settings.selfVoicing && !e.isChoice)
                 m_speech.Speak(e.speaker.empty() ? e.text : e.speaker + ". " + e.text);
         }
-        RollbackEntry entry;
-        entry.snap = MakeSnapshot(/*includeBacklog=*/false);
-        entry.backlogSize = backlogSize;
-        m_rollback.push_back(std::move(entry));
-        if (m_rollback.size() > 64) m_rollback.pop_front();
+        if (auto snapshot = MakeSnapshot(/*includeBacklog=*/false)) {
+            RollbackEntry entry;
+            entry.snap = std::move(*snapshot);
+            entry.backlogSize = backlogSize;
+            m_rollback.push_back(std::move(entry));
+            if (m_rollback.size() > 64) m_rollback.pop_front();
+        }
         m_lastBacklogSize = backlogSize;
     } else if (backlogSize < m_lastBacklogSize) {
         m_lastBacklogSize = backlogSize;

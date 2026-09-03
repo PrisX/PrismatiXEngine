@@ -4,19 +4,39 @@
 #include "Engine/IO/VFS.h"
 
 #include <cstdint>
+#include <cstddef>
+#include <atomic>
 #include <memory>
 #include <string>
 
 struct SDL_Renderer;
 struct SDL_AudioStream;
-typedef struct plm_t plm_t;
-
 namespace px::video {
 
 struct FfmpegState;
 
-// MPEG-1 (.mpg) playback via pl_mpeg: video to an SDL texture, MP2 audio
-// pushed to a dedicated SDL audio stream. Intended for OP/ED movies.
+enum class PlaybackState : std::uint8_t {
+    Idle,
+    Playing,
+    Paused,
+    Finished,
+    Stopped,
+    Failed,
+};
+
+struct QueueMetrics {
+    std::size_t videoFrames = 0;
+    std::size_t audioFrames = 0;
+    std::size_t videoBytes = 0;
+    std::size_t audioBytes = 0;
+    std::size_t videoCapacity = 0;
+    std::size_t audioCapacity = 0;
+    std::size_t videoByteCapacity = 0;
+    std::size_t audioByteCapacity = 0;
+};
+
+// Native FFmpeg player. Demux/codec/resample work runs on a bounded worker;
+// SDL texture and audio-device calls remain on the owning render thread.
 class VideoPlayer {
 public:
     VideoPlayer(SDL_Renderer* renderer, io::VFS& vfs);
@@ -27,44 +47,50 @@ public:
 
     bool Open(const std::string& vfsPath, float volume = 1.0f);
     void Close();
+    bool Pause();
+    bool Resume();
+    void Stop();
+    void Skip();
 
     void Update(float dt);
     // Draws letterboxed into the given logical-coordinate viewport.
     void Render(int logicalW, int logicalH);
 
-    [[nodiscard]] bool Playing() const { return (m_plm != nullptr || m_ffmpeg) && !m_finished; }
-    [[nodiscard]] bool Finished() const { return m_finished; }
+    [[nodiscard]] bool Playing() const {
+        const auto state = m_state.load();
+        return state == PlaybackState::Playing || state == PlaybackState::Paused;
+    }
+    [[nodiscard]] bool Paused() const { return m_state.load() == PlaybackState::Paused; }
+    [[nodiscard]] bool Finished() const { return m_state.load() == PlaybackState::Finished; }
+    [[nodiscard]] PlaybackState State() const { return m_state.load(); }
+    [[nodiscard]] std::string LastError() const;
+    [[nodiscard]] QueueMetrics Queues() const;
     [[nodiscard]] graphics::TextureHandle Texture() const {
         return m_texture.Handle();
     }
     [[nodiscard]] int Width() const { return m_width; }
     [[nodiscard]] int Height() const { return m_height; }
 
-    // Internal decoder callbacks (pl_mpeg types are not forward-declarable).
-    void HandleVideoFrame(void* frame);
-    void HandleAudioSamples(void* samples);
-
 private:
     bool OpenFfmpeg(const std::string& vfsPath);
     void UpdateFfmpeg(float dt);
-    bool DecodeNextFfmpegFrame();
-    void DecodeFfmpegAudio(void* packet);
+    void DecodeFfmpegLoop();
     void CloseFfmpeg();
     static int ReadFfmpeg(void* opaque, std::uint8_t* buffer, int size);
     static std::int64_t SeekFfmpeg(void* opaque, std::int64_t offset, int whence);
+    static int InterruptFfmpeg(void* opaque);
     SDL_Renderer* m_renderer;
     io::VFS& m_vfs;
 
-    plm_t* m_plm = nullptr;
-    io::Bytes m_data;
     graphics::TextureResource m_texture;
-    std::unique_ptr<std::uint8_t[]> m_rgb;
     int m_width = 0;
     int m_height = 0;
 
     SDL_AudioStream* m_audio = nullptr;
     float m_volume = 1.0f;
-    bool m_finished = false;
+    double m_clock = 0.0;
+    std::atomic<PlaybackState> m_state{PlaybackState::Idle};
+    std::string m_lastError;
     std::unique_ptr<FfmpegState> m_ffmpeg;
 };
 

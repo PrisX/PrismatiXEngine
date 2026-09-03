@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -30,5 +31,11 @@ struct CustomEffectDescriptor {
     std::uint32_t samplerCount = 0;
     std::uint32_t uniformBufferCount = 0;
 };
+
+// Author-facing values resolved through the .pxeffect uniform schema.  The
+// renderer owns slot/type/range validation so every caller uses the same
+// contract and scripts never receive raw GPU resources.
+using CustomEffectNamedParameters =
+    std::map<std::string, std::vector<float>, std::less<>>;
 
 }  // namespace px::graphics

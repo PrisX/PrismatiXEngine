@@ -15,9 +15,13 @@ const engine = {
   emit: async (_name: string, payload?: RuntimeValue) => {
     if (payload !== undefined) emitted.push(payload);
   },
+  SetCustomEffect: () => undefined,
 } as unknown as PrismatiXEngine;
 
 const context = createPrismatiXContext(engine);
+// .pxeffect names are validated by the native Player against packaged uniform
+// type/range metadata; scripts do not receive textures or GPU pointers.
+context.stage.customEffect("dream-tone", 0.5, {amount: 0.75});
 defineCommand<{amount: number}, number>("game.raiseAffection", async ({amount}) => {
   const next = Number(context.variables.get("affection") ?? 0) + amount;
   context.variables.set("affection", next);

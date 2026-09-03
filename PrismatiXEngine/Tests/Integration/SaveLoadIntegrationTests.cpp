@@ -80,6 +80,29 @@ void TestArchiveBoundsAndRoundTrip() {
     Check(archive.Contains("Content/test.txt"), "archive should contain exact normalized path");
     const auto actual = archive.Read("Content/test.txt");
     Check(actual && *actual == expected, "archive payload should round-trip");
+    auto compressedStream = archive.OpenStream("Content/test.txt");
+    std::array<std::uint8_t, 3> streamed{};
+    Check(compressedStream && compressedStream->Size() == expected.size() &&
+              compressedStream->Read(streamed.data(), streamed.size()) == 3 &&
+              compressedStream->Seek(-2, px::io::SeekOrigin::End) &&
+              compressedStream->Tell() == expected.size() - 2,
+          "compressed archive entries should expose the seekable VFS contract");
+
+    const auto streamingPath = temp.path / "streaming.pdx";
+    px::io::ArchiveWriter streamingWriter;
+    streamingWriter.SetCompression(false);
+    streamingWriter.Add("Content/video.bin", expected);
+    Check(streamingWriter.Write(streamingPath.string()),
+          "uncompressed streaming archive should be written");
+    px::io::VFS streamingVfs;
+    Check(streamingVfs.MountArchive(streamingPath.string()),
+          "uncompressed streaming archive should mount");
+    auto directStream = streamingVfs.Open("Content/video.bin");
+    std::array<std::uint8_t, 2> tail{};
+    Check(directStream && directStream->Seek(-2, px::io::SeekOrigin::End) &&
+              directStream->Read(tail.data(), tail.size()) == 2 &&
+              tail[0] == 'm' && tail[1] == 'a',
+          "uncompressed archive entries should seek and read without whole-entry allocation");
     Check(!archive.Contains("Content/other.txt"), "archive should reject missing path");
     Check(!archive.Contains("Content\\test.txt") &&
               !archive.Read("Content\\test.txt").has_value(),
@@ -217,6 +240,31 @@ void TestSaveValidation() {
         .z = 3,
         .scaleY = 0.75f,
         .rotation = 17.0f});
+    snapshot.stage.nodes.push_back({
+        .name = "scene-root",
+        .kind = px::vn::Stage::NodeKind::Group,
+        .children = {"alice", "foreground"},
+        .transform = {.x = 2.0f, .y = 3.0f, .scaleX = 0.9f,
+                      .scaleY = 1.1f, .rotation = 4.0f, .opacity = 0.8f},
+        .order = 1});
+    snapshot.stage.nodes.push_back({
+        .name = "alice", .kind = px::vn::Stage::NodeKind::Character,
+        .parent = "scene-root", .z = 2, .order = 2});
+    snapshot.stage.nodes.push_back({
+        .name = "foreground", .kind = px::vn::Stage::NodeKind::Image,
+        .parent = "scene-root",
+        .transform = {.x = 18.0f, .y = 30.0f, .scaleX = 1.25f,
+                      .scaleY = 0.75f, .rotation = 17.0f,
+                      .opacity = 220.0f / 255.0f},
+        .z = 3, .order = 3});
+    snapshot.stage.particleEmitters.push_back({
+        .name = "snow",
+        .spec = {.preset = px::vn::ParticlePreset::Snow, .seed = 73,
+                 .rate = 42.0f, .maxParticles = 200, .z = -1,
+                 .opacity = 0.7f, .wind = 0.2f, .speed = 0.9f,
+                 .size = 1.1f},
+        .ticks = 901,
+        .tickRemainder = 0.25});
     px::vn::Stage::SavedTween tween;
     tween.target = "alice";
     tween.spec.hasX = true;
@@ -284,6 +332,11 @@ void TestSaveValidation() {
     pendingAction.waitKind = "timer";
     pendingAction.remainingSeconds = 0.35f;
     snapshot.scriptActions.push_back(std::move(pendingAction));
+    snapshot.extensionState.push_back({
+        "commercial-extension", "weather-memory", 3,
+        px::Variant(px::VariantObject{
+            {"seed", px::Variant(std::int64_t{42})},
+            {"enabled", px::Variant(true)}})});
     Check(saves.Save(0, snapshot), "valid save should be written");
     const auto loaded = saves.Load(0);
     Check(loaded && loaded->pc == 7 && loaded->variables.at("affection") == 3, "valid save should round-trip");
@@ -291,6 +344,7 @@ void TestSaveValidation() {
         loaded && loaded->vm.state == px::vn::VMState::WaitingChoice && loaded->vm.callStack.size() == 1 && loaded->vm.choices.size() == 1 && loaded->dialogue.state.displayText == "Hel" &&
             loaded->dialogue.speedMs == 42 && loaded->typedVariables.at("route").TryGet<std::string>() && loaded->typedVariables.at("flags").AsObject() && loaded->routes.stack.size() == 2 && loaded->routes.modals.size() == 1 &&
             loaded->timelines.size() == 1 && loaded->timelines.front().awaiting && loaded->animationClips.size() == 1 && loaded->animationClips.front().name == "Custom/Save" && loaded->stage.backgroundFade == 0.45f && loaded->stage.ruleActive && loaded->stage.ruleMask == "Content/Transitions/clouds.png" && loaded->stage.ruleProgress == 0.35f && loaded->stage.ruleVague == 48 && loaded->stage.cameraX == 16.0f && loaded->stage.cameraY == -9.0f && loaded->stage.cameraZoom == 1.15f && loaded->stage.actors.size() == 1 && loaded->stage.layers.size() == 1 && loaded->stage.layers.front().scaleY == 0.75f && loaded->stage.layers.front().rotation == 17.0f &&
+            loaded->stage.nodes.size() == 3 && loaded->stage.nodes.front().name == "scene-root" && loaded->stage.nodes.front().children.size() == 2 && loaded->stage.particleEmitters.size() == 1 && loaded->stage.particleEmitters.front().spec.preset == px::vn::ParticlePreset::Snow && loaded->stage.particleEmitters.front().ticks == 901 && loaded->stage.particleEmitters.front().tickRemainder == 0.25 &&
             loaded->stage.tweens.size() == 1 && loaded->audio.music.playbackFrame == 24000 && loaded->scriptPending.size() == 2 && loaded->scriptPending.front().yieldIndex == 1 && loaded->scriptPending.back().waitKind == "screen-effect" && loaded->scriptPending.back().handle == 91 && loaded->scriptActions.size() == 1 && loaded->scriptActions.front().yieldIndex == 2 &&
             loaded->ui.behavior.fibers.size() == 1 && loaded->ui.behavior.fibers.front().current == behaviorDelay && loaded->ui.behavior.fibers.front().signalArguments.at("position").TryGet<px::Vec2>() && loaded->ui.behavior.actions.size() == 1 &&
             loaded->ui.behavior.actions.front().providerHandle == 73 &&
@@ -298,7 +352,12 @@ void TestSaveValidation() {
             loaded->ui.animation->parameters.at("selected").TryGet<bool>() &&
             loaded->ui.visualState && loaded->ui.visualState->groups.size() == 1 &&
             loaded->ui.visualState->groups.front().state == "hover" &&
-            loaded->ui.visualState->groups.front().animationPosition == 0.08f,
+            loaded->ui.visualState->groups.front().animationPosition == 0.08f &&
+            loaded->extensionState.size() == 1 &&
+            loaded->extensionState.front().version == 3 &&
+            loaded->extensionState.front().state.AsObject() &&
+            loaded->extensionState.front().state.AsObject()->at("seed") ==
+                px::Variant(std::int64_t{42}),
         "current save schema should preserve exact VM, stage, audio, script, UI, and variable state"
     );
 
@@ -308,6 +367,7 @@ void TestSaveValidation() {
               currentJson->contains("anchor") && currentJson->contains("state") &&
               (*currentJson)["state"].contains("scriptPending") &&
               (*currentJson)["state"].contains("scriptActions") &&
+              (*currentJson)["state"].contains("extensionState") &&
               (*currentJson)["state"].contains("ui"),
           "current saves must use an authenticated v2 envelope and complete runtime state");
     if (currentJson) {

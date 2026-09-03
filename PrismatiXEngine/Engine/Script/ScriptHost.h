@@ -67,6 +67,20 @@ struct ScriptServices {
     vn::VariableStore* variables = nullptr;
     ui::UIRouter* routes = nullptr;
     animation::TimelinePlayer* timeline = nullptr;
+    // Player-owned services remain capability-gated and opaque to JavaScript.
+    std::function<bool(int slot)> requestSave;
+    std::function<bool(int slot)> requestLoad;
+    std::function<bool(int slot)> deleteSave;
+    std::function<Variant(int slot)> querySave;
+    std::function<Variant(int count)> listSaves;
+    std::function<std::uint64_t(const std::string& path, float volume,
+                                bool skippable)> playVideo;
+    std::function<bool(std::uint64_t handle)> pauseVideo;
+    std::function<bool(std::uint64_t handle)> resumeVideo;
+    std::function<bool(std::uint64_t handle)> stopVideo;
+    std::function<bool(std::uint64_t handle)> skipVideo;
+    std::function<std::string(std::uint64_t handle)> videoStatus;
+    std::function<std::string(std::uint64_t handle)> videoError;
     std::function<void(const ConsoleMessage&)> console;
 };
 
@@ -111,6 +125,8 @@ public:
     virtual Status RestorePending(const PendingCommandsState& state) = 0;
     [[nodiscard]] virtual PendingActionsState CapturePendingActions() const = 0;
     virtual Status RestorePendingActions(const PendingActionsState& state) = 0;
+    [[nodiscard]] virtual Result<ExtensionStates> CaptureExtensionState() = 0;
+    virtual Status RestoreExtensionState(const ExtensionStates& state) = 0;
     // Restores command and Action continuations as one checkpoint. If either
     // replay fails, every realm is returned to the exact checkpoint that was
     // active before this call.

@@ -1,9 +1,11 @@
 #pragma once
 
 #include "Engine/IO/Crypto.h"
+#include "Engine/IO/SeekableStream.h"
 
 #include <cstdint>
 #include <optional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -30,6 +32,8 @@ public:
 
     [[nodiscard]] bool IsOpen() const { return m_open; }
     [[nodiscard]] bool Contains(std::string_view path) const;
+    [[nodiscard]] std::unique_ptr<SeekableReadStream> OpenStream(
+        std::string_view path) const;
     [[nodiscard]] std::optional<Bytes> Read(std::string_view path) const;
     [[nodiscard]] const std::vector<Entry>& Entries() const { return m_entries; }
 

@@ -306,6 +306,14 @@ test("compileProject publishes only validated custom-effect source inputs", () =
   assert.equal(invalidDefault.valid, false);
   assert.ok(invalidDefault.diagnostics.some((diagnostic) =>
     diagnostic.code === "PXBUILD1023"));
+
+  const defaultOutsideRange = compile({}, {uniforms: [
+    {name: "amount", type: "number", slot: 0, default: 2,
+      minimum: 0, maximum: 1},
+  ]});
+  assert.equal(defaultOutsideRange.valid, false);
+  assert.ok(defaultOutsideRange.diagnostics.some((diagnostic) =>
+    diagnostic.code === "PXBUILD1023"));
 });
 
 test("compileProject rejects unknown and unsupported-tier Story effects before packaging", () => {

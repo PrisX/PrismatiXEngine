@@ -10,6 +10,81 @@
 namespace px::io {
 
 namespace {
+class FileReadStream final : public SeekableReadStream {
+public:
+    explicit FileReadStream(const std::filesystem::path& path)
+        : m_input(path, std::ios::binary) {
+        std::error_code error;
+        const auto size = std::filesystem::file_size(path, error);
+        if (!m_input || error) {
+            m_failed = true;
+            return;
+        }
+        m_size = size;
+    }
+
+    [[nodiscard]] std::size_t Read(std::uint8_t* destination,
+                                   const std::size_t bytes) override {
+        if (m_failed || !destination || bytes == 0 || m_position >= m_size)
+            return 0;
+        const std::uint64_t remaining = m_size - m_position;
+        const std::size_t count = static_cast<std::size_t>(std::min<std::uint64_t>(
+            remaining, std::min<std::uint64_t>(
+                           bytes, static_cast<std::uint64_t>(
+                                      (std::numeric_limits<std::streamsize>::max)()))));
+        m_input.read(reinterpret_cast<char*>(destination),
+                     static_cast<std::streamsize>(count));
+        const std::streamsize read = m_input.gcount();
+        if (read < 0 || read != static_cast<std::streamsize>(count)) {
+            m_failed = true;
+            if (read <= 0) return 0;
+        }
+        m_position += static_cast<std::uint64_t>(read);
+        return static_cast<std::size_t>(read);
+    }
+
+    [[nodiscard]] bool Seek(const std::int64_t offset,
+                            const SeekOrigin origin) override {
+        if (m_failed) return false;
+        std::int64_t base = 0;
+        if (origin == SeekOrigin::Current) {
+            if (m_position > static_cast<std::uint64_t>(
+                                 (std::numeric_limits<std::int64_t>::max)()))
+                return false;
+            base = static_cast<std::int64_t>(m_position);
+        } else if (origin == SeekOrigin::End) {
+            if (m_size > static_cast<std::uint64_t>(
+                             (std::numeric_limits<std::int64_t>::max)()))
+                return false;
+            base = static_cast<std::int64_t>(m_size);
+        }
+        if ((offset > 0 && base > (std::numeric_limits<std::int64_t>::max)() - offset) ||
+            (offset < 0 && base < (std::numeric_limits<std::int64_t>::min)() - offset))
+            return false;
+        const std::int64_t requested = base + offset;
+        if (requested < 0 || static_cast<std::uint64_t>(requested) > m_size)
+            return false;
+        m_input.clear();
+        m_input.seekg(static_cast<std::streamoff>(requested), std::ios::beg);
+        if (!m_input) {
+            m_failed = true;
+            return false;
+        }
+        m_position = static_cast<std::uint64_t>(requested);
+        return true;
+    }
+
+    [[nodiscard]] std::uint64_t Tell() const override { return m_position; }
+    [[nodiscard]] std::uint64_t Size() const override { return m_size; }
+    [[nodiscard]] bool Failed() const override { return m_failed; }
+
+private:
+    std::ifstream m_input;
+    std::uint64_t m_size = 0;
+    std::uint64_t m_position = 0;
+    bool m_failed = false;
+};
+
 bool IsValidUtf8(const std::string_view text) {
     std::size_t index = 0;
     while (index < text.size()) {
@@ -143,6 +218,25 @@ bool VFS::Exists(std::string_view path) const {
     }
 #endif
     return false;
+}
+
+std::unique_ptr<SeekableReadStream> VFS::Open(const std::string_view path) const {
+    const auto normalized = NormalizeVirtualPath(path);
+    if (!normalized) return {};
+    for (const std::string& dir : m_dirs) {
+        std::error_code error;
+        const auto full = ResolveDirectoryPath(dir, *normalized);
+        if (!full || !std::filesystem::is_regular_file(*full, error) || error)
+            continue;
+        auto stream = std::make_unique<FileReadStream>(*full);
+        if (!stream->Failed()) return stream;
+    }
+#if !defined(PRISMATIX_PREVIEW_WASM)
+    for (const auto& archive : m_archives) {
+        if (auto stream = archive->OpenStream(*normalized)) return stream;
+    }
+#endif
+    return {};
 }
 
 std::optional<Bytes> VFS::Read(std::string_view path) const {

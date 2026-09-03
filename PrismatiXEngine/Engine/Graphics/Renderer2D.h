@@ -180,6 +180,12 @@ public:
     CustomEffectDefaults(std::string_view id) const {
         return m_compositor.CustomEffectDefaults(id);
     }
+    [[nodiscard]] std::optional<std::array<std::array<float, 4>, 8>>
+    ResolveCustomEffectParameters(
+        std::string_view id,
+        const CustomEffectNamedParameters& parameters) const {
+        return m_compositor.ResolveCustomEffectParameters(id, parameters);
+    }
 
     [[nodiscard]] SDL_Renderer* Handle() const { return m_renderer; }
 

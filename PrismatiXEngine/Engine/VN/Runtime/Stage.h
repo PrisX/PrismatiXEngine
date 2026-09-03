@@ -2,13 +2,16 @@
 
 #include "Engine/Core/Variant.h"
 #include "Engine/Core/Result.h"
+#include "Engine/Graphics/CustomEffect.h"
 #include "Engine/Graphics/Texture.h"
+#include "Engine/VN/Runtime/ParticleSystem.h"
 
 #include <cstdint>
 #include <array>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace px::graphics {
@@ -38,6 +41,44 @@ public:
                            float x, float y, float scaleX, float scaleY,
                            float rotation, std::uint8_t alpha, int z);
     void ClearLayer(const std::string& name);
+
+    enum class NodeKind : std::uint8_t { Group, Image, Character };
+    struct NodeTransform {
+        float x = 0.0f;
+        float y = 0.0f;
+        float scaleX = 1.0f;
+        float scaleY = 1.0f;
+        float rotation = 0.0f;
+        float opacity = 1.0f;
+    };
+    struct SavedNode {
+        std::string name;
+        NodeKind kind = NodeKind::Group;
+        std::string parent;
+        std::vector<std::string> children;
+        NodeTransform transform;
+        int z = 0;
+        int order = 0;
+        bool visible = true;
+    };
+
+    // Stage graph foundation. Legacy layers/characters are leaf nodes in this
+    // graph, so SetLayer and ctx.stage.layer remain source-compatible.
+    bool SetGroupNode(const std::string& name,
+                      const std::string& parent = {});
+    bool SetNodeParent(const std::string& name, const std::string& parent);
+    bool SetNodeTransform(const std::string& name,
+                          const NodeTransform& transform);
+    bool SetNodeOrder(const std::string& name, int z, int order);
+    bool SetNodeVisibility(const std::string& name, bool visible);
+    void RemoveNode(const std::string& name);
+    [[nodiscard]] std::vector<SavedNode> SnapshotNodes() const;
+
+    bool SetParticleEmitter(const std::string& name,
+                            const ParticleEmitterSpec& spec);
+    void ClearParticleEmitter(std::string_view name);
+    [[nodiscard]] std::vector<ParticleSample> SampleParticles(
+        std::string_view name, int width, int height) const;
 
     // Tweened pose animation for an actor or a layer (matched by name; actors
     // take precedence). Only the properties with has* set are animated.
@@ -75,6 +116,8 @@ public:
     bool SetCustomEffect(
         std::string_view effect, float progress,
         const std::array<std::array<float, 4>, 8>* parameters = nullptr);
+    bool SetCustomEffect(std::string_view effect, float progress,
+                         const graphics::CustomEffectNamedParameters& parameters);
     void ClearCustomEffect();
 
     void Update(float dt);
@@ -157,6 +200,8 @@ public:
         std::vector<SavedActor> actors;
         std::vector<SavedLayer> layers;
         std::vector<SavedTween> tweens;
+        std::vector<SavedNode> nodes;
+        std::vector<ParticleEmitterState> particleEmitters;
     };
     [[nodiscard]] RuntimeState CaptureState() const;
     Status RestoreState(const RuntimeState& state);
@@ -221,17 +266,53 @@ private:
         float duration = 0.6f;
     };
 
+    struct Node {
+        NodeKind kind = NodeKind::Group;
+        std::string parent;
+        std::vector<std::string> children;
+        NodeTransform transform;
+        int z = 0;
+        int order = 0;
+        bool visible = true;
+    };
+
+    struct WorldNodeTransform {
+        float x = 0.0f;
+        float y = 0.0f;
+        float scaleX = 1.0f;
+        float scaleY = 1.0f;
+        float rotation = 0.0f;
+        float opacity = 1.0f;
+        bool visible = true;
+    };
+
+    struct NodeSortKey {
+        std::int64_t z = 0;
+        std::vector<std::pair<int, std::string>> path;
+    };
+
     [[nodiscard]] float SlotCenterX(int slot) const;
     void RenderLayers(bool front);
     void RenderRuleOverlay();
     void RenderScreenEffects();
     void EndRuleTransition();
     void UpdateTweens(float dt);
+    Node& EnsureNode(const std::string& name, NodeKind kind);
+    [[nodiscard]] WorldNodeTransform ResolveNodeTransform(
+        const std::string& name) const;
+    [[nodiscard]] NodeSortKey ResolveNodeSortKey(
+        const std::string& name) const;
+    [[nodiscard]] bool WouldCreateNodeCycle(
+        const std::string& name, const std::string& parent) const;
+    Status RestoreNodes(const std::vector<SavedNode>& nodes);
 
     graphics::Renderer2D& m_renderer;
     graphics::AssetCache& m_assets;
 
     std::unordered_map<std::string, Layer> m_layers;
+    std::unordered_map<std::string, Node> m_nodes;
+    int m_nextNodeOrder = 1;
+    ParticleSystem m_particles;
     std::vector<Tween> m_tweens;
     RuleState m_ruleState;
 

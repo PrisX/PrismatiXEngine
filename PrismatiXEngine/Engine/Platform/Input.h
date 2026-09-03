@@ -19,6 +19,16 @@ enum class InputAction : std::uint8_t {
     Cancel,
     FocusNext,
     FocusPrevious,
+    Advance,
+    Menu,
+    Backlog,
+    ToggleAuto,
+    ToggleSkip,
+    ToggleUi,
+    QuickSave,
+    QuickLoad,
+    Rollback,
+    Pause,
     Count,
 };
 
@@ -32,6 +42,7 @@ public:
     void BindKey(InputAction action, int scancode);
     void BindGamepadButton(InputAction action, int button);
     [[nodiscard]] bool ActionPressed(InputAction action) const;
+    [[nodiscard]] bool ActionDown(InputAction action) const;
     [[nodiscard]] bool ActionPressedWithoutKeyboard(InputAction action) const;
     // Deterministic automation seam used by Player E2E and input conformance.
     void InjectAction(InputAction action);

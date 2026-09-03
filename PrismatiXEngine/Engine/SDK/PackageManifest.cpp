@@ -368,9 +368,27 @@ PackageManifestParseResult ParsePackageManifest(const std::string_view text) {
                         uniformValue["minimum"].get<double>();
                     const double maximum =
                         uniformValue["maximum"].get<double>();
+                    const double floatLimit = static_cast<double>(
+                        (std::numeric_limits<float>::max)());
+                    const std::size_t components = uniform.type == "number" ? 1u
+                                                 : uniform.type == "vec2" ? 2u
+                                                 : uniform.type == "color" ? 4u : 0u;
+                    bool defaultInRange = defaultValue && components > 0;
+                    if (defaultInRange) {
+                        for (std::size_t component = 0;
+                             component < components; ++component) {
+                            const double number = (*defaultValue)[component];
+                            defaultInRange = defaultInRange &&
+                                             number >= minimum &&
+                                             number <= maximum;
+                        }
+                    }
                     if (!IsIdentifier(uniform.name) || uniform.slot > 7 ||
                         !defaultValue || !std::isfinite(minimum) ||
-                        !std::isfinite(maximum) || minimum > maximum ||
+                        !std::isfinite(maximum) ||
+                        std::abs(minimum) > floatLimit ||
+                        std::abs(maximum) > floatLimit || minimum > maximum ||
+                        !defaultInRange ||
                         !uniformNames.insert(uniform.name).second ||
                         !uniformSlots.insert(uniform.slot).second) {
                         valid = false;

@@ -25,6 +25,7 @@
 #include <cmath>
 #include <deque>
 #include <limits>
+#include <iterator>
 #include <ranges>
 #include <set>
 #include <tuple>
@@ -140,7 +141,9 @@ bool ActionHintMatchesType(const ui::ActionEditorHint hint,
 
 bool SupportedCapability(const std::string_view capability) {
     return capability == "runtime" || capability == "animation" ||
-           capability == "ui" || capability == "audio";
+           capability == "ui" || capability == "audio" ||
+           capability == "video" || capability == "persistence" ||
+           capability == "input";
 }
 
 bool IsJsonValue(const Variant& value, const int depth = 0) {
@@ -167,7 +170,37 @@ std::string_view CapabilityForOperation(const std::string_view operation) {
     if (operation.starts_with("route.")) return "ui";
     if (operation.starts_with("audio.")) return "audio";
     if (operation.starts_with("animation.")) return "animation";
+    if (operation.starts_with("video.") || operation == "await.video" ||
+        operation == "wait.video")
+        return "video";
+    if (operation.starts_with("save.")) return "persistence";
+    // Existing raw pointer access remains part of the legacy runtime
+    // capability. Only the new device-neutral action surface requires input.
+    if (operation == "input.actionPressed" || operation == "input.actionDown")
+        return "input";
     return "runtime";
+}
+
+std::optional<InputAction> ParseInputAction(const std::string_view name) {
+    if (name == "navigate-up") return InputAction::NavigateUp;
+    if (name == "navigate-down") return InputAction::NavigateDown;
+    if (name == "navigate-left") return InputAction::NavigateLeft;
+    if (name == "navigate-right") return InputAction::NavigateRight;
+    if (name == "accept") return InputAction::Accept;
+    if (name == "cancel") return InputAction::Cancel;
+    if (name == "focus-next") return InputAction::FocusNext;
+    if (name == "focus-previous") return InputAction::FocusPrevious;
+    if (name == "advance") return InputAction::Advance;
+    if (name == "menu") return InputAction::Menu;
+    if (name == "backlog") return InputAction::Backlog;
+    if (name == "toggle-auto") return InputAction::ToggleAuto;
+    if (name == "toggle-skip") return InputAction::ToggleSkip;
+    if (name == "toggle-ui") return InputAction::ToggleUi;
+    if (name == "quick-save") return InputAction::QuickSave;
+    if (name == "quick-load") return InputAction::QuickLoad;
+    if (name == "rollback") return InputAction::Rollback;
+    if (name == "pause") return InputAction::Pause;
+    return std::nullopt;
 }
 
 struct ManifestSafety {
@@ -421,6 +454,11 @@ public:
             for (auto& [_, callback] : actions) JS_FreeValue(context, callback);
             for (auto& [_, callbacks] : events)
                 for (auto& callback : callbacks) JS_FreeValue(context, callback);
+            for (auto& [_, provider] : stateProviders) {
+                JS_FreeValue(context, provider.capture);
+                JS_FreeValue(context, provider.restore);
+                JS_FreeValue(context, provider.migrate);
+            }
             if (ownsRegistrations) {
                 for (const auto& source : loadedActionSources)
                     (void)ui::ActionCatalog::Global().RemoveSource(
@@ -471,6 +509,13 @@ public:
 
     enum class StepResult { Yielded, Finished, Failed };
 
+    struct StateProvider {
+        std::uint32_t version = 0;
+        JSValue capture = JS_UNDEFINED;
+        JSValue restore = JS_UNDEFINED;
+        JSValue migrate = JS_UNDEFINED;
+    };
+
     class JournalScope {
     public:
         JournalScope(Impl& owner, EngineOperationJournal& recording)
@@ -505,6 +550,25 @@ public:
         EngineOperationJournal* previousRecording = nullptr;
         const EngineOperationJournal* previousReplay = nullptr;
         std::size_t previousCursor = 0;
+        bool previousPersistent = false;
+    };
+
+    class StateCallbackScope {
+    public:
+        explicit StateCallbackScope(Impl& owner)
+            : owner(owner), previous(owner.insideStateProviderCallback),
+              previousPersistent(owner.insidePersistentCallback) {
+            owner.insideStateProviderCallback = true;
+            owner.insidePersistentCallback = true;
+        }
+        ~StateCallbackScope() {
+            owner.insideStateProviderCallback = previous;
+            owner.insidePersistentCallback = previousPersistent;
+        }
+
+    private:
+        Impl& owner;
+        bool previous = false;
         bool previousPersistent = false;
     };
 
@@ -798,6 +862,63 @@ public:
         return JS_UNDEFINED;
     }
 
+    static JSValue RegisterStateProvider(JSContext* context, JSValueConst,
+                                         const int count,
+                                         JSValueConst* values) {
+        auto* self = From(context);
+        if (self->insidePersistentCallback ||
+            self->insideStateProviderCallback)
+            return JS_ThrowTypeError(
+                context,
+                "state provider registration is forbidden inside a persistent callback");
+        if (!self->HasCapability("persistence"))
+            return self->PermissionDenied(
+                "persistence", "Engine.RegisterStateProvider");
+        std::int64_t version = 0;
+        if (count != 3 || !JS_IsString(values[0]) ||
+            JS_ToInt64(context, &version, values[1]) != 0 || version <= 0 ||
+            version > (std::numeric_limits<std::uint32_t>::max)() ||
+            !JS_IsObject(values[2]))
+            return JS_ThrowTypeError(
+                context,
+                "RegisterStateProvider requires an id, positive version, and provider object");
+        const auto id = self->String(values[0]);
+        const auto validId = [](const std::string_view value) {
+            return !value.empty() && value.size() <= 128 &&
+                   std::ranges::all_of(value, [](const unsigned char character) {
+                       return std::isalnum(character) || character == '.' ||
+                              character == '_' || character == '-';
+                   });
+        };
+        if (!id || !validId(*id))
+            return JS_ThrowRangeError(
+                context, "state provider id must be a portable identifier");
+        if (self->stateProviders.size() >= 256 ||
+            self->stateProviders.contains(*id))
+            return JS_ThrowRangeError(
+                context, "state provider id is duplicated or limit was exceeded");
+
+        JSValue capture = JS_GetPropertyStr(context, values[2], "capture");
+        JSValue restore = JS_GetPropertyStr(context, values[2], "restore");
+        JSValue migrate = JS_GetPropertyStr(context, values[2], "migrate");
+        const bool valid = JS_IsFunction(context, capture) &&
+                           JS_IsFunction(context, restore) &&
+                           (JS_IsUndefined(migrate) ||
+                            JS_IsFunction(context, migrate));
+        if (!valid) {
+            JS_FreeValue(context, capture);
+            JS_FreeValue(context, restore);
+            JS_FreeValue(context, migrate);
+            return JS_ThrowTypeError(
+                context,
+                "state provider requires capture/restore functions and optional migrate function");
+        }
+        self->stateProviders.emplace(
+            *id, StateProvider{static_cast<std::uint32_t>(version), capture,
+                               restore, migrate});
+        return JS_UNDEFINED;
+    }
+
     static JSValue On(JSContext* context, JSValueConst, const int count,
                       JSValueConst* values) {
         auto* self = From(context);
@@ -818,6 +939,10 @@ public:
     static JSValue EmitEvent(JSContext* context, JSValueConst, const int count,
                              JSValueConst* values) {
         auto* self = From(context);
+        if (self->insideStateProviderCallback)
+            return JS_ThrowTypeError(
+                context,
+                "event emission is forbidden inside a state provider callback");
         if (!self->HasCapability("runtime"))
             return self->PermissionDenied("runtime", "Engine.Emit");
         if (count < 1 || !JS_IsString(values[0]))
@@ -1147,6 +1272,17 @@ public:
                               JS_NewInt64(context, integer));
             return token;
         }
+        if (operation == "await.video") {
+            if (!IntegerArgument(count, values, 0, integer) || integer <= 0)
+                return JS_ThrowRangeError(context,
+                                          "AwaitVideo requires a valid handle");
+            JSValue token = JS_NewObject(context);
+            JS_SetPropertyStr(context, token, "kind",
+                              JS_NewString(context, "video"));
+            JS_SetPropertyStr(context, token, "handle",
+                              JS_NewInt64(context, integer));
+            return token;
+        }
         if (operation == "wait.timer") {
             double seconds = 0.0;
             if (!NumberArgument(count, values, 0, seconds) || seconds < 0.0 ||
@@ -1171,6 +1307,14 @@ public:
                     context, "WaitScreenEffect requires a valid handle");
             return CreatePromiseWait(
                 {.kind = "screen-effect",
+                 .handle = static_cast<std::uint64_t>(integer)});
+        }
+        if (operation == "wait.video") {
+            if (!IntegerArgument(count, values, 0, integer) || integer <= 0)
+                return JS_ThrowRangeError(context,
+                                          "WaitVideo requires a valid handle");
+            return CreatePromiseWait(
+                {.kind = "video",
                  .handle = static_cast<std::uint64_t>(integer)});
         }
         if (operation == "variables.get") {
@@ -1322,6 +1466,17 @@ public:
                 services.audio->PlaySE(first);
                 return JS_UNDEFINED;
             }
+            if (operation == "audio.playVoice") {
+                if (!StringArgument(count, values, 0, first))
+                    return JS_ThrowTypeError(context,
+                                             "PlayVoice requires a path");
+                services.audio->PlayVoice(first);
+                return JS_UNDEFINED;
+            }
+            if (operation == "audio.stopVoice") {
+                services.audio->StopVoice();
+                return JS_UNDEFINED;
+            }
             if (operation == "audio.playBGM" || operation == "audio.playAmbience") {
                 if (!StringArgument(count, values, 0, first))
                     return JS_ThrowTypeError(context, "audio play requires a path");
@@ -1355,6 +1510,119 @@ public:
             else if (operation == "audio.ambienceVolume") services.audio->SetAmbienceVolume(static_cast<int>(integer));
             else return JS_ThrowRangeError(context, "unknown audio operation");
             return JS_UNDEFINED;
+        }
+        if (operation.starts_with("save.")) {
+            if (insidePersistentCallback &&
+                operation != "save.query" && operation != "save.list")
+                return JS_ThrowTypeError(
+                    context,
+                    "save mutations are forbidden inside a persistent callback");
+            if (operation == "save.autosave") {
+                if (!services.requestSave)
+                    return JS_ThrowInternalError(context,
+                                                 "save service is unavailable");
+                return JS_NewBool(context, services.requestSave(-1));
+            }
+            if (operation == "save.list") {
+                std::int64_t countValue = 20;
+                if (count >= 1 && !JS_IsUndefined(values[0]) &&
+                    (!IntegerArgument(count, values, 0, countValue) ||
+                     countValue < 0 || countValue > 1000))
+                    return JS_ThrowRangeError(
+                        context, "save list count must be between 0 and 1000");
+                if (!services.listSaves)
+                    return JS_ThrowInternalError(context,
+                                                 "save query service is unavailable");
+                return ToJavaScript(services.listSaves(
+                    static_cast<int>(countValue)));
+            }
+            if (!IntegerArgument(count, values, 0, integer) || integer < 0 ||
+                integer > 999)
+                return JS_ThrowRangeError(context,
+                                          "save slot must be between 0 and 999");
+            if (operation == "save.write") {
+                if (!services.requestSave)
+                    return JS_ThrowInternalError(context,
+                                                 "save service is unavailable");
+                return JS_NewBool(
+                    context, services.requestSave(static_cast<int>(integer)));
+            }
+            if (operation == "save.load") {
+                if (!services.requestLoad)
+                    return JS_ThrowInternalError(context,
+                                                 "load service is unavailable");
+                return JS_NewBool(
+                    context, services.requestLoad(static_cast<int>(integer)));
+            }
+            if (operation == "save.delete") {
+                if (!services.deleteSave)
+                    return JS_ThrowInternalError(context,
+                                                 "save service is unavailable");
+                return JS_NewBool(
+                    context, services.deleteSave(static_cast<int>(integer)));
+            }
+            if (operation == "save.query") {
+                if (!services.querySave)
+                    return JS_ThrowInternalError(context,
+                                                 "save query service is unavailable");
+                return ToJavaScript(
+                    services.querySave(static_cast<int>(integer)));
+            }
+            return JS_ThrowRangeError(context, "unknown save operation");
+        }
+        if (operation.starts_with("video.")) {
+            if (operation == "video.play") {
+                if (!services.playVideo ||
+                    !StringArgument(count, values, 0, first))
+                    return JS_ThrowTypeError(context,
+                                             "PlayVideo requires a path");
+                double volume = 1.0;
+                bool skippable = true;
+                if (count >= 2 && !JS_IsUndefined(values[1]) &&
+                    (!NumberArgument(count, values, 1, volume) || volume < 0.0 ||
+                     volume > 1.0))
+                    return JS_ThrowRangeError(
+                        context, "video volume must be between 0 and 1");
+                if (count >= 3 && !JS_IsUndefined(values[2]) &&
+                    !BoolArgument(count, values, 2, skippable))
+                    return JS_ThrowTypeError(context,
+                                             "video skippable must be boolean");
+                const auto handle = services.playVideo(
+                    first, static_cast<float>(volume), skippable);
+                if (handle == 0)
+                    return JS_ThrowInternalError(context,
+                                                 "video could not be opened");
+                return JS_NewInt64(context,
+                                   static_cast<std::int64_t>(handle));
+            }
+            if (!IntegerArgument(count, values, 0, integer) || integer <= 0)
+                return JS_ThrowRangeError(context,
+                                          "video handle is invalid");
+            const auto handle = static_cast<std::uint64_t>(integer);
+            if (operation == "video.pause")
+                return JS_NewBool(
+                    context, services.pauseVideo && services.pauseVideo(handle));
+            if (operation == "video.resume")
+                return JS_NewBool(
+                    context, services.resumeVideo && services.resumeVideo(handle));
+            if (operation == "video.stop")
+                return JS_NewBool(context,
+                                  services.stopVideo && services.stopVideo(handle));
+            if (operation == "video.skip")
+                return JS_NewBool(context,
+                                  services.skipVideo && services.skipVideo(handle));
+            if (operation == "video.status")
+                return JS_NewString(
+                    context,
+                    services.videoStatus
+                        ? services.videoStatus(handle).c_str()
+                        : "unavailable");
+            if (operation == "video.error")
+                return JS_NewString(
+                    context,
+                    services.videoError ? services.videoError(handle).c_str()
+                                        : "video service is unavailable");
+            return JS_ThrowRangeError(context, "unknown video operation");
         }
         if (operation.starts_with("stage.")) {
             if (!services.stage)
@@ -1494,6 +1762,135 @@ public:
                 services.stage->ClearLayer(first);
                 return JS_UNDEFINED;
             }
+            if (operation == "stage.group") {
+                if (!StringArgument(count, values, 0, first))
+                    return JS_ThrowTypeError(context,
+                                             "SetStageGroup requires a name");
+                if (count >= 2 && !JS_IsUndefined(values[1]) &&
+                    !StringArgument(count, values, 1, second))
+                    return JS_ThrowTypeError(context,
+                                             "stage group parent must be a string");
+                return JS_NewBool(context,
+                                  services.stage->SetGroupNode(first, second));
+            }
+            if (operation == "stage.nodeParent") {
+                if (!StringArgument(count, values, 0, first) ||
+                    !StringArgument(count, values, 1, second))
+                    return JS_ThrowTypeError(
+                        context, "SetStageNodeParent requires a name and parent");
+                return JS_NewBool(context,
+                                  services.stage->SetNodeParent(first, second));
+            }
+            if (operation == "stage.nodeTransform") {
+                if (!StringArgument(count, values, 0, first) || count < 2 ||
+                    !JS_IsObject(values[1]))
+                    return JS_ThrowTypeError(
+                        context, "SetStageNodeTransform requires a name and options");
+                vn::Stage::NodeTransform transform;
+                if (const auto value = NumberProperty(values[1], "x"))
+                    transform.x = static_cast<float>(*value);
+                if (const auto value = NumberProperty(values[1], "y"))
+                    transform.y = static_cast<float>(*value);
+                if (const auto value = NumberProperty(values[1], "scaleX"))
+                    transform.scaleX = static_cast<float>(*value);
+                if (const auto value = NumberProperty(values[1], "scaleY"))
+                    transform.scaleY = static_cast<float>(*value);
+                if (const auto value = NumberProperty(values[1], "rotation"))
+                    transform.rotation = static_cast<float>(*value);
+                if (const auto value = NumberProperty(values[1], "opacity"))
+                    transform.opacity = static_cast<float>(*value);
+                return JS_NewBool(
+                    context, services.stage->SetNodeTransform(first, transform));
+            }
+            if (operation == "stage.nodeOrder") {
+                std::int64_t order = 0;
+                if (!StringArgument(count, values, 0, first) ||
+                    !IntegerArgument(count, values, 1, integer) ||
+                    !IntegerArgument(count, values, 2, order) ||
+                    integer < std::numeric_limits<int>::min() ||
+                    integer > std::numeric_limits<int>::max() ||
+                    order < std::numeric_limits<int>::min() ||
+                    order > std::numeric_limits<int>::max())
+                    return JS_ThrowTypeError(
+                        context, "SetStageNodeOrder requires name, z, and order");
+                return JS_NewBool(context, services.stage->SetNodeOrder(
+                                               first, static_cast<int>(integer),
+                                               static_cast<int>(order)));
+            }
+            if (operation == "stage.nodeVisibility") {
+                if (!StringArgument(count, values, 0, first) ||
+                    !BoolArgument(count, values, 1, boolean))
+                    return JS_ThrowTypeError(
+                        context, "SetStageNodeVisibility requires name and boolean");
+                return JS_NewBool(context,
+                                  services.stage->SetNodeVisibility(first, boolean));
+            }
+            if (operation == "stage.removeNode") {
+                if (!StringArgument(count, values, 0, first))
+                    return JS_ThrowTypeError(context,
+                                             "RemoveStageNode requires a name");
+                services.stage->RemoveNode(first);
+                return JS_UNDEFINED;
+            }
+            if (operation == "stage.particles") {
+                if (!StringArgument(count, values, 0, first) ||
+                    !StringArgument(count, values, 1, second))
+                    return JS_ThrowTypeError(
+                        context, "SetParticleEmitter requires a name and preset");
+                const auto preset = vn::ParticlePresetFromName(second);
+                if (!preset)
+                    return JS_ThrowRangeError(context,
+                                              "particle preset is unsupported");
+                vn::ParticleEmitterSpec spec;
+                spec.preset = *preset;
+                if (count >= 3 && !JS_IsUndefined(values[2])) {
+                    if (!JS_IsObject(values[2]))
+                        return JS_ThrowTypeError(
+                            context, "particle options must be an object");
+                    if (const auto value = NumberProperty(values[2], "seed")) {
+                        if (*value < 1.0 ||
+                            *value > std::numeric_limits<std::uint32_t>::max() ||
+                            std::floor(*value) != *value)
+                            return JS_ThrowRangeError(
+                                context, "particle seed must be a positive uint32");
+                        spec.seed = static_cast<std::uint32_t>(*value);
+                    }
+                    if (const auto value = NumberProperty(values[2], "rate"))
+                        spec.rate = static_cast<float>(*value);
+                    if (const auto value = NumberProperty(values[2], "maxParticles")) {
+                        if (*value < 1.0 || *value > 4096.0 ||
+                            std::floor(*value) != *value)
+                            return JS_ThrowRangeError(
+                                context, "particle maxParticles must be 1..4096");
+                        spec.maxParticles = static_cast<std::uint32_t>(*value);
+                    }
+                    if (const auto value = NumberProperty(values[2], "z")) {
+                        if (*value < std::numeric_limits<int>::min() ||
+                            *value > std::numeric_limits<int>::max() ||
+                            std::floor(*value) != *value)
+                            return JS_ThrowRangeError(
+                                context, "particle z must be an integer");
+                        spec.z = static_cast<int>(*value);
+                    }
+                    if (const auto value = NumberProperty(values[2], "opacity"))
+                        spec.opacity = static_cast<float>(*value);
+                    if (const auto value = NumberProperty(values[2], "wind"))
+                        spec.wind = static_cast<float>(*value);
+                    if (const auto value = NumberProperty(values[2], "speed"))
+                        spec.speed = static_cast<float>(*value);
+                    if (const auto value = NumberProperty(values[2], "size"))
+                        spec.size = static_cast<float>(*value);
+                }
+                return JS_NewBool(
+                    context, services.stage->SetParticleEmitter(first, spec));
+            }
+            if (operation == "stage.clearParticles") {
+                if (!StringArgument(count, values, 0, first))
+                    return JS_ThrowTypeError(
+                        context, "ClearParticleEmitter requires a name");
+                services.stage->ClearParticleEmitter(first);
+                return JS_UNDEFINED;
+            }
             if (operation == "stage.shake") {
                 std::int64_t milliseconds = 400;
                 double amplitude = 12.0;
@@ -1541,38 +1938,83 @@ public:
                         context, "SetCustomEffect requires an id and progress");
                 std::array<std::array<float, 4>, 8> parameters{};
                 const std::array<std::array<float, 4>, 8>* parameterPointer = nullptr;
+                graphics::CustomEffectNamedParameters namedParameters;
+                bool hasNamedParameters = false;
                 if (count >= 3 && !JS_IsUndefined(values[2])) {
                     const auto converted = FromJavaScript(values[2]);
                     const auto* slots = converted ? converted->AsArray() : nullptr;
-                    if (!slots || slots->size() > parameters.size())
-                        return JS_ThrowTypeError(
-                            context, "custom effect parameters must contain at most 8 vec4 slots");
-                    for (std::size_t slot = 0; slot < slots->size(); ++slot) {
-                        const auto* components = slots->at(slot).AsArray();
-                        if (!components || components->size() > 4)
-                            return JS_ThrowTypeError(
-                                context, "custom effect parameter slots must be vec4 arrays");
-                        for (std::size_t component = 0;
-                             component < components->size(); ++component) {
-                            if (const auto* value =
-                                    components->at(component).TryGet<double>())
-                                parameters[slot][component] = static_cast<float>(*value);
-                            else if (const auto* integerValue =
-                                         components->at(component)
-                                             .TryGet<std::int64_t>())
-                                parameters[slot][component] =
-                                    static_cast<float>(*integerValue);
-                            else
-                                return JS_ThrowTypeError(
-                                    context, "custom effect parameters must be numeric");
+                    const auto* named = converted ? converted->AsObject() : nullptr;
+                    const auto numeric = [](const Variant& value,
+                                            float& output) {
+                        if (const auto* number = value.TryGet<double>()) {
+                            output = static_cast<float>(*number);
+                            return std::isfinite(output);
                         }
+                        if (const auto* integer =
+                                value.TryGet<std::int64_t>()) {
+                            output = static_cast<float>(*integer);
+                            return std::isfinite(output);
+                        }
+                        return false;
+                    };
+                    if (slots) {
+                        if (slots->size() > parameters.size())
+                            return JS_ThrowTypeError(
+                                context, "custom effect parameters must contain at most 8 vec4 slots");
+                        for (std::size_t slot = 0; slot < slots->size(); ++slot) {
+                            const auto* components = slots->at(slot).AsArray();
+                            if (!components || components->size() > 4)
+                                return JS_ThrowTypeError(
+                                    context, "custom effect parameter slots must be vec4 arrays");
+                            for (std::size_t component = 0;
+                                 component < components->size(); ++component) {
+                                if (!numeric(components->at(component),
+                                             parameters[slot][component]))
+                                    return JS_ThrowTypeError(
+                                        context, "custom effect parameters must be finite numbers");
+                            }
+                        }
+                        parameterPointer = &parameters;
+                    } else if (named) {
+                        if (named->size() > parameters.size())
+                            return JS_ThrowTypeError(
+                                context, "custom effect parameters must contain at most 8 named values");
+                        for (const auto& [name, value] : *named) {
+                            std::vector<float> components;
+                            if (const auto* vectorValues = value.AsArray()) {
+                                if (vectorValues->empty() ||
+                                    vectorValues->size() > 4)
+                                    return JS_ThrowTypeError(
+                                        context, "named custom effect vectors must contain 1 to 4 numbers");
+                                components.resize(vectorValues->size());
+                                for (std::size_t component = 0;
+                                     component < vectorValues->size(); ++component)
+                                    if (!numeric(vectorValues->at(component),
+                                                 components[component]))
+                                        return JS_ThrowTypeError(
+                                            context, "custom effect parameters must be finite numbers");
+                            } else {
+                                components.resize(1);
+                                if (!numeric(value, components.front()))
+                                    return JS_ThrowTypeError(
+                                        context, "named custom effect parameters must be numbers or numeric arrays");
+                            }
+                            namedParameters.emplace(name, std::move(components));
+                        }
+                        hasNamedParameters = true;
+                    } else {
+                        return JS_ThrowTypeError(
+                            context, "custom effect parameters must be named values or at most 8 vec4 slots");
                     }
-                    parameterPointer = &parameters;
                 }
-                if (!services.stage->SetCustomEffect(
-                        first, static_cast<float>(progress), parameterPointer))
+                const bool applied = hasNamedParameters
+                    ? services.stage->SetCustomEffect(
+                          first, static_cast<float>(progress), namedParameters)
+                    : services.stage->SetCustomEffect(
+                          first, static_cast<float>(progress), parameterPointer);
+                if (!applied)
                     return JS_ThrowRangeError(
-                        context, "custom stage effect is unknown or unavailable");
+                        context, "custom stage effect or its named parameters are invalid or unavailable");
                 return JS_UNDEFINED;
             }
             if (operation == "stage.clearCustomEffect") {
@@ -1707,6 +2149,20 @@ public:
             if (operation == "input.mouseY") return JS_NewFloat64(context, services.input->MouseY());
             if (operation == "input.leftClick") return JS_NewBool(context, services.input->LeftClick());
             if (operation == "input.rightClick") return JS_NewBool(context, services.input->RightClick());
+            if (operation == "input.actionPressed" ||
+                operation == "input.actionDown") {
+                if (!StringArgument(count, values, 0, first))
+                    return JS_ThrowTypeError(context,
+                                             "input action requires a name");
+                const auto action = ParseInputAction(first);
+                if (!action)
+                    return JS_ThrowRangeError(context,
+                                              "unknown logical input action");
+                return JS_NewBool(
+                    context, operation == "input.actionPressed"
+                                 ? services.input->ActionPressed(*action)
+                                 : services.input->ActionDown(*action));
+            }
             return JS_ThrowRangeError(context, "unknown input operation");
         }
         if (operation.starts_with("renderer.")) {
@@ -1767,11 +2223,16 @@ public:
         const std::string_view operation) const {
         return operation != "debug.point" &&
                !operation.starts_with("await.") &&
-               !operation.starts_with("wait.");
+               !operation.starts_with("wait.") &&
+               !operation.starts_with("video.");
     }
 
     JSValue RuntimeOperation(const std::string_view operation, const int count,
                              JSValueConst* values) {
+        if (insideStateProviderCallback)
+            return JS_ThrowTypeError(
+                context,
+                "Engine operations are forbidden inside a state provider callback");
         const auto capability = CapabilityForOperation(operation);
         if (!HasCapability(capability))
             return PermissionDenied(capability, operation);
@@ -1838,6 +2299,10 @@ public:
                           JS_NewCFunction(context, &RegisterCommand, "RegisterCommand", 2));
         JS_SetPropertyStr(context, engine, "RegisterAction",
                           JS_NewCFunction(context, &RegisterAction, "RegisterAction", 2));
+        JS_SetPropertyStr(
+            context, engine, "RegisterStateProvider",
+            JS_NewCFunction(context, &RegisterStateProvider,
+                            "RegisterStateProvider", 3));
         JS_SetPropertyStr(context, engine, "On",
                           JS_NewCFunction(context, &On, "On", 2));
         JS_SetPropertyStr(context, engine, "Emit",
@@ -1882,6 +2347,8 @@ public:
                 UnlockCG: { value: bindRuntime("profile.unlockCG") },
                 UnlockScene: { value: bindRuntime("profile.unlockScene") },
                 PlaySE: { value: bindRuntime("audio.playSE") },
+                PlayVoice: { value: bindRuntime("audio.playVoice") },
+                StopVoice: { value: bindRuntime("audio.stopVoice") },
                 PlayBGM: { value: bindRuntime("audio.playBGM") },
                 StopBGM: { value: bindRuntime("audio.stopBGM") },
                 SetBGMVolume: { value: bindRuntime("audio.bgmVolume") },
@@ -1890,6 +2357,19 @@ public:
                 SetAmbienceVolume: { value: bindRuntime("audio.ambienceVolume") },
                 PlayAmbience: { value: bindRuntime("audio.playAmbience") },
                 StopAmbience: { value: bindRuntime("audio.stopAmbience") },
+                Save: { value: bindRuntime("save.write") },
+                Load: { value: bindRuntime("save.load") },
+                Autosave: { value: bindRuntime("save.autosave") },
+                DeleteSave: { value: bindRuntime("save.delete") },
+                QuerySave: { value: bindRuntime("save.query") },
+                ListSaves: { value: bindRuntime("save.list") },
+                PlayVideo: { value: bindRuntime("video.play") },
+                PauseVideo: { value: bindRuntime("video.pause") },
+                ResumeVideo: { value: bindRuntime("video.resume") },
+                StopVideo: { value: bindRuntime("video.stop") },
+                SkipVideo: { value: bindRuntime("video.skip") },
+                GetVideoStatus: { value: bindRuntime("video.status") },
+                GetVideoError: { value: bindRuntime("video.error") },
                 SetBackground: { value: bindRuntime("stage.background") },
                 SetBackgroundRule: { value: bindRuntime("stage.backgroundRule") },
                 SetCharacter: { value: bindRuntime("stage.character") },
@@ -1898,6 +2378,14 @@ public:
                 SetLayer: { value: bindRuntime("stage.layer") },
                 SetLayerTransform: { value: bindRuntime("stage.layerTransform") },
                 ClearLayer: { value: bindRuntime("stage.clearLayer") },
+                SetStageGroup: { value: bindRuntime("stage.group") },
+                SetStageNodeParent: { value: bindRuntime("stage.nodeParent") },
+                SetStageNodeTransform: { value: bindRuntime("stage.nodeTransform") },
+                SetStageNodeOrder: { value: bindRuntime("stage.nodeOrder") },
+                SetStageNodeVisibility: { value: bindRuntime("stage.nodeVisibility") },
+                RemoveStageNode: { value: bindRuntime("stage.removeNode") },
+                SetParticleEmitter: { value: bindRuntime("stage.particles") },
+                ClearParticleEmitter: { value: bindRuntime("stage.clearParticles") },
                 Shake: { value: bindRuntime("stage.shake") },
                 SetCamera: { value: bindRuntime("stage.camera") },
                 SetScreenEffect: { value: bindRuntime("stage.screenEffect") },
@@ -1917,14 +2405,18 @@ public:
                 AwaitSeconds: { value: bindRuntime("await.timer") },
                 AwaitAnimation: { value: bindRuntime("await.animation") },
                 AwaitScreenEffect: { value: bindRuntime("await.screenEffect") },
+                AwaitVideo: { value: bindRuntime("await.video") },
                 WaitSeconds: { value: bindRuntime("wait.timer") },
                 WaitAnimation: { value: bindRuntime("wait.animation") },
                 WaitScreenEffect: { value: bindRuntime("wait.screenEffect") },
+                WaitVideo: { value: bindRuntime("wait.video") },
                 DebugPoint: { value: bindRuntime("debug.point") },
                 GetMouseX: { value: bindRuntime("input.mouseX") },
                 GetMouseY: { value: bindRuntime("input.mouseY") },
                 GetLeftClick: { value: bindRuntime("input.leftClick") },
                 GetRightClick: { value: bindRuntime("input.rightClick") },
+                IsInputActionPressed: { value: bindRuntime("input.actionPressed") },
+                IsInputActionDown: { value: bindRuntime("input.actionDown") },
                 GetLogicalSize: { value: bindRuntime("renderer.logicalSize") },
                 DrawImage: { value: bindRuntime("renderer.drawImage") },
                 DrawAuto: { value: bindRuntime("renderer.drawAuto") },
@@ -1957,6 +2449,150 @@ public:
         EndExecution();
         if (JS_IsException(result)) Error("<prismatix-sandbox>", Exception());
         JS_FreeValue(context, result);
+    }
+
+    [[nodiscard]] Result<ExtensionStates> CaptureStateProviders() {
+        std::vector<std::string> ids;
+        ids.reserve(stateProviders.size());
+        for (const auto& [id, _] : stateProviders) ids.push_back(id);
+        std::ranges::sort(ids);
+
+        ExtensionStates snapshots;
+        snapshots.reserve(ids.size());
+        for (const auto& id : ids) {
+            auto& provider = stateProviders.at(id);
+            StateCallbackScope scope(*this);
+            BeginExecution();
+            JSValue result =
+                JS_Call(context, provider.capture, JS_UNDEFINED, 0, nullptr);
+            EndExecution();
+            if (JS_IsException(result)) {
+                const std::string details = Exception();
+                JS_FreeValue(context, result);
+                return Result<ExtensionStates>::Failure(ScriptDiagnostic(
+                    "PXJS7601", "Extension state capture failed",
+                    id + ": " + details, extensionId));
+            }
+            if (JS_IsPromise(result)) {
+                JS_FreeValue(context, result);
+                return Result<ExtensionStates>::Failure(ScriptDiagnostic(
+                    "PXJS7602",
+                    "Extension state capture must be synchronous", id,
+                    extensionId));
+            }
+            auto converted = FromJavaScript(result);
+            JS_FreeValue(context, result);
+            if (!converted || !IsJsonValue(*converted))
+                return Result<ExtensionStates>::Failure(ScriptDiagnostic(
+                    "PXJS7603",
+                    "Extension state capture returned a non-JSON value", id,
+                    extensionId));
+            snapshots.push_back({extensionId, id, provider.version,
+                                 converted->Clone()});
+        }
+        return Result<ExtensionStates>::Success(std::move(snapshots));
+    }
+
+    Status RestoreStateProviders(const ExtensionStates& snapshots) {
+        std::unordered_map<std::string, const ExtensionStateSnapshot*> saved;
+        for (const auto& snapshot : snapshots) {
+            if (snapshot.sourceId != extensionId || snapshot.providerId.empty() ||
+                !saved.emplace(snapshot.providerId, &snapshot).second)
+                return Status::Fail(ScriptDiagnostic(
+                    "PXJS7610",
+                    "Extension state checkpoint contains an invalid provider identity",
+                    snapshot.providerId, extensionId));
+        }
+        for (const auto& [id, _] : saved) {
+            if (!stateProviders.contains(id))
+                return Status::Fail(ScriptDiagnostic(
+                    "PXJS7611",
+                    "Saved extension state provider is no longer registered", id,
+                    extensionId));
+        }
+
+        std::vector<std::string> ids;
+        ids.reserve(stateProviders.size());
+        for (const auto& [id, _] : stateProviders) ids.push_back(id);
+        std::ranges::sort(ids);
+        for (const auto& id : ids) {
+            auto& provider = stateProviders.at(id);
+            const auto found = saved.find(id);
+            Variant value;
+            std::uint32_t version = 0;
+            if (found != saved.end()) {
+                value = found->second->state.Clone();
+                version = found->second->version;
+            }
+            if (!IsJsonValue(value) || version > provider.version)
+                return Status::Fail(ScriptDiagnostic(
+                    "PXJS7612",
+                    "Saved extension state version or value is incompatible", id,
+                    extensionId));
+
+            StateCallbackScope scope(*this);
+            if (version != provider.version) {
+                if (JS_IsUndefined(provider.migrate))
+                    return Status::Fail(ScriptDiagnostic(
+                        "PXJS7613",
+                        "Extension state requires an explicit migration", id,
+                        extensionId));
+                JSValue arguments[] = {
+                    ToJavaScript(value), JS_NewUint32(context, version),
+                    JS_NewUint32(context, provider.version)};
+                BeginExecution();
+                JSValue migrated = JS_Call(context, provider.migrate,
+                                           JS_UNDEFINED, 3, arguments);
+                EndExecution();
+                for (auto& argument : arguments)
+                    JS_FreeValue(context, argument);
+                if (JS_IsException(migrated)) {
+                    const std::string details = Exception();
+                    JS_FreeValue(context, migrated);
+                    return Status::Fail(ScriptDiagnostic(
+                        "PXJS7614", "Extension state migration failed",
+                        id + ": " + details, extensionId));
+                }
+                if (JS_IsPromise(migrated)) {
+                    JS_FreeValue(context, migrated);
+                    return Status::Fail(ScriptDiagnostic(
+                        "PXJS7615",
+                        "Extension state migration must be synchronous", id,
+                        extensionId));
+                }
+                auto converted = FromJavaScript(migrated);
+                JS_FreeValue(context, migrated);
+                if (!converted || !IsJsonValue(*converted))
+                    return Status::Fail(ScriptDiagnostic(
+                        "PXJS7616",
+                        "Extension state migration returned a non-JSON value",
+                        id, extensionId));
+                value = converted->Clone();
+            }
+
+            JSValue argument = ToJavaScript(value);
+            BeginExecution();
+            JSValue restored = JS_Call(context, provider.restore, JS_UNDEFINED,
+                                       1, &argument);
+            EndExecution();
+            JS_FreeValue(context, argument);
+            if (JS_IsException(restored)) {
+                const std::string details = Exception();
+                JS_FreeValue(context, restored);
+                return Status::Fail(ScriptDiagnostic(
+                    "PXJS7617", "Extension state restore failed",
+                    id + ": " + details, extensionId));
+            }
+            if (JS_IsPromise(restored)) {
+                JS_FreeValue(context, restored);
+                return Status::Fail(ScriptDiagnostic(
+                    "PXJS7618",
+                    "Extension state restore must be synchronous", id,
+                    extensionId));
+            }
+            JS_FreeValue(context, restored);
+        }
+        return Status::Ok();
     }
 
     [[nodiscard]] JSValue ToJavaScript(const Variant& value, const int depth = 0) {
@@ -2171,7 +2807,7 @@ public:
         const auto kind = JS_IsString(kindValue) ? String(kindValue) : std::nullopt;
         JS_FreeValue(context, kindValue);
         if (!kind || (*kind != "timer" && *kind != "animation" &&
-                      *kind != "screen-effect")) {
+                      *kind != "screen-effect" && *kind != "video")) {
             JS_FreeValue(context, yielded);
             Error(source, "JavaScript generator yielded an unknown wait token");
             return StepResult::Failed;
@@ -2317,6 +2953,7 @@ public:
     std::unordered_set<std::string> declaredActions;
     std::unordered_set<std::string> loadedActionSources;
     std::unordered_set<std::string> loadedCommandSources;
+    std::unordered_map<std::string, StateProvider> stateProviders;
     std::string activeExtension;
     std::string extensionId;
     std::string moduleRoot;
@@ -2343,6 +2980,7 @@ public:
     const EngineOperationJournal* replayJournal = nullptr;
     std::size_t replayJournalCursor = 0;
     bool insidePersistentCallback = false;
+    bool insideStateProviderCallback = false;
     bool acceptingPromiseWait = false;
     std::uint64_t nextActionHandle = 1;
     std::uint64_t nextRealmNamespace = 1;
@@ -3202,6 +3840,11 @@ void JavaScriptHost::Update(const float deltaSeconds) {
         if (wait.kind == "screen-effect")
             return !m_impl->services.renderer ||
                    !m_impl->services.renderer->ScreenEffectPlaying(wait.handle);
+        if (wait.kind == "video") {
+            if (!m_impl->services.videoStatus) return true;
+            const std::string state = m_impl->services.videoStatus(wait.handle);
+            return state != "playing" && state != "paused";
+        }
         if (wait.kind == "timer") {
             wait.remainingSeconds -= std::max(0.0f, deltaSeconds);
             return wait.remainingSeconds <= 0.0f;
@@ -3379,7 +4022,7 @@ Status JavaScriptHost::RestorePendingInCurrentRealm(
                                  saved.remainingSeconds >= 0.0f);
         if (saved.yieldIndex == 0 || !validTimer ||
             (saved.waitKind != "timer" && saved.waitKind != "animation" &&
-             saved.waitKind != "screen-effect")) {
+             saved.waitKind != "screen-effect" && saved.waitKind != "video")) {
             return fail("PXJS7501", "Saved JavaScript await checkpoint is invalid",
                         saved.command.type);
         }
@@ -3412,7 +4055,9 @@ Status JavaScriptHost::RestorePendingInCurrentRealm(
         pending.command = saved.command;
         pending.yieldIndex = saved.yieldIndex;
         pending.wait = {.kind = saved.waitKind,
-                        .handle = saved.handle,
+                        .handle = saved.waitKind == "video"
+                                      ? replayed->wait.handle
+                                      : saved.handle,
                         .remainingSeconds = saved.remainingSeconds};
         pending.journal = saved.journal;
         candidate.push_back(std::move(pending));
@@ -3475,7 +4120,7 @@ Status JavaScriptHost::RestorePendingActionsInCurrentRealm(
         if (saved.id == 0 || !ids.insert(saved.id).second ||
             saved.yieldIndex == 0 || !validTimer ||
             (saved.waitKind != "timer" && saved.waitKind != "animation" &&
-             saved.waitKind != "screen-effect")) {
+             saved.waitKind != "screen-effect" && saved.waitKind != "video")) {
             return fail("PXJS7510", "Saved JavaScript Action checkpoint is invalid",
                         saved.invocation.action);
         }
@@ -3512,7 +4157,9 @@ Status JavaScriptHost::RestorePendingActionsInCurrentRealm(
         pending.invocation = saved.invocation;
         pending.yieldIndex = saved.yieldIndex;
         pending.wait = {.kind = saved.waitKind,
-                        .handle = saved.handle,
+                        .handle = saved.waitKind == "video"
+                                      ? replayed->wait.handle
+                                      : saved.handle,
                         .remainingSeconds = saved.remainingSeconds};
         pending.journal = saved.journal;
         candidate.push_back(std::move(pending));
@@ -3525,6 +4172,94 @@ Status JavaScriptHost::RestorePendingActionsInCurrentRealm(
         m_impl->nextActionHandle =
             std::max(m_impl->nextActionHandle, pending.id + 1);
     return Status::Ok();
+}
+
+Result<ExtensionStates> JavaScriptHost::CaptureExtensionStateInCurrentRealm() {
+    return m_impl->CaptureStateProviders();
+}
+
+Result<ExtensionStates> JavaScriptHost::CaptureExtensionState() {
+    ExtensionStates combined;
+    auto append = [&combined](Result<ExtensionStates> captured)
+        -> std::optional<std::vector<diag::Diagnostic>> {
+        if (!captured) return captured.Diagnostics();
+        auto values = captured.TakeValue();
+        combined.insert(combined.end(),
+                        std::make_move_iterator(values.begin()),
+                        std::make_move_iterator(values.end()));
+        return std::nullopt;
+    };
+    if (auto failure = append(CaptureExtensionStateInCurrentRealm()))
+        return Result<ExtensionStates>::Failure(std::move(*failure));
+    for (const auto& realm : m_impl->extensionRealms) {
+        if (auto failure = append(realm->CaptureExtensionStateInCurrentRealm()))
+            return Result<ExtensionStates>::Failure(std::move(*failure));
+    }
+    std::ranges::sort(combined, [](const auto& left, const auto& right) {
+        return std::tie(left.sourceId, left.providerId) <
+               std::tie(right.sourceId, right.providerId);
+    });
+    return Result<ExtensionStates>::Success(std::move(combined));
+}
+
+Status JavaScriptHost::RestoreExtensionStateInCurrentRealm(
+    const ExtensionStates& state) {
+    return m_impl->RestoreStateProviders(state);
+}
+
+Status JavaScriptHost::RestoreExtensionStateUnchecked(
+    const ExtensionStates& state) {
+    ExtensionStates local;
+    std::unordered_map<JavaScriptHost*, ExtensionStates> grouped;
+    std::set<std::pair<std::string, std::string>> identities;
+    for (const auto& saved : state) {
+        if (!identities.emplace(saved.sourceId, saved.providerId).second)
+            return Status::Fail(ScriptDiagnostic(
+                "PXJS7620",
+                "Extension state checkpoint contains duplicate providers",
+                saved.sourceId + ":" + saved.providerId));
+        if (saved.sourceId.empty()) {
+            local.push_back(saved);
+            continue;
+        }
+        const auto realm = std::ranges::find_if(
+            m_impl->extensionRealms, [&](const auto& candidate) {
+                return candidate->m_impl->extensionId == saved.sourceId;
+            });
+        if (realm == m_impl->extensionRealms.end())
+            return Status::Fail(ScriptDiagnostic(
+                "PXJS7621", "Saved extension state realm is unavailable",
+                saved.sourceId));
+        grouped[realm->get()].push_back(saved);
+    }
+    if (Status restored = RestoreExtensionStateInCurrentRealm(local); !restored)
+        return restored;
+    for (const auto& realm : m_impl->extensionRealms) {
+        if (Status restored = realm->RestoreExtensionStateInCurrentRealm(
+                grouped[realm.get()]);
+            !restored)
+            return restored;
+    }
+    return Status::Ok();
+}
+
+Status JavaScriptHost::RestoreExtensionState(const ExtensionStates& state) {
+    auto previous = CaptureExtensionState();
+    if (!previous)
+        return Status::Fail(previous.Diagnostics());
+    const Status restored = RestoreExtensionStateUnchecked(state);
+    if (restored) return restored;
+    if (const Status rolledBack =
+            RestoreExtensionStateUnchecked(previous.Value());
+        !rolledBack) {
+        diag::Emit(diag::Diagnostic{
+            .severity = diag::Severity::Fatal,
+            .code = "PXJS7622",
+            .category = "Script.Restore",
+            .message =
+                "Extension state rollback could not recover the active realms"});
+    }
+    return restored;
 }
 
 void JavaScriptHost::CancelPending() {

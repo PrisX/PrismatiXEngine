@@ -7,6 +7,7 @@ out/
 /Export
 /logs
 /Save
+/dist
 
 # CMake
 CMakeCache.txt

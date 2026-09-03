@@ -493,6 +493,33 @@ int main() {
                      "packaged UI document dispatches its authored Player Action");
     });
 
+    suite.Run("VideoContainersRemainSeekableInCompressedPackages", [&] {
+        const auto videoPath = root / "Video/stream.mp4";
+        Write(videoPath, std::string(64 * 1024, 'v'));
+        const auto videoOutput = fixture.path / "Build/StreamingVideo";
+        auto videoRequest = FixtureRequest(root, videoOutput);
+        videoRequest.requestId = "streaming-video-contract";
+        videoRequest.encryption = false;
+        videoRequest.compression = px::sdk::PackageCompression::Maximum;
+        videoRequest.inputs.push_back(Input(root, "Video/stream.mp4"));
+        const auto result = px::sdk::RunPackager(videoRequest);
+        suite.Require(result.Completed(),
+                      "compressed package with a video container completes");
+        px::io::Archive archive;
+        suite.Require(archive.Open((videoOutput / "Content.pdx").string()),
+                      "streaming video package mounts");
+        const auto entry = std::ranges::find_if(
+            archive.Entries(), [](const auto& candidate) {
+                return candidate.name == "Video/stream.mp4";
+            });
+        suite.Require(entry != archive.Entries().end() && entry->flags == 0,
+                      "Packager stores video without whole-entry compression");
+        auto stream = archive.OpenStream("Video/stream.mp4");
+        suite.Expect(stream && stream->Seek(-1, px::io::SeekOrigin::End) &&
+                         stream->Tell() == 64 * 1024 - 1,
+                     "Packager output exposes a direct seekable video range");
+    });
+
     suite.Run("LocaleFontChain_IsPackagedAndPreflightChecksGlyphCoverage", [&] {
         const auto localePath = root / "Content/Localization/ja-JP.json";
         const auto originalLocale = Read(localePath);
@@ -690,11 +717,29 @@ int main() {
             runtime.Renderer().CustomEffectDefaults("dream-tone");
         suite.Require(defaults.has_value(),
                       "custom effect default uniforms are available");
+        const auto named = runtime.Renderer().ResolveCustomEffectParameters(
+            "dream-tone", {{"amount", {0.8f}}});
+        suite.Expect(named && (*named)[0][0] == 0.8f,
+                     "declared custom effect parameters resolve by name");
+        suite.Expect(
+            !runtime.Renderer().ResolveCustomEffectParameters(
+                "dream-tone", {{"amount", {1.1f}}}) &&
+                !runtime.Renderer().ResolveCustomEffectParameters(
+                    "dream-tone", {{"undeclared", {0.5f}}}),
+            "named custom effect parameters enforce declared names and ranges");
         custom.customParameters = *defaults;
         const std::uint64_t effected = render(custom);
         suite.Expect(baseline != 0 && effected != 0 && baseline != effected,
                      "packaged custom effect visibly changes the Stage framebuffer");
         runtime.Shutdown();
+
+        px::RuntimeConfig tamperedConfig = runtimeConfig;
+        for (auto& artifact : tamperedConfig.customEffects.front().artifacts)
+            artifact.fingerprint = std::string(64, '0');
+        px::Runtime tamperedRuntime;
+        suite.Expect(!tamperedRuntime.Init(tamperedConfig),
+                     "Runtime rejects a shader artifact whose fingerprint metadata was tampered");
+        tamperedRuntime.Shutdown();
 
         Write(effectRoot / "Effects/dream-tone.frag.hlsl", R"(
           Texture2D stageTexture : register(t0);

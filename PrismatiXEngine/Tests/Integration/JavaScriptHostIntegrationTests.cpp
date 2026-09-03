@@ -34,6 +34,21 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     const auto extensions = temp.path / "Content" / "Extensions";
     std::filesystem::create_directories(extensions);
     Write(extensions / "demo.js", R"js(
+        let providerState = { score: 1, migrated: false };
+        Engine.RegisterStateProvider("demo-state", 2, {
+            capture: () => ({ ...providerState }),
+            restore: (state) => {
+                if (state.throwRestore) throw new Error("state restore rejected");
+                providerState = { ...state };
+            },
+            migrate: (state, fromVersion, toVersion) => ({
+                score: state?.score ?? 0,
+                migrated: fromVersion < toVersion
+            })
+        });
+        Engine.RegisterCommand("js.demo.state", (args) => {
+            providerState.score = args.score;
+        });
         Engine.RegisterCommand("js.demo.echo", (args) => {
             Engine.log(`${args.message}:${args.amount}`);
         });
@@ -90,7 +105,7 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
         "version": "1.0.0",
         "requiredEngineVersion": ">=0.2.0 <0.3.0",
         "entry": "demo.js",
-        "capabilities": ["runtime", "ui"],
+        "capabilities": ["runtime", "ui", "persistence"],
         "safety": {
             "previewSafe": true,
             "deterministic": true,
@@ -98,6 +113,17 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
             "rollbackSafe": false
         },
         "commands": [
+            {
+                "id": "js.demo.state",
+                "displayName": "State",
+                "description": "Extension state provider fixture",
+                "category": "Tests",
+                "await": false,
+                "rollback": "reversible",
+                "parameters": [
+                    {"name":"score","type":"integer","required":true}
+                ]
+            },
             {
                 "id": "js.demo.echo",
                 "displayName": "Echo",
@@ -374,6 +400,19 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
                                  "Content/Rules/dissolve.png", 750, 48);
         Engine.SetLayerTransform("foreground", "Content/Images/card.png",
                                  14, 28, 1.25, 0.75, 20, 210, 4);
+        if (!Engine.SetStageGroup("scene-root") ||
+            !Engine.SetStageNodeParent("foreground", "scene-root") ||
+            !Engine.SetStageNodeTransform("scene-root", {
+              x: 3, y: -4, scaleX: 0.9, scaleY: 1.1,
+              rotation: 5, opacity: 0.8
+            }) || !Engine.SetStageNodeOrder("foreground", 4, 9) ||
+            !Engine.SetStageNodeVisibility("foreground", true) ||
+            !Engine.SetParticleEmitter("snow", "snow", {
+              seed: 17, rate: 50, maxParticles: 128, z: -1,
+              opacity: 0.75, wind: 0.1, speed: 0.9, size: 1.2
+            })) {
+            throw new Error("stage graph/particle bridge failed");
+        }
         Engine.SetCamera(12, -8, 1.2);
         Engine.SetScreenEffect("fade", 0.4);
         if (!Engine.RegisterScreenEffect("js-tile-transition", {
@@ -402,6 +441,9 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
                      std::abs(foreground->scale - 1.25f) < 0.001f &&
                      std::abs(foreground->scaleY - 0.75f) < 0.001f &&
                      std::abs(foreground->rotation - 20.0f) < 0.001f &&
+                     stageState.nodes.size() == 2 &&
+                     stageState.particleEmitters.size() == 1 &&
+                     stageState.particleEmitters.front().spec.seed == 17 &&
                      std::abs(stageState.cameraX - 12.0f) < 0.001f &&
                      std::abs(stageState.cameraY + 8.0f) < 0.001f &&
                      std::abs(stageState.cameraZoom - 1.2f) < 0.001f &&
@@ -469,6 +511,48 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     suite.Require(host.LoadExtensionManifest(
                       "Content/Extensions/default.pxextension"),
                   "strict JavaScript extension manifest should load");
+
+    const auto initialExtensionState = host.CaptureExtensionState();
+    suite.Require(initialExtensionState &&
+                      initialExtensionState.Value().size() == 1 &&
+                      initialExtensionState.Value().front().sourceId == "js-demo" &&
+                      initialExtensionState.Value().front().providerId ==
+                          "demo-state" &&
+                      initialExtensionState.Value().front().version == 2,
+                  "extension state providers should capture versioned realm-owned state");
+    px::vn::Command mutateExtensionState;
+    mutateExtensionState.type = "js.demo.state";
+    mutateExtensionState.typedArgs["score"] = px::Variant(std::int64_t{7});
+    suite.Require(host.InvokeCommand(mutateExtensionState),
+                  "extension state fixture should mutate its private closure");
+    suite.Require(static_cast<bool>(host.RestoreExtensionState(
+                      initialExtensionState.Value())),
+                  "captured extension state should restore transactionally");
+    auto migratedExtensionState = initialExtensionState.Value();
+    migratedExtensionState.front().version = 1;
+    migratedExtensionState.front().state = px::Variant(px::VariantObject{
+        {"score", px::Variant(std::int64_t{5})}});
+    suite.Require(static_cast<bool>(host.RestoreExtensionState(
+                      migratedExtensionState)),
+                  "older extension state should pass through the provider migration");
+    const auto afterMigration = host.CaptureExtensionState();
+    const auto* migratedState = afterMigration
+                                    ? afterMigration.Value().front().state.AsObject()
+                                    : nullptr;
+    suite.Require(migratedState && migratedState->at("score") ==
+                                       px::Variant(std::int64_t{5}) &&
+                      migratedState->at("migrated") == px::Variant(true),
+                  "provider migration should deterministically produce the current schema");
+    auto rejectedExtensionState = afterMigration.Value();
+    rejectedExtensionState.front().state = px::Variant(px::VariantObject{
+        {"throwRestore", px::Variant(true)}});
+    suite.Expect(!host.RestoreExtensionState(rejectedExtensionState),
+                 "failed provider restore should fail the checkpoint transaction");
+    const auto afterRejectedRestore = host.CaptureExtensionState();
+    suite.Expect(afterRejectedRestore &&
+                     afterRejectedRestore.Value().front().state ==
+                         afterMigration.Value().front().state,
+                 "failed provider restore should roll back all extension realms");
 
     const auto* commandDescriptor =
         px::vn::CommandRegistry::Global().Find("js.demo.echo");

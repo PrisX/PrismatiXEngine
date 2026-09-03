@@ -46,4 +46,16 @@ struct PendingActionState {
 
 using PendingActionsState = std::vector<PendingActionState>;
 
+// Extension-owned data is persisted independently from QuickJS heap state.
+// The source/provider identity and explicit schema version make restore and
+// extension upgrades deterministic across save, seek, and rollback.
+struct ExtensionStateSnapshot {
+    std::string sourceId;
+    std::string providerId;
+    std::uint32_t version = 0;
+    Variant state;
+};
+
+using ExtensionStates = std::vector<ExtensionStateSnapshot>;
+
 }  // namespace px::script

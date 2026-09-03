@@ -44,6 +44,10 @@ public:
     [[nodiscard]] std::vector<std::string> CustomEffectIds() const;
     [[nodiscard]] std::optional<std::array<std::array<float, 4>, 8>>
     CustomEffectDefaults(std::string_view id) const;
+    [[nodiscard]] std::optional<std::array<std::array<float, 4>, 8>>
+    ResolveCustomEffectParameters(
+        std::string_view id,
+        const CustomEffectNamedParameters& parameters) const;
     [[nodiscard]] bool BeginStage();
     void EndStage(const StagePostEffects& effects);
     [[nodiscard]] bool Enabled() const { return m_enabled; }

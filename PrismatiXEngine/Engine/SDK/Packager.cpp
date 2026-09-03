@@ -157,6 +157,14 @@ std::string Lower(std::string value) {
     return value;
 }
 
+bool IsStreamingMediaPath(const std::string_view uri) {
+    const std::string extension =
+        Lower(Utf8Path(uri).extension().string());
+    constexpr std::array<std::string_view, 8> extensions{
+        ".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".ogv", ".ts"};
+    return std::ranges::find(extensions, extension) != extensions.end();
+}
+
 bool IsFingerprint(const std::string_view value) {
     return value.size() == 64 && std::all_of(value.begin(), value.end(), [](const unsigned char c) { return std::isxdigit(c) != 0; });
 }
@@ -348,7 +356,8 @@ bool WriteArchive(const std::filesystem::path& path, const std::vector<ArchiveEn
 
         std::uint8_t flags = 0;
         Bytes stored = entry.data;
-        if (compressionLevel != 0 && !entry.data.empty()) {
+        if (compressionLevel != 0 && !entry.data.empty() &&
+            !IsStreamingMediaPath(entry.uri)) {
             auto compressed = Compress(entry.data, compressionLevel);
             if (!compressed) return false;
             if (compressed->size() < stored.size()) {
@@ -840,9 +849,25 @@ CompiledEffects CompileCustomEffects(const std::vector<ArchiveEntry>& entries) {
             const auto defaultValue = EffectDefault(value["default"], uniform.type);
             const double minimum = value.value("minimum", 0.0);
             const double maximum = value.value("maximum", 1.0);
+            const double floatLimit =
+                static_cast<double>((std::numeric_limits<float>::max)());
+            const std::size_t components = uniform.type == "number" ? 1u
+                                         : uniform.type == "vec2" ? 2u
+                                         : uniform.type == "color" ? 4u : 0u;
+            bool defaultInRange = defaultValue && components > 0;
+            if (defaultInRange) {
+                for (std::size_t component = 0; component < components;
+                     ++component) {
+                    const double number = (*defaultValue)[component];
+                    defaultInRange = defaultInRange && number >= minimum &&
+                                     number <= maximum;
+                }
+            }
             if (!IsRequestId(uniform.name) || uniform.slot > 7 || !defaultValue ||
                 !std::isfinite(minimum) || !std::isfinite(maximum) ||
-                minimum > maximum || !uniformNames.insert(uniform.name).second ||
+                std::abs(minimum) > floatLimit ||
+                std::abs(maximum) > floatLimit || minimum > maximum ||
+                !defaultInRange || !uniformNames.insert(uniform.name).second ||
                 !uniformSlots.insert(uniform.slot).second) {
                 uniformsValid = false;
                 break;
@@ -1485,7 +1510,8 @@ ValidationResult Validate(const PackageRequest& request) {
                     } else {
                         for (const auto& capability : *capabilities) {
                             if (!capability.is_string() ||
-                                !std::set<std::string>{"runtime", "animation", "ui", "audio"}
+                                !std::set<std::string>{"runtime", "animation", "ui", "audio",
+                                                       "video", "persistence", "input"}
                                      .contains(capability.get<std::string>()) ||
                                 !declaredCapabilities.insert(
                                     capability.get<std::string>()).second) {

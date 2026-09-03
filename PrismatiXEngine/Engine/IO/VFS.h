@@ -2,6 +2,7 @@
 
 #include "Engine/IO/Archive.h"
 #include "Engine/IO/Crypto.h"
+#include "Engine/IO/SeekableStream.h"
 
 #include <memory>
 #include <optional>
@@ -25,6 +26,10 @@ public:
     void Clear();
 
     [[nodiscard]] bool Exists(std::string_view path) const;
+    // Opens an independent seekable cursor. Directory files and uncompressed,
+    // unencrypted archive entries are streamed without retaining the full asset.
+    [[nodiscard]] std::unique_ptr<SeekableReadStream> Open(
+        std::string_view path) const;
     [[nodiscard]] std::optional<Bytes> Read(std::string_view path) const;
     [[nodiscard]] std::optional<std::string> ReadText(std::string_view path) const;
 

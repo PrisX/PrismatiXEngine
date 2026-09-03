@@ -8,17 +8,24 @@ namespace px {
 
 Input::Input() {
     BindKey(InputAction::NavigateUp,SDL_SCANCODE_UP);
-    BindKey(InputAction::NavigateUp,SDL_SCANCODE_W);
     BindKey(InputAction::NavigateDown,SDL_SCANCODE_DOWN);
-    BindKey(InputAction::NavigateDown,SDL_SCANCODE_S);
     BindKey(InputAction::NavigateLeft,SDL_SCANCODE_LEFT);
-    BindKey(InputAction::NavigateLeft,SDL_SCANCODE_A);
     BindKey(InputAction::NavigateRight,SDL_SCANCODE_RIGHT);
-    BindKey(InputAction::NavigateRight,SDL_SCANCODE_D);
     BindKey(InputAction::Accept,SDL_SCANCODE_RETURN);
     BindKey(InputAction::Accept,SDL_SCANCODE_SPACE);
     BindKey(InputAction::Cancel,SDL_SCANCODE_ESCAPE);
     BindKey(InputAction::FocusNext,SDL_SCANCODE_TAB);
+    BindKey(InputAction::Advance,SDL_SCANCODE_RETURN);
+    BindKey(InputAction::Advance,SDL_SCANCODE_SPACE);
+    BindKey(InputAction::Menu,SDL_SCANCODE_ESCAPE);
+    BindKey(InputAction::Backlog,SDL_SCANCODE_B);
+    BindKey(InputAction::ToggleAuto,SDL_SCANCODE_A);
+    BindKey(InputAction::ToggleSkip,SDL_SCANCODE_S);
+    BindKey(InputAction::ToggleUi,SDL_SCANCODE_H);
+    BindKey(InputAction::QuickSave,SDL_SCANCODE_F5);
+    BindKey(InputAction::QuickLoad,SDL_SCANCODE_F9);
+    BindKey(InputAction::Rollback,SDL_SCANCODE_PAGEUP);
+    BindKey(InputAction::Pause,SDL_SCANCODE_P);
     BindGamepadButton(InputAction::NavigateUp,SDL_GAMEPAD_BUTTON_DPAD_UP);
     BindGamepadButton(InputAction::NavigateDown,SDL_GAMEPAD_BUTTON_DPAD_DOWN);
     BindGamepadButton(InputAction::NavigateLeft,SDL_GAMEPAD_BUTTON_DPAD_LEFT);
@@ -29,6 +36,12 @@ Input::Input() {
                       SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
     BindGamepadButton(InputAction::FocusPrevious,
                       SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
+    BindGamepadButton(InputAction::Advance,SDL_GAMEPAD_BUTTON_SOUTH);
+    BindGamepadButton(InputAction::Menu,SDL_GAMEPAD_BUTTON_EAST);
+    BindGamepadButton(InputAction::Backlog,SDL_GAMEPAD_BUTTON_NORTH);
+    BindGamepadButton(InputAction::ToggleAuto,SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
+    BindGamepadButton(InputAction::ToggleSkip,SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+    BindGamepadButton(InputAction::Pause,SDL_GAMEPAD_BUTTON_START);
 }
 
 void Input::ClearBindings(const InputAction action) {
@@ -49,6 +62,12 @@ void Input::BindGamepadButton(const InputAction action,const int button) {
 bool Input::ActionPressed(const InputAction action) const {
     if(action==InputAction::Count)return false;
     if(m_injectedActions.contains(action))return true;
+    if ((action == InputAction::Accept || action == InputAction::Advance) &&
+        m_leftClick)
+        return true;
+    if ((action == InputAction::Cancel || action == InputAction::Menu) &&
+        m_rightClick)
+        return true;
     const auto& keys=m_keyBindings[ActionIndex(action)];
     if(std::ranges::any_of(keys,[this](const int key){
            return m_keysPressed.contains(key);
@@ -59,9 +78,34 @@ bool Input::ActionPressed(const InputAction action) const {
     });
 }
 
+bool Input::ActionDown(const InputAction action) const {
+    if(action==InputAction::Count)return false;
+    if(m_injectedActions.contains(action))return true;
+    if ((action == InputAction::Accept || action == InputAction::Advance) &&
+        m_leftDown)
+        return true;
+    if ((action == InputAction::Cancel || action == InputAction::Menu) &&
+        m_rightDown)
+        return true;
+    const auto& keys=m_keyBindings[ActionIndex(action)];
+    if(std::ranges::any_of(keys,[this](const int key){
+           return m_keysDown.contains(key);
+       }))return true;
+    const auto& buttons=m_gamepadBindings[ActionIndex(action)];
+    return std::ranges::any_of(buttons,[this](const int button){
+        return m_gamepadButtonsDown.contains(button);
+    });
+}
+
 bool Input::ActionPressedWithoutKeyboard(const InputAction action) const {
     if(action==InputAction::Count)return false;
     if(m_injectedActions.contains(action))return true;
+    if ((action == InputAction::Accept || action == InputAction::Advance) &&
+        m_leftClick)
+        return true;
+    if ((action == InputAction::Cancel || action == InputAction::Menu) &&
+        m_rightClick)
+        return true;
     const auto& buttons=m_gamepadBindings[ActionIndex(action)];
     return std::ranges::any_of(buttons,[this](const int button){
         return m_gamepadButtonsPressed.contains(button);

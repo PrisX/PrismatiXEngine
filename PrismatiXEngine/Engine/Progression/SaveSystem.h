@@ -55,6 +55,7 @@ struct SaveSnapshot {
     std::vector<animation::AnimationClip> animationClips;
     script::PendingCommandsState scriptPending;
     script::PendingActionsState scriptActions;
+    script::ExtensionStates extensionState;
     ui::UIRuntimeState ui;
     std::vector<vn::BacklogEntry> backlog;
     bool nvlMode = false;

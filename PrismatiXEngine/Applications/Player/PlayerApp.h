@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -61,8 +62,9 @@ private:
 
     void StartGame();
     bool LoadSlot(int slot);
-    void SaveSlot(int slot, std::vector<std::uint8_t> thumbnail);
-    [[nodiscard]] progress::SaveSnapshot MakeSnapshot(bool includeBacklog);
+    bool SaveSlot(int slot, std::vector<std::uint8_t> thumbnail);
+    [[nodiscard]] std::optional<progress::SaveSnapshot> MakeSnapshot(
+        bool includeBacklog);
     bool LoadLocale(std::string locale, bool refreshPresentation);
 
     // --- Rollback (per-line snapshot ring) ---
@@ -82,6 +84,8 @@ private:
     [[nodiscard]] ui::DialoguePresentation DialogueUI() const;
     [[nodiscard]] ui::SettingsPresentation SettingsUI() const;
     void HandleUIAction(const ui::GalgameAction& action);
+    void RecordScriptVideoTerminal(std::uint64_t handle, std::string status,
+                                   std::string error = {});
 
     void TitleFrame(float dt);
     void GameFrame(float dt, std::uint64_t now);
@@ -139,6 +143,13 @@ private:
     std::unique_ptr<video::VideoPlayer> m_video;
     std::string m_pendingVideo;
     bool m_videoSkippable = true;
+    std::uint64_t m_nextScriptVideoHandle = 1;
+    std::uint64_t m_scriptVideoHandle = 0;
+    std::unordered_map<std::uint64_t, std::string> m_scriptVideoStates;
+    std::unordered_map<std::uint64_t, std::string> m_scriptVideoErrors;
+    std::deque<std::uint64_t> m_scriptVideoTerminalOrder;
+    std::optional<int> m_pendingScriptSave;
+    std::optional<int> m_pendingScriptLoad;
 
     bool m_quitRequested = false;
     enum class E2EStage {

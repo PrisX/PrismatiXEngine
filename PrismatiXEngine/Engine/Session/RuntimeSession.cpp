@@ -579,7 +579,9 @@ Result<RuntimeSession::PreparedRestore> RuntimeSession::PrepareRestore(
         state.timelines.size() > kRestoreCollectionLimit ||
         state.stage.actors.size() > kRestoreCollectionLimit ||
         state.stage.layers.size() > kRestoreCollectionLimit ||
-        state.stage.tweens.size() > kRestoreCollectionLimit) {
+        state.stage.tweens.size() > kRestoreCollectionLimit ||
+        state.stage.nodes.size() > kRestoreCollectionLimit ||
+        state.stage.particleEmitters.size() > kRestoreCollectionLimit) {
         return Result<PreparedRestore>::Failure(
             RestoreFailure("Restore candidate exceeds runtime collection limits")
                 .Diagnostics());

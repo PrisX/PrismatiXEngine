@@ -36,6 +36,8 @@ public:
     Status RestorePending(const PendingCommandsState& state) override;
     [[nodiscard]] PendingActionsState CapturePendingActions() const override;
     Status RestorePendingActions(const PendingActionsState& state) override;
+    [[nodiscard]] Result<ExtensionStates> CaptureExtensionState() override;
+    Status RestoreExtensionState(const ExtensionStates& state) override;
     void CancelPending() override;
     std::vector<DebugBreakpoint> SetDebugBreakpoints(
         std::vector<DebugBreakpoint> breakpoints) override;
@@ -57,6 +59,9 @@ private:
     bool LoadExtensionManifestIntoCurrentRealm(const std::string& manifestPath);
     Status RestorePendingInCurrentRealm(const PendingCommandsState& state);
     Status RestorePendingActionsInCurrentRealm(const PendingActionsState& state);
+    [[nodiscard]] Result<ExtensionStates> CaptureExtensionStateInCurrentRealm();
+    Status RestoreExtensionStateInCurrentRealm(const ExtensionStates& state);
+    Status RestoreExtensionStateUnchecked(const ExtensionStates& state);
     Status DispatchEventInCurrentRealm(const std::string& event,
                                        const EventPayload& payload);
 
