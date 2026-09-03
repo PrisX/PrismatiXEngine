@@ -51,6 +51,71 @@ export interface StageTweenSpec {
   readonly ease?: string;
 }
 
+export interface RouteTransitionOptions {
+  readonly preset?: string;
+  /** Seconds. A zero duration settles on the incoming screen immediately. */
+  readonly durationSeconds?: number;
+}
+
+export interface BackgroundRuleOptions {
+  readonly durationMilliseconds?: number;
+  readonly vague?: number;
+}
+
+export interface LayerTransformOptions {
+  readonly x?: number;
+  readonly y?: number;
+  readonly scaleX?: number;
+  readonly scaleY?: number;
+  readonly rotation?: number;
+  readonly alpha?: number;
+  readonly z?: number;
+}
+
+export type StageScreenEffect = "flash" | "fade" | "blur" | "vignette" | "color-grade";
+export type ScreenEffectStatus = "unknown" | "playing" | "completed" | "stopped" | "cancelled";
+
+export interface ScreenTextureReference {
+  readonly kind: "screen-texture";
+  readonly slot: "outgoing" | "incoming";
+}
+
+export interface EffectProgressReference {
+  readonly kind: "effect-parameter";
+  readonly name: "progress";
+}
+
+export interface EffectViewportReference {
+  readonly kind: "effect-parameter";
+  readonly name: "viewport";
+}
+
+export interface ScreenEffectContext {
+  readonly outgoing: ScreenTextureReference;
+  readonly incoming: ScreenTextureReference;
+  readonly progress: EffectProgressReference;
+  readonly viewport: EffectViewportReference;
+}
+
+export type ScreenEffectOperator =
+  | "none" | "fade" | "crossfade" | "slide-left" | "slide-right" | "tiles";
+
+export interface ScreenEffectPlan {
+  readonly operator: ScreenEffectOperator;
+  /** Native tile compositor parameters; ignored by non-tile operators. */
+  readonly columns?: number;
+  readonly rows?: number;
+  readonly stagger?: number;
+  readonly order?: "row-major" | "column-major" | "reverse";
+  /** Symbolic inputs keep the plan portable; they are resolved by native code. */
+  readonly outgoing?: ScreenTextureReference;
+  readonly incoming?: ScreenTextureReference;
+  readonly progress?: EffectProgressReference;
+  readonly viewport?: EffectViewportReference;
+}
+
+export type ScreenEffectFactory = (context: ScreenEffectContext) => ScreenEffectPlan;
+
 export interface TimerAwaitToken {
   readonly kind: "timer";
   readonly seconds: number;
@@ -61,7 +126,12 @@ export interface AnimationAwaitToken {
   readonly handle: number;
 }
 
-export type EngineAwaitToken = TimerAwaitToken | AnimationAwaitToken;
+export interface ScreenEffectAwaitToken {
+  readonly kind: "screen-effect";
+  readonly handle: number;
+}
+
+export type EngineAwaitToken = TimerAwaitToken | AnimationAwaitToken | ScreenEffectAwaitToken;
 
 export interface DisplayModeTable {
   readonly TopLeft: 0;
@@ -97,11 +167,12 @@ export interface PrismatiXEngine {
   ResourceExists(path: string): boolean;
   ReadResourceText(path: string): string;
 
-  PushRoute(route: string): boolean;
-  ReplaceRoute(route: string): boolean;
-  BackRoute(): boolean;
-  ShowModal(route: string): boolean;
-  CloseModal(): boolean;
+  PushRoute(route: string, transition?: RouteTransitionOptions): boolean;
+  ReplaceRoute(route: string, transition?: RouteTransitionOptions): boolean;
+  BackRoute(transition?: RouteTransitionOptions): boolean;
+  ShowModal(route: string, transition?: RouteTransitionOptions): boolean;
+  CloseModal(transition?: RouteTransitionOptions): boolean;
+  SetRouteTransition(outgoing: string, incoming: string, transition: RouteTransitionOptions): boolean;
 
   HasSeen(id: string): boolean;
   MarkSeen(id: string): void;
@@ -122,21 +193,36 @@ export interface PrismatiXEngine {
   StopAmbience(fadeMilliseconds?: number): void;
 
   SetBackground(path: string, transition?: boolean): void;
+  SetBackgroundRule(path: string, rulePath: string, durationMilliseconds?: number, vague?: number): void;
   SetCharacter(name: string, image: string, slot?: number, transition?: boolean, x?: number, y?: number, scale?: number): void;
   ClearCharacter(name: string, transition?: boolean): void;
   MoveCharacter(name: string, slot: number): void;
   SetLayer(name: string, image: string, x?: number, y?: number, scale?: number, alpha?: number, z?: number): void;
+  SetLayerTransform(name: string, image: string, x?: number, y?: number, scaleX?: number, scaleY?: number, rotation?: number, alpha?: number, z?: number): void;
   ClearLayer(name: string): void;
   Shake(milliseconds?: number, amplitude?: number): void;
+  SetCamera(x: number, y: number, zoom: number): void;
+  SetScreenEffect(effect: StageScreenEffect, amount: number): void;
+  ClearScreenEffect(effect: StageScreenEffect): void;
+  SetCustomEffect(effect: string, progress: number, parameters?: readonly (readonly number[])[]): void;
+  ClearCustomEffect(): void;
   Animate(target: string, properties: StageTweenSpec): boolean;
 
   LoadAnimation(path: string): string;
   PlayAnimation(resourceId: string, awaitCompletion?: boolean, speed?: number): number;
   CancelAnimation(handle: number): boolean;
+  RegisterScreenEffect(id: string, plan: ScreenEffectPlan): boolean;
+  PlayScreenEffect(id: string, durationSeconds?: number): number;
+  StopScreenEffect(handle: number): boolean;
+  CancelScreenEffect(handle: number): boolean;
+  IsScreenEffectPlaying(handle: number): boolean;
+  GetScreenEffectStatus(handle: number): ScreenEffectStatus;
   AwaitSeconds(seconds: number): TimerAwaitToken;
   AwaitAnimation(handle: number): AnimationAwaitToken;
+  AwaitScreenEffect(handle: number): ScreenEffectAwaitToken;
   WaitSeconds(seconds: number): Promise<void>;
   WaitAnimation(handle: number): Promise<void>;
+  WaitScreenEffect(handle: number): Promise<void>;
 
   DebugPoint(source: string, line: number, locals?: Record<string, RuntimeValue>, functionName?: string): Promise<void>;
 
@@ -171,6 +257,7 @@ export const ENGINE_HOST_BINDINGS = [
   "BackRoute",
   "ShowModal",
   "CloseModal",
+  "SetRouteTransition",
   "HasSeen",
   "MarkSeen",
   "ClearCount",
@@ -188,20 +275,35 @@ export const ENGINE_HOST_BINDINGS = [
   "PlayAmbience",
   "StopAmbience",
   "SetBackground",
+  "SetBackgroundRule",
   "SetCharacter",
   "ClearCharacter",
   "MoveCharacter",
   "SetLayer",
+  "SetLayerTransform",
   "ClearLayer",
   "Shake",
+  "SetCamera",
+  "SetScreenEffect",
+  "ClearScreenEffect",
+  "SetCustomEffect",
+  "ClearCustomEffect",
   "Animate",
   "LoadAnimation",
   "PlayAnimation",
   "CancelAnimation",
+  "RegisterScreenEffect",
+  "PlayScreenEffect",
+  "StopScreenEffect",
+  "CancelScreenEffect",
+  "IsScreenEffectPlaying",
+  "GetScreenEffectStatus",
   "AwaitSeconds",
   "AwaitAnimation",
+  "AwaitScreenEffect",
   "WaitSeconds",
   "WaitAnimation",
+  "WaitScreenEffect",
   "DebugPoint",
   "GetMouseX",
   "GetMouseY",
@@ -240,11 +342,12 @@ export interface PrismatiXContext {
     readText(path: string): string;
   };
   readonly ui: {
-    push(route: string): boolean;
-    replace(route: string): boolean;
-    back(): boolean;
-    showModal(route: string): boolean;
-    closeModal(): boolean;
+    push(route: string, transition?: RouteTransitionOptions): boolean;
+    replace(route: string, transition?: RouteTransitionOptions): boolean;
+    back(transition?: RouteTransitionOptions): boolean;
+    showModal(route: string, transition?: RouteTransitionOptions): boolean;
+    closeModal(transition?: RouteTransitionOptions): boolean;
+    setTransition(outgoing: string, incoming: string, transition: RouteTransitionOptions): boolean;
   };
   readonly progress: {
     hasSeen(id: string): boolean;
@@ -268,12 +371,18 @@ export interface PrismatiXContext {
   };
   readonly stage: {
     background(path: string, transition?: boolean): void;
+    backgroundRule(path: string, rulePath: string, options?: BackgroundRuleOptions): void;
     character(name: string, image: string, options?: {readonly slot?: number; readonly transition?: boolean; readonly x?: number; readonly y?: number; readonly scale?: number}): void;
     clearCharacter(name: string, transition?: boolean): void;
     moveCharacter(name: string, slot: number): void;
-    layer(name: string, image: string, options?: {readonly x?: number; readonly y?: number; readonly scale?: number; readonly alpha?: number; readonly z?: number}): void;
+    layer(name: string, image: string, options?: LayerTransformOptions & {readonly scale?: number}): void;
     clearLayer(name: string): void;
     shake(options?: {readonly milliseconds?: number; readonly amplitude?: number}): void;
+    camera(options: {readonly x?: number; readonly y?: number; readonly zoom?: number}): void;
+    screenEffect(effect: StageScreenEffect, amount: number): void;
+    clearScreenEffect(effect: StageScreenEffect): void;
+    customEffect(effect: string, progress: number, parameters?: readonly (readonly number[])[]): void;
+    clearCustomEffect(): void;
     animate(target: string, properties: StageTweenSpec): boolean;
   };
   readonly animation: {
@@ -286,6 +395,16 @@ export interface PrismatiXContext {
   readonly time: {
     wait(seconds: number): Promise<void>;
     token(seconds: number): TimerAwaitToken;
+  };
+  readonly effects: {
+    register(id: string, effect: ScreenEffectPlan | ScreenEffectFactory): boolean;
+    play(id: string, durationSeconds?: number): number;
+    stop(handle: number): boolean;
+    cancel(handle: number): boolean;
+    isPlaying(handle: number): boolean;
+    status(handle: number): ScreenEffectStatus;
+    wait(handle: number): Promise<void>;
+    token(handle: number): ScreenEffectAwaitToken;
   };
   readonly events: {
     on(event: string, handler: (payload: RuntimeValue) => void | Promise<void>): void;
@@ -330,6 +449,17 @@ function runtimeDisplayMode(): DisplayModeTable {
   return globalThis.DisplayMode ?? fallbackDisplayMode;
 }
 
+const screenEffectContext: ScreenEffectContext = Object.freeze({
+  outgoing: Object.freeze({kind: "screen-texture", slot: "outgoing"}),
+  incoming: Object.freeze({kind: "screen-texture", slot: "incoming"}),
+  progress: Object.freeze({kind: "effect-parameter", name: "progress"}),
+  viewport: Object.freeze({kind: "effect-parameter", name: "viewport"}),
+});
+
+function resolveScreenEffectPlan(effect: ScreenEffectPlan | ScreenEffectFactory): ScreenEffectPlan {
+  return typeof effect === "function" ? effect(screenEffectContext) : effect;
+}
+
 export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engine): PrismatiXContext {
   return {
     raw: engine,
@@ -343,11 +473,12 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
       readText: (path) => engine.ReadResourceText(path),
     },
     ui: {
-      push: (route) => engine.PushRoute(route),
-      replace: (route) => engine.ReplaceRoute(route),
-      back: () => engine.BackRoute(),
-      showModal: (route) => engine.ShowModal(route),
-      closeModal: () => engine.CloseModal(),
+      push: (route, transition) => engine.PushRoute(route, transition),
+      replace: (route, transition) => engine.ReplaceRoute(route, transition),
+      back: (transition) => engine.BackRoute(transition),
+      showModal: (route, transition) => engine.ShowModal(route, transition),
+      closeModal: (transition) => engine.CloseModal(transition),
+      setTransition: (outgoing, incoming, transition) => engine.SetRouteTransition(outgoing, incoming, transition),
     },
     progress: {
       hasSeen: (id) => engine.HasSeen(id),
@@ -371,12 +502,23 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
     },
     stage: {
       background: (path, transition) => engine.SetBackground(path, transition),
+      backgroundRule: (path, rulePath, options) => engine.SetBackgroundRule(path, rulePath, options?.durationMilliseconds, options?.vague),
       character: (name, image, options) => engine.SetCharacter(name, image, options?.slot, options?.transition, options?.x, options?.y, options?.scale),
       clearCharacter: (name, transition) => engine.ClearCharacter(name, transition),
       moveCharacter: (name, slot) => engine.MoveCharacter(name, slot),
-      layer: (name, image, options) => engine.SetLayer(name, image, options?.x, options?.y, options?.scale, options?.alpha, options?.z),
+      layer: (name, image, options) => {
+        if (options?.scaleX !== undefined || options?.scaleY !== undefined || options?.rotation !== undefined)
+          engine.SetLayerTransform(name, image, options?.x, options?.y, options?.scaleX ?? options?.scale, options?.scaleY ?? options?.scale, options?.rotation, options?.alpha, options?.z);
+        else
+          engine.SetLayer(name, image, options?.x, options?.y, options?.scale, options?.alpha, options?.z);
+      },
       clearLayer: (name) => engine.ClearLayer(name),
       shake: (options) => engine.Shake(options?.milliseconds, options?.amplitude),
+      camera: (options) => engine.SetCamera(options.x ?? 0, options.y ?? 0, options.zoom ?? 1),
+      screenEffect: (effect, amount) => engine.SetScreenEffect(effect, amount),
+      clearScreenEffect: (effect) => engine.ClearScreenEffect(effect),
+      customEffect: (effect, progress, parameters) => engine.SetCustomEffect(effect, progress, parameters),
+      clearCustomEffect: () => engine.ClearCustomEffect(),
       animate: (target, properties) => engine.Animate(target, properties),
     },
     animation: {
@@ -389,6 +531,16 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
     time: {
       wait: (seconds) => engine.WaitSeconds(seconds),
       token: (seconds) => engine.AwaitSeconds(seconds),
+    },
+    effects: {
+      register: (id, effect) => engine.RegisterScreenEffect(id, resolveScreenEffectPlan(effect)),
+      play: (id, durationSeconds) => engine.PlayScreenEffect(id, durationSeconds),
+      stop: (handle) => engine.StopScreenEffect(handle),
+      cancel: (handle) => engine.CancelScreenEffect(handle),
+      isPlaying: (handle) => engine.IsScreenEffectPlaying(handle),
+      status: (handle) => engine.GetScreenEffectStatus(handle),
+      wait: (handle) => engine.WaitScreenEffect(handle),
+      token: (handle) => engine.AwaitScreenEffect(handle),
     },
     events: {
       on: (event, handler) => engine.on(event, handler),
@@ -430,3 +582,20 @@ export function defineAction<TArgs extends Record<string, RuntimeValue>>(
 ): void {
   engine.RegisterAction(id, handler);
 }
+
+/**
+ * Registers a declarative full-screen transition. The factory runs once and
+ * receives symbolic outgoing/incoming textures plus progress and viewport
+ * parameters. Native Renderer2D resolves those symbols and performs every
+ * per-frame tile/blend/slide operation without JavaScript draw calls.
+ */
+export function defineScreenEffect(
+  id: string,
+  effect: ScreenEffectPlan | ScreenEffectFactory,
+  engine: PrismatiXEngine = globalThis.Engine,
+): boolean {
+  return engine.RegisterScreenEffect(id, resolveScreenEffectPlan(effect));
+}
+
+/** Alias that makes route-transition intent explicit. */
+export const defineScreenTransition = defineScreenEffect;

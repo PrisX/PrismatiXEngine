@@ -189,15 +189,60 @@ add_library(libunibreak::libunibreak ALIAS prismatix_unibreak_wasm)
 # compiler. Its Autotools distribution already separates CC_FOR_BUILD from
 # the target compiler, which is the safe cross-compilation path for WASM.
 include(ExternalProject)
-find_program(PRISMATIX_WASM_MAKE_EXECUTABLE NAMES make gmake REQUIRED)
 find_program(PRISMATIX_WASM_HOST_CC NAMES cc clang gcc REQUIRED)
+get_filename_component(PRISMATIX_WASM_HOST_BIN
+    "${PRISMATIX_WASM_HOST_CC}" DIRECTORY)
+unset(PRISMATIX_WASM_MAKE_EXECUTABLE CACHE)
+find_program(PRISMATIX_WASM_MAKE_EXECUTABLE NAMES make gmake
+    HINTS "${PRISMATIX_WASM_HOST_BIN}" NO_DEFAULT_PATH)
+if(NOT PRISMATIX_WASM_MAKE_EXECUTABLE)
+    find_program(PRISMATIX_WASM_MAKE_EXECUTABLE NAMES make gmake REQUIRED)
+endif()
+unset(PRISMATIX_WASM_SH_EXECUTABLE CACHE)
+find_program(PRISMATIX_WASM_SH_EXECUTABLE NAMES sh bash
+    HINTS
+        "$ENV{ProgramFiles}/Git/bin"
+        "$ENV{ProgramW6432}/Git/bin"
+        "${PRISMATIX_WASM_HOST_BIN}"
+    NO_DEFAULT_PATH)
+if(NOT PRISMATIX_WASM_SH_EXECUTABLE)
+    find_program(PRISMATIX_WASM_SH_EXECUTABLE NAMES sh bash REQUIRED)
+endif()
 set(PRISMATIX_WASM_FRIBIDI_INSTALL
     "${CMAKE_BINARY_DIR}/wasm-deps/fribidi")
+set(PRISMATIX_WASM_FRIBIDI_SOURCE
+    "${CMAKE_BINARY_DIR}/wasm-deps/fribidi-build/src/prismatix_fribidi_external")
+set(PRISMATIX_WASM_FRIBIDI_BINARY
+    "${CMAKE_BINARY_DIR}/wasm-deps/fribidi-build/src/prismatix_fribidi_external-build")
+set(PRISMATIX_WASM_FRIBIDI_CONFIGURE_SOURCE
+    "${PRISMATIX_WASM_FRIBIDI_SOURCE}")
+set(PRISMATIX_WASM_FRIBIDI_CONFIGURE_INSTALL
+    "${PRISMATIX_WASM_FRIBIDI_INSTALL}")
+set(PRISMATIX_WASM_FRIBIDI_CONFIGURE_BINARY
+    "${PRISMATIX_WASM_FRIBIDI_BINARY}")
+set(PRISMATIX_WASM_HOST_BIN_SHELL "${PRISMATIX_WASM_HOST_BIN}")
+if(CMAKE_HOST_WIN32)
+    foreach(PRISMATIX_WASM_PATH_VARIABLE IN ITEMS
+            PRISMATIX_WASM_FRIBIDI_CONFIGURE_SOURCE
+            PRISMATIX_WASM_FRIBIDI_CONFIGURE_INSTALL
+            PRISMATIX_WASM_FRIBIDI_CONFIGURE_BINARY
+            PRISMATIX_WASM_HOST_BIN_SHELL)
+        string(REGEX MATCH "^([A-Za-z]):/(.*)$" PRISMATIX_WASM_PATH_MATCH
+            "${${PRISMATIX_WASM_PATH_VARIABLE}}")
+        if(PRISMATIX_WASM_PATH_MATCH)
+            string(TOLOWER "${CMAKE_MATCH_1}" PRISMATIX_WASM_PATH_DRIVE)
+            set(${PRISMATIX_WASM_PATH_VARIABLE}
+                "/${PRISMATIX_WASM_PATH_DRIVE}/${CMAKE_MATCH_2}")
+        endif()
+    endforeach()
+endif()
 file(MAKE_DIRECTORY "${PRISMATIX_WASM_FRIBIDI_INSTALL}/include")
 ExternalProject_Add(prismatix_fribidi_external
     URL      https://github.com/fribidi/fribidi/releases/download/v1.0.16/fribidi-1.0.16.tar.xz
     URL_HASH SHA256=1b1cde5b235d40479e91be2f0e88a309e3214c8ab470ec8a2744d82a5a9ea05c
     PREFIX "${CMAKE_BINARY_DIR}/wasm-deps/fribidi-build"
+    SOURCE_DIR "${PRISMATIX_WASM_FRIBIDI_SOURCE}"
+    BINARY_DIR "${PRISMATIX_WASM_FRIBIDI_BINARY}"
     CONFIGURE_COMMAND
         ${CMAKE_COMMAND} -E env
             "CC=${CMAKE_C_COMPILER}"
@@ -205,26 +250,21 @@ ExternalProject_Add(prismatix_fribidi_external
             "RANLIB=${CMAKE_RANLIB}"
             "NM=${CMAKE_NM}"
             "CC_FOR_BUILD=${PRISMATIX_WASM_HOST_CC}"
-        <SOURCE_DIR>/configure
+        ${PRISMATIX_WASM_SH_EXECUTABLE}
+            "${PRISMATIX_WASM_FRIBIDI_CONFIGURE_SOURCE}/configure"
             --host=wasm32-unknown-emscripten
-            --prefix=${PRISMATIX_WASM_FRIBIDI_INSTALL}
+            --prefix=${PRISMATIX_WASM_FRIBIDI_CONFIGURE_INSTALL}
             --disable-shared
             --enable-static
             --disable-docs
             --disable-bin
             --disable-dependency-tracking
     BUILD_COMMAND
-        ${CMAKE_COMMAND} -E env
-            "CC=${CMAKE_C_COMPILER}"
-            "AR=${CMAKE_AR}"
-            "RANLIB=${CMAKE_RANLIB}"
-        ${PRISMATIX_WASM_MAKE_EXECUTABLE} -C <BINARY_DIR> -j2
+        ${PRISMATIX_WASM_SH_EXECUTABLE} -c
+            "PATH='${PRISMATIX_WASM_HOST_BIN_SHELL}':$PATH CC='${CMAKE_C_COMPILER}' AR='${CMAKE_AR}' RANLIB='${CMAKE_RANLIB}' make -C '${PRISMATIX_WASM_FRIBIDI_CONFIGURE_BINARY}' -j2"
     INSTALL_COMMAND
-        ${CMAKE_COMMAND} -E env
-            "CC=${CMAKE_C_COMPILER}"
-            "AR=${CMAKE_AR}"
-            "RANLIB=${CMAKE_RANLIB}"
-        ${PRISMATIX_WASM_MAKE_EXECUTABLE} -C <BINARY_DIR> install
+        ${PRISMATIX_WASM_SH_EXECUTABLE} -c
+            "PATH='${PRISMATIX_WASM_HOST_BIN_SHELL}':$PATH CC='${CMAKE_C_COMPILER}' AR='${CMAKE_AR}' RANLIB='${CMAKE_RANLIB}' make -C '${PRISMATIX_WASM_FRIBIDI_CONFIGURE_BINARY}' install"
     BUILD_BYPRODUCTS
         "${PRISMATIX_WASM_FRIBIDI_INSTALL}/lib/libfribidi.a"
 )

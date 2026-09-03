@@ -147,7 +147,7 @@ public:
     }
     void SetRoutePresentationHandler(
         std::function<void(std::string_view route, std::string_view operation)> handler) {
-        m_routePresentationHandler = std::move(handler);
+        m_routes.SetPresentationHandler(std::move(handler));
     }
     void SetUIStateHandler(
         std::function<ui::UIRuntimeState()> capture,
@@ -172,7 +172,6 @@ private:
     std::unordered_map<animation::TargetKind,animation::TimelinePlayer::Apply> m_animationHandlers;
     std::unordered_map<animation::TargetKind,AnimationTargetValidator> m_animationValidators;
     std::function<bool(const vn::Command&)> m_extensionCommandHandler;
-    std::function<void(std::string_view, std::string_view)> m_routePresentationHandler;
     std::function<ui::UIRuntimeState()> m_captureUIState;
     std::function<Status(const ui::UIRuntimeState&)> m_restoreUIState;
     std::function<Status(const ui::UIRuntimeState&)> m_validateUIState;

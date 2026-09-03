@@ -1,10 +1,13 @@
 #include "Engine/Graphics/Renderer2D.h"
 
+#include "Engine/Diagnostics/Diagnostic.h"
+
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <vector>
 
@@ -40,10 +43,19 @@ std::string MakeKey(const std::string& text, const std::string& font, int size, 
 Renderer2D::Renderer2D(SDL_Renderer* renderer, AssetCache& assets,
                        const bool gpuEffects)
     : m_renderer(renderer), m_assets(assets), m_textLayout(assets),
-      m_compositor(renderer, gpuEffects) {}
+      m_compositor(renderer, gpuEffects) {
+    for (const char* operation : {"none", "fade", "crossfade", "slide-left",
+                                  "slide-right"}) {
+        ScreenEffectDefinition definition;
+        definition.id = operation;
+        definition.operation = operation;
+        m_screenEffectDefinitions.emplace(definition.id, std::move(definition));
+    }
+}
 
 Renderer2D::~Renderer2D() {
     ClearTextCache();
+    DestroyFrameTargets();
 }
 
 void Renderer2D::SetLogicalSize(int width, int height, bool updateTextDensity) {
@@ -51,6 +63,7 @@ void Renderer2D::SetLogicalSize(int width, int height, bool updateTextDensity) {
     m_logicalH = height;
     SDL_SetRenderLogicalPresentation(m_renderer, width, height, SDL_LOGICAL_PRESENTATION_LETTERBOX);
     m_compositor.SetLogicalSize(width, height);
+    DestroyFrameTargets();
     if(updateTextDensity&&m_textSamplingMode==TextSamplingMode::Auto&&width>0&&height>0){int outputW=width,outputH=height;(void)SDL_GetCurrentRenderOutputSize(m_renderer,&outputW,&outputH);const float density=std::min(static_cast<float>(outputW)/width,static_cast<float>(outputH)/height);const int effective=std::clamp(static_cast<int>(std::ceil(std::max(2.0f,density))),2,4);if(effective!=m_effectiveTextSupersample){m_effectiveTextSupersample=effective;ClearTextCache();}}
 }
 
@@ -103,6 +116,284 @@ void Renderer2D::DrawRoundedRect(const Rect& rect, float radius, Color color) {
     for(auto& vertex:fan){const auto transformed=TransformPoint({vertex.position.x,vertex.position.y});vertex.position={transformed.x,transformed.y};}
     SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
     SDL_RenderGeometry(m_renderer, nullptr, fan.data(), static_cast<int>(fan.size()), nullptr, 0);
+}
+
+Status Renderer2D::RegisterScreenEffect(ScreenEffectDefinition definition) {
+    const bool validId = !definition.id.empty() && definition.id.size() <= 128 &&
+                         std::ranges::all_of(definition.id, [](const unsigned char c) {
+                             return std::isalnum(c) || c == '.' || c == '_' || c == '-';
+                         });
+    const bool validOperation =
+        definition.operation == "none" || definition.operation == "fade" ||
+        definition.operation == "crossfade" ||
+        definition.operation == "slide-left" ||
+        definition.operation == "slide-right" || definition.operation == "tiles";
+    if (!validId || !validOperation || definition.columns < 1 ||
+        definition.columns > 64 || definition.rows < 1 || definition.rows > 64 ||
+        !std::isfinite(definition.stagger) || definition.stagger < 0.0f ||
+        definition.stagger > 1.0f ||
+        (definition.order != "row-major" && definition.order != "column-major" &&
+         definition.order != "reverse")) {
+        return Status::Fail(diag::Diagnostic{
+            .severity = diag::Severity::Error,
+            .code = "PXGFX7610",
+            .category = "Graphics.ScreenEffect",
+            .message = "Screen effect definition is invalid",
+            .details = definition.id});
+    }
+    m_screenEffectDefinitions.insert_or_assign(definition.id,
+                                                std::move(definition));
+    return Status::Ok();
+}
+
+bool Renderer2D::HasScreenEffect(const std::string_view id) const {
+    return m_screenEffectDefinitions.contains(std::string(id));
+}
+
+std::vector<std::string> Renderer2D::ScreenEffectIds() const {
+    std::vector<std::string> result;
+    result.reserve(m_screenEffectDefinitions.size());
+    for (const auto& [id, _] : m_screenEffectDefinitions) result.push_back(id);
+    std::ranges::sort(result);
+    return result;
+}
+
+bool Renderer2D::EnsureFrameTargets() {
+    if (!m_renderer || m_logicalW <= 0 || m_logicalH <= 0) return false;
+    if (m_frameTarget && m_presentedTarget && m_outgoingTarget) return true;
+    const auto create = [this]() {
+        SDL_Texture* texture = SDL_CreateTexture(
+            m_renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET,
+            m_logicalW, m_logicalH);
+        if (texture) {
+            SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
+        }
+        return texture;
+    };
+    m_frameTarget = create();
+    m_presentedTarget = create();
+    m_outgoingTarget = create();
+    if (!m_frameTarget || !m_presentedTarget || !m_outgoingTarget) {
+        DestroyFrameTargets();
+        return false;
+    }
+    SDL_Texture* previous = SDL_GetRenderTarget(m_renderer);
+    SDL_SetRenderTarget(m_renderer, m_presentedTarget);
+    SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 0);
+    SDL_RenderClear(m_renderer);
+    SDL_SetRenderTarget(m_renderer, m_outgoingTarget);
+    SDL_RenderClear(m_renderer);
+    SDL_SetRenderTarget(m_renderer, previous);
+    return true;
+}
+
+void Renderer2D::DestroyFrameTargets() {
+    if (m_frameTarget) SDL_DestroyTexture(m_frameTarget);
+    if (m_presentedTarget) SDL_DestroyTexture(m_presentedTarget);
+    if (m_outgoingTarget) SDL_DestroyTexture(m_outgoingTarget);
+    m_frameTarget = m_presentedTarget = m_outgoingTarget = nullptr;
+    m_framePreviousTarget = nullptr;
+    m_frameRecording = false;
+    FinishScreenEffect(ScreenEffectStatus::Cancelled);
+}
+
+bool Renderer2D::BeginFrame(const Color clearColor) {
+    if (!EnsureFrameTargets() || m_frameRecording) return false;
+    m_framePreviousTarget = SDL_GetRenderTarget(m_renderer);
+    if (!SDL_SetRenderTarget(m_renderer, m_frameTarget)) return false;
+    SDL_SetRenderDrawColor(m_renderer, clearColor.r, clearColor.g, clearColor.b,
+                           clearColor.a);
+    SDL_RenderClear(m_renderer);
+    m_frameRecording = true;
+    return true;
+}
+
+void Renderer2D::EndFrame() {
+    if (!m_frameRecording) return;
+    SDL_SetRenderTarget(m_renderer, m_framePreviousTarget);
+    m_frameRecording = false;
+    PresentScreenFrame();
+    std::swap(m_frameTarget, m_presentedTarget);
+    m_framePreviousTarget = nullptr;
+}
+
+ScreenEffectHandle Renderer2D::PlayScreenEffect(const std::string_view id,
+                                                 const float durationSeconds) {
+    const auto found = m_screenEffectDefinitions.find(std::string(id));
+    if (found == m_screenEffectDefinitions.end() ||
+        !std::isfinite(durationSeconds) || durationSeconds < 0.0f)
+        return 0;
+    if (m_activeScreenEffect)
+        FinishScreenEffect(ScreenEffectStatus::Cancelled);
+    const ScreenEffectHandle handle = m_nextScreenEffectHandle++;
+    if (found->second.operation == "none" || durationSeconds <= 0.0f) {
+        m_screenEffectStates[handle] = ScreenEffectStatus::Completed;
+        return handle;
+    }
+    if (!EnsureFrameTargets()) return 0;
+    SDL_Texture* previous = SDL_GetRenderTarget(m_renderer);
+    SDL_SetRenderTarget(m_renderer, m_outgoingTarget);
+    SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 0);
+    SDL_RenderClear(m_renderer);
+    const SDL_FRect viewport{0.0f, 0.0f, static_cast<float>(m_logicalW),
+                             static_cast<float>(m_logicalH)};
+    SDL_RenderTexture(m_renderer, m_presentedTarget, nullptr, &viewport);
+    SDL_SetRenderTarget(m_renderer, previous);
+    m_activeScreenEffect = ScreenEffectPlayback{
+        handle, found->second.id, durationSeconds, 0.0f,
+        ScreenEffectStatus::Playing};
+    m_screenEffectStates[handle] = ScreenEffectStatus::Playing;
+    return handle;
+}
+
+bool Renderer2D::StopScreenEffect(const ScreenEffectHandle handle) {
+    if (!m_activeScreenEffect || m_activeScreenEffect->handle != handle) return false;
+    FinishScreenEffect(ScreenEffectStatus::Stopped);
+    return true;
+}
+
+bool Renderer2D::CancelScreenEffect(const ScreenEffectHandle handle) {
+    if (!m_activeScreenEffect || m_activeScreenEffect->handle != handle) return false;
+    FinishScreenEffect(ScreenEffectStatus::Cancelled);
+    return true;
+}
+
+bool Renderer2D::ScreenEffectPlaying(const ScreenEffectHandle handle) const {
+    return m_activeScreenEffect && m_activeScreenEffect->handle == handle &&
+           m_activeScreenEffect->status == ScreenEffectStatus::Playing;
+}
+
+ScreenEffectStatus Renderer2D::ScreenEffectState(
+    const ScreenEffectHandle handle) const {
+    const auto found = m_screenEffectStates.find(handle);
+    return found == m_screenEffectStates.end() ? ScreenEffectStatus::Unknown
+                                               : found->second;
+}
+
+std::optional<ScreenEffectPlayback> Renderer2D::ActiveScreenEffect() const {
+    return m_activeScreenEffect;
+}
+
+void Renderer2D::UpdateScreenEffects(const float deltaSeconds) {
+    if (!m_activeScreenEffect || !std::isfinite(deltaSeconds) ||
+        deltaSeconds < 0.0f)
+        return;
+    m_activeScreenEffect->elapsedSeconds = std::min(
+        m_activeScreenEffect->durationSeconds,
+        m_activeScreenEffect->elapsedSeconds + deltaSeconds);
+    if (m_activeScreenEffect->elapsedSeconds >=
+        m_activeScreenEffect->durationSeconds)
+        FinishScreenEffect(ScreenEffectStatus::Completed);
+}
+
+void Renderer2D::FinishScreenEffect(const ScreenEffectStatus status) {
+    if (!m_activeScreenEffect) return;
+    m_screenEffectStates[m_activeScreenEffect->handle] = status;
+    m_activeScreenEffect.reset();
+    constexpr std::size_t kTerminalHistoryLimit = 256;
+    if (m_screenEffectStates.size() > kTerminalHistoryLimit) {
+        const ScreenEffectHandle floor =
+            m_nextScreenEffectHandle > kTerminalHistoryLimit
+                ? m_nextScreenEffectHandle - kTerminalHistoryLimit
+                : 0;
+        std::erase_if(m_screenEffectStates,
+                      [floor](const auto& entry) { return entry.first < floor; });
+    }
+}
+
+void Renderer2D::PresentScreenFrame() {
+    SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 255);
+    SDL_RenderClear(m_renderer);
+    if (!m_activeScreenEffect) {
+        const SDL_FRect viewport{0.0f, 0.0f, static_cast<float>(m_logicalW),
+                                 static_cast<float>(m_logicalH)};
+        SDL_RenderTexture(m_renderer, m_frameTarget, nullptr, &viewport);
+        return;
+    }
+    const auto definition =
+        m_screenEffectDefinitions.find(m_activeScreenEffect->effect);
+    if (definition == m_screenEffectDefinitions.end()) {
+        FinishScreenEffect(ScreenEffectStatus::Cancelled);
+        const SDL_FRect viewport{0.0f, 0.0f, static_cast<float>(m_logicalW),
+                                 static_cast<float>(m_logicalH)};
+        SDL_RenderTexture(m_renderer, m_frameTarget, nullptr, &viewport);
+        return;
+    }
+    const float progress = std::clamp(
+        m_activeScreenEffect->elapsedSeconds /
+            std::max(0.0001f, m_activeScreenEffect->durationSeconds),
+        0.0f, 1.0f);
+    RenderScreenEffect(definition->second, progress);
+}
+
+void Renderer2D::RenderScreenEffect(const ScreenEffectDefinition& definition,
+                                    const float progress) {
+    const float width = static_cast<float>(m_logicalW);
+    const float height = static_cast<float>(m_logicalH);
+    const SDL_FRect viewport{0.0f, 0.0f, width, height};
+    const auto drawAlpha = [&](SDL_Texture* texture, const float alpha,
+                               const SDL_FRect& destination) {
+        SDL_SetTextureAlphaMod(texture, static_cast<std::uint8_t>(
+                                            std::clamp(alpha, 0.0f, 1.0f) * 255.0f));
+        SDL_RenderTexture(m_renderer, texture, nullptr, &destination);
+        SDL_SetTextureAlphaMod(texture, 255);
+    };
+    if (definition.operation == "fade") {
+        if (progress < 0.5f)
+            drawAlpha(m_outgoingTarget, 1.0f - progress * 2.0f, viewport);
+        else
+            drawAlpha(m_frameTarget, progress * 2.0f - 1.0f, viewport);
+        return;
+    }
+    if (definition.operation == "crossfade") {
+        drawAlpha(m_outgoingTarget, 1.0f - progress, viewport);
+        drawAlpha(m_frameTarget, progress, viewport);
+        return;
+    }
+    if (definition.operation == "slide-left" ||
+        definition.operation == "slide-right") {
+        const float direction = definition.operation == "slide-left" ? -1.0f : 1.0f;
+        SDL_FRect outgoing{direction * progress * width, 0.0f, width, height};
+        SDL_FRect incoming{direction * (progress - 1.0f) * width, 0.0f, width,
+                           height};
+        SDL_RenderTexture(m_renderer, m_outgoingTarget, nullptr, &outgoing);
+        SDL_RenderTexture(m_renderer, m_frameTarget, nullptr, &incoming);
+        return;
+    }
+    if (definition.operation == "tiles") {
+        const int columns = definition.columns;
+        const int rows = definition.rows;
+        const int tileCount = columns * rows;
+        for (int row = 0; row < rows; ++row) {
+            for (int column = 0; column < columns; ++column) {
+                int order = row * columns + column;
+                if (definition.order == "column-major") order = column * rows + row;
+                else if (definition.order == "reverse") order = tileCount - 1 - order;
+                const float delay = tileCount <= 1
+                                        ? 0.0f
+                                        : static_cast<float>(order) /
+                                              static_cast<float>(tileCount - 1);
+                const float local = std::clamp(
+                    (progress * (1.0f + definition.stagger) -
+                     delay * definition.stagger),
+                    0.0f, 1.0f);
+                const float x0 = width * static_cast<float>(column) / columns;
+                const float x1 = width * static_cast<float>(column + 1) / columns;
+                const float y0 = height * static_cast<float>(row) / rows;
+                const float y1 = height * static_cast<float>(row + 1) / rows;
+                const float scale = std::abs(std::cos(local * 3.14159265358979323846f));
+                const SDL_FRect source{x0, y0, x1 - x0, y1 - y0};
+                const SDL_FRect destination{x0 + (x1 - x0) * (1.0f - scale) * 0.5f,
+                                            y0, (x1 - x0) * scale, y1 - y0};
+                SDL_RenderTexture(m_renderer,
+                                  local < 0.5f ? m_outgoingTarget : m_frameTarget,
+                                  &source, &destination);
+            }
+        }
+        return;
+    }
+    SDL_RenderTexture(m_renderer, m_frameTarget, nullptr, &viewport);
 }
 
 Vec2 Renderer2D::TransformPoint(const Vec2 point) const {const auto& t=m_transformStack.back();return {t.a*point.x+t.c*point.y+t.tx+m_camX,t.b*point.x+t.d*point.y+t.ty+m_camY};}

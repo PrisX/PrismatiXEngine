@@ -26,6 +26,7 @@ namespace px::player {
 // saves, and session modes (auto / skip / backlog / hide-UI).
 class PlayerApp {
 public:
+    ~PlayerApp();
     int Run(int argc, char* argv[]);
 
 private:

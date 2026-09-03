@@ -202,9 +202,21 @@ void TestSaveValidation() {
     snapshot.stage.ruleProgress = 0.35f;
     snapshot.stage.ruleDuration = 1.2f;
     snapshot.stage.ruleVague = 48;
+    snapshot.stage.cameraX = 16.0f;
+    snapshot.stage.cameraY = -9.0f;
     snapshot.stage.cameraZoom = 1.15f;
     snapshot.stage.screenEffects["vignette"] = 0.3f;
     snapshot.stage.actors.push_back({ "alice", "Content/Characters/alice.png", 2, 4.0f, -2.0f, 1.0f, {}, 180.0f, 255.0f, 0.0f, 640.0f, 640.0f, false });
+    snapshot.stage.layers.push_back({
+        .name = "foreground",
+        .imagePath = "Content/Images/card.png",
+        .x = 18.0f,
+        .y = 30.0f,
+        .scale = 1.25f,
+        .alpha = 220,
+        .z = 3,
+        .scaleY = 0.75f,
+        .rotation = 17.0f});
     px::vn::Stage::SavedTween tween;
     tween.target = "alice";
     tween.spec.hasX = true;
@@ -220,6 +232,12 @@ void TestSaveValidation() {
     pending.waitKind = "timer";
     pending.remainingSeconds = 0.25f;
     snapshot.scriptPending.push_back(std::move(pending));
+    px::script::PendingCommandState pendingEffect;
+    pendingEffect.command.type = "demo.awaitEffect";
+    pendingEffect.yieldIndex = 1;
+    pendingEffect.waitKind = "screen-effect";
+    pendingEffect.handle = 91;
+    snapshot.scriptPending.push_back(std::move(pendingEffect));
     const px::Uuid behaviorEntry = px::Uuid::FromName("save.behavior.entry");
     const px::Uuid behaviorDelay = px::Uuid::FromName("save.behavior.delay");
     px::ui::BehaviorFiberState behaviorFiber;
@@ -272,8 +290,8 @@ void TestSaveValidation() {
     Check(
         loaded && loaded->vm.state == px::vn::VMState::WaitingChoice && loaded->vm.callStack.size() == 1 && loaded->vm.choices.size() == 1 && loaded->dialogue.state.displayText == "Hel" &&
             loaded->dialogue.speedMs == 42 && loaded->typedVariables.at("route").TryGet<std::string>() && loaded->typedVariables.at("flags").AsObject() && loaded->routes.stack.size() == 2 && loaded->routes.modals.size() == 1 &&
-            loaded->timelines.size() == 1 && loaded->timelines.front().awaiting && loaded->animationClips.size() == 1 && loaded->animationClips.front().name == "Custom/Save" && loaded->stage.backgroundFade == 0.45f && loaded->stage.ruleActive && loaded->stage.ruleMask == "Content/Transitions/clouds.png" && loaded->stage.ruleProgress == 0.35f && loaded->stage.ruleVague == 48 && loaded->stage.actors.size() == 1 &&
-            loaded->stage.tweens.size() == 1 && loaded->audio.music.playbackFrame == 24000 && loaded->scriptPending.size() == 1 && loaded->scriptPending.front().yieldIndex == 1 && loaded->scriptActions.size() == 1 && loaded->scriptActions.front().yieldIndex == 2 &&
+            loaded->timelines.size() == 1 && loaded->timelines.front().awaiting && loaded->animationClips.size() == 1 && loaded->animationClips.front().name == "Custom/Save" && loaded->stage.backgroundFade == 0.45f && loaded->stage.ruleActive && loaded->stage.ruleMask == "Content/Transitions/clouds.png" && loaded->stage.ruleProgress == 0.35f && loaded->stage.ruleVague == 48 && loaded->stage.cameraX == 16.0f && loaded->stage.cameraY == -9.0f && loaded->stage.cameraZoom == 1.15f && loaded->stage.actors.size() == 1 && loaded->stage.layers.size() == 1 && loaded->stage.layers.front().scaleY == 0.75f && loaded->stage.layers.front().rotation == 17.0f &&
+            loaded->stage.tweens.size() == 1 && loaded->audio.music.playbackFrame == 24000 && loaded->scriptPending.size() == 2 && loaded->scriptPending.front().yieldIndex == 1 && loaded->scriptPending.back().waitKind == "screen-effect" && loaded->scriptPending.back().handle == 91 && loaded->scriptActions.size() == 1 && loaded->scriptActions.front().yieldIndex == 2 &&
             loaded->ui.behavior.fibers.size() == 1 && loaded->ui.behavior.fibers.front().current == behaviorDelay && loaded->ui.behavior.fibers.front().signalArguments.at("position").TryGet<px::Vec2>() && loaded->ui.behavior.actions.size() == 1 &&
             loaded->ui.behavior.actions.front().providerHandle == 73 &&
             loaded->ui.animation && loaded->ui.animation->position == 0.42f &&

@@ -77,6 +77,67 @@ void TestRouteStackAndModalState() {
     Check(captured.stack.size() == 2 && captured.modals.size() == 2, "router state should capture route and modal stacks");
     Check(router.CloseModal() && router.CurrentModalRoute() == "confirm", "closing one modal should reveal the previous modal");
     Check(router.RestoreState(captured) && router.CurrentRoute() == "game" && router.CurrentModalRoute() == "confirm", "router stack should restore atomically from runtime state");
+
+    px::ui::UIRouter transitionRouter;
+    Check(transitionRouter.Register("title", factory) &&
+              transitionRouter.Register("game", factory) &&
+              transitionRouter.Register("confirm", factory),
+          "transition router factories should register");
+    px::ui::RouteTransitionHandle nextHandle = 40;
+    px::ui::RouteTransitionHandle playingHandle = 0;
+    px::ui::RouteTransition playedTransition;
+    std::vector<std::string> presentations;
+    transitionRouter.SetTransitionDriver({
+        .play = [&](const px::ui::RouteTransition& transition) {
+            playedTransition = transition;
+            playingHandle = ++nextHandle;
+            return playingHandle;
+        },
+        .playing = [&](const px::ui::RouteTransitionHandle handle) {
+            return playingHandle == handle;
+        },
+        .stop = [&](const px::ui::RouteTransitionHandle handle) {
+            if (playingHandle != handle) return false;
+            playingHandle = 0;
+            return true;
+        },
+        .cancel = [&](const px::ui::RouteTransitionHandle handle) {
+            if (playingHandle != handle) return false;
+            playingHandle = 0;
+            return true;
+        }});
+    transitionRouter.SetPresentationHandler(
+        [&](const std::string_view route, const std::string_view operation) {
+            presentations.push_back(std::string(operation) + ":" +
+                                    std::string(route));
+        });
+    Check(transitionRouter.SetDefaultTransition(
+              "title", "game", {.preset = "crossfade", .durationSeconds = 0.4f}),
+          "route-pair transition defaults should register");
+    Check(transitionRouter.Push("title") && transitionRouter.Push("game"),
+          "route-pair defaults should drive ordinary navigation");
+    Check(transitionRouter.ActiveTransition() &&
+              transitionRouter.ActiveTransition()->outgoingRoute == "title" &&
+              transitionRouter.ActiveTransition()->incomingRoute == "game" &&
+              playedTransition.preset == "crossfade" &&
+              playedTransition.durationSeconds == 0.4f &&
+              presentations == std::vector<std::string>{"push:title", "push:game"},
+          "active transitions should retain both route identities and present the incoming screen");
+    playingHandle = 0;
+    transitionRouter.UpdateTransition();
+    Check(!transitionRouter.ActiveTransition(),
+          "completed native effects should retire their route transition");
+    Check(transitionRouter.ShowModal(
+              "confirm", {.preset = "slide-left", .durationSeconds = 0.25f}) &&
+              transitionRouter.ActiveTransition() &&
+              transitionRouter.ActiveTransition()->modal &&
+              transitionRouter.StopTransition(),
+          "modal transitions should share the same stoppable lifecycle");
+    Check(transitionRouter.CloseModal(
+              {.preset = "slide-right", .durationSeconds = 0.25f}) &&
+              transitionRouter.ActiveTransition() &&
+              transitionRouter.CancelTransition(),
+          "reverse modal transitions should be cancellable");
 }
 
 void TestScriptExtensionIntegration() {

@@ -26,6 +26,8 @@
 
 namespace px::player {
 
+PlayerApp::~PlayerApp() = default;
+
 namespace {
 const std::string kSaveKey = "prismatix-demo-secret";
 constexpr int kAutoSaveSlot = -1;
@@ -905,8 +907,6 @@ bool PlayerApp::Init(int argc, char* argv[]) {
 void PlayerApp::FinishBootPresentation() {
     if(m_appState!=AppState::BootSplash)return;
     if(!m_session->Routes().Replace(m_boot.startRoute)){m_quitRequested=true;return;}
-    const Status title=m_ui.ShowTitle();
-    if(!title){for(const auto& diagnostic:title.Diagnostics())diag::Emit(diagnostic);m_quitRequested=true;return;}
     m_appState=AppState::Title;
     PX_LOG_INFO("Player presentation ready route={}", m_boot.startRoute);
 }
@@ -959,10 +959,8 @@ void PlayerApp::StartGame() {
     }
     if (m_scriptHost) m_scriptHost->Emit("scenario.started", {{"resource", m_script}});
     m_appState = AppState::Game;
-    (void)m_session->Routes().Replace("hud");
-    const Status hud = m_ui.ShowHUD(DialogueUI());
-    if (!hud) {
-        for (const auto& diagnostic : hud.Diagnostics()) diag::Emit(diagnostic);
+    if (const Status routed = m_session->Routes().Replace("hud"); !routed) {
+        for (const auto& diagnostic : routed.Diagnostics()) diag::Emit(diagnostic);
         m_quitRequested = true;
         return;
     }
@@ -1355,14 +1353,19 @@ ui::SettingsPresentation PlayerApp::SettingsUI() const {
 void PlayerApp::OpenScreen(const std::string& route) {
     std::string target=route;if(target=="saveload")target="load";
     const Status routed=m_session->Routes().ShowModal(target);if(!routed){for(const auto& diagnostic:routed.Diagnostics())diag::Emit(diagnostic);return;}
-    PresentRoute(target, "modal");
 }
 
 void PlayerApp::PresentRoute(const std::string& route, const std::string& operation) {
     std::string target=route;if(target=="saveload")target="load";
+    const auto present = [this](const Status& status) {
+        if (status) return true;
+        for (const auto& diagnostic : status.Diagnostics()) diag::Emit(diagnostic);
+        m_quitRequested = true;
+        return false;
+    };
     if (operation == "back") {
-        if (m_appState == AppState::Title) (void)m_ui.ShowTitle();
-        else (void)m_ui.ShowHUD(DialogueUI());
+        if (m_appState == AppState::Title) (void)present(m_ui.ShowTitle());
+        else (void)present(m_ui.ShowHUD(DialogueUI()));
         return;
     }
     if (target == "gallery") {
@@ -1372,19 +1375,16 @@ void PlayerApp::PresentRoute(const std::string& route, const std::string& operat
                 return !item.disabled;
             }));
         const Status status = m_ui.ShowGallery(std::move(items));
-        if (!status) {
-            for (const auto& diagnostic : status.Diagnostics()) diag::Emit(diagnostic);
-            return;
-        }
+        if (!present(status)) return;
         PX_LOG_INFO("Player gallery presented total={} unlocked={}",
                     m_catalog.Gallery().size(), unlocked);
     }
-    else if (target == "save") m_ui.ShowSaveLoad(true, SaveItems(true));
-    else if (target == "load") m_ui.ShowSaveLoad(false, SaveItems(false));
-    else if (target == "settings") m_ui.ShowSettings(SettingsUI());
-    else if (target == "backlog") m_ui.ShowBacklog(BacklogItems());
-    else if (target == "title") { m_appState = AppState::Title; (void)m_ui.ShowTitle(); }
-    else if (target == "hud" || target == "game") { m_appState = AppState::Game; (void)m_ui.ShowHUD(DialogueUI()); }
+    else if (target == "save") (void)present(m_ui.ShowSaveLoad(true, SaveItems(true)));
+    else if (target == "load") (void)present(m_ui.ShowSaveLoad(false, SaveItems(false)));
+    else if (target == "settings") (void)present(m_ui.ShowSettings(SettingsUI()));
+    else if (target == "backlog") (void)present(m_ui.ShowBacklog(BacklogItems()));
+    else if (target == "title") { m_appState = AppState::Title; (void)present(m_ui.ShowTitle()); }
+    else if (target == "hud" || target == "game") { m_appState = AppState::Game; (void)present(m_ui.ShowHUD(DialogueUI())); }
 }
 
 void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
@@ -1476,7 +1476,6 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
     } else if (t == "overlay.close") {
         (void)m_session->Routes().CloseModal();
         m_settings.Save("Save/config.dat", &m_saveKey); progress::SaveGlobalProfile(m_profile, "Save/profile.dat", &m_saveKey);
-        if (m_appState == AppState::Title) m_ui.ShowTitle(); else m_ui.ShowHUD(DialogueUI());
         PX_LOG_INFO("Player overlay closed");
     } else if (t == "app.quit") {
         m_quitRequested = true;

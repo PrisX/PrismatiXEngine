@@ -128,10 +128,15 @@ bool Runtime::BeginFrame() {
     if (m_audio) {
         m_audio->Update();
     }
-    m_window.Clear(m_config.clearColor);
+    m_renderer->UpdateScreenEffects(m_clock.DeltaSeconds());
+    if (!m_renderer->BeginFrame(m_config.clearColor))
+        m_window.Clear(m_config.clearColor);
     return true;
 }
 
-void Runtime::EndFrame() { m_window.Present(); }
+void Runtime::EndFrame() {
+    if (m_renderer) m_renderer->EndFrame();
+    m_window.Present();
+}
 
 }  // namespace px

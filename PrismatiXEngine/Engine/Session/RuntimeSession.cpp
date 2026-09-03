@@ -52,6 +52,20 @@ RuntimeSession::RuntimeSession(Services services)
     : m_services(services),
       m_stage(services.renderer, services.assets),
       m_vm(services.vfs, services.audio, m_stage, m_dialogue, m_variables, m_backlog) {
+    m_routes.SetTransitionDriver({
+        .play = [&renderer = services.renderer](const ui::RouteTransition& transition) {
+            return renderer.PlayScreenEffect(transition.preset,
+                                             transition.durationSeconds);
+        },
+        .playing = [&renderer = services.renderer](const ui::RouteTransitionHandle handle) {
+            return renderer.ScreenEffectPlaying(handle);
+        },
+        .stop = [&renderer = services.renderer](const ui::RouteTransitionHandle handle) {
+            return renderer.StopScreenEffect(handle);
+        },
+        .cancel = [&renderer = services.renderer](const ui::RouteTransitionHandle handle) {
+            return renderer.CancelScreenEffect(handle);
+        }});
     for (auto& preset : animation::OfficialPresets()) (void)m_timeline.Register(std::move(preset));
     for (const auto& id : services.renderer.CustomEffectIds()) {
         animation::AnimationClip clip;
@@ -271,7 +285,6 @@ bool RuntimeSession::ExecuteCommand(const vn::Command& command) {
         else if (operation == "back") status = m_routes.Back();
         else status = m_routes.Replace(route);
         if (!status) for (const auto& diagnostic : status.Diagnostics()) diag::Emit(diagnostic);
-        if (status && m_routePresentationHandler) m_routePresentationHandler(route, operation);
         return true;
     }
     if (command.type == "animation") {
@@ -507,6 +520,7 @@ std::optional<vn::Program> RuntimeSession::CompileRuntimeIrText(
 void RuntimeSession::Update(const std::uint64_t nowMs, const float deltaSeconds) {
     m_vm.Update(nowMs, deltaSeconds);
     m_timeline.Update(deltaSeconds);
+    m_routes.UpdateTransition();
     if (m_externalResumePending) {
         m_externalResumePending = false;
         m_vm.NotifyExternalDone();
@@ -760,6 +774,11 @@ Status RuntimeSession::ApplyState(const GameState& state,
     }
     m_vm.OverrideCurrentBgm(state.vm.currentBgm);
     m_runtimeProgramIdentity = state.runtimeProgram;
+    // Full-screen route/effect playbacks are render-time transients. Loading a
+    // checkpoint restores the incoming UI/Stage state and retires any direct
+    // JavaScript effect that happened to be active at the load boundary.
+    if (const auto activeEffect = m_services.renderer.ActiveScreenEffect())
+        (void)m_services.renderer.CancelScreenEffect(activeEffect->handle);
     if (const Status routeStatus = m_routes.RestoreState(state.routes);
         !routeStatus) return routeStatus;
     if (m_restoreUIState) {

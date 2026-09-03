@@ -591,6 +591,10 @@ int main(int argc, char* argv[]) {
                           return exitCode.has_value();
                       }),
                       "native Player exits within the bounded deadline");
+        if (exitCode.has_value() && *exitCode != 0) {
+            std::cout << "Player exited with code 0x" << std::hex
+                      << static_cast<unsigned int>(*exitCode) << std::dec << '\n';
+        }
         suite.Expect(exitCode.has_value() && *exitCode == 0,
                      "native Player exits cleanly");
 

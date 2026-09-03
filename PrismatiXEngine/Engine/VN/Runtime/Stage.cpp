@@ -402,6 +402,63 @@ void Stage::Shake(int durationMs, float amplitude) {
     m_shakePhase = 0.0f;
 }
 
+bool Stage::SetCamera(const float x, const float y, const float zoom) {
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(zoom) ||
+        zoom <= 0.0f)
+        return false;
+    m_cameraX = x;
+    m_cameraY = y;
+    m_cameraZoom = zoom;
+    return true;
+}
+
+bool Stage::SetScreenEffect(const std::string_view effect, const float amount) {
+    if (!std::isfinite(amount)) return false;
+    if (effect != "flash" && effect != "fade" && effect != "blur" &&
+        effect != "vignette" && effect != "color-grade")
+        return false;
+    if ((effect == "blur" || effect == "vignette" ||
+         effect == "color-grade") &&
+        !m_renderer.SupportsStagePostEffects())
+        return false;
+    m_screenEffects[std::string(effect)] = std::clamp(amount, 0.0f, 1.0f);
+    return true;
+}
+
+void Stage::ClearScreenEffect(const std::string_view effect) {
+    m_screenEffects.erase(std::string(effect));
+}
+
+bool Stage::SetCustomEffect(
+    const std::string_view effect, const float progress,
+    const std::array<std::array<float, 4>, 8>* parameters) {
+    if (!m_renderer.HasCustomEffect(effect) || !std::isfinite(progress))
+        return false;
+    if (m_customEffect != effect) {
+        const auto defaults = m_renderer.CustomEffectDefaults(effect);
+        if (!defaults) return false;
+        m_customEffect = std::string(effect);
+        m_customEffectParameters = *defaults;
+        ++m_customEffectSequence;
+        m_customEffectSeed = m_customEffectSeed * 1664525u +
+                             1013904223u + m_customEffectSequence;
+    }
+    if (parameters) {
+        for (const auto& slot : *parameters)
+            for (const float component : slot)
+                if (!std::isfinite(component)) return false;
+        m_customEffectParameters = *parameters;
+    }
+    m_customEffectProgress = std::clamp(progress, 0.0f, 1.0f);
+    return true;
+}
+
+void Stage::ClearCustomEffect() {
+    m_customEffect.clear();
+    m_customEffectProgress = 0.0f;
+    m_customEffectParameters = {};
+}
+
 void Stage::Update(float dt) {
     float shakeX = 0.0f;
     float shakeY = 0.0f;

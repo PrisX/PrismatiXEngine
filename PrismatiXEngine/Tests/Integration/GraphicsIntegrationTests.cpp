@@ -223,6 +223,82 @@ int main() {
             result = 1;
         }
 
+        px::graphics::ScreenEffectDefinition tileDefinition{
+            .id = "test-tile-flip",
+            .operation = "tiles",
+            .columns = 7,
+            .rows = 5,
+            .stagger = 0.4f,
+            .order = "reverse"};
+        px::graphics::ScreenEffectDefinition invalidDefinition{
+            .id = "invalid effect", .operation = "tiles"};
+        if (!renderer.RegisterScreenEffect(tileDefinition) ||
+            renderer.RegisterScreenEffect(invalidDefinition) ||
+            !renderer.HasScreenEffect("fade") ||
+            !renderer.HasScreenEffect("crossfade") ||
+            !renderer.HasScreenEffect("slide-left") ||
+            !renderer.HasScreenEffect("slide-right")) {
+            std::cerr << "FAIL: screen transition registry validation or built-ins are incomplete\n";
+            result = 1;
+        }
+        if (!renderer.BeginFrame({220, 35, 45, 255})) {
+            std::cerr << "FAIL: screen transition outgoing target could not begin\n";
+            result = 1;
+        } else {
+            renderer.DrawRect({0, 0, 640, 360}, {220, 35, 45, 255});
+            renderer.EndFrame();
+        }
+        const FrameEvidence outgoingFrame =
+            CaptureFrame(device.Renderer(), "transition-outgoing");
+        const auto tileHandle =
+            renderer.PlayScreenEffect("test-tile-flip", 1.0f);
+        renderer.UpdateScreenEffects(0.5f);
+        if (!tileHandle || !renderer.ScreenEffectPlaying(tileHandle) ||
+            !renderer.BeginFrame({30, 75, 220, 255})) {
+            std::cerr << "FAIL: custom tile transition could not start\n";
+            result = 1;
+        } else {
+            renderer.DrawRect({0, 0, 640, 360}, {30, 75, 220, 255});
+            renderer.EndFrame();
+        }
+        const FrameEvidence tileFrame =
+            CaptureFrame(device.Renderer(), "transition-tile-midpoint");
+        renderer.UpdateScreenEffects(0.6f);
+        if (renderer.ScreenEffectState(tileHandle) !=
+                px::graphics::ScreenEffectStatus::Completed ||
+            !renderer.BeginFrame({30, 75, 220, 255})) {
+            std::cerr << "FAIL: screen transition did not complete deterministically\n";
+            result = 1;
+        } else {
+            renderer.DrawRect({0, 0, 640, 360}, {30, 75, 220, 255});
+            renderer.EndFrame();
+        }
+        const FrameEvidence incomingFrame =
+            CaptureFrame(device.Renderer(), "transition-incoming");
+        if (outgoingFrame.hash == 0 || incomingFrame.hash == 0 ||
+            tileFrame.hash == outgoingFrame.hash ||
+            tileFrame.hash == incomingFrame.hash ||
+            outgoingFrame.hash == incomingFrame.hash) {
+            std::cerr << "FAIL: outgoing/incoming snapshots were not composited by the native tile operator\n";
+            result = 1;
+        }
+        const auto stoppedHandle = renderer.PlayScreenEffect("fade", 0.5f);
+        if (!stoppedHandle || !renderer.StopScreenEffect(stoppedHandle) ||
+            renderer.ScreenEffectState(stoppedHandle) !=
+                px::graphics::ScreenEffectStatus::Stopped) {
+            std::cerr << "FAIL: screen transition stop lifecycle is incomplete\n";
+            result = 1;
+        }
+        const auto cancelledHandle =
+            renderer.PlayScreenEffect("crossfade", 0.5f);
+        if (!cancelledHandle ||
+            !renderer.CancelScreenEffect(cancelledHandle) ||
+            renderer.ScreenEffectState(cancelledHandle) !=
+                px::graphics::ScreenEffectStatus::Cancelled) {
+            std::cerr << "FAIL: screen transition cancel lifecycle is incomplete\n";
+            result = 1;
+        }
+
         const auto fixtureRoot = std::filesystem::temp_directory_path() /
                                  "prismatix-visual-conformance";
         std::error_code fixtureError;

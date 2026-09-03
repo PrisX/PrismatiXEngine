@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <array>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -68,6 +69,13 @@ public:
     void ClearAll();
     // Camera shake (KAG [quake]-style): durationMs of decaying jitter.
     void Shake(int durationMs, float amplitude);
+    bool SetCamera(float x, float y, float zoom);
+    bool SetScreenEffect(std::string_view effect, float amount);
+    void ClearScreenEffect(std::string_view effect);
+    bool SetCustomEffect(
+        std::string_view effect, float progress,
+        const std::array<std::array<float, 4>, 8>* parameters = nullptr);
+    void ClearCustomEffect();
 
     void Update(float dt);
     void Render();

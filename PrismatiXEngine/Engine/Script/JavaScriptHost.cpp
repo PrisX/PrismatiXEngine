@@ -1136,6 +1136,17 @@ public:
                               JS_NewInt64(context, integer));
             return token;
         }
+        if (operation == "await.screenEffect") {
+            if (!IntegerArgument(count, values, 0, integer) || integer < 0)
+                return JS_ThrowRangeError(
+                    context, "AwaitScreenEffect requires a valid handle");
+            JSValue token = JS_NewObject(context);
+            JS_SetPropertyStr(context, token, "kind",
+                              JS_NewString(context, "screen-effect"));
+            JS_SetPropertyStr(context, token, "handle",
+                              JS_NewInt64(context, integer));
+            return token;
+        }
         if (operation == "wait.timer") {
             double seconds = 0.0;
             if (!NumberArgument(count, values, 0, seconds) || seconds < 0.0 ||
@@ -1152,6 +1163,14 @@ public:
                                           "WaitAnimation requires a valid handle");
             return CreatePromiseWait(
                 {.kind = "animation",
+                 .handle = static_cast<std::uint64_t>(integer)});
+        }
+        if (operation == "wait.screenEffect") {
+            if (!IntegerArgument(count, values, 0, integer) || integer < 0)
+                return JS_ThrowRangeError(
+                    context, "WaitScreenEffect requires a valid handle");
+            return CreatePromiseWait(
+                {.kind = "screen-effect",
                  .handle = static_cast<std::uint64_t>(integer)});
         }
         if (operation == "variables.get") {
@@ -1198,16 +1217,69 @@ public:
         if (operation.starts_with("route.")) {
             if (!services.routes)
                 return JS_ThrowInternalError(context, "UIRouter is unavailable");
-            if (operation == "route.back")
-                return JS_NewBool(context, static_cast<bool>(services.routes->Back()));
-            if (operation == "route.closeModal")
-                return JS_NewBool(context, static_cast<bool>(services.routes->CloseModal()));
+            const auto parseTransition = [&](const int index)
+                -> std::optional<ui::RouteTransition> {
+                ui::RouteTransition transition;
+                if (index >= count || JS_IsUndefined(values[index]) ||
+                    JS_IsNull(values[index]))
+                    return transition;
+                if (!JS_IsObject(values[index])) return std::nullopt;
+                if (const auto preset = StringProperty(values[index], "preset"))
+                    transition.preset = *preset;
+                if (const auto duration =
+                        NumberProperty(values[index], "durationSeconds"))
+                    transition.durationSeconds = static_cast<float>(*duration);
+                else if (const auto legacyDuration =
+                             NumberProperty(values[index], "duration"))
+                    transition.durationSeconds = static_cast<float>(*legacyDuration);
+                return transition;
+            };
+            if (operation == "route.defaultTransition") {
+                if (!StringArgument(count, values, 0, first) ||
+                    !StringArgument(count, values, 1, second))
+                    return JS_ThrowTypeError(
+                        context,
+                        "SetRouteTransition requires outgoing and incoming routes");
+                const auto transition = parseTransition(2);
+                if (!transition || transition->preset.empty())
+                    return JS_ThrowTypeError(
+                        context,
+                        "SetRouteTransition requires a preset transition object");
+                const Status status = services.routes->SetDefaultTransition(
+                    first, second, *transition);
+                if (!status)
+                    return JS_ThrowTypeError(
+                        context, "%s",
+                        diag::Describe(status.Diagnostics().front()).c_str());
+                return JS_TRUE;
+            }
+            if (operation == "route.back" || operation == "route.closeModal") {
+                const auto transition = parseTransition(0);
+                if (!transition)
+                    return JS_ThrowTypeError(
+                        context, "route transition must be an object");
+                const Status status = operation == "route.back"
+                                          ? services.routes->Back(*transition)
+                                          : services.routes->CloseModal(*transition);
+                if (!status)
+                    return JS_ThrowInternalError(
+                        context, "%s",
+                        diag::Describe(status.Diagnostics().front()).c_str());
+                return JS_TRUE;
+            }
             if (!StringArgument(count, values, 0, first))
                 return JS_ThrowTypeError(context, "route operation requires a route id");
+            const auto transition = parseTransition(1);
+            if (!transition)
+                return JS_ThrowTypeError(context,
+                                         "route transition must be an object");
             Status status;
-            if (operation == "route.push") status = services.routes->Push(first);
-            else if (operation == "route.replace") status = services.routes->Replace(first);
-            else if (operation == "route.showModal") status = services.routes->ShowModal(first);
+            if (operation == "route.push")
+                status = services.routes->Push(first, *transition);
+            else if (operation == "route.replace")
+                status = services.routes->Replace(first, *transition);
+            else if (operation == "route.showModal")
+                status = services.routes->ShowModal(first, *transition);
             else return JS_ThrowRangeError(context, "unknown route operation");
             if (!status)
                 return JS_ThrowInternalError(context, "%s",
@@ -1297,6 +1369,27 @@ public:
                 services.stage->SetBackground(first, boolean);
                 return JS_UNDEFINED;
             }
+            if (operation == "stage.backgroundRule") {
+                if (!StringArgument(count, values, 0, first) ||
+                    !StringArgument(count, values, 1, second))
+                    return JS_ThrowTypeError(
+                        context,
+                        "SetBackgroundRule requires background and rule paths");
+                std::int64_t duration = 600;
+                std::int64_t vague = 64;
+                if (count >= 3 && !JS_IsUndefined(values[2]) &&
+                    !IntegerArgument(count, values, 2, duration))
+                    return JS_ThrowTypeError(
+                        context, "background rule duration must be milliseconds");
+                if (count >= 4 && !JS_IsUndefined(values[3]) &&
+                    !IntegerArgument(count, values, 3, vague))
+                    return JS_ThrowTypeError(
+                        context, "background rule vague must be an integer");
+                services.stage->SetBackgroundRule(
+                    first, second, static_cast<int>(std::max<std::int64_t>(0, duration)),
+                    static_cast<int>(std::max<std::int64_t>(1, vague)));
+                return JS_UNDEFINED;
+            }
             if (operation == "stage.character") {
                 if (!StringArgument(count, values, 0, first) ||
                     !StringArgument(count, values, 1, second))
@@ -1352,6 +1445,49 @@ public:
                                          static_cast<int>(z));
                 return JS_UNDEFINED;
             }
+            if (operation == "stage.layerTransform") {
+                if (!StringArgument(count, values, 0, first) ||
+                    !StringArgument(count, values, 1, second))
+                    return JS_ThrowTypeError(
+                        context,
+                        "SetLayerTransform requires a name and image");
+                double x = 0.0, y = 0.0, scaleX = 1.0, scaleY = 1.0,
+                       rotation = 0.0;
+                std::int64_t alpha = 255, z = 0;
+                if (count >= 3 && !JS_IsUndefined(values[2]) &&
+                    !NumberArgument(count, values, 2, x))
+                    return JS_ThrowTypeError(context, "layer x must be numeric");
+                if (count >= 4 && !JS_IsUndefined(values[3]) &&
+                    !NumberArgument(count, values, 3, y))
+                    return JS_ThrowTypeError(context, "layer y must be numeric");
+                if (count >= 5 && !JS_IsUndefined(values[4]) &&
+                    !NumberArgument(count, values, 4, scaleX))
+                    return JS_ThrowTypeError(context,
+                                             "layer scaleX must be numeric");
+                if (count >= 6 && !JS_IsUndefined(values[5]) &&
+                    !NumberArgument(count, values, 5, scaleY))
+                    return JS_ThrowTypeError(context,
+                                             "layer scaleY must be numeric");
+                if (count >= 7 && !JS_IsUndefined(values[6]) &&
+                    !NumberArgument(count, values, 6, rotation))
+                    return JS_ThrowTypeError(context,
+                                             "layer rotation must be numeric");
+                if (count >= 8 && !JS_IsUndefined(values[7]) &&
+                    !IntegerArgument(count, values, 7, alpha))
+                    return JS_ThrowTypeError(context,
+                                             "layer alpha must be integer");
+                if (count >= 9 && !JS_IsUndefined(values[8]) &&
+                    !IntegerArgument(count, values, 8, z))
+                    return JS_ThrowTypeError(context, "layer z must be integer");
+                services.stage->SetLayerTransform(
+                    first, second, static_cast<float>(x), static_cast<float>(y),
+                    static_cast<float>(scaleX), static_cast<float>(scaleY),
+                    static_cast<float>(rotation),
+                    static_cast<std::uint8_t>(
+                        std::clamp<std::int64_t>(alpha, 0, 255)),
+                    static_cast<int>(z));
+                return JS_UNDEFINED;
+            }
             if (operation == "stage.clearLayer") {
                 if (!StringArgument(count, values, 0, first))
                     return JS_ThrowTypeError(context, "ClearLayer requires a name");
@@ -1364,6 +1500,83 @@ public:
                 if (count >= 1 && !JS_IsUndefined(values[0]) && !IntegerArgument(count, values, 0, milliseconds)) return JS_ThrowTypeError(context, "shake duration must be integer");
                 if (count >= 2 && !JS_IsUndefined(values[1]) && !NumberArgument(count, values, 1, amplitude)) return JS_ThrowTypeError(context, "shake amplitude must be numeric");
                 services.stage->Shake(static_cast<int>(milliseconds), static_cast<float>(amplitude));
+                return JS_UNDEFINED;
+            }
+            if (operation == "stage.camera") {
+                double x = 0.0, y = 0.0, zoom = 1.0;
+                if (!NumberArgument(count, values, 0, x) ||
+                    !NumberArgument(count, values, 1, y) ||
+                    !NumberArgument(count, values, 2, zoom) ||
+                    !services.stage->SetCamera(static_cast<float>(x),
+                                               static_cast<float>(y),
+                                               static_cast<float>(zoom)))
+                    return JS_ThrowRangeError(
+                        context, "SetCamera requires finite x/y and positive zoom");
+                return JS_UNDEFINED;
+            }
+            if (operation == "stage.screenEffect") {
+                double amount = 0.0;
+                if (!StringArgument(count, values, 0, first) ||
+                    !NumberArgument(count, values, 1, amount))
+                    return JS_ThrowTypeError(
+                        context, "SetScreenEffect requires an id and amount");
+                if (!services.stage->SetScreenEffect(first,
+                                                     static_cast<float>(amount)))
+                    return JS_ThrowRangeError(
+                        context, "screen effect is unknown or unavailable");
+                return JS_UNDEFINED;
+            }
+            if (operation == "stage.clearScreenEffect") {
+                if (!StringArgument(count, values, 0, first))
+                    return JS_ThrowTypeError(
+                        context, "ClearScreenEffect requires an id");
+                services.stage->ClearScreenEffect(first);
+                return JS_UNDEFINED;
+            }
+            if (operation == "stage.customEffect") {
+                double progress = 0.0;
+                if (!StringArgument(count, values, 0, first) ||
+                    !NumberArgument(count, values, 1, progress))
+                    return JS_ThrowTypeError(
+                        context, "SetCustomEffect requires an id and progress");
+                std::array<std::array<float, 4>, 8> parameters{};
+                const std::array<std::array<float, 4>, 8>* parameterPointer = nullptr;
+                if (count >= 3 && !JS_IsUndefined(values[2])) {
+                    const auto converted = FromJavaScript(values[2]);
+                    const auto* slots = converted ? converted->AsArray() : nullptr;
+                    if (!slots || slots->size() > parameters.size())
+                        return JS_ThrowTypeError(
+                            context, "custom effect parameters must contain at most 8 vec4 slots");
+                    for (std::size_t slot = 0; slot < slots->size(); ++slot) {
+                        const auto* components = slots->at(slot).AsArray();
+                        if (!components || components->size() > 4)
+                            return JS_ThrowTypeError(
+                                context, "custom effect parameter slots must be vec4 arrays");
+                        for (std::size_t component = 0;
+                             component < components->size(); ++component) {
+                            if (const auto* value =
+                                    components->at(component).TryGet<double>())
+                                parameters[slot][component] = static_cast<float>(*value);
+                            else if (const auto* integerValue =
+                                         components->at(component)
+                                             .TryGet<std::int64_t>())
+                                parameters[slot][component] =
+                                    static_cast<float>(*integerValue);
+                            else
+                                return JS_ThrowTypeError(
+                                    context, "custom effect parameters must be numeric");
+                        }
+                    }
+                    parameterPointer = &parameters;
+                }
+                if (!services.stage->SetCustomEffect(
+                        first, static_cast<float>(progress), parameterPointer))
+                    return JS_ThrowRangeError(
+                        context, "custom stage effect is unknown or unavailable");
+                return JS_UNDEFINED;
+            }
+            if (operation == "stage.clearCustomEffect") {
+                services.stage->ClearCustomEffect();
                 return JS_UNDEFINED;
             }
             if (operation == "stage.animate") {
@@ -1418,6 +1631,75 @@ public:
                     static_cast<animation::PlaybackHandle>(integer))));
             }
             return JS_ThrowRangeError(context, "unknown animation operation");
+        }
+        if (operation.starts_with("effect.")) {
+            if (!services.renderer)
+                return JS_ThrowInternalError(context, "Renderer2D is unavailable");
+            if (operation == "effect.register") {
+                if (!StringArgument(count, values, 0, first) || count < 2 ||
+                    !JS_IsObject(values[1]))
+                    return JS_ThrowTypeError(
+                        context, "RegisterScreenEffect requires an id and render plan");
+                graphics::ScreenEffectDefinition definition;
+                definition.id = first;
+                definition.operation =
+                    StringProperty(values[1], "operator")
+                        .value_or(StringProperty(values[1], "operation")
+                                      .value_or(std::string{}));
+                if (const auto columns = NumberProperty(values[1], "columns"))
+                    definition.columns = static_cast<int>(*columns);
+                if (const auto rows = NumberProperty(values[1], "rows"))
+                    definition.rows = static_cast<int>(*rows);
+                if (const auto stagger = NumberProperty(values[1], "stagger"))
+                    definition.stagger = static_cast<float>(*stagger);
+                if (const auto order = StringProperty(values[1], "order"))
+                    definition.order = *order;
+                const Status status =
+                    services.renderer->RegisterScreenEffect(std::move(definition));
+                if (!status)
+                    return JS_ThrowTypeError(
+                        context, "%s",
+                        diag::Describe(status.Diagnostics().front()).c_str());
+                return JS_TRUE;
+            }
+            if (operation == "effect.play") {
+                double duration = 0.5;
+                if (!StringArgument(count, values, 0, first))
+                    return JS_ThrowTypeError(
+                        context, "PlayScreenEffect requires an id");
+                if (count >= 2 && !JS_IsUndefined(values[1]) &&
+                    !NumberArgument(count, values, 1, duration))
+                    return JS_ThrowTypeError(
+                        context, "screen effect duration must be seconds");
+                return JS_NewInt64(
+                    context,
+                    static_cast<std::int64_t>(services.renderer->PlayScreenEffect(
+                        first, static_cast<float>(duration))));
+            }
+            if (!IntegerArgument(count, values, 0, integer) || integer < 0)
+                return JS_ThrowTypeError(context,
+                                         "screen effect handle is invalid");
+            const auto handle =
+                static_cast<graphics::ScreenEffectHandle>(integer);
+            if (operation == "effect.stop")
+                return JS_NewBool(
+                    context, services.renderer->StopScreenEffect(handle));
+            if (operation == "effect.cancel")
+                return JS_NewBool(
+                    context, services.renderer->CancelScreenEffect(handle));
+            if (operation == "effect.playing")
+                return JS_NewBool(
+                    context, services.renderer->ScreenEffectPlaying(handle));
+            if (operation == "effect.status") {
+                const auto status = services.renderer->ScreenEffectState(handle);
+                const char* name = "unknown";
+                if (status == graphics::ScreenEffectStatus::Playing) name = "playing";
+                else if (status == graphics::ScreenEffectStatus::Completed) name = "completed";
+                else if (status == graphics::ScreenEffectStatus::Stopped) name = "stopped";
+                else if (status == graphics::ScreenEffectStatus::Cancelled) name = "cancelled";
+                return JS_NewString(context, name);
+            }
+            return JS_ThrowRangeError(context, "unknown screen effect operation");
         }
         if (operation.starts_with("input.")) {
             if (!services.input) return JS_ThrowInternalError(context, "Input is unavailable");
@@ -1591,6 +1873,7 @@ public:
                 BackRoute: { value: bindRuntime("route.back") },
                 ShowModal: { value: bindRuntime("route.showModal") },
                 CloseModal: { value: bindRuntime("route.closeModal") },
+                SetRouteTransition: { value: bindRuntime("route.defaultTransition") },
                 HasSeen: { value: bindRuntime("profile.hasSeen") },
                 MarkSeen: { value: bindRuntime("profile.markSeen") },
                 ClearCount: { value: bindRuntime("profile.clearCount") },
@@ -1608,20 +1891,35 @@ public:
                 PlayAmbience: { value: bindRuntime("audio.playAmbience") },
                 StopAmbience: { value: bindRuntime("audio.stopAmbience") },
                 SetBackground: { value: bindRuntime("stage.background") },
+                SetBackgroundRule: { value: bindRuntime("stage.backgroundRule") },
                 SetCharacter: { value: bindRuntime("stage.character") },
                 ClearCharacter: { value: bindRuntime("stage.clearCharacter") },
                 MoveCharacter: { value: bindRuntime("stage.moveCharacter") },
                 SetLayer: { value: bindRuntime("stage.layer") },
+                SetLayerTransform: { value: bindRuntime("stage.layerTransform") },
                 ClearLayer: { value: bindRuntime("stage.clearLayer") },
                 Shake: { value: bindRuntime("stage.shake") },
+                SetCamera: { value: bindRuntime("stage.camera") },
+                SetScreenEffect: { value: bindRuntime("stage.screenEffect") },
+                ClearScreenEffect: { value: bindRuntime("stage.clearScreenEffect") },
+                SetCustomEffect: { value: bindRuntime("stage.customEffect") },
+                ClearCustomEffect: { value: bindRuntime("stage.clearCustomEffect") },
                 Animate: { value: bindRuntime("stage.animate") },
                 LoadAnimation: { value: bindRuntime("animation.load") },
                 PlayAnimation: { value: bindRuntime("animation.play") },
                 CancelAnimation: { value: bindRuntime("animation.cancel") },
+                RegisterScreenEffect: { value: bindRuntime("effect.register") },
+                PlayScreenEffect: { value: bindRuntime("effect.play") },
+                StopScreenEffect: { value: bindRuntime("effect.stop") },
+                CancelScreenEffect: { value: bindRuntime("effect.cancel") },
+                IsScreenEffectPlaying: { value: bindRuntime("effect.playing") },
+                GetScreenEffectStatus: { value: bindRuntime("effect.status") },
                 AwaitSeconds: { value: bindRuntime("await.timer") },
                 AwaitAnimation: { value: bindRuntime("await.animation") },
+                AwaitScreenEffect: { value: bindRuntime("await.screenEffect") },
                 WaitSeconds: { value: bindRuntime("wait.timer") },
                 WaitAnimation: { value: bindRuntime("wait.animation") },
+                WaitScreenEffect: { value: bindRuntime("wait.screenEffect") },
                 DebugPoint: { value: bindRuntime("debug.point") },
                 GetMouseX: { value: bindRuntime("input.mouseX") },
                 GetMouseY: { value: bindRuntime("input.mouseY") },
@@ -1872,7 +2170,8 @@ public:
         JSValue kindValue = JS_GetPropertyStr(context, yielded, "kind");
         const auto kind = JS_IsString(kindValue) ? String(kindValue) : std::nullopt;
         JS_FreeValue(context, kindValue);
-        if (!kind || (*kind != "timer" && *kind != "animation")) {
+        if (!kind || (*kind != "timer" && *kind != "animation" &&
+                      *kind != "screen-effect")) {
             JS_FreeValue(context, yielded);
             Error(source, "JavaScript generator yielded an unknown wait token");
             return StepResult::Failed;
@@ -2900,6 +3199,9 @@ void JavaScriptHost::Update(const float deltaSeconds) {
         if (wait.kind == "animation")
             return !m_impl->services.timeline ||
                    !m_impl->services.timeline->Playing(wait.handle);
+        if (wait.kind == "screen-effect")
+            return !m_impl->services.renderer ||
+                   !m_impl->services.renderer->ScreenEffectPlaying(wait.handle);
         if (wait.kind == "timer") {
             wait.remainingSeconds -= std::max(0.0f, deltaSeconds);
             return wait.remainingSeconds <= 0.0f;
@@ -3076,7 +3378,8 @@ Status JavaScriptHost::RestorePendingInCurrentRealm(
                                 (std::isfinite(saved.remainingSeconds) &&
                                  saved.remainingSeconds >= 0.0f);
         if (saved.yieldIndex == 0 || !validTimer ||
-            (saved.waitKind != "timer" && saved.waitKind != "animation")) {
+            (saved.waitKind != "timer" && saved.waitKind != "animation" &&
+             saved.waitKind != "screen-effect")) {
             return fail("PXJS7501", "Saved JavaScript await checkpoint is invalid",
                         saved.command.type);
         }
@@ -3171,7 +3474,8 @@ Status JavaScriptHost::RestorePendingActionsInCurrentRealm(
                                  saved.remainingSeconds >= 0.0f);
         if (saved.id == 0 || !ids.insert(saved.id).second ||
             saved.yieldIndex == 0 || !validTimer ||
-            (saved.waitKind != "timer" && saved.waitKind != "animation")) {
+            (saved.waitKind != "timer" && saved.waitKind != "animation" &&
+             saved.waitKind != "screen-effect")) {
             return fail("PXJS7510", "Saved JavaScript Action checkpoint is invalid",
                         saved.invocation.action);
         }

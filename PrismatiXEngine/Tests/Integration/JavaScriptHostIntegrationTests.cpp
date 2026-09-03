@@ -1,4 +1,6 @@
 #include "Engine/Animation/Timeline.h"
+#include "Engine/Graphics/AssetCache.h"
+#include "Engine/Graphics/Renderer2D.h"
 #include "Engine/IO/VFS.h"
 #include "Engine/Progression/GlobalProfile.h"
 #include "Engine/Script/JavaScriptHost.h"
@@ -7,9 +9,11 @@
 #include "Engine/UI/Control.h"
 #include "Engine/UI/UIRouter.h"
 #include "Engine/VN/Commands/CommandRegistry.h"
+#include "Engine/VN/Runtime/Stage.h"
 #include "Engine/VN/Runtime/VariableStore.h"
 #include "Tests/TestSupport/TestHarness.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -287,18 +291,40 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     px::progress::GlobalProfile profile;
     px::ui::UIRouter routes;
     px::animation::TimelinePlayer timeline;
+    px::graphics::AssetCache assets(nullptr, vfs);
+    px::graphics::Renderer2D renderer(nullptr, assets);
+    px::vn::Stage stage(renderer, assets);
+    px::ui::RouteTransition drivenTransition;
+    px::ui::RouteTransitionHandle drivenHandle = 0;
     const auto routeFactory = []() -> px::Result<std::unique_ptr<px::ui::Control>> {
         return px::Result<std::unique_ptr<px::ui::Control>>::Success(
             std::make_unique<px::ui::Control>());
     };
     suite.Require(static_cast<bool>(routes.Register("title", routeFactory)),
                   "runtime route fixture should register");
+    routes.SetTransitionDriver({
+        .play = [&](const px::ui::RouteTransition& transition) {
+            drivenTransition = transition;
+            drivenHandle = 73;
+            return drivenHandle;
+        },
+        .playing = [&](const px::ui::RouteTransitionHandle handle) {
+            return handle == drivenHandle;
+        },
+        .stop = [&](const px::ui::RouteTransitionHandle handle) {
+            return handle == drivenHandle;
+        },
+        .cancel = [&](const px::ui::RouteTransitionHandle handle) {
+            return handle == drivenHandle;
+        }});
     px::script::ScriptServices services;
     services.vfs = &vfs;
     services.variables = &variables;
     services.profile = &profile;
     services.routes = &routes;
     services.timeline = &timeline;
+    services.renderer = &renderer;
+    services.stage = &stage;
     services.console = [&console](const px::script::ConsoleMessage& message) {
         console.push_back(message);
     };
@@ -338,15 +364,51 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
             throw new Error("profile bridge failed");
         }
         if (!Engine.PushRoute("title")) throw new Error("route bridge failed");
+        if (!Engine.SetRouteTransition("title", "title", {
+              preset: "slide-left", durationSeconds: 0.35
+            }) || !Engine.ReplaceRoute("title")) {
+            throw new Error("route transition bridge failed");
+        }
+        Engine.SetBackground("Content/Images/outgoing.png", false);
+        Engine.SetBackgroundRule("Content/Images/incoming.png",
+                                 "Content/Rules/dissolve.png", 750, 48);
+        Engine.SetLayerTransform("foreground", "Content/Images/card.png",
+                                 14, 28, 1.25, 0.75, 20, 210, 4);
+        Engine.SetCamera(12, -8, 1.2);
+        Engine.SetScreenEffect("fade", 0.4);
+        if (!Engine.RegisterScreenEffect("js-tile-transition", {
+              operator: "tiles", columns: 9, rows: 6,
+              stagger: 0.3, order: "column-major"
+            })) {
+            throw new Error("screen effect registration bridge failed");
+        }
         Engine.log("runtime-context-ready");
     )js", "javascript-runtime-context"),
                  "JavaScript RuntimeContext should bridge typed engine services");
     const auto* runtimeValue = variables.GetValue("js.runtime");
+    const auto stageState = stage.CaptureState();
+    const auto foreground = std::ranges::find_if(
+        stageState.layers, [](const px::vn::Stage::SavedLayer& layer) {
+            return layer.name == "foreground";
+        });
     suite.Expect(runtimeValue && runtimeValue->AsObject() &&
                      profile.HasSeen("js.scene") && profile.CGUnlocked("js.cg") &&
                      routes.CurrentRoute() == "title" &&
+                     routes.ActiveTransition() && drivenHandle == 73 &&
+                     drivenTransition.preset == "slide-left" &&
+                     std::abs(drivenTransition.durationSeconds - 0.35f) < 0.001f &&
+                     stageState.background == "Content/Images/incoming.png" &&
+                     foreground != stageState.layers.end() &&
+                     std::abs(foreground->scale - 1.25f) < 0.001f &&
+                     std::abs(foreground->scaleY - 0.75f) < 0.001f &&
+                     std::abs(foreground->rotation - 20.0f) < 0.001f &&
+                     std::abs(stageState.cameraX - 12.0f) < 0.001f &&
+                     std::abs(stageState.cameraY + 8.0f) < 0.001f &&
+                     std::abs(stageState.cameraZoom - 1.2f) < 0.001f &&
+                     stageState.screenEffects.contains("fade") &&
+                     renderer.HasScreenEffect("js-tile-transition") &&
                      console.back().text == "runtime-context-ready",
-                 "RuntimeContext mutations should reach the C++ runtime services");
+                 "RuntimeContext stage, transform, camera, effect, and route bindings should reach C++ services");
     suite.Expect(!host.LoadExtensionManifest(
                      "Content/Extensions/denied.pxextension"),
                  "undeclared host capabilities must fail closed");

@@ -1,9 +1,13 @@
 #pragma once
 
+#include <cstdint>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
+#include "Engine/Core/Result.h"
 #include "Engine/Core/Types.h"
 #include "Engine/Graphics/AssetCache.h"
 #include "Engine/Graphics/Compositor2D.h"
@@ -33,6 +37,37 @@ enum class ContentScaleMode { Stretch, Fit, Fill, Original };
 enum class HorizontalAlignment { Left, Center, Right };
 enum class VerticalAlignment { Top, Center, Bottom };
 
+using ScreenEffectHandle = std::uint64_t;
+
+// A compact, backend-neutral render plan. JavaScript registers one of these
+// once; the Renderer executes the expensive per-frame work natively against
+// the outgoing/incoming screen textures.
+struct ScreenEffectDefinition {
+    std::string id;
+    // none, fade, crossfade, slide-left, slide-right, or tiles.
+    std::string operation;
+    int columns = 8;
+    int rows = 6;
+    float stagger = 0.35f;
+    std::string order = "row-major";
+};
+
+enum class ScreenEffectStatus : std::uint8_t {
+    Unknown,
+    Playing,
+    Completed,
+    Stopped,
+    Cancelled,
+};
+
+struct ScreenEffectPlayback {
+    ScreenEffectHandle handle = 0;
+    std::string effect;
+    float durationSeconds = 0.0f;
+    float elapsedSeconds = 0.0f;
+    ScreenEffectStatus status = ScreenEffectStatus::Unknown;
+};
+
 struct Shadow {
     bool enabled = false;
     int offsetX = 3;
@@ -49,6 +84,25 @@ public:
 
     void SetLogicalSize(int width, int height, bool updateTextDensity = true);
     void GetLogicalSize(int& width, int& height) const;
+
+    // Runtime owns these calls. Every complete frame is rendered into a
+    // texture, making the last presented frame available as an immutable
+    // outgoing snapshot when a transition starts mid-frame.
+    [[nodiscard]] bool BeginFrame(Color clearColor);
+    void EndFrame();
+
+    Status RegisterScreenEffect(ScreenEffectDefinition definition);
+    [[nodiscard]] bool HasScreenEffect(std::string_view id) const;
+    [[nodiscard]] std::vector<std::string> ScreenEffectIds() const;
+    [[nodiscard]] ScreenEffectHandle PlayScreenEffect(
+        std::string_view id, float durationSeconds);
+    [[nodiscard]] bool StopScreenEffect(ScreenEffectHandle handle);
+    [[nodiscard]] bool CancelScreenEffect(ScreenEffectHandle handle);
+    [[nodiscard]] bool ScreenEffectPlaying(ScreenEffectHandle handle) const;
+    [[nodiscard]] ScreenEffectStatus ScreenEffectState(
+        ScreenEffectHandle handle) const;
+    [[nodiscard]] std::optional<ScreenEffectPlayback> ActiveScreenEffect() const;
+    void UpdateScreenEffects(float deltaSeconds);
 
     void SetCameraOffset(int x, int y) { m_camX = x, m_camY = y; }
     void ResetCamera() { m_camX = 0, m_camY = 0; }
@@ -152,6 +206,12 @@ private:
     void Blit(SDL_Texture* texture, const Rect& dst, std::uint8_t alpha);
     void BlitRegion(SDL_Texture* texture, const Rect& sourcePixels, const Rect& dst,
                     std::uint8_t alpha);
+    [[nodiscard]] bool EnsureFrameTargets();
+    void DestroyFrameTargets();
+    void PresentScreenFrame();
+    void RenderScreenEffect(const ScreenEffectDefinition& definition,
+                            float progress);
+    void FinishScreenEffect(ScreenEffectStatus status);
 
     SDL_Renderer* m_renderer;
     AssetCache& m_assets;
@@ -169,6 +229,15 @@ private:
     std::unordered_map<std::string, CachedText> m_textCache;
     std::vector<Rect> m_clipStack;
     std::vector<TransformState> m_transformStack{{}};
+    SDL_Texture* m_frameTarget = nullptr;
+    SDL_Texture* m_presentedTarget = nullptr;
+    SDL_Texture* m_outgoingTarget = nullptr;
+    SDL_Texture* m_framePreviousTarget = nullptr;
+    std::unordered_map<std::string, ScreenEffectDefinition> m_screenEffectDefinitions;
+    std::unordered_map<ScreenEffectHandle, ScreenEffectStatus> m_screenEffectStates;
+    std::optional<ScreenEffectPlayback> m_activeScreenEffect;
+    ScreenEffectHandle m_nextScreenEffectHandle = 1;
+    bool m_frameRecording = false;
 };
 
 }  // namespace px::graphics
