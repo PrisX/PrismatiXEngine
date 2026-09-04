@@ -17,7 +17,16 @@ using Json = nlohmann::json;
 
 void AddDiagnostic(std::vector<PackageDiagnostic>& diagnostics,
                    std::string code, std::string message) {
-    diagnostics.push_back({std::move(code), std::move(message), false});
+    diagnostics.push_back(PackageDiagnostic{
+        .code = std::move(code),
+        .message = std::move(message),
+        .retryable = false,
+        .severity = "error",
+        .documentId = {},
+        .sourceId = {},
+        .span = std::nullopt,
+        .hint = {},
+        .cause = {}});
 }
 
 std::optional<int> JsonInt(const Json& value) {
@@ -314,7 +323,8 @@ PackageManifestParseResult ParsePackageManifest(const std::string_view text) {
         } else {
             std::set<std::string> effectIds;
             for (const Json& value : *customEffects) {
-                if (!value.is_object() || value.size() != 5 ||
+                if (!value.is_object() ||
+                    (value.size() != 5 && value.size() != 6) ||
                     !value.contains("id") || !value["id"].is_string() ||
                     !value.contains("targetLayer") ||
                     !value["targetLayer"].is_string() ||
@@ -330,8 +340,18 @@ PackageManifestParseResult ParsePackageManifest(const std::string_view text) {
                 }
                 PackageCustomEffect effect;
                 effect.id = value["id"].get<std::string>();
+                effect.schemaRevision =
+                    value.value("schemaRevision", std::uint32_t{2});
                 effect.targetLayer = value["targetLayer"].get<std::string>();
-                if (!IsIdentifier(effect.id) || effect.targetLayer != "stage" ||
+                const bool validTarget =
+                    effect.targetLayer == "stage" ||
+                    effect.targetLayer == "node" ||
+                    effect.targetLayer == "transition";
+                if (!IsIdentifier(effect.id) || !validTarget ||
+                    (effect.schemaRevision != 2 &&
+                     effect.schemaRevision != 3) ||
+                    (effect.schemaRevision == 2 &&
+                     effect.targetLayer != "stage") ||
                     !effectIds.insert(effect.id).second ||
                     value["uniforms"].size() > 8 ||
                     value["artifacts"].size() != 3) {
@@ -433,7 +453,10 @@ PackageManifestParseResult ParsePackageManifest(const std::string_view text) {
                         reflection["samplers"].get<std::uint32_t>();
                     effect.uniformBufferCount =
                         reflection["uniformBuffers"].get<std::uint32_t>();
-                    valid = valid && effect.samplerCount == 1 &&
+                    const std::uint32_t expectedSamplers =
+                        effect.targetLayer == "transition" ? 2u : 1u;
+                    valid = valid &&
+                            effect.samplerCount == expectedSamplers &&
                             effect.uniformBufferCount == 1;
                 }
                 if (formats != std::set<std::string>{"dxil", "msl", "spirv"})

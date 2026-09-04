@@ -25,6 +25,8 @@ public:
         std::uint64_t storedSize = 0;
         std::uint32_t crc = 0;
         std::uint8_t flags = 0;
+        std::uint32_t chunkSize = 0;
+        std::uint32_t chunkCount = 0;
     };
 
     bool Open(const std::string& path, const crypto::Key* key = nullptr);
@@ -41,6 +43,7 @@ private:
     std::string m_path;
     bool m_open = false;
     bool m_encrypted = false;
+    std::uint32_t m_version = 0;
     crypto::Key m_key{};
     std::vector<Entry> m_entries;
     std::unordered_map<std::uint64_t, std::size_t> m_index;

@@ -68,6 +68,8 @@ const engine = {
   SetStageNodeTransform: () => true,
   SetStageNodeOrder: () => true,
   SetStageNodeVisibility: () => true,
+  SetStageNodeEffect: () => true,
+  ClearStageNodeEffect: () => undefined,
   RemoveStageNode: () => undefined,
   SetParticleEmitter: () => true,
   ClearParticleEmitter: () => undefined,
@@ -143,7 +145,14 @@ ctx.stage.layer("mist", "Assets/FX/mist.webp", {scaleX: 1.2, scaleY: 0.8, rotati
 if (!ctx.stage.group("weather") || !ctx.stage.parent("mist", "weather") ||
     !ctx.stage.transform("weather", {x: 4, opacity: 0.8}) ||
     !ctx.stage.order("mist", -1, 2) || !ctx.stage.visible("mist", true) ||
-    !ctx.stage.particles("rain", "rain", {seed: 7, maxParticles: 128}))
+    !ctx.stage.nodeEffect("mist", "dream-node", 0.5, {amount: 0.8}) ||
+    !ctx.stage.particles("rain", "rain", {
+      seed: 7, maxParticles: 128, texture: "Assets/FX/drop.png",
+      spawnShape: "line", position: {x: [0, 1], y: 0},
+      velocity: {x: [-10, 10], y: [300, 500]}, lifetime: [1, 2],
+      scaleOverLifetime: [{time: 0, value: 1}, {time: 1, value: 0.5}],
+      burst: 32, loop: true, duration: 2,
+    }))
   throw new Error("stage graph/particle facade is not wired");
 ctx.stage.camera({x: 4, y: -2, zoom: 1.1});
 ctx.stage.screenEffect("fade", 0.3);

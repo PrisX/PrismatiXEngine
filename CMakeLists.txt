@@ -18,6 +18,7 @@ option(PRISMATIX_WARNINGS_AS_ERRORS "Treat compiler warnings as release-blocking
 option(PRISMATIX_BUILD_FUZZERS "Build libFuzzer parser targets" OFF)
 option(PRISMATIX_PERFORMANCE_TESTS "Enable scheduled large-scene performance scenarios" OFF)
 option(PRISMATIX_STRESS_TESTS "Enable long-running performance and 50,000-asset stress tests" OFF)
+option(PRISMATIX_HEAVY_STRESS_TESTS "Enable commercial-scale 100k-dialogue acceptance tests" OFF)
 option(PRISMATIX_BUILD_WASM_PREVIEW "Build the Studio-only Emscripten preview runtime" OFF)
 
 if(PRISMATIX_BUILD_WASM_PREVIEW AND NOT EMSCRIPTEN)

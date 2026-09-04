@@ -60,9 +60,9 @@ export interface CustomEffectUniform {
 
 export interface CustomEffectDocument {
   readonly format: "PrismatiXEffect";
-  readonly schemaRevision: 2;
+  readonly schemaRevision: 2 | 3;
   readonly id: string;
-  readonly targetLayer: "stage";
+  readonly targetLayer: "stage" | "node" | "transition";
   readonly shader: string;
   readonly uniforms: readonly CustomEffectUniform[];
 }
@@ -400,6 +400,10 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     }
     if (!effect.shader.endsWith(".hlsl") || input.sourceFiles[effect.shader] === undefined) {
       diagnostics.push(issue("PXBUILD1022", "Custom effect HLSL source is missing or has the wrong extension", effect.shader));
+      continue;
+    }
+    if (effect.schemaRevision === 2 && effect.targetLayer !== "stage") {
+      diagnostics.push(issue("PXBUILD1024", "Effect schema revision 2 only supports the Stage post-processing target", descriptor.source, effect.id));
       continue;
     }
     const uniformNames = new Set<string>();

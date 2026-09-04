@@ -245,6 +245,7 @@ PlayerApp::Boot PlayerApp::LoadBootConfig() {
     for (const auto& effect : package.customEffects) {
         graphics::CustomEffectDescriptor descriptor;
         descriptor.id = effect.id;
+        descriptor.schemaRevision = effect.schemaRevision;
         descriptor.targetLayer = effect.targetLayer;
         descriptor.samplerCount = effect.samplerCount;
         descriptor.uniformBufferCount = effect.uniformBufferCount;

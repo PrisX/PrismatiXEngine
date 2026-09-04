@@ -68,6 +68,7 @@ RuntimeSession::RuntimeSession(Services services)
         }});
     for (auto& preset : animation::OfficialPresets()) (void)m_timeline.Register(std::move(preset));
     for (const auto& id : services.renderer.CustomEffectIds()) {
+        if (services.renderer.CustomEffectTarget(id) != "stage") continue;
         animation::AnimationClip clip;
         clip.id = Uuid::FromName("PrismatiX.CustomEffect." + id);
         clip.name = "Screen/" + id;

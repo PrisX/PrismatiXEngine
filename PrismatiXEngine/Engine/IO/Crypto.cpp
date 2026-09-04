@@ -43,14 +43,16 @@ bool ImportAesKey(const Key& key, psa_key_usage_t usage, mbedtls_svc_key_id_t& k
     return status == PSA_SUCCESS;
 }
 
-Bytes EncryptAuthenticated(const Bytes& input,const Key& key,const Iv& iv){
+Bytes EncryptAuthenticated(const Bytes& input,const Key& key,const Iv& iv,
+                           const std::string_view context){
     Bytes seed(iv.begin(),iv.end());seed.insert(seed.end(),input.begin(),input.end());std::array<std::uint8_t,32> digest{};if(!ComputeSha256(seed.data(),seed.size(),digest.data(),digest.size()))return {};
     mbedtls_svc_key_id_t keyId = MBEDTLS_SVC_KEY_ID_INIT;
     if(!ImportAesKey(key,PSA_KEY_USAGE_ENCRYPT,keyId))return {};
-    Bytes output(kNonceSize+input.size()+kTagSize);std::copy_n(digest.begin(),kNonceSize,output.begin());std::size_t written=0;const psa_status_t status=psa_aead_encrypt(keyId,PSA_ALG_GCM,output.data(),kNonceSize,nullptr,0,input.data(),input.size(),output.data()+kNonceSize,output.size()-kNonceSize,&written);psa_destroy_key(keyId);if(status!=PSA_SUCCESS)return {};output.resize(kNonceSize+written);return output;
+    Bytes output(kNonceSize+input.size()+kTagSize);std::copy_n(digest.begin(),kNonceSize,output.begin());std::size_t written=0;const psa_status_t status=psa_aead_encrypt(keyId,PSA_ALG_GCM,output.data(),kNonceSize,reinterpret_cast<const std::uint8_t*>(context.data()),context.size(),input.data(),input.size(),output.data()+kNonceSize,output.size()-kNonceSize,&written);psa_destroy_key(keyId);if(status!=PSA_SUCCESS)return {};output.resize(kNonceSize+written);return output;
 }
-Bytes DecryptAuthenticated(const Bytes& input,const Key& key,const Iv& iv){
-    (void)iv;if(input.size()<kNonceSize+kTagSize)return {};mbedtls_svc_key_id_t keyId=MBEDTLS_SVC_KEY_ID_INIT;if(!ImportAesKey(key,PSA_KEY_USAGE_DECRYPT,keyId))return {};Bytes output(input.size()-kNonceSize-kTagSize);std::size_t written=0;const psa_status_t status=psa_aead_decrypt(keyId,PSA_ALG_GCM,input.data(),kNonceSize,nullptr,0,input.data()+kNonceSize,input.size()-kNonceSize,output.data(),output.size(),&written);psa_destroy_key(keyId);if(status!=PSA_SUCCESS)return {};output.resize(written);return output;
+Bytes DecryptAuthenticated(const Bytes& input,const Key& key,const Iv& iv,
+                           const std::string_view context){
+    (void)iv;if(input.size()<kNonceSize+kTagSize)return {};mbedtls_svc_key_id_t keyId=MBEDTLS_SVC_KEY_ID_INIT;if(!ImportAesKey(key,PSA_KEY_USAGE_DECRYPT,keyId))return {};Bytes output(input.size()-kNonceSize-kTagSize);std::size_t written=0;const psa_status_t status=psa_aead_decrypt(keyId,PSA_ALG_GCM,input.data(),kNonceSize,reinterpret_cast<const std::uint8_t*>(context.data()),context.size(),input.data()+kNonceSize,input.size()-kNonceSize,output.data(),output.size(),&written);psa_destroy_key(keyId);if(status!=PSA_SUCCESS)return {};output.resize(written);return output;
 }
 }
 
@@ -73,11 +75,21 @@ Iv DeriveIv(std::string_view salt) {
 }
 
 Bytes Encrypt(const Bytes& plain, const Key& key, const Iv& iv) {
-    return EncryptAuthenticated(plain,key,iv);
+    return EncryptAuthenticated(plain,key,iv,{});
 }
 
 Bytes Decrypt(const Bytes& cipher, const Key& key, const Iv& iv) {
-    return DecryptAuthenticated(cipher,key,iv);
+    return DecryptAuthenticated(cipher,key,iv,{});
+}
+
+Bytes EncryptRecord(const Bytes& plain, const Key& key, const Iv& iv,
+                    const std::string_view context) {
+    return EncryptAuthenticated(plain, key, iv, context);
+}
+
+Bytes DecryptRecord(const Bytes& cipher, const Key& key, const Iv& iv,
+                    const std::string_view context) {
+    return DecryptAuthenticated(cipher, key, iv, context);
 }
 
 std::uint64_t HashPath(std::string_view path) {

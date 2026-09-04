@@ -19,16 +19,26 @@ namespace px::io {
 
 namespace {
 
-constexpr char kMagic[4] = { 'P', 'D', 'X', '4' };
-constexpr std::uint32_t kVersion = 4;
+constexpr char kMagicV4[4] = { 'P', 'D', 'X', '4' };
+constexpr char kMagicV5[4] = { 'P', 'D', 'X', '5' };
+constexpr std::uint32_t kVersionV4 = 4;
+constexpr std::uint32_t kVersionV5 = 5;
 constexpr std::size_t kHeaderSize = 28;
 constexpr std::uint8_t kEntryEncrypted = 0x01;
 constexpr std::uint8_t kEntryCompressed = 0x02;
+constexpr std::uint8_t kEntryChunkedEncrypted = 0x04;
 constexpr std::uint32_t kFlagEncrypted = 0x01;
-constexpr char kIndexSalt[] = "__pdx4_index__";
+constexpr char kIndexSaltV4[] = "__pdx4_index__";
+constexpr char kIndexSaltV5[] = "__pdx5_index__";
+constexpr std::uint32_t kStreamingChunkSize = 256u * 1024u;
+constexpr std::uint64_t kAeadRecordOverhead = 12u + 16u;
 constexpr std::uint32_t kMaxEntries = 1'000'000;
 constexpr std::uint64_t kMaxIndexSize = 256ull * 1024ull * 1024ull;
 constexpr std::uint64_t kMaxEntrySize = 8ull * 1024ull * 1024ull * 1024ull;
+constexpr std::uint64_t kMaxStoredEntrySize =
+    kMaxEntrySize +
+    ((kMaxEntrySize + kStreamingChunkSize - 1u) / kStreamingChunkSize) *
+        kAeadRecordOverhead;
 constexpr std::size_t kMaxNameLength = 4096;
 constexpr std::size_t kFixedEntryBytes = 8 + 2 + 8 + 8 + 8 + 4 + 1;
 
@@ -63,6 +73,12 @@ public:
     [[nodiscard]] std::uint64_t Tell() const override { return m_position; }
     [[nodiscard]] std::uint64_t Size() const override { return m_bytes.size(); }
     [[nodiscard]] bool Failed() const override { return false; }
+    [[nodiscard]] std::size_t BufferedBytes() const override {
+        return m_bytes.size();
+    }
+    [[nodiscard]] std::size_t PeakBufferedBytes() const override {
+        return m_bytes.size();
+    }
 
 private:
     Bytes m_bytes;
@@ -138,6 +154,152 @@ private:
     std::uint64_t m_offset = 0;
     std::uint64_t m_size = 0;
     std::uint64_t m_position = 0;
+    bool m_failed = false;
+};
+
+std::string ChunkContext(const std::string_view name,
+                         const std::uint32_t index,
+                         const std::uint32_t rawBytes) {
+    return std::string(name) + "#pdx5:" + std::to_string(index) + ":" +
+           std::to_string(rawBytes);
+}
+
+class ChunkedEncryptedReadStream final : public SeekableReadStream {
+public:
+    ChunkedEncryptedReadStream(std::string path, std::string name,
+                               const std::uint64_t offset,
+                               const std::uint64_t rawSize,
+                               const std::uint32_t chunkSize,
+                               const std::uint32_t chunkCount,
+                               const crypto::Key& key)
+        : m_input(std::move(path), std::ios::binary), m_name(std::move(name)),
+          m_offset(offset), m_rawSize(rawSize), m_chunkSize(chunkSize),
+          m_chunkCount(chunkCount), m_key(key) {
+        m_failed = !m_input || m_chunkSize == 0 ||
+                   m_chunkCount != ExpectedChunkCount(m_rawSize, m_chunkSize);
+        m_cipher.reserve(static_cast<std::size_t>(m_chunkSize) +
+                         kAeadRecordOverhead);
+        m_plain.reserve(m_chunkSize);
+    }
+
+    [[nodiscard]] std::size_t Read(std::uint8_t* destination,
+                                   const std::size_t bytes) override {
+        if (m_failed || !destination || bytes == 0 || m_position >= m_rawSize)
+            return 0;
+        const std::uint64_t available = m_rawSize - m_position;
+        std::size_t remaining = static_cast<std::size_t>(
+            std::min<std::uint64_t>(available, bytes));
+        std::size_t written = 0;
+        while (remaining > 0) {
+            const std::uint32_t index =
+                static_cast<std::uint32_t>(m_position / m_chunkSize);
+            if (!Load(index)) break;
+            const std::size_t within =
+                static_cast<std::size_t>(m_position % m_chunkSize);
+            if (within >= m_plain.size()) {
+                m_failed = true;
+                break;
+            }
+            const std::size_t count =
+                std::min(remaining, m_plain.size() - within);
+            std::memcpy(destination + written, m_plain.data() + within, count);
+            written += count;
+            remaining -= count;
+            m_position += count;
+        }
+        return written;
+    }
+
+    [[nodiscard]] bool Seek(const std::int64_t offset,
+                            const SeekOrigin origin) override {
+        if (m_failed) return false;
+        std::int64_t base = 0;
+        if (origin == SeekOrigin::Current)
+            base = static_cast<std::int64_t>(m_position);
+        else if (origin == SeekOrigin::End)
+            base = static_cast<std::int64_t>(m_rawSize);
+        if ((offset > 0 && base > (std::numeric_limits<std::int64_t>::max)() - offset) ||
+            (offset < 0 && base < (std::numeric_limits<std::int64_t>::min)() - offset))
+            return false;
+        const std::int64_t requested = base + offset;
+        if (requested < 0 || static_cast<std::uint64_t>(requested) > m_rawSize)
+            return false;
+        m_position = static_cast<std::uint64_t>(requested);
+        return true;
+    }
+
+    [[nodiscard]] std::uint64_t Tell() const override { return m_position; }
+    [[nodiscard]] std::uint64_t Size() const override { return m_rawSize; }
+    [[nodiscard]] bool Failed() const override { return m_failed; }
+    [[nodiscard]] std::size_t BufferedBytes() const override {
+        return m_cipher.capacity() + m_plain.capacity();
+    }
+    [[nodiscard]] std::size_t PeakBufferedBytes() const override {
+        return m_peakBuffered;
+    }
+
+private:
+    static std::uint32_t ExpectedChunkCount(const std::uint64_t size,
+                                            const std::uint32_t chunkSize) {
+        if (size == 0 || chunkSize == 0) return 0;
+        return static_cast<std::uint32_t>((size + chunkSize - 1u) / chunkSize);
+    }
+
+    bool Load(const std::uint32_t index) {
+        if (index == m_loadedChunk) return true;
+        if (index >= m_chunkCount) {
+            m_failed = true;
+            return false;
+        }
+        const std::uint64_t rawOffset =
+            static_cast<std::uint64_t>(index) * m_chunkSize;
+        const std::uint32_t rawBytes = static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(m_chunkSize, m_rawSize - rawOffset));
+        const std::uint64_t storedOffset =
+            m_offset + static_cast<std::uint64_t>(index) *
+                           (static_cast<std::uint64_t>(m_chunkSize) +
+                            kAeadRecordOverhead);
+        if (storedOffset > static_cast<std::uint64_t>(
+                               (std::numeric_limits<std::streamoff>::max)())) {
+            m_failed = true;
+            return false;
+        }
+        const std::size_t cipherBytes =
+            static_cast<std::size_t>(rawBytes + kAeadRecordOverhead);
+        m_cipher.resize(cipherBytes);
+        m_input.clear();
+        m_input.seekg(static_cast<std::streamoff>(storedOffset), std::ios::beg);
+        m_input.read(reinterpret_cast<char*>(m_cipher.data()),
+                     static_cast<std::streamsize>(m_cipher.size()));
+        if (m_input.gcount() != static_cast<std::streamsize>(m_cipher.size())) {
+            m_failed = true;
+            return false;
+        }
+        const std::string context = ChunkContext(m_name, index, rawBytes);
+        m_plain = crypto::DecryptRecord(m_cipher, m_key,
+                                        crypto::DeriveIv(context), context);
+        if (m_plain.size() != rawBytes) {
+            m_plain.clear();
+            m_failed = true;
+            return false;
+        }
+        m_loadedChunk = index;
+        m_peakBuffered = std::max(m_peakBuffered, BufferedBytes());
+        return true;
+    }
+
+    std::ifstream m_input;
+    std::string m_name;
+    std::uint64_t m_offset = 0;
+    std::uint64_t m_rawSize = 0;
+    std::uint64_t m_position = 0;
+    std::uint32_t m_chunkSize = 0;
+    std::uint32_t m_chunkCount = 0;
+    std::uint32_t m_loadedChunk = (std::numeric_limits<std::uint32_t>::max)();
+    crypto::Key m_key{};
+    Bytes m_cipher;
+    Bytes m_plain;
+    std::size_t m_peakBuffered = 0;
     bool m_failed = false;
 };
 
@@ -246,6 +408,39 @@ bool IsStreamingMediaPath(const std::string_view path) {
     return std::ranges::find(extensions, extension) != extensions.end();
 }
 
+struct ChunkedPayload {
+    Bytes bytes;
+    std::uint32_t chunks = 0;
+};
+
+std::optional<ChunkedPayload> EncryptChunked(const Bytes& input,
+                                             const crypto::Key& key,
+                                             const std::string_view name) {
+    if (input.empty()) return std::nullopt;
+    ChunkedPayload result;
+    result.chunks = static_cast<std::uint32_t>(
+        (input.size() + kStreamingChunkSize - 1u) / kStreamingChunkSize);
+    result.bytes.reserve(input.size() +
+                         static_cast<std::size_t>(result.chunks) *
+                             kAeadRecordOverhead);
+    for (std::uint32_t index = 0; index < result.chunks; ++index) {
+        const std::size_t offset =
+            static_cast<std::size_t>(index) * kStreamingChunkSize;
+        const std::size_t count =
+            std::min<std::size_t>(kStreamingChunkSize, input.size() - offset);
+        Bytes plain(input.begin() + static_cast<std::ptrdiff_t>(offset),
+                    input.begin() + static_cast<std::ptrdiff_t>(offset + count));
+        const std::string context = ChunkContext(
+            name, index, static_cast<std::uint32_t>(count));
+        Bytes encrypted = crypto::EncryptRecord(
+            plain, key, crypto::DeriveIv(context), context);
+        if (encrypted.size() != count + kAeadRecordOverhead)
+            return std::nullopt;
+        result.bytes.insert(result.bytes.end(), encrypted.begin(), encrypted.end());
+    }
+    return result;
+}
+
 }
 
 
@@ -265,7 +460,9 @@ bool Archive::Open(const std::string& path, const crypto::Key* key) {
 
     std::uint8_t header[kHeaderSize];
     in.read(reinterpret_cast<char*>(header), kHeaderSize);
-    if (!in || std::memcmp(header, kMagic, 4) != 0) {
+    const bool magicV4 = std::memcmp(header, kMagicV4, 4) == 0;
+    const bool magicV5 = std::memcmp(header, kMagicV5, 4) == 0;
+    if (!in || (!magicV4 && !magicV5)) {
         PX_LOG_ERROR("Archive::Open bad magic in '{}'", path);
         return false;
     }
@@ -274,7 +471,9 @@ bool Archive::Open(const std::string& path, const crypto::Key* key) {
     const std::uint32_t flags = c.U32();
     const std::uint64_t indexOffset = c.U64();
     const std::uint64_t indexStored = c.U64();
-    if (version != kVersion) {
+    if ((version != kVersionV4 && version != kVersionV5) ||
+        (version == kVersionV4) != magicV4 ||
+        (version == kVersionV5) != magicV5) {
         PX_LOG_ERROR("Archive::Open unsupported version {} in '{}'", version, path);
         return false;
     }
@@ -286,6 +485,7 @@ bool Archive::Open(const std::string& path, const crypto::Key* key) {
         return false;
     }
 
+    m_version = version;
     m_encrypted = (flags & kFlagEncrypted) != 0;
     if (m_encrypted) {
         if (!key) {
@@ -303,7 +503,10 @@ bool Archive::Open(const std::string& path, const crypto::Key* key) {
         return false;
     }
     if (m_encrypted) {
-        indexBlob = crypto::Decrypt(indexBlob, m_key, crypto::DeriveIv(kIndexSalt));
+        const std::string_view indexSalt =
+            version == kVersionV5 ? kIndexSaltV5 : kIndexSaltV4;
+        indexBlob = crypto::Decrypt(indexBlob, m_key,
+                                    crypto::DeriveIv(indexSalt));
         if (indexBlob.empty()) {
             PX_LOG_ERROR("Archive::Open index decrypt failed (wrong key?) for '{}'", path);
             return false;
@@ -336,9 +539,33 @@ bool Archive::Open(const std::string& path, const crypto::Key* key) {
         e.storedSize = ic.U64();
         e.crc = ic.U32();
         e.flags = *ic.p++;
+        const std::uint8_t allowedFlags =
+            version == kVersionV5
+                ? kEntryEncrypted | kEntryCompressed | kEntryChunkedEncrypted
+                : kEntryEncrypted | kEntryCompressed;
+        if ((e.flags & kEntryChunkedEncrypted) != 0) {
+            if (!ic.Ok(8)) return false;
+            e.chunkSize = ic.U32();
+            e.chunkCount = ic.U32();
+        }
+        const std::uint64_t expectedChunkCount =
+            e.chunkSize == 0 ? 0 :
+                (e.rawSize + e.chunkSize - 1u) / e.chunkSize;
+        const bool validChunking =
+            (e.flags & kEntryChunkedEncrypted) == 0 ||
+            (version == kVersionV5 && (e.flags & kEntryEncrypted) != 0 &&
+             (e.flags & kEntryCompressed) == 0 &&
+             e.chunkSize == kStreamingChunkSize && e.rawSize > 0 &&
+             e.chunkCount == expectedChunkCount && e.chunkCount > 0 &&
+             e.storedSize == e.rawSize +
+                 static_cast<std::uint64_t>(e.chunkCount) * kAeadRecordOverhead);
+        const bool validEncryption =
+            (e.flags & kEntryEncrypted) == 0 || m_encrypted;
         if (!IsSafeLogicalPath(e.name) ||
-            e.pathHash != crypto::HashPath(e.name) || (e.flags & ~(kEntryEncrypted | kEntryCompressed)) != 0 ||
-            e.rawSize > kMaxEntrySize || e.storedSize > kMaxEntrySize ||
+            e.pathHash != crypto::HashPath(e.name) ||
+            (e.flags & ~allowedFlags) != 0 || !validChunking ||
+            !validEncryption || e.rawSize > kMaxEntrySize ||
+            e.storedSize > kMaxStoredEntrySize ||
             e.rawSize > static_cast<std::uint64_t>((std::numeric_limits<std::size_t>::max)()) ||
             e.storedSize > static_cast<std::uint64_t>((std::numeric_limits<std::size_t>::max)()) ||
             e.storedSize > static_cast<std::uint64_t>((std::numeric_limits<std::streamsize>::max)()) ||
@@ -365,6 +592,7 @@ bool Archive::Open(const std::string& path, const crypto::Key* key) {
 void Archive::Close() {
     m_open = false;
     m_encrypted = false;
+    m_version = 0;
     m_entries.clear();
     m_index.clear();
     m_path.clear();
@@ -385,6 +613,14 @@ std::unique_ptr<SeekableReadStream> Archive::OpenStream(
     if (found == m_index.end() || found->second >= m_entries.size()) return {};
     const Entry& entry = m_entries[found->second];
     if (entry.name != path) return {};
+
+    if ((entry.flags & kEntryChunkedEncrypted) != 0) {
+        auto stream = std::make_unique<ChunkedEncryptedReadStream>(
+            m_path, entry.name, entry.offset, entry.rawSize, entry.chunkSize,
+            entry.chunkCount, m_key);
+        if (!stream->Failed()) return stream;
+        return {};
+    }
 
     if ((entry.flags & (kEntryEncrypted | kEntryCompressed)) == 0) {
         bool verified = false;
@@ -419,6 +655,26 @@ std::optional<Bytes> Archive::Read(std::string_view path) const {
     }
     const Entry& e = m_entries[it->second];
     if (e.name != path) return std::nullopt;
+
+    if ((e.flags & kEntryChunkedEncrypted) != 0) {
+        if (e.rawSize > static_cast<std::uint64_t>(
+                            (std::numeric_limits<std::size_t>::max)()))
+            return std::nullopt;
+        auto stream = OpenStream(path);
+        if (!stream) return std::nullopt;
+        Bytes raw(static_cast<std::size_t>(e.rawSize));
+        std::size_t offset = 0;
+        while (offset < raw.size()) {
+            const std::size_t read =
+                stream->Read(raw.data() + offset, raw.size() - offset);
+            if (read == 0) return std::nullopt;
+            offset += read;
+        }
+        if (stream->Failed() ||
+            crypto::Crc32(raw.data(), raw.size()) != e.crc)
+            return std::nullopt;
+        return raw;
+    }
 
     std::ifstream in(m_path, std::ios::binary);
     if (!in) {
@@ -490,7 +746,14 @@ bool ArchiveWriter::Write(const std::string& outPath) const {
                 flags |= kEntryCompressed;
             }
         }
-        if (m_encrypt) {
+        std::uint32_t chunkCount = 0;
+        if (m_encrypt && IsStreamingMediaPath(p.name) && !stage.empty()) {
+            auto encrypted = EncryptChunked(stage, m_key, p.name);
+            if (!encrypted) return false;
+            stage = std::move(encrypted->bytes);
+            chunkCount = encrypted->chunks;
+            flags |= kEntryEncrypted | kEntryChunkedEncrypted;
+        } else if (m_encrypt) {
             stage = crypto::Encrypt(stage, m_key, crypto::DeriveIv(p.name));
             flags |= kEntryEncrypted;
         }
@@ -507,10 +770,14 @@ bool ArchiveWriter::Write(const std::string& outPath) const {
         PutU64(index, storedSize);
         PutU32(index, crc);
         index.push_back(flags);
+        if ((flags & kEntryChunkedEncrypted) != 0) {
+            PutU32(index, kStreamingChunkSize);
+            PutU32(index, chunkCount);
+        }
     }
 
     if (m_encrypt) {
-        index = crypto::Encrypt(index, m_key, crypto::DeriveIv(kIndexSalt));
+        index = crypto::Encrypt(index, m_key, crypto::DeriveIv(kIndexSaltV5));
     }
     if (index.empty() || index.size() > kMaxIndexSize) {
         PX_LOG_ERROR("ArchiveWriter::Write index is too large for '{}'", outPath);
@@ -520,8 +787,8 @@ bool ArchiveWriter::Write(const std::string& outPath) const {
     const std::uint64_t indexOffset = kHeaderSize + data.size();
 
     Bytes header;
-    header.insert(header.end(), kMagic, kMagic + 4);
-    PutU32(header, kVersion);
+    header.insert(header.end(), kMagicV5, kMagicV5 + 4);
+    PutU32(header, kVersionV5);
     PutU32(header, m_encrypt ? kFlagEncrypted : 0u);
     PutU64(header, indexOffset);
     PutU64(header, index.size());

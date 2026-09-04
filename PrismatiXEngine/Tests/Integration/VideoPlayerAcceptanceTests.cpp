@@ -53,6 +53,17 @@ std::string ReadText(const std::filesystem::path& path) {
             std::istreambuf_iterator<char>()};
 }
 
+void AppendFreeBox(std::vector<std::uint8_t>& bytes,
+                   const std::uint32_t boxSize) {
+    if (boxSize < 8) throw std::runtime_error("invalid MP4 free box size");
+    bytes.push_back(static_cast<std::uint8_t>((boxSize >> 24u) & 0xffu));
+    bytes.push_back(static_cast<std::uint8_t>((boxSize >> 16u) & 0xffu));
+    bytes.push_back(static_cast<std::uint8_t>((boxSize >> 8u) & 0xffu));
+    bytes.push_back(static_cast<std::uint8_t>(boxSize & 0xffu));
+    bytes.insert(bytes.end(), {'f', 'r', 'e', 'e'});
+    bytes.resize(bytes.size() + boxSize - 8u, 0);
+}
+
 void WriteBytes(const std::filesystem::path& path,
                 const std::vector<std::uint8_t>& bytes,
                 const std::size_t count) {
@@ -68,12 +79,14 @@ int main() {
     px::test::Suite suite("VideoPlayerAcceptance");
     suite.Run("Mp4H264AacStreamingLifecycle", [&] {
         px::test::TempDirectory temp("video-player");
-        const auto bytes = DecodeBase64(
+        const auto fixtureBytes = DecodeBase64(
             ReadText(std::filesystem::path(PRISMATIX_VIDEO_FIXTURE_BASE64)));
-        suite.Require(bytes.size() > 8'000,
+        suite.Require(fixtureBytes.size() > 8'000,
                       "checked-in MP4 fixture must decode from base64");
+        auto bytes = fixtureBytes;
+        AppendFreeBox(bytes, 4u * 1024u * 1024u);
         WriteBytes(temp.path / "h264-aac.mp4", bytes, bytes.size());
-        WriteBytes(temp.path / "truncated.mp4", bytes, 512);
+        WriteBytes(temp.path / "truncated.mp4", fixtureBytes, 512);
         px::io::ArchiveWriter archiveWriter;
         archiveWriter.SetCompression(true);
         archiveWriter.Add("Video/h264-aac.mp4", bytes);
@@ -84,6 +97,66 @@ int main() {
                           archive.Entries().size() == 1 &&
                           archive.Entries().front().flags == 0,
                       "video containers must remain stored for direct archive streaming");
+
+        const auto key = px::crypto::DeriveKey("encrypted-video-acceptance");
+        const auto encryptedPath = temp.path / "encrypted-video.pdx";
+        px::io::ArchiveWriter encryptedWriter;
+        encryptedWriter.SetKey(key);
+        encryptedWriter.SetCompression(true);
+        encryptedWriter.Add("Video/h264-aac.mp4", bytes);
+        suite.Require(encryptedWriter.Write(encryptedPath.string()),
+                      "production package should encrypt native video");
+        px::io::Archive encryptedArchive;
+        suite.Require(encryptedArchive.Open(encryptedPath.string(), &key) &&
+                          encryptedArchive.Entries().size() == 1,
+                      "encrypted production video archive should mount");
+        const auto& encryptedEntry = encryptedArchive.Entries().front();
+        suite.Require((encryptedEntry.flags & 0x05u) == 0x05u &&
+                          encryptedEntry.chunkSize == 256u * 1024u &&
+                          encryptedEntry.chunkCount > 1,
+                      "encrypted video must use independently authenticated PDX records");
+        auto encryptedStream =
+            encryptedArchive.OpenStream("Video/h264-aac.mp4");
+        std::array<std::uint8_t, 64> streamProbe{};
+        suite.Require(encryptedStream &&
+                          encryptedStream->Seek(128, px::io::SeekOrigin::Begin) &&
+                          encryptedStream->Read(streamProbe.data(),
+                                                streamProbe.size()) ==
+                              streamProbe.size() &&
+                          std::equal(streamProbe.begin(), streamProbe.end(),
+                                     bytes.begin() + 128) &&
+                          encryptedStream->Seek(-32, px::io::SeekOrigin::End) &&
+                          encryptedStream->Read(streamProbe.data(), 32) == 32 &&
+                          std::equal(streamProbe.begin(), streamProbe.begin() + 32,
+                                     bytes.end() - 32),
+                      "encrypted records must preserve random seek semantics");
+        suite.Expect(encryptedStream->PeakBufferedBytes() <=
+                         2u * (256u * 1024u + 28u) &&
+                         encryptedStream->PeakBufferedBytes() * 4u < bytes.size(),
+                     "encrypted video stream memory must remain bounded independently of file size");
+
+        const auto corruptPath = temp.path / "corrupt-encrypted-video.pdx";
+        std::filesystem::copy_file(encryptedPath, corruptPath);
+        {
+            std::fstream corrupt(corruptPath,
+                                 std::ios::binary | std::ios::in | std::ios::out);
+            const auto corruptOffset = encryptedEntry.offset + 128u;
+            corrupt.seekg(static_cast<std::streamoff>(corruptOffset));
+            char value = 0;
+            corrupt.read(&value, 1);
+            value ^= 0x5a;
+            corrupt.seekp(static_cast<std::streamoff>(corruptOffset));
+            corrupt.write(&value, 1);
+        }
+        px::io::Archive corruptArchive;
+        suite.Require(corruptArchive.Open(corruptPath.string(), &key),
+                      "corrupted encrypted payload should leave the authenticated index readable");
+        auto corruptStream = corruptArchive.OpenStream("Video/h264-aac.mp4");
+        suite.Require(corruptStream != nullptr,
+                      "corrupted encrypted payload should fail on demand, not preload");
+        suite.Expect(corruptStream->Read(streamProbe.data(), streamProbe.size()) == 0 &&
+                         corruptStream->Failed(),
+                     "tampered encrypted video records must fail authentication before exposing plaintext");
 
         px::io::VFS vfs;
         vfs.MountDirectory(temp.path.string());
@@ -152,18 +225,39 @@ int main() {
         {
             px::io::VFS archiveVfs;
             suite.Require(
-                archiveVfs.MountArchive((temp.path / "video.pdx").string()),
-                "stored video archive should mount");
+                archiveVfs.MountArchive(encryptedPath.string(), &key),
+                "encrypted video archive should mount through VFS");
             px::video::VideoPlayer player(renderer, archiveVfs);
             suite.Require(player.Open("Video/h264-aac.mp4"),
-                          "MP4/H.264/AAC must open from a stored archive range");
+                          "MP4/H.264/AAC must open from encrypted PDX AVIO");
+            suite.Require(player.Pause() && player.Resume(),
+                          "encrypted playback must preserve pause/resume lifecycle");
             for (int iteration = 0; iteration < 3'000 && player.Playing();
                  ++iteration) {
                 player.Update(1.0f / 240.0f);
                 SDL_Delay(1);
             }
             suite.Expect(player.Finished(),
-                         "archive-backed video must drain to native EOF");
+                         "encrypted archive-backed video must drain to native EOF");
+            suite.Require(player.Open("Video/h264-aac.mp4"),
+                          "encrypted playback must reopen after EOF");
+            player.Stop();
+            suite.Require(player.Open("Video/h264-aac.mp4"),
+                          "encrypted playback must reopen after stop");
+            player.Skip();
+            suite.Expect(player.State() == px::video::PlaybackState::Stopped,
+                         "encrypted playback skip must release decoder state");
+        }
+
+        {
+            px::io::VFS corruptVfs;
+            suite.Require(corruptVfs.MountArchive(corruptPath.string(), &key),
+                          "corrupted encrypted archive index should still mount");
+            px::video::VideoPlayer player(renderer, corruptVfs);
+            suite.Expect(!player.Open("Video/h264-aac.mp4") &&
+                             player.State() == px::video::PlaybackState::Failed &&
+                             !player.LastError().empty(),
+                         "authenticated media corruption must fail FFmpeg startup without leaving a decoder worker");
         }
 
         SDL_DestroyRenderer(renderer);

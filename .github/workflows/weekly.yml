@@ -30,7 +30,8 @@ jobs:
             -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/fuzz" \
             -DBUILD_TESTING=ON \
             -DPRISMATIX_BUILD_FUZZERS=ON \
-            -DPRISMATIX_STRESS_TESTS=ON
+            -DPRISMATIX_STRESS_TESTS=ON \
+            -DPRISMATIX_HEAVY_STRESS_TESTS=ON
       - run: >-
           cmake --build out/ci/fuzz
           --target PrismatiXParserFuzz PrismatiXSoakTests

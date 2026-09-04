@@ -60,6 +60,10 @@ public:
         int z = 0;
         int order = 0;
         bool visible = true;
+        std::string effect;
+        float effectProgress = 0.0f;
+        std::uint32_t effectSeed = 0;
+        std::array<std::array<float, 4>, 8> effectParameters{};
     };
 
     // Stage graph foundation. Legacy layers/characters are leaf nodes in this
@@ -71,6 +75,10 @@ public:
                           const NodeTransform& transform);
     bool SetNodeOrder(const std::string& name, int z, int order);
     bool SetNodeVisibility(const std::string& name, bool visible);
+    bool SetNodeEffect(
+        const std::string& name, std::string_view effect, float progress,
+        const graphics::CustomEffectNamedParameters& parameters = {});
+    void ClearNodeEffect(std::string_view name);
     void RemoveNode(const std::string& name);
     [[nodiscard]] std::vector<SavedNode> SnapshotNodes() const;
 
@@ -274,6 +282,10 @@ private:
         int z = 0;
         int order = 0;
         bool visible = true;
+        std::string effect;
+        float effectProgress = 0.0f;
+        std::uint32_t effectSeed = 0;
+        std::array<std::array<float, 4>, 8> effectParameters{};
     };
 
     struct WorldNodeTransform {
@@ -301,6 +313,8 @@ private:
     [[nodiscard]] WorldNodeTransform ResolveNodeTransform(
         const std::string& name) const;
     [[nodiscard]] NodeSortKey ResolveNodeSortKey(
+        const std::string& name) const;
+    [[nodiscard]] const Node* ResolveNodeEffect(
         const std::string& name) const;
     [[nodiscard]] bool WouldCreateNodeCycle(
         const std::string& name, const std::string& parent) const;

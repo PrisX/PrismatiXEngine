@@ -26,6 +26,31 @@ float Approach(float value, float target, float rate, float dt) {
     const float t = std::min(1.0f, rate * dt);
     return value + (target - value) * t;
 }
+
+std::uint32_t EffectSeed(const std::string_view node,
+                         const std::string_view effect) {
+    std::uint32_t hash = 2166136261u;
+    for (const auto text : {node, effect}) {
+        for (const unsigned char character : text) {
+            hash ^= character;
+            hash *= 16777619u;
+        }
+        hash ^= 0xffu;
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+diag::Diagnostic StageRestoreError(std::string code, std::string message,
+                                   std::string details = {}) {
+    diag::Diagnostic diagnostic;
+    diagnostic.severity = diag::Severity::Error;
+    diagnostic.code = std::move(code);
+    diagnostic.category = "Runtime.Stage";
+    diagnostic.message = std::move(message);
+    diagnostic.details = std::move(details);
+    return diagnostic;
+}
 }
 
 Stage::Stage(graphics::Renderer2D& renderer, graphics::AssetCache& assets)
@@ -274,6 +299,35 @@ bool Stage::SetNodeVisibility(const std::string& name, const bool visible) {
     return true;
 }
 
+bool Stage::SetNodeEffect(
+    const std::string& name, const std::string_view effect,
+    const float progress,
+    const graphics::CustomEffectNamedParameters& parameters) {
+    auto found = m_nodes.find(name);
+    if (found == m_nodes.end() || !std::isfinite(progress) ||
+        !m_renderer.HasCustomEffect(effect, "node"))
+        return false;
+    const auto resolved = parameters.empty()
+                              ? m_renderer.CustomEffectDefaults(effect)
+                              : m_renderer.ResolveCustomEffectParameters(
+                                    effect, parameters);
+    if (!resolved) return false;
+    found->second.effect = std::string(effect);
+    found->second.effectProgress = std::clamp(progress, 0.0f, 1.0f);
+    found->second.effectSeed = EffectSeed(name, effect);
+    found->second.effectParameters = *resolved;
+    return true;
+}
+
+void Stage::ClearNodeEffect(const std::string_view name) {
+    const auto found = m_nodes.find(std::string(name));
+    if (found == m_nodes.end()) return;
+    found->second.effect.clear();
+    found->second.effectProgress = 0.0f;
+    found->second.effectSeed = 0;
+    found->second.effectParameters = {};
+}
+
 void Stage::RemoveNode(const std::string& name) {
     auto found = m_nodes.find(name);
     if (found == m_nodes.end()) return;
@@ -295,8 +349,20 @@ std::vector<Stage::SavedNode> Stage::SnapshotNodes() const {
     std::vector<SavedNode> out;
     out.reserve(m_nodes.size());
     for (const auto& [name, node] : m_nodes) {
-        out.push_back({name, node.kind, node.parent, node.children, node.transform,
-                       node.z, node.order, node.visible});
+        SavedNode saved;
+        saved.name = name;
+        saved.kind = node.kind;
+        saved.parent = node.parent;
+        saved.children = node.children;
+        saved.transform = node.transform;
+        saved.z = node.z;
+        saved.order = node.order;
+        saved.visible = node.visible;
+        saved.effect = node.effect;
+        saved.effectProgress = node.effectProgress;
+        saved.effectSeed = node.effectSeed;
+        saved.effectParameters = node.effectParameters;
+        out.push_back(std::move(saved));
     }
     std::ranges::sort(out, [](const SavedNode& left, const SavedNode& right) {
         if (left.order != right.order) return left.order < right.order;
@@ -344,6 +410,18 @@ Stage::WorldNodeTransform Stage::ResolveNodeTransform(
         world.visible = world.visible && node.visible;
     }
     return world;
+}
+
+const Stage::Node* Stage::ResolveNodeEffect(const std::string& name) const {
+    std::string cursor = name;
+    for (std::size_t depth = 0; !cursor.empty() && depth <= m_nodes.size();
+         ++depth) {
+        const auto found = m_nodes.find(cursor);
+        if (found == m_nodes.end()) return nullptr;
+        if (!found->second.effect.empty()) return &found->second;
+        cursor = found->second.parent;
+    }
+    return nullptr;
 }
 
 Stage::NodeSortKey Stage::ResolveNodeSortKey(const std::string& name) const {
@@ -423,7 +501,7 @@ bool Stage::ApplyAnimationProperty(const std::string& target, const std::string&
             if(!m_ruleState.active)return false;
             m_ruleState.progress=std::clamp(*number,0.0f,.999999f);
         }
-        else if (m_renderer.HasCustomEffect(property)) {
+        else if (m_renderer.HasCustomEffect(property, "stage")) {
             if (m_customEffect != property) {
                 const auto defaults = m_renderer.CustomEffectDefaults(property);
                 if (!defaults) return false;
@@ -660,7 +738,8 @@ void Stage::ClearScreenEffect(const std::string_view effect) {
 bool Stage::SetCustomEffect(
     const std::string_view effect, const float progress,
     const std::array<std::array<float, 4>, 8>* parameters) {
-    if (!m_renderer.HasCustomEffect(effect) || !std::isfinite(progress))
+    if (!m_renderer.HasCustomEffect(effect, "stage") ||
+        !std::isfinite(progress))
         return false;
     if (m_customEffect != effect) {
         const auto defaults = m_renderer.CustomEffectDefaults(effect);
@@ -818,10 +897,16 @@ void Stage::RenderLayers(bool front) {
         m_renderer.PushTransform(
             {bounds.x + bounds.w * 0.5f, bounds.y + bounds.h * 0.5f},
             {1.0f, 1.0f}, world.rotation);
+        const Node* nodeEffect = ResolveNodeEffect(std::string(entry.name));
+        const bool effectActive = nodeEffect && m_renderer.BeginNodeEffect(
+            nodeEffect->effect, nodeEffect->effectProgress,
+            static_cast<float>(nodeEffect->effectSeed),
+            nodeEffect->effectParameters, bounds);
         m_renderer.DrawImage(
             layer->imagePath, bounds,
             static_cast<std::uint8_t>(
                 std::clamp(world.opacity, 0.0f, 1.0f) * 255.0f));
+        if (effectActive) m_renderer.EndNodeEffect();
         m_renderer.PopTransform();
     }
 }
@@ -889,10 +974,17 @@ void Stage::Render() {
                             actor.effectOffsetY + world.y;
         m_renderer.PushTransform({drawX + w * 0.5f, drawY + h * 0.5f},
                                  {1.0f, 1.0f}, world.rotation);
-        m_renderer.DrawImage(path, Rect{ drawX, drawY, w, h },
+        const Rect bounds{drawX, drawY, w, h};
+        const Node* nodeEffect = ResolveNodeEffect(name);
+        const bool effectActive = nodeEffect && m_renderer.BeginNodeEffect(
+            nodeEffect->effect, nodeEffect->effectProgress,
+            static_cast<float>(nodeEffect->effectSeed),
+            nodeEffect->effectParameters, bounds);
+        m_renderer.DrawImage(path, bounds,
                              static_cast<std::uint8_t>(std::clamp(
                                  alpha * actor.effectAlpha * world.opacity,
                                  0.0f, 255.0f)));
+        if (effectActive) m_renderer.EndNodeEffect();
         m_renderer.PopTransform();
     };
     for (const ActorEntry& entry : ordered) {
@@ -915,10 +1007,10 @@ void Stage::Render() {
             const auto found = m_screenEffects.find(name);
             return found == m_screenEffects.end() ? 0.0f : found->second;
         };
-        graphics::StagePostEffects effects{
-            .blur = effect("blur"),
-            .vignette = effect("vignette"),
-            .colorGrade = effect("color-grade")};
+        graphics::StagePostEffects effects;
+        effects.blur = effect("blur");
+        effects.vignette = effect("vignette");
+        effects.colorGrade = effect("color-grade");
         effects.randomSeed = static_cast<float>(m_customEffectSeed);
         effects.customEffect = m_customEffect;
         effects.customProgress = m_customEffectProgress;
@@ -999,11 +1091,8 @@ void Stage::RestoreLayers(const std::vector<SavedLayer>& layers) {
 
 Status Stage::RestoreNodes(const std::vector<SavedNode>& nodes) {
     if (nodes.size() > 4'096) {
-        return Status::Fail(diag::Diagnostic{
-            .severity = diag::Severity::Error,
-            .code = "PXSTAGE7521",
-            .category = "Runtime.Stage",
-            .message = "Saved stage graph exceeds the node limit"});
+        return Status::Fail(StageRestoreError(
+            "PXSTAGE7521", "Saved stage graph exceeds the node limit"));
     }
     const auto finite = [](const float value) { return std::isfinite(value); };
     std::unordered_map<std::string, Node> candidate;
@@ -1013,7 +1102,28 @@ Status Stage::RestoreNodes(const std::vector<SavedNode>& nodes) {
         const bool validKind = saved.kind == NodeKind::Group ||
                                saved.kind == NodeKind::Image ||
                                saved.kind == NodeKind::Character;
-        if (!validKind || saved.name.empty() || saved.name.size() > 128 ||
+        bool validEffect = std::isfinite(saved.effectProgress) &&
+                           saved.effectProgress >= 0.0f &&
+                           saved.effectProgress <= 1.0f &&
+                           (saved.effect.empty() ||
+                            m_renderer.HasCustomEffect(saved.effect, "node"));
+        for (const auto& slot : saved.effectParameters)
+            for (const float component : slot)
+                validEffect = validEffect && std::isfinite(component);
+        Node restored;
+        restored.kind = saved.kind;
+        restored.parent = saved.parent;
+        restored.children = saved.children;
+        restored.transform = saved.transform;
+        restored.z = saved.z;
+        restored.order = saved.order;
+        restored.visible = saved.visible;
+        restored.effect = saved.effect;
+        restored.effectProgress = saved.effectProgress;
+        restored.effectSeed = saved.effectSeed;
+        restored.effectParameters = saved.effectParameters;
+        if (!validKind || !validEffect || saved.name.empty() ||
+            saved.name.size() > 128 ||
             saved.parent.size() > 128 || !finite(t.x) || !finite(t.y) ||
             !finite(t.scaleX) || !finite(t.scaleY) || !finite(t.rotation) ||
             !finite(t.opacity) || t.scaleX <= 0.0f || t.scaleY <= 0.0f ||
@@ -1021,17 +1131,10 @@ Status Stage::RestoreNodes(const std::vector<SavedNode>& nodes) {
             saved.z < -kNodeOrderLimit || saved.z > kNodeOrderLimit ||
             saved.order < -kNodeOrderLimit ||
             saved.order > kNodeOrderLimit ||
-            !candidate.emplace(saved.name,
-                               Node{saved.kind, saved.parent, saved.children,
-                                    saved.transform, saved.z, saved.order,
-                                    saved.visible})
+            !candidate.emplace(saved.name, std::move(restored))
                  .second) {
-            return Status::Fail(diag::Diagnostic{
-                .severity = diag::Severity::Error,
-                .code = "PXSTAGE7522",
-                .category = "Runtime.Stage",
-                .message = "Saved stage node is invalid",
-                .details = saved.name});
+            return Status::Fail(StageRestoreError(
+                "PXSTAGE7522", "Saved stage node is invalid", saved.name));
         }
         nextOrder = std::max(nextOrder, saved.order + 1);
     }
@@ -1041,79 +1144,57 @@ Status Stage::RestoreNodes(const std::vector<SavedNode>& nodes) {
             const auto parent = candidate.find(node.parent);
             if (parent == candidate.end() || parent->second.kind != NodeKind::Group ||
                 !derived[node.parent].insert(name).second) {
-                return Status::Fail(diag::Diagnostic{
-                    .severity = diag::Severity::Error,
-                    .code = "PXSTAGE7523",
-                    .category = "Runtime.Stage",
-                    .message = "Saved stage node parent is invalid",
-                    .details = name});
+                return Status::Fail(StageRestoreError(
+                    "PXSTAGE7523", "Saved stage node parent is invalid", name));
             }
         }
     }
     for (const auto& [name, node] : candidate) {
         if (node.kind == NodeKind::Image && !m_layers.contains(name)) {
-            return Status::Fail(diag::Diagnostic{
-                .severity = diag::Severity::Error, .code = "PXSTAGE7524",
-                .category = "Runtime.Stage",
-                .message = "Saved image node has no layer payload", .details = name});
+            return Status::Fail(StageRestoreError(
+                "PXSTAGE7524", "Saved image node has no layer payload", name));
         }
         if (node.kind == NodeKind::Character && !m_actors.contains(name)) {
-            return Status::Fail(diag::Diagnostic{
-                .severity = diag::Severity::Error, .code = "PXSTAGE7525",
-                .category = "Runtime.Stage",
-                .message = "Saved character node has no actor payload", .details = name});
+            return Status::Fail(StageRestoreError(
+                "PXSTAGE7525", "Saved character node has no actor payload", name));
         }
         std::unordered_set<std::string> declared;
         for (const auto& child : node.children) {
             if (!declared.insert(child).second) {
-                return Status::Fail(diag::Diagnostic{
-                    .severity = diag::Severity::Error, .code = "PXSTAGE7526",
-                    .category = "Runtime.Stage",
-                    .message = "Saved stage node repeats a child", .details = name});
+                return Status::Fail(StageRestoreError(
+                    "PXSTAGE7526", "Saved stage node repeats a child", name));
             }
         }
         if (declared != derived[name]) {
-            return Status::Fail(diag::Diagnostic{
-                .severity = diag::Severity::Error, .code = "PXSTAGE7527",
-                .category = "Runtime.Stage",
-                .message = "Saved stage parent/children links disagree",
-                .details = name});
+            return Status::Fail(StageRestoreError(
+                "PXSTAGE7527", "Saved stage parent/children links disagree",
+                name));
         }
         std::string cursor = node.parent;
         for (std::size_t depth = 0; !cursor.empty() && depth <= candidate.size();
              ++depth) {
             if (cursor == name) {
-                return Status::Fail(diag::Diagnostic{
-                    .severity = diag::Severity::Error, .code = "PXSTAGE7528",
-                    .category = "Runtime.Stage",
-                    .message = "Saved stage graph contains a cycle",
-                    .details = name});
+                return Status::Fail(StageRestoreError(
+                    "PXSTAGE7528", "Saved stage graph contains a cycle", name));
             }
             cursor = candidate.at(cursor).parent;
         }
         if (!cursor.empty()) {
-            return Status::Fail(diag::Diagnostic{
-                .severity = diag::Severity::Error, .code = "PXSTAGE7528",
-                .category = "Runtime.Stage",
-                .message = "Saved stage graph contains a cycle",
-                .details = name});
+            return Status::Fail(StageRestoreError(
+                "PXSTAGE7528", "Saved stage graph contains a cycle", name));
         }
     }
     for (const auto& [name, _] : m_layers) {
         if (!candidate.contains(name) ||
             candidate.at(name).kind != NodeKind::Image)
-            return Status::Fail(diag::Diagnostic{
-                .severity = diag::Severity::Error, .code = "PXSTAGE7529",
-                .category = "Runtime.Stage",
-                .message = "Saved stage graph omits a layer", .details = name});
+            return Status::Fail(StageRestoreError(
+                "PXSTAGE7529", "Saved stage graph omits a layer", name));
     }
     for (const auto& [name, _] : m_actors) {
         if (!candidate.contains(name) ||
             candidate.at(name).kind != NodeKind::Character)
-            return Status::Fail(diag::Diagnostic{
-                .severity = diag::Severity::Error, .code = "PXSTAGE7530",
-                .category = "Runtime.Stage",
-                .message = "Saved stage graph omits an actor", .details = name});
+            return Status::Fail(StageRestoreError(
+                "PXSTAGE7530", "Saved stage graph omits an actor", name));
     }
     m_nodes = std::move(candidate);
     m_nextNodeOrder = nextOrder;
@@ -1185,11 +1266,9 @@ Status Stage::RestoreState(const RuntimeState& state) {
         !finite(state.customEffectProgress) ||
         state.customEffectProgress < 0.0f || state.customEffectProgress > 1.0f ||
         (!state.customEffect.empty() &&
-         !m_renderer.HasCustomEffect(state.customEffect))) {
-        return Status::Fail(diag::Diagnostic{.severity = diag::Severity::Error,
-                                             .code = "PXSTAGE7510",
-                                             .category = "Runtime.Stage",
-                                             .message = "Saved stage state contains invalid numbers"});
+         !m_renderer.HasCustomEffect(state.customEffect, "stage"))) {
+        return Status::Fail(StageRestoreError(
+            "PXSTAGE7510", "Saved stage state contains invalid numbers"));
     }
     ClearAll();
     m_bgPath = state.background;
@@ -1211,11 +1290,9 @@ Status Stage::RestoreState(const RuntimeState& state) {
     for (const auto& slot : m_customEffectParameters)
         for (const float component : slot)
             if (!finite(component))
-                return Status::Fail(diag::Diagnostic{
-                    .severity = diag::Severity::Error,
-                    .code = "PXSTAGE7510",
-                    .category = "Runtime.Stage",
-                    .message = "Saved custom effect parameters contain invalid numbers"});
+                return Status::Fail(StageRestoreError(
+                    "PXSTAGE7510",
+                    "Saved custom effect parameters contain invalid numbers"));
     for (const SavedActor& saved : state.actors) {
         if (saved.name.empty() || !finite(saved.alpha) || !finite(saved.targetAlpha) ||
             !finite(saved.previousAlpha) || !finite(saved.x) || !finite(saved.targetX) ||
@@ -1224,11 +1301,8 @@ Status Stage::RestoreState(const RuntimeState& state) {
             !finite(saved.effectOffsetY) || !finite(saved.effectScale) ||
             saved.effectScale <= 0.0f || !finite(saved.effectAlpha) ||
             saved.effectAlpha < 0.0f || saved.effectAlpha > 1.0f) {
-            return Status::Fail(diag::Diagnostic{.severity = diag::Severity::Error,
-                                                 .code = "PXSTAGE7511",
-                                                 .category = "Runtime.Stage",
-                                                 .message = "Saved actor state is invalid",
-                                                 .details = saved.name});
+            return Status::Fail(StageRestoreError(
+                "PXSTAGE7511", "Saved actor state is invalid", saved.name));
         }
         Actor actor;
         actor.imagePath = saved.imagePath;
@@ -1261,11 +1335,8 @@ Status Stage::RestoreState(const RuntimeState& state) {
     for (const SavedTween& saved : state.tweens) {
         if (saved.target.empty() || !finite(saved.elapsed) || !finite(saved.duration) ||
             saved.duration <= 0.0f || saved.elapsed < 0.0f || saved.elapsed > saved.duration) {
-            return Status::Fail(diag::Diagnostic{.severity = diag::Severity::Error,
-                                                 .code = "PXSTAGE7512",
-                                                 .category = "Runtime.Stage",
-                                                 .message = "Saved stage animation is invalid",
-                                                 .details = saved.target});
+            return Status::Fail(StageRestoreError(
+                "PXSTAGE7512", "Saved stage animation is invalid", saved.target));
         }
         m_tweens.push_back(Tween{saved.layer, saved.target, saved.spec, saved.fromX,
                                   saved.fromY, saved.fromScale, saved.fromAlpha,
@@ -1277,11 +1348,9 @@ Status Stage::RestoreState(const RuntimeState& state) {
                           std::max(1, static_cast<int>(std::lround(state.ruleDuration * 1000.0f))),
                           state.ruleVague);
         if (!m_ruleState.active) {
-            return Status::Fail(diag::Diagnostic{.severity = diag::Severity::Error,
-                                                 .code = "PXSTAGE7513",
-                                                 .category = "Runtime.Stage",
-                                                 .message = "Saved rule transition assets cannot be restored",
-                                                 .details = state.ruleMask});
+            return Status::Fail(StageRestoreError(
+                "PXSTAGE7513", "Saved rule transition assets cannot be restored",
+                state.ruleMask));
         }
         m_ruleState.progress = state.ruleProgress;
     }

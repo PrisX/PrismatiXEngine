@@ -14,6 +14,8 @@ namespace px::io { class VFS; }
 struct SDL_Renderer;
 struct SDL_GPUShader;
 struct SDL_GPURenderState;
+struct SDL_GPUTexture;
+struct SDL_GPUSampler;
 struct SDL_Texture;
 
 namespace px::graphics {
@@ -40,7 +42,9 @@ public:
     void SetLogicalSize(int width, int height);
     bool LoadCustomEffects(const std::vector<CustomEffectDescriptor>& effects,
                            const io::VFS& vfs);
-    [[nodiscard]] bool HasCustomEffect(std::string_view id) const;
+    [[nodiscard]] bool HasCustomEffect(
+        std::string_view id, std::string_view target = {}) const;
+    [[nodiscard]] std::string CustomEffectTarget(std::string_view id) const;
     [[nodiscard]] std::vector<std::string> CustomEffectIds() const;
     [[nodiscard]] std::optional<std::array<std::array<float, 4>, 8>>
     CustomEffectDefaults(std::string_view id) const;
@@ -50,6 +54,16 @@ public:
         const CustomEffectNamedParameters& parameters) const;
     [[nodiscard]] bool BeginStage();
     void EndStage(const StagePostEffects& effects);
+    [[nodiscard]] bool BeginNodeEffect(
+        std::string_view id, float progress, float randomSeed,
+        const std::array<std::array<float, 4>, 8>& parameters,
+        const std::array<float, 4>& viewport);
+    void EndNodeEffect();
+    [[nodiscard]] bool ApplyCustomTransition(
+        std::string_view id, SDL_Texture* outgoing, SDL_Texture* incoming,
+        float progress, float randomSeed,
+        const std::array<std::array<float, 4>, 8>& parameters);
+    void InvalidateCustomTransitionTargets();
     [[nodiscard]] bool Enabled() const { return m_enabled; }
     [[nodiscard]] bool Ready() const { return !m_required || m_enabled; }
 
@@ -74,6 +88,9 @@ private:
         CustomEffectDescriptor descriptor;
         SDL_GPUShader* shader = nullptr;
         SDL_GPURenderState* state = nullptr;
+        SDL_GPUSampler* transitionSampler = nullptr;
+        std::unordered_map<SDL_GPUTexture*, SDL_GPURenderState*>
+            transitionStates;
     };
     std::unordered_map<std::string, CustomEffectState> m_customEffects;
     int m_width = 0;

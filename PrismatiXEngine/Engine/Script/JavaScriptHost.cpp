@@ -203,6 +203,76 @@ std::optional<InputAction> ParseInputAction(const std::string_view name) {
     return std::nullopt;
 }
 
+std::optional<double> NumericVariant(const Variant& value) {
+    if (const auto* number = value.TryGet<double>()) return *number;
+    if (const auto* integer = value.TryGet<std::int64_t>())
+        return static_cast<double>(*integer);
+    return std::nullopt;
+}
+
+std::optional<vn::ParticleRange> ParticleRangeVariant(const Variant& value) {
+    if (const auto number = NumericVariant(value))
+        return vn::ParticleRange{static_cast<float>(*number),
+                                 static_cast<float>(*number)};
+    const auto* array = value.AsArray();
+    if (!array || array->size() != 2) return std::nullopt;
+    const auto minimum = NumericVariant(array->at(0));
+    const auto maximum = NumericVariant(array->at(1));
+    if (!minimum || !maximum) return std::nullopt;
+    return vn::ParticleRange{static_cast<float>(*minimum),
+                             static_cast<float>(*maximum)};
+}
+
+bool ParticleCurveVariant(const Variant& value,
+                          std::vector<vn::ParticleCurvePoint>& result) {
+    const auto* array = value.AsArray();
+    if (!array || array->size() > 8) return false;
+    result.clear();
+    for (const auto& item : *array) {
+        const auto* point = item.AsObject();
+        if (!point) return false;
+        const auto time = point->find("time");
+        const auto sampled = point->find("value");
+        if (time == point->end() || sampled == point->end()) return false;
+        const auto t = NumericVariant(time->second);
+        const auto v = NumericVariant(sampled->second);
+        if (!t || !v) return false;
+        result.push_back({static_cast<float>(*t), static_cast<float>(*v)});
+    }
+    return true;
+}
+
+bool ParticleColorCurveVariant(
+    const Variant& value, std::vector<vn::ParticleColorPoint>& result) {
+    const auto* array = value.AsArray();
+    if (!array || array->size() > 8) return false;
+    result.clear();
+    for (const auto& item : *array) {
+        const auto* point = item.AsObject();
+        if (!point) return false;
+        const auto time = point->find("time");
+        const auto sampled = point->find("value");
+        const auto* channels = sampled == point->end()
+                                   ? nullptr
+                                   : sampled->second.AsArray();
+        const auto t = time == point->end()
+                           ? std::optional<double>{}
+                           : NumericVariant(time->second);
+        if (!t || !channels || channels->size() != 4) return false;
+        Color color;
+        std::uint8_t* output[4]{&color.r, &color.g, &color.b, &color.a};
+        for (std::size_t index = 0; index < 4; ++index) {
+            const auto channel = NumericVariant(channels->at(index));
+            if (!channel || *channel < 0.0 || *channel > 255.0 ||
+                std::floor(*channel) != *channel)
+                return false;
+            *output[index] = static_cast<std::uint8_t>(*channel);
+        }
+        result.push_back({static_cast<float>(*t), color});
+    }
+    return true;
+}
+
 struct ManifestSafety {
     bool previewSafe = false;
     bool deterministic = false;
@@ -1858,10 +1928,10 @@ public:
                     if (const auto value = NumberProperty(values[2], "rate"))
                         spec.rate = static_cast<float>(*value);
                     if (const auto value = NumberProperty(values[2], "maxParticles")) {
-                        if (*value < 1.0 || *value > 4096.0 ||
+                        if (*value < 1.0 || *value > 32768.0 ||
                             std::floor(*value) != *value)
                             return JS_ThrowRangeError(
-                                context, "particle maxParticles must be 1..4096");
+                                context, "particle maxParticles must be 1..32768");
                         spec.maxParticles = static_cast<std::uint32_t>(*value);
                     }
                     if (const auto value = NumberProperty(values[2], "z")) {
@@ -1880,6 +1950,157 @@ public:
                         spec.speed = static_cast<float>(*value);
                     if (const auto value = NumberProperty(values[2], "size"))
                         spec.size = static_cast<float>(*value);
+
+                    const auto converted = FromJavaScript(values[2]);
+                    const auto* options = converted ? converted->AsObject() : nullptr;
+                    if (!options)
+                        return JS_ThrowTypeError(
+                            context, "particle options must be JSON-compatible");
+                    const auto integerOption = [&](const Variant& value,
+                                                   std::uint32_t& output) {
+                        const auto number = NumericVariant(value);
+                        if (!number || *number < 0.0 ||
+                            *number > std::numeric_limits<std::uint32_t>::max() ||
+                            std::floor(*number) != *number)
+                            return false;
+                        output = static_cast<std::uint32_t>(*number);
+                        return true;
+                    };
+                    if (const auto found = options->find("texture");
+                        found != options->end()) {
+                        const auto* path = found->second.TryGet<std::string>();
+                        if (!path)
+                            return JS_ThrowTypeError(
+                                context, "particle texture must be a resource path");
+                        spec.texture = *path;
+                    }
+                    if (const auto found = options->find("atlas");
+                        found != options->end()) {
+                        const auto* atlas = found->second.AsObject();
+                        if (!atlas)
+                            return JS_ThrowTypeError(
+                                context, "particle atlas must be an object");
+                        const auto assign = [&](const char* name,
+                                                std::uint32_t& output) {
+                            const auto value = atlas->find(name);
+                            return value == atlas->end() ||
+                                   integerOption(value->second, output);
+                        };
+                        if (!assign("columns", spec.atlasColumns) ||
+                            !assign("rows", spec.atlasRows) ||
+                            !assign("firstFrame", spec.atlasFirstFrame) ||
+                            !assign("frameCount", spec.atlasFrameCount))
+                            return JS_ThrowRangeError(
+                                context, "particle atlas fields must be uint32 values");
+                    }
+                    if (const auto found = options->find("spawnShape");
+                        found != options->end()) {
+                        const auto* shape = found->second.TryGet<std::string>();
+                        if (!shape)
+                            return JS_ThrowTypeError(
+                                context, "particle spawnShape must be a string");
+                        if (*shape == "point") spec.spawnShape = vn::ParticleSpawnShape::Point;
+                        else if (*shape == "box") spec.spawnShape = vn::ParticleSpawnShape::Box;
+                        else if (*shape == "line") spec.spawnShape = vn::ParticleSpawnShape::Line;
+                        else if (*shape == "ellipse") spec.spawnShape = vn::ParticleSpawnShape::Ellipse;
+                        else return JS_ThrowRangeError(
+                            context, "particle spawnShape is unsupported");
+                        spec.advanced = true;
+                    }
+                    const auto vectorRanges = [&](const char* name,
+                                                  vn::ParticleRange& x,
+                                                  vn::ParticleRange& y) {
+                        const auto found = options->find(name);
+                        if (found == options->end()) return true;
+                        const auto* object = found->second.AsObject();
+                        if (!object) return false;
+                        const auto xValue = object->find("x");
+                        const auto yValue = object->find("y");
+                        const auto parsedX = xValue == object->end()
+                                                 ? std::optional<vn::ParticleRange>{x}
+                                                 : ParticleRangeVariant(xValue->second);
+                        const auto parsedY = yValue == object->end()
+                                                 ? std::optional<vn::ParticleRange>{y}
+                                                 : ParticleRangeVariant(yValue->second);
+                        if (!parsedX || !parsedY) return false;
+                        x = *parsedX;
+                        y = *parsedY;
+                        spec.advanced = true;
+                        return true;
+                    };
+                    if (!vectorRanges("position", spec.positionX, spec.positionY) ||
+                        !vectorRanges("velocity", spec.velocityX, spec.velocityY) ||
+                        !vectorRanges("acceleration", spec.accelerationX,
+                                      spec.accelerationY))
+                        return JS_ThrowTypeError(
+                            context, "particle vector ranges require numeric x/y ranges");
+                    const auto rangeOption = [&](const char* name,
+                                                 vn::ParticleRange& output) {
+                        const auto found = options->find(name);
+                        if (found == options->end()) return true;
+                        const auto parsed = ParticleRangeVariant(found->second);
+                        if (!parsed) return false;
+                        output = *parsed;
+                        spec.advanced = true;
+                        return true;
+                    };
+                    if (!rangeOption("lifetime", spec.lifetime) ||
+                        !rangeOption("rotation", spec.rotation) ||
+                        !rangeOption("angularVelocity", spec.angularVelocity) ||
+                        !rangeOption("scale", spec.scale) ||
+                        !rangeOption("initialOpacity", spec.initialOpacity))
+                        return JS_ThrowTypeError(
+                            context, "particle scalar ranges must be numbers or [min,max]");
+                    const auto curveOption = [&](const char* name,
+                                                 std::vector<vn::ParticleCurvePoint>& output) {
+                        const auto found = options->find(name);
+                        if (found == options->end()) return true;
+                        spec.advanced = true;
+                        return ParticleCurveVariant(found->second, output);
+                    };
+                    if (!curveOption("scaleOverLifetime", spec.scaleOverLifetime) ||
+                        !curveOption("opacityOverLifetime",
+                                     spec.opacityOverLifetime))
+                        return JS_ThrowTypeError(
+                            context, "particle curves require bounded time/value points");
+                    if (const auto found = options->find("colorOverLifetime");
+                        found != options->end()) {
+                        spec.advanced = true;
+                        if (!ParticleColorCurveVariant(found->second,
+                                                       spec.colorOverLifetime))
+                            return JS_ThrowTypeError(
+                                context, "particle color curve is invalid");
+                    }
+                    const auto floatOption = [&](const char* name, float& output) {
+                        const auto found = options->find(name);
+                        if (found == options->end()) return true;
+                        const auto number = NumericVariant(found->second);
+                        if (!number || !std::isfinite(*number)) return false;
+                        output = static_cast<float>(*number);
+                        spec.advanced = true;
+                        return true;
+                    };
+                    if (!floatOption("gravity", spec.gravity) ||
+                        !floatOption("variation", spec.variation) ||
+                        !floatOption("duration", spec.duration))
+                        return JS_ThrowTypeError(
+                            context, "particle gravity/variation/duration must be finite");
+                    if (const auto found = options->find("burst");
+                        found != options->end()) {
+                        spec.advanced = true;
+                        if (!integerOption(found->second, spec.burst))
+                            return JS_ThrowRangeError(
+                                context, "particle burst must be a uint32");
+                    }
+                    if (const auto found = options->find("loop");
+                        found != options->end()) {
+                        const auto* loop = found->second.TryGet<bool>();
+                        if (!loop)
+                            return JS_ThrowTypeError(
+                                context, "particle loop must be boolean");
+                        spec.loop = *loop;
+                        spec.advanced = true;
+                    }
                 }
                 return JS_NewBool(
                     context, services.stage->SetParticleEmitter(first, spec));
@@ -1928,6 +2149,72 @@ public:
                     return JS_ThrowTypeError(
                         context, "ClearScreenEffect requires an id");
                 services.stage->ClearScreenEffect(first);
+                return JS_UNDEFINED;
+            }
+            if (operation == "stage.nodeEffect") {
+                std::string effect;
+                double progress = 0.0;
+                if (!StringArgument(count, values, 0, first) ||
+                    !StringArgument(count, values, 1, effect) ||
+                    !NumberArgument(count, values, 2, progress))
+                    return JS_ThrowTypeError(
+                        context,
+                        "SetStageNodeEffect requires a node, effect, and progress");
+                graphics::CustomEffectNamedParameters parameters;
+                if (count >= 4 && !JS_IsUndefined(values[3])) {
+                    const auto converted = FromJavaScript(values[3]);
+                    const auto* named = converted ? converted->AsObject() : nullptr;
+                    if (!named || named->size() > 8)
+                        return JS_ThrowTypeError(
+                            context,
+                            "node effect parameters must be a bounded named object");
+                    for (const auto& [name, value] : *named) {
+                        std::vector<float> components;
+                        const auto numeric = [](const Variant& item,
+                                                float& output) {
+                            if (const auto* number = item.TryGet<double>())
+                                output = static_cast<float>(*number);
+                            else if (const auto* integer =
+                                         item.TryGet<std::int64_t>())
+                                output = static_cast<float>(*integer);
+                            else
+                                return false;
+                            return std::isfinite(output);
+                        };
+                        if (const auto* array = value.AsArray()) {
+                            if (array->empty() || array->size() > 4)
+                                return JS_ThrowTypeError(
+                                    context,
+                                    "node effect vectors must contain 1 to 4 numbers");
+                            components.resize(array->size());
+                            for (std::size_t index = 0; index < array->size();
+                                 ++index)
+                                if (!numeric(array->at(index), components[index]))
+                                    return JS_ThrowTypeError(
+                                        context,
+                                        "node effect parameters must be finite numbers");
+                        } else {
+                            components.resize(1);
+                            if (!numeric(value, components.front()))
+                                return JS_ThrowTypeError(
+                                    context,
+                                    "node effect parameters must be numeric");
+                        }
+                        parameters.emplace(name, std::move(components));
+                    }
+                }
+                if (!services.stage->SetNodeEffect(
+                        first, effect, static_cast<float>(progress), parameters))
+                    return JS_ThrowRangeError(
+                        context,
+                        "node effect, target, or parameters are unavailable");
+                return JS_NewBool(context, true);
+            }
+            if (operation == "stage.clearNodeEffect") {
+                if (!StringArgument(count, values, 0, first))
+                    return JS_ThrowTypeError(
+                        context, "ClearStageNodeEffect requires a node");
+                services.stage->ClearNodeEffect(first);
                 return JS_UNDEFINED;
             }
             if (operation == "stage.customEffect") {
@@ -2113,10 +2400,55 @@ public:
                     !NumberArgument(count, values, 1, duration))
                     return JS_ThrowTypeError(
                         context, "screen effect duration must be seconds");
-                return JS_NewInt64(
-                    context,
-                    static_cast<std::int64_t>(services.renderer->PlayScreenEffect(
-                        first, static_cast<float>(duration))));
+                graphics::CustomEffectNamedParameters parameters;
+                const graphics::CustomEffectNamedParameters* parameterPointer =
+                    nullptr;
+                if (count >= 3 && !JS_IsUndefined(values[2])) {
+                    const auto converted = FromJavaScript(values[2]);
+                    const auto* named = converted ? converted->AsObject() : nullptr;
+                    if (!named || named->size() > 8)
+                        return JS_ThrowTypeError(
+                            context,
+                            "custom transition parameters must be a bounded named object");
+                    for (const auto& [name, value] : *named) {
+                        const auto numeric = [](const Variant& item,
+                                                float& output) {
+                            if (const auto* number = item.TryGet<double>())
+                                output = static_cast<float>(*number);
+                            else if (const auto* integer =
+                                         item.TryGet<std::int64_t>())
+                                output = static_cast<float>(*integer);
+                            else
+                                return false;
+                            return std::isfinite(output);
+                        };
+                        std::vector<float> components;
+                        if (const auto* array = value.AsArray()) {
+                            if (array->empty() || array->size() > 4)
+                                return JS_ThrowTypeError(
+                                    context,
+                                    "custom transition vectors must contain 1 to 4 numbers");
+                            components.resize(array->size());
+                            for (std::size_t index = 0; index < array->size();
+                                 ++index)
+                                if (!numeric(array->at(index), components[index]))
+                                    return JS_ThrowTypeError(
+                                        context,
+                                        "custom transition parameters must be finite numbers");
+                        } else {
+                            components.resize(1);
+                            if (!numeric(value, components.front()))
+                                return JS_ThrowTypeError(
+                                    context,
+                                    "custom transition parameters must be numeric");
+                        }
+                        parameters.emplace(name, std::move(components));
+                    }
+                    parameterPointer = &parameters;
+                }
+                return JS_NewInt64(context, static_cast<std::int64_t>(
+                    services.renderer->PlayScreenEffect(
+                        first, static_cast<float>(duration), parameterPointer)));
             }
             if (!IntegerArgument(count, values, 0, integer) || integer < 0)
                 return JS_ThrowTypeError(context,
@@ -2383,6 +2715,8 @@ public:
                 SetStageNodeTransform: { value: bindRuntime("stage.nodeTransform") },
                 SetStageNodeOrder: { value: bindRuntime("stage.nodeOrder") },
                 SetStageNodeVisibility: { value: bindRuntime("stage.nodeVisibility") },
+                SetStageNodeEffect: { value: bindRuntime("stage.nodeEffect") },
+                ClearStageNodeEffect: { value: bindRuntime("stage.clearNodeEffect") },
                 RemoveStageNode: { value: bindRuntime("stage.removeNode") },
                 SetParticleEmitter: { value: bindRuntime("stage.particles") },
                 ClearParticleEmitter: { value: bindRuntime("stage.clearParticles") },

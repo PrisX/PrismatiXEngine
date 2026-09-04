@@ -409,7 +409,22 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
             !Engine.SetStageNodeVisibility("foreground", true) ||
             !Engine.SetParticleEmitter("snow", "snow", {
               seed: 17, rate: 50, maxParticles: 128, z: -1,
-              opacity: 0.75, wind: 0.1, speed: 0.9, size: 1.2
+              opacity: 0.75, wind: 12, speed: 0.9, size: 1.2,
+              texture: "Content/Images/card.png",
+              atlas: {columns: 2, rows: 2, firstFrame: 0, frameCount: 4},
+              spawnShape: "ellipse",
+              position: {x: [0.1, 0.9], y: [0, 0.2]},
+              velocity: {x: [-20, 20], y: [30, 60]},
+              acceleration: {x: [-2, 2], y: [4, 8]},
+              lifetime: [3, 6], rotation: [-30, 30],
+              angularVelocity: [-90, 90], scale: [0.5, 1.5],
+              initialOpacity: [0.4, 1], gravity: 9, variation: 0.2,
+              burst: 16, loop: false, duration: 2,
+              scaleOverLifetime: [{time: 0, value: 0.5}, {time: 1, value: 1}],
+              opacityOverLifetime: [{time: 0, value: 1}, {time: 1, value: 0}],
+              colorOverLifetime: [
+                {time: 0, value: [255, 255, 255, 255]},
+                {time: 1, value: [180, 210, 255, 0]}]
             })) {
             throw new Error("stage graph/particle bridge failed");
         }
@@ -444,6 +459,10 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
                      stageState.nodes.size() == 2 &&
                      stageState.particleEmitters.size() == 1 &&
                      stageState.particleEmitters.front().spec.seed == 17 &&
+                     stageState.particleEmitters.front().spec.advanced &&
+                     stageState.particleEmitters.front().spec.texture ==
+                         "Content/Images/card.png" &&
+                     stageState.particleEmitters.front().spec.burst == 16 &&
                      std::abs(stageState.cameraX - 12.0f) < 0.001f &&
                      std::abs(stageState.cameraY + 8.0f) < 0.001f &&
                      std::abs(stageState.cameraZoom - 1.2f) < 0.001f &&

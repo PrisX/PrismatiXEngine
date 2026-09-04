@@ -348,7 +348,7 @@ int main() {
 
         px::io::Archive archive;
         const auto key = px::crypto::DeriveKey(manifest.manifest.archiveKey);
-        suite.Require(archive.Open((output / "Content.pdx").string(), &key), "Player archive reader opens generated PDX4");
+        suite.Require(archive.Open((output / "Content.pdx").string(), &key), "Player archive reader opens generated PDX5");
         suite.Expect(archive.Contains(request.startScript) && archive.Contains("Content/UI/Title.pxui"), "compiled entrypoint and route scene are in the archive");
         const auto packagedEntryIr = archive.Read(request.startScript);
         suite.Require(packagedEntryIr.has_value(),
@@ -495,7 +495,8 @@ int main() {
 
     suite.Run("VideoContainersRemainSeekableInCompressedPackages", [&] {
         const auto videoPath = root / "Video/stream.mp4";
-        Write(videoPath, std::string(64 * 1024, 'v'));
+        constexpr std::size_t videoBytes = 2 * 1024 * 1024 + 37;
+        Write(videoPath, std::string(videoBytes, 'v'));
         const auto videoOutput = fixture.path / "Build/StreamingVideo";
         auto videoRequest = FixtureRequest(root, videoOutput);
         videoRequest.requestId = "streaming-video-contract";
@@ -516,8 +517,47 @@ int main() {
                       "Packager stores video without whole-entry compression");
         auto stream = archive.OpenStream("Video/stream.mp4");
         suite.Expect(stream && stream->Seek(-1, px::io::SeekOrigin::End) &&
-                         stream->Tell() == 64 * 1024 - 1,
+                         stream->Tell() == videoBytes - 1,
                      "Packager output exposes a direct seekable video range");
+
+        const auto encryptedOutput = fixture.path / "Build/EncryptedStreamingVideo";
+        auto encryptedRequest = FixtureRequest(root, encryptedOutput);
+        encryptedRequest.requestId = "encrypted-streaming-video-contract";
+        encryptedRequest.encryption = true;
+        encryptedRequest.compression = px::sdk::PackageCompression::Maximum;
+        encryptedRequest.inputs.push_back(Input(root, "Video/stream.mp4"));
+        const auto encryptedResult = px::sdk::RunPackager(encryptedRequest);
+        suite.Require(encryptedResult.Completed(),
+                      "encrypted production package with video completes");
+        const auto manifest = px::sdk::detail::ParsePackageManifest(
+            Read(encryptedOutput / "Package/manifest.json"));
+        suite.Require(manifest.Valid(),
+                      "encrypted streaming package manifest should parse");
+        const auto key = px::crypto::DeriveKey(manifest.manifest.archiveKey);
+        px::io::Archive encryptedArchive;
+        suite.Require(encryptedArchive.Open(
+                          (encryptedOutput / "Content.pdx").string(), &key),
+                      "encrypted streaming package should mount");
+        const auto encryptedEntry = std::ranges::find_if(
+            encryptedArchive.Entries(), [](const auto& candidate) {
+                return candidate.name == "Video/stream.mp4";
+            });
+        suite.Require(encryptedEntry != encryptedArchive.Entries().end() &&
+                          (encryptedEntry->flags & 0x05u) == 0x05u &&
+                          encryptedEntry->chunkCount > 1,
+                      "Packager must emit chunk-authenticated video records");
+        auto encryptedStream =
+            encryptedArchive.OpenStream("Video/stream.mp4");
+        std::array<std::uint8_t, 16> tail{};
+        suite.Expect(encryptedStream &&
+                         encryptedStream->Seek(-16, px::io::SeekOrigin::End) &&
+                         encryptedStream->Read(tail.data(), tail.size()) ==
+                             tail.size() &&
+                         std::ranges::all_of(tail, [](const std::uint8_t byte) {
+                             return byte == static_cast<std::uint8_t>('v');
+                         }) &&
+                         encryptedStream->PeakBufferedBytes() * 4u < videoBytes,
+                     "encrypted Packager video remains seekable with bounded memory");
     });
 
     suite.Run("LocaleFontChain_IsPackagedAndPreflightChecksGlyphCoverage", [&] {
@@ -587,10 +627,14 @@ int main() {
         project["graphicsTier"] = "gpu-effects";
         project["effects"] = nlohmann::json::array(
             {{{"id", "dream-tone"},
-              {"source", "Effects/dream-tone.pxeffect"}}});
+              {"source", "Effects/dream-tone.pxeffect"}},
+             {{"id", "node-tone"},
+              {"source", "Effects/node-tone.pxeffect"}},
+             {{"id", "screen-dream"},
+              {"source", "Effects/screen-dream.pxeffect"}}});
         Write(effectRoot / "project.pxproject", project.dump());
         Write(effectRoot / "Effects/dream-tone.pxeffect", R"({
-          "format":"PrismatiXEffect","schemaRevision":2,
+          "format":"PrismatiXEffect","schemaRevision":3,
           "id":"dream-tone","targetLayer":"stage",
           "shader":"Effects/dream-tone.frag.hlsl",
           "uniforms":[{"name":"amount","type":"number","slot":0,
@@ -600,6 +644,7 @@ int main() {
           cbuffer PrismatiXEffectContext : register(b0, space3) {
             float2 texelSize; float progress; float randomSeed;
             float4 parameters[8];
+            float4 viewport;
           };
           Texture2D stageTexture : register(t0, space2);
           SamplerState stageSampler : register(s0, space2);
@@ -608,6 +653,51 @@ int main() {
             float4 color = stageTexture.Sample(stageSampler, input.uv) * input.color;
             return lerp(color, float4(color.b, color.r, color.g, color.a),
                         saturate(parameters[0].x * progress));
+          }
+        )");
+        Write(effectRoot / "Effects/node-tone.pxeffect", R"({
+          "format":"PrismatiXEffect","schemaRevision":3,
+          "id":"node-tone","targetLayer":"node",
+          "shader":"Effects/node-tone.frag.hlsl",
+          "uniforms":[{"name":"tint","type":"color","slot":0,
+            "default":[1,0.8,0.8,1],"minimum":0,"maximum":1}]
+        })");
+        Write(effectRoot / "Effects/node-tone.frag.hlsl", R"(
+          cbuffer PrismatiXEffectContext : register(b0, space3) {
+            float2 texelSize; float progress; float randomSeed;
+            float4 parameters[8]; float4 viewport;
+          };
+          Texture2D nodeTexture : register(t0, space2);
+          SamplerState nodeSampler : register(s0, space2);
+          struct Input { float4 color : COLOR0; float2 uv : TEXCOORD0; };
+          float4 main(Input input) : SV_Target {
+            float4 color = nodeTexture.Sample(nodeSampler, input.uv) * input.color;
+            return lerp(color, color * parameters[0], saturate(progress));
+          }
+        )");
+        Write(effectRoot / "Effects/screen-dream.pxeffect", R"({
+          "format":"PrismatiXEffect","schemaRevision":3,
+          "id":"screen-dream","targetLayer":"transition",
+          "shader":"Effects/screen-dream.frag.hlsl",
+          "uniforms":[{"name":"softness","type":"number","slot":0,
+            "default":0.1,"minimum":0,"maximum":1}]
+        })");
+        Write(effectRoot / "Effects/screen-dream.frag.hlsl", R"(
+          cbuffer PrismatiXEffectContext : register(b0, space3) {
+            float2 texelSize; float progress; float randomSeed;
+            float4 parameters[8]; float4 viewport;
+          };
+          Texture2D outgoingTexture : register(t0, space2);
+          Texture2D incomingTexture : register(t1, space2);
+          SamplerState outgoingSampler : register(s0, space2);
+          SamplerState incomingSampler : register(s1, space2);
+          struct Input { float4 color : COLOR0; float2 uv : TEXCOORD0; };
+          float4 main(Input input) : SV_Target {
+            float edge = smoothstep(progress - parameters[0].x,
+                                    progress + parameters[0].x, input.uv.x);
+            float4 outgoing = outgoingTexture.Sample(outgoingSampler, input.uv);
+            float4 incoming = incomingTexture.Sample(incomingSampler, input.uv);
+            return lerp(incoming, outgoing, edge) * input.color;
           }
         )");
         auto effectRequest = FixtureRequest(effectRoot, effectOutput);
@@ -619,6 +709,12 @@ int main() {
             Input(effectRoot, "Effects/dream-tone.pxeffect"));
         effectRequest.inputs.push_back(
             Input(effectRoot, "Effects/dream-tone.frag.hlsl"));
+        for (const auto& path : {
+                 "Effects/node-tone.pxeffect",
+                 "Effects/node-tone.frag.hlsl",
+                 "Effects/screen-dream.pxeffect",
+                 "Effects/screen-dream.frag.hlsl"})
+            effectRequest.inputs.push_back(Input(effectRoot, path));
 
         const auto result = px::sdk::RunPackager(effectRequest);
         suite.Require(result.Completed(),
@@ -626,10 +722,16 @@ int main() {
         const auto manifest = px::sdk::detail::ParsePackageManifest(
             Read(effectOutput / "Package/manifest.json"));
         suite.Require(manifest.Valid() &&
-                          manifest.manifest.customEffects.size() == 1,
+                          manifest.manifest.customEffects.size() == 3,
                       "Player parses reflected custom effect metadata");
-        const auto& effect = manifest.manifest.customEffects.front();
+        const auto effectIterator = std::ranges::find(
+            manifest.manifest.customEffects, std::string("dream-tone"),
+            &px::sdk::detail::PackageCustomEffect::id);
+        suite.Require(effectIterator != manifest.manifest.customEffects.end(),
+                      "stage custom effect remains in packaged metadata");
+        const auto& effect = *effectIterator;
         suite.Expect(effect.id == "dream-tone" && effect.targetLayer == "stage" &&
+                         effect.schemaRevision == 3 &&
                          effect.samplerCount == 1 &&
                          effect.uniformBufferCount == 1 &&
                          effect.artifacts.size() == 3 &&
@@ -666,25 +768,31 @@ int main() {
             (effectOutput / "Content.pdx").string()};
         runtimeConfig.archiveKey = manifest.manifest.archiveKey;
         runtimeConfig.graphicsTier = "gpu-effects";
-        px::graphics::CustomEffectDescriptor runtimeEffect;
-        runtimeEffect.id = effect.id;
-        runtimeEffect.targetLayer = effect.targetLayer;
-        runtimeEffect.samplerCount = effect.samplerCount;
-        runtimeEffect.uniformBufferCount = effect.uniformBufferCount;
-        for (const auto& uniform : effect.uniforms)
-            runtimeEffect.uniforms.push_back(
-                {uniform.name, uniform.type, uniform.slot,
-                 uniform.defaultValue, uniform.minimum, uniform.maximum});
-        for (const auto& artifact : effect.artifacts)
-            runtimeEffect.artifacts.push_back(
-                {artifact.format, artifact.asset, artifact.fingerprint});
-        runtimeConfig.customEffects.push_back(std::move(runtimeEffect));
+        for (const auto& packagedEffect : manifest.manifest.customEffects) {
+            px::graphics::CustomEffectDescriptor runtimeEffect;
+            runtimeEffect.id = packagedEffect.id;
+            runtimeEffect.schemaRevision = packagedEffect.schemaRevision;
+            runtimeEffect.targetLayer = packagedEffect.targetLayer;
+            runtimeEffect.samplerCount = packagedEffect.samplerCount;
+            runtimeEffect.uniformBufferCount = packagedEffect.uniformBufferCount;
+            for (const auto& uniform : packagedEffect.uniforms)
+                runtimeEffect.uniforms.push_back(
+                    {uniform.name, uniform.type, uniform.slot,
+                     uniform.defaultValue, uniform.minimum, uniform.maximum});
+            for (const auto& artifact : packagedEffect.artifacts)
+                runtimeEffect.artifacts.push_back(
+                    {artifact.format, artifact.asset, artifact.fingerprint});
+            runtimeConfig.customEffects.push_back(std::move(runtimeEffect));
+        }
 
         px::Runtime runtime;
         suite.Require(runtime.Init(runtimeConfig),
                       "Runtime loads the packaged device-specific custom shader artifact");
         suite.Require(runtime.Renderer().HasCustomEffect("dream-tone"),
                       "custom effect is registered in the production compositor");
+        suite.Expect(runtime.Renderer().HasCustomEffect("node-tone", "node") &&
+                         runtime.Renderer().HasScreenEffect("screen-dream"),
+                     "node and outgoing/incoming transition targets share the packaged compositor");
         px::RuntimeSession session({runtime.VFS(), runtime.Audio(),
                                     runtime.Renderer(), runtime.Assets()});
         suite.Expect(std::ranges::any_of(
@@ -731,6 +839,41 @@ int main() {
         const std::uint64_t effected = render(custom);
         suite.Expect(baseline != 0 && effected != 0 && baseline != effected,
                      "packaged custom effect visibly changes the Stage framebuffer");
+        session.Stage().SetLayer("effected-layer", "Assets/rin.png", 32.0f,
+                                 24.0f, 1.0f, 255, 2);
+        suite.Require(session.Stage().SetNodeEffect(
+                          "effected-layer", "node-tone", 0.75f,
+                          {{"tint", {0.4f, 1.0f, 0.5f, 1.0f}}}),
+                      "Stage graph accepts the packaged node effect schema");
+        const auto nodeCheckpoint = session.Stage().CaptureState();
+        suite.Require(session.Stage().RestoreState(nodeCheckpoint) &&
+                          nodeCheckpoint.nodes.size() == 1 &&
+                          nodeCheckpoint.nodes.front().effect == "node-tone",
+                      "node effect parameters and deterministic seed restore through Stage state");
+
+        suite.Require(runtime.Renderer().BeginFrame({210, 40, 50, 255}),
+                      "custom transition captures an outgoing frame");
+        runtime.Renderer().EndFrame();
+        const px::graphics::CustomEffectNamedParameters transitionParameters{
+            {"softness", {0.2f}}};
+        const auto transitionHandle = runtime.Renderer().PlayScreenEffect(
+            "screen-dream", 1.0f, &transitionParameters);
+        suite.Require(transitionHandle != 0 &&
+                          runtime.Renderer().BeginFrame({35, 70, 220, 255}),
+                      "custom outgoing/incoming transition starts");
+        runtime.Renderer().UpdateScreenEffects(0.5f);
+        runtime.Renderer().EndFrame();
+        SDL_Surface* transitionPixels = SDL_RenderReadPixels(
+            runtime.Renderer().Handle(), nullptr);
+        const auto transitionHash = SurfaceHash(transitionPixels);
+        SDL_DestroySurface(transitionPixels);
+        suite.Expect(transitionHash != 0 &&
+                         runtime.Renderer().ScreenEffectPlaying(transitionHandle),
+                     "custom transition renders both controlled textures at runtime");
+        suite.Require(runtime.Renderer().LoadCustomEffects({}, runtime.VFS()) &&
+                          !runtime.Renderer().HasCustomEffect("dream-tone") &&
+                          !runtime.Renderer().HasScreenEffect("screen-dream"),
+                      "custom effect reload releases Stage, node, and transition registrations");
         runtime.Shutdown();
 
         px::RuntimeConfig tamperedConfig = runtimeConfig;

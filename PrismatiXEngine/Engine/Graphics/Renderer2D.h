@@ -50,6 +50,9 @@ struct ScreenEffectDefinition {
     int rows = 6;
     float stagger = 0.35f;
     std::string order = "row-major";
+    // Set only by the packaged .pxeffect loader. JavaScript cannot inject a
+    // shader id or GPU resource binding through RegisterScreenEffect.
+    std::string customEffect;
 };
 
 enum class ScreenEffectStatus : std::uint8_t {
@@ -66,6 +69,8 @@ struct ScreenEffectPlayback {
     float durationSeconds = 0.0f;
     float elapsedSeconds = 0.0f;
     ScreenEffectStatus status = ScreenEffectStatus::Unknown;
+    float randomSeed = 0.0f;
+    std::array<std::array<float, 4>, 8> parameters{};
 };
 
 struct Shadow {
@@ -73,6 +78,14 @@ struct Shadow {
     int offsetX = 3;
     int offsetY = 3;
     std::uint8_t alpha = 110;
+};
+
+struct SpriteBatchItem {
+    Rect source;
+    Rect destination;
+    Color color{255, 255, 255, 255};
+    float rotation = 0.0f;
+    bool sourceNormalized = false;
 };
 
 class Renderer2D {
@@ -95,7 +108,8 @@ public:
     [[nodiscard]] bool HasScreenEffect(std::string_view id) const;
     [[nodiscard]] std::vector<std::string> ScreenEffectIds() const;
     [[nodiscard]] ScreenEffectHandle PlayScreenEffect(
-        std::string_view id, float durationSeconds);
+        std::string_view id, float durationSeconds,
+        const CustomEffectNamedParameters* parameters = nullptr);
     [[nodiscard]] bool StopScreenEffect(ScreenEffectHandle handle);
     [[nodiscard]] bool CancelScreenEffect(ScreenEffectHandle handle);
     [[nodiscard]] bool ScreenEffectPlaying(ScreenEffectHandle handle) const;
@@ -130,6 +144,14 @@ public:
     // streaming transition mask).
     void DrawTexture(TextureHandle texture, const Rect& dst,
                      std::uint8_t alpha = 255);
+    void DrawSpriteBatch(const std::string& texture,
+                         const std::vector<SpriteBatchItem>& items);
+    [[nodiscard]] std::uint64_t GeometryBatchCount() const {
+        return m_geometryBatchCount;
+    }
+    [[nodiscard]] std::uint64_t GeometryBatchItems() const {
+        return m_geometryBatchItems;
+    }
     Rect DrawImageAuto(const std::string& path, DisplayMode mode, std::uint8_t alpha = 255, int offsetX = 0, int offsetY = 0, float scale = 1.0f, Shadow shadow = {});
 
     void DrawText(const std::string& text, float x, float y, const std::string& fontPath, int size, Color color, std::uint8_t alpha = 255, int wrap = 0);
@@ -167,11 +189,13 @@ public:
     }
     [[nodiscard]] bool Ready() const { return m_compositor.Ready(); }
     bool LoadCustomEffects(const std::vector<CustomEffectDescriptor>& effects,
-                           const io::VFS& vfs) {
-        return m_compositor.LoadCustomEffects(effects, vfs);
+                           const io::VFS& vfs);
+    [[nodiscard]] bool HasCustomEffect(
+        std::string_view id, std::string_view target = {}) const {
+        return m_compositor.HasCustomEffect(id, target);
     }
-    [[nodiscard]] bool HasCustomEffect(std::string_view id) const {
-        return m_compositor.HasCustomEffect(id);
+    [[nodiscard]] std::string CustomEffectTarget(std::string_view id) const {
+        return m_compositor.CustomEffectTarget(id);
     }
     [[nodiscard]] std::vector<std::string> CustomEffectIds() const {
         return m_compositor.CustomEffectIds();
@@ -186,6 +210,15 @@ public:
         const CustomEffectNamedParameters& parameters) const {
         return m_compositor.ResolveCustomEffectParameters(id, parameters);
     }
+    [[nodiscard]] bool BeginNodeEffect(
+        std::string_view id, float progress, float randomSeed,
+        const std::array<std::array<float, 4>, 8>& parameters,
+        const Rect& viewport) {
+        return m_compositor.BeginNodeEffect(
+            id, progress, randomSeed, parameters,
+            {viewport.x, viewport.y, viewport.w, viewport.h});
+    }
+    void EndNodeEffect() { m_compositor.EndNodeEffect(); }
 
     [[nodiscard]] SDL_Renderer* Handle() const { return m_renderer; }
 
@@ -244,6 +277,8 @@ private:
     std::optional<ScreenEffectPlayback> m_activeScreenEffect;
     ScreenEffectHandle m_nextScreenEffectHandle = 1;
     bool m_frameRecording = false;
+    std::uint64_t m_geometryBatchCount = 0;
+    std::uint64_t m_geometryBatchItems = 0;
 };
 
 }  // namespace px::graphics

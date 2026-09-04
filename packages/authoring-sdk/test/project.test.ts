@@ -288,6 +288,17 @@ test("compileProject publishes only validated custom-effect source inputs", () =
   assert.ok(valid.artifact?.files[descriptor.source]?.includes("PrismatiXEffect"));
   assert.equal(valid.artifact?.files[effect.shader], shader);
 
+  const transition = compile({}, {
+    schemaRevision: 3,
+    targetLayer: "transition",
+  });
+  assert.equal(transition.valid, true, JSON.stringify(transition.diagnostics));
+
+  const legacyWrongTarget = compile({}, {targetLayer: "node"});
+  assert.equal(legacyWrongTarget.valid, false);
+  assert.ok(legacyWrongTarget.diagnostics.some((diagnostic) =>
+    diagnostic.code === "PXSDKJSON1004"));
+
   const basicTier = compile({graphicsTier: "basic"});
   assert.equal(basicTier.valid, false);
   assert.ok(basicTier.diagnostics.some((diagnostic) =>

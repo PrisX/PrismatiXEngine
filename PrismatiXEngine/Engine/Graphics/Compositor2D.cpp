@@ -13,6 +13,42 @@
 
 namespace px::graphics {
 
+namespace {
+
+struct alignas(16) CustomUniformsV2 {
+    float texelSize[2];
+    float progress;
+    float randomSeed;
+    float parameters[8][4];
+};
+
+struct alignas(16) CustomUniformsV3 : CustomUniformsV2 {
+    float viewport[4];
+};
+
+[[maybe_unused]] bool SetCustomUniforms(
+    SDL_Renderer* renderer, SDL_GPURenderState* state,
+    const CustomEffectDescriptor& descriptor, const int width, const int height,
+    const float progress, const float randomSeed,
+    const std::array<std::array<float, 4>, 8>& parameters,
+    const std::array<float, 4>& viewport) {
+    if (!renderer || !state || width <= 0 || height <= 0) return false;
+    CustomUniformsV3 uniforms{};
+    uniforms.texelSize[0] = 1.0f / static_cast<float>(width);
+    uniforms.texelSize[1] = 1.0f / static_cast<float>(height);
+    uniforms.progress = std::clamp(progress, 0.0f, 1.0f);
+    uniforms.randomSeed = randomSeed;
+    for (std::size_t slot = 0; slot < parameters.size(); ++slot)
+        std::ranges::copy(parameters[slot], uniforms.parameters[slot]);
+    std::ranges::copy(viewport, uniforms.viewport);
+    const std::uint32_t bytes = descriptor.schemaRevision >= 3
+                                    ? sizeof(CustomUniformsV3)
+                                    : sizeof(CustomUniformsV2);
+    return SDL_SetGPURenderStateFragmentUniforms(state, 0, &uniforms, bytes);
+}
+
+}  // namespace
+
 Compositor2D::Compositor2D(SDL_Renderer* renderer, const bool enabled)
     : m_renderer(renderer), m_required(enabled) {
     m_enabled = enabled && CreateGpuState();
@@ -71,7 +107,11 @@ void Compositor2D::DestroyGpuState() {
 #if !defined(__EMSCRIPTEN__)
     SDL_GPUDevice* device = SDL_GetGPURendererDevice(m_renderer);
     for (auto& [_, effect] : m_customEffects) {
+        for (auto& [__, state] : effect.transitionStates)
+            if (state) SDL_DestroyGPURenderState(state);
         if (effect.state) SDL_DestroyGPURenderState(effect.state);
+        if (effect.transitionSampler && device)
+            SDL_ReleaseGPUSampler(device, effect.transitionSampler);
         if (effect.shader && device) SDL_ReleaseGPUShader(device, effect.shader);
     }
     m_customEffects.clear();
@@ -90,23 +130,46 @@ bool Compositor2D::LoadCustomEffects(
     (void)vfs;
     return effects.empty();
 #else
-    if (effects.empty()) return true;
-    if (!m_enabled) return false;
     SDL_GPUDevice* device = SDL_GetGPURendererDevice(m_renderer);
+    if (effects.empty()) {
+        for (auto& [_, effect] : m_customEffects) {
+            for (auto& [__, state] : effect.transitionStates)
+                if (state) SDL_DestroyGPURenderState(state);
+            if (effect.state) SDL_DestroyGPURenderState(effect.state);
+            if (effect.transitionSampler && device)
+                SDL_ReleaseGPUSampler(device, effect.transitionSampler);
+            if (effect.shader && device)
+                SDL_ReleaseGPUShader(device, effect.shader);
+        }
+        m_customEffects.clear();
+        return true;
+    }
+    if (!m_enabled) return false;
     if (!device) return false;
     const SDL_GPUShaderFormat supported = SDL_GetGPUShaderFormats(device);
     std::unordered_map<std::string, CustomEffectState> candidate;
     const auto rejectCandidate = [&candidate, device] {
         for (auto& [_, built] : candidate) {
+            for (auto& [__, state] : built.transitionStates)
+                if (state) SDL_DestroyGPURenderState(state);
             if (built.state) SDL_DestroyGPURenderState(built.state);
+            if (built.transitionSampler)
+                SDL_ReleaseGPUSampler(device, built.transitionSampler);
             if (built.shader) SDL_ReleaseGPUShader(device, built.shader);
         }
         candidate.clear();
         return false;
     };
     for (const auto& descriptor : effects) {
-        if (descriptor.id.empty() || descriptor.targetLayer != "stage" ||
-            descriptor.samplerCount != 1 ||
+        const bool validTarget = IsCustomEffectTarget(descriptor.targetLayer);
+        const std::uint32_t expectedSamplers =
+            descriptor.targetLayer == "transition" ? 2u : 1u;
+        if (descriptor.id.empty() || !validTarget ||
+            (descriptor.schemaRevision != 2 &&
+             descriptor.schemaRevision != 3) ||
+            (descriptor.schemaRevision == 2 &&
+             descriptor.targetLayer != "stage") ||
+            descriptor.samplerCount != expectedSamplers ||
             descriptor.uniformBufferCount != 1 ||
             descriptor.uniforms.size() > 8 || descriptor.artifacts.size() != 3 ||
             candidate.contains(descriptor.id))
@@ -154,18 +217,43 @@ bool Compositor2D::LoadCustomEffects(
                          descriptor.id, SDL_GetError());
             return rejectCandidate();
         }
-        SDL_GPURenderStateCreateInfo stateInfo{};
-        stateInfo.fragment_shader = shader;
-        SDL_GPURenderState* state = SDL_CreateGPURenderState(m_renderer, &stateInfo);
-        if (!state) {
-            SDL_ReleaseGPUShader(device, shader);
-            return rejectCandidate();
+        SDL_GPURenderState* state = nullptr;
+        SDL_GPUSampler* transitionSampler = nullptr;
+        if (descriptor.targetLayer == "transition") {
+            SDL_GPUSamplerCreateInfo samplerInfo{};
+            samplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
+            samplerInfo.mag_filter = SDL_GPU_FILTER_LINEAR;
+            samplerInfo.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
+            samplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+            samplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+            samplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+            transitionSampler = SDL_CreateGPUSampler(device, &samplerInfo);
+            if (!transitionSampler) {
+                SDL_ReleaseGPUShader(device, shader);
+                return rejectCandidate();
+            }
+        } else {
+            SDL_GPURenderStateCreateInfo stateInfo{};
+            stateInfo.fragment_shader = shader;
+            state = SDL_CreateGPURenderState(m_renderer, &stateInfo);
+            if (!state) {
+                SDL_ReleaseGPUShader(device, shader);
+                return rejectCandidate();
+            }
         }
-        candidate.emplace(descriptor.id,
-                          CustomEffectState{descriptor, shader, state});
+        CustomEffectState built;
+        built.descriptor = descriptor;
+        built.shader = shader;
+        built.state = state;
+        built.transitionSampler = transitionSampler;
+        candidate.emplace(descriptor.id, std::move(built));
     }
     for (auto& [_, effect] : m_customEffects) {
+        for (auto& [__, state] : effect.transitionStates)
+            if (state) SDL_DestroyGPURenderState(state);
         if (effect.state) SDL_DestroyGPURenderState(effect.state);
+        if (effect.transitionSampler)
+            SDL_ReleaseGPUSampler(device, effect.transitionSampler);
         if (effect.shader) SDL_ReleaseGPUShader(device, effect.shader);
     }
     m_customEffects = std::move(candidate);
@@ -173,8 +261,18 @@ bool Compositor2D::LoadCustomEffects(
 #endif
 }
 
-bool Compositor2D::HasCustomEffect(const std::string_view id) const {
-    return m_customEffects.contains(std::string(id));
+bool Compositor2D::HasCustomEffect(const std::string_view id,
+                                   const std::string_view target) const {
+    const auto found = m_customEffects.find(std::string(id));
+    return found != m_customEffects.end() &&
+           (target.empty() || found->second.descriptor.targetLayer == target);
+}
+
+std::string Compositor2D::CustomEffectTarget(const std::string_view id) const {
+    const auto found = m_customEffects.find(std::string(id));
+    return found == m_customEffects.end()
+               ? std::string{}
+               : found->second.descriptor.targetLayer;
 }
 
 std::vector<std::string> Compositor2D::CustomEffectIds() const {
@@ -301,7 +399,8 @@ void Compositor2D::EndStage(const StagePostEffects& effects) {
                effects.randomSeed,
                {0.0f, 0.0f}};
     const auto custom = m_customEffects.find(effects.customEffect);
-    if (custom == m_customEffects.end()) {
+    if (custom == m_customEffects.end() ||
+        custom->second.descriptor.targetLayer != "stage") {
         (void)ApplyRenderState(m_renderState, m_stage, m_previousTarget,
                                &uniforms, sizeof(uniforms));
         return;
@@ -316,12 +415,7 @@ void Compositor2D::EndStage(const StagePostEffects& effects) {
             return;
         customSource = m_intermediate;
     }
-    struct alignas(16) CustomUniforms {
-        float texelSize[2];
-        float progress;
-        float randomSeed;
-        float parameters[8][4];
-    } customUniforms{};
+    CustomUniformsV3 customUniforms{};
     customUniforms.texelSize[0] = 1.0f / static_cast<float>(m_width);
     customUniforms.texelSize[1] = 1.0f / static_cast<float>(m_height);
     customUniforms.progress = std::clamp(effects.customProgress, 0.0f, 1.0f);
@@ -329,9 +423,98 @@ void Compositor2D::EndStage(const StagePostEffects& effects) {
     for (std::size_t slot = 0; slot < effects.customParameters.size(); ++slot)
         std::ranges::copy(effects.customParameters[slot],
                           customUniforms.parameters[slot]);
+    customUniforms.viewport[2] = static_cast<float>(m_width);
+    customUniforms.viewport[3] = static_cast<float>(m_height);
+    const std::uint32_t uniformBytes =
+        custom->second.descriptor.schemaRevision >= 3
+            ? sizeof(CustomUniformsV3)
+            : sizeof(CustomUniformsV2);
     (void)ApplyRenderState(custom->second.state, customSource,
                            m_previousTarget, &customUniforms,
-                           sizeof(customUniforms));
+                           uniformBytes);
+}
+
+bool Compositor2D::BeginNodeEffect(
+    const std::string_view id, const float progress, const float randomSeed,
+    const std::array<std::array<float, 4>, 8>& parameters,
+    const std::array<float, 4>& viewport) {
+#if defined(__EMSCRIPTEN__)
+    (void)id; (void)progress; (void)randomSeed; (void)parameters; (void)viewport;
+    return false;
+#else
+    const auto found = m_customEffects.find(std::string(id));
+    if (found == m_customEffects.end() ||
+        found->second.descriptor.targetLayer != "node" ||
+        !SetCustomUniforms(m_renderer, found->second.state,
+                           found->second.descriptor, m_width, m_height,
+                           progress, randomSeed, parameters, viewport))
+        return false;
+    return SDL_SetGPURenderState(m_renderer, found->second.state);
+#endif
+}
+
+void Compositor2D::EndNodeEffect() {
+#if !defined(__EMSCRIPTEN__)
+    (void)SDL_SetGPURenderState(m_renderer, nullptr);
+#endif
+}
+
+bool Compositor2D::ApplyCustomTransition(
+    const std::string_view id, SDL_Texture* outgoing, SDL_Texture* incoming,
+    const float progress, const float randomSeed,
+    const std::array<std::array<float, 4>, 8>& parameters) {
+#if defined(__EMSCRIPTEN__)
+    (void)id; (void)outgoing; (void)incoming; (void)progress;
+    (void)randomSeed; (void)parameters;
+    return false;
+#else
+    auto found = m_customEffects.find(std::string(id));
+    if (found == m_customEffects.end() || !outgoing || !incoming ||
+        found->second.descriptor.targetLayer != "transition")
+        return false;
+    SDL_GPUTexture* incomingGpu = static_cast<SDL_GPUTexture*>(
+        SDL_GetPointerProperty(SDL_GetTextureProperties(incoming),
+                               SDL_PROP_TEXTURE_GPU_TEXTURE_POINTER, nullptr));
+    if (!incomingGpu) return false;
+    SDL_GPURenderState* state = nullptr;
+    if (const auto cached = found->second.transitionStates.find(incomingGpu);
+        cached != found->second.transitionStates.end()) {
+        state = cached->second;
+    } else {
+        const SDL_GPUTextureSamplerBinding binding{
+            incomingGpu, found->second.transitionSampler};
+        SDL_GPURenderStateCreateInfo stateInfo{};
+        stateInfo.fragment_shader = found->second.shader;
+        stateInfo.num_sampler_bindings = 1;
+        stateInfo.sampler_bindings = &binding;
+        state = SDL_CreateGPURenderState(m_renderer, &stateInfo);
+        if (!state) return false;
+        found->second.transitionStates.emplace(incomingGpu, state);
+    }
+    const std::array<float, 4> viewport{
+        0.0f, 0.0f, static_cast<float>(m_width), static_cast<float>(m_height)};
+    if (!SetCustomUniforms(m_renderer, state, found->second.descriptor,
+                           m_width, m_height, progress, randomSeed, parameters,
+                           viewport) ||
+        !SDL_SetGPURenderState(m_renderer, state))
+        return false;
+    const SDL_FRect destination{0.0f, 0.0f, static_cast<float>(m_width),
+                                static_cast<float>(m_height)};
+    const bool rendered =
+        SDL_RenderTexture(m_renderer, outgoing, nullptr, &destination);
+    (void)SDL_SetGPURenderState(m_renderer, nullptr);
+    return rendered;
+#endif
+}
+
+void Compositor2D::InvalidateCustomTransitionTargets() {
+#if !defined(__EMSCRIPTEN__)
+    for (auto& [_, effect] : m_customEffects) {
+        for (auto& [__, state] : effect.transitionStates)
+            if (state) SDL_DestroyGPURenderState(state);
+        effect.transitionStates.clear();
+    }
+#endif
 }
 
 bool Compositor2D::ApplyRenderState(SDL_GPURenderState* state,

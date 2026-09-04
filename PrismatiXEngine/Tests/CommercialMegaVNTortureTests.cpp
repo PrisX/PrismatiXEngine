@@ -31,9 +31,10 @@
 namespace {
 
 using Json = nlohmann::json;
-constexpr std::size_t kDialogueCount = 20'000;
-constexpr std::size_t kVoiceAssetCount = 1'024;
-constexpr std::size_t kImageAssetCount = 1'024;
+std::size_t gDialogueCount = 20'000;
+std::size_t gVoiceAssetCount = 1'024;
+std::size_t gImageAssetCount = 1'024;
+bool gHeavyTier = false;
 constexpr std::string_view kDocumentId = "commercial-mega-vn-main";
 const std::vector<std::string> kLocales{"en-US", "zh-TW", "ja-JP", "fr-FR"};
 
@@ -52,33 +53,33 @@ std::string Read(const std::filesystem::path& path) {
 
 Json Operation(const std::size_t sequence, const std::string& kind,
                Json arguments, const std::string& suffix = {}) {
-    const std::string id = "op-" + std::to_string(sequence) + suffix;
-    return {{"operationId", id}, {"sourceId", "source-" + id},
-            {"sourceLine", sequence + 1}, {"kind", kind}, {"text", ""},
+    const std::string id = "o" + std::to_string(sequence) + suffix;
+    return {{"operationId", id},
+            {"sourceId", "s" + std::to_string(sequence) + suffix},
+            {"kind", kind}, {"text", ""},
             {"arguments", std::move(arguments)}};
 }
 
 Json BuildRuntimeIr(const std::string_view locale) {
     Json operations = Json::array();
     auto& values = operations.get_ref<Json::array_t&>();
-    values.reserve(kDialogueCount + kDialogueCount / 100 + 8);
+    values.reserve(gDialogueCount + gDialogueCount / 100 + 8);
     std::size_t sequence = 0;
     values.push_back(Operation(sequence++, "scene", {{"title", "Mega Chapter"}}));
-    for (std::size_t line = 0; line < kDialogueCount; ++line) {
+    for (std::size_t line = 0; line < gDialogueCount; ++line) {
         if (line % 1'000 == 0) {
             values.push_back(Operation(
                 sequence++, "background",
                 {{"asset", "Assets/Images/image-" +
-                                   std::to_string(line % kImageAssetCount) + ".webp"},
+                                   std::to_string(line % gImageAssetCount) + ".webp"},
                  {"duration", "0ms"}}));
         }
-        Json args{{"speaker", "Character-" + std::to_string(line % 64)},
-                  {"text", std::string(locale) + " commercial dialogue " +
-                               std::to_string(line)},
-                  {"speed", "0"}};
-        if (line % 500 == 0) {
+        Json args{{"speaker", "C" + std::to_string(line % 64)},
+                  {"text", std::string(locale) + ":" +
+                               std::to_string(line)}};
+        if (line % 10 == 0) {
             args["voice"] = "Assets/Voice/voice-" +
-                            std::to_string(line % kVoiceAssetCount) + ".ogg";
+                            std::to_string((line / 10) % gVoiceAssetCount) + ".ogg";
         }
         values.push_back(Operation(sequence++, "dialogue", std::move(args)));
         if (line % 500 == 499) {
@@ -103,13 +104,14 @@ Json BuildSourceMap(const Json& runtime, const std::string& sourceUri) {
     Json mappings = Json::array();
     auto& values = mappings.get_ref<Json::array_t&>();
     values.reserve(runtime.at("operations").size());
+    std::uint32_t line = 1;
     for (const auto& operation : runtime.at("operations")) {
-        const auto line = operation.at("sourceLine");
         values.push_back({{"operationId", operation.at("operationId")},
                           {"sourceId", operation.at("sourceId")},
                           {"sourceUri", sourceUri}, {"startLine", line},
                           {"startColumn", 1}, {"endLine", line},
                           {"endColumn", 2}});
+        ++line;
     }
     return {{"format", "PrismatiXSourceMap"}, {"schemaRevision", 2},
             {"documentId", kDocumentId}, {"mappings", std::move(mappings)}};
@@ -211,7 +213,7 @@ FixturePaths BuildFixture(const std::filesystem::path& base) {
                            "Content/Migrations/v1-to-v2.pxsave-migration"});
 
     Json assets = Json::array();
-    for (std::size_t index = 0; index < kVoiceAssetCount; ++index) {
+    for (std::size_t index = 0; index < gVoiceAssetCount; ++index) {
         const std::string uri = "Assets/Voice/voice-" + std::to_string(index) + ".ogg";
         Write(fixture.root / uri, "synthetic-voice-" + std::to_string(index));
         assets.push_back({{"id", px::Uuid::FromName(uri).ToString()},
@@ -219,7 +221,7 @@ FixturePaths BuildFixture(const std::filesystem::path& base) {
                           {"kind", "audio"}, {"source", uri}});
         fixture.inputs.push_back(uri);
     }
-    for (std::size_t index = 0; index < kImageAssetCount; ++index) {
+    for (std::size_t index = 0; index < gImageAssetCount; ++index) {
         const std::string uri = "Assets/Images/image-" + std::to_string(index) + ".webp";
         Write(fixture.root / uri, "synthetic-image-" + std::to_string(index));
         assets.push_back({{"id", px::Uuid::FromName(uri).ToString()},
@@ -304,7 +306,16 @@ px::progress::SaveSnapshot SaveFromState(
 
 }  // namespace
 
-int main() {
+int main(const int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--heavy") {
+        gHeavyTier = true;
+        gDialogueCount = 100'000;
+        gVoiceAssetCount = 2'500;
+        gImageAssetCount = 2'500;
+    } else if (argc != 1) {
+        std::cerr << "usage: PrismatiXCommercialMegaVNTortureTests [--heavy]\n";
+        return 2;
+    }
     px::test::Suite suite("CommercialMegaVNTorture");
     px::test::TempDirectory temp("commercial-mega-vn");
     FixturePaths fixture;
@@ -315,7 +326,7 @@ int main() {
         fixture = BuildFixture(temp.path);
         const auto parsed = px::sdk::ParseRuntimeIr(fixture.canonicalRuntime);
         suite.Require(parsed.Valid(), "commercial Runtime IR validates");
-        suite.Expect(parsed.document.operations.size() > kDialogueCount,
+        suite.Expect(parsed.document.operations.size() > gDialogueCount,
                      "fixture contains dialogue, labels, choices, and visual operations");
 
         px::sdk::PackageRequest request;
@@ -366,7 +377,9 @@ int main() {
         std::cout << "CommercialMegaVN validate/compile/package/startup: "
                   << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()
                   << " ms; operations=" << parsed.document.operations.size()
-                  << "; assets=" << (kVoiceAssetCount + kImageAssetCount)
+                  << "; assets=" << (gVoiceAssetCount + gImageAssetCount)
+                  << "; voiceRefs=" << (gDialogueCount / 10)
+                  << "; tier=" << (gHeavyTier ? "heavy" : "quick")
                   << "; locales=" << kLocales.size() << '\n';
         suite.Expect(elapsed < std::chrono::seconds(120),
                      "commercial pipeline stays within the stress budget");
@@ -383,7 +396,7 @@ int main() {
         std::size_t choices = 0;
         const auto start = std::chrono::steady_clock::now();
         while (live.runtime.VM().State() != px::vn::VMState::Finished &&
-               cycles < kDialogueCount * 3) {
+               cycles < gDialogueCount * 3) {
             if (live.runtime.VM().State() == px::vn::VMState::WaitingChoice) {
                 live.runtime.SelectChoice(static_cast<int>(choices++ % 2));
             } else if (live.runtime.VM().State() == px::vn::VMState::WaitingClick) {
@@ -393,12 +406,12 @@ int main() {
                 now += 16;
                 live.runtime.Update(now, 0.016f);
             }
-            if (++cycles == kDialogueCount / 2)
+            if (++cycles == gDialogueCount / 2)
                 rollback = live.runtime.CaptureState(now);
         }
         suite.Require(live.runtime.VM().State() == px::vn::VMState::Finished,
                       "long auto/skip traversal reaches EOF");
-        suite.Expect(choices == kDialogueCount / 500,
+        suite.Expect(choices == gDialogueCount / 500,
                      "all large choice blocks execute");
         suite.Expect(live.runtime.Backlog().Size() == 500,
                      "backlog remains at its production memory bound");
@@ -439,7 +452,8 @@ int main() {
         const auto saveRoot = temp.path / "Saves";
         saves.Configure(saveRoot.string(), nullptr);
         const auto start = std::chrono::steady_clock::now();
-        for (int iteration = 0; iteration < 256; ++iteration) {
+        const int saveIterations = gHeavyTier ? 1'024 : 256;
+        for (int iteration = 0; iteration < saveIterations; ++iteration) {
             const int slot = iteration % 32;
             save.timestamp = static_cast<std::uint64_t>(iteration + 1);
             suite.Require(saves.Save(slot, save), "bulk save write succeeds");
@@ -462,7 +476,8 @@ int main() {
                          !migrated.Value().typedVariables.contains("route"),
                      "commercial save migration is deterministic");
         const auto elapsed = std::chrono::steady_clock::now() - start;
-        std::cout << "CommercialMegaVN 256 save/load cycles + migration: "
+        std::cout << "CommercialMegaVN " << saveIterations
+                  << " save/load cycles + migration: "
                   << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()
                   << " ms\n";
     });
@@ -494,9 +509,10 @@ int main() {
                          "locale switch preserves stable narrative identity");
         }
 
-        for (std::size_t index = 0; index < 10'000; ++index) {
+        const std::size_t resourceIterations = gHeavyTier ? 50'000 : 10'000;
+        for (std::size_t index = 0; index < resourceIterations; ++index) {
             const std::string path = "Assets/Images/image-" +
-                                     std::to_string(index % kImageAssetCount) + ".webp";
+                                     std::to_string(index % gImageAssetCount) + ".webp";
             auto stream = live.vfs.Open(path);
             suite.Require(stream && stream->Size() > 0,
                           "streaming asset handle opens during lifetime churn");
@@ -505,11 +521,14 @@ int main() {
                          "streaming asset handle reads a bounded prefix");
         }
 
-        live.runtime.Stage().SetParticleEmitter(
-            "soak-rain", {.preset = px::vn::ParticlePreset::Rain, .seed = 99,
-                          .rate = 120.0f, .maxParticles = 384});
-        constexpr int acceleratedEightHours = 8 * 60 * 60 * 4;
-        for (int update = 0; update < acceleratedEightHours; ++update)
+        px::vn::ParticleEmitterSpec soakRain;
+        soakRain.preset = px::vn::ParticlePreset::Rain;
+        soakRain.seed = 99;
+        soakRain.rate = 120.0f;
+        soakRain.maxParticles = 384;
+        live.runtime.Stage().SetParticleEmitter("soak-rain", soakRain);
+        const int acceleratedSoak = (gHeavyTier ? 24 : 8) * 60 * 60 * 4;
+        for (int update = 0; update < acceleratedSoak; ++update)
             live.runtime.Stage().Update(0.25f);
         const auto state = live.runtime.Stage().CaptureState();
         suite.Expect(state.particleEmitters.size() == 1 &&

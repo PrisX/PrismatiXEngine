@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace px::graphics {
@@ -25,12 +26,19 @@ struct CustomEffectArtifactDescriptor {
 
 struct CustomEffectDescriptor {
     std::string id;
+    std::uint32_t schemaRevision = 2;
+    // stage: whole Stage post-processing; node: one Stage graph leaf;
+    // transition: outgoing/incoming screen textures.
     std::string targetLayer;
     std::vector<CustomEffectUniformDescriptor> uniforms;
     std::vector<CustomEffectArtifactDescriptor> artifacts;
     std::uint32_t samplerCount = 0;
     std::uint32_t uniformBufferCount = 0;
 };
+
+inline bool IsCustomEffectTarget(const std::string_view value) {
+    return value == "stage" || value == "node" || value == "transition";
+}
 
 // Author-facing values resolved through the .pxeffect uniform schema.  The
 // renderer owns slot/type/range validation so every caller uses the same

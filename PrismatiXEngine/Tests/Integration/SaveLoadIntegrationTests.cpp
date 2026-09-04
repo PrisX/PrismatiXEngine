@@ -240,31 +240,72 @@ void TestSaveValidation() {
         .z = 3,
         .scaleY = 0.75f,
         .rotation = 17.0f});
-    snapshot.stage.nodes.push_back({
-        .name = "scene-root",
-        .kind = px::vn::Stage::NodeKind::Group,
-        .children = {"alice", "foreground"},
-        .transform = {.x = 2.0f, .y = 3.0f, .scaleX = 0.9f,
-                      .scaleY = 1.1f, .rotation = 4.0f, .opacity = 0.8f},
-        .order = 1});
-    snapshot.stage.nodes.push_back({
-        .name = "alice", .kind = px::vn::Stage::NodeKind::Character,
-        .parent = "scene-root", .z = 2, .order = 2});
-    snapshot.stage.nodes.push_back({
-        .name = "foreground", .kind = px::vn::Stage::NodeKind::Image,
-        .parent = "scene-root",
-        .transform = {.x = 18.0f, .y = 30.0f, .scaleX = 1.25f,
-                      .scaleY = 0.75f, .rotation = 17.0f,
-                      .opacity = 220.0f / 255.0f},
-        .z = 3, .order = 3});
-    snapshot.stage.particleEmitters.push_back({
-        .name = "snow",
-        .spec = {.preset = px::vn::ParticlePreset::Snow, .seed = 73,
-                 .rate = 42.0f, .maxParticles = 200, .z = -1,
-                 .opacity = 0.7f, .wind = 0.2f, .speed = 0.9f,
-                 .size = 1.1f},
-        .ticks = 901,
-        .tickRemainder = 0.25});
+    px::vn::Stage::SavedNode sceneRoot;
+    sceneRoot.name = "scene-root";
+    sceneRoot.kind = px::vn::Stage::NodeKind::Group;
+    sceneRoot.children = {"alice", "foreground"};
+    sceneRoot.transform = {.x = 2.0f, .y = 3.0f, .scaleX = 0.9f,
+                           .scaleY = 1.1f, .rotation = 4.0f,
+                           .opacity = 0.8f};
+    sceneRoot.order = 1;
+    snapshot.stage.nodes.push_back(std::move(sceneRoot));
+
+    px::vn::Stage::SavedNode aliceNode;
+    aliceNode.name = "alice";
+    aliceNode.kind = px::vn::Stage::NodeKind::Character;
+    aliceNode.parent = "scene-root";
+    aliceNode.z = 2;
+    aliceNode.order = 2;
+    snapshot.stage.nodes.push_back(std::move(aliceNode));
+
+    px::vn::Stage::SavedNode foregroundNode;
+    foregroundNode.name = "foreground";
+    foregroundNode.kind = px::vn::Stage::NodeKind::Image;
+    foregroundNode.parent = "scene-root";
+    foregroundNode.transform = {
+        .x = 18.0f, .y = 30.0f, .scaleX = 1.25f, .scaleY = 0.75f,
+        .rotation = 17.0f, .opacity = 220.0f / 255.0f};
+    foregroundNode.z = 3;
+    foregroundNode.order = 3;
+    snapshot.stage.nodes.push_back(std::move(foregroundNode));
+
+    px::vn::ParticleEmitterState savedEmitter;
+    savedEmitter.name = "snow";
+    savedEmitter.spec.preset = px::vn::ParticlePreset::Snow;
+    savedEmitter.spec.seed = 73;
+    savedEmitter.spec.rate = 42.0f;
+    savedEmitter.spec.maxParticles = 200;
+    savedEmitter.spec.z = -1;
+    savedEmitter.spec.opacity = 0.7f;
+    savedEmitter.spec.wind = 0.2f;
+    savedEmitter.spec.speed = 0.9f;
+    savedEmitter.spec.size = 1.1f;
+    savedEmitter.ticks = 901;
+    savedEmitter.tickRemainder = 0.25;
+    snapshot.stage.particleEmitters.push_back(std::move(savedEmitter));
+    auto& savedParticles = snapshot.stage.particleEmitters.back().spec;
+    savedParticles.texture = "Content/Particles/snow-atlas.png";
+    savedParticles.atlasColumns = 4;
+    savedParticles.atlasRows = 2;
+    savedParticles.atlasFrameCount = 8;
+    savedParticles.spawnShape = px::vn::ParticleSpawnShape::Line;
+    savedParticles.positionX = {0.1f, 0.9f};
+    savedParticles.positionY = {0.0f, 0.2f};
+    savedParticles.velocityX = {-10.0f, 10.0f};
+    savedParticles.velocityY = {40.0f, 80.0f};
+    savedParticles.lifetime = {3.0f, 6.0f};
+    savedParticles.rotation = {-30.0f, 30.0f};
+    savedParticles.angularVelocity = {-90.0f, 90.0f};
+    savedParticles.scaleOverLifetime = {{0.0f, 0.5f}, {1.0f, 1.0f}};
+    savedParticles.opacityOverLifetime = {{0.0f, 1.0f}, {1.0f, 0.0f}};
+    savedParticles.colorOverLifetime = {
+        {0.0f, {255, 255, 255, 255}}, {1.0f, {180, 210, 255, 0}}};
+    savedParticles.gravity = 9.0f;
+    savedParticles.variation = 0.25f;
+    savedParticles.burst = 32;
+    savedParticles.loop = false;
+    savedParticles.duration = 2.0f;
+    savedParticles.advanced = true;
     px::vn::Stage::SavedTween tween;
     tween.target = "alice";
     tween.spec.hasX = true;
@@ -344,7 +385,7 @@ void TestSaveValidation() {
         loaded && loaded->vm.state == px::vn::VMState::WaitingChoice && loaded->vm.callStack.size() == 1 && loaded->vm.choices.size() == 1 && loaded->dialogue.state.displayText == "Hel" &&
             loaded->dialogue.speedMs == 42 && loaded->typedVariables.at("route").TryGet<std::string>() && loaded->typedVariables.at("flags").AsObject() && loaded->routes.stack.size() == 2 && loaded->routes.modals.size() == 1 &&
             loaded->timelines.size() == 1 && loaded->timelines.front().awaiting && loaded->animationClips.size() == 1 && loaded->animationClips.front().name == "Custom/Save" && loaded->stage.backgroundFade == 0.45f && loaded->stage.ruleActive && loaded->stage.ruleMask == "Content/Transitions/clouds.png" && loaded->stage.ruleProgress == 0.35f && loaded->stage.ruleVague == 48 && loaded->stage.cameraX == 16.0f && loaded->stage.cameraY == -9.0f && loaded->stage.cameraZoom == 1.15f && loaded->stage.actors.size() == 1 && loaded->stage.layers.size() == 1 && loaded->stage.layers.front().scaleY == 0.75f && loaded->stage.layers.front().rotation == 17.0f &&
-            loaded->stage.nodes.size() == 3 && loaded->stage.nodes.front().name == "scene-root" && loaded->stage.nodes.front().children.size() == 2 && loaded->stage.particleEmitters.size() == 1 && loaded->stage.particleEmitters.front().spec.preset == px::vn::ParticlePreset::Snow && loaded->stage.particleEmitters.front().ticks == 901 && loaded->stage.particleEmitters.front().tickRemainder == 0.25 &&
+            loaded->stage.nodes.size() == 3 && loaded->stage.nodes.front().name == "scene-root" && loaded->stage.nodes.front().children.size() == 2 && loaded->stage.particleEmitters.size() == 1 && loaded->stage.particleEmitters.front().spec.preset == px::vn::ParticlePreset::Snow && loaded->stage.particleEmitters.front().spec.advanced && loaded->stage.particleEmitters.front().spec.texture == "Content/Particles/snow-atlas.png" && loaded->stage.particleEmitters.front().spec.atlasFrameCount == 8 && loaded->stage.particleEmitters.front().spec.burst == 32 && loaded->stage.particleEmitters.front().spec.colorOverLifetime.size() == 2 && loaded->stage.particleEmitters.front().ticks == 901 && loaded->stage.particleEmitters.front().tickRemainder == 0.25 &&
             loaded->stage.tweens.size() == 1 && loaded->audio.music.playbackFrame == 24000 && loaded->scriptPending.size() == 2 && loaded->scriptPending.front().yieldIndex == 1 && loaded->scriptPending.back().waitKind == "screen-effect" && loaded->scriptPending.back().handle == 91 && loaded->scriptActions.size() == 1 && loaded->scriptActions.front().yieldIndex == 2 &&
             loaded->ui.behavior.fibers.size() == 1 && loaded->ui.behavior.fibers.front().current == behaviorDelay && loaded->ui.behavior.fibers.front().signalArguments.at("position").TryGet<px::Vec2>() && loaded->ui.behavior.actions.size() == 1 &&
             loaded->ui.behavior.actions.front().providerHandle == 73 &&

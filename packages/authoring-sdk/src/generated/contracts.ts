@@ -633,6 +633,27 @@ export const contractSchemas: Readonly<Record<string, object>> = {
     "$id": "https://prismatix.dev/contracts/effect.schema.json",
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "schemaRevision": {
+              "const": 2
+            }
+          },
+          "required": [
+            "schemaRevision"
+          ]
+        },
+        "then": {
+          "properties": {
+            "targetLayer": {
+              "const": "stage"
+            }
+          }
+        }
+      }
+    ],
     "properties": {
       "format": {
         "const": "PrismatiXEffect"
@@ -641,13 +662,20 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
       },
       "schemaRevision": {
-        "const": 2
+        "enum": [
+          2,
+          3
+        ]
       },
       "shader": {
         "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
       },
       "targetLayer": {
-        "const": "stage"
+        "enum": [
+          "stage",
+          "node",
+          "transition"
+        ]
       },
       "uniforms": {
         "items": {
@@ -3257,7 +3285,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "animation.schema.json": "350ac0431be758205b25b425155a920cbf626f918d3be410950e2717c69b8ec8",
   "character.schema.json": "aadcf4c9e6d8e141581293dde1ffd1ef004f5423c4e8d450f7c2b0c880a5f64e",
   "common.schema.json": "1ba66770e3cf7f90b6ffe29f7fdccd263ad2eeec4cb2cff63bc0f7839a5d57f4",
-  "effect.schema.json": "12b6be0b325683ba82b6b2cc8cc48971cc953ac9d0dcf53f837b3d3c1726f83f",
+  "effect.schema.json": "631dd0bce555dcbb3f849049978c9b635dd79848ac497adf292ca6e02468eee7",
   "extension.schema.json": "b20aa556b29e2eba19ebc0a61e12ec309c3ac26811df44942068be3520fdc4ff",
   "game.schema.json": "f0592fc75a4deb4aed7f192c076165012ef480196a07cd7d2136be390821dcba",
   "locale.schema.json": "d9fc4deae726d556c7bc7fb51a1d7a25e8db065147cb79450e31326dd81f4d79",

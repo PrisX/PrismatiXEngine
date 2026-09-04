@@ -84,9 +84,22 @@ export interface StageNodeTransform {
 }
 
 export type ParticlePreset = "rain" | "snow" | "sakura" | "dust" | "light" | "motes";
+export type ParticleRange = number | readonly [minimum: number, maximum: number];
+export interface ParticleCurvePoint {
+  readonly time: number;
+  readonly value: number;
+}
+export interface ParticleColorCurvePoint {
+  readonly time: number;
+  readonly value: readonly [r: number, g: number, b: number, a: number];
+}
+export interface ParticleVectorRanges {
+  readonly x?: ParticleRange;
+  readonly y?: ParticleRange;
+}
 
 export interface ParticleEmitterOptions {
-  /** Required to be a non-zero uint32. Defaults to 1. */
+  /** Reproducible stream id; all random sampling remains engine-owned. */
   readonly seed?: number;
   readonly rate?: number;
   readonly maxParticles?: number;
@@ -95,6 +108,33 @@ export interface ParticleEmitterOptions {
   readonly wind?: number;
   readonly speed?: number;
   readonly size?: number;
+  readonly texture?: string;
+  readonly atlas?: {
+    readonly columns?: number;
+    readonly rows?: number;
+    readonly firstFrame?: number;
+    readonly frameCount?: number;
+  };
+  readonly spawnShape?: "point" | "box" | "line" | "ellipse";
+  /** Normalized logical Stage coordinates. */
+  readonly position?: ParticleVectorRanges;
+  /** Logical pixels per second. */
+  readonly velocity?: ParticleVectorRanges;
+  /** Logical pixels per second squared. */
+  readonly acceleration?: ParticleVectorRanges;
+  readonly lifetime?: ParticleRange;
+  readonly rotation?: ParticleRange;
+  readonly angularVelocity?: ParticleRange;
+  readonly scale?: ParticleRange;
+  readonly initialOpacity?: ParticleRange;
+  readonly scaleOverLifetime?: readonly ParticleCurvePoint[];
+  readonly opacityOverLifetime?: readonly ParticleCurvePoint[];
+  readonly colorOverLifetime?: readonly ParticleColorCurvePoint[];
+  readonly gravity?: number;
+  readonly variation?: number;
+  readonly burst?: number;
+  readonly loop?: boolean;
+  readonly duration?: number;
 }
 
 export type StageScreenEffect = "flash" | "fade" | "blur" | "vignette" | "color-grade";
@@ -308,6 +348,8 @@ export interface PrismatiXEngine {
   SetStageNodeTransform(name: string, transform: StageNodeTransform): boolean;
   SetStageNodeOrder(name: string, z: number, order: number): boolean;
   SetStageNodeVisibility(name: string, visible: boolean): boolean;
+  SetStageNodeEffect(name: string, effect: string, progress: number, parameters?: CustomEffectNamedParameters): boolean;
+  ClearStageNodeEffect(name: string): void;
   RemoveStageNode(name: string): void;
   SetParticleEmitter(name: string, preset: ParticlePreset, options?: ParticleEmitterOptions): boolean;
   ClearParticleEmitter(name: string): void;
@@ -323,7 +365,7 @@ export interface PrismatiXEngine {
   PlayAnimation(resourceId: string, awaitCompletion?: boolean, speed?: number): number;
   CancelAnimation(handle: number): boolean;
   RegisterScreenEffect(id: string, plan: ScreenEffectPlan): boolean;
-  PlayScreenEffect(id: string, durationSeconds?: number): number;
+  PlayScreenEffect(id: string, durationSeconds?: number, parameters?: CustomEffectNamedParameters): number;
   StopScreenEffect(handle: number): boolean;
   CancelScreenEffect(handle: number): boolean;
   IsScreenEffectPlaying(handle: number): boolean;
@@ -422,6 +464,8 @@ export const ENGINE_HOST_BINDINGS = [
   "SetStageNodeTransform",
   "SetStageNodeOrder",
   "SetStageNodeVisibility",
+  "SetStageNodeEffect",
+  "ClearStageNodeEffect",
   "RemoveStageNode",
   "SetParticleEmitter",
   "ClearParticleEmitter",
@@ -544,6 +588,8 @@ export interface PrismatiXContext {
     transform(name: string, transform: StageNodeTransform): boolean;
     order(name: string, z: number, order: number): boolean;
     visible(name: string, visible: boolean): boolean;
+    nodeEffect(name: string, effect: string, progress: number, parameters?: CustomEffectNamedParameters): boolean;
+    clearNodeEffect(name: string): void;
     remove(name: string): void;
     particles(name: string, preset: ParticlePreset, options?: ParticleEmitterOptions): boolean;
     clearParticles(name: string): void;
@@ -568,7 +614,7 @@ export interface PrismatiXContext {
   };
   readonly effects: {
     register(id: string, effect: ScreenEffectPlan | ScreenEffectFactory): boolean;
-    play(id: string, durationSeconds?: number): number;
+    play(id: string, durationSeconds?: number, parameters?: CustomEffectNamedParameters): number;
     stop(handle: number): boolean;
     cancel(handle: number): boolean;
     isPlaying(handle: number): boolean;
@@ -732,6 +778,8 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
       transform: (name, transform) => engine.SetStageNodeTransform(name, transform),
       order: (name, z, order) => engine.SetStageNodeOrder(name, z, order),
       visible: (name, visible) => engine.SetStageNodeVisibility(name, visible),
+      nodeEffect: (name, effect, progress, parameters) => engine.SetStageNodeEffect(name, effect, progress, parameters),
+      clearNodeEffect: (name) => engine.ClearStageNodeEffect(name),
       remove: (name) => engine.RemoveStageNode(name),
       particles: (name, preset, options) => engine.SetParticleEmitter(name, preset, options),
       clearParticles: (name) => engine.ClearParticleEmitter(name),
@@ -756,7 +804,7 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
     },
     effects: {
       register: (id, effect) => engine.RegisterScreenEffect(id, resolveScreenEffectPlan(effect)),
-      play: (id, durationSeconds) => engine.PlayScreenEffect(id, durationSeconds),
+      play: (id, durationSeconds, parameters) => engine.PlayScreenEffect(id, durationSeconds, parameters),
       stop: (handle) => engine.StopScreenEffect(handle),
       cancel: (handle) => engine.CancelScreenEffect(handle),
       isPlaying: (handle) => engine.IsScreenEffectPlaying(handle),

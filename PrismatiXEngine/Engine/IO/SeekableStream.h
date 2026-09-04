@@ -23,6 +23,13 @@ public:
     [[nodiscard]] virtual std::uint64_t Tell() const = 0;
     [[nodiscard]] virtual std::uint64_t Size() const = 0;
     [[nodiscard]] virtual bool Failed() const = 0;
+    // Diagnostic accounting used by acceptance tests and runtime telemetry.
+    // File-backed streams report zero; transforming streams report only their
+    // bounded working set, never their logical entry size.
+    [[nodiscard]] virtual std::size_t BufferedBytes() const { return 0; }
+    [[nodiscard]] virtual std::size_t PeakBufferedBytes() const {
+        return BufferedBytes();
+    }
 };
 
 }  // namespace px::io

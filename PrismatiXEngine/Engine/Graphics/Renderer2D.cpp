@@ -127,7 +127,9 @@ Status Renderer2D::RegisterScreenEffect(ScreenEffectDefinition definition) {
         definition.operation == "none" || definition.operation == "fade" ||
         definition.operation == "crossfade" ||
         definition.operation == "slide-left" ||
-        definition.operation == "slide-right" || definition.operation == "tiles";
+        definition.operation == "slide-right" || definition.operation == "tiles" ||
+        (definition.operation == "custom" &&
+         m_compositor.HasCustomEffect(definition.customEffect, "transition"));
     if (!validId || !validOperation || definition.columns < 1 ||
         definition.columns > 64 || definition.rows < 1 || definition.rows > 64 ||
         !std::isfinite(definition.stagger) || definition.stagger < 0.0f ||
@@ -144,6 +146,33 @@ Status Renderer2D::RegisterScreenEffect(ScreenEffectDefinition definition) {
     m_screenEffectDefinitions.insert_or_assign(definition.id,
                                                 std::move(definition));
     return Status::Ok();
+}
+
+bool Renderer2D::LoadCustomEffects(
+    const std::vector<CustomEffectDescriptor>& effects, const io::VFS& vfs) {
+    for (const auto& effect : effects) {
+        if (effect.targetLayer != "transition") continue;
+        const auto existing = m_screenEffectDefinitions.find(effect.id);
+        if (existing != m_screenEffectDefinitions.end() &&
+            existing->second.operation != "custom")
+            return false;
+    }
+    if (!m_compositor.LoadCustomEffects(effects, vfs)) return false;
+    std::erase_if(m_screenEffectDefinitions, [](const auto& entry) {
+        return entry.second.operation == "custom";
+    });
+    for (const auto& id : m_compositor.CustomEffectIds()) {
+        if (m_compositor.CustomEffectTarget(id) != "transition") continue;
+        if (const auto existing = m_screenEffectDefinitions.find(id);
+            existing != m_screenEffectDefinitions.end())
+            return false;
+        ScreenEffectDefinition definition;
+        definition.id = id;
+        definition.operation = "custom";
+        definition.customEffect = id;
+        m_screenEffectDefinitions.emplace(id, std::move(definition));
+    }
+    return true;
 }
 
 bool Renderer2D::HasScreenEffect(const std::string_view id) const {
@@ -189,6 +218,7 @@ bool Renderer2D::EnsureFrameTargets() {
 }
 
 void Renderer2D::DestroyFrameTargets() {
+    m_compositor.InvalidateCustomTransitionTargets();
     if (m_frameTarget) SDL_DestroyTexture(m_frameTarget);
     if (m_presentedTarget) SDL_DestroyTexture(m_presentedTarget);
     if (m_outgoingTarget) SDL_DestroyTexture(m_outgoingTarget);
@@ -219,11 +249,23 @@ void Renderer2D::EndFrame() {
 }
 
 ScreenEffectHandle Renderer2D::PlayScreenEffect(const std::string_view id,
-                                                 const float durationSeconds) {
+    const float durationSeconds,
+    const CustomEffectNamedParameters* parameters) {
     const auto found = m_screenEffectDefinitions.find(std::string(id));
     if (found == m_screenEffectDefinitions.end() ||
         !std::isfinite(durationSeconds) || durationSeconds < 0.0f)
         return 0;
+    std::array<std::array<float, 4>, 8> resolvedParameters{};
+    if (found->second.operation == "custom") {
+        const auto resolved = parameters
+            ? m_compositor.ResolveCustomEffectParameters(
+                  found->second.customEffect, *parameters)
+            : m_compositor.CustomEffectDefaults(found->second.customEffect);
+        if (!resolved) return 0;
+        resolvedParameters = *resolved;
+    } else if (parameters) {
+        return 0;
+    }
     if (m_activeScreenEffect)
         FinishScreenEffect(ScreenEffectStatus::Cancelled);
     const ScreenEffectHandle handle = m_nextScreenEffectHandle++;
@@ -240,9 +282,15 @@ ScreenEffectHandle Renderer2D::PlayScreenEffect(const std::string_view id,
                              static_cast<float>(m_logicalH)};
     SDL_RenderTexture(m_renderer, m_presentedTarget, nullptr, &viewport);
     SDL_SetRenderTarget(m_renderer, previous);
-    m_activeScreenEffect = ScreenEffectPlayback{
-        handle, found->second.id, durationSeconds, 0.0f,
-        ScreenEffectStatus::Playing};
+    ScreenEffectPlayback playback;
+    playback.handle = handle;
+    playback.effect = found->second.id;
+    playback.durationSeconds = durationSeconds;
+    playback.status = ScreenEffectStatus::Playing;
+    playback.randomSeed = static_cast<float>(
+        (handle * 2654435761ull) & 0x00ffffffu);
+    playback.parameters = resolvedParameters;
+    m_activeScreenEffect = std::move(playback);
     m_screenEffectStates[handle] = ScreenEffectStatus::Playing;
     return handle;
 }
@@ -339,6 +387,18 @@ void Renderer2D::RenderScreenEffect(const ScreenEffectDefinition& definition,
         SDL_RenderTexture(m_renderer, texture, nullptr, &destination);
         SDL_SetTextureAlphaMod(texture, 255);
     };
+    if (definition.operation == "custom") {
+        if (!m_compositor.ApplyCustomTransition(
+                definition.customEffect, m_outgoingTarget, m_frameTarget,
+                progress,
+                m_activeScreenEffect ? m_activeScreenEffect->randomSeed : 0.0f,
+                m_activeScreenEffect ? m_activeScreenEffect->parameters
+                                     : std::array<std::array<float, 4>, 8>{})) {
+            drawAlpha(m_outgoingTarget, 1.0f - progress, viewport);
+            drawAlpha(m_frameTarget, progress, viewport);
+        }
+        return;
+    }
     if (definition.operation == "fade") {
         if (progress < 0.5f)
             drawAlpha(m_outgoingTarget, 1.0f - progress * 2.0f, viewport);
@@ -502,6 +562,76 @@ void Renderer2D::DrawNinePatch(const std::string& path,const Rect& bounds,Rect m
 void Renderer2D::DrawTexture(const TextureHandle texture, const Rect& dst,
                              const std::uint8_t alpha) {
     Blit(NativeTexture(texture), dst, alpha);
+}
+
+void Renderer2D::DrawSpriteBatch(
+    const std::string& texturePath,
+    const std::vector<SpriteBatchItem>& items) {
+    if (items.empty()) return;
+    SDL_Texture* texture = texturePath.empty()
+                               ? nullptr
+                               : NativeTexture(m_assets.Texture(texturePath));
+    if (!texturePath.empty() && !texture) return;
+    float textureWidth = 1.0f;
+    float textureHeight = 1.0f;
+    if (texture &&
+        (!SDL_GetTextureSize(texture, &textureWidth, &textureHeight) ||
+         textureWidth <= 0.0f || textureHeight <= 0.0f))
+        return;
+
+    std::vector<SDL_Vertex> vertices;
+    std::vector<int> indices;
+    vertices.reserve(items.size() * 4u);
+    indices.reserve(items.size() * 6u);
+    for (const auto& item : items) {
+        if (item.destination.w <= 0.0f || item.destination.h <= 0.0f ||
+            !std::isfinite(item.rotation))
+            continue;
+        const float centerX = item.destination.x + item.destination.w * 0.5f;
+        const float centerY = item.destination.y + item.destination.h * 0.5f;
+        const float radians = item.rotation * 0.017453292519943295f;
+        const float cosine = std::cos(radians);
+        const float sine = std::sin(radians);
+        const auto corner = [&](const float x, const float y) {
+            const float dx = x - centerX;
+            const float dy = y - centerY;
+            return TransformPoint({centerX + dx * cosine - dy * sine,
+                                   centerY + dx * sine + dy * cosine});
+        };
+        const auto p0 = corner(item.destination.x, item.destination.y);
+        const auto p1 = corner(item.destination.x + item.destination.w,
+                               item.destination.y);
+        const auto p2 = corner(item.destination.x + item.destination.w,
+                               item.destination.y + item.destination.h);
+        const auto p3 = corner(item.destination.x,
+                               item.destination.y + item.destination.h);
+        const SDL_FColor color = ToFColor(TransformColor(item.color));
+        float u0 = 0.0f, v0 = 0.0f, u1 = 1.0f, v1 = 1.0f;
+        if (texture && item.source.w > 0.0f && item.source.h > 0.0f) {
+            const float divisorX = item.sourceNormalized ? 1.0f : textureWidth;
+            const float divisorY = item.sourceNormalized ? 1.0f : textureHeight;
+            u0 = item.source.x / divisorX;
+            v0 = item.source.y / divisorY;
+            u1 = (item.source.x + item.source.w) / divisorX;
+            v1 = (item.source.y + item.source.h) / divisorY;
+        }
+        const int base = static_cast<int>(vertices.size());
+        vertices.insert(vertices.end(),
+                        {{{p0.x, p0.y}, color, {u0, v0}},
+                         {{p1.x, p1.y}, color, {u1, v0}},
+                         {{p2.x, p2.y}, color, {u1, v1}},
+                         {{p3.x, p3.y}, color, {u0, v1}}});
+        indices.insert(indices.end(),
+                       {base, base + 1, base + 2, base, base + 2, base + 3});
+    }
+    if (vertices.empty()) return;
+    SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+    if (SDL_RenderGeometry(m_renderer, texture, vertices.data(),
+                           static_cast<int>(vertices.size()), indices.data(),
+                           static_cast<int>(indices.size()))) {
+        ++m_geometryBatchCount;
+        m_geometryBatchItems += vertices.size() / 4u;
+    }
 }
 
 Rect Renderer2D::DrawImageAuto(const std::string& path, DisplayMode mode, std::uint8_t alpha, int offsetX, int offsetY, float scale, Shadow shadow) {

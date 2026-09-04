@@ -782,6 +782,8 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         Tests/Integration/StageGraphParticleIntegrationTests.cpp
         PrismatiX.Integration.Runtime.StageGraphParticles
         "integration;runtime;graphics;stage;particles;save" PrismatiXRuntime)
+    target_compile_definitions(PrismatiXStageGraphParticleIntegrationTests PRIVATE
+        PRISMATIX_RESOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../Resources")
     prismatix_add_simple_test(
         PrismatiXAssetPreloadIntegrationTests
         Tests/Integration/AssetPreloadIntegrationTests.cpp
@@ -872,6 +874,13 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
                              LABELS "stress;commercial;packager;runtime;save;rollback;locale;soak"
                              TIMEOUT 180)
     endif()
+    if(PRISMATIX_HEAVY_STRESS_TESTS)
+        add_test(NAME PrismatiX.Stress.CommercialMegaVN.Heavy
+                 COMMAND PrismatiXCommercialMegaVNTortureTests --heavy)
+        set_tests_properties(PrismatiX.Stress.CommercialMegaVN.Heavy PROPERTIES
+                             LABELS "stress;heavy;commercial;packager;runtime;save;rollback;locale;soak"
+                             TIMEOUT 600)
+    endif()
 
     add_test(NAME PrismatiX.Architecture.SDK
              COMMAND ${CMAKE_COMMAND}
@@ -888,6 +897,10 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     if(PRISMATIX_STRESS_TESTS)
         set_tests_properties(PrismatiX.Stress.Soak PROPERTIES TIMEOUT 120)
         set_tests_properties(PrismatiX.Stress.CommercialMegaVN PROPERTIES TIMEOUT 180)
+    endif()
+    if(PRISMATIX_HEAVY_STRESS_TESTS)
+        set_tests_properties(PrismatiX.Stress.CommercialMegaVN.Heavy
+                             PROPERTIES TIMEOUT 600)
     endif()
 
     add_custom_target(PrismatiXSDKTests DEPENDS

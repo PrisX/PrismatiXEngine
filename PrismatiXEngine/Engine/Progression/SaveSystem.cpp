@@ -851,7 +851,11 @@ Json NodesToJson(const std::vector<vn::Stage::SavedNode>& nodes) {
                            {"scaleY", node.transform.scaleY},
                            {"rotation", node.transform.rotation},
                            {"opacity", node.transform.opacity}}},
-            {"z", node.z}, {"order", node.order}, {"visible", node.visible}});
+            {"z", node.z}, {"order", node.order}, {"visible", node.visible},
+            {"effect", {{"id", node.effect},
+                        {"progress", node.effectProgress},
+                        {"seed", node.effectSeed},
+                        {"parameters", node.effectParameters}}}});
     }
     return values;
 }
@@ -882,9 +886,92 @@ std::vector<vn::Stage::SavedNode> NodesFromJson(const Json& values) {
         node.z = value.value("z", 0);
         node.order = value.value("order", 0);
         node.visible = value.value("visible", true);
+        if (const auto effect = value.find("effect"); effect != value.end()) {
+            if (!effect->is_object())
+                throw std::invalid_argument("stage node effect must be an object");
+            node.effect = effect->value("id", std::string{});
+            node.effectProgress = effect->value("progress", 0.0f);
+            node.effectSeed = effect->value("seed", std::uint32_t{0});
+            if (effect->contains("parameters"))
+                node.effectParameters =
+                    effect->at("parameters")
+                        .get<std::array<std::array<float, 4>, 8>>();
+        }
         nodes.push_back(std::move(node));
     }
     return nodes;
+}
+
+Json ParticleRangeToJson(const vn::ParticleRange& range) {
+    return Json::array({range.minimum, range.maximum});
+}
+
+vn::ParticleRange ParticleRangeFromJson(const Json& value,
+                                        const vn::ParticleRange fallback) {
+    if (value.is_null()) return fallback;
+    if (!value.is_array() || value.size() != 2 || !value[0].is_number() ||
+        !value[1].is_number())
+        throw std::invalid_argument("particle range must be [minimum, maximum]");
+    return {value[0].get<float>(), value[1].get<float>()};
+}
+
+Json ParticleCurveToJson(const std::vector<vn::ParticleCurvePoint>& curve) {
+    Json result = Json::array();
+    for (const auto& point : curve)
+        result.push_back({{"time", point.time}, {"value", point.value}});
+    return result;
+}
+
+std::vector<vn::ParticleCurvePoint> ParticleCurveFromJson(const Json& value) {
+    if (!value.is_array() || value.size() > 8)
+        throw std::invalid_argument("particle curve must be a bounded array");
+    std::vector<vn::ParticleCurvePoint> result;
+    for (const auto& point : value) {
+        if (!point.is_object() || !point.contains("time") ||
+            !point.contains("value"))
+            throw std::invalid_argument("particle curve point is invalid");
+        result.push_back(
+            {point.at("time").get<float>(), point.at("value").get<float>()});
+    }
+    return result;
+}
+
+Json ParticleColorCurveToJson(
+    const std::vector<vn::ParticleColorPoint>& curve) {
+    Json result = Json::array();
+    for (const auto& point : curve)
+        result.push_back(
+            {{"time", point.time},
+             {"value", {point.value.r, point.value.g, point.value.b,
+                        point.value.a}}});
+    return result;
+}
+
+std::vector<vn::ParticleColorPoint> ParticleColorCurveFromJson(
+    const Json& value) {
+    if (!value.is_array() || value.size() > 8)
+        throw std::invalid_argument("particle color curve must be bounded");
+    std::vector<vn::ParticleColorPoint> result;
+    for (const auto& point : value) {
+        if (!point.is_object() || !point.contains("time") ||
+            !point.contains("value") || !point.at("value").is_array() ||
+            point.at("value").size() != 4)
+            throw std::invalid_argument("particle color curve point is invalid");
+        const auto& color = point.at("value");
+        std::array<int, 4> channels{};
+        for (std::size_t index = 0; index < channels.size(); ++index) {
+            channels[index] = color[index].get<int>();
+            if (channels[index] < 0 || channels[index] > 255)
+                throw std::invalid_argument("particle color channel is invalid");
+        }
+        result.push_back(
+            {point.at("time").get<float>(),
+             {static_cast<std::uint8_t>(channels[0]),
+              static_cast<std::uint8_t>(channels[1]),
+              static_cast<std::uint8_t>(channels[2]),
+              static_cast<std::uint8_t>(channels[3])}});
+    }
+    return result;
 }
 
 Json ParticleEmittersToJson(
@@ -898,6 +985,29 @@ Json ParticleEmittersToJson(
                           {"maxParticles", spec.maxParticles}, {"z", spec.z},
                           {"opacity", spec.opacity}, {"wind", spec.wind},
                           {"speed", spec.speed}, {"size", spec.size},
+                          {"texture", spec.texture},
+                          {"atlas", {{"columns", spec.atlasColumns},
+                                     {"rows", spec.atlasRows},
+                                     {"firstFrame", spec.atlasFirstFrame},
+                                     {"frameCount", spec.atlasFrameCount}}},
+                          {"spawnShape", vn::ParticleSpawnShapeName(spec.spawnShape)},
+                          {"position", {{"x", ParticleRangeToJson(spec.positionX)},
+                                        {"y", ParticleRangeToJson(spec.positionY)}}},
+                          {"velocity", {{"x", ParticleRangeToJson(spec.velocityX)},
+                                        {"y", ParticleRangeToJson(spec.velocityY)}}},
+                          {"acceleration", {{"x", ParticleRangeToJson(spec.accelerationX)},
+                                            {"y", ParticleRangeToJson(spec.accelerationY)}}},
+                          {"lifetime", ParticleRangeToJson(spec.lifetime)},
+                          {"rotation", ParticleRangeToJson(spec.rotation)},
+                          {"angularVelocity", ParticleRangeToJson(spec.angularVelocity)},
+                          {"scale", ParticleRangeToJson(spec.scale)},
+                          {"initialOpacity", ParticleRangeToJson(spec.initialOpacity)},
+                          {"scaleOverLifetime", ParticleCurveToJson(spec.scaleOverLifetime)},
+                          {"opacityOverLifetime", ParticleCurveToJson(spec.opacityOverLifetime)},
+                          {"colorOverLifetime", ParticleColorCurveToJson(spec.colorOverLifetime)},
+                          {"gravity", spec.gravity}, {"variation", spec.variation},
+                          {"burst", spec.burst}, {"loop", spec.loop},
+                          {"duration", spec.duration}, {"advanced", spec.advanced},
                           {"ticks", emitter.ticks},
                           {"tickRemainder", emitter.tickRemainder}});
     }
@@ -925,6 +1035,55 @@ std::vector<vn::ParticleEmitterState> ParticleEmittersFromJson(
         spec.wind = value.value("wind", 0.0f);
         spec.speed = value.value("speed", 1.0f);
         spec.size = value.value("size", 1.0f);
+        spec.texture = value.value("texture", std::string{});
+        if (const auto atlas = value.find("atlas"); atlas != value.end()) {
+            if (!atlas->is_object())
+                throw std::invalid_argument("particle atlas must be an object");
+            spec.atlasColumns = atlas->value("columns", std::uint32_t{1});
+            spec.atlasRows = atlas->value("rows", std::uint32_t{1});
+            spec.atlasFirstFrame = atlas->value("firstFrame", std::uint32_t{0});
+            spec.atlasFrameCount = atlas->value("frameCount", std::uint32_t{1});
+        }
+        const auto shape = vn::ParticleSpawnShapeFromName(
+            value.value("spawnShape", std::string("box")));
+        if (!shape) throw std::invalid_argument("particle spawn shape is invalid");
+        spec.spawnShape = *shape;
+        const auto vectorRange = [&](const char* name, vn::ParticleRange& x,
+                                     vn::ParticleRange& y) {
+            const auto object = value.find(name);
+            if (object == value.end()) return;
+            if (!object->is_object())
+                throw std::invalid_argument("particle vector range is invalid");
+            x = ParticleRangeFromJson(object->value("x", Json{}), x);
+            y = ParticleRangeFromJson(object->value("y", Json{}), y);
+        };
+        vectorRange("position", spec.positionX, spec.positionY);
+        vectorRange("velocity", spec.velocityX, spec.velocityY);
+        vectorRange("acceleration", spec.accelerationX, spec.accelerationY);
+        spec.lifetime = ParticleRangeFromJson(
+            value.value("lifetime", Json{}), spec.lifetime);
+        spec.rotation = ParticleRangeFromJson(
+            value.value("rotation", Json{}), spec.rotation);
+        spec.angularVelocity = ParticleRangeFromJson(
+            value.value("angularVelocity", Json{}), spec.angularVelocity);
+        spec.scale = ParticleRangeFromJson(value.value("scale", Json{}), spec.scale);
+        spec.initialOpacity = ParticleRangeFromJson(
+            value.value("initialOpacity", Json{}), spec.initialOpacity);
+        if (value.contains("scaleOverLifetime"))
+            spec.scaleOverLifetime =
+                ParticleCurveFromJson(value.at("scaleOverLifetime"));
+        if (value.contains("opacityOverLifetime"))
+            spec.opacityOverLifetime =
+                ParticleCurveFromJson(value.at("opacityOverLifetime"));
+        if (value.contains("colorOverLifetime"))
+            spec.colorOverLifetime =
+                ParticleColorCurveFromJson(value.at("colorOverLifetime"));
+        spec.gravity = value.value("gravity", 0.0f);
+        spec.variation = value.value("variation", 0.0f);
+        spec.burst = value.value("burst", std::uint32_t{0});
+        spec.loop = value.value("loop", true);
+        spec.duration = value.value("duration", 0.0f);
+        spec.advanced = value.value("advanced", false);
         emitters.push_back({value.value("name", std::string{}), spec,
                             value.value("ticks", std::uint64_t{0}),
                             value.value("tickRemainder", 0.0)});

@@ -4,6 +4,9 @@
 #include "Engine/VN/Runtime/Stage.h"
 #include "Tests/TestSupport/TestHarness.h"
 
+#include <SDL3/SDL.h>
+
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <ranges>
@@ -27,7 +30,10 @@ void ExpectSameParticles(px::test::Suite& suite,
         suite.Expect(left[index].id == right[index].id &&
                          left[index].position == right[index].position &&
                          left[index].extent == right[index].extent &&
-                         left[index].color == right[index].color,
+                         left[index].color == right[index].color &&
+                         left[index].rotation == right[index].rotation &&
+                         left[index].source == right[index].source &&
+                         left[index].texture == right[index].texture,
                      "restored emitter reproduces deterministic samples");
     }
 }
@@ -123,6 +129,101 @@ int main() {
             (std::numeric_limits<std::uint64_t>::max)();
         suite.Expect(!static_cast<bool>(rejected.stage.RestoreState(corrupt)),
                      "overflow-prone saved emitter clocks are rejected");
+
+        px::vn::ParticleEmitterSpec oneShot;
+        oneShot.seed = 7;
+        oneShot.burst = 32;
+        oneShot.maxParticles = 64;
+        oneShot.loop = false;
+        oneShot.lifetime = {0.5f, 0.5f};
+        oneShot.advanced = true;
+        suite.Require(original.stage.SetParticleEmitter("one-shot", oneShot),
+                      "one-shot burst emitter is accepted");
+        for (int tick = 0; tick < 4; ++tick) original.stage.Update(0.25f);
+        suite.Expect(original.stage.SampleParticles("one-shot", 1280, 720).empty(),
+                     "non-looping burst without a duration does not emit continuously");
+    });
+
+    suite.Run("TexturedAdvancedParticlesRestoreAndBatchAtHighCount", [&] {
+        px::io::VFS vfs;
+        vfs.MountDirectory(PRISMATIX_RESOURCE_ROOT);
+        SDL_Surface* surface =
+            SDL_CreateSurface(640, 360, SDL_PIXELFORMAT_RGBA32);
+        suite.Require(surface != nullptr,
+                      "particle stress surface should initialize");
+        SDL_Renderer* native = SDL_CreateSoftwareRenderer(surface);
+        suite.Require(native != nullptr,
+                      "particle stress renderer should initialize");
+        {
+        px::graphics::AssetCache assets(native, vfs);
+        px::graphics::Renderer2D renderer(native, assets);
+        renderer.SetLogicalSize(640, 360);
+        px::vn::Stage stage(renderer, assets);
+
+        px::vn::ParticleEmitterSpec spec;
+        spec.preset = px::vn::ParticlePreset::Sakura;
+        spec.seed = 0x98765432u;
+        spec.rate = 1.0f;
+        spec.maxParticles = 20'000;
+        spec.z = -1;
+        spec.texture = "Branding/PrismatiXEngine_Logo.png";
+        spec.atlasColumns = 2;
+        spec.atlasRows = 2;
+        spec.atlasFrameCount = 4;
+        spec.spawnShape = px::vn::ParticleSpawnShape::Ellipse;
+        spec.positionX = {0.1f, 0.9f};
+        spec.positionY = {0.1f, 0.4f};
+        spec.velocityX = {-25.0f, 35.0f};
+        spec.velocityY = {20.0f, 80.0f};
+        spec.accelerationX = {-2.0f, 2.0f};
+        spec.accelerationY = {5.0f, 15.0f};
+        spec.lifetime = {30.0f, 40.0f};
+        spec.rotation = {-30.0f, 30.0f};
+        spec.angularVelocity = {-120.0f, 120.0f};
+        spec.scale = {0.25f, 1.25f};
+        spec.initialOpacity = {0.5f, 1.0f};
+        spec.scaleOverLifetime = {{0.0f, 0.25f}, {0.2f, 1.0f},
+                                  {1.0f, 0.1f}};
+        spec.opacityOverLifetime = {{0.0f, 0.0f}, {0.05f, 1.0f},
+                                    {0.8f, 1.0f}, {1.0f, 0.0f}};
+        spec.colorOverLifetime = {
+            {0.0f, {255, 180, 210, 255}},
+            {1.0f, {180, 210, 255, 128}}};
+        spec.gravity = 18.0f;
+        spec.wind = 6.0f;
+        spec.variation = 0.35f;
+        spec.burst = 20'000;
+        spec.loop = false;
+        spec.duration = 1.0f;
+        spec.advanced = true;
+        suite.Require(stage.SetParticleEmitter("textured-stress", spec),
+                      "production textured emitter should validate");
+        stage.Update(1.0f / 60.0f);
+        const auto samples =
+            stage.SampleParticles("textured-stress", 640, 360);
+        suite.Require(samples.size() >= 19'999 &&
+                          samples.front().texture == spec.texture &&
+                          samples.front().source.w == 0.5f,
+                      "burst creates deterministic texture-atlas samples");
+        const auto checkpoint = stage.CaptureState();
+        px::vn::Stage restored(renderer, assets);
+        suite.Require(static_cast<bool>(restored.RestoreState(checkpoint)),
+                      "advanced particle state restores");
+        ExpectSameParticles(
+            suite, samples,
+            restored.SampleParticles("textured-stress", 640, 360));
+
+        const auto started = std::chrono::steady_clock::now();
+        stage.Render();
+        const auto elapsed = std::chrono::steady_clock::now() - started;
+        suite.Expect(renderer.GeometryBatchCount() == 1 &&
+                         renderer.GeometryBatchItems() >= 19'999,
+                     "high-count particles use one batched geometry submission");
+        suite.Expect(elapsed < std::chrono::seconds(5),
+                     "20k textured particle stress frame stays within the acceptance budget");
+        }
+        SDL_DestroyRenderer(native);
+        SDL_DestroySurface(surface);
     });
 
     suite.Run("CorruptedGraphCannotRestore", [&] {

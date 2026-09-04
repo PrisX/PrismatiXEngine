@@ -11,7 +11,7 @@ artifact, and removes the HLSL source from the Player archive.
 ```json
 {
   "format": "PrismatiXEffect",
-  "schemaRevision": 2,
+  "schemaRevision": 3,
   "id": "dream-tone",
   "targetLayer": "stage",
   "shader": "Effects/dream-tone.frag.hlsl",
@@ -28,7 +28,9 @@ artifact, and removes the HLSL source from the Player archive.
 }
 ```
 
-An effect may declare at most eight uniquely named uniforms in unique slots.
+Revision 2 remains accepted for existing Stage-only effects. Revision 3 adds
+`node` and `transition` targets and the controlled viewport input. An effect may
+declare at most eight uniquely named uniforms in unique slots.
 Supported types are `number`, `vec2`, and `color`; defaults must be finite and
 inside the declared range. Colors also remain in normalized `[0, 1]` space.
 
@@ -40,14 +42,17 @@ cbuffer PrismatiXEffectContext : register(b0, space3) {
   float progress;
   float randomSeed;
   float4 parameters[8];
+  float4 viewport; // logical x, y, width, height
 };
 Texture2D stageTexture : register(t0, space2);
 SamplerState stageSampler : register(s0, space2);
 ```
 
-The fragment entry point is `main`. Reflection must report exactly one sampler,
+Stage and node effects bind their source at `t0`/`s0`. Transition effects bind
+the immutable outgoing frame at `t0`/`s0` and incoming frame at `t1`/`s1`.
+Reflection must report exactly one sampler for Stage/node or two for transition,
 one uniform buffer, one output, and no storage textures or buffers. The runtime
-provides only the Stage texture, normalized progress, logical-viewport texel
+provides only those textures, normalized progress, logical viewport and texel
 size, deterministic seed, and declared parameter slots. Raw renderer objects,
 GPU pointers, filesystem, network, wall-clock, and unrestricted randomness are
 never exposed.
@@ -56,7 +61,12 @@ never exposed.
 
 ```ts
 ctx.stage.customEffect("dream-tone", 0.65, {amount: 0.8});
+ctx.stage.nodeEffect("portrait", "character-outline", 1, {width: 2});
 ctx.stage.clearCustomEffect();
+ctx.stage.clearNodeEffect("portrait");
+
+const transition = ctx.effects.play("ink-wipe", 0.8, {softness: 0.12});
+await ctx.effects.wait(transition);
 ```
 
 Named values are checked against the packaged schema before native uniform
@@ -67,10 +77,9 @@ rollback capture.
 
 ## Capability and fallback
 
-Custom effects require `graphicsTier: "gpu-effects"`. Native Player and Native
+All three custom-effect targets require `graphicsTier: "gpu-effects"`. Native Player and Native
 Preview load the artifact format accepted by the SDL GPU device and reject the
 package if no compatible or fingerprint-valid artifact is available. The WASM
 Preview currently has no custom GPU-effect backend and fails the GPU tier
 explicitly instead of silently rendering a different image. Use basic-tier
 built-in effects where a software/WASM fallback is required.
-

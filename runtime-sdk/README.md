@@ -55,6 +55,13 @@ const occupied = ctx.saves.list().filter((entry) => entry.exists);
 ctx.saves.load(slot.slot);
 ```
 
+Native playback keeps FFmpeg demux/decode on its worker and feeds bounded audio
+and video frame queues. Production PDX5 packages store video as independently
+authenticated 256 KiB records, so AVIO seek/read decrypts only the requested
+record; encrypted MP4/H.264/AAC playback does not materialize the whole file.
+PDX4 packages remain readable. WASM Preview reports native-video capability as
+unavailable instead of silently substituting a different decoder.
+
 Keyboard, controller, and pointer bindings converge on logical actions, so
 extensions do not need device-specific branches:
 
@@ -110,10 +117,23 @@ ctx.stage.customEffect("dream-tone", 0.65, {
   amount: 0.8,
   tint: [1, 0.8, 0.65, 1],
 });
+ctx.stage.nodeEffect("petals", "petal-glow", 0.75, {strength: 0.4});
 
 ctx.stage.group("weather");
 ctx.stage.particles("snow", "snow", {
   parent: "weather", seed: 42, rate: 90, maxParticles: 600,
+  texture: "Content/Particles/snow-atlas.png",
+  atlas: {columns: 4, rows: 2, frameCount: 8},
+  spawnShape: "box",
+  position: {x: [0, 1], y: [-0.1, 0]},
+  velocity: {x: [-8, 8], y: [35, 75]},
+  acceleration: {y: 4},
+  lifetime: [5, 9], rotation: [0, 360], angularVelocity: [-30, 30],
+  scale: [0.5, 1.2], initialOpacity: [0.7, 1],
+  scaleOverLifetime: [{time: 0, value: 0.5}, {time: 1, value: 1}],
+  opacityOverLifetime: [{time: 0, value: 0}, {time: 0.1, value: 1}, {time: 1, value: 0}],
+  gravity: 3, wind: 2, variation: 0.25,
+  burst: 40, loop: true, duration: 8,
 });
 ```
 
@@ -121,7 +141,7 @@ Named values are checked by the native runtime against the packaged `number`,
 `vec2`, or `color` declaration before a GPU uniform is updated. The older
 positional `vec4[]` form remains accepted for existing extensions.
 
-`flash` and `fade` are available on every graphics tier. `blur`, `vignette`, `color-grade`, and packaged shader effects require the GPU-effects tier, matching the native Stage behavior. Stage nodes (`Group`, compatibility image layers, and characters) inherit transform, visibility, and opacity from their parent. Particle presets (`rain`, `snow`, `sakura`, and `dust`/`light`) are native, fixed-step, and seeded. Stage state—including hierarchy, particles, camera, transforms, background-rule progress, and post-effect values—continues to use the existing save/checkpoint path.
+`flash` and `fade` are available on every graphics tier. `blur`, `vignette`, `color-grade`, and packaged shader effects require the GPU-effects tier, matching the native Stage behavior. Stage nodes (`Group`, compatibility image layers, and characters) inherit transform, visibility, opacity, and the nearest group effect from their parent. Particle presets (`rain`, `snow`, `sakura`, and `dust`/`light`) remain available; advanced emitters use the same native fixed-step, engine-seeded simulation and one geometry batch per texture/emitter. Hierarchy, node effects, complete emitter specifications and clocks, camera, transforms, background-rule progress, and post-effect values all use the existing save/checkpoint path.
 
 ## Screen and route transitions
 
@@ -185,6 +205,14 @@ if (ctx.effects.isPlaying(handle)) {
 ctx.effects.stop(handle);   // settle and report "stopped"
 ctx.effects.cancel(handle); // abort and report "cancelled"
 ctx.effects.status(handle);
+```
+
+Packaged schema-revision-3 `.pxeffect` transitions use the same lifecycle and
+may take validated named parameters:
+
+```ts
+const handle = ctx.effects.play("ink-wipe", 0.9, {softness: 0.12});
+await ctx.effects.wait(handle);
 ```
 
 An awaited screen effect is a normal engine-owned suspension point, so JavaScript commands and Actions remain cooperative with the runtime. Full-screen playback is transient across route/state restoration; the restored screen and ordinary Stage/Timeline/save data remain authoritative.

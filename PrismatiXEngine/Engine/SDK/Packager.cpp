@@ -41,13 +41,16 @@ using Json = nlohmann::json;
 using Key = std::array<std::uint8_t, 32>;
 using Iv = std::array<std::uint8_t, 16>;
 
-constexpr char kArchiveMagic[4] = { 'P', 'D', 'X', '4' };
-constexpr std::uint32_t kArchiveVersion = 4;
+constexpr char kArchiveMagic[4] = { 'P', 'D', 'X', '5' };
+constexpr std::uint32_t kArchiveVersion = 5;
 constexpr std::size_t kArchiveHeaderSize = 28;
 constexpr std::uint8_t kEntryEncrypted = 0x01;
 constexpr std::uint8_t kEntryCompressed = 0x02;
+constexpr std::uint8_t kEntryChunkedEncrypted = 0x04;
 constexpr std::uint32_t kArchiveEncrypted = 0x01;
-constexpr char kIndexSalt[] = "__pdx4_index__";
+constexpr char kIndexSalt[] = "__pdx5_index__";
+constexpr std::uint32_t kStreamingChunkSize = 256u * 1024u;
+constexpr std::size_t kAeadRecordOverhead = 12u + 16u;
 constexpr std::uint64_t kMaxEntrySize = 8ull * 1024ull * 1024ull * 1024ull;
 constexpr std::size_t kMaxInputs = 1'000'000;
 
@@ -165,6 +168,13 @@ bool IsStreamingMediaPath(const std::string_view uri) {
     return std::ranges::find(extensions, extension) != extensions.end();
 }
 
+std::string ChunkContext(const std::string_view name,
+                         const std::uint32_t index,
+                         const std::uint32_t rawBytes) {
+    return std::string(name) + "#pdx5:" + std::to_string(index) + ":" +
+           std::to_string(rawBytes);
+}
+
 bool IsFingerprint(const std::string_view value) {
     return value.size() == 64 && std::all_of(value.begin(), value.end(), [](const unsigned char c) { return std::isxdigit(c) != 0; });
 }
@@ -241,7 +251,8 @@ Iv DeriveIv(const std::string_view salt) {
     return result;
 }
 
-std::optional<Bytes> Encrypt(const Bytes& input, const Key& key, const Iv& iv) {
+std::optional<Bytes> Encrypt(const Bytes& input, const Key& key, const Iv& iv,
+                             const std::string_view context = {}) {
     constexpr std::size_t nonceSize = 12;
     constexpr std::size_t tagSize = 16;
     Bytes seed(iv.begin(), iv.end());
@@ -262,11 +273,50 @@ std::optional<Bytes> Encrypt(const Bytes& input, const Key& key, const Iv& iv) {
     Bytes output(nonceSize + input.size() + tagSize);
     std::copy_n(digest->begin(), nonceSize, output.begin());
     std::size_t written = 0;
-    const psa_status_t encrypted = psa_aead_encrypt(keyId, PSA_ALG_GCM, output.data(), nonceSize, nullptr, 0, input.data(), input.size(), output.data() + nonceSize, output.size() - nonceSize, &written);
+    const psa_status_t encrypted = psa_aead_encrypt(keyId, PSA_ALG_GCM, output.data(), nonceSize, reinterpret_cast<const std::uint8_t*>(context.data()), context.size(), input.data(), input.size(), output.data() + nonceSize, output.size() - nonceSize, &written);
     psa_destroy_key(keyId);
     if (encrypted != PSA_SUCCESS) return std::nullopt;
     output.resize(nonceSize + written);
     return output;
+}
+
+struct ChunkedPayload {
+    Bytes bytes;
+    std::uint32_t count = 0;
+};
+
+std::optional<ChunkedPayload> EncryptChunked(const Bytes& input,
+                                             const Key& key,
+                                             const std::string_view name) {
+    if (input.empty()) return ChunkedPayload{};
+    const std::uint64_t count64 =
+        (input.size() + kStreamingChunkSize - 1u) / kStreamingChunkSize;
+    if (count64 > (std::numeric_limits<std::uint32_t>::max)())
+        return std::nullopt;
+
+    ChunkedPayload result;
+    result.count = static_cast<std::uint32_t>(count64);
+    if (input.size() > (std::numeric_limits<std::size_t>::max)() -
+                           result.count * kAeadRecordOverhead)
+        return std::nullopt;
+    result.bytes.reserve(input.size() + result.count * kAeadRecordOverhead);
+
+    for (std::uint32_t index = 0; index < result.count; ++index) {
+        const std::size_t offset =
+            static_cast<std::size_t>(index) * kStreamingChunkSize;
+        const std::size_t size =
+            std::min<std::size_t>(kStreamingChunkSize, input.size() - offset);
+        Bytes chunk(input.begin() + static_cast<std::ptrdiff_t>(offset),
+                    input.begin() + static_cast<std::ptrdiff_t>(offset + size));
+        const std::string context =
+            ChunkContext(name, index, static_cast<std::uint32_t>(size));
+        auto encrypted = Encrypt(chunk, key, DeriveIv(context), context);
+        if (!encrypted || encrypted->size() != size + kAeadRecordOverhead)
+            return std::nullopt;
+        result.bytes.insert(result.bytes.end(), encrypted->begin(),
+                            encrypted->end());
+    }
+    return result;
 }
 
 std::uint64_t HashPath(const std::string_view path) {
@@ -365,7 +415,14 @@ bool WriteArchive(const std::filesystem::path& path, const std::vector<ArchiveEn
                 flags |= kEntryCompressed;
             }
         }
-        if (encryption) {
+        std::uint32_t chunkCount = 0;
+        if (encryption && !stored.empty() && IsStreamingMediaPath(entry.uri)) {
+            auto encrypted = EncryptChunked(stored, key, entry.uri);
+            if (!encrypted) return false;
+            stored = std::move(encrypted->bytes);
+            chunkCount = encrypted->count;
+            flags |= kEntryEncrypted | kEntryChunkedEncrypted;
+        } else if (encryption) {
             auto encrypted = Encrypt(stored, key, DeriveIv(entry.uri));
             if (!encrypted) return false;
             stored = std::move(*encrypted);
@@ -382,6 +439,10 @@ bool WriteArchive(const std::filesystem::path& path, const std::vector<ArchiveEn
         PutU64(index, stored.size());
         PutU32(index, Crc32(entry.data));
         index.push_back(flags);
+        if ((flags & kEntryChunkedEncrypted) != 0u) {
+            PutU32(index, kStreamingChunkSize);
+            PutU32(index, chunkCount);
+        }
     }
 
     if (encryption) {
@@ -791,12 +852,20 @@ CompiledEffects CompileCustomEffects(const std::vector<ArchiveEntry>& entries) {
                                                          manifestEntry->data.end()),
                                               nullptr, false)
                                 : Json(Json::value_t::discarded);
+        const int schemaRevision =
+            effect.is_object() ? effect.value("schemaRevision", 0) : 0;
+        const std::string targetLayer =
+            effect.is_object()
+                ? effect.value("targetLayer", std::string{})
+                : std::string{};
         if (!manifestEntry || effect.is_discarded() || !effect.is_object() ||
             effect.size() != 6 ||
             effect.value("format", std::string{}) != "PrismatiXEffect" ||
-            effect.value("schemaRevision", 0) != 2 ||
+            (schemaRevision != 2 && schemaRevision != 3) ||
             effect.value("id", std::string{}) != id ||
-            effect.value("targetLayer", std::string{}) != "stage" ||
+            (targetLayer != "stage" && targetLayer != "node" &&
+             targetLayer != "transition") ||
+            (schemaRevision == 2 && targetLayer != "stage") ||
             !effect.contains("shader") || !effect["shader"].is_string() ||
             !effect.contains("uniforms") || !effect["uniforms"].is_array() ||
             effect["uniforms"].size() > 8) {
@@ -815,12 +884,19 @@ CompiledEffects CompileCustomEffects(const std::vector<ArchiveEntry>& entries) {
             continue;
         }
         std::string hlsl(shaderEntry->data.begin(), shaderEntry->data.end());
+        const std::uint32_t expectedSamplers =
+            targetLayer == "transition" ? 2u : 1u;
         if (hlsl.find('\0') != std::string::npos ||
             hlsl.find("cbuffer PrismatiXEffectContext") == std::string::npos ||
             hlsl.find("register(b0, space3)") == std::string::npos ||
             hlsl.find("float4 parameters[8]") == std::string::npos ||
+            (schemaRevision == 3 &&
+             hlsl.find("float4 viewport") == std::string::npos) ||
             hlsl.find("register(t0, space2)") == std::string::npos ||
-            hlsl.find("register(s0, space2)") == std::string::npos) {
+            hlsl.find("register(s0, space2)") == std::string::npos ||
+            (expectedSamplers == 2u &&
+             (hlsl.find("register(t1, space2)") == std::string::npos ||
+              hlsl.find("register(s1, space2)") == std::string::npos))) {
             AddDiagnostic(result.diagnostics, "PXPKG1506",
                           "Custom effect must use the fixed PrismatiXEffectContext, texture, and sampler bindings: " +
                               shaderPath);
@@ -829,7 +905,8 @@ CompiledEffects CompileCustomEffects(const std::vector<ArchiveEntry>& entries) {
 
         detail::PackageCustomEffect compiled;
         compiled.id = id;
-        compiled.targetLayer = "stage";
+        compiled.schemaRevision = static_cast<std::uint32_t>(schemaRevision);
+        compiled.targetLayer = targetLayer;
         std::set<std::string> uniformNames;
         std::set<std::uint32_t> uniformSlots;
         bool uniformsValid = true;
@@ -899,7 +976,8 @@ CompiledEffects CompileCustomEffects(const std::vector<ArchiveEntry>& entries) {
         SDL_ShaderCross_GraphicsShaderMetadata* metadata =
             SDL_ShaderCross_ReflectGraphicsSPIRV(
                 static_cast<const Uint8*>(spirv), spirvSize, 0);
-        if (!metadata || metadata->resource_info.num_samplers != 1 ||
+        if (!metadata ||
+            metadata->resource_info.num_samplers != expectedSamplers ||
             metadata->resource_info.num_storage_textures != 0 ||
             metadata->resource_info.num_storage_buffers != 0 ||
             metadata->resource_info.num_uniform_buffers != 1 ||
@@ -1872,6 +1950,7 @@ std::string detail::SerializePackageManifest(
                                  {"fingerprint", artifact.fingerprint}});
         customEffects.push_back(
             {{"id", effect.id},
+             {"schemaRevision", effect.schemaRevision},
              {"targetLayer", effect.targetLayer},
              {"uniforms", std::move(uniforms)},
              {"artifacts", std::move(artifacts)},
