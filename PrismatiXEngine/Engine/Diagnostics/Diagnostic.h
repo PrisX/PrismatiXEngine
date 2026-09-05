@@ -11,10 +11,10 @@ namespace px::diag {
 enum class Severity : std::uint8_t { Info, Warning, Error, Fatal };
 
 struct Source {
-    std::string resourceId;
-    std::string path;
-    std::string nodeId;
-    std::string property;
+    std::string resourceId{};
+    std::string path{};
+    std::string nodeId{};
+    std::string property{};
     int line = 0;
     int column = 0;
     int endLine = 0;
@@ -23,19 +23,19 @@ struct Source {
 
 struct Diagnostic {
     Severity severity = Severity::Error;
-    std::string code;
-    std::string category;
-    std::string message;
-    std::string details;
-    Source source;
-    std::string operationId;
-    std::string quickFix;
+    std::string code{};
+    std::string category{};
+    std::string message{};
+    std::string details{};
+    Source source{};
+    std::string operationId{};
+    std::string quickFix{};
     // Canonical 0.2 diagnostic identity. Legacy Source fields remain for
     // object/property diagnostics; every transport serializes these fields.
-    std::string documentId;
-    std::string sourceId;
-    std::string hint;
-    std::string cause;
+    std::string documentId{};
+    std::string sourceId{};
+    std::string hint{};
+    std::string cause{};
 
     [[nodiscard]] bool BlocksBuild() const {
         return severity == Severity::Error || severity == Severity::Fatal;

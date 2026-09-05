@@ -7,18 +7,22 @@ vcpkg_from_github(
     PATCHES
         fix-directx-shader-compiler-includes.patch
         fix-optional-dxc-package-config.patch
+        add-glslang-hlsl-frontend.patch
 )
 
 if(VCPKG_TARGET_IS_OSX)
     set(SDLSHADERCROSS_DXC_OPTION "-DSDLSHADERCROSS_DXC=OFF")
+    set(SDLSHADERCROSS_GLSLANG_OPTION "-DSDLSHADERCROSS_GLSLANG=ON")
 else()
     set(SDLSHADERCROSS_DXC_OPTION "-DSDLSHADERCROSS_DXC=ON")
+    set(SDLSHADERCROSS_GLSLANG_OPTION "-DSDLSHADERCROSS_GLSLANG=OFF")
 endif()
 
 vcpkg_cmake_configure(
     SOURCE_PATH "${SOURCE_PATH}"
     OPTIONS
         ${SDLSHADERCROSS_DXC_OPTION}
+        ${SDLSHADERCROSS_GLSLANG_OPTION}
         -DSDLSHADERCROSS_INSTALL=ON
         -DSDLSHADERCROSS_INSTALL_CMAKEDIR_ROOT=share/sdl3_shadercross
         -DSDLSHADERCROSS_INSTALL_RUNTIME=OFF

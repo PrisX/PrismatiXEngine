@@ -1,4 +1,4 @@
-foreach(required IN ITEMS INPUT_SPIRV INPUT_DXIL INPUT_MSL OUTPUT)
+foreach(required IN ITEMS INPUT_SPIRV INPUT_MSL OUTPUT)
     if(NOT DEFINED ${required} OR "${${required}}" STREQUAL "")
         message(FATAL_ERROR "GenerateBuiltInShaders.cmake requires ${required}")
     endif()
@@ -17,8 +17,17 @@ function(prismatix_binary_array input name output_variable)
 endfunction()
 
 prismatix_binary_array("${INPUT_SPIRV}" kCompositorSpirv spirv_array)
-prismatix_binary_array("${INPUT_DXIL}" kCompositorDxil dxil_array)
 prismatix_binary_array("${INPUT_MSL}" kCompositorMsl msl_array)
+
+set(dxil_array "")
+set(dxil_selector "")
+if(DEFINED INPUT_DXIL AND NOT "${INPUT_DXIL}" STREQUAL "")
+    prismatix_binary_array("${INPUT_DXIL}" kCompositorDxil dxil_array)
+    set(dxil_selector
+"    if ((supportedFormats & SDL_GPU_SHADERFORMAT_DXIL) != 0)\n"
+"        return ShaderBytecodeView{kCompositorDxil, sizeof(kCompositorDxil),\n"
+"                                  SDL_GPU_SHADERFORMAT_DXIL, \"main\"};\n")
+endif()
 
 file(WRITE "${OUTPUT}"
 "#include \"Engine/Graphics/BuiltInShaders.h\"\n"
@@ -31,9 +40,7 @@ file(WRITE "${OUTPUT}"
 "    if ((supportedFormats & SDL_GPU_SHADERFORMAT_SPIRV) != 0)\n"
 "        return ShaderBytecodeView{kCompositorSpirv, sizeof(kCompositorSpirv),\n"
 "                                  SDL_GPU_SHADERFORMAT_SPIRV, \"main\"};\n"
-"    if ((supportedFormats & SDL_GPU_SHADERFORMAT_DXIL) != 0)\n"
-"        return ShaderBytecodeView{kCompositorDxil, sizeof(kCompositorDxil),\n"
-"                                  SDL_GPU_SHADERFORMAT_DXIL, \"main\"};\n"
+"${dxil_selector}"
 "    if ((supportedFormats & SDL_GPU_SHADERFORMAT_MSL) != 0)\n"
 "        return ShaderBytecodeView{kCompositorMsl, sizeof(kCompositorMsl),\n"
 "                                  SDL_GPU_SHADERFORMAT_MSL, \"main0\"};\n"

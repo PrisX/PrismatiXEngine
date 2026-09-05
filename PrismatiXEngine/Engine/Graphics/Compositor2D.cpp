@@ -171,7 +171,8 @@ bool Compositor2D::LoadCustomEffects(
              descriptor.targetLayer != "stage") ||
             descriptor.samplerCount != expectedSamplers ||
             descriptor.uniformBufferCount != 1 ||
-            descriptor.uniforms.size() > 8 || descriptor.artifacts.size() != 3 ||
+            descriptor.uniforms.size() > 8 || descriptor.artifacts.empty() ||
+            descriptor.artifacts.size() > 3 ||
             candidate.contains(descriptor.id))
             return rejectCandidate();
         const CustomEffectArtifactDescriptor* selected = nullptr;

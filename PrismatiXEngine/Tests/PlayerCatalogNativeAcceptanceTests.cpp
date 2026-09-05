@@ -50,23 +50,6 @@ void Copy(const std::filesystem::path& source,
                                std::filesystem::copy_options::overwrite_existing);
 }
 
-void CopySceneAsCurrentVersion(const std::filesystem::path& source,
-                               const std::filesystem::path& destination) {
-    std::string scene = Read(source);
-    const std::string header = "@pxscene 1 ";
-    if (scene.starts_with(header)) scene.replace(0, header.size(), "@pxscene 4 ");
-    const std::string schema = "uiSchemaVersion = 1";
-    if (const auto offset = scene.find(schema); offset != std::string::npos) {
-        scene.replace(offset, schema.size(), "uiSchemaVersion = 5");
-    }
-    if (const auto offset = scene.find("theme = res("); offset != std::string::npos) {
-        const auto end = scene.find('\n', offset);
-        scene.erase(offset, end == std::string::npos ? scene.size() - offset
-                                                      : end - offset + 1);
-    }
-    Write(destination, scene);
-}
-
 px::sdk::PackageInput Input(const std::filesystem::path& root,
                             const std::string& uri) {
     const auto path = root / std::filesystem::path(uri);
@@ -301,17 +284,12 @@ private:
 
 void CreateProjectFixture(const std::filesystem::path& root,
                           const std::filesystem::path& contentRoot,
+                          const std::filesystem::path& fontSource,
                           const std::filesystem::path& imageSource) {
-    CopySceneAsCurrentVersion(contentRoot / "UI/Title.pxscene",
-                              root / "Content/UI/Title.pxscene");
-    CopySceneAsCurrentVersion(contentRoot / "UI/HUD.pxscene",
-                              root / "Content/UI/HUD.pxscene");
-    CopySceneAsCurrentVersion(contentRoot / "UI/Gallery.pxscene",
-                              root / "Content/UI/Gallery.pxscene");
-    Copy(contentRoot / "UI/PrismatiX.pxtheme",
-         root / "Content/UI/PrismatiX.pxtheme");
-    Copy(contentRoot / "Fonts/NotoSansTC-Bold.ttf",
-         root / "Content/Fonts/NotoSansTC-Bold.ttf");
+    Copy(contentRoot / "UI/Title.pxui", root / "Content/UI/Title.pxui");
+    Copy(contentRoot / "UI/HUD.pxui", root / "Content/UI/HUD.pxui");
+    Copy(contentRoot / "UI/Gallery.pxui", root / "Content/UI/Gallery.pxui");
+    Copy(fontSource, root / "Content/Fonts/NotoSansTC-Bold.ttf");
     Copy(imageSource, root / "Assets/ending.png");
 
     Write(root / "Content/Extensions/default.pxextension", R"({
@@ -427,7 +405,7 @@ Engine.RegisterAction("acceptance.packaged-action", async (args, context) => {
       "defaultLocale":"zh-TW","supportedLocales":["zh-TW","ja-JP"],
       "storyIndex":"Story/story.pxindex","gameCatalog":"Content/game.pxgame",
       "extensions":["Content/Extensions/default.pxextension"],
-      "uiEntryPoints":{"title":"Content/UI/Title.pxscene"},
+      "uiEntryPoints":{"title":"Content/UI/Title.pxui"},
       "assets":[{
         "id":"33333333-3333-4333-8333-333333333333",
         "name":"Ending","kind":"cg","source":"Assets/ending.png",
@@ -471,9 +449,9 @@ px::sdk::PackageRequest PackageRequest(const std::filesystem::path& root,
     request.sourceMap = "Content/Runtime/start.pxmap";
     request.extensions = {"Content/Extensions/default.pxextension"};
     request.startRoute = "title";
-    request.routes = {{"title", "Content/UI/Title.pxscene"},
-                      {"hud", "Content/UI/HUD.pxscene"},
-                      {"gallery", "Content/UI/Gallery.pxscene"}};
+    request.routes = {{"title", "Content/UI/Title.pxui"},
+                      {"hud", "Content/UI/HUD.pxui"},
+                      {"gallery", "Content/UI/Gallery.pxui"}};
     request.contentVersion = "player-catalog-native-acceptance-v1";
     request.saveVersion = 1;
     request.encryption = false;
@@ -493,10 +471,9 @@ px::sdk::PackageRequest PackageRequest(const std::filesystem::path& root,
         "Runtime/Locales/ja-JP/main.pxir",
         "Runtime/Locales/ja-JP/main.pxmap",
         "Story/Entry.ja.pxstory",
-        "Content/UI/Gallery.pxscene",
-        "Content/UI/HUD.pxscene",
-        "Content/UI/PrismatiX.pxtheme",
-        "Content/UI/Title.pxscene",
+        "Content/UI/Gallery.pxui",
+        "Content/UI/HUD.pxui",
+        "Content/UI/Title.pxui",
         "Story/Entry.pxstory",
         "Story/story.pxindex",
         "project.pxproject",
@@ -511,23 +488,27 @@ px::sdk::PackageRequest PackageRequest(const std::filesystem::path& root,
 int main(int argc, char* argv[]) {
     px::test::Suite suite("PlayerCatalogNativeAcceptance");
     suite.Run("PackagedPlayerInputGalleryAndPersistence", [&] {
-        suite.Require(argc == 4,
-                      "test receives Player, Content root, and image fixture paths");
+        suite.Require(argc == 5,
+                      "test receives Player, Content root, font, and image fixture paths");
         const std::filesystem::path player =
             std::filesystem::absolute(std::filesystem::path(argv[1]));
         const std::filesystem::path contentRoot =
             std::filesystem::absolute(std::filesystem::path(argv[2]));
-        const std::filesystem::path imageSource =
+        const std::filesystem::path fontSource =
             std::filesystem::absolute(std::filesystem::path(argv[3]));
+        const std::filesystem::path imageSource =
+            std::filesystem::absolute(std::filesystem::path(argv[4]));
         suite.Require(std::filesystem::is_regular_file(player),
                       "built native Player exists");
+        suite.Require(std::filesystem::is_regular_file(fontSource),
+                      "native font fixture exists");
         suite.Require(std::filesystem::is_regular_file(imageSource),
                       "native Gallery image fixture exists");
 
         px::test::TempDirectory fixture("player-catalog-native");
         const auto root = fixture.path / "Project";
         const auto output = fixture.path / "Build/Game";
-        CreateProjectFixture(root, contentRoot, imageSource);
+        CreateProjectFixture(root, contentRoot, fontSource, imageSource);
         const auto packaged = px::sdk::RunPackager(
             PackageRequest(root, output, player));
         if (!packaged.Completed()) {
