@@ -684,34 +684,6 @@ std::optional<std::string> PlayerUiSceneId(const std::string_view text) {
                : std::nullopt;
 }
 
-std::string Quote(const std::string_view value) {
-    std::string result{ "\"" };
-    for (const char character : value) {
-        switch (character) {
-            case '\\':
-                result += "\\\\";
-                break;
-            case '"':
-                result += "\\\"";
-                break;
-            case '\n':
-                result += "\\n";
-                break;
-            case '\r':
-                result += "\\r";
-                break;
-            case '\t':
-                result += "\\t";
-                break;
-            default:
-                result.push_back(character);
-                break;
-        }
-    }
-    result.push_back('"');
-    return result;
-}
-
 std::string UuidFromFingerprint(const std::string_view fingerprint) {
     std::string uuid(fingerprint.substr(0, 32));
     if (uuid.size() < 32) uuid.append(32 - uuid.size(), '0');
@@ -724,30 +696,6 @@ std::string UuidFromFingerprint(const std::string_view fingerprint) {
     uuid.insert(18, "-");
     uuid.insert(23, "-");
     return uuid;
-}
-
-std::string CompressionText(const PackageCompression value) {
-    switch (value) {
-        case PackageCompression::None:
-            return "none";
-        case PackageCompression::Fast:
-            return "fast";
-        case PackageCompression::Balanced:
-            return "balanced";
-        case PackageCompression::Maximum:
-            return "maximum";
-    }
-    return "none";
-}
-
-std::string PlatformText() {
-#ifdef _WIN32
-    return "windows";
-#elif defined(__APPLE__)
-    return "macos";
-#else
-    return "linux";
-#endif
 }
 
 const ArchiveEntry* FindArchiveEntry(const std::vector<ArchiveEntry>& entries,
