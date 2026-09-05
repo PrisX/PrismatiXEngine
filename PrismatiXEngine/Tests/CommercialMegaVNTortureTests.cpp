@@ -310,8 +310,8 @@ int main(const int argc, char** argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--heavy") {
         gHeavyTier = true;
         gDialogueCount = 100'000;
-        gVoiceAssetCount = 2'500;
-        gImageAssetCount = 2'500;
+        gVoiceAssetCount = 10'000;
+        gImageAssetCount = 5'000;
     } else if (argc != 1) {
         std::cerr << "usage: PrismatiXCommercialMegaVNTortureTests [--heavy]\n";
         return 2;
