@@ -1,0 +1,82 @@
+name: Windows Player Acceptance Diagnostic
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  player-acceptance:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: "24.14.0"
+          cache: npm
+      - name: Build Authoring SDK quietly
+        shell: pwsh
+        run: |
+          npm ci --ignore-scripts *> authoring-sdk.log
+          if ($LASTEXITCODE -ne 0) { Get-Content authoring-sdk.log -Tail 120; throw 'Authoring SDK install failed' }
+          npm run build *>> authoring-sdk.log
+          if ($LASTEXITCODE -ne 0) { Get-Content authoring-sdk.log -Tail 120; throw 'Authoring SDK build failed' }
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: x64
+      - uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed
+      - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
+        with:
+          vcpkgDirectory: ${{ runner.temp }}/vcpkg
+      - name: Resolve dependencies quietly
+        shell: pwsh
+        run: |
+          $installRoot = Join-Path $env:GITHUB_WORKSPACE 'out/diag/vcpkg/msvc'
+          & "$env:VCPKG_ROOT/vcpkg.exe" install --triplet x64-windows "--x-install-root=$installRoot" *> vcpkg.log
+          if ($LASTEXITCODE -ne 0) { Get-Content vcpkg.log -Tail 160; throw 'vcpkg dependency resolution failed' }
+      - name: Configure quietly
+        shell: pwsh
+        run: |
+          cmake -S . -B out/diag/sdk-msvc -G Ninja `
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            "-DVCPKG_INSTALLED_DIR=$env:GITHUB_WORKSPACE/out/diag/vcpkg/msvc" `
+            -DBUILD_TESTING=ON `
+            -DPRISMATIX_WARNINGS_AS_ERRORS=ON *> configure.log
+          if ($LASTEXITCODE -ne 0) { Get-Content configure.log -Tail 160; throw 'CMake configure failed' }
+      - name: Build quietly
+        shell: pwsh
+        run: |
+          cmake --build out/diag/sdk-msvc --parallel *> build.log
+          if ($LASTEXITCODE -ne 0) { Get-Content build.log -Tail 200; throw 'Build failed' }
+      - name: Run only packaged Player acceptance
+        shell: pwsh
+        run: |
+          $listing = ctest --test-dir out/diag/sdk-msvc -N -R '^PrismatiX\.Player\.CatalogNativeAcceptance$'
+          if ($listing -notmatch 'PrismatiX\.Player\.CatalogNativeAcceptance') { throw 'Packaged Player E2E is absent from CTest' }
+          ctest --test-dir out/diag/sdk-msvc -R '^PrismatiX\.Player\.CatalogNativeAcceptance$' --output-on-failure --timeout 240 --no-tests=error
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            $last = 'out/diag/sdk-msvc/Testing/Temporary/LastTest.log'
+            if (Test-Path -LiteralPath $last) {
+              Write-Host '===== LastTest.log tail ====='
+              Get-Content -LiteralPath $last -Tail 240
+            }
+            throw "Packaged Player E2E failed with exit code $code"
+          }
+      - name: Upload concise CTest diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows-Player-Acceptance-Diagnostic-${{ github.run_id }}
+          path: |
+            out/diag/sdk-msvc/Testing/Temporary/LastTest.log
+            out/diag/sdk-msvc/Testing/Temporary/LastTestsFailed.log
+          if-no-files-found: warn
+          retention-days: 2
