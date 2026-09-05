@@ -93,7 +93,7 @@ private:
         std::shared_ptr<IActionProvider> provider;
         std::uint64_t providerHandle = 0;
         ActionExecutionState state = ActionExecutionState::Unknown;
-        Status failure;
+        Status failure{};
         bool autoForget = false;
         ActionInvocation invocation;
     };

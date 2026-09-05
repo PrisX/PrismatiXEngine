@@ -52,7 +52,7 @@ index 6bbe74f..ef7fa92 100644
  /* Constants */
  #define MAX_DEFINES 64
  #define MAX_DEFINE_STRING_LENGTH 256
-@@ -625,6 +630,168 @@ void *SDL_ShaderCross_CompileDXILFromHLSL(
+@@ -625,6 +630,167 @@ void *SDL_ShaderCross_CompileDXILFromHLSL(
  #endif
  }
  
@@ -165,7 +165,6 @@ index 6bbe74f..ef7fa92 100644
 +    if (preamble != NULL) {
 +        glslang_shader_set_preamble(shader, preamble);
 +    }
-+    glslang_shader_set_source_entry_point(shader, info->entrypoint);
 +    glslang_shader_set_entry_point(shader, info->entrypoint);
 +    glslang_shader_set_options(shader,
 +        GLSLANG_SHADER_AUTO_MAP_BINDINGS | GLSLANG_SHADER_AUTO_MAP_LOCATIONS);
@@ -221,7 +220,7 @@ index 6bbe74f..ef7fa92 100644
  void *SDL_ShaderCross_CompileSPIRVFromHLSL(
      const SDL_ShaderCross_HLSL_Info *info,
      size_t *size)
-@@ -635,10 +802,18 @@ void *SDL_ShaderCross_CompileSPIRVFromHLSL(
+@@ -635,10 +801,18 @@ void *SDL_ShaderCross_CompileSPIRVFromHLSL(
          return NULL;
      }
  
@@ -240,7 +239,7 @@ index 6bbe74f..ef7fa92 100644
  }
  
  /* DXBC via FXC */
-@@ -2607,6 +2782,13 @@ SDL_GPUComputePipeline *SDL_ShaderCross_CompileComputePipelineFromSPIRV(
+@@ -2607,6 +2781,13 @@ SDL_GPUComputePipeline *SDL_ShaderCross_CompileComputePipelineFromSPIRV(
  
  bool SDL_ShaderCross_Init(void)
  {
@@ -254,7 +253,7 @@ index 6bbe74f..ef7fa92 100644
      d3dcompiler_dll = SDL_LoadObject(D3DCOMPILER_DLL);
  
      if (d3dcompiler_dll != NULL) {
-@@ -2622,4 +2804,8 @@ void SDL_ShaderCross_Quit(void)
+@@ -2622,4 +2803,8 @@ void SDL_ShaderCross_Quit(void)
  {
 +#ifdef SDL_SHADERCROSS_GLSLANG
 +    glslang_finalize_process();
@@ -263,7 +262,7 @@ index 6bbe74f..ef7fa92 100644
      if (d3dcompiler_dll != NULL) {
          SDL_UnloadObject(d3dcompiler_dll);
          d3dcompiler_dll = NULL;
-@@ -2654,7 +2840,7 @@ SDL_GPUShaderFormat SDL_ShaderCross_GetHLSLShaderFormats(void)
+@@ -2654,7 +2839,7 @@ SDL_GPUShaderFormat SDL_ShaderCross_GetHLSLShaderFormats(void)
      SDL_GPUShaderFormat supportedFormats = 0;
  
 -    /* DXC allows compilation from HLSL to SPIRV */
