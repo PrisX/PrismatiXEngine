@@ -66,21 +66,21 @@ struct PackageDiagnostic {
     std::string message;
     bool retryable = false;
     std::string severity = "error";
-    std::string documentId;
-    std::string sourceId;
+    std::string documentId{};
+    std::string sourceId{};
     struct SourceSpan {
         struct Position {
             std::uint32_t line = 0;
             std::uint32_t column = 0;
             std::uint64_t offset = 0;
         };
-        std::string path;
-        Position start;
-        Position end;
+        std::string path{};
+        Position start{};
+        Position end{};
     };
-    std::optional<SourceSpan> span;
-    std::string hint;
-    std::string cause;
+    std::optional<SourceSpan> span{};
+    std::string hint{};
+    std::string cause{};
 };
 
 struct PackageRequestParseResult {
