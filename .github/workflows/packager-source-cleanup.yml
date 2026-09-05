@@ -1,0 +1,65 @@
+name: One-shot Packager Source Cleanup
+
+on:
+  push:
+    branches: [fix/final-production-readiness-gates]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.repository_owner == 'owenliu0924'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: fix/final-production-readiness-gates
+      - name: Remove proven-dead Packager helpers
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("PrismatiXEngine/Engine/SDK/Packager.cpp")
+          text = path.read_text(encoding="utf-8")
+
+          def remove_between(source: str, start: str, end: str) -> str:
+              start_index = source.find(start)
+              end_index = source.find(end, start_index)
+              if start_index < 0 or end_index < 0:
+                  raise SystemExit(f"expected source anchors not found: {start!r} -> {end!r}")
+              return source[:start_index] + source[end_index:]
+
+          text = remove_between(
+              text,
+              "std::string Quote(const std::string_view value) {",
+              "std::string UuidFromFingerprint(const std::string_view fingerprint) {",
+          )
+          text = remove_between(
+              text,
+              "std::string CompressionText(const PackageCompression value) {",
+              "const ArchiveEntry* FindArchiveEntry(const std::vector<ArchiveEntry>& entries,",
+          )
+
+          for dead in ("std::string Quote(", "std::string CompressionText(", "std::string PlatformText("):
+              if dead in text:
+                  raise SystemExit(f"dead helper still present: {dead}")
+          for live in ("std::string UuidFromFingerprint(", "const ArchiveEntry* FindArchiveEntry("):
+              if live not in text:
+                  raise SystemExit(f"live anchor was removed unexpectedly: {live}")
+
+          path.write_text(text, encoding="utf-8")
+      - name: Commit source-only cleanup
+        shell: bash
+        run: |
+          git diff --check
+          git diff -- PrismatiXEngine/Engine/SDK/Packager.cpp
+          if git diff --quiet -- PrismatiXEngine/Engine/SDK/Packager.cpp; then
+            echo 'Packager helpers are already clean.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add PrismatiXEngine/Engine/SDK/Packager.cpp
+          git commit -m 'fix: remove obsolete packager helpers'
+          git push origin HEAD:fix/final-production-readiness-gates
