@@ -59,7 +59,7 @@ jobs:
         shell: pwsh
         run: |
           $listing = ctest --test-dir out/diag/sdk-msvc -N -R '^PrismatiX\.Player\.CatalogNativeAcceptance$'
-          if ($listing -notmatch 'PrismatiX\.Player\.CatalogNativeAcceptance') { throw 'Packaged Player E2E is absent from CTest' }
+          if (($listing -join "`n") -notmatch 'PrismatiX\.Player\.CatalogNativeAcceptance') { throw 'Packaged Player E2E is absent from CTest' }
           ctest --test-dir out/diag/sdk-msvc -R '^PrismatiX\.Player\.CatalogNativeAcceptance$' --output-on-failure --timeout 240 --no-tests=error
           $code = $LASTEXITCODE
           if ($code -ne 0) {

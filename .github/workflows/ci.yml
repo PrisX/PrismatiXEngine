@@ -154,7 +154,7 @@ jobs:
         run: |
           $listing = ctest --test-dir out/ci/sdk-msvc -N -R '^PrismatiX\.Player\.CatalogNativeAcceptance$'
           $listing | Set-Content -LiteralPath out/ci/sdk-msvc/player-e2e-list.txt
-          if ($listing -notmatch 'PrismatiX\.Player\.CatalogNativeAcceptance') { throw 'Packaged Player E2E is absent from CTest' }
+          if (($listing -join "`n") -notmatch 'PrismatiX\.Player\.CatalogNativeAcceptance') { throw 'Packaged Player E2E is absent from CTest' }
           ctest --test-dir out/ci/sdk-msvc -R '^PrismatiX\.Player\.CatalogNativeAcceptance$' --output-on-failure --timeout 240 --no-tests=error
           if ($LASTEXITCODE -ne 0) { throw 'Packaged Player E2E failed' }
       - name: Execute the complete Windows test suite
