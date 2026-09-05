@@ -2,14 +2,14 @@ diff --git a/CMakeLists.txt b/CMakeLists.txt
 index 252753e..dbed135 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -40,6 +40,7 @@ endif()
+@@ -40,5 +40,6 @@ endif()
  # Options
  option(SDLSHADERCROSS_DXC "Enable HLSL compilation via DXC" ON)
 +option(SDLSHADERCROSS_GLSLANG "Enable HLSL to SPIR-V compilation via glslang" OFF)
  option(SDLSHADERCROSS_SHARED "Build shared SDL_shadercross library" ${SDLSHADERCROSS_SHARED_DEFAULT})
  option(SDLSHADERCROSS_STATIC "Build static SDL_shadercross library" ${SDLSHADERCROSS_STATIC_DEFAULT})
  option(SDLSHADERCROSS_SPIRVCROSS_SHARED "Link to shared library variants of dependencies" ON)
-@@ -139,6 +140,10 @@ else()
+@@ -139,7 +140,11 @@ else()
  	if(SDLSHADERCROSS_DXC)
  		set(DirectXShaderCompiler_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/external/DirectXShaderCompiler-binaries")
  		find_package(DirectXShaderCompiler REQUIRED)
@@ -21,7 +21,7 @@ index 252753e..dbed135 100644
  endif()
  
  # Source lists
-@@ -224,6 +229,15 @@ foreach(target IN LISTS SDL3_shadercross_targets)
+@@ -224,6 +229,14 @@ foreach(target IN LISTS SDL3_shadercross_targets)
  	if(SDLSHADERCROSS_DXC)
  		target_link_libraries(${target} PRIVATE DirectXShaderCompiler::dxcompiler)
  	endif()
@@ -52,7 +52,7 @@ index 6bbe74f..ef7fa92 100644
  /* Constants */
  #define MAX_DEFINES 64
  #define MAX_DEFINE_STRING_LENGTH 256
-@@ -625,6 +630,148 @@ void *SDL_ShaderCross_CompileDXILFromHLSL(
+@@ -625,6 +630,168 @@ void *SDL_ShaderCross_CompileDXILFromHLSL(
  #endif
  }
  
@@ -221,7 +221,7 @@ index 6bbe74f..ef7fa92 100644
  void *SDL_ShaderCross_CompileSPIRVFromHLSL(
      const SDL_ShaderCross_HLSL_Info *info,
      size_t *size)
-@@ -635,10 +782,19 @@ void *SDL_ShaderCross_CompileSPIRVFromHLSL(
+@@ -635,10 +802,18 @@ void *SDL_ShaderCross_CompileSPIRVFromHLSL(
          return NULL;
      }
  
@@ -240,7 +240,7 @@ index 6bbe74f..ef7fa92 100644
  }
  
  /* DXBC via FXC */
-@@ -2607,6 +2763,13 @@ SDL_GPUComputePipeline *SDL_ShaderCross_CompileComputePipelineFromSPIRV(
+@@ -2607,6 +2782,13 @@ SDL_GPUComputePipeline *SDL_ShaderCross_CompileComputePipelineFromSPIRV(
  
  bool SDL_ShaderCross_Init(void)
  {
@@ -254,7 +254,7 @@ index 6bbe74f..ef7fa92 100644
      d3dcompiler_dll = SDL_LoadObject(D3DCOMPILER_DLL);
  
      if (d3dcompiler_dll != NULL) {
-@@ -2622,6 +2785,10 @@ void SDL_ShaderCross_Quit(void)
+@@ -2622,4 +2804,8 @@ void SDL_ShaderCross_Quit(void)
  {
 +#ifdef SDL_SHADERCROSS_GLSLANG
 +    glslang_finalize_process();
@@ -263,7 +263,7 @@ index 6bbe74f..ef7fa92 100644
      if (d3dcompiler_dll != NULL) {
          SDL_UnloadObject(d3dcompiler_dll);
          d3dcompiler_dll = NULL;
-@@ -2654,7 +2821,7 @@ SDL_GPUShaderFormat SDL_ShaderCross_GetHLSLShaderFormats(void)
+@@ -2654,7 +2840,7 @@ SDL_GPUShaderFormat SDL_ShaderCross_GetHLSLShaderFormats(void)
      SDL_GPUShaderFormat supportedFormats = 0;
  
 -    /* DXC allows compilation from HLSL to SPIRV */
