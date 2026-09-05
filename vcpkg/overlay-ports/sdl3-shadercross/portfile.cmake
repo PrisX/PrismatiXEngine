@@ -6,6 +6,7 @@ vcpkg_from_github(
     HEAD_REF main
     PATCHES
         fix-directx-shader-compiler-includes.patch
+        fix-optional-dxc-package-config.patch
 )
 
 if(VCPKG_TARGET_IS_OSX)
