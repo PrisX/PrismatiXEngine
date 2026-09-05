@@ -17,7 +17,9 @@ public:
 
 private:
     void* m_voice = nullptr;
+#if defined(_WIN32)
     bool m_comInitialized = false;
+#endif
 };
 
 }  // namespace px::accessibility
