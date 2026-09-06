@@ -202,7 +202,7 @@ public:
     void EmitInputSignal(const UIEvent& event);
     [[nodiscard]] SignalConnection ConnectSignal(std::string signal, SignalHandler handler);
     bool DisconnectSignal(std::string_view signal, SignalConnection connection);
-    void EmitSignal(std::string signal, const SignalArguments& arguments = {});
+    void EmitSignal(std::string_view signal, const SignalArguments& arguments = {});
     virtual void Update(float deltaSeconds);
     virtual void Draw(graphics::Renderer2D& renderer, const Theme& theme);
 
@@ -268,7 +268,7 @@ private:
 
 class Container : public Control {
 public:
-    explicit Container(std::string name = "Control") : Control(std::move(name)) {
+    explicit Container(std::string name = "Container") : Control(std::move(name)) {
         SetMouseFilter(MouseFilter::Pass);
     }
     [[nodiscard]] std::string_view TypeName() const override { return "Container"; }
