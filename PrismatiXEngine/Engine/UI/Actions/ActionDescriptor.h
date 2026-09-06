@@ -63,7 +63,7 @@ struct ActionContext {
     std::string sourceScene;
     Uuid sourceNode;
     std::string signal;
-    std::string currentRoute;
+    std::string currentRoute{};
     void* runtimeServices = nullptr;
     bool preview = false;
 };
