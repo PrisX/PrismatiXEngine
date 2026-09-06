@@ -70,7 +70,7 @@ struct UIEvent {
     Vec2 delta{};
     float wheel = 0.0f;
     int key = 0;
-    std::string text;
+    std::string text{};
     bool shift = false;
     bool control = false;
     bool handled = false;
@@ -222,7 +222,7 @@ protected:
     }
     [[nodiscard]] virtual Vec2 MeasureOverride(Vec2 available);
     virtual void ArrangeOverride(Rect finalRect);
-    virtual void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme);
+    [[nodiscard]] virtual void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme);
 
 private:
     Rect m_anchors{0, 0, 0, 0};
