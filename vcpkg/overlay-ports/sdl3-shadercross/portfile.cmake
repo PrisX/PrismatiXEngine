@@ -11,6 +11,11 @@ vcpkg_from_github(
 )
 
 if(VCPKG_TARGET_IS_OSX)
+    # The upstream static target exports a Debug location even though this
+    # overlay's macOS package does not retain a matching debug archive. Build
+    # this dependency release-only on macOS so its installed CMake target never
+    # advertises a nonexistent debug/lib/libSDL3_shadercross.a.
+    set(VCPKG_BUILD_TYPE release)
     set(SDLSHADERCROSS_DXC_OPTION "-DSDLSHADERCROSS_DXC=OFF")
     set(SDLSHADERCROSS_GLSLANG_OPTION "-DSDLSHADERCROSS_GLSLANG=ON")
 else()
