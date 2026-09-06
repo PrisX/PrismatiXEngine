@@ -110,13 +110,13 @@ struct SignalInfo {
 // contains no ImGui or editor-renderer types so runtime and plugin type
 // registration can describe palette behaviour without depending on Editor.
 struct DesignerTypeMetadata {
-    std::string displayName;
-    std::string description;
-    std::string category;
-    std::string iconId;
+    std::string displayName{};
+    std::string description{};
+    std::string category{};
+    std::string iconId{};
     Vec2 defaultSize{180.0f, 52.0f};
-    VariantObject defaultProperties;
-    std::vector<std::string> acceptedAssetTypes;
+    VariantObject defaultProperties{};
+    std::vector<std::string> acceptedAssetTypes{};
     bool canHaveChildren = false;
     bool paletteVisible = true;
 };
