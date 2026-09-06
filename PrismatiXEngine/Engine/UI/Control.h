@@ -202,7 +202,7 @@ public:
     void EmitInputSignal(const UIEvent& event);
     [[nodiscard]] SignalConnection ConnectSignal(std::string signal, SignalHandler handler);
     bool DisconnectSignal(std::string_view signal, SignalConnection connection);
-    void EmitSignal(std::string_view signal, const SignalArguments& arguments = {});
+    void EmitSignal(std::string signal, const SignalArguments& arguments = {});
     virtual void Update(float deltaSeconds);
     virtual void Draw(graphics::Renderer2D& renderer, const Theme& theme);
 
@@ -222,7 +222,7 @@ protected:
     }
     [[nodiscard]] virtual Vec2 MeasureOverride(Vec2 available);
     virtual void ArrangeOverride(Rect finalRect);
-    [[nodiscard]] virtual void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme);
+    virtual void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme);
 
 private:
     Rect m_anchors{0, 0, 0, 0};
@@ -268,7 +268,7 @@ private:
 
 class Container : public Control {
 public:
-    explicit Container(std::string name = "Container") : Control(std::move(name)) {
+    explicit Container(std::string name = "Control") : Control(std::move(name)) {
         SetMouseFilter(MouseFilter::Pass);
     }
     [[nodiscard]] std::string_view TypeName() const override { return "Container"; }
