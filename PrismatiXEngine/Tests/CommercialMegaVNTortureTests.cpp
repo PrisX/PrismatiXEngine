@@ -148,8 +148,8 @@ px::sdk::PackageInput Input(const std::filesystem::path& root,
 struct FixturePaths {
     std::filesystem::path root;
     std::filesystem::path output;
-    std::vector<std::string> inputs;
-    std::string canonicalRuntime;
+    std::vector<std::string> inputs{};
+    std::string canonicalRuntime{};
 };
 
 FixturePaths BuildFixture(const std::filesystem::path& base) {
