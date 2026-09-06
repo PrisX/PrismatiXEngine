@@ -36,9 +36,9 @@ struct UiComponentSource {
 using UiComponentLoader = std::function<std::optional<UiComponentSource>(std::string_view)>;
 
 struct UiApplicationOptions {
-    std::string sourcePath;
-    UiAssetResolver resolveAsset;
-    UiComponentLoader loadComponent;
+    std::string sourcePath{};
+    UiAssetResolver resolveAsset{};
+    UiComponentLoader loadComponent{};
     IViewModel* viewModel = nullptr;
     bool previewSafeMode = false;
     bool diagnosticOverlay = false;
