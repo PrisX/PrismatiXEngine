@@ -44,7 +44,7 @@ struct UiTypeRegistrySignal {
     std::string id;
     std::string displayName;
     std::string description;
-    std::vector<UiTypeRegistrySignalArgument> arguments;
+    std::vector<UiTypeRegistrySignalArgument> arguments{};
 };
 
 struct UiTypeRegistryControl {

@@ -40,9 +40,9 @@ struct CatalogGalleryItem {
     // Resolved paths remain the presentation-facing compatibility surface;
     // identity is carried separately and always comes from the manifest UUID.
     std::string image;
-    std::string thumbnail;
+    std::string thumbnail{};
     ResourceRefValue imageReference;
-    std::optional<ResourceRefValue> thumbnailReference;
+    std::optional<ResourceRefValue> thumbnailReference{};
 };
 struct CatalogInputBinding { std::string key; std::string command; std::string argument; };
 struct CatalogUnlockable {

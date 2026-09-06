@@ -21,11 +21,11 @@ struct PreviewSessionOptions {
     std::size_t checkpointInterval = 100;
     std::size_t maximumCheckpoints = 128;
     std::function<std::optional<sdk::PreviewSafety>(const vn::Command&)>
-        inspectSafety;
-    std::function<Status(int width, int height, float scale)> resize;
-    std::function<std::shared_ptr<const void>()> captureExternalState;
+        inspectSafety{};
+    std::function<Status(int width, int height, float scale)> resize{};
+    std::function<std::shared_ptr<const void>()> captureExternalState{};
     std::function<Status(const std::shared_ptr<const void>&)>
-        restoreExternalState;
+        restoreExternalState{};
 };
 
 [[nodiscard]] std::unique_ptr<sdk::PreviewSession> CreatePreviewSession(

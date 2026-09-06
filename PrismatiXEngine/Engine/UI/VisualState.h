@@ -40,7 +40,7 @@ struct VisualStateTransition {
     std::string to;
     float duration = 0.0f;
     VisualStateEase easing = VisualStateEase::Linear;
-    std::optional<Uuid> animationClip;
+    std::optional<Uuid> animationClip{};
 };
 
 struct VisualStateGroup {
@@ -64,7 +64,7 @@ struct VisualStateGroupRuntimeState {
     float duration = 0.0f;
     VisualStateEase easing = VisualStateEase::Linear;
     std::vector<VisualStatePropertyValue> transitionFrom;
-    std::optional<Uuid> animationClip;
+    std::optional<Uuid> animationClip{};
     float animationPosition = 0.0f;
 };
 

@@ -1,0 +1,274 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 252753e..dbed135 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -40,5 +40,6 @@ endif()
+ # Options
+ option(SDLSHADERCROSS_DXC "Enable HLSL compilation via DXC" ON)
++option(SDLSHADERCROSS_GLSLANG "Enable HLSL to SPIR-V compilation via glslang" OFF)
+ option(SDLSHADERCROSS_SHARED "Build shared SDL_shadercross library" ${SDLSHADERCROSS_SHARED_DEFAULT})
+ option(SDLSHADERCROSS_STATIC "Build static SDL_shadercross library" ${SDLSHADERCROSS_STATIC_DEFAULT})
+ option(SDLSHADERCROSS_SPIRVCROSS_SHARED "Link to shared library variants of dependencies" ON)
+@@ -139,7 +140,11 @@ else()
+ 	if(SDLSHADERCROSS_DXC)
+ 		set(DirectXShaderCompiler_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/external/DirectXShaderCompiler-binaries")
+ 		find_package(DirectXShaderCompiler REQUIRED)
+ 	endif()
++
++	if(SDLSHADERCROSS_GLSLANG)
++		find_package(glslang CONFIG REQUIRED)
++	endif()
+ endif()
+ 
+ # Source lists
+@@ -224,6 +229,14 @@ foreach(target IN LISTS SDL3_shadercross_targets)
+ 	if(SDLSHADERCROSS_DXC)
+ 		target_link_libraries(${target} PRIVATE DirectXShaderCompiler::dxcompiler)
+ 	endif()
++	if(SDLSHADERCROSS_GLSLANG)
++		target_compile_definitions(${target} PRIVATE SDL_SHADERCROSS_GLSLANG)
++		target_link_libraries(${target} PRIVATE
++			glslang::glslang
++			glslang::glslang-default-resource-limits
++			glslang::SPIRV
++		)
++	endif()
+ 	if(NOT SDLSHADERCROSS_SPIRVCROSS_SHARED)
+ 		# spirv-cross uses C++
+ 		set_property(TARGET ${target} PROPERTY LINKER_LANGUAGE CXX)
+diff --git a/src/SDL_shadercross.c b/src/SDL_shadercross.c
+index 6bbe74f..ef7fa92 100644
+--- a/src/SDL_shadercross.c
++++ b/src/SDL_shadercross.c
+@@ -20,6 +20,11 @@
+ #include <SDL3/SDL_loadso.h>
+ #include <SDL3/SDL_log.h>
+ 
++#ifdef SDL_SHADERCROSS_GLSLANG
++#include <glslang/Include/glslang_c_interface.h>
++#include <glslang/Public/resource_limits_c.h>
++#endif
++
+ /* Constants */
+ #define MAX_DEFINES 64
+ #define MAX_DEFINE_STRING_LENGTH 256
+@@ -625,6 +630,167 @@ void *SDL_ShaderCross_CompileDXILFromHLSL(
+ #endif
+ }
+ 
++#ifdef SDL_SHADERCROSS_GLSLANG
++static glslang_stage_t SDL_ShaderCross_INTERNAL_GlslangStage(
++    SDL_ShaderCross_ShaderStage stage)
++{
++    switch (stage) {
++    case SDL_SHADERCROSS_SHADERSTAGE_VERTEX:
++        return GLSLANG_STAGE_VERTEX;
++    case SDL_SHADERCROSS_SHADERSTAGE_FRAGMENT:
++        return GLSLANG_STAGE_FRAGMENT;
++    case SDL_SHADERCROSS_SHADERSTAGE_COMPUTE:
++        return GLSLANG_STAGE_COMPUTE;
++    default:
++        return GLSLANG_STAGE_COUNT;
++    }
++}
++
++static char *SDL_ShaderCross_INTERNAL_GlslangPreamble(
++    const SDL_ShaderCross_HLSL_Define *defines)
++{
++    if (defines == NULL) {
++        return NULL;
++    }
++
++    size_t total = 1;
++    size_t count = 0;
++    for (const SDL_ShaderCross_HLSL_Define *define = defines;
++         define->name != NULL || define->value != NULL; ++define) {
++        if (define->name == NULL || ++count > MAX_DEFINES) {
++            SDL_SetError("Invalid or excessive HLSL defines for glslang frontend");
++            return NULL;
++        }
++        const size_t name_length = SDL_strlen(define->name);
++        const size_t value_length = define->value ? SDL_strlen(define->value) : 0;
++        if (name_length == 0 || name_length > MAX_DEFINE_STRING_LENGTH ||
++            value_length > MAX_DEFINE_STRING_LENGTH) {
++            SDL_SetError("HLSL define exceeds the ShaderCross contract limit");
++            return NULL;
++        }
++        total += SDL_strlen("#define ") + name_length + 1 + value_length + 1;
++    }
++
++    char *preamble = (char *)SDL_malloc(total);
++    if (preamble == NULL) {
++        return NULL;
++    }
++    preamble[0] = '\0';
++    size_t offset = 0;
++    for (const SDL_ShaderCross_HLSL_Define *define = defines;
++         define->name != NULL || define->value != NULL; ++define) {
++        const int written = SDL_snprintf(
++            preamble + offset, total - offset,
++            define->value ? "#define %s %s\n" : "#define %s\n",
++            define->name, define->value);
++        if (written < 0 || (size_t)written >= total - offset) {
++            SDL_free(preamble);
++            SDL_SetError("Could not build glslang HLSL preamble");
++            return NULL;
++        }
++        offset += (size_t)written;
++    }
++    return preamble;
++}
++
++static void *SDL_ShaderCross_INTERNAL_CompileSPIRVUsingGlslang(
++    const SDL_ShaderCross_HLSL_Info *info, size_t *size)
++{
++    if (info->include_dir != NULL && info->include_dir[0] != '\0') {
++        SDL_SetError("glslang HLSL frontend does not accept include_dir; PrismatiX shaders are self-contained");
++        return NULL;
++    }
++
++    const glslang_stage_t stage =
++        SDL_ShaderCross_INTERNAL_GlslangStage(info->shader_stage);
++    if (stage == GLSLANG_STAGE_COUNT) {
++        SDL_SetError("Unsupported shader stage for glslang HLSL frontend");
++        return NULL;
++    }
++
++    const glslang_input_t input = {
++        .language = GLSLANG_SOURCE_HLSL,
++        .stage = stage,
++        .client = GLSLANG_CLIENT_VULKAN,
++        .client_version = GLSLANG_TARGET_VULKAN_1_1,
++        .target_language = GLSLANG_TARGET_SPV,
++        .target_language_version = GLSLANG_TARGET_SPV_1_3,
++        .code = info->source,
++        .default_version = 100,
++        .default_profile = GLSLANG_NO_PROFILE,
++        .force_default_version_and_profile = false,
++        .forward_compatible = false,
++        .messages = GLSLANG_MSG_SPV_RULES_BIT | GLSLANG_MSG_VULKAN_RULES_BIT |
++                    GLSLANG_MSG_READ_HLSL_BIT | GLSLANG_MSG_HLSL_OFFSETS_BIT,
++        .resource = glslang_default_resource(),
++    };
++
++    glslang_shader_t *shader = glslang_shader_create(&input);
++    if (shader == NULL) {
++        SDL_SetError("Could not create glslang HLSL shader");
++        return NULL;
++    }
++
++    char *preamble = SDL_ShaderCross_INTERNAL_GlslangPreamble(info->defines);
++    if (info->defines != NULL && preamble == NULL) {
++        glslang_shader_delete(shader);
++        return NULL;
++    }
++    if (preamble != NULL) {
++        glslang_shader_set_preamble(shader, preamble);
++    }
++    glslang_shader_set_entry_point(shader, info->entrypoint);
++    glslang_shader_set_options(shader,
++        GLSLANG_SHADER_AUTO_MAP_BINDINGS | GLSLANG_SHADER_AUTO_MAP_LOCATIONS);
++
++    if (!glslang_shader_preprocess(shader, &input) ||
++        !glslang_shader_parse(shader, &input)) {
++        SDL_SetError("HLSL compilation failed: %s%s%s",
++                     glslang_shader_get_info_log(shader),
++                     glslang_shader_get_info_debug_log(shader)[0] ? "\n" : "",
++                     glslang_shader_get_info_debug_log(shader));
++        SDL_free(preamble);
++        glslang_shader_delete(shader);
++        return NULL;
++    }
++
++    glslang_program_t *program = glslang_program_create();
++    glslang_program_add_shader(program, shader);
++    if (!glslang_program_link(program,
++                              GLSLANG_MSG_SPV_RULES_BIT |
++                              GLSLANG_MSG_VULKAN_RULES_BIT)) {
++        SDL_SetError("HLSL linking failed: %s%s%s",
++                     glslang_program_get_info_log(program),
++                     glslang_program_get_info_debug_log(program)[0] ? "\n" : "",
++                     glslang_program_get_info_debug_log(program));
++        SDL_free(preamble);
++        glslang_program_delete(program);
++        glslang_shader_delete(shader);
++        return NULL;
++    }
++
++    glslang_program_SPIRV_generate(program, stage);
++    const size_t word_count = glslang_program_SPIRV_get_size(program);
++    if (word_count == 0 || word_count > SIZE_MAX / sizeof(Uint32)) {
++        SDL_SetError("glslang produced invalid SPIR-V size");
++        SDL_free(preamble);
++        glslang_program_delete(program);
++        glslang_shader_delete(shader);
++        return NULL;
++    }
++
++    *size = word_count * sizeof(Uint32);
++    Uint32 *result = (Uint32 *)SDL_malloc(*size);
++    if (result != NULL) {
++        glslang_program_SPIRV_get(program, result);
++    }
++    SDL_free(preamble);
++    glslang_program_delete(program);
++    glslang_shader_delete(shader);
++    return result;
++}
++#endif
++
+ void *SDL_ShaderCross_CompileSPIRVFromHLSL(
+     const SDL_ShaderCross_HLSL_Info *info,
+     size_t *size)
+@@ -635,10 +801,18 @@ void *SDL_ShaderCross_CompileSPIRVFromHLSL(
+         return NULL;
+     }
+ 
++#ifdef SDL_SHADERCROSS_DXC
+     return SDL_ShaderCross_INTERNAL_CompileUsingDXC(
+         info,
+         true,
+         size);
++#elif defined(SDL_SHADERCROSS_GLSLANG)
++    return SDL_ShaderCross_INTERNAL_CompileSPIRVUsingGlslang(info, size);
++#else
++    SDL_SetError("ShaderCross was built without an HLSL to SPIR-V frontend");
++    *size = 0;
++    return NULL;
++#endif
+ }
+ 
+ /* DXBC via FXC */
+@@ -2607,6 +2781,13 @@ SDL_GPUComputePipeline *SDL_ShaderCross_CompileComputePipelineFromSPIRV(
+ 
+ bool SDL_ShaderCross_Init(void)
+ {
++#ifdef SDL_SHADERCROSS_GLSLANG
++    if (!glslang_initialize_process()) {
++        SDL_SetError("Could not initialize glslang HLSL frontend");
++        return false;
++    }
++#endif
++
+     d3dcompiler_dll = SDL_LoadObject(D3DCOMPILER_DLL);
+ 
+     if (d3dcompiler_dll != NULL) {
+@@ -2622,4 +2803,8 @@ void SDL_ShaderCross_Quit(void)
+ {
++#ifdef SDL_SHADERCROSS_GLSLANG
++    glslang_finalize_process();
++#endif
++
+     if (d3dcompiler_dll != NULL) {
+         SDL_UnloadObject(d3dcompiler_dll);
+         d3dcompiler_dll = NULL;
+@@ -2654,7 +2839,7 @@ SDL_GPUShaderFormat SDL_ShaderCross_GetHLSLShaderFormats(void)
+     SDL_GPUShaderFormat supportedFormats = 0;
+ 
+-    /* DXC allows compilation from HLSL to SPIRV */
+-#ifdef SDL_SHADERCROSS_DXC
++    /* DXC or glslang allows compilation from HLSL to SPIR-V. */
++#if defined(SDL_SHADERCROSS_DXC) || defined(SDL_SHADERCROSS_GLSLANG)
+     supportedFormats |= SDL_ShaderCross_GetSPIRVShaderFormats();
+ #endif
+ 

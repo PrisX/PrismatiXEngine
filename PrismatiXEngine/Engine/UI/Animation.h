@@ -143,7 +143,7 @@ struct UIAnimationRuntimeState {
     float position = 0.0f;
     float transitionProgress = 0.0f;
     bool paused = false;
-    std::unordered_map<std::string, Variant> parameters;
+    std::unordered_map<std::string, Variant> parameters{};
 };
 
 class UIAnimationController {

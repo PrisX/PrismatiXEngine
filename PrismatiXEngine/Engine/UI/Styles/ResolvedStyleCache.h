@@ -10,7 +10,7 @@ struct StyleCacheKey {
     std::string controlType;
     std::optional<StyleId> baseStyle;
     std::vector<StyleId> appliedStyles;
-    std::vector<VariantSelection> variants;
+    std::vector<VariantSelection> variants{};
     StyleStateMask states = 0;
     std::uint64_t themeRevision = 0;
     std::uint64_t registryRevision = 0;

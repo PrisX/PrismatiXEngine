@@ -2,9 +2,11 @@
 
 PrismatiX custom effects extend the existing native Stage compositor. They are
 offline assets, not runtime shader injection: the Packager validates a bounded
-`.pxeffect` descriptor, compiles its HLSL fragment entry point to SPIR-V, DXIL,
-and MSL with SDL ShaderCross, reflects the resource layout, fingerprints each
-artifact, and removes the HLSL source from the Player archive.
+`.pxeffect` descriptor, compiles its HLSL fragment entry point to SPIR-V,
+reflects the fixed resource layout, and emits only fingerprinted native release
+artifacts before removing the HLSL source from the Player archive. DXC-capable
+Windows/Linux packaging emits SPIR-V, DXIL, and MSL; macOS uses the pinned
+glslang HLSL frontend plus ShaderCross/SPIRV-Cross and emits SPIR-V and MSL.
 
 ## Descriptor
 
@@ -77,9 +79,14 @@ rollback capture.
 
 ## Capability and fallback
 
-All three custom-effect targets require `graphicsTier: "gpu-effects"`. Native Player and Native
-Preview load the artifact format accepted by the SDL GPU device and reject the
-package if no compatible or fingerprint-valid artifact is available. The WASM
-Preview currently has no custom GPU-effect backend and fails the GPU tier
-explicitly instead of silently rendering a different image. Use basic-tier
+All three custom-effect targets require `graphicsTier: "gpu-effects"`. Native
+Player and Native Preview select a fingerprint-valid packaged artifact accepted
+by the SDL GPU device and reject the package if none is compatible. Package
+manifests carry one to three unique release formats and always retain SPIR-V for
+reflection plus MSL for Apple targets; DXIL is emitted only where the build-time
+DXC backend exists. Shader compilers remain build/Packager dependencies and are
+never copied into the Player distribution.
+
+The WASM Preview currently has no custom GPU-effect backend and fails the GPU
+tier explicitly instead of silently rendering a different image. Use basic-tier
 built-in effects where a software/WASM fallback is required.

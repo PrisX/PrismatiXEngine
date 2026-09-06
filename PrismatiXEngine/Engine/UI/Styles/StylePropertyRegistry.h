@@ -31,7 +31,7 @@ struct StylePropertyDescriptor {
     bool animatable = false;
     bool inherited = false;
     bool runtimeSupported = false;
-    std::vector<ControlTypeId> compatibleTypes;
+    std::vector<ControlTypeId> compatibleTypes{};
 };
 
 class StylePropertyRegistry {

@@ -347,6 +347,7 @@ PackageManifestParseResult ParsePackageManifest(const std::string_view text) {
                     effect.targetLayer == "stage" ||
                     effect.targetLayer == "node" ||
                     effect.targetLayer == "transition";
+                const auto& artifacts = value["artifacts"];
                 if (!IsIdentifier(effect.id) || !validTarget ||
                     (effect.schemaRevision != 2 &&
                      effect.schemaRevision != 3) ||
@@ -354,7 +355,7 @@ PackageManifestParseResult ParsePackageManifest(const std::string_view text) {
                      effect.targetLayer != "stage") ||
                     !effectIds.insert(effect.id).second ||
                     value["uniforms"].size() > 8 ||
-                    value["artifacts"].size() != 3) {
+                    artifacts.empty() || artifacts.size() > 3) {
                     AddDiagnostic(result.diagnostics, "PXPKG1421",
                                   "Custom effect identity, layer, or bounds are invalid");
                     continue;
@@ -420,7 +421,7 @@ PackageManifestParseResult ParsePackageManifest(const std::string_view text) {
                     effect.uniforms.push_back(std::move(uniform));
                 }
                 std::set<std::string> formats;
-                for (const Json& artifactValue : value["artifacts"]) {
+                for (const Json& artifactValue : artifacts) {
                     if (!artifactValue.is_object()) {
                         valid = false;
                         break;
@@ -459,7 +460,7 @@ PackageManifestParseResult ParsePackageManifest(const std::string_view text) {
                             effect.samplerCount == expectedSamplers &&
                             effect.uniformBufferCount == 1;
                 }
-                if (formats != std::set<std::string>{"dxil", "msl", "spirv"})
+                if (!formats.contains("spirv") || !formats.contains("msl"))
                     valid = false;
                 if (!valid) {
                     AddDiagnostic(result.diagnostics, "PXPKG1422",

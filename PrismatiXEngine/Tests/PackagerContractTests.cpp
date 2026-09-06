@@ -339,8 +339,7 @@ int main() {
                 manifest.manifest.startRoute == "title" &&
                 manifest.manifest.gameId == request.gameId &&
                 !manifest.manifest.packageFingerprint.empty(),
-            "package manifest retains entrypoint and stable save identity"
-        );
+            "package manifest retains entrypoint and stable save identity");
         const auto* sceneReference = manifest.manifest.routes.size() == 1
                                          ? &manifest.manifest.routes.front()
                                          : nullptr;
@@ -730,11 +729,16 @@ int main() {
         suite.Require(effectIterator != manifest.manifest.customEffects.end(),
                       "stage custom effect remains in packaged metadata");
         const auto& effect = *effectIterator;
+#ifdef __APPLE__
+        constexpr std::size_t expectedArtifactCount = 2;
+#else
+        constexpr std::size_t expectedArtifactCount = 3;
+#endif
         suite.Expect(effect.id == "dream-tone" && effect.targetLayer == "stage" &&
                          effect.schemaRevision == 3 &&
                          effect.samplerCount == 1 &&
                          effect.uniformBufferCount == 1 &&
-                         effect.artifacts.size() == 3 &&
+                         effect.artifacts.size() == expectedArtifactCount &&
                          effect.uniforms.size() == 1,
                      "custom effect manifest has a fixed bounded resource schema");
 
@@ -742,10 +746,18 @@ int main() {
         const auto key = px::crypto::DeriveKey(manifest.manifest.archiveKey);
         suite.Require(archive.Open((effectOutput / "Content.pdx").string(), &key),
                       "custom-effect package archive opens");
-        suite.Expect(archive.Contains("Shaders/dream-tone/fragment.spv") &&
-                         archive.Contains("Shaders/dream-tone/fragment.dxil") &&
-                         archive.Contains("Shaders/dream-tone/fragment.msl"),
-                     "all release shader formats are packaged");
+        const bool commonArtifacts =
+            archive.Contains("Shaders/dream-tone/fragment.spv") &&
+            archive.Contains("Shaders/dream-tone/fragment.msl");
+#ifdef __APPLE__
+        suite.Expect(commonArtifacts &&
+                         !archive.Contains("Shaders/dream-tone/fragment.dxil"),
+                     "macOS package carries reflected SPIR-V and native MSL without a fake DXIL artifact");
+#else
+        suite.Expect(commonArtifacts &&
+                         archive.Contains("Shaders/dream-tone/fragment.dxil"),
+                     "all release shader formats are packaged on DXC-capable hosts");
+#endif
         suite.Expect(!archive.Contains("Effects/dream-tone.frag.hlsl"),
                      "Player package does not contain injectable shader source");
         suite.Expect(

@@ -518,8 +518,6 @@ bool DecodeUtf8(const std::string_view text, std::set<std::uint32_t>& output) {
             codepoint > 0x10FFFFu ||
             (codepoint >= 0xD800u && codepoint <= 0xDFFFu))
             return false;
-        // Layout controls, whitespace and variation selectors do not require
-        // an outline glyph. Combining marks and visible spacing characters do.
         const bool layoutControl = codepoint <= 0x20u ||
             (codepoint >= 0x7Fu && codepoint <= 0x9Fu) ||
             (codepoint >= 0x200Bu && codepoint <= 0x200Fu) ||
@@ -684,34 +682,6 @@ std::optional<std::string> PlayerUiSceneId(const std::string_view text) {
                : std::nullopt;
 }
 
-std::string Quote(const std::string_view value) {
-    std::string result{ "\"" };
-    for (const char character : value) {
-        switch (character) {
-            case '\\':
-                result += "\\\\";
-                break;
-            case '"':
-                result += "\\\"";
-                break;
-            case '\n':
-                result += "\\n";
-                break;
-            case '\r':
-                result += "\\r";
-                break;
-            case '\t':
-                result += "\\t";
-                break;
-            default:
-                result.push_back(character);
-                break;
-        }
-    }
-    result.push_back('"');
-    return result;
-}
-
 std::string UuidFromFingerprint(const std::string_view fingerprint) {
     std::string uuid(fingerprint.substr(0, 32));
     if (uuid.size() < 32) uuid.append(32 - uuid.size(), '0');
@@ -724,30 +694,6 @@ std::string UuidFromFingerprint(const std::string_view fingerprint) {
     uuid.insert(18, "-");
     uuid.insert(23, "-");
     return uuid;
-}
-
-std::string CompressionText(const PackageCompression value) {
-    switch (value) {
-        case PackageCompression::None:
-            return "none";
-        case PackageCompression::Fast:
-            return "fast";
-        case PackageCompression::Balanced:
-            return "balanced";
-        case PackageCompression::Maximum:
-            return "maximum";
-    }
-    return "none";
-}
-
-std::string PlatformText() {
-#ifdef _WIN32
-    return "windows";
-#elif defined(__APPLE__)
-    return "macos";
-#else
-    return "linux";
-#endif
 }
 
 const ArchiveEntry* FindArchiveEntry(const std::vector<ArchiveEntry>& entries,
@@ -998,16 +944,13 @@ CompiledEffects CompileCustomEffects(const std::vector<ArchiveEntry>& entries) {
         spirvInfo.bytecode_size = spirvSize;
         spirvInfo.entrypoint = "main";
         spirvInfo.shader_stage = SDL_SHADERCROSS_SHADERSTAGE_FRAGMENT;
-        std::size_t dxilSize = 0;
-        void* dxil = SDL_ShaderCross_CompileDXILFromSPIRV(&spirvInfo, &dxilSize);
         void* msl = SDL_ShaderCross_TranspileMSLFromSPIRV(&spirvInfo);
-        const std::size_t mslSize = msl ? std::strlen(static_cast<const char*>(msl)) + 1 : 0;
-        if (!dxil || dxilSize == 0 || dxilSize > 4 * 1024 * 1024 ||
-            !msl || mslSize <= 1 || mslSize > 4 * 1024 * 1024) {
+        const std::size_t mslSize =
+            msl ? std::strlen(static_cast<const char*>(msl)) + 1 : 0;
+        if (!msl || mslSize <= 1 || mslSize > 4 * 1024 * 1024) {
             AddDiagnostic(result.diagnostics, "PXPKG1510",
-                          "Custom effect did not compile to all release shader formats: " +
+                          "Custom effect did not compile to the release MSL format: " +
                               shaderPath + " (" + SDL_GetError() + ")");
-            if (dxil) SDL_free(dxil);
             if (msl) SDL_free(msl);
             SDL_free(spirv);
             continue;
@@ -1026,9 +969,24 @@ CompiledEffects CompileCustomEffects(const std::vector<ArchiveEntry>& entries) {
             result.artifacts.push_back({asset, std::move(data)});
         };
         appendArtifact("spirv", "spv", spirv, spirvSize);
+#ifdef __APPLE__
+        appendArtifact("msl", "msl", msl, mslSize);
+#else
+        std::size_t dxilSize = 0;
+        void* dxil = SDL_ShaderCross_CompileDXILFromSPIRV(&spirvInfo, &dxilSize);
+        if (!dxil || dxilSize == 0 || dxilSize > 4 * 1024 * 1024) {
+            AddDiagnostic(result.diagnostics, "PXPKG1510",
+                          "Custom effect did not compile to the release DXIL format: " +
+                              shaderPath + " (" + SDL_GetError() + ")");
+            if (dxil) SDL_free(dxil);
+            SDL_free(msl);
+            SDL_free(spirv);
+            continue;
+        }
         appendArtifact("dxil", "dxil", dxil, dxilSize);
         appendArtifact("msl", "msl", msl, mslSize);
         SDL_free(dxil);
+#endif
         SDL_free(msl);
         SDL_free(spirv);
         result.sourceAssets.insert(shaderPath);
@@ -1078,10 +1036,6 @@ detail::PackageManifest BuildPackageManifest(const PackageRequest& request,
 
 bool RuntimeLibrary(const std::filesystem::path& path) {
     const std::string filename = Lower(path.filename().string());
-    // Build-time shader toolchains may live beside the Packager and Player in
-    // developer builds, but are never Player runtime dependencies.  Excluding
-    // them here prevents production distributions from silently acquiring a
-    // shader compiler or its native backends.
     if (filename.find("shadercross") != std::string::npos ||
         filename.find("dxcompiler") != std::string::npos ||
         filename == "dxil.dll" ||
@@ -1983,7 +1937,6 @@ std::string detail::SerializePackageManifest(
     return root.dump(2) + "\n";
 }
 
-
 PackageRequestParseResult ParsePackageRequest(const std::string_view text) {
     PackageRequestParseResult result;
     if (text.size() > 16 * 1024 * 1024) {
@@ -2423,9 +2376,6 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
     const std::string manifest = detail::SerializePackageManifest(
         BuildPackageManifest(request, packageFingerprint, encryptionKey, entries,
                              std::move(customEffects.manifests)));
-    // Package output is verified by the exact parser used by the shipped
-    // Player. A private approximation here would allow Packager and Player to
-    // disagree about the artifact that is about to be promoted.
     const auto manifestSelfCheck = detail::ParsePackageManifest(manifest);
     if (!manifestSelfCheck.Valid()) {
         const auto& diagnostic = manifestSelfCheck.diagnostics.front();

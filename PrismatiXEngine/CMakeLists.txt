@@ -195,45 +195,80 @@ if(NOT EMSCRIPTEN)
     set(PRISMATIX_BUILTIN_SHADER_CPP
         "${PRISMATIX_BUILTIN_SHADER_DIR}/BuiltInCompositorShaders.generated.cpp")
 
-    add_custom_command(
-        OUTPUT
-            "${PRISMATIX_BUILTIN_SHADER_SPIRV}"
-            "${PRISMATIX_BUILTIN_SHADER_DXIL}"
-            "${PRISMATIX_BUILTIN_SHADER_MSL}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory
-                "${PRISMATIX_BUILTIN_SHADER_DIR}"
-        COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}"
-                "${PRISMATIX_BUILTIN_SHADER_SOURCE}"
-                --source HLSL --dest SPIRV --stage fragment
-                --entrypoint main --output "${PRISMATIX_BUILTIN_SHADER_SPIRV}"
-        COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}"
-                "${PRISMATIX_BUILTIN_SHADER_SOURCE}"
-                --source HLSL --dest DXIL --stage fragment
-                --entrypoint main --output "${PRISMATIX_BUILTIN_SHADER_DXIL}"
-        COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}"
-                "${PRISMATIX_BUILTIN_SHADER_SOURCE}"
-                --source HLSL --dest MSL --stage fragment
-                --entrypoint main --output "${PRISMATIX_BUILTIN_SHADER_MSL}"
-        DEPENDS "${PRISMATIX_BUILTIN_SHADER_SOURCE}"
-        COMMENT "Offline-compiling PrismatiX built-in compositor shader"
-        VERBATIM
-    )
-    add_custom_command(
-        OUTPUT "${PRISMATIX_BUILTIN_SHADER_CPP}"
-        COMMAND "${CMAKE_COMMAND}"
-                -DINPUT_SPIRV=${PRISMATIX_BUILTIN_SHADER_SPIRV}
-                -DINPUT_DXIL=${PRISMATIX_BUILTIN_SHADER_DXIL}
-                -DINPUT_MSL=${PRISMATIX_BUILTIN_SHADER_MSL}
-                -DOUTPUT=${PRISMATIX_BUILTIN_SHADER_CPP}
-                -P "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/GenerateBuiltInShaders.cmake"
-        DEPENDS
-            "${PRISMATIX_BUILTIN_SHADER_SPIRV}"
-            "${PRISMATIX_BUILTIN_SHADER_DXIL}"
-            "${PRISMATIX_BUILTIN_SHADER_MSL}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/GenerateBuiltInShaders.cmake"
-        COMMENT "Embedding offline-compiled PrismatiX compositor shaders"
-        VERBATIM
-    )
+    if(APPLE)
+        add_custom_command(
+            OUTPUT
+                "${PRISMATIX_BUILTIN_SHADER_SPIRV}"
+                "${PRISMATIX_BUILTIN_SHADER_MSL}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory
+                    "${PRISMATIX_BUILTIN_SHADER_DIR}"
+            COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}"
+                    "${PRISMATIX_BUILTIN_SHADER_SOURCE}"
+                    --source HLSL --dest SPIRV --stage fragment
+                    --entrypoint main --output "${PRISMATIX_BUILTIN_SHADER_SPIRV}"
+            COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}"
+                    "${PRISMATIX_BUILTIN_SHADER_SPIRV}"
+                    --source SPIRV --dest MSL --stage fragment
+                    --entrypoint main --output "${PRISMATIX_BUILTIN_SHADER_MSL}"
+            DEPENDS "${PRISMATIX_BUILTIN_SHADER_SOURCE}"
+            COMMENT "Offline-compiling PrismatiX built-in compositor shader"
+            VERBATIM
+        )
+        add_custom_command(
+            OUTPUT "${PRISMATIX_BUILTIN_SHADER_CPP}"
+            COMMAND "${CMAKE_COMMAND}"
+                    -DINPUT_SPIRV=${PRISMATIX_BUILTIN_SHADER_SPIRV}
+                    -DINPUT_MSL=${PRISMATIX_BUILTIN_SHADER_MSL}
+                    -DOUTPUT=${PRISMATIX_BUILTIN_SHADER_CPP}
+                    -P "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/GenerateBuiltInShaders.cmake"
+            DEPENDS
+                "${PRISMATIX_BUILTIN_SHADER_SPIRV}"
+                "${PRISMATIX_BUILTIN_SHADER_MSL}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/GenerateBuiltInShaders.cmake"
+            COMMENT "Embedding offline-compiled PrismatiX compositor shaders"
+            VERBATIM
+        )
+    else()
+        add_custom_command(
+            OUTPUT
+                "${PRISMATIX_BUILTIN_SHADER_SPIRV}"
+                "${PRISMATIX_BUILTIN_SHADER_DXIL}"
+                "${PRISMATIX_BUILTIN_SHADER_MSL}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory
+                    "${PRISMATIX_BUILTIN_SHADER_DIR}"
+            COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}"
+                    "${PRISMATIX_BUILTIN_SHADER_SOURCE}"
+                    --source HLSL --dest SPIRV --stage fragment
+                    --entrypoint main --output "${PRISMATIX_BUILTIN_SHADER_SPIRV}"
+            COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}"
+                    "${PRISMATIX_BUILTIN_SHADER_SOURCE}"
+                    --source HLSL --dest DXIL --stage fragment
+                    --entrypoint main --output "${PRISMATIX_BUILTIN_SHADER_DXIL}"
+            COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}"
+                    "${PRISMATIX_BUILTIN_SHADER_SOURCE}"
+                    --source HLSL --dest MSL --stage fragment
+                    --entrypoint main --output "${PRISMATIX_BUILTIN_SHADER_MSL}"
+            DEPENDS "${PRISMATIX_BUILTIN_SHADER_SOURCE}"
+            COMMENT "Offline-compiling PrismatiX built-in compositor shader"
+            VERBATIM
+        )
+        add_custom_command(
+            OUTPUT "${PRISMATIX_BUILTIN_SHADER_CPP}"
+            COMMAND "${CMAKE_COMMAND}"
+                    -DINPUT_SPIRV=${PRISMATIX_BUILTIN_SHADER_SPIRV}
+                    -DINPUT_DXIL=${PRISMATIX_BUILTIN_SHADER_DXIL}
+                    -DINPUT_MSL=${PRISMATIX_BUILTIN_SHADER_MSL}
+                    -DOUTPUT=${PRISMATIX_BUILTIN_SHADER_CPP}
+                    -P "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/GenerateBuiltInShaders.cmake"
+            DEPENDS
+                "${PRISMATIX_BUILTIN_SHADER_SPIRV}"
+                "${PRISMATIX_BUILTIN_SHADER_DXIL}"
+                "${PRISMATIX_BUILTIN_SHADER_MSL}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/GenerateBuiltInShaders.cmake"
+            COMMENT "Embedding offline-compiled PrismatiX compositor shaders"
+            VERBATIM
+        )
+    endif()
     set_source_files_properties("${PRISMATIX_BUILTIN_SHADER_CPP}"
         PROPERTIES GENERATED TRUE)
     list(APPEND PRISMATIX_RUNTIME_CORE_SOURCES
@@ -597,7 +632,8 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         NAME PrismatiX.Player.CatalogNativeAcceptance
         COMMAND PrismatiXPlayerCatalogNativeAcceptanceTests
                 $<TARGET_FILE:PrismatiXPlayer>
-                ${CMAKE_CURRENT_SOURCE_DIR}/../Content
+                ${CMAKE_CURRENT_SOURCE_DIR}/../Samples/CommercialVN/Content
+                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Fonts/NotoSansTC-Bold.ttf
                 ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/PrismatiXEngine_Logo.png)
     set_tests_properties(
         PrismatiX.Player.CatalogNativeAcceptance
@@ -666,9 +702,9 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_executable(PrismatiXRuntimeIrRuntimeAdapterTests
         Tests/RuntimeIrRuntimeAdapterTests.cpp)
     target_link_libraries(PrismatiXRuntimeIrRuntimeAdapterTests PRIVATE PrismatiXRuntime)
+    prismatix_configure_target(PrismatiXRuntimeIrRuntimeAdapterTests)
     target_compile_definitions(PrismatiXRuntimeIrRuntimeAdapterTests PRIVATE
         PRISMATIX_RUNTIME_IR_SCHEMA_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../Contracts/runtime-ir.schema.json")
-    prismatix_configure_target(PrismatiXRuntimeIrRuntimeAdapterTests)
     add_test(NAME PrismatiX.SDK.RuntimeIrRuntimeAdapter
              COMMAND PrismatiXRuntimeIrRuntimeAdapterTests)
     set_tests_properties(PrismatiX.SDK.RuntimeIrRuntimeAdapter

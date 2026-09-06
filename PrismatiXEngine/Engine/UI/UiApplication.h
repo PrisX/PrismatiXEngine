@@ -36,13 +36,13 @@ struct UiComponentSource {
 using UiComponentLoader = std::function<std::optional<UiComponentSource>(std::string_view)>;
 
 struct UiApplicationOptions {
-    std::string sourcePath;
-    UiAssetResolver resolveAsset;
-    UiComponentLoader loadComponent;
+    std::string sourcePath{};
+    UiAssetResolver resolveAsset{};
+    UiComponentLoader loadComponent{};
     IViewModel* viewModel = nullptr;
     bool previewSafeMode = false;
     bool diagnosticOverlay = false;
-    std::function<void(const sdk::UiAction&, const Status&)> observeAction;
+    std::function<void(const sdk::UiAction&, const Status&)> observeAction{};
 };
 
 // Production application path for authored UI. PreviewHost and Player

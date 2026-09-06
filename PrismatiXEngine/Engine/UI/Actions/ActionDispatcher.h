@@ -44,7 +44,7 @@ public:
 
 struct ActionDispatchOptions {
     bool previewSafeMode = false;
-    std::optional<ActionReentryPolicy> reentryPolicy;
+    std::optional<ActionReentryPolicy> reentryPolicy{};
 };
 
 // Serializable bridge between a Behavior fiber and the provider coroutine it
@@ -93,7 +93,7 @@ private:
         std::shared_ptr<IActionProvider> provider;
         std::uint64_t providerHandle = 0;
         ActionExecutionState state = ActionExecutionState::Unknown;
-        Status failure;
+        Status failure{};
         bool autoForget = false;
         ActionInvocation invocation;
     };

@@ -488,13 +488,21 @@ ui::ActionContext ActionContextFromJson(const Json& json) {
 }
 
 Json ScriptActionsToJson(const script::PendingActionsState& state) {
-    Json values=Json::array();for(const auto& pending:state)values.push_back({
-        {"sourceId",pending.sourceId},{"id",pending.id},{"action",pending.invocation.action},
-        {"arguments",VariantObjectToSaveJson(pending.invocation.arguments)},
-        {"context",ActionContextToJson(pending.invocation.context)},
-        {"yieldIndex",pending.yieldIndex},{"waitKind",pending.waitKind},
-        {"handle",pending.handle},{"remainingSeconds",pending.remainingSeconds},
-        {"journal",ScriptJournalToJson(pending.journal)}});return values;
+    Json values = Json::array();
+    for (const auto& pending : state) {
+        values.push_back({
+            {"sourceId", pending.sourceId},
+            {"id", pending.id},
+            {"action", pending.invocation.action},
+            {"arguments", VariantObjectToSaveJson(pending.invocation.arguments)},
+            {"context", ActionContextToJson(pending.invocation.context)},
+            {"yieldIndex", pending.yieldIndex},
+            {"waitKind", pending.waitKind},
+            {"handle", pending.handle},
+            {"remainingSeconds", pending.remainingSeconds},
+            {"journal", ScriptJournalToJson(pending.journal)}});
+    }
+    return values;
 }
 
 script::PendingActionsState ScriptActionsFromJson(const Json& json) {

@@ -108,7 +108,7 @@ using UiActionValue = UiValue;
 
 struct UiAction {
     std::string id;
-    std::unordered_map<std::string, UiActionValue> arguments;
+    std::unordered_map<std::string, UiActionValue> arguments{};
 };
 
 enum class UiComponentValueType {
@@ -177,13 +177,13 @@ struct UiComponentInstance {
     std::string componentId;
     std::string instanceRootId;
     std::string sourceNodeId;
-    std::vector<std::string> sourcePath;
-    std::vector<std::string> overrides;
+    std::vector<std::string> sourcePath{};
+    std::vector<std::string> overrides{};
     std::unordered_map<std::string, UiComponentPublicValue>
-        publicProperties;
+        publicProperties{};
     std::unordered_map<std::string,
                        std::optional<UiComponentSignalBinding>>
-        publicSignals;
+        publicSignals{};
 };
 
 struct UiComponentSlot {

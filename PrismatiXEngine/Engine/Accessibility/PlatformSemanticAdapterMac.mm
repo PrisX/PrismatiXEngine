@@ -76,7 +76,7 @@ NSAccessibilityRole NativeRole(const std::string_view role) {
     if (role == "progressbar") return NSAccessibilityProgressIndicatorRole;
     if (role == "list" || role == "listbox" || role == "log")
         return NSAccessibilityListRole;
-    if (role == "dialog") return NSAccessibilityDialogRole;
+    if (role == "dialog") return NSAccessibilityWindowRole;
     if (role == "window") return NSAccessibilityWindowRole;
     return NSAccessibilityGroupRole;
 }
@@ -159,6 +159,8 @@ private:
             semantics.text && semantics.text->multiline
                 ? NSAccessibilityTextAreaRole
                 : NativeRole(semantics.role)];
+        if (semantics.role == "dialog")
+            [element setAccessibilitySubrole:NSAccessibilityDialogSubrole];
         [element setAccessibilityLabel:Text(semantics.label)];
         [element setAccessibilityHelp:Text(semantics.description)];
         [element setAccessibilityEnabled:
