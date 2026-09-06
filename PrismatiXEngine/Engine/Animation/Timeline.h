@@ -38,7 +38,7 @@ struct Marker {
     float time = 0.0f;
     std::string name;
     VariantObject payload;
-    std::string id;
+    std::string id{};
 };
 
 struct NestedClip {
