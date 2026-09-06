@@ -42,7 +42,7 @@ struct UiApplicationOptions {
     IViewModel* viewModel = nullptr;
     bool previewSafeMode = false;
     bool diagnosticOverlay = false;
-    std::function<void(const sdk::UiAction&, const Status&)> observeAction;
+    std::function<void(const sdk::UiAction&, const Status&)> observeAction{};
 };
 
 // Production application path for authored UI. PreviewHost and Player
