@@ -289,6 +289,18 @@ void CreateProjectFixture(const std::filesystem::path& root,
     Copy(contentRoot / "UI/Title.pxui", root / "Content/UI/Title.pxui");
     Copy(contentRoot / "UI/HUD.pxui", root / "Content/UI/HUD.pxui");
     Copy(contentRoot / "UI/Gallery.pxui", root / "Content/UI/Gallery.pxui");
+    std::string galleryUi = Read(root / "Content/UI/Gallery.pxui");
+    const std::string sampleGalleryAsset =
+        "40000000-0000-4000-8000-000000000001";
+    const std::string fixtureGalleryAsset =
+        "33333333-3333-4333-8333-333333333333";
+    for (std::size_t offset = 0;
+         (offset = galleryUi.find(sampleGalleryAsset, offset)) !=
+         std::string::npos;
+         offset += fixtureGalleryAsset.size()) {
+        galleryUi.replace(offset, sampleGalleryAsset.size(), fixtureGalleryAsset);
+    }
+    Write(root / "Content/UI/Gallery.pxui", galleryUi);
     Copy(fontSource, root / "Content/Fonts/NotoSansTC-Bold.ttf");
     Copy(imageSource, root / "Assets/ending.png");
 
