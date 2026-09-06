@@ -16,9 +16,9 @@ struct StyleSourceTraceEntry {
     std::string label;
     std::size_t stackOrder = 0;
     StyleStateMask stateSelector = 0;
-    std::optional<StyleId> style;
-    std::optional<VariantAxisId> variantAxis;
-    std::optional<VariantValueId> variantValue;
+    std::optional<StyleId> style{};
+    std::optional<VariantAxisId> variantAxis{};
+    std::optional<VariantValueId> variantValue{};
 
     auto operator<=>(const StyleSourceTraceEntry&) const = default;
 };
@@ -47,8 +47,8 @@ struct ResolvedStyle {
 
 struct StyleResolveRequest {
     ControlTypeId controlType = "Control";
-    ControlStyleBinding binding;
-    StyleStateSet activeStates;
+    ControlStyleBinding binding{};
+    StyleStateSet activeStates{};
 };
 
 class StyleResolver {
