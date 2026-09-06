@@ -33,7 +33,7 @@ struct BehaviorNode {
     Uuid id;
     BehaviorNodeKind kind = BehaviorNodeKind::Constant;
     Vec2 position{};
-    VariantObject properties;
+    VariantObject properties{};
 };
 
 struct BehaviorLink {
@@ -73,11 +73,11 @@ struct BehaviorFiberState {
     BehaviorFiberId id = 0;
     Uuid entry;
     Uuid current;
-    std::vector<Uuid> continuation;
+    std::vector<Uuid> continuation{};
     float delayRemaining = 0.0f;
     ActionExecutionId actionExecution = 0;
     std::uint64_t animationHandle = 0;
-    VariantObject signalArguments;
+    VariantObject signalArguments{};
 };
 
 struct BehaviorRuntimeState {

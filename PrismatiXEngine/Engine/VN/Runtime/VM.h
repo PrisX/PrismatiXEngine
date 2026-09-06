@@ -76,8 +76,8 @@ struct VMRunResult {
 struct Choice {
     std::string text;
     std::string target;
-    std::string sourceId;
-    std::string operationId;
+    std::string sourceId{};
+    std::string operationId{};
 };
 
 struct VMCallFrameState {

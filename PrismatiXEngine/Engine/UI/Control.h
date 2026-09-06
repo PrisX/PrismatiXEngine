@@ -92,12 +92,12 @@ struct AccessibilityTextSemantics {
 
 struct AccessibilitySemantics {
     Uuid id;
-    std::string role;
-    std::string label;
-    std::string value;
-    std::string description;
-    std::vector<std::string> states;
-    std::vector<std::string> actions;
+    std::string role{};
+    std::string label{};
+    std::string value{};
+    std::string description{};
+    std::vector<std::string> states{};
+    std::vector<std::string> actions{};
     Rect bounds{};
     double minimum = 0.0;
     double maximum = 0.0;
@@ -107,7 +107,7 @@ struct AccessibilitySemantics {
     std::int32_t focusOrder = 0;
     bool focusable = false;
     bool hidden = false;
-    std::optional<AccessibilityTextSemantics> text;
+    std::optional<AccessibilityTextSemantics> text{};
 };
 
 class Control : public scene::Node {

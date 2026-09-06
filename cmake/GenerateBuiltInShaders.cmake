@@ -23,7 +23,7 @@ set(dxil_array "")
 set(dxil_selector "")
 if(DEFINED INPUT_DXIL AND NOT "${INPUT_DXIL}" STREQUAL "")
     prismatix_binary_array("${INPUT_DXIL}" kCompositorDxil dxil_array)
-    set(dxil_selector
+    string(CONCAT dxil_selector
 "    if ((supportedFormats & SDL_GPU_SHADERFORMAT_DXIL) != 0)\n"
 "        return ShaderBytecodeView{kCompositorDxil, sizeof(kCompositorDxil),\n"
 "                                  SDL_GPU_SHADERFORMAT_DXIL, \"main\"};\n")

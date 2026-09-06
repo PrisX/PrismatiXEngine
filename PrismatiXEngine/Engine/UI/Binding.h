@@ -52,8 +52,8 @@ private:
         VariantType type = VariantType::Null;
         Variant value;
         bool writable = false;
-        std::vector<std::string> dependencies;
-        Compute compute;
+        std::vector<std::string> dependencies{};
+        Compute compute{};
     };
     struct Subscription { std::uint64_t token; std::string path; Changed callback; };
     Status RecomputeDependents(std::string_view changedPath);

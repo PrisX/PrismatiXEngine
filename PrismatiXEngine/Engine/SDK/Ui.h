@@ -108,7 +108,7 @@ using UiActionValue = UiValue;
 
 struct UiAction {
     std::string id;
-    std::unordered_map<std::string, UiActionValue> arguments;
+    std::unordered_map<std::string, UiActionValue> arguments{};
 };
 
 enum class UiComponentValueType {
