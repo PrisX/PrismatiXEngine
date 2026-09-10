@@ -1,6 +1,7 @@
 #include "Engine/IO/Crypto.h"
 #include "Engine/Progression/GlobalProfile.h"
 #include "Engine/Progression/GlobalProfileStore.h"
+#include "Engine/Progression/Persist.h"
 #include "Engine/SDK/Packager.h"
 #include "Engine/Package/PackageManifest.h"
 #include "Tests/TestSupport/TestHarness.h"
@@ -568,6 +569,10 @@ int main(int argc, char* argv[]) {
             WaitForLog(log,
                        "Player E2E locale switched locale=ja-JP text=こんにちは"),
             "running Player transactionally switches to aligned localized Story IR without restarting");
+        suite.Require(
+            WaitForLog(log,
+                       "Player release F2 policy ignored demo reset shortcut"),
+            "shipping Player ignores the removed F2 demo reset shortcut");
 
         suite.Require(WaitForLog(log,
                                  "Player gallery presented total=1 unlocked=1"),
@@ -599,8 +604,9 @@ int main(int argc, char* argv[]) {
             Read(output / "Package/manifest.json"));
         suite.Require(manifest.Valid(),
                       "packaged manifest can derive the same save identity as Player");
-        const px::crypto::Key saveKey = px::crypto::DeriveKey(
-            manifest.manifest.packageFingerprint + "|px-save");
+        const px::crypto::Key saveKey =
+            px::progress::DeriveGameDataPersistenceKey(
+                manifest.manifest.persistenceDataId);
         px::progress::GlobalProfile profile;
         suite.Require(px::progress::LoadGlobalProfile(profile, savePath.string(), &saveKey),
                       "saved Player profile reloads with the package identity");

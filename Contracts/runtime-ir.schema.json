@@ -20,7 +20,14 @@
           "kind":{"enum":["scene","fragment","callFragment","return","endStory","dialogue","narration","choiceOption","background","showCharacter","hideCharacter","voice","bgm","soundEffect","setVariable","condition","else","endCondition","label","jump","wait","timeline","effect","ui","customNode","camera"]},
           "text":{"type":"string","maxLength":1048576},
           "arguments":{"type":"object","maxProperties":1024,"additionalProperties":{"type":"string","maxLength":1048576}}
-        }
+        },
+        "allOf":[{
+          "if":{"properties":{"kind":{"const":"setVariable"}},"required":["kind"]},
+          "then":{"properties":{"arguments":{"type":"object","properties":{
+            "scope":{"enum":["session","profile"]},
+            "type":{"enum":["boolean","integer","number","string"]}
+          }}}}
+        }]
       }
     }
   }

@@ -486,6 +486,50 @@ std::optional<std::string> ReadTextFile(const std::filesystem::path& path, const
     return std::string(bytes->begin(), bytes->end());
 }
 
+struct PreviousPersistence {
+    std::vector<detail::PackagePersistenceReader> readers;
+    std::string error;
+};
+
+PreviousPersistence DiscoverPreviousPersistence(
+    const std::filesystem::path& outputDir, const std::string_view gameId) {
+    PreviousPersistence result;
+    const auto path = outputDir / "Package/manifest.json";
+    std::error_code error;
+    if (!std::filesystem::exists(path, error)) return result;
+    if (error || !std::filesystem::is_regular_file(path, error)) {
+        result.error = "The previous package manifest could not be inspected";
+        return result;
+    }
+    const auto size = std::filesystem::file_size(path, error);
+    if (error || size == 0 || size > 4 * 1024 * 1024) {
+        result.error = "The previous package manifest has an invalid size";
+        return result;
+    }
+    const auto text = ReadTextFile(path, size);
+    const auto parsed = text ? detail::ParsePackageManifest(*text)
+                             : detail::PackageManifestParseResult{};
+    if (!text || !parsed.Valid()) {
+        result.error =
+            "The previous package manifest is unreadable; refusing to discard its persistence reader";
+        return result;
+    }
+    const auto& manifest = parsed.manifest;
+    if (manifest.gameId != gameId) return result;
+    if (manifest.persistenceKeyId.empty()) {
+        if (manifest.encrypted && !manifest.archiveKey.empty()) {
+            result.readers.push_back(
+                {"legacy-archive-v1", manifest.archiveKey});
+        } else {
+            result.readers.push_back(
+                {"legacy-fingerprint-v1", manifest.packageFingerprint});
+        }
+    } else {
+        result.readers = manifest.legacyPersistenceReaders;
+    }
+    return result;
+}
+
 bool DecodeUtf8(const std::string_view text, std::set<std::uint32_t>& output) {
     for (std::size_t offset = 0; offset < text.size();) {
         const auto first = static_cast<std::uint8_t>(text[offset]);
@@ -1001,7 +1045,9 @@ detail::PackageManifest BuildPackageManifest(const PackageRequest& request,
                                      const std::string& packageFingerprint,
                                      const std::string& encryptionKey,
                                      const std::vector<ArchiveEntry>& entries,
-                                     std::vector<detail::PackageCustomEffect> customEffects) {
+                                     std::vector<detail::PackageCustomEffect> customEffects,
+                                     std::vector<detail::PackagePersistenceReader>
+                                         legacyPersistenceReaders) {
     auto routesInOrder = request.routes;
     std::sort(routesInOrder.begin(), routesInOrder.end(), [](const auto& left, const auto& right) { return left.id < right.id; });
     detail::PackageManifest manifest;
@@ -1020,6 +1066,10 @@ detail::PackageManifest BuildPackageManifest(const PackageRequest& request,
     manifest.extensions = request.extensions;
     manifest.customEffects = std::move(customEffects);
     manifest.packageFingerprint = packageFingerprint;
+    manifest.persistenceDataId = request.gameId;
+    manifest.persistenceKeyId = "game-data-v1";
+    manifest.legacyPersistenceReaders =
+        std::move(legacyPersistenceReaders);
     manifest.encrypted = request.encryption;
     manifest.archiveKey = request.encryption ? encryptionKey : std::string{};
     manifest.archives.push_back({"Content.pdx", "base", false});
@@ -1931,6 +1981,18 @@ std::string detail::SerializePackageManifest(
         {"contentVersion", manifest.contentVersion},
         {"saveVersion", manifest.saveVersion},
         {"packageFingerprint", manifest.packageFingerprint},
+        {"persistence",
+         {{"dataId", manifest.persistenceDataId},
+          {"keyId", manifest.persistenceKeyId},
+          {"legacyReaders", [&manifest] {
+               Json readers = Json::array();
+               for (const auto& reader :
+                    manifest.legacyPersistenceReaders) {
+                   readers.push_back({{"keyId", reader.keyId},
+                                      {"secret", reader.secret}});
+               }
+               return readers;
+           }()}}},
         {"encryption", {{"enabled", manifest.encrypted},
                         {"archiveKey", manifest.archiveKey}}},
         {"graphicsTier", manifest.graphicsTier}};
@@ -2229,6 +2291,13 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
         return Cancel(request, eventSink, "Packaging was cancelled before staging");
     }
 
+    auto previousPersistence =
+        DiscoverPreviousPersistence(request.outputDir, request.gameId);
+    if (!previousPersistence.error.empty()) {
+        return Fail(request, eventSink, "PXPKG1317",
+                    previousPersistence.error, true);
+    }
+
     std::error_code error;
     std::filesystem::create_directories(request.outputDir.parent_path(), error);
     if (error) {
@@ -2375,7 +2444,8 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
 
     const std::string manifest = detail::SerializePackageManifest(
         BuildPackageManifest(request, packageFingerprint, encryptionKey, entries,
-                             std::move(customEffects.manifests)));
+                             std::move(customEffects.manifests),
+                             std::move(previousPersistence.readers)));
     const auto manifestSelfCheck = detail::ParsePackageManifest(manifest);
     if (!manifestSelfCheck.Valid()) {
         const auto& diagnostic = manifestSelfCheck.diagnostics.front();
@@ -2425,6 +2495,36 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
             if (!restoreError) backupCleanup.keep = true;
         }
         return Fail(request, eventSink, "PXPKG1315", "Staged output promotion failed; prior output was restored", true);
+    }
+    if (previousOutput) {
+        const auto previousSave = backup / "Save";
+        error.clear();
+        const bool hasPreviousSave =
+            std::filesystem::exists(previousSave, error);
+        if (!error && hasPreviousSave) {
+            std::filesystem::rename(previousSave,
+                                    request.outputDir / "Save", error);
+        }
+        if (error) {
+            std::error_code discardError;
+            std::filesystem::rename(request.outputDir, staging, discardError);
+            std::error_code restoreError;
+            if (!discardError)
+                std::filesystem::rename(backup, request.outputDir,
+                                        restoreError);
+            if (discardError || restoreError) {
+                backupCleanup.keep = true;
+                stagingCleanup.keep = true;
+                return Fail(
+                    request, eventSink, "PXPKG1318",
+                    "User save preservation failed and the prior output could not be restored; both copies were retained",
+                    true);
+            }
+            backupCleanup.keep = true;
+            return Fail(request, eventSink, "PXPKG1318",
+                        "User save preservation failed; the prior output was restored",
+                        true);
+        }
     }
     stagingCleanup.keep = true;
     if (previousOutput) {

@@ -232,6 +232,43 @@ Variant ParseLiteral(const std::string& text) {
     return Variant(value);
 }
 
+std::optional<Variant> ParseCatalogLiteral(const std::string& text,
+                                           const std::string_view type) {
+    const std::string value = Trim(text);
+    if (type == "boolean") {
+        if (value == "true") return Variant(true);
+        if (value == "false") return Variant(false);
+        return std::nullopt;
+    }
+    if (type == "integer") {
+        std::int64_t integer = 0;
+        const auto parsed =
+            std::from_chars(value.data(), value.data() + value.size(), integer);
+        return parsed.ec == std::errc{} &&
+                       parsed.ptr == value.data() + value.size()
+                   ? std::optional<Variant>(Variant(integer))
+                   : std::nullopt;
+    }
+    if (type == "number") {
+        double number = 0.0;
+        return ParseFiniteDouble(value, number)
+                   ? std::optional<Variant>(Variant(number))
+                   : std::nullopt;
+    }
+    if (type == "string") {
+        if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
+            const auto decoded = nlohmann::json::parse(value, nullptr, false);
+            if (decoded.is_discarded() || !decoded.is_string()) return std::nullopt;
+            return Variant(decoded.get<std::string>());
+        }
+        if (value.size() >= 2 && value.front() == '\'' && value.back() == '\'') {
+            return Variant(value.substr(1, value.size() - 2));
+        }
+        return Variant(value);
+    }
+    return std::nullopt;
+}
+
 std::optional<vn::Expression> ParseSimpleExpression(const std::string& text) {
     struct Candidate {
         std::string_view token;
@@ -261,6 +298,19 @@ std::optional<vn::Expression> ParseSimpleExpression(const std::string& text) {
     if (variable.starts_with('$')) variable.erase(0, 1);
     if (variable.empty()) return std::nullopt;
     return vn::Expression::Variable(std::move(variable));
+}
+
+std::optional<vn::Expression> ParseRuntimeExpression(const std::string& text) {
+    const std::string trimmed = Trim(text);
+    if (trimmed.empty()) return std::nullopt;
+    if (trimmed.front() != '{') return ParseSimpleExpression(trimmed);
+    const nlohmann::json encoded = nlohmann::json::parse(text, nullptr, false);
+    if (encoded.is_discarded() || !encoded.is_object()) return std::nullopt;
+    auto value = UntypedJsonValue(encoded);
+    if (!value) return std::nullopt;
+    auto expression = vn::ExpressionFromValue(*value);
+    return expression ? std::optional<vn::Expression>(expression.TakeValue())
+                      : std::nullopt;
 }
 
 std::string DurationMilliseconds(const std::string& value) {
@@ -400,13 +450,36 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
         } else if (operation.kind == "setVariable") {
             command.type = "var";
             Add(command, "name", Argument(operation, "name"));
-            if (!Argument(operation, "add").empty()) {
-                command.typedArgs["add"] = ParseLiteral(Argument(operation, "add"));
-            } else if (!Argument(operation, "value").empty()) {
-                command.typedArgs["value"] = ParseLiteral(Argument(operation, "value"));
+            const std::string& scope = Argument(operation, "scope");
+            if (!scope.empty()) {
+                if (scope != "session" && scope != "profile") {
+                    adapterErrors.push_back(
+                        "invalid variable scope at Runtime IR operation " +
+                        std::to_string(index));
+                    continue;
+                }
+                command.typedArgs["scope"] = Variant(scope);
+            }
+            const auto add = operation.arguments.find("add");
+            const auto value = operation.arguments.find("value");
+            const std::string& type = Argument(operation, "type");
+            if (add != operation.arguments.end()) {
+                command.typedArgs["add"] = ParseLiteral(add->second);
+            } else if (value != operation.arguments.end()) {
+                if (type.empty()) {
+                    command.typedArgs["value"] = ParseLiteral(value->second);
+                } else if (auto converted = ParseCatalogLiteral(value->second, type)) {
+                    command.typedArgs["value"] = std::move(*converted);
+                } else {
+                    adapterErrors.push_back(
+                        "invalid " + type +
+                        " variable value at Runtime IR operation " +
+                        std::to_string(index));
+                    continue;
+                }
             }
         } else if (operation.kind == "condition") {
-            const auto expression = ParseSimpleExpression(Argument(operation, "expression"));
+            const auto expression = ParseRuntimeExpression(Argument(operation, "expression"));
             const auto found = conditions.find(index);
             if (!expression || found == conditions.end()) {
                 adapterErrors.push_back("invalid condition at Runtime IR operation " +

@@ -1,4 +1,5 @@
 import {canonicalJson} from "./canonical-json.js";
+import {parseStoryExpression} from "./story-expression.js";
 import type {
   AuthoringDiagnostic,
   CharacterDocument,
@@ -501,11 +502,28 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
           const parsed = decodeValue(value).value;
           const matches = descriptor === undefined || (descriptor.type === "integer" ? typeof parsed === "number" && Number.isInteger(parsed) : typeof parsed === descriptor.type);
           if (!matches) diagnostics.push(error("PXSTORY1123", `Value for ${variableName} does not match ${descriptor!.type}`, node.span));
-          else emit(node, "setVariable", {name: variableName, value});
+          else emit(node, "setVariable", {
+            name: variableName,
+            value,
+            ...(descriptor === undefined ? {} : {scope: descriptor.scope, type: descriptor.type}),
+          });
         }
         break;
       }
-      case "if": emit(node, "condition", {expression: (node.arguments ?? []).map((value) => value.raw).join(" ")}); break;
+      case "if": {
+        const source = (node.arguments ?? []).map((value) => value.raw).join(" ");
+        const expression = parseStoryExpression(source, context.game?.variables);
+        if (expression.error !== undefined || expression.encoded === undefined) {
+          diagnostics.push(error(
+            "PXSTORY1133",
+            `Invalid condition expression: ${expression.error ?? "unknown error"}`,
+            node.span,
+          ));
+        } else {
+          emit(node, "condition", {expression: expression.encoded});
+        }
+        break;
+      }
       case "else": emit(node, "else", {}); break;
       case "endif": emit(node, "endCondition", {}); break;
       case "voice":

@@ -18,6 +18,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -110,7 +111,8 @@ using SaveMigrationReadText =
 
 class SaveSystem {
 public:
-    void Configure(const std::string& directory, const crypto::Key* key);
+    void Configure(const std::string& directory, const crypto::Key* key,
+                   std::span<const crypto::Key> fallbackKeys = {});
 
     bool Save(int slot, const SaveSnapshot& snapshot);
     [[nodiscard]] std::optional<SaveSnapshot> Load(int slot) const;
@@ -124,6 +126,7 @@ private:
     std::string m_dir = "Save";
     bool m_encrypt = false;
     crypto::Key m_key{};
+    std::vector<crypto::Key> m_fallbackKeys;
 };
 
 }

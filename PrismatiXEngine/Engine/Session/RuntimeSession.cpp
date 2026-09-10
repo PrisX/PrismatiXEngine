@@ -647,7 +647,7 @@ Result<RuntimeSession::PreparedRestore> RuntimeSession::PrepareRestore(
     for (const auto& entry : state.backlog)
         candidateBacklog.Push(entry.speaker, entry.text, entry.voice,
                               entry.isChoice, entry.sourceId,
-                              entry.operationId);
+                              entry.operationId, entry.sequence);
     candidateDialogue.RestoreState(state.dialogue);
     vn::VM candidateVm(m_services.vfs, m_services.audio, candidateStage,
                        candidateDialogue, candidateVariables, candidateBacklog);
@@ -762,7 +762,7 @@ Status RuntimeSession::ApplyState(const GameState& state,
     m_backlog.Clear();
     for (const auto& entry : state.backlog) {
         m_backlog.Push(entry.speaker, entry.text, entry.voice, entry.isChoice,
-                       entry.sourceId, entry.operationId);
+                       entry.sourceId, entry.operationId, entry.sequence);
     }
     m_dialogue.RestoreState(state.dialogue);
     bool vmRestored = true;

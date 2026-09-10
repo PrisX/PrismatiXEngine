@@ -1,7 +1,9 @@
 #pragma once
 
 #include "Engine/IO/Crypto.h"
+#include "Engine/Progression/Persist.h"
 
+#include <span>
 #include <string>
 
 namespace px::progress {
@@ -26,7 +28,13 @@ struct GameSettings {
     bool selfVoicing = false;
 
     bool Load(const std::string& path, const crypto::Key* key);
+    [[nodiscard]] PersistLoadStatus LoadWithFallback(
+        const std::string& path, const crypto::Key* primaryKey,
+        std::span<const crypto::Key> fallbackKeys = {});
     bool Save(const std::string& path, const crypto::Key* key) const;
+    bool SavePreservingExisting(
+        const std::string& path, const crypto::Key* primaryKey,
+        std::span<const crypto::Key> fallbackKeys = {}) const;
 };
 
 }

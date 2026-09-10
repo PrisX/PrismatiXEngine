@@ -1236,7 +1236,8 @@ Json BacklogToJson(const std::vector<vn::BacklogEntry>& log) {
                         { "voice", e.voice },
                         { "choice", e.isChoice },
                         { "sourceId", e.sourceId },
-                        { "operationId", e.operationId } });
+                        { "operationId", e.operationId },
+                        { "sequence", e.sequence } });
     }
     return arr;
 }
@@ -1250,15 +1251,18 @@ std::vector<vn::BacklogEntry> BacklogFromJson(const Json& arr) {
                                         j.value("voice", std::string{}),
                                         j.value("choice", false),
                                         j.value("sourceId", std::string{}),
-                                        j.value("operationId", std::string{}) });
+                                        j.value("operationId", std::string{}),
+                                        j.value("sequence", std::uint64_t{0}) });
     }
     return out;
 }
 }
 
-void SaveSystem::Configure(const std::string& directory, const crypto::Key* key) {
+void SaveSystem::Configure(const std::string& directory, const crypto::Key* key,
+                           const std::span<const crypto::Key> fallbackKeys) {
     m_dir = directory;
     m_encrypt = key != nullptr;
+    m_fallbackKeys.assign(fallbackKeys.begin(), fallbackKeys.end());
     if (key) {
         m_key = *key;
     }
@@ -1272,6 +1276,20 @@ std::string SaveSystem::SlotPath(int slot) const {
 }
 
 bool SaveSystem::Save(int slot, const SaveSnapshot& s) {
+    const std::string path = SlotPath(slot);
+    if (std::filesystem::exists(path)) {
+        auto existing = LoadJsonWithFallback(
+            path, m_encrypt ? &m_key : nullptr, m_fallbackKeys);
+        if (!existing.Loaded() ||
+            !ParseSaveEnvelopeV2(existing.value->dump(), path)) {
+            SaveLoadError(
+                path,
+                "Existing save is unreadable; refusing to overwrite its only copy");
+            return false;
+        }
+        if (existing.UsedFallback() && !BackupPersistenceFile(path))
+            return false;
+    }
     Json j;
     try {
     if (s.engineVersion.empty() || s.gameId.empty() ||
@@ -1435,18 +1453,20 @@ std::optional<SaveSnapshot> ParseSaveEnvelopeV2(
 }
 
 std::optional<SaveSnapshot> SaveSystem::Load(int slot) const {
-    auto json = LoadJson(SlotPath(slot), m_encrypt ? &m_key : nullptr);
-    if (!json) return std::nullopt;
-    return ParseSaveEnvelopeV2(json->dump(), SlotPath(slot));
+    auto loaded = LoadJsonWithFallback(
+        SlotPath(slot), m_encrypt ? &m_key : nullptr, m_fallbackKeys);
+    if (!loaded.Loaded()) return std::nullopt;
+    return ParseSaveEnvelopeV2(loaded.value->dump(), SlotPath(slot));
 }
 
 SlotInfo SaveSystem::Peek(int slot) const {
     SlotInfo info;
-    auto json = LoadJson(SlotPath(slot), m_encrypt ? &m_key : nullptr);
-    if (!json) {
+    auto loaded = LoadJsonWithFallback(
+        SlotPath(slot), m_encrypt ? &m_key : nullptr, m_fallbackKeys);
+    if (!loaded.Loaded()) {
         return info;
     }
-    const Json& j = *json;
+    const Json& j = *loaded.value;
     const std::string path=SlotPath(slot);
     if(!HasSupportedHeader(j)){SaveLoadError(path,"Unsupported or corrupt save schema");return info;}
     try {

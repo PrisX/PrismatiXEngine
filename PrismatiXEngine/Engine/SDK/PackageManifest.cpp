@@ -126,7 +126,7 @@ PackageManifestParseResult ParsePackageManifest(const std::string_view text) {
         "format", "schemaRevision", "engineVersion", "gameId", "title",
         "resolution", "entry", "routes", "archives", "contentVersion",
         "saveVersion", "packageFingerprint", "encryption", "graphicsTier",
-        "saveMigrations", "extensions", "customEffects"};
+        "saveMigrations", "extensions", "customEffects", "persistence"};
     for (auto item = root.begin(); item != root.end(); ++item) {
         if (!allowed.contains(item.key()))
             AddDiagnostic(result.diagnostics, "PXPKG1402",
@@ -163,6 +163,52 @@ PackageManifestParseResult ParsePackageManifest(const std::string_view text) {
              manifest.graphicsTier != "gpu-effects"))
             AddDiagnostic(result.diagnostics, "PXPKG1405",
                           "Package identity, version, title, or graphics tier is invalid");
+
+        const auto persistence = root.find("persistence");
+        if (persistence != root.end()) {
+            if (!persistence->is_object()) {
+                AddDiagnostic(result.diagnostics, "PXPKG1424",
+                              "persistence must be an object");
+            } else {
+                manifest.persistenceDataId =
+                    persistence->value("dataId", std::string{});
+                manifest.persistenceKeyId =
+                    persistence->value("keyId", std::string{});
+                const auto readers = persistence->find("legacyReaders");
+                if (manifest.persistenceDataId != manifest.gameId ||
+                    manifest.persistenceKeyId != "game-data-v1" ||
+                    readers == persistence->end() || !readers->is_array() ||
+                    readers->size() > 64) {
+                    AddDiagnostic(
+                        result.diagnostics, "PXPKG1425",
+                        "persistence data identity, key id, or reader set is invalid");
+                } else {
+                    std::set<std::pair<std::string, std::string>> unique;
+                    for (const auto& value : *readers) {
+                        PackagePersistenceReader reader{
+                            value.is_object()
+                                ? value.value("keyId", std::string{})
+                                : std::string{},
+                            value.is_object()
+                                ? value.value("secret", std::string{})
+                                : std::string{}};
+                        const bool knownKey =
+                            reader.keyId == "legacy-archive-v1" ||
+                            reader.keyId == "legacy-fingerprint-v1";
+                        if (!value.is_object() || !knownKey ||
+                            reader.secret.empty() || reader.secret.size() > 1024 ||
+                            !unique.emplace(reader.keyId, reader.secret).second) {
+                            AddDiagnostic(
+                                result.diagnostics, "PXPKG1426",
+                                "legacy persistence reader is invalid or duplicated");
+                            continue;
+                        }
+                        manifest.legacyPersistenceReaders.push_back(
+                            std::move(reader));
+                    }
+                }
+            }
+        }
 
         const auto resolution = root.find("resolution");
         const auto entry = root.find("entry");

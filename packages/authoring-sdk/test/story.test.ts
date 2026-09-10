@@ -111,6 +111,10 @@ test("Story compiler emits only executable semantic operations and source maps",
   assert.equal(validateDocument("sourceMap", compiled.sourceMap).valid, true);
   assert.equal(compiled.runtimeIr!.operations.some((operation) => ["sequence", "group", "document", "choice-wrapper"].includes(operation.kind)), false);
   assert.equal(compiled.runtimeIr!.operations.some((operation) => operation.kind === "customNode" && operation.arguments.type === "weather"), true);
+  assert.deepEqual(
+    compiled.runtimeIr!.operations.find((operation) => operation.kind === "setVariable")?.arguments,
+    {name:"affection",value:"10",scope:"profile",type:"integer"},
+  );
   const shown = compiled.runtimeIr!.operations.find((operation) => operation.kind === "showCharacter");
   assert.equal(shown?.arguments.character, character.id);
   assert.equal(shown?.arguments.expression, character.expressions[0]!.id);
@@ -120,6 +124,28 @@ test("Story compiler emits only executable semantic operations and source maps",
   assert.equal(shown?.arguments.y, "8");
   assert.equal(shown?.arguments.scale, "0.67");
   assert.equal(compiled.sourceMap!.mappings.length, compiled.runtimeIr!.operations.length);
+});
+
+test("Story catalog assignments lower declared scope and scalar type explicitly", () => {
+  const catalog: GameDocument = {
+    format: "PrismatiXGame",
+    schemaRevision: 2,
+    variables: [
+      {name:"route",type:"string",default:"common",scope:"session"},
+      {name:"endingUnlocked",type:"boolean",default:false,scope:"profile"},
+      {name:"affection",type:"number",default:0,scope:"profile"},
+    ],
+  };
+  const compiled = compileStory(
+    parseStory('[set route="rin"]\n[set endingUnlocked=true]\n[set affection=5]\n', "Story/catalog-variables.pxstory"),
+    {documentId:"catalog-variables",game:catalog},
+  );
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  assert.deepEqual(compiled.runtimeIr?.operations.map((operation) => operation.arguments), [
+    {name:"route",value:"rin",scope:"session",type:"string"},
+    {name:"endingUnlocked",value:"true",scope:"profile",type:"boolean"},
+    {name:"affection",value:"5",scope:"profile",type:"number"},
+  ]);
 });
 
 test("character placement names and authored moves lower to explicit Runtime commands", () => {

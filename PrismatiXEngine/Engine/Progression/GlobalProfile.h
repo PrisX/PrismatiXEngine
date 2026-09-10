@@ -40,6 +40,9 @@ public:
     [[nodiscard]] const std::set<std::string>& UnlockedCGs() const { return m_cgs; }
     [[nodiscard]] const std::set<std::string>& UnlockedMusic() const { return m_music; }
 
+    // Returns false without modifying output when a variable is not a bounded,
+    // JSON-compatible Variant value.
+    bool TryToJson(nlohmann::json& output) const;
     [[nodiscard]] nlohmann::json ToJson() const;
     bool ApplyJson(const nlohmann::json& json);
 

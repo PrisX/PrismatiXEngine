@@ -1558,6 +1558,43 @@ export const contractSchemas: Readonly<Record<string, object>> = {
       "operations": {
         "items": {
           "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "kind": {
+                    "const": "setVariable"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "arguments": {
+                    "properties": {
+                      "scope": {
+                        "enum": [
+                          "session",
+                          "profile"
+                        ]
+                      },
+                      "type": {
+                        "enum": [
+                          "boolean",
+                          "integer",
+                          "number",
+                          "string"
+                        ]
+                      }
+                    },
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          ],
           "properties": {
             "arguments": {
               "additionalProperties": {
@@ -3290,7 +3327,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "game.schema.json": "f0592fc75a4deb4aed7f192c076165012ef480196a07cd7d2136be390821dcba",
   "locale.schema.json": "d9fc4deae726d556c7bc7fb51a1d7a25e8db065147cb79450e31326dd81f4d79",
   "project.schema.json": "8a7ed01b49ac02f5b1c6b2bf6c74267fd058f8e92763ec7de1ba0c7cee034ac1",
-  "runtime-ir.schema.json": "951ce9f24b2c0ec13a536c6ee8f657796b5c90792f71587cf24ed181239d35d1",
+  "runtime-ir.schema.json": "b79954bfb6772c2b7a38194d236794a449b0e7d428cf1589d8fbd1cfa9e3616e",
   "save-migration.schema.json": "fd9f89119a4e8a70324f95bb6e0261e5d78b0ea173e2755422c36e5e2379b6cf",
   "source-map.schema.json": "1a0d20fbc5ed639fcb33bf7e8b81f78caf9af091a4d245cee2e5e66eb80d3e62",
   "story-index.schema.json": "1f88e0ed708fcf0edc47dddf80fd6617c40e746b6779105516d463f85191a4bb",

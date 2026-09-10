@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <limits>
 #include <string>
 #include <string_view>
 
@@ -15,6 +17,7 @@
 #include "Engine/Progression/GameSettings.h"
 #include "Engine/Progression/GlobalProfile.h"
 #include "Engine/Progression/GlobalProfileStore.h"
+#include "Engine/Progression/AwaitedWork.h"
 #include "Engine/Progression/Persist.h"
 #include "Engine/Progression/SaveSystem.h"
 #include "Engine/Resources/AssetRegistry.h"
@@ -433,6 +436,12 @@ void TestSaveValidation() {
     Check(!saves.Peek(2).exists, "unsupported save must not appear as a valid slot");
 }
 
+std::string ReadBytes(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>()};
+}
+
 void TestProfileAndSettingsSchemas() {
     px::test::TempDirectory temp("runtime-profile-settings");
     const auto profilePath = (temp.path / "profile.pxprofile").string();
@@ -443,6 +452,17 @@ void TestProfileAndSettingsSchemas() {
     profile.MarkChoiceSeen("choice.intro#option-a");
     profile.RegisterClear("route.alice");
     profile.SetVariable("affection", px::Variant(std::int64_t{7}));
+    px::VariantObject score;
+    score.emplace("score", px::Variant(12.5));
+    px::VariantArray flags;
+    flags.emplace_back(true);
+    flags.emplace_back();
+    flags.emplace_back(std::move(score));
+    px::VariantObject routeStateObject;
+    routeStateObject.emplace("route", px::Variant("alice"));
+    routeStateObject.emplace("flags", px::Variant(std::move(flags)));
+    const px::Variant routeState(std::move(routeStateObject));
+    profile.SetVariable("routeState", routeState.Clone());
     profile.UnlockScene("scene.after-story");
     profile.UnlockCG("cg.sunset");
     profile.UnlockMusic("music.ending");
@@ -452,9 +472,51 @@ void TestProfileAndSettingsSchemas() {
     Check(px::progress::LoadGlobalProfile(loadedProfile, profilePath, nullptr), "global profile should load with the current schema");
     Check(
         loadedProfile.HasSeen("scene.intro#line-1") && loadedProfile.HasChoiceSeen("choice.intro#option-a") && loadedProfile.ClearCount() == 1 && loadedProfile.RouteCleared("route.alice") &&
-            loadedProfile.Variable("affection") && loadedProfile.Variable("affection")->TryGet<std::int64_t>() && *loadedProfile.Variable("affection")->TryGet<std::int64_t>() == 7 && loadedProfile.SceneUnlocked("scene.after-story") && loadedProfile.CGUnlocked("cg.sunset") && loadedProfile.MusicUnlocked("music.ending"),
-        "global profile should preserve seen state, clears, persistent variables, and unlocks"
+            loadedProfile.Variable("affection") && loadedProfile.Variable("affection")->TryGet<std::int64_t>() && *loadedProfile.Variable("affection")->TryGet<std::int64_t>() == 7 && loadedProfile.Variable("routeState") && *loadedProfile.Variable("routeState") == routeState && loadedProfile.SceneUnlocked("scene.after-story") && loadedProfile.CGUnlocked("cg.sunset") && loadedProfile.MusicUnlocked("music.ending"),
+        "global profile should preserve seen state, clears, scalar/composite persistent variables, and unlocks"
     );
+
+    const auto unchangedAfterRejectedApply = [&]() {
+        return loadedProfile.HasSeen("scene.intro#line-1") &&
+               loadedProfile.ClearCount() == 1 &&
+               loadedProfile.Variable("affection") &&
+               loadedProfile.Variable("affection")->TryGet<std::int64_t>() &&
+               *loadedProfile.Variable("affection")->TryGet<std::int64_t>() == 7 &&
+               loadedProfile.Variable("routeState") &&
+               *loadedProfile.Variable("routeState") == routeState;
+    };
+    px::progress::Json invalidProfile = loadedProfile.ToJson();
+    invalidProfile["vars"]["nonFinite"] =
+        std::numeric_limits<double>::infinity();
+    Check(!loadedProfile.ApplyJson(invalidProfile) && unchangedAfterRejectedApply(),
+          "invalid composite profile values must be rejected transactionally");
+
+    px::progress::Json deepValue = nullptr;
+    for (int depth = 0; depth < 34; ++depth) {
+        deepValue = px::progress::Json::array({std::move(deepValue)});
+    }
+    px::progress::Json deepProfile = loadedProfile.ToJson();
+    deepProfile["vars"]["tooDeep"] = std::move(deepValue);
+    Check(!loadedProfile.ApplyJson(deepProfile) && unchangedAfterRejectedApply(),
+          "excessively deep profile values must be rejected transactionally");
+
+    px::progress::Json wideProfile = loadedProfile.ToJson();
+    px::progress::Json tooWide = px::progress::Json::array();
+    tooWide.get_ref<px::progress::Json::array_t&>().resize(100'001);
+    wideProfile["vars"]["tooWide"] = std::move(tooWide);
+    Check(!loadedProfile.ApplyJson(wideProfile) && unchangedAfterRejectedApply(),
+          "excessively wide profile values must be rejected transactionally");
+
+    px::progress::GlobalProfile unsupportedProfile;
+    unsupportedProfile.SetVariable(
+        "editorColor", px::Variant(px::Color{255, 0, 0, 255}));
+    Check(!px::progress::SaveGlobalProfile(unsupportedProfile, profilePath, nullptr),
+          "non-JSON Variant values must fail profile serialization");
+    px::progress::GlobalProfile preservedProfile;
+    Check(px::progress::LoadGlobalProfile(preservedProfile, profilePath, nullptr) &&
+              preservedProfile.Variable("routeState") &&
+              *preservedProfile.Variable("routeState") == routeState,
+          "a rejected profile save must preserve the previous file");
 
     px::progress::Json legacyProfile{ { "version", 4 }, { "clearCount", 99 } };
     Check(px::progress::SaveJson(profilePath, legacyProfile, nullptr), "legacy profile fixture should be written");
@@ -628,6 +690,157 @@ void TestSavedAssetIdentityRegistration() {
     Check(registry.Scan(temp.path), "asset scan should accept all registered saved artifacts");
 }
 
+void TestAwaitedWorkValidation() {
+    px::progress::SaveSnapshot snapshot;
+    snapshot.vm.state = px::vn::VMState::WaitingExternal;
+    px::script::PendingActionState action;
+    action.id = 7;
+    action.invocation.action = "test.async";
+    snapshot.scriptActions.push_back(std::move(action));
+    const auto actionOnly = px::progress::InspectAwaitedWork(snapshot);
+    Check(actionOnly.action && !actionOnly.command && !actionOnly.timeline &&
+              px::progress::HasConsistentAwaitState(snapshot),
+          "an action-only checkpoint is a valid external await state");
+
+    snapshot.scriptActions.clear();
+    Check(!px::progress::HasConsistentAwaitState(snapshot),
+          "WaitingExternal without restorable work is rejected");
+    snapshot.vm.state = px::vn::VMState::WaitingClick;
+    Check(px::progress::HasConsistentAwaitState(snapshot),
+          "non-external VM state without awaited work is valid");
+
+    px::animation::PlaybackState timeline;
+    timeline.playing = true;
+    timeline.awaiting = true;
+    snapshot.timelines.push_back(timeline);
+    Check(!px::progress::HasConsistentAwaitState(snapshot),
+          "awaited timeline requires WaitingExternal");
+    snapshot.vm.state = px::vn::VMState::WaitingExternal;
+    Check(px::progress::HasConsistentAwaitState(snapshot),
+          "awaited timeline and WaitingExternal agree");
+}
+
+void TestPersistenceKeyUpgradeAndFailurePreservation() {
+    px::test::TempDirectory temp("persistence-key-upgrade");
+    const auto profilePath = temp.path / "profile.dat";
+    const auto settingsPath = temp.path / "config.dat";
+    const auto corruptPath = temp.path / "protected.dat";
+    const auto stableKey =
+        px::progress::DeriveGameDataPersistenceKey("commercial-game");
+    const auto stableKeyAgain =
+        px::progress::DeriveGameDataPersistenceKey("commercial-game");
+    const auto otherStableKey =
+        px::progress::DeriveGameDataPersistenceKey("different-game");
+    const auto legacyKey =
+        px::progress::DeriveLegacyPersistenceKey("content-fingerprint-v1");
+    const auto wrongKey =
+        px::progress::DeriveLegacyPersistenceKey("unavailable-key");
+    Check(stableKey == stableKeyAgain && stableKey != otherStableKey &&
+              stableKey != legacyKey,
+          "game-data persistence identity is stable and isolated from content keys");
+    const std::vector<px::crypto::Key> fallbackKeys{legacyKey};
+
+    px::progress::GlobalProfile legacyProfile;
+    legacyProfile.MarkSeen("chapter-1#line-1");
+    legacyProfile.SetVariable("route", px::Variant("alice"));
+    Check(px::progress::SaveGlobalProfile(
+              legacyProfile, profilePath.string(), &legacyKey),
+          "legacy-key profile fixture is written");
+    const std::string legacyProfileBytes = ReadBytes(profilePath);
+    px::progress::GlobalProfile loadedProfile;
+    Check(px::progress::LoadGlobalProfileWithFallback(
+              loadedProfile, profilePath.string(), &stableKey,
+              fallbackKeys) == px::progress::PersistLoadStatus::Loaded &&
+              loadedProfile.HasSeen("chapter-1#line-1"),
+          "current reader loads a legacy-key profile before migration");
+    loadedProfile.MarkSeen("chapter-2#line-1");
+    Check(px::progress::SaveGlobalProfilePreservingExisting(
+              loadedProfile, profilePath.string(), &stableKey,
+              fallbackKeys),
+          "validated legacy profile is promoted to the stable key");
+    const auto profileBackup =
+        std::filesystem::path(profilePath.string() + ".legacy.bak");
+    Check(std::filesystem::is_regular_file(profileBackup) &&
+              ReadBytes(profileBackup) == legacyProfileBytes,
+          "legacy profile bytes are retained before stable-key promotion");
+    px::progress::GlobalProfile promotedProfile;
+    Check(px::progress::LoadGlobalProfile(
+              promotedProfile, profilePath.string(), &stableKey) &&
+              promotedProfile.HasSeen("chapter-1#line-1") &&
+              promotedProfile.HasSeen("chapter-2#line-1"),
+          "promoted profile reloads with the stable key and preserves state");
+
+    px::progress::GameSettings legacySettings;
+    legacySettings.language = "ja-JP";
+    legacySettings.textSpeedMs = 19;
+    Check(legacySettings.Save(settingsPath.string(), &legacyKey),
+          "legacy-key settings fixture is written");
+    const std::string legacySettingsBytes = ReadBytes(settingsPath);
+    px::progress::GameSettings loadedSettings;
+    Check(loadedSettings.LoadWithFallback(
+              settingsPath.string(), &stableKey, fallbackKeys) ==
+              px::progress::PersistLoadStatus::Loaded &&
+              loadedSettings.language == "ja-JP" &&
+              loadedSettings.textSpeedMs == 19,
+          "current reader loads legacy-key settings");
+    loadedSettings.autoWaitMs = 875;
+    Check(loadedSettings.SavePreservingExisting(
+              settingsPath.string(), &stableKey, fallbackKeys) &&
+              ReadBytes(settingsPath.string() + ".legacy.bak") ==
+                  legacySettingsBytes,
+          "settings promotion retains the exact legacy bytes");
+    px::progress::GameSettings promotedSettings;
+    Check(promotedSettings.Load(settingsPath.string(), &stableKey) &&
+              promotedSettings.language == "ja-JP" &&
+              promotedSettings.autoWaitMs == 875,
+          "promoted settings reload with the stable key");
+
+    px::progress::GlobalProfile protectedProfile;
+    protectedProfile.MarkSeen("must-survive");
+    Check(px::progress::SaveGlobalProfile(
+              protectedProfile, corruptPath.string(), &wrongKey),
+          "wrong-key protection fixture is written");
+    const std::string protectedBytes = ReadBytes(corruptPath);
+    px::progress::GlobalProfile replacement;
+    replacement.MarkSeen("replacement");
+    Check(px::progress::LoadGlobalProfileWithFallback(
+              replacement, corruptPath.string(), &stableKey,
+              fallbackKeys) == px::progress::PersistLoadStatus::Failed &&
+              !px::progress::SaveGlobalProfilePreservingExisting(
+                  replacement, corruptPath.string(), &stableKey,
+                  fallbackKeys) &&
+              ReadBytes(corruptPath) == protectedBytes,
+          "an existing file with an unavailable key is never overwritten");
+
+    px::progress::SaveSnapshot snapshot;
+    snapshot.gameId = "commercial-game";
+    snapshot.packageFingerprint = std::string(64, '1');
+    snapshot.contentVersion = "1";
+    snapshot.saveVersion = 1;
+    snapshot.anchor = {"runtime-main", "line-1", "operation-1"};
+    snapshot.scriptPath = "Runtime/main.pxir";
+    snapshot.vm.scriptPath = snapshot.scriptPath;
+    snapshot.chapter = "chapter-1";
+    px::progress::SaveSystem legacySaves;
+    legacySaves.Configure((temp.path / "Save").string(), &legacyKey);
+    Check(legacySaves.Save(1, snapshot),
+          "legacy-key slot fixture is written");
+    const std::string legacySlotBytes = ReadBytes(legacySaves.SlotPath(1));
+    px::progress::SaveSystem currentSaves;
+    currentSaves.Configure((temp.path / "Save").string(), &stableKey,
+                           fallbackKeys);
+    const auto loadedSlot = currentSaves.Load(1);
+    Check(loadedSlot && loadedSlot->chapter == "chapter-1",
+          "current save reader loads the legacy-key slot");
+    snapshot.chapter = "chapter-2";
+    Check(currentSaves.Save(1, snapshot) &&
+              ReadBytes(currentSaves.SlotPath(1) + ".legacy.bak") ==
+                  legacySlotBytes &&
+              currentSaves.Load(1) &&
+              currentSaves.Load(1)->chapter == "chapter-2",
+          "slot promotion backs up legacy bytes and writes the stable key");
+}
+
 
 }  // namespace
 
@@ -637,6 +850,9 @@ int main() {
     Run("ProfileAndSettings_CurrentSchemasRoundTrip", TestProfileAndSettingsSchemas);
     Run("Save_ExplicitMigrationChainIsTransactional", TestExplicitSaveMigrationChain);
     Run("Assets_SavedIdentityRegisters", TestSavedAssetIdentityRegistration);
+    Run("Save_AwaitedWorkValidationIsShared", TestAwaitedWorkValidation);
+    Run("Persistence_KeyUpgradeAndFailurePreservation",
+        TestPersistenceKeyUpgradeAndFailurePreservation);
     if (g_failures == 0) std::cout << "PASS: runtime-save-load integration\n";
     return g_failures == 0 ? 0 : 1;
 }

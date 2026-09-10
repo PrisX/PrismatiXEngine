@@ -19,6 +19,11 @@ struct PackageArchiveMount {
     bool optional = false;
 };
 
+struct PackagePersistenceReader {
+    std::string keyId;
+    std::string secret;
+};
+
 struct PackageManifestRoute {
     std::string id;
     std::string sceneId;
@@ -67,6 +72,12 @@ struct PackageManifest {
     std::string contentVersion;
     std::uint32_t saveVersion = 1;
     std::string packageFingerprint;
+    // Content fingerprints and archive keys identify one build. Persistence
+    // uses a stable game-data identity and carries bounded legacy readers only
+    // for already shipped build-derived keys.
+    std::string persistenceDataId;
+    std::string persistenceKeyId;
+    std::vector<PackagePersistenceReader> legacyPersistenceReaders;
     bool encrypted = false;
     std::string archiveKey;
     std::string graphicsTier = "basic";

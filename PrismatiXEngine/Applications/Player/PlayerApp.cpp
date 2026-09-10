@@ -2,6 +2,7 @@
 
 #include "Engine/Graphics/Screenshot.h"
 #include "Engine/Diagnostics/Diagnostic.h"
+#include "Engine/Progression/AwaitedWork.h"
 #include "Engine/Progression/GlobalProfileStore.h"
 #include "Engine/Resources/TypedDocument.h"
 #include "Engine/SDK/Packager.h"
@@ -19,6 +20,7 @@
 #include <ctime>
 #include <fstream>
 #include <filesystem>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <set>
@@ -268,8 +270,16 @@ PlayerApp::Boot PlayerApp::LoadBootConfig() {
     boot.startRoute = package.startRoute;
     for (const auto& route : package.routes)
         boot.routeScenes.emplace(route.id, route.scene);
-    boot.saveSecret = package.archiveKey.empty() ? package.packageFingerprint
-                                                 : package.archiveKey;
+    if (package.persistenceKeyId.empty()) {
+        boot.saveSecret = package.archiveKey.empty()
+                              ? package.packageFingerprint
+                              : package.archiveKey;
+    } else {
+        boot.persistenceDataId = package.persistenceDataId;
+        boot.persistenceKeyId = package.persistenceKeyId;
+        for (const auto& reader : package.legacyPersistenceReaders)
+            boot.legacyPersistenceSecrets.push_back(reader.secret);
+    }
     boot.valid = true;
     PX_LOG_INFO("Packaged build: mounting {} content group(s)",
                 boot.config.mountArchives.size());
@@ -543,13 +553,27 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         return false;
     }
 
-    // Save files are keyed per project; the fixed default only covers projects
-    // that ship neither a key nor a title.
-    m_saveKey = crypto::DeriveKey(
-        m_boot.saveSecret.empty() ? std::string(kSaveKey) : m_boot.saveSecret + "|px-save");
-    progress::LoadGlobalProfile(m_profile, "Save/profile.dat", &m_saveKey);
-    m_settings.Load("Save/config.dat", &m_saveKey);
-    m_saves.Configure("Save", &m_saveKey);
+    // Current packages use stable game-data identity. Manifests produced before
+    // that contract remain self-consistent and use their historical key, while
+    // upgraded packages carry those old secrets as read-only fallback keys.
+    if (m_boot.persistenceKeyId == progress::kGameDataPersistenceKeyId) {
+        m_saveKey = progress::DeriveGameDataPersistenceKey(
+            m_boot.persistenceDataId);
+        for (const auto& secret : m_boot.legacyPersistenceSecrets)
+            m_saveFallbackKeys.push_back(
+                progress::DeriveLegacyPersistenceKey(secret));
+    } else {
+        m_saveKey = progress::DeriveLegacyPersistenceKey(
+            m_boot.saveSecret.empty() ? std::string(kSaveKey)
+                                      : m_boot.saveSecret);
+    }
+    const auto profileLoad = progress::LoadGlobalProfileWithFallback(
+        m_profile, "Save/profile.dat", &m_saveKey, m_saveFallbackKeys);
+    const auto settingsLoad = m_settings.LoadWithFallback(
+        "Save/config.dat", &m_saveKey, m_saveFallbackKeys);
+    m_profileWritable = profileLoad != progress::PersistLoadStatus::Failed;
+    m_settingsWritable = settingsLoad != progress::PersistLoadStatus::Failed;
+    m_saves.Configure("Save", &m_saveKey, m_saveFallbackKeys);
     PX_LOG_DEBUG("Player boot: persistence configured");
     m_runtime.Audio().SetBGMVolume(m_settings.bgmVolume);
     m_runtime.Audio().SetSEVolume(m_settings.seVolume);
@@ -878,7 +902,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_session->VM().SetUnlockHook([this](const std::string& kind, const std::string& id) {
         if (kind == "cg") m_profile.UnlockCG(id);
         else m_profile.UnlockScene(id);
-        progress::SaveGlobalProfile(m_profile, "Save/profile.dat", &m_saveKey);
+        SaveProfileIfWritable();
         PX_LOG_INFO("Player progression unlocked kind={} id={}", kind, id);
     });
     m_session->VM().SetSeenHook([this](const std::string& key) {
@@ -1024,6 +1048,26 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     return true;
 }
 
+bool PlayerApp::SaveProfileIfWritable() {
+    if (!m_profileWritable) {
+        PX_LOG_ERROR(
+            "Profile write suppressed because the existing file failed to load");
+        return false;
+    }
+    return progress::SaveGlobalProfilePreservingExisting(
+        m_profile, "Save/profile.dat", &m_saveKey, m_saveFallbackKeys);
+}
+
+bool PlayerApp::SaveSettingsIfWritable() {
+    if (!m_settingsWritable) {
+        PX_LOG_ERROR(
+            "Settings write suppressed because the existing file failed to load");
+        return false;
+    }
+    return m_settings.SavePreservingExisting(
+        "Save/config.dat", &m_saveKey, m_saveFallbackKeys);
+}
+
 void PlayerApp::FinishBootPresentation() {
     if(m_appState!=AppState::BootSplash)return;
     if(!m_session->Routes().Replace(m_boot.startRoute)){m_quitRequested=true;return;}
@@ -1060,7 +1104,7 @@ void PlayerApp::StartGame() {
     m_nvlMode = false;
     m_nvlLines.clear();
     m_rollback.clear();
-    m_lastBacklogSize = 0;
+    m_lastBacklogSequence = m_session->Backlog().LastSequence();
     m_playtimeBaseMs = 0;
     m_playtimeStartedAtMs = m_runtime.GetClock().NowMs();
     if (m_script.ends_with(".pxir")) {
@@ -1191,10 +1235,7 @@ bool PlayerApp::LoadSlot(int slot) {
             .details = candidateScript});
         return false;
     }
-    const bool awaitingTimeline = std::any_of(snap->timelines.begin(), snap->timelines.end(),
-        [](const animation::PlaybackState& playback) { return playback.playing && playback.awaiting; });
-    if ((snap->vm.state == vn::VMState::WaitingExternal) !=
-        (!snap->scriptPending.empty() || awaitingTimeline)) {
+    if (!progress::HasConsistentAwaitState(*snap)) {
         diag::Emit(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXSAVE6110",
                                     .category="Persistence.Save",
                                     .message="Save has inconsistent script await state"});
@@ -1255,7 +1296,7 @@ bool PlayerApp::LoadSlot(int slot) {
     else
         m_nvlLines = snap->nvlLines;
     m_rollback.clear();
-    m_lastBacklogSize = m_session->Backlog().Entries().size();
+    m_lastBacklogSequence = m_session->Backlog().LastSequence();
     m_playtimeBaseMs = snap->playtimeMs;
     m_playtimeStartedAtMs = m_runtime.GetClock().NowMs();
     m_script = candidateScript;
@@ -1343,7 +1384,12 @@ bool PlayerApp::ApplyRollback(const RollbackEntry& entry) {
     state.ui = s.ui;
     state.runtimeProgram = s.runtimeProgram;
     state.backlog = m_session->Backlog().Entries();
-    if (state.backlog.size() > entry.backlogSize) state.backlog.resize(entry.backlogSize);
+    const auto rollbackLine = std::ranges::find_if(
+        state.backlog, [&entry](const vn::BacklogEntry& line) {
+            return line.sequence == entry.backlogSequence;
+        });
+    if (rollbackLine == state.backlog.end()) return false;
+    state.backlog.erase(std::next(rollbackLine), state.backlog.end());
     auto preparedRuntime = m_session->PrepareRestore(
         state, m_runtime.GetClock().NowMs());
     if (!preparedRuntime) {
@@ -1382,7 +1428,7 @@ bool PlayerApp::ApplyRollback(const RollbackEntry& entry) {
     }
     m_nvlMode = s.nvlMode;
     m_nvlLines = s.nvlLines;
-    m_lastBacklogSize = m_session->Backlog().Entries().size();
+    m_lastBacklogSequence = m_session->Backlog().LastSequence();
     m_autoMode = m_skipMode = false;
     (void)m_ui.RefreshHUD(DialogueUI());
     return true;
@@ -1396,10 +1442,10 @@ void PlayerApp::RollbackOneLine() {
     if (ApplyRollback(target)) m_rollback.pop_back();
 }
 
-bool PlayerApp::RollbackToBacklogIndex(std::size_t index) {
+bool PlayerApp::RollbackToBacklogSequence(const std::uint64_t sequence) {
     for (std::size_t i = m_rollback.size(); i > 0; --i) {
         const RollbackEntry& entry = m_rollback[i - 1];
-        if (entry.backlogSize == index + 1) {
+        if (entry.backlogSequence == sequence) {
             const RollbackEntry target = entry;
             if (!ApplyRollback(target)) return false;
             m_rollback.erase(m_rollback.begin() + static_cast<std::ptrdiff_t>(i),
@@ -1471,9 +1517,10 @@ std::vector<ui::GalgameItem> PlayerApp::BacklogItems() {
     for (std::size_t i = 0; i < entries.size(); ++i) {
         const auto& entry = entries[i];
         const std::string speaker = entry.isChoice ? "▶ 選擇" : entry.speaker;
-        items.push_back({"backlog-" + std::to_string(i), speaker.empty() ? entry.text : speaker + "　" + entry.text,
+        items.push_back({"backlog-" + std::to_string(entry.sequence), speaker.empty() ? entry.text : speaker + "　" + entry.text,
                          entry.voice.empty() ? "" : "♪ 點擊重播語音", "", false,
-                         entry.voice.empty() ? "backlog.rollback" : "backlog.voice", std::to_string(i)});
+                         entry.voice.empty() ? "backlog.rollback" : "backlog.voice",
+                         std::to_string(entry.sequence)});
     }
     return items;
 }
@@ -1565,7 +1612,7 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
     } else if(t=="set.highcontrast.value") { m_settings.highContrast=action.argument=="true";
     } else if(t=="set.reducedmotion.value") { m_settings.reducedMotion=action.argument=="true";
     } else if(t=="set.selfvoicing.value") { m_settings.selfVoicing=action.argument=="true";if(!m_settings.selfVoicing)m_speech.Stop();
-    } else if(t=="set.language.value") { if(LoadLocale(action.argument,true))(void)m_settings.Save("Save/config.dat",&m_saveKey);
+    } else if(t=="set.language.value") { if(LoadLocale(action.argument,true))(void)SaveSettingsIfWritable();
     } else if (t == "set.bgm.up") {
         m_settings.bgmVolume = std::min(128, m_settings.bgmVolume + 8);
         audio.SetBGMVolume(m_settings.bgmVolume);
@@ -1620,16 +1667,20 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
     } else if (t == "backlog.open") {
         OpenScreen("backlog");
     } else if (t == "backlog.voice" || t == "backlog.rollback") {
-        const std::size_t index = static_cast<std::size_t>(std::max(0, std::atoi(action.argument.c_str())));
-        if (index < m_session->Backlog().Entries().size()) {
-            const auto& entry = m_session->Backlog().Entries()[index];
-            if (t == "backlog.voice" && !entry.voice.empty())
-                m_runtime.Audio().PlayVoice(entry.voice.find('/') != std::string::npos ? entry.voice : m_session->VM().Config().voiceDir + entry.voice);
-            else RollbackToBacklogIndex(index);
+        std::uint64_t sequence = 0;
+        try {
+            sequence = std::stoull(action.argument);
+        } catch (const std::exception&) {
+            sequence = 0;
+        }
+        if (const auto* entry = m_session->Backlog().Find(sequence)) {
+            if (t == "backlog.voice" && !entry->voice.empty())
+                m_runtime.Audio().PlayVoice(entry->voice.find('/') != std::string::npos ? entry->voice : m_session->VM().Config().voiceDir + entry->voice);
+            else RollbackToBacklogSequence(entry->sequence);
         }
     } else if (t == "overlay.close") {
         (void)m_session->Routes().CloseModal();
-        m_settings.Save("Save/config.dat", &m_saveKey); progress::SaveGlobalProfile(m_profile, "Save/profile.dat", &m_saveKey);
+        SaveSettingsIfWritable(); SaveProfileIfWritable();
         PX_LOG_INFO("Player overlay closed");
     } else if (t == "app.quit") {
         m_quitRequested = true;
@@ -1691,10 +1742,30 @@ void PlayerApp::DriveE2EJourney() {
                                 target,m_session->Dialogue().State().fullText);
                     break;
                 }
-                input.InjectKeyPress(SDL_SCANCODE_G);
-                m_e2eStage=E2EStage::AwaitGallery;
+                m_e2eClearCountBeforeF2=m_profile.ClearCount();
+                if(const auto* value=m_session->Variables().GetValue("routeName"))
+                    m_e2eSessionValueBeforeF2=value->Clone();
+                input.InjectKeyPress(SDL_SCANCODE_F2);
+                m_e2eStage=E2EStage::VerifyReleaseF2;
             }
             break;
+        case E2EStage::VerifyReleaseF2: {
+            const auto* value=m_session->Variables().GetValue("routeName");
+            const bool sessionUnchanged=
+                (!m_e2eSessionValueBeforeF2&&value==nullptr)||
+                (m_e2eSessionValueBeforeF2&&value&&
+                 *m_e2eSessionValueBeforeF2==*value);
+            if(m_profile.ClearCount()!=m_e2eClearCountBeforeF2||
+               !sessionUnchanged){
+                PX_LOG_ERROR("Player release F2 policy changed persistent or session state");
+                m_e2eFailed=true;m_e2eStage=E2EStage::Complete;
+                m_quitRequested=true;break;
+            }
+            PX_LOG_INFO("Player release F2 policy ignored demo reset shortcut");
+            input.InjectKeyPress(SDL_SCANCODE_G);
+            m_e2eStage=E2EStage::AwaitGallery;
+            break;
+        }
         case E2EStage::AwaitGallery:
             if(m_ui.IsOverlay()&&
                m_ui.CurrentScreen()==ui::GalgameUI::Screen::Gallery)
@@ -1834,12 +1905,6 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     px::Input& input = m_runtime.GetInput();
 
     if (input.KeyPressed(SDL_SCANCODE_F9)) LoadSlot(0);
-    if (input.KeyPressed(SDL_SCANCODE_F2)) {
-        m_profile.RegisterClear("demo");
-        m_session->Variables().Reset(true);
-        progress::SaveGlobalProfile(m_profile, "Save/profile.dat", &m_saveKey);
-        PX_LOG_INFO("NG+ clear count {}", m_profile.ClearCount());
-    }
     if (input.KeyPressed(SDL_SCANCODE_F5)) m_saveRequested = true;
     if (input.KeyPressed(SDL_SCANCODE_F6)) m_pendingSaveScreen = true;
 
@@ -1931,24 +1996,26 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     syncChoiceTexts();
 
     // New dialogue lines feed the NVL page and the rollback ring.
-    const std::size_t backlogSize = m_session->Backlog().Entries().size();
-    if (backlogSize > m_lastBacklogSize) {
-        for (std::size_t i = m_lastBacklogSize; i < backlogSize; ++i) {
-            const vn::BacklogEntry& e = m_session->Backlog().Entries()[i];
+    const std::uint64_t backlogSequence = m_session->Backlog().LastSequence();
+    if (backlogSequence > m_lastBacklogSequence) {
+        const vn::BacklogEntry* latestEntry = nullptr;
+        for (const vn::BacklogEntry& e :
+             m_session->Backlog().EntriesAfter(m_lastBacklogSequence)) {
+            latestEntry = &e;
             if (m_nvlMode && !e.isChoice) m_nvlLines.push_back(e);
             if (m_settings.selfVoicing && !e.isChoice)
                 m_speech.Speak(e.speaker.empty() ? e.text : e.speaker + ". " + e.text);
         }
-        if (auto snapshot = MakeSnapshot(/*includeBacklog=*/false)) {
-            RollbackEntry entry;
-            entry.snap = std::move(*snapshot);
-            entry.backlogSize = backlogSize;
-            m_rollback.push_back(std::move(entry));
-            if (m_rollback.size() > 64) m_rollback.pop_front();
+        if (latestEntry) {
+            if (auto snapshot = MakeSnapshot(/*includeBacklog=*/false)) {
+                RollbackEntry entry;
+                entry.snap = std::move(*snapshot);
+                entry.backlogSequence = latestEntry->sequence;
+                m_rollback.push_back(std::move(entry));
+                if (m_rollback.size() > 64) m_rollback.pop_front();
+            }
         }
-        m_lastBacklogSize = backlogSize;
-    } else if (backlogSize < m_lastBacklogSize) {
-        m_lastBacklogSize = backlogSize;
+        m_lastBacklogSequence = backlogSequence;
     }
 
     m_session->Stage().Render();
@@ -2061,8 +2128,8 @@ void PlayerApp::Shutdown() {
             m_settings.windowHeight = h;
         }
     }
-    m_settings.Save("Save/config.dat", &m_saveKey);
-    progress::SaveGlobalProfile(m_profile, "Save/profile.dat", &m_saveKey);
+    SaveSettingsIfWritable();
+    SaveProfileIfWritable();
     // Subsystems referencing the runtime must go before Runtime::Shutdown.
     m_scriptHost.reset();
     m_splash.reset();

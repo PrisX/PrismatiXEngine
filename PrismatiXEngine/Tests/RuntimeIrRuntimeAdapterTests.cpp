@@ -76,8 +76,13 @@ int main() {
     document.committedRevision = 4;
     document.operations = {
         Operation("scene", "scene", {{"title", "雨夜"}}),
-        Operation("set", "setVariable", {{"name", "affection"}, {"value", "3"}}),
-        Operation("if", "condition", {{"expression", "affection >= 3"}}),
+        Operation("set", "setVariable",
+                  {{"name", "affection"}, {"value", "3"},
+                   {"scope", "profile"}, {"type", "integer"}}),
+        Operation(
+            "if", "condition",
+            {{"expression",
+              R"({"kind":"binary","op":"and","left":{"kind":"binary","op":"greater-equal","left":{"kind":"variable","name":"affection"},"right":{"kind":"literal","value":3}},"right":{"kind":"unary","op":"not","operand":{"kind":"binary","op":"less","left":{"kind":"variable","name":"affection"},"right":{"kind":"literal","value":3}}}})"}}),
         Operation("say-true", "dialogue",
                   {{"speaker", "雪"}, {"text", "你還記得。"}}, 47),
         Operation("else", "else"),
@@ -96,6 +101,12 @@ int main() {
     assert(program.code.front().type == "chapter");
     assert(program.code.front().sourceId == "scene");
     assert(program.code[1].type == "var");
+    const auto* profileScope = program.code[1].FindTyped("scope");
+    assert(profileScope && profileScope->TryGet<std::string>() &&
+           *profileScope->TryGet<std::string>() == "profile");
+    const auto* profileValue = program.code[1].FindTyped("value");
+    assert(profileValue && profileValue->TryGet<std::int64_t>() &&
+           *profileValue->TryGet<std::int64_t>() == 3);
     assert(program.code[2].type == "branch");
     assert(program.code[2].FindTyped("expression") != nullptr);
     bool foundMappedLine = false;
@@ -123,6 +134,44 @@ int main() {
     assert(actionObject->at("asset").TryGet<std::string>() != nullptr);
     assert(*actionObject->at("asset").TryGet<std::string>() ==
            "asset:33333333-3333-4333-8333-333333333333");
+
+    px::sdk::RuntimeIrDocument typedVariableDocument;
+    typedVariableDocument.documentId = "typed-variables";
+    typedVariableDocument.committedRevision = 1;
+    typedVariableDocument.operations = {
+        Operation("number", "setVariable",
+                  {{"name", "ratio"}, {"value", "5"},
+                   {"scope", "session"}, {"type", "number"}}),
+        Operation("empty", "setVariable",
+                  {{"name", "route"}, {"value", ""},
+                   {"scope", "profile"}, {"type", "string"}}),
+    };
+    const px::vn::Program typedVariableProgram =
+        px::CompileRuntimeIr(typedVariableDocument);
+    assert(typedVariableProgram.errors.empty());
+    assert(typedVariableProgram.code.size() == 2);
+    assert(typedVariableProgram.code[0].FindTyped("value") &&
+           typedVariableProgram.code[0].FindTyped("value")->TryGet<double>());
+    assert(typedVariableProgram.code[1].FindTyped("value") &&
+           typedVariableProgram.code[1].FindTyped("value")->TryGet<std::string>() &&
+           typedVariableProgram.code[1].FindTyped("value")
+               ->TryGet<std::string>()->empty());
+
+    px::sdk::RuntimeIrDocument invalidVariableDocument;
+    invalidVariableDocument.documentId = "invalid-variables";
+    invalidVariableDocument.committedRevision = 1;
+    invalidVariableDocument.operations = {
+        Operation("bad-scope", "setVariable",
+                  {{"name", "flag"}, {"value", "true"},
+                   {"scope", "temporary"}, {"type", "boolean"}}),
+        Operation("bad-value", "setVariable",
+                  {{"name", "score"}, {"value", "3.5"},
+                   {"scope", "profile"}, {"type", "integer"}}),
+    };
+    const px::vn::Program invalidVariableProgram =
+        px::CompileRuntimeIr(invalidVariableDocument);
+    assert(invalidVariableProgram.code.empty());
+    assert(invalidVariableProgram.errors.size() == 2);
 
     px::sdk::RuntimeIrDocument fragmentDocument;
     fragmentDocument.documentId = "fragment-scene";

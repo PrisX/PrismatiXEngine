@@ -14,6 +14,10 @@
 #include "Engine/Graphics/Renderer2D.h"
 #include "Engine/IO/Archive.h"
 #include "Engine/IO/Crypto.h"
+#include "Engine/Progression/GameSettings.h"
+#include "Engine/Progression/GlobalProfileStore.h"
+#include "Engine/Progression/Persist.h"
+#include "Engine/Progression/SaveSystem.h"
 #include "Engine/Resources/TypedDocument.h"
 #include "Engine/Runtime.h"
 #include "Engine/SDK/Packager.h"
@@ -490,6 +494,127 @@ int main() {
         start->Activate();
         suite.Expect(startActions == 1,
                      "packaged UI document dispatches its authored Player Action");
+    });
+
+    suite.Run("ContentUpgradePreservesAndReadsLegacyUserData", [&] {
+        const auto upgradeOutput = fixture.path / "Build/PersistenceUpgrade";
+        auto versionOne = FixtureRequest(root, upgradeOutput);
+        versionOne.requestId = "persistence-upgrade-v1";
+        const auto first = px::sdk::RunPackager(versionOne);
+        suite.Require(first.Completed(), "version-one package completes");
+
+        const auto manifestPath = upgradeOutput / "Package/manifest.json";
+        auto legacyManifest = nlohmann::json::parse(Read(manifestPath));
+        const std::string legacyFingerprint =
+            legacyManifest.at("packageFingerprint").get<std::string>();
+        const std::string legacySecret =
+            legacyManifest.at("encryption").at("archiveKey").get<std::string>();
+        legacyManifest.erase("persistence");
+        Write(manifestPath, legacyManifest.dump());
+        const auto parsedLegacy = px::sdk::detail::ParsePackageManifest(
+            Read(manifestPath));
+        suite.Require(parsedLegacy.Valid() &&
+                          parsedLegacy.manifest.persistenceKeyId.empty(),
+                      "pre-stable-key package manifest remains a readable legacy fixture");
+
+        const auto legacyKey =
+            px::progress::DeriveLegacyPersistenceKey(legacySecret);
+        const auto saveDirectory = upgradeOutput / "Save";
+        px::progress::GlobalProfile profile;
+        profile.MarkSeen("v1#line");
+        profile.SetVariable("ending", px::Variant("alice"));
+        suite.Require(px::progress::SaveGlobalProfile(
+                          profile, (saveDirectory / "profile.dat").string(),
+                          &legacyKey),
+                      "version-one profile is written with its package key");
+        px::progress::GameSettings settings;
+        settings.language = "ja-JP";
+        settings.textSpeedMs = 21;
+        suite.Require(settings.Save(
+                          (saveDirectory / "config.dat").string(), &legacyKey),
+                      "version-one settings are written with their package key");
+        px::progress::SaveSnapshot snapshot;
+        snapshot.gameId = versionOne.gameId;
+        snapshot.packageFingerprint = legacyFingerprint;
+        snapshot.contentVersion = versionOne.contentVersion;
+        snapshot.saveVersion = versionOne.saveVersion;
+        snapshot.anchor = {"99999999-9999-4999-8999-999999999999",
+                           "line-1", "line-1"};
+        snapshot.scriptPath = versionOne.startScript;
+        snapshot.vm.scriptPath = versionOne.startScript;
+        snapshot.chapter = "v1";
+        px::progress::SaveSystem oldSaves;
+        oldSaves.Configure(saveDirectory.string(), &legacyKey);
+        suite.Require(oldSaves.Save(2, snapshot),
+                      "version-one slot is written with its package key");
+        const std::string profileBytes =
+            Read(saveDirectory / "profile.dat");
+        const std::string settingsBytes =
+            Read(saveDirectory / "config.dat");
+        const std::string slotBytes = Read(oldSaves.SlotPath(2));
+
+        const auto storyPath = root / "Story/Entry.pxstory";
+        const std::string originalStory = Read(storyPath);
+        const auto projectPath = root / "project.pxproject";
+        const std::string originalProject = Read(projectPath);
+        auto upgradedProject = nlohmann::json::parse(originalProject);
+        upgradedProject["contentVersion"] = "fixture-v2";
+        Write(storyPath, originalStory + "\n; content upgrade\n");
+        Write(projectPath, upgradedProject.dump());
+        auto versionTwo = FixtureRequest(root, upgradeOutput);
+        versionTwo.requestId = "persistence-upgrade-v2";
+        versionTwo.contentVersion = "fixture-v2";
+        const auto second = px::sdk::RunPackager(versionTwo);
+        Write(storyPath, originalStory);
+        Write(projectPath, originalProject);
+        suite.Require(second.Completed(), "content-upgraded package completes");
+
+        const auto currentManifest = px::sdk::detail::ParsePackageManifest(
+            Read(manifestPath));
+        suite.Require(currentManifest.Valid(),
+                      "upgraded package publishes a valid persistence contract");
+        suite.Expect(
+            currentManifest.manifest.packageFingerprint != legacyFingerprint &&
+                currentManifest.manifest.persistenceDataId == versionTwo.gameId &&
+                currentManifest.manifest.persistenceKeyId ==
+                    px::progress::kGameDataPersistenceKeyId &&
+                currentManifest.manifest.legacyPersistenceReaders.size() == 1 &&
+                currentManifest.manifest.legacyPersistenceReaders.front().secret ==
+                    legacySecret,
+            "content identity changes while stable data identity retains the v1 reader");
+        suite.Require(
+            Read(saveDirectory / "profile.dat") == profileBytes &&
+                Read(saveDirectory / "config.dat") == settingsBytes &&
+                Read(oldSaves.SlotPath(2)) == slotBytes,
+            "atomic output promotion preserves profile, settings, and slot bytes");
+
+        const auto stableKey = px::progress::DeriveGameDataPersistenceKey(
+            currentManifest.manifest.persistenceDataId);
+        std::vector<px::crypto::Key> fallbackKeys;
+        for (const auto& reader :
+             currentManifest.manifest.legacyPersistenceReaders) {
+            fallbackKeys.push_back(
+                px::progress::DeriveLegacyPersistenceKey(reader.secret));
+        }
+        px::progress::GlobalProfile upgradedProfile;
+        px::progress::GameSettings upgradedSettings;
+        px::progress::SaveSystem upgradedSaves;
+        upgradedSaves.Configure(saveDirectory.string(), &stableKey,
+                                fallbackKeys);
+        const auto upgradedSlot = upgradedSaves.Load(2);
+        suite.Expect(
+            px::progress::LoadGlobalProfileWithFallback(
+                upgradedProfile, (saveDirectory / "profile.dat").string(),
+                &stableKey, fallbackKeys) ==
+                    px::progress::PersistLoadStatus::Loaded &&
+                upgradedProfile.HasSeen("v1#line") &&
+                upgradedProfile.Variable("ending") &&
+                upgradedSettings.LoadWithFallback(
+                    (saveDirectory / "config.dat").string(), &stableKey,
+                    fallbackKeys) == px::progress::PersistLoadStatus::Loaded &&
+                upgradedSettings.language == "ja-JP" && upgradedSlot &&
+                upgradedSlot->chapter == "v1",
+            "upgraded package readers recover all version-one user data before migration");
     });
 
     suite.Run("VideoContainersRemainSeekableInCompressedPackages", [&] {

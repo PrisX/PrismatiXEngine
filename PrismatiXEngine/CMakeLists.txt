@@ -779,6 +779,12 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         PrismatiX.Integration.Runtime.DialogueScenario
         "integration;runtime;dialogue;scenario" PrismatiXRuntime)
     prismatix_add_simple_test(
+        PrismatiXBacklogStableIdentityTests
+        Tests/BacklogStableIdentityTests.cpp
+        PrismatiX.Integration.Player.BacklogStableIdentity
+        "integration;player;runtime;backlog;rollback;accessibility"
+        PrismatiXRuntime)
+    prismatix_add_simple_test(
         PrismatiXBehaviorIntegrationTests
         Tests/Integration/BehaviorIntegrationTests.cpp
         PrismatiX.Integration.Runtime.Behavior "integration;runtime;behavior"

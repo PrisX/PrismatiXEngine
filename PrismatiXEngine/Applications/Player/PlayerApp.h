@@ -41,7 +41,10 @@ private:
         std::string startRoute = "title";
         std::unordered_map<std::string,std::string> routeScenes;
         std::vector<ui::startup::SplashScreenEntry> splashes;
-        std::string saveSecret;  // per-project secret for save encryption
+        std::string saveSecret;  // legacy build-derived persistence secret
+        std::string persistenceDataId;
+        std::string persistenceKeyId;
+        std::vector<std::string> legacyPersistenceSecrets;
         std::string gameId;
         std::string packageFingerprint;
         std::string contentVersion;
@@ -57,6 +60,8 @@ private:
     bool Init(int argc, char* argv[]);
     void MainLoop();
     void Shutdown();
+    bool SaveProfileIfWritable();
+    bool SaveSettingsIfWritable();
     void FinishBootPresentation();
     void SplashFrame(float dt);
 
@@ -70,11 +75,11 @@ private:
     // --- Rollback (per-line snapshot ring) ---
     struct RollbackEntry {
         progress::SaveSnapshot snap;
-        std::size_t backlogSize = 0;  // backlog length including this line
+        std::uint64_t backlogSequence = 0;
     };
     [[nodiscard]] bool ApplyRollback(const RollbackEntry& entry);
     void RollbackOneLine();
-    bool RollbackToBacklogIndex(std::size_t index);
+    bool RollbackToBacklogSequence(std::uint64_t sequence);
 
     void OpenScreen(const std::string& route);
     void PresentRoute(const std::string& route, const std::string& operation);
@@ -99,6 +104,9 @@ private:
     Runtime m_runtime;
     Boot m_boot;
     crypto::Key m_saveKey{};
+    std::vector<crypto::Key> m_saveFallbackKeys;
+    bool m_profileWritable = true;
+    bool m_settingsWritable = true;
     progress::GlobalProfile m_profile;
     progress::GameSettings m_settings;
     progress::SaveSystem m_saves;
@@ -131,7 +139,7 @@ private:
     bool m_nvlMode = false;
     std::vector<vn::BacklogEntry> m_nvlLines;
     std::deque<RollbackEntry> m_rollback;
-    std::size_t m_lastBacklogSize = 0;
+    std::uint64_t m_lastBacklogSequence = 0;
 
     bool m_slotSaveMode = false;
     bool m_autoSavedChoice = false;
@@ -156,6 +164,7 @@ private:
         Disabled,
         AwaitTitle,
         AwaitGameReady,
+        VerifyReleaseF2,
         AwaitGallery,
         CaptureGallery,
         CloseGallery,
@@ -166,6 +175,8 @@ private:
     std::uint64_t m_e2eStartedAt = 0;
     bool m_e2eFailed = false;
     bool m_e2eLocaleSwitched = false;
+    int m_e2eClearCountBeforeF2 = 0;
+    std::optional<Variant> m_e2eSessionValueBeforeF2;
     accessibility::SpeechService m_speech;
     std::shared_ptr<accessibility::SemanticAdapter> m_accessibilityAdapter;
 };
