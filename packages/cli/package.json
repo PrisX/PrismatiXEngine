@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "type": "module",
   "bin": {"prismatix": "./dist/src/cli.js"},
-  "files": ["dist/src"],
+  "files": ["dist/src", "templates", "runtime"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "node --test dist/test/*.test.js"

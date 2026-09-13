@@ -1,0 +1,5 @@
+[id main.welcome]
+Welcome to PrismatiX. Edit this line and run `prismatix dev` to see it update.
+
+[id main.finish]
+[end]

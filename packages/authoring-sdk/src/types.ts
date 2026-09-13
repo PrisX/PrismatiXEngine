@@ -1,3 +1,5 @@
+import type {ProjectAssetDescriptor} from "./resources.js";
+
 export type DiagnosticSeverity = "error" | "warning" | "information";
 
 export interface SourcePosition {
@@ -192,12 +194,17 @@ export interface StoryCompileContext {
   readonly characters?: readonly CharacterDocument[];
   readonly game?: GameDocument;
   readonly extensions?: readonly ExtensionManifest[];
+  /** Optional author aliases. Paths remain valid without appearing here. */
   readonly resources?: Readonly<Record<string, string>>;
+  /** Stable-identity catalog used to normalize bare UUIDs and asset tokens. */
+  readonly resourceAssets?: readonly ProjectAssetDescriptor[];
 }
 
 export interface StoryCompileResult {
   readonly runtimeIr?: RuntimeIrDocument;
   readonly sourceMap?: RuntimeSourceMap;
+  /** Project-relative binary/text resources required by the emitted program. */
+  readonly resourceDependencies?: readonly string[];
   readonly diagnostics: readonly AuthoringDiagnostic[];
   readonly valid: boolean;
 }

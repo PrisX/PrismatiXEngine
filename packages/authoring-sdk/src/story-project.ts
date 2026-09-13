@@ -1,4 +1,5 @@
 import {compileStory, parseStory} from "./story.js";
+import type {ProjectAssetDescriptor} from "./resources.js";
 import type {
   AuthoringDiagnostic,
   CharacterDocument,
@@ -49,6 +50,7 @@ export interface StoryProjectCompileContext {
   readonly game?: GameDocument;
   readonly extensions?: readonly ExtensionManifest[];
   readonly resources?: Readonly<Record<string, string>>;
+  readonly resourceAssets?: readonly ProjectAssetDescriptor[];
 }
 
 interface ParsedScene {
@@ -285,6 +287,7 @@ export function compileStoryProject(context: StoryProjectCompileContext): StoryC
 
   const operations: RuntimeIrOperation[] = [];
   const mappings: RuntimeSourceMap["mappings"][number][] = [];
+  const resourceDependencies = new Set<string>();
 
   for (const descriptor of context.storyIndex.scenes) {
     const scene = scenesById.get(descriptor.id);
@@ -309,8 +312,11 @@ export function compileStoryProject(context: StoryProjectCompileContext): StoryC
       ...(context.game === undefined ? {} : {game: context.game}),
       ...(context.extensions === undefined ? {} : {extensions: context.extensions}),
       ...(context.resources === undefined ? {} : {resources: context.resources}),
+      ...(context.resourceAssets === undefined ? {} : {resourceAssets: context.resourceAssets}),
     });
     diagnostics.push(...compiled.diagnostics);
+    for (const dependency of compiled.resourceDependencies ?? [])
+      resourceDependencies.add(dependency);
     if (!compiled.valid || compiled.runtimeIr === undefined || compiled.sourceMap === undefined) continue;
 
     operations.push(...compiled.runtimeIr.operations.filter((operation) => !rewritten.stubSourceIds.has(operation.sourceId)));
@@ -318,7 +324,7 @@ export function compileStoryProject(context: StoryProjectCompileContext): StoryC
   }
 
   if (diagnostics.some((diagnostic) => diagnostic.severity === "error") || entryScene === undefined) {
-    return {diagnostics, valid: false};
+    return {resourceDependencies: [...resourceDependencies].sort(), diagnostics, valid: false};
   }
 
   const bootstrapSourceId = `story-project-${stableId(`${documentId}:bootstrap`)}`;
@@ -356,6 +362,7 @@ export function compileStoryProject(context: StoryProjectCompileContext): StoryC
       documentId,
       mappings: [bootstrapMapping, ...mappings],
     },
+    resourceDependencies: [...resourceDependencies].sort(),
     diagnostics,
     valid: true,
   };

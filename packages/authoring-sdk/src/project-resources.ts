@@ -1,4 +1,4 @@
-import {validateDocument} from "./contracts.js";
+import {parseDocument, validateDocument} from "./contracts.js";
 import type {AuthoringDiagnostic, Result} from "./types.js";
 
 type ObjectValue = Record<string, unknown>;
@@ -70,7 +70,7 @@ export function validateProjectCharacterResources(
   const assets = objects(root.assets);
   const assetsById = new Map<string, ObjectValue>();
   for (const asset of assets) {
-    if (typeof asset.id === "string") assetsById.set(asset.id, asset);
+    if (typeof asset.id === "string") assetsById.set(asset.id.toLowerCase(), asset);
   }
 
   const expressionOwners = new Map<string, string>();
@@ -99,7 +99,7 @@ export function validateProjectCharacterResources(
     property: string,
   ): void => {
     if (typeof assetId !== "string") return;
-    const asset = assetsById.get(assetId);
+    const asset = assetsById.get(assetId.toLowerCase());
     if (asset === undefined) {
       diagnostics.push(diagnostic(
         "PXSDKRES2006",
@@ -145,13 +145,16 @@ export function validateProjectCharacterResources(
       continue;
     }
 
-    const characterValidation = validateDocument<ObjectValue>("character", authored, source);
+    const characterValidation = typeof authored === "string"
+      ? parseDocument<ObjectValue>("character", authored, source)
+      : validateDocument<ObjectValue>("character", authored, source);
     diagnostics.push(...characterValidation.diagnostics);
     if (!characterValidation.valid || characterValidation.value === undefined) continue;
     const character = characterValidation.value;
     const characterId = typeof character.id === "string" ? character.id : descriptorId;
 
-    if (character.id !== descriptor.id) {
+    if (typeof character.id !== "string" || typeof descriptor.id !== "string" ||
+        character.id.toLowerCase() !== descriptor.id.toLowerCase()) {
       diagnostics.push(diagnostic(
         "PXSDKRES2003",
         "Character document id does not match its project descriptor",

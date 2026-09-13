@@ -4,7 +4,7 @@ import test from "node:test";
 import {validateDocument} from "../src/index.js";
 import type {JsonValue} from "../src/index.js";
 
-test("project character descriptors enforce the Runtime loader contract", () => {
+test("project character descriptors accept readable source paths with stable document ids", () => {
   const id = "11111111-1111-4111-8111-111111111111";
   const base = {
     format:"PrismatiXProject",
@@ -28,13 +28,13 @@ test("project character descriptors enforce the Runtime loader contract", () => 
   assert.equal(missingNameResult.valid, false);
   assert.ok(missingNameResult.diagnostics.some((item) => item.code === "PXSDKSEM1111"));
 
-  const wrongSource = {
+  const readableSource = {
     ...base,
     characters:[{id,displayName:"Yuki",source:"Characters/yuki.pxcharacter"}],
   } satisfies JsonValue;
-  const wrongSourceResult = validateDocument("project", wrongSource);
-  assert.equal(wrongSourceResult.valid, false);
-  assert.ok(wrongSourceResult.diagnostics.some((item) => item.code === "PXSDKSEM1112"));
+  const readableSourceResult = validateDocument("project", readableSource);
+  assert.equal(readableSourceResult.valid, true,
+    JSON.stringify(readableSourceResult.diagnostics));
 
   const duplicateSource = {
     ...base,

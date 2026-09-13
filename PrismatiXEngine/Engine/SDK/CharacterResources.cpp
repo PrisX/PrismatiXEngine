@@ -213,13 +213,6 @@ CharacterResourcesLoadResult LoadCharacterResources(
                 "project.pxproject", id);
             continue;
         }
-        const std::string expected = "Characters/" + id + ".pxcharacter";
-        if (Lower(source) != Lower(expected)) {
-            Add(result, "PXCHAR1010",
-                "character source must match its stable UUID: " + expected,
-                source, id);
-            continue;
-        }
         const auto text = readText ? readText(source) : std::nullopt;
         if (!text) {
             Add(result, "PXCHAR1011",

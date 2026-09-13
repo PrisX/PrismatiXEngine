@@ -287,15 +287,8 @@ export function validateSemantics(contractId: string, value: unknown, path?: str
       for (const character of characters) {
         const id = typeof character.id === "string" ? character.id : undefined;
         const displayName = typeof character.displayName === "string" ? character.displayName : undefined;
-        const source = typeof character.source === "string" ? character.source : undefined;
         if (displayName === undefined || displayName.length === 0 || displayName.length > 256) {
           diagnostics.push(issue("PXSDKSEM1111", "Project character displayName must be present and at most 256 characters", path, id));
-        }
-        if (id !== undefined && source !== undefined) {
-          const expected = `Characters/${id}.pxcharacter`;
-          if (source.toLocaleLowerCase("en-US") !== expected.toLocaleLowerCase("en-US")) {
-            diagnostics.push(issue("PXSDKSEM1112", "Project character source must match its stable UUID", path, expected));
-          }
         }
       }
       break;

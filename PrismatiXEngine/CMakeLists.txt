@@ -44,6 +44,11 @@ configure_file(
     @ONLY
 )
 configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/PrismatiXRuntimeManifest.json.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/runtime-manifest.json"
+    @ONLY
+)
+configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/PreviewContractManifest.json.in"
     "${CMAKE_CURRENT_BINARY_DIR}/preview-contract.json"
     @ONLY
@@ -456,6 +461,10 @@ install(FILES "${PRISMATIX_SDK_REFERENCE}"
 install(TARGETS PrismatiXPackager PrismatiXPreviewHost PrismatiXPlayer
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT PrismatiXRuntime
 )
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/runtime-manifest.json"
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/PrismatiX
+    COMPONENT PrismatiXRuntime
+)
 if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
     install(DIRECTORY
         "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin/"
@@ -684,7 +693,9 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     target_link_libraries(PrismatiXSDKManifestContractTests
                           PRIVATE PrismatiXRuntime)
     target_compile_definitions(PrismatiXSDKManifestContractTests PRIVATE
-        "PRISMATIX_SDK_MANIFEST_PATH=\"${CMAKE_CURRENT_BINARY_DIR}/PrismatiXSDKManifest.json\"")
+        "PRISMATIX_SDK_MANIFEST_PATH=\"${CMAKE_CURRENT_BINARY_DIR}/PrismatiXSDKManifest.json\""
+        "PRISMATIX_RUNTIME_MANIFEST_PATH=\"${CMAKE_CURRENT_BINARY_DIR}/runtime-manifest.json\""
+        "PRISMATIX_EXECUTABLE_SUFFIX=\"${CMAKE_EXECUTABLE_SUFFIX}\"")
     prismatix_configure_target(PrismatiXSDKManifestContractTests)
     add_test(NAME PrismatiX.SDK.ManifestContract
              COMMAND PrismatiXSDKManifestContractTests)

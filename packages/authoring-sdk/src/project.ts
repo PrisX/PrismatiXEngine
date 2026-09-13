@@ -1,5 +1,13 @@
 import {canonicalJson} from "./canonical-json.js";
 import {parseDocument, validateDocument} from "./contracts.js";
+import {normalizeProject} from "./project-normalization.js";
+import {validateProjectCharacterResources} from "./project-resources.js";
+import {
+  collectProjectDependencies,
+  type ProjectAssetDescriptor,
+  type ProjectDependency,
+  type ProjectDependencyReference,
+} from "./resources.js";
 import {compileStoryProject, type StoryIndexDocument} from "./story-project.js";
 import type {
   AuthoringDiagnostic,
@@ -90,14 +98,20 @@ export interface SaveMigrationDocument {
 }
 
 export interface CompileProjectInput {
-  readonly project: unknown;
+  readonly project?: unknown;
   /** Canonical JSON documents keyed by project-relative path. */
-  readonly documents: Readonly<Record<string, unknown>>;
+  readonly documents?: Readonly<Record<string, unknown>>;
   /** Story source text keyed by the exact paths used by story.pxindex. */
-  readonly sourceFiles: Readonly<Record<string, string>>;
+  readonly sourceFiles?: Readonly<Record<string, string>>;
   /** Locale documents keyed by canonical locale tag. */
-  readonly locales: Readonly<Record<string, unknown>>;
+  readonly locales?: Readonly<Record<string, unknown>>;
   readonly projectPath?: string;
+  /** Conventional source used when a Story index is generated. */
+  readonly storyPath?: string;
+  /** Single-locale default used only when the source manifest omits it. */
+  readonly defaultLocale?: string;
+  /** Optional IO-injected existence check for production graph validation. */
+  readonly resourceExists?: (path: string) => boolean;
   readonly committedRevision?: number;
 }
 
@@ -120,6 +134,8 @@ export interface BuildArtifact {
   }>>;
   /** Deterministically serialized package inputs keyed by virtual path. */
   readonly files: Readonly<Record<string, string>>;
+  /** External package inputs which build tools must copy byte-for-byte. */
+  readonly dependencies: readonly ProjectDependency[];
 }
 
 export interface ProjectCompileResult {
@@ -311,23 +327,37 @@ function satisfiesVersionRange(range: string): boolean | undefined {
 
 export function compileProject(input: CompileProjectInput): ProjectCompileResult {
   const diagnostics: AuthoringDiagnostic[] = [];
-  const projectPath = input.projectPath ?? "project.pxproject";
-  const parsedProject = parseValue<ProjectDocument>("project", input.project, projectPath);
-  diagnostics.push(...parsedProject.diagnostics);
-  const project = parsedProject.value;
-  if (!parsedProject.valid || project === undefined) return {diagnostics, valid: false};
+  const normalized = normalizeProject(input);
+  diagnostics.push(...normalized.diagnostics);
+  if (!normalized.valid || normalized.value === undefined)
+    return {diagnostics, valid: false};
+  const projectPath = normalized.value.projectPath;
+  const project = normalized.value.project;
+  const documents = normalized.value.documents;
+  const sourceFiles = normalized.value.sourceFiles;
+  const locales = normalized.value.locales;
 
-  const storyIndex = documentAt<StoryIndexDocument>("storyIndex", project.storyIndex, input.documents, diagnostics);
-  const game = documentAt<GameDocument>("game", project.gameCatalog, input.documents, diagnostics);
+  const storyIndex = documentAt<StoryIndexDocument>("storyIndex", project.storyIndex, documents, diagnostics);
+  const game = documentAt<GameDocument>("game", project.gameCatalog, documents, diagnostics);
   const characters: CharacterDocument[] = [];
+  const characterDocuments: Record<string, unknown> = {};
   for (const descriptor of project.characters ?? []) {
-    const character = documentAt<CharacterDocument>("character", descriptor.source, input.documents, diagnostics);
+    const authored = documents[descriptor.source];
+    if (authored !== undefined) characterDocuments[descriptor.source] = authored;
+    const character = documentAt<CharacterDocument>("character", descriptor.source, documents, diagnostics);
     if (character !== undefined) characters.push(character);
   }
+  const characterGraph = validateProjectCharacterResources(project, characterDocuments, {
+    projectPath,
+    ...(input.resourceExists === undefined ? {} : {assetExists: input.resourceExists}),
+  });
+  diagnostics.push(...characterGraph.diagnostics);
   const extensions: ExtensionManifest[] = [];
+  const extensionDocuments = new Map<string, ExtensionManifest>();
   for (const path of project.extensions) {
-    const extension = documentAt<ExtensionManifest>("extension", path, input.documents, diagnostics);
+    const extension = documentAt<ExtensionManifest>("extension", path, documents, diagnostics);
     if (extension !== undefined) {
+      extensionDocuments.set(path, extension);
       const compatible = satisfiesVersionRange(extension.requiredEngineVersion);
       if (parseVersion(extension.version) === undefined)
         diagnostics.push(issue("PXBUILD1011", "Extension version is not SemVer", path, extension.version));
@@ -344,7 +374,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     `${version.contentVersion}\n${version.saveVersion}`;
   for (const descriptor of project.saveMigrations ?? []) {
     const migration = documentAt<SaveMigrationDocument>(
-      "saveMigration", descriptor.asset, input.documents, diagnostics,
+      "saveMigration", descriptor.asset, documents, diagnostics,
     );
     if (migration === undefined) continue;
     if (migration.id !== descriptor.id ||
@@ -380,14 +410,14 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     }
   }
   for (const [id, path] of Object.entries(project.uiEntryPoints)) {
-    const ui = documentAt<JsonValue>("ui", path, input.documents, diagnostics);
+    const ui = documentAt<JsonValue>("ui", path, documents, diagnostics);
     if (ui === undefined) diagnostics.push(issue("PXBUILD1002", `UI entry point ${id} is unavailable`, path, id));
   }
   const effectDocuments = new Map<string, CustomEffectDocument>();
   const effectIds = new Set<string>();
   for (const descriptor of project.effects ?? []) {
     const effect = documentAt<CustomEffectDocument>(
-      "effect", descriptor.source, input.documents, diagnostics,
+      "effect", descriptor.source, documents, diagnostics,
     );
     if (effect === undefined) continue;
     if (project.graphicsTier !== "gpu-effects") {
@@ -398,7 +428,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       diagnostics.push(issue("PXBUILD1021", "Custom effect identity is duplicated or disagrees with its project descriptor", descriptor.source, descriptor.id));
       continue;
     }
-    if (!effect.shader.endsWith(".hlsl") || input.sourceFiles[effect.shader] === undefined) {
+    if (!effect.shader.endsWith(".hlsl") || sourceFiles[effect.shader] === undefined) {
       diagnostics.push(issue("PXBUILD1022", "Custom effect HLSL source is missing or has the wrong extension", effect.shader));
       continue;
     }
@@ -440,7 +470,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   const uiComponentIds = new Set<string>();
   for (const descriptor of project.uiComponents ?? []) {
     const component = documentAt<JsonValue>("uiComponent", descriptor.source,
-      input.documents, diagnostics);
+      documents, diagnostics);
     if (component === undefined) {
       diagnostics.push(issue("PXBUILD1014", "UI component document is missing or invalid",
         descriptor.source, descriptor.id));
@@ -464,7 +494,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   }
   const localeDocuments = new Map<string, JsonValue>();
   for (const locale of project.supportedLocales) {
-    const source = input.locales[locale];
+    const source = locales[locale];
     const path = `Content/Localization/${locale}.json`;
     if (source === undefined) {
       diagnostics.push(issue("PXBUILD1003", `Locale document ${locale} is missing`, path, locale));
@@ -486,16 +516,26 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   }
 
   const resourcePaths: Record<string, string> = {};
+  const resourceAssets: ProjectAssetDescriptor[] = [];
   for (const value of project.assets ?? []) {
     if (value !== null && typeof value === "object" && !Array.isArray(value)) {
       const asset = value as Record<string, JsonValue>;
-      if (typeof asset.id === "string" && typeof asset.source === "string") resourcePaths[asset.id] = asset.source;
+      if (typeof asset.id === "string" && typeof asset.source === "string" &&
+          typeof asset.kind === "string") {
+        resourcePaths[asset.id] = `asset:${asset.id.toLowerCase()}`;
+        resourceAssets.push({
+          id: asset.id,
+          source: asset.source,
+          kind: asset.kind,
+          ...(typeof asset.name === "string" ? {name: asset.name} : {}),
+        });
+      }
     }
   }
   const compileLocale = (locale: string) => compileStoryProject({
       storyIndex,
       locale,
-      sourceFiles: input.sourceFiles,
+      sourceFiles,
       storyIndexPath: project.storyIndex,
       documentId: project.id,
       ...(input.committedRevision === undefined ? {} : {committedRevision: input.committedRevision}),
@@ -503,6 +543,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       game,
       extensions,
       resources: resourcePaths,
+      resourceAssets,
     });
   const compiled = compileLocale(project.defaultLocale);
   diagnostics.push(...compiled.diagnostics);
@@ -521,9 +562,12 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     runtimeIr: RuntimeIrDocument; sourceMap: RuntimeSourceMap;
     runtimeIrPath: string; sourceMapPath: string;
   }> = {};
+  const storyResourcePaths = new Set(compiled.resourceDependencies ?? []);
   for (const locale of project.supportedLocales) {
     const localized = locale === project.defaultLocale ? compiled : compileLocale(locale);
     if (localized !== compiled) diagnostics.push(...localized.diagnostics);
+    for (const dependency of localized.resourceDependencies ?? [])
+      storyResourcePaths.add(dependency);
     if (!localized.valid || localized.runtimeIr === undefined ||
         localized.sourceMap === undefined) continue;
     const aligned = locale === project.defaultLocale
@@ -544,12 +588,62 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     return {diagnostics, valid: false};
   }
 
+  const dependencyReferences: ProjectDependencyReference[] =
+    [...storyResourcePaths].map((value) => ({value, origin: "Story"}));
+  const addResourceRef = (value: unknown, origin: string): void => {
+    if (typeof value === "string") {
+      dependencyReferences.push({value, origin});
+      return;
+    }
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return;
+    const reference = value as Record<string, unknown>;
+    if (typeof reference.path === "string")
+      dependencyReferences.push({value: reference.path, origin});
+    else if (typeof reference.id === "string")
+      dependencyReferences.push({value: reference.id, origin});
+  };
+  for (const [index, item] of (game.gallery ?? []).entries()) {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) continue;
+    const gallery = item as Record<string, JsonValue>;
+    addResourceRef(gallery.image, `${project.gameCatalog}:gallery[${index}].image`);
+    addResourceRef(gallery.thumbnail, `${project.gameCatalog}:gallery[${index}].thumbnail`);
+  }
+  for (const [locale, value] of localeDocuments) {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) continue;
+    const fontChain = (value as Record<string, JsonValue>).fontChain;
+    if (!Array.isArray(fontChain)) continue;
+    for (const font of fontChain)
+      addResourceRef(font, `Content/Localization/${locale}.json:fontChain`);
+  }
+  const dependencyCollection = collectProjectDependencies({
+    assets: resourceAssets,
+    references: dependencyReferences,
+    extensions: [...extensionDocuments].map(([manifestPath, extension]) => ({
+      manifestPath,
+      entry: extension.entry,
+      ...(extension.modules === undefined ? {} : {modules: extension.modules}),
+    })),
+  });
+  diagnostics.push(...dependencyCollection.diagnostics);
+  if (input.resourceExists !== undefined) {
+    for (const dependency of dependencyCollection.dependencies) {
+      if (!input.resourceExists(dependency.source)) {
+        diagnostics.push(issue("PXBUILD1044",
+          "Project dependency source is missing", dependency.source,
+          dependency.logicalPath));
+      }
+    }
+  }
+  if (!dependencyCollection.valid ||
+      diagnostics.some((diagnostic) => diagnostic.severity === "error"))
+    return {diagnostics, valid: false};
+
   const runtimeIrPath = "Runtime/main.pxir";
   const sourceMapPath = "Runtime/main.pxmap";
   const files: Record<string, string> = {
     [projectPath]: canonicalJson(project),
-    [project.storyIndex]: serialized(input.documents[project.storyIndex]),
-    [project.gameCatalog]: serialized(input.documents[project.gameCatalog]),
+    [project.storyIndex]: serialized(documents[project.storyIndex]),
+    [project.gameCatalog]: serialized(documents[project.gameCatalog]),
     [runtimeIrPath]: canonicalJson(compiled.runtimeIr),
     [sourceMapPath]: canonicalJson(compiled.sourceMap),
   };
@@ -557,17 +651,17 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     files[localized.runtimeIrPath] = canonicalJson(localized.runtimeIr);
     files[localized.sourceMapPath] = canonicalJson(localized.sourceMap);
   }
-  for (const descriptor of project.characters ?? []) files[descriptor.source] = serialized(input.documents[descriptor.source]);
-  for (const path of project.extensions) files[path] = serialized(input.documents[path]);
+  for (const descriptor of project.characters ?? []) files[descriptor.source] = serialized(documents[descriptor.source]);
+  for (const path of project.extensions) files[path] = serialized(documents[path]);
   for (const [path, value] of saveMigrationDocuments) files[path] = canonicalJson(value);
-  for (const path of Object.values(project.uiEntryPoints)) files[path] = serialized(input.documents[path]);
+  for (const path of Object.values(project.uiEntryPoints)) files[path] = serialized(documents[path]);
   for (const [path, value] of uiComponentDocuments) files[path] = canonicalJson(value);
   for (const [path, value] of effectDocuments) {
     files[path] = canonicalJson(value);
-    files[value.shader] = input.sourceFiles[value.shader]!;
+    files[value.shader] = sourceFiles[value.shader]!;
   }
   for (const [locale, value] of localeDocuments) files[`Content/Localization/${locale}.json`] = canonicalJson(value);
-  for (const [path, value] of Object.entries(input.sourceFiles)) files[path] = value;
+  for (const [path, value] of Object.entries(sourceFiles)) files[path] = value;
 
   return {
     artifact: {
@@ -579,6 +673,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       sourceMapPath,
       localeArtifacts,
       files,
+      dependencies: dependencyCollection.dependencies,
     },
     diagnostics,
     valid: true,

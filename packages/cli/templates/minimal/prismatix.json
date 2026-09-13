@@ -1,0 +1,7 @@
+{
+  "name": "{{PROJECT_NAME}}",
+  "id": "{{PROJECT_ID}}",
+  "defaultLocale": "{{LOCALE}}",
+  "resolution": {"width": {{WIDTH}}, "height": {{HEIGHT}}},
+  "uiEntryPoints": {"title": "Content/UI/Title.pxui"}
+}

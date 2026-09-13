@@ -42,6 +42,13 @@ test("resolveResourceReference resolves catalog identities without changing auth
     path: asset.source,
     asset,
   });
+  assert.equal(resourceReferenceKind(id), "asset");
+  assert.deepEqual(resolveResourceReference(id.toUpperCase(), [asset]), {
+    kind: "asset",
+    assetId: id,
+    path: asset.source,
+    asset,
+  });
 });
 
 test("resolveResourceReference preserves an unresolved stable identity for repair tooling", () => {

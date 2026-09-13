@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-import {createDecipheriv, createHash} from "node:crypto";
-import {spawn} from "node:child_process";
+import {createDecipheriv, createHash, randomUUID} from "node:crypto";
+import {spawn, type ChildProcessWithoutNullStreams} from "node:child_process";
+import {existsSync} from "node:fs";
 import {
   copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile,
 } from "node:fs/promises";
@@ -11,10 +12,17 @@ import {fileURLToPath, pathToFileURL} from "node:url";
 import * as ts from "typescript-compiler";
 
 import {
+  discoverRuntimeTool, RuntimeDiscoveryFailure, runtimeDiscoveryHint,
+  type RuntimeDiscoveryOptions,
+} from "./runtime-discovery.js";
+
+import {
   canonicalJson,
+  assignStableSourceIds,
   compileJsxUi,
   compileProject,
   migrateDocument,
+  stableSourceIdReport,
   validateDocument,
   type AuthoringDiagnostic,
   type BuildArtifact,
@@ -23,8 +31,8 @@ import {
 } from "@prismatix/authoring-sdk";
 
 interface Options {readonly values: Map<string, string>; readonly flags: Set<string>; readonly positional: string[]}
-interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>}
-interface BuildResult {readonly root: string; readonly artifact: BuildArtifact; readonly output: string}
+interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>; readonly dependencies: ReadonlySet<string>; readonly storyPath?: string}
+interface BuildResult {readonly root: string; readonly artifact: BuildArtifact; readonly output: string; readonly dependencies: ReadonlySet<string>}
 interface MigrationChange {readonly path: string; readonly before: string; readonly after: string; readonly reason: string}
 
 class PackagerFailure extends Error {
@@ -362,6 +370,72 @@ function projectFile(root: string, virtualPath: string): string {
   return target;
 }
 
+const starterTemplateRoot = fileURLToPath(new URL("../../templates/minimal", import.meta.url));
+
+function jsonTemplateValue(value: string): string {
+  return JSON.stringify(value).slice(1, -1);
+}
+
+function starterProjectId(value: string): string {
+  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9._-]+/gu, "-")
+    .replace(/^[^a-z0-9]+/u, "").replace(/-+$/u, "");
+  return normalized.length > 0 ? normalized.slice(0, 256) : "my-prismatix-game";
+}
+
+function integerOption(options: Options, name: string, fallback: number,
+  minimum: number, maximum: number): number {
+  const raw = options.values.get(name);
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum)
+    throw new RangeError(`--${name} must be an integer from ${minimum} to ${maximum}`);
+  return value;
+}
+
+async function createCommand(options: Options): Promise<number> {
+  const target = resolve(options.positional[0] ?? "my-prismatix-game");
+  try {
+    let existing: string[] = [];
+    try { existing = await readdir(target); } catch { /* Created below. */ }
+    if (existing.length > 0) throw new Error(`Destination is not empty: ${target}`);
+    const name = options.values.get("name") ?? "My PrismatiX Game";
+    if (name.trim().length === 0 || name.length > 512) throw new Error("--name must not be empty or exceed 512 characters");
+    const id = options.values.get("id") ?? starterProjectId(basename(target));
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(id) || id.length > 256)
+      throw new Error("--id must be a stable identifier using letters, digits, '.', '_' or '-'");
+    const locale = options.values.get("locale") ?? "en";
+    if (!/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/u.test(locale))
+      throw new Error("--locale must be a BCP 47 language tag such as en or zh-TW");
+    const width = integerOption(options, "width", 1280, 1, 16384);
+    const height = integerOption(options, "height", 720, 1, 16384);
+    const replacements: Readonly<Record<string, string>> = {
+      "{{PROJECT_ID}}": jsonTemplateValue(id),
+      "{{PROJECT_NAME}}": jsonTemplateValue(name),
+      "{{LOCALE}}": jsonTemplateValue(locale),
+      "{{WIDTH}}": String(width), "{{HEIGHT}}": String(height),
+      "{{SCENE_ID}}": randomUUID(), "{{ROOT_ID}}": randomUUID(),
+      "{{TITLE_ID}}": randomUUID(), "{{START_ID}}": randomUUID(),
+    };
+    for (const virtualPath of await listFiles(starterTemplateRoot)) {
+      let text = await readBoundedText(projectFile(starterTemplateRoot, virtualPath));
+      for (const [token, replacement] of Object.entries(replacements))
+        text = text.replaceAll(token, replacement);
+      const destination = projectFile(target, virtualPath);
+      await mkdir(dirname(destination), {recursive: true});
+      await writeFile(destination, text, "utf8");
+    }
+    await mkdir(join(target, "Assets"), {recursive: true});
+    const project = join(target, "prismatix.json");
+    process.stdout.write(`${JSON.stringify({created: true, project, next: [
+      `cd ${basename(target)}`, "prismatix dev",
+    ]})}\n`);
+    return 0;
+  } catch (error) {
+    printDiagnostics([diagnostic("PXCLI1501", "Project could not be created", target, String(error))]);
+    return 1;
+  }
+}
+
 async function readBoundedText(path: string): Promise<string> {
   const info = await stat(path);
   if (!info.isFile() || info.size > maxDocumentBytes) throw new Error(`Document is missing or exceeds 16 MiB: ${path}`);
@@ -550,10 +624,11 @@ async function emitJsxProgram(root: string, sourcePath: string, value: JsxProgra
 }
 
 async function loadJsxUiDocument(root: string, virtualPath: string,
-  kind: "scene" | "component"): Promise<unknown> {
+  kind: "scene" | "component", dependencies?: Set<string>): Promise<unknown> {
   const sourcePath = projectFile(root, virtualPath);
   const source = await readBoundedText(sourcePath);
   const program = createJsxProgram(root, sourcePath);
+  for (const dependency of program.sourceFiles) dependencies?.add(resolve(dependency.fileName));
   const checked = typescriptDiagnostics(ts.getPreEmitDiagnostics(program.program),
     root, virtualPath, source);
   if (checked.length > 0) throw new JsxAuthoringFailure(checked);
@@ -647,25 +722,59 @@ function failedPackageDiagnostics(events: readonly Record<string, unknown>[]): r
   return values.map(packageDiagnostic).filter((value): value is AuthoringDiagnostic => value !== undefined);
 }
 
+async function regularFile(path: string): Promise<boolean> {
+  try { return (await stat(path)).isFile(); } catch { return false; }
+}
+
+async function resolveProjectPath(projectArgument?: string): Promise<{
+  readonly root: string; readonly projectPath: string; readonly manifestExists: boolean;
+}> {
+  const candidate = resolve(projectArgument ?? ".");
+  let directory = false;
+  try { directory = (await stat(candidate)).isDirectory(); } catch { directory = false; }
+  if (!directory) return {root: dirname(candidate), projectPath: candidate,
+    manifestExists: await regularFile(candidate)};
+  const beginner = join(candidate, "prismatix.json");
+  const canonical = join(candidate, "project.pxproject");
+  if (await regularFile(beginner)) return {root: candidate, projectPath: beginner, manifestExists: true};
+  if (await regularFile(canonical)) return {root: candidate, projectPath: canonical, manifestExists: true};
+  const conventionalStory = join(candidate, "Story", "main.pxstory");
+  if (await regularFile(conventionalStory))
+    return {root: candidate, projectPath: beginner, manifestExists: false};
+  throw new Error(`No prismatix.json, project.pxproject, or Story/main.pxstory was found in ${candidate}`);
+}
+
+async function conventionalStory(root: string): Promise<string | undefined> {
+  if (await regularFile(projectFile(root, "Story/main.pxstory"))) return "Story/main.pxstory";
+  try {
+    const paths = (await listFiles(join(root, "Story")))
+      .filter((path) => path.toLowerCase().endsWith(".pxstory"));
+    return paths.length === 1 ? `Story/${paths[0]}` : undefined;
+  } catch { return undefined; }
+}
+
 async function loadProject(projectArgument?: string): Promise<LoadedProject> {
-  const projectPath = resolve(projectArgument ?? "project.pxproject");
-  const root = dirname(projectPath);
-  const authoredProject = await readJson(projectPath);
+  const resolvedProject = await resolveProjectPath(projectArgument);
+  const {root, projectPath} = resolvedProject;
+  const authoredProject = resolvedProject.manifestExists ? await readJson(projectPath) : {};
   const authoredRaw = object(authoredProject);
-  if (authoredRaw === undefined) throw new Error("project.pxproject must be a JSON object");
+  if (authoredRaw === undefined) throw new Error(`${basename(projectPath)} must be a JSON object`);
   const project = structuredClone(authoredProject);
   const raw = object(project);
-  if (raw === undefined) throw new Error("project.pxproject must be a JSON object");
+  if (raw === undefined) throw new Error(`${basename(projectPath)} must be a JSON object`);
   const documents: Record<string, unknown> = {};
   const documentSources = new Map<string, string>();
   const sourceFiles: Record<string, string> = {};
   const locales: Record<string, unknown> = {};
+  const dependencies = new Set<string>([projectPath]);
   const loadDocument = async (virtualPath: unknown): Promise<void> => {
     if (typeof virtualPath !== "string") return;
     const owner = documentSources.get(virtualPath);
     if (owner === virtualPath) return;
     if (owner !== undefined) throw new Error(`${virtualPath} is already produced by ${owner}`);
-    documents[virtualPath] = await readJson(projectFile(root, virtualPath));
+    const path = projectFile(root, virtualPath);
+    documents[virtualPath] = await readJson(path);
+    dependencies.add(path);
     documentSources.set(virtualPath, virtualPath);
   };
   const loadJsxDocument = async (virtualPath: string,
@@ -674,7 +783,7 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
     const owner = documentSources.get(outputPath);
     if (owner === virtualPath) return outputPath;
     if (owner !== undefined) throw new Error(`${outputPath} is already produced by ${owner}`);
-    documents[outputPath] = await loadJsxUiDocument(root, virtualPath, kind);
+    documents[outputPath] = await loadJsxUiDocument(root, virtualPath, kind, dependencies);
     documentSources.set(outputPath, virtualPath);
     return outputPath;
   };
@@ -709,6 +818,12 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
         sourceFiles[source] = await readBoundedText(projectFile(root, source));
     }
   }
+  let storyPath: string | undefined;
+  if (index === undefined) {
+    storyPath = await conventionalStory(root);
+    if (storyPath !== undefined)
+      sourceFiles[storyPath] = await readBoundedText(projectFile(root, storyPath));
+  }
   for (const value of Array.isArray(raw.effects) ? raw.effects : []) {
     const descriptor = object(value);
     const manifest = typeof descriptor?.source === "string"
@@ -718,15 +833,38 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
   }
   for (const locale of Array.isArray(raw.supportedLocales) ? raw.supportedLocales : []) {
     if (typeof locale !== "string") continue;
-    locales[locale] = await readJson(projectFile(root, `Content/Localization/${locale}.json`));
+    const localePath = projectFile(root, `Content/Localization/${locale}.json`);
+    locales[locale] = await readJson(localePath);
+    dependencies.add(localePath);
   }
-  return {root, projectPath, project, documents, sourceFiles, locales};
+  for (const path of Object.keys(sourceFiles)) dependencies.add(projectFile(root, path));
+  for (const value of Array.isArray(raw.assets) ? raw.assets : []) {
+    const source = object(value)?.source;
+    if (typeof source === "string") dependencies.add(projectFile(root, source));
+  }
+  for (const extensionPath of Array.isArray(raw.extensions) ? raw.extensions : []) {
+    if (typeof extensionPath !== "string") continue;
+    const extension = object(documents[extensionPath]);
+    const prefix = extensionPath.includes("/")
+      ? extensionPath.slice(0, extensionPath.lastIndexOf("/") + 1) : "";
+    for (const module of [extension?.entry,
+      ...(Array.isArray(extension?.modules) ? extension.modules : [])]) {
+      if (typeof module === "string") dependencies.add(projectFile(root, `${prefix}${module}`));
+    }
+  }
+  return {root, projectPath, project, documents, sourceFiles, locales, dependencies,
+    ...(storyPath === undefined ? {} : {storyPath})};
 }
 
-async function compileLoaded(loaded: LoadedProject) {
+async function compileLoaded(loaded: LoadedProject, committedRevision?: number) {
   return compileProject({project: loaded.project, documents: loaded.documents,
     sourceFiles: loaded.sourceFiles, locales: loaded.locales,
-    projectPath: basename(loaded.projectPath)});
+    projectPath: "project.pxproject",
+    ...(loaded.storyPath === undefined ? {} : {storyPath: loaded.storyPath}),
+    resourceExists: (path) => {
+      try { return existsSync(projectFile(loaded.root, path)); } catch { return false; }
+    },
+    ...(committedRevision === undefined ? {} : {committedRevision})});
 }
 
 async function validateCommand(options: Options): Promise<number> {
@@ -753,26 +891,10 @@ async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact,
     await mkdir(dirname(destination), {recursive: true});
     await writeFile(destination, text, "utf8");
   }
-  const project = artifact.project;
-  for (const value of project.assets ?? []) {
-    const asset = object(value);
-    if (typeof asset?.source !== "string") continue;
-    const destination = projectFile(staging, asset.source);
+  for (const dependency of artifact.dependencies) {
+    const destination = projectFile(staging, dependency.logicalPath);
     await mkdir(dirname(destination), {recursive: true});
-    await copyFile(projectFile(loaded.root, asset.source), destination);
-  }
-  for (const extensionPath of project.extensions) {
-    const extension = object(loaded.documents[extensionPath]);
-    if (typeof extension?.entry !== "string") continue;
-    const prefix = extensionPath.includes("/") ? extensionPath.slice(0, extensionPath.lastIndexOf("/") + 1) : "";
-    const modules = Array.isArray(extension.modules) ? extension.modules : [];
-    for (const relativePath of [extension.entry, ...modules]) {
-      if (typeof relativePath !== "string") continue;
-      const modulePath = `${prefix}${relativePath}`;
-      const destination = projectFile(staging, modulePath);
-      await mkdir(dirname(destination), {recursive: true});
-      await copyFile(projectFile(loaded.root, modulePath), destination);
-    }
+    await copyFile(projectFile(loaded.root, dependency.source), destination);
   }
 }
 
@@ -792,9 +914,10 @@ async function promoteDirectory(staging: string, output: string): Promise<void> 
   }
 }
 
-async function buildProject(projectArgument: string | undefined, outputArgument: string | undefined): Promise<BuildResult> {
+async function buildProject(projectArgument: string | undefined, outputArgument: string | undefined,
+  committedRevision?: number): Promise<BuildResult> {
   const loaded = await loadProject(projectArgument);
-  const compiled = await compileLoaded(loaded);
+  const compiled = await compileLoaded(loaded, committedRevision);
   printDiagnostics(compiled.diagnostics);
   if (!compiled.valid || compiled.artifact === undefined) throw new Error("Project validation or compilation failed");
   const output = resolve(outputArgument ?? join(loaded.root, ".prismatix", "build"));
@@ -808,10 +931,27 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
     await rm(staging, {recursive: true, force: true});
     throw error;
   }
-  return {root: loaded.root, artifact: compiled.artifact, output};
+  const dependencies = new Set(loaded.dependencies);
+  for (const dependency of compiled.artifact.dependencies) {
+    try { dependencies.add(projectFile(loaded.root, dependency.source)); }
+    catch { /* Compiler paths are advisory. */ }
+  }
+  return {root: loaded.root, artifact: compiled.artifact, output, dependencies};
 }
 
 async function buildCommand(options: Options): Promise<number> {
+  if (!options.flags.has("artifact-only") &&
+      (!options.values.has("output") || options.flags.has("distribution"))) {
+    try {
+      const packaged = await packProject(options);
+      process.stdout.write(`${JSON.stringify({built: true, distribution: true, ...packaged})}\n`);
+      return 0;
+    } catch (error) {
+      printDiagnostics(error instanceof PackagerFailure || error instanceof JsxAuthoringFailure
+        ? error.diagnostics : [diagnostic("PXCLI1101", "Build failed", options.positional[0], String(error))]);
+      return 1;
+    }
+  }
   try {
     const built = await buildProject(options.positional[0], options.values.get("output"));
     process.stdout.write(`${JSON.stringify({built: true, output: built.output,
@@ -841,23 +981,56 @@ async function sha256(path: string): Promise<string> {
   return createHash("sha256").update(await readFile(path)).digest("hex");
 }
 
-async function runProcess(executable: string, args: readonly string[], input?: string, cwd?: string): Promise<{code: number; stdout: string; stderr: string}> {
+async function runProcess(executable: string, args: readonly string[], input?: string,
+  cwd?: string, stream = false): Promise<{code: number; stdout: string; stderr: string}> {
   return new Promise((accept, reject) => {
-    const child = spawn(executable, [...args], {cwd, stdio: ["pipe", "pipe", "pipe"], windowsHide: true});
+    const script = [".js", ".mjs", ".cjs"].includes(extname(executable).toLowerCase());
+    const child = spawn(script ? process.execPath : executable,
+      script ? [executable, ...args] : [...args],
+      {cwd, stdio: ["pipe", "pipe", "pipe"], windowsHide: true});
     let stdout = ""; let stderr = "";
     child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (value: string) => { stdout += value; });
-    child.stderr.on("data", (value: string) => { stderr += value; });
+    child.stdout.on("data", (value: string) => { stdout += value; if (stream) process.stdout.write(value); });
+    child.stderr.on("data", (value: string) => { stderr += value; if (stream) process.stderr.write(value); });
     child.on("error", reject);
     child.on("close", (code) => accept({code: code ?? 1, stdout, stderr}));
     if (input !== undefined) child.stdin.end(input); else child.stdin.end();
   });
 }
 
-async function packProject(options: Options): Promise<{output: string; player: string}> {
+function runtimeOptions(options: Options): RuntimeDiscoveryOptions {
+  const runtime = options.values.get("runtime");
+  const previewHost = options.values.get("preview-host");
   const packager = options.values.get("packager");
   const player = options.values.get("player");
-  if (packager === undefined || player === undefined) throw new Error("pack requires --packager and --player");
+  return {
+    ...(runtime === undefined ? {} : {runtime}),
+    ...(previewHost === undefined ? {} : {previewHost}),
+    ...(packager === undefined ? {} : {packager}),
+    ...(player === undefined ? {} : {player}),
+  };
+}
+
+function discoveryDiagnostic(code: string, message: string, error: RuntimeDiscoveryFailure,
+  path?: string): AuthoringDiagnostic {
+  return diagnostic(code, message, path, runtimeDiscoveryHint(error));
+}
+
+async function packProject(options: Options): Promise<{output: string; player: string}> {
+  let packager: string;
+  let player: string;
+  try {
+    [packager, player] = await Promise.all([
+      discoverRuntimeTool("packager", runtimeOptions(options)).then((value) => value.path),
+      discoverRuntimeTool("player", runtimeOptions(options)).then((value) => value.path),
+    ]);
+  } catch (error) {
+    if (error instanceof RuntimeDiscoveryFailure) {
+      throw new PackagerFailure([discoveryDiagnostic("PXCLI1204",
+        `PrismatiX ${error.tool} could not be discovered`, error, options.positional[0])]);
+    }
+    throw error;
+  }
   const temp = await mkdtemp(join(tmpdir(), "prismatix-pack-"));
   try {
     const built = await buildProject(options.positional[0], join(temp, "artifact"));
@@ -871,7 +1044,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
       format: "PrismatiXPackageRequest", schemaRevision: 2,
       requestId: `cli-${process.pid}`, gameId: project.id,
       projectRoot: built.output, outputDir: output,
-      playerExecutable: resolve(player), title: project.name,
+      playerExecutable: player, title: project.name,
       width: project.resolution.width, height: project.resolution.height,
       startScript: built.artifact.runtimeIrPath,
       sourceMap: built.artifact.sourceMapPath,
@@ -890,7 +1063,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
     // The native Packager intentionally accepts only an absolute request file
     // so its bounded parser, diagnostics and cancellation lifecycle have one
     // wire protocol across CLI, Studio and CI.
-    const packageTool = resolve(packager);
+    const packageTool = packager;
     const scriptTool = [".js", ".mjs", ".cjs"].includes(extname(packageTool).toLowerCase());
     const result = await runProcess(
       scriptTool ? process.execPath : packageTool,
@@ -930,13 +1103,233 @@ async function packCommand(options: Options): Promise<number> {
 async function runCommand(options: Options): Promise<number> {
   try {
     const result = await packProject(options);
-    const child = await runProcess(result.player, [], undefined, result.output);
-    if (child.stdout.length > 0) process.stdout.write(child.stdout);
-    if (child.stderr.length > 0) process.stderr.write(child.stderr);
+    const child = await runProcess(result.player, [], undefined, result.output, true);
     return child.code;
   } catch (error) {
     printDiagnostics(error instanceof PackagerFailure || error instanceof JsxAuthoringFailure ? error.diagnostics :
       [diagnostic("PXCLI1301", "Run failed", options.positional[0], String(error))]);
+    return 1;
+  }
+}
+
+type PreviewMessage = Record<string, unknown>;
+
+class PreviewClient {
+  readonly sessionId = `cli-dev-${randomUUID()}`;
+  private readonly waiters = new Map<string, {
+    readonly accept: (message: PreviewMessage) => void;
+    readonly reject: (error: Error) => void;
+    readonly timer: NodeJS.Timeout;
+  }>();
+  private outputBuffer = "";
+  private exited = false;
+
+  private constructor(private readonly child: ChildProcessWithoutNullStreams) {
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      process.stdout.write(chunk);
+      this.outputBuffer += chunk;
+      let newline = this.outputBuffer.indexOf("\n");
+      while (newline >= 0) {
+        const line = this.outputBuffer.slice(0, newline).trim();
+        this.outputBuffer = this.outputBuffer.slice(newline + 1);
+        if (line.length > 0) {
+          try {
+            const message = object(JSON.parse(line) as unknown);
+            const requestId = message?.requestId;
+            if (message !== undefined && typeof requestId === "string") {
+              const waiter = this.waiters.get(requestId);
+              if (waiter !== undefined && message.event === undefined) {
+                clearTimeout(waiter.timer); this.waiters.delete(requestId); waiter.accept(message);
+              }
+            }
+          } catch { /* Native log lines remain visible but are not protocol responses. */ }
+        }
+        newline = this.outputBuffer.indexOf("\n");
+      }
+    });
+    child.stderr.on("data", (chunk: string) => process.stderr.write(chunk));
+    child.on("exit", (code, signal) => {
+      this.exited = true;
+      const error = new Error(`PreviewHost exited (${code ?? signal ?? "unknown"})`);
+      for (const [id, waiter] of this.waiters) {
+        clearTimeout(waiter.timer); waiter.reject(error); this.waiters.delete(id);
+      }
+    });
+  }
+
+  static async start(executable: string, cwd: string): Promise<PreviewClient> {
+    const script = [".js", ".mjs", ".cjs"].includes(extname(executable).toLowerCase());
+    const child = spawn(script ? process.execPath : executable, script ? [executable] : [],
+      {cwd, stdio: ["pipe", "pipe", "pipe"], windowsHide: true});
+    await new Promise<void>((accept, reject) => {
+      child.once("spawn", accept); child.once("error", reject);
+    });
+    const client = new PreviewClient(child);
+    const ready = await client.request("hello", "", 0, {});
+    if (ready.type !== "ready") {
+      await client.close();
+      throw new Error(`PreviewHost handshake failed: ${JSON.stringify(ready)}`);
+    }
+    return client;
+  }
+
+  get alive(): boolean { return !this.exited && this.child.exitCode === null; }
+
+  request(type: string, documentId: string, revision: number,
+    fields: Readonly<Record<string, unknown>>): Promise<PreviewMessage> {
+    if (!this.alive) return Promise.reject(new Error("PreviewHost is not running"));
+    const requestId = `cli-${randomUUID()}`;
+    const request = {protocol: "PrismatiXPreviewProtocol", schemaRevision: 2,
+      protocolVersion: 2, type, sessionId: this.sessionId, requestId,
+      documentId, revision, ...fields};
+    return new Promise((accept, reject) => {
+      const timer = setTimeout(() => {
+        this.waiters.delete(requestId);
+        reject(new Error(`PreviewHost timed out waiting for ${type}`));
+      }, 20_000);
+      this.waiters.set(requestId, {accept, reject, timer});
+      this.child.stdin.write(`${JSON.stringify(request)}\n`, (error) => {
+        if (error === null || error === undefined) return;
+        const waiter = this.waiters.get(requestId);
+        if (waiter !== undefined) {
+          clearTimeout(waiter.timer); this.waiters.delete(requestId); reject(error);
+        }
+      });
+    });
+  }
+
+  async close(): Promise<void> {
+    if (!this.alive) return;
+    try { await this.request("shutdown", "", 0, {}); } catch { /* Force termination below. */ }
+    if (!this.alive) return;
+    await Promise.race([
+      new Promise<void>((accept) => this.child.once("exit", () => accept())),
+      new Promise<void>((accept) => setTimeout(accept, 2_000)),
+    ]);
+    if (this.alive) this.child.kill();
+  }
+}
+
+function previewResponseError(action: string, response: PreviewMessage): Error {
+  const code = typeof response.code === "string" ? response.code : String(response.type ?? "unknown");
+  const message = typeof response.message === "string" ? response.message : JSON.stringify(response);
+  return new Error(`${action} was rejected (${code}): ${message}`);
+}
+
+async function applyPreviewBuild(client: PreviewClient, built: BuildResult,
+  incremental: boolean): Promise<void> {
+  const documentId = built.artifact.runtimeIr.documentId;
+  const revision = built.artifact.runtimeIr.committedRevision;
+  const fields = {projectRoot: built.output, documentId,
+    committedRevision: revision, irPath: built.artifact.runtimeIrPath};
+  let response = await client.request(incremental ? "patchRuntimeIr" : "applyRuntimeIr",
+    documentId, revision, fields);
+  if (incremental && response.type === "resyncRequired") {
+    process.stderr.write(`${JSON.stringify({severity: "information", code: "PXCLI1604",
+      message: "Preview requested a full resync after a revision gap", reason: response.reason})}\n`);
+    response = await client.request("applyRuntimeIr", documentId, revision, fields);
+  }
+  if (response.type !== "runtimeIrApplied" && response.type !== "staleRevision")
+    throw previewResponseError(incremental ? "Runtime patch" : "Runtime apply", response);
+  if (response.type === "runtimeIrApplied") {
+    process.stderr.write(`${JSON.stringify({severity: "information", code: "PXCLI1603",
+      message: incremental ? "Preview updated" : "Preview started",
+      applyMode: response.applyMode, revision})}\n`);
+  }
+}
+
+async function dependencySignature(paths: ReadonlySet<string>): Promise<string> {
+  const values: string[] = [];
+  for (const path of [...paths].sort()) {
+    try {
+      const info = await stat(path);
+      values.push(`${path}\0${info.size}\0${info.mtimeMs}`);
+    } catch { values.push(`${path}\0missing`); }
+  }
+  return createHash("sha256").update(values.join("\n")).digest("hex");
+}
+
+function waitFor(milliseconds: number): Promise<void> {
+  return new Promise((accept) => setTimeout(accept, milliseconds));
+}
+
+async function devCommand(options: Options): Promise<number> {
+  let client: PreviewClient | undefined;
+  try {
+    let previewHost: Awaited<ReturnType<typeof discoverRuntimeTool>>;
+    try { previewHost = await discoverRuntimeTool("previewHost", runtimeOptions(options)); }
+    catch (error) {
+      if (error instanceof RuntimeDiscoveryFailure) {
+        printDiagnostics([discoveryDiagnostic("PXCLI1601",
+          "PrismatiX PreviewHost could not be discovered", error, options.positional[0])]);
+        return 1;
+      }
+      throw error;
+    }
+    const rawDebounce = Number(options.values.get("debounce") ?? "150");
+    if (!Number.isSafeInteger(rawDebounce) || rawDebounce < 50 || rawDebounce > 10_000)
+      throw new RangeError("--debounce must be an integer from 50 to 10000 milliseconds");
+    const projectArgument = options.positional[0];
+    const projectLocation = await resolveProjectPath(projectArgument);
+    const output = join(projectLocation.root, ".prismatix", "dev");
+    let revision = 1;
+    let built = await buildProject(projectArgument, output, revision);
+    client = await PreviewClient.start(previewHost.path, built.root);
+    await applyPreviewBuild(client, built, false);
+    const played = await client.request("play", built.artifact.runtimeIr.documentId,
+      revision, {});
+    if (played.type !== "playAccepted") throw previewResponseError("Play", played);
+    process.stderr.write(`${JSON.stringify({severity: "information", code: "PXCLI1602",
+      message: "Watching the project dependency graph", dependencyCount: built.dependencies.size,
+      previewHost: previewHost.path, discoveredFrom: previewHost.source})}\n`);
+    if (options.flags.has("once") || options.flags.has("smoke")) {
+      await client.close();
+      return 0;
+    }
+
+    let stopped = false;
+    const stop = (): void => { stopped = true; };
+    process.once("SIGINT", stop); process.once("SIGTERM", stop);
+    try {
+      let signature = await dependencySignature(built.dependencies);
+      while (!stopped) {
+        await waitFor(rawDebounce);
+        if (stopped) break;
+        if (!client.alive) {
+          process.stderr.write(`${JSON.stringify({severity: "warning", code: "PXCLI1605",
+            message: "PreviewHost exited; restarting the current build"})}\n`);
+          client = await PreviewClient.start(previewHost.path, built.root);
+          await applyPreviewBuild(client, built, false);
+          continue;
+        }
+        const nextSignature = await dependencySignature(built.dependencies);
+        if (nextSignature === signature) continue;
+        try {
+          const previousDocumentId = built.artifact.runtimeIr.documentId;
+          revision += 1;
+          const updated = await buildProject(projectArgument, output, revision);
+          const canPatch = updated.artifact.runtimeIr.documentId === previousDocumentId;
+          await applyPreviewBuild(client, updated, canPatch);
+          built = updated;
+          signature = await dependencySignature(built.dependencies);
+        } catch (error) {
+          if (error instanceof JsxAuthoringFailure) printDiagnostics(error.diagnostics);
+          else printDiagnostics([diagnostic("PXCLI1606", "Development rebuild failed",
+            projectArgument, String(error))]);
+          signature = nextSignature;
+        }
+      }
+    } finally {
+      process.removeListener("SIGINT", stop); process.removeListener("SIGTERM", stop);
+    }
+    await client.close();
+    return 0;
+  } catch (error) {
+    if (client !== undefined) await client.close();
+    printDiagnostics(error instanceof JsxAuthoringFailure ? error.diagnostics :
+      [diagnostic("PXCLI1600", "Development preview failed", options.positional[0], String(error))]);
     return 1;
   }
 }
@@ -1410,6 +1803,104 @@ function stable(value: unknown): string {
   return JSON.stringify(value);
 }
 
+interface StoryIdentitySource {
+  readonly absolutePath: string;
+  readonly virtualPath: string;
+  readonly source: string;
+}
+
+async function identitySources(argument?: string): Promise<{
+  readonly root: string; readonly documentId: string; readonly sources: readonly StoryIdentitySource[];
+}> {
+  if (argument !== undefined && argument.toLowerCase().endsWith(".pxstory")) {
+    const absolutePath = resolve(argument);
+    return {root: dirname(absolutePath), documentId: "main", sources: [{
+      absolutePath, virtualPath: basename(absolutePath), source: await readBoundedText(absolutePath),
+    }]};
+  }
+  const loaded = await loadProject(argument);
+  const raw = object(loaded.project) ?? {};
+  const name = typeof raw.name === "string" ? raw.name : "PrismatiX Game";
+  const documentId = typeof raw.id === "string" ? raw.id : starterProjectId(name);
+  const sources = Object.entries(loaded.sourceFiles)
+    .filter(([path]) => path.toLowerCase().endsWith(".pxstory"))
+    .map(([virtualPath, source]) => ({absolutePath: projectFile(loaded.root, virtualPath),
+      virtualPath, source}));
+  if (sources.length === 0) throw new Error("Project dependency graph contains no Story source files");
+  return {root: loaded.root, documentId, sources};
+}
+
+async function replaceTextWithBackup(path: string, text: string): Promise<void> {
+  const temporary = `${path}.prismatix-new-${process.pid}`;
+  const previous = `${path}.prismatix-old-${process.pid}`;
+  await writeFile(temporary, text, "utf8");
+  await rename(path, previous);
+  try {
+    await rename(temporary, path);
+    await rm(previous, {force: true});
+  } catch (error) {
+    try { await rename(previous, path); } catch { /* The external backup remains recoverable. */ }
+    await rm(temporary, {force: true});
+    throw error;
+  }
+}
+
+async function idsCommand(options: Options): Promise<number> {
+  try {
+    const collection = await identitySources(options.positional[0]);
+    const documentId = options.values.get("document-id") ?? collection.documentId;
+    const prefix = options.values.get("prefix") ?? "auto";
+    const assignments = collection.sources.map((value) => ({value,
+      assignment: assignStableSourceIds(value.source,
+        {path: value.virtualPath, documentId, prefix})}));
+    const diagnostics = assignments.flatMap(({assignment}) => assignment.diagnostics);
+    printDiagnostics(diagnostics);
+    if (assignments.some(({assignment}) => !assignment.valid || assignment.source === undefined)) {
+      process.stdout.write(`${JSON.stringify({dryRun: !options.flags.has("write"), assigned: 0,
+        diagnostics, reports: assignments.map(({assignment}) => assignment.report)}, null, 2)}\n`);
+      return 1;
+    }
+    const write = options.flags.has("write");
+    let backup: string | undefined;
+    if (write && assignments.some(({assignment}) => assignment.assigned > 0)) {
+      backup = resolve(options.values.get("backup") ?? join(collection.root, ".prismatix",
+        `identity-backup-${new Date().toISOString().replaceAll(":", "-")}`));
+      for (const {value, assignment} of assignments) {
+        if (assignment.assigned === 0) continue;
+        const relativePath = relative(collection.root, value.absolutePath);
+        if (relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath))
+          throw new Error(`Story source is outside the project backup root: ${value.absolutePath}`);
+        const backupPath = join(backup, relativePath);
+        await mkdir(dirname(backupPath), {recursive: true});
+        await copyFile(value.absolutePath, backupPath);
+      }
+      for (const {value, assignment} of assignments) {
+        if (assignment.assigned > 0) await replaceTextWithBackup(value.absolutePath, assignment.source!);
+      }
+    }
+    const reports = write
+      ? assignments.map(({value}) => stableSourceIdReport(
+          assignments.find((entry) => entry.value.absolutePath === value.absolutePath)!.assignment.source!,
+          {path: value.virtualPath, documentId}))
+      : assignments.map(({value}) => stableSourceIdReport(value.source,
+          {path: value.virtualPath, documentId}));
+    const result = {
+      dryRun: !write,
+      assigned: assignments.reduce((sum, value) => sum + value.assignment.assigned, 0),
+      total: reports.reduce((sum, value) => sum + value.total, 0),
+      anchored: reports.reduce((sum, value) => sum + value.anchored, 0),
+      fallback: reports.reduce((sum, value) => sum + value.fallback, 0),
+      ...(backup === undefined ? {} : {backup}), reports,
+    };
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return options.flags.has("check") && result.fallback > 0 ? 1 : 0;
+  } catch (error) {
+    printDiagnostics([diagnostic("PXCLI1701", "Stable Story identity operation failed",
+      options.positional[0], String(error))]);
+    return 1;
+  }
+}
+
 async function inspectSaveCommand(options: Options): Promise<number> {
   const path = resolve(options.positional[0] ?? "");
   try {
@@ -1457,16 +1948,19 @@ async function inspectSaveCommand(options: Options): Promise<number> {
 }
 
 function usage(): void {
-  process.stderr.write("Usage: prismatix <validate|build|pack|run|migrate|inspect-save> [project-or-save] [options]\n");
+  process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|ids|migrate|inspect-save> [project-or-save] [options]\n");
 }
 
 async function main(): Promise<number> {
   const [command, ...args] = process.argv.slice(2);
   const options = parseOptions(args);
+  if (command === "create") return createCommand(options);
+  if (command === "dev") return devCommand(options);
   if (command === "validate") return validateCommand(options);
   if (command === "build") return buildCommand(options);
   if (command === "pack") return packCommand(options);
   if (command === "run") return runCommand(options);
+  if (command === "ids") return idsCommand(options);
   if (command === "migrate") return migrateCommand(options);
   if (command === "inspect-save") return inspectSaveCommand(options);
   usage(); return 2;

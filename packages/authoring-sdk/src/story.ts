@@ -1,4 +1,5 @@
 import {canonicalJson} from "./canonical-json.js";
+import {canonicalResourceReference} from "./resources.js";
 import {parseStoryExpression} from "./story-expression.js";
 import type {
   AuthoringDiagnostic,
@@ -344,8 +345,56 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
   for (const extension of context.extensions ?? []) for (const command of extension.commands) extensions.set(command.id, command);
   const operations: RuntimeIrOperation[] = [];
   const mappings: RuntimeSourceMap["mappings"][number][] = [];
+  const resourceDependencies = new Set<string>();
   const authoredSourceIds = new Set<string>();
   let pendingAuthoredSourceId: string | undefined;
+
+  const resolveResource = (node: StoryNode, authored: string): string | undefined => {
+    const aliased = context.resources?.[authored] ?? authored;
+    const resolved = canonicalResourceReference(aliased, context.resourceAssets ?? []);
+    if (resolved === undefined) {
+      diagnostics.push(error(
+        "PXSTORY1111",
+        `Resource must be a safe project-relative path or a cataloged asset identity: ${authored}`,
+        node.span,
+      ));
+      return undefined;
+    }
+    resourceDependencies.add(resolved.source);
+    return resolved.reference;
+  };
+
+  const collectStructuredResource = (node: StoryNode, value: JsonValue): JsonValue | undefined => {
+    if (typeof value === "string") return resolveResource(node, value);
+    if (value === null || Array.isArray(value) || typeof value !== "object") return value;
+    const identity = typeof value.id === "string" ? value.id
+      : typeof value.uuid === "string" ? value.uuid : undefined;
+    const fallbackPath = typeof value.path === "string" ? value.path : undefined;
+    if (identity !== undefined) {
+      const resolved = canonicalResourceReference(identity, context.resourceAssets ?? []);
+      if (resolved !== undefined) {
+        resourceDependencies.add(resolved.source);
+        return value;
+      }
+      if (fallbackPath === undefined) {
+        diagnostics.push(error("PXSTORY1111",
+          `Resource identity is missing from the project asset catalog: ${identity}`,
+          node.span));
+        return undefined;
+      }
+    }
+    if (fallbackPath !== undefined) {
+      const resolved = canonicalResourceReference(fallbackPath, context.resourceAssets ?? []);
+      if (resolved === undefined) {
+        diagnostics.push(error("PXSTORY1111",
+          `Resource path is not a safe project-relative path: ${fallbackPath}`,
+          node.span));
+        return undefined;
+      }
+      resourceDependencies.add(resolved.source);
+    }
+    return value;
+  };
 
   const emit = (node: StoryNode, kind: string, args: Record<string, string>, text = node.text ?? node.raw.trim()): void => {
     const sourceId = pendingAuthoredSourceId === undefined
@@ -406,9 +455,8 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         const assetName = named("asset") ?? positional(0);
         if (assetName === undefined) diagnostics.push(error("PXSTORY1110", "bg requires a resource", node.span));
         else {
-          const resolved = context.resources?.[assetName] ?? assetName;
-          if (context.resources !== undefined && context.resources[assetName] === undefined) diagnostics.push(error("PXSTORY1111", `Unknown background resource: ${assetName}`, node.span));
-          emit(node, "background", {asset: resolved});
+          const resolved = resolveResource(node, assetName);
+          if (resolved !== undefined) emit(node, "background", {asset: resolved});
         }
         break;
       }
@@ -432,6 +480,9 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
             ...(named("y") === undefined ? {} : {y: named("y")!}),
             ...(named("scale") === undefined ? {} : {scale: named("scale")!}),
           });
+          if (expression !== undefined && context.resourceAssets !== undefined) {
+            resolveResource(node, `asset:${expression.assetId}`);
+          }
         }
         break;
       }
@@ -531,13 +582,20 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       case "se": {
         const asset = named("asset") ?? positional(0);
         if (asset === undefined) diagnostics.push(error("PXSTORY1124", `${node.name} requires a resource`, node.span));
-        else emit(node, node.name === "se" ? "soundEffect" : node.name, {asset: context.resources?.[asset] ?? asset});
+        else {
+          const resolved = resolveResource(node, asset);
+          if (resolved !== undefined)
+            emit(node, node.name === "se" ? "soundEffect" : node.name, {asset: resolved});
+        }
         break;
       }
       case "timeline": {
         const timeline = named("timeline") ?? positional(0);
         if (timeline === undefined) diagnostics.push(error("PXSTORY1125", "timeline requires a clip", node.span));
-        else emit(node, "timeline", {timeline});
+        else {
+          const resolved = resolveResource(node, timeline);
+          if (resolved !== undefined) emit(node, "timeline", {timeline: resolved});
+        }
         break;
       }
       case "ui": emit(node, "ui", {route: named("route") ?? positional(0) ?? "", operation: named("operation") ?? "push"}); break;
@@ -562,7 +620,15 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
           break;
         }
         const normalized = normalizeExtensionArguments(node, descriptor, diagnostics);
-        if (normalized !== undefined) emit(node, "customNode", {type: descriptor.id, value: canonicalJson(normalized, false).trim()});
+        if (normalized !== undefined) {
+          for (const parameter of descriptor.parameters) {
+            const value = normalized[parameter.name];
+            if (parameter.type !== "resource" || value === undefined) continue;
+            const collected = collectStructuredResource(node, value);
+            if (collected !== undefined) normalized[parameter.name] = collected;
+          }
+          emit(node, "customNode", {type: descriptor.id, value: canonicalJson(normalized, false).trim()});
+        }
       }
     }
   }
@@ -575,10 +641,11 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
   }
 
   const valid = !diagnostics.some((item) => item.severity === "error");
-  if (!valid) return {diagnostics, valid: false};
+  if (!valid) return {resourceDependencies: [...resourceDependencies].sort(), diagnostics, valid: false};
   return {
     runtimeIr: {format: "PrismatiXRuntimeIR", schemaRevision: 2, documentId: context.documentId, committedRevision: context.committedRevision ?? 0, operations},
     sourceMap: {format: "PrismatiXSourceMap", schemaRevision: 2, documentId: context.documentId, mappings},
+    resourceDependencies: [...resourceDependencies].sort(),
     diagnostics,
     valid: true,
   };

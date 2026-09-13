@@ -50,5 +50,24 @@ int main() {
               px::preview::kProtocolVersion ==
                   px::sdk::kPreviewProtocolVersion,
           "Preview protocol constants must use the authoritative revisions");
+
+    std::ifstream runtimeStream(PRISMATIX_RUNTIME_MANIFEST_PATH,
+                                std::ios::binary);
+    Check(runtimeStream.good(), "configured Runtime manifest must exist");
+    const auto runtimeManifest =
+        nlohmann::json::parse(runtimeStream, nullptr, false);
+    Check(!runtimeManifest.is_discarded() &&
+              runtimeManifest.at("format") == "PrismatiXRuntimeManifest" &&
+              runtimeManifest.at("schemaRevision") == 1 &&
+              runtimeManifest.at("version") == "0.2.0",
+          "Runtime bundle must publish its versioned discovery contract");
+    Check(runtimeManifest.at("binDir") == "../../bin" &&
+              runtimeManifest.at("tools").at("previewHost") ==
+                  "PrismatiXPreviewHost" PRISMATIX_EXECUTABLE_SUFFIX &&
+              runtimeManifest.at("tools").at("packager") ==
+                  "PrismatiXPackager" PRISMATIX_EXECUTABLE_SUFFIX &&
+              runtimeManifest.at("tools").at("player") ==
+                  "PrismatiXPlayer" PRISMATIX_EXECUTABLE_SUFFIX,
+          "Runtime bundle must identify every author-facing native tool");
     return 0;
 }

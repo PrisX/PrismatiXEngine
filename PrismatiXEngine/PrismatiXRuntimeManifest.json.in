@@ -1,0 +1,12 @@
+{
+  "format": "PrismatiXRuntimeManifest",
+  "schemaRevision": 1,
+  "version": "0.2.0",
+  "target": "@PRISMATIX_TARGET_TRIPLE@",
+  "binDir": "../../bin",
+  "tools": {
+    "previewHost": "PrismatiXPreviewHost@CMAKE_EXECUTABLE_SUFFIX@",
+    "packager": "PrismatiXPackager@CMAKE_EXECUTABLE_SUFFIX@",
+    "player": "PrismatiXPlayer@CMAKE_EXECUTABLE_SUFFIX@"
+  }
+}

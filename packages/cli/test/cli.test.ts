@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
-import {mkdtemp, mkdir, readFile, stat, writeFile} from "node:fs/promises";
+import {mkdtemp, mkdir, readFile, readdir, stat, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {dirname, join, resolve} from "node:path";
 import {spawnSync} from "node:child_process";
 import test from "node:test";
+
+import {discoverRuntimeTool, RuntimeDiscoveryFailure} from "../src/runtime-discovery.js";
 
 function stable(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
@@ -66,6 +68,91 @@ async function fixture(legacy = false): Promise<{root: string; project: string}>
   }));
   return {root, project};
 }
+
+test("create scaffolds a canonical playable starter without author-supplied UUIDs", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "prismatix-cli-create-"));
+  const root = join(parent, "hello-game");
+  const created = run(["create", root, "--name", "Hello Game", "--locale", "zh-TW"]);
+  assert.equal(created.status, 0, created.stderr);
+  const project = join(root, "prismatix.json");
+  const validated = run(["validate", project]);
+  assert.equal(validated.status, 0, validated.stderr);
+  const ui = await readFile(join(root, "Content/UI/Title.pxui"), "utf8");
+  assert.match(ui, /[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/u);
+  assert.doesNotMatch(ui, /\{\{[A-Z_]+\}\}/u);
+  const manifest = JSON.parse(await readFile(project, "utf8")) as Record<string, unknown>;
+  assert.deepEqual(Object.keys(manifest).sort(),
+    ["defaultLocale", "id", "name", "resolution", "uiEntryPoints"]);
+  await assert.rejects(stat(join(root, "Content/Localization/zh-TW.json")));
+  assert.deepEqual(await readdir(join(root, "Assets")), []);
+});
+
+test("runtime discovery accepts an installed prefix manifest and reports attempted sources", async () => {
+  const prefix = await mkdtemp(join(tmpdir(), "prismatix-runtime-prefix-"));
+  const bin = join(prefix, "bin");
+  const manifest = join(prefix, "share", "PrismatiX", "runtime-manifest.json");
+  await write(join(bin, process.platform === "win32" ? "PrismatiXPreviewHost.exe" : "PrismatiXPreviewHost"), "fixture");
+  await write(manifest, JSON.stringify({format: "PrismatiXRuntimeManifest", schemaRevision: 1,
+    version: "0.2.0", binDir: "../../bin", tools: {
+      previewHost: process.platform === "win32" ? "PrismatiXPreviewHost.exe" : "PrismatiXPreviewHost",
+    }}));
+  const discovered = await discoverRuntimeTool("previewHost", {runtime: prefix, environment: {}});
+  assert.equal(discovered.path, resolve(bin,
+    process.platform === "win32" ? "PrismatiXPreviewHost.exe" : "PrismatiXPreviewHost"));
+  await assert.rejects(discoverRuntimeTool("player", {runtime: prefix, environment: {}}),
+    (error: unknown) => error instanceof RuntimeDiscoveryFailure &&
+      error.attempts.some((attempt) => attempt.includes("runtime-manifest.json")));
+});
+
+test("dev --once streams PreviewHost protocol output and exits after a clean shutdown", async () => {
+  const value = await fixture();
+  const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-preview-"));
+  const preview = join(tools, "mock-preview.mjs");
+  await write(preview, `
+    import {createInterface} from "node:readline";
+    const input = createInterface({input: process.stdin});
+    input.on("line", (line) => {
+      const request = JSON.parse(line);
+      const types = {hello: "ready", applyRuntimeIr: "runtimeIrApplied",
+        patchRuntimeIr: "runtimeIrApplied", play: "playAccepted", shutdown: "shutdownAccepted"};
+      const type = types[request.type];
+      if (!type) process.exit(71);
+      process.stdout.write(JSON.stringify({...request, type,
+        ...(type === "runtimeIrApplied" ? {applyMode: "fullRuntimeRestart"} : {})}) + "\\n");
+      if (request.type === "shutdown") { input.close(); process.exitCode = 0; }
+    });
+  `);
+  const previewed = run(["dev", value.root, "--preview-host", preview, "--once"]);
+  assert.equal(previewed.status, 0, previewed.stderr);
+  assert.match(previewed.stdout, /"type":"ready"/u);
+  assert.match(previewed.stdout, /"type":"runtimeIrApplied"/u);
+  assert.match(previewed.stdout, /"type":"playAccepted"/u);
+  assert.match(previewed.stdout, /"type":"shutdownAccepted"/u);
+  assert.match(previewed.stderr, /PXCLI1602/u);
+  assert.equal((await stat(join(value.root, ".prismatix", "dev", "Runtime", "main.pxir"))).isFile(), true);
+});
+
+test("ids reports fallback identities and writes stable Story anchors with a backup", async () => {
+  const value = await fixture();
+  const checkedBefore = run(["ids", value.root, "--check"]);
+  assert.equal(checkedBefore.status, 1, checkedBefore.stdout);
+  const before = JSON.parse(checkedBefore.stdout) as {dryRun: boolean; fallback: number};
+  assert.equal(before.dryRun, true);
+  assert.ok(before.fallback > 0);
+
+  const backup = join(value.root, "identity-backup");
+  const written = run(["ids", value.root, "--write", "--backup", backup]);
+  assert.equal(written.status, 0, written.stderr);
+  const report = JSON.parse(written.stdout) as {dryRun: boolean; assigned: number; fallback: number};
+  assert.equal(report.dryRun, false);
+  assert.ok(report.assigned > 0);
+  assert.equal(report.fallback, 0);
+  assert.match(await readFile(join(value.root, "Story", "main.pxstory"), "utf8"), /\[id auto\.[0-9a-f]+\]/u);
+  assert.equal((await stat(join(backup, "Story", "main.pxstory"))).isFile(), true);
+
+  const checkedAfter = run(["ids", value.root, "--check"]);
+  assert.equal(checkedAfter.status, 0, checkedAfter.stderr);
+});
 
 test("validate and build use the same canonical project compiler", async () => {
   const value = await fixture();

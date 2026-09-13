@@ -111,6 +111,24 @@ int main() {
             "stable expression and resource UUIDs resolve to runtime paths");
     });
 
+    suite.Run("LoadsReadableCharacterSourcePaths", [&] {
+        constexpr std::string_view readablePath =
+            "Characters/Cast/Rin.pxcharacter";
+        const auto manifest = Manifest(R"([
+          {"id":"11111111-1111-4111-8111-111111111111",
+           "displayName":"凛",
+           "source":"Characters/Cast/Rin.pxcharacter"}
+        ])");
+        const auto loaded =
+            Load(manifest,
+                 {{std::string(readablePath), Character()},
+                  {std::string(kAssetPath), "png"}});
+        suite.Require(loaded.Valid(),
+                      "a safe readable path loads without embedding the UUID in its filename");
+        suite.Expect(loaded.document.characters.front().id == kCharacterId,
+                     "document identity remains authoritative for readable paths");
+    });
+
     suite.Run("LegacyManifestIsRejectedByRuntime", [&] {
         const auto loaded = Load(
             R"({"format":"PrismatiXProject","schemaRevision":1,"assets":[]})",
