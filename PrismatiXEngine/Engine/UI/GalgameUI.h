@@ -67,7 +67,10 @@ struct SettingsPresentation {
 
 class GalgameUI {
 public:
-    enum class Screen { Title, HUD, Backlog, Save, Load, Gallery, Settings, Video };
+    // Screen remains the compatibility vocabulary for the default VN
+    // controllers. Arbitrary authored route ids use Custom and never need to
+    // enter this enum.
+    enum class Screen { Title, HUD, Backlog, Save, Load, Gallery, Settings, Video, Custom };
     using ActionSink = std::function<void(const GalgameAction&)>;
 
     GalgameUI();
@@ -75,6 +78,8 @@ public:
     // Both formats install into the same UIContext and Action runtime.
     Status RegisterTemplate(Screen screen,std::string_view scene,
                             const std::string& sourcePath={});
+    Status RegisterRouteTemplate(std::string route, std::string_view scene,
+                                 const std::string& sourcePath = {});
     void SetUiAssetResolver(UiAssetResolver resolver) {
         m_studioAssetResolver = std::move(resolver);
     }
@@ -115,6 +120,7 @@ public:
     Status ValidateRuntimeState(const UIRuntimeState& state);
     Status RestoreRuntimeState(const UIRuntimeState& state);
     [[nodiscard]] ActionDispatcher& Actions() { return m_context.Actions(); }
+    Status ShowRoute(std::string_view route);
     Status ShowTitle();
     Status ShowHUD(const DialoguePresentation& presentation);
     Status ShowBacklog(std::vector<GalgameItem> entries);
@@ -138,6 +144,7 @@ public:
     [[nodiscard]] bool Update(const Input& input, int width, int height,float deltaSeconds=0.0f);
     void Render(graphics::Renderer2D& renderer);
     [[nodiscard]] Screen CurrentScreen() const { return m_screen; }
+    [[nodiscard]] std::string_view CurrentRoute() const { return m_route; }
     [[nodiscard]] bool IsOverlay() const { return m_screen != Screen::Title && m_screen != Screen::HUD; }
     Status ApplyAnimationProperty(const animation::TrackBinding& binding,const Variant& value);
     Status ValidateAnimationProperty(const animation::TrackBinding& binding,
@@ -149,10 +156,14 @@ public:
 private:
     class ItemSource;
     void Emit(std::string command, std::string argument = {});
-    Status Install(std::unique_ptr<Control> root, Screen screen);
+    Status Install(std::unique_ptr<Control> root, Screen screen,
+                   std::string route = {});
     Status InstallTemplate(Screen screen);
     Status InstallCheckpointSurface(Screen screen);
+    Status InstallRouteTemplate(std::string_view route);
+    Status InstallCheckpointRoute(std::string_view route);
     [[nodiscard]] bool HasTemplate(Screen screen) const;
+    [[nodiscard]] bool HasRouteTemplate(std::string_view route) const;
     std::unique_ptr<Control> MakeMenuButton(std::string text, std::string command, std::string argument = {});
     Status Add(Control& parent, std::unique_ptr<Control> child);
     void RememberGameplayCheckpoint(Screen target);
@@ -163,6 +174,7 @@ private:
     UIContext m_context;
     ActionSink m_sink;
     Screen m_screen = Screen::Title;
+    std::string m_route = "title";
     Label* m_speaker = nullptr;
     Label* m_dialogue = nullptr;
     int m_dialogueBaseFontSize = 30;
@@ -184,7 +196,7 @@ private:
         std::optional<sdk::UiDocument> studioScene;
         std::string sourcePath;
     };
-    std::unordered_map<int,Template> m_templates;
+    std::unordered_map<std::string,Template> m_templates;
     UiAssetResolver m_studioAssetResolver;
     UiComponentLoader m_studioComponentLoader;
     std::vector<GalgameAction> m_pendingActions;

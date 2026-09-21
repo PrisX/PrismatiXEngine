@@ -73,6 +73,18 @@ struct ScriptServices {
     std::function<bool(int slot)> deleteSave;
     std::function<Variant(int slot)> querySave;
     std::function<Variant(int count)> listSaves;
+    // Player-owned VN presentation models. These callbacks deliberately
+    // return JSON-compatible snapshots so authored UI can render the current
+    // session without reaching into VM, Backlog, or GameSettings internals.
+    std::function<Variant()> queryDialogue;
+    std::function<Variant()> queryChoices;
+    std::function<Variant()> queryBacklog;
+    std::function<Variant()> querySettings;
+    std::function<bool()> advanceDialogue;
+    std::function<bool(int index)> selectChoice;
+    std::function<bool(std::uint64_t sequence)> replayBacklogVoice;
+    std::function<bool(std::uint64_t sequence)> rollbackBacklog;
+    std::function<bool(std::string_view name, const Variant& value)> updateSetting;
     std::function<std::uint64_t(const std::string& path, float volume,
                                 bool skippable)> playVideo;
     std::function<bool(std::uint64_t handle)> pauseVideo;

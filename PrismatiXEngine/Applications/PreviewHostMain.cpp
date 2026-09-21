@@ -24,7 +24,9 @@
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/Preview/PreviewProtocolV2.h"
 #include "Engine/Preview/PreviewSessionFactory.h"
+#include "Engine/Script/ScriptFrameScheduler.h"
 #include "Engine/Script/ScriptHost.h"
+#include "Engine/Script/VnModelSnapshots.h"
 #include "Engine/Preview/PerformancePreview.h"
 #include "Engine/Runtime.h"
 #include "Engine/SDK/RuntimeIr.h"
@@ -2101,6 +2103,69 @@ private:
         m_scriptServices.variables = &m_session->Variables();
         m_scriptServices.routes = &m_session->Routes();
         m_scriptServices.timeline = &m_session->Timeline();
+        m_scriptServices.queryDialogue = [this] {
+            return px::script::BuildDialogueModel(m_session->Dialogue());
+        };
+        m_scriptServices.queryChoices = [this] {
+            return px::script::BuildChoiceModels(m_session->VM());
+        };
+        m_scriptServices.queryBacklog = [this] {
+            return px::script::BuildBacklogModels(m_session->Backlog());
+        };
+        auto previewSettings = std::make_shared<px::VariantObject>(
+            px::VariantObject{
+                {"bgmVolume", px::Variant(96)},
+                {"seVolume", px::Variant(110)},
+                {"voiceVolume", px::Variant(128)},
+                {"textSpeedMs", px::Variant(28)},
+                {"autoWaitMs", px::Variant(1400)},
+                {"skipReadOnly", px::Variant(true)},
+                {"skipAfterChoices", px::Variant(false)},
+                {"fullscreen", px::Variant(false)},
+                {"windowWidth", px::Variant(1280)},
+                {"windowHeight", px::Variant(720)},
+                {"language", px::Variant("preview")},
+                {"textScale", px::Variant(1.0)},
+                {"highContrast", px::Variant(false)},
+                {"reducedMotion", px::Variant(false)},
+                {"selfVoicing", px::Variant(false)},
+                {"supportedLocales", px::Variant(px::VariantArray{})}});
+        m_scriptServices.querySettings = [previewSettings] {
+            px::VariantObject copy;
+            for (const auto& [name, value] : *previewSettings)
+                copy.emplace(name, value.Clone());
+            return px::Variant(std::move(copy));
+        };
+        m_scriptServices.advanceDialogue = [this] {
+            if (m_session->VM().State() == px::vn::VMState::WaitingChoice)
+                return false;
+            m_session->Advance();
+            return true;
+        };
+        m_scriptServices.selectChoice = [this](const int index) {
+            const auto& choices = m_session->VM().Choices();
+            if (m_session->VM().State() != px::vn::VMState::WaitingChoice ||
+                index < 0 || static_cast<std::size_t>(index) >= choices.size())
+                return false;
+            m_session->SelectChoice(index);
+            return true;
+        };
+        m_scriptServices.replayBacklogVoice =
+            [this](const std::uint64_t sequence) {
+                const auto* entry = m_session->Backlog().Find(sequence);
+                if (!entry || entry->voice.empty()) return false;
+                m_runtime->Audio().PlayVoice(entry->voice);
+                return true;
+            };
+        m_scriptServices.rollbackBacklog = [](std::uint64_t) { return false; };
+        m_scriptServices.updateSetting =
+            [previewSettings](const std::string_view name,
+                              const px::Variant& value) {
+                auto found = previewSettings->find(std::string(name));
+                if (found == previewSettings->end()) return false;
+                found->second = value.Clone();
+                return true;
+            };
         m_scriptServices.console = [events = m_events](const px::script::ConsoleMessage& message) {
             std::string_view level = "info";
             std::string_view stream = "stdout";
@@ -2199,11 +2264,13 @@ private:
         const float delta = m_runtime->GetClock().DeltaSeconds();
         const std::uint64_t now = m_runtime->GetClock().NowMs();
         if (m_scriptHost) {
-            m_scriptHost->Update(delta);
+            px::script::AdvanceScriptFrame(
+                *m_scriptHost, delta, {}, [this] {
+                    if (m_session->VM().State() ==
+                        px::vn::VMState::WaitingExternal)
+                        m_session->VM().NotifyExternalDone();
+                });
             if (!m_showUiPreview) m_uiPreview.Actions().Update(delta);
-            if (m_session->VM().State() == px::vn::VMState::WaitingExternal && !m_scriptHost->HasPendingCommand() && !m_scriptHost->HasPendingAction()) {
-                m_session->VM().NotifyExternalDone();
-            }
         }
         if (m_showUiPreview) {
             auto& input = m_runtime->GetInput();

@@ -53,6 +53,7 @@ std::string_view ScreenId(const GalgameUI::Screen screen) {
         case GalgameUI::Screen::Gallery: return "gallery";
         case GalgameUI::Screen::Settings: return "settings";
         case GalgameUI::Screen::Video: return "video";
+        case GalgameUI::Screen::Custom: return {};
     }
     return {};
 }
@@ -114,13 +115,13 @@ GalgameUI::GalgameUI() {
         Template value;
         value.studioScene = std::move(entry.document);
         value.sourcePath = "BuiltinUI/" + std::string(entry.route) + ".pxui";
-        m_templates.emplace(static_cast<int>(*screen), std::move(value));
+        m_templates.emplace(std::string(entry.route), std::move(value));
     }
 }
 
 UIRuntimeState GalgameUI::CaptureRuntimeState() const {
     UIRuntimeState state = m_context.CaptureRuntimeState();
-    state.surfaceId = std::string(ScreenId(m_screen));
+    state.surfaceId = m_route;
     return state;
 }
 
@@ -139,12 +140,12 @@ void GalgameUI::RememberGameplayCheckpoint(const Screen target) {
 }
 
 Status GalgameUI::ValidateRuntimeState(const UIRuntimeState& state) {
-    const auto target = ScreenFromId(state.surfaceId);
-    if (!target)
+    if (state.surfaceId.empty() ||
+        (!HasRouteTemplate(state.surfaceId) && !ScreenFromId(state.surfaceId)))
         return GalgameFailure("PXUI2817",
                               "UI checkpoint references an unknown surface: " +
                                   state.surfaceId);
-    if (*target == m_screen) return m_context.ValidateRuntimeState(state);
+    if (state.surfaceId == m_route) return m_context.ValidateRuntimeState(state);
     // Build the complete target document in an isolated UI runtime.  Action
     // providers are source-owned by the live ScriptHost, so validate those
     // handles against the live dispatcher and all topology/controller state
@@ -157,7 +158,7 @@ Status GalgameUI::ValidateRuntimeState(const UIRuntimeState& state) {
     candidate.m_templates = m_templates;
     candidate.m_studioAssetResolver = m_studioAssetResolver;
     candidate.m_studioComponentLoader = m_studioComponentLoader;
-    if (const Status installed = candidate.InstallCheckpointSurface(*target);
+    if (const Status installed = candidate.InstallCheckpointRoute(state.surfaceId);
         !installed)
         return installed;
     UIRuntimeState candidateState = state;
@@ -167,20 +168,19 @@ Status GalgameUI::ValidateRuntimeState(const UIRuntimeState& state) {
 
 Status GalgameUI::RestoreRuntimeState(const UIRuntimeState& state) {
     if (const Status valid = ValidateRuntimeState(state); !valid) return valid;
-    const Screen previousScreen = m_screen;
+    const std::string previousRoute = m_route;
     const UIRuntimeState previousState = CaptureRuntimeState();
-    const Screen target = *ScreenFromId(state.surfaceId);
-    if (target != m_screen) {
-        if (const Status installed = InstallCheckpointSurface(target); !installed)
+    if (state.surfaceId != m_route) {
+        if (const Status installed = InstallCheckpointRoute(state.surfaceId); !installed)
             return installed;
     }
     if (const Status restored = m_context.RestoreRuntimeState(state); restored) {
-        if (target == Screen::HUD) m_lastGameplayState = state;
+        if (state.surfaceId == "hud") m_lastGameplayState = state;
         return restored;
     } else {
         Status rollback = Status::Ok();
-        if (previousScreen != m_screen) {
-            rollback = InstallCheckpointSurface(previousScreen);
+        if (previousRoute != m_route) {
+            rollback = InstallCheckpointRoute(previousRoute);
         }
         if (rollback) rollback = m_context.RestoreRuntimeState(previousState);
         if (!rollback)
@@ -193,13 +193,25 @@ Status GalgameUI::RestoreRuntimeState(const UIRuntimeState& state) {
 }
 
 Status GalgameUI::RegisterTemplate(Screen screen,std::string_view text,const std::string& sourcePath){
+    const std::string_view route = ScreenId(screen);
+    if (route.empty())
+        return GalgameFailure("PXUI2821",
+                              "Custom UI templates require an explicit route id");
+    return RegisterRouteTemplate(std::string(route), text, sourcePath);
+}
+
+Status GalgameUI::RegisterRouteTemplate(std::string route,
+                                        std::string_view text,
+                                        const std::string& sourcePath){
+    if (route.empty())
+        return GalgameFailure("PXUI2821", "UI route id cannot be empty");
     auto typed=resource::ParseTypedDocument(text,sourcePath);
     if(typed&&typed.Value().kind==resource::DocumentKind::Scene&&
        typed.Value().type=="UIScene"){
         Template value;
         value.typedScene=std::move(typed.Value());
         value.sourcePath=sourcePath;
-        m_templates[static_cast<int>(screen)]=std::move(value);
+        m_templates[std::move(route)]=std::move(value);
         return Status::Ok();
     }
     auto studio=sdk::ParseUi(text);
@@ -207,7 +219,7 @@ Status GalgameUI::RegisterTemplate(Screen screen,std::string_view text,const std
         Template value;
         value.studioScene=std::move(studio.document);
         value.sourcePath=sourcePath;
-        m_templates[static_cast<int>(screen)]=std::move(value);
+        m_templates[std::move(route)]=std::move(value);
         return Status::Ok();
     }
     if(typed&&
@@ -219,15 +231,26 @@ Status GalgameUI::RegisterTemplate(Screen screen,std::string_view text,const std
     return Status::Fail(typed.Diagnostics());
 }
 
-bool GalgameUI::HasTemplate(Screen screen)const{return m_templates.contains(static_cast<int>(screen));}
+bool GalgameUI::HasRouteTemplate(const std::string_view route) const {
+    return m_templates.contains(std::string(route));
+}
+
+bool GalgameUI::HasTemplate(Screen screen)const{
+    return HasRouteTemplate(ScreenId(screen));
+}
 
 Status GalgameUI::InstallTemplate(Screen screen){
-    const auto it=m_templates.find(static_cast<int>(screen));if(it==m_templates.end())return GalgameFailure("PXUI2804","Requested Galgame UI template is not registered");
+    return InstallRouteTemplate(ScreenId(screen));
+}
+
+Status GalgameUI::InstallRouteTemplate(const std::string_view route){
+    const auto it=m_templates.find(std::string(route));if(it==m_templates.end())return GalgameFailure("PXUI2804","Requested UI route template is not registered: "+std::string(route));
+    const Screen screen = ScreenFromId(route).value_or(Screen::Custom);
     RememberGameplayCheckpoint(screen);
     ResetUiTimelineOverrides();
     if(it->second.typedScene){
         auto loaded=InstantiateUIScene(*it->second.typedScene,&m_viewModel,m_context.Formatters());if(!loaded)return Status::Fail(loaded.Diagnostics());
-        auto bindings=std::move(loaded.Value().bindings);auto animations=std::move(loaded.Value().animations);auto theme=std::move(loaded.Value().theme);auto triggers=std::move(loaded.Value().triggers);auto interaction=std::move(loaded.Value().interactionGraph);const Status installed=Install(std::move(loaded.Value().root),screen);if(!installed)return installed;m_bindings=std::move(bindings);if(theme)m_context.SetTheme(std::move(*theme));if(animations){const Status status=m_context.SetAnimations(std::move(*animations),true);if(!status)return status;}const Status triggerStatus=m_context.ConfigureTriggers(std::move(triggers),std::move(interaction));if(!triggerStatus)return triggerStatus;
+        auto bindings=std::move(loaded.Value().bindings);auto animations=std::move(loaded.Value().animations);auto theme=std::move(loaded.Value().theme);auto triggers=std::move(loaded.Value().triggers);auto interaction=std::move(loaded.Value().interactionGraph);const Status installed=Install(std::move(loaded.Value().root),screen,std::string(route));if(!installed)return installed;m_bindings=std::move(bindings);if(theme)m_context.SetTheme(std::move(*theme));if(animations){const Status status=m_context.SetAnimations(std::move(*animations),true);if(!status)return status;}const Status triggerStatus=m_context.ConfigureTriggers(std::move(triggers),std::move(interaction));if(!triggerStatus)return triggerStatus;
     }else if(it->second.studioScene){
         m_bindings.clear();
         UiApplication application(m_context);
@@ -251,6 +274,7 @@ Status GalgameUI::InstallTemplate(Screen screen){
             m_noticePanel=nullptr;
         }
         m_screen=screen;
+        m_route=route;
     }else{
         return GalgameFailure("PXUI2805","Registered UI template has no document");
     }
@@ -269,8 +293,22 @@ Status GalgameUI::InstallCheckpointSurface(const Screen screen) {
         case Screen::Gallery: return ShowGallery({});
         case Screen::Settings: return ShowSettings({});
         case Screen::Video: return ShowVideoOverlay(false);
+        case Screen::Custom: break;
     }
     return GalgameFailure("PXUI2818", "UI checkpoint surface is unsupported");
+}
+
+Status GalgameUI::InstallCheckpointRoute(const std::string_view route) {
+    if (HasRouteTemplate(route)) return InstallRouteTemplate(route);
+    const auto screen = ScreenFromId(route);
+    return screen ? InstallCheckpointSurface(*screen)
+                  : GalgameFailure("PXUI2818",
+                                   "UI checkpoint route is unsupported: " +
+                                       std::string(route));
+}
+
+Status GalgameUI::ShowRoute(const std::string_view route) {
+    return InstallCheckpointRoute(route);
 }
 void GalgameUI::Emit(std::string command, std::string argument) { m_pendingActions.push_back({std::move(command),std::move(argument)}); }
 
@@ -284,7 +322,8 @@ std::unique_ptr<Control> GalgameUI::MakeMenuButton(std::string text, std::string
     return button;
 }
 
-Status GalgameUI::Install(std::unique_ptr<Control> root, Screen screen) {
+Status GalgameUI::Install(std::unique_ptr<Control> root, Screen screen,
+                          std::string route) {
     RememberGameplayCheckpoint(screen);
     ResetUiTimelineOverrides();
     m_bindings.clear();
@@ -294,7 +333,9 @@ Status GalgameUI::Install(std::unique_ptr<Control> root, Screen screen) {
         m_presentedChoices.clear();
     }
     const Status status = m_context.SetRoot(std::move(root)); if (!status) return status;
-    m_screen = screen; return Status::Ok();
+    m_screen = screen;
+    m_route = route.empty() ? std::string(ScreenId(screen)) : std::move(route);
+    return Status::Ok();
 }
 
 Status GalgameUI::ApplyAnimationProperty(
@@ -305,15 +346,15 @@ Status GalgameUI::ApplyAnimationProperty(
 Status GalgameUI::ValidateAnimationProperty(
     const animation::TrackBinding& binding, const Variant& value,
     const UIRuntimeState& state) {
-    const auto target = ScreenFromId(state.surfaceId);
-    if (!target)
+    if (state.surfaceId.empty() ||
+        (!HasRouteTemplate(state.surfaceId) && !ScreenFromId(state.surfaceId)))
         return GalgameFailure("PXUI2817",
                               "Animation checkpoint references an unknown UI surface");
     GalgameUI candidate;
     candidate.m_templates = m_templates;
     candidate.m_studioAssetResolver = m_studioAssetResolver;
     candidate.m_studioComponentLoader = m_studioComponentLoader;
-    if (const Status installed = candidate.InstallCheckpointSurface(*target);
+    if (const Status installed = candidate.InstallCheckpointRoute(state.surfaceId);
         !installed)
         return installed;
     return candidate.ApplyAnimationProperty(binding, value);

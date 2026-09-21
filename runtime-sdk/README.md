@@ -55,6 +55,30 @@ const occupied = ctx.saves.list().filter((entry) => entry.exists);
 ctx.saves.load(slot.slot);
 ```
 
+Authored screens can render the same live VN data as the compatibility HUD,
+backlog, choice list, and settings controls. Snapshot reads are synchronous;
+observers receive one immediate value and then changed snapshots on the shared
+`frame.update` clock. Calling the returned function stops delivery.
+
+```ts
+const stop = ctx.session.observeDialogue((dialogue) => {
+  // Bind speaker/displayText/effect to any authored presentation.
+  console.log(dialogue.speaker, dialogue.displayText);
+});
+
+const choices = ctx.session.choices();
+if (choices.length > 0) ctx.session.selectChoice(choices[0].index);
+
+const entry = ctx.backlog.entries().at(-1);
+if (entry?.voice) ctx.backlog.replayVoice(entry.sequence);
+
+ctx.settings.set("textScale", 1.25);
+stop();
+```
+
+Backlog actions use stable `sequence` identities rather than physical array
+indices, so bounded-log eviction does not retarget replay or rollback actions.
+
 Native playback keeps FFmpeg demux/decode on its worker and feeds bounded audio
 and video frame queues. Production PDX5 packages store video as independently
 authenticated 256 KiB records, so AVIO seek/read decrypts only the requested

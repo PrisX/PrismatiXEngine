@@ -5,6 +5,8 @@
 #include "Engine/Progression/AwaitedWork.h"
 #include "Engine/Progression/GlobalProfileStore.h"
 #include "Engine/Resources/TypedDocument.h"
+#include "Engine/Script/ScriptFrameScheduler.h"
+#include "Engine/Script/VnModelSnapshots.h"
 #include "Engine/SDK/Packager.h"
 #include "Engine/Package/PackageManifest.h"
 #include "Engine/SDK/SourceMap.h"
@@ -516,6 +518,7 @@ bool PlayerApp::LoadLocale(std::string locale, const bool refreshPresentation) {
             (void)m_ui.ShowTitle();
             break;
         case ui::GalgameUI::Screen::Video:
+        case ui::GalgameUI::Screen::Custom:
             break;
     }
     return true;
@@ -613,7 +616,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         [this](const std::uint64_t handle){return m_session->Timeline().Playing(handle);});
     m_ui.SetControlRuntimeConfigurator([this](ui::Control& control){auto* rectangle=dynamic_cast<ui::VideoRect*>(&control);if(!rectangle)return;auto player=std::make_shared<video::VideoPlayer>(m_runtime.Renderer().Handle(),m_runtime.VFS());rectangle->SetPlayback({[player](const std::string_view path){return player->Open(std::string(path));},[player]{player->Close();},[player](const float delta){player->Update(delta);},[player]{return player->Playing();},[player]{return player->Texture();},[player]{return Vec2{static_cast<float>(player->Width()),static_cast<float>(player->Height())};}});});
     m_session->SetUIStateHandler(
-        [this] { return m_ui.CaptureGameplayRuntimeState(); },
+        [this] { return m_ui.CaptureRuntimeState(); },
         [this](const ui::UIRuntimeState& state) { return m_ui.RestoreRuntimeState(state); },
         [this](const ui::UIRuntimeState& state) { return m_ui.ValidateRuntimeState(state); });
     if (const auto projectText=m_runtime.VFS().ReadText("project.pxproject")) {
@@ -666,7 +669,14 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                        :std::nullopt;
         });
     if(m_boot.routeScenes.empty()||!m_boot.routeScenes.contains(m_boot.startRoute)){diag::Diagnostic diagnostic{.severity=diag::Severity::Fatal,.code="PXPLAYER5004",.category="Player.Boot",.message="Route table or startRoute is invalid"};diag::Emit(diagnostic);return false;}
-    for(const auto& [route,_]:m_boot.routeScenes){
+    std::set<std::string> runtimeRoutes;
+    for (const auto& [route, _] : m_boot.routeScenes)
+        runtimeRoutes.insert(route);
+    for (const std::string_view route :
+         {"title", "hud", "backlog", "save", "load", "gallery",
+          "settings", "video"})
+        runtimeRoutes.emplace(route);
+    for(const auto& route:runtimeRoutes){
         const Status registered=m_session->Routes().Register(route,[route](){return Result<std::unique_ptr<ui::Control>>::Success(std::make_unique<ui::Control>(std::string("Route:")+route));});
         if(!registered)return false;
     }
@@ -754,6 +764,164 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         }
         return Variant(std::move(values));
     };
+    m_scriptServices.queryDialogue = [this] {
+        return script::BuildDialogueModel(m_session->Dialogue());
+    };
+    m_scriptServices.queryChoices = [this] {
+        return script::BuildChoiceModels(m_session->VM());
+    };
+    m_scriptServices.queryBacklog = [this] {
+        return script::BuildBacklogModels(m_session->Backlog());
+    };
+    m_scriptServices.querySettings = [this] {
+        VariantArray locales;
+        locales.reserve(m_supportedLocales.size());
+        for (const auto& locale : m_supportedLocales)
+            locales.emplace_back(locale);
+        return Variant(VariantObject{
+            {"bgmVolume", Variant(m_settings.bgmVolume)},
+            {"seVolume", Variant(m_settings.seVolume)},
+            {"voiceVolume", Variant(m_settings.voiceVolume)},
+            {"textSpeedMs", Variant(m_settings.textSpeedMs)},
+            {"autoWaitMs", Variant(m_settings.autoWaitMs)},
+            {"skipReadOnly", Variant(m_settings.skipReadOnly)},
+            {"skipAfterChoices", Variant(m_settings.skipAfterChoices)},
+            {"fullscreen", Variant(m_settings.fullscreen)},
+            {"windowWidth", Variant(m_settings.windowWidth)},
+            {"windowHeight", Variant(m_settings.windowHeight)},
+            {"language", Variant(m_settings.language)},
+            {"textScale", Variant(m_settings.textScale)},
+            {"highContrast", Variant(m_settings.highContrast)},
+            {"reducedMotion", Variant(m_settings.reducedMotion)},
+            {"selfVoicing", Variant(m_settings.selfVoicing)},
+            {"supportedLocales", Variant(std::move(locales))}});
+    };
+    m_scriptServices.advanceDialogue = [this] {
+        if (m_appState != AppState::Game ||
+            m_session->VM().State() == vn::VMState::WaitingChoice)
+            return false;
+        m_session->Advance();
+        m_autoMode = false;
+        m_skipMode = false;
+        return true;
+    };
+    m_scriptServices.selectChoice = [this](const int index) {
+        const auto& choices = m_session->VM().Choices();
+        if (m_session->VM().State() != vn::VMState::WaitingChoice ||
+            index < 0 || static_cast<std::size_t>(index) >= choices.size())
+            return false;
+        m_session->SelectChoice(index);
+        return true;
+    };
+    m_scriptServices.replayBacklogVoice =
+        [this](const std::uint64_t sequence) {
+            const auto* entry = m_session->Backlog().Find(sequence);
+            if (!entry || entry->voice.empty()) return false;
+            const std::string path =
+                entry->voice.find('/') != std::string::npos
+                    ? entry->voice
+                    : m_session->VM().Config().voiceDir + entry->voice;
+            m_runtime.Audio().PlayVoice(path);
+            return true;
+        };
+    m_scriptServices.rollbackBacklog =
+        [this](const std::uint64_t sequence) {
+            return RollbackToBacklogSequence(sequence);
+        };
+    m_scriptServices.updateSetting =
+        [this](const std::string_view name, const Variant& value) {
+            const auto integer = [&value]() -> std::optional<int> {
+                if (const auto* exact = value.TryGet<std::int64_t>()) {
+                    if (*exact < (std::numeric_limits<int>::min)() ||
+                        *exact > (std::numeric_limits<int>::max)())
+                        return std::nullopt;
+                    return static_cast<int>(*exact);
+                }
+                if (const auto* number = value.TryGet<double>(); number &&
+                    std::isfinite(*number) && std::floor(*number) == *number &&
+                    *number >= (std::numeric_limits<int>::min)() &&
+                    *number <= (std::numeric_limits<int>::max)())
+                    return static_cast<int>(*number);
+                return std::nullopt;
+            };
+            const auto number = [&value]() -> std::optional<double> {
+                if (const auto* exact = value.TryGet<double>(); exact &&
+                    std::isfinite(*exact))
+                    return *exact;
+                if (const auto* exact = value.TryGet<std::int64_t>())
+                    return static_cast<double>(*exact);
+                return std::nullopt;
+            };
+            bool changed = false;
+            if (name == "bgmVolume") {
+                if (const auto v = integer()) {
+                    m_settings.bgmVolume = std::clamp(*v, 0, 128);
+                    m_runtime.Audio().SetBGMVolume(m_settings.bgmVolume);
+                    changed = true;
+                }
+            } else if (name == "seVolume") {
+                if (const auto v = integer()) {
+                    m_settings.seVolume = std::clamp(*v, 0, 128);
+                    m_runtime.Audio().SetSEVolume(m_settings.seVolume);
+                    changed = true;
+                }
+            } else if (name == "voiceVolume") {
+                if (const auto v = integer()) {
+                    m_settings.voiceVolume = std::clamp(*v, 0, 128);
+                    m_runtime.Audio().SetVoiceVolume(m_settings.voiceVolume);
+                    changed = true;
+                }
+            } else if (name == "textSpeedMs") {
+                if (const auto v = integer()) {
+                    m_settings.textSpeedMs = std::clamp(*v, 0, 120);
+                    m_session->VM().SetDefaultTextSpeed(m_settings.textSpeedMs);
+                    changed = true;
+                }
+            } else if (name == "autoWaitMs") {
+                if (const auto v = integer()) {
+                    m_settings.autoWaitMs = std::clamp(*v, 0, 60'000);
+                    changed = true;
+                }
+            } else if (name == "windowWidth" || name == "windowHeight") {
+                if (const auto v = integer()) {
+                    if (name == "windowWidth")
+                        m_settings.windowWidth = std::clamp(*v, 320, 16'384);
+                    else
+                        m_settings.windowHeight = std::clamp(*v, 180, 16'384);
+                    if (!m_settings.fullscreen)
+                        SDL_SetWindowSize(m_runtime.GetWindow().Handle(),
+                                          m_settings.windowWidth,
+                                          m_settings.windowHeight);
+                    changed = true;
+                }
+            } else if (name == "textScale") {
+                if (const auto v = number()) {
+                    m_settings.textScale =
+                        static_cast<float>(std::clamp(*v, 0.75, 2.0));
+                    changed = true;
+                }
+            } else if (name == "language") {
+                if (const auto* v = value.TryGet<std::string>())
+                    changed = LoadLocale(*v, true);
+            } else {
+                const auto* v = value.TryGet<bool>();
+                if (!v) return false;
+                if (name == "skipReadOnly") m_settings.skipReadOnly = *v;
+                else if (name == "skipAfterChoices")
+                    m_settings.skipAfterChoices = *v;
+                else if (name == "fullscreen") {
+                    m_settings.fullscreen = *v;
+                    SDL_SetWindowFullscreen(m_runtime.GetWindow().Handle(), *v);
+                } else if (name == "highContrast") m_settings.highContrast = *v;
+                else if (name == "reducedMotion") m_settings.reducedMotion = *v;
+                else if (name == "selfVoicing") {
+                    m_settings.selfVoicing = *v;
+                    if (!*v) m_speech.Stop();
+                } else return false;
+                changed = true;
+            }
+            return changed && SaveSettingsIfWritable();
+        };
     m_scriptServices.playVideo =
         [this](const std::string& path, const float volume,
                const bool skippable) -> std::uint64_t {
@@ -934,23 +1102,12 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         [this](const auto& binding,const Variant& value){return m_ui.ApplyAnimationProperty(binding,value);},
         validateUiAnimation);
     PX_LOG_DEBUG("Player boot: registering typed UI templates");
-    const auto registerTemplate=[this](ui::GalgameUI::Screen screen,const std::string& path){
+    const auto registerTemplate=[this](const std::string& route,const std::string& path){
         auto text=m_runtime.VFS().ReadText(path);if(!text){diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXPLAYER5003",.category="Player.UI",.message="Required UI template is missing: "+path};d.source.path=path;diag::Emit(d);return false;}
-        const Status status=m_ui.RegisterTemplate(screen,*text,path);if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);return status.IsOk();
+        const Status status=m_ui.RegisterRouteTemplate(route,*text,path);if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic);return status.IsOk();
     };
-    const auto scene=[this](const char* route)->std::string{const auto found=m_boot.routeScenes.find(route);return found==m_boot.routeScenes.end()?std::string{}:found->second;};
-    const auto registerOptional=[&](ui::GalgameUI::Screen screen,const char* route){
-        const std::string path=scene(route);
-        return path.empty()||registerTemplate(screen,path);
-    };
-    if(!registerTemplate(ui::GalgameUI::Screen::Title,m_boot.routeScenes.at(m_boot.startRoute))||
-       !registerOptional(ui::GalgameUI::Screen::HUD,"hud")||
-       !registerOptional(ui::GalgameUI::Screen::Backlog,"backlog")||
-       !registerOptional(ui::GalgameUI::Screen::Save,"save")||
-       !registerOptional(ui::GalgameUI::Screen::Load,"load")||
-       !registerOptional(ui::GalgameUI::Screen::Gallery,"gallery")||
-       !registerOptional(ui::GalgameUI::Screen::Settings,"settings")||
-       !registerOptional(ui::GalgameUI::Screen::Video,"video"))return false;
+    for (const auto& [route, path] : m_boot.routeScenes)
+        if (!registerTemplate(route, path)) return false;
     m_accessibilityAdapter = accessibility::CreatePlatformSemanticAdapter(
         m_runtime.GetWindow().Handle());
     if (!m_accessibilityAdapter) {
@@ -1302,7 +1459,8 @@ bool PlayerApp::LoadSlot(int slot) {
     m_script = candidateScript;
     m_appState = AppState::Game;
     m_autoMode = m_skipMode = m_hudHidden = false;
-    (void)m_ui.RefreshHUD(DialogueUI());
+    if (m_ui.CurrentRoute() == "hud" || m_ui.CurrentRoute() == "game")
+        (void)m_ui.RefreshHUD(DialogueUI());
     if (m_scriptHost) m_scriptHost->Emit("save.loaded", {{"slot", std::to_string(slot)}});
     PX_LOG_INFO("Loaded slot {}", slot);
     return true;
@@ -1430,7 +1588,8 @@ bool PlayerApp::ApplyRollback(const RollbackEntry& entry) {
     m_nvlLines = s.nvlLines;
     m_lastBacklogSequence = m_session->Backlog().LastSequence();
     m_autoMode = m_skipMode = false;
-    (void)m_ui.RefreshHUD(DialogueUI());
+    if (m_ui.CurrentRoute() == "hud" || m_ui.CurrentRoute() == "game")
+        (void)m_ui.RefreshHUD(DialogueUI());
     return true;
 }
 
@@ -1556,7 +1715,8 @@ void PlayerApp::OpenScreen(const std::string& route) {
     const Status routed=m_session->Routes().ShowModal(target);if(!routed){for(const auto& diagnostic:routed.Diagnostics())diag::Emit(diagnostic);return;}
 }
 
-void PlayerApp::PresentRoute(const std::string& route, const std::string& operation) {
+void PlayerApp::PresentRoute(const std::string& route,
+                             const std::string& /*operation*/) {
     std::string target=route;if(target=="saveload")target="load";
     const auto present = [this](const Status& status) {
         if (status) return true;
@@ -1564,11 +1724,6 @@ void PlayerApp::PresentRoute(const std::string& route, const std::string& operat
         m_quitRequested = true;
         return false;
     };
-    if (operation == "back") {
-        if (m_appState == AppState::Title) (void)present(m_ui.ShowTitle());
-        else (void)present(m_ui.ShowHUD(DialogueUI()));
-        return;
-    }
     if (target == "gallery") {
         auto items = GalleryItems();
         const auto unlocked = static_cast<std::size_t>(std::count_if(
@@ -1577,8 +1732,11 @@ void PlayerApp::PresentRoute(const std::string& route, const std::string& operat
             }));
         const Status status = m_ui.ShowGallery(std::move(items));
         if (!present(status)) return;
-        PX_LOG_INFO("Player gallery presented total={} unlocked={}",
-                    m_catalog.Gallery().size(), unlocked);
+        PX_LOG_INFO(
+            "Player gallery presented total={} unlocked={} base={} modal={} ui={}",
+            m_catalog.Gallery().size(), unlocked,
+            m_session->Routes().CurrentRoute(),
+            m_session->Routes().CurrentModalRoute(), m_ui.CurrentRoute());
     }
     else if (target == "save") (void)present(m_ui.ShowSaveLoad(true, SaveItems(true)));
     else if (target == "load") (void)present(m_ui.ShowSaveLoad(false, SaveItems(false)));
@@ -1586,6 +1744,7 @@ void PlayerApp::PresentRoute(const std::string& route, const std::string& operat
     else if (target == "backlog") (void)present(m_ui.ShowBacklog(BacklogItems()));
     else if (target == "title") { m_appState = AppState::Title; (void)present(m_ui.ShowTitle()); }
     else if (target == "hud" || target == "game") { m_appState = AppState::Game; (void)present(m_ui.ShowHUD(DialogueUI())); }
+    else (void)present(m_ui.ShowRoute(target));
 }
 
 void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
@@ -1718,14 +1877,102 @@ void PlayerApp::DriveE2EJourney() {
     }
     auto& input=m_runtime.GetInput();
     switch(m_e2eStage){
-        case E2EStage::AwaitTitle:
+        case E2EStage::AwaitTitle: {
             if(m_appState==AppState::Title){
+                const auto titleState=m_ui.CaptureRuntimeState();
+                if(!titleState.animation||titleState.animation->position<=0.0f)
+                    break;
+                PX_LOG_INFO("Player Phase 2 authored title animation advanced");
+                ui::ActionInvocation invocation;
+                invocation.action="acceptance.phase2-title";
+                invocation.context.sourceScene=std::string(m_ui.CurrentRoute());
+                const auto started=m_ui.Actions().Start(std::move(invocation));
+                if(!started){
+                    PX_LOG_ERROR("Player Phase 2 title Action failed to start");
+                    m_e2eFailed=true;m_e2eStage=E2EStage::Complete;
+                    m_quitRequested=true;break;
+                }
+                m_e2eStage=E2EStage::AwaitTitleAsync;
+            }
+            break;
+        }
+        case E2EStage::AwaitTitleAsync:
+            if(m_session->Routes().CurrentRoute()=="phone"){
+                const bool actualScene=
+                    m_ui.CurrentRoute()=="phone"&&
+                    m_ui.CurrentScreen()==ui::GalgameUI::Screen::Custom&&
+                    m_ui.Root()&&m_ui.Root()->Name()=="PhoneRoot";
+                if(!actualScene){
+                    PX_LOG_ERROR("Player arbitrary phone route did not install its authored scene");
+                    m_e2eFailed=true;m_e2eStage=E2EStage::Complete;
+                    m_quitRequested=true;break;
+                }
+                m_e2eCustomTitleRouteSeen=true;
+            }
+            if(m_e2eCustomTitleRouteSeen&&m_scriptHost&&
+               !m_scriptHost->HasPendingAction()&&
+               m_session->Routes().CurrentRoute()=="title"){
+                PX_LOG_INFO("Player Phase 2 title async and custom phone route complete");
                 input.InjectAction(InputAction::FocusNext);
                 input.InjectAction(InputAction::Accept);
                 m_e2eStage=E2EStage::AwaitGameReady;
             }
             break;
         case E2EStage::AwaitGameReady:
+            if(m_appState==AppState::Game&&m_profile.CGUnlocked("ending-rin")&&
+               m_scriptHost&&!m_scriptHost->HasPendingCommand()&&
+               !m_scriptHost->HasPendingAction()&&
+               m_session->Dialogue().Active()){
+                ui::ActionInvocation invocation;
+                invocation.action="acceptance.phase2-menu";
+                invocation.context.sourceScene=std::string(m_ui.CurrentRoute());
+                const auto started=m_ui.Actions().Start(std::move(invocation));
+                if(!started){
+                    PX_LOG_ERROR("Player Phase 2 menu Action failed to start");
+                    m_e2eFailed=true;m_e2eStage=E2EStage::Complete;
+                    m_quitRequested=true;break;
+                }
+                m_e2eStage=E2EStage::AwaitMenuAsync;
+            }
+            break;
+        case E2EStage::AwaitMenuAsync:
+            if(m_session->Routes().CurrentModalRoute()=="replay"){
+                const bool actualScene=
+                    m_ui.CurrentRoute()=="replay"&&
+                    m_ui.CurrentScreen()==ui::GalgameUI::Screen::Custom&&
+                    m_ui.Root()&&m_ui.Root()->Name()=="ReplayRoot";
+                if(!actualScene){
+                    PX_LOG_ERROR("Player arbitrary replay route did not install its authored scene");
+                    m_e2eFailed=true;m_e2eStage=E2EStage::Complete;
+                    m_quitRequested=true;break;
+                }
+                m_e2eCustomMenuRouteSeen=true;
+            }
+            if(m_e2eCustomMenuRouteSeen&&m_scriptHost&&
+               !m_scriptHost->HasPendingAction()&&
+               m_session->Routes().CurrentModalRoute().empty()){
+                bool consistent =
+                    m_session->Routes().ShowModal("replay").IsOk()&&
+                    SaveSlot(1,{})&&
+                    m_session->Routes().CloseModal().IsOk()&&
+                    m_session->Routes().Push("phone").IsOk()&&LoadSlot(1);
+                const auto restored=m_session->Routes().CaptureState();
+                consistent=consistent&&
+                    restored.stack==std::vector<std::string>{"hud"}&&
+                    restored.modals==std::vector<std::string>{"replay"}&&
+                    m_ui.CurrentRoute()=="replay"&&m_ui.Root()&&
+                    m_ui.Root()->Name()=="ReplayRoot";
+                if(!consistent){
+                    PX_LOG_ERROR("Player save/load did not restore the route and UI stack");
+                    m_e2eFailed=true;m_e2eStage=E2EStage::Complete;
+                    m_quitRequested=true;break;
+                }
+                (void)m_session->Routes().CloseModal();
+                PX_LOG_INFO("Player Phase 2 menu async and save/load stack complete");
+                m_e2eStage=E2EStage::AwaitPostMenuGameReady;
+            }
+            break;
+        case E2EStage::AwaitPostMenuGameReady:
             if(m_appState==AppState::Game&&m_profile.CGUnlocked("ending-rin")&&
                m_scriptHost&&!m_scriptHost->HasPendingCommand()&&
                !m_scriptHost->HasPendingAction()&&
@@ -1767,8 +2014,8 @@ void PlayerApp::DriveE2EJourney() {
             break;
         }
         case E2EStage::AwaitGallery:
-            if(m_ui.IsOverlay()&&
-               m_ui.CurrentScreen()==ui::GalgameUI::Screen::Gallery)
+            if(m_session->Routes().CurrentModalRoute()=="gallery"&&
+               m_ui.CurrentRoute()=="gallery")
                 m_e2eStage=E2EStage::CaptureGallery;
             break;
         case E2EStage::CloseGallery:
@@ -1777,7 +2024,7 @@ void PlayerApp::DriveE2EJourney() {
             m_e2eStage=E2EStage::AwaitOverlayClosed;
             break;
         case E2EStage::AwaitOverlayClosed:
-            if(!m_ui.IsOverlay()){
+            if(m_session->Routes().CurrentModalRoute().empty()){
                 PX_LOG_INFO("Player E2E journey complete name=catalog");
                 m_e2eStage=E2EStage::Complete;
                 m_quitRequested=true;
@@ -1835,26 +2082,12 @@ bool PlayerApp::VideoFrame(float dt) {
     }
 
     m_video->Update(dt);
-    const auto updateScript = [&] {
-        if (!m_scriptHost) return;
-        (void)m_scriptHost->Emit(
-            "frame.update", {{"delta", std::to_string(dt)}});
-        const bool hadPending = m_scriptHost->HasPendingCommand() ||
-                                m_scriptHost->HasPendingAction();
-        m_scriptHost->Update(dt);
-        if (hadPending && !m_scriptHost->HasPendingCommand() &&
-            !m_scriptHost->HasPendingAction() &&
-            m_session->VM().State() == vn::VMState::WaitingExternal)
-            m_session->VM().NotifyExternalDone();
-    };
-
     const bool skipRequested =
         m_videoSkippable &&
         (input.ActionPressed(InputAction::Advance) ||
          input.ActionPressed(InputAction::Cancel));
     if (skipRequested) m_video->Skip();
 
-    updateScript();
     const video::PlaybackState state = m_video->State();
     if (state == video::PlaybackState::Finished ||
         state == video::PlaybackState::Stopped ||
@@ -1869,8 +2102,6 @@ bool PlayerApp::VideoFrame(float dt) {
                 state == video::PlaybackState::Failed ? m_video->LastError()
                                                       : std::string{});
             m_scriptVideoHandle = 0;
-            // Resolve an await after publishing the terminal handle state.
-            updateScript();
         }
         m_video->Close();
         if (vmWaiting) m_session->VM().NotifyVideoDone();
@@ -1888,7 +2119,9 @@ bool PlayerApp::VideoFrame(float dt) {
     return true;
 }
 
-void PlayerApp::GameFrame(float dt, std::uint64_t now) {
+void PlayerApp::ProcessScriptSafePoint() {
+    // Loads are exclusive: preserving their restored continuation and route
+    // state takes precedence over a save requested by the outgoing state.
     if (m_pendingScriptLoad) {
         const int slot = *m_pendingScriptLoad;
         m_pendingScriptLoad.reset();
@@ -1902,6 +2135,23 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
             slot, graphics::CaptureThumbnailPng(
                       m_runtime.Renderer().Handle(), 256, 144));
     }
+}
+
+void PlayerApp::UpdateScriptScheduler(const float dt) {
+    if (m_scriptHost) {
+        script::AdvanceScriptFrame(
+            *m_scriptHost, dt,
+            [this] { ProcessScriptSafePoint(); },
+            [this] {
+                if (m_session->VM().State() == vn::VMState::WaitingExternal)
+                    m_session->VM().NotifyExternalDone();
+            });
+        return;
+    }
+    ProcessScriptSafePoint();
+}
+
+void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     px::Input& input = m_runtime.GetInput();
 
     if (input.KeyPressed(SDL_SCANCODE_F9)) LoadSlot(0);
@@ -1955,7 +2205,11 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         // UI actions may select a branch synchronously. Do not render the
         // previous choice snapshot for the remainder of this frame.
         syncChoiceTexts();
-        if (m_ui.IsOverlay()) { m_session->Stage().Render(); m_ui.Render(m_runtime.Renderer()); return; }
+        if (!m_session->Routes().CurrentModalRoute().empty()) {
+            m_session->Stage().Render();
+            m_ui.Render(m_runtime.Renderer());
+            return;
+        }
         if (!uiConsumed && (input.LeftClick() || advanceKey) &&
                m_session->VM().State() != vn::VMState::WaitingChoice) {
             m_session->Advance();
@@ -1992,7 +2246,6 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     }
 
     m_session->Update(now, dt);
-    if(m_scriptHost){m_scriptHost->Emit("frame.update",{{"delta",std::to_string(dt)}});const bool hadPending=m_scriptHost->HasPendingCommand()||m_scriptHost->HasPendingAction();m_scriptHost->Update(dt);if(hadPending&&!m_scriptHost->HasPendingCommand()&&!m_scriptHost->HasPendingAction())m_session->VM().NotifyExternalDone();}
     syncChoiceTexts();
 
     // New dialogue lines feed the NVL page and the rollback ring.
@@ -2063,6 +2316,10 @@ void PlayerApp::MainLoop() {
             SDL_SetWindowFullscreen(m_runtime.GetWindow().Handle(), m_settings.fullscreen);
         }
 
+        // Script jobs and accepted save/load requests have one application
+        // clock and safe point, independent of the currently presented route.
+        UpdateScriptScheduler(dt);
+
         if(m_appState==AppState::BootSplash){
             SplashFrame(dt);
             m_runtime.EndFrame();
@@ -2086,15 +2343,35 @@ void PlayerApp::MainLoop() {
             }
         }
 
-        if (m_appState == AppState::Game && !m_ui.IsOverlay()) {
+        bool modalOpen =
+            !m_session->Routes().CurrentModalRoute().empty();
+        const std::string_view currentRoute =
+            m_session->Routes().CurrentRoute();
+        const bool gameplayRoute =
+            currentRoute == "hud" || currentRoute == "game";
+
+        if (m_appState == AppState::Game && !modalOpen && gameplayRoute) {
             for (const auto& [scancode, route] : m_screenTriggers)
                 if (input.KeyPressed(scancode)) OpenScreen(route);
+            // An input binding may have opened a modal during this frame. Do
+            // not let the gameplay HUD refresh replace its authored scene.
+            modalOpen = !m_session->Routes().CurrentModalRoute().empty();
         }
 
-        if (m_ui.IsOverlay() && m_ui.CurrentScreen() != ui::GalgameUI::Screen::Video) {
+        if (modalOpen &&
+            m_ui.CurrentScreen() != ui::GalgameUI::Screen::Video) {
             if (input.RightClick() || input.KeyPressed(SDL_SCANCODE_ESCAPE)) {
                 HandleUIAction({"overlay.close", {}});
             }
+            ScreensFrame(dt);
+            m_runtime.EndFrame();
+            continue;
+        }
+
+        // A non-modal custom route (phone, replay selector, custom menu, ...)
+        // owns presentation while the story domain remains paused. The shared
+        // script scheduler above intentionally continues to run.
+        if (m_appState == AppState::Game && !gameplayRoute) {
             ScreensFrame(dt);
             m_runtime.EndFrame();
             continue;

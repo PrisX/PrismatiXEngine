@@ -351,6 +351,80 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     services.timeline = &timeline;
     services.renderer = &renderer;
     services.stage = &stage;
+    int advanceRequests = 0;
+    int selectedChoice = -1;
+    std::uint64_t replayedSequence = 0;
+    std::uint64_t rollbackSequence = 0;
+    std::string updatedSetting;
+    px::Variant updatedSettingValue;
+    services.queryDialogue = [] {
+        return px::Variant(px::VariantObject{
+            {"active", px::Variant(true)},
+            {"speaker", px::Variant("Yuki")},
+            {"fullText", px::Variant("Hello")},
+            {"displayText", px::Variant("Hel")},
+            {"voice", px::Variant("Content/Voice/001.ogg")},
+            {"currentChar", px::Variant(3)},
+            {"totalChars", px::Variant(5)},
+            {"progress", px::Variant(0.6)},
+            {"finished", px::Variant(false)},
+            {"textColor", px::Variant(px::VariantObject{
+                 {"r", px::Variant(245)}, {"g", px::Variant(248)},
+                 {"b", px::Variant(255)}, {"a", px::Variant(255)}})},
+            {"outlineColor", px::Variant(px::VariantObject{
+                 {"r", px::Variant(0)}, {"g", px::Variant(0)},
+                 {"b", px::Variant(0)}, {"a", px::Variant(255)}})},
+            {"effect", px::Variant("wave")},
+            {"effectProgress", px::Variant(0.4)}});
+    };
+    services.queryChoices = [] {
+        return px::Variant(px::VariantArray{px::Variant(px::VariantObject{
+            {"index", px::Variant(0)}, {"text", px::Variant("Go")},
+            {"target", px::Variant("route-a")},
+            {"sourceId", px::Variant("story")},
+            {"operationId", px::Variant("choice-1")}})});
+    };
+    services.queryBacklog = [] {
+        return px::Variant(px::VariantArray{px::Variant(px::VariantObject{
+            {"sequence", px::Variant(17)}, {"speaker", px::Variant("Yuki")},
+            {"text", px::Variant("Hello")},
+            {"voice", px::Variant("Content/Voice/001.ogg")},
+            {"isChoice", px::Variant(false)},
+            {"sourceId", px::Variant("story")},
+            {"operationId", px::Variant("line-1")}})});
+    };
+    services.querySettings = [] {
+        return px::Variant(px::VariantObject{
+            {"bgmVolume", px::Variant(96)}, {"seVolume", px::Variant(110)},
+            {"voiceVolume", px::Variant(128)}, {"textSpeedMs", px::Variant(28)},
+            {"autoWaitMs", px::Variant(1400)}, {"skipReadOnly", px::Variant(true)},
+            {"skipAfterChoices", px::Variant(false)},
+            {"fullscreen", px::Variant(false)}, {"windowWidth", px::Variant(1280)},
+            {"windowHeight", px::Variant(720)}, {"language", px::Variant("zh-TW")},
+            {"textScale", px::Variant(1.0)}, {"highContrast", px::Variant(false)},
+            {"reducedMotion", px::Variant(false)}, {"selfVoicing", px::Variant(false)},
+            {"supportedLocales", px::Variant(px::VariantArray{
+                 px::Variant("zh-TW"), px::Variant("ja-JP")})}});
+    };
+    services.advanceDialogue = [&] { ++advanceRequests; return true; };
+    services.selectChoice = [&](const int index) {
+        selectedChoice = index;
+        return index == 0;
+    };
+    services.replayBacklogVoice = [&](const std::uint64_t sequence) {
+        replayedSequence = sequence;
+        return sequence == 17;
+    };
+    services.rollbackBacklog = [&](const std::uint64_t sequence) {
+        rollbackSequence = sequence;
+        return sequence == 17;
+    };
+    services.updateSetting = [&](const std::string_view name,
+                                 const px::Variant& value) {
+        updatedSetting = name;
+        updatedSettingValue = value.Clone();
+        return true;
+    };
     services.console = [&console](const px::script::ConsoleMessage& message) {
         console.push_back(message);
     };
@@ -374,6 +448,27 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
                      console[0].text == "sandbox-ready 7" &&
                      console[1].level == px::script::ConsoleLevel::Warning,
                  "console bridge should preserve messages and levels");
+    suite.Expect(host.RunString(R"js(
+        const dialogue = Engine.GetDialogue();
+        const choices = Engine.GetChoices();
+        const backlog = Engine.GetBacklog();
+        const settings = Engine.GetSettings();
+        if (dialogue.speaker !== "Yuki" || dialogue.displayText !== "Hel" ||
+            choices[0].operationId !== "choice-1" ||
+            backlog[0].sequence !== 17 || settings.language !== "zh-TW") {
+            throw new Error("VN model snapshots were not exposed");
+        }
+        if (!Engine.AdvanceDialogue() || !Engine.SelectChoice(0) ||
+            !Engine.ReplayBacklogVoice(17) || !Engine.RollbackBacklog(17) ||
+            !Engine.SetSetting("textScale", 1.25)) {
+            throw new Error("VN model operations were not exposed");
+        }
+    )js", "javascript-vn-models") &&
+                     advanceRequests == 1 && selectedChoice == 0 &&
+                     replayedSequence == 17 && rollbackSequence == 17 &&
+                     updatedSetting == "textScale" &&
+                     updatedSettingValue == px::Variant(1.25),
+                 "public VN models and item operations should bridge through ScriptServices");
     suite.Expect(host.RunString(R"js(
         Engine.SetVariable("js.runtime", { score: 7, flags: [true, "ready"] }, "session");
         const restored = Engine.GetVariable("js.runtime");

@@ -3,6 +3,8 @@ import type {PrismatiXEngine, RuntimeValue} from "../src/index.js";
 
 const calls: string[] = [];
 const variables = new Map<string, RuntimeValue>();
+const eventHandlers = new Map<string, Array<(payload: RuntimeValue) => void | Promise<void>>>();
+let dialogueText = "Hel";
 let commandHandler: ((args: Record<string, RuntimeValue>) => unknown) | undefined;
 let actionHandler: ((args: Record<string, RuntimeValue>, context: {preview: boolean}) => unknown) | undefined;
 
@@ -10,9 +12,17 @@ const engine = {
   log: () => undefined,
   RegisterCommand: (_id: string, handler: (args: Record<string, RuntimeValue>) => unknown) => { commandHandler = handler; },
   RegisterAction: (_id: string, handler: (args: Record<string, RuntimeValue>, context: {preview: boolean}) => unknown) => { actionHandler = handler; },
-  on: () => undefined,
+  on: (event: string, handler: (payload: RuntimeValue) => void | Promise<void>) => {
+    const handlers = eventHandlers.get(event) ?? [];
+    handlers.push(handler);
+    eventHandlers.set(event, handlers);
+  },
   emit: async (_event: string, payload?: RuntimeValue) => { calls.push(`emit:${JSON.stringify(payload)}`); },
-  On: () => undefined,
+  On: (event: string, handler: (payload: RuntimeValue) => void | Promise<void>) => {
+    const handlers = eventHandlers.get(event) ?? [];
+    handlers.push(handler);
+    eventHandlers.set(event, handlers);
+  },
   Emit: async () => undefined,
   GetVariable: (name: string) => variables.get(name),
   SetVariable: (name: string, value: RuntimeValue, scope?: string) => { variables.set(name, value); calls.push(`var:${name}:${scope ?? "session"}`); },
@@ -31,6 +41,27 @@ const engine = {
   SceneUnlocked: () => false,
   UnlockCG: () => undefined,
   UnlockScene: () => undefined,
+  GetDialogue: () => ({
+    active: true, speaker: "Yuki", fullText: "Hello", displayText: dialogueText,
+    voice: "Assets/Voice/001.ogg", currentChar: dialogueText.length, totalChars: 5,
+    progress: dialogueText.length / 5, finished: dialogueText === "Hello",
+    textColor: {r: 245, g: 248, b: 255, a: 255},
+    outlineColor: {r: 0, g: 0, b: 0, a: 255}, effect: "wave", effectProgress: 0.4,
+  }),
+  GetChoices: () => [{index: 0, text: "Go", target: "route-a", sourceId: "story", operationId: "choice-1"}],
+  AdvanceDialogue: () => { calls.push("advance"); return true; },
+  SelectChoice: (index: number) => { calls.push(`choice:${index}`); return index === 0; },
+  GetBacklog: () => [{sequence: 17, speaker: "Yuki", text: "Hello", voice: "Assets/Voice/001.ogg", isChoice: false, sourceId: "story", operationId: "line-1"}],
+  ReplayBacklogVoice: (sequence: number) => { calls.push(`replay:${sequence}`); return sequence === 17; },
+  RollbackBacklog: (sequence: number) => { calls.push(`rollback:${sequence}`); return sequence === 17; },
+  GetSettings: () => ({
+    bgmVolume: 96, seVolume: 110, voiceVolume: 128, textSpeedMs: 28,
+    autoWaitMs: 1400, skipReadOnly: true, skipAfterChoices: false,
+    fullscreen: false, windowWidth: 1280, windowHeight: 720, language: "zh-TW",
+    textScale: 1, highContrast: false, reducedMotion: false, selfVoicing: false,
+    supportedLocales: ["zh-TW", "ja-JP"], custom: {routeHints: true},
+  }),
+  SetSetting: (name: string, value: RuntimeValue) => { calls.push(`setting:${name}:${JSON.stringify(value)}`); return true; },
   PlaySE: () => undefined,
   PlayVoice: (path: string) => { calls.push(`voice:${path}`); },
   StopVoice: () => { calls.push("voice-stop"); },
@@ -131,6 +162,26 @@ if (ctx.variables.get("affection") !== 12) throw new Error("variables facade is 
 if (!ctx.assets.exists("Assets/ok.txt")) throw new Error("asset facade is not wired");
 ctx.ui.push("settings");
 ctx.ui.setTransition("title", "hud", {preset: "tile", durationSeconds: 0.8});
+if (ctx.session.dialogue().speaker !== "Yuki" || ctx.session.choices()[0]?.target !== "route-a" ||
+    !ctx.session.advance() || !ctx.session.selectChoice(0))
+  throw new Error("session model facade is not wired");
+if (ctx.backlog.entries()[0]?.sequence !== 17 || !ctx.backlog.replayVoice(17) ||
+    !ctx.backlog.rollback(17))
+  throw new Error("backlog model facade is not wired");
+if (ctx.settings.get().language !== "zh-TW" || !ctx.settings.set("textScale", 1.25))
+  throw new Error("settings model facade is not wired");
+const observedDialogue: string[] = [];
+const stopObservingDialogue = ctx.session.observeDialogue(
+  (model) => observedDialogue.push(model.displayText),
+);
+dialogueText = "Hello";
+for (const handler of eventHandlers.get("frame.update") ?? []) await handler({delta: 0.016});
+for (const handler of eventHandlers.get("frame.update") ?? []) await handler({delta: 0.016});
+stopObservingDialogue();
+dialogueText = "ignored";
+for (const handler of eventHandlers.get("frame.update") ?? []) await handler({delta: 0.016});
+if (observedDialogue.join("|") !== "Hel|Hello")
+  throw new Error(`observable dialogue model is not change-filtered: ${observedDialogue.join("|")}`);
 ctx.audio.playBGM("Assets/BGM/theme.ogg");
 ctx.audio.playVoice("Assets/Voice/001.ogg");
 ctx.audio.stopVoice();
@@ -185,6 +236,11 @@ const expected = [
   "var:affection:profile",
   "push:settings",
   "route-effect:title:hud",
+  "advance",
+  "choice:0",
+  "replay:17",
+  "rollback:17",
+  "setting:textScale:1.25",
   "bgm:Assets/BGM/theme.ogg",
   "voice:Assets/Voice/001.ogg",
   "voice-stop",

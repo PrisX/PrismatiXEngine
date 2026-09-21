@@ -19,6 +19,7 @@
 #include <future>
 #include <functional>
 #include <iostream>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -305,6 +306,51 @@ void CreateProjectFixture(const std::filesystem::path& root,
     Copy(fontSource, root / "Content/Fonts/NotoSansTC-Bold.ttf");
     Copy(imageSource, root / "Assets/ending.png");
 
+    auto titleUi = nlohmann::json::parse(Read(root / "Content/UI/Title.pxui"));
+    const std::string titleRootId = titleUi.at("rootId").get<std::string>();
+    titleUi["animations"] = {
+        {"clips", nlohmann::json::array({{
+            {"id", "a1000000-0000-4000-8000-000000000001"},
+            {"name", "Title pulse"}, {"duration", 0.5}, {"loop", true},
+            {"tracks", nlohmann::json::array({{
+                {"id", "a1000000-0000-4000-8000-000000000002"},
+                {"nodeId", titleRootId}, {"property", "opacity"},
+                {"keys", nlohmann::json::array({
+                    {{"id", "a1000000-0000-4000-8000-000000000003"},
+                     {"time", 0.0}, {"value", 0.82}, {"easing", "linear"},
+                     {"interpolation", "linear"}},
+                    {{"id", "a1000000-0000-4000-8000-000000000004"},
+                     {"time", 0.5}, {"value", 1.0}, {"easing", "easeInOut"},
+                     {"interpolation", "linear"}}})}}})}}})},
+        {"stateMachine", {
+            {"entryStateId", "a1000000-0000-4000-8000-000000000005"},
+            {"parameters", nlohmann::json::array()},
+            {"states", nlohmann::json::array({{
+                {"id", "a1000000-0000-4000-8000-000000000005"},
+                {"name", "Animated"},
+                {"clipId", "a1000000-0000-4000-8000-000000000001"},
+                {"position", {{"x", 80}, {"y", 80}}}}})},
+            {"transitions", nlohmann::json::array()}}}};
+    Write(root / "Content/UI/Title.pxui", titleUi.dump(2));
+
+    auto phoneUi = titleUi;
+    phoneUi["id"] = "a2000000-0000-4000-8000-000000000001";
+    phoneUi["name"] = "Phone";
+    for (auto& node : phoneUi["nodes"])
+        if (node.at("id").get<std::string>() == titleRootId)
+            node["name"] = "PhoneRoot";
+    phoneUi.erase("animations");
+    Write(root / "Content/UI/Phone.pxui", phoneUi.dump(2));
+
+    auto replayUi = titleUi;
+    replayUi["id"] = "a3000000-0000-4000-8000-000000000001";
+    replayUi["name"] = "Replay selector";
+    for (auto& node : replayUi["nodes"])
+        if (node.at("id").get<std::string>() == titleRootId)
+            node["name"] = "ReplayRoot";
+    replayUi.erase("animations");
+    Write(root / "Content/UI/Replay.pxui", replayUi.dump(2));
+
     Write(root / "Content/Extensions/default.pxextension", R"({
       "format":"PrismatiXExtension","schemaRevision":2,
       "id":"player-catalog-native-acceptance",
@@ -330,6 +376,16 @@ void CreateProjectFixture(const std::filesystem::path& root,
            "required":true,"default":null,"enum":[],"resourceFilter":"image/*",
            "editorHint":"resource","range":null}
         ]
+      },{
+        "id":"acceptance.phase2-title","displayName":"Phase 2 Title",
+        "description":"Exercises title async and an arbitrary route.",
+        "category":"Tests","reentry":"ignoreWhileRunning",
+        "capabilities":["runtime","ui"],"parameters":[]
+      },{
+        "id":"acceptance.phase2-menu","displayName":"Phase 2 Menu",
+        "description":"Exercises menu async and public VN models.",
+        "category":"Tests","reentry":"ignoreWhileRunning",
+        "capabilities":["runtime","ui"],"parameters":[]
       }]
     })");
     Write(root / "Content/Extensions/acceptance.js", R"(
@@ -345,6 +401,28 @@ Engine.RegisterAction("acceptance.packaged-action", async (args, context) => {
   const result = Engine.GetVariable("packaged_action_result");
   if (result !== 6) throw new Error("unexpected variable result");
   Engine.log("packaged-action-complete", result, args.asset.id, args.asset.path, context.scene, context.preview);
+});
+Engine.RegisterAction("acceptance.phase2-title", async () => {
+  await Engine.WaitSeconds(0.05);
+  if (!Engine.PushRoute("phone")) throw new Error("phone route rejected");
+  await Engine.WaitSeconds(0.25);
+  if (!Engine.BackRoute()) throw new Error("phone route back rejected");
+  Engine.log("phase2-title-async-complete");
+});
+Engine.RegisterAction("acceptance.phase2-menu", async () => {
+  const dialogue = Engine.GetDialogue();
+  const choices = Engine.GetChoices();
+  const backlog = Engine.GetBacklog();
+  const settings = Engine.GetSettings();
+  if (!dialogue.active || !Array.isArray(choices) || backlog.length < 1)
+    throw new Error("public VN models unavailable");
+  if (!Engine.ShowModal("replay")) throw new Error("replay modal rejected");
+  await Engine.WaitSeconds(0.25);
+  if (!Engine.SetSetting("textScale", settings.textScale))
+    throw new Error("public settings update rejected");
+  if (!Engine.CloseModal()) throw new Error("replay modal close rejected");
+  Engine.log("phase2-menu-async-complete", dialogue.speaker, backlog.length,
+             settings.language);
 });
 )");
 
@@ -418,7 +496,11 @@ Engine.RegisterAction("acceptance.packaged-action", async (args, context) => {
       "defaultLocale":"zh-TW","supportedLocales":["zh-TW","ja-JP"],
       "storyIndex":"Story/story.pxindex","gameCatalog":"Content/game.pxgame",
       "extensions":["Content/Extensions/default.pxextension"],
-      "uiEntryPoints":{"title":"Content/UI/Title.pxui"},
+      "uiEntryPoints":{
+        "title":"Content/UI/Title.pxui",
+        "phone":"Content/UI/Phone.pxui",
+        "replay":"Content/UI/Replay.pxui"
+      },
       "assets":[{
         "id":"33333333-3333-4333-8333-333333333333",
         "name":"Ending","kind":"cg","source":"Assets/ending.png",
@@ -464,7 +546,9 @@ px::sdk::PackageRequest PackageRequest(const std::filesystem::path& root,
     request.startRoute = "title";
     request.routes = {{"title", "Content/UI/Title.pxui"},
                       {"hud", "Content/UI/HUD.pxui"},
-                      {"gallery", "Content/UI/Gallery.pxui"}};
+                      {"gallery", "Content/UI/Gallery.pxui"},
+                      {"phone", "Content/UI/Phone.pxui"},
+                      {"replay", "Content/UI/Replay.pxui"}};
     request.contentVersion = "player-catalog-native-acceptance-v1";
     request.saveVersion = 1;
     request.encryption = false;
@@ -486,6 +570,8 @@ px::sdk::PackageRequest PackageRequest(const std::filesystem::path& root,
         "Story/Entry.ja.pxstory",
         "Content/UI/Gallery.pxui",
         "Content/UI/HUD.pxui",
+        "Content/UI/Phone.pxui",
+        "Content/UI/Replay.pxui",
         "Content/UI/Title.pxui",
         "Story/Entry.pxstory",
         "Story/story.pxindex",
@@ -555,6 +641,19 @@ int main(int argc, char* argv[]) {
         suite.Require(titleReady,
                       "native Player reaches the title route");
 
+        suite.Require(
+            WaitForLog(log,
+                       "Player Phase 2 authored title animation advanced"),
+            "the authored title animation advances through the public UI scene contract");
+        suite.Require(
+            WaitForLog(log,
+                       "[javascript] phase2-title-async-complete"),
+            "a public async Action advances while the animated title route owns presentation");
+        suite.Require(
+            WaitForLog(log,
+                       "Player Phase 2 title async and custom phone route complete"),
+            "the packaged Player installs and renders an arbitrary authored phone route");
+
         suite.Require(WaitForLog(log, "Player game started script=Runtime/Locales/zh-TW/main.pxir"),
                       "automated native input activates Start and runs packaged Runtime IR");
         suite.Require(WaitForLog(log,
@@ -565,6 +664,13 @@ int main(int argc, char* argv[]) {
                 log,
                 "[javascript] packaged-action-complete 6 33333333-3333-4333-8333-333333333333 Assets/ending.png Runtime/Locales/zh-TW/main.pxir false"),
             "packaged Runtime IR dispatches the typed JavaScript Action with exact Player context, resolved UUID resource, and observable variable side effect");
+        suite.Require(
+            WaitForLog(log, "[javascript] phase2-menu-async-complete Rin 1 zh-TW"),
+            "a custom replay menu reads public dialogue/backlog/settings models and completes async while modal");
+        suite.Require(
+            WaitForLog(log,
+                       "Player Phase 2 menu async and save/load stack complete"),
+            "save/load restores the exact custom modal route and authored UI surface stack");
         suite.Require(
             WaitForLog(log,
                        "Player E2E locale switched locale=ja-JP text=こんにちは"),

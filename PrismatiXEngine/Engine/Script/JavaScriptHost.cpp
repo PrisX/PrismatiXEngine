@@ -1527,6 +1527,76 @@ public:
             }
             return JS_ThrowRangeError(context, "unknown profile operation");
         }
+        if (operation.starts_with("model.")) {
+            std::function<Variant()>* query = nullptr;
+            const char* unavailable = "VN model service is unavailable";
+            if (operation == "model.dialogue")
+                query = &services.queryDialogue;
+            else if (operation == "model.choices")
+                query = &services.queryChoices;
+            else if (operation == "model.backlog")
+                query = &services.queryBacklog;
+            else if (operation == "model.settings")
+                query = &services.querySettings;
+            else
+                return JS_ThrowRangeError(context, "unknown VN model operation");
+            if (!*query) return JS_ThrowInternalError(context, "%s", unavailable);
+            Variant snapshot = (*query)();
+            if (!IsJsonValue(snapshot))
+                return JS_ThrowInternalError(
+                    context, "VN model service returned a non-JSON value");
+            return ToJavaScript(snapshot);
+        }
+        if (operation == "session.advance") {
+            if (!services.advanceDialogue)
+                return JS_ThrowInternalError(
+                    context, "session advance service is unavailable");
+            return JS_NewBool(context, services.advanceDialogue());
+        }
+        if (operation == "session.selectChoice") {
+            if (!IntegerArgument(count, values, 0, integer) || integer < 0 ||
+                integer > (std::numeric_limits<int>::max)())
+                return JS_ThrowRangeError(
+                    context, "SelectChoice requires a non-negative choice index");
+            if (!services.selectChoice)
+                return JS_ThrowInternalError(
+                    context, "choice selection service is unavailable");
+            return JS_NewBool(
+                context, services.selectChoice(static_cast<int>(integer)));
+        }
+        if (operation == "backlog.replayVoice" ||
+            operation == "backlog.rollback") {
+            if (!IntegerArgument(count, values, 0, integer) || integer <= 0)
+                return JS_ThrowRangeError(
+                    context, "backlog operation requires a positive sequence");
+            const auto sequence = static_cast<std::uint64_t>(integer);
+            if (operation == "backlog.replayVoice") {
+                if (!services.replayBacklogVoice)
+                    return JS_ThrowInternalError(
+                        context, "backlog voice service is unavailable");
+                return JS_NewBool(context,
+                                  services.replayBacklogVoice(sequence));
+            }
+            if (!services.rollbackBacklog)
+                return JS_ThrowInternalError(
+                    context, "backlog rollback service is unavailable");
+            return JS_NewBool(context, services.rollbackBacklog(sequence));
+        }
+        if (operation == "settings.set") {
+            if (!StringArgument(count, values, 0, first) || first.empty() ||
+                count < 2)
+                return JS_ThrowTypeError(
+                    context, "SetSetting requires a setting name and value");
+            auto value = FromJavaScript(values[1]);
+            if (!value || !IsJsonValue(*value))
+                return JS_ThrowTypeError(
+                    context, "SetSetting received an unsupported value");
+            if (!services.updateSetting)
+                return JS_ThrowInternalError(
+                    context, "settings update service is unavailable");
+            return JS_NewBool(context,
+                              services.updateSetting(first, *value));
+        }
         if (operation.starts_with("audio.")) {
             if (!services.audio)
                 return JS_ThrowInternalError(context, "AudioEngine is unavailable");
@@ -2678,6 +2748,15 @@ public:
                 SceneUnlocked: { value: bindRuntime("profile.sceneUnlocked") },
                 UnlockCG: { value: bindRuntime("profile.unlockCG") },
                 UnlockScene: { value: bindRuntime("profile.unlockScene") },
+                GetDialogue: { value: bindRuntime("model.dialogue") },
+                GetChoices: { value: bindRuntime("model.choices") },
+                AdvanceDialogue: { value: bindRuntime("session.advance") },
+                SelectChoice: { value: bindRuntime("session.selectChoice") },
+                GetBacklog: { value: bindRuntime("model.backlog") },
+                ReplayBacklogVoice: { value: bindRuntime("backlog.replayVoice") },
+                RollbackBacklog: { value: bindRuntime("backlog.rollback") },
+                GetSettings: { value: bindRuntime("model.settings") },
+                SetSetting: { value: bindRuntime("settings.set") },
                 PlaySE: { value: bindRuntime("audio.playSE") },
                 PlayVoice: { value: bindRuntime("audio.playVoice") },
                 StopVoice: { value: bindRuntime("audio.stopVoice") },

@@ -838,6 +838,23 @@ int main() {
     playerUi.SetUiAssetResolver([](const std::string_view id) -> std::optional<std::string> { return id == "66666666-6666-4666-8666-666666666666" ? std::optional<std::string>{ "Content/logo.png" } : std::nullopt; });
     Check(playerUi.RegisterTemplate(px::ui::GalgameUI::Screen::Title, scene, "Content/UI/Title.pxui").IsOk(), "Player UI entry accepts a packaged UI document template");
     Check(playerUi.ShowTitle().IsOk(), "Player title route installs through the shared UI document application");
+    auto phoneScene = nlohmann::json::parse(scene);
+    phoneScene["name"] = "Phone";
+    phoneScene["nodes"][0]["name"] = "PhoneRoot";
+    Check(playerUi.RegisterRouteTemplate("phone", phoneScene.dump(),
+                                         "Content/UI/Phone.pxui").IsOk(),
+          "Player UI accepts an arbitrary authored route template");
+    Check(playerUi.ShowRoute("phone").IsOk() &&
+              playerUi.CurrentScreen() == px::ui::GalgameUI::Screen::Custom &&
+              playerUi.CurrentRoute() == "phone" && playerUi.Root() &&
+              playerUi.Root()->Name() == "PhoneRoot",
+          "arbitrary routes install their real authored scene instead of a placeholder");
+    const auto phoneCheckpoint = playerUi.CaptureRuntimeState();
+    Check(phoneCheckpoint.surfaceId == "phone" && playerUi.ShowTitle().IsOk() &&
+              playerUi.RestoreRuntimeState(phoneCheckpoint).IsOk() &&
+              playerUi.CurrentRoute() == "phone" && playerUi.Root() &&
+              playerUi.Root()->Name() == "PhoneRoot",
+          "arbitrary route identity and UI state survive a screen checkpoint restore");
     px::ui::ActionInvocation playerStart;
     playerStart.action = "game.start";
     playerStart.context.sourceScene = "Content/UI/Title.pxui";

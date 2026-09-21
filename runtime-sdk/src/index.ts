@@ -237,6 +237,67 @@ export interface SaveSlotInfo {
   readonly hasThumbnail: boolean;
 }
 
+/** Read-only dialogue state for authored HUDs and non-standard presentations. */
+export interface DialogueModel {
+  readonly active: boolean;
+  readonly speaker: string;
+  readonly fullText: string;
+  readonly displayText: string;
+  readonly voice: string;
+  readonly currentChar: number;
+  readonly totalChars: number;
+  /** Normalized typewriter progress in the inclusive range 0..1. */
+  readonly progress: number;
+  readonly finished: boolean;
+  readonly textColor: Color;
+  readonly outlineColor: Color;
+  readonly effect: string;
+  readonly effectProgress: number;
+}
+
+export interface ChoiceModel {
+  readonly index: number;
+  readonly text: string;
+  readonly target: string;
+  readonly sourceId: string;
+  readonly operationId: string;
+}
+
+export interface BacklogEntryModel {
+  /** Stable append identity; unlike an array index it survives front eviction. */
+  readonly sequence: number;
+  readonly speaker: string;
+  readonly text: string;
+  readonly voice: string;
+  readonly isChoice: boolean;
+  readonly sourceId: string;
+  readonly operationId: string;
+}
+
+/** Built-in settings remain defaults; unknown keys may be supplied by a host. */
+export interface SettingsModel {
+  readonly bgmVolume: number;
+  readonly seVolume: number;
+  readonly voiceVolume: number;
+  readonly textSpeedMs: number;
+  readonly autoWaitMs: number;
+  readonly skipReadOnly: boolean;
+  readonly skipAfterChoices: boolean;
+  readonly fullscreen: boolean;
+  readonly windowWidth: number;
+  readonly windowHeight: number;
+  readonly language: string;
+  readonly textScale: number;
+  readonly highContrast: boolean;
+  readonly reducedMotion: boolean;
+  readonly selfVoicing: boolean;
+  readonly supportedLocales: readonly string[];
+  readonly custom?: Readonly<Record<string, RuntimeValue>>;
+}
+
+export type ModelSubscriber<T> = (snapshot: T) => void;
+export type Unsubscribe = () => void;
+
 export type JsonValue =
   | null
   | boolean
@@ -307,6 +368,16 @@ export interface PrismatiXEngine {
   SceneUnlocked(id: string): boolean;
   UnlockCG(id: string): void;
   UnlockScene(id: string): void;
+
+  GetDialogue(): DialogueModel;
+  GetChoices(): readonly ChoiceModel[];
+  AdvanceDialogue(): boolean;
+  SelectChoice(index: number): boolean;
+  GetBacklog(): readonly BacklogEntryModel[];
+  ReplayBacklogVoice(sequence: number): boolean;
+  RollbackBacklog(sequence: number): boolean;
+  GetSettings(): SettingsModel;
+  SetSetting(name: string, value: RuntimeValue): boolean;
 
   PlaySE(path: string): void;
   PlayVoice(path: string): void;
@@ -427,6 +498,15 @@ export const ENGINE_HOST_BINDINGS = [
   "SceneUnlocked",
   "UnlockCG",
   "UnlockScene",
+  "GetDialogue",
+  "GetChoices",
+  "AdvanceDialogue",
+  "SelectChoice",
+  "GetBacklog",
+  "ReplayBacklogVoice",
+  "RollbackBacklog",
+  "GetSettings",
+  "SetSetting",
   "PlaySE",
   "PlayVoice",
   "StopVoice",
@@ -549,6 +629,29 @@ export interface PrismatiXContext {
     sceneUnlocked(id: string): boolean;
     unlockCG(id: string): void;
     unlockScene(id: string): void;
+  };
+  readonly session: {
+    dialogue(): DialogueModel;
+    choices(): readonly ChoiceModel[];
+    /** Delivers the current snapshot immediately, then only changed snapshots. */
+    observeDialogue(subscriber: ModelSubscriber<DialogueModel>): Unsubscribe;
+    /** Delivers the current snapshot immediately, then only changed snapshots. */
+    observeChoices(subscriber: ModelSubscriber<readonly ChoiceModel[]>): Unsubscribe;
+    advance(): boolean;
+    selectChoice(index: number): boolean;
+  };
+  readonly backlog: {
+    entries(): readonly BacklogEntryModel[];
+    /** Delivers the current snapshot immediately, then only changed snapshots. */
+    observe(subscriber: ModelSubscriber<readonly BacklogEntryModel[]>): Unsubscribe;
+    replayVoice(sequence: number): boolean;
+    rollback(sequence: number): boolean;
+  };
+  readonly settings: {
+    get(): SettingsModel;
+    /** Delivers the current snapshot immediately, then only changed snapshots. */
+    observe(subscriber: ModelSubscriber<SettingsModel>): Unsubscribe;
+    set(name: string, value: RuntimeValue): boolean;
   };
   readonly audio: {
     playSE(path: string): void;
@@ -704,6 +807,26 @@ function videoHandle(engine: PrismatiXEngine, id: number): VideoHandle {
   });
 }
 
+function observeModel<T>(
+  engine: PrismatiXEngine,
+  read: () => T,
+  subscriber: ModelSubscriber<T>,
+): Unsubscribe {
+  let active = true;
+  let fingerprint: string | undefined;
+  const publish = () => {
+    if (!active) return;
+    const snapshot = read();
+    const nextFingerprint = JSON.stringify(snapshot);
+    if (nextFingerprint === fingerprint) return;
+    fingerprint = nextFingerprint;
+    subscriber(snapshot);
+  };
+  publish();
+  engine.on("frame.update", publish);
+  return () => { active = false; };
+}
+
 export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engine): PrismatiXContext {
   return {
     raw: engine,
@@ -732,6 +855,33 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
       sceneUnlocked: (id) => engine.SceneUnlocked(id),
       unlockCG: (id) => engine.UnlockCG(id),
       unlockScene: (id) => engine.UnlockScene(id),
+    },
+    session: {
+      dialogue: () => engine.GetDialogue(),
+      choices: () => engine.GetChoices(),
+      observeDialogue: (subscriber) => observeModel(
+        engine, () => engine.GetDialogue(), subscriber,
+      ),
+      observeChoices: (subscriber) => observeModel(
+        engine, () => engine.GetChoices(), subscriber,
+      ),
+      advance: () => engine.AdvanceDialogue(),
+      selectChoice: (index) => engine.SelectChoice(index),
+    },
+    backlog: {
+      entries: () => engine.GetBacklog(),
+      observe: (subscriber) => observeModel(
+        engine, () => engine.GetBacklog(), subscriber,
+      ),
+      replayVoice: (sequence) => engine.ReplayBacklogVoice(sequence),
+      rollback: (sequence) => engine.RollbackBacklog(sequence),
+    },
+    settings: {
+      get: () => engine.GetSettings(),
+      observe: (subscriber) => observeModel(
+        engine, () => engine.GetSettings(), subscriber,
+      ),
+      set: (name, value) => engine.SetSetting(name, value),
     },
     audio: {
       playSE: (path) => engine.PlaySE(path),

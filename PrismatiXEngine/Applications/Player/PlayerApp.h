@@ -95,6 +95,8 @@ private:
     void TitleFrame(float dt);
     void GameFrame(float dt, std::uint64_t now);
     void ScreensFrame(float dt);
+    void UpdateScriptScheduler(float dt);
+    void ProcessScriptSafePoint();
     // Returns true when it consumed the frame (a movie is on screen).
     bool VideoFrame(float dt);
     void ConfigureE2EJourney();
@@ -163,7 +165,10 @@ private:
     enum class E2EStage {
         Disabled,
         AwaitTitle,
+        AwaitTitleAsync,
         AwaitGameReady,
+        AwaitMenuAsync,
+        AwaitPostMenuGameReady,
         VerifyReleaseF2,
         AwaitGallery,
         CaptureGallery,
@@ -175,6 +180,8 @@ private:
     std::uint64_t m_e2eStartedAt = 0;
     bool m_e2eFailed = false;
     bool m_e2eLocaleSwitched = false;
+    bool m_e2eCustomTitleRouteSeen = false;
+    bool m_e2eCustomMenuRouteSeen = false;
     int m_e2eClearCountBeforeF2 = 0;
     std::optional<Variant> m_e2eSessionValueBeforeF2;
     accessibility::SpeechService m_speech;
