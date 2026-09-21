@@ -1,7 +1,9 @@
 #include "Engine/Animation/Timeline.h"
+#include "Engine/Audio/AudioEngine.h"
 #include "Engine/Graphics/AssetCache.h"
 #include "Engine/Graphics/Renderer2D.h"
 #include "Engine/IO/VFS.h"
+#include "Engine/Platform/Input.h"
 #include "Engine/Progression/GlobalProfile.h"
 #include "Engine/Script/JavaScriptHost.h"
 #include "Engine/UI/Actions/ActionCatalog.h"
@@ -904,12 +906,105 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
                  "runaway JavaScript should respect the execution budget");
 }
 
+void TestPhaseThreePublicRuntimeSurfaces(px::test::Suite& suite) {
+    px::test::TempDirectory temp("javascript-phase-three");
+    px::io::VFS vfs;
+    vfs.MountDirectory(temp.path.string());
+    px::graphics::AssetCache assets(nullptr, vfs);
+    px::graphics::Renderer2D renderer(nullptr, assets);
+    px::audio::AudioEngine audio(vfs);
+    px::Input input;
+    px::animation::TimelinePlayer timeline;
+    bool canonicalLoaderCalled = false;
+    const auto animationId = px::Uuid::FromName("phase-three-loader");
+
+    px::script::ScriptServices services;
+    services.vfs = &vfs;
+    services.renderer = &renderer;
+    services.audio = &audio;
+    services.input = &input;
+    services.timeline = &timeline;
+    services.loadAnimationAsset = [&](const std::string& path) {
+        canonicalLoaderCalled = path == "Animations/show.pxtimeline";
+        return px::Result<std::string>::Success(animationId.ToString());
+    };
+    px::script::JavaScriptHost host(services);
+
+    input.InjectAction(px::InputAction::Advance);
+    suite.Require(host.RunString(R"js(
+        const resource = Engine.LoadAnimation("Animations/show.pxtimeline");
+        if (!resource) throw new Error("canonical Timeline loader missing");
+        const events = Engine.GetInputEvents();
+        const advance = events.find((event) => event.type === "action" &&
+                                               event.action === "advance");
+        if (!advance || !Engine.ConsumeInputEvent(advance.id) ||
+            !Engine.SuppressInputDefault(advance.id)) {
+            throw new Error("consumable input event surface missing");
+        }
+        if (!Engine.RegisterInputAction("portrait.interact"))
+            throw new Error("custom input action registration failed");
+        if (!Engine.UpsertRenderNode("portrait.mouth", {
+              kind: "image", phase: "after-stage", order: 4,
+              path: "Assets/portrait.png",
+              bounds: {x: 20, y: 20, w: 80, h: 40},
+              source: {x: 0, y: 64, w: 128, h: 64},
+              clip: {x: 16, y: 16, w: 96, h: 64},
+              translateX: 2, scaleX: 1.1, rotation: 3
+            })) throw new Error("retained render node registration failed");
+        const audio = Engine.PlayAudio("Assets/missing.wav", "voice");
+        if (audio <= 0 || Engine.GetAudioStatus(audio) !== "failed" ||
+            Engine.GetAudioPlayback(audio)?.id !== audio) {
+            throw new Error("audio handle/status surface missing");
+        }
+    )js", "phase-three-public-runtime"),
+                  "Phase 3 public runtime surfaces should execute in the embedded host");
+    suite.Expect(canonicalLoaderCalled,
+                 "JavaScript animation loading should use the canonical RuntimeSession seam");
+    suite.Expect(!input.ActionPressed(px::InputAction::Advance),
+                 "suppressed input events should prevent the product default in the same frame");
+
+    suite.Require(host.RunString(R"js(
+        Engine.RegisterAction("phase3.invalid-audio-wait", async () => {
+          await Engine.WaitAudio(999999);
+          throw new Error("invalid audio wait resumed as a success");
+        });
+    )js", "phase-three-invalid-audio-wait"),
+                  "invalid audio wait fixture should register");
+    px::ui::ActionInvocation invalidAudioWait;
+    invalidAudioWait.action = "phase3.invalid-audio-wait";
+    const auto invalidWait = host.StartAction(invalidAudioWait);
+    suite.Require(invalidWait.status && invalidWait.pending,
+                  "invalid audio wait should begin as a persistent Action boundary");
+    host.Update(0.0f);
+    suite.Expect(host.ActionState(invalidWait.handle) ==
+                     px::ui::ActionExecutionState::Failed,
+                 "an evicted or nonexistent audio handle must fail rather than falsely complete");
+
+    const auto retained = host.CaptureExtensionState();
+    suite.Require(retained && retained.Value().size() == 1 &&
+                      retained.Value().front().providerId ==
+                          "$prismatix.render-tree",
+                  "retained render nodes should enter the host checkpoint");
+    suite.Require(host.RunString("Engine.ClearRenderNodes();", "clear-render") &&
+                      host.CaptureExtensionState().Value().empty() &&
+                      host.RestoreExtensionState(retained.Value()),
+                  "retained render tree should clear and restore transactionally");
+    const auto restored = host.CaptureExtensionState();
+    suite.Expect(restored && restored.Value().size() == 1 &&
+                     restored.Value().front().state ==
+                         retained.Value().front().state,
+                 "retained render checkpoint should round-trip exactly");
+}
+
 }  // namespace
 
 int main() {
     px::test::Suite suite("JavaScriptHostIntegration");
     suite.Run("SandboxAndImmediateParity", [&] {
         TestSandboxAndImmediateParity(suite);
+    });
+    suite.Run("PhaseThreePublicRuntimeSurfaces", [&] {
+        TestPhaseThreePublicRuntimeSurfaces(suite);
     });
     return suite.Finish();
 }

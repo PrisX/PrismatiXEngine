@@ -40,6 +40,8 @@ namespace {
 constexpr std::size_t kJavaScriptMemoryLimit = 64U * 1024U * 1024U;
 constexpr std::size_t kJavaScriptStackLimit = 1024U * 1024U;
 constexpr auto kExecutionBudget = std::chrono::milliseconds(250);
+constexpr std::string_view kRenderTreeStateProvider =
+    "$prismatix.render-tree";
 
 diag::Diagnostic ScriptDiagnostic(std::string code, std::string message,
                                   std::string details = {},
@@ -143,7 +145,7 @@ bool SupportedCapability(const std::string_view capability) {
     return capability == "runtime" || capability == "animation" ||
            capability == "ui" || capability == "audio" ||
            capability == "video" || capability == "persistence" ||
-           capability == "input";
+           capability == "input" || capability == "render";
 }
 
 bool IsJsonValue(const Variant& value, const int depth = 0) {
@@ -168,12 +170,17 @@ bool IsJsonValue(const Variant& value, const int depth = 0) {
 
 std::string_view CapabilityForOperation(const std::string_view operation) {
     if (operation.starts_with("route.")) return "ui";
-    if (operation.starts_with("audio.")) return "audio";
+    if (operation.starts_with("audio.") || operation == "await.audio" ||
+        operation == "wait.audio")
+        return "audio";
     if (operation.starts_with("animation.")) return "animation";
     if (operation.starts_with("video.") || operation == "await.video" ||
         operation == "wait.video")
         return "video";
     if (operation.starts_with("save.")) return "persistence";
+    if (operation == "renderer.upsert" || operation == "renderer.remove" ||
+        operation == "renderer.clear")
+        return "render";
     // Existing raw pointer access remains part of the legacy runtime
     // capability. Only the new device-neutral action surface requires input.
     if (operation == "input.actionPressed" || operation == "input.actionDown")
@@ -547,6 +554,7 @@ public:
         std::string kind;
         std::uint64_t handle = 0;
         float remainingSeconds = 0.0f;
+        std::string failure;
     };
 
     enum class ContinuationFlavor { Generator, Promise };
@@ -1353,6 +1361,17 @@ public:
                               JS_NewInt64(context, integer));
             return token;
         }
+        if (operation == "await.audio") {
+            if (!IntegerArgument(count, values, 0, integer) || integer <= 0)
+                return JS_ThrowRangeError(context,
+                                          "AwaitAudio requires a valid handle");
+            JSValue token = JS_NewObject(context);
+            JS_SetPropertyStr(context, token, "kind",
+                              JS_NewString(context, "audio"));
+            JS_SetPropertyStr(context, token, "handle",
+                              JS_NewInt64(context, integer));
+            return token;
+        }
         if (operation == "wait.timer") {
             double seconds = 0.0;
             if (!NumberArgument(count, values, 0, seconds) || seconds < 0.0 ||
@@ -1385,6 +1404,14 @@ public:
                                           "WaitVideo requires a valid handle");
             return CreatePromiseWait(
                 {.kind = "video",
+                 .handle = static_cast<std::uint64_t>(integer)});
+        }
+        if (operation == "wait.audio") {
+            if (!IntegerArgument(count, values, 0, integer) || integer <= 0)
+                return JS_ThrowRangeError(context,
+                                          "WaitAudio requires a valid handle");
+            return CreatePromiseWait(
+                {.kind = "audio",
                  .handle = static_cast<std::uint64_t>(integer)});
         }
         if (operation == "variables.get") {
@@ -1600,6 +1627,128 @@ public:
         if (operation.starts_with("audio.")) {
             if (!services.audio)
                 return JS_ThrowInternalError(context, "AudioEngine is unavailable");
+            const auto audioHandle = [](const std::int64_t value) {
+                return audio::AudioEngine::AudioHandle{
+                    static_cast<std::uint64_t>(value)};
+            };
+            const auto audioStatusName = [](const audio::AudioEngine::PlaybackStatus status) {
+                switch (status) {
+                    case audio::AudioEngine::PlaybackStatus::Playing: return "playing";
+                    case audio::AudioEngine::PlaybackStatus::Paused: return "paused";
+                    case audio::AudioEngine::PlaybackStatus::Completed: return "completed";
+                    case audio::AudioEngine::PlaybackStatus::Stopped: return "stopped";
+                    case audio::AudioEngine::PlaybackStatus::Failed: return "failed";
+                    case audio::AudioEngine::PlaybackStatus::Invalid: return "invalid";
+                }
+                return "invalid";
+            };
+            if (operation == "audio.play") {
+                if (!StringArgument(count, values, 0, first) || first.empty())
+                    return JS_ThrowTypeError(context,
+                                             "PlayAudio requires a path");
+                std::string busName = "sound-effect";
+                if (count >= 2 && !JS_IsUndefined(values[1]) &&
+                    !StringArgument(count, values, 1, busName))
+                    return JS_ThrowTypeError(context,
+                                             "PlayAudio bus must be a string");
+                audio::AudioEngine::Bus bus;
+                if (busName == "music") bus = audio::AudioEngine::Bus::Music;
+                else if (busName == "sound-effect" || busName == "se")
+                    bus = audio::AudioEngine::Bus::SoundEffect;
+                else if (busName == "voice") bus = audio::AudioEngine::Bus::Voice;
+                else if (busName == "ambience")
+                    bus = audio::AudioEngine::Bus::Ambience;
+                else return JS_ThrowRangeError(context, "unknown audio bus");
+                bool loop = false;
+                std::int64_t fade = 0;
+                std::string loopPath;
+                if (count >= 3 && !JS_IsUndefined(values[2]) &&
+                    !BoolArgument(count, values, 2, loop))
+                    return JS_ThrowTypeError(context,
+                                             "PlayAudio loop must be boolean");
+                if (count >= 4 && !JS_IsUndefined(values[3]) &&
+                    (!IntegerArgument(count, values, 3, fade) || fade < 0 ||
+                     fade > (std::numeric_limits<int>::max)()))
+                    return JS_ThrowRangeError(
+                        context, "PlayAudio fade must be non-negative milliseconds");
+                if (count >= 5 && !JS_IsUndefined(values[4]) &&
+                    !StringArgument(count, values, 4, loopPath))
+                    return JS_ThrowTypeError(context,
+                                             "PlayAudio loopPath must be a string");
+                const auto handle = services.audio->Play(
+                    {.bus = bus, .path = first, .loop = loop,
+                     .fadeMs = static_cast<int>(fade),
+                     .loopPath = std::move(loopPath)});
+                return JS_NewInt64(context,
+                                   static_cast<std::int64_t>(handle.value));
+            }
+            if (operation == "audio.pause" || operation == "audio.resume" ||
+                operation == "audio.stop" || operation == "audio.seek" ||
+                operation == "audio.status" || operation == "audio.state") {
+                if (!IntegerArgument(count, values, 0, integer) || integer <= 0)
+                    return JS_ThrowRangeError(context,
+                                             "audio control requires a valid handle");
+                const auto handle = audioHandle(integer);
+                if (operation == "audio.pause")
+                    return JS_NewBool(context, services.audio->Pause(handle));
+                if (operation == "audio.resume")
+                    return JS_NewBool(context, services.audio->Resume(handle));
+                if (operation == "audio.stop") {
+                    std::int64_t fade = 0;
+                    if (count >= 2 && !JS_IsUndefined(values[1]) &&
+                        (!IntegerArgument(count, values, 1, fade) || fade < 0 ||
+                         fade > (std::numeric_limits<int>::max)()))
+                        return JS_ThrowRangeError(
+                            context, "StopAudio fade must be non-negative milliseconds");
+                    return JS_NewBool(
+                        context, services.audio->Stop(handle,
+                                                       static_cast<int>(fade)));
+                }
+                if (operation == "audio.seek") {
+                    std::int64_t frame = 0;
+                    if (!IntegerArgument(count, values, 1, frame) || frame < 0)
+                        return JS_ThrowRangeError(
+                            context, "SeekAudio requires a non-negative frame");
+                    return JS_NewBool(context,
+                                      services.audio->Seek(handle, frame));
+                }
+                if (operation == "audio.status")
+                    return JS_NewString(
+                        context,
+                        audioStatusName(services.audio->Status(handle)));
+                const auto state = services.audio->Playback(handle);
+                if (!state) return JS_NULL;
+                JSValue result = JS_NewObject(context);
+                const char* bus = "sound-effect";
+                if (state->bus == audio::AudioEngine::Bus::Music) bus = "music";
+                else if (state->bus == audio::AudioEngine::Bus::Voice) bus = "voice";
+                else if (state->bus == audio::AudioEngine::Bus::Ambience) bus = "ambience";
+                const char* phase = "single";
+                if (state->phase == audio::AudioEngine::PlaybackPhase::Intro)
+                    phase = "intro";
+                else if (state->phase == audio::AudioEngine::PlaybackPhase::Loop)
+                    phase = "loop";
+                JS_SetPropertyStr(context, result, "id",
+                                  JS_NewInt64(context, integer));
+                JS_SetPropertyStr(context, result, "bus",
+                                  JS_NewString(context, bus));
+                JS_SetPropertyStr(context, result, "status",
+                                  JS_NewString(context,
+                                      audioStatusName(state->status)));
+                JS_SetPropertyStr(context, result, "phase",
+                                  JS_NewString(context, phase));
+                JS_SetPropertyStr(context, result, "path",
+                                  JS_NewString(context, state->path.c_str()));
+                JS_SetPropertyStr(context, result, "introPath",
+                                  JS_NewString(context, state->introPath.c_str()));
+                JS_SetPropertyStr(context, result, "loopPath",
+                                  JS_NewString(context, state->loopPath.c_str()));
+                JS_SetPropertyStr(context, result, "playbackFrame",
+                                  JS_NewInt64(context, state->playbackFrame));
+                JS_SetPropertyStr(context, result, "loop",
+                                  JS_NewBool(context, state->loop));
+                return result;
+            }
             if (operation == "audio.playSE") {
                 if (!StringArgument(count, values, 0, first))
                     return JS_ThrowTypeError(context, "PlaySE requires a path");
@@ -2397,19 +2546,17 @@ public:
             if (!services.timeline)
                 return JS_ThrowInternalError(context, "TimelinePlayer is unavailable");
             if (operation == "animation.load") {
-                if (!services.vfs) return JS_ThrowInternalError(context, "VFS is unavailable");
                 if (!StringArgument(count, values, 0, first))
                     return JS_ThrowTypeError(context, "LoadAnimation requires a path");
-                const auto text = services.vfs->ReadText(first);
-                if (!text) return JS_ThrowReferenceError(context, "animation was not found: %s", first.c_str());
-                auto clip = animation::ParseAnimationClip(*text, first);
-                if (!clip) return JS_ThrowTypeError(context, "%s",
-                    diag::Describe(clip.Diagnostics().front()).c_str());
-                const auto id = clip.Value().id;
-                const Status status = services.timeline->Register(clip.TakeValue());
-                if (!status) return JS_ThrowInternalError(context, "%s",
-                    diag::Describe(status.Diagnostics().front()).c_str());
-                return JS_NewString(context, id.ToString().c_str());
+                if (!services.loadAnimationAsset)
+                    return JS_ThrowInternalError(
+                        context, "canonical animation loader is unavailable");
+                auto loaded = services.loadAnimationAsset(first);
+                if (!loaded) return JS_ThrowTypeError(
+                    context, "%s", loaded.Diagnostics().empty()
+                        ? "animation asset could not be loaded"
+                        : diag::Describe(loaded.Diagnostics().front()).c_str());
+                return JS_NewString(context, loaded.Value().c_str());
             }
             if (operation == "animation.play") {
                 if (!StringArgument(count, values, 0, first))
@@ -2420,14 +2567,89 @@ public:
                 double speed = 1.0;
                 if (count >= 2 && !JS_IsUndefined(values[1]) && !BoolArgument(count, values, 1, await)) return JS_ThrowTypeError(context, "animation await must be boolean");
                 if (count >= 3 && !JS_IsUndefined(values[2]) && !NumberArgument(count, values, 2, speed)) return JS_ThrowTypeError(context, "animation speed must be numeric");
-                return JS_NewInt64(context, static_cast<std::int64_t>(
-                    services.timeline->Play(*id, await, static_cast<float>(speed))));
+                auto played = services.timeline->PlayChecked(
+                    *id, await, static_cast<float>(speed));
+                if (!played)
+                    return JS_ThrowInternalError(
+                        context, "%s", played.Diagnostics().empty()
+                            ? "animation playback could not start"
+                            : diag::Describe(played.Diagnostics().front()).c_str());
+                return JS_NewInt64(
+                    context, static_cast<std::int64_t>(played.Value()));
             }
             if (operation == "animation.cancel") {
                 if (!IntegerArgument(count, values, 0, integer))
                     return JS_ThrowTypeError(context, "CancelAnimation requires a handle");
                 return JS_NewBool(context, static_cast<bool>(services.timeline->Cancel(
                     static_cast<animation::PlaybackHandle>(integer))));
+            }
+            if (operation == "animation.pause" ||
+                operation == "animation.resume" ||
+                operation == "animation.finish") {
+                if (!IntegerArgument(count, values, 0, integer))
+                    return JS_ThrowTypeError(
+                        context, "animation control requires a handle");
+                const auto handle =
+                    static_cast<animation::PlaybackHandle>(integer);
+                bool apply = true;
+                if (operation == "animation.finish" && count >= 2 &&
+                    !JS_IsUndefined(values[1]) &&
+                    !BoolArgument(count, values, 1, apply))
+                    return JS_ThrowTypeError(
+                        context, "FinishAnimation apply must be boolean");
+                const Status status = operation == "animation.pause"
+                                          ? services.timeline->Pause(handle)
+                                      : operation == "animation.resume"
+                                          ? services.timeline->Resume(handle)
+                                          : services.timeline->Finish(handle,
+                                                                      apply);
+                return JS_NewBool(context, static_cast<bool>(status));
+            }
+            if (operation == "animation.seek") {
+                double position = 0.0;
+                if (!IntegerArgument(count, values, 0, integer) ||
+                    !NumberArgument(count, values, 1, position))
+                    return JS_ThrowTypeError(
+                        context, "SeekAnimation requires a handle and position");
+                bool apply = true;
+                if (count >= 3 && !JS_IsUndefined(values[2]) &&
+                    !BoolArgument(count, values, 2, apply))
+                    return JS_ThrowTypeError(
+                        context, "SeekAnimation apply must be boolean");
+                return JS_NewBool(
+                    context, static_cast<bool>(services.timeline->Seek(
+                                 static_cast<animation::PlaybackHandle>(integer),
+                                 static_cast<float>(position), apply)));
+            }
+            if (operation == "animation.status") {
+                if (!IntegerArgument(count, values, 0, integer))
+                    return JS_ThrowTypeError(
+                        context, "GetAnimationStatus requires a handle");
+                const auto status = services.timeline->GetStatus(
+                    static_cast<animation::PlaybackHandle>(integer));
+                const char* name = "unknown";
+                if (status == animation::PlaybackStatus::Playing)
+                    name = "playing";
+                else if (status == animation::PlaybackStatus::Paused)
+                    name = "paused";
+                else if (status == animation::PlaybackStatus::Completed)
+                    name = "completed";
+                else if (status == animation::PlaybackStatus::Cancelled)
+                    name = "cancelled";
+                else if (status == animation::PlaybackStatus::Failed)
+                    name = "failed";
+                return JS_NewString(context, name);
+            }
+            if (operation == "animation.error") {
+                if (!IntegerArgument(count, values, 0, integer))
+                    return JS_ThrowTypeError(
+                        context, "GetAnimationError requires a handle");
+                const auto* errors = services.timeline->GetError(
+                    static_cast<animation::PlaybackHandle>(integer));
+                return JS_NewString(
+                    context, !errors || errors->empty()
+                                 ? ""
+                                 : diag::Describe(errors->front()).c_str());
             }
             return JS_ThrowRangeError(context, "unknown animation operation");
         }
@@ -2547,6 +2769,75 @@ public:
         }
         if (operation.starts_with("input.")) {
             if (!services.input) return JS_ThrowInternalError(context, "Input is unavailable");
+            if (operation == "input.events") {
+                VariantArray inputEvents;
+                inputEvents.reserve(services.input->FrameEvents().size());
+                for (const auto& event : services.input->FrameEvents()) {
+                    const char* type = "pointer-move";
+                    if (event.type == InputEventType::PointerDown)
+                        type = "pointer-down";
+                    else if (event.type == InputEventType::PointerUp)
+                        type = "pointer-up";
+                    else if (event.type == InputEventType::PointerWheel)
+                        type = "pointer-wheel";
+                    else if (event.type == InputEventType::TextInput)
+                        type = "text";
+                    else if (event.type == InputEventType::Action)
+                        type = "action";
+                    const char* button = "none";
+                    if (event.button == PointerButton::Primary)
+                        button = "primary";
+                    else if (event.button == PointerButton::Secondary)
+                        button = "secondary";
+                    else if (event.button == PointerButton::Middle)
+                        button = "middle";
+                    inputEvents.emplace_back(VariantObject{
+                        {"id", static_cast<std::int64_t>(event.id)},
+                        {"frame", static_cast<std::int64_t>(event.frame)},
+                        {"type", type},
+                        {"pointerId", static_cast<std::int64_t>(event.pointerId)},
+                        {"button", button}, {"x", event.x}, {"y", event.y},
+                        {"deltaX", event.deltaX}, {"deltaY", event.deltaY},
+                        {"text", event.text}, {"action", event.action}});
+                }
+                return ToJavaScript(Variant(std::move(inputEvents)));
+            }
+            if (operation == "input.consume" ||
+                operation == "input.suppressDefault") {
+                if (!IntegerArgument(count, values, 0, integer) || integer <= 0)
+                    return JS_ThrowRangeError(
+                        context, "input event control requires a positive id");
+                return JS_NewBool(
+                    context, operation == "input.consume"
+                                 ? services.input->ConsumeEvent(
+                                       static_cast<std::uint64_t>(integer))
+                                 : services.input->SuppressDefault(
+                                       static_cast<std::uint64_t>(integer)));
+            }
+            if (operation == "input.registerAction" ||
+                operation == "input.namedActionPressed" ||
+                operation == "input.namedActionDown") {
+                if (!StringArgument(count, values, 0, first) || first.empty())
+                    return JS_ThrowTypeError(
+                        context, "named input action requires an id");
+                if (operation == "input.registerAction")
+                    return JS_NewBool(context,
+                                      services.input->RegisterAction(first));
+                return JS_NewBool(
+                    context, operation == "input.namedActionPressed"
+                                 ? services.input->ActionPressed(first)
+                                 : services.input->ActionDown(first));
+            }
+            if (operation == "input.bindKey") {
+                if (!StringArgument(count, values, 0, first) || first.empty() ||
+                    !IntegerArgument(count, values, 1, integer) || integer < 0 ||
+                    integer > (std::numeric_limits<int>::max)())
+                    return JS_ThrowTypeError(
+                        context, "BindInputKey requires an action and scancode");
+                return JS_NewBool(
+                    context, services.input->BindKey(
+                                 first, static_cast<int>(integer)));
+            }
             if (operation == "input.mouseX") return JS_NewFloat64(context, services.input->MouseX());
             if (operation == "input.mouseY") return JS_NewFloat64(context, services.input->MouseY());
             if (operation == "input.leftClick") return JS_NewBool(context, services.input->LeftClick());
@@ -2570,6 +2861,36 @@ public:
         if (operation.starts_with("renderer.")) {
             if (!services.renderer)
                 return JS_ThrowInternalError(context, "Renderer2D is unavailable");
+            if (operation == "renderer.upsert") {
+                if (!StringArgument(count, values, 0, first) || count < 2)
+                    return JS_ThrowTypeError(
+                        context, "UpsertRenderNode requires an id and plan");
+                const auto plan = FromJavaScript(values[1]);
+                if (!plan)
+                    return JS_ThrowTypeError(
+                        context, "render node plan is not JSON-compatible");
+                auto parsed = ScriptRenderTree::ParseNode(first, *plan);
+                if (!parsed)
+                    return JS_ThrowTypeError(
+                        context, "%s",
+                        diag::Describe(parsed.Diagnostics().front()).c_str());
+                const Status status = renderTree.Upsert(parsed.TakeValue());
+                if (!status)
+                    return JS_ThrowTypeError(
+                        context, "%s",
+                        diag::Describe(status.Diagnostics().front()).c_str());
+                return JS_TRUE;
+            }
+            if (operation == "renderer.remove") {
+                if (!StringArgument(count, values, 0, first))
+                    return JS_ThrowTypeError(
+                        context, "RemoveRenderNode requires an id");
+                return JS_NewBool(context, renderTree.Remove(first));
+            }
+            if (operation == "renderer.clear") {
+                renderTree.Clear();
+                return JS_UNDEFINED;
+            }
             if (operation == "renderer.logicalSize") {
                 int width = 0, height = 0;
                 services.renderer->GetLogicalSize(width, height);
@@ -2768,6 +3089,13 @@ public:
                 SetAmbienceVolume: { value: bindRuntime("audio.ambienceVolume") },
                 PlayAmbience: { value: bindRuntime("audio.playAmbience") },
                 StopAmbience: { value: bindRuntime("audio.stopAmbience") },
+                PlayAudio: { value: bindRuntime("audio.play") },
+                PauseAudio: { value: bindRuntime("audio.pause") },
+                ResumeAudio: { value: bindRuntime("audio.resume") },
+                StopAudio: { value: bindRuntime("audio.stop") },
+                SeekAudio: { value: bindRuntime("audio.seek") },
+                GetAudioStatus: { value: bindRuntime("audio.status") },
+                GetAudioPlayback: { value: bindRuntime("audio.state") },
                 Save: { value: bindRuntime("save.write") },
                 Load: { value: bindRuntime("save.load") },
                 Autosave: { value: bindRuntime("save.autosave") },
@@ -2809,6 +3137,12 @@ public:
                 LoadAnimation: { value: bindRuntime("animation.load") },
                 PlayAnimation: { value: bindRuntime("animation.play") },
                 CancelAnimation: { value: bindRuntime("animation.cancel") },
+                PauseAnimation: { value: bindRuntime("animation.pause") },
+                ResumeAnimation: { value: bindRuntime("animation.resume") },
+                SeekAnimation: { value: bindRuntime("animation.seek") },
+                FinishAnimation: { value: bindRuntime("animation.finish") },
+                GetAnimationStatus: { value: bindRuntime("animation.status") },
+                GetAnimationError: { value: bindRuntime("animation.error") },
                 RegisterScreenEffect: { value: bindRuntime("effect.register") },
                 PlayScreenEffect: { value: bindRuntime("effect.play") },
                 StopScreenEffect: { value: bindRuntime("effect.stop") },
@@ -2819,10 +3153,12 @@ public:
                 AwaitAnimation: { value: bindRuntime("await.animation") },
                 AwaitScreenEffect: { value: bindRuntime("await.screenEffect") },
                 AwaitVideo: { value: bindRuntime("await.video") },
+                AwaitAudio: { value: bindRuntime("await.audio") },
                 WaitSeconds: { value: bindRuntime("wait.timer") },
                 WaitAnimation: { value: bindRuntime("wait.animation") },
                 WaitScreenEffect: { value: bindRuntime("wait.screenEffect") },
                 WaitVideo: { value: bindRuntime("wait.video") },
+                WaitAudio: { value: bindRuntime("wait.audio") },
                 DebugPoint: { value: bindRuntime("debug.point") },
                 GetMouseX: { value: bindRuntime("input.mouseX") },
                 GetMouseY: { value: bindRuntime("input.mouseY") },
@@ -2830,7 +3166,17 @@ public:
                 GetRightClick: { value: bindRuntime("input.rightClick") },
                 IsInputActionPressed: { value: bindRuntime("input.actionPressed") },
                 IsInputActionDown: { value: bindRuntime("input.actionDown") },
+                GetInputEvents: { value: bindRuntime("input.events") },
+                ConsumeInputEvent: { value: bindRuntime("input.consume") },
+                SuppressInputDefault: { value: bindRuntime("input.suppressDefault") },
+                RegisterInputAction: { value: bindRuntime("input.registerAction") },
+                BindInputKey: { value: bindRuntime("input.bindKey") },
+                IsNamedInputActionPressed: { value: bindRuntime("input.namedActionPressed") },
+                IsNamedInputActionDown: { value: bindRuntime("input.namedActionDown") },
                 GetLogicalSize: { value: bindRuntime("renderer.logicalSize") },
+                UpsertRenderNode: { value: bindRuntime("renderer.upsert") },
+                RemoveRenderNode: { value: bindRuntime("renderer.remove") },
+                ClearRenderNodes: { value: bindRuntime("renderer.clear") },
                 DrawImage: { value: bindRuntime("renderer.drawImage") },
                 DrawAuto: { value: bindRuntime("renderer.drawAuto") },
                 DrawRect: { value: bindRuntime("renderer.drawRect") },
@@ -3357,6 +3703,7 @@ public:
 
     JavaScriptHost& host;
     ScriptServices services;
+    ScriptRenderTree renderTree;
     JSRuntime* runtime = nullptr;
     JSContext* context = nullptr;
     std::unordered_map<std::string, JSValue> commands;
@@ -4258,6 +4605,26 @@ void JavaScriptHost::Update(const float deltaSeconds) {
             const std::string state = m_impl->services.videoStatus(wait.handle);
             return state != "playing" && state != "paused";
         }
+        if (wait.kind == "audio") {
+            if (!m_impl->services.audio) {
+                wait.failure = "Audio service became unavailable while awaiting playback";
+                return true;
+            }
+            const auto status = m_impl->services.audio->Status(
+                audio::AudioEngine::AudioHandle{wait.handle});
+            if (status == audio::AudioEngine::PlaybackStatus::Invalid) {
+                wait.failure = "Awaited audio handle is invalid or no longer retained: " +
+                               std::to_string(wait.handle);
+                return true;
+            }
+            if (status == audio::AudioEngine::PlaybackStatus::Failed) {
+                wait.failure = "Awaited audio playback failed: " +
+                               std::to_string(wait.handle);
+                return true;
+            }
+            return status == audio::AudioEngine::PlaybackStatus::Completed ||
+                   status == audio::AudioEngine::PlaybackStatus::Stopped;
+        }
         if (wait.kind == "timer") {
             wait.remainingSeconds -= std::max(0.0f, deltaSeconds);
             return wait.remainingSeconds <= 0.0f;
@@ -4273,7 +4640,10 @@ void JavaScriptHost::Update(const float deltaSeconds) {
         }
         const auto source = "command:" + iterator->command.type;
         Impl::JournalScope journalScope(*m_impl, iterator->journal);
-        const auto result = iterator->flavor == Impl::ContinuationFlavor::Promise
+        const auto result = !iterator->wait.failure.empty()
+                                ? (m_impl->Error(source, iterator->wait.failure),
+                                   Impl::StepResult::Failed)
+                            : iterator->flavor == Impl::ContinuationFlavor::Promise
                                 ? m_impl->StepPromise(
                                       iterator->continuation, iterator->resume,
                                       iterator->wait, source)
@@ -4297,7 +4667,10 @@ void JavaScriptHost::Update(const float deltaSeconds) {
         }
         const auto source = "action:" + iterator->invocation.action;
         Impl::JournalScope journalScope(*m_impl, iterator->journal);
-        const auto result = iterator->flavor == Impl::ContinuationFlavor::Promise
+        const auto result = !iterator->wait.failure.empty()
+                                ? (m_impl->Error(source, iterator->wait.failure),
+                                   Impl::StepResult::Failed)
+                            : iterator->flavor == Impl::ContinuationFlavor::Promise
                                 ? m_impl->StepPromise(
                                       iterator->continuation, iterator->resume,
                                       iterator->wait, source)
@@ -4328,6 +4701,20 @@ void JavaScriptHost::Update(const float deltaSeconds) {
             break;
         }
     }
+}
+
+void JavaScriptHost::RenderRetained(const RenderPhase phase) {
+    if (!m_impl->services.renderer) return;
+    const std::string_view route = m_impl->services.routes
+                                       ? m_impl->services.routes->CurrentRoute()
+                                       : std::string_view{};
+    const std::string_view modal =
+        m_impl->services.routes
+            ? m_impl->services.routes->CurrentModalRoute()
+            : std::string_view{};
+    m_impl->renderTree.Render(*m_impl->services.renderer, phase, route, modal);
+    for (const auto& realm : m_impl->extensionRealms)
+        realm->RenderRetained(phase);
 }
 
 bool JavaScriptHost::HasPendingCommand() const {
@@ -4435,7 +4822,8 @@ Status JavaScriptHost::RestorePendingInCurrentRealm(
                                  saved.remainingSeconds >= 0.0f);
         if (saved.yieldIndex == 0 || !validTimer ||
             (saved.waitKind != "timer" && saved.waitKind != "animation" &&
-             saved.waitKind != "screen-effect" && saved.waitKind != "video")) {
+             saved.waitKind != "screen-effect" && saved.waitKind != "video" &&
+             saved.waitKind != "audio")) {
             return fail("PXJS7501", "Saved JavaScript await checkpoint is invalid",
                         saved.command.type);
         }
@@ -4533,7 +4921,8 @@ Status JavaScriptHost::RestorePendingActionsInCurrentRealm(
         if (saved.id == 0 || !ids.insert(saved.id).second ||
             saved.yieldIndex == 0 || !validTimer ||
             (saved.waitKind != "timer" && saved.waitKind != "animation" &&
-             saved.waitKind != "screen-effect" && saved.waitKind != "video")) {
+             saved.waitKind != "screen-effect" && saved.waitKind != "video" &&
+             saved.waitKind != "audio")) {
             return fail("PXJS7510", "Saved JavaScript Action checkpoint is invalid",
                         saved.invocation.action);
         }
@@ -4588,7 +4977,14 @@ Status JavaScriptHost::RestorePendingActionsInCurrentRealm(
 }
 
 Result<ExtensionStates> JavaScriptHost::CaptureExtensionStateInCurrentRealm() {
-    return m_impl->CaptureStateProviders();
+    auto captured = m_impl->CaptureStateProviders();
+    if (!captured) return captured;
+    auto values = captured.TakeValue();
+    if (m_impl->renderTree.Size() != 0)
+        values.push_back({m_impl->extensionId,
+                          std::string(kRenderTreeStateProvider), 1,
+                          m_impl->renderTree.CaptureState()});
+    return Result<ExtensionStates>::Success(std::move(values));
 }
 
 Result<ExtensionStates> JavaScriptHost::CaptureExtensionState() {
@@ -4617,7 +5013,33 @@ Result<ExtensionStates> JavaScriptHost::CaptureExtensionState() {
 
 Status JavaScriptHost::RestoreExtensionStateInCurrentRealm(
     const ExtensionStates& state) {
-    return m_impl->RestoreStateProviders(state);
+    ExtensionStates providers;
+    const ExtensionStateSnapshot* renderTree = nullptr;
+    providers.reserve(state.size());
+    for (const auto& snapshot : state) {
+        if (snapshot.providerId == kRenderTreeStateProvider) {
+            if (renderTree || snapshot.version != 1 ||
+                snapshot.sourceId != m_impl->extensionId)
+                return Status::Fail(ScriptDiagnostic(
+                    "PXJS7623",
+                    "Retained render tree checkpoint is incompatible",
+                    snapshot.sourceId));
+            renderTree = &snapshot;
+        } else {
+            providers.push_back(snapshot);
+        }
+    }
+    ScriptRenderTree candidate;
+    if (renderTree) {
+        if (const Status restored = candidate.RestoreState(renderTree->state);
+            !restored)
+            return restored;
+    }
+    if (const Status restored = m_impl->RestoreStateProviders(providers);
+        !restored)
+        return restored;
+    m_impl->renderTree = std::move(candidate);
+    return Status::Ok();
 }
 
 Status JavaScriptHost::RestoreExtensionStateUnchecked(

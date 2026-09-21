@@ -355,19 +355,488 @@ Status TimelinePlayer::ReplaceRegisteredClips(std::vector<AnimationClip> clips) 
 const AnimationClip* TimelinePlayer::Find(const resource::ResourceId& id) const {const auto found=m_clips.find(id);return found==m_clips.end()?nullptr:&found->second;}
 Status TimelinePlayer::Unregister(const resource::ResourceId& id){if(std::any_of(m_playbacks.begin(),m_playbacks.end(),[&](const auto& state){return state.clip==id&&state.playing;}))return Status::Fail(TimelineError("PXANIM7515","Cannot remove an animation while it is playing"));if(!m_clips.erase(id))return Status::Fail(TimelineError("PXANIM7516","Animation clip is not registered"));return Status::Ok();}
 
-PlaybackHandle TimelinePlayer::Play(const resource::ResourceId& clip,const bool await,const float speed) {if(!Find(clip)||!std::isfinite(speed)||speed<=0.0f)return 0;PlaybackState state;state.handle=m_nextHandle++;state.clip=clip;state.speed=speed;state.playing=true;state.awaiting=await;m_playbacks.push_back(state);(void)ApplyAt(*Find(clip),0.0f);return state.handle;}
+Result<PlaybackHandle> TimelinePlayer::PlayChecked(
+    const resource::ResourceId& clipId, const bool await, const float speed) {
+    const auto* clip = Find(clipId);
+    if (!clip)
+        return Result<PlaybackHandle>::Failure(
+            TimelineError("PXANIM7511", "Playback clip is missing"));
+    if (!std::isfinite(speed) || speed <= 0.0f)
+        return Result<PlaybackHandle>::Failure(TimelineError(
+            "PXANIM7514", "Playback speed must be finite and greater than zero"));
+    if (m_nextHandle == 0 ||
+        m_nextHandle == (std::numeric_limits<PlaybackHandle>::max)())
+        return Result<PlaybackHandle>::Failure(
+            TimelineError("PXANIM7519", "Playback handle space is exhausted"));
 
-Status TimelinePlayer::Seek(const PlaybackHandle handle,const float position,const bool apply){if(!std::isfinite(position))return Status::Fail(TimelineError("PXANIM7514","Playback position must be finite"));for(auto& state:m_playbacks)if(state.handle==handle){const auto* clip=Find(state.clip);if(!clip)return Status::Fail(TimelineError("PXANIM7511","Playback clip is missing"));state.position=std::clamp(position,0.0f,clip->duration);return apply?ApplyAt(*clip,state.position):Status::Ok();}return Status::Fail(TimelineError("PXANIM7512","Playback handle is unknown"));}
-Status TimelinePlayer::Cancel(const PlaybackHandle handle){for(auto& state:m_playbacks)if(state.handle==handle&&state.playing){state.playing=false;if(m_completion)m_completion(handle,true);return Status::Ok();}return Status::Fail(TimelineError("PXANIM7512","Playback handle is unknown or stopped"));}
-bool TimelinePlayer::Playing(const PlaybackHandle handle) const {return std::any_of(m_playbacks.begin(),m_playbacks.end(),[handle](const auto& state){return state.handle==handle&&state.playing;});}
+    const Status applied = ApplyAt(*clip, 0.0f);
+    if (!applied)
+        return Result<PlaybackHandle>::Failure(applied.Diagnostics());
+
+    PlaybackState state;
+    state.handle = m_nextHandle++;
+    state.clip = clipId;
+    state.speed = speed;
+    state.playing = true;
+    state.awaiting = await;
+    state.status = PlaybackStatus::Playing;
+    m_playbacks.push_back(state);
+    return Result<PlaybackHandle>::Success(state.handle);
+}
+
+PlaybackHandle TimelinePlayer::Play(const resource::ResourceId& clip,
+                                    const bool await, const float speed) {
+    auto result = PlayChecked(clip, await, speed);
+    return result ? result.Value() : 0;
+}
+
+Status TimelinePlayer::Pause(const PlaybackHandle handle) {
+    const auto found = std::ranges::find_if(
+        m_playbacks, [handle](const auto& state) { return state.handle == handle; });
+    if (found == m_playbacks.end() || found->status != PlaybackStatus::Playing)
+        return Status::Fail(TimelineError(
+            "PXANIM7512", "Playback handle is unknown or is not playing"));
+    found->status = PlaybackStatus::Paused;
+    return Status::Ok();
+}
+
+Status TimelinePlayer::Resume(const PlaybackHandle handle) {
+    const auto found = std::ranges::find_if(
+        m_playbacks, [handle](const auto& state) { return state.handle == handle; });
+    if (found == m_playbacks.end() || found->status != PlaybackStatus::Paused)
+        return Status::Fail(TimelineError(
+            "PXANIM7512", "Playback handle is unknown or is not paused"));
+    found->status = PlaybackStatus::Playing;
+    return Status::Ok();
+}
+
+Status TimelinePlayer::Seek(const PlaybackHandle handle, const float position,
+                            const bool apply) {
+    if (!std::isfinite(position))
+        return Status::Fail(TimelineError(
+            "PXANIM7514", "Playback position must be finite"));
+    const auto found = std::ranges::find_if(
+        m_playbacks, [handle](const auto& state) { return state.handle == handle; });
+    if (found == m_playbacks.end())
+        return Status::Fail(TimelineError(
+            "PXANIM7512", "Playback handle is unknown or stopped"));
+    const auto* clip = Find(found->clip);
+    if (!clip)
+        return Status::Fail(
+            TimelineError("PXANIM7511", "Playback clip is missing"));
+    const float target = std::clamp(position, 0.0f, clip->duration);
+    if (apply) {
+        const Status applied = ApplyAt(*clip, target);
+        if (!applied) return applied;
+    }
+    found->position = target;
+    return Status::Ok();
+}
+
+Status TimelinePlayer::Finish(const PlaybackHandle handle, const bool apply) {
+    const auto found = std::ranges::find_if(
+        m_playbacks, [handle](const auto& state) { return state.handle == handle; });
+    if (found == m_playbacks.end())
+        return Status::Fail(TimelineError(
+            "PXANIM7512", "Playback handle is unknown or stopped"));
+    PlaybackState state = *found;
+    const auto* clip = Find(state.clip);
+    if (!clip)
+        return Status::Fail(
+            TimelineError("PXANIM7511", "Playback clip is missing"));
+
+    if (apply) {
+        const Status applied = ApplyAt(*clip, clip->duration);
+        if (!applied) {
+            m_playbacks.erase(found);
+            RecordTerminal(state, PlaybackStatus::Failed,
+                           applied.Diagnostics());
+            if (m_completion) m_completion(handle, true);
+            return applied;
+        }
+    }
+
+    const double from = clip->loop && clip->duration > 0.0f
+                            ? static_cast<double>(state.loopIteration) *
+                                      clip->duration +
+                                  state.position
+                            : state.position;
+    const double to = clip->loop && clip->duration > 0.0f
+                          ? static_cast<double>(state.loopIteration) *
+                                    clip->duration +
+                                clip->duration
+                          : clip->duration;
+    EmitMarkers(state, *clip, from, to, false, false);
+    state.position = clip->duration;
+    m_playbacks.erase(found);
+    RecordTerminal(state, PlaybackStatus::Completed);
+    if (m_completion) m_completion(handle, false);
+    return Status::Ok();
+}
+
+Status TimelinePlayer::Cancel(const PlaybackHandle handle) {
+    const auto found = std::ranges::find_if(
+        m_playbacks, [handle](const auto& state) { return state.handle == handle; });
+    if (found == m_playbacks.end())
+        return Status::Fail(TimelineError(
+            "PXANIM7512", "Playback handle is unknown or stopped"));
+    PlaybackState state = *found;
+    m_playbacks.erase(found);
+    RecordTerminal(std::move(state), PlaybackStatus::Cancelled);
+    if (m_completion) m_completion(handle, true);
+    return Status::Ok();
+}
+
+bool TimelinePlayer::Playing(const PlaybackHandle handle) const {
+    const auto status = GetStatus(handle);
+    return status && *status == PlaybackStatus::Playing;
+}
+
+bool TimelinePlayer::Paused(const PlaybackHandle handle) const {
+    const auto status = GetStatus(handle);
+    return status && *status == PlaybackStatus::Paused;
+}
+
+bool TimelinePlayer::Active(const PlaybackHandle handle) const {
+    return std::ranges::any_of(m_playbacks, [handle](const auto& state) {
+        return state.handle == handle;
+    });
+}
+
+std::optional<PlaybackStatus> TimelinePlayer::GetStatus(
+    const PlaybackHandle handle) const {
+    if (const auto active = std::ranges::find_if(
+            m_playbacks,
+            [handle](const auto& state) { return state.handle == handle; });
+        active != m_playbacks.end())
+        return active->status;
+    if (const auto terminal = std::ranges::find_if(
+            m_terminalHistory,
+            [handle](const auto& state) { return state.handle == handle; });
+        terminal != m_terminalHistory.end())
+        return terminal->status;
+    return std::nullopt;
+}
+
+const std::vector<diag::Diagnostic>* TimelinePlayer::GetError(
+    const PlaybackHandle handle) const {
+    if (const auto active = std::ranges::find_if(
+            m_playbacks,
+            [handle](const auto& state) { return state.handle == handle; });
+        active != m_playbacks.end())
+        return active->errors.empty() ? nullptr : &active->errors;
+    if (const auto terminal = std::ranges::find_if(
+            m_terminalHistory,
+            [handle](const auto& state) { return state.handle == handle; });
+        terminal != m_terminalHistory.end())
+        return terminal->errors.empty() ? nullptr : &terminal->errors;
+    return nullptr;
+}
 
 Status TimelinePlayer::ApplyAt(const AnimationClip& clip,const float position){std::vector<resource::ResourceId> stack;return ApplyAtRecursive(clip,position,stack);}
 Status TimelinePlayer::ApplyAtRecursive(const AnimationClip& clip,const float position,std::vector<resource::ResourceId>& stack){Status status;if(std::find(stack.begin(),stack.end(),clip.id)!=stack.end())return Status::Fail(TimelineError("PXANIM7517","Nested animation cycle detected"));stack.push_back(clip.id);if(m_apply)for(const auto& track:clip.tracks){const Status applied=m_apply(track.binding,Sample(track,position));for(const auto& diagnostic:applied.Diagnostics())status.Add(diagnostic);}for(const auto& nested:clip.nested){if(position<nested.start)continue;const auto* child=Find(nested.clip);if(!child){status.Add(TimelineError("PXANIM7518","Nested animation clip is not registered"));continue;}float childTime=(position-nested.start)*nested.speed;if(child->loop&&child->duration>0.0f)childTime=std::fmod(childTime,child->duration);else childTime=std::clamp(childTime,0.0f,child->duration);const Status applied=ApplyAtRecursive(*child,childTime,stack);for(const auto& diagnostic:applied.Diagnostics())status.Add(diagnostic);}stack.pop_back();return status;}
-void TimelinePlayer::EmitMarkers(const AnimationClip& clip,const float from,const float to){if(!m_event)return;for(const auto& marker:clip.markers)if(marker.time>from&&marker.time<=to)m_event(marker);}
 
-void TimelinePlayer::Update(const float deltaSeconds){if(!std::isfinite(deltaSeconds)||deltaSeconds<0.0f)return;for(auto& state:m_playbacks){if(!state.playing)continue;const auto* clip=Find(state.clip);if(!clip){state.playing=false;continue;}const float previous=state.position;state.position+=deltaSeconds*state.speed;if(clip->loop&&clip->duration>0.0f){while(state.position>=clip->duration){EmitMarkers(*clip,previous,clip->duration);state.position-=clip->duration;++state.loopIteration;}EmitMarkers(*clip,0.0f,state.position);}else{const float target=std::min(state.position,clip->duration);EmitMarkers(*clip,previous,target);state.position=target;if(state.position>=clip->duration){state.playing=false;if(m_completion)m_completion(state.handle,false);}}(void)ApplyAt(*clip,state.position);}}
-void TimelinePlayer::Clear(){for(auto& state:m_playbacks)if(state.playing&&m_completion)m_completion(state.handle,true);m_playbacks.clear();}
-Status TimelinePlayer::RestoreState(std::vector<PlaybackState> state,const bool apply){std::unordered_set<PlaybackHandle> handles;for(const auto& playback:state){const auto* clip=Find(playback.clip);if(!clip)return Status::Fail(TimelineError("PXANIM7513","Saved playback references a missing clip"));if(!playback.handle||!handles.insert(playback.handle).second||!std::isfinite(playback.position)||!std::isfinite(playback.speed)||playback.speed<=0.0f||playback.position<0.0f||playback.position>clip->duration)return Status::Fail(TimelineError("PXANIM7514","Saved playback state is invalid"));}m_playbacks=std::move(state);for(const auto& playback:m_playbacks)m_nextHandle=std::max(m_nextHandle,playback.handle+1);if(apply)for(const auto& playback:m_playbacks){const Status status=ApplyAt(*Find(playback.clip),playback.position);if(!status)return status;}return Status::Ok();}
+void TimelinePlayer::EmitMarkers(const PlaybackState& playback,
+                                 const AnimationClip& root, const double from,
+                                 const double to, const bool includeFrom,
+                                 const bool includeLoopStartAtEnd) {
+    if ((!m_event && !m_detailedEvent) || to < from) return;
+
+    struct PendingMarker {
+        double time = 0.0;
+        std::size_t sequence = 0;
+        MarkerEvent event;
+    };
+    std::vector<PendingMarker> pending;
+    std::vector<resource::ResourceId> stack;
+    std::size_t sequence = 0;
+
+    std::function<void(const AnimationClip&, double, double, bool, double,
+                       double, std::uint64_t, bool)>
+        collectElapsed;
+    std::function<void(const AnimationClip&, double, double, bool,
+                       std::uint64_t, double, double, std::uint64_t)>
+        collectIteration;
+
+    collectIteration = [&](const AnimationClip& clip, const double localFrom,
+                           const double localTo, const bool includeLocalFrom,
+                           const std::uint64_t clipIteration,
+                           const double rootOffset,
+                           const double rootUnitsPerClipSecond,
+                           const std::uint64_t playbackIteration) {
+        if (std::ranges::find(stack, clip.id) != stack.end()) return;
+        stack.push_back(clip.id);
+
+        for (const auto& marker : clip.markers) {
+            const double markerTime = marker.time;
+            const bool afterStart = includeLocalFrom
+                                        ? markerTime >= localFrom
+                                        : markerTime > localFrom;
+            if (!afterStart || markerTime > localTo) continue;
+            MarkerEvent event;
+            event.handle = playback.handle;
+            event.playbackClip = root.id;
+            event.clip = clip.id;
+            event.clipName = clip.name;
+            event.marker = marker;
+            event.loopIteration = clipIteration;
+            event.playbackLoopIteration = playbackIteration;
+            pending.push_back(
+                {rootOffset + markerTime * rootUnitsPerClipSecond,
+                 sequence++, std::move(event)});
+        }
+
+        for (const auto& nested : clip.nested) {
+            const auto* child = Find(nested.clip);
+            if (!child) continue;
+            const double rawFrom =
+                (localFrom - static_cast<double>(nested.start)) * nested.speed;
+            const double rawTo =
+                (localTo - static_cast<double>(nested.start)) * nested.speed;
+            if (rawTo < 0.0) continue;
+            const bool childIncludeFrom =
+                rawFrom < 0.0 ? true : includeLocalFrom;
+            collectElapsed(
+                *child, std::max(0.0, rawFrom), std::max(0.0, rawTo),
+                childIncludeFrom,
+                rootOffset + static_cast<double>(nested.start) *
+                                 rootUnitsPerClipSecond,
+                rootUnitsPerClipSecond / nested.speed, playbackIteration,
+                false);
+        }
+        stack.pop_back();
+    };
+
+    collectElapsed = [&](const AnimationClip& clip, const double elapsedFrom,
+                         const double elapsedTo, const bool includeElapsedFrom,
+                         const double rootOffset,
+                         const double rootUnitsPerClipSecond,
+                         const std::uint64_t playbackIteration,
+                         const bool rootLevel) {
+        if (elapsedTo < elapsedFrom) return;
+        const double duration = clip.duration;
+        if (clip.loop && duration > 0.0) {
+            const double firstValue = std::floor(elapsedFrom / duration);
+            double lastValue = std::floor(elapsedTo / duration);
+            if (rootLevel && !includeLoopStartAtEnd &&
+                elapsedTo > elapsedFrom &&
+                elapsedTo == lastValue * duration)
+                lastValue -= 1.0;
+            if (firstValue < 0.0 || lastValue < firstValue ||
+                lastValue > static_cast<double>(
+                                (std::numeric_limits<std::uint64_t>::max)()))
+                return;
+            const auto first = static_cast<std::uint64_t>(firstValue);
+            const auto last = static_cast<std::uint64_t>(lastValue);
+            for (std::uint64_t iteration = first;; ++iteration) {
+                const double base = static_cast<double>(iteration) * duration;
+                const double localFrom =
+                    iteration == first ? elapsedFrom - base : 0.0;
+                const double localTo =
+                    iteration == last ? elapsedTo - base : duration;
+                collectIteration(
+                    clip, std::clamp(localFrom, 0.0, duration),
+                    std::clamp(localTo, 0.0, duration),
+                    iteration == first ? includeElapsedFrom : true, iteration,
+                    rootOffset + base * rootUnitsPerClipSecond,
+                    rootUnitsPerClipSecond,
+                    rootLevel ? iteration : playbackIteration);
+                if (iteration == last) break;
+            }
+            return;
+        }
+
+        if (elapsedTo < 0.0 || elapsedFrom > duration) return;
+        const double localFrom = std::clamp(elapsedFrom, 0.0, duration);
+        const double localTo = std::clamp(elapsedTo, 0.0, duration);
+        collectIteration(clip, localFrom, localTo,
+                         elapsedFrom < 0.0 ? true : includeElapsedFrom, 0,
+                         rootOffset, rootUnitsPerClipSecond,
+                         playbackIteration);
+    };
+
+    collectElapsed(root, from, to, includeFrom, 0.0, 1.0,
+                   playback.loopIteration, true);
+    std::ranges::stable_sort(pending, {}, &PendingMarker::time);
+    for (const auto& item : pending) {
+        if (m_detailedEvent) m_detailedEvent(item.event);
+        if (m_event) m_event(item.event.marker);
+    }
+}
+
+void TimelinePlayer::RecordTerminal(
+    PlaybackState state, const PlaybackStatus status,
+    std::vector<diag::Diagnostic> errors) {
+    state.playing = false;
+    state.status = status;
+    state.errors = std::move(errors);
+    m_terminalHistory.push_back(std::move(state));
+    while (m_terminalHistory.size() > TerminalHistoryLimit)
+        m_terminalHistory.pop_front();
+}
+
+Status TimelinePlayer::Update(const float deltaSeconds) {
+    if (!std::isfinite(deltaSeconds) || deltaSeconds < 0.0f)
+        return Status::Fail(TimelineError(
+            "PXANIM7514", "Timeline delta must be finite and non-negative"));
+
+    Status result;
+    std::size_t index = 0;
+    while (index < m_playbacks.size()) {
+        PlaybackState state = m_playbacks[index];
+        if (state.status == PlaybackStatus::Paused) {
+            ++index;
+            continue;
+        }
+        const auto* clip = Find(state.clip);
+        if (!clip) {
+            const auto diagnostic =
+                TimelineError("PXANIM7511", "Playback clip is missing");
+            result.Add(diagnostic);
+            m_playbacks.erase(m_playbacks.begin() +
+                              static_cast<std::ptrdiff_t>(index));
+            RecordTerminal(state, PlaybackStatus::Failed, {diagnostic});
+            if (m_completion) m_completion(state.handle, true);
+            continue;
+        }
+
+        const double advance =
+            static_cast<double>(deltaSeconds) * state.speed;
+        bool completed = false;
+        if (clip->loop && clip->duration > 0.0f) {
+            const double previous =
+                static_cast<double>(state.loopIteration) * clip->duration +
+                state.position;
+            const double target = previous + advance;
+            const double loopValue = std::floor(target / clip->duration);
+            if (!std::isfinite(target) ||
+                loopValue > static_cast<double>(
+                                (std::numeric_limits<std::uint64_t>::max)())) {
+                const auto diagnostic = TimelineError(
+                    "PXANIM7514", "Timeline position overflowed");
+                result.Add(diagnostic);
+                m_playbacks.erase(m_playbacks.begin() +
+                                  static_cast<std::ptrdiff_t>(index));
+                RecordTerminal(state, PlaybackStatus::Failed, {diagnostic});
+                if (m_completion) m_completion(state.handle, true);
+                continue;
+            }
+            EmitMarkers(state, *clip, previous, target);
+            state.loopIteration = static_cast<std::uint64_t>(loopValue);
+            state.position = static_cast<float>(
+                target - loopValue * static_cast<double>(clip->duration));
+        } else {
+            const double previous = state.position;
+            const double target =
+                std::min(previous + advance,
+                         static_cast<double>(clip->duration));
+            EmitMarkers(state, *clip, previous, target);
+            state.position = static_cast<float>(target);
+            completed = state.position >= clip->duration;
+        }
+
+        const Status applied = ApplyAt(*clip, state.position);
+        if (!applied) {
+            for (const auto& diagnostic : applied.Diagnostics())
+                result.Add(diagnostic);
+            m_playbacks.erase(m_playbacks.begin() +
+                              static_cast<std::ptrdiff_t>(index));
+            RecordTerminal(state, PlaybackStatus::Failed,
+                           applied.Diagnostics());
+            if (m_completion) m_completion(state.handle, true);
+            continue;
+        }
+
+        if (completed) {
+            m_playbacks.erase(m_playbacks.begin() +
+                              static_cast<std::ptrdiff_t>(index));
+            RecordTerminal(state, PlaybackStatus::Completed);
+            if (m_completion) m_completion(state.handle, false);
+            continue;
+        }
+        m_playbacks[index] = std::move(state);
+        ++index;
+    }
+    return result;
+}
+
+void TimelinePlayer::Clear() {
+    std::vector<PlaybackHandle> cancelled;
+    cancelled.reserve(m_playbacks.size());
+    for (const auto& state : m_playbacks) cancelled.push_back(state.handle);
+    m_playbacks.clear();
+    m_terminalHistory.clear();
+    if (m_completion)
+        for (const auto handle : cancelled) m_completion(handle, true);
+}
+
+std::vector<PlaybackState> TimelinePlayer::CaptureState() const {
+    std::vector<PlaybackState> result;
+    result.reserve(m_playbacks.size() + m_terminalHistory.size());
+    result.insert(result.end(), m_playbacks.begin(), m_playbacks.end());
+    result.insert(result.end(), m_terminalHistory.begin(),
+                  m_terminalHistory.end());
+    return result;
+}
+
+Status TimelinePlayer::RestoreState(std::vector<PlaybackState> state,
+                                    const bool apply) {
+    std::unordered_set<PlaybackHandle> handles;
+    std::vector<PlaybackState> active;
+    std::deque<PlaybackState> terminal;
+    PlaybackHandle nextHandle = m_nextHandle;
+    for (auto& playback : state) {
+        const PlaybackHandle restoredHandle = playback.handle;
+        const auto* clip = Find(playback.clip);
+        if (!clip)
+            return Status::Fail(TimelineError(
+                "PXANIM7513", "Saved playback references a missing clip"));
+        if (!playback.handle || !handles.insert(playback.handle).second ||
+            !std::isfinite(playback.position) ||
+            !std::isfinite(playback.speed) || playback.speed <= 0.0f ||
+            playback.position < 0.0f || playback.position > clip->duration ||
+            playback.handle ==
+                (std::numeric_limits<PlaybackHandle>::max)())
+            return Status::Fail(TimelineError(
+                "PXANIM7514", "Saved playback state is invalid"));
+
+        // Old saves only have `playing`. A false value represented a retained
+        // completed entry before terminal state was made explicit.
+        if (!playback.playing && playback.status == PlaybackStatus::Playing)
+            playback.status = PlaybackStatus::Completed;
+        switch (playback.status) {
+            case PlaybackStatus::Playing:
+            case PlaybackStatus::Paused:
+                playback.playing = true;
+                active.push_back(std::move(playback));
+                break;
+            case PlaybackStatus::Completed:
+            case PlaybackStatus::Cancelled:
+            case PlaybackStatus::Failed:
+                playback.playing = false;
+                terminal.push_back(std::move(playback));
+                if (terminal.size() > TerminalHistoryLimit)
+                    terminal.pop_front();
+                break;
+            default:
+                return Status::Fail(TimelineError(
+                    "PXANIM7514", "Saved playback status is invalid"));
+        }
+        nextHandle = std::max(nextHandle, restoredHandle + 1);
+    }
+
+    if (apply) {
+        for (const auto& playback : active) {
+            const Status applied =
+                ApplyAt(*Find(playback.clip), playback.position);
+            if (!applied) return applied;
+        }
+    }
+    m_playbacks = std::move(active);
+    m_terminalHistory = std::move(terminal);
+    m_nextHandle = nextHandle;
+    return Status::Ok();
+}
 
 std::vector<AnimationClip> OfficialPresets(){std::vector<AnimationClip> clips;const auto add=[&](const char* c,const char* n,const char* p,Variant a,Variant b,float d=0.45f,bool loop=false){clips.push_back(Preset(c,n,p,std::move(a),std::move(b),d,loop));};
     for(const char* name:{"typewriter","fade","slide","pop","shake","wave","rainbow","glitch"})add("Text",name,name,0.0,1.0,name==std::string("typewriter")?1.2f:0.6f,name==std::string("wave")||name==std::string("rainbow"));

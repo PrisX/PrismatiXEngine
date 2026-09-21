@@ -4,7 +4,10 @@
 
 #include <array>
 #include <cstdint>
+#include <deque>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -17,11 +20,84 @@ namespace px::audio {
 
 class AudioEngine {
 public:
+    enum class Bus : std::uint8_t {
+        Music,
+        SoundEffect,
+        Voice,
+        Ambience,
+        BGM = Music,
+        SE = SoundEffect,
+    };
+    using AudioBus = Bus;
+
+    enum class PlaybackStatus : std::uint8_t {
+        Invalid,
+        Playing,
+        Paused,
+        Completed,
+        Stopped,
+        Failed,
+    };
+
+    enum class PlaybackPhase : std::uint8_t {
+        Single,
+        Intro,
+        Loop,
+    };
+
+    enum class RestorePolicy : std::uint8_t {
+        Persistent,
+        Transient,
+    };
+
+    struct AudioHandle {
+        std::uint64_t value = 0;
+        [[nodiscard]] explicit operator bool() const { return value != 0; }
+        friend bool operator==(AudioHandle, AudioHandle) = default;
+    };
+    using PlaybackHandle = AudioHandle;
+
+    struct PlaybackRequest {
+        Bus bus = Bus::SoundEffect;
+        std::string path;
+        bool loop = false;
+        int fadeMs = 0;
+        // When non-empty, path is a one-shot intro and loopPath becomes the
+        // indefinitely looping body without changing the handle identity.
+        std::string loopPath;
+    };
+
+    struct PlaybackState {
+        AudioHandle handle;
+        Bus bus = Bus::SoundEffect;
+        PlaybackStatus status = PlaybackStatus::Invalid;
+        PlaybackPhase phase = PlaybackPhase::Single;
+        std::string path;
+        std::string introPath;
+        std::string loopPath;
+        std::int64_t playbackFrame = 0;
+        bool loop = false;
+        [[nodiscard]] bool Terminal() const {
+            return status == PlaybackStatus::Completed ||
+                   status == PlaybackStatus::Stopped ||
+                   status == PlaybackStatus::Failed;
+        }
+    };
+
+    static constexpr std::size_t TerminalHistoryLimit = 64;
+    static constexpr std::size_t kTerminalHistoryCapacity = TerminalHistoryLimit;
+    using Completion = std::function<void(AudioHandle)>;
+
     struct TrackState {
         std::string path;
         bool loop = false;
         bool playing = false;
         std::int64_t playbackFrame = 0;
+        bool paused = false;
+        // Persistent buses carry their live identity through checkpoint
+        // restore so an outstanding wait token continues observing the same
+        // playback rather than a replacement handle.
+        std::uint64_t handle = 0;
     };
     struct RuntimeState {
         TrackState music;
@@ -39,6 +115,43 @@ public:
 
     bool Init();
     void Shutdown();
+
+    // Native handle API. A valid handle is returned even when startup fails;
+    // its status is Failed, allowing callers to distinguish a rejected play
+    // from an absent/stale handle (Invalid).
+    [[nodiscard]] AudioHandle Play(PlaybackRequest request);
+    [[nodiscard]] AudioHandle PlayIntroLoop(Bus bus,
+                                            const std::string& introPath,
+                                            const std::string& loopPath,
+                                            int fadeMs = 0);
+    [[nodiscard]] std::optional<PlaybackState> Playback(AudioHandle handle) const;
+    [[nodiscard]] PlaybackStatus Status(AudioHandle handle) const;
+    [[nodiscard]] std::optional<PlaybackStatus> GetStatus(
+        AudioHandle handle) const;
+    [[nodiscard]] bool IsComplete(AudioHandle handle) const;
+    [[nodiscard]] bool Active(AudioHandle handle) const;
+    [[nodiscard]] bool Playing(AudioHandle handle) const;
+    [[nodiscard]] bool Paused(AudioHandle handle) const;
+    bool Pause(AudioHandle handle);
+    bool Resume(AudioHandle handle);
+    bool Stop(AudioHandle handle, int fadeMs = 0);
+    bool Seek(AudioHandle handle, std::int64_t playbackFrame);
+    // Natural completions are delivered once. Terminal Playback() state stays
+    // queryable until the bounded history evicts the oldest terminal handle.
+    [[nodiscard]] std::vector<AudioHandle> TakeCompletions();
+    void SetCompletion(Completion completion) {
+        m_completion = std::move(completion);
+    }
+    [[nodiscard]] std::size_t TerminalHistorySize() const {
+        return m_terminalHistory.size();
+    }
+    [[nodiscard]] static constexpr RestorePolicy RestorePolicyFor(Bus bus) {
+        // Music/voice/ambience are durable buses captured by RuntimeState.
+        // Sound effects are overlapping transient cues and intentionally do
+        // not replay during checkpoint restore.
+        return bus == Bus::SoundEffect ? RestorePolicy::Transient
+                                       : RestorePolicy::Persistent;
+    }
 
     // With fadeMs > 0 while another BGM is playing this crossfades: the old
     // track fades out while the new one fades in on a second track.
@@ -91,6 +204,11 @@ private:
         std::uint64_t lastUse = 0;
     };
 
+    struct PlaybackRecord {
+        PlaybackState state;
+        MIX_Track* track = nullptr;
+    };
+
     MIX_Audio* AcquireAudio(const std::string& path, bool predecode);
     // Returns the track and records the audio about to play on it.
     MIX_Track* AcquireSeTrack(MIX_Audio* audio);
@@ -98,6 +216,23 @@ private:
     void EvictAudio();
     void ApplyMixGains();
     static bool SetTrackPaused(MIX_Track* track, bool paused);
+    bool StartMusic(const std::string& path, bool loop, int fadeMs);
+    MIX_Track* StartSoundEffect(const std::string& path);
+    bool StartVoice(const std::string& path);
+    bool StartAmbience(const std::string& path, bool loop, int fadeMs);
+    void StopMusicTracks(int fadeMs);
+    void StopVoiceTrack();
+    void StopAmbienceTrack(int fadeMs);
+    void StopTransientSoundEffects();
+    [[nodiscard]] AudioHandle NextHandle();
+    [[nodiscard]] AudioHandle PlayWithHandle(PlaybackRequest request,
+                                             AudioHandle restoredHandle);
+    void ForgetTerminalHandle(AudioHandle handle);
+    void Finish(AudioHandle handle, PlaybackStatus status);
+    void FinishTrackPlayback(MIX_Track* track, PlaybackStatus status);
+    [[nodiscard]] PlaybackRecord* Find(AudioHandle handle);
+    [[nodiscard]] const PlaybackRecord* Find(AudioHandle handle) const;
+    void TrimTerminalHistory();
 
     io::VFS& m_vfs;
     bool m_initialized = false;
@@ -128,6 +263,25 @@ private:
     int m_ambienceVolume = 96;
     int m_mainVolume = 128;
     bool m_voiceDucking = false;
+
+    std::uint64_t m_nextHandle = 1;
+    std::unordered_map<std::uint64_t,PlaybackRecord> m_playbacks;
+    std::unordered_map<MIX_Track*,AudioHandle> m_trackPlaybacks;
+    std::deque<AudioHandle> m_terminalHistory;
+    std::vector<AudioHandle> m_completions;
+    AudioHandle m_musicHandle;
+    AudioHandle m_voiceHandle;
+    AudioHandle m_ambienceHandle;
+    Completion m_completion;
 };
+
+using AudioBus = AudioEngine::Bus;
+using AudioHandle = AudioEngine::AudioHandle;
+using PlaybackHandle = AudioEngine::PlaybackHandle;
+using PlaybackStatus = AudioEngine::PlaybackStatus;
+using PlaybackPhase = AudioEngine::PlaybackPhase;
+using PlaybackRequest = AudioEngine::PlaybackRequest;
+using PlaybackState = AudioEngine::PlaybackState;
+using AudioRestorePolicy = AudioEngine::RestorePolicy;
 
 }

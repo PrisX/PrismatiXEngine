@@ -123,6 +123,8 @@ public:
     [[nodiscard]] const ui::UIRouter& Routes() const { return m_routes; }
     [[nodiscard]] animation::TimelinePlayer& Timeline() { return m_timeline; }
     [[nodiscard]] const animation::TimelinePlayer& Timeline() const { return m_timeline; }
+    [[nodiscard]] Result<resource::ResourceId> LoadAnimationAsset(
+        const std::string& path);
     [[nodiscard]] Result<animation::PlaybackHandle> PlayAnimationAsset(
         const std::string& path,bool await=false,float speed=1.0f);
     [[nodiscard]] Result<animation::PlaybackHandle> PlayTimelineAsset(
@@ -186,7 +188,7 @@ private:
     Status ApplyState(const GameState& state, std::uint64_t nowMs);
     std::optional<vn::Program> CompileRuntimeIrText(
         std::string_view text, const std::string& sourcePath);
-    Result<resource::ResourceId> LoadAnimationAsset(
+    Result<resource::ResourceId> LoadAnimationAssetRecursive(
         const std::string& path,
         std::optional<resource::ResourceId> expectedId,
         std::vector<std::string>& stack);

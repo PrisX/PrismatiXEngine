@@ -713,6 +713,12 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_scriptServices.variables = &m_session->Variables();
     m_scriptServices.routes = &m_session->Routes();
     m_scriptServices.timeline = &m_session->Timeline();
+    m_scriptServices.loadAnimationAsset = [this](const std::string& path) {
+        auto loaded = m_session->LoadAnimationAsset(path);
+        if (!loaded)
+            return Result<std::string>::Failure(loaded.Diagnostics());
+        return Result<std::string>::Success(loaded.Value().ToString());
+    };
     m_scriptServices.requestSave = [this](const int slot) {
         if (m_appState != AppState::Game || slot < -1 || slot > 999)
             return false;
@@ -979,6 +985,24 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     };
     PX_LOG_DEBUG("Player boot: constructing script host");
     m_scriptHost = script::CreateScriptHost(m_scriptServices);
+    m_session->Timeline().SetDetailedEvent(
+        [this](const animation::MarkerEvent& event) {
+            if (!m_scriptHost) return;
+            (void)m_scriptHost->Emit(
+                "timeline.marker",
+                Variant(VariantObject{
+                 {"handle", static_cast<std::int64_t>(event.handle)},
+                 {"playbackClip", event.playbackClip.ToString()},
+                 {"clip", event.clip.ToString()},
+                 {"clipName", event.clipName},
+                 {"marker", event.marker.name},
+                 {"markerId", event.marker.id},
+                 {"loopIteration",
+                  static_cast<std::int64_t>(event.loopIteration)},
+                 {"playbackLoopIteration",
+                  static_cast<std::int64_t>(event.playbackLoopIteration)},
+                 {"payload", Variant(event.marker.payload)}}));
+        });
     PX_LOG_DEBUG("Player boot: script host constructed backend={}", m_scriptHost->BackendId());
     (void)m_ui.Actions().RegisterProvider(m_scriptHost->CreateActionProvider());
     PX_LOG_DEBUG("Player boot: script Action provider registered");
@@ -1847,12 +1871,28 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
     if (t.ends_with(".up") || t.ends_with(".down")) m_ui.ShowSettings(SettingsUI());
 }
 
+void PlayerApp::RenderStageWithScripts() {
+    if (m_scriptHost)
+        m_scriptHost->RenderRetained(script::RenderPhase::BeforeStage);
+    m_session->Stage().Render();
+    if (m_scriptHost)
+        m_scriptHost->RenderRetained(script::RenderPhase::AfterStage);
+}
+
+void PlayerApp::RenderUIWithScripts() {
+    if (m_scriptHost)
+        m_scriptHost->RenderRetained(script::RenderPhase::BeforeUI);
+    m_ui.Render(m_runtime.Renderer());
+    if (m_scriptHost)
+        m_scriptHost->RenderRetained(script::RenderPhase::AfterUI);
+}
+
 void PlayerApp::ScreensFrame(float dt) {
     px::Input& input = m_runtime.GetInput();
     int w = 0, h = 0; m_runtime.Renderer().GetLogicalSize(w, h);
     (void)m_ui.Update(input, w, h,dt);
-    if (m_appState == AppState::Game) m_session->Stage().Render();
-    m_ui.Render(m_runtime.Renderer());
+    if (m_appState == AppState::Game) RenderStageWithScripts();
+    RenderUIWithScripts();
     CaptureE2EGalleryFrame();
 }
 
@@ -2055,7 +2095,7 @@ void PlayerApp::TitleFrame(float dt) {
     px::Input& input = m_runtime.GetInput();
     int w = 0, h = 0; m_runtime.Renderer().GetLogicalSize(w, h);
     (void)m_ui.Update(input, w, h,dt);
-    m_ui.Render(m_runtime.Renderer());
+    RenderUIWithScripts();
 }
 
 bool PlayerApp::VideoFrame(float dt) {
@@ -2115,7 +2155,7 @@ bool PlayerApp::VideoFrame(float dt) {
     m_video->Render(w, h);
     if (m_ui.CurrentScreen() != ui::GalgameUI::Screen::Video) m_ui.ShowVideoOverlay(m_videoSkippable);
     (void)m_ui.Update(input, w, h,dt);
-    m_ui.Render(m_runtime.Renderer());
+    RenderUIWithScripts();
     return true;
 }
 
@@ -2154,24 +2194,24 @@ void PlayerApp::UpdateScriptScheduler(const float dt) {
 void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     px::Input& input = m_runtime.GetInput();
 
-    if (input.KeyPressed(SDL_SCANCODE_F9)) LoadSlot(0);
-    if (input.KeyPressed(SDL_SCANCODE_F5)) m_saveRequested = true;
+    if (input.ActionPressed(InputAction::QuickLoad)) LoadSlot(0);
+    if (input.ActionPressed(InputAction::QuickSave)) m_saveRequested = true;
     if (input.KeyPressed(SDL_SCANCODE_F6)) m_pendingSaveScreen = true;
 
     // Mode toggles (KAG conventions: A=auto, S=skip toggle, Ctrl=skip held).
-    if (input.KeyPressed(SDL_SCANCODE_A)) {
+    if (input.ActionPressed(InputAction::ToggleAuto)) {
         m_autoMode = !m_autoMode;
         if (m_autoMode) m_skipMode = false;
     }
-    if (input.KeyPressed(SDL_SCANCODE_S)) {
+    if (input.ActionPressed(InputAction::ToggleSkip)) {
         m_skipMode = !m_skipMode;
         if (m_skipMode) m_autoMode = false;
     }
-    if (input.KeyPressed(SDL_SCANCODE_B) || input.WheelY() > 0.0f) {
+    if (input.ActionPressed(InputAction::Backlog) || input.WheelY() > 0.0f) {
         OpenScreen("backlog");
         return;
     }
-    if (input.KeyPressed(SDL_SCANCODE_PAGEUP)) {
+    if (input.ActionPressed(InputAction::Rollback)) {
         RollbackOneLine();
     }
     if (input.RightClick()) {
@@ -2191,9 +2231,9 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     // Enter/Space advance like a click (KAG convention). Alt+Enter stays the
     // fullscreen toggle handled in MainLoop.
     const bool advanceKey =
-        (input.KeyPressed(SDL_SCANCODE_RETURN) && !input.KeyDown(SDL_SCANCODE_LALT) &&
-         !input.KeyDown(SDL_SCANCODE_RALT)) ||
-        input.KeyPressed(SDL_SCANCODE_SPACE);
+        input.ActionPressed(InputAction::Advance) &&
+        !input.KeyDown(SDL_SCANCODE_LALT) &&
+        !input.KeyDown(SDL_SCANCODE_RALT);
 
     bool advancedByClick = false;
     if (m_hudHidden) {
@@ -2206,8 +2246,8 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         // previous choice snapshot for the remainder of this frame.
         syncChoiceTexts();
         if (!m_session->Routes().CurrentModalRoute().empty()) {
-            m_session->Stage().Render();
-            m_ui.Render(m_runtime.Renderer());
+            RenderStageWithScripts();
+            RenderUIWithScripts();
             return;
         }
         if (!uiConsumed && (input.LeftClick() || advanceKey) &&
@@ -2271,7 +2311,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         m_lastBacklogSequence = backlogSequence;
     }
 
-    m_session->Stage().Render();
+    RenderStageWithScripts();
 
     // Autosave once per choice prompt; the stage is rendered, so the thumbnail
     // shows the scene the player was deciding on.
@@ -2294,7 +2334,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
 
     if (!m_hudHidden) {
         m_ui.RefreshHUD(DialogueUI());
-        m_ui.Render(m_runtime.Renderer());
+        RenderUIWithScripts();
     }
 
     if (m_saveRequested) {

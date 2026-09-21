@@ -173,7 +173,7 @@ Status RuntimeSession::SetSourceMapText(const std::string_view text,
 Result<animation::PlaybackHandle> RuntimeSession::PlayAnimationAsset(
     const std::string& path,const bool await,const float speed){
     std::vector<std::string> stack;
-    auto loaded=LoadAnimationAsset(path,std::nullopt,stack);
+    auto loaded=LoadAnimationAssetRecursive(path,std::nullopt,stack);
     if(!loaded)return Result<animation::PlaybackHandle>::Failure(loaded.Diagnostics());
     const auto handle=m_timeline.Play(loaded.Value(),await,speed);if(!handle)return Result<animation::PlaybackHandle>::Failure(RestoreFailure("Animation clip could not be played",path).Diagnostics());return Result<animation::PlaybackHandle>::Success(handle);
 }
@@ -194,7 +194,7 @@ Result<animation::PlaybackHandle> RuntimeSession::PlayTimelineText(
     for(const auto& nested:document.nestedClips){
         resource::ResourceId nestedId=nested.clip.id;
         if(!nested.clip.lastKnownPath.empty()){
-            auto loaded=LoadAnimationAsset(nested.clip.lastKnownPath,
+            auto loaded=LoadAnimationAssetRecursive(nested.clip.lastKnownPath,
                 nested.clip.id.Empty()?std::nullopt:std::optional<resource::ResourceId>{nested.clip.id},stack);
             if(!loaded)return Result<animation::PlaybackHandle>::Failure(loaded.Diagnostics());
             nestedId=loaded.Value();
@@ -214,6 +214,12 @@ Result<animation::PlaybackHandle> RuntimeSession::PlayTimelineText(
 }
 
 Result<resource::ResourceId> RuntimeSession::LoadAnimationAsset(
+    const std::string& path) {
+    std::vector<std::string> stack;
+    return LoadAnimationAssetRecursive(path, std::nullopt, stack);
+}
+
+Result<resource::ResourceId> RuntimeSession::LoadAnimationAssetRecursive(
     const std::string& path,
     const std::optional<resource::ResourceId> expectedId,
     std::vector<std::string>& stack){
@@ -236,7 +242,7 @@ Result<resource::ResourceId> RuntimeSession::LoadAnimationAsset(
         for(const auto& nested:document.nestedClips){
             resource::ResourceId nestedId=nested.clip.id;
             if(!nested.clip.lastKnownPath.empty()){
-                auto loaded=LoadAnimationAsset(nested.clip.lastKnownPath,
+                auto loaded=LoadAnimationAssetRecursive(nested.clip.lastKnownPath,
                     nested.clip.id.Empty()?std::nullopt:std::optional<resource::ResourceId>{nested.clip.id},stack);
                 if(!loaded){pop();return Result<resource::ResourceId>::Failure(loaded.Diagnostics());}
                 nestedId=loaded.Value();

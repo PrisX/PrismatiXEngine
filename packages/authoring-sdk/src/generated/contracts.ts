@@ -911,7 +911,8 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             "audio",
             "video",
             "persistence",
-            "input"
+            "input",
+            "render"
           ]
         },
         "maxItems": 64,
@@ -3323,7 +3324,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "character.schema.json": "aadcf4c9e6d8e141581293dde1ffd1ef004f5423c4e8d450f7c2b0c880a5f64e",
   "common.schema.json": "1ba66770e3cf7f90b6ffe29f7fdccd263ad2eeec4cb2cff63bc0f7839a5d57f4",
   "effect.schema.json": "631dd0bce555dcbb3f849049978c9b635dd79848ac497adf292ca6e02468eee7",
-  "extension.schema.json": "b20aa556b29e2eba19ebc0a61e12ec309c3ac26811df44942068be3520fdc4ff",
+  "extension.schema.json": "9438f403e51b8f69f52f05d5999afc37c433754a215094460e28c6d1710555a2",
   "game.schema.json": "f0592fc75a4deb4aed7f192c076165012ef480196a07cd7d2136be390821dcba",
   "locale.schema.json": "d9fc4deae726d556c7bc7fb51a1d7a25e8db065147cb79450e31326dd81f4d79",
   "project.schema.json": "8a7ed01b49ac02f5b1c6b2bf6c74267fd058f8e92763ec7de1ba0c7cee034ac1",

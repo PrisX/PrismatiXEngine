@@ -116,6 +116,143 @@ void TestUnifiedTimelineAndPresets() {
     Check(px::animation::OfficialPresets().size() >= 35, "official preset library should cover text, actor, screen, and UI effects");
 }
 
+void TestTimelinePlaybackContract() {
+    px::animation::AnimationClip child;
+    child.id = px::Uuid::FromName("timeline-contract-child");
+    child.name = "Looping child";
+    child.duration = 0.5f;
+    child.loop = true;
+    child.markers.push_back({0.25f, "child-quarter", {}, "child-quarter"});
+
+    px::animation::AnimationClip root;
+    root.id = px::Uuid::FromName("timeline-contract-root");
+    root.name = "Looping root";
+    root.duration = 1.0f;
+    root.loop = true;
+    root.markers.push_back({0.75f, "root-three-quarter", {}, "root-marker"});
+    root.nested.push_back({0.25f, child.id, 2.0f});
+
+    px::animation::TimelinePlayer player;
+    int rootMarkers = 0;
+    int childMarkers = 0;
+    std::vector<px::animation::MarkerEvent> events;
+    player.SetDetailedEvent([&](const px::animation::MarkerEvent& event) {
+        events.push_back(event);
+        if (event.clip == root.id) ++rootMarkers;
+        if (event.clip == child.id) ++childMarkers;
+    });
+    Check(player.Register(child) && player.Register(root),
+          "nested looping Timeline contract clips should register");
+    auto played = player.PlayChecked(root.id, true);
+    Check(static_cast<bool>(played),
+          "checked Timeline playback should report initial apply errors");
+    if (!played) return;
+    const auto handle = played.Value();
+
+    Check(player.Update(2.6f) && rootMarkers == 2 && childMarkers == 7 &&
+              events.size() == 9,
+          "root, nested, loop, and multi-wrap markers must each fire once");
+    Check(std::ranges::is_sorted(events, std::ranges::less{},
+                                 [&](const auto& event) {
+              return static_cast<double>(event.playbackLoopIteration) +
+                     (event.clip == root.id ? event.marker.time
+                                            : 0.25 +
+                                                  (event.loopIteration * 0.5 +
+                                                   event.marker.time) /
+                                                      2.0);
+          }),
+          "nested marker callbacks must retain chronological crossing order");
+    Check(events.front().handle == handle &&
+              events.front().playbackClip == root.id &&
+              events.front().clip == child.id &&
+              events.front().clipName == child.name,
+          "detailed marker payload must identify playback and nested source clips");
+
+    const auto checkpoint = player.CaptureState();
+    const auto markersAtCheckpoint = events.size();
+    Check(checkpoint.size() == 1 && checkpoint.front().loopIteration == 2 &&
+              player.RestoreState(checkpoint) &&
+              events.size() == markersAtCheckpoint && player.Update(0.0f) &&
+              events.size() == markersAtCheckpoint,
+          "capture/restore and zero-delta updates must not replay marker crossings");
+    Check(player.Pause(handle) && player.Paused(handle) &&
+              player.Active(handle),
+          "active Timeline playback should pause with an explicit status");
+    const auto paused = player.CaptureState();
+    Check(player.Update(1.0f) && player.CaptureState().front().position ==
+                                     paused.front().position &&
+              player.Resume(handle) && player.Playing(handle),
+          "paused playback must remain stationary and resume deterministically");
+    const auto beforeSeekMarkers = events.size();
+    Check(player.Seek(handle, 0.9f) && events.size() == beforeSeekMarkers,
+          "seek must apply a sample without synthesizing marker crossings");
+    Check(player.Finish(handle) &&
+              player.GetStatus(handle) ==
+                  px::animation::PlaybackStatus::Completed &&
+              !player.Active(handle),
+          "finish must apply the terminal pose and retain bounded status");
+    const auto terminalCheckpoint = player.CaptureState();
+    const auto beforeTerminalRestore = events.size();
+    Check(player.RestoreState(terminalCheckpoint) &&
+              player.GetStatus(handle) ==
+                  px::animation::PlaybackStatus::Completed &&
+              events.size() == beforeTerminalRestore,
+          "terminal status must survive restore without marker replay");
+
+    px::animation::AnimationClip failing;
+    failing.id = px::Uuid::FromName("timeline-contract-failing");
+    failing.name = "Failing binding";
+    failing.duration = 1.0f;
+    failing.tracks.push_back(
+        {{px::animation::TargetKind::UI, "panel", "opacity"},
+         {{0.0f, 0.0, px::animation::Curve::Linear},
+          {1.0f, 1.0, px::animation::Curve::Linear}}});
+    Check(player.Register(failing), "failing Timeline test clip should register");
+    player.SetApply([](const px::animation::TrackBinding&,
+                       const px::Variant& value) {
+        const auto* number = value.TryGet<double>();
+        if (!number || *number <= 0.5) return px::Status::Ok();
+        px::diag::Diagnostic diagnostic;
+        diagnostic.severity = px::diag::Severity::Error;
+        diagnostic.code = "PXTEST_TIMELINE_APPLY";
+        diagnostic.category = "Test.Animation";
+        diagnostic.message = "intentional Timeline apply failure";
+        return px::Status::Fail(std::move(diagnostic));
+    });
+    auto failingPlayback = player.PlayChecked(failing.id);
+    Check(static_cast<bool>(failingPlayback),
+          "initial Timeline sample should start when apply succeeds");
+    if (failingPlayback) {
+        const auto failingHandle = failingPlayback.Value();
+        Check(!player.Update(0.75f) &&
+                  player.GetStatus(failingHandle) ==
+                      px::animation::PlaybackStatus::Failed &&
+                  player.GetError(failingHandle) &&
+                  !player.GetError(failingHandle)->empty(),
+              "Update must surface ApplyAt errors and preserve failure diagnostics");
+    }
+
+    player.SetApply({});
+    px::animation::AnimationClip shortClip;
+    shortClip.id = px::Uuid::FromName("timeline-contract-terminal-bound");
+    shortClip.name = "Terminal history bound";
+    shortClip.duration = 0.01f;
+    Check(player.Register(shortClip), "terminal history test clip should register");
+    px::animation::PlaybackHandle newest = 0;
+    for (std::size_t index = 0;
+         index < px::animation::TimelinePlayer::TerminalHistoryLimit + 32;
+         ++index) {
+        newest = player.Play(shortClip.id);
+        Check(newest != 0 && player.Update(0.02f),
+              "short Timeline playback should complete for pruning coverage");
+    }
+    Check(player.TerminalHistorySize() ==
+              px::animation::TimelinePlayer::TerminalHistoryLimit &&
+              player.GetStatus(newest) ==
+                  px::animation::PlaybackStatus::Completed,
+          "terminal handle history must remain bounded while retaining recent status");
+}
+
 void TestCanonicalTimelineRuntime() {
     px::test::TempDirectory temp("canonical-timeline");
     px::animation::AnimationClip child;
@@ -451,6 +588,7 @@ void TestUIAnimationStateMachine() {
 
 int main() {
     Run("Timeline_PresetsAndCheckpoint", TestUnifiedTimelineAndPresets);
+    Run("Timeline_PlaybackContract", TestTimelinePlaybackContract);
     Run("Timeline_CanonicalNestedRealtimeScrub", TestCanonicalTimelineRuntime);
     Run("Animation_EmbeddedPreviewRuntimeParity", TestEmbeddedUIAnimationParity);
     Run("Animation_StateMachineCheckpoint", TestUIAnimationStateMachine);

@@ -260,13 +260,30 @@ vn::Value RuntimeValueFromJson(const Json& json, const int depth = 0) {
 Json TimelinesToJson(const std::vector<animation::PlaybackState>& timelines) {
     Json values = Json::array();
     for (const auto& state : timelines) {
+        const char* status = "playing";
+        if (state.status == animation::PlaybackStatus::Paused) status = "paused";
+        else if (state.status == animation::PlaybackStatus::Completed) status = "completed";
+        else if (state.status == animation::PlaybackStatus::Cancelled) status = "cancelled";
+        else if (state.status == animation::PlaybackStatus::Failed) status = "failed";
+        Json errors = Json::array();
+        for (const auto& error : state.errors) {
+            errors.push_back({{"severity", static_cast<int>(error.severity)},
+                              {"code", error.code},
+                              {"category", error.category},
+                              {"message", error.message},
+                              {"details", error.details},
+                              {"sourcePath", error.source.path},
+                              {"sourceLine", error.source.line}});
+        }
         values.push_back({{"handle", state.handle},
                           {"clip", state.clip.ToString()},
                           {"position", state.position},
                           {"speed", state.speed},
                           {"loopIteration", state.loopIteration},
                           {"playing", state.playing},
-                          {"awaiting", state.awaiting}});
+                          {"awaiting", state.awaiting},
+                          {"status", status},
+                          {"errors", std::move(errors)}});
     }
     return values;
 }
@@ -289,6 +306,36 @@ std::vector<animation::PlaybackState> TimelinesFromJson(const Json& json) {
         state.loopIteration = value.value("loopIteration", std::uint64_t{0});
         state.playing = value.value("playing", false);
         state.awaiting = value.value("awaiting", false);
+        const std::string status = value.value(
+            "status", state.playing ? std::string("playing")
+                                      : std::string("completed"));
+        if (status == "playing") state.status = animation::PlaybackStatus::Playing;
+        else if (status == "paused") state.status = animation::PlaybackStatus::Paused;
+        else if (status == "completed") state.status = animation::PlaybackStatus::Completed;
+        else if (status == "cancelled") state.status = animation::PlaybackStatus::Cancelled;
+        else if (status == "failed") state.status = animation::PlaybackStatus::Failed;
+        else throw std::invalid_argument("timeline status is invalid");
+        if (value.contains("errors")) {
+            const auto& errors = value.at("errors");
+            if (!errors.is_array() || errors.size() > 64)
+                throw std::invalid_argument("timeline errors must be a bounded array");
+            for (const auto& encoded : errors) {
+                if (!encoded.is_object())
+                    throw std::invalid_argument("timeline error must be an object");
+                const int severity = encoded.value("severity", 2);
+                if (severity < 0 || severity > 3)
+                    throw std::invalid_argument("timeline error severity is invalid");
+                diag::Diagnostic error;
+                error.severity = static_cast<diag::Severity>(severity);
+                error.code = encoded.value("code", std::string{});
+                error.category = encoded.value("category", std::string{});
+                error.message = encoded.value("message", std::string{});
+                error.details = encoded.value("details", std::string{});
+                error.source.path = encoded.value("sourcePath", std::string{});
+                error.source.line = encoded.value("sourceLine", 0);
+                state.errors.push_back(std::move(error));
+            }
+        }
         timelines.push_back(state);
     }
     return timelines;
@@ -1195,14 +1242,18 @@ vn::Stage::RuntimeState StageFromJson(const Json& json) {
 
 Json AudioTrackToJson(const audio::AudioEngine::TrackState& state) {
     return {{"path", state.path}, {"loop", state.loop}, {"playing", state.playing},
-            {"playbackFrame", state.playbackFrame}};
+            {"playbackFrame", state.playbackFrame}, {"paused", state.paused},
+            {"handle", state.handle}};
 }
 
 audio::AudioEngine::TrackState AudioTrackFromJson(const Json& json) {
     if (!json.is_object()) throw std::invalid_argument("audio track must be an object");
-    return {.path=json.at("path").get<std::string>(), .loop=json.at("loop").get<bool>(),
-            .playing=json.at("playing").get<bool>(),
-            .playbackFrame=json.at("playbackFrame").get<std::int64_t>()};
+    return {.path = json.at("path").get<std::string>(),
+            .loop = json.at("loop").get<bool>(),
+            .playing = json.at("playing").get<bool>(),
+            .playbackFrame = json.at("playbackFrame").get<std::int64_t>(),
+            .paused = json.value("paused", false),
+            .handle = json.value("handle", std::uint64_t{0})};
 }
 
 Json AudioToJson(const audio::AudioEngine::RuntimeState& state) {

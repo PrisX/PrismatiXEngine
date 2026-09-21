@@ -209,6 +209,49 @@ export interface VideoAwaitToken {
   readonly handle: number;
 }
 
+export interface AudioAwaitToken {
+  readonly kind: "audio";
+  readonly handle: number;
+}
+
+export type AudioBus = "music" | "sound-effect" | "voice" | "ambience";
+export type AudioStatus =
+  | "invalid" | "playing" | "paused" | "completed" | "stopped" | "failed";
+export type AudioPhase = "single" | "intro" | "loop";
+
+export interface AudioPlayOptions {
+  readonly bus?: AudioBus;
+  readonly loop?: boolean;
+  readonly fadeMilliseconds?: number;
+  /** Plays path once, then loops this resource while retaining the handle. */
+  readonly loopPath?: string;
+}
+
+export interface AudioPlaybackModel {
+  readonly id: number;
+  readonly bus: AudioBus;
+  readonly status: AudioStatus;
+  readonly phase: AudioPhase;
+  readonly path: string;
+  readonly introPath: string;
+  readonly loopPath: string;
+  readonly playbackFrame: number;
+  readonly loop: boolean;
+}
+
+/** Awaiting this object suspends only at the native audio wait boundary. */
+export interface AudioHandle extends PromiseLike<void> {
+  readonly id: number;
+  pause(): boolean;
+  resume(): boolean;
+  stop(fadeMilliseconds?: number): boolean;
+  seek(playbackFrame: number): boolean;
+  status(): AudioStatus;
+  playback(): AudioPlaybackModel | null;
+  wait(): Promise<void>;
+  token(): AudioAwaitToken;
+}
+
 export type VideoStatus = "unknown" | "playing" | "paused" | "completed" | "stopped" | "failed" | "unavailable";
 
 export interface VideoPlayOptions {
@@ -318,7 +361,81 @@ export type LogicalInputAction =
   | "advance" | "menu" | "backlog" | "toggle-auto" | "toggle-skip"
   | "toggle-ui" | "quick-save" | "quick-load" | "rollback" | "pause";
 
-export type EngineAwaitToken = TimerAwaitToken | AnimationAwaitToken | ScreenEffectAwaitToken | VideoAwaitToken;
+export type InputActionId = LogicalInputAction | (string & {});
+export type InputEventType =
+  | "pointer-down" | "pointer-up" | "pointer-move" | "pointer-wheel"
+  | "text" | "action";
+export type PointerButton = "none" | "primary" | "secondary" | "middle";
+export interface InputEvent {
+  readonly id: number;
+  readonly frame: number;
+  readonly type: InputEventType;
+  readonly pointerId: number;
+  readonly button: PointerButton;
+  readonly x: number;
+  readonly y: number;
+  readonly deltaX: number;
+  readonly deltaY: number;
+  readonly text: string;
+  readonly action: string;
+}
+
+export type RenderPhase =
+  | "before-stage" | "after-stage" | "before-ui" | "after-ui";
+
+export interface RenderTransform {
+  readonly translateX?: number;
+  readonly translateY?: number;
+  readonly scaleX?: number;
+  readonly scaleY?: number;
+  readonly rotation?: number;
+  readonly pivotX?: number;
+  readonly pivotY?: number;
+}
+
+export interface RenderNodeBase extends RenderTransform {
+  readonly phase?: RenderPhase;
+  readonly order?: number;
+  readonly visible?: boolean;
+  /** Empty or omitted means every route. */
+  readonly route?: string;
+  readonly bounds: Rect;
+  readonly clip?: Rect;
+  readonly color?: Color;
+}
+
+export type RenderNode =
+  | (RenderNodeBase & {
+      readonly kind: "image";
+      readonly path: string;
+      /** Source pixels in the image; omitted draws the complete resource. */
+      readonly source?: Rect;
+    })
+  | (RenderNodeBase & {readonly kind: "rect"})
+  | (RenderNodeBase & {readonly kind: "rounded-rect"; readonly radius: number})
+  | (RenderNodeBase & {
+      readonly kind: "text";
+      readonly text: string;
+      readonly font: string;
+      readonly fontSize: number;
+    });
+
+export type EngineAwaitToken = TimerAwaitToken | AnimationAwaitToken | ScreenEffectAwaitToken | VideoAwaitToken | AudioAwaitToken;
+
+export type AnimationStatus =
+  | "unknown" | "playing" | "paused" | "completed" | "cancelled" | "failed";
+
+export interface TimelineMarkerEvent {
+  readonly handle: number;
+  readonly playbackClip: string;
+  readonly clip: string;
+  readonly clipName: string;
+  readonly marker: string;
+  readonly markerId: string;
+  readonly loopIteration: number;
+  readonly playbackLoopIteration: number;
+  readonly payload: RuntimeValue;
+}
 
 export interface DisplayModeTable {
   readonly TopLeft: 0;
@@ -390,6 +507,13 @@ export interface PrismatiXEngine {
   SetAmbienceVolume(volume: number): void;
   PlayAmbience(path: string, loop?: boolean, fadeMilliseconds?: number): void;
   StopAmbience(fadeMilliseconds?: number): void;
+  PlayAudio(path: string, bus?: AudioBus, loop?: boolean, fadeMilliseconds?: number, loopPath?: string): number;
+  PauseAudio(handle: number): boolean;
+  ResumeAudio(handle: number): boolean;
+  StopAudio(handle: number, fadeMilliseconds?: number): boolean;
+  SeekAudio(handle: number, playbackFrame: number): boolean;
+  GetAudioStatus(handle: number): AudioStatus;
+  GetAudioPlayback(handle: number): AudioPlaybackModel | null;
 
   Save(slot: number): boolean;
   Load(slot: number): boolean;
@@ -435,6 +559,12 @@ export interface PrismatiXEngine {
   LoadAnimation(path: string): string;
   PlayAnimation(resourceId: string, awaitCompletion?: boolean, speed?: number): number;
   CancelAnimation(handle: number): boolean;
+  PauseAnimation(handle: number): boolean;
+  ResumeAnimation(handle: number): boolean;
+  SeekAnimation(handle: number, positionSeconds: number, apply?: boolean): boolean;
+  FinishAnimation(handle: number, apply?: boolean): boolean;
+  GetAnimationStatus(handle: number): AnimationStatus;
+  GetAnimationError(handle: number): string;
   RegisterScreenEffect(id: string, plan: ScreenEffectPlan): boolean;
   PlayScreenEffect(id: string, durationSeconds?: number, parameters?: CustomEffectNamedParameters): number;
   StopScreenEffect(handle: number): boolean;
@@ -445,10 +575,12 @@ export interface PrismatiXEngine {
   AwaitAnimation(handle: number): AnimationAwaitToken;
   AwaitScreenEffect(handle: number): ScreenEffectAwaitToken;
   AwaitVideo(handle: number): VideoAwaitToken;
+  AwaitAudio(handle: number): AudioAwaitToken;
   WaitSeconds(seconds: number): Promise<void>;
   WaitAnimation(handle: number): Promise<void>;
   WaitScreenEffect(handle: number): Promise<void>;
   WaitVideo(handle: number): Promise<void>;
+  WaitAudio(handle: number): Promise<void>;
 
   DebugPoint(source: string, line: number, locals?: Record<string, RuntimeValue>, functionName?: string): Promise<void>;
 
@@ -458,6 +590,13 @@ export interface PrismatiXEngine {
   GetRightClick(): boolean;
   IsInputActionPressed(action: LogicalInputAction): boolean;
   IsInputActionDown(action: LogicalInputAction): boolean;
+  GetInputEvents(): readonly InputEvent[];
+  ConsumeInputEvent(eventId: number): boolean;
+  SuppressInputDefault(eventId: number): boolean;
+  RegisterInputAction(action: string): boolean;
+  BindInputKey(action: string, scancode: number): boolean;
+  IsNamedInputActionPressed(action: string): boolean;
+  IsNamedInputActionDown(action: string): boolean;
   RegisterStateProvider<T extends JsonValue>(
     id: string,
     version: number,
@@ -465,6 +604,9 @@ export interface PrismatiXEngine {
   ): void;
 
   GetLogicalSize(): LogicalSize;
+  UpsertRenderNode(id: string, node: RenderNode): boolean;
+  RemoveRenderNode(id: string): boolean;
+  ClearRenderNodes(): void;
   DrawImage(path: string, x: number, y: number, width: number, height: number, alpha?: number): void;
   DrawAuto(path: string, displayMode: DisplayMode, alpha?: number): void;
   DrawRect(x: number, y: number, width: number, height: number, r: number, g: number, b: number, a: number): void;
@@ -518,6 +660,13 @@ export const ENGINE_HOST_BINDINGS = [
   "SetAmbienceVolume",
   "PlayAmbience",
   "StopAmbience",
+  "PlayAudio",
+  "PauseAudio",
+  "ResumeAudio",
+  "StopAudio",
+  "SeekAudio",
+  "GetAudioStatus",
+  "GetAudioPlayback",
   "Save",
   "Load",
   "Autosave",
@@ -559,6 +708,12 @@ export const ENGINE_HOST_BINDINGS = [
   "LoadAnimation",
   "PlayAnimation",
   "CancelAnimation",
+  "PauseAnimation",
+  "ResumeAnimation",
+  "SeekAnimation",
+  "FinishAnimation",
+  "GetAnimationStatus",
+  "GetAnimationError",
   "RegisterScreenEffect",
   "PlayScreenEffect",
   "StopScreenEffect",
@@ -569,10 +724,12 @@ export const ENGINE_HOST_BINDINGS = [
   "AwaitAnimation",
   "AwaitScreenEffect",
   "AwaitVideo",
+  "AwaitAudio",
   "WaitSeconds",
   "WaitAnimation",
   "WaitScreenEffect",
   "WaitVideo",
+  "WaitAudio",
   "DebugPoint",
   "GetMouseX",
   "GetMouseY",
@@ -580,8 +737,18 @@ export const ENGINE_HOST_BINDINGS = [
   "GetRightClick",
   "IsInputActionPressed",
   "IsInputActionDown",
+  "GetInputEvents",
+  "ConsumeInputEvent",
+  "SuppressInputDefault",
+  "RegisterInputAction",
+  "BindInputKey",
+  "IsNamedInputActionPressed",
+  "IsNamedInputActionDown",
   "RegisterStateProvider",
   "GetLogicalSize",
+  "UpsertRenderNode",
+  "RemoveRenderNode",
+  "ClearRenderNodes",
   "DrawImage",
   "DrawAuto",
   "DrawRect",
@@ -654,6 +821,8 @@ export interface PrismatiXContext {
     set(name: string, value: RuntimeValue): boolean;
   };
   readonly audio: {
+    play(path: string, options?: AudioPlayOptions): AudioHandle;
+    from(handle: number): AudioHandle;
     playSE(path: string): void;
     playVoice(path: string): void;
     stopVoice(): void;
@@ -708,6 +877,13 @@ export interface PrismatiXContext {
     load(path: string): string;
     play(resourceId: string, options?: {readonly awaitCompletion?: boolean; readonly speed?: number}): number;
     cancel(handle: number): boolean;
+    pause(handle: number): boolean;
+    resume(handle: number): boolean;
+    seek(handle: number, positionSeconds: number, apply?: boolean): boolean;
+    finish(handle: number, apply?: boolean): boolean;
+    status(handle: number): AnimationStatus;
+    error(handle: number): string;
+    onMarker(handler: (event: TimelineMarkerEvent) => void | Promise<void>): void;
     wait(handle: number): Promise<void>;
     token(handle: number): AnimationAwaitToken;
   };
@@ -736,6 +912,13 @@ export interface PrismatiXContext {
     rightClick(): boolean;
     actionPressed(action: LogicalInputAction): boolean;
     actionDown(action: LogicalInputAction): boolean;
+    events(): readonly InputEvent[];
+    consume(eventId: number): boolean;
+    suppressDefault(eventId: number): boolean;
+    registerAction(action: string): boolean;
+    bindKey(action: string, scancode: number): boolean;
+    namedActionPressed(action: string): boolean;
+    namedActionDown(action: string): boolean;
   };
   readonly state: {
     registerProvider<T extends JsonValue>(
@@ -746,6 +929,10 @@ export interface PrismatiXContext {
   };
   readonly renderer: {
     logicalSize(): LogicalSize;
+    /** Creates or atomically replaces a host-owned retained draw node. */
+    upsert(id: string, node: RenderNode): boolean;
+    remove(id: string): boolean;
+    clear(): void;
     drawImage(path: string, bounds: Rect, alpha?: number): void;
     drawAuto(path: string, displayMode: DisplayMode, alpha?: number): void;
     drawRect(bounds: Rect, color: Color): void;
@@ -800,6 +987,25 @@ function videoHandle(engine: PrismatiXEngine, id: number): VideoHandle {
     error: () => engine.GetVideoError(id),
     wait,
     token: () => engine.AwaitVideo(id),
+    then: <TResult1 = void, TResult2 = never>(
+      onfulfilled?: ((value: void) => TResult1 | PromiseLike<TResult1>) | null,
+      onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+    ) => wait().then(onfulfilled, onrejected),
+  });
+}
+
+function audioHandle(engine: PrismatiXEngine, id: number): AudioHandle {
+  const wait = () => engine.WaitAudio(id);
+  return Object.freeze({
+    id,
+    pause: () => engine.PauseAudio(id),
+    resume: () => engine.ResumeAudio(id),
+    stop: (fadeMilliseconds?: number) => engine.StopAudio(id, fadeMilliseconds),
+    seek: (playbackFrame: number) => engine.SeekAudio(id, playbackFrame),
+    status: () => engine.GetAudioStatus(id),
+    playback: () => engine.GetAudioPlayback(id),
+    wait,
+    token: () => engine.AwaitAudio(id),
     then: <TResult1 = void, TResult2 = never>(
       onfulfilled?: ((value: void) => TResult1 | PromiseLike<TResult1>) | null,
       onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
@@ -884,6 +1090,12 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
       set: (name, value) => engine.SetSetting(name, value),
     },
     audio: {
+      play: (path, options) => audioHandle(
+        engine,
+        engine.PlayAudio(path, options?.bus, options?.loop,
+          options?.fadeMilliseconds, options?.loopPath),
+      ),
+      from: (handle) => audioHandle(engine, handle),
       playSE: (path) => engine.PlaySE(path),
       playVoice: (path) => engine.PlayVoice(path),
       stopVoice: () => engine.StopVoice(),
@@ -945,6 +1157,16 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
       load: (path) => engine.LoadAnimation(path),
       play: (resourceId, options) => engine.PlayAnimation(resourceId, options?.awaitCompletion, options?.speed),
       cancel: (handle) => engine.CancelAnimation(handle),
+      pause: (handle) => engine.PauseAnimation(handle),
+      resume: (handle) => engine.ResumeAnimation(handle),
+      seek: (handle, positionSeconds, apply) => engine.SeekAnimation(handle, positionSeconds, apply),
+      finish: (handle, apply) => engine.FinishAnimation(handle, apply),
+      status: (handle) => engine.GetAnimationStatus(handle),
+      error: (handle) => engine.GetAnimationError(handle),
+      onMarker: (handler) => engine.on(
+        "timeline.marker",
+        (payload) => handler(payload as unknown as TimelineMarkerEvent),
+      ),
       wait: (handle) => engine.WaitAnimation(handle),
       token: (handle) => engine.AwaitAnimation(handle),
     },
@@ -973,6 +1195,13 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
       rightClick: () => engine.GetRightClick(),
       actionPressed: (action) => engine.IsInputActionPressed(action),
       actionDown: (action) => engine.IsInputActionDown(action),
+      events: () => engine.GetInputEvents(),
+      consume: (eventId) => engine.ConsumeInputEvent(eventId),
+      suppressDefault: (eventId) => engine.SuppressInputDefault(eventId),
+      registerAction: (action) => engine.RegisterInputAction(action),
+      bindKey: (action, scancode) => engine.BindInputKey(action, scancode),
+      namedActionPressed: (action) => engine.IsNamedInputActionPressed(action),
+      namedActionDown: (action) => engine.IsNamedInputActionDown(action),
     },
     state: {
       registerProvider: (id, version, provider) =>
@@ -980,6 +1209,9 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
     },
     renderer: {
       logicalSize: () => engine.GetLogicalSize(),
+      upsert: (id, node) => engine.UpsertRenderNode(id, node),
+      remove: (id) => engine.RemoveRenderNode(id),
+      clear: () => engine.ClearRenderNodes(),
       drawImage: (path, bounds, alpha) => engine.DrawImage(path, bounds.x, bounds.y, bounds.w, bounds.h, alpha),
       drawAuto: (path, displayMode, alpha) => engine.DrawAuto(path, displayMode, alpha),
       drawRect: (bounds, color) => engine.DrawRect(bounds.x, bounds.y, bounds.w, bounds.h, color.r, color.g, color.b, color.a),

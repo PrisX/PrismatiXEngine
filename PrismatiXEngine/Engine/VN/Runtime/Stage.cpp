@@ -386,55 +386,89 @@ std::vector<ParticleSample> Stage::SampleParticles(
 }
 
 Stage::WorldNodeTransform Stage::ResolveNodeTransform(
-    const std::string& name) const {
+    const std::string& name, const Vec2 leafPivot) const {
     WorldNodeTransform world;
-    std::vector<const Node*> chain;
+    std::vector<std::pair<std::string, const Node*>> chain;
     std::string cursor = name;
     while (!cursor.empty() && chain.size() <= m_nodes.size()) {
         const auto found = m_nodes.find(cursor);
         if (found == m_nodes.end()) break;
-        chain.push_back(&found->second);
+        chain.emplace_back(cursor, &found->second);
         cursor = found->second.parent;
     }
-    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
-        const Node& node = **it;
-        const float radians = world.rotation * 0.0174532925f;
-        const float localX = node.transform.x * world.scaleX;
-        const float localY = node.transform.y * world.scaleY;
-        world.x += std::cos(radians) * localX - std::sin(radians) * localY;
-        world.y += std::sin(radians) * localX + std::cos(radians) * localY;
-        world.scaleX *= node.transform.scaleX;
-        world.scaleY *= node.transform.scaleY;
-        world.rotation += node.transform.rotation;
+    std::ranges::reverse(chain);
+    for (std::size_t index = 0; index < chain.size(); ++index) {
+        const Node& node = *chain[index].second;
+        const float radians = node.transform.rotation * 0.017453292519943295f;
+        const float cosine = std::cos(radians);
+        const float sine = std::sin(radians);
+        const float localA = cosine * node.transform.scaleX;
+        const float localB = sine * node.transform.scaleX;
+        const float localC = -sine * node.transform.scaleY;
+        const float localD = cosine * node.transform.scaleY;
+        float localTx = node.transform.x;
+        float localTy = node.transform.y;
+        if (index + 1 == chain.size() &&
+            (leafPivot.x != 0.0f || leafPivot.y != 0.0f)) {
+            // Legacy image/actor rotation is centre-based. Express that as a
+            // true affine local matrix before composing it with its parents.
+            localTx += node.transform.scaleX * leafPivot.x -
+                       (localA * leafPivot.x + localC * leafPivot.y);
+            localTy += node.transform.scaleY * leafPivot.y -
+                       (localB * leafPivot.x + localD * leafPivot.y);
+        }
+        const WorldNodeTransform parent = world;
+        world.a = parent.a * localA + parent.c * localB;
+        world.b = parent.b * localA + parent.d * localB;
+        world.c = parent.a * localC + parent.c * localD;
+        world.d = parent.b * localC + parent.d * localD;
+        world.tx = parent.a * localTx + parent.c * localTy + parent.tx;
+        world.ty = parent.b * localTx + parent.d * localTy + parent.ty;
         world.opacity *= node.transform.opacity;
         world.visible = world.visible && node.visible;
     }
     return world;
 }
 
-const Stage::Node* Stage::ResolveNodeEffect(const std::string& name) const {
+std::vector<std::string> Stage::ResolveNodeEffectPath(
+    const std::string& name) const {
+    std::vector<std::string> path;
     std::string cursor = name;
     for (std::size_t depth = 0; !cursor.empty() && depth <= m_nodes.size();
          ++depth) {
         const auto found = m_nodes.find(cursor);
-        if (found == m_nodes.end()) return nullptr;
-        if (!found->second.effect.empty()) return &found->second;
+        if (found == m_nodes.end()) break;
+        if (!found->second.effect.empty()) path.push_back(cursor);
         cursor = found->second.parent;
     }
-    return nullptr;
+    std::ranges::reverse(path);
+    return path;
 }
 
 Stage::NodeSortKey Stage::ResolveNodeSortKey(const std::string& name) const {
     NodeSortKey key;
+    std::vector<std::pair<std::string, const Node*>> chain;
     std::string cursor = name;
-    while (!cursor.empty() && key.path.size() <= m_nodes.size()) {
+    while (!cursor.empty() && chain.size() <= m_nodes.size()) {
         const auto found = m_nodes.find(cursor);
         if (found == m_nodes.end()) break;
-        key.z += found->second.z;
-        key.path.emplace_back(found->second.order, cursor);
+        chain.emplace_back(cursor, &found->second);
         cursor = found->second.parent;
     }
-    std::ranges::reverse(key.path);
+    std::ranges::reverse(chain);
+    bool stackingContext = false;
+    std::int64_t cumulativeZ = 0;
+    for (const auto& [nodeName, node] : chain) {
+        cumulativeZ += node->z;
+        key.path.emplace_back(node->z, node->order, nodeName);
+        // An effected group is a stacking context: all descendants remain
+        // contiguous so the group can be captured and shaded exactly once.
+        if (!stackingContext && !node->effect.empty()) {
+            key.z = cumulativeZ;
+            stackingContext = true;
+        }
+    }
+    if (!stackingContext) key.z = cumulativeZ;
     return key;
 }
 
@@ -854,63 +888,6 @@ void Stage::RenderRuleOverlay() {
                                 static_cast<float>(rs.h)});
 }
 
-void Stage::RenderLayers(bool front) {
-    if (m_layers.empty()) {
-        return;
-    }
-    struct Entry {
-        std::string_view name;
-        const Layer* layer = nullptr;
-        NodeSortKey key;
-    };
-    std::vector<Entry> ordered;
-    for (const auto& [name, layer] : m_layers) {
-        const auto node = m_nodes.find(name);
-        NodeSortKey key = node == m_nodes.end()
-                              ? NodeSortKey{layer.z, {{0, name}}}
-                              : ResolveNodeSortKey(name);
-        if (front ? key.z >= 0 : key.z < 0)
-            ordered.push_back({name, &layer, std::move(key)});
-    }
-    std::ranges::sort(ordered, [](const Entry& left, const Entry& right) {
-        if (left.key.z != right.key.z) return left.key.z < right.key.z;
-        if (left.key.path != right.key.path)
-            return left.key.path < right.key.path;
-        return left.name < right.name;
-    });
-    for (const Entry& entry : ordered) {
-        const Layer* layer = entry.layer;
-        const auto world = ResolveNodeTransform(std::string(entry.name));
-        if (!world.visible || world.opacity <= 0.0f) continue;
-        const graphics::TextureHandle texture =
-            m_assets.Texture(layer->imagePath);
-        if (!texture) {
-            continue;
-        }
-        int tw = 0, th = 0;
-        graphics::AssetCache::TextureSize(texture, tw, th);
-        if (tw <= 0 || th <= 0) {
-            continue;
-        }
-        const Rect bounds{world.x, world.y, tw * world.scaleX,
-                          th * world.scaleY};
-        m_renderer.PushTransform(
-            {bounds.x + bounds.w * 0.5f, bounds.y + bounds.h * 0.5f},
-            {1.0f, 1.0f}, world.rotation);
-        const Node* nodeEffect = ResolveNodeEffect(std::string(entry.name));
-        const bool effectActive = nodeEffect && m_renderer.BeginNodeEffect(
-            nodeEffect->effect, nodeEffect->effectProgress,
-            static_cast<float>(nodeEffect->effectSeed),
-            nodeEffect->effectParameters, bounds);
-        m_renderer.DrawImage(
-            layer->imagePath, bounds,
-            static_cast<std::uint8_t>(
-                std::clamp(world.opacity, 0.0f, 1.0f) * 255.0f));
-        if (effectActive) m_renderer.EndNodeEffect();
-        m_renderer.PopTransform();
-    }
-}
-
 void Stage::Render() {
     const bool compositing = m_renderer.BeginStageLayer();
     int logicalW = 0, logicalH = 0;
@@ -927,76 +904,276 @@ void Stage::Render() {
         m_renderer.DrawImageAuto(m_bgPath, graphics::DisplayMode::Fill, alpha);
     }
     RenderRuleOverlay();
-    RenderLayers(/*front=*/false);
-    m_particles.Render(/*front=*/false);
 
-    struct ActorEntry {
-        std::string_view name;
+    enum class DrawableKind : std::uint8_t { Layer, Actor, Particle };
+    struct Drawable {
+        DrawableKind kind = DrawableKind::Layer;
+        std::string name;
+        const Layer* layer = nullptr;
         const Actor* actor = nullptr;
+        const ParticleEmitterState* emitter = nullptr;
         NodeSortKey key;
+        std::vector<std::string> effects;
+        WorldNodeTransform world;
+        Rect localBounds;
+        Rect worldBounds;
     };
-    std::vector<ActorEntry> ordered;
-    ordered.reserve(m_actors.size());
-    for (const auto& [name, actor] : m_actors) {
-        const auto node = m_nodes.find(name);
-        NodeSortKey key = node == m_nodes.end()
-                              ? NodeSortKey{actor.slot, {{0, name}}}
-                              : ResolveNodeSortKey(name);
-        ordered.push_back({name, &actor, std::move(key)});
+
+    const auto transformBounds = [](const WorldNodeTransform& transform,
+                                    const Rect& rect) {
+        const auto point = [&transform](const float x, const float y) {
+            return Vec2{transform.a * x + transform.c * y + transform.tx,
+                        transform.b * x + transform.d * y + transform.ty};
+        };
+        const std::array<Vec2, 4> points{
+            point(rect.x, rect.y), point(rect.x + rect.w, rect.y),
+            point(rect.x + rect.w, rect.y + rect.h),
+            point(rect.x, rect.y + rect.h)};
+        float left = points.front().x;
+        float right = left;
+        float top = points.front().y;
+        float bottom = top;
+        for (const auto& value : points) {
+            left = std::min(left, value.x);
+            right = std::max(right, value.x);
+            top = std::min(top, value.y);
+            bottom = std::max(bottom, value.y);
+        }
+        return Rect{left, top, right - left, bottom - top};
+    };
+    const auto mergeBounds = [](const Rect& left, const Rect& right) {
+        if (left.w <= 0.0f || left.h <= 0.0f) return right;
+        if (right.w <= 0.0f || right.h <= 0.0f) return left;
+        const float x = std::min(left.x, right.x);
+        const float y = std::min(left.y, right.y);
+        const float farX = std::max(left.x + left.w, right.x + right.w);
+        const float farY = std::max(left.y + left.h, right.y + right.h);
+        return Rect{x, y, farX - x, farY - y};
+    };
+
+    const auto emitters = m_particles.Capture();
+    std::vector<Drawable> drawables;
+    drawables.reserve(m_layers.size() + m_actors.size() + emitters.size());
+    for (const auto& [name, layer] : m_layers) {
+        const graphics::TextureHandle texture = m_assets.Texture(layer.imagePath);
+        int textureWidth = 0;
+        int textureHeight = 0;
+        graphics::AssetCache::TextureSize(texture, textureWidth, textureHeight);
+        if (!texture || textureWidth <= 0 || textureHeight <= 0) continue;
+        Drawable drawable;
+        drawable.kind = DrawableKind::Layer;
+        drawable.name = name;
+        drawable.layer = &layer;
+        drawable.key = m_nodes.contains(name)
+                           ? ResolveNodeSortKey(name)
+                           : NodeSortKey{
+                                 layer.z, {{layer.z, 0, name}}};
+        drawable.effects = ResolveNodeEffectPath(name);
+        drawable.localBounds =
+            {0.0f, 0.0f, static_cast<float>(textureWidth),
+             static_cast<float>(textureHeight)};
+        drawable.world = ResolveNodeTransform(
+            name, {textureWidth * 0.5f, textureHeight * 0.5f});
+        if (!drawable.world.visible || drawable.world.opacity <= 0.0f)
+            continue;
+        drawable.worldBounds =
+            transformBounds(drawable.world, drawable.localBounds);
+        drawables.push_back(std::move(drawable));
     }
-    std::ranges::sort(ordered, [](const ActorEntry& left,
-                                  const ActorEntry& right) {
+
+    const auto actorImageBounds = [&](const std::string& name,
+                                      const Actor& actor,
+                                      const std::string& path) {
+        Rect empty;
+        const graphics::TextureHandle texture = m_assets.Texture(path);
+        int textureWidth = 0;
+        int textureHeight = 0;
+        graphics::AssetCache::TextureSize(texture, textureWidth, textureHeight);
+        if (!texture || textureWidth <= 0 || textureHeight <= 0) return empty;
+        const float effectScale = std::max(0.01f, actor.effectScale);
+        const float width = textureWidth * actor.scale * effectScale;
+        const float height = textureHeight * actor.scale * effectScale;
+        const Rect local{
+            actor.x - width * 0.5f + actor.offsetX + actor.effectOffsetX,
+            static_cast<float>(logicalH) - height + actor.offsetY +
+                actor.effectOffsetY,
+            width, height};
+        const auto world = ResolveNodeTransform(
+            name, {local.x + local.w * 0.5f,
+                   local.y + local.h * 0.5f});
+        if (!world.visible || world.opacity <= 0.0f) return empty;
+        return transformBounds(world, local);
+    };
+    for (const auto& [name, actor] : m_actors) {
+        Drawable drawable;
+        drawable.kind = DrawableKind::Actor;
+        drawable.name = name;
+        drawable.actor = &actor;
+        drawable.key = m_nodes.contains(name)
+                           ? ResolveNodeSortKey(name)
+                           : NodeSortKey{
+                                 actor.slot, {{actor.slot, 0, name}}};
+        drawable.effects = ResolveNodeEffectPath(name);
+        drawable.worldBounds = actorImageBounds(name, actor, actor.imagePath);
+        if (!actor.prevImagePath.empty()) {
+            drawable.worldBounds = mergeBounds(
+                drawable.worldBounds,
+                actorImageBounds(name, actor, actor.prevImagePath));
+        }
+        if (drawable.worldBounds.w <= 0.0f ||
+            drawable.worldBounds.h <= 0.0f)
+            continue;
+        drawables.push_back(std::move(drawable));
+    }
+
+    for (const auto& emitter : emitters) {
+        Drawable drawable;
+        drawable.kind = DrawableKind::Particle;
+        drawable.name = emitter.name;
+        drawable.emitter = &emitter;
+        drawable.key = {emitter.spec.z,
+                        {{emitter.spec.z, kNodeOrderLimit, emitter.name}}};
+        drawables.push_back(std::move(drawable));
+    }
+
+    std::ranges::sort(drawables, [](const Drawable& left,
+                                    const Drawable& right) {
         if (left.key.z != right.key.z) return left.key.z < right.key.z;
         if (left.key.path != right.key.path)
             return left.key.path < right.key.path;
+        if (left.kind != right.kind) return left.kind < right.kind;
         return left.name < right.name;
     });
 
-    const auto drawSprite = [&](const std::string& name, const std::string& path,
-                                const Actor& actor, float alpha) {
-        const auto world = ResolveNodeTransform(name);
-        if (!world.visible || world.opacity <= 0.0f) return;
+    std::unordered_map<std::string, Rect> effectBounds;
+    for (const auto& drawable : drawables) {
+        if (drawable.kind == DrawableKind::Particle) continue;
+        for (const auto& effect : drawable.effects) {
+            effectBounds[effect] = mergeBounds(effectBounds[effect],
+                                               drawable.worldBounds);
+        }
+    }
+
+    struct ActiveEffect {
+        std::string name;
+        const Node* node = nullptr;
+        Rect viewport;
+        bool composed = false;
+        bool direct = false;
+    };
+    std::vector<ActiveEffect> activeEffects;
+    const auto closeEffect = [&] {
+        ActiveEffect effect = std::move(activeEffects.back());
+        activeEffects.pop_back();
+        if (effect.composed) {
+            m_renderer.EndComposition(
+                effect.node->effect, effect.node->effectProgress,
+                static_cast<float>(effect.node->effectSeed),
+                effect.node->effectParameters, effect.viewport);
+        } else if (effect.direct) {
+            m_renderer.EndNodeEffect();
+        }
+    };
+    const auto alignEffects = [&](const std::vector<std::string>& path) {
+        std::size_t common = 0;
+        while (common < activeEffects.size() && common < path.size() &&
+               activeEffects[common].name == path[common])
+            ++common;
+        while (activeEffects.size() > common) closeEffect();
+        for (std::size_t index = common; index < path.size(); ++index) {
+            const auto found = m_nodes.find(path[index]);
+            if (found == m_nodes.end() || found->second.effect.empty()) continue;
+            Rect viewport{0.0f, 0.0f, static_cast<float>(logicalW),
+                          static_cast<float>(logicalH)};
+            if (const auto bounds = effectBounds.find(path[index]);
+                bounds != effectBounds.end() && bounds->second.w > 0.0f &&
+                bounds->second.h > 0.0f)
+                viewport = bounds->second;
+            // Leaf effects retain the established shader contract: the
+            // source texture and UVs are the leaf itself. Only groups capture
+            // their descendants into one source texture before shading.
+            const bool composed = found->second.kind == NodeKind::Group &&
+                                  m_renderer.BeginComposition();
+            const bool direct =
+                !composed && m_renderer.BeginNodeEffect(
+                                 found->second.effect,
+                                 found->second.effectProgress,
+                                 static_cast<float>(found->second.effectSeed),
+                                 found->second.effectParameters, viewport);
+            activeEffects.push_back(
+                {path[index], &found->second, viewport, composed, direct});
+        }
+    };
+
+    const auto drawActorImage = [&](const std::string& name,
+                                    const std::string& path,
+                                    const Actor& actor, const float alpha) {
         const graphics::TextureHandle texture = m_assets.Texture(path);
-        if (!texture) {
-            return;
-        }
-        int tw = 0, th = 0;
-        graphics::AssetCache::TextureSize(texture, tw, th);
-        if (tw <= 0 || th <= 0) {
-            return;
-        }
-        const float effectScale = std::max(.01f, actor.effectScale);
-        const float w = tw * actor.scale * effectScale * world.scaleX;
-        const float h = th * actor.scale * effectScale * world.scaleY;
-        const float drawX = actor.x - w * 0.5f + actor.offsetX +
-                            actor.effectOffsetX + world.x;
-        const float drawY = static_cast<float>(logicalH) - h + actor.offsetY +
-                            actor.effectOffsetY + world.y;
-        m_renderer.PushTransform({drawX + w * 0.5f, drawY + h * 0.5f},
-                                 {1.0f, 1.0f}, world.rotation);
-        const Rect bounds{drawX, drawY, w, h};
-        const Node* nodeEffect = ResolveNodeEffect(name);
-        const bool effectActive = nodeEffect && m_renderer.BeginNodeEffect(
-            nodeEffect->effect, nodeEffect->effectProgress,
-            static_cast<float>(nodeEffect->effectSeed),
-            nodeEffect->effectParameters, bounds);
-        m_renderer.DrawImage(path, bounds,
-                             static_cast<std::uint8_t>(std::clamp(
-                                 alpha * actor.effectAlpha * world.opacity,
-                                 0.0f, 255.0f)));
-        if (effectActive) m_renderer.EndNodeEffect();
+        int textureWidth = 0;
+        int textureHeight = 0;
+        graphics::AssetCache::TextureSize(texture, textureWidth, textureHeight);
+        if (!texture || textureWidth <= 0 || textureHeight <= 0) return;
+        const float effectScale = std::max(0.01f, actor.effectScale);
+        const float width = textureWidth * actor.scale * effectScale;
+        const float height = textureHeight * actor.scale * effectScale;
+        const Rect local{
+            actor.x - width * 0.5f + actor.offsetX + actor.effectOffsetX,
+            static_cast<float>(logicalH) - height + actor.offsetY +
+                actor.effectOffsetY,
+            width, height};
+        const auto world = ResolveNodeTransform(
+            name, {local.x + local.w * 0.5f,
+                   local.y + local.h * 0.5f});
+        if (!world.visible || world.opacity <= 0.0f) return;
+        m_renderer.PushAffineTransform(
+            {world.a, world.b, world.c, world.d, world.tx, world.ty});
+        m_renderer.DrawImage(
+            path, local,
+            static_cast<std::uint8_t>(std::clamp(
+                alpha * actor.effectAlpha * world.opacity, 0.0f, 255.0f)));
         m_renderer.PopTransform();
     };
-    for (const ActorEntry& entry : ordered) {
-        const Actor* a = entry.actor;
-        if (!a->prevImagePath.empty()) {
-            drawSprite(std::string(entry.name), a->prevImagePath, *a,
-                       a->prevAlpha);
+
+    for (const Drawable& drawable : drawables) {
+        alignEffects(drawable.effects);
+        if (drawable.kind == DrawableKind::Layer) {
+            m_renderer.PushAffineTransform(
+                {drawable.world.a, drawable.world.b, drawable.world.c,
+                 drawable.world.d, drawable.world.tx, drawable.world.ty});
+            m_renderer.DrawImage(
+                drawable.layer->imagePath, drawable.localBounds,
+                static_cast<std::uint8_t>(
+                    std::clamp(drawable.world.opacity, 0.0f, 1.0f) *
+                    255.0f));
+            m_renderer.PopTransform();
+        } else if (drawable.kind == DrawableKind::Actor) {
+            if (!drawable.actor->prevImagePath.empty()) {
+                drawActorImage(drawable.name,
+                               drawable.actor->prevImagePath,
+                               *drawable.actor,
+                               drawable.actor->prevAlpha);
+            }
+            drawActorImage(drawable.name, drawable.actor->imagePath,
+                           *drawable.actor, drawable.actor->alpha);
+        } else {
+            const auto particles = m_particles.Samples(
+                drawable.name, logicalW, logicalH);
+            std::vector<graphics::SpriteBatchItem> batch;
+            batch.reserve(particles.size());
+            for (const auto& particle : particles) {
+                graphics::SpriteBatchItem item;
+                item.source = particle.source;
+                item.destination = {particle.position.x, particle.position.y,
+                                    particle.extent.x, particle.extent.y};
+                item.color = particle.color;
+                item.rotation = particle.rotation;
+                item.sourceNormalized = !particle.texture.empty();
+                batch.push_back(item);
+            }
+            m_renderer.DrawSpriteBatch(drawable.emitter->spec.texture, batch);
         }
-        drawSprite(std::string(entry.name), a->imagePath, *a, a->alpha);
     }
-    RenderLayers(/*front=*/true);
-    m_particles.Render(/*front=*/true);
+    while (!activeEffects.empty()) closeEffect();
     m_renderer.PopTransform();
     // Camera and shake belong to the Stage layer. Dialogue/UI is rendered by
     // the host after this call and must remain stable.

@@ -149,7 +149,7 @@ export interface ExtensionManifest {
   readonly entry: string;
   /** ES modules that the entry is allowed to import, relative to this manifest. */
   readonly modules?: readonly string[];
-  readonly capabilities: readonly ("runtime" | "animation" | "ui" | "audio")[];
+  readonly capabilities: readonly ("runtime" | "animation" | "ui" | "audio" | "video" | "persistence" | "input" | "render")[];
   readonly safety?: ExtensionSafety;
   readonly commands: readonly ExtensionCommand[];
   readonly actions: readonly ExtensionAction[];

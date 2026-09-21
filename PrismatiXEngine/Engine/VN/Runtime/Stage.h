@@ -10,6 +10,7 @@
 #include <array>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -289,32 +290,32 @@ private:
     };
 
     struct WorldNodeTransform {
-        float x = 0.0f;
-        float y = 0.0f;
-        float scaleX = 1.0f;
-        float scaleY = 1.0f;
-        float rotation = 0.0f;
+        float a = 1.0f;
+        float b = 0.0f;
+        float c = 0.0f;
+        float d = 1.0f;
+        float tx = 0.0f;
+        float ty = 0.0f;
         float opacity = 1.0f;
         bool visible = true;
     };
 
     struct NodeSortKey {
         std::int64_t z = 0;
-        std::vector<std::pair<int, std::string>> path;
+        std::vector<std::tuple<int, int, std::string>> path;
     };
 
     [[nodiscard]] float SlotCenterX(int slot) const;
-    void RenderLayers(bool front);
     void RenderRuleOverlay();
     void RenderScreenEffects();
     void EndRuleTransition();
     void UpdateTweens(float dt);
     Node& EnsureNode(const std::string& name, NodeKind kind);
     [[nodiscard]] WorldNodeTransform ResolveNodeTransform(
-        const std::string& name) const;
+        const std::string& name, Vec2 leafPivot = {}) const;
     [[nodiscard]] NodeSortKey ResolveNodeSortKey(
         const std::string& name) const;
-    [[nodiscard]] const Node* ResolveNodeEffect(
+    [[nodiscard]] std::vector<std::string> ResolveNodeEffectPath(
         const std::string& name) const;
     [[nodiscard]] bool WouldCreateNodeCycle(
         const std::string& name, const std::string& parent) const;

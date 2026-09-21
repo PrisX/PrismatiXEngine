@@ -1593,7 +1593,7 @@ ValidationResult Validate(const PackageRequest& request) {
                         for (const auto& capability : *capabilities) {
                             if (!capability.is_string() ||
                                 !std::set<std::string>{"runtime", "animation", "ui", "audio",
-                                                       "video", "persistence", "input"}
+                                                       "video", "persistence", "input", "render"}
                                      .contains(capability.get<std::string>()) ||
                                 !declaredCapabilities.insert(
                                     capability.get<std::string>()).second) {

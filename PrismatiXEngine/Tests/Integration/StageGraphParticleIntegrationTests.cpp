@@ -8,11 +8,50 @@
 
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <limits>
+#include <optional>
 #include <ranges>
 #include <string>
 
 namespace {
+
+struct Pixel {
+    std::uint8_t r = 0;
+    std::uint8_t g = 0;
+    std::uint8_t b = 0;
+    std::uint8_t a = 0;
+};
+
+Pixel ReadPixel(SDL_Surface* surface, const int x, const int y) {
+    Pixel pixel;
+    (void)SDL_ReadSurfacePixel(surface, x, y, &pixel.r, &pixel.g, &pixel.b,
+                               &pixel.a);
+    return pixel;
+}
+
+bool SaveSolidBmp(const std::filesystem::path& path, const int width,
+                  const int height, const Pixel color,
+                  const std::optional<Pixel> rightHalf = std::nullopt) {
+    SDL_Surface* surface =
+        SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA32);
+    if (!surface) return false;
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const Pixel value = rightHalf && x >= width / 2
+                                    ? *rightHalf
+                                    : color;
+            if (!SDL_WriteSurfacePixel(surface, x, y, value.r, value.g,
+                                       value.b, value.a)) {
+                SDL_DestroySurface(surface);
+                return false;
+            }
+        }
+    }
+    const bool saved = SDL_SaveBMP(surface, path.string().c_str());
+    SDL_DestroySurface(surface);
+    return saved;
+}
 
 struct Fixture {
     px::io::VFS vfs;
@@ -87,6 +126,189 @@ int main() {
         suite.Expect(restored.stage.SnapshotLayers().size() == 1 &&
                          restored.stage.SnapshotNodes().size() == 2,
                      "SetLayer compatibility payload remains available");
+    });
+
+    suite.Run("RendererRetainedPrimitivesAreSafeAndAffine", [&] {
+        const auto root = std::filesystem::temp_directory_path() /
+                          "prismatix-stage-render-primitives";
+        std::error_code error;
+        std::filesystem::create_directories(root, error);
+        suite.Require(!error &&
+                          SaveSolidBmp(root / "regions.bmp", 2, 1,
+                                       {240, 20, 30, 255},
+                                       Pixel{20, 40, 240, 255}) &&
+                          SaveSolidBmp(root / "matrix.bmp", 4, 2,
+                                       {30, 230, 70, 255}),
+                      "source-region fixture is available");
+        SDL_Surface* surface =
+            SDL_CreateSurface(64, 64, SDL_PIXELFORMAT_RGBA32);
+        suite.Require(surface != nullptr,
+                      "retained primitive surface initializes");
+        SDL_Renderer* native = SDL_CreateSoftwareRenderer(surface);
+        suite.Require(native != nullptr,
+                      "retained primitive renderer initializes");
+        {
+            px::io::VFS vfs;
+            vfs.MountDirectory(root.string());
+            px::graphics::AssetCache assets(native, vfs);
+            px::graphics::Renderer2D renderer(native, assets);
+            renderer.SetLogicalSize(64, 64);
+            SDL_SetRenderDrawColor(native, 0, 0, 0, 255);
+            SDL_RenderClear(native);
+
+            renderer.DrawImageRegion("regions.bmp", {1, 0, 1, 1},
+                                     {0, 0, 12, 12});
+            SDL_RenderPresent(native);
+            const Pixel region = ReadPixel(surface, 4, 4);
+            suite.Expect(region.b > 200 && region.r < 50,
+                         "pixel source regions do not expose native textures");
+
+            renderer.PushAffineTransform({2, 0, 0, 1, 10, 5});
+            renderer.PushAffineTransform({0, 1, -1, 0, 4, 0});
+            const px::Vec2 mapped = renderer.TransformPoint({2, 3});
+            suite.Expect(std::abs(mapped.x - 12.0f) < 0.001f &&
+                             std::abs(mapped.y - 7.0f) < 0.001f,
+                         "nested non-uniform affine matrices multiply exactly");
+            renderer.PopTransform();
+            renderer.PopTransform();
+
+            renderer.PushAffineTransform({1, 0, 0, 1, 20, 10});
+            renderer.PushClip({0, 0, 8, 8});
+            renderer.DrawRect({0, 0, 16, 16}, {245, 25, 35, 255});
+            renderer.PopClip();
+            renderer.PopTransform();
+            SDL_RenderPresent(native);
+            const Pixel clippedInside = ReadPixel(surface, 22, 12);
+            const Pixel clippedOutside = ReadPixel(surface, 30, 12);
+            suite.Expect(clippedInside.r > 220 && clippedOutside.r < 50,
+                         "clip scopes follow the affine transform and stay balanced");
+
+            suite.Require(renderer.BeginComposition(),
+                          "software renderer supports retained composition");
+            renderer.DrawRect({40, 40, 8, 8}, {20, 230, 60, 255});
+            renderer.EndComposition({}, 0.0f, 0.0f, {}, {40, 40, 8, 8});
+            SDL_RenderPresent(native);
+            const Pixel composed = ReadPixel(surface, 43, 43);
+            suite.Expect(composed.g > 200,
+                         "a captured group is composited once as a retained texture");
+
+            SDL_SetRenderDrawColor(native, 0, 0, 0, 255);
+            SDL_RenderClear(native);
+            px::vn::Stage stage(renderer, assets);
+            suite.Require(stage.SetGroupNode("matrix-group"),
+                          "affine test group is created");
+            stage.SetLayerTransform("matrix-leaf", "matrix.bmp", 0.0f,
+                                    0.0f, 1.0f, 1.0f, 90.0f, 255, 0);
+            suite.Require(stage.SetNodeParent("matrix-leaf", "matrix-group") &&
+                              stage.SetNodeTransform(
+                                  "matrix-group",
+                                  {.x = 30.0f, .y = 30.0f,
+                                   .scaleX = 2.0f, .scaleY = 1.0f,
+                                   .rotation = 90.0f}),
+                          "nested non-uniform Stage transforms are accepted");
+            stage.Render();
+            SDL_RenderPresent(native);
+            const Pixel affineStage = ReadPixel(surface, 28, 34);
+            const Pixel obsoleteDecomposition = ReadPixel(surface, 34, 31);
+            suite.Expect(affineStage.g > 200 &&
+                             obsoleteDecomposition.g < 80,
+                         "Stage hierarchy consumes the full affine product instead of decomposed sums");
+        }
+        SDL_DestroyRenderer(native);
+        SDL_DestroySurface(surface);
+    });
+
+    suite.Run("ActorsLayersAndParticlesShareOneGlobalOrder", [&] {
+        const auto root = std::filesystem::temp_directory_path() /
+                          "prismatix-stage-global-order";
+        std::error_code error;
+        std::filesystem::create_directories(root, error);
+        suite.Require(!error &&
+                          SaveSolidBmp(root / "actor.bmp", 16, 16,
+                                       {240, 20, 30, 255}) &&
+                          SaveSolidBmp(root / "layer.bmp", 16, 16,
+                                       {20, 40, 240, 255}) &&
+                          SaveSolidBmp(root / "field.bmp", 64, 64,
+                                       {240, 20, 30, 255}),
+                      "global ordering fixtures are available");
+        SDL_Surface* surface =
+            SDL_CreateSurface(64, 64, SDL_PIXELFORMAT_RGBA32);
+        suite.Require(surface != nullptr, "ordering surface initializes");
+        SDL_Renderer* native = SDL_CreateSoftwareRenderer(surface);
+        suite.Require(native != nullptr, "ordering renderer initializes");
+        {
+            px::io::VFS vfs;
+            vfs.MountDirectory(root.string());
+            px::graphics::AssetCache assets(native, vfs);
+            px::graphics::Renderer2D renderer(native, assets);
+            renderer.SetLogicalSize(64, 64);
+            px::vn::Stage stage(renderer, assets);
+            stage.SetCharacter("hero", "actor.bmp", 2, false);
+            stage.SetLayer("between", "layer.bmp", 24.0f, 48.0f,
+                           1.0f, 255, 1);
+
+            SDL_SetRenderDrawColor(native, 0, 0, 0, 255);
+            SDL_RenderClear(native);
+            stage.Render();
+            SDL_RenderPresent(native);
+            Pixel overlap = ReadPixel(surface, 32, 56);
+            suite.Expect(overlap.r > 220 && overlap.b < 60,
+                         "a lower-z positive layer can render behind an actor");
+
+            suite.Require(stage.SetNodeOrder("between", 3, 2),
+                          "layer order can cross the actor slot adapter");
+            SDL_SetRenderDrawColor(native, 0, 0, 0, 255);
+            SDL_RenderClear(native);
+            stage.Render();
+            SDL_RenderPresent(native);
+            overlap = ReadPixel(surface, 32, 56);
+            suite.Expect(overlap.b > 220 && overlap.r < 60,
+                         "a higher-z layer renders in front of the actor");
+
+            stage.ClearCharacter("hero", false);
+            stage.SetLayer("field", "field.bmp", 0.0f, 0.0f, 1.0f,
+                           255, 0);
+            px::vn::ParticleEmitterSpec particle;
+            particle.seed = 9;
+            particle.z = 1;
+            particle.rate = 1.0f;
+            particle.maxParticles = 1;
+            particle.burst = 1;
+            particle.loop = false;
+            particle.advanced = true;
+            particle.spawnShape = px::vn::ParticleSpawnShape::Point;
+            particle.positionX = {0.5f, 0.5f};
+            particle.positionY = {0.5f, 0.5f};
+            particle.velocityX = {0.0f, 0.0f};
+            particle.velocityY = {0.0f, 0.0f};
+            particle.lifetime = {5.0f, 5.0f};
+            particle.scale = {1.0f, 1.0f};
+            particle.initialOpacity = {1.0f, 1.0f};
+            particle.colorOverLifetime = {
+                {0.0f, {20, 240, 40, 255}},
+                {1.0f, {20, 240, 40, 255}}};
+            suite.Require(stage.SetParticleEmitter("spark", particle),
+                          "ordering particle validates");
+            stage.Update(0.2f);
+            SDL_SetRenderDrawColor(native, 0, 0, 0, 255);
+            SDL_RenderClear(native);
+            stage.Render();
+            SDL_RenderPresent(native);
+            const Pixel particleOverLayer = ReadPixel(surface, 36, 36);
+            suite.Expect(particleOverLayer.g > particleOverLayer.r,
+                         "a higher-z particle emitter renders over a layer");
+
+            stage.SetNodeOrder("field", 2, 3);
+            SDL_SetRenderDrawColor(native, 0, 0, 0, 255);
+            SDL_RenderClear(native);
+            stage.Render();
+            SDL_RenderPresent(native);
+            const Pixel layerOverParticle = ReadPixel(surface, 36, 36);
+            suite.Expect(layerOverParticle.r > 220 && layerOverParticle.g < 80,
+                         "a higher-z layer renders over a particle emitter");
+        }
+        SDL_DestroyRenderer(native);
+        SDL_DestroySurface(surface);
     });
 
     suite.Run("ParticleStateIsDeterministicAndValidated", [&] {

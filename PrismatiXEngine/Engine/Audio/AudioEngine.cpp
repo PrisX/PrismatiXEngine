@@ -6,6 +6,7 @@
 #include <SDL3_mixer/SDL_mixer.h>
 
 #include <algorithm>
+#include <limits>
 
 namespace px::audio {
 
@@ -37,9 +38,12 @@ bool AudioEngine::Init() {
     spec.format = SDL_AUDIO_F32;
     spec.channels = 2;
     spec.freq = 48000;
-    m_mixer = MIX_CreateMixer(&spec);
+    // A memory mixer advances only when MIX_Generate() is called. Runtime
+    // playback needs the device-backed mixer so positions, natural completion,
+    // intro handoff, and voice-aware waits progress with the audio clock.
+    m_mixer = MIX_CreateMixerDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec);
     if (!m_mixer) {
-        PX_LOG_ERROR("MIX_CreateMixer failed: {}", SDL_GetError());
+        PX_LOG_ERROR("MIX_CreateMixerDevice failed: {}", SDL_GetError());
         MIX_Quit();
         return false;
     }
@@ -61,6 +65,13 @@ void AudioEngine::Shutdown() {
     if (!m_initialized) {
         return;
     }
+    std::vector<AudioHandle> active;
+    active.reserve(m_playbacks.size());
+    for (const auto& [id, record] : m_playbacks) {
+        if (!record.state.Terminal()) active.push_back(AudioHandle{id});
+    }
+    for (const AudioHandle handle : active) Finish(handle, PlaybackStatus::Stopped);
+    m_trackPlaybacks.clear();
     for (MIX_Track*& track : m_bgmTracks) {
         if (track) MIX_DestroyTrack(track), track = nullptr;
     }
@@ -182,24 +193,91 @@ MIX_Track* AudioEngine::AcquireSeTrack(MIX_Audio* audio) {
     return m_seTracks.front();
 }
 
-void AudioEngine::PlayBGM(const std::string& path, bool loop, int fadeMs) {
-    if (!m_initialized) {
-        return;
+AudioEngine::AudioHandle AudioEngine::NextHandle() {
+    if (m_nextHandle == 0) ++m_nextHandle;
+    return AudioHandle{m_nextHandle++};
+}
+
+void AudioEngine::ForgetTerminalHandle(const AudioHandle handle) {
+    const auto found = m_playbacks.find(handle.value);
+    if (found != m_playbacks.end() && found->second.state.Terminal())
+        m_playbacks.erase(found);
+    std::erase(m_terminalHistory, handle);
+    std::erase(m_completions, handle);
+}
+
+AudioEngine::PlaybackRecord* AudioEngine::Find(const AudioHandle handle) {
+    const auto found = m_playbacks.find(handle.value);
+    return found == m_playbacks.end() ? nullptr : &found->second;
+}
+
+const AudioEngine::PlaybackRecord* AudioEngine::Find(
+    const AudioHandle handle) const {
+    const auto found = m_playbacks.find(handle.value);
+    return found == m_playbacks.end() ? nullptr : &found->second;
+}
+
+void AudioEngine::TrimTerminalHistory() {
+    while (m_terminalHistory.size() > kTerminalHistoryCapacity) {
+        const AudioHandle oldest = m_terminalHistory.front();
+        m_terminalHistory.pop_front();
+        const auto found = m_playbacks.find(oldest.value);
+        if (found != m_playbacks.end() && found->second.state.Terminal())
+            m_playbacks.erase(found);
     }
-    m_pendingLoop.clear();
+}
+
+void AudioEngine::Finish(const AudioHandle handle,
+                         const PlaybackStatus status) {
+    PlaybackRecord* record = Find(handle);
+    if (!record || record->state.Terminal()) return;
+    record->state.status = status;
+    if (record->track) {
+        const auto track = m_trackPlaybacks.find(record->track);
+        if (track != m_trackPlaybacks.end() && track->second == handle)
+            m_trackPlaybacks.erase(track);
+    }
+    if (m_musicHandle == handle) {
+        m_musicHandle = {};
+        m_bgmPath.clear();
+        m_pendingLoop.clear();
+    }
+    if (m_voiceHandle == handle) {
+        m_voiceHandle = {};
+        m_voicePath.clear();
+    }
+    if (m_ambienceHandle == handle) {
+        m_ambienceHandle = {};
+        m_ambiencePath.clear();
+    }
+    if (status == PlaybackStatus::Completed) {
+        if (m_completions.size() == kTerminalHistoryCapacity)
+            m_completions.erase(m_completions.begin());
+        m_completions.push_back(handle);
+        if (m_completion) m_completion(handle);
+    }
+    m_terminalHistory.push_back(handle);
+    TrimTerminalHistory();
+}
+
+void AudioEngine::FinishTrackPlayback(MIX_Track* track,
+                                      const PlaybackStatus status) {
+    const auto found = m_trackPlaybacks.find(track);
+    if (found != m_trackPlaybacks.end()) Finish(found->second, status);
+}
+
+bool AudioEngine::StartMusic(const std::string& path, const bool loop,
+                             const int fadeMs) {
+    if (!m_initialized) return false;
     MIX_Track* current = m_bgmTracks[m_bgmActive];
     const bool crossfade = fadeMs > 0 && current && MIX_TrackPlaying(current);
     const int next = crossfade ? 1 - m_bgmActive : m_bgmActive;
     MIX_Track* track = m_bgmTracks[next];
-    if (!track) {
-        return;
-    }
+    if (!track) return false;
 
     MIX_StopTrack(track, 0);
     MIX_Audio* audio = AcquireAudio(path, /*predecode=*/false);
-    if (!audio || !MIX_SetTrackAudio(track, audio)) {
-        return;
-    }
+    if (!audio || !MIX_SetTrackAudio(track, audio)) return false;
     m_bgmAudio[next] = audio;
     ApplyMixGains();
 
@@ -208,8 +286,9 @@ void AudioEngine::PlayBGM(const std::string& path, bool loop, int fadeMs) {
     if (fadeMs > 0) {
         SDL_SetNumberProperty(props, MIX_PROP_PLAY_FADE_IN_MILLISECONDS_NUMBER, fadeMs);
     }
-    MIX_PlayTrack(track, props);
+    const bool started = MIX_PlayTrack(track, props);
     SDL_DestroyProperties(props);
+    if (!started) return false;
     m_bgmPath = path;
     m_bgmLoop = loop;
 
@@ -217,76 +296,32 @@ void AudioEngine::PlayBGM(const std::string& path, bool loop, int fadeMs) {
         MIX_StopTrack(current, MIX_MSToFrames(m_sampleRate, fadeMs));
         m_bgmActive = next;
     }
+    return true;
 }
 
-void AudioEngine::PlayBGMWithIntro(const std::string& introPath, const std::string& loopPath,
-                                   int fadeMs) {
-    PlayBGM(introPath, /*loop=*/false, fadeMs);
-    m_pendingLoop = loopPath;
-}
-
-void AudioEngine::Update() {
-    if (!m_initialized) return;
-    const bool duck = m_voiceTrack && MIX_TrackPlaying(m_voiceTrack);
-    if (duck != m_voiceDucking) {
-        m_voiceDucking = duck;
-        ApplyMixGains();
-    }
-    if (m_pendingLoop.empty()) return;
-    MIX_Track* track = m_bgmTracks[m_bgmActive];
-    if (track && MIX_TrackPlaying(track)) {
-        return;
-    }
-    const std::string loop = m_pendingLoop;
-    m_pendingLoop.clear();
-    PlayBGM(loop, /*loop=*/true, 0);
-}
-
-void AudioEngine::PlayAmbience(const std::string& path,bool loop,int fadeMs){if(!m_initialized||!m_ambienceTrack)return;MIX_Audio* audio=AcquireAudio(path,false);if(!audio||!MIX_SetTrackAudio(m_ambienceTrack,audio))return;m_ambienceAudio=audio;SDL_PropertiesID props=SDL_CreateProperties();SDL_SetNumberProperty(props,MIX_PROP_PLAY_LOOPS_NUMBER,loop?-1:0);if(fadeMs>0)SDL_SetNumberProperty(props,MIX_PROP_PLAY_FADE_IN_MILLISECONDS_NUMBER,fadeMs);ApplyMixGains();MIX_PlayTrack(m_ambienceTrack,props);SDL_DestroyProperties(props);m_ambiencePath=path;m_ambienceLoop=loop;}
-void AudioEngine::StopAmbience(int fadeMs){if(m_initialized&&m_ambienceTrack)MIX_StopTrack(m_ambienceTrack,fadeMs>0?MIX_MSToFrames(m_sampleRate,fadeMs):0);m_ambiencePath.clear();}
-
-void AudioEngine::StopBGM(int fadeMs) {
-    if (!m_initialized) {
-        return;
-    }
-    m_pendingLoop.clear();
-    const Sint64 frames = fadeMs > 0 ? MIX_MSToFrames(m_sampleRate, fadeMs) : 0;
-    for (MIX_Track* track : m_bgmTracks) {
-        if (track) {
-            MIX_StopTrack(track, frames);
-        }
-    }
-    m_bgmPath.clear();
-}
-
-void AudioEngine::PlaySE(const std::string& path) {
-    if (!m_initialized) {
-        return;
-    }
+MIX_Track* AudioEngine::StartSoundEffect(const std::string& path) {
+    if (!m_initialized) return nullptr;
     MIX_Audio* audio = AcquireAudio(path, /*predecode=*/true);
-    if (!audio) {
-        return;
-    }
+    if (!audio) return nullptr;
     MIX_Track* track = AcquireSeTrack(audio);
-    if (!track) {
-        return;
-    }
+    if (!track) return nullptr;
+    const bool wasPlaying = MIX_TrackPlaying(track);
+    FinishTrackPlayback(track, wasPlaying ? PlaybackStatus::Stopped
+                                          : PlaybackStatus::Completed);
     MIX_StopTrack(track, 0);
-    MIX_SetTrackAudio(track, audio);
+    if (!MIX_SetTrackAudio(track, audio)) return nullptr;
     ApplyMixGains();
-    MIX_PlayTrack(track, 0);
+    return MIX_PlayTrack(track, 0) ? track : nullptr;
 }
 
-void AudioEngine::PlayVoice(const std::string& path) {
-    if (!m_initialized) {
-        return;
-    }
-    // Voice lines are unique per dialogue line — caching them would grow without
-    // bound over a session, so each voice replaces the previous one.
+bool AudioEngine::StartVoice(const std::string& path) {
+    if (!m_initialized || !m_voiceTrack) return false;
+    // Voice lines are unique per dialogue line. Caching every line would grow
+    // without bound, so each voice owns only the bytes used by the live track.
     auto bytes = m_vfs.Read(path);
     if (!bytes) {
         PX_LOG_WARN("AudioEngine: audio not found '{}'", path);
-        return;
+        return false;
     }
     MIX_StopTrack(m_voiceTrack, 0);
     if (m_voiceAudio.audio) {
@@ -296,39 +331,369 @@ void AudioEngine::PlayVoice(const std::string& path) {
     }
     auto held = std::make_shared<io::Bytes>(std::move(*bytes));
     SDL_IOStream* io = SDL_IOFromConstMem(held->data(), held->size());
-    MIX_Audio* audio = io ? MIX_LoadAudio_IO(m_mixer, io, /*predecode=*/true, /*closeio=*/true)
+    MIX_Audio* audio = io ? MIX_LoadAudio_IO(
+                                m_mixer, io, /*predecode=*/true,
+                                /*closeio=*/true)
                           : nullptr;
     if (!audio) {
-        PX_LOG_WARN("AudioEngine: failed to load voice '{}': {}", path, SDL_GetError());
-        return;
+        PX_LOG_WARN("AudioEngine: failed to load voice '{}': {}", path,
+                    SDL_GetError());
+        return false;
     }
-    m_voiceAudio = AudioEntry{ audio, held, 0 };
-    MIX_SetTrackAudio(m_voiceTrack, audio);
+    m_voiceAudio = AudioEntry{audio, held, 0};
+    if (!MIX_SetTrackAudio(m_voiceTrack, audio)) return false;
     ApplyMixGains();
-    MIX_PlayTrack(m_voiceTrack, 0);
+    if (!MIX_PlayTrack(m_voiceTrack, 0)) return false;
     m_voicePath = path;
+    return true;
 }
 
-void AudioEngine::StopVoice() {
-    if (m_initialized) {
-        MIX_StopTrack(m_voiceTrack, 0);
-    }
+bool AudioEngine::StartAmbience(const std::string& path, const bool loop,
+                                const int fadeMs) {
+    if (!m_initialized || !m_ambienceTrack) return false;
+    MIX_Audio* audio = AcquireAudio(path, false);
+    if (!audio || !MIX_SetTrackAudio(m_ambienceTrack, audio)) return false;
+    m_ambienceAudio = audio;
+    SDL_PropertiesID props = SDL_CreateProperties();
+    SDL_SetNumberProperty(props, MIX_PROP_PLAY_LOOPS_NUMBER, loop ? -1 : 0);
+    if (fadeMs > 0)
+        SDL_SetNumberProperty(props,
+                              MIX_PROP_PLAY_FADE_IN_MILLISECONDS_NUMBER,
+                              fadeMs);
+    ApplyMixGains();
+    const bool started = MIX_PlayTrack(m_ambienceTrack, props);
+    SDL_DestroyProperties(props);
+    if (!started) return false;
+    m_ambiencePath = path;
+    m_ambienceLoop = loop;
+    return true;
+}
+
+void AudioEngine::StopMusicTracks(const int fadeMs) {
+    if (!m_initialized) return;
+    const Sint64 frames = fadeMs > 0 ? MIX_MSToFrames(m_sampleRate, fadeMs) : 0;
+    for (MIX_Track* track : m_bgmTracks)
+        if (track) MIX_StopTrack(track, frames);
+    m_bgmPath.clear();
+    m_pendingLoop.clear();
+}
+
+void AudioEngine::StopVoiceTrack() {
+    if (m_initialized && m_voiceTrack) MIX_StopTrack(m_voiceTrack, 0);
     m_voicePath.clear();
 }
 
+void AudioEngine::StopAmbienceTrack(const int fadeMs) {
+    if (m_initialized && m_ambienceTrack)
+        MIX_StopTrack(m_ambienceTrack,
+                      fadeMs > 0 ? MIX_MSToFrames(m_sampleRate, fadeMs) : 0);
+    m_ambiencePath.clear();
+}
+
+void AudioEngine::StopTransientSoundEffects() {
+    for (MIX_Track* track : m_seTracks) {
+        if (!track) continue;
+        MIX_StopTrack(track, 0);
+        FinishTrackPlayback(track, PlaybackStatus::Stopped);
+    }
+}
+
+AudioEngine::AudioHandle AudioEngine::Play(PlaybackRequest request) {
+    return PlayWithHandle(std::move(request), {});
+}
+
+AudioEngine::AudioHandle AudioEngine::PlayWithHandle(
+    PlaybackRequest request, const AudioHandle restoredHandle) {
+    AudioHandle handle = restoredHandle;
+    if (handle) {
+        ForgetTerminalHandle(handle);
+        // A restored handle must never make a later fresh handle go backward.
+        if (handle.value >= m_nextHandle) m_nextHandle = handle.value + 1;
+    } else {
+        handle = NextHandle();
+    }
+    PlaybackRecord record;
+    record.state.handle = handle;
+    record.state.bus = request.bus;
+    record.state.status = PlaybackStatus::Playing;
+    record.state.path = request.path;
+    record.state.loop = request.loop;
+    if (!request.loopPath.empty()) {
+        record.state.phase = PlaybackPhase::Intro;
+        record.state.introPath = request.path;
+        record.state.loopPath = request.loopPath;
+        record.state.loop = false;
+    }
+    m_playbacks.emplace(handle.value, std::move(record));
+
+    if (!m_initialized || request.path.empty() ||
+        (!request.loopPath.empty() && request.bus != Bus::Music) ||
+        (!request.loopPath.empty() && request.loopPath == request.path)) {
+        Finish(handle, PlaybackStatus::Failed);
+        return handle;
+    }
+
+    MIX_Track* track = nullptr;
+    switch (request.bus) {
+        case Bus::Music:
+            if (m_musicHandle) Finish(m_musicHandle, PlaybackStatus::Stopped);
+            m_pendingLoop.clear();
+            if (StartMusic(request.path, request.loopPath.empty() && request.loop,
+                           std::max(0, request.fadeMs))) {
+                track = m_bgmTracks[m_bgmActive];
+                m_musicHandle = handle;
+                m_pendingLoop = request.loopPath;
+            }
+            break;
+        case Bus::SoundEffect:
+            track = StartSoundEffect(request.path);
+            break;
+        case Bus::Voice:
+            if (m_voiceHandle) Finish(m_voiceHandle, PlaybackStatus::Stopped);
+            if (StartVoice(request.path)) {
+                track = m_voiceTrack;
+                m_voiceHandle = handle;
+            }
+            break;
+        case Bus::Ambience:
+            if (m_ambienceHandle)
+                Finish(m_ambienceHandle, PlaybackStatus::Stopped);
+            if (StartAmbience(request.path, request.loop,
+                              std::max(0, request.fadeMs))) {
+                track = m_ambienceTrack;
+                m_ambienceHandle = handle;
+            }
+            break;
+    }
+    if (!track) {
+        if (request.bus == Bus::Music) StopMusicTracks(0);
+        else if (request.bus == Bus::Voice) StopVoiceTrack();
+        else if (request.bus == Bus::Ambience) StopAmbienceTrack(0);
+        Finish(handle, PlaybackStatus::Failed);
+        return handle;
+    }
+    PlaybackRecord* started = Find(handle);
+    started->track = track;
+    m_trackPlaybacks[track] = handle;
+    return handle;
+}
+
+AudioEngine::AudioHandle AudioEngine::PlayIntroLoop(
+    const Bus bus, const std::string& introPath, const std::string& loopPath,
+    const int fadeMs) {
+    return Play({.bus=bus,
+                 .path=introPath,
+                 .loop=false,
+                 .fadeMs=fadeMs,
+                 .loopPath=loopPath});
+}
+
+std::optional<AudioEngine::PlaybackState> AudioEngine::Playback(
+    const AudioHandle handle) const {
+    const PlaybackRecord* record = Find(handle);
+    if (!record) return std::nullopt;
+    PlaybackState state = record->state;
+    if (!state.Terminal() && record->track) {
+        state.playbackFrame = std::max<Sint64>(
+            0, MIX_GetTrackPlaybackPosition(record->track));
+    }
+    return state;
+}
+
+AudioEngine::PlaybackStatus AudioEngine::Status(
+    const AudioHandle handle) const {
+    const PlaybackRecord* record = Find(handle);
+    return record ? record->state.status : PlaybackStatus::Invalid;
+}
+
+std::optional<AudioEngine::PlaybackStatus> AudioEngine::GetStatus(
+    const AudioHandle handle) const {
+    const PlaybackRecord* record = Find(handle);
+    if (!record) return std::nullopt;
+    return record->state.status;
+}
+
+bool AudioEngine::IsComplete(const AudioHandle handle) const {
+    return Status(handle) == PlaybackStatus::Completed;
+}
+
+bool AudioEngine::Active(const AudioHandle handle) const {
+    const PlaybackStatus status = Status(handle);
+    return status == PlaybackStatus::Playing || status == PlaybackStatus::Paused;
+}
+
+bool AudioEngine::Playing(const AudioHandle handle) const {
+    return Status(handle) == PlaybackStatus::Playing;
+}
+
+bool AudioEngine::Paused(const AudioHandle handle) const {
+    return Status(handle) == PlaybackStatus::Paused;
+}
+
+bool AudioEngine::Pause(const AudioHandle handle) {
+    PlaybackRecord* record = Find(handle);
+    if (!record || record->state.status != PlaybackStatus::Playing ||
+        !record->track)
+        return false;
+    if (!MIX_TrackPlaying(record->track) &&
+        !MIX_TrackPaused(record->track)) {
+        Finish(handle, PlaybackStatus::Completed);
+        return false;
+    }
+    if (!SetTrackPaused(record->track, true)) return false;
+    record->state.status = PlaybackStatus::Paused;
+    return true;
+}
+
+bool AudioEngine::Resume(const AudioHandle handle) {
+    PlaybackRecord* record = Find(handle);
+    if (!record || record->state.status != PlaybackStatus::Paused ||
+        !SetTrackPaused(record->track, false))
+        return false;
+    record->state.status = PlaybackStatus::Playing;
+    return true;
+}
+
+bool AudioEngine::Stop(const AudioHandle handle, const int fadeMs) {
+    PlaybackRecord* record = Find(handle);
+    if (!record || record->state.Terminal()) return false;
+    switch (record->state.bus) {
+        case Bus::Music: StopMusicTracks(std::max(0, fadeMs)); break;
+        case Bus::Voice: StopVoiceTrack(); break;
+        case Bus::Ambience: StopAmbienceTrack(std::max(0, fadeMs)); break;
+        case Bus::SoundEffect:
+            if (record->track)
+                MIX_StopTrack(record->track,
+                              fadeMs > 0
+                                  ? MIX_MSToFrames(m_sampleRate, fadeMs)
+                                  : 0);
+            break;
+    }
+    Finish(handle, PlaybackStatus::Stopped);
+    return true;
+}
+
+bool AudioEngine::Seek(const AudioHandle handle,
+                       const std::int64_t playbackFrame) {
+    PlaybackRecord* record = Find(handle);
+    if (!record || record->state.Terminal() || !record->track ||
+        playbackFrame < 0 ||
+        !MIX_SetTrackPlaybackPosition(record->track, playbackFrame))
+        return false;
+    record->state.playbackFrame = playbackFrame;
+    return true;
+}
+
+std::vector<AudioEngine::AudioHandle> AudioEngine::TakeCompletions() {
+    std::vector<AudioHandle> completed = std::move(m_completions);
+    m_completions.clear();
+    return completed;
+}
+
+void AudioEngine::PlayBGM(const std::string& path, const bool loop,
+                          const int fadeMs) {
+    (void)Play({.bus=Bus::Music,
+                .path=path,
+                .loop=loop,
+                .fadeMs=fadeMs});
+}
+
+void AudioEngine::PlayBGMWithIntro(const std::string& introPath,
+                                   const std::string& loopPath,
+                                   const int fadeMs) {
+    (void)PlayIntroLoop(Bus::Music, introPath, loopPath, fadeMs);
+}
+
+void AudioEngine::PlaySE(const std::string& path) {
+    (void)Play({.bus=Bus::SoundEffect, .path=path});
+}
+
+void AudioEngine::PlayVoice(const std::string& path) {
+    (void)Play({.bus=Bus::Voice, .path=path});
+}
+
+void AudioEngine::PlayAmbience(const std::string& path, const bool loop,
+                               const int fadeMs) {
+    (void)Play({.bus=Bus::Ambience,
+                .path=path,
+                .loop=loop,
+                .fadeMs=fadeMs});
+}
+
+void AudioEngine::StopBGM(const int fadeMs) {
+    if (m_musicHandle) (void)Stop(m_musicHandle, fadeMs);
+    else StopMusicTracks(fadeMs);
+}
+
+void AudioEngine::StopVoice() {
+    if (m_voiceHandle) (void)Stop(m_voiceHandle);
+    else StopVoiceTrack();
+}
+
+void AudioEngine::StopAmbience(const int fadeMs) {
+    if (m_ambienceHandle) (void)Stop(m_ambienceHandle, fadeMs);
+    else StopAmbienceTrack(fadeMs);
+}
+
+void AudioEngine::Update() {
+    if (!m_initialized) return;
+    const bool duck = m_voiceTrack && MIX_TrackPlaying(m_voiceTrack);
+    if (duck != m_voiceDucking) {
+        m_voiceDucking = duck;
+        ApplyMixGains();
+    }
+
+    if (!m_pendingLoop.empty() && m_musicHandle) {
+        PlaybackRecord* music = Find(m_musicHandle);
+        MIX_Track* track = m_bgmTracks[m_bgmActive];
+        if (music && music->state.status == PlaybackStatus::Playing && track &&
+            !MIX_TrackPlaying(track) && !MIX_TrackPaused(track)) {
+            const std::string loop = m_pendingLoop;
+            m_pendingLoop.clear();
+            if (StartMusic(loop, /*loop=*/true, 0)) {
+                m_trackPlaybacks.erase(music->track);
+                music->track = m_bgmTracks[m_bgmActive];
+                music->state.path = loop;
+                music->state.phase = PlaybackPhase::Loop;
+                music->state.loop = true;
+                music->state.playbackFrame = 0;
+                m_trackPlaybacks[music->track] = m_musicHandle;
+            } else {
+                Finish(m_musicHandle, PlaybackStatus::Failed);
+            }
+        }
+    }
+
+    std::vector<AudioHandle> completed;
+    completed.reserve(m_trackPlaybacks.size());
+    for (const auto& [track, handle] : m_trackPlaybacks) {
+        const PlaybackRecord* record = Find(handle);
+        if (record && record->state.status == PlaybackStatus::Playing &&
+            track && !MIX_TrackPlaying(track) && !MIX_TrackPaused(track))
+            completed.push_back(handle);
+    }
+    for (const AudioHandle handle : completed)
+        Finish(handle, PlaybackStatus::Completed);
+}
+
 AudioEngine::RuntimeState AudioEngine::CaptureState() const {
-    const auto trackState = [](MIX_Track* track, const std::string& path, const bool loop) {
+    const auto trackState = [](MIX_Track* track, const std::string& path,
+                               const bool loop, const AudioHandle handle) {
         TrackState state{.path=path,.loop=loop};
         if (track && !path.empty()) {
-            state.playing = MIX_TrackPlaying(track);
+            state.paused = MIX_TrackPaused(track);
+            state.playing = state.paused || MIX_TrackPlaying(track);
             state.playbackFrame = std::max<Sint64>(0, MIX_GetTrackPlaybackPosition(track));
+            state.handle = handle.value;
         }
         return state;
     };
     RuntimeState state;
-    state.music = trackState(m_bgmTracks[m_bgmActive], m_bgmPath, m_bgmLoop);
-    state.voice = trackState(m_voiceTrack, m_voicePath, false);
-    state.ambience = trackState(m_ambienceTrack, m_ambiencePath, m_ambienceLoop);
+    state.music = trackState(m_bgmTracks[m_bgmActive], m_bgmPath, m_bgmLoop,
+                             m_musicHandle);
+    state.voice = trackState(m_voiceTrack, m_voicePath, false, m_voiceHandle);
+    state.ambience = trackState(m_ambienceTrack, m_ambiencePath,
+                                m_ambienceLoop, m_ambienceHandle);
     state.pendingMusicLoop = m_pendingLoop;
     state.mainVolume = m_mainVolume;
     state.musicVolume = m_bgmVolume;
@@ -346,7 +711,18 @@ bool AudioEngine::ValidateState(const RuntimeState& state,
         state.sfxVolume < 0 || state.sfxVolume > 128 ||
         state.ambienceVolume < 0 || state.ambienceVolume > 128 ||
         state.music.playbackFrame < 0 || state.voice.playbackFrame < 0 ||
-        state.ambience.playbackFrame < 0) return false;
+        state.ambience.playbackFrame < 0 ||
+        state.music.handle == (std::numeric_limits<std::uint64_t>::max)() ||
+        state.voice.handle == (std::numeric_limits<std::uint64_t>::max)() ||
+        state.ambience.handle == (std::numeric_limits<std::uint64_t>::max)() ||
+        (state.music.paused && !state.music.playing) ||
+        (state.voice.paused && !state.voice.playing) ||
+        (state.ambience.paused && !state.ambience.playing) ||
+        (state.music.handle != 0 &&
+         (state.music.handle == state.voice.handle ||
+          state.music.handle == state.ambience.handle)) ||
+        (state.voice.handle != 0 &&
+         state.voice.handle == state.ambience.handle)) return false;
     if (!requireResources) return true;
     for (const auto* track : {&state.music, &state.voice, &state.ambience}) {
         if (track->playing &&
@@ -376,26 +752,47 @@ bool AudioEngine::PrepareRestoreState(const RuntimeState& state) {
 
 bool AudioEngine::RestoreState(const RuntimeState& state) {
     if (!PrepareRestoreState(state)) return false;
+    if (!m_initialized &&
+        (state.music.playing || state.voice.playing || state.ambience.playing))
+        return false;
     SetMainVolume(state.mainVolume);
     SetBGMVolume(state.musicVolume);
     SetVoiceVolume(state.voiceVolume);
     SetSEVolume(state.sfxVolume);
     SetAmbienceVolume(state.ambienceVolume);
     StopBGM(0); StopVoice(); StopAmbience(0);
+    // SE is explicitly transient: restore silences in-flight cues and never
+    // replays them from checkpoint data.
+    StopTransientSoundEffects();
     if (state.music.playing && !state.music.path.empty()) {
-        PlayBGM(state.music.path, state.music.loop, 0);
-        if (!MIX_SetTrackPlaybackPosition(m_bgmTracks[m_bgmActive], state.music.playbackFrame))
+        const AudioHandle handle = PlayWithHandle(
+            {.bus=Bus::Music,
+             .path=state.music.path,
+             .loop=state.music.loop,
+             .loopPath=state.pendingMusicLoop},
+            AudioHandle{state.music.handle});
+        if (!Active(handle) || !Seek(handle, state.music.playbackFrame))
             return false;
+        if (state.music.paused && !SetMusicPaused(true)) return false;
     }
     if (state.voice.playing && !state.voice.path.empty()) {
-        PlayVoice(state.voice.path);
-        if (!MIX_SetTrackPlaybackPosition(m_voiceTrack, state.voice.playbackFrame)) return false;
+        const AudioHandle handle = PlayWithHandle(
+            {.bus=Bus::Voice,.path=state.voice.path},
+            AudioHandle{state.voice.handle});
+        if (!Active(handle) || !Seek(handle, state.voice.playbackFrame))
+            return false;
+        if (state.voice.paused && !SetVoicePaused(true)) return false;
     }
     if (state.ambience.playing && !state.ambience.path.empty()) {
-        PlayAmbience(state.ambience.path, state.ambience.loop, 0);
-        if (!MIX_SetTrackPlaybackPosition(m_ambienceTrack, state.ambience.playbackFrame)) return false;
+        const AudioHandle handle = PlayWithHandle(
+            {.bus=Bus::Ambience,
+             .path=state.ambience.path,
+             .loop=state.ambience.loop},
+            AudioHandle{state.ambience.handle});
+        if (!Active(handle) || !Seek(handle, state.ambience.playbackFrame))
+            return false;
+        if (state.ambience.paused && !SetAmbiencePaused(true)) return false;
     }
-    m_pendingLoop = state.pendingMusicLoop;
     return true;
 }
 
@@ -404,9 +801,12 @@ bool AudioEngine::RestoreMusicTrack(const TrackState& state, const int volume) {
     SetBGMVolume(volume);
     StopBGM(0);
     if (!state.playing || state.path.empty()) return true;
-    PlayBGM(state.path, state.loop, 0);
-    return MIX_SetTrackPlaybackPosition(m_bgmTracks[m_bgmActive],
-                                        state.playbackFrame);
+    if (!m_initialized) return false;
+    const AudioHandle handle = PlayWithHandle(
+        {.bus=Bus::Music,.path=state.path,.loop=state.loop},
+        AudioHandle{state.handle});
+    if (!Active(handle) || !Seek(handle, state.playbackFrame)) return false;
+    return !state.paused || SetMusicPaused(true);
 }
 
 bool AudioEngine::RestoreVoiceTrack(const TrackState& state, const int volume) {
@@ -414,8 +814,11 @@ bool AudioEngine::RestoreVoiceTrack(const TrackState& state, const int volume) {
     SetVoiceVolume(volume);
     StopVoice();
     if (!state.playing || state.path.empty()) return true;
-    PlayVoice(state.path);
-    return MIX_SetTrackPlaybackPosition(m_voiceTrack, state.playbackFrame);
+    if (!m_initialized) return false;
+    const AudioHandle handle = PlayWithHandle(
+        {.bus=Bus::Voice,.path=state.path}, AudioHandle{state.handle});
+    if (!Active(handle) || !Seek(handle, state.playbackFrame)) return false;
+    return !state.paused || SetVoicePaused(true);
 }
 
 bool AudioEngine::RestoreAmbienceTrack(const TrackState& state,
@@ -424,9 +827,12 @@ bool AudioEngine::RestoreAmbienceTrack(const TrackState& state,
     SetAmbienceVolume(volume);
     StopAmbience(0);
     if (!state.playing || state.path.empty()) return true;
-    PlayAmbience(state.path, state.loop, 0);
-    return MIX_SetTrackPlaybackPosition(m_ambienceTrack,
-                                        state.playbackFrame);
+    if (!m_initialized) return false;
+    const AudioHandle handle = PlayWithHandle(
+        {.bus=Bus::Ambience,.path=state.path,.loop=state.loop},
+        AudioHandle{state.handle});
+    if (!Active(handle) || !Seek(handle, state.playbackFrame)) return false;
+    return !state.paused || SetAmbiencePaused(true);
 }
 
 bool AudioEngine::SetTrackPaused(MIX_Track* track, const bool paused) {
@@ -439,15 +845,19 @@ bool AudioEngine::SetTrackPaused(MIX_Track* track, const bool paused) {
 }
 
 bool AudioEngine::SetMusicPaused(const bool paused) {
-    return SetTrackPaused(m_bgmTracks[m_bgmActive], paused);
+    if (!m_musicHandle)
+        return SetTrackPaused(m_bgmTracks[m_bgmActive], paused);
+    return paused ? Pause(m_musicHandle) : Resume(m_musicHandle);
 }
 
 bool AudioEngine::SetVoicePaused(const bool paused) {
-    return SetTrackPaused(m_voiceTrack, paused);
+    if (!m_voiceHandle) return SetTrackPaused(m_voiceTrack, paused);
+    return paused ? Pause(m_voiceHandle) : Resume(m_voiceHandle);
 }
 
 bool AudioEngine::SetAmbiencePaused(const bool paused) {
-    return SetTrackPaused(m_ambienceTrack, paused);
+    if (!m_ambienceHandle) return SetTrackPaused(m_ambienceTrack, paused);
+    return paused ? Pause(m_ambienceHandle) : Resume(m_ambienceHandle);
 }
 
 void AudioEngine::SetBGMVolume(int volume) {

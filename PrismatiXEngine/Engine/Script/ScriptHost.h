@@ -2,6 +2,7 @@
 
 #include "Engine/Core/Result.h"
 #include "Engine/Script/ScriptState.h"
+#include "Engine/Script/ScriptRenderTree.h"
 #include "Engine/UI/Actions/ActionDispatcher.h"
 
 #include <functional>
@@ -67,6 +68,11 @@ struct ScriptServices {
     vn::VariableStore* variables = nullptr;
     ui::UIRouter* routes = nullptr;
     animation::TimelinePlayer* timeline = nullptr;
+    // Canonical RuntimeSession-owned loader. Keeping asset traversal outside
+    // the language host makes .pxanim and nested .pxtimeline resolution,
+    // validation, and ResourceId identity identical in Player and Preview.
+    std::function<Result<std::string>(const std::string& path)>
+        loadAnimationAsset;
     // Player-owned services remain capability-gated and opaque to JavaScript.
     std::function<bool(int slot)> requestSave;
     std::function<bool(int slot)> requestLoad;
@@ -131,6 +137,9 @@ public:
     virtual bool InvokeCommand(const vn::Command& command) = 0;
     [[nodiscard]] virtual std::shared_ptr<ui::IActionProvider> CreateActionProvider() = 0;
     virtual void Update(float deltaSeconds) = 0;
+    // Executes retained backend-neutral draw plans at a host-defined frame
+    // boundary. Every application host calls the same four phases.
+    virtual void RenderRetained(RenderPhase phase) = 0;
     [[nodiscard]] virtual bool HasPendingCommand() const = 0;
     [[nodiscard]] virtual bool HasPendingAction() const = 0;
     [[nodiscard]] virtual PendingCommandsState CapturePending() const = 0;

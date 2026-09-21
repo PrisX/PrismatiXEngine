@@ -2103,6 +2103,13 @@ private:
         m_scriptServices.variables = &m_session->Variables();
         m_scriptServices.routes = &m_session->Routes();
         m_scriptServices.timeline = &m_session->Timeline();
+        m_scriptServices.loadAnimationAsset = [this](const std::string& path) {
+            auto loaded = m_session->LoadAnimationAsset(path);
+            if (!loaded)
+                return px::Result<std::string>::Failure(loaded.Diagnostics());
+            return px::Result<std::string>::Success(
+                loaded.Value().ToString());
+        };
         m_scriptServices.queryDialogue = [this] {
             return px::script::BuildDialogueModel(m_session->Dialogue());
         };
@@ -2180,6 +2187,24 @@ private:
             events->Push("output", Json{ { "scope", "script" }, { "stream", stream }, { "level", level }, { "message", message.text }, { "source", message.source }, { "line", message.line } });
         };
         m_scriptHost = px::script::CreateScriptHost(m_scriptServices);
+        m_session->Timeline().SetDetailedEvent(
+            [this](const px::animation::MarkerEvent& event) {
+                if (!m_scriptHost) return;
+                (void)m_scriptHost->Emit(
+                    "timeline.marker",
+                    px::Variant(px::VariantObject{
+                     {"handle", static_cast<std::int64_t>(event.handle)},
+                     {"playbackClip", event.playbackClip.ToString()},
+                     {"clip", event.clip.ToString()},
+                     {"clipName", event.clipName},
+                     {"marker", event.marker.name},
+                     {"markerId", event.marker.id},
+                     {"loopIteration", static_cast<std::int64_t>(
+                                           event.loopIteration)},
+                     {"playbackLoopIteration", static_cast<std::int64_t>(
+                                                   event.playbackLoopIteration)},
+                     {"payload", px::Variant(event.marker.payload)}}));
+            });
         if (const auto status = m_uiPreview.Actions().RegisterProvider(m_scriptHost->CreateActionProvider()); !status) {
             spdlog::error("Preview script Action provider registration failed: {}", StatusMessage(status, "unknown error"));
             return false;
@@ -2278,7 +2303,13 @@ private:
             int height = 0;
             m_runtime->Renderer().GetLogicalSize(width, height);
             (void)m_uiPreview.Update(input, width, height, delta);
+            if (m_scriptHost)
+                m_scriptHost->RenderRetained(
+                    px::script::RenderPhase::BeforeUI);
             m_uiPreview.Render(m_runtime->Renderer());
+            if (m_scriptHost)
+                m_scriptHost->RenderRetained(
+                    px::script::RenderPhase::AfterUI);
             return;
         }
         const auto ticked = m_previewSession->Tick(now, delta);
@@ -2302,8 +2333,20 @@ private:
         if (!consumed && input.LeftClick() && m_session->VM().State() != px::vn::VMState::WaitingChoice) {
             (void)m_previewSession->Advance();
         }
+        if (m_scriptHost)
+            m_scriptHost->RenderRetained(
+                px::script::RenderPhase::BeforeStage);
         m_session->Stage().Render();
+        if (m_scriptHost) {
+            m_scriptHost->RenderRetained(
+                px::script::RenderPhase::AfterStage);
+            m_scriptHost->RenderRetained(
+                px::script::RenderPhase::BeforeUI);
+        }
         m_hud.Render(m_runtime->Renderer());
+        if (m_scriptHost)
+            m_scriptHost->RenderRetained(
+                px::script::RenderPhase::AfterUI);
         (void)m_previewSession->Events();
     }
 

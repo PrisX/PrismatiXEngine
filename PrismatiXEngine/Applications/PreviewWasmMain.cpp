@@ -311,6 +311,13 @@ public:
         m_scriptServices.variables = &m_session->Variables();
         m_scriptServices.routes = &m_session->Routes();
         m_scriptServices.timeline = &m_session->Timeline();
+        m_scriptServices.loadAnimationAsset = [this](const std::string& path) {
+            auto loaded = m_session->LoadAnimationAsset(path);
+            if (!loaded)
+                return px::Result<std::string>::Failure(loaded.Diagnostics());
+            return px::Result<std::string>::Success(
+                loaded.Value().ToString());
+        };
         m_scriptServices.queryDialogue = [this] {
             return px::script::BuildDialogueModel(m_session->Dialogue());
         };
@@ -396,6 +403,24 @@ public:
                     .dump());
         };
         m_scriptHost = px::script::CreateScriptHost(m_scriptServices);
+        m_session->Timeline().SetDetailedEvent(
+            [this](const px::animation::MarkerEvent& event) {
+                if (!m_scriptHost) return;
+                (void)m_scriptHost->Emit(
+                    "timeline.marker",
+                    px::Variant(px::VariantObject{
+                     {"handle", static_cast<std::int64_t>(event.handle)},
+                     {"playbackClip", event.playbackClip.ToString()},
+                     {"clip", event.clip.ToString()},
+                     {"clipName", event.clipName},
+                     {"marker", event.marker.name},
+                     {"markerId", event.marker.id},
+                     {"loopIteration", static_cast<std::int64_t>(
+                                           event.loopIteration)},
+                     {"playbackLoopIteration", static_cast<std::int64_t>(
+                                                   event.playbackLoopIteration)},
+                     {"payload", px::Variant(event.marker.payload)}}));
+            });
         if (const auto status =
                 m_hud.Actions().RegisterProvider(m_scriptHost->CreateActionProvider());
             !status) {
@@ -1687,8 +1712,20 @@ public:
             m_skipMode = false;
             m_autoTimerStartedAtMs = 0;
         }
+        if (m_scriptHost)
+            m_scriptHost->RenderRetained(
+                px::script::RenderPhase::BeforeStage);
         m_session->Stage().Render();
+        if (m_scriptHost) {
+            m_scriptHost->RenderRetained(
+                px::script::RenderPhase::AfterStage);
+            m_scriptHost->RenderRetained(
+                px::script::RenderPhase::BeforeUI);
+        }
         m_hud.Render(m_runtime.Renderer());
+        if (m_scriptHost)
+            m_scriptHost->RenderRetained(
+                px::script::RenderPhase::AfterUI);
         m_runtime.EndFrame();
         EmitFocus(false);
         (void)m_previewSession->Events();

@@ -9,11 +9,17 @@
 #include "Engine/UI/UITypeRegistry.h"
 #include "Tests/TestSupport/TestHarness.h"
 
+#include <SDL3/SDL.h>
 #include <nlohmann/json.hpp>
 
 #include <cmath>
+#include <cstdint>
+#include <fstream>
 #include <memory>
+#include <ranges>
 #include <string>
+#include <type_traits>
+#include <vector>
 
 namespace {
 
@@ -47,10 +53,248 @@ struct RuntimeFixture {
     px::RuntimeSession runtime{{vfs, audio, renderer, assets}};
 };
 
+void WriteSilentWav(const std::filesystem::path& path,
+                    const std::uint32_t milliseconds) {
+    constexpr std::uint32_t sampleRate = 8000;
+    constexpr std::uint16_t channels = 1;
+    constexpr std::uint16_t bitsPerSample = 16;
+    const std::uint32_t sampleCount = sampleRate * milliseconds / 1000;
+    const std::uint32_t dataSize =
+        sampleCount * channels * (bitsPerSample / 8);
+    const auto write16 = [](std::ofstream& output, const std::uint16_t value) {
+        const std::array bytes{static_cast<char>(value & 0xffu),
+                               static_cast<char>((value >> 8u) & 0xffu)};
+        output.write(bytes.data(), bytes.size());
+    };
+    const auto write32 = [](std::ofstream& output, const std::uint32_t value) {
+        const std::array bytes{
+            static_cast<char>(value & 0xffu),
+            static_cast<char>((value >> 8u) & 0xffu),
+            static_cast<char>((value >> 16u) & 0xffu),
+            static_cast<char>((value >> 24u) & 0xffu)};
+        output.write(bytes.data(), bytes.size());
+    };
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output.write("RIFF", 4);
+    write32(output, 36 + dataSize);
+    output.write("WAVEfmt ", 8);
+    write32(output, 16);
+    write16(output, 1);
+    write16(output, channels);
+    write32(output, sampleRate);
+    write32(output, sampleRate * channels * (bitsPerSample / 8));
+    write16(output, channels * (bitsPerSample / 8));
+    write16(output, bitsPerSample);
+    output.write("data", 4);
+    write32(output, dataSize);
+    const std::vector<char> silence(dataSize, 0);
+    output.write(silence.data(), static_cast<std::streamsize>(silence.size()));
+}
+
 }  // namespace
 
 int main() {
     px::test::Suite suite("PreviewSessionContract");
+
+    suite.Run("DeviceNeutralInputEventsAndCustomActions", [&] {
+        static_assert(std::is_const_v<
+                      std::remove_reference_t<decltype(
+                          std::declval<px::Input>().FrameEvents().front())>>);
+        px::Input input;
+        input.NewFrame();
+        suite.Require(input.RegisterAction("photo-mode") &&
+                          input.BindKey("photo-mode", SDL_SCANCODE_X),
+                      "custom string actions register before binding");
+
+        SDL_Event event{};
+        event.type = SDL_EVENT_MOUSE_MOTION;
+        event.motion.x = 12.0f;
+        event.motion.y = 34.0f;
+        event.motion.xrel = 2.0f;
+        event.motion.yrel = -1.0f;
+        input.Process(event);
+        event = {};
+        event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+        event.button.button = SDL_BUTTON_LEFT;
+        event.button.x = 12.0f;
+        event.button.y = 34.0f;
+        input.Process(event);
+        event = {};
+        event.type = SDL_EVENT_TEXT_INPUT;
+        event.text.text = "A";
+        input.Process(event);
+        event = {};
+        event.type = SDL_EVENT_KEY_DOWN;
+        event.key.scancode = SDL_SCANCODE_X;
+        input.Process(event);
+        event = {};
+        event.type = SDL_EVENT_MOUSE_WHEEL;
+        event.wheel.x = 1.0f;
+        event.wheel.y = -2.0f;
+        input.Process(event);
+
+        const auto events = input.FrameEvents();
+        suite.Require(events.size() == 7,
+                      "pointer, text, wheel, and logical actions share one frame stream");
+        bool monotonic = true;
+        for (std::size_t index = 1; index < events.size(); ++index)
+            monotonic = monotonic && events[index - 1].id < events[index].id;
+        const auto custom = std::ranges::find_if(
+            events, [](const px::InputEvent& value) {
+                return value.type == px::InputEventType::Action &&
+                       value.action == "photo-mode";
+            });
+        suite.Require(custom != events.end(),
+                      "a bound platform key emits a device-neutral logical action");
+        const auto pointerDown = std::ranges::find_if(
+            events, [](const px::InputEvent& value) {
+                return value.type == px::InputEventType::PointerDown &&
+                       value.button == px::PointerButton::Primary;
+            });
+        suite.Require(pointerDown != events.end(),
+                      "pointer down is represented in the frame stream");
+        const std::uint64_t customId = custom->id;
+        const std::uint64_t lastId = events.back().id;
+        suite.Expect(monotonic && input.ActionPressed("photo-mode") &&
+                         input.ActionDown("photo-mode") &&
+                         input.KeyPressed(SDL_SCANCODE_X),
+                     "new action events and legacy polling observe the same input");
+        suite.Expect(input.ConsumeEvent(customId) &&
+                         input.SuppressDefault(customId) &&
+                         input.EventConsumed(customId) &&
+                         input.DefaultSuppressed(customId) &&
+                         custom->action == "photo-mode" &&
+                         !input.ActionPressed("photo-mode") &&
+                         !input.ActionDown("photo-mode") &&
+                         !input.KeyPressed(SDL_SCANCODE_X),
+                     "consume/default state is separate from immutable event payloads");
+        suite.Expect(input.SuppressDefault(pointerDown->id) &&
+                         !input.LeftClick() && !input.LeftDown() &&
+                         !input.ActionPressed(px::InputAction::Accept) &&
+                         !input.ActionPressed(px::InputAction::Advance),
+                     "suppressing a pointer source blocks legacy pointer and default action polling");
+
+        input.NewFrame();
+        suite.Expect(input.FrameEvents().empty() &&
+                         !input.EventConsumed(customId) &&
+                         input.ActionDown("photo-mode"),
+                     "frame events and dispositions clear while held polling persists");
+        event = {};
+        event.type = SDL_EVENT_KEY_UP;
+        event.key.scancode = SDL_SCANCODE_X;
+        input.Process(event);
+        suite.Expect(!input.ActionDown("photo-mode") &&
+                         input.InjectAction("photo-mode") &&
+                         input.FrameEvents().back().id > lastId,
+                     "injected actions use the same monotonic event stream");
+        suite.Expect(!input.RegisterAction("photo-mode") &&
+                         input.ClearBindings("photo-mode") &&
+                         !input.UnregisterAction("accept") &&
+                         input.UnregisterAction("photo-mode"),
+                     "registration is idempotent and built-in action identity is retained");
+    });
+
+    suite.Run("AudioHandlesCompletionAndRestorePolicy", [&] {
+        suite.Expect(
+            px::audio::AudioEngine::RestorePolicyFor(
+                px::audio::AudioBus::Music) ==
+                    px::audio::AudioEngine::RestorePolicy::Persistent &&
+                px::audio::AudioEngine::RestorePolicyFor(
+                    px::audio::AudioBus::Voice) ==
+                    px::audio::AudioEngine::RestorePolicy::Persistent &&
+                px::audio::AudioEngine::RestorePolicyFor(
+                    px::audio::AudioBus::SoundEffect) ==
+                    px::audio::AudioEngine::RestorePolicy::Transient,
+            "persistent buses and transient sound effects have an explicit restore policy");
+
+        px::test::TempDirectory directory("audio-handles");
+        WriteSilentWav(directory.path / "intro.wav", 25);
+        WriteSilentWav(directory.path / "loop.wav", 250);
+        px::io::VFS vfs;
+        vfs.MountDirectory(directory.path.string());
+        suite.Require(SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy"),
+                      "dummy audio backend is selected before mixer init");
+        px::audio::AudioEngine audio(vfs);
+        suite.Require(audio.Init(), "device-backed test mixer initializes");
+
+        std::vector<px::audio::AudioHandle> callbacks;
+        audio.SetCompletion([&callbacks](const px::audio::AudioHandle handle) {
+            callbacks.push_back(handle);
+        });
+        const auto music = audio.PlayIntroLoop(
+            px::audio::AudioBus::Music, "intro.wav", "loop.wav");
+        auto playback = audio.Playback(music);
+        suite.Require(playback &&
+                          playback->phase == px::audio::PlaybackPhase::Intro &&
+                          playback->introPath == "intro.wav" &&
+                          playback->loopPath == "loop.wav",
+                      "intro-loop phases are exposed without changing handle identity");
+        for (int attempt = 0; attempt < 100 &&
+                              playback->phase != px::audio::PlaybackPhase::Loop;
+             ++attempt) {
+            SDL_Delay(5);
+            audio.Update();
+            playback = audio.Playback(music);
+        }
+        suite.Require(playback &&
+                          playback->phase == px::audio::PlaybackPhase::Loop &&
+                          playback->handle == music && audio.Playing(music),
+                      "intro naturally hands off to the looping body on the same handle");
+        suite.Require(audio.Pause(music) && audio.Paused(music) &&
+                          audio.Seek(music, 100),
+                      "handle playback supports pause and seek");
+        const auto snapshot = audio.CaptureState();
+        suite.Require(snapshot.music.handle == music.value &&
+                          snapshot.music.paused,
+                      "persistent capture includes handle identity and paused state");
+
+        const auto transient = audio.Play(
+            {.bus=px::audio::AudioBus::SoundEffect,.path="loop.wav"});
+        suite.Require(audio.Active(transient),
+                      "transient sound effect starts independently");
+        suite.Require(audio.RestoreState(snapshot),
+                      "persistent audio snapshot restores");
+        suite.Expect(audio.Paused(music) &&
+                         audio.Playback(music)->handle == music &&
+                         audio.Status(transient) ==
+                             px::audio::PlaybackStatus::Stopped,
+                     "restore preserves persistent handle and silences transient SE");
+        suite.Expect(audio.Resume(music) && audio.Stop(music) &&
+                         audio.Status(music) ==
+                             px::audio::PlaybackStatus::Stopped,
+                     "handle playback supports resume and explicit stop");
+
+        const auto voice = audio.Play(
+            {.bus=px::audio::AudioBus::Voice,.path="intro.wav"});
+        suite.Require(audio.Active(voice), "one-shot voice starts");
+        for (int attempt = 0; attempt < 100 && audio.Active(voice); ++attempt) {
+            SDL_Delay(5);
+            audio.Update();
+        }
+        const auto completions = audio.TakeCompletions();
+        suite.Expect(audio.IsComplete(voice) && callbacks.size() == 1 &&
+                         callbacks.front() == voice && completions.size() == 1 &&
+                         completions.front() == voice &&
+                         audio.TakeCompletions().empty(),
+                     "natural completion is observable once by callback and drain queue");
+
+        px::audio::AudioHandle oldestFailure;
+        px::audio::AudioHandle newestFailure;
+        for (std::size_t index = 0;
+             index < px::audio::AudioEngine::TerminalHistoryLimit + 2; ++index) {
+            newestFailure = audio.Play(
+                {.bus=px::audio::AudioBus::SoundEffect,.path="missing.wav"});
+            if (index == 0) oldestFailure = newestFailure;
+        }
+        suite.Expect(audio.TerminalHistorySize() ==
+                             px::audio::AudioEngine::TerminalHistoryLimit &&
+                         audio.Status(oldestFailure) ==
+                             px::audio::PlaybackStatus::Invalid &&
+                         audio.Status(newestFailure) ==
+                             px::audio::PlaybackStatus::Failed,
+                     "terminal handle history is bounded and evicts oldest state");
+        audio.Shutdown();
+    });
 
     suite.Run("FrontendNeutralSessionState", [&] {
         RuntimeFixture fixture;

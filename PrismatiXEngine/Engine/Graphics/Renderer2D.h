@@ -88,6 +88,18 @@ struct SpriteBatchItem {
     bool sourceNormalized = false;
 };
 
+// Backend-neutral 2x3 affine transform.  It intentionally contains no native
+// renderer handles so retained drawables can safely capture and replay it.
+// Points are mapped as (a*x + c*y + tx, b*x + d*y + ty).
+struct AffineTransform2D {
+    float a = 1.0f;
+    float b = 0.0f;
+    float c = 0.0f;
+    float d = 1.0f;
+    float tx = 0.0f;
+    float ty = 0.0f;
+};
+
 class Renderer2D {
 public:
     enum class TextSamplingMode { Auto, Fixed };
@@ -129,7 +141,11 @@ public:
     void DrawBorder(const Rect& rect, float width, float radius, Color color);
     void PushTransform(Vec2 pivot, Vec2 scale = {1,1}, float rotationDegrees = 0.0f,
                        Color modulate = {255,255,255,255});
+    void PushAffineTransform(const AffineTransform2D& transform,
+                             Color modulate = {255,255,255,255});
     void PopTransform();
+    [[nodiscard]] Vec2 TransformPoint(Vec2 point) const;
+    [[nodiscard]] Rect TransformBounds(Rect rect) const;
     void PushClip(const Rect& rect);
     void PopClip();
 
@@ -144,6 +160,13 @@ public:
     // streaming transition mask).
     void DrawTexture(TextureHandle texture, const Rect& dst,
                      std::uint8_t alpha = 255);
+    // Source rectangles use texture pixels. Invalid/empty regions are ignored
+    // and valid regions are clipped to the texture, keeping callers away from
+    // backend texture pointers and unchecked UVs.
+    void DrawImageRegion(const std::string& path, const Rect& sourcePixels,
+                         const Rect& dst, std::uint8_t alpha = 255);
+    void DrawTextureRegion(TextureHandle texture, const Rect& sourcePixels,
+                           const Rect& dst, std::uint8_t alpha = 255);
     void DrawSpriteBatch(const std::string& texture,
                          const std::vector<SpriteBatchItem>& items);
     [[nodiscard]] std::uint64_t GeometryBatchCount() const {
@@ -220,6 +243,16 @@ public:
     }
     void EndNodeEffect() { m_compositor.EndNodeEffect(); }
 
+    // Captures subsequent draws into a transparent logical-size target. The
+    // matching EndComposition composites that target once, so a node shader
+    // observes an entire group rather than being re-run for each leaf.
+    // Calls may be nested. A false return leaves renderer state unchanged.
+    [[nodiscard]] bool BeginComposition();
+    void EndComposition(
+        std::string_view effect, float progress, float randomSeed,
+        const std::array<std::array<float, 4>, 8>& parameters,
+        const Rect& viewport);
+
     [[nodiscard]] SDL_Renderer* Handle() const { return m_renderer; }
 
 private:
@@ -227,9 +260,7 @@ private:
         float a=1,b=0,c=0,d=1,tx=0,ty=0;
         Color modulate{255,255,255,255};
     };
-    [[nodiscard]] Vec2 TransformPoint(Vec2 point) const;
     [[nodiscard]] Color TransformColor(Color color) const;
-    [[nodiscard]] Rect TransformBounds(Rect rect) const;
 
     struct CachedText {
         SDL_Texture* texture = nullptr;
@@ -245,6 +276,7 @@ private:
     void Blit(SDL_Texture* texture, const Rect& dst, std::uint8_t alpha);
     void BlitRegion(SDL_Texture* texture, const Rect& sourcePixels, const Rect& dst,
                     std::uint8_t alpha);
+    void BlitUntransformed(SDL_Texture* texture);
     [[nodiscard]] bool EnsureFrameTargets();
     void DestroyFrameTargets();
     void PresentScreenFrame();
@@ -268,6 +300,11 @@ private:
     std::unordered_map<std::string, CachedText> m_textCache;
     std::vector<Rect> m_clipStack;
     std::vector<TransformState> m_transformStack{{}};
+    struct CompositionState {
+        SDL_Texture* texture = nullptr;
+        SDL_Texture* previousTarget = nullptr;
+    };
+    std::vector<CompositionState> m_compositionStack;
     SDL_Texture* m_frameTarget = nullptr;
     SDL_Texture* m_presentedTarget = nullptr;
     SDL_Texture* m_outgoingTarget = nullptr;

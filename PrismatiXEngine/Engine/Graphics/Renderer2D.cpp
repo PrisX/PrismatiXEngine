@@ -54,6 +54,13 @@ Renderer2D::Renderer2D(SDL_Renderer* renderer, AssetCache& assets,
 }
 
 Renderer2D::~Renderer2D() {
+    while (!m_compositionStack.empty()) {
+        const CompositionState composition = m_compositionStack.back();
+        m_compositionStack.pop_back();
+        if (m_renderer)
+            (void)SDL_SetRenderTarget(m_renderer, composition.previousTarget);
+        if (composition.texture) SDL_DestroyTexture(composition.texture);
+    }
     ClearTextCache();
     DestroyFrameTargets();
 }
@@ -460,6 +467,39 @@ Vec2 Renderer2D::TransformPoint(const Vec2 point) const {const auto& t=m_transfo
 Color Renderer2D::TransformColor(const Color color) const {const auto tint=m_transformStack.back().modulate;return {static_cast<std::uint8_t>((static_cast<unsigned>(color.r)*tint.r)/255),static_cast<std::uint8_t>((static_cast<unsigned>(color.g)*tint.g)/255),static_cast<std::uint8_t>((static_cast<unsigned>(color.b)*tint.b)/255),static_cast<std::uint8_t>((static_cast<unsigned>(color.a)*tint.a)/255)};}
 Rect Renderer2D::TransformBounds(const Rect rect) const {const std::array<Vec2,4> points{TransformPoint({rect.x,rect.y}),TransformPoint({rect.x+rect.w,rect.y}),TransformPoint({rect.x+rect.w,rect.y+rect.h}),TransformPoint({rect.x,rect.y+rect.h})};float left=points[0].x,right=left,top=points[0].y,bottom=top;for(const auto point:points){left=std::min(left,point.x);right=std::max(right,point.x);top=std::min(top,point.y);bottom=std::max(bottom,point.y);}return {left,top,right-left,bottom-top};}
 void Renderer2D::PushTransform(const Vec2 pivot,const Vec2 scale,const float rotationDegrees,const Color modulate){const float radians=rotationDegrees*3.14159265358979323846f/180.0f,cs=std::cos(radians),sn=std::sin(radians);TransformState local{cs*scale.x,sn*scale.x,-sn*scale.y,cs*scale.y,0,0,modulate};local.tx=pivot.x-(local.a*pivot.x+local.c*pivot.y);local.ty=pivot.y-(local.b*pivot.x+local.d*pivot.y);const auto& parent=m_transformStack.back();TransformState combined;combined.a=parent.a*local.a+parent.c*local.b;combined.b=parent.b*local.a+parent.d*local.b;combined.c=parent.a*local.c+parent.c*local.d;combined.d=parent.b*local.c+parent.d*local.d;combined.tx=parent.a*local.tx+parent.c*local.ty+parent.tx;combined.ty=parent.b*local.tx+parent.d*local.ty+parent.ty;combined.modulate={static_cast<std::uint8_t>((static_cast<unsigned>(parent.modulate.r)*modulate.r)/255),static_cast<std::uint8_t>((static_cast<unsigned>(parent.modulate.g)*modulate.g)/255),static_cast<std::uint8_t>((static_cast<unsigned>(parent.modulate.b)*modulate.b)/255),static_cast<std::uint8_t>((static_cast<unsigned>(parent.modulate.a)*modulate.a)/255)};m_transformStack.push_back(combined);}
+
+void Renderer2D::PushAffineTransform(const AffineTransform2D& transform,
+                                     const Color modulate) {
+    const auto finite = [](const float value) { return std::isfinite(value); };
+    if (!finite(transform.a) || !finite(transform.b) ||
+        !finite(transform.c) || !finite(transform.d) ||
+        !finite(transform.tx) || !finite(transform.ty)) {
+        // Preserve stack balance for retained draw command streams. An invalid
+        // transform is a no-op rather than a source of NaN renderer geometry.
+        m_transformStack.push_back(m_transformStack.back());
+        return;
+    }
+    const auto& parent = m_transformStack.back();
+    TransformState combined;
+    combined.a = parent.a * transform.a + parent.c * transform.b;
+    combined.b = parent.b * transform.a + parent.d * transform.b;
+    combined.c = parent.a * transform.c + parent.c * transform.d;
+    combined.d = parent.b * transform.c + parent.d * transform.d;
+    combined.tx = parent.a * transform.tx + parent.c * transform.ty +
+                  parent.tx;
+    combined.ty = parent.b * transform.tx + parent.d * transform.ty +
+                  parent.ty;
+    combined.modulate = {
+        static_cast<std::uint8_t>(
+            (static_cast<unsigned>(parent.modulate.r) * modulate.r) / 255),
+        static_cast<std::uint8_t>(
+            (static_cast<unsigned>(parent.modulate.g) * modulate.g) / 255),
+        static_cast<std::uint8_t>(
+            (static_cast<unsigned>(parent.modulate.b) * modulate.b) / 255),
+        static_cast<std::uint8_t>(
+            (static_cast<unsigned>(parent.modulate.a) * modulate.a) / 255)};
+    m_transformStack.push_back(combined);
+}
 void Renderer2D::PopTransform(){if(m_transformStack.size()>1)m_transformStack.pop_back();}
 
 void Renderer2D::SetPreviewContext(float displayPixelsPerLogical, bool clarityCompensation) {
@@ -482,7 +522,12 @@ void Renderer2D::DrawBorder(const Rect& rect, float width, float, Color color) {
 }
 
 void Renderer2D::PushClip(const Rect& requested) {
-    Rect clip = TransformBounds(requested);
+    const bool valid = std::isfinite(requested.x) &&
+                       std::isfinite(requested.y) &&
+                       std::isfinite(requested.w) &&
+                       std::isfinite(requested.h) && requested.w > 0.0f &&
+                       requested.h > 0.0f;
+    Rect clip = valid ? TransformBounds(requested) : Rect{};
     if (!m_clipStack.empty()) {
         const Rect parent = m_clipStack.back();
         const float left = std::max(parent.x, clip.x);
@@ -520,9 +565,13 @@ void Renderer2D::Blit(SDL_Texture* texture, const Rect& dst, std::uint8_t alpha)
 }
 
 void Renderer2D::BlitRegion(SDL_Texture* texture,const Rect& sourcePixels,const Rect& dst,const std::uint8_t alpha){
-    if(!texture||dst.w<=0||dst.h<=0||sourcePixels.w<=0||sourcePixels.h<=0)return;float nativeWidth=0,nativeHeight=0;if(!SDL_GetTextureSize(texture,&nativeWidth,&nativeHeight)||nativeWidth<=0||nativeHeight<=0)return;const int width=static_cast<int>(nativeWidth),height=static_cast<int>(nativeHeight);
-    const float u0=sourcePixels.x/static_cast<float>(width),v0=sourcePixels.y/static_cast<float>(height),u1=(sourcePixels.x+sourcePixels.w)/static_cast<float>(width),v1=(sourcePixels.y+sourcePixels.h)/static_cast<float>(height);
-    const auto p0=TransformPoint({dst.x,dst.y}),p1=TransformPoint({dst.x+dst.w,dst.y}),p2=TransformPoint({dst.x+dst.w,dst.y+dst.h}),p3=TransformPoint({dst.x,dst.y+dst.h});const SDL_FColor color=ToFColor(TransformColor({255,255,255,alpha}));
+    const auto finiteRect=[](const Rect& value){return std::isfinite(value.x)&&std::isfinite(value.y)&&std::isfinite(value.w)&&std::isfinite(value.h);};
+    if(!texture||!finiteRect(dst)||!finiteRect(sourcePixels)||dst.w<=0||dst.h<=0||sourcePixels.w<=0||sourcePixels.h<=0)return;float nativeWidth=0,nativeHeight=0;if(!SDL_GetTextureSize(texture,&nativeWidth,&nativeHeight)||nativeWidth<=0||nativeHeight<=0)return;
+    const float sourceLeft=std::clamp(sourcePixels.x,0.0f,nativeWidth),sourceTop=std::clamp(sourcePixels.y,0.0f,nativeHeight),sourceRight=std::clamp(sourcePixels.x+sourcePixels.w,0.0f,nativeWidth),sourceBottom=std::clamp(sourcePixels.y+sourcePixels.h,0.0f,nativeHeight);if(sourceRight<=sourceLeft||sourceBottom<=sourceTop)return;
+    const float xFraction=(sourceLeft-sourcePixels.x)/sourcePixels.w,yFraction=(sourceTop-sourcePixels.y)/sourcePixels.h,rightFraction=(sourceRight-sourcePixels.x)/sourcePixels.w,bottomFraction=(sourceBottom-sourcePixels.y)/sourcePixels.h;
+    const Rect clippedDestination{dst.x+dst.w*xFraction,dst.y+dst.h*yFraction,dst.w*(rightFraction-xFraction),dst.h*(bottomFraction-yFraction)};
+    const float u0=sourceLeft/nativeWidth,v0=sourceTop/nativeHeight,u1=sourceRight/nativeWidth,v1=sourceBottom/nativeHeight;
+    const auto p0=TransformPoint({clippedDestination.x,clippedDestination.y}),p1=TransformPoint({clippedDestination.x+clippedDestination.w,clippedDestination.y}),p2=TransformPoint({clippedDestination.x+clippedDestination.w,clippedDestination.y+clippedDestination.h}),p3=TransformPoint({clippedDestination.x,clippedDestination.y+clippedDestination.h});const SDL_FColor color=ToFColor(TransformColor({255,255,255,alpha}));
     SDL_Vertex vertices[4]{{{p0.x,p0.y},color,{u0,v0}},{{p1.x,p1.y},color,{u1,v0}},{{p2.x,p2.y},color,{u1,v1}},{{p3.x,p3.y},color,{u0,v1}}};constexpr int indices[6]{0,1,2,0,2,3};SDL_RenderGeometry(m_renderer,texture,vertices,4,indices,6);
 }
 
@@ -562,6 +611,75 @@ void Renderer2D::DrawNinePatch(const std::string& path,const Rect& bounds,Rect m
 void Renderer2D::DrawTexture(const TextureHandle texture, const Rect& dst,
                              const std::uint8_t alpha) {
     Blit(NativeTexture(texture), dst, alpha);
+}
+
+void Renderer2D::DrawImageRegion(const std::string& path,
+                                 const Rect& sourcePixels, const Rect& dst,
+                                 const std::uint8_t alpha) {
+    BlitRegion(NativeTexture(m_assets.Texture(path)), sourcePixels, dst, alpha);
+}
+
+void Renderer2D::DrawTextureRegion(const TextureHandle texture,
+                                   const Rect& sourcePixels, const Rect& dst,
+                                   const std::uint8_t alpha) {
+    BlitRegion(NativeTexture(texture), sourcePixels, dst, alpha);
+}
+
+void Renderer2D::BlitUntransformed(SDL_Texture* texture) {
+    if (!m_renderer || !texture) return;
+    SDL_FRect destination{0.0f, 0.0f, static_cast<float>(m_logicalW),
+                          static_cast<float>(m_logicalH)};
+    (void)SDL_RenderTexture(m_renderer, texture, nullptr, &destination);
+}
+
+bool Renderer2D::BeginComposition() {
+    if (!m_renderer || m_logicalW <= 0 || m_logicalH <= 0) return false;
+    SDL_Texture* texture = SDL_CreateTexture(
+        m_renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET,
+        m_logicalW, m_logicalH);
+    if (!texture) return false;
+    (void)SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+    (void)SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
+    SDL_Texture* previous = SDL_GetRenderTarget(m_renderer);
+    if (!SDL_SetRenderTarget(m_renderer, texture)) {
+        SDL_DestroyTexture(texture);
+        return false;
+    }
+
+    std::uint8_t red = 0, green = 0, blue = 0, alpha = 0;
+    (void)SDL_GetRenderDrawColor(m_renderer, &red, &green, &blue, &alpha);
+    const bool clipEnabled = SDL_RenderClipEnabled(m_renderer);
+    SDL_Rect clip{};
+    if (clipEnabled) (void)SDL_GetRenderClipRect(m_renderer, &clip);
+    (void)SDL_SetRenderClipRect(m_renderer, nullptr);
+    (void)SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 0);
+    if (!SDL_RenderClear(m_renderer)) {
+        (void)SDL_SetRenderTarget(m_renderer, previous);
+        SDL_DestroyTexture(texture);
+        (void)SDL_SetRenderDrawColor(m_renderer, red, green, blue, alpha);
+        if (clipEnabled) (void)SDL_SetRenderClipRect(m_renderer, &clip);
+        return false;
+    }
+    (void)SDL_SetRenderDrawColor(m_renderer, red, green, blue, alpha);
+    if (clipEnabled) (void)SDL_SetRenderClipRect(m_renderer, &clip);
+    m_compositionStack.push_back({texture, previous});
+    return true;
+}
+
+void Renderer2D::EndComposition(
+    const std::string_view effect, const float progress,
+    const float randomSeed,
+    const std::array<std::array<float, 4>, 8>& parameters,
+    const Rect& viewport) {
+    if (m_compositionStack.empty() || !m_renderer) return;
+    const CompositionState composition = m_compositionStack.back();
+    m_compositionStack.pop_back();
+    (void)SDL_SetRenderTarget(m_renderer, composition.previousTarget);
+    const bool active = BeginNodeEffect(effect, progress, randomSeed,
+                                        parameters, viewport);
+    BlitUntransformed(composition.texture);
+    if (active) EndNodeEffect();
+    SDL_DestroyTexture(composition.texture);
 }
 
 void Renderer2D::DrawSpriteBatch(

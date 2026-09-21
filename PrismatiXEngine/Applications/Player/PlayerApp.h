@@ -95,6 +95,8 @@ private:
     void TitleFrame(float dt);
     void GameFrame(float dt, std::uint64_t now);
     void ScreensFrame(float dt);
+    void RenderStageWithScripts();
+    void RenderUIWithScripts();
     void UpdateScriptScheduler(float dt);
     void ProcessScriptSafePoint();
     // Returns true when it consumed the frame (a movie is on screen).

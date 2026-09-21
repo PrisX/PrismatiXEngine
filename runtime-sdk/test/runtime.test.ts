@@ -73,6 +73,13 @@ const engine = {
   SetAmbienceVolume: () => undefined,
   PlayAmbience: () => undefined,
   StopAmbience: () => undefined,
+  PlayAudio: () => 11,
+  PauseAudio: (handle: number) => handle === 11,
+  ResumeAudio: (handle: number) => handle === 11,
+  StopAudio: (handle: number) => handle === 11,
+  SeekAudio: (handle: number) => handle === 11,
+  GetAudioStatus: () => "playing" as const,
+  GetAudioPlayback: () => null,
   Save: (slot: number) => { calls.push(`save:${slot}`); return true; },
   Load: (slot: number) => slot === 3,
   Autosave: () => true,
@@ -116,6 +123,12 @@ const engine = {
   LoadAnimation: () => "11111111-1111-4111-8111-111111111111",
   PlayAnimation: () => 7,
   CancelAnimation: (handle: number) => handle === 7,
+  PauseAnimation: (handle: number) => handle === 7,
+  ResumeAnimation: (handle: number) => handle === 7,
+  SeekAnimation: (handle: number) => handle === 7,
+  FinishAnimation: (handle: number) => handle === 7,
+  GetAnimationStatus: () => "playing" as const,
+  GetAnimationError: () => "",
   RegisterScreenEffect: (id: string, plan: {operator: string}) => { calls.push(`register-effect:${id}:${plan.operator}`); return true; },
   PlayScreenEffect: () => 9,
   StopScreenEffect: () => true,
@@ -126,9 +139,11 @@ const engine = {
   AwaitAnimation: (handle: number) => ({kind: "animation", handle} as const),
   AwaitScreenEffect: (handle: number) => ({kind: "screen-effect", handle} as const),
   AwaitVideo: (handle: number) => ({kind: "video", handle} as const),
+  AwaitAudio: (handle: number) => ({kind: "audio", handle} as const),
   WaitAnimation: async () => undefined,
   WaitScreenEffect: async () => undefined,
   WaitVideo: async (handle: number) => { calls.push(`video-wait:${handle}`); },
+  WaitAudio: async (handle: number) => { calls.push(`audio-wait:${handle}`); },
   WaitSeconds: async (seconds: number) => { calls.push(`wait:${seconds}`); },
   DebugPoint: async () => undefined,
   GetMouseX: () => 12,
@@ -137,8 +152,20 @@ const engine = {
   GetRightClick: () => false,
   IsInputActionPressed: (action: string) => action === "advance",
   IsInputActionDown: () => false,
+  GetInputEvents: () => [{id: 23, frame: 4, type: "action", pointerId: 0,
+    button: "none", x: 0, y: 0, deltaX: 0, deltaY: 0,
+    text: "", action: "sample.interact"}] as const,
+  ConsumeInputEvent: () => true,
+  SuppressInputDefault: () => true,
+  RegisterInputAction: () => true,
+  BindInputKey: () => true,
+  IsNamedInputActionPressed: () => false,
+  IsNamedInputActionDown: () => false,
   RegisterStateProvider: () => undefined,
   GetLogicalSize: () => ({w: 1280, h: 720}),
+  UpsertRenderNode: () => true,
+  RemoveRenderNode: () => true,
+  ClearRenderNodes: () => undefined,
   DrawImage: () => undefined,
   DrawAuto: (_path: string, mode: number) => { calls.push(`auto:${mode}`); },
   DrawRect: () => undefined,
@@ -186,6 +213,10 @@ ctx.audio.playBGM("Assets/BGM/theme.ogg");
 ctx.audio.playVoice("Assets/Voice/001.ogg");
 ctx.audio.stopVoice();
 ctx.audio.setBGMVolume(80);
+const audio = ctx.audio.play("Assets/Voice/001.ogg", {bus: "voice"});
+if (audio.id !== 11 || audio.status() !== "playing" ||
+    audio.token().kind !== "audio" || !audio.pause() || !audio.resume() ||
+    !audio.seek(0)) throw new Error("audio handle is not wired");
 if (!ctx.saves.save(3) || !ctx.saves.load(3) || ctx.saves.query(3).chapter !== "chapter-1") throw new Error("save facade is not wired");
 const video = ctx.video.play("Assets/Video/op.mp4", {volume: 0.8, skippable: true});
 if (video.id !== 11 || video.status() !== "completed" || video.token().kind !== "video") throw new Error("video handle is not wired");
@@ -209,7 +240,10 @@ ctx.stage.camera({x: 4, y: -2, zoom: 1.1});
 ctx.stage.screenEffect("fade", 0.3);
 ctx.stage.customEffect("dream-tone", 0.65, {amount: 0.8, tint: [1, 0.5, 0, 1]});
 if (!ctx.stage.animate("yuki", {x: 100, duration: 250, ease: "outQuad"})) throw new Error("stage animation facade is not wired");
-if (!ctx.animation.cancel(ctx.animation.play(ctx.animation.load("Animations/yuki.pxanim")))) throw new Error("animation facade is not wired");
+const animation = ctx.animation.play(ctx.animation.load("Animations/yuki.pxanim"));
+if (!ctx.animation.pause(animation) || !ctx.animation.resume(animation) ||
+    !ctx.animation.seek(animation, 0.25) || ctx.animation.status(animation) !== "playing" ||
+    !ctx.animation.finish(animation)) throw new Error("animation facade is not wired");
 if (ctx.animation.token(7).kind !== "animation" || ctx.time.token(0.5).kind !== "timer") throw new Error("await token types are not wired");
 if (!defineScreenTransition("tile", ({outgoing, incoming, progress, viewport}) => ({
   operator: "tiles", columns: 8, rows: 5, outgoing, incoming, progress, viewport,
@@ -221,11 +255,20 @@ await ctx.time.wait(0.25);
 await ctx.events.emit("sample", {nested: {count: 2}, values: [true, "ok"]});
 if (ctx.input.mouseX() !== 12 || ctx.input.mouseY() !== 24 || !ctx.input.leftClick() || ctx.input.rightClick()) throw new Error("input facade is not wired");
 if (!ctx.input.actionPressed("advance") || ctx.input.actionDown("pause")) throw new Error("logical input facade is not wired");
+const event = ctx.input.events()[0];
+if (!event || event.action !== "sample.interact" || !ctx.input.consume(event.id) ||
+    !ctx.input.suppressDefault(event.id) || !ctx.input.registerAction("sample.interact") ||
+    !ctx.input.bindKey("sample.interact", 44)) throw new Error("input event facade is not wired");
 ctx.state.registerProvider("sample", 1, {
   capture: () => ({value: 1}),
   restore: () => undefined,
 });
 if (ctx.renderer.logicalSize().w !== 1280) throw new Error("renderer logical size is not wired");
+if (!ctx.renderer.upsert("portrait.mouth", {kind: "image", phase: "after-stage",
+    path: "Assets/Character/yuki.png", bounds: {x: 1, y: 2, w: 30, h: 20},
+    source: {x: 0, y: 64, w: 64, h: 32}, clip: {x: 0, y: 0, w: 100, h: 100}}))
+  throw new Error("retained render node facade is not wired");
+if (!ctx.renderer.remove("portrait.mouth")) throw new Error("retained render removal is not wired");
 ctx.renderer.drawAuto("Assets/CG/test.webp", ctx.displayMode.Fit);
 ctx.renderer.drawRect({x: 0, y: 0, w: 10, h: 10}, {r: 1, g: 2, b: 3, a: 4});
 ctx.renderer.drawRoundedRect({x: 0, y: 0, w: 10, h: 10}, 4, {r: 1, g: 2, b: 3, a: 4});

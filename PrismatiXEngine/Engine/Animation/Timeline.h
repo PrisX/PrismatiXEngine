@@ -5,6 +5,7 @@
 #include "Engine/Resources/ResourceRef.h"
 
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <optional>
 #include <string>
@@ -76,6 +77,14 @@ struct TimelineDocument {
 
 using PlaybackHandle = std::uint64_t;
 
+enum class PlaybackStatus : std::uint8_t {
+    Playing,
+    Paused,
+    Completed,
+    Cancelled,
+    Failed,
+};
+
 struct PlaybackState {
     PlaybackHandle handle = 0;
     resource::ResourceId clip;
@@ -84,13 +93,33 @@ struct PlaybackState {
     std::uint64_t loopIteration = 0;
     bool playing = false;
     bool awaiting = false;
+    // `playing` is retained as the save-format compatibility bit and means
+    // that the handle is active (Playing or Paused). `status` is authoritative
+    // for live state and newer checkpoints.
+    PlaybackStatus status = PlaybackStatus::Playing;
+    std::vector<diag::Diagnostic> errors;
+};
+
+struct MarkerEvent {
+    PlaybackHandle handle = 0;
+    resource::ResourceId playbackClip;
+    resource::ResourceId clip;
+    std::string clipName;
+    Marker marker;
+    // Iteration of the clip that owns the marker. Nested looping clips can
+    // therefore report a different value from playbackLoopIteration.
+    std::uint64_t loopIteration = 0;
+    std::uint64_t playbackLoopIteration = 0;
 };
 
 class TimelinePlayer {
 public:
     using Apply = std::function<Status(const TrackBinding&, const Variant&)>;
     using Event = std::function<void(const Marker&)>;
+    using DetailedEvent = std::function<void(const MarkerEvent&)>;
     using Completion = std::function<void(PlaybackHandle, bool cancelled)>;
+
+    static constexpr std::size_t TerminalHistoryLimit = 256;
 
     Status Register(AnimationClip clip);
     // Preview authoring may replace a canonical clip while retaining the
@@ -102,31 +131,53 @@ public:
     [[nodiscard]] const AnimationClip* Find(const resource::ResourceId& id) const;
     [[nodiscard]] const auto& RegisteredClips() const { return m_clips; }
     Status Unregister(const resource::ResourceId& id);
+    Result<PlaybackHandle> PlayChecked(const resource::ResourceId& clip,
+                                       bool await = false, float speed = 1.0f);
     PlaybackHandle Play(const resource::ResourceId& clip, bool await = false, float speed = 1.0f);
+    Status Pause(PlaybackHandle handle);
+    Status Resume(PlaybackHandle handle);
     Status Seek(PlaybackHandle handle, float position, bool apply = true);
+    Status Finish(PlaybackHandle handle, bool apply = true);
     Status Cancel(PlaybackHandle handle);
-    void Update(float deltaSeconds);
+    Status Update(float deltaSeconds);
     void Clear();
 
     void SetApply(Apply apply) { m_apply = std::move(apply); }
     void SetEvent(Event event) { m_event = std::move(event); }
+    void SetDetailedEvent(DetailedEvent event) { m_detailedEvent = std::move(event); }
     void SetCompletion(Completion completion) { m_completion = std::move(completion); }
 
     [[nodiscard]] bool Playing(PlaybackHandle handle) const;
-    [[nodiscard]] std::vector<PlaybackState> CaptureState() const { return m_playbacks; }
+    [[nodiscard]] bool Paused(PlaybackHandle handle) const;
+    [[nodiscard]] bool Active(PlaybackHandle handle) const;
+    [[nodiscard]] std::optional<PlaybackStatus> GetStatus(PlaybackHandle handle) const;
+    [[nodiscard]] const std::vector<diag::Diagnostic>* GetError(
+        PlaybackHandle handle) const;
+    [[nodiscard]] std::size_t TerminalHistorySize() const {
+        return m_terminalHistory.size();
+    }
+    [[nodiscard]] std::vector<PlaybackState> CaptureState() const;
     Status RestoreState(std::vector<PlaybackState> state, bool apply = true);
 
 private:
     Status ApplyAt(const AnimationClip& clip, float position);
     Status ApplyAtRecursive(const AnimationClip& clip, float position,
                             std::vector<resource::ResourceId>& stack);
-    void EmitMarkers(const AnimationClip& clip, float from, float to);
+    void EmitMarkers(const PlaybackState& playback, const AnimationClip& clip,
+                     double from, double to, bool includeFrom = false,
+                     bool includeLoopStartAtEnd = true);
+    void RecordTerminal(PlaybackState state, PlaybackStatus status,
+                        std::vector<diag::Diagnostic> errors = {});
 
     std::unordered_map<resource::ResourceId, AnimationClip, UuidHash> m_clips;
+    // Active handles only. Completed/cancelled/failed handles live in the
+    // bounded history so long-running sessions do not grow without limit.
     std::vector<PlaybackState> m_playbacks;
+    std::deque<PlaybackState> m_terminalHistory;
     PlaybackHandle m_nextHandle = 1;
     Apply m_apply;
     Event m_event;
+    DetailedEvent m_detailedEvent;
     Completion m_completion;
 };
 
