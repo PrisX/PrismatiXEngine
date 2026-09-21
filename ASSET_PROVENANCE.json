@@ -1,0 +1,53 @@
+{
+  "format": "PrismatiXAssetProvenance",
+  "schemaRevision": 1,
+  "release": "0.2.0",
+  "assets": [
+    {
+      "path": "Resources/Fonts/NotoSansTC-Bold.ttf",
+      "sha256": "ed4ae6ed781e34d0beee896e9be5d835a938ac7adabbcc1b6b6904290006f372",
+      "origin": "Google Noto font family (legacy repository import)",
+      "license": "OFL-1.1",
+      "redistribution": "runtime-tests-and-authored-packages"
+    },
+    {
+      "path": "Resources/Fonts/NotoSerifJP-Bold.ttf",
+      "sha256": "370341f60a5a33dff0dd66e9fb04ddb7523846d4800e4e2cd8fba0bf715d44ea",
+      "origin": "Google Noto font family (legacy repository import)",
+      "license": "OFL-1.1",
+      "redistribution": "runtime-tests-and-authored-packages"
+    },
+    {
+      "path": "Resources/Fonts/NotoSerifJP-SemiBold.ttf",
+      "sha256": "b9f75696212c54cb0ab25806b25e724f06cf7b60490068f8ad802edc41fed3af",
+      "origin": "Google Noto font family (legacy repository import)",
+      "license": "OFL-1.1",
+      "redistribution": "runtime-tests-and-authored-packages"
+    },
+    {
+      "path": "Resources/Fonts/NotoSerifTC-Bold.ttf",
+      "sha256": "98c207d0254a6b0b4b5611dd8d5bcc37af4482494477d43eba6b2409ed083140",
+      "origin": "Google Noto font family (legacy repository import)",
+      "license": "OFL-1.1",
+      "redistribution": "runtime-tests-and-authored-packages"
+    },
+    {
+      "path": "Resources/Branding/PrismatiXEngine_Logo.png",
+      "sha256": "4502d5660798694cc99e6306ed2625aa0f4ceca651a38f163a091236dbde0214",
+      "origin": "PrismatiXEngine project branding, repository history a7e858b55fd8c22d5bb2580389a27772bb0f56ec",
+      "license": "project-branding-restricted",
+      "redistribution": "engine-runtime-and-documentation-only"
+    },
+    {
+      "path": "Resources/Branding/logo.wav",
+      "sha256": "120b6f23adbc87b90ed547b98e72e89a124896daa6e4c01b4d450c1d873f808a",
+      "origin": "PrismatiXEngine project branding, repository history a7e858b55fd8c22d5bb2580389a27772bb0f56ec",
+      "license": "project-branding-restricted",
+      "redistribution": "engine-runtime-only"
+    }
+  ],
+  "policy": {
+    "sampleAssets": "Each redistributable sample must carry its own provenance inventory; an absent inventory means the sample is not a release starter.",
+    "unknownOrigin": "Assets with unknown origin or redistribution terms are release-blocking."
+  }
+}

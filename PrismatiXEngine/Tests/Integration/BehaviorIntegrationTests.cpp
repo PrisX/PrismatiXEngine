@@ -65,10 +65,6 @@ void Run(const std::string_view name, void (*test)()) {
 
 
 void TestRouteStackAndModalState() {
-    px::ui::RouteTable table;
-    Check(static_cast<bool>(table.Register({ "title", px::resource::ResourceRef<px::ui::UISceneResourceTag>(px::Uuid::FromName("ui-title"), "Content/UI/Title.pxscene") })), "typed route table should accept a ResourceId-backed scene");
-    Check(table.Find("title") && table.Find("title")->scene.LastKnownPath().ends_with("Title.pxscene"), "route table should resolve stable route ids");
-
     px::ui::UIRouter router;
     const auto factory = []() -> px::Result<std::unique_ptr<px::ui::Control>> { return px::Result<std::unique_ptr<px::ui::Control>>::Success(std::make_unique<px::ui::Control>()); };
     Check(router.Register("title", factory) && router.Register("game", factory) && router.Register("confirm", factory), "router factories should register");

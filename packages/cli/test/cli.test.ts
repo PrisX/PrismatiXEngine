@@ -515,8 +515,47 @@ test("the PrismaFamilyDemo authors every UI route in TSX and builds canonical-on
   assert.equal(built.status, 0, built.stderr);
   for (const name of ["Title", "HUD", "Gallery", "Backlog", "Save", "Load"])
     assert.equal((await stat(join(output, `Content/UI/${name}.pxui`))).isFile(), true);
+  for (const path of [
+    "Runtime/Locales/zh-TW/main.pxir", "Runtime/Locales/ja-JP/main.pxir",
+    "Assets/Locales/zh-TW/greeting-v2.wav", "Assets/Locales/ja-JP/greeting-v2.wav",
+    "Assets/three-cups-ending.png", "Assets/evening-room.png",
+    "Content/Migrations/family-v1-to-v2.pxsave-migration",
+  ]) assert.equal((await stat(join(output, path))).isFile(), true, `missing ${path}`);
   const published = await readFile(join(output, "project.pxproject"), "utf8");
   assert.doesNotMatch(published, /\.(?:jsx|tsx)/u);
   assert.equal((await readFile(join(output, "Content/UI/HUD.pxui"), "utf8"))
     .includes('"format": "PrismatiXUIScene"'), true);
+  const zh = JSON.parse(await readFile(
+    join(output, "Runtime/Locales/zh-TW/main.pxir"), "utf8")) as {
+      operations: Array<{kind: string; operationId: string; sourceId: string;
+        arguments: Record<string, string>}>;
+    };
+  const ja = JSON.parse(await readFile(
+    join(output, "Runtime/Locales/ja-JP/main.pxir"), "utf8")) as typeof zh;
+  assert.deepEqual(
+    ja.operations.map(({kind, operationId, sourceId}) => ({kind, operationId, sourceId})),
+    zh.operations.map(({kind, operationId, sourceId}) => ({kind, operationId, sourceId})),
+  );
+  assert.ok(zh.operations.filter(({kind}) =>
+    kind === "narration" || kind === "dialogue").length >= 521);
+  assert.notDeepEqual(
+    zh.operations.filter(({kind}) => kind === "background").map(({arguments: value}) => value.asset),
+    ja.operations.filter(({kind}) => kind === "background").map(({arguments: value}) => value.asset),
+  );
+  assert.notDeepEqual(
+    zh.operations.filter(({kind}) => kind === "voice").map(({arguments: value}) => value.asset),
+    ja.operations.filter(({kind}) => kind === "voice").map(({arguments: value}) => value.asset),
+  );
+});
+
+test("the PrismaFamily V1 to V2 release journey stays on public authoring inputs", async () => {
+  const root = await mkdtemp(join(tmpdir(), "prismatix-family-release-test-"));
+  const script = resolve("../..", "Samples/PrismaFamilyDemo/Scripts/release-journey.mjs");
+  const cli = resolve("dist/src/cli.js");
+  const result = spawnSync(process.execPath,
+    [script, "--cli", cli, "--output", root], {encoding: "utf8"});
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, /PrismaFamily release journey passed/u);
+  assert.equal((await stat(join(root, "author-v1/project.pxproject"))).isFile(), true);
+  assert.equal((await stat(join(root, "author-v2/project.pxproject"))).isFile(), true);
 });

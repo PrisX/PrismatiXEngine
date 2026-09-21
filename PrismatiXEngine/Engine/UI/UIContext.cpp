@@ -613,6 +613,15 @@ Status UIContext::SetAnimationBool(const std::string_view parameter,const bool v
 Status UIContext::SetAnimationNumber(const std::string_view parameter,const double value){return m_animationController?m_animationController->SetNumber(parameter,value):Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXUI2406",.category="UI.Animation",.message="Animation Controller is not configured"});}
 Status UIContext::SetAnimationParameter(const std::string_view parameter,const Variant& value){return m_animationController?m_animationController->SetParameter(parameter,value):Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXUI2406",.category="UI.Animation",.message="Animation Controller is not configured"});}
 Status UIContext::TravelAnimationState(const std::string_view state,const float duration){return m_animationController?m_animationController->Travel(state,duration):Status::Fail(diag::Diagnostic{.severity=diag::Severity::Error,.code="PXUI2406",.category="UI.Animation",.message="Animation Controller is not configured"});}
+float UIContext::AnimationDuration(const std::string_view state) const {
+    if (!m_animationController || !m_animationController->Library() || state.empty())
+        return 0.0f;
+    const auto& library = *m_animationController->Library();
+    const auto* descriptor = library.machine.FindState(state);
+    if (!descriptor) return 0.0f;
+    const auto* clip = library.FindClip(descriptor->clip);
+    return clip ? std::max(0.0f, clip->duration) : 0.0f;
+}
 Status UIContext::PreviewAnimation(const Uuid& clip,float time,bool playing){
     if(!m_animationController||!m_animationController->Library()||m_animationController->Library()->clips.empty()){diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXUI2402",.category="UI.Animation",.message="UI scene has no animation Clip to preview"};diag::Emit(d);return Status::Fail(std::move(d));}
     return m_animationController->PreviewClip(clip.Empty()?m_animationController->Library()->clips.front().id:clip,time,playing);

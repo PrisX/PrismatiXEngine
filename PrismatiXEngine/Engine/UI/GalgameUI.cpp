@@ -8,7 +8,6 @@
 #include "Engine/UI/UiApplication.h"
 #include "Engine/UI/VirtualizedView.h"
 #include "Engine/UI/Widgets.h"
-#include "Engine/UI/UISceneLoader.h"
 
 #include <algorithm>
 #include <cmath>
@@ -113,7 +112,7 @@ GalgameUI::GalgameUI() {
         const auto screen = ScreenFromId(entry.route);
         if (!screen) continue;
         Template value;
-        value.studioScene = std::move(entry.document);
+        value.document = std::move(entry.document);
         value.sourcePath = "BuiltinUI/" + std::string(entry.route) + ".pxui";
         m_templates.emplace(std::string(entry.route), std::move(value));
     }
@@ -205,30 +204,24 @@ Status GalgameUI::RegisterRouteTemplate(std::string route,
                                         const std::string& sourcePath){
     if (route.empty())
         return GalgameFailure("PXUI2821", "UI route id cannot be empty");
-    auto typed=resource::ParseTypedDocument(text,sourcePath);
-    if(typed&&typed.Value().kind==resource::DocumentKind::Scene&&
-       typed.Value().type=="UIScene"){
+    auto canonical=sdk::ParseUi(text);
+    if(canonical.Valid()){
         Template value;
-        value.typedScene=std::move(typed.Value());
+        value.document=std::move(canonical.document);
         value.sourcePath=sourcePath;
         m_templates[std::move(route)]=std::move(value);
         return Status::Ok();
     }
-    auto studio=sdk::ParseUi(text);
-    if(studio.Valid()){
-        Template value;
-        value.studioScene=std::move(studio.document);
-        value.sourcePath=sourcePath;
-        m_templates[std::move(route)]=std::move(value);
-        return Status::Ok();
+    std::vector<diag::Diagnostic> diagnostics;
+    for (const auto& error : canonical.diagnostics) {
+        diag::Diagnostic diagnostic{
+            .severity=diag::Severity::Error,.code=error.code,
+            .category="UI.Galgame",.message=error.message};
+        diagnostic.source.path=sourcePath;
+        diag::Emit(diagnostic);
+        diagnostics.push_back(std::move(diagnostic));
     }
-    if(typed&&
-       (typed.Value().kind!=resource::DocumentKind::Scene||
-        typed.Value().type!="UIScene"))
-        return GalgameFailure("PXUI2803",
-            "Galgame template is neither a typed UIScene nor UI document: "+sourcePath);
-    for(const auto& diagnostic:typed.Diagnostics())diag::Emit(diagnostic);
-    return Status::Fail(typed.Diagnostics());
+    return Status::Fail(std::move(diagnostics));
 }
 
 bool GalgameUI::HasRouteTemplate(const std::string_view route) const {
@@ -248,14 +241,11 @@ Status GalgameUI::InstallRouteTemplate(const std::string_view route){
     const Screen screen = ScreenFromId(route).value_or(Screen::Custom);
     RememberGameplayCheckpoint(screen);
     ResetUiTimelineOverrides();
-    if(it->second.typedScene){
-        auto loaded=InstantiateUIScene(*it->second.typedScene,&m_viewModel,m_context.Formatters());if(!loaded)return Status::Fail(loaded.Diagnostics());
-        auto bindings=std::move(loaded.Value().bindings);auto animations=std::move(loaded.Value().animations);auto theme=std::move(loaded.Value().theme);auto triggers=std::move(loaded.Value().triggers);auto interaction=std::move(loaded.Value().interactionGraph);const Status installed=Install(std::move(loaded.Value().root),screen,std::string(route));if(!installed)return installed;m_bindings=std::move(bindings);if(theme)m_context.SetTheme(std::move(*theme));if(animations){const Status status=m_context.SetAnimations(std::move(*animations),true);if(!status)return status;}const Status triggerStatus=m_context.ConfigureTriggers(std::move(triggers),std::move(interaction));if(!triggerStatus)return triggerStatus;
-    }else if(it->second.studioScene){
+    if(it->second.document){
         m_bindings.clear();
         UiApplication application(m_context);
         auto applied=application.ApplyDocument(
-            *it->second.studioScene,
+            *it->second.document,
             {.sourcePath=it->second.sourcePath,
              .resolveAsset=m_studioAssetResolver,
              .loadComponent=m_studioComponentLoader,

@@ -1,6 +1,5 @@
 #include "Engine/VN/Runtime/VariableStore.h"
 
-#include <limits>
 #include <sstream>
 #include <string>
 
@@ -11,13 +10,6 @@ void VariableStore::SetValue(const std::string& name, Value value, const Variabl
     m_typedValues[name] = {value.Clone(), scope};
     if (scope == VariableScope::Profile) m_profileKeys.insert(name);
     else m_profileKeys.erase(name);
-    if (const auto* integer = value.TryGet<std::int64_t>();
-        integer && *integer >= (std::numeric_limits<int>::min)() &&
-        *integer <= (std::numeric_limits<int>::max)()) {
-        m_values[name] = static_cast<int>(*integer);
-    } else {
-        m_values.erase(name);
-    }
     if (scope == VariableScope::Profile && m_profileWrite)
         m_profileWrite(name, m_typedValues.at(name).value);
 }
@@ -118,22 +110,16 @@ std::string VariableStore::Substitute(std::string_view text) const {
 
 void VariableStore::Reset(bool keepPersistent) {
     if (!keepPersistent) {
-        m_values.clear();
         m_typedValues.clear();
         m_profileKeys.clear();
         return;
     }
-    std::unordered_map<std::string, int> kept;
     std::unordered_map<std::string, VariableEntry> typedKept;
     for (const std::string& key : m_profileKeys) {
-        if (auto it = m_values.find(key); it != m_values.end()) {
-            kept[key] = it->second;
-        }
         if (auto it = m_typedValues.find(key); it != m_typedValues.end()) {
             typedKept.emplace(key, VariableEntry{it->second.value.Clone(), VariableScope::Profile});
         }
     }
-    m_values = std::move(kept);
     m_typedValues = std::move(typedKept);
 }
 

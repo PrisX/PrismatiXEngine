@@ -39,8 +39,6 @@ PersistLoadStatus GameSettings::LoadWithFallback(
         candidate.textSpeedMs = j.value("textSpeedMs", candidate.textSpeedMs);
         candidate.autoWaitMs = j.value("autoWaitMs", candidate.autoWaitMs);
         candidate.skipReadOnly = j.value("skipReadOnly", candidate.skipReadOnly);
-        candidate.skipAfterChoices =
-            j.value("skipAfterChoices", candidate.skipAfterChoices);
         candidate.fullscreen = j.value("fullscreen", candidate.fullscreen);
         candidate.windowWidth = j.value("windowWidth", candidate.windowWidth);
         candidate.windowHeight = j.value("windowHeight", candidate.windowHeight);
@@ -78,7 +76,6 @@ bool GameSettings::Save(const std::string& path, const crypto::Key* key) const {
     j["textSpeedMs"] = textSpeedMs;
     j["autoWaitMs"] = autoWaitMs;
     j["skipReadOnly"] = skipReadOnly;
-    j["skipAfterChoices"] = skipAfterChoices;
     j["fullscreen"] = fullscreen;
     j["windowWidth"] = windowWidth;
     j["windowHeight"] = windowHeight;

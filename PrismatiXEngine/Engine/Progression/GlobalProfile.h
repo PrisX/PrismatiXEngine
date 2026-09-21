@@ -55,7 +55,6 @@ private:
     std::set<std::string> m_music;
     std::unordered_map<std::string, Variant> m_vars;
     int m_clearCount = 0;
-    bool m_dirty = false;
 };
 
 }  // namespace px::progress

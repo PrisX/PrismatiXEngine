@@ -1,5 +1,6 @@
 #include "Engine/Script/ScriptHost.h"
 
+#include "Engine/Animation/Timeline.h"
 #include "Engine/Script/JavaScriptHost.h"
 #include "Engine/Diagnostics/Diagnostic.h"
 
@@ -35,6 +36,30 @@ Status ScriptHost::RestoreCheckpoint(const PendingCommandsState& commands,
 
 std::unique_ptr<ScriptHost> CreateScriptHost(const ScriptServices& services) {
     return std::make_unique<JavaScriptHost>(services);
+}
+
+void BindTimelineMarkerEvents(animation::TimelinePlayer& timeline,
+                              std::function<ScriptHost*()> host) {
+    timeline.SetDetailedEvent(
+        [host = std::move(host)](const animation::MarkerEvent& event) {
+            ScriptHost* const scriptHost = host ? host() : nullptr;
+            if (!scriptHost) return;
+            (void)scriptHost->Emit(
+                "timeline.marker",
+                Variant(VariantObject{
+                    {"handle", static_cast<std::int64_t>(event.handle)},
+                    {"playbackClip", event.playbackClip.ToString()},
+                    {"clip", event.clip.ToString()},
+                    {"clipName", event.clipName},
+                    {"marker", event.marker.name},
+                    {"markerId", event.marker.id},
+                    {"loopIteration",
+                     static_cast<std::int64_t>(event.loopIteration)},
+                    {"playbackLoopIteration",
+                     static_cast<std::int64_t>(
+                         event.playbackLoopIteration)},
+                    {"payload", Variant(event.marker.payload)}}));
+        });
 }
 
 }  // namespace px::script

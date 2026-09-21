@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <optional>
 
 namespace px {
@@ -561,9 +562,12 @@ RuntimeSession::GameState RuntimeSession::CaptureState(const std::uint64_t playt
     for (const auto& [name, entry] : m_variables.Values()) {
         if (entry.scope == vn::VariableScope::Session) {
             state.typedVariables.emplace(name, entry.value.Clone());
-            if (const auto found = m_variables.All().find(name);
-                found != m_variables.All().end())
-                state.variables.emplace(name, found->second);
+            // The typed map is authoritative. Build the old integer save view
+            // only at the serialization boundary for backwards compatibility.
+            if (const auto* integer = entry.value.TryGet<std::int64_t>();
+                integer && *integer >= (std::numeric_limits<int>::min)() &&
+                *integer <= (std::numeric_limits<int>::max)())
+                state.variables.emplace(name, static_cast<int>(*integer));
         }
     }
     state.stage = m_stage.CaptureState();

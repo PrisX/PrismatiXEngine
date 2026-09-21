@@ -2,6 +2,8 @@
 
 #include "Engine/Core/TypeRegistry.h"
 #include "Engine/Diagnostics/Diagnostic.h"
+#include "Engine/Support/Easing.h"
+#include "Engine/Support/Interpolation.h"
 
 #include <algorithm>
 #include <cmath>
@@ -32,61 +34,18 @@ float EaseValue(float value, const VisualStateEase ease) {
     value = std::clamp(value, 0.0f, 1.0f);
     switch (ease) {
         case VisualStateEase::Step: return value >= 1.0f ? 1.0f : 0.0f;
-        case VisualStateEase::EaseIn: return value * value;
-        case VisualStateEase::EaseOut:
-            return 1.0f - (1.0f - value) * (1.0f - value);
-        case VisualStateEase::EaseInOut:
-            return value < 0.5f
-                       ? 2.0f * value * value
-                       : 1.0f - std::pow(-2.0f * value + 2.0f, 2.0f) * 0.5f;
-        case VisualStateEase::BackOut: {
-            constexpr float c1 = 1.70158f;
-            constexpr float c3 = c1 + 1.0f;
-            const float shifted = value - 1.0f;
-            return 1.0f + c3 * shifted * shifted * shifted +
-                   c1 * shifted * shifted;
-        }
+        case VisualStateEase::EaseIn: return support::EaseInQuad(value);
+        case VisualStateEase::EaseOut: return support::EaseOutQuad(value);
+        case VisualStateEase::EaseInOut: return support::EaseInOutQuad(value);
+        case VisualStateEase::BackOut: return support::EaseOutBack(value);
         default: return value;
     }
 }
 
 Variant Interpolate(const Variant& from, const Variant& to, const float amount) {
     if (from.Type() != to.Type()) return amount >= 1.0f ? to.Clone() : from.Clone();
-    switch (from.Type()) {
-        case VariantType::Number: {
-            const double a = *from.TryGet<double>();
-            const double b = *to.TryGet<double>();
-            return a + (b - a) * static_cast<double>(amount);
-        }
-        case VariantType::Vec2: {
-            const Vec2 a = *from.TryGet<Vec2>();
-            const Vec2 b = *to.TryGet<Vec2>();
-            return Vec2{a.x + (b.x - a.x) * amount,
-                        a.y + (b.y - a.y) * amount};
-        }
-        case VariantType::Rect: {
-            const Rect a = *from.TryGet<Rect>();
-            const Rect b = *to.TryGet<Rect>();
-            return Rect{a.x + (b.x - a.x) * amount,
-                        a.y + (b.y - a.y) * amount,
-                        a.w + (b.w - a.w) * amount,
-                        a.h + (b.h - a.h) * amount};
-        }
-        case VariantType::Color: {
-            const Color a = *from.TryGet<Color>();
-            const Color b = *to.TryGet<Color>();
-            const auto channel = [amount](const std::uint8_t x,
-                                          const std::uint8_t y) {
-                return static_cast<std::uint8_t>(std::clamp(
-                    std::lround(static_cast<float>(x) +
-                                (static_cast<float>(y) - x) * amount),
-                    0l, 255l));
-            };
-            return Color{channel(a.r, b.r), channel(a.g, b.g),
-                         channel(a.b, b.b), channel(a.a, b.a)};
-        }
-        default: return amount >= 1.0f ? to.Clone() : from.Clone();
-    }
+    auto value=support::InterpolateVariant(from,to,amount);
+    return value?std::move(*value):(amount>=1.0f?to.Clone():from.Clone());
 }
 
 }  // namespace

@@ -1,6 +1,8 @@
 #include "Engine/Animation/Timeline.h"
 
 #include "Engine/Diagnostics/Diagnostic.h"
+#include "Engine/Support/Easing.h"
+#include "Engine/Support/Interpolation.h"
 
 #include <nlohmann/json.hpp>
 
@@ -30,22 +32,20 @@ float Ease(const Curve curve, const float value) {
     const float t=std::clamp(value,0.0f,1.0f);
     switch(curve){
         case Curve::Step:return 0.0f;
-        case Curve::Linear:return t;
-        case Curve::EaseIn:return t*t;
-        case Curve::EaseOut:return 1.0f-(1.0f-t)*(1.0f-t);
-        case Curve::EaseInOut:return t<0.5f?2.0f*t*t:1.0f-std::pow(-2.0f*t+2.0f,2.0f)/2.0f;
-        case Curve::BackOut:{constexpr float c1=1.70158f,c3=c1+1.0f;return 1.0f+c3*std::pow(t-1.0f,3.0f)+c1*std::pow(t-1.0f,2.0f);}
+        case Curve::Linear:return support::Linear(t);
+        case Curve::EaseIn:return support::EaseInQuad(t);
+        case Curve::EaseOut:return support::EaseOutQuad(t);
+        case Curve::EaseInOut:return support::EaseInOutQuad(t);
+        case Curve::BackOut:return support::EaseOutBack(t);
     }
     return t;
 }
 
 Variant Interpolate(const Variant& from,const Variant& to,const float amount) {
     if(from.Type()!=to.Type())return amount<1.0f?from.Clone():to.Clone();
-    if(const auto* a=from.TryGet<std::int64_t>()){const auto b=*to.TryGet<std::int64_t>();return Variant(static_cast<std::int64_t>(std::llround(static_cast<double>(*a)+(static_cast<double>(b)-*a)*amount)));}
-    if(const auto* a=from.TryGet<double>()){const auto b=*to.TryGet<double>();return Variant(*a+(b-*a)*amount);}
-    if(const auto* a=from.TryGet<Vec2>()){const auto b=*to.TryGet<Vec2>();return Variant(Vec2{a->x+(b.x-a->x)*amount,a->y+(b.y-a->y)*amount});}
-    if(const auto* a=from.TryGet<Color>()){const auto b=*to.TryGet<Color>();const auto channel=[amount](std::uint8_t x,std::uint8_t y){return static_cast<std::uint8_t>(std::clamp(std::lround(x+(y-x)*amount),0l,255l));};return Variant(Color{channel(a->r,b.r),channel(a->g,b.g),channel(a->b,b.b),channel(a->a,b.a)});}
-    return amount<1.0f?from.Clone():to.Clone();
+    auto value=support::InterpolateVariant(
+        from,to,amount,support::IntegerInterpolation::Rounded);
+    return value?std::move(*value):(amount<1.0f?from.Clone():to.Clone());
 }
 
 Variant Sample(const Track& track,const float time) {

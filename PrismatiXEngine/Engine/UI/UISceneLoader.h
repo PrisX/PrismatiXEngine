@@ -7,7 +7,6 @@
 #include "Engine/UI/Actions/TriggerBinding.h"
 #include "Engine/UI/Behavior/BehaviorGraph.h"
 
-#include <filesystem>
 #include <memory>
 #include <vector>
 #include <optional>
@@ -26,15 +25,12 @@ struct LoadedUIScene {
     std::string sourceScene;
 };
 
-[[nodiscard]] Result<LoadedUIScene> InstantiateUIScene(const resource::TypedDocument& document,
-                                                       IViewModel* viewModel,
-                                                       const FormatterRegistry& formatters);
-[[nodiscard]] Result<LoadedUIScene> InstantiateUIScene(const resource::TypedDocument& document,
-                                                       IViewModel* viewModel,
-                                                       const FormatterRegistry& formatters,
-                                                       const UIDocumentLoader& loader);
-[[nodiscard]] Result<LoadedUIScene> LoadUIScene(const std::filesystem::path& path,
-                                                IViewModel* viewModel,
-                                                const FormatterRegistry& formatters);
-
+// One-way compatibility adapter for migration tooling and legacy fixture
+// verification. Production UI is installed through UiApplication.
+[[nodiscard]] Result<LoadedUIScene> InstantiateLegacyUISceneForMigration(
+    const resource::TypedDocument& document, IViewModel* viewModel,
+    const FormatterRegistry& formatters);
+[[nodiscard]] Result<LoadedUIScene> InstantiateLegacyUISceneForMigration(
+    const resource::TypedDocument& document, IViewModel* viewModel,
+    const FormatterRegistry& formatters, const UIDocumentLoader& loader);
 }  // namespace px::ui

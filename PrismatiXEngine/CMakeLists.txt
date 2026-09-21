@@ -49,6 +49,11 @@ configure_file(
     @ONLY
 )
 configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/PrismatiXReleaseInventory.json.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/release-inventory.json"
+    @ONLY
+)
+configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/PreviewContractManifest.json.in"
     "${CMAKE_CURRENT_BINARY_DIR}/preview-contract.json"
     @ONLY
@@ -301,10 +306,6 @@ target_include_directories(PrismatiXRuntimeCore PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/Engine
 )
-target_include_directories(PrismatiXRuntimeCore PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/pl_mpeg
-)
-
 target_link_libraries(PrismatiXRuntimeCore PUBLIC
     SDL3::SDL3
     SDL3_image::SDL3_image
@@ -367,7 +368,6 @@ if(NOT EMSCRIPTEN)
     )
     target_include_directories(PrismatiXRuntimePlatformNative PRIVATE
         ${FFMPEG_INCLUDE_DIRS}
-        ${CMAKE_CURRENT_SOURCE_DIR}/../ThirdParty/pl_mpeg
     )
     target_link_libraries(PrismatiXRuntimePlatformNative PUBLIC
         PrismatiXRuntimeCore
@@ -458,13 +458,71 @@ install(FILES "${PRISMATIX_SDK_REFERENCE}"
     DESTINATION ${CMAKE_INSTALL_DATADIR}/PrismatiX/docs
     COMPONENT PrismatiXSDK
 )
-install(TARGETS PrismatiXPackager PrismatiXPreviewHost PrismatiXPlayer
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT PrismatiXRuntime
-)
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/runtime-manifest.json"
+if(UNIX)
+    if(APPLE)
+        set(_PRISMATIX_RUNTIME_RPATH "@loader_path")
+    else()
+        set(_PRISMATIX_RUNTIME_RPATH "$ORIGIN")
+    endif()
+    set_target_properties(PrismatiXPackager PrismatiXPreviewHost PrismatiXPlayer
+        PROPERTIES INSTALL_RPATH "${_PRISMATIX_RUNTIME_RPATH}")
+    install(TARGETS PrismatiXPackager PrismatiXPreviewHost PrismatiXPlayer
+        RUNTIME_DEPENDENCY_SET PrismatiXRuntimeDependencies
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT PrismatiXRuntime
+    )
+    set(_PRISMATIX_RUNTIME_DEPENDENCY_DIRECTORIES)
+    if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+        list(APPEND _PRISMATIX_RUNTIME_DEPENDENCY_DIRECTORIES
+            "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin"
+            "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib")
+    endif()
+    install(RUNTIME_DEPENDENCY_SET PrismatiXRuntimeDependencies
+        DESTINATION ${CMAKE_INSTALL_BINDIR}
+        COMPONENT PrismatiXRuntime
+        DIRECTORIES ${_PRISMATIX_RUNTIME_DEPENDENCY_DIRECTORIES}
+        PRE_EXCLUDE_REGEXES
+            "^api-ms-" "^ext-ms-"
+        POST_EXCLUDE_REGEXES
+            "^/lib/" "^/lib64/" "^/usr/lib/" "^/System/Library/"
+    )
+else()
+    install(TARGETS PrismatiXPackager PrismatiXPreviewHost PrismatiXPlayer
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT PrismatiXRuntime
+    )
+endif()
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/runtime-manifest.json"
+    "${CMAKE_CURRENT_BINARY_DIR}/release-inventory.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../LICENSE"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../THIRD_PARTY_NOTICES.md"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../ASSET_PROVENANCE.json"
     DESTINATION ${CMAKE_INSTALL_DATADIR}/PrismatiX
     COMPONENT PrismatiXRuntime
 )
+install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Fonts/OFL-1.1.txt"
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/PrismatiX/licenses/fonts
+    COMPONENT PrismatiXRuntime
+)
+install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/../docs/releases/0.2.0.md"
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/PrismatiX/docs/releases
+    COMPONENT PrismatiXRuntime
+)
+if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+    foreach(_PRISMATIX_NOTICE_PACKAGE IN ITEMS
+            bzip2 ffmpeg fmt freetype fribidi harfbuzz libflac libjpeg-turbo
+            libogg libpng libunibreak libvorbis libwebp mbedtls mpg123
+            nlohmann-json opus opusfile sdl3 sdl3-image sdl3-mixer
+            sdl3-shadercross sdl3-ttf spdlog spirv-cross utf8proc zlib zstd)
+        install(FILES
+            "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${_PRISMATIX_NOTICE_PACKAGE}/copyright"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/PrismatiX/licenses/${_PRISMATIX_NOTICE_PACKAGE}"
+            COMPONENT PrismatiXRuntime
+            OPTIONAL
+        )
+    endforeach()
+endif()
 if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
     install(DIRECTORY
         "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin/"
@@ -598,6 +656,9 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_executable(PrismatiXPackagerContractTests Tests/PackagerContractTests.cpp)
     target_link_libraries(PrismatiXPackagerContractTests PRIVATE
                           PrismatiXRuntime PrismatiXPackagerSDK)
+    if(WIN32)
+        target_link_libraries(PrismatiXPackagerContractTests PRIVATE psapi)
+    endif()
     target_compile_definitions(PrismatiXPackagerContractTests PRIVATE
         PRISMATIX_RESOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../Resources")
     prismatix_configure_target(PrismatiXPackagerContractTests)
@@ -605,6 +666,15 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
              COMMAND PrismatiXPackagerContractTests)
     set_tests_properties(PrismatiX.SDK.PackagerContract
                          PROPERTIES LABELS "sdk;contract;packager;gpu;native")
+
+    # Invoked by Samples/PrismaFamilyDemo/Scripts/release-journey.mjs after
+    # public CLI packaging. It deliberately has no standalone CTest entry:
+    # the verifier never synthesizes Runtime IR or bypasses the authoring path.
+    add_executable(PrismatiXPrismaFamilyReleaseJourneyTests
+                   Tests/PrismaFamilyReleaseJourneyTests.cpp)
+    target_link_libraries(PrismatiXPrismaFamilyReleaseJourneyTests PRIVATE
+                          PrismatiXRuntime PrismatiXPackagerSDK)
+    prismatix_configure_target(PrismatiXPrismaFamilyReleaseJourneyTests)
 
     add_executable(PrismatiXCharacterResourcesContractTests
                    Tests/CharacterResourcesContractTests.cpp)
@@ -643,7 +713,8 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
                 $<TARGET_FILE:PrismatiXPlayer>
                 ${CMAKE_CURRENT_SOURCE_DIR}/../Samples/CommercialVN/Content
                 ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Fonts/NotoSansTC-Bold.ttf
-                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/PrismatiXEngine_Logo.png)
+                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/PrismatiXEngine_Logo.png
+                ${CMAKE_CURRENT_SOURCE_DIR}/../Resources/Branding/logo.wav)
     set_tests_properties(
         PrismatiX.Player.CatalogNativeAcceptance
         PROPERTIES
@@ -947,6 +1018,9 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     # has an explicit upper bound; long stress coverage gets its own budget.
     get_property(PRISMATIX_REGISTERED_TESTS DIRECTORY PROPERTY TESTS)
     set_tests_properties(${PRISMATIX_REGISTERED_TESTS} PROPERTIES TIMEOUT 60)
+    # The weekly RSS gate streams a real multi-GiB media entry. Regular runs
+    # use 32 MiB through the identical path; only input size changes.
+    set_tests_properties(PrismatiX.SDK.PackagerContract PROPERTIES TIMEOUT 600)
     if(PRISMATIX_STRESS_TESTS)
         set_tests_properties(PrismatiX.Stress.Soak PROPERTIES TIMEOUT 120)
         set_tests_properties(PrismatiX.Stress.CommercialMegaVN PROPERTIES TIMEOUT 180)

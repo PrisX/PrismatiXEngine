@@ -98,8 +98,8 @@ using SaveMigrationReadText =
 // Strict in-memory decoder used by the Player, save inspector, and fuzzers.
 // The input is the authenticated JSON envelope (without the persistence-file
 // magic/encryption wrapper).  Keeping this public avoids tools growing a
-// second, weaker interpretation of SaveEnvelopeV2.
-[[nodiscard]] std::optional<SaveSnapshot> ParseSaveEnvelopeV2(
+// second, weaker interpretation of the current versioned save envelope.
+[[nodiscard]] std::optional<SaveSnapshot> ParseSaveEnvelope(
     std::string_view json, std::string_view sourcePath = "<memory-save>");
 
 // Finds one unambiguous ordered chain and applies it to an isolated copy.

@@ -220,7 +220,6 @@ Status RegisterBuiltinUITypes() {
         return Status::Ok();
     Status combined;
     auto add = [&combined, &registry](TypeInfo type) {
-        type.sourceId = "PrismatiX.Builtin.UI";
         if (!type.designer) {
             if (const auto* metadata = BuiltinDesignerMetadata(type.name))
                 type.designer = *metadata;

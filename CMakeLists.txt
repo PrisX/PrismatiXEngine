@@ -199,8 +199,6 @@ file(GLOB_RECURSE ALL_CXX_SOURCE_FILES
     "PrismatiXEngine/Applications/*.h"
     "PrismatiXEngine/Engine/*.cpp"
     "PrismatiXEngine/Engine/*.h"
-    "PrismatiXEngine/Editor/*.cpp"
-    "PrismatiXEngine/Editor/*.h"
 )
 add_custom_target(format
     COMMAND clang-format -i -style=file ${ALL_CXX_SOURCE_FILES}

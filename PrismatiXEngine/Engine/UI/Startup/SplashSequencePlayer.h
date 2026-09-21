@@ -1,9 +1,9 @@
 #pragma once
 
-#include "Engine/Resources/TypedDocument.h"
-#include "Engine/UI/Binding.h"
+#include "Engine/SDK/Ui.h"
 #include "Engine/UI/Startup/SplashTypes.h"
 #include "Engine/UI/UIContext.h"
+#include "Engine/UI/UiApplication.h"
 
 #include <functional>
 
@@ -13,12 +13,14 @@ class SplashSequencePlayer {
 public:
     enum class Phase { Idle, Loading, Entering, Holding, Exiting, Completed };
     using SceneLoader =
-        std::function<Result<resource::TypedDocument>(const ResourceRefValue&)>;
+        std::function<Result<sdk::UiDocument>(const ResourceRefValue&)>;
     using AudioPlayer = std::function<Status(const ResourceRefValue&)>;
     using DiagnosticSink = std::function<void(const diag::Diagnostic&)>;
 
     struct Services {
         SceneLoader loadScene;
+        UiAssetResolver resolveAsset;
+        UiComponentLoader loadComponent;
         AudioPlayer playAudio;
         DiagnosticSink diagnostics;
     };
@@ -46,12 +48,9 @@ private:
     void Advance();
     void Finish();
     void Emit(diag::Diagnostic diagnostic) const;
-    [[nodiscard]] static float AnimationDuration(const UIAnimationLibrary& library,
-                                                 std::string_view state);
 
     Services m_services;
     UIContext m_context;
-    std::vector<Binding> m_bindings;
     std::vector<SplashScreenEntry> m_entries;
     std::function<void()> m_completion;
     Phase m_phase = Phase::Idle;

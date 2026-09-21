@@ -123,14 +123,14 @@ bool RevisionTwo(const nlohmann::json& value) {
 }  // namespace
 
 void GlobalProfile::MarkSeen(const std::string& key) {
-    if (m_seen.insert(key).second) m_dirty = true;
+    m_seen.insert(key);
 }
 bool GlobalProfile::HasSeen(const std::string& key) const {
     return m_seen.count(key) != 0;
 }
 
 void GlobalProfile::MarkChoiceSeen(const std::string& key) {
-    if (m_choicesSeen.insert(key).second) m_dirty = true;
+    m_choicesSeen.insert(key);
 }
 bool GlobalProfile::HasChoiceSeen(const std::string& key) const {
     return m_choicesSeen.count(key) != 0;
@@ -139,7 +139,6 @@ bool GlobalProfile::HasChoiceSeen(const std::string& key) const {
 void GlobalProfile::RegisterClear(const std::string& route) {
     ++m_clearCount;
     if (!route.empty()) m_clearedRoutes.insert(route);
-    m_dirty = true;
 }
 bool GlobalProfile::RouteCleared(const std::string& route) const {
     return m_clearedRoutes.count(route) != 0;
@@ -148,7 +147,6 @@ bool GlobalProfile::RouteCleared(const std::string& route) const {
 void GlobalProfile::SetVariable(const std::string& name, Variant value) {
     if (name.empty()) return;
     m_vars[name] = value.Clone();
-    m_dirty = true;
 }
 const Variant* GlobalProfile::Variable(const std::string& name) const {
     const auto found = m_vars.find(name);
@@ -156,19 +154,19 @@ const Variant* GlobalProfile::Variable(const std::string& name) const {
 }
 
 void GlobalProfile::UnlockScene(const std::string& id) {
-    if (m_scenes.insert(id).second) m_dirty = true;
+    m_scenes.insert(id);
 }
 bool GlobalProfile::SceneUnlocked(const std::string& id) const {
     return m_scenes.count(id) != 0;
 }
 void GlobalProfile::UnlockCG(const std::string& id) {
-    if (m_cgs.insert(id).second) m_dirty = true;
+    m_cgs.insert(id);
 }
 bool GlobalProfile::CGUnlocked(const std::string& id) const {
     return m_cgs.count(id) != 0;
 }
 void GlobalProfile::UnlockMusic(const std::string& id) {
-    if (m_music.insert(id).second) m_dirty = true;
+    m_music.insert(id);
 }
 bool GlobalProfile::MusicUnlocked(const std::string& id) const {
     return m_music.count(id) != 0;
@@ -276,7 +274,6 @@ bool GlobalProfile::ApplyJson(const nlohmann::json& j) {
         m_music = std::move(music);
         m_vars = std::move(variables);
         m_clearCount = static_cast<int>(clearCountValue);
-        m_dirty = false;
         return true;
     } catch (const nlohmann::json::exception&) {
         return false;

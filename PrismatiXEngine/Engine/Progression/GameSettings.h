@@ -16,7 +16,6 @@ struct GameSettings {
     int textSpeedMs = 28;
     int autoWaitMs = 1400;
     bool skipReadOnly = true;
-    bool skipAfterChoices = false;
 
     bool fullscreen = false;
     int windowWidth = 1280;

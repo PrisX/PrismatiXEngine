@@ -72,7 +72,12 @@ struct ValidatedInput {
 
 struct ArchiveEntry {
     std::string uri;
+    std::filesystem::path source;
     Bytes data;
+    std::uint64_t size = 0;
+    std::string fingerprint;
+
+    [[nodiscard]] bool FileBacked() const { return !source.empty(); }
 };
 
 struct ValidationResult {
@@ -280,45 +285,6 @@ std::optional<Bytes> Encrypt(const Bytes& input, const Key& key, const Iv& iv,
     return output;
 }
 
-struct ChunkedPayload {
-    Bytes bytes;
-    std::uint32_t count = 0;
-};
-
-std::optional<ChunkedPayload> EncryptChunked(const Bytes& input,
-                                             const Key& key,
-                                             const std::string_view name) {
-    if (input.empty()) return ChunkedPayload{};
-    const std::uint64_t count64 =
-        (input.size() + kStreamingChunkSize - 1u) / kStreamingChunkSize;
-    if (count64 > (std::numeric_limits<std::uint32_t>::max)())
-        return std::nullopt;
-
-    ChunkedPayload result;
-    result.count = static_cast<std::uint32_t>(count64);
-    if (input.size() > (std::numeric_limits<std::size_t>::max)() -
-                           result.count * kAeadRecordOverhead)
-        return std::nullopt;
-    result.bytes.reserve(input.size() + result.count * kAeadRecordOverhead);
-
-    for (std::uint32_t index = 0; index < result.count; ++index) {
-        const std::size_t offset =
-            static_cast<std::size_t>(index) * kStreamingChunkSize;
-        const std::size_t size =
-            std::min<std::size_t>(kStreamingChunkSize, input.size() - offset);
-        Bytes chunk(input.begin() + static_cast<std::ptrdiff_t>(offset),
-                    input.begin() + static_cast<std::ptrdiff_t>(offset + size));
-        const std::string context =
-            ChunkContext(name, index, static_cast<std::uint32_t>(size));
-        auto encrypted = Encrypt(chunk, key, DeriveIv(context), context);
-        if (!encrypted || encrypted->size() != size + kAeadRecordOverhead)
-            return std::nullopt;
-        result.bytes.insert(result.bytes.end(), encrypted->begin(),
-                            encrypted->end());
-    }
-    return result;
-}
-
 std::uint64_t HashPath(const std::string_view path) {
     std::uint64_t hash = 1469598103934665603ULL;
     for (const char character : path) {
@@ -338,6 +304,17 @@ std::uint32_t Crc32(const Bytes& data) {
         }
     }
     return ~crc;
+}
+
+void UpdateCrc32(std::uint32_t& crc, const std::uint8_t* data,
+                 const std::size_t size) {
+    for (std::size_t index = 0; index < size; ++index) {
+        crc ^= data[index];
+        for (int bit = 0; bit < 8; ++bit) {
+            const std::uint32_t mask = 0u - (crc & 1u);
+            crc = (crc >> 1) ^ (0xEDB88320u & mask);
+        }
+    }
 }
 
 void PutU16(Bytes& bytes, const std::uint16_t value) {
@@ -371,73 +348,252 @@ int CompressionLevel(const PackageCompression compression) {
     return 0;
 }
 
-std::optional<Bytes> Compress(const Bytes& source, const int level) {
-    if (level == 0 || source.empty()) return source;
-    const std::size_t bound = ZSTD_compressBound(source.size());
-    Bytes result(bound);
-    const std::size_t size = ZSTD_compress(result.data(), result.size(), source.data(), source.size(), level);
-    if (ZSTD_isError(size) != 0) return std::nullopt;
-    result.resize(size);
-    return result;
-}
+enum class ArchiveWriteResult {
+    Completed,
+    InputChanged,
+    Failed,
+};
 
-bool WriteBytes(const std::filesystem::path& path, const Bytes& bytes) {
-    std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    if (!output) return false;
-    if (!bytes.empty()) {
-        output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+struct StreamDigest {
+    psa_hash_operation_t hash = PSA_HASH_OPERATION_INIT;
+    std::uint32_t crc = 0xFFFFFFFFu;
+    std::uint64_t size = 0;
+    bool valid = false;
+
+    StreamDigest() {
+        valid = CryptoReady() &&
+                psa_hash_setup(&hash, PSA_ALG_SHA_256) == PSA_SUCCESS;
     }
-    return static_cast<bool>(output);
+    StreamDigest(const StreamDigest&) = delete;
+    StreamDigest& operator=(const StreamDigest&) = delete;
+    ~StreamDigest() {
+        if (valid) psa_hash_abort(&hash);
+    }
+
+    bool Update(const std::uint8_t* bytes, const std::size_t count) {
+        if (!valid || size > (std::numeric_limits<std::uint64_t>::max)() - count ||
+            psa_hash_update(&hash, bytes, count) != PSA_SUCCESS)
+            return false;
+        UpdateCrc32(crc, bytes, count);
+        size += count;
+        return true;
+    }
+
+    std::optional<std::string> Finish() {
+        if (!valid) return std::nullopt;
+        Key digest{};
+        std::size_t written = 0;
+        if (psa_hash_finish(&hash, digest.data(), digest.size(), &written) !=
+                PSA_SUCCESS ||
+            written != digest.size()) {
+            psa_hash_abort(&hash);
+            valid = false;
+            return std::nullopt;
+        }
+        valid = false;
+        return Hex(digest);
+    }
+};
+
+bool CopyStream(std::istream& input, std::ostream& output,
+                StreamDigest* digest = nullptr) {
+    std::array<std::uint8_t, kStreamingChunkSize> buffer{};
+    while (input) {
+        input.read(reinterpret_cast<char*>(buffer.data()),
+                   static_cast<std::streamsize>(buffer.size()));
+        const auto count = input.gcount();
+        if (count > 0) {
+            const auto size = static_cast<std::size_t>(count);
+            if (digest && !digest->Update(buffer.data(), size)) return false;
+            output.write(reinterpret_cast<const char*>(buffer.data()), count);
+            if (!output) return false;
+        }
+    }
+    return input.eof();
 }
 
-bool WriteArchive(const std::filesystem::path& path, const std::vector<ArchiveEntry>& entries, const PackageCompression compression, const bool encryption, const Key& key) {
-    Bytes data;
+bool EncryptStreamChunked(std::istream& input, std::ostream& output,
+                          const Key& key, const std::string_view uri,
+                          std::uint32_t& chunkCount,
+                          std::uint64_t& storedSize,
+                          StreamDigest* digest = nullptr) {
+    std::array<std::uint8_t, kStreamingChunkSize> buffer{};
+    chunkCount = 0;
+    storedSize = 0;
+    while (input) {
+        input.read(reinterpret_cast<char*>(buffer.data()),
+                   static_cast<std::streamsize>(buffer.size()));
+        const auto count = input.gcount();
+        if (count <= 0) break;
+        const auto size = static_cast<std::size_t>(count);
+        if (digest && !digest->Update(buffer.data(), size)) return false;
+        if (chunkCount == (std::numeric_limits<std::uint32_t>::max)())
+            return false;
+        Bytes chunk(buffer.begin(), buffer.begin() + count);
+        const std::string context =
+            ChunkContext(uri, chunkCount, static_cast<std::uint32_t>(size));
+        const auto encrypted = Encrypt(chunk, key, DeriveIv(context), context);
+        if (!encrypted || encrypted->size() != size + kAeadRecordOverhead)
+            return false;
+        output.write(reinterpret_cast<const char*>(encrypted->data()),
+                     static_cast<std::streamsize>(encrypted->size()));
+        if (!output || storedSize >
+                           (std::numeric_limits<std::uint64_t>::max)() -
+                               encrypted->size())
+            return false;
+        storedSize += encrypted->size();
+        ++chunkCount;
+    }
+    return input.eof();
+}
+
+bool CompressFile(const ArchiveEntry& entry,
+                  const std::filesystem::path& destination, const int level,
+                  StreamDigest& digest, std::uint64_t& compressedSize) {
+    std::ifstream input(entry.source, std::ios::binary);
+    std::ofstream output(destination, std::ios::binary | std::ios::trunc);
+    if (!input || !output) return false;
+    const auto context = std::unique_ptr<ZSTD_CCtx, decltype(&ZSTD_freeCCtx)>(
+        ZSTD_createCCtx(), &ZSTD_freeCCtx);
+    if (!context || ZSTD_isError(ZSTD_CCtx_setParameter(
+                        context.get(), ZSTD_c_compressionLevel, level)) != 0)
+        return false;
+    std::array<std::uint8_t, kStreamingChunkSize> source{};
+    std::array<std::uint8_t, kStreamingChunkSize> target{};
+    bool finished = false;
+    while (!finished) {
+        input.read(reinterpret_cast<char*>(source.data()),
+                   static_cast<std::streamsize>(source.size()));
+        const auto count = input.gcount();
+        if (count > 0 &&
+            !digest.Update(source.data(), static_cast<std::size_t>(count)))
+            return false;
+        if (!input && !input.eof()) return false;
+        ZSTD_inBuffer in{source.data(), static_cast<std::size_t>(count), 0};
+        const ZSTD_EndDirective directive = input.eof() ? ZSTD_e_end : ZSTD_e_continue;
+        do {
+            ZSTD_outBuffer out{target.data(), target.size(), 0};
+            const std::size_t remaining =
+                ZSTD_compressStream2(context.get(), &out, &in, directive);
+            if (ZSTD_isError(remaining) != 0) return false;
+            output.write(reinterpret_cast<const char*>(target.data()),
+                         static_cast<std::streamsize>(out.pos));
+            if (!output) return false;
+            compressedSize += out.pos;
+            finished = directive == ZSTD_e_end && remaining == 0;
+        } while (in.pos < in.size || (directive == ZSTD_e_end && !finished));
+    }
+    return true;
+}
+
+ArchiveWriteResult WriteArchive(const std::filesystem::path& path,
+                                const std::vector<ArchiveEntry>& entries,
+                                const PackageCompression compression,
+                                const bool encryption, const Key& key) {
     Bytes index;
     PutU32(index, static_cast<std::uint32_t>(entries.size()));
     std::unordered_set<std::uint64_t> hashes;
     const int compressionLevel = CompressionLevel(compression);
 
-    for (const auto& entry : entries) {
-        if (!IsSafeUri(entry.uri) || entry.uri.size() > static_cast<std::size_t>((std::numeric_limits<std::uint16_t>::max)()) || entry.data.size() > kMaxEntrySize) {
-            return false;
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    if (!output) return ArchiveWriteResult::Failed;
+    std::array<std::uint8_t, kArchiveHeaderSize> placeholder{};
+    output.write(reinterpret_cast<const char*>(placeholder.data()),
+                 static_cast<std::streamsize>(placeholder.size()));
+    if (!output) return ArchiveWriteResult::Failed;
+
+    const auto workDirectory = path.parent_path() / ".pdx-work";
+    std::error_code error;
+    std::filesystem::create_directories(workDirectory, error);
+    if (error) return ArchiveWriteResult::Failed;
+    ScopedDirectory cleanup{workDirectory};
+
+    for (std::size_t entryIndex = 0; entryIndex < entries.size(); ++entryIndex) {
+        const auto& entry = entries[entryIndex];
+        const std::uint64_t rawSize = entry.FileBacked() ? entry.size : entry.data.size();
+        if (!IsSafeUri(entry.uri) || entry.uri.size() > static_cast<std::size_t>((std::numeric_limits<std::uint16_t>::max)()) || rawSize > kMaxEntrySize) {
+            return ArchiveWriteResult::Failed;
         }
         const std::uint64_t pathHash = HashPath(entry.uri);
-        if (!hashes.insert(pathHash).second) return false;
+        if (!hashes.insert(pathHash).second) return ArchiveWriteResult::Failed;
 
         std::uint8_t flags = 0;
-        Bytes stored = entry.data;
-        if (compressionLevel != 0 && !entry.data.empty() &&
-            !IsStreamingMediaPath(entry.uri)) {
-            auto compressed = Compress(entry.data, compressionLevel);
-            if (!compressed) return false;
-            if (compressed->size() < stored.size()) {
-                stored = std::move(*compressed);
-                flags |= kEntryCompressed;
-            }
-        }
+        std::uint32_t crc = 0;
         std::uint32_t chunkCount = 0;
-        if (encryption && !stored.empty() && IsStreamingMediaPath(entry.uri)) {
-            auto encrypted = EncryptChunked(stored, key, entry.uri);
-            if (!encrypted) return false;
-            stored = std::move(encrypted->bytes);
-            chunkCount = encrypted->count;
-            flags |= kEntryEncrypted | kEntryChunkedEncrypted;
-        } else if (encryption) {
-            auto encrypted = Encrypt(stored, key, DeriveIv(entry.uri));
-            if (!encrypted) return false;
-            stored = std::move(*encrypted);
-            flags |= kEntryEncrypted;
+        std::uint64_t storedSize = 0;
+        const std::uint64_t offset = static_cast<std::uint64_t>(output.tellp());
+        const auto temporary = workDirectory / (std::to_string(entryIndex) + ".zst");
+        bool useCompressedFile = false;
+
+        if (!encryption && entry.FileBacked() && compressionLevel != 0 && rawSize > 0 &&
+            !IsStreamingMediaPath(entry.uri)) {
+            StreamDigest digest;
+            std::uint64_t compressedSize = 0;
+            if (!digest.valid ||
+                !CompressFile(entry, temporary, compressionLevel, digest,
+                              compressedSize))
+                return ArchiveWriteResult::Failed;
+            const auto fingerprint = digest.Finish();
+            if (!fingerprint || digest.size != entry.size ||
+                *fingerprint != Lower(entry.fingerprint))
+                return ArchiveWriteResult::InputChanged;
+            crc = ~digest.crc;
+            useCompressedFile = compressedSize < rawSize;
+            if (useCompressedFile) flags |= kEntryCompressed;
         }
 
-        const std::uint64_t offset = kArchiveHeaderSize + data.size();
-        data.insert(data.end(), stored.begin(), stored.end());
+        auto writeInput = [&](std::istream& input, StreamDigest* digest) {
+            if (encryption) {
+                if (rawSize == 0) {
+                    const auto encrypted =
+                        Encrypt(Bytes{}, key, DeriveIv(entry.uri));
+                    if (!encrypted) return false;
+                    flags |= kEntryEncrypted;
+                    output.write(
+                        reinterpret_cast<const char*>(encrypted->data()),
+                        static_cast<std::streamsize>(encrypted->size()));
+                    storedSize = encrypted->size();
+                    return static_cast<bool>(output);
+                }
+                flags |= kEntryEncrypted | kEntryChunkedEncrypted;
+                return EncryptStreamChunked(input, output, key, entry.uri,
+                                            chunkCount, storedSize, digest);
+            }
+            const auto before = static_cast<std::uint64_t>(output.tellp());
+            if (!CopyStream(input, output, digest)) return false;
+            storedSize = static_cast<std::uint64_t>(output.tellp()) - before;
+            return true;
+        };
+
+        if (useCompressedFile) {
+            std::ifstream transformed(temporary, std::ios::binary);
+            if (!transformed || !writeInput(transformed, nullptr))
+                return ArchiveWriteResult::Failed;
+        } else if (entry.FileBacked()) {
+            StreamDigest digest;
+            std::ifstream input(entry.source, std::ios::binary);
+            if (!digest.valid || !input || !writeInput(input, &digest))
+                return ArchiveWriteResult::Failed;
+            const auto fingerprint = digest.Finish();
+            if (!fingerprint || digest.size != entry.size ||
+                *fingerprint != Lower(entry.fingerprint))
+                return ArchiveWriteResult::InputChanged;
+            crc = ~digest.crc;
+        } else {
+            crc = Crc32(entry.data);
+            std::string bytes(reinterpret_cast<const char*>(entry.data.data()),
+                              entry.data.size());
+            std::istringstream input(std::move(bytes), std::ios::binary);
+            if (!writeInput(input, nullptr)) return ArchiveWriteResult::Failed;
+        }
+
         PutU64(index, pathHash);
         PutU16(index, static_cast<std::uint16_t>(entry.uri.size()));
         index.insert(index.end(), entry.uri.begin(), entry.uri.end());
         PutU64(index, offset);
-        PutU64(index, entry.data.size());
-        PutU64(index, stored.size());
-        PutU32(index, Crc32(entry.data));
+        PutU64(index, rawSize);
+        PutU64(index, storedSize);
+        PutU32(index, crc);
         index.push_back(flags);
         if ((flags & kEntryChunkedEncrypted) != 0u) {
             PutU32(index, kStreamingChunkSize);
@@ -447,21 +603,26 @@ bool WriteArchive(const std::filesystem::path& path, const std::vector<ArchiveEn
 
     if (encryption) {
         auto encrypted = Encrypt(index, key, DeriveIv(kIndexSalt));
-        if (!encrypted) return false;
+        if (!encrypted) return ArchiveWriteResult::Failed;
         index = std::move(*encrypted);
     }
-    if (index.empty()) return false;
+    if (index.empty()) return ArchiveWriteResult::Failed;
 
-    Bytes output;
-    output.reserve(kArchiveHeaderSize + data.size() + index.size());
-    output.insert(output.end(), kArchiveMagic, kArchiveMagic + 4);
-    PutU32(output, kArchiveVersion);
-    PutU32(output, encryption ? kArchiveEncrypted : 0u);
-    PutU64(output, kArchiveHeaderSize + data.size());
-    PutU64(output, index.size());
-    output.insert(output.end(), data.begin(), data.end());
-    output.insert(output.end(), index.begin(), index.end());
-    return WriteBytes(path, output);
+    const std::uint64_t indexOffset = static_cast<std::uint64_t>(output.tellp());
+    output.write(reinterpret_cast<const char*>(index.data()),
+                 static_cast<std::streamsize>(index.size()));
+    if (!output) return ArchiveWriteResult::Failed;
+    Bytes header;
+    header.insert(header.end(), kArchiveMagic, kArchiveMagic + 4);
+    PutU32(header, kArchiveVersion);
+    PutU32(header, encryption ? kArchiveEncrypted : 0u);
+    PutU64(header, indexOffset);
+    PutU64(header, index.size());
+    output.seekp(0);
+    output.write(reinterpret_cast<const char*>(header.data()),
+                 static_cast<std::streamsize>(header.size()));
+    output.close();
+    return output ? ArchiveWriteResult::Completed : ArchiveWriteResult::Failed;
 }
 
 std::optional<Bytes> ReadFile(const std::filesystem::path& path, const std::uint64_t expectedSize) {
@@ -748,6 +909,18 @@ const ArchiveEntry* FindArchiveEntry(const std::vector<ArchiveEntry>& entries,
     return found == entries.end() ? nullptr : &*found;
 }
 
+std::optional<Bytes> ReadArchiveEntry(const ArchiveEntry& entry,
+                                      const std::uint64_t maximumSize =
+                                          16ull * 1024ull * 1024ull) {
+    if (!entry.FileBacked()) {
+        return entry.data.size() <= maximumSize
+                   ? std::optional<Bytes>(entry.data)
+                   : std::nullopt;
+    }
+    if (entry.size > maximumSize) return std::nullopt;
+    return ReadFile(entry.source, entry.size);
+}
+
 bool ShaderCrossReady() {
     static std::once_flag once;
     static bool ready = false;
@@ -796,8 +969,14 @@ CompiledEffects CompileCustomEffects(const std::vector<ArchiveEntry>& entries) {
     CompiledEffects result;
     const ArchiveEntry* projectEntry = FindArchiveEntry(entries, "project.pxproject");
     if (!projectEntry) return result;
+    const auto projectBytes = ReadArchiveEntry(*projectEntry);
+    if (!projectBytes) {
+        AddDiagnostic(result.diagnostics, "PXPKG1500",
+                      "Project manifest is unavailable or over 16 MiB");
+        return result;
+    }
     const Json project = Json::parse(
-        std::string(projectEntry->data.begin(), projectEntry->data.end()),
+        std::string(projectBytes->begin(), projectBytes->end()),
         nullptr, false);
     const auto effects = project.find("effects");
     if (effects == project.end()) return result;
@@ -837,9 +1016,12 @@ CompiledEffects CompileCustomEffects(const std::vector<ArchiveEntry>& entries) {
             continue;
         }
         const ArchiveEntry* manifestEntry = FindArchiveEntry(entries, manifestPath);
-        const Json effect = manifestEntry
-                                ? Json::parse(std::string(manifestEntry->data.begin(),
-                                                         manifestEntry->data.end()),
+        const auto manifestBytes = manifestEntry
+                                       ? ReadArchiveEntry(*manifestEntry)
+                                       : std::optional<Bytes>{};
+        const Json effect = manifestBytes
+                                ? Json::parse(std::string(manifestBytes->begin(),
+                                                         manifestBytes->end()),
                                               nullptr, false)
                                 : Json(Json::value_t::discarded);
         const int schemaRevision =
@@ -865,15 +1047,17 @@ CompiledEffects CompileCustomEffects(const std::vector<ArchiveEntry>& entries) {
         }
         const std::string shaderPath = effect["shader"].get<std::string>();
         const ArchiveEntry* shaderEntry = FindArchiveEntry(entries, shaderPath);
+        const auto shaderBytes = shaderEntry
+                                     ? ReadArchiveEntry(*shaderEntry, 1024 * 1024)
+                                     : std::optional<Bytes>{};
         if (!IsSafeUri(shaderPath) || !shaderPath.ends_with(".hlsl") ||
-            !shaderEntry || shaderEntry->data.empty() ||
-            shaderEntry->data.size() > 1024 * 1024) {
+            !shaderBytes || shaderBytes->empty()) {
             AddDiagnostic(result.diagnostics, "PXPKG1505",
                           "Custom effect HLSL is missing, unsafe, or over 1 MiB: " +
                               shaderPath);
             continue;
         }
-        std::string hlsl(shaderEntry->data.begin(), shaderEntry->data.end());
+        std::string hlsl(shaderBytes->begin(), shaderBytes->end());
         const std::uint32_t expectedSamplers =
             targetLayer == "transition" ? 2u : 1u;
         if (hlsl.find('\0') != std::string::npos ||
@@ -1010,7 +1194,8 @@ CompiledEffects CompileCustomEffects(const std::vector<ArchiveEntry>& entries) {
             const auto digest = Sha256Bytes(data.data(), data.size());
             compiled.artifacts.push_back(
                 {format, asset, digest ? Hex(*digest) : std::string{}});
-            result.artifacts.push_back({asset, std::move(data)});
+            result.artifacts.push_back(ArchiveEntry{
+                .uri = asset, .data = std::move(data), .size = size});
         };
         appendArtifact("spirv", "spv", spirv, spirvSize);
 #ifdef __APPLE__
@@ -1075,7 +1260,13 @@ detail::PackageManifest BuildPackageManifest(const PackageRequest& request,
     manifest.archives.push_back({"Content.pdx", "base", false});
     for (const auto& route : routesInOrder) {
         const auto archived = std::find_if(entries.begin(), entries.end(), [&](const auto& entry) { return entry.uri == route.scene; });
-        const auto sceneText = archived == entries.end() ? std::optional<std::string>{} : std::optional<std::string>(std::string(archived->data.begin(), archived->data.end()));
+        const auto sceneBytes = archived == entries.end()
+                                    ? std::optional<Bytes>{}
+                                    : ReadArchiveEntry(*archived);
+        const auto sceneText = sceneBytes
+                                   ? std::optional<std::string>(std::string(
+                                         sceneBytes->begin(), sceneBytes->end()))
+                                   : std::optional<std::string>{};
         const auto sceneId = sceneText ? PlayerUiSceneId(*sceneText) : std::optional<std::string>{};
         manifest.routes.push_back(
             {route.id, sceneId.value_or(UuidFromFingerprint(packageFingerprint)),
@@ -2356,23 +2547,33 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
         }
         const auto& input = validated.inputs[index];
         EmitProgress(request, eventSink, "archive", index, validated.inputs.size(), "Reading " + input.input.uri);
-        auto bytes = ReadFile(input.source, input.input.size);
-        if (!bytes) {
-            return Fail(request, eventSink, "PXPKG1305", "An input changed while packaging: " + input.input.uri, true);
-        }
-        const auto readFingerprint = Sha256Bytes(bytes->data(), bytes->size());
-        if (!readFingerprint || Hex(*readFingerprint) != Lower(input.input.fingerprint)) {
+        const std::string readFingerprint = ComputePackageFingerprint(input.source);
+        if (readFingerprint.empty() ||
+            readFingerprint != Lower(input.input.fingerprint)) {
             return Fail(request, eventSink, "PXPKG1305", "An input changed while packaging: " + input.input.uri, true);
         }
         std::string contentFingerprint = Lower(input.input.fingerprint);
-        const Json normalized = Json::parse(
-            std::string(bytes->begin(), bytes->end()), nullptr, false);
-        if (!normalized.is_discarded()) {
-            const std::string canonical = normalized.dump();
-            if (const auto digest = Sha256Text(canonical))
-                contentFingerprint = Hex(*digest);
+        if (input.input.size <= 16ull * 1024ull * 1024ull) {
+            const auto bytes = ReadFile(input.source, input.input.size);
+            if (!bytes) {
+                return Fail(request, eventSink, "PXPKG1305",
+                            "An input changed while packaging: " +
+                                input.input.uri,
+                            true);
+            }
+            const Json normalized = Json::parse(
+                std::string(bytes->begin(), bytes->end()), nullptr, false);
+            if (!normalized.is_discarded()) {
+                const std::string canonical = normalized.dump();
+                if (const auto digest = Sha256Text(canonical))
+                    contentFingerprint = Hex(*digest);
+            }
         }
-        entries.push_back({ input.input.uri, std::move(*bytes) });
+        entries.push_back(ArchiveEntry{.uri = input.input.uri,
+                                       .source = input.source,
+                                       .size = input.input.size,
+                                       .fingerprint =
+                                           Lower(input.input.fingerprint)});
         identityMaterial += "|" + input.input.uri + "|" + contentFingerprint;
     }
     auto customEffects = CompileCustomEffects(entries);
@@ -2406,7 +2607,15 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
     const std::string packageFingerprint = Hex(*packageDigest);
     const std::string encryptionKey = "pxpkg-" + Hex(DeriveKey("PrismatiXPackage|" + identityMaterial));
     EmitProgress(request, eventSink, "archive", validated.inputs.size(), validated.inputs.size(), "Writing Content.pdx");
-    if (!WriteArchive(staging / "Content.pdx", entries, request.compression, request.encryption, DeriveKey(encryptionKey))) {
+    const auto archiveResult =
+        WriteArchive(staging / "Content.pdx", entries, request.compression,
+                     request.encryption, DeriveKey(encryptionKey));
+    if (archiveResult == ArchiveWriteResult::InputChanged) {
+        return Fail(request, eventSink, "PXPKG1305",
+                    "An input changed while Content.pdx was being written",
+                    true);
+    }
+    if (archiveResult != ArchiveWriteResult::Completed) {
         return Fail(request, eventSink, "PXPKG1307", "Content.pdx could not be written", true);
     }
     if (Cancelled(request)) {
@@ -2440,6 +2649,74 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
         if (error) {
             return Fail(request, eventSink, "PXPKG1310", "Runtime library could not be copied: " + library.filename().string(), true);
         }
+    }
+
+    // Installed runtime bundles carry a versioned notice inventory. Keep the
+    // Packager usable from a contributor build tree (where the share directory
+    // is absent), but copy the complete inventory into every retail package
+    // created from an installed runtime.
+    const auto runtimeShare = request.playerExecutable.parent_path().parent_path() /
+                              "share/PrismatiX";
+    error.clear();
+    const bool runtimeShareExists = std::filesystem::exists(runtimeShare, error);
+    if (error) {
+        return Fail(request, eventSink, "PXPKG1319",
+                    "Runtime release inventory could not be inspected", true);
+    }
+    if (runtimeShareExists &&
+        std::filesystem::is_directory(runtimeShare, error)) {
+        const auto notices = staging / "Notices";
+        std::filesystem::create_directories(notices, error);
+        if (error) {
+            return Fail(request, eventSink, "PXPKG1319",
+                        "Release notice directory could not be created", true);
+        }
+        for (const auto& name : {"LICENSE", "THIRD_PARTY_NOTICES.md",
+                                 "ASSET_PROVENANCE.json",
+                                 "release-inventory.json"}) {
+            const auto source = runtimeShare / name;
+            error.clear();
+            if (std::filesystem::is_regular_file(source, error)) {
+                std::filesystem::copy_file(
+                    source, notices / name,
+                    std::filesystem::copy_options::overwrite_existing, error);
+                if (error) {
+                    return Fail(request, eventSink, "PXPKG1319",
+                                std::string("Release notice could not be copied: ") +
+                                    name,
+                                true);
+                }
+            }
+        }
+        for (const auto& directory : {"licenses", "docs/releases"}) {
+            const auto source = runtimeShare / directory;
+            error.clear();
+            if (std::filesystem::is_directory(source, error)) {
+                const auto destination = notices / directory;
+                std::filesystem::create_directories(destination.parent_path(),
+                                                    error);
+                if (error) {
+                    return Fail(request, eventSink, "PXPKG1319",
+                                std::string("Release inventory directory could not be created: ") +
+                                    directory,
+                                true);
+                }
+                std::filesystem::copy(
+                    source, destination,
+                    std::filesystem::copy_options::recursive |
+                        std::filesystem::copy_options::overwrite_existing,
+                    error);
+                if (error) {
+                    return Fail(request, eventSink, "PXPKG1319",
+                                std::string("Release inventory could not be copied: ") +
+                                    directory,
+                                true);
+                }
+            }
+        }
+    } else if (error || runtimeShareExists) {
+        return Fail(request, eventSink, "PXPKG1319",
+                    "Runtime release inventory could not be inspected", true);
     }
 
     const std::string manifest = detail::SerializePackageManifest(

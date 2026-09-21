@@ -12,6 +12,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -287,7 +288,8 @@ private:
 void CreateProjectFixture(const std::filesystem::path& root,
                           const std::filesystem::path& contentRoot,
                           const std::filesystem::path& fontSource,
-                          const std::filesystem::path& imageSource) {
+                          const std::filesystem::path& imageSource,
+                          const std::filesystem::path& audioSource) {
     Copy(contentRoot / "UI/Title.pxui", root / "Content/UI/Title.pxui");
     Copy(contentRoot / "UI/HUD.pxui", root / "Content/UI/HUD.pxui");
     Copy(contentRoot / "UI/Gallery.pxui", root / "Content/UI/Gallery.pxui");
@@ -305,6 +307,10 @@ void CreateProjectFixture(const std::filesystem::path& root,
     Write(root / "Content/UI/Gallery.pxui", galleryUi);
     Copy(fontSource, root / "Content/Fonts/NotoSansTC-Bold.ttf");
     Copy(imageSource, root / "Assets/ending.png");
+    Copy(imageSource, root / "Assets/Locales/zh-TW/opening.png");
+    Copy(imageSource, root / "Assets/Locales/ja-JP/opening.png");
+    Copy(audioSource, root / "Assets/Locales/zh-TW/opening.wav");
+    Copy(audioSource, root / "Assets/Locales/ja-JP/opening.wav");
 
     auto titleUi = nlohmann::json::parse(Read(root / "Content/UI/Title.pxui"));
     const std::string titleRootId = titleUi.at("rootId").get<std::string>();
@@ -446,6 +452,12 @@ Engine.RegisterAction("acceptance.phase2-menu", async () => {
       "documentId":"99999999-9999-4999-8999-999999999999",
       "committedRevision":1,
       "operations":[
+        {"operationId":"localized-background","sourceId":"localized-background","sourceLine":1,
+         "kind":"background","text":"",
+         "arguments":{"asset":"Assets/Locales/zh-TW/opening.png"}},
+        {"operationId":"localized-voice","sourceId":"localized-voice","sourceLine":2,
+         "kind":"voice","text":"",
+         "arguments":{"asset":"Assets/Locales/zh-TW/opening.wav"}},
         {"operationId":"unlock-ending","sourceId":"unlock-ending","sourceLine":1,
          "kind":"customNode","text":"",
          "arguments":{"type":"unlock","value":"{\"kind\":\"cg\",\"id\":\"ending-rin\"}"}},
@@ -461,6 +473,8 @@ Engine.RegisterAction("acceptance.phase2-menu", async () => {
       "format":"PrismatiXSourceMap","schemaRevision":2,
       "documentId":"99999999-9999-4999-8999-999999999999",
       "mappings":[
+        {"operationId":"localized-background","sourceId":"localized-background","sourceUri":"Story/Entry.pxstory","startLine":1,"startColumn":1,"endLine":1,"endColumn":10},
+        {"operationId":"localized-voice","sourceId":"localized-voice","sourceUri":"Story/Entry.pxstory","startLine":2,"startColumn":1,"endLine":2,"endColumn":10},
         {"operationId":"unlock-ending","sourceId":"unlock-ending","sourceUri":"Story/Entry.pxstory","startLine":1,"startColumn":1,"endLine":1,"endColumn":10},
         {"operationId":"typed-action","sourceId":"typed-action","sourceUri":"Story/Entry.pxstory","startLine":2,"startColumn":1,"endLine":2,"endColumn":10},
         {"operationId":"line-1","sourceId":"line-1","sourceUri":"Story/Entry.pxstory","startLine":3,"startColumn":1,"endLine":3,"endColumn":5}
@@ -476,6 +490,17 @@ Engine.RegisterAction("acceptance.phase2-menu", async () => {
          offset += std::string_view("こんにちは").size())
         japaneseIr.replace(offset, std::string_view("hello").size(),
                            "こんにちは");
+    for (const auto& [source, localized] :
+         std::array<std::pair<std::string_view, std::string_view>, 2>{
+             {{"Assets/Locales/zh-TW/opening.png",
+               "Assets/Locales/ja-JP/opening.png"},
+              {"Assets/Locales/zh-TW/opening.wav",
+               "Assets/Locales/ja-JP/opening.wav"}}}) {
+        for (std::size_t offset = 0;
+             (offset = japaneseIr.find(source, offset)) != std::string::npos;
+             offset += localized.size())
+            japaneseIr.replace(offset, source.size(), localized);
+    }
     Write(root / "Runtime/Locales/ja-JP/main.pxir", japaneseIr);
     std::string japaneseMap = Read(root / "Content/Runtime/start.pxmap");
     for (std::size_t offset = 0;
@@ -555,6 +580,10 @@ px::sdk::PackageRequest PackageRequest(const std::filesystem::path& root,
     request.compression = px::sdk::PackageCompression::Fast;
     const std::vector<std::string> uris = {
         "Assets/ending.png",
+        "Assets/Locales/zh-TW/opening.png",
+        "Assets/Locales/ja-JP/opening.png",
+        "Assets/Locales/zh-TW/opening.wav",
+        "Assets/Locales/ja-JP/opening.wav",
         "Content/Fonts/NotoSansTC-Bold.ttf",
         "Content/Extensions/acceptance.js",
         "Content/Extensions/default.pxextension",
@@ -587,8 +616,8 @@ px::sdk::PackageRequest PackageRequest(const std::filesystem::path& root,
 int main(int argc, char* argv[]) {
     px::test::Suite suite("PlayerCatalogNativeAcceptance");
     suite.Run("PackagedPlayerInputGalleryAndPersistence", [&] {
-        suite.Require(argc == 5,
-                      "test receives Player, Content root, font, and image fixture paths");
+        suite.Require(argc == 6,
+                      "test receives Player, Content root, font, image, and audio fixture paths");
         const std::filesystem::path player =
             std::filesystem::absolute(std::filesystem::path(argv[1]));
         const std::filesystem::path contentRoot =
@@ -597,17 +626,22 @@ int main(int argc, char* argv[]) {
             std::filesystem::absolute(std::filesystem::path(argv[3]));
         const std::filesystem::path imageSource =
             std::filesystem::absolute(std::filesystem::path(argv[4]));
+        const std::filesystem::path audioSource =
+            std::filesystem::absolute(std::filesystem::path(argv[5]));
         suite.Require(std::filesystem::is_regular_file(player),
                       "built native Player exists");
         suite.Require(std::filesystem::is_regular_file(fontSource),
                       "native font fixture exists");
         suite.Require(std::filesystem::is_regular_file(imageSource),
                       "native Gallery image fixture exists");
+        suite.Require(std::filesystem::is_regular_file(audioSource),
+                      "native localized audio fixture exists");
 
         px::test::TempDirectory fixture("player-catalog-native");
         const auto root = fixture.path / "Project";
         const auto output = fixture.path / "Build/Game";
-        CreateProjectFixture(root, contentRoot, fontSource, imageSource);
+        CreateProjectFixture(root, contentRoot, fontSource, imageSource,
+                             audioSource);
         const auto packaged = px::sdk::RunPackager(
             PackageRequest(root, output, player));
         if (!packaged.Completed()) {
@@ -675,6 +709,10 @@ int main(int argc, char* argv[]) {
             WaitForLog(log,
                        "Player E2E locale switched locale=ja-JP text=こんにちは"),
             "running Player transactionally switches to aligned localized Story IR without restarting");
+        suite.Require(
+            WaitForLog(log,
+                       "Player E2E localized media background=Assets/Locales/ja-JP/opening.png voice=Assets/Locales/ja-JP/opening.wav"),
+            "locale switching transactionally replaces the live stage image and retained replay voice resource");
         suite.Require(
             WaitForLog(log,
                        "Player release F2 policy ignored demo reset shortcut"),

@@ -400,7 +400,6 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
             {"bgmVolume", px::Variant(96)}, {"seVolume", px::Variant(110)},
             {"voiceVolume", px::Variant(128)}, {"textSpeedMs", px::Variant(28)},
             {"autoWaitMs", px::Variant(1400)}, {"skipReadOnly", px::Variant(true)},
-            {"skipAfterChoices", px::Variant(false)},
             {"fullscreen", px::Variant(false)}, {"windowWidth", px::Variant(1280)},
             {"windowHeight", px::Variant(720)}, {"language", px::Variant("zh-TW")},
             {"textScale", px::Variant(1.0)}, {"highContrast", px::Variant(false)},

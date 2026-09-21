@@ -335,7 +335,6 @@ public:
                 {"textSpeedMs", px::Variant(28)},
                 {"autoWaitMs", px::Variant(1400)},
                 {"skipReadOnly", px::Variant(true)},
-                {"skipAfterChoices", px::Variant(false)},
                 {"fullscreen", px::Variant(false)},
                 {"windowWidth", px::Variant(1280)},
                 {"windowHeight", px::Variant(720)},
@@ -403,24 +402,8 @@ public:
                     .dump());
         };
         m_scriptHost = px::script::CreateScriptHost(m_scriptServices);
-        m_session->Timeline().SetDetailedEvent(
-            [this](const px::animation::MarkerEvent& event) {
-                if (!m_scriptHost) return;
-                (void)m_scriptHost->Emit(
-                    "timeline.marker",
-                    px::Variant(px::VariantObject{
-                     {"handle", static_cast<std::int64_t>(event.handle)},
-                     {"playbackClip", event.playbackClip.ToString()},
-                     {"clip", event.clip.ToString()},
-                     {"clipName", event.clipName},
-                     {"marker", event.marker.name},
-                     {"markerId", event.marker.id},
-                     {"loopIteration", static_cast<std::int64_t>(
-                                           event.loopIteration)},
-                     {"playbackLoopIteration", static_cast<std::int64_t>(
-                                                   event.playbackLoopIteration)},
-                     {"payload", px::Variant(event.marker.payload)}}));
-            });
+        px::script::BindTimelineMarkerEvents(
+            m_session->Timeline(), [this] { return m_scriptHost.get(); });
         if (const auto status =
                 m_hud.Actions().RegisterProvider(m_scriptHost->CreateActionProvider());
             !status) {

@@ -9,7 +9,7 @@
     "effect.schema.json": "631dd0bce555dcbb3f849049978c9b635dd79848ac497adf292ca6e02468eee7",
     "extension.schema.json": "9438f403e51b8f69f52f05d5999afc37c433754a215094460e28c6d1710555a2",
     "game.schema.json": "f0592fc75a4deb4aed7f192c076165012ef480196a07cd7d2136be390821dcba",
-    "locale.schema.json": "d9fc4deae726d556c7bc7fb51a1d7a25e8db065147cb79450e31326dd81f4d79",
+    "locale.schema.json": "b8f6009219c6cad7fa6130af6d710af11cabcf85bf2e0039f1fdd3c08e2bbf9f",
     "project.schema.json": "8a7ed01b49ac02f5b1c6b2bf6c74267fd058f8e92763ec7de1ba0c7cee034ac1",
     "runtime-ir.schema.json": "b79954bfb6772c2b7a38194d236794a449b0e7d428cf1589d8fbd1cfa9e3616e",
     "save-migration.schema.json": "fd9f89119a4e8a70324f95bb6e0261e5d78b0ea173e2755422c36e5e2379b6cf",

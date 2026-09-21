@@ -5,7 +5,6 @@
 #include "Engine/UI/UIContext.h"
 #include "Engine/UI/UiAdapter.h"
 #include "Engine/UI/UiApplication.h"
-#include "Engine/Resources/TypedDocument.h"
 #include "Engine/Animation/Timeline.h"
 
 #include <functional>
@@ -74,8 +73,7 @@ public:
     using ActionSink = std::function<void(const GalgameAction&)>;
 
     GalgameUI();
-    // Accepts either the Engine typed UIScene or the public UI document contract.
-    // Both formats install into the same UIContext and Action runtime.
+    // Production templates use the canonical public UI document contract.
     Status RegisterTemplate(Screen screen,std::string_view scene,
                             const std::string& sourcePath={});
     Status RegisterRouteTemplate(std::string route, std::string_view scene,
@@ -192,8 +190,7 @@ private:
     std::shared_ptr<ItemSource> m_items;
     std::vector<Binding> m_bindings;
     struct Template {
-        std::optional<resource::TypedDocument> typedScene;
-        std::optional<sdk::UiDocument> studioScene;
+        std::optional<sdk::UiDocument> document;
         std::string sourcePath;
     };
     std::unordered_map<std::string,Template> m_templates;

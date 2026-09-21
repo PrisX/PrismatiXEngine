@@ -87,7 +87,7 @@ void TestTypedUITriggerBinding() {
     document.nodes.push_back(std::move(button));
 
     px::ui::FormatterRegistry formatters;
-    const auto loaded = px::ui::InstantiateUIScene(document, nullptr, formatters);
+    const auto loaded = px::ui::InstantiateLegacyUISceneForMigration(document, nullptr, formatters);
     Check(static_cast<bool>(loaded), "typed TriggerBinding scene should load");
     if (loaded) {
         Check(loaded.Value().triggers.size() == 1 && loaded.Value().triggers.front().signal == "activated" && loaded.Value().triggers.front().action == "game.start", "typed TriggerBinding should produce one generic runtime signal handler");
@@ -96,26 +96,26 @@ void TestTypedUITriggerBinding() {
         return px::VariantObject{ { "activated", px::VariantObject{ { "kind", std::string("action") }, { "action", action }, { "arguments", px::VariantObject{} }, { "reentry", std::string("Allow") } } } };
     };
     document.nodes.front().properties["triggers"] = directTrigger("missing.action");
-    Check(!px::ui::InstantiateUIScene(document, nullptr, formatters), "UI schema v5 must reject Direct Action Trigger bindings with missing Action ids");
+    Check(!px::ui::InstantiateLegacyUISceneForMigration(document, nullptr, formatters), "UI schema v5 must reject Direct Action Trigger bindings with missing Action ids");
     document.nodes.front().properties["triggers"] =
         px::VariantObject{ { "missingSignal", px::VariantObject{ { "kind", std::string("action") }, { "action", std::string("game.start") }, { "arguments", px::VariantObject{} }, { "reentry", std::string("Allow") } } } };
-    Check(!px::ui::InstantiateUIScene(document, nullptr, formatters), "UI schema v5 must reject Trigger bindings to invalid Control Signals");
+    Check(!px::ui::InstantiateLegacyUISceneForMigration(document, nullptr, formatters), "UI schema v5 must reject Trigger bindings to invalid Control Signals");
     px::ui::BehaviorGraph emptyInteraction;
     document.properties["interactionGraph"] = px::ui::WriteBehaviorGraph(emptyInteraction);
     document.nodes.front().properties["triggers"] = px::VariantObject{ { "activated", px::VariantObject{ { "kind", std::string("flow") }, { "entry", px::Uuid::Random() }, { "reentry", std::string("Allow") } } } };
-    Check(!px::ui::InstantiateUIScene(document, nullptr, formatters), "UI schema v5 must reject Flow Trigger bindings with missing Entry references");
+    Check(!px::ui::InstantiateLegacyUISceneForMigration(document, nullptr, formatters), "UI schema v5 must reject Flow Trigger bindings with missing Entry references");
     document.properties.erase("interactionGraph");
     document.nodes.front().properties["triggers"] = directTrigger("game.start");
     auto duplicate = document.nodes.front();
     duplicate.name = "Duplicate";
     document.nodes.push_back(std::move(duplicate));
-    Check(!px::ui::InstantiateUIScene(document, nullptr, formatters), "UI schema v5 must reject duplicate node UUIDs");
+    Check(!px::ui::InstantiateLegacyUISceneForMigration(document, nullptr, formatters), "UI schema v5 must reject duplicate node UUIDs");
     document.nodes.pop_back();
     document.properties.erase("uiSchemaVersion");
-    Check(!px::ui::InstantiateUIScene(document, nullptr, formatters), "UI loader must reject documents without semantic schema 5");
+    Check(!px::ui::InstantiateLegacyUISceneForMigration(document, nullptr, formatters), "UI loader must reject documents without semantic schema 5");
     document.properties["uiSchemaVersion"] = std::int64_t{ 5 };
     document.nodes.front().properties["visible"] = true;
-    Check(!px::ui::InstantiateUIScene(document, nullptr, formatters), "UI loader must reject removed legacy properties");
+    Check(!px::ui::InstantiateLegacyUISceneForMigration(document, nullptr, formatters), "UI loader must reject removed legacy properties");
 }
 
 void TestDialogueEffects() {
@@ -290,14 +290,14 @@ void TestCharacterCatalogExpressions() {
     document.nodes = { character, neutral };
     const std::string encoded = px::resource::WriteTypedDocument(document);
     px::vn::GameCatalog catalog;
-    Check(catalog.Load(encoded, "Game.pxres"), "GameCatalog should load typed CharacterExpression children");
+    Check(catalog.LoadLegacyForMigration(encoded, "Game.pxres"), "GameCatalog migration should load typed CharacterExpression children");
     const auto image = catalog.ResolveCharacterImage("alice", {});
     Check(image && image->lastKnownPath == "Content/Images/Character/alice_neutral.png", "Character default expression should resolve to its ResourceRef");
     Check(catalog.CharacterDisplayName("alice") == "愛麗絲", "Character id should resolve to the author-facing display name");
 
     document.nodes.front().properties["defaultExpression"] = std::string("missing");
     px::vn::GameCatalog invalid;
-    Check(!invalid.Load(px::resource::WriteTypedDocument(document), "invalid.pxres"), "GameCatalog must reject a missing default expression");
+    Check(!invalid.LoadLegacyForMigration(px::resource::WriteTypedDocument(document), "invalid.pxres"), "GameCatalog migration must reject a missing default expression");
 }
 
 void TestTypedExpressions() {

@@ -24,7 +24,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     (void)px::sdk::ParseSourceMap(input);
     (void)px::sdk::ParsePackageRequest(input);
     (void)px::sdk::detail::ParsePackageManifest(input);
-    (void)px::progress::ParseSaveEnvelopeV2(input, "fuzz.pxsav");
+    (void)px::progress::ParseSaveEnvelope(input, "fuzz.pxsav");
     (void)px::io::VFS::NormalizeVirtualPath(input);
     // Invalid save inputs intentionally produce structured diagnostics.  A
     // long fuzz campaign must not retain one object per corpus mutation.

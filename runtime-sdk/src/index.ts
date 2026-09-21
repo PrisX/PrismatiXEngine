@@ -325,7 +325,6 @@ export interface SettingsModel {
   readonly textSpeedMs: number;
   readonly autoWaitMs: number;
   readonly skipReadOnly: boolean;
-  readonly skipAfterChoices: boolean;
   readonly fullscreen: boolean;
   readonly windowWidth: number;
   readonly windowHeight: number;

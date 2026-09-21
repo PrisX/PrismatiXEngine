@@ -394,6 +394,22 @@ async function main() {
     if (configuration.mock) await createMockRuntime(copiedRuntime);
     else await copyRuntimeBundle(configuration.runtime, copiedRuntime);
     await assertSelfContainedTree(copiedRuntime, [repositoryRoot], "Copied runtime bundle");
+    if (!configuration.mock) {
+      const share = join(copiedRuntime, "share", "PrismatiX");
+      for (const relative of [
+        "runtime-manifest.json", "release-inventory.json", "LICENSE",
+        "THIRD_PARTY_NOTICES.md", "ASSET_PROVENANCE.json",
+        join("licenses", "fonts", "OFL-1.1.txt"),
+        join("docs", "releases", "0.2.0.md"),
+      ]) assert.ok(await exists(join(share, relative)),
+        `Runtime release inventory is missing ${relative}`);
+      const inventory = JSON.parse(await readFile(join(share, "release-inventory.json"), "utf8"));
+      assert.equal(inventory.format, "PrismatiXReleaseInventory");
+      assert.equal(inventory.version, "0.2.0");
+      assert.equal(inventory.shipping?.desktopPlayer, true);
+      assert.equal(inventory.shipping?.webGame, false);
+      log("verified release inventory", inventory.target);
+    }
     const toolEnvironment = cleanToolEnvironment(copiedRuntime, {
       PRISMATIX_PHASE1_PREVIEW_LOG: previewLog,
     });
@@ -459,6 +475,14 @@ async function main() {
     await assertSelfContainedTree(packageOutput,
       [repositoryRoot, copiedRuntime, configuration.runtime ?? ""].filter(Boolean),
       "Packaged game");
+    if (!configuration.mock) {
+      for (const relative of [
+        "LICENSE", "THIRD_PARTY_NOTICES.md", "ASSET_PROVENANCE.json",
+        "release-inventory.json", join("licenses", "fonts", "OFL-1.1.txt"),
+        join("docs", "releases", "0.2.0.md"),
+      ]) assert.ok(await exists(join(packageOutput, "Notices", relative)),
+        `Packaged Player notice inventory is missing ${relative}`);
+    }
     await launchArtifact(player, packageOutput, toolEnvironment, configuration.mock);
     log("portable artifact smoke passed", player);
 

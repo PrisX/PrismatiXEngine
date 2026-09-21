@@ -143,9 +143,10 @@ int main() {
                 runtime.Variables()[2].typedDefault.TryGet<double>() &&
                 *runtime.Variables()[2].typedDefault.TryGet<double>() == 1.25 &&
                 runtime.Variables()[3].typedDefault.TryGet<std::string>() &&
-                *runtime.Variables()[3].typedDefault.TryGet<std::string>() == "rin" &&
-                runtime.Unlockables().size() == 1,
-            "SDK parsing and runtime lowering expose identical typed semantics");
+                *runtime.Variables()[3].typedDefault.TryGet<std::string>() == "rin",
+            "runtime lowering exposes the canonical executable variable semantics");
+        suite.Expect(loaded.document.unlockables.size() == 1,
+                     "declarative unlock metadata remains available to SDK tooling");
     });
 
     suite.Run("LoadsResidualRuntimeSemanticsAndStableIdentities", [&] {
@@ -170,7 +171,7 @@ int main() {
 
     suite.Run("RuntimeAdapterUsesTheSameContract", [&] {
         px::vn::GameCatalog catalog;
-        const auto status = catalog.LoadRuntimeResources(
+        const auto status = catalog.LoadLegacyRuntimeResourcesForMigration(
             kCanonicalResidualCatalog, "Content/Game.pxres",
             px::sdk::LegacyGameCatalogPolicy::RejectCharacterNodes,
             px::sdk::LegacyGalleryReferencePolicy::RejectPathStrings,

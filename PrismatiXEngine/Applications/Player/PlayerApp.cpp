@@ -69,6 +69,14 @@ std::string LocalizedCommandText(
                                     : translated->second);
 }
 
+std::string ProductText(
+    const std::unordered_map<std::string, std::string>& translations,
+    const std::string_view id, const std::string_view fallback) {
+    const auto found = translations.find(std::string(id));
+    return found == translations.end() ? std::string(fallback)
+                                       : found->second;
+}
+
 bool LocaleProgramsAlign(const vn::Program& current,
                          const vn::Program& candidate) {
     if (current.documentId != candidate.documentId ||
@@ -100,6 +108,45 @@ bool RelocalizeRuntimeState(
             variables.SetValue(name, entry.value.Clone(), entry.scope);
     for (const auto& [name, value] : state.typedVariables)
         variables.SetValue(name, value.Clone(), vn::VariableScope::Session);
+
+    const auto replacePath = [](std::string& value,
+                                const std::string_view before,
+                                const std::string_view after) {
+        if (!before.empty() && value == before) value = after;
+    };
+    for (std::size_t index = 0; index < state.runtimeProgram->code.size();
+         ++index) {
+        const auto& before = state.runtimeProgram->code[index];
+        const auto& after = candidate->code[index];
+        if (before.type == "bg") {
+            const std::string oldPath = before.Get("file");
+            const std::string newPath = after.Get("file", oldPath);
+            replacePath(state.stage.background, oldPath, newPath);
+            replacePath(state.stage.previousBackground, oldPath, newPath);
+            replacePath(state.stage.ruleOldBackground, oldPath, newPath);
+            replacePath(state.stage.ruleNewBackground, oldPath, newPath);
+        } else if (before.type == "char") {
+            const std::string oldPath = before.Get("file");
+            const std::string newPath = after.Get("file", oldPath);
+            for (auto& actor : state.stage.actors) {
+                replacePath(actor.imagePath, oldPath, newPath);
+                replacePath(actor.previousImagePath, oldPath, newPath);
+            }
+            for (auto& layer : state.stage.layers)
+                replacePath(layer.imagePath, oldPath, newPath);
+        } else if (before.type == "bgm") {
+            const std::string oldPath = before.Get("file");
+            const std::string newPath = after.Get("file", oldPath);
+            replacePath(state.audio.music.path, oldPath, newPath);
+            replacePath(state.audio.pendingMusicLoop, oldPath, newPath);
+        } else if (before.type == "voice") {
+            const std::string oldPath = before.Get("file");
+            const std::string newPath = after.Get("file", oldPath);
+            replacePath(state.audio.voice.path, oldPath, newPath);
+            for (auto& entry : state.backlog)
+                replacePath(entry.voice, oldPath, newPath);
+        }
+    }
 
     for (auto& choice : state.vm.choices) {
         const vn::Command* command = FindOperation(*candidate,
@@ -791,7 +838,6 @@ bool PlayerApp::Init(int argc, char* argv[]) {
             {"textSpeedMs", Variant(m_settings.textSpeedMs)},
             {"autoWaitMs", Variant(m_settings.autoWaitMs)},
             {"skipReadOnly", Variant(m_settings.skipReadOnly)},
-            {"skipAfterChoices", Variant(m_settings.skipAfterChoices)},
             {"fullscreen", Variant(m_settings.fullscreen)},
             {"windowWidth", Variant(m_settings.windowWidth)},
             {"windowHeight", Variant(m_settings.windowHeight)},
@@ -913,8 +959,6 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                 const auto* v = value.TryGet<bool>();
                 if (!v) return false;
                 if (name == "skipReadOnly") m_settings.skipReadOnly = *v;
-                else if (name == "skipAfterChoices")
-                    m_settings.skipAfterChoices = *v;
                 else if (name == "fullscreen") {
                     m_settings.fullscreen = *v;
                     SDL_SetWindowFullscreen(m_runtime.GetWindow().Handle(), *v);
@@ -985,24 +1029,8 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     };
     PX_LOG_DEBUG("Player boot: constructing script host");
     m_scriptHost = script::CreateScriptHost(m_scriptServices);
-    m_session->Timeline().SetDetailedEvent(
-        [this](const animation::MarkerEvent& event) {
-            if (!m_scriptHost) return;
-            (void)m_scriptHost->Emit(
-                "timeline.marker",
-                Variant(VariantObject{
-                 {"handle", static_cast<std::int64_t>(event.handle)},
-                 {"playbackClip", event.playbackClip.ToString()},
-                 {"clip", event.clip.ToString()},
-                 {"clipName", event.clipName},
-                 {"marker", event.marker.name},
-                 {"markerId", event.marker.id},
-                 {"loopIteration",
-                  static_cast<std::int64_t>(event.loopIteration)},
-                 {"playbackLoopIteration",
-                  static_cast<std::int64_t>(event.playbackLoopIteration)},
-                 {"payload", Variant(event.marker.payload)}}));
-        });
+    script::BindTimelineMarkerEvents(
+        m_session->Timeline(), [this] { return m_scriptHost.get(); });
     PX_LOG_DEBUG("Player boot: script host constructed backend={}", m_scriptHost->BackendId());
     (void)m_ui.Actions().RegisterProvider(m_scriptHost->CreateActionProvider());
     PX_LOG_DEBUG("Player boot: script Action provider registered");
@@ -1209,10 +1237,24 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                         : (m_script.empty() ? m_boot.startScript : m_script);
     m_splash=std::make_unique<ui::startup::SplashSequencePlayer>(
         ui::startup::SplashSequencePlayer::Services{
-            .loadScene=[this](const ResourceRefValue& reference)->Result<resource::TypedDocument>{
+            .loadScene=[this](const ResourceRefValue& reference)->Result<sdk::UiDocument>{
                 const auto text=m_runtime.VFS().ReadText(reference.lastKnownPath);
-                if(!text){diag::Diagnostic diagnostic{.severity=diag::Severity::Error,.code="PXBOOT1201",.category="Player.Splash",.message="Splash scene is missing",.details=reference.lastKnownPath};diagnostic.source.path=reference.lastKnownPath;return Result<resource::TypedDocument>::Failure(std::move(diagnostic));}
-                return resource::ParseTypedDocument(*text,reference.lastKnownPath);
+                if(!text){diag::Diagnostic diagnostic{.severity=diag::Severity::Error,.code="PXBOOT1201",.category="Player.Splash",.message="Splash scene is missing",.details=reference.lastKnownPath};diagnostic.source.path=reference.lastKnownPath;return Result<sdk::UiDocument>::Failure(std::move(diagnostic));}
+                const auto parsed=sdk::ParseUi(*text);
+                if(parsed.Valid())return Result<sdk::UiDocument>::Success(parsed.document);
+                std::vector<diag::Diagnostic> diagnostics;
+                for(const auto& error:parsed.diagnostics){diag::Diagnostic diagnostic{.severity=diag::Severity::Error,.code=error.code,.category="Player.Splash",.message=error.message};diagnostic.source.path=reference.lastKnownPath;diagnostics.push_back(std::move(diagnostic));}
+                return Result<sdk::UiDocument>::Failure(std::move(diagnostics));
+            },
+            .resolveAsset=[this](const std::string_view assetId)->std::optional<std::string>{
+                const auto found=m_uiAssets.find(std::string(assetId));
+                return found==m_uiAssets.end()?std::nullopt:std::optional<std::string>{found->second};
+            },
+            .loadComponent=[this](const std::string_view componentId)->std::optional<ui::UiComponentSource>{
+                const auto found=m_uiComponents.find(std::string(componentId));
+                if(found==m_uiComponents.end())return std::nullopt;
+                const auto source=m_runtime.VFS().ReadText(found->second);
+                return source?std::optional<ui::UiComponentSource>{ui::UiComponentSource{found->second,*source}}:std::nullopt;
             },
             .playAudio=[this](const ResourceRefValue& reference){
                 if(!m_runtime.VFS().Exists(reference.lastKnownPath)){diag::Diagnostic diagnostic{.severity=diag::Severity::Warning,.code="PXBOOT1202",.category="Player.Splash",.message="Splash audio is missing; visual playback will continue",.details=reference.lastKnownPath};diagnostic.source.path=reference.lastKnownPath;return Status::Fail(std::move(diagnostic));}
@@ -1644,7 +1686,19 @@ std::vector<ui::GalgameItem> PlayerApp::GalleryItems() {
     for (const auto& cg : m_catalog.Gallery()) {
         const bool unlocked = m_profile.CGUnlocked(cg.id);
         const std::string thumb = cg.thumbnail.empty() ? cg.image : cg.thumbnail;
-        items.push_back({cg.id, unlocked ? cg.title : "？？？", unlocked ? "已解鎖" : "尚未解鎖",
+        const std::string title = ProductText(
+            m_langTable, "gallery." + cg.id + ".title", cg.title);
+        items.push_back({cg.id,
+                         unlocked ? title
+                                  : ProductText(m_langTable,
+                                                "player.gallery.lockedTitle",
+                                                "？？？"),
+                         unlocked ? ProductText(m_langTable,
+                                                "player.gallery.unlocked",
+                                                "已解鎖")
+                                  : ProductText(m_langTable,
+                                                "player.gallery.locked",
+                                                "尚未解鎖"),
                          unlocked ? thumb : "", !unlocked, "cg.view", cg.image});
     }
     return items;
@@ -1654,11 +1708,15 @@ std::vector<ui::GalgameItem> PlayerApp::SaveItems(bool saveMode) {
     std::vector<ui::GalgameItem> items;
     const auto slotItem = [&](int slot, const std::string& prefix, const std::string& action) {
         const progress::SlotInfo info = m_saves.Peek(slot);
-        std::string label = "空白存檔";
+        std::string label = ProductText(m_langTable, "player.save.empty",
+                                        "空白存檔");
         std::string subtitle;
         std::string image;
         if (info.exists) {
-            label = info.chapter.empty() ? "未命名章節" : info.chapter;
+            label = info.chapter.empty()
+                        ? ProductText(m_langTable, "player.save.untitled",
+                                      "未命名章節")
+                        : info.chapter;
             if (info.timestamp != 0) {
                 const std::time_t t = static_cast<std::time_t>(info.timestamp);
                 char buf[32];
@@ -1685,7 +1743,9 @@ std::vector<ui::GalgameItem> PlayerApp::SaveItems(bool saveMode) {
     };
 
     if (!saveMode) {
-        slotItem(kAutoSaveSlot, "AUTO", "load.slot");
+        slotItem(kAutoSaveSlot,
+                 ProductText(m_langTable, "player.save.auto", "AUTO"),
+                 "load.slot");
     }
     for (int i = 0; i < 6; ++i) {
         slotItem(i, "#" + std::to_string(i + 1), saveMode ? "save.slot" : "load.slot");
@@ -1699,9 +1759,17 @@ std::vector<ui::GalgameItem> PlayerApp::BacklogItems() {
     items.reserve(entries.size());
     for (std::size_t i = 0; i < entries.size(); ++i) {
         const auto& entry = entries[i];
-        const std::string speaker = entry.isChoice ? "▶ 選擇" : entry.speaker;
+        const std::string speaker = entry.isChoice
+                                        ? ProductText(m_langTable,
+                                                      "player.backlog.choice",
+                                                      "▶ 選擇")
+                                        : entry.speaker;
         items.push_back({"backlog-" + std::to_string(entry.sequence), speaker.empty() ? entry.text : speaker + "　" + entry.text,
-                         entry.voice.empty() ? "" : "♪ 點擊重播語音", "", false,
+                         entry.voice.empty()
+                             ? ""
+                             : ProductText(m_langTable,
+                                           "player.backlog.replayVoice",
+                                           "♪ 點擊重播語音"), "", false,
                          entry.voice.empty() ? "backlog.rollback" : "backlog.voice",
                          std::to_string(entry.sequence)});
     }
@@ -2027,6 +2095,22 @@ void PlayerApp::DriveE2EJourney() {
                     m_e2eLocaleSwitched=true;
                     PX_LOG_INFO("Player E2E locale switched locale={} text={}",
                                 target,m_session->Dialogue().State().fullText);
+                    const auto localizedAudio = m_session->Audio().CaptureState();
+                    std::string localizedVoice = localizedAudio.voice.path;
+                    if (localizedVoice.empty()) {
+                        const auto& backlog = m_session->Backlog().Entries();
+                        const auto voice = std::ranges::find_if(
+                            backlog.rbegin(), backlog.rend(),
+                            [](const vn::BacklogEntry& entry) {
+                                return !entry.voice.empty();
+                            });
+                        if (voice != backlog.rend())
+                            localizedVoice = voice->voice;
+                    }
+                    PX_LOG_INFO(
+                        "Player E2E localized media background={} voice={}",
+                        m_session->Stage().BackgroundPath(),
+                        localizedVoice);
                     break;
                 }
                 m_e2eClearCountBeforeF2=m_profile.ClearCount();

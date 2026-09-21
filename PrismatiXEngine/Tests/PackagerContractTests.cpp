@@ -1,9 +1,20 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <cstdlib>
 #include <sstream>
 #include <string>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
+#else
+#include <sys/resource.h>
+#endif
 
 #include <nlohmann/json.hpp>
 #include <SDL3/SDL.h>
@@ -38,6 +49,38 @@ void Write(const std::filesystem::path& path, const std::string_view content) {
     std::filesystem::create_directories(path.parent_path());
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     output << content;
+}
+
+void WriteRepeated(const std::filesystem::path& path, const char value,
+                   std::uint64_t bytes) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    const std::string block(256 * 1024, value);
+    while (bytes > 0) {
+        const auto count = static_cast<std::streamsize>(
+            std::min<std::uint64_t>(bytes, block.size()));
+        output.write(block.data(), count);
+        bytes -= static_cast<std::uint64_t>(count);
+    }
+}
+
+std::uint64_t PeakResidentBytes() {
+#ifdef _WIN32
+    PROCESS_MEMORY_COUNTERS counters{};
+    counters.cb = sizeof(counters);
+    return GetProcessMemoryInfo(GetCurrentProcess(), &counters,
+                                sizeof(counters))
+               ? counters.PeakWorkingSetSize
+               : 0;
+#else
+    rusage usage{};
+    if (getrusage(RUSAGE_SELF, &usage) != 0) return 0;
+#ifdef __APPLE__
+    return static_cast<std::uint64_t>(usage.ru_maxrss);
+#else
+    return static_cast<std::uint64_t>(usage.ru_maxrss) * 1024u;
+#endif
+#endif
 }
 
 std::string Read(const std::filesystem::path& path) {
@@ -496,6 +539,24 @@ int main() {
                      "packaged UI document dispatches its authored Player Action");
     });
 
+    suite.Run("StreamingWriter_IsDeterministicAndLeavesNoWorkFiles", [&] {
+        const auto repeatOutput = fixture.path / "Build/Repeat";
+        auto repeat = FixtureRequest(root, repeatOutput);
+        repeat.requestId = "deterministic-repeat";
+        const auto result = px::sdk::RunPackager(repeat);
+        suite.Require(result.Completed(),
+                      "the same input set packages a second time");
+        suite.Expect(
+            px::sdk::ComputePackageFingerprint(output / "Content.pdx") ==
+                px::sdk::ComputePackageFingerprint(repeatOutput /
+                                                   "Content.pdx"),
+            "streamed PDX5 output is byte-for-byte deterministic");
+        suite.Expect(!std::filesystem::exists(output / ".pdx-work") &&
+                         !std::filesystem::exists(repeatOutput /
+                                                  ".pdx-work"),
+                     "entry transform scratch data is removed before promotion");
+    });
+
     suite.Run("ContentUpgradePreservesAndReadsLegacyUserData", [&] {
         const auto upgradeOutput = fixture.path / "Build/PersistenceUpgrade";
         auto versionOne = FixtureRequest(root, upgradeOutput);
@@ -619,8 +680,30 @@ int main() {
 
     suite.Run("VideoContainersRemainSeekableInCompressedPackages", [&] {
         const auto videoPath = root / "Video/stream.mp4";
-        constexpr std::size_t videoBytes = 2 * 1024 * 1024 + 37;
-        Write(videoPath, std::string(videoBytes, 'v'));
+        std::uint64_t videoBytes = 32ull * 1024ull * 1024ull + 37ull;
+        std::string requestedBytes;
+#ifdef _WIN32
+        char* requestedBuffer = nullptr;
+        std::size_t requestedLength = 0;
+        if (_dupenv_s(&requestedBuffer, &requestedLength,
+                      "PRISMATIX_PACKAGER_RSS_BYTES") == 0 &&
+            requestedBuffer) {
+            requestedBytes.assign(requestedBuffer);
+            std::free(requestedBuffer);
+        }
+#else
+        if (const char* requested =
+                std::getenv("PRISMATIX_PACKAGER_RSS_BYTES"))
+            requestedBytes = requested;
+#endif
+        if (!requestedBytes.empty()) {
+            const auto parsed = std::strtoull(requestedBytes.c_str(), nullptr, 10);
+            if (parsed >= 2ull * 1024ull * 1024ull &&
+                parsed <= 3ull * 1024ull * 1024ull * 1024ull)
+                videoBytes = parsed;
+        }
+        WriteRepeated(videoPath, 'v', videoBytes);
+        const std::uint64_t residentBefore = PeakResidentBytes();
         const auto videoOutput = fixture.path / "Build/StreamingVideo";
         auto videoRequest = FixtureRequest(root, videoOutput);
         videoRequest.requestId = "streaming-video-contract";
@@ -682,6 +765,15 @@ int main() {
                          }) &&
                          encryptedStream->PeakBufferedBytes() * 4u < videoBytes,
                      "encrypted Packager video remains seekable with bounded memory");
+        const std::uint64_t residentAfter = PeakResidentBytes();
+        constexpr std::uint64_t memoryBudget = 64ull * 1024ull * 1024ull;
+        suite.Expect(
+            residentBefore == 0 || residentAfter == 0 ||
+                residentAfter <= residentBefore + memoryBudget,
+            "stream Packager peak RSS stays within a fixed budget independent of input size",
+            "before=" + std::to_string(residentBefore) +
+                " after=" + std::to_string(residentAfter) +
+                " budget=" + std::to_string(memoryBudget));
     });
 
     suite.Run("LocaleFontChain_IsPackagedAndPreflightChecksGlyphCoverage", [&] {
@@ -1056,6 +1148,34 @@ int main() {
         std::filesystem::remove(cancelled.cancelFile, cleanupError);
         suite.Expect(result.exitCode == px::sdk::PackageExitCode::Cancelled, "cancel exits with the dedicated status");
         suite.Expect(Read(cancelledOutput / "previous-success.txt") == "preserved" && !std::filesystem::exists(cancelledOutput / "Content.pdx"), "cancel leaves prior successful output untouched");
+    });
+
+    suite.Run("WriterRecheck_RejectsMutationBeforePromotion", [&] {
+        const auto mutationOutput = fixture.path / "Build/Mutation";
+        Write(mutationOutput / "previous-success.txt", "preserved");
+        const auto assetPath = root / "Assets/rin.png";
+        const auto originalAsset = Read(assetPath);
+        auto mutated = FixtureRequest(root, mutationOutput);
+        mutated.requestId = "writer-recheck-contract";
+        bool injected = false;
+        const auto result = px::sdk::RunPackager(
+            mutated, [&](const auto& event) {
+                if (!injected &&
+                    event.kind == px::sdk::PackageEventKind::Progress &&
+                    event.phase == "archive" &&
+                    event.message == "Writing Content.pdx") {
+                    Write(assetPath, "changed-after-identity");
+                    injected = true;
+                }
+            });
+        Write(assetPath, originalAsset);
+        suite.Expect(!result.Completed() &&
+                         HasDiagnostic(result, "PXPKG1305") &&
+                         Read(mutationOutput / "previous-success.txt") ==
+                             "preserved" &&
+                         !std::filesystem::exists(mutationOutput /
+                                                  "Content.pdx"),
+                     "stream writer rechecks file bytes and keeps the prior output");
     });
 
     suite.Run("ValidationFailure_PreservesPriorSuccessfulOutput", [&] {

@@ -91,6 +91,7 @@ public:
     Status SetAnimationNumber(std::string_view parameter,double value);
     Status SetAnimationParameter(std::string_view parameter, const Variant& value);
     Status TravelAnimationState(std::string_view state,float duration=0.0f);
+    [[nodiscard]] float AnimationDuration(std::string_view state) const;
     Status PreviewAnimation(const Uuid& clip, float time, bool playing);
     Status StopAnimation(bool restoreDesignState = true);
     [[nodiscard]] UIAnimationRuntimeState CaptureAnimationState() const;

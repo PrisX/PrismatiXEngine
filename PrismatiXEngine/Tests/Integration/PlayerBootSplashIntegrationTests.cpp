@@ -1,4 +1,4 @@
-#include "Engine/UI/Animation.h"
+#include "Engine/SDK/Ui.h"
 #include "Engine/UI/Startup/SplashSequencePlayer.h"
 #include "Engine/UI/UITypeRegistry.h"
 #include "Tests/TestSupport/TestHarness.h"
@@ -7,36 +7,49 @@
 
 namespace {
 
-px::resource::TypedDocument Scene(const std::string& name) {
-    px::resource::TypedDocument document;
-    document.kind = px::resource::DocumentKind::Scene;
-    document.id = px::Uuid::FromName("BootScene/" + name);
-    document.type = "UIScene";
-    document.properties["canvasSize"] = px::Vec2{1280, 720};
-    document.properties["uiSchemaVersion"] = std::int64_t{5};
-    const auto root = px::Uuid::FromName("BootRoot/" + name);
-    const auto logo = px::Uuid::FromName("BootLogo/" + name);
-    document.nodes.push_back({root, {}, "Root", "Control",
-                              {{"anchors", px::Rect{0, 0, 1, 1}}}});
-    document.nodes.push_back({logo, root, "Logo", "Control", {{"opacity", 1.0}}});
-    px::ui::AnimationClip enter;
-    enter.id = px::Uuid::FromName("BootEnter/" + name);
+px::sdk::UiDocument Scene(const std::string& name) {
+    px::sdk::UiDocument document;
+    document.id = px::Uuid::FromName("BootScene/" + name).ToString();
+    document.revision = 1;
+    document.name = name;
+    document.width = 1280;
+    document.height = 720;
+    const auto root = px::Uuid::FromName("BootRoot/" + name).ToString();
+    const auto logo = px::Uuid::FromName("BootLogo/" + name).ToString();
+    document.rootId = root;
+    px::sdk::UiNode rootNode;
+    rootNode.id = root;
+    rootNode.name = "Root";
+    rootNode.kind = px::sdk::UiNodeKind::Group;
+    rootNode.runtimeType = "Panel";
+    rootNode.layout = {.width=1280,.height=720,.anchorRight=1,.anchorBottom=1,
+                       .alignment="fill",.sizeRule="fill"};
+    px::sdk::UiNode logoNode;
+    logoNode.id = logo;
+    logoNode.parentId = root;
+    logoNode.name = "Logo";
+    logoNode.runtimeType = "Control";
+    logoNode.layout = {.x=512,.y=288,.width=256,.height=144,
+                       .alignment="start",.sizeRule="fixed"};
+    document.nodes = {std::move(rootNode), std::move(logoNode)};
+    px::sdk::UiAnimationClip enter;
+    enter.id = px::Uuid::FromName("BootEnter/" + name).ToString();
     enter.name = "enter";
     enter.duration = 0.1f;
-    px::ui::AnimationClip exit;
-    exit.id = px::Uuid::FromName("BootExit/" + name);
+    px::sdk::UiAnimationClip exit;
+    exit.id = px::Uuid::FromName("BootExit/" + name).ToString();
     exit.name = "exit";
     exit.duration = 0.1f;
-    const auto enterState = px::Uuid::FromName("BootEnterState/" + name);
-    const auto exitState = px::Uuid::FromName("BootExitState/" + name);
-    px::ui::UIAnimationLibrary animations;
+    const auto enterState = px::Uuid::FromName("BootEnterState/" + name).ToString();
+    const auto exitState = px::Uuid::FromName("BootExitState/" + name).ToString();
+    px::sdk::UiAnimations animations;
     animations.clips.push_back(std::move(enter));
     animations.clips.push_back(std::move(exit));
-    animations.machine.entry = enterState;
-    animations.machine.states = {
-        {enterState, "enter", animations.clips[0].id, {0, 0}},
-        {exitState, "exit", animations.clips[1].id, {220, 0}}};
-    document.properties["animations"] = px::ui::WriteUIAnimationLibrary(animations);
+    animations.stateMachine.entryStateId = enterState;
+    animations.stateMachine.states = {
+        {enterState,"enter",animations.clips[0].id,0,0},
+        {exitState,"exit",animations.clips[1].id,220,0}};
+    document.animations = std::move(animations);
     return document;
 }
 
@@ -58,12 +71,12 @@ public:
                   loadOrder.push_back(reference.lastKnownPath);
                   const auto found = scenes.find(reference.lastKnownPath);
                   if (found == scenes.end())
-                      return px::Result<px::resource::TypedDocument>::Failure(
+                      return px::Result<px::sdk::UiDocument>::Failure(
                           px::diag::Diagnostic{.severity = px::diag::Severity::Error,
                                                .code = "PXTESTBOOT",
                                                .category = "Player.Splash",
                                                .message = "scene missing"});
-                  return px::Result<px::resource::TypedDocument>::Success(found->second);
+                  return px::Result<px::sdk::UiDocument>::Success(found->second);
               },
           }) {
         player.SetCompletionCallback([this] { FinishBootPresentation(); });
@@ -78,7 +91,7 @@ public:
         else ++scenarioUpdates;
     }
 
-    std::unordered_map<std::string, px::resource::TypedDocument> scenes;
+    std::unordered_map<std::string, px::sdk::UiDocument> scenes;
     std::vector<std::string> loadOrder;
     px::ui::startup::SplashSequencePlayer player;
     bool routeReplaced = false;

@@ -7,6 +7,7 @@
     "format":{"const":"PrismatiXLocale"},"schemaRevision":{"const":2},
     "locale":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/locale"},
     "fontChain":{"type":"array","maxItems":16,"uniqueItems":true,"items":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"}},
+    "resources":{"type":"object","maxProperties":100000,"propertyNames":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"additionalProperties":{"oneOf":[{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},{"type":"string","pattern":"^asset:[0-9a-fA-F-]{36}$"}]}},
     "strings":{"type":"object","maxProperties":1000000,"propertyNames":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},"additionalProperties":{"type":"string","maxLength":1048576}}
   }
 }

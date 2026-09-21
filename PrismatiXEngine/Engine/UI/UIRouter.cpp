@@ -14,23 +14,6 @@ Status RouteFailure(std::string code, std::string message) {
 }
 }
 
-Status RouteTable::Register(RouteDescriptor descriptor) {
-    if (descriptor.id.empty() || descriptor.scene.Empty()) {
-        return RouteFailure("PXUI2310", "A route requires an id and scene ResourceId");
-    }
-    if (m_byId.contains(descriptor.id)) {
-        return RouteFailure("PXUI2311", "Duplicate route id: " + descriptor.id);
-    }
-    m_byId[descriptor.id] = m_routes.size();
-    m_routes.push_back(std::move(descriptor));
-    return Status::Ok();
-}
-
-const RouteDescriptor* RouteTable::Find(const std::string_view id) const {
-    const auto found = m_byId.find(std::string(id));
-    return found == m_byId.end() ? nullptr : &m_routes[found->second];
-}
-
 Status UIRouter::Register(std::string route, ScreenFactory factory) {
     if (route.empty() || !factory) return RouteFailure("PXUI2301", "Invalid UI route registration");
     if (m_factories.contains(route)) return RouteFailure("PXUI2302", "Duplicate UI route: " + route);

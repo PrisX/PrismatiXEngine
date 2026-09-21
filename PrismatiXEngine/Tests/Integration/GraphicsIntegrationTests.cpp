@@ -192,6 +192,16 @@ int main() {
             std::cerr << "FAIL: ruby base range is not derived from shaped clusters\n";
             result = 1;
         }
+        const std::string wrappedRubyText = "前前前前漢字後";
+        const auto wrappedRuby = renderer.LayoutText(wrappedRubyText, font,
+                                                     24, 54);
+        const px::Rect wrappedRubyBounds = wrappedRuby.BoundsForRange(
+            std::string("前前前前").size(), std::string("漢字").size());
+        if (wrappedRubyBounds.w <= 0.0f || wrappedRubyBounds.h <= 0.0f ||
+            wrappedRubyBounds.y <= 0.0f) {
+            std::cerr << "FAIL: wrapped ruby base does not retain its shaped line geometry\n";
+            result = 1;
+        }
         const auto drawFixture = [&] {
             renderer.DrawRect({0, 0, 640, 360}, {230, 230, 210, 255});
             renderer.DrawRect({190, 85, 260, 200}, {230, 45, 55, 255});

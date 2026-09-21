@@ -2,6 +2,8 @@
 
 #include "Engine/Core/TypeRegistry.h"
 #include "Engine/Diagnostics/Diagnostic.h"
+#include "Engine/Support/Easing.h"
+#include "Engine/Support/Interpolation.h"
 
 #include <algorithm>
 #include <cmath>
@@ -18,36 +20,18 @@ diag::Diagnostic AnimationError(std::string code, std::string message, const Ani
 float EaseValue(float value, Ease ease) {
     value = std::clamp(value, 0.0f, 1.0f);
     switch (ease) {
-        case Ease::EaseIn: return value * value;
-        case Ease::EaseOut: return 1.0f - (1.0f - value) * (1.0f - value);
-        case Ease::EaseInOut: return value < 0.5f ? 2.0f * value * value : 1.0f - std::pow(-2.0f * value + 2.0f, 2.0f) * 0.5f;
+        case Ease::EaseIn: return support::EaseInQuad(value);
+        case Ease::EaseOut: return support::EaseOutQuad(value);
+        case Ease::EaseInOut: return support::EaseInOutQuad(value);
         case Ease::Step: return 0.0f;
         default: return value;
     }
 }
 Result<Variant> Interpolate(const Variant& a, const Variant& b, float t) {
-    if (a.Type() != b.Type()) return Result<Variant>::Failure(AnimationError("PXUI2701", "Animation key types do not match"));
-    switch (a.Type()) {
-        case VariantType::Number: {
-            const double x = *a.TryGet<double>(), y = *b.TryGet<double>();
-            return Result<Variant>::Success(Variant(x + (y - x) * t));
-        }
-        case VariantType::Vec2: {
-            const Vec2 x = *a.TryGet<Vec2>(), y = *b.TryGet<Vec2>();
-            return Result<Variant>::Success(Variant(Vec2{x.x + (y.x - x.x) * t, x.y + (y.y - x.y) * t}));
-        }
-        case VariantType::Rect: {
-            const Rect x = *a.TryGet<Rect>(), y = *b.TryGet<Rect>();
-            return Result<Variant>::Success(Variant(Rect{x.x + (y.x - x.x) * t, x.y + (y.y - x.y) * t,
-                x.w + (y.w - x.w) * t, x.h + (y.h - x.h) * t}));
-        }
-        case VariantType::Color: {
-            const Color x = *a.TryGet<Color>(), y = *b.TryGet<Color>();
-            auto channel = [t](std::uint8_t p, std::uint8_t q) { return static_cast<std::uint8_t>(std::clamp(std::lround(static_cast<float>(p) + (static_cast<float>(q) - p) * t), 0l, 255l)); };
-            return Result<Variant>::Success(Variant(Color{channel(x.r,y.r), channel(x.g,y.g), channel(x.b,y.b), channel(x.a,y.a)}));
-        }
-        default: return Result<Variant>::Success(t < 1.0f ? a : b);
-    }
+    auto value=support::InterpolateVariant(a,b,t);
+    return value?Result<Variant>::Success(std::move(*value))
+                :Result<Variant>::Failure(AnimationError(
+                     "PXUI2701","Animation key types do not match"));
 }
 }
 

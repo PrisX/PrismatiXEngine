@@ -168,4 +168,11 @@ public:
 [[nodiscard]] std::unique_ptr<ScriptHost> CreateScriptHost(
     const ScriptServices& services);
 
+// Installs the one canonical Timeline marker -> script event adapter used by
+// Player and every Preview host. The getter is evaluated at delivery time so
+// hosts may bind the bridge before or after constructing their ScriptHost.
+void BindTimelineMarkerEvents(
+    animation::TimelinePlayer& timeline,
+    std::function<ScriptHost*()> host);
+
 }  // namespace px::script

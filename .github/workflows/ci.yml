@@ -45,6 +45,12 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           submodules: recursive
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: "24.14.0"
+          cache: npm
+      - name: Build installable author tooling
+        run: npm ci --ignore-scripts && npm run build
       - run: bash .github/scripts/install-linux-dependencies.sh
       - uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed
       - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
@@ -80,11 +86,20 @@ jobs:
       - name: Execute the complete Linux test suite
         env:
           ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:halt_on_error=1
+          PRISMATIX_PACKAGER_RSS_BYTES: ${{ github.event_name == 'schedule' && '2147483685' || '' }}
           PRISMATIX_VISUAL_OUTPUT_DIR: ${{ github.workspace }}/out/ci/visual/linux
           SDL_AUDIO_DRIVER: dummy
           SDL_VIDEO_DRIVER: x11
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: xvfb-run -a ctest --test-dir out/ci/sdk-clang -E '^PrismatiX\.Player\.CatalogNativeAcceptance$' --output-on-failure --timeout 240 --no-tests=error
+      - name: Verify clean Linux runtime bundle and packaged Player
+        env:
+          SDL_AUDIO_DRIVER: dummy
+          SDL_VIDEO_DRIVER: x11
+        run: |
+          cmake --install out/ci/sdk-clang --prefix out/ci/runtime-linux --component PrismatiXRuntime
+          xvfb-run -a env PRISMATIX_PHASE1_RUNTIME="${{ github.workspace }}/out/ci/runtime-linux" \
+            npm run phase1:acceptance
       - name: Publish Linux GPU visual matrix
         if: always()
         uses: actions/upload-artifact@v4
@@ -220,6 +235,12 @@ jobs:
               $manifest.manifestSha256 -notmatch '^[0-9a-f]{64}$') {
             throw "Finalized SDK manifest identity is invalid"
           }
+      - name: Verify clean Windows runtime bundle and packaged Player
+        shell: pwsh
+        run: |
+          $env:PRISMATIX_PHASE1_RUNTIME = Join-Path $env:GITHUB_WORKSPACE 'out/ci/sdk-package'
+          npm run phase1:acceptance
+          if ($LASTEXITCODE -ne 0) { throw 'Clean Windows runtime gate failed' }
       - name: Publish pinned Windows SDK artifact
         uses: actions/upload-artifact@v4
         with:
@@ -234,6 +255,12 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           submodules: recursive
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: "24.14.0"
+          cache: npm
+      - name: Build installable author tooling
+        run: npm ci --ignore-scripts && npm run build
       - run: brew install autoconf automake libtool nasm pkg-config
       - uses: lukka/get-cmake@80ed063af494e28dd56b85fb7a630f2f8f55ceed
       - uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2
@@ -265,6 +292,10 @@ jobs:
         env:
           PRISMATIX_VISUAL_OUTPUT_DIR: ${{ github.workspace }}/out/ci/visual/macos
         run: ctest --test-dir out/ci/sdk-apple-clang -E '^PrismatiX\.Player\.CatalogNativeAcceptance$' --output-on-failure --timeout 300 --no-tests=error
+      - name: Verify clean macOS runtime bundle and packaged Player
+        run: |
+          cmake --install out/ci/sdk-apple-clang --prefix out/ci/runtime-macos --component PrismatiXRuntime
+          PRISMATIX_PHASE1_RUNTIME="${{ github.workspace }}/out/ci/runtime-macos" npm run phase1:acceptance
       - name: Publish macOS GPU visual matrix
         if: always()
         uses: actions/upload-artifact@v4
@@ -311,6 +342,9 @@ jobs:
           test -n "$contract" && test -s "$contract"
           grep -q 'createPrismatiXPreview' "$module"
           node scripts/test-wasm-preview.mjs "$module"
+          browser="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium)"
+          test -n "$browser"
+          node scripts/test-wasm-preview-browser.mjs "$module" "$browser"
           echo "module=$module"
           echo "wasm=$wasm"
           echo "contract=$contract"

@@ -500,7 +500,7 @@ void TestEmbeddedUIAnimationParity() {
     library.machine.entry = stateId;
     library.machine.states.push_back({ stateId, "Default", clipId, { 80, 80 } });
     scene.properties["animations"] = px::ui::WriteUIAnimationLibrary(library);
-    const auto loaded = px::ui::InstantiateUIScene(scene, nullptr, px::ui::FormatterRegistry{});
+    const auto loaded = px::ui::InstantiateLegacyUISceneForMigration(scene, nullptr, px::ui::FormatterRegistry{});
     Check(loaded && loaded.Value().animations.has_value(), "strict UI scene loader must parse the v5 Animation Library used by Preview and Player");
     if (loaded && loaded.Value().animations) {
         auto& control = *loaded.Value().root;
@@ -513,7 +513,7 @@ void TestEmbeddedUIAnimationParity() {
         Check(std::abs(control.Opacity() - 1.0f) < .001f, "animation preview must restore the design state");
     }
     scene.properties["animations"] = px::VariantObject{};
-    Check(!px::ui::InstantiateUIScene(scene, nullptr, px::ui::FormatterRegistry{}), "malformed v5 Animation Libraries must fail strict scene loading");
+    Check(!px::ui::InstantiateLegacyUISceneForMigration(scene, nullptr, px::ui::FormatterRegistry{}), "malformed v5 Animation Libraries must fail strict scene loading");
 }
 
 void TestUIAnimationStateMachine() {

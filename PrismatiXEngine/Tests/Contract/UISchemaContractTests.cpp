@@ -30,7 +30,7 @@ int main() {
         const auto parsed = px::resource::ParseTypedDocument(text, "current.pxscene");
         suite.Expect(parsed && parsed.Value().properties.at("uiSchemaVersion") ==
                                    px::Variant(std::int64_t{5}) &&
-                         static_cast<bool>(px::ui::InstantiateUIScene(
+                         static_cast<bool>(px::ui::InstantiateLegacyUISceneForMigration(
                              parsed.Value(), nullptr, px::ui::FormatterRegistry{})),
                      "current strict v5 scene round-trips and instantiates without migration");
     });
@@ -40,14 +40,14 @@ int main() {
                      "built-in UI metadata registers for strict rejection");
         auto scene = Scene();
         scene.properties["uiSchemaVersion"] = std::int64_t{4};
-        suite.Expect(!px::ui::InstantiateUIScene(scene, nullptr,
+        suite.Expect(!px::ui::InstantiateLegacyUISceneForMigration(scene, nullptr,
                                                  px::ui::FormatterRegistry{}),
                      "v4 is rejected with no compatibility branch");
         scene.properties["uiSchemaVersion"] = std::int64_t{5};
         for (const char* legacy : {"command", "themeVariant", "zOrder"}) {
             scene.nodes.front().properties.clear();
             scene.nodes.front().properties[legacy] = std::string("legacy");
-            suite.Expect(!px::ui::InstantiateUIScene(scene, nullptr,
+            suite.Expect(!px::ui::InstantiateLegacyUISceneForMigration(scene, nullptr,
                                                      px::ui::FormatterRegistry{}),
                          std::string("removed property is rejected: ") + legacy);
         }
@@ -65,7 +65,7 @@ int main() {
                                {"action", std::string("choice.select")},
                                {"arguments", px::VariantObject{{"index", std::int64_t{2}}}},
                                {"reentry", std::string("Allow")}}}};
-        const auto loaded = px::ui::InstantiateUIScene(
+        const auto loaded = px::ui::InstantiateLegacyUISceneForMigration(
             scene, nullptr, px::ui::FormatterRegistry{});
         suite.Expect(loaded && loaded.Value().triggers.size() == 1 &&
                          loaded.Value().triggers.front().action == "choice.select",
@@ -74,7 +74,7 @@ int main() {
             px::VariantObject{{"kind", std::string("action")},
                               {"action", std::string("choice.select")},
                               {"arguments", px::VariantObject{{"index", std::int64_t{2}}}}};
-        suite.Expect(!px::ui::InstantiateUIScene(scene, nullptr,
+        suite.Expect(!px::ui::InstantiateLegacyUISceneForMigration(scene, nullptr,
                                                  px::ui::FormatterRegistry{}),
                      "unknown signal is rejected by typed schema contract");
     });

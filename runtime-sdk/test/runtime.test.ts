@@ -56,7 +56,7 @@ const engine = {
   RollbackBacklog: (sequence: number) => { calls.push(`rollback:${sequence}`); return sequence === 17; },
   GetSettings: () => ({
     bgmVolume: 96, seVolume: 110, voiceVolume: 128, textSpeedMs: 28,
-    autoWaitMs: 1400, skipReadOnly: true, skipAfterChoices: false,
+    autoWaitMs: 1400, skipReadOnly: true,
     fullscreen: false, windowWidth: 1280, windowHeight: 720, language: "zh-TW",
     textScale: 1, highContrast: false, reducedMotion: false, selfVoicing: false,
     supportedLocales: ["zh-TW", "ja-JP"], custom: {routeHints: true},

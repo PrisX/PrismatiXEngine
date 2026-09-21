@@ -227,12 +227,28 @@ function localeRuntimePath(locale: string, extension: "pxir" | "pxmap"): string 
   return `Runtime/Locales/${locale}/main.${extension}`;
 }
 
-function localizedArguments(operation: RuntimeIrDocument["operations"][number]):
+function localizedArguments(
+  operation: RuntimeIrDocument["operations"][number],
+  customResourceParameters: ReadonlyMap<string, ReadonlySet<string>>,
+):
 Readonly<Record<string, string>> {
-  if (!["dialogue", "narration", "choiceOption"].includes(operation.kind))
-    return operation.arguments;
   const result: Record<string, string> = {...operation.arguments};
-  delete result.text;
+  if (["dialogue", "narration", "choiceOption"].includes(operation.kind))
+    delete result.text;
+  if (["background", "voice", "bgm", "soundEffect"].includes(operation.kind))
+    delete result.asset;
+  if (operation.kind === "customNode") {
+    const parameters = customResourceParameters.get(result.type ?? "");
+    if (parameters !== undefined && result.value !== undefined) {
+      const decoded = JSON.parse(result.value) as unknown;
+      if (decoded !== null && typeof decoded === "object" &&
+          !Array.isArray(decoded)) {
+        const normalized = {...decoded as Record<string, JsonValue>};
+        for (const parameter of parameters) delete normalized[parameter];
+        result.value = canonicalJson(normalized, false).trim();
+      }
+    }
+  }
   return result;
 }
 
@@ -240,6 +256,7 @@ function alignLocalizedProgram(
   locale: string,
   base: {readonly runtimeIr: RuntimeIrDocument; readonly sourceMap: RuntimeSourceMap},
   localized: {readonly runtimeIr: RuntimeIrDocument; readonly sourceMap: RuntimeSourceMap},
+  customResourceParameters: ReadonlyMap<string, ReadonlySet<string>>,
   diagnostics: AuthoringDiagnostic[],
 ): {runtimeIr: RuntimeIrDocument; sourceMap: RuntimeSourceMap} | undefined {
   if (localized.runtimeIr.operations.length !== base.runtimeIr.operations.length ||
@@ -254,8 +271,8 @@ function alignLocalizedProgram(
   const operations = localized.runtimeIr.operations.map((operation, index) => {
     const canonical = base.runtimeIr.operations[index]!;
     if (operation.kind !== canonical.kind ||
-        canonicalJson(localizedArguments(operation), false) !==
-          canonicalJson(localizedArguments(canonical), false)) {
+        canonicalJson(localizedArguments(operation, customResourceParameters), false) !==
+          canonicalJson(localizedArguments(canonical, customResourceParameters), false)) {
       invalid = true;
       diagnostics.push(issue("PXBUILD1031",
         `Story locale ${locale} changes control flow or a non-localizable command at operation ${index}`,
@@ -532,19 +549,32 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       }
     }
   }
-  const compileLocale = (locale: string) => compileStoryProject({
-      storyIndex,
-      locale,
-      sourceFiles,
-      storyIndexPath: project.storyIndex,
-      documentId: project.id,
-      ...(input.committedRevision === undefined ? {} : {committedRevision: input.committedRevision}),
-      characters,
-      game,
-      extensions,
-      resources: resourcePaths,
-      resourceAssets,
-    });
+  const compileLocale = (locale: string) => {
+    const document = localeDocuments.get(locale);
+    const localizedResources: Record<string, string> = {};
+    if (document !== null && typeof document === "object" &&
+        !Array.isArray(document)) {
+      const resources = (document as Record<string, JsonValue>).resources;
+      if (resources !== null && typeof resources === "object" &&
+          !Array.isArray(resources)) {
+        for (const [id, value] of Object.entries(resources))
+          if (typeof value === "string") localizedResources[id] = value;
+      }
+    }
+    return compileStoryProject({
+        storyIndex,
+        locale,
+        sourceFiles,
+        storyIndexPath: project.storyIndex,
+        documentId: project.id,
+        ...(input.committedRevision === undefined ? {} : {committedRevision: input.committedRevision}),
+        characters,
+        game,
+        extensions,
+        resources: {...resourcePaths, ...localizedResources},
+        resourceAssets,
+      });
+  };
   const compiled = compileLocale(project.defaultLocale);
   diagnostics.push(...compiled.diagnostics);
   if (!compiled.valid || compiled.runtimeIr === undefined || compiled.sourceMap === undefined) {
@@ -562,6 +592,13 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     runtimeIr: RuntimeIrDocument; sourceMap: RuntimeSourceMap;
     runtimeIrPath: string; sourceMapPath: string;
   }> = {};
+  const customResourceParameters = new Map<string, ReadonlySet<string>>(
+    extensions.map((extension) => extension.commands.map((command) => [
+      command.id,
+      new Set(command.parameters.filter((parameter) =>
+        parameter.type === "resource").map((parameter) => parameter.name)),
+    ] as const)).flat(),
+  );
   const storyResourcePaths = new Set(compiled.resourceDependencies ?? []);
   for (const locale of project.supportedLocales) {
     const localized = locale === project.defaultLocale ? compiled : compileLocale(locale);
@@ -575,6 +612,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       : alignLocalizedProgram(locale,
         {runtimeIr: compiled.runtimeIr, sourceMap: compiled.sourceMap},
         {runtimeIr: localized.runtimeIr, sourceMap: localized.sourceMap},
+        customResourceParameters,
         diagnostics);
     if (aligned === undefined) continue;
     localeArtifacts[locale] = {
@@ -610,10 +648,19 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   }
   for (const [locale, value] of localeDocuments) {
     if (value === null || typeof value !== "object" || Array.isArray(value)) continue;
-    const fontChain = (value as Record<string, JsonValue>).fontChain;
-    if (!Array.isArray(fontChain)) continue;
-    for (const font of fontChain)
-      addResourceRef(font, `Content/Localization/${locale}.json:fontChain`);
+    const localeValue = value as Record<string, JsonValue>;
+    const fontChain = localeValue.fontChain;
+    if (Array.isArray(fontChain)) {
+      for (const font of fontChain)
+        addResourceRef(font, `Content/Localization/${locale}.json:fontChain`);
+    }
+    const resources = localeValue.resources;
+    if (resources !== null && typeof resources === "object" &&
+        !Array.isArray(resources)) {
+      for (const [id, resource] of Object.entries(resources))
+        addResourceRef(resource,
+          `Content/Localization/${locale}.json:resources.${id}`);
+    }
   }
   const dependencyCollection = collectProjectDependencies({
     assets: resourceAssets,

@@ -45,7 +45,6 @@ public:
 
     void Reset(bool keepPersistent);
 
-    [[nodiscard]] const std::unordered_map<std::string, int>& All() const { return m_values; }
     [[nodiscard]] const std::unordered_map<std::string, VariableEntry>& Values() const {
         return m_typedValues;
     }
@@ -54,7 +53,6 @@ public:
     }
 
 private:
-    std::unordered_map<std::string, int> m_values;
     std::unordered_map<std::string, VariableEntry> m_typedValues;
     std::set<std::string> m_profileKeys;
     ProfileWriteHandler m_profileWrite;

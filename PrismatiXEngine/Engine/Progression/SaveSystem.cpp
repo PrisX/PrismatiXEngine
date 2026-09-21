@@ -1332,7 +1332,7 @@ bool SaveSystem::Save(int slot, const SaveSnapshot& s) {
         auto existing = LoadJsonWithFallback(
             path, m_encrypt ? &m_key : nullptr, m_fallbackKeys);
         if (!existing.Loaded() ||
-            !ParseSaveEnvelopeV2(existing.value->dump(), path)) {
+            !ParseSaveEnvelope(existing.value->dump(), path)) {
             SaveLoadError(
                 path,
                 "Existing save is unreadable; refusing to overwrite its only copy");
@@ -1399,7 +1399,7 @@ bool SaveSystem::Save(int slot, const SaveSnapshot& s) {
     }
 }
 
-std::optional<SaveSnapshot> ParseSaveEnvelopeV2(
+std::optional<SaveSnapshot> ParseSaveEnvelope(
     const std::string_view text, const std::string_view sourcePath) {
     constexpr std::size_t kMaxSaveEnvelopeBytes = 64u * 1024u * 1024u;
     const std::string path(sourcePath);
@@ -1507,7 +1507,7 @@ std::optional<SaveSnapshot> SaveSystem::Load(int slot) const {
     auto loaded = LoadJsonWithFallback(
         SlotPath(slot), m_encrypt ? &m_key : nullptr, m_fallbackKeys);
     if (!loaded.Loaded()) return std::nullopt;
-    return ParseSaveEnvelopeV2(loaded.value->dump(), SlotPath(slot));
+    return ParseSaveEnvelope(loaded.value->dump(), SlotPath(slot));
 }
 
 SlotInfo SaveSystem::Peek(int slot) const {

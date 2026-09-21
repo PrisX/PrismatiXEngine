@@ -95,9 +95,16 @@ cmake --build --preset macos-debug
 On Windows, the maintained presets include `x64-debug`, `x64-relwithdebinfo`, and `x64-release`:
 
 ```powershell
+$env:VCPKG_ROOT = "C:\path\to\vcpkg"
+# Run from a Visual Studio Developer PowerShell with Ninja on PATH.
 cmake --preset x64-debug
 cmake --build --preset x64-debug
 ```
+
+Presets intentionally contain no user-specific Visual Studio, Windows SDK,
+Ninja, Homebrew, or vcpkg paths. Windows compiler discovery comes from the
+Developer PowerShell environment; `VCPKG_ROOT` selects the dependency
+toolchain.
 
 Runtime and test binaries are generated under `out/build/<preset>/PrismatiXEngine/`. Install the redistributable runtime component to a staging prefix before running the real Phase 1 acceptance gate:
 
@@ -126,6 +133,12 @@ PrismatiXEngine/
 ```
 
 Runtime extensions live under `Content/Extensions/`. Custom Stage shaders use the bounded [`.pxeffect` contract](docs/custom-effects.md); packages contain fingerprinted SPIR-V, DXIL, and MSL artifacts, never author HLSL or a runtime shader compiler. The canonical public C++ UI contract is `Engine/SDK/Ui.h`; the 0.1 `StudioUi` compatibility surface was removed in the 0.2 breaking release.
+
+The [0.2.0 delivery contract](docs/releases/0.2.0.md) defines supported native
+shipping targets and required clean-machine/browser gates. Release artifacts
+carry the [third-party notice inventory](THIRD_PARTY_NOTICES.md) and
+[asset provenance](ASSET_PROVENANCE.json); the Emscripten build is a Studio
+Preview, not a web-game distribution.
 
 ## License
 

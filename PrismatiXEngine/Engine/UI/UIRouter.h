@@ -1,7 +1,6 @@
 #pragma once
 
 #include "Engine/Core/Result.h"
-#include "Engine/Resources/ResourceRef.h"
 #include "Engine/UI/Control.h"
 
 #include <functional>
@@ -15,10 +14,6 @@
 namespace px::ui {
 
 using RouteId = std::string;
-struct UISceneResourceTag {};
-
-enum class RouteCachePolicy : std::uint8_t { Recreate, KeepAlive };
-
 struct RouteTransition {
     // Empty selects a registered route-pair default; "none" explicitly
     // disables it.
@@ -36,26 +31,9 @@ struct ActiveRouteTransition {
     bool modal = false;
 };
 
-struct RouteDescriptor {
-    RouteId id;
-    resource::ResourceRef<UISceneResourceTag> scene;
-    RouteCachePolicy cachePolicy = RouteCachePolicy::Recreate;
-};
-
 struct RouteState {
     std::vector<RouteId> stack;
     std::vector<RouteId> modals;
-};
-
-class RouteTable {
-public:
-    Status Register(RouteDescriptor descriptor);
-    [[nodiscard]] const RouteDescriptor* Find(std::string_view id) const;
-    [[nodiscard]] const std::vector<RouteDescriptor>& Routes() const { return m_routes; }
-
-private:
-    std::vector<RouteDescriptor> m_routes;
-    std::unordered_map<RouteId, std::size_t> m_byId;
 };
 
 class UIRouter {

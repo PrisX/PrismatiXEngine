@@ -3,8 +3,6 @@
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/Resources/TypedDocument.h"
 
-#include <nlohmann/json.hpp>
-
 #include <unordered_map>
 #include <unordered_set>
 
@@ -18,33 +16,6 @@ ResourceRefValue Resource(const resource::NodeRecord& node,const char* key){cons
 Value CatalogScalar(const sdk::GameCatalogVariable& variable) {
     return std::visit([](const auto& value) -> Value { return Value(value); },
                       variable.typedDefault);
-}
-std::optional<Value> JsonValue(const nlohmann::json& source, const int depth = 0) {
-    if (depth > 32) return std::nullopt;
-    if (source.is_null()) return Value{};
-    if (source.is_boolean()) return Value(source.get<bool>());
-    if (source.is_number_integer()) return Value(source.get<std::int64_t>());
-    if (source.is_number()) return Value(source.get<double>());
-    if (source.is_string()) return Value(source.get<std::string>());
-    if (source.is_array()) {
-        ValueList values;
-        for (const auto& item : source) {
-            auto value = JsonValue(item, depth + 1);
-            if (!value) return std::nullopt;
-            values.push_back(std::move(*value));
-        }
-        return Value(std::move(values));
-    }
-    if (source.is_object()) {
-        ValueMap values;
-        for (auto item = source.begin(); item != source.end(); ++item) {
-            auto value = JsonValue(item.value(), depth + 1);
-            if (!value) return std::nullopt;
-            values.emplace(item.key(), std::move(*value));
-        }
-        return Value(std::move(values));
-    }
-    return std::nullopt;
 }
 }
 
@@ -95,26 +66,16 @@ Status GameCatalog::LoadCanonical(
         }
         gallery.push_back(std::move(item));
     }
-    std::vector<CatalogUnlockable> unlockables;
-    for (const auto& source : loaded.document.unlockables) {
-        const auto payloadJson = nlohmann::json::parse(source.payloadJson, nullptr, false);
-        auto payload = payloadJson.is_discarded() ? std::optional<Value>{}
-                                                  : JsonValue(payloadJson);
-        if (!payload) return Status::Fail(CatalogError("PXCAT1115", "Unlockable payload is invalid", sourcePath));
-        unlockables.push_back({source.id, source.kind, source.condition,
-                               std::move(*payload)});
-    }
     m_variables = std::move(variables);
     m_gallery = std::move(gallery);
     m_input.clear();
     for (const auto& source : loaded.document.inputBindings)
         m_input.push_back({source.key, source.command, source.argument});
-    m_unlockables = std::move(unlockables);
     return Status::Ok();
 }
 
-Status GameCatalog::Load(std::string_view text,const std::string& sourcePath){
-    const Status runtimeResources = LoadRuntimeResources(
+Status GameCatalog::LoadLegacyForMigration(std::string_view text,const std::string& sourcePath){
+    const Status runtimeResources = LoadLegacyRuntimeResourcesForMigration(
         text, sourcePath,
         sdk::LegacyGameCatalogPolicy::AllowCharacterNodes,
         sdk::LegacyGalleryReferencePolicy::AllowPathStrings);
@@ -157,7 +118,7 @@ Status GameCatalog::Load(std::string_view text,const std::string& sourcePath){
     return Status::Ok();
 }
 
-Status GameCatalog::LoadRuntimeResources(
+Status GameCatalog::LoadLegacyRuntimeResourcesForMigration(
     const std::string_view text, const std::string& sourcePath,
     const sdk::LegacyGameCatalogPolicy legacyPolicy,
     const sdk::LegacyGalleryReferencePolicy galleryPolicy,

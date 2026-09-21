@@ -1,8 +1,7 @@
 #include "Engine/UI/Startup/SplashSequencePlayer.h"
 
 #include "Engine/Diagnostics/Diagnostic.h"
-#include "Engine/UI/UISceneLoader.h"
-#include "Engine/UI/UITypeRegistry.h"
+#include "Engine/UI/UiApplication.h"
 
 #include <algorithm>
 #include <cmath>
@@ -38,7 +37,6 @@ Status SplashSequencePlayer::Start(std::vector<SplashScreenEntry> entries,
     m_reducedMotion = reducedMotion;
     m_skipRequested = false;
     m_completionSent = false;
-    m_bindings.clear();
     if (m_entries.empty()) {
         Finish();
         return Status::Ok();
@@ -52,15 +50,6 @@ Status SplashSequencePlayer::Start(std::vector<SplashScreenEntry> entries,
 void SplashSequencePlayer::Emit(diag::Diagnostic diagnostic) const {
     if (m_services.diagnostics) m_services.diagnostics(diagnostic);
     else diag::Emit(std::move(diagnostic));
-}
-
-float SplashSequencePlayer::AnimationDuration(const UIAnimationLibrary& library,
-                                              const std::string_view state) {
-    if (state.empty()) return 0.0f;
-    const auto* descriptor = library.machine.FindState(state);
-    if (!descriptor) return 0.0f;
-    const auto* clip = library.FindClip(descriptor->clip);
-    return clip ? std::max(0.0f, clip->duration) : 0.0f;
 }
 
 bool SplashSequencePlayer::LoadCurrent() {
@@ -80,50 +69,25 @@ bool SplashSequencePlayer::LoadCurrent() {
                                entry.scene.lastKnownPath));
         return false;
     }
-    if (document.Value().kind != resource::DocumentKind::Scene ||
-        document.Value().type != "UIScene") {
-        Emit(RuntimeDiagnostic(diag::Severity::Error, "PXBOOT1103",
-                               "Splash resource is not a typed UIScene; skipping entry", m_index,
-                               entry.scene.lastKnownPath));
+    UiApplication application(m_context);
+    auto applied = application.ApplyDocument(
+        document.Value(),
+        {.sourcePath=entry.scene.lastKnownPath,
+         .resolveAsset=m_services.resolveAsset,
+         .loadComponent=m_services.loadComponent,
+         .previewSafeMode=false,
+         .diagnosticOverlay=false});
+    if (!applied) {
+        for (const auto& diagnostic : applied.Diagnostics()) Emit(diagnostic);
         return false;
     }
-    (void)RegisterBuiltinUITypes();
-    auto loaded = InstantiateUIScene(document.Value(), nullptr, m_context.Formatters(),
-                                     m_services.loadScene);
-    if (!loaded) {
-        for (const auto& diagnostic : loaded.Diagnostics()) Emit(diagnostic);
-        return false;
-    }
-    m_bindings = std::move(loaded.Value().bindings);
-    auto animations = std::move(loaded.Value().animations);
-    m_context.SetTheme(loaded.Value().theme ? std::move(*loaded.Value().theme) : Theme{});
-    const Status root = m_context.SetRoot(std::move(loaded.Value().root));
-    if (!root) {
-        for (const auto& diagnostic : root.Diagnostics()) Emit(diagnostic);
-        return false;
-    }
-    m_enterDuration = 0.0f;
-    m_exitDuration = 0.0f;
-    if (animations) {
-        m_enterDuration = m_reducedMotion
-                              ? 0.0f
-                              : AnimationDuration(*animations, entry.enterAnimation);
-        m_exitDuration = m_reducedMotion
-                             ? 0.0f
-                             : AnimationDuration(*animations, entry.exitAnimation);
-        const Status installed = m_context.SetAnimations(std::move(*animations), false);
-        if (!installed) {
-            for (const auto& diagnostic : installed.Diagnostics()) Emit(diagnostic);
-            return false;
-        }
-    }
-    const Status triggers = m_context.ConfigureTriggers(
-        std::move(loaded.Value().triggers), std::move(loaded.Value().interactionGraph),
-        entry.scene.lastKnownPath);
-    if (!triggers) {
-        for (const auto& diagnostic : triggers.Diagnostics()) Emit(diagnostic);
-        return false;
-    }
+    m_enterDuration = m_reducedMotion
+                          ? 0.0f
+                          : m_context.AnimationDuration(entry.enterAnimation);
+    m_exitDuration = m_reducedMotion
+                         ? 0.0f
+                         : m_context.AnimationDuration(entry.exitAnimation);
+    if (m_reducedMotion) (void)m_context.StopAnimation(true);
 
     if (!entry.enterAnimation.empty() && !m_reducedMotion && m_enterDuration <= 0.0f)
         Emit(RuntimeDiagnostic(diag::Severity::Warning, "PXBOOT1104",

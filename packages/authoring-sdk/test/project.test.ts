@@ -145,6 +145,21 @@ test("compileProject rejects UI component interfaces that the native Runtime can
 });
 
 test("compileProject publishes aligned RuntimeIR and source maps for every Story locale", () => {
+  const extensionPath = "Content/Extensions/localized.pxextension";
+  const localizedExtension = {
+    format: "PrismatiXExtension", schemaRevision: 2, language: "javascript",
+    id: "localized-media", version: "1.0.0",
+    requiredEngineVersion: ">=0.2.0 <0.3.0", entry: "localized.js",
+    capabilities: ["runtime"],
+    safety: {previewSafe: true, deterministic: true, seekSafe: true,
+      rollbackSafe: true},
+    commands: [{id: "localized.cue", displayName: "Localized cue",
+      rollback: "reversible", capabilities: ["runtime"], parameters: [
+        {name: "media", type: "resource", required: true},
+        {name: "cue", type: "string", required: true},
+      ]}],
+    actions: [],
+  };
   const bilingualIndex = {
     ...storyIndex,
     scenes: [{id: "scene01", sources: {
@@ -153,25 +168,38 @@ test("compileProject publishes aligned RuntimeIR and source maps for every Story
     }}],
   };
   const compile = (japanese: string) => compileProject({
-    project: {...project, supportedLocales: ["zh-TW", "ja-JP"]},
+    project: {...project, supportedLocales: ["zh-TW", "ja-JP"],
+      extensions: [extensionPath]},
     documents: {
       "Story/story.pxindex": bilingualIndex,
       "Content/game.pxgame": game,
       "Content/UI/Title.pxui": ui,
+      [extensionPath]: localizedExtension,
     },
     sourceFiles: {
-      "Story/zh-TW/scene01.pxstory": "*start\n@hero\n早安。\n[choice text=留下 goto=end]\n*end\n[end]\n",
+      "Story/zh-TW/scene01.pxstory": "*start\n[bg asset=opening.background]\n[voice asset=opening.voice]\n[localized.cue media=opening.voice cue=opening]\n@hero\n早安。\n[choice text=留下 goto=end]\n*end\n[end]\n",
       "Story/ja-JP/scene01.pxstory": japanese,
+      "Content/Extensions/localized.js": "export {};",
+      "Assets/zh-TW/opening.webp": "localized-image-zh",
+      "Assets/ja-JP/opening.webp": "localized-image-ja",
+      "Assets/zh-TW/opening.ogg": "localized-voice-zh",
+      "Assets/ja-JP/opening.ogg": "localized-voice-ja",
     },
     locales: {
       "zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
-        locale: "zh-TW", strings: {}},
+        locale: "zh-TW", strings: {}, resources: {
+          "opening.background": "Assets/zh-TW/opening.webp",
+          "opening.voice": "Assets/zh-TW/opening.ogg",
+        }},
       "ja-JP": {format: "PrismatiXLocale", schemaRevision: 2,
-        locale: "ja-JP", strings: {}},
+        locale: "ja-JP", strings: {}, resources: {
+          "opening.background": "Assets/ja-JP/opening.webp",
+          "opening.voice": "Assets/ja-JP/opening.ogg",
+        }},
     },
   });
 
-  const valid = compile("*start\n@hero\nおはよう。\n[choice text=残る goto=end]\n*end\n[end]\n");
+  const valid = compile("*start\n[bg asset=opening.background]\n[voice asset=opening.voice]\n[localized.cue media=opening.voice cue=opening]\n@hero\nおはよう。\n[choice text=残る goto=end]\n*end\n[end]\n");
   assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
   const base = valid.artifact!.localeArtifacts["zh-TW"]!;
   const localized = valid.artifact!.localeArtifacts["ja-JP"]!;
@@ -182,10 +210,25 @@ test("compileProject publishes aligned RuntimeIR and source maps for every Story
   assert.notEqual(localized.runtimeIr.operations.find((operation) =>
     operation.kind === "dialogue")?.arguments.text,
   base.runtimeIr.operations.find((operation) => operation.kind === "dialogue")?.arguments.text);
+  assert.equal(base.runtimeIr.operations.find((operation) =>
+    operation.kind === "background")?.arguments.asset,
+  "Assets/zh-TW/opening.webp");
+  assert.equal(localized.runtimeIr.operations.find((operation) =>
+    operation.kind === "background")?.arguments.asset,
+  "Assets/ja-JP/opening.webp");
+  assert.equal(localized.runtimeIr.operations.find((operation) =>
+    operation.kind === "voice")?.arguments.asset,
+  "Assets/ja-JP/opening.ogg");
+  const localizedCue = localized.runtimeIr.operations.find((operation) =>
+    operation.kind === "customNode")?.arguments.value;
+  assert.equal(JSON.parse(localizedCue ?? "{}").media,
+    "Assets/ja-JP/opening.ogg");
+  assert.ok(valid.artifact!.dependencies.some((dependency) =>
+    dependency.source === "Assets/ja-JP/opening.ogg"));
   assert.ok(valid.artifact!.files["Runtime/Locales/ja-JP/main.pxmap"]?.includes(
     "Story/ja-JP/scene01.pxstory"));
 
-  const structurallyDifferent = compile("*start\n@hero\nおはよう。\n[set route=branch]\n[choice text=残る goto=end]\n*end\n[end]\n");
+  const structurallyDifferent = compile("*start\n[bg asset=opening.background]\n[voice asset=opening.voice]\n[localized.cue media=opening.voice cue=opening]\n@hero\nおはよう。\n[set route=branch]\n[choice text=残る goto=end]\n*end\n[end]\n");
   assert.equal(structurallyDifferent.valid, false);
   assert.ok(structurallyDifferent.diagnostics.some((diagnostic) =>
     diagnostic.code === "PXBUILD1030" || diagnostic.code === "PXBUILD1031"));

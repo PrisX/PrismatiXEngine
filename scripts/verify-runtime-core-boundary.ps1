@@ -14,8 +14,7 @@ foreach ($root in $coreRoots) {
     $violations += $matches
 }
 $coreProgressionFiles = @(
-    "CGGallery.cpp", "CGGallery.h", "GlobalProfile.cpp", "GlobalProfile.h",
-    "SceneUnlock.cpp", "SceneUnlock.h"
+    "GlobalProfile.cpp", "GlobalProfile.h"
 )
 $progressionRoot = Join-Path $engineRoot "Progression"
 foreach ($name in $coreProgressionFiles) {

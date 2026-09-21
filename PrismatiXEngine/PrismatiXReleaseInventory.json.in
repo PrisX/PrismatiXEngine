@@ -1,0 +1,23 @@
+{
+  "format": "PrismatiXReleaseInventory",
+  "schemaRevision": 1,
+  "version": "0.2.0",
+  "engineCommit": "@PRISMATIX_ENGINE_COMMIT@",
+  "target": "@PRISMATIX_TARGET_TRIPLE@",
+  "archiveFormat": "PDX5",
+  "runtimeManifest": "runtime-manifest.json",
+  "notices": [
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "ASSET_PROVENANCE.json",
+    "licenses/"
+  ],
+  "documentation": ["docs/releases/0.2.0.md"],
+  "shipping": {
+    "desktopPlayer": true,
+    "browserPreview": true,
+    "webGame": false,
+    "mobile": false,
+    "console": false
+  }
+}

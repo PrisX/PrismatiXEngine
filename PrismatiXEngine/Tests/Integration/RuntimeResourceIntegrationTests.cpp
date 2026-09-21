@@ -330,7 +330,7 @@ void TestDesignerImageAndTextProperties() {
     rich.properties = {{"markup", std::string("[ruby=かんじ]漢字[/ruby]")},
                        {"vertical", true}, {"verticalRows", std::int64_t{8}}};
     scene.nodes = { root, image, label, button, rich };
-    const auto loaded = px::ui::InstantiateUIScene(scene, nullptr, px::ui::FormatterRegistry{});
+    const auto loaded = px::ui::InstantiateLegacyUISceneForMigration(scene, nullptr, px::ui::FormatterRegistry{});
     bool valid = static_cast<bool>(loaded);
     if (valid) {
         const auto* texture = dynamic_cast<const px::ui::TextureRect*>(loaded.Value().root->Find(image.id));
@@ -391,13 +391,13 @@ void TestDesignerRewriteContracts() {
     button.id = px::Uuid::Random();
     button.type = "Button";
     scene.nodes.push_back(button);
-    Check(!px::ui::InstantiateUIScene(scene, nullptr, px::ui::FormatterRegistry{}), "strict UI schema must reject v4 without a compatibility branch");
+    Check(!px::ui::InstantiateLegacyUISceneForMigration(scene, nullptr, px::ui::FormatterRegistry{}), "strict UI schema must reject v4 without a compatibility branch");
     scene.properties["uiSchemaVersion"] = std::int64_t{ 5 };
     scene.nodes[0].properties["command"] = std::string("game.start");
-    Check(!px::ui::InstantiateUIScene(scene, nullptr, px::ui::FormatterRegistry{}), "strict UI schema must reject command instead of migrating it");
+    Check(!px::ui::InstantiateLegacyUISceneForMigration(scene, nullptr, px::ui::FormatterRegistry{}), "strict UI schema must reject command instead of migrating it");
     scene.nodes[0].properties.erase("command");
     scene.nodes[0].properties["themeVariant"] = std::string("Button");
-    Check(!px::ui::InstantiateUIScene(scene, nullptr, px::ui::FormatterRegistry{}), "strict UI schema must reject themeVariant instead of migrating it");
+    Check(!px::ui::InstantiateLegacyUISceneForMigration(scene, nullptr, px::ui::FormatterRegistry{}), "strict UI schema must reject themeVariant instead of migrating it");
 }
 
 

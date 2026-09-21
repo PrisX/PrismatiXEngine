@@ -9,8 +9,6 @@
 #include "Engine/UI/Widgets.h"
 #include "Engine/UI/Styles/StyleSerialization.h"
 
-#include <fstream>
-#include <sstream>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -35,9 +33,9 @@ Result<std::unique_ptr<Control>> CreateControl(const resource::NodeRecord& recor
 }
 }
 
-Result<LoadedUIScene> InstantiateUIScene(const resource::TypedDocument& document, IViewModel* viewModel,
-                                         const FormatterRegistry& formatters,
-                                         const UIDocumentLoader& loader) {
+Result<LoadedUIScene> InstantiateLegacyUISceneForMigration(
+    const resource::TypedDocument& document, IViewModel* viewModel,
+    const FormatterRegistry& formatters, const UIDocumentLoader& loader) {
     const Status registration = RegisterBuiltinUITypes();
     if (!registration) return Result<LoadedUIScene>::Failure(registration.Diagnostics());
     if (document.kind != resource::DocumentKind::Scene)
@@ -145,35 +143,11 @@ Result<LoadedUIScene> InstantiateUIScene(const resource::TypedDocument& document
     return Result<LoadedUIScene>::Success(std::move(loaded));
 }
 
-Result<LoadedUIScene> InstantiateUIScene(const resource::TypedDocument& document, IViewModel* viewModel,
-                                         const FormatterRegistry& formatters) {
-    return InstantiateUIScene(document, viewModel, formatters, {});
-}
-
-Result<LoadedUIScene> LoadUIScene(const std::filesystem::path& path, IViewModel* viewModel,
-                                  const FormatterRegistry& formatters) {
-    std::ifstream stream(path, std::ios::binary);
-    if (!stream) {
-        auto d = SceneError("PXUI2616", "Cannot open typed UI scene: " + path.string()); d.source.path = path.string();
-        return Result<LoadedUIScene>::Failure(std::move(d));
-    }
-    std::ostringstream text; text << stream.rdbuf();
-    auto document = resource::ParseTypedDocument(text.str(), path.string());
-    if (!document) { for (const auto& d : document.Diagnostics()) diag::Emit(d); return Result<LoadedUIScene>::Failure(document.Diagnostics()); }
-    const UIDocumentLoader loader=[&path](const ResourceRefValue& reference)->Result<resource::TypedDocument>{
-        std::filesystem::path candidate=reference.lastKnownPath;
-        if(candidate.is_relative()){
-            auto parent=path.parent_path();
-            while(!parent.empty()){
-                const auto resolved=parent/candidate;
-                if(std::filesystem::exists(resolved)){candidate=resolved;break;}
-                const auto next=parent.parent_path();if(next==parent)break;parent=next;
-            }
-        }
-        std::ifstream input(candidate,std::ios::binary);if(!input)return Result<resource::TypedDocument>::Failure(SceneError("PXUI2627","Referenced UI resource was not found: "+candidate.string()));
-        std::ostringstream buffer;buffer<<input.rdbuf();return resource::ParseTypedDocument(buffer.str(),candidate.string());
-    };
-    return InstantiateUIScene(document.Value(), viewModel, formatters, loader);
+Result<LoadedUIScene> InstantiateLegacyUISceneForMigration(
+    const resource::TypedDocument& document, IViewModel* viewModel,
+    const FormatterRegistry& formatters) {
+    return InstantiateLegacyUISceneForMigration(document, viewModel, formatters,
+                                                 {});
 }
 
 }  // namespace px::ui

@@ -1,4 +1,4 @@
-#include "Engine/UI/Animation.h"
+#include "Engine/SDK/Ui.h"
 #include "Engine/UI/Startup/SplashSequencePlayer.h"
 #include "Engine/UI/UITypeRegistry.h"
 #include "Tests/TestSupport/TestHarness.h"
@@ -9,48 +9,58 @@ namespace {
 
 using px::ui::startup::SplashScreenEntry;
 
-px::resource::TypedDocument Scene(const std::string& name, const bool animations = true) {
-    px::resource::TypedDocument document;
-    document.kind = px::resource::DocumentKind::Scene;
-    document.id = px::Uuid::FromName("PrismatiX.Splash.Test.Scene." + name);
-    document.type = "UIScene";
-    document.properties["canvasSize"] = px::Vec2{1280, 720};
-    document.properties["uiSchemaVersion"] = std::int64_t{5};
-    const px::Uuid root = px::Uuid::FromName("PrismatiX.Splash.Test.Root." + name);
-    const px::Uuid logo = px::Uuid::FromName("PrismatiX.Splash.Test.Logo." + name);
-    document.nodes.push_back(
-        {root, {}, "Root", "Control", {{"anchors", px::Rect{0, 0, 1, 1}}}});
-    document.nodes.push_back({logo,
-                              root,
-                              "Logo",
-                              "Control",
-                              {{"anchors", px::Rect{0.4f, 0.4f, 0.6f, 0.6f}},
-                               {"opacity", 0.0}}});
+px::sdk::UiDocument Scene(const std::string& name, const bool animations = true) {
+    px::sdk::UiDocument document;
+    document.id = px::Uuid::FromName("PrismatiX.Splash.Test.Scene." + name).ToString();
+    document.revision = 1;
+    document.name = name;
+    document.width = 1280;
+    document.height = 720;
+    const std::string root = px::Uuid::FromName("PrismatiX.Splash.Test.Root." + name).ToString();
+    const std::string logo = px::Uuid::FromName("PrismatiX.Splash.Test.Logo." + name).ToString();
+    document.rootId = root;
+    px::sdk::UiNode rootNode;
+    rootNode.id = root;
+    rootNode.name = "Root";
+    rootNode.kind = px::sdk::UiNodeKind::Group;
+    rootNode.runtimeType = "Panel";
+    rootNode.layout = {.width=1280,.height=720,.anchorRight=1,.anchorBottom=1,
+                       .alignment="fill",.sizeRule="fill"};
+    px::sdk::UiNode logoNode;
+    logoNode.id = logo;
+    logoNode.parentId = root;
+    logoNode.name = "Logo";
+    logoNode.runtimeType = "Control";
+    logoNode.layout = {.x=512,.y=288,.width=256,.height=144,
+                       .alignment="start",.sizeRule="fixed"};
+    logoNode.appearance.opacity = 0.0f;
+    document.nodes = {std::move(rootNode), std::move(logoNode)};
     if (!animations) return document;
 
-    const px::Uuid enterClip = px::Uuid::FromName("PrismatiX.Splash.EnterClip." + name);
-    const px::Uuid exitClip = px::Uuid::FromName("PrismatiX.Splash.ExitClip." + name);
-    const px::Uuid enterState = px::Uuid::FromName("PrismatiX.Splash.EnterState." + name);
-    const px::Uuid exitState = px::Uuid::FromName("PrismatiX.Splash.ExitState." + name);
-    px::ui::AnimationClip enter;
+    const std::string enterClip = px::Uuid::FromName("PrismatiX.Splash.EnterClip." + name).ToString();
+    const std::string exitClip = px::Uuid::FromName("PrismatiX.Splash.ExitClip." + name).ToString();
+    const std::string enterState = px::Uuid::FromName("PrismatiX.Splash.EnterState." + name).ToString();
+    const std::string exitState = px::Uuid::FromName("PrismatiX.Splash.ExitState." + name).ToString();
+    px::sdk::UiAnimationClip enter;
     enter.id = enterClip;
     enter.name = "enter";
     enter.duration = 0.5f;
-    enter.tracks.push_back(
-        {logo, "opacity", {{0.0f, 0.0}, {0.5f, 1.0}}});
-    px::ui::AnimationClip exit;
+    enter.tracks.push_back({px::Uuid::FromName("enter-track." + name).ToString(), logo, "opacity",
+                            {{px::Uuid::FromName("enter-key-0." + name).ToString(),0.0f,0.0},
+                             {px::Uuid::FromName("enter-key-1." + name).ToString(),0.5f,1.0}}});
+    px::sdk::UiAnimationClip exit;
     exit.id = exitClip;
     exit.name = "exit";
     exit.duration = 0.5f;
-    exit.tracks.push_back(
-        {logo, "opacity", {{0.0f, 1.0}, {0.5f, 0.0}}});
-    px::ui::UIAnimationLibrary library;
-    library.clips.push_back(std::move(enter));
-    library.clips.push_back(std::move(exit));
-    library.machine.entry = enterState;
-    library.machine.states = {{enterState, "enter", enterClip, {0, 0}},
-                              {exitState, "exit", exitClip, {220, 0}}};
-    document.properties["animations"] = px::ui::WriteUIAnimationLibrary(library);
+    exit.tracks.push_back({px::Uuid::FromName("exit-track." + name).ToString(), logo, "opacity",
+                           {{px::Uuid::FromName("exit-key-0." + name).ToString(),0.0f,1.0},
+                            {px::Uuid::FromName("exit-key-1." + name).ToString(),0.5f,0.0}}});
+    px::sdk::UiAnimations library;
+    library.clips = {std::move(enter), std::move(exit)};
+    library.stateMachine.entryStateId = enterState;
+    library.stateMachine.states = {{enterState,"enter",enterClip,0,0},
+                                   {exitState,"exit",exitClip,220,0}};
+    document.animations = std::move(library);
     return document;
 }
 
@@ -65,7 +75,7 @@ SplashScreenEntry Entry(const std::string& name = "one") {
 }
 
 struct Fixture {
-    std::unordered_map<std::string, px::resource::TypedDocument> scenes;
+    std::unordered_map<std::string, px::sdk::UiDocument> scenes;
     std::vector<std::string> loaded;
     std::vector<std::string> audio;
     std::vector<px::diag::Diagnostic> diagnostics;
@@ -76,12 +86,12 @@ struct Fixture {
                 loaded.push_back(reference.lastKnownPath);
                 const auto found = scenes.find(reference.lastKnownPath);
                 if (found == scenes.end())
-                    return px::Result<px::resource::TypedDocument>::Failure(
+                    return px::Result<px::sdk::UiDocument>::Failure(
                         px::diag::Diagnostic{.severity = px::diag::Severity::Error,
                                              .code = "PXTEST",
                                              .category = "Player.Splash",
                                              .message = "missing scene"});
-                return px::Result<px::resource::TypedDocument>::Success(found->second);
+                return px::Result<px::sdk::UiDocument>::Success(found->second);
             },
             .playAudio = [this](const px::ResourceRefValue& reference) {
                 audio.push_back(reference.lastKnownPath);
@@ -191,12 +201,12 @@ int main() {
                 fixture.loaded.push_back(reference.lastKnownPath);
                 const auto found = fixture.scenes.find(reference.lastKnownPath);
                 if (found == fixture.scenes.end())
-                    return px::Result<px::resource::TypedDocument>::Failure(
+                    return px::Result<px::sdk::UiDocument>::Failure(
                         px::diag::Diagnostic{.severity = px::diag::Severity::Error,
                                              .code = "PXTEST",
                                              .category = "Player.Splash",
                                              .message = "missing scene"});
-                return px::Result<px::resource::TypedDocument>::Success(found->second);
+                return px::Result<px::sdk::UiDocument>::Success(found->second);
             },
             .playAudio = [](const px::ResourceRefValue&) {
                 return px::Status::Fail(px::diag::Diagnostic{

@@ -416,7 +416,71 @@ AccessibilitySemantics RichTextLabel::DescribeAccessibility() const {
     return semantics;
 }
 Vec2 RichTextLabel::MeasureOverride(const Vec2 available){if(!m_vertical)return Label::MeasureOverride(available);const int height=available.y>0.0f?std::max(1,static_cast<int>(std::floor(available.y))):0;if(const auto layout=MeasureTextLayout(Text(),FontSize(),height,text::TextOrientation::Vertical,m_verticalRows))return layout->Size();return Label::MeasureOverride(available);}
-void RichTextLabel::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){const auto& style=theme.Resolve(*this);const int baseSize=FontSize()>0?FontSize():style.fontSize;if(!m_vertical){Label::DrawSelf(renderer,theme);for(const auto& ruby:m_ruby){const auto layout=renderer.LayoutText(ruby.prefix+ruby.base,style.font,baseSize);const Rect base=layout.BoundsForRange(ruby.prefix.size(),ruby.base.size());const int rubySize=std::max(8,baseSize/2);const Vec2 reading=renderer.MeasureText(ruby.reading,style.font,rubySize);const float center=base.w>0?base.x+base.w*.5f:renderer.MeasureText(ruby.prefix,style.font,baseSize).x;renderer.DrawText(ruby.reading,LayoutRect().x+center-reading.x*.5f,LayoutRect().y-rubySize,style.font,rubySize,style.text);}return;}const auto layout=renderer.LayoutText(Text(),style.font,baseSize,std::max(1,static_cast<int>(std::floor(LayoutRect().h))),text::TextOrientation::Vertical,m_verticalRows);const Vec2 origin{LayoutRect().x+(LayoutRect().w-layout.Size().x)*.5f,LayoutRect().y};renderer.PushClip(LayoutRect());renderer.DrawTextLayout(layout,origin,style.font,baseSize,style.text);for(const auto& ruby:m_ruby){const Rect base=layout.BoundsForRange(ruby.prefix.size(),ruby.base.size());const int rubySize=std::max(8,baseSize/2);const auto rubyLayout=renderer.LayoutText(ruby.reading,style.font,rubySize,0,text::TextOrientation::Vertical);renderer.DrawTextLayout(rubyLayout,{origin.x+base.x+base.w,origin.y+base.y},style.font,rubySize,style.text);}renderer.PopClip();}
+void RichTextLabel::DrawSelf(graphics::Renderer2D& renderer,
+                             const Theme& theme) {
+    const auto& style = theme.Resolve(*this);
+    const int baseSize = FontSize() > 0 ? FontSize() : style.fontSize;
+    if (!m_vertical) {
+        Label::DrawSelf(renderer, theme);
+        const int wrap = Wrap()
+                             ? std::max(1, static_cast<int>(
+                                               std::floor(LayoutRect().w)))
+                             : 0;
+        const auto layout = renderer.LayoutText(Text(), style.font, baseSize,
+                                                wrap);
+        Vec2 origin{LayoutRect().x, LayoutRect().y};
+        if (HorizontalAlignment() == HorizontalTextAlignment::Center)
+            origin.x += (LayoutRect().w - layout.Size().x) * 0.5f;
+        else if (HorizontalAlignment() == HorizontalTextAlignment::Right)
+            origin.x += LayoutRect().w - layout.Size().x;
+        if (VerticalAlignment() == VerticalTextAlignment::Center)
+            origin.y += (LayoutRect().h - layout.Size().y) * 0.5f;
+        else if (VerticalAlignment() == VerticalTextAlignment::Bottom)
+            origin.y += LayoutRect().h - layout.Size().y;
+
+        const float rubyExtent = static_cast<float>(std::max(8, baseSize / 2));
+        renderer.PushClip({LayoutRect().x, LayoutRect().y - rubyExtent,
+                           LayoutRect().w, LayoutRect().h + rubyExtent});
+        for (const auto& ruby : m_ruby) {
+            const Rect base = layout.BoundsForRange(ruby.prefix.size(),
+                                                    ruby.base.size());
+            const int rubySize = std::max(8, baseSize / 2);
+            const Vec2 reading = renderer.MeasureText(
+                ruby.reading, style.font, rubySize);
+            const float center = base.w > 0.0f
+                                     ? base.x + base.w * 0.5f
+                                     : 0.0f;
+            renderer.DrawText(ruby.reading,
+                              origin.x + center - reading.x * 0.5f,
+                              origin.y + base.y - rubySize, style.font,
+                              rubySize, style.text);
+        }
+        renderer.PopClip();
+        return;
+    }
+    const auto layout = renderer.LayoutText(
+        Text(), style.font, baseSize,
+        std::max(1, static_cast<int>(std::floor(LayoutRect().h))),
+        text::TextOrientation::Vertical, m_verticalRows);
+    const Vec2 origin{LayoutRect().x +
+                          (LayoutRect().w - layout.Size().x) * 0.5f,
+                      LayoutRect().y};
+    renderer.PushClip(LayoutRect());
+    renderer.DrawTextLayout(layout, origin, style.font, baseSize, style.text);
+    for (const auto& ruby : m_ruby) {
+        const Rect base = layout.BoundsForRange(ruby.prefix.size(),
+                                                ruby.base.size());
+        const int rubySize = std::max(8, baseSize / 2);
+        const auto rubyLayout = renderer.LayoutText(
+            ruby.reading, style.font, rubySize, 0,
+            text::TextOrientation::Vertical);
+        renderer.DrawTextLayout(rubyLayout,
+                                {origin.x + base.x + base.w,
+                                 origin.y + base.y},
+                                style.font, rubySize, style.text);
+    }
+    renderer.PopClip();
+}
 
 void NinePatchRect::DrawSelf(graphics::Renderer2D& renderer,const Theme&){if(!m_path.empty())renderer.DrawNinePatch(m_path,LayoutRect(),m_margins,m_drawCenter);}
 
