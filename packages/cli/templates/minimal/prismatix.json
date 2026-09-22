@@ -3,5 +3,13 @@
   "id": "{{PROJECT_ID}}",
   "defaultLocale": "{{LOCALE}}",
   "resolution": {"width": {{WIDTH}}, "height": {{HEIGHT}}},
-  "uiEntryPoints": {"title": "Content/UI/Title.pxui"}
+  "uiEntryPoints": {"title": "Content/UI/Title.pxui"},
+  "assets": [
+    {"id":"10000000-0000-4000-8000-000000000001","name":"Window at dusk","kind":"background","source":"Assets/window.png"},
+    {"id":"20000000-0000-4000-8000-000000000001","name":"Guide","kind":"character","source":"Assets/guide.png"},
+    {"id":"30000000-0000-4000-8000-000000000001","name":"Noto Sans TC","kind":"font","source":"Content/Fonts/NotoSansTC-Bold.ttf"},
+    {"id":"40000000-0000-4000-8000-000000000001","name":"Font license","kind":"license","source":"Content/Fonts/OFL-1.1.txt"},
+    {"id":"50000000-0000-4000-8000-000000000001","name":"Starter provenance","kind":"provenance","source":"ASSET_PROVENANCE.md"}
+  ],
+  "characters": [{"id":"60000000-0000-4000-8000-000000000001","alias":"guide","displayName":"小光","source":"Characters/guide.pxcharacter"}]
 }

@@ -7,6 +7,9 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <cmath>
+#include <unordered_set>
+#include <stdexcept>
 
 namespace px::progress {
 
@@ -24,20 +27,39 @@ std::optional<Json> DecodeJson(const crypto::Bytes& source,
                                const crypto::Key* key) {
     crypto::Bytes bytes = source;
     if (key) {
+        const auto filename = path.filename().u8string();
         bytes = crypto::Decrypt(
-            bytes, *key, crypto::DeriveIv(path.filename().string()));
+            bytes, *key, crypto::DeriveIv(std::string(filename.begin(), filename.end())));
         if (bytes.empty()) return std::nullopt;
     }
     const std::string_view payload(
         reinterpret_cast<const char*>(bytes.data()), bytes.size());
     if (!payload.starts_with(kPersistMagic)) return std::nullopt;
-    const auto jsonBegin =
-        bytes.begin() + static_cast<std::ptrdiff_t>(kPersistMagic.size());
-    Json json = Json::parse(jsonBegin, bytes.end(), nullptr,
-                            /*allow_exceptions=*/false);
-    if (json.is_discarded()) return std::nullopt;
-    return json;
+    return ParsePersistenceJson(payload.substr(kPersistMagic.size()));
 }
+}
+
+std::optional<Json> ParsePersistenceJson(const std::string_view text) {
+    if (text.empty() || text.size() > kMaxPersistFileSize) return std::nullopt;
+    try {
+        std::vector<std::unordered_set<std::string>> objectKeys;
+        auto parsed = Json::parse(text, [&](int depth, Json::parse_event_t event, Json& value) {
+            if (depth > 128) throw std::invalid_argument("Persistence JSON exceeds 128 levels");
+            if (event == Json::parse_event_t::object_start) objectKeys.emplace_back();
+            else if (event == Json::parse_event_t::object_end) objectKeys.pop_back();
+            else if (event == Json::parse_event_t::key &&
+                     !objectKeys.back().insert(value.get<std::string>()).second)
+                throw std::invalid_argument("Duplicate persistence JSON key");
+            if (event == Json::parse_event_t::value && value.is_number_float() &&
+                !std::isfinite(value.get<double>()))
+                throw std::invalid_argument("Non-finite persistence number");
+            return true;
+        }, false);
+        if (parsed.is_discarded()) return std::nullopt;
+        return parsed;
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
 }
 
 crypto::Key DeriveGameDataPersistenceKey(const std::string_view gameDataId) {
@@ -117,13 +139,21 @@ std::optional<Json> LoadJson(const std::string& path, const crypto::Key* key) {
 PersistLoadResult LoadJsonWithFallback(
     const std::string& path, const crypto::Key* primaryKey,
     const std::span<const crypto::Key> fallbackKeys) {
+    return LoadJsonPathWithFallback(AsPath(path), primaryKey, fallbackKeys);
+}
+
+PersistLoadResult LoadJsonPathWithFallback(
+    const std::filesystem::path& nativePath, const crypto::Key* primaryKey,
+    const std::span<const crypto::Key> fallbackKeys) {
+    const auto utf8Path = nativePath.u8string();
+    const std::string path(utf8Path.begin(), utf8Path.end());
     // A profile, config, or save slot is optional until the user creates it.
     // "Not present" is therefore a valid state, while an existing unreadable
     // file is a visible persistence failure.
-    if (!std::filesystem::exists(AsPath(path))) {
+    if (!std::filesystem::exists(nativePath)) {
         return {.status = PersistLoadStatus::Missing};
     }
-    std::ifstream in(path, std::ios::binary | std::ios::ate);
+    std::ifstream in(nativePath, std::ios::binary | std::ios::ate);
     if (!in) {
         diag::Diagnostic d{.severity=diag::Severity::Error,.code="PXPERSIST6001",.category="Persistence",.message="Persistence file could not be read: "+path};d.source.path=path;diag::Emit(d);return {.status = PersistLoadStatus::Failed};
     }
@@ -138,7 +168,7 @@ PersistLoadResult LoadJsonWithFallback(
         return {.status = PersistLoadStatus::Failed};
     }
 
-    if (auto json = DecodeJson(bytes, AsPath(path), primaryKey)) {
+    if (auto json = DecodeJson(bytes, nativePath, primaryKey)) {
         return {.status = PersistLoadStatus::Loaded,
                 .value = std::move(json),
                 .readerIndex = 0};
@@ -153,7 +183,7 @@ PersistLoadResult LoadJsonWithFallback(
             }
         }
         if (duplicate) continue;
-        if (auto json = DecodeJson(bytes, AsPath(path), &fallbackKeys[index])) {
+        if (auto json = DecodeJson(bytes, nativePath, &fallbackKeys[index])) {
             return {.status = PersistLoadStatus::Loaded,
                     .value = std::move(json),
                     .readerIndex = index + 1};

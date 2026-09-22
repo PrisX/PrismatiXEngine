@@ -103,7 +103,11 @@ int main() {
     assert(!unknownField.Valid());
     assert(unknownField.diagnostics.back().code == "PXSDKIR1008");
 
-    const std::string oversized(16 * 1024 * 1024 + 1, 'x');
+    std::string boundary = valid;
+    boundary.resize(64 * 1024 * 1024, ' ');
+    assert(px::sdk::ParseRuntimeIr(boundary).Valid());
+    boundary.push_back(' ');
+    const std::string& oversized = boundary;
     const auto bounded = px::sdk::ParseRuntimeIr(oversized);
     assert(!bounded.Valid());
     assert(bounded.diagnostics.back().code == "PXSDKIR1007");

@@ -617,6 +617,20 @@ std::unique_ptr<Control> CreateControl(
             return nullptr;
         }
         control.reset(static_cast<Control*>(object.release()));
+        // Reflected factories construct empty controls. Canonical node text is
+        // separate from accessibilityLabel and runtimeProperties, and must be
+        // applied just as it is by the legacy kind-based constructors below.
+        // Keep explicit runtimeProperties authoritative by applying them later.
+        if (auto* rich = dynamic_cast<RichTextLabel*>(control.get()))
+            rich->SetMarkup(node.text);
+        else if (auto* label = dynamic_cast<Label*>(control.get()))
+            label->SetText(node.text);
+        else if (auto* button = dynamic_cast<Button*>(control.get()))
+            button->SetText(node.text);
+        else if (auto* line = dynamic_cast<LineEdit*>(control.get()))
+            line->SetText(node.text);
+        else if (auto* text = dynamic_cast<TextEdit*>(control.get()))
+            text->SetText(node.text);
     } else switch (node.kind) {
         case sdk::UiNodeKind::Control:
         case sdk::UiNodeKind::Group:

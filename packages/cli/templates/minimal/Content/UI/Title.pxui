@@ -17,7 +17,22 @@
       "name": "TitleRoot",
       "visible": true,
       "locked": false,
-      "layout": {"mode":"free","x":0,"y":0,"width":{{WIDTH}},"height":{{HEIGHT}},"anchorX":0,"anchorY":0,"anchorRight":1,"anchorBottom":1,"pivotX":0,"pivotY":0,"margin":0,"alignment":"fill","sizeRule":"fill"},
+      "layout": {
+        "mode": "free",
+        "x": 0,
+        "y": 0,
+        "width": {{WIDTH}},
+        "height": {{HEIGHT}},
+        "anchorX": 0,
+        "anchorY": 0,
+        "anchorRight": 1,
+        "anchorBottom": 1,
+        "pivotX": 0,
+        "pivotY": 0,
+        "margin": 0,
+        "alignment": "fill",
+        "sizeRule": "fill"
+      },
       "runtimeProperties": {},
       "bindings": {},
       "accessibilityLabel": "{{PROJECT_NAME}} title",
@@ -33,9 +48,27 @@
       "name": "Title",
       "visible": true,
       "locked": false,
-      "layout": {"mode":"free","x":120,"y":120,"width":760,"height":120,"anchorX":0,"anchorY":0,"anchorRight":0,"anchorBottom":0,"pivotX":0,"pivotY":0,"margin":0,"alignment":"center","sizeRule":"fixed"},
+      "layout": {
+        "mode": "free",
+        "x": 120,
+        "y": 120,
+        "width": 760,
+        "height": 120,
+        "anchorX": 0,
+        "anchorY": 0,
+        "anchorRight": 0,
+        "anchorBottom": 0,
+        "pivotX": 0,
+        "pivotY": 0,
+        "margin": 0,
+        "alignment": "center",
+        "sizeRule": "fixed"
+      },
       "text": "{{PROJECT_NAME}}",
-      "runtimeProperties": {"fontSize": 48, "wrap": true},
+      "runtimeProperties": {
+        "fontSize": 48,
+        "wrap": true
+      },
       "bindings": {},
       "accessibilityLabel": "{{PROJECT_NAME}}",
       "accessibilityRole": "heading",
@@ -50,18 +83,80 @@
       "name": "Start",
       "visible": true,
       "locked": false,
-      "layout": {"mode":"free","x":120,"y":360,"width":300,"height":72,"anchorX":0,"anchorY":0,"anchorRight":0,"anchorBottom":0,"pivotX":0,"pivotY":0,"margin":0,"alignment":"center","sizeRule":"fixed"},
+      "layout": {
+        "mode": "free",
+        "x": 120,
+        "y": 360,
+        "width": 300,
+        "height": 72,
+        "anchorX": 0,
+        "anchorY": 0,
+        "anchorRight": 0,
+        "anchorBottom": 0,
+        "pivotX": 0,
+        "pivotY": 0,
+        "margin": 0,
+        "alignment": "center",
+        "sizeRule": "fixed"
+      },
       "text": "Start",
-      "onClick": {"id":"game.start","arguments":{}},
-      "runtimeProperties": {"focusMode":"All"},
+      "onClick": {
+        "id": "game.start",
+        "arguments": {}
+      },
+      "runtimeProperties": {
+        "focusMode": "All"
+      },
       "bindings": {},
       "accessibilityLabel": "Start a new game",
       "accessibilityRole": "button",
       "accessibilityFocusOrder": 10
+    },
+    {
+      "id": "{{LOAD_ID}}",
+      "parentId": "{{ROOT_ID}}",
+      "order": 2,
+      "kind": "button",
+      "runtimeType": "Button",
+      "name": "Load",
+      "visible": true,
+      "locked": false,
+      "layout": {
+        "mode": "free",
+        "x": 120,
+        "y": 460,
+        "width": 300,
+        "height": 72,
+        "anchorX": 0,
+        "anchorY": 0,
+        "anchorRight": 0,
+        "anchorBottom": 0,
+        "pivotX": 0,
+        "pivotY": 0,
+        "margin": 0,
+        "alignment": "center",
+        "sizeRule": "fixed"
+      },
+      "text": "Load / 讀取",
+      "onClick": {
+        "id": "load.open",
+        "arguments": {}
+      },
+      "runtimeProperties": {
+        "focusMode": "All"
+      },
+      "bindings": {},
+      "accessibilityLabel": "Load a saved game",
+      "accessibilityRole": "button",
+      "accessibilityFocusOrder": 11
     }
   ],
   "theme": [],
-  "behaviorGraph": {"nodes":[],"links":[],"groups":[]},
+  "behaviorGraph": {
+    "nodes": [],
+    "links": [],
+    "groups": []
+  },
   "behaviorTriggers": [],
   "visualStateGroups": []
 }

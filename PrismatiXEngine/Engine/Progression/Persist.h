@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <filesystem>
 #include <limits>
 #include <optional>
 #include <span>
@@ -46,9 +47,14 @@ struct PersistLoadResult {
     std::string_view legacySecret);
 
 bool SaveJson(const std::string& path, const Json& json, const crypto::Key* key);
+// Shared bounded JSON grammar for persistence readers and envelope inspection.
+[[nodiscard]] std::optional<Json> ParsePersistenceJson(std::string_view text);
 [[nodiscard]] std::optional<Json> LoadJson(const std::string& path, const crypto::Key* key);
 [[nodiscard]] PersistLoadResult LoadJsonWithFallback(
     const std::string& path, const crypto::Key* primaryKey,
+    std::span<const crypto::Key> fallbackKeys = {});
+[[nodiscard]] PersistLoadResult LoadJsonPathWithFallback(
+    const std::filesystem::path& path, const crypto::Key* primaryKey,
     std::span<const crypto::Key> fallbackKeys = {});
 // Creates a non-overwriting sibling copy before a legacy-key payload is
 // promoted to the current writer. The backup is intentionally retained.

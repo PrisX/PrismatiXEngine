@@ -26,6 +26,9 @@ struct PreviewSessionOptions {
     std::function<std::shared_ptr<const void>()> captureExternalState{};
     std::function<Status(const std::shared_ptr<const void>&)>
         restoreExternalState{};
+    // Allows hosts to reject failed captures before any restore mutation.
+    std::function<Status(const std::shared_ptr<const void>&)>
+        validateExternalState{};
 };
 
 [[nodiscard]] std::unique_ptr<sdk::PreviewSession> CreatePreviewSession(

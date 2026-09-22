@@ -6,6 +6,10 @@
 #include "Engine/Platform/Input.h"
 #include "Engine/Text/Typography.h"
 #include "Engine/UI/GalgameUI.h"
+#include "Engine/UI/UiAdapter.h"
+#include "Engine/UI/UITypeRegistry.h"
+#include "Engine/UI/Theme.h"
+#include "Engine/UI/Widgets.h"
 #include "Engine/VN/Runtime/Stage.h"
 
 #include <SDL3/SDL.h>
@@ -167,6 +171,56 @@ int main() {
         px::graphics::AssetCache assets(device.Renderer(), vfs);
         px::graphics::Renderer2D renderer(device.Renderer(), assets, true);
         renderer.SetLogicalSize(640, 360);
+        // A packaged starter has only its own font path. Exercise typed static
+        // captions through the adapter, not dynamic HUD SetText calls or a
+        // checkout-only font fallback, and compare rendered pixels with blanks.
+        const auto captionRoot = std::filesystem::temp_directory_path() /
+            ("prismatix-caption-" + std::to_string(SDL_GetTicksNS()));
+        std::error_code captionError;
+        std::filesystem::create_directories(captionRoot / "Content/Fonts", captionError);
+        std::filesystem::copy_file(
+            std::filesystem::path(PRISMATIX_RESOURCE_ROOT) / "Fonts/NotoSansTC-Bold.ttf",
+            captionRoot / "Content/Fonts/NotoSansTC-Bold.ttf",
+            std::filesystem::copy_options::none, captionError);
+        if (captionError || !px::ui::RegisterBuiltinUITypes()) {
+            std::cerr << "FAIL: packaged caption font fixture: " << captionError.message() << '\n';
+            result = 1;
+        } else {
+            px::io::VFS captionVfs;
+            captionVfs.MountDirectory(captionRoot.generic_string());
+            px::graphics::AssetCache captionAssets(device.Renderer(), captionVfs);
+            px::graphics::Renderer2D captionRenderer(device.Renderer(), captionAssets, true);
+            captionRenderer.SetLogicalSize(640, 360);
+            const px::ui::Theme captionTheme;
+            for (const std::string type : {"Label", "RichTextLabel", "Button", "IconButton"}) {
+                const auto renderCaption = [&](const std::string& text) {
+                    px::sdk::UiDocument document;
+                    document.id = "12000000-0000-4000-8000-000000000001";
+                    document.rootId = "12000000-0000-4000-8000-000000000002";
+                    px::sdk::UiNode node;
+                    node.id = document.rootId;
+                    node.kind = type.find("Button") != std::string::npos
+                                    ? px::sdk::UiNodeKind::Button : px::sdk::UiNodeKind::Label;
+                    node.runtimeType = type;
+                    node.text = text;
+                    document.nodes.push_back(node);
+                    auto tree = px::ui::BuildUiRuntimeTree(document);
+                    if (!tree.Valid()) return std::uint64_t{0};
+                    tree.root->Arrange({40, 40, 480, 100});
+                    ClearFrame(device.Renderer());
+                    tree.root->Draw(captionRenderer, captionTheme);
+                    return CaptureFrame(device.Renderer(), "typed-caption-" + type +
+                        (text.empty() ? "-blank" : "-text")).hash;
+                };
+                const auto blank = renderCaption("");
+                const auto drawn = renderCaption("SAVE / 小光");
+                if (blank == 0 || drawn == 0 || drawn == blank) {
+                    std::cerr << "FAIL: authored " << type << " text did not change native pixels\n";
+                    result = 1;
+                }
+            }
+        }
+        std::filesystem::remove_all(captionRoot, captionError);
         const std::string font = "Fonts/NotoSansTC-Bold.ttf";
         const auto vertical = renderer.LayoutText(
             "Aあ\nB", font, 24, 48, px::text::TextOrientation::Vertical);
@@ -374,6 +428,47 @@ int main() {
         vfs.MountDirectory(
             std::filesystem::path(PRISMATIX_RESOURCE_ROOT).parent_path().string());
         renderer.SetLogicalSize(1280, 720);
+        {
+            px::ui::GalgameUI slotsUi;
+            slotsUi.SetTextRenderer(&renderer);
+            std::vector<px::ui::GalgameItem> slots;
+            for (int index = 0; index < 4; ++index)
+                slots.push_back({std::to_string(index), "Slot " + std::to_string(index + 1),
+                    "2026-09-22 12:34 / 小光\nA deliberately long saved dialogue preview that must stay inside this card",
+                    "", false, "save.slot", std::to_string(index)});
+            if (!slotsUi.ShowSaveLoad(false, slots)) result = 1;
+            px::Input slotsInput;
+            (void)slotsUi.Update(slotsInput, 1280, 720);
+            std::vector<const px::scene::Node*> pending{slotsUi.Root()};
+            int count = 0;
+            while (!pending.empty()) {
+                const auto* node = pending.back(); pending.pop_back();
+                if (const auto* button = dynamic_cast<const px::ui::Button*>(node);
+                    button && button->Text().starts_with("Slot ")) {
+                    ++count;
+                    const auto rect = button->LayoutRect();
+                    if (rect.x < 50 || rect.x + rect.w > 1230.1f ||
+                        button->Text().find('\n') != std::string::npos ||
+                        button->AccessibilityDescription().find("小光") == std::string::npos) {
+                        std::cerr << "FAIL: save card bounds or accessible caption\n"; result = 1;
+                    }
+                }
+                for (const auto& child : node->Children()) pending.push_back(child.get());
+            }
+            if (count != 4) { std::cerr << "FAIL: save card count\n"; result = 1; }
+            ClearFrame(device.Renderer());
+            slotsUi.Render(renderer);
+            const auto metadataPixels = CaptureFrame(device.Renderer(), "save-card-metadata").hash;
+            for (auto& slot : slots) slot.subtitle.clear();
+            (void)slotsUi.ShowSaveLoad(false, slots);
+            (void)slotsUi.Update(slotsInput, 1280, 720);
+            ClearFrame(device.Renderer());
+            slotsUi.Render(renderer);
+            const auto titlePixels = CaptureFrame(device.Renderer(), "save-card-title-only").hash;
+            if (metadataPixels == 0 || titlePixels == 0 || metadataPixels == titlePixels) {
+                std::cerr << "FAIL: save metadata must produce visible pixels\n"; result = 1;
+            }
+        }
         const auto renderTextEffect = [&](const std::string_view effect) {
             px::ui::GalgameUI ui;
             ui.SetTextRenderer(&renderer);

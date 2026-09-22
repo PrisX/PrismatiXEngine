@@ -1,3 +1,4 @@
+#include "Engine/Support/Utf8Path.h"
 #include "Engine/IO/AtomicFile.h"
 
 #include "Engine/Diagnostics/Diagnostic.h"
@@ -24,14 +25,14 @@ diag::Diagnostic FileError(const std::filesystem::path& path, std::string messag
     d.category = "io";
     d.message = std::move(message);
     d.details = std::move(details);
-    d.source.path = path.generic_string();
+    d.source.path = px::PathToUtf8(path);
     return d;
 }
 
 std::filesystem::path TempPathFor(const std::filesystem::path& target) {
     const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
     return target.parent_path() /
-           (target.filename().string() + ".tmp." + std::to_string(now) + "." +
+           px::PathFromUtf8(px::PathToUtf8(target.filename()) + ".tmp." + std::to_string(now) + "." +
             std::to_string(g_tempId.fetch_add(1)));
 }
 

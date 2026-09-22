@@ -12,6 +12,7 @@ import {
   basename, delimiter, dirname, extname, isAbsolute, join, resolve,
 } from "node:path";
 import {fileURLToPath} from "node:url";
+import {startCandidateRegistry} from "./candidate-registry.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const packageRoots = [
@@ -24,14 +25,20 @@ const invalidStoryCommand = "[phase1-invalid-command]";
 const defaultTimeoutMs = 60_000;
 
 function parseArguments(values) {
-  const result = {mock: false, keep: false, runtime: process.env.PRISMATIX_PHASE1_RUNTIME};
+  const result = {mock: false, keep: false, runtime: process.env.PRISMATIX_PHASE1_RUNTIME, projectName: "first-game"};
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
     if (value === "--mock") result.mock = true;
     else if (value === "--keep") result.keep = true;
     else if (value === "--runtime") result.runtime = values[++index];
     else if (value.startsWith("--runtime=")) result.runtime = value.slice("--runtime=".length);
+    else if (value === "--project-name") result.projectName = values[++index];
+    else if (value.startsWith("--project-name=")) result.projectName = value.slice("--project-name=".length);
     else throw new Error(`Unknown argument: ${value}`);
+  }
+  if (typeof result.projectName !== "string" || result.projectName.length === 0 ||
+      result.projectName === "." || result.projectName === ".." || /[\\/<>:"|?*\u0000-\u001f]/u.test(result.projectName)) {
+    throw new Error("--project-name must be one nonempty portable directory name");
   }
   if (!result.mock && (result.runtime === undefined || result.runtime.length === 0)) {
     throw new Error(
@@ -168,19 +175,28 @@ async function assertSelfContainedTree(root, forbiddenRoots, label) {
   }
 }
 
-async function packWorkspacePackages(packDirectory, environment) {
+async function packWorkspacePackages(packDirectory, environment, runtimeRoot) {
   await mkdir(packDirectory, {recursive: true});
   const tarballs = [];
   for (const packageRoot of packageRoots) {
+    const manifest = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
+    const staging = join(packDirectory, "staging", basename(packageRoot));
+    await mkdir(staging, {recursive: true});
+    await cp(join(packageRoot, "package.json"), join(staging, "package.json"));
+    for (const path of manifest.files ?? ["dist"]) {
+      if (await exists(join(packageRoot, path))) await cp(join(packageRoot, path), join(staging, path), {recursive: true});
+    }
+    if (manifest.name === "@prismatix/cli")
+      await cp(runtimeRoot, join(staging, "runtime", `${process.platform}-${process.arch}`), {recursive: true});
     const packed = requireSuccess(await npm([
       "pack", "--json", "--ignore-scripts", "--pack-destination", packDirectory,
-    ], {cwd: packageRoot, env: environment}), `npm pack ${packageRoot}`);
+    ], {cwd: staging, env: environment, timeoutMs: 180_000}), `npm pack ${packageRoot}`);
     const report = JSON.parse(packed.stdout);
     assert.ok(Array.isArray(report) && typeof report[0]?.filename === "string",
       `npm pack returned an unexpected report for ${packageRoot}`);
     const tarball = join(packDirectory, report[0].filename);
     assert.ok(await exists(tarball), `npm pack did not create ${tarball}`);
-    tarballs.push(tarball);
+    tarballs.push({manifest, tarball});
   }
   return tarballs;
 }
@@ -288,7 +304,7 @@ await writeFile(join(process.cwd(), "phase1-artifact-launched.json"),
   JSON.stringify({launched: true}) + "\\n", "utf8");
 `, "utf8");
   await writeFile(join(manifestDirectory, "runtime-manifest.json"), `${JSON.stringify({
-    format: "PrismatiXRuntimeManifest", schemaRevision: 1, version: "0.2.0-mock",
+    format: "PrismatiXRuntimeManifest", schemaRevision: 1, version: "0.2.0", testOnly: true,
     target: `${process.platform}-${process.arch}`, binDir: "../../bin",
     tools: {previewHost: previewName, packager: packagerName, player: playerName},
   }, null, 2)}\n`, "utf8");
@@ -346,51 +362,71 @@ async function launchArtifact(player, output, environment, mock) {
   });
 }
 
+async function watchAuthorJourney(cli, project, story, environment, evidenceRoot) {
+  const child = spawn(process.execPath, [cli, "dev", project, "--json"], {env: environment,
+    cwd: dirname(project), shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"]});
+  let stdout = ""; let stderr = ""; let exited = false;
+  child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (value) => { stdout = (stdout + value).slice(-2 * 1024 * 1024); });
+  child.stderr.on("data", (value) => { stderr = (stderr + value).slice(-2 * 1024 * 1024); });
+  const closed = new Promise((accept) => child.once("close", () => { exited = true; accept(); }));
+  let spawnError;
+  child.once("error", (error) => { spawnError = error; });
+  const waitFor = async (predicate, label) => {
+    const start = Date.now();
+    while (!predicate()) {
+      if (spawnError || exited || Date.now() - start > 60_000)
+        throw new Error(`${label} failed: ${spawnError ?? "timeout or exited"}\n${stderr}`);
+      await new Promise((accept) => setTimeout(accept, 50));
+    }
+  };
+  const commits = () => parseJsonLines(stderr).filter((value) => value.code === "PXCLI1602");
+  try {
+    await waitFor(() => commits().length >= 1, "initial persistent preview");
+    const baseline = await readFile(story, "utf8");
+    // Replace a live dialogue before [end], rather than appending unreachable text.
+    const edited = baseline.replace("你好，我是小光。這是你的第一個故事。", authorEdit);
+    assert.notEqual(edited, baseline, "starter dialogue anchor changed; update the journey fixture");
+    await writeFile(story, edited, "utf8");
+    await waitFor(() => commits().length >= 2, "live dialogue rebuild");
+    const latest = commits().at(-1);
+    const files = await listFiles(latest.output);
+    const ir = files.find((path) => path.endsWith(".pxir"));
+    assert.ok(ir && (await readFile(ir, "utf8")).includes(authorEdit), "acknowledged revision does not contain edited dialogue");
+    const beforeInvalid = commits().length;
+    await appendFile(story, `\n${invalidStoryCommand}\n`, "utf8");
+    await waitFor(() => stderr.includes("PXSTORY1199"), "syntax error during watch");
+    assert.equal(commits().length, beforeInvalid, "invalid source was committed to Preview");
+    await writeFile(story, edited, "utf8");
+    await waitFor(() => commits().length > beforeInvalid, "repair without restarting dev");
+    assert.ok(commits().every((value) => String(value.discoveredFrom).startsWith("bundled runtime")), "preview used a runtime override or PATH fallback");
+  } finally {
+    child.kill("SIGTERM");
+    let closeTimer;
+    try { await Promise.race([closed, new Promise((_, reject) => { closeTimer = setTimeout(() => reject(new Error("dev did not close")), 10_000); })]); }
+    finally { clearTimeout(closeTimer); }
+    await writeFile(join(evidenceRoot, "watch.stdout.log"), stdout);
+    await writeFile(join(evidenceRoot, "watch.stderr.log"), stderr);
+  }
+}
+
 async function main() {
   const configuration = parseArguments(process.argv.slice(2));
   const temporaryRoot = await mkdtemp(join(tmpdir(), "prismatix-phase1-clean-"));
   assertOutsideRepository(temporaryRoot, "Acceptance workspace");
   const packDirectory = join(temporaryRoot, "tarballs");
   const installRoot = join(temporaryRoot, "author-machine");
-  const projectRoot = join(temporaryRoot, "first-game");
+  const projectRoot = join(temporaryRoot, configuration.projectName);
   const explicitPackage = join(temporaryRoot, "portable-game");
   const copiedRuntime = join(temporaryRoot, "runtime-bundle");
   const previewLog = join(temporaryRoot, "preview-requests.ndjson");
+  let registry;
 
   try {
     log("workspace", temporaryRoot);
     const packagingEnvironment = {...process.env};
     delete packagingEnvironment.NODE_PATH;
     delete packagingEnvironment.INIT_CWD;
-    const tarballs = await packWorkspacePackages(packDirectory, packagingEnvironment);
-    log("packed npm artifacts", tarballs.map((path) => basename(path)).join(", "));
-
-    await mkdir(installRoot, {recursive: true});
-    const dependencies = Object.fromEntries(tarballs.map((path) => {
-      const filename = basename(path);
-      const name = filename.includes("authoring-sdk") ? "@prismatix/authoring-sdk" :
-        filename.includes("runtime-") ? "@prismatix/runtime" : "@prismatix/cli";
-      return [name, `file:../tarballs/${filename}`];
-    }));
-    await writeFile(join(installRoot, "package.json"), `${JSON.stringify({
-      name: "prismatix-phase1-clean-machine", private: true, type: "module", dependencies,
-    }, null, 2)}\n`, "utf8");
-    requireSuccess(await npm([
-      "install", "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=false",
-    ], {cwd: installRoot, env: packagingEnvironment, timeoutMs: 180_000}), "clean npm install");
-    const installedPackages = join(installRoot, "node_modules", "@prismatix");
-    await assertSelfContainedTree(installedPackages, [repositoryRoot], "Installed npm packages");
-
-    const cli = join(installedPackages, "cli", "dist", "src", "cli.js");
-    assert.ok(await exists(cli), "The installed CLI entrypoint is missing");
-    const importProbe = requireSuccess(await run(process.execPath, [
-      "--input-type=module", "--eval",
-      "const [a,r]=await Promise.all([import('@prismatix/authoring-sdk'),import('@prismatix/runtime')]);" +
-      "if(typeof a.compileStory!=='function'||typeof r.createPrismatiXContext!=='function')process.exit(9);",
-    ], {cwd: installRoot, env: cleanToolEnvironment()}), "installed package import probe");
-    assert.equal(importProbe.stderr, "");
-    log("installed npm artifacts", installRoot);
-
     if (configuration.mock) await createMockRuntime(copiedRuntime);
     else await copyRuntimeBundle(configuration.runtime, copiedRuntime);
     await assertSelfContainedTree(copiedRuntime, [repositoryRoot], "Copied runtime bundle");
@@ -410,23 +446,44 @@ async function main() {
       assert.equal(inventory.shipping?.webGame, false);
       log("verified release inventory", inventory.target);
     }
-    const toolEnvironment = cleanToolEnvironment(copiedRuntime, {
-      PRISMATIX_PHASE1_PREVIEW_LOG: previewLog,
-    });
+    const candidates = await packWorkspacePackages(packDirectory, packagingEnvironment, copiedRuntime);
+    log("packed candidate npm artifacts with bundled runtime", candidates.map(({tarball}) => basename(tarball)).join(", "));
+    registry = await startCandidateRegistry(candidates);
+    const home = join(temporaryRoot, "home");
+    const cache = join(temporaryRoot, "npm-cache");
+    const prefix = join(temporaryRoot, "npm-prefix");
+    await Promise.all([home, cache, prefix, installRoot].map((path) => mkdir(path, {recursive: true})));
+    const npmrc = join(home, ".npmrc");
+    await writeFile(npmrc, `@prismatix:registry=${registry.url}\nregistry=https://registry.npmjs.org/\naudit=false\nfund=false\n`);
+    const toolEnvironment = cleanToolEnvironment(undefined, {HOME: home, USERPROFILE: home,
+      APPDATA: join(home, "AppData", "Roaming"), LOCALAPPDATA: join(home, "AppData", "Local"),
+      PRISMATIX_PHASE1_PREVIEW_LOG: previewLog});
+    // cleanToolEnvironment removes inherited npm settings before these isolated settings are added.
+    Object.assign(toolEnvironment, {npm_config_prefix: prefix, npm_config_cache: cache, npm_config_userconfig: npmrc});
+    requireSuccess(await npm(["install", "-g", "@prismatix/cli", "--ignore-scripts", "--no-audit", "--no-fund"],
+      {cwd: installRoot, env: toolEnvironment, timeoutMs: 180_000}), "npm install -g @prismatix/cli (isolated candidate registry)");
+    const globalModules = process.platform === "win32" ? join(prefix, "node_modules") : join(prefix, "lib", "node_modules");
+    const installedPackages = join(globalModules, "@prismatix");
+    const cli = join(installedPackages, "cli", "dist", "src", "cli.js");
+    assert.ok(await exists(cli), "The global CLI entrypoint is missing");
+    assert.ok(await exists(join(prefix, process.platform === "win32" ? "prismatix.cmd" : "bin/prismatix")), "npm did not create the global command shim");
+    await assertSelfContainedTree(installedPackages, [repositoryRoot], "Installed candidate packages");
+    log("installed global candidate CLI", prefix);
 
-    const cliRun = (args, options = {}) => run(process.execPath, [cli, ...args], {
+    const cliRun = (args, options = {}) => run(process.execPath, [cli, ...args, "--json"], {
       cwd: installRoot, env: toolEnvironment, timeoutMs: options.timeoutMs ?? 120_000,
     });
     requireSuccess(await cliRun([
       "create", projectRoot, "--name", "Clean Room Story", "--id", "phase1-clean-room",
-      "--locale", "en",
+      "--locale", "zh-TW",
     ]), "prismatix create");
     const project = join(projectRoot, "prismatix.json");
     const story = join(projectRoot, "Story", "main.pxstory");
     assert.ok(await exists(project), "create did not write the minimal prismatix.json manifest");
     assert.ok(await exists(story), "create did not write Story/main.pxstory");
-    await appendFile(story, `\n${authorEdit}\n`, "utf8");
-    log("created and edited starter", story);
+    assert.ok(await exists(join(projectRoot, "package-lock.json")), "create did not install and lock project tooling");
+    assert.ok(await exists(join(projectRoot, "node_modules", "@prismatix", "cli", "dist", "src", "cli.js")), "create did not prepare pinned project CLI");
+    log("created prepared starter", story);
 
     requireSuccess(await cliRun(["validate", project]), "prismatix validate after author edit");
     const goodStory = await readFile(story, "utf8");
@@ -442,30 +499,50 @@ async function main() {
     await writeFile(story, goodStory, "utf8");
     log("verified source diagnostics", `PXSTORY1199 at Story/main.pxstory:${sourceDiagnostic.span.start.line}`);
 
-    requireSuccess(await cliRun([
-      "dev", project, "--runtime", copiedRuntime, "--once",
-    ]), "prismatix dev --once");
+    await watchAuthorJourney(cli, project, story, toolEnvironment, temporaryRoot);
+    log("persistent edit/error/repair journey passed", configuration.mock ? "mock protocol only" : "native PreviewHost acknowledgements");
+    // Preserve the separate SDK consumer import regression without making it an author setup step.
+    const consumerRoot = join(temporaryRoot, "sdk-consumer-probe");
+    await mkdir(consumerRoot);
+    await writeFile(join(consumerRoot, "package.json"), JSON.stringify({private: true, type: "module",
+      dependencies: {"@prismatix/authoring-sdk": "0.2.0", "@prismatix/runtime": "0.2.0"}}));
+    requireSuccess(await npm(["install", "--ignore-scripts", "--no-audit", "--no-fund"],
+      {cwd: consumerRoot, env: toolEnvironment, timeoutMs: 180_000}), "isolated SDK consumer install probe");
+    const importProbe = requireSuccess(await run(process.execPath, ["--input-type=module", "--eval",
+      "const [a,r]=await Promise.all([import('@prismatix/authoring-sdk'),import('@prismatix/runtime')]);" +
+      "if(typeof a.compileStory!=='function'||typeof r.createPrismatiXContext!=='function')process.exit(9);"],
+    {cwd: consumerRoot, env: toolEnvironment}), "installed package import probe");
+    assert.equal(importProbe.stderr, "");
+    await registry.close();
+    registry = undefined;
+    // Closed registry + offline npm mode: prepared projects must need no initialization download.
+    toolEnvironment.npm_config_offline = "true";
+    requireSuccess(await cliRun(["dev", project, "--once"]), "offline prismatix dev --once");
     if (configuration.mock) {
       const requests = parseJsonLines(await readFile(previewLog, "utf8"));
       for (const type of ["hello", "applyRuntimeIr", "play", "shutdown"])
         assert.ok(requests.some((request) => request.type === type), `dev --once did not send ${type}`);
-      const apply = requests.find((request) => request.type === "applyRuntimeIr");
+      const apply = requests.filter((request) => request.type === "applyRuntimeIr").at(-1);
       const ir = await readFile(join(apply.projectRoot, ...apply.irPath.split("/")), "utf8");
       assert.ok(ir.includes(authorEdit), "dev compiled stale Story content instead of the author edit");
     }
     log("preview smoke passed", configuration.mock ? "mock protocol" : "native PreviewHost");
 
     const built = requireSuccess(await cliRun([
-      "build", project, "--runtime", copiedRuntime,
+      "build", project,
     ]), "prismatix build distribution");
     const buildReport = lastObject(built.stdout, (value) => value.packed === true || value.built === true);
     assert.ok(buildReport, `build did not report an output:\n${built.stdout}`);
     const buildOutput = resolve(String(buildReport.output));
     assertOutsideRepository(buildOutput, "Build output");
     assert.ok(await exists(buildOutput), `Build output is missing: ${buildOutput}`);
+    assert.equal(typeof buildReport.player, "string", "Distribution build did not report its Player");
+    const buildPlayer = resolve(buildReport.player);
+    await launchArtifact(buildPlayer, buildOutput, toolEnvironment, configuration.mock);
+    log("default build artifact smoke passed", buildPlayer);
 
     const packed = requireSuccess(await cliRun([
-      "pack", project, "--runtime", copiedRuntime, "--output", explicitPackage,
+      "pack", project, "--output", explicitPackage,
     ]), "prismatix pack distribution");
     const packReport = lastObject(packed.stdout, (value) => value.packed === true);
     assert.ok(packReport, `pack did not report its Player/output:\n${packed.stdout}`);
@@ -486,13 +563,24 @@ async function main() {
     await launchArtifact(player, packageOutput, toolEnvironment, configuration.mock);
     log("portable artifact smoke passed", player);
 
-    log("PASS", configuration.mock ? "fast mock gate" : "real playable runtime gate");
+    await writeFile(join(temporaryRoot, "evidence.json"), JSON.stringify({
+      candidateOnly: true, published: false, mock: configuration.mock,
+      platform: process.platform, architecture: process.arch,
+      globalInstall: true, automaticProjectInstall: true, bundledRuntime: true,
+      watchEditAndRepair: true, offlineReopenAndBuild: true,
+      nativeVisualInteraction: "not measured by this harness", externalAuthorTrial: "not run",
+      packages: candidates.map(({manifest, tarball}) => ({name: manifest.name, version: manifest.version, tarball})),
+      projectName: configuration.projectName, projectRoot, player, packageOutput,
+      buildPlayer, buildOutput, defaultBuildPlayerLaunch: true,
+    }, null, 2));
+    log("PASS", configuration.mock ? "candidate install/workflow gate (mock runtime; no native claim)" : "candidate native handshake / launch smoke (visual interaction not measured)");
   } catch (error) {
     configuration.keep = true;
     process.stderr.write(`[phase1] FAIL: ${error?.stack ?? error}\n`);
     process.stderr.write(`[phase1] retained workspace: ${temporaryRoot}\n`);
     process.exitCode = 1;
   } finally {
+    if (registry !== undefined) await registry.close();
     if (!configuration.keep) await rm(temporaryRoot, {recursive: true, force: true});
   }
 }

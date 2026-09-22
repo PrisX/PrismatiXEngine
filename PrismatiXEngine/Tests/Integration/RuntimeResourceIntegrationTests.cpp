@@ -10,7 +10,9 @@
 #include "Engine/Animation/Timeline.h"
 #include "Engine/Core/TypeRegistry.h"
 #include "Engine/IO/Archive.h"
+#include "Engine/IO/AtomicFile.h"
 #include "Engine/IO/VFS.h"
+#include "Engine/Support/Utf8Path.h"
 #include "Engine/Platform/Input.h"
 #include "Engine/Progression/Persist.h"
 #include "Engine/Progression/SaveSystem.h"
@@ -62,6 +64,29 @@ void Run(const std::string_view name, void (*test)()) {
         ++g_failures;
         std::cerr << "UNCAUGHT [" << name << "]: unknown exception\n";
     }
+}
+
+void TestVfsUnicodePaths() {
+    px::test::TempDirectory fixture("vfs-unicode");
+    const auto root = fixture.path / std::filesystem::path(u8"\u7e41\u4e2d \u5c08\u6848 \U0001f600");
+    const auto asset = std::filesystem::path(u8"\u7d20\u6750 \u5716\u7247 \U0001f600.bin");
+    std::filesystem::create_directories(root);
+    std::ofstream(root / asset, std::ios::binary) << "unicode payload";
+    px::io::VFS vfs;
+    vfs.MountDirectory(px::PathToUtf8(root));
+    const auto loaded = vfs.ReadText(px::PathToUtf8(asset));
+    Check(loaded && *loaded == "unicode payload", "UTF-8 mount and asset paths must preserve Unicode and spaces");
+    const auto atomicFile = root / std::filesystem::path(u8"\u539f\u5b50 \U0001f600.txt");
+    Check(px::io::AtomicFile::WriteText(atomicFile, "atomic"), "Atomic writes must preserve Unicode paths");
+    px::io::ArchiveWriter writer;
+    writer.Add(px::PathToUtf8(asset), px::io::Bytes{'o', 'k'});
+    const auto archivePath = root / std::filesystem::path(u8"\u5c01\u5305 \U0001f600.pdx");
+    Check(writer.Write(px::PathToUtf8(archivePath)), "Archive writer must support Unicode native paths");
+    px::io::VFS archived;
+    Check(archived.MountArchive(px::PathToUtf8(archivePath)), "Archive mount must support Unicode native paths");
+    const auto archivedText = archived.ReadText(px::PathToUtf8(asset));
+    Check(archivedText && *archivedText == "ok", "Archive resource reads must preserve Unicode virtual paths");
+
 }
 
 void TestVfsRejectsDirectoriesAndReadsRegularFiles() {
@@ -582,6 +607,7 @@ void TestPublishedUiEffectsAreObservable() {
 }  // namespace
 
 int main() {
+    Run("VFS_UnicodePaths", TestVfsUnicodePaths);
     Run("VFS_DirectoryAndRegularFileReads", TestVfsRejectsDirectoriesAndReadsRegularFiles);
     Run("Typography_CjkRubyVerticalText", TestCjkRubyAndVerticalText);
     Run("Typography_ImmutableTextLayoutRanges", TestImmutableTextLayoutRanges);

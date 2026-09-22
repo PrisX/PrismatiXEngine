@@ -32,6 +32,17 @@ own licenses. Their exact copyright files are collected from the pinned vcpkg
 installation into the runtime bundle. No `ThirdParty/` source is implicitly
 licensed by the PrismatiXEngine MIT license.
 
+For vcpkg builds, installation copies every existing `share/*/copyright` from
+the selected target triplet, preserving its package directory name. This can
+include notices for build tools or libraries that a particular executable does
+not use; it intentionally follows the complete installed dependency set copied
+by Windows runtime packaging. Examples include Brotli and DirectX Shader
+Compiler (`directx-dxc`), whose notices must not disappear when the DLL set grows.
+QuickJS-NG's actual `LICENSE*` / `COPYING*` files are copied from the pinned fetched
+source into `licenses/quickjs-ng`; they are not inferred from this summary.
+This collection does not replace checking redistribution requirements against
+the exact binaries, dependency features, and platform used for a release.
+
 This file is an engineering inventory, not legal advice. Release owners are
 responsible for checking the exact dependency feature set and all authored or
 sample media before redistribution.

@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <chrono>
 #include <exception>
+#include <cstring>
+#include <optional>
 #include <sstream>
 #include <unordered_set>
 #include <utility>
@@ -18,6 +20,73 @@
 namespace px::graphics {
 
 namespace {
+constexpr std::size_t kMaximumEncodedImageBytes = 128u * 1024u * 1024u;
+
+std::optional<io::Bytes> ReadImageInput(io::VFS& vfs, const std::string& path) {
+    // Keep VFS access on its owning thread. Size is checked before allocating
+    // encoded bytes; the eventual worker still owns an immutable byte vector.
+    auto stream = vfs.Open(path);
+    if (!stream || stream->Size() > kMaximumEncodedImageBytes) {
+        SDL_SetError("Image is missing or exceeds the 128 MiB encoded input limit");
+        return std::nullopt;
+    }
+    io::Bytes bytes(static_cast<std::size_t>(stream->Size()));
+    std::size_t offset = 0;
+    while (offset < bytes.size()) {
+        const auto count = stream->Read(bytes.data() + offset, bytes.size() - offset);
+        if (count == 0) { SDL_SetError("Image input could not be read completely"); return std::nullopt; }
+        offset += count;
+    }
+    if (stream->Failed()) { SDL_SetError("Image input stream failed"); return std::nullopt; }
+    return bytes;
+}
+
+bool ImageDimensionsFit(const std::uint64_t width, const std::uint64_t height,
+                        const std::size_t decodedLimit) {
+    return width > 0 && height > 0 && width <= decodedLimit / 4u / height;
+}
+
+SDL_Surface* DecodeImage(const void* data, const std::size_t size,
+                         const std::size_t decodedLimit) {
+    if (!data || size == 0 || size > kMaximumEncodedImageBytes) {
+        SDL_SetError("Image exceeds encoded input limit or has no data");
+        return nullptr;
+    }
+    const auto* bytes = static_cast<const std::uint8_t*>(data);
+    constexpr std::uint8_t pngSignature[] = {137, 80, 78, 71, 13, 10, 26, 10};
+    if (size >= 24 && std::memcmp(bytes, pngSignature, sizeof(pngSignature)) == 0 &&
+        std::memcmp(bytes + 12, "IHDR", 4) == 0) {
+        const auto bigEndian = [bytes](const std::size_t offset) {
+            return (static_cast<std::uint32_t>(bytes[offset]) << 24) |
+                   (static_cast<std::uint32_t>(bytes[offset + 1]) << 16) |
+                   (static_cast<std::uint32_t>(bytes[offset + 2]) << 8) |
+                   static_cast<std::uint32_t>(bytes[offset + 3]);
+        };
+        if (!ImageDimensionsFit(bigEndian(16), bigEndian(20), decodedLimit)) {
+            SDL_SetError("PNG dimensions exceed decoded image byte limit");
+            return nullptr;
+        }
+    }
+    SDL_IOStream* stream = SDL_IOFromConstMem(data, size);
+    SDL_Surface* surface = stream ? IMG_Load_IO(stream, true) : nullptr;
+    if (surface && !ImageDimensionsFit(static_cast<std::uint64_t>(surface->w),
+                                      static_cast<std::uint64_t>(surface->h), decodedLimit)) {
+        SDL_DestroySurface(surface);
+        SDL_SetError("Image dimensions exceed decoded image byte limit");
+        return nullptr;
+    }
+    if (surface && (surface->pitch < 0 ||
+                    static_cast<std::size_t>(surface->pitch) >
+                        decodedLimit / static_cast<std::size_t>(surface->h))) {
+        SDL_DestroySurface(surface);
+        SDL_SetError("Decoded surface storage exceeds image byte limit");
+        return nullptr;
+    }
+    // PNG is bounded before decompression. Other SDL_image codecs are checked
+    // after decoding; this is not a universal pre-allocation decoder sandbox.
+    return surface;
+}
+
 // Soft cap on resident textures; a long VN session visits far more backgrounds
 // and sprites than are ever on screen together.
 void AssetDiagnostic(std::string code,const std::string& path,std::string message,std::string details={}){
@@ -63,6 +132,16 @@ void AssetCache::BeginFrame() {
 
 void AssetCache::SetPreloadConcurrency(const std::size_t value) {
     m_preloadConcurrency = std::clamp<std::size_t>(value, 1, 32);
+}
+
+void AssetCache::SetPreloadFrameLimits(const std::size_t starts,
+                                       const std::size_t uploads) {
+    m_preloadStartsPerFrame = std::clamp<std::size_t>(starts, 1, 32);
+    m_preloadUploadsPerFrame = std::clamp<std::size_t>(uploads, 1, 32);
+}
+
+void AssetCache::SetImageDecodeByteLimit(const std::size_t bytes) {
+    m_imageDecodeByteLimit = std::max<std::size_t>(bytes, 4);
 }
 
 bool AssetCache::HasResidentTexture(const std::string& path) const {
@@ -194,7 +273,9 @@ void AssetCache::QueueTexture(const std::string& path,
 }
 
 void AssetCache::LaunchQueuedTextures() {
-    while (m_pendingTextures.size() < m_preloadConcurrency &&
+    std::size_t started = 0;
+    while (started < m_preloadStartsPerFrame &&
+           m_pendingTextures.size() < m_preloadConcurrency &&
            !m_queuedTextures.empty()) {
         auto selected = std::max_element(
             m_queuedTextures.begin(), m_queuedTextures.end(),
@@ -215,26 +296,24 @@ void AssetCache::LaunchQueuedTextures() {
             ++batch->second.progress.running;
         }
 
-        auto bytes = m_vfs.Read(task.path);
+        ++started;
+        auto bytes = ReadImageInput(m_vfs, task.path);
         if (!bytes) {
             for (const auto batchId : task.batches)
                 CompleteBatchRequest(batchId, task.path, false, 0,
                                      "PXASSET7013",
-                                     "Texture preload asset was not found");
+                                     "Texture preload asset is missing, unreadable, or exceeds the encoded input limit");
             if (task.cacheRequest)
                 AssetDiagnostic("PXASSET7013", task.path,
-                                "Texture preload asset was not found");
+                                "Texture preload asset is missing, unreadable, or exceeds the encoded input limit");
             continue;
         }
 
         try {
             auto future = std::async(
                 std::launch::async,
-                [input = std::move(*bytes)]() mutable -> DecodeResult {
-                    SDL_IOStream* stream = SDL_IOFromConstMem(
-                        input.data(), input.size());
-                    SDL_Surface* surface =
-                        stream ? IMG_Load_IO(stream, true) : nullptr;
+                [input = std::move(*bytes), limit = m_imageDecodeByteLimit]() mutable -> DecodeResult {
+                    SDL_Surface* surface = DecodeImage(input.data(), input.size(), limit);
                     if (!surface)
                         return {.surface = nullptr,
                                 .width = 0,
@@ -269,6 +348,7 @@ void AssetCache::LaunchQueuedTextures() {
 }
 
 void AssetCache::HarvestPendingTextures() {
+    std::size_t uploaded = 0;
     for (auto iterator = m_pendingTextures.begin();
          iterator != m_pendingTextures.end();) {
         if (!iterator->future.valid()) {
@@ -281,6 +361,13 @@ void AssetCache::HarvestPendingTextures() {
             continue;
         }
 
+        const bool currentSession = iterator->session == m_assetSession;
+        const bool requested = iterator->cacheRequest || !iterator->batches.empty();
+        if (currentSession && requested && uploaded >= m_preloadUploadsPerFrame) {
+            ++iterator;
+            continue;
+        }
+        if (currentSession && requested) ++uploaded;
         DecodeResult decoded;
         try {
             decoded = iterator->future.get();
@@ -290,9 +377,6 @@ void AssetCache::HarvestPendingTextures() {
             decoded.error = "unknown texture decode failure";
         }
 
-        const bool currentSession = iterator->session == m_assetSession;
-        const bool requested = iterator->cacheRequest ||
-                               !iterator->batches.empty();
         SDL_Texture* nativeTexture = nullptr;
         if (currentSession && requested && decoded.surface && m_renderer)
             nativeTexture = SDL_CreateTextureFromSurface(m_renderer, decoded.surface);
@@ -401,16 +485,15 @@ TextureHandle AssetCache::Texture(const std::string& path) {
                     }))
         return {};
 
-    auto bytes = m_vfs.Read(path);
+    auto bytes = ReadImageInput(m_vfs, path);
     if (!bytes) {
         PX_LOG_WARN("AssetCache: texture not found '{}'", path);
-        AssetDiagnostic("PXASSET7001",path,"Texture asset was not found");
+        AssetDiagnostic("PXASSET7001",path,"Texture asset is missing, unreadable, or exceeds the encoded input limit");
         m_textures[path] = TextureEntry{{}, m_frame,0};
         return {};
     }
 
-    SDL_IOStream* io = SDL_IOFromConstMem(bytes->data(), bytes->size());
-    SDL_Surface* surface = io ? IMG_Load_IO(io, /*closeio=*/true) : nullptr;
+    SDL_Surface* surface = DecodeImage(bytes->data(), bytes->size(), m_imageDecodeByteLimit);
     if (!surface) {
         PX_LOG_WARN("AssetCache: failed to decode image '{}': {}", path, SDL_GetError());
         AssetDiagnostic("PXASSET7002",path,"Texture asset could not be decoded",SDL_GetError());
@@ -444,14 +527,13 @@ void AssetCache::PreloadTexture(const std::string& path,
 }
 
 SDL_Surface* AssetCache::LoadSurface(const std::string& path) {
-    auto bytes = m_vfs.Read(path);
+    auto bytes = ReadImageInput(m_vfs, path);
     if (!bytes) {
         PX_LOG_WARN("AssetCache: surface not found '{}'", path);
-        AssetDiagnostic("PXASSET7003",path,"Image surface asset was not found");
+        AssetDiagnostic("PXASSET7003",path,"Image surface is missing, unreadable, or exceeds the encoded input limit");
         return nullptr;
     }
-    SDL_IOStream* io = SDL_IOFromConstMem(bytes->data(), bytes->size());
-    SDL_Surface* surface = io ? IMG_Load_IO(io, /*closeio=*/true) : nullptr;
+    SDL_Surface* surface = DecodeImage(bytes->data(), bytes->size(), m_imageDecodeByteLimit);
     if (!surface) {
         PX_LOG_WARN("AssetCache: failed to decode surface '{}': {}", path, SDL_GetError());
         AssetDiagnostic("PXASSET7004",path,"Image surface could not be decoded",SDL_GetError());
@@ -470,8 +552,7 @@ TextureHandle AssetCache::RegisterMemoryTexture(const std::string& key,
         AssetDiagnostic("PXASSET7005",key,"Memory texture has no data");
         return {};
     }
-    SDL_IOStream* io = SDL_IOFromConstMem(data, size);
-    SDL_Surface* surface = io ? IMG_Load_IO(io, /*closeio=*/true) : nullptr;
+    SDL_Surface* surface = DecodeImage(data, size, m_imageDecodeByteLimit);
     if (!surface) {
         PX_LOG_WARN("AssetCache: failed to decode memory image '{}': {}", key, SDL_GetError());
         AssetDiagnostic("PXASSET7006",key,"Memory texture could not be decoded",SDL_GetError());

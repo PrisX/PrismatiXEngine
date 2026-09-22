@@ -149,6 +149,11 @@ private:
     bool m_autoSavedChoice = false;
     bool m_saveRequested = false;
     bool m_pendingSaveScreen = false;
+    struct SavePresentationState {
+        ui::UIRuntimeState ui;
+        ui::RouteState routes;
+    };
+    std::optional<SavePresentationState> m_beforeSavePresentation;
     std::vector<std::uint8_t> m_menuThumb;
     std::string m_viewingCG;
 
@@ -170,6 +175,7 @@ private:
         AwaitTitleAsync,
         AwaitGameReady,
         AwaitMenuAsync,
+        AwaitSaveScreen,
         AwaitPostMenuGameReady,
         VerifyReleaseF2,
         AwaitGallery,

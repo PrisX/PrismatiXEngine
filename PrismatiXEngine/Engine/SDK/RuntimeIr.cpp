@@ -11,7 +11,9 @@ namespace {
 
 using Json = nlohmann::json;
 
-constexpr std::size_t kMaxRuntimeIrBytes = 16U * 1024U * 1024U;
+// Compiled projects aggregate chapters: 100k authored lines can exceed 32 MiB.
+// Match the bounded source-map document budget; operation/string limits remain.
+constexpr std::size_t kMaxRuntimeIrBytes = 64U * 1024U * 1024U;
 constexpr std::size_t kMaxRuntimeOperations = 1'000'000U;
 constexpr std::size_t kMaxOperationArguments = 1'024U;
 constexpr std::size_t kMaxRuntimeStringBytes = 1U * 1024U * 1024U;

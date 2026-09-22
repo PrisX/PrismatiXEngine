@@ -148,3 +148,19 @@ test("Timeline semantic validation rejects unordered or out-of-range samples", (
   assert.equal(result.valid, false);
   assert.ok(result.diagnostics.some((item) => item.code === "PXSDKSEM1201"));
 });
+
+test("compiled Runtime IR and source maps use the same bounded UTF-8 byte budget as native", () => {
+  const documents = {
+    runtimeIr: {format:"PrismatiXRuntimeIR",schemaRevision:2,documentId:"large",committedRevision:1,operations:[]},
+    sourceMap: {format:"PrismatiXSourceMap",schemaRevision:2,documentId:"large",mappings:[]},
+  };
+  for (const [kind, value] of Object.entries(documents)) {
+    const json = JSON.stringify(value);
+    const boundary = json + " ".repeat(64 * 1024 * 1024 - Buffer.byteLength(json));
+    assert.equal(parseDocument(kind, boundary).valid, true);
+    const over = parseDocument(kind, boundary + " ");
+    assert.equal(over.valid, false);
+    assert.equal(over.diagnostics[0]?.code, "PXSDKJSON1001");
+    assert.equal(parseDocument(kind, boundary.slice(0, -1) + "雪").valid, false);
+  }
+});

@@ -150,9 +150,11 @@ function decodeValue(raw: string): DecodedValue {
   return {value: raw};
 }
 
-function parseArguments(path: string, line: SourceLine, tokens: readonly Token[], diagnostics: AuthoringDiagnostic[]): StoryArgument[] {
+function parseArguments(path: string, line: SourceLine, tokens: readonly Token[], diagnostics: AuthoringDiagnostic[], namedArguments = true): StoryArgument[] {
   return tokens.map((token) => {
-    const equals = token.raw.indexOf("=");
+    // `if` is an expression, not a command's name=value argument list.
+    // Preserve operators and quoted '=' characters for the expression parser.
+    const equals = namedArguments ? token.raw.indexOf("=") : -1;
     const name = equals > 0 ? token.raw.slice(0, equals) : undefined;
     const raw = equals > 0 ? token.raw.slice(equals + 1) : token.raw;
     const start = line.text.indexOf("[") + 2 + token.start + (equals > 0 ? equals + 1 : 0);
@@ -228,7 +230,7 @@ export function parseStory(text: string, path = "Story/untitled.pxstory"): Story
         span: lineSpan,
         raw: line.text,
         name: command!.raw,
-        arguments: parseArguments(path, line, argumentTokens, diagnostics),
+        arguments: parseArguments(path, line, argumentTokens, diagnostics, command!.raw !== "if"),
       });
       continue;
     }

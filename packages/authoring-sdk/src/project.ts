@@ -1,5 +1,5 @@
 import {canonicalJson} from "./canonical-json.js";
-import {parseDocument, validateDocument} from "./contracts.js";
+import {contractDocumentByteLimit, parseDocument, validateDocument} from "./contracts.js";
 import {normalizeProject} from "./project-normalization.js";
 import {validateProjectCharacterResources} from "./project-resources.js";
 import {
@@ -698,6 +698,13 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     files[localized.runtimeIrPath] = canonicalJson(localized.runtimeIr);
     files[localized.sourceMapPath] = canonicalJson(localized.sourceMap);
   }
+  for (const [path, text] of Object.entries(files)) {
+    if ((path.endsWith(".pxir") || path.endsWith(".pxmap")) &&
+        Buffer.byteLength(text, "utf8") > contractDocumentByteLimit(path.endsWith(".pxir") ? "runtimeIr" : "sourceMap"))
+      diagnostics.push(issue("PXPROJECT1050", "Compiled artifact exceeds the native 64 MiB document limit", path,
+        "Reduce this project's aggregate content before previewing or packaging; no artifact was published."));
+  }
+  if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) return {diagnostics, valid: false};
   for (const descriptor of project.characters ?? []) files[descriptor.source] = serialized(documents[descriptor.source]);
   for (const path of project.extensions) files[path] = serialized(documents[path]);
   for (const [path, value] of saveMigrationDocuments) files[path] = canonicalJson(value);
