@@ -1,0 +1,177 @@
+import assert from "node:assert/strict";
+import {mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import test from "node:test";
+import {publishDirectory, retirePublishedDirectory, outputOwnershipMarker} from "../src/output-safety.js";
+
+async function fixture(t: test.TestContext) {
+  const root = await mkdtemp(join(tmpdir(), "prismatix-output-safety-"));
+  t.after(() => rm(root, {recursive: true, force: true}));
+  const projectRoot = join(root, "project");
+  const story = join(projectRoot, "Story");
+  await mkdir(story, {recursive: true});
+  await writeFile(join(story, "main.pxstory"), "author source");
+  const output = join(projectRoot, "dist");
+  return {root, projectRoot, story, output, protectedPaths: [story]};
+}
+const build = (text: string) => async (stage: string) => { await writeFile(join(stage, "game.bin"), text); return text; };
+
+test("protects source directories, ancestors and missing nested outputs", async t => {
+  const f = await fixture(t);
+  for (const output of [f.root, f.projectRoot, f.story, join(f.story, "new", "output")]) {
+    await assert.rejects(publishDirectory({...f, output}, build("replacement")), /Unsafe output/);
+  }
+  assert.equal(await readFile(join(f.story, "main.pxstory"), "utf8"), "author source");
+});
+
+test("refuses unrelated nonempty output and overlapping external input", async t => {
+  const f = await fixture(t);
+  await mkdir(f.output);
+  await writeFile(join(f.output, "notes.txt"), "author notes");
+  await assert.rejects(publishDirectory(f, build("replacement")), /unowned or modified/);
+  assert.equal(await readFile(join(f.output, "notes.txt"), "utf8"), "author notes");
+  const external = join(f.root, "shared");
+  await mkdir(external);
+  await assert.rejects(publishDirectory({...f, output: external, protectedPaths: [join(external, "input.png")]}, build("replacement")), /overlaps author input/);
+});
+
+test("allows new or empty output and replaces only intact owned output", async t => {
+  const f = await fixture(t);
+  assert.equal(await publishDirectory(f, build("one")), "one");
+  await publishDirectory(f, build("two"));
+  assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "two");
+  assert.ok((await readdir(f.output)).includes(outputOwnershipMarker));
+  await writeFile(join(f.output, "author.txt"), "keep");
+  await assert.rejects(publishDirectory(f, build("three")), /unowned or modified/);
+  assert.equal(await readFile(join(f.output, "author.txt"), "utf8"), "keep");
+  await rm(join(f.output, "author.txt"));
+  await writeFile(join(f.output, "game.bin"), "user edits");
+  await assert.rejects(publishDirectory(f, build("three")), /unowned or modified/);
+  assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "user edits");
+  const empty = join(f.root, "empty");
+  await mkdir(empty);
+  await publishDirectory({...f, output: empty}, build("empty accepted"));
+});
+
+test("build failure preserves previous output and unknown backup", async t => {
+  const f = await fixture(t);
+  await publishDirectory(f, build("stable"));
+  const unknownBackup = join(f.projectRoot, ".prismatix-backup-user");
+  await mkdir(unknownBackup);
+  await writeFile(join(unknownBackup, "notes"), "keep");
+  await assert.rejects(publishDirectory(f, async stage => {
+    await writeFile(join(stage, "partial"), "bad");
+    throw new Error("build failure");
+  }), /build failure/);
+  assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "stable");
+  assert.equal(await readFile(join(unknownBackup, "notes"), "utf8"), "keep");
+  assert.deepEqual((await readdir(f.projectRoot)).filter(name => name.includes("stage-") || name.endsWith(".lock")), []);
+});
+
+test("concurrent publications fail closed and edits during build are preserved", async t => {
+  const f = await fixture(t);
+  await publishDirectory(f, build("stable"));
+  let entered!: () => void;
+  let release!: () => void;
+  const ready = new Promise<void>(resolve => { entered = resolve; });
+  const proceed = new Promise<void>(resolve => { release = resolve; });
+  const first = publishDirectory(f, async stage => { entered(); await proceed; await build("next")(stage); });
+  await ready;
+  await assert.rejects(publishDirectory(f, build("concurrent")), /locked/);
+  await writeFile(join(f.output, "author.txt"), "new note");
+  release();
+  await assert.rejects(first, /unowned or modified/);
+  assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "stable");
+  assert.equal(await readFile(join(f.output, "author.txt"), "utf8"), "new note");
+});
+
+test("resolves junction aliases including missing descendants", async t => {
+  const f = await fixture(t);
+  const alias = join(f.root, "alias");
+  try { await symlink(f.story, alias, process.platform === "win32" ? "junction" : "dir"); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "EPERM") { t.skip("symlink permission unavailable"); return; } throw error; }
+  await assert.rejects(publishDirectory({...f, output: join(alias, "missing")}, build("bad")), /overlaps author input/);
+  await assert.rejects(publishDirectory({...f, output: alias}, build("bad")), /overlaps author input/);
+  if (process.platform === "win32") await assert.rejects(publishDirectory({...f, output: f.story.toUpperCase()}, build("bad")), /overlaps author input/);
+});
+
+test("promotion rename failure restores the previous complete output", async t => {
+  const f = await fixture(t);
+  await publishDirectory(f, build("stable"));
+  const filesystem = (await import("node:fs/promises")).default;
+  const originalRename = filesystem.rename;
+  let failed = false;
+  const mock = t.mock.method(filesystem, "rename", async (source: Parameters<typeof originalRename>[0], destination: Parameters<typeof originalRename>[1]) => {
+    if (!failed && String(source).includes(".prismatix-stage-")) {
+      failed = true;
+      throw Object.assign(new Error("injected promotion failure"), {code: "EACCES"});
+    }
+    return originalRename(source, destination);
+  });
+  try { await assert.rejects(publishDirectory(f, build("next")), /injected promotion failure/); }
+  finally { mock.mock.restore(); }
+  assert.ok(failed);
+  assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "stable");
+  await publishDirectory(f, build("retry"));
+  assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "retry");
+});
+
+
+test("retirement removes intact owned output and refuses empty, unowned or author-modified directories", async t => {
+  const f = await fixture(t);
+  await mkdir(f.output);
+  await assert.rejects(retirePublishedDirectory(f), /unowned or modified/);
+  await writeFile(join(f.output, "notes.txt"), "author data");
+  await assert.rejects(retirePublishedDirectory(f), /unowned or modified/);
+  await rm(join(f.output, "notes.txt"));
+  await publishDirectory(f, build("stable"));
+  await writeFile(join(f.output, "notes.txt"), "author data");
+  await assert.rejects(retirePublishedDirectory(f), /unowned or modified/);
+  assert.equal(await readFile(join(f.output, "notes.txt"), "utf8"), "author data");
+  await rm(join(f.output, "notes.txt"));
+  await retirePublishedDirectory(f);
+  await assert.rejects(readdir(f.output), {code: "ENOENT"});
+  await retirePublishedDirectory(f); // Already absent is a harmless no-op.
+  await assert.rejects(retirePublishedDirectory({...f, output: f.story}), /overlaps author input/);
+});
+
+test("retirement shares publication lock and rejects junction aliases", async t => {
+  const f = await fixture(t);
+  await publishDirectory(f, build("stable"));
+  let entered!: () => void;
+  let release!: () => void;
+  const ready = new Promise<void>(resolve => { entered = resolve; });
+  const proceed = new Promise<void>(resolve => { release = resolve; });
+  const publication = publishDirectory(f, async stage => { entered(); await proceed; await build("next")(stage); });
+  await ready;
+  try { await assert.rejects(retirePublishedDirectory(f), /locked/); }
+  finally { release(); await publication; }
+  const alias = join(f.root, "retirement-alias");
+  try { await symlink(f.output, alias, process.platform === "win32" ? "junction" : "dir"); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "EPERM") { t.skip("symlink permission unavailable"); return; } throw error; }
+  await assert.rejects(retirePublishedDirectory({...f, output: alias}), /not a regular directory/);
+  assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "next");
+});
+
+test("failed retirement reports retained location without overwriting a replacement output", async t => {
+  const f = await fixture(t);
+  await publishDirectory(f, build("stable"));
+  const filesystem = (await import("node:fs/promises")).default;
+  const originalRm = filesystem.rm;
+  let retained = "";
+  const mock = t.mock.method(filesystem, "rm", async (path: Parameters<typeof originalRm>[0], options: Parameters<typeof originalRm>[1]) => {
+    if (String(path).includes(".prismatix-retired-")) {
+      retained = String(path);
+      await mkdir(f.output);
+      await writeFile(join(f.output, "author.txt"), "new data");
+      throw Object.assign(new Error("injected removal failure"), {code: "EACCES"});
+    }
+    return originalRm(path, options);
+  });
+  try { await assert.rejects(retirePublishedDirectory(f), /remaining files are preserved at/); }
+  finally { mock.mock.restore(); }
+  assert.ok(retained);
+  assert.equal(await readFile(join(retained, "game.bin"), "utf8"), "stable");
+  assert.equal(await readFile(join(f.output, "author.txt"), "utf8"), "new data");
+});

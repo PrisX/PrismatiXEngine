@@ -17,44 +17,27 @@
 
 PrismatiXEngine combines typed content contracts and deterministic Story execution with a native Player and PreviewHost. Story authors work through the project-local CLI; building the C++ engine is a separate contributor workflow.
 
-## Make your first game in five steps
+## Make your first game
 
-You need Node.js 20 or newer and the released PrismatiX runtime bundle for your platform. You do not need CMake, vcpkg, an engine checkout, or a globally installed PrismatiX command.
+Install Node.js and npm first (maintained CI uses Node.js 24.14.0). On a supported platform with a matching bundled CLI release:
 
-1. Install the CLI in an empty authoring directory.
+```bash
+npm install -g @prismatix/cli
+prismatix create my-game
+prismatix dev my-game
+```
 
-   ```bash
-   npm init -y
-   npm install --save-dev @prismatix/cli
-   ```
+Edit `my-game/Story/main.pxstory` and save. The original starter includes character/background pictures, two branches, a Traditional Chinese font, the default HUD and save/load routes. Create automatically installs exact local CLI/SDK versions and writes the lockfile. No native build tools or separate runtime download are part of this author workflow.
 
-2. Create the playable starter.
+Successful edits currently restart the scene after a replacement Preview acknowledges playback; errors retain the previous preview. The global command respects each project's pinned local CLI. Build a portable Player distribution with:
 
-   ```bash
-   npx prismatix create first-game --name "First Light" --locale en
-   cd first-game
-   ```
+```bash
+prismatix build my-game
+```
 
-3. Change the welcome line in `Story/main.pxstory`.
+`--output` changes distribution location only. Compiler-only automation must explicitly use `--artifact-only`. See [getting started](docs/getting-started.md) and the [cookbook](docs/cookbook.md).
 
-   ```pxstory
-   [id main.welcome]
-   The station lights came on one by one.
-   ```
-
-4. Preview it. Saving a dependency reports source diagnostics and updates Preview.
-
-   ```bash
-   npx prismatix dev
-   ```
-
-5. Build a portable distribution under `dist/<project-id>/`.
-
-   ```bash
-   npx prismatix build
-   ```
-
-Released CLI packages may include the matching native runtime. For a standalone bundle, set `PRISMATIX_RUNTIME_DIR` to its install prefix or pass `--runtime <prefix>` to `dev` and `build`. See [Build your first PrismatiX game](docs/getting-started.md) for runtime discovery, `dev --once`, diagnostics, explicit packaging, and the clean-machine release gate.
+**Candidate status:** this task tests privately assembled npm candidates. It does not publish packages or establish public npm availability. Desktop platform claims require separate native evidence; consult the [release audit](docs/releases/0.2.0-audit.md) for actual passes and blockers.
 
 ## What authors get
 

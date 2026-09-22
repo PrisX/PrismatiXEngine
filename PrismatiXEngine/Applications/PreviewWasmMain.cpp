@@ -225,6 +225,12 @@ public:
              },
              .restoreExternalState = [this](const auto& state) {
                  return RestoreExternalCheckpoint(state);
+             },
+             .validateExternalState = [](const std::shared_ptr<const void>& state) {
+                 if (!state) return px::Status::Ok();
+                 const auto checkpoint = std::static_pointer_cast<const ScriptCheckpoint>(state);
+                 return checkpoint->captureErrors.empty() ? px::Status::Ok()
+                     : px::Status::Fail(checkpoint->captureErrors);
              }});
         m_hud.SetBehaviorVariableAccess(
             [this](const std::string_view name) -> std::optional<px::Variant> {
@@ -1726,6 +1732,8 @@ private:
     struct ScriptCheckpoint {
         px::script::PendingCommandsState commands;
         px::script::PendingActionsState actions;
+        px::script::ExtensionStates extensions;
+        std::vector<px::diag::Diagnostic> captureErrors;
     };
 
     std::optional<px::sdk::PreviewSafety> InspectOperationSafety(
@@ -1745,9 +1753,17 @@ private:
 
     std::shared_ptr<const void> CaptureExternalCheckpoint() const {
         if (!m_scriptHost) return {};
-        return std::make_shared<ScriptCheckpoint>(ScriptCheckpoint{
-            m_scriptHost->CapturePending(),
-            m_scriptHost->CapturePendingActions()});
+        auto checkpoint = std::make_shared<ScriptCheckpoint>();
+        checkpoint->commands = m_scriptHost->CapturePending();
+        checkpoint->actions = m_scriptHost->CapturePendingActions();
+        auto extensions = m_scriptHost->CaptureExtensionState();
+        if (extensions) checkpoint->extensions = extensions.TakeValue();
+        else {
+            checkpoint->captureErrors = extensions.Diagnostics();
+            for (const auto& diagnostic : checkpoint->captureErrors)
+                px::diag::Emit(diagnostic);
+        }
+        return checkpoint;
     }
 
     px::Status RestoreExternalCheckpoint(
@@ -1767,12 +1783,12 @@ private:
         }
         const auto checkpoint =
             std::static_pointer_cast<const ScriptCheckpoint>(opaque);
-        m_scriptHost->CancelPending();
-        if (px::Status status =
-                m_scriptHost->RestorePending(checkpoint->commands);
-            !status)
+        if (!checkpoint->captureErrors.empty())
+            return px::Status::Fail(checkpoint->captureErrors);
+        if (px::Status status = m_scriptHost->RestoreCheckpoint(
+                checkpoint->commands, checkpoint->actions); !status)
             return status;
-        return m_scriptHost->RestorePendingActions(checkpoint->actions);
+        return m_scriptHost->RestoreExtensionState(checkpoint->extensions);
     }
 
     template <typename PreviewResult>

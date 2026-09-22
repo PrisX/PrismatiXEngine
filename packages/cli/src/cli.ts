@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
-import {createDecipheriv, createHash, randomUUID} from "node:crypto";
+import {createHash, randomUUID} from "node:crypto";
 import {spawn, type ChildProcessWithoutNullStreams} from "node:child_process";
-import {createReadStream, existsSync} from "node:fs";
+import {createReadStream, existsSync, watch} from "node:fs";
 import {
-  copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile,
+  copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile,
 } from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {basename, dirname, extname, isAbsolute, join, relative, resolve, sep} from "node:path";
@@ -12,10 +12,13 @@ import {fileURLToPath, pathToFileURL} from "node:url";
 import * as ts from "typescript-compiler";
 
 import {
-  discoverRuntimeTool, RuntimeDiscoveryFailure, runtimeDiscoveryHint,
+  discoverRuntimeTool, discoverRuntimeBundle, RuntimeDiscoveryFailure, runtimeDiscoveryHint,
   type RuntimeDiscoveryOptions,
 } from "./runtime-discovery.js";
+import {publishDirectory, retirePublishedDirectory, outputOwnershipMarker} from "./output-safety.js";
+import {createStarter} from "./starter.js";
 import {migrateCommand} from "./migration.js";
+import {inspectSaveWithRuntime} from "./save-inspection.js";
 
 import {
   canonicalJson,
@@ -49,20 +52,47 @@ class JsxAuthoringFailure extends Error {
 }
 
 const maxDocumentBytes = 16 * 1024 * 1024;
+const machineOutput = process.argv.includes("--json");
 
-function parseOptions(args: readonly string[]): Options {
+const commandOptions: Readonly<Record<string, {values: string; flags: string}>> = {
+  create: {values: "name id locale width height", flags: ""},
+  dev: {values: "runtime preview-host debounce", flags: "once smoke"},
+  validate: {values: "", flags: ""},
+  build: {values: "output runtime packager player compression", flags: "artifact-only distribution encrypt"},
+  pack: {values: "output runtime packager player compression", flags: "encrypt"},
+  run: {values: "output runtime packager player compression", flags: "encrypt"},
+  ids: {values: "document-id prefix backup", flags: "write check"},
+  migrate: {values: "report backup entry-story entry-ui supported-locales save-version id name version content-version default-locale story-index game-catalog", flags: "write"},
+  "inspect-save": {values: "package secret runtime player", flags: ""},
+};
+function parseOptions(command: string, args: readonly string[]): Options {
+  const schema = commandOptions[command];
+  if (schema === undefined) throw new Error(`Unknown command: ${command}`);
+  const valueNames = new Set(schema.values.split(" ").filter(Boolean));
+  const flagNames = new Set([...schema.flags.split(" ").filter(Boolean), "json", "help"]);
   const values = new Map<string, string>();
   const flags = new Set<string>();
   const positional: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
-    const value = args[index]!;
-    if (!value.startsWith("--")) { positional.push(value); continue; }
-    const equals = value.indexOf("=");
-    if (equals >= 0) { values.set(value.slice(2, equals), value.slice(equals + 1)); continue; }
-    const next = args[index + 1];
-    if (next !== undefined && !next.startsWith("--")) { values.set(value.slice(2), next); index += 1; }
-    else flags.add(value.slice(2));
+    const argument = args[index]!;
+    if (argument === "--") { positional.push(...args.slice(index + 1)); break; }
+    if (!argument.startsWith("--")) { positional.push(argument); continue; }
+    const equals = argument.indexOf("=");
+    const name = argument.slice(2, equals < 0 ? undefined : equals);
+    if (values.has(name) || flags.has(name)) throw new Error(`Duplicate option: --${name}`);
+    if (flagNames.has(name)) {
+      if (equals >= 0) throw new Error(`--${name} is a flag and does not accept a value`);
+      flags.add(name); continue;
+    }
+    if (!valueNames.has(name)) throw new Error(`Unknown option for ${command}: --${name}`);
+    const value = equals >= 0 ? argument.slice(equals + 1) : args[++index];
+    if (value === undefined || value.length === 0 || value.startsWith("--")) throw new Error(`--${name} requires a value`);
+    values.set(name, value);
   }
+  if (positional.length > 1) throw new Error("Expected one project or save path; quote paths containing spaces");
+  if (flags.has("artifact-only") && flags.has("distribution")) throw new Error("--artifact-only and --distribution cannot be combined");
+  if (values.has("compression") && !["none", "fast", "balanced", "maximum"].includes(values.get("compression")!))
+    throw new Error("--compression must be none, fast, balanced, or maximum");
   return {values, flags, positional};
 }
 
@@ -98,7 +128,18 @@ function firstLineSpan(text: string, path: string): SourceSpan {
 }
 
 function printDiagnostics(values: readonly AuthoringDiagnostic[]): void {
-  for (const value of values) process.stderr.write(`${JSON.stringify(value)}\n`);
+  for (const value of values) {
+    if (machineOutput) process.stderr.write(`${JSON.stringify(value)}\n`);
+    else {
+      const at = value.span ? `${value.span.path}:${value.span.start.line}:${value.span.start.column}` : value.path;
+      process.stderr.write(`${value.severity} ${value.code}${at ? ` (${at})` : ""}: ${value.message}\n`);
+      if (value.hint ?? value.details) process.stderr.write(`  ${value.hint ?? value.details}\n`);
+    }
+  }
+}
+
+function progress(value: Readonly<Record<string, unknown>>): void {
+  process.stderr.write(machineOutput ? `${JSON.stringify(value)}\n` : `${String(value.message)}\n`);
 }
 
 function safeVirtualPath(value: string): boolean {
@@ -115,16 +156,9 @@ function projectFile(root: string, virtualPath: string): string {
   return target;
 }
 
-const starterTemplateRoot = fileURLToPath(new URL("../../templates/minimal", import.meta.url));
-
-function jsonTemplateValue(value: string): string {
-  return JSON.stringify(value).slice(1, -1);
-}
-
 function starterProjectId(value: string): string {
-  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9._-]+/gu, "-")
-    .replace(/^[^a-z0-9]+/u, "").replace(/-+$/u, "");
-  return normalized.length > 0 ? normalized.slice(0, 256) : "my-prismatix-game";
+  return value.trim().toLowerCase().replace(/[^a-z0-9._-]+/gu, "-")
+    .replace(/^[^a-z0-9]+/u, "").replace(/-+$/u, "").slice(0, 256) || "my-prismatix-game";
 }
 
 function integerOption(options: Options, name: string, fallback: number,
@@ -140,40 +174,16 @@ function integerOption(options: Options, name: string, fallback: number,
 async function createCommand(options: Options): Promise<number> {
   const target = resolve(options.positional[0] ?? "my-prismatix-game");
   try {
-    let existing: string[] = [];
-    try { existing = await readdir(target); } catch { /* Created below. */ }
-    if (existing.length > 0) throw new Error(`Destination is not empty: ${target}`);
-    const name = options.values.get("name") ?? "My PrismatiX Game";
-    if (name.trim().length === 0 || name.length > 512) throw new Error("--name must not be empty or exceed 512 characters");
-    const id = options.values.get("id") ?? starterProjectId(basename(target));
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(id) || id.length > 256)
-      throw new Error("--id must be a stable identifier using letters, digits, '.', '_' or '-'");
-    const locale = options.values.get("locale") ?? "en";
-    if (!/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/u.test(locale))
-      throw new Error("--locale must be a BCP 47 language tag such as en or zh-TW");
-    const width = integerOption(options, "width", 1280, 1, 16384);
-    const height = integerOption(options, "height", 720, 1, 16384);
-    const replacements: Readonly<Record<string, string>> = {
-      "{{PROJECT_ID}}": jsonTemplateValue(id),
-      "{{PROJECT_NAME}}": jsonTemplateValue(name),
-      "{{LOCALE}}": jsonTemplateValue(locale),
-      "{{WIDTH}}": String(width), "{{HEIGHT}}": String(height),
-      "{{SCENE_ID}}": randomUUID(), "{{ROOT_ID}}": randomUUID(),
-      "{{TITLE_ID}}": randomUUID(), "{{START_ID}}": randomUUID(),
-    };
-    for (const virtualPath of await listFiles(starterTemplateRoot)) {
-      let text = await readBoundedText(projectFile(starterTemplateRoot, virtualPath));
-      for (const [token, replacement] of Object.entries(replacements))
-        text = text.replaceAll(token, replacement);
-      const destination = projectFile(target, virtualPath);
-      await mkdir(dirname(destination), {recursive: true});
-      await writeFile(destination, text, "utf8");
-    }
-    await mkdir(join(target, "Assets"), {recursive: true});
-    const project = join(target, "prismatix.json");
-    process.stdout.write(`${JSON.stringify({created: true, project, next: [
-      `cd ${basename(target)}`, "prismatix dev",
-    ]})}\n`);
+    const result = await createStarter(target, {
+      ...(options.values.has("name") ? {name: options.values.get("name")!} : {}),
+      ...(options.values.has("id") ? {id: options.values.get("id")!} : {}),
+      ...(options.values.has("locale") ? {locale: options.values.get("locale")!} : {}),
+      width: integerOption(options, "width", 1280, 1, 16384),
+      height: integerOption(options, "height", 720, 1, 16384),
+    });
+    process.stdout.write(machineOutput ? `${JSON.stringify({created: true, ...result,
+      next: [`prismatix dev ${JSON.stringify(target)}`]})}\n` :
+      `Created ${result.root}\nEdit Story/main.pxstory, then run: prismatix dev ${JSON.stringify(target)}\n`);
     return 0;
   } catch (error) {
     printDiagnostics([diagnostic("PXCLI1501", "Project could not be created", target, String(error))]);
@@ -643,20 +653,10 @@ async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact,
   }
 }
 
-async function promoteDirectory(staging: string, output: string): Promise<void> {
-  if (output === resolve(output).split(sep)[0] || output === dirname(output)) throw new Error("Refusing to replace a filesystem root");
-  const backup = `${output}.backup-${process.pid}`;
-  await rm(backup, {recursive: true, force: true});
-  let hadOutput = false;
-  try { hadOutput = (await stat(output)).isDirectory(); } catch { hadOutput = false; }
-  if (hadOutput) await rename(output, backup);
-  try {
-    await rename(staging, output);
-    if (hadOutput) await rm(backup, {recursive: true, force: true});
-  } catch (error) {
-    if (hadOutput) await rename(backup, output);
-    throw error;
-  }
+function protectedInputs(loaded: LoadedProject, artifact: BuildArtifact): string[] {
+  return [loaded.projectPath, ...loaded.dependencies,
+    ...["Story", "Assets", "Content", "Scripts", "Extensions"].map((name) => join(loaded.root, name)),
+    ...artifact.dependencies.map((dependency) => projectFile(loaded.root, dependency.source))];
 }
 
 async function buildProject(projectArgument: string | undefined, outputArgument: string | undefined,
@@ -666,16 +666,10 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
   printDiagnostics(compiled.diagnostics);
   if (!compiled.valid || compiled.artifact === undefined) throw new Error("Project validation or compilation failed");
   const output = resolve(outputArgument ?? join(loaded.root, ".prismatix", "build"));
-  if (output === loaded.root || loaded.root.startsWith(`${output}${sep}`)) throw new Error("Build output cannot equal or contain the project root");
-  await mkdir(dirname(output), {recursive: true});
-  const staging = await mkdtemp(join(dirname(output), `.${basename(output)}.staging-`));
-  try {
-    await copyRuntimeInputs(loaded, compiled.artifact, staging);
-    await promoteDirectory(staging, output);
-  } catch (error) {
-    await rm(staging, {recursive: true, force: true});
-    throw error;
-  }
+  await publishDirectory({output, projectRoot: loaded.root,
+    protectedPaths: protectedInputs(loaded, compiled.artifact)}, async (staging) => {
+    await copyRuntimeInputs(loaded, compiled.artifact!, staging);
+  });
   const dependencies = new Set(loaded.dependencies);
   for (const dependency of compiled.artifact.dependencies) {
     try { dependencies.add(projectFile(loaded.root, dependency.source)); }
@@ -685,11 +679,10 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
 }
 
 async function buildCommand(options: Options): Promise<number> {
-  if (!options.flags.has("artifact-only") &&
-      (!options.values.has("output") || options.flags.has("distribution"))) {
+  if (!options.flags.has("artifact-only")) {
     try {
       const packaged = await packProject(options);
-      process.stdout.write(`${JSON.stringify({built: true, distribution: true, ...packaged})}\n`);
+      process.stdout.write(machineOutput ? `${JSON.stringify({built: true, distribution: true, ...packaged})}\n` : `Built playable game: ${packaged.output}\n`);
       return 0;
     } catch (error) {
       printDiagnostics(error instanceof PackagerFailure || error instanceof JsxAuthoringFailure
@@ -699,8 +692,8 @@ async function buildCommand(options: Options): Promise<number> {
   }
   try {
     const built = await buildProject(options.positional[0], options.values.get("output"));
-    process.stdout.write(`${JSON.stringify({built: true, output: built.output,
-      runtimeIr: built.artifact.runtimeIrPath, sourceMap: built.artifact.sourceMapPath})}\n`);
+    process.stdout.write(machineOutput ? `${JSON.stringify({built: true, output: built.output,
+      runtimeIr: built.artifact.runtimeIrPath, sourceMap: built.artifact.sourceMapPath})}\n` : `Built Runtime artifact: ${built.output}\n`);
     return 0;
   } catch (error) {
     if (error instanceof JsxAuthoringFailure) {
@@ -754,11 +747,38 @@ async function runProcess(executable: string, args: readonly string[], input?: s
       script ? [executable, ...args] : [...args],
       {cwd, stdio: ["pipe", "pipe", "pipe"], windowsHide: true});
     let stdout = ""; let stderr = "";
+    let outputError: Error | undefined;
+    const limit = 16 * 1024 * 1024;
+    const capture = (previous: string, value: string): string => {
+      const combined = previous + value;
+      if (combined.length <= limit) return combined;
+      if (!stream) {
+        outputError = new Error("Child process output exceeds the 16 MiB capture limit");
+        child.kill();
+      }
+      return combined.slice(-limit);
+    };
+    const interrupt = (): void => { child.kill(); };
+    process.once("SIGINT", interrupt); process.once("SIGTERM", interrupt);
+    const cleanup = (): void => {
+      process.removeListener("SIGINT", interrupt); process.removeListener("SIGTERM", interrupt);
+    };
     child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (value: string) => { stdout += value; if (stream) process.stdout.write(value); });
-    child.stderr.on("data", (value: string) => { stderr += value; if (stream) process.stderr.write(value); });
-    child.on("error", reject);
-    child.on("close", (code) => accept({code: code ?? 1, stdout, stderr}));
+    child.stdout.on("data", (value: string) => {
+      stdout = capture(stdout, value);
+      if (stream && !process.stdout.write(value)) { child.stdout.pause(); process.stdout.once("drain", () => child.stdout.resume()); }
+    });
+    child.stderr.on("data", (value: string) => {
+      stderr = capture(stderr, value);
+      if (stream && !process.stderr.write(value)) { child.stderr.pause(); process.stderr.once("drain", () => child.stderr.resume()); }
+    });
+    child.stdin.on("error", (error) => { outputError = error; child.kill(); });
+    child.on("error", (error) => { cleanup(); reject(error); });
+    child.on("close", (code) => {
+      cleanup();
+      if (outputError !== undefined) reject(outputError);
+      else accept({code: code ?? 1, stdout, stderr});
+    });
     if (input !== undefined) child.stdin.end(input); else child.stdin.end();
   });
 }
@@ -785,10 +805,11 @@ async function packProject(options: Options): Promise<{output: string; player: s
   let packager: string;
   let player: string;
   try {
-    [packager, player] = await Promise.all([
-      discoverRuntimeTool("packager", runtimeOptions(options)).then((value) => value.path),
-      discoverRuntimeTool("player", runtimeOptions(options)).then((value) => value.path),
-    ]);
+    const bundle = await discoverRuntimeBundle(["packager", "player"] as const, runtimeOptions(options));
+    packager = bundle.packager.path;
+    player = bundle.player.path;
+    progress({severity: "information", code: "PXCLI1205",
+      message: "Using Runtime tools", packagerSource: bundle.packager.source, playerSource: bundle.player.source});
   } catch (error) {
     if (error instanceof RuntimeDiscoveryFailure) {
       throw new PackagerFailure([discoveryDiagnostic("PXCLI1204",
@@ -800,16 +821,19 @@ async function packProject(options: Options): Promise<{output: string; player: s
   try {
     const built = await buildProject(options.positional[0], join(temp, "artifact"));
     const project = built.artifact.project;
-    const files = await listFiles(built.output);
+    const files = (await listFiles(built.output)).filter((path) => path !== outputOwnershipMarker);
     const inputs = await mapBounded(files, 4, async (uri) => {
       const path = projectFile(built.output, uri);
       return {uri, fingerprint: await sha256(path), size: (await stat(path)).size};
     });
     const output = resolve(options.values.get("output") ?? join(built.root, "dist", project.id));
+    const loaded = await loadProject(options.positional[0]);
+    await publishDirectory({output, projectRoot: built.root,
+      protectedPaths: [...protectedInputs(loaded, built.artifact), packager, player]}, async (staging) => {
     const request = {
       format: "PrismatiXPackageRequest", schemaRevision: 2,
       requestId: `cli-${process.pid}`, gameId: project.id,
-      projectRoot: built.output, outputDir: output,
+      projectRoot: built.output, outputDir: staging,
       playerExecutable: player, title: project.name,
       width: project.resolution.width, height: project.resolution.height,
       startScript: built.artifact.runtimeIrPath,
@@ -836,7 +860,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
       [...(scriptTool ? [packageTool] : []), "--request", requestPath],
       undefined, built.root,
     );
-    if (result.stdout.length > 0) process.stdout.write(result.stdout);
+    if (machineOutput && result.stdout.length > 0) process.stdout.write(result.stdout);
     if (result.stderr.length > 0) process.stderr.write(result.stderr);
     const events = packageEvents(result.stdout);
     const failed = failedPackageDiagnostics(events);
@@ -851,6 +875,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
         "Packager exited successfully without a completed event",
         options.positional[0])]);
     }
+    });
     return {output, player: join(output, basename(player))};
   } finally {
     await rm(temp, {recursive: true, force: true});
@@ -858,7 +883,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
 }
 
 async function packCommand(options: Options): Promise<number> {
-  try { const result = await packProject(options); process.stdout.write(`${JSON.stringify({packed: true, ...result})}\n`); return 0; }
+  try { const result = await packProject(options); process.stdout.write(machineOutput ? `${JSON.stringify({packed: true, ...result})}\n` : `Packaged playable game: ${result.output}\n`); return 0; }
   catch (error) {
     printDiagnostics(error instanceof PackagerFailure || error instanceof JsxAuthoringFailure ? error.diagnostics :
       [diagnostic("PXCLI1201", "Pack failed", options.positional[0], String(error))]);
@@ -886,16 +911,25 @@ class PreviewClient {
     readonly accept: (message: PreviewMessage) => void;
     readonly reject: (error: Error) => void;
     readonly timer: NodeJS.Timeout;
+    readonly documentId: string;
+    readonly revision: number;
   }>();
   private outputBuffer = "";
   private exited = false;
+  private readonly closed: Promise<void>;
 
   private constructor(private readonly child: ChildProcessWithoutNullStreams) {
+    this.closed = new Promise((accept) => child.once("close", () => accept()));
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
-      process.stdout.write(chunk);
       this.outputBuffer += chunk;
+      if (Buffer.byteLength(this.outputBuffer, "utf8") > maxDocumentBytes) {
+        this.outputBuffer = "";
+        this.fail(new Error("PreviewHost protocol line exceeds 16 MiB"));
+        child.kill();
+        return;
+      }
       let newline = this.outputBuffer.indexOf("\n");
       while (newline >= 0) {
         const line = this.outputBuffer.slice(0, newline).trim();
@@ -906,23 +940,41 @@ class PreviewClient {
             const requestId = message?.requestId;
             if (message !== undefined && typeof requestId === "string") {
               const waiter = this.waiters.get(requestId);
-              if (waiter !== undefined && message.event === undefined) {
+              if (waiter !== undefined && message.event === undefined &&
+                  message.protocol === "PrismatiXPreviewProtocol" && message.schemaRevision === 2 &&
+                  message.protocolVersion === 2 && message.sessionId === this.sessionId &&
+                  message.documentId === waiter.documentId && message.revision === waiter.revision) {
                 clearTimeout(waiter.timer); this.waiters.delete(requestId); waiter.accept(message);
               }
             }
-          } catch { /* Native log lines remain visible but are not protocol responses. */ }
+            if (machineOutput && !process.stdout.write(`${line}\n`)) {
+              child.stdout.pause(); process.stdout.once("drain", () => child.stdout.resume());
+            } else if (!machineOutput && typeof message?.message === "string" && message.code !== undefined) {
+              if (!process.stderr.write(`${String(message.code)}: ${message.message}\n`)) {
+                child.stdout.pause(); process.stderr.once("drain", () => child.stdout.resume());
+              }
+            }
+          } catch { /* Non-protocol stdout must not contaminate machine output. */ }
         }
         newline = this.outputBuffer.indexOf("\n");
       }
     });
-    child.stderr.on("data", (chunk: string) => process.stderr.write(chunk));
+    child.stderr.on("data", (chunk: string) => {
+      if (!process.stderr.write(chunk)) { child.stderr.pause(); process.stderr.once("drain", () => child.stderr.resume()); }
+    });
+    child.stdin.on("error", (error) => this.fail(error));
+    child.on("error", (error) => this.fail(error));
     child.on("exit", (code, signal) => {
       this.exited = true;
       const error = new Error(`PreviewHost exited (${code ?? signal ?? "unknown"})`);
-      for (const [id, waiter] of this.waiters) {
-        clearTimeout(waiter.timer); waiter.reject(error); this.waiters.delete(id);
-      }
+      this.fail(error);
     });
+  }
+
+  private fail(error: Error): void {
+    for (const [id, waiter] of this.waiters) {
+      clearTimeout(waiter.timer); waiter.reject(error); this.waiters.delete(id);
+    }
   }
 
   static async start(executable: string, cwd: string): Promise<PreviewClient> {
@@ -933,10 +985,13 @@ class PreviewClient {
       child.once("spawn", accept); child.once("error", reject);
     });
     const client = new PreviewClient(child);
-    const ready = await client.request("hello", "", 0, {});
-    if (ready.type !== "ready") {
+    try {
+      const ready = await client.request("hello", "", 0, {});
+      if (ready.type !== "ready" || ready.runtimeIrSchemaRevision !== 2 || ready.uiSchemaRevision !== 2)
+        throw new Error(`PreviewHost handshake has incompatible IR/UI contracts: ${JSON.stringify(ready)}`);
+    } catch (error) {
       await client.close();
-      throw new Error(`PreviewHost handshake failed: ${JSON.stringify(ready)}`);
+      throw error;
     }
     return client;
   }
@@ -944,7 +999,7 @@ class PreviewClient {
   get alive(): boolean { return !this.exited && this.child.exitCode === null; }
 
   request(type: string, documentId: string, revision: number,
-    fields: Readonly<Record<string, unknown>>): Promise<PreviewMessage> {
+    fields: Readonly<Record<string, unknown>>, timeoutMs = 20_000): Promise<PreviewMessage> {
     if (!this.alive) return Promise.reject(new Error("PreviewHost is not running"));
     const requestId = `cli-${randomUUID()}`;
     const request = {protocol: "PrismatiXPreviewProtocol", schemaRevision: 2,
@@ -954,8 +1009,8 @@ class PreviewClient {
       const timer = setTimeout(() => {
         this.waiters.delete(requestId);
         reject(new Error(`PreviewHost timed out waiting for ${type}`));
-      }, 20_000);
-      this.waiters.set(requestId, {accept, reject, timer});
+      }, timeoutMs);
+      this.waiters.set(requestId, {accept, reject, timer, documentId, revision});
       this.child.stdin.write(`${JSON.stringify(request)}\n`, (error) => {
         if (error === null || error === undefined) return;
         const waiter = this.waiters.get(requestId);
@@ -967,14 +1022,19 @@ class PreviewClient {
   }
 
   async close(): Promise<void> {
-    if (!this.alive) return;
-    try { await this.request("shutdown", "", 0, {}); } catch { /* Force termination below. */ }
-    if (!this.alive) return;
-    await Promise.race([
-      new Promise<void>((accept) => this.child.once("exit", () => accept())),
-      new Promise<void>((accept) => setTimeout(accept, 2_000)),
-    ]);
-    if (this.alive) this.child.kill();
+    if (this.alive) {
+      try { await this.request("shutdown", "", 0, {}, 2_000); } catch { /* Force termination below. */ }
+      let grace: NodeJS.Timeout | undefined;
+      await Promise.race([this.closed, new Promise<void>((accept) => { grace = setTimeout(accept, 2_000); })]);
+      if (grace !== undefined) clearTimeout(grace);
+      if (this.alive) this.child.kill();
+    }
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([this.closed, new Promise<never>((_accept, reject) => {
+        timer = setTimeout(() => reject(new Error("PreviewHost did not exit; its revision is retained")), 5_000);
+      })]);
+    } finally { if (timer !== undefined) clearTimeout(timer); }
   }
 }
 
@@ -993,28 +1053,17 @@ async function applyPreviewBuild(client: PreviewClient, built: BuildResult,
   let response = await client.request(incremental ? "patchRuntimeIr" : "applyRuntimeIr",
     documentId, revision, fields);
   if (incremental && response.type === "resyncRequired") {
-    process.stderr.write(`${JSON.stringify({severity: "information", code: "PXCLI1604",
-      message: "Preview requested a full resync after a revision gap", reason: response.reason})}\n`);
+    progress({severity: "information", code: "PXCLI1604",
+      message: "Preview requested a full resync after a revision gap", reason: response.reason});
     response = await client.request("applyRuntimeIr", documentId, revision, fields);
   }
-  if (response.type !== "runtimeIrApplied" && response.type !== "staleRevision")
+  if (response.type !== "runtimeIrApplied" || response.appliedRevision !== revision)
     throw previewResponseError(incremental ? "Runtime patch" : "Runtime apply", response);
   if (response.type === "runtimeIrApplied") {
-    process.stderr.write(`${JSON.stringify({severity: "information", code: "PXCLI1603",
+    progress({severity: "information", code: "PXCLI1603",
       message: incremental ? "Preview updated" : "Preview started",
-      applyMode: response.applyMode, revision})}\n`);
+      applyMode: response.applyMode, revision});
   }
-}
-
-async function dependencySignature(paths: ReadonlySet<string>): Promise<string> {
-  const values: string[] = [];
-  for (const path of [...paths].sort()) {
-    try {
-      const info = await stat(path);
-      values.push(`${path}\0${info.size}\0${info.mtimeMs}`);
-    } catch { values.push(`${path}\0missing`); }
-  }
-  return createHash("sha256").update(values.join("\n")).digest("hex");
 }
 
 function waitFor(milliseconds: number): Promise<void> {
@@ -1023,88 +1072,109 @@ function waitFor(milliseconds: number): Promise<void> {
 
 async function devCommand(options: Options): Promise<number> {
   let client: PreviewClient | undefined;
+  let watcher: ReturnType<typeof watch> | undefined;
+  let stopped = false;
+  const stop = (): void => { stopped = true; };
+  process.once("SIGINT", stop); process.once("SIGTERM", stop);
   try {
-    let previewHost: Awaited<ReturnType<typeof discoverRuntimeTool>>;
-    try { previewHost = await discoverRuntimeTool("previewHost", runtimeOptions(options)); }
-    catch (error) {
-      if (error instanceof RuntimeDiscoveryFailure) {
-        printDiagnostics([discoveryDiagnostic("PXCLI1601",
-          "PrismatiX PreviewHost could not be discovered", error, options.positional[0])]);
-        return 1;
-      }
-      throw error;
-    }
-    const rawDebounce = Number(options.values.get("debounce") ?? "150");
-    if (!Number.isSafeInteger(rawDebounce) || rawDebounce < 50 || rawDebounce > 10_000)
-      throw new RangeError("--debounce must be an integer from 50 to 10000 milliseconds");
+    const previewHost = await discoverRuntimeTool("previewHost", runtimeOptions(options));
+    const debounce = integerOption(options, "debounce", 150, 50, 10_000);
     const projectArgument = options.positional[0];
-    const projectLocation = await resolveProjectPath(projectArgument);
-    const output = join(projectLocation.root, ".prismatix", "dev");
-    let revision = 1;
-    let built = await buildProject(projectArgument, output, revision);
-    client = await PreviewClient.start(previewHost.path, built.root);
-    await applyPreviewBuild(client, built, false);
-    const played = await client.request("play", built.artifact.runtimeIr.documentId,
-      revision, {});
-    if (played.type !== "playAccepted") throw previewResponseError("Play", played);
-    process.stderr.write(`${JSON.stringify({severity: "information", code: "PXCLI1602",
-      message: "Watching the project dependency graph", dependencyCount: built.dependencies.size,
-      previewHost: previewHost.path, discoveredFrom: previewHost.source})}\n`);
-    if (options.flags.has("once") || options.flags.has("smoke")) {
-      await client.close();
-      return 0;
-    }
-
-    let stopped = false;
-    const stop = (): void => { stopped = true; };
-    process.once("SIGINT", stop); process.once("SIGTERM", stop);
-    try {
-      let signature = await dependencySignature(built.dependencies);
-      while (!stopped) {
-        await waitFor(rawDebounce);
-        if (stopped) break;
-        if (!client.alive) {
-          process.stderr.write(`${JSON.stringify({severity: "warning", code: "PXCLI1605",
-            message: "PreviewHost exited; restarting the current build"})}\n`);
-          client = await PreviewClient.start(previewHost.path, built.root);
-          await applyPreviewBuild(client, built, false);
-          continue;
-        }
-        const nextSignature = await dependencySignature(built.dependencies);
-        if (nextSignature === signature) continue;
-        try {
-          const previousDocumentId = built.artifact.runtimeIr.documentId;
-          revision += 1;
-          const updated = await buildProject(projectArgument, output, revision);
-          const canPatch = updated.artifact.runtimeIr.documentId === previousDocumentId;
-          await applyPreviewBuild(client, updated, canPatch);
-          built = updated;
-          signature = await dependencySignature(built.dependencies);
-        } catch (error) {
-          if (error instanceof JsxAuthoringFailure) printDiagnostics(error.diagnostics);
-          else printDiagnostics([diagnostic("PXCLI1606", "Development rebuild failed",
-            projectArgument, String(error))]);
-          signature = nextSignature;
-        }
+    const location = await resolveProjectPath(projectArgument);
+    // Subscribe before the first build, including files not yet in a successful
+    // dependency graph. Failed imports/assets and atomic saves remain observable.
+    let changes = 1;
+    watcher = watch(location.root, {recursive: true}, (_event, filename) => {
+      const parts = String(filename ?? "").split(/[\\/]/u);
+      if ([".prismatix", ".git", "node_modules", "dist"].includes(parts[0] ?? "")) return;
+      changes += 1;
+    });
+    watcher.on("error", (error) => {
+      printDiagnostics([diagnostic("PXCLI1607", "Project watcher failed", location.root, String(error))]);
+      stopped = true;
+    });
+    const revisionRoot = join(location.root, ".prismatix", "dev", randomUUID());
+    let revision = 0;
+    let attempted = 0;
+    let built: BuildResult | undefined;
+    const once = options.flags.has("once") || options.flags.has("smoke");
+    const retire = async (obsolete: BuildResult): Promise<void> => {
+      try {
+        await retirePublishedDirectory({output: obsolete.output, projectRoot: location.root,
+          protectedPaths: [...obsolete.dependencies]});
+      } catch (error) {
+        printDiagnostics([{severity: "warning", code: "PXCLI1608", message: "Unused preview revision retained",
+          path: obsolete.output, hint: String(error)}]);
       }
-    } finally {
-      process.removeListener("SIGINT", stop); process.removeListener("SIGTERM", stop);
+    };
+    while (!stopped) {
+      if (changes === attempted && client?.alive) { await waitFor(debounce); continue; }
+      if (changes === attempted && built === undefined) { await waitFor(debounce); continue; }
+      const observed = changes;
+      let candidate: PreviewClient | undefined;
+      let updated: BuildResult | undefined;
+      try {
+        updated = changes === attempted && built !== undefined
+          ? built : await buildProject(projectArgument, join(revisionRoot, String(++revision)), revision);
+        candidate = await PreviewClient.start(previewHost.path, updated.root);
+        await applyPreviewBuild(candidate, updated, false);
+        const played = await candidate.request("play", updated.artifact.runtimeIr.documentId,
+          updated.artifact.runtimeIr.committedRevision, {showTitle: built === undefined});
+        if (played.type !== "playAccepted") throw previewResponseError("Play", played);
+        const previous = client;
+        const previousBuild = built;
+        client = candidate;
+        candidate = undefined;
+        built = updated;
+        if (previous !== undefined) {
+          try {
+            await previous.close();
+            if (previousBuild !== undefined && previousBuild.output !== built.output) await retire(previousBuild);
+          } catch (error) {
+            printDiagnostics([{severity: "warning", code: "PXCLI1608",
+              message: "New preview committed; previous host has not closed and its revision is retained",
+              path: previousBuild?.output ?? location.root, hint: String(error)}]);
+          }
+        }
+        progress({severity: "information", code: "PXCLI1602",
+          message: "Watching project; successful edits restart the scene after candidate playback is acknowledged",
+          revision, output: built.output, previewHost: previewHost.path, discoveredFrom: previewHost.source});
+        if (once) return 0;
+      } catch (error) {
+        // A failed start can also mean its host could not be closed. Retain that
+        // revision unless this scope owns a client and confirms its full close.
+        if (candidate !== undefined) {
+          try {
+            await candidate.close();
+            if (updated !== undefined && updated.output !== built?.output) await retire(updated);
+          } catch (closeError) {
+            printDiagnostics([{severity: "warning", code: "PXCLI1608",
+              message: "Rejected preview host has not closed; its revision is retained",
+              path: updated?.output ?? location.root, hint: String(closeError)}]);
+          }
+        }
+        printDiagnostics(error instanceof JsxAuthoringFailure ? error.diagnostics :
+          [diagnostic("PXCLI1606", "Development build or preview failed; previous preview retained",
+            projectArgument, String(error))]);
+        if (once) return 1;
+        // An exited host is retried on a source change, avoiding a crash loop.
+        if (client !== undefined && !client.alive) { client = undefined; built = undefined; }
+      }
+      attempted = observed;
+      await waitFor(debounce);
     }
-    await client.close();
     return 0;
   } catch (error) {
-    if (client !== undefined) await client.close();
-    printDiagnostics(error instanceof JsxAuthoringFailure ? error.diagnostics :
-      [diagnostic("PXCLI1600", "Development preview failed", options.positional[0], String(error))]);
+    printDiagnostics([diagnostic("PXCLI1600", "Development preview failed", options.positional[0],
+      error instanceof RuntimeDiscoveryFailure ? runtimeDiscoveryHint(error) : String(error))]);
     return 1;
+  } finally {
+    watcher?.close();
+    if (client !== undefined) await client.close();
+    process.removeListener("SIGINT", stop); process.removeListener("SIGTERM", stop);
+    // Keep the last acknowledged revision after shutdown for diagnostics.
+    // Superseded revisions are retired only after their host has fully closed.
   }
-}
-
-function stable(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
-  const record = object(value);
-  if (record !== undefined) return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stable(record[key])}`).join(",")}}`;
-  return JSON.stringify(value);
 }
 
 interface StoryIdentitySource {
@@ -1208,56 +1278,82 @@ async function idsCommand(options: Options): Promise<number> {
 async function inspectSaveCommand(options: Options): Promise<number> {
   const path = resolve(options.positional[0] ?? "");
   try {
-    let bytes = await readFile(path);
+    if (options.positional[0] === undefined) throw new Error("inspect-save requires a save file path");
     const packagePath = options.values.get("package");
     const secret = options.values.get("secret");
-    if (packagePath !== undefined || secret !== undefined) {
-      let passphrase = secret;
-      if (packagePath !== undefined) {
-        const manifest = object(await readJson(resolve(packagePath)));
-        const encryption = object(manifest?.encryption);
-        passphrase = encryption?.enabled === true && typeof encryption.archiveKey === "string"
-          ? encryption.archiveKey : String(manifest?.packageFingerprint ?? "");
-      }
-      const key = createHash("sha256").update(`${passphrase ?? ""}|px-save`).digest();
-      if (bytes.length < 28) throw new Error("Encrypted save is truncated");
-      const nonce = bytes.subarray(0, 12); const tag = bytes.subarray(bytes.length - 16);
-      const decipher = createDecipheriv("aes-256-gcm", key, nonce); decipher.setAuthTag(tag);
-      bytes = Buffer.concat([decipher.update(bytes.subarray(12, bytes.length - 16)), decipher.final()]);
-    }
-    const magic = Buffer.from("PRISMATIX-PERSIST\n");
-    if (!bytes.subarray(0, magic.length).equals(magic)) throw new Error("Unsupported persistence envelope or missing decryption key");
-    const envelope = JSON.parse(bytes.subarray(magic.length).toString("utf8")) as unknown;
-    const root = object(envelope);
-    if (root?.format !== "PrismatiXSave" || root.schemaRevision !== 4) throw new Error("Unsupported save schema");
-    const expected = root.integrityHash;
-    const authenticated = {...root}; delete authenticated.integrityHash;
-    const actual = createHash("sha256").update(stable(authenticated)).digest("hex");
-    if (typeof expected !== "string" || expected !== actual) throw new Error("Save integrity hash does not match");
-    const state = object(root.state);
-    const output = options.flags.has("json") ? envelope : {
-      format: root.format, schemaRevision: root.schemaRevision,
-      engineVersion: root.engineVersion, gameId: root.gameId,
-      packageFingerprint: root.packageFingerprint,
-      contentVersion: root.contentVersion, saveVersion: root.saveVersion,
-      anchor: root.anchor, timestamp: state?.timestamp, playtimeMs: state?.playtimeMs,
-      chapter: state?.chapter,
-    };
-    process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
+    const result = await inspectSaveWithRuntime({path, json: machineOutput,
+      runtime: runtimeOptions(options),
+      ...(packagePath === undefined ? {} : {packagePath}),
+      ...(secret === undefined ? {} : {secret})});
+    process.stdout.write(result.output);
     return 0;
   } catch (error) {
-    printDiagnostics([diagnostic("PXCLI1401", "Save inspection failed", path, String(error))]);
+    printDiagnostics([diagnostic("PXCLI1401", "Save inspection failed", path,
+      error instanceof RuntimeDiscoveryFailure ? runtimeDiscoveryHint(error) : String(error))]);
     return 1;
   }
 }
-
 function usage(): void {
   process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|ids|migrate|inspect-save> [project-or-save] [options]\n");
 }
 
+async function projectTool(command: string, options: Options, args: string[]): Promise<number | undefined> {
+  if (launcherStopRequested) return 130;
+  if (["create", "inspect-save"].includes(command)) return undefined;
+  const location = await resolveProjectPath(options.positional[0]);
+  const manifestPath = join(location.root, "package.json");
+  if (!await regularFile(manifestPath)) return launcherStopRequested ? 130 : undefined;
+  const manifest = object(await readJson(manifestPath));
+  const pinned = object(manifest?.devDependencies)?.["@prismatix/cli"] ?? object(manifest?.dependencies)?.["@prismatix/cli"];
+  if (pinned === undefined) return launcherStopRequested ? 130 : undefined; // Existing pre-lock projects retain their public API.
+  if (typeof pinned !== "string" || !/^\d+\.\d+\.\d+$/u.test(pinned))
+    throw new Error("Project @prismatix/cli must use an exact version, not a range");
+  const localRoot = join(location.root, "node_modules", "@prismatix", "cli");
+  const entry = join(localRoot, "dist", "src", "cli.js");
+  if (!await regularFile(entry)) throw new Error("The project's pinned CLI is missing. Restore dependencies with npm ci in the project directory.");
+  const installed = object(await readJson(join(localRoot, "package.json")));
+  if (installed?.version !== pinned) throw new Error(`Project requires CLI ${pinned}; installed version is ${String(installed?.version)}. Restore the lock with npm ci.`);
+  const isLocalTool = await realpath(entry) === await realpath(fileURLToPath(import.meta.url));
+  if (launcherStopRequested) return 130;
+  if (isLocalTool) return undefined;
+  // Directly inherit stdio: the local CLI owns its protocol and long-lived preview.
+  return new Promise<number>((accept, reject) => {
+    const child = spawn(process.execPath, [entry, command, ...args], {
+      stdio: ["inherit", "inherit", "inherit", "ipc"], windowsHide: true});
+    let stopping = false;
+    let escalation: NodeJS.Timeout | undefined;
+    const stop = (): void => {
+      if (stopping) return;
+      stopping = true;
+      // Windows kill() terminates Node without running its finally blocks.
+      // Let the pinned CLI shut down its PreviewHost first through IPC.
+      if (child.connected) child.send({type: "prismatix-launcher-shutdown"}, () => {});
+      escalation = setTimeout(() => { child.kill(); }, 35_000);
+    };
+    process.once("SIGINT", stop); process.once("SIGTERM", stop);
+    const cleanup = (): void => {
+      if (escalation) clearTimeout(escalation);
+      process.removeListener("SIGINT", stop); process.removeListener("SIGTERM", stop);
+    };
+    child.once("error", (error) => { cleanup(); reject(error); });
+    child.once("close", (code) => { cleanup(); accept(code ?? 1); });
+  });
+}
+
 async function main(): Promise<number> {
   const [command, ...args] = process.argv.slice(2);
-  const options = parseOptions(args);
+  if (command === undefined || command === "--help") { usage(); return 0; }
+  let options: Options;
+  try { options = parseOptions(command, args); }
+  catch (error) { printDiagnostics([diagnostic("PXCLI0001", "Invalid command arguments", undefined, String(error))]); return 2; }
+  if (options.flags.has("help")) { usage(); return 0; }
+  try {
+    const delegated = await projectTool(command, options, args);
+    if (delegated !== undefined) return delegated;
+  } catch (error) {
+    printDiagnostics([diagnostic("PXCLI0002", "Project tool preparation failed", options.positional[0], String(error))]);
+    return 1;
+  }
   if (command === "create") return createCommand(options);
   if (command === "dev") return devCommand(options);
   if (command === "validate") return validateCommand(options);
@@ -1270,4 +1366,23 @@ async function main(): Promise<number> {
   usage(); return 2;
 }
 
+// A delegated CLI must not survive a crashed/terminated global launcher. IPC
+// closure works on Windows too, where child.kill does not deliver JS SIGTERM.
+let launcherStopRequested = false;
+const launcherDisconnected = (): void => {
+  if (launcherStopRequested) return;
+  launcherStopRequested = true;
+  process.emit("SIGTERM");
+};
+const launcherMessage = (message: unknown): void => {
+  if (object(message)?.type === "prismatix-launcher-shutdown") launcherDisconnected();
+};
+if (process.send !== undefined) {
+  process.once("disconnect", launcherDisconnected);
+  process.on("message", launcherMessage);
+  if (!process.connected) launcherDisconnected();
+}
 process.exitCode = await main();
+process.removeListener("disconnect", launcherDisconnected);
+process.removeListener("message", launcherMessage);
+if (process.connected) process.disconnect?.();

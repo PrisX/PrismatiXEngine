@@ -1,3 +1,4 @@
+#include "Engine/Support/Utf8Path.h"
 #include "Engine/IO/Archive.h"
 
 #include "Engine/IO/VFS.h"
@@ -89,7 +90,7 @@ class ArchiveRangeReadStream final : public SeekableReadStream {
 public:
     ArchiveRangeReadStream(const std::string& path, const std::uint64_t offset,
                            const std::uint64_t size)
-        : m_input(path, std::ios::binary), m_offset(offset), m_size(size) {
+        : m_input(px::PathFromUtf8(path), std::ios::binary), m_offset(offset), m_size(size) {
         if (!m_input || offset > static_cast<std::uint64_t>(
                                     (std::numeric_limits<std::streamoff>::max)())) {
             m_failed = true;
@@ -172,7 +173,7 @@ public:
                                const std::uint32_t chunkSize,
                                const std::uint32_t chunkCount,
                                const crypto::Key& key)
-        : m_input(std::move(path), std::ios::binary), m_name(std::move(name)),
+        : m_input(px::PathFromUtf8(path), std::ios::binary), m_name(std::move(name)),
           m_offset(offset), m_rawSize(rawSize), m_chunkSize(chunkSize),
           m_chunkCount(chunkCount), m_key(key) {
         m_failed = !m_input || m_chunkSize == 0 ||
@@ -306,7 +307,7 @@ private:
 std::uint32_t Crc32Range(const std::string& path, const std::uint64_t offset,
                          const std::uint64_t size, bool& ok) {
     ok = false;
-    std::ifstream input(path, std::ios::binary);
+    std::ifstream input(px::PathFromUtf8(path), std::ios::binary);
     if (!input || offset > static_cast<std::uint64_t>(
                                (std::numeric_limits<std::streamoff>::max)()))
         return 0;
@@ -446,13 +447,13 @@ std::optional<ChunkedPayload> EncryptChunked(const Bytes& input,
 
 bool Archive::Open(const std::string& path, const crypto::Key* key) {
     Close();
-    std::ifstream in(path, std::ios::binary);
+    std::ifstream in(px::PathFromUtf8(path), std::ios::binary);
     if (!in) {
         PX_LOG_ERROR("Archive::Open cannot open '{}'", path);
         return false;
     }
     std::error_code sizeError;
-    const std::uintmax_t fileSize = std::filesystem::file_size(path, sizeError);
+    const std::uintmax_t fileSize = std::filesystem::file_size(px::PathFromUtf8(path), sizeError);
     if (sizeError || fileSize < kHeaderSize) {
         PX_LOG_ERROR("Archive::Open invalid file size for '{}'", path);
         return false;
@@ -676,7 +677,7 @@ std::optional<Bytes> Archive::Read(std::string_view path) const {
         return raw;
     }
 
-    std::ifstream in(m_path, std::ios::binary);
+    std::ifstream in(px::PathFromUtf8(m_path), std::ios::binary);
     if (!in) {
         return std::nullopt;
     }
@@ -793,7 +794,7 @@ bool ArchiveWriter::Write(const std::string& outPath) const {
     PutU64(header, indexOffset);
     PutU64(header, index.size());
 
-    std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
+    std::ofstream out(px::PathFromUtf8(outPath), std::ios::binary | std::ios::trunc);
     if (!out) {
         PX_LOG_ERROR("ArchiveWriter::Write cannot open '{}'", outPath);
         return false;

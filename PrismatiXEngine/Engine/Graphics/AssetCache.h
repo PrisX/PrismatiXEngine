@@ -83,6 +83,11 @@ public:
     [[nodiscard]] std::size_t PreloadConcurrency() const {
         return m_preloadConcurrency;
     }
+    // Scheduling limits are independent of total worker concurrency. They bound
+    // synchronous read/start and renderer-upload work admitted by each BeginFrame.
+    void SetPreloadFrameLimits(std::size_t starts, std::size_t uploads);
+    void SetImageDecodeByteLimit(std::size_t bytes);
+    [[nodiscard]] std::size_t ImageDecodeByteLimit() const { return m_imageDecodeByteLimit; }
     void SetAsyncPreloadEnabled(bool enabled) { m_asyncPreloadEnabled = enabled; }
     [[nodiscard]] bool AsyncPreloadEnabled() const { return m_asyncPreloadEnabled; }
     void SetTextureBudget(std::size_t bytes) { m_textureBudgetBytes=bytes; }
@@ -174,6 +179,9 @@ private:
     std::size_t m_textureBudgetBytes=512u*1024u*1024u;
     std::size_t m_residentTextureBytes=0;
     std::size_t m_preloadConcurrency = 4;
+    std::size_t m_preloadStartsPerFrame = 2;
+    std::size_t m_preloadUploadsPerFrame = 2;
+    std::size_t m_imageDecodeByteLimit = 256u * 1024u * 1024u;
     bool m_asyncPreloadEnabled=true;
 
     void QueueTexture(const std::string& path, AssetPreloadPriority priority,

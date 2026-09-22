@@ -354,6 +354,44 @@ std::string DependencyComponent(const std::string& id, const std::optional<std::
 }  // namespace
 
 int main() {
+    Check(px::ui::RegisterBuiltinUITypes().IsOk(), "typed caption fixture requires builtin controls");
+    for (const std::string type : {"Label", "RichTextLabel", "Button", "IconButton"}) {
+        px::sdk::UiDocument captions;
+        captions.id = "11000000-0000-4000-8000-000000000001";
+        captions.rootId = "11000000-0000-4000-8000-000000000002";
+        px::sdk::UiNode root;
+        root.id = captions.rootId;
+        root.kind = px::sdk::UiNodeKind::Group;
+        root.runtimeType = "Panel";
+        root.layout.width = 640;
+        root.layout.height = 360;
+        px::sdk::UiNode caption;
+        caption.id = "11000000-0000-4000-8000-000000000003";
+        caption.parentId = root.id;
+        caption.kind = type.find("Button") != std::string::npos
+                           ? px::sdk::UiNodeKind::Button : px::sdk::UiNodeKind::Label;
+        caption.runtimeType = type;
+        caption.text = "SAVE / 小光";
+        caption.accessibilityLabel = "Separate accessible name";
+        caption.layout.width = 320;
+        caption.layout.height = 80;
+        captions.nodes = {root, caption};
+        const auto checkCaption = [&](const std::string& expected) {
+            auto tree = px::ui::BuildUiRuntimeTree(captions);
+            Check(tree.Valid(), "typed caption fixture must adapt");
+            const auto* control = tree.root->Find(*px::Uuid::Parse(caption.id));
+            const auto* label = dynamic_cast<const px::ui::Label*>(control);
+            const auto* button = dynamic_cast<const px::ui::Button*>(control);
+            Check((label && label->Text() == expected) ||
+                      (button && button->Text() == expected),
+                  "runtimeType must retain authored visible text independently of accessibility");
+            if (const auto* rich = dynamic_cast<const px::ui::RichTextLabel*>(control))
+                Check(rich->Markup() == expected, "typed rich caption must initialize markup as well as text");
+        };
+        checkCaption(caption.text);
+        captions.nodes[1].runtimeProperties.emplace(type == "RichTextLabel" ? "markup" : "text", "Explicit text override");
+        checkCaption("Explicit text override");
+    }
     std::string scene = R"({
       "format":"PrismatiXUIScene","schemaRevision":1,
       "id":"11111111-1111-4111-8111-111111111111","revision":9,

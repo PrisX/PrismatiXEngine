@@ -309,6 +309,107 @@ int main() {
             "timeline and UI-only state restores without a VM program");
     });
 
+    suite.Run("RestoreFailureRecoversExternalCheckpoint", [&] {
+        RuntimeFixture fixture;
+        int external = 1;
+        bool rejectRuntime = false;
+        bool rejectRollback = false;
+        bool rejectExternal = false;
+        bool rejectCapture = false;
+        fixture.runtime.SetUIStateHandler({}, [&](const auto&) {
+            if (rejectRuntime) {
+                rejectRuntime = false;
+                return px::Status::Fail(px::diag::Diagnostic{
+                    .code = "TEST-RESTORE", .message = "Injected runtime commit failure"});
+            }
+            return px::Status::Ok();
+        });
+        auto preview = px::preview::CreatePreviewSession(fixture.runtime, {
+            .captureExternalState = [&] { return std::make_shared<const int>(external); },
+            .restoreExternalState = [&](const std::shared_ptr<const void>& value) {
+                const int restored = *std::static_pointer_cast<const int>(value);
+                if (rejectRollback && restored == 2)
+                    return px::Status::Fail(px::diag::Diagnostic{
+                        .code = "TEST-ROLLBACK", .message = "Injected external rollback failure"});
+                external = restored;
+                if (rejectExternal && restored == 1)
+                    return px::Status::Fail(px::diag::Diagnostic{
+                        .code = "TEST-EXTERNAL", .message = "Injected partial external restore"});
+                return px::Status::Ok();
+            },
+            .validateExternalState = [&](const std::shared_ptr<const void>&) {
+                if (rejectCapture) return px::Status::Fail(px::diag::Diagnostic{
+                    .code = "TEST-CAPTURE", .message = "Extension provider capture failed"});
+                return px::Status::Ok();
+            }});
+        const auto checkpoint = preview->CaptureCheckpoint();
+        suite.Require(checkpoint.accepted && checkpoint.checkpoint.has_value(),
+                      "external checkpoint captures");
+        external = 2;
+        rejectCapture = true;
+        suite.Expect(!preview->RestoreCheckpoint(checkpoint.checkpoint->id).accepted && external == 2,
+                     "failed provider capture rejects restore before changing external state");
+        rejectCapture = false;
+        rejectRuntime = true;
+        suite.Expect(!preview->RestoreCheckpoint(checkpoint.checkpoint->id).accepted &&
+                         external == 2,
+                     "runtime commit failure restores the previous external state");
+        rejectExternal = true;
+        suite.Expect(!preview->RestoreCheckpoint(checkpoint.checkpoint->id).accepted &&
+                         external == 2,
+                     "partially failed external restore recovers its previous state");
+        rejectExternal = false;
+        rejectRuntime = true;
+        rejectRollback = true;
+        const auto failedRollback = preview->RestoreCheckpoint(checkpoint.checkpoint->id);
+        suite.Expect(!failedRollback.accepted && std::ranges::any_of(
+                         failedRollback.diagnostics, [](const auto& diagnostic) {
+                             return diagnostic.code == "PXPREVIEW1304" &&
+                                    diagnostic.severity == px::sdk::PreviewDiagnosticSeverity::Fatal;
+                         }),
+                     "external rollback failure is returned as a fatal diagnostic");
+    });
+
+    suite.Run("RuntimeRestoreRetiresPendingTimelineResume", [&] {
+        RuntimeFixture fixture;
+        suite.Require(fixture.runtime.StartRuntimeIrText(Document("await", 1,
+            Json::array({Operation("line", "narration", {{"text", "Hold"}})})), "await"),
+            "runtime program loads");
+        px::animation::AnimationClip clip;
+        clip.id = px::Uuid::FromName("restore.await");
+        clip.name = "Restore await";
+        clip.duration = 1.0f;
+        suite.Require(static_cast<bool>(fixture.runtime.Timeline().Register(clip)),
+                      "await fixture clip registers");
+        const auto handle = fixture.runtime.Timeline().Play(clip.id, true);
+        auto checkpoint = fixture.runtime.CaptureState();
+        checkpoint.vm.state = px::vn::VMState::WaitingExternal;
+        suite.Require(static_cast<bool>(fixture.runtime.RestoreState(checkpoint)),
+                      "awaiting checkpoint restores");
+        suite.Require(static_cast<bool>(fixture.runtime.Timeline().Cancel(handle)),
+                      "old timeline queues its completion outside the frame update");
+        suite.Require(static_cast<bool>(fixture.runtime.RestoreState(checkpoint)),
+                      "checkpoint replaces the cancelled timeline");
+        fixture.runtime.Update(1, 0.0f);
+        suite.Expect(fixture.runtime.VM().State() == px::vn::VMState::WaitingExternal,
+                     "old completion must not resume the restored await");
+    });
+
+    suite.Run("CommitRevalidatesPublicPreparedRestore", [&] {
+        RuntimeFixture fixture;
+        auto prepared = fixture.runtime.PrepareRestore(fixture.runtime.CaptureState());
+        suite.Require(static_cast<bool>(prepared), "candidate initially validates");
+        auto candidate = prepared.TakeValue();
+        candidate.state.typedVariables["unvalidated"] = px::Variant(std::int64_t{7});
+        fixture.runtime.SetUIStateHandler({}, {}, [](const auto&) {
+            return px::Status::Fail(px::diag::Diagnostic{
+                .code = "TEST-VALIDATION", .message = "UI topology changed since prepare"});
+        });
+        suite.Expect(!fixture.runtime.CommitRestore(std::move(candidate)) &&
+                         !fixture.runtime.Variables().GetValue("unvalidated"),
+                     "public candidate and changed live dependencies revalidate before mutation");
+    });
+
     suite.Run("CompleteUIRuntimeCheckpoint", [&] {
         RuntimeFixture fixture;
         suite.Require(static_cast<bool>(px::ui::RegisterBuiltinUITypes()),

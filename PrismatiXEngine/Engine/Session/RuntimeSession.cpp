@@ -726,10 +726,18 @@ Result<RuntimeSession::PreparedRestore> RuntimeSession::PrepareRestore(
 }
 
 Status RuntimeSession::CommitRestore(PreparedRestore prepared) {
+    // PreparedRestore remains a public value for SDK compatibility. Its fields
+    // and live resource/UI dependencies may have changed since preparation.
+    {
+        const auto validated = PrepareRestore(prepared.state, prepared.nowMs);
+        if (!validated) return Status::Fail(validated.Diagnostics());
+    }
     const GameState previous = CaptureState();
+    const bool previousResumePending = m_externalResumePending;
     const Status restored = ApplyState(prepared.state, prepared.nowMs);
     if (restored) return restored;
     const Status rolledBack = ApplyState(previous, prepared.nowMs);
+    if (rolledBack) m_externalResumePending = previousResumePending;
     if (!rolledBack) {
         diag::Diagnostic diagnostic{
             .severity = diag::Severity::Fatal,
@@ -809,6 +817,9 @@ Status RuntimeSession::ApplyState(const GameState& state,
             m_awaitingTimeline = playback.handle;
             break;
         }
+    // Completion notifications belong to the state that queued them. A loaded
+    // await must be resumed only by its own restored playback.
+    m_externalResumePending = false;
     return Status::Ok();
 }
 

@@ -1,3 +1,4 @@
+#include "Engine/Support/Utf8Path.h"
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -6,7 +7,7 @@
 
 namespace {
 
-std::filesystem::path Utf8Path(const std::string_view value) { return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(value.data()), value.size())); }
+std::filesystem::path Utf8Path(const std::string_view value) { return px::PathFromUtf8(value); }
 
 void Emit(const px::sdk::PackageEvent& event) {
     std::cout << px::sdk::SerializePackageEvent(event) << '\n';
@@ -41,7 +42,7 @@ px::sdk::PackageEvent FailedEvent(
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int RunMain(int argc, char** argv) {
     if (argc != 3 || std::string_view(argv[1]) != "--request") {
         Emit(FailedEvent({}, "PXPKG1001", "Usage: PrismatiXPackager --request <absolute-json-path>"));
         return static_cast<int>(px::sdk::PackageExitCode::Failed);
@@ -74,3 +75,15 @@ int main(int argc, char** argv) {
     const auto result = px::sdk::RunPackager(parsed.request, Emit);
     return static_cast<int>(result.exitCode);
 }
+
+#if defined(_WIN32)
+int wmain(int argc, wchar_t** argv) {
+    std::vector<std::string> encoded;
+    for (int i = 0; i < argc; ++i) encoded.push_back(px::PathToUtf8(std::filesystem::path(argv[i])));
+    std::vector<char*> arguments;
+    for (auto& value : encoded) arguments.push_back(value.data());
+    return RunMain(argc, arguments.data());
+}
+#else
+int main(int argc, char** argv) { return RunMain(argc, argv); }
+#endif

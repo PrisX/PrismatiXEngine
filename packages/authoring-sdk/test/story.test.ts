@@ -148,6 +148,34 @@ test("Story catalog assignments lower declared scope and scalar type explicitly"
   ]);
 });
 
+test("if expressions preserve comparison operators and quoted equals through Story parsing", () => {
+  const catalog: GameDocument = {format: "PrismatiXGame", schemaRevision: 2, variables: [
+    {name: "affection", type: "integer", default: 0, scope: "session"},
+    {name: "route", type: "string", default: "a=b", scope: "session"},
+  ]};
+  const cases = [
+    ["affection >= 1", "greater-equal"], ["affection<=1", "less-equal"],
+    ["affection != 1", "not-equal"], ["affection==1", "equal"],
+    ['route == "a=b"', "equal"], ['route!="a=b"', "not-equal"],
+  ] as const;
+  for (const [expression, expectedOperator] of cases) {
+    const source = `  [if ${expression}]\nYes.\n[else]\nNo.\n[endif]\n`;
+    const parsed = parseStory(source, "Story/comparison.pxstory");
+    const compiled = compileStory(parsed, {documentId: "comparison", game: catalog});
+    assert.equal(compiled.valid, true, `${expression}: ${JSON.stringify(compiled.diagnostics)}`);
+    const condition = compiled.runtimeIr?.operations.find((operation) => operation.kind === "condition");
+    assert.equal(JSON.parse(String(condition?.arguments.expression)).op, expectedOperator);
+    const argument = parsed.nodes[0]?.arguments?.[0];
+    assert.equal(argument?.span.start.offset, 6);
+    assert.equal(argument?.span.start.column, 7);
+    assert.equal(source.slice(argument!.span.start.offset, argument!.span.end.offset), argument?.raw);
+  }
+  const assignment = parseStory('[set route="a=b"]\n', "Story/assignment.pxstory");
+  assert.equal(assignment.nodes[0]?.arguments?.[0]?.name, "route");
+  assert.equal(assignment.nodes[0]?.arguments?.[0]?.value, "a=b");
+  assert.equal(assignment.nodes[0]?.arguments?.[0]?.span.start.offset, 11);
+});
+
 test("character placement names and authored moves lower to explicit Runtime commands", () => {
   const compiled = compileStory(
     parseStory(`[show yuki position=left x=24 scale=0.8]\n[move yuki position=right x=-48 y=32 scale=1 duration=450ms ease=easeInOut wait=true]\n`, "Story/placement.pxstory"),

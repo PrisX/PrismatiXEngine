@@ -148,7 +148,7 @@ sdk::UiDocument Hud() {
     const std::pair<const char*, const char*> actions[]{
         {"AUTO", "mode.auto"}, {"SKIP", "mode.skip"},
         {"LOG", "backlog.open"}, {"SAVE", "save.open"},
-        {"LOAD", "load.open"}, {"⚙", "settings.open"}};
+        {"LOAD", "load.open"}, {"SET", "settings.open"}};
     for (std::uint32_t index = 0; index < std::size(actions); ++index)
         nodes.push_back(Button(
             "72000000-0000-4000-8000-0000000000" +
@@ -170,8 +170,10 @@ sdk::UiDocument Collection(const std::string& documentId,
     const std::string listId = rootId.substr(0, rootId.size() - 1) + "2";
     const auto kind = runtimeType == "ListView" ? sdk::UiNodeKind::Control
                                                 : sdk::UiNodeKind::Grid;
+    auto collectionLayout = Layout(50, 60, 1180, 570);
+    collectionLayout.anchorRight = 1.0f;
     nodes.push_back(Node(listId, rootId, 0, kind, std::move(runtimeType),
-                         std::move(listName), Layout(50, 60, 1180, 570),
+                         std::move(listName), collectionLayout,
                          "list", name + " entries"));
     nodes.push_back(Button(rootId.substr(0, rootId.size() - 1) + "3", rootId,
                            1, "Close", Layout(1040, 642, 180, 52), "返回",

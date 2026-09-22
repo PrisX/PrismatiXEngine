@@ -1,3 +1,4 @@
+#include "Engine/Support/Utf8Path.h"
 #include <SDL3/SDL.h>
 #include <spdlog/sinks/base_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -317,25 +318,25 @@ bool IsWithin(const std::filesystem::path& root, const std::filesystem::path& ca
 }
 
 std::optional<std::string> SafeProjectRelativePath(const std::string& value) {
-    const std::filesystem::path path(value);
+    const std::filesystem::path path = px::PathFromUtf8(value);
     if (path.empty() || path.is_absolute()) return std::nullopt;
     for (const auto& part : path) {
         if (part == "..") return std::nullopt;
     }
-    return path.generic_string();
+    return px::PathToUtf8(path);
 }
 
 bool IsProjectRegularFile(const std::filesystem::path& root, const std::string& relativePath) {
     std::error_code error;
-    const auto candidate = std::filesystem::canonical(root / relativePath, error);
+    const auto candidate = std::filesystem::canonical(root / px::PathFromUtf8(relativePath), error);
     return !error && IsWithin(root, candidate) && std::filesystem::is_regular_file(candidate, error) && !error;
 }
 
 std::optional<std::pair<std::filesystem::path, std::string>> ReadProjectFile(const std::string& projectRoot, const std::string& relativePath) {
     std::error_code error;
-    const auto root = std::filesystem::canonical(projectRoot, error);
+    const auto root = std::filesystem::canonical(px::PathFromUtf8(projectRoot), error);
     if (error) return std::nullopt;
-    const std::filesystem::path requested(relativePath);
+    const std::filesystem::path requested = px::PathFromUtf8(relativePath);
     if (requested.is_absolute()) return std::nullopt;
     const auto file = std::filesystem::canonical(root / requested, error);
     if (error || !IsWithin(root, file)) return std::nullopt;
@@ -459,6 +460,8 @@ private:
     struct ScriptCheckpoint {
         px::script::PendingCommandsState commands;
         px::script::PendingActionsState actions;
+        px::script::ExtensionStates extensions;
+        std::vector<px::diag::Diagnostic> captureErrors;
     };
 
     std::optional<px::sdk::PreviewSafety> InspectOperationSafety(
@@ -478,9 +481,17 @@ private:
 
     std::shared_ptr<const void> CaptureExternalCheckpoint() const {
         if (!m_scriptHost) return {};
-        return std::make_shared<ScriptCheckpoint>(ScriptCheckpoint{
-            m_scriptHost->CapturePending(),
-            m_scriptHost->CapturePendingActions()});
+        auto checkpoint = std::make_shared<ScriptCheckpoint>();
+        checkpoint->commands = m_scriptHost->CapturePending();
+        checkpoint->actions = m_scriptHost->CapturePendingActions();
+        auto extensions = m_scriptHost->CaptureExtensionState();
+        if (extensions) checkpoint->extensions = extensions.TakeValue();
+        else {
+            checkpoint->captureErrors = extensions.Diagnostics();
+            for (const auto& diagnostic : checkpoint->captureErrors)
+                px::diag::Emit(diagnostic);
+        }
+        return checkpoint;
     }
 
     px::Status RestoreExternalCheckpoint(
@@ -495,12 +506,12 @@ private:
                 "JavaScript checkpoint cannot be restored without the script host.");
         const auto checkpoint =
             std::static_pointer_cast<const ScriptCheckpoint>(opaque);
-        m_scriptHost->CancelPending();
-        if (px::Status status =
-                m_scriptHost->RestorePending(checkpoint->commands);
-            !status)
+        if (!checkpoint->captureErrors.empty())
+            return px::Status::Fail(checkpoint->captureErrors);
+        if (px::Status status = m_scriptHost->RestoreCheckpoint(
+                checkpoint->commands, checkpoint->actions); !status)
             return status;
-        return m_scriptHost->RestorePendingActions(checkpoint->actions);
+        return m_scriptHost->RestoreExtensionState(checkpoint->extensions);
     }
 
     template <typename PreviewResult>
@@ -551,7 +562,7 @@ private:
         }
         if (*type == "hello") {
             Json response = Response(request, "ready");
-            response["runtimeIrSchemaRevision"] = 1;
+            response["runtimeIrSchemaRevision"] = 2;
             response["uiSchemaRevision"] = 2;
             response["renderMode"] = "nativeWindow";
             Write(response);
@@ -784,6 +795,14 @@ private:
                                     "Preview could not resume.", controlled);
                 return;
             }
+            if (*type == "play" && request.value("showTitle", false)) {
+                (void)m_previewSession->Pause();
+                const auto shown = m_hud.ShowTitle();
+                if (!shown) {
+                    Write(Error(request, "preview-title-rejected", StatusMessage(shown, "Title could not be shown")));
+                    return;
+                }
+            }
             Write(RuntimeStateResponse(request, *type == "play" ? "playAccepted" : "continueAccepted"));
         }
         else if (*type == "pause") {
@@ -922,7 +941,7 @@ private:
                     Write(Error(request, "invalid-script-breakpoints", "Script breakpoint paths and lines must be safe and positive"));
                     return;
                 }
-                const auto loaded = ReadProjectFile(m_projectRoot.string(), *source);
+                const auto loaded = ReadProjectFile(px::PathToUtf8(m_projectRoot), *source);
                 std::size_t lineCount = 0;
                 if (loaded) {
                     lineCount = 1 + static_cast<std::size_t>(std::count(loaded->second.begin(), loaded->second.end(), '\n'));
@@ -1059,6 +1078,35 @@ private:
             return state;
         }
         state["scope"] = "runtime";
+        state["uiRoute"] = std::string(m_hud.CurrentRoute());
+        // Bounded diagnostic snapshot, not a serialized UI document or restore contract.
+        state["uiControls"] = Json::array();
+        const auto boundedText = [](const std::string& text) {
+            auto length = std::min<std::size_t>(text.size(), 512);
+            while (length < text.size() && length > 0 &&
+                   (static_cast<unsigned char>(text[length]) & 0xc0) == 0x80) --length;
+            return text.substr(0, length);
+        };
+        std::vector<const px::scene::Node*> pending;
+        bool controlsTruncated = false;
+        if (m_hud.Root()) pending.push_back(m_hud.Root());
+        while (!pending.empty() && state["uiControls"].size() < 64) {
+            const auto* node = pending.back();
+            pending.pop_back();
+            if (const auto* control = dynamic_cast<const px::ui::Control*>(node)) {
+                Json item{{"nodeId", control->Id().ToString()}, {"name", control->Name()},
+                    {"type", std::string(control->TypeName())}, {"enabled", control->Enabled()},
+                    {"visible", control->IsVisibleInTree()}};
+                if (const auto* button = dynamic_cast<const px::ui::Button*>(control)) item["text"] = boundedText(button->Text());
+                else if (const auto* label = dynamic_cast<const px::ui::Label*>(control)) item["text"] = boundedText(label->Text());
+                state["uiControls"].push_back(std::move(item));
+            }
+            for (const auto& child : node->Children()) {
+                if (pending.size() >= 64) { controlsTruncated = true; break; }
+                pending.push_back(child.get());
+            }
+        }
+        state["uiControlsTruncated"] = controlsTruncated || !pending.empty();
         state["state"] = VMStateName(m_session->VM().State());
         state["programCounter"] = m_session->VM().ProgramCounter();
         state["sourceLine"] = m_session->VM().CurrentSourceLine();
@@ -1309,13 +1357,13 @@ private:
         std::unordered_map<std::string, RuntimeSourceLocation> runtimeSources;
         std::optional<std::string> runtimeSourceMapText;
         std::string runtimeSourceMapPath;
-        std::filesystem::path sourceMapPath(*irPath);
+        std::filesystem::path sourceMapPath = px::PathFromUtf8(*irPath);
         sourceMapPath.replace_extension(".pxmap");
         std::error_code sourceMapError;
         const bool sourceMapExists = std::filesystem::is_regular_file(
-            std::filesystem::path(*projectRoot) / sourceMapPath, sourceMapError);
+            px::PathFromUtf8(*projectRoot) / sourceMapPath, sourceMapError);
         if (!sourceMapError && sourceMapExists) {
-            const auto sourceMapFile = ReadProjectFile(*projectRoot, sourceMapPath.generic_string());
+            const auto sourceMapFile = ReadProjectFile(*projectRoot, px::PathToUtf8(sourceMapPath));
             const auto sourceMap = sourceMapFile
                 ? px::sdk::ParseSourceMap(sourceMapFile->second)
                 : px::sdk::SourceMapParseResult{};
@@ -1346,7 +1394,7 @@ private:
                 }
             }
             runtimeSourceMapText = sourceMapFile->second;
-            runtimeSourceMapPath = sourceMapPath.generic_string();
+            runtimeSourceMapPath = px::PathToUtf8(sourceMapPath);
         }
         if (!EnsureRuntime(loaded->first)) {
             Write(Error(request, m_runtimeStartupErrorCode.empty() ? "runtime-start-failed" : m_runtimeStartupErrorCode, m_runtimeStartupErrorMessage.empty() ? "Native preview runtime could not start" : m_runtimeStartupErrorMessage));
@@ -1377,6 +1425,11 @@ private:
             return;
         }
         spdlog::info("Runtime IR program started");
+        if (!previewApply.inPlace) {
+            m_previewSaves.clear();
+            m_pendingPreviewSave.reset();
+            m_previewActions.clear();
+        }
         m_runtimeSources = std::move(runtimeSources);
         m_showUiPreview = false;
         m_activeUiSceneId.clear();
@@ -1595,6 +1648,21 @@ private:
         const auto nodeId = RequiredString(request, "nodeId");
         if (!nodeId) {
             Write(Error(request, "invalid-ui-control-activation", "nodeId is required"));
+            return;
+        }
+        if (!m_showUiPreview && m_previewSession && m_hud.Root()) {
+            const auto state = m_previewSession->State();
+            if (request.value("documentId", std::string{}) != state.documentId ||
+                request.value("revision", 0ULL) != state.revision) {
+                Write(Error(request, "ui-preview-identity-mismatch", "Control activation must target the applied Runtime revision"));
+                return;
+            }
+            const auto activated = m_hud.ActivateUiControl(*nodeId);
+            if (!activated) {
+                Write(Error(request, "ui-control-not-activatable", StatusMessage(activated, "Control action was rejected")));
+                return;
+            }
+            Write(RuntimeStateResponse(request, "uiControlActivated"));
             return;
         }
         if (!m_showUiPreview || m_activeUiSceneId.empty() || !m_uiPreview.Root()) {
@@ -2032,6 +2100,9 @@ private:
         (void)m_uiPreview.Actions().UnregisterProvider("script");
         m_scriptHost.reset();
         m_previewSession.reset();
+        m_previewSaves.clear();
+        m_pendingPreviewSave.reset();
+        m_previewActions.clear();
         m_session.reset();
         m_runtime.reset();
         m_appliedRevisions.clear();
@@ -2057,8 +2128,8 @@ private:
         auto runtime = std::make_unique<px::Runtime>();
         px::RuntimeConfig config;
         config.title = "PrismatiX Preview";
-        config.mountDirs = { projectRoot.string() };
-        spdlog::info("Initializing native runtime projectRoot={}", projectRoot.string());
+        config.mountDirs = { px::PathToUtf8(projectRoot) };
+        spdlog::info("Initializing native runtime projectRoot={}", px::PathToUtf8(projectRoot));
         if (!runtime->Init(config)) {
             m_runtimeStartupErrorMessage = "Native preview runtime could not initialize";
             return false;
@@ -2074,16 +2145,78 @@ private:
         auto session = std::make_unique<px::RuntimeSession>(px::RuntimeSession::Services{ runtime->VFS(), runtime->Audio(), runtime->Renderer(), runtime->Assets() });
         m_gameCatalog = std::move(catalog);
         session->VM().SetGameCatalog(m_gameCatalog);
+        // The compiled project carries the same locale and font chain used by
+        // Player. A Preview launched from a clean npm install must not depend
+        // on fonts or locale files from an engine checkout.
+        const auto projectText = runtime->VFS().ReadText("project.pxproject");
+        const auto project = projectText ? Json::parse(*projectText, nullptr, false) : Json{};
+        if (!project.is_object() || !project.contains("defaultLocale") ||
+            !project["defaultLocale"].is_string()) {
+            m_runtimeStartupErrorMessage = "Compiled project has no default locale";
+            return false;
+        }
+        const auto locale = project["defaultLocale"].get<std::string>();
+        const auto localeFile = ReadProjectFile(px::PathToUtf8(projectRoot), "Content/Localization/" + locale + ".json");
+        const auto localeDocument = localeFile ? Json::parse(localeFile->second, nullptr, false) : Json{};
+        if (!localeDocument.is_object() ||
+            localeDocument.value("format", std::string{}) != "PrismatiXLocale" ||
+            localeDocument.value("schemaRevision", 0) != 2 ||
+            localeDocument.value("locale", std::string{}) != locale ||
+            !localeDocument.contains("strings") || !localeDocument["strings"].is_object()) {
+            m_runtimeStartupErrorMessage = "Compiled project locale is missing or invalid";
+            return false;
+        }
+        std::unordered_map<std::string, std::string> strings;
+        for (auto it = localeDocument["strings"].begin(); it != localeDocument["strings"].end(); ++it) {
+            if (!it.value().is_string()) {
+                m_runtimeStartupErrorMessage = "Locale strings must contain text values";
+                return false;
+            }
+            strings.emplace(it.key(), it.value().get<std::string>());
+        }
+        std::vector<std::string> fonts;
+        if (const auto chain = localeDocument.find("fontChain"); chain != localeDocument.end()) {
+            if (!chain->is_array() || chain->size() > 16) {
+                m_runtimeStartupErrorMessage = "Locale fontChain must be a bounded array";
+                return false;
+            }
+            std::set<std::string> unique;
+            for (const auto& entry : *chain) {
+                if (!entry.is_string()) return false;
+                const auto font = entry.get<std::string>();
+                if ((!font.ends_with(".ttf") && !font.ends_with(".otf")) ||
+                    !ReadProjectFile(px::PathToUtf8(projectRoot), font) || !unique.insert(font).second) {
+                    m_runtimeStartupErrorMessage = "Locale font is missing, unsafe, duplicated, or unsupported: " + font;
+                    return false;
+                }
+                fonts.push_back(font);
+            }
+        }
+        runtime->Renderer().SetTextLocale(locale, std::move(fonts));
+        session->VM().SetTextFilter([strings = std::move(strings)](const std::string& id, const std::string& fallback) {
+            const auto found = strings.find(id);
+            return found == strings.end() ? fallback : found->second;
+        });
+        if (const auto entries = project.find("uiEntryPoints"); entries != project.end() && entries->is_object()) {
+            for (auto entry = entries->begin(); entry != entries->end(); ++entry) {
+                if (!entry.value().is_string()) return false;
+                const auto path = entry.value().get<std::string>();
+                const auto scene = ReadProjectFile(px::PathToUtf8(projectRoot), path);
+                if (!scene || !m_hud.RegisterRouteTemplate(entry.key(), scene->second, path)) {
+                    m_runtimeStartupErrorMessage = "Authored UI route could not be loaded: " + path;
+                    return false;
+                }
+            }
+        }
         m_characterCount = m_gameCatalog.Characters().size();
         m_characterResourcesDeclared = characterResourcesDeclared;
         spdlog::info("Preview canonical catalog loaded characters={} variables={}",
                      m_gameCatalog.Characters().size(),
                      m_gameCatalog.Variables().size());
         m_hud.SetActionSink([this](const px::ui::GalgameAction& action) {
-            if (action.command == "choice.select" && m_previewSession) {
-                (void)m_previewSession->SelectChoice(
-                    std::atoi(action.argument.c_str()));
-            }
+            // Replacing a UI tree from inside Button::Activate destroys the
+            // active callback owner. Apply host actions at the next frame.
+            if (m_previewActions.size() < 64) m_previewActions.push_back(action);
         });
         m_projectRoot = projectRoot;
         m_runtime = std::move(runtime);
@@ -2263,12 +2396,69 @@ private:
              },
              .restoreExternalState = [this](const auto& state) {
                  return RestoreExternalCheckpoint(state);
+             },
+             .validateExternalState = [](const std::shared_ptr<const void>& state) {
+                 if (!state) return px::Status::Ok();
+                 const auto checkpoint = std::static_pointer_cast<const ScriptCheckpoint>(state);
+                 return checkpoint->captureErrors.empty() ? px::Status::Ok()
+                     : px::Status::Fail(checkpoint->captureErrors);
              }});
         m_scriptHost->Emit("engine.ready");
         return true;
     }
 
     void Frame() {
+        while (!m_previewActions.empty()) {
+            const auto action = std::move(m_previewActions.front());
+            m_previewActions.pop_front();
+            if (action.command == "choice.select")
+                (void)m_previewSession->SelectChoice(std::atoi(action.argument.c_str()));
+            else if (action.command == "game.start" || action.command == "overlay.close") {
+                (void)m_hud.ShowHUD(DialogueView(*m_session, m_choices));
+                (void)m_previewSession->Continue();
+            } else if (action.command == "save.open" || action.command == "load.open") {
+                const bool save = action.command == "save.open";
+                if (save) {
+                    const auto captured = m_previewSession->CaptureCheckpoint();
+                    if (!captured.accepted || !captured.checkpoint) {
+                        m_events->Push("diagnostics", Json{{"code", "PXPREVIEW1702"},
+                            {"message", "Preview checkpoint capture failed; no slot was changed"}});
+                        continue;
+                    }
+                    m_pendingPreviewSave = captured.checkpoint->id;
+                }
+                (void)m_previewSession->Pause();
+                std::vector<px::ui::GalgameItem> slots;
+                for (int slot = 0; slot < 4; ++slot) {
+                    const bool exists = m_previewSaves.contains(slot);
+                    slots.push_back({.key = std::to_string(slot),
+                        .title = "Preview checkpoint " + std::to_string(slot + 1),
+                        .subtitle = "Session only; cleared on rebuild or close",
+                        .disabled = !save && !exists,
+                        .command = save ? "save.slot" : "load.slot", .argument = std::to_string(slot)});
+                }
+                (void)m_hud.ShowSaveLoad(save, std::move(slots));
+            } else if (action.command == "save.slot" || action.command == "load.slot") {
+                const int slot = std::atoi(action.argument.c_str());
+                if (slot < 0 || slot >= 4) continue;
+                if (action.command == "save.slot") {
+                    if (m_pendingPreviewSave) m_previewSaves[slot] = *m_pendingPreviewSave;
+                } else {
+                    const auto found = m_previewSaves.find(slot);
+                    if (found == m_previewSaves.end() || !m_previewSession->RestoreCheckpoint(found->second).accepted) {
+                        m_events->Push("diagnostics", Json{{"code", "PXPREVIEW1703"},
+                            {"message", "Preview checkpoint is unavailable or restore failed; it may have expired from bounded session history"}});
+                        continue;
+                    }
+                }
+                (void)m_hud.ShowHUD(DialogueView(*m_session, m_choices));
+                (void)m_previewSession->Continue();
+            } else {
+                m_events->Push("diagnostics", Json{{"code", "PXPREVIEW1701"},
+                    {"message", "This Player action is not available in safe Preview; test it in the built game"},
+                    {"action", action.command}});
+            }
+        }
         const float delta = m_runtime->GetClock().DeltaSeconds();
         const std::uint64_t now = m_runtime->GetClock().NowMs();
         if (m_scriptHost) {
@@ -2307,13 +2497,14 @@ private:
         if (m_session->VM().State() == px::vn::VMState::WaitingChoice) {
             for (const auto& choice : m_session->VM().Choices()) m_choices.push_back(choice.text);
         }
-        (void)m_hud.RefreshHUD(DialogueView(*m_session, m_choices));
+        if (m_hud.CurrentScreen() == px::ui::GalgameUI::Screen::HUD)
+            (void)m_hud.RefreshHUD(DialogueView(*m_session, m_choices));
         auto& input = m_runtime->GetInput();
         int width = 0;
         int height = 0;
         m_runtime->Renderer().GetLogicalSize(width, height);
         const bool consumed = m_hud.Update(input, width, height, delta);
-        if (!consumed && input.LeftClick() && m_session->VM().State() != px::vn::VMState::WaitingChoice) {
+        if (!consumed && m_hud.CurrentScreen() == px::ui::GalgameUI::Screen::HUD && input.LeftClick() && m_session->VM().State() != px::vn::VMState::WaitingChoice) {
             (void)m_previewSession->Advance();
         }
         if (m_scriptHost)
@@ -2344,6 +2535,9 @@ private:
     std::unique_ptr<px::script::ScriptHost> m_scriptHost;
     std::vector<px::script::DebugBreakpoint> m_scriptBreakpoints;
     px::ui::GalgameUI m_hud;
+    std::deque<px::ui::GalgameAction> m_previewActions;
+    std::unordered_map<int, std::uint64_t> m_previewSaves;
+    std::optional<std::uint64_t> m_pendingPreviewSave;
     px::ui::ObservableViewModel m_uiPreviewViewModel;
     px::ui::UIContext m_uiPreview;
     std::filesystem::path m_projectRoot;

@@ -1,3 +1,4 @@
+#include "Engine/Support/Utf8Path.h"
 #include "Engine/SDK/Packager.h"
 
 #include "Engine/Package/PackageManifest.h"
@@ -85,7 +86,7 @@ struct ValidationResult {
     std::vector<PackageDiagnostic> diagnostics;
 };
 
-std::filesystem::path Utf8Path(const std::string_view value) { return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(value.data()), value.size())); }
+std::filesystem::path Utf8Path(const std::string_view value) { return px::PathFromUtf8(value); }
 
 void AddDiagnostic(std::vector<PackageDiagnostic>& diagnostics, std::string code,
                    std::string message, const bool retryable = false,
@@ -167,7 +168,7 @@ std::string Lower(std::string value) {
 
 bool IsStreamingMediaPath(const std::string_view uri) {
     const std::string extension =
-        Lower(Utf8Path(uri).extension().string());
+        Lower(px::PathToUtf8(Utf8Path(uri).extension()));
     constexpr std::array<std::string_view, 8> extensions{
         ".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".ogv", ".ts"};
     return std::ranges::find(extensions, extension) != extensions.end();
@@ -189,11 +190,11 @@ bool IsSafeUri(const std::string_view uri) {
         return false;
     }
     const std::filesystem::path path = Utf8Path(uri);
-    if (path.is_absolute() || path.generic_string() != uri) return false;
+    if (path.is_absolute() || px::PathToUtf8(path) != uri) return false;
     for (const auto& component : path) {
         if (component.empty() || component == "." || component == "..") return false;
     }
-    return path.lexically_normal().generic_string() == uri;
+    return px::PathToUtf8(path.lexically_normal()) == uri;
 }
 
 std::filesystem::path WeakCanonical(const std::filesystem::path& path, std::error_code& error) {
@@ -204,7 +205,7 @@ std::filesystem::path WeakCanonical(const std::filesystem::path& path, std::erro
 
 bool EqualComponent(const std::filesystem::path& left, const std::filesystem::path& right) {
 #ifdef _WIN32
-    return Lower(left.string()) == Lower(right.string());
+    return Lower(px::PathToUtf8(left)) == Lower(px::PathToUtf8(right));
 #else
     return left == right;
 #endif
@@ -1276,19 +1277,19 @@ detail::PackageManifest BuildPackageManifest(const PackageRequest& request,
 }
 
 bool RuntimeLibrary(const std::filesystem::path& path) {
-    const std::string filename = Lower(path.filename().string());
+    const std::string filename = Lower(px::PathToUtf8(path.filename()));
     if (filename.find("shadercross") != std::string::npos ||
         filename.find("dxcompiler") != std::string::npos ||
         filename == "dxil.dll" ||
         filename.find("spirv-cross") != std::string::npos)
         return false;
-    const std::string extension = Lower(path.extension().string());
+    const std::string extension = Lower(px::PathToUtf8(path.extension()));
 #ifdef _WIN32
     return extension == ".dll";
 #elif defined(__APPLE__)
     return extension == ".dylib";
 #else
-    return extension == ".so" || path.filename().string().find(".so.") != std::string::npos;
+    return extension == ".so" || px::PathToUtf8(path.filename()).find(".so.") != std::string::npos;
 #endif
 }
 
@@ -2089,9 +2090,9 @@ ValidationResult Validate(const PackageRequest& request) {
 }
 
 std::filesystem::path UniqueSibling(const std::filesystem::path& output, const std::string_view label, const std::string_view requestId) {
-    const auto digest = Sha256Text(std::string(requestId) + "|" + output.generic_string() + "|" + std::string(label));
+    const auto digest = Sha256Text(std::string(requestId) + "|" + px::PathToUtf8(output) + "|" + std::string(label));
     const std::string suffix = digest ? Hex(*digest).substr(0, 16) : std::string("0000000000000000");
-    return output.parent_path() / (output.filename().string() + "." + std::string(label) + "-" + suffix);
+    return output.parent_path() / Utf8Path(px::PathToUtf8(output.filename()) + "." + std::string(label) + "-" + suffix);
 }
 
 }  // namespace
@@ -2386,9 +2387,9 @@ std::string SerializePackageEvent(const PackageEvent& event) {
             break;
         case PackageEventKind::Completed:
             object["event"] = "completed";
-            object["outputDir"] = event.outputDir.generic_string();
-            object["playerExecutable"] = event.playerExecutable.generic_string();
-            object["manifestPath"] = event.manifestPath.generic_string();
+            object["outputDir"] = px::PathToUtf8(event.outputDir);
+            object["playerExecutable"] = px::PathToUtf8(event.playerExecutable);
+            object["manifestPath"] = px::PathToUtf8(event.manifestPath);
             object["inputCount"] = event.inputCount;
             break;
         case PackageEventKind::Cancelled:
@@ -2647,7 +2648,7 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
         error.clear();
         std::filesystem::copy_file(library, staging / library.filename(), std::filesystem::copy_options::overwrite_existing, error);
         if (error) {
-            return Fail(request, eventSink, "PXPKG1310", "Runtime library could not be copied: " + library.filename().string(), true);
+            return Fail(request, eventSink, "PXPKG1310", "Runtime library could not be copied: " + px::PathToUtf8(library.filename()), true);
         }
     }
 

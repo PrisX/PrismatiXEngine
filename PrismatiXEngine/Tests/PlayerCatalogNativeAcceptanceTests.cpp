@@ -658,9 +658,16 @@ int main(int argc, char* argv[]) {
                       "packaged output contains its content archive");
 
         const auto packagedPlayer = output / player.filename();
+        const auto launchDirectory = fixture.path / "UnrelatedWorkingDirectory";
+        std::filesystem::create_directories(launchDirectory / "Save");
+        const auto unrelatedSave = launchDirectory / "Save/profile.dat";
+        {
+            std::ofstream sentinel(unrelatedSave, std::ios::binary);
+            sentinel << "unrelated-player-data";
+        }
         AutomatedChildProcess process;
-        suite.Require(process.Start(packagedPlayer, output),
-                      "packaged Player process launches");
+        suite.Require(process.Start(packagedPlayer, launchDirectory),
+                      "packaged Player process launches independently of the caller working directory");
         const auto log = output / "logs/PrismatiXPlayer.log";
         const bool titleReady =
             WaitForLog(log, "Player presentation ready route=title");
@@ -705,6 +712,10 @@ int main(int argc, char* argv[]) {
             WaitForLog(log,
                        "Player Phase 2 menu async and save/load stack complete"),
             "save/load restores the exact custom modal route and authored UI surface stack");
+        suite.Require(WaitForLog(log, "Player save menu survived a rendered frame"),
+                      "SAVE remains visible after the gameplay frame that opened it");
+        suite.Require(WaitForLog(log, "Player save picker checkpoint restored gameplay HUD"),
+                      "saving through the picker restores its underlying gameplay surface and route stack");
         suite.Require(
             WaitForLog(log,
                        "Player E2E locale switched locale=ja-JP text=こんにちは"),
@@ -756,6 +767,9 @@ int main(int argc, char* argv[]) {
                       "saved Player profile reloads with the package identity");
         suite.Expect(profile.CGUnlocked("ending-rin"),
                      "Gallery unlock survives Player shutdown and reload");
+        suite.Expect(Read(unrelatedSave) == "unrelated-player-data" &&
+                         !std::filesystem::exists(launchDirectory / "logs"),
+                     "package launch never reads or writes the caller's persistence or logs");
     });
     return suite.Finish();
 }

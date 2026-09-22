@@ -1,3 +1,4 @@
+#include "Engine/Support/Utf8Path.h"
 #include "Engine/IO/VFS.h"
 
 #include "Engine/Support/Logger.h"
@@ -130,10 +131,10 @@ std::optional<std::filesystem::path> ResolveDirectoryPath(
     const std::string& root, const std::string_view normalized) {
     std::error_code error;
     const std::filesystem::path canonicalRoot =
-        std::filesystem::weakly_canonical(std::filesystem::path(root), error);
+        std::filesystem::weakly_canonical(px::PathFromUtf8(root), error);
     if (error) return std::nullopt;
     const std::filesystem::path candidate = std::filesystem::weakly_canonical(
-        canonicalRoot / std::filesystem::path(normalized), error);
+        canonicalRoot / px::PathFromUtf8(normalized), error);
     if (error) return std::nullopt;
     const std::filesystem::path relative =
         std::filesystem::relative(candidate, canonicalRoot, error);
@@ -170,13 +171,13 @@ std::optional<std::string> VFS::NormalizeVirtualPath(
 void VFS::MountDirectory(const std::string& root) {
     std::error_code error;
     const auto canonical =
-        std::filesystem::weakly_canonical(std::filesystem::path(root), error);
+        std::filesystem::weakly_canonical(px::PathFromUtf8(root), error);
     if (error || canonical.empty()) {
         PX_LOG_ERROR("VFS rejected invalid directory mount '{}'", root);
         return;
     }
-    m_dirs.push_back(canonical.string());
-    PX_LOG_INFO("VFS mounted directory '{}'", canonical.string());
+    m_dirs.push_back(px::PathToUtf8(canonical));
+    PX_LOG_INFO("VFS mounted directory '{}'", px::PathToUtf8(canonical));
 }
 
 bool VFS::MountArchive(const std::string& archivePath, const crypto::Key* key) {

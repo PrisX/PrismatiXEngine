@@ -26,13 +26,35 @@ class CardButton final : public Button {
 public:
     using Button::Button;
     void SetImage(std::string value) { m_image = std::move(value); }
+    void SetCaption(std::string title, std::string subtitle) {
+        m_title = std::move(title); m_subtitle = std::move(subtitle);
+        SetText(m_title);
+        SetAccessibilityLabel(m_title);
+        SetAccessibilityDescription(m_subtitle);
+    }
 protected:
     void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) override {
+        const auto& style = theme.Resolve(*this);
+        const auto& box = !Enabled() ? style.disabled : Pressed() ? style.pressed :
+            Focused() ? style.focused : Hovered() ? style.hover : style.normal;
+        const auto area = LayoutRect();
+        renderer.DrawRoundedRect(area, box.cornerRadius, box.background);
         if (!m_image.empty()) renderer.DrawImage(m_image, LayoutRect(), Enabled() ? 210 : 70);
-        Button::DrawSelf(renderer, theme);
+        if (box.borderWidth > 0) renderer.DrawBorder(area, box.borderWidth, box.cornerRadius, box.border);
+        const auto color = Enabled() ? style.text : style.textDisabled;
+        const Rect title{area.x + 12, area.y + 6, std::max(0.0f, area.w - 24), 28};
+        const Rect subtitle{title.x, area.y + 36, title.w, std::max(0.0f, area.h - 42)};
+        renderer.PushClip(area);
+        renderer.DrawTextInRect(m_title, title, style.font, std::min(style.fontSize, 22), color,
+            graphics::HorizontalAlignment::Left, graphics::VerticalAlignment::Top, true);
+        renderer.DrawTextInRect(m_subtitle, subtitle, style.font, std::min(style.fontSize, 16), color,
+            graphics::HorizontalAlignment::Left, graphics::VerticalAlignment::Top, true);
+        renderer.PopClip();
     }
 private:
     std::string m_image;
+    std::string m_title;
+    std::string m_subtitle;
 };
 
 template<typename T>T* FindNamed(Control* root,std::string_view name){if(!root)return nullptr;if(root->Name()==name)return dynamic_cast<T*>(root);for(const auto& child:root->Children())if(auto* control=dynamic_cast<Control*>(child.get()))if(auto* found=FindNamed<T>(control,name))return found;return nullptr;}
@@ -87,7 +109,10 @@ public:
         const GalgameItem& value = m_items[index];
         button->SetText(value.title + (value.subtitle.empty() ? "" : "\n" + value.subtitle));
         button->SetEnabled(!value.disabled);
-        if (auto* card = dynamic_cast<CardButton*>(button)) card->SetImage(value.image);
+        if (auto* card = dynamic_cast<CardButton*>(button)) {
+            card->SetImage(value.image);
+            card->SetCaption(value.title, value.subtitle);
+        }
         button->SetOnActivated([this, index] {
             if (index < m_items.size()) m_owner.Emit(m_items[index].command, m_items[index].argument);
         });

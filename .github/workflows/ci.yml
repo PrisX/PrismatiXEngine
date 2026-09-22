@@ -40,6 +40,14 @@ jobs:
         run: cmake -DROOT="${{ github.workspace }}/PrismatiXEngine" -P PrismatiXEngine/Tests/SDKArchitectureGate.cmake
 
   linux-clang-sanitizer:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - configuration: Debug
+            sanitizers: "ON"
+          - configuration: RelWithDebInfo
+            sanitizers: "OFF"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -63,13 +71,13 @@ jobs:
       - name: Configure complete sanitizer desktop build
         run: |
           cmake -S . -B out/ci/sdk-clang -G Ninja \
-            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_BUILD_TYPE=${{ matrix.configuration }} \
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET=x64-linux \
             -DVCPKG_INSTALLED_DIR="${{ github.workspace }}/out/ci/vcpkg/clang" \
             -DBUILD_TESTING=ON \
-            -DPRISMATIX_ENABLE_SANITIZERS=ON \
+            -DPRISMATIX_ENABLE_SANITIZERS=${{ matrix.sanitizers }} \
             -DPRISMATIX_WARNINGS_AS_ERRORS=ON
       - name: Compile complete Runtime, SDK, Player, and test surface
         run: cmake --build out/ci/sdk-clang --parallel
@@ -104,7 +112,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: PrismatiX-GPU-Visual-Linux-${{ github.run_id }}
+          name: PrismatiX-GPU-Visual-Linux-${{ matrix.configuration }}-${{ github.run_id }}
           path: out/ci/visual/linux
           if-no-files-found: error
           retention-days: 14
@@ -239,8 +247,10 @@ jobs:
         shell: pwsh
         run: |
           $env:PRISMATIX_PHASE1_RUNTIME = Join-Path $env:GITHUB_WORKSPACE 'out/ci/sdk-package'
-          npm run phase1:acceptance
+          npm run phase1:acceptance -- --project-name "繁中 專案 測試"
           if ($LASTEXITCODE -ne 0) { throw 'Clean Windows runtime gate failed' }
+          node scripts/preview-ui-regression.mjs out/ci/sdk-package/bin/PrismatiXPreviewHost.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Native Preview UI gate failed' }
       - name: Publish pinned Windows SDK artifact
         uses: actions/upload-artifact@v4
         with:
@@ -250,7 +260,17 @@ jobs:
           retention-days: 14
 
   macos-apple-clang-sdk:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            architecture: x64
+            triplet: x64-osx
+          - runner: macos-15
+            architecture: arm64
+            triplet: arm64-osx
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -268,7 +288,10 @@ jobs:
           vcpkgDirectory: ${{ runner.temp }}/vcpkg
       - name: Resolve dependencies
         run: |
-          if [[ "$(uname -m)" == "arm64" ]]; then triplet=arm64-osx; else triplet=x64-osx; fi
+          triplet="${{ matrix.triplet }}"
+          expected="${{ matrix.architecture }}"
+          actual="$(uname -m)"
+          [[ "$actual" == "arm64" && "$expected" == "arm64" || "$actual" == "x86_64" && "$expected" == "x64" ]]
           echo "VCPKG_TARGET_TRIPLET=$triplet" >> "$GITHUB_ENV"
           "$VCPKG_ROOT/vcpkg" install --triplet "$triplet" \
             --x-install-root="${{ github.workspace }}/out/ci/vcpkg/apple-clang"
@@ -300,7 +323,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: PrismatiX-GPU-Visual-macOS-${{ github.run_id }}
+          name: PrismatiX-GPU-Visual-macOS-${{ matrix.architecture }}-${{ github.run_id }}
           path: out/ci/visual/macos
           if-no-files-found: error
           retention-days: 14

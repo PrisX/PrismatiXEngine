@@ -1,0 +1,2 @@
+# Contract fixtures are byte-level cross-language golden inputs and outputs.
+/Contracts/fixtures/** text eol=lf

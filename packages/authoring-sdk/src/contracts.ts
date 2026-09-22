@@ -6,6 +6,11 @@ import {validateSemantics, validateUiPropertyUsage, type UiTypeRegistryMetadata}
 import type {AuthoringDiagnostic, JsonValue, Result} from "./types.js";
 
 const maximumDocumentBytes = 16 * 1024 * 1024;
+// Compiled aggregate artifacts share the native RuntimeIR/SourceMap 64 MiB
+// budget. Authored document and Story input limits remain 16 MiB.
+export function contractDocumentByteLimit(contractId: string): number {
+  return ["runtimeIr", "sourceMap"].includes(contractId) ? 64 * 1024 * 1024 : maximumDocumentBytes;
+}
 const ajv = new Ajv2020({allErrors: true, strict: true, allowUnionTypes: true});
 for (const schema of Object.values(contractSchemas)) ajv.addSchema(schema);
 
@@ -75,8 +80,9 @@ export function validateUiDocument<T>(value: unknown, registry: UiTypeRegistryMe
 }
 
 export function parseDocument<T>(contractId: string, text: string, path?: string): Result<T> {
-  if (Buffer.byteLength(text, "utf8") > maximumDocumentBytes) {
-    return {diagnostics: [diagnostic("PXSDKJSON1001", "Document exceeds the 16 MiB limit", path)], valid: false};
+  const limit = contractDocumentByteLimit(contractId);
+  if (Buffer.byteLength(text, "utf8") > limit) {
+    return {diagnostics: [diagnostic("PXSDKJSON1001", `Document exceeds the ${limit / 1024 / 1024} MiB limit`, path)], valid: false};
   }
   if (text.startsWith("\uFEFF")) {
     return {diagnostics: [diagnostic("PXSDKJSON1002", "Canonical UTF-8 documents must not contain a BOM", path)], valid: false};
@@ -94,7 +100,10 @@ export function serializeDocument<T extends JsonValue>(contractId: string, value
   const validation = validateDocument<T>(contractId, value);
   if (!validation.valid) return validation as Result<string>;
   try {
-    return {value: canonicalJson(value), diagnostics: [], valid: true};
+    const text = canonicalJson(value);
+    if (Buffer.byteLength(text, "utf8") > contractDocumentByteLimit(contractId))
+      return {diagnostics: [diagnostic("PXSDKJSON1001", "Serialized document exceeds its native byte limit")], valid: false};
+    return {value: text, diagnostics: [], valid: true};
   } catch (error) {
     return {diagnostics: [diagnostic("PXSDKJSON1005", "Document cannot be serialized deterministically", undefined, String(error))], valid: false};
   }

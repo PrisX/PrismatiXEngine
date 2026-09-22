@@ -1,126 +1,71 @@
 # Build your first PrismatiX game
 
-This guide is for story authors. You need Node.js 20 or newer, the PrismatiX CLI, and a PrismatiX runtime bundle for your platform. You do not need a C++ compiler, CMake, vcpkg, a source checkout, or a globally installed PrismatiX tool.
+Install Node.js and npm first. CI is configured for Node.js 24.14.0; this candidate's local Windows journey was verified with Node.js 24.2.0. Other versions have not been revalidated for this candidate. Node.js is an author prerequisite, not installed by the commands below. The platform CLI package must contain the matching native runtime; authors do not need C++, CMake, vcpkg, an engine checkout or a separate runtime download.
 
-Released CLI packages may include the matching runtime. If yours does not, extract a same-version runtime bundle and set `PRISMATIX_RUNTIME_DIR` to its top-level directory. You can instead pass `--runtime <directory>` to `dev`, `build`, `pack`, or `run`. A runtime directory may be an install prefix, its `bin` directory, its `runtime-manifest.json`, or the directory containing that manifest.
+**Release status:** the commands below describe the intended published-package interface. Current evidence is from an isolated candidate registry, not public npm publication. Check the [release audit](releases/0.2.0-audit.md) for actual platform results.
 
-## The five-step author workflow
-
-### 1. Install the authoring tool
-
-Start in any empty directory outside the PrismatiXEngine repository:
+## Three commands
 
 ```bash
-npm init -y
-npm install --save-dev @prismatix/cli
+npm install -g @prismatix/cli
+prismatix create my-game
+prismatix dev my-game
 ```
 
-The project-local install keeps the CLI version with the game. All commands below use `npx`, so no global npm package is required.
+`create` prepares a short Traditional Chinese story with original character/background pictures, two choices and endings, a title, default dialogue HUD and save/load routes. It copies Noto Sans TC and its license, prepares editor settings, installs exact project CLI/SDK versions and writes `package-lock.json`. No npm init, second SDK install, hand-written UUIDs or initialization command is needed. Initial preparation needs registry access; failures preserve existing author data.
 
-### 2. Create a game
+All options are non-interactive:
 
 ```bash
-npx prismatix create first-game --name "First Light" --locale en
-cd first-game
+prismatix create "my game" --name "First Light" --id first-light --locale zh-TW --width 1280 --height 720
 ```
 
-This creates a playable starter with a default title screen, game catalog, locale, and Story index. The CLI generates its canonical metadata and UUIDs; a first game does not require you to hand-author them.
+`--locale` sets the locale tag; it does not translate the Chinese template. The bundled font covers the starter text. Add and test appropriate fonts before authoring other writing systems.
 
-### 3. Write one line
+Edit `my-game/Story/main.pxstory` and save. Keep `[id main.welcome]` when rewriting that line. `dev` watches before its first build, so fixing initial syntax errors can start Preview without rerunning the command. Each successful edit prepares an immutable revision and replacement Preview, waits for apply/play acknowledgements, then closes the prior Preview. **The current policy restarts the scene after a successful edit.** It does not promise to preserve dialogue position. Errors retain the previous playable revision. Preview starts at Title; Start opens the story HUD. Its Save/Load slots hold session-only checkpoints, cleared on rebuild or Host close. Packaged Player Save/Load uses persistent player saves.
 
-Open `Story/main.pxstory` and change the welcome text:
+Press Ctrl+C to close a watch session. Superseded and rejected revisions are retired only after their Preview process confirms closure. The last successfully acknowledged revision remains in `.prismatix/dev/` for diagnosis and is ignored by Git. A process that cannot confirm closure keeps its resources.
 
-```pxstory
-[id main.welcome]
-The station lights came on one by one.
-
-[id main.finish]
-[end]
-```
-
-You may also add assets under `Assets/` and refer to them by project-relative path. Stable asset identities and custom UI are available when a project needs them, but they are not onboarding prerequisites.
-
-### 4. Preview while you edit
+## Daily work and distribution
 
 ```bash
-npx prismatix dev
+prismatix dev my-game
+prismatix validate my-game
+prismatix build my-game
+prismatix build my-game --output "release/First Light"
 ```
 
-`dev` compiles the canonical Runtime IR, starts PreviewHost, and watches project dependencies. Saving the Story file patches or restarts Preview as required. Diagnostics are emitted immediately as NDJSON with a stable code, source path, and line/column span, so editors and CI can locate the authoring error.
-
-For a non-interactive environment, use the same handshake and initial apply/play path once:
+`build` creates a desktop distribution with Player, game content and redistributable dependencies in `my-game/dist/<project-id>/`. Players need neither Node.js nor the SDK. `--output` changes only location. Automation that previously used `build --output` for compiler artifacts must add `--artifact-only`:
 
 ```bash
-npx prismatix dev --once
+prismatix build my-game --artifact-only --output my-game/.prismatix/artifact
 ```
 
-Press Ctrl+C to stop a normal watch session.
+Never choose Story, Assets, another source input or an unrelated existing folder as output. `pack` is an explicit distribution command; `run` packages and launches. Quote paths containing spaces.
 
-### 5. Build the portable game
+Output replacement verifies the previous build's inventory. If you have played a distribution and it now contains saves/logs, or edited its files, use a new output directory; do not delete player data to bypass the guard. Test migration with a copy of the old saves before distributing an update.
 
-```bash
-npx prismatix build
-```
+The global command delegates project commands to the exact local CLI pinned in the game's package.json. Commit that manifest and its lock. A missing or mismatched local CLI is diagnosed instead of silently using the global version. After preparation, dev/build use local packages and bundled runtime offline. Upgrade tool versions deliberately in a branch, reinstall the pinned dependencies, and test old saves and the packaged Player before distributing an update.
 
-With no `--output` or `--artifact-only` option, `build` validates, compiles, packages the matching Player and native dependencies, and writes a distribution under `dist/<project-id>/`. Run the Player from that directory; the distribution must not read the engine repository or an author-machine vcpkg installation.
+## Diagnostics and troubleshooting
 
-Use `prismatix build --artifact-only` when a CI pipeline only needs canonical Runtime inputs, or `prismatix pack` when you want to package explicitly. `prismatix run` packages and launches in one command.
+The terminal shows readable diagnostics by default. Pass `--json` for stable NDJSON codes, paths and source spans on stderr; preserve stderr for editor integrations. `PXSTORY1199` identifies an unknown Story command. Unknown options and invalid typed values fail. `dev --once` tests initial apply/play and shutdown, not an interactive editing session.
 
-## Runtime discovery
+Normal discovery uses the matching `runtime/<platform>-<architecture>/` bundle inside the CLI package. A missing or incompatible bundle is an installation/release problem. Do not install C++ build tools as an author workaround. Explicit `--runtime`, per-tool options and `PRISMATIX_*` overrides are developer diagnostics. Manifest validation cannot attest to the compiler ABI of an arbitrary executable supplied as an override.
 
-Normally no option is needed. When selecting a standalone runtime bundle, prefer an explicit project or CI setting:
-
-```bash
-npx prismatix dev --runtime /opt/prismatix-0.2
-npx prismatix build --runtime /opt/prismatix-0.2
-```
-
-PowerShell uses the same CLI syntax:
-
-```powershell
-$env:PRISMATIX_RUNTIME_DIR = "C:\Tools\PrismatiX-0.2"
-npx prismatix dev --once
-```
-
-Tool lookup is deterministic: a per-tool option, `--runtime`, a per-tool environment variable, `PRISMATIX_RUNTIME_DIR`, a platform runtime bundled with the CLI, `PATH`, then source-checkout developer fallbacks. A missing tool reports every checked location and tells you which option or environment variable to set.
-
-The runtime manifest lives at `share/PrismatiX/runtime-manifest.json` and names the matching PreviewHost, Packager, and Player. Keep the CLI and runtime bundle on the same released version.
-
-## Validate and diagnose
-
-Run validation without launching Preview:
-
-```bash
-npx prismatix validate
-```
-
-A diagnostic is one JSON object per stderr line. For example, an unknown Story command reports `PXSTORY1199` and a span similar to `Story/main.pxstory:5`. Do not discard stderr in editor integrations.
+For registry or proxy errors during create, fix npm's registry/proxy configuration and retry. Do not use sudo or disable security controls. A nonempty or read-only destination is rejected. After abrupt termination, inspect a leftover create lock before removing its empty lock directory and retrying.
 
 ## Verify a runtime bundle release
 
-Engine release jobs have two Phase 1 gates:
+Native build instructions are in the [contributor section](../README.md#engine-contributors). Release engineers run:
 
 ```bash
-# Fast: packs and installs the real npm artifacts in a temporary, repo-external
-# author project and exercises the workflow with protocol-compatible mock tools.
-npm run test:phase1:mock
-
-# Release: repeats the clean journey with a redistributable native bundle and
-# launches the packaged Player from outside the repository.
-PRISMATIX_PHASE1_RUNTIME=/path/to/install-prefix npm run test:phase1
+node scripts/phase1-clean-install.mjs --mock --keep
+node scripts/phase1-clean-install.mjs --runtime /path/to/installed-runtime --keep
 ```
 
-On PowerShell:
+Here `--runtime` supplies binaries for the candidate npm package; it is never passed to the simulated author CLI. The harness serves candidate packages through a loopback registry, installs into a temporary global prefix, creates the project, watches edit/error/repair, closes the registry, reopens offline, builds and launches Player. Failed workspaces are retained; `--keep` also retains success evidence. Mock proves orchestration only. Native acknowledgements and launch do not prove visual interaction, audio or glyph correctness.
 
-```powershell
-$env:PRISMATIX_PHASE1_RUNTIME = "C:\Packages\PrismatiX-runtime"
-npm run test:phase1
-```
+Windows x64, Linux x64 and macOS x64/arm64 are intended desktop targets. Each exact platform/architecture needs its own candidate evidence. WASM Preview is separate from full Web game distribution; mobile, console and full Web shipping are outside this desktop release.
 
-The release gate copies the supplied bundle out of the checkout, strips repository/vcpkg discovery variables and paths, verifies source diagnostics, runs `dev --once`, exercises both `build` and `pack`, and keeps the failed temporary workspace for inspection. The mock gate is regression coverage for packaging and orchestration; only the native gate satisfies the playable Phase 1 exit condition.
-
-## Going further
-
-- Install `@prismatix/runtime` when writing typed JavaScript or TypeScript extensions.
-- See [Custom effects](custom-effects.md) for offline-compiled Stage shaders.
-- Engine and runtime contributors should use the build instructions in the repository [README](../README.md#engine-contributors).
+Continue with the [cookbook](cookbook.md), [custom effects](custom-effects.md), [runtime extension contracts](../runtime-sdk/README.md) and [release compatibility](releases/0.2.0.md).

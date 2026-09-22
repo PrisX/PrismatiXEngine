@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
-import {mkdtemp, mkdir, readFile, readdir, stat, writeFile} from "node:fs/promises";
+import {mkdtemp, mkdir, readFile, readdir, stat, symlink, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {dirname, join, resolve} from "node:path";
 import {spawnSync} from "node:child_process";
 import test from "node:test";
 
+import {createStarter} from "../src/starter.js";
 import {discoverRuntimeTool, RuntimeDiscoveryFailure} from "../src/runtime-discovery.js";
 
 function stable(value: unknown): string {
@@ -23,7 +24,7 @@ async function write(path: string, value: string): Promise<void> {
 }
 
 function run(args: readonly string[]) {
-  return spawnSync(process.execPath, [resolve("dist/src/cli.js"), ...args], {encoding: "utf8"});
+  return spawnSync(process.execPath, [resolve("dist/src/cli.js"), ...args, "--json"], {encoding: "utf8"});
 }
 
 async function fixture(legacy = false): Promise<{root: string; project: string}> {
@@ -72,8 +73,12 @@ async function fixture(legacy = false): Promise<{root: string; project: string}>
 test("create scaffolds a canonical playable starter without author-supplied UUIDs", async () => {
   const parent = await mkdtemp(join(tmpdir(), "prismatix-cli-create-"));
   const root = join(parent, "hello-game");
-  const created = run(["create", root, "--name", "Hello Game", "--locale", "zh-TW"]);
-  assert.equal(created.status, 0, created.stderr);
+  await createStarter(root, {name: "Hello Game", locale: "zh-TW", install: async (directory) => {
+    await writeFile(join(directory, "package-lock.json"), JSON.stringify({lockfileVersion: 3}));
+    await mkdir(join(directory, "node_modules", "@prismatix"), {recursive: true});
+    await symlink(resolve("."), join(directory, "node_modules", "@prismatix", "cli"), "junction");
+  }}); // Actual CLI/npm installation is covered by phase1-clean-install.
+
   const project = join(root, "prismatix.json");
   const validated = run(["validate", project]);
   assert.equal(validated.status, 0, validated.stderr);
@@ -82,9 +87,9 @@ test("create scaffolds a canonical playable starter without author-supplied UUID
   assert.doesNotMatch(ui, /\{\{[A-Z_]+\}\}/u);
   const manifest = JSON.parse(await readFile(project, "utf8")) as Record<string, unknown>;
   assert.deepEqual(Object.keys(manifest).sort(),
-    ["defaultLocale", "id", "name", "resolution", "uiEntryPoints"]);
-  await assert.rejects(stat(join(root, "Content/Localization/zh-TW.json")));
-  assert.deepEqual(await readdir(join(root, "Assets")), []);
+    ["assets", "characters", "defaultLocale", "id", "name", "resolution", "uiEntryPoints"]);
+  assert.equal((await stat(join(root, "Content/Localization/zh-TW.json"))).isFile(), true);
+  assert.deepEqual((await readdir(join(root, "Assets"))).sort(), ["guide.png", "window.png"]);
 });
 
 test("runtime discovery accepts an installed prefix manifest and reports attempted sources", async () => {
@@ -93,7 +98,7 @@ test("runtime discovery accepts an installed prefix manifest and reports attempt
   const manifest = join(prefix, "share", "PrismatiX", "runtime-manifest.json");
   await write(join(bin, process.platform === "win32" ? "PrismatiXPreviewHost.exe" : "PrismatiXPreviewHost"), "fixture");
   await write(manifest, JSON.stringify({format: "PrismatiXRuntimeManifest", schemaRevision: 1,
-    version: "0.2.0", binDir: "../../bin", tools: {
+    version: "0.2.0", target: `${process.platform}-${process.arch}`, binDir: "../../bin", tools: {
       previewHost: process.platform === "win32" ? "PrismatiXPreviewHost.exe" : "PrismatiXPreviewHost",
     }}));
   const discovered = await discoverRuntimeTool("previewHost", {runtime: prefix, environment: {}});
@@ -117,8 +122,8 @@ test("dev --once streams PreviewHost protocol output and exits after a clean shu
         patchRuntimeIr: "runtimeIrApplied", play: "playAccepted", shutdown: "shutdownAccepted"};
       const type = types[request.type];
       if (!type) process.exit(71);
-      process.stdout.write(JSON.stringify({...request, type,
-        ...(type === "runtimeIrApplied" ? {applyMode: "fullRuntimeRestart"} : {})}) + "\\n");
+      process.stdout.write(JSON.stringify({...request, type, runtimeIrSchemaRevision: 2, uiSchemaRevision: 2,
+        ...(type === "runtimeIrApplied" ? {applyMode: "fullRuntimeRestart", appliedRevision: request.revision} : {})}) + "\\n");
       if (request.type === "shutdown") { input.close(); process.exitCode = 0; }
     });
   `);
@@ -129,7 +134,8 @@ test("dev --once streams PreviewHost protocol output and exits after a clean shu
   assert.match(previewed.stdout, /"type":"playAccepted"/u);
   assert.match(previewed.stdout, /"type":"shutdownAccepted"/u);
   assert.match(previewed.stderr, /PXCLI1602/u);
-  assert.equal((await stat(join(value.root, ".prismatix", "dev", "Runtime", "main.pxir"))).isFile(), true);
+  const event = previewed.stderr.split(/\r?\n/u).filter(Boolean).map((line) => JSON.parse(line)).find((value) => value.code === "PXCLI1602");
+  assert.equal((await stat(join(event.output, "Runtime", "main.pxir"))).isFile(), true);
 });
 
 test("ids reports fallback identities and writes stable Story anchors with a backup", async () => {
@@ -159,7 +165,7 @@ test("validate and build use the same canonical project compiler", async () => {
   const validated = run(["validate", value.project]);
   assert.equal(validated.status, 0, validated.stderr);
   const output = join(value.root, "artifact");
-  const built = run(["build", value.project, "--output", output]);
+  const built = run(["build", value.project, "--artifact-only", "--output", output]);
   assert.equal(built.status, 0, built.stderr);
   assert.equal((await stat(join(output, "Runtime/main.pxir"))).isFile(), true);
   assert.equal((await stat(join(output, "Runtime/main.pxmap"))).isFile(), true);
@@ -209,7 +215,7 @@ test("TSX UI authoring lowers to canonical JSON and never enters the Runtime art
   const validated = run(["validate", value.project]);
   assert.equal(validated.status, 0, validated.stderr);
   const output = join(value.root, "tsx-artifact");
-  const built = run(["build", value.project, "--output", output]);
+  const built = run(["build", value.project, "--artifact-only", "--output", output]);
   assert.equal(built.status, 0, built.stderr);
   const canonicalPath = join(output, "Content/UI/Title.pxui");
   const canonical = JSON.parse(await readFile(canonicalPath, "utf8")) as {
@@ -227,7 +233,7 @@ test("TSX UI authoring lowers to canonical JSON and never enters the Runtime art
   await assert.rejects(stat(join(output, "Content/UI/Panel.jsx")));
 
   const secondOutput = join(value.root, "tsx-artifact-second");
-  const rebuilt = run(["build", value.project, "--output", secondOutput]);
+  const rebuilt = run(["build", value.project, "--artifact-only", "--output", secondOutput]);
   assert.equal(rebuilt.status, 0, rebuilt.stderr);
   assert.equal(await readFile(join(secondOutput, "Content/UI/Title.pxui"), "utf8"),
     await readFile(canonicalPath, "utf8"));
@@ -324,7 +330,7 @@ test("build publishes every declared extension ES module", async () => {
     "export const value = 1;\n");
 
   const output = join(value.root, "artifact-modules");
-  const built = run(["build", value.project, "--output", output]);
+  const built = run(["build", value.project, "--artifact-only", "--output", output]);
   assert.equal(built.status, 0, built.stderr);
   assert.equal((await stat(join(output, "Content/Extensions/entry.js"))).isFile(), true);
   assert.equal((await stat(join(output, "Content/Extensions/lib/helper.js"))).isFile(), true);
@@ -448,7 +454,7 @@ test("migrate pinpoints the non-string value in an unsafe legacy locale", async 
   assert.equal(await readFile(localePath, "utf8"), authored);
 });
 
-test("inspect-save verifies the V2 envelope integrity before reporting metadata", async () => {
+test("inspect-save cannot accept a JS-hashed envelope without the authoritative native validator", async () => {
   const root = await mkdtemp(join(tmpdir(), "prismatix-save-inspect-"));
   const path = join(root, "save.pxsav");
   const envelope: Record<string, unknown> = {
@@ -460,9 +466,12 @@ test("inspect-save verifies the V2 envelope integrity before reporting metadata"
   };
   envelope.integrityHash = createHash("sha256").update(stable(envelope)).digest("hex");
   await writeFile(path, Buffer.concat([Buffer.from("PRISMATIX-PERSIST\n"), Buffer.from(stable(envelope))]));
-  const inspected = run(["inspect-save", path]);
-  assert.equal(inspected.status, 0, inspected.stderr);
-  assert.match(inspected.stdout, /"gameId": "cli-sample"/);
+  // This intentionally incomplete state passed the old hash-only JS validator.
+  // Native format/encryption acceptance is covered by the Player native suite.
+  const inspected = run(["inspect-save", path, "--runtime", join(root, "absent-runtime")]);
+  assert.equal(inspected.status, 1, inspected.stderr);
+  assert.match(inspected.stderr, /PXCLI1401/);
+  assert.equal(inspected.stdout, "");
 });
 
 test("the commercial sample compiles and publishes every release-gated capability", async () => {
@@ -471,7 +480,7 @@ test("the commercial sample compiles and publishes every release-gated capabilit
   const output = join(root, "artifact");
   const validated = run(["validate", sample]);
   assert.equal(validated.status, 0, validated.stderr);
-  const built = run(["build", sample, "--output", output]);
+  const built = run(["build", sample, "--artifact-only", "--output", output]);
   assert.equal(built.status, 0, built.stderr);
 
   for (const path of [
@@ -511,7 +520,7 @@ test("the PrismaFamilyDemo authors every UI route in TSX and builds canonical-on
   assert.ok(Object.values(authoredProject.uiEntryPoints).every((path) => path.endsWith(".tsx")));
   const validated = run(["validate", sample]);
   assert.equal(validated.status, 0, validated.stderr);
-  const built = run(["build", sample, "--output", output]);
+  const built = run(["build", sample, "--artifact-only", "--output", output]);
   assert.equal(built.status, 0, built.stderr);
   for (const name of ["Title", "HUD", "Gallery", "Backlog", "Save", "Load"])
     assert.equal((await stat(join(output, `Content/UI/${name}.pxui`))).isFile(), true);

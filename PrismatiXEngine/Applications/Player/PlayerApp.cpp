@@ -1561,6 +1561,13 @@ std::optional<progress::SaveSnapshot> PlayerApp::MakeSnapshot(
     snap.timelines = state.timelines;
     snap.animationClips = state.animationClips;
     snap.ui = state.ui;
+    // The save picker is a transient tool surface. Preserve the exact surface
+    // and route stack beneath it (including authored custom routes), rather
+    // than serializing its dynamically generated slot controls.
+    if (m_ui.CurrentScreen() == ui::GalgameUI::Screen::Save && m_beforeSavePresentation) {
+        snap.ui = m_beforeSavePresentation->ui;
+        snap.routes = m_beforeSavePresentation->routes;
+    }
     if (m_scriptHost) {
         snap.scriptPending = m_scriptHost->CapturePending();
         snap.scriptActions = m_scriptHost->CapturePendingActions();
@@ -1804,6 +1811,9 @@ ui::SettingsPresentation PlayerApp::SettingsUI() const {
 
 void PlayerApp::OpenScreen(const std::string& route) {
     std::string target=route;if(target=="saveload")target="load";
+    if (target == "save" && m_ui.CurrentScreen() != ui::GalgameUI::Screen::Save)
+        m_beforeSavePresentation = SavePresentationState{
+            m_ui.CaptureRuntimeState(), m_session->Routes().CaptureState()};
     const Status routed=m_session->Routes().ShowModal(target);if(!routed){for(const auto& diagnostic:routed.Diagnostics())diag::Emit(diagnostic);return;}
 }
 
@@ -2077,8 +2087,27 @@ void PlayerApp::DriveE2EJourney() {
                 }
                 (void)m_session->Routes().CloseModal();
                 PX_LOG_INFO("Player Phase 2 menu async and save/load stack complete");
-                m_e2eStage=E2EStage::AwaitPostMenuGameReady;
+                HandleUIAction({"save.open", {}});
+                m_e2eStage=E2EStage::AwaitSaveScreen;
             }
+            break;
+        case E2EStage::AwaitSaveScreen:
+            if (m_pendingSaveScreen) break;
+            if (m_ui.CurrentScreen() != ui::GalgameUI::Screen::Save) {
+                PX_LOG_ERROR("Player save menu was replaced before the next frame");
+                m_e2eFailed=true;m_e2eStage=E2EStage::Complete;
+                m_quitRequested=true;break;
+            }
+            PX_LOG_INFO("Player save menu survived a rendered frame");
+            if (!SaveSlot(2, {}) || !LoadSlot(2) || m_ui.CurrentRoute() != "hud" ||
+                !m_session->Routes().CurrentModalRoute().empty()) {
+                PX_LOG_ERROR("Player save picker leaked into the loaded gameplay checkpoint");
+                m_e2eFailed=true;m_e2eStage=E2EStage::Complete;
+                m_quitRequested=true;break;
+            }
+            PX_LOG_INFO("Player save picker checkpoint restored gameplay HUD");
+            HandleUIAction({"overlay.close", {}});
+            m_e2eStage=E2EStage::AwaitPostMenuGameReady;
             break;
         case E2EStage::AwaitPostMenuGameReady:
             if(m_appState==AppState::Game&&m_profile.CGUnlocked("ending-rin")&&
@@ -2417,7 +2446,11 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     }
 
     if (!m_hudHidden) {
-        m_ui.RefreshHUD(DialogueUI());
+        // Opening Save above changes the active surface during this frame.
+        // RefreshHUD installs HUD when another screen is active, so doing it
+        // unconditionally immediately erased the menu the player just opened.
+        if (m_ui.CurrentScreen() == ui::GalgameUI::Screen::HUD)
+            m_ui.RefreshHUD(DialogueUI());
         RenderUIWithScripts();
     }
 

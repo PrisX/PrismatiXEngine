@@ -8,6 +8,7 @@
 #include <limits>
 #include <string>
 #include <string_view>
+#include <SDL3/SDL_stdinc.h>
 
 #include "Engine/Animation/Timeline.h"
 #include "Engine/Core/TypeRegistry.h"
@@ -420,6 +421,41 @@ void TestSaveValidation() {
               (*currentJson)["state"].contains("ui"),
           "current saves must use an authenticated v2 envelope and complete runtime state");
     if (currentJson) {
+        const auto rehash = [](px::progress::Json value) {
+            value.erase("integrityHash");
+            value["integrityHash"] = px::crypto::Sha256Hex(value.dump());
+            return value.dump();
+        };
+        for (const auto& [pointer, value] : std::vector<std::pair<std::string, px::progress::Json>>{
+                 {"/state/values/overflow", std::uint64_t{9223372036854775808ull}},
+                 {"/saveVersion", std::uint64_t{4294967297ull}},
+                 {"/state/pc", std::uint64_t{4294967296ull}},
+                 {"/state/vm/pc", std::uint64_t{4294967296ull}},
+                 {"/state/timestamp", -1}, {"/state/playtimeMs", -1},
+                 {"/state/variables/affection", std::uint64_t{4294967296ull}}}) {
+            auto invalid = *currentJson;
+            invalid[px::progress::Json::json_pointer(pointer)] = value;
+            Check(!px::progress::ParseSaveEnvelope(rehash(std::move(invalid))),
+                  "authenticated integer overflow must fail rather than narrow or wrap");
+        }
+        const auto validText = currentJson->dump();
+        const auto duplicate = std::string("{\"format\":\"PrismatiXSave\",") + validText.substr(1);
+        Check(!px::progress::ParseSaveEnvelope(duplicate),
+              "duplicate envelope keys must be rejected before canonical hashing");
+        {
+            std::ofstream fixture(saves.SlotPath(6), std::ios::binary);
+            fixture << "PRISMATIX-PERSIST\n" << duplicate;
+        }
+        Check(!saves.Load(6), "persistence reader must not erase duplicate-key evidence");
+        auto deep = *currentJson;
+        px::progress::Json nested = nullptr;
+        for (int depth = 0; depth < 130; ++depth) nested = px::progress::Json::array({nested});
+        deep["extra"] = std::move(nested);
+        Check(!px::progress::ParseSaveEnvelope(rehash(std::move(deep))),
+              "save JSON depth over 128 must fail before materializing the DOM");
+        Check(!px::progress::ParseSaveEnvelope("{\"format\":3,\"schemaRevision\":4}") &&
+                  !px::progress::ParseSaveEnvelope("{\"format\":\"PrismatiXSave\",\"schemaRevision\":\"four\"}"),
+              "wrong header types return failure without escaping exceptions");
         auto tampered = *currentJson;
         tampered["state"]["chapter"] = "tampered";
         Check(px::progress::SaveJson(saves.SlotPath(4), tampered, nullptr) &&
@@ -439,6 +475,37 @@ void TestSaveValidation() {
     Check(px::progress::SaveJson(saves.SlotPath(2), wrongSchema, nullptr), "wrong-schema fixture should be written");
     Check(!saves.Load(2), "unsupported save schema must be rejected");
     Check(!saves.Peek(2).exists, "unsupported save must not appear as a valid slot");
+    if (const char* output = SDL_getenv("PRISMATIX_TEST_INSPECT_FIXTURE")) {
+        const std::filesystem::path root(output);
+        auto exported = snapshot;
+        exported.timestamp = 9007199254740993ull;
+        exported.playtimeMs = (std::numeric_limits<std::uint64_t>::max)();
+        exported.typedVariables["floatZero"] = px::Variant(0.0);
+        exported.typedVariables["floatOne"] = px::Variant(1.0);
+        const auto currentKey = px::progress::DeriveGameDataPersistenceKey(exported.gameId);
+        const auto legacyKey = px::progress::DeriveLegacyPersistenceKey("fixture-legacy-secret");
+        for (const auto& [name, key] : std::vector<std::pair<std::string, const px::crypto::Key*>>{
+                 {"plaintext", nullptr}, {"current", &currentKey}, {"legacy", &legacyKey}}) {
+            px::progress::SaveSystem writer;
+            writer.Configure((root / name).string(), key);
+            Check(writer.Save(0, exported), "native inspector fixture writer succeeds");
+        }
+        const px::progress::Json manifest{
+            {"format", "PrismatiXPackageManifest"}, {"schemaRevision", 2},
+            {"engineVersion", "0.2.0"}, {"gameId", exported.gameId}, {"title", "Inspector fixture"},
+            {"contentVersion", exported.contentVersion}, {"packageFingerprint", exported.packageFingerprint},
+            {"saveVersion", 1}, {"graphicsTier", "basic"},
+            {"resolution", {{"width", 1280}, {"height", 720}}},
+            {"entry", {{"runtimeIr", "Runtime/main.pxir"}, {"sourceMap", "Runtime/main.pxmap"}, {"route", ""}}},
+            {"routes", px::progress::Json::array()},
+            {"archives", px::progress::Json::array({{{"file", "Content.pdx"}, {"group", "content"}, {"optional", false}}})},
+            {"saveMigrations", px::progress::Json::array()}, {"extensions", px::progress::Json::array()},
+            {"customEffects", px::progress::Json::array()}, {"encryption", {{"enabled", false}, {"archiveKey", ""}}},
+            {"persistence", {{"dataId", exported.gameId}, {"keyId", "game-data-v1"},
+                {"legacyReaders", px::progress::Json::array({{{"keyId", "legacy-archive-v1"}, {"secret", "fixture-legacy-secret"}}})}}}};
+        std::ofstream file(root / "manifest.json", std::ios::binary);
+        file << manifest.dump();
+    }
 }
 
 std::string ReadBytes(const std::filesystem::path& path) {

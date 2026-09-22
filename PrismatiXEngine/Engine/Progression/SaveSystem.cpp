@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
 
 namespace px::progress {
 
@@ -14,6 +15,30 @@ constexpr std::string_view kSaveFormat = "PrismatiXSave";
 constexpr int kSaveSchemaRevision = 4;
 constexpr int kOldestSaveSchemaRevision = 4;
 constexpr std::size_t kMaxSaveCollectionItems = 1'000'000;
+
+template<class T>
+T IntegerField(const Json& object, const char* key, T fallback = T{}) {
+    if (!object.contains(key)) return fallback;
+    const auto& value = object.at(key);
+    if (value.is_number_unsigned()) {
+        const auto number = value.get<std::uint64_t>();
+        if (number > static_cast<std::uint64_t>((std::numeric_limits<T>::max)()))
+            throw std::out_of_range(std::string(key) + " exceeds integer range");
+        return static_cast<T>(number);
+    }
+    if (value.is_number_integer()) {
+        const auto number = value.get<std::int64_t>();
+        if constexpr (std::is_unsigned_v<T>) {
+            if (number < 0) throw std::out_of_range(std::string(key) + " must be nonnegative");
+        }
+        if (number < static_cast<std::int64_t>((std::numeric_limits<T>::min)()) ||
+            (number >= 0 && static_cast<std::uint64_t>(number) >
+                static_cast<std::uint64_t>((std::numeric_limits<T>::max)())))
+            throw std::out_of_range(std::string(key) + " exceeds integer range");
+        return static_cast<T>(number);
+    }
+    throw std::invalid_argument(std::string(key) + " must be an integer");
+}
 
 void SaveLoadError(const std::string& path, std::string message, std::string details = {}) {
     diag::Diagnostic diagnostic{.severity=diag::Severity::Error,.code="PXSAVE6101",
@@ -26,7 +51,7 @@ bool HasSupportedHeader(const Json& json) {
     if (!json.is_object() ||
         json.value("format", std::string{}) != kSaveFormat)
         return false;
-    const int revision = json.value("schemaRevision", 0);
+    const int revision = IntegerField<int>(json, "schemaRevision");
     return revision >= kOldestSaveSchemaRevision &&
            revision <= kSaveSchemaRevision;
 }
@@ -115,7 +140,7 @@ vn::VMRuntimeState VMStateFromJson(const Json& json) {
     if (!json.is_object()) throw std::invalid_argument("vm must be an object");
     vn::VMRuntimeState state;
     state.scriptPath = json.value("scriptPath", std::string{});
-    state.pc = json.value("pc", 0);
+    state.pc = IntegerField<int>(json, "pc");
     state.state = VMExecutionStateFromJson(json.value("state", Json("idle")));
     const Json& stack = json.value("callStack", Json::array());
     if (!stack.is_array() || stack.size() > kMaxSaveCollectionItems) {
@@ -124,7 +149,7 @@ vn::VMRuntimeState VMStateFromJson(const Json& json) {
     for (const auto& frame : stack) {
         if (!frame.is_object()) throw std::invalid_argument("VM call frame must be an object");
         state.callStack.push_back(
-            {frame.value("script", std::string{}), frame.value("pc", 0)});
+            {frame.value("script", std::string{}), IntegerField<int>(frame, "pc")});
     }
     const Json& choices = json.value("choices", Json::array());
     if (!choices.is_array() || choices.size() > kMaxSaveCollectionItems) {
@@ -146,7 +171,7 @@ vn::VMRuntimeState VMStateFromJson(const Json& json) {
     state.textEffect = json.value("textEffect", std::string{});
     state.chapter = json.value("chapter", std::string{});
     state.currentBgm = json.value("currentBgm", std::string{});
-    state.timerRemainingMs = json.value("timerRemainingMs", std::uint64_t{0});
+    state.timerRemainingMs = IntegerField<std::uint64_t>(json, "timerRemainingMs");
     state.currentLineSeen = json.value("currentLineSeen", true);
     return state;
 }
@@ -225,7 +250,6 @@ vn::Value RuntimeValueFromJson(const Json& json, const int depth = 0) {
     if (depth > 64) throw std::invalid_argument("variable value nesting exceeds 64 levels");
     if (json.is_null()) return vn::Value{};
     if (json.is_boolean()) return vn::Value(json.get<bool>());
-    if (json.is_number_integer()) return vn::Value(json.get<std::int64_t>());
     if (json.is_number_unsigned()) {
         const auto value = json.get<std::uint64_t>();
         if (value > static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)())) {
@@ -233,6 +257,7 @@ vn::Value RuntimeValueFromJson(const Json& json, const int depth = 0) {
         }
         return vn::Value(static_cast<std::int64_t>(value));
     }
+    if (json.is_number_integer()) return vn::Value(json.get<std::int64_t>());
     if (json.is_number_float()) return vn::Value(json.get<double>());
     if (json.is_string()) return vn::Value(json.get<std::string>());
     if (json.is_array()) {
@@ -1407,13 +1432,14 @@ std::optional<SaveSnapshot> ParseSaveEnvelope(
         SaveLoadError(path, "Save envelope has an invalid or excessive size");
         return std::nullopt;
     }
-    const Json j = Json::parse(text, nullptr, /*allow_exceptions=*/false);
-    if (j.is_discarded()) {
+    const auto parsed = ParsePersistenceJson(text);
+    if (!parsed) {
         SaveLoadError(path, "Save envelope is not valid JSON");
         return std::nullopt;
     }
-    if(!HasSupportedHeader(j)){SaveLoadError(path,"Unsupported or corrupt save schema");return std::nullopt;}
     try {
+        const Json& j = *parsed;
+        if(!HasSupportedHeader(j)){SaveLoadError(path,"Unsupported or corrupt save schema");return std::nullopt;}
         if (!j.contains("integrityHash") || !j["integrityHash"].is_string() ||
             !j.contains("state") || !j["state"].is_object() ||
             !j.contains("anchor") || !j["anchor"].is_object()) {
@@ -1435,7 +1461,7 @@ std::optional<SaveSnapshot> ParseSaveEnvelope(
         s.gameId = j.value("gameId", std::string{});
         s.packageFingerprint = j.value("packageFingerprint", std::string{});
         s.contentVersion = j.value("contentVersion", std::string{});
-        s.saveVersion = j.value("saveVersion", std::uint32_t{0});
+        s.saveVersion = IntegerField<std::uint32_t>(j, "saveVersion");
         s.anchor.runtimeDocumentId = anchor.value("runtimeDocumentId", std::string{});
         s.anchor.sourceId = anchor.value("sourceId", std::string{});
         s.anchor.operationId = anchor.value("operationId", std::string{});
@@ -1447,7 +1473,7 @@ std::optional<SaveSnapshot> ParseSaveEnvelope(
             return std::nullopt;
         }
         s.scriptPath = payload.value("scriptPath", std::string{});
-        s.pc = payload.value("pc", 0);
+        s.pc = IntegerField<int>(payload, "pc");
         s.chapter = payload.value("chapter", std::string{});
         s.bgmPath = payload.value("bgmPath", std::string{});
         s.nvlMode = payload.value("nvlMode", false);
@@ -1456,7 +1482,7 @@ std::optional<SaveSnapshot> ParseSaveEnvelope(
             if(!payload["variables"].is_object()){SaveLoadError(path,"Save variables field must be an object");return std::nullopt;}
             for (auto it = payload["variables"].begin(); it != payload["variables"].end(); ++it) {
                 if(!it.value().is_number_integer()){SaveLoadError(path,"Save variable values must be integers",it.key());return std::nullopt;}
-                s.variables[it.key()] = it.value().get<int>();
+                s.variables[it.key()] = IntegerField<int>(payload["variables"], it.key().c_str());
             }
         }
         if (!payload.contains("values") || !payload["values"].is_object() ||
@@ -1487,8 +1513,8 @@ std::optional<SaveSnapshot> ParseSaveEnvelope(
         if(payload.contains("ui"))s.ui=UIRuntimeStateFromJson(payload["ui"]);
         else s.ui.behavior=BehaviorStateFromJson(payload["behavior"]);
         s.backlog = BacklogFromJson(payload.value("backlog", Json::array()));
-        s.timestamp = payload.value("timestamp", std::uint64_t{ 0 });
-        s.playtimeMs = payload.value("playtimeMs", std::uint64_t{ 0 });
+        s.timestamp = IntegerField<std::uint64_t>(payload, "timestamp");
+        s.playtimeMs = IntegerField<std::uint64_t>(payload, "playtimeMs");
         if (payload.contains("thumb")) {
             if(!payload["thumb"].is_string()){SaveLoadError(path,"Save thumbnail must be a string");return std::nullopt;}
             s.thumbnailPng = Base64Decode(payload["thumb"].get<std::string>());
@@ -1519,8 +1545,8 @@ SlotInfo SaveSystem::Peek(int slot) const {
     }
     const Json& j = *loaded.value;
     const std::string path=SlotPath(slot);
-    if(!HasSupportedHeader(j)){SaveLoadError(path,"Unsupported or corrupt save schema");return info;}
     try {
+        if(!HasSupportedHeader(j)){SaveLoadError(path,"Unsupported or corrupt save schema");return info;}
         if (!j.contains("integrityHash") || !j["integrityHash"].is_string() ||
             !j.contains("state") || !j["state"].is_object()) {
             SaveLoadError(path, "Save envelope is incomplete");
@@ -1535,13 +1561,13 @@ SlotInfo SaveSystem::Peek(int slot) const {
         }
         const Json& payload = j["state"];
         info.chapter = payload.value("chapter", std::string{});
-        info.timestamp = payload.value("timestamp", std::uint64_t{ 0 });
+        info.timestamp = IntegerField<std::uint64_t>(payload, "timestamp");
         if (payload.contains("thumb")) {
             if(!payload["thumb"].is_string()){SaveLoadError(path,"Save thumbnail must be a string");return info;}
             info.thumbnailPng = Base64Decode(payload["thumb"].get<std::string>());
         }
         info.exists = true;
-    } catch(const Json::exception& error) {
+    } catch(const std::exception& error) {
         SaveLoadError(path,"Save metadata has invalid field types",error.what());
     }
     return info;

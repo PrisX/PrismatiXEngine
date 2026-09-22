@@ -510,19 +510,30 @@ install(FILES
     COMPONENT PrismatiXRuntime
 )
 if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
-    foreach(_PRISMATIX_NOTICE_PACKAGE IN ITEMS
-            bzip2 ffmpeg fmt freetype fribidi harfbuzz libflac libjpeg-turbo
-            libogg libpng libunibreak libvorbis libwebp mbedtls mpg123
-            nlohmann-json opus opusfile sdl3 sdl3-image sdl3-mixer
-            sdl3-shadercross sdl3-ttf spdlog spirv-cross utf8proc zlib zstd)
+    # Windows redistributes the selected triplet's DLL set below. Collect that
+    # same installation's actual notices, including transitive dependencies;
+    # a hand-maintained OPTIONAL list silently omitted newly added libraries.
+    file(GLOB _PRISMATIX_DEPENDENCY_NOTICES CONFIGURE_DEPENDS
+        "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/*/copyright")
+    foreach(_PRISMATIX_NOTICE IN LISTS _PRISMATIX_DEPENDENCY_NOTICES)
+        get_filename_component(_PRISMATIX_NOTICE_DIRECTORY "${_PRISMATIX_NOTICE}" DIRECTORY)
+        get_filename_component(_PRISMATIX_NOTICE_PACKAGE "${_PRISMATIX_NOTICE_DIRECTORY}" NAME)
         install(FILES
-            "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${_PRISMATIX_NOTICE_PACKAGE}/copyright"
+            "${_PRISMATIX_NOTICE}"
             DESTINATION "${CMAKE_INSTALL_DATADIR}/PrismatiX/licenses/${_PRISMATIX_NOTICE_PACKAGE}"
             COMPONENT PrismatiXRuntime
-            OPTIONAL
         )
     endforeach()
 endif()
+# QuickJS-NG is fetched from the pinned source revision rather than vcpkg.
+file(GLOB _PRISMATIX_QUICKJS_NOTICES CONFIGURE_DEPENDS
+    "${quickjs_ng_SOURCE_DIR}/LICENSE*" "${quickjs_ng_SOURCE_DIR}/COPYING*")
+if(NOT _PRISMATIX_QUICKJS_NOTICES)
+    message(FATAL_ERROR "Pinned QuickJS-NG source has no LICENSE or COPYING notice")
+endif()
+install(FILES ${_PRISMATIX_QUICKJS_NOTICES}
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/PrismatiX/licenses/quickjs-ng"
+    COMPONENT PrismatiXRuntime)
 if(WIN32 AND DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
     install(DIRECTORY
         "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin/"

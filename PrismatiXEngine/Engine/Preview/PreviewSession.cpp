@@ -691,19 +691,60 @@ private:
                 checkpoint.info.operationIndex));
             return false;
         }
+        auto prepared = m_runtime.PrepareRestore(checkpoint.runtime);
+        if (!prepared) {
+            for (const auto& diagnostic : prepared.Diagnostics())
+                AddDiagnostic(RuntimeDiagnostic(
+                    diagnostic, checkpoint.info.operationIndex));
+            return false;
+        }
+        if (m_options.restoreExternalState && !m_options.captureExternalState) {
+            AddDiagnostic(PreviewDiagnostic(
+                "PXPREVIEW1303",
+                "External checkpoint restoration requires a capture callback for recovery."));
+            return false;
+        }
+        const auto previousExternal = m_options.captureExternalState
+            ? m_options.captureExternalState() : std::shared_ptr<const void>{};
+        if (m_options.validateExternalState) {
+            for (const auto& external : {previousExternal, checkpoint.external}) {
+                const Status valid = m_options.validateExternalState(external);
+                if (!valid) {
+                    for (const auto& diagnostic : valid.Diagnostics())
+                        AddDiagnostic(RuntimeDiagnostic(diagnostic, checkpoint.info.operationIndex));
+                    return false;
+                }
+            }
+        }
+        const auto recoverExternal = [&] {
+            if (!m_options.restoreExternalState) return;
+            const Status recovered = m_options.restoreExternalState(previousExternal);
+            if (!recovered) {
+                auto diagnostic = PreviewDiagnostic(
+                    "PXPREVIEW1304",
+                    "Checkpoint restore failed and the previous external state could not be recovered.",
+                    {}, checkpoint.info.operationIndex);
+                diagnostic.severity = sdk::PreviewDiagnosticSeverity::Fatal;
+                AddDiagnostic(std::move(diagnostic));
+                for (const auto& cause : recovered.Diagnostics())
+                    AddDiagnostic(RuntimeDiagnostic(cause, checkpoint.info.operationIndex));
+            }
+        };
         if (m_options.restoreExternalState &&
             !m_options.restoreExternalState(checkpoint.external)) {
             AddDiagnostic(PreviewDiagnostic(
                 "PXPREVIEW1303",
                 "External script or UI state could not be restored.", {},
                 checkpoint.info.operationIndex));
+            recoverExternal();
             return false;
         }
-        const Status status = m_runtime.RestoreState(checkpoint.runtime);
+        const Status status = m_runtime.CommitRestore(prepared.TakeValue());
         if (!status) {
             for (const auto& diagnostic : status.Diagnostics())
                 AddDiagnostic(RuntimeDiagnostic(
                     diagnostic, checkpoint.info.operationIndex));
+            recoverExternal();
             return false;
         }
         m_branchPath = checkpoint.info.branchPath;
