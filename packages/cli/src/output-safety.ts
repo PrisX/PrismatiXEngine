@@ -10,11 +10,23 @@ export interface PublishedInput {
   readonly fingerprint: string;
   readonly size: number;
 }
+export interface PublishedScanProgress {
+  readonly files: number;
+  readonly bytes: number;
+  readonly done: boolean;
+}
+export interface PublicationProgress {
+  readonly phase: "verify-existing" | "fingerprint-output" | "verify-before-publish";
+  readonly files: number;
+  readonly bytes: number;
+  readonly done: boolean;
+}
 export interface PublicationOptions {
   output: string;
   projectRoot: string;
   /** Author directories and every build/package input, including external dependencies. */
   protectedPaths: readonly string[];
+  readonly onProgress?: (value: PublicationProgress) => void;
 }
 
 function missing(error: unknown): boolean {
@@ -50,13 +62,31 @@ async function validatePaths(options: PublicationOptions): Promise<string> {
   } catch (error) { if (!missing(error)) throw error; }
   return output;
 }
-async function digest(path: string): Promise<string> {
+async function digest(path: string, onChunk?: (bytes: number) => void): Promise<string> {
   const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
+  for await (const chunk of createReadStream(path)) {
+    hash.update(chunk);
+    onChunk?.(Buffer.byteLength(chunk));
+  }
   return hash.digest("hex");
 }
-async function inventory(root: string): Promise<Record<string, string>> {
+async function inventory(root: string, phase?: PublicationProgress["phase"],
+  onProgress?: PublicationOptions["onProgress"]): Promise<Record<string, string>> {
   const entries: Record<string, string> = Object.create(null) as Record<string, string>;
+  let files = 0;
+  let bytes = 0;
+  let lastReport = Date.now();
+  let lastFiles = 0;
+  const report = (done = false): void => {
+    if (phase === undefined || onProgress === undefined) return;
+    const now = Date.now();
+    if (!done && files - lastFiles < 512 && now - lastReport < 2000) return;
+    onProgress({phase, files, bytes, done});
+    lastReport = now;
+    lastFiles = files;
+  };
+  if (phase !== undefined && onProgress !== undefined)
+    onProgress({phase, files: 0, bytes: 0, done: false});
   async function visit(dir: string): Promise<void> {
     for (const entry of await readdir(dir, {withFileTypes: true})) {
       const path = join(dir, entry.name);
@@ -64,18 +94,27 @@ async function inventory(root: string): Promise<Record<string, string>> {
       if (name === outputOwnershipMarker) continue;
       if (entry.isSymbolicLink()) throw new Error(`Unsafe output contains a symbolic link: ${path}`);
       if (entry.isDirectory()) { entries[name] = "directory"; await visit(path); }
-      else if (entry.isFile()) entries[name] = await digest(path);
+      else if (entry.isFile()) {
+        entries[name] = await digest(path, onProgress === undefined ? undefined : (size) => {
+          bytes += size;
+          report();
+        });
+        files += 1;
+        report();
+      }
       else throw new Error(`Unsafe output contains a special file: ${path}`);
     }
   }
   await visit(root);
+  report(true);
   return entries;
 }
 function sameInventory(a: Record<string, string>, b: Record<string, string>): boolean {
   const names = Object.keys(a);
   return names.length === Object.keys(b).length && names.every(name => a[name] === b[name]);
 }
-async function assertOwned(output: string, allowEmpty = true): Promise<void> {
+async function assertOwned(output: string, allowEmpty = true,
+  phase?: PublicationProgress["phase"], onProgress?: PublicationOptions["onProgress"]): Promise<void> {
   let names: string[];
   try { names = await readdir(output); } catch (error) { if (missing(error) && allowEmpty) return; throw error; }
   if (names.length === 0 && allowEmpty) return;
@@ -83,7 +122,9 @@ async function assertOwned(output: string, allowEmpty = true): Promise<void> {
     const markerPath = join(output, outputOwnershipMarker);
     if (!(await lstat(markerPath)).isFile()) throw new Error("invalid marker");
     const marker = JSON.parse(await readFile(markerPath, "utf8")) as {format?: string; files?: Record<string, string>};
-    if (marker.format !== "PrismatiXOutput/1" || !marker.files || !sameInventory(marker.files, await inventory(output))) throw new Error("output changed");
+    if (marker.format !== "PrismatiXOutput/1" || !marker.files ||
+        !sameInventory(marker.files, await inventory(output, phase, onProgress)))
+      throw new Error("output changed");
   } catch (error) {
     throw new Error(`Refusing to replace unowned or modified output directory: ${output}`, {cause: error});
   }
@@ -91,7 +132,8 @@ async function assertOwned(output: string, allowEmpty = true): Promise<void> {
 
 /** Read an existing artifact without rehashing multi-GiB media. The native
  * Packager verifies each supplied SHA-256 and size before accepting it. */
-export async function publishedInputs(output: string): Promise<readonly PublishedInput[]> {
+export async function publishedInputs(output: string,
+  onProgress?: (value: PublishedScanProgress) => void): Promise<readonly PublishedInput[]> {
   const root = resolve(output);
   const info = await lstat(root);
   if (!info.isDirectory() || info.isSymbolicLink())
@@ -111,6 +153,18 @@ export async function publishedInputs(output: string): Promise<readonly Publishe
   const found = new Set<string>();
   const inputs: PublishedInput[] = [];
   const caseFolded = new Set<string>();
+  let bytes = 0;
+  let lastReport = Date.now();
+  let lastFiles = 0;
+  const report = (done = false): void => {
+    if (onProgress === undefined) return;
+    const now = Date.now();
+    if (!done && inputs.length - lastFiles < 512 && now - lastReport < 2000) return;
+    onProgress({files: inputs.length, bytes, done});
+    lastReport = now;
+    lastFiles = inputs.length;
+  };
+  onProgress?.({files: 0, bytes: 0, done: false});
   const visit = async (directory: string): Promise<void> => {
     for (const entry of await readdir(directory, {withFileTypes: true})) {
       const path = join(directory, entry.name);
@@ -132,7 +186,10 @@ export async function publishedInputs(output: string): Promise<readonly Publishe
         if (typeof expectedValue !== "string" || !/^[0-9a-f]{64}$/iu.test(expectedValue))
           throw new Error(`Artifact file has no valid fingerprint: ${uri}`);
         found.add(uri);
-        inputs.push({uri, fingerprint: expectedValue, size: (await lstat(path)).size});
+        const size = (await lstat(path)).size;
+        inputs.push({uri, fingerprint: expectedValue, size});
+        bytes += size;
+        report();
       } else throw new Error(`Artifact contains a special file: ${uri}`);
     }
   };
@@ -140,6 +197,7 @@ export async function publishedInputs(output: string): Promise<readonly Publishe
   if (found.size !== Object.keys(expected).length ||
       Object.keys(expected).some((uri) => !found.has(uri)))
     throw new Error(`Artifact ownership marker does not match directory contents: ${root}`);
+  report(true);
   return inputs.sort((left, right) => left.uri.localeCompare(right.uri, "en"));
 }
 
@@ -159,15 +217,16 @@ export async function publishDirectory<T>(options: PublicationOptions, build: (s
   const lock = await acquireOutputLock(output);
   let staging: string | undefined;
   try {
-    await assertOwned(output);
+    await assertOwned(output, true, "verify-existing", options.onProgress);
     staging = await mkdtemp(join(dirname(output), ".prismatix-stage-"));
     const value = await build(staging);
     // A callback must not impersonate the ownership marker or supply symbolic links.
     try { await lstat(join(staging, outputOwnershipMarker)); throw new Error("Build produced reserved output ownership marker"); }
     catch (error) { if (!missing(error)) throw error; }
-    await writeFile(join(staging, outputOwnershipMarker), JSON.stringify({format: "PrismatiXOutput/1", files: await inventory(staging)}), {flag: "wx"});
+    await writeFile(join(staging, outputOwnershipMarker), JSON.stringify({format: "PrismatiXOutput/1",
+      files: await inventory(staging, "fingerprint-output", options.onProgress)}), {flag: "wx"});
     if (key(await validatePaths(options)) !== key(output)) throw new Error("Output path changed during publication");
-    await assertOwned(output);
+    await assertOwned(output, true, "verify-before-publish", options.onProgress);
     const backup = join(dirname(output), `.prismatix-backup-${randomUUID()}`);
     let backedUp = false;
     try { await filesystem.rename(output, backup); backedUp = true; } catch (error) { if (!missing(error)) throw error; }

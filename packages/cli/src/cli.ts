@@ -145,6 +145,22 @@ function progress(value: Readonly<Record<string, unknown>>): void {
   process.stderr.write(machineOutput ? `${JSON.stringify(value)}\n` : `${String(value.message)}\n`);
 }
 
+function buildProgress(phase: string, current: number, total: number | undefined,
+  bytes = 0, done = false): void {
+  const labels: Readonly<Record<string, string>> = {
+    load: "Loading project", compile: "Compiling Story and UI",
+    copy: "Copying artifact inputs", "verify-existing": "Checking existing output",
+    "fingerprint-output": "Fingerprinting artifact output",
+    "verify-before-publish": "Rechecking existing output", publish: "Publishing artifact",
+  };
+  const label = labels[phase] ?? phase;
+  const count = total === undefined ? `${current} files` : `${current}/${total}`;
+  const amount = bytes > 0 ? `, ${(bytes / 1024 ** 2).toFixed(1)} MiB` : "";
+  progress({event: "progress", severity: "information", code: "PXCLI1102", phase,
+    current, ...(total === undefined ? {} : {total}), bytes, done,
+    message: `${label}: ${count}${amount}${done ? " (done)" : ""}`});
+}
+
 function safeVirtualPath(value: string): boolean {
   return value.length > 0 && !value.startsWith("/") && !value.includes("\\") &&
     !value.includes(":") && !value.includes("\0") &&
@@ -676,16 +692,36 @@ async function validateCommand(options: Options): Promise<number> {
 }
 
 async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact, staging: string): Promise<void> {
+  const total = Object.keys(artifact.files).length + artifact.dependencies.length;
+  let current = 0;
+  let bytes = 0;
+  let lastReport = Date.now();
+  let lastCount = 0;
+  buildProgress("copy", 0, total);
+  const report = (): void => {
+    const now = Date.now();
+    if (current !== total && current - lastCount < 512 && now - lastReport < 2000) return;
+    buildProgress("copy", current, total, bytes, current === total);
+    lastReport = now;
+    lastCount = current;
+  };
   for (const [virtualPath, text] of Object.entries(artifact.files)) {
     const destination = projectFile(staging, virtualPath);
     await mkdir(dirname(destination), {recursive: true});
     await writeFile(destination, text, "utf8");
+    bytes += Buffer.byteLength(text, "utf8");
+    current += 1;
+    report();
   }
   for (const dependency of artifact.dependencies) {
     const destination = projectFile(staging, dependency.logicalPath);
     await mkdir(dirname(destination), {recursive: true});
     await copyFile(projectFile(loaded.root, dependency.source), destination);
+    bytes += (await stat(destination)).size;
+    current += 1;
+    report();
   }
+  if (total === 0) buildProgress("copy", 0, 0, 0, true);
 }
 
 function protectedInputs(loaded: LoadedProject, artifact: BuildArtifact): string[] {
@@ -696,15 +732,23 @@ function protectedInputs(loaded: LoadedProject, artifact: BuildArtifact): string
 
 async function buildProject(projectArgument: string | undefined, outputArgument: string | undefined,
   committedRevision?: number, registryOverride?: string): Promise<BuildResult> {
+  buildProgress("load", 0, 1);
   const loaded = await loadProject(projectArgument);
+  buildProgress("load", 1, 1, 0, true);
+  buildProgress("compile", 0, 1);
   const compiled = await compileLoaded(loaded, committedRevision, registryOverride);
   printDiagnostics(compiled.diagnostics);
   if (!compiled.valid || compiled.artifact === undefined) throw new Error("Project validation or compilation failed");
+  buildProgress("compile", 1, 1, 0, true);
   const output = resolve(outputArgument ?? join(loaded.root, ".prismatix", "build"));
+  buildProgress("publish", 0, 1);
   await publishDirectory({output, projectRoot: loaded.root,
-    protectedPaths: protectedInputs(loaded, compiled.artifact)}, async (staging) => {
+    protectedPaths: protectedInputs(loaded, compiled.artifact),
+    onProgress: (value) => buildProgress(value.phase, value.files, undefined,
+      value.bytes, value.done)}, async (staging) => {
     await copyRuntimeInputs(loaded, compiled.artifact!, staging);
   });
+  buildProgress("publish", 1, 1, 0, true);
   const dependencies = new Set(loaded.dependencies);
   for (const dependency of compiled.artifact.dependencies) {
     try { dependencies.add(projectFile(loaded.root, dependency.source)); }
@@ -752,7 +796,7 @@ async function listFiles(root: string, directory = root): Promise<string[]> {
 }
 
 async function runProcess(executable: string, args: readonly string[], input?: string,
-  cwd?: string, stream = false): Promise<{code: number; stdout: string; stderr: string}> {
+  cwd?: string, stream = false, onStdoutChunk?: (chunk: string) => void): Promise<{code: number; stdout: string; stderr: string}> {
   return new Promise((accept, reject) => {
     const script = [".js", ".mjs", ".cjs"].includes(extname(executable).toLowerCase());
     const child = spawn(script ? process.execPath : executable,
@@ -761,10 +805,10 @@ async function runProcess(executable: string, args: readonly string[], input?: s
     let stdout = ""; let stderr = "";
     let outputError: Error | undefined;
     const limit = 16 * 1024 * 1024;
-    const capture = (previous: string, value: string): string => {
+    const capture = (previous: string, value: string, observed = false): string => {
       const combined = previous + value;
       if (combined.length <= limit) return combined;
-      if (!stream) {
+      if (!stream && !observed) {
         outputError = new Error("Child process output exceeds the 16 MiB capture limit");
         child.kill();
       }
@@ -777,7 +821,8 @@ async function runProcess(executable: string, args: readonly string[], input?: s
     };
     child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
     child.stdout.on("data", (value: string) => {
-      stdout = capture(stdout, value);
+      stdout = capture(stdout, value, onStdoutChunk !== undefined);
+      onStdoutChunk?.(value);
       if (stream && !process.stdout.write(value)) { child.stdout.pause(); process.stdout.once("drain", () => child.stdout.resume()); }
     });
     child.stderr.on("data", (value: string) => {
@@ -811,6 +856,39 @@ function runtimeOptions(options: Options): RuntimeDiscoveryOptions {
 function discoveryDiagnostic(code: string, message: string, error: RuntimeDiscoveryFailure,
   path?: string): AuthoringDiagnostic {
   return diagnostic(code, message, path, runtimeDiscoveryHint(error));
+}
+
+function packageOutputObserver(): (chunk: string) => void {
+  if (machineOutput) return (chunk) => { process.stdout.write(chunk); };
+  let pending = "";
+  let skipLongLine = false;
+  const reported = new Map<string, {current: number; time: number}>();
+  return (chunk) => {
+    pending += chunk;
+    for (;;) {
+      const newline = pending.indexOf("\n");
+      if (newline < 0) break;
+      const line = pending.slice(0, newline).trim();
+      pending = pending.slice(newline + 1);
+      if (skipLongLine) { skipLongLine = false; continue; }
+      let event: Record<string, unknown>;
+      try { event = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+      if (event.event !== "progress" || typeof event.phase !== "string" ||
+          typeof event.current !== "number" || typeof event.total !== "number") continue;
+      const previous = reported.get(event.phase);
+      const now = Date.now();
+      if (previous !== undefined && event.current !== 0 && event.current < event.total &&
+          event.current - previous.current < 512 && now - previous.time < 2000) continue;
+      reported.set(event.phase, {current: event.current, time: now});
+      progress({event: "progress", severity: "information", code: "PXCLI1210",
+        phase: event.phase, current: event.current, total: event.total,
+        message: `Packaging ${event.phase}: ${event.current}/${event.total} ` +
+          String(event.message ?? "").slice(0, 240)});
+    }
+    // Native progress records should be short. Do not retain an unbounded
+    // partial line from a malformed or unrelated tool override.
+    if (pending.length > 1024 * 1024) { pending = ""; skipLongLine = true; }
+  };
 }
 
 async function packProject(options: Options): Promise<{output: string; player: string}> {
@@ -863,14 +941,24 @@ async function packProject(options: Options): Promise<{output: string; player: s
       protectedPaths = [location.projectPath, artifactRoot,
         ...["Story", "Assets", "Content", "Scripts", "Extensions"].map((name) => join(root, name))];
     }
-    const inputs = await publishedInputs(artifactRoot);
+    const inputs = await publishedInputs(artifactRoot, (value) => progress({
+      event: "progress", severity: "information", code: "PXCLI1212",
+      phase: "scan-artifact", current: value.files, bytes: value.bytes, done: value.done,
+      message: `Scanning artifact: ${value.files} files, ` +
+        `${(value.bytes / 1024 ** 2).toFixed(1)} MiB indexed${value.done ? " (done)" : ""}`,
+    }));
     for (const required of ["project.pxproject", startScript, sourceMap]) {
       if (!inputs.some((input) => input.uri === required))
         throw new Error(`Compiled artifact is missing ${required}: ${artifactRoot}`);
     }
     const output = resolve(options.values.get("output") ?? join(root, "dist", project.id));
     await publishDirectory({output, projectRoot: root,
-      protectedPaths: [...protectedPaths, packager, player]}, async (staging) => {
+      protectedPaths: [...protectedPaths, packager, player],
+      onProgress: (value) => progress({event: "progress", severity: "information",
+        code: "PXCLI1211", phase: value.phase, current: value.files,
+        bytes: value.bytes, done: value.done,
+        message: `Checking distribution ${value.phase}: ${value.files} files, ` +
+          `${(value.bytes / 1024 ** 2).toFixed(1)} MiB${value.done ? " (done)" : ""}`})}, async (staging) => {
     const request = {
       format: "PrismatiXPackageRequest", schemaRevision: 2,
       requestId: `cli-${process.pid}`, gameId: project.id,
@@ -898,9 +986,8 @@ async function packProject(options: Options): Promise<{output: string; player: s
     const result = await runProcess(
       scriptTool ? process.execPath : packageTool,
       [...(scriptTool ? [packageTool] : []), "--request", requestPath],
-      undefined, root,
+      undefined, root, false, packageOutputObserver(),
     );
-    if (machineOutput && result.stdout.length > 0) process.stdout.write(result.stdout);
     if (result.stderr.length > 0) process.stderr.write(result.stderr);
     const events = packageEvents(result.stdout);
     const failed = failedPackageDiagnostics(events);

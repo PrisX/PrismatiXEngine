@@ -63,6 +63,12 @@ Never choose Story, Assets, another source input or an unrelated existing folder
 
 Output replacement verifies the previous build's inventory. If you have played a distribution and it now contains saves/logs, or edited its files, use a new output directory; do not delete player data to bypass the guard. Test migration with a copy of the old saves before distributing an update.
 
+Long builds report loading, compilation, copy counts and bytes, fingerprinting,
+and publication on stderr. Packaging also forwards throttled native phase/count
+updates as they happen. With `--json`, CLI progress is NDJSON on stderr and
+native Packager events are streamed on stdout; neither waits for the whole
+archive to finish before showing progress.
+
 The global command delegates project commands to the exact local CLI pinned in the game's package.json. Commit that manifest and its lock. A missing or mismatched local CLI is diagnosed instead of silently using the global version. After preparation, dev/build use local packages and bundled runtime offline. Upgrade tool versions deliberately in a branch, reinstall the pinned dependencies, and test old saves and the packaged Player before distributing an update.
 
 ## Diagnostics and troubleshooting

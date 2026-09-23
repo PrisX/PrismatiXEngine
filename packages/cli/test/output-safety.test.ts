@@ -3,7 +3,8 @@ import {mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile} from "node:fs
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import test from "node:test";
-import {publishDirectory, publishedInputs, retirePublishedDirectory, outputOwnershipMarker} from "../src/output-safety.js";
+import {publishDirectory, publishedInputs, retirePublishedDirectory, outputOwnershipMarker,
+  type PublicationProgress} from "../src/output-safety.js";
 
 async function fixture(t: test.TestContext) {
   const root = await mkdtemp(join(tmpdir(), "prismatix-output-safety-"));
@@ -61,9 +62,11 @@ test("published artifact inputs come from an intact ownership inventory", async 
     await writeFile(join(stage, "Runtime", "main.pxir"), "runtime");
     await writeFile(join(stage, "game.bin"), "payload");
   });
-  const inputs = await publishedInputs(f.output);
+  const scan: Array<{files: number; bytes: number; done: boolean}> = [];
+  const inputs = await publishedInputs(f.output, value => scan.push(value));
   assert.deepEqual(inputs.map(input => input.uri), ["game.bin", "Runtime/main.pxir"]);
   assert.deepEqual(inputs.map(input => input.size), [7, 7]);
+  assert.deepEqual(scan.at(-1), {files: 2, bytes: 14, done: true});
   assert.ok(inputs.every(input => /^[0-9a-f]{64}$/u.test(input.fingerprint)));
   await writeFile(join(f.output, "author.txt"), "not owned");
   await assert.rejects(publishedInputs(f.output), /no valid fingerprint/u);
@@ -84,6 +87,22 @@ test("published artifact input discovery rejects symlinks and invalid markers", 
   await rm(link);
   await writeFile(join(f.output, outputOwnershipMarker), "{}");
   await assert.rejects(publishedInputs(f.output), /unsupported format/u);
+});
+
+test("publication reports completed byte and file counts for fingerprint phases", async t => {
+  const f = await fixture(t);
+  const updates: PublicationProgress[] = [];
+  const options = {...f, onProgress: (value: PublicationProgress) => updates.push(value)};
+  await publishDirectory(options, build("stable"));
+  assert.deepEqual(updates.filter(value => value.done).map(value =>
+    [value.phase, value.files, value.bytes]), [["fingerprint-output", 1, 6]]);
+  updates.length = 0;
+  await publishDirectory(options, build("next"));
+  assert.deepEqual(updates.filter(value => value.done).map(value =>
+    [value.phase, value.files, value.bytes]), [
+    ["verify-existing", 1, 6], ["fingerprint-output", 1, 4],
+    ["verify-before-publish", 1, 6],
+  ]);
 });
 
 test("build failure preserves previous output and unknown backup", async t => {

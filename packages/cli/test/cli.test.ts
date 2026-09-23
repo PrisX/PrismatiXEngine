@@ -27,6 +27,10 @@ function run(args: readonly string[]) {
   return spawnSync(process.execPath, [resolve("dist/src/cli.js"), ...args, "--json"], {encoding: "utf8"});
 }
 
+function runHuman(args: readonly string[]) {
+  return spawnSync(process.execPath, [resolve("dist/src/cli.js"), ...args], {encoding: "utf8"});
+}
+
 async function fixture(legacy = false): Promise<{root: string; project: string}> {
   const root = await mkdtemp(join(tmpdir(), "prismatix-cli-test-"));
   const project = join(root, "project.pxproject");
@@ -199,6 +203,20 @@ test("validate and build use the same canonical project compiler", async () => {
   assert.equal((await stat(join(output, "Runtime/main.pxmap"))).isFile(), true);
 });
 
+test("artifact build reports load, compile, copy and fingerprint progress", async () => {
+  const value = await fixture();
+  const built = run(["build", value.project, "--artifact-only", "--output",
+    join(value.root, ".prismatix", "progress-artifact")]);
+  assert.equal(built.status, 0, built.stderr);
+  const events = built.stderr.split(/\r?\n/u).filter(Boolean).map(line => JSON.parse(line) as {
+    code: string; phase?: string; current?: number; total?: number; done?: boolean;
+  }).filter(event => event.code === "PXCLI1102");
+  for (const phase of ["load", "compile", "copy", "fingerprint-output", "publish"])
+    assert.ok(events.some(event => event.phase === phase && event.done), phase);
+  const copy = events.find(event => event.phase === "copy" && event.done)!;
+  assert.equal(copy.current, copy.total);
+});
+
 test("TSX UI authoring lowers to canonical JSON and never enters the Runtime artifact", async () => {
   const value = await fixture();
   const project = JSON.parse(await readFile(value.project, "utf8")) as {
@@ -312,6 +330,27 @@ test("pack invokes the native file-based request protocol", async () => {
   assert.equal(packed.status, 0, packed.stderr);
   assert.match(packed.stdout, /"fileRequest":true/);
   assert.match(packed.stdout, /"packed":true/);
+});
+
+test("pack streams native progress and handles more than 16 MiB of progress events", async () => {
+  const value = await fixture();
+  const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-long-progress-"));
+  const mock = join(tools, "mock-packager.mjs");
+  await write(mock, `
+    const padding = "x".repeat(4096);
+    for (let current = 0; current <= 4200; current++)
+      process.stdout.write(JSON.stringify({event: "progress", phase: "archive",
+        current, total: 4200, message: padding}) + "\\n");
+    process.stdout.write(JSON.stringify({event: "completed"}) + "\\n");
+  `);
+  const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
+  await write(player, "fixture");
+  const packed = runHuman(["pack", value.project, "--packager", mock,
+    "--player", player, "--output", join(value.root, "packaged")]);
+  assert.equal(packed.status, 0, packed.stderr.slice(-2000));
+  assert.match(packed.stderr, /Packaging archive: 0\/4200/u);
+  assert.match(packed.stderr, /Packaging archive: 4200\/4200/u);
+  assert.match(packed.stdout, /Packaged playable game/u);
 });
 
 test("pack reuses an owned artifact without recompiling edited author sources", async () => {
