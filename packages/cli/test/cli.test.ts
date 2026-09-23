@@ -169,6 +169,23 @@ test("validate and build reject native UI property type mismatches before packag
   assert.equal(valid.status, 0, valid.stderr);
 });
 
+test("validate rejects a native-invalid UI binding path before packaging", async () => {
+  const value = await fixture();
+  const uiPath = join(value.root, "Content/UI/Title.pxui");
+  const ui = JSON.parse(await readFile(uiPath, "utf8")) as {
+    nodes: Array<{bindings: Record<string, unknown>}>
+  };
+  ui.nodes[0]!.bindings.visible = {path: "saveLoad.slot[0].enabled"};
+  await write(uiPath, JSON.stringify(ui));
+  const validated = run(["validate", value.project]);
+  assert.equal(validated.status, 1);
+  assert.match(validated.stderr, /Content\/UI\/Title\.pxui/u);
+  const built = run(["build", value.project, "--artifact-only",
+    "--output", join(value.root, "artifact")]);
+  assert.equal(built.status, 1);
+  assert.equal((await readdir(value.root)).includes("artifact"), false);
+});
+
 test("validate and artifact build use the selected local Runtime UI registry", async () => {
   const value = await fixture();
   const uiPath = join(value.root, "Content/UI/Title.pxui");

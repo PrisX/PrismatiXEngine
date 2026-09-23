@@ -3087,10 +3087,13 @@ export const contractSchemas: Readonly<Record<string, object>> = {
               "additionalProperties": false,
               "properties": {
                 "formatter": {
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
                   "type": "string"
                 },
                 "path": {
-                  "minLength": 1,
+                  "maxLength": 512,
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$",
                   "type": "string"
                 }
               },
@@ -3099,7 +3102,11 @@ export const contractSchemas: Readonly<Record<string, object>> = {
               ],
               "type": "object"
             },
-            "maxProperties": 4096,
+            "maxProperties": 256,
+            "propertyNames": {
+              "maxLength": 256,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+            },
             "type": "object"
           },
           "componentInstance": {
@@ -3157,7 +3164,10 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             "additionalProperties": {
               "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"
             },
-            "maxProperties": 4096,
+            "maxProperties": 256,
+            "propertyNames": {
+              "minLength": 1
+            },
             "type": "object"
           },
           "runtimeType": {
@@ -3630,5 +3640,5 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "story-index.schema.json": "abc3cf730c81d25c45c5a11632268e16334d5a189ff419bdfb2da940e6292b82",
   "timeline.schema.json": "48f267a0d203fc813879304be8df079b965785d71258cbcf358b51db269265be",
   "ui-component.schema.json": "d91e1ee59871449dfb898409aadaf054adc2f39c3df0df911ce993122e3a281a",
-  "ui.schema.json": "d02ad777cd9bc272981ed65073bfbe9ecf10ddee9b2297f87b8e3273a24b8631"
+  "ui.schema.json": "9e264648c730ff8c1c40c5bbc9c1f8c928b72ae80cac45ffb7c323530a7f22fd"
 };

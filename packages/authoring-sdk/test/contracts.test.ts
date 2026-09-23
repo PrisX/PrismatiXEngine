@@ -190,6 +190,36 @@ test("UI semantic validation matches native built-in Action argument contracts",
   assert.ok(result.diagnostics.some((item) => item.code === "PXSDKUI1025"));
 });
 
+test("UI binding and runtime-property limits match the native loader", () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  const layout = {mode:"free",x:0,y:0,width:100,height:100,
+    anchorX:0,anchorY:0,anchorRight:0,anchorBottom:0,pivotX:0,pivotY:0,
+    margin:0,alignment:"start",sizeRule:"fixed"};
+  const node = {id,parentId:null,order:0,kind:"control",runtimeType:"Control",
+    name:"Root",visible:true,locked:false,layout,runtimeProperties:{},
+    bindings:{visible:{path:"saveLoad.slot0.enabled"}}};
+  const scene = {format:"PrismatiXUIScene",schemaRevision:2,id,revision:1,
+    name:"Bindings",width:100,height:100,rootId:id,nodes:[node],theme:[],
+    behaviorGraph:{nodes:[],links:[],groups:[]},behaviorTriggers:[],
+    visualStateGroups:[]};
+  const withMaps = (runtimeProperties: Record<string, JsonValue>,
+    bindings: Record<string, JsonValue>) => ({...scene,
+      nodes:[{...node,runtimeProperties,bindings}]});
+  assert.equal(validateDocument("ui", scene).valid, true);
+  assert.equal(validateDocument("ui", withMaps({},
+    {visible:{path:"saveLoad.slot[0].enabled"}})).valid, false);
+  assert.equal(validateDocument("ui", withMaps({},
+    {"bad key":{path:"saveLoad.slot0.enabled"}})).valid, false);
+  assert.equal(validateDocument("ui", withMaps({},
+    {visible:{path:"saveLoad.slot0.enabled",formatter:"bad formatter"}})).valid, false);
+  assert.equal(validateDocument("ui", withMaps({}, Object.fromEntries(
+    Array.from({length:257}, (_, index) => [`binding${index}`,
+      {path:"saveLoad.slot0.enabled"}])))).valid, false);
+  assert.equal(validateDocument("ui", withMaps(Object.fromEntries(
+    Array.from({length:257}, (_, index) => [`property${index}`, index])), {})).valid, false);
+  assert.equal(validateDocument("ui", withMaps({"":1}, {})).valid, false);
+});
+
 test("Timeline semantic validation rejects unordered or out-of-range samples", () => {
   const invalid = {format:"PrismatiXTimeline",schemaRevision:2,id:"bad",duration:1,tracks:[{id:"track",binding:{kind:"stage",target:"yuki",property:"opacity"},keyframes:[{time:0.8,value:1,easing:"linear"},{time:0.4,value:0,easing:"linear"}]}],markers:[],nestedClips:[]} satisfies JsonValue;
   const result = validateDocument("timeline", invalid);

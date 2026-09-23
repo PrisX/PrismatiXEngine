@@ -57,12 +57,16 @@
         "accessibilityRole": {"type": "string", "maxLength": 128},
         "accessibilityDescription": {"type": "string", "maxLength": 4096},
         "accessibilityFocusOrder": {"type": "integer", "minimum": -1000000, "maximum": 1000000},
-        "runtimeProperties": {"type": "object", "maxProperties": 4096, "additionalProperties": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"}},
+        "runtimeProperties": {"type": "object", "maxProperties": 256, "propertyNames": {"minLength": 1}, "additionalProperties": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"}},
         "bindings": {
-          "type": "object", "maxProperties": 4096,
+          "type": "object", "maxProperties": 256,
+          "propertyNames": {"pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$", "maxLength": 256},
           "additionalProperties": {
             "type": "object", "additionalProperties": false, "required": ["path"],
-            "properties": {"path": {"type": "string", "minLength": 1}, "formatter": {"type": "string"}}
+            "properties": {
+              "path": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$", "maxLength": 512},
+              "formatter": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$", "maxLength": 128}
+            }
           }
         },
         "componentInstance": {"$ref": "#/$defs/componentInstance"},
