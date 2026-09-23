@@ -1046,7 +1046,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
     const request = {
       format: "PrismatiXPackageRequest", schemaRevision: 2,
       requestId: `cli-${process.pid}`, gameId: project.id,
-      projectRoot: artifactRoot, outputDir: staging,
+      projectRoot: artifactRoot, outputDir: staging, cacheSourceDir: output,
       playerExecutable: player, title: project.name,
       width: project.resolution.width, height: project.resolution.height,
       startScript, sourceMap,

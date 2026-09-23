@@ -42,6 +42,9 @@ struct PackageRequest {
     std::string gameId;
     std::filesystem::path projectRoot;
     std::filesystem::path outputDir;
+    // Optional read-only source for reusable compressed entries when a
+    // frontend publishes through its own staging directory.
+    std::filesystem::path cacheSourceDir;
     std::filesystem::path playerExecutable;
     std::string title;
     int width = 1280;

@@ -25,6 +25,7 @@
 #include <set>
 #include <sstream>
 #include <system_error>
+#include <unordered_map>
 #include <unordered_set>
 
 #include "Engine/SDK/RuntimeIr.h"
@@ -79,6 +80,20 @@ struct ArchiveEntry {
     std::string fingerprint;
 
     [[nodiscard]] bool FileBacked() const { return !source.empty(); }
+};
+
+struct CachedArchiveEntry {
+    std::string uri;
+    std::string fingerprint;
+    std::uint64_t offset = 0;
+    std::uint64_t rawSize = 0;
+    std::uint64_t storedSize = 0;
+    std::uint32_t crc = 0;
+};
+
+struct ArchiveCache {
+    std::filesystem::path archivePath;
+    std::unordered_map<std::string, CachedArchiveEntry> entries;
 };
 
 struct ValidationResult {
@@ -359,6 +374,28 @@ int CompressionLevel(const PackageCompression compression) {
     return 0;
 }
 
+bool CouldBeJson(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) return true;  // The subsequent read reports the actual failure.
+    std::array<unsigned char, 4096> prefix{};
+    input.read(reinterpret_cast<char*>(prefix.data()),
+               static_cast<std::streamsize>(prefix.size()));
+    const auto count = static_cast<std::size_t>(input.gcount());
+    std::size_t offset = 0;
+    if (count >= 3 && prefix[0] == 0xef && prefix[1] == 0xbb &&
+        prefix[2] == 0xbf) offset = 3;
+    for (; offset < count; ++offset) {
+        const unsigned char value = prefix[offset];
+        if (value == ' ' || value == '\t' || value == '\r' || value == '\n')
+            continue;
+        return value == '{' || value == '[' || value == '"' || value == '-' ||
+               (value >= '0' && value <= '9') || value == 't' || value == 'f' ||
+               value == 'n';
+    }
+    // A long whitespace prefix may still precede a valid JSON value.
+    return !input.eof();
+}
+
 enum class ArchiveWriteResult {
     Completed,
     InputChanged,
@@ -497,10 +534,123 @@ bool CompressFile(const ArchiveEntry& entry,
     return true;
 }
 
+std::optional<ArchiveCache> LoadArchiveCache(
+    const std::filesystem::path& previousOutput, const int compressionLevel) {
+    const auto cachePath = previousOutput / "Package/entry-cache.json";
+    const auto archivePath = previousOutput / "Content.pdx";
+    std::error_code error;
+    const auto cacheSize = std::filesystem::file_size(cachePath, error);
+    if (error || cacheSize == 0 || cacheSize > 64ull * 1024ull * 1024ull)
+        return std::nullopt;
+    error.clear();
+    const auto archiveSize = std::filesystem::file_size(archivePath, error);
+    if (error || archiveSize < kArchiveHeaderSize) return std::nullopt;
+    std::ifstream input(cachePath, std::ios::binary);
+    if (!input) return std::nullopt;
+    std::string source(static_cast<std::size_t>(cacheSize), '\0');
+    input.read(source.data(), static_cast<std::streamsize>(source.size()));
+    if (!input) return std::nullopt;
+    const Json root = Json::parse(source, nullptr, false);
+    if (!root.is_object() || !root.contains("format") ||
+        !root["format"].is_string() ||
+        root["format"].get<std::string>() != "PrismatiXPackageEntryCache" ||
+        !root.contains("schemaRevision") ||
+        !root["schemaRevision"].is_number_integer() ||
+        root["schemaRevision"].get<int>() != 1 ||
+        !root.contains("compressionLevel") ||
+        !root["compressionLevel"].is_number_integer() ||
+        root["compressionLevel"].get<std::int64_t>() < 0 ||
+        root["compressionLevel"].get<std::int64_t>() > 19 ||
+        root["compressionLevel"].get<int>() != compressionLevel ||
+        !root.contains("entries") || !root["entries"].is_array() ||
+        root["entries"].size() > kMaxInputs) return std::nullopt;
+    ArchiveCache cache{.archivePath = archivePath};
+    for (const auto& item : root["entries"]) {
+        if (!item.is_object() || !item.contains("uri") ||
+            !item["uri"].is_string() || !item.contains("fingerprint") ||
+            !item["fingerprint"].is_string() || !item.contains("offset") ||
+            !item["offset"].is_number_unsigned() ||
+            !item.contains("rawSize") || !item["rawSize"].is_number_unsigned() ||
+            !item.contains("storedSize") || !item["storedSize"].is_number_unsigned() ||
+            !item.contains("crc") || !item["crc"].is_number_unsigned() ||
+            item["crc"].get<std::uint64_t>() >
+                (std::numeric_limits<std::uint32_t>::max)())
+            return std::nullopt;
+        CachedArchiveEntry entry{
+            .uri = item["uri"].get<std::string>(),
+            .fingerprint = item["fingerprint"].get<std::string>(),
+            .offset = item["offset"].get<std::uint64_t>(),
+            .rawSize = item["rawSize"].get<std::uint64_t>(),
+            .storedSize = item["storedSize"].get<std::uint64_t>(),
+            .crc = item["crc"].get<std::uint32_t>()};
+        if (!IsSafeUri(entry.uri) || !IsFingerprint(entry.fingerprint) ||
+            entry.offset < kArchiveHeaderSize || entry.offset > archiveSize ||
+            entry.storedSize == 0 || entry.storedSize >= entry.rawSize ||
+            entry.storedSize > archiveSize - entry.offset)
+            return std::nullopt;
+        const std::string key = entry.uri;
+        if (!cache.entries.emplace(key, std::move(entry)).second)
+            return std::nullopt;
+    }
+    return cache;
+}
+
+bool VerifyOrCopyCachedEntry(const ArchiveCache& cache,
+                             const CachedArchiveEntry& entry,
+                             std::ostream* output) {
+    std::ifstream input(cache.archivePath, std::ios::binary);
+    input.seekg(static_cast<std::streamoff>(entry.offset));
+    const auto context = std::unique_ptr<ZSTD_DCtx, decltype(&ZSTD_freeDCtx)>(
+        ZSTD_createDCtx(), &ZSTD_freeDCtx);
+    StreamDigest digest;
+    if (!input || !context || !digest.valid) return false;
+    std::array<std::uint8_t, kStreamingChunkSize> source{};
+    std::array<std::uint8_t, kStreamingChunkSize> decoded{};
+    std::uint64_t remaining = entry.storedSize;
+    bool finished = false;
+    while (remaining > 0) {
+        const auto count = static_cast<std::size_t>(
+            std::min<std::uint64_t>(remaining, source.size()));
+        input.read(reinterpret_cast<char*>(source.data()),
+                   static_cast<std::streamsize>(count));
+        if (input.gcount() != static_cast<std::streamsize>(count)) return false;
+        if (output) {
+            output->write(reinterpret_cast<const char*>(source.data()),
+                          static_cast<std::streamsize>(count));
+            if (!*output) return false;
+        }
+        remaining -= count;
+        ZSTD_inBuffer compressed{source.data(), count, 0};
+        while (compressed.pos < compressed.size) {
+            const auto before = compressed.pos;
+            ZSTD_outBuffer plain{decoded.data(), decoded.size(), 0};
+            const auto needed = ZSTD_decompressStream(
+                context.get(), &plain, &compressed);
+            if (ZSTD_isError(needed) != 0 ||
+                digest.size > entry.rawSize ||
+                plain.pos > entry.rawSize - digest.size ||
+                !digest.Update(decoded.data(), plain.pos)) return false;
+            if (needed == 0) {
+                finished = true;
+                if (compressed.pos != compressed.size || remaining != 0)
+                    return false;
+            } else if (plain.pos == 0 && compressed.pos == before) {
+                return false;
+            }
+        }
+    }
+    const auto fingerprint = digest.Finish();
+    return finished && fingerprint && digest.size == entry.rawSize &&
+           *fingerprint == Lower(entry.fingerprint) && ~digest.crc == entry.crc;
+}
+
 ArchiveWriteResult WriteArchive(const std::filesystem::path& path,
                                 const std::vector<ArchiveEntry>& entries,
                                 const PackageCompression compression,
                                 const bool encryption, const Key& key,
+                                const ArchiveCache* cache,
+                                std::vector<CachedArchiveEntry>& cacheEntries,
+                                std::size_t& reusedEntries,
                                 std::string& failure,
                                 const std::function<void(std::size_t,
                                                          std::size_t,
@@ -514,6 +664,8 @@ ArchiveWriteResult WriteArchive(const std::filesystem::path& path,
     PutU32(index, static_cast<std::uint32_t>(entries.size()));
     std::unordered_set<std::uint64_t> hashes;
     const int compressionLevel = CompressionLevel(compression);
+    cacheEntries.clear();
+    reusedEntries = 0;
 
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     if (!output) return failed("the output archive could not be opened");
@@ -551,8 +703,35 @@ ArchiveWriteResult WriteArchive(const std::filesystem::path& path,
         const std::uint64_t offset = static_cast<std::uint64_t>(output.tellp());
         const auto temporary = workDirectory / (std::to_string(entryIndex) + ".zst");
         bool useCompressedFile = false;
+        bool useCachedEntry = false;
 
-        if (!encryption && entry.FileBacked() && compressionLevel != 0 && rawSize > 0 &&
+        if (cache && !encryption && entry.FileBacked() &&
+            compressionLevel != 0 && rawSize > 0 &&
+            !IsStreamingMediaPath(entry.uri) &&
+            !IsAlreadyCompressedMediaPath(entry.uri)) {
+            const auto found = cache->entries.find(entry.uri);
+            if (found != cache->entries.end()) {
+                const auto& cached = found->second;
+                if (cached.rawSize == rawSize &&
+                    Lower(cached.fingerprint) == Lower(entry.fingerprint) &&
+                    VerifyOrCopyCachedEntry(*cache, cached, nullptr)) {
+                    // The cache is only a transformed-byte optimization. The
+                    // current source still gets a writer-time TOCTOU check.
+                    if (ComputePackageFingerprint(entry.source) !=
+                        Lower(entry.fingerprint))
+                        return ArchiveWriteResult::InputChanged;
+                    if (!VerifyOrCopyCachedEntry(*cache, cached, &output))
+                        return failed("cached archive entry changed while copying: " + entry.uri);
+                    useCachedEntry = true;
+                    flags = kEntryCompressed;
+                    storedSize = cached.storedSize;
+                    crc = cached.crc;
+                    ++reusedEntries;
+                }
+            }
+        }
+
+        if (!useCachedEntry && !encryption && entry.FileBacked() && compressionLevel != 0 && rawSize > 0 &&
             !IsStreamingMediaPath(entry.uri) &&
             !IsAlreadyCompressedMediaPath(entry.uri)) {
             StreamDigest digest;
@@ -593,7 +772,9 @@ ArchiveWriteResult WriteArchive(const std::filesystem::path& path,
             return true;
         };
 
-        if (useCompressedFile) {
+        if (useCachedEntry) {
+            // Verified transformed bytes have already been appended.
+        } else if (useCompressedFile) {
             std::ifstream transformed(temporary, std::ios::binary);
             if (!transformed || !writeInput(transformed, nullptr))
                 return failed("compressed archive entry could not be written: " + entry.uri);
@@ -638,6 +819,13 @@ ArchiveWriteResult WriteArchive(const std::filesystem::path& path,
         if ((flags & kEntryChunkedEncrypted) != 0u) {
             PutU32(index, kStreamingChunkSize);
             PutU32(index, chunkCount);
+        }
+        if (entry.FileBacked() && !encryption &&
+            (flags & kEntryCompressed) != 0u) {
+            cacheEntries.push_back(CachedArchiveEntry{
+                .uri = entry.uri, .fingerprint = Lower(entry.fingerprint),
+                .offset = offset, .rawSize = rawSize,
+                .storedSize = storedSize, .crc = crc});
         }
     }
 
@@ -1421,6 +1609,13 @@ ValidationResult Validate(const PackageRequest& request,
             "projectRoot, outputDir, playerExecutable, and cancelFile "
             "must be absolute"
         );
+    }
+    if (!request.cacheSourceDir.empty() &&
+        (!request.cacheSourceDir.is_absolute() ||
+         request.cacheSourceDir == request.cacheSourceDir.root_path() ||
+         request.cacheSourceDir != request.cacheSourceDir.lexically_normal())) {
+        AddDiagnostic(diagnostics, "PXPKG1240",
+                      "cacheSourceDir must be a normalized absolute directory path");
     }
     if (request.title.empty() || request.title.size() > 512) {
         AddDiagnostic(diagnostics, "PXPKG1203", "title is invalid");
@@ -2271,6 +2466,15 @@ PackageRequestParseResult ParsePackageRequest(const std::string_view text) {
     RequiredString(root, "gameId", result.request.gameId, result.diagnostics);
     result.request.projectRoot = JsonPath(root, "projectRoot");
     result.request.outputDir = JsonPath(root, "outputDir");
+    const auto cacheSource = root.find("cacheSourceDir");
+    if (cacheSource != root.end()) {
+        if (!cacheSource->is_string() || cacheSource->empty()) {
+            AddDiagnostic(result.diagnostics, "PXPKG1240",
+                          "cacheSourceDir must be a non-empty path string when provided");
+        } else {
+            result.request.cacheSourceDir = JsonPath(root, "cacheSourceDir");
+        }
+    }
     result.request.playerExecutable = JsonPath(root, "playerExecutable");
     result.request.cancelFile = JsonPath(root, "cancelFile");
     RequiredString(root, "title", result.request.title, result.diagnostics);
@@ -2607,14 +2811,13 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
             return Cancel(request, eventSink, "Packaging was cancelled while reading inputs");
         }
         const auto& input = validated.inputs[index];
-        EmitProgress(request, eventSink, "archive", index, validated.inputs.size(), "Reading " + input.input.uri);
-        const std::string readFingerprint = ComputePackageFingerprint(input.source);
-        if (readFingerprint.empty() ||
-            readFingerprint != Lower(input.input.fingerprint)) {
-            return Fail(request, eventSink, "PXPKG1305", "An input changed while packaging: " + input.input.uri, true);
-        }
+        EmitProgress(request, eventSink, "archive", index, validated.inputs.size(), "Preparing " + input.input.uri);
+        // Validation already compared every source to its declared SHA-256.
+        // WriteArchive hashes the bytes it actually writes again, so another
+        // full pass here only triples I/O for large media-heavy projects.
         std::string contentFingerprint = Lower(input.input.fingerprint);
-        if (input.input.size <= 16ull * 1024ull * 1024ull) {
+        if (input.input.size <= 16ull * 1024ull * 1024ull &&
+            CouldBeJson(input.source)) {
             const auto bytes = ReadFile(input.source, input.input.size);
             if (!bytes) {
                 return Fail(request, eventSink, "PXPKG1305",
@@ -2668,10 +2871,21 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
     const std::string packageFingerprint = Hex(*packageDigest);
     const std::string encryptionKey = "pxpkg-" + Hex(DeriveKey("PrismatiXPackage|" + identityMaterial));
     EmitProgress(request, eventSink, "archive", validated.inputs.size(), validated.inputs.size(), "Writing Content.pdx");
+    const auto previousCache = !request.encryption &&
+                                       CompressionLevel(request.compression) != 0
+                                   ? LoadArchiveCache(request.cacheSourceDir.empty()
+                                                          ? request.outputDir
+                                                          : request.cacheSourceDir,
+                                                      CompressionLevel(request.compression))
+                                   : std::optional<ArchiveCache>{};
+    std::vector<CachedArchiveEntry> cacheEntries;
+    std::size_t reusedEntries = 0;
     std::string archiveFailure;
     const auto archiveResult =
         WriteArchive(staging / "Content.pdx", entries, request.compression,
-                     request.encryption, DeriveKey(encryptionKey), archiveFailure,
+                     request.encryption, DeriveKey(encryptionKey),
+                     previousCache ? &*previousCache : nullptr,
+                     cacheEntries, reusedEntries, archiveFailure,
                      [&](const std::size_t current, const std::size_t total,
                          const std::string& message) {
                          EmitProgress(request, eventSink, "archive-write", current,
@@ -2688,6 +2902,8 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
                         (archiveFailure.empty() ? std::string{} : ": " + archiveFailure),
                     true);
     }
+    EmitProgress(request, eventSink, "archive-cache", reusedEntries,
+                 cacheEntries.size(), "Reused verified compressed entries");
     if (Cancelled(request)) {
         return Cancel(request, eventSink, "Packaging was cancelled after archive creation");
     }
@@ -2803,6 +3019,28 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
         if (error) {
             return Fail(request, eventSink, "PXPKG1311",
                         "Package manifest directory could not be created", true);
+        }
+        if (!request.encryption && CompressionLevel(request.compression) != 0) {
+            Json cacheDocument{{"format", "PrismatiXPackageEntryCache"},
+                               {"schemaRevision", 1},
+                               {"compressionLevel", CompressionLevel(request.compression)},
+                               {"entries", Json::array()}};
+            for (const auto& entry : cacheEntries) {
+                cacheDocument["entries"].push_back({
+                    {"uri", entry.uri}, {"fingerprint", entry.fingerprint},
+                    {"offset", entry.offset}, {"rawSize", entry.rawSize},
+                    {"storedSize", entry.storedSize}, {"crc", entry.crc}});
+            }
+            const std::string cacheText = cacheDocument.dump();
+            if (cacheText.size() <= 64ull * 1024ull * 1024ull) {
+                std::ofstream cacheOutput(staging / "Package/entry-cache.json",
+                                          std::ios::binary | std::ios::trunc);
+                cacheOutput << cacheText;
+                if (!cacheOutput) {
+                    return Fail(request, eventSink, "PXPKG1311",
+                                "Package/entry-cache.json could not be written", true);
+                }
+            }
         }
         std::ofstream output(staging / "Package/manifest.json", std::ios::binary | std::ios::trunc);
         output << manifest;

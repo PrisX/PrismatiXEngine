@@ -67,6 +67,17 @@ UI source are **not** included until you build or otherwise update the artifact.
 prismatix pack my-game --artifact my-game/.prismatix/artifact
 ```
 
+For an unencrypted compressed distribution, Packager writes an
+`Package/entry-cache.json` inventory. The CLI passes the prior published
+distribution as a read-only cache source even though it builds the replacement
+in a separate staging directory. Repacking to the same intact output can
+reuse matching compressed entry bytes after checking the old bytes and the
+current source against SHA-256; a corrupt cache is ignored and rebuilt.
+Compression-mode changes and encrypted packages do not reuse this cache.
+Packager still verifies every input and writes a complete new `Content.pdx`:
+this reduces redundant compression and one full input-read pass, but is not
+yet block-level incremental packaging.
+
 Never choose Story, Assets, another source input or an unrelated existing folder as output. `pack` is an explicit distribution command; `run` packages and launches. Quote paths containing spaces.
 
 Output replacement verifies the previous build's inventory. If you have played a distribution and it now contains saves/logs, or edited its files, use a new output directory; do not delete player data to bypass the guard. Test migration with a copy of the old saves before distributing an update.

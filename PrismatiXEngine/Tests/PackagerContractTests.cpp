@@ -296,6 +296,7 @@ int main() {
              << R"("gameId":"parse-contract-game",)"
              << R"("projectRoot":")" << root.generic_string() << R"(",)"
              << R"("outputDir":")" << output.generic_string() << R"(",)"
+              << R"("cacheSourceDir":")" << output.generic_string() << R"(",)"
              << R"("playerExecutable":")" << request.playerExecutable.generic_string() << R"(",)"
              << R"("title":"Contract","width":1280,"height":720,)"
              << R"("startScript":"Content/Runtime/start.pxir",)"
@@ -310,6 +311,8 @@ int main() {
              << R"("cancelFile":")" << request.cancelFile.generic_string() << R"("})";
         const auto parsed = px::sdk::ParsePackageRequest(json.str());
         suite.Expect(parsed.Valid(), "locked package request parses");
+         suite.Expect(parsed.request.cacheSourceDir == output,
+                      "optional external cache source survives wire parsing");
         suite.Expect(parsed.request.routes.size() == 1 && parsed.request.routes.front().id == "title", "typed Player route is retained by the SDK contract");
 
         px::sdk::PackageEvent progress;
@@ -748,6 +751,9 @@ int main() {
         const auto encryptedResult = px::sdk::RunPackager(encryptedRequest);
         suite.Require(encryptedResult.Completed(),
                       "encrypted production package with video completes");
+        suite.Expect(!std::filesystem::exists(encryptedOutput /
+                                                "Package/entry-cache.json"),
+                     "encrypted packages do not expose reusable archive byte ranges");
         const auto manifest = px::sdk::detail::ParsePackageManifest(
             Read(encryptedOutput / "Package/manifest.json"));
         suite.Require(manifest.Valid(),
@@ -820,6 +826,163 @@ int main() {
                          "PNG/OGG package entries remain directly readable without Zstd",
                          std::string(uri));
         }
+    });
+
+    suite.Run("CompressedEntryCacheReusesOnlyVerifiedMatchingBytes", [&] {
+        const auto source = root / "Assets/cache-fixture.bin";
+        WriteRepeated(source, 'c', 256 * 1024);
+        const auto cachedOutput = fixture.path / "Build/EntryCache";
+        auto cached = FixtureRequest(root, cachedOutput);
+        cached.requestId = "entry-cache-contract";
+        cached.encryption = false;
+        cached.compression = px::sdk::PackageCompression::Fast;
+        cached.inputs.push_back(Input(root, "Assets/cache-fixture.bin"));
+        suite.Require(px::sdk::RunPackager(cached).Completed(),
+                      "first package creates a compressed-entry cache");
+        const auto cachePath = cachedOutput / "Package/entry-cache.json";
+        suite.Require(std::filesystem::is_regular_file(cachePath),
+                      "entry cache is shipped with the output it describes");
+        const auto cacheDocument = nlohmann::json::parse(Read(cachePath));
+        const auto& cacheRecords = cacheDocument.at("entries");
+        const auto record = std::find_if(cacheRecords.begin(), cacheRecords.end(),
+                                         [](const auto& item) {
+                                             return item.at("uri") ==
+                                                    "Assets/cache-fixture.bin";
+                                         });
+        suite.Require(record != cacheRecords.end(),
+                      "compressible source has a reusable byte range");
+
+        std::vector<px::sdk::PackageEvent> cacheEvents;
+        suite.Require(px::sdk::RunPackager(cached, [&](const auto& event) {
+                          cacheEvents.push_back(event);
+                      }).Completed(), "second package reuses verified entries");
+        const auto reuse = std::ranges::find_if(cacheEvents, [](const auto& event) {
+            return event.phase == "archive-cache";
+        });
+        suite.Expect(reuse != cacheEvents.end() && reuse->current > 0,
+                     "same-source package reports compressed cache reuse");
+        auto staged = cached;
+        staged.outputDir = fixture.path / "Build/EntryCacheStaged";
+        staged.cacheSourceDir = cachedOutput;
+        cacheEvents.clear();
+        suite.Require(px::sdk::RunPackager(staged, [&](const auto& event) {
+                          cacheEvents.push_back(event);
+                      }).Completed(),
+                      "staged frontend output can reuse an external published cache");
+        const auto stagedReuse = std::ranges::find_if(
+            cacheEvents, [](const auto& event) {
+                return event.phase == "archive-cache";
+            });
+        suite.Expect(stagedReuse != cacheEvents.end() &&
+                         stagedReuse->current > 0,
+                     "external cache source is passed through to archive reuse");
+        suite.Expect(std::filesystem::is_regular_file(
+                         cachedOutput / "Content.pdx"),
+                     "external cache source remains untouched");
+        px::io::Archive archive;
+        suite.Require(archive.Open((cachedOutput / "Content.pdx").string()),
+                      "reused archive still mounts in the Player reader");
+        const auto bytes = archive.Read("Assets/cache-fixture.bin");
+        suite.Expect(bytes && bytes->size() == 256 * 1024 &&
+                         std::ranges::all_of(*bytes, [](std::uint8_t value) {
+                             return value == static_cast<std::uint8_t>('c');
+                         }), "reused compressed bytes decode to the original source");
+        archive.Close();
+
+        const auto currentCache = nlohmann::json::parse(Read(cachePath));
+        const auto corrupted = std::find_if(
+            currentCache.at("entries").begin(),
+            currentCache.at("entries").end(), [](const auto& item) {
+                return item.at("uri") == "Assets/cache-fixture.bin";
+            });
+        suite.Require(corrupted != currentCache.at("entries").end(),
+                      "replacement output keeps the cache record");
+        const auto offset = corrupted->at("offset").get<std::uint64_t>();
+        {
+            std::fstream previous(cachedOutput / "Content.pdx",
+                                  std::ios::binary | std::ios::in | std::ios::out);
+            previous.seekg(static_cast<std::streamoff>(offset));
+            char value = 0;
+            previous.get(value);
+            previous.seekp(static_cast<std::streamoff>(offset));
+            previous.put(static_cast<char>(value ^ 0x01));
+            suite.Require(static_cast<bool>(previous),
+                          "test corrupts only the old cached byte range");
+        }
+        cacheEvents.clear();
+        suite.Require(px::sdk::RunPackager(cached, [&](const auto& event) {
+                          cacheEvents.push_back(event);
+                      }).Completed(),
+                      "tampered cache falls back to current source compression");
+        const auto fallback = std::ranges::find_if(cacheEvents,
+                                                    [](const auto& event) {
+                                                        return event.phase ==
+                                                               "archive-cache";
+                                                    });
+        suite.Expect(fallback != cacheEvents.end() &&
+                         fallback->current < fallback->total,
+                     "corrupt cached entry is not reused");
+        suite.Require(archive.Open((cachedOutput / "Content.pdx").string()),
+                      "fallback archive mounts after cache corruption");
+        suite.Expect(archive.Read("Assets/cache-fixture.bin").has_value(),
+                     "fallback archive contains the affected source");
+        archive.Close();
+
+        const auto priorArchive = px::sdk::ComputePackageFingerprint(
+            cachedOutput / "Content.pdx");
+        bool mutated = false;
+        const auto changed = px::sdk::RunPackager(cached, [&](const auto& event) {
+            if (!mutated && event.phase == "archive" &&
+                event.message == "Writing Content.pdx") {
+                WriteRepeated(source, 'x', 256 * 1024);
+                mutated = true;
+            }
+        });
+        WriteRepeated(source, 'c', 256 * 1024);
+        suite.Expect(mutated && HasDiagnostic(changed, "PXPKG1305") &&
+                         px::sdk::ComputePackageFingerprint(
+                             cachedOutput / "Content.pdx") == priorArchive,
+                     "cache reuse rechecks current source and preserves prior output");
+
+        cached.compression = px::sdk::PackageCompression::Balanced;
+        cacheEvents.clear();
+        suite.Require(px::sdk::RunPackager(cached, [&](const auto& event) {
+                          cacheEvents.push_back(event);
+                      }).Completed(),
+                      "different compression mode produces a fresh archive");
+        const auto mismatch = std::ranges::find_if(cacheEvents,
+                                                    [](const auto& event) {
+                                                        return event.phase ==
+                                                               "archive-cache";
+                                                    });
+        suite.Expect(mismatch != cacheEvents.end() && mismatch->current == 0,
+                     "cache never crosses compression-level boundaries");
+    });
+
+    suite.Run("JsonIdentityRemainsCanonicalAfterBinaryProbe", [&] {
+        const auto semanticPath = root / "Assets/semantic.json";
+        Write(semanticPath, R"({"value":1,"label":"ok"})");
+        auto first = FixtureRequest(root, fixture.path / "Build/JsonIdentityA");
+        first.encryption = false;
+        first.inputs.push_back(Input(root, "Assets/semantic.json"));
+        suite.Require(px::sdk::RunPackager(first).Completed(),
+                      "compact JSON package completes");
+        const auto firstManifest = px::sdk::detail::ParsePackageManifest(
+            Read(first.outputDir / "Package/manifest.json"));
+        suite.Require(firstManifest.Valid(), "compact JSON manifest parses");
+
+        Write(semanticPath, " { \"label\" : \"ok\", \"value\" : 1 } \n");
+        auto second = FixtureRequest(root, fixture.path / "Build/JsonIdentityB");
+        second.encryption = false;
+        second.inputs.push_back(Input(root, "Assets/semantic.json"));
+        suite.Require(px::sdk::RunPackager(second).Completed(),
+                      "reformatted JSON package completes");
+        const auto secondManifest = px::sdk::detail::ParsePackageManifest(
+            Read(second.outputDir / "Package/manifest.json"));
+        suite.Require(secondManifest.Valid(), "reformatted JSON manifest parses");
+        suite.Expect(firstManifest.manifest.packageFingerprint ==
+                         secondManifest.manifest.packageFingerprint,
+                     "JSON identity still ignores formatting and object-key order");
     });
 
     suite.Run("LocaleFontChain_IsPackagedAndPreflightChecksGlyphCoverage", [&] {

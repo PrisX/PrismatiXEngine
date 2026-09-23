@@ -572,10 +572,13 @@ test("pack reuses an owned artifact without recompiling edited author sources", 
   await write(join(value.root, "Story/main.pxstory"), "[unknown-command]\n");
   const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-reused-artifact-"));
   const mock = join(tools, "mock-packager.mjs");
+  const output = join(value.root, "packaged");
   await write(mock, `
     import {readFile} from "node:fs/promises";
     const request = JSON.parse(await readFile(process.argv.at(-1), "utf8"));
     if (request.projectRoot !== ${JSON.stringify(artifact)} ||
+        request.cacheSourceDir !== ${JSON.stringify(output)} ||
+        request.outputDir === request.cacheSourceDir ||
         !request.inputs.some(value => value.uri === "Runtime/main.pxir") ||
         !request.inputs.some(value => value.uri === "project.pxproject")) process.exit(42);
     process.stdout.write(JSON.stringify({protocolVersion: 1, event: "completed",
@@ -583,7 +586,6 @@ test("pack reuses an owned artifact without recompiling edited author sources", 
   `);
   const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
   await write(player, "fixture");
-  const output = join(value.root, "packaged");
   const packed = run(["pack", value.project, "--artifact", artifact,
     "--packager", mock, "--player", player, "--output", output]);
   assert.equal(packed.status, 0, packed.stderr);
