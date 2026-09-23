@@ -14,8 +14,15 @@ class IVirtualItemSource {
 public:
     virtual ~IVirtualItemSource() = default;
     [[nodiscard]] virtual std::size_t Count() const = 0;
+    // Unique within a source revision. Visible controls keep their identity
+    // when the same key moves to another index; increment Revision on edits.
     [[nodiscard]] virtual std::string StableKey(std::size_t index) const = 0;
     virtual Status Bind(std::size_t index, Control& item) = 0;
+    // Release item-scoped subscriptions or actions before a Control enters
+    // the reuse pool. The key remains valid even after indexes are reordered.
+    virtual void Unbind(std::string_view key, Control& item) {
+        (void)key; (void)item;
+    }
     [[nodiscard]] virtual std::uint64_t Revision() const = 0;
 };
 
@@ -23,6 +30,7 @@ class VirtualizedView : public Control {
 public:
     using Factory = std::function<std::unique_ptr<Control>()>;
     explicit VirtualizedView(std::string name = "VirtualizedView") : Control(std::move(name)) {}
+    ~VirtualizedView() override;
     [[nodiscard]] std::string_view TypeName() const override { return "VirtualizedView"; }
     [[nodiscard]] ChildLayoutPolicy ChildPolicy() const override {
         return ChildLayoutPolicy::RuntimeManaged;
@@ -50,14 +58,16 @@ protected:
     void ArrangeOverride(Rect finalRect) override;
 
 private:
-    Status ValidateKeys() const;
+    static Status ValidateKeys(const IVirtualItemSource& source);
     Status Synchronize(Rect viewport);
-    std::unique_ptr<Control> Acquire();
-    void Recycle(std::size_t index);
+    std::unique_ptr<Control> Acquire(const std::string& key);
+    void Recycle(const std::string& key);
 
     std::shared_ptr<IVirtualItemSource> m_source;
     Factory m_factory;
-    std::unordered_map<std::size_t, Uuid> m_realized;
+    // A visible item's Runtime identity follows its source key, not its
+    // current index. Reordering data must not recreate focused controls.
+    std::unordered_map<std::string, Uuid> m_realized;
     std::vector<std::unique_ptr<Control>> m_pool;
     std::size_t m_columns = 1;
     std::size_t m_overscan = 2;

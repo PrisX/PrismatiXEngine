@@ -768,6 +768,12 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_test(NAME PrismatiX.SDK.UiRuntimeAdapter COMMAND PrismatiXUiRuntimeAdapterTests)
     set_tests_properties(PrismatiX.SDK.UiRuntimeAdapter PROPERTIES LABELS "sdk;runtime;contract;ui")
 
+    add_executable(PrismatiXVirtualizedViewTests Tests/VirtualizedViewTests.cpp)
+    target_link_libraries(PrismatiXVirtualizedViewTests PRIVATE PrismatiXRuntime)
+    prismatix_configure_target(PrismatiXVirtualizedViewTests)
+    add_test(NAME PrismatiX.SDK.VirtualizedView COMMAND PrismatiXVirtualizedViewTests)
+    set_tests_properties(PrismatiX.SDK.VirtualizedView PROPERTIES LABELS "sdk;runtime;ui")
+
     add_executable(PrismatiXUiTypeRegistryContractTests
                    Tests/UiTypeRegistryContractTests.cpp)
     target_link_libraries(PrismatiXUiTypeRegistryContractTests
