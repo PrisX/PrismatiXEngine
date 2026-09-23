@@ -173,6 +173,16 @@ such as `"#2D171DFF"` is lowered to the native Color value. These typed props
 override an identically named entry in
 `runtimeProperties`, which remains available for less common native properties.
 
+Bindings can address array items and object fields, for example
+`bind={{text: "saveLoad.slots[0].title"}}`. The native ViewModel must define
+`saveLoad.slots` as an array containing an object with a string `title` before
+the UI is installed; replacing that array refreshes subscribed item bindings.
+Indexes are zero-based and cannot have leading zeroes. TSX may generate a fixed
+set of controls with `Array.from`, but this is not yet a runtime keyed repeater:
+changing the array length does not create or remove controls. A replacement
+that removes an actively bound item or changes its bound value type is rejected
+instead of leaving stale UI visible.
+
 When a native UI TypeRegistry manifest is available, use
 `validateUiDocument(ui, registry)` to check writable/bindable properties and
 their declared `valueType` before packaging. For example, a Color property

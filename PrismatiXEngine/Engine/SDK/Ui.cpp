@@ -1,4 +1,5 @@
 #include "Engine/SDK/Ui.h"
+#include "Engine/Core/IndexedPropertyPath.h"
 
 #include <nlohmann/json.hpp>
 
@@ -1656,7 +1657,7 @@ UiParseResult ParseUi(const std::string_view text) {
                                             binding.value().size() == 2) &&
                                            ReadString(binding.value(), "path",
                                                       descriptor.path) &&
-                                           IsPropertyPath(descriptor.path);
+                                           ParseIndexedPropertyPath(descriptor.path).has_value();
                     const auto formatter = binding.value().find("formatter");
                     descriptorValid = binding.value().size() ==
                                               (formatter != binding.value().end() ? 2u : 1u) &&

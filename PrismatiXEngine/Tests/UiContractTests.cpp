@@ -357,6 +357,15 @@ int main() {
               dynamicScene.document.nodes[1].bindings.at("text").path ==
                   "dialogue.text",
           "revision-2 Runtime identity, semantic properties and bindings must parse");
+    auto indexedBinding = dynamicSceneJson;
+    indexedBinding["nodes"][1]["bindings"]["text"]["path"] =
+        "saveLoad.slots[0].title";
+    Check(ParseSceneFixture(indexedBinding.dump()).Valid(),
+          "typed UI bindings must accept collection index paths");
+    indexedBinding["nodes"][1]["bindings"]["text"]["path"] =
+        "saveLoad.slots[00].title";
+    Check(!ParseSceneFixture(indexedBinding.dump()).Valid(),
+          "typed UI bindings must reject ambiguous collection indexes");
     auto missingRuntimeType = dynamicSceneJson;
     missingRuntimeType["nodes"][1].erase("runtimeType");
     Check(!ParseSceneFixture(missingRuntimeType.dump()).Valid(),

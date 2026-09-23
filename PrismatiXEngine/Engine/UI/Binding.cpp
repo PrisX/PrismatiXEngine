@@ -1,4 +1,5 @@
 #include "Engine/UI/Binding.h"
+#include "Engine/Core/IndexedPropertyPath.h"
 
 #include <algorithm>
 #include <cctype>
@@ -24,6 +25,32 @@ Result<T> ResultFailure(std::string code, std::string message, std::string path 
 Result<Variant> FormatBoolVisibility(const Variant& value) {
     if (const auto* boolean = value.TryGet<bool>()) return Result<Variant>::Success(Variant(*boolean ? "Visible" : "Collapsed"));
     return ResultFailure<Variant>("PXUI2101", "BoolToVisibility received a non-boolean value");
+}
+
+template <typename Value>
+Value* NestedValue(Value* value,
+                   const std::vector<IndexedPropertyPathSegment>& segments,
+                   const std::size_t start) {
+    for (std::size_t index = start; index < segments.size(); ++index) {
+        const auto& segment = segments[index];
+        if (segment.kind == IndexedPropertyPathSegment::Kind::Field) {
+            auto* object = value->AsObject();
+            if (!object) return nullptr;
+            const auto found = object->find(std::string(segment.field));
+            if (found == object->end()) return nullptr;
+            value = &found->second;
+        } else {
+            auto* array = value->AsArray();
+            if (!array || segment.index >= array->size()) return nullptr;
+            value = &(*array)[segment.index];
+        }
+    }
+    return value;
+}
+
+bool IsDescendantPath(const std::string_view path, const std::string_view root) {
+    return path.size() > root.size() && path.substr(0, root.size()) == root &&
+           (path[root.size()] == '.' || path[root.size()] == '[');
 }
 }
 
@@ -62,10 +89,32 @@ Status ObservableViewModel::DefineComputed(std::string path, VariantType type,
     return Status::Ok();
 }
 
-std::optional<PropertyPathInfo> ObservableViewModel::Describe(std::string_view path) const {
+std::optional<ObservableViewModel::ResolvedPath> ObservableViewModel::ResolvePath(
+    const std::string_view path) const {
     if (const auto it = m_entries.find(std::string(path)); it != m_entries.end())
-        return PropertyPathInfo{it->first, it->second.type, it->second.writable};
-    return std::nullopt;
+        return ResolvedPath{it->first, &it->second, &it->second.value, 0};
+    const auto segments = ParseIndexedPropertyPath(path);
+    if (!segments) return std::nullopt;
+    std::string prefix;
+    std::optional<ResolvedPath> result;
+    for (std::size_t index = 0; index < segments->size(); ++index) {
+        const auto& segment = (*segments)[index];
+        if (segment.kind != IndexedPropertyPathSegment::Kind::Field) break;
+        if (!prefix.empty()) prefix += '.';
+        prefix += segment.field;
+        const auto found = m_entries.find(prefix);
+        if (found == m_entries.end()) continue;
+        if (const auto* value = NestedValue(&found->second.value, *segments, index + 1))
+            result = ResolvedPath{found->first, &found->second, value, index + 1};
+    }
+    return result;
+}
+
+std::optional<PropertyPathInfo> ObservableViewModel::Describe(std::string_view path) const {
+    const auto resolved = ResolvePath(path);
+    if (!resolved) return std::nullopt;
+    return PropertyPathInfo{std::string(path), resolved->value->Type(),
+                            resolved->root->writable};
 }
 
 std::vector<PropertyPathInfo> ObservableViewModel::EnumerateProperties() const {
@@ -80,19 +129,46 @@ std::vector<PropertyPathInfo> ObservableViewModel::EnumerateProperties() const {
 }
 
 Result<Variant> ObservableViewModel::Read(std::string_view path) const {
-    if (const auto it = m_entries.find(std::string(path)); it != m_entries.end()) return Result<Variant>::Success(it->second.value);
+    if (const auto resolved = ResolvePath(path))
+        return Result<Variant>::Success(*resolved->value);
     return ResultFailure<Variant>("PXUI2108", "Unknown ViewModel property path", std::string(path));
 }
 
 Status ObservableViewModel::Write(std::string_view path, const Variant& value) {
-    const auto it = m_entries.find(std::string(path));
-    if (it == m_entries.end()) return Failure("PXUI2108", "Unknown ViewModel property path", std::string(path));
-    if (!it->second.writable) return Failure("PXUI2109", "ViewModel property is read-only", std::string(path));
-    if (it->second.type != value.Type()) return Failure("PXUI2110", "ViewModel property type mismatch", std::string(path));
-    if (it->second.value == value) return Status::Ok();
-    it->second.value = value;
-    Notify(it->first, it->second.value);
-    return RecomputeDependents(it->first);
+    const auto resolved = ResolvePath(path);
+    if (!resolved) return Failure("PXUI2108", "Unknown ViewModel property path", std::string(path));
+    if (!resolved->root->writable) return Failure("PXUI2109", "ViewModel property is read-only", std::string(path));
+    if (resolved->value->Type() != value.Type()) return Failure("PXUI2110", "ViewModel property type mismatch", std::string(path));
+    if (*resolved->value == value) return Status::Ok();
+    auto root = m_entries.find(resolved->rootPath);
+    if (resolved->firstNested == 0) {
+        const auto rootSegments = ParseIndexedPropertyPath(path);
+        for (const auto& subscription : m_subscriptions) {
+            if (!IsDescendantPath(subscription.path, path)) continue;
+            const auto segments = ParseIndexedPropertyPath(subscription.path);
+            const auto* replacement = rootSegments && segments
+                ? NestedValue(&value, *segments, rootSegments->size()) : nullptr;
+            if (!replacement)
+                return Failure("PXUI2124", "ViewModel replacement would invalidate an active binding",
+                               subscription.path);
+            if (const auto previous = Read(subscription.path);
+                previous && previous.Value().Type() != replacement->Type())
+                return Failure("PXUI2110", "ViewModel replacement would change a bound property type",
+                               subscription.path);
+        }
+        root->second.value = value;
+    }
+    else {
+        const auto segments = ParseIndexedPropertyPath(path);
+        if (!segments) return Failure("PXUI2108", "Unknown ViewModel property path", std::string(path));
+        Variant updated = root->second.value.Clone();
+        auto* nested = NestedValue(&updated, *segments, resolved->firstNested);
+        if (!nested) return Failure("PXUI2108", "Unknown ViewModel property path", std::string(path));
+        *nested = value.Clone();
+        root->second.value = std::move(updated);
+    }
+    Notify(root->first, root->second.value);
+    return RecomputeDependents(root->first);
 }
 
 Status ObservableViewModel::RecomputeDependents(std::string_view changedPath) {
@@ -116,7 +192,14 @@ Status ObservableViewModel::RecomputeDependents(std::string_view changedPath) {
 
 void ObservableViewModel::Notify(const std::string& path, const Variant& value) {
     const auto copy = m_subscriptions;
-    for (const auto& subscription : copy) if (subscription.path == path && subscription.callback) subscription.callback(value);
+    for (const auto& subscription : copy) {
+        if (!subscription.callback) continue;
+        if (subscription.path == path) subscription.callback(value);
+        else if (IsDescendantPath(subscription.path, path)) {
+            if (auto nested = Read(subscription.path); nested)
+                subscription.callback(nested.Value());
+        }
+    }
 }
 
 std::uint64_t ObservableViewModel::Subscribe(std::string path, Changed changed) {

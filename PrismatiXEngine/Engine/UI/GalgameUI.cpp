@@ -151,17 +151,24 @@ GalgameUI::GalgameUI() {
     (void)m_viewModel.Define("dialogue.text",Variant(std::string{}),true);
     (void)m_viewModel.Define("chapter.title",Variant(std::string{}),true);
     (void)m_viewModel.Define("music.title",Variant(std::string{}),true);
-    // Authored save/load surfaces bind fixed slot controls to these values.
-    // The layout and textures belong to the .pxui document; only data is
-    // supplied by the host. A future repeater contract can replace this
-    // finite bridge without changing the authored slot presentation.
+    // An authored slot template can bind into one typed collection. Keep the
+    // flat fields for older authored UI documents until they are migrated.
+    VariantArray initialSlots;
+    initialSlots.reserve(12);
     for (std::size_t slot = 0; slot < 12; ++slot) {
+        initialSlots.emplace_back(VariantObject{
+            {"image", Variant(std::string{})},
+            {"title", Variant(std::string{})},
+            {"subtitle", Variant(std::string{})},
+            {"enabled", Variant(false)},
+        });
         const std::string prefix = "saveLoad.slot" + std::to_string(slot) + ".";
         (void)m_viewModel.Define(prefix + "image", Variant(std::string{}), true);
         (void)m_viewModel.Define(prefix + "title", Variant(std::string{}), true);
         (void)m_viewModel.Define(prefix + "subtitle", Variant(std::string{}), true);
         (void)m_viewModel.Define(prefix + "enabled", Variant(false), true);
     }
+    (void)m_viewModel.Define("saveLoad.slots", Variant(std::move(initialSlots)), true);
     for (const char* property : {"visible", "save", "load", "overwrite"})
         (void)m_viewModel.Define(
             std::string("saveLoad.confirm.") + property, Variant(false), true);
@@ -654,17 +661,27 @@ Status GalgameUI::ShowBacklog(std::vector<GalgameItem> entries) {
 Status GalgameUI::ShowSaveLoad(bool saveMode, std::vector<GalgameItem> slots) {
     const Screen target=saveMode?Screen::Save:Screen::Load;
     (void)SetSaveLoadConfirmation(SaveLoadPrompt::None);
+    VariantArray slotValues;
+    slotValues.reserve(12);
     for (std::size_t index = 0; index < 12; ++index) {
         const auto found = std::ranges::find_if(slots, [index](const GalgameItem& item) {
             return item.argument == std::to_string(index);
         });
         const GalgameItem* item = found == slots.end() ? nullptr : &*found;
+        slotValues.emplace_back(VariantObject{
+            {"image", Variant(item ? item->image : std::string{})},
+            {"title", Variant(item ? item->title : std::string{})},
+            {"subtitle", Variant(item ? item->subtitle : std::string{})},
+            {"enabled", Variant(item && !item->disabled)},
+        });
         const std::string prefix = "saveLoad.slot" + std::to_string(index) + ".";
         (void)m_viewModel.Write(prefix + "image", Variant(item ? item->image : std::string{}));
         (void)m_viewModel.Write(prefix + "title", Variant(item ? item->title : std::string{}));
         (void)m_viewModel.Write(prefix + "subtitle", Variant(item ? item->subtitle : std::string{}));
         (void)m_viewModel.Write(prefix + "enabled", Variant(item && !item->disabled));
     }
+    const Status populated = m_viewModel.Write("saveLoad.slots", Variant(std::move(slotValues)));
+    if (!populated) return populated;
     const Status installed = InstallTemplate(target);
     if (!installed) return installed;
     if (FindNamed<Button>(m_context.Root(), "Slot0Button")) {

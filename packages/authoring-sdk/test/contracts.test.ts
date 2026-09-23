@@ -249,7 +249,11 @@ test("UI binding and runtime-property limits match the native loader", () => {
       nodes:[{...node,runtimeProperties,bindings}]});
   assert.equal(validateDocument("ui", scene).valid, true);
   assert.equal(validateDocument("ui", withMaps({},
-    {visible:{path:"saveLoad.slot[0].enabled"}})).valid, false);
+    {visible:{path:"saveLoad.slots[0].enabled"}})).valid, true);
+  assert.equal(validateDocument("ui", withMaps({},
+    {visible:{path:"saveLoad.slots[00].enabled"}})).valid, false);
+  assert.equal(validateDocument("ui", withMaps({},
+    {visible:{path:"saveLoad.slots[0].enabled["}})).valid, false);
   assert.equal(validateDocument("ui", withMaps({},
     {"bad key":{path:"saveLoad.slot0.enabled"}})).valid, false);
   assert.equal(validateDocument("ui", withMaps({},

@@ -176,7 +176,7 @@ test("validate rejects native-invalid UI bindings and typed values before packag
     nodes: Array<{bindings: Record<string, unknown>;
       runtimeProperties: Record<string, unknown>}>
   };
-  ui.nodes[0]!.bindings.visible = {path: "saveLoad.slot[0].enabled"};
+  ui.nodes[0]!.bindings.visible = {path: "saveLoad.slots[00].enabled"};
   await write(uiPath, JSON.stringify(ui));
   const validated = run(["validate", value.project]);
   assert.equal(validated.status, 1);

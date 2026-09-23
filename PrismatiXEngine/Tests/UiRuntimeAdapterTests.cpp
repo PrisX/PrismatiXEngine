@@ -669,6 +669,52 @@ int main() {
         "shared Preview/Player application must instantiate OptionButton and apply its typed binding"
     );
     Check(optionViewModel.Write("dialogue.text", px::Variant(std::string{ "Updated Chapter" })) && optionButton && optionButton->Text() == "Updated Chapter", "shared Runtime binding must retain its subscription and call the real text setter");
+    auto indexedOptionScene = optionScene;
+    for (auto& node : indexedOptionScene["nodes"])
+        if (node["id"] == "17171717-1717-4717-8717-171717171717")
+            node["bindings"]["text"]["path"] = "saveLoad.slots[0].title";
+    const auto indexedParsed = px::sdk::ParseUi(indexedOptionScene.dump());
+    Check(indexedParsed.Valid(), "indexed ViewModel binding must parse as a canonical UI scene");
+    px::ui::ObservableViewModel indexedViewModel;
+    Check(static_cast<bool>(indexedViewModel.Define(
+              "saveLoad.slots",
+              px::Variant(px::VariantArray{px::Variant(px::VariantObject{
+                  {"title", std::string{"Saved One"}}})}))),
+          "one typed collection must replace per-cell ViewModel declarations");
+    px::ui::UIContext indexedContext;
+    px::ui::UiApplication indexedApplication(indexedContext);
+    const auto indexedApplied = indexedApplication.ApplyDocument(
+        indexedParsed.document,
+        {.sourcePath = "Content/UI/IndexedOption.pxui",
+         .resolveAsset = [](const std::string_view id) -> std::optional<std::string> {
+             return id == "66666666-6666-4666-8666-666666666666"
+                        ? std::optional<std::string>{"Content/logo.png"}
+                        : std::nullopt;
+         },
+         .viewModel = &indexedViewModel});
+    auto* indexedButton = indexedApplied && optionId
+        ? dynamic_cast<px::ui::OptionButton*>(indexedContext.Root()->Find(*optionId))
+        : nullptr;
+    Check(indexedApplied && indexedButton && indexedButton->Text() == "Saved One",
+          "indexed collection item must initialize a real UI property binding");
+    Check(indexedViewModel.Write("saveLoad.slots[0].title", px::Variant("Saved Two")) &&
+              indexedButton && indexedButton->Text() == "Saved Two",
+          "indexed item writes must notify subscribed UI controls");
+    Check(indexedViewModel.Write(
+              "saveLoad.slots",
+              px::Variant(px::VariantArray{px::Variant(px::VariantObject{
+                  {"title", std::string{"Saved Three"}}})})) &&
+              indexedButton && indexedButton->Text() == "Saved Three",
+          "replacing a collection must refresh indexed item bindings");
+    Check(!indexedViewModel.Write("saveLoad.slots", px::Variant(px::VariantArray{})) &&
+              !indexedViewModel.Write("saveLoad.slots", px::Variant(px::VariantArray{
+                  px::Variant(px::VariantObject{{"title", px::Variant(false)}})})) &&
+              indexedButton && indexedButton->Text() == "Saved Three",
+          "collection replacements must not silently leave bound controls stale");
+    Check(!indexedViewModel.Describe("saveLoad.slots[1].title") &&
+              !indexedViewModel.Describe("saveLoad.slots[00].title") &&
+              !indexedViewModel.Write("saveLoad.slots[0].title", px::Variant(false)),
+          "invalid indexes and incompatible nested writes must fail closed");
     Check(
         referencedTexture && referencedTexture->Texture().id.ToString() == "66666666-6666-4666-8666-666666666666" && referencedTexture->Texture().lastKnownPath == "Content/logo.png" && referencedTexture->Path() == "Content/logo.png" &&
             referencedTexture->StyleToken().name == "accent" && referencedTexture->Opacity() == 0.35f && referencedTexture->Modulate() == px::Color{ 0x33, 0x66, 0x99, 0xff },

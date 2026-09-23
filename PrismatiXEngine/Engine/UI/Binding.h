@@ -5,6 +5,7 @@
 #include "Engine/Diagnostics/Diagnostic.h"
 
 #include <functional>
+#include <cstddef>
 #include <memory>
 #include <map>
 #include <optional>
@@ -55,7 +56,14 @@ private:
         std::vector<std::string> dependencies{};
         Compute compute{};
     };
+    struct ResolvedPath {
+        std::string rootPath;
+        const Entry* root = nullptr;
+        const Variant* value = nullptr;
+        std::size_t firstNested = 0;
+    };
     struct Subscription { std::uint64_t token; std::string path; Changed callback; };
+    [[nodiscard]] std::optional<ResolvedPath> ResolvePath(std::string_view path) const;
     Status RecomputeDependents(std::string_view changedPath);
     void Notify(const std::string& path, const Variant& value);
 
