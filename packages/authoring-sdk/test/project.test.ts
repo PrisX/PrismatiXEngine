@@ -110,6 +110,8 @@ test("compileProject collects UI runtime texture dependencies", () => {
         hoverPath: "Assets/UI/start-hover.png",
         pressedPath: "Assets/UI/start-pressed.png",
         disabledPath: "Assets/UI/start-disabled.png",
+        hoverSoundPath: "Assets/Audio/hover.ogg",
+        activateSoundPath: "Assets/Audio/activate.ogg",
       },
     }],
   };
@@ -136,6 +138,10 @@ test("compileProject collects UI runtime texture dependencies", () => {
   assert.ok(result.artifact?.dependencies.some((dependency) =>
     dependency.source === "Assets/Audio/theme.wav"),
   "path-shaped UI action arguments must be included in the artifact");
+  assert.ok(result.artifact?.dependencies.some((dependency) =>
+    dependency.source === "Assets/Audio/hover.ogg"));
+  assert.ok(result.artifact?.dependencies.some((dependency) =>
+    dependency.source === "Assets/Audio/activate.ogg"));
 });
 
 test("compileProject checks every authored UI property against a supplied native registry", () => {

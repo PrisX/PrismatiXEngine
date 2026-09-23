@@ -131,25 +131,38 @@ test("texture buttons and rich labels lower typed convenience props to native co
     children: jsxs(Control, {name: "Root", children: [
       jsx(TextureButton, {
         name: "Start", normalPath: "Assets/UI/start.png", hoverPath: "Assets/UI/start-hover.png",
-        scaleMode: "Fit", runtimeProperties: {focusMode: "All"},
+        scaleMode: "Fit", focusMode: "All", hoverSoundPath: "Assets/Audio/hover.ogg",
+        activateSoundPath: "Assets/Audio/start.ogg", fontSize: 22,
+        horizontalAlignment: "Left", verticalAlignment: "Bottom",
         action: "game.start", children: "Start",
       }),
       jsx(RichTextLabel, {
         name: "Dialogue", markup: "<ruby>花<rt>はな</rt></ruby>", vertical: true,
-        verticalRows: 4, runtimeProperties: {fontSize: 30},
+        verticalRows: 4, fontSize: 30, wrap: true, outlineSize: 2,
+        outlineColor: "#2D171DFF", horizontalAlignment: "Center",
       }),
+      jsx(Image, {name: "Backdrop", path: "Assets/UI/backdrop.png", scaleMode: "Stretch",
+        lockAspectRatio: false, opacity: 0.8, runtimeProperties: {path: "old.png"}}),
     ]}),
   }), {kind: "scene"});
   assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
   const button = result.value!.nodes.find((item) => item.name === "Start")!;
   const label = result.value!.nodes.find((item) => item.name === "Dialogue")!;
+  const image = result.value!.nodes.find((item) => item.name === "Backdrop")!;
   assert.equal(button.runtimeType, "TextureButton");
   assert.equal(button.text, "Start");
   assert.deepEqual(button.runtimeProperties, {
     focusMode: "All", normalPath: "Assets/UI/start.png",
     hoverPath: "Assets/UI/start-hover.png", scaleMode: "Fit",
+    hoverSoundPath: "Assets/Audio/hover.ogg", activateSoundPath: "Assets/Audio/start.ogg",
+    fontSize: 22, horizontalAlignment: "Left", verticalAlignment: "Bottom",
   });
   assert.equal(label.runtimeType, "RichTextLabel");
   assert.equal(label.text, "<ruby>花<rt>はな</rt></ruby>");
-  assert.deepEqual(label.runtimeProperties, {fontSize: 30, vertical: true, verticalRows: 4});
+  assert.deepEqual(label.runtimeProperties, {fontSize: 30, wrap: true, outlineSize: 2,
+    outlineColor: {type: "color", value: "#2D171DFF"}, horizontalAlignment: "Center",
+    vertical: true, verticalRows: 4});
+  assert.equal(image.runtimeType, "TextureRect");
+  assert.deepEqual(image.runtimeProperties, {path: "Assets/UI/backdrop.png", scaleMode: "Stretch",
+    lockAspectRatio: false, opacity: 0.8});
 });

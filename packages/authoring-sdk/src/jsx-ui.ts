@@ -125,6 +125,10 @@ export interface UiNodeProps {
   readonly appearance?: UiAppearance;
   readonly style?: UiStyle;
   readonly runtimeProperties?: Readonly<Record<string, JsonValue>>;
+  /** Common native Control interaction properties. */
+  readonly focusMode?: "None" | "Click" | "All";
+  readonly hoverSoundPath?: string;
+  readonly activateSoundPath?: string;
   readonly bindings?: UiBindings;
   readonly bind?: Readonly<Record<string, string | UiBinding>>;
   readonly onClick?: UiAction;
@@ -145,15 +149,28 @@ export interface ControlProps extends UiNodeProps {
 
 export interface TextProps extends Omit<UiNodeProps, "children"> {
   readonly text?: string;
+  readonly fontSize?: number;
+  readonly wrap?: boolean;
+  readonly outlineSize?: number;
+  readonly outlineColor?: string;
+  readonly horizontalAlignment?: "Left" | "Center" | "Right";
+  readonly verticalAlignment?: "Top" | "Center" | "Bottom";
   readonly children?: string | number | readonly (string | number)[];
 }
 
 export interface ImageProps extends UiNodeProps {
   readonly assetId?: string | null;
+  readonly path?: string;
+  readonly scaleMode?: "Stretch" | "Fit" | "Fill" | "Original";
+  readonly lockAspectRatio?: boolean;
+  readonly opacity?: number;
 }
 
 export interface ButtonProps extends Omit<UiNodeProps, "children"> {
   readonly text?: string;
+  readonly fontSize?: number;
+  readonly horizontalAlignment?: "Left" | "Center" | "Right";
+  readonly verticalAlignment?: "Top" | "Center" | "Bottom";
   readonly children?: string | number | readonly (string | number)[];
 }
 
@@ -301,10 +318,16 @@ function node(
   runtimeType: string | undefined,
   props: UiNodeProps & {readonly text?: string; readonly assetId?: string | null},
 ): UiElement {
+  const {focusMode, hoverSoundPath, activateSoundPath, ...rest} = props;
   return definitionElement(nodeType, {
     category: "node", kind,
     ...(runtimeType === undefined ? {} : {runtimeType}),
-    props,
+    props: {...rest, runtimeProperties: {
+      ...props.runtimeProperties,
+      ...(focusMode === undefined ? {} : {focusMode}),
+      ...(hoverSoundPath === undefined ? {} : {hoverSoundPath}),
+      ...(activateSoundPath === undefined ? {} : {activateSoundPath}),
+    }},
   });
 }
 
@@ -339,18 +362,41 @@ export function Grid(props: UiNodeProps): UiElement {
 
 export function Text(props: TextProps): UiElement {
   const text = props.text ?? textualChildren(props.children);
-  const {children: _children, ...rest} = props;
-  return node("label", "Label", {...rest, ...(text === undefined ? {} : {text})});
+  const {children: _children, fontSize, wrap, outlineSize, outlineColor,
+    horizontalAlignment, verticalAlignment, ...rest} = props;
+  return node("label", "Label", {...rest, ...(text === undefined ? {} : {text}),
+    runtimeProperties: {...props.runtimeProperties,
+      ...(fontSize === undefined ? {} : {fontSize}),
+      ...(wrap === undefined ? {} : {wrap}),
+      ...(outlineSize === undefined ? {} : {outlineSize}),
+      ...(outlineColor === undefined ? {} : {outlineColor: {type: "color", value: outlineColor}}),
+      ...(horizontalAlignment === undefined ? {} : {horizontalAlignment}),
+      ...(verticalAlignment === undefined ? {} : {verticalAlignment})}});
 }
 
 export function Image(props: ImageProps): UiElement {
-  return node("image", "TextureRect", props);
+  const {path, scaleMode, lockAspectRatio, opacity, ...rest} = props;
+  return node("image", "TextureRect", {...rest, runtimeProperties: {
+    ...props.runtimeProperties,
+    ...(path === undefined ? {} : {path}),
+    ...(scaleMode === undefined ? {} : {scaleMode}),
+    ...(lockAspectRatio === undefined ? {} : {lockAspectRatio}),
+    ...(opacity === undefined ? {} : {opacity}),
+  }});
+}
+
+function buttonNode(runtimeType: "Button" | "TextureButton", props: ButtonProps): UiElement {
+  const text = props.text ?? textualChildren(props.children);
+  const {children: _children, fontSize, horizontalAlignment, verticalAlignment, ...rest} = props;
+  return node("button", runtimeType, {...rest, ...(text === undefined ? {} : {text}),
+    runtimeProperties: {...props.runtimeProperties,
+      ...(fontSize === undefined ? {} : {fontSize}),
+      ...(horizontalAlignment === undefined ? {} : {horizontalAlignment}),
+      ...(verticalAlignment === undefined ? {} : {verticalAlignment})}});
 }
 
 export function Button(props: ButtonProps): UiElement {
-  const text = props.text ?? textualChildren(props.children);
-  const {children: _children, ...rest} = props;
-  return node("button", "Button", {...rest, ...(text === undefined ? {} : {text})});
+  return buttonNode("Button", props);
 }
 
 /** Image-state button without the generic Control runtimeType escape hatch. */
@@ -358,7 +404,7 @@ export function TextureButton(props: TextureButtonProps): UiElement {
   const text = props.text ?? textualChildren(props.children);
   const {children: _children, normalPath, hoverPath, pressedPath, disabledPath,
     scaleMode, ...rest} = props;
-  return node("button", "TextureButton", {
+  return buttonNode("TextureButton", {
     ...rest,
     ...(text === undefined ? {} : {text}),
     runtimeProperties: {
@@ -375,12 +421,20 @@ export function TextureButton(props: TextureButtonProps): UiElement {
 /** Rich text and ruby markup rendered by the native RichTextLabel control. */
 export function RichTextLabel(props: RichTextLabelProps): UiElement {
   const text = props.markup ?? props.text ?? textualChildren(props.children);
-  const {children: _children, markup: _markup, vertical, verticalRows, ...rest} = props;
+  const {children: _children, markup: _markup, vertical, verticalRows,
+    fontSize, wrap, outlineSize, outlineColor, horizontalAlignment, verticalAlignment,
+    ...rest} = props;
   return node("label", "RichTextLabel", {
     ...rest,
     ...(text === undefined ? {} : {text}),
     runtimeProperties: {
       ...props.runtimeProperties,
+      ...(fontSize === undefined ? {} : {fontSize}),
+      ...(wrap === undefined ? {} : {wrap}),
+      ...(outlineSize === undefined ? {} : {outlineSize}),
+      ...(outlineColor === undefined ? {} : {outlineColor: {type: "color", value: outlineColor}}),
+      ...(horizontalAlignment === undefined ? {} : {horizontalAlignment}),
+      ...(verticalAlignment === undefined ? {} : {verticalAlignment}),
       ...(vertical === undefined ? {} : {vertical}),
       ...(verticalRows === undefined ? {} : {verticalRows}),
     },

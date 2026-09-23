@@ -113,7 +113,14 @@ such as `position`, `size`, `anchor`, `align`, and `fill`, plus CSS-like `style`
 `TextureButton` accepts `normalPath`, `hoverPath`, `pressedPath`,
 `disabledPath`, and `scaleMode` directly. `RichTextLabel` accepts ruby/markup
 through `markup` (or text children), plus `vertical` and `verticalRows`. Both
-still support `runtimeProperties` for less common native properties.
+can use the common `focusMode`, `hoverSoundPath`, and `activateSoundPath`
+props inherited by UI nodes. `Image` accepts `path`, `scaleMode`,
+`lockAspectRatio`, and `opacity` directly; `Text` and `RichTextLabel` accept
+`fontSize`, wrapping, outline size/color, and text alignment. `Button` and
+`TextureButton` accept caption font size and alignment. An outline color string
+such as `"#2D171DFF"` is lowered to the native Color value. These typed props
+override an identically named entry in
+`runtimeProperties`, which remains available for less common native properties.
 
 When a native UI TypeRegistry manifest is available, use
 `validateUiDocument(ui, registry)` to check writable/bindable properties and

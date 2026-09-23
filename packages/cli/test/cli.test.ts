@@ -468,6 +468,30 @@ test("validate reports semantic TypeScript prop errors before JSX evaluation", a
   assert.match(validated.stderr, /TS2322/u);
 });
 
+test("typed image and button props reject invalid author values before native UI loading", async () => {
+  const value = await fixture();
+  const project = JSON.parse(await readFile(value.project, "utf8")) as {
+    uiEntryPoints: Record<string, string>;
+  };
+  project.uiEntryPoints.title = "Content/UI/InvalidProps.tsx";
+  await write(value.project, JSON.stringify(project));
+  await write(join(value.root, "Content/UI/InvalidProps.tsx"), `
+    import {Image, Scene, TextureButton, VBox} from "@prismatix/authoring-sdk";
+    export default (
+      <Scene name="Invalid" width={1280} height={720}>
+        <VBox name="Root">
+          <Image name="Backdrop" path={42} scaleMode="Squish" />
+          <TextureButton name="Start" focusMode="Hover" action="game.start" />
+        </VBox>
+      </Scene>
+    );
+  `);
+  const validated = run(["validate", value.project]);
+  assert.equal(validated.status, 1);
+  assert.match(validated.stderr, /PXCLIJSX1001/u);
+  assert.match(validated.stderr, /TS2322/u);
+});
+
 test("pack invokes the native file-based request protocol", async () => {
   const value = await fixture();
   const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-packager-"));
