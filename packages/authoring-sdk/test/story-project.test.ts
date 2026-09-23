@@ -17,6 +17,8 @@ const storyIndex: StoryIndexDocument = {
 };
 
 test("Story project compiler resolves cross-scene jump/call targets into one Runtime IR program", () => {
+  const progress: Array<{phase: string; sceneId: string; current: number;
+    total: number; sourcePath?: string}> = [];
   const compiled = compileStoryProject({
     storyIndex,
     locale: "zh-TW",
@@ -25,6 +27,7 @@ test("Story project compiler resolves cross-scene jump/call targets into one Run
       "zh-TW/ch01/scene01.pxstory": `*start\nOpening.\n[jump scene=scene02 target=start]\n`,
       "zh-TW/ch01/scene02.pxstory": `*start\nSecond scene.\n[call target=aside]\n[end]\n\n*aside\nAside.\n[return]\n`,
     },
+    onProgress: (event) => progress.push(event),
   });
 
   assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
@@ -47,6 +50,12 @@ test("Story project compiler resolves cross-scene jump/call targets into one Run
   assert.ok(sourceUris.has("Story/story.pxindex"));
   assert.ok(sourceUris.has("zh-TW/ch01/scene01.pxstory"));
   assert.ok(sourceUris.has("zh-TW/ch01/scene02.pxstory"));
+  assert.deepEqual(progress.map(({phase, sceneId, current, total}) =>
+    [phase, sceneId, current, total]), [
+    ["parse", "scene01", 1, 2], ["parse", "scene02", 2, 2],
+    ["compile", "scene01", 1, 2], ["compile", "scene02", 2, 2],
+  ]);
+  assert.equal(progress[0]?.sourcePath, "zh-TW/ch01/scene01.pxstory");
 });
 
 test("Story project compiler supports jumping directly to another scene entry", () => {
@@ -161,14 +170,17 @@ test("Story project compiler hashes author-controlled scene and label ids into i
 });
 
 test("Story project compiler fails closed for missing locale sources, scenes, labels, and required labels", () => {
+  const progress: string[] = [];
   const missingSource = compileStoryProject({
     storyIndex,
     locale: "ja-JP",
     sourceFiles: {},
+    onProgress: (event) => progress.push(`${event.phase}:${event.current}/${event.total}`),
   });
   assert.equal(missingSource.valid, false);
   assert.ok(missingSource.diagnostics.some((diagnostic) => diagnostic.code === "PXSTORY1302"));
   assert.ok(missingSource.diagnostics.some((diagnostic) => diagnostic.code === "PXSTORY1306"));
+  assert.deepEqual(progress, ["parse:1/2", "parse:2/2", "compile:1/2", "compile:2/2"]);
 
   const unresolved = compileStoryProject({
     storyIndex,

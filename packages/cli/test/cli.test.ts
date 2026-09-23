@@ -381,6 +381,17 @@ test("artifact build reports load, compile, copy and fingerprint progress", asyn
     assert.ok(events.some(event => event.phase === phase && event.done), phase);
   const copy = events.find(event => event.phase === "copy" && event.done)!;
   assert.equal(copy.current, copy.total);
+  const storyEvents = built.stderr.split(/\r?\n/u).filter(Boolean)
+    .map(line => JSON.parse(line) as {code: string; phase?: string; current?: number;
+      total?: number; sceneId?: string; locale?: string; done?: boolean})
+    .filter(event => event.code === "PXCLI1103");
+  assert.deepEqual(storyEvents.map(event => event.phase),
+    ["story-parse", "story-compile"]);
+  assert.ok(storyEvents.every(event => event.current === 1 && event.total === 1 &&
+    event.locale === "en" && event.sceneId === "main" && event.done));
+  const validated = run(["validate", value.project]);
+  assert.equal(validated.status, 0, validated.stderr);
+  assert.match(validated.stderr, /"code":"PXCLI1103"/u);
 });
 
 test("TSX UI authoring lowers to canonical JSON and never enters the Runtime artifact", async () => {

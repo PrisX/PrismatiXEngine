@@ -12,7 +12,7 @@ import {
   type ProjectDependency,
   type ProjectDependencyReference,
 } from "./resources.js";
-import {compileStoryProject, type StoryIndexDocument} from "./story-project.js";
+import {compileStoryProject, type StoryIndexDocument, type StoryProjectProgress} from "./story-project.js";
 import type {
   AuthoringDiagnostic,
   CharacterDocument,
@@ -123,6 +123,10 @@ export interface CompileProjectInput {
   /** Native UI TypeRegistry metadata for validating authored runtime properties. */
   readonly uiTypeRegistry?: UiTypeRegistryMetadata;
   readonly committedRevision?: number;
+  /** Completed Story scenes across all locales; callbacks are synchronous. */
+  readonly onStoryProgress?: (event: StoryProjectProgress & {
+    readonly globalCurrent: number; readonly globalTotal: number;
+  }) => void;
 }
 
 export interface BuildArtifact {
@@ -602,6 +606,9 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       }
     }
   }
+  const storyProgressCounts = {parse: 0, compile: 0};
+  const globalStoryTotal = storyIndex.scenes.length *
+    (1 + project.supportedLocales.filter((locale) => locale !== project.defaultLocale).length);
   const compileLocale = (locale: string) => {
     const document = localeDocuments.get(locale);
     const localizedResources: Record<string, string> = {};
@@ -626,6 +633,11 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
         extensions,
         resources: {...resourcePaths, ...localizedResources},
         resourceAssets,
+        ...(input.onStoryProgress === undefined ? {} : {onProgress: (event: StoryProjectProgress) => {
+          storyProgressCounts[event.phase] += 1;
+          input.onStoryProgress?.({...event,
+            globalCurrent: storyProgressCounts[event.phase], globalTotal: globalStoryTotal});
+        }}),
       });
   };
   const compiled = compileLocale(project.defaultLocale);

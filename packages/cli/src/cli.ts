@@ -33,6 +33,7 @@ import {
   validateDocument,
   type AuthoringDiagnostic,
   type BuildArtifact,
+  type CompileProjectInput,
   type ProjectDocument,
   type SourceSpan,
   type UiTypeRegistryMetadata,
@@ -163,6 +164,23 @@ function buildProgress(phase: string, current: number, total: number | undefined
   progress({event: "progress", severity: "information", code: "PXCLI1102", phase,
     current, ...(total === undefined ? {} : {total}), bytes, done,
     message: `${label}: ${count}${amount}${done ? " (done)" : ""}`});
+}
+
+function storyProgressReporter(): NonNullable<CompileProjectInput["onStoryProgress"]> {
+  const lastHumanReport = {parse: 0, compile: 0};
+  return (value) => {
+    const {phase, globalCurrent: current, globalTotal: total} = value;
+    const step = Math.max(1, Math.ceil(total / 20));
+    if (!machineOutput && current !== 1 && current !== total &&
+        current - lastHumanReport[phase] < step) return;
+    lastHumanReport[phase] = current;
+    const label = phase === "parse" ? "Parsing Story" : "Compiling Story";
+    progress({event: "progress", severity: "information", code: "PXCLI1103",
+      phase: `story-${phase}`, current, total, done: current === total,
+      locale: value.locale, sceneId: value.sceneId,
+      ...(value.sourcePath === undefined ? {} : {sourcePath: value.sourcePath}),
+      message: `${label}: ${current}/${total} scenes (${value.locale}: ${value.sceneId})`});
+  };
 }
 
 function safeVirtualPath(value: string): boolean {
@@ -723,7 +741,8 @@ async function loadUiRegistry(override?: string, runtimeHint?: string,
 }
 
 async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
-  registryOverride?: string, runtimeHint?: string, packagerPath?: string) {
+  registryOverride?: string, runtimeHint?: string, packagerPath?: string,
+  onStoryProgress?: NonNullable<CompileProjectInput["onStoryProgress"]>) {
   const uiTypeRegistry = await loadUiRegistry(registryOverride, runtimeHint, packagerPath);
   const result = compileProject({project: loaded.project, documents: loaded.documents,
     sourceFiles: loaded.sourceFiles, locales: loaded.locales,
@@ -737,6 +756,7 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
       catch { return undefined; }
     },
     resolveResourceInclude: (path) => loaded.includedResources[path],
+    ...(onStoryProgress === undefined ? {} : {onStoryProgress}),
     ...(committedRevision === undefined ? {} : {committedRevision}),
     ...(uiTypeRegistry === undefined ? {} : {uiTypeRegistry})});
   if (uiTypeRegistry !== undefined ||
@@ -749,7 +769,7 @@ async function validateCommand(options: Options): Promise<number> {
   try {
     const loaded = await loadProject(options.positional[0]);
     const result = await compileLoaded(loaded, undefined, options.values.get("ui-registry"),
-      options.values.get("runtime"));
+      options.values.get("runtime"), undefined, storyProgressReporter());
     printDiagnostics(result.diagnostics);
     if (!result.valid) return 1;
     process.stdout.write(`${JSON.stringify({valid: true, engineVersion: "0.2.0",
@@ -819,7 +839,7 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
   buildProgress("load", 1, 1, 0, true);
   buildProgress("compile", 0, 1);
   const compiled = await compileLoaded(loaded, committedRevision, registryOverride,
-    runtimeHint, packagerPath);
+    runtimeHint, packagerPath, storyProgressReporter());
   printDiagnostics(compiled.diagnostics);
   if (!compiled.valid || compiled.artifact === undefined) throw new Error("Project validation or compilation failed");
   buildProgress("compile", 1, 1, 0, true);

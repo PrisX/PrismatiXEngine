@@ -40,6 +40,17 @@ export interface StoryIndexDocument {
   readonly scenes: readonly StoryIndexScene[];
 }
 
+/** Synchronous, per-locale scene progress. A skipped or invalid scene still
+ * advances the count so consumers can distinguish work from a stalled build. */
+export interface StoryProjectProgress {
+  readonly phase: "parse" | "compile";
+  readonly locale: string;
+  readonly sceneId: string;
+  readonly sourcePath?: string;
+  readonly current: number;
+  readonly total: number;
+}
+
 export interface StoryProjectCompileContext {
   readonly storyIndex: StoryIndexDocument;
   readonly locale: string;
@@ -55,6 +66,7 @@ export interface StoryProjectCompileContext {
   readonly extensions?: readonly ExtensionManifest[];
   readonly resources?: Readonly<Record<string, string>>;
   readonly resourceAssets?: readonly ProjectAssetDescriptor[];
+  readonly onProgress?: (event: StoryProjectProgress) => void;
 }
 
 interface ParsedScene {
@@ -258,42 +270,49 @@ export function compileStoryProject(context: StoryProjectCompileContext): StoryC
   const scenesById = new Map<string, ParsedScene>();
   const seenSceneIds = new Set<string>();
 
-  for (const descriptor of context.storyIndex.scenes) {
-    if (seenSceneIds.has(descriptor.id)) {
-      diagnostics.push(issue("PXSTORY1301", `Duplicate Story scene id: ${descriptor.id}`, indexPath, descriptor.id));
-      continue;
-    }
-    seenSceneIds.add(descriptor.id);
-
-    const sourcePath = descriptor.sources[context.locale];
-    if (sourcePath === undefined) {
-      diagnostics.push(issue("PXSTORY1302", `Story scene ${descriptor.id} has no ${context.locale} source`, indexPath, descriptor.id));
-      continue;
-    }
-    const source = context.sourceFiles[sourcePath];
-    if (source === undefined) {
-      diagnostics.push(issue("PXSTORY1303", `Story source is unavailable: ${sourcePath}`, sourcePath, descriptor.id));
-      continue;
-    }
-    let document = parseStory(source, sourcePath);
-    const mapPath = `${sourcePath}.pxids.json`;
-    const mapSource = context.sourceFiles[mapPath];
-    if (mapSource === undefined && storyRequiresIdentityMap(source)) {
-      document = {...document, diagnostics: [...document.diagnostics,
-        issue("PXSTORY1411", "Story requires its external identity map", mapPath)]};
-    } else if (mapSource !== undefined) {
-      try { document = applyStoryIdentityMap(document, JSON.parse(mapSource) as unknown, mapPath); }
-      catch (error) {
-        document = {...document, diagnostics: [...document.diagnostics,
-          issue("PXSTORY1410", "Story identity map is not valid JSON", mapPath, String(error))]};
+  for (const [index, descriptor] of context.storyIndex.scenes.entries()) {
+    try {
+      if (seenSceneIds.has(descriptor.id)) {
+        diagnostics.push(issue("PXSTORY1301", `Duplicate Story scene id: ${descriptor.id}`, indexPath, descriptor.id));
+        continue;
       }
+      seenSceneIds.add(descriptor.id);
+
+      const sourcePath = descriptor.sources[context.locale];
+      if (sourcePath === undefined) {
+        diagnostics.push(issue("PXSTORY1302", `Story scene ${descriptor.id} has no ${context.locale} source`, indexPath, descriptor.id));
+        continue;
+      }
+      const source = context.sourceFiles[sourcePath];
+      if (source === undefined) {
+        diagnostics.push(issue("PXSTORY1303", `Story source is unavailable: ${sourcePath}`, sourcePath, descriptor.id));
+        continue;
+      }
+      let document = parseStory(source, sourcePath);
+      const mapPath = `${sourcePath}.pxids.json`;
+      const mapSource = context.sourceFiles[mapPath];
+      if (mapSource === undefined && storyRequiresIdentityMap(source)) {
+        document = {...document, diagnostics: [...document.diagnostics,
+          issue("PXSTORY1411", "Story requires its external identity map", mapPath)]};
+      } else if (mapSource !== undefined) {
+        try { document = applyStoryIdentityMap(document, JSON.parse(mapSource) as unknown, mapPath); }
+        catch (error) {
+          document = {...document, diagnostics: [...document.diagnostics,
+            issue("PXSTORY1410", "Story identity map is not valid JSON", mapPath, String(error))]};
+        }
+      }
+      const labels = new Set(
+        document.nodes
+          .filter((node) => node.kind === "label" && node.name !== undefined)
+          .map((node) => node.name as string),
+      );
+      scenesById.set(descriptor.id, {descriptor, path: sourcePath, document, labels});
+    } finally {
+      context.onProgress?.({phase: "parse", locale: context.locale,
+        sceneId: descriptor.id, ...(descriptor.sources[context.locale] === undefined ? {}
+          : {sourcePath: descriptor.sources[context.locale]}),
+        current: index + 1, total: context.storyIndex.scenes.length});
     }
-    const labels = new Set(
-      document.nodes
-        .filter((node) => node.kind === "label" && node.name !== undefined)
-        .map((node) => node.name as string),
-    );
-    scenesById.set(descriptor.id, {descriptor, path: sourcePath, document, labels});
   }
 
   const entryScene = scenesById.get(context.storyIndex.entryScene);
@@ -306,51 +325,58 @@ export function compileStoryProject(context: StoryProjectCompileContext): StoryC
   const resourceDependencies = new Set<string>();
   const operationOwners = new Map<string, string>();
 
-  for (const descriptor of context.storyIndex.scenes) {
-    const scene = scenesById.get(descriptor.id);
-    if (scene === undefined || scene.descriptor !== descriptor) continue;
-    const sceneDiagnostics: AuthoringDiagnostic[] = [];
-    for (const requiredLabel of descriptor.requiredLabels ?? []) {
-      if (!scene.labels.has(requiredLabel)) {
-        sceneDiagnostics.push(issue(
-          "PXSTORY1307",
-          `Story scene ${descriptor.id} is missing required label ${requiredLabel}`,
-          scene.path,
-          requiredLabel,
-        ));
+  for (const [index, descriptor] of context.storyIndex.scenes.entries()) {
+    try {
+      const scene = scenesById.get(descriptor.id);
+      if (scene === undefined || scene.descriptor !== descriptor) continue;
+      const sceneDiagnostics: AuthoringDiagnostic[] = [];
+      for (const requiredLabel of descriptor.requiredLabels ?? []) {
+        if (!scene.labels.has(requiredLabel)) {
+          sceneDiagnostics.push(issue(
+            "PXSTORY1307",
+            `Story scene ${descriptor.id} is missing required label ${requiredLabel}`,
+            scene.path,
+            requiredLabel,
+          ));
+        }
       }
-    }
 
-    const rewritten = rewriteScene(scene, scenesById, sceneDiagnostics);
-    const compiled = compileStory(rewritten.document, {
-      documentId: descriptor.identityNamespace ?? `${documentId}:${descriptor.id}`,
-      locale: context.locale,
-      ...(context.committedRevision === undefined ? {} : {committedRevision: context.committedRevision}),
-      ...(context.characters === undefined ? {} : {characters: context.characters}),
-      ...(context.game === undefined ? {} : {game: context.game}),
-      ...(context.extensions === undefined ? {} : {extensions: context.extensions}),
-      ...(context.resources === undefined ? {} : {resources: context.resources}),
-      ...(context.resourceAssets === undefined ? {} : {resourceAssets: context.resourceAssets}),
-    });
-    diagnostics.push(...compiled.diagnostics);
-    for (const dependency of compiled.resourceDependencies ?? [])
-      resourceDependencies.add(dependency);
-    if (!compiled.valid || compiled.runtimeIr === undefined || compiled.sourceMap === undefined) continue;
+      const rewritten = rewriteScene(scene, scenesById, sceneDiagnostics);
+      const compiled = compileStory(rewritten.document, {
+        documentId: descriptor.identityNamespace ?? `${documentId}:${descriptor.id}`,
+        locale: context.locale,
+        ...(context.committedRevision === undefined ? {} : {committedRevision: context.committedRevision}),
+        ...(context.characters === undefined ? {} : {characters: context.characters}),
+        ...(context.game === undefined ? {} : {game: context.game}),
+        ...(context.extensions === undefined ? {} : {extensions: context.extensions}),
+        ...(context.resources === undefined ? {} : {resources: context.resources}),
+        ...(context.resourceAssets === undefined ? {} : {resourceAssets: context.resourceAssets}),
+      });
+      diagnostics.push(...compiled.diagnostics);
+      for (const dependency of compiled.resourceDependencies ?? [])
+        resourceDependencies.add(dependency);
+      if (!compiled.valid || compiled.runtimeIr === undefined || compiled.sourceMap === undefined) continue;
 
-    // Do not spread a commercial-size scene into Array.push: V8 treats the
-    // elements as call arguments and overflows its argument stack around the
-    // same scale that our Runtime IR contract explicitly supports.
-    for (const operation of compiled.runtimeIr.operations) {
-      if (rewritten.stubSourceIds.has(operation.sourceId)) continue;
-      const owner = operationOwners.get(operation.operationId);
-      if (owner !== undefined) diagnostics.push(issue(
-        "PXSTORY1308", `Duplicate Story operation identity shared by ${owner} and ${descriptor.id}`,
-        scene.path, operation.operationId));
-      else operationOwners.set(operation.operationId, descriptor.id);
-      operations.push(operation);
-    }
-    for (const mapping of compiled.sourceMap.mappings) {
-      if (!rewritten.stubSourceIds.has(mapping.sourceId)) mappings.push(mapping);
+      // Do not spread a commercial-size scene into Array.push: V8 treats the
+      // elements as call arguments and overflows its argument stack around the
+      // same scale that our Runtime IR contract explicitly supports.
+      for (const operation of compiled.runtimeIr.operations) {
+        if (rewritten.stubSourceIds.has(operation.sourceId)) continue;
+        const owner = operationOwners.get(operation.operationId);
+        if (owner !== undefined) diagnostics.push(issue(
+          "PXSTORY1308", `Duplicate Story operation identity shared by ${owner} and ${descriptor.id}`,
+          scene.path, operation.operationId));
+        else operationOwners.set(operation.operationId, descriptor.id);
+        operations.push(operation);
+      }
+      for (const mapping of compiled.sourceMap.mappings) {
+        if (!rewritten.stubSourceIds.has(mapping.sourceId)) mappings.push(mapping);
+      }
+    } finally {
+      context.onProgress?.({phase: "compile", locale: context.locale,
+        sceneId: descriptor.id, ...(descriptor.sources[context.locale] === undefined ? {}
+          : {sourcePath: descriptor.sources[context.locale]}),
+        current: index + 1, total: context.storyIndex.scenes.length});
     }
   }
 

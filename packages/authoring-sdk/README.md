@@ -52,6 +52,15 @@ const result = compileStory(story, {
 `compileStoryProject` with a Story index and all referenced scene sources;
 single-document compilation reports `PXSTORY1215` for these commands.
 
+For large Story indexes, `compileStoryProject({..., onProgress})` reports each
+completed scene in its `parse` and `compile` phases with locale, scene ID,
+source path and per-locale `current`/`total`. `compileProject({...,
+onStoryProgress})` forwards those events and adds `globalCurrent`/`globalTotal`
+across locales. Callbacks are synchronous; a missing or invalid scene still
+advances the count, while diagnostics remain in the compile result. The CLI
+uses this API for `validate`, `dev` and builds: human output is throttled, and
+`--json` streams every scene as a `PXCLI1103` progress record on stderr.
+
 ## Readable Story with durable save identities
 
 An ordinary `.pxstory` needs no manually authored id. New projects from

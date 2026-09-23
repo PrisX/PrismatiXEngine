@@ -82,8 +82,8 @@ Never choose Story, Assets, another source input or an unrelated existing folder
 
 Output replacement verifies the previous build's inventory. If you have played a distribution and it now contains saves/logs, or edited its files, use a new output directory; do not delete player data to bypass the guard. Test migration with a copy of the old saves before distributing an update.
 
-Long builds report loading, compilation, copy counts and bytes, fingerprinting,
-and publication on stderr. Packaging also forwards throttled native phase/count
+Long builds report loading, per-scene Story parse/compile counts across locales,
+copy counts and bytes, fingerprinting, and publication on stderr. Packaging also forwards throttled native phase/count
 updates as they happen. With `--json`, CLI progress is NDJSON on stderr and
 native Packager events are streamed on stdout; neither waits for the whole
 archive to finish before showing progress.

@@ -95,6 +95,34 @@ test("compileProject produces one deterministic RuntimeIR BuildArtifact", () => 
   assert.ok(result.artifact.files["Content/UI/Panel.pxuicomponent"]?.includes("PrismatiXUIComponent"));
 });
 
+test("compileProject reports completed Story scenes across locales", () => {
+  const progress: Array<{phase: string; locale: string; current: number;
+    total: number; globalCurrent: number; globalTotal: number}> = [];
+  const result = compileProject({
+    project: {...project, supportedLocales: ["ja-JP", "zh-TW"]},
+    documents: {
+      "Story/story.pxindex": {...storyIndex, scenes: [{id: "scene01", sources: {
+        "zh-TW": "Story/zh-TW/scene01.pxstory",
+        "ja-JP": "Story/ja-JP/scene01.pxstory",
+      }}]},
+      "Content/game.pxgame": game, "Content/UI/Title.pxui": ui,
+    },
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n",
+      "Story/ja-JP/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {
+      "zh-TW": {format: "PrismatiXLocale", schemaRevision: 2, locale: "zh-TW", strings: {}},
+      "ja-JP": {format: "PrismatiXLocale", schemaRevision: 2, locale: "ja-JP", strings: {}},
+    },
+    onStoryProgress: (event) => progress.push(event),
+  });
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  assert.deepEqual(progress.map(({phase, locale, current, total, globalCurrent, globalTotal}) =>
+    [phase, locale, current, total, globalCurrent, globalTotal]), [
+    ["parse", "zh-TW", 1, 1, 1, 2], ["compile", "zh-TW", 1, 1, 1, 2],
+    ["parse", "ja-JP", 1, 1, 2, 2], ["compile", "ja-JP", 1, 1, 2, 2],
+  ]);
+});
+
 test("compileProject collects UI runtime texture dependencies", () => {
   const textureUi = {
     ...ui,
