@@ -59,6 +59,9 @@ int main() {
     const auto* activateSound=button?FindProperty(*button,"activateSoundPath"):nullptr;
     Check(hoverSound&&hoverSound->writable&&activateSound&&activateSound->writable,
           "Controls must expose authored hover and activation sounds");
+    const auto* visible = button ? FindProperty(*button, "visible") : nullptr;
+    Check(visible && visible->writable && visible->valueType == "boolean",
+          "JSX visible must reach Runtime as a writable boolean property");
     const auto* horizontal =
         button ? FindProperty(*button, "horizontalAlignment") : nullptr;
     Check(horizontal && horizontal->enumChoices.size() == 3,

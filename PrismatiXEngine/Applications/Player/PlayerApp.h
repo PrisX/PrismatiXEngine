@@ -177,6 +177,8 @@ private:
         ui::RouteState routes;
     };
     std::optional<SavePresentationState> m_beforeSavePresentation;
+    std::optional<int> m_pendingSaveLoadSlot;
+    bool m_pendingSaveLoadSaveMode = false;
     std::vector<std::uint8_t> m_menuThumb;
     std::string m_viewingCG;
 
@@ -223,6 +225,7 @@ private:
     bool m_uiRoutesE2EReadinessLogged = false;
     std::size_t m_uiRoutesE2EIndex = 0;
     bool m_uiRoutesE2EAwaitingCapture = false;
+    int m_uiRoutesE2ESaveConfirmStage = 0;
     std::uint64_t m_uiRoutesE2EStartedAt = 0;
     std::uint64_t m_uiRoutesE2ECaptureAt = 0;
     bool m_uiActionsE2E = false;

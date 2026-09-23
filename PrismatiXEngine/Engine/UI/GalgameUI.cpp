@@ -162,6 +162,9 @@ GalgameUI::GalgameUI() {
         (void)m_viewModel.Define(prefix + "subtitle", Variant(std::string{}), true);
         (void)m_viewModel.Define(prefix + "enabled", Variant(false), true);
     }
+    for (const char* property : {"visible", "save", "load", "overwrite"})
+        (void)m_viewModel.Define(
+            std::string("saveLoad.confirm.") + property, Variant(false), true);
     const std::vector<std::string> commands={
         "game.start", "game.continue", "load.open", "save.open",
         "gallery.open", "settings.open", "extra.open", "flowchart.open",
@@ -171,6 +174,8 @@ GalgameUI::GalgameUI() {
     for(const auto& command:commands)(void)RegisterActionCommand(command);
     (void)RegisterActionCommand("save.slot", "slot");
     (void)RegisterActionCommand("load.slot", "slot");
+    (void)RegisterActionCommand("saveLoad.confirm.accept");
+    (void)RegisterActionCommand("saveLoad.confirm.cancel");
     (void)m_context.Commands().Register("hud.toolbar.pin",[this](const Variant&){return ToggleHudToolbarPinned();});
     for (auto& entry : CreateBuiltinUiPackage()) {
         const auto screen = ScreenFromId(entry.route);
@@ -648,6 +653,7 @@ Status GalgameUI::ShowBacklog(std::vector<GalgameItem> entries) {
 
 Status GalgameUI::ShowSaveLoad(bool saveMode, std::vector<GalgameItem> slots) {
     const Screen target=saveMode?Screen::Save:Screen::Load;
+    (void)SetSaveLoadConfirmation(SaveLoadPrompt::None);
     for (std::size_t index = 0; index < 12; ++index) {
         const auto found = std::ranges::find_if(slots, [index](const GalgameItem& item) {
             return item.argument == std::to_string(index);
@@ -679,6 +685,24 @@ Status GalgameUI::ShowSaveLoad(bool saveMode, std::vector<GalgameItem> slots) {
     }
     m_items = std::make_shared<ItemSource>(std::move(slots), *this);
     return grid->SetSource(m_items, [] { return std::make_unique<CardButton>(); });
+}
+
+bool GalgameUI::SupportsSaveLoadConfirmation() const {
+    return (m_screen == Screen::Save || m_screen == Screen::Load) &&
+           FindNamed<Control>(m_context.Root(), "SaveLoadConfirm") != nullptr;
+}
+
+Status GalgameUI::SetSaveLoadConfirmation(const SaveLoadPrompt prompt) {
+    for (const auto& [name, enabled] : {
+             std::pair{"visible", prompt != SaveLoadPrompt::None},
+             std::pair{"save", prompt == SaveLoadPrompt::Save},
+             std::pair{"load", prompt == SaveLoadPrompt::Load},
+             std::pair{"overwrite", prompt == SaveLoadPrompt::Overwrite}}) {
+        const Status written = m_viewModel.Write(
+            std::string("saveLoad.confirm.") + name, Variant(enabled));
+        if (!written) return written;
+    }
+    return Status::Ok();
 }
 
 Status GalgameUI::ShowGallery(std::vector<GalgameItem> entries) {

@@ -258,6 +258,14 @@ Status RegisterBuiltinUITypes() {
         [](Object& o, const Variant& v) { if (auto* p = v.TryGet<Rect>()) { As<Control>(o)->SetOffsets(*p); return Status::Ok(); } return TypeError("offsets expects Rect"); }});
     control.properties.push_back(BoolProperty("enabled", "Interaction", [](const Object& o) { return As<Control>(o)->Enabled(); },
         [](Object& o, bool v) { As<Control>(o)->SetEnabled(v); return Status::Ok(); }));
+    // JSX exposes `visible` as a bool. Make the same property bindable at
+    // Runtime, so authored modal surfaces can react to ViewModel state.
+    control.properties.push_back(BoolProperty("visible", "Behavior", [](const Object& o) {
+        return As<Control>(o)->GetVisibility() == Visibility::Visible;
+    }, [](Object& o, bool v) {
+        As<Control>(o)->SetVisibility(v ? Visibility::Visible : Visibility::Hidden);
+        return Status::Ok();
+    }));
     auto visibilityProperty=StringProperty("visibility", "Behavior", [](const Object& o) {
         switch (As<Control>(o)->GetVisibility()) { case Visibility::Visible: return std::string("Visible"); case Visibility::Hidden: return std::string("Hidden"); default: return std::string("Collapsed"); }
     }, [](Object& o, std::string v) {

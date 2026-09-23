@@ -2217,6 +2217,7 @@ void PlayerApp::OpenScreen(const std::string& route) {
 void PlayerApp::PresentRoute(const std::string& route,
                              const std::string& /*operation*/) {
     std::string target=route;if(target=="saveload")target="load";
+    m_pendingSaveLoadSlot.reset();
     if (m_appState != AppState::BootSplash &&
         !m_gameStartTransitionActive && m_ui.CurrentRoute() != target)
         BeginPresentationCrossfade(0.3f);
@@ -2305,11 +2306,43 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         else if (command.ends_with(".down")) offset.y += 360.0f;
         scroll->SetScrollOffset(offset);
     };
-    if (t == "load.slot") {
-        LoadSlot(std::atoi(action.argument.c_str()));
-    } else if (t == "save.slot") {
-        SaveSlot(std::atoi(action.argument.c_str()), m_menuThumb);
-        m_ui.ShowSaveLoad(true, SaveItems(true));
+    if (t == "load.slot" || t == "save.slot") {
+        const bool saveMode = t == "save.slot";
+        if (m_ui.SupportsSaveLoadConfirmation()) {
+            char* end = nullptr;
+            const long slot = std::strtol(action.argument.c_str(), &end, 10);
+            if (end == action.argument.c_str() || *end != '\0' ||
+                slot < 0 || slot >= 12 ||
+                (!saveMode && !m_saves.Peek(static_cast<int>(slot)).exists))
+                return;
+            m_pendingSaveLoadSlot = static_cast<int>(slot);
+            m_pendingSaveLoadSaveMode = saveMode;
+            const auto prompt = !saveMode
+                ? ui::GalgameUI::SaveLoadPrompt::Load
+                : m_saves.Peek(static_cast<int>(slot)).exists
+                    ? ui::GalgameUI::SaveLoadPrompt::Overwrite
+                    : ui::GalgameUI::SaveLoadPrompt::Save;
+            (void)m_ui.SetSaveLoadConfirmation(prompt);
+        } else if (saveMode) {
+            SaveSlot(std::atoi(action.argument.c_str()), m_menuThumb);
+            m_ui.ShowSaveLoad(true, SaveItems(true));
+        } else {
+            LoadSlot(std::atoi(action.argument.c_str()));
+        }
+    } else if (t == "saveLoad.confirm.accept") {
+        const auto pending = std::exchange(m_pendingSaveLoadSlot, std::nullopt);
+        (void)m_ui.SetSaveLoadConfirmation(ui::GalgameUI::SaveLoadPrompt::None);
+        if (!pending) return;
+        if (m_pendingSaveLoadSaveMode) {
+            if (SaveSlot(*pending, m_menuThumb))
+                (void)m_ui.ShowSaveLoad(true, SaveItems(true));
+        } else {
+            BeginPresentationCrossfade(0.3f);
+            (void)LoadSlot(*pending);
+        }
+    } else if (t == "saveLoad.confirm.cancel") {
+        m_pendingSaveLoadSlot.reset();
+        (void)m_ui.SetSaveLoadConfirmation(ui::GalgameUI::SaveLoadPrompt::None);
     } else if (t == "set.bgm.value") {
         m_settings.bgmVolume=std::clamp(std::atoi(action.argument.c_str()),0,128);audio.SetBGMVolume(m_settings.bgmVolume);
     } else if (t == "set.se.value") {
@@ -2521,6 +2554,11 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
             else RollbackToBacklogSequence(entry->sequence);
         }
     } else if (t == "overlay.close") {
+        if (m_pendingSaveLoadSlot) {
+            m_pendingSaveLoadSlot.reset();
+            (void)m_ui.SetSaveLoadConfirmation(ui::GalgameUI::SaveLoadPrompt::None);
+            return;
+        }
         const bool restoreTitleMusic = m_musicTrackSelected &&
             (m_ui.CurrentRoute() == "music" || m_ui.CurrentRoute() == "extra");
         (void)m_session->Routes().CloseModal();
@@ -2667,6 +2705,30 @@ void PlayerApp::DriveE2EJourney() {
             m_e2eFailed=true;
             m_uiRoutesE2E=false;
             m_quitRequested=true;
+            return;
+        }
+        if(m_uiRoutesE2ESaveConfirmStage==1){
+            auto* dialog=FindUiControlNamed<ui::Control>(
+                m_ui.Root(),"SaveLoadConfirm");
+            if(m_pendingSaveLoadSlot==0&&dialog&&dialog->IsVisibleInTree()){
+                m_uiRoutesE2ESaveConfirmStage=2;
+                m_uiRoutesE2EAwaitingCapture=true;
+                m_uiRoutesE2ECaptureAt=now+350;
+            }
+            return;
+        }
+        if(m_uiRoutesE2ESaveConfirmStage==3){
+            auto* dialog=FindUiControlNamed<ui::Control>(
+                m_ui.Root(),"SaveLoadConfirm");
+            if(m_pendingSaveLoadSlot||(dialog&&dialog->IsVisibleInTree()))return;
+            const Status closed=m_session->Routes().CloseModal();
+            if(!closed){
+                for(const auto& diagnostic:closed.Diagnostics())diag::Emit(diagnostic);
+                m_e2eFailed=true;m_uiRoutesE2E=false;m_quitRequested=true;
+                return;
+            }
+            m_uiRoutesE2ESaveConfirmStage=0;
+            ++m_uiRoutesE2EIndex;
             return;
         }
         if(m_uiRoutesE2EAwaitingCapture)return;
@@ -3054,9 +3116,10 @@ void PlayerApp::CaptureUIRoutesE2EFrame() {
         return;
     const auto summary=graphics::CaptureFrameSummary(
         m_runtime.Renderer().Handle());
+    const bool confirmCapture=route=="save"&&m_uiRoutesE2ESaveConfirmStage==2;
     const std::string captureName=
         "route-"+std::to_string(m_uiRoutesE2EIndex+1)+"-"+
-        std::string(route);
+        std::string(route)+(confirmCapture?"-confirm":"");
     const bool saved=CapturePresentationE2EFrame(captureName);
     PX_LOG_INFO(
         "Player UI routes E2E frame index={} route={} width={} height={} colors={} hash={} saved={}",
@@ -3069,6 +3132,31 @@ void PlayerApp::CaptureUIRoutesE2EFrame() {
         m_e2eFailed=true;
         m_uiRoutesE2E=false;
         m_quitRequested=true;
+        return;
+    }
+    if(route=="save"&&m_uiRoutesE2ESaveConfirmStage==0){
+        auto* slot=FindUiControlNamed<ui::Button>(m_ui.Root(),"Slot0Button");
+        if(!slot){
+            PX_LOG_ERROR("Player UI routes E2E authored save slot missing");
+            m_e2eFailed=true;m_uiRoutesE2E=false;m_quitRequested=true;
+            return;
+        }
+        slot->Activate();
+        m_uiRoutesE2ESaveConfirmStage=1;
+        m_uiRoutesE2EAwaitingCapture=false;
+        return;
+    }
+    if(confirmCapture){
+        auto* cancel=FindUiControlNamed<ui::Button>(
+            m_ui.Root(),"ConfirmNoButton");
+        if(!cancel){
+            PX_LOG_ERROR("Player UI routes E2E authored save confirmation missing");
+            m_e2eFailed=true;m_uiRoutesE2E=false;m_quitRequested=true;
+            return;
+        }
+        cancel->Activate();
+        m_uiRoutesE2ESaveConfirmStage=3;
+        m_uiRoutesE2EAwaitingCapture=false;
         return;
     }
     const Status closed=m_session->Routes().CloseModal();

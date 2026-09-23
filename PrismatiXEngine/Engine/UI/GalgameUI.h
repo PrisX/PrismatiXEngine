@@ -129,6 +129,9 @@ public:
     Status ShowHUD(const DialoguePresentation& presentation);
     Status ShowBacklog(std::vector<GalgameItem> entries);
     Status ShowSaveLoad(bool saveMode, std::vector<GalgameItem> slots);
+    enum class SaveLoadPrompt { None, Save, Load, Overwrite };
+    [[nodiscard]] bool SupportsSaveLoadConfirmation() const;
+    Status SetSaveLoadConfirmation(SaveLoadPrompt prompt);
     Status ShowGallery(std::vector<GalgameItem> entries);
     Status ShowSettings(const SettingsPresentation& settings);
     Status ShowVideoOverlay(bool skippable);
