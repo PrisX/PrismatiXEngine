@@ -45,10 +45,16 @@ in the Runtime artifact.
 
 The map preserves both authored ids and the exact pre-migration fallback
 `sourceId` of operations that had no `[id]`. In-place prose edits, comments,
-and blank lines retain those identities. If executable operations are added,
-removed, changed to another command, or recognizably moved, compilation fails
-with a map diagnostic instead of silently redirecting a save. Review the
-change and its save-migration implications before regenerating a map.
+and blank lines retain those identities. For added or removed executable
+operations, run `prismatix ids my-game --sync` to preview the proposed map,
+then `prismatix ids my-game --sync --write` to back up and update only the
+sidecars. `--sync --check` exits nonzero when an update is pending. Existing
+operation ids survive unambiguous edits; deleted identities are listed so you
+can review save-migration implications. The synchronizer refuses reordered,
+duplicated, or otherwise ambiguous edits rather than guessing a save anchor.
+Changing an operation's kind/command also needs manual review. Validate the
+project and test old saves before distributing an update; stable ids alone do
+not prove save compatibility.
 
 ## JSX UI authoring
 

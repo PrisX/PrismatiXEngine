@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-import {randomUUID} from "node:crypto";
+import {createHash, randomUUID} from "node:crypto";
 import {spawn, type ChildProcessWithoutNullStreams} from "node:child_process";
-import {existsSync, readFileSync, watch} from "node:fs";
+import {constants, existsSync, readFileSync, watch} from "node:fs";
 import {
   copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile,
 } from "node:fs/promises";
@@ -29,6 +29,7 @@ import {
   externalizeStoryIds,
   parseStory,
   stableSourceIdReport,
+  synchronizeStoryIdentityMap,
   validateDocument,
   type AuthoringDiagnostic,
   type BuildArtifact,
@@ -65,7 +66,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   build: {values: "output artifact runtime packager player compression ui-registry", flags: "artifact-only distribution encrypt"},
   pack: {values: "output artifact runtime packager player compression ui-registry", flags: "encrypt"},
   run: {values: "output artifact runtime packager player compression ui-registry", flags: "encrypt"},
-  ids: {values: "document-id prefix backup", flags: "write check external"},
+  ids: {values: "document-id prefix backup", flags: "write check external sync"},
   migrate: {values: "report backup entry-story entry-ui supported-locales save-version id name version content-version default-locale story-index game-catalog", flags: "write"},
   "inspect-save": {values: "package secret runtime player", flags: ""},
 };
@@ -1361,6 +1362,91 @@ async function replaceTextWithBackup(path: string, text: string): Promise<void> 
   }
 }
 
+async function syncExternalIdsCommand(collection: Awaited<ReturnType<typeof identitySources>>,
+  options: Options): Promise<number> {
+  if (options.values.has("prefix"))
+    throw new Error("--prefix applies to inline ids, not external identity maps");
+  const digest = (source: string) => createHash("sha256").update(source).digest("hex");
+  const plans: Array<{value: StoryIdentitySource; mapPath: string; beforeHash: string;
+    updatedText?: string; preserved: number; added: number; removed: readonly string[]}> = [];
+  const diagnostics: AuthoringDiagnostic[] = [];
+  for (const value of collection.sources) {
+    const mapPath = `${value.absolutePath}.pxids.json`;
+    if (!await regularFile(mapPath)) {
+      diagnostics.push(diagnostic("PXSTORY1411",
+        "Story identity sidecar is missing; use ids --external --write for a new Story",
+        `${value.virtualPath}.pxids.json`));
+      continue;
+    }
+    let source: string;
+    let map: unknown;
+    try {
+      source = await readBoundedText(mapPath);
+      map = JSON.parse(source) as unknown;
+    } catch (error) {
+      diagnostics.push(diagnostic("PXSTORY1403", "Story identity sidecar could not be read",
+        `${value.virtualPath}.pxids.json`, String(error)));
+      continue;
+    }
+    const synced = synchronizeStoryIdentityMap(value.source, map,
+      {path: value.virtualPath, mapPath: `${value.virtualPath}.pxids.json`});
+    if (!synced.valid || synced.map === undefined) {
+      diagnostics.push(...synced.diagnostics);
+      continue;
+    }
+    const changed = JSON.stringify(synced.map) !== JSON.stringify(map);
+    plans.push({value, mapPath, beforeHash: digest(source),
+      ...(changed ? {updatedText: `${JSON.stringify(synced.map)}\n`} : {}),
+      preserved: synced.preserved, added: synced.added, removed: synced.removed});
+  }
+  printDiagnostics(diagnostics);
+  if (diagnostics.some((item) => item.severity === "error")) {
+    process.stdout.write(`${JSON.stringify({sync: true, dryRun: !options.flags.has("write"),
+      changed: 0, diagnostics}, null, 2)}\n`);
+    return 1;
+  }
+  const changes = plans.filter((plan) => plan.updatedText !== undefined);
+  const write = options.flags.has("write");
+  let backup: string | undefined;
+  if (write && changes.length > 0) {
+    // Preflight the entire batch before modifying any source. A second check
+    // immediately before replacement protects against ordinary concurrent edits.
+    for (const plan of changes) {
+      if (await readBoundedText(plan.value.absolutePath) !== plan.value.source ||
+          digest(await readBoundedText(plan.mapPath)) !== plan.beforeHash)
+        throw new Error(`Story or identity map changed during sync: ${plan.value.virtualPath}`);
+    }
+    backup = resolve(options.values.get("backup") ?? join(collection.root, ".prismatix",
+      `identity-backup-${new Date().toISOString().replaceAll(":", "-")}-${randomUUID().slice(0, 8)}`));
+    for (const plan of changes) {
+      const relativePath = relative(collection.root, plan.mapPath);
+      if (relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath))
+        throw new Error(`Story identity map is outside the project backup root: ${plan.mapPath}`);
+      const backupPath = join(backup, relativePath);
+      await mkdir(dirname(backupPath), {recursive: true});
+      await copyFile(plan.mapPath, backupPath, constants.COPYFILE_EXCL);
+    }
+    for (const plan of changes) {
+      if (await readBoundedText(plan.value.absolutePath) !== plan.value.source ||
+          digest(await readBoundedText(plan.mapPath)) !== plan.beforeHash)
+        throw new Error(`Story or identity map changed during sync: ${plan.value.virtualPath}`);
+      await replaceTextWithBackup(plan.mapPath, plan.updatedText!);
+    }
+  }
+  const result = {sync: true, dryRun: !write, scanned: plans.length,
+    changed: changes.length,
+    preserved: plans.reduce((sum, plan) => sum + plan.preserved, 0),
+    added: plans.reduce((sum, plan) => sum + plan.added, 0),
+    removed: plans.flatMap((plan) => plan.removed.map((identity) =>
+      ({path: plan.value.virtualPath, identity}))),
+    ...(backup === undefined ? {} : {backup}),
+    reports: changes.map((plan) => ({path: plan.value.virtualPath,
+      preserved: plan.preserved, added: plan.added, removed: plan.removed})),
+  };
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  return options.flags.has("check") && !write && changes.length > 0 ? 1 : 0;
+}
+
 async function externalIdsCommand(collection: Awaited<ReturnType<typeof identitySources>>,
   options: Options): Promise<number> {
   const documentId = options.values.get("document-id") ?? collection.documentId;
@@ -1455,6 +1541,7 @@ async function externalIdsCommand(collection: Awaited<ReturnType<typeof identity
 async function idsCommand(options: Options): Promise<number> {
   try {
     const collection = await identitySources(options.positional[0]);
+    if (options.flags.has("sync")) return syncExternalIdsCommand(collection, options);
     const mapsExist = (await Promise.all(collection.sources.map((value) =>
       regularFile(`${value.absolutePath}.pxids.json`)))).some(Boolean);
     if (options.flags.has("external") || mapsExist) {

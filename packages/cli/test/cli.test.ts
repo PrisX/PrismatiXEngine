@@ -221,6 +221,57 @@ test("ids --external moves inline anchors to a sidecar without changing compiled
   assert.match(invalid.stderr, /PXSTORY1405/u);
 });
 
+test("ids --sync previews changes, backs up only sidecars, and preserves published ids", async () => {
+  const value = await fixture();
+  const sourcePath = join(value.root, "Story", "main.pxstory");
+  const mapPath = `${sourcePath}.pxids.json`;
+  assert.equal(run(["ids", value.project, "--external", "--write"]).status, 0);
+  const beforeArtifact = join(value.root, "sync-before-artifact");
+  assert.equal(run(["build", value.project, "--artifact-only", "--output", beforeArtifact]).status, 0);
+  const originalMap = await readFile(mapPath, "utf8");
+  const changedSource = "; @prismatix-ids\nHello.\nInserted.\n[end]\n";
+  await write(sourcePath, changedSource);
+  assert.equal(run(["validate", value.project]).status, 1);
+
+  const preview = run(["ids", value.project, "--sync"]);
+  assert.equal(preview.status, 0, preview.stderr);
+  const previewReport = JSON.parse(preview.stdout) as {
+    dryRun: boolean; changed: number; preserved: number; added: number;
+  };
+  assert.equal(previewReport.dryRun, true);
+  assert.equal(previewReport.changed, 1);
+  assert.equal(previewReport.preserved, 2);
+  assert.equal(previewReport.added, 1);
+  assert.equal(await readFile(mapPath, "utf8"), originalMap);
+  assert.equal(run(["ids", value.project, "--sync", "--check"]).status, 1);
+
+  const backup = join(value.root, "sync-backup");
+  const written = run(["ids", value.project, "--sync", "--write", "--backup", backup]);
+  assert.equal(written.status, 0, written.stderr);
+  const report = JSON.parse(written.stdout) as {backup: string; changed: number};
+  assert.equal(report.backup, backup);
+  assert.equal(report.changed, 1);
+  assert.equal(await readFile(join(backup, "Story", "main.pxstory.pxids.json"), "utf8"), originalMap);
+  assert.equal(await readFile(sourcePath, "utf8"), changedSource);
+  assert.equal(run(["validate", value.project]).status, 0);
+  assert.equal(run(["ids", value.project, "--sync", "--check"]).status, 0);
+  const afterArtifact = join(value.root, "sync-after-artifact");
+  assert.equal(run(["build", value.project, "--artifact-only", "--output", afterArtifact]).status, 0);
+  const operations = async (root: string) => (JSON.parse(await readFile(join(root, "Runtime/main.pxir"), "utf8")) as {
+    operations: Array<{operationId: string}>;
+  }).operations.map(operation => operation.operationId);
+  const beforeIds = await operations(beforeArtifact);
+  const afterIds = await operations(afterArtifact);
+  assert.deepEqual(afterIds.filter(id => beforeIds.includes(id)), beforeIds);
+
+  const updatedMap = await readFile(mapPath, "utf8");
+  await write(sourcePath, "; @prismatix-ids\nInserted.\nHello.\n[end]\n");
+  const ambiguous = run(["ids", value.project, "--sync", "--write"]);
+  assert.equal(ambiguous.status, 1);
+  assert.match(ambiguous.stderr, /PXSTORY1413/u);
+  assert.equal(await readFile(mapPath, "utf8"), updatedMap);
+});
+
 test("validate and build use the same canonical project compiler", async () => {
   const value = await fixture();
   const validated = run(["validate", value.project]);

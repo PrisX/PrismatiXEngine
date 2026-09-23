@@ -75,6 +75,11 @@ anchors into adjacent `.pxstory.pxids.json` files while keeping the prose
 readable. The command backs up original Story sources. `prismatix ids my-game
 --check` then audits coverage. Do not delete a sidecar: the source marker makes
 the compiler reject a missing one rather than silently changing save ids.
+After adding or removing executable Story lines, preview the identity update
+with `prismatix ids my-game --sync`; if the reported preserved/added/removed
+operations match your intent, use `--sync --write` to update only the sidecars
+with a backup. Reorders and ambiguous duplicate lines require manual identity
+review. Test existing saves before shipping a revised story.
 
 The global command delegates project commands to the exact local CLI pinned in the game's package.json. Commit that manifest and its lock. A missing or mismatched local CLI is diagnosed instead of silently using the global version. After preparation, dev/build use local packages and bundled runtime offline. Upgrade tool versions deliberately in a branch, reinstall the pinned dependencies, and test old saves and the packaged Player before distributing an update.
 

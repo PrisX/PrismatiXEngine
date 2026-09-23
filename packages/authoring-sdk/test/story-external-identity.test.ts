@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {compileProject, compileStoryProject, externalizeStoryIds,
+  synchronizeStoryIdentityMap,
   type StoryIdentityMap, type StoryIndexDocument} from "../src/index.js";
 
 const sourcePath = "Story/en/main.pxstory";
@@ -58,6 +59,48 @@ test("external ids fail closed for inserted or reordered executable operations",
   const moved = compile("*start\nSecond.\nFirst.\n[end]\n", converted.map);
   assert.equal(moved.valid, false);
   assert.ok(moved.diagnostics.some(diagnostic => diagnostic.code === "PXSTORY1409"));
+});
+
+test("sidecar sync preserves old operation ids across distinct insertions and edits", () => {
+  const converted = externalizeStoryIds("*start\nFirst.\nSecond.\n[end]\n", {path: sourcePath});
+  const before = compile(converted.source!, converted.map);
+  const changed = "; @prismatix-ids\n*start\nFirst revised.\nSecond.\nNew line.\n[end]\n";
+  const synced = synchronizeStoryIdentityMap(changed, converted.map,
+    {path: sourcePath});
+  assert.equal(synced.valid, true, JSON.stringify(synced.diagnostics));
+  assert.equal(synced.preserved, 4);
+  assert.equal(synced.added, 1);
+  assert.deepEqual(synced.removed, []);
+  const after = compile(changed, synced.map);
+  assert.equal(after.valid, true, JSON.stringify(after.diagnostics));
+  const ids = (result: typeof before) => result.runtimeIr!.operations.map(operation => operation.operationId);
+  assert.deepEqual(ids(after).filter(id => ids(before).includes(id)), ids(before));
+  assert.equal(synchronizeStoryIdentityMap(changed, synced.map, {path: sourcePath}).added, 0);
+});
+
+test("sidecar sync reports deletions for save migration review", () => {
+  const converted = externalizeStoryIds("*start\nFirst.\nSecond.\n[end]\n", {path: sourcePath});
+  const changed = "; @prismatix-ids\n*start\nFirst.\n[end]\n";
+  const synced = synchronizeStoryIdentityMap(changed, converted.map, {path: sourcePath});
+  assert.equal(synced.valid, true, JSON.stringify(synced.diagnostics));
+  assert.equal(synced.preserved, 3);
+  assert.equal(synced.added, 0);
+  assert.deepEqual(synced.removed, [`source:${converted.map!.entries[2]!.sourceId}`]);
+  assert.equal(compile(changed, synced.map).valid, true);
+});
+
+test("sidecar sync rejects reordered, duplicated, or overlapping ambiguous edits", () => {
+  const converted = externalizeStoryIds("*start\nFirst.\nSecond.\n[end]\n", {path: sourcePath});
+  for (const [changed, code] of [
+    ["; @prismatix-ids\n*start\nSecond.\nFirst.\n[end]\n", "PXSTORY1413"],
+    ["; @prismatix-ids\n*start\nFirst.\nFirst.\nSecond.\n[end]\n", "PXSTORY1416"],
+    ["; @prismatix-ids\n*start\nChanged.\nInserted.\nSecond.\n[end]\n", "PXSTORY1414"],
+  ] as const) {
+    const result = synchronizeStoryIdentityMap(changed, converted.map, {path: sourcePath});
+    assert.equal(result.valid, false, changed);
+    assert.ok(result.diagnostics.some(diagnostic => diagnostic.code === code),
+      JSON.stringify(result.diagnostics));
+  }
 });
 
 test("declared external identities fail closed when the sidecar is missing", () => {

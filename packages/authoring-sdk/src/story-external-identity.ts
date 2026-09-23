@@ -1,6 +1,6 @@
 import {parseStory} from "./story.js";
 import {stableSourceIdReport} from "./story-identity.js";
-import type {AuthoringDiagnostic, StoryDocument, StoryNode, StoryNodeKind} from "./types.js";
+import type {AuthoringDiagnostic, Result, StoryDocument, StoryNode, StoryNodeKind} from "./types.js";
 
 const identifier = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 export const storyIdentityMapMarker = "; @prismatix-ids";
@@ -35,6 +35,16 @@ export interface ExternalizeStoryIdsResult {
   readonly valid: boolean;
 }
 
+export interface SynchronizeStoryIdsResult {
+  readonly map?: StoryIdentityMap;
+  readonly preserved: number;
+  readonly added: number;
+  /** Old anchors with no surviving operation; review save migrations. */
+  readonly removed: readonly string[];
+  readonly diagnostics: readonly AuthoringDiagnostic[];
+  readonly valid: boolean;
+}
+
 function hash64(input: string): string {
   let hash = 0xcbf29ce484222325n;
   for (const byte of new TextEncoder().encode(input)) {
@@ -56,6 +66,42 @@ function fingerprint(node: StoryNode): string {
 function issue(code: string, message: string, path: string, node?: StoryNode): AuthoringDiagnostic {
   return {severity: "error", code, message, path,
     ...(node === undefined ? {} : {span: node.span})};
+}
+
+export function validateStoryIdentityMap(value: unknown,
+  mapPath = "Story/main.pxstory.pxids.json"): Result<StoryIdentityMap> {
+  const record = value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : undefined;
+  const entries = record?.entries;
+  if (record?.format !== "PrismatiXStoryIdentityMap" || record.schemaRevision !== 1 ||
+      !Array.isArray(entries)) return {valid: false,
+    diagnostics: [issue("PXSTORY1403", "Story identity map has an invalid format", mapPath)]};
+  const diagnostics: AuthoringDiagnostic[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      diagnostics.push(issue("PXSTORY1406", `Invalid Story identity entry ${index}`, mapPath));
+      continue;
+    }
+    const anchor = entry as Record<string, unknown>;
+    const hasId = typeof anchor.id === "string" && identifier.test(anchor.id);
+    const hasSourceId = typeof anchor.sourceId === "string" &&
+      /^story-[0-9a-f]{16}$/u.test(anchor.sourceId);
+    if (hasId === hasSourceId ||
+        typeof anchor.fingerprint !== "string" || !/^[0-9a-f]{16}$/u.test(anchor.fingerprint) ||
+        !["label", "dialogue", "narration", "command"].includes(String(anchor.kind)) ||
+        (anchor.kind === "command" && typeof anchor.command !== "string")) {
+      diagnostics.push(issue("PXSTORY1406", `Invalid Story identity entry ${index}`, mapPath));
+      continue;
+    }
+    const identity = hasId ? `id:${anchor.id}` : `source:${anchor.sourceId}`;
+    if (seen.has(identity)) diagnostics.push(issue("PXSTORY1407",
+      `Duplicate Story identity map id: ${identity}`, mapPath));
+    seen.add(identity);
+  }
+  return diagnostics.length > 0 ? {valid: false, diagnostics}
+    : {value: value as StoryIdentityMap, diagnostics: [], valid: true};
 }
 
 /** Move inline `[id ...]` directives into a sidecar, or assign durable ids
@@ -96,26 +142,173 @@ export function externalizeStoryIds(source: string, options: {
     assigned, diagnostics: [], valid: true};
 }
 
+/** Reconcile an edited Story against its existing sidecar without changing
+ * identities of operations that can be matched unambiguously. Never writes. */
+export function synchronizeStoryIdentityMap(source: string, value: unknown, options: {
+  readonly path?: string; readonly mapPath?: string;
+} = {}): SynchronizeStoryIdsResult {
+  const path = options.path ?? "Story/main.pxstory";
+  const mapPath = options.mapPath ?? `${path}.pxids.json`;
+  const failed = (diagnostics: readonly AuthoringDiagnostic[]): SynchronizeStoryIdsResult =>
+    ({preserved: 0, added: 0, removed: [], diagnostics, valid: false});
+  if (!storyRequiresIdentityMap(source)) return failed([issue("PXSTORY1412",
+    "Story must declare ; @prismatix-ids before its sidecar can be synchronized", path)]);
+  const document = parseStory(source, path);
+  if (document.diagnostics.some((diagnostic) => diagnostic.severity === "error"))
+    return failed(document.diagnostics);
+  if (document.nodes.some((node) => node.kind === "command" && node.name === "id"))
+    return failed([issue("PXSTORY1404",
+      "Story identity map cannot be combined with inline [id] directives", path)]);
+  const validated = validateStoryIdentityMap(value, mapPath);
+  if (!validated.valid || validated.value === undefined) return failed(validated.diagnostics);
+  const oldMap = validated.value;
+  const nodes = document.nodes.filter(observable);
+  const current = nodes.map(fingerprint);
+  const old = oldMap.entries;
+  const sameShape = (oldIndex: number, newIndex: number) =>
+    old[oldIndex]!.kind === nodes[newIndex]!.kind &&
+    (old[oldIndex]!.kind !== "command" || old[oldIndex]!.command === nodes[newIndex]!.name);
+  if (old.length === nodes.length && old.every((entry, index) =>
+    sameShape(index, index) && entry.fingerprint === current[index])) {
+    return {map: oldMap, preserved: old.length, added: 0, removed: [],
+      diagnostics: [], valid: true};
+  }
+
+  const oldPositions = new Map<string, number[]>();
+  const newPositions = new Map<string, number[]>();
+  for (let index = 0; index < old.length; index += 1) {
+    const key = old[index]!.fingerprint;
+    const positions = oldPositions.get(key) ?? [];
+    positions.push(index);
+    oldPositions.set(key, positions);
+  }
+  for (let index = 0; index < nodes.length; index += 1) {
+    const key = current[index]!;
+    const positions = newPositions.get(key) ?? [];
+    positions.push(index);
+    newPositions.set(key, positions);
+  }
+  const anchors: Array<{oldIndex: number; newIndex: number}> = [];
+  for (let index = 0; index < old.length; index += 1) {
+    const key = old[index]!.fingerprint;
+    const matching = newPositions.get(key);
+    if (oldPositions.get(key)?.length === 1 && matching?.length === 1)
+      anchors.push({oldIndex: index, newIndex: matching[0]!});
+  }
+  for (let index = 1; index < anchors.length; index += 1) {
+    if (anchors[index]!.newIndex <= anchors[index - 1]!.newIndex)
+      return failed([issue("PXSTORY1413",
+        "Story operations were reordered; review their saved identities manually", path,
+        nodes[anchors[index]!.newIndex])]);
+  }
+
+  const next: StoryIdentityMapEntry[] = new Array(nodes.length);
+  const removed: string[] = [];
+  const identities = new Set(old.map((entry) => entry.id === undefined
+    ? `source:${entry.sourceId}` : `id:${entry.id}`));
+  let preserved = 0;
+  let added = 0;
+  const keep = (oldIndex: number, newIndex: number) => {
+    next[newIndex] = {...old[oldIndex]!, fingerprint: current[newIndex]!};
+    preserved += 1;
+  };
+  const reconcile = (oldStart: number, oldEnd: number,
+    newStart: number, newEnd: number): AuthoringDiagnostic | undefined => {
+    while (oldStart < oldEnd && newStart < newEnd &&
+        old[oldStart]!.fingerprint === current[newStart] && sameShape(oldStart, newStart)) {
+      keep(oldStart, newStart);
+      oldStart += 1;
+      newStart += 1;
+    }
+    while (oldStart < oldEnd && newStart < newEnd &&
+        old[oldEnd - 1]!.fingerprint === current[newEnd - 1] &&
+        sameShape(oldEnd - 1, newEnd - 1)) {
+      keep(oldEnd - 1, newEnd - 1);
+      oldEnd -= 1;
+      newEnd -= 1;
+    }
+    const oldCount = oldEnd - oldStart;
+    const newCount = newEnd - newStart;
+    if (oldCount > 0 && newCount > 0 && oldCount !== newCount)
+      return issue("PXSTORY1414",
+        "Story edits are ambiguous: changed and inserted/removed operations overlap; review identities manually",
+        path, nodes[newStart]);
+    if (oldCount > 0 && newCount > 0) {
+      for (let offset = 0; offset < oldCount; offset += 1) {
+        const oldIndex = oldStart + offset;
+        const newIndex = newStart + offset;
+        if (!sameShape(oldIndex, newIndex)) return issue("PXSTORY1415",
+          "Story operation changed kind or command; review its saved identity manually",
+          path, nodes[newIndex]);
+        if ((newPositions.get(old[oldIndex]!.fingerprint) ?? []).some((position) =>
+          position !== newIndex)) return issue("PXSTORY1413",
+          "Story operation appears to have moved; review its saved identity manually",
+          path, nodes[newIndex]);
+        keep(oldIndex, newIndex);
+      }
+    } else if (newCount > 0) {
+      for (let index = newStart; index < newEnd; index += 1) {
+        if (oldPositions.has(current[index]!)) return issue("PXSTORY1416",
+          "Inserted Story operation duplicates an existing operation; review identities manually",
+          path, nodes[index]);
+        let salt = 0;
+        let identity: string;
+        do {
+          identity = `story-${hash64(`external-new:${path}:${nodes[index]!.id}:${index}:${salt}`)}`;
+          salt += 1;
+        } while (identities.has(`source:${identity}`));
+        identities.add(`source:${identity}`);
+        const node = nodes[index]!;
+        next[index] = {sourceId: identity, kind: node.kind,
+          ...(node.kind === "command" ? {command: node.name} : {}),
+          fingerprint: current[index]!};
+        added += 1;
+      }
+    } else {
+      for (let index = oldStart; index < oldEnd; index += 1) {
+        const entry = old[index]!;
+        if (newPositions.has(entry.fingerprint)) return issue("PXSTORY1413",
+          "Removed Story operation appears elsewhere; review its saved identity manually", path);
+        removed.push(entry.id === undefined ? `source:${entry.sourceId}` : `id:${entry.id}`);
+      }
+    }
+    return undefined;
+  };
+
+  let oldStart = 0;
+  let newStart = 0;
+  for (const anchor of [...anchors, {oldIndex: old.length, newIndex: nodes.length}]) {
+    const diagnostic = reconcile(oldStart, anchor.oldIndex, newStart, anchor.newIndex);
+    if (diagnostic !== undefined) return failed([diagnostic]);
+    if (anchor.oldIndex < old.length) {
+      keep(anchor.oldIndex, anchor.newIndex);
+      oldStart = anchor.oldIndex + 1;
+      newStart = anchor.newIndex + 1;
+    }
+  }
+  const map: StoryIdentityMap = {format: "PrismatiXStoryIdentityMap",
+    schemaRevision: 1, entries: next};
+  const applied = applyStoryIdentityMap(document, map, mapPath);
+  if (applied.diagnostics.some((diagnostic) => diagnostic.severity === "error"))
+    return failed(applied.diagnostics);
+  return {map, preserved, added, removed, diagnostics: [], valid: true};
+}
+
 /** Materialize sidecar ids as non-executable synthetic directives so the
  * existing Story compiler produces byte-for-byte identical operation ids. */
 export function applyStoryIdentityMap(document: StoryDocument, value: unknown,
   mapPath = `${document.path}.pxids.json`): StoryDocument {
   const diagnostics: AuthoringDiagnostic[] = [];
-  const record = value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown> : undefined;
-  const entries = record?.entries;
-  if (record?.format !== "PrismatiXStoryIdentityMap" || record.schemaRevision !== 1 ||
-      !Array.isArray(entries)) {
-    diagnostics.push(issue("PXSTORY1403", "Story identity map has an invalid format", mapPath));
-    return {...document, diagnostics: [...document.diagnostics, ...diagnostics]};
-  }
+  const validated = validateStoryIdentityMap(value, mapPath);
+  if (!validated.valid || validated.value === undefined)
+    return {...document, diagnostics: [...document.diagnostics, ...validated.diagnostics]};
+  const entries = validated.value.entries;
   if (document.nodes.some((node) => node.kind === "command" && node.name === "id"))
     diagnostics.push(issue("PXSTORY1404", "Story identity map cannot be combined with inline [id] directives", document.path));
   const nodes = document.nodes.filter(observable);
   if (entries.length !== nodes.length) diagnostics.push(issue("PXSTORY1405",
     `Story identity map has ${entries.length} entries but source has ${nodes.length} operations; review additions/removals before regenerating the map`,
     mapPath));
-  const seen = new Set<string>();
   const currentFingerprints = nodes.map(fingerprint);
   const positions = new Map<string, number[]>();
   for (let index = 0; index < currentFingerprints.length; index += 1) {
@@ -126,27 +319,8 @@ export function applyStoryIdentityMap(document: StoryDocument, value: unknown,
   }
   const anchored = new Map<StoryNode, {id?: string; sourceId?: string}>();
   for (let index = 0; index < entries.length; index += 1) {
-    const entry = entries[index];
+    const anchor = entries[index]!;
     const node = nodes[index];
-    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
-      diagnostics.push(issue("PXSTORY1406", `Invalid Story identity entry ${index}`, mapPath));
-      continue;
-    }
-    const anchor = entry as Record<string, unknown>;
-    const hasId = typeof anchor.id === "string" && identifier.test(anchor.id);
-    const hasSourceId = typeof anchor.sourceId === "string" &&
-      /^story-[0-9a-f]{16}$/u.test(anchor.sourceId);
-    if (hasId === hasSourceId ||
-        typeof anchor.fingerprint !== "string" || !/^[0-9a-f]{16}$/u.test(anchor.fingerprint) ||
-        !["label", "dialogue", "narration", "command"].includes(String(anchor.kind)) ||
-        (anchor.kind === "command" && typeof anchor.command !== "string")) {
-      diagnostics.push(issue("PXSTORY1406", `Invalid Story identity entry ${index}`, mapPath));
-      continue;
-    }
-    const identity = hasId ? `id:${anchor.id}` : `source:${anchor.sourceId}`;
-    if (seen.has(identity)) diagnostics.push(issue("PXSTORY1407",
-      `Duplicate Story identity map id: ${identity}`, mapPath));
-    seen.add(identity);
     if (node === undefined) continue;
     if (node.kind !== anchor.kind || (node.kind === "command" && node.name !== anchor.command)) {
       diagnostics.push(issue("PXSTORY1408",
@@ -159,8 +333,8 @@ export function applyStoryIdentityMap(document: StoryDocument, value: unknown,
         `Story operation ${index + 1} appears to have moved; review its saved identity`, document.path, node));
       continue;
     }
-    anchored.set(node, hasId ? {id: anchor.id as string}
-      : {sourceId: anchor.sourceId as string});
+    anchored.set(node, anchor.id === undefined ? {sourceId: anchor.sourceId!}
+      : {id: anchor.id});
   }
   if (diagnostics.length > 0) return {...document, diagnostics: [...document.diagnostics, ...diagnostics]};
   const expanded: StoryNode[] = [];
