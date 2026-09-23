@@ -144,6 +144,65 @@ test("compileProject collects UI runtime texture dependencies", () => {
     dependency.source === "Assets/Audio/activate.ogg"));
 });
 
+test("compileProject validates portraits referenced outside Story and collects every layer", () => {
+  const descriptorPath = "Assets/Characters/Hero.pxportrait";
+  const descriptor = {format: "PrismatiXLayeredPortrait", schemaRevision: 1,
+    width: 691, height: 1450, layers: [
+      {path: "Assets/Characters/Layers/body.png", width: 691, height: 1450},
+      {path: "Assets/Characters/Layers/face.png", x: 302, y: 153,
+        width: 174, height: 74, opacity: 217},
+    ]};
+  const withPortraitUi = {...ui, nodes: [{...ui.nodes[0],
+    onClick: {id: "show.portrait", arguments: {argument: descriptorPath}}}]};
+  const compile = (text: string | undefined,
+    resourceExists?: (path: string) => boolean) => compileProject({
+    project,
+    documents: {"Story/story.pxindex": storyIndex,
+      "Content/game.pxgame": game, "Content/UI/Title.pxui": withPortraitUi},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locale: "zh-TW", strings: {}}},
+    resourceText: (path) => path === descriptorPath ? text : undefined,
+    ...(resourceExists === undefined ? {} : {resourceExists}),
+  });
+  const valid = compile(JSON.stringify(descriptor));
+  assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
+  for (const path of [descriptorPath, "Assets/Characters/Layers/body.png",
+    "Assets/Characters/Layers/face.png"])
+    assert.ok(valid.artifact?.dependencies.some((dependency) =>
+      dependency.source === path), `${path} is packaged`);
+
+  const catalogOnly = compileProject({
+    project: {...project, assets: [{id: "33333333-3333-4333-8333-333333333333",
+      kind: "character", source: descriptorPath}]},
+    documents: {"Story/story.pxindex": storyIndex,
+      "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locale: "zh-TW", strings: {}}},
+    resourceText: (path) => path === descriptorPath
+      ? JSON.stringify(descriptor) : undefined,
+  });
+  assert.equal(catalogOnly.valid, true, JSON.stringify(catalogOnly.diagnostics));
+  assert.ok(catalogOnly.artifact?.dependencies.some((dependency) =>
+    dependency.source === "Assets/Characters/Layers/face.png"));
+
+  const invalid = compile(JSON.stringify({...descriptor, height: 0}));
+  assert.equal(invalid.valid, false);
+  assert.ok(invalid.diagnostics.some((diagnostic) =>
+    diagnostic.code === "PXBUILD1045" && diagnostic.path === descriptorPath));
+  const missing = compile(undefined);
+  assert.equal(missing.valid, false);
+  assert.ok(missing.diagnostics.some((diagnostic) =>
+    diagnostic.code === "PXBUILD1045" && diagnostic.path === descriptorPath));
+  const missingLayer = compile(JSON.stringify(descriptor),
+    (path) => path !== "Assets/Characters/Layers/face.png");
+  assert.equal(missingLayer.valid, false);
+  assert.ok(missingLayer.diagnostics.some((diagnostic) =>
+    diagnostic.code === "PXBUILD1044" &&
+    diagnostic.path === "Assets/Characters/Layers/face.png"));
+});
+
 test("compileProject checks every authored UI property against a supplied native registry", () => {
   const registry = {controls: [{runtimeType: "Control", properties: [
     {id: "modulate", valueType: "color", writable: true, bindable: true, animatable: true},

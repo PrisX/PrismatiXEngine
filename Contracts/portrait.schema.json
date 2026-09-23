@@ -1,0 +1,24 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://prismatix.dev/contracts/portrait.schema.json",
+  "type":"object","additionalProperties":false,
+  "required":["format","schemaRevision","width","height","layers"],
+  "properties":{
+    "format":{"const":"PrismatiXLayeredPortrait"},
+    "schemaRevision":{"const":1},
+    "width":{"type":"number","exclusiveMinimum":0,"maximum":16384},
+    "height":{"type":"number","exclusiveMinimum":0,"maximum":16384},
+    "layers":{"type":"array","minItems":1,"maxItems":10000,"items":{
+      "type":"object","additionalProperties":false,
+      "required":["path","width","height"],
+      "properties":{
+        "path":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
+        "x":{"type":"number","minimum":-1000000,"maximum":1000000},
+        "y":{"type":"number","minimum":-1000000,"maximum":1000000},
+        "width":{"type":"number","exclusiveMinimum":0,"maximum":16384},
+        "height":{"type":"number","exclusiveMinimum":0,"maximum":16384},
+        "opacity":{"type":"integer","minimum":0,"maximum":255}
+      }
+    }}
+  }
+}

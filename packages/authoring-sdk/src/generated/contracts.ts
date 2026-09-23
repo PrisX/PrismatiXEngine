@@ -30,6 +30,13 @@ export const contractManifest: Readonly<Record<string, unknown>> = {
       "schemaRevision": 2
     },
     {
+      "extension": ".pxportrait",
+      "id": "portrait",
+      "migration": "reject-legacy",
+      "schema": "portrait.schema.json",
+      "schemaRevision": 1
+    },
+    {
       "extension": ".pxui",
       "id": "ui",
       "migration": "migrate-previous",
@@ -1267,6 +1274,81 @@ export const contractSchemas: Readonly<Record<string, object>> = {
       "schemaRevision",
       "locale",
       "strings"
+    ],
+    "type": "object"
+  },
+  "portrait.schema.json": {
+    "$id": "https://prismatix.dev/contracts/portrait.schema.json",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "format": {
+        "const": "PrismatiXLayeredPortrait"
+      },
+      "height": {
+        "exclusiveMinimum": 0,
+        "maximum": 16384,
+        "type": "number"
+      },
+      "layers": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "height": {
+              "exclusiveMinimum": 0,
+              "maximum": 16384,
+              "type": "number"
+            },
+            "opacity": {
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "path": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+            },
+            "width": {
+              "exclusiveMinimum": 0,
+              "maximum": 16384,
+              "type": "number"
+            },
+            "x": {
+              "maximum": 1000000,
+              "minimum": -1000000,
+              "type": "number"
+            },
+            "y": {
+              "maximum": 1000000,
+              "minimum": -1000000,
+              "type": "number"
+            }
+          },
+          "required": [
+            "path",
+            "width",
+            "height"
+          ],
+          "type": "object"
+        },
+        "maxItems": 10000,
+        "minItems": 1,
+        "type": "array"
+      },
+      "schemaRevision": {
+        "const": 1
+      },
+      "width": {
+        "exclusiveMinimum": 0,
+        "maximum": 16384,
+        "type": "number"
+      }
+    },
+    "required": [
+      "format",
+      "schemaRevision",
+      "width",
+      "height",
+      "layers"
     ],
     "type": "object"
   },
@@ -3368,6 +3450,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "extension.schema.json": "9438f403e51b8f69f52f05d5999afc37c433754a215094460e28c6d1710555a2",
   "game.schema.json": "f0592fc75a4deb4aed7f192c076165012ef480196a07cd7d2136be390821dcba",
   "locale.schema.json": "b8f6009219c6cad7fa6130af6d710af11cabcf85bf2e0039f1fdd3c08e2bbf9f",
+  "portrait.schema.json": "23235204cea30d1f9bf49f810f896364b910ce2f74e46f28bc7381dc5da0a6fe",
   "project.schema.json": "8a7ed01b49ac02f5b1c6b2bf6c74267fd058f8e92763ec7de1ba0c7cee034ac1",
   "runtime-ir.schema.json": "66d31c68d122e7516c3d0fef73672fa7fa47d879553c2fea2bdec5af3871b68c",
   "save-migration.schema.json": "fd9f89119a4e8a70324f95bb6e0261e5d78b0ea173e2755422c36e5e2379b6cf",

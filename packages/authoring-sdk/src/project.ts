@@ -1,10 +1,12 @@
 import {canonicalJson} from "./canonical-json.js";
 import {contractDocumentByteLimit, parseDocument, validateDocument} from "./contracts.js";
 import {normalizeProject} from "./project-normalization.js";
+import type {LayeredPortraitDocument} from "./portrait.js";
 import {validateProjectCharacterResources} from "./project-resources.js";
 import {validateUiPropertyUsage, type UiTypeRegistryMetadata} from "./semantic.js";
 import {
   collectProjectDependencies,
+  canonicalResourceReference,
   isSafeResourcePath,
   type ProjectAssetDescriptor,
   type ProjectDependency,
@@ -762,31 +764,6 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       if (typeof audio === "string") addResourceRef(audio, `settings.player.splashes[${index}].audio`);
     }
   }
-  for (const descriptorPath of storyResourcePaths) {
-    if (!descriptorPath.endsWith(".pxportrait") || input.resourceText === undefined) continue;
-    const text = input.resourceText(descriptorPath);
-    if (text === undefined) continue;
-    let value: unknown;
-    try { value = JSON.parse(text); }
-    catch {
-      diagnostics.push(issue("PXBUILD1045", "Layered portrait descriptor is not valid JSON", descriptorPath));
-      continue;
-    }
-    if (value === null || typeof value !== "object" || Array.isArray(value)) continue;
-    const portrait = value as Record<string, unknown>;
-    const layers = portrait.format === "PrismatiXLayeredPortrait" &&
-      portrait.schemaRevision === 1 && Array.isArray(portrait.layers)
-      ? portrait.layers : undefined;
-    if (layers === undefined) {
-      diagnostics.push(issue("PXBUILD1045", "Layered portrait descriptor fields are invalid", descriptorPath));
-      continue;
-    }
-    for (const [index, layer] of layers.entries()) {
-      if (layer === null || typeof layer !== "object" || Array.isArray(layer)) continue;
-      const path = (layer as Record<string, unknown>).path;
-      if (typeof path === "string") addResourceRef(path, `${descriptorPath}:layers[${index}].path`);
-    }
-  }
   for (const [index, item] of (game.gallery ?? []).entries()) {
     if (item === null || typeof item !== "object" || Array.isArray(item)) continue;
     const gallery = item as Record<string, JsonValue>;
@@ -808,6 +785,40 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
         addResourceRef(resource,
           `Content/Localization/${locale}.json:resources.${id}`);
     }
+  }
+  // A portrait can be referenced by Story, UI, a locale, a dynamic include, or
+  // a catalog identity. Expand every reachable descriptor, not just Story
+  // dependencies, before collecting the final package graph.
+  const portraitPaths = new Set(resourceAssets.map((asset) => asset.source)
+    .filter((path) => path.endsWith(".pxportrait")));
+  for (const reference of dependencyReferences) {
+    const resolved = canonicalResourceReference(reference.value, resourceAssets);
+    if (resolved?.source.endsWith(".pxportrait")) portraitPaths.add(resolved.source);
+  }
+  for (const descriptorPath of portraitPaths) {
+    let authored: unknown = sourceFiles[descriptorPath];
+    try { authored ??= input.resourceText?.(descriptorPath); }
+    catch (error) {
+      diagnostics.push(issue("PXBUILD1045", "Could not read layered portrait descriptor",
+        descriptorPath, String(error)));
+      continue;
+    }
+    if (authored === undefined) {
+      diagnostics.push(issue("PXBUILD1045", "Layered portrait descriptor is missing",
+        descriptorPath));
+      continue;
+    }
+    const parsed = typeof authored === "string"
+      ? parseDocument<LayeredPortraitDocument>("portrait", authored, descriptorPath)
+      : validateDocument<LayeredPortraitDocument>("portrait", authored, descriptorPath);
+    if (!parsed.valid || parsed.value === undefined) {
+      diagnostics.push(issue("PXBUILD1045", "Layered portrait descriptor is invalid",
+        descriptorPath, parsed.diagnostics.slice(0, 3)
+          .map((diagnostic) => diagnostic.details ?? diagnostic.message).join("; ")));
+      continue;
+    }
+    for (const [index, layer] of parsed.value.layers.entries())
+      addResourceRef(layer.path, `${descriptorPath}:layers[${index}].path`);
   }
   const dependencyCollection = collectProjectDependencies({
     assets: resourceAssets,

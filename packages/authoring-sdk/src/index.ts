@@ -5,6 +5,7 @@ export * from "./jsx-ui.js";
 export * from "./project-resources.js";
 export * from "./project-normalization.js";
 export * from "./project.js";
+export * from "./portrait.js";
 export * from "./resources.js";
 export * from "./semantic.js";
 export * from "./story.js";

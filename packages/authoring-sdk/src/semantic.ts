@@ -344,6 +344,16 @@ export function validateSemantics(contractId: string, value: unknown, path?: str
       }
       break;
     }
+    case "portrait": {
+      for (const layer of objects(root.layers)) {
+        if (typeof layer.path === "string" &&
+            layer.path.toLowerCase().endsWith(".pxportrait"))
+          diagnostics.push(issue("PXSDKSEM1350",
+            "A portrait layer must reference a texture, not another .pxportrait descriptor",
+            path, layer.path));
+      }
+      break;
+    }
     case "storyIndex": {
       const scenes = objects(root.scenes);
       diagnostics.push(...uniqueIdentities(scenes, "id", "Story scene", path));

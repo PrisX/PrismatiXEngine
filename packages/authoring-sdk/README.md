@@ -184,6 +184,10 @@ in a shipped game without reviewing save/seen identity migration.
 
 ## Project-aware character resources
 
+Layered expression sprites have a typed, validated `.pxportrait` authoring
+contract. See [layered portrait authoring](../../docs/portrait-authoring.md)
+for the helper, coordinate semantics, and dependency rules.
+
 Standalone schema validation cannot prove that a `.pxproject` character descriptor and its `.pxcharacter` document agree, or that expression asset UUIDs exist with a Runtime-compatible kind. Use `validateProjectCharacterResources()` once the project provider has loaded those documents.
 
 ```ts
