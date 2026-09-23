@@ -68,6 +68,57 @@ const {behaviorGraph: _behaviorGraph, behaviorTriggers: _behaviorTriggers,
 const component = {...componentContent, format: "PrismatiXUIComponent",
   componentInterface: {properties: [], signals: [], slots: []}};
 
+test("compileProject validates extension UI Actions and packages typed resource arguments", () => {
+  const extensionPath = "Content/Extensions/music.pxextension";
+  const extension = {format: "PrismatiXExtension", schemaRevision: 2,
+    language: "javascript", id: "music-extension", version: "1.0.0",
+    requiredEngineVersion: "^0.2.0", entry: "music.js",
+    capabilities: ["ui", "audio"],
+    safety: {previewSafe: true, deterministic: true, seekSafe: true,
+      rollbackSafe: true}, commands: [],
+    actions: [{id: "music.play", parameters: [
+      {name: "media", type: "resource", required: true},
+      {name: "volume", type: "number", range: {minimum: 0, maximum: 1}},
+    ]}],
+  };
+  const compile = (arguments_: Record<string, unknown>, manifest: unknown = extension) => compileProject({
+    project: {...project, extensions: [extensionPath]},
+    documents: {"Story/story.pxindex": storyIndex,
+      "Content/game.pxgame": game,
+      "Content/UI/Title.pxui": {...ui, nodes: [{...ui.nodes[0],
+        onClick: {id: "music.play", arguments: arguments_}}]},
+      [extensionPath]: manifest},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locale: "zh-TW", strings: {}}},
+  });
+  const valid = compile({media: {type: "resource", value: "Assets/Audio/theme.ogg"},
+    volume: 1});
+  assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
+  assert.ok(valid.artifact?.dependencies.some((dependency) =>
+    dependency.source === "Assets/Audio/theme.ogg"));
+  const extensionless = compile({media: {type: "resource", value: "Assets/Audio/theme"}});
+  assert.equal(extensionless.valid, true, JSON.stringify(extensionless.diagnostics));
+  assert.ok(extensionless.artifact?.dependencies.some((dependency) =>
+    dependency.source === "Assets/Audio/theme"));
+
+  const invalid = compile({media: "Assets/Audio/theme.ogg", volume: 2});
+  assert.equal(invalid.valid, false);
+  assert.ok(invalid.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1062"));
+  assert.ok(invalid.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1064"));
+
+  const defaulted = compile({volume: 0.5}, {...extension, actions: [{
+    id: "music.play", parameters: [
+      {name: "media", type: "resource", required: true,
+        default: "Assets/Audio/default.ogg"},
+      {name: "volume", type: "number", range: {minimum: 0, maximum: 1}},
+    ],
+  }]});
+  assert.equal(defaulted.valid, true, JSON.stringify(defaulted.diagnostics));
+  assert.ok(defaulted.artifact?.dependencies.some((dependency) =>
+    dependency.source === "Assets/Audio/default.ogg"));
+});
+
 test("UI-only project edits reuse Story compilation but publish fresh UI and revision", () => {
   const storyCompilationCache = new StoryProjectCompilationCache();
   const input = {

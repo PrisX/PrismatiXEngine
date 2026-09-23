@@ -11,6 +11,7 @@
 #include "Engine/SDK/Ui.h"
 #include "Engine/Platform/Input.h"
 #include "Engine/UI/GalgameUI.h"
+#include "Engine/UI/Actions/ActionCatalog.h"
 #include "Engine/UI/UiAdapter.h"
 #include "Engine/UI/UiApplication.h"
 #include "Engine/UI/UIContext.h"
@@ -495,6 +496,70 @@ int main() {
     scene = CanonicalUiText(scene);
     const auto parsed = px::sdk::ParseUi(scene);
     Check(parsed.Valid(), "valid UI document must parse before Runtime adaptation");
+    auto typedActionScene = nlohmann::json::parse(scene);
+    for (auto& node : typedActionScene["nodes"]) {
+        if (node["kind"] != "button") continue;
+        node["onClick"] = {
+            {"id", "extension.test"},
+            {"arguments", {
+                {"tint", {{"type", "color"}, {"value", "#ffccdd"}}},
+                {"target", {{"type", "uuid"}, {"value", "22222222-2222-4222-8222-222222222222"}}},
+                {"media", {{"type", "resource"}, {"value", "Assets/Audio/theme.ogg"}}},
+                {"token", {{"type", "token"}, {"value", "accent"}}},
+                {"items", nlohmann::json::array({1, "two", true})},
+                {"options", {{"volume", 0.5}, {"loop", true}}},
+            }},
+        };
+    }
+    const auto typedAction = px::sdk::ParseUi(typedActionScene.dump());
+    Check(typedAction.Valid(), "typed Action arguments must parse in authored UI");
+    const auto actionNode = std::ranges::find_if(typedAction.document.nodes,
+        [](const px::sdk::UiNode& node) { return node.kind == px::sdk::UiNodeKind::Button; });
+    Check(actionNode != typedAction.document.nodes.end() && actionNode->onClick.has_value(),
+          "typed Action button must retain its invocation");
+    const auto& typedArguments = actionNode->onClick->arguments;
+    const auto tint = px::ui::ConvertUiActionValue(typedArguments.at("tint"));
+    const auto target = px::ui::ConvertUiActionValue(typedArguments.at("target"));
+    const auto media = px::ui::ConvertUiActionValue(typedArguments.at("media"));
+    const auto token = px::ui::ConvertUiActionValue(typedArguments.at("token"));
+    const auto items = px::ui::ConvertUiActionValue(typedArguments.at("items"));
+    const auto options = px::ui::ConvertUiActionValue(typedArguments.at("options"));
+    Check(tint && tint->Type() == px::VariantType::Color &&
+          target && target->Type() == px::VariantType::Uuid &&
+          media && media->Type() == px::VariantType::ResourceRef &&
+          media->TryGet<px::ResourceRefValue>()->lastKnownPath == "Assets/Audio/theme.ogg" &&
+          token && token->Type() == px::VariantType::TokenRef &&
+          items && items->Type() == px::VariantType::Array &&
+          options && options->Type() == px::VariantType::Object,
+          "typed Action values must reach the Runtime with their declared Variant types");
+    px::ui::ActionCatalog typedCatalog;
+    px::ui::ActionDescriptor typedDescriptor;
+    typedDescriptor.id = "extension.test";
+    typedDescriptor.arguments = {
+        {.name = "tint", .type = px::VariantType::Color, .required = true},
+        {.name = "target", .type = px::VariantType::Uuid, .required = true},
+        {.name = "media", .type = px::VariantType::ResourceRef, .required = true},
+        {.name = "token", .type = px::VariantType::TokenRef, .required = true},
+        {.name = "items", .type = px::VariantType::Array, .required = true},
+        {.name = "options", .type = px::VariantType::Object, .required = true},
+    };
+    Check(typedCatalog.Register(std::move(typedDescriptor)).IsOk(),
+          "typed Action descriptor must register");
+    px::ui::ActionInvocation typedInvocation;
+    typedInvocation.action = "extension.test";
+    typedInvocation.arguments = {
+        {"tint", tint->Clone()}, {"target", target->Clone()},
+        {"media", media->Clone()}, {"token", token->Clone()},
+        {"items", items->Clone()}, {"options", options->Clone()},
+    };
+    Check(static_cast<bool>(typedCatalog.ValidateAndNormalize(typedInvocation)),
+          "converted UI arguments must satisfy the production ActionCatalog");
+    auto unsafeActionScene = typedActionScene;
+    for (auto& node : unsafeActionScene["nodes"])
+        if (node["kind"] == "button")
+            node["onClick"]["arguments"]["media"]["value"] = "../secret.ogg";
+    Check(!px::sdk::ParseUi(unsafeActionScene.dump()).Valid(),
+          "typed Action resources must reject unsafe project paths");
     std::size_t actions = 0;
     auto runtime = px::ui::BuildUiRuntimeTree(
         parsed.document,

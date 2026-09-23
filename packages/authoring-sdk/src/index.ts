@@ -9,6 +9,7 @@ export * from "./contracts.js";
 export * from "./localization.js";
 export * from "./jsx-ui.js";
 export * from "./project-resources.js";
+export * from "./project-actions.js";
 export * from "./project-normalization.js";
 export * from "./project.js";
 export * from "./portrait.js";

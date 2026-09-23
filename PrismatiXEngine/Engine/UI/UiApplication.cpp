@@ -1,7 +1,6 @@
 #include "Engine/UI/UiApplication.h"
 
 #include <algorithm>
-#include <charconv>
 #include <cmath>
 #include <nlohmann/json.hpp>
 #include <unordered_map>
@@ -24,32 +23,6 @@ diag::Diagnostic ApplicationError(std::string code, std::string message, const s
     diagnostic.source.nodeId = std::move(nodeId);
     diagnostic.source.property = std::move(property);
     return diagnostic;
-}
-
-Color ParseColor(const std::string_view value) {
-    const auto byte = [value](const std::size_t offset) {
-        unsigned parsed = 0;
-        const auto* first = value.data() + offset;
-        (void)std::from_chars(first, first + 2, parsed, 16);
-        return static_cast<std::uint8_t>(parsed);
-    };
-    return { byte(1), byte(3), byte(5), value.size() == 9 ? byte(7) : std::uint8_t{ 255 } };
-}
-
-std::optional<Variant> RuntimeActionValue(const sdk::UiActionValue& value) {
-    if (std::holds_alternative<std::monostate>(value)) return Variant{};
-    if (const auto* item = std::get_if<bool>(&value)) return Variant(*item);
-    if (const auto* item = std::get_if<std::int64_t>(&value)) return Variant(*item);
-    if (const auto* item = std::get_if<double>(&value)) return std::isfinite(*item) ? std::optional<Variant>{ Variant(*item) } : std::nullopt;
-    if (const auto* item = std::get_if<std::string>(&value)) return Variant(*item);
-    if (const auto* item = std::get_if<sdk::UiVec2Value>(&value)) return Variant(Vec2{ item->x, item->y });
-    if (const auto* item = std::get_if<sdk::UiRectValue>(&value)) return Variant(Rect{ item->x, item->y, item->width, item->height });
-    if (const auto* item = std::get_if<sdk::UiColorValue>(&value)) return Variant(ParseColor(item->value));
-    if (const auto* item = std::get_if<sdk::UiNodeReferenceValue>(&value)) {
-        const auto id = Uuid::Parse(item->nodeId);
-        return id ? std::optional<Variant>{ Variant(*id) } : std::nullopt;
-    }
-    return std::nullopt;
 }
 
 std::vector<diag::Diagnostic> ParseDiagnostics(const sdk::UiParseResult& parsed, const std::string& sourcePath) {
@@ -534,7 +507,7 @@ Result<UiApplicationSummary> UiApplication::ApplyDocument(const sdk::UiDocument&
             invocation.context.signal = "ui." + std::string(signal);
             if (const auto sourceNode = Uuid::Parse(nodeId)) invocation.context.sourceNode = *sourceNode;
             for (const auto& [name, source] : action.arguments) {
-                auto value = RuntimeActionValue(source);
+                auto value = ConvertUiActionValue(source);
                 if (!value) {
                     const Status status = Status::Fail(ApplicationError(
                         "PXUISTUDIO2105",

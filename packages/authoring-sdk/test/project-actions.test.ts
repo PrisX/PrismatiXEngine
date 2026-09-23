@@ -1,0 +1,52 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {validateUiActionUsage} from "../src/index.js";
+import type {ExtensionManifest} from "../src/index.js";
+
+const extension: ExtensionManifest = {
+  format: "PrismatiXExtension", schemaRevision: 2, language: "javascript",
+  id: "music-extension", version: "1.0.0", requiredEngineVersion: "^0.2.0",
+  entry: "Extensions/music.js", capabilities: ["ui", "audio"], commands: [],
+  actions: [{id: "music.play", parameters: [
+    {name: "media", type: "resource", required: true},
+    {name: "volume", type: "number", range: {minimum: 0, maximum: 1}},
+    {name: "mode", type: "string", enum: ["once", "loop"]},
+  ]}],
+};
+
+const action = (arguments_: Record<string, unknown>) => ({id: "music.play", arguments: arguments_});
+const validArguments = {media: {type: "resource", value: "Assets/Audio/theme.ogg"},
+  volume: 1, mode: "loop"};
+
+test("extension Action validation accepts typed UI arguments and dynamic signal mappings", () => {
+  const document = {nodes: [
+    {onClick: action(validArguments)},
+    {componentInstance: {publicSignals: {activated: {
+      ...action({mode: "once"}), argumentBindings: {media: "resource"},
+    }}}},
+    {onClick: action({media: {type: "resource", value: "22222222-2222-4222-8222-222222222222"}})},
+    {onClick: {id: "player.dynamic", arguments: {anything: true}}},
+  ], behaviorGraph: {nodes: [{id: "graph-action", kind: "action",
+    properties: {action: "music.play"}, arguments: {mode: "loop"}}],
+    links: [{toNodeId: "graph-action", toPin: "arg:media"}]}};
+  assert.deepEqual(validateUiActionUsage(document, [extension], "Content/UI/Title.pxui"), []);
+});
+
+test("extension Action validation reports every invalid static argument before Player", () => {
+  const document = {nodes: [
+    {onClick: action({volume: "loud", mode: "invalid", extra: 1})},
+    {onClick: action({media: "Assets/Audio/theme.ogg", volume: 2})},
+    {onClick: action({media: {type: "resource", value: "../secret.ogg"}})},
+    {componentInstance: {publicSignals: {activated: {
+      ...action({}), argumentBindings: {unknown: "value"},
+    }}}},
+  ]};
+  const diagnostics = validateUiActionUsage(document, [extension], "Content/UI/Title.pxui");
+  const codes = diagnostics.map((diagnostic) => diagnostic.code);
+  for (const code of ["PXBUILD1060", "PXBUILD1061", "PXBUILD1062",
+    "PXBUILD1063", "PXBUILD1064"])
+    assert.ok(codes.includes(code), code);
+  assert.ok(diagnostics.every((diagnostic) => diagnostic.path === "Content/UI/Title.pxui"));
+  assert.ok(diagnostics.some((diagnostic) => diagnostic.details?.includes("nodes[0].onClick")));
+});

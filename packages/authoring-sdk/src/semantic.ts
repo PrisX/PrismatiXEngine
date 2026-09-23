@@ -62,6 +62,51 @@ function hasCompleteSafety(value: unknown): boolean {
     && typeof safety.rollbackSafe === "boolean";
 }
 
+function manifestActionDefaultMatches(type: unknown, value: unknown): boolean {
+  if (value === null) return true; // Native treats a null default as absent.
+  const finite = (item: unknown) => typeof item === "number" && Number.isFinite(item);
+  const integer = (item: unknown) => typeof item === "number" && Number.isSafeInteger(item);
+  const uuid = (item: unknown) => typeof item === "string" &&
+    /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/iu.test(item);
+  const shallowScalar = (item: unknown) => typeof item === "string" ||
+    typeof item === "boolean" || finite(item);
+  switch (type) {
+    case "boolean": return typeof value === "boolean";
+    case "integer": return integer(value);
+    case "number": return finite(value);
+    case "string": case "token": return typeof value === "string";
+    case "uuid": return uuid(value);
+    case "resource": {
+      if (typeof value === "string") return true;
+      const reference = object(value);
+      return typeof reference?.path === "string" &&
+        (reference.id === undefined || uuid(reference.id));
+    }
+    case "vec2": return Array.isArray(value) && value.length === 2 && value.every(finite);
+    case "rect": return Array.isArray(value) && value.length === 4 && value.every(finite);
+    case "color": return Array.isArray(value) && value.length === 4 &&
+      value.every((channel) => integer(channel) && channel >= 0 && channel <= 255);
+    case "array": return Array.isArray(value) && value.every(shallowScalar);
+    case "object": {
+      const record = object(value);
+      return record !== undefined && Object.values(record).every(shallowScalar);
+    }
+    default: return false;
+  }
+}
+
+function validActionEditorHint(hint: unknown, type: unknown, hasEnum: boolean): boolean {
+  if (hint === undefined || hint === "default") return true;
+  if (hint === "multiline" || hint === "route") return type === "string";
+  if (hint === "enum") return type === "string" && hasEnum;
+  if (hint === "color") return type === "color";
+  if (hint === "resource") return type === "resource";
+  if (hint === "node") return type === "uuid";
+  if (hint === "animation") return type === "resource" || type === "string";
+  if (hint === "token") return type === "token";
+  return false;
+}
+
 function timelineSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[] {
   const diagnostics: AuthoringDiagnostic[] = [];
   const duration = typeof root.duration === "number" ? root.duration : 0;
@@ -382,6 +427,33 @@ export function validateSemantics(contractId: string, value: unknown, path?: str
         for (const parameter of parameters) {
           const range = object(parameter.range);
           if (range !== undefined && typeof range.minimum === "number" && typeof range.maximum === "number" && range.minimum > range.maximum) diagnostics.push(issue("PXSDKSEM1108", "Extension parameter minimum exceeds maximum", path, `${String(declaration.id)}.${String(parameter.name)}`));
+        }
+      }
+      const capabilities = new Set(Array.isArray(root.capabilities) ? root.capabilities : []);
+      for (const action of actions) {
+        for (const capability of Array.isArray(action.capabilities) ? action.capabilities : []) {
+          if (!capabilities.has(capability))
+            diagnostics.push(issue("PXSDKSEM1114", "Extension Action capability is not declared by its manifest",
+              path, `${String(action.id)}.${String(capability)}`));
+        }
+        for (const parameter of objects(action.parameters)) {
+          const location = `${String(action.id)}.${String(parameter.name)}`;
+          if (parameter.type === "null")
+            diagnostics.push(issue("PXSDKSEM1115", "Extension Action parameters cannot use the null type",
+              path, location));
+          if (parameter.default !== undefined &&
+              !manifestActionDefaultMatches(parameter.type, parameter.default))
+            diagnostics.push(issue("PXSDKSEM1116", "Extension Action parameter default has the wrong Runtime type",
+              path, location));
+          const choices = Array.isArray(parameter.enum) ? parameter.enum : [];
+          if (choices.length > 0 && (parameter.type !== "string" ||
+              choices.some((choice) => typeof choice !== "string")))
+            diagnostics.push(issue("PXSDKSEM1117", "Extension Action enum requires string parameters and string choices",
+              path, location));
+          if (!validActionEditorHint(parameter.editorHint, parameter.type, choices.length > 0) ||
+              (parameter.resourceFilter !== undefined && parameter.type !== "resource"))
+            diagnostics.push(issue("PXSDKSEM1118", "Extension Action editor hint or resource filter does not match its type",
+              path, location));
         }
       }
       break;

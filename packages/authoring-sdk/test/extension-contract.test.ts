@@ -85,3 +85,19 @@ test("extension ES modules are explicit, path-safe JavaScript inputs", () => {
   }, "Extensions/test.pxextension");
   assert.equal(invalid.valid, false);
 });
+
+test("extension Action manifest rejects contracts the native catalog cannot register", () => {
+  const invalid = validateDocument<ExtensionManifest>("extension", manifest({
+    safety,
+    actions: [{id: "bad.action", capabilities: ["audio"], parameters: [
+      {name: "nothing", type: "null"},
+      {name: "volume", type: "number", default: "loud"},
+      {name: "mode", type: "integer", enum: [1, 2], editorHint: "enum"},
+      {name: "media", type: "string", resourceFilter: "audio"},
+    ]}],
+  }), "Extensions/bad.pxextension");
+  assert.equal(invalid.valid, false);
+  for (const code of ["PXSDKSEM1114", "PXSDKSEM1115", "PXSDKSEM1116",
+    "PXSDKSEM1117", "PXSDKSEM1118"])
+    assert.ok(invalid.diagnostics.some((diagnostic) => diagnostic.code === code), code);
+});

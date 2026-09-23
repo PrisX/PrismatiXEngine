@@ -115,6 +115,14 @@ The template's title button contains this actual Action descriptor:
 [ui route=save operation=push]
 ```
 
+Extension-declared Actions use the parameter names and types in their `.pxextension` manifest. For a `resource` parameter, wrap a path so it reaches the Runtime as a ResourceRef, not an ordinary string:
+
+```json
+{"id":"music.play","arguments":{"media":{"type":"resource","value":"Assets/Audio/theme.ogg"},"volume":0.8}}
+```
+
+The same typed UI argument bridge accepts `color`, `uuid`, `token`, `vec2`, `rect`, arrays and objects. `prismatix validate` checks extension-declared Action arguments (required names, types, enum choices and ranges) and includes static resource paths, including manifest resource defaults, in the artifact. Actions registered only by a Player/host at runtime have no authoring manifest to check and remain runtime-validated. A bare string path is still a string, so it cannot satisfy a declared `resource` parameter.
+
 A registered `.pxtimeline` can be played using its resource reference:
 
 ```pxstory

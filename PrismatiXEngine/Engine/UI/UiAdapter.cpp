@@ -163,10 +163,9 @@ std::optional<Variant> TryRuntimeValue(
             std::get_if<sdk::UiResourceValue>(&value)) {
         if (resource->value.empty()) return Variant(ResourceRefValue{});
         const auto parsed = Uuid::Parse(resource->value);
-        return parsed
-                   ? std::optional<Variant>{Variant(
-                         ResourceRefValue{*parsed, std::string{}})}
-                   : std::nullopt;
+        if (parsed) return Variant(ResourceRefValue{*parsed, std::string{}});
+        return Variant(ResourceRefValue{Uuid::FromName(resource->value),
+                                        resource->value});
     }
     if (const auto* token = std::get_if<sdk::UiTokenValue>(&value))
         return token->value.empty()
@@ -866,6 +865,10 @@ std::unique_ptr<Control> BuildNode(
 }
 
 }  // namespace
+
+std::optional<Variant> ConvertUiActionValue(const sdk::UiActionValue& value) {
+    return TryRuntimeValue(value);
+}
 
 UiRuntimeTree BuildUiRuntimeTree(
     const sdk::UiDocument& document, UiAssetResolver assetResolver,

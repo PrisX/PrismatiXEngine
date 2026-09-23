@@ -1,6 +1,7 @@
 import {canonicalJson} from "./canonical-json.js";
 import {contractDocumentByteLimit, parseDocument, validateDocument} from "./contracts.js";
 import {normalizeProject} from "./project-normalization.js";
+import {validateUiActionUsage} from "./project-actions.js";
 import type {LayeredPortraitDocument} from "./portrait.js";
 import {validateProjectCharacterResources} from "./project-resources.js";
 import {validateUiPropertyUsage, type UiTypeRegistryMetadata} from "./semantic.js";
@@ -437,6 +438,13 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       else extensions.push(extension);
     }
   }
+  const extensionActionIds = new Set<string>();
+  for (const extension of extensions) for (const action of extension.actions) {
+    if (extensionActionIds.has(action.id))
+      diagnostics.push(issue("PXBUILD1066", "Extension Action id is declared more than once",
+        projectPath, action.id));
+    extensionActionIds.add(action.id);
+  }
   const saveMigrationDocuments = new Map<string, SaveMigrationDocument>();
   const migrationSources = new Map<string, SaveMigrationDescriptor>();
   const versionKey = (version: SaveMigrationVersion) =>
@@ -485,6 +493,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     else {
       if (input.uiTypeRegistry !== undefined)
         diagnostics.push(...validateUiPropertyUsage(ui, input.uiTypeRegistry, path));
+      diagnostics.push(...validateUiActionUsage(ui, extensions, path));
       uiDocuments.set(path, ui);
     }
   }
@@ -564,6 +573,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     }
     if (input.uiTypeRegistry !== undefined)
       diagnostics.push(...validateUiPropertyUsage(component, input.uiTypeRegistry, descriptor.source));
+    diagnostics.push(...validateUiActionUsage(component, extensions, descriptor.source));
     uiComponentDocuments.set(descriptor.source, component);
   }
   if (storyIndex !== undefined && storyIndex.entryScene !== project.entry.story) {
@@ -713,6 +723,18 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     else if (typeof reference.id === "string")
       dependencyReferences.push({value: reference.id, origin});
   };
+  for (const [manifestPath, extension] of extensionDocuments) {
+    for (const declaration of [...extension.commands, ...extension.actions]) {
+      for (const parameter of declaration.parameters) {
+        if (parameter.type === "resource" && parameter.default != null &&
+            !(parameter.default === "" ||
+              (typeof parameter.default === "object" && !Array.isArray(parameter.default) &&
+                parameter.default.path === "")))
+          addResourceRef(parameter.default,
+            `${manifestPath}:${declaration.id}.${parameter.name}.default`);
+      }
+    }
+  }
   const addUiResourceRefs = (document: JsonValue, origin: string): void => {
     if (document === null || typeof document !== "object" || Array.isArray(document)) return;
     const nodes = (document as Record<string, JsonValue>).nodes;
@@ -749,6 +771,10 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
           visitActionArguments(item, `${path}[${index}]`);
         return;
       }
+      if (value.type === "resource" && typeof value.value === "string") {
+        if (value.value !== "") addResourceRef(value.value, `${origin}:${path}.value`);
+        return;
+      }
       for (const [key, item] of Object.entries(value))
         visitActionArguments(item, `${path}.${key}`);
     };
@@ -764,6 +790,30 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
         const actionArguments = (onClick as Record<string, JsonValue>).arguments;
         if (actionArguments !== undefined)
           visitActionArguments(actionArguments, `nodes[${index}].onClick.arguments`);
+      }
+      const instance = uiNode.componentInstance;
+      if (instance !== null && typeof instance === "object" &&
+          !Array.isArray(instance)) {
+        const signals = (instance as Record<string, JsonValue>).publicSignals;
+        if (signals !== null && typeof signals === "object" && !Array.isArray(signals)) {
+          for (const [signalId, value] of Object.entries(signals)) {
+            if (value === null || typeof value !== "object" || Array.isArray(value)) continue;
+            const actionArguments = (value as Record<string, JsonValue>).arguments;
+            if (actionArguments !== undefined)
+              visitActionArguments(actionArguments,
+                `nodes[${index}].componentInstance.publicSignals.${signalId}.arguments`);
+          }
+        }
+      }
+    }
+    const graph = (document as Record<string, JsonValue>).behaviorGraph;
+    if (graph !== null && typeof graph === "object" && !Array.isArray(graph)) {
+      const graphNodes = (graph as Record<string, JsonValue>).nodes;
+      if (Array.isArray(graphNodes)) for (const [index, value] of graphNodes.entries()) {
+        if (value === null || typeof value !== "object" || Array.isArray(value)) continue;
+        const node = value as Record<string, JsonValue>;
+        if (node.kind === "action" && node.arguments !== undefined)
+          visitActionArguments(node.arguments, `behaviorGraph.nodes[${index}].arguments`);
       }
     }
   };

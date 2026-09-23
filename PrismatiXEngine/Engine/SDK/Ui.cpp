@@ -180,8 +180,37 @@ bool ParseValue(const Json& value, UiValue& output) {
 }
 
 bool ParseActionValue(const Json& value, UiActionValue& output) {
+    // Action ResourceRefs may point directly at an owned project resource;
+    // control properties still use catalog UUIDs through ParseValue.
+    if (value.is_object() && value.size() == 2 && value.contains("type") &&
+        value["type"].is_string() && value["type"] == "resource" &&
+        value.contains("value") && value["value"].is_string()) {
+        const auto path = value["value"].get<std::string>();
+        if (!path.empty() && path.size() <= 4096 && path.front() != '/' &&
+            path.find('\\') == std::string::npos &&
+            path.find(':') == std::string::npos &&
+            path.find('\0') == std::string::npos) {
+            bool safe = true;
+            std::size_t start = 0;
+            while (start < path.size()) {
+                const auto end = path.find('/', start);
+                const auto segment = std::string_view(path).substr(
+                    start, end == std::string::npos ? end : end - start);
+                if (segment.empty() || segment == "." || segment == "..") {
+                    safe = false;
+                    break;
+                }
+                if (end == std::string::npos) break;
+                start = end + 1;
+            }
+            if (safe && path.back() != '/') {
+                output = UiResourceValue{path};
+                return true;
+            }
+        }
+    }
     if (!ParseValue(value, output)) return false;
-    return output.index() <= 4;
+    return true;
 }
 
 bool KnownAction(std::string_view id);

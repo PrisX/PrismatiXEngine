@@ -49,6 +49,10 @@ using UiActionSink =
     std::function<void(const sdk::UiAction& action,
                        std::string_view signal, std::string_view nodeId)>;
 
+/** Use the same typed UI value conversion for Action arguments and controls. */
+[[nodiscard]] std::optional<Variant> ConvertUiActionValue(
+    const sdk::UiActionValue& value);
+
 // Converts the public SDK contract into actual Runtime UI Controls. This is a
 // Runtime adapter; the authored JSON contract remains independent of Engine UI
 // implementation classes.
