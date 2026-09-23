@@ -538,18 +538,21 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         break;
       }
       case "choice":
-        if (target === undefined || named("text") === undefined) diagnostics.push(error("PXSTORY1116", "choice requires text and goto", node.span));
+        if (args.has("scene")) diagnostics.push(error("PXSTORY1215", "Cross-scene choice requires compileStoryProject; compileStory only resolves labels in one document", node.span));
+        else if (target === undefined || named("text") === undefined) diagnostics.push(error("PXSTORY1116", "choice requires text and goto", node.span));
         else {
           if (!labels.has(target)) diagnostics.push(error("PXSTORY1117", `Unknown choice target: ${target}`, node.span));
           emit(node, "choiceOption", {text: named("text")!, target}, named("text")!);
         }
         break;
       case "jump":
-        if (target === undefined || !labels.has(target)) diagnostics.push(error("PXSTORY1118", `Unknown jump target: ${target ?? ""}`, node.span));
+        if (args.has("scene")) diagnostics.push(error("PXSTORY1215", "Cross-scene jump requires compileStoryProject; compileStory only resolves labels in one document", node.span));
+        else if (target === undefined || !labels.has(target)) diagnostics.push(error("PXSTORY1118", `Unknown jump target: ${target ?? ""}`, node.span));
         else emit(node, "jump", {target});
         break;
       case "call":
-        if (target === undefined || !labels.has(target)) diagnostics.push(error("PXSTORY1119", `Unknown call target: ${target ?? ""}`, node.span));
+        if (args.has("scene")) diagnostics.push(error("PXSTORY1215", "Cross-scene call requires compileStoryProject; compileStory only resolves labels in one document", node.span));
+        else if (target === undefined || !labels.has(target)) diagnostics.push(error("PXSTORY1119", `Unknown call target: ${target ?? ""}`, node.span));
         else emit(node, "callFragment", {target});
         break;
       case "return": emit(node, "return", {}); break;

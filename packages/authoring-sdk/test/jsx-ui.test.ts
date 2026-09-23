@@ -6,8 +6,10 @@ import {
   Component,
   Control,
   Image,
+  RichTextLabel,
   Scene,
   Text,
+  TextureButton,
   VBox,
   compileJsxUi,
 } from "../src/index.js";
@@ -121,4 +123,33 @@ test("layout, style, binding, and action shorthands lower to canonical fields", 
   });
   assert.deepEqual(button.bindings, {visible: {path: "game.canSave"}});
   assert.deepEqual(button.onClick, {id: "save.open", arguments: {}});
+});
+
+test("texture buttons and rich labels lower typed convenience props to native controls", () => {
+  const result = compileJsxUi(jsx(Scene, {
+    name: "Image UI", width: 800, height: 600,
+    children: jsxs(Control, {name: "Root", children: [
+      jsx(TextureButton, {
+        name: "Start", normalPath: "Assets/UI/start.png", hoverPath: "Assets/UI/start-hover.png",
+        scaleMode: "Fit", runtimeProperties: {focusMode: "All"},
+        action: "game.start", children: "Start",
+      }),
+      jsx(RichTextLabel, {
+        name: "Dialogue", markup: "<ruby>花<rt>はな</rt></ruby>", vertical: true,
+        verticalRows: 4, runtimeProperties: {fontSize: 30},
+      }),
+    ]}),
+  }), {kind: "scene"});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  const button = result.value!.nodes.find((item) => item.name === "Start")!;
+  const label = result.value!.nodes.find((item) => item.name === "Dialogue")!;
+  assert.equal(button.runtimeType, "TextureButton");
+  assert.equal(button.text, "Start");
+  assert.deepEqual(button.runtimeProperties, {
+    focusMode: "All", normalPath: "Assets/UI/start.png",
+    hoverPath: "Assets/UI/start-hover.png", scaleMode: "Fit",
+  });
+  assert.equal(label.runtimeType, "RichTextLabel");
+  assert.equal(label.text, "<ruby>花<rt>はな</rt></ruby>");
+  assert.deepEqual(label.runtimeProperties, {fontSize: 30, vertical: true, verticalRows: 4});
 });

@@ -87,7 +87,7 @@ test("UI contract models simultaneous Visual State Groups through shared propert
     format:"PrismatiXUIScene",schemaRevision:2,id:"33333333-3333-4333-8333-333333333333",revision:1,name:"Menu",width:1280,height:720,rootId:root,
     nodes:[
       {id:root,parentId:null,order:0,kind:"control",runtimeType:"Control",name:"Root",visible:true,locked:false,layout:{mode:"free",x:0,y:0,width:1280,height:720,anchorX:0,anchorY:0,anchorRight:0,anchorBottom:0,pivotX:0,pivotY:0,margin:0,alignment:"start",sizeRule:"fixed"},runtimeProperties:{},bindings:{}},
-      {id:button,parentId:root,order:0,kind:"button",runtimeType:"Button",name:"Start",visible:true,locked:false,layout:{mode:"free",x:100,y:100,width:240,height:80,anchorX:0,anchorY:0,anchorRight:0,anchorBottom:0,pivotX:0.5,pivotY:0.5,margin:0,alignment:"center",sizeRule:"fixed"},runtimeProperties:{texture:"Assets/UI/start-normal.png",opacity:1},bindings:{text:{path:"locale.ui.start"}}},
+      {id:button,parentId:root,order:0,kind:"button",runtimeType:"Button",name:"Start",visible:true,locked:false,layout:{mode:"free",x:100,y:100,width:240,height:80,anchorX:0,anchorY:0,anchorRight:0,anchorBottom:0,pivotX:0.5,pivotY:0.5,margin:0,alignment:"center",sizeRule:"fixed"},runtimeProperties:{texture:"Assets/UI/start-normal.png",opacity:1,outlineColor:{type:"color",value:"#2D171DFF"}},bindings:{text:{path:"locale.ui.start"}}},
     ],
     theme:[],behaviorGraph:{nodes:[],links:[],groups:[]},behaviorTriggers:[],
     visualStateGroups:[
@@ -98,8 +98,9 @@ test("UI contract models simultaneous Visual State Groups through shared propert
   const registry = {controls:[
     {runtimeType:"Control",properties:[]},
     {runtimeType:"Button",properties:[
-      {id:"texture",writable:true,bindable:false,animatable:true},
-      {id:"opacity",writable:true,bindable:true,animatable:true},
+      {id:"texture",writable:true,bindable:false,animatable:true,valueType:"string"},
+      {id:"opacity",writable:true,bindable:true,animatable:true,valueType:"number"},
+      {id:"outlineColor",writable:true,bindable:false,animatable:false,valueType:"color"},
       {id:"text",writable:true,bindable:true,animatable:false},
     ]},
   ]};
@@ -107,6 +108,14 @@ test("UI contract models simultaneous Visual State Groups through shared propert
   const invalid = structuredClone(ui) as typeof ui;
   (invalid.visualStateGroups[0]!.states[0]!.overrides[0] as {property: string}).property = "removedProperty";
   assert.equal(validateUiDocument(invalid, registry).valid, false);
+  const wrongColor = structuredClone(ui) as typeof ui;
+  (wrongColor.nodes[1]!.runtimeProperties as {outlineColor: unknown}).outlineColor = "#2D171DFF";
+  const rejected = validateUiDocument(wrongColor, registry);
+  assert.equal(rejected.valid, false);
+  assert.ok(rejected.diagnostics.some((item) => item.code === "PXSDKSEM1324" && item.message.includes("expects color")));
+  const malformedColor = structuredClone(ui) as typeof ui;
+  (malformedColor.nodes[1]!.runtimeProperties as {outlineColor: unknown}).outlineColor = {type:"color",value:"pink"};
+  assert.ok(validateUiDocument(malformedColor, registry).diagnostics.some((item) => item.code === "PXSDKSEM1324"));
 });
 
 test("UI revision-1 migration normalizes legacy presentation fields", () => {

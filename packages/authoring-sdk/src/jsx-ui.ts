@@ -157,6 +157,21 @@ export interface ButtonProps extends Omit<UiNodeProps, "children"> {
   readonly children?: string | number | readonly (string | number)[];
 }
 
+export interface TextureButtonProps extends ButtonProps {
+  readonly normalPath?: string;
+  readonly hoverPath?: string;
+  readonly pressedPath?: string;
+  readonly disabledPath?: string;
+  readonly scaleMode?: "Stretch" | "Fit" | "Fill" | "Original";
+}
+
+export interface RichTextLabelProps extends TextProps {
+  /** Ruby/markup source; takes precedence over text children. */
+  readonly markup?: string;
+  readonly vertical?: boolean;
+  readonly verticalRows?: number;
+}
+
 export interface ThemeToken {
   readonly id: string;
   readonly name: string;
@@ -336,6 +351,40 @@ export function Button(props: ButtonProps): UiElement {
   const text = props.text ?? textualChildren(props.children);
   const {children: _children, ...rest} = props;
   return node("button", "Button", {...rest, ...(text === undefined ? {} : {text})});
+}
+
+/** Image-state button without the generic Control runtimeType escape hatch. */
+export function TextureButton(props: TextureButtonProps): UiElement {
+  const text = props.text ?? textualChildren(props.children);
+  const {children: _children, normalPath, hoverPath, pressedPath, disabledPath,
+    scaleMode, ...rest} = props;
+  return node("button", "TextureButton", {
+    ...rest,
+    ...(text === undefined ? {} : {text}),
+    runtimeProperties: {
+      ...props.runtimeProperties,
+      ...(normalPath === undefined ? {} : {normalPath}),
+      ...(hoverPath === undefined ? {} : {hoverPath}),
+      ...(pressedPath === undefined ? {} : {pressedPath}),
+      ...(disabledPath === undefined ? {} : {disabledPath}),
+      ...(scaleMode === undefined ? {} : {scaleMode}),
+    },
+  });
+}
+
+/** Rich text and ruby markup rendered by the native RichTextLabel control. */
+export function RichTextLabel(props: RichTextLabelProps): UiElement {
+  const text = props.markup ?? props.text ?? textualChildren(props.children);
+  const {children: _children, markup: _markup, vertical, verticalRows, ...rest} = props;
+  return node("label", "RichTextLabel", {
+    ...rest,
+    ...(text === undefined ? {} : {text}),
+    runtimeProperties: {
+      ...props.runtimeProperties,
+      ...(vertical === undefined ? {} : {vertical}),
+      ...(verticalRows === undefined ? {} : {verticalRows}),
+    },
+  });
 }
 
 /** A typed convenience node for already-authored canonical component metadata. */

@@ -26,6 +26,11 @@ const result = compileStory(story, {
 });
 ```
 
+`compileStory` compiles one document and resolves only its local labels. For
+`[jump scene=...]`, `[call scene=...]`, or `[choice scene=...]`, use
+`compileStoryProject` with a Story index and all referenced scene sources;
+single-document compilation reports `PXSTORY1215` for these commands.
+
 ## JSX UI authoring
 
 JSX and TSX are build-time syntax only. `Scene`, `VBox`, `HBox`, `Text`, `Image`,
@@ -58,6 +63,18 @@ node's `name`, `stableId`, or JSX `key` provide stable, deterministic UUID seeds
 Duplicate sibling names are deterministically disambiguated. Direct layout props
 such as `position`, `size`, `anchor`, `align`, and `fill`, plus CSS-like `style`,
 `bind`, and `action` aliases, lower to the unchanged canonical fields.
+
+`TextureButton` accepts `normalPath`, `hoverPath`, `pressedPath`,
+`disabledPath`, and `scaleMode` directly. `RichTextLabel` accepts ruby/markup
+through `markup` (or text children), plus `vertical` and `verticalRows`. Both
+still support `runtimeProperties` for less common native properties.
+
+When a native UI TypeRegistry manifest is available, use
+`validateUiDocument(ui, registry)` to check writable/bindable properties and
+their declared `valueType` before packaging. For example, a Color property
+must receive `{type: "color", value: "#2D171DFF"}`, not the plain string
+`"#2D171DFF"`. `validateDocument("ui", ui)` checks the canonical document
+but has no native property metadata, so it cannot catch that type mismatch.
 
 Local `.jsx`/`.tsx` modules may be imported normally, so authoring components can
 live in separate files. `prismatix validate` and `build` construct a real strict

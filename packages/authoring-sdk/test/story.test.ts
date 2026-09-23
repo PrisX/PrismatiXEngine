@@ -110,6 +110,19 @@ test("chapter authors a durable in-story presentation title", () => {
   assert.ok(missing.diagnostics.some((diagnostic) => diagnostic.code === "PXSTORY1144"));
 });
 
+test("single-document Story compilation points cross-scene authors to the project API", () => {
+  for (const command of ["jump", "call", "choice"] as const) {
+    const syntax = command === "choice"
+      ? '[choice text="Continue" scene=next target=start]'
+      : `[${command} scene=next target=start]`;
+    const compiled = compileStory(parseStory(`*start\n${syntax}\n`, "Story/one.pxstory"),
+      {documentId: "one"});
+    assert.equal(compiled.valid, false);
+    assert.ok(compiled.diagnostics.some((item) => item.code === "PXSTORY1215" &&
+      item.message.includes("compileStoryProject")), JSON.stringify(compiled.diagnostics));
+  }
+});
+
 test("Story compiler emits only executable semantic operations and source maps", () => {
   const parsed = parseStory(source, "Story/zh-TW/ch01.pxstory");
   const compiled = compileStory(parsed, {

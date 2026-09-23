@@ -392,6 +392,9 @@ export interface UiPropertyMetadata {
   readonly writable: boolean;
   readonly bindable: boolean;
   readonly animatable: boolean;
+  /** Native TypeRegistry valueType, when available in the exported manifest. */
+  readonly valueType?: string;
+  readonly tokenBindable?: boolean;
 }
 
 export interface UiControlMetadata {
@@ -403,6 +406,41 @@ export interface UiTypeRegistryMetadata {
   readonly controls: readonly UiControlMetadata[];
 }
 
+function uiValueType(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "boolean") return "boolean";
+  if (typeof value === "number") return Number.isInteger(value) ? "integer" : "number";
+  if (typeof value === "string") return "string";
+  if (Array.isArray(value)) return "array";
+  const record = object(value);
+  if (record === undefined) return "invalid";
+  const type = record.type;
+  if (typeof type !== "string") return "object";
+  const keys = Object.keys(record).length;
+  const finite = (name: string): boolean => typeof record[name] === "number" && Number.isFinite(record[name]);
+  const uuid = (text: unknown): boolean => typeof text === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(text);
+  switch (type) {
+    case "vec2": return keys === 3 && finite("x") && finite("y") ? type : "invalid";
+    case "rect": return keys === 5 && finite("x") && finite("y") && finite("width") && finite("height") ? type : "invalid";
+    case "color": return keys === 2 && typeof record.value === "string" &&
+      /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/iu.test(record.value) ? type : "invalid";
+    case "uuid": return keys === 2 && uuid(record.value) ? type : "invalid";
+    case "resource": return keys === 2 && (record.value === "" || uuid(record.value)) ? type : "invalid";
+    case "token": return keys === 2 && typeof record.value === "string" && record.value.length > 0 ? type : "invalid";
+    case "nodeReference": return keys === 2 && uuid(record.nodeId) ? "uuid" : "invalid";
+  }
+  return "object";
+}
+
+function uiValueMatches(value: unknown, property: UiPropertyMetadata): boolean {
+  if (property.valueType === undefined) return true;
+  const actual = uiValueType(value);
+  if (actual === "token" && property.valueType !== "token") return property.tokenBindable === true;
+  if (property.valueType === "number" && actual === "integer") return true;
+  return actual === property.valueType;
+}
+
 export function validateUiPropertyUsage(value: unknown, registry: UiTypeRegistryMetadata, path?: string): readonly AuthoringDiagnostic[] {
   const root = object(value);
   if (root === undefined) return [];
@@ -410,16 +448,20 @@ export function validateUiPropertyUsage(value: unknown, registry: UiTypeRegistry
   const metadata = new Map(registry.controls.map((control) => [control.runtimeType, new Map(control.properties.map((property) => [property.id, property]))]));
   const nodes = objects(root.nodes);
   const runtimeTypeByNode = new Map(nodes.map((node) => [node.id, node.runtimeType]));
-  const check = (nodeId: unknown, propertyId: unknown, capability: keyof Pick<UiPropertyMetadata, "writable" | "bindable" | "animatable">, code: string): void => {
+  const check = (nodeId: unknown, propertyId: unknown, capability: keyof Pick<UiPropertyMetadata, "writable" | "bindable" | "animatable">, code: string, authoredValue?: unknown): void => {
     const runtimeType = runtimeTypeByNode.get(nodeId);
     const property = typeof runtimeType === "string" && typeof propertyId === "string" ? metadata.get(runtimeType)?.get(propertyId) : undefined;
-    if (property === undefined || !property[capability]) diagnostics.push(issue(code, `UI property is not ${capability}`, path, `${String(nodeId)}.${String(propertyId)}`));
+    const location = `${String(nodeId)}.${String(propertyId)}`;
+    if (property === undefined || !property[capability]) diagnostics.push(issue(code, `UI property is not ${capability}`, path, location));
+    else if (capability === "writable" && !uiValueMatches(authoredValue, property))
+      diagnostics.push(issue("PXSDKSEM1324", `UI property expects ${property.valueType} but received ${uiValueType(authoredValue)}`, path, location));
   };
   for (const node of nodes) {
-    for (const property of Object.keys(object(node.runtimeProperties) ?? {})) check(node.id, property, "writable", "PXSDKSEM1320");
+    for (const [property, authoredValue] of Object.entries(object(node.runtimeProperties) ?? {}))
+      check(node.id, property, "writable", "PXSDKSEM1320", authoredValue);
     for (const property of Object.keys(object(node.bindings) ?? {})) check(node.id, property, "bindable", "PXSDKSEM1321");
   }
-  for (const group of objects(root.visualStateGroups)) for (const state of objects(group.states)) for (const override of objects(state.overrides)) check(override.nodeId, override.property, "writable", "PXSDKSEM1322");
+  for (const group of objects(root.visualStateGroups)) for (const state of objects(group.states)) for (const override of objects(state.overrides)) check(override.nodeId, override.property, "writable", "PXSDKSEM1322", override.value);
   for (const clip of objects(object(root.animations)?.clips)) for (const track of objects(clip.tracks)) check(track.nodeId, track.property, "animatable", "PXSDKSEM1323");
   return diagnostics;
 }
