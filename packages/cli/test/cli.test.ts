@@ -169,11 +169,12 @@ test("validate and build reject native UI property type mismatches before packag
   assert.equal(valid.status, 0, valid.stderr);
 });
 
-test("validate rejects a native-invalid UI binding path before packaging", async () => {
+test("validate rejects native-invalid UI bindings and typed values before packaging", async () => {
   const value = await fixture();
   const uiPath = join(value.root, "Content/UI/Title.pxui");
   const ui = JSON.parse(await readFile(uiPath, "utf8")) as {
-    nodes: Array<{bindings: Record<string, unknown>}>
+    nodes: Array<{bindings: Record<string, unknown>;
+      runtimeProperties: Record<string, unknown>}>
   };
   ui.nodes[0]!.bindings.visible = {path: "saveLoad.slot[0].enabled"};
   await write(uiPath, JSON.stringify(ui));
@@ -184,6 +185,13 @@ test("validate rejects a native-invalid UI binding path before packaging", async
     "--output", join(value.root, "artifact")]);
   assert.equal(built.status, 1);
   assert.equal((await readdir(value.root)).includes("artifact"), false);
+  ui.nodes[0]!.bindings = {};
+  ui.nodes[0]!.runtimeProperties.translation = {type:"vec2",x:0,y:"bottom"};
+  await write(uiPath, JSON.stringify(ui));
+  const invalidValue = run(["validate", value.project]);
+  assert.equal(invalidValue.status, 1);
+  assert.match(invalidValue.stderr, /PXSDKSEM1325/u);
+  assert.match(invalidValue.stderr, /runtimeProperties\.translation/u);
 });
 
 test("validate and artifact build use the selected local Runtime UI registry", async () => {

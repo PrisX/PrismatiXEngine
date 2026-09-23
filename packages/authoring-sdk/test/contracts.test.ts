@@ -8,9 +8,11 @@ import {
   parseDocument,
   serializeDocument,
   validateDocument,
+  validateSemantics,
   validateUiDocument,
 } from "../src/index.js";
 import type {JsonValue} from "../src/index.js";
+import {nativeUiValueType} from "../src/ui-value.js";
 
 test("contract schemas have deterministic SHA-256 identities", () => {
   assert.ok(Object.keys(contractHashes).length >= 12);
@@ -127,7 +129,8 @@ test("UI contract models simultaneous Visual State Groups through shared propert
   assert.ok(rejected.diagnostics.some((item) => item.code === "PXSDKSEM1324" && item.message.includes("expects color")));
   const malformedColor = structuredClone(ui) as typeof ui;
   (malformedColor.nodes[1]!.runtimeProperties as {outlineColor: unknown}).outlineColor = {type:"color",value:"pink"};
-  assert.ok(validateUiDocument(malformedColor, registry).diagnostics.some((item) => item.code === "PXSDKSEM1324"));
+  assert.ok(validateUiDocument(malformedColor, registry).diagnostics.some((item) =>
+    item.code === "PXSDKSEM1325" && item.details === "nodes[1].runtimeProperties.outlineColor"));
 });
 
 test("UI revision-1 migration normalizes legacy presentation fields", () => {
@@ -218,6 +221,55 @@ test("UI binding and runtime-property limits match the native loader", () => {
   assert.equal(validateDocument("ui", withMaps(Object.fromEntries(
     Array.from({length:257}, (_, index) => [`property${index}`, index])), {})).valid, false);
   assert.equal(validateDocument("ui", withMaps({"":1}, {})).valid, false);
+});
+
+test("all authored UI value surfaces reject values the native parser cannot load", () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  const layout = {mode:"free",x:0,y:0,width:100,height:100,
+    anchorX:0,anchorY:0,anchorRight:0,anchorBottom:0,pivotX:0,pivotY:0,
+    margin:0,alignment:"start",sizeRule:"fixed"};
+  const node = {id,parentId:null,order:0,kind:"control",runtimeType:"Control",
+    name:"Root",visible:true,locked:false,layout,bindings:{},runtimeProperties:{}};
+  const scene = {format:"PrismatiXUIScene",schemaRevision:2,id,revision:1,
+    name:"Values",width:100,height:100,rootId:id,nodes:[node],theme:[],
+    behaviorGraph:{nodes:[],links:[],groups:[]},behaviorTriggers:[],
+    visualStateGroups:[]};
+  assert.equal(validateDocument("ui", scene).valid, true);
+  const invalidVec = {type:"vec2",x:1,y:"not a number"};
+  const invalidNode = validateDocument("ui", {...scene,nodes:[
+    {...node,runtimeProperties:{translation:invalidVec}}]});
+  assert.equal(invalidNode.valid, false);
+  assert.ok(invalidNode.diagnostics.some((item) => item.code === "PXSDKSEM1325" &&
+    item.details === "nodes[0].runtimeProperties.translation"));
+  const invalidAction = validateDocument("ui", {...scene,nodes:[
+    {...node,onClick:{id:"host.custom",arguments:{color:{type:"color",value:"pink"}}}}]});
+  assert.equal(invalidAction.valid, false);
+  assert.ok(invalidAction.diagnostics.some((item) => item.code === "PXSDKSEM1325" &&
+    item.details === "nodes[0].onClick.arguments.color"));
+  assert.equal(nativeUiValueType({type:"resource",value:"Assets/UI/button.png"}), "invalid");
+  assert.equal(nativeUiValueType({type:"resource",value:"Assets/UI/button.png"}, true), "resource");
+  assert.equal(nativeUiValueType(Array.from({length:1025}, () => 1)), "invalid");
+  assert.equal(nativeUiValueType({["界".repeat(86)]:1}), "invalid");
+  assert.equal(nativeUiValueType({value:"x".repeat(1024 * 1024)}), "invalid");
+  const surfaces = {...scene,
+    nodes:[{...node,componentInstance:{publicSignals:{pressed:{arguments:{bad:invalidVec}}}}}],
+    behaviorGraph:{nodes:[{properties:{bad:invalidVec},arguments:{bad:invalidVec}}],
+      links:[],groups:[]},
+    visualStateGroups:[{states:[{overrides:[{value:invalidVec}]}]}],
+    animations:{clips:[{tracks:[{keys:[{value:invalidVec}]}]}],
+      stateMachine:{parameters:[{defaultValue:invalidVec}],
+        transitions:[{conditions:[{value:invalidVec}]}]}}};
+  const locations = new Set(validateSemantics("ui", surfaces)
+    .filter((item) => item.code === "PXSDKSEM1325").map((item) => item.details));
+  for (const location of [
+    "nodes[0].componentInstance.publicSignals.pressed.arguments.bad",
+    "behaviorGraph.nodes[0].properties.bad",
+    "behaviorGraph.nodes[0].arguments.bad",
+    "visualStateGroups[0].states[0].overrides[0].value",
+    "animations.clips[0].tracks[0].keys[0].value",
+    "animations.stateMachine.parameters[0].defaultValue",
+    "animations.stateMachine.transitions[0].conditions[0].value",
+  ]) assert.ok(locations.has(location), `missing native UiValue validation at ${location}`);
 });
 
 test("Timeline semantic validation rejects unordered or out-of-range samples", () => {

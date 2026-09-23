@@ -1,4 +1,5 @@
 import type {AuthoringDiagnostic} from "./types.js";
+import {nativeUiValueType} from "./ui-value.js";
 
 type ObjectValue = Record<string, unknown>;
 
@@ -255,8 +256,55 @@ function uiComponentSemantics(root: ObjectValue, path?: string): AuthoringDiagno
   return diagnostics;
 }
 
+function validateNativeUiValues(root: ObjectValue, path?: string): AuthoringDiagnostic[] {
+  const diagnostics: AuthoringDiagnostic[] = [];
+  const check = (value: unknown, location: string, action = false): void => {
+    if (nativeUiValueType(value, action) === "invalid")
+      diagnostics.push(issue("PXSDKSEM1325",
+        `UI ${action ? "Action argument" : "value"} cannot be parsed by the native loader`,
+        path, location));
+  };
+  const checkMap = (value: unknown, location: string, action = false): void => {
+    for (const [key, item] of Object.entries(object(value) ?? {}))
+      check(item, `${location}.${key}`, action);
+  };
+
+  for (const [index, node] of objects(root.nodes).entries()) {
+    checkMap(node.runtimeProperties, `nodes[${index}].runtimeProperties`);
+    checkMap(object(node.onClick)?.arguments, `nodes[${index}].onClick.arguments`, true);
+    const signals = object(object(node.componentInstance)?.publicSignals) ?? {};
+    for (const [name, signal] of Object.entries(signals))
+      checkMap(object(signal)?.arguments,
+        `nodes[${index}].componentInstance.publicSignals.${name}.arguments`, true);
+  }
+  for (const [index, node] of objects(object(root.behaviorGraph)?.nodes).entries()) {
+    checkMap(node.properties, `behaviorGraph.nodes[${index}].properties`);
+    checkMap(node.arguments, `behaviorGraph.nodes[${index}].arguments`);
+  }
+  for (const [groupIndex, group] of objects(root.visualStateGroups).entries())
+    for (const [stateIndex, state] of objects(group.states).entries())
+      for (const [overrideIndex, override] of objects(state.overrides).entries())
+        check(override.value,
+          `visualStateGroups[${groupIndex}].states[${stateIndex}].overrides[${overrideIndex}].value`);
+  const animations = object(root.animations);
+  for (const [clipIndex, clip] of objects(animations?.clips).entries())
+    for (const [trackIndex, track] of objects(clip.tracks).entries())
+      for (const [keyIndex, key] of objects(track.keys).entries())
+        check(key.value,
+          `animations.clips[${clipIndex}].tracks[${trackIndex}].keys[${keyIndex}].value`);
+  const machine = object(animations?.stateMachine);
+  for (const [index, parameter] of objects(machine?.parameters).entries())
+    check(parameter.defaultValue, `animations.stateMachine.parameters[${index}].defaultValue`);
+  for (const [transitionIndex, transition] of objects(machine?.transitions).entries())
+    for (const [conditionIndex, condition] of objects(transition.conditions).entries())
+      check(condition.value,
+        `animations.stateMachine.transitions[${transitionIndex}].conditions[${conditionIndex}].value`);
+  return diagnostics;
+}
+
 function uiSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[] {
   const diagnostics: AuthoringDiagnostic[] = [];
+  diagnostics.push(...validateNativeUiValues(root, path));
   const nodes = objects(root.nodes);
   diagnostics.push(...uniqueIdentities(nodes, "id", "UI node", path));
   const nodeIds = new Set(nodes.map((node) => node.id).filter((id): id is string => typeof id === "string"));
@@ -488,36 +536,9 @@ export interface UiTypeRegistryMetadata {
   readonly controls: readonly UiControlMetadata[];
 }
 
-function uiValueType(value: unknown): string {
-  if (value === null) return "null";
-  if (typeof value === "boolean") return "boolean";
-  if (typeof value === "number") return Number.isInteger(value) ? "integer" : "number";
-  if (typeof value === "string") return "string";
-  if (Array.isArray(value)) return "array";
-  const record = object(value);
-  if (record === undefined) return "invalid";
-  const type = record.type;
-  if (typeof type !== "string") return "object";
-  const keys = Object.keys(record).length;
-  const finite = (name: string): boolean => typeof record[name] === "number" && Number.isFinite(record[name]);
-  const uuid = (text: unknown): boolean => typeof text === "string" &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(text);
-  switch (type) {
-    case "vec2": return keys === 3 && finite("x") && finite("y") ? type : "invalid";
-    case "rect": return keys === 5 && finite("x") && finite("y") && finite("width") && finite("height") ? type : "invalid";
-    case "color": return keys === 2 && typeof record.value === "string" &&
-      /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/iu.test(record.value) ? type : "invalid";
-    case "uuid": return keys === 2 && uuid(record.value) ? type : "invalid";
-    case "resource": return keys === 2 && (record.value === "" || uuid(record.value)) ? type : "invalid";
-    case "token": return keys === 2 && typeof record.value === "string" && record.value.length > 0 ? type : "invalid";
-    case "nodeReference": return keys === 2 && uuid(record.nodeId) ? "uuid" : "invalid";
-  }
-  return "object";
-}
-
 function uiValueMatches(value: unknown, property: UiPropertyMetadata): boolean {
   if (property.valueType === undefined) return true;
-  const actual = uiValueType(value);
+  const actual = nativeUiValueType(value);
   if (actual === "token" && property.valueType !== "token") return property.tokenBindable === true;
   if (property.valueType === "number" && actual === "integer") return true;
   return actual === property.valueType;
@@ -536,7 +557,7 @@ export function validateUiPropertyUsage(value: unknown, registry: UiTypeRegistry
     const location = `${String(nodeId)}.${String(propertyId)}`;
     if (property === undefined || !property[capability]) diagnostics.push(issue(code, `UI property is not ${capability}`, path, location));
     else if (capability === "writable" && !uiValueMatches(authoredValue, property))
-      diagnostics.push(issue("PXSDKSEM1324", `UI property expects ${property.valueType} but received ${uiValueType(authoredValue)}`, path, location));
+      diagnostics.push(issue("PXSDKSEM1324", `UI property expects ${property.valueType} but received ${nativeUiValueType(authoredValue)}`, path, location));
   };
   for (const node of nodes) {
     for (const [property, authoredValue] of Object.entries(object(node.runtimeProperties) ?? {}))
