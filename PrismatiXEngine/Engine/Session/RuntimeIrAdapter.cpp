@@ -443,6 +443,10 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
         } else if (operation.kind == "hideCharacter") {
             command.type = "char_clear";
             Add(command, "id", Argument(operation, "character"));
+            Add(command, "transition", Argument(operation, "transition"));
+        } else if (operation.kind == "hideCharacters") {
+            command.type = "char_clear_all";
+            Add(command, "transition", Argument(operation, "transition"));
         } else if (operation.kind == "voice" || operation.kind == "bgm" ||
                    operation.kind == "soundEffect" || operation.kind == "ambience") {
             command.type = operation.kind == "soundEffect" ? "se" : operation.kind;

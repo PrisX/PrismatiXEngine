@@ -560,8 +560,16 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       case "hide": {
         const alias = named("character") ?? positional(0);
         const character = alias === undefined ? undefined : characters.get(alias);
+        const transition = named("transition");
         if (alias === undefined) diagnostics.push(error("PXSTORY1115", "hide requires a character alias", node.span));
-        else emit(node, "hideCharacter", {character: character?.id ?? alias});
+        else if (transition !== undefined && transition !== "true" && transition !== "false") {
+          diagnostics.push(error("PXSTORY1145", "hide transition must be true or false", node.span));
+        } else if (named("character") === undefined && positional(0) === "all") {
+          emit(node, "hideCharacters", transition === undefined ? {} : {transition});
+        } else {
+          emit(node, "hideCharacter", {character: character?.id ?? alias,
+            ...(transition === undefined ? {} : {transition})});
+        }
         break;
       }
       case "choice":
@@ -780,6 +788,9 @@ export function storyCommandCompletions(extensions: readonly ExtensionCommand[] 
       {name:"position", required:false, values:["left", "center", "right"]},
       {name:"x", required:false}, {name:"y", required:false}, {name:"scale", required:false},
       {name:"duration", required:false}, {name:"ease", required:false}, {name:"wait", required:false},
+    ],
+    hide: [
+      {name:"character", required:true}, {name:"transition", required:false, values:[true, false]},
     ],
     bgm: [{name:"asset", required:true}, {name:"fade", required:false}],
     "bgm.stop": [{name:"fade", required:false}],

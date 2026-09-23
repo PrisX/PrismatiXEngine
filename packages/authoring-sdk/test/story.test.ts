@@ -42,6 +42,28 @@ test("quoted Story speaker keeps visible name separate without inventing a chara
   const malformed = parseStory('@"村雨\n早安。\n');
   assert.ok(malformed.diagnostics.some((item) => item.code === "PXSTORY1015"));
 });
+
+test("hide all clears actors with one readable operation and optional instant transition", () => {
+  const result = compileStory(parseStory(
+    "[hide all]\n[hide all transition=false]\n[hide yuki transition=false]\n",
+    "Story/clear.pxstory"), {documentId: "clear", characters: [character]});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  assert.deepEqual(result.runtimeIr?.operations.map(({kind, arguments: args}) => [kind, args]), [
+    ["hideCharacters", {}],
+    ["hideCharacters", {transition:"false"}],
+    ["hideCharacter", {character:character.id, transition:"false"}],
+  ]);
+  const invalid = compileStory(parseStory("[hide all transition=maybe]\n"),
+    {documentId: "invalid-clear"});
+  assert.equal(invalid.valid, false);
+  assert.ok(invalid.diagnostics.some((item) => item.code === "PXSTORY1145"));
+  const namedAll = compileStory(parseStory("[hide character=all]\n"),
+    {documentId: "named-all", characters: [{...character, aliases:["all"]}]});
+  assert.equal(namedAll.valid, true, JSON.stringify(namedAll.diagnostics));
+  assert.deepEqual(namedAll.runtimeIr?.operations.map(({kind, arguments: args}) => [kind, args]), [
+    ["hideCharacter", {character:character.id}],
+  ]);
+});
 const game: GameDocument = {
   format: "PrismatiXGame",
   schemaRevision: 2,

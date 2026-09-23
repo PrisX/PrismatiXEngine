@@ -671,6 +671,10 @@ void VM::ExecuteSimple(const Command& cmd) {
         m_stage.ClearCharacter(cmd.Get("name", cmd.Get("id")), TruthyFlag(cmd));
         return;
     }
+    if (t == "char_clear_all") {
+        m_stage.ClearCharacters(TruthyFlag(cmd));
+        return;
+    }
     if (t == "bgm") {
         m_currentBgm = Resolve(m_config.bgmDir, cmd.Get("file", cmd.Get("value")));
         const int fade = ParseInt(cmd.Get("fade"), 0);

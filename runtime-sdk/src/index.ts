@@ -533,6 +533,7 @@ export interface PrismatiXEngine {
   SetBackgroundRule(path: string, rulePath: string, durationMilliseconds?: number, vague?: number): void;
   SetCharacter(name: string, image: string, slot?: number, transition?: boolean, x?: number, y?: number, scale?: number): void;
   ClearCharacter(name: string, transition?: boolean): void;
+  ClearCharacters(transition?: boolean): void;
   MoveCharacter(name: string, slot: number): void;
   SetLayer(name: string, image: string, x?: number, y?: number, scale?: number, alpha?: number, z?: number): void;
   SetLayerTransform(name: string, image: string, x?: number, y?: number, scaleX?: number, scaleY?: number, rotation?: number, alpha?: number, z?: number): void;
@@ -683,6 +684,7 @@ export const ENGINE_HOST_BINDINGS = [
   "SetBackgroundRule",
   "SetCharacter",
   "ClearCharacter",
+  "ClearCharacters",
   "MoveCharacter",
   "SetLayer",
   "SetLayerTransform",
@@ -851,6 +853,7 @@ export interface PrismatiXContext {
     backgroundRule(path: string, rulePath: string, options?: BackgroundRuleOptions): void;
     character(name: string, image: string, options?: {readonly slot?: number; readonly transition?: boolean; readonly x?: number; readonly y?: number; readonly scale?: number}): void;
     clearCharacter(name: string, transition?: boolean): void;
+    clearCharacters(transition?: boolean): void;
     moveCharacter(name: string, slot: number): void;
     layer(name: string, image: string, options?: LayerTransformOptions & {readonly scale?: number}): void;
     clearLayer(name: string): void;
@@ -1126,6 +1129,7 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
       backgroundRule: (path, rulePath, options) => engine.SetBackgroundRule(path, rulePath, options?.durationMilliseconds, options?.vague),
       character: (name, image, options) => engine.SetCharacter(name, image, options?.slot, options?.transition, options?.x, options?.y, options?.scale),
       clearCharacter: (name, transition) => engine.ClearCharacter(name, transition),
+      clearCharacters: (transition) => engine.ClearCharacters(transition),
       moveCharacter: (name, slot) => engine.MoveCharacter(name, slot),
       layer: (name, image, options) => {
         if (options?.scaleX !== undefined || options?.scaleY !== undefined || options?.rotation !== undefined)

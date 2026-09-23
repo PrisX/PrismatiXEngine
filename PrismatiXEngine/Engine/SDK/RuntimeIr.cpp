@@ -23,7 +23,7 @@ bool ExecutableOperationKind(const std::string_view kind) {
         "scene",         "fragment",      "callFragment",
         "return",        "endStory",      "dialogue",
         "narration",     "choiceOption",  "background",
-        "showCharacter", "hideCharacter", "voice",
+        "showCharacter", "hideCharacter", "hideCharacters", "voice",
         "bgm",           "stopBgm",       "soundEffect",
         "ambience",      "stopAmbience",  "video",
         "setVariable",

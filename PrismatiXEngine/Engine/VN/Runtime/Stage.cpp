@@ -750,6 +750,21 @@ void Stage::ClearCharacter(const std::string& name, bool transition) {
     it->second.targetAlpha = 0.0f;
 }
 
+void Stage::ClearCharacters(const bool transition) {
+    if (transition) {
+        for (auto& entry : m_actors) {
+            auto& actor = entry.second;
+            actor.exiting = true;
+            actor.targetAlpha = 0.0f;
+        }
+        return;
+    }
+    std::vector<std::string> names;
+    names.reserve(m_actors.size());
+    for (const auto& entry : m_actors) names.push_back(entry.first);
+    for (const auto& name : names) RemoveNode(name);
+}
+
 void Stage::MoveCharacter(const std::string& name, int slot) {
     auto it = m_actors.find(name);
     if (it == m_actors.end()) {

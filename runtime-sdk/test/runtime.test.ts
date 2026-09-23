@@ -97,6 +97,7 @@ const engine = {
   SetBackgroundRule: (_path: string, _rule: string, duration?: number) => { calls.push(`rule:${duration}`); },
   SetCharacter: () => undefined,
   ClearCharacter: () => undefined,
+  ClearCharacters: (transition?: boolean) => { calls.push(`clearCharacters:${transition}`); },
   MoveCharacter: () => undefined,
   SetLayer: () => undefined,
   SetLayerTransform: (_name: string, _image: string, _x?: number, _y?: number, scaleX?: number, scaleY?: number, rotation?: number) => { calls.push(`layer:${scaleX}:${scaleY}:${rotation}`); },
@@ -223,6 +224,7 @@ if (video.id !== 11 || video.status() !== "completed" || video.token().kind !== 
 await video;
 ctx.stage.background("Assets/BG/classroom.webp");
 ctx.stage.backgroundRule("Assets/BG/night.webp", "Assets/Rules/clouds.webp", {durationMilliseconds: 700});
+ctx.stage.clearCharacters(false);
 ctx.stage.layer("mist", "Assets/FX/mist.webp", {scaleX: 1.2, scaleY: 0.8, rotation: 12});
 if (!ctx.stage.group("weather") || !ctx.stage.parent("mist", "weather") ||
     !ctx.stage.transform("weather", {x: 4, opacity: 0.8}) ||
@@ -293,6 +295,7 @@ const expected = [
   "video-wait:11",
   "bg:Assets/BG/classroom.webp",
   "rule:700",
+  "clearCharacters:false",
   "layer:1.2:0.8:12",
   "camera:4:-2:1.1",
   "stage-effect:fade:0.3",

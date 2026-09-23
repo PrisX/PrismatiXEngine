@@ -1978,6 +1978,13 @@ public:
                 services.stage->ClearCharacter(first, boolean);
                 return JS_UNDEFINED;
             }
+            if (operation == "stage.clearCharacters") {
+                boolean = true;
+                if (count >= 1 && !JS_IsUndefined(values[0]) && !BoolArgument(count, values, 0, boolean))
+                    return JS_ThrowTypeError(context, "transition must be boolean");
+                services.stage->ClearCharacters(boolean);
+                return JS_UNDEFINED;
+            }
             if (operation == "stage.moveCharacter") {
                 if (!StringArgument(count, values, 0, first) ||
                     !IntegerArgument(count, values, 1, integer))
@@ -3113,6 +3120,7 @@ public:
                 SetBackgroundRule: { value: bindRuntime("stage.backgroundRule") },
                 SetCharacter: { value: bindRuntime("stage.character") },
                 ClearCharacter: { value: bindRuntime("stage.clearCharacter") },
+                ClearCharacters: { value: bindRuntime("stage.clearCharacters") },
                 MoveCharacter: { value: bindRuntime("stage.moveCharacter") },
                 SetLayer: { value: bindRuntime("stage.layer") },
                 SetLayerTransform: { value: bindRuntime("stage.layerTransform") },

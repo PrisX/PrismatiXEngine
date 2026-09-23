@@ -82,6 +82,33 @@ void ExpectSameParticles(px::test::Suite& suite,
 int main() {
     px::test::Suite suite("StageGraphParticleIntegration");
 
+    suite.Run("ClearCharactersPreservesOtherStageContent", [&] {
+        Fixture fixture;
+        fixture.stage.SetBackground("Assets/background.webp", false);
+        fixture.stage.SetLayer("mist", "Assets/mist.webp", 0.0f, 0.0f,
+                               1.0f, 255, 1);
+        fixture.stage.SetCharacter("hero", "Assets/hero.webp", 1, false);
+        fixture.stage.SetCharacter("friend", "Assets/friend.webp", 3, false);
+        fixture.stage.ClearCharacters(true);
+        const auto fading = fixture.stage.CaptureState();
+        suite.Expect(fading.actors.size() == 2 &&
+                         std::ranges::all_of(fading.actors, [](const auto& actor) {
+                             return actor.exiting && actor.targetAlpha == 0.0f;
+                         }),
+                     "clear-all fades every actor together");
+        suite.Expect(fixture.stage.BackgroundPath() == "Assets/background.webp" &&
+                         fading.layers.size() == 1,
+                     "clear-all preserves background and independent layers");
+        fixture.stage.Update(1.0f);
+        suite.Expect(fixture.stage.CaptureState().actors.empty(),
+                     "faded actors leave the stage");
+        fixture.stage.SetCharacter("hero", "Assets/hero.webp", 2, false);
+        fixture.stage.ClearCharacters(false);
+        suite.Expect(fixture.stage.CaptureState().actors.empty() &&
+                         fixture.stage.BackgroundPath() == "Assets/background.webp",
+                     "instant clear removes actors without clearing the background");
+    });
+
     suite.Run("LegacyLayersAreGraphLeaves", [&] {
         Fixture fixture;
         fixture.stage.SetLayer("mist", "Assets/mist.webp", 10.0f, 20.0f,

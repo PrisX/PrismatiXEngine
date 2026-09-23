@@ -114,6 +114,8 @@ public:
                       bool transition = true, float offsetX = 0.0f, float offsetY = 0.0f,
                       float scale = 1.0f);
     void ClearCharacter(const std::string& name, bool transition = true);
+    // Clears character actors without resetting the rest of the stage.
+    void ClearCharacters(bool transition = true);
     // Slides an existing actor to another slot without changing its image.
     void MoveCharacter(const std::string& name, int slot);
     void ClearAll();

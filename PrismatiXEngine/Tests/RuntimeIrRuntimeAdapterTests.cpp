@@ -1,5 +1,14 @@
 #include "Engine/Session/RuntimeIrAdapter.h"
+#include "Engine/Audio/AudioEngine.h"
+#include "Engine/Graphics/AssetCache.h"
+#include "Engine/Graphics/Renderer2D.h"
+#include "Engine/IO/VFS.h"
 #include "Engine/VN/Commands/CommandRegistry.h"
+#include "Engine/VN/Runtime/Backlog.h"
+#include "Engine/VN/Runtime/Dialogue.h"
+#include "Engine/VN/Runtime/Stage.h"
+#include "Engine/VN/Runtime/VariableStore.h"
+#include "Engine/VN/Runtime/VM.h"
 
 #include <algorithm>
 #include <cassert>
@@ -395,7 +404,7 @@ int main() {
     const std::set<std::string> exercisedKinds{
         "scene",          "fragment",       "callFragment", "return",
         "endStory",       "dialogue",       "narration",    "choiceOption",
-        "background",     "showCharacter",  "hideCharacter", "voice",
+        "background",     "showCharacter",  "hideCharacter", "hideCharacters", "voice",
         "bgm",            "stopBgm",        "soundEffect",  "ambience",
         "stopAmbience",   "video",          "setVariable",    "condition",
         "else",           "endCondition",   "label",        "jump",
@@ -415,6 +424,7 @@ int main() {
         Operation("all-background", "background", {{"asset", "bg.png"}}),
         Operation("all-show", "showCharacter", {{"character", "hero"}, {"sprite", "hero.png"}}),
         Operation("all-hide", "hideCharacter", {{"character", "hero"}}),
+        Operation("all-hide-characters", "hideCharacters", {{"transition", "false"}}),
         Operation("all-voice", "voice", {{"asset", "voice.ogg"}}),
         Operation("all-bgm", "bgm", {{"asset", "music.ogg"}}),
         Operation("all-stop-bgm", "stopBgm", {{"fade", "100ms"}}),
@@ -448,6 +458,10 @@ int main() {
         px::CompileRuntimeIr(allKindsDocument);
     for (const auto& error : allKindsProgram.errors) std::cerr << error << '\n';
     assert(allKindsProgram.errors.empty());
+    assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
+        return command.type == "char_clear_all" && command.Get("transition") == "false";
+    }));
+    assert(px::vn::CommandRegistry::Builtins().Find("char_clear_all") != nullptr);
     assert(std::count_if(allKindsProgram.code.begin(), allKindsProgram.code.end(),
                          [](const auto& command) {
                              return command.type == "screen_effect";
@@ -456,6 +470,30 @@ int main() {
                         [](const auto& command) {
                             return command.type == "camera";
                         }));
+
+    px::io::VFS clearVfs;
+    px::audio::AudioEngine clearAudio(clearVfs);
+    px::graphics::AssetCache clearAssets(nullptr, clearVfs);
+    px::graphics::Renderer2D clearRenderer(nullptr, clearAssets);
+    px::vn::Stage clearStage(clearRenderer, clearAssets);
+    px::vn::Dialogue clearDialogue;
+    px::vn::VariableStore clearVariables;
+    px::vn::Backlog clearBacklog;
+    px::vn::VM clearVm(clearVfs, clearAudio, clearStage, clearDialogue,
+                       clearVariables, clearBacklog);
+    clearStage.SetBackground("Assets/background.webp", false);
+    clearStage.SetCharacter("hero", "Assets/hero.webp", 2, false);
+    clearStage.SetCharacter("friend", "Assets/friend.webp", 3, false);
+    px::sdk::RuntimeIrDocument clearDocument;
+    clearDocument.documentId = "clear-all-runtime";
+    clearDocument.operations = {
+        Operation("clear-all", "hideCharacters", {{"transition", "false"}}),
+        Operation("clear-end", "endStory"),
+    };
+    assert(clearVm.LoadCompiledProgram(px::CompileRuntimeIr(clearDocument),
+                                       "memory://clear-all-runtime"));
+    assert(clearStage.CaptureState().actors.empty());
+    assert(clearStage.BackgroundPath() == "Assets/background.webp");
 
     px::sdk::RuntimeIrDocument unknownDocument;
     unknownDocument.documentId = "unknown-operation";

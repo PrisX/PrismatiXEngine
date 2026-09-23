@@ -432,6 +432,14 @@ void TestSandboxAndImmediateParity(px::test::Suite& suite) {
     px::script::JavaScriptHost host(services);
     suite.Equal("javascript", host.BackendId(),
                 "embedded host must identify the JavaScript backend");
+    stage.SetBackground("Assets/background.webp", false);
+    stage.SetCharacter("hero", "Assets/hero.webp", 2, false);
+    stage.SetCharacter("friend", "Assets/friend.webp", 3, false);
+    suite.Require(host.RunString("Engine.ClearCharacters(false);"),
+                  "script can clear all character actors without naming each one");
+    suite.Expect(stage.CaptureState().actors.empty() &&
+                     stage.BackgroundPath() == "Assets/background.webp",
+                 "script clear-all preserves the background");
     suite.Expect(host.RunString(R"js(
         if (typeof require !== "undefined" || typeof Date !== "undefined" ||
             typeof eval !== "undefined" || typeof Function !== "undefined") {
