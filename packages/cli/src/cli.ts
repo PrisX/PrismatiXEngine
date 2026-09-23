@@ -820,6 +820,15 @@ async function validateCommand(options: Options): Promise<number> {
 
 async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact, staging: string): Promise<void> {
   const total = Object.keys(artifact.files).length + artifact.dependencies.length;
+  const readyDirectories = new Map<string, Promise<void>>();
+  const ensureDirectory = (directory: string): Promise<void> => {
+    let ready = readyDirectories.get(directory);
+    if (ready === undefined) {
+      ready = mkdir(directory, {recursive: true}).then(() => undefined);
+      readyDirectories.set(directory, ready);
+    }
+    return ready;
+  };
   let current = 0;
   let bytes = 0;
   let lastReport = Date.now();
@@ -834,19 +843,28 @@ async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact,
   };
   for (const [virtualPath, text] of Object.entries(artifact.files)) {
     const destination = projectFile(staging, virtualPath);
-    await mkdir(dirname(destination), {recursive: true});
+    await ensureDirectory(dirname(destination));
     await writeFile(destination, text, "utf8");
     bytes += Buffer.byteLength(text, "utf8");
     current += 1;
     report();
   }
-  for (const dependency of artifact.dependencies) {
-    const destination = projectFile(staging, dependency.logicalPath);
-    await mkdir(dirname(destination), {recursive: true});
-    await copyFile(projectFile(loaded.root, dependency.source), destination);
-    bytes += (await stat(destination)).size;
-    current += 1;
-    report();
+  // A small batch keeps media copies off the one-file-at-a-time path without
+  // opening thousands of files at once. Await every task in a failed batch
+  // before publication removes staging, so no copy can outlive its directory.
+  const copyBatchSize = 8;
+  for (let start = 0; start < artifact.dependencies.length; start += copyBatchSize) {
+    const batch = artifact.dependencies.slice(start, start + copyBatchSize);
+    const results = await Promise.allSettled(batch.map(async (dependency) => {
+      const destination = projectFile(staging, dependency.logicalPath);
+      await ensureDirectory(dirname(destination));
+      await copyFile(projectFile(loaded.root, dependency.source), destination);
+      bytes += (await stat(destination)).size;
+      current += 1;
+      report();
+    }));
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
   }
   if (total === 0) buildProgress("copy", 0, 0, 0, true);
 }

@@ -370,6 +370,38 @@ test("resourceIncludes package unreferenced UI families and audio without artifa
   assert.match(linked.stderr, /symbolic link/u);
 });
 
+test("bounded parallel resource copy preserves every file and rebuilds changed media", async () => {
+  const value = await fixture();
+  const manifest = JSON.parse(await readFile(value.project, "utf8")) as Record<string, unknown>;
+  manifest.resourceIncludes = ["Assets/Batch"];
+  await write(value.project, JSON.stringify(manifest));
+  const inputs = Array.from({length: 25}, (_, index) =>
+    `Assets/Batch/group-${index % 3}/media-${index}.bin`);
+  for (const [index, path] of inputs.entries())
+    await write(join(value.root, ...path.split("/")), `original-${index}`);
+  const output = join(value.root, "batch-artifact");
+  const built = run(["build", value.project, "--artifact-only", "--output", output]);
+  assert.equal(built.status, 0, built.stderr);
+  for (const [index, path] of inputs.entries())
+    assert.equal(await readFile(join(output, ...path.split("/")), "utf8"),
+      `original-${index}`);
+  const markerPath = join(output, ".prismatix-output.json");
+  const before = JSON.parse(await readFile(markerPath, "utf8")) as {
+    files: Record<string, string>;
+  };
+  assert.equal(inputs.every((path) => /^[0-9a-f]{64}$/u.test(before.files[path] ?? "")),
+    true);
+  await write(join(value.root, ...inputs[9]!.split("/")), "changed-media");
+  const rebuilt = run(["build", value.project, "--artifact-only", "--output", output]);
+  assert.equal(rebuilt.status, 0, rebuilt.stderr);
+  const after = JSON.parse(await readFile(markerPath, "utf8")) as {
+    files: Record<string, string>;
+  };
+  assert.notEqual(after.files[inputs[9]!], before.files[inputs[9]!]);
+  assert.equal(await readFile(join(output, ...inputs[9]!.split("/")), "utf8"),
+    "changed-media");
+});
+
 test("validate reports catalog entries already covered by an included media directory", async () => {
   const value = await fixture();
   const manifest = JSON.parse(await readFile(value.project, "utf8")) as Record<string, unknown>;
