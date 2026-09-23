@@ -1,5 +1,5 @@
 import type {AuthoringDiagnostic} from "./types.js";
-import {nativeUiValueType} from "./ui-value.js";
+import {nativeJsonValueValid, nativeUiValueType} from "./ui-value.js";
 
 type ObjectValue = Record<string, unknown>;
 
@@ -155,16 +155,6 @@ function validBuiltinUiAction(value: unknown): boolean {
   return true;
 }
 
-function boundedJsonValue(value: unknown, depth = 0, budget = {nodes: 0}): boolean {
-  if (depth > 32 || ++budget.nodes > 8192) return false;
-  if (value === null || typeof value === "boolean" || typeof value === "string") return true;
-  if (typeof value === "number") return Number.isFinite(value);
-  if (Array.isArray(value)) return value.length <= 1024 && value.every((item) => boundedJsonValue(item, depth + 1, budget));
-  const record = object(value);
-  if (record === undefined || Object.keys(record).length > 256) return false;
-  return Object.values(record).every((item) => boundedJsonValue(item, depth + 1, budget));
-}
-
 function componentValueMatches(valueType: unknown, value: unknown): boolean {
   const record = object(value);
   const exactKeys = (expected: readonly string[]) => record !== undefined &&
@@ -185,8 +175,8 @@ function componentValueMatches(valueType: unknown, value: unknown): boolean {
     case "token": return (typeof value === "string" && value.length > 0) ||
       (exactKeys(["type", "value"]) && record?.type === "token" &&
         typeof record.value === "string" && record.value.length > 0);
-    case "array": return Array.isArray(value) && boundedJsonValue(value);
-    case "object": return record !== undefined && boundedJsonValue(value);
+    case "array": return Array.isArray(value) && nativeJsonValueValid(value);
+    case "object": return record !== undefined && nativeJsonValueValid(value);
     case "vec2": return exactKeys(["type", "x", "y"]) && record?.type === "vec2" &&
       finite(record.x) && finite(record.y);
     case "rect": return exactKeys(["type", "x", "y", "width", "height"]) &&
@@ -217,9 +207,18 @@ function uiComponentSemantics(root: ObjectValue, path?: string): AuthoringDiagno
   const componentInterface = object(root.componentInterface);
   if (componentInterface === undefined) return diagnostics;
 
+  const checkMetadata = (owner: ObjectValue, location: string): void => {
+    if (owner.metadata !== undefined &&
+        (object(owner.metadata) === undefined || !nativeJsonValueValid(owner.metadata)))
+      diagnostics.push(issue("PXSDKUICOMP1108",
+        "UI component metadata exceeds native JSON limits", path, location));
+  };
+  checkMetadata(componentInterface, "componentInterface.metadata");
+
   const properties = objects(componentInterface.properties);
   diagnostics.push(...uniqueIdentities(properties, "id", "UI component exposed property", path));
-  for (const property of properties) {
+  for (const [index, property] of properties.entries()) {
+    checkMetadata(property, `componentInterface.properties[${index}].metadata`);
     const node = typeof property.nodeId === "string" ? byId.get(property.nodeId) : undefined;
     const authored = node === undefined ? undefined : propertyAtPath(node, property.property);
     if (authored === undefined ||
@@ -232,7 +231,8 @@ function uiComponentSemantics(root: ObjectValue, path?: string): AuthoringDiagno
   const controlSignals = new Set(["pointerEntered", "pointerExited", "pointerDown", "pointerUp", "clicked", "scrolled", "focusEntered", "focusExited"]);
   const signals = objects(componentInterface.signals);
   diagnostics.push(...uniqueIdentities(signals, "id", "UI component exposed signal", path));
-  for (const signal of signals) {
+  for (const [index, signal] of signals.entries()) {
+    checkMetadata(signal, `componentInterface.signals[${index}].metadata`);
     const node = typeof signal.nodeId === "string" ? byId.get(signal.nodeId) : undefined;
     const signalName = typeof signal.signal === "string" ? signal.signal : "";
     const dynamic = node !== undefined && typeof node.runtimeType === "string";
@@ -247,7 +247,8 @@ function uiComponentSemantics(root: ObjectValue, path?: string): AuthoringDiagno
 
   const slots = objects(componentInterface.slots);
   diagnostics.push(...uniqueIdentities(slots, "id", "UI component slot", path));
-  for (const slot of slots) {
+  for (const [index, slot] of slots.entries()) {
+    checkMetadata(slot, `componentInterface.slots[${index}].metadata`);
     const node = typeof slot.nodeId === "string" ? byId.get(slot.nodeId) : undefined;
     if (node === undefined || node.kind === "button" || node.kind === "label" || node.kind === "image") {
       diagnostics.push(issue("PXSDKUICOMP1107", "UI component slot is invalid", path, String(slot.id ?? "")));

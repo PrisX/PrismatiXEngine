@@ -166,6 +166,45 @@ test("UI component contract rejects scene-only fields and migrates canonical pro
   assert.equal(validateDocument("uiComponent", {...migrated.value as object, behaviorGraph:{nodes:[],links:[],groups:[]}}).valid, false);
 });
 
+test("UI component defaults and metadata use native JSON capacity limits", () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  const layout = {mode:"free",x:0,y:0,width:100,height:100,
+    anchorX:0,anchorY:0,anchorRight:0,anchorBottom:0,pivotX:0,pivotY:0,
+    margin:0,alignment:"start",sizeRule:"fixed"};
+  const component = {format:"PrismatiXUIComponent",schemaRevision:2,id,revision:1,
+    name:"Panel",width:100,height:100,rootId:id,
+    nodes:[{id,parentId:null,order:0,kind:"group",runtimeType:"Control",
+      name:"Root",visible:true,locked:false,layout,
+      runtimeProperties:{payload:{small:1}},bindings:{}}],theme:[],
+    componentInterface:{properties:[{id:"payload",displayName:"Payload",nodeId:id,
+      property:"runtimeProperties.payload",valueType:"object",defaultValue:{small:1}}],
+    signals:[],slots:[]}};
+  assert.equal(validateDocument("uiComponent", component).valid, true);
+  const largeDefault = structuredClone(component) as typeof component;
+  (largeDefault.componentInterface.properties[0] as {defaultValue: unknown}).defaultValue =
+    {value:"x".repeat(1024 * 1024)};
+  const defaultResult = validateDocument("uiComponent", largeDefault);
+  assert.equal(defaultResult.valid, false);
+  assert.ok(defaultResult.diagnostics.some((item) => item.code === "PXSDKUICOMP1105" &&
+    item.details === "payload"));
+  const longKey = "界".repeat(86);
+  for (const location of ["componentInterface", "properties", "signals", "slots"] as const) {
+    const invalid = structuredClone(component) as typeof component;
+    const interface_ = invalid.componentInterface as Record<string, unknown>;
+    if (location === "componentInterface") interface_.metadata = {[longKey]:1};
+    else if (location === "properties") (interface_.properties as Record<string, unknown>[])[0]!.metadata = {[longKey]:1};
+    else if (location === "signals") interface_.signals = [{id:"pressed",displayName:"Pressed",
+      nodeId:id,signal:"clicked",arguments:[],metadata:{[longKey]:1}}];
+    else interface_.slots = [{id:"content",displayName:"Content",nodeId:id,
+      metadata:{[longKey]:1}}];
+    const result = validateDocument("uiComponent", invalid);
+    assert.equal(result.valid, false, location);
+    assert.ok(result.diagnostics.some((item) => item.code === "PXSDKUICOMP1108" &&
+      item.details?.includes(location === "componentInterface" ? "componentInterface.metadata" :
+        `componentInterface.${location}[0].metadata`)), location);
+  }
+});
+
 test("UI semantic validation matches native built-in Action argument contracts", () => {
   const root = "11111111-1111-4111-8111-111111111111";
   const button = "22222222-2222-4222-8222-222222222222";

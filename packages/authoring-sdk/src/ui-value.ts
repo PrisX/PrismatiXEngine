@@ -30,7 +30,7 @@ function boundedJson(value: unknown, depth = 0, budget = {nodes: 0}): boolean {
       encoder.encode(key).length <= 256 && boundedJson(item, depth + 1, budget));
 }
 
-function boundedJsonBytes(value: unknown): boolean {
+export function nativeJsonValueValid(value: unknown): boolean {
   return boundedJson(value) &&
     encoder.encode(JSON.stringify(value)).length <= 1024 * 1024;
 }
@@ -41,7 +41,7 @@ export function nativeUiValueType(value: unknown, allowResourcePath = false): st
   if (typeof value === "number") return !Number.isFinite(value) ? "invalid"
     : Number.isSafeInteger(value) ? "integer" : "number";
   if (typeof value === "string") return "string";
-  if (Array.isArray(value)) return boundedJsonBytes(value) ? "array" : "invalid";
+  if (Array.isArray(value)) return nativeJsonValueValid(value) ? "array" : "invalid";
   const record = object(value);
   if (record === undefined) return "invalid";
   const keys = Object.keys(record);
@@ -62,5 +62,5 @@ export function nativeUiValueType(value: unknown, allowResourcePath = false): st
     if (record.type === "token") return keys.length === 2 && typeof record.value === "string" &&
       record.value.length > 0 ? "token" : "invalid";
   }
-  return boundedJsonBytes(value) ? "object" : "invalid";
+  return nativeJsonValueValid(value) ? "object" : "invalid";
 }

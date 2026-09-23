@@ -633,6 +633,16 @@ int main() {
     wrongDefault["componentInterface"]["properties"][0]["defaultValue"] = 42;
     Check(!ParseComponentFixture(wrongDefault.dump()).Valid(),
           "component default values must match their declared public type");
+    auto oversizedDefault = nlohmann::json::parse(ComplexComponentContract());
+    oversizedDefault["componentInterface"]["properties"][5]["defaultValue"] =
+        {{"payload", std::string(1024 * 1024, 'x')}};
+    Check(!ParseComponentFixture(oversizedDefault.dump()).Valid(),
+          "component object defaults must obey native JSON byte limits");
+    auto oversizedMetadata = nlohmann::json::parse(ComponentContract());
+    oversizedMetadata["componentInterface"]["metadata"] =
+        {{std::string(257, 'k'), true}};
+    Check(!ParseComponentFixture(oversizedMetadata.dump()).Valid(),
+          "component metadata keys must obey native JSON byte limits");
     std::string sceneOnlyComponent = ComponentContract();
     const auto sceneOnlyEnd = sceneOnlyComponent.rfind("\n    }");
     sceneOnlyComponent.insert(sceneOnlyEnd,
