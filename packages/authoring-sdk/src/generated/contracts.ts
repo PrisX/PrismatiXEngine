@@ -1582,6 +1582,79 @@ export const contractSchemas: Readonly<Record<string, object>> = {
           "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"
         },
         "maxProperties": 1024,
+        "properties": {
+          "player.splashes": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "audio": {
+                  "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+                },
+                "audioDelay": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "audioVariants": {
+                  "items": {
+                    "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+                  },
+                  "maxItems": 256,
+                  "minItems": 1,
+                  "type": "array",
+                  "uniqueItems": true
+                },
+                "enterAnimation": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "exitAnimation": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "minimumDuration": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "scene": {
+                  "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+                },
+                "skipAllowedAfter": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "skippable": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "scene"
+              ],
+              "type": "object"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "player.titleBgm": {
+            "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+          },
+          "player.titleVoiceVariants": {
+            "items": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+            },
+            "maxItems": 256,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "player.uiActivateSound": {
+            "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+          },
+          "player.uiHoverSound": {
+            "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+          }
+        },
         "type": "object"
       },
       "storyIndex": {
@@ -3451,7 +3524,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "game.schema.json": "f0592fc75a4deb4aed7f192c076165012ef480196a07cd7d2136be390821dcba",
   "locale.schema.json": "b8f6009219c6cad7fa6130af6d710af11cabcf85bf2e0039f1fdd3c08e2bbf9f",
   "portrait.schema.json": "23235204cea30d1f9bf49f810f896364b910ce2f74e46f28bc7381dc5da0a6fe",
-  "project.schema.json": "8a7ed01b49ac02f5b1c6b2bf6c74267fd058f8e92763ec7de1ba0c7cee034ac1",
+  "project.schema.json": "a90b9d6f2b57ef16d789fa667d1ca64ba78dcf7f38545458668f65a515392f6b",
   "runtime-ir.schema.json": "66d31c68d122e7516c3d0fef73672fa7fa47d879553c2fea2bdec5af3871b68c",
   "save-migration.schema.json": "fd9f89119a4e8a70324f95bb6e0261e5d78b0ea173e2755422c36e5e2379b6cf",
   "source-map.schema.json": "1a0d20fbc5ed639fcb33bf7e8b81f78caf9af091a4d245cee2e5e66eb80d3e62",

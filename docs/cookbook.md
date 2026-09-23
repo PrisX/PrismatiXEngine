@@ -51,6 +51,29 @@ After registering suitable decodable media, the compiler accepts:
 
 These Story audio commands lower an asset reference only. Do not copy JavaScript volume/fade/bus options into them and assume those options take effect. Use the typed runtime API in an extension when you need its richer audio controls. A missing reference is a build diagnostic, while decode/device failures need native testing with real media.
 
+For startup screens and title voices, declare all random candidates in the
+project's `settings` instead of duplicating them in `resourceIncludes`:
+
+```json
+"settings": {
+  "player.titleVoiceVariants": ["Assets/Voice/title-a.ogg", "Assets/Voice/title-b.ogg"],
+  "player.splashes": [{
+    "scene": "Content/UI/Logo.pxui",
+    "audioVariants": ["Assets/Voice/logo-a.ogg", "Assets/Voice/logo-b.ogg"],
+    "audioDelay": 1,
+    "minimumDuration": 4
+  }]
+}
+```
+
+The splash scene must be listed in `uiEntryPoints`; for a TSX-authored route,
+use its `.tsx` source path in both places and the CLI publishes the compiled
+`.pxui` path. The compiler collects
+*every* candidate for packaging and reports missing media when the project
+resolver is available; the Player chooses one available candidate at runtime.
+`audio` remains available for a single splash sound. The project schema checks
+these known settings, including paths and timing, before a distribution build.
+
 ## Variables and conditional flow
 
 Declare a catalog, for example by setting `"gameCatalog":"Content/game.pxgame"` in the project and creating:

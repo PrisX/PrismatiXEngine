@@ -172,6 +172,49 @@ test("compileProject collects UI runtime texture dependencies", () => {
     dependency.source === "Assets/Audio/activate.ogg"));
 });
 
+test("compileProject validates splash voice variants and packages every possible choice", () => {
+  const settings = {
+    "player.titleVoiceVariants": ["Assets/Voice/title-a.ogg", "Assets/Voice/title-b.ogg"],
+    "player.splashes": [{scene: "Content/UI/Title.pxui", audioDelay: 1,
+      minimumDuration: 4, audioVariants: ["Assets/Voice/logo-a.ogg", "Assets/Voice/logo-b.ogg"]}],
+  };
+  const compile = (values: unknown, resourceExists?: (path: string) => boolean) => compileProject({
+    project: {...project, settings: values},
+    documents: {"Story/story.pxindex": storyIndex,
+      "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locale: "zh-TW", strings: {}}},
+    ...(resourceExists === undefined ? {} : {resourceExists}),
+  });
+  const valid = compile(settings);
+  assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
+  assert.deepEqual(valid.artifact?.dependencies
+    .filter((dependency) => dependency.source.startsWith("Assets/Voice/"))
+    .map((dependency) => dependency.source).sort(), [
+      "Assets/Voice/logo-a.ogg", "Assets/Voice/logo-b.ogg",
+      "Assets/Voice/title-a.ogg", "Assets/Voice/title-b.ogg",
+    ]);
+  const missing = compile(settings, (path) => path !== "Assets/Voice/logo-b.ogg");
+  assert.equal(missing.valid, false);
+  assert.ok(missing.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1044" &&
+    diagnostic.path === "Assets/Voice/logo-b.ogg"));
+  for (const invalidSettings of [
+    {...settings, "player.titleVoiceVariants": ["Assets/Voice/title-a.ogg", 42]},
+    {...settings, "player.titleVoiceVariants": []},
+    {...settings, "player.splashes": [{scene: "Content/UI/Title.pxui",
+      audioVariants: ["../outside.ogg"]}]},
+    {...settings, "player.splashes": [{scene: "Content/UI/Title.pxui",
+      audioVariants: []}]},
+  ]) assert.equal(compile(invalidSettings).valid, false);
+  const uncompiledScene = compile({...settings, "player.splashes": [{
+    scene: "Content/UI/Uncompiled.pxui"}]});
+  assert.ok(uncompiledScene.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1055"));
+  const impossibleSkip = compile({...settings, "player.splashes": [{
+    scene: "Content/UI/Title.pxui", minimumDuration: 0, skipAllowedAfter: 0.5}]});
+  assert.ok(impossibleSkip.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1056"));
+});
+
 test("compileProject validates portraits referenced outside Story and collects every layer", () => {
   const descriptorPath = "Assets/Characters/Hero.pxportrait";
   const descriptor = {format: "PrismatiXLayeredPortrait", schemaRevision: 1,

@@ -768,12 +768,31 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     const value = settings[key];
     if (typeof value === "string") addResourceRef(value, `settings.${key}`);
   }
+  const titleVoices = settings["player.titleVoiceVariants"];
+  if (Array.isArray(titleVoices)) {
+    for (const [index, voice] of titleVoices.entries())
+      addResourceRef(voice, `settings.player.titleVoiceVariants[${index}]`);
+  }
   const splashes = settings["player.splashes"];
   if (Array.isArray(splashes)) {
+    const authoredUiScenes = new Set(Object.values(project.uiEntryPoints));
     for (const [index, splash] of splashes.entries()) {
       if (splash === null || typeof splash !== "object" || Array.isArray(splash)) continue;
-      const audio = (splash as Record<string, JsonValue>).audio;
-      if (typeof audio === "string") addResourceRef(audio, `settings.player.splashes[${index}].audio`);
+      const entry = splash as Record<string, JsonValue>;
+      if (typeof entry.scene === "string" && !authoredUiScenes.has(entry.scene))
+        diagnostics.push(issue("PXBUILD1055", "Splash scene must be an authored UI entry point",
+          projectPath, `settings.player.splashes[${index}].scene: ${entry.scene}`));
+      const minimumDuration = typeof entry.minimumDuration === "number" ? entry.minimumDuration : 2;
+      const skipAllowedAfter = typeof entry.skipAllowedAfter === "number" ? entry.skipAllowedAfter : 0.5;
+      if (skipAllowedAfter > minimumDuration)
+        diagnostics.push(issue("PXBUILD1056", "Splash skipAllowedAfter exceeds minimumDuration",
+          projectPath, `settings.player.splashes[${index}]`));
+      addResourceRef(entry.audio, `settings.player.splashes[${index}].audio`);
+      if (Array.isArray(entry.audioVariants)) {
+        for (const [variantIndex, voice] of entry.audioVariants.entries())
+          addResourceRef(voice,
+            `settings.player.splashes[${index}].audioVariants[${variantIndex}]`);
+      }
     }
   }
   for (const [index, item] of (game.gallery ?? []).entries()) {

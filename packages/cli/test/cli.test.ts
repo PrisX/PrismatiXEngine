@@ -369,6 +369,29 @@ test("resourceIncludes package unreferenced UI families and audio without artifa
   assert.match(linked.stderr, /symbolic link/u);
 });
 
+test("startup voice variants enter the artifact without asset ids or resourceIncludes", async () => {
+  const value = await fixture();
+  const manifest = JSON.parse(await readFile(value.project, "utf8")) as Record<string, unknown>;
+  manifest.settings = {"player.titleVoiceVariants": ["Assets/Voice/title.ogg"],
+    "player.splashes": [{scene: "Content/UI/Title.pxui", minimumDuration: 2,
+      audioVariants: ["Assets/Voice/logo-a.ogg", "Assets/Voice/logo-b.ogg"]}]};
+  await write(value.project, JSON.stringify(manifest));
+  const voices = ["title.ogg", "logo-a.ogg", "logo-b.ogg"];
+  for (const voice of voices)
+    await write(join(value.root, "Assets/Voice", voice), `audio:${voice}`);
+  const validated = run(["validate", value.project]);
+  assert.equal(validated.status, 0, validated.stderr);
+  assert.equal(JSON.parse(validated.stdout).resourceFiles, voices.length);
+  const output = join(value.root, "voices-artifact");
+  const built = run(["build", value.project, "--artifact-only", "--output", output]);
+  assert.equal(built.status, 0, built.stderr);
+  for (const voice of voices)
+    assert.equal(await readFile(join(output, "Assets/Voice", voice), "utf8"), `audio:${voice}`);
+  const marker = JSON.parse(await readFile(join(output, ".prismatix-output.json"), "utf8"));
+  for (const voice of voices)
+    assert.match(marker.files[`Assets/Voice/${voice}`], /^[0-9a-f]{64}$/u);
+});
+
 test("artifact build reports load, compile, copy and fingerprint progress", async () => {
   const value = await fixture();
   const built = run(["build", value.project, "--artifact-only", "--output",
@@ -437,8 +460,11 @@ test("TSX UI authoring lowers to canonical JSON and never enters the Runtime art
   const project = JSON.parse(await readFile(value.project, "utf8")) as {
     uiEntryPoints: Record<string, string>;
     uiComponents?: Array<{id: string; name: string; source: string}>;
+    settings?: Record<string, unknown>;
   };
   project.uiEntryPoints.title = "Content/UI/Title.tsx";
+  project.settings = {"player.splashes": [{scene: "Content/UI/Title.tsx",
+    minimumDuration: 2}]};
   project.uiComponents = [{id: "12121212-1212-4212-8212-121212121212",
     name: "Panel", source: "Content/UI/Panel.jsx"}];
   await write(value.project, JSON.stringify(project));
@@ -487,8 +513,11 @@ test("TSX UI authoring lowers to canonical JSON and never enters the Runtime art
     "game.start");
   const builtProject = JSON.parse(await readFile(join(output, "project.pxproject"), "utf8")) as {
     uiEntryPoints: Record<string, string>;
+    settings: {"player.splashes": Array<{scene: string}>};
   };
   assert.equal(builtProject.uiEntryPoints.title, "Content/UI/Title.pxui");
+  assert.equal(builtProject.settings["player.splashes"][0]?.scene,
+    "Content/UI/Title.pxui");
   await assert.rejects(stat(join(output, "Content/UI/Title.tsx")));
   assert.equal((await stat(join(output, "Content/UI/Panel.pxuicomponent"))).isFile(), true);
   await assert.rejects(stat(join(output, "Content/UI/Panel.jsx")));

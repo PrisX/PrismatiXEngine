@@ -591,10 +591,23 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
   for (const value of Array.isArray(raw.extensions) ? raw.extensions : []) await loadDocument(value);
   const authoredEntryPoints = object(authoredRaw.uiEntryPoints) ?? {};
   const runtimeEntryPoints = object(raw.uiEntryPoints) ?? {};
+  const uiSourceToRuntime = new Map<string, string>();
   for (const [id, value] of Object.entries(authoredEntryPoints)) {
     if (typeof value === "string" && isJsxUiPath(value)) {
-      runtimeEntryPoints[id] = await loadJsxDocument(value, "scene");
+      const runtimeSource = await loadJsxDocument(value, "scene");
+      runtimeEntryPoints[id] = runtimeSource;
+      uiSourceToRuntime.set(value, runtimeSource);
     } else await loadDocument(value);
+  }
+  // Startup settings may refer to the same TSX source the author put in
+  // uiEntryPoints. Publish its compiled route, never a build-time .tsx path.
+  const runtimeSplashes = object(raw.settings)?.["player.splashes"];
+  if (Array.isArray(runtimeSplashes)) {
+    for (const value of runtimeSplashes) {
+      const splash = object(value);
+      if (typeof splash?.scene !== "string") continue;
+      splash.scene = uiSourceToRuntime.get(splash.scene) ?? splash.scene;
+    }
   }
   for (const value of Array.isArray(raw.characters) ? raw.characters : []) await loadDocument(object(value)?.source);
   const authoredComponents = Array.isArray(authoredRaw.uiComponents) ? authoredRaw.uiComponents : [];
