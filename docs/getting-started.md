@@ -83,6 +83,12 @@ review. Test existing saves before shipping a revised story.
 
 The global command delegates project commands to the exact local CLI pinned in the game's package.json. Commit that manifest and its lock. A missing or mismatched local CLI is diagnosed instead of silently using the global version. After preparation, dev/build use local packages and bundled runtime offline. Upgrade tool versions deliberately in a branch, reinstall the pinned dependencies, and test old saves and the packaged Player before distributing an update.
 
+For media selected by a dynamic runtime path rather than a static Story/UI
+reference, add `"resourceIncludes": ["Assets/MyFamily", "Assets/Audio/confirm.ogg"]`
+to `prismatix.json`. Directories are expanded during validate/build; the files
+are packaged as owned dependencies, while this author-only field is omitted
+from the runtime project document. Missing or empty roots fail validation.
+
 ## Diagnostics and troubleshooting
 
 The terminal shows readable diagnostics by default. Pass `--json` for stable NDJSON codes, paths and source spans on stderr; preserve stderr for editor integrations. `PXSTORY1199` identifies an unknown Story command. Unknown options and invalid typed values fail. `dev --once` tests initial apply/play and shutdown, not an interactive editing session.

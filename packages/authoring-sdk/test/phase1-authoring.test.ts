@@ -42,6 +42,48 @@ test("single-locale normalization compiles Story/main.pxstory without support do
   assert.ok(compiled.artifact?.files["Runtime/main.pxir"]);
 });
 
+test("resourceIncludes add dynamic media without leaking author roots into runtime project", () => {
+  const input = {
+    project: {id: "dynamic-media", resourceIncludes: ["Assets/UI/Original", "Assets/Audio/pick.ogg"]},
+    sourceFiles: {"Story/main.pxstory": "Hello.\n[end]\n"},
+  };
+  const normalized = normalizeProject(input);
+  assert.equal(normalized.valid, true, JSON.stringify(normalized.diagnostics));
+  assert.deepEqual(normalized.value?.resourceIncludes, input.project.resourceIncludes);
+  assert.equal("resourceIncludes" in normalized.value!.project, false);
+  const files: Readonly<Record<string, readonly string[]>> = {
+    "Assets/UI/Original": ["Assets/UI/Original/a.png", "Assets/UI/Original/sub/b.png"],
+    "Assets/Audio/pick.ogg": ["Assets/Audio/pick.ogg"],
+  };
+  const compiled = compileProject({...input,
+    resolveResourceInclude: (root) => files[root], resourceExists: () => true});
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  assert.deepEqual(compiled.artifact!.dependencies.map((value) => value.logicalPath),
+    ["Assets/Audio/pick.ogg", "Assets/UI/Original/a.png", "Assets/UI/Original/sub/b.png"]);
+  assert.doesNotMatch(compiled.artifact!.files["project.pxproject"]!, /resourceIncludes/u);
+
+  const unresolved = compileProject(input);
+  assert.ok(unresolved.diagnostics.some((value) => value.code === "PXBUILD1052"));
+  const escaped = compileProject({...input,
+    resolveResourceInclude: () => ["Assets/elsewhere.png"]});
+  assert.ok(escaped.diagnostics.some((value) => value.code === "PXBUILD1053"));
+  const malformed = normalizeProject({...input,
+    project: {...input.project, resourceIncludes: ["Assets/../outside"]}});
+  assert.ok(malformed.diagnostics.some((value) => value.code === "PXBUILD1051"));
+  const collision = compileProject({...input,
+    project: {...input.project, resourceIncludes: ["Story/main.pxstory"]},
+    resolveResourceInclude: () => ["Story/main.pxstory"]});
+  assert.ok(collision.diagnostics.some((value) => value.code === "PXBUILD1055"));
+  const authoredSource = compileProject({...input,
+    project: {...input.project, resourceIncludes: ["Assets/UI"]},
+    resolveResourceInclude: () => ["Assets/UI/Save.tsx"]});
+  assert.ok(authoredSource.diagnostics.some((value) => value.code === "PXBUILD1055"));
+  const canonicalCollision = compileProject({...input,
+    project: {...input.project, resourceIncludes: ["Content/Localization/en-US.json"]},
+    resolveResourceInclude: () => ["Content/Localization/en-US.json"]});
+  assert.ok(canonicalCollision.diagnostics.some((value) => value.code === "PXBUILD1054"));
+});
+
 test("path-first project compilation resolves all resource spellings and collects inputs", () => {
   const story = [
     `[bg asset=${assetPath}]`,

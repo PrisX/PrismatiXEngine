@@ -283,6 +283,51 @@ test("validate and build use the same canonical project compiler", async () => {
   assert.equal((await stat(join(output, "Runtime/main.pxmap"))).isFile(), true);
 });
 
+test("resourceIncludes package unreferenced UI families and audio without artifact post-processing", async () => {
+  const value = await fixture();
+  const manifest = JSON.parse(await readFile(value.project, "utf8")) as Record<string, unknown>;
+  manifest.resourceIncludes = ["Assets/UI/Original", "Assets/Audio/choice.ogg"];
+  await write(value.project, JSON.stringify(manifest));
+  await write(join(value.root, "Assets/UI/Original", "a.png"), "first-image");
+  await write(join(value.root, "Assets/UI/Original/sub", "b.png"), "second-image");
+  await write(join(value.root, "Assets/Audio/choice.ogg"), "choice-sound");
+  const validated = run(["validate", value.project]);
+  assert.equal(validated.status, 0, validated.stderr);
+  const summary = JSON.parse(validated.stdout) as {
+    resourceFiles: number; includeRoots: number; includedFiles: number;
+  };
+  assert.equal(summary.includeRoots, 2);
+  assert.equal(summary.includedFiles, 3);
+  assert.equal(summary.resourceFiles, 3);
+  const output = join(value.root, "included-artifact");
+  const built = run(["build", value.project, "--artifact-only", "--output", output]);
+  assert.equal(built.status, 0, built.stderr);
+  for (const path of ["Assets/UI/Original/a.png", "Assets/UI/Original/sub/b.png",
+    "Assets/Audio/choice.ogg"]) {
+    assert.equal(await readFile(join(output, ...path.split("/")), "utf8"),
+      await readFile(join(value.root, ...path.split("/")), "utf8"));
+  }
+  const canonical = JSON.parse(await readFile(join(output, "project.pxproject"), "utf8")) as Record<string, unknown>;
+  assert.equal(canonical.resourceIncludes, undefined);
+  const marker = JSON.parse(await readFile(join(output, ".prismatix-output.json"), "utf8")) as {
+    files: Record<string, string>;
+  };
+  assert.match(marker.files["Assets/UI/Original/sub/b.png"]!, /^[0-9a-f]{64}$/u);
+
+  const missingManifest = {...manifest, resourceIncludes: ["Assets/UI/Missing"]};
+  await write(value.project, JSON.stringify(missingManifest));
+  const missing = run(["validate", value.project]);
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /PXBUILD1052/u);
+  await mkdir(join(value.root, "Assets", "UI"), {recursive: true});
+  await symlink(join(value.root, "Assets", "UI", "Original"),
+    join(value.root, "Assets", "UI", "Alias"), "junction");
+  await write(value.project, JSON.stringify({...manifest, resourceIncludes: ["Assets/UI/Alias"]}));
+  const linked = run(["validate", value.project]);
+  assert.equal(linked.status, 1);
+  assert.match(linked.stderr, /symbolic link/u);
+});
+
 test("artifact build reports load, compile, copy and fingerprint progress", async () => {
   const value = await fixture();
   const built = run(["build", value.project, "--artifact-only", "--output",

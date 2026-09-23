@@ -116,6 +116,8 @@ export interface CompileProjectInput {
   readonly resourceExists?: (path: string) => boolean;
   /** Optional text reader for dependency-bearing authored resource descriptors. */
   readonly resourceText?: (path: string) => string | undefined;
+  /** IO-injected expansion of author-only `resourceIncludes` roots into files. */
+  readonly resolveResourceInclude?: (path: string) => readonly string[] | undefined;
   /** Native UI TypeRegistry metadata for validating authored runtime properties. */
   readonly uiTypeRegistry?: UiTypeRegistryMetadata;
   readonly committedRevision?: number;
@@ -359,6 +361,38 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   const documents = normalized.value.documents;
   const sourceFiles = normalized.value.sourceFiles;
   const locales = normalized.value.locales;
+  const includedResources: ProjectDependencyReference[] = [];
+  for (const root of normalized.value.resourceIncludes) {
+    let paths: readonly string[] | undefined;
+    try { paths = input.resolveResourceInclude?.(root); }
+    catch (error) {
+      diagnostics.push(issue("PXBUILD1052", "Could not expand resourceIncludes root", projectPath,
+        `${root}: ${String(error)}`));
+      continue;
+    }
+    if (!Array.isArray(paths) || paths.length === 0) {
+      diagnostics.push(issue("PXBUILD1052",
+        "resourceIncludes root has no files or no resource resolver", projectPath, root));
+      continue;
+    }
+    for (const path of paths) {
+      if (typeof path !== "string" || !isSafeResourcePath(path) ||
+          path.includes(":") || path.includes("\0") ||
+          path.split("/").some((part) => part.length === 0 || part === ".") ||
+          (path !== root && !path.startsWith(`${root}/`))) {
+        diagnostics.push(issue("PXBUILD1053",
+          "resourceIncludes resolver returned a path outside its root or an unsafe path",
+          projectPath, `${root}: ${String(path)}`));
+      } else if (/\.(?:[jt]sx?|mjs|cjs|pxstory|pxui|pxuicomponent|pxproject|pxgame|pxindex)$/iu.test(path) ||
+          path.endsWith(".pxstory.pxids.json")) {
+        diagnostics.push(issue("PXBUILD1055",
+          "resourceIncludes is for runtime media, not authored source or canonical documents",
+          projectPath, path));
+      } else includedResources.push({value: path, origin: `resourceIncludes:${root}`});
+    }
+  }
+  if (diagnostics.some((diagnostic) => diagnostic.severity === "error"))
+    return {diagnostics, valid: false};
 
   const storyIndex = documentAt<StoryIndexDocument>("storyIndex", project.storyIndex, documents, diagnostics);
   const game = documentAt<GameDocument>("game", project.gameCatalog, documents, diagnostics);
@@ -640,8 +674,10 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     return {diagnostics, valid: false};
   }
 
-  const dependencyReferences: ProjectDependencyReference[] =
-    [...storyResourcePaths].map((value) => ({value, origin: "Story"}));
+  const dependencyReferences: ProjectDependencyReference[] = [
+    ...[...storyResourcePaths].map((value) => ({value, origin: "Story"})),
+    ...includedResources,
+  ];
   const addResourceRef = (value: unknown, origin: string): void => {
     if (typeof value === "string") {
       dependencyReferences.push({value, origin});
@@ -828,6 +864,14 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     // source map, not the sidecar itself, belong in the distributed artifact.
     if (!path.endsWith(".pxstory.pxids.json")) files[path] = value;
   }
+  for (const reference of includedResources) {
+    if (files[reference.value] !== undefined)
+      diagnostics.push(issue("PXBUILD1054",
+        "resourceIncludes file collides with a generated or authored document",
+        projectPath, reference.value));
+  }
+  if (diagnostics.some((diagnostic) => diagnostic.severity === "error"))
+    return {diagnostics, valid: false};
 
   return {
     artifact: {

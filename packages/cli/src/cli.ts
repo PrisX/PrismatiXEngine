@@ -4,7 +4,7 @@ import {createHash, randomUUID} from "node:crypto";
 import {spawn, type ChildProcessWithoutNullStreams} from "node:child_process";
 import {constants, existsSync, readFileSync, watch} from "node:fs";
 import {
-  copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile,
+  copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile,
 } from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {basename, dirname, extname, isAbsolute, join, relative, resolve, sep} from "node:path";
@@ -39,7 +39,7 @@ import {
 } from "@prismatix/authoring-sdk";
 
 interface Options {readonly values: Map<string, string>; readonly flags: Set<string>; readonly positional: string[]}
-interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>; readonly dependencies: ReadonlySet<string>; readonly storyPath?: string}
+interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>; readonly dependencies: ReadonlySet<string>; readonly includedResources: Readonly<Record<string, readonly string[]>>; readonly storyPath?: string}
 interface BuildResult {readonly root: string; readonly artifact: BuildArtifact; readonly output: string; readonly dependencies: ReadonlySet<string>}
 
 class PackagerFailure extends Error {
@@ -635,7 +635,53 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
       if (typeof module === "string") dependencies.add(projectFile(root, `${prefix}${module}`));
     }
   }
-  return {root, projectPath, project, documents, sourceFiles, locales, dependencies,
+  const includedResources: Record<string, readonly string[]> = Object.create(null) as Record<string, readonly string[]>;
+  const includeRoots = Array.isArray(authoredRaw.resourceIncludes) ? authoredRaw.resourceIncludes : [];
+  const canonicalRoot = await realpath(root);
+  let includedCount = 0;
+  for (const includeRoot of includeRoots) {
+    // The SDK reports malformed entries. Never use them to access the filesystem.
+    if (typeof includeRoot !== "string" || !safeVirtualPath(includeRoot) ||
+        [".prismatix", ".git", "node_modules"].includes(includeRoot.split("/")[0]!.toLowerCase()))
+      continue;
+    const absolute = projectFile(root, includeRoot);
+    dependencies.add(absolute);
+    let info: Awaited<ReturnType<typeof lstat>>;
+    try { info = await lstat(absolute); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      includedResources[includeRoot] = [];
+      continue;
+    }
+    if (info.isSymbolicLink()) throw new Error(`resourceIncludes root is a symbolic link: ${includeRoot}`);
+    const real = await realpath(absolute);
+    const relativeReal = relative(canonicalRoot, real);
+    if (relativeReal === ".." || relativeReal.startsWith(`..${sep}`) || isAbsolute(relativeReal))
+      throw new Error(`resourceIncludes root escapes the project: ${includeRoot}`);
+    const files: string[] = [];
+    const visit = async (directory: string): Promise<void> => {
+      for (const entry of await readdir(directory, {withFileTypes: true})) {
+        const path = join(directory, entry.name);
+        if (entry.isSymbolicLink()) throw new Error(`resourceIncludes contains a symbolic link: ${path}`);
+        if (entry.isDirectory()) await visit(path);
+        else if (entry.isFile()) {
+          files.push(relative(root, path).split(sep).join("/"));
+          if (++includedCount > 1_000_000)
+            throw new Error("resourceIncludes expands beyond one million files");
+        } else throw new Error(`resourceIncludes contains a special file: ${path}`);
+      }
+    };
+    if (info.isDirectory()) await visit(absolute);
+    else if (info.isFile()) {
+      files.push(includeRoot);
+      if (++includedCount > 1_000_000)
+        throw new Error("resourceIncludes expands beyond one million files");
+    } else throw new Error(`resourceIncludes root is not a regular file or directory: ${includeRoot}`);
+    files.sort((left, right) => left.localeCompare(right, "en"));
+    includedResources[includeRoot] = files;
+    for (const path of files) dependencies.add(projectFile(root, path));
+  }
+  return {root, projectPath, project, documents, sourceFiles, locales, dependencies, includedResources,
     ...(storyPath === undefined ? {} : {storyPath})};
 }
 
@@ -673,6 +719,7 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
       try { return readFileSync(projectFile(loaded.root, path), "utf8"); }
       catch { return undefined; }
     },
+    resolveResourceInclude: (path) => loaded.includedResources[path],
     ...(committedRevision === undefined ? {} : {committedRevision}),
     ...(uiTypeRegistry === undefined ? {} : {uiTypeRegistry})});
 }
@@ -683,7 +730,10 @@ async function validateCommand(options: Options): Promise<number> {
     const result = await compileLoaded(loaded, undefined, options.values.get("ui-registry"));
     printDiagnostics(result.diagnostics);
     if (!result.valid) return 1;
-    process.stdout.write(`${JSON.stringify({valid: true, engineVersion: "0.2.0", project: loaded.projectPath})}\n`);
+    process.stdout.write(`${JSON.stringify({valid: true, engineVersion: "0.2.0",
+      project: loaded.projectPath, resourceFiles: result.artifact!.dependencies.length,
+      includeRoots: Object.keys(loaded.includedResources).length,
+      includedFiles: Object.values(loaded.includedResources).reduce((sum, files) => sum + files.length, 0)})}\n`);
     return 0;
   } catch (error) {
     if (error instanceof JsxAuthoringFailure) {

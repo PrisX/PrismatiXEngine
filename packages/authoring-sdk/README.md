@@ -14,6 +14,27 @@ The public entrypoint provides:
 - a React-free JSX runtime and typed UI components that lower to the same canonical UI contracts;
 - explicit migration entrypoints and generated contract hashes.
 
+## Dynamic resource families
+
+Static Story/UI references and catalog assets are collected automatically. If
+the Player selects a file dynamically (for example, a PIMG-derived UI family
+or one of several system voices), add project-relative files or directories to
+the author manifest:
+
+```json
+{"resourceIncludes": ["Assets/UI/Original", "Assets/Audio/Voice/confirm.ogg"]}
+```
+
+The CLI expands directories recursively, rejects missing/empty roots and
+symbolic links, and copies the files into the owned artifact as normal
+dependencies. `resourceIncludes` is build-time metadata and is removed from
+the canonical `project.pxproject` shipped to the Player. Direct
+`compileProject` callers must provide `resolveResourceInclude(root)` returning
+the file paths under each declared root; without a resolver compilation fails
+instead of silently omitting media. This is for runtime assets, not TSX source
+or generated UI documents. Use the asset catalog when a resource needs a
+stable UUID across renames.
+
 ```ts
 import {compileStory, parseStory} from "@prismatix/authoring-sdk";
 

@@ -1,4 +1,5 @@
 import {validateDocument} from "./contracts.js";
+import {isSafeResourcePath} from "./resources.js";
 import type {ProjectDocument} from "./project.js";
 import type {AuthoringDiagnostic, Result} from "./types.js";
 
@@ -24,6 +25,8 @@ export interface NormalizedProjectInput {
   readonly locales: Readonly<Record<string, unknown>>;
   readonly projectPath: string;
   readonly storyPath: string;
+  /** Author-only file or directory roots; never serialized into project.pxproject. */
+  readonly resourceIncludes: readonly string[];
 }
 
 function issue(code: string, message: string, path: string, details?: string): AuthoringDiagnostic {
@@ -174,6 +177,19 @@ export function normalizeProject(input: NormalizeProjectInput = {}): Result<Norm
     return {diagnostics: parsedSource.diagnostics, valid: false};
 
   const raw = parsedSource.value;
+  const includeValue = raw.resourceIncludes;
+  if (includeValue !== undefined && (!Array.isArray(includeValue) ||
+      includeValue.length > 4096 || !includeValue.every((value: unknown) =>
+        typeof value === "string" && isSafeResourcePath(value) &&
+        !value.includes(":") && !value.includes("\0") &&
+        ![".prismatix", ".git", "node_modules"].includes(value.split("/")[0]!.toLowerCase()) &&
+        value.split("/").every((part) => part.length > 0 && part !== "."))))
+    return {diagnostics: [issue("PXBUILD1051",
+      "resourceIncludes must be an array of safe project-relative file or directory paths", projectPath)],
+    valid: false};
+  const resourceIncludes = includeValue as readonly string[] | undefined;
+  const runtimeSource = {...raw};
+  delete runtimeSource.resourceIncludes;
   const name = typeof raw.name === "string" ? raw.name : "PrismatiX Game";
   const projectId = typeof raw.id === "string" ? raw.id : identifier(name);
   const locale = typeof raw.defaultLocale === "string" ? raw.defaultLocale
@@ -210,7 +226,7 @@ export function normalizeProject(input: NormalizeProjectInput = {}): Result<Norm
     gameCatalog: gameCatalogPath,
     extensions: [],
     uiEntryPoints: uiEntryPoints ?? {[defaultUiRoute]: defaultUiPath},
-    ...raw,
+    ...runtimeSource,
     resolution: {...{width, height}, ...resolution},
     entry: {
       story: entryStory,
@@ -259,6 +275,7 @@ export function normalizeProject(input: NormalizeProjectInput = {}): Result<Norm
       locales,
       projectPath,
       storyPath,
+      resourceIncludes: resourceIncludes ?? [],
     },
     diagnostics: validated.diagnostics,
     valid: true,
