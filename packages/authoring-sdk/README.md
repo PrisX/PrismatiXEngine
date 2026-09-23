@@ -54,7 +54,9 @@ single-document compilation reports `PXSTORY1215` for these commands.
 
 ## Readable Story with durable save identities
 
-An ordinary `.pxstory` needs no manually authored id. When save/seen identity
+An ordinary `.pxstory` needs no manually authored id. New projects from
+`prismatix create` start with an external identity map already prepared.
+When save/seen identity
 must survive text edits, `prismatix ids my-game --external --write` creates a
 recoverable source backup, removes existing `[id ...]` directives, and writes
 an author-only `<source>.pxids.json` sidecar. The Story keeps one short

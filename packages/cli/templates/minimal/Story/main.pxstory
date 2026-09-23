@@ -1,11 +1,9 @@
-; Edit dialogue, save, and watch Preview update. Keep existing [id] anchors when rewriting.
+; Edit dialogue, save, and watch Preview update. The SDK keeps stable save IDs beside this file.
 *start
-[bg asset=10000000-0000-4000-8000-000000000001]
+[bg Assets/window.png]
 [show guide expression=smile position=center]
-[id main.welcome]
 @guide
 你好，我是小光。這是你的第一個故事。
-[id main.invitation]
 窗外的天空正在變色。今天想去哪裡呢？
 
 [choice text="一起看看星星" goto=stars]
@@ -13,17 +11,14 @@
 [choice.wait]
 
 *stars
-[id main.stars]
 @guide
 我們打開窗，等第一顆星亮起。明天也一起來吧！
 [jump target=finish]
 
 *story
-[id main.story]
 @guide
 那就從「很久很久以前」開始。下一句，交給你來寫。
 
 *finish
-[id main.finish]
 你可以用上方的 SAVE／LOAD 保存或讀取進度，再試另一個選項。
 [end]

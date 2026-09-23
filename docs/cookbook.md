@@ -1,12 +1,11 @@
 # Story author cookbook
 
-These examples use the public Story compiler in `packages/authoring-sdk/src/story.ts`, not guessed spellings of runtime JavaScript methods. Start from a generated project and run `prismatix validate my-game` after changing declarations. Asset examples require the referenced file to exist and be registered in `prismatix.json`.
+These examples use the public Story compiler in `packages/authoring-sdk/src/story.ts`, not guessed spellings of runtime JavaScript methods. Start from a generated project and run `prismatix validate my-game` after changing declarations. Asset examples require the referenced file to exist; a catalog entry is needed when you want a stable asset identity or a character expression references it.
 
 ## Rewrite, branch and preserve identities
 
 ```pxstory
 *start
-[id greeting.first]
 @guide
 今天想去哪裡呢？
 
@@ -14,24 +13,22 @@ These examples use the public Story compiler in `packages/authoring-sdk/src/stor
 [choice text="聽個故事" goto=story]
 [choice.wait]
 *stars
-[id ending.stars]
 第一顆星亮起了。
 [jump target=finish]
 *story
-[id ending.story]
 很久很久以前，有一個小小的願望。
 *finish
 [end]
 ```
 
-An empty line ends speaker scope. Labels use `*name`; choices use `text` and `goto`, jumps use `target`. Retain explicit `[id ...]` anchors for the same logical line when rewriting or moving it. New lines need new identities, not copies of an existing anchor. `prismatix ids <project>` provides the existing identity workflow; changing stable IDs, resource names or variable schemas still requires a deliberate migration test against old saves. Identity stability does not by itself prove compatibility.
+An empty line ends speaker scope. Labels use `*name`; choices use `text` and `goto`, jumps use `target`. A generated project's adjacent `.pxids.json` keeps save identities without `[id ...]` in the prose. Prose rewrites retain their identities; for added or removed executable lines, review `prismatix ids <project> --sync` and then run `--sync --write`. Do not delete the Story's `; @prismatix-ids` marker or the sidecar. Changing routes, resources or variable schemas still requires a deliberate migration test against old saves. Identity stability does not by itself prove compatibility.
 
 ## Characters, backgrounds and sound
 
 The starter registers `guide`, its `smile` expression and an original background. Reuse these without hand-writing another UUID:
 
 ```pxstory
-[bg asset=10000000-0000-4000-8000-000000000001]
+[bg Assets/window.png]
 [show guide expression=smile position=left x=0 y=0 scale=0.8]
 @guide
 這裡就是新的背景。

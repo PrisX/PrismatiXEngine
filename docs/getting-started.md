@@ -22,7 +22,7 @@ prismatix create "my game" --name "First Light" --id first-light --locale zh-TW 
 
 `--locale` sets the locale tag; it does not translate the Chinese template. The bundled font covers the starter text. Add and test appropriate fonts before authoring other writing systems.
 
-Edit `my-game/Story/main.pxstory` and save. Keep `[id main.welcome]` when rewriting that line. `dev` watches before its first build, so fixing initial syntax errors can start Preview without rerunning the command. Each successful edit prepares an immutable revision and replacement Preview, waits for apply/play acknowledgements, then closes the prior Preview. **The current policy restarts the scene after a successful edit.** It does not promise to preserve dialogue position. Errors retain the previous playable revision. Preview starts at Title; Start opens the story HUD. Its Save/Load slots hold session-only checkpoints, cleared on rebuild or Host close. Packaged Player Save/Load uses persistent player saves.
+Edit `my-game/Story/main.pxstory` and save. The generated Story has no inline `[id]` directives: `create` puts stable save identities in the adjacent `.pxids.json` sidecar. Keep its `; @prismatix-ids` marker and the sidecar together. `dev` watches before its first build, so fixing initial syntax errors can start Preview without rerunning the command. Each successful edit prepares an immutable revision and replacement Preview, waits for apply/play acknowledgements, then closes the prior Preview. **The current policy restarts the scene after a successful edit.** It does not promise to preserve dialogue position. Errors retain the previous playable revision. Preview starts at Title; Start opens the story HUD. Its Save/Load slots hold session-only checkpoints, cleared on rebuild or Host close. Packaged Player Save/Load uses persistent player saves.
 
 When the bundled Runtime includes `share/PrismatiX/PrismatiXUiTypeRegistry.json`,
 `validate`, `dev`, `build`, `pack`, and `run` also verify UI runtime property
@@ -88,7 +88,8 @@ updates as they happen. With `--json`, CLI progress is NDJSON on stderr and
 native Packager events are streamed on stdout; neither waits for the whole
 archive to finish before showing progress.
 
-For a long-lived Story with save/seen history, run
+`create` already prepares an identity sidecar for the starter Story. For an
+older or separately authored Story with save/seen history, run
 `prismatix ids my-game --external --write` once to move line-by-line `[id]`
 anchors into adjacent `.pxstory.pxids.json` files while keeping the prose
 readable. The command backs up original Story sources. `prismatix ids my-game
@@ -98,7 +99,10 @@ After adding or removing executable Story lines, preview the identity update
 with `prismatix ids my-game --sync`; if the reported preserved/added/removed
 operations match your intent, use `--sync --write` to update only the sidecars
 with a backup. Reorders and ambiguous duplicate lines require manual identity
-review. Test existing saves before shipping a revised story.
+review. For a rewrite immediately beside an insertion, sync the rewrite first,
+then insert and sync again; a combined edit cannot always be safely matched
+because the sidecar stores fingerprints, not the old prose. Test existing saves
+before shipping a revised story.
 
 The global command delegates project commands to the exact local CLI pinned in the game's package.json. Commit that manifest and its lock. A missing or mismatched local CLI is diagnosed instead of silently using the global version. After preparation, dev/build use local packages and bundled runtime offline. Upgrade tool versions deliberately in a branch, reinstall the pinned dependencies, and test old saves and the packaged Player before distributing an update.
 

@@ -36,6 +36,35 @@ test("starter prepares a compilable branch story and preserves binary font/image
     assert.equal(createHash("sha256").update(font).digest("hex"), "ed4ae6ed781e34d0beee896e9be5d835a938ac7adabbcc1b6b6904290006f372");
     const built = spawnSync(process.execPath, [join(packageRoot, "dist/src/cli.js"), "validate", target], {encoding: "utf8"});
     assert.equal(built.status, 0, built.stdout + built.stderr);
+    const storyPath = join(target, "Story/main.pxstory");
+    const story = await readFile(storyPath, "utf8");
+    const identities = JSON.parse(await readFile(`${storyPath}.pxids.json`, "utf8"));
+    assert.match(story, /^; @prismatix-ids\r?\n/u);
+    assert.doesNotMatch(story, /\[id\s/u);
+    assert.match(story, /\[bg Assets\/window\.png\]/u);
+    assert.equal(identities.format, "PrismatiXStoryIdentityMap");
+    assert.ok(identities.entries.length > 5);
+    await writeFile(storyPath, story.replace("你好，我是小光。這是你的第一個故事。",
+      "你好，我是小光。故事從這裡開始。"), "utf8");
+    const revised = spawnSync(process.execPath,
+      [join(packageRoot, "dist/src/cli.js"), "validate", target], {encoding: "utf8"});
+    assert.equal(revised.status, 0, revised.stdout + revised.stderr);
+    const rewritten = spawnSync(process.execPath,
+      [join(packageRoot, "dist/src/cli.js"), "ids", target, "--sync", "--write"], {encoding: "utf8"});
+    assert.equal(rewritten.status, 0, rewritten.stdout + rewritten.stderr);
+    await writeFile(storyPath, (await readFile(storyPath, "utf8")).replace(
+      "故事從這裡開始。", "故事從這裡開始。\n這是新增的一句。"), "utf8");
+    const unsynced = spawnSync(process.execPath,
+      [join(packageRoot, "dist/src/cli.js"), "validate", target], {encoding: "utf8"});
+    assert.equal(unsynced.status, 1);
+    assert.match(unsynced.stdout + unsynced.stderr, /PXSTORY1405/u);
+    assert.match(unsynced.stdout + unsynced.stderr, /--sync/u);
+    const synced = spawnSync(process.execPath,
+      [join(packageRoot, "dist/src/cli.js"), "ids", target, "--sync", "--write"], {encoding: "utf8"});
+    assert.equal(synced.status, 0, synced.stdout + synced.stderr);
+    const expanded = spawnSync(process.execPath,
+      [join(packageRoot, "dist/src/cli.js"), "validate", target], {encoding: "utf8"});
+    assert.equal(expanded.status, 0, expanded.stdout + expanded.stderr);
     assert.ok(await readFile(join(target, "package-lock.json"), "utf8"));
     assert.match(await readFile(join(target, ".gitignore"), "utf8"), /node_modules\//u);
     assert.deepEqual(await readdir(root), ["繁中 story"]);

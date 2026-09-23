@@ -94,6 +94,11 @@ test("create scaffolds a canonical playable starter without author-supplied UUID
     ["assets", "characters", "defaultLocale", "id", "name", "resolution", "uiEntryPoints"]);
   assert.equal((await stat(join(root, "Content/Localization/zh-TW.json"))).isFile(), true);
   assert.deepEqual((await readdir(join(root, "Assets"))).sort(), ["guide.png", "window.png"]);
+  const story = await readFile(join(root, "Story/main.pxstory"), "utf8");
+  assert.match(story, /^; @prismatix-ids\r?\n/u);
+  assert.doesNotMatch(story, /\[id\s/u);
+  assert.match(story, /\[bg Assets\/window\.png\]/u);
+  assert.equal((await stat(join(root, "Story/main.pxstory.pxids.json"))).isFile(), true);
 });
 
 test("runtime discovery accepts an installed prefix manifest and reports attempted sources", async () => {

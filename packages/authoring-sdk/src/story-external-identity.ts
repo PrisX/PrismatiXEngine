@@ -231,7 +231,7 @@ export function synchronizeStoryIdentityMap(source: string, value: unknown, opti
     const newCount = newEnd - newStart;
     if (oldCount > 0 && newCount > 0 && oldCount !== newCount)
       return issue("PXSTORY1414",
-        "Story edits are ambiguous: changed and inserted/removed operations overlap; review identities manually",
+        "Story edits are ambiguous: changed and inserted/removed operations overlap. If possible, sync the prose rewrite first, then add/remove lines and sync again; otherwise review old save identities manually",
         path, nodes[newStart]);
     if (oldCount > 0 && newCount > 0) {
       for (let offset = 0; offset < oldCount; offset += 1) {
@@ -307,7 +307,7 @@ export function applyStoryIdentityMap(document: StoryDocument, value: unknown,
     diagnostics.push(issue("PXSTORY1404", "Story identity map cannot be combined with inline [id] directives", document.path));
   const nodes = document.nodes.filter(observable);
   if (entries.length !== nodes.length) diagnostics.push(issue("PXSTORY1405",
-    `Story identity map has ${entries.length} entries but source has ${nodes.length} operations; review additions/removals before regenerating the map`,
+    `Story identity map has ${entries.length} entries but source has ${nodes.length} operations; run prismatix ids <project> --sync to review additions/removals, then --sync --write to update the map`,
     mapPath));
   const currentFingerprints = nodes.map(fingerprint);
   const positions = new Map<string, number[]>();

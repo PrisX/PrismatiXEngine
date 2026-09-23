@@ -3,6 +3,7 @@ import {randomUUID} from "node:crypto";
 import {copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, rmdir, writeFile} from "node:fs/promises";
 import {basename, dirname, extname, join, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
+import {externalizeStoryIds} from "@prismatix/authoring-sdk";
 
 export interface StarterOptions {
   readonly name?: string;
@@ -115,6 +116,14 @@ export async function createStarter(targetArgument: string, options: StarterOpti
       }
     };
     await copy(templateRoot, staging);
+    const storyPath = join(staging, "Story", "main.pxstory");
+    const story = await readFile(storyPath, "utf8");
+    const identities = externalizeStoryIds(story, {path: "Story/main.pxstory"});
+    if (!identities.valid || identities.source === undefined || identities.map === undefined)
+      throw new Error(`Starter Story identity preparation failed: ${identities.diagnostics
+        .map((item) => `${item.code}: ${item.message}`).join("; ")}`);
+    await writeFile(storyPath, identities.source, "utf8");
+    await writeFile(`${storyPath}.pxids.json`, `${JSON.stringify(identities.map)}\n`, "utf8");
     await (options.install ?? ((directory) => installDependencies(directory, options)))(staging);
     if (await emptyDestination(target)) { await rmdir(target); removedEmptyTarget = true; }
     await rename(staging, target);
