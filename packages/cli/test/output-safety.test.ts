@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import {mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile} from "node:fs/promises";
+import {link, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import test from "node:test";
 import {publishDirectory, publishedInputs, retirePublishedDirectory, outputOwnershipMarker,
+  verifiedPublishedInputs,
   maxOutputMarkerBytes, type PublicationProgress} from "../src/output-safety.js";
 
 async function fixture(t: test.TestContext) {
@@ -73,6 +74,29 @@ test("published artifact inputs come from an intact ownership inventory", async 
   await rm(join(f.output, "author.txt"));
   await rm(join(f.output, "game.bin"));
   await assert.rejects(publishedInputs(f.output), /does not match directory contents/u);
+});
+
+test("resource reuse requires a content-verified published revision", async t => {
+  const f = await fixture(t);
+  await publishDirectory(f, build("stable"));
+  assert.deepEqual((await verifiedPublishedInputs(f.output)).map((input) => input.uri),
+    ["game.bin"]);
+  await writeFile(join(f.output, "game.bin"), "edited!");
+  await assert.rejects(verifiedPublishedInputs(f.output), /unowned or modified/u);
+});
+
+test("linked reuse is rechecked before a new revision is promoted", async t => {
+  const f = await fixture(t);
+  await publishDirectory(f, build("stable"));
+  const next = join(f.projectRoot, "next-revision");
+  await assert.rejects(publishDirectory({...f, output: next,
+    beforePromotion: async () => { await verifiedPublishedInputs(f.output); }},
+  async stage => {
+    await link(join(f.output, "game.bin"), join(stage, "game.bin"));
+    await writeFile(join(f.output, "game.bin"), "tampered");
+  }), /unowned or modified/u);
+  await assert.rejects(readFile(join(next, "game.bin")), /ENOENT/u);
+  assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "tampered");
 });
 
 test("published artifact input discovery rejects symlinks and invalid markers", async t => {

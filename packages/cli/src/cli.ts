@@ -4,7 +4,7 @@ import {createHash, randomUUID} from "node:crypto";
 import {spawn, type ChildProcessWithoutNullStreams} from "node:child_process";
 import {constants, existsSync, readFileSync, watch} from "node:fs";
 import {
-  copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile,
+  copyFile, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile,
 } from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {basename, dirname, extname, isAbsolute, join, relative, resolve, sep} from "node:path";
@@ -15,7 +15,8 @@ import {
   discoverRuntimeTool, discoverRuntimeBundle, RuntimeDiscoveryFailure, runtimeDiscoveryHint,
   type RuntimeDiscoveryOptions,
 } from "./runtime-discovery.js";
-import {publishDirectory, publishedInputs, retirePublishedDirectory} from "./output-safety.js";
+import {fingerprintFile, publishDirectory, publishedInputs, retirePublishedDirectory,
+  verifiedPublishedInputs, type PublishedInput} from "./output-safety.js";
 import {augmentArtifact} from "./artifact-augment.js";
 import {createStarter} from "./starter.js";
 import {migrateCommand} from "./migration.js";
@@ -158,20 +159,23 @@ function progress(value: Readonly<Record<string, unknown>>): void {
 }
 
 function buildProgress(phase: string, current: number, total: number | undefined,
-  bytes = 0, done = false): void {
+  bytes = 0, done = false, reuse?: {readonly files: number; readonly bytes: number}): void {
   const labels: Readonly<Record<string, string>> = {
     load: "Loading project", compile: "Compiling Story and UI",
     copy: "Copying artifact inputs", "verify-existing": "Checking existing output",
     "clone-existing": "Cloning owned artifact",
     "fingerprint-output": "Fingerprinting artifact output",
-    "verify-before-publish": "Rechecking existing output", publish: "Publishing artifact",
+    "verify-before-publish": "Rechecking existing output",
+    "verify-reuse-source": "Checking reused media revision", publish: "Publishing artifact",
   };
   const label = labels[phase] ?? phase;
   const count = total === undefined ? `${current} files` : `${current}/${total}`;
   const amount = bytes > 0 ? `, ${(bytes / 1024 ** 2).toFixed(1)} MiB` : "";
+  const reused = reuse?.files ? `, ${reuse.files} reused` : "";
   progress({event: "progress", severity: "information", code: "PXCLI1102", phase,
     current, ...(total === undefined ? {} : {total}), bytes, done,
-    message: `${label}: ${count}${amount}${done ? " (done)" : ""}`});
+    ...(reuse === undefined ? {} : {reusedFiles: reuse.files, reusedBytes: reuse.bytes}),
+    message: `${label}: ${count}${amount}${reused}${done ? " (done)" : ""}`});
 }
 
 function storyProgressReporter(): NonNullable<CompileProjectInput["onStoryProgress"]> {
@@ -824,7 +828,13 @@ async function validateCommand(options: Options): Promise<number> {
   }
 }
 
-async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact, staging: string): Promise<void> {
+interface ReusableArtifactInputs {
+  readonly root: string;
+  readonly byUri: ReadonlyMap<string, PublishedInput>;
+}
+
+async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact, staging: string,
+  reuse?: ReusableArtifactInputs): Promise<{readonly files: number; readonly bytes: number}> {
   const total = Object.keys(artifact.files).length + artifact.dependencies.length;
   const readyDirectories = new Map<string, Promise<void>>();
   const ensureDirectory = (directory: string): Promise<void> => {
@@ -837,13 +847,16 @@ async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact,
   };
   let current = 0;
   let bytes = 0;
+  let reusedFiles = 0;
+  let reusedBytes = 0;
   let lastReport = Date.now();
   let lastCount = 0;
   buildProgress("copy", 0, total);
   const report = (): void => {
     const now = Date.now();
     if (current !== total && current - lastCount < 512 && now - lastReport < 2000) return;
-    buildProgress("copy", current, total, bytes, current === total);
+    buildProgress("copy", current, total, bytes, current === total,
+      {files: reusedFiles, bytes: reusedBytes});
     lastReport = now;
     lastCount = current;
   };
@@ -864,8 +877,25 @@ async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact,
     const results = await Promise.allSettled(batch.map(async (dependency) => {
       const destination = projectFile(staging, dependency.logicalPath);
       await ensureDirectory(dirname(destination));
-      await copyFile(projectFile(loaded.root, dependency.source), destination);
-      bytes += (await stat(destination)).size;
+      const source = projectFile(loaded.root, dependency.source);
+      const previous = reuse?.byUri.get(dependency.logicalPath);
+      let reused = false;
+      if (previous !== undefined) {
+        const sourceInfo = await stat(source);
+        if (sourceInfo.isFile() && sourceInfo.size === previous.size &&
+            await fingerprintFile(source) === previous.fingerprint) {
+          const oldPath = projectFile(reuse!.root, dependency.logicalPath);
+          try { await link(oldPath, destination); reused = true; }
+          catch (error) {
+            if (!["EXDEV", "EPERM", "EOPNOTSUPP", "ENOSYS", "ENOENT"].includes(
+              (error as NodeJS.ErrnoException).code ?? "")) throw error;
+          }
+        }
+      }
+      if (!reused) await copyFile(source, destination);
+      const size = reused ? previous!.size : (await stat(destination)).size;
+      bytes += size;
+      if (reused) { reusedFiles += 1; reusedBytes += size; }
       current += 1;
       report();
     }));
@@ -873,6 +903,7 @@ async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact,
     if (failed?.status === "rejected") throw failed.reason;
   }
   if (total === 0) buildProgress("copy", 0, 0, 0, true);
+  return {files: reusedFiles, bytes: reusedBytes};
 }
 
 function protectedInputs(loaded: LoadedProject, artifact: BuildArtifact): string[] {
@@ -883,7 +914,8 @@ function protectedInputs(loaded: LoadedProject, artifact: BuildArtifact): string
 
 async function buildProject(projectArgument: string | undefined, outputArgument: string | undefined,
   committedRevision?: number, registryOverride?: string, runtimeHint?: string,
-  packagerPath?: string, storyCompilationCache?: StoryProjectCompilationCache): Promise<BuildResult> {
+  packagerPath?: string, storyCompilationCache?: StoryProjectCompilationCache,
+  previousBuild?: BuildResult): Promise<BuildResult> {
   buildProgress("load", 0, 1);
   const loaded = await loadProject(projectArgument);
   buildProgress("load", 1, 1, 0, true);
@@ -894,13 +926,32 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
   if (!compiled.valid || compiled.artifact === undefined) throw new Error("Project validation or compilation failed");
   buildProgress("compile", 1, 1, 0, true);
   const output = resolve(outputArgument ?? join(loaded.root, ".prismatix", "build"));
+  let reuse: ReusableArtifactInputs | undefined;
+  if (previousBuild !== undefined) {
+    try {
+      const inputs = await publishedInputs(previousBuild.output);
+      reuse = {root: previousBuild.output,
+        byUri: new Map(inputs.map((input) => [input.uri, input]))};
+    } catch (error) {
+      printDiagnostics([{severity: "warning", code: "PXCLI1610",
+        message: "Previous preview artifact cannot be reused; copying source resources",
+        path: previousBuild.output, hint: String(error)}]);
+    }
+  }
+  let reused: {readonly files: number; readonly bytes: number} = {files: 0, bytes: 0};
   buildProgress("publish", 0, 1);
   await publishDirectory({output, projectRoot: loaded.root,
     verifyExistingBeforeBuild: false,
+    beforePromotion: async () => {
+      if (reuse !== undefined && reused.files > 0)
+        await verifiedPublishedInputs(reuse.root,
+          (value) => buildProgress(value.phase, value.files, undefined,
+            value.bytes, value.done));
+    },
     protectedPaths: protectedInputs(loaded, compiled.artifact),
     onProgress: (value) => buildProgress(value.phase, value.files, undefined,
       value.bytes, value.done)}, async (staging) => {
-    await copyRuntimeInputs(loaded, compiled.artifact!, staging);
+    reused = await copyRuntimeInputs(loaded, compiled.artifact!, staging, reuse);
   });
   buildProgress("publish", 1, 1, 0, true);
   const dependencies = new Set(loaded.dependencies);
@@ -1432,7 +1483,7 @@ async function devCommand(options: Options): Promise<number> {
         updated = changes === attempted && built !== undefined
           ? built : await buildProject(projectArgument, join(revisionRoot, String(++revision)),
             revision, options.values.get("ui-registry"), options.values.get("runtime"),
-            undefined, storyCompilationCache);
+            undefined, storyCompilationCache, built);
         candidate = await PreviewClient.start(previewHost.path, updated.root);
         await applyPreviewBuild(candidate, updated, false);
         const played = await candidate.request("play", updated.artifact.runtimeIr.documentId,

@@ -259,8 +259,13 @@ test("dev --once streams PreviewHost protocol output and exits after a clean shu
   assert.equal((await stat(join(event.output, "Runtime", "main.pxir"))).isFile(), true);
 });
 
-test("dev reuses Story compilation for UI edits and invalidates it for Story edits", {timeout: 35_000}, async (t) => {
+test("dev reuses verified media and Story inputs without hiding changes", {timeout: 50_000}, async (t) => {
   const value = await fixture();
+  const project = JSON.parse(await readFile(value.project, "utf8")) as Record<string, unknown>;
+  project.resourceIncludes = ["Assets/Batch"];
+  await write(value.project, JSON.stringify(project));
+  const mediaPath = join(value.root, "Assets/Batch/media.bin");
+  await write(mediaPath, "media-alpha");
   const host = join(value.root, "mock-preview.mjs");
   const hostLog = join(value.root, ".prismatix", "cache-host.jsonl");
   await write(host, `
@@ -325,6 +330,11 @@ test("dev reuses Story compilation for UI edits and invalidates it for Story edi
   };
   assert.deepEqual(secondIr.operations, firstIr.operations);
   assert.equal(secondIr.committedRevision, 2);
+  const secondCopy = events().filter((event) => event.phase === "copy" && event.done)[1]!;
+  assert.equal(secondCopy.reusedFiles, 1);
+  assert.equal(secondCopy.reusedBytes, Buffer.byteLength("media-alpha"));
+  assert.equal(await readFile(join(String(second.output), "Assets/Batch/media.bin"), "utf8"),
+    "media-alpha");
   const storyEvents = events().filter((event) => event.code === "PXCLI1103");
   assert.equal(storyEvents.length, 4);
   assert.deepEqual(storyEvents.slice(2).map((event) => event.cached), [true, true]);
@@ -338,6 +348,14 @@ test("dev reuses Story compilation for UI edits and invalidates it for Story edi
   assert.equal(thirdIr.committedRevision, 3);
   assert.deepEqual(events().filter((event) => event.code === "PXCLI1103")
     .slice(4).map((event) => event.cached), [undefined, undefined]);
+
+  await write(mediaPath, "media-bravo"); // same size; reuse must compare content
+  const fourth = await waitForRevision(4);
+  assert.equal(await readFile(join(String(fourth.output), "Assets/Batch/media.bin"), "utf8"),
+    "media-bravo");
+  const fourthCopy = events().filter((event) => event.phase === "copy" && event.done)[3]!;
+  assert.equal(fourthCopy.reusedFiles, 0);
+  assert.equal(fourthCopy.reusedBytes, 0);
 });
 
 test("ids defaults to readable Story and external stable identities with a backup", async () => {

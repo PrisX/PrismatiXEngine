@@ -17,7 +17,8 @@ export interface PublishedScanProgress {
   readonly done: boolean;
 }
 export interface PublicationProgress {
-  readonly phase: "verify-existing" | "clone-existing" | "fingerprint-output" | "verify-before-publish";
+  readonly phase: "verify-existing" | "clone-existing" | "fingerprint-output" |
+    "verify-before-publish" | "verify-reuse-source";
   readonly files: number;
   readonly bytes: number;
   readonly done: boolean;
@@ -31,6 +32,8 @@ export interface PublicationOptions {
    * fully verified immediately before replacement; this skips an otherwise
    * redundant pre-build hash pass over potentially multi-GiB artifacts. */
   readonly verifyExistingBeforeBuild?: boolean;
+  /** Recheck external published revisions linked into staging before promotion. */
+  readonly beforePromotion?: () => Promise<void>;
   readonly onProgress?: (value: PublicationProgress) => void;
 }
 
@@ -67,7 +70,7 @@ async function validatePaths(options: PublicationOptions): Promise<string> {
   } catch (error) { if (!missing(error)) throw error; }
   return output;
 }
-async function digest(path: string, onChunk?: (bytes: number) => void): Promise<string> {
+export async function fingerprintFile(path: string, onChunk?: (bytes: number) => void): Promise<string> {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(path)) {
     hash.update(chunk);
@@ -100,7 +103,7 @@ async function inventory(root: string, phase?: PublicationProgress["phase"],
       if (entry.isSymbolicLink()) throw new Error(`Unsafe output contains a symbolic link: ${path}`);
       if (entry.isDirectory()) { entries[name] = "directory"; await visit(path); }
       else if (entry.isFile()) {
-        entries[name] = await digest(path, onProgress === undefined ? undefined : (size) => {
+        entries[name] = await fingerprintFile(path, onProgress === undefined ? undefined : (size) => {
           bytes += size;
           report();
         });
@@ -208,6 +211,14 @@ export async function publishedInputs(output: string,
   return inputs.sort((left, right) => left.uri.localeCompare(right.uri, "en"));
 }
 
+/** Reuse candidates must be content-verified, unlike Packager inputs whose
+ * fingerprints are independently checked by native before packaging. */
+export async function verifiedPublishedInputs(output: string,
+  onProgress?: PublicationOptions["onProgress"]): Promise<readonly PublishedInput[]> {
+  await assertOwned(output, false, "verify-reuse-source", onProgress);
+  return publishedInputs(output);
+}
+
 async function acquireOutputLock(output: string): Promise<string> {
   const lock = join(dirname(output), `.prismatix-${createHash("sha256").update(key(output)).digest("hex").slice(0, 24)}.lock`);
   try { await mkdir(lock); } catch (error) {
@@ -236,6 +247,7 @@ export async function publishDirectory<T>(options: PublicationOptions, build: (s
     if (Buffer.byteLength(marker, "utf8") > maxOutputMarkerBytes)
       throw new Error(`Artifact ownership marker exceeds ${maxOutputMarkerBytes} bytes`);
     await writeFile(join(staging, outputOwnershipMarker), marker, {flag: "wx"});
+    await options.beforePromotion?.();
     if (key(await validatePaths(options)) !== key(output)) throw new Error("Output path changed during publication");
     await assertOwned(output, true, "verify-before-publish", options.onProgress);
     const backup = join(dirname(output), `.prismatix-backup-${randomUUID()}`);
