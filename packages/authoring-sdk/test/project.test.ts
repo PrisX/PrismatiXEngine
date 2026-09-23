@@ -219,6 +219,15 @@ test("compileProject rejects UI component interfaces that the native Runtime can
 
 test("compileProject publishes aligned RuntimeIR and source maps for every Story locale", () => {
   const extensionPath = "Content/Extensions/localized.pxextension";
+  const heroId = "33333333-3333-4333-8333-333333333333";
+  const heroSource = `Characters/${heroId}.pxcharacter`;
+  const hero = {format: "PrismatiXCharacter", schemaRevision: 2,
+    id: heroId, displayName: "英雄", displayNames: {"ja-JP": "勇者"},
+    aliases: ["hero"], expressions: []};
+  const rivalId = "44444444-4444-4444-8444-444444444444";
+  const rivalSource = `Characters/${rivalId}.pxcharacter`;
+  const rival = {format: "PrismatiXCharacter", schemaRevision: 2,
+    id: rivalId, displayName: "對手", aliases: ["rival"], expressions: []};
   const localizedExtension = {
     format: "PrismatiXExtension", schemaRevision: 2, language: "javascript",
     id: "localized-media", version: "1.0.0",
@@ -242,12 +251,16 @@ test("compileProject publishes aligned RuntimeIR and source maps for every Story
   };
   const compile = (japanese: string) => compileProject({
     project: {...project, supportedLocales: ["zh-TW", "ja-JP"],
-      extensions: [extensionPath]},
+      extensions: [extensionPath],
+      characters: [{id: heroId, displayName: "英雄", source: heroSource},
+        {id: rivalId, displayName: "對手", source: rivalSource}]},
     documents: {
       "Story/story.pxindex": bilingualIndex,
       "Content/game.pxgame": game,
       "Content/UI/Title.pxui": ui,
       [extensionPath]: localizedExtension,
+      [heroSource]: hero,
+      [rivalSource]: rival,
     },
     sourceFiles: {
       "Story/zh-TW/scene01.pxstory": "*start\n[bg asset=opening.background]\n[voice asset=opening.voice]\n[localized.cue media=opening.voice cue=opening]\n@hero\n早安。\n[choice text=留下 goto=end]\n*end\n[end]\n",
@@ -284,6 +297,12 @@ test("compileProject publishes aligned RuntimeIR and source maps for every Story
     operation.kind === "dialogue")?.arguments.text,
   base.runtimeIr.operations.find((operation) => operation.kind === "dialogue")?.arguments.text);
   assert.equal(base.runtimeIr.operations.find((operation) =>
+    operation.kind === "dialogue")?.arguments.speaker, "英雄");
+  assert.equal(localized.runtimeIr.operations.find((operation) =>
+    operation.kind === "dialogue")?.arguments.speaker, "勇者");
+  assert.equal(localized.runtimeIr.operations.find((operation) =>
+    operation.kind === "dialogue")?.arguments.character, heroId);
+  assert.equal(base.runtimeIr.operations.find((operation) =>
     operation.kind === "background")?.arguments.asset,
   "Assets/zh-TW/opening.webp");
   assert.equal(localized.runtimeIr.operations.find((operation) =>
@@ -301,10 +320,46 @@ test("compileProject publishes aligned RuntimeIR and source maps for every Story
   assert.ok(valid.artifact!.files["Runtime/Locales/ja-JP/main.pxmap"]?.includes(
     "Story/ja-JP/scene01.pxstory"));
 
+  const wrongActor = compile("*start\n[bg asset=opening.background]\n[voice asset=opening.voice]\n[localized.cue media=opening.voice cue=opening]\n@rival\nおはよう。\n[choice text=残る goto=end]\n*end\n[end]\n");
+  assert.equal(wrongActor.valid, false);
+  assert.ok(wrongActor.diagnostics.some((diagnostic) =>
+    diagnostic.code === "PXBUILD1031"));
+
   const structurallyDifferent = compile("*start\n[bg asset=opening.background]\n[voice asset=opening.voice]\n[localized.cue media=opening.voice cue=opening]\n@hero\nおはよう。\n[set route=branch]\n[choice text=残る goto=end]\n*end\n[end]\n");
   assert.equal(structurallyDifferent.valid, false);
   assert.ok(structurallyDifferent.diagnostics.some((diagnostic) =>
     diagnostic.code === "PXBUILD1030" || diagnostic.code === "PXBUILD1031"));
+});
+
+test("localized literal Story speakers keep dialogue identity and presentation separate", () => {
+  const bilingualIndex = {...storyIndex, scenes: [{id: "scene01", sources: {
+    "zh-TW": "Story/zh-TW/scene01.pxstory",
+    "ja-JP": "Story/ja-JP/scene01.pxstory",
+  }}]};
+  const result = compileProject({
+    project: {...project, supportedLocales: ["zh-TW", "ja-JP"]},
+    documents: {"Story/story.pxindex": bilingualIndex,
+      "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
+    sourceFiles: {
+      "Story/zh-TW/scene01.pxstory": '*start\n@"村雨"\n早安。\n[end]\n',
+      "Story/ja-JP/scene01.pxstory": '*start\n@"ムラサメ"\nおはよう。\n[end]\n',
+    },
+    locales: {
+      "zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+        locale: "zh-TW", strings: {}},
+      "ja-JP": {format: "PrismatiXLocale", schemaRevision: 2,
+        locale: "ja-JP", strings: {}},
+    },
+  });
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  const base = result.artifact!.localeArtifacts["zh-TW"]!.runtimeIr.operations
+    .find((operation) => operation.kind === "dialogue")!;
+  const translated = result.artifact!.localeArtifacts["ja-JP"]!.runtimeIr.operations
+    .find((operation) => operation.kind === "dialogue")!;
+  assert.equal(base.arguments.speaker, "村雨");
+  assert.equal(translated.arguments.speaker, "ムラサメ");
+  assert.equal(translated.arguments.character, "");
+  assert.equal(translated.operationId, base.operationId);
 });
 
 test("compileProject fails closed when cross-document identity is inconsistent", () => {

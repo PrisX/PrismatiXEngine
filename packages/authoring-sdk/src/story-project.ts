@@ -324,6 +324,7 @@ export function compileStoryProject(context: StoryProjectCompileContext): StoryC
     const rewritten = rewriteScene(scene, scenesById, sceneDiagnostics);
     const compiled = compileStory(rewritten.document, {
       documentId: descriptor.identityNamespace ?? `${documentId}:${descriptor.id}`,
+      locale: context.locale,
       ...(context.committedRevision === undefined ? {} : {committedRevision: context.committedRevision}),
       ...(context.characters === undefined ? {} : {characters: context.characters}),
       ...(context.game === undefined ? {} : {game: context.game}),

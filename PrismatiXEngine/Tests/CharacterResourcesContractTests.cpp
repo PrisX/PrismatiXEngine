@@ -49,6 +49,7 @@ std::string Character(
   "id":"11111111-1111-4111-8111-111111111111",
   "revision":0,
   "displayName":"凛",
+  "displayNames":{"ja-JP":"リン"},
   "aliases":["rin"],
   "voiceDirectory":"Content/Audio/Voice/Rin",
   "defaultExpressionId":)") +

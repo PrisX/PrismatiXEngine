@@ -306,6 +306,18 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "minLength": 1,
         "type": "string"
       },
+      "displayNames": {
+        "additionalProperties": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "maxProperties": 128,
+        "propertyNames": {
+          "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/locale"
+        },
+        "type": "object"
+      },
       "expressions": {
         "items": {
           "additionalProperties": false,
@@ -3350,7 +3362,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
 
 export const contractHashes: Readonly<Record<string, string>> = {
   "animation.schema.json": "350ac0431be758205b25b425155a920cbf626f918d3be410950e2717c69b8ec8",
-  "character.schema.json": "aadcf4c9e6d8e141581293dde1ffd1ef004f5423c4e8d450f7c2b0c880a5f64e",
+  "character.schema.json": "6ee4b099e738ac42a283b82891619e33c3bbad73f3cc53e83512fc4e3bf700ad",
   "common.schema.json": "1ba66770e3cf7f90b6ffe29f7fdccd263ad2eeec4cb2cff63bc0f7839a5d57f4",
   "effect.schema.json": "631dd0bce555dcbb3f849049978c9b635dd79848ac497adf292ca6e02468eee7",
   "extension.schema.json": "9438f403e51b8f69f52f05d5999afc37c433754a215094460e28c6d1710555a2",

@@ -85,6 +85,9 @@ int main() {
               R"({"kind":"binary","op":"and","left":{"kind":"binary","op":"greater-equal","left":{"kind":"variable","name":"affection"},"right":{"kind":"literal","value":3}},"right":{"kind":"unary","op":"not","operand":{"kind":"binary","op":"less","left":{"kind":"variable","name":"affection"},"right":{"kind":"literal","value":3}}}})"}}),
         Operation("say-true", "dialogue",
                   {{"speaker", "雪"}, {"text", "你還記得。"}}, 47),
+        Operation("literal-speaker", "dialogue",
+                  {{"speaker", "村雨"}, {"character", ""},
+                   {"text", "早安，主人。"}}),
         Operation("else", "else"),
         Operation("say-false", "dialogue", {{"speaker", "雪"}, {"text", "你忘了。"}}),
         Operation("end", "endCondition"),
@@ -118,6 +121,15 @@ int main() {
         }
     }
     assert(foundMappedLine);
+    const auto literalSay = std::find_if(
+        program.code.begin(), program.code.end(), [](const auto& command) {
+            return command.sourceId == "literal-speaker";
+        });
+    assert(literalSay != program.code.end());
+    assert(literalSay->type == "say");
+    assert(literalSay->Get("speaker") == "村雨");
+    assert(literalSay->Get("char").empty());
+    assert(literalSay->Get("value") == "早安，主人。");
     assert(program.LabelIndex("@if-else-if") >= 0);
     assert(program.LabelIndex("@if-end-if") >= 0);
     assert(program.code.back().type == "wait");

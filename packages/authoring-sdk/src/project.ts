@@ -243,6 +243,9 @@ Readonly<Record<string, string>> {
   const result: Record<string, string> = {...operation.arguments};
   if (["dialogue", "narration", "choiceOption"].includes(operation.kind))
     delete result.text;
+  // The visible speaker is localized presentation, while character remains
+  // the stable actor identity and is still compared across locales.
+  if (operation.kind === "dialogue") delete result.speaker;
   if (["background", "voice", "bgm", "soundEffect", "ambience"].includes(operation.kind))
     delete result.asset;
   if (operation.kind === "customNode") {

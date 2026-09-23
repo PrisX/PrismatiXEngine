@@ -87,6 +87,8 @@ export interface StoryNode {
   readonly span: SourceSpan;
   readonly raw: string;
   readonly name?: string;
+  /** A quoted @"name" speaker is presentation text, not a character alias. */
+  readonly literalSpeaker?: boolean;
   readonly text?: string;
   readonly arguments?: readonly StoryArgument[];
 }
@@ -169,6 +171,8 @@ export interface CharacterDocument {
   readonly schemaRevision: 2;
   readonly id: string;
   readonly displayName: string;
+  /** Optional Story speaker names by locale; falls back to displayName. */
+  readonly displayNames?: Readonly<Record<string, string>>;
   readonly aliases: readonly string[];
   readonly defaultExpressionId?: string | null;
   readonly expressions: readonly CharacterExpression[];
@@ -193,6 +197,7 @@ export interface GameDocument {
 export interface StoryCompileContext {
   readonly documentId: string;
   readonly committedRevision?: number;
+  readonly locale?: string;
   readonly characters?: readonly CharacterDocument[];
   readonly game?: GameDocument;
   readonly extensions?: readonly ExtensionManifest[];

@@ -155,6 +155,33 @@ the center and one at the side.
 `x`, `y`, and `scale` remain fully author-controlled. Positive `y` moves a bottom-anchored
 sprite downward, which is useful for conventional upper-body visual-novel framing.
 
+For a multilingual Story, keep one stable character alias and optionally give
+its `.pxcharacter` document localized speaker names:
+
+```json
+{"displayName":"村雨","displayNames":{"ja-JP":"ムラサメ","en-US":"Murasame"},"aliases":["murasame"]}
+```
+
+The other required character fields are omitted from this excerpt. `@murasame`
+then emits the locale's `speaker` text while retaining the same `character` ID
+and save/seen operation IDs. Missing locales use `displayName`. The project
+compiler allows translated speaker text but still rejects changes to actor
+identity or control flow across locales. This affects authored Story dialogue;
+it does not localize arbitrary native/JavaScript calls that bypass Story.
+
+For a displayed speaker with no character resource, quote the name after `@`:
+
+```pxstory
+@"村雨"
+早安，主人。
+```
+
+This emits a `dialogue` operation with separate `speaker` and `text` fields and
+an empty character identity. Each locale may translate the quoted speaker.
+Unlike `@murasame`, it does not select a portrait, voice directory, or other
+character-catalog resource. Existing narration cannot be converted to dialogue
+in a shipped game without reviewing save/seen identity migration.
+
 ## Project-aware character resources
 
 Standalone schema validation cannot prove that a `.pxproject` character descriptor and its `.pxcharacter` document agree, or that expression asset UUIDs exist with a Runtime-compatible kind. Use `validateProjectCharacterResources()` once the project provider has loaded those documents.

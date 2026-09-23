@@ -51,6 +51,18 @@ test("project contract is strict, bounded, and path-safe", () => {
   assert.equal(parseDocument("project", serialized.value!).valid, true);
 });
 
+test("character localized display names require valid locale tags and nonempty text", () => {
+  const character = {format: "PrismatiXCharacter", schemaRevision: 2,
+    id: "11111111-1111-4111-8111-111111111111", displayName: "雪",
+    displayNames: {"ja-JP": "ゆき", "zh-TW": "雪"},
+    aliases: ["yuki"], expressions: []};
+  assert.equal(validateDocument("character", character).valid, true);
+  assert.equal(validateDocument("character", {...character,
+    displayNames: {"ja-JP": ""}}).valid, false);
+  assert.equal(validateDocument("character", {...character,
+    displayNames: {"not a locale": "Yuki"}}).valid, false);
+});
+
 test("all canonical authored format schemas accept representative documents", () => {
   const uuid = "11111111-1111-4111-8111-111111111111";
   const uuid2 = "22222222-2222-4222-8222-222222222222";

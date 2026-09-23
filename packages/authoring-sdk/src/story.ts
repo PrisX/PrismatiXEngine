@@ -182,7 +182,7 @@ export function parseStory(text: string, path = "Story/untitled.pxstory"): Story
     text = text.slice(1);
   }
 
-  let activeSpeaker: string | undefined;
+  let activeSpeaker: {readonly name: string; readonly literal: boolean} | undefined;
   for (const line of sourceLines(text)) {
     const trimmed = line.text.trim();
     if (trimmed.length === 0) {
@@ -206,10 +206,29 @@ export function parseStory(text: string, path = "Story/untitled.pxstory"): Story
       continue;
     }
     if (trimmed.startsWith("@")) {
-      const name = trimmed.slice(1).trim();
-      if (!identifierPattern.test(name)) diagnostics.push(error("PXSTORY1011", "Speaker must be a character alias", lineSpan));
-      activeSpeaker = name;
-      nodes.push({id, kind: "speaker", span: lineSpan, raw: line.text, name});
+      const authored = trimmed.slice(1).trim();
+      if (authored.startsWith('"')) {
+        let literal: unknown;
+        try { literal = JSON.parse(authored) as unknown; }
+        catch { literal = undefined; }
+        if (typeof literal !== "string" || literal.trim().length === 0 ||
+            Buffer.byteLength(literal, "utf8") > 512 ||
+            /[\u0000-\u001f\u007f]/u.test(literal)) {
+          diagnostics.push(error("PXSTORY1015",
+            "Literal speaker must be a non-empty quoted name of at most 512 UTF-8 bytes", lineSpan));
+          activeSpeaker = undefined;
+        } else {
+          activeSpeaker = {name: literal, literal: true};
+          nodes.push({id, kind: "speaker", span: lineSpan, raw: line.text,
+            name: literal, literalSpeaker: true});
+        }
+      } else {
+        if (!identifierPattern.test(authored))
+          diagnostics.push(error("PXSTORY1011", "Speaker must be a character alias", lineSpan));
+        activeSpeaker = {name: authored, literal: false};
+        nodes.push({id, kind: "speaker", span: lineSpan, raw: line.text,
+          name: authored});
+      }
       continue;
     }
     if (trimmed.startsWith("[")) {
@@ -240,7 +259,10 @@ export function parseStory(text: string, path = "Story/untitled.pxstory"): Story
       span: lineSpan,
       raw: line.text,
       text: trimmed,
-      ...(activeSpeaker === undefined ? {} : {name: activeSpeaker}),
+      ...(activeSpeaker === undefined ? {} : {
+        name: activeSpeaker.name,
+        ...(activeSpeaker.literal ? {literalSpeaker: true} : {}),
+      }),
     });
   }
   return {path, nodes, diagnostics};
@@ -415,9 +437,14 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       continue;
     }
     if (node.kind === "dialogue") {
-      const character = node.name === undefined ? undefined : characters.get(node.name);
-      if ((context.characters?.length ?? 0) > 0 && character === undefined) diagnostics.push(error("PXSTORY1102", `Unknown character alias: ${node.name ?? ""}`, node.span));
-      emit(node, "dialogue", {speaker: character?.displayName ?? node.name ?? "", character: character?.id ?? node.name ?? "", text: node.text ?? ""}, node.text ?? "");
+      const character = node.literalSpeaker || node.name === undefined ?
+        undefined : characters.get(node.name);
+      if (!node.literalSpeaker && (context.characters?.length ?? 0) > 0 &&
+          character === undefined)
+        diagnostics.push(error("PXSTORY1102", `Unknown character alias: ${node.name ?? ""}`, node.span));
+      const localizedName = context.locale === undefined ? undefined :
+        character?.displayNames?.[context.locale];
+      emit(node, "dialogue", {speaker: localizedName ?? character?.displayName ?? node.name ?? "", character: node.literalSpeaker ? "" : character?.id ?? node.name ?? "", text: node.text ?? ""}, node.text ?? "");
       continue;
     }
     if (node.kind === "narration") {

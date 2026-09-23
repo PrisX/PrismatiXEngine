@@ -10,10 +10,38 @@ const character: CharacterDocument = {
   schemaRevision: 2,
   id: "11111111-1111-4111-8111-111111111111",
   displayName: "雪",
+  displayNames: {"ja-JP": "ゆき"},
   aliases: ["yuki"],
   defaultExpressionId: "22222222-2222-4222-8222-222222222222",
   expressions: [{id:"22222222-2222-4222-8222-222222222222",name:"Smile",aliases:["smile"],assetId:"33333333-3333-4333-8333-333333333333"}],
 };
+
+test("Story dialogue uses the authored locale name without changing actor identity", () => {
+  const document = parseStory("@yuki\nおはよう。\n", "Story/ja-JP/intro.pxstory");
+  const localized = compileStory(document, {documentId: "intro", locale: "ja-JP",
+    characters: [character]});
+  const fallback = compileStory(document, {documentId: "intro", locale: "zh-TW",
+    characters: [character]});
+  assert.equal(localized.valid, true, JSON.stringify(localized.diagnostics));
+  assert.equal(localized.runtimeIr?.operations[0]?.arguments.speaker, "ゆき");
+  assert.equal(fallback.runtimeIr?.operations[0]?.arguments.speaker, "雪");
+  assert.equal(localized.runtimeIr?.operations[0]?.arguments.character, character.id);
+  assert.equal(localized.runtimeIr?.operations[0]?.operationId,
+    fallback.runtimeIr?.operations[0]?.operationId);
+});
+
+test("quoted Story speaker keeps visible name separate without inventing a character", () => {
+  const document = parseStory('@"村雨"\n早安，主人。\n',
+    "Story/zh-TW/intro.pxstory");
+  const result = compileStory(document, {documentId: "intro", characters: [character]});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  assert.equal(result.runtimeIr?.operations[0]?.kind, "dialogue");
+  assert.equal(result.runtimeIr?.operations[0]?.arguments.speaker, "村雨");
+  assert.equal(result.runtimeIr?.operations[0]?.arguments.character, "");
+  assert.equal(result.runtimeIr?.operations[0]?.arguments.text, "早安，主人。");
+  const malformed = parseStory('@"村雨\n早安。\n');
+  assert.ok(malformed.diagnostics.some((item) => item.code === "PXSTORY1015"));
+});
 const game: GameDocument = {
   format: "PrismatiXGame",
   schemaRevision: 2,
