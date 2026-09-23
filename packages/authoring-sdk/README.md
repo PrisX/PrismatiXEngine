@@ -75,6 +75,8 @@ their declared `valueType` before packaging. For example, a Color property
 must receive `{type: "color", value: "#2D171DFF"}`, not the plain string
 `"#2D171DFF"`. `validateDocument("ui", ui)` checks the canonical document
 but has no native property metadata, so it cannot catch that type mismatch.
+`compileProject({..., uiTypeRegistry: registry})` applies the same check to all
+authored UI routes and reusable components.
 
 Local `.jsx`/`.tsx` modules may be imported normally, so authoring components can
 live in separate files. `prismatix validate` and `build` construct a real strict

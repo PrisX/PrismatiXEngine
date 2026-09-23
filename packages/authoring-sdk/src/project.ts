@@ -2,6 +2,7 @@ import {canonicalJson} from "./canonical-json.js";
 import {contractDocumentByteLimit, parseDocument, validateDocument} from "./contracts.js";
 import {normalizeProject} from "./project-normalization.js";
 import {validateProjectCharacterResources} from "./project-resources.js";
+import {validateUiPropertyUsage, type UiTypeRegistryMetadata} from "./semantic.js";
 import {
   collectProjectDependencies,
   isSafeResourcePath,
@@ -115,6 +116,8 @@ export interface CompileProjectInput {
   readonly resourceExists?: (path: string) => boolean;
   /** Optional text reader for dependency-bearing authored resource descriptors. */
   readonly resourceText?: (path: string) => string | undefined;
+  /** Native UI TypeRegistry metadata for validating authored runtime properties. */
+  readonly uiTypeRegistry?: UiTypeRegistryMetadata;
   readonly committedRevision?: number;
 }
 
@@ -433,7 +436,11 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   for (const [id, path] of Object.entries(project.uiEntryPoints)) {
     const ui = documentAt<JsonValue>("ui", path, documents, diagnostics);
     if (ui === undefined) diagnostics.push(issue("PXBUILD1002", `UI entry point ${id} is unavailable`, path, id));
-    else uiDocuments.set(path, ui);
+    else {
+      if (input.uiTypeRegistry !== undefined)
+        diagnostics.push(...validateUiPropertyUsage(ui, input.uiTypeRegistry, path));
+      uiDocuments.set(path, ui);
+    }
   }
   const effectDocuments = new Map<string, CustomEffectDocument>();
   const effectIds = new Set<string>();
@@ -509,6 +516,8 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
         projectPath, descriptor.id));
       continue;
     }
+    if (input.uiTypeRegistry !== undefined)
+      diagnostics.push(...validateUiPropertyUsage(component, input.uiTypeRegistry, descriptor.source));
     uiComponentDocuments.set(descriptor.source, component);
   }
   if (storyIndex !== undefined && storyIndex.entryScene !== project.entry.story) {

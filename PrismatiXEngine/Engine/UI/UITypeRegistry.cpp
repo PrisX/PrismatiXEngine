@@ -78,6 +78,8 @@ const DesignerTypeMetadata* BuiltinDesignerMetadata(std::string_view type) {
                                    {200, 40}, false, {{"text", std::string("Text")}}, {"font"})},
         {"Button", DesignerMetadata("Button", "Clickable text button.", "Input", "ui.button",
                                     {180, 52}, false, {{"text", std::string("Button")}}, {"font"})},
+        {"TextureButton", DesignerMetadata("Texture Button", "Button with normal, hover, pressed, and disabled images.", "Input",
+                                           "ui.texture-button", {180, 52}, false, {}, {"image"})},
         {"IconButton", DesignerMetadata("Icon Button", "Compact button intended for an icon.", "Input",
                                         "ui.icon-button", {52, 52}, false, {{"text", std::string{}}}, {"image"})},
         {"TextureRect", DesignerMetadata("Image", "Displays an image asset.", "Display", "ui.image",

@@ -308,6 +308,18 @@ await writeFile(join(process.cwd(), "phase1-artifact-launched.json"),
     target: `${process.platform}-${process.arch}`, binDir: "../../bin",
     tools: {previewHost: previewName, packager: packagerName, player: playerName},
   }, null, 2)}\n`, "utf8");
+  const property = (id, valueType) => ({id, valueType,
+    writable: true, bindable: true, animatable: false});
+  await writeFile(join(manifestDirectory, "PrismatiXUiTypeRegistry.json"), `${JSON.stringify({
+    format: "PrismatiXUiTypeRegistry", schemaRevision: 2, testOnly: true,
+    controls: [
+      {runtimeType: "Control", properties: []},
+      {runtimeType: "Panel", properties: []},
+      {runtimeType: "Label", properties: [property("fontSize", "number"), property("wrap", "boolean")]},
+      {runtimeType: "RichTextLabel", properties: [property("fontSize", "number"), property("wrap", "boolean")]},
+      {runtimeType: "Button", properties: [property("focusMode", "string")]},
+    ],
+  }, null, 2)}\n`, "utf8");
   return root;
 }
 
@@ -433,7 +445,7 @@ async function main() {
     if (!configuration.mock) {
       const share = join(copiedRuntime, "share", "PrismatiX");
       for (const relative of [
-        "runtime-manifest.json", "release-inventory.json", "LICENSE",
+        "runtime-manifest.json", "PrismatiXUiTypeRegistry.json", "release-inventory.json", "LICENSE",
         "THIRD_PARTY_NOTICES.md", "ASSET_PROVENANCE.json",
         join("licenses", "fonts", "OFL-1.1.txt"),
         join("docs", "releases", "0.2.0.md"),
@@ -486,6 +498,20 @@ async function main() {
     log("created prepared starter", story);
 
     requireSuccess(await cliRun(["validate", project]), "prismatix validate after author edit");
+    if (configuration.mock) {
+      const title = join(projectRoot, "Content", "UI", "Title.pxui");
+      const authored = JSON.parse(await readFile(title, "utf8"));
+      const label = authored.nodes.find((node) => node.runtimeType === "RichTextLabel");
+      assert.ok(label, "starter must have a RichTextLabel for UI registry validation");
+      label.runtimeProperties.fontSize = "large";
+      const original = await readFile(title, "utf8");
+      await writeFile(title, JSON.stringify(authored), "utf8");
+      const rejected = await cliRun(["validate", project]);
+      assert.notEqual(rejected.code, 0, "bundled registry accepted an invalid fontSize");
+      assert.ok(parseJsonLines(rejected.stderr).some((entry) => entry?.code === "PXSDKSEM1324"),
+        `bundled registry was not used by validate:\n${rejected.stderr}`);
+      await writeFile(title, original, "utf8");
+    }
     const goodStory = await readFile(story, "utf8");
     const invalidLine = goodStory.split(/\r?\n/u).length + 1;
     await appendFile(story, `\n${invalidStoryCommand}\n`, "utf8");

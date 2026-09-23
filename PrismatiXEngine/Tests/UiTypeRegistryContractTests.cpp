@@ -59,6 +59,14 @@ int main() {
     const auto* activateSound=button?FindProperty(*button,"activateSoundPath"):nullptr;
     Check(hoverSound&&hoverSound->writable&&activateSound&&activateSound->writable,
           "Controls must expose authored hover and activation sounds");
+    const auto* textureButton = FindControl(parsed.manifest, "textureButton");
+    const auto* normalPath = textureButton
+                                 ? FindProperty(*textureButton, "normalPath")
+                                 : nullptr;
+    Check(textureButton && textureButton->runtimeType == "TextureButton" &&
+              normalPath && normalPath->writable &&
+              normalPath->resourceFilter == "image",
+          "TextureButton must be in the exported SDK registry for authored UI validation");
     const auto* visible = button ? FindProperty(*button, "visible") : nullptr;
     Check(visible && visible->writable && visible->valueType == "boolean",
           "JSX visible must reach Runtime as a writable boolean property");

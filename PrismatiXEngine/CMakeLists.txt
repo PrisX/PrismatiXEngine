@@ -441,6 +441,10 @@ install(FILES "${PRISMATIX_UI_TYPE_MANIFEST}"
     DESTINATION .
     COMPONENT PrismatiXSDK
 )
+install(FILES "${PRISMATIX_UI_TYPE_MANIFEST}"
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/PrismatiX
+    COMPONENT PrismatiXRuntime
+)
 add_executable(PrismatiXSDKReference Applications/SDKReferenceMain.cpp)
 target_link_libraries(PrismatiXSDKReference PRIVATE PrismatiXSDK)
 prismatix_configure_target(PrismatiXSDKReference)

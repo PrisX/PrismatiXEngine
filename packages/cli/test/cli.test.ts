@@ -109,6 +109,34 @@ test("runtime discovery accepts an installed prefix manifest and reports attempt
       error.attempts.some((attempt) => attempt.includes("runtime-manifest.json")));
 });
 
+test("validate and build reject native UI property type mismatches before packaging", async () => {
+  const value = await fixture();
+  const uiPath = join(value.root, "Content/UI/Title.pxui");
+  const ui = JSON.parse(await readFile(uiPath, "utf8")) as {
+    nodes: Array<{runtimeProperties: Record<string, unknown>}>
+  };
+  ui.nodes[0]!.runtimeProperties.modulate = "#2D171DFF";
+  await write(uiPath, JSON.stringify(ui));
+  const registryPath = join(value.root, "PrismatiXUiTypeRegistry.json");
+  await write(registryPath, JSON.stringify({
+    format: "PrismatiXUiTypeRegistry", schemaRevision: 2,
+    controls: [{runtimeType: "Control", properties: [{id: "modulate", valueType: "color",
+      writable: true, bindable: true, animatable: true}]}],
+  }));
+  const invalid = run(["validate", value.project, "--ui-registry", registryPath]);
+  assert.equal(invalid.status, 1);
+  assert.match(invalid.stderr, /PXSDKSEM1324/u);
+  const rejectedBuild = run(["build", value.project, "--artifact-only", "--output",
+    join(value.root, "invalid-build"), "--ui-registry", registryPath]);
+  assert.equal(rejectedBuild.status, 1);
+  assert.match(rejectedBuild.stderr, /PXSDKSEM1324/u);
+
+  ui.nodes[0]!.runtimeProperties.modulate = {type: "color", value: "#2D171DFF"};
+  await write(uiPath, JSON.stringify(ui));
+  const valid = run(["validate", value.project, "--ui-registry", registryPath]);
+  assert.equal(valid.status, 0, valid.stderr);
+});
+
 test("dev --once streams PreviewHost protocol output and exits after a clean shutdown", async () => {
   const value = await fixture();
   const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-preview-"));

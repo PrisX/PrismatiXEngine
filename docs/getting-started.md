@@ -24,6 +24,13 @@ prismatix create "my game" --name "First Light" --id first-light --locale zh-TW 
 
 Edit `my-game/Story/main.pxstory` and save. Keep `[id main.welcome]` when rewriting that line. `dev` watches before its first build, so fixing initial syntax errors can start Preview without rerunning the command. Each successful edit prepares an immutable revision and replacement Preview, waits for apply/play acknowledgements, then closes the prior Preview. **The current policy restarts the scene after a successful edit.** It does not promise to preserve dialogue position. Errors retain the previous playable revision. Preview starts at Title; Start opens the story HUD. Its Save/Load slots hold session-only checkpoints, cleared on rebuild or Host close. Packaged Player Save/Load uses persistent player saves.
 
+When the bundled Runtime includes `share/PrismatiX/PrismatiXUiTypeRegistry.json`,
+`validate`, `dev`, `build`, `pack`, and `run` also verify UI runtime property
+names and types before launching the Player. For a separate native SDK, pass
+`--ui-registry <path-to-PrismatiXUiTypeRegistry.json>` to these commands.
+Without a registry, canonical UI schema checks still run, but native property
+type compatibility cannot be established until the Player loads the scene.
+
 Press Ctrl+C to close a watch session. Superseded and rejected revisions are retired only after their Preview process confirms closure. The last successfully acknowledged revision remains in `.prismatix/dev/` for diagnosis and is ignored by Git. A process that cannot confirm closure keeps its resources.
 
 ## Daily work and distribution

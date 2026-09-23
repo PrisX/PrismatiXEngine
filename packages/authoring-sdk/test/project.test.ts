@@ -138,6 +138,30 @@ test("compileProject collects UI runtime texture dependencies", () => {
   "path-shaped UI action arguments must be included in the artifact");
 });
 
+test("compileProject checks every authored UI property against a supplied native registry", () => {
+  const registry = {controls: [{runtimeType: "Control", properties: [
+    {id: "modulate", valueType: "color", writable: true, bindable: true, animatable: true},
+  ]}]};
+  const compile = (authoredColor: unknown) => compileProject({
+    project,
+    documents: {
+      "Story/story.pxindex": storyIndex,
+      "Content/game.pxgame": game,
+      "Content/UI/Title.pxui": {...ui, nodes: [{...ui.nodes[0],
+        runtimeProperties: {modulate: authoredColor}}]},
+    },
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locale: "zh-TW", strings: {}}},
+    uiTypeRegistry: registry,
+  });
+  assert.equal(compile({type: "color", value: "#2D171DFF"}).valid, true);
+  const invalid = compile("#2D171DFF");
+  assert.equal(invalid.valid, false);
+  assert.ok(invalid.diagnostics.some((item) => item.code === "PXSDKSEM1324" &&
+    item.path === "Content/UI/Title.pxui"));
+});
+
 test("compileProject rejects UI component interfaces that the native Runtime cannot instantiate", () => {
   const source = "Content/UI/Panel.pxuicomponent";
   const exposedComponent = {

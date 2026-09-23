@@ -31,6 +31,7 @@ import {
   type BuildArtifact,
   type ProjectDocument,
   type SourceSpan,
+  type UiTypeRegistryMetadata,
 } from "@prismatix/authoring-sdk";
 
 interface Options {readonly values: Map<string, string>; readonly flags: Set<string>; readonly positional: string[]}
@@ -56,11 +57,11 @@ const machineOutput = process.argv.includes("--json");
 
 const commandOptions: Readonly<Record<string, {values: string; flags: string}>> = {
   create: {values: "name id locale width height", flags: ""},
-  dev: {values: "runtime preview-host debounce", flags: "once smoke"},
-  validate: {values: "", flags: ""},
-  build: {values: "output runtime packager player compression", flags: "artifact-only distribution encrypt"},
-  pack: {values: "output runtime packager player compression", flags: "encrypt"},
-  run: {values: "output runtime packager player compression", flags: "encrypt"},
+  dev: {values: "runtime preview-host debounce ui-registry", flags: "once smoke"},
+  validate: {values: "ui-registry", flags: ""},
+  build: {values: "output runtime packager player compression ui-registry", flags: "artifact-only distribution encrypt"},
+  pack: {values: "output runtime packager player compression ui-registry", flags: "encrypt"},
+  run: {values: "output runtime packager player compression ui-registry", flags: "encrypt"},
   ids: {values: "document-id prefix backup", flags: "write check"},
   migrate: {values: "report backup entry-story entry-ui supported-locales save-version id name version content-version default-locale story-index game-catalog", flags: "write"},
   "inspect-save": {values: "package secret runtime player", flags: ""},
@@ -611,7 +612,29 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
     ...(storyPath === undefined ? {} : {storyPath})};
 }
 
-async function compileLoaded(loaded: LoadedProject, committedRevision?: number) {
+async function loadUiRegistry(override?: string): Promise<UiTypeRegistryMetadata | undefined> {
+  const path = override === undefined
+    ? fileURLToPath(new URL(`../../runtime/${process.platform}-${process.arch}/share/PrismatiX/PrismatiXUiTypeRegistry.json`, import.meta.url))
+    : resolve(override);
+  if (override === undefined && !existsSync(path)) return undefined;
+  const source = object(await readJson(path));
+  if (source?.format !== "PrismatiXUiTypeRegistry" || source.schemaRevision !== 2 ||
+      !Array.isArray(source.controls) || !source.controls.every((entry) => {
+        const control = object(entry);
+        return typeof control?.runtimeType === "string" && Array.isArray(control.properties) &&
+          control.properties.every((value: unknown) => {
+            const property = object(value);
+            return typeof property?.id === "string" && typeof property.valueType === "string" &&
+              typeof property.writable === "boolean" && typeof property.bindable === "boolean" &&
+              typeof property.animatable === "boolean";
+          });
+      })) throw new Error(`UI TypeRegistry manifest is invalid: ${path}`);
+  return source as unknown as UiTypeRegistryMetadata;
+}
+
+async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
+  registryOverride?: string) {
+  const uiTypeRegistry = await loadUiRegistry(registryOverride);
   return compileProject({project: loaded.project, documents: loaded.documents,
     sourceFiles: loaded.sourceFiles, locales: loaded.locales,
     projectPath: "project.pxproject",
@@ -623,13 +646,14 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number) 
       try { return readFileSync(projectFile(loaded.root, path), "utf8"); }
       catch { return undefined; }
     },
-    ...(committedRevision === undefined ? {} : {committedRevision})});
+    ...(committedRevision === undefined ? {} : {committedRevision}),
+    ...(uiTypeRegistry === undefined ? {} : {uiTypeRegistry})});
 }
 
 async function validateCommand(options: Options): Promise<number> {
   try {
     const loaded = await loadProject(options.positional[0]);
-    const result = await compileLoaded(loaded);
+    const result = await compileLoaded(loaded, undefined, options.values.get("ui-registry"));
     printDiagnostics(result.diagnostics);
     if (!result.valid) return 1;
     process.stdout.write(`${JSON.stringify({valid: true, engineVersion: "0.2.0", project: loaded.projectPath})}\n`);
@@ -669,9 +693,9 @@ function protectedInputs(loaded: LoadedProject, artifact: BuildArtifact): string
 }
 
 async function buildProject(projectArgument: string | undefined, outputArgument: string | undefined,
-  committedRevision?: number): Promise<BuildResult> {
+  committedRevision?: number, registryOverride?: string): Promise<BuildResult> {
   const loaded = await loadProject(projectArgument);
-  const compiled = await compileLoaded(loaded, committedRevision);
+  const compiled = await compileLoaded(loaded, committedRevision, registryOverride);
   printDiagnostics(compiled.diagnostics);
   if (!compiled.valid || compiled.artifact === undefined) throw new Error("Project validation or compilation failed");
   const output = resolve(outputArgument ?? join(loaded.root, ".prismatix", "build"));
@@ -700,7 +724,8 @@ async function buildCommand(options: Options): Promise<number> {
     }
   }
   try {
-    const built = await buildProject(options.positional[0], options.values.get("output"));
+    const built = await buildProject(options.positional[0], options.values.get("output"),
+      undefined, options.values.get("ui-registry"));
     process.stdout.write(machineOutput ? `${JSON.stringify({built: true, output: built.output,
       runtimeIr: built.artifact.runtimeIrPath, sourceMap: built.artifact.sourceMapPath})}\n` : `Built Runtime artifact: ${built.output}\n`);
     return 0;
@@ -828,7 +853,8 @@ async function packProject(options: Options): Promise<{output: string; player: s
   }
   const temp = await mkdtemp(join(tmpdir(), "prismatix-pack-"));
   try {
-    const built = await buildProject(options.positional[0], join(temp, "artifact"));
+    const built = await buildProject(options.positional[0], join(temp, "artifact"),
+      undefined, options.values.get("ui-registry"));
     const project = built.artifact.project;
     const files = (await listFiles(built.output)).filter((path) => path !== outputOwnershipMarker);
     const inputs = await mapBounded(files, 4, async (uri) => {
@@ -1130,7 +1156,8 @@ async function devCommand(options: Options): Promise<number> {
       let updated: BuildResult | undefined;
       try {
         updated = changes === attempted && built !== undefined
-          ? built : await buildProject(projectArgument, join(revisionRoot, String(++revision)), revision);
+          ? built : await buildProject(projectArgument, join(revisionRoot, String(++revision)),
+            revision, options.values.get("ui-registry"));
         candidate = await PreviewClient.start(previewHost.path, updated.root);
         await applyPreviewBuild(candidate, updated, false);
         const played = await candidate.request("play", updated.artifact.runtimeIr.documentId,
