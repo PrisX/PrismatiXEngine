@@ -175,8 +175,11 @@ test("compileProject collects UI runtime texture dependencies", () => {
 test("compileProject validates splash voice variants and packages every possible choice", () => {
   const settings = {
     "player.titleVoiceVariants": ["Assets/Voice/title-a.ogg", "Assets/Voice/title-b.ogg"],
+    "player.presentationTransitions": {routeDuration: 0.3, splashDuration: 0.4,
+      titleDuration: 0.5},
     "player.splashes": [{scene: "Content/UI/Title.pxui", audioDelay: 1,
-      minimumDuration: 4, audioVariants: ["Assets/Voice/logo-a.ogg", "Assets/Voice/logo-b.ogg"]}],
+      minimumDuration: 4, transitionDuration: 0.7,
+      audioVariants: ["Assets/Voice/logo-a.ogg", "Assets/Voice/logo-b.ogg"]}],
   };
   const compile = (values: unknown, resourceExists?: (path: string) => boolean) => compileProject({
     project: {...project, settings: values},
@@ -189,6 +192,15 @@ test("compileProject validates splash voice variants and packages every possible
   });
   const valid = compile(settings);
   assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
+  assert.deepEqual(valid.artifact?.project.settings?.["player.presentationTransitions"],
+    settings["player.presentationTransitions"]);
+  assert.equal((valid.artifact?.project.settings?.["player.splashes"] as
+    Array<{transitionDuration: number}>)[0]?.transitionDuration, 0.7);
+  const instant = compile({...settings,
+    "player.presentationTransitions": {routeDuration: 0, splashDuration: 0,
+      titleDuration: 0},
+    "player.splashes": [{scene: "Content/UI/Title.pxui", transitionDuration: 0}]});
+  assert.equal(instant.valid, true, JSON.stringify(instant.diagnostics));
   assert.deepEqual(valid.artifact?.dependencies
     .filter((dependency) => dependency.source.startsWith("Assets/Voice/"))
     .map((dependency) => dependency.source).sort(), [
@@ -206,6 +218,14 @@ test("compileProject validates splash voice variants and packages every possible
       audioVariants: ["../outside.ogg"]}]},
     {...settings, "player.splashes": [{scene: "Content/UI/Title.pxui",
       audioVariants: []}]},
+    {...settings, "player.presentationTransitions": {routeDuration: -0.1}},
+    {...settings, "player.presentationTransitions": {splashDuration: 11}},
+    {...settings, "player.presentationTransitions": {titleDuration: "0.5"}},
+    {...settings, "player.presentationTransitions": {unknownDuration: 0.2}},
+    {...settings, "player.splashes": [{scene: "Content/UI/Title.pxui",
+      transitionDuration: -1}]},
+    {...settings, "player.splashes": [{scene: "Content/UI/Title.pxui",
+      transitionDuration: 11}]},
   ]) assert.equal(compile(invalidSettings).valid, false);
   const uncompiledScene = compile({...settings, "player.splashes": [{
     scene: "Content/UI/Uncompiled.pxui"}]});

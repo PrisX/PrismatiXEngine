@@ -135,6 +135,11 @@ private:
     std::vector<std::string> m_titleVoices;
     std::string m_defaultUiHoverSound;
     std::string m_defaultUiActivateSound;
+    float m_routeTransitionDuration = 0.3f;
+    float m_splashTransitionDuration = 0.3f;
+    bool m_splashTransitionConfigured = false;
+    float m_titleTransitionDuration = 0.5f;
+    std::vector<std::optional<float>> m_splashTransitionOverrides;
 
     ui::GalgameUI m_ui;
     std::unique_ptr<ui::startup::SplashSequencePlayer> m_splash;

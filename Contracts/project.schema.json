@@ -29,11 +29,17 @@
       "player.uiHoverSound":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
       "player.uiActivateSound":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
       "player.titleVoiceVariants":{"type":"array","minItems":1,"maxItems":256,"uniqueItems":true,"items":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"}},
+      "player.presentationTransitions":{"type":"object","additionalProperties":false,"properties":{
+        "routeDuration":{"type":"number","minimum":0,"maximum":10},
+        "splashDuration":{"type":"number","minimum":0,"maximum":10},
+        "titleDuration":{"type":"number","minimum":0,"maximum":10}
+      }},
       "player.splashes":{"type":"array","maxItems":64,"items":{"type":"object","additionalProperties":false,"required":["scene"],"properties":{
         "scene":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
         "audio":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
         "audioVariants":{"type":"array","minItems":1,"maxItems":256,"uniqueItems":true,"items":{"$ref":"https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"}},
         "audioDelay":{"type":"number","minimum":0},"minimumDuration":{"type":"number","minimum":0},
+        "transitionDuration":{"type":"number","minimum":0,"maximum":10},
         "skippable":{"type":"boolean"},"skipAllowedAfter":{"type":"number","minimum":0},
         "enterAnimation":{"type":"string","minLength":1,"maxLength":128},
         "exitAnimation":{"type":"string","minLength":1,"maxLength":128}

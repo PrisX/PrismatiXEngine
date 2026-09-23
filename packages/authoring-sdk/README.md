@@ -88,6 +88,33 @@ Changing an operation's kind/command also needs manual review. Validate the
 project and test old saves before distributing an update; stable ids alone do
 not prove save compatibility.
 
+## Player presentation crossfades
+
+Set crossfade durations in the project `settings` (seconds, from 0 to 10;
+`0` disables the crossfade):
+
+```json
+{
+  "player.presentationTransitions": {
+    "routeDuration": 0.3,
+    "splashDuration": 0.3,
+    "titleDuration": 0.5
+  },
+  "player.splashes": [
+    {"scene": "Content/UI/Publisher.pxui"},
+    {"scene": "Content/UI/Studio.pxui", "transitionDuration": 0.5}
+  ]
+}
+```
+
+`routeDuration` applies to Player menu routes and confirmed load presentation;
+`splashDuration` applies between splash screens; `titleDuration` applies from
+the final splash to the title. A splash entry's `transitionDuration` overrides
+the duration when entering that particular splash. Omitted settings preserve
+the previous Player defaults (including the 0.5-second transition into the
+second splash). These settings control duration only; route-specific transition
+styles remain a separate authoring gap.
+
 ## JSX UI authoring
 
 JSX and TSX are build-time syntax only. `Scene`, `VBox`, `HBox`, `Text`, `Image`,

@@ -769,6 +769,27 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                 };
                 readUiSound("player.uiHoverSound",m_defaultUiHoverSound);
                 readUiSound("player.uiActivateSound",m_defaultUiActivateSound);
+                const auto transitionDuration = [](const nlohmann::json& owner,
+                                                    const char* key)
+                    -> std::optional<float> {
+                    const auto value = owner.find(key);
+                    if (value == owner.end() || !value->is_number()) return std::nullopt;
+                    const double seconds = value->get<double>();
+                    if (!std::isfinite(seconds) || seconds < 0.0 || seconds > 10.0)
+                        return std::nullopt;
+                    return static_cast<float>(seconds);
+                };
+                if (const auto transitions = settings->find("player.presentationTransitions");
+                    transitions != settings->end() && transitions->is_object()) {
+                    if (const auto duration = transitionDuration(*transitions, "routeDuration"))
+                        m_routeTransitionDuration = *duration;
+                    if (const auto duration = transitionDuration(*transitions, "splashDuration")) {
+                        m_splashTransitionDuration = *duration;
+                        m_splashTransitionConfigured = true;
+                    }
+                    if (const auto duration = transitionDuration(*transitions, "titleDuration"))
+                        m_titleTransitionDuration = *duration;
+                }
                 if (const auto titleVoices = settings->find("player.titleVoiceVariants");
                     titleVoices != settings->end() && titleVoices->is_array()) {
                     for (const auto& value : *titleVoices) {
@@ -781,6 +802,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                 if (const auto splashes = settings->find("player.splashes");
                     splashes != settings->end() && splashes->is_array()) {
                     m_boot.splashes.clear();
+                    m_splashTransitionOverrides.clear();
                     for (std::size_t index = 0; index < splashes->size(); ++index) {
                         const auto& value = (*splashes)[index];
                         if (!value.is_object()) continue;
@@ -824,9 +846,11 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                             }
                         }
                         if (const Status valid = ui::startup::ValidateSplashEntry(
-                                entry, index, "project.pxproject"); valid)
+                                entry, index, "project.pxproject"); valid) {
+                            m_splashTransitionOverrides.push_back(
+                                transitionDuration(value, "transitionDuration"));
                             m_boot.splashes.push_back(std::move(entry));
-                        else
+                        } else
                             for (const auto& diagnostic : valid.Diagnostics())
                                 diag::Emit(diagnostic);
                     }
@@ -1517,7 +1541,7 @@ void PlayerApp::BeginRuntimeIrPreload() {
 
 void PlayerApp::FinishBootPresentation() {
     if(m_appState!=AppState::BootSplash)return;
-    BeginPresentationCrossfade(0.5f);
+    BeginPresentationCrossfade(m_titleTransitionDuration);
     if(!m_session->Routes().Replace(m_boot.startRoute)){m_quitRequested=true;return;}
     m_appState=AppState::Title;
     if (!m_titleBgm.empty()) {
@@ -1550,8 +1574,12 @@ void PlayerApp::SplashFrame(const float dt) {
         if (m_splash->CurrentIndex() != previousIndex) {
             // The next scene is installed by Update(); capture the preceding
             // presented frame before drawing the new one.
-            BeginPresentationCrossfade(
-                m_splash->CurrentIndex() == 1 ? 0.5f : 0.3f);
+            const std::size_t index = m_splash->CurrentIndex();
+            const float durationDefault = index == 1 && !m_splashTransitionConfigured
+                ? 0.5f : m_splashTransitionDuration;
+            const auto durationOverride = index < m_splashTransitionOverrides.size()
+                ? m_splashTransitionOverrides[index] : std::nullopt;
+            BeginPresentationCrossfade(durationOverride.value_or(durationDefault));
             Input neutral;
             neutral.InjectFrame(-1000.0f,-1000.0f,false);
             (void)m_splash->Context().Update(neutral,width,height,0.0f);
@@ -2220,7 +2248,7 @@ void PlayerApp::PresentRoute(const std::string& route,
     m_pendingSaveLoadSlot.reset();
     if (m_appState != AppState::BootSplash &&
         !m_gameStartTransitionActive && m_ui.CurrentRoute() != target)
-        BeginPresentationCrossfade(0.3f);
+        BeginPresentationCrossfade(m_routeTransitionDuration);
     const auto present = [this](const Status& status) {
         if (status) return true;
         for (const auto& diagnostic : status.Diagnostics()) diag::Emit(diagnostic);
@@ -2337,7 +2365,7 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
             if (SaveSlot(*pending, m_menuThumb))
                 (void)m_ui.ShowSaveLoad(true, SaveItems(true));
         } else {
-            BeginPresentationCrossfade(0.3f);
+            BeginPresentationCrossfade(m_routeTransitionDuration);
             (void)LoadSlot(*pending);
         }
     } else if (t == "saveLoad.confirm.cancel") {
