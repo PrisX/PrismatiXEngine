@@ -680,6 +680,7 @@ int main() {
 
     suite.Run("VideoContainersRemainSeekableInCompressedPackages", [&] {
         const auto videoPath = root / "Video/stream.mp4";
+        const auto wmvPath = root / "Video/stream.wmv";
         std::uint64_t videoBytes = 32ull * 1024ull * 1024ull + 37ull;
         std::string requestedBytes;
 #ifdef _WIN32
@@ -703,6 +704,7 @@ int main() {
                 videoBytes = parsed;
         }
         WriteRepeated(videoPath, 'v', videoBytes);
+        WriteRepeated(wmvPath, 'w', 4097);
         const std::uint64_t residentBefore = PeakResidentBytes();
         const auto videoOutput = fixture.path / "Build/StreamingVideo";
         auto videoRequest = FixtureRequest(root, videoOutput);
@@ -710,6 +712,7 @@ int main() {
         videoRequest.encryption = false;
         videoRequest.compression = px::sdk::PackageCompression::Maximum;
         videoRequest.inputs.push_back(Input(root, "Video/stream.mp4"));
+        videoRequest.inputs.push_back(Input(root, "Video/stream.wmv"));
         const auto result = px::sdk::RunPackager(videoRequest);
         suite.Require(result.Completed(),
                       "compressed package with a video container completes");
@@ -726,6 +729,15 @@ int main() {
         suite.Expect(stream && stream->Seek(-1, px::io::SeekOrigin::End) &&
                          stream->Tell() == videoBytes - 1,
                      "Packager output exposes a direct seekable video range");
+        const auto wmvEntry = std::ranges::find_if(
+            archive.Entries(), [](const auto& candidate) {
+                return candidate.name == "Video/stream.wmv";
+            });
+        auto wmvStream = archive.OpenStream("Video/stream.wmv");
+        suite.Expect(wmvEntry != archive.Entries().end() && wmvEntry->flags == 0 &&
+                         wmvStream && wmvStream->Seek(-1, px::io::SeekOrigin::End) &&
+                         wmvStream->Tell() == 4096,
+                     "WMV remains directly seekable in compressed packages");
 
         const auto encryptedOutput = fixture.path / "Build/EncryptedStreamingVideo";
         auto encryptedRequest = FixtureRequest(root, encryptedOutput);
@@ -774,6 +786,40 @@ int main() {
             "before=" + std::to_string(residentBefore) +
                 " after=" + std::to_string(residentAfter) +
                 " budget=" + std::to_string(memoryBudget));
+    });
+
+    suite.Run("CompressedMediaAvoidsRedundantWholeEntryCompression", [&] {
+        WriteRepeated(root / "Assets/compressed-image.png", 'p', 16384);
+        WriteRepeated(root / "Assets/compressed-voice.ogg", 'o', 16384);
+        const auto output = fixture.path / "Build/PrecompressedMedia";
+        auto mediaRequest = FixtureRequest(root, output);
+        mediaRequest.requestId = "precompressed-media-contract";
+        mediaRequest.encryption = false;
+        mediaRequest.compression = px::sdk::PackageCompression::Maximum;
+        mediaRequest.inputs.push_back(Input(root, "Assets/compressed-image.png"));
+        mediaRequest.inputs.push_back(Input(root, "Assets/compressed-voice.ogg"));
+        const auto result = px::sdk::RunPackager(mediaRequest);
+        suite.Require(result.Completed(), "package with already-compressed media completes");
+        px::io::Archive archive;
+        suite.Require(archive.Open((output / "Content.pdx").string()),
+                      "precompressed media archive mounts");
+        for (const auto [uri, expected] : {
+                 std::pair<std::string_view, std::uint8_t>{
+                     "Assets/compressed-image.png", static_cast<std::uint8_t>('p')},
+                 {"Assets/compressed-voice.ogg", static_cast<std::uint8_t>('o')}}) {
+            const auto entry = std::ranges::find_if(
+                archive.Entries(), [&](const auto& candidate) {
+                    return candidate.name == uri;
+                });
+            const auto bytes = archive.Read(std::string(uri));
+            suite.Expect(entry != archive.Entries().end() && entry->flags == 0 &&
+                             bytes && bytes->size() == 16384 &&
+                             std::ranges::all_of(*bytes, [&](const std::uint8_t byte) {
+                                 return byte == expected;
+                             }),
+                         "PNG/OGG package entries remain directly readable without Zstd",
+                         std::string(uri));
+        }
     });
 
     suite.Run("LocaleFontChain_IsPackagedAndPreflightChecksGlyphCoverage", [&] {
@@ -1148,6 +1194,39 @@ int main() {
         std::filesystem::remove(cancelled.cancelFile, cleanupError);
         suite.Expect(result.exitCode == px::sdk::PackageExitCode::Cancelled, "cancel exits with the dedicated status");
         suite.Expect(Read(cancelledOutput / "previous-success.txt") == "preserved" && !std::filesystem::exists(cancelledOutput / "Content.pdx"), "cancel leaves prior successful output untouched");
+    });
+
+    suite.Run("ValidationReportsProgressAndCanCancelBeforeStaging", [&] {
+        const auto output = fixture.path / "Build/CancelledValidation";
+        Write(output / "previous-success.txt", "preserved");
+        auto validating = FixtureRequest(root, output);
+        validating.requestId = "cancel-validation-contract";
+        for (int index = 0; index < 300; ++index) {
+            const std::string uri = "Assets/Validation/file-" +
+                                    std::to_string(index) + ".bin";
+            Write(root / uri, "data");
+            validating.inputs.push_back(Input(root, uri));
+        }
+        bool requested = false;
+        bool progressed = false;
+        const auto result = px::sdk::RunPackager(
+            validating, [&](const auto& event) {
+                if (event.kind == px::sdk::PackageEventKind::Progress &&
+                    event.phase == "validate" && event.current >= 256) {
+                    progressed = true;
+                    if (!requested) {
+                        Write(validating.cancelFile, "cancel");
+                        requested = true;
+                    }
+                }
+            });
+        std::error_code cleanupError;
+        std::filesystem::remove(validating.cancelFile, cleanupError);
+        suite.Expect(progressed && requested &&
+                         result.exitCode == px::sdk::PackageExitCode::Cancelled &&
+                         Read(output / "previous-success.txt") == "preserved" &&
+                         !std::filesystem::exists(output / "Content.pdx"),
+                     "long input validation reports progress and cancellation preserves output");
     });
 
     suite.Run("WriterRecheck_RejectsMutationBeforePromotion", [&] {

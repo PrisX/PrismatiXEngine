@@ -84,6 +84,7 @@ struct ArchiveEntry {
 struct ValidationResult {
     std::vector<ValidatedInput> inputs;
     std::vector<PackageDiagnostic> diagnostics;
+    bool cancelled = false;
 };
 
 std::filesystem::path Utf8Path(const std::string_view value) { return px::PathFromUtf8(value); }
@@ -169,8 +170,17 @@ std::string Lower(std::string value) {
 bool IsStreamingMediaPath(const std::string_view uri) {
     const std::string extension =
         Lower(px::PathToUtf8(Utf8Path(uri).extension()));
-    constexpr std::array<std::string_view, 8> extensions{
-        ".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".ogv", ".ts"};
+    constexpr std::array<std::string_view, 9> extensions{
+        ".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".ogv", ".ts", ".wmv"};
+    return std::ranges::find(extensions, extension) != extensions.end();
+}
+
+bool IsAlreadyCompressedMediaPath(const std::string_view uri) {
+    const std::string extension =
+        Lower(px::PathToUtf8(Utf8Path(uri).extension()));
+    constexpr std::array<std::string_view, 13> extensions{
+        ".png", ".jpg", ".jpeg", ".webp", ".avif", ".gif",
+        ".ogg", ".opus", ".mp3", ".flac", ".m4a", ".aac", ".wma"};
     return std::ranges::find(extensions, extension) != extensions.end();
 }
 
@@ -543,7 +553,8 @@ ArchiveWriteResult WriteArchive(const std::filesystem::path& path,
         bool useCompressedFile = false;
 
         if (!encryption && entry.FileBacked() && compressionLevel != 0 && rawSize > 0 &&
-            !IsStreamingMediaPath(entry.uri)) {
+            !IsStreamingMediaPath(entry.uri) &&
+            !IsAlreadyCompressedMediaPath(entry.uri)) {
             StreamDigest digest;
             std::uint64_t compressedSize = 0;
             if (!digest.valid ||
@@ -1387,7 +1398,8 @@ PackageRunResult Cancel(const PackageRequest& request, const PackageEventSink& s
     return result;
 }
 
-ValidationResult Validate(const PackageRequest& request) {
+ValidationResult Validate(const PackageRequest& request,
+                          const PackageEventSink& eventSink) {
     ValidationResult result;
     auto& diagnostics = result.diagnostics;
     struct LocalizedProgram {
@@ -1455,7 +1467,16 @@ ValidationResult Validate(const PackageRequest& request) {
     std::set<std::string> uris;
     std::set<std::string> uriKeys;
     result.inputs.reserve(request.inputs.size());
-    for (const auto& input : request.inputs) {
+    for (std::size_t index = 0; index < request.inputs.size(); ++index) {
+        if (index > 0 && index % 256 == 0) {
+            EmitProgress(request, eventSink, "validate", index,
+                         request.inputs.size(), "Verified package inputs");
+        }
+        if (Cancelled(request)) {
+            result.cancelled = true;
+            return result;
+        }
+        const auto& input = request.inputs[index];
         if (!IsSafeUri(input.uri)) {
             AddDiagnostic(diagnostics, "PXPKG1211", "input URI is not a normalized project-relative path: " + input.uri);
             continue;
@@ -1493,6 +1514,12 @@ ValidationResult Validate(const PackageRequest& request) {
             continue;
         }
         result.inputs.push_back({ input, source });
+    }
+    EmitProgress(request, eventSink, "validate", request.inputs.size(),
+                 request.inputs.size(), "Verified package inputs");
+    if (Cancelled(request)) {
+        result.cancelled = true;
+        return result;
     }
     std::set<std::string> migrationIds;
     std::unordered_map<std::string, const PackageSaveMigration*>
@@ -2504,7 +2531,11 @@ std::string ComputePackageFingerprint(const std::filesystem::path& path) {
 
 PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSink& eventSink) {
     EmitProgress(request, eventSink, "validate", 0, request.inputs.size(), "Validating package request");
-    auto validated = Validate(request);
+    auto validated = Validate(request, eventSink);
+    if (validated.cancelled) {
+        return Cancel(request, eventSink,
+                      "Packaging was cancelled while validating inputs");
+    }
     if (!validated.diagnostics.empty()) {
         return Fail(request, eventSink, std::move(validated.diagnostics));
     }
