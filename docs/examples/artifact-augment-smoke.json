@@ -1,0 +1,8 @@
+{
+  "format": "PrismatiXArtifactAugmentation",
+  "schemaRevision": 1,
+  "owner": "sample-notes",
+  "files": [
+    {"source": "README.md", "target": "Extras/sample-notes.md", "mode": "add"}
+  ]
+}

@@ -4,7 +4,7 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import test from "node:test";
 import {publishDirectory, publishedInputs, retirePublishedDirectory, outputOwnershipMarker,
-  type PublicationProgress} from "../src/output-safety.js";
+  maxOutputMarkerBytes, type PublicationProgress} from "../src/output-safety.js";
 
 async function fixture(t: test.TestContext) {
   const root = await mkdtemp(join(tmpdir(), "prismatix-output-safety-"));
@@ -87,6 +87,9 @@ test("published artifact input discovery rejects symlinks and invalid markers", 
   await rm(link);
   await writeFile(join(f.output, outputOwnershipMarker), "{}");
   await assert.rejects(publishedInputs(f.output), /unsupported format/u);
+  await writeFile(join(f.output, outputOwnershipMarker), "x".repeat(maxOutputMarkerBytes + 1));
+  await assert.rejects(publishedInputs(f.output), /marker is invalid/u);
+  await assert.rejects(publishDirectory(f, build("replacement")), /unowned or modified/u);
 });
 
 test("publication reports completed byte and file counts for fingerprint phases", async t => {

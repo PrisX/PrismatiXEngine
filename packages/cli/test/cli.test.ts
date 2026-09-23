@@ -394,6 +394,44 @@ test("artifact build reports load, compile, copy and fingerprint progress", asyn
   assert.match(validated.stderr, /"code":"PXCLI1103"/u);
 });
 
+test("augment publishes declared artifact additions for pack --artifact without hand-editing ownership", async () => {
+  const value = await fixture();
+  const artifact = join(value.root, ".prismatix", "augment-artifact");
+  const built = run(["build", value.project, "--artifact-only", "--output", artifact]);
+  assert.equal(built.status, 0, built.stderr);
+  await write(join(value.root, "Assets", "bonus.bin"), "bonus data");
+  const manifestPath = join(value.root, "augment.json");
+  await write(manifestPath, JSON.stringify({format: "PrismatiXArtifactAugmentation",
+    schemaRevision: 1, owner: "bonus", files: [{source: "Assets/bonus.bin",
+      target: "Assets/bonus.bin", mode: "add"}]}));
+  const augmented = run(["augment", value.project, "--artifact", artifact,
+    "--manifest", manifestPath]);
+  assert.equal(augmented.status, 0, augmented.stderr);
+  assert.equal(JSON.parse(augmented.stdout).added, 1);
+  assert.equal(await readFile(join(artifact, "Assets", "bonus.bin"), "utf8"), "bonus data");
+  const marker = JSON.parse(await readFile(join(artifact, ".prismatix-output.json"), "utf8"));
+  assert.match(marker.files["Assets/bonus.bin"], /^[0-9a-f]{64}$/u);
+  assert.equal(marker.files.Assets, "directory");
+  const tools = await mkdtemp(join(tmpdir(), "prismatix-augment-pack-"));
+  const mock = join(tools, "mock-packager.mjs");
+  await write(mock, `
+    import {readFile} from "node:fs/promises";
+    const request = JSON.parse(await readFile(process.argv.at(-1), "utf8"));
+    if (!request.inputs.some(value => value.uri === "Assets/bonus.bin") ||
+        !request.inputs.some(value => value.uri === ".prismatix-augmentations.json")) process.exit(42);
+    process.stdout.write(JSON.stringify({protocolVersion: 1, event: "completed",
+      requestId: request.requestId, augmentedInput: true}) + "\\n");
+  `);
+  const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
+  await write(player, "fixture");
+  const packed = run(["pack", value.project, "--artifact", artifact,
+    "--packager", mock, "--player", player, "--output", join(value.root, "augmented-package")]);
+  assert.equal(packed.status, 0, packed.stderr);
+  assert.match(packed.stdout, /"augmentedInput":true/u);
+  const secondBuild = run(["build", value.project, "--artifact-only", "--output", artifact]);
+  assert.equal(secondBuild.status, 0, secondBuild.stderr);
+});
+
 test("TSX UI authoring lowers to canonical JSON and never enters the Runtime artifact", async () => {
   const value = await fixture();
   const project = JSON.parse(await readFile(value.project, "utf8")) as {

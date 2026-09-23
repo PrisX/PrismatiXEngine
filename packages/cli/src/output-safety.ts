@@ -5,6 +5,7 @@ import {lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile} from 
 import {basename, dirname, isAbsolute, join, relative, resolve} from "node:path";
 
 export const outputOwnershipMarker = ".prismatix-output.json";
+export const maxOutputMarkerBytes = 16 * 1024 * 1024;
 export interface PublishedInput {
   readonly uri: string;
   readonly fingerprint: string;
@@ -16,7 +17,7 @@ export interface PublishedScanProgress {
   readonly done: boolean;
 }
 export interface PublicationProgress {
-  readonly phase: "verify-existing" | "fingerprint-output" | "verify-before-publish";
+  readonly phase: "verify-existing" | "clone-existing" | "fingerprint-output" | "verify-before-publish";
   readonly files: number;
   readonly bytes: number;
   readonly done: boolean;
@@ -120,7 +121,9 @@ async function assertOwned(output: string, allowEmpty = true,
   if (names.length === 0 && allowEmpty) return;
   try {
     const markerPath = join(output, outputOwnershipMarker);
-    if (!(await lstat(markerPath)).isFile()) throw new Error("invalid marker");
+    const markerInfo = await lstat(markerPath);
+    if (!markerInfo.isFile() || markerInfo.isSymbolicLink() ||
+        markerInfo.size > maxOutputMarkerBytes) throw new Error("invalid marker");
     const marker = JSON.parse(await readFile(markerPath, "utf8")) as {format?: string; files?: Record<string, string>};
     if (marker.format !== "PrismatiXOutput/1" || !marker.files ||
         !sameInventory(marker.files, await inventory(output, phase, onProgress)))
@@ -140,7 +143,7 @@ export async function publishedInputs(output: string,
     throw new Error(`Artifact is not a regular directory: ${root}`);
   const markerPath = join(root, outputOwnershipMarker);
   const markerInfo = await lstat(markerPath);
-  if (!markerInfo.isFile() || markerInfo.isSymbolicLink() || markerInfo.size > 16 * 1024 * 1024)
+  if (!markerInfo.isFile() || markerInfo.isSymbolicLink() || markerInfo.size > maxOutputMarkerBytes)
     throw new Error(`Artifact ownership marker is invalid: ${markerPath}`);
   const marker: unknown = JSON.parse(await readFile(markerPath, "utf8"));
   if (marker === null || typeof marker !== "object" || Array.isArray(marker) ||
@@ -223,8 +226,11 @@ export async function publishDirectory<T>(options: PublicationOptions, build: (s
     // A callback must not impersonate the ownership marker or supply symbolic links.
     try { await lstat(join(staging, outputOwnershipMarker)); throw new Error("Build produced reserved output ownership marker"); }
     catch (error) { if (!missing(error)) throw error; }
-    await writeFile(join(staging, outputOwnershipMarker), JSON.stringify({format: "PrismatiXOutput/1",
-      files: await inventory(staging, "fingerprint-output", options.onProgress)}), {flag: "wx"});
+    const marker = JSON.stringify({format: "PrismatiXOutput/1",
+      files: await inventory(staging, "fingerprint-output", options.onProgress)});
+    if (Buffer.byteLength(marker, "utf8") > maxOutputMarkerBytes)
+      throw new Error(`Artifact ownership marker exceeds ${maxOutputMarkerBytes} bytes`);
+    await writeFile(join(staging, outputOwnershipMarker), marker, {flag: "wx"});
     if (key(await validatePaths(options)) !== key(output)) throw new Error("Output path changed during publication");
     await assertOwned(output, true, "verify-before-publish", options.onProgress);
     const backup = join(dirname(output), `.prismatix-backup-${randomUUID()}`);

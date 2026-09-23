@@ -16,6 +16,7 @@ import {
   type RuntimeDiscoveryOptions,
 } from "./runtime-discovery.js";
 import {publishDirectory, publishedInputs, retirePublishedDirectory} from "./output-safety.js";
+import {augmentArtifact} from "./artifact-augment.js";
 import {createStarter} from "./starter.js";
 import {migrateCommand} from "./migration.js";
 import {inspectSaveWithRuntime} from "./save-inspection.js";
@@ -67,6 +68,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   build: {values: "output artifact runtime packager player compression ui-registry", flags: "artifact-only distribution encrypt"},
   pack: {values: "output artifact runtime packager player compression ui-registry", flags: "encrypt"},
   run: {values: "output artifact runtime packager player compression ui-registry", flags: "encrypt"},
+  augment: {values: "artifact manifest", flags: ""},
   ids: {values: "document-id prefix backup", flags: "write check external sync"},
   migrate: {values: "report backup entry-story entry-ui supported-locales save-version id name version content-version default-locale story-index game-catalog", flags: "write"},
   "inspect-save": {values: "package secret runtime player", flags: ""},
@@ -155,6 +157,7 @@ function buildProgress(phase: string, current: number, total: number | undefined
   const labels: Readonly<Record<string, string>> = {
     load: "Loading project", compile: "Compiling Story and UI",
     copy: "Copying artifact inputs", "verify-existing": "Checking existing output",
+    "clone-existing": "Cloning owned artifact",
     "fingerprint-output": "Fingerprinting artifact output",
     "verify-before-publish": "Rechecking existing output", publish: "Publishing artifact",
   };
@@ -884,6 +887,32 @@ async function buildCommand(options: Options): Promise<number> {
       return 1;
     }
     printDiagnostics([diagnostic("PXCLI1101", "Build failed", options.positional[0], String(error))]);
+    return 1;
+  }
+}
+
+async function augmentCommand(options: Options): Promise<number> {
+  try {
+    const artifact = options.values.get("artifact");
+    const manifestOption = options.values.get("manifest");
+    if (artifact === undefined || manifestOption === undefined)
+      throw new Error("augment requires --artifact <published-directory> and --manifest <json-file>");
+    const location = await resolveProjectPath(options.positional[0]);
+    const manifestPath = resolve(manifestOption);
+    const info = await stat(manifestPath);
+    if (!info.isFile() || info.size > maxDocumentBytes)
+      throw new Error(`Augmentation manifest must be a regular file under ${maxDocumentBytes / 1024 / 1024} MiB`);
+    const manifest: unknown = JSON.parse(await readFile(manifestPath, "utf8"));
+    const result = await augmentArtifact({projectRoot: location.root,
+      artifactRoot: resolve(artifact), manifest, manifestPath,
+      onProgress: (value) => buildProgress(value.phase, value.files, undefined,
+        value.bytes, value.done)});
+    process.stdout.write(machineOutput ? `${JSON.stringify({augmented: true, ...result})}\n`
+      : `Augmented artifact: ${result.artifactRoot} (${result.added} added, ${result.replaced} replaced)\n`);
+    return 0;
+  } catch (error) {
+    printDiagnostics([diagnostic("PXCLI1801", "Artifact augmentation failed",
+      options.values.get("artifact"), String(error))]);
     return 1;
   }
 }
@@ -1716,7 +1745,7 @@ async function inspectSaveCommand(options: Options): Promise<number> {
   }
 }
 function usage(): void {
-  process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|ids|migrate|inspect-save> [project-or-save] [options]\n");
+  process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|augment|ids|migrate|inspect-save> [project-or-save] [options]\n");
 }
 
 async function projectTool(command: string, options: Options, args: string[]): Promise<number | undefined> {
@@ -1785,6 +1814,7 @@ async function main(): Promise<number> {
   if (command === "build") return buildCommand(options);
   if (command === "pack") return packCommand(options);
   if (command === "run") return runCommand(options);
+  if (command === "augment") return augmentCommand(options);
   if (command === "ids") return idsCommand(options);
   if (command === "migrate") return migrateCommand(options);
   if (command === "inspect-save") return inspectSaveCommand(options);

@@ -67,6 +67,10 @@ UI source are **not** included until you build or otherwise update the artifact.
 prismatix pack my-game --artifact my-game/.prismatix/artifact
 ```
 
+If a post-build tool must add or replace artifact files, use the supported
+[`augment` command](artifact-augmentation.md) before `pack --artifact`;
+ordinary media should instead be declared with `resourceIncludes`.
+
 For an unencrypted compressed distribution, Packager writes an
 `Package/entry-cache.json` inventory. The CLI passes the prior published
 distribution as a read-only cache source even though it builds the replacement
