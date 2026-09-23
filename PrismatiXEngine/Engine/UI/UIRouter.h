@@ -71,6 +71,7 @@ public:
     Status SetDefaultTransition(std::string_view outgoing,
                                 std::string_view incoming,
                                 RouteTransition transition);
+    Status SetFallbackTransition(RouteTransition transition);
     [[nodiscard]] std::optional<RouteTransition> DefaultTransition(
         std::string_view outgoing, std::string_view incoming) const;
     void UpdateTransition();
@@ -94,6 +95,7 @@ private:
     PresentationHandler m_presentation;
     TransitionDriver m_transitionDriver;
     std::optional<ActiveRouteTransition> m_activeTransition;
+    std::optional<RouteTransition> m_fallbackTransition;
     std::unordered_map<std::string, RouteTransition> m_defaultTransitions;
 };
 

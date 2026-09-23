@@ -764,6 +764,30 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   for (const [path, document] of uiDocuments) addUiResourceRefs(document, path);
   for (const [path, document] of uiComponentDocuments) addUiResourceRefs(document, path);
   const settings = project.settings ?? {};
+  const presentationTransitions = settings["player.presentationTransitions"];
+  if (presentationTransitions !== null && typeof presentationTransitions === "object" &&
+      !Array.isArray(presentationTransitions)) {
+    const overrides = (presentationTransitions as Record<string, JsonValue>).routeOverrides;
+    if (Array.isArray(overrides)) {
+      const availableRoutes = new Set(["title", "hud", "backlog", "save", "load",
+        "gallery", "settings", "video", ...Object.keys(project.uiEntryPoints)]);
+      const seenPairs = new Set<string>();
+      for (const [index, value] of overrides.entries()) {
+        if (value === null || typeof value !== "object" || Array.isArray(value)) continue;
+        const {from, to} = value as Record<string, JsonValue>;
+        if (typeof from !== "string" || typeof to !== "string") continue;
+        if (!availableRoutes.has(from) || !availableRoutes.has(to) || from === to)
+          diagnostics.push(issue("PXBUILD1057",
+            "Route transition must name two distinct registered Player routes",
+            projectPath, `settings.player.presentationTransitions.routeOverrides[${index}]: ${from} -> ${to}`));
+        const pair = `${from}\n${to}`;
+        if (seenPairs.has(pair))
+          diagnostics.push(issue("PXBUILD1058", "Duplicate Player route transition pair",
+            projectPath, `settings.player.presentationTransitions.routeOverrides[${index}]: ${from} -> ${to}`));
+        seenPairs.add(pair);
+      }
+    }
+  }
   for (const key of ["player.titleBgm", "player.uiHoverSound", "player.uiActivateSound"]) {
     const value = settings[key];
     if (typeof value === "string") addResourceRef(value, `settings.${key}`);

@@ -134,6 +134,38 @@ void TestRouteStackAndModalState() {
               transitionRouter.ActiveTransition() &&
               transitionRouter.CancelTransition(),
           "reverse modal transitions should be cancellable");
+    Check(transitionRouter.SetFallbackTransition(
+              {.preset = "fade", .durationSeconds = 0.6f}),
+          "a project-wide route fallback should register");
+    Check(transitionRouter.ShowModal("confirm") &&
+              transitionRouter.ActiveTransition() &&
+              playedTransition.preset == "fade" &&
+              playedTransition.durationSeconds == 0.6f &&
+              transitionRouter.CancelTransition(),
+          "unspecified route transitions should use the project fallback");
+    Check(transitionRouter.CloseModal({.preset = "none"}) &&
+              !transitionRouter.ActiveTransition(),
+          "an explicit none transition should suppress the project fallback");
+    Check(transitionRouter.Back({.preset = "none"}) &&
+              transitionRouter.Push("game") &&
+              transitionRouter.ActiveTransition() &&
+              playedTransition.preset == "crossfade" &&
+              playedTransition.durationSeconds == 0.4f &&
+              transitionRouter.CancelTransition(),
+          "an exact route pair should outrank the project fallback");
+    Check(transitionRouter.Push("game") &&
+              !transitionRouter.ActiveTransition(),
+          "re-presenting the same route should not trigger the fallback");
+    Check(transitionRouter.ShowModal("confirm",
+              {.preset = "slide-left", .durationSeconds = 0.2f}) &&
+              transitionRouter.ActiveTransition() &&
+              playedTransition.preset == "slide-left" &&
+              playedTransition.durationSeconds == 0.2f &&
+              transitionRouter.CancelTransition(),
+          "a caller-specified transition should outrank the project fallback");
+    Check(!transitionRouter.SetFallbackTransition(
+              {.preset = "", .durationSeconds = -0.1f}),
+          "invalid route fallbacks must be rejected");
 }
 
 void TestScriptExtensionIntegration() {

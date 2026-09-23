@@ -175,10 +175,13 @@ test("compileProject collects UI runtime texture dependencies", () => {
 test("compileProject validates splash voice variants and packages every possible choice", () => {
   const settings = {
     "player.titleVoiceVariants": ["Assets/Voice/title-a.ogg", "Assets/Voice/title-b.ogg"],
-    "player.presentationTransitions": {routeDuration: 0.3, splashDuration: 0.4,
-      titleDuration: 0.5},
+    "player.presentationTransitions": {routePreset: "crossfade", routeDuration: 0.3,
+      splashPreset: "slide-left", splashDuration: 0.4,
+      titlePreset: "fade", titleDuration: 0.5,
+      routeOverrides: [{from: "title", to: "settings", preset: "slide-right",
+        duration: 0.6}]},
     "player.splashes": [{scene: "Content/UI/Title.pxui", audioDelay: 1,
-      minimumDuration: 4, transitionDuration: 0.7,
+      minimumDuration: 4, transitionPreset: "crossfade", transitionDuration: 0.7,
       audioVariants: ["Assets/Voice/logo-a.ogg", "Assets/Voice/logo-b.ogg"]}],
   };
   const compile = (values: unknown, resourceExists?: (path: string) => boolean) => compileProject({
@@ -197,9 +200,11 @@ test("compileProject validates splash voice variants and packages every possible
   assert.equal((valid.artifact?.project.settings?.["player.splashes"] as
     Array<{transitionDuration: number}>)[0]?.transitionDuration, 0.7);
   const instant = compile({...settings,
-    "player.presentationTransitions": {routeDuration: 0, splashDuration: 0,
+    "player.presentationTransitions": {routePreset: "none", routeDuration: 0,
+      splashPreset: "none", splashDuration: 0, titlePreset: "none",
       titleDuration: 0},
-    "player.splashes": [{scene: "Content/UI/Title.pxui", transitionDuration: 0}]});
+    "player.splashes": [{scene: "Content/UI/Title.pxui",
+      transitionPreset: "none", transitionDuration: 0}]});
   assert.equal(instant.valid, true, JSON.stringify(instant.diagnostics));
   assert.deepEqual(valid.artifact?.dependencies
     .filter((dependency) => dependency.source.startsWith("Assets/Voice/"))
@@ -222,11 +227,27 @@ test("compileProject validates splash voice variants and packages every possible
     {...settings, "player.presentationTransitions": {splashDuration: 11}},
     {...settings, "player.presentationTransitions": {titleDuration: "0.5"}},
     {...settings, "player.presentationTransitions": {unknownDuration: 0.2}},
+    {...settings, "player.presentationTransitions": {routePreset: "tiles"}},
+    {...settings, "player.presentationTransitions": {routeOverrides: [
+      {from: "title", to: "settings", preset: "wipe", duration: 0.3}]}},
     {...settings, "player.splashes": [{scene: "Content/UI/Title.pxui",
       transitionDuration: -1}]},
     {...settings, "player.splashes": [{scene: "Content/UI/Title.pxui",
       transitionDuration: 11}]},
+    {...settings, "player.splashes": [{scene: "Content/UI/Title.pxui",
+      transitionPreset: "custom"}]},
   ]) assert.equal(compile(invalidSettings).valid, false);
+  const unknownRoute = compile({...settings, "player.presentationTransitions": {
+    routeOverrides: [{from: "title", to: "typo", preset: "crossfade", duration: 0.3}]}});
+  assert.ok(unknownRoute.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1057"));
+  const duplicatePair = compile({...settings, "player.presentationTransitions": {
+    routeOverrides: [
+      {from: "title", to: "settings", preset: "crossfade", duration: 0.3},
+      {from: "title", to: "settings", preset: "fade", duration: 0.5}]}});
+  assert.ok(duplicatePair.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1058"));
+  const sameRoute = compile({...settings, "player.presentationTransitions": {
+    routeOverrides: [{from: "title", to: "title", preset: "fade", duration: 0.5}]}});
+  assert.ok(sameRoute.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1057"));
   const uncompiledScene = compile({...settings, "player.splashes": [{
     scene: "Content/UI/Uncompiled.pxui"}]});
   assert.ok(uncompiledScene.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1055"));

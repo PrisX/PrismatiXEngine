@@ -90,30 +90,41 @@ not prove save compatibility.
 
 ## Player presentation crossfades
 
-Set crossfade durations in the project `settings` (seconds, from 0 to 10;
-`0` disables the crossfade):
+Set Player presentation effects in the project `settings` (seconds, from 0 to
+10; `0` settles immediately):
 
 ```json
 {
   "player.presentationTransitions": {
+    "routePreset": "crossfade",
     "routeDuration": 0.3,
+    "splashPreset": "crossfade",
     "splashDuration": 0.3,
-    "titleDuration": 0.5
+    "titlePreset": "crossfade",
+    "titleDuration": 0.5,
+    "routeOverrides": [
+      {"from": "title", "to": "settings", "preset": "slide-left", "duration": 0.4}
+    ]
   },
   "player.splashes": [
     {"scene": "Content/UI/Publisher.pxui"},
-    {"scene": "Content/UI/Studio.pxui", "transitionDuration": 0.5}
+    {"scene": "Content/UI/Studio.pxui", "transitionPreset": "crossfade",
+      "transitionDuration": 0.5}
   ]
 }
 ```
 
-`routeDuration` applies to Player menu routes and confirmed load presentation;
-`splashDuration` applies between splash screens; `titleDuration` applies from
-the final splash to the title. A splash entry's `transitionDuration` overrides
-the duration when entering that particular splash. Omitted settings preserve
-the previous Player defaults (including the 0.5-second transition into the
-second splash). These settings control duration only; route-specific transition
-styles remain a separate authoring gap.
+`routePreset`/`routeDuration` apply to Player menu routes and confirmed load
+presentation; `splashPreset`/`splashDuration` apply between splash screens;
+`titlePreset`/`titleDuration` apply from the final splash to the title. A splash
+entry can override the effect or duration used when entering that screen.
+`routeOverrides` selects an exact outgoing/incoming Player route pair; unknown
+routes and duplicate pairs fail validation. Available built-in presets are
+`none`, `fade`, `crossfade`, `slide-left`, and `slide-right`. `fade` passes
+through the clear colour, while `crossfade` overlays the incoming frame on
+the outgoing frame. Omitted settings preserve previous Player defaults
+(including the 0.5-second transition into the second splash). Custom shader
+transitions and a fully declarative route graph remain separate authoring gaps.
 
 ## JSX UI authoring
 

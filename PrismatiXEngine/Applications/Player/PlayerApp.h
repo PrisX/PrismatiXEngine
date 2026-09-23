@@ -34,6 +34,14 @@ public:
 
 private:
     enum class AppState { BootSplash, Title, Game };
+    struct PresentationTransition {
+        std::string preset = "crossfade";
+        float duration = 0.3f;
+    };
+    struct SplashTransitionOverride {
+        std::optional<std::string> preset;
+        std::optional<float> duration;
+    };
 
     // Boot configuration shared by typed dev projects and packaged builds.
     struct Boot {
@@ -67,7 +75,7 @@ private:
     void BeginRuntimeIrPreload();
     void FinishBootPresentation();
     void SplashFrame(float dt);
-    void BeginPresentationCrossfade(float durationSeconds);
+    void BeginPresentationTransition(const PresentationTransition& transition);
 
     void StartGame();
     [[nodiscard]] bool CommitStartGame();
@@ -135,11 +143,12 @@ private:
     std::vector<std::string> m_titleVoices;
     std::string m_defaultUiHoverSound;
     std::string m_defaultUiActivateSound;
-    float m_routeTransitionDuration = 0.3f;
-    float m_splashTransitionDuration = 0.3f;
+    PresentationTransition m_routeTransition;
+    PresentationTransition m_splashTransition;
     bool m_splashTransitionConfigured = false;
-    float m_titleTransitionDuration = 0.5f;
-    std::vector<std::optional<float>> m_splashTransitionOverrides;
+    PresentationTransition m_titleTransition{"crossfade", 0.5f};
+    std::unordered_map<std::string, PresentationTransition> m_routeTransitionOverrides;
+    std::vector<SplashTransitionOverride> m_splashTransitionOverrides;
 
     ui::GalgameUI m_ui;
     std::unique_ptr<ui::startup::SplashSequencePlayer> m_splash;

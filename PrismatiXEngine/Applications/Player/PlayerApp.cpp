@@ -779,16 +779,49 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                         return std::nullopt;
                     return static_cast<float>(seconds);
                 };
+                const auto transitionPreset = [](const nlohmann::json& owner,
+                                                  const char* key)
+                    -> std::optional<std::string> {
+                    const auto value = owner.find(key);
+                    if (value == owner.end() || !value->is_string()) return std::nullopt;
+                    const std::string preset = value->get<std::string>();
+                    if (preset != "none" && preset != "fade" && preset != "crossfade" &&
+                        preset != "slide-left" && preset != "slide-right")
+                        return std::nullopt;
+                    return preset;
+                };
                 if (const auto transitions = settings->find("player.presentationTransitions");
                     transitions != settings->end() && transitions->is_object()) {
+                    if (const auto preset = transitionPreset(*transitions, "routePreset"))
+                        m_routeTransition.preset = *preset;
                     if (const auto duration = transitionDuration(*transitions, "routeDuration"))
-                        m_routeTransitionDuration = *duration;
+                        m_routeTransition.duration = *duration;
+                    if (const auto preset = transitionPreset(*transitions, "splashPreset"))
+                        m_splashTransition.preset = *preset;
                     if (const auto duration = transitionDuration(*transitions, "splashDuration")) {
-                        m_splashTransitionDuration = *duration;
+                        m_splashTransition.duration = *duration;
                         m_splashTransitionConfigured = true;
                     }
+                    if (const auto preset = transitionPreset(*transitions, "titlePreset"))
+                        m_titleTransition.preset = *preset;
                     if (const auto duration = transitionDuration(*transitions, "titleDuration"))
-                        m_titleTransitionDuration = *duration;
+                        m_titleTransition.duration = *duration;
+                    if (const auto overrides = transitions->find("routeOverrides");
+                        overrides != transitions->end() && overrides->is_array()) {
+                        for (const auto& routeOverride : *overrides) {
+                            if (!routeOverride.is_object()) continue;
+                            const auto from = routeOverride.find("from");
+                            const auto to = routeOverride.find("to");
+                            const auto preset = transitionPreset(routeOverride, "preset");
+                            const auto duration = transitionDuration(routeOverride, "duration");
+                            if (from == routeOverride.end() || !from->is_string() ||
+                                to == routeOverride.end() || !to->is_string() ||
+                                !preset || !duration) continue;
+                            m_routeTransitionOverrides.insert_or_assign(
+                                from->get<std::string>() + "\n" + to->get<std::string>(),
+                                PresentationTransition{*preset, *duration});
+                        }
+                    }
                 }
                 if (const auto titleVoices = settings->find("player.titleVoiceVariants");
                     titleVoices != settings->end() && titleVoices->is_array()) {
@@ -847,8 +880,9 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                         }
                         if (const Status valid = ui::startup::ValidateSplashEntry(
                                 entry, index, "project.pxproject"); valid) {
-                            m_splashTransitionOverrides.push_back(
-                                transitionDuration(value, "transitionDuration"));
+                            m_splashTransitionOverrides.push_back({
+                                transitionPreset(value, "transitionPreset"),
+                                transitionDuration(value, "transitionDuration")});
                             m_boot.splashes.push_back(std::move(entry));
                         } else
                             for (const auto& diagnostic : valid.Diagnostics())
@@ -1541,8 +1575,28 @@ void PlayerApp::BeginRuntimeIrPreload() {
 
 void PlayerApp::FinishBootPresentation() {
     if(m_appState!=AppState::BootSplash)return;
-    BeginPresentationCrossfade(m_titleTransitionDuration);
+    BeginPresentationTransition(m_titleTransition);
     if(!m_session->Routes().Replace(m_boot.startRoute)){m_quitRequested=true;return;}
+    const auto routeStatus = m_session->Routes().SetFallbackTransition(
+        {m_routeTransition.preset, m_routeTransition.duration});
+    if (!routeStatus) {
+        for (const auto& diagnostic : routeStatus.Diagnostics()) diag::Emit(diagnostic);
+        m_quitRequested = true;
+        return;
+    }
+    for (const auto& [pair, transition] : m_routeTransitionOverrides) {
+        const auto separator = pair.find('\n');
+        if (separator == std::string::npos) continue;
+        const auto status = m_session->Routes().SetDefaultTransition(
+            std::string_view(pair).substr(0, separator),
+            std::string_view(pair).substr(separator + 1),
+            {transition.preset, transition.duration});
+        if (!status) {
+            for (const auto& diagnostic : status.Diagnostics()) diag::Emit(diagnostic);
+            m_quitRequested = true;
+            return;
+        }
+    }
     m_appState=AppState::Title;
     if (!m_titleBgm.empty()) {
         const auto handle=m_runtime.Audio().PlayBGM(m_titleBgm,true,500);
@@ -1554,10 +1608,11 @@ void PlayerApp::FinishBootPresentation() {
     PX_LOG_INFO("Player presentation ready route={}", m_boot.startRoute);
 }
 
-void PlayerApp::BeginPresentationCrossfade(const float durationSeconds) {
+void PlayerApp::BeginPresentationTransition(
+    const PresentationTransition& transition) {
     if (m_uiTransitionStartedThisFrame) return;
     const auto handle = m_runtime.Renderer().PlayScreenEffect(
-        "crossfade", durationSeconds);
+        transition.preset, transition.duration);
     if (handle) m_uiTransitionStartedThisFrame = true;
 }
 
@@ -1575,11 +1630,15 @@ void PlayerApp::SplashFrame(const float dt) {
             // The next scene is installed by Update(); capture the preceding
             // presented frame before drawing the new one.
             const std::size_t index = m_splash->CurrentIndex();
-            const float durationDefault = index == 1 && !m_splashTransitionConfigured
-                ? 0.5f : m_splashTransitionDuration;
-            const auto durationOverride = index < m_splashTransitionOverrides.size()
-                ? m_splashTransitionOverrides[index] : std::nullopt;
-            BeginPresentationCrossfade(durationOverride.value_or(durationDefault));
+            PresentationTransition transition = m_splashTransition;
+            if (index == 1 && !m_splashTransitionConfigured)
+                transition.duration = 0.5f;
+            if (index < m_splashTransitionOverrides.size()) {
+                const auto& authored = m_splashTransitionOverrides[index];
+                if (authored.preset) transition.preset = *authored.preset;
+                if (authored.duration) transition.duration = *authored.duration;
+            }
+            BeginPresentationTransition(transition);
             Input neutral;
             neutral.InjectFrame(-1000.0f,-1000.0f,false);
             (void)m_splash->Context().Update(neutral,width,height,0.0f);
@@ -1697,7 +1756,8 @@ bool PlayerApp::CommitStartGame() {
     }
     if (m_scriptHost) m_scriptHost->Emit("scenario.started", {{"resource", m_script}});
     m_appState = AppState::Game;
-    if (const Status routed = m_session->Routes().Replace("hud"); !routed) {
+    if (const Status routed = m_session->Routes().Replace(
+            "hud", {.preset = "none"}); !routed) {
         for (const auto& diagnostic : routed.Diagnostics()) diag::Emit(diagnostic);
         m_quitRequested = true;
         return false;
@@ -2246,9 +2306,6 @@ void PlayerApp::PresentRoute(const std::string& route,
                              const std::string& /*operation*/) {
     std::string target=route;if(target=="saveload")target="load";
     m_pendingSaveLoadSlot.reset();
-    if (m_appState != AppState::BootSplash &&
-        !m_gameStartTransitionActive && m_ui.CurrentRoute() != target)
-        BeginPresentationCrossfade(m_routeTransitionDuration);
     const auto present = [this](const Status& status) {
         if (status) return true;
         for (const auto& diagnostic : status.Diagnostics()) diag::Emit(diagnostic);
@@ -2365,7 +2422,7 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
             if (SaveSlot(*pending, m_menuThumb))
                 (void)m_ui.ShowSaveLoad(true, SaveItems(true));
         } else {
-            BeginPresentationCrossfade(m_routeTransitionDuration);
+            BeginPresentationTransition(m_routeTransition);
             (void)LoadSlot(*pending);
         }
     } else if (t == "saveLoad.confirm.cancel") {

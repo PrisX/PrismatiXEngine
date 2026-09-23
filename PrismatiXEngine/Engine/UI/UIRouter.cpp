@@ -149,6 +149,9 @@ Result<RouteTransitionHandle> UIRouter::StartTransition(
     if (normalized.preset.empty()) {
         if (const auto fallback = DefaultTransition(outgoing, incoming))
             normalized = *fallback;
+        else if (!outgoing.empty() && outgoing != incoming &&
+                 m_fallbackTransition)
+            normalized = *m_fallbackTransition;
     }
     if (normalized.preset.empty()) normalized.preset = "none";
     const std::string& preset = normalized.preset;
@@ -190,6 +193,15 @@ Status UIRouter::SetDefaultTransition(const std::string_view outgoing,
     m_defaultTransitions.insert_or_assign(
         std::string(outgoing) + "\n" + std::string(incoming),
         std::move(transition));
+    return Status::Ok();
+}
+
+Status UIRouter::SetFallbackTransition(RouteTransition transition) {
+    if (transition.preset.empty() ||
+        !std::isfinite(transition.durationSeconds) ||
+        transition.durationSeconds < 0.0f)
+        return RouteFailure("PXUI2313", "Fallback route transition is invalid");
+    m_fallbackTransition = std::move(transition);
     return Status::Ok();
 }
 

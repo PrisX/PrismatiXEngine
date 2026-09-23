@@ -1591,15 +1591,78 @@ export const contractSchemas: Readonly<Record<string, object>> = {
                 "minimum": 0,
                 "type": "number"
               },
+              "routeOverrides": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "duration": {
+                      "maximum": 10,
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "from": {
+                      "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+                    },
+                    "preset": {
+                      "enum": [
+                        "none",
+                        "fade",
+                        "crossfade",
+                        "slide-left",
+                        "slide-right"
+                      ]
+                    },
+                    "to": {
+                      "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+                    }
+                  },
+                  "required": [
+                    "from",
+                    "to",
+                    "preset",
+                    "duration"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 256,
+                "type": "array"
+              },
+              "routePreset": {
+                "enum": [
+                  "none",
+                  "fade",
+                  "crossfade",
+                  "slide-left",
+                  "slide-right"
+                ]
+              },
               "splashDuration": {
                 "maximum": 10,
                 "minimum": 0,
                 "type": "number"
               },
+              "splashPreset": {
+                "enum": [
+                  "none",
+                  "fade",
+                  "crossfade",
+                  "slide-left",
+                  "slide-right"
+                ]
+              },
               "titleDuration": {
                 "maximum": 10,
                 "minimum": 0,
                 "type": "number"
+              },
+              "titlePreset": {
+                "enum": [
+                  "none",
+                  "fade",
+                  "crossfade",
+                  "slide-left",
+                  "slide-right"
+                ]
               }
             },
             "type": "object"
@@ -1652,6 +1715,15 @@ export const contractSchemas: Readonly<Record<string, object>> = {
                   "maximum": 10,
                   "minimum": 0,
                   "type": "number"
+                },
+                "transitionPreset": {
+                  "enum": [
+                    "none",
+                    "fade",
+                    "crossfade",
+                    "slide-left",
+                    "slide-right"
+                  ]
                 }
               },
               "required": [
@@ -3550,7 +3622,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "game.schema.json": "f0592fc75a4deb4aed7f192c076165012ef480196a07cd7d2136be390821dcba",
   "locale.schema.json": "b8f6009219c6cad7fa6130af6d710af11cabcf85bf2e0039f1fdd3c08e2bbf9f",
   "portrait.schema.json": "23235204cea30d1f9bf49f810f896364b910ce2f74e46f28bc7381dc5da0a6fe",
-  "project.schema.json": "0cfe434dd776485808a133840edaff47d7342e784e2b750be516c6289504f8b8",
+  "project.schema.json": "937ef02098a0f720d5154b2300c7ddbdc60ef69fd2410337b483de7bc5a3390e",
   "runtime-ir.schema.json": "66d31c68d122e7516c3d0fef73672fa7fa47d879553c2fea2bdec5af3871b68c",
   "save-migration.schema.json": "fd9f89119a4e8a70324f95bb6e0261e5d78b0ea173e2755422c36e5e2379b6cf",
   "source-map.schema.json": "1a0d20fbc5ed639fcb33bf7e8b81f78caf9af091a4d245cee2e5e66eb80d3e62",
