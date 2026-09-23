@@ -22,9 +22,12 @@ import {inspectSaveWithRuntime} from "./save-inspection.js";
 
 import {
   canonicalJson,
+  applyStoryIdentityMap,
   assignStableSourceIds,
   compileJsxUi,
   compileProject,
+  externalizeStoryIds,
+  parseStory,
   stableSourceIdReport,
   validateDocument,
   type AuthoringDiagnostic,
@@ -62,7 +65,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   build: {values: "output artifact runtime packager player compression ui-registry", flags: "artifact-only distribution encrypt"},
   pack: {values: "output artifact runtime packager player compression ui-registry", flags: "encrypt"},
   run: {values: "output artifact runtime packager player compression ui-registry", flags: "encrypt"},
-  ids: {values: "document-id prefix backup", flags: "write check"},
+  ids: {values: "document-id prefix backup", flags: "write check external"},
   migrate: {values: "report backup entry-story entry-ui supported-locales save-version id name version content-version default-locale story-index game-catalog", flags: "write"},
   "inspect-save": {values: "package secret runtime player", flags: ""},
 };
@@ -597,6 +600,11 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
     storyPath = await conventionalStory(root);
     if (storyPath !== undefined)
       sourceFiles[storyPath] = await readBoundedText(projectFile(root, storyPath));
+  }
+  for (const path of Object.keys(sourceFiles).filter((value) => value.endsWith(".pxstory"))) {
+    const mapPath = `${path}.pxids.json`;
+    const absolute = projectFile(root, mapPath);
+    if (await regularFile(absolute)) sourceFiles[mapPath] = await readBoundedText(absolute);
   }
   for (const value of Array.isArray(raw.effects) ? raw.effects : []) {
     const descriptor = object(value);
@@ -1353,9 +1361,107 @@ async function replaceTextWithBackup(path: string, text: string): Promise<void> 
   }
 }
 
+async function externalIdsCommand(collection: Awaited<ReturnType<typeof identitySources>>,
+  options: Options): Promise<number> {
+  const documentId = options.values.get("document-id") ?? collection.documentId;
+  if (options.values.has("prefix"))
+    throw new Error("--prefix applies to inline generated ids; external maps preserve existing source ids");
+  const summarize = (report: ReturnType<typeof stableSourceIdReport>) => ({
+    path: report.path, total: report.total, anchored: report.anchored,
+    fallback: report.fallback, valid: report.valid,
+  });
+  const plans: Array<{value: StoryIdentitySource; mapPath: string; previousMap: boolean;
+    assigned: number; before: ReturnType<typeof summarize>; after: ReturnType<typeof summarize>}> = [];
+  const diagnostics: AuthoringDiagnostic[] = [];
+  let invalid = false;
+  // Process one source at a time: commercial imports can have hundreds of
+  // thousands of operations, and retaining every parsed node/map is wasteful.
+  for (const value of collection.sources) {
+    const mapPath = `${value.absolutePath}.pxids.json`;
+    const previousMap = await regularFile(mapPath);
+    if (previousMap) {
+      const map = JSON.parse(await readBoundedText(mapPath)) as unknown;
+      const applied = applyStoryIdentityMap(parseStory(value.source, value.virtualPath), map,
+        `${value.virtualPath}.pxids.json`);
+      const report = stableSourceIdReport(applied, {documentId});
+      diagnostics.push(...report.diagnostics);
+      if (!report.valid) invalid = true;
+      plans.push({value, mapPath, previousMap, assigned: 0,
+        before: summarize(report), after: summarize(report)});
+      continue;
+    }
+    const before = stableSourceIdReport(value.source, {path: value.virtualPath, documentId});
+    const converted = externalizeStoryIds(value.source,
+      {path: value.virtualPath, documentId});
+    const after = converted.map === undefined || converted.source === undefined
+      ? before : stableSourceIdReport(applyStoryIdentityMap(
+        parseStory(converted.source, value.virtualPath), converted.map), {documentId});
+    diagnostics.push(...converted.diagnostics, ...after.diagnostics);
+    if (!converted.valid || !after.valid) invalid = true;
+    plans.push({value, mapPath, previousMap, assigned: converted.assigned,
+      before: summarize(before), after: summarize(after)});
+  }
+  printDiagnostics(diagnostics);
+  if (invalid) {
+    process.stdout.write(`${JSON.stringify({external: true, dryRun: !options.flags.has("write"),
+      assigned: 0, diagnostics}, null, 2)}\n`);
+    return 1;
+  }
+  const write = options.flags.has("write");
+  let backup: string | undefined;
+  if (write && plans.some((plan) => !plan.previousMap)) {
+    backup = resolve(options.values.get("backup") ?? join(collection.root, ".prismatix",
+      `identity-backup-${new Date().toISOString().replaceAll(":", "-")}`));
+    for (const plan of plans) {
+      if (plan.previousMap) continue;
+      if (await readBoundedText(plan.value.absolutePath) !== plan.value.source)
+        throw new Error(`Story source changed during identity map preparation: ${plan.value.absolutePath}`);
+      const relativePath = relative(collection.root, plan.value.absolutePath);
+      if (relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath))
+        throw new Error(`Story source is outside the project backup root: ${plan.value.absolutePath}`);
+      const backupPath = join(backup, relativePath);
+      await mkdir(dirname(backupPath), {recursive: true});
+      await copyFile(plan.value.absolutePath, backupPath);
+    }
+    for (const plan of plans) {
+      if (plan.previousMap) continue;
+      const converted = externalizeStoryIds(plan.value.source,
+        {path: plan.value.virtualPath, documentId});
+      if (!converted.valid || converted.map === undefined || converted.source === undefined)
+        throw new Error(`Story identity map changed during preparation: ${plan.value.virtualPath}`);
+      await writeFile(plan.mapPath, `${JSON.stringify(converted.map)}\n`, {encoding: "utf8", flag: "wx"});
+      try {
+        if (converted.source !== plan.value.source)
+          await replaceTextWithBackup(plan.value.absolutePath, converted.source);
+      } catch (error) {
+        // Only remove the sidecar created by this invocation. The original
+        // source and independent backup remain recoverable.
+        await rm(plan.mapPath, {force: true});
+        throw error;
+      }
+    }
+  }
+  const reports = plans.map((plan) => write ? plan.after : plan.before);
+  const result = {external: true, dryRun: !write,
+    assigned: plans.reduce((sum, plan) => sum + plan.assigned, 0),
+    total: reports.reduce((sum, report) => sum + report.total, 0),
+    anchored: reports.reduce((sum, report) => sum + report.anchored, 0),
+    fallback: reports.reduce((sum, report) => sum + report.fallback, 0),
+    ...(backup === undefined ? {} : {backup}), reports};
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  return options.flags.has("check") && result.fallback > 0 ? 1 : 0;
+}
+
 async function idsCommand(options: Options): Promise<number> {
   try {
     const collection = await identitySources(options.positional[0]);
+    const mapsExist = (await Promise.all(collection.sources.map((value) =>
+      regularFile(`${value.absolutePath}.pxids.json`)))).some(Boolean);
+    if (options.flags.has("external") || mapsExist) {
+      if (mapsExist && !options.flags.has("external") && options.flags.has("write"))
+        throw new Error("This project has external Story identity maps; use ids --external --write");
+      return externalIdsCommand(collection, options);
+    }
     const documentId = options.values.get("document-id") ?? collection.documentId;
     const prefix = options.values.get("prefix") ?? "auto";
     const assignments = collection.sources.map((value) => ({value,

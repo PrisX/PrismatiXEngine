@@ -81,6 +81,8 @@ export interface StoryArgument {
 
 export interface StoryNode {
   readonly id: string;
+  /** Author-sidecar override for an existing fallback identity. */
+  readonly externalSourceId?: string;
   readonly kind: StoryNodeKind;
   readonly span: SourceSpan;
   readonly raw: string;

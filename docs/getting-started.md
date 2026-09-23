@@ -69,6 +69,13 @@ updates as they happen. With `--json`, CLI progress is NDJSON on stderr and
 native Packager events are streamed on stdout; neither waits for the whole
 archive to finish before showing progress.
 
+For a long-lived Story with save/seen history, run
+`prismatix ids my-game --external --write` once to move line-by-line `[id]`
+anchors into adjacent `.pxstory.pxids.json` files while keeping the prose
+readable. The command backs up original Story sources. `prismatix ids my-game
+--check` then audits coverage. Do not delete a sidecar: the source marker makes
+the compiler reject a missing one rather than silently changing save ids.
+
 The global command delegates project commands to the exact local CLI pinned in the game's package.json. Commit that manifest and its lock. A missing or mismatched local CLI is diagnosed instead of silently using the global version. After preparation, dev/build use local packages and bundled runtime offline. Upgrade tool versions deliberately in a branch, reinstall the pinned dependencies, and test old saves and the packaged Player before distributing an update.
 
 ## Diagnostics and troubleshooting

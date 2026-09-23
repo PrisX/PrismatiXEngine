@@ -31,6 +31,25 @@ const result = compileStory(story, {
 `compileStoryProject` with a Story index and all referenced scene sources;
 single-document compilation reports `PXSTORY1215` for these commands.
 
+## Readable Story with durable save identities
+
+An ordinary `.pxstory` needs no manually authored id. When save/seen identity
+must survive text edits, `prismatix ids my-game --external --write` creates a
+recoverable source backup, removes existing `[id ...]` directives, and writes
+an author-only `<source>.pxids.json` sidecar. The Story keeps one short
+`; @prismatix-ids` marker so a missing sidecar fails the build instead of
+silently changing save anchors. The CLI loads adjacent maps automatically;
+direct `compileStoryProject` callers must include each sidecar's text in
+`sourceFiles` under its exact `<source>.pxids.json` path. Sidecars do not ship
+in the Runtime artifact.
+
+The map preserves both authored ids and the exact pre-migration fallback
+`sourceId` of operations that had no `[id]`. In-place prose edits, comments,
+and blank lines retain those identities. If executable operations are added,
+removed, changed to another command, or recognizably moved, compilation fails
+with a map diagnostic instead of silently redirecting a save. Review the
+change and its save-migration implications before regenerating a map.
+
 ## JSX UI authoring
 
 JSX and TSX are build-time syntax only. `Scene`, `VBox`, `HBox`, `Text`, `Image`,

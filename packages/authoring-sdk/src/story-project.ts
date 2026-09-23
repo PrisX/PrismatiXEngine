@@ -1,4 +1,5 @@
 import {compileStory, parseStory} from "./story.js";
+import {applyStoryIdentityMap, storyRequiresIdentityMap} from "./story-external-identity.js";
 import type {ProjectAssetDescriptor} from "./resources.js";
 import type {
   AuthoringDiagnostic,
@@ -274,7 +275,19 @@ export function compileStoryProject(context: StoryProjectCompileContext): StoryC
       diagnostics.push(issue("PXSTORY1303", `Story source is unavailable: ${sourcePath}`, sourcePath, descriptor.id));
       continue;
     }
-    const document = parseStory(source, sourcePath);
+    let document = parseStory(source, sourcePath);
+    const mapPath = `${sourcePath}.pxids.json`;
+    const mapSource = context.sourceFiles[mapPath];
+    if (mapSource === undefined && storyRequiresIdentityMap(source)) {
+      document = {...document, diagnostics: [...document.diagnostics,
+        issue("PXSTORY1411", "Story requires its external identity map", mapPath)]};
+    } else if (mapSource !== undefined) {
+      try { document = applyStoryIdentityMap(document, JSON.parse(mapSource) as unknown, mapPath); }
+      catch (error) {
+        document = {...document, diagnostics: [...document.diagnostics,
+          issue("PXSTORY1410", "Story identity map is not valid JSON", mapPath, String(error))]};
+      }
+    }
     const labels = new Set(
       document.nodes
         .filter((node) => node.kind === "label" && node.name !== undefined)

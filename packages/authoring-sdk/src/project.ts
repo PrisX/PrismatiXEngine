@@ -823,7 +823,11 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     files[value.shader] = sourceFiles[value.shader]!;
   }
   for (const [locale, value] of localeDocuments) files[`Content/Localization/${locale}.json`] = canonicalJson(value);
-  for (const [path, value] of Object.entries(sourceFiles)) files[path] = value;
+  for (const [path, value] of Object.entries(sourceFiles)) {
+    // Identity maps are build-time author metadata. Only the compiled IR and
+    // source map, not the sidecar itself, belong in the distributed artifact.
+    if (!path.endsWith(".pxstory.pxids.json")) files[path] = value;
+  }
 
   return {
     artifact: {

@@ -47,6 +47,7 @@ interface ScannedEntry {
   readonly node: StoryNode;
   readonly authoredId?: string;
   readonly sourceId: string;
+  readonly stable: boolean;
 }
 
 function hash64(input: string): string {
@@ -110,8 +111,9 @@ function scan(document: StoryDocument, documentId: string): {
     entries.push({
       node,
       ...(pinned === undefined ? {} : {authoredId: pinned}),
-      sourceId: pinned === undefined ? node.id
+      sourceId: pinned === undefined ? node.externalSourceId ?? node.id
         : `story-${hash64(`${documentId}:${pinned}`)}`,
+      stable: pinned !== undefined || node.externalSourceId !== undefined,
     });
   }
   if (pending !== undefined) {
@@ -132,10 +134,10 @@ export function stableSourceIdReport(
   const document = typeof source === "string" ? parseStory(source, path) : source;
   const documentId = options.documentId ?? "main";
   const scanned = scan(document, documentId);
-  const entries = scanned.entries.map(({node, authoredId: id, sourceId}) => ({
+  const entries = scanned.entries.map(({node, authoredId: id, sourceId, stable}) => ({
     sourceId,
     ...(id === undefined ? {} : {authoredId: id}),
-    stable: id !== undefined,
+    stable,
     kind: node.kind,
     ...(node.kind === "command" && node.name !== undefined ? {command: node.name} : {}),
     path: node.span.path,

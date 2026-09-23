@@ -400,7 +400,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
 
   const emit = (node: StoryNode, kind: string, args: Record<string, string>, text = node.text ?? node.raw.trim()): void => {
     const sourceId = pendingAuthoredSourceId === undefined
-      ? node.id
+      ? node.externalSourceId ?? node.id
       : `story-${stableId(`${context.documentId}:${pendingAuthoredSourceId}`)}`;
     pendingAuthoredSourceId = undefined;
     const operationId = `op-${stableId(`${context.documentId}:${sourceId}:${kind}`)}`;

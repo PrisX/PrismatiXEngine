@@ -192,6 +192,35 @@ test("ids reports fallback identities and writes stable Story anchors with a bac
   assert.equal(checkedAfter.status, 0, checkedAfter.stderr);
 });
 
+test("ids --external moves inline anchors to a sidecar without changing compiled operation ids", async () => {
+  const value = await fixture();
+  const sourcePath = join(value.root, "Story", "main.pxstory");
+  await write(sourcePath, "[id pin.hello]\nHello.\n[id pin.end]\n[end]\n");
+  const before = join(value.root, "before-artifact");
+  assert.equal(run(["build", value.project, "--artifact-only", "--output", before]).status, 0);
+  const converted = run(["ids", value.project, "--external", "--write"]);
+  assert.equal(converted.status, 0, converted.stderr);
+  const report = JSON.parse(converted.stdout) as {external: boolean; fallback: number; backup: string};
+  assert.equal(report.external, true);
+  assert.equal(report.fallback, 0);
+  assert.doesNotMatch(await readFile(sourcePath, "utf8"), /\[id /u);
+  assert.equal((await stat(`${sourcePath}.pxids.json`)).isFile(), true);
+  assert.equal((await stat(join(report.backup, "Story", "main.pxstory"))).isFile(), true);
+  assert.equal(run(["ids", value.project, "--check"]).status, 0);
+  const after = join(value.root, "after-artifact");
+  const built = run(["build", value.project, "--artifact-only", "--output", after]);
+  assert.equal(built.status, 0, built.stderr);
+  const operations = async (root: string) => (JSON.parse(await readFile(join(root, "Runtime/main.pxir"), "utf8")) as {
+    operations: Array<{operationId: string; text: string}>;
+  }).operations.map(operation => operation.operationId);
+  assert.deepEqual(await operations(after), await operations(before));
+  assert.equal((await readdir(join(after, "Story"))).some(name => name.endsWith(".pxids.json")), false);
+  await write(sourcePath, "Hello.\nNew operation.\n[end]\n");
+  const invalid = run(["validate", value.project]);
+  assert.equal(invalid.status, 1);
+  assert.match(invalid.stderr, /PXSTORY1405/u);
+});
+
 test("validate and build use the same canonical project compiler", async () => {
   const value = await fixture();
   const validated = run(["validate", value.project]);
