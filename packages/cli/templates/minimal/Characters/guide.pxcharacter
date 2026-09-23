@@ -1,7 +1,6 @@
 {
   "format":"PrismatiXCharacter","schemaRevision":2,
-  "id":"60000000-0000-4000-8000-000000000001","revision":1,
+  "revision":1,
   "displayName":"小光","aliases":["guide"],
-  "defaultExpressionId":"61000000-0000-4000-8000-000000000001",
-  "expressions":[{"id":"61000000-0000-4000-8000-000000000001","name":"微笑","aliases":["smile","default"],"assetId":"20000000-0000-4000-8000-000000000001","thumbnailAssetId":null}]
+  "expressions":[{"name":"微笑","aliases":["smile","default"],"assetPath":"Assets/guide.png","thumbnailAssetId":null}]
 }

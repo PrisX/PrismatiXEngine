@@ -92,6 +92,29 @@ test("create scaffolds a canonical playable starter without author-supplied UUID
   const manifest = JSON.parse(await readFile(project, "utf8")) as Record<string, unknown>;
   assert.deepEqual(Object.keys(manifest).sort(),
     ["assets", "characters", "defaultLocale", "id", "name", "resolution", "uiEntryPoints"]);
+  assert.equal((manifest.characters as Array<{id?: string}>)[0]!.id, undefined);
+  assert.equal((manifest.assets as Array<{source: string}>).some((asset) =>
+    asset.source === "Assets/guide.png"), false);
+  const authorCharacter = JSON.parse(await readFile(join(root,
+    "Characters/guide.pxcharacter"), "utf8")) as {
+    id?: string; expressions: Array<{id?: string; assetId?: string; assetPath?: string}>;
+  };
+  assert.equal(authorCharacter.id, undefined);
+  assert.equal(authorCharacter.expressions[0]!.id, undefined);
+  assert.equal(authorCharacter.expressions[0]!.assetId, undefined);
+  assert.equal(authorCharacter.expressions[0]!.assetPath, "Assets/guide.png");
+  const artifact = join(root, "artifact");
+  const built = run(["build", project, "--artifact-only", "--output", artifact]);
+  assert.equal(built.status, 0, built.stderr);
+  const canonicalCharacter = JSON.parse(await readFile(join(artifact,
+    "Characters/guide.pxcharacter"), "utf8")) as {
+    id: string; expressions: Array<{id: string; assetId: string; assetPath?: string}>;
+  };
+  assert.match(canonicalCharacter.id, /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/u);
+  assert.match(canonicalCharacter.expressions[0]!.assetId,
+    /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/u);
+  assert.equal(canonicalCharacter.expressions[0]!.assetPath, undefined);
+  assert.equal((await stat(join(artifact, "Assets/guide.png"))).isFile(), true);
   assert.equal((await stat(join(root, "Content/Localization/zh-TW.json"))).isFile(), true);
   assert.deepEqual((await readdir(join(root, "Assets"))).sort(), ["guide.png", "window.png"]);
   const story = await readFile(join(root, "Story/main.pxstory"), "utf8");

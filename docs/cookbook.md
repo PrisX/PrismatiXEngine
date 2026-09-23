@@ -1,6 +1,6 @@
 # Story author cookbook
 
-These examples use the public Story compiler in `packages/authoring-sdk/src/story.ts`, not guessed spellings of runtime JavaScript methods. Start from a generated project and run `prismatix validate my-game` after changing declarations. Asset examples require the referenced file to exist; a catalog entry is needed when you want a stable asset identity or a character expression references it.
+These examples use the public Story compiler in `packages/authoring-sdk/src/story.ts`, not guessed spellings of runtime JavaScript methods. Start from a generated project and run `prismatix validate my-game` after changing declarations. Asset examples require the referenced file to exist; an explicit catalog entry is needed only when you want to pin a stable asset identity yourself.
 
 ## Rewrite, branch and preserve identities
 
@@ -36,7 +36,7 @@ The starter registers `guide`, its `smile` expression and an original background
 [hide guide]
 ```
 
-To add an expression, add an asset descriptor and an expression in `Characters/guide.pxcharacter`, then select its alias with `expression=...`. Positions are `left`, `center`, `right` (also 1/2/3). The move duration is milliseconds in the native session implementation.
+To add an expression, add a source image and an expression with `assetPath` in `Characters/guide.pxcharacter`, then select its alias with `expression=...`. The Authoring project compiler generates canonical character, expression, and asset UUIDs when omitted; no catalog entry is needed for that image. For example, `{"name":"Happy","aliases":["happy"],"assetPath":"Assets/guide-happy.png"}` is enough inside `expressions`. TypeScript generators can use the exported `CharacterSourceDocument` type; the stricter `CharacterDocument` type describes the published canonical file. Validate this shorthand with `compileProject` or `prismatix validate`, not the low-level `validateDocument("character")` canonical checker. The generated IDs derive from the project, character source path, expression's first alias, and image path. Keep those stable across save-compatible releases, or pin `id`/`assetId` explicitly before renaming; a file move is not automatically a save migration. Positions are `left`, `center`, `right` (also 1/2/3). The move duration is milliseconds in the native session implementation.
 
 For a dynamically selected family of UI/media files, put the containing
 directory in the project's `resourceIncludes`, for example

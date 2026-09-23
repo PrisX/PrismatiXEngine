@@ -1,9 +1,31 @@
 import {validateDocument} from "./contracts.js";
 import {isSafeResourcePath} from "./resources.js";
 import type {ProjectDocument} from "./project.js";
-import type {AuthoringDiagnostic, Result} from "./types.js";
+import type {AuthoringDiagnostic, CharacterDocument, CharacterExpression,
+  Result} from "./types.js";
 
 type ObjectValue = Record<string, unknown>;
+
+/** Project-source character expression. `assetPath` is lowered to the native
+ * asset catalog; explicit ids remain available for save-compatible renames. */
+export type CharacterSourceExpression = Omit<CharacterExpression, "id" | "assetId"> & {
+  readonly id?: string;
+  readonly thumbnailAssetId?: string | null;
+  readonly portraitAssetId?: string;
+} & ({readonly assetPath: string; readonly assetId?: string} |
+  {readonly assetId: string; readonly assetPath?: never});
+
+/** Author-only character document shape consumed by `normalizeProject` and
+ * `compileProject`. The published .pxcharacter retains the strict canonical
+ * `CharacterDocument` format. */
+export interface CharacterSourceDocument extends
+  Omit<CharacterDocument, "id" | "displayName" | "aliases" | "expressions"> {
+  readonly id?: string;
+  readonly revision?: number;
+  readonly displayName?: string;
+  readonly aliases?: readonly string[];
+  readonly expressions: readonly CharacterSourceExpression[];
+}
 
 export interface NormalizeProjectInput {
   /** A complete project, a small source manifest, JSON text, or nothing. */
@@ -93,6 +115,139 @@ function conventionalStoryPath(input: NormalizeProjectInput): string {
   const candidates = Object.keys(input.sourceFiles ?? {})
     .filter((path) => path.endsWith(".pxstory")).sort();
   return candidates.length === 1 ? candidates[0]! : "Story/main.pxstory";
+}
+
+/** Author-only character shorthand. Canonical .pxcharacter and .pxproject
+ * artifacts still carry the UUIDs required by the native CharacterResources
+ * loader; none of the shorthand fields enter those artifacts. */
+function normalizeCharacterAuthoring(runtimeSource: ObjectValue,
+  documents: Record<string, unknown>, projectId: string): readonly AuthoringDiagnostic[] {
+  const descriptors = runtimeSource.characters;
+  if (!Array.isArray(descriptors)) return [];
+  const diagnostics: AuthoringDiagnostic[] = [];
+  const assets: unknown[] = Array.isArray(runtimeSource.assets) ? [...runtimeSource.assets] : [];
+  const assetsById = new Map<string, ObjectValue>();
+  const assetsBySource = new Map<string, ObjectValue[]>();
+  const rememberAsset = (value: ObjectValue): void => {
+    if (typeof value.id === "string") assetsById.set(value.id.toLowerCase(), value);
+    if (typeof value.source === "string") {
+      const matches = assetsBySource.get(value.source) ?? [];
+      matches.push(value);
+      assetsBySource.set(value.source, matches);
+    }
+  };
+  for (const asset of assets) {
+    const record = object(asset);
+    if (record !== undefined) rememberAsset(record);
+  }
+  const addAsset = (value: ObjectValue): void => {
+    assets.push(value);
+    rememberAsset(value);
+  };
+  let generatedAsset = false;
+  const normalizedDescriptors = descriptors.map((value, characterIndex) => {
+    const descriptor = object(value);
+    if (descriptor === undefined || typeof descriptor.source !== "string") return value;
+    const source = descriptor.source;
+    if (!isSafeResourcePath(source) || source.includes(":") || source.includes("\0") ||
+        source.split("/").some((part) => part === "" || part === ".")) return value;
+    let authored = object(documents[source]);
+    if (authored === undefined && typeof documents[source] === "string") {
+      try { authored = object(JSON.parse(documents[source] as string) as unknown); }
+      catch { /* The normal document parser reports malformed JSON below. */ }
+    }
+    const characterId = typeof descriptor.id === "string" ? descriptor.id
+      : typeof authored?.id === "string" ? authored.id
+        : stableUuid(`${projectId}:character:${source}`);
+    const displayName = descriptor.displayName ?? authored?.displayName;
+    const nextDescriptor = {...descriptor, id: characterId,
+      ...(displayName === undefined ? {} : {displayName})};
+    if (authored === undefined) return nextDescriptor;
+
+    const nextCharacter: ObjectValue = {...authored,
+      ...(authored.id === undefined ? {id: characterId} : {}),
+      ...(authored.displayName === undefined && displayName !== undefined ? {displayName} : {})};
+    if (nextCharacter.aliases === undefined) {
+      const stem = source.split("/").at(-1)?.replace(/\.pxcharacter$/iu, "") ?? "";
+      nextCharacter.aliases = [typeof descriptor.alias === "string" ? descriptor.alias
+        : /[A-Za-z0-9]/u.test(stem) ? identifier(stem) : `character-${characterIndex + 1}`];
+    }
+    if (Array.isArray(authored.expressions)) {
+      nextCharacter.expressions = authored.expressions.map((value, index) => {
+        const expression = object(value);
+        if (expression === undefined) return value;
+        const nextExpression: ObjectValue = {...expression};
+        const path = expression.assetPath;
+        if (path !== undefined) {
+          if (typeof path !== "string" || !isSafeResourcePath(path) ||
+              path.includes(":") || path.includes("\0") ||
+              path.split("/").some((part) => part === "" || part === ".")) {
+            diagnostics.push(issue("PXBUILD1067",
+              "Character expression assetPath must be a safe project-relative resource path",
+              source, `expressions[${index}].assetPath`));
+          } else if (expression.assetId !== undefined) {
+            const pinnedId = expression.assetId;
+            const existing = typeof pinnedId === "string"
+              ? assetsById.get(pinnedId.toLowerCase()) : undefined;
+            if (typeof pinnedId !== "string" ||
+                existing !== undefined && (existing.source !== path ||
+                  !["character", "cg", "uiImage"].includes(String(existing.kind)))) {
+              diagnostics.push(issue("PXBUILD1068",
+                "Character expression assetId conflicts with its assetPath or catalog entry",
+                source, `expressions[${index}]`));
+            } else if (existing === undefined) {
+              addAsset({id: pinnedId, kind: "character", source: path});
+              generatedAsset = true;
+            }
+          } else {
+            const matching = (assetsBySource.get(path) ?? []).filter((asset) =>
+              ["character", "cg", "uiImage"].includes(String(asset.kind)));
+            if (matching.length > 1) {
+              diagnostics.push(issue("PXBUILD1069",
+                "Character expression assetPath matches multiple catalog assets; use an explicit assetId",
+                source, `expressions[${index}].assetPath: ${path}`));
+            } else if (matching.length === 1) {
+              nextExpression.assetId = matching[0]!.id;
+            } else {
+              const assetId = stableUuid(`${projectId}:character-asset:${path}`);
+              if (assetsById.has(assetId)) {
+                diagnostics.push(issue("PXBUILD1070",
+                  "Generated character assetId collides with an existing catalog entry; pin an explicit assetId",
+                  source, `expressions[${index}].assetPath: ${path}`));
+              } else {
+                nextExpression.assetId = assetId;
+                addAsset({id: assetId, kind: "character", source: path});
+                generatedAsset = true;
+              }
+            }
+          }
+          delete nextExpression.assetPath;
+        }
+        if (nextExpression.id === undefined) {
+          const seed = Array.isArray(expression.aliases) && typeof expression.aliases[0] === "string"
+            ? expression.aliases[0] : typeof expression.name === "string" ? expression.name : String(index);
+          nextExpression.id = stableUuid(`${projectId}:expression:${characterId}:${seed}`);
+        }
+        return nextExpression;
+      });
+      const expressions = nextCharacter.expressions as unknown[];
+      if (nextCharacter.defaultExpressionId === undefined && expressions.length > 0)
+        nextCharacter.defaultExpressionId = object(expressions[0])?.id;
+      else if (typeof nextCharacter.defaultExpressionId === "string" &&
+          !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/iu.test(nextCharacter.defaultExpressionId)) {
+        const alias = nextCharacter.defaultExpressionId;
+        const matched = expressions.map(object).find((expression) =>
+          expression?.name === alias || Array.isArray(expression?.aliases) &&
+          expression.aliases.includes(alias));
+        if (matched !== undefined) nextCharacter.defaultExpressionId = matched.id;
+      }
+    }
+    documents[source] = nextCharacter;
+    return nextDescriptor;
+  });
+  runtimeSource.characters = normalizedDescriptors;
+  if (generatedAsset || runtimeSource.assets === undefined) runtimeSource.assets = assets;
+  return diagnostics;
 }
 
 function defaultUi(projectId: string, name: string, width: number, height: number): unknown {
@@ -192,6 +347,12 @@ export function normalizeProject(input: NormalizeProjectInput = {}): Result<Norm
   delete runtimeSource.resourceIncludes;
   const name = typeof raw.name === "string" ? raw.name : "PrismatiX Game";
   const projectId = typeof raw.id === "string" ? raw.id : identifier(name);
+  const documents = Object.assign(Object.create(null) as Record<string, unknown>,
+    input.documents);
+  const characterDiagnostics = normalizeCharacterAuthoring(runtimeSource,
+    documents, projectId);
+  if (characterDiagnostics.length > 0)
+    return {diagnostics: characterDiagnostics, valid: false};
   const locale = typeof raw.defaultLocale === "string" ? raw.defaultLocale
     : input.defaultLocale ?? "en-US";
   const supportedLocales = raw.supportedLocales ?? [locale];
@@ -238,7 +399,6 @@ export function normalizeProject(input: NormalizeProjectInput = {}): Result<Norm
     return {diagnostics: validated.diagnostics, valid: false};
 
   const project = validated.value;
-  const documents: Record<string, unknown> = {...input.documents};
   const locales: Record<string, unknown> = {...input.locales};
   if (raw.storyIndex === undefined && documents[project.storyIndex] === undefined) {
     documents[project.storyIndex] = {

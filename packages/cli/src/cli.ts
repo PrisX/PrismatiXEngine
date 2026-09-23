@@ -797,7 +797,7 @@ async function validateCommand(options: Options): Promise<number> {
     printDiagnostics(result.diagnostics);
     if (!result.valid) return 1;
     const includedFiles = new Set(Object.values(loaded.includedResources).flat());
-    const projectAssets = object(loaded.project)?.assets;
+    const projectAssets = result.artifact!.project.assets;
     const catalogIncludeOverlap = (Array.isArray(projectAssets) ? projectAssets : []).filter((asset) => {
       const source = object(asset)?.source;
       return typeof source === "string" && includedFiles.has(source);
