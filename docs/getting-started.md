@@ -100,8 +100,11 @@ readable. The command backs up original Story sources. `prismatix ids my-game
 --check` then audits coverage. Do not delete a sidecar: the source marker makes
 the compiler reject a missing one rather than silently changing save ids.
 After adding or removing executable Story lines, preview the identity update
-with `prismatix ids my-game --sync`; if the reported preserved/added/removed
-operations match your intent, use `--sync --write` to update only the sidecars
+with `prismatix ids my-game --sync`. The JSON report includes each new
+operation's Story path, one-based line and short source preview, plus each
+removed anchor's original operation position and identity. Check these against
+your edit; if the preserved/added/removed operations match your intent, use
+`--sync --write` to update only the sidecars
 with a backup. Reorders and ambiguous duplicate lines require manual identity
 review. For a rewrite immediately beside an insertion, sync the rewrite first,
 then insert and sync again; a combined edit cannot always be safely matched

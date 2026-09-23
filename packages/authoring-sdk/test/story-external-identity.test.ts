@@ -70,7 +70,13 @@ test("sidecar sync preserves old operation ids across distinct insertions and ed
   assert.equal(synced.valid, true, JSON.stringify(synced.diagnostics));
   assert.equal(synced.preserved, 4);
   assert.equal(synced.added, 1);
+  assert.deepEqual(synced.addedOperations.map(operation => ({
+    operation: operation.operation, line: operation.line,
+    kind: operation.kind, preview: operation.preview,
+  })), [{operation: 4, line: 5, kind: "narration", preview: "New line."}]);
+  assert.match(synced.addedOperations[0]!.sourceId, /^story-[0-9a-f]{16}$/u);
   assert.deepEqual(synced.removed, []);
+  assert.deepEqual(synced.removedOperations, []);
   const after = compile(changed, synced.map);
   assert.equal(after.valid, true, JSON.stringify(after.diagnostics));
   const ids = (result: typeof before) => result.runtimeIr!.operations.map(operation => operation.operationId);
@@ -85,7 +91,10 @@ test("sidecar sync reports deletions for save migration review", () => {
   assert.equal(synced.valid, true, JSON.stringify(synced.diagnostics));
   assert.equal(synced.preserved, 3);
   assert.equal(synced.added, 0);
+  assert.deepEqual(synced.addedOperations, []);
   assert.deepEqual(synced.removed, [`source:${converted.map!.entries[2]!.sourceId}`]);
+  assert.deepEqual(synced.removedOperations, [{oldOperation: 3,
+    identity: `source:${converted.map!.entries[2]!.sourceId}`, kind: "narration"}]);
   assert.equal(compile(changed, synced.map).valid, true);
 });
 

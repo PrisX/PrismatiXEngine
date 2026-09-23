@@ -1541,7 +1541,9 @@ async function syncExternalIdsCommand(collection: Awaited<ReturnType<typeof iden
     throw new Error("--prefix applies to inline ids, not external identity maps");
   const digest = (source: string) => createHash("sha256").update(source).digest("hex");
   const plans: Array<{value: StoryIdentitySource; mapPath: string; beforeHash: string;
-    updatedText?: string; preserved: number; added: number; removed: readonly string[]}> = [];
+    updatedText?: string; preserved: number; added: number; removed: readonly string[];
+    addedOperations: ReturnType<typeof synchronizeStoryIdentityMap>["addedOperations"];
+    removedOperations: ReturnType<typeof synchronizeStoryIdentityMap>["removedOperations"]}> = [];
   const diagnostics: AuthoringDiagnostic[] = [];
   for (const value of collection.sources) {
     const mapPath = `${value.absolutePath}.pxids.json`;
@@ -1570,7 +1572,8 @@ async function syncExternalIdsCommand(collection: Awaited<ReturnType<typeof iden
     const changed = JSON.stringify(synced.map) !== JSON.stringify(map);
     plans.push({value, mapPath, beforeHash: digest(source),
       ...(changed ? {updatedText: `${JSON.stringify(synced.map)}\n`} : {}),
-      preserved: synced.preserved, added: synced.added, removed: synced.removed});
+      preserved: synced.preserved, added: synced.added, removed: synced.removed,
+      addedOperations: synced.addedOperations, removedOperations: synced.removedOperations});
   }
   printDiagnostics(diagnostics);
   if (diagnostics.some((item) => item.severity === "error")) {
@@ -1612,9 +1615,15 @@ async function syncExternalIdsCommand(collection: Awaited<ReturnType<typeof iden
     added: plans.reduce((sum, plan) => sum + plan.added, 0),
     removed: plans.flatMap((plan) => plan.removed.map((identity) =>
       ({path: plan.value.virtualPath, identity}))),
+    addedOperations: plans.flatMap((plan) => plan.addedOperations.map((operation) =>
+      ({path: plan.value.virtualPath, ...operation}))),
+    removedOperations: plans.flatMap((plan) => plan.removedOperations.map((operation) =>
+      ({path: plan.value.virtualPath, ...operation}))),
     ...(backup === undefined ? {} : {backup}),
     reports: changes.map((plan) => ({path: plan.value.virtualPath,
-      preserved: plan.preserved, added: plan.added, removed: plan.removed})),
+      preserved: plan.preserved, added: plan.added, removed: plan.removed,
+      addedOperations: plan.addedOperations,
+      removedOperations: plan.removedOperations})),
   };
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   return options.flags.has("check") && !write && changes.length > 0 ? 1 : 0;

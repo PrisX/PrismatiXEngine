@@ -359,11 +359,19 @@ test("ids --sync previews changes, backs up only sidecars, and preserves publish
   assert.equal(preview.status, 0, preview.stderr);
   const previewReport = JSON.parse(preview.stdout) as {
     dryRun: boolean; changed: number; preserved: number; added: number;
+    addedOperations: Array<{path: string; operation: number; line: number;
+      kind: string; preview: string; sourceId: string}>;
+    removedOperations: unknown[];
   };
   assert.equal(previewReport.dryRun, true);
   assert.equal(previewReport.changed, 1);
   assert.equal(previewReport.preserved, 2);
   assert.equal(previewReport.added, 1);
+  assert.deepEqual(previewReport.addedOperations.map(({path, operation, line, kind, preview}) =>
+    ({path, operation, line, kind, preview})), [{path: "Story/main.pxstory",
+    operation: 2, line: 3, kind: "narration", preview: "Inserted."}]);
+  assert.match(previewReport.addedOperations[0]!.sourceId, /^story-[0-9a-f]{16}$/u);
+  assert.deepEqual(previewReport.removedOperations, []);
   assert.equal(await readFile(mapPath, "utf8"), originalMap);
   assert.equal(run(["ids", value.project, "--sync", "--check"]).status, 1);
 
@@ -391,6 +399,18 @@ test("ids --sync previews changes, backs up only sidecars, and preserves publish
   const ambiguous = run(["ids", value.project, "--sync", "--write"]);
   assert.equal(ambiguous.status, 1);
   assert.match(ambiguous.stderr, /PXSTORY1413/u);
+  assert.equal(await readFile(mapPath, "utf8"), updatedMap);
+
+  await write(sourcePath, "; @prismatix-ids\nHello.\n[end]\n");
+  const removal = run(["ids", value.project, "--sync"]);
+  assert.equal(removal.status, 0, removal.stderr);
+  const removalReport = JSON.parse(removal.stdout) as {removedOperations:
+    Array<{path: string; oldOperation: number; identity: string; kind: string}>};
+  assert.equal(removalReport.removedOperations.length, 1);
+  assert.equal(removalReport.removedOperations[0]!.path, "Story/main.pxstory");
+  assert.equal(removalReport.removedOperations[0]!.oldOperation, 2);
+  assert.equal(removalReport.removedOperations[0]!.kind, "narration");
+  assert.match(removalReport.removedOperations[0]!.identity, /^source:story-[0-9a-f]{16}$/u);
   assert.equal(await readFile(mapPath, "utf8"), updatedMap);
 });
 

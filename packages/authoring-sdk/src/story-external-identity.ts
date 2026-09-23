@@ -39,10 +39,34 @@ export interface SynchronizeStoryIdsResult {
   readonly map?: StoryIdentityMap;
   readonly preserved: number;
   readonly added: number;
+  /** New operations requiring a fresh save identity, in current Story order. */
+  readonly addedOperations: readonly StoryIdentityAddedOperation[];
   /** Old anchors with no surviving operation; review save migrations. */
   readonly removed: readonly string[];
+  /** Removed anchors in their original Story operation order. */
+  readonly removedOperations: readonly StoryIdentityRemovedOperation[];
   readonly diagnostics: readonly AuthoringDiagnostic[];
   readonly valid: boolean;
+}
+
+export interface StoryIdentityAddedOperation {
+  /** One-based executable-operation index in the edited Story. */
+  readonly operation: number;
+  /** One-based source line in the edited Story. */
+  readonly line: number;
+  readonly kind: StoryNodeKind;
+  readonly command?: string;
+  readonly sourceId: string;
+  /** Short source excerpt for human review; never used for identity matching. */
+  readonly preview: string;
+}
+
+export interface StoryIdentityRemovedOperation {
+  /** One-based executable-operation index in the previous sidecar. */
+  readonly oldOperation: number;
+  readonly identity: string;
+  readonly kind: StoryNodeKind;
+  readonly command?: string;
 }
 
 function hash64(input: string): string {
@@ -150,7 +174,8 @@ export function synchronizeStoryIdentityMap(source: string, value: unknown, opti
   const path = options.path ?? "Story/main.pxstory";
   const mapPath = options.mapPath ?? `${path}.pxids.json`;
   const failed = (diagnostics: readonly AuthoringDiagnostic[]): SynchronizeStoryIdsResult =>
-    ({preserved: 0, added: 0, removed: [], diagnostics, valid: false});
+    ({preserved: 0, added: 0, addedOperations: [], removed: [],
+      removedOperations: [], diagnostics, valid: false});
   if (!storyRequiresIdentityMap(source)) return failed([issue("PXSTORY1412",
     "Story must declare ; @prismatix-ids before its sidecar can be synchronized", path)]);
   const document = parseStory(source, path);
@@ -170,7 +195,8 @@ export function synchronizeStoryIdentityMap(source: string, value: unknown, opti
     (old[oldIndex]!.kind !== "command" || old[oldIndex]!.command === nodes[newIndex]!.name);
   if (old.length === nodes.length && old.every((entry, index) =>
     sameShape(index, index) && entry.fingerprint === current[index])) {
-    return {map: oldMap, preserved: old.length, added: 0, removed: [],
+    return {map: oldMap, preserved: old.length, added: 0,
+      addedOperations: [], removed: [], removedOperations: [],
       diagnostics: [], valid: true};
   }
 
@@ -204,6 +230,8 @@ export function synchronizeStoryIdentityMap(source: string, value: unknown, opti
 
   const next: StoryIdentityMapEntry[] = new Array(nodes.length);
   const removed: string[] = [];
+  const addedOperations: StoryIdentityAddedOperation[] = [];
+  const removedOperations: StoryIdentityRemovedOperation[] = [];
   const identities = new Set(old.map((entry) => entry.id === undefined
     ? `source:${entry.sourceId}` : `id:${entry.id}`));
   let preserved = 0;
@@ -262,6 +290,10 @@ export function synchronizeStoryIdentityMap(source: string, value: unknown, opti
         next[index] = {sourceId: identity, kind: node.kind,
           ...(node.kind === "command" ? {command: node.name} : {}),
           fingerprint: current[index]!};
+        addedOperations.push({operation: index + 1, line: node.span.start.line,
+          kind: node.kind,
+          ...(node.kind === "command" ? {command: node.name} : {}),
+          sourceId: identity, preview: Array.from(node.raw.trim()).slice(0, 120).join("")});
         added += 1;
       }
     } else {
@@ -269,7 +301,11 @@ export function synchronizeStoryIdentityMap(source: string, value: unknown, opti
         const entry = old[index]!;
         if (newPositions.has(entry.fingerprint)) return issue("PXSTORY1413",
           "Removed Story operation appears elsewhere; review its saved identity manually", path);
-        removed.push(entry.id === undefined ? `source:${entry.sourceId}` : `id:${entry.id}`);
+        const identity = entry.id === undefined ? `source:${entry.sourceId}` : `id:${entry.id}`;
+        removed.push(identity);
+        removedOperations.push({oldOperation: index + 1, identity,
+          kind: entry.kind,
+          ...(entry.kind === "command" ? {command: entry.command} : {})});
       }
     }
     return undefined;
@@ -291,7 +327,8 @@ export function synchronizeStoryIdentityMap(source: string, value: unknown, opti
   const applied = applyStoryIdentityMap(document, map, mapPath);
   if (applied.diagnostics.some((diagnostic) => diagnostic.severity === "error"))
     return failed(applied.diagnostics);
-  return {map, preserved, added, removed, diagnostics: [], valid: true};
+  return {map, preserved, added, addedOperations, removed,
+    removedOperations, diagnostics: [], valid: true};
 }
 
 /** Materialize sidecar ids as non-executable synthetic directives so the
