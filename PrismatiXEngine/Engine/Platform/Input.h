@@ -115,6 +115,14 @@ public:
     [[nodiscard]] bool ClearBindings(std::string_view action);
     [[nodiscard]] bool BindKey(std::string_view action, int scancode);
     [[nodiscard]] bool BindGamepadButton(std::string_view action, int button);
+    // Named actions default to the global context. The host selects a base
+    // context; scripts may push temporary overlays for nested screens.
+    [[nodiscard]] bool SetActionContext(std::string_view action,
+                                        std::string context);
+    [[nodiscard]] bool SetBaseContext(std::string context);
+    [[nodiscard]] bool PushContext(std::string context);
+    [[nodiscard]] bool PopContext();
+    [[nodiscard]] std::vector<std::string> ActiveContexts() const;
     [[nodiscard]] static std::optional<int> KeyCode(std::string_view name);
     [[nodiscard]] static std::string KeyName(int scancode);
     [[nodiscard]] std::vector<int> KeyBindings(std::string_view action) const;
@@ -202,6 +210,7 @@ private:
     struct NamedBindings {
         std::set<int> keys;
         std::set<int> gamepadButtons;
+        std::string context = "global";
     };
     enum class EventSourceKind : std::uint8_t {
         None,
@@ -216,6 +225,7 @@ private:
     };
 
     [[nodiscard]] bool HasCurrentEvent(std::uint64_t eventId) const;
+    [[nodiscard]] bool ActionActive(std::string_view action) const;
     [[nodiscard]] bool EventDefaultSuppressed(const InputEvent& event) const;
     [[nodiscard]] std::uint64_t AppendEvent(
         InputEvent event, EventSource source = {});
@@ -231,6 +241,8 @@ private:
     std::array<std::set<int>,kActionCount> m_gamepadBindings;
     std::set<InputAction> m_injectedActions;
     std::map<std::string,NamedBindings,std::less<>> m_namedBindings;
+    std::string m_baseContext = "global";
+    std::vector<std::string> m_contextStack;
     KeyboardBindingMap m_pendingKeyBindings;
     std::set<std::string,std::less<>> m_injectedNamedActions;
     std::vector<InputEvent> m_events;

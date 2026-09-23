@@ -950,6 +950,11 @@ void TestPhaseThreePublicRuntimeSurfaces(px::test::Suite& suite) {
         }
         if (!Engine.RegisterInputAction("portrait.interact"))
             throw new Error("custom input action registration failed");
+        if (!Engine.SetInputActionContext("portrait.interact", "game") ||
+            !Engine.PushInputContext("game") ||
+            !Engine.GetInputContexts().includes("game") ||
+            !Engine.PopInputContext())
+            throw new Error("input context stack is not exposed");
         if (!Engine.BindInputKey("portrait.interact", 27) ||
             Engine.GetInputKeyBindings("portrait.interact")[0] !== 27)
             throw new Error("input key inspection failed");

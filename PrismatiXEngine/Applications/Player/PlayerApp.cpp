@@ -1469,10 +1469,16 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         m_catalog.Variables().size(), m_catalog.InputBindings().size(),
         m_catalog.Gallery().size());
     for (const auto& binding : m_catalog.InputBindings()) {
-        if (binding.command == "screen.open") {
+        if (binding.command == "screen.open" && !binding.argument.empty()) {
             const int sc = ScancodeFromName(binding.key);
             if (sc != SDL_SCANCODE_UNKNOWN) {
-                m_screenTriggers[sc] = binding.argument;
+                const std::string action = "screen.open." + binding.argument;
+                auto& input = m_runtime.GetInput();
+                if (!input.HasAction(action)) (void)input.RegisterAction(action);
+                (void)input.SetActionContext(action, "game");
+                if (!m_settings.keyboardBindings.contains(action))
+                    (void)input.BindKey(action, sc);
+                m_screenTriggers[action] = binding.argument;
                 PX_LOG_INFO("Player input binding registered key={} route={}",
                             binding.key, binding.argument);
             }
@@ -3175,7 +3181,15 @@ void PlayerApp::DriveE2EJourney() {
                 m_quitRequested=true;break;
             }
             PX_LOG_INFO("Player release F2 policy ignored demo reset shortcut");
-            input.InjectKeyPress(SDL_SCANCODE_G);
+            if (input.KeyBindings("screen.open.gallery") !=
+                std::vector<int>{SDL_SCANCODE_F8}) {
+                PX_LOG_ERROR("Player E2E saved Gallery shortcut was not restored");
+                m_e2eFailed = true;
+                m_e2eStage = E2EStage::Complete;
+                m_quitRequested = true;
+                break;
+            }
+            input.InjectKeyPress(SDL_SCANCODE_F8);
             m_e2eStage=E2EStage::AwaitGallery;
             break;
         }
@@ -3584,6 +3598,12 @@ void PlayerApp::MainLoop() {
         px::Input& input = m_runtime.GetInput();
         const float dt = m_runtime.GetClock().DeltaSeconds();
         const std::uint64_t now = m_runtime.GetClock().NowMs();
+        const std::string_view inputRoute = m_session->Routes().CurrentRoute();
+        const bool gameInputContext = m_appState == AppState::Game &&
+            !m_gameStartTransitionActive && m_viewingCG.empty() &&
+            m_session->Routes().CurrentModalRoute().empty() &&
+            (inputRoute == "hud" || inputRoute == "game");
+        (void)input.SetBaseContext(gameInputContext ? "game" : "ui");
         DriveE2EJourney();
 
         if (input.KeyPressed(SDL_SCANCODE_RETURN) &&
@@ -3633,8 +3653,11 @@ void PlayerApp::MainLoop() {
             currentRoute == "hud" || currentRoute == "game";
 
         if (m_appState == AppState::Game && !modalOpen && gameplayRoute) {
-            for (const auto& [scancode, route] : m_screenTriggers)
-                if (input.KeyPressed(scancode)) OpenScreen(route);
+            for (const auto& [action, route] : m_screenTriggers)
+                if (input.ActionPressed(action)) {
+                    OpenScreen(route);
+                    break;
+                }
             // An input binding may have opened a modal during this frame. Do
             // not let the gameplay HUD refresh replace its authored scene.
             modalOpen = !m_session->Routes().CurrentModalRoute().empty();

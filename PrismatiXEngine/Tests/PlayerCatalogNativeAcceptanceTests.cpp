@@ -1,4 +1,6 @@
 #include "Engine/IO/Crypto.h"
+#include "Engine/Platform/Input.h"
+#include "Engine/Progression/GameSettings.h"
 #include "Engine/Progression/GlobalProfile.h"
 #include "Engine/Progression/GlobalProfileStore.h"
 #include "Engine/Progression/Persist.h"
@@ -657,6 +659,24 @@ int main(int argc, char* argv[]) {
         suite.Require(std::filesystem::is_regular_file(output / "Content.pdx"),
                       "packaged output contains its content archive");
 
+        const auto startupManifest = px::sdk::detail::ParsePackageManifest(
+            Read(output / "Package/manifest.json"));
+        suite.Require(startupManifest.Valid(),
+                      "packaged manifest supplies the stable settings key");
+        const px::crypto::Key startupKey =
+            px::progress::DeriveGameDataPersistenceKey(
+                startupManifest.manifest.persistenceDataId);
+        const int galleryOverride = px::Input::KeyCode("F8").value_or(0);
+        suite.Require(galleryOverride > 0,
+                      "F8 is a recognized keyboard override");
+        px::progress::GameSettings startupSettings;
+        startupSettings.keyboardBindings["screen.open.gallery"] =
+            {galleryOverride};
+        std::filesystem::create_directories(output / "Save");
+        suite.Require(startupSettings.Save(
+                          (output / "Save/config.dat").string(), &startupKey),
+                      "encrypted settings can override an authored screen shortcut");
+
         const auto packagedPlayer = output / player.filename();
         const auto launchDirectory = fixture.path / "UnrelatedWorkingDirectory";
         std::filesystem::create_directories(launchDirectory / "Save");
@@ -767,6 +787,14 @@ int main(int argc, char* argv[]) {
                       "saved Player profile reloads with the package identity");
         suite.Expect(profile.CGUnlocked("ending-rin"),
                      "Gallery unlock survives Player shutdown and reload");
+        px::progress::GameSettings persistedSettings;
+        suite.Require(persistedSettings.Load(
+                          (output / "Save/config.dat").string(), &startupKey),
+                      "Player preserves its encrypted keyboard settings");
+        suite.Expect(persistedSettings.keyboardBindings.at(
+                         "screen.open.gallery") ==
+                         std::vector<int>{galleryOverride},
+                     "authored Gallery shortcut remains remapped after Player exit");
         suite.Expect(Read(unrelatedSave) == "unrelated-player-data" &&
                          !std::filesystem::exists(launchDirectory / "logs"),
                      "package launch never reads or writes the caller's persistence or logs");

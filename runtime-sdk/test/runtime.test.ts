@@ -159,6 +159,10 @@ const engine = {
   ConsumeInputEvent: () => true,
   SuppressInputDefault: () => true,
   RegisterInputAction: () => true,
+  SetInputActionContext: () => true,
+  PushInputContext: () => true,
+  PopInputContext: () => true,
+  GetInputContexts: () => ["global", "game"],
   BindInputKey: () => true,
   GetInputKeyBindings: () => [44],
   GetInputKeyCode: () => 58,
@@ -264,6 +268,9 @@ if (!ctx.input.actionPressed("advance") || ctx.input.actionDown("pause")) throw 
 const event = ctx.input.events()[0];
 if (!event || event.action !== "sample.interact" || !ctx.input.consume(event.id) ||
     !ctx.input.suppressDefault(event.id) || !ctx.input.registerAction("sample.interact") ||
+    !ctx.input.assignContext("sample.interact", "game") ||
+    !ctx.input.pushContext("game") ||
+    ctx.input.contexts()[1] !== "game" || !ctx.input.popContext() ||
     !ctx.input.bindKey("sample.interact", 44) ||
     ctx.input.keyBindings("sample.interact")[0] !== 44 ||
     ctx.input.keyCode("F1") !== 58 || ctx.input.keyName(58) !== "F1" ||

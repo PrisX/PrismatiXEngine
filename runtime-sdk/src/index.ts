@@ -598,6 +598,10 @@ export interface PrismatiXEngine {
   ConsumeInputEvent(eventId: number): boolean;
   SuppressInputDefault(eventId: number): boolean;
   RegisterInputAction(action: string): boolean;
+  SetInputActionContext(action: string, context: string): boolean;
+  PushInputContext(context: string): boolean;
+  PopInputContext(): boolean;
+  GetInputContexts(): readonly string[];
   BindInputKey(action: string, scancode: number): boolean;
   GetInputKeyBindings(action: string): readonly number[];
   GetInputKeyCode(name: string): number | null;
@@ -750,6 +754,10 @@ export const ENGINE_HOST_BINDINGS = [
   "ConsumeInputEvent",
   "SuppressInputDefault",
   "RegisterInputAction",
+  "SetInputActionContext",
+  "PushInputContext",
+  "PopInputContext",
+  "GetInputContexts",
   "BindInputKey",
   "GetInputKeyBindings",
   "GetInputKeyCode",
@@ -930,6 +938,10 @@ export interface PrismatiXContext {
     consume(eventId: number): boolean;
     suppressDefault(eventId: number): boolean;
     registerAction(action: string): boolean;
+    assignContext(action: string, context: string): boolean;
+    pushContext(context: string): boolean;
+    popContext(): boolean;
+    contexts(): readonly string[];
     bindKey(action: string, scancode: number): boolean;
     keyBindings(action: string): readonly number[];
     keyCode(name: string): number | null;
@@ -1218,6 +1230,10 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
       consume: (eventId) => engine.ConsumeInputEvent(eventId),
       suppressDefault: (eventId) => engine.SuppressInputDefault(eventId),
       registerAction: (action) => engine.RegisterInputAction(action),
+      assignContext: (action, context) => engine.SetInputActionContext(action, context),
+      pushContext: (context) => engine.PushInputContext(context),
+      popContext: () => engine.PopInputContext(),
+      contexts: () => engine.GetInputContexts(),
       bindKey: (action, scancode) => engine.BindInputKey(action, scancode),
       keyBindings: (action) => engine.GetInputKeyBindings(action),
       keyCode: (name) => engine.GetInputKeyCode(name),

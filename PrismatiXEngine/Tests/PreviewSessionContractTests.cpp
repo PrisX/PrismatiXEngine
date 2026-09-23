@@ -268,6 +268,36 @@ int main() {
                      "reset clears custom overrides and restores engine defaults");
     });
 
+    suite.Run("NamedActionContextsGateActivationWithoutDroppingBindings", [&] {
+        px::Input input;
+        suite.Require(input.RegisterAction("screen.open.gallery") &&
+                          input.BindKey("screen.open.gallery", SDL_SCANCODE_G) &&
+                          input.SetActionContext("screen.open.gallery", "game"),
+                      "authored screen action has a named gameplay context");
+        input.NewFrame();
+        input.InjectKeyPress(SDL_SCANCODE_G);
+        suite.Expect(!input.ActionPressed("screen.open.gallery"),
+                     "game shortcut stays inactive in the global context");
+        suite.Require(input.SetBaseContext("game"),
+                      "host selects the gameplay context");
+        suite.Expect(input.ActionPressed("screen.open.gallery"),
+                     "context activation applies to current-frame events");
+        suite.Require(input.SetBaseContext("ui"),
+                      "host selects the menu context");
+        suite.Expect(!input.ActionPressed("screen.open.gallery"),
+                     "game shortcut does not fire while a menu owns input");
+        suite.Require(input.PushContext("game"),
+                      "temporary overlay can activate a nested context");
+        suite.Expect(input.ActionPressed("screen.open.gallery") &&
+                         input.ActiveContexts() ==
+                             std::vector<std::string>{"global", "ui", "game"},
+                     "overlay activation is visible and preserves the base context");
+        suite.Expect(input.PopContext() &&
+                         !input.ActionPressed("screen.open.gallery") &&
+                         !input.PopContext(),
+                     "popping the overlay restores menu input without underflow");
+    });
+
     suite.Run("AudioHandlesCompletionAndRestorePolicy", [&] {
         suite.Expect(
             px::audio::AudioEngine::RestorePolicyFor(

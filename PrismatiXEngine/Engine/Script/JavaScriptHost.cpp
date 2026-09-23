@@ -2835,6 +2835,28 @@ public:
                                  ? services.input->ActionPressed(first)
                                  : services.input->ActionDown(first));
             }
+            if (operation == "input.setActionContext") {
+                if (!StringArgument(count, values, 0, first) ||
+                    !StringArgument(count, values, 1, second))
+                    return JS_ThrowTypeError(
+                        context, "SetInputActionContext requires an action and context");
+                return JS_NewBool(context,
+                    services.input->SetActionContext(first, std::move(second)));
+            }
+            if (operation == "input.pushContext") {
+                if (!StringArgument(count, values, 0, first))
+                    return JS_ThrowTypeError(context, "PushInputContext requires a context");
+                return JS_NewBool(context,
+                    services.input->PushContext(std::move(first)));
+            }
+            if (operation == "input.popContext")
+                return JS_NewBool(context, services.input->PopContext());
+            if (operation == "input.contexts") {
+                VariantArray contexts;
+                for (const auto& name : services.input->ActiveContexts())
+                    contexts.emplace_back(name);
+                return ToJavaScript(Variant(std::move(contexts)));
+            }
             if (operation == "input.bindKey") {
                 if (!StringArgument(count, values, 0, first) || first.empty() ||
                     !IntegerArgument(count, values, 1, integer) || integer < 0 ||
@@ -3238,6 +3260,10 @@ public:
                 ConsumeInputEvent: { value: bindRuntime("input.consume") },
                 SuppressInputDefault: { value: bindRuntime("input.suppressDefault") },
                 RegisterInputAction: { value: bindRuntime("input.registerAction") },
+                SetInputActionContext: { value: bindRuntime("input.setActionContext") },
+                PushInputContext: { value: bindRuntime("input.pushContext") },
+                PopInputContext: { value: bindRuntime("input.popContext") },
+                GetInputContexts: { value: bindRuntime("input.contexts") },
                 BindInputKey: { value: bindRuntime("input.bindKey") },
                 GetInputKeyBindings: { value: bindRuntime("input.keyBindings") },
                 GetInputKeyCode: { value: bindRuntime("input.keyCode") },

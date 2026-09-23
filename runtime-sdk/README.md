@@ -109,13 +109,29 @@ if (result.status === "conflict") {
 }
 ```
 
+An authored game-catalog binding such as
+`{"key":"G","command":"screen.open","argument":"gallery"}` becomes the
+named action `screen.open.gallery`. The native Player activates it only in
+the gameplay input context, and a saved override replaces its default key:
+
+```ts
+ctx.input.rebindKey("screen.open.gallery", "F8");
+ctx.input.registerAction("photo.inspect");
+ctx.input.assignContext("photo.inspect", "photo-overlay");
+ctx.input.pushContext("photo-overlay");
+// Pop the overlay when its screen closes.
+ctx.input.popContext();
+```
+
 `rebindKey` leaves gamepad bindings untouched. Unknown actions and invalid key
 names are reported without altering the old binding. Passing `true` as its
 third argument explicitly permits a shared key. The native Player persists
 keyboard overrides in its existing settings file, including actions that a
 script registers later. Other hosts must persist the native Input binding map
-themselves. Screen-specific action contexts and a ready-made remapping UI are
-not yet provided.
+themselves. The Player selects `game` or `ui` as its base context; extensions
+can assign custom actions to a context and push/pop temporary overlays.
+There is not yet a project-wide declarative action-context map or a ready-made
+remapping UI.
 
 Extension-owned state participates in save, seek, and rollback through a
 versioned, deterministic JSON provider. Capture, restore, and migration are

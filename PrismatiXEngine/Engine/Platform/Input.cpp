@@ -162,6 +162,53 @@ bool Input::BindGamepadButton(const std::string_view action, const int button) {
     return true;
 }
 
+bool Input::SetActionContext(const std::string_view action,
+                             std::string context) {
+    const auto found = m_namedBindings.find(action);
+    if (found == m_namedBindings.end() || context.empty() ||
+        context.size() > 128 || context.find('\0') != std::string::npos)
+        return false;
+    found->second.context = std::move(context);
+    return true;
+}
+
+bool Input::SetBaseContext(std::string context) {
+    if (context.empty() || context.size() > 128 ||
+        context.find('\0') != std::string::npos)
+        return false;
+    m_baseContext = std::move(context);
+    return true;
+}
+
+bool Input::PushContext(std::string context) {
+    if (context.empty() || context.size() > 128 ||
+        context.find('\0') != std::string::npos || m_contextStack.size() >= 32)
+        return false;
+    m_contextStack.push_back(std::move(context));
+    return true;
+}
+
+bool Input::PopContext() {
+    if (m_contextStack.empty()) return false;
+    m_contextStack.pop_back();
+    return true;
+}
+
+std::vector<std::string> Input::ActiveContexts() const {
+    std::vector<std::string> result{"global"};
+    if (m_baseContext != "global") result.push_back(m_baseContext);
+    result.insert(result.end(), m_contextStack.begin(), m_contextStack.end());
+    return result;
+}
+
+bool Input::ActionActive(const std::string_view action) const {
+    const auto found = m_namedBindings.find(action);
+    if (found == m_namedBindings.end()) return false;
+    const auto& context = found->second.context;
+    return context == "global" || context == m_baseContext ||
+           std::ranges::find(m_contextStack, context) != m_contextStack.end();
+}
+
 std::optional<int> Input::KeyCode(const std::string_view name) {
     if (name.empty() || name.find('\0') != std::string_view::npos)
         return std::nullopt;
@@ -259,6 +306,7 @@ void Input::ResetKeyboardBindings() {
 }
 
 bool Input::ActionPressed(const std::string_view action) const {
+    if (!ActionActive(action)) return false;
     bool emitted = false;
     for (const InputEvent& event : m_events) {
         if (event.type != InputEventType::Action || event.action != action)
@@ -280,6 +328,7 @@ bool Input::ActionPressed(const std::string_view action) const {
 }
 
 bool Input::ActionDown(const std::string_view action) const {
+    if (!ActionActive(action)) return false;
     // Injected actions behave as a one-frame down state. Physical sources use
     // the held sets below so down+up in one frame does not leave a false hold.
     for (const InputEvent& event : m_events) {
@@ -316,6 +365,7 @@ bool Input::ActionDown(const InputAction action) const {
 bool Input::ActionPressedWithoutKeyboard(const InputAction action) const {
     if(action==InputAction::Count)return false;
     const std::string_view name = ActionName(action);
+    if (!ActionActive(name)) return false;
     for (const InputEvent& event : m_events) {
         if (event.type != InputEventType::Action || event.action != name)
             continue;

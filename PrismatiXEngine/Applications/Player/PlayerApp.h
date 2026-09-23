@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <deque>
 #include <future>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -154,7 +155,7 @@ private:
     std::unique_ptr<ui::startup::SplashSequencePlayer> m_splash;
     std::vector<std::string> m_choiceTexts;
     vn::GameCatalog m_catalog;
-    std::unordered_map<int, std::string> m_screenTriggers;
+    std::map<std::string, std::string, std::less<>> m_screenTriggers;
 
     AppState m_appState = AppState::BootSplash;
     bool m_uiTransitionStartedThisFrame = false;
