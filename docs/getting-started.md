@@ -110,6 +110,12 @@ before shipping a revised story.
 
 The global command delegates project commands to the exact local CLI pinned in the game's package.json. Commit that manifest and its lock. A missing or mismatched local CLI is diagnosed instead of silently using the global version. After preparation, dev/build use local packages and bundled runtime offline. Upgrade tool versions deliberately in a branch, reinstall the pinned dependencies, and test old saves and the packaged Player before distributing an update.
 
+If you intentionally link a local Engine checkout with `file:` dependencies,
+run `npm run build` in that checkout after editing CLI or Authoring SDK source.
+Local source packages carry a content-based build stamp; an out-of-date `dist`
+now fails with `PXSDKBUILD1001` instead of silently running old compiler code.
+Registry packages contain no source tree and do not perform this local check.
+
 For media selected by a dynamic runtime path rather than a static Story/UI
 reference, add `"resourceIncludes": ["Assets/MyFamily", "Assets/Audio/confirm.ogg"]`
 to `prismatix.json`. Directories are expanded during validate/build; the files

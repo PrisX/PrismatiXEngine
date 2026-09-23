@@ -22,6 +22,7 @@ import {migrateCommand} from "./migration.js";
 import {inspectSaveWithRuntime} from "./save-inspection.js";
 
 import {
+  assertLocalBuildFresh,
   canonicalJson,
   applyStoryIdentityMap,
   assignStableSourceIds,
@@ -39,6 +40,8 @@ import {
   type SourceSpan,
   type UiTypeRegistryMetadata,
 } from "@prismatix/authoring-sdk";
+
+assertLocalBuildFresh(fileURLToPath(new URL("../..", import.meta.url)), "@prismatix/cli");
 
 interface Options {readonly values: Map<string, string>; readonly flags: Set<string>; readonly positional: string[]}
 interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>; readonly dependencies: ReadonlySet<string>; readonly includedResources: Readonly<Record<string, readonly string[]>>; readonly storyPath?: string}

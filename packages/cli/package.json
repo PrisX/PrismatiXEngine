@@ -5,7 +5,7 @@
   "bin": {"prismatix": "./dist/src/cli.js"},
   "files": ["dist/src", "templates", "runtime"],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node ../authoring-sdk/dist/src/build-freshness.js --stamp .",
     "test": "node --test dist/test/*.test.js"
   },
   "dependencies": {"@prismatix/authoring-sdk": "0.2.0", "typescript-compiler": "npm:typescript@5.9.2"},

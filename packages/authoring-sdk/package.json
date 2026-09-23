@@ -22,7 +22,7 @@
     "dist/src"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node dist/src/build-freshness.js --stamp .",
     "test": "node --test dist/test/*.test.js"
   },
   "dependencies": {
