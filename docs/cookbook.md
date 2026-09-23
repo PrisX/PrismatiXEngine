@@ -38,6 +38,14 @@ The starter registers `guide`, its `smile` expression and an original background
 
 To add an expression, add an asset descriptor and an expression in `Characters/guide.pxcharacter`, then select its alias with `expression=...`. Positions are `left`, `center`, `right` (also 1/2/3). The move duration is milliseconds in the native session implementation.
 
+For a dynamically selected family of UI/media files, put the containing
+directory in the project's `resourceIncludes`, for example
+`"resourceIncludes": ["Assets/UI/Original"]`. UI controls can still use
+ordinary paths; do not also list every file in `assets` unless it needs a
+stable catalog identity. `prismatix validate` reports `catalogIncludeOverlap`
+so large duplicate inventories are visible. Overlap is not automatically an
+error: an ID referenced by a gallery or character may still be necessary.
+
 After registering suitable decodable media, the compiler accepts:
 
 ```pxstory

@@ -340,6 +340,7 @@ test("resourceIncludes package unreferenced UI families and audio without artifa
   assert.equal(summary.includeRoots, 2);
   assert.equal(summary.includedFiles, 3);
   assert.equal(summary.resourceFiles, 3);
+  assert.equal(JSON.parse(validated.stdout).catalogIncludeOverlap, 0);
   const output = join(value.root, "included-artifact");
   const built = run(["build", value.project, "--artifact-only", "--output", output]);
   assert.equal(built.status, 0, built.stderr);
@@ -367,6 +368,19 @@ test("resourceIncludes package unreferenced UI families and audio without artifa
   const linked = run(["validate", value.project]);
   assert.equal(linked.status, 1);
   assert.match(linked.stderr, /symbolic link/u);
+});
+
+test("validate reports catalog entries already covered by an included media directory", async () => {
+  const value = await fixture();
+  const manifest = JSON.parse(await readFile(value.project, "utf8")) as Record<string, unknown>;
+  manifest.resourceIncludes = ["Assets/UI/Original"];
+  manifest.assets = [{id: "33333333-3333-4333-8333-333333333333", kind: "ui",
+    source: "Assets/UI/Original/scene.png"}];
+  await write(value.project, JSON.stringify(manifest));
+  await write(join(value.root, "Assets/UI/Original/scene.png"), "picture");
+  const validated = run(["validate", value.project]);
+  assert.equal(validated.status, 0, validated.stderr);
+  assert.equal(JSON.parse(validated.stdout).catalogIncludeOverlap, 1);
 });
 
 test("startup voice variants enter the artifact without asset ids or resourceIncludes", async () => {
