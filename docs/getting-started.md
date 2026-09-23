@@ -26,10 +26,18 @@ Edit `my-game/Story/main.pxstory` and save. Keep `[id main.welcome]` when rewrit
 
 When the bundled Runtime includes `share/PrismatiX/PrismatiXUiTypeRegistry.json`,
 `validate`, `dev`, `build`, `pack`, and `run` also verify UI runtime property
-names and types before launching the Player. For a separate native SDK, pass
-`--ui-registry <path-to-PrismatiXUiTypeRegistry.json>` to these commands.
-Without a registry, canonical UI schema checks still run, but native property
-type compatibility cannot be established until the Player loads the scene.
+names and types before launching the Player. A selected `--runtime` prefix or
+native build directory supplies its own registry for these commands; `validate`
+accepts `--runtime` too. A fresh `pack`/distribution build also looks next to
+its selected Packager (or in that bundle's `share/PrismatiX` directory).
+For a separate native SDK, you can still pass
+`--ui-registry <path-to-PrismatiXUiTypeRegistry.json>` explicitly.
+Selecting `--runtime` without a registry is an error. Without any selected or
+bundled registry, canonical UI schema checks still run, but CLI emits
+`PXCLI1042` to say native property compatibility was not checked. In a local
+CMake build, regenerate an outdated manifest with the
+`PrismatiXUiTypeRegistryManifest` target; CLI rejects a manifest older than
+its adjacent native exporter.
 
 Press Ctrl+C to close a watch session. Superseded and rejected revisions are retired only after their Preview process confirms closure. The last successfully acknowledged revision remains in `.prismatix/dev/` for diagnosis and is ignored by Git. A process that cannot confirm closure keeps its resources.
 

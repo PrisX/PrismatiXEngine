@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
-import {mkdtemp, mkdir, readFile, readdir, stat, symlink, writeFile} from "node:fs/promises";
+import {mkdtemp, mkdir, readFile, readdir, stat, symlink, utimes, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {dirname, join, resolve} from "node:path";
 import {spawnSync} from "node:child_process";
@@ -139,6 +139,42 @@ test("validate and build reject native UI property type mismatches before packag
   await write(uiPath, JSON.stringify(ui));
   const valid = run(["validate", value.project, "--ui-registry", registryPath]);
   assert.equal(valid.status, 0, valid.stderr);
+});
+
+test("validate and artifact build use the selected local Runtime UI registry", async () => {
+  const value = await fixture();
+  const uiPath = join(value.root, "Content/UI/Title.pxui");
+  const ui = JSON.parse(await readFile(uiPath, "utf8")) as {
+    nodes: Array<{runtimeProperties: Record<string, unknown>}>
+  };
+  ui.nodes[0]!.runtimeProperties.modulate = "#2D171DFF";
+  await write(uiPath, JSON.stringify(ui));
+  const runtime = join(value.root, "native-build");
+  const registry = join(runtime, "PrismatiXUiTypeRegistry.json");
+  await write(registry, JSON.stringify({format: "PrismatiXUiTypeRegistry", schemaRevision: 2,
+    controls: [{runtimeType: "Control", properties: [{id: "modulate", valueType: "color",
+      writable: true, bindable: true, animatable: true}]}]}));
+  const invalid = run(["validate", value.project, "--runtime", runtime]);
+  assert.equal(invalid.status, 1);
+  assert.match(invalid.stderr, /PXSDKSEM1324/u);
+  const rejectedBuild = run(["build", value.project, "--artifact-only", "--output",
+    join(value.root, "invalid-build"), "--runtime", runtime]);
+  assert.equal(rejectedBuild.status, 1);
+  assert.match(rejectedBuild.stderr, /PXSDKSEM1324/u);
+
+  const missing = join(value.root, "missing-registry");
+  await mkdir(missing);
+  const unverified = run(["validate", value.project, "--runtime", missing]);
+  assert.equal(unverified.status, 1);
+  assert.match(unverified.stderr, /UI TypeRegistry manifest was not found/u);
+
+  const exporter = join(runtime, process.platform === "win32"
+    ? "PrismatiXUiTypeManifest.exe" : "PrismatiXUiTypeManifest");
+  await write(exporter, "fixture");
+  await utimes(registry, new Date(0), new Date(0));
+  const stale = run(["validate", value.project, "--runtime", runtime]);
+  assert.equal(stale.status, 1);
+  assert.match(stale.stderr, /older than its native exporter/u);
 });
 
 test("dev --once streams PreviewHost protocol output and exits after a clean shutdown", async () => {
@@ -453,8 +489,34 @@ test("pack invokes the native file-based request protocol", async () => {
   const packed = run(["pack", value.project, "--packager", mock,
     "--player", player, "--output", output]);
   assert.equal(packed.status, 0, packed.stderr);
+  assert.match(packed.stderr, /PXCLI1042/u);
   assert.match(packed.stdout, /"fileRequest":true/);
   assert.match(packed.stdout, /"packed":true/);
+});
+
+test("pack validates UI against the selected Packager's adjacent registry", async () => {
+  const value = await fixture();
+  const uiPath = join(value.root, "Content/UI/Title.pxui");
+  const ui = JSON.parse(await readFile(uiPath, "utf8")) as {
+    nodes: Array<{runtimeProperties: Record<string, unknown>}>
+  };
+  ui.nodes[0]!.runtimeProperties.modulate = "#2D171DFF";
+  await write(uiPath, JSON.stringify(ui));
+  const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-native-ui-"));
+  const mock = join(tools, "mock-packager.mjs");
+  const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
+  await write(mock, "process.exit(0);\n");
+  await write(player, "fixture");
+  await write(join(tools, "PrismatiXUiTypeRegistry.json"), JSON.stringify({
+    format: "PrismatiXUiTypeRegistry", schemaRevision: 2,
+    controls: [{runtimeType: "Control", properties: [{id: "modulate", valueType: "color",
+      writable: true, bindable: true, animatable: true}]}],
+  }));
+  const packed = run(["pack", value.project, "--packager", mock, "--player", player,
+    "--output", join(value.root, "package")]);
+  assert.equal(packed.status, 1);
+  assert.match(packed.stderr, /PXSDKSEM1324/u);
+  assert.doesNotMatch(packed.stderr, /PXCLI1042/u);
 });
 
 test("pack streams native progress and handles more than 16 MiB of progress events", async () => {

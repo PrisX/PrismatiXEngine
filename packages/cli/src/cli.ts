@@ -62,7 +62,7 @@ const machineOutput = process.argv.includes("--json");
 const commandOptions: Readonly<Record<string, {values: string; flags: string}>> = {
   create: {values: "name id locale width height", flags: ""},
   dev: {values: "runtime preview-host debounce ui-registry", flags: "once smoke"},
-  validate: {values: "ui-registry", flags: ""},
+  validate: {values: "runtime ui-registry", flags: ""},
   build: {values: "output artifact runtime packager player compression ui-registry", flags: "artifact-only distribution encrypt"},
   pack: {values: "output artifact runtime packager player compression ui-registry", flags: "encrypt"},
   run: {values: "output artifact runtime packager player compression ui-registry", flags: "encrypt"},
@@ -685,11 +685,28 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
     ...(storyPath === undefined ? {} : {storyPath})};
 }
 
-async function loadUiRegistry(override?: string): Promise<UiTypeRegistryMetadata | undefined> {
-  const path = override === undefined
-    ? fileURLToPath(new URL(`../../runtime/${process.platform}-${process.arch}/share/PrismatiX/PrismatiXUiTypeRegistry.json`, import.meta.url))
-    : resolve(override);
-  if (override === undefined && !existsSync(path)) return undefined;
+async function loadUiRegistry(override?: string, runtimeHint?: string,
+  packagerPath?: string): Promise<UiTypeRegistryMetadata | undefined> {
+  const bundled = fileURLToPath(new URL(
+    `../../runtime/${process.platform}-${process.arch}/share/PrismatiX/PrismatiXUiTypeRegistry.json`, import.meta.url));
+  let path: string | undefined;
+  if (override !== undefined) path = resolve(override);
+  else if (runtimeHint !== undefined || packagerPath !== undefined) {
+    const hint = resolve(runtimeHint ?? packagerPath!);
+    const location = runtimeHint === undefined ? dirname(hint)
+      : (await stat(hint)).isDirectory() ? hint : dirname(hint);
+    const candidates = [join(location, "PrismatiXUiTypeRegistry.json"),
+      join(location, "share", "PrismatiX", "PrismatiXUiTypeRegistry.json"),
+      join(location, "..", "share", "PrismatiX", "PrismatiXUiTypeRegistry.json")];
+    path = candidates.find((candidate) => existsSync(candidate));
+    if (path === undefined && runtimeHint !== undefined)
+      throw new Error(`UI TypeRegistry manifest was not found in --runtime ${hint}; use --ui-registry or build PrismatiXUiTypeRegistryManifest`);
+  } else if (existsSync(bundled)) path = bundled;
+  if (path === undefined) return undefined;
+  const emitter = join(dirname(path), process.platform === "win32"
+    ? "PrismatiXUiTypeManifest.exe" : "PrismatiXUiTypeManifest");
+  if (existsSync(emitter) && (await stat(emitter)).mtimeMs > (await stat(path)).mtimeMs + 1000)
+    throw new Error(`UI TypeRegistry manifest is older than its native exporter: ${path}; rebuild PrismatiXUiTypeRegistryManifest`);
   const source = object(await readJson(path));
   if (source?.format !== "PrismatiXUiTypeRegistry" || source.schemaRevision !== 2 ||
       !Array.isArray(source.controls) || !source.controls.every((entry) => {
@@ -706,9 +723,9 @@ async function loadUiRegistry(override?: string): Promise<UiTypeRegistryMetadata
 }
 
 async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
-  registryOverride?: string) {
-  const uiTypeRegistry = await loadUiRegistry(registryOverride);
-  return compileProject({project: loaded.project, documents: loaded.documents,
+  registryOverride?: string, runtimeHint?: string, packagerPath?: string) {
+  const uiTypeRegistry = await loadUiRegistry(registryOverride, runtimeHint, packagerPath);
+  const result = compileProject({project: loaded.project, documents: loaded.documents,
     sourceFiles: loaded.sourceFiles, locales: loaded.locales,
     projectPath: "project.pxproject",
     ...(loaded.storyPath === undefined ? {} : {storyPath: loaded.storyPath}),
@@ -722,12 +739,17 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
     resolveResourceInclude: (path) => loaded.includedResources[path],
     ...(committedRevision === undefined ? {} : {committedRevision}),
     ...(uiTypeRegistry === undefined ? {} : {uiTypeRegistry})});
+  if (uiTypeRegistry !== undefined ||
+      !Object.keys(loaded.documents).some((path) => /\.pxui(?:component)?$/u.test(path))) return result;
+  return {...result, diagnostics: [...result.diagnostics, {severity: "warning" as const,
+    code: "PXCLI1042", message: "Native UI property compatibility was not checked; select --runtime or --ui-registry"}]};
 }
 
 async function validateCommand(options: Options): Promise<number> {
   try {
     const loaded = await loadProject(options.positional[0]);
-    const result = await compileLoaded(loaded, undefined, options.values.get("ui-registry"));
+    const result = await compileLoaded(loaded, undefined, options.values.get("ui-registry"),
+      options.values.get("runtime"));
     printDiagnostics(result.diagnostics);
     if (!result.valid) return 1;
     process.stdout.write(`${JSON.stringify({valid: true, engineVersion: "0.2.0",
@@ -790,12 +812,14 @@ function protectedInputs(loaded: LoadedProject, artifact: BuildArtifact): string
 }
 
 async function buildProject(projectArgument: string | undefined, outputArgument: string | undefined,
-  committedRevision?: number, registryOverride?: string): Promise<BuildResult> {
+  committedRevision?: number, registryOverride?: string, runtimeHint?: string,
+  packagerPath?: string): Promise<BuildResult> {
   buildProgress("load", 0, 1);
   const loaded = await loadProject(projectArgument);
   buildProgress("load", 1, 1, 0, true);
   buildProgress("compile", 0, 1);
-  const compiled = await compileLoaded(loaded, committedRevision, registryOverride);
+  const compiled = await compileLoaded(loaded, committedRevision, registryOverride,
+    runtimeHint, packagerPath);
   printDiagnostics(compiled.diagnostics);
   if (!compiled.valid || compiled.artifact === undefined) throw new Error("Project validation or compilation failed");
   buildProgress("compile", 1, 1, 0, true);
@@ -830,7 +854,7 @@ async function buildCommand(options: Options): Promise<number> {
   }
   try {
     const built = await buildProject(options.positional[0], options.values.get("output"),
-      undefined, options.values.get("ui-registry"));
+      undefined, options.values.get("ui-registry"), options.values.get("runtime"));
     process.stdout.write(machineOutput ? `${JSON.stringify({built: true, output: built.output,
       runtimeIr: built.artifact.runtimeIrPath, sourceMap: built.artifact.sourceMapPath})}\n` : `Built Runtime artifact: ${built.output}\n`);
     return 0;
@@ -977,7 +1001,8 @@ async function packProject(options: Options): Promise<{output: string; player: s
     let sourceMap = "Runtime/main.pxmap";
     if (suppliedArtifact === undefined) {
       const built = await buildProject(options.positional[0], join(temp, "artifact"),
-        undefined, options.values.get("ui-registry"));
+        undefined, options.values.get("ui-registry"), options.values.get("runtime"),
+        packager);
       const loaded = await loadProject(options.positional[0]);
       root = built.root;
       artifactRoot = built.output;
@@ -1308,7 +1333,7 @@ async function devCommand(options: Options): Promise<number> {
       try {
         updated = changes === attempted && built !== undefined
           ? built : await buildProject(projectArgument, join(revisionRoot, String(++revision)),
-            revision, options.values.get("ui-registry"));
+            revision, options.values.get("ui-registry"), options.values.get("runtime"));
         candidate = await PreviewClient.start(previewHost.path, updated.root);
         await applyPreviewBuild(candidate, updated, false);
         const played = await candidate.request("play", updated.artifact.runtimeIr.documentId,

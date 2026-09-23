@@ -437,6 +437,12 @@ add_custom_command(
 )
 add_custom_target(PrismatiXUiTypeRegistryManifest ALL
                   DEPENDS "${PRISMATIX_UI_TYPE_MANIFEST}")
+# Building a single native tool must refresh the UI contract that the CLI
+# discovers beside it. Otherwise an old JSON manifest can reject properties
+# supported by the newly linked Player/PreviewHost.
+add_dependencies(PrismatiXPackager PrismatiXUiTypeRegistryManifest)
+add_dependencies(PrismatiXPlayer PrismatiXUiTypeRegistryManifest)
+add_dependencies(PrismatiXPreviewHost PrismatiXUiTypeRegistryManifest)
 install(FILES "${PRISMATIX_UI_TYPE_MANIFEST}"
     DESTINATION .
     COMPONENT PrismatiXSDK
