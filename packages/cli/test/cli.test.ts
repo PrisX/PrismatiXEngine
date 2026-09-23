@@ -314,6 +314,45 @@ test("pack invokes the native file-based request protocol", async () => {
   assert.match(packed.stdout, /"packed":true/);
 });
 
+test("pack reuses an owned artifact without recompiling edited author sources", async () => {
+  const value = await fixture();
+  const artifact = join(value.root, ".prismatix", "artifact");
+  const built = run(["build", value.project, "--artifact-only", "--output", artifact]);
+  assert.equal(built.status, 0, built.stderr);
+  await write(join(value.root, "Story/main.pxstory"), "[unknown-command]\n");
+  const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-reused-artifact-"));
+  const mock = join(tools, "mock-packager.mjs");
+  await write(mock, `
+    import {readFile} from "node:fs/promises";
+    const request = JSON.parse(await readFile(process.argv.at(-1), "utf8"));
+    if (request.projectRoot !== ${JSON.stringify(artifact)} ||
+        !request.inputs.some(value => value.uri === "Runtime/main.pxir") ||
+        !request.inputs.some(value => value.uri === "project.pxproject")) process.exit(42);
+    process.stdout.write(JSON.stringify({protocolVersion: 1, event: "completed",
+      requestId: request.requestId, reusedArtifact: true}) + "\\n");
+  `);
+  const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
+  await write(player, "fixture");
+  const output = join(value.root, "packaged");
+  const packed = run(["pack", value.project, "--artifact", artifact,
+    "--packager", mock, "--player", player, "--output", output]);
+  assert.equal(packed.status, 0, packed.stderr);
+  assert.match(packed.stdout, /"reusedArtifact":true/u);
+  assert.match(packed.stdout, /"packed":true/u);
+  const rebuilt = run(["pack", value.project, "--packager", mock,
+    "--player", player, "--output", join(value.root, "other-package")]);
+  assert.equal(rebuilt.status, 1);
+  assert.match(rebuilt.stderr, /PXSTORY1199/u);
+  const overlapping = run(["pack", value.project, "--artifact", artifact,
+    "--packager", mock, "--player", player, "--output", artifact]);
+  assert.equal(overlapping.status, 1);
+  assert.match(overlapping.stderr, /Unsafe output overlaps author input/u);
+  assert.ok((await readdir(artifact)).includes("project.pxproject"));
+  const incompatible = run(["build", value.project, "--artifact-only", "--artifact", artifact]);
+  assert.equal(incompatible.status, 2);
+  assert.match(incompatible.stderr, /--artifact-only and --artifact cannot be combined/u);
+});
+
 test("pack preserves structured native diagnostics instead of replacing them with a CLI error", async () => {
   const value = await fixture();
   const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-packager-failure-"));

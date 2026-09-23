@@ -3,7 +3,7 @@ import {mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile} from "node:fs
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import test from "node:test";
-import {publishDirectory, retirePublishedDirectory, outputOwnershipMarker} from "../src/output-safety.js";
+import {publishDirectory, publishedInputs, retirePublishedDirectory, outputOwnershipMarker} from "../src/output-safety.js";
 
 async function fixture(t: test.TestContext) {
   const root = await mkdtemp(join(tmpdir(), "prismatix-output-safety-"));
@@ -52,6 +52,38 @@ test("allows new or empty output and replaces only intact owned output", async t
   const empty = join(f.root, "empty");
   await mkdir(empty);
   await publishDirectory({...f, output: empty}, build("empty accepted"));
+});
+
+test("published artifact inputs come from an intact ownership inventory", async t => {
+  const f = await fixture(t);
+  await publishDirectory(f, async stage => {
+    await mkdir(join(stage, "Runtime"));
+    await writeFile(join(stage, "Runtime", "main.pxir"), "runtime");
+    await writeFile(join(stage, "game.bin"), "payload");
+  });
+  const inputs = await publishedInputs(f.output);
+  assert.deepEqual(inputs.map(input => input.uri), ["game.bin", "Runtime/main.pxir"]);
+  assert.deepEqual(inputs.map(input => input.size), [7, 7]);
+  assert.ok(inputs.every(input => /^[0-9a-f]{64}$/u.test(input.fingerprint)));
+  await writeFile(join(f.output, "author.txt"), "not owned");
+  await assert.rejects(publishedInputs(f.output), /no valid fingerprint/u);
+  await rm(join(f.output, "author.txt"));
+  await rm(join(f.output, "game.bin"));
+  await assert.rejects(publishedInputs(f.output), /does not match directory contents/u);
+});
+
+test("published artifact input discovery rejects symlinks and invalid markers", async t => {
+  const f = await fixture(t);
+  await publishDirectory(f, build("stable"));
+  const link = join(f.output, "link.bin");
+  try { await symlink(join(f.output, "game.bin"), link); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "EPERM") {
+    t.skip("symlink permission unavailable"); return;
+  } throw error; }
+  await assert.rejects(publishedInputs(f.output), /symbolic link/u);
+  await rm(link);
+  await writeFile(join(f.output, outputOwnershipMarker), "{}");
+  await assert.rejects(publishedInputs(f.output), /unsupported format/u);
 });
 
 test("build failure preserves previous output and unknown backup", async t => {

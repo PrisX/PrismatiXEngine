@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-import {createHash, randomUUID} from "node:crypto";
+import {randomUUID} from "node:crypto";
 import {spawn, type ChildProcessWithoutNullStreams} from "node:child_process";
-import {createReadStream, existsSync, readFileSync, watch} from "node:fs";
+import {existsSync, readFileSync, watch} from "node:fs";
 import {
   copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile,
 } from "node:fs/promises";
@@ -15,7 +15,7 @@ import {
   discoverRuntimeTool, discoverRuntimeBundle, RuntimeDiscoveryFailure, runtimeDiscoveryHint,
   type RuntimeDiscoveryOptions,
 } from "./runtime-discovery.js";
-import {publishDirectory, retirePublishedDirectory, outputOwnershipMarker} from "./output-safety.js";
+import {publishDirectory, publishedInputs, retirePublishedDirectory} from "./output-safety.js";
 import {createStarter} from "./starter.js";
 import {migrateCommand} from "./migration.js";
 import {inspectSaveWithRuntime} from "./save-inspection.js";
@@ -59,9 +59,9 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   create: {values: "name id locale width height", flags: ""},
   dev: {values: "runtime preview-host debounce ui-registry", flags: "once smoke"},
   validate: {values: "ui-registry", flags: ""},
-  build: {values: "output runtime packager player compression ui-registry", flags: "artifact-only distribution encrypt"},
-  pack: {values: "output runtime packager player compression ui-registry", flags: "encrypt"},
-  run: {values: "output runtime packager player compression ui-registry", flags: "encrypt"},
+  build: {values: "output artifact runtime packager player compression ui-registry", flags: "artifact-only distribution encrypt"},
+  pack: {values: "output artifact runtime packager player compression ui-registry", flags: "encrypt"},
+  run: {values: "output artifact runtime packager player compression ui-registry", flags: "encrypt"},
   ids: {values: "document-id prefix backup", flags: "write check"},
   migrate: {values: "report backup entry-story entry-ui supported-locales save-version id name version content-version default-locale story-index game-catalog", flags: "write"},
   "inspect-save": {values: "package secret runtime player", flags: ""},
@@ -92,6 +92,8 @@ function parseOptions(command: string, args: readonly string[]): Options {
   }
   if (positional.length > 1) throw new Error("Expected one project or save path; quote paths containing spaces");
   if (flags.has("artifact-only") && flags.has("distribution")) throw new Error("--artifact-only and --distribution cannot be combined");
+  if (flags.has("artifact-only") && values.has("artifact")) throw new Error("--artifact-only and --artifact cannot be combined");
+  if (values.has("artifact") && values.has("ui-registry")) throw new Error("--ui-registry requires a fresh build; it cannot be combined with --artifact");
   if (values.has("compression") && !["none", "fast", "balanced", "maximum"].includes(values.get("compression")!))
     throw new Error("--compression must be none, fast, balanced, or maximum");
   return {values, flags, positional};
@@ -749,30 +751,6 @@ async function listFiles(root: string, directory = root): Promise<string[]> {
   return output.sort();
 }
 
-async function sha256(path: string): Promise<string> {
-  return new Promise((accept, reject) => {
-    const hash = createHash("sha256");
-    const input = createReadStream(path, {highWaterMark: 256 * 1024});
-    input.on("data", (chunk) => hash.update(chunk));
-    input.on("error", reject);
-    input.on("end", () => accept(hash.digest("hex")));
-  });
-}
-
-async function mapBounded<T, U>(values: readonly T[], concurrency: number,
-  operation: (value: T, index: number) => Promise<U>): Promise<U[]> {
-  const output = new Array<U>(values.length);
-  let cursor = 0;
-  const worker = async (): Promise<void> => {
-    while (cursor < values.length) {
-      const index = cursor++;
-      output[index] = await operation(values[index]!, index);
-    }
-  };
-  await Promise.all(Array.from({length: Math.min(concurrency, values.length)}, worker));
-  return output;
-}
-
 async function runProcess(executable: string, args: readonly string[], input?: string,
   cwd?: string, stream = false): Promise<{code: number; stdout: string; stderr: string}> {
   return new Promise((accept, reject) => {
@@ -853,26 +831,53 @@ async function packProject(options: Options): Promise<{output: string; player: s
   }
   const temp = await mkdtemp(join(tmpdir(), "prismatix-pack-"));
   try {
-    const built = await buildProject(options.positional[0], join(temp, "artifact"),
-      undefined, options.values.get("ui-registry"));
-    const project = built.artifact.project;
-    const files = (await listFiles(built.output)).filter((path) => path !== outputOwnershipMarker);
-    const inputs = await mapBounded(files, 4, async (uri) => {
-      const path = projectFile(built.output, uri);
-      return {uri, fingerprint: await sha256(path), size: (await stat(path)).size};
-    });
-    const output = resolve(options.values.get("output") ?? join(built.root, "dist", project.id));
-    const loaded = await loadProject(options.positional[0]);
-    await publishDirectory({output, projectRoot: built.root,
-      protectedPaths: [...protectedInputs(loaded, built.artifact), packager, player]}, async (staging) => {
+    const suppliedArtifact = options.values.get("artifact");
+    let root: string;
+    let artifactRoot: string;
+    let project: ProjectDocument;
+    let protectedPaths: string[];
+    let startScript = "Runtime/main.pxir";
+    let sourceMap = "Runtime/main.pxmap";
+    if (suppliedArtifact === undefined) {
+      const built = await buildProject(options.positional[0], join(temp, "artifact"),
+        undefined, options.values.get("ui-registry"));
+      const loaded = await loadProject(options.positional[0]);
+      root = built.root;
+      artifactRoot = built.output;
+      project = built.artifact.project;
+      startScript = built.artifact.runtimeIrPath;
+      sourceMap = built.artifact.sourceMapPath;
+      protectedPaths = [...protectedInputs(loaded, built.artifact), artifactRoot];
+    } else {
+      // A published artifact is already compiled. In particular, do not
+      // re-parse a possibly edited author project when distributing it.
+      const location = await resolveProjectPath(options.positional[0]);
+      root = location.root;
+      artifactRoot = resolve(suppliedArtifact);
+      const validated = validateDocument<ProjectDocument>("project",
+        await readJson(projectFile(artifactRoot, "project.pxproject")),
+        "project.pxproject");
+      if (!validated.valid || validated.value === undefined)
+        throw new PackagerFailure(validated.diagnostics);
+      project = validated.value;
+      protectedPaths = [location.projectPath, artifactRoot,
+        ...["Story", "Assets", "Content", "Scripts", "Extensions"].map((name) => join(root, name))];
+    }
+    const inputs = await publishedInputs(artifactRoot);
+    for (const required of ["project.pxproject", startScript, sourceMap]) {
+      if (!inputs.some((input) => input.uri === required))
+        throw new Error(`Compiled artifact is missing ${required}: ${artifactRoot}`);
+    }
+    const output = resolve(options.values.get("output") ?? join(root, "dist", project.id));
+    await publishDirectory({output, projectRoot: root,
+      protectedPaths: [...protectedPaths, packager, player]}, async (staging) => {
     const request = {
       format: "PrismatiXPackageRequest", schemaRevision: 2,
       requestId: `cli-${process.pid}`, gameId: project.id,
-      projectRoot: built.output, outputDir: staging,
+      projectRoot: artifactRoot, outputDir: staging,
       playerExecutable: player, title: project.name,
       width: project.resolution.width, height: project.resolution.height,
-      startScript: built.artifact.runtimeIrPath,
-      sourceMap: built.artifact.sourceMapPath,
+      startScript, sourceMap,
       startRoute: project.entry.ui,
       routes: Object.entries(project.uiEntryPoints).map(([id, scene]) => ({id, scene})),
       contentVersion: project.contentVersion, saveVersion: project.saveVersion,
@@ -893,7 +898,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
     const result = await runProcess(
       scriptTool ? process.execPath : packageTool,
       [...(scriptTool ? [packageTool] : []), "--request", requestPath],
-      undefined, built.root,
+      undefined, root,
     );
     if (machineOutput && result.stdout.length > 0) process.stdout.write(result.stdout);
     if (result.stderr.length > 0) process.stderr.write(result.stderr);

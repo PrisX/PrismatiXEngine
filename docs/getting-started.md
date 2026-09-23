@@ -48,6 +48,17 @@ prismatix build my-game --output "release/First Light"
 prismatix build my-game --artifact-only --output my-game/.prismatix/artifact
 ```
 
+To distribute an artifact that has already been built, pass it to `pack`,
+`build`, or `run` with `--artifact`. This skips author-source compilation and
+the intermediate artifact copy; the native Packager still checks every input's
+size and SHA-256 before accepting it. The artifact must be an intact CLI-owned
+build directory with its `.prismatix-output.json` marker. Changes to Story or
+UI source are **not** included until you build or otherwise update the artifact.
+
+```bash
+prismatix pack my-game --artifact my-game/.prismatix/artifact
+```
+
 Never choose Story, Assets, another source input or an unrelated existing folder as output. `pack` is an explicit distribution command; `run` packages and launches. Quote paths containing spaces.
 
 Output replacement verifies the previous build's inventory. If you have played a distribution and it now contains saves/logs, or edited its files, use a new output directory; do not delete player data to bypass the guard. Test migration with a copy of the old saves before distributing an update.

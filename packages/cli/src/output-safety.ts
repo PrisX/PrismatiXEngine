@@ -5,6 +5,11 @@ import {lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile} from 
 import {basename, dirname, isAbsolute, join, relative, resolve} from "node:path";
 
 export const outputOwnershipMarker = ".prismatix-output.json";
+export interface PublishedInput {
+  readonly uri: string;
+  readonly fingerprint: string;
+  readonly size: number;
+}
 export interface PublicationOptions {
   output: string;
   projectRoot: string;
@@ -82,6 +87,60 @@ async function assertOwned(output: string, allowEmpty = true): Promise<void> {
   } catch (error) {
     throw new Error(`Refusing to replace unowned or modified output directory: ${output}`, {cause: error});
   }
+}
+
+/** Read an existing artifact without rehashing multi-GiB media. The native
+ * Packager verifies each supplied SHA-256 and size before accepting it. */
+export async function publishedInputs(output: string): Promise<readonly PublishedInput[]> {
+  const root = resolve(output);
+  const info = await lstat(root);
+  if (!info.isDirectory() || info.isSymbolicLink())
+    throw new Error(`Artifact is not a regular directory: ${root}`);
+  const markerPath = join(root, outputOwnershipMarker);
+  const markerInfo = await lstat(markerPath);
+  if (!markerInfo.isFile() || markerInfo.isSymbolicLink() || markerInfo.size > 16 * 1024 * 1024)
+    throw new Error(`Artifact ownership marker is invalid: ${markerPath}`);
+  const marker: unknown = JSON.parse(await readFile(markerPath, "utf8"));
+  if (marker === null || typeof marker !== "object" || Array.isArray(marker) ||
+      (marker as {format?: unknown}).format !== "PrismatiXOutput/1")
+    throw new Error(`Artifact ownership marker has an unsupported format: ${markerPath}`);
+  const files = (marker as {files?: unknown}).files;
+  if (files === null || typeof files !== "object" || Array.isArray(files))
+    throw new Error(`Artifact ownership marker has no file inventory: ${markerPath}`);
+  const expected = files as Record<string, unknown>;
+  const found = new Set<string>();
+  const inputs: PublishedInput[] = [];
+  const caseFolded = new Set<string>();
+  const visit = async (directory: string): Promise<void> => {
+    for (const entry of await readdir(directory, {withFileTypes: true})) {
+      const path = join(directory, entry.name);
+      const uri = relative(root, path).split("\\").join("/");
+      if (uri === outputOwnershipMarker) continue;
+      if (!uri || uri.startsWith("/") || uri.includes(":") ||
+          uri.split("/").some((part) => !part || part === "." || part === ".."))
+        throw new Error(`Artifact has an unsafe path: ${uri}`);
+      const folded = process.platform === "win32" ? uri.toLowerCase() : uri;
+      if (caseFolded.has(folded)) throw new Error(`Artifact has duplicate paths: ${uri}`);
+      caseFolded.add(folded);
+      if (entry.isSymbolicLink()) throw new Error(`Artifact contains a symbolic link: ${uri}`);
+      const expectedValue = Object.hasOwn(expected, uri) ? expected[uri] : undefined;
+      if (entry.isDirectory()) {
+        if (expectedValue !== "directory") throw new Error(`Artifact directory is not owned: ${uri}`);
+        found.add(uri);
+        await visit(path);
+      } else if (entry.isFile()) {
+        if (typeof expectedValue !== "string" || !/^[0-9a-f]{64}$/iu.test(expectedValue))
+          throw new Error(`Artifact file has no valid fingerprint: ${uri}`);
+        found.add(uri);
+        inputs.push({uri, fingerprint: expectedValue, size: (await lstat(path)).size});
+      } else throw new Error(`Artifact contains a special file: ${uri}`);
+    }
+  };
+  await visit(root);
+  if (found.size !== Object.keys(expected).length ||
+      Object.keys(expected).some((uri) => !found.has(uri)))
+    throw new Error(`Artifact ownership marker does not match directory contents: ${root}`);
+  return inputs.sort((left, right) => left.uri.localeCompare(right.uri, "en"));
 }
 
 async function acquireOutputLock(output: string): Promise<string> {
