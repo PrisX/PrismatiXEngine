@@ -23,6 +23,9 @@ export interface StoryIndexChapter {
 export interface StoryIndexScene {
   readonly id: string;
   readonly title?: string;
+  // Keeps explicit [id] operation anchors stable when authored content is
+  // moved between scenes. Shared namespaces require globally unique ids.
+  readonly identityNamespace?: string;
   readonly sources: Readonly<Record<string, string>>;
   readonly requiredLabels?: readonly string[];
 }
@@ -288,6 +291,7 @@ export function compileStoryProject(context: StoryProjectCompileContext): StoryC
   const operations: RuntimeIrOperation[] = [];
   const mappings: RuntimeSourceMap["mappings"][number][] = [];
   const resourceDependencies = new Set<string>();
+  const operationOwners = new Map<string, string>();
 
   for (const descriptor of context.storyIndex.scenes) {
     const scene = scenesById.get(descriptor.id);
@@ -306,7 +310,7 @@ export function compileStoryProject(context: StoryProjectCompileContext): StoryC
 
     const rewritten = rewriteScene(scene, scenesById, sceneDiagnostics);
     const compiled = compileStory(rewritten.document, {
-      documentId: `${documentId}:${descriptor.id}`,
+      documentId: descriptor.identityNamespace ?? `${documentId}:${descriptor.id}`,
       ...(context.committedRevision === undefined ? {} : {committedRevision: context.committedRevision}),
       ...(context.characters === undefined ? {} : {characters: context.characters}),
       ...(context.game === undefined ? {} : {game: context.game}),
@@ -319,8 +323,21 @@ export function compileStoryProject(context: StoryProjectCompileContext): StoryC
       resourceDependencies.add(dependency);
     if (!compiled.valid || compiled.runtimeIr === undefined || compiled.sourceMap === undefined) continue;
 
-    operations.push(...compiled.runtimeIr.operations.filter((operation) => !rewritten.stubSourceIds.has(operation.sourceId)));
-    mappings.push(...compiled.sourceMap.mappings.filter((mapping) => !rewritten.stubSourceIds.has(mapping.sourceId)));
+    // Do not spread a commercial-size scene into Array.push: V8 treats the
+    // elements as call arguments and overflows its argument stack around the
+    // same scale that our Runtime IR contract explicitly supports.
+    for (const operation of compiled.runtimeIr.operations) {
+      if (rewritten.stubSourceIds.has(operation.sourceId)) continue;
+      const owner = operationOwners.get(operation.operationId);
+      if (owner !== undefined) diagnostics.push(issue(
+        "PXSTORY1308", `Duplicate Story operation identity shared by ${owner} and ${descriptor.id}`,
+        scene.path, operation.operationId));
+      else operationOwners.set(operation.operationId, descriptor.id);
+      operations.push(operation);
+    }
+    for (const mapping of compiled.sourceMap.mappings) {
+      if (!rewritten.stubSourceIds.has(mapping.sourceId)) mappings.push(mapping);
+    }
   }
 
   if (diagnostics.some((diagnostic) => diagnostic.severity === "error") || entryScene === undefined) {

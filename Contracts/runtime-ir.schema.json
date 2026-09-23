@@ -17,7 +17,7 @@
           "operationId":{"type":"string","minLength":1,"maxLength":512},
           "sourceId":{"type":"string","minLength":1,"maxLength":512},
           "sourceLine":{"type":"integer","minimum":1,"maximum":4294967295},
-          "kind":{"enum":["scene","fragment","callFragment","return","endStory","dialogue","narration","choiceOption","background","showCharacter","hideCharacter","voice","bgm","soundEffect","setVariable","condition","else","endCondition","label","jump","wait","timeline","effect","ui","customNode","camera"]},
+          "kind":{"enum":["scene","fragment","callFragment","return","endStory","dialogue","narration","choiceOption","background","showCharacter","hideCharacter","voice","bgm","stopBgm","soundEffect","ambience","stopAmbience","video","setVariable","condition","else","endCondition","label","jump","wait","timeline","effect","shake","ui","unlock","customNode","camera"]},
           "text":{"type":"string","maxLength":1048576},
           "arguments":{"type":"object","maxProperties":1024,"additionalProperties":{"type":"string","maxLength":1048576}}
         },

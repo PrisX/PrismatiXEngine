@@ -70,6 +70,47 @@ test("Story project compiler supports jumping directly to another scene entry", 
   assert.ok(compiled.runtimeIr!.operations.some((operation) => operation.kind === "jump" && operation.arguments.target === "pxscene.entry.3ddd0f2578e95426"));
 });
 
+test("Story scene identityNamespace preserves explicit operation anchors after splitting a source", () => {
+  const oldIndex: StoryIndexDocument = {
+    format: "PrismatiXStoryIndex", schemaRevision: 2, id: "migration",
+    entryScene: "main", chapters: [{id: "all", title: "All", scenes: ["main"]}],
+    scenes: [{id: "main", sources: {"zh-TW": "old.pxstory"}}],
+  };
+  const newIndex: StoryIndexDocument = {
+    ...oldIndex, entryScene: "opening",
+    chapters: [{id: "opening", title: "Opening", scenes: ["opening"]}],
+    scenes: [{id: "opening", identityNamespace: "migration:main",
+      sources: {"zh-TW": "opening.pxstory"}}],
+  };
+  const source = "*start\n[id line-1]\nFirst line.\n[end]\n";
+  const oldResult = compileStoryProject({storyIndex: oldIndex, locale: "zh-TW",
+    sourceFiles: {"old.pxstory": source}});
+  const newResult = compileStoryProject({storyIndex: newIndex, locale: "zh-TW",
+    sourceFiles: {"opening.pxstory": source}});
+  assert.equal(oldResult.valid, true, JSON.stringify(oldResult.diagnostics));
+  assert.equal(newResult.valid, true, JSON.stringify(newResult.diagnostics));
+  assert.equal(validateDocument("storyIndex", newIndex).valid, true);
+  const anchor = (result: typeof oldResult) => result.runtimeIr!.operations
+    .find((operation) => operation.text === "First line.");
+  assert.equal(anchor(oldResult)?.operationId, anchor(newResult)?.operationId);
+  assert.equal(anchor(oldResult)?.sourceId, anchor(newResult)?.sourceId);
+  assert.equal(newResult.sourceMap!.mappings.find((mapping) =>
+    mapping.operationId === anchor(newResult)?.operationId)?.sourceUri, "opening.pxstory");
+});
+
+test("shared Story identityNamespace rejects duplicate authored ids", () => {
+  const index: StoryIndexDocument = {
+    ...storyIndex,
+    scenes: storyIndex.scenes.map((scene) => ({...scene, identityNamespace: "legacy:main"})),
+  };
+  const compiled = compileStoryProject({storyIndex: index, locale: "zh-TW", sourceFiles: {
+    "zh-TW/ch01/scene01.pxstory": "*start\n[id duplicate]\nFirst.\n[end]\n",
+    "zh-TW/ch01/scene02.pxstory": "*start\n[id duplicate]\nSecond.\n*aside\n[end]\n",
+  }});
+  assert.equal(compiled.valid, false);
+  assert.ok(compiled.diagnostics.some((diagnostic) => diagnostic.code === "PXSTORY1308"));
+});
+
 test("Story project compiler rejects duplicate scene ids even when the first descriptor cannot be loaded", () => {
   const duplicate = compileStoryProject({
     storyIndex: {

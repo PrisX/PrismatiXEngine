@@ -1638,7 +1638,11 @@ export const contractSchemas: Readonly<Record<string, object>> = {
                 "hideCharacter",
                 "voice",
                 "bgm",
+                "stopBgm",
                 "soundEffect",
+                "ambience",
+                "stopAmbience",
+                "video",
                 "setVariable",
                 "condition",
                 "else",
@@ -1648,7 +1652,9 @@ export const contractSchemas: Readonly<Record<string, object>> = {
                 "wait",
                 "timeline",
                 "effect",
+                "shake",
                 "ui",
+                "unlock",
                 "customNode",
                 "camera"
               ]
@@ -2051,6 +2057,11 @@ export const contractSchemas: Readonly<Record<string, object>> = {
           "properties": {
             "id": {
               "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+            },
+            "identityNamespace": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
             },
             "requiredLabels": {
               "items": {
@@ -3346,10 +3357,10 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "game.schema.json": "f0592fc75a4deb4aed7f192c076165012ef480196a07cd7d2136be390821dcba",
   "locale.schema.json": "b8f6009219c6cad7fa6130af6d710af11cabcf85bf2e0039f1fdd3c08e2bbf9f",
   "project.schema.json": "8a7ed01b49ac02f5b1c6b2bf6c74267fd058f8e92763ec7de1ba0c7cee034ac1",
-  "runtime-ir.schema.json": "b79954bfb6772c2b7a38194d236794a449b0e7d428cf1589d8fbd1cfa9e3616e",
+  "runtime-ir.schema.json": "66d31c68d122e7516c3d0fef73672fa7fa47d879553c2fea2bdec5af3871b68c",
   "save-migration.schema.json": "fd9f89119a4e8a70324f95bb6e0261e5d78b0ea173e2755422c36e5e2379b6cf",
   "source-map.schema.json": "1a0d20fbc5ed639fcb33bf7e8b81f78caf9af091a4d245cee2e5e66eb80d3e62",
-  "story-index.schema.json": "1f88e0ed708fcf0edc47dddf80fd6617c40e746b6779105516d463f85191a4bb",
+  "story-index.schema.json": "abc3cf730c81d25c45c5a11632268e16334d5a189ff419bdfb2da940e6292b82",
   "timeline.schema.json": "48f267a0d203fc813879304be8df079b965785d71258cbcf358b51db269265be",
   "ui-component.schema.json": "d91e1ee59871449dfb898409aadaf054adc2f39c3df0df911ce993122e3a281a",
   "ui.schema.json": "d02ad777cd9bc272981ed65073bfbe9ecf10ddee9b2297f87b8e3273a24b8631"
