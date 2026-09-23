@@ -108,6 +108,26 @@ test("publication reports completed byte and file counts for fingerprint phases"
   ]);
 });
 
+test("independent artifact publication skips only the pre-build old-output scan", async t => {
+  const f = await fixture(t);
+  await publishDirectory(f, build("stable"));
+  const updates: PublicationProgress[] = [];
+  const options = {...f, verifyExistingBeforeBuild: false,
+    onProgress: (value: PublicationProgress) => updates.push(value)};
+  await publishDirectory(options, build("next"));
+  assert.deepEqual(updates.filter(value => value.done).map(value => value.phase),
+    ["fingerprint-output", "verify-before-publish"]);
+  assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "next");
+  await writeFile(join(f.output, "game.bin"), "user edits");
+  let built = false;
+  await assert.rejects(publishDirectory(options, async stage => {
+    built = true;
+    await writeFile(join(stage, "game.bin"), "replacement");
+  }), /unowned or modified/u);
+  assert.equal(built, true, "the old output is checked at promotion, not before the build");
+  assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "user edits");
+});
+
 test("build failure preserves previous output and unknown backup", async t => {
   const f = await fixture(t);
   await publishDirectory(f, build("stable"));

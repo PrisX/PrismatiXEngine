@@ -869,6 +869,7 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
   const output = resolve(outputArgument ?? join(loaded.root, ".prismatix", "build"));
   buildProgress("publish", 0, 1);
   await publishDirectory({output, projectRoot: loaded.root,
+    verifyExistingBeforeBuild: false,
     protectedPaths: protectedInputs(loaded, compiled.artifact),
     onProgress: (value) => buildProgress(value.phase, value.files, undefined,
       value.bytes, value.done)}, async (staging) => {

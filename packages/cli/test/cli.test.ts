@@ -408,8 +408,8 @@ test("startup voice variants enter the artifact without asset ids or resourceInc
 
 test("artifact build reports load, compile, copy and fingerprint progress", async () => {
   const value = await fixture();
-  const built = run(["build", value.project, "--artifact-only", "--output",
-    join(value.root, ".prismatix", "progress-artifact")]);
+  const output = join(value.root, ".prismatix", "progress-artifact");
+  const built = run(["build", value.project, "--artifact-only", "--output", output]);
   assert.equal(built.status, 0, built.stderr);
   const events = built.stderr.split(/\r?\n/u).filter(Boolean).map(line => JSON.parse(line) as {
     code: string; phase?: string; current?: number; total?: number; done?: boolean;
@@ -429,6 +429,10 @@ test("artifact build reports load, compile, copy and fingerprint progress", asyn
   const validated = run(["validate", value.project]);
   assert.equal(validated.status, 0, validated.stderr);
   assert.match(validated.stderr, /"code":"PXCLI1103"/u);
+  const rebuilt = run(["build", value.project, "--artifact-only", "--output", output]);
+  assert.equal(rebuilt.status, 0, rebuilt.stderr);
+  assert.doesNotMatch(rebuilt.stderr, /"phase":"verify-existing"/u);
+  assert.match(rebuilt.stderr, /"phase":"verify-before-publish"/u);
 });
 
 test("augment publishes declared artifact additions for pack --artifact without hand-editing ownership", async () => {

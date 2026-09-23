@@ -27,6 +27,10 @@ export interface PublicationOptions {
   projectRoot: string;
   /** Author directories and every build/package input, including external dependencies. */
   protectedPaths: readonly string[];
+  /** Only for builders that never read the old output. The old output is still
+   * fully verified immediately before replacement; this skips an otherwise
+   * redundant pre-build hash pass over potentially multi-GiB artifacts. */
+  readonly verifyExistingBeforeBuild?: boolean;
   readonly onProgress?: (value: PublicationProgress) => void;
 }
 
@@ -220,7 +224,8 @@ export async function publishDirectory<T>(options: PublicationOptions, build: (s
   const lock = await acquireOutputLock(output);
   let staging: string | undefined;
   try {
-    await assertOwned(output, true, "verify-existing", options.onProgress);
+    if (options.verifyExistingBeforeBuild !== false)
+      await assertOwned(output, true, "verify-existing", options.onProgress);
     staging = await mkdtemp(join(dirname(output), ".prismatix-stage-"));
     const value = await build(staging);
     // A callback must not impersonate the ownership marker or supply symbolic links.
