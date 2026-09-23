@@ -75,6 +75,13 @@ direct `compileStoryProject` callers must include each sidecar's text in
 `sourceFiles` under its exact `<source>.pxids.json` path. Sidecars do not ship
 in the Runtime artifact.
 
+Node callers of the lower-level `compileProject` API can use
+`await loadStorySourceFiles(projectRoot, storyIndex)` to read all indexed
+`.pxstory` sources and any adjacent `.pxids.json` maps into its `sourceFiles`
+input. Missing required Story files, oversized files, and paths escaping the
+project root fail at load time. Browser/Editor callers can continue supplying
+their own `sourceFiles` map without Node filesystem access.
+
 The map preserves both authored ids and the exact pre-migration fallback
 `sourceId` of operations that had no `[id]`. In-place prose edits, comments,
 and blank lines retain those identities. For added or removed executable

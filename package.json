@@ -22,7 +22,7 @@
     "test:phase1:mock": "npm run build && npm run phase1:acceptance:mock",
     "test:phase1": "npm run build && npm run phase1:acceptance",
     "test": "npm run build && npm run test --workspace @prismatix/authoring-sdk && npm run runtime:test && npm run cli:test && npm run test:package && npm run phase1:acceptance:mock && npm run docs:test",
-    "test:package": "node -e \"Promise.all([import('@prismatix/authoring-sdk'), import('@prismatix/authoring-sdk/jsx-runtime')]).then(([sdk, jsx]) => { if (typeof sdk.compileStory !== 'function' || typeof sdk.validateDocument !== 'function' || typeof sdk.compileJsxUi !== 'function' || typeof jsx.jsx !== 'function') process.exit(1); })\"",
+    "test:package": "node -e \"Promise.all([import('@prismatix/authoring-sdk'), import('@prismatix/authoring-sdk/jsx-runtime')]).then(([sdk, jsx]) => { if (typeof sdk.compileStory !== 'function' || typeof sdk.loadStorySourceFiles !== 'function' || typeof sdk.validateDocument !== 'function' || typeof sdk.compileJsxUi !== 'function' || typeof jsx.jsx !== 'function') process.exit(1); })\"",
     "check": "npm run test"
   },
   "devDependencies": {

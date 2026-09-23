@@ -1,7 +1,8 @@
 import {readFile} from "node:fs/promises";
 import {resolve} from "node:path";
 
-import {compileProject} from "@prismatix/authoring-sdk";
+import {compileProject, loadStorySourceFiles,
+  type StoryIndexDocument} from "@prismatix/authoring-sdk";
 
 const sampleRoot = resolve("Samples/CommercialVN");
 const json = async (path: string): Promise<unknown> =>
@@ -15,7 +16,6 @@ const record = (value: unknown): Record<string, unknown> => {
 const project = await json("project.pxproject");
 const descriptor = record(project);
 const documents: Record<string, unknown> = {};
-const sourceFiles: Record<string, string> = {};
 const locales: Record<string, unknown> = {};
 const loadDocument = async (path: unknown): Promise<void> => {
   if (typeof path !== "string" || documents[path] !== undefined) return;
@@ -39,18 +39,8 @@ for (const collection of ["extensions", "characters", "uiComponents",
 }
 
 const storyIndex = record(documents[String(descriptor.storyIndex)]);
-for (const scene of Array.isArray(storyIndex.scenes)
-  ? storyIndex.scenes as unknown[] : []) {
-  for (const path of Object.values(record(record(scene).sources))) {
-    if (typeof path === "string") {
-      sourceFiles[path] = await readFile(resolve(sampleRoot, path), "utf8");
-      // Direct SDK callers supply the author-only identity sidecar; the CLI
-      // performs this adjacent-file lookup automatically.
-      sourceFiles[`${path}.pxids.json`] = await readFile(
-        resolve(sampleRoot, `${path}.pxids.json`), "utf8");
-    }
-  }
-}
+const sourceFiles = await loadStorySourceFiles(
+  sampleRoot, storyIndex as unknown as StoryIndexDocument);
 for (const item of Array.isArray(descriptor.effects)
   ? descriptor.effects as unknown[] : []) {
   const effectPath = record(item).source;
