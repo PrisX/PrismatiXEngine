@@ -89,6 +89,14 @@ Ninja, Homebrew, or vcpkg paths. Windows compiler discovery comes from the
 Developer PowerShell environment; `VCPKG_ROOT` selects the dependency
 toolchain.
 
+For a Traditional Chinese-only MSVC installation, CMake supplies Ninja with
+the correct localized `/showIncludes` prefix so C++ header changes trigger
+recompilation. A build directory created before this fix may already contain
+objects with zero recorded header dependencies; reconfiguring alone does not
+repair those objects. Use a fresh build directory or rebuild the affected
+objects before trusting an incremental build. `ninja -C out/build/<preset> -t deps`
+shows the recorded dependencies.
+
 Runtime and test binaries are generated under `out/build/<preset>/PrismatiXEngine/`. Install the redistributable runtime component to a staging prefix before running the real Phase 1 acceptance gate:
 
 ```bash

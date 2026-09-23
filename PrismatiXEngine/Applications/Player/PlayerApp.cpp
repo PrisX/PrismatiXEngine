@@ -3040,7 +3040,8 @@ void PlayerApp::DriveE2EJourney() {
             }
             break;
         case E2EStage::AwaitGameReady:
-            if(m_appState==AppState::Game&&m_profile.CGUnlocked("ending-rin")&&
+            if(m_appState==AppState::Game&&!m_gameStartTransitionActive&&
+               m_profile.CGUnlocked("ending-rin")&&
                m_scriptHost&&!m_scriptHost->HasPendingCommand()&&
                !m_scriptHost->HasPendingAction()&&
                m_session->Dialogue().Active()){
@@ -3430,7 +3431,11 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     if (m_hudHidden) {
         if (input.LeftClick() || advanceKey || wheelAdvance) m_hudHidden = false;
     } else {
-        m_ui.RefreshHUD(DialogueUI());
+        // A modal may have replaced the HUD since the previous frame. Keep
+        // its authored scene installed while still updating dialogue when the
+        // HUD itself is active.
+        if (m_ui.CurrentScreen() == ui::GalgameUI::Screen::HUD)
+            m_ui.RefreshHUD(DialogueUI());
         int uiW = 0, uiH = 0; m_runtime.Renderer().GetLogicalSize(uiW, uiH);
         const bool uiConsumed = m_ui.Update(input, uiW, uiH,dt);
         // UI actions may select a branch synchronously. Do not render the

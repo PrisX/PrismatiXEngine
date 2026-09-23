@@ -1,4 +1,5 @@
 #include "Engine/Support/Utf8Path.h"
+#include <exception>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -72,8 +73,18 @@ int RunMain(int argc, char** argv) {
         return static_cast<int>(px::sdk::PackageExitCode::Failed);
     }
 
-    const auto result = px::sdk::RunPackager(parsed.request, Emit);
-    return static_cast<int>(result.exitCode);
+    try {
+        const auto result = px::sdk::RunPackager(parsed.request, Emit);
+        return static_cast<int>(result.exitCode);
+    } catch (const std::exception& error) {
+        Emit(FailedEvent(parsed.request.requestId, "PXPKG1005",
+                         std::string("Packager failed unexpectedly: ") + error.what()));
+        return static_cast<int>(px::sdk::PackageExitCode::Failed);
+    } catch (...) {
+        Emit(FailedEvent(parsed.request.requestId, "PXPKG1005",
+                         "Packager failed unexpectedly with a non-standard exception"));
+        return static_cast<int>(px::sdk::PackageExitCode::Failed);
+    }
 }
 
 #if defined(_WIN32)

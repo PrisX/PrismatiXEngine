@@ -8,6 +8,26 @@ endif()
 
 project ("PrismatiXEngine" LANGUAGES C CXX)
 
+# CMake can misdecode Traditional Chinese cl.exe /showIncludes output while
+# configuring Ninja. A garbled prefix silently records zero header deps, so
+# changing a public SDK header can leave old and new C++ class layouts linked
+# into the same binary. Override only the unambiguous zh-TW-only MSVC install;
+# other locales retain CMake's detected prefix.
+if(MSVC AND CMAKE_GENERATOR MATCHES "^Ninja" AND
+   IS_ABSOLUTE "${CMAKE_CXX_COMPILER}")
+    get_filename_component(_PRISMATIX_CL_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    file(GLOB _PRISMATIX_CLUI_FILES "${_PRISMATIX_CL_DIR}/*/clui.dll")
+    list(LENGTH _PRISMATIX_CLUI_FILES _PRISMATIX_CLUI_COUNT)
+    if(_PRISMATIX_CLUI_COUNT EQUAL 1)
+        get_filename_component(_PRISMATIX_CLUI_DIR "${_PRISMATIX_CLUI_FILES}" DIRECTORY)
+        get_filename_component(_PRISMATIX_CLUI_LOCALE "${_PRISMATIX_CLUI_DIR}" NAME)
+        if(_PRISMATIX_CLUI_LOCALE STREQUAL "1028")
+            set(CMAKE_CL_SHOWINCLUDES_PREFIX "注意: 包含檔案: ")
+            message(STATUS "Using the zh-TW MSVC /showIncludes prefix for Ninja header dependencies")
+        endif()
+    endif()
+endif()
+
 if(APPLE)
     enable_language(OBJCXX)
 endif()

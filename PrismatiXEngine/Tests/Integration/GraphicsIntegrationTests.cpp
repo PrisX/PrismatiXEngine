@@ -531,7 +531,7 @@ int main() {
             while (!pending.empty()) {
                 const auto* node = pending.back(); pending.pop_back();
                 if (const auto* button = dynamic_cast<const px::ui::Button*>(node);
-                    button && button->Text().starts_with("Slot ")) {
+                    button && button->Text().find("Slot ") != std::string::npos) {
                     ++count;
                     const auto rect = button->LayoutRect();
                     if (rect.x < 50 || rect.x + rect.w > 1230.1f ||
