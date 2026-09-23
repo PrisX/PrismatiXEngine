@@ -2090,10 +2090,9 @@ std::vector<ui::GalgameItem> PlayerApp::GalleryItems() {
 
 std::vector<ui::GalgameItem> PlayerApp::SaveItems(bool saveMode) {
     std::vector<ui::GalgameItem> items;
-    const auto slotItem = [&](int slot, const std::string& prefix, const std::string& action) {
+    const auto slotItem = [&](int slot, const std::string& action) {
         const progress::SlotInfo info = m_saves.Peek(slot);
-        std::string label = ProductText(m_langTable, "player.save.empty",
-                                        "空白存檔");
+        std::string label;
         std::string subtitle;
         std::string image;
         if (info.exists) {
@@ -2122,17 +2121,15 @@ std::vector<ui::GalgameItem> PlayerApp::SaveItems(bool saveMode) {
                 }
             }
         }
-        items.push_back({"slot-" + std::to_string(slot), prefix + "  " + label, subtitle, image,
+        items.push_back({"slot-" + std::to_string(slot), label, subtitle, image,
                          !saveMode && !info.exists, action, std::to_string(slot)});
     };
 
     if (!saveMode) {
-        slotItem(kAutoSaveSlot,
-                 ProductText(m_langTable, "player.save.auto", "AUTO"),
-                 "load.slot");
+        slotItem(kAutoSaveSlot, "load.slot");
     }
-    for (int i = 0; i < 6; ++i) {
-        slotItem(i, "#" + std::to_string(i + 1), saveMode ? "save.slot" : "load.slot");
+    for (int i = 0; i < 12; ++i) {
+        slotItem(i, saveMode ? "save.slot" : "load.slot");
     }
     return items;
 }

@@ -142,6 +142,33 @@ test("UI component contract rejects scene-only fields and migrates canonical pro
   assert.equal(validateDocument("uiComponent", {...migrated.value as object, behaviorGraph:{nodes:[],links:[],groups:[]}}).valid, false);
 });
 
+test("UI semantic validation matches native built-in Action argument contracts", () => {
+  const root = "11111111-1111-4111-8111-111111111111";
+  const button = "22222222-2222-4222-8222-222222222222";
+  const layout = {mode:"free",x:0,y:0,width:200,height:60,
+    anchorX:0,anchorY:0,anchorRight:0,anchorBottom:0,pivotX:0,pivotY:0,
+    margin:0,alignment:"start",sizeRule:"fixed"};
+  const scene = {format:"PrismatiXUIScene",schemaRevision:2,id:root,revision:1,
+    name:"Save",width:1280,height:720,rootId:root,
+    nodes:[
+      {id:root,parentId:null,order:0,kind:"group",runtimeType:"Control",name:"Root",
+        visible:true,locked:false,layout,runtimeProperties:{},bindings:{}},
+      {id:button,parentId:root,order:0,kind:"button",runtimeType:"TextureButton",
+        name:"Slot0Button",visible:true,locked:false,layout,runtimeProperties:{},
+        bindings:{},onClick:{id:"save.slot",arguments:{slot:0}}},
+    ],theme:[],behaviorGraph:{nodes:[],links:[],groups:[]},
+    behaviorTriggers:[],visualStateGroups:[],
+  } satisfies JsonValue;
+  assert.equal(validateDocument("ui", scene).valid, true);
+  const invalid = structuredClone(scene) as {
+    nodes: Array<{onClick?: {id: string; arguments: Record<string, JsonValue>}}>;
+  };
+  invalid.nodes[1]!.onClick = {id:"save.slot",arguments:{argument:"0"}};
+  const result = validateDocument("ui", invalid);
+  assert.equal(result.valid, false);
+  assert.ok(result.diagnostics.some((item) => item.code === "PXSDKUI1025"));
+});
+
 test("Timeline semantic validation rejects unordered or out-of-range samples", () => {
   const invalid = {format:"PrismatiXTimeline",schemaRevision:2,id:"bad",duration:1,tracks:[{id:"track",binding:{kind:"stage",target:"yuki",property:"opacity"},keyframes:[{time:0.8,value:1,easing:"linear"},{time:0.4,value:0,easing:"linear"}]}],markers:[],nestedClips:[]} satisfies JsonValue;
   const result = validateDocument("timeline", invalid);

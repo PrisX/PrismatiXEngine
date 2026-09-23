@@ -151,6 +151,17 @@ GalgameUI::GalgameUI() {
     (void)m_viewModel.Define("dialogue.text",Variant(std::string{}),true);
     (void)m_viewModel.Define("chapter.title",Variant(std::string{}),true);
     (void)m_viewModel.Define("music.title",Variant(std::string{}),true);
+    // Authored save/load surfaces bind fixed slot controls to these values.
+    // The layout and textures belong to the .pxui document; only data is
+    // supplied by the host. A future repeater contract can replace this
+    // finite bridge without changing the authored slot presentation.
+    for (std::size_t slot = 0; slot < 12; ++slot) {
+        const std::string prefix = "saveLoad.slot" + std::to_string(slot) + ".";
+        (void)m_viewModel.Define(prefix + "image", Variant(std::string{}), true);
+        (void)m_viewModel.Define(prefix + "title", Variant(std::string{}), true);
+        (void)m_viewModel.Define(prefix + "subtitle", Variant(std::string{}), true);
+        (void)m_viewModel.Define(prefix + "enabled", Variant(false), true);
+    }
     const std::vector<std::string> commands={
         "game.start", "game.continue", "load.open", "save.open",
         "gallery.open", "settings.open", "extra.open", "flowchart.open",
@@ -158,6 +169,8 @@ GalgameUI::GalgameUI() {
         "mode.auto", "mode.skip", "backlog.open", "hud.hide",
         "overlay.close"};
     for(const auto& command:commands)(void)RegisterActionCommand(command);
+    (void)RegisterActionCommand("save.slot", "slot");
+    (void)RegisterActionCommand("load.slot", "slot");
     (void)m_context.Commands().Register("hud.toolbar.pin",[this](const Variant&){return ToggleHudToolbarPinned();});
     for (auto& entry : CreateBuiltinUiPackage()) {
         const auto screen = ScreenFromId(entry.route);
@@ -206,6 +219,8 @@ Status GalgameUI::RegisterActionCommand(std::string command,
                     found != values->end()) {
                     if (const auto* value = found->second.TryGet<std::string>())
                         argument = *value;
+                    else if (const auto* integer = found->second.TryGet<std::int64_t>())
+                        argument = std::to_string(*integer);
                 }
             }
             Emit(registered, std::move(argument));
@@ -633,7 +648,37 @@ Status GalgameUI::ShowBacklog(std::vector<GalgameItem> entries) {
 
 Status GalgameUI::ShowSaveLoad(bool saveMode, std::vector<GalgameItem> slots) {
     const Screen target=saveMode?Screen::Save:Screen::Load;
-    const Status installed=InstallTemplate(target);if(!installed)return installed;auto* grid=FindNamed<GridView>(m_context.Root(),"Slots");if(!grid)return GalgameFailure("PXUI2806","SaveLoad template requires a GridView named Slots");m_items=std::make_shared<ItemSource>(std::move(slots),*this);return grid->SetSource(m_items,[]{return std::make_unique<CardButton>();});
+    for (std::size_t index = 0; index < 12; ++index) {
+        const auto found = std::ranges::find_if(slots, [index](const GalgameItem& item) {
+            return item.argument == std::to_string(index);
+        });
+        const GalgameItem* item = found == slots.end() ? nullptr : &*found;
+        const std::string prefix = "saveLoad.slot" + std::to_string(index) + ".";
+        (void)m_viewModel.Write(prefix + "image", Variant(item ? item->image : std::string{}));
+        (void)m_viewModel.Write(prefix + "title", Variant(item ? item->title : std::string{}));
+        (void)m_viewModel.Write(prefix + "subtitle", Variant(item ? item->subtitle : std::string{}));
+        (void)m_viewModel.Write(prefix + "enabled", Variant(item && !item->disabled));
+    }
+    const Status installed = InstallTemplate(target);
+    if (!installed) return installed;
+    if (FindNamed<Button>(m_context.Root(), "Slot0Button")) {
+        for (std::size_t index = 1; index < 12; ++index)
+            if (!FindNamed<Button>(m_context.Root(), "Slot" + std::to_string(index) + "Button"))
+                return GalgameFailure("PXUI2806", "Authored save/load template is missing a slot button");
+        m_items.reset();
+        return Status::Ok();
+    }
+    auto* grid = FindNamed<GridView>(m_context.Root(), "Slots");
+    if (!grid) return GalgameFailure("PXUI2806", "SaveLoad template requires authored Slot0Button..Slot11Button or a GridView named Slots");
+    for (auto& item : slots) {
+        std::string prefix = item.argument == "-1" ? "AUTO" : std::string{};
+        for (std::size_t index = 0; index < 12 && prefix.empty(); ++index)
+            if (item.argument == std::to_string(index))
+                prefix = "#" + std::to_string(index + 1);
+        if (!prefix.empty()) item.title = prefix + "  " + (item.title.empty() ? "—" : item.title);
+    }
+    m_items = std::make_shared<ItemSource>(std::move(slots), *this);
+    return grid->SetSource(m_items, [] { return std::make_unique<CardButton>(); });
 }
 
 Status GalgameUI::ShowGallery(std::vector<GalgameItem> entries) {

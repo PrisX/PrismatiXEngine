@@ -88,6 +88,27 @@ function timelineSemantics(root: ObjectValue, path?: string): AuthoringDiagnosti
 const structuralUiKinds = new Set(["control", "group", "stack", "hbox", "vbox", "grid"]);
 const layoutOwningUiKinds = new Set(["stack", "hbox", "vbox", "grid"]);
 
+function validBuiltinUiAction(value: unknown): boolean {
+  const action = object(value);
+  if (action === undefined || typeof action.id !== "string") return true;
+  const args = object(action.arguments) ?? {};
+  const noArguments = new Set([
+    "game.start", "app.quit", "overlay.close", "load.open", "save.open",
+    "gallery.open", "settings.open", "backlog.open", "mode.auto", "mode.skip",
+    "set.skipread.toggle", "set.fullscreen.toggle",
+  ]);
+  if (noArguments.has(action.id)) return Object.keys(args).length === 0;
+  if (["choice.select", "load.slot", "save.slot"].includes(action.id)) {
+    const key = action.id === "choice.select" ? "index" : "slot";
+    return Object.keys(args).length === 1 &&
+      typeof args[key] === "number" && Number.isSafeInteger(args[key]);
+  }
+  if (action.id === "cg.view")
+    return Object.keys(args).length === 1 && typeof args.resource === "string";
+  // Extensions and project-specific actions are checked by their catalogs.
+  return true;
+}
+
 function boundedJsonValue(value: unknown, depth = 0, budget = {nodes: 0}): boolean {
   if (depth > 32 || ++budget.nodes > 8192) return false;
   if (value === null || typeof value === "boolean" || typeof value === "string") return true;
@@ -219,6 +240,9 @@ function uiSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[] {
     if (typeof node.runtimeType === "string" && !/^[A-Za-z0-9_.-]*$/u.test(node.runtimeType)) {
       diagnostics.push(issue("PXSDKUI1018", "UI node runtimeType is invalid", path, node.id));
     }
+    if (!validBuiltinUiAction(node.onClick))
+      diagnostics.push(issue("PXSDKUI1025", "UI node typed action is invalid", path,
+        `${String(node.name ?? node.id)}: ${String(object(node.onClick)?.id)}`));
     const orderKey = `${parent ?? "<root>"}:${String(node.order)}`;
     if (siblingOrders.has(orderKey)) diagnostics.push(issue("PXSDKSEM1303", "Sibling UI order must be unique", path, orderKey));
     siblingOrders.add(orderKey);
