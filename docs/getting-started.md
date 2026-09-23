@@ -94,9 +94,10 @@ archive to finish before showing progress.
 
 `create` already prepares an identity sidecar for the starter Story. For an
 older or separately authored Story with save/seen history, run
-`prismatix ids my-game --external --write` once to move line-by-line `[id]`
+`prismatix ids my-game --write` once to move line-by-line `[id]`
 anchors into adjacent `.pxstory.pxids.json` files while keeping the prose
-readable. The command backs up original Story sources. `prismatix ids my-game
+readable. External sidecars are the default; `--inline` is an explicit legacy
+mode. The command backs up original Story sources. `prismatix ids my-game
 --check` then audits coverage. Do not delete a sidecar: the source marker makes
 the compiler reject a missing one rather than silently changing save ids.
 After adding or removing executable Story lines, preview the identity update

@@ -42,8 +42,13 @@ const storyIndex = record(documents[String(descriptor.storyIndex)]);
 for (const scene of Array.isArray(storyIndex.scenes)
   ? storyIndex.scenes as unknown[] : []) {
   for (const path of Object.values(record(record(scene).sources))) {
-    if (typeof path === "string")
+    if (typeof path === "string") {
       sourceFiles[path] = await readFile(resolve(sampleRoot, path), "utf8");
+      // Direct SDK callers supply the author-only identity sidecar; the CLI
+      // performs this adjacent-file lookup automatically.
+      sourceFiles[`${path}.pxids.json`] = await readFile(
+        resolve(sampleRoot, `${path}.pxids.json`), "utf8");
+    }
   }
 }
 for (const item of Array.isArray(descriptor.effects)

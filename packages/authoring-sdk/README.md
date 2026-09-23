@@ -66,7 +66,7 @@ uses this API for `validate`, `dev` and builds: human output is throttled, and
 An ordinary `.pxstory` needs no manually authored id. New projects from
 `prismatix create` start with an external identity map already prepared.
 When save/seen identity
-must survive text edits, `prismatix ids my-game --external --write` creates a
+must survive text edits, `prismatix ids my-game --write` creates a
 recoverable source backup, removes existing `[id ...]` directives, and writes
 an author-only `<source>.pxids.json` sidecar. The Story keeps one short
 `; @prismatix-ids` marker so a missing sidecar fails the build instead of
@@ -86,7 +86,9 @@ can review save-migration implications. The synchronizer refuses reordered,
 duplicated, or otherwise ambiguous edits rather than guessing a save anchor.
 Changing an operation's kind/command also needs manual review. Validate the
 project and test old saves before distributing an update; stable ids alone do
-not prove save compatibility.
+not prove save compatibility. `--external` remains an explicit spelling of the
+default. `--inline` is available only for legacy projects that deliberately
+want `[id ...]` in Story source; it cannot be mixed with external sidecars.
 
 ## Player presentation crossfades
 

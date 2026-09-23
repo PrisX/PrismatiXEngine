@@ -315,7 +315,7 @@ test("dev reuses Story compilation for UI edits and invalidates it for Story edi
     .slice(4).map((event) => event.cached), [undefined, undefined]);
 });
 
-test("ids reports fallback identities and writes stable Story anchors with a backup", async () => {
+test("ids defaults to readable Story and external stable identities with a backup", async () => {
   const value = await fixture();
   const checkedBefore = run(["ids", value.root, "--check"]);
   assert.equal(checkedBefore.status, 1, checkedBefore.stdout);
@@ -326,15 +326,40 @@ test("ids reports fallback identities and writes stable Story anchors with a bac
   const backup = join(value.root, "identity-backup");
   const written = run(["ids", value.root, "--write", "--backup", backup]);
   assert.equal(written.status, 0, written.stderr);
-  const report = JSON.parse(written.stdout) as {dryRun: boolean; assigned: number; fallback: number};
+  const report = JSON.parse(written.stdout) as {
+    external: boolean; dryRun: boolean; assigned: number; fallback: number;
+  };
+  assert.equal(report.external, true);
   assert.equal(report.dryRun, false);
   assert.ok(report.assigned > 0);
   assert.equal(report.fallback, 0);
-  assert.match(await readFile(join(value.root, "Story", "main.pxstory"), "utf8"), /\[id auto\.[0-9a-f]+\]/u);
+  const sourcePath = join(value.root, "Story", "main.pxstory");
+  const story = await readFile(sourcePath, "utf8");
+  assert.match(story, /^; @prismatix-ids\r?\n/u);
+  assert.doesNotMatch(story, /\[id /u);
+  assert.equal((await stat(`${sourcePath}.pxids.json`)).isFile(), true);
   assert.equal((await stat(join(backup, "Story", "main.pxstory"))).isFile(), true);
 
   const checkedAfter = run(["ids", value.root, "--check"]);
   assert.equal(checkedAfter.status, 0, checkedAfter.stderr);
+});
+
+test("ids --inline keeps the legacy source rewrite explicit", async () => {
+  const value = await fixture();
+  const sourcePath = join(value.root, "Story", "main.pxstory");
+  const written = run(["ids", value.root, "--inline", "--write", "--prefix", "legacy"]);
+  assert.equal(written.status, 0, written.stderr);
+  assert.match(await readFile(sourcePath, "utf8"), /\[id legacy\.[0-9a-f]+\]/u);
+  assert.equal((await readdir(join(value.root, "Story"))).some(name => name.endsWith(".pxids.json")), false);
+  const conflicting = run(["ids", value.root, "--inline", "--external", "--write"]);
+  assert.equal(conflicting.status, 1);
+  assert.match(conflicting.stderr, /mutually exclusive/u);
+  assert.equal(run(["ids", value.root, "--inline", "--sync"]).status, 1);
+  await write(sourcePath, "; @prismatix-ids\nHello.\n[end]\n");
+  const missingSidecar = run(["ids", value.root, "--inline", "--write"]);
+  assert.equal(missingSidecar.status, 1);
+  assert.match(missingSidecar.stderr, /restore its sidecar/u);
+  assert.equal(await readFile(sourcePath, "utf8"), "; @prismatix-ids\nHello.\n[end]\n");
 });
 
 test("ids --external moves inline anchors to a sidecar without changing compiled operation ids", async () => {
@@ -343,7 +368,7 @@ test("ids --external moves inline anchors to a sidecar without changing compiled
   await write(sourcePath, "[id pin.hello]\nHello.\n[id pin.end]\n[end]\n");
   const before = join(value.root, "before-artifact");
   assert.equal(run(["build", value.project, "--artifact-only", "--output", before]).status, 0);
-  const converted = run(["ids", value.project, "--external", "--write"]);
+  const converted = run(["ids", value.project, "--write"]);
   assert.equal(converted.status, 0, converted.stderr);
   const report = JSON.parse(converted.stdout) as {external: boolean; fallback: number; backup: string};
   assert.equal(report.external, true);
@@ -1052,6 +1077,11 @@ test("inspect-save cannot accept a JS-hashed envelope without the authoritative 
 
 test("the commercial sample compiles and publishes every release-gated capability", async () => {
   const sample = resolve("../..", "Samples/CommercialVN/project.pxproject");
+  for (const locale of ["zh-TW", "ja-JP"]) for (const scene of ["prologue", "chapter1"]) {
+    const story = resolve("../..", `Samples/CommercialVN/Story/${locale}/${scene}.pxstory`);
+    assert.doesNotMatch(await readFile(story, "utf8"), /\[id\s/u);
+    assert.equal((await stat(`${story}.pxids.json`)).isFile(), true);
+  }
   const root = await mkdtemp(join(tmpdir(), "prismatix-commercial-sample-"));
   const output = join(root, "artifact");
   const validated = run(["validate", sample]);
@@ -1088,6 +1118,11 @@ test("the commercial sample compiles and publishes every release-gated capabilit
 
 test("the PrismaFamilyDemo authors every UI route in TSX and builds canonical-only UI", async () => {
   const sample = resolve("../..", "Samples/PrismaFamilyDemo/project.pxproject");
+  for (const locale of ["zh-TW", "ja-JP"]) {
+    const story = resolve("../..", `Samples/PrismaFamilyDemo/Story/${locale}/main.pxstory`);
+    assert.doesNotMatch(await readFile(story, "utf8"), /\[id\s/u);
+    assert.equal((await stat(`${story}.pxids.json`)).isFile(), true);
+  }
   const root = await mkdtemp(join(tmpdir(), "prismatix-jsx-sample-"));
   const output = join(root, "artifact");
   const authoredProject = JSON.parse(await readFile(sample, "utf8")) as {

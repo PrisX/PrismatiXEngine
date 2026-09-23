@@ -30,6 +30,7 @@ import {
   compileProject,
   externalizeStoryIds,
   parseStory,
+  storyRequiresIdentityMap,
   StoryProjectCompilationCache,
   stableSourceIdReport,
   synchronizeStoryIdentityMap,
@@ -73,7 +74,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   pack: {values: "output artifact runtime packager player compression ui-registry", flags: "encrypt"},
   run: {values: "output artifact runtime packager player compression ui-registry", flags: "encrypt"},
   augment: {values: "artifact manifest", flags: ""},
-  ids: {values: "document-id prefix backup", flags: "write check external sync"},
+  ids: {values: "document-id prefix backup", flags: "write check external inline sync"},
   migrate: {values: "report backup entry-story entry-ui supported-locales save-version id name version content-version default-locale story-index game-catalog", flags: "write"},
   "inspect-save": {values: "package secret runtime player", flags: ""},
 };
@@ -1549,7 +1550,7 @@ async function syncExternalIdsCommand(collection: Awaited<ReturnType<typeof iden
     const mapPath = `${value.absolutePath}.pxids.json`;
     if (!await regularFile(mapPath)) {
       diagnostics.push(diagnostic("PXSTORY1411",
-        "Story identity sidecar is missing; use ids --external --write for a new Story",
+        "Story identity sidecar is missing; use ids --write for a new Story",
         `${value.virtualPath}.pxids.json`));
       continue;
     }
@@ -1722,13 +1723,20 @@ async function externalIdsCommand(collection: Awaited<ReturnType<typeof identity
 
 async function idsCommand(options: Options): Promise<number> {
   try {
+    if (options.flags.has("inline") && options.flags.has("external"))
+      throw new Error("--inline and --external are mutually exclusive");
+    if (options.flags.has("inline") && options.flags.has("sync"))
+      throw new Error("--sync updates external identity maps; omit --inline");
     const collection = await identitySources(options.positional[0]);
     if (options.flags.has("sync")) return syncExternalIdsCommand(collection, options);
     const mapsExist = (await Promise.all(collection.sources.map((value) =>
       regularFile(`${value.absolutePath}.pxids.json`)))).some(Boolean);
-    if (options.flags.has("external") || mapsExist) {
-      if (mapsExist && !options.flags.has("external") && options.flags.has("write"))
-        throw new Error("This project has external Story identity maps; use ids --external --write");
+    if (options.flags.has("inline") && mapsExist)
+      throw new Error("This project has external Story identity maps; omit --inline");
+    if (options.flags.has("inline") && collection.sources.some((value) =>
+      storyRequiresIdentityMap(value.source)))
+      throw new Error("A Story requires a missing external identity map; restore its sidecar before changing identity mode");
+    if (!options.flags.has("inline")) {
       return externalIdsCommand(collection, options);
     }
     const documentId = options.values.get("document-id") ?? collection.documentId;
