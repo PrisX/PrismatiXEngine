@@ -150,6 +150,25 @@ int main() {
                      "one splash completes without per-frame reload or repeated audio");
     });
 
+    suite.Run("DelayedAudio_FiresOnceAtConfiguredTime", [&] {
+        Fixture fixture;
+        auto entry = Entry("delayed");
+        entry.audioDelay = 1.0f;
+        fixture.scenes.emplace(entry.scene.lastKnownPath, Scene("delayed"));
+        auto player = fixture.Player();
+        suite.Require(static_cast<bool>(player.Start({entry})), "delayed splash starts");
+        suite.Expect(fixture.audio.empty(), "audio does not play at scene load");
+        player.Update(0.9f);
+        suite.Expect(fixture.audio.empty(), "audio remains silent before delay");
+        player.Update(0.1f);
+        suite.Expect(fixture.audio.size() == 1 &&
+                         fixture.audio[0] == entry.audio->lastKnownPath,
+                     "audio plays at its authored delay");
+        player.Update(1.0f);
+        suite.Expect(fixture.audio.size() == 1,
+                     "subsequent frames do not replay the audio");
+    });
+
     suite.Run("MultipleSplashes_PreserveExactAuthoredOrder", [&] {
         Fixture fixture;
         std::vector<SplashScreenEntry> entries{Entry("publisher"), Entry("studio"),

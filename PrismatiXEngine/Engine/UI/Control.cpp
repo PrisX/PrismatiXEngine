@@ -213,7 +213,7 @@ void Control::InvalidateLayout() {
 bool Control::HitTest(Vec2 point) const {
     if(!IsVisibleInTree()||!m_enabled||m_mouseFilter==MouseFilter::Ignore)return false;
     std::vector<const Control*> chain;for(const Control* control=this;control;control=dynamic_cast<const Control*>(control->Parent()))chain.push_back(control);std::reverse(chain.begin(),chain.end());
-    for(const auto* control:chain){const float sx=std::abs(control->m_scale.x)<.0001f?.0001f:control->m_scale.x,sy=std::abs(control->m_scale.y)<.0001f?.0001f:control->m_scale.y;const Vec2 pivot{control->m_layoutRect.x+control->m_pivot.x*control->m_layoutRect.w,control->m_layoutRect.y+control->m_pivot.y*control->m_layoutRect.h};const float radians=-control->m_rotation*3.14159265358979323846f/180.0f,cs=std::cos(radians),sn=std::sin(radians);const float x=point.x-pivot.x,y=point.y-pivot.y;point={pivot.x+(cs*x-sn*y)/sx,pivot.y+(sn*x+cs*y)/sy};}
+    for(const auto* control:chain){const float sx=std::abs(control->m_scale.x)<.0001f?.0001f:control->m_scale.x,sy=std::abs(control->m_scale.y)<.0001f?.0001f:control->m_scale.y;const Vec2 pivot{control->m_layoutRect.x+control->m_pivot.x*control->m_layoutRect.w,control->m_layoutRect.y+control->m_pivot.y*control->m_layoutRect.h};const Vec2 transformedPivot{pivot.x+control->m_translation.x,pivot.y+control->m_translation.y};const float radians=-control->m_rotation*3.14159265358979323846f/180.0f,cs=std::cos(radians),sn=std::sin(radians);const float x=point.x-transformedPivot.x,y=point.y-transformedPivot.y;point={pivot.x+(cs*x-sn*y)/sx,pivot.y+(sn*x+cs*y)/sy};}
     return m_layoutRect.Contains(point.x,point.y);
 }
 
@@ -272,7 +272,7 @@ void Control::Update(float deltaSeconds) {
 void Control::Draw(graphics::Renderer2D& renderer, const Theme& theme) {
     if (m_visibility != Visibility::Visible) return;
     Color tint=m_modulate;tint.a=static_cast<std::uint8_t>(static_cast<float>(tint.a)*m_opacity);
-    renderer.PushTransform({m_layoutRect.x+m_pivot.x*m_layoutRect.w,m_layoutRect.y+m_pivot.y*m_layoutRect.h},m_scale,m_rotation,tint);
+    renderer.PushTransform({m_layoutRect.x+m_pivot.x*m_layoutRect.w+m_translation.x,m_layoutRect.y+m_pivot.y*m_layoutRect.h+m_translation.y},m_scale,m_rotation,tint);
     if(m_clipContent)renderer.PushClip(m_layoutRect);
     DrawSelf(renderer, theme);
     for(const auto& child:Children())if(auto* control=dynamic_cast<Control*>(child.get()))control->Draw(renderer,theme);

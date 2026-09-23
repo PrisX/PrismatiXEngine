@@ -184,6 +184,10 @@ public:
     bool LoadScript(const std::string& scriptPath);
     bool LoadScenarioText(std::string_view text, const std::string& scriptPath);
     bool LoadCompiledProgram(Program program, const std::string& scriptPath);
+    // Starts the already-loaded program directly at an authored label.  This
+    // is the bounded runtime primitive used by scene replay and flowchart
+    // jump UIs; presentation cleanup remains the host's responsibility.
+    bool RestartAtLabel(std::string_view label);
     ProgramSeekStatus LoadCompiledProgramAt(Program program,
                                             const std::string& scriptPath,
                                             int operationIndex);

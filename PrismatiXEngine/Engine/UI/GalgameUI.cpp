@@ -58,6 +58,27 @@ private:
 };
 
 template<typename T>T* FindNamed(Control* root,std::string_view name){if(!root)return nullptr;if(root->Name()==name)return dynamic_cast<T*>(root);for(const auto& child:root->Children())if(auto* control=dynamic_cast<Control*>(child.get()))if(auto* found=FindNamed<T>(control,name))return found;return nullptr;}
+bool UpdateChapterBanner(Control* root, std::string_view title) {
+    auto* banner = FindNamed<Control>(root, "ChapterBanner");
+    if (!banner) return false;
+    constexpr std::string_view prefix = "CHAPTER ";
+    const auto number = title.starts_with(prefix) ? title.substr(prefix.size()) : std::string_view{};
+    const bool visible = !number.empty() && number.size() <= 4 &&
+        std::ranges::all_of(number, [](char value) {
+            return (value >= '0' && value <= '9') || value == '-';
+        });
+    banner->SetVisibility(visible ? Visibility::Visible : Visibility::Collapsed);
+    for (std::size_t slot = 0; slot < 4; ++slot) {
+        for (const char glyph : std::string_view("0123456789-")) {
+            const std::string name = "ChapterGlyph" + std::to_string(slot) + "-" +
+                (glyph == '-' ? "dash" : std::string(1, glyph));
+            if (auto* image = FindNamed<TextureRect>(banner, name))
+                image->SetVisibility(visible && slot < number.size() && number[slot] == glyph
+                    ? Visibility::Visible : Visibility::Collapsed);
+        }
+    }
+    return visible;
+}
 void SetPresentationText(Label* label, std::string value) {
     if (auto* rich = dynamic_cast<RichTextLabel*>(label))
         rich->SetMarkup(std::move(value));
@@ -130,8 +151,13 @@ GalgameUI::GalgameUI() {
     (void)m_viewModel.Define("dialogue.text",Variant(std::string{}),true);
     (void)m_viewModel.Define("chapter.title",Variant(std::string{}),true);
     (void)m_viewModel.Define("music.title",Variant(std::string{}),true);
-    const std::vector<std::string> commands={"game.start","load.open","save.open","gallery.open","settings.open","app.quit","mode.auto","mode.skip","backlog.open","overlay.close"};
-    for(const auto& command:commands)(void)m_context.Commands().Register(command,[this,command](const Variant&){Emit(command);return Status::Ok();});
+    const std::vector<std::string> commands={
+        "game.start", "game.continue", "load.open", "save.open",
+        "gallery.open", "settings.open", "extra.open", "flowchart.open",
+        "replay.open", "music.open", "title.open", "app.quit",
+        "mode.auto", "mode.skip", "backlog.open", "hud.hide",
+        "overlay.close"};
+    for(const auto& command:commands)(void)RegisterActionCommand(command);
     (void)m_context.Commands().Register("hud.toolbar.pin",[this](const Variant&){return ToggleHudToolbarPinned();});
     for (auto& entry : CreateBuiltinUiPackage()) {
         const auto screen = ScreenFromId(entry.route);
@@ -141,6 +167,50 @@ GalgameUI::GalgameUI() {
         value.sourcePath = "BuiltinUI/" + std::string(entry.route) + ".pxui";
         m_templates.emplace(std::string(entry.route), std::move(value));
     }
+}
+
+Status GalgameUI::RegisterActionCommand(std::string command,
+                                        std::string argumentKey) {
+    if (command.empty())
+        return GalgameFailure("PXUI2822", "UI action command cannot be empty");
+    // CommandRegistry is the compatibility execution backend, while authored
+    // .pxui triggers are validated and dispatched through ActionCatalog. Both
+    // sides must know the id or a skinned button can install successfully but
+    // fail with PXUIACTION2010 only when the player clicks it.
+    auto& catalog = m_context.Actions().Catalog();
+    if (!catalog.Contains(command)) {
+        ActionDescriptor descriptor;
+        descriptor.id = command;
+        descriptor.label = command;
+        descriptor.displayName = command;
+        descriptor.category = "Game";
+        descriptor.origin = ActionOrigin::BuiltIn;
+        descriptor.sourceId = "GalgameUI.Dynamic";
+        descriptor.providerId = "builtin";
+        // Game routes commonly carry a string under a project-selected key.
+        // Keep the catalog entry idempotent across multiple GalgameUI
+        // instances and let each instance choose the key it forwards.
+        descriptor.allowAdditionalArguments = true;
+        const Status registered = catalog.Register(std::move(descriptor));
+        if (!registered) return registered;
+    }
+    if (m_context.Commands().Contains(command)) return Status::Ok();
+    const std::string registered = command;
+    return m_context.Commands().Register(
+        std::move(command),
+        [this, registered, argumentKey = std::move(argumentKey)](
+            const Variant& parameter) {
+            std::string argument;
+            if (const auto* values = parameter.AsObject()) {
+                if (const auto found = values->find(argumentKey);
+                    found != values->end()) {
+                    if (const auto* value = found->second.TryGet<std::string>())
+                        argument = *value;
+                }
+            }
+            Emit(registered, std::move(argument));
+            return Status::Ok();
+        });
 }
 
 UIRuntimeState GalgameUI::CaptureRuntimeState() const {
@@ -505,12 +575,20 @@ Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
     (void)m_viewModel.Write("chapter.title",Variant(p.chapterTitle));(void)m_viewModel.Write("music.title",Variant(p.musicTitle));
     const bool chapterChanged=p.chapterTitle!=m_lastChapterTitle;
     const bool musicChanged=p.musicTitle!=m_lastMusicTitle;
+    const bool chapterBannerVisible = chapterChanged &&
+        UpdateChapterBanner(m_context.Root(), p.chapterTitle);
     if(m_noticePanel&&(chapterChanged||musicChanged)){
-        const bool showChapter=chapterChanged&&!p.chapterTitle.empty();
+        const bool showChapter=chapterChanged&&!chapterBannerVisible&&!p.chapterTitle.empty();
         const bool showMusic=!showChapter&&musicChanged&&!p.musicTitle.empty();
+        // Authored HUDs may deliberately leave notice labels empty and feed
+        // them from the runtime presentation model.  View-model writes only
+        // update controls that carry an explicit binding, so also update the
+        // conventional named controls just as we already do for dialogue.
+        if(m_chapterNotice)SetPresentationText(m_chapterNotice,p.chapterTitle);
+        if(m_musicNotice)SetPresentationText(m_musicNotice,p.musicTitle);
         if(m_chapterNotice)m_chapterNotice->SetVisibility(showChapter?Visibility::Visible:Visibility::Collapsed);
         if(m_musicNotice)m_musicNotice->SetVisibility(showMusic?Visibility::Visible:Visibility::Collapsed);
-        if(showChapter||showMusic)m_noticePanel->RevealFor(3.0f);
+        if(showChapter||showMusic)m_noticePanel->RevealFor(5.0f);
     }
     m_lastChapterTitle=p.chapterTitle;m_lastMusicTitle=p.musicTitle;
     if (m_nvlText) {

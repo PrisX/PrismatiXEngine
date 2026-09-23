@@ -21,6 +21,10 @@ public:
     [[nodiscard]] float Speed() const{return m_speed;}
     void SetTriggerSize(float value){m_triggerSize=std::max(1.0f,value);InvalidateLayout();}
     [[nodiscard]] float TriggerSize() const{return m_triggerSize;}
+    void SetRevealDistance(float value){m_revealDistance=std::max(0.0f,value);InvalidateLayout();}
+    [[nodiscard]] float RevealDistance() const{return m_revealDistance;}
+    void SetFadeWithReveal(bool value){m_fadeWithReveal=value;SetOpacity(value?m_progress:1.0f);}
+    [[nodiscard]] bool FadeWithReveal() const{return m_fadeWithReveal;}
     void SetPinned(bool value){m_pinned=value;}
     [[nodiscard]] bool Pinned() const{return m_pinned;}
     void TogglePinned(){SetPinned(!m_pinned);}
@@ -38,8 +42,8 @@ public:
 protected:void ArrangeOverride(Rect finalRect) override;
 private:
     RevealEdge m_edge=RevealEdge::Top;
-    float m_speed=12.0f,m_triggerSize=10.0f,m_progress=0.0f;
-    bool m_pinned=false,m_pointerInside=false,m_manualVisible=false,m_reducedMotion=false;
+    float m_speed=12.0f,m_triggerSize=10.0f,m_revealDistance=0.0f,m_progress=0.0f;
+    bool m_pinned=false,m_pointerInside=false,m_manualVisible=false,m_reducedMotion=false,m_fadeWithReveal=false;
     float m_holdRemaining=0.0f;
     RevealTrigger m_trigger=RevealTrigger::Hover;
     RevealEasing m_easing=RevealEasing::EaseOut;

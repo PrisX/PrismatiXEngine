@@ -85,6 +85,12 @@ public:
         m_studioComponentLoader = std::move(loader);
     }
     void SetActionSink(ActionSink sink) { m_sink = std::move(sink); }
+    // Makes an authored command available to a game-specific UI route and
+    // forwards its optional string argument to the normal Galgame action
+    // sink.  Games no longer need engine-side hard-coded command whitelists
+    // just to make a skinned screen interactive.
+    Status RegisterActionCommand(std::string command,
+                                 std::string argumentKey = "argument");
     void SetBehaviorVariableAccess(
         std::function<std::optional<Variant>(std::string_view)> read,
         std::function<Status(std::string_view, const Variant&)> write) {

@@ -68,6 +68,9 @@ public:
                            bool resetVariables = true);
     bool StartRuntimeIr(const std::string& sourcePath,
                         bool resetVariables = true);
+    bool StartPreparedRuntimeIr(std::shared_ptr<const vn::Program> program,
+                                const std::string& sourcePath,
+                                bool resetVariables = true);
     bool StartRuntimeIrText(std::string_view text, const std::string& sourcePath,
                             bool resetVariables = true);
     [[nodiscard]] std::shared_ptr<const vn::Program> PrepareRuntimeIr(
@@ -75,12 +78,22 @@ public:
     Status LoadSourceMap(const std::string& sourcePath);
     Status SetSourceMapText(std::string_view text,
                             const std::string& sourcePath);
+    // Packaged builds have already validated source maps during packaging.
+    // Keep their large debug metadata off the startup path and materialize it
+    // only if a runtime diagnostic actually needs authored source locations.
+    void DeferSourceMap(std::string sourcePath,
+                        std::string expectedDocumentId = {}) {
+        m_sourceMap.reset();
+        m_sourceMapPath = std::move(sourcePath);
+        m_deferredSourceMapDocumentId = std::move(expectedDocumentId);
+    }
     // Commits an already strictly parsed source map. Used with transactional
     // program replacement so no fallible parsing remains after state commit.
     void CommitSourceMap(sdk::SourceMapDocument document,
                          std::string sourcePath) {
         m_sourceMap = std::move(document);
         m_sourceMapPath = std::move(sourcePath);
+        m_deferredSourceMapDocumentId.clear();
     }
     [[nodiscard]] std::shared_ptr<const vn::Program> RuntimeProgramIdentity() const {
         return m_runtimeProgramIdentity;
@@ -183,8 +196,10 @@ private:
     std::shared_ptr<const vn::Program> m_runtimeProgramIdentity;
     std::optional<sdk::SourceMapDocument> m_sourceMap;
     std::string m_sourceMapPath;
+    std::string m_deferredSourceMapDocumentId;
 
     bool ExecuteCommand(const vn::Command& command);
+    bool EnsureSourceMapLoaded();
     Status ApplyState(const GameState& state, std::uint64_t nowMs);
     std::optional<vn::Program> CompileRuntimeIrText(
         std::string_view text, const std::string& sourcePath);

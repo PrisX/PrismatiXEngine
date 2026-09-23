@@ -45,6 +45,7 @@ void EdgeRevealContainer::Update(float deltaSeconds){
     const float step=m_speed*std::max(0.0f,deltaSeconds);
     const float next=m_reducedMotion?target:(target>m_progress?std::min(target,m_progress+step):std::max(target,m_progress-step));
     if(std::abs(next-m_progress)>.0001f){m_progress=next;InvalidateLayout();}else m_progress=target;
+    if(m_fadeWithReveal)SetOpacity(m_progress);
 }
 
 void EdgeRevealContainer::ArrangeOverride(Rect area){
@@ -54,7 +55,8 @@ void EdgeRevealContainer::ArrangeOverride(Rect area){
     float eased=m_progress;
     if(m_easing==RevealEasing::EaseOut)eased=1.0f-std::pow(1.0f-m_progress,3.0f);
     else if(m_easing==RevealEasing::EaseInOut)eased=m_progress<.5f?4.0f*m_progress*m_progress*m_progress:1.0f-std::pow(-2.0f*m_progress+2.0f,3.0f)/2.0f;
-    const float shift=(1.0f-eased)*std::max(0.0f,extent-m_triggerSize)*direction;
+    const float distance=m_revealDistance>0.0f?m_revealDistance:std::max(0.0f,extent-m_triggerSize);
+    const float shift=(1.0f-eased)*distance*direction;
     Container::ArrangeOverride(horizontal?Rect{area.x+shift,area.y,area.w,area.h}:Rect{area.x,area.y+shift,area.w,area.h});
 }
 

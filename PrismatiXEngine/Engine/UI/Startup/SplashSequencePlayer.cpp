@@ -102,19 +102,26 @@ bool SplashSequencePlayer::LoadCurrent() {
         if (!animation)
             for (const auto& diagnostic : animation.Diagnostics()) Emit(diagnostic);
     }
-    if (entry.audio && m_services.playAudio) {
-        const Status audio = m_services.playAudio(*entry.audio);
-        if (!audio)
-            for (auto diagnostic : audio.Diagnostics()) {
-                diagnostic.category = "Player.Splash";
-                Emit(std::move(diagnostic));
-            }
-    }
+    m_audioPlayed = false;
     m_elapsed = 0.0f;
     m_phaseElapsed = 0.0f;
     m_skipRequested = false;
     m_phase = m_enterDuration > 0.0f ? Phase::Entering : Phase::Holding;
+    if (entry.audioDelay <= 0.0f) PlayCurrentAudio();
     return true;
+}
+
+void SplashSequencePlayer::PlayCurrentAudio() {
+    if (m_audioPlayed || m_index >= m_entries.size()) return;
+    m_audioPlayed = true;
+    const auto& entry = m_entries[m_index];
+    if (!entry.audio || !m_services.playAudio) return;
+    const Status audio = m_services.playAudio(*entry.audio);
+    if (!audio)
+        for (auto diagnostic : audio.Diagnostics()) {
+            diagnostic.category = "Player.Splash";
+            Emit(std::move(diagnostic));
+        }
 }
 
 void SplashSequencePlayer::BeginExit() {
@@ -156,6 +163,7 @@ void SplashSequencePlayer::Update(const float deltaSeconds, const bool skipReque
     m_phaseElapsed += delta;
     m_skipRequested = m_skipRequested || skipRequested;
     const auto& entry = m_entries[m_index];
+    if (m_elapsed >= entry.audioDelay) PlayCurrentAudio();
 
     if (m_skipRequested && entry.skippable && m_elapsed >= entry.skipAllowedAfter &&
         m_phase != Phase::Exiting) {

@@ -95,6 +95,49 @@ test("compileProject produces one deterministic RuntimeIR BuildArtifact", () => 
   assert.ok(result.artifact.files["Content/UI/Panel.pxuicomponent"]?.includes("PrismatiXUIComponent"));
 });
 
+test("compileProject collects UI runtime texture dependencies", () => {
+  const textureUi = {
+    ...ui,
+    nodes: [{
+      ...ui.nodes[0],
+      runtimeType: "TextureButton",
+      onClick: {id: "music.play", arguments: {
+        argument: "Assets/Audio/theme.wav",
+        label: "chapter/route.without-a-resource-extension/",
+      }},
+      runtimeProperties: {
+        normalPath: "Assets/UI/start.png",
+        hoverPath: "Assets/UI/start-hover.png",
+        pressedPath: "Assets/UI/start-pressed.png",
+        disabledPath: "Assets/UI/start-disabled.png",
+      },
+    }],
+  };
+  const result = compileProject({
+    project,
+    documents: {
+      "Story/story.pxindex": storyIndex,
+      "Content/game.pxgame": game,
+      "Content/UI/Title.pxui": textureUi,
+    },
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locale: "zh-TW", strings: {}}},
+  });
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  assert.deepEqual(result.artifact?.dependencies
+    .filter((dependency) => dependency.source.startsWith("Assets/UI/"))
+    .map((dependency) => dependency.source).sort(), [
+      "Assets/UI/start-disabled.png",
+      "Assets/UI/start-hover.png",
+      "Assets/UI/start-pressed.png",
+      "Assets/UI/start.png",
+    ]);
+  assert.ok(result.artifact?.dependencies.some((dependency) =>
+    dependency.source === "Assets/Audio/theme.wav"),
+  "path-shaped UI action arguments must be included in the artifact");
+});
+
 test("compileProject rejects UI component interfaces that the native Runtime cannot instantiate", () => {
   const source = "Content/UI/Panel.pxuicomponent";
   const exposedComponent = {

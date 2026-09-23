@@ -15,9 +15,11 @@
 
 #include <cstdint>
 #include <deque>
+#include <future>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -62,10 +64,14 @@ private:
     void Shutdown();
     bool SaveProfileIfWritable();
     bool SaveSettingsIfWritable();
+    void BeginRuntimeIrPreload();
     void FinishBootPresentation();
     void SplashFrame(float dt);
+    void BeginPresentationCrossfade(float durationSeconds);
 
     void StartGame();
+    [[nodiscard]] bool CommitStartGame();
+    void GameStartTransitionFrame(float dt, std::uint64_t now);
     bool LoadSlot(int slot);
     bool SaveSlot(int slot, std::vector<std::uint8_t> thumbnail);
     [[nodiscard]] std::optional<progress::SaveSnapshot> MakeSnapshot(
@@ -104,6 +110,8 @@ private:
     void ConfigureE2EJourney();
     void DriveE2EJourney();
     void CaptureE2EGalleryFrame();
+    void CaptureUIRoutesE2EFrame();
+    bool CapturePresentationE2EFrame(std::string_view name);
 
     Runtime m_runtime;
     Boot m_boot;
@@ -123,6 +131,10 @@ private:
     std::vector<std::string> m_supportedLocales;
     std::unordered_map<std::string, std::string> m_uiAssets;
     std::unordered_map<std::string, std::string> m_uiComponents;
+    std::string m_titleBgm;
+    std::vector<std::string> m_titleVoices;
+    std::string m_defaultUiHoverSound;
+    std::string m_defaultUiActivateSound;
 
     ui::GalgameUI m_ui;
     std::unique_ptr<ui::startup::SplashSequencePlayer> m_splash;
@@ -131,7 +143,18 @@ private:
     std::unordered_map<int, std::string> m_screenTriggers;
 
     AppState m_appState = AppState::BootSplash;
+    bool m_uiTransitionStartedThisFrame = false;
+    bool m_gameStartTransitionActive = false;
+    bool m_gameStartTransitionCommitted = false;
+    float m_gameStartTransitionElapsed = 0.0f;
     std::string m_script;
+    std::string m_runtimePreloadPath;
+    std::future<std::shared_ptr<const vn::Program>> m_runtimePreload;
+    std::string m_pendingStoryEntry;
+    std::string m_selectedFlowEntry;
+    std::vector<std::string> m_musicTracks;
+    std::size_t m_musicTrackIndex = 0;
+    bool m_musicTrackSelected = false;
 
     bool m_autoMode = false;
     bool m_skipMode = false;
@@ -190,6 +213,21 @@ private:
     bool m_e2eLocaleSwitched = false;
     bool m_e2eCustomTitleRouteSeen = false;
     bool m_e2eCustomMenuRouteSeen = false;
+    bool m_presentationE2E = false;
+    int m_presentationE2EStage = 0;
+    std::uint64_t m_presentationE2EStartedAt = 0;
+    std::string m_presentationE2ECaptureDir;
+    std::string m_presentationE2ETargetOperationId;
+    std::vector<bool> m_presentationE2ESplashCaptured;
+    bool m_uiRoutesE2E = false;
+    bool m_uiRoutesE2EReadinessLogged = false;
+    std::size_t m_uiRoutesE2EIndex = 0;
+    bool m_uiRoutesE2EAwaitingCapture = false;
+    std::uint64_t m_uiRoutesE2EStartedAt = 0;
+    std::uint64_t m_uiRoutesE2ECaptureAt = 0;
+    bool m_uiActionsE2E = false;
+    int m_uiActionsE2EStage = 0;
+    std::uint64_t m_uiActionsE2EStartedAt = 0;
     int m_e2eClearCountBeforeF2 = 0;
     std::optional<Variant> m_e2eSessionValueBeforeF2;
     accessibility::SpeechService m_speech;

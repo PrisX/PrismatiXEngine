@@ -401,6 +401,12 @@ add_executable(PrismatiXPlayer
     Applications/Player/PlayerApp.cpp
 )
 target_link_libraries(PrismatiXPlayer PRIVATE PrismatiXRuntime)
+if(MSVC)
+    # PlayerApp intentionally integrates the complete shipped-player surface in
+    # one translation unit. Async preload state can push debug builds beyond
+    # COFF's default section count, so use MSVC's extended object format.
+    target_compile_options(PrismatiXPlayer PRIVATE /bigobj)
+endif()
 if(WIN32)
     target_link_libraries(PrismatiXPlayer PRIVATE sapi)
 endif()

@@ -155,7 +155,7 @@ public:
 
     // With fadeMs > 0 while another BGM is playing this crossfades: the old
     // track fades out while the new one fades in on a second track.
-    void PlayBGM(const std::string& path, bool loop = true, int fadeMs = 0);
+    AudioHandle PlayBGM(const std::string& path, bool loop = true, int fadeMs = 0);
     // Plays `introPath` once, then switches to `loopPath` looping forever
     // (handoff is polled in Update()).
     void PlayBGMWithIntro(const std::string& introPath, const std::string& loopPath,

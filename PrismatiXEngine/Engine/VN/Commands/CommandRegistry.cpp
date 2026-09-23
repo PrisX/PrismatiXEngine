@@ -151,7 +151,10 @@ CommandRegistry MakeBuiltins() {
     add(Descriptor("speaker","Dialogue",{Param("name",VariantType::String)}));
     add(Descriptor("chapter","Flow",{Param("title",VariantType::String,true)},CommandWaitPolicy::Immediate,RollbackPolicy::Reversible,false));
     add(Descriptor("choice","Flow",{Param("textId",VariantType::String,true),Param("text",VariantType::String,true,{},CommandEditorWidget::Multiline),Param("target",VariantType::String,false,{},CommandEditorWidget::Target)},CommandWaitPolicy::Input,RollbackPolicy::Reversible,true));
-    add(Descriptor("label","Flow",{Param("name",VariantType::String,true,{},CommandEditorWidget::Target)},CommandWaitPolicy::Immediate,RollbackPolicy::Reversible,false));
+    add(Descriptor("label","Flow",{
+        Param("name",VariantType::String,true,{},CommandEditorWidget::Target),
+        Param("alias",VariantType::String)},
+        CommandWaitPolicy::Immediate,RollbackPolicy::Reversible,false));
     add(Descriptor("jump","Flow",{Param("target",VariantType::String,false,{},CommandEditorWidget::Target)},CommandWaitPolicy::Immediate,RollbackPolicy::Reversible,true));
     add(Descriptor("call","Flow",{Param("target",VariantType::String,false,{},CommandEditorWidget::Target)},CommandWaitPolicy::Immediate,RollbackPolicy::Reversible,true));
     add(Descriptor("return","Flow",{},CommandWaitPolicy::Immediate,RollbackPolicy::Reversible,false));

@@ -248,10 +248,17 @@ bool Renderer2D::BeginFrame(const Color clearColor) {
 
 void Renderer2D::EndFrame() {
     if (!m_frameRecording) return;
-    SDL_SetRenderTarget(m_renderer, m_framePreviousTarget);
     m_frameRecording = false;
+    // Keep the composited result, not merely the incoming scene, as the
+    // outgoing snapshot for a transition started while another is playing.
+    SDL_SetRenderTarget(m_renderer, m_presentedTarget);
     PresentScreenFrame();
-    std::swap(m_frameTarget, m_presentedTarget);
+    SDL_SetRenderTarget(m_renderer, m_framePreviousTarget);
+    SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 255);
+    SDL_RenderClear(m_renderer);
+    const SDL_FRect viewport{0.0f, 0.0f, static_cast<float>(m_logicalW),
+                             static_cast<float>(m_logicalH)};
+    SDL_RenderTexture(m_renderer, m_presentedTarget, nullptr, &viewport);
     m_framePreviousTarget = nullptr;
 }
 
@@ -401,7 +408,7 @@ void Renderer2D::RenderScreenEffect(const ScreenEffectDefinition& definition,
                 m_activeScreenEffect ? m_activeScreenEffect->randomSeed : 0.0f,
                 m_activeScreenEffect ? m_activeScreenEffect->parameters
                                      : std::array<std::array<float, 4>, 8>{})) {
-            drawAlpha(m_outgoingTarget, 1.0f - progress, viewport);
+            drawAlpha(m_outgoingTarget, 1.0f, viewport);
             drawAlpha(m_frameTarget, progress, viewport);
         }
         return;
@@ -414,7 +421,7 @@ void Renderer2D::RenderScreenEffect(const ScreenEffectDefinition& definition,
         return;
     }
     if (definition.operation == "crossfade") {
-        drawAlpha(m_outgoingTarget, 1.0f - progress, viewport);
+        drawAlpha(m_outgoingTarget, 1.0f, viewport);
         drawAlpha(m_frameTarget, progress, viewport);
         return;
     }
@@ -977,13 +984,36 @@ void Renderer2D::SetTextSupersample(int factor) {
 void Renderer2D::DrawTextInRect(const std::string& text, const Rect& bounds,
                                 const std::string& fontPath, int size, Color color,
                                 HorizontalAlignment horizontal, VerticalAlignment vertical,
-                                bool wrap, std::uint8_t alpha) {
+                                bool wrap, std::uint8_t alpha,
+                                int outlineSize, Color outlineColor) {
     const int wrapWidth=wrap?std::max(1,static_cast<int>(std::floor(bounds.w))):0;
     const CachedText* t=AcquireText(text,fontPath,size,color,0,wrapWidth,horizontal);if(!t)return;
     float x=bounds.x,y=bounds.y;
     if(horizontal==HorizontalAlignment::Center)x+=(bounds.w-t->w)*.5f;else if(horizontal==HorizontalAlignment::Right)x+=bounds.w-t->w;
     if(vertical==VerticalAlignment::Center)y+=(bounds.h-t->h)*.5f;else if(vertical==VerticalAlignment::Bottom)y+=bounds.h-t->h;
-    PushClip(bounds);Blit(t->texture,{x,y,static_cast<float>(t->w),static_cast<float>(t->h)},alpha);PopClip();
+    const int edge=std::clamp(outlineSize,0,8);
+    const float bleed=static_cast<float>(edge);
+    PushClip({bounds.x-bleed,bounds.y-bleed,bounds.w+bleed*2.0f,bounds.h+bleed*2.0f});
+    if(edge>0){
+        // SDL_ttf wraps outlined glyphs using their enlarged metrics. During
+        // typewriter reveal this can move the edge to the next line before the
+        // fill, making the shadow appear to jump. Use the identical unoutlined
+        // glyph layout for both passes and build the edge with small offsets.
+        const CachedText* outline=AcquireText(text,fontPath,size,outlineColor,0,wrapWidth,horizontal);
+        if(outline){
+            for(int dy=-edge;dy<=edge;++dy)
+                for(int dx=-edge;dx<=edge;++dx){
+                    if((dx==0&&dy==0)||dx*dx+dy*dy>edge*edge)continue;
+                    Blit(outline->texture,{x+static_cast<float>(dx),y+static_cast<float>(dy),
+                        static_cast<float>(outline->w),static_cast<float>(outline->h)},alpha);
+                }
+        }
+    }
+    // Acquiring the edge can evict the text cache. Reacquire the fill after
+    // drawing the edge rather than retaining a potentially invalid pointer.
+    if(const CachedText* fill=AcquireText(text,fontPath,size,color,0,wrapWidth,horizontal))
+        Blit(fill->texture,{x,y,static_cast<float>(fill->w),static_cast<float>(fill->h)},alpha);
+    PopClip();
 }
 
 void Renderer2D::SetTextSupersampleAuto(){if(m_textSamplingMode==TextSamplingMode::Auto)return;m_textSamplingMode=TextSamplingMode::Auto;SetLogicalSize(m_logicalW,m_logicalH);}

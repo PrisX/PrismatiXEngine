@@ -12,6 +12,7 @@ namespace px::ui::startup {
 struct SplashScreenEntry {
     ResourceRefValue scene;
     std::optional<ResourceRefValue> audio;
+    float audioDelay = 0.0f;
     float minimumDuration = 2.0f;
     bool skippable = true;
     float skipAllowedAfter = 0.5f;

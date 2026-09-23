@@ -2,7 +2,7 @@
 
 import {createHash, randomUUID} from "node:crypto";
 import {spawn, type ChildProcessWithoutNullStreams} from "node:child_process";
-import {createReadStream, existsSync, watch} from "node:fs";
+import {createReadStream, existsSync, readFileSync, watch} from "node:fs";
 import {
   copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile,
 } from "node:fs/promises";
@@ -619,6 +619,10 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number) 
     resourceExists: (path) => {
       try { return existsSync(projectFile(loaded.root, path)); } catch { return false; }
     },
+    resourceText: (path) => {
+      try { return readFileSync(projectFile(loaded.root, path), "utf8"); }
+      catch { return undefined; }
+    },
     ...(committedRevision === undefined ? {} : {committedRevision})});
 }
 
@@ -635,7 +639,12 @@ async function validateCommand(options: Options): Promise<number> {
       printDiagnostics(error.diagnostics);
       return 1;
     }
-    printDiagnostics([diagnostic("PXCLI1001", "Project could not be loaded", options.positional[0], String(error))]);
+    printDiagnostics([diagnostic(
+      "PXCLI1001",
+      "Project could not be loaded",
+      options.positional[0],
+      error instanceof Error ? (error.stack ?? String(error)) : String(error),
+    )]);
     return 1;
   }
 }
@@ -1048,14 +1057,20 @@ async function applyPreviewBuild(client: PreviewClient, built: BuildResult,
   incremental: boolean): Promise<void> {
   const documentId = built.artifact.runtimeIr.documentId;
   const revision = built.artifact.runtimeIr.committedRevision;
+  // Native apply includes schema parsing, command lowering and session setup.
+  // A fixed 20-second budget rejects valid commercial-scale projects near the
+  // one-million-operation contract limit, so grant one additional millisecond
+  // per operation while retaining a hard upper bound.
+  const applyTimeoutMs = Math.min(300_000,
+    20_000 + built.artifact.runtimeIr.operations.length);
   const fields = {projectRoot: built.output, documentId,
     committedRevision: revision, irPath: built.artifact.runtimeIrPath};
   let response = await client.request(incremental ? "patchRuntimeIr" : "applyRuntimeIr",
-    documentId, revision, fields);
+    documentId, revision, fields, applyTimeoutMs);
   if (incremental && response.type === "resyncRequired") {
     progress({severity: "information", code: "PXCLI1604",
       message: "Preview requested a full resync after a revision gap", reason: response.reason});
-    response = await client.request("applyRuntimeIr", documentId, revision, fields);
+    response = await client.request("applyRuntimeIr", documentId, revision, fields, applyTimeoutMs);
   }
   if (response.type !== "runtimeIrApplied" || response.appliedRevision !== revision)
     throw previewResponseError(incremental ? "Runtime patch" : "Runtime apply", response);
@@ -1306,13 +1321,16 @@ async function projectTool(command: string, options: Options, args: string[]): P
   const manifest = object(await readJson(manifestPath));
   const pinned = object(manifest?.devDependencies)?.["@prismatix/cli"] ?? object(manifest?.dependencies)?.["@prismatix/cli"];
   if (pinned === undefined) return launcherStopRequested ? 130 : undefined; // Existing pre-lock projects retain their public API.
-  if (typeof pinned !== "string" || !/^\d+\.\d+\.\d+$/u.test(pinned))
-    throw new Error("Project @prismatix/cli must use an exact version, not a range");
+  const exactVersion = typeof pinned === "string" && /^\d+\.\d+\.\d+$/u.test(pinned);
+  const localPackage = typeof pinned === "string" && pinned.startsWith("file:");
+  if (!exactVersion && !localPackage)
+    throw new Error("Project @prismatix/cli must use an exact version or a local file: dependency, not a range");
   const localRoot = join(location.root, "node_modules", "@prismatix", "cli");
   const entry = join(localRoot, "dist", "src", "cli.js");
   if (!await regularFile(entry)) throw new Error("The project's pinned CLI is missing. Restore dependencies with npm ci in the project directory.");
   const installed = object(await readJson(join(localRoot, "package.json")));
-  if (installed?.version !== pinned) throw new Error(`Project requires CLI ${pinned}; installed version is ${String(installed?.version)}. Restore the lock with npm ci.`);
+  if (exactVersion && installed?.version !== pinned)
+    throw new Error(`Project requires CLI ${pinned}; installed version is ${String(installed?.version)}. Restore the lock with npm ci.`);
   const isLocalTool = await realpath(entry) === await realpath(fileURLToPath(import.meta.url));
   if (launcherStopRequested) return 130;
   if (isLocalTool) return undefined;

@@ -180,7 +180,8 @@ public:
     void DrawText(const std::string& text, float x, float y, const std::string& fontPath, int size, Color color, std::uint8_t alpha = 255, int wrap = 0);
     void DrawTextInRect(const std::string& text, const Rect& bounds, const std::string& fontPath,
                         int size, Color color, HorizontalAlignment horizontal,
-                        VerticalAlignment vertical, bool wrap, std::uint8_t alpha = 255);
+                        VerticalAlignment vertical, bool wrap, std::uint8_t alpha = 255,
+                        int outlineSize = 0, Color outlineColor = {0, 0, 0, 255});
     void DrawTextOutline(const std::string& text, float x, float y, const std::string& fontPath, int size, Color textColor, Color outlineColor, int outlineSize, std::uint8_t alpha = 255, bool shadow = false, int wrap = 0);
     [[nodiscard]] Vec2 MeasureText(const std::string& text, const std::string& fontPath, int size, int wrap = 0);
     [[nodiscard]] text::TextLayout LayoutText(

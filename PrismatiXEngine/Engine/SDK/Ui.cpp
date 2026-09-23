@@ -442,7 +442,7 @@ bool ValidAction(const UiAction& action) {
 
 bool SupportedRuntimeProperty(const std::string_view property) {
     static const std::unordered_set<std::string_view> names = {
-        "opacity", "rotation", "scale", "pivot", "modulate", "visibility",
+        "opacity", "rotation", "scale", "translation", "pivot", "modulate", "visibility",
         "enabled", "offsets", "minimumSize"};
     return names.contains(property);
 }
@@ -450,7 +450,7 @@ bool SupportedRuntimeProperty(const std::string_view property) {
 bool RuntimePropertyValueMatches(const std::string_view property,
                                  const UiValue& value) {
     if (property == "opacity" || property == "rotation") return IsNumber(value);
-    if (property == "scale" || property == "pivot" ||
+    if (property == "scale" || property == "translation" || property == "pivot" ||
         property == "minimumSize")
         return std::holds_alternative<UiVec2Value>(value);
     if (property == "modulate")

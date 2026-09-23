@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <future>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -66,6 +67,11 @@ public:
     AssetCache& operator=(const AssetCache&) = delete;
 
     [[nodiscard]] TextureHandle Texture(const std::string& path);
+    // Small authored descriptors (for example layered portraits) may share
+    // the cache's mounted VFS without giving presentation systems direct
+    // filesystem access.
+    [[nodiscard]] std::optional<std::string> ReadTextAsset(
+        const std::string& path) const;
     void PreloadTexture(
         const std::string& path,
         AssetPreloadPriority priority = AssetPreloadPriority::Normal);

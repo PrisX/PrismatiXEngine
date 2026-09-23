@@ -317,6 +317,10 @@ Status RegisterBuiltinUITypes() {
     control.properties.push_back(std::move(focusMode));
     control.properties.push_back(StringProperty("tooltip", "Interaction", [](const Object& o) { return As<Control>(o)->Tooltip(); },
         [](Object& o, std::string v) { As<Control>(o)->SetTooltip(std::move(v)); return Status::Ok(); }));
+    control.properties.push_back(StringProperty("hoverSoundPath", "Audio", [](const Object& o) { return As<Control>(o)->HoverSoundPath(); },
+        [](Object& o, std::string v) { As<Control>(o)->SetHoverSoundPath(std::move(v)); return Status::Ok(); }));
+    control.properties.push_back(StringProperty("activateSoundPath", "Audio", [](const Object& o) { return As<Control>(o)->ActivateSoundPath(); },
+        [](Object& o, std::string v) { As<Control>(o)->SetActivateSoundPath(std::move(v)); return Status::Ok(); }));
     control.properties.push_back(StringProperty("accessibilityLabel", "Accessibility", [](const Object& o) { return As<Control>(o)->AccessibilityLabel(); },
         [](Object& o, std::string v) { As<Control>(o)->SetAccessibilityLabel(std::move(v)); return Status::Ok(); }));
     control.properties.push_back(StringProperty("accessibilityRole", "Accessibility", [](const Object& o) { return As<Control>(o)->AccessibilityRole(); },
@@ -332,6 +336,8 @@ Status RegisterBuiltinUITypes() {
         [](Object& o, Vec2 v) { As<Control>(o)->SetPivot(v); return Status::Ok(); }));
     control.properties.push_back(Vec2Property("scale", "Transform", [](const Object& o) { return As<Control>(o)->Scale(); },
         [](Object& o, Vec2 v) { As<Control>(o)->SetScale(v); return Status::Ok(); }));
+    control.properties.push_back(Vec2Property("translation", "Transform", [](const Object& o) { return As<Control>(o)->Translation(); },
+        [](Object& o, Vec2 v) { As<Control>(o)->SetTranslation(v); return Status::Ok(); }));
     auto rotation = NumberProperty("rotation", "Transform", [](const Object& o) { return As<Control>(o)->Rotation(); },
         [](Object& o, double v) { As<Control>(o)->SetRotation(static_cast<float>(v)); return Status::Ok(); });
     rotation.editor.displayName = "旋轉"; rotation.editor.description = "以度數表示，繞 pivot 旋轉。";
@@ -398,6 +404,8 @@ Status RegisterBuiltinUITypes() {
     auto edge=StringProperty("edge","Behavior",[](const Object& o){switch(As<EdgeRevealContainer>(o)->Edge()){case RevealEdge::Bottom:return std::string("Bottom");case RevealEdge::Left:return std::string("Left");case RevealEdge::Right:return std::string("Right");default:return std::string("Top");}},[](Object& o,std::string v){if(v=="Top")As<EdgeRevealContainer>(o)->SetEdge(RevealEdge::Top);else if(v=="Bottom")As<EdgeRevealContainer>(o)->SetEdge(RevealEdge::Bottom);else if(v=="Left")As<EdgeRevealContainer>(o)->SetEdge(RevealEdge::Left);else if(v=="Right")As<EdgeRevealContainer>(o)->SetEdge(RevealEdge::Right);else return TypeError("edge expects Top, Bottom, Left, or Right");return Status::Ok();});edge.editor.displayName="Reveal edge";edge.editor.enumChoices={"Top","Bottom","Left","Right"};edgeReveal.properties.push_back(std::move(edge));
     auto revealSpeed=NumberProperty("revealSpeed","Behavior",[](const Object& o){return static_cast<double>(As<EdgeRevealContainer>(o)->Speed());},[](Object& o,double v){As<EdgeRevealContainer>(o)->SetSpeed(static_cast<float>(v));return Status::Ok();});revealSpeed.editor.hasRange=true;revealSpeed.editor.minimum=.1;revealSpeed.editor.maximum=30;revealSpeed.editor.step=.1;edgeReveal.properties.push_back(std::move(revealSpeed));
     auto triggerSize=NumberProperty("triggerSize","Behavior",[](const Object& o){return static_cast<double>(As<EdgeRevealContainer>(o)->TriggerSize());},[](Object& o,double v){As<EdgeRevealContainer>(o)->SetTriggerSize(static_cast<float>(v));return Status::Ok();});triggerSize.editor.hasRange=true;triggerSize.editor.minimum=1;triggerSize.editor.maximum=64;triggerSize.editor.step=1;edgeReveal.properties.push_back(std::move(triggerSize));
+    auto revealDistance=NumberProperty("revealDistance","Behavior",[](const Object& o){return static_cast<double>(As<EdgeRevealContainer>(o)->RevealDistance());},[](Object& o,double v){As<EdgeRevealContainer>(o)->SetRevealDistance(static_cast<float>(v));return Status::Ok();});revealDistance.editor.hasRange=true;revealDistance.editor.minimum=0;revealDistance.editor.maximum=1920;revealDistance.editor.step=1;edgeReveal.properties.push_back(std::move(revealDistance));
+    edgeReveal.properties.push_back(BoolProperty("fadeWithReveal","Behavior",[](const Object& o){return As<EdgeRevealContainer>(o)->FadeWithReveal();},[](Object& o,bool v){As<EdgeRevealContainer>(o)->SetFadeWithReveal(v);return Status::Ok();}));
     auto revealTrigger=StringProperty("revealTrigger","Behavior",[](const Object& o){return As<EdgeRevealContainer>(o)->Trigger()==RevealTrigger::Manual?std::string("Manual"):std::string("Hover");},[](Object& o,std::string v){if(v=="Hover")As<EdgeRevealContainer>(o)->SetTrigger(RevealTrigger::Hover);else if(v=="Manual")As<EdgeRevealContainer>(o)->SetTrigger(RevealTrigger::Manual);else return TypeError("revealTrigger expects Hover or Manual");return Status::Ok();});revealTrigger.editor.displayName="Reveal trigger";revealTrigger.editor.enumChoices={"Hover","Manual"};edgeReveal.properties.push_back(std::move(revealTrigger));
     auto revealEasing=StringProperty("revealEasing","Behavior",[](const Object& o){switch(As<EdgeRevealContainer>(o)->Easing()){case RevealEasing::Linear:return std::string("Linear");case RevealEasing::EaseInOut:return std::string("EaseInOut");default:return std::string("EaseOut");}},[](Object& o,std::string v){if(v=="Linear")As<EdgeRevealContainer>(o)->SetEasing(RevealEasing::Linear);else if(v=="EaseOut")As<EdgeRevealContainer>(o)->SetEasing(RevealEasing::EaseOut);else if(v=="EaseInOut")As<EdgeRevealContainer>(o)->SetEasing(RevealEasing::EaseInOut);else return TypeError("revealEasing expects Linear, EaseOut, or EaseInOut");return Status::Ok();});revealEasing.editor.displayName="Reveal easing";revealEasing.editor.enumChoices={"Linear","EaseOut","EaseInOut"};edgeReveal.properties.push_back(std::move(revealEasing));
     edgeReveal.properties.push_back(BoolProperty("pinned","Behavior",[](const Object& o){return As<EdgeRevealContainer>(o)->Pinned();},[](Object& o,bool v){As<EdgeRevealContainer>(o)->SetPinned(v);return Status::Ok();}));add(std::move(edgeReveal));
@@ -428,6 +436,8 @@ Status RegisterBuiltinUITypes() {
         [](Object& o, std::string v) { As<Label>(o)->SetText(std::move(v)); return Status::Ok(); }));
     label.properties.push_back(BoolProperty("wrap","Content",[](const Object& o){return As<Label>(o)->Wrap();},[](Object& o,bool v){As<Label>(o)->SetWrap(v);return Status::Ok();}));
     label.properties.push_back(NumberProperty("fontSize","Theme",[](const Object& o){return As<Label>(o)->FontSize();},[](Object& o,double v){As<Label>(o)->SetFontSize(static_cast<int>(v));return Status::Ok();}));
+    auto labelOutlineSize=NumberProperty("outlineSize","Theme",[](const Object& o){return static_cast<double>(As<Label>(o)->OutlineSize());},[](Object& o,double v){As<Label>(o)->SetOutlineSize(static_cast<int>(v));return Status::Ok();});labelOutlineSize.editor.hasRange=true;labelOutlineSize.editor.minimum=0;labelOutlineSize.editor.maximum=8;labelOutlineSize.editor.step=1;label.properties.push_back(std::move(labelOutlineSize));
+    label.properties.push_back(ColorProperty("outlineColor","Theme",[](const Object& o){return As<Label>(o)->OutlineColor();},[](Object& o,Color v){As<Label>(o)->SetOutlineColor(v);return Status::Ok();}));
     auto labelH=StringProperty("horizontalAlignment","Content",[](const Object& o){switch(As<Label>(o)->HorizontalAlignment()){case HorizontalTextAlignment::Center:return std::string("Center");case HorizontalTextAlignment::Right:return std::string("Right");default:return std::string("Left");}},[](Object& o,std::string v){if(v=="Left")As<Label>(o)->SetHorizontalAlignment(HorizontalTextAlignment::Left);else if(v=="Center")As<Label>(o)->SetHorizontalAlignment(HorizontalTextAlignment::Center);else if(v=="Right")As<Label>(o)->SetHorizontalAlignment(HorizontalTextAlignment::Right);else return TypeError("horizontalAlignment expects Left, Center, or Right");return Status::Ok();});labelH.editor.displayName="Horizontal alignment";labelH.editor.enumChoices={"Left","Center","Right"};label.properties.push_back(std::move(labelH));
     auto labelV=StringProperty("verticalAlignment","Content",[](const Object& o){switch(As<Label>(o)->VerticalAlignment()){case VerticalTextAlignment::Center:return std::string("Center");case VerticalTextAlignment::Bottom:return std::string("Bottom");default:return std::string("Top");}},[](Object& o,std::string v){if(v=="Top")As<Label>(o)->SetVerticalAlignment(VerticalTextAlignment::Top);else if(v=="Center")As<Label>(o)->SetVerticalAlignment(VerticalTextAlignment::Center);else if(v=="Bottom")As<Label>(o)->SetVerticalAlignment(VerticalTextAlignment::Bottom);else return TypeError("verticalAlignment expects Top, Center, or Bottom");return Status::Ok();});labelV.editor.displayName="Vertical alignment";labelV.editor.enumChoices={"Top","Center","Bottom"};label.properties.push_back(std::move(labelV));
     add(std::move(label));
@@ -435,10 +445,87 @@ Status RegisterBuiltinUITypes() {
     TypeInfo button{"Button", "Control", "UI/Input", [] { return std::make_unique<Button>(); }};
     button.properties.push_back(StringProperty("text", "Content", [](const Object& o) { return As<Button>(o)->Text(); },
         [](Object& o, std::string v) { As<Button>(o)->SetText(std::move(v)); return Status::Ok(); }));
+    auto buttonFontSize = NumberProperty("fontSize", "Theme", [](const Object& o) { return As<Button>(o)->FontSize(); },
+        [](Object& o, double v) { As<Button>(o)->SetFontSize(static_cast<int>(v)); return Status::Ok(); });
+    buttonFontSize.editor.displayName = "Font size";
+    buttonFontSize.editor.hasRange = true;
+    buttonFontSize.editor.minimum = 0.0;
+    buttonFontSize.editor.maximum = 512.0;
+    buttonFontSize.editor.step = 1.0;
+    button.properties.push_back(std::move(buttonFontSize));
+    auto buttonTextColor = ColorProperty("textColor", "Theme", [](const Object& o) { return As<Button>(o)->GetTextColor(); },
+        [](Object& o, Color v) { As<Button>(o)->SetTextColor(v); return Status::Ok(); });
+    buttonTextColor.editor.displayName = "Text colour";
+    buttonTextColor.editor.description = "Optional explicit caption colour. Authored UI appearance.textColor initializes this value.";
+    buttonTextColor.editor.tokenBindable = true;
+    button.properties.push_back(std::move(buttonTextColor));
     auto buttonH=StringProperty("horizontalAlignment","Content",[](const Object& o){switch(As<Button>(o)->HorizontalAlignment()){case HorizontalTextAlignment::Left:return std::string("Left");case HorizontalTextAlignment::Right:return std::string("Right");default:return std::string("Center");}},[](Object& o,std::string v){if(v=="Left")As<Button>(o)->SetHorizontalAlignment(HorizontalTextAlignment::Left);else if(v=="Center")As<Button>(o)->SetHorizontalAlignment(HorizontalTextAlignment::Center);else if(v=="Right")As<Button>(o)->SetHorizontalAlignment(HorizontalTextAlignment::Right);else return TypeError("horizontalAlignment expects Left, Center, or Right");return Status::Ok();});buttonH.editor.displayName="Horizontal alignment";buttonH.editor.enumChoices={"Left","Center","Right"};button.properties.push_back(std::move(buttonH));
     auto buttonV=StringProperty("verticalAlignment","Content",[](const Object& o){switch(As<Button>(o)->VerticalAlignment()){case VerticalTextAlignment::Top:return std::string("Top");case VerticalTextAlignment::Bottom:return std::string("Bottom");default:return std::string("Center");}},[](Object& o,std::string v){if(v=="Top")As<Button>(o)->SetVerticalAlignment(VerticalTextAlignment::Top);else if(v=="Center")As<Button>(o)->SetVerticalAlignment(VerticalTextAlignment::Center);else if(v=="Bottom")As<Button>(o)->SetVerticalAlignment(VerticalTextAlignment::Bottom);else return TypeError("verticalAlignment expects Top, Center, or Bottom");return Status::Ok();});buttonV.editor.displayName="Vertical alignment";buttonV.editor.enumChoices={"Top","Center","Bottom"};button.properties.push_back(std::move(buttonV));
     button.signals.push_back({"activated", "啟用", "Button was activated by pointer or keyboard.", {}}); add(std::move(button));
     add({"IconButton", "Button", "UI/Input", [] { return std::make_unique<IconButton>(); }});
+    TypeInfo textureButton{"TextureButton", "Button", "UI/Input",
+                           [] { return std::make_unique<TextureButton>(); }};
+    const auto addTextureButtonPath = [&textureButton](const char* name,
+                                                       const char* displayName,
+                                                       auto getter,
+                                                       auto setter) {
+        auto property = StringProperty(
+            name, "Content", std::move(getter), std::move(setter));
+        property.flags = property.flags | PropertyFlags::ResourcePath;
+        property.editor.displayName = displayName;
+        property.editor.resourceFilter = "image";
+        textureButton.properties.push_back(std::move(property));
+    };
+    addTextureButtonPath(
+        "normalPath", "Normal texture",
+        [](const Object& o) { return As<TextureButton>(o)->NormalPath(); },
+        [](Object& o, std::string v) {
+            As<TextureButton>(o)->SetNormalPath(std::move(v));
+            return Status::Ok();
+        });
+    addTextureButtonPath(
+        "hoverPath", "Hover texture",
+        [](const Object& o) { return As<TextureButton>(o)->HoverPath(); },
+        [](Object& o, std::string v) {
+            As<TextureButton>(o)->SetHoverPath(std::move(v));
+            return Status::Ok();
+        });
+    addTextureButtonPath(
+        "pressedPath", "Pressed texture",
+        [](const Object& o) { return As<TextureButton>(o)->PressedPath(); },
+        [](Object& o, std::string v) {
+            As<TextureButton>(o)->SetPressedPath(std::move(v));
+            return Status::Ok();
+        });
+    addTextureButtonPath(
+        "disabledPath", "Disabled texture",
+        [](const Object& o) { return As<TextureButton>(o)->DisabledPath(); },
+        [](Object& o, std::string v) {
+            As<TextureButton>(o)->SetDisabledPath(std::move(v));
+            return Status::Ok();
+        });
+    auto textureButtonScale = StringProperty(
+        "scaleMode", "Display",
+        [](const Object& o) {
+            switch (As<TextureButton>(o)->ScaleMode()) {
+                case TextureScaleMode::Fit: return std::string("Fit");
+                case TextureScaleMode::Fill: return std::string("Fill");
+                case TextureScaleMode::Original: return std::string("Original");
+                default: return std::string("Stretch");
+            }
+        },
+        [](Object& o, std::string v) {
+            auto* value = As<TextureButton>(o);
+            if (v == "Stretch") value->SetScaleMode(TextureScaleMode::Stretch);
+            else if (v == "Fit") value->SetScaleMode(TextureScaleMode::Fit);
+            else if (v == "Fill") value->SetScaleMode(TextureScaleMode::Fill);
+            else if (v == "Original") value->SetScaleMode(TextureScaleMode::Original);
+            else return TypeError("scaleMode expects Stretch, Fit, Fill, or Original");
+            return Status::Ok();
+        });
+    textureButtonScale.editor.enumChoices = {"Stretch", "Fit", "Fill", "Original"};
+    textureButton.properties.push_back(std::move(textureButtonScale));
+    add(std::move(textureButton));
 
     TypeInfo texture{"TextureRect", "Control", "UI/Display", [] { return std::make_unique<TextureRect>(); }};
     auto texturePath = StringProperty("path", "Content", [](const Object& o) { return As<TextureRect>(o)->Path(); },
@@ -490,6 +577,13 @@ Status RegisterBuiltinUITypes() {
     slider.properties.push_back(NumberProperty("maximum","Value",[](const Object& o){return As<Slider>(o)->Maximum();},[](Object& o,double v){auto* s=As<Slider>(o);s->SetRange(s->Minimum(),v,s->Step());return Status::Ok();}));
     slider.properties.push_back(NumberProperty("step","Value",[](const Object& o){return As<Slider>(o)->Step();},[](Object& o,double v){auto* s=As<Slider>(o);s->SetRange(s->Minimum(),s->Maximum(),v);return Status::Ok();}));
     slider.properties.push_back(NumberProperty("value","Value",[](const Object& o){return As<Slider>(o)->Value();},[](Object& o,double v){As<Slider>(o)->SetValue(v);return Status::Ok();}));
+    const auto addSliderTexture=[&slider](const char* name,const char* displayName,auto getter,auto setter){auto property=StringProperty(name,"Skin",std::move(getter),std::move(setter));property.flags=property.flags|PropertyFlags::ResourcePath;property.editor.displayName=displayName;property.editor.resourceFilter="image";slider.properties.push_back(std::move(property));};
+    addSliderTexture("railPath","Rail texture",[](const Object& o){return As<Slider>(o)->RailPath();},[](Object& o,std::string v){As<Slider>(o)->SetRailPath(std::move(v));return Status::Ok();});
+    addSliderTexture("knobPath","Knob texture",[](const Object& o){return As<Slider>(o)->KnobPath();},[](Object& o,std::string v){As<Slider>(o)->SetKnobPath(std::move(v));return Status::Ok();});
+    addSliderTexture("knobHoverPath","Knob hover texture",[](const Object& o){return As<Slider>(o)->KnobHoverPath();},[](Object& o,std::string v){As<Slider>(o)->SetKnobHoverPath(std::move(v));return Status::Ok();});
+    addSliderTexture("knobPressedPath","Knob pressed texture",[](const Object& o){return As<Slider>(o)->KnobPressedPath();},[](Object& o,std::string v){As<Slider>(o)->SetKnobPressedPath(std::move(v));return Status::Ok();});
+    auto railHeight=NumberProperty("railHeight","Skin",[](const Object& o){return As<Slider>(o)->RailHeight();},[](Object& o,double v){As<Slider>(o)->SetRailHeight(static_cast<float>(v));return Status::Ok();});railHeight.editor.hasRange=true;railHeight.editor.minimum=1;railHeight.editor.maximum=128;railHeight.editor.step=1;slider.properties.push_back(std::move(railHeight));
+    auto knobSize=NumberProperty("knobSize","Skin",[](const Object& o){return As<Slider>(o)->KnobSize();},[](Object& o,double v){As<Slider>(o)->SetKnobSize(static_cast<float>(v));return Status::Ok();});knobSize.editor.hasRange=true;knobSize.editor.minimum=1;knobSize.editor.maximum=256;knobSize.editor.step=1;slider.properties.push_back(std::move(knobSize));
     slider.signals.push_back({"valueChanged", "數值變更", "Slider value changed.", {{"value", VariantType::Number}}});add(std::move(slider));
     TypeInfo lineEdit{"LineEdit","Control","UI/Input",[]{return std::make_unique<LineEdit>();}};
     lineEdit.properties.push_back(StringProperty("text","Content",[](const Object& o){return As<LineEdit>(o)->Text();},[](Object& o,std::string v){As<LineEdit>(o)->SetText(std::move(v));return Status::Ok();}));

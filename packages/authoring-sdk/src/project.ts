@@ -4,6 +4,7 @@ import {normalizeProject} from "./project-normalization.js";
 import {validateProjectCharacterResources} from "./project-resources.js";
 import {
   collectProjectDependencies,
+  isSafeResourcePath,
   type ProjectAssetDescriptor,
   type ProjectDependency,
   type ProjectDependencyReference,
@@ -112,6 +113,8 @@ export interface CompileProjectInput {
   readonly defaultLocale?: string;
   /** Optional IO-injected existence check for production graph validation. */
   readonly resourceExists?: (path: string) => boolean;
+  /** Optional text reader for dependency-bearing authored resource descriptors. */
+  readonly resourceText?: (path: string) => string | undefined;
   readonly committedRevision?: number;
 }
 
@@ -235,7 +238,7 @@ Readonly<Record<string, string>> {
   const result: Record<string, string> = {...operation.arguments};
   if (["dialogue", "narration", "choiceOption"].includes(operation.kind))
     delete result.text;
-  if (["background", "voice", "bgm", "soundEffect"].includes(operation.kind))
+  if (["background", "voice", "bgm", "soundEffect", "ambience"].includes(operation.kind))
     delete result.asset;
   if (operation.kind === "customNode") {
     const parameters = customResourceParameters.get(result.type ?? "");
@@ -426,9 +429,11 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       current = versionKey(next.to);
     }
   }
+  const uiDocuments = new Map<string, JsonValue>();
   for (const [id, path] of Object.entries(project.uiEntryPoints)) {
     const ui = documentAt<JsonValue>("ui", path, documents, diagnostics);
     if (ui === undefined) diagnostics.push(issue("PXBUILD1002", `UI entry point ${id} is unavailable`, path, id));
+    else uiDocuments.set(path, ui);
   }
   const effectDocuments = new Map<string, CustomEffectDocument>();
   const effectIds = new Set<string>();
@@ -640,6 +645,100 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     else if (typeof reference.id === "string")
       dependencyReferences.push({value: reference.id, origin});
   };
+  const addUiResourceRefs = (document: JsonValue, origin: string): void => {
+    if (document === null || typeof document !== "object" || Array.isArray(document)) return;
+    const nodes = (document as Record<string, JsonValue>).nodes;
+    if (!Array.isArray(nodes)) return;
+    const visitProperties = (value: JsonValue, path: string): void => {
+      if (value === null || typeof value !== "object") return;
+      if (Array.isArray(value)) {
+        for (const [index, item] of value.entries()) visitProperties(item, `${path}[${index}]`);
+        return;
+      }
+      for (const [key, item] of Object.entries(value)) {
+        const itemPath = `${path}.${key}`;
+        if (typeof item === "string" && (key === "path" || key.endsWith("Path")))
+          addResourceRef(item, `${origin}:${itemPath}`);
+        else visitProperties(item, itemPath);
+      }
+    };
+    const visitActionArguments = (value: JsonValue, path: string): void => {
+      if (typeof value === "string") {
+        // Project actions frequently pass media paths through a generic
+        // `argument` field (music galleries, replay thumbnails, custom
+        // viewers). Those files are just as package-critical as typed
+        // runtime *Path properties. Restrict discovery to path-shaped values
+        // so route ids, labels, and ordinary action strings stay untouched.
+        if (value.includes("/") && !value.includes("://") &&
+            /\.[A-Za-z0-9_-]{1,16}$/u.test(value) &&
+            isSafeResourcePath(value))
+          addResourceRef(value, `${origin}:${path}`);
+        return;
+      }
+      if (value === null || typeof value !== "object") return;
+      if (Array.isArray(value)) {
+        for (const [index, item] of value.entries())
+          visitActionArguments(item, `${path}[${index}]`);
+        return;
+      }
+      for (const [key, item] of Object.entries(value))
+        visitActionArguments(item, `${path}.${key}`);
+    };
+    for (const [index, node] of nodes.entries()) {
+      if (node === null || typeof node !== "object" || Array.isArray(node)) continue;
+      const uiNode = node as Record<string, JsonValue>;
+      const properties = uiNode.runtimeProperties;
+      if (properties !== undefined)
+        visitProperties(properties, `nodes[${index}].runtimeProperties`);
+      const onClick = uiNode.onClick;
+      if (onClick !== null && typeof onClick === "object" &&
+          !Array.isArray(onClick)) {
+        const actionArguments = (onClick as Record<string, JsonValue>).arguments;
+        if (actionArguments !== undefined)
+          visitActionArguments(actionArguments, `nodes[${index}].onClick.arguments`);
+      }
+    }
+  };
+  for (const [path, document] of uiDocuments) addUiResourceRefs(document, path);
+  for (const [path, document] of uiComponentDocuments) addUiResourceRefs(document, path);
+  const settings = project.settings ?? {};
+  for (const key of ["player.titleBgm", "player.uiHoverSound", "player.uiActivateSound"]) {
+    const value = settings[key];
+    if (typeof value === "string") addResourceRef(value, `settings.${key}`);
+  }
+  const splashes = settings["player.splashes"];
+  if (Array.isArray(splashes)) {
+    for (const [index, splash] of splashes.entries()) {
+      if (splash === null || typeof splash !== "object" || Array.isArray(splash)) continue;
+      const audio = (splash as Record<string, JsonValue>).audio;
+      if (typeof audio === "string") addResourceRef(audio, `settings.player.splashes[${index}].audio`);
+    }
+  }
+  for (const descriptorPath of storyResourcePaths) {
+    if (!descriptorPath.endsWith(".pxportrait") || input.resourceText === undefined) continue;
+    const text = input.resourceText(descriptorPath);
+    if (text === undefined) continue;
+    let value: unknown;
+    try { value = JSON.parse(text); }
+    catch {
+      diagnostics.push(issue("PXBUILD1045", "Layered portrait descriptor is not valid JSON", descriptorPath));
+      continue;
+    }
+    if (value === null || typeof value !== "object" || Array.isArray(value)) continue;
+    const portrait = value as Record<string, unknown>;
+    const layers = portrait.format === "PrismatiXLayeredPortrait" &&
+      portrait.schemaRevision === 1 && Array.isArray(portrait.layers)
+      ? portrait.layers : undefined;
+    if (layers === undefined) {
+      diagnostics.push(issue("PXBUILD1045", "Layered portrait descriptor fields are invalid", descriptorPath));
+      continue;
+    }
+    for (const [index, layer] of layers.entries()) {
+      if (layer === null || typeof layer !== "object" || Array.isArray(layer)) continue;
+      const path = (layer as Record<string, unknown>).path;
+      if (typeof path === "string") addResourceRef(path, `${descriptorPath}:layers[${index}].path`);
+    }
+  }
   for (const [index, item] of (game.gallery ?? []).entries()) {
     if (item === null || typeof item !== "object" || Array.isArray(item)) continue;
     const gallery = item as Record<string, JsonValue>;

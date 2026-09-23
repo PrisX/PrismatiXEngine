@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -117,6 +118,18 @@ int main() {
         DialogueProgram("第一段", true), path, 2);
     assert(invalidSeek == px::vn::ProgramSeekStatus::InvalidOperation);
 
+    auto replayProgram = DialogueProgram("第一段", true);
+    replayProgram.labels["second-scene"] = 1;
+    assert(vm.LoadCompiledProgram(std::move(replayProgram), path));
+    assert(vm.CurrentSourceId() == "block-01");
+    assert(vm.RestartAtLabel("second-scene"));
+    assert(vm.State() == px::vn::VMState::WaitingClick);
+    assert(vm.ProgramCounter() == 2);
+    assert(vm.CurrentSourceId() == "block-02");
+    assert(dialogue.State().fullText == "新增段落");
+    assert(!vm.RestartAtLabel("missing-scene"));
+    assert(vm.CurrentSourceId() == "block-02");
+
     std::vector<std::string> choiceSeen;
     vm.SetChoiceSeenHook(
         [&choiceSeen](const std::string& key) { choiceSeen.push_back(key); });
@@ -148,6 +161,14 @@ int main() {
     assert(!invalidMap.Valid());
 
     px::RuntimeSession session({vfs, audio, renderer, assets});
+    const auto prepared = std::make_shared<const px::vn::Program>(
+        DialogueProgram("背景預載完成"));
+    assert(session.StartPreparedRuntimeIr(
+        prepared, "Content/Runtime/preloaded.pxir",
+        /*resetVariables=*/false));
+    assert(session.RuntimeProgramIdentity() == prepared);
+    assert(session.Dialogue().State().fullText == "背景預載完成");
+
     assert(session.SetSourceMapText(R"({
       "format":"PrismatiXSourceMap","schemaRevision":2,"documentId":"loop-document",
       "mappings":[

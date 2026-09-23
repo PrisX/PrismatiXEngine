@@ -111,7 +111,7 @@ RuntimeSession::RuntimeSession(Services services)
     m_vm.SetCommandHook([this](const vn::Command& command) { return ExecuteCommand(command); });
     m_vm.SetDiagnosticSourceResolver(
         [this](diag::Diagnostic& diagnostic, const vn::Command& command) {
-            if (!m_sourceMap ||
+            if (!EnsureSourceMapLoaded() || !m_sourceMap ||
                 m_sourceMap->documentId != m_vm.CurrentDocumentId() ||
                 command.operationId.empty()) {
                 return;
@@ -129,6 +129,21 @@ RuntimeSession::RuntimeSession(Services services)
             diagnostic.documentId = m_sourceMap->documentId;
             diagnostic.sourceId = mapping->sourceId;
         });
+}
+
+bool RuntimeSession::EnsureSourceMapLoaded() {
+    if (m_sourceMap) return true;
+    if (m_sourceMapPath.empty()) return false;
+    const std::string expectedDocumentId = m_deferredSourceMapDocumentId;
+    const std::string sourcePath = m_sourceMapPath;
+    if (!LoadSourceMap(sourcePath) || !m_sourceMap) return false;
+    if (!expectedDocumentId.empty() &&
+        m_sourceMap->documentId != expectedDocumentId) {
+        m_sourceMap.reset();
+        m_deferredSourceMapDocumentId = expectedDocumentId;
+        return false;
+    }
+    return true;
 }
 
 Status RuntimeSession::LoadSourceMap(const std::string& sourcePath) {
@@ -168,6 +183,7 @@ Status RuntimeSession::SetSourceMapText(const std::string_view text,
     }
     m_sourceMap = std::move(parsed.document);
     m_sourceMapPath = sourcePath;
+    m_deferredSourceMapDocumentId.clear();
     return Status::Ok();
 }
 
@@ -350,7 +366,15 @@ bool RuntimeSession::StartScenarioText(const std::string_view text,
 
 bool RuntimeSession::StartRuntimeIr(const std::string& sourcePath,
                                     const bool resetVariables) {
-    const auto program = PrepareRuntimeIr(sourcePath);
+    auto program = PrepareRuntimeIr(sourcePath);
+    return StartPreparedRuntimeIr(std::move(program), sourcePath,
+                                  resetVariables);
+}
+
+bool RuntimeSession::StartPreparedRuntimeIr(
+    std::shared_ptr<const vn::Program> program,
+    const std::string& sourcePath,
+    const bool resetVariables) {
     if (!program) return false;
     m_stage.ClearAll();
     m_dialogue.Clear();

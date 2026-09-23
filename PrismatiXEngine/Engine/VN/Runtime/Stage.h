@@ -218,6 +218,22 @@ public:
     [[nodiscard]] const std::string& BackgroundPath() const { return m_bgPath; }
 
 private:
+    struct PortraitLayer {
+        std::string path;
+        float x = 0.0f;
+        float y = 0.0f;
+        float width = 0.0f;
+        float height = 0.0f;
+        std::uint8_t opacity = 255;
+    };
+    struct LayeredPortrait {
+        float width = 0.0f;
+        float height = 0.0f;
+        std::vector<PortraitLayer> layers;
+    };
+    [[nodiscard]] const LayeredPortrait* ResolveLayeredPortrait(
+        const std::string& path);
+
     struct Actor {
         std::string imagePath;
         std::string prevImagePath;  // old expression fading out under the new one
@@ -350,6 +366,8 @@ private:
     std::array<std::array<float, 4>, 8> m_customEffectParameters{};
 
     std::unordered_map<std::string, Actor> m_actors;
+    std::unordered_map<std::string, LayeredPortrait> m_layeredPortraits;
+    std::unordered_map<std::string, bool> m_invalidLayeredPortraits;
 };
 
 }

@@ -3,8 +3,10 @@
 #include "Engine/Graphics/AssetCache.h"
 #include "Engine/Graphics/Renderer2D.h"
 #include "Engine/Support/Easing.h"
+#include "Engine/Support/Logger.h"
 
 #include <SDL3/SDL.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -58,6 +60,51 @@ Stage::Stage(graphics::Renderer2D& renderer, graphics::AssetCache& assets)
 
 Stage::~Stage() {
     EndRuleTransition();
+}
+
+const Stage::LayeredPortrait* Stage::ResolveLayeredPortrait(
+    const std::string& path) {
+    if(!path.ends_with(".pxportrait"))return nullptr;
+    if(const auto found=m_layeredPortraits.find(path);
+       found!=m_layeredPortraits.end())return &found->second;
+    if(m_invalidLayeredPortraits.contains(path))return nullptr;
+    const auto text=m_assets.ReadTextAsset(path);
+    const nlohmann::json document=text
+        ? nlohmann::json::parse(*text,nullptr,false)
+        : nlohmann::json{};
+    if(!text||document.is_discarded()||!document.is_object()||
+       document.value("format",std::string{})!="PrismatiXLayeredPortrait"||
+       document.value("schemaRevision",0)!=1||
+       !document.contains("layers")||!document["layers"].is_array()){
+        m_invalidLayeredPortraits[path]=true;
+        PX_LOG_WARN("Stage: invalid layered portrait descriptor '{}'",path);
+        return nullptr;
+    }
+    LayeredPortrait portrait;
+    portrait.width=document.value("width",0.0f);
+    portrait.height=document.value("height",0.0f);
+    for(const auto& value:document["layers"]){
+        if(!value.is_object()||!value.contains("path")||
+           !value["path"].is_string())continue;
+        PortraitLayer layer;
+        layer.path=value["path"].get<std::string>();
+        layer.x=value.value("x",0.0f);
+        layer.y=value.value("y",0.0f);
+        layer.width=value.value("width",0.0f);
+        layer.height=value.value("height",0.0f);
+        layer.opacity=static_cast<std::uint8_t>(std::clamp(
+            value.value("opacity",255),0,255));
+        if(layer.path.empty()||layer.width<=0.0f||layer.height<=0.0f)continue;
+        m_assets.PreloadTexture(layer.path,
+            graphics::AssetPreloadPriority::High);
+        portrait.layers.push_back(std::move(layer));
+    }
+    if(portrait.width<=0.0f||portrait.height<=0.0f||portrait.layers.empty()){
+        m_invalidLayeredPortraits[path]=true;
+        PX_LOG_WARN("Stage: empty layered portrait descriptor '{}'",path);
+        return nullptr;
+    }
+    return &m_layeredPortraits.emplace(path,std::move(portrait)).first->second;
 }
 
 float Stage::SlotCenterX(int slot) const {
@@ -985,14 +1032,22 @@ void Stage::Render() {
                                       const Actor& actor,
                                       const std::string& path) {
         Rect empty;
-        const graphics::TextureHandle texture = m_assets.Texture(path);
-        int textureWidth = 0;
-        int textureHeight = 0;
-        graphics::AssetCache::TextureSize(texture, textureWidth, textureHeight);
-        if (!texture || textureWidth <= 0 || textureHeight <= 0) return empty;
+        float sourceWidth=0.0f,sourceHeight=0.0f;
+        if(const auto* portrait=ResolveLayeredPortrait(path)){
+            sourceWidth=portrait->width;
+            sourceHeight=portrait->height;
+        }else{
+            if(path.ends_with(".pxportrait"))return empty;
+            const graphics::TextureHandle texture=m_assets.Texture(path);
+            int textureWidth=0,textureHeight=0;
+            graphics::AssetCache::TextureSize(texture,textureWidth,textureHeight);
+            if(!texture||textureWidth<=0||textureHeight<=0)return empty;
+            sourceWidth=static_cast<float>(textureWidth);
+            sourceHeight=static_cast<float>(textureHeight);
+        }
         const float effectScale = std::max(0.01f, actor.effectScale);
-        const float width = textureWidth * actor.scale * effectScale;
-        const float height = textureHeight * actor.scale * effectScale;
+        const float width = sourceWidth * actor.scale * effectScale;
+        const float height = sourceHeight * actor.scale * effectScale;
         const Rect local{
             actor.x - width * 0.5f + actor.offsetX + actor.effectOffsetX,
             static_cast<float>(logicalH) - height + actor.offsetY +
@@ -1108,14 +1163,24 @@ void Stage::Render() {
     const auto drawActorImage = [&](const std::string& name,
                                     const std::string& path,
                                     const Actor& actor, const float alpha) {
-        const graphics::TextureHandle texture = m_assets.Texture(path);
-        int textureWidth = 0;
-        int textureHeight = 0;
-        graphics::AssetCache::TextureSize(texture, textureWidth, textureHeight);
-        if (!texture || textureWidth <= 0 || textureHeight <= 0) return;
+        const LayeredPortrait* portrait=ResolveLayeredPortrait(path);
+        float sourceWidth=0.0f,sourceHeight=0.0f;
+        if(portrait){
+            sourceWidth=portrait->width;
+            sourceHeight=portrait->height;
+        }else{
+            if(path.ends_with(".pxportrait"))return;
+            const graphics::TextureHandle texture=m_assets.Texture(path);
+            int textureWidth=0,textureHeight=0;
+            graphics::AssetCache::TextureSize(texture,textureWidth,textureHeight);
+            if(!texture||textureWidth<=0||textureHeight<=0)return;
+            sourceWidth=static_cast<float>(textureWidth);
+            sourceHeight=static_cast<float>(textureHeight);
+        }
         const float effectScale = std::max(0.01f, actor.effectScale);
-        const float width = textureWidth * actor.scale * effectScale;
-        const float height = textureHeight * actor.scale * effectScale;
+        const float spriteScale=actor.scale*effectScale;
+        const float width=sourceWidth*spriteScale;
+        const float height=sourceHeight*spriteScale;
         const Rect local{
             actor.x - width * 0.5f + actor.offsetX + actor.effectOffsetX,
             static_cast<float>(logicalH) - height + actor.offsetY +
@@ -1127,10 +1192,24 @@ void Stage::Render() {
         if (!world.visible || world.opacity <= 0.0f) return;
         m_renderer.PushAffineTransform(
             {world.a, world.b, world.c, world.d, world.tx, world.ty});
-        m_renderer.DrawImage(
-            path, local,
-            static_cast<std::uint8_t>(std::clamp(
-                alpha * actor.effectAlpha * world.opacity, 0.0f, 255.0f)));
+        const float combinedAlpha=std::clamp(
+            alpha*actor.effectAlpha*world.opacity,0.0f,255.0f);
+        if(portrait){
+            for(const auto& layer:portrait->layers){
+                m_renderer.DrawImage(
+                    layer.path,
+                    {local.x+layer.x*spriteScale,
+                     local.y+layer.y*spriteScale,
+                     layer.width*spriteScale,
+                     layer.height*spriteScale},
+                    static_cast<std::uint8_t>(std::clamp(
+                        combinedAlpha*static_cast<float>(layer.opacity)/255.0f,
+                        0.0f,255.0f)));
+            }
+        }else{
+            m_renderer.DrawImage(path,local,
+                static_cast<std::uint8_t>(combinedAlpha));
+        }
         m_renderer.PopTransform();
     };
 

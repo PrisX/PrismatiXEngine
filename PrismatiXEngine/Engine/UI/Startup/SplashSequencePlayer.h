@@ -47,6 +47,7 @@ private:
     void BeginExit();
     void Advance();
     void Finish();
+    void PlayCurrentAudio();
     void Emit(diag::Diagnostic diagnostic) const;
 
     Services m_services;
@@ -61,6 +62,7 @@ private:
     float m_exitDuration = 0.0f;
     bool m_reducedMotion = false;
     bool m_skipRequested = false;
+    bool m_audioPlayed = false;
     bool m_completionSent = false;
 };
 

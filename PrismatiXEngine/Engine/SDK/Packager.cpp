@@ -490,33 +490,49 @@ bool CompressFile(const ArchiveEntry& entry,
 ArchiveWriteResult WriteArchive(const std::filesystem::path& path,
                                 const std::vector<ArchiveEntry>& entries,
                                 const PackageCompression compression,
-                                const bool encryption, const Key& key) {
+                                const bool encryption, const Key& key,
+                                std::string& failure,
+                                const std::function<void(std::size_t,
+                                                         std::size_t,
+                                                         const std::string&)>&
+                                    progress) {
+    const auto failed = [&](std::string message) {
+        failure = std::move(message);
+        return ArchiveWriteResult::Failed;
+    };
     Bytes index;
     PutU32(index, static_cast<std::uint32_t>(entries.size()));
     std::unordered_set<std::uint64_t> hashes;
     const int compressionLevel = CompressionLevel(compression);
 
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    if (!output) return ArchiveWriteResult::Failed;
+    if (!output) return failed("the output archive could not be opened");
     std::array<std::uint8_t, kArchiveHeaderSize> placeholder{};
     output.write(reinterpret_cast<const char*>(placeholder.data()),
                  static_cast<std::streamsize>(placeholder.size()));
-    if (!output) return ArchiveWriteResult::Failed;
+    if (!output) return failed("the archive header placeholder could not be written");
 
     const auto workDirectory = path.parent_path() / ".pdx-work";
     std::error_code error;
     std::filesystem::create_directories(workDirectory, error);
-    if (error) return ArchiveWriteResult::Failed;
+    if (error) return failed("the compression work directory could not be created: " + error.message());
     ScopedDirectory cleanup{workDirectory};
 
     for (std::size_t entryIndex = 0; entryIndex < entries.size(); ++entryIndex) {
         const auto& entry = entries[entryIndex];
+        if (progress &&
+            (entryIndex == 0 || (entryIndex + 1) % 256 == 0 ||
+             entryIndex + 1 == entries.size())) {
+            progress(entryIndex + 1, entries.size(),
+                     "Writing " + entry.uri);
+        }
         const std::uint64_t rawSize = entry.FileBacked() ? entry.size : entry.data.size();
         if (!IsSafeUri(entry.uri) || entry.uri.size() > static_cast<std::size_t>((std::numeric_limits<std::uint16_t>::max)()) || rawSize > kMaxEntrySize) {
-            return ArchiveWriteResult::Failed;
+            return failed("invalid archive entry: " + entry.uri);
         }
         const std::uint64_t pathHash = HashPath(entry.uri);
-        if (!hashes.insert(pathHash).second) return ArchiveWriteResult::Failed;
+        if (!hashes.insert(pathHash).second)
+            return failed("archive path hash collision: " + entry.uri);
 
         std::uint8_t flags = 0;
         std::uint32_t crc = 0;
@@ -533,7 +549,7 @@ ArchiveWriteResult WriteArchive(const std::filesystem::path& path,
             if (!digest.valid ||
                 !CompressFile(entry, temporary, compressionLevel, digest,
                               compressedSize))
-                return ArchiveWriteResult::Failed;
+                return failed("archive entry could not be compressed: " + entry.uri);
             const auto fingerprint = digest.Finish();
             if (!fingerprint || digest.size != entry.size ||
                 *fingerprint != Lower(entry.fingerprint))
@@ -569,12 +585,12 @@ ArchiveWriteResult WriteArchive(const std::filesystem::path& path,
         if (useCompressedFile) {
             std::ifstream transformed(temporary, std::ios::binary);
             if (!transformed || !writeInput(transformed, nullptr))
-                return ArchiveWriteResult::Failed;
+                return failed("compressed archive entry could not be written: " + entry.uri);
         } else if (entry.FileBacked()) {
             StreamDigest digest;
             std::ifstream input(entry.source, std::ios::binary);
             if (!digest.valid || !input || !writeInput(input, &digest))
-                return ArchiveWriteResult::Failed;
+                return failed("archive entry could not be read or written: " + entry.uri);
             const auto fingerprint = digest.Finish();
             if (!fingerprint || digest.size != entry.size ||
                 *fingerprint != Lower(entry.fingerprint))
@@ -585,7 +601,19 @@ ArchiveWriteResult WriteArchive(const std::filesystem::path& path,
             std::string bytes(reinterpret_cast<const char*>(entry.data.data()),
                               entry.data.size());
             std::istringstream input(std::move(bytes), std::ios::binary);
-            if (!writeInput(input, nullptr)) return ArchiveWriteResult::Failed;
+            if (!writeInput(input, nullptr))
+                return failed("generated archive entry could not be written: " + entry.uri);
+        }
+
+        // Each transformed file has already been appended to Content.pdx. Keeping
+        // every .zst until the whole archive completes doubles peak disk usage on
+        // large projects and makes otherwise valid packages fail late.
+        if (std::filesystem::exists(temporary, error)) {
+            error.clear();
+            std::filesystem::remove(temporary, error);
+            if (error)
+                return failed("temporary archive entry could not be removed: " +
+                              entry.uri + ": " + error.message());
         }
 
         PutU64(index, pathHash);
@@ -604,15 +632,15 @@ ArchiveWriteResult WriteArchive(const std::filesystem::path& path,
 
     if (encryption) {
         auto encrypted = Encrypt(index, key, DeriveIv(kIndexSalt));
-        if (!encrypted) return ArchiveWriteResult::Failed;
+        if (!encrypted) return failed("the archive index could not be encrypted");
         index = std::move(*encrypted);
     }
-    if (index.empty()) return ArchiveWriteResult::Failed;
+    if (index.empty()) return failed("the archive index is empty");
 
     const std::uint64_t indexOffset = static_cast<std::uint64_t>(output.tellp());
     output.write(reinterpret_cast<const char*>(index.data()),
                  static_cast<std::streamsize>(index.size()));
-    if (!output) return ArchiveWriteResult::Failed;
+    if (!output) return failed("the archive index could not be written");
     Bytes header;
     header.insert(header.end(), kArchiveMagic, kArchiveMagic + 4);
     PutU32(header, kArchiveVersion);
@@ -623,7 +651,8 @@ ArchiveWriteResult WriteArchive(const std::filesystem::path& path,
     output.write(reinterpret_cast<const char*>(header.data()),
                  static_cast<std::streamsize>(header.size()));
     output.close();
-    return output ? ArchiveWriteResult::Completed : ArchiveWriteResult::Failed;
+    return output ? ArchiveWriteResult::Completed
+                  : failed("the final archive header could not be written");
 }
 
 std::optional<Bytes> ReadFile(const std::filesystem::path& path, const std::uint64_t expectedSize) {
@@ -2608,16 +2637,25 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
     const std::string packageFingerprint = Hex(*packageDigest);
     const std::string encryptionKey = "pxpkg-" + Hex(DeriveKey("PrismatiXPackage|" + identityMaterial));
     EmitProgress(request, eventSink, "archive", validated.inputs.size(), validated.inputs.size(), "Writing Content.pdx");
+    std::string archiveFailure;
     const auto archiveResult =
         WriteArchive(staging / "Content.pdx", entries, request.compression,
-                     request.encryption, DeriveKey(encryptionKey));
+                     request.encryption, DeriveKey(encryptionKey), archiveFailure,
+                     [&](const std::size_t current, const std::size_t total,
+                         const std::string& message) {
+                         EmitProgress(request, eventSink, "archive-write", current,
+                                      total, message);
+                     });
     if (archiveResult == ArchiveWriteResult::InputChanged) {
         return Fail(request, eventSink, "PXPKG1305",
                     "An input changed while Content.pdx was being written",
                     true);
     }
     if (archiveResult != ArchiveWriteResult::Completed) {
-        return Fail(request, eventSink, "PXPKG1307", "Content.pdx could not be written", true);
+        return Fail(request, eventSink, "PXPKG1307",
+                    "Content.pdx could not be written" +
+                        (archiveFailure.empty() ? std::string{} : ": " + archiveFailure),
+                    true);
     }
     if (Cancelled(request)) {
         return Cancel(request, eventSink, "Packaging was cancelled after archive creation");

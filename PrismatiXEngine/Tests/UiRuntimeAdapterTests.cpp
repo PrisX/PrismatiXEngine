@@ -4,6 +4,7 @@
 #include <iomanip>
 #include <iostream>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <sstream>
 #include <string>
 
@@ -372,9 +373,15 @@ int main() {
                            ? px::sdk::UiNodeKind::Button : px::sdk::UiNodeKind::Label;
         caption.runtimeType = type;
         caption.text = "SAVE / 小光";
+        caption.appearance.textColor = "#123456FF";
         caption.accessibilityLabel = "Separate accessible name";
         caption.layout.width = 320;
         caption.layout.height = 80;
+        if (type == "Label" || type == "RichTextLabel") {
+            caption.runtimeProperties.emplace("outlineSize", std::int64_t{2});
+            caption.runtimeProperties.emplace(
+                "outlineColor", px::sdk::UiColorValue{"#2D171DFF"});
+        }
         captions.nodes = {root, caption};
         const auto checkCaption = [&](const std::string& expected) {
             auto tree = px::ui::BuildUiRuntimeTree(captions);
@@ -387,6 +394,22 @@ int main() {
                   "runtimeType must retain authored visible text independently of accessibility");
             if (const auto* rich = dynamic_cast<const px::ui::RichTextLabel*>(control))
                 Check(rich->Markup() == expected, "typed rich caption must initialize markup as well as text");
+            if (label) {
+                const auto color = label->GetColor();
+                Check(color.r == 0x12 && color.g == 0x34 && color.b == 0x56 &&
+                          color.a == 0xFF,
+                      "runtimeType label must retain authored appearance textColor");
+                const auto edge = label->OutlineColor();
+                Check(label->OutlineSize() == 2 && edge.r == 0x2D &&
+                          edge.g == 0x17 && edge.b == 0x1D && edge.a == 0xFF,
+                      "typed label outline must survive UI runtime adaptation");
+            }
+            if (button) {
+                const auto color = button->GetTextColor();
+                Check(button->HasTextColor() && color.r == 0x12 && color.g == 0x34 &&
+                          color.b == 0x56 && color.a == 0xFF,
+                      "runtimeType button must retain authored appearance textColor");
+            }
         };
         checkCaption(caption.text);
         captions.nodes[1].runtimeProperties.emplace(type == "RichTextLabel" ? "markup" : "text", "Explicit text override");
@@ -640,6 +663,31 @@ int main() {
     (void)runtime.root->Measure({ 1280, 720 });
     runtime.root->Arrange({ 0, 0, 1280, 720 });
     Check(button->LayoutRect() == px::Rect{ 520, 330, 240, 60 }, "normalized anchors must reposition the control against its parent");
+
+    auto compactDocument = parsed.document;
+    auto compactNode = std::ranges::find_if(
+        compactDocument.nodes, [](const px::sdk::UiNode& node) {
+            return node.name == "Start";
+        });
+    Check(compactNode != compactDocument.nodes.end(),
+          "compact fixed-layout fixture button must exist");
+    compactNode->layout.x = 739.0f;
+    compactNode->layout.y = 680.0f;
+    compactNode->layout.width = 43.0f;
+    compactNode->layout.height = 17.0f;
+    compactNode->layout.anchorX = compactNode->layout.anchorRight = 0.0f;
+    compactNode->layout.anchorY = compactNode->layout.anchorBottom = 0.0f;
+    auto compactRuntime = px::ui::BuildUiRuntimeTree(compactDocument);
+    auto* compactButton = compactRuntime.Valid()
+                              ? dynamic_cast<px::ui::Button*>(
+                                    compactRuntime.root->Find(*buttonId))
+                              : nullptr;
+    Check(compactButton != nullptr,
+          "compact authored button must instantiate as a Runtime button");
+    (void)compactRuntime.root->Measure({1280, 720});
+    compactRuntime.root->Arrange({0, 0, 1280, 720});
+    Check(compactButton->LayoutRect() == px::Rect{739, 680, 43, 17},
+          "fixed free-layout rectangles must not expand to a control's intrinsic minimum");
 
     auto responsiveSource = nlohmann::json::parse(scene);
     responsiveSource["schemaRevision"] = 2;
@@ -897,6 +945,22 @@ int main() {
     playerStart.action = "game.start";
     playerStart.context.sourceScene = "Content/UI/Title.pxui";
     Check(playerUi.Actions().Dispatch(std::move(playerStart)).IsOk(), "Player UI document route uses the production Action dispatcher");
+    std::optional<px::ui::GalgameAction> customAction;
+    playerUi.SetActionSink([&customAction](const px::ui::GalgameAction& action) {
+        customAction = action;
+    });
+    Check(playerUi.RegisterActionCommand("music.play", "track").IsOk(),
+          "game-specific authored commands must register without an engine whitelist");
+    px::ui::ActionInvocation playTrack;
+    playTrack.action = "music.play";
+    playTrack.arguments.emplace("track", px::Variant("Assets/Audio/BGM/BGM01.wav"));
+    Check(playerUi.Actions().Dispatch(std::move(playTrack)).IsOk(),
+          "game-specific authored command must dispatch through the production Action dispatcher");
+    px::Input customActionInput;
+    (void)playerUi.Update(customActionInput, 1920, 1080, 0.016f);
+    Check(customAction && customAction->command == "music.play" &&
+              customAction->argument == "Assets/Audio/BGM/BGM01.wav",
+          "game-specific authored command must preserve its configured string argument");
 
     const auto componentContract = px::sdk::ParseUiComponent(ComponentSource());
     if (!componentContract.Valid())

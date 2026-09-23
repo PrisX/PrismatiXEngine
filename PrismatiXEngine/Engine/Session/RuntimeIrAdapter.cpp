@@ -444,9 +444,17 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             command.type = "char_clear";
             Add(command, "id", Argument(operation, "character"));
         } else if (operation.kind == "voice" || operation.kind == "bgm" ||
-                   operation.kind == "soundEffect") {
+                   operation.kind == "soundEffect" || operation.kind == "ambience") {
             command.type = operation.kind == "soundEffect" ? "se" : operation.kind;
             Add(command, "file", Argument(operation, "asset"));
+            Add(command, "fade", DurationMilliseconds(Argument(operation, "fade")));
+        } else if (operation.kind == "stopBgm" || operation.kind == "stopAmbience") {
+            command.type = operation.kind == "stopBgm" ? "stopbgm" : "stopambience";
+            Add(command, "fade", DurationMilliseconds(Argument(operation, "fade")));
+        } else if (operation.kind == "video") {
+            command.type = "video";
+            Add(command, "file", Argument(operation, "asset"));
+            Add(command, "skippable", Argument(operation, "skippable"));
         } else if (operation.kind == "setVariable") {
             command.type = "var";
             Add(command, "name", Argument(operation, "name"));
@@ -519,6 +527,16 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
         } else if (operation.kind == "label") {
             command.type = "label";
             Add(command, "name", LabelTarget(Argument(operation, "target")));
+            // Runtime IR uses stable hashed targets for control flow, while
+            // replay/flowchart UIs are naturally authored against the public
+            // Story label. Preserve that source spelling as a second lookup
+            // key instead of forcing games to reproduce the compiler hash.
+            const std::string authored = Trim(operation.text);
+            if (authored.size() > 1 && authored.front() == '*') {
+                const std::string alias = Trim(std::string_view(authored).substr(1));
+                if (!alias.empty() && alias != Argument(operation, "target"))
+                    Add(command, "alias", alias);
+            }
         } else if (operation.kind == "jump") {
             command.type = "jump";
             Add(command, "target", LabelTarget(Argument(operation, "target")));
@@ -547,10 +565,18 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
         } else if (operation.kind == "effect") {
             command.type = "screen_effect";
             Add(command, "preset", Argument(operation, "value"));
+        } else if (operation.kind == "shake") {
+            command.type = "shake";
+            Add(command, "ms", DurationMilliseconds(Argument(operation, "duration")));
+            Add(command, "amp", Argument(operation, "amplitude"));
         } else if (operation.kind == "ui") {
             command.type = "route";
             Add(command, "route", Argument(operation, "route"));
             Add(command, "operation", Argument(operation, "operation"));
+        } else if (operation.kind == "unlock") {
+            command.type = "unlock";
+            Add(command, "kind", Argument(operation, "kind"));
+            Add(command, "id", Argument(operation, "id"));
         } else if (operation.kind == "customNode") {
             command.type = Argument(operation, "type");
             const auto* descriptor = vn::CommandRegistry::Global().Find(command.type);

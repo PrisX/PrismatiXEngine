@@ -24,11 +24,13 @@ bool ExecutableOperationKind(const std::string_view kind) {
         "return",        "endStory",      "dialogue",
         "narration",     "choiceOption",  "background",
         "showCharacter", "hideCharacter", "voice",
-        "bgm",           "soundEffect",   "setVariable",
+        "bgm",           "stopBgm",       "soundEffect",
+        "ambience",      "stopAmbience",  "video",
+        "setVariable",
         "condition",     "else",           "endCondition",
         "label",         "jump",           "wait",
-        "timeline",      "effect",         "ui",
-        "customNode",    "camera",
+        "timeline",      "effect",         "shake",          "ui",
+        "unlock",        "customNode",     "camera",
     };
     for (const auto candidate : kinds)
         if (candidate == kind) return true;

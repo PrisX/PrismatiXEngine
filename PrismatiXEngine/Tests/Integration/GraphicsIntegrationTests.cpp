@@ -171,6 +171,53 @@ int main() {
         px::graphics::AssetCache assets(device.Renderer(), vfs);
         px::graphics::Renderer2D renderer(device.Renderer(), assets, true);
         renderer.SetLogicalSize(640, 360);
+        // A typewriter prefix can sit exactly at the wrapping boundary. The
+        // coloured edge must use the fill's line layout, not SDL_ttf's wider
+        // outlined-font metrics (which used to put the edge on line two).
+        {
+            const std::string glyphs = "天地玄黃宇宙洪荒";
+            const std::string fontPath = "Fonts/NotoSansTC-Bold.ttf";
+            TTF_Font* plain = assets.Font(fontPath, 48, 0);
+            TTF_Font* stroked = assets.Font(fontPath, 48, 4);
+            int plainWidth = 0, plainHeight = 0;
+            int strokedWidth = 0, strokedHeight = 0;
+            if (!plain || !stroked ||
+                !TTF_GetStringSize(plain, glyphs.c_str(), glyphs.size(),
+                                   &plainWidth, &plainHeight) ||
+                !TTF_GetStringSize(stroked, glyphs.c_str(), glyphs.size(),
+                                   &strokedWidth, &strokedHeight) ||
+                strokedWidth <= plainWidth) {
+                std::cerr << "FAIL: outlined text wrap fixture metrics\n";
+                result = 1;
+            } else {
+                ClearFrame(device.Renderer());
+                renderer.DrawTextInRect(glyphs,
+                    {24, 24, static_cast<float>(plainWidth / 2 + 1), 120},
+                    fontPath, 24, {255, 255, 255, 255},
+                    px::graphics::HorizontalAlignment::Left,
+                    px::graphics::VerticalAlignment::Top, true, 255, 2,
+                    {255, 0, 0, 255});
+                SDL_Surface* pixels = SDL_RenderReadPixels(device.Renderer(), nullptr);
+                bool edgeBelowFirstLine = false;
+                if (pixels) {
+                    const int firstLineBottom = 24 + plainHeight / 2 + 4;
+                    for (int y = firstLineBottom; y < 110 && !edgeBelowFirstLine; ++y)
+                        for (int x = 24; x < 24 + plainWidth / 2 + 2; ++x) {
+                            std::uint8_t r = 0, g = 0, b = 0, a = 0;
+                            if (SDL_ReadSurfacePixel(pixels, x, y, &r, &g, &b, &a) &&
+                                r > 90 && g < 70 && b < 70) {
+                                edgeBelowFirstLine = true;
+                                break;
+                            }
+                        }
+                    SDL_DestroySurface(pixels);
+                }
+                if (!pixels || edgeBelowFirstLine) {
+                    std::cerr << "FAIL: outlined typewriter text wrapped separately from fill\n";
+                    result = 1;
+                }
+            }
+        }
         // A packaged starter has only its own font path. Exercise typed static
         // captions through the adapter, not dynamic HUD SetText calls or a
         // checkout-only font fallback, and compare rendered pixels with blanks.
@@ -346,6 +393,46 @@ int main() {
             std::cerr << "FAIL: outgoing/incoming snapshots were not composited by the native tile operator\n";
             result = 1;
         }
+        const auto crossfadeHandle = renderer.PlayScreenEffect("crossfade", 1.0f);
+        renderer.UpdateScreenEffects(0.5f);
+        FrameEvidence midpoint;
+        if (!crossfadeHandle || !renderer.BeginFrame({220, 35, 45, 255})) {
+            std::cerr << "FAIL: crossfade midpoint could not start\n";
+            result = 1;
+        } else {
+            renderer.DrawRect({0, 0, 640, 360}, {220, 35, 45, 255});
+            renderer.EndFrame();
+            midpoint = CaptureFrame(device.Renderer(),
+                                    "transition-crossfade-midpoint");
+            if (std::abs(static_cast<int>(midpoint.center.r) - 125) > 12 ||
+                std::abs(static_cast<int>(midpoint.center.g) - 55) > 12 ||
+                std::abs(static_cast<int>(midpoint.center.b) - 133) > 12) {
+                std::cerr << "FAIL: crossfade midpoint must mix both frames without a dark dip\n";
+                result = 1;
+            }
+        }
+        const auto restartedHandle = renderer.PlayScreenEffect("crossfade", 1.0f);
+        if (!restartedHandle || renderer.ScreenEffectState(crossfadeHandle) !=
+                px::graphics::ScreenEffectStatus::Cancelled ||
+            !renderer.BeginFrame({20, 180, 60, 255})) {
+            std::cerr << "FAIL: crossfade could not restart from the composited frame\n";
+            result = 1;
+        } else {
+            renderer.DrawRect({0, 0, 640, 360}, {20, 180, 60, 255});
+            renderer.EndFrame();
+            const FrameEvidence restarted =
+                CaptureFrame(device.Renderer(), "transition-crossfade-restarted");
+            if (std::abs(static_cast<int>(restarted.center.r) -
+                         static_cast<int>(midpoint.center.r)) > 5 ||
+                std::abs(static_cast<int>(restarted.center.g) -
+                         static_cast<int>(midpoint.center.g)) > 5 ||
+                std::abs(static_cast<int>(restarted.center.b) -
+                         static_cast<int>(midpoint.center.b)) > 5) {
+                std::cerr << "FAIL: rapid route transition must begin at the visible composite\n";
+                result = 1;
+            }
+        }
+        renderer.UpdateScreenEffects(1.0f);
         const auto stoppedHandle = renderer.PlayScreenEffect("fade", 0.5f);
         if (!stoppedHandle || !renderer.StopScreenEffect(stoppedHandle) ||
             renderer.ScreenEffectState(stoppedHandle) !=

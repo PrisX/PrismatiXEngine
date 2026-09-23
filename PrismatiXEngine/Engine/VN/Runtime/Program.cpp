@@ -23,6 +23,12 @@ Program CompileProgram(std::vector<Command> commands) {
         if (name.empty()) continue;
         if (program.labels.contains(name)) program.errors.push_back("duplicate label '" + name + "'");
         else program.labels[name] = i;
+        const std::string alias = command.Get("alias");
+        if (alias.empty() || alias == name) continue;
+        if (program.labels.contains(alias))
+            program.errors.push_back("duplicate label alias '" + alias + "'");
+        else
+            program.labels[alias] = i;
     }
     for (int i = 0; i < static_cast<int>(program.code.size()); ++i) {
         const auto& command = program.code[static_cast<std::size_t>(i)];

@@ -4,6 +4,7 @@
 #include "Engine/UI/Control.h"
 #include "Engine/Graphics/Texture.h"
 
+#include <algorithm>
 #include <functional>
 #include <string>
 #include <vector>
@@ -32,13 +33,18 @@ public:
         SetMouseFilter(MouseFilter::Ignore);
     }
     [[nodiscard]] std::string_view TypeName() const override { return "Label"; }
-    void SetText(std::string value) { m_text = std::move(value); InvalidateLayout(); }
+    void SetText(std::string value) { if (m_text == value) return; m_text = std::move(value); InvalidateLayout(); }
     [[nodiscard]] const std::string& Text() const { return m_text; }
     void SetWrap(bool value) { m_wrap = value; InvalidateLayout(); }
     [[nodiscard]] bool Wrap() const { return m_wrap; }
     void SetFontSize(int value) { m_fontSize = value; InvalidateLayout(); }
     [[nodiscard]] int FontSize() const { return m_fontSize; }
     void SetColor(Color value) { m_color = value; m_hasColor = true; }
+    [[nodiscard]] Color GetColor() const { return m_color; }
+    void SetOutlineSize(int value) { m_outlineSize = std::clamp(value, 0, 8); }
+    [[nodiscard]] int OutlineSize() const { return m_outlineSize; }
+    void SetOutlineColor(Color value) { m_outlineColor = value; }
+    [[nodiscard]] Color OutlineColor() const { return m_outlineColor; }
     void SetHorizontalAlignment(HorizontalTextAlignment value) { m_horizontalAlignment=value; }
     void SetVerticalAlignment(VerticalTextAlignment value) { m_verticalAlignment=value; }
     [[nodiscard]] HorizontalTextAlignment HorizontalAlignment() const { return m_horizontalAlignment; }
@@ -54,6 +60,8 @@ private:
     int m_fontSize = 0;
     Color m_color{};
     bool m_hasColor = false;
+    int m_outlineSize = 0;
+    Color m_outlineColor{0, 0, 0, 255};
     HorizontalTextAlignment m_horizontalAlignment = HorizontalTextAlignment::Left;
     VerticalTextAlignment m_verticalAlignment = VerticalTextAlignment::Top;
 };
@@ -65,6 +73,12 @@ public:
     [[nodiscard]] std::string_view TypeName() const override { return "Button"; }
     void SetText(std::string value) { m_text = std::move(value); InvalidateLayout(); }
     [[nodiscard]] const std::string& Text() const { return m_text; }
+    void SetFontSize(int value) { m_fontSize = value; InvalidateLayout(); }
+    [[nodiscard]] int FontSize() const { return m_fontSize; }
+    void SetTextColor(Color value) { m_textColor = value; m_hasTextColor = true; }
+    void ClearTextColor() { m_hasTextColor = false; }
+    [[nodiscard]] Color GetTextColor() const { return m_textColor; }
+    [[nodiscard]] bool HasTextColor() const { return m_hasTextColor; }
     void SetOnActivated(Activated value) { m_activated = std::move(value); }
     void SetActionInvocation(ActionInvocation value) { m_action = std::move(value); }
     [[nodiscard]] const ActionInvocation& BoundAction() const { return m_action; }
@@ -78,9 +92,17 @@ public:
 protected:
     Vec2 MeasureOverride(Vec2 available) override;
     void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) override;
+    // Image-backed subclasses still need the normal Button caption for
+    // dynamic list rows and skinned settings controls. Keeping caption
+    // rendering here avoids painting the default button chrome twice.
+    void DrawTextContent(graphics::Renderer2D& renderer,
+                         const Theme& theme) const;
 
 private:
     std::string m_text;
+    int m_fontSize = 0;
+    Color m_textColor{};
+    bool m_hasTextColor = false;
     ActionInvocation m_action;
     Activated m_activated;
     HorizontalTextAlignment m_horizontalAlignment = HorizontalTextAlignment::Center;
@@ -96,6 +118,39 @@ public:
 protected:
     Vec2 MeasureOverride(Vec2 available) override;
     void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) override;
+};
+
+// Image-backed button used by commercial VN interfaces.  Keeping all four
+// interaction textures on one control preserves authored hit testing,
+// keyboard focus, accessibility, and Actions without requiring a behavior
+// graph just to swap sibling TextureRect visibility on hover/press.
+class TextureButton final : public Button {
+public:
+    explicit TextureButton(std::string name = "TextureButton")
+        : Button({}, std::move(name)) {}
+    [[nodiscard]] std::string_view TypeName() const override {
+        return "TextureButton";
+    }
+    void SetNormalPath(std::string value) { m_normalPath = std::move(value); }
+    void SetHoverPath(std::string value) { m_hoverPath = std::move(value); }
+    void SetPressedPath(std::string value) { m_pressedPath = std::move(value); }
+    void SetDisabledPath(std::string value) { m_disabledPath = std::move(value); }
+    [[nodiscard]] const std::string& NormalPath() const { return m_normalPath; }
+    [[nodiscard]] const std::string& HoverPath() const { return m_hoverPath; }
+    [[nodiscard]] const std::string& PressedPath() const { return m_pressedPath; }
+    [[nodiscard]] const std::string& DisabledPath() const { return m_disabledPath; }
+    void SetScaleMode(TextureScaleMode value) { m_scaleMode = value; }
+    [[nodiscard]] TextureScaleMode ScaleMode() const { return m_scaleMode; }
+
+protected:
+    void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) override;
+
+private:
+    std::string m_normalPath;
+    std::string m_hoverPath;
+    std::string m_pressedPath;
+    std::string m_disabledPath;
+    TextureScaleMode m_scaleMode = TextureScaleMode::Stretch;
 };
 
 class TextureRect : public Control {
@@ -182,12 +237,26 @@ public:
     [[nodiscard]] double Minimum() const{return m_min;}
     [[nodiscard]] double Maximum() const{return m_max;}
     [[nodiscard]] double Step() const{return m_step;}
+    void SetRailPath(std::string value){m_railPath=std::move(value);}
+    void SetKnobPath(std::string value){m_knobPath=std::move(value);}
+    void SetKnobHoverPath(std::string value){m_knobHoverPath=std::move(value);}
+    void SetKnobPressedPath(std::string value){m_knobPressedPath=std::move(value);}
+    [[nodiscard]] const std::string& RailPath() const{return m_railPath;}
+    [[nodiscard]] const std::string& KnobPath() const{return m_knobPath;}
+    [[nodiscard]] const std::string& KnobHoverPath() const{return m_knobHoverPath;}
+    [[nodiscard]] const std::string& KnobPressedPath() const{return m_knobPressedPath;}
+    void SetRailHeight(float value){m_railHeight=std::max(1.0f,value);}
+    void SetKnobSize(float value){m_knobSize=std::max(1.0f,value);}
+    [[nodiscard]] float RailHeight() const{return m_railHeight;}
+    [[nodiscard]] float KnobSize() const{return m_knobSize;}
     void SetOnChanged(Changed value){m_changed=std::move(value);}
     void HandleEvent(UIEvent& event) override;
     bool PerformAccessibilityAction(std::string_view action,
                                     std::string_view value = {}) override;
 protected:Vec2 MeasureOverride(Vec2 available) override;void DrawSelf(graphics::Renderer2D& renderer,const Theme& theme) override;
 private:void SetFromPosition(float x);double m_min=0,m_max=1,m_step=0,m_value=0;Changed m_changed;
+    std::string m_railPath,m_knobPath,m_knobHoverPath,m_knobPressedPath;
+    float m_railHeight=6.0f,m_knobSize=14.0f;
 };
 
 class LineEdit : public Control {

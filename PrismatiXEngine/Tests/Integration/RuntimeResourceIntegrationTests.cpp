@@ -441,8 +441,11 @@ void TestExpandedControlMetadataAndTransforms() {
     transformed.SetScale({ 2, 2 });
     transformed.SetRotation(90);
     Check(transformed.HitTest({ 20, 15 }) && transformed.HitTest({ 20, 30 }) && !transformed.HitTest({ 50, 50 }), "Control hit testing must match pivot, scale, and rotation");
+    transformed.SetTranslation({100,25});
+    Check(transformed.HitTest({120,40}) && !transformed.HitTest({20,15}),
+          "Control hit testing must invert animated translation");
     transformed.SetVisibility(px::ui::Visibility::Hidden);
-    Check(!transformed.HitTest({ 20, 15 }), "Hidden controls must not participate in hit testing");
+    Check(!transformed.HitTest({120,40}), "Hidden controls must not participate in hit testing");
     px::ui::Control clippedRoot("ClippedRoot");
     clippedRoot.Arrange({0, 0, 50, 50});
     clippedRoot.SetClipContent(true);

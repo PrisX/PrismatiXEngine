@@ -135,6 +135,20 @@ int main() {
     assert(*actionObject->at("asset").TryGet<std::string>() ==
            "asset:33333333-3333-4333-8333-333333333333");
 
+    px::sdk::RuntimeIrDocument authoredLabelDocument;
+    authoredLabelDocument.documentId = "authored-label-alias";
+    authoredLabelDocument.committedRevision = 1;
+    auto authoredLabel = Operation(
+        "replay-label", "label", {{"target", "pxscene.label.1234567890abcdef"}});
+    authoredLabel.text = "*replay.yoshino.after";
+    authoredLabelDocument.operations = {authoredLabel};
+    const px::vn::Program authoredLabelProgram =
+        px::CompileRuntimeIr(authoredLabelDocument);
+    assert(authoredLabelProgram.errors.empty());
+    assert(authoredLabelProgram.LabelIndex("@pxscene.label.1234567890abcdef") >= 0);
+    assert(authoredLabelProgram.LabelIndex("replay.yoshino.after") ==
+           authoredLabelProgram.LabelIndex("@pxscene.label.1234567890abcdef"));
+
     px::sdk::RuntimeIrDocument typedVariableDocument;
     typedVariableDocument.documentId = "typed-variables";
     typedVariableDocument.committedRevision = 1;
@@ -370,10 +384,11 @@ int main() {
         "scene",          "fragment",       "callFragment", "return",
         "endStory",       "dialogue",       "narration",    "choiceOption",
         "background",     "showCharacter",  "hideCharacter", "voice",
-        "bgm",            "soundEffect",    "setVariable",  "condition",
+        "bgm",            "stopBgm",        "soundEffect",  "ambience",
+        "stopAmbience",   "video",          "setVariable",    "condition",
         "else",           "endCondition",   "label",        "jump",
-        "wait",           "timeline",       "effect",       "ui",
-        "customNode",     "camera",
+        "wait",           "timeline",       "effect",       "shake",        "ui",
+        "unlock",         "customNode",     "camera",
     };
     assert(schemaKinds == exercisedKinds);
 
@@ -390,7 +405,11 @@ int main() {
         Operation("all-hide", "hideCharacter", {{"character", "hero"}}),
         Operation("all-voice", "voice", {{"asset", "voice.ogg"}}),
         Operation("all-bgm", "bgm", {{"asset", "music.ogg"}}),
+        Operation("all-stop-bgm", "stopBgm", {{"fade", "100ms"}}),
         Operation("all-se", "soundEffect", {{"asset", "click.wav"}}),
+        Operation("all-ambience", "ambience", {{"asset", "wind.ogg"}, {"fade", "50ms"}}),
+        Operation("all-stop-ambience", "stopAmbience", {{"fade", "25ms"}}),
+        Operation("all-video", "video", {{"asset", "op.mp4"}, {"skippable", "true"}}),
         Operation("all-set", "setVariable", {{"name", "flag"}, {"value", "true"}}),
         Operation("all-if", "condition", {{"expression", "true"}}),
         Operation("all-if-body", "narration", {{"text", "yes"}}),
@@ -403,7 +422,9 @@ int main() {
         Operation("all-timeline-asset", "timeline", {{"timeline", "intro.pxanim"}}),
         Operation("all-timeline-inline", "timeline", {{"mode", "animate"}, {"target", "hero"}, {"x", "4"}, {"duration", "1ms"}}),
         Operation("all-effect", "effect", {{"value", "fade"}}),
+        Operation("all-shake", "shake", {{"duration", "250ms"}, {"amplitude", "15"}}),
         Operation("all-ui", "ui", {{"route", "title"}, {"operation", "replace"}}),
+        Operation("all-unlock", "unlock", {{"kind", "cg"}, {"id", "ev101a"}}),
         Operation("all-custom", "customNode", {{"type", "nvl"}, {"value", "{}"}}),
         Operation("all-camera", "camera", {{"value", "pan"}}),
         Operation("all-call", "callFragment", {{"target", "fragment"}}),

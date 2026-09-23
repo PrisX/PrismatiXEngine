@@ -155,10 +155,16 @@ public:
     [[nodiscard]] StyleStateSet ActiveStyleStates() const;
     void SetTooltip(std::string value) { m_tooltip = std::move(value); }
     [[nodiscard]] const std::string& Tooltip() const { return m_tooltip; }
+    void SetHoverSoundPath(std::string value) { m_hoverSoundPath = std::move(value); }
+    [[nodiscard]] const std::string& HoverSoundPath() const { return m_hoverSoundPath; }
+    void SetActivateSoundPath(std::string value) { m_activateSoundPath = std::move(value); }
+    [[nodiscard]] const std::string& ActivateSoundPath() const { return m_activateSoundPath; }
     void SetPivot(Vec2 value) { m_pivot = value; }
     [[nodiscard]] Vec2 Pivot() const { return m_pivot; }
     void SetScale(Vec2 value) { m_scale = value; }
     [[nodiscard]] Vec2 Scale() const { return m_scale; }
+    void SetTranslation(Vec2 value) { m_translation = value; }
+    [[nodiscard]] Vec2 Translation() const { return m_translation; }
     void SetRotation(float degrees) { m_rotation = degrees; }
     [[nodiscard]] float Rotation() const { return m_rotation; }
     void SetOpacity(float value) { m_opacity = std::clamp(value,0.0f,1.0f); }
@@ -247,8 +253,11 @@ private:
     bool m_visualChecked = false;
     bool m_visualSelected = false;
     std::string m_tooltip;
+    std::string m_hoverSoundPath;
+    std::string m_activateSoundPath;
     Vec2 m_pivot{.5f,.5f};
     Vec2 m_scale{1,1};
+    Vec2 m_translation{};
     float m_rotation = 0.0f;
     float m_opacity = 1.0f;
     Color m_modulate{255,255,255,255};

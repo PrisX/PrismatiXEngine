@@ -94,6 +94,22 @@ test("blank lines end speaker scope so the next text paragraph is narration", ()
   );
 });
 
+test("chapter authors a durable in-story presentation title", () => {
+  const compiled = compileStory(parseStory("[id chapter-one]\n[chapter title=\"CHAPTER 1-1\"]\nDialogue.\n", "chapter.pxstory"),
+    {documentId: "chapter-fixture"});
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  const chapter = compiled.runtimeIr!.operations.find((operation) => operation.kind === "scene");
+  assert.equal(chapter?.arguments.title, "CHAPTER 1-1");
+  const shifted = compileStory(parseStory("; inserted note\n[id chapter-one]\n[chapter title=\"CHAPTER 1-1\"]\nDialogue.\n", "chapter.pxstory"),
+    {documentId: "chapter-fixture"});
+  assert.equal(chapter?.operationId,
+    shifted.runtimeIr!.operations.find((operation) => operation.kind === "scene")?.operationId);
+  const missing = compileStory(parseStory("[chapter]\n", "missing.pxstory"),
+    {documentId: "chapter-fixture"});
+  assert.equal(missing.valid, false);
+  assert.ok(missing.diagnostics.some((diagnostic) => diagnostic.code === "PXSTORY1144"));
+});
+
 test("Story compiler emits only executable semantic operations and source maps", () => {
   const parsed = parseStory(source, "Story/zh-TW/ch01.pxstory");
   const compiled = compileStory(parsed, {
@@ -124,6 +140,79 @@ test("Story compiler emits only executable semantic operations and source maps",
   assert.equal(shown?.arguments.y, "8");
   assert.equal(shown?.arguments.scale, "0.67");
   assert.equal(compiled.sourceMap!.mappings.length, compiled.runtimeIr!.operations.length);
+});
+
+test("durable audio Story commands lower to typed Runtime IR operations", () => {
+  const compiled = compileStory(
+    parseStory([
+      "[bgm Assets/Audio/theme.ogg fade=250ms]",
+      "[ambience Assets/Audio/rain.ogg fade=100ms]",
+      "[ambience.stop fade=80ms]",
+      "[bgm.stop fade=120ms]",
+    ].join("\n"), "Story/audio.pxstory"),
+    {documentId: "audio"},
+  );
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  assert.deepEqual(compiled.runtimeIr?.operations.map((operation) => [operation.kind, operation.arguments]), [
+    ["bgm", {asset:"Assets/Audio/theme.ogg",fade:"250ms"}],
+    ["ambience", {asset:"Assets/Audio/rain.ogg",fade:"100ms"}],
+    ["stopAmbience", {fade:"80ms"}],
+    ["stopBgm", {fade:"120ms"}],
+  ]);
+  assert.deepEqual(compiled.resourceDependencies, ["Assets/Audio/rain.ogg", "Assets/Audio/theme.ogg"]);
+});
+
+test("unlock lowers to a typed Runtime IR operation", () => {
+  const compiled = compileStory(
+    parseStory("[unlock kind=cg id=ev101a]\n", "Story/unlock.pxstory"),
+    {documentId: "unlock"},
+  );
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  assert.deepEqual(compiled.runtimeIr?.operations.map((operation) => [operation.kind, operation.arguments]), [
+    ["unlock", {kind:"cg", id:"ev101a"}],
+  ]);
+});
+
+test("video lowers to a typed Runtime IR operation and resource dependency", () => {
+  const compiled = compileStory(
+    parseStory("[video asset=Assets/Video/op.mp4 skippable=true]\n", "Story/video.pxstory"),
+    {documentId: "video"},
+  );
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  assert.deepEqual(compiled.runtimeIr?.operations.map((operation) => [operation.kind, operation.arguments]), [
+    ["video", {asset:"Assets/Video/op.mp4", skippable:"true"}],
+  ]);
+  assert.deepEqual(compiled.resourceDependencies, ["Assets/Video/op.mp4"]);
+});
+
+test("background transition rules lower with timing and both resources", () => {
+  const compiled = compileStory(
+    parseStory("[bg asset=Assets/Backgrounds/shrine.png rule=Content/Images/Rules/rule_7.png duration=1500ms vague=64]\n", "Story/background-rule.pxstory"),
+    {documentId: "background-rule"},
+  );
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  assert.deepEqual(compiled.runtimeIr?.operations.map((operation) => [operation.kind, operation.arguments]), [
+    ["background", {
+      asset:"Assets/Backgrounds/shrine.png",
+      rule:"Content/Images/Rules/rule_7.png",
+      duration:"1500ms",
+      vague:"64",
+    }],
+  ]);
+  assert.deepEqual(compiled.resourceDependencies, [
+    "Assets/Backgrounds/shrine.png", "Content/Images/Rules/rule_7.png",
+  ]);
+});
+
+test("shake lowers to an explicit Runtime IR operation", () => {
+  const compiled = compileStory(
+    parseStory("[shake duration=250ms amplitude=15]\n", "Story/shake.pxstory"),
+    {documentId: "shake"},
+  );
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  assert.deepEqual(compiled.runtimeIr?.operations.map((operation) => [operation.kind, operation.arguments]), [
+    ["shake", {duration:"250ms", amplitude:"15"}],
+  ]);
 });
 
 test("Story catalog assignments lower declared scope and scalar type explicitly", () => {
@@ -193,6 +282,18 @@ test("character placement names and authored moves lower to explicit Runtime com
   );
   assert.equal(invalid.valid, false);
   assert.ok(invalid.diagnostics.some((diagnostic) => diagnostic.code === "PXSTORY1128"));
+});
+
+test("show accepts a path-first sprite without a character catalog", () => {
+  const compiled = compileStory(
+    parseStory("[show character=yoshino asset=Assets/Characters/yoshino.png position=center y=24 scale=0.65]\n", "Story/direct-sprite.pxstory"),
+    {documentId:"direct-sprite"},
+  );
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  assert.deepEqual(compiled.runtimeIr?.operations.map((operation) => operation.arguments), [{
+    character:"yoshino", sprite:"Assets/Characters/yoshino.png", position:"2", y:"24", scale:"0.65",
+  }]);
+  assert.deepEqual(compiled.resourceDependencies, ["Assets/Characters/yoshino.png"]);
 });
 
 test("effect and camera commands require presets and lower to explicit RuntimeIR kinds", () => {

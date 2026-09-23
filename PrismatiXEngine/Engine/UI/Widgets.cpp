@@ -104,7 +104,8 @@ void Label::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
     const int size = m_fontSize > 0 ? m_fontSize : style.fontSize;
     renderer.DrawTextInRect(m_text,LayoutRect(),style.font,size,
                             m_hasColor?m_color:(Enabled()?style.text:style.textDisabled),
-                            Horizontal(m_horizontalAlignment),Vertical(m_verticalAlignment),m_wrap);
+                            Horizontal(m_horizontalAlignment),Vertical(m_verticalAlignment),m_wrap,
+                            255,m_outlineSize,m_outlineColor);
 }
 
 Button::Button(std::string text, std::string name) : Control(std::move(name)), m_text(std::move(text)) {
@@ -124,10 +125,10 @@ void Button::HandleEvent(UIEvent& event) {
 }
 
 Vec2 Button::MeasureOverride(Vec2) {
-    if (const auto layout = MeasureTextLayout(m_text, 0))
+    if (const auto layout = MeasureTextLayout(m_text, m_fontSize))
         return {std::max(88.0f, layout->Size().x + 28.0f),
                 std::max(48.0f, layout->Size().y + 16.0f)};
-    constexpr float size = 24.0f;
+    const float size = m_fontSize > 0 ? static_cast<float>(m_fontSize) : 24.0f;
     return {std::max(88.0f, static_cast<float>(m_text.size()) * size * 0.58f + 28.0f), 48.0f};
 }
 
@@ -135,9 +136,17 @@ void Button::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
     const auto& style = theme.Resolve(*this);
     const auto& box = StateBox(*this, style);
     DrawBox(renderer, LayoutRect(), box);
+    DrawTextContent(renderer, theme);
+}
+
+void Button::DrawTextContent(graphics::Renderer2D& renderer,
+                             const Theme& theme) const {
+    if (m_text.empty()) return;
+    const auto& style = theme.Resolve(*this);
+    const int fontSize = m_fontSize > 0 ? m_fontSize : style.fontSize;
     Rect textArea=LayoutRect();textArea.x+=12;textArea.w=std::max(0.0f,textArea.w-24);
-    renderer.DrawTextInRect(m_text,textArea,style.font,style.fontSize,
-                            Enabled()?style.text:style.textDisabled,
+    renderer.DrawTextInRect(m_text,textArea,style.font,fontSize,
+                            Enabled()?(m_hasTextColor?m_textColor:style.text):style.textDisabled,
                             Horizontal(m_horizontalAlignment),Vertical(m_verticalAlignment),false);
 }
 
@@ -148,6 +157,23 @@ void IconButton::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
     if(Hovered()&&Enabled())color=style.focused.border;
     renderer.DrawTextInRect(Text(),LayoutRect(),style.font,style.fontSize,color,
                             graphics::HorizontalAlignment::Center,graphics::VerticalAlignment::Center,false);
+}
+
+void TextureButton::DrawSelf(graphics::Renderer2D& renderer,
+                             const Theme& theme) {
+    const std::string* path = &m_normalPath;
+    if (!Enabled() && !m_disabledPath.empty()) path = &m_disabledPath;
+    else if (Pressed() && !m_pressedPath.empty()) path = &m_pressedPath;
+    else if ((Hovered() || Focused()) && !m_hoverPath.empty()) path = &m_hoverPath;
+    if (!path->empty()) {
+        renderer.DrawImageInRect(*path, LayoutRect(), ToScaleMode(m_scaleMode),
+                                 graphics::HorizontalAlignment::Center,
+                                 graphics::VerticalAlignment::Center,
+                                 Enabled() ? 255 : 128);
+        DrawTextContent(renderer, theme);
+        return;
+    }
+    Button::DrawSelf(renderer, theme);
 }
 
 void TextureRect::SetOpacity(float value) { m_opacity = std::clamp(value, 0.0f, 1.0f); }
@@ -199,7 +225,32 @@ bool Slider::PerformAccessibilityAction(const std::string_view action,
     return true;
 }
 Vec2 Slider::MeasureOverride(Vec2){return{180,26};}
-void Slider::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){const auto& style=theme.Resolve(*this);const Rect r=LayoutRect();const float y=r.y+r.h*.5f-3;renderer.DrawRoundedRect({r.x,y,r.w,6},3,style.normal.background);const float ratio=m_max>m_min?static_cast<float>((m_value-m_min)/(m_max-m_min)):0;renderer.DrawRoundedRect({r.x,y,r.w*ratio,6},3,style.focused.border);renderer.DrawRoundedRect({r.x+r.w*ratio-7,r.y+r.h*.5f-7,14,14},7,style.text);}
+void Slider::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){
+    const auto& style=theme.Resolve(*this);const Rect r=LayoutRect();
+    const float ratio=m_max>m_min?static_cast<float>((m_value-m_min)/(m_max-m_min)):0;
+    const float railHeight=std::min(r.h,m_railHeight);
+    const Rect rail{r.x,r.y+(r.h-railHeight)*.5f,r.w,railHeight};
+    if(!m_railPath.empty())
+        renderer.DrawImageInRect(m_railPath,rail,graphics::ContentScaleMode::Stretch,
+            graphics::HorizontalAlignment::Center,
+            graphics::VerticalAlignment::Center,255);
+    else{
+        renderer.DrawRoundedRect(rail,railHeight*.5f,style.normal.background);
+        Rect fill=rail;fill.w*=ratio;
+        renderer.DrawRoundedRect(fill,railHeight*.5f,style.focused.border);
+    }
+    const float knobSize=std::min(std::max(1.0f,m_knobSize),std::max(r.w,r.h));
+    const Rect knob{r.x+(r.w-knobSize)*ratio,r.y+(r.h-knobSize)*.5f,
+                    knobSize,knobSize};
+    const std::string* knobPath=&m_knobPath;
+    if(Pressed()&&!m_knobPressedPath.empty())knobPath=&m_knobPressedPath;
+    else if((Hovered()||Focused())&&!m_knobHoverPath.empty())knobPath=&m_knobHoverPath;
+    if(!knobPath->empty())
+        renderer.DrawImageInRect(*knobPath,knob,graphics::ContentScaleMode::Stretch,
+            graphics::HorizontalAlignment::Center,
+            graphics::VerticalAlignment::Center,255);
+    else renderer.DrawRoundedRect(knob,knobSize*.5f,style.text);
+}
 
 LineEdit::LineEdit(std::string text,std::string name)
     : Control(std::move(name)), m_text(std::move(text)),
@@ -396,7 +447,7 @@ void LineEdit::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme) {
 }
 
 RichTextLabel::RichTextLabel(std::string markup,std::string name):Label({},std::move(name)){SetWrap(true);SetMarkup(std::move(markup));}
-void RichTextLabel::SetMarkup(std::string markup){m_markup=std::move(markup);const auto parsed=text::ParseRubyMarkup(m_markup);m_ruby.clear();for(const auto& ruby:parsed.ruby)m_ruby.push_back({ruby.prefix,ruby.base,ruby.reading});SetText(parsed.plain);}
+void RichTextLabel::SetMarkup(std::string markup){const auto parsed=text::ParseRubyMarkup(markup);if(m_markup==markup&&Text()==parsed.plain)return;m_markup=std::move(markup);m_ruby.clear();for(const auto& ruby:parsed.ruby)m_ruby.push_back({ruby.prefix,ruby.base,ruby.reading});SetText(parsed.plain);}
 AccessibilitySemantics RichTextLabel::DescribeAccessibility() const {
     auto semantics = Label::DescribeAccessibility();
     const int wrap = m_vertical
@@ -450,10 +501,15 @@ void RichTextLabel::DrawSelf(graphics::Renderer2D& renderer,
             const float center = base.w > 0.0f
                                      ? base.x + base.w * 0.5f
                                      : 0.0f;
-            renderer.DrawText(ruby.reading,
-                              origin.x + center - reading.x * 0.5f,
-                              origin.y + base.y - rubySize, style.font,
-                              rubySize, style.text);
+            const float rubyX=origin.x+center-reading.x*0.5f;
+            const float rubyY=origin.y+base.y-rubySize;
+            if(OutlineSize()>0)
+                renderer.DrawTextOutline(ruby.reading,
+                    rubyX-static_cast<float>(OutlineSize()),
+                    rubyY-static_cast<float>(OutlineSize()),style.font,
+                    rubySize,style.text,OutlineColor(),OutlineSize());
+            else renderer.DrawText(ruby.reading,rubyX,rubyY,style.font,
+                                   rubySize,style.text);
         }
         renderer.PopClip();
         return;

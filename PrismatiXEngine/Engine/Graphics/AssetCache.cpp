@@ -100,6 +100,11 @@ AssetCache::~AssetCache() {
     Clear();
 }
 
+std::optional<std::string> AssetCache::ReadTextAsset(
+    const std::string& path) const {
+    return m_vfs.ReadText(path);
+}
+
 void AssetCache::BeginFrame() {
     ++m_frame;
     HarvestPendingTextures();

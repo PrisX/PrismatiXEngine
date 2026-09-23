@@ -40,6 +40,9 @@ Status ValidateSplashEntry(const SplashScreenEntry& entry, const std::size_t ind
     if (entry.audio && (entry.audio->id.Empty() || entry.audio->lastKnownPath.empty()))
         return Status::Fail(Error("PXBOOT1002", "Splash audio ResourceRef is invalid",
                                   source, index));
+    if (!std::isfinite(entry.audioDelay) || entry.audioDelay < 0.0f)
+        return Status::Fail(Error("PXBOOT1005", "Splash audioDelay must be non-negative",
+                                  source, index));
     if (!std::isfinite(entry.minimumDuration) || entry.minimumDuration < 0.0f)
         return Status::Fail(Error("PXBOOT1003", "Splash minimumDuration must be non-negative",
                                   source, index));
@@ -68,6 +71,7 @@ Result<std::vector<SplashScreenEntry>> ParseSplashSequence(const Variant& value,
                 Error("PXBOOT1011", "Splash entry must be an Object", source, index));
         const auto scene = object->find("scene");
         const auto audio = object->find("audio");
+        const auto audioDelay = object->find("audioDelay");
         const auto minimum = object->find("minimumDuration");
         const auto skippable = object->find("skippable");
         const auto skipAfter = object->find("skipAllowedAfter");
@@ -89,6 +93,11 @@ Result<std::vector<SplashScreenEntry>> ParseSplashSequence(const Variant& value,
                 Error("PXBOOT1012", "Splash entry fields are incomplete or invalid", source,
                       index));
         entry.scene = *sceneRef;
+        if (audioDelay != object->end() &&
+            !Number(audioDelay->second, entry.audioDelay))
+            return Result<std::vector<SplashScreenEntry>>::Failure(
+                Error("PXBOOT1014", "Splash audioDelay must be a finite number", source,
+                      index));
         entry.skippable = *skippableValue;
         entry.enterAnimation = *enterName;
         entry.exitAnimation = *exitName;
@@ -115,6 +124,7 @@ Variant WriteSplashSequence(const std::vector<SplashScreenEntry>& entries) {
         values.emplace_back(VariantObject{
             {"scene", entry.scene},
             {"audio", entry.audio ? Variant(*entry.audio) : Variant{}},
+            {"audioDelay", static_cast<double>(entry.audioDelay)},
             {"minimumDuration", static_cast<double>(entry.minimumDuration)},
             {"skippable", entry.skippable},
             {"skipAllowedAfter", static_cast<double>(entry.skipAllowedAfter)},

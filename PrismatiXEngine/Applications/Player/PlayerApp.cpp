@@ -11,6 +11,7 @@
 #include "Engine/Package/PackageManifest.h"
 #include "Engine/SDK/SourceMap.h"
 #include "Engine/Support/Logger.h"
+#include "Engine/UI/Layout.h"
 #include "Engine/UI/Widgets.h"
 #include "Engine/UI/Startup/SplashTypes.h"
 
@@ -18,6 +19,8 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
@@ -36,6 +39,29 @@ PlayerApp::~PlayerApp() = default;
 namespace {
 const std::string kSaveKey = "prismatix-demo-secret";
 constexpr int kAutoSaveSlot = -1;
+constexpr std::string_view kUIRouteE2ERoutes[] = {
+    "backlog", "save", "load", "gallery", "settings",
+    "settings-page1", "settings-page2", "settings-page3",
+    "settings-page4", "settings-page5", "settings-page6",
+    "settings-page7",
+    "extra", "flowchart", "flowchart-common", "flowchart-yoshino",
+    "flowchart-mako", "flowchart-murasame", "flowchart-lena",
+    "flowchart-sub", "replay", "music",
+};
+constexpr std::string_view kUIActionsE2EReplayLabel =
+    "sb.115-afterver1-01.yos-part-15";
+
+template <typename T>
+T* FindUiControlNamed(ui::Control* root, const std::string_view name) {
+    if (!root) return nullptr;
+    if (root->Name() == name) return dynamic_cast<T*>(root);
+    for (const auto& child : root->Children()) {
+        if (auto* control = dynamic_cast<ui::Control*>(child.get()))
+            if (auto* found = FindUiControlNamed<T>(control, name))
+                return found;
+    }
+    return nullptr;
+}
 
 std::optional<std::string> SafeVfsRelativePath(const std::string& value) {
     return io::VFS::NormalizeVirtualPath(value);
@@ -422,9 +448,28 @@ bool PlayerApp::LoadLocale(std::string locale, const bool refreshPresentation) {
 
     const std::string runtimePath = LocaleRuntimeIrPath(locale);
     const std::string sourceMapPath = LocaleSourceMapPath(locale);
-    const auto sourceMapText = m_runtime.VFS().ReadText(sourceMapPath);
-    auto runtimeProgram = m_session->PrepareRuntimeIr(runtimePath);
-    if (!runtimeProgram || !sourceMapText) {
+    // Do not mutate deferred source-map state while an earlier locale is still
+    // compiling on the preload worker. Keep a matching ready future so New
+    // Game can consume it; discard a stale locale before starting its
+    // replacement below.
+    if (m_runtimePreload.valid()) {
+        m_runtimePreload.wait();
+        if (m_runtimePreloadPath != runtimePath) {
+            try {
+                (void)m_runtimePreload.get();
+            } catch (const std::exception& error) {
+                PX_LOG_WARN("Discarding failed Runtime IR preload: {}",
+                            error.what());
+            }
+            m_runtimePreloadPath.clear();
+        }
+    }
+    // Packaging validates the Runtime IR/source-map pair exhaustively. The
+    // title and splash presentation do not execute Story code, so compile it
+    // in the background before New Game (or synchronously when a running game
+    // changes language and must preserve its exact state).
+    if (!m_runtime.VFS().Exists(runtimePath) ||
+        !m_runtime.VFS().Exists(sourceMapPath)) {
         diag::Emit(diag::Diagnostic{
             .severity = diag::Severity::Error,
             .code = "PXPLAYER5016",
@@ -433,22 +478,23 @@ bool PlayerApp::LoadLocale(std::string locale, const bool refreshPresentation) {
             .details = runtimePath});
         return false;
     }
-    const auto parsedSourceMap = sdk::ParseSourceMap(*sourceMapText);
-    if (!parsedSourceMap.Valid() ||
-        parsedSourceMap.document.documentId != runtimeProgram->documentId) {
-        diag::Emit(diag::Diagnostic{
-            .severity = diag::Severity::Error,
-            .code = "PXPLAYER5017",
-            .category = "Player.Localization",
-            .message = "Locale-specific source map is invalid or mismatched",
-            .details = sourceMapPath});
-        return false;
+
+    const bool replacingRunningProgram =
+        m_appState == AppState::Game && m_session->RuntimeProgramIdentity();
+    std::shared_ptr<const vn::Program> runtimeProgram;
+    if (replacingRunningProgram) {
+        // Clear any previously materialized locale map before compiling the
+        // replacement program so diagnostics never resolve through stale
+        // metadata.
+        m_session->DeferSourceMap(sourceMapPath);
+        runtimeProgram = m_session->PrepareRuntimeIr(runtimePath);
+        if (!runtimeProgram) return false;
     }
 
     std::optional<RuntimeSession::PreparedRestore> preparedRuntime;
     std::vector<vn::BacklogEntry> localizedNvl;
     std::deque<RollbackEntry> localizedRollback = m_rollback;
-    if (m_appState == AppState::Game && m_session->RuntimeProgramIdentity()) {
+    if (replacingRunningProgram) {
         auto state = m_session->CaptureState();
         if (!RelocalizeRuntimeState(state, runtimeProgram, runtimePath,
                                     candidate, m_session->Variables())) {
@@ -518,13 +564,16 @@ bool PlayerApp::LoadLocale(std::string locale, const bool refreshPresentation) {
     if (preparedRuntime &&
         !m_session->CommitRestore(std::move(*preparedRuntime)))
         return false;
-    // Parsing was completed before the runtime transaction, so this commit
-    // cannot expose a half-switched program/source-map pair.
-    m_session->CommitSourceMap(parsedSourceMap.document, sourceMapPath);
+    m_session->DeferSourceMap(
+        sourceMapPath,
+        runtimeProgram ? runtimeProgram->documentId : std::string{});
 
     m_langTable = std::move(candidate);
     m_settings.language = std::move(locale);
     m_script = runtimePath;
+    if (!replacingRunningProgram && m_appState == AppState::Title &&
+        m_runtimePreloadPath != m_script)
+        BeginRuntimeIrPreload();
     if (!localizedNvl.empty() || m_nvlLines.empty())
         m_nvlLines = std::move(localizedNvl);
     m_rollback = std::move(localizedRollback);
@@ -640,10 +689,6 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_session = std::make_unique<RuntimeSession>(RuntimeSession::Services{
         m_runtime.VFS(), m_runtime.Audio(), m_runtime.Renderer(), m_runtime.Assets()});
     m_ui.SetTextRenderer(&m_runtime.Renderer());
-    if (const Status sourceMap = m_session->LoadSourceMap(m_boot.sourceMap);
-        !sourceMap) {
-        return false;
-    }
     m_session->Variables().SetProfileWriteHandler(
         [this](const std::string_view name, const vn::Value& value) {
             m_profile.SetVariable(std::string(name), value.Clone());
@@ -661,7 +706,20 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_ui.SetExternalAnimationServices(
         [this](const std::string_view path){return m_session->PlayAnimationAsset(std::string(path));},
         [this](const std::uint64_t handle){return m_session->Timeline().Playing(handle);});
-    m_ui.SetControlRuntimeConfigurator([this](ui::Control& control){auto* rectangle=dynamic_cast<ui::VideoRect*>(&control);if(!rectangle)return;auto player=std::make_shared<video::VideoPlayer>(m_runtime.Renderer().Handle(),m_runtime.VFS());rectangle->SetPlayback({[player](const std::string_view path){return player->Open(std::string(path));},[player]{player->Close();},[player](const float delta){player->Update(delta);},[player]{return player->Playing();},[player]{return player->Texture();},[player]{return Vec2{static_cast<float>(player->Width()),static_cast<float>(player->Height())};}});});
+    m_ui.SetControlRuntimeConfigurator([this](ui::Control& control){
+        if(auto* rectangle=dynamic_cast<ui::VideoRect*>(&control)){
+            auto player=std::make_shared<video::VideoPlayer>(m_runtime.Renderer().Handle(),m_runtime.VFS());
+            rectangle->SetPlayback({[player](const std::string_view path){return player->Open(std::string(path));},[player]{player->Close();},[player](const float delta){player->Update(delta);},[player]{return player->Playing();},[player]{return player->Texture();},[player]{return Vec2{static_cast<float>(player->Width()),static_cast<float>(player->Height())};}});
+        }
+        if(dynamic_cast<ui::Button*>(&control)){
+            const std::string hover=control.HoverSoundPath().empty()
+                ? m_defaultUiHoverSound : control.HoverSoundPath();
+            const std::string activate=control.ActivateSoundPath().empty()
+                ? m_defaultUiActivateSound : control.ActivateSoundPath();
+            if(!hover.empty()) (void)control.ConnectSignal("pointerEntered",[this,hover](const ui::Control::SignalArguments&){m_runtime.Audio().PlaySE(hover);});
+            if(!activate.empty()) (void)control.ConnectSignal("activated",[this,activate](const ui::Control::SignalArguments&){m_runtime.Audio().PlaySE(activate);});
+        }
+    });
     m_session->SetUIStateHandler(
         [this] { return m_ui.CaptureRuntimeState(); },
         [this](const ui::UIRuntimeState& state) { return m_ui.RestoreRuntimeState(state); },
@@ -693,6 +751,86 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                 if(source&&m_runtime.VFS().Exists(*source))
                     m_uiComponents.emplace(
                         component["id"].get<std::string>(),*source);
+            }
+        }
+        if (!project.is_discarded() && project.is_object()) {
+            const auto settings = project.find("settings");
+            if (settings != project.end() && settings->is_object()) {
+                if (const auto titleBgm = settings->find("player.titleBgm");
+                    titleBgm != settings->end() && titleBgm->is_string()) {
+                    const auto safe = SafeVfsRelativePath(titleBgm->get<std::string>());
+                    if (safe && m_runtime.VFS().Exists(*safe)) m_titleBgm = *safe;
+                }
+                const auto readUiSound=[this,settings](const char* key,std::string& output){
+                    const auto value=settings->find(key);
+                    if(value==settings->end()||!value->is_string())return;
+                    const auto safe=SafeVfsRelativePath(value->get<std::string>());
+                    if(safe&&m_runtime.VFS().Exists(*safe))output=*safe;
+                };
+                readUiSound("player.uiHoverSound",m_defaultUiHoverSound);
+                readUiSound("player.uiActivateSound",m_defaultUiActivateSound);
+                if (const auto titleVoices = settings->find("player.titleVoiceVariants");
+                    titleVoices != settings->end() && titleVoices->is_array()) {
+                    for (const auto& value : *titleVoices) {
+                        if (!value.is_string()) continue;
+                        const auto safe = SafeVfsRelativePath(value.get<std::string>());
+                        if (safe && m_runtime.VFS().Exists(*safe))
+                            m_titleVoices.push_back(*safe);
+                    }
+                }
+                if (const auto splashes = settings->find("player.splashes");
+                    splashes != settings->end() && splashes->is_array()) {
+                    m_boot.splashes.clear();
+                    for (std::size_t index = 0; index < splashes->size(); ++index) {
+                        const auto& value = (*splashes)[index];
+                        if (!value.is_object()) continue;
+                        const auto sceneValue = value.find("scene");
+                        if (sceneValue == value.end() || !sceneValue->is_string()) continue;
+                        const auto scene = SafeVfsRelativePath(sceneValue->get<std::string>());
+                        if (!scene || !m_runtime.VFS().Exists(*scene)) continue;
+                        ui::startup::SplashScreenEntry entry;
+                        entry.scene = {Uuid::FromName("PrismatiX.Splash.Scene." + *scene), *scene};
+                        entry.minimumDuration = value.value("minimumDuration", 2.0f);
+                        entry.audioDelay = value.value("audioDelay", 0.0f);
+                        entry.skippable = value.value("skippable", true);
+                        entry.skipAllowedAfter = value.value("skipAllowedAfter", 0.5f);
+                        entry.enterAnimation = value.value("enterAnimation", std::string("enter"));
+                        entry.exitAnimation = value.value("exitAnimation", std::string("exit"));
+                        if (const auto audioValue = value.find("audio");
+                            audioValue != value.end() && audioValue->is_string()) {
+                            const auto audio = SafeVfsRelativePath(audioValue->get<std::string>());
+                            if (audio && m_runtime.VFS().Exists(*audio))
+                                entry.audio = ResourceRefValue{
+                                    Uuid::FromName("PrismatiX.Splash.Audio." + *audio), *audio};
+                        }
+                        if (const auto variants = value.find("audioVariants");
+                            variants != value.end() && variants->is_array()) {
+                            std::vector<std::string> available;
+                            for (const auto& variant : *variants) {
+                                if (!variant.is_string()) continue;
+                                const auto safe = SafeVfsRelativePath(
+                                    variant.get<std::string>());
+                                if (safe && m_runtime.VFS().Exists(*safe))
+                                    available.push_back(*safe);
+                            }
+                            if (!available.empty()) {
+                                const auto tick = std::chrono::steady_clock::now()
+                                    .time_since_epoch().count();
+                                const std::string& chosen = available[
+                                    static_cast<std::size_t>(tick) % available.size()];
+                                entry.audio = ResourceRefValue{
+                                    Uuid::FromName("PrismatiX.Splash.Audio." + chosen),
+                                    chosen};
+                            }
+                        }
+                        if (const Status valid = ui::startup::ValidateSplashEntry(
+                                entry, index, "project.pxproject"); valid)
+                            m_boot.splashes.push_back(std::move(entry));
+                        else
+                            for (const auto& diagnostic : valid.Diagnostics())
+                                diag::Emit(diagnostic);
+                    }
+                }
             }
         }
     }
@@ -1140,6 +1278,50 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     });
 
     m_ui.SetActionSink([this](const ui::GalgameAction& action) { HandleUIAction(action); });
+    const std::vector<std::string> authoredUiCommands = {
+        "set.fullscreen.on", "set.fullscreen.off",
+        "set.reducedmotion.on", "set.reducedmotion.off",
+        "settings.reset", "settings.noop",
+        "music.play", "music.previous", "music.stop", "music.resume",
+        "music.next", "music.about", "music.random",
+        "music.scroll.home", "music.scroll.up", "music.scroll.down",
+        "music.scroll.end", "replay.launch", "flowchart.select", "flowchart.jump",
+        "flowchart.filter", "flowchart.scroll.home", "flowchart.scroll.up",
+        "flowchart.scroll.down", "flowchart.scroll.end",
+    };
+    for (const auto& command : authoredUiCommands) {
+        if (const Status registered = m_ui.RegisterActionCommand(command);
+            !registered) {
+            for (const auto& diagnostic : registered.Diagnostics())
+                diag::Emit(diagnostic);
+            return false;
+        }
+    }
+    for (int page = 0; page < 8; ++page) {
+        if (const Status registered = m_ui.RegisterActionCommand(
+                "settings.page" + std::to_string(page));
+            !registered) {
+            for (const auto& diagnostic : registered.Diagnostics())
+                diag::Emit(diagnostic);
+            return false;
+        }
+    }
+    constexpr std::string_view musicNames[] = {
+        "SongOp", "BGM01", "BGM01i", "BGM34", "BGM04", "BGM02",
+        "BGM05", "BGM37", "BGM11", "BGM38", "BGM35", "BGM03",
+        "BGM40", "BGM41", "BGM51", "BGM42", "BGM52", "BGM43",
+        "BGM53", "BGM44", "BGM54", "BGM45", "BGM46", "BGM56",
+        "BGM25", "BGM21", "BGM22", "BGM24", "BGM23", "BGM31",
+        "BGM26", "BGM39", "BGM08", "BGM28", "BGM12", "BGM29",
+        "BGM30", "BGM13", "BGM27", "BGM33", "BGM32", "BGM36",
+        "BGM09", "BGM15", "BGM06", "BGM07", "BGM14", "BGM10",
+        "SongED1", "SongED2", "SongED3", "SongED4", "SongED5",
+        "SongED6", "BGM61",
+    };
+    for (const auto name : musicNames) {
+        const std::string path = "Assets/Audio/BGM/" + std::string(name) + ".wav";
+        if (m_runtime.VFS().Exists(path)) m_musicTracks.push_back(path);
+    }
     const auto validateUiAnimation =
         [this](const auto& binding, const Variant& value,
                const ui::UIRuntimeState& state) {
@@ -1235,6 +1417,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
 
     m_script = argc > 1 ? argv[1]
                         : (m_script.empty() ? m_boot.startScript : m_script);
+    if (m_runtimePreloadPath != m_script) BeginRuntimeIrPreload();
     m_splash=std::make_unique<ui::startup::SplashSequencePlayer>(
         ui::startup::SplashSequencePlayer::Services{
             .loadScene=[this](const ResourceRefValue& reference)->Result<sdk::UiDocument>{
@@ -1258,7 +1441,13 @@ bool PlayerApp::Init(int argc, char* argv[]) {
             },
             .playAudio=[this](const ResourceRefValue& reference){
                 if(!m_runtime.VFS().Exists(reference.lastKnownPath)){diag::Diagnostic diagnostic{.severity=diag::Severity::Warning,.code="PXBOOT1202",.category="Player.Splash",.message="Splash audio is missing; visual playback will continue",.details=reference.lastKnownPath};diagnostic.source.path=reference.lastKnownPath;return Status::Fail(std::move(diagnostic));}
-                m_runtime.Audio().PlaySE(reference.lastKnownPath);return Status::Ok();
+                if (reference.lastKnownPath.starts_with("Assets/Audio/Voice/"))
+                    m_runtime.Audio().PlayVoice(reference.lastKnownPath);
+                else
+                    m_runtime.Audio().PlaySE(reference.lastKnownPath);
+                PX_LOG_INFO("Player splash audio started path={}",
+                            reference.lastKnownPath);
+                return Status::Ok();
             },
             .diagnostics=[](const diag::Diagnostic& diagnostic){diag::Emit(diagnostic);}});
     m_splash->Context().SetTextRenderer(&m_runtime.Renderer());
@@ -1291,11 +1480,61 @@ bool PlayerApp::SaveSettingsIfWritable() {
         "Save/config.dat", &m_saveKey, m_saveFallbackKeys);
 }
 
+void PlayerApp::BeginRuntimeIrPreload() {
+    if (!m_session || !m_script.ends_with(".pxir")) return;
+    if (m_runtimePreload.valid()) {
+        m_runtimePreload.wait();
+        try {
+            (void)m_runtimePreload.get();
+        } catch (const std::exception& error) {
+            PX_LOG_WARN("Discarding failed Runtime IR preload: {}",
+                        error.what());
+        }
+    }
+    m_runtimePreloadPath = m_script;
+    PX_LOG_INFO("Player Runtime IR preload started script={}", m_script);
+    try {
+        m_runtimePreload = std::async(
+            std::launch::async,
+            [session = m_session.get(), path = m_script] {
+                const auto started = std::chrono::steady_clock::now();
+                auto program = session->PrepareRuntimeIr(path);
+                const auto elapsed =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - started);
+                PX_LOG_INFO(
+                    "Player Runtime IR preload finished script={} ms={} operations={}",
+                    path, elapsed.count(), program ? program->code.size() : 0);
+                return program;
+            });
+    } catch (const std::exception& error) {
+        m_runtimePreloadPath.clear();
+        PX_LOG_WARN(
+            "Player Runtime IR preload could not start; New Game will load synchronously: {}",
+            error.what());
+    }
+}
+
 void PlayerApp::FinishBootPresentation() {
     if(m_appState!=AppState::BootSplash)return;
+    BeginPresentationCrossfade(0.5f);
     if(!m_session->Routes().Replace(m_boot.startRoute)){m_quitRequested=true;return;}
     m_appState=AppState::Title;
+    if (!m_titleBgm.empty()) {
+        const auto handle=m_runtime.Audio().PlayBGM(m_titleBgm,true,500);
+        if(m_runtime.Audio().Status(handle)==audio::PlaybackStatus::Failed)
+            PX_LOG_ERROR("Player title BGM failed path={}",m_titleBgm);
+        else
+            PX_LOG_INFO("Player title BGM started path={} handle={}",m_titleBgm,handle.value);
+    }
     PX_LOG_INFO("Player presentation ready route={}", m_boot.startRoute);
+}
+
+void PlayerApp::BeginPresentationCrossfade(const float durationSeconds) {
+    if (m_uiTransitionStartedThisFrame) return;
+    const auto handle = m_runtime.Renderer().PlayScreenEffect(
+        "crossfade", durationSeconds);
+    if (handle) m_uiTransitionStartedThisFrame = true;
 }
 
 void PlayerApp::SplashFrame(const float dt) {
@@ -1305,11 +1544,53 @@ void PlayerApp::SplashFrame(const float dt) {
     const bool skip=input.LeftClick()||input.KeyPressed(SDL_SCANCODE_RETURN)||
         input.KeyPressed(SDL_SCANCODE_ESCAPE)||input.KeyPressed(SDL_SCANCODE_SPACE);
     (void)m_splash->Context().Update(input,width,height,dt);
+    const std::size_t previousIndex = m_splash->CurrentIndex();
     m_splash->Update(dt,skip);
-    if(!m_splash->Completed())m_splash->Context().Render(m_runtime.Renderer());
+    if(!m_splash->Completed()){
+        if (m_splash->CurrentIndex() != previousIndex) {
+            // The next scene is installed by Update(); capture the preceding
+            // presented frame before drawing the new one.
+            BeginPresentationCrossfade(
+                m_splash->CurrentIndex() == 1 ? 0.5f : 0.3f);
+            Input neutral;
+            neutral.InjectFrame(-1000.0f,-1000.0f,false);
+            (void)m_splash->Context().Update(neutral,width,height,0.0f);
+        }
+        m_splash->Context().Render(m_runtime.Renderer());
+        if(m_presentationE2E&&
+           m_splash->CurrentPhase()==ui::startup::SplashSequencePlayer::Phase::Holding){
+            const std::size_t index=m_splash->CurrentIndex();
+            if(index<m_presentationE2ESplashCaptured.size()&&
+               !m_presentationE2ESplashCaptured[index]){
+                (void)CapturePresentationE2EFrame(
+                    "splash-"+std::to_string(index+1));
+                m_presentationE2ESplashCaptured[index]=true;
+            }
+        }
+        return;
+    }
+    // The route callback runs during Update(). Arrange and draw the title in
+    // this same frame so the clear colour never flashes between splash/title.
+    FinishBootPresentation();
+    Input neutral;
+    neutral.InjectFrame(-1000.0f,-1000.0f,false);
+    (void)m_ui.Update(neutral,width,height,0.0f);
+    RenderUIWithScripts();
 }
 
 void PlayerApp::StartGame() {
+    if(m_appState!=AppState::Title||m_gameStartTransitionActive)return;
+    m_gameStartTransitionActive=true;
+    m_gameStartTransitionCommitted=false;
+    m_gameStartTransitionElapsed=0.0f;
+    if(!m_titleBgm.empty())m_runtime.Audio().StopBGM(1000);
+}
+
+bool PlayerApp::CommitStartGame() {
+    // An authored title button can remain alive until the HUD route commits.
+    // Ignore a duplicate click/action delivered during that transition rather
+    // than resetting an already-started runtime program.
+    if (m_appState != AppState::Title) return false;
     m_session->Variables().Reset(false);
     for (const auto& v : m_catalog.Variables()) {
         if (v.scope == vn::CatalogVariable::Scope::Profile) {
@@ -1331,7 +1612,29 @@ void PlayerApp::StartGame() {
     m_playtimeBaseMs = 0;
     m_playtimeStartedAtMs = m_runtime.GetClock().NowMs();
     if (m_script.ends_with(".pxir")) {
-        if (!m_session->StartRuntimeIr(m_script, /*resetVariables=*/false)) {
+        bool started = false;
+        if (m_runtimePreload.valid() && m_runtimePreloadPath == m_script) {
+            const auto waiting = std::chrono::steady_clock::now();
+            try {
+                auto program = m_runtimePreload.get();
+                const auto waited =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - waiting);
+                PX_LOG_INFO(
+                    "Player Runtime IR preload consumed script={} waitMs={}",
+                    m_script, waited.count());
+                started = m_session->StartPreparedRuntimeIr(
+                    std::move(program), m_script, /*resetVariables=*/false);
+            } catch (const std::exception& error) {
+                PX_LOG_ERROR("Player Runtime IR preload failed: {}", error.what());
+                started = m_session->StartRuntimeIr(
+                    m_script, /*resetVariables=*/false);
+            }
+        } else {
+            started = m_session->StartRuntimeIr(
+                m_script, /*resetVariables=*/false);
+        }
+        if (!started) {
             diag::Emit(diag::Diagnostic{
                 .severity = diag::Severity::Fatal,
                 .code = "PXPLAYER5006",
@@ -1339,19 +1642,93 @@ void PlayerApp::StartGame() {
                 .message = "Compiled Story Runtime IR could not be loaded",
                 .details = m_script});
             m_quitRequested = true;
-            return;
+            return false;
         }
     } else {
         m_session->VM().LoadScript(m_script);
+    }
+    if (!m_pendingStoryEntry.empty()) {
+        const std::string entry = std::exchange(m_pendingStoryEntry, {});
+        if (m_session->VM().CurrentProgram().LabelIndex(entry) >= 0) {
+            m_session->Stage().ClearAll();
+            m_session->Dialogue().Clear();
+            m_session->Backlog().Clear();
+            m_runtime.Audio().StopVoice();
+            m_runtime.Audio().StopAmbience(0);
+            m_runtime.Audio().StopBGM(0);
+            if (!m_session->VM().RestartAtLabel(entry)) {
+                PX_LOG_ERROR("Player could not start story entry label={}", entry);
+                return false;
+            } else {
+                PX_LOG_INFO("Player started story entry label={}", entry);
+            }
+        } else {
+            PX_LOG_ERROR("Player story entry label does not exist label={}", entry);
+            return false;
+        }
     }
     if (m_scriptHost) m_scriptHost->Emit("scenario.started", {{"resource", m_script}});
     m_appState = AppState::Game;
     if (const Status routed = m_session->Routes().Replace("hud"); !routed) {
         for (const auto& diagnostic : routed.Diagnostics()) diag::Emit(diagnostic);
         m_quitRequested = true;
-        return;
+        return false;
     }
     PX_LOG_INFO("Player game started script={}", m_script);
+    return true;
+}
+
+void PlayerApp::GameStartTransitionFrame(const float dt,
+                                         const std::uint64_t now) {
+    constexpr float duration=1.0f;
+    m_gameStartTransitionElapsed+=std::max(0.0f,dt);
+    int width=0,height=0;
+    m_runtime.Renderer().GetLogicalSize(width,height);
+    float alpha=1.0f;
+    if(!m_gameStartTransitionCommitted){
+        // Keep the authored title intact while it fades to black. Input is
+        // intentionally not updated, so a second click cannot leak through.
+        RenderUIWithScripts();
+        alpha=std::clamp(m_gameStartTransitionElapsed/duration,0.0f,1.0f);
+        if(m_gameStartTransitionElapsed>=duration){
+            if (CommitStartGame()) {
+                m_gameStartTransitionCommitted=true;
+                m_gameStartTransitionElapsed=0.0f;
+                alpha=1.0f;
+            } else {
+                // A replay/flowchart target can become stale after content is
+                // rebuilt. Return to the still-mounted title route instead of
+                // silently starting the story from its first instruction.
+                m_gameStartTransitionActive=false;
+                m_gameStartTransitionCommitted=false;
+                m_gameStartTransitionElapsed=0.0f;
+                alpha=0.0f;
+                if (!m_quitRequested && !m_titleBgm.empty()) {
+                    (void)m_runtime.Audio().PlayBGM(m_titleBgm,true,300);
+                }
+            }
+        }
+    }else{
+        GameFrame(dt,now);
+        alpha=1.0f-std::clamp(m_gameStartTransitionElapsed/duration,0.0f,1.0f);
+        if(m_gameStartTransitionElapsed>=duration){
+            m_gameStartTransitionActive=false;
+            m_gameStartTransitionCommitted=false;
+            m_gameStartTransitionElapsed=0.0f;
+            alpha=0.0f;
+        }
+    }
+    if(alpha>0.0f){
+        m_runtime.Renderer().DrawRect(
+            Rect{0,0,static_cast<float>(width),static_cast<float>(height)},
+            Color{0,0,0,static_cast<std::uint8_t>(std::lround(alpha*255.0f))});
+    }
+    if(m_presentationE2E&&m_presentationE2EStage==2&&
+       !m_gameStartTransitionCommitted&&
+       m_gameStartTransitionElapsed>=0.55f){
+        (void)CapturePresentationE2EFrame("new-game-fade-out");
+        m_presentationE2EStage=3;
+    }
 }
 
 bool PlayerApp::LoadSlot(int slot) {
@@ -1785,10 +2162,33 @@ std::vector<ui::GalgameItem> PlayerApp::BacklogItems() {
 
 ui::DialoguePresentation PlayerApp::DialogueUI() const {
     ui::DialoguePresentation view;
-    view.speaker = m_session->Dialogue().State().speaker;
-    view.text = m_session->Dialogue().State().displayText;
+    const auto& dialogue = m_session->Dialogue().State();
+    view.speaker = dialogue.speaker;
+    view.text = dialogue.displayText;
+    // Imported KAG prose retains its literal speaker prefix so existing
+    // authored operation identities and saves remain stable. Present that
+    // prefix through the SDK HUD's distinct name field, including while the
+    // typewriter has only revealed part of the line.
+    constexpr std::string_view open = "【";
+    constexpr std::string_view close = "】";
+    if (view.speaker.empty() && dialogue.fullText.starts_with(open)) {
+        const auto end = dialogue.fullText.find(close, open.size());
+        if (end != std::string::npos) {
+            const auto prefixLength = end + close.size();
+            view.speaker = dialogue.fullText.substr(0, prefixLength);
+            view.text = dialogue.displayText.size() > prefixLength
+                ? dialogue.displayText.substr(prefixLength) : "";
+        }
+    }
     view.chapterTitle = m_session->VM().Chapter();
-    view.musicTitle = m_session->VM().CurrentBgm();
+    const std::string currentBgm=m_session->VM().CurrentBgm();
+    if(!currentBgm.empty()){
+        const std::string key="bgm."+std::filesystem::path(currentBgm).stem().string();
+        if(const auto translated=m_langTable.find(key);translated!=m_langTable.end())
+            view.musicTitle=translated->second;
+        else
+            view.musicTitle=std::filesystem::path(currentBgm).stem().string();
+    }
     view.effect = m_session->Dialogue().State().effect;
     view.effectProgress = m_session->Dialogue().State().effectProgress;
     view.choices = m_choiceTexts;
@@ -1820,6 +2220,9 @@ void PlayerApp::OpenScreen(const std::string& route) {
 void PlayerApp::PresentRoute(const std::string& route,
                              const std::string& /*operation*/) {
     std::string target=route;if(target=="saveload")target="load";
+    if (m_appState != AppState::BootSplash &&
+        !m_gameStartTransitionActive && m_ui.CurrentRoute() != target)
+        BeginPresentationCrossfade(0.3f);
     const auto present = [this](const Status& status) {
         if (status) return true;
         for (const auto& diagnostic : status.Diagnostics()) diag::Emit(diagnostic);
@@ -1844,14 +2247,67 @@ void PlayerApp::PresentRoute(const std::string& route,
     else if (target == "load") (void)present(m_ui.ShowSaveLoad(false, SaveItems(false)));
     else if (target == "settings") (void)present(m_ui.ShowSettings(SettingsUI()));
     else if (target == "backlog") (void)present(m_ui.ShowBacklog(BacklogItems()));
-    else if (target == "title") { m_appState = AppState::Title; (void)present(m_ui.ShowTitle()); }
+    else if (target == "title") {
+        m_appState = AppState::Title;
+        if (!present(m_ui.ShowTitle())) return;
+        if (!m_titleVoices.empty()) {
+            const auto tick = std::chrono::steady_clock::now()
+                .time_since_epoch().count();
+            const std::string& voice = m_titleVoices[
+                static_cast<std::size_t>(tick) % m_titleVoices.size()];
+            m_runtime.Audio().PlayVoice(voice);
+            PX_LOG_INFO("Player title system voice started path={}", voice);
+        }
+    }
     else if (target == "hud" || target == "game") { m_appState = AppState::Game; (void)present(m_ui.ShowHUD(DialogueUI())); }
-    else (void)present(m_ui.ShowRoute(target));
+    else {
+        if (!present(m_ui.ShowRoute(target))) return;
+        if (target == "flowchart" || target.starts_with("flowchart-")) {
+            if (auto* jump = FindUiControlNamed<ui::Button>(
+                    m_ui.Root(), "scenejumpButton"))
+                jump->SetEnabled(!m_selectedFlowEntry.empty());
+        }
+        if (target == "music" || target == "extra") {
+            if (auto* volume = FindUiControlNamed<ui::Slider>(
+                    m_ui.Root(), "MusicVolume")) {
+                volume->SetRange(0, 128, 4);
+                volume->SetValue(m_settings.bgmVolume);
+                volume->SetOnChanged([this](const double value) {
+                    m_settings.bgmVolume = std::clamp(
+                        static_cast<int>(std::lround(value)), 0, 128);
+                    m_runtime.Audio().SetBGMVolume(m_settings.bgmVolume);
+                });
+            }
+        }
+    }
 }
 
 void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
     const std::string& t = action.command;
     auto& audio = m_runtime.Audio();
+    const auto playMusicAt = [this, &audio](const std::size_t index) {
+        if (m_musicTracks.empty()) return;
+        m_musicTrackIndex = index % m_musicTracks.size();
+        const auto handle = audio.PlayBGM(m_musicTracks[m_musicTrackIndex], true, 250);
+        if (audio.Status(handle) == px::audio::PlaybackStatus::Failed) {
+            PX_LOG_ERROR("Player music gallery failed path={}",
+                         m_musicTracks[m_musicTrackIndex]);
+            return;
+        }
+        m_musicTrackSelected = true;
+    };
+    const auto scrollRoute = [this](const std::string_view controlName,
+                                    const std::string_view command) {
+        auto* scroll = FindUiControlNamed<ui::ScrollContainer>(
+            m_ui.Root(), controlName);
+        if (!scroll) return;
+        auto offset = scroll->ScrollOffset();
+        if (command.ends_with(".home")) offset.y = 0.0f;
+        else if (command.ends_with(".end")) offset.y = 1'000'000.0f;
+        else if (command.ends_with(".up")) offset.y = std::max(0.0f, offset.y - 360.0f);
+        else if (command.ends_with(".down")) offset.y += 360.0f;
+        scroll->SetScrollOffset(offset);
+    };
     if (t == "load.slot") {
         LoadSlot(std::atoi(action.argument.c_str()));
     } else if (t == "save.slot") {
@@ -1869,9 +2325,16 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         m_settings.skipReadOnly=action.argument=="true";
     } else if (t == "set.fullscreen.value") {
         m_settings.fullscreen=action.argument=="true";SDL_SetWindowFullscreen(m_runtime.GetWindow().Handle(),m_settings.fullscreen);
+    } else if (t == "set.fullscreen.on" || t == "set.fullscreen.off") {
+        m_settings.fullscreen=t.ends_with(".on");
+        SDL_SetWindowFullscreen(m_runtime.GetWindow().Handle(),m_settings.fullscreen);
+        (void)m_ui.ShowSettings(SettingsUI());
     } else if(t=="set.textscale.value") { m_settings.textScale=std::clamp(std::atoi(action.argument.c_str())/100.0f,.75f,2.0f);
     } else if(t=="set.highcontrast.value") { m_settings.highContrast=action.argument=="true";
     } else if(t=="set.reducedmotion.value") { m_settings.reducedMotion=action.argument=="true";
+    } else if(t=="set.reducedmotion.on"||t=="set.reducedmotion.off") {
+        m_settings.reducedMotion=t.ends_with(".on");
+        (void)m_ui.ShowSettings(SettingsUI());
     } else if(t=="set.selfvoicing.value") { m_settings.selfVoicing=action.argument=="true";if(!m_settings.selfVoicing)m_speech.Stop();
     } else if(t=="set.language.value") { if(LoadLocale(action.argument,true))(void)SaveSettingsIfWritable();
     } else if (t == "set.bgm.up") {
@@ -1908,6 +2371,100 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         m_pendingSaveScreen = true;
     } else if (t == "settings.open") {
         OpenScreen("settings");
+    } else if (t == "settings.reset") {
+        const std::string locale=m_settings.language;
+        const bool fullscreen=m_settings.fullscreen;
+        m_settings=progress::GameSettings{};
+        m_settings.language=locale;
+        m_settings.fullscreen=fullscreen;
+        audio.SetBGMVolume(m_settings.bgmVolume);
+        audio.SetSEVolume(m_settings.seVolume);
+        audio.SetVoiceVolume(m_settings.voiceVolume);
+        m_session->VM().SetDefaultTextSpeed(m_settings.textSpeedMs);
+        (void)m_ui.ShowSettings(SettingsUI());
+    } else if (t.starts_with("settings.page")) {
+        const std::string page = t.substr(std::string("settings.page").size());
+        while (!m_session->Routes().CurrentModalRoute().empty())
+            (void)m_session->Routes().CloseModal();
+        OpenScreen(page == "0" ? "settings" : "settings-page" + page);
+    } else if (t == "settings.noop") {
+        // The original setting exists visually but has no matching portable
+        // host capability yet. Keep the authored control responsive without
+        // mutating an unrelated setting.
+    } else if (t == "music.play") {
+        const auto found = std::ranges::find(m_musicTracks, action.argument);
+        if (found != m_musicTracks.end()) {
+            playMusicAt(static_cast<std::size_t>(
+                std::distance(m_musicTracks.begin(), found)));
+            PX_LOG_INFO("Player music gallery selected path={}", action.argument);
+        } else {
+            PX_LOG_ERROR("Player music gallery received unknown track path={}",
+                         action.argument);
+        }
+    } else if (t == "music.previous") {
+        if (!m_musicTracks.empty())
+            playMusicAt((m_musicTrackIndex + m_musicTracks.size() - 1) %
+                        m_musicTracks.size());
+    } else if (t == "music.next") {
+        if (!m_musicTracks.empty()) playMusicAt(m_musicTrackIndex + 1);
+    } else if (t == "music.random") {
+        if (!m_musicTracks.empty())
+            playMusicAt(static_cast<std::size_t>(SDL_GetTicks()) %
+                        m_musicTracks.size());
+    } else if (t == "music.stop") {
+        audio.StopBGM(200);
+        m_musicTrackSelected = false;
+    } else if (t == "music.resume") {
+        if (m_musicTrackSelected) audio.SetMusicPaused(false);
+        else playMusicAt(m_musicTrackIndex);
+    } else if (t == "music.about") {
+        audio.SetMusicPaused(true);
+    } else if (t.starts_with("music.scroll.")) {
+        scrollRoute("MusicTracksScroll", t);
+    } else if (t == "flowchart.select") {
+        const auto selected = nlohmann::json::parse(
+            action.argument, nullptr, false);
+        if (selected.is_object() && selected.value("entry", "") != "" &&
+            selected.value("heading", "").size() < 512 &&
+            selected.value("details", "").size() < 2048) {
+            m_selectedFlowEntry = selected.value("entry", "");
+            if (auto* item = FindUiControlNamed<ui::Label>(
+                    m_ui.Root(), "FlowSelectedItem"))
+                item->SetText(selected.value("heading", ""));
+            if (auto* heading = FindUiControlNamed<ui::Label>(
+                    m_ui.Root(), "FlowSelectedHeading"))
+                heading->SetText(selected.value("heading", ""));
+            if (auto* details = FindUiControlNamed<ui::Label>(
+                    m_ui.Root(), "FlowSelectedDetails"))
+                details->SetText(selected.value("details", ""));
+            if (auto* jump = FindUiControlNamed<ui::Button>(
+                    m_ui.Root(), "scenejumpButton"))
+                jump->SetEnabled(true);
+            PX_LOG_INFO("Player flowchart selected entry={}", m_selectedFlowEntry);
+        }
+    } else if (t == "flowchart.jump") {
+        if (!m_selectedFlowEntry.empty()) {
+            m_pendingStoryEntry = std::exchange(m_selectedFlowEntry, {});
+            (void)m_session->Routes().CloseModal();
+            StartGame();
+        }
+    } else if (t == "replay.launch") {
+        if (!action.argument.empty()) {
+            m_pendingStoryEntry = action.argument;
+            (void)m_session->Routes().CloseModal();
+            StartGame();
+        }
+    } else if (t.starts_with("flowchart.scroll.")) {
+        scrollRoute("FlowGraphScroll", t);
+    } else if (t == "flowchart.filter") {
+        if (!action.argument.empty() &&
+            (action.argument == "flowchart" ||
+             action.argument.starts_with("flowchart-"))) {
+            m_selectedFlowEntry.clear();
+            while (!m_session->Routes().CurrentModalRoute().empty())
+                (void)m_session->Routes().CloseModal();
+            OpenScreen(action.argument);
+        }
     } else if (t == "cg.view") {
         m_viewingCG = action.argument;
     } else if (t == "set.skipread.toggle") {
@@ -1919,6 +2476,33 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         m_ui.ShowSettings(SettingsUI());
     } else if (t == "game.start") {
         StartGame();
+    } else if (t == "game.continue") {
+        const auto saves = m_saves.List(1000);
+        std::optional<int> latest;
+        std::uint64_t latestTimestamp = 0;
+        for (std::size_t index = 0; index < saves.size(); ++index) {
+            if (saves[index].exists &&
+                (!latest || saves[index].timestamp >= latestTimestamp)) {
+                latest = static_cast<int>(index);
+                latestTimestamp = saves[index].timestamp;
+            }
+        }
+        if (latest) (void)LoadSlot(*latest);
+        else OpenScreen("load");
+    } else if (t == "extra.open") {
+        OpenScreen("extra");
+    } else if (t == "flowchart.open") {
+        OpenScreen("flowchart");
+    } else if (t == "replay.open") {
+        OpenScreen("replay");
+    } else if (t == "music.open") {
+        OpenScreen("music");
+    } else if (t == "title.open") {
+        while (!m_session->Routes().CurrentModalRoute().empty())
+            (void)m_session->Routes().CloseModal();
+        (void)m_session->Routes().Replace("title");
+    } else if (t == "hud.hide") {
+        m_hudHidden = true;
     } else if (t == "choice.select") {
         m_session->SelectChoice(std::atoi(action.argument.c_str()));
     } else if (t == "mode.auto") {
@@ -1940,7 +2524,13 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
             else RollbackToBacklogSequence(entry->sequence);
         }
     } else if (t == "overlay.close") {
+        const bool restoreTitleMusic = m_musicTrackSelected &&
+            (m_ui.CurrentRoute() == "music" || m_ui.CurrentRoute() == "extra");
         (void)m_session->Routes().CloseModal();
+        if (restoreTitleMusic && !m_titleBgm.empty()) {
+            audio.PlayBGM(m_titleBgm, true, 300);
+            m_musicTrackSelected = false;
+        }
         SaveSettingsIfWritable(); SaveProfileIfWritable();
         PX_LOG_INFO("Player overlay closed");
     } else if (t == "app.quit") {
@@ -1972,17 +2562,286 @@ void PlayerApp::ScreensFrame(float dt) {
     if (m_appState == AppState::Game) RenderStageWithScripts();
     RenderUIWithScripts();
     CaptureE2EGalleryFrame();
+    CaptureUIRoutesE2EFrame();
 }
 
 void PlayerApp::ConfigureE2EJourney() {
     const char* journey=SDL_getenv("PRISMATIX_E2E_JOURNEY");
-    if(!journey||std::string_view(journey)!="catalog")return;
+    if(!journey)return;
+    if(std::string_view(journey)=="presentation"){
+        m_presentationE2E=true;
+        m_presentationE2EStage=1;
+        m_presentationE2EStartedAt=SDL_GetTicks();
+        const char* captureDir=SDL_getenv("PRISMATIX_E2E_CAPTURE_DIR");
+        m_presentationE2ECaptureDir=captureDir?captureDir:"e2e-captures";
+        const char* targetOperation=SDL_getenv("PRISMATIX_E2E_TARGET_OPERATION_ID");
+        m_presentationE2ETargetOperationId=targetOperation?targetOperation:"";
+        m_presentationE2ESplashCaptured.assign(
+            m_splash?m_splash->Entries().size():0,false);
+        PX_LOG_INFO("Player presentation E2E armed captureDir={}",
+                    m_presentationE2ECaptureDir);
+        return;
+    }
+    if(std::string_view(journey)=="ui-routes"){
+        m_uiRoutesE2E=true;
+        m_uiRoutesE2EStartedAt=SDL_GetTicks();
+        const char* captureDir=SDL_getenv("PRISMATIX_E2E_CAPTURE_DIR");
+        m_presentationE2ECaptureDir=captureDir?captureDir:"e2e-ui-routes";
+        PX_LOG_INFO("Player UI routes E2E armed captureDir={} routes={}",
+                    m_presentationE2ECaptureDir,
+                    std::size(kUIRouteE2ERoutes));
+        return;
+    }
+    if(std::string_view(journey)=="ui-actions"){
+        m_uiActionsE2E=true;
+        m_uiActionsE2EStartedAt=SDL_GetTicks();
+        PX_LOG_INFO("Player UI actions E2E armed");
+        return;
+    }
+    if(std::string_view(journey)!="catalog")return;
     m_e2eStage=E2EStage::AwaitTitle;
     m_e2eStartedAt=SDL_GetTicks();
     PX_LOG_INFO("Player E2E journey armed name=catalog");
 }
 
+bool PlayerApp::CapturePresentationE2EFrame(const std::string_view name){
+    int width=0,height=0;
+    m_runtime.Renderer().GetLogicalSize(width,height);
+    auto png=graphics::CaptureThumbnailPng(
+        m_runtime.Renderer().Handle(),width,height);
+    if(png.empty())return false;
+    std::error_code error;
+    const std::filesystem::path directory=m_presentationE2ECaptureDir;
+    std::filesystem::create_directories(directory,error);
+    if(error)return false;
+    const auto path=directory/(std::string(name)+".png");
+    std::ofstream stream(path,std::ios::binary|std::ios::trunc);
+    stream.write(reinterpret_cast<const char*>(png.data()),
+                 static_cast<std::streamsize>(png.size()));
+    const bool saved=stream.good();
+    PX_LOG_INFO("Player presentation E2E capture name={} path={} saved={}",
+                name,path.string(),saved);
+    return saved;
+}
+
 void PlayerApp::DriveE2EJourney() {
+    if(m_presentationE2E){
+        if(SDL_GetTicks()-m_presentationE2EStartedAt>90'000){
+            PX_LOG_ERROR("Player presentation E2E timed out stage={}",
+                         m_presentationE2EStage);
+            m_quitRequested=true;
+            m_presentationE2E=false;
+            return;
+        }
+        if(m_presentationE2EStage==3&&m_appState==AppState::Game&&
+           !m_gameStartTransitionActive){
+            if(!m_presentationE2ETargetOperationId.empty()&&
+               m_session->VM().CurrentOperationId()==m_presentationE2ETargetOperationId){
+                m_session->Dialogue().ShowAll();
+                return;
+            }
+            const auto actors=m_session->Stage().Snapshot();
+            const auto& dialogue=m_session->Dialogue().State();
+            const bool waitingForPresentation=!actors.empty()&&
+                !dialogue.fullText.empty()&&
+                std::ranges::any_of(actors,[](const auto& actor){
+                    return !actor.exiting&&actor.targetAlpha>=245.0f&&
+                           actor.alpha<245.0f;
+                });
+            if(waitingForPresentation)return;
+            if(m_session->VM().State()==vn::VMState::WaitingChoice)
+                m_session->SelectChoice(0);
+            else if(m_session->VM().State()==vn::VMState::WaitingClick||
+                    m_session->VM().State()==vn::VMState::WaitingTimer){
+                m_session->Dialogue().ShowAll();
+                m_session->Advance();
+            }
+        }
+        return;
+    }
+    if(m_uiRoutesE2E){
+        const std::uint64_t now=SDL_GetTicks();
+        if(now-m_uiRoutesE2EStartedAt>120'000){
+            PX_LOG_ERROR("Player UI routes E2E timed out index={} route={}",
+                         m_uiRoutesE2EIndex,
+                         m_uiRoutesE2EIndex<std::size(kUIRouteE2ERoutes)
+                             ? kUIRouteE2ERoutes[m_uiRoutesE2EIndex]
+                             : std::string_view("complete"));
+            m_e2eFailed=true;
+            m_uiRoutesE2E=false;
+            m_quitRequested=true;
+            return;
+        }
+        if(m_uiRoutesE2EAwaitingCapture)return;
+        if(m_uiRoutesE2EIndex>=std::size(kUIRouteE2ERoutes)){
+            PX_LOG_INFO("Player UI routes E2E complete routes={}",
+                        std::size(kUIRouteE2ERoutes));
+            m_uiRoutesE2E=false;
+            m_quitRequested=true;
+            return;
+        }
+        if(!m_uiRoutesE2EReadinessLogged&&
+           now-m_uiRoutesE2EStartedAt>15'000){
+            PX_LOG_INFO(
+                "Player UI routes E2E readiness appState={} base={} modal={} ui={}",
+                static_cast<int>(m_appState),
+                m_session->Routes().CurrentRoute(),
+                m_session->Routes().CurrentModalRoute(),m_ui.CurrentRoute());
+            m_uiRoutesE2EReadinessLogged=true;
+        }
+        if(m_appState!=AppState::Title||
+           !m_session->Routes().CurrentModalRoute().empty())
+            return;
+        const std::string target(kUIRouteE2ERoutes[m_uiRoutesE2EIndex]);
+        const Status shown=m_session->Routes().ShowModal(target);
+        if(!shown){
+            for(const auto& diagnostic:shown.Diagnostics())diag::Emit(diagnostic);
+            PX_LOG_ERROR("Player UI routes E2E could not open route={}",target);
+            m_e2eFailed=true;
+            m_uiRoutesE2E=false;
+            m_quitRequested=true;
+            return;
+        }
+        m_uiRoutesE2EAwaitingCapture=true;
+        m_uiRoutesE2ECaptureAt=now+350;
+        PX_LOG_INFO("Player UI routes E2E opened index={} route={}",
+                    m_uiRoutesE2EIndex,target);
+        return;
+    }
+    if(m_uiActionsE2E){
+        if(SDL_GetTicks()-m_uiActionsE2EStartedAt>90'000){
+            PX_LOG_ERROR("Player UI actions E2E timed out stage={}",
+                         m_uiActionsE2EStage);
+            m_e2eFailed=true;
+            m_uiActionsE2E=false;
+            m_quitRequested=true;
+            return;
+        }
+        switch(m_uiActionsE2EStage){
+            case 0:
+                if(m_appState==AppState::Title&&m_ui.CurrentRoute()=="title"){
+                    OpenScreen("flowchart");
+                    m_uiActionsE2EStage=1;
+                }
+                break;
+            case 1:
+                if(m_session->Routes().CurrentModalRoute()=="flowchart"&&
+                   m_ui.CurrentRoute()=="flowchart"){
+                    auto* filter=FindUiControlNamed<ui::Button>(
+                        m_ui.Root(),"btyosButton");
+                    if(!filter){
+                        PX_LOG_ERROR("Player UI actions E2E flowchart filter missing");
+                        m_e2eFailed=true;m_uiActionsE2E=false;m_quitRequested=true;
+                        break;
+                    }
+                    filter->Activate();
+                    m_uiActionsE2EStage=2;
+                }
+                break;
+            case 2:
+                if(m_session->Routes().CurrentModalRoute()=="flowchart-yoshino"&&
+                   m_ui.CurrentRoute()=="flowchart-yoshino"){
+                    PX_LOG_INFO("Player UI actions E2E flowchart filter dispatched route={}",
+                                m_ui.CurrentRoute());
+                    auto* item=FindUiControlNamed<ui::Button>(
+                        m_ui.Root(),"flow_yoshino_1Button");
+                    if(!item){
+                        PX_LOG_ERROR("Player UI actions E2E flowchart item missing");
+                        m_e2eFailed=true;m_uiActionsE2E=false;m_quitRequested=true;
+                        break;
+                    }
+                    item->Activate();
+                    m_uiActionsE2EStage=7;
+                }
+                break;
+            case 7:
+                if(m_selectedFlowEntry=="sb.100-ver1-01.yos-part-0"&&
+                   m_appState==AppState::Title&&
+                   m_ui.CurrentRoute()=="flowchart-yoshino"){
+                    auto* heading=FindUiControlNamed<ui::Label>(
+                        m_ui.Root(),"FlowSelectedHeading");
+                    auto* jump=FindUiControlNamed<ui::Button>(
+                        m_ui.Root(),"scenejumpButton");
+                    if(!heading||heading->Text().empty()||!jump||!jump->Enabled()){
+                        PX_LOG_ERROR("Player UI actions E2E flowchart selection detail missing");
+                        m_e2eFailed=true;m_uiActionsE2E=false;m_quitRequested=true;
+                        break;
+                    }
+                    PX_LOG_INFO("Player UI actions E2E flowchart selection visible heading={}",
+                                heading->Text());
+                    HandleUIAction({"overlay.close",{}});
+                    OpenScreen("music");
+                    m_uiActionsE2EStage=3;
+                }
+                break;
+            case 3:
+                if(m_session->Routes().CurrentModalRoute()=="music"&&
+                   m_ui.CurrentRoute()=="music"){
+                    auto* track=FindUiControlNamed<ui::Button>(
+                        m_ui.Root(),"music_SongOpButton");
+                    if(!track){
+                        PX_LOG_ERROR("Player UI actions E2E music control missing");
+                        m_e2eFailed=true;m_uiActionsE2E=false;m_quitRequested=true;
+                        break;
+                    }
+                    track->Activate();
+                    m_uiActionsE2EStage=4;
+                }
+                break;
+            case 4:
+                if(m_musicTrackSelected&&!m_musicTracks.empty()){
+                    const std::string activePath =
+                        m_runtime.Audio().CaptureState().music.path;
+                    if(activePath!=m_musicTracks.front()){
+                        PX_LOG_ERROR(
+                            "Player UI actions E2E music path mismatch expected={} actual={}",
+                            m_musicTracks.front(),activePath);
+                        m_e2eFailed=true;m_uiActionsE2E=false;m_quitRequested=true;
+                        break;
+                    }
+                    PX_LOG_INFO("Player UI actions E2E music argument dispatched path={}",
+                                m_musicTracks.front());
+                    HandleUIAction({"overlay.close",{}});
+                    OpenScreen("replay");
+                    m_uiActionsE2EStage=5;
+                }
+                break;
+            case 5:
+                if(m_session->Routes().CurrentModalRoute()=="replay"&&
+                   m_ui.CurrentRoute()=="replay"){
+                    auto* replay=FindUiControlNamed<ui::Button>(
+                        m_ui.Root(),"yoshinoButton");
+                    if(!replay){
+                        PX_LOG_ERROR("Player UI actions E2E replay control missing");
+                        m_e2eFailed=true;m_uiActionsE2E=false;m_quitRequested=true;
+                        break;
+                    }
+                    replay->Activate();
+                    m_uiActionsE2EStage=6;
+                }
+                break;
+            case 6:
+                if(m_appState==AppState::Game&&!m_gameStartTransitionActive){
+                    const int target=m_session->VM().CurrentProgram().LabelIndex(
+                        std::string(kUIActionsE2EReplayLabel));
+                    if(target<0||m_session->VM().ProgramCounter()<=target){
+                        PX_LOG_ERROR(
+                            "Player UI actions E2E replay did not restart at label target={} pc={}",
+                            target,m_session->VM().ProgramCounter());
+                        m_e2eFailed=true;
+                    }else{
+                        PX_LOG_INFO(
+                            "Player UI actions E2E complete replayLabel={} pc={}",
+                            kUIActionsE2EReplayLabel,m_session->VM().ProgramCounter());
+                    }
+                    m_uiActionsE2E=false;
+                    m_quitRequested=true;
+                }
+                break;
+            default:break;
+        }
+        return;
+    }
     if(m_e2eStage==E2EStage::Disabled||m_e2eStage==E2EStage::Complete)
         return;
     if(SDL_GetTicks()-m_e2eStartedAt>30'000){
@@ -2187,6 +3046,46 @@ void PlayerApp::DriveE2EJourney() {
     }
 }
 
+void PlayerApp::CaptureUIRoutesE2EFrame() {
+    if(!m_uiRoutesE2E||!m_uiRoutesE2EAwaitingCapture||
+       m_uiRoutesE2EIndex>=std::size(kUIRouteE2ERoutes)||
+       SDL_GetTicks()<m_uiRoutesE2ECaptureAt)
+        return;
+    const std::string_view route=kUIRouteE2ERoutes[m_uiRoutesE2EIndex];
+    if(m_session->Routes().CurrentModalRoute()!=route||
+       m_ui.CurrentRoute()!=route)
+        return;
+    const auto summary=graphics::CaptureFrameSummary(
+        m_runtime.Renderer().Handle());
+    const std::string captureName=
+        "route-"+std::to_string(m_uiRoutesE2EIndex+1)+"-"+
+        std::string(route);
+    const bool saved=CapturePresentationE2EFrame(captureName);
+    PX_LOG_INFO(
+        "Player UI routes E2E frame index={} route={} width={} height={} colors={} hash={} saved={}",
+        m_uiRoutesE2EIndex,route,summary.width,summary.height,
+        summary.sampledColors,summary.hash,saved);
+    if(!saved||!summary.Valid()||summary.width<640||summary.height<360||
+       summary.sampledColors<8){
+        PX_LOG_ERROR("Player UI routes E2E frame is blank or undersized route={}",
+                     route);
+        m_e2eFailed=true;
+        m_uiRoutesE2E=false;
+        m_quitRequested=true;
+        return;
+    }
+    const Status closed=m_session->Routes().CloseModal();
+    if(!closed){
+        for(const auto& diagnostic:closed.Diagnostics())diag::Emit(diagnostic);
+        m_e2eFailed=true;
+        m_uiRoutesE2E=false;
+        m_quitRequested=true;
+        return;
+    }
+    ++m_uiRoutesE2EIndex;
+    m_uiRoutesE2EAwaitingCapture=false;
+}
+
 void PlayerApp::CaptureE2EGalleryFrame() {
     if(m_e2eStage!=E2EStage::CaptureGallery)return;
     const auto capture=graphics::CaptureFrameSummary(
@@ -2209,6 +3108,14 @@ void PlayerApp::TitleFrame(float dt) {
     int w = 0, h = 0; m_runtime.Renderer().GetLogicalSize(w, h);
     (void)m_ui.Update(input, w, h,dt);
     RenderUIWithScripts();
+    if(m_presentationE2E&&m_presentationE2EStage==1){
+        const auto state=m_ui.CaptureRuntimeState();
+        if(state.animation&&state.animation->position>=2.15f){
+            (void)CapturePresentationE2EFrame("title");
+            StartGame();
+            m_presentationE2EStage=2;
+        }
+    }
 }
 
 bool PlayerApp::VideoFrame(float dt) {
@@ -2347,10 +3254,11 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         input.ActionPressed(InputAction::Advance) &&
         !input.KeyDown(SDL_SCANCODE_LALT) &&
         !input.KeyDown(SDL_SCANCODE_RALT);
+    const bool wheelAdvance = input.WheelY() < 0.0f;
 
     bool advancedByClick = false;
     if (m_hudHidden) {
-        if (input.LeftClick() || advanceKey) m_hudHidden = false;
+        if (input.LeftClick() || advanceKey || wheelAdvance) m_hudHidden = false;
     } else {
         m_ui.RefreshHUD(DialogueUI());
         int uiW = 0, uiH = 0; m_runtime.Renderer().GetLogicalSize(uiW, uiH);
@@ -2363,7 +3271,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
             RenderUIWithScripts();
             return;
         }
-        if (!uiConsumed && (input.LeftClick() || advanceKey) &&
+        if (!uiConsumed && (input.LeftClick() || advanceKey || wheelAdvance) &&
                m_session->VM().State() != vn::VMState::WaitingChoice) {
             m_session->Advance();
             advancedByClick = true;
@@ -2458,10 +3366,37 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         SaveSlot(0, graphics::CaptureThumbnailPng(m_runtime.Renderer().Handle(), 256, 144));
         m_saveRequested = false;
     }
+    if(m_presentationE2E&&m_presentationE2EStage==3&&
+       !m_gameStartTransitionActive){
+        const auto stage=m_session->Stage().CaptureState();
+        const std::string background=m_session->Stage().BackgroundPath();
+        const std::string bgm=m_session->VM().CurrentBgm();
+        const auto& dialogue=m_session->Dialogue().State();
+        const bool visibleBackground=!background.empty()&&
+            background.find("画面_黒")==std::string::npos&&
+            background.find("black")==std::string::npos;
+        const bool settledActor=std::ranges::any_of(
+            stage.actors,[](const auto& actor){
+                return !actor.exiting&&actor.targetAlpha>=245.0f&&
+                       actor.alpha>=245.0f;
+            });
+        const bool targetReached=m_presentationE2ETargetOperationId.empty()||
+            m_session->VM().CurrentOperationId()==m_presentationE2ETargetOperationId;
+        if(targetReached&&visibleBackground&&settledActor&&!bgm.empty()&&
+           !dialogue.displayText.empty()){
+            (void)CapturePresentationE2EFrame("game");
+            PX_LOG_INFO(
+                "Player presentation E2E complete background={} actors={} actorAsset={} bgm={}",
+                background,stage.actors.size(),stage.actors.front().imagePath,bgm);
+            m_presentationE2E=false;
+            m_quitRequested=true;
+        }
+    }
 }
 
 void PlayerApp::MainLoop() {
     while (!m_quitRequested && m_runtime.BeginFrame()) {
+        m_uiTransitionStartedThisFrame = false;
         px::Input& input = m_runtime.GetInput();
         const float dt = m_runtime.GetClock().DeltaSeconds();
         const std::uint64_t now = m_runtime.GetClock().NowMs();
@@ -2479,6 +3414,12 @@ void PlayerApp::MainLoop() {
 
         if(m_appState==AppState::BootSplash){
             SplashFrame(dt);
+            m_runtime.EndFrame();
+            continue;
+        }
+
+        if(m_gameStartTransitionActive){
+            GameStartTransitionFrame(dt,now);
             m_runtime.EndFrame();
             continue;
         }
@@ -2567,6 +3508,7 @@ void PlayerApp::Shutdown() {
     // Subsystems referencing the runtime must go before Runtime::Shutdown.
     m_scriptHost.reset();
     m_splash.reset();
+    if (m_runtimePreload.valid()) m_runtimePreload.wait();
     m_session.reset();
     m_runtime.Shutdown();
 }

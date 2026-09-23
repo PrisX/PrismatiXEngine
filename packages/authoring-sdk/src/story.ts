@@ -453,18 +453,32 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         break;
       }
       case "choice.wait": break;
+      case "chapter": {
+        const title = named("title") ?? positional(0);
+        if (!title) diagnostics.push(error("PXSTORY1144", "chapter requires a title", node.span));
+        else emit(node, "scene", {title});
+        break;
+      }
       case "bg": {
         const assetName = named("asset") ?? positional(0);
         if (assetName === undefined) diagnostics.push(error("PXSTORY1110", "bg requires a resource", node.span));
         else {
           const resolved = resolveResource(node, assetName);
-          if (resolved !== undefined) emit(node, "background", {asset: resolved});
+          const authoredRule = named("rule");
+          const rule = authoredRule === undefined ? undefined : resolveResource(node, authoredRule);
+          if (resolved !== undefined && (authoredRule === undefined || rule !== undefined)) emit(node, "background", {
+            asset: resolved,
+            ...(rule === undefined ? {} : {rule}),
+            ...(named("duration") === undefined ? {} : {duration: named("duration")!}),
+            ...(named("vague") === undefined ? {} : {vague: named("vague")!}),
+          });
         }
         break;
       }
       case "show": {
         const alias = named("character") ?? positional(0);
         const character = alias === undefined ? undefined : characters.get(alias);
+        const authoredAsset = named("asset") ?? named("sprite");
         if (alias === undefined) diagnostics.push(error("PXSTORY1112", "show requires a character alias", node.span));
         else if ((context.characters?.length ?? 0) > 0 && character === undefined) diagnostics.push(error("PXSTORY1113", `Unknown character alias: ${alias}`, node.span));
         else {
@@ -474,16 +488,22 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
           const authoredPosition = named("position");
           const position = characterPosition(authoredPosition);
           if (authoredPosition !== undefined && position === undefined) diagnostics.push(error("PXSTORY1128", `Unknown character position: ${authoredPosition}; expected left, center, right, 1, 2, or 3`, node.span));
-          emit(node, "showCharacter", {
-            character: character?.id ?? alias,
-            ...(expression === undefined ? {} : {expression: expression.id, sprite: `asset:${expression.assetId}`}),
-            ...(position === undefined ? {} : {position}),
-            ...(named("x") === undefined ? {} : {x: named("x")!}),
-            ...(named("y") === undefined ? {} : {y: named("y")!}),
-            ...(named("scale") === undefined ? {} : {scale: named("scale")!}),
-          });
-          if (expression !== undefined && context.resourceAssets !== undefined) {
-            resolveResource(node, `asset:${expression.assetId}`);
+          const sprite = authoredAsset === undefined
+            ? (expression === undefined ? undefined : `asset:${expression.assetId}`)
+            : resolveResource(node, authoredAsset);
+          if (authoredAsset === undefined || sprite !== undefined) {
+            emit(node, "showCharacter", {
+              character: character?.id ?? alias,
+              ...(expression === undefined ? {} : {expression: expression.id}),
+              ...(sprite === undefined ? {} : {sprite}),
+              ...(position === undefined ? {} : {position}),
+              ...(named("x") === undefined ? {} : {x: named("x")!}),
+              ...(named("y") === undefined ? {} : {y: named("y")!}),
+              ...(named("scale") === undefined ? {} : {scale: named("scale")!}),
+            });
+            if (authoredAsset === undefined && expression !== undefined && context.resourceAssets !== undefined) {
+              resolveResource(node, `asset:${expression.assetId}`);
+            }
           }
         }
         break;
@@ -581,13 +601,46 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       case "endif": emit(node, "endCondition", {}); break;
       case "voice":
       case "bgm":
+      case "ambience":
       case "se": {
         const asset = named("asset") ?? positional(0);
         if (asset === undefined) diagnostics.push(error("PXSTORY1124", `${node.name} requires a resource`, node.span));
         else {
           const resolved = resolveResource(node, asset);
-          if (resolved !== undefined)
-            emit(node, node.name === "se" ? "soundEffect" : node.name, {asset: resolved});
+          if (resolved !== undefined) {
+            const fade = named("fade");
+            emit(node, node.name === "se" ? "soundEffect" : node.name, {
+              asset: resolved,
+              ...(fade === undefined ? {} : {fade}),
+            });
+          }
+        }
+        break;
+      }
+      case "bgm.stop":
+      case "ambience.stop": {
+        const fade = named("fade") ?? positional(0);
+        emit(node, node.name === "bgm.stop" ? "stopBgm" : "stopAmbience", {
+          ...(fade === undefined ? {} : {fade}),
+        });
+        break;
+      }
+      case "video": {
+        const asset = named("asset") ?? positional(0);
+        if (asset === undefined) diagnostics.push(error("PXSTORY1136", "video requires a resource", node.span));
+        else {
+          const resolved = resolveResource(node, asset);
+          if (resolved !== undefined) {
+            const skippable = named("skippable");
+            if (skippable !== undefined && skippable !== "true" && skippable !== "false") {
+              diagnostics.push(error("PXSTORY1137", "video skippable must be true or false", node.span));
+            } else {
+              emit(node, "video", {
+                asset: resolved,
+                ...(skippable === undefined ? {} : {skippable}),
+              });
+            }
+          }
         }
         break;
       }
@@ -601,11 +654,33 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         break;
       }
       case "ui": emit(node, "ui", {route: named("route") ?? positional(0) ?? "", operation: named("operation") ?? "push"}); break;
+      case "unlock": {
+        const kind = named("kind") ?? positional(0);
+        const id = named("id") ?? positional(1);
+        if (kind === undefined || id === undefined) {
+          diagnostics.push(error("PXSTORY1134", "unlock requires kind and id", node.span));
+        } else if (!identifierPattern.test(kind) || !identifierPattern.test(id)) {
+          diagnostics.push(error("PXSTORY1135", "unlock kind and id must be stable identifiers", node.span));
+        } else {
+          emit(node, "unlock", {kind, id});
+        }
+        break;
+      }
       case "effect": {
         const value = named("value") ?? positional(0);
         if (value === undefined || value.length === 0)
           diagnostics.push(error("PXSTORY1126", "effect requires a preset", node.span));
         else emit(node, "effect", {value});
+        break;
+      }
+      case "shake": {
+        const duration = named("duration") ?? positional(0);
+        const amplitude = named("amplitude") ?? positional(1);
+        if (duration === undefined) diagnostics.push(error("PXSTORY1138", "shake requires a duration", node.span));
+        else emit(node, "shake", {
+          duration,
+          ...(amplitude === undefined ? {} : {amplitude}),
+        });
         break;
       }
       case "camera": {
@@ -659,10 +734,14 @@ export interface StoryCommandCompletion {
 }
 
 export function storyCommandCompletions(extensions: readonly ExtensionCommand[] = []): readonly StoryCommandCompletion[] {
-  const builtins = ["id", "bg", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "if", "else", "endif", "voice", "bgm", "se", "timeline", "ui", "effect", "camera"];
+  const builtins = ["id", "bg", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "ui", "unlock", "effect", "shake", "camera"];
   const builtinParameters: Readonly<Record<string, StoryCommandCompletion["parameters"]>> = {
+    bg: [
+      {name:"asset", required:true}, {name:"rule", required:false},
+      {name:"duration", required:false}, {name:"vague", required:false},
+    ],
     show: [
-      {name:"character", required:true}, {name:"expression", required:false},
+      {name:"character", required:true}, {name:"expression", required:false}, {name:"asset", required:false},
       {name:"position", required:false, values:["left", "center", "right"]},
       {name:"x", required:false}, {name:"y", required:false}, {name:"scale", required:false},
     ],
@@ -672,6 +751,13 @@ export function storyCommandCompletions(extensions: readonly ExtensionCommand[] 
       {name:"x", required:false}, {name:"y", required:false}, {name:"scale", required:false},
       {name:"duration", required:false}, {name:"ease", required:false}, {name:"wait", required:false},
     ],
+    bgm: [{name:"asset", required:true}, {name:"fade", required:false}],
+    "bgm.stop": [{name:"fade", required:false}],
+    ambience: [{name:"asset", required:true}, {name:"fade", required:false}],
+    "ambience.stop": [{name:"fade", required:false}],
+    video: [{name:"asset", required:true}, {name:"skippable", required:false, values:[true, false]}],
+    shake: [{name:"duration", required:true}, {name:"amplitude", required:false}],
+    unlock: [{name:"kind", required:true}, {name:"id", required:true}],
   };
   return [
     ...builtins.map((id) => ({id, parameters: builtinParameters[id] ?? []})),

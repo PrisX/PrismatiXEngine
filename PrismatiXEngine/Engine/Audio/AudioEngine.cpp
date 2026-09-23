@@ -590,12 +590,13 @@ std::vector<AudioEngine::AudioHandle> AudioEngine::TakeCompletions() {
     return completed;
 }
 
-void AudioEngine::PlayBGM(const std::string& path, const bool loop,
-                          const int fadeMs) {
-    (void)Play({.bus=Bus::Music,
-                .path=path,
-                .loop=loop,
-                .fadeMs=fadeMs});
+AudioEngine::AudioHandle AudioEngine::PlayBGM(const std::string& path,
+                                              const bool loop,
+                                              const int fadeMs) {
+    return Play({.bus=Bus::Music,
+                 .path=path,
+                 .loop=loop,
+                 .fadeMs=fadeMs});
 }
 
 void AudioEngine::PlayBGMWithIntro(const std::string& introPath,

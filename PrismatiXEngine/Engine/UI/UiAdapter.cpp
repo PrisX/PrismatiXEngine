@@ -690,6 +690,13 @@ std::unique_ptr<Control> CreateControl(
     }
     const auto id = Uuid::Parse(node.id);
     if (!control || !id) return nullptr;
+    // runtimeType-backed text controls must honor authored appearance just as
+    // legacy kind-backed controls do. Without this, RichTextLabel and
+    // TextureButton silently fall back to the theme text colour.
+    if (auto* label = dynamic_cast<Label*>(control.get()))
+        label->SetColor(ParseColor(node.appearance.textColor));
+    if (auto* button = dynamic_cast<Button*>(control.get()))
+        button->SetTextColor(ParseColor(node.appearance.textColor));
     control->SetId(*id);
     control->SetName(node.name);
     control->SetAccessibilityLabel(node.accessibilityLabel);
@@ -732,6 +739,15 @@ std::unique_ptr<Control> CreateControl(
                      : node.layout.y + node.layout.height -
                            parentHeight * verticalSpan});
             control->SetCustomMinimumSize({node.layout.width, node.layout.height});
+            // A free-layout node with fixed sizing is an exact authored
+            // rectangle, not merely a minimum.  Without the matching maximum
+            // a Button's intrinsic 88x48 measure silently expands small
+            // image-backed controls (commercial VN HUD icons are often only
+            // 20-70 px), shifting and clipping the original interface.
+            if (node.layout.sizeRule == "fixed" &&
+                horizontalSpan == 0.0f && verticalSpan == 0.0f)
+                control->SetMaximumSize(
+                    {node.layout.width, node.layout.height});
         }
     }
     for (const auto& [name, value] : node.runtimeProperties) {

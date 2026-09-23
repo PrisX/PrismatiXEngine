@@ -51,6 +51,14 @@ int main() {
               opacity->hasRange && opacity->range.minimum == 0.0 &&
               opacity->range.maximum == 1.0,
           "Runtime opacity metadata must reach the SDK contract");
+    const auto* translation=button?FindProperty(*button,"translation"):nullptr;
+    Check(translation&&translation->valueType=="vec2"&&translation->writable&&
+              translation->animatable,
+          "Runtime translation must be authorable and animatable through the SDK contract");
+    const auto* hoverSound=button?FindProperty(*button,"hoverSoundPath"):nullptr;
+    const auto* activateSound=button?FindProperty(*button,"activateSoundPath"):nullptr;
+    Check(hoverSound&&hoverSound->writable&&activateSound&&activateSound->writable,
+          "Controls must expose authored hover and activation sounds");
     const auto* horizontal =
         button ? FindProperty(*button, "horizontalAlignment") : nullptr;
     Check(horizontal && horizontal->enumChoices.size() == 3,
@@ -74,6 +82,13 @@ int main() {
               options->defaultValueJson == "[]",
           "OptionButton must expose leaf identity and its stable Array default");
     const auto* richText = FindControl(parsed.manifest, "richTextLabel");
+    const auto* label = FindControl(parsed.manifest, "label");
+    const auto* outlineSize = label ? FindProperty(*label, "outlineSize") : nullptr;
+    const auto* outlineColor = label ? FindProperty(*label, "outlineColor") : nullptr;
+    Check(outlineSize && outlineSize->writable && outlineSize->hasRange &&
+              outlineColor && outlineColor->writable &&
+              outlineColor->valueType == "color",
+          "Label text outline must be authorable through the SDK registry");
     const auto* vertical = richText ? FindProperty(*richText, "vertical") : nullptr;
     const auto* verticalRows = richText
                                    ? FindProperty(*richText, "verticalRows")
@@ -89,6 +104,17 @@ int main() {
               revealEasing->enumChoices ==
                   std::vector<std::string>({"Linear", "EaseOut", "EaseInOut"}),
           "EdgeRevealContainer easing choices must reach the generated SDK registry");
+    const auto* revealDistance = edgeReveal
+                                     ? FindProperty(*edgeReveal, "revealDistance")
+                                     : nullptr;
+    const auto* fadeWithReveal = edgeReveal
+                                     ? FindProperty(*edgeReveal, "fadeWithReveal")
+                                     : nullptr;
+    Check(revealDistance && revealDistance->writable &&
+              revealDistance->valueType == "number" &&
+              fadeWithReveal && fadeWithReveal->writable &&
+              fadeWithReveal->valueType == "boolean",
+          "EdgeRevealContainer distance and fade must be authorable");
 
     constexpr std::string_view revisionOneFixture =
         R"({"format":"PrismatiXUiTypeRegistry","schemaRevision":1,"contract":"uiTypeRegistry","contractRevision":1,"contractHash":"0f2044c10f8697034577b1b09a1baa87efecda10901c912b7a4e05a91fff542d","controls":[{"id":"button","runtimeType":"Button","displayName":"Button","description":"","category":"Input","iconId":"ui.button","canHaveChildren":false,"acceptedResourceKinds":[],"properties":[],"signals":[]}]})";

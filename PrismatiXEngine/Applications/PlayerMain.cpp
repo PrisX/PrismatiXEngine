@@ -14,6 +14,10 @@
 #include <iostream>
 
 namespace {
+// Keep this translation unit coupled to PlayerApp's complete class layout;
+// localized MSVC /showIncludes output cannot currently drive Ninja header
+// dependencies reliably on every host. Recompile this TU whenever PlayerApp's
+// state layout changes.
 int InspectSave(int argc, char* argv[]) {
     // Diagnostics are collected below on stderr; never initialize a file logger
     // or send the default spdlog console sink into the machine JSON channel.

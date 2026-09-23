@@ -155,6 +155,27 @@ bool VM::LoadCompiledProgram(Program program, const std::string& scriptPath) {
     return true;
 }
 
+bool VM::RestartAtLabel(const std::string_view label) {
+    const int target = m_program.LabelIndex(std::string(label));
+    if (target < 0) return false;
+    m_callStack.clear();
+    m_debugResumeState.reset();
+    m_seekTargetPc.reset();
+    m_seeking = false;
+    m_safetyRejected = false;
+    m_pendingVoice.clear();
+    m_choices.clear();
+    m_pc = target;
+    m_state = VMState::Idle;
+    m_skipBacklogOnce = false;
+    m_skipBreakOnce = false;
+    m_stepping = false;
+    m_stepBudget = 0;
+    m_textSpeed = m_config.defaultTextSpeed;
+    Run();
+    return true;
+}
+
 ProgramSeekStatus VM::LoadCompiledProgramAt(Program program,
                                             const std::string& scriptPath,
                                             const int operationIndex) {

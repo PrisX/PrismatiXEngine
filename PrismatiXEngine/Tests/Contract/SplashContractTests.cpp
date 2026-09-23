@@ -20,7 +20,9 @@ int main() {
     px::test::Suite suite("SplashContract");
 
     suite.Run("OrderedSequence_RoundTripsResourceIdentity", [&] {
-        const std::vector authored{Entry("Engine", 2.0f), Entry("Publisher", 2.5f),
+        auto publisher = Entry("Publisher", 2.5f);
+        publisher.audioDelay = 1.0f;
+        const std::vector authored{Entry("Engine", 2.0f), publisher,
                                    Entry("Studio", 1.5f)};
         px::resource::TypedDocument manifest;
         manifest.kind = px::resource::DocumentKind::Project;
@@ -51,11 +53,15 @@ int main() {
         invalidScene.scene.id = {};
         auto invalidTiming = Entry("Timing", 1.0f);
         invalidTiming.skipAllowedAfter = 1.5f;
+        auto invalidAudioDelay = Entry("AudioDelay", 2.0f);
+        invalidAudioDelay.audioDelay = -0.1f;
         suite.Expect(!px::ui::startup::ValidateSplashEntry(invalidScene, 0,
                                                            "project.pxproject") &&
                          !px::ui::startup::ValidateSplashEntry(invalidTiming, 1,
+                                                               "project.pxproject") &&
+                         !px::ui::startup::ValidateSplashEntry(invalidAudioDelay, 2,
                                                                "project.pxproject"),
-                     "missing identity and invalid skip timing are rejected");
+                     "missing identity and invalid skip/audio timing are rejected");
         suite.Expect(!px::ui::startup::ParseSplashSequence(px::VariantObject{},
                                                            "project.pxproject"),
                      "splashes must have one authoritative ordered array shape");
