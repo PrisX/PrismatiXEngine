@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
-import {mkdtemp, mkdir, readFile, readdir, stat, symlink, utimes, writeFile} from "node:fs/promises";
+import {mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, utimes, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {dirname, join, resolve} from "node:path";
-import {spawnSync} from "node:child_process";
+import {spawn, spawnSync} from "node:child_process";
 import test from "node:test";
 
 import {createStarter} from "../src/starter.js";
@@ -209,6 +209,87 @@ test("dev --once streams PreviewHost protocol output and exits after a clean shu
   assert.match(previewed.stderr, /PXCLI1602/u);
   const event = previewed.stderr.split(/\r?\n/u).filter(Boolean).map((line) => JSON.parse(line)).find((value) => value.code === "PXCLI1602");
   assert.equal((await stat(join(event.output, "Runtime", "main.pxir"))).isFile(), true);
+});
+
+test("dev reuses Story compilation for UI edits and invalidates it for Story edits", {timeout: 35_000}, async (t) => {
+  const value = await fixture();
+  const host = join(value.root, "mock-preview.mjs");
+  const hostLog = join(value.root, ".prismatix", "cache-host.jsonl");
+  await write(host, `
+    import {createInterface} from "node:readline";
+    import {appendFileSync} from "node:fs";
+    const input = createInterface({input: process.stdin});
+    input.on("line", (line) => {
+      const request = JSON.parse(line);
+      appendFileSync(${JSON.stringify(hostLog)}, JSON.stringify({pid: process.pid, type: request.type}) + "\\n");
+      const type = {hello: "ready", applyRuntimeIr: "runtimeIrApplied",
+        play: "playAccepted", shutdown: "shutdownAccepted"}[request.type];
+      process.stdout.write(JSON.stringify({...request, type, runtimeIrSchemaRevision: 2,
+        uiSchemaRevision: 2, appliedRevision: request.revision}) + "\\n");
+      if (request.type === "shutdown") { input.close(); process.exit(0); }
+    });
+  `);
+  const child = spawn(process.execPath, [resolve("dist/src/cli.js"), "dev", value.root,
+    "--preview-host", host, "--debounce", "50", "--json"],
+  {stdio: ["ignore", "pipe", "pipe"], windowsHide: true});
+  let stderr = "";
+  child.stderr.on("data", (chunk) => { stderr += String(chunk); });
+  child.stdout.resume();
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+    await new Promise<void>((done) => {
+      if (child.exitCode !== null || child.signalCode !== null) done();
+      else child.once("exit", () => done());
+    });
+    try {
+      const log = await readFile(hostLog, "utf8");
+      const pids = new Set(log.trim().split(/\r?\n/u).filter(Boolean)
+        .map((line) => Number((JSON.parse(line) as {pid: number}).pid)));
+      for (const pid of pids) { try { process.kill(pid); } catch { /* host already closed */ } }
+    } catch { /* host did not start */ }
+    await rm(value.root, {recursive: true, force: true, maxRetries: 10, retryDelay: 100});
+  });
+  const events = () => stderr.split(/\r?\n/u).filter(Boolean).flatMap((line) => {
+    try { return [JSON.parse(line) as Record<string, unknown>]; }
+    catch { return []; }
+  });
+  const waitForRevision = async (revision: number) => {
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline) {
+      const builds = events().filter((event) => event.code === "PXCLI1602");
+      if (builds.length >= revision) return builds[revision - 1]!;
+      if (child.exitCode !== null) break;
+      await new Promise((done) => setTimeout(done, 50));
+    }
+    assert.fail(`dev did not publish revision ${revision}: ${stderr}`);
+  };
+  const first = await waitForRevision(1);
+  const firstIr = JSON.parse(await readFile(join(String(first.output), "Runtime/main.pxir"), "utf8")) as {
+    operations: unknown[]; committedRevision: number;
+  };
+
+  const uiPath = join(value.root, "Content/UI/Title.pxui");
+  const ui = JSON.parse(await readFile(uiPath, "utf8")) as Record<string, unknown>;
+  await write(uiPath, JSON.stringify({...ui, name: "Edited title"}));
+  const second = await waitForRevision(2);
+  const secondIr = JSON.parse(await readFile(join(String(second.output), "Runtime/main.pxir"), "utf8")) as {
+    operations: unknown[]; committedRevision: number;
+  };
+  assert.deepEqual(secondIr.operations, firstIr.operations);
+  assert.equal(secondIr.committedRevision, 2);
+  const storyEvents = events().filter((event) => event.code === "PXCLI1103");
+  assert.equal(storyEvents.length, 4);
+  assert.deepEqual(storyEvents.slice(2).map((event) => event.cached), [true, true]);
+
+  await write(join(value.root, "Story/main.pxstory"), "Edited dialogue.\n[end]\n");
+  const third = await waitForRevision(3);
+  const thirdIr = JSON.parse(await readFile(join(String(third.output), "Runtime/main.pxir"), "utf8")) as {
+    operations: Array<{text: string}>; committedRevision: number;
+  };
+  assert.ok(thirdIr.operations.some((operation) => operation.text === "Edited dialogue."));
+  assert.equal(thirdIr.committedRevision, 3);
+  assert.deepEqual(events().filter((event) => event.code === "PXCLI1103")
+    .slice(4).map((event) => event.cached), [undefined, undefined]);
 });
 
 test("ids reports fallback identities and writes stable Story anchors with a backup", async () => {

@@ -30,6 +30,7 @@ import {
   compileProject,
   externalizeStoryIds,
   parseStory,
+  StoryProjectCompilationCache,
   stableSourceIdReport,
   synchronizeStoryIdentityMap,
   validateDocument,
@@ -180,9 +181,11 @@ function storyProgressReporter(): NonNullable<CompileProjectInput["onStoryProgre
     if (!machineOutput && current !== 1 && current !== total &&
         current - lastHumanReport[phase] < step) return;
     lastHumanReport[phase] = current;
-    const label = phase === "parse" ? "Parsing Story" : "Compiling Story";
+    const label = value.cached ? "Reusing Story cache"
+      : phase === "parse" ? "Parsing Story" : "Compiling Story";
     progress({event: "progress", severity: "information", code: "PXCLI1103",
       phase: `story-${phase}`, current, total, done: current === total,
+      ...(value.cached === undefined ? {} : {cached: value.cached}),
       locale: value.locale, sceneId: value.sceneId,
       ...(value.sourcePath === undefined ? {} : {sourcePath: value.sourcePath}),
       message: `${label}: ${current}/${total} scenes (${value.locale}: ${value.sceneId})`});
@@ -761,7 +764,8 @@ async function loadUiRegistry(override?: string, runtimeHint?: string,
 
 async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
   registryOverride?: string, runtimeHint?: string, packagerPath?: string,
-  onStoryProgress?: NonNullable<CompileProjectInput["onStoryProgress"]>) {
+  onStoryProgress?: NonNullable<CompileProjectInput["onStoryProgress"]>,
+  storyCompilationCache?: StoryProjectCompilationCache) {
   const uiTypeRegistry = await loadUiRegistry(registryOverride, runtimeHint, packagerPath);
   const result = compileProject({project: loaded.project, documents: loaded.documents,
     sourceFiles: loaded.sourceFiles, locales: loaded.locales,
@@ -776,6 +780,7 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
     },
     resolveResourceInclude: (path) => loaded.includedResources[path],
     ...(onStoryProgress === undefined ? {} : {onStoryProgress}),
+    ...(storyCompilationCache === undefined ? {} : {storyCompilationCache}),
     ...(committedRevision === undefined ? {} : {committedRevision}),
     ...(uiTypeRegistry === undefined ? {} : {uiTypeRegistry})});
   if (uiTypeRegistry !== undefined ||
@@ -877,13 +882,13 @@ function protectedInputs(loaded: LoadedProject, artifact: BuildArtifact): string
 
 async function buildProject(projectArgument: string | undefined, outputArgument: string | undefined,
   committedRevision?: number, registryOverride?: string, runtimeHint?: string,
-  packagerPath?: string): Promise<BuildResult> {
+  packagerPath?: string, storyCompilationCache?: StoryProjectCompilationCache): Promise<BuildResult> {
   buildProgress("load", 0, 1);
   const loaded = await loadProject(projectArgument);
   buildProgress("load", 1, 1, 0, true);
   buildProgress("compile", 0, 1);
   const compiled = await compileLoaded(loaded, committedRevision, registryOverride,
-    runtimeHint, packagerPath, storyProgressReporter());
+    runtimeHint, packagerPath, storyProgressReporter(), storyCompilationCache);
   printDiagnostics(compiled.diagnostics);
   if (!compiled.valid || compiled.artifact === undefined) throw new Error("Project validation or compilation failed");
   buildProgress("compile", 1, 1, 0, true);
@@ -1402,6 +1407,7 @@ async function devCommand(options: Options): Promise<number> {
       stopped = true;
     });
     const revisionRoot = join(location.root, ".prismatix", "dev", randomUUID());
+    const storyCompilationCache = new StoryProjectCompilationCache();
     let revision = 0;
     let attempted = 0;
     let built: BuildResult | undefined;
@@ -1424,7 +1430,8 @@ async function devCommand(options: Options): Promise<number> {
       try {
         updated = changes === attempted && built !== undefined
           ? built : await buildProject(projectArgument, join(revisionRoot, String(++revision)),
-            revision, options.values.get("ui-registry"), options.values.get("runtime"));
+            revision, options.values.get("ui-registry"), options.values.get("runtime"),
+            undefined, storyCompilationCache);
         candidate = await PreviewClient.start(previewHost.path, updated.root);
         await applyPreviewBuild(candidate, updated, false);
         const played = await candidate.request("play", updated.artifact.runtimeIr.documentId,

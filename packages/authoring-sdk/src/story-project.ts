@@ -49,6 +49,8 @@ export interface StoryProjectProgress {
   readonly sourcePath?: string;
   readonly current: number;
   readonly total: number;
+  /** The phase was satisfied by a previously compiled, identical Story input. */
+  readonly cached?: boolean;
 }
 
 export interface StoryProjectCompileContext {
@@ -67,6 +69,73 @@ export interface StoryProjectCompileContext {
   readonly resources?: Readonly<Record<string, string>>;
   readonly resourceAssets?: readonly ProjectAssetDescriptor[];
   readonly onProgress?: (event: StoryProjectProgress) => void;
+}
+
+interface StoryCompilationSnapshot {
+  readonly inputs: string;
+  readonly sources: readonly (readonly [string, string | undefined, string | undefined])[];
+}
+
+function storyCompilationSnapshot(context: StoryProjectCompileContext): StoryCompilationSnapshot {
+  // These are all non-source inputs read by compileStoryProject/compileStory.
+  // Retain exact source strings rather than a short hash: a cache collision
+  // must never silently reuse save identities or cross-scene control flow.
+  const inputs = JSON.stringify([
+    context.storyIndex, context.locale,
+    context.storyIndexPath ?? "Story/story.pxindex",
+    context.documentId ?? context.storyIndex.id,
+    context.characters, context.game, context.extensions,
+    context.resources, context.resourceAssets,
+  ]);
+  const sources = context.storyIndex.scenes.map((scene) => {
+    const path = scene.sources[context.locale] ?? "";
+    return [path, context.sourceFiles[path], context.sourceFiles[`${path}.pxids.json`]] as const;
+  });
+  return {inputs, sources};
+}
+
+function sameStorySnapshot(left: StoryCompilationSnapshot, right: StoryCompilationSnapshot): boolean {
+  return left.inputs === right.inputs && left.sources.length === right.sources.length &&
+    left.sources.every((entry, index) => {
+      const other = right.sources[index];
+      return other !== undefined && entry[0] === other[0] &&
+        entry[1] === other[1] && entry[2] === other[2];
+    });
+}
+
+/** Optional, in-process cache for repeated project builds (for example UI-only
+ * edits in `dev`). Invalid Story is never cached, and a new revision only
+ * replaces the Runtime IR envelope; operations and save identities are kept. */
+export class StoryProjectCompilationCache {
+  private readonly entries = new Map<string, {
+    readonly snapshot: StoryCompilationSnapshot;
+    readonly result: StoryCompileResult;
+  }>();
+
+  compile(context: StoryProjectCompileContext): StoryCompileResult {
+    const snapshot = storyCompilationSnapshot(context);
+    const previous = this.entries.get(context.locale);
+    if (previous !== undefined && sameStorySnapshot(previous.snapshot, snapshot)) {
+      for (const phase of ["parse", "compile"] as const) {
+        for (const [index, scene] of context.storyIndex.scenes.entries()) {
+          const sourcePath = scene.sources[context.locale];
+          context.onProgress?.({phase, locale: context.locale, sceneId: scene.id,
+            ...(sourcePath === undefined ? {} : {sourcePath}),
+            current: index + 1, total: context.storyIndex.scenes.length, cached: true});
+        }
+      }
+      const runtimeIr = previous.result.runtimeIr;
+      return runtimeIr === undefined ? previous.result : {
+        ...previous.result,
+        runtimeIr: {...runtimeIr, committedRevision: context.committedRevision ?? 0},
+      };
+    }
+
+    const result = compileStoryProject(context);
+    if (result.valid && result.runtimeIr !== undefined && result.sourceMap !== undefined)
+      this.entries.set(context.locale, {snapshot, result});
+    return result;
+  }
 }
 
 interface ParsedScene {

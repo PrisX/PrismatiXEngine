@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {compileProject} from "../src/index.js";
+import {compileProject, StoryProjectCompilationCache} from "../src/index.js";
 
 const rootId = "11111111-1111-4111-8111-111111111111";
 const uiId = "22222222-2222-4222-8222-222222222222";
@@ -67,6 +67,31 @@ const {behaviorGraph: _behaviorGraph, behaviorTriggers: _behaviorTriggers,
   visualStateGroups: _visualStateGroups, ...componentContent} = ui;
 const component = {...componentContent, format: "PrismatiXUIComponent",
   componentInterface: {properties: [], signals: [], slots: []}};
+
+test("UI-only project edits reuse Story compilation but publish fresh UI and revision", () => {
+  const storyCompilationCache = new StoryProjectCompilationCache();
+  const input = {
+    project,
+    documents: {"Story/story.pxindex": storyIndex,
+      "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locale: "zh-TW", strings: {"ui.start": "開始"}}},
+    storyCompilationCache,
+  };
+  const first = compileProject({...input, committedRevision: 1});
+  assert.equal(first.valid, true, JSON.stringify(first.diagnostics));
+  const progress: Array<{cached?: boolean}> = [];
+  const second = compileProject({...input, committedRevision: 2,
+    documents: {...input.documents, "Content/UI/Title.pxui": {...ui, name: "New title"}},
+    onStoryProgress: (event) => progress.push(event)});
+  assert.equal(second.valid, true, JSON.stringify(second.diagnostics));
+  assert.ok(progress.length > 0 && progress.every((event) => event.cached === true));
+  assert.equal(second.artifact?.runtimeIr.committedRevision, 2);
+  assert.deepEqual(second.artifact?.runtimeIr.operations, first.artifact?.runtimeIr.operations);
+  assert.notEqual(second.artifact?.files["Content/UI/Title.pxui"],
+    first.artifact?.files["Content/UI/Title.pxui"]);
+});
 
 test("compileProject produces one deterministic RuntimeIR BuildArtifact", () => {
   const result = compileProject({

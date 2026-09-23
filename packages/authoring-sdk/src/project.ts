@@ -12,7 +12,8 @@ import {
   type ProjectDependency,
   type ProjectDependencyReference,
 } from "./resources.js";
-import {compileStoryProject, type StoryIndexDocument, type StoryProjectProgress} from "./story-project.js";
+import {compileStoryProject, type StoryIndexDocument, type StoryProjectCompilationCache,
+  type StoryProjectProgress} from "./story-project.js";
 import type {
   AuthoringDiagnostic,
   CharacterDocument,
@@ -123,6 +124,8 @@ export interface CompileProjectInput {
   /** Native UI TypeRegistry metadata for validating authored runtime properties. */
   readonly uiTypeRegistry?: UiTypeRegistryMetadata;
   readonly committedRevision?: number;
+  /** Reuse unchanged Story compilation across repeated project builds. */
+  readonly storyCompilationCache?: StoryProjectCompilationCache;
   /** Completed Story scenes across all locales; callbacks are synchronous. */
   readonly onStoryProgress?: (event: StoryProjectProgress & {
     readonly globalCurrent: number; readonly globalTotal: number;
@@ -621,24 +624,27 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
           if (typeof value === "string") localizedResources[id] = value;
       }
     }
-    return compileStoryProject({
-        storyIndex,
-        locale,
-        sourceFiles,
-        storyIndexPath: project.storyIndex,
-        documentId: project.id,
-        ...(input.committedRevision === undefined ? {} : {committedRevision: input.committedRevision}),
-        characters,
-        game,
-        extensions,
-        resources: {...resourcePaths, ...localizedResources},
-        resourceAssets,
-        ...(input.onStoryProgress === undefined ? {} : {onProgress: (event: StoryProjectProgress) => {
-          storyProgressCounts[event.phase] += 1;
-          input.onStoryProgress?.({...event,
-            globalCurrent: storyProgressCounts[event.phase], globalTotal: globalStoryTotal});
-        }}),
-      });
+    const storyContext = {
+      storyIndex,
+      locale,
+      sourceFiles,
+      storyIndexPath: project.storyIndex,
+      documentId: project.id,
+      ...(input.committedRevision === undefined ? {} : {committedRevision: input.committedRevision}),
+      characters,
+      game,
+      extensions,
+      resources: {...resourcePaths, ...localizedResources},
+      resourceAssets,
+      ...(input.onStoryProgress === undefined ? {} : {onProgress: (event: StoryProjectProgress) => {
+        storyProgressCounts[event.phase] += 1;
+        input.onStoryProgress?.({...event,
+          globalCurrent: storyProgressCounts[event.phase], globalTotal: globalStoryTotal});
+      }}),
+    };
+    return input.storyCompilationCache === undefined
+      ? compileStoryProject(storyContext)
+      : input.storyCompilationCache.compile(storyContext);
   };
   const compiled = compileLocale(project.defaultLocale);
   diagnostics.push(...compiled.diagnostics);

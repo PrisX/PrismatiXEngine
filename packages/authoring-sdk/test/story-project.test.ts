@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {compileStoryProject, validateDocument} from "../src/index.js";
+import {compileStoryProject, StoryProjectCompilationCache, validateDocument} from "../src/index.js";
 import type {StoryIndexDocument} from "../src/index.js";
 
 const storyIndex: StoryIndexDocument = {
@@ -15,6 +15,44 @@ const storyIndex: StoryIndexDocument = {
     {id: "scene02", sources: {"zh-TW": "zh-TW/ch01/scene02.pxstory"}, requiredLabels: ["start", "aside"]},
   ],
 };
+
+test("Story compilation cache reuses only identical inputs and refreshes the revision", () => {
+  const cache = new StoryProjectCompilationCache();
+  const sourceFiles = {
+    "zh-TW/ch01/scene01.pxstory": "*start\nFirst line.\n[jump scene=scene02 target=start]\n",
+    "zh-TW/ch01/scene02.pxstory": "*start\nSecond line.\n[end]\n*aside\n[end]\n",
+  };
+  const first = cache.compile({storyIndex, locale: "zh-TW", sourceFiles, committedRevision: 1});
+  assert.equal(first.valid, true, JSON.stringify(first.diagnostics));
+  const progress: Array<{cached?: boolean}> = [];
+  const second = cache.compile({storyIndex: {...storyIndex}, locale: "zh-TW",
+    sourceFiles: {...sourceFiles, "unrelated.pxstory": "changed"}, committedRevision: 2,
+    onProgress: (event) => progress.push(event)});
+  assert.equal(second.valid, true, JSON.stringify(second.diagnostics));
+  assert.equal(second.runtimeIr?.committedRevision, 2);
+  assert.equal(first.runtimeIr?.committedRevision, 1);
+  assert.deepEqual(second.runtimeIr?.operations, first.runtimeIr?.operations);
+  assert.equal(progress.length, storyIndex.scenes.length * 2);
+  assert.ok(progress.every((event) => event.cached === true));
+
+  progress.length = 0;
+  const edited = cache.compile({storyIndex, locale: "zh-TW", committedRevision: 3,
+    sourceFiles: {...sourceFiles, "zh-TW/ch01/scene01.pxstory":
+      "*start\nEdited line.\n[jump scene=scene02 target=start]\n"},
+    onProgress: (event) => progress.push(event)});
+  assert.equal(edited.valid, true, JSON.stringify(edited.diagnostics));
+  assert.ok(edited.runtimeIr?.operations.some((operation) => operation.text === "Edited line."));
+  assert.ok(progress.every((event) => event.cached === undefined));
+
+  progress.length = 0;
+  const badSidecar = cache.compile({storyIndex, locale: "zh-TW", committedRevision: 4,
+    sourceFiles: {...sourceFiles,
+      "zh-TW/ch01/scene01.pxstory.pxids.json": "{}"},
+    onProgress: (event) => progress.push(event)});
+  assert.equal(badSidecar.valid, false);
+  assert.ok(badSidecar.diagnostics.some((diagnostic) => diagnostic.code === "PXSTORY1403"));
+  assert.ok(progress.every((event) => event.cached === undefined));
+});
 
 test("Story project compiler resolves cross-scene jump/call targets into one Runtime IR program", () => {
   const progress: Array<{phase: string; sceneId: string; current: number;
