@@ -12,9 +12,11 @@
 #include <SDL3/SDL.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <iostream>
 #include <memory>
 #include <ranges>
 #include <string>
@@ -194,6 +196,78 @@ int main() {
                      "registration is idempotent and built-in action identity is retained");
     });
 
+    suite.Run("KeyRebindReportsConflictsWithoutLosingBindings", [&] {
+        px::Input input;
+        suite.Require(input.RegisterAction("photo-mode") &&
+                          input.BindKey("photo-mode", SDL_SCANCODE_X),
+                      "custom action is available for rebinding");
+        suite.Expect(!input.BindKey("photo-mode", SDL_SCANCODE_COUNT),
+                     "out-of-range bindings fail instead of silently doing nothing");
+        const auto conflict = input.RebindKey("photo-mode", SDL_SCANCODE_F5);
+        suite.Expect(conflict.status == px::KeyRebindStatus::Conflict &&
+                         std::ranges::find(conflict.conflicts, "quick-save") !=
+                             conflict.conflicts.end() &&
+                         input.KeyBindings("photo-mode") ==
+                             std::vector<int>{SDL_SCANCODE_X},
+                     "conflicting rebind names the existing action and leaves the old key intact");
+        const auto invalid = input.RebindKey("photo-mode", -1);
+        suite.Expect(invalid.status == px::KeyRebindStatus::InvalidScancode &&
+                         input.KeyBindings("photo-mode") ==
+                             std::vector<int>{SDL_SCANCODE_X},
+                     "invalid scancodes do not change the action map");
+        const auto applied = input.RebindKey("photo-mode", SDL_SCANCODE_F2);
+        suite.Expect(applied.status == px::KeyRebindStatus::Applied &&
+                         input.KeyBindings("photo-mode") ==
+                             std::vector<int>{SDL_SCANCODE_F2} &&
+                         px::Input::KeyName(SDL_SCANCODE_F2) == "F2" &&
+                         px::Input::KeyCode("F2") == SDL_SCANCODE_F2,
+                     "successful rebind replaces, rather than appends, the keyboard shortcut");
+        input.NewFrame();
+        input.InjectKeyPress(SDL_SCANCODE_X);
+        suite.Expect(!input.ActionPressed("photo-mode"),
+                     "old key no longer triggers the action");
+        input.NewFrame();
+        input.InjectKeyPress(SDL_SCANCODE_F2);
+        suite.Expect(input.ActionPressed("photo-mode"),
+                     "new key triggers the action");
+        const auto shared = input.RebindKey("photo-mode", SDL_SCANCODE_F5, true);
+        suite.Expect(shared.status == px::KeyRebindStatus::Applied &&
+                         std::ranges::find(shared.conflicts, "quick-save") !=
+                             shared.conflicts.end(),
+                     "intentional shared bindings still report what overlaps");
+        const auto sameShared = input.RebindKey("photo-mode", SDL_SCANCODE_F5);
+        suite.Expect(sameShared.status == px::KeyRebindStatus::Applied,
+                     "reselecting an already-shared key is not a new conflict");
+        suite.Expect(input.RebindKey("not-registered", SDL_SCANCODE_F2).status ==
+                         px::KeyRebindStatus::UnknownAction,
+                     "unknown actions cannot silently create a binding");
+
+        auto saved = input.CaptureKeyboardBindings();
+        saved["later.action"] = {SDL_SCANCODE_F3};
+        px::Input restored;
+        suite.Require(restored.RestoreKeyboardBindings(saved),
+                      "saved keyboard bindings restore atomically");
+        suite.Require(restored.RegisterAction("photo-mode") &&
+                          restored.RegisterAction("later.action"),
+                      "saved custom actions may register after settings load");
+        suite.Expect(restored.KeyBindings("photo-mode") ==
+                         std::vector<int>{SDL_SCANCODE_F5} &&
+                         restored.KeyBindings("later.action") ==
+                             std::vector<int>{SDL_SCANCODE_F3},
+                     "late action registration receives its persisted key");
+        auto invalidSaved = saved;
+        invalidSaved["later.action"] = {-1};
+        suite.Expect(!restored.RestoreKeyboardBindings(invalidSaved) &&
+                         restored.KeyBindings("later.action") ==
+                             std::vector<int>{SDL_SCANCODE_F3},
+                     "invalid saved map does not partially overwrite live bindings");
+        restored.ResetKeyboardBindings();
+        suite.Expect(restored.KeyBindings("later.action").empty() &&
+                         restored.KeyBindings("quick-save") ==
+                             std::vector<int>{SDL_SCANCODE_F5},
+                     "reset clears custom overrides and restores engine defaults");
+    });
+
     suite.Run("AudioHandlesCompletionAndRestorePolicy", [&] {
         suite.Expect(
             px::audio::AudioEngine::RestorePolicyFor(
@@ -229,13 +303,19 @@ int main() {
                           playback->introPath == "intro.wav" &&
                           playback->loopPath == "loop.wav",
                       "intro-loop phases are exposed without changing handle identity");
-        for (int attempt = 0; attempt < 100 &&
-                              playback->phase != px::audio::PlaybackPhase::Loop;
-             ++attempt) {
+        const auto handoffDeadline = SDL_GetTicks() + 2'000;
+        while (playback && playback->phase != px::audio::PlaybackPhase::Loop &&
+               SDL_GetTicks() < handoffDeadline) {
             SDL_Delay(5);
             audio.Update();
             playback = audio.Playback(music);
         }
+        if (!playback || playback->phase != px::audio::PlaybackPhase::Loop)
+            std::cerr << "intro-loop diagnostic: playback=" << (playback ? 1 : 0)
+                      << " status=" << (playback ? static_cast<int>(playback->status) : -1)
+                      << " phase=" << (playback ? static_cast<int>(playback->phase) : -1)
+                      << " frame=" << (playback ? playback->playbackFrame : -1)
+                      << " playing=" << audio.Playing(music) << '\n';
         suite.Require(playback &&
                           playback->phase == px::audio::PlaybackPhase::Loop &&
                           playback->handle == music && audio.Playing(music),

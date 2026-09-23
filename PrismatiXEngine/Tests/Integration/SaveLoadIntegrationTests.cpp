@@ -613,14 +613,43 @@ void TestProfileAndSettingsSchemas() {
     settings.highContrast = true;
     settings.reducedMotion = true;
     settings.selfVoicing = true;
+    const int f11 = px::Input::KeyCode("F11").value_or(0);
+    px::Input sourceInput;
+    Check(f11 > 0 &&
+              sourceInput.RebindKey("quick-save", f11).status ==
+                  px::KeyRebindStatus::Applied,
+          "input map can author a portable keyboard settings override");
+    settings.keyboardBindings = sourceInput.CaptureKeyboardBindings();
     Check(settings.Save(settingsPath, nullptr), "game settings should be written with the current schema");
 
     px::progress::GameSettings loadedSettings;
     Check(loadedSettings.Load(settingsPath, nullptr), "game settings should load with the current schema");
     Check(
-        loadedSettings.bgmVolume == 64 && loadedSettings.voiceVolume == 96 && loadedSettings.language == "ja-JP" && loadedSettings.textScale == 1.25f && loadedSettings.highContrast && loadedSettings.reducedMotion && loadedSettings.selfVoicing,
-        "game settings should preserve audio, locale, text scale, and accessibility options"
+        loadedSettings.bgmVolume == 64 && loadedSettings.voiceVolume == 96 && loadedSettings.language == "ja-JP" && loadedSettings.textScale == 1.25f && loadedSettings.highContrast && loadedSettings.reducedMotion && loadedSettings.selfVoicing && loadedSettings.keyboardBindings.at("quick-save") == std::vector<int>{f11},
+        "game settings should preserve audio, locale, accessibility, and keyboard overrides"
     );
+    px::Input restoredInput;
+    Check(restoredInput.RestoreKeyboardBindings(loadedSettings.keyboardBindings) &&
+              restoredInput.KeyBindings("quick-save") ==
+                  std::vector<int>{f11},
+          "a saved shortcut is applied by a fresh runtime input map");
+
+    px::progress::Json invalidBindings{
+        {"format", "PrismatiXSettings"}, {"schemaRevision", 2},
+        {"keyboardBindings", {{"quick-save", "not-an-array"}}}};
+    Check(px::progress::SaveJson(settingsPath, invalidBindings, nullptr),
+          "invalid keyboard settings fixture should be written");
+    Check(!loadedSettings.Load(settingsPath, nullptr) &&
+              loadedSettings.keyboardBindings.at("quick-save") ==
+                  std::vector<int>{f11},
+          "invalid keyboard binding type must not partially replace settings");
+    px::progress::Json settingsWithoutBindings{
+        {"format", "PrismatiXSettings"}, {"schemaRevision", 2}};
+    Check(px::progress::SaveJson(settingsPath, settingsWithoutBindings, nullptr),
+          "older settings without keyboard overrides should be written");
+    Check(loadedSettings.Load(settingsPath, nullptr) &&
+              loadedSettings.keyboardBindings.empty(),
+          "settings without keyboard overrides restore engine defaults");
 
     px::progress::Json legacySettings{ { "version", 4 }, { "language", "legacy" } };
     Check(px::progress::SaveJson(settingsPath, legacySettings, nullptr), "legacy settings fixture should be written");

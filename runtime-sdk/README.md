@@ -98,6 +98,25 @@ if (ctx.input.actionDown("toggle-skip")) {
 }
 ```
 
+For a keyboard settings screen, inspect the current scancodes and use a
+readable SDL key name to replace one action's keyboard shortcut atomically:
+
+```ts
+const current = ctx.input.keyBindings("quick-save").map(ctx.input.keyName);
+const result = ctx.input.rebindKey("quick-save", "F11");
+if (result.status === "conflict") {
+  // Show result.conflicts and let the player choose another key or allow sharing.
+}
+```
+
+`rebindKey` leaves gamepad bindings untouched. Unknown actions and invalid key
+names are reported without altering the old binding. Passing `true` as its
+third argument explicitly permits a shared key. The native Player persists
+keyboard overrides in its existing settings file, including actions that a
+script registers later. Other hosts must persist the native Input binding map
+themselves. Screen-specific action contexts and a ready-made remapping UI are
+not yet provided.
+
 Extension-owned state participates in save, seek, and rollback through a
 versioned, deterministic JSON provider. Capture, restore, and migration are
 synchronous and may not call back into engine operations.

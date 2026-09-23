@@ -76,6 +76,20 @@ struct InputEvent {
     std::string action;
 };
 
+enum class KeyRebindStatus : std::uint8_t {
+    Applied,
+    UnknownAction,
+    InvalidScancode,
+    Conflict,
+};
+
+struct KeyRebindResult {
+    KeyRebindStatus status = KeyRebindStatus::UnknownAction;
+    std::vector<std::string> conflicts;
+};
+
+using KeyboardBindingMap = std::map<std::string, std::vector<int>, std::less<>>;
+
 class Input {
 public:
     Input();
@@ -101,6 +115,20 @@ public:
     [[nodiscard]] bool ClearBindings(std::string_view action);
     [[nodiscard]] bool BindKey(std::string_view action, int scancode);
     [[nodiscard]] bool BindGamepadButton(std::string_view action, int button);
+    [[nodiscard]] static std::optional<int> KeyCode(std::string_view name);
+    [[nodiscard]] static std::string KeyName(int scancode);
+    [[nodiscard]] std::vector<int> KeyBindings(std::string_view action) const;
+    // Atomically replaces keyboard bindings only; gamepad bindings are kept.
+    // Existing shared defaults remain valid, but a new collision is reported
+    // unless the caller explicitly allows it.
+    [[nodiscard]] KeyRebindResult RebindKey(std::string_view action,
+                                            int scancode,
+                                            bool allowConflict = false);
+    [[nodiscard]] KeyboardBindingMap CaptureKeyboardBindings() const;
+    // Validates the entire map before applying it. Actions registered later
+    // receive their saved keys when RegisterAction is called.
+    [[nodiscard]] bool RestoreKeyboardBindings(const KeyboardBindingMap& bindings);
+    void ResetKeyboardBindings();
     [[nodiscard]] bool ActionPressed(std::string_view action) const;
     [[nodiscard]] bool ActionDown(std::string_view action) const;
     [[nodiscard]] bool InjectAction(std::string_view action);
@@ -203,6 +231,7 @@ private:
     std::array<std::set<int>,kActionCount> m_gamepadBindings;
     std::set<InputAction> m_injectedActions;
     std::map<std::string,NamedBindings,std::less<>> m_namedBindings;
+    KeyboardBindingMap m_pendingKeyBindings;
     std::set<std::string,std::less<>> m_injectedNamedActions;
     std::vector<InputEvent> m_events;
     std::unordered_set<std::uint64_t> m_consumedEvents;

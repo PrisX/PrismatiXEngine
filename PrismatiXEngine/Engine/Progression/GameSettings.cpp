@@ -51,6 +51,20 @@ PersistLoadStatus GameSettings::LoadWithFallback(
             j.value("reducedMotion", candidate.reducedMotion);
         candidate.selfVoicing =
             j.value("selfVoicing", candidate.selfVoicing);
+        candidate.keyboardBindings.clear();
+        if (j.contains("keyboardBindings")) {
+            const auto& rawBindings = j.at("keyboardBindings");
+            if (!rawBindings.is_object() || rawBindings.size() > 1'024)
+                throw Json::type_error::create(
+                    302, "keyboardBindings must be a bounded object", &rawBindings);
+            for (auto it = rawBindings.begin(); it != rawBindings.end(); ++it) {
+                if (!it.value().is_array() || it.value().size() > 32)
+                    throw Json::type_error::create(
+                        302, "each keyboard binding must be a bounded array", &it.value());
+                candidate.keyboardBindings[it.key()] =
+                    it.value().get<std::vector<int>>();
+            }
+        }
         *this = std::move(candidate);
         return PersistLoadStatus::Loaded;
     } catch (const Json::exception& error) {
@@ -84,6 +98,7 @@ bool GameSettings::Save(const std::string& path, const crypto::Key* key) const {
     j["highContrast"] = highContrast;
     j["reducedMotion"] = reducedMotion;
     j["selfVoicing"] = selfVoicing;
+    if (!keyboardBindings.empty()) j["keyboardBindings"] = keyboardBindings;
     return SaveJson(path, j, key);
 }
 

@@ -672,6 +672,13 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         "Save/config.dat", &m_saveKey, m_saveFallbackKeys);
     m_profileWritable = profileLoad != progress::PersistLoadStatus::Failed;
     m_settingsWritable = settingsLoad != progress::PersistLoadStatus::Failed;
+    if (settingsLoad == progress::PersistLoadStatus::Loaded &&
+        !m_settings.keyboardBindings.empty() &&
+        !m_runtime.GetInput().RestoreKeyboardBindings(
+            m_settings.keyboardBindings)) {
+        m_settingsWritable = false;
+        PX_LOG_ERROR("Saved keyboard bindings are invalid; settings writes suppressed");
+    }
     m_saves.Configure("Save", &m_saveKey, m_saveFallbackKeys);
     PX_LOG_DEBUG("Player boot: persistence configured");
     m_runtime.Audio().SetBGMVolume(m_settings.bgmVolume);
@@ -1534,6 +1541,7 @@ bool PlayerApp::SaveSettingsIfWritable() {
             "Settings write suppressed because the existing file failed to load");
         return false;
     }
+    m_settings.keyboardBindings = m_runtime.GetInput().CaptureKeyboardBindings();
     return m_settings.SavePreservingExisting(
         "Save/config.dat", &m_saveKey, m_saveFallbackKeys);
 }
@@ -2490,6 +2498,7 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         const std::string locale=m_settings.language;
         const bool fullscreen=m_settings.fullscreen;
         m_settings=progress::GameSettings{};
+        m_runtime.GetInput().ResetKeyboardBindings();
         m_settings.language=locale;
         m_settings.fullscreen=fullscreen;
         audio.SetBGMVolume(m_settings.bgmVolume);

@@ -2845,6 +2845,66 @@ public:
                     context, services.input->BindKey(
                                  first, static_cast<int>(integer)));
             }
+            if (operation == "input.keyBindings") {
+                if (!StringArgument(count, values, 0, first) || first.empty())
+                    return JS_ThrowTypeError(
+                        context, "GetInputKeyBindings requires an action");
+                VariantArray bindings;
+                for (const int scancode : services.input->KeyBindings(first))
+                    bindings.emplace_back(scancode);
+                return ToJavaScript(Variant(std::move(bindings)));
+            }
+            if (operation == "input.keyCode") {
+                if (!StringArgument(count, values, 0, first))
+                    return JS_ThrowTypeError(context, "key name must be a string");
+                const auto code = Input::KeyCode(first);
+                return code ? JS_NewInt32(context, *code) : JS_NULL;
+            }
+            if (operation == "input.keyName") {
+                if (!IntegerArgument(count, values, 0, integer) ||
+                    integer < (std::numeric_limits<int>::min)() ||
+                    integer > (std::numeric_limits<int>::max)())
+                    return JS_ThrowTypeError(context, "scancode must be an integer");
+                return JS_NewString(context, Input::KeyName(static_cast<int>(integer)).c_str());
+            }
+            if (operation == "input.rebindKey") {
+                if (!StringArgument(count, values, 0, first) || first.empty())
+                    return JS_ThrowTypeError(
+                        context, "RebindInputKey requires an action");
+                int scancode = 0;
+                if (count >= 2 && JS_IsString(values[1])) {
+                    if (!StringArgument(count, values, 1, second))
+                        return JS_ThrowTypeError(context, "key name must be a string");
+                    scancode = Input::KeyCode(second).value_or(0);
+                } else if (IntegerArgument(count, values, 1, integer) &&
+                           integer >= (std::numeric_limits<int>::min)() &&
+                           integer <= (std::numeric_limits<int>::max)()) {
+                    scancode = static_cast<int>(integer);
+                } else {
+                    return JS_ThrowTypeError(
+                        context, "RebindInputKey requires a key name or integer scancode");
+                }
+                boolean = false;
+                if (count >= 3 && !JS_IsUndefined(values[2]) &&
+                    !BoolArgument(count, values, 2, boolean))
+                    return JS_ThrowTypeError(
+                        context, "allowConflict must be boolean");
+                const auto result = services.input->RebindKey(
+                    first, scancode, boolean);
+                const char* status = "unknown-action";
+                switch (result.status) {
+                    case KeyRebindStatus::Applied: status = "applied"; break;
+                    case KeyRebindStatus::UnknownAction: break;
+                    case KeyRebindStatus::InvalidScancode:
+                        status = "invalid-scancode"; break;
+                    case KeyRebindStatus::Conflict: status = "conflict"; break;
+                }
+                VariantArray conflicts;
+                for (const auto& action : result.conflicts)
+                    conflicts.emplace_back(action);
+                return ToJavaScript(Variant(VariantObject{
+                    {"status", status}, {"conflicts", std::move(conflicts)}}));
+            }
             if (operation == "input.mouseX") return JS_NewFloat64(context, services.input->MouseX());
             if (operation == "input.mouseY") return JS_NewFloat64(context, services.input->MouseY());
             if (operation == "input.leftClick") return JS_NewBool(context, services.input->LeftClick());
@@ -3179,6 +3239,10 @@ public:
                 SuppressInputDefault: { value: bindRuntime("input.suppressDefault") },
                 RegisterInputAction: { value: bindRuntime("input.registerAction") },
                 BindInputKey: { value: bindRuntime("input.bindKey") },
+                GetInputKeyBindings: { value: bindRuntime("input.keyBindings") },
+                GetInputKeyCode: { value: bindRuntime("input.keyCode") },
+                GetInputKeyName: { value: bindRuntime("input.keyName") },
+                RebindInputKey: { value: bindRuntime("input.rebindKey") },
                 IsNamedInputActionPressed: { value: bindRuntime("input.namedActionPressed") },
                 IsNamedInputActionDown: { value: bindRuntime("input.namedActionDown") },
                 GetLogicalSize: { value: bindRuntime("renderer.logicalSize") },

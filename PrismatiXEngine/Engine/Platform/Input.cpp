@@ -89,7 +89,8 @@ void Input::ClearBindings(const InputAction action) {
 }
 
 void Input::BindKey(const InputAction action,const int scancode) {
-    if(action==InputAction::Count||scancode<0)return;
+    if(action==InputAction::Count || scancode <= SDL_SCANCODE_UNKNOWN ||
+       scancode >= SDL_SCANCODE_COUNT) return;
     m_keyBindings[ActionIndex(action)].insert(scancode);
     const std::string_view name = ActionName(action);
     if (!HasAction(name)) (void)RegisterAction(std::string(name));
@@ -106,7 +107,16 @@ void Input::BindGamepadButton(const InputAction action,const int button) {
 
 bool Input::RegisterAction(std::string action) {
     if (action.empty() || action.find('\0') != std::string::npos) return false;
-    return m_namedBindings.try_emplace(std::move(action)).second;
+    const auto [found, inserted] = m_namedBindings.try_emplace(std::move(action));
+    if (!inserted) return false;
+    if (const auto pending = m_pendingKeyBindings.find(found->first);
+        pending != m_pendingKeyBindings.end()) {
+        found->second.keys = {pending->second.begin(), pending->second.end()};
+        if (const auto builtin = BuiltinAction(found->first))
+            m_keyBindings[ActionIndex(*builtin)] = found->second.keys;
+        m_pendingKeyBindings.erase(pending);
+    }
+    return true;
 }
 
 bool Input::HasAction(const std::string_view action) const {
@@ -117,6 +127,7 @@ bool Input::UnregisterAction(const std::string_view action) {
     if (BuiltinAction(action)) return false;
     const std::string name(action);
     m_injectedNamedActions.erase(name);
+    m_pendingKeyBindings.erase(name);
     return m_namedBindings.erase(name) != 0;
 }
 
@@ -133,7 +144,9 @@ bool Input::ClearBindings(const std::string_view action) {
 
 bool Input::BindKey(const std::string_view action, const int scancode) {
     const auto found = m_namedBindings.find(action);
-    if (found == m_namedBindings.end() || scancode < 0) return false;
+    if (found == m_namedBindings.end() ||
+        scancode <= SDL_SCANCODE_UNKNOWN ||
+        scancode >= SDL_SCANCODE_COUNT) return false;
     found->second.keys.insert(scancode);
     if (const auto builtin = BuiltinAction(action))
         m_keyBindings[ActionIndex(*builtin)].insert(scancode);
@@ -147,6 +160,102 @@ bool Input::BindGamepadButton(const std::string_view action, const int button) {
     if (const auto builtin = BuiltinAction(action))
         m_gamepadBindings[ActionIndex(*builtin)].insert(button);
     return true;
+}
+
+std::optional<int> Input::KeyCode(const std::string_view name) {
+    if (name.empty() || name.find('\0') != std::string_view::npos)
+        return std::nullopt;
+    const auto scancode = SDL_GetScancodeFromName(std::string(name).c_str());
+    if (scancode == SDL_SCANCODE_UNKNOWN) return std::nullopt;
+    return static_cast<int>(scancode);
+}
+
+std::string Input::KeyName(const int scancode) {
+    if (scancode <= SDL_SCANCODE_UNKNOWN || scancode >= SDL_SCANCODE_COUNT)
+        return {};
+    const char* name = SDL_GetScancodeName(static_cast<SDL_Scancode>(scancode));
+    return name ? std::string(name) : std::string{};
+}
+
+std::vector<int> Input::KeyBindings(const std::string_view action) const {
+    const auto found = m_namedBindings.find(action);
+    if (found == m_namedBindings.end()) return {};
+    return {found->second.keys.begin(), found->second.keys.end()};
+}
+
+KeyRebindResult Input::RebindKey(const std::string_view action,
+                                 const int scancode,
+                                 const bool allowConflict) {
+    const auto found = m_namedBindings.find(action);
+    if (found == m_namedBindings.end())
+        return {.status = KeyRebindStatus::UnknownAction};
+    if (scancode <= SDL_SCANCODE_UNKNOWN || scancode >= SDL_SCANCODE_COUNT)
+        return {.status = KeyRebindStatus::InvalidScancode};
+
+    KeyRebindResult result{.status = KeyRebindStatus::Applied};
+    for (const auto& [otherAction, bindings] : m_namedBindings) {
+        if (otherAction != action && bindings.keys.contains(scancode))
+            result.conflicts.push_back(otherAction);
+    }
+    if (!allowConflict && !result.conflicts.empty() &&
+        !found->second.keys.contains(scancode)) {
+        result.status = KeyRebindStatus::Conflict;
+        return result;
+    }
+    found->second.keys = {scancode};
+    if (const auto builtin = BuiltinAction(action))
+        m_keyBindings[ActionIndex(*builtin)] = {scancode};
+    return result;
+}
+
+KeyboardBindingMap Input::CaptureKeyboardBindings() const {
+    KeyboardBindingMap result = m_pendingKeyBindings;
+    for (const auto& [action, bindings] : m_namedBindings)
+        result[action] = {bindings.keys.begin(), bindings.keys.end()};
+    return result;
+}
+
+bool Input::RestoreKeyboardBindings(const KeyboardBindingMap& bindings) {
+    if (bindings.size() > 1'024) return false;
+    for (const auto& [action, keys] : bindings) {
+        if (action.empty() || action.size() > 512 ||
+            action.find('\0') != std::string::npos || keys.size() > 32)
+            return false;
+        std::set<int> unique;
+        for (const int scancode : keys) {
+            if (scancode <= SDL_SCANCODE_UNKNOWN ||
+                scancode >= SDL_SCANCODE_COUNT || !unique.insert(scancode).second)
+                return false;
+        }
+    }
+    auto named = m_namedBindings;
+    auto builtins = m_keyBindings;
+    KeyboardBindingMap pending;
+    for (const auto& [action, keys] : bindings) {
+        const auto found = named.find(action);
+        if (found == named.end()) {
+            pending.emplace(action, keys);
+            continue;
+        }
+        found->second.keys = {keys.begin(), keys.end()};
+        if (const auto builtin = BuiltinAction(action))
+            builtins[ActionIndex(*builtin)] = found->second.keys;
+    }
+    m_namedBindings = std::move(named);
+    m_keyBindings = std::move(builtins);
+    m_pendingKeyBindings = std::move(pending);
+    return true;
+}
+
+void Input::ResetKeyboardBindings() {
+    const Input defaults;
+    for (auto& [action, bindings] : m_namedBindings) {
+        const auto found = defaults.m_namedBindings.find(action);
+        bindings.keys = found == defaults.m_namedBindings.end()
+                            ? std::set<int>{} : found->second.keys;
+    }
+    m_keyBindings = defaults.m_keyBindings;
+    m_pendingKeyBindings.clear();
 }
 
 bool Input::ActionPressed(const std::string_view action) const {

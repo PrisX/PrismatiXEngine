@@ -670,7 +670,10 @@ void AudioEngine::Update() {
     for (const auto& [track, handle] : m_trackPlaybacks) {
         const PlaybackRecord* record = Find(handle);
         if (record && record->state.status == PlaybackStatus::Playing &&
-            track && !MIX_TrackPlaying(track) && !MIX_TrackPaused(track))
+            track && !MIX_TrackPlaying(track) && !MIX_TrackPaused(track) &&
+            // The intro can end between the pending-loop check above and
+            // this sweep. Defer completion so the next Update starts its loop.
+            !(handle == m_musicHandle && !m_pendingLoop.empty()))
             completed.push_back(handle);
     }
     for (const AudioHandle handle : completed)

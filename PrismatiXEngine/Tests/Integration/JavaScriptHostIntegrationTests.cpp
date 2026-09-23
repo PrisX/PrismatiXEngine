@@ -950,6 +950,25 @@ void TestPhaseThreePublicRuntimeSurfaces(px::test::Suite& suite) {
         }
         if (!Engine.RegisterInputAction("portrait.interact"))
             throw new Error("custom input action registration failed");
+        if (!Engine.BindInputKey("portrait.interact", 27) ||
+            Engine.GetInputKeyBindings("portrait.interact")[0] !== 27)
+            throw new Error("input key inspection failed");
+        const conflict = Engine.RebindInputKey("portrait.interact", 44);
+        if (conflict.status !== "conflict" ||
+            !conflict.conflicts.includes("accept") ||
+            Engine.GetInputKeyBindings("portrait.interact")[0] !== 27)
+            throw new Error("conflicting input rebind changed the old shortcut");
+        if (Engine.GetInputKeyCode("F1") !== 58 ||
+            Engine.GetInputKeyName(58) !== "F1")
+            throw new Error("readable key names did not round-trip");
+        const rebound = Engine.RebindInputKey("portrait.interact", "F1");
+        if (rebound.status !== "applied" ||
+            Engine.GetInputKeyBindings("portrait.interact")[0] !== 58)
+            throw new Error("input shortcut was not replaced");
+        if (Engine.RebindInputKey("portrait.interact", "not-a-key").status !==
+                "invalid-scancode" ||
+            Engine.GetInputKeyBindings("portrait.interact")[0] !== 58)
+            throw new Error("invalid key name changed the shortcut");
         if (!Engine.UpsertRenderNode("portrait.mouth", {
               kind: "image", phase: "after-stage", order: 4,
               path: "Assets/portrait.png",

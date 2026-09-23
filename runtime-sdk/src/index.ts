@@ -361,6 +361,10 @@ export type LogicalInputAction =
   | "toggle-ui" | "quick-save" | "quick-load" | "rollback" | "pause";
 
 export type InputActionId = LogicalInputAction | (string & {});
+export interface KeyRebindResult {
+  readonly status: "applied" | "unknown-action" | "invalid-scancode" | "conflict";
+  readonly conflicts: readonly string[];
+}
 export type InputEventType =
   | "pointer-down" | "pointer-up" | "pointer-move" | "pointer-wheel"
   | "text" | "action";
@@ -595,6 +599,10 @@ export interface PrismatiXEngine {
   SuppressInputDefault(eventId: number): boolean;
   RegisterInputAction(action: string): boolean;
   BindInputKey(action: string, scancode: number): boolean;
+  GetInputKeyBindings(action: string): readonly number[];
+  GetInputKeyCode(name: string): number | null;
+  GetInputKeyName(scancode: number): string;
+  RebindInputKey(action: string, key: string | number, allowConflict?: boolean): KeyRebindResult;
   IsNamedInputActionPressed(action: string): boolean;
   IsNamedInputActionDown(action: string): boolean;
   RegisterStateProvider<T extends JsonValue>(
@@ -743,6 +751,10 @@ export const ENGINE_HOST_BINDINGS = [
   "SuppressInputDefault",
   "RegisterInputAction",
   "BindInputKey",
+  "GetInputKeyBindings",
+  "GetInputKeyCode",
+  "GetInputKeyName",
+  "RebindInputKey",
   "IsNamedInputActionPressed",
   "IsNamedInputActionDown",
   "RegisterStateProvider",
@@ -919,6 +931,10 @@ export interface PrismatiXContext {
     suppressDefault(eventId: number): boolean;
     registerAction(action: string): boolean;
     bindKey(action: string, scancode: number): boolean;
+    keyBindings(action: string): readonly number[];
+    keyCode(name: string): number | null;
+    keyName(scancode: number): string;
+    rebindKey(action: string, key: string | number, allowConflict?: boolean): KeyRebindResult;
     namedActionPressed(action: string): boolean;
     namedActionDown(action: string): boolean;
   };
@@ -1203,6 +1219,11 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
       suppressDefault: (eventId) => engine.SuppressInputDefault(eventId),
       registerAction: (action) => engine.RegisterInputAction(action),
       bindKey: (action, scancode) => engine.BindInputKey(action, scancode),
+      keyBindings: (action) => engine.GetInputKeyBindings(action),
+      keyCode: (name) => engine.GetInputKeyCode(name),
+      keyName: (scancode) => engine.GetInputKeyName(scancode),
+      rebindKey: (action, key, allowConflict) =>
+        engine.RebindInputKey(action, key, allowConflict),
       namedActionPressed: (action) => engine.IsNamedInputActionPressed(action),
       namedActionDown: (action) => engine.IsNamedInputActionDown(action),
     },

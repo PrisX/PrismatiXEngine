@@ -160,6 +160,10 @@ const engine = {
   SuppressInputDefault: () => true,
   RegisterInputAction: () => true,
   BindInputKey: () => true,
+  GetInputKeyBindings: () => [44],
+  GetInputKeyCode: () => 58,
+  GetInputKeyName: () => "F1",
+  RebindInputKey: () => ({status: "applied" as const, conflicts: []}),
   IsNamedInputActionPressed: () => false,
   IsNamedInputActionDown: () => false,
   RegisterStateProvider: () => undefined,
@@ -260,7 +264,11 @@ if (!ctx.input.actionPressed("advance") || ctx.input.actionDown("pause")) throw 
 const event = ctx.input.events()[0];
 if (!event || event.action !== "sample.interact" || !ctx.input.consume(event.id) ||
     !ctx.input.suppressDefault(event.id) || !ctx.input.registerAction("sample.interact") ||
-    !ctx.input.bindKey("sample.interact", 44)) throw new Error("input event facade is not wired");
+    !ctx.input.bindKey("sample.interact", 44) ||
+    ctx.input.keyBindings("sample.interact")[0] !== 44 ||
+    ctx.input.keyCode("F1") !== 58 || ctx.input.keyName(58) !== "F1" ||
+    ctx.input.rebindKey("sample.interact", "F1").status !== "applied")
+  throw new Error("input event facade is not wired");
 ctx.state.registerProvider("sample", 1, {
   capture: () => ({value: 1}),
   restore: () => undefined,
