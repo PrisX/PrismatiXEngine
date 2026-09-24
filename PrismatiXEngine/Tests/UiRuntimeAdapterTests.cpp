@@ -1071,6 +1071,45 @@ int main() {
     Check(applicationActions == 1, "shared application dispatches authored Actions through UIContext");
     Check(applicationButton->Opacity() == 0.25f, "shared application installs Behavior using the same activation");
 
+    auto motionDocument = parsed.document;
+    auto motionNode = std::ranges::find_if(motionDocument.nodes,
+        [](const px::sdk::UiNode& node) { return node.name == "Logo"; });
+    Check(motionNode != motionDocument.nodes.end(), "motion test image node must exist");
+    motionNode->runtimeType = "MotionRect";
+    motionNode->assetId.reset();
+    motionNode->runtimeProperties["path"] = std::string{"Content/Motion/logo.pxmotion"};
+    constexpr auto motionSource = R"({
+      "format":"PrismatiXMotion","schemaRevision":1,"id":"logo",
+      "canvas":{"width":320,"height":120},"duration":1,"loop":false,
+      "layers":[{"id":"body","image":"Assets/body.png","width":100,"height":100}],
+      "tracks":[{"layer":"body","property":"opacity","keys":[
+        {"time":0,"value":0,"curve":"linear"},
+        {"time":1,"value":1,"curve":"linear"}]}]})";
+    px::ui::UIContext motionContext;
+    Check(motionContext.Commands().Register("game.start",
+        [](const px::Variant&) { return px::Status::Ok(); }).IsOk(),
+        "motion test action route must register");
+    px::ui::UiApplication motionApplication(motionContext);
+    auto motionApplied = motionApplication.ApplyDocument(motionDocument,
+        {.sourcePath = "Content/UI/Title.pxui",
+         .loadMotion = [](const std::string_view path) -> std::optional<std::string> {
+             return path == "Content/Motion/logo.pxmotion"
+                 ? std::optional<std::string>{motionSource} : std::nullopt;
+         }});
+    Check(static_cast<bool>(motionApplied), "authored MotionRect must load through UiApplication");
+    auto* motion = dynamic_cast<px::ui::MotionRect*>(motionContext.Root()->Find(*imageId));
+    Check(motion && motion->Clip() && motion->Playing(),
+          "MotionRect must install a playable layered clip");
+    motion->Update(0.5f);
+    Check(std::abs(motion->Position() - 0.5) < 0.0001,
+          "MotionRect playback clock must advance deterministically");
+    const auto* installedMotionRoot = motionContext.Root();
+    const auto missingMotion = motionApplication.ApplyDocument(motionDocument,
+        {.sourcePath = "Content/UI/Title.pxui"});
+    Check(!missingMotion && HasDiagnostic(missingMotion, "PXUIMOTION1002") &&
+              motionContext.Root() == installedMotionRoot,
+          "missing motion loader must reject without replacing the installed UI");
+
     auto visualSceneJson = nlohmann::json::parse(scene);
     visualSceneJson["schemaRevision"] = 2;
     visualSceneJson["visualStateGroups"] = nlohmann::json::array({

@@ -872,6 +872,9 @@ public:
                                : std::optional<px::ui::UiComponentSource>{
                                      found->second};
                 });
+            m_hud.SetUiMotionLoader([this](const std::string_view path) {
+                return m_runtime.VFS().ReadText(std::string(path));
+            });
             const std::string uiSource =
                 "memory://preview/ui/" +
                 uiScene.value("id", std::string{"scene"}) + ".pxui";

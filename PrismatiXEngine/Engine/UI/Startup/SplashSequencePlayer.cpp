@@ -75,6 +75,7 @@ bool SplashSequencePlayer::LoadCurrent() {
         {.sourcePath=entry.scene.lastKnownPath,
          .resolveAsset=m_services.resolveAsset,
          .loadComponent=m_services.loadComponent,
+         .loadMotion=m_services.loadMotion,
          .previewSafeMode=false,
          .diagnosticOverlay=false});
     if (!applied) {

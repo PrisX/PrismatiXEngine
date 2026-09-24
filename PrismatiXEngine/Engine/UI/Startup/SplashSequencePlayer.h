@@ -21,6 +21,7 @@ public:
         SceneLoader loadScene;
         UiAssetResolver resolveAsset;
         UiComponentLoader loadComponent;
+        UiMotionLoader loadMotion;
         AudioPlayer playAudio;
         DiagnosticSink diagnostics;
     };

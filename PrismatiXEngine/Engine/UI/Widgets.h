@@ -3,9 +3,12 @@
 
 #include "Engine/UI/Control.h"
 #include "Engine/Graphics/Texture.h"
+#include "Engine/SDK/Motion.h"
 
 #include <algorithm>
 #include <functional>
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -185,6 +188,47 @@ private:
     HorizontalTextAlignment m_horizontalAlignment = HorizontalTextAlignment::Center;
     VerticalTextAlignment m_verticalAlignment = VerticalTextAlignment::Center;
     bool m_lockAspectRatio = true;
+};
+
+class MotionRect final : public Control {
+public:
+    using SourceLoader =
+        std::function<std::optional<std::string>(std::string_view)>;
+
+    explicit MotionRect(std::string name = "MotionRect") : Control(std::move(name)) {
+        SetMouseFilter(MouseFilter::Ignore);
+    }
+    [[nodiscard]] std::string_view TypeName() const override { return "MotionRect"; }
+    Status SetPath(std::string value);
+    [[nodiscard]] const std::string& Path() const { return m_path; }
+    Status SetSourceLoader(SourceLoader loader);
+    void SetAutoplay(bool value) {
+        m_autoplay = value;
+        if (!m_playingExplicit) m_playing = value;
+    }
+    [[nodiscard]] bool Autoplay() const { return m_autoplay; }
+    void SetPlaying(bool value) { m_playingExplicit = true; m_playing = value; }
+    [[nodiscard]] bool Playing() const { return m_playing; }
+    Status SetSpeed(double value);
+    [[nodiscard]] double Speed() const { return m_speed; }
+    void Seek(double seconds);
+    [[nodiscard]] double Position() const { return m_position; }
+    [[nodiscard]] const sdk::MotionClip* Clip() const { return m_clip.get(); }
+    void Update(float deltaSeconds) override;
+
+protected:
+    void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) override;
+
+private:
+    std::string m_path;
+    SourceLoader m_loader;
+    std::unique_ptr<sdk::MotionClip> m_clip;
+    std::unique_ptr<sdk::MotionSampler> m_sampler;
+    double m_position = 0;
+    double m_speed = 1;
+    bool m_autoplay = true;
+    bool m_playing = true;
+    bool m_playingExplicit = false;
 };
 
 class ProgressBar : public Control {

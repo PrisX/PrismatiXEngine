@@ -1,4 +1,5 @@
 #include "Engine/UI/Widgets.h"
+#include "Engine/Animation/MotionRenderer.h"
 #include "Engine/Text/Typography.h"
 
 #include "Engine/Graphics/Renderer2D.h"
@@ -180,6 +181,95 @@ void TextureRect::SetOpacity(float value) { m_opacity = std::clamp(value, 0.0f, 
 void TextureRect::DrawSelf(graphics::Renderer2D& renderer, const Theme&) {
     if (!m_path.empty()) renderer.DrawImageInRect(m_path,LayoutRect(),ToScaleMode(m_scaleMode),
         Horizontal(m_horizontalAlignment),Vertical(m_verticalAlignment),static_cast<std::uint8_t>(m_opacity*255.0f));
+}
+
+Status MotionRect::SetPath(std::string value) {
+    if (value == m_path && m_clip) return Status::Ok();
+    if (value.empty()) {
+        m_path.clear();
+        m_sampler.reset();
+        m_clip.reset();
+        m_position = 0;
+        return Status::Ok();
+    }
+    if (!m_loader) {
+        m_path = std::move(value);
+        return Status::Ok();
+    }
+    const auto text = m_loader(value);
+    if (!text) {
+        diag::Diagnostic diagnostic{.severity = diag::Severity::Error,
+            .code = "PXUIMOTION1001", .category = "UI.Motion",
+            .message = "Motion descriptor is missing: " + value};
+        diagnostic.source.path = value;
+        return Status::Fail(std::move(diagnostic));
+    }
+    auto parsed = sdk::ParseMotion(*text, value);
+    if (!parsed.Valid()) {
+        std::vector<diag::Diagnostic> diagnostics;
+        for (const auto& issue : parsed.diagnostics) {
+            diag::Diagnostic diagnostic{.severity = diag::Severity::Error,
+                .code = issue.code, .category = "UI.Motion", .message = issue.message};
+            diagnostic.source.path = issue.path;
+            diagnostics.push_back(std::move(diagnostic));
+        }
+        return Status::Fail(std::move(diagnostics));
+    }
+    auto clip = std::make_unique<sdk::MotionClip>(std::move(*parsed.clip));
+    auto sampler = std::make_unique<sdk::MotionSampler>(*clip);
+    sampler->Seek(m_position);
+    m_path = std::move(value);
+    m_sampler = std::move(sampler);
+    m_clip = std::move(clip);
+    m_position = m_sampler->Position();
+    return Status::Ok();
+}
+
+Status MotionRect::SetSourceLoader(SourceLoader loader) {
+    m_loader = std::move(loader);
+    if (!m_loader && !m_path.empty()) {
+        diag::Diagnostic diagnostic{.severity = diag::Severity::Error,
+            .code = "PXUIMOTION1002", .category = "UI.Motion",
+            .message = "MotionRect requires a motion source loader"};
+        diagnostic.source.path = m_path;
+        return Status::Fail(std::move(diagnostic));
+    }
+    return SetPath(m_path);
+}
+
+Status MotionRect::SetSpeed(const double value) {
+    if (!std::isfinite(value) || value <= 0 || value > 16) {
+        return Status::Fail({.severity = diag::Severity::Error,
+            .code = "PXUIMOTION1003", .category = "UI.Motion",
+            .message = "Motion playback speed must be within (0, 16]"});
+    }
+    m_speed = value;
+    return Status::Ok();
+}
+
+void MotionRect::Seek(const double seconds) {
+    m_position = std::isfinite(seconds) ? std::max(0.0, seconds) : 0.0;
+    if (m_sampler) {
+        m_sampler->Seek(m_position);
+        m_position = m_sampler->Position();
+    }
+}
+
+void MotionRect::Update(const float deltaSeconds) {
+    Control::Update(deltaSeconds);
+    if (!m_playing || !m_clip || !std::isfinite(deltaSeconds) || deltaSeconds <= 0) return;
+    const double next = m_position + static_cast<double>(deltaSeconds) * m_speed;
+    const bool complete = !m_clip->loop && next >= m_clip->duration;
+    Seek(next);
+    if (complete) {
+        m_playing = false;
+        EmitSignal("playbackFinished");
+    }
+}
+
+void MotionRect::DrawSelf(graphics::Renderer2D& renderer, const Theme&) {
+    if (m_clip && m_sampler)
+        animation::DrawMotionPose(renderer, *m_clip, *m_sampler, LayoutRect());
 }
 
 void ProgressBar::SetRange(double minimum, double maximum) {

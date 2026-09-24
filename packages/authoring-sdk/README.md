@@ -282,10 +282,12 @@ create a validated revision-1 `.pxmotion` with parented layers and keyed
 position, scale, rotation, opacity, or step visibility tracks. The default
 canvas mode is `fit`. The native `MotionSampler` can seek deterministically
 without per-frame allocations, and `DrawMotionPose` draws its result through
-the ordinary image renderer. This is currently a programmatic primitive:
-projects collect the image dependencies of declared motion assets, but do not
-yet mount `.pxmotion` in TSX/Story; masks/blur/atlas frames/audio markers are
-not implemented.
+the ordinary image renderer. `Motion` is a TSX UI component backed by the
+native `MotionRect`; Player, splash scenes and both previews can load its
+descriptor, and project compilation collects the clip's image dependencies.
+Story commands, a transition/preload handshake, masks, blur, atlas frames and
+audio markers are not implemented. The image-layer renderer has not yet been
+verified against a motion-specific framebuffer reference.
 See [the motion status and remaining contract](../../docs/architecture/layered-motion-authoring.md).
 
 ```ts
@@ -302,6 +304,10 @@ const logo = serializeMotion({
 if (!logo.valid) throw new Error(JSON.stringify(logo.diagnostics));
 // Write logo.value to Assets/Motion/logo.pxmotion and declare/reference it.
 ```
+
+Use `<Motion path="Assets/Motion/logo.pxmotion" playhead={0} />` inside a
+TSX UI scene. `position={[x, y]}` remains the normal layout coordinate;
+`playhead` is playback time in seconds.
 
 Standalone schema validation cannot prove that a `.pxproject` character descriptor and its `.pxcharacter` document agree, or that expression asset UUIDs exist with a Runtime-compatible kind. Use `validateProjectCharacterResources()` once the project provider has loaded those documents.
 

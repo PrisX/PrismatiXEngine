@@ -918,6 +918,9 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                             ui::UiComponentSource{found->second,*source}}
                        :std::nullopt;
         });
+    m_ui.SetUiMotionLoader([this](const std::string_view path) {
+        return m_runtime.VFS().ReadText(std::string(path));
+    });
     if(m_boot.routeScenes.empty()||!m_boot.routeScenes.contains(m_boot.startRoute)){diag::Diagnostic diagnostic{.severity=diag::Severity::Fatal,.code="PXPLAYER5004",.category="Player.Boot",.message="Route table or startRoute is invalid"};diag::Emit(diagnostic);return false;}
     std::set<std::string> runtimeRoutes;
     for (const auto& [route, _] : m_boot.routeScenes)
@@ -1509,6 +1512,9 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                 if(found==m_uiComponents.end())return std::nullopt;
                 const auto source=m_runtime.VFS().ReadText(found->second);
                 return source?std::optional<ui::UiComponentSource>{ui::UiComponentSource{found->second,*source}}:std::nullopt;
+            },
+            .loadMotion=[this](const std::string_view path){
+                return m_runtime.VFS().ReadText(std::string(path));
             },
             .playAudio=[this](const ResourceRefValue& reference){
                 if(!m_runtime.VFS().Exists(reference.lastKnownPath)){diag::Diagnostic diagnostic{.severity=diag::Severity::Warning,.code="PXBOOT1202",.category="Player.Splash",.message="Splash audio is missing; visual playback will continue",.details=reference.lastKnownPath};diagnostic.source.path=reference.lastKnownPath;return Status::Fail(std::move(diagnostic));}

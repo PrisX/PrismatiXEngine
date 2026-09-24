@@ -281,6 +281,7 @@ Status GalgameUI::ValidateRuntimeState(const UIRuntimeState& state) {
     candidate.m_templates = m_templates;
     candidate.m_studioAssetResolver = m_studioAssetResolver;
     candidate.m_studioComponentLoader = m_studioComponentLoader;
+    candidate.m_studioMotionLoader = m_studioMotionLoader;
     if (const Status installed = candidate.InstallCheckpointRoute(state.surfaceId);
         !installed)
         return installed;
@@ -373,6 +374,7 @@ Status GalgameUI::InstallRouteTemplate(const std::string_view route){
             {.sourcePath=it->second.sourcePath,
              .resolveAsset=m_studioAssetResolver,
              .loadComponent=m_studioComponentLoader,
+             .loadMotion=m_studioMotionLoader,
              .viewModel=&m_viewModel,
              .previewSafeMode=false,
              .diagnosticOverlay=false});
@@ -468,6 +470,7 @@ Status GalgameUI::ValidateAnimationProperty(
     candidate.m_templates = m_templates;
     candidate.m_studioAssetResolver = m_studioAssetResolver;
     candidate.m_studioComponentLoader = m_studioComponentLoader;
+    candidate.m_studioMotionLoader = m_studioMotionLoader;
     if (const Status installed = candidate.InstallCheckpointRoute(state.surfaceId);
         !installed)
         return installed;

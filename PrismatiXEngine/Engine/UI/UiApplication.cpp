@@ -13,6 +13,7 @@
 #include "Engine/UI/UIContext.h"
 #include "Engine/UI/UITypeRegistry.h"
 #include "Engine/UI/VirtualizedView.h"
+#include "Engine/UI/Widgets.h"
 
 namespace px::ui {
 namespace {
@@ -492,17 +493,29 @@ const Variant* ItemField(const Variant& item, std::string_view path) {
     return value;
 }
 
+Status ConfigureMotionControls(scene::Node& node, const UiMotionLoader& loader) {
+    if (auto* motion = dynamic_cast<MotionRect*>(&node)) {
+        if (const auto status = motion->SetSourceLoader(loader); !status) return status;
+    }
+    for (const auto& child : node.Children()) {
+        if (const auto status = ConfigureMotionControls(*child, loader); !status) return status;
+    }
+    return Status::Ok();
+}
+
 class AuthoredItemSource final : public IVirtualItemSource,
                                  public std::enable_shared_from_this<AuthoredItemSource> {
 public:
     AuthoredItemSource(sdk::UiDocument document, sdk::UiItemSource descriptor,
                        IViewModel& model, VirtualizedView& view,
                        const FormatterRegistry& formatters,
-                       UiAssetResolver assets, UiActionSink actions,
+                       UiAssetResolver assets, UiMotionLoader motionLoader,
+                       UiActionSink actions,
                        std::string sourcePath)
         : m_document(std::move(document)), m_descriptor(std::move(descriptor)),
           m_model(model), m_view(view), m_formatters(formatters),
-          m_assets(std::move(assets)), m_actions(std::move(actions)),
+          m_assets(std::move(assets)), m_motionLoader(std::move(motionLoader)),
+          m_actions(std::move(actions)),
           m_sourcePath(std::move(sourcePath)) {}
 
     ~AuthoredItemSource() override {
@@ -524,6 +537,8 @@ public:
                 "PXUISTUDIO2140", "UI item template has no Runtime root", m_sourcePath));
             return Status::Fail(std::move(diagnostics));
         }
+        if (const auto status = ConfigureMotionControls(*prototype.root, m_motionLoader); !status)
+            return status;
         CollectPaths(*prototype.root, {});
         for (const auto& node : m_document.nodes) {
             const auto path = m_nodePaths.find(node.id);
@@ -628,6 +643,10 @@ public:
             for (const auto& issue : tree.diagnostics)
                 diag::Emit(ApplicationError(issue.code, issue.message,
                                              m_sourcePath, issue.nodeId));
+            return nullptr;
+        }
+        if (const auto status = ConfigureMotionControls(*tree.root, m_motionLoader); !status) {
+            for (const auto& diagnostic : status.Diagnostics()) diag::Emit(diagnostic);
             return nullptr;
         }
         context->root = tree.root.get();
@@ -748,6 +767,7 @@ private:
     VirtualizedView& m_view;
     const FormatterRegistry& m_formatters;
     UiAssetResolver m_assets;
+    UiMotionLoader m_motionLoader;
     UiActionSink m_actions;
     std::string m_sourcePath;
     std::uint64_t m_subscription = 0;
@@ -916,6 +936,8 @@ Result<UiApplicationSummary> UiApplication::ApplyDocument(const sdk::UiDocument&
         diagnostics.push_back(ApplicationError("PXUISTUDIO2101", "UI document did not produce a Runtime root", sourcePath));
     }
     if (!diagnostics.empty()) return Result<UiApplicationSummary>::Failure(std::move(diagnostics));
+    if (const auto status = ConfigureMotionControls(*runtimeTree.root, options.loadMotion); !status)
+        return Result<UiApplicationSummary>::Failure(status.Diagnostics());
 
     std::vector<Binding> propertyBindings;
     for (const auto& node : staticDocument.nodes) {
@@ -950,7 +972,7 @@ Result<UiApplicationSummary> UiApplication::ApplyDocument(const sdk::UiDocument&
         auto source = std::make_shared<AuthoredItemSource>(
             std::move(repeater.document), std::move(repeater.descriptor),
             *options.viewModel, *view, m_context.Formatters(),
-            options.resolveAsset, actionSink, sourcePath);
+            options.resolveAsset, options.loadMotion, actionSink, sourcePath);
         if (const auto ready = source->Initialize(); !ready)
             return Result<UiApplicationSummary>::Failure(ready.Diagnostics());
         const auto installed = view->SetSource(source,

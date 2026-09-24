@@ -182,6 +182,16 @@ export interface ImageProps extends UiNodeProps {
   readonly opacity?: number;
 }
 
+/** A layered, time-sampled .pxmotion clip rendered inside a UI layout box. */
+export interface MotionProps extends UiNodeProps {
+  readonly path: string;
+  readonly autoplay?: boolean;
+  readonly playing?: boolean;
+  readonly speed?: number;
+  /** Playback time in seconds; `position` remains the layout coordinate prop. */
+  readonly playhead?: number;
+}
+
 export interface ButtonProps extends Omit<UiNodeProps, "children"> {
   readonly text?: string;
   readonly fontSize?: number;
@@ -422,6 +432,18 @@ export function Image(props: ImageProps): UiElement {
     ...(scaleMode === undefined ? {} : {scaleMode}),
     ...(lockAspectRatio === undefined ? {} : {lockAspectRatio}),
     ...(opacity === undefined ? {} : {opacity}),
+  }});
+}
+
+export function Motion(props: MotionProps): UiElement {
+  const {path, autoplay, playing, speed, playhead, ...rest} = props;
+  return node("image", "MotionRect", {...rest, runtimeProperties: {
+    ...props.runtimeProperties,
+    path,
+    ...(autoplay === undefined ? {} : {autoplay}),
+    ...(playing === undefined ? {} : {playing}),
+    ...(speed === undefined ? {} : {speed}),
+    ...(playhead === undefined ? {} : {position: playhead}),
   }});
 }
 

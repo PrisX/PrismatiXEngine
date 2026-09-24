@@ -84,6 +84,9 @@ public:
     void SetUiComponentLoader(UiComponentLoader loader) {
         m_studioComponentLoader = std::move(loader);
     }
+    void SetUiMotionLoader(UiMotionLoader loader) {
+        m_studioMotionLoader = std::move(loader);
+    }
     void SetActionSink(ActionSink sink) { m_sink = std::move(sink); }
     // Makes an authored command available to a game-specific UI route and
     // forwards its optional string argument to the normal Galgame action
@@ -205,6 +208,7 @@ private:
     std::unordered_map<std::string,Template> m_templates;
     UiAssetResolver m_studioAssetResolver;
     UiComponentLoader m_studioComponentLoader;
+    UiMotionLoader m_studioMotionLoader;
     std::vector<GalgameAction> m_pendingActions;
     std::optional<UIRuntimeState> m_lastGameplayState;
     std::unordered_map<std::string, Visibility> m_timelineVisibilityBase;

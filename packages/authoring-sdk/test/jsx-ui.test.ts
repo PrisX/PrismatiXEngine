@@ -7,6 +7,7 @@ import {
   Control,
   Image,
   ItemsGrid,
+  Motion,
   RichTextLabel,
   Scene,
   Text,
@@ -55,6 +56,23 @@ test("React-free JSX lowering produces canonical UI with deterministic node ids"
   assert.equal(title?.layout.mode, "container");
   assert.deepEqual(title?.bindings, {text: {path: "locale.card.title"}});
   assert.deepEqual(button?.onClick, {id: "dialog.confirm", arguments: {source: "card"}});
+});
+
+test("Motion lowers a layered clip reference without confusing playhead and layout position", () => {
+  const result = compileJsxUi(jsx(Scene, {
+    name: "Motion demo", width: 320, height: 120,
+    children: jsx(Control, {name: "Root", children: jsx(Motion, {
+      name: "Logo", path: "Content/Motion/logo.pxmotion",
+      position: [20, 10], size: [280, 100], playhead: 0.25, speed: 1.5,
+    })}),
+  }), {kind: "scene"});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  const logo = result.value?.nodes.find((node) => node.name === "Logo");
+  assert.equal(logo?.runtimeType, "MotionRect");
+  assert.equal(logo?.layout.x, 20);
+  assert.equal(logo?.runtimeProperties?.path, "Content/Motion/logo.pxmotion");
+  assert.equal(logo?.runtimeProperties?.position, 0.25);
+  assert.equal(logo?.runtimeProperties?.speed, 1.5);
 });
 
 test("JSX supports reusable component documents through the canonical validator", () => {

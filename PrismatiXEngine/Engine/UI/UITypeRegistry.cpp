@@ -85,6 +85,8 @@ const DesignerTypeMetadata* BuiltinDesignerMetadata(std::string_view type) {
         {"TextureRect", DesignerMetadata("Image", "Displays an image asset.", "Display", "ui.image",
                                          {320, 180}, false,
                                          {{"scaleMode", std::string("Fit")}, {"lockAspectRatio", true}}, {"image"})},
+        {"MotionRect", DesignerMetadata("Layered Motion", "Displays a .pxmotion image-layer clip.", "Display",
+                                        "ui.motion", {320, 180}, false, {}, {"motion", "image"})},
         {"NinePatchRect", DesignerMetadata("九宮格圖片", "以可伸縮九宮格邊界顯示圖片資源。", "Display", "ui.nine-patch",
                                             {320, 180}, false, {}, {"image"})},
         {"ProgressBar", DesignerMetadata("Progress Bar", "Displays a normalized progress value.", "Display",
@@ -565,6 +567,34 @@ Status RegisterBuiltinUITypes() {
     auto textureV=StringProperty("verticalAlignment","Display",[](const Object& o){switch(As<TextureRect>(o)->VerticalAlignment()){case VerticalTextAlignment::Top:return std::string("Top");case VerticalTextAlignment::Bottom:return std::string("Bottom");default:return std::string("Center");}},[](Object& o,std::string v){if(v=="Top")As<TextureRect>(o)->SetVerticalAlignment(VerticalTextAlignment::Top);else if(v=="Center")As<TextureRect>(o)->SetVerticalAlignment(VerticalTextAlignment::Center);else if(v=="Bottom")As<TextureRect>(o)->SetVerticalAlignment(VerticalTextAlignment::Bottom);else return TypeError("verticalAlignment expects Top, Center, or Bottom");return Status::Ok();});textureV.editor.displayName="Vertical alignment";textureV.editor.enumChoices={"Top","Center","Bottom"};texture.properties.push_back(std::move(textureV));
     auto opacity=NumberProperty("opacity","Display",[](const Object& o){return As<TextureRect>(o)->Opacity();},[](Object& o,double v){As<TextureRect>(o)->SetOpacity(static_cast<float>(v));return Status::Ok();});opacity.editor.hasRange=true;opacity.editor.minimum=0;opacity.editor.maximum=1;opacity.editor.step=.01;opacity.editor.tokenBindable=true;texture.properties.push_back(std::move(opacity));
     add(std::move(texture));
+    TypeInfo motion{"MotionRect", "Control", "UI/Display",
+                    [] { return std::make_unique<MotionRect>(); }};
+    auto motionPath = StringProperty("path", "Content",
+        [](const Object& o) { return As<MotionRect>(o)->Path(); },
+        [](Object& o, std::string v) { return As<MotionRect>(o)->SetPath(std::move(v)); });
+    motionPath.flags = motionPath.flags | PropertyFlags::ResourcePath;
+    motionPath.editor.displayName = "Motion clip";
+    motionPath.editor.resourceFilter = "motion";
+    motion.properties.push_back(std::move(motionPath));
+    motion.properties.push_back(BoolProperty("autoplay", "Playback",
+        [](const Object& o) { return As<MotionRect>(o)->Autoplay(); },
+        [](Object& o, bool v) { As<MotionRect>(o)->SetAutoplay(v); return Status::Ok(); }));
+    motion.properties.push_back(BoolProperty("playing", "Playback",
+        [](const Object& o) { return As<MotionRect>(o)->Playing(); },
+        [](Object& o, bool v) { As<MotionRect>(o)->SetPlaying(v); return Status::Ok(); }));
+    auto motionSpeed = NumberProperty("speed", "Playback",
+        [](const Object& o) { return As<MotionRect>(o)->Speed(); },
+        [](Object& o, double v) { return As<MotionRect>(o)->SetSpeed(v); });
+    motionSpeed.editor.hasRange = true;
+    motionSpeed.editor.minimum = 0.01;
+    motionSpeed.editor.maximum = 16;
+    motion.properties.push_back(std::move(motionSpeed));
+    motion.properties.push_back(NumberProperty("position", "Playback",
+        [](const Object& o) { return As<MotionRect>(o)->Position(); },
+        [](Object& o, double v) { As<MotionRect>(o)->Seek(v); return Status::Ok(); }));
+    motion.signals.push_back({"playbackFinished", "Playback finished",
+                              "Non-looping motion reached its final frame.", {}});
+    add(std::move(motion));
     TypeInfo progress{"ProgressBar", "Control", "UI/Display", [] { return std::make_unique<ProgressBar>(); }};
     progress.properties.push_back(NumberProperty("value", "Value", [](const Object& o) { return As<ProgressBar>(o)->Value(); },
         [](Object& o, double v) { As<ProgressBar>(o)->SetValue(v); return Status::Ok(); }));

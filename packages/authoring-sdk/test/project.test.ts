@@ -417,6 +417,23 @@ test("compileProject validates motion descriptors and packages their image layer
   assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
   for (const path of [descriptorPath, "Assets/Motion/back.png", "Assets/Motion/mark.png"])
     assert.ok(valid.artifact?.dependencies.some((dependency) => dependency.source === path));
+  const referencedFromUi = compileProject({
+    project,
+    documents: {"Story/story.pxindex": storyIndex,
+      "Content/game.pxgame": game,
+      "Content/UI/Title.pxui": {...ui, nodes: [ui.nodes[0], {
+        ...ui.nodes[0], id: "33333333-3333-4333-8333-333333333333",
+        parentId: rootId, order: 0, kind: "image", runtimeType: "MotionRect",
+        name: "Logo motion", runtimeProperties: {path: descriptorPath},
+      }]}},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locale: "zh-TW", strings: {}}},
+    resourceText: (path) => path === descriptorPath ? JSON.stringify(descriptor) : undefined,
+  });
+  assert.equal(referencedFromUi.valid, true, JSON.stringify(referencedFromUi.diagnostics));
+  for (const path of [descriptorPath, "Assets/Motion/back.png", "Assets/Motion/mark.png"])
+    assert.ok(referencedFromUi.artifact?.dependencies.some((dependency) => dependency.source === path));
   const broken = compile({...descriptor, layers: [...descriptor.layers,
     {...descriptor.layers[0], id: "back"}]});
   assert.equal(broken.valid, false);

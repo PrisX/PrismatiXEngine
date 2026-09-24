@@ -1560,6 +1560,10 @@ private:
                                                            const auto source = ReadProjectFile(projectRoot, found->second);
                                                            return source ? std::optional<px::ui::UiComponentSource>{ px::ui::UiComponentSource{ found->second, source->second } } : std::nullopt;
                                                        },
+                                                       .loadMotion = [projectRoot = *projectRoot](const std::string_view path) -> std::optional<std::string> {
+                                                           const auto source = ReadProjectFile(projectRoot, std::string(path));
+                                                           return source ? std::optional<std::string>{source->second} : std::nullopt;
+                                                       },
                                                        .viewModel = &m_uiPreviewViewModel,
                                                        .previewSafeMode = true,
                                                        .diagnosticOverlay = false,
@@ -1828,6 +1832,11 @@ private:
                                      px::ui::UiComponentSource{
                                          found->second, source->second}}
                                : std::nullopt;
+                });
+            m_hud.SetUiMotionLoader(
+                [root = *projectRoot](const std::string_view path) -> std::optional<std::string> {
+                    const auto source = ReadProjectFile(root, std::string(path));
+                    return source ? std::optional<std::string>{source->second} : std::nullopt;
                 });
             const auto registered = m_hud.RegisterTemplate(
                 px::ui::GalgameUI::Screen::Title, loadedUi->second, *uiPath);
