@@ -46,13 +46,18 @@ void DrawMotionPose(graphics::Renderer2D& renderer, const sdk::MotionClip& clip,
             std::lround(draw.opacity * 255), 0l, 255l));
         const Rect destination{0, 0, static_cast<float>(layer.width),
                                static_cast<float>(layer.height)};
+        const auto blendMode = layer.blendMode == sdk::MotionBlendMode::Additive
+            ? graphics::ImageBlendMode::Additive
+            : layer.blendMode == sdk::MotionBlendMode::Multiply
+                ? graphics::ImageBlendMode::Multiply
+                : graphics::ImageBlendMode::Normal;
         if (draw.sourcePixels) {
             const auto& source = *draw.sourcePixels;
-            renderer.DrawImageRegion(layer.image,
+            renderer.DrawImageRegionBlended(layer.image,
                 {static_cast<float>(source.x), static_cast<float>(source.y),
                  static_cast<float>(source.width), static_cast<float>(source.height)},
-                destination, alpha);
-        } else renderer.DrawImage(layer.image, destination, alpha);
+                destination, alpha, blendMode);
+        } else renderer.DrawImageBlended(layer.image, destination, alpha, blendMode);
         renderer.PopTransform();
     }
     renderer.PopTransform();

@@ -166,7 +166,7 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         root["format"].get_ref<const std::string&>() != "PrismatiXMotion" ||
         !root.contains("schemaRevision") || !root["schemaRevision"].is_number_integer() ||
         (root["schemaRevision"] != 1 && root["schemaRevision"] != 2 &&
-         root["schemaRevision"] != 3) ||
+         root["schemaRevision"] != 3 && root["schemaRevision"] != 4) ||
         !root.contains("id") ||
         !root["id"].is_string() || !Identifier(root["id"].get_ref<const std::string&>()))
         return fail("PXMOTION1002", "Motion format, revision, or id is invalid");
@@ -201,7 +201,7 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
     std::vector<std::string> parents;
     clip.layers.reserve(layers->size()); parents.reserve(layers->size());
     for (const auto& entry : *layers) {
-        if (!OnlyFields(entry, {"id", "parent", "image", "frames", "z", "width", "height",
+        if (!OnlyFields(entry, {"id", "parent", "image", "frames", "z", "blendMode", "width", "height",
             "anchorX", "anchorY", "x", "y", "scaleX", "scaleY", "rotation",
             "opacity", "visible"}) || !entry.contains("id") || !entry["id"].is_string() ||
             !entry.contains("image") || !entry["image"].is_string())
@@ -209,6 +209,15 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         MotionLayer layer;
         layer.id = entry["id"].get<std::string>();
         layer.image = entry["image"].get<std::string>();
+        if (const auto blend = entry.find("blendMode"); blend != entry.end()) {
+            if (clip.schemaRevision < 4 || !blend->is_string())
+                return fail("PXMOTION1026", "Motion blend mode requires revision 4");
+            const auto value = blend->get<std::string>();
+            if (value == "normal") layer.blendMode = MotionBlendMode::Normal;
+            else if (value == "additive") layer.blendMode = MotionBlendMode::Additive;
+            else if (value == "multiply") layer.blendMode = MotionBlendMode::Multiply;
+            else return fail("PXMOTION1026", "Motion blend mode is invalid");
+        }
         if (!Identifier(layer.id) || !SafePath(layer.image) ||
             EndsWithIgnoreCase(layer.image, ".pxmotion") ||
             EndsWithIgnoreCase(layer.image, ".pxportrait") ||

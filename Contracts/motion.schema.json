@@ -6,7 +6,7 @@
   "required": ["format", "schemaRevision", "id", "canvas", "duration", "loop", "layers", "tracks"],
   "properties": {
     "format": {"const": "PrismatiXMotion"},
-    "schemaRevision": {"enum": [1, 2, 3]},
+    "schemaRevision": {"enum": [1, 2, 3, 4]},
     "id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
     "canvas": {
       "type": "object", "additionalProperties": false,
@@ -42,6 +42,7 @@
             }
           },
           "z": {"type": "integer", "minimum": -100000, "maximum": 100000},
+          "blendMode": {"enum": ["normal", "additive", "multiply"]},
           "width": {"type": "number", "exclusiveMinimum": 0, "maximum": 16384},
           "height": {"type": "number", "exclusiveMinimum": 0, "maximum": 16384},
           "anchorX": {"type": "number", "minimum": 0, "maximum": 1},
@@ -102,5 +103,10 @@
   }, {
     "if": {"type": "object", "properties": {"schemaRevision": {"enum": [1, 2]}}},
     "then": {"type": "object", "properties": {"markers": false}}
+  }, {
+    "if": {"type": "object", "properties": {"schemaRevision": {"enum": [1, 2, 3]}}},
+    "then": {"type": "object", "properties": {
+      "layers": {"type": "array", "items": {"type": "object", "properties": {"blendMode": false}}}
+    }}
   }]
 }

@@ -12,6 +12,7 @@ enum class MotionScaleMode { Fit, Fill, Stretch };
 enum class MotionProperty { X, Y, ScaleX, ScaleY, Rotation, Opacity, Visible, Frame };
 enum class MotionCurve { Step, Linear, EaseIn, EaseOut, EaseInOut };
 enum class MotionAudioBus { SE, Voice };
+enum class MotionBlendMode { Normal, Additive, Multiply };
 
 struct MotionKey {
     double time = 0;
@@ -31,6 +32,7 @@ struct MotionLayer {
     std::vector<MotionAtlasFrame> frames;
     std::optional<std::size_t> parent;
     int z = 0;
+    MotionBlendMode blendMode = MotionBlendMode::Normal;
     double width = 0, height = 0;
     double anchorX = 0, anchorY = 0;
     double x = 0, y = 0;

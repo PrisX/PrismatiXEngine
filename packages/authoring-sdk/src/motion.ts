@@ -9,6 +9,8 @@ export interface MotionLayer {
   readonly frames?: readonly MotionFrame[];
   readonly parent?: string;
   readonly z?: number;
+  /** Normal alpha, additive light, or multiplicative tint. Revision 4. */
+  readonly blendMode?: "normal" | "additive" | "multiply";
   readonly width: number;
   readonly height: number;
   readonly anchorX?: number;
@@ -71,18 +73,20 @@ export interface MotionInput {
 
 export interface MotionDocument extends MotionInput {
   readonly format: "PrismatiXMotion";
-  readonly schemaRevision: 1 | 2 | 3;
+  readonly schemaRevision: 1 | 2 | 3 | 4;
   readonly loop: boolean;
   readonly tracks: readonly MotionTrack[];
   readonly markers?: readonly MotionAudioMarker[];
 }
 
 /** Author a deterministic image-layer .pxmotion clip. Atlas frames use
- * revision 2 and audio markers use revision 3; masks and blur remain unsupported. */
+ * revision 2, audio markers revision 3, and blend modes revision 4.
+ * Alpha masks and blur remain unsupported. */
 export function defineMotion(input: MotionInput): Result<MotionDocument> {
   const atlas = input.layers.some((layer) => layer.frames !== undefined) ||
     input.tracks?.some((track) => track.property === "frame") === true;
   const hasMarkers = (input.markers?.length ?? 0) > 0;
+  const hasBlendModes = input.layers.some((layer) => layer.blendMode !== undefined);
   const usedMarkerIds = new Set(input.markers?.flatMap((marker) =>
     marker.id === undefined ? [] : [marker.id]) ?? []);
   const markers = input.markers?.map((marker, index) => {
@@ -95,7 +99,7 @@ export function defineMotion(input: MotionInput): Result<MotionDocument> {
   });
   const document: MotionDocument = {
     format: "PrismatiXMotion",
-    schemaRevision: hasMarkers ? 3 : atlas ? 2 : 1,
+    schemaRevision: hasBlendModes ? 4 : hasMarkers ? 3 : atlas ? 2 : 1,
     id: input.id,
     canvas: input.canvas,
     duration: input.duration,
@@ -107,6 +111,7 @@ export function defineMotion(input: MotionInput): Result<MotionDocument> {
       ...(layer.frames === undefined ? {} : {frames: layer.frames.map((frame) => ({...frame}))}),
       ...(layer.parent === undefined ? {} : {parent: layer.parent}),
       z: layer.z ?? 0,
+      ...(layer.blendMode === undefined ? {} : {blendMode: layer.blendMode}),
       width: layer.width,
       height: layer.height,
       anchorX: layer.anchorX ?? 0,

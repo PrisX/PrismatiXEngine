@@ -11,6 +11,10 @@ rectangles in one layer image selected by integer, `step`-curve `frame` keys.
 The helper chooses revision 2 when either `frames` or a `frame` track is used.
 Revision 3 adds timed `se`/`voice` audio markers. The helper selects revision 3
 when `markers` are present. Older revision-1/2 files remain supported.
+Revision 4 adds per-layer `blendMode`: `normal` (default), `additive`, or
+`multiply`. The helper selects revision 4 when a layer declares the property;
+older revisions reject it instead of silently drawing with the wrong blend.
+Revision-3 files remain supported as well.
 
 ```ts
 import {writeFile} from "node:fs/promises";
@@ -23,6 +27,7 @@ const motion = serializeMotion({
   layers: [{
     id: "logo",
     image: "Assets/UI/logo-atlas.png",
+    blendMode: "additive",
     x: 480, y: 300, width: 320, height: 120,
     frames: [
       {x: 0, y: 0, width: 320, height: 120},
@@ -73,7 +78,11 @@ when omitted; specify an ID only when a tool or editor needs a stable name.
 Native hosts register one `UIContext::SetMotionAudioSink` callback, rather than
 walking every `MotionRect` to attach a callback.
 
+Blend modes are scoped per draw, so two layers can share one atlas without
+leaking the previous layer's mode. `additive` adds source light to what is
+already drawn; `multiply` darkens the overlap. Neither mode is an alpha mask.
+
 This is not an `.mtn` importer or a full M2 Cheeseware reproduction. Image
-masks, blur, blend modes, and Story playback are still missing;
+masks, blur, more specialized blend equations, and Story playback are still missing;
 the source work on those features is tracked in
 [layered motion architecture](architecture/layered-motion-authoring.md).

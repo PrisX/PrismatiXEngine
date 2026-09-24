@@ -4,7 +4,7 @@ Status: first image-layer slice and TSX UI mounting implemented; advanced compos
 and Story playback below remain a proposal. This is not an `.mtn` parser or a claim that the
 original M2/petal animations are reproduced.
 
-The versioned `PrismatiXMotion` revision-1/2/3 `.pxmotion` contract has an
+The versioned `PrismatiXMotion` revision-1/2/3/4 `.pxmotion` contract has an
 Authoring SDK `defineMotion`/`serializeMotion` helper, matching native parser,
 unique layer/track and hierarchy checks, path checks, deterministic keyed
 sampling, and a `Renderer2D` image-layer drawing adapter. A `MotionRect`
@@ -26,7 +26,7 @@ after each UI update; `TextureRect` retains its prior resident image until a
 replacement is ready. Arbitrary custom drawing, Story playback dependencies,
 texture residency under budget pressure, and M2-specific framebuffer
 conformance remain open. Story motion commands,
-masks, blur, blend modes, save/load playback binding, and
+masks, blur, specialized blend equations, save/load playback binding, and
 M2 conformance fixtures have not been added. The renderer adapter has not yet
 passed an M2-specific framebuffer comparison. Revision 2 adds
 per-layer atlas rectangles and discrete `frame` keys; the Authoring helper
@@ -39,6 +39,10 @@ them and includes their audio paths in package dependencies, and `MotionRect`
 emits crossed events during normal playback to the Player audio service (also
 for splash scenes). Seeking does not replay skipped cues. Script markers,
 Story integration, and audio-predecode scheduling remain open.
+Revision 4 adds layer-local normal/additive/multiply blending. Authoring and
+native parsing reject the field in older revisions; a framebuffer test draws
+overlapping layers from one atlas and verifies both additive and multiply
+pixels. This is not an alpha-mask implementation or M2 conformance fixture.
 
 Revision-1 sampling uses a layer's authored property until its first key;
 thereafter each key's curve determines interpolation toward the next key.

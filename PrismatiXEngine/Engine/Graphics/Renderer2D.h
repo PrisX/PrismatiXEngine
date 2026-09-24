@@ -34,6 +34,7 @@ enum class DisplayMode {
 };
 
 enum class ContentScaleMode { Stretch, Fit, Fill, Original };
+enum class ImageBlendMode { Normal, Additive, Multiply };
 enum class HorizontalAlignment { Left, Center, Right };
 enum class VerticalAlignment { Top, Center, Bottom };
 
@@ -154,6 +155,9 @@ public:
     void PopClip();
 
     void DrawImage(const std::string& path, const Rect& dst, std::uint8_t alpha = 255);
+    // Blend mode is scoped to this draw, even when layers share one texture.
+    void DrawImageBlended(const std::string& path, const Rect& dst,
+                          std::uint8_t alpha, ImageBlendMode blendMode);
     void PreloadImage(const std::string& path) {
         m_assets.PreloadTexture(path, AssetPreloadPriority::Normal);
     }
@@ -175,6 +179,9 @@ public:
     // backend texture pointers and unchecked UVs.
     void DrawImageRegion(const std::string& path, const Rect& sourcePixels,
                          const Rect& dst, std::uint8_t alpha = 255);
+    void DrawImageRegionBlended(const std::string& path, const Rect& sourcePixels,
+                                const Rect& dst, std::uint8_t alpha,
+                                ImageBlendMode blendMode);
     void DrawTextureRegion(TextureHandle texture, const Rect& sourcePixels,
                            const Rect& dst, std::uint8_t alpha = 255);
     void DrawSpriteBatch(const std::string& texture,

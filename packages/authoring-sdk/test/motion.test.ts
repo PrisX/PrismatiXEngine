@@ -112,3 +112,24 @@ test("sound markers use revision 3 with ordered, named audio dependencies", () =
     {...document.markers![0], audio: "../outside.ogg"},
   ]}).valid, false);
 });
+
+test("layer blend modes select revision 4 and reject older or unknown modes", () => {
+  const result = defineMotion({...input, layers: [
+    {...input.layers[0]!, blendMode: "normal" as const},
+    {...input.layers[1]!, blendMode: "additive" as const},
+  ]});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  assert.equal(result.value?.schemaRevision, 4);
+  assert.equal(result.value?.layers[1]?.blendMode, "additive");
+  const document = result.value!;
+  assert.equal(validateDocument("motion", {...document, schemaRevision: 3}).valid, false);
+  assert.equal(validateDocument("motion", {...document, layers: [
+    {...document.layers[0]!, blendMode: "screen"}, document.layers[1]!,
+  ]}).valid, false);
+  const withSound = defineMotion({...input, layers: [
+    {...input.layers[0]!, blendMode: "multiply" as const}, input.layers[1]!,
+  ], markers: [{time: 0.2, audio: "Assets/Audio/pop.ogg", bus: "se" as const}]});
+  assert.equal(withSound.valid, true, JSON.stringify(withSound.diagnostics));
+  assert.equal(withSound.value?.schemaRevision, 4);
+  assert.equal(withSound.value?.markers?.length, 1);
+});

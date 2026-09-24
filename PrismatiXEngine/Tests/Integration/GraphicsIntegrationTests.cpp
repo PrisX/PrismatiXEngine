@@ -224,6 +224,44 @@ int main() {
                         std::cerr << "FAIL: atlas motion frame regions did not change rendered pixels\n";
                         result = 1;
                     }
+                    auto blended = px::sdk::ParseMotion(R"({
+                      "format":"PrismatiXMotion","schemaRevision":4,"id":"blend",
+                      "canvas":{"width":640,"height":360},"duration":1,"loop":false,
+                      "layers":[
+                        {"id":"base","image":"Assets/atlas.bmp","width":100,
+                         "height":100,"x":270,"y":130,"frames":[
+                           {"x":0,"y":0,"width":1,"height":1}]},
+                        {"id":"light","image":"Assets/atlas.bmp","width":100,
+                         "height":100,"x":270,"y":130,"z":1,
+                         "blendMode":"additive","frames":[
+                           {"x":1,"y":0,"width":1,"height":1}]}],
+                      "tracks":[]})");
+                    if (!blended.Valid()) {
+                        std::cerr << "FAIL: revision-4 blend motion fixture parse\n";
+                        result = 1;
+                    } else {
+                        px::sdk::MotionSampler blendSampler(*blended.clip);
+                        blendSampler.Seek(0);
+                        ClearFrame(device.Renderer());
+                        px::animation::DrawMotionPose(atlasRenderer, *blended.clip,
+                                                      blendSampler, {0, 0, 640, 360});
+                        const auto additive = CaptureFrame(
+                            device.Renderer(), "motion-additive-layer").center;
+                        if (additive.r < 220 || additive.b < 220) {
+                            std::cerr << "FAIL: additive motion layer did not blend both colors\n";
+                            result = 1;
+                        }
+                        blended.clip->layers[1].blendMode = px::sdk::MotionBlendMode::Multiply;
+                        ClearFrame(device.Renderer());
+                        px::animation::DrawMotionPose(atlasRenderer, *blended.clip,
+                                                      blendSampler, {0, 0, 640, 360});
+                        const auto multiply = CaptureFrame(
+                            device.Renderer(), "motion-multiply-layer").center;
+                        if (multiply.r > 80 || multiply.b > 80) {
+                            std::cerr << "FAIL: multiply motion layer did not darken overlap\n";
+                            result = 1;
+                        }
+                    }
                 }
             }
             std::filesystem::remove_all(atlasRoot, atlasError);

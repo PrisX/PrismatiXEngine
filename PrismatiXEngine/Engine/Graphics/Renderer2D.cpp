@@ -21,6 +21,14 @@ SDL_Texture* NativeTexture(const TextureHandle texture) {
         texture.Native(TextureBackend::SdlRenderer));
 }
 
+SDL_BlendMode NativeBlendMode(const ImageBlendMode mode) {
+    switch (mode) {
+    case ImageBlendMode::Additive: return SDL_BLENDMODE_ADD;
+    case ImageBlendMode::Multiply: return SDL_BLENDMODE_MUL;
+    default: return SDL_BLENDMODE_BLEND;
+    }
+}
+
 SDL_FColor ToFColor(Color c, float alphaScale = 1.0f) { return SDL_FColor{ c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, (c.a / 255.0f) * alphaScale }; }
 
 void AppendArc(std::vector<SDL_Vertex>& out, float cx, float cy, float radius, float a0, float a1, SDL_FColor color, int segments) {
@@ -596,6 +604,22 @@ void Renderer2D::DrawImage(const std::string& path, const Rect& dst,
     Blit(NativeTexture(m_assets.Texture(path)), dst, alpha);
 }
 
+void Renderer2D::DrawImageBlended(const std::string& path, const Rect& dst,
+                                  const std::uint8_t alpha,
+                                  const ImageBlendMode blendMode) {
+    if (blendMode == ImageBlendMode::Normal) return DrawImage(path, dst, alpha);
+    SDL_Texture* texture = NativeTexture(m_assets.Texture(path));
+    if (!texture) return;
+    SDL_BlendMode previous = SDL_BLENDMODE_BLEND;
+    if (!SDL_GetTextureBlendMode(texture, &previous) ||
+        !SDL_SetTextureBlendMode(texture, NativeBlendMode(blendMode))) {
+        Blit(texture, dst, alpha);
+        return;
+    }
+    Blit(texture, dst, alpha);
+    (void)SDL_SetTextureBlendMode(texture, previous);
+}
+
 void Renderer2D::DrawImageInRect(const std::string& path, const Rect& bounds,
                                  ContentScaleMode mode, HorizontalAlignment horizontal,
                                  VerticalAlignment vertical, std::uint8_t alpha) {
@@ -633,6 +657,24 @@ void Renderer2D::DrawImageRegion(const std::string& path,
                                  const Rect& sourcePixels, const Rect& dst,
                                  const std::uint8_t alpha) {
     BlitRegion(NativeTexture(m_assets.Texture(path)), sourcePixels, dst, alpha);
+}
+
+void Renderer2D::DrawImageRegionBlended(const std::string& path,
+                                        const Rect& sourcePixels, const Rect& dst,
+                                        const std::uint8_t alpha,
+                                        const ImageBlendMode blendMode) {
+    if (blendMode == ImageBlendMode::Normal)
+        return DrawImageRegion(path, sourcePixels, dst, alpha);
+    SDL_Texture* texture = NativeTexture(m_assets.Texture(path));
+    if (!texture) return;
+    SDL_BlendMode previous = SDL_BLENDMODE_BLEND;
+    if (!SDL_GetTextureBlendMode(texture, &previous) ||
+        !SDL_SetTextureBlendMode(texture, NativeBlendMode(blendMode))) {
+        BlitRegion(texture, sourcePixels, dst, alpha);
+        return;
+    }
+    BlitRegion(texture, sourcePixels, dst, alpha);
+    (void)SDL_SetTextureBlendMode(texture, previous);
 }
 
 void Renderer2D::DrawTextureRegion(const TextureHandle texture,

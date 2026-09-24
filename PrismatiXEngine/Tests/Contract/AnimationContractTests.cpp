@@ -162,6 +162,34 @@ int main() {
                      "malformed motion format and huge revisions report diagnostics");
     });
 
+    suite.Run("MotionClip_LayerBlendModesAreVersionedAndValidated", [&] {
+        constexpr auto source = R"({
+          "format":"PrismatiXMotion","schemaRevision":4,"id":"blend",
+          "canvas":{"width":320,"height":120},"duration":1,"loop":false,
+          "layers":[
+            {"id":"base","image":"Assets/base.png","width":100,"height":100},
+            {"id":"light","image":"Assets/light.png","width":100,"height":100,
+             "blendMode":"additive"},
+            {"id":"shade","image":"Assets/shade.png","width":100,"height":100,
+             "blendMode":"multiply"}],"tracks":[]})";
+        const auto parsed = px::sdk::ParseMotion(source);
+        suite.Expect(parsed.Valid() && parsed.clip->layers[0].blendMode ==
+            px::sdk::MotionBlendMode::Normal && parsed.clip->layers[1].blendMode ==
+            px::sdk::MotionBlendMode::Additive && parsed.clip->layers[2].blendMode ==
+            px::sdk::MotionBlendMode::Multiply,
+            "revision-4 blend modes parse without changing ordinary layers");
+        auto oldRevision = std::string(source);
+        oldRevision.replace(oldRevision.find("\"schemaRevision\":4"),
+            std::string("\"schemaRevision\":4").size(), "\"schemaRevision\":3");
+        suite.Expect(!px::sdk::ParseMotion(oldRevision).Valid(),
+            "older motion revisions reject blendMode rather than ignoring it");
+        auto invalid = std::string(source);
+        invalid.replace(invalid.find("\"additive\""),
+            std::string("\"additive\"").size(), "\"screen\"");
+        suite.Expect(!px::sdk::ParseMotion(invalid).Valid(),
+            "unsupported blend mode fails closed");
+    });
+
     suite.Run("MotionClip_AtlasFrameTrackIsDiscreteAndVersioned", [&] {
         constexpr auto source = R"({
           "format":"PrismatiXMotion","schemaRevision":2,"id":"atlas",
