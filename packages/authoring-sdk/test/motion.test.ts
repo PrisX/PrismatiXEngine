@@ -179,3 +179,37 @@ test("alpha mask references select revision 6 and reject unsupported composition
     {...document.layers[0]!, blendMode: "multiply"}, document.layers[1]!,
   ]}).valid, false);
 });
+
+test("transform groups and child-local time select revision 7", () => {
+  const source = {
+    id: "nested-logo", canvas: {width: 640, height: 360}, duration: 1,
+    layers: [
+      {id: "subclip", kind: "group" as const, x: 250, y: 130,
+        opacity: 0.5, timeOffset: -0.25, timeScale: 2},
+      {id: "logo", parent: "subclip", image: "Assets/Motion/logo.png",
+        width: 100, height: 100},
+    ],
+    tracks: [{layer: "logo", property: "x" as const, keys: [
+      {time: 0, value: 0}, {time: 1, value: 100},
+    ]}],
+  };
+  const result = defineMotion(source);
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  assert.equal(result.value?.schemaRevision, 7);
+  assert.equal(result.value?.layers[0]?.kind, "group");
+  assert.equal(parseDocument("motion", serializeMotion(source).value!).valid, true);
+  const document = result.value!;
+  assert.equal(validateDocument("motion", {...document, schemaRevision: 6}).valid, false);
+  assert.equal(validateDocument("motion", {...document, layers: [
+    {...document.layers[0]!, image: "Assets/Motion/logo.png"}, document.layers[1]!,
+  ]}).valid, false);
+  assert.equal(validateDocument("motion", {...document, layers: [
+    {...document.layers[0]!, mask: "logo"}, document.layers[1]!,
+  ]}).valid, false);
+  assert.equal(validateDocument("motion", {...document, layers: [
+    {...document.layers[0]!, timeScale: 1001}, document.layers[1]!,
+  ]}).valid, false);
+  assert.equal(validateDocument("motion", {...document, layers: [
+    document.layers[0]!, {...document.layers[1]!, mask: "subclip"},
+  ]}).valid, false);
+});

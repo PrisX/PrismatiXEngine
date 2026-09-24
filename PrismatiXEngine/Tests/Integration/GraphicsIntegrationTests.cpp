@@ -224,6 +224,46 @@ int main() {
                         std::cerr << "FAIL: atlas motion frame regions did not change rendered pixels\n";
                         result = 1;
                     }
+                    const auto nested = px::sdk::ParseMotion(R"({
+                      "format":"PrismatiXMotion","schemaRevision":7,"id":"nested",
+                      "canvas":{"width":640,"height":360},"duration":1,"loop":false,
+                      "layers":[
+                        {"id":"subclip","kind":"group","x":250,"y":130,
+                         "timeOffset":-0.5,"timeScale":1},
+                        {"id":"logo","parent":"subclip","image":"Assets/atlas.bmp",
+                         "width":100,"height":100,"frames":[
+                           {"x":0,"y":0,"width":1,"height":1}]}],
+                      "tracks":[{"layer":"logo","property":"x","keys":[
+                        {"time":0,"value":0,"curve":"linear"},
+                        {"time":0.5,"value":100,"curve":"linear"}]}]})");
+                    if (!nested.Valid()) {
+                        std::cerr << "FAIL: revision-7 nested motion fixture parse\n";
+                        result = 1;
+                    } else {
+                        px::sdk::MotionSampler nestedSampler(*nested.clip);
+                        nestedSampler.Seek(0.5);
+                        ClearFrame(device.Renderer());
+                        px::animation::DrawMotionPose(atlasRenderer, *nested.clip,
+                                                      nestedSampler, {0, 0, 640, 360});
+                        SDL_Surface* pixels = SDL_RenderReadPixels(
+                            device.Renderer(), nullptr);
+                        const auto early = ReadLogicalPixel(pixels, 300, 180, 640, 360);
+                        const auto future = ReadLogicalPixel(pixels, 400, 180, 640, 360);
+                        if (pixels) SDL_DestroySurface(pixels);
+                        nestedSampler.Seek(1);
+                        ClearFrame(device.Renderer());
+                        px::animation::DrawMotionPose(atlasRenderer, *nested.clip,
+                                                      nestedSampler, {0, 0, 640, 360});
+                        pixels = SDL_RenderReadPixels(device.Renderer(), nullptr);
+                        const auto past = ReadLogicalPixel(pixels, 300, 180, 640, 360);
+                        const auto late = ReadLogicalPixel(pixels, 400, 180, 640, 360);
+                        if (pixels) SDL_DestroySurface(pixels);
+                        if (early.r < 180 || future.r > 40 ||
+                            past.r > 40 || late.r < 180) {
+                            std::cerr << "FAIL: nested motion child-local time or group rendering\n";
+                            result = 1;
+                        }
+                    }
                     const auto eased = px::sdk::ParseMotion(R"({
                       "format":"PrismatiXMotion","schemaRevision":5,"id":"eased",
                       "canvas":{"width":640,"height":360},"duration":1,"loop":false,

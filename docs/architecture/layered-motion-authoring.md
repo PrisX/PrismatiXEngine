@@ -1,17 +1,18 @@
 # Layered motion authoring proposal
 
-Status: image-layer, timing, blend, and alpha-mask slices plus TSX UI mounting implemented; advanced composition
+Status: image-layer, timing, blend, alpha-mask, and inline nested-transform slices plus TSX UI mounting implemented; advanced composition
 and Story playback below remain a proposal. This is not an `.mtn` parser or a claim that the
 original M2/petal animations are reproduced.
 
-The versioned `PrismatiXMotion` revision-1/2/3/4/5/6 `.pxmotion` contract has an
+The versioned `PrismatiXMotion` revision-1/2/3/4/5/6/7 `.pxmotion` contract has an
 Authoring SDK `defineMotion`/`serializeMotion` helper, matching native parser,
 unique layer/track and hierarchy checks, path checks, deterministic keyed
 sampling, and a `Renderer2D` image-layer drawing adapter. A `MotionRect`
 control can now play the descriptor in TSX-authored UI, splash scenes,
 Player routes and native/WASM previews. `MotionSampler::Seek`
 reuses its scratch storage and binary-searches ordered keys; its parent-world
-transform and inherited opacity are sampled at one time. `fit` is the default
+transform and inherited opacity are sampled deterministically, with revision-7
+child-local time offsets and scales. `fit` is the default
 canvas scaling mode to avoid image squashing. Native and TypeScript contract
 tests cover this slice. `compileProject` validates reachable descriptors
 and collects their image dependencies. Splash playback now resolves static UI
@@ -53,8 +54,16 @@ the same clock and rendered only into reusable alpha coverage targets; its
 alpha multiplies the content layer. SDK and native validation reject missing,
 self-referential, nested or non-normal-blend masks. GPU D3D12 and basic D3D11
 framebuffer tests check full, empty, half-alpha, and moving coverage. This is
-not an M2 conformance result: nested clip references, blur, particles, and
+not an M2 conformance result: external nested clip references, blur, particles, and
 source-specific blend behavior still block a faithful converter.
+Revision 7 adds non-drawing transform groups and child-local time remapping.
+The Authoring helper selects it automatically; the native sampler computes
+each layer's local time in hierarchy order before sampling property tracks.
+The GPU framebuffer test verifies that a delayed child moves at the expected
+time without painting its group, and the project compiler omits groups from
+image dependencies. This allows an offline `.mtn` importer to flatten some
+referenced submotions under groups, but does not interpret external references,
+spatial paths, particles, mesh deformations, or source-specific mask flags.
 
 Revision-1 sampling uses a layer's authored property until its first key;
 thereafter each key's curve determines interpolation toward the next key.

@@ -230,6 +230,43 @@ int main() {
                      "masked multiply blending is rejected until it is implemented");
     });
 
+    suite.Run("MotionClip_GroupsRemapChildTimeWithoutDrawing", [&] {
+        constexpr auto source = R"({
+          "format":"PrismatiXMotion","schemaRevision":7,"id":"subtimeline",
+          "canvas":{"width":320,"height":120},"duration":1,"loop":false,
+          "layers":[
+            {"id":"group","kind":"group","x":100,"y":30,
+             "opacity":0.5,"timeOffset":-0.25,"timeScale":2},
+            {"id":"image","parent":"group","image":"Assets/mark.png",
+             "width":20,"height":20}],
+          "tracks":[{"layer":"image","property":"x","keys":[
+            {"time":0,"value":0,"curve":"linear"},
+            {"time":1,"value":100,"curve":"linear"}]}]})";
+        const auto parsed = px::sdk::ParseMotion(source);
+        suite.Require(parsed.Valid(), "revision-7 group and local time parse");
+        suite.Expect(parsed.clip->layers[0].kind == px::sdk::MotionLayerKind::Group &&
+                     px::sdk::MotionDependencies(*parsed.clip) ==
+                         std::vector<std::string>{"Assets/mark.png"},
+                     "non-drawing groups do not become package resources");
+        px::sdk::MotionSampler sampler(*parsed.clip);
+        sampler.Seek(0.375);
+        suite.Expect(std::abs(sampler.LayerPose(1).transform.tx - 150) < 0.001 &&
+                     std::abs(sampler.LayerPose(1).opacity - 0.5) < 0.001,
+                     "child uses its parent-local clock and inherited transform");
+        auto old = nlohmann::json::parse(source);
+        old["schemaRevision"] = 6;
+        suite.Expect(!px::sdk::ParseMotion(old.dump()).Valid(),
+                     "older revisions reject local clocks and groups");
+        auto drawableGroup = nlohmann::json::parse(source);
+        drawableGroup["layers"][0]["image"] = "Assets/invalid.png";
+        suite.Expect(!px::sdk::ParseMotion(drawableGroup.dump()).Valid(),
+                     "group layers cannot silently draw an image");
+        auto maskedGroup = nlohmann::json::parse(source);
+        maskedGroup["layers"][1]["mask"] = "group";
+        suite.Expect(!px::sdk::ParseMotion(maskedGroup.dump()).Valid(),
+                     "non-image groups cannot be mask sources");
+    });
+
     suite.Run("MotionClip_CubicBezierTimingMatchesAuthoredControlPoints", [&] {
         constexpr auto source = R"({
           "format":"PrismatiXMotion","schemaRevision":5,"id":"eased",

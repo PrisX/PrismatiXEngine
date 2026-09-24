@@ -23,6 +23,12 @@ itself. The helper selects revision 6 when any layer declares a mask. Missing,
 self-referential and nested mask references are rejected. This first slice
 requires normal blending on both the content and mask source; combining a mask
 with additive/multiply is rejected instead of producing a misleading image.
+Revision 7 adds non-drawing `kind: "group"` layers and per-layer `timeOffset` /
+`timeScale`. A child samples its tracks at `parentLocalTime * timeScale +
+timeOffset`; its transform and opacity still inherit from the parent. Group
+layers need no image or dimensions and create no packaged texture dependency.
+The helper selects revision 7 when these fields are used. Older files retain
+their original shared-clock behavior.
 
 ```ts
 import {writeFile} from "node:fs/promises";
@@ -115,6 +121,26 @@ transparent, half-alpha and moving masks. Software and WASM parity, mask
 performance in the full game, and M2-specific frame matching are not yet
 verified.
 
+To place an animated subpart under a parent transform and delay its own
+timeline, write a group and parent an image layer to it:
+
+```ts
+layers: [
+  {id: "logo-group", kind: "group", x: 320, y: 180,
+    timeOffset: -0.25, timeScale: 2},
+  {id: "letter", parent: "logo-group", image: "Assets/Motion/letter.png",
+    width: 120, height: 80},
+],
+tracks: [{layer: "letter", property: "opacity", keys: [
+  {time: 0, value: 0}, {time: 0.5, value: 1},
+]}],
+```
+
+At the clip's 0.5-second mark, `letter` is sampled at local time 0.75. A
+group can also have transform tracks. This represents an inline nested motion
+hierarchy, not a reference to another `.pxmotion` resource; an importer must
+flatten external `.mtn` subclips and diagnose unsupported source fields.
+
 For a non-linear key interval, put the timing curve on the first key:
 
 ```ts
@@ -130,7 +156,7 @@ the same pose. This supports a class of `.mtn` timing curves, but does not
 interpret `.mtn` files automatically.
 
 This is not an `.mtn` importer or a full M2 Cheeseware reproduction. Blur,
-nested motion references, more specialized blend equations, and Story playback
-are still missing;
+external nested motion references, spatial path curves, particles, more
+specialized blend equations, and Story playback are still missing;
 the source work on those features is tracked in
 [layered motion architecture](architecture/layered-motion-authoring.md).

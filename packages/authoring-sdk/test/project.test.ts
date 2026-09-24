@@ -517,6 +517,15 @@ test("compileProject validates motion descriptors and packages their image layer
   assert.ok(masked.artifact?.dependencies.some((dependency) =>
     dependency.source === "Assets/Motion/mark.png"),
   "mask-only sources must still be packaged");
+  const nested = compile({...descriptor, schemaRevision: 7,
+    layers: [{id: "subclip", kind: "group", timeOffset: -0.25, timeScale: 2},
+      {...descriptor.layers[1], parent: "subclip"}]});
+  assert.equal(nested.valid, true, JSON.stringify(nested.diagnostics));
+  assert.ok(nested.artifact?.dependencies.some((dependency) =>
+    dependency.source === "Assets/Motion/mark.png"));
+  assert.equal(nested.artifact?.dependencies.some((dependency) =>
+    dependency.source === ""), false,
+  "non-drawing transform groups do not create empty image dependencies");
   const missingMask = compile({...descriptor, schemaRevision: 6,
     layers: [{...descriptor.layers[0], mask: "mark"}, descriptor.layers[1]]},
   (path) => path !== "Assets/Motion/mark.png");

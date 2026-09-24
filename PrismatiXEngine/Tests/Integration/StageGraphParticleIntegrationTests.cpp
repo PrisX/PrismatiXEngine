@@ -117,7 +117,9 @@ int main() {
                           SaveSolidBmp(fixture.path / "old-face.bmp", 8, 8,
                                        {20, 40, 240, 255}) &&
                           SaveSolidBmp(fixture.path / "new-face.bmp", 8, 8,
-                                       {20, 240, 40, 255}),
+                                       {20, 240, 40, 255}) &&
+                          SaveSolidBmp(fixture.path / "ornament.bmp", 4, 4,
+                                       {250, 200, 20, 255}),
                       "layered portrait images are available");
         const auto writePortrait = [&](const char* name, const char* face) {
             std::ofstream output(fixture.path / name, std::ios::binary);
@@ -126,7 +128,9 @@ int main() {
                    << "\"layers\":["
                    << "{\"path\":\"body.bmp\",\"width\":16,\"height\":16},"
                    << "{\"path\":\"" << face
-                   << "\",\"width\":8,\"height\":8}]}";
+                   << "\",\"width\":8,\"height\":8},"
+                   << "{\"path\":\"ornament.bmp\",\"x\":10,"
+                   << "\"width\":4,\"height\":4}]}";
             return static_cast<bool>(output);
         };
         suite.Require(writePortrait("old.pxportrait", "old-face.bmp") &&
@@ -147,7 +151,8 @@ int main() {
             // blending rather than preload scheduling.
             suite.Require(assets.Texture("body.bmp") &&
                               assets.Texture("old-face.bmp") &&
-                              assets.Texture("new-face.bmp"),
+                              assets.Texture("new-face.bmp") &&
+                              assets.Texture("ornament.bmp"),
                           "portrait textures decode before the render assertion");
             px::vn::Stage stage(renderer, assets);
             stage.SetCharacter("hero", "old.pxportrait", 2, false);
@@ -159,6 +164,7 @@ int main() {
             SDL_RenderPresent(native);
             const Pixel body = ReadPixel(surface, 32, 60);
             const Pixel face = ReadPixel(surface, 28, 51);
+            const Pixel ornament = ReadPixel(surface, 35, 50);
             suite.Expect(body.r > 220 && body.g < 60 && body.b < 60,
                          "unchanged body stays opaque during facial crossfade",
                          std::to_string(body.r) + "," + std::to_string(body.g) +
@@ -167,6 +173,12 @@ int main() {
                          "only changed facial layers blend during the transition",
                          std::to_string(face.r) + "," + std::to_string(face.g) +
                              "," + std::to_string(face.b));
+            suite.Expect(ornament.r > 235 && ornament.g > 185 &&
+                             ornament.b < 35,
+                         "unchanged overlay after the face stays fully opaque",
+                         std::to_string(ornament.r) + "," +
+                             std::to_string(ornament.g) + "," +
+                             std::to_string(ornament.b));
             stage.SetCharacter("hero", "old.pxportrait", 2, false);
             const auto pose = stage.CaptureState().actors;
             suite.Expect(pose.size() == 1 && pose.front().alpha == 255.0f &&

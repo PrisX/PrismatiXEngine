@@ -1523,6 +1523,39 @@ export const contractSchemas: Readonly<Record<string, object>> = {
           },
           "type": "object"
         }
+      },
+      {
+        "if": {
+          "properties": {
+            "schemaRevision": {
+              "enum": [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "then": {
+          "properties": {
+            "layers": {
+              "items": {
+                "properties": {
+                  "kind": false,
+                  "timeOffset": false,
+                  "timeScale": false
+                },
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        }
       }
     ],
     "properties": {
@@ -1560,6 +1593,45 @@ export const contractSchemas: Readonly<Record<string, object>> = {
       "layers": {
         "items": {
           "additionalProperties": false,
+          "allOf": [
+            {
+              "else": {
+                "properties": {
+                  "height": {
+                    "exclusiveMinimum": 0,
+                    "type": "number"
+                  },
+                  "width": {
+                    "exclusiveMinimum": 0,
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "image",
+                  "width",
+                  "height"
+                ]
+              },
+              "if": {
+                "properties": {
+                  "kind": {
+                    "const": "group"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "blendMode": false,
+                  "frames": false,
+                  "image": false,
+                  "mask": false
+                }
+              }
+            }
+          ],
           "properties": {
             "anchorX": {
               "maximum": 1,
@@ -1616,8 +1688,8 @@ export const contractSchemas: Readonly<Record<string, object>> = {
               "type": "array"
             },
             "height": {
-              "exclusiveMinimum": 0,
               "maximum": 16384,
+              "minimum": 0,
               "type": "number"
             },
             "id": {
@@ -1625,6 +1697,12 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             },
             "image": {
               "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+            },
+            "kind": {
+              "enum": [
+                "image",
+                "group"
+              ]
             },
             "mask": {
               "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
@@ -1652,12 +1730,22 @@ export const contractSchemas: Readonly<Record<string, object>> = {
               "minimum": -1000,
               "type": "number"
             },
+            "timeOffset": {
+              "maximum": 86400,
+              "minimum": -86400,
+              "type": "number"
+            },
+            "timeScale": {
+              "maximum": 1000,
+              "minimum": -1000,
+              "type": "number"
+            },
             "visible": {
               "type": "boolean"
             },
             "width": {
-              "exclusiveMinimum": 0,
               "maximum": 16384,
+              "minimum": 0,
               "type": "number"
             },
             "x": {
@@ -1677,10 +1765,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             }
           },
           "required": [
-            "id",
-            "image",
-            "width",
-            "height"
+            "id"
           ],
           "type": "object"
         },
@@ -1737,7 +1822,8 @@ export const contractSchemas: Readonly<Record<string, object>> = {
           3,
           4,
           5,
-          6
+          6,
+          7
         ]
       },
       "tracks": {
@@ -4257,7 +4343,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "extension.schema.json": "9438f403e51b8f69f52f05d5999afc37c433754a215094460e28c6d1710555a2",
   "game.schema.json": "d31e583ebdfa1503b8cb77e20d2773fb8e289c7677ad4f59dd66087f8967cc92",
   "locale.schema.json": "b8f6009219c6cad7fa6130af6d710af11cabcf85bf2e0039f1fdd3c08e2bbf9f",
-  "motion.schema.json": "ae219fad075f3edebe55f3b08843793d737a9086e569e032281b36c787094245",
+  "motion.schema.json": "4be7b81a659bf5a62910e13ecb00541d985b36dc3acae2eeb50b5e58445c45dc",
   "portrait.schema.json": "23235204cea30d1f9bf49f810f896364b910ce2f74e46f28bc7381dc5da0a6fe",
   "project.schema.json": "937ef02098a0f720d5154b2300c7ddbdc60ef69fd2410337b483de7bc5a3390e",
   "runtime-ir.schema.json": "04c51fc94dc46b500d78877d29dba1dffe1f41619211af24e48cf48699bf0836",

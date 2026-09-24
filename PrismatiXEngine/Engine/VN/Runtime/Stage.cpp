@@ -1253,10 +1253,38 @@ void Stage::Render() {
                     drawable.actor->prevImagePath);
                 const auto* current = ResolveLayeredPortrait(
                     drawable.actor->imagePath);
-                std::size_t sharedLayers = 0;
                 if (previous && current &&
                     previous->width == current->width &&
-                    previous->height == current->height) {
+                    previous->height == current->height &&
+                    previous->layers.size() == current->layers.size()) {
+                    // Preserve every unchanged layer, including overlays
+                    // after a changed face layer. Only differing layers fade.
+                    for (std::size_t index = 0; index < current->layers.size(); ++index) {
+                        const auto& left = previous->layers[index];
+                        const auto& right = current->layers[index];
+                        const bool unchanged = left.path == right.path &&
+                            left.x == right.x && left.y == right.y &&
+                            left.width == right.width &&
+                            left.height == right.height &&
+                            left.opacity == right.opacity;
+                        if (unchanged) {
+                            drawActorImage(drawable.name, drawable.actor->imagePath,
+                                           *drawable.actor, drawable.actor->targetAlpha,
+                                           index, index + 1);
+                        } else {
+                            drawActorImage(drawable.name,
+                                           drawable.actor->prevImagePath,
+                                           *drawable.actor, drawable.actor->prevAlpha,
+                                           index, index + 1);
+                            drawActorImage(drawable.name, drawable.actor->imagePath,
+                                           *drawable.actor, drawable.actor->alpha,
+                                           index, index + 1);
+                        }
+                    }
+                } else if (previous && current &&
+                           previous->width == current->width &&
+                           previous->height == current->height) {
+                    std::size_t sharedLayers = 0;
                     const auto limit = std::min(previous->layers.size(),
                                                 current->layers.size());
                     while (sharedLayers < limit) {
@@ -1268,13 +1296,11 @@ void Stage::Render() {
                             left.opacity != right.opacity) break;
                         ++sharedLayers;
                     }
-                }
-                if (sharedLayers > 0) {
-                    // A facial expression change must not fade the unchanged
-                    // body underneath its old and new overlay layers.
-                    drawActorImage(drawable.name, drawable.actor->imagePath,
-                                   *drawable.actor, drawable.actor->targetAlpha,
-                                   0, sharedLayers);
+                    if (sharedLayers > 0) {
+                        drawActorImage(drawable.name, drawable.actor->imagePath,
+                                       *drawable.actor, drawable.actor->targetAlpha,
+                                       0, sharedLayers);
+                    }
                     drawActorImage(drawable.name,
                                    drawable.actor->prevImagePath,
                                    *drawable.actor, drawable.actor->prevAlpha,

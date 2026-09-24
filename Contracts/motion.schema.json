@@ -6,7 +6,7 @@
   "required": ["format", "schemaRevision", "id", "canvas", "duration", "loop", "layers", "tracks"],
   "properties": {
     "format": {"const": "PrismatiXMotion"},
-    "schemaRevision": {"enum": [1, 2, 3, 4, 5, 6]},
+    "schemaRevision": {"enum": [1, 2, 3, 4, 5, 6, 7]},
     "id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
     "canvas": {
       "type": "object", "additionalProperties": false,
@@ -23,9 +23,10 @@
       "type": "array", "minItems": 1, "maxItems": 4096,
       "items": {
         "type": "object", "additionalProperties": false,
-        "required": ["id", "image", "width", "height"],
+        "required": ["id"],
         "properties": {
           "id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
+          "kind": {"enum": ["image", "group"]},
           "parent": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
           "mask": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
           "image": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"},
@@ -44,8 +45,8 @@
           },
           "z": {"type": "integer", "minimum": -100000, "maximum": 100000},
           "blendMode": {"enum": ["normal", "additive", "multiply"]},
-          "width": {"type": "number", "exclusiveMinimum": 0, "maximum": 16384},
-          "height": {"type": "number", "exclusiveMinimum": 0, "maximum": 16384},
+          "width": {"type": "number", "minimum": 0, "maximum": 16384},
+          "height": {"type": "number", "minimum": 0, "maximum": 16384},
           "anchorX": {"type": "number", "minimum": 0, "maximum": 1},
           "anchorY": {"type": "number", "minimum": 0, "maximum": 1},
           "x": {"type": "number", "minimum": -1000000, "maximum": 1000000},
@@ -53,9 +54,19 @@
           "scaleX": {"type": "number", "minimum": -1000, "maximum": 1000},
           "scaleY": {"type": "number", "minimum": -1000, "maximum": 1000},
           "rotation": {"type": "number", "minimum": -1000000, "maximum": 1000000},
+          "timeOffset": {"type": "number", "minimum": -86400, "maximum": 86400},
+          "timeScale": {"type": "number", "minimum": -1000, "maximum": 1000},
           "opacity": {"type": "number", "minimum": 0, "maximum": 1},
           "visible": {"type": "boolean"}
-        }
+        },
+        "allOf": [{
+          "if": {"properties": {"kind": {"const": "group"}}, "required": ["kind"]},
+          "then": {"properties": {"image": false, "frames": false,
+            "mask": false, "blendMode": false}},
+          "else": {"required": ["image", "width", "height"],
+            "properties": {"width": {"type": "number", "exclusiveMinimum": 0},
+              "height": {"type": "number", "exclusiveMinimum": 0}}}
+        }]
       }
     },
     "tracks": {
@@ -137,6 +148,13 @@
     "if": {"type": "object", "properties": {"schemaRevision": {"enum": [1, 2, 3, 4, 5]}}},
     "then": {"type": "object", "properties": {
       "layers": {"type": "array", "items": {"type": "object", "properties": {"mask": false}}}
+    }}
+  }, {
+    "if": {"type": "object", "properties": {"schemaRevision": {"enum": [1, 2, 3, 4, 5, 6]}}},
+    "then": {"type": "object", "properties": {
+      "layers": {"type": "array", "items": {"type": "object", "properties": {
+        "kind": false, "timeOffset": false, "timeScale": false
+      }}}
     }}
   }]
 }

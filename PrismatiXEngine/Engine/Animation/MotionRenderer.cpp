@@ -66,6 +66,7 @@ void DrawMotionPose(graphics::Renderer2D& renderer, const sdk::MotionClip& clip,
     };
     for (const auto& draw : sampler.Pose()) {
         if (!renderable(draw) ||
+            clip.layers[draw.layer].kind == sdk::MotionLayerKind::Group ||
             (draw.layer < clip.maskSource.size() && clip.maskSource[draw.layer]))
             continue;
         const auto& layer = clip.layers[draw.layer];

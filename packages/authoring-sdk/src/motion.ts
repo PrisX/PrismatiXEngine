@@ -1,21 +1,10 @@
 import {serializeDocument, validateDocument} from "./contracts.js";
 import type {JsonValue, Result} from "./types.js";
 
-export interface MotionLayer {
+interface MotionLayerBase {
   readonly id: string;
-  readonly image: string;
-  /** Pixel rectangles within image; frame tracks select an index without
-   * loading a new texture on each key. Requires schema revision 2. */
-  readonly frames?: readonly MotionFrame[];
   readonly parent?: string;
-  /** Another animated layer whose alpha clips this layer. Mask sources are
-   * not painted independently. Requires revision 6. */
-  readonly mask?: string;
   readonly z?: number;
-  /** Normal alpha, additive light, or multiplicative tint. Revision 4. */
-  readonly blendMode?: "normal" | "additive" | "multiply";
-  readonly width: number;
-  readonly height: number;
   readonly anchorX?: number;
   readonly anchorY?: number;
   readonly x?: number;
@@ -23,9 +12,40 @@ export interface MotionLayer {
   readonly scaleX?: number;
   readonly scaleY?: number;
   readonly rotation?: number;
+  /** Local time = parent-local time × timeScale + timeOffset. Revision 7. */
+  readonly timeOffset?: number;
+  readonly timeScale?: number;
   readonly opacity?: number;
   readonly visible?: boolean;
 }
+
+export interface MotionImageLayer extends MotionLayerBase {
+  readonly kind?: "image";
+  readonly image: string;
+  /** Pixel rectangles within image; frame tracks select an index without
+   * loading a new texture on each key. Requires schema revision 2. */
+  readonly frames?: readonly MotionFrame[];
+  /** Another animated layer whose alpha clips this layer. Mask sources are
+   * not painted independently. Requires revision 6. */
+  readonly mask?: string;
+  /** Normal alpha, additive light, or multiplicative tint. Revision 4. */
+  readonly blendMode?: "normal" | "additive" | "multiply";
+  readonly width: number;
+  readonly height: number;
+}
+
+/** Invisible transform/time parent for inlined sub-timelines. Revision 7. */
+export interface MotionGroupLayer extends MotionLayerBase {
+  readonly kind: "group";
+  readonly image?: never;
+  readonly frames?: never;
+  readonly mask?: never;
+  readonly blendMode?: never;
+  readonly width?: number;
+  readonly height?: number;
+}
+
+export type MotionLayer = MotionImageLayer | MotionGroupLayer;
 
 export interface MotionFrame {
   readonly x: number;
@@ -80,7 +100,7 @@ export interface MotionInput {
 
 export interface MotionDocument extends MotionInput {
   readonly format: "PrismatiXMotion";
-  readonly schemaRevision: 1 | 2 | 3 | 4 | 5 | 6;
+  readonly schemaRevision: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   readonly loop: boolean;
   readonly tracks: readonly MotionTrack[];
   readonly markers?: readonly MotionAudioMarker[];
@@ -88,7 +108,8 @@ export interface MotionDocument extends MotionInput {
 
 /** Author a deterministic image-layer .pxmotion clip. Atlas frames use
  * revision 2, audio markers revision 3, blend modes revision 4, and cubic
- * timing curves revision 5, and layer alpha masks revision 6.
+ * timing curves revision 5, layer alpha masks revision 6, and local-time
+ * transform groups revision 7.
  * Blur and nested motion remain unsupported. */
 export function defineMotion(input: MotionInput): Result<MotionDocument> {
   const atlas = input.layers.some((layer) => layer.frames !== undefined) ||
@@ -98,6 +119,8 @@ export function defineMotion(input: MotionInput): Result<MotionDocument> {
   const hasBezier = input.tracks?.some((track) => track.keys.some((key) =>
     key.curve === "cubicBezier" || key.bezier !== undefined)) === true;
   const hasMasks = input.layers.some((layer) => layer.mask !== undefined);
+  const hasLocalTime = input.layers.some((layer) => layer.kind === "group" ||
+    layer.timeOffset !== undefined || layer.timeScale !== undefined);
   const usedMarkerIds = new Set(input.markers?.flatMap((marker) =>
     marker.id === undefined ? [] : [marker.id]) ?? []);
   const markers = input.markers?.map((marker, index) => {
@@ -110,33 +133,43 @@ export function defineMotion(input: MotionInput): Result<MotionDocument> {
   });
   const document: MotionDocument = {
     format: "PrismatiXMotion",
-    schemaRevision: hasMasks ? 6 : hasBezier ? 5 : hasBlendModes ? 4 :
+    schemaRevision: hasLocalTime ? 7 : hasMasks ? 6 : hasBezier ? 5 : hasBlendModes ? 4 :
       hasMarkers ? 3 : atlas ? 2 : 1,
     id: input.id,
     canvas: input.canvas,
     duration: input.duration,
     loop: input.loop ?? false,
     scaleMode: input.scaleMode ?? "fit",
-    layers: input.layers.map((layer) => ({
-      id: layer.id,
-      image: layer.image,
-      ...(layer.frames === undefined ? {} : {frames: layer.frames.map((frame) => ({...frame}))}),
-      ...(layer.parent === undefined ? {} : {parent: layer.parent}),
-      ...(layer.mask === undefined ? {} : {mask: layer.mask}),
-      z: layer.z ?? 0,
-      ...(layer.blendMode === undefined ? {} : {blendMode: layer.blendMode}),
-      width: layer.width,
-      height: layer.height,
-      anchorX: layer.anchorX ?? 0,
-      anchorY: layer.anchorY ?? 0,
-      x: layer.x ?? 0,
-      y: layer.y ?? 0,
-      scaleX: layer.scaleX ?? 1,
-      scaleY: layer.scaleY ?? 1,
-      rotation: layer.rotation ?? 0,
-      opacity: layer.opacity ?? 1,
-      visible: layer.visible ?? true,
-    })),
+    layers: input.layers.map((layer): MotionLayer => {
+      const common = {
+        id: layer.id,
+        ...(layer.parent === undefined ? {} : {parent: layer.parent}),
+        z: layer.z ?? 0,
+        anchorX: layer.anchorX ?? 0,
+        anchorY: layer.anchorY ?? 0,
+        x: layer.x ?? 0,
+        y: layer.y ?? 0,
+        scaleX: layer.scaleX ?? 1,
+        scaleY: layer.scaleY ?? 1,
+        rotation: layer.rotation ?? 0,
+        ...(layer.timeOffset === undefined ? {} : {timeOffset: layer.timeOffset}),
+        ...(layer.timeScale === undefined ? {} : {timeScale: layer.timeScale}),
+        opacity: layer.opacity ?? 1,
+        visible: layer.visible ?? true,
+      };
+      if (layer.kind === "group") return {
+        ...common, kind: "group", width: layer.width ?? 0,
+        height: layer.height ?? 0,
+      };
+      return {
+        ...common, image: layer.image,
+        ...(layer.frames === undefined ? {} :
+          {frames: layer.frames.map((frame) => ({...frame}))}),
+        ...(layer.mask === undefined ? {} : {mask: layer.mask}),
+        ...(layer.blendMode === undefined ? {} : {blendMode: layer.blendMode}),
+        width: layer.width, height: layer.height,
+      };
+    }),
     tracks: (input.tracks ?? []).map((track) => ({
       layer: track.layer,
       property: track.property,

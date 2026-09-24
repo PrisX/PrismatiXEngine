@@ -13,6 +13,7 @@ enum class MotionProperty { X, Y, ScaleX, ScaleY, Rotation, Opacity, Visible, Fr
 enum class MotionCurve { Step, Linear, EaseIn, EaseOut, EaseInOut, CubicBezier };
 enum class MotionAudioBus { SE, Voice };
 enum class MotionBlendMode { Normal, Additive, Multiply };
+enum class MotionLayerKind { Image, Group };
 
 struct MotionKey {
     double time = 0;
@@ -31,6 +32,7 @@ struct MotionAtlasFrame {
 
 struct MotionLayer {
     std::string id;
+    MotionLayerKind kind = MotionLayerKind::Image;
     std::string image;
     std::vector<MotionAtlasFrame> frames;
     std::optional<std::size_t> parent;
@@ -42,6 +44,7 @@ struct MotionLayer {
     double x = 0, y = 0;
     double scaleX = 1, scaleY = 1;
     double rotation = 0, opacity = 1;
+    double timeOffset = 0, timeScale = 1;
     bool visible = true;
 };
 
@@ -126,6 +129,7 @@ private:
     const MotionClip& m_clip;
     double m_position = 0;
     std::vector<State> m_states;
+    std::vector<double> m_localTimes;
     std::vector<MotionDrawLayer> m_world;
     std::vector<MotionDrawLayer> m_pose;
 };

@@ -185,7 +185,8 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         !root.contains("schemaRevision") || !root["schemaRevision"].is_number_integer() ||
         (root["schemaRevision"] != 1 && root["schemaRevision"] != 2 &&
          root["schemaRevision"] != 3 && root["schemaRevision"] != 4 &&
-         root["schemaRevision"] != 5 && root["schemaRevision"] != 6) ||
+         root["schemaRevision"] != 5 && root["schemaRevision"] != 6 &&
+         root["schemaRevision"] != 7) ||
         !root.contains("id") ||
         !root["id"].is_string() || !Identifier(root["id"].get_ref<const std::string&>()))
         return fail("PXMOTION1002", "Motion format, revision, or id is invalid");
@@ -222,14 +223,30 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
     clip.layers.reserve(layers->size()); parents.reserve(layers->size());
     masks.reserve(layers->size());
     for (const auto& entry : *layers) {
-        if (!OnlyFields(entry, {"id", "parent", "mask", "image", "frames", "z", "blendMode", "width", "height",
+        if (!OnlyFields(entry, {"id", "kind", "parent", "mask", "image", "frames", "z", "blendMode", "width", "height",
             "anchorX", "anchorY", "x", "y", "scaleX", "scaleY", "rotation",
-            "opacity", "visible"}) || !entry.contains("id") || !entry["id"].is_string() ||
-            !entry.contains("image") || !entry["image"].is_string())
+            "timeOffset", "timeScale", "opacity", "visible"}) ||
+            !entry.contains("id") || !entry["id"].is_string())
             return fail("PXMOTION1006", "Motion layer has invalid or unknown fields");
         MotionLayer layer;
         layer.id = entry["id"].get<std::string>();
-        layer.image = entry["image"].get<std::string>();
+        if (const auto kind = entry.find("kind"); kind != entry.end()) {
+            if (clip.schemaRevision < 7 || !kind->is_string())
+                return fail("PXMOTION1030", "Motion layer kind requires revision 7");
+            const auto value = kind->get<std::string>();
+            if (value == "group") layer.kind = MotionLayerKind::Group;
+            else if (value != "image")
+                return fail("PXMOTION1030", "Motion layer kind is invalid");
+        }
+        if (layer.kind == MotionLayerKind::Group) {
+            if (entry.contains("image") || entry.contains("frames") ||
+                entry.contains("mask") || entry.contains("blendMode"))
+                return fail("PXMOTION1031", "Motion transform group cannot draw or mask images");
+        } else {
+            if (!entry.contains("image") || !entry["image"].is_string())
+                return fail("PXMOTION1006", "Motion image layer requires an image path");
+            layer.image = entry["image"].get<std::string>();
+        }
         if (const auto blend = entry.find("blendMode"); blend != entry.end()) {
             if (clip.schemaRevision < 4 || !blend->is_string())
                 return fail("PXMOTION1026", "Motion blend mode requires revision 4");
@@ -239,9 +256,11 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
             else if (value == "multiply") layer.blendMode = MotionBlendMode::Multiply;
             else return fail("PXMOTION1026", "Motion blend mode is invalid");
         }
-        if (!Identifier(layer.id) || !SafePath(layer.image) ||
-            EndsWithIgnoreCase(layer.image, ".pxmotion") ||
-            EndsWithIgnoreCase(layer.image, ".pxportrait") ||
+        if (!Identifier(layer.id) ||
+            (layer.kind == MotionLayerKind::Image &&
+                (!SafePath(layer.image) ||
+                 EndsWithIgnoreCase(layer.image, ".pxmotion") ||
+                 EndsWithIgnoreCase(layer.image, ".pxportrait"))) ||
             !layerIds.emplace(layer.id, clip.layers.size()).second)
             return fail("PXMOTION1007", "Motion layer id or image path is invalid or duplicated");
         if (const auto frames = entry.find("frames"); frames != entry.end()) {
@@ -278,8 +297,11 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
             masks.push_back(mask->get<std::string>());
         } else masks.emplace_back();
         const auto z = Number(entry, "z", 0, -100000, 100000);
-        const auto width = Number(entry, "width", 0, 0.000001, 16384, true);
-        const auto height = Number(entry, "height", 0, 0.000001, 16384, true);
+        const bool imageLayer = layer.kind == MotionLayerKind::Image;
+        const auto width = Number(entry, "width", 0, imageLayer ? 0.000001 : 0,
+                                  16384, imageLayer);
+        const auto height = Number(entry, "height", 0, imageLayer ? 0.000001 : 0,
+                                   16384, imageLayer);
         const auto anchorX = Number(entry, "anchorX", 0, 0, 1);
         const auto anchorY = Number(entry, "anchorY", 0, 0, 1);
         const auto x = Number(entry, "x", 0, -1'000'000, 1'000'000);
@@ -287,16 +309,22 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         const auto scaleX = Number(entry, "scaleX", 1, -1000, 1000);
         const auto scaleY = Number(entry, "scaleY", 1, -1000, 1000);
         const auto rotation = Number(entry, "rotation", 0, -1'000'000, 1'000'000);
+        const auto timeOffset = Number(entry, "timeOffset", 0, -86400, 86400);
+        const auto timeScale = Number(entry, "timeScale", 1, -1000, 1000);
         const auto opacity = Number(entry, "opacity", 1, 0, 1);
         const auto visible = Boolean(entry, "visible", true);
         if (!z || std::floor(*z) != *z || !width || !height || !anchorX || !anchorY ||
-            !x || !y || !scaleX || !scaleY || !rotation || !opacity || !visible)
+            !x || !y || !scaleX || !scaleY || !rotation || !timeOffset ||
+            !timeScale || !opacity || !visible ||
+            (clip.schemaRevision < 7 &&
+                (entry.contains("timeOffset") || entry.contains("timeScale"))))
             return fail("PXMOTION1009", "Motion layer geometry or visibility is invalid");
         layer.z = static_cast<int>(*z);
         layer.width = *width; layer.height = *height;
         layer.anchorX = *anchorX; layer.anchorY = *anchorY;
         layer.x = *x; layer.y = *y; layer.scaleX = *scaleX; layer.scaleY = *scaleY;
         layer.rotation = *rotation; layer.opacity = *opacity; layer.visible = *visible;
+        layer.timeOffset = *timeOffset; layer.timeScale = *timeScale;
         clip.layers.push_back(std::move(layer));
     }
     std::vector<std::vector<std::size_t>> children(clip.layers.size());
@@ -321,6 +349,7 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         if (masks[i].empty()) continue;
         const auto target = layerIds.find(masks[i]);
         if (target == layerIds.end() || target->second == i ||
+            clip.layers[target->second].kind != MotionLayerKind::Image ||
             !masks[target->second].empty())
             return fail("PXMOTION1028", "Motion mask must name an unmasked, distinct layer");
         if (clip.layers[i].blendMode != MotionBlendMode::Normal ||
@@ -452,7 +481,8 @@ std::vector<std::string> MotionDependencies(const MotionClip& clip) {
     std::vector<std::string> dependencies;
     std::unordered_set<std::string> seen;
     for (const auto& layer : clip.layers)
-        if (seen.insert(layer.image).second) dependencies.push_back(layer.image);
+        if (layer.kind == MotionLayerKind::Image &&
+            seen.insert(layer.image).second) dependencies.push_back(layer.image);
     return dependencies;
 }
 
@@ -466,6 +496,7 @@ std::vector<std::string> MotionAudioDependencies(const MotionClip& clip) {
 
 MotionSampler::MotionSampler(const MotionClip& clip) : m_clip(clip) {
     m_states.resize(clip.layers.size());
+    m_localTimes.resize(clip.layers.size());
     m_world.resize(clip.layers.size());
     m_pose.resize(clip.layers.size());
     Seek(0);
@@ -475,6 +506,11 @@ void MotionSampler::Seek(double timeSeconds) {
     const double finite = std::isfinite(timeSeconds) ? std::max(0.0, timeSeconds) : 0.0;
     m_position = m_clip.loop ? std::fmod(finite, m_clip.duration) :
         std::min(finite, m_clip.duration);
+    for (const auto index : m_clip.hierarchyOrder) {
+        const auto& layer = m_clip.layers[index];
+        const double parentTime = layer.parent ? m_localTimes[*layer.parent] : m_position;
+        m_localTimes[index] = parentTime * layer.timeScale + layer.timeOffset;
+    }
     for (std::size_t i = 0; i < m_clip.layers.size(); ++i) {
         const auto& layer = m_clip.layers[i];
         m_states[i] = {layer.x, layer.y, layer.scaleX, layer.scaleY,
@@ -482,19 +518,20 @@ void MotionSampler::Seek(double timeSeconds) {
     }
     for (const auto& track : m_clip.tracks) {
         auto& state = m_states[track.layer];
+        const double localTime = m_localTimes[track.layer];
         if (track.property == MotionProperty::Visible) {
-            const auto right = std::upper_bound(track.keys.begin(), track.keys.end(), m_position,
+            const auto right = std::upper_bound(track.keys.begin(), track.keys.end(), localTime,
                 [](double at, const MotionKey& key) { return at < key.time; });
             if (right != track.keys.begin()) state.visible = (right - 1)->visible;
             continue;
         }
         if (track.property == MotionProperty::Frame) {
-            const auto right = std::upper_bound(track.keys.begin(), track.keys.end(), m_position,
+            const auto right = std::upper_bound(track.keys.begin(), track.keys.end(), localTime,
                 [](double at, const MotionKey& key) { return at < key.time; });
             if (right != track.keys.begin()) state.frame = (right - 1)->frame;
             continue;
         }
-        const auto sampled = SampleNumber(track, m_position);
+        const auto sampled = SampleNumber(track, localTime);
         if (!sampled) continue;
         const double value = *sampled;
         switch (track.property) {

@@ -142,6 +142,8 @@ function motionSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[
       const source = byId.get(layer.mask);
       if (source === undefined)
         diagnostics.push(issue("PXSDKSEM1412", "Motion mask layer does not exist", path, String(layer.id)));
+      else if (source.kind === "group")
+        diagnostics.push(issue("PXSDKSEM1415", "Motion group cannot supply image alpha for a mask", path, String(layer.id)));
       else if (source === layer || source.mask !== undefined)
         diagnostics.push(issue("PXSDKSEM1413", "Motion masks cannot reference themselves or another masked layer", path, String(layer.id)));
       if (layer.blendMode !== undefined && layer.blendMode !== "normal")

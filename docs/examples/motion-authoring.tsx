@@ -30,6 +30,21 @@ const masked = serializeMotion({
 if (!masked.valid || JSON.parse(masked.value!).schemaRevision !== 6)
   throw new Error("Alpha-mask motion must validate as revision 6");
 
+const nested = serializeMotion({
+  id: "nested-logo", canvas: {width: 1280, height: 720}, duration: 1,
+  layers: [
+    {id: "subclip", kind: "group", x: 480, y: 300,
+      timeOffset: -0.25, timeScale: 2},
+    {id: "logo", parent: "subclip", image: "Assets/UI/logo.png",
+      width: 320, height: 120},
+  ],
+  tracks: [{layer: "logo", property: "opacity", keys: [
+    {time: 0, value: 0}, {time: 0.5, value: 1},
+  ]}],
+});
+if (!nested.valid || JSON.parse(nested.value!).schemaRevision !== 7)
+  throw new Error("Child-local motion must validate as revision 7");
+
 const ui = compileJsxUi(
   <Scene name="Title" width={1280} height={720}>
     <Motion name="Logo" path="Content/Motion/logo-reveal.pxmotion"
