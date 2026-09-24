@@ -659,6 +659,18 @@ test("bounded parallel resource copy preserves every file and rebuilds changed m
   assert.equal(unchanged.status, 0, unchanged.stderr);
   assert.equal(copyEvent(unchanged.stderr)?.reusedFiles, inputs.length,
     "ordinary artifact rebuild reuses unchanged media, not just dev preview");
+  const unownedPath = join(output, "Assets", "Unowned", "stray.bin");
+  await write(unownedPath, "stray");
+  const unowned = run(["build", value.project, "--artifact-only", "--output", output]);
+  assert.equal(unowned.status, 1);
+  assert.match(unowned.stderr, /Artifact directory is not owned: Assets\/Unowned/u);
+  assert.match(unowned.stderr, /use --output <new-empty-directory>/u);
+  assert.doesNotMatch(unowned.stderr, /"phase":"compile"/u,
+    "unowned output must fail before Story compilation");
+  assert.doesNotMatch(unowned.stderr, /"phase":"copy"/u,
+    "unowned output must fail before copying source media");
+  assert.equal(await readFile(unownedPath, "utf8"), "stray");
+  await rm(join(output, "Assets", "Unowned"), {recursive: true});
   const retainedPath = join(output, ...inputs[0]!.split("/"));
   await write(retainedPath, "tampered-0");
   const refused = run(["build", value.project, "--artifact-only", "--output", output]);

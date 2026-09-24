@@ -988,21 +988,52 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
   buildProgress("load", 0, 1);
   const loaded = await loadProject(projectArgument);
   buildProgress("load", 1, 1, 0, true);
+  const output = resolve(outputArgument ?? join(loaded.root, ".prismatix", "build"));
+  const reuseRoot = previousBuild?.output ?? output;
+  let preflightInputs: readonly PublishedInput[] | undefined;
+  let destinationEmpty = false;
+  if (existsSync(output)) {
+    destinationEmpty = (await readdir(output)).length === 0;
+    if (!destinationEmpty) {
+      try {
+        // Name/ownership validation is cheap relative to compiling a large
+        // Story or copying its media. Full content hashes remain mandatory
+        // immediately before publication.
+        preflightInputs = await publishedInputs(output, undefined, true);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`${detail}. Existing output was preserved; use --output ` +
+          "<new-empty-directory> for a fresh artifact, or reconcile the existing output first.",
+          {cause: error});
+      }
+    }
+  }
   buildProgress("compile", 0, 1);
   const compiled = await compileLoaded(loaded, committedRevision, registryOverride,
     runtimeHint, packagerPath, storyProgressReporter(), storyCompilationCache);
   printDiagnostics(compiled.diagnostics);
   if (!compiled.valid || compiled.artifact === undefined) throw new Error("Project validation or compilation failed");
   buildProgress("compile", 1, 1, 0, true);
-  const output = resolve(outputArgument ?? join(loaded.root, ".prismatix", "build"));
   let reuse: ReusableArtifactInputs | undefined;
-  const reuseRoot = previousBuild?.output ?? output;
-  if (existsSync(reuseRoot)) {
+  if (existsSync(reuseRoot) && !(resolve(reuseRoot) === output && destinationEmpty)) {
     try {
-      const inputs = await publishedInputs(reuseRoot);
+      // Replacement requires exact directory ownership. Reading a separate
+      // legacy artifact for packaging/reuse still permits implicit parents.
+      const inputs = resolve(reuseRoot) === output && preflightInputs !== undefined
+        ? preflightInputs : await publishedInputs(reuseRoot, undefined,
+          resolve(reuseRoot) === output);
       reuse = {root: reuseRoot,
         byUri: new Map(inputs.map((input) => [input.uri, input]))};
     } catch (error) {
+      // A nonempty destination that fails its name/ownership scan will also
+      // fail publication. Stop before copying multi-GiB inputs into staging;
+      // only a separate previous preview revision may be ignored for reuse.
+      if (resolve(reuseRoot) === output && (await readdir(reuseRoot)).length > 0) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`${detail}. Existing output was preserved; use --output ` +
+          "<new-empty-directory> for a fresh artifact, or reconcile the existing output first.",
+          {cause: error});
+      }
       printDiagnostics([{severity: "warning", code: "PXCLI1610",
         message: "Previous artifact cannot be reused; copying source resources",
         path: reuseRoot, hint: String(error)}]);

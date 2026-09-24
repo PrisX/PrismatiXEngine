@@ -153,7 +153,8 @@ async function assertOwned(output: string, allowEmpty = true,
 /** Read an existing artifact without rehashing multi-GiB media. The native
  * Packager verifies each supplied SHA-256 and size before accepting it. */
 export async function publishedInputs(output: string,
-  onProgress?: (value: PublishedScanProgress) => void): Promise<readonly PublishedInput[]> {
+  onProgress?: (value: PublishedScanProgress) => void,
+  requireOwnedDirectories = false): Promise<readonly PublishedInput[]> {
   const root = resolve(output);
   const info = await lstat(root);
   if (!info.isDirectory() || info.isSymbolicLink())
@@ -201,6 +202,8 @@ export async function publishedInputs(output: string,
       const expectedValue = Object.hasOwn(expected, uri) ? expected[uri] : undefined;
       if (entry.isDirectory()) {
         if (expectedValue !== undefined && expectedValue !== "directory")
+          throw new Error(`Artifact directory is not owned: ${uri}`);
+        if (requireOwnedDirectories && expectedValue === undefined)
           throw new Error(`Artifact directory is not owned: ${uri}`);
         const children = await visit(path);
         // Legacy artifact post-processors sometimes listed every file but
