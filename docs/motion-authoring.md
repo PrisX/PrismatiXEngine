@@ -37,6 +37,12 @@ three-channel `tint` track. The helper selects revision 8 when either is
 authored; older files cannot silently contain tint fields. A group's tint is
 multiplied into its descendants, independently of `opacity`.
 
+In TypeScript, `MotionTrack` is property-discriminated: `visible` keys take
+booleans, `tint` keys take `{r, g, b}`, and position/scale/rotation/opacity/
+atlas-frame keys take numbers. The editor and `tsc` catch mismatched value
+types before building the game. Runtime schema and semantic checks still
+validate external JSON, frame indices, ranges, curves, and references.
+
 ```ts
 import {writeFile} from "node:fs/promises";
 import {serializeMotion} from "@prismatix/authoring-sdk";
