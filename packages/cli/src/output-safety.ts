@@ -183,13 +183,26 @@ async function inventory(root: string, phase?: PublicationProgress["phase"],
   report(true);
   return entries;
 }
-function inventoryDifference(expected: Record<string, string>, actual: Record<string, string>): string | undefined {
+function inventoryDifference(expected: Record<string, string>, actual: Record<string, string>,
+  output: string): string | undefined {
+  const location = (name: string): string => {
+    const absolute = resolve(output, ...name.split("/"));
+    if (actual[name] !== "directory") return `${name} (${absolute})`;
+    const empty = !Object.keys(actual).some((entry) => entry.startsWith(`${name}/`));
+    return `${name} (${absolute}; ${empty ? "empty" : "nonempty"} directory)`;
+  };
   for (const name of Object.keys(expected).sort()) {
-    if (!Object.hasOwn(actual, name)) return `owned entry is missing: ${name}`;
-    if (expected[name] !== actual[name]) return `owned entry was modified: ${name}`;
+    if (!Object.hasOwn(actual, name)) return `owned entry is missing: ${location(name)}`;
+    if (expected[name] !== actual[name]) return `owned entry was modified: ${location(name)}`;
   }
   for (const name of Object.keys(actual).sort()) {
-    if (!Object.hasOwn(expected, name)) return `unowned entry was added: ${name}`;
+    if (!Object.hasOwn(expected, name)) {
+      const nested = Object.keys(actual).filter((entry) => entry.startsWith(`${name}/`))
+        .sort((left, right) => right.split("/").length - left.split("/").length ||
+          left.localeCompare(right, "en"))[0];
+      return `unowned entry was added: ${location(name)}` +
+        (nested === undefined ? "" : `; nested entry: ${location(nested)}`);
+    }
   }
   return undefined;
 }
@@ -208,11 +221,13 @@ async function assertOwned(output: string, allowEmpty = true,
         typeof marker.files !== "object" || Array.isArray(marker.files))
       throw new Error("invalid ownership marker");
     const difference = inventoryDifference(marker.files,
-      await inventory(output, phase, onProgress));
+      await inventory(output, phase, onProgress), output);
     if (difference !== undefined) throw new Error(difference);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`Refusing to replace unowned or modified output directory: ${output} (${detail})`, {cause: error});
+    throw new Error(`Refusing to replace unowned or modified output directory: ${output} (${detail}). ` +
+      "Inspect the listed entry or choose a new --output; the existing output was left untouched.",
+    {cause: error});
   }
 }
 

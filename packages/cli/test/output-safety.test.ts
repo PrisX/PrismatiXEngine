@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {link, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile} from "node:fs/promises";
+import {link, mkdtemp, mkdir, readFile, readdir, rm, rmdir, stat, symlink, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import test from "node:test";
@@ -57,6 +57,36 @@ test("allows new or empty output and replaces only intact owned output", async t
   const empty = join(f.root, "empty");
   await mkdir(empty);
   await publishDirectory({...f, output: empty}, build("empty accepted"));
+});
+
+test("unowned directory diagnostics identify its full path and whether it is empty", async t => {
+  const f = await fixture(t);
+  await publishDirectory(f, build("owned payload"));
+  const foreign = join(f.output, "Assets", "UI", "Original", "settings-key-skin");
+  await mkdir(foreign, {recursive: true});
+  await writeFile(join(f.output, "Assets", "readme.txt"), "other unowned file");
+  await assert.rejects(publishDirectory(f, build("replacement")), error => {
+    const message = String(error);
+    assert.match(message, /unowned entry was added: Assets/u);
+    assert.ok(message.includes(join(f.output, "Assets")));
+    assert.ok(message.includes(foreign));
+    assert.match(message, /nonempty directory/u);
+    assert.match(message, /existing output was left untouched/u);
+    return true;
+  });
+  assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "owned payload");
+  await rm(join(f.output, "Assets", "readme.txt"));
+  await rmdir(foreign);
+  await rmdir(join(f.output, "Assets", "UI", "Original"));
+  await rmdir(join(f.output, "Assets", "UI"));
+  await assert.rejects(publishDirectory(f, build("replacement")), error => {
+    const message = String(error);
+    assert.match(message, /unowned entry was added: Assets/u);
+    assert.ok(message.includes(join(f.output, "Assets")));
+    assert.match(message, /empty directory/u);
+    return true;
+  });
+  assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "owned payload");
 });
 
 test("published artifact inputs come from an intact ownership inventory", async t => {
