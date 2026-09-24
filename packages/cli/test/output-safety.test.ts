@@ -110,6 +110,29 @@ test("resource reuse requires a content-verified published revision", async t =>
   await assert.rejects(verifiedPublishedInputs(f.output), /unowned or modified/u);
 });
 
+test("bounded inventory workers fingerprint every file and report completed work", async t => {
+  const f = await fixture(t);
+  const phases: PublicationProgress[] = [];
+  await publishDirectory({...f, onProgress: value => phases.push(value)}, async stage => {
+    await mkdir(join(stage, "Media"));
+    for (let index = 0; index < 24; index += 1)
+      await writeFile(join(stage, "Media", `${index}.bin`), `file-${index}`);
+  });
+  const marker = JSON.parse(await readFile(join(f.output, outputOwnershipMarker), "utf8")) as {
+    files: Record<string, string>;
+  };
+  assert.equal(Object.keys(marker.files).length, 25);
+  assert.ok(Object.entries(marker.files).every(([uri, fingerprint]) =>
+    uri === "Media" ? fingerprint === "directory" : /^[0-9a-f]{64}$/u.test(fingerprint)));
+  const inventoryReports = phases.filter(value => value.phase === "fingerprint-output");
+  assert.deepEqual(inventoryReports.at(-1), {phase: "fingerprint-output",
+    files: 24, bytes: 158, done: true});
+  const verified = await verifiedPublishedInputs(f.output);
+  assert.equal(verified.length, 24);
+  await writeFile(join(f.output, "Media", "7.bin"), "other-7");
+  await assert.rejects(verifiedPublishedInputs(f.output), /owned entry was modified: Media\/7\.bin/u);
+});
+
 test("unchanged publication keeps its file identity only after full content verification", async t => {
   const f = await fixture(t);
   await publishDirectory(f, build("stable"));

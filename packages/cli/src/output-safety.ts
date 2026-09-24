@@ -108,6 +108,7 @@ async function inventory(root: string, phase?: PublicationProgress["phase"],
   onProgress?: PublicationOptions["onProgress"],
   linkedOutput?: {root: string; files: ReadonlyMap<string, PublishedInput>; verified: Set<string>}): Promise<Record<string, string>> {
   const entries: Record<string, string> = Object.create(null) as Record<string, string>;
+  const fileEntries: {readonly name: string; readonly path: string}[] = [];
   const seenLinks = new Set<string>();
   let files = 0;
   let bytes = 0;
@@ -131,6 +132,22 @@ async function inventory(root: string, phase?: PublicationProgress["phase"],
       if (entry.isSymbolicLink()) throw new Error(`Unsafe output contains a symbolic link: ${path}`);
       if (entry.isDirectory()) { entries[name] = "directory"; await visit(path); }
       else if (entry.isFile()) {
+        // Reserve the insertion order so published markers remain stable even
+        // though bounded workers complete fingerprints out of order.
+        entries[name] = "";
+        fileEntries.push({name, path});
+      }
+      else throw new Error(`Unsafe output contains a special file: ${path}`);
+    }
+  }
+  await visit(root);
+  let nextFile = 0;
+  let failed = false;
+  let failure: unknown;
+  const worker = async (): Promise<void> => {
+    while (!failed && nextFile < fileEntries.length) {
+      const {name, path} = fileEntries[nextFile++]!;
+      try {
         const linked = linkedOutput?.files.get(name);
         if (linked !== undefined) {
           if (await assertLinkedIdentity(linkedOutput!.root, root, name, linked.size)) {
@@ -152,11 +169,15 @@ async function inventory(root: string, phase?: PublicationProgress["phase"],
         }
         files += 1;
         report();
+      } catch (error) {
+        failed = true;
+        failure = error;
       }
-      else throw new Error(`Unsafe output contains a special file: ${path}`);
     }
-  }
-  await visit(root);
+  };
+  // Keep open files and disk contention bounded for large VN artifacts.
+  await Promise.all(Array.from({length: Math.min(8, fileEntries.length)}, worker));
+  if (failed) throw failure;
   if (linkedOutput !== undefined && seenLinks.size !== linkedOutput.files.size)
     throw new Error("A reused artifact file is missing from staged output");
   report(true);
