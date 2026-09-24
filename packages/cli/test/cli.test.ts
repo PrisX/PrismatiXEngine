@@ -999,6 +999,46 @@ test("pack validates UI against the selected Packager's adjacent registry", asyn
   assert.doesNotMatch(packed.stderr, /PXCLI1042/u);
 });
 
+test("pack --check runs native preflight on an artifact without writing a distribution", async () => {
+  const value = await fixture();
+  const artifact = join(value.root, "artifact");
+  assert.equal(run(["build", value.project, "--artifact-only", "--output", artifact]).status, 0);
+  await write(join(value.root, "Story/main.pxstory"), "[invalid-author-source]\n");
+  const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-package-check-"));
+  const mock = join(tools, "mock-packager.mjs");
+  const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
+  await write(player, "fixture");
+  await write(mock, `
+    import {readFile} from "node:fs/promises";
+    const [flag, path] = process.argv.slice(2);
+    if (flag !== "--validate-request") process.exit(41);
+    const request = JSON.parse(await readFile(path, "utf8"));
+    if (request.projectRoot !== ${JSON.stringify(artifact)} ||
+        request.inputs.length === 0) process.exit(42);
+    process.stdout.write(JSON.stringify({event: "validated",
+      inputCount: request.inputs.length}) + "\\n");
+  `);
+  const output = join(value.root, "distribution");
+  const args = ["pack", value.project, "--artifact", artifact,
+    "--packager", mock, "--player", player, "--output", output, "--check"];
+  const checked = run(args);
+  assert.equal(checked.status, 0, checked.stderr);
+  assert.match(checked.stdout, /"validated":true/u);
+  assert.match(checked.stdout, /"packed":false/u);
+  await assert.rejects(stat(output), /ENOENT/u);
+
+  await write(mock, `
+    process.stdout.write(JSON.stringify({event: "failed", code: "PXPKG1020",
+      diagnostics: [{severity: "error", code: "PXPKG1020",
+        message: "Native semantic check rejected UI"}]}) + "\\n");
+    process.exit(1);
+  `);
+  const rejected = run(args);
+  assert.equal(rejected.status, 1);
+  assert.match(rejected.stderr, /PXPKG1020/u);
+  await assert.rejects(stat(output), /ENOENT/u);
+});
+
 test("pack streams native progress and handles more than 16 MiB of progress events", async () => {
   const value = await fixture();
   const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-long-progress-"));

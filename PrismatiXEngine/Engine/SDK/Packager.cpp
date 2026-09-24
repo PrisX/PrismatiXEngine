@@ -2869,6 +2869,10 @@ std::string SerializePackageEvent(const PackageEvent& event) {
             object["manifestPath"] = px::PathToUtf8(event.manifestPath);
             object["inputCount"] = event.inputCount;
             break;
+        case PackageEventKind::Validated:
+            object["event"] = "validated";
+            object["inputCount"] = event.inputCount;
+            break;
         case PackageEventKind::Cancelled:
             object["event"] = "cancelled";
             object["message"] = event.message;
@@ -2948,6 +2952,29 @@ std::string ComputePackageFingerprint(const std::filesystem::path& path) {
         return {};
     }
     return Hex(digest);
+}
+
+PackageRunResult ValidatePackageRequest(const PackageRequest& request,
+                                        const PackageEventSink& eventSink) {
+    EmitProgress(request, eventSink, "validate", 0, request.inputs.size(),
+                 "Validating package request");
+    auto validated = Validate(request, eventSink);
+    if (validated.cancelled)
+        return Cancel(request, eventSink,
+                      "Package validation was cancelled while checking inputs");
+    if (!validated.diagnostics.empty())
+        return Fail(request, eventSink, std::move(validated.diagnostics));
+    if (Cancelled(request))
+        return Cancel(request, eventSink,
+                      "Package validation was cancelled after checking inputs");
+    PackageEvent completed;
+    completed.kind = PackageEventKind::Validated;
+    completed.requestId = request.requestId;
+    completed.inputCount = validated.inputs.size();
+    Emit(eventSink, std::move(completed));
+    PackageRunResult result;
+    result.exitCode = PackageExitCode::Completed;
+    return result;
 }
 
 PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSink& eventSink) {

@@ -130,6 +130,14 @@ rather than during the initial validation phase. This removes one media read,
 not the integrity checks or the time needed to verify
 old PDX shards and publish a distribution.
 
+Use `prismatix pack <project> --artifact <artifact> --check` to run that
+native request and Story/UI/resource-contract preflight without writing a
+distribution. Without `--artifact`, the CLI compiles a temporary artifact
+first. The command reports a distinct `validated` result, never `packed`.
+Media fingerprints intentionally deferred by normal Packager are also
+deferred by `--check`; a successful preflight is not a verified PDX or a
+guarantee that all media bytes will remain unchanged during packaging.
+
 For large games, `pack`, `run`, and distribution `build` accept
 `--archive-shards N` (1–64). The default `1` keeps `Content.pdx`; larger
 values assign each resource to a stable URI-hash shard and emit

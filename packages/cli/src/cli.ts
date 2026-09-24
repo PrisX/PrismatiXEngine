@@ -82,7 +82,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   dev: {values: "runtime preview-host debounce ui-registry", flags: "once smoke"},
   validate: {values: "runtime ui-registry", flags: ""},
   build: {values: "output artifact runtime packager player compression archive-shards ui-registry", flags: "artifact-only distribution encrypt ignore-disk-space"},
-  pack: {values: "output artifact runtime packager player compression archive-shards ui-registry", flags: "encrypt ignore-disk-space"},
+  pack: {values: "output artifact runtime packager player compression archive-shards ui-registry", flags: "encrypt ignore-disk-space check"},
   run: {values: "output artifact runtime packager player compression archive-shards ui-registry", flags: "encrypt ignore-disk-space"},
   augment: {values: "artifact manifest", flags: ""},
   ids: {values: "document-id prefix backup", flags: "write check external inline sync"},
@@ -1312,7 +1312,7 @@ function packageOutputObserver(activity = "Packaging", streamMachineOutput = tru
   };
 }
 
-async function packProject(options: Options): Promise<{output: string; player: string}> {
+async function packProject(options: Options): Promise<{output: string; player: string; validatedOnly?: boolean}> {
   let packager: string;
   let player: string;
   try {
@@ -1390,6 +1390,31 @@ async function packProject(options: Options): Promise<{output: string; player: s
       archiveShards: Number(options.values.get("archive-shards") ?? "1"),
       inputs,
     };
+    if (options.flags.has("check")) {
+      const requestPath = join(temp, "validate-request.json");
+      await writeFile(requestPath, `${JSON.stringify({...requestPlan,
+        requestId: `cli-check-${process.pid}`,
+        projectRoot: artifactRoot, outputDir: output,
+        cancelFile: join(temp, ".cancel-validation")})}\n`, "utf8");
+      const scriptTool = [".js", ".mjs", ".cjs"].includes(extname(packager).toLowerCase());
+      const result = await runProcess(scriptTool ? process.execPath : packager,
+        [...(scriptTool ? [packager] : []), "--validate-request", requestPath],
+        undefined, root, false, packageOutputObserver());
+      if (result.stderr.length > 0) process.stderr.write(result.stderr);
+      const events = packageEvents(result.stdout);
+      const failed = failedPackageDiagnostics(events);
+      if (failed.length > 0) throw new PackagerFailure(failed);
+      if (result.code !== 0 || !events.some(event => event.event === "validated"))
+        throw new PackagerFailure([diagnostic("PXCLI1219",
+          result.code === 0
+            ? "Packager did not confirm native package validation"
+            : `Packager validation exited with code ${result.code}`,
+          options.positional[0])]);
+      progress({event: "progress", severity: "information", code: "PXCLI1220",
+        phase: "validate-package", current: inputs.length, total: inputs.length,
+        message: `Package preflight passed: ${inputs.length} inputs; no distribution written`});
+      return {output, player: join(output, basename(player)), validatedOnly: true};
+    }
     const planKey = suppliedArtifact === undefined ? undefined :
       await packageRetentionKey(packager, player, artifactRoot, requestPlan);
     const contentKey = planKey === undefined ? undefined :
@@ -1515,7 +1540,13 @@ async function packProject(options: Options): Promise<{output: string; player: s
 }
 
 async function packCommand(options: Options): Promise<number> {
-  try { const result = await packProject(options); process.stdout.write(machineOutput ? `${JSON.stringify({packed: true, ...result})}\n` : `Packaged playable game: ${result.output}\n`); return 0; }
+  try { const result = await packProject(options); process.stdout.write(machineOutput
+    ? `${JSON.stringify(result.validatedOnly
+      ? {validated: true, packed: false}
+      : {packed: true, ...result})}\n`
+    : result.validatedOnly
+      ? "Package preflight passed; no distribution was written (media payloads are verified during packaging).\n"
+      : `Packaged playable game: ${result.output}\n`); return 0; }
   catch (error) {
     printDiagnostics(error instanceof PackagerFailure || error instanceof JsxAuthoringFailure ? error.diagnostics :
       [diagnostic("PXCLI1201", "Pack failed", options.positional[0], String(error))]);

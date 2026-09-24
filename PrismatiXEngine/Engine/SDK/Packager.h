@@ -104,6 +104,7 @@ enum class PackageEventKind {
     Completed,
     Cancelled,
     Failed,
+    Validated,
 };
 
 struct PackageEvent {
@@ -160,5 +161,12 @@ using PackageEventSink = std::function<void(const PackageEvent&)>;
 // promotion. Cancellation is polled between work units and immediately before
 // promotion.
 [[nodiscard]] PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSink& eventSink = {});
+
+// Checks native package request and authored Story/UI/resource contracts
+// without creating or replacing a distribution. Media payload fingerprints
+// deferred by normal packaging are also deferred here: this is a preflight,
+// not a complete package-content verification.
+[[nodiscard]] PackageRunResult ValidatePackageRequest(const PackageRequest& request,
+                                                      const PackageEventSink& eventSink = {});
 
 }  // namespace px::sdk

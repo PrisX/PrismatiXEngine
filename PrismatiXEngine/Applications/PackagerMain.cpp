@@ -82,8 +82,11 @@ int RunMain(int argc, char** argv) {
             return static_cast<int>(px::sdk::PackageExitCode::Failed);
         }
     }
-    if (argc != 3 || std::string_view(argv[1]) != "--request") {
-        Emit(FailedEvent({}, "PXPKG1001", "Usage: PrismatiXPackager --request <absolute-json-path> | --verify-package <absolute-distribution-path>"));
+    const bool validateOnly = argc == 3 &&
+        std::string_view(argv[1]) == "--validate-request";
+    if (argc != 3 || (std::string_view(argv[1]) != "--request" &&
+                      !validateOnly)) {
+        Emit(FailedEvent({}, "PXPKG1001", "Usage: PrismatiXPackager --request <absolute-json-path> | --validate-request <absolute-json-path> | --verify-package <absolute-distribution-path>"));
         return static_cast<int>(px::sdk::PackageExitCode::Failed);
     }
 
@@ -112,7 +115,9 @@ int RunMain(int argc, char** argv) {
     }
 
     try {
-        const auto result = px::sdk::RunPackager(parsed.request, Emit);
+        const auto result = validateOnly
+            ? px::sdk::ValidatePackageRequest(parsed.request, Emit)
+            : px::sdk::RunPackager(parsed.request, Emit);
         return static_cast<int>(result.exitCode);
     } catch (const std::exception& error) {
         Emit(FailedEvent(parsed.request.requestId, "PXPKG1005",

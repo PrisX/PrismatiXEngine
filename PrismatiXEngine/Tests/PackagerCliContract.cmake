@@ -27,3 +27,14 @@ if(NOT PROTOCOL EQUAL 1 OR NOT EVENT STREQUAL "failed" OR
    NOT DIAGNOSTIC_COUNT EQUAL 1)
     message(FATAL_ERROR "Unexpected Packager failure event: ${OUTPUT}")
 endif()
+
+execute_process(
+    COMMAND "${PACKAGER}" --validate-request relative-request.json
+    RESULT_VARIABLE VALIDATE_RESULT
+    OUTPUT_VARIABLE VALIDATE_OUTPUT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+string(JSON VALIDATE_CODE GET "${VALIDATE_OUTPUT}" code)
+if(NOT VALIDATE_RESULT EQUAL 1 OR NOT VALIDATE_CODE STREQUAL "PXPKG1002")
+    message(FATAL_ERROR "Validation-only CLI must parse its own request path: ${VALIDATE_OUTPUT}")
+endif()

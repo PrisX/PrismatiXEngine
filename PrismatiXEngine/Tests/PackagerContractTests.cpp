@@ -361,6 +361,46 @@ int main() {
             failedWire.dump());
     });
 
+    suite.Run("ValidationOnly_ChecksNativeSemanticsWithoutPublishing", [&] {
+        std::vector<px::sdk::PackageEvent> validationEvents;
+        const auto valid = px::sdk::ValidatePackageRequest(
+            request, [&](const auto& event) {
+                validationEvents.push_back(event);
+            });
+        suite.Require(valid.Completed(), "valid request passes native preflight");
+        suite.Expect(!validationEvents.empty() &&
+                         validationEvents.back().kind ==
+                             px::sdk::PackageEventKind::Validated &&
+                         validationEvents.back().inputCount ==
+                             request.inputs.size(),
+                     "preflight emits a distinct validated event");
+        suite.Expect(nlohmann::json::parse(px::sdk::SerializePackageEvent(
+                         validationEvents.back()))["event"] == "validated",
+                     "validated event has a machine-readable protocol name");
+        suite.Expect(std::filesystem::exists(output / "previous-success.txt") &&
+                         !std::filesystem::exists(output / "Content.pdx"),
+                     "preflight leaves the existing output untouched");
+
+        auto malformed = request;
+        const auto source = root / "Content/UI/Title.pxui";
+        const auto original = Read(source);
+        Write(source, R"({"format":"InvalidUi"})");
+        for (auto& input : malformed.inputs) {
+            if (input.uri == "Content/UI/Title.pxui") {
+                input.size = std::filesystem::file_size(source);
+                input.fingerprint =
+                    px::sdk::ComputePackageFingerprint(source);
+            }
+        }
+        const auto invalid = px::sdk::ValidatePackageRequest(malformed);
+        suite.Expect(!invalid.Completed() && !invalid.diagnostics.empty(),
+                     "preflight rejects a malformed authored UI even when its hash matches");
+        suite.Expect(std::filesystem::exists(output / "previous-success.txt") &&
+                         !std::filesystem::exists(output / "Content.pdx"),
+                     "failed preflight also leaves output untouched");
+        Write(source, original);
+    });
+
     suite.Run("Package_CreatesPlayerCompatibleAtomicDistribution", [&] {
         const auto result = px::sdk::RunPackager(request, [&](const auto& event) { events.push_back(event); });
         suite.Require(result.Completed(), "SDK Packager completes");
