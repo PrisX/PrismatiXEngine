@@ -154,6 +154,12 @@ public:
     void PopClip();
 
     void DrawImage(const std::string& path, const Rect& dst, std::uint8_t alpha = 255);
+    void PreloadImage(const std::string& path) {
+        m_assets.PreloadTexture(path, AssetPreloadPriority::Normal);
+    }
+    [[nodiscard]] bool ImageReady(const std::string& path) const {
+        return m_assets.HasResidentTexture(path);
+    }
     void DrawImageInRect(const std::string& path, const Rect& bounds, ContentScaleMode mode,
                          HorizontalAlignment horizontal = HorizontalAlignment::Center,
                          VerticalAlignment vertical = VerticalAlignment::Center,

@@ -62,6 +62,11 @@ public:
     // Non-owning: the renderer outlives the UI context in Player and Preview.
     // Measurement and drawing then consume the same immutable TextLayout.
     void SetTextRenderer(graphics::Renderer2D* renderer);
+    // Called after binding/layout updates for every currently mounted image.
+    // Hosts can enqueue asynchronous reads; the sink must be idempotent.
+    void SetImagePreloadSink(std::function<void(std::string_view)> sink) {
+        m_imagePreloadSink = std::move(sink);
+    }
     [[nodiscard]] Control* Root() const { return m_root.get(); }
     [[nodiscard]] InputRouter* InputRouting() const { return m_input.get(); }
     [[nodiscard]] Theme& ActiveTheme() { return m_theme; }
@@ -145,6 +150,7 @@ private:
     std::function<bool(std::uint64_t)> m_externalAnimationPlaying;
     std::function<void(Control&)> m_configureControlRuntime;
     graphics::Renderer2D* m_textRenderer = nullptr;
+    std::function<void(std::string_view)> m_imagePreloadSink;
     int m_width = 0;
     int m_height = 0;
     bool m_showDiagnostics = true;

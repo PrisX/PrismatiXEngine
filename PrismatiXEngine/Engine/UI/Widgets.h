@@ -184,6 +184,7 @@ protected:
     void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) override;
 private:
     std::string m_path;
+    std::string m_displayPath;
     ResourceRefValue m_texture;
     float m_opacity = 1.0f;
     TextureScaleMode m_scaleMode = TextureScaleMode::Stretch;

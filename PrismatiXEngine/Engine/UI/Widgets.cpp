@@ -188,8 +188,15 @@ void TextureRect::CollectImageDependencies(std::vector<std::string>& paths) cons
     if (!m_path.empty()) paths.push_back(m_path);
 }
 void TextureRect::DrawSelf(graphics::Renderer2D& renderer, const Theme&) {
-    if (!m_path.empty()) renderer.DrawImageInRect(m_path,LayoutRect(),ToScaleMode(m_scaleMode),
-        Horizontal(m_horizontalAlignment),Vertical(m_verticalAlignment),static_cast<std::uint8_t>(m_opacity*255.0f));
+    if (m_path.empty()) {
+        m_displayPath.clear();
+        return;
+    }
+    renderer.PreloadImage(m_path);
+    if (renderer.ImageReady(m_path)) m_displayPath = m_path;
+    if (!m_displayPath.empty() && renderer.ImageReady(m_displayPath))
+        renderer.DrawImageInRect(m_displayPath,LayoutRect(),ToScaleMode(m_scaleMode),
+            Horizontal(m_horizontalAlignment),Vertical(m_verticalAlignment),static_cast<std::uint8_t>(m_opacity*255.0f));
 }
 
 Status MotionRect::SetPath(std::string value) {

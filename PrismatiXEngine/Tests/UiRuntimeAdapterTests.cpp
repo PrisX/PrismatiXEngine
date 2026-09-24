@@ -588,6 +588,19 @@ void TestMountedImageDependencies() {
     const auto rebound = context.MountedImageDependencies();
     Check(rebound == std::vector<std::string>{"Assets/bound.png", "Assets/initial.png", "Assets/hover.png"},
           "mounted image dependencies observe runtime-bound path changes");
+    std::vector<std::string> requested;
+    context.SetImagePreloadSink([&requested](const std::string_view path) {
+        requested.emplace_back(path);
+    });
+    px::Input neutral;
+    (void)context.Update(neutral, 300, 200, 0.0f);
+    Check(requested == rebound,
+          "UI update requests the paths resolved after binding and layout");
+    boundImage->SetPath("Assets/changed-again.png");
+    requested.clear();
+    (void)context.Update(neutral, 300, 200, 0.0f);
+    Check(std::ranges::find(requested, "Assets/changed-again.png") != requested.end(),
+          "UI update requests images changed after the route was mounted");
 }
 
 int main() {

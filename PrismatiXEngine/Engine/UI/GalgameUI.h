@@ -115,6 +115,9 @@ public:
     void SetTextRenderer(graphics::Renderer2D* renderer) {
         m_context.SetTextRenderer(renderer);
     }
+    void SetImagePreloadSink(std::function<void(std::string_view)> sink) {
+        m_context.SetImagePreloadSink(std::move(sink));
+    }
     void SetAccessibilityAdapter(
         std::shared_ptr<accessibility::SemanticAdapter> adapter) {
         m_context.SetAccessibilityAdapter(std::move(adapter));

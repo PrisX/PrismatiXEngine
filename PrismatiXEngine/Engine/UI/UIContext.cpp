@@ -566,6 +566,9 @@ bool UIContext::Update(const Input& input, int viewportWidth, int viewportHeight
         (void)m_root->Measure({static_cast<float>(m_width), static_cast<float>(m_height)});
         m_root->Arrange({0, 0, static_cast<float>(m_width), static_cast<float>(m_height)});
     }
+    if (m_imagePreloadSink)
+        for (const auto& path : MountedImageDependencies())
+            m_imagePreloadSink(path);
     if (m_accessibilityAdapter)
         m_accessibilityAdapter->Publish(accessibility::SemanticTreeBuilder::Build(
             *m_root, ++m_accessibilityRevision));

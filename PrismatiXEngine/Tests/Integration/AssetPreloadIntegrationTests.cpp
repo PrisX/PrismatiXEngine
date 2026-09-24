@@ -293,6 +293,44 @@ int main() {
         SDL_Quit();
     });
 
+    suite.Run("FailedDemandRequestIsCachedUntilAssetSessionChanges", [&] {
+        suite.Require(SDL_Init(SDL_INIT_VIDEO), "demand request video initializes");
+        px::test::TempDirectory fixture("asset-preload-negative-cache");
+        SDL_Window* window = SDL_CreateWindow(
+            "Asset demand request", 160, 90, SDL_WINDOW_HIDDEN);
+        suite.Require(window != nullptr, "demand request hidden window exists");
+        SDL_Renderer* renderer = SDL_CreateRenderer(window, nullptr);
+        suite.Require(renderer != nullptr, "demand request renderer exists");
+        px::io::VFS vfs;
+        vfs.MountDirectory(fixture.path.string());
+        {
+            px::graphics::AssetCache assets(renderer, vfs);
+            assets.PreloadTexture("late.bmp");
+            const auto missing = assets.BeginTexturePreload({{.path = "late.bmp"}});
+            const auto failed = WaitForProgress(assets, missing);
+            suite.Require(failed.Finished() && failed.failed == 1,
+                          "missing demand image reports its first failure");
+            suite.Require(WriteBitmap(fixture.path / "late.bmp", 40, 20,
+                                      0xff3366ffu),
+                          "late image appears after the failed request");
+            for (int attempt = 0; attempt < 10; ++attempt) {
+                assets.PreloadTexture("late.bmp");
+                assets.BeginFrame();
+                std::this_thread::sleep_for(5ms);
+            }
+            suite.Expect(!assets.HasResidentTexture("late.bmp"),
+                         "failed demand image is not requeued every UI frame");
+            assets.BeginAssetSession();
+            const auto retried = assets.BeginTexturePreload({{.path = "late.bmp"}});
+            suite.Expect(WaitForProgress(assets, retried).succeeded == 1 &&
+                             assets.HasResidentTexture("late.bmp"),
+                         "new asset session clears the failure and permits retry");
+        }
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+    });
+
     suite.Run("FrameAdmissionAndImageLimits", [&] {
         suite.Require(SDL_Init(SDL_INIT_VIDEO), "limit test video initializes");
         px::test::TempDirectory fixture("asset-preload-limits");

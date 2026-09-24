@@ -114,7 +114,7 @@ void AssetCache::BeginFrame() {
     order.reserve(m_textures.size());
     for (const auto& [path, entry] : m_textures) {
         // mem:// textures cannot be reloaded from disk; leave them alone.
-        if (path.rfind("mem://", 0) == 0) {
+        if (!entry.texture || path.rfind("mem://", 0) == 0) {
             continue;
         }
         order.emplace_back(entry.lastUse, path);
@@ -411,6 +411,8 @@ void AssetCache::HarvestPendingTextures() {
             if (iterator->cacheRequest && !succeeded)
                 AssetDiagnostic(code, iterator->path,
                                 "Texture preload failed", decoded.error);
+            if (iterator->cacheRequest && !succeeded)
+                m_textures[iterator->path] = {{}, m_frame, 0};
         }
         iterator = m_pendingTextures.erase(iterator);
     }
@@ -521,7 +523,7 @@ TextureHandle AssetCache::Texture(const std::string& path) {
 
 void AssetCache::PreloadTexture(const std::string& path,
                                 const AssetPreloadPriority priority) {
-    if (path.empty()) return;
+    if (path.empty() || m_textures.contains(path)) return;
     QueueTexture(path, priority, 0, true);
 }
 

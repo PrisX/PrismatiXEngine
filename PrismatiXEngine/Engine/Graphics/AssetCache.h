@@ -90,7 +90,7 @@ public:
         return m_preloadConcurrency;
     }
     // Scheduling limits are independent of total worker concurrency. They bound
-    // synchronous read/start and renderer-upload work admitted by each BeginFrame.
+    // worker admission and renderer uploads admitted by each BeginFrame.
     void SetPreloadFrameLimits(std::size_t starts, std::size_t uploads);
     void SetImageDecodeByteLimit(std::size_t bytes);
     [[nodiscard]] std::size_t ImageDecodeByteLimit() const { return m_imageDecodeByteLimit; }

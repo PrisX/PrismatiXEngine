@@ -1346,6 +1346,10 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     });
 
     m_ui.SetActionSink([this](const ui::GalgameAction& action) { HandleUIAction(action); });
+    m_ui.SetImagePreloadSink([this](const std::string_view path) {
+        m_runtime.Assets().PreloadTexture(
+            std::string(path), graphics::AssetPreloadPriority::Normal);
+    });
     const std::vector<std::string> authoredUiCommands = {
         "set.fullscreen.on", "set.fullscreen.off",
         "set.reducedmotion.on", "set.reducedmotion.off",
