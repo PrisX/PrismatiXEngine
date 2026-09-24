@@ -48,7 +48,7 @@ assertLocalBuildFresh(fileURLToPath(new URL("../..", import.meta.url)), "@prisma
 
 interface Options {readonly values: Map<string, string>; readonly flags: Set<string>; readonly positional: string[]}
 interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>; readonly dependencies: ReadonlySet<string>; readonly includedResources: Readonly<Record<string, readonly string[]>>; readonly storyPath?: string}
-interface BuildResult {readonly root: string; readonly artifact: BuildArtifact; readonly output: string; readonly dependencies: ReadonlySet<string>}
+interface BuildResult {readonly root: string; readonly artifact: BuildArtifact; readonly output: string; readonly dependencies: ReadonlySet<string>; readonly protectedPaths: readonly string[]}
 
 class PackagerFailure extends Error {
   constructor(readonly diagnostics: readonly AuthoringDiagnostic[]) {
@@ -907,9 +907,12 @@ async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact,
 }
 
 function protectedInputs(loaded: LoadedProject, artifact: BuildArtifact): string[] {
-  return [loaded.projectPath, ...loaded.dependencies,
+  // Catalog assets and resourceIncludes appear in both dependency sets. A
+  // large VN can otherwise realpath the same tens of thousands of sources
+  // twice at each output-safety boundary.
+  return [...new Set([loaded.projectPath, ...loaded.dependencies,
     ...["Story", "Assets", "Content", "Scripts", "Extensions"].map((name) => join(loaded.root, name)),
-    ...artifact.dependencies.map((dependency) => projectFile(loaded.root, dependency.source))];
+    ...artifact.dependencies.map((dependency) => projectFile(loaded.root, dependency.source))])];
 }
 
 async function buildProject(projectArgument: string | undefined, outputArgument: string | undefined,
@@ -939,6 +942,7 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
     }
   }
   let reused: {readonly files: number; readonly bytes: number} = {files: 0, bytes: 0};
+  const protectedPaths = protectedInputs(loaded, compiled.artifact);
   buildProgress("publish", 0, 1);
   await publishDirectory({output, projectRoot: loaded.root,
     verifyExistingBeforeBuild: false,
@@ -948,7 +952,7 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
           (value) => buildProgress(value.phase, value.files, undefined,
             value.bytes, value.done));
     },
-    protectedPaths: protectedInputs(loaded, compiled.artifact),
+    protectedPaths,
     onProgress: (value) => buildProgress(value.phase, value.files, undefined,
       value.bytes, value.done)}, async (staging) => {
     reused = await copyRuntimeInputs(loaded, compiled.artifact!, staging, reuse);
@@ -959,7 +963,8 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
     try { dependencies.add(projectFile(loaded.root, dependency.source)); }
     catch { /* Compiler paths are advisory. */ }
   }
-  return {root: loaded.root, artifact: compiled.artifact, output, dependencies};
+  return {root: loaded.root, artifact: compiled.artifact, output, dependencies,
+    protectedPaths};
 }
 
 async function buildCommand(options: Options): Promise<number> {
@@ -1151,13 +1156,12 @@ async function packProject(options: Options): Promise<{output: string; player: s
       const built = await buildProject(options.positional[0], join(temp, "artifact"),
         undefined, options.values.get("ui-registry"), options.values.get("runtime"),
         packager);
-      const loaded = await loadProject(options.positional[0]);
       root = built.root;
       artifactRoot = built.output;
       project = built.artifact.project;
       startScript = built.artifact.runtimeIrPath;
       sourceMap = built.artifact.sourceMapPath;
-      protectedPaths = [...protectedInputs(loaded, built.artifact), artifactRoot];
+      protectedPaths = [...built.protectedPaths, artifactRoot];
     } else {
       // A published artifact is already compiled. In particular, do not
       // re-parse a possibly edited author project when distributing it.

@@ -819,6 +819,23 @@ test("typed image and button props reject invalid author values before native UI
 
 test("pack invokes the native file-based request protocol", async () => {
   const value = await fixture();
+  const authorProject = JSON.parse(await readFile(value.project, "utf8")) as {
+    uiEntryPoints: Record<string, string>;
+  };
+  authorProject.uiEntryPoints.title = "Content/UI/Title.tsx";
+  (authorProject as {resourceIncludes?: string[]}).resourceIncludes =
+    ["Extras/illustration.bin"];
+  await write(value.project, JSON.stringify(authorProject));
+  await write(join(value.root, "Extras/illustration.bin"), "author media");
+  await write(join(value.root, "Content/UI/Title.tsx"), `
+    import {Scene, Text, VBox} from "@prismatix/authoring-sdk";
+    console.log("PXCLI_TEST_AUTHORING_EVALUATED");
+    export default (
+      <Scene name="Title" width={1280} height={720}>
+        <VBox name="Root"><Text name="Caption">Title</Text></VBox>
+      </Scene>
+    );
+  `);
   const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-packager-"));
   const mock = join(tools, "mock-packager.mjs");
   await write(mock, `
@@ -841,6 +858,15 @@ test("pack invokes the native file-based request protocol", async () => {
   assert.match(packed.stderr, /PXCLI1042/u);
   assert.match(packed.stdout, /"fileRequest":true/);
   assert.match(packed.stdout, /"packed":true/);
+  assert.equal(packed.stdout.match(/PXCLI_TEST_AUTHORING_EVALUATED/gu)?.length, 1,
+    "pack should load and evaluate TSX authoring inputs only once");
+  const overlapping = run(["pack", value.project, "--packager", mock,
+    "--player", player, "--output", join(value.root, "Extras")]);
+  assert.equal(overlapping.status, 1);
+  assert.match(overlapping.stderr, /Unsafe output overlaps author input/u,
+    "the single loaded project must still protect nonstandard resource roots");
+  assert.equal(await readFile(join(value.root, "Extras/illustration.bin"), "utf8"),
+    "author media");
 });
 
 test("pack validates UI against the selected Packager's adjacent registry", async () => {
