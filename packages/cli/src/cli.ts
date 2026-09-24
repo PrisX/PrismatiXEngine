@@ -22,6 +22,7 @@ import {assessPackageDiskSpace, availableBytesForOutput, formatDiskBytes} from "
 import {createStarter} from "./starter.js";
 import {migrateCommand} from "./migration.js";
 import {inspectSaveWithRuntime} from "./save-inspection.js";
+import {planPackagePatch} from "./package-diff.js";
 
 import {
   assertLocalBuildFresh,
@@ -80,6 +81,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   ids: {values: "document-id prefix backup", flags: "write check external inline sync"},
   migrate: {values: "report backup entry-story entry-ui supported-locales save-version id name version content-version default-locale story-index game-catalog", flags: "write"},
   "inspect-save": {values: "package secret runtime player", flags: ""},
+  "plan-patch": {values: "base target", flags: ""},
 };
 function parseOptions(command: string, args: readonly string[]): Options {
   const schema = commandOptions[command];
@@ -106,6 +108,8 @@ function parseOptions(command: string, args: readonly string[]): Options {
     values.set(name, value);
   }
   if (positional.length > 1) throw new Error("Expected one project or save path; quote paths containing spaces");
+  if (command === "plan-patch" && positional.length !== 0)
+    throw new Error("plan-patch uses --base and --target, not a positional project path");
   if (flags.has("artifact-only") && flags.has("distribution")) throw new Error("--artifact-only and --distribution cannot be combined");
   if (flags.has("artifact-only") && values.has("artifact")) throw new Error("--artifact-only and --artifact cannot be combined");
   if (flags.has("artifact-only") && values.has("archive-shards"))
@@ -1943,12 +1947,39 @@ async function inspectSaveCommand(options: Options): Promise<number> {
   }
 }
 function usage(): void {
-  process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|augment|ids|migrate|inspect-save> [project-or-save] [options]\n");
+  process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|augment|ids|migrate|inspect-save|plan-patch> [project-or-save] [options]\n");
+}
+
+async function planPatchCommand(options: Options): Promise<number> {
+  const base = options.values.get("base");
+  const target = options.values.get("target");
+  if (base === undefined || target === undefined) {
+    printDiagnostics([diagnostic("PXCLI1501",
+      "plan-patch requires --base <old-distribution> and --target <new-distribution>")]);
+    return 2;
+  }
+  try {
+    const plan = await planPackagePatch(base, target);
+    if (machineOutput) {
+      process.stdout.write(`${JSON.stringify({patchPlan: plan, patchWritten: false})}\n`);
+    } else {
+      process.stdout.write(`Patch plan ${plan.baseContentVersion} → ${plan.targetContentVersion}: ` +
+        `${plan.added.length} added, ${plan.modified.length} modified, ` +
+        `${plan.removed.length} removed, ${plan.unchangedCount} unchanged; ` +
+        `${plan.affectedTargetArchives.length} target archive(s) affected, ` +
+        `${plan.changedRawBytes} changed raw bytes. No patch was written.\n`);
+    }
+    return 0;
+  } catch (error) {
+    printDiagnostics([diagnostic("PXCLI1502", "Package patch plan failed", undefined,
+      String(error))]);
+    return 1;
+  }
 }
 
 async function projectTool(command: string, options: Options, args: string[]): Promise<number | undefined> {
   if (launcherStopRequested) return 130;
-  if (["create", "inspect-save"].includes(command)) return undefined;
+  if (["create", "inspect-save", "plan-patch"].includes(command)) return undefined;
   const location = await resolveProjectPath(options.positional[0]);
   const manifestPath = join(location.root, "package.json");
   if (!await regularFile(manifestPath)) return launcherStopRequested ? 130 : undefined;
@@ -2016,6 +2047,7 @@ async function main(): Promise<number> {
   if (command === "ids") return idsCommand(options);
   if (command === "migrate") return migrateCommand(options);
   if (command === "inspect-save") return inspectSaveCommand(options);
+  if (command === "plan-patch") return planPatchCommand(options);
   usage(); return 2;
 }
 

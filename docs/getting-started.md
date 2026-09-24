@@ -112,6 +112,23 @@ is not a claim of constant-time or measured large-project speedup. This is
 split packaging, not automatic patch delivery: placing an extra `patch.pdx`
 beside the game does not mount or apply it.
 
+Each packaged distribution now includes `Package/content-index.json`, a
+per-resource URI, SHA-256, source-size, and owning-archive inventory. To
+compare two complete distributions, run:
+
+```sh
+prismatix plan-patch --base path/to/old-distribution --target path/to/new-distribution --json
+```
+
+This read-only plan reports added, modified, and removed resources, changed
+raw bytes, and target archives containing additions or modifications. It
+does not create a PDX, install an update, verify the actual archive payload
+against the index, or establish trust in a package. The base and target must
+be packages for the same game and both must include the new index. A safe
+patch format still needs authenticated base/target identity, overlay and
+deletion semantics, version and dependency checks, atomic installation, and
+rollback before an extra PDX can be automatically loaded.
+
 Never choose Story, Assets, another source input or an unrelated existing folder as output. `pack` is an explicit distribution command; `run` packages and launches. Quote paths containing spaces.
 
 Output replacement verifies the previous build's inventory. If you have played a distribution and it now contains saves/logs, or edited its files, use a new output directory; do not delete player data to bypass the guard. Test migration with a copy of the old saves before distributing an update.

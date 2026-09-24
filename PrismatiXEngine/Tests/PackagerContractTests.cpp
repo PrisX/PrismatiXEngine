@@ -557,6 +557,16 @@ int main() {
             Read(shardedOutput / "Package/manifest.json"));
         suite.Require(manifest.Valid() && manifest.manifest.archives.size() > 1,
                       "manifest lists multiple generated PDX archives");
+        const auto contentIndex = nlohmann::json::parse(
+            Read(shardedOutput / "Package/content-index.json"));
+        suite.Require(contentIndex.at("format") == "PrismatiXContentIndex" &&
+                          contentIndex.at("schemaRevision") == 1 &&
+                          contentIndex.at("gameId") == sharded.gameId &&
+                          contentIndex.at("packageFingerprint") ==
+                              manifest.manifest.packageFingerprint &&
+                          contentIndex.at("entries").size() ==
+                              sharded.inputs.size(),
+                      "packaged content index enumerates the exact source set");
         px::io::VFS vfs;
         std::vector<std::pair<std::string, std::string>> fingerprints;
         for (const auto& archive : manifest.manifest.archives) {
@@ -578,6 +588,21 @@ int main() {
                              std::string(bytes->begin(), bytes->end()) ==
                                  Read(root / input.uri),
                          "all packaged inputs resolve across the shard set",
+                         input.uri);
+            const auto indexed = std::ranges::find_if(
+                contentIndex.at("entries"), [&](const auto& item) {
+                    return item.at("uri") == input.uri;
+                });
+            suite.Expect(indexed != contentIndex.at("entries").end() &&
+                             indexed->at("fingerprint") == input.fingerprint &&
+                             indexed->at("size") == input.size &&
+                             std::ranges::any_of(
+                                 manifest.manifest.archives,
+                                 [&](const auto& archive) {
+                                     return archive.file ==
+                                            indexed->at("archive").get<std::string>();
+                                 }),
+                         "content index binds source fingerprint to a mounted shard",
                          input.uri);
         }
         vfs.Clear();
@@ -624,6 +649,19 @@ int main() {
                              shardedOutput / fingerprints.front().first,
                              staged.outputDir / fingerprints.front().first),
                      "unretired external cache source is never hard-linked");
+        Write(shardedOutput / "Package/archive-shards.json", "{broken");
+        events.clear();
+        suite.Require(px::sdk::RunPackager(sharded, [&](const auto& event) {
+                          events.push_back(event);
+                      }).Completed(),
+                      "malformed shard reuse metadata falls back to fresh output");
+        const auto malformedReuse = std::ranges::find_if(
+            events, [](const auto& event) {
+                return event.phase == "archive-shard-reuse";
+            });
+        suite.Expect(malformedReuse != events.end() &&
+                         malformedReuse->current == 0,
+                     "malformed sidecar cannot authorize whole-shard reuse");
         Write(root / "Assets/shard-added.bin", "one later resource");
         sharded.inputs.push_back(Input(root, "Assets/shard-added.bin"));
         events.clear();

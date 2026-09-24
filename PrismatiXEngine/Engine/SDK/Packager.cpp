@@ -3295,6 +3295,40 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
         if (!shardIndexOutput)
             return Fail(request, eventSink, "PXPKG1311",
                         "Package/archive-shards.json could not be written", true);
+        std::ofstream contentIndexOutput(
+            staging / "Package/content-index.json",
+            std::ios::binary | std::ios::trunc);
+        contentIndexOutput
+            << "{\"format\":\"PrismatiXContentIndex\",\"schemaRevision\":1,"
+            << "\"gameId\":" << Json(request.gameId).dump()
+            << ",\"packageFingerprint\":" << Json(packageFingerprint).dump()
+            << ",\"entries\":[";
+        bool firstEntry = true;
+        for (const auto& entry : entries) {
+            if (!firstEntry) contentIndexOutput << ',';
+            firstEntry = false;
+            contentIndexOutput << Json{
+                {"uri", entry.uri},
+                {"fingerprint", entry.fingerprint},
+                {"size", entry.size},
+                {"archive", ShardArchiveName(
+                    ArchiveShardForUri(entry.uri, request.archiveShards),
+                    request.archiveShards)}}.dump();
+            if (!contentIndexOutput ||
+                contentIndexOutput.tellp() >
+                    static_cast<std::streamoff>(128ull * 1024ull * 1024ull))
+                return Fail(request, eventSink, "PXPKG1311",
+                            "Package/content-index.json exceeds its size limit or could not be written",
+                            true);
+        }
+        contentIndexOutput << "]}";
+        contentIndexOutput.flush();
+        if (!contentIndexOutput ||
+            contentIndexOutput.tellp() >
+                static_cast<std::streamoff>(128ull * 1024ull * 1024ull))
+            return Fail(request, eventSink, "PXPKG1311",
+                        "Package/content-index.json exceeds its size limit or could not be written",
+                        true);
         std::ofstream output(staging / "Package/manifest.json", std::ios::binary | std::ios::trunc);
         output << manifest;
         if (!output) {
