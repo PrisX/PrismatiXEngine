@@ -134,10 +134,17 @@ function timelineSemantics(root: ObjectValue, path?: string): AuthoringDiagnosti
 
 function motionSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[] {
   const diagnostics: AuthoringDiagnostic[] = [];
+  const tickRate = typeof root.tickRate === "number" ? root.tickRate : 1;
+  const duration = typeof root.duration === "number" ? root.duration : 0;
+  if (duration / tickRate < 0.000001 || duration / tickRate > 86400)
+    diagnostics.push(issue("PXSDKSEM1416", "Motion duration must be between 0.000001 and 86400 seconds after tick conversion", path));
   const layers = objects(root.layers);
   diagnostics.push(...uniqueIdentities(layers, "id", "Motion layer", path));
   const byId = new Map(layers.map((layer) => [layer.id, layer]));
   for (const layer of layers) {
+    if (typeof layer.timeOffset === "number" &&
+        Math.abs(layer.timeOffset / tickRate) > 86400)
+      diagnostics.push(issue("PXSDKSEM1417", "Motion layer timeOffset exceeds 86400 seconds after tick conversion", path, String(layer.id)));
     if (layer.mask !== undefined) {
       const source = byId.get(layer.mask);
       if (source === undefined)
@@ -183,10 +190,9 @@ function motionSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[
   }
   const tracks = objects(root.tracks);
   const targets = new Set<string>();
-  const duration = typeof root.duration === "number" ? root.duration : 0;
   // Revision 7 keys live on a layer's local clock. A sped-up child may have
   // keys beyond the enclosing clip's duration while still being visible.
-  const keyTimeLimit = Number(root.schemaRevision) >= 7 ? 86400 : duration;
+  const keyTimeLimit = Number(root.schemaRevision) >= 7 ? 86400 * tickRate : duration;
   for (const track of tracks) {
     const target = `${String(track.layer)}.${String(track.property)}`;
     const targetLayer = byId.get(track.layer);

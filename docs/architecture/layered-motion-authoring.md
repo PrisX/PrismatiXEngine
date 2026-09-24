@@ -85,6 +85,11 @@ out of inherited rotation and/or scale/stretch. Native sampling tests cover
 all four combinations and reflected parents. This fills an Engine capability
 gap revealed by nonuniform `inheritMask` values in the Senren M2 source; the
 bitfield-to-rule mapping and rendered-frame equivalence are still unproven.
+Revision 10 accepts an explicit ticks-per-second rate for authored duration,
+layer offsets, track keys, and audio markers. Native playback normalizes all
+four to seconds; `inlineMotion` can compose clips with different rates after
+validating each source. The M2 source rate is still unverified, and this does
+not resolve source-specific paths or composition rules.
 
 Revision-1 sampling uses a layer's authored property until its first key;
 thereafter each key's curve determines interpolation toward the next key.
@@ -92,18 +97,22 @@ Visibility keys are discrete. Layers with the same `z` paint in authored order.
 
 ## Existing foundation and the gap
 
-`PrismatiXTimeline` already has typed tracks, easing, markers and nested clips;
-`AnimationClip` and `TimelinePlayer` provide deterministic sampling. UI scenes
-can position image nodes. What is missing is a declarative visual composition
-that binds tracks to layers and expresses image sequence, masks, blend modes,
-and dependency preloading. The port currently reconstructs these effects with
-generated UI files and Player-specific presentation code.
+`PrismatiXTimeline` has typed tracks, easing, markers and nested clips;
+`AnimationClip` and `TimelinePlayer` provide deterministic sampling. The
+implemented `.pxmotion` resource now binds image/group layers to tracks,
+atlas frames, alpha masks, tint, blend modes, audio markers and dependencies;
+TSX `<Motion>` can display it. The port's M2 animation still uses a substitute
+UI animation. Missing work includes source-specific `.mtn` conversion with
+rendered-frame conformance, richer curve/compositing semantics, and direct
+Story/Stage playback with preloading and save/load behavior.
 
 ## Target `.pxmotion` document
 
-The file is a reusable composition, referenceable from a UI node, splash,
-transition or Story command. Time is in seconds; coordinates are in a declared
-logical canvas, independent of window scaling.
+The file is a reusable composition, currently referenceable from a UI node
+or splash; transition and Story presentation remain targets. Revisions 1–9
+author time in seconds; revision 10 can author it in declared ticks per
+second. Native playback uses seconds. Coordinates are in a declared logical
+canvas, independent of window scaling.
 
 - `canvas`: width, height, scale mode and transparent background.
 - `layers`: stable IDs, z-order, image/atlas resource, anchor, transform,

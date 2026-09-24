@@ -34,6 +34,48 @@ test("motion helper emits canonical, safe layered animation document", () => {
   assert.equal(parseDocument("motion", serialized.value!).valid, true);
 });
 
+test("tick-based motion uses revision 10 and inline composition normalizes clocks", () => {
+  const outer = {
+    id: "tick-outer", canvas: {width: 320, height: 180}, duration: 120,
+    tickRate: 60, layers: [{id: "anchor", kind: "group" as const,
+      timeOffset: -15}],
+    markers: [{time: 30, audio: "Assets/Audio/start.ogg", bus: "se" as const}],
+  };
+  const child = {
+    id: "tick-child", canvas: {width: 100, height: 60}, duration: 12,
+    tickRate: 24,
+    layers: [{id: "image", image: "Assets/Motion/image.png", width: 100, height: 60}],
+    tracks: [{layer: "image", property: "x" as const, keys: [
+      {time: 0, value: 0}, {time: 12, value: 100},
+    ]}],
+    markers: [{time: 6, audio: "Assets/Audio/pop.ogg", bus: "se" as const}],
+  };
+  const authored = defineMotion(outer);
+  assert.equal(authored.valid, true, JSON.stringify(authored.diagnostics));
+  assert.equal(authored.value?.schemaRevision, 10);
+  assert.equal(authored.value?.duration, 120);
+  assert.equal(parseDocument("motion", serializeMotion(outer).value!).valid, true);
+  const composed = inlineMotion(outer, child, {id: "nested", at: 0.5});
+  assert.equal(composed.valid, true, JSON.stringify(composed.diagnostics));
+  assert.equal(composed.value?.tickRate, undefined);
+  assert.equal(composed.value?.duration, 2);
+  assert.equal(composed.value?.layers[0]?.timeOffset, -0.25);
+  assert.equal(composed.value?.layers[1]?.timeOffset, -0.5);
+  assert.equal(composed.value?.tracks[1]?.keys[1]?.time, 0.5);
+  assert.deepEqual(composed.value?.markers?.map((marker) => marker.time), [0.5, 0.75]);
+  assert.equal(defineMotion({...outer, tickRate: 2000}).valid, false);
+  assert.equal(inlineMotion({...outer, tickRate: 2000}, child, {id: "bad"}).valid, false);
+  assert.equal(defineMotion({...outer, duration: 86401 * 60}).valid, false);
+  assert.equal(defineMotion({...outer, layers: [{...outer.layers[0]!, timeOffset: 86401 * 60}]}).valid, false);
+  assert.equal(defineMotion({...child, tracks: [{...child.tracks[0]!, keys: [
+    {time: 0, value: 0}, {time: 86401 * 24, value: 100},
+  ]}]}).valid, false);
+  assert.equal(validateDocument("motion", {...authored.value,
+    schemaRevision: 9, tickRate: undefined, duration: 86401}).valid, false);
+  assert.equal(validateDocument("motion", {...authored.value, schemaRevision: 9}).valid, false);
+  assert.equal(validateDocument("motion", {...authored.value, tickRate: undefined}).valid, false);
+});
+
 test("motion validation rejects cycles, duplicate tracks, unsafe paths, and wrong key types", () => {
   const valid = defineMotion(input).value!;
   const layers = valid.layers.map((layer) => ({...layer}));

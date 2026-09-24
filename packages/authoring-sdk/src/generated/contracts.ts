@@ -1691,6 +1691,29 @@ export const contractSchemas: Readonly<Record<string, object>> = {
           },
           "type": "object"
         }
+      },
+      {
+        "else": {
+          "properties": {
+            "tickRate": false
+          }
+        },
+        "if": {
+          "properties": {
+            "schemaRevision": {
+              "const": 10
+            }
+          },
+          "type": "object"
+        },
+        "then": {
+          "properties": {
+            "tickRate": true
+          },
+          "required": [
+            "tickRate"
+          ]
+        }
       }
     ],
     "properties": {
@@ -1716,7 +1739,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
       },
       "duration": {
         "exclusiveMinimum": 0,
-        "maximum": 86400,
+        "maximum": 86400000,
         "type": "number"
       },
       "format": {
@@ -1872,8 +1895,8 @@ export const contractSchemas: Readonly<Record<string, object>> = {
               "type": "number"
             },
             "timeOffset": {
-              "maximum": 86400,
-              "minimum": -86400,
+              "maximum": 86400000,
+              "minimum": -86400000,
               "type": "number"
             },
             "timeScale": {
@@ -1992,8 +2015,14 @@ export const contractSchemas: Readonly<Record<string, object>> = {
           6,
           7,
           8,
-          9
+          9,
+          10
         ]
+      },
+      "tickRate": {
+        "maximum": 1000,
+        "minimum": 0.001,
+        "type": "number"
       },
       "tracks": {
         "items": {
@@ -2070,7 +2099,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
                     ]
                   },
                   "time": {
-                    "maximum": 86400,
+                    "maximum": 86400000,
                     "minimum": 0,
                     "type": "number"
                   },
@@ -4609,7 +4638,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "extension.schema.json": "9438f403e51b8f69f52f05d5999afc37c433754a215094460e28c6d1710555a2",
   "game.schema.json": "48d500c77e10f90b02be0cf87c1368eb3a65253e22bc0fbac534bf3af95e44a9",
   "locale.schema.json": "b8f6009219c6cad7fa6130af6d710af11cabcf85bf2e0039f1fdd3c08e2bbf9f",
-  "motion.schema.json": "70fc192d214ddedc4316bc399a90aedbe8c0805bc15c51aa98af8e917ecff241",
+  "motion.schema.json": "9497d8de2a89e6d7b97714c25e23f2fa48293bf1b49984533cae9fee9a382305",
   "portrait.schema.json": "658421c74dacc9d8247b64c6a00389c069b7516f57f863f399160161a1207f16",
   "project.schema.json": "ed7c11420a9a3acf450ff4a9fe84ae04a3dabb2a9fc717f9428c9456350a4361",
   "runtime-ir.schema.json": "04c51fc94dc46b500d78877d29dba1dffe1f41619211af24e48cf48699bf0836",

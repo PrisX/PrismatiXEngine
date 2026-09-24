@@ -42,6 +42,15 @@ dropping its authored rotation, scale/stretch (including reflection and shear),
 or both. The sampler tracks authored rotation separately so a negative scale
 does not become a fake 180-degree angle. `inlineMotion` accepts the same
 switches for its inserted group. Older revisions reject these fields.
+Revision 10 adds an explicit `tickRate` (ticks per second). When it is present,
+`duration`, layer `timeOffset`, track-key `time`, and audio-marker `time` are
+all authored in ticks. The Native loader converts them to seconds before
+playback; `defineMotion` selects revision 10, which requires `tickRate`.
+Earlier revisions still use seconds and reject the field. The allowed
+`tickRate` is 0.001–1000; converted duration and local key/offset limits
+remain one day. This avoids independent, error-prone division of every
+timestamp when importing a source timeline. It does **not** infer a source
+format's tick rate or validate that source animation semantics match.
 
 In TypeScript, `MotionTrack` is property-discriminated: `visible` keys take
 booleans, `tint` keys take `{r, g, b}`, and position/scale/rotation/opacity/
@@ -79,6 +88,28 @@ const motion = serializeMotion({
 if (!motion.valid) throw new Error(JSON.stringify(motion.diagnostics));
 await writeFile("Content/Motion/logo-reveal.pxmotion", motion.value!, "utf8");
 ```
+
+For a source whose rate is independently verified as 60 ticks per second,
+the same authoring API can keep its original time coordinates:
+
+```ts
+const tickMotion = serializeMotion({
+  id: "tick-reveal", canvas: {width: 1280, height: 720},
+  tickRate: 60, duration: 90, // 1.5 seconds
+  layers: [{id: "logo", image: "Assets/UI/logo.png",
+    width: 320, height: 120, timeOffset: -15}],
+  tracks: [{layer: "logo", property: "opacity", keys: [
+    {time: 0, value: 0}, {time: 60, value: 1},
+  ]}],
+  markers: [{time: 30, audio: "Assets/Audio/logo-pop.ogg", bus: "se"}],
+});
+```
+
+`inlineMotion` accepts clips with different `tickRate` values, checks each
+original document first, then returns a seconds-based composed clip. Its
+`at` option is always in the parent's local **seconds**, not ticks; `speed`
+is unitless. The M2 `.mtn` tick rate has not yet been verified here, so the
+value 60 above is an example, not a claim about M2.
 
 ```tsx
 import {Motion, Scene} from "@prismatix/authoring-sdk";

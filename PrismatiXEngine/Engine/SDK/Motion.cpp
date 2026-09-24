@@ -230,7 +230,7 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         return fail("PXMOTION1000", "Motion document exceeds 4 MiB or has a UTF-8 BOM");
     const Json root = Json::parse(text, nullptr, false);
     if (root.is_discarded() || !OnlyFields(root, {"format", "schemaRevision", "id", "canvas",
-        "duration", "loop", "scaleMode", "layers", "tracks", "markers"}))
+        "duration", "tickRate", "loop", "scaleMode", "layers", "tracks", "markers"}))
         return fail("PXMOTION1001", "Motion document is invalid JSON or contains unknown fields");
     if (!root.contains("format") || !root["format"].is_string() ||
         root["format"].get_ref<const std::string&>() != "PrismatiXMotion" ||
@@ -239,7 +239,7 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
          root["schemaRevision"] != 3 && root["schemaRevision"] != 4 &&
          root["schemaRevision"] != 5 && root["schemaRevision"] != 6 &&
          root["schemaRevision"] != 7 && root["schemaRevision"] != 8 &&
-         root["schemaRevision"] != 9) ||
+         root["schemaRevision"] != 9 && root["schemaRevision"] != 10) ||
         !root.contains("id") ||
         !root["id"].is_string() || !Identifier(root["id"].get_ref<const std::string&>()))
         return fail("PXMOTION1002", "Motion format, revision, or id is invalid");
@@ -248,16 +248,23 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         return fail("PXMOTION1003", "Motion canvas must specify width and height");
     const auto canvasWidth = Number(*canvas, "width", 0, 0.000001, 16384, true);
     const auto canvasHeight = Number(*canvas, "height", 0, 0.000001, 16384, true);
-    const auto duration = Number(root, "duration", 0, 0.000001, 86400, true);
+    const int revision = root["schemaRevision"].get<int>();
+    const bool tickTime = revision >= 10;
+    if (tickTime != root.contains("tickRate"))
+        return fail("PXMOTION1003", "Motion tickRate requires revision 10 and is mandatory for that revision");
+    const auto tickRate = Number(root, "tickRate", 1, 0.001, 1000, tickTime);
+    if (!tickRate) return fail("PXMOTION1003", "Motion tickRate is invalid");
+    const auto duration = Number(root, "duration", 0, 0.000001, 86400000, true);
     const auto loop = Boolean(root, "loop", false, true);
-    if (!canvasWidth || !canvasHeight || !duration || !loop)
+    if (!canvasWidth || !canvasHeight || !duration || !loop ||
+        *duration / *tickRate < 0.000001 || *duration / *tickRate > 86400)
         return fail("PXMOTION1003", "Motion canvas, duration, or loop is invalid");
     MotionClip clip;
     clip.id = root["id"].get<std::string>();
     clip.schemaRevision = root["schemaRevision"].get<int>();
     clip.canvasWidth = *canvasWidth;
     clip.canvasHeight = *canvasHeight;
-    clip.duration = *duration;
+    clip.duration = *duration / *tickRate;
     clip.loop = *loop;
     if (const auto mode = root.find("scaleMode"); mode != root.end()) {
         if (!mode->is_string()) return fail("PXMOTION1004", "Motion scaleMode is invalid");
@@ -363,7 +370,8 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         const auto scaleX = Number(entry, "scaleX", 1, -1000, 1000);
         const auto scaleY = Number(entry, "scaleY", 1, -1000, 1000);
         const auto rotation = Number(entry, "rotation", 0, -1'000'000, 1'000'000);
-        const auto timeOffset = Number(entry, "timeOffset", 0, -86400, 86400);
+        const auto timeOffset = Number(entry, "timeOffset", 0,
+            -86400 * *tickRate, 86400 * *tickRate);
         const auto timeScale = Number(entry, "timeScale", 1, -1000, 1000);
         const auto opacity = Number(entry, "opacity", 1, 0, 1);
         const auto inheritRotation = Boolean(entry, "inheritRotation", true);
@@ -385,7 +393,7 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         layer.rotation = *rotation; layer.opacity = *opacity; layer.visible = *visible;
         layer.inheritRotation = *inheritRotation;
         layer.inheritScale = *inheritScale;
-        layer.timeOffset = *timeOffset; layer.timeScale = *timeScale;
+        layer.timeOffset = *timeOffset / *tickRate; layer.timeScale = *timeScale;
         if (const auto tint = entry.find("tint"); tint != entry.end()) {
             if (clip.schemaRevision < 8 || !OnlyFields(*tint, {"r", "g", "b"}) ||
                 tint->size() != 3)
@@ -475,12 +483,12 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
             // Revision 7 keys use layer-local seconds. A faster nested clock
             // can reach key times beyond the enclosing clip duration.
             const auto time = Number(key, "time", 0, 0,
-                clip.schemaRevision >= 7 ? 86400.0 : clip.duration, true);
+                clip.schemaRevision >= 7 ? 86400.0 * *tickRate : *duration, true);
             const auto curve = Curve(key["curve"].get<std::string>());
             if (!time || *time <= previous || !curve || !key.contains("value"))
                 return fail("PXMOTION1017", "Motion key time or curve is invalid");
             MotionKey parsed;
-            parsed.time = *time;
+            parsed.time = *time / *tickRate;
             parsed.curve = *curve;
             const auto bezier = key.find("bezier");
             if (*curve == MotionCurve::CubicBezier) {
@@ -546,7 +554,7 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
             MotionAudioMarker marker;
             marker.id = entry["id"].get<std::string>();
             marker.audio = entry["audio"].get<std::string>();
-            const auto time = Number(entry, "time", 0, 0, clip.duration, true);
+            const auto time = Number(entry, "time", 0, 0, *duration, true);
             const auto bus = entry["bus"].get<std::string>();
             if (!Identifier(marker.id) || !markerIds.insert(marker.id).second ||
                 !time || *time < previousTime || !SafePath(marker.audio) ||
@@ -554,7 +562,7 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
                 EndsWithIgnoreCase(marker.audio, ".pxportrait") ||
                 (bus != "se" && bus != "voice"))
                 return fail("PXMOTION1026", "Motion audio marker id, time, path or bus is invalid");
-            marker.time = *time;
+            marker.time = *time / *tickRate;
             marker.bus = bus == "voice" ? MotionAudioBus::Voice : MotionAudioBus::SE;
             previousTime = *time;
             clip.markers.push_back(std::move(marker));

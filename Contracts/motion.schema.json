@@ -6,7 +6,7 @@
   "required": ["format", "schemaRevision", "id", "canvas", "duration", "loop", "layers", "tracks"],
   "properties": {
     "format": {"const": "PrismatiXMotion"},
-    "schemaRevision": {"enum": [1, 2, 3, 4, 5, 6, 7, 8, 9]},
+    "schemaRevision": {"enum": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]},
     "id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
     "canvas": {
       "type": "object", "additionalProperties": false,
@@ -16,7 +16,8 @@
         "height": {"type": "number", "exclusiveMinimum": 0, "maximum": 16384}
       }
     },
-    "duration": {"type": "number", "exclusiveMinimum": 0, "maximum": 86400},
+    "duration": {"type": "number", "exclusiveMinimum": 0, "maximum": 86400000},
+    "tickRate": {"type": "number", "minimum": 0.001, "maximum": 1000},
     "loop": {"type": "boolean"},
     "scaleMode": {"enum": ["fit", "fill", "stretch"]},
     "layers": {
@@ -54,7 +55,7 @@
           "scaleX": {"type": "number", "minimum": -1000, "maximum": 1000},
           "scaleY": {"type": "number", "minimum": -1000, "maximum": 1000},
           "rotation": {"type": "number", "minimum": -1000000, "maximum": 1000000},
-          "timeOffset": {"type": "number", "minimum": -86400, "maximum": 86400},
+          "timeOffset": {"type": "number", "minimum": -86400000, "maximum": 86400000},
           "timeScale": {"type": "number", "minimum": -1000, "maximum": 1000},
           "opacity": {"type": "number", "minimum": 0, "maximum": 1},
           "inheritRotation": {"type": "boolean"},
@@ -92,7 +93,7 @@
               "type": "object", "additionalProperties": false,
               "required": ["time", "value", "curve"],
               "properties": {
-                "time": {"type": "number", "minimum": 0, "maximum": 86400},
+                "time": {"type": "number", "minimum": 0, "maximum": 86400000},
                 "value": {"oneOf": [{"type": "number"}, {"type": "boolean"},
                   {"type": "object", "additionalProperties": false,
                     "required": ["r", "g", "b"],
@@ -187,5 +188,9 @@
         "inheritRotation": false, "inheritScale": false
       }}}
     }}
+  }, {
+    "if": {"type": "object", "properties": {"schemaRevision": {"const": 10}}},
+    "then": {"properties": {"tickRate": true}, "required": ["tickRate"]},
+    "else": {"properties": {"tickRate": false}}
   }]
 }

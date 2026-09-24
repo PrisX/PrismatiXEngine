@@ -297,6 +297,61 @@ int main() {
                      "non-image groups cannot be mask sources");
     });
 
+    suite.Run("MotionClip_TickRateNormalizesEveryTimelineField", [&] {
+        constexpr auto source = R"({
+          "format":"PrismatiXMotion","schemaRevision":10,"id":"tick-clock",
+          "canvas":{"width":320,"height":120},"duration":90,"tickRate":60,"loop":false,
+          "layers":[
+            {"id":"group","kind":"group","x":10,"timeOffset":-15,"timeScale":2},
+            {"id":"image","parent":"group","image":"Assets/mark.png",
+             "width":20,"height":20}],
+          "tracks":[{"layer":"image","property":"x","keys":[
+            {"time":0,"value":0,"curve":"linear"},
+            {"time":120,"value":120,"curve":"linear"}]}],
+          "markers":[{"id":"cue","time":30,"audio":"Assets/cue.ogg","bus":"se"}]})";
+        const auto parsed = px::sdk::ParseMotion(source);
+        suite.Require(parsed.Valid(), "revision-10 tick timeline parses");
+        suite.Expect(std::abs(parsed.clip->duration - 1.5) < 0.001 &&
+                     std::abs(parsed.clip->layers[0].timeOffset + 0.25) < 0.001 &&
+                     std::abs(parsed.clip->tracks[0].keys[1].time - 2) < 0.001 &&
+                     std::abs(parsed.clip->markers[0].time - 0.5) < 0.001,
+                     "root, group, track, and marker times normalize to seconds");
+        px::sdk::MotionSampler sampler(*parsed.clip);
+        sampler.Seek(0.5);
+        suite.Expect(std::abs(sampler.LayerPose(1).transform.tx - 55) < 0.001,
+                     "nested tick track plays on the parent-local clock");
+        auto oldRevision = nlohmann::json::parse(source);
+        oldRevision["schemaRevision"] = 9;
+        suite.Expect(!px::sdk::ParseMotion(oldRevision.dump()).Valid(),
+                     "tickRate is forbidden before revision 10");
+        auto missingRate = nlohmann::json::parse(source);
+        missingRate.erase("tickRate");
+        suite.Expect(!px::sdk::ParseMotion(missingRate.dump()).Valid(),
+                     "revision 10 requires tickRate");
+        auto invalidRate = nlohmann::json::parse(source);
+        invalidRate["tickRate"] = 0;
+        suite.Expect(!px::sdk::ParseMotion(invalidRate.dump()).Valid(),
+                     "tickRate must be positive");
+        auto excessiveDuration = nlohmann::json::parse(source);
+        excessiveDuration["duration"] = 86401 * 60;
+        suite.Expect(!px::sdk::ParseMotion(excessiveDuration.dump()).Valid(),
+                     "normalized duration remains capped at one day");
+        auto excessiveOffset = nlohmann::json::parse(source);
+        excessiveOffset["layers"][0]["timeOffset"] = 86401 * 60;
+        suite.Expect(!px::sdk::ParseMotion(excessiveOffset.dump()).Valid(),
+                     "normalized layer offset remains capped at one day");
+        auto excessiveKey = nlohmann::json::parse(source);
+        excessiveKey["tracks"][0]["keys"][1]["time"] = 86401 * 60;
+        suite.Expect(!px::sdk::ParseMotion(excessiveKey.dump()).Valid(),
+                     "normalized local key remains capped at one day");
+        auto legacyDuration = nlohmann::json::parse(source);
+        legacyDuration["schemaRevision"] = 9;
+        legacyDuration.erase("tickRate");
+        legacyDuration["duration"] = 86401;
+        suite.Expect(!px::sdk::ParseMotion(legacyDuration.dump()).Valid(),
+                     "old revisions retain their seconds-based duration limit");
+    });
+
     suite.Run("MotionClip_RgbTintInterpolatesAndInheritsIndependentlyOfAlpha", [&] {
         constexpr auto source = R"({
           "format":"PrismatiXMotion","schemaRevision":8,"id":"tinted",

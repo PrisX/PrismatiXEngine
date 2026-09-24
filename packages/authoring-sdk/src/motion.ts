@@ -132,6 +132,8 @@ export interface MotionInput {
   readonly id: string;
   readonly canvas: {readonly width: number; readonly height: number};
   readonly duration: number;
+  /** Revision 10: all authored times are ticks at this rate per second. */
+  readonly tickRate?: number;
   readonly loop?: boolean;
   readonly scaleMode?: "fit" | "fill" | "stretch";
   readonly layers: readonly MotionLayer[];
@@ -142,7 +144,7 @@ export interface MotionInput {
 
 export interface MotionDocument extends MotionInput {
   readonly format: "PrismatiXMotion";
-  readonly schemaRevision: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+  readonly schemaRevision: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
   readonly loop: boolean;
   readonly tracks: readonly MotionTrack[];
   readonly markers?: readonly MotionAudioMarker[];
@@ -180,11 +182,12 @@ export function defineMotion(input: MotionInput): Result<MotionDocument> {
   });
   const document: MotionDocument = {
     format: "PrismatiXMotion",
-    schemaRevision: hasSelectiveInheritance ? 9 : hasTint ? 8 : hasLocalTime ? 7 : hasMasks ? 6 : hasBezier ? 5 : hasBlendModes ? 4 :
+    schemaRevision: input.tickRate !== undefined ? 10 : hasSelectiveInheritance ? 9 : hasTint ? 8 : hasLocalTime ? 7 : hasMasks ? 6 : hasBezier ? 5 : hasBlendModes ? 4 :
       hasMarkers ? 3 : atlas ? 2 : 1,
     id: input.id,
     canvas: input.canvas,
     duration: input.duration,
+    ...(input.tickRate === undefined ? {} : {tickRate: input.tickRate}),
     loop: input.loop ?? false,
     scaleMode: input.scaleMode ?? "fit",
     layers: input.layers.map((layer): MotionLayer => {
@@ -250,7 +253,7 @@ export interface InlineMotionOptions {
   readonly id: string;
   /** Parent layer in the destination clip, if any. */
   readonly parent?: string;
-  /** Start position in the parent's local seconds; hidden before this point. */
+  /** Start position in the parent's local seconds, even for tick-based clips. */
   readonly at?: number;
   /** Child playback speed relative to the parent's local clock. */
   readonly speed?: number;
@@ -285,13 +288,32 @@ export function inlineMotion(outer: MotionInput, child: MotionInput,
   // A standalone .pxmotion needs at least one layer, but a composition can
   // naturally start with none. Validate its other fields through the normal
   // contract using a temporary group, then omit that group from the result.
+  const toSeconds = (input: MotionInput): MotionInput => {
+    if (input.tickRate === undefined) return input;
+    const {tickRate: rate, ...secondsInput} = input;
+    return {
+      ...secondsInput, duration: input.duration / rate,
+      layers: input.layers.map((layer) => layer.timeOffset === undefined ? layer :
+        {...layer, timeOffset: layer.timeOffset / rate}),
+      ...(input.tracks === undefined ? {} : {tracks: input.tracks.map((track) => ({
+        ...track, keys: track.keys.map((key) => ({...key, time: key.time / rate})),
+      })) as MotionTrack[]}),
+      ...(input.markers === undefined ? {} : {markers: input.markers.map((marker) => ({
+        ...marker, time: marker.time / rate,
+      }))}),
+    };
+  };
   const emptyOuter = outer.layers.length === 0;
-  const base = defineMotion(emptyOuter ? {...outer, layers: [
+  const authoredBase = defineMotion(emptyOuter ? {...outer, layers: [
     {id: "inline-placeholder", kind: "group"},
   ]} : outer);
+  if (!authoredBase.valid || authoredBase.value === undefined) return authoredBase;
+  const base = defineMotion(toSeconds(authoredBase.value));
   if (!base.valid || base.value === undefined) return base;
   const outerDuration = base.value.duration;
-  const nested = defineMotion(child);
+  const authoredChild = defineMotion(child);
+  if (!authoredChild.valid || authoredChild.value === undefined) return authoredChild;
+  const nested = defineMotion(toSeconds(authoredChild.value));
   if (!nested.valid || nested.value === undefined) return nested;
   if (nested.value.loop) return error("PXMOTION2001",
     "A looping child clip cannot be inlined because local group time does not repeat");
