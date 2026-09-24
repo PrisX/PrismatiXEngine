@@ -1707,6 +1707,7 @@ ValidationResult Validate(const PackageRequest& request,
         std::vector<LocalizedOperationIdentity> operations;
     };
     std::vector<LocalizedProgram> localizedPrograms;
+    std::optional<std::size_t> equivalentPrimaryLocale;
     if (!IsRequestId(request.requestId)) {
         AddDiagnostic(diagnostics, "PXPKG1201", "requestId contains unsupported characters");
     }
@@ -2029,7 +2030,14 @@ ValidationResult Validate(const PackageRequest& request,
                     canonicalProject["defaultLocale"].get<std::string>();
                 bool defaultDeclared = false;
                 std::set<std::string> localeIds;
+                const auto localeCount = canonicalProject["supportedLocales"].size();
+                std::size_t localeIndex = 0;
                 for (const auto& locale : canonicalProject["supportedLocales"]) {
+                    EmitProgress(request, eventSink, "validate-locales",
+                                 localeIndex++, localeCount,
+                                 locale.is_string()
+                                     ? "Validating locale " + locale.get<std::string>()
+                                     : "Validating locale descriptor");
                     if (!locale.is_string() ||
                         !IsLocaleId(locale.get<std::string>()) ||
                         !localeIds.insert(locale.get<std::string>()).second) {
@@ -2083,6 +2091,7 @@ ValidationResult Validate(const PackageRequest& request,
                                 map.document.Find(operation.operationId);
                             if (!mapping ||
                                 mapping->sourceId != operation.sourceId ||
+                                mapping->startLine != operation.sourceLine ||
                                 !packagedInputs.contains(mapping->sourceUri)) {
                                 identitiesValid = false;
                                 break;
@@ -2104,8 +2113,34 @@ ValidationResult Validate(const PackageRequest& request,
                                                              operation.sourceId, operation.kind});
                             }
                             localizedPrograms.push_back(std::move(topology));
+                            const auto primaryRuntime = packagedInputs.find(request.startScript);
+                            const auto primaryMap = packagedInputs.find(request.sourceMap);
+                            const auto localeRuntime = packagedInputs.find(runtimePath);
+                            const auto localeMap = packagedInputs.find(sourceMapPath);
+                            // Every input above has already passed raw SHA-256 verification.
+                            // Reuse only when the locale pair also covered every primary
+                            // Runtime IR/source-map identity check, including sourceLine.
+                            const auto sameValidatedInput = [](const ValidatedInput* left,
+                                                               const ValidatedInput* right) {
+                                return left->input.size == right->input.size &&
+                                       Lower(left->input.fingerprint) == Lower(right->input.fingerprint);
+                            };
+                            if (!equivalentPrimaryLocale &&
+                                primaryRuntime != packagedInputs.end() &&
+                                primaryMap != packagedInputs.end() &&
+                                localeRuntime != packagedInputs.end() &&
+                                localeMap != packagedInputs.end() &&
+                                sameValidatedInput(primaryRuntime->second, localeRuntime->second) &&
+                                sameValidatedInput(primaryMap->second, localeMap->second)) {
+                                equivalentPrimaryLocale = localizedPrograms.size() - 1;
+                            }
                         }
                     }
+                }
+                if (localeCount != 0) {
+                    EmitProgress(request, eventSink, "validate-locales",
+                                 localeCount, localeCount,
+                                 "Validated locale Runtime IR and source maps");
                 }
                 if (!defaultDeclared) {
                     AddDiagnostic(diagnostics, "PXPKG1244",
@@ -2271,8 +2306,12 @@ ValidationResult Validate(const PackageRequest& request,
                     }
                 }
             }
+            EmitProgress(request, eventSink, "validate-characters", 0, 1,
+                         "Validating character and expression resources");
             const auto characters = LoadCharacterResources(
                 *projectText, readPackaged, packagedExists);
+            EmitProgress(request, eventSink, "validate-characters", 1, 1,
+                         "Validated character and expression resources");
             for (const auto& diagnostic : characters.diagnostics) {
                 AddDiagnostic(
                     diagnostics, diagnostic.code,
@@ -2326,7 +2365,7 @@ ValidationResult Validate(const PackageRequest& request,
     std::optional<SourceMapDocument> packagedSourceMap;
     if (!uris.contains(request.startScript)) {
         AddDiagnostic(diagnostics, "PXPKG1217", "startScript must be present in inputs");
-    } else {
+    } else if (!equivalentPrimaryLocale) {
         const auto script = std::find_if(result.inputs.begin(), result.inputs.end(), [&](const auto& input) { return input.input.uri == request.startScript; });
         if (script != result.inputs.end()) {
             const auto text = ReadTextFile(script->source, script->input.size);
@@ -2342,7 +2381,7 @@ ValidationResult Validate(const PackageRequest& request,
     if (!uris.contains(request.sourceMap)) {
         AddDiagnostic(diagnostics, "PXPKG1238",
                       "sourceMap must be present in inputs");
-    } else {
+    } else if (!equivalentPrimaryLocale) {
         const auto sourceMap = std::find_if(
             result.inputs.begin(), result.inputs.end(), [&](const auto& input) {
                 return input.input.uri == request.sourceMap;
@@ -2392,19 +2431,20 @@ ValidationResult Validate(const PackageRequest& request,
                                   mapping->sourceUri);
             }
         }
+    }
+    const auto validateLocalizedTopology =
+        [&](const std::string_view documentId, const auto& canonicalOperations) {
         for (const auto& localized : localizedPrograms) {
-            if (localized.documentId !=
-                    packagedRuntimeIr->documentId ||
-                localized.operations.size() !=
-                    packagedRuntimeIr->operations.size()) {
+            if (localized.documentId != documentId ||
+                localized.operations.size() != canonicalOperations.size()) {
                 AddDiagnostic(diagnostics, "PXPKG1262",
                               "locale Story topology differs from package entry: " +
                                   localized.locale);
                 continue;
             }
             for (std::size_t index = 0;
-                 index < packagedRuntimeIr->operations.size(); ++index) {
-                const auto& canonical = packagedRuntimeIr->operations[index];
+                 index < canonicalOperations.size(); ++index) {
+                const auto& canonical = canonicalOperations[index];
                 const auto& translated = localized.operations[index];
                 if (canonical.operationId != translated.operationId ||
                     canonical.sourceId != translated.sourceId ||
@@ -2417,6 +2457,15 @@ ValidationResult Validate(const PackageRequest& request,
                 }
             }
         }
+    };
+    if (equivalentPrimaryLocale) {
+        const auto& canonical = localizedPrograms[*equivalentPrimaryLocale];
+        validateLocalizedTopology(canonical.documentId, canonical.operations);
+        EmitProgress(request, eventSink, "validate-primary-reuse", 1, 1,
+                     "Reused verified locale Runtime IR and source map for package entry");
+    } else if (packagedRuntimeIr && packagedSourceMap) {
+        validateLocalizedTopology(packagedRuntimeIr->documentId,
+                                  packagedRuntimeIr->operations);
     }
     std::set<std::string> routeIds;
     for (const auto& route : request.routes) {

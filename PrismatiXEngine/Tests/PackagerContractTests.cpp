@@ -389,6 +389,25 @@ int main() {
         };
         suite.Expect(hasStructureProgress(0) && hasStructureProgress(1),
                      "semantic validation reports a bounded phase after input verification");
+        const auto hasPhaseProgress = [&](const std::string_view phase,
+                                          const std::uint64_t current) {
+            return std::any_of(events.begin(), events.end(), [&](const auto& event) {
+                return event.kind == px::sdk::PackageEventKind::Progress &&
+                       event.phase == phase && event.current == current &&
+                       event.total == 1;
+            });
+        };
+        suite.Expect(hasPhaseProgress("validate-locales", 0) &&
+                         hasPhaseProgress("validate-locales", 1) &&
+                         hasPhaseProgress("validate-characters", 0) &&
+                         hasPhaseProgress("validate-characters", 1),
+                     "semantic validation reports locale and character subphase progress");
+        suite.Expect(std::any_of(events.begin(), events.end(), [](const auto& event) {
+                         return event.kind == px::sdk::PackageEventKind::Progress &&
+                                event.phase == "validate-primary-reuse" &&
+                                event.current == 1 && event.total == 1;
+                     }),
+                     "byte-identical primary Runtime IR and source map reuse the validated locale pair");
 
         const auto manifest = px::sdk::detail::ParsePackageManifest(
             Read(output / "Package/manifest.json"));
@@ -1228,10 +1247,31 @@ int main() {
                 break;
             }
         }
-        const auto result = px::sdk::RunPackager(changed);
+        std::vector<px::sdk::PackageEvent> changedEvents;
+        const auto result = px::sdk::RunPackager(changed, [&](const auto& event) {
+            changedEvents.push_back(event);
+        });
         suite.Expect(!result.Completed() && HasDiagnostic(result, "PXPKG1263"),
                      "locale topology comparison retains kind identity without full parsed documents");
+        suite.Expect(std::none_of(changedEvents.begin(), changedEvents.end(), [](const auto& event) {
+                         return event.phase == "validate-primary-reuse";
+                     }),
+                     "changed locale Runtime IR falls back to independent primary validation");
         Write(localeIrPath, original);
+    });
+
+    suite.Run("LocaleSourceMap_StillChecksSourceLineBeforePrimaryReuse", [&] {
+        const auto localeMapPath = root / "Runtime/Locales/ja-JP/main.pxmap";
+        const auto original = Read(localeMapPath);
+        auto localized = nlohmann::json::parse(original);
+        localized["mappings"][0]["startLine"] = 2;
+        localized["mappings"][0]["endLine"] = 2;
+        Write(localeMapPath, localized.dump());
+        auto changed = FixtureRequest(root, fixture.path / "Build/LocaleSourceLineMismatch");
+        const auto result = px::sdk::RunPackager(changed);
+        suite.Expect(!result.Completed() && HasDiagnostic(result, "PXPKG1261"),
+                     "locale source-map source line is checked before identical primary documents can reuse validation");
+        Write(localeMapPath, original);
     });
 
     suite.Run("LocaleFontChain_IsPackagedAndPreflightChecksGlyphCoverage", [&] {
