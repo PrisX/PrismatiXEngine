@@ -87,9 +87,22 @@ in a separate staging directory. Repacking to the same intact output can
 reuse matching compressed entry bytes after checking the old bytes and the
 current source against SHA-256; a corrupt cache is ignored and rebuilt.
 Compression-mode changes and encrypted packages do not reuse this cache.
-Packager still verifies every input and writes a complete new `Content.pdx`:
+With the default single archive, Packager still verifies every input and
+writes a complete new `Content.pdx`:
 this reduces redundant compression and one full input-read pass, but is not
 yet block-level incremental packaging.
+
+For large games, `pack`, `run`, and distribution `build` accept
+`--archive-shards N` (1–64). The default `1` keeps `Content.pdx`; larger
+values assign each resource to a stable URI-hash shard and emit
+`Content-00.pdx`, `Content-01.pdx`, etc. The manifest lists only nonempty
+shards, and Player mounts all listed files. Each compressed shard has its own
+`Package/entry-cache-XX.json`. Keeping the same shard count preserves a
+resource's shard when other resources are added; changing the count
+repartitions the package and its cache. Packager still verifies
+every input and rewrites every shard on each distribution build. This is
+split packaging, not automatic patch delivery: placing an extra `patch.pdx`
+beside the game does not mount or apply it.
 
 Never choose Story, Assets, another source input or an unrelated existing folder as output. `pack` is an explicit distribution command; `run` packages and launches. Quote paths containing spaces.
 

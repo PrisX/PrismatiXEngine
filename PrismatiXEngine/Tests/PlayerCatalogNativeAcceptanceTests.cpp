@@ -604,6 +604,7 @@ px::sdk::PackageRequest PackageRequest(const std::filesystem::path& root,
     request.saveVersion = 1;
     request.encryption = false;
     request.compression = px::sdk::PackageCompression::Fast;
+    request.archiveShards = 4;
     const std::vector<std::string> uris = {
         "Assets/ending.png",
         "Assets/Locales/zh-TW/opening.png",
@@ -683,13 +684,15 @@ int main(int argc, char* argv[]) {
         suite.Require(std::filesystem::is_regular_file(
                           output / "Package/manifest.json"),
                       "packaged output contains its explicit package manifest");
-        suite.Require(std::filesystem::is_regular_file(output / "Content.pdx"),
-                      "packaged output contains its content archive");
-
         const auto startupManifest = px::sdk::detail::ParsePackageManifest(
             Read(output / "Package/manifest.json"));
         suite.Require(startupManifest.Valid(),
                       "packaged manifest supplies the stable settings key");
+        suite.Require(startupManifest.manifest.archives.size() > 1,
+                      "Packager writes multiple stable content shards");
+        for (const auto& archive : startupManifest.manifest.archives)
+            suite.Require(std::filesystem::is_regular_file(output / archive.file),
+                          "every declared content shard exists");
         const px::crypto::Key startupKey =
             px::progress::DeriveGameDataPersistenceKey(
                 startupManifest.manifest.persistenceDataId);

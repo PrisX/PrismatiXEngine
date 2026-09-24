@@ -73,9 +73,9 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   create: {values: "name id locale width height", flags: ""},
   dev: {values: "runtime preview-host debounce ui-registry", flags: "once smoke"},
   validate: {values: "runtime ui-registry", flags: ""},
-  build: {values: "output artifact runtime packager player compression ui-registry", flags: "artifact-only distribution encrypt ignore-disk-space"},
-  pack: {values: "output artifact runtime packager player compression ui-registry", flags: "encrypt ignore-disk-space"},
-  run: {values: "output artifact runtime packager player compression ui-registry", flags: "encrypt ignore-disk-space"},
+  build: {values: "output artifact runtime packager player compression archive-shards ui-registry", flags: "artifact-only distribution encrypt ignore-disk-space"},
+  pack: {values: "output artifact runtime packager player compression archive-shards ui-registry", flags: "encrypt ignore-disk-space"},
+  run: {values: "output artifact runtime packager player compression archive-shards ui-registry", flags: "encrypt ignore-disk-space"},
   augment: {values: "artifact manifest", flags: ""},
   ids: {values: "document-id prefix backup", flags: "write check external inline sync"},
   migrate: {values: "report backup entry-story entry-ui supported-locales save-version id name version content-version default-locale story-index game-catalog", flags: "write"},
@@ -108,9 +108,14 @@ function parseOptions(command: string, args: readonly string[]): Options {
   if (positional.length > 1) throw new Error("Expected one project or save path; quote paths containing spaces");
   if (flags.has("artifact-only") && flags.has("distribution")) throw new Error("--artifact-only and --distribution cannot be combined");
   if (flags.has("artifact-only") && values.has("artifact")) throw new Error("--artifact-only and --artifact cannot be combined");
+  if (flags.has("artifact-only") && values.has("archive-shards"))
+    throw new Error("--archive-shards requires a distribution build");
   if (values.has("artifact") && values.has("ui-registry")) throw new Error("--ui-registry requires a fresh build; it cannot be combined with --artifact");
   if (values.has("compression") && !["none", "fast", "balanced", "maximum"].includes(values.get("compression")!))
     throw new Error("--compression must be none, fast, balanced, or maximum");
+  if (values.has("archive-shards") &&
+      (!/^(?:[1-9]|[1-5][0-9]|6[0-4])$/u.test(values.get("archive-shards")!)))
+    throw new Error("--archive-shards must be an integer from 1 to 64");
   return {values, flags, positional};
 }
 
@@ -1280,6 +1285,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
       extensions: project.extensions,
       encryption: options.flags.has("encrypt"),
       compression,
+      archiveShards: Number(options.values.get("archive-shards") ?? "1"),
       inputs, cancelFile: join(temp, ".cancel-package"),
     };
     const requestPath = join(temp, "package-request.json");

@@ -1004,6 +1004,7 @@ test("pack reuses an owned artifact without recompiling edited author sources", 
     if (request.projectRoot !== ${JSON.stringify(artifact)} ||
         request.cacheSourceDir !== ${JSON.stringify(output)} ||
         request.outputDir === request.cacheSourceDir ||
+        request.archiveShards !== 4 ||
         !request.inputs.some(value => value.uri === "Runtime/main.pxir") ||
         !request.inputs.some(value => value.uri === "project.pxproject")) process.exit(42);
     process.stdout.write(JSON.stringify({protocolVersion: 1, event: "completed",
@@ -1012,7 +1013,8 @@ test("pack reuses an owned artifact without recompiling edited author sources", 
   const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
   await write(player, "fixture");
   const packed = run(["pack", value.project, "--artifact", artifact,
-    "--packager", mock, "--player", player, "--output", output]);
+    "--packager", mock, "--player", player, "--output", output,
+    "--archive-shards", "4"]);
   assert.equal(packed.status, 0, packed.stderr);
   assert.match(packed.stdout, /"reusedArtifact":true/u);
   assert.match(packed.stdout, /"packed":true/u);
@@ -1028,6 +1030,13 @@ test("pack reuses an owned artifact without recompiling edited author sources", 
   const incompatible = run(["build", value.project, "--artifact-only", "--artifact", artifact]);
   assert.equal(incompatible.status, 2);
   assert.match(incompatible.stderr, /--artifact-only and --artifact cannot be combined/u);
+  const invalidShards = run(["pack", value.project, "--archive-shards", "65"]);
+  assert.equal(invalidShards.status, 2);
+  assert.match(invalidShards.stderr, /--archive-shards must be an integer from 1 to 64/u);
+  const artifactOnlyShards = run(["build", value.project, "--artifact-only",
+    "--archive-shards", "4"]);
+  assert.equal(artifactOnlyShards.status, 2);
+  assert.match(artifactOnlyShards.stderr, /--archive-shards requires a distribution build/u);
 });
 
 test("pack preserves structured native diagnostics instead of replacing them with a CLI error", async () => {

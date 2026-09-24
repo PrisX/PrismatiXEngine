@@ -534,10 +534,35 @@ bool CompressFile(const ArchiveEntry& entry,
     return true;
 }
 
+std::string ShardArchiveName(const std::uint32_t index,
+                             const std::uint32_t count) {
+    if (count == 1) return "Content.pdx";
+    return "Content-" + (index < 10 ? std::string("0") : std::string{}) +
+           std::to_string(index) + ".pdx";
+}
+
+std::string ShardCacheName(const std::uint32_t index,
+                           const std::uint32_t count) {
+    if (count == 1) return "entry-cache.json";
+    return "entry-cache-" + (index < 10 ? std::string("0") : std::string{}) +
+           std::to_string(index) + ".json";
+}
+
+std::uint32_t ArchiveShardForUri(const std::string_view uri,
+                                  const std::uint32_t count) {
+    std::uint64_t hash = 14695981039346656037ull;
+    for (const unsigned char value : uri) {
+        hash ^= value;
+        hash *= 1099511628211ull;
+    }
+    return static_cast<std::uint32_t>(hash % count);
+}
+
 std::optional<ArchiveCache> LoadArchiveCache(
-    const std::filesystem::path& previousOutput, const int compressionLevel) {
-    const auto cachePath = previousOutput / "Package/entry-cache.json";
-    const auto archivePath = previousOutput / "Content.pdx";
+    const std::filesystem::path& previousOutput, const int compressionLevel,
+    const std::string_view archiveName, const std::string_view cacheName) {
+    const auto cachePath = previousOutput / "Package" / cacheName;
+    const auto archivePath = previousOutput / archiveName;
     std::error_code error;
     const auto cacheSize = std::filesystem::file_size(cachePath, error);
     if (error || cacheSize == 0 || cacheSize > 64ull * 1024ull * 1024ull)
@@ -1459,6 +1484,7 @@ detail::PackageManifest BuildPackageManifest(const PackageRequest& request,
                                      const std::string& packageFingerprint,
                                      const std::string& encryptionKey,
                                      const std::vector<ArchiveEntry>& entries,
+                                     std::vector<detail::PackageArchiveMount> archives,
                                      std::vector<detail::PackageCustomEffect> customEffects,
                                      std::vector<detail::PackagePersistenceReader>
                                          legacyPersistenceReaders) {
@@ -1486,7 +1512,7 @@ detail::PackageManifest BuildPackageManifest(const PackageRequest& request,
         std::move(legacyPersistenceReaders);
     manifest.encrypted = request.encryption;
     manifest.archiveKey = request.encryption ? encryptionKey : std::string{};
-    manifest.archives.push_back({"Content.pdx", "base", false});
+    manifest.archives = std::move(archives);
     for (const auto& route : routesInOrder) {
         const auto archived = std::find_if(entries.begin(), entries.end(), [&](const auto& entry) { return entry.uri == route.scene; });
         const auto sceneBytes = archived == entries.end()
@@ -1638,6 +1664,10 @@ ValidationResult Validate(const PackageRequest& request,
     }
     if (request.inputs.empty() || request.inputs.size() > kMaxInputs) {
         AddDiagnostic(diagnostics, "PXPKG1207", "inputs count is invalid");
+    }
+    if (request.archiveShards < 1 || request.archiveShards > 64) {
+        AddDiagnostic(diagnostics, "PXPKG1241",
+                      "archiveShards must be an integer from 1 to 64");
     }
 
     std::error_code error;
@@ -2551,6 +2581,17 @@ PackageRequestParseResult ParsePackageRequest(const std::string_view text) {
         }
     }
 
+    const auto archiveShards = root.find("archiveShards");
+    if (archiveShards != root.end()) {
+        const auto count = JsonInt(*archiveShards);
+        if (!count || *count < 1 || *count > 64) {
+            AddDiagnostic(result.diagnostics, "PXPKG1241",
+                          "archiveShards must be an integer from 1 to 64");
+        } else {
+            result.request.archiveShards = static_cast<std::uint32_t>(*count);
+        }
+    }
+
     const auto inputs = root.find("inputs");
     if (inputs == root.end() || !inputs->is_array()) {
         AddDiagnostic(result.diagnostics, "PXPKG1109", "inputs must be an array");
@@ -2870,40 +2911,62 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
     }
     const std::string packageFingerprint = Hex(*packageDigest);
     const std::string encryptionKey = "pxpkg-" + Hex(DeriveKey("PrismatiXPackage|" + identityMaterial));
-    EmitProgress(request, eventSink, "archive", validated.inputs.size(), validated.inputs.size(), "Writing Content.pdx");
-    const auto previousCache = !request.encryption &&
-                                       CompressionLevel(request.compression) != 0
-                                   ? LoadArchiveCache(request.cacheSourceDir.empty()
-                                                          ? request.outputDir
-                                                          : request.cacheSourceDir,
-                                                      CompressionLevel(request.compression))
-                                   : std::optional<ArchiveCache>{};
-    std::vector<CachedArchiveEntry> cacheEntries;
+    std::vector<std::vector<ArchiveEntry>> shards(request.archiveShards);
+    for (const auto& entry : entries)
+        shards[ArchiveShardForUri(entry.uri, request.archiveShards)].push_back(entry);
+    std::vector<detail::PackageArchiveMount> archiveMounts;
+    std::vector<std::pair<std::string, std::vector<CachedArchiveEntry>>> cacheDocuments;
+    std::size_t writtenEntries = 0;
     std::size_t reusedEntries = 0;
-    std::string archiveFailure;
-    const auto archiveResult =
-        WriteArchive(staging / "Content.pdx", entries, request.compression,
-                     request.encryption, DeriveKey(encryptionKey),
-                     previousCache ? &*previousCache : nullptr,
-                     cacheEntries, reusedEntries, archiveFailure,
-                     [&](const std::size_t current, const std::size_t total,
-                         const std::string& message) {
-                         EmitProgress(request, eventSink, "archive-write", current,
-                                      total, message);
-                     });
-    if (archiveResult == ArchiveWriteResult::InputChanged) {
-        return Fail(request, eventSink, "PXPKG1305",
-                    "An input changed while Content.pdx was being written",
-                    true);
-    }
-    if (archiveResult != ArchiveWriteResult::Completed) {
-        return Fail(request, eventSink, "PXPKG1307",
-                    "Content.pdx could not be written" +
-                        (archiveFailure.empty() ? std::string{} : ": " + archiveFailure),
-                    true);
+    std::size_t cacheEntryCount = 0;
+    for (std::uint32_t index = 0; index < request.archiveShards; ++index) {
+        const auto& shard = shards[index];
+        if (shard.empty()) continue;
+        const std::string archiveName = ShardArchiveName(index, request.archiveShards);
+        const std::string cacheName = ShardCacheName(index, request.archiveShards);
+        EmitProgress(request, eventSink, "archive", writtenEntries,
+                     entries.size(), "Writing " + archiveName);
+        const auto previousCache = !request.encryption &&
+                                           CompressionLevel(request.compression) != 0
+                                       ? LoadArchiveCache(request.cacheSourceDir.empty()
+                                                              ? request.outputDir
+                                                              : request.cacheSourceDir,
+                                                          CompressionLevel(request.compression),
+                                                          archiveName, cacheName)
+                                       : std::optional<ArchiveCache>{};
+        std::vector<CachedArchiveEntry> cacheEntries;
+        std::size_t shardReused = 0;
+        std::string archiveFailure;
+        const auto archiveResult =
+            WriteArchive(staging / archiveName, shard, request.compression,
+                         request.encryption, DeriveKey(encryptionKey),
+                         previousCache ? &*previousCache : nullptr,
+                         cacheEntries, shardReused, archiveFailure,
+                         [&](const std::size_t current, const std::size_t,
+                             const std::string& message) {
+                             EmitProgress(request, eventSink, "archive-write",
+                                          writtenEntries + current, entries.size(),
+                                          message);
+                         });
+        if (archiveResult == ArchiveWriteResult::InputChanged) {
+            return Fail(request, eventSink, "PXPKG1305",
+                        "An input changed while " + archiveName + " was being written",
+                        true);
+        }
+        if (archiveResult != ArchiveWriteResult::Completed) {
+            return Fail(request, eventSink, "PXPKG1307",
+                        archiveName + " could not be written" +
+                            (archiveFailure.empty() ? std::string{} : ": " + archiveFailure),
+                        true);
+        }
+        archiveMounts.push_back({archiveName, "base", false});
+        writtenEntries += shard.size();
+        reusedEntries += shardReused;
+        cacheEntryCount += cacheEntries.size();
+        cacheDocuments.emplace_back(cacheName, std::move(cacheEntries));
     }
     EmitProgress(request, eventSink, "archive-cache", reusedEntries,
-                 cacheEntries.size(), "Reused verified compressed entries");
+                 cacheEntryCount, "Reused verified compressed entries");
     if (Cancelled(request)) {
         return Cancel(request, eventSink, "Packaging was cancelled after archive creation");
     }
@@ -3007,6 +3070,7 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
 
     const std::string manifest = detail::SerializePackageManifest(
         BuildPackageManifest(request, packageFingerprint, encryptionKey, entries,
+                             std::move(archiveMounts),
                              std::move(customEffects.manifests),
                              std::move(previousPersistence.readers)));
     const auto manifestSelfCheck = detail::ParsePackageManifest(manifest);
@@ -3021,24 +3085,26 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
                         "Package manifest directory could not be created", true);
         }
         if (!request.encryption && CompressionLevel(request.compression) != 0) {
-            Json cacheDocument{{"format", "PrismatiXPackageEntryCache"},
-                               {"schemaRevision", 1},
-                               {"compressionLevel", CompressionLevel(request.compression)},
-                               {"entries", Json::array()}};
-            for (const auto& entry : cacheEntries) {
-                cacheDocument["entries"].push_back({
-                    {"uri", entry.uri}, {"fingerprint", entry.fingerprint},
-                    {"offset", entry.offset}, {"rawSize", entry.rawSize},
-                    {"storedSize", entry.storedSize}, {"crc", entry.crc}});
-            }
-            const std::string cacheText = cacheDocument.dump();
-            if (cacheText.size() <= 64ull * 1024ull * 1024ull) {
-                std::ofstream cacheOutput(staging / "Package/entry-cache.json",
-                                          std::ios::binary | std::ios::trunc);
-                cacheOutput << cacheText;
-                if (!cacheOutput) {
-                    return Fail(request, eventSink, "PXPKG1311",
-                                "Package/entry-cache.json could not be written", true);
+            for (const auto& [cacheName, cacheEntries] : cacheDocuments) {
+                Json cacheDocument{{"format", "PrismatiXPackageEntryCache"},
+                                   {"schemaRevision", 1},
+                                   {"compressionLevel", CompressionLevel(request.compression)},
+                                   {"entries", Json::array()}};
+                for (const auto& entry : cacheEntries) {
+                    cacheDocument["entries"].push_back({
+                        {"uri", entry.uri}, {"fingerprint", entry.fingerprint},
+                        {"offset", entry.offset}, {"rawSize", entry.rawSize},
+                        {"storedSize", entry.storedSize}, {"crc", entry.crc}});
+                }
+                const std::string cacheText = cacheDocument.dump();
+                if (cacheText.size() <= 64ull * 1024ull * 1024ull) {
+                    std::ofstream cacheOutput(staging / "Package" / cacheName,
+                                              std::ios::binary | std::ios::trunc);
+                    cacheOutput << cacheText;
+                    if (!cacheOutput) {
+                        return Fail(request, eventSink, "PXPKG1311",
+                                    "Package/" + cacheName + " could not be written", true);
+                    }
                 }
             }
         }

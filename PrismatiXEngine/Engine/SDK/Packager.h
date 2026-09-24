@@ -60,6 +60,8 @@ struct PackageRequest {
     std::string graphicsTier = "basic";
     bool encryption = false;
     PackageCompression compression = PackageCompression::Balanced;
+    // Stable URI-hash partitions. One preserves the legacy Content.pdx layout.
+    std::uint32_t archiveShards = 1;
     std::vector<PackageInput> inputs;
     std::filesystem::path cancelFile;
 };

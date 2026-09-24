@@ -542,6 +542,115 @@ int main() {
                      "packaged UI document dispatches its authored Player Action");
     });
 
+    suite.Run("StableArchiveShardsMountAndReuseTheirOwnCaches", [&] {
+        WriteRepeated(root / "Assets/shard-compress.bin", 's', 256 * 1024);
+        const auto shardedOutput = fixture.path / "Build/Sharded";
+        auto sharded = FixtureRequest(root, shardedOutput);
+        sharded.requestId = "sharded-archive-contract";
+        sharded.encryption = false;
+        sharded.compression = px::sdk::PackageCompression::Fast;
+        sharded.archiveShards = 4;
+        sharded.inputs.push_back(Input(root, "Assets/shard-compress.bin"));
+        suite.Require(px::sdk::RunPackager(sharded).Completed(),
+                      "Packager creates a sharded distribution");
+        const auto manifest = px::sdk::detail::ParsePackageManifest(
+            Read(shardedOutput / "Package/manifest.json"));
+        suite.Require(manifest.Valid() && manifest.manifest.archives.size() > 1,
+                      "manifest lists multiple generated PDX archives");
+        px::io::VFS vfs;
+        std::vector<std::pair<std::string, std::string>> fingerprints;
+        for (const auto& archive : manifest.manifest.archives) {
+            const auto path = shardedOutput / archive.file;
+            suite.Require(std::filesystem::is_regular_file(path) &&
+                              vfs.MountArchive(path.string()),
+                          "each manifest shard mounts in the production VFS");
+            fingerprints.emplace_back(
+                archive.file, px::sdk::ComputePackageFingerprint(path));
+            const auto suffix = archive.file.substr(8, 2);
+            suite.Expect(std::filesystem::is_regular_file(
+                             shardedOutput / "Package" /
+                             ("entry-cache-" + suffix + ".json")),
+                         "each compressed shard has a corresponding cache inventory");
+        }
+        for (const auto& input : sharded.inputs) {
+            const auto bytes = vfs.Read(input.uri);
+            suite.Expect(bytes &&
+                             std::string(bytes->begin(), bytes->end()) ==
+                                 Read(root / input.uri),
+                         "all packaged inputs resolve across the shard set",
+                         input.uri);
+        }
+        vfs.Clear();
+        std::vector<px::sdk::PackageEvent> events;
+        suite.Require(px::sdk::RunPackager(sharded, [&](const auto& event) {
+                          events.push_back(event);
+                      }).Completed(),
+                      "repacking the same shards succeeds");
+        const auto reuse = std::ranges::find_if(events, [](const auto& event) {
+            return event.phase == "archive-cache";
+        });
+        suite.Expect(reuse != events.end() && reuse->current > 0,
+                     "sharded repack reuses verified compressed entry bytes");
+        for (const auto& [file, fingerprint] : fingerprints)
+            suite.Expect(px::sdk::ComputePackageFingerprint(shardedOutput / file) ==
+                             fingerprint,
+                         "sharded archive bytes remain deterministic", file);
+        auto staged = sharded;
+        staged.outputDir = fixture.path / "Build/ShardedStaged";
+        staged.cacheSourceDir = shardedOutput;
+        events.clear();
+        suite.Require(px::sdk::RunPackager(staged, [&](const auto& event) {
+                          events.push_back(event);
+                      }).Completed(),
+                      "CLI-style staging can reuse a sharded cache source");
+        const auto stagedReuse = std::ranges::find_if(
+            events, [](const auto& event) { return event.phase == "archive-cache"; });
+        suite.Expect(stagedReuse != events.end() && stagedReuse->current > 0,
+                     "external sharded cache source reuses verified entries");
+        Write(root / "Assets/shard-added.bin", "one later resource");
+        sharded.inputs.push_back(Input(root, "Assets/shard-added.bin"));
+        suite.Require(px::sdk::RunPackager(sharded).Completed(),
+                      "adding a resource rebuilds a sharded distribution");
+        std::string changedShard;
+        for (const auto& [file, fingerprint] : fingerprints) {
+            px::io::Archive archive;
+            suite.Require(archive.Open((shardedOutput / file).string()),
+                          "rebuilt shard remains readable");
+            if (archive.Contains("Assets/shard-added.bin")) changedShard = file;
+        }
+        suite.Require(!changedShard.empty(),
+                      "new resource lands in one deterministic shard");
+        for (const auto& [file, fingerprint] : fingerprints)
+            if (file != changedShard)
+                suite.Expect(px::sdk::ComputePackageFingerprint(shardedOutput / file) ==
+                                 fingerprint,
+                             "unaffected shards retain identical bytes", file);
+        auto encrypted = sharded;
+        encrypted.requestId = "sharded-encrypted-contract";
+        encrypted.outputDir = fixture.path / "Build/ShardedEncrypted";
+        encrypted.encryption = true;
+        suite.Require(px::sdk::RunPackager(encrypted).Completed(),
+                      "encrypted sharded distribution packages");
+        const auto encryptedManifest = px::sdk::detail::ParsePackageManifest(
+            Read(encrypted.outputDir / "Package/manifest.json"));
+        suite.Require(encryptedManifest.Valid(),
+                      "encrypted sharded manifest validates");
+        const auto key = px::crypto::DeriveKey(encryptedManifest.manifest.archiveKey);
+        px::io::VFS encryptedVfs;
+        for (const auto& mount : encryptedManifest.manifest.archives)
+            suite.Require(encryptedVfs.MountArchive(
+                              (encrypted.outputDir / mount.file).string(), &key),
+                          "each encrypted shard mounts with the package key");
+        const auto encryptedBytes = encryptedVfs.Read("Assets/shard-added.bin");
+        suite.Expect(encryptedBytes &&
+                         std::string(encryptedBytes->begin(), encryptedBytes->end()) ==
+                             "one later resource",
+                     "encrypted shard data resolves through the production VFS");
+        sharded.archiveShards = 65;
+        suite.Expect(HasDiagnostic(px::sdk::RunPackager(sharded), "PXPKG1241"),
+                     "invalid shard counts fail before modifying output");
+    });
+
     suite.Run("StreamingWriter_IsDeterministicAndLeavesNoWorkFiles", [&] {
         const auto repeatOutput = fixture.path / "Build/Repeat";
         auto repeat = FixtureRequest(root, repeatOutput);
