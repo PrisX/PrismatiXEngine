@@ -93,6 +93,8 @@ public:
         m_studioMotionLoader = std::move(loader);
     }
     void SetActionSink(ActionSink sink) { m_sink = std::move(sink); }
+    /** Define an authored UI ViewModel value before its route is mounted. */
+    Status DefineUiData(std::string path, Variant value);
     // Makes an authored command available to a game-specific UI route and
     // forwards its optional string argument to the normal Galgame action
     // sink.  Games no longer need engine-side hard-coded command whitelists

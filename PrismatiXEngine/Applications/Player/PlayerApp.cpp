@@ -753,6 +753,34 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         if (!project.is_discarded() && project.is_object()) {
             const auto settings = project.find("settings");
             if (settings != project.end() && settings->is_object()) {
+                if (const auto data = settings->find("player.uiData"); data != settings->end()) {
+                    if (!data->is_object() || data->size() > 256) {
+                        diag::Emit(diag::Diagnostic{
+                            .severity = diag::Severity::Fatal,
+                            .code = "PXPLAYER5024",
+                            .category = "Player.UI",
+                            .message = "player.uiData must be a bounded property map"});
+                        return false;
+                    }
+                    for (auto item = data->begin(); item != data->end(); ++item) {
+                        auto value = JsonVariant(item.value());
+                        if (!value) {
+                            diag::Emit(diag::Diagnostic{
+                                .severity = diag::Severity::Fatal,
+                                .code = "PXPLAYER5024",
+                                .category = "Player.UI",
+                                .message = "player.uiData contains an unsupported value",
+                                .details = item.key()});
+                            return false;
+                        }
+                        if (const Status defined = m_ui.DefineUiData(
+                                item.key(), std::move(*value)); !defined) {
+                            for (const auto& diagnostic : defined.Diagnostics())
+                                diag::Emit(diagnostic);
+                            return false;
+                        }
+                    }
+                }
                 if (const auto titleBgm = settings->find("player.titleBgm");
                     titleBgm != settings->end() && titleBgm->is_string()) {
                     const auto safe = SafeVfsRelativePath(titleBgm->get<std::string>());
@@ -3469,6 +3497,9 @@ void PlayerApp::CaptureUIRoutesE2EFrame() {
     }
     if(route=="save"&&m_uiRoutesE2ESaveConfirmStage==0){
         auto* slot=FindUiControlNamed<ui::Button>(m_ui.Root(),"Slot0Button");
+        // TSX-authored slot grids reuse one keyed template rather than
+        // materializing a separately named button for every save slot.
+        if(!slot)slot=FindUiControlNamed<ui::Button>(m_ui.Root(),"SlotButton");
         if(!slot){
             PX_LOG_ERROR("Player UI routes E2E authored save slot missing");
             m_e2eFailed=true;m_uiRoutesE2E=false;m_quitRequested=true;

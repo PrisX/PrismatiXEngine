@@ -42,6 +42,34 @@ test("single-locale normalization compiles Story/main.pxstory without support do
   assert.ok(compiled.artifact?.files["Runtime/main.pxir"]);
 });
 
+test("Player UI data is validated and preserved in the canonical project", () => {
+  const rows = [{key: "confirm-0", rect: {x: 20, y: 30, width: 388, height: 35}}];
+  const project = {id: "placed-ui", settings: {"player.uiData": {
+    "settings.confirmations": rows,
+  }}};
+  const normalized = normalizeProject({project});
+  assert.equal(normalized.valid, true, JSON.stringify(normalized.diagnostics));
+  assert.deepEqual((normalized.value?.project.settings?.["player.uiData"] as
+    Record<string, unknown>)["settings.confirmations"], rows);
+  const compiled = compileProject({project,
+    sourceFiles: {"Story/main.pxstory": "Hello.\n[end]\n"}});
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  assert.deepEqual(JSON.parse(compiled.artifact!.files["project.pxproject"]!).settings[
+    "player.uiData"]["settings.confirmations"], rows);
+
+  const invalidPath = normalizeProject({project: {id: "bad-ui-data", settings: {
+    "player.uiData": {"settings..rows": rows},
+  }}});
+  assert.equal(invalidPath.valid, false);
+  let tooDeep: unknown = "leaf";
+  for (let depth = 0; depth < 34; depth += 1) tooDeep = [tooDeep];
+  const invalidDepth = normalizeProject({project: {id: "deep-ui-data", settings: {
+    "player.uiData": {"settings.rows": tooDeep},
+  }}});
+  assert.equal(invalidDepth.valid, false);
+  assert.ok(invalidDepth.diagnostics.some((value) => value.code === "PXBUILD1059"));
+});
+
 test("resourceIncludes add dynamic media without leaking author roots into runtime project", () => {
   const input = {
     project: {id: "dynamic-media", resourceIncludes: ["Assets/UI/Original", "Assets/Audio/pick.ogg"]},

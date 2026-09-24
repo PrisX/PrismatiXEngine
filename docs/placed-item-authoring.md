@@ -25,17 +25,31 @@ export default <Scene name="Settings" width={1920} height={1080}>
 </Scene>;
 ```
 
-The host must define `settings.confirmations` in its UI ViewModel before
-mounting the route. Each item needs a unique nonempty string or integer `key`
-and a `rect` object with finite numeric `x`, `y`, `width`, and `height`.
-Coordinates are local to `ItemsPlaced`; width and height must be positive.
+For a packaged Player, define initial UI data in the project manifest's
+`settings["player.uiData"]` map. The key is the same ViewModel path used in
+`items.path`; values may be arrays, objects, or scalar JSON values. The Player
+registers them before mounting the first UI route. Other hosts can register
+equivalent values with `GalgameUI::DefineUiData`.
 
 ```json
-[
-  {"key":"confirm-voice","rect":{"x":0,"y":0,"width":388,"height":35}},
-  {"key":"confirm-exit","rect":{"x":0,"y":48,"width":388,"height":35}}
-]
+{
+  "settings": {
+    "player.uiData": {
+      "settings.confirmations": [
+        {"key":"confirm-voice","rect":{"x":0,"y":0,"width":388,"height":35}},
+        {"key":"confirm-exit","rect":{"x":0,"y":48,"width":388,"height":35}}
+      ]
+    }
+  }
+}
 ```
+
+Each item needs a unique nonempty string or integer `key`
+and a `rect` object with finite numeric `x`, `y`, `width`, and `height`.
+Coordinates are local to `ItemsPlaced`; width and height must be positive.
+Resource paths supplied only through dynamic item bindings still need explicit
+asset inclusion (for example `resourceIncludes`) until the compiler can infer
+those runtime dependencies.
 
 The view realizes every item; unlike `ItemsGrid` and `ItemsList`, it does not
 scroll or virtualize a long collection. Reordering an array or changing a

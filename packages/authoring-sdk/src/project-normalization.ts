@@ -399,6 +399,24 @@ export function normalizeProject(input: NormalizeProjectInput = {}): Result<Norm
     return {diagnostics: validated.diagnostics, valid: false};
 
   const project = validated.value;
+  // Player's JSON-to-Variant adapter has a finite depth. Reject an authored
+  // value here instead of publishing a package which fails only at boot.
+  const convertibleUiData = (value: unknown, depth: number): boolean => {
+    if (depth > 32) return false;
+    if (Array.isArray(value)) return value.every((item) =>
+      convertibleUiData(item, depth + 1));
+    if (value !== null && typeof value === "object") return Object.values(value).every((item) =>
+      convertibleUiData(item, depth + 1));
+    if (typeof value === "number") return Number.isFinite(value) &&
+      (!Number.isInteger(value) || Number.isSafeInteger(value));
+    return value === null || typeof value === "string" || typeof value === "boolean";
+  };
+  const uiData = object(project.settings?.["player.uiData"]);
+  if (uiData !== undefined && !Object.values(uiData).every((value) =>
+    convertibleUiData(value, 0)))
+    return {diagnostics: [issue("PXBUILD1059",
+      "player.uiData contains a value too deep or numerically unsafe for Player",
+      projectPath, "settings.player.uiData")], valid: false};
   const locales: Record<string, unknown> = {...input.locales};
   if (raw.storyIndex === undefined && documents[project.storyIndex] === undefined) {
     documents[project.storyIndex] = {

@@ -662,6 +662,48 @@ void TestGalgameAuthoredSlots() {
     px::Input input;
     (void)galgame.Update(input, 600, 400);
     Check(selected == "0", "authored Save item must dispatch the selected slot index");
+
+    auto placedDocument = document;
+    placedDocument["nodes"][1]["kind"] = "control";
+    placedDocument["nodes"][1]["runtimeType"] = "PlacedItemsView";
+    placedDocument["nodes"][1]["runtimeProperties"] = nlohmann::json::object();
+    placedDocument["nodes"][1]["itemSource"] =
+        {{"path", "custom.rows"}, {"key", "key"}, {"placement", "rect"}};
+    const auto placedRow = [](const char* key, const char* title, const int x) {
+        return px::Variant(px::VariantObject{
+            {"key", px::Variant(key)}, {"title", px::Variant(title)},
+            {"enabled", px::Variant(true)},
+            {"rect", px::Variant(px::VariantObject{
+                {"x", px::Variant(x)}, {"y", px::Variant(25)},
+                {"width", px::Variant(100)}, {"height", px::Variant(70)}})},
+        });
+    };
+    px::ui::GalgameUI authoredData;
+    Check(authoredData.DefineUiData("custom.rows", px::Variant(px::VariantArray{
+        placedRow("one", "One", 20), placedRow("two", "Two", 180)})).IsOk(),
+          "GalgameUI must accept initial author-defined UI data");
+    Check(!authoredData.DefineUiData("custom.rows", px::Variant(px::VariantArray{})) &&
+          !authoredData.DefineUiData("custom..invalid", px::Variant(1)),
+          "GalgameUI must reject duplicate and invalid authored data paths");
+    Check(authoredData.RegisterRouteTemplate("custom-placed", placedDocument.dump(),
+          "custom-placed.pxui").IsOk(),
+          "GalgameUI must accept a placed item route");
+    const auto placedShown = authoredData.ShowRoute("custom-placed");
+    if (!placedShown) for (const auto& diagnostic : placedShown.Diagnostics())
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    Check(placedShown.IsOk(), "author-defined data must be available before route mount");
+    (void)authoredData.Root()->Measure({600, 400});
+    authoredData.Root()->Arrange({0, 0, 600, 400});
+    auto* placedView = dynamic_cast<px::ui::PlacedItemsView*>(
+        authoredData.Root()->Find(*px::Uuid::Parse(gridId)));
+    auto* placedFirst = placedView && placedView->Children().size() == 2
+        ? dynamic_cast<px::ui::Control*>(placedView->Child(0)) : nullptr;
+    auto* placedButton = placedFirst
+        ? dynamic_cast<px::ui::Button*>(placedFirst->Child(0)) : nullptr;
+    Check(placedView && placedView->RealizedCount() == 2 && placedFirst &&
+          placedButton && placedButton->Text() == "One" &&
+          placedFirst->LayoutRect().x == placedView->LayoutRect().x + 20,
+          "GalgameUI must bind and place items from the author-defined data source");
 }
 
 void TestMountedImageDependencies() {

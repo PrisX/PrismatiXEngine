@@ -204,6 +204,10 @@ GalgameUI::GalgameUI() {
     }
 }
 
+Status GalgameUI::DefineUiData(std::string path, Variant value) {
+    return m_viewModel.Define(std::move(path), std::move(value), true);
+}
+
 Status GalgameUI::RegisterActionCommand(std::string command,
                                         std::string argumentKey) {
     if (command.empty())
