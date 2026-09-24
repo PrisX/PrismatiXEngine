@@ -5,6 +5,7 @@
 #include <sstream>
 
 #include "Engine/SDK/Packager.h"
+#include "Engine/IO/PackageVerifier.h"
 
 namespace {
 
@@ -44,8 +45,45 @@ px::sdk::PackageEvent FailedEvent(
 }  // namespace
 
 int RunMain(int argc, char** argv) {
+    if (argc == 3 && std::string_view(argv[1]) == "--verify-package") {
+        const std::filesystem::path distribution = Utf8Path(argv[2]);
+        if (!distribution.is_absolute()) {
+            Emit(FailedEvent({}, "PXPKG1510", "Distribution path must be absolute"));
+            return static_cast<int>(px::sdk::PackageExitCode::Failed);
+        }
+        try {
+            const auto verified = px::io::VerifyPackageContents(
+                distribution, [](const std::uint64_t current,
+                                 const std::uint64_t total,
+                                 const std::uint64_t rawBytes) {
+                    px::sdk::PackageEvent event;
+                    event.kind = px::sdk::PackageEventKind::Progress;
+                    event.phase = "contents";
+                    event.current = current;
+                    event.total = total;
+                    event.message = std::to_string(rawBytes) + " raw bytes checked";
+                    Emit(event);
+                });
+            if (!verified.valid) {
+                Emit(FailedEvent({}, "PXPKG1511", verified.error));
+                return static_cast<int>(px::sdk::PackageExitCode::Failed);
+            }
+            std::cout << "{\"event\":\"verified\",\"archives\":"
+                      << verified.archives << ",\"resources\":" << verified.resources
+                      << ",\"rawBytes\":" << verified.rawBytes << "}\n";
+            return static_cast<int>(px::sdk::PackageExitCode::Completed);
+        } catch (const std::exception& error) {
+            Emit(FailedEvent({}, "PXPKG1512",
+                             std::string("Package verification failed unexpectedly: ") + error.what()));
+            return static_cast<int>(px::sdk::PackageExitCode::Failed);
+        } catch (...) {
+            Emit(FailedEvent({}, "PXPKG1512",
+                             "Package verification failed unexpectedly"));
+            return static_cast<int>(px::sdk::PackageExitCode::Failed);
+        }
+    }
     if (argc != 3 || std::string_view(argv[1]) != "--request") {
-        Emit(FailedEvent({}, "PXPKG1001", "Usage: PrismatiXPackager --request <absolute-json-path>"));
+        Emit(FailedEvent({}, "PXPKG1001", "Usage: PrismatiXPackager --request <absolute-json-path> | --verify-package <absolute-distribution-path>"));
         return static_cast<int>(px::sdk::PackageExitCode::Failed);
     }
 

@@ -81,7 +81,8 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   ids: {values: "document-id prefix backup", flags: "write check external inline sync"},
   migrate: {values: "report backup entry-story entry-ui supported-locales save-version id name version content-version default-locale story-index game-catalog", flags: "write"},
   "inspect-save": {values: "package secret runtime player", flags: ""},
-  "plan-patch": {values: "base target", flags: ""},
+  "plan-patch": {values: "base target runtime packager", flags: "verify-contents"},
+  "verify-package": {values: "runtime packager", flags: ""},
 };
 function parseOptions(command: string, args: readonly string[]): Options {
   const schema = commandOptions[command];
@@ -1154,8 +1155,8 @@ function discoveryDiagnostic(code: string, message: string, error: RuntimeDiscov
   return diagnostic(code, message, path, runtimeDiscoveryHint(error));
 }
 
-function packageOutputObserver(): (chunk: string) => void {
-  if (machineOutput) return (chunk) => { process.stdout.write(chunk); };
+function packageOutputObserver(activity = "Packaging", streamMachineOutput = true): (chunk: string) => void {
+  if (machineOutput && streamMachineOutput) return (chunk) => { process.stdout.write(chunk); };
   let pending = "";
   let skipLongLine = false;
   const reported = new Map<string, {current: number; time: number}>();
@@ -1178,7 +1179,7 @@ function packageOutputObserver(): (chunk: string) => void {
       reported.set(event.phase, {current: event.current, time: now});
       progress({event: "progress", severity: "information", code: "PXCLI1210",
         phase: event.phase, current: event.current, total: event.total,
-        message: `Packaging ${event.phase}: ${event.current}/${event.total} ` +
+        message: `${activity} ${event.phase}: ${event.current}/${event.total} ` +
           String(event.message ?? "").slice(0, 240)});
     }
     // Native progress records should be short. Do not retain an unbounded
@@ -1947,7 +1948,49 @@ async function inspectSaveCommand(options: Options): Promise<number> {
   }
 }
 function usage(): void {
-  process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|augment|ids|migrate|inspect-save|plan-patch> [project-or-save] [options]\n");
+  process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|augment|ids|migrate|inspect-save|plan-patch|verify-package> [project-or-save-or-distribution] [options]\n");
+}
+
+async function verifyPackagedContents(directory: string, options: Options): Promise<{
+  readonly archives: number; readonly resources: number; readonly rawBytes: number;
+}> {
+  const packager = await discoverRuntimeTool("packager", runtimeOptions(options));
+  const result = await runProcess(packager.path, ["--verify-package", resolve(directory)],
+    undefined, undefined, false, packageOutputObserver("Verifying", false));
+  const events = packageEvents(result.stdout);
+  const failed = failedPackageDiagnostics(events);
+  if (failed.length > 0) throw new PackagerFailure(failed);
+  const verified = events.find((event) => event.event === "verified");
+  if (result.code !== 0 || verified === undefined ||
+      !Number.isSafeInteger(verified.archives) ||
+      !Number.isSafeInteger(verified.resources) ||
+      !Number.isSafeInteger(verified.rawBytes) ||
+      Number(verified.archives) < 1 || Number(verified.resources) < 1 ||
+      Number(verified.rawBytes) < 0)
+    throw new Error(`Native package verification failed or returned an invalid result: ${result.stderr || result.stdout}`);
+  return {archives: Number(verified.archives), resources: Number(verified.resources),
+    rawBytes: Number(verified.rawBytes)};
+}
+
+async function verifyPackageCommand(options: Options): Promise<number> {
+  const directory = options.positional[0];
+  if (directory === undefined) {
+    printDiagnostics([diagnostic("PXCLI1503", "verify-package requires a distribution path")]);
+    return 2;
+  }
+  try {
+    const verified = await verifyPackagedContents(directory, options);
+    process.stdout.write(machineOutput
+      ? `${JSON.stringify({verified: true, distribution: resolve(directory), ...verified})}\n`
+      : `Verified ${verified.resources} resources in ${verified.archives} PDX archive(s) (${verified.rawBytes} raw bytes).\n`);
+    return 0;
+  } catch (error) {
+    printDiagnostics(error instanceof PackagerFailure ? error.diagnostics :
+      error instanceof RuntimeDiscoveryFailure ? [discoveryDiagnostic("PXCLI1504",
+        "Packager required for package verification was not found", error, directory)] :
+      [diagnostic("PXCLI1504", "Package content verification failed", directory, String(error))]);
+    return 1;
+  }
 }
 
 async function planPatchCommand(options: Options): Promise<number> {
@@ -1959,27 +2002,36 @@ async function planPatchCommand(options: Options): Promise<number> {
     return 2;
   }
   try {
+    if (options.flags.has("verify-contents")) {
+      await verifyPackagedContents(base, options);
+      if (resolve(base) !== resolve(target))
+        await verifyPackagedContents(target, options);
+    }
     const plan = await planPackagePatch(base, target);
     if (machineOutput) {
-      process.stdout.write(`${JSON.stringify({patchPlan: plan, patchWritten: false})}\n`);
+      process.stdout.write(`${JSON.stringify({patchPlan: plan, patchWritten: false,
+        contentsVerified: options.flags.has("verify-contents")})}\n`);
     } else {
       process.stdout.write(`Patch plan ${plan.baseContentVersion} → ${plan.targetContentVersion}: ` +
         `${plan.added.length} added, ${plan.modified.length} modified, ` +
         `${plan.removed.length} removed, ${plan.unchangedCount} unchanged; ` +
         `${plan.affectedTargetArchives.length} target archive(s) affected, ` +
-        `${plan.changedRawBytes} changed raw bytes. No patch was written.\n`);
+        `${plan.changedRawBytes} changed raw bytes. ` +
+        `${options.flags.has("verify-contents") ? "PDX contents verified. " : ""}No patch was written.\n`);
     }
     return 0;
   } catch (error) {
-    printDiagnostics([diagnostic("PXCLI1502", "Package patch plan failed", undefined,
-      String(error))]);
+    printDiagnostics(error instanceof PackagerFailure ? error.diagnostics :
+      error instanceof RuntimeDiscoveryFailure ? [discoveryDiagnostic("PXCLI1502",
+        "Packager required for content verification was not found", error)] :
+      [diagnostic("PXCLI1502", "Package patch plan failed", undefined, String(error))]);
     return 1;
   }
 }
 
 async function projectTool(command: string, options: Options, args: string[]): Promise<number | undefined> {
   if (launcherStopRequested) return 130;
-  if (["create", "inspect-save", "plan-patch"].includes(command)) return undefined;
+  if (["create", "inspect-save", "plan-patch", "verify-package"].includes(command)) return undefined;
   const location = await resolveProjectPath(options.positional[0]);
   const manifestPath = join(location.root, "package.json");
   if (!await regularFile(manifestPath)) return launcherStopRequested ? 130 : undefined;
@@ -2048,6 +2100,7 @@ async function main(): Promise<number> {
   if (command === "migrate") return migrateCommand(options);
   if (command === "inspect-save") return inspectSaveCommand(options);
   if (command === "plan-patch") return planPatchCommand(options);
+  if (command === "verify-package") return verifyPackageCommand(options);
   usage(); return 2;
 }
 

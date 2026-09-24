@@ -59,6 +59,26 @@ test("package patch plan reports added, changed and removed resources without wr
       patchPlan: {changedRawBytes: string}};
     assert.equal(response.patchWritten, false);
     assert.equal(response.patchPlan.changedRawBytes, "18");
+
+    const packager = join(root, "verify-packager.js");
+    await writeFile(packager,
+      "if (process.argv[2] !== '--verify-package') process.exit(2); " +
+      "process.stdout.write(JSON.stringify({event:'verified',archives:1,resources:3,rawBytes:10})+'\\n');\n");
+    const verifiedCommand = spawnSync(process.execPath, [cli, "plan-patch",
+      "--base", base, "--target", target, "--verify-contents",
+      "--packager", packager, "--json"], {encoding: "utf8"});
+    assert.equal(verifiedCommand.status, 0, verifiedCommand.stderr);
+    const verifiedResponse = JSON.parse(verifiedCommand.stdout) as {
+      contentsVerified: boolean; patchWritten: boolean};
+    assert.equal(verifiedResponse.contentsVerified, true);
+    assert.equal(verifiedResponse.patchWritten, false);
+    const directCommand = spawnSync(process.execPath, [cli, "verify-package",
+      target, "--packager", packager, "--json"], {encoding: "utf8"});
+    assert.equal(directCommand.status, 0, directCommand.stderr);
+    const directResponse = JSON.parse(directCommand.stdout) as {
+      verified: boolean; resources: number};
+    assert.equal(directResponse.verified, true);
+    assert.equal(directResponse.resources, 3);
   } finally {
     await rm(root, {recursive: true, force: true});
   }

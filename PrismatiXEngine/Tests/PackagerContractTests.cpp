@@ -25,6 +25,7 @@
 #include "Engine/Graphics/Renderer2D.h"
 #include "Engine/IO/Archive.h"
 #include "Engine/IO/Crypto.h"
+#include "Engine/IO/PackageVerifier.h"
 #include "Engine/Progression/GameSettings.h"
 #include "Engine/Progression/GlobalProfileStore.h"
 #include "Engine/Progression/Persist.h"
@@ -557,6 +558,29 @@ int main() {
             Read(shardedOutput / "Package/manifest.json"));
         suite.Require(manifest.Valid() && manifest.manifest.archives.size() > 1,
                       "manifest lists multiple generated PDX archives");
+        const auto verified = px::io::VerifyPackageContents(shardedOutput);
+        suite.Expect(verified.valid && verified.archives ==
+                         manifest.manifest.archives.size() &&
+                         verified.resources == sharded.inputs.size(),
+                     "native verifier reads and hashes every indexed PDX resource",
+                     verified.error);
+        const auto contentIndexPath = shardedOutput / "Package/content-index.json";
+        const auto intactIndex = Read(contentIndexPath);
+        auto alteredIndex = nlohmann::json::parse(intactIndex);
+        alteredIndex["entries"][0]["fingerprint"] = std::string(64, '0');
+        Write(contentIndexPath, alteredIndex.dump());
+        suite.Expect(!px::io::VerifyPackageContents(shardedOutput).valid,
+                     "native verifier rejects an index that lies about archive contents");
+        Write(contentIndexPath, intactIndex);
+        const auto corruptedArchivePath =
+            shardedOutput / manifest.manifest.archives.front().file;
+        const auto intactArchive = Read(corruptedArchivePath);
+        auto corruptedArchive = intactArchive;
+        corruptedArchive.back() ^= 1;
+        Write(corruptedArchivePath, corruptedArchive);
+        suite.Expect(!px::io::VerifyPackageContents(shardedOutput).valid,
+                     "native verifier rejects a corrupted PDX payload");
+        Write(corruptedArchivePath, intactArchive);
         const auto contentIndex = nlohmann::json::parse(
             Read(shardedOutput / "Package/content-index.json"));
         suite.Require(contentIndex.at("format") == "PrismatiXContentIndex" &&
@@ -700,6 +724,8 @@ int main() {
             Read(encrypted.outputDir / "Package/manifest.json"));
         suite.Require(encryptedManifest.Valid(),
                       "encrypted sharded manifest validates");
+        suite.Expect(px::io::VerifyPackageContents(encrypted.outputDir).valid,
+                     "native verifier hashes decrypted encrypted-shard resources");
         const auto key = px::crypto::DeriveKey(encryptedManifest.manifest.archiveKey);
         px::io::VFS encryptedVfs;
         for (const auto& mount : encryptedManifest.manifest.archives)

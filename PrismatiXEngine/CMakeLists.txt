@@ -414,7 +414,7 @@ endif()
 prismatix_configure_target(PrismatiXPlayer)
 
 add_executable(PrismatiXPackager Applications/PackagerMain.cpp)
-target_link_libraries(PrismatiXPackager PRIVATE PrismatiXPackagerSDK)
+target_link_libraries(PrismatiXPackager PRIVATE PrismatiXPackagerSDK PrismatiXRuntime)
 prismatix_configure_target(PrismatiXPackager)
 
 add_executable(PrismatiXPreviewHost Applications/PreviewHostMain.cpp)

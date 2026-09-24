@@ -122,8 +122,15 @@ prismatix plan-patch --base path/to/old-distribution --target path/to/new-distri
 
 This read-only plan reports added, modified, and removed resources, changed
 raw bytes, and target archives containing additions or modifications. It
-does not create a PDX, install an update, verify the actual archive payload
-against the index, or establish trust in a package. The base and target must
+does not create a PDX, install an update, or establish trust in a package.
+Use `prismatix verify-package path/to/distribution` to read and SHA-256-check
+every resource in its PDX archives against the index, or add
+`--verify-contents` to `plan-patch` to check both distributions before
+comparing them. Native Packager also accepts `--verify-package` with an
+absolute distribution path. These checks detect missing, corrupt, and
+misindexed resources but are not cryptographic signatures: someone who can
+replace the archives and their metadata together can forge a passing local
+verification. The base and target must
 be packages for the same game and both must include the new index. A safe
 patch format still needs authenticated base/target identity, overlay and
 deletion semantics, version and dependency checks, atomic installation, and
