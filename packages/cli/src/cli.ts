@@ -26,7 +26,7 @@ import {inspectSaveWithRuntime} from "./save-inspection.js";
 import {planPackagePatch} from "./package-diff.js";
 import {applyDistributionPatch, createDistributionPatch,
   type DistributionPatchProgress} from "./distribution-patch.js";
-import {packageRetentionKey, retainPackageIfMatching,
+import {packageRetentionKey, retainPackageIfMatching, reusedArchiveInputs,
   writePackageProvenance} from "./package-retain.js";
 
 import {
@@ -1429,7 +1429,20 @@ async function packProject(options: Options): Promise<{output: string; player: s
         }
       }
     }
-    await publishDirectory(publication, async (staging) => {
+    let previousOutputInputs: readonly PublishedInput[] = [];
+    const linkedOutputFiles = new Map<string, PublishedInput>();
+    const packagePublication = {...publication,
+      verifyExistingBeforeBuild: false, linkedOutputFiles};
+    await publishDirectory(packagePublication, async (staging) => {
+    // The publisher has checked path safety and acquired its output lock.
+    // Reject extra files or invalid ownership before running native Packager.
+    // Complete content verification still runs before promotion below.
+    try {
+      if ((await readdir(output)).length > 0)
+        previousOutputInputs = await publishedInputs(output, undefined, true);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
     const request = {
       ...requestPlan,
       requestId: `cli-${process.pid}`,
@@ -1463,6 +1476,9 @@ async function packProject(options: Options): Promise<{output: string; player: s
         "Packager exited successfully without a completed event",
         options.positional[0])]);
     }
+    if (!scriptTool)
+      for (const [uri, input] of reusedArchiveInputs(events, previousOutputInputs))
+        linkedOutputFiles.set(uri, input);
     if (planKey !== undefined) await writePackageProvenance(staging, planKey);
     });
     return {output, player: join(output, basename(player))};

@@ -4,10 +4,25 @@ import {mkdir, mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import test from "node:test";
-import {packageRetentionKey, retainPackageIfMatching,
+import {packageRetentionKey, retainPackageIfMatching, reusedArchiveInputs,
   writePackageProvenance} from "../src/package-retain.js";
 import {outputOwnershipMarker, publishDirectory, publishedInputs,
   type PublicationOptions} from "../src/output-safety.js";
+
+test("only native whole-shard reuse reports select owned archive fingerprints", () => {
+  const previous = [
+    {uri: "Content-00.pdx", size: 100, fingerprint: "a".repeat(64)},
+    {uri: "Content-01.pdx", size: 200, fingerprint: "b".repeat(64)},
+  ];
+  const events = [
+    {event: "progress", phase: "archive-write", message: "Reused unchanged Content-00.pdx"},
+    {event: "progress", phase: "archive-write", message: "Writing Content-01.pdx"},
+    {event: "progress", phase: "archive-write", message: "Reused unchanged Content-02.pdx"},
+    {event: "progress", phase: "archive-write", message: "Reused unchanged ../asset.bin"},
+    {event: "failed", phase: "archive-write", message: "Reused unchanged Content-01.pdx"},
+  ];
+  assert.deepEqual([...reusedArchiveInputs(events, previous).keys()], ["Content-00.pdx"]);
+});
 
 test("unchanged package retention verifies artifact, tools and owned output", async t => {
   const root = await mkdtemp(join(tmpdir(), "prismatix-package-retain-"));

@@ -137,6 +137,15 @@ Packager overrides do not use this shortcut because their imported code is
 not bounded by the native runtime inventory. This path still reads the full
 artifact and output, so it is not constant-time.
 
+When an artifact does change, the CLI first checks the existing distribution's
+owned names under its publication lock, then lets native Packager validate the
+artifact and decide which PDX shards can be hard-linked from the old output.
+For reported reused shards, the CLI reuses their recorded output hashes only
+after checking file identity; it still hashes the complete old output before
+promotion and rechecks the links. Modified or unowned old output is never
+replaced. Native input, contract, and shard-content checks still run, so this
+reduces redundant publication I/O but does not make a changed pack fast.
+
 Each packaged distribution now includes `Package/content-index.json`, a
 per-resource URI, SHA-256, source-size, and owning-archive inventory. To
 compare two complete distributions, run:

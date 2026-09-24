@@ -1020,6 +1020,31 @@ test("pack streams native progress and handles more than 16 MiB of progress even
   assert.match(packed.stdout, /Packaged playable game/u);
 });
 
+test("changed pack still refuses a modified old distribution at promotion", async () => {
+  const value = await fixture();
+  const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-pack-late-check-"));
+  const mock = join(tools, "mock-packager.mjs");
+  await write(mock, `
+    import {readFile, writeFile} from "node:fs/promises";
+    import {join} from "node:path";
+    const request = JSON.parse(await readFile(process.argv.at(-1), "utf8"));
+    await writeFile(join(request.outputDir, "Content.pdx"), "new-content");
+    process.stdout.write(JSON.stringify({event: "completed"}) + "\\n");
+  `);
+  const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
+  await write(player, "fixture");
+  const output = join(value.root, "packaged");
+  const args = ["pack", value.project, "--packager", mock, "--player", player,
+    "--output", output];
+  const initial = run(args);
+  assert.equal(initial.status, 0, initial.stderr);
+  await write(join(output, "Content.pdx"), "old-content");
+  const rejected = run(args);
+  assert.equal(rejected.status, 1);
+  assert.match(rejected.stderr, /unowned or modified output directory/u);
+  assert.equal(await readFile(join(output, "Content.pdx"), "utf8"), "old-content");
+});
+
 test("pack reuses an owned artifact without recompiling edited author sources", async () => {
   const value = await fixture();
   const artifact = join(value.root, ".prismatix", "artifact");

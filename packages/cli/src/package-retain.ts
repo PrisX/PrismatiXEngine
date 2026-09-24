@@ -8,6 +8,23 @@ import {fingerprintFile, maxOutputMarkerBytes, outputOwnershipMarker,
 export const packageProvenanceUri = "Package/cli-package-provenance.json";
 const provenanceFormat = "PrismatiXPackageRetention/1";
 const fingerprintPattern = /^[0-9a-f]{64}$/u;
+const reusedArchiveMessage = /^Reused unchanged (Content(?:-\d{2})?\.pdx)$/u;
+
+/** Native Packager reports only archives it hard-linked from the old output.
+ * Publication checks their file identity again before it reuses marker hashes. */
+export function reusedArchiveInputs(events: readonly Readonly<Record<string, unknown>>[],
+  previous: readonly PublishedInput[]): Map<string, PublishedInput> {
+  const byUri = new Map(previous.map(input => [input.uri, input]));
+  const reused = new Map<string, PublishedInput>();
+  for (const event of events) {
+    if (event.event !== "progress" || event.phase !== "archive-write" ||
+        typeof event.message !== "string") continue;
+    const archive = reusedArchiveMessage.exec(event.message)?.[1];
+    const input = archive === undefined ? undefined : byUri.get(archive);
+    if (input !== undefined) reused.set(input.uri, input);
+  }
+  return reused;
+}
 
 function isDynamicLibrary(name: string): boolean {
   const lower = name.toLowerCase();

@@ -191,6 +191,20 @@ test("same-output hardlinks reuse their marker hash without skipping final conte
   ]);
 });
 
+test("a builder can report hard-linked files after staging has completed", async t => {
+  const f = await fixture(t);
+  await publishDirectory(f, build("stable"));
+  const previous = (await publishedInputs(f.output))[0]!;
+  const linkedOutputFiles = new Map<string, typeof previous>();
+  await publishDirectory({...f, verifyExistingBeforeBuild: false, linkedOutputFiles},
+    async stage => {
+      await link(join(f.output, "game.bin"), join(stage, "game.bin"));
+      linkedOutputFiles.set(previous.uri, previous);
+    });
+  assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "stable");
+  assert.equal((await publishedInputs(f.output))[0]?.fingerprint, previous.fingerprint);
+});
+
 test("same-output nonlinks are rehashed and edited hardlinks are rejected", async t => {
   const f = await fixture(t);
   await publishDirectory(f, build("stable"));
