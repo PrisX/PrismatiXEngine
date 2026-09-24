@@ -99,6 +99,8 @@ private:
 
     void OpenScreen(const std::string& route);
     void PresentRoute(const std::string& route, const std::string& operation);
+    void BeginRouteVisualPreload(std::string_view route);
+    void UpdateRouteVisualPreload();
     [[nodiscard]] std::vector<ui::GalgameItem> GalleryItems();
     [[nodiscard]] std::vector<ui::GalgameItem> SaveItems(bool saveMode);
     [[nodiscard]] std::vector<ui::GalgameItem> BacklogItems();
@@ -155,6 +157,8 @@ private:
     ui::GalgameUI m_ui;
     std::unique_ptr<ui::startup::SplashSequencePlayer> m_splash;
     graphics::AssetPreloadBatchId m_titlePreloadBatch = 0;
+    graphics::AssetPreloadBatchId m_routePreloadBatch = 0;
+    graphics::ScreenEffectHandle m_routePreloadEffect = 0;
     std::vector<std::string> m_choiceTexts;
     vn::GameCatalog m_catalog;
     std::map<std::string, std::string, std::less<>> m_screenTriggers;

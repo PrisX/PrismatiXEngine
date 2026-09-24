@@ -68,6 +68,7 @@ struct ScreenEffectPlayback {
     std::string effect;
     float durationSeconds = 0.0f;
     float elapsedSeconds = 0.0f;
+    bool paused = false;
     ScreenEffectStatus status = ScreenEffectStatus::Unknown;
     float randomSeed = 0.0f;
     std::array<std::array<float, 4>, 8> parameters{};
@@ -124,6 +125,9 @@ public:
         const CustomEffectNamedParameters* parameters = nullptr);
     [[nodiscard]] bool StopScreenEffect(ScreenEffectHandle handle);
     [[nodiscard]] bool CancelScreenEffect(ScreenEffectHandle handle);
+    // Holds the outgoing snapshot while the incoming screen prepares assets;
+    // unpausing resumes the same timeline without recapturing the frame.
+    [[nodiscard]] bool PauseScreenEffect(ScreenEffectHandle handle, bool paused);
     [[nodiscard]] bool ScreenEffectPlaying(ScreenEffectHandle handle) const;
     [[nodiscard]] ScreenEffectStatus ScreenEffectState(
         ScreenEffectHandle handle) const;

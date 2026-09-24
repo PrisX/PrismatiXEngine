@@ -393,6 +393,27 @@ int main() {
             std::cerr << "FAIL: outgoing/incoming snapshots were not composited by the native tile operator\n";
             result = 1;
         }
+        const auto heldHandle = renderer.PlayScreenEffect("crossfade", 1.0f);
+        if (!heldHandle || !renderer.PauseScreenEffect(heldHandle, true)) {
+            std::cerr << "FAIL: screen transition cannot be held for asset readiness\n";
+            result = 1;
+        }
+        renderer.UpdateScreenEffects(0.75f);
+        const auto held = renderer.ActiveScreenEffect();
+        if (!held || !held->paused || held->elapsedSeconds != 0.0f ||
+            !renderer.ScreenEffectPlaying(heldHandle) ||
+            !renderer.PauseScreenEffect(heldHandle, false)) {
+            std::cerr << "FAIL: held transition advanced or lost its playback state\n";
+            result = 1;
+        }
+        renderer.UpdateScreenEffects(0.25f);
+        const auto resumed = renderer.ActiveScreenEffect();
+        if (!resumed || resumed->paused ||
+            std::abs(resumed->elapsedSeconds - 0.25f) > 0.001f) {
+            std::cerr << "FAIL: held transition did not resume from its original time\n";
+            result = 1;
+        }
+        renderer.UpdateScreenEffects(0.75f);
         const auto crossfadeHandle = renderer.PlayScreenEffect("crossfade", 1.0f);
         renderer.UpdateScreenEffects(0.5f);
         FrameEvidence midpoint;

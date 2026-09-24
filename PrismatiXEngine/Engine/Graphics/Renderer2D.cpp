@@ -321,6 +321,14 @@ bool Renderer2D::CancelScreenEffect(const ScreenEffectHandle handle) {
     return true;
 }
 
+bool Renderer2D::PauseScreenEffect(const ScreenEffectHandle handle,
+                                   const bool paused) {
+    if (!m_activeScreenEffect || m_activeScreenEffect->handle != handle)
+        return false;
+    m_activeScreenEffect->paused = paused;
+    return true;
+}
+
 bool Renderer2D::ScreenEffectPlaying(const ScreenEffectHandle handle) const {
     return m_activeScreenEffect && m_activeScreenEffect->handle == handle &&
            m_activeScreenEffect->status == ScreenEffectStatus::Playing;
@@ -338,7 +346,8 @@ std::optional<ScreenEffectPlayback> Renderer2D::ActiveScreenEffect() const {
 }
 
 void Renderer2D::UpdateScreenEffects(const float deltaSeconds) {
-    if (!m_activeScreenEffect || !std::isfinite(deltaSeconds) ||
+    if (!m_activeScreenEffect || m_activeScreenEffect->paused ||
+        !std::isfinite(deltaSeconds) ||
         deltaSeconds < 0.0f)
         return;
     m_activeScreenEffect->elapsedSeconds = std::min(

@@ -2354,9 +2354,56 @@ void PlayerApp::OpenScreen(const std::string& route) {
     const Status routed=m_session->Routes().ShowModal(target);if(!routed){for(const auto& diagnostic:routed.Diagnostics())diag::Emit(diagnostic);return;}
 }
 
+void PlayerApp::BeginRouteVisualPreload(const std::string_view route) {
+    if (m_routePreloadBatch) {
+        (void)m_runtime.Assets().CancelTexturePreload(m_routePreloadBatch);
+        m_routePreloadBatch = 0;
+        m_routePreloadEffect = 0;
+    }
+    const auto& transition = m_session->Routes().ActiveTransition();
+    if (!transition || !m_boot.routeScenes.contains(std::string(route))) return;
+    auto images = m_ui.RouteImageDependencies(route);
+    if (!images) {
+        for (const auto& diagnostic : images.Diagnostics()) diag::Emit(diagnostic);
+        return;
+    }
+    if (images.Value().empty()) return;
+    std::vector<graphics::AssetPreloadRequest> requests;
+    requests.reserve(images.Value().size());
+    for (const auto& path : images.Value())
+        requests.push_back({path, graphics::AssetPreloadPriority::Critical});
+    const auto batch = m_runtime.Assets().BeginTexturePreload(std::move(requests));
+    const auto progress = m_runtime.Assets().TexturePreloadProgress(batch);
+    if (progress.Finished() ||
+        !m_runtime.Renderer().PauseScreenEffect(transition->handle, true))
+        return;
+    m_routePreloadBatch = batch;
+    m_routePreloadEffect = transition->handle;
+    PX_LOG_INFO("Player route visuals preloading route={} images={}",
+                route, progress.total);
+}
+
+void PlayerApp::UpdateRouteVisualPreload() {
+    if (!m_routePreloadBatch) return;
+    if (!m_runtime.Renderer().ScreenEffectPlaying(m_routePreloadEffect)) {
+        (void)m_runtime.Assets().CancelTexturePreload(m_routePreloadBatch);
+        m_routePreloadBatch = 0;
+        m_routePreloadEffect = 0;
+        return;
+    }
+    const auto progress = m_runtime.Assets().TexturePreloadProgress(m_routePreloadBatch);
+    if (progress.valid && !progress.Finished()) return;
+    (void)m_runtime.Renderer().PauseScreenEffect(m_routePreloadEffect, false);
+    PX_LOG_INFO("Player route visuals ready loaded={} failed={}",
+                progress.succeeded, progress.failed);
+    m_routePreloadBatch = 0;
+    m_routePreloadEffect = 0;
+}
+
 void PlayerApp::PresentRoute(const std::string& route,
                              const std::string& /*operation*/) {
     std::string target=route;if(target=="saveload")target="load";
+    BeginRouteVisualPreload(target);
     m_pendingSaveLoadSlot.reset();
     const auto present = [this](const Status& status) {
         if (status) return true;
@@ -2731,7 +2778,13 @@ void PlayerApp::RenderUIWithScripts() {
 void PlayerApp::ScreensFrame(float dt) {
     px::Input& input = m_runtime.GetInput();
     int w = 0, h = 0; m_runtime.Renderer().GetLogicalSize(w, h);
-    (void)m_ui.Update(input, w, h,dt);
+    if (m_routePreloadBatch) {
+        px::Input neutral;
+        neutral.InjectFrame(-1000.0f, -1000.0f, false);
+        (void)m_ui.Update(neutral, w, h, 0.0f);
+    } else {
+        (void)m_ui.Update(input, w, h, dt);
+    }
     if (m_appState == AppState::Game) RenderStageWithScripts();
     RenderUIWithScripts();
     CaptureE2EGalleryFrame();
@@ -3257,6 +3310,13 @@ void PlayerApp::CaptureUIRoutesE2EFrame() {
        m_uiRoutesE2EIndex>=std::size(kUIRouteE2ERoutes)||
        SDL_GetTicks()<m_uiRoutesE2ECaptureAt)
         return;
+    // The capture must show the incoming route, not the held outgoing frame
+    // or a mid-transition blend after a slow first-time asset preload.
+    if (m_routePreloadBatch) return;
+    if (const auto& transition = m_session->Routes().ActiveTransition();
+        transition &&
+        m_runtime.Renderer().ScreenEffectPlaying(transition->handle))
+        return;
     const std::string_view route=kUIRouteE2ERoutes[m_uiRoutesE2EIndex];
     if(m_session->Routes().CurrentModalRoute()!=route||
        m_ui.CurrentRoute()!=route)
@@ -3633,6 +3693,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
 void PlayerApp::MainLoop() {
     while (!m_quitRequested && m_runtime.BeginFrame()) {
         m_uiTransitionStartedThisFrame = false;
+        UpdateRouteVisualPreload();
         px::Input& input = m_runtime.GetInput();
         const float dt = m_runtime.GetClock().DeltaSeconds();
         const std::uint64_t now = m_runtime.GetClock().NowMs();
@@ -3662,6 +3723,12 @@ void PlayerApp::MainLoop() {
 
         if(m_gameStartTransitionActive){
             GameStartTransitionFrame(dt,now);
+            m_runtime.EndFrame();
+            continue;
+        }
+
+        if (m_routePreloadBatch) {
+            ScreensFrame(0.0f);
             m_runtime.EndFrame();
             continue;
         }
