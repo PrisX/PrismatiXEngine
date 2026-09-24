@@ -200,6 +200,20 @@ bool IsAlreadyCompressedMediaPath(const std::string_view uri) {
     return std::ranges::find(extensions, extension) != extensions.end();
 }
 
+// These assets are not parsed by the project/Story/UI contract checks. Every
+// archive path below independently hashes the source before promotion: the
+// stream writer hashes the bytes it writes, cached entries recheck the source,
+// and whole-shard reuse rehashes current sources. Deferring their first hash
+// avoids reading large media twice while preserving a byte-level check.
+bool CanDeferInputFingerprint(const std::string_view uri) {
+    // MPEG transport streams and TypeScript modules share the .ts extension.
+    // An authored module may be read during structural validation, so keep
+    // ambiguous .ts inputs on the eager path.
+    if (Lower(px::PathToUtf8(Utf8Path(uri).extension())) == ".ts")
+        return false;
+    return IsAlreadyCompressedMediaPath(uri) || IsStreamingMediaPath(uri);
+}
+
 std::string ChunkContext(const std::string_view name,
                          const std::uint32_t index,
                          const std::uint32_t rawBytes) {
@@ -1696,6 +1710,7 @@ ValidationResult Validate(const PackageRequest& request,
                           const PackageEventSink& eventSink) {
     ValidationResult result;
     auto& diagnostics = result.diagnostics;
+    std::size_t deferredMediaFingerprints = 0;
     struct LocalizedOperationIdentity {
         std::string operationId;
         std::string sourceId;
@@ -1781,7 +1796,7 @@ ValidationResult Validate(const PackageRequest& request,
     for (std::size_t index = 0; index < request.inputs.size(); ++index) {
         if (index > 0 && index % 256 == 0) {
             EmitProgress(request, eventSink, "validate", index,
-                         request.inputs.size(), "Verified package inputs");
+                         request.inputs.size(), "Checking package inputs");
         }
         if (Cancelled(request)) {
             result.cancelled = true;
@@ -1819,15 +1834,22 @@ ValidationResult Validate(const PackageRequest& request,
             AddDiagnostic(diagnostics, "PXPKG1215", "input size changed: " + input.uri, true);
             continue;
         }
-        const std::string actualFingerprint = ComputePackageFingerprint(source);
-        if (actualFingerprint.empty() || actualFingerprint != Lower(input.fingerprint)) {
-            AddDiagnostic(diagnostics, "PXPKG1216", "input fingerprint changed: " + input.uri, true);
-            continue;
+        if (CanDeferInputFingerprint(input.uri)) {
+            ++deferredMediaFingerprints;
+        } else {
+            const std::string actualFingerprint = ComputePackageFingerprint(source);
+            if (actualFingerprint.empty() || actualFingerprint != Lower(input.fingerprint)) {
+                AddDiagnostic(diagnostics, "PXPKG1216", "input fingerprint changed: " + input.uri, true);
+                continue;
+            }
         }
         result.inputs.push_back({ input, source });
     }
     EmitProgress(request, eventSink, "validate", request.inputs.size(),
-                 request.inputs.size(), "Verified package inputs");
+                 request.inputs.size(),
+                 "Checked package inputs; " +
+                     std::to_string(deferredMediaFingerprints) +
+                     " media fingerprint(s) will be verified during archive writing or reuse");
     if (Cancelled(request)) {
         result.cancelled = true;
         return result;
@@ -2117,8 +2139,9 @@ ValidationResult Validate(const PackageRequest& request,
                             const auto primaryMap = packagedInputs.find(request.sourceMap);
                             const auto localeRuntime = packagedInputs.find(runtimePath);
                             const auto localeMap = packagedInputs.find(sourceMapPath);
-                            // Every input above has already passed raw SHA-256 verification.
-                            // Reuse only when the locale pair also covered every primary
+                            // Runtime IR and source maps are not deferred media:
+                            // each has passed raw SHA-256 verification. Reuse only when
+                            // the locale pair also covered every primary
                             // Runtime IR/source-map identity check, including sourceLine.
                             const auto sameValidatedInput = [](const ValidatedInput* left,
                                                                const ValidatedInput* right) {
@@ -3006,9 +3029,9 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
         }
         const auto& input = validated.inputs[index];
         EmitProgress(request, eventSink, "archive", index, validated.inputs.size(), "Preparing " + input.input.uri);
-        // Validation already compared every source to its declared SHA-256.
-        // WriteArchive hashes the bytes it actually writes again, so another
-        // full pass here only triples I/O for large media-heavy projects.
+        // Non-media inputs were hashed during validation; media inputs are
+        // verified by the writer or whole-shard reuse. Another full pass here
+        // would duplicate I/O for large media-heavy projects.
         std::string contentFingerprint = Lower(input.input.fingerprint);
         if (input.input.size <= 16ull * 1024ull * 1024ull &&
             CouldBeJson(input.source)) {

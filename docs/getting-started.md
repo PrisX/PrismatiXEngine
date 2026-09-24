@@ -108,6 +108,18 @@ distribution after successful replacement; a caller that keeps an external
 cache source does not hard-link its archives by default. With one archive,
 any content change still rewrites `Content.pdx`.
 
+Native input validation checks paths, sizes, and declared SHA-256 syntax up
+front. For recognized image, audio, and streaming-video extensions, the raw
+SHA-256 read is deferred to the archive writer or whole-shard reuse check;
+these paths hash the current source bytes before publication. Story, UI,
+project, font, and other inputs used by structural validation are still
+content-checked before parsing. The ambiguous `.ts` extension stays on this
+eager path because it may contain a TypeScript module rather than video. A
+media mismatch therefore may be reported during archive writing or reuse
+rather than during the initial validation phase. This removes one media read,
+not the integrity checks or the time needed to verify
+old PDX shards and publish a distribution.
+
 For large games, `pack`, `run`, and distribution `build` accept
 `--archive-shards N` (1–64). The default `1` keeps `Content.pdx`; larger
 values assign each resource to a stable URI-hash shard and emit

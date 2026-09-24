@@ -1070,6 +1070,60 @@ int main() {
         }
     });
 
+    suite.Run("DeferredMediaFingerprintIsCheckedByWriterAndShardReuse", [&] {
+        const auto assetPath = root / "Assets/rin.png";
+        const std::string originalAsset = Read(assetPath);
+        const auto reusedOutput = fixture.path / "Build/DeferredMediaReuse";
+        auto mediaRequest = FixtureRequest(root, reusedOutput);
+        mediaRequest.requestId = "deferred-media-reuse";
+        mediaRequest.encryption = false;
+        mediaRequest.archiveShards = 4;
+        suite.Require(px::sdk::RunPackager(mediaRequest).Completed(),
+                      "the baseline media package completes");
+        const auto baselineManifest = Read(reusedOutput / "Package/manifest.json");
+        std::string changedAsset = originalAsset;
+        changedAsset[0] = changedAsset[0] == 'x' ? 'y' : 'x';
+        Write(assetPath, changedAsset);
+        bool reachedStructureValidation = false;
+        const auto reuseResult = px::sdk::RunPackager(
+            mediaRequest, [&](const auto& event) {
+                reachedStructureValidation |=
+                    event.kind == px::sdk::PackageEventKind::Progress &&
+                    event.phase == "validate-structure";
+            });
+        const auto freshOutput = fixture.path / "Build/DeferredMediaFresh";
+        Write(freshOutput / "previous-success.txt", "preserved");
+        mediaRequest.outputDir = freshOutput;
+        mediaRequest.requestId = "deferred-media-writer";
+        const auto freshResult = px::sdk::RunPackager(mediaRequest);
+        Write(assetPath, originalAsset);
+        suite.Expect(reachedStructureValidation &&
+                         HasDiagnostic(reuseResult, "PXPKG1305") &&
+                         Read(reusedOutput / "Package/manifest.json") ==
+                             baselineManifest,
+                     "whole-shard reuse rejects drifted media after deferred validation and preserves the old package");
+        suite.Expect(HasDiagnostic(freshResult, "PXPKG1305") &&
+                         Read(freshOutput / "previous-success.txt") ==
+                             "preserved" &&
+                         !std::filesystem::exists(freshOutput / "Content-00.pdx"),
+                     "fresh stream writing rejects drifted media without replacing the old output");
+    });
+
+    suite.Run("TypeScriptInputIsNotMistakenForStreamingVideo", [&] {
+        Write(root / "Scripts/extra.ts", "export const value = 1;\n");
+        const auto failedOutput = fixture.path / "Build/TypeScriptFingerprint";
+        Write(failedOutput / "previous-success.txt", "preserved");
+        auto typed = FixtureRequest(root, failedOutput);
+        typed.requestId = "typescript-fingerprint-contract";
+        typed.inputs.push_back(Input(root, "Scripts/extra.ts"));
+        typed.inputs.back().fingerprint = std::string(64, '0');
+        const auto result = px::sdk::RunPackager(typed);
+        suite.Expect(HasDiagnostic(result, "PXPKG1216") &&
+                         Read(failedOutput / "previous-success.txt") ==
+                             "preserved",
+                     "ambiguous .ts inputs retain eager SHA validation");
+    });
+
     suite.Run("CompressedEntryCacheReusesOnlyVerifiedMatchingBytes", [&] {
         const auto source = root / "Assets/cache-fixture.bin";
         WriteRepeated(source, 'c', 256 * 1024);
@@ -1714,7 +1768,13 @@ int main() {
         Write(failedOutput / "previous-success.txt", "preserved");
         auto failed = FixtureRequest(root, failedOutput);
         failed.requestId = "failure-contract";
-        failed.inputs.front().fingerprint = std::string(64, '0');
+        const auto projectInput = std::ranges::find_if(
+            failed.inputs, [](const auto& input) {
+                return input.uri == "project.pxproject";
+            });
+        suite.Require(projectInput != failed.inputs.end(),
+                      "fixture includes an eagerly validated project document");
+        projectInput->fingerprint = std::string(64, '0');
         const auto result = px::sdk::RunPackager(failed);
         suite.Expect(result.exitCode == px::sdk::PackageExitCode::Failed && !result.diagnostics.empty() && result.diagnostics.front().code == "PXPKG1216", "fingerprint drift is a typed failure");
         suite.Expect(Read(failedOutput / "previous-success.txt") == "preserved", "failure leaves prior successful output untouched");
