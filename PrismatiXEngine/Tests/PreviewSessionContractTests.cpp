@@ -136,7 +136,7 @@ int main() {
         input.Process(event);
 
         const auto events = input.FrameEvents();
-        suite.Require(events.size() == 7,
+        suite.Require(events.size() == 8,
                       "pointer, text, wheel, and logical actions share one frame stream");
         bool monotonic = true;
         for (std::size_t index = 1; index < events.size(); ++index)
@@ -173,8 +173,15 @@ int main() {
         suite.Expect(input.SuppressDefault(pointerDown->id) &&
                          !input.LeftClick() && !input.LeftDown() &&
                          !input.ActionPressed(px::InputAction::Accept) &&
+                         input.ActionPressed(px::InputAction::Advance),
+                     "suppressing a pointer source leaves an independent wheel action active");
+        const auto wheel = std::ranges::find_if(events, [](const px::InputEvent& value) {
+            return value.type == px::InputEventType::PointerWheel;
+        });
+        suite.Expect(wheel != events.end() && input.SuppressDefault(wheel->id) &&
+                         input.WheelY() == 0.0f &&
                          !input.ActionPressed(px::InputAction::Advance),
-                     "suppressing a pointer source blocks legacy pointer and default action polling");
+                     "suppressing wheel also blocks the linked logical action");
 
         input.NewFrame();
         suite.Expect(input.FrameEvents().empty() &&
@@ -194,6 +201,58 @@ int main() {
                          !input.UnregisterAction("accept") &&
                          input.UnregisterAction("photo-mode"),
                      "registration is idempotent and built-in action identity is retained");
+    });
+
+    suite.Run("WheelActionsAreDeclarativeAndContextGated", [&] {
+        px::Input input;
+        suite.Require(input.RegisterAction("screen.open.history") &&
+                          input.SetActionContext("screen.open.history", "game") &&
+                          input.SetWheelBinding("screen.open.history",
+                                                px::WheelDirection::Up, 1.0f) &&
+                          input.SetWheelBinding("advance", px::WheelDirection::None),
+                      "custom wheel action and disabled built-in gesture register");
+        suite.Expect(!input.SetWheelBinding("screen.open.history",
+                                            px::WheelDirection::None, 1.0f) &&
+                         !input.SetWheelBinding("missing", px::WheelDirection::Up),
+                     "invalid or unknown wheel bindings do not replace the current binding");
+        SDL_Event event{};
+        event.type = SDL_EVENT_MOUSE_WHEEL;
+        event.wheel.y = 0.4f;
+        input.NewFrame();
+        input.Process(event);
+        suite.Expect(!input.ActionPressed("screen.open.history") &&
+                         input.WheelY() == 0.4f,
+                     "high-resolution wheel remains visible to UI before threshold");
+        event.wheel.y = 0.6f;
+        input.Process(event);
+        suite.Expect(!input.ActionPressed("screen.open.history"),
+                     "inactive game context prevents the threshold action");
+        suite.Require(input.SetBaseContext("game"), "game context becomes active");
+        suite.Expect(input.ActionPressed("screen.open.history"),
+                     "multiple wheel deltas accumulate within the frame");
+        const auto action = std::ranges::find_if(input.FrameEvents(),
+            [](const px::InputEvent& value) {
+                return value.type == px::InputEventType::Action &&
+                       value.action == "screen.open.history";
+            });
+        suite.Expect(action != input.FrameEvents().end() &&
+                         input.SuppressDefault(action->id) &&
+                         input.WheelY() == 0.0f &&
+                         !input.ActionPressed("screen.open.history"),
+                     "suppressing a wheel action also suppresses its raw source");
+        input.NewFrame();
+        event.wheel.y = -1.0f;
+        input.Process(event);
+        suite.Expect(!input.ActionPressed(px::InputAction::Advance) &&
+                         input.WheelY() == -1.0f,
+                     "none disables the default gesture without disabling UI scroll");
+        suite.Require(input.SetWheelBinding("advance", px::WheelDirection::Down),
+                      "gesture can be re-enabled");
+        input.NewFrame();
+        input.Process(event);
+        suite.Expect(input.ActionPressed(px::InputAction::Advance) &&
+                         !input.ActionDown(px::InputAction::Advance),
+                     "wheel emits a one-frame action, never a held key state");
     });
 
     suite.Run("KeyRebindReportsConflictsWithoutLosingBindings", [&] {

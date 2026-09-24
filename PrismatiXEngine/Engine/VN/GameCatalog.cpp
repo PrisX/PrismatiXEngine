@@ -73,7 +73,8 @@ Status GameCatalog::LoadCanonical(
         m_input.push_back({source.key, source.command, source.argument});
     m_inputActions.clear();
     for (const auto& source : loaded.document.inputActions)
-        m_inputActions.push_back({source.id, source.context, source.keys, source.route});
+        m_inputActions.push_back({source.id, source.context, source.keys, source.route,
+                                  source.wheelDirection, source.wheelThreshold});
     return Status::Ok();
 }
 
@@ -203,7 +204,8 @@ Status GameCatalog::LoadLegacyRuntimeResourcesForMigration(
     m_input = std::move(input);
     m_inputActions.clear();
     for (const auto& source : loaded.document.inputActions)
-        m_inputActions.push_back({source.id, source.context, source.keys, source.route});
+        m_inputActions.push_back({source.id, source.context, source.keys, source.route,
+                                  source.wheelDirection, source.wheelThreshold});
     return Status::Ok();
 }
 

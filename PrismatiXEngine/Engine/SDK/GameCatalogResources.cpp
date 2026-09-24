@@ -780,6 +780,31 @@ GameCatalogResourcesLoadResult LoadCanonicalGameCatalogResources(
                             continue;
                         }
                     }
+                    if (const auto wheel = source.find("wheel"); wheel != source.end()) {
+                        if (!wheel->is_object() || !wheel->contains("direction") ||
+                            !(*wheel)["direction"].is_string() ||
+                            wheel->size() > (wheel->contains("threshold") ? 2 : 1)) {
+                            Add(result, "PXCAT1121", "input action wheel must declare a direction and optional threshold", path, 0, action.id);
+                            continue;
+                        }
+                        action.wheelDirection = (*wheel)["direction"].get<std::string>();
+                        if (action.wheelDirection != "up" && action.wheelDirection != "down" &&
+                            action.wheelDirection != "none") {
+                            Add(result, "PXCAT1121", "input action wheel direction must be up, down, or none", path, 0, action.id);
+                            continue;
+                        }
+                        if (const auto threshold = wheel->find("threshold");
+                            threshold != wheel->end()) {
+                            if (!threshold->is_number() ||
+                                threshold->get<double>() < 0.0 ||
+                                threshold->get<double>() > 100.0 ||
+                                action.wheelDirection == "none") {
+                                Add(result, "PXCAT1121", "input action wheel threshold must be 0..100 for up or down", path, 0, action.id);
+                                continue;
+                            }
+                            action.wheelThreshold = threshold->get<float>();
+                        }
+                    }
                     result.document.inputActions.push_back(std::move(action));
                 }
             }

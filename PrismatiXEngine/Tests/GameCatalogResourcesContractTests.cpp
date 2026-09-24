@@ -76,8 +76,8 @@ constexpr std::string_view kCanonicalCatalog = R"({
     {"key":"Escape","command":"screen.open","argument":"settings"}
   ],
   "inputActions":[
-    {"id":"quick-save","context":"game","keys":["F8"]},
-    {"id":"screen.open.gallery","context":"game","keys":["G"],"route":"gallery"}
+    {"id":"quick-save","context":"game","keys":["F8"],"wheel":{"direction":"none"}},
+    {"id":"screen.open.gallery","context":"game","keys":["G"],"wheel":{"direction":"up","threshold":1},"route":"gallery"}
   ]
 })";
 
@@ -132,6 +132,9 @@ int main() {
         suite.Expect(loaded.document.inputActions.size() == 2 &&
                          loaded.document.inputActions[0].id == "quick-save" &&
                          loaded.document.inputActions[0].keys == std::vector<std::string>{"F8"} &&
+                         loaded.document.inputActions[0].wheelDirection == "none" &&
+                         loaded.document.inputActions[1].wheelDirection == "up" &&
+                         loaded.document.inputActions[1].wheelThreshold == 1.0f &&
                          loaded.document.inputActions[1].route == "gallery",
                      "named actions, contexts, default keys, and routes survive canonical loading");
 
@@ -312,6 +315,10 @@ name = "affinity"
             std::string(prefix) + R"("inputActions":[{"id":"quick-save","context":"game","keys":["F8","F8"]}]})");
         suite.Expect(HasCode(malformed, "PXCAT1120"),
                      "duplicate default key names fail before Player startup");
+        const auto invalidWheel = px::sdk::LoadCanonicalGameCatalogResources(
+            std::string(prefix) + R"("inputActions":[{"id":"advance","context":"game","wheel":{"direction":"none","threshold":1}}]})");
+        suite.Expect(HasCode(invalidWheel, "PXCAT1121"),
+                     "invalid wheel descriptors fail at the native boundary");
         const auto wrongContext = px::sdk::LoadCanonicalGameCatalogResources(
             std::string(prefix) + R"("inputActions":[{"id":"screen.open.gallery","context":"ui","route":"gallery"}]})");
         suite.Expect(HasCode(wrongContext, "PXCAT1119"),

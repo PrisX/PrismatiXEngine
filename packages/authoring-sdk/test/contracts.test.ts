@@ -93,11 +93,15 @@ test("game input actions declare contexts and default keys without legacy key co
     inputActions: [
       {id: "quick-save", context: "game", keys: ["F8"]},
       {id: "screen.open.gallery", context: "game", keys: ["G"], route: "gallery"},
-      {id: "camera.photo", context: "game"},
+      {id: "camera.photo", context: "game", wheel: {direction: "up", threshold: 1}},
+      {id: "advance", context: "game", wheel: {direction: "none"}},
     ]};
   assert.equal(validateDocument("game", game).valid, true);
   assert.equal(validateDocument("game", {...game, inputActions: [
     {id: "quick-save", context: "game", keys: ["F8", "F8"]},
+  ]}).valid, false);
+  assert.equal(validateDocument("game", {...game, inputActions: [
+    {id: "advance", context: "game", wheel: {direction: "none", threshold: 1}},
   ]}).valid, false);
   assert.equal(validateDocument("game", {...game, inputBindings: [
     {key: "G", command: "screen.open", argument: "gallery"},

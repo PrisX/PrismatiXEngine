@@ -6,6 +6,8 @@ const game: GameDocument = {
   inputActions: [
     {id: "quick-save", context: "game", keys: ["F8"]},
     {id: "screen.open.gallery", context: "game", keys: ["G"], route: "gallery"},
+    {id: "backlog", context: "game", wheel: {direction: "up", threshold: 1}},
+    {id: "advance", context: "game", wheel: {direction: "down"}},
     {id: "photo-mode", context: "game"},
   ],
 };

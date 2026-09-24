@@ -70,6 +70,8 @@ struct GameCatalogInputAction {
     std::string context;
     std::vector<std::string> keys;
     std::string route;
+    std::string wheelDirection;
+    float wheelThreshold = 0.0f;
 };
 
 struct GameCatalogUnlockable {

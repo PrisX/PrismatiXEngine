@@ -58,6 +58,8 @@ enum class PointerButton : std::uint8_t {
     Middle,
 };
 
+enum class WheelDirection : std::uint8_t { None, Up, Down };
+
 struct InputEvent {
     std::uint64_t id = 0;
     std::uint64_t frame = 0;
@@ -115,6 +117,11 @@ public:
     [[nodiscard]] bool ClearBindings(std::string_view action);
     [[nodiscard]] bool BindKey(std::string_view action, int scancode);
     [[nodiscard]] bool BindGamepadButton(std::string_view action, int button);
+    // Wheel gestures are transient actions. Threshold is accumulated within
+    // one frame; zero means any nonzero delta in the chosen direction.
+    [[nodiscard]] bool SetWheelBinding(std::string_view action,
+                                       WheelDirection direction,
+                                       float threshold = 0.0f);
     // Named actions default to the global context. The host selects a base
     // context; scripts may push temporary overlays for nested screens.
     [[nodiscard]] bool SetActionContext(std::string_view action,
@@ -215,12 +222,15 @@ private:
         std::set<int> keys;
         std::set<int> gamepadButtons;
         std::string context = "global";
+        WheelDirection wheelDirection = WheelDirection::None;
+        float wheelThreshold = 0.0f;
     };
     enum class EventSourceKind : std::uint8_t {
         None,
         Key,
         GamepadButton,
         Pointer,
+        Wheel,
     };
     struct EventSource {
         EventSourceKind kind = EventSourceKind::None;
@@ -237,6 +247,7 @@ private:
     void AppendActionEventsForGamepadButton(int button);
     void AppendPointerDefaultActions(PointerButton button,
                                      std::uint64_t sourceId);
+    void AppendWheelActions(std::uint64_t sourceId);
     std::set<int> m_keysPressed;
     std::set<int> m_keysDown;
     std::set<int> m_gamepadButtonsPressed;
@@ -261,6 +272,9 @@ private:
     float m_mouseX = -1000.0f;
     float m_mouseY = -1000.0f;
     float m_wheelY = 0.0f;
+    float m_wheelUp = 0.0f;
+    float m_wheelDown = 0.0f;
+    std::set<std::string, std::less<>> m_wheelTriggeredActions;
     bool m_leftDown = false;
     bool m_rightDown = false;
     bool m_leftClick = false;

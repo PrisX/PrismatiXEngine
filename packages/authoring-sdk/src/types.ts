@@ -200,6 +200,9 @@ export interface GameInputAction {
   readonly id: string;
   readonly context: string;
   readonly keys?: readonly string[];
+  /** Wheel movement needed in one frame; omit threshold for any nonzero movement. */
+  readonly wheel?: {readonly direction: "up" | "down"; readonly threshold?: number} |
+                   {readonly direction: "none"};
   /** Player route opened when this action is pressed in its context. */
   readonly route?: string;
 }

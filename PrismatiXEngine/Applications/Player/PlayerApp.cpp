@@ -1520,6 +1520,14 @@ bool PlayerApp::Init(int argc, char* argv[]) {
             for (std::size_t index = 1; index < keys.size(); ++index)
                 if (!input.BindKey(action.id, keys[index])) return false;
         }
+        if (!action.wheelDirection.empty()) {
+            const WheelDirection direction = action.wheelDirection == "up"
+                ? WheelDirection::Up
+                : action.wheelDirection == "down" ? WheelDirection::Down
+                                                   : WheelDirection::None;
+            if (!input.SetWheelBinding(action.id, direction, action.wheelThreshold))
+                return false;
+        }
         if (!action.route.empty()) m_screenTriggers[action.id] = action.route;
     }
     m_session->VM().SetGameCatalog(m_catalog);
@@ -3564,7 +3572,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         m_skipMode = !m_skipMode;
         if (m_skipMode) m_autoMode = false;
     }
-    if (input.ActionPressed(InputAction::Backlog) || input.WheelY() > 0.0f) {
+    if (input.ActionPressed(InputAction::Backlog)) {
         OpenScreen("backlog");
         return;
     }
@@ -3591,11 +3599,12 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         input.ActionPressed(InputAction::Advance) &&
         !input.KeyDown(SDL_SCANCODE_LALT) &&
         !input.KeyDown(SDL_SCANCODE_RALT);
-    const bool wheelAdvance = input.WheelY() < 0.0f;
+    const bool nonKeyboardAdvance =
+        input.ActionPressedWithoutKeyboard(InputAction::Advance);
 
     bool advancedByClick = false;
     if (m_hudHidden) {
-        if (input.LeftClick() || advanceKey || wheelAdvance) m_hudHidden = false;
+        if (input.LeftClick() || advanceKey || nonKeyboardAdvance) m_hudHidden = false;
     } else {
         // A modal may have replaced the HUD since the previous frame. Keep
         // its authored scene installed while still updating dialogue when the
@@ -3612,7 +3621,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
             RenderUIWithScripts();
             return;
         }
-        if (!uiConsumed && (input.LeftClick() || advanceKey || wheelAdvance) &&
+        if (!uiConsumed && (input.LeftClick() || advanceKey || nonKeyboardAdvance) &&
                m_session->VM().State() != vn::VMState::WaitingChoice) {
             m_session->Advance();
             advancedByClick = true;

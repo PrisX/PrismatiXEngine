@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace px {
@@ -38,6 +39,8 @@ Input::Input() {
     BindKey(InputAction::QuickLoad,SDL_SCANCODE_F9);
     BindKey(InputAction::Rollback,SDL_SCANCODE_PAGEUP);
     BindKey(InputAction::Pause,SDL_SCANCODE_P);
+    (void)SetWheelBinding(ActionName(InputAction::Backlog), WheelDirection::Up);
+    (void)SetWheelBinding(ActionName(InputAction::Advance), WheelDirection::Down);
     BindGamepadButton(InputAction::NavigateUp,SDL_GAMEPAD_BUTTON_DPAD_UP);
     BindGamepadButton(InputAction::NavigateDown,SDL_GAMEPAD_BUTTON_DPAD_DOWN);
     BindGamepadButton(InputAction::NavigateLeft,SDL_GAMEPAD_BUTTON_DPAD_LEFT);
@@ -160,6 +163,20 @@ bool Input::BindGamepadButton(const std::string_view action, const int button) {
     found->second.gamepadButtons.insert(button);
     if (const auto builtin = BuiltinAction(action))
         m_gamepadBindings[ActionIndex(*builtin)].insert(button);
+    return true;
+}
+
+bool Input::SetWheelBinding(const std::string_view action,
+                            const WheelDirection direction,
+                            const float threshold) {
+    const auto found = m_namedBindings.find(action);
+    if (found == m_namedBindings.end() || !std::isfinite(threshold) ||
+        threshold < 0.0f || threshold > 100.0f ||
+        (direction != WheelDirection::None && direction != WheelDirection::Up &&
+         direction != WheelDirection::Down) ||
+        (direction == WheelDirection::None && threshold != 0.0f)) return false;
+    found->second.wheelDirection = direction;
+    found->second.wheelThreshold = threshold;
     return true;
 }
 
@@ -476,6 +493,9 @@ void Input::NewFrame() {
     m_leftReleased = false;
     m_rightClick = false;
     m_wheelY = 0.0f;
+    m_wheelUp = 0.0f;
+    m_wheelDown = 0.0f;
+    m_wheelTriggeredActions.clear();
     m_keysPressed.clear();
     m_gamepadButtonsPressed.clear();
     m_injectedActions.clear();
@@ -524,7 +544,8 @@ bool Input::SuppressDefault(const std::uint64_t eventId) {
     const std::uint64_t sourceId = found->sourceId != 0
                                        ? found->sourceId
                                        : (found->type == InputEventType::PointerDown ||
-                                                  found->type == InputEventType::PointerUp
+                                                  found->type == InputEventType::PointerUp ||
+                                                  found->type == InputEventType::PointerWheel
                                               ? found->id
                                               : 0);
     if (sourceId != 0) {
@@ -552,9 +573,20 @@ bool Input::SuppressDefault(const std::uint64_t eventId) {
                 m_suppressLeftPointer = true;
             else if (source->second.pointerButton == PointerButton::Secondary)
                 m_suppressRightPointer = true;
+        } else if (source->second.kind == EventSourceKind::Wheel) {
+            m_suppressWheel = true;
         }
     }
     if (found->type == InputEventType::PointerWheel) m_suppressWheel = true;
+    if (m_suppressWheel) {
+        for (const InputEvent& event : m_events) {
+            const auto other = m_eventSources.find(event.id);
+            if (event.type == InputEventType::PointerWheel ||
+                (other != m_eventSources.end() &&
+                 other->second.kind == EventSourceKind::Wheel))
+                m_suppressedDefaults.insert(event.id);
+        }
+    }
     if (found->type == InputEventType::TextInput) m_suppressText = true;
     return true;
 }
@@ -609,6 +641,23 @@ void Input::AppendPointerDefaultActions(const PointerButton button,
         (void)AppendEvent(std::move(event),
                           {.kind=EventSourceKind::Pointer,
                            .pointerButton=button});
+    }
+}
+
+void Input::AppendWheelActions(const std::uint64_t sourceId) {
+    if (m_suppressWheel) return;
+    for (const auto& [action, bindings] : m_namedBindings) {
+        if (bindings.wheelDirection == WheelDirection::None ||
+            m_wheelTriggeredActions.contains(action)) continue;
+        const float travel = bindings.wheelDirection == WheelDirection::Up
+                                 ? m_wheelUp : m_wheelDown;
+        if (travel <= 0.0f || travel < bindings.wheelThreshold) continue;
+        InputEvent event;
+        event.type = InputEventType::Action;
+        event.action = action;
+        event.sourceId = sourceId;
+        (void)AppendEvent(std::move(event), {.kind=EventSourceKind::Wheel});
+        m_wheelTriggeredActions.insert(action);
     }
 }
 
@@ -701,8 +750,11 @@ void Input::Process(const SDL_Event& event) {
             inputEvent.y = m_mouseY;
             inputEvent.deltaX = event.wheel.x;
             inputEvent.deltaY = event.wheel.y;
-            (void)AppendEvent(std::move(inputEvent));
+            const std::uint64_t sourceId = AppendEvent(std::move(inputEvent));
             m_wheelY += event.wheel.y;
+            if (event.wheel.y > 0.0f) m_wheelUp += event.wheel.y;
+            else if (event.wheel.y < 0.0f) m_wheelDown -= event.wheel.y;
+            AppendWheelActions(sourceId);
             break;
             }
 
