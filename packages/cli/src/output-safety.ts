@@ -175,7 +175,8 @@ export async function publishedInputs(output: string,
     lastFiles = inputs.length;
   };
   onProgress?.({files: 0, bytes: 0, done: false});
-  const visit = async (directory: string): Promise<void> => {
+  const visit = async (directory: string): Promise<number> => {
+    let ownedFiles = 0;
     for (const entry of await readdir(directory, {withFileTypes: true})) {
       const path = join(directory, entry.name);
       const uri = relative(root, path).split("\\").join("/");
@@ -189,9 +190,16 @@ export async function publishedInputs(output: string,
       if (entry.isSymbolicLink()) throw new Error(`Artifact contains a symbolic link: ${uri}`);
       const expectedValue = Object.hasOwn(expected, uri) ? expected[uri] : undefined;
       if (entry.isDirectory()) {
-        if (expectedValue !== "directory") throw new Error(`Artifact directory is not owned: ${uri}`);
-        found.add(uri);
-        await visit(path);
+        if (expectedValue !== undefined && expectedValue !== "directory")
+          throw new Error(`Artifact directory is not owned: ${uri}`);
+        const children = await visit(path);
+        // Legacy artifact post-processors sometimes listed every file but
+        // omitted the containing directory. Packager rechecks file hashes;
+        // accept this only when the implicit directory has owned files.
+        if (expectedValue === undefined && children === 0)
+          throw new Error(`Artifact directory is not owned: ${uri}`);
+        if (expectedValue === "directory") found.add(uri);
+        ownedFiles += children;
       } else if (entry.isFile()) {
         if (typeof expectedValue !== "string" || !/^[0-9a-f]{64}$/iu.test(expectedValue))
           throw new Error(`Artifact file has no valid fingerprint: ${uri}`);
@@ -199,9 +207,11 @@ export async function publishedInputs(output: string,
         const size = (await lstat(path)).size;
         inputs.push({uri, fingerprint: expectedValue, size});
         bytes += size;
+        ++ownedFiles;
         report();
       } else throw new Error(`Artifact contains a special file: ${uri}`);
     }
+    return ownedFiles;
   };
   await visit(root);
   if (found.size !== Object.keys(expected).length ||

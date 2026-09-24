@@ -920,6 +920,12 @@ test("pack reuses an owned artifact without recompiling edited author sources", 
   const artifact = join(value.root, ".prismatix", "artifact");
   const built = run(["build", value.project, "--artifact-only", "--output", artifact]);
   assert.equal(built.status, 0, built.stderr);
+  const markerPath = join(artifact, ".prismatix-output.json");
+  const marker = JSON.parse(await readFile(markerPath, "utf8")) as {
+    files: Record<string, string>;
+  };
+  delete marker.files.Runtime;
+  await write(markerPath, JSON.stringify(marker));
   await write(join(value.root, "Story/main.pxstory"), "[unknown-command]\n");
   const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-reused-artifact-"));
   const mock = join(tools, "mock-packager.mjs");

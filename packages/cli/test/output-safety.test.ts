@@ -76,6 +76,28 @@ test("published artifact inputs come from an intact ownership inventory", async 
   await assert.rejects(publishedInputs(f.output), /does not match directory contents/u);
 });
 
+test("packaging accepts legacy implicit directories only when every file is owned", async t => {
+  const f = await fixture(t);
+  await publishDirectory(f, async stage => {
+    await mkdir(join(stage, "Assets", "skin"), {recursive: true});
+    await writeFile(join(stage, "Assets", "skin", "button.png"), "image");
+  });
+  const markerPath = join(f.output, outputOwnershipMarker);
+  const marker = JSON.parse(await readFile(markerPath, "utf8")) as {
+    files: Record<string, string>;
+  };
+  delete marker.files["Assets/skin"];
+  await writeFile(markerPath, JSON.stringify(marker));
+  assert.deepEqual((await publishedInputs(f.output)).map(item => item.uri),
+    ["Assets/skin/button.png"]);
+  await assert.rejects(verifiedPublishedInputs(f.output), /unowned or modified/u);
+  await writeFile(join(f.output, "Assets", "skin", "extra.png"), "unowned");
+  await assert.rejects(publishedInputs(f.output), /no valid fingerprint/u);
+  await rm(join(f.output, "Assets", "skin", "extra.png"));
+  await mkdir(join(f.output, "Assets", "empty"));
+  await assert.rejects(publishedInputs(f.output), /directory is not owned/u);
+});
+
 test("resource reuse requires a content-verified published revision", async t => {
   const f = await fixture(t);
   await publishDirectory(f, build("stable"));
