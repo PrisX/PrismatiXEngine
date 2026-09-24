@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <filesystem>
 #include <future>
 #include <map>
 #include <memory>
@@ -130,6 +131,7 @@ private:
 
     Runtime m_runtime;
     Boot m_boot;
+    std::filesystem::path m_saveDirectory = "Save";
     crypto::Key m_saveKey{};
     std::vector<crypto::Key> m_saveFallbackKeys;
     bool m_profileWritable = true;

@@ -7,7 +7,8 @@
 
 namespace Logger {
 
-void Initialize(const std::string& application = "PrismatiX");
+[[nodiscard]] bool Initialize(const std::string& application = "PrismatiX",
+                              const std::filesystem::path& directory = "logs");
 void Shutdown();
 void Flush();
 [[nodiscard]] std::filesystem::path CurrentLogPath();

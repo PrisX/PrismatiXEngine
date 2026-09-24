@@ -257,14 +257,17 @@ public:
     }
 
     bool Start(const std::filesystem::path& executable,
-               const std::filesystem::path& workingDirectory) {
+               const std::filesystem::path& workingDirectory,
+               const std::filesystem::path& userDataRoot) {
         if(m_result.valid())return false;
 #if defined(_WIN32)
         const std::string command="cd /d "+ShellQuote(workingDirectory)+
-            " && set PRISMATIX_E2E_JOURNEY=catalog&& "+ShellQuote(executable);
+            " && set \"PRISMATIX_PLAYER_DATA_ROOT="+userDataRoot.string()+
+            "\"&& set PRISMATIX_E2E_JOURNEY=catalog&& "+ShellQuote(executable);
 #else
         const std::string command="cd "+ShellQuote(workingDirectory)+
-            " && PRISMATIX_E2E_JOURNEY=catalog "+ShellQuote(executable);
+            " && PRISMATIX_PLAYER_DATA_ROOT="+ShellQuote(userDataRoot)+
+            " PRISMATIX_E2E_JOURNEY=catalog "+ShellQuote(executable);
 #endif
         m_result=std::async(std::launch::async,[command]{
             return std::system(command.c_str());
@@ -710,6 +713,10 @@ int main(int argc, char* argv[]) {
         suite.Require(startupSettings.Save(
                           (output / "Save/config.dat").string(), &startupKey),
                       "encrypted settings can override an authored screen shortcut");
+        const auto originalPortableSettings = Read(output / "Save/config.dat");
+        const auto userDataRoot = fixture.path / "IsolatedUserData";
+        const auto userData = userDataRoot /
+            ("Game " + px::crypto::Sha256Hex(startupManifest.manifest.gameId));
 
         const auto packagedPlayer = output / player.filename();
         const auto launchDirectory = fixture.path / "UnrelatedWorkingDirectory";
@@ -720,9 +727,9 @@ int main(int argc, char* argv[]) {
             sentinel << "unrelated-player-data";
         }
         AutomatedChildProcess process;
-        suite.Require(process.Start(packagedPlayer, launchDirectory),
+        suite.Require(process.Start(packagedPlayer, launchDirectory, userDataRoot),
                       "packaged Player process launches independently of the caller working directory");
-        const auto log = output / "logs/PrismatiXPlayer.log";
+        const auto log = userData / "logs/PrismatiXPlayer.log";
         const bool titleReady =
             WaitForLog(log, "Player presentation ready route=title");
         if (!titleReady) {
@@ -811,7 +818,7 @@ int main(int argc, char* argv[]) {
         suite.Expect(exitCode.has_value() && *exitCode == 0,
                      "native Player exits cleanly");
 
-        const auto savePath = output / "Save/profile.dat";
+        const auto savePath = userData / "Save/profile.dat";
         suite.Require(std::filesystem::is_regular_file(savePath) &&
                           std::filesystem::file_size(savePath) > 0,
                       "Player writes the encrypted global profile");
@@ -829,8 +836,8 @@ int main(int argc, char* argv[]) {
                      "Gallery unlock survives Player shutdown and reload");
         px::progress::GameSettings persistedSettings;
         suite.Require(persistedSettings.Load(
-                          (output / "Save/config.dat").string(), &startupKey),
-                      "Player preserves its encrypted keyboard settings");
+                          (userData / "Save/config.dat").string(), &startupKey),
+                      "Player imports encrypted portable keyboard settings");
         suite.Expect(persistedSettings.keyboardBindings.at(
                          "screen.open.gallery") ==
                          std::vector<int>{galleryOverride},
@@ -838,6 +845,13 @@ int main(int argc, char* argv[]) {
         suite.Expect(Read(unrelatedSave) == "unrelated-player-data" &&
                          !std::filesystem::exists(launchDirectory / "logs"),
                      "package launch never reads or writes the caller's persistence or logs");
+        suite.Expect(std::filesystem::is_regular_file(
+                         userData / ".portable-save-imported-v1") &&
+                         Read(output / "Save/config.dat") ==
+                             originalPortableSettings &&
+                         !std::filesystem::exists(output / "Save/profile.dat") &&
+                         !std::filesystem::exists(output / "logs"),
+                     "packaged Player imports old saves without writing new data into the distribution");
     });
     return suite.Finish();
 }

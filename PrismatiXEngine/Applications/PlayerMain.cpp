@@ -2,7 +2,9 @@
 
 #include "Engine/Support/Logger.h"
 #include "Engine/Progression/Persist.h"
+#include "Engine/Progression/UserDataLocation.h"
 #include "Engine/Package/PackageManifest.h"
+#include "Engine/Support/Utf8Path.h"
 
 #include <SDL3/SDL_main.h>
 #include <SDL3/SDL_filesystem.h>
@@ -12,8 +14,24 @@
 #include <string>
 #include <fstream>
 #include <iostream>
+#include <optional>
 
 namespace {
+std::optional<std::string> PackagedGameId(const std::filesystem::path& root) {
+    const auto manifest = root / "Package/manifest.json";
+    std::error_code error;
+    const auto size = std::filesystem::file_size(manifest, error);
+    if (error || size == 0 || size > 4u * 1024u * 1024u) return std::nullopt;
+    std::ifstream input(manifest, std::ios::binary);
+    if (!input) return std::nullopt;
+    std::string text(static_cast<std::size_t>(size), '\0');
+    input.read(text.data(), static_cast<std::streamsize>(text.size()));
+    if (!input) return std::nullopt;
+    const auto parsed = px::sdk::detail::ParsePackageManifest(text);
+    if (!parsed.Valid()) return std::nullopt;
+    return parsed.manifest.gameId;
+}
+
 // Keep this translation unit coupled to PlayerApp's complete class layout;
 // localized MSVC /showIncludes output cannot currently drive Ninja header
 // dependencies reliably on every host. Recompile this TU whenever PlayerApp's
@@ -81,10 +99,11 @@ int InspectSave(int argc, char* argv[]) {
 
 int main(int argc, char* argv[]) {
     if (argc > 1 && std::string_view(argv[1]) == "--inspect-save") return InspectSave(argc, argv);
-    // A distributed game owns its manifest, archives, saves and logs beside
-    // the executable, regardless of a shortcut or launcher's working directory.
+    // The package owns only immutable game content. A shortcut's working
+    // directory never chooses persistence, which lives in per-user storage.
     // Keep the existing cwd-based developer launch when no adjacent package
     // exists; script arguments retain their original virtual asset paths.
+    std::filesystem::path logDirectory = "logs";
     if (const char* base = SDL_GetBasePath()) {
         const std::filesystem::path packageRoot(
             std::u8string(base, base + std::char_traits<char>::length(base)));
@@ -96,9 +115,20 @@ int main(int argc, char* argv[]) {
                              error.message().c_str());
                 return 1;
             }
+            const auto userData = px::progress::ResolvePackagedUserDataDirectory(
+                PackagedGameId(packageRoot).value_or("invalid-package"));
+            if (!userData) {
+                for (const auto& diagnostic : userData.Diagnostics())
+                    std::fprintf(stderr, "%s: %s (%s)\n",
+                                 diagnostic.code.c_str(),
+                                 diagnostic.message.c_str(),
+                                 diagnostic.details.c_str());
+                return 1;
+            }
+            logDirectory = userData.Value() / "logs";
         }
     }
-    Logger::Initialize("PrismatiXPlayer");
+    if (!Logger::Initialize("PrismatiXPlayer", logDirectory)) return 1;
     px::player::PlayerApp app;
     const int result = app.Run(argc, argv);
     Logger::Shutdown();

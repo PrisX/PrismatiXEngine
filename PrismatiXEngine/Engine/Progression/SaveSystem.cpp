@@ -1,4 +1,5 @@
 #include "Engine/Progression/SaveSystem.h"
+#include "Engine/Support/Utf8Path.h"
 
 #include "Engine/Progression/Persist.h"
 #include "Engine/Diagnostics/Diagnostic.h"
@@ -1348,12 +1349,12 @@ std::string SaveSystem::SlotPath(int slot) const {
     // Negative slots are reserved for the automatic save.
     const std::string file = slot < 0 ? "autosave.pxsav"
                                       : "save_" + std::to_string(slot) + ".pxsav";
-    return (std::filesystem::path(m_dir) / file).string();
+    return PathToUtf8(PathFromUtf8(m_dir) / file);
 }
 
 bool SaveSystem::Save(int slot, const SaveSnapshot& s) {
     const std::string path = SlotPath(slot);
-    if (std::filesystem::exists(path)) {
+    if (std::filesystem::exists(PathFromUtf8(path))) {
         auto existing = LoadJsonWithFallback(
             path, m_encrypt ? &m_key : nullptr, m_fallbackKeys);
         if (!existing.Loaded() ||
@@ -1584,7 +1585,7 @@ std::vector<SlotInfo> SaveSystem::List(int count) const {
 
 bool SaveSystem::Delete(int slot) {
     std::error_code ec;
-    return std::filesystem::remove(SlotPath(slot), ec);
+    return std::filesystem::remove(PathFromUtf8(SlotPath(slot)), ec);
 }
 
 }

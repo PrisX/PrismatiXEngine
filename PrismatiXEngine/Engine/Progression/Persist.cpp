@@ -1,4 +1,5 @@
 #include "Engine/Progression/Persist.h"
+#include "Engine/Support/Utf8Path.h"
 
 #include "Engine/Support/Logger.h"
 #include "Engine/IO/AtomicFile.h"
@@ -19,7 +20,7 @@ constexpr std::string_view kPersistMagic = "PRISMATIX-PERSIST\n";
 constexpr std::uintmax_t kMaxPersistFileSize = 64ull * 1024ull * 1024ull;
 
 std::filesystem::path AsPath(const std::string& path) {
-    return std::filesystem::path(path);
+    return PathFromUtf8(path);
 }
 
 std::optional<Json> DecodeJson(const crypto::Bytes& source,
@@ -126,7 +127,7 @@ bool SaveJson(const std::string& path, const Json& json, const crypto::Key* key)
     if (key) {
         bytes = crypto::Encrypt(bytes, *key, crypto::DeriveIv(AsPath(path).filename().string()));
     }
-    const Status status = io::AtomicFile::WriteBinary(path, bytes);
+    const Status status = io::AtomicFile::WriteBinary(AsPath(path), bytes);
     if (!status) for (const auto& diagnostic : status.Diagnostics()) diag::Emit(diagnostic);
     return static_cast<bool>(status);
 }

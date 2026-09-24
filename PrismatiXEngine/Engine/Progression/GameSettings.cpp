@@ -2,6 +2,7 @@
 
 #include "Engine/Progression/Persist.h"
 #include "Engine/Diagnostics/Diagnostic.h"
+#include "Engine/Support/Utf8Path.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -105,7 +106,7 @@ bool GameSettings::Save(const std::string& path, const crypto::Key* key) const {
 bool GameSettings::SavePreservingExisting(
     const std::string& path, const crypto::Key* primaryKey,
     const std::span<const crypto::Key> fallbackKeys) const {
-    if (std::filesystem::exists(path)) {
+    if (std::filesystem::exists(PathFromUtf8(path))) {
         const auto loaded =
             LoadJsonWithFallback(path, primaryKey, fallbackKeys);
         if (!loaded.Loaded()) return false;

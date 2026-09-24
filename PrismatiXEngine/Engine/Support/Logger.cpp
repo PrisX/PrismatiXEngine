@@ -15,12 +15,15 @@ std::mutex g_mutex;
 std::filesystem::path g_logPath;
 }
 
-void Initialize(const std::string& application) {
+bool Initialize(const std::string& application,
+                const std::filesystem::path& directory) {
     std::lock_guard lock(g_mutex);
     try {
         std::error_code ec;
-        std::filesystem::create_directories("logs", ec);
-        g_logPath = std::filesystem::path("logs") / (application + ".log");
+        std::filesystem::create_directories(directory, ec);
+        if (ec) throw std::filesystem::filesystem_error(
+            "Could not create log directory", directory, ec);
+        g_logPath = directory / (application + ".log");
 
         auto console = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
         console->set_level(spdlog::level::debug);
@@ -39,8 +42,10 @@ void Initialize(const std::string& application) {
         spdlog::flush_every(std::chrono::seconds(2));
         PX_LOG_INFO("logger initialized application={} path={}", application,
                     g_logPath.generic_string());
-    } catch (const spdlog::spdlog_ex& ex) {
+        return true;
+    } catch (const std::exception& ex) {
         std::fprintf(stderr, "Log initialization failed: %s\n", ex.what());
+        return false;
     }
 }
 

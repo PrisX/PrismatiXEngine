@@ -96,7 +96,8 @@ export default <Scene name="Keys" width={800} height={600}>
 ```
 
 `bindingAction` must name an action registered by the game or host. Player
-provides the input service and saves a successful rebind to `Save/config.dat`;
+provides the input service and saves a successful rebind to `Save/config.dat`
+in its [per-game user-data directory](player-user-data.md);
 other hosts must attach `UIContext::SetInputBindingService(input, onChanged)`
 and persist the updated keyboard bindings themselves. This is a single-key
 replacement control, not a multi-key editor or confirmation dialog.

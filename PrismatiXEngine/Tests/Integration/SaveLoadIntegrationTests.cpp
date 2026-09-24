@@ -21,7 +21,9 @@
 #include "Engine/Progression/AwaitedWork.h"
 #include "Engine/Progression/Persist.h"
 #include "Engine/Progression/SaveSystem.h"
+#include "Engine/Progression/UserDataLocation.h"
 #include "Engine/Resources/AssetRegistry.h"
+#include "Engine/Support/Utf8Path.h"
 #include "Engine/Text/Typography.h"
 #include "Engine/UI/Actions/ActionCatalog.h"
 #include "Engine/UI/Animation.h"
@@ -942,6 +944,100 @@ void TestPersistenceKeyUpgradeAndFailurePreservation() {
           "slot promotion backs up legacy bytes and writes the stable key");
 }
 
+void TestPackagedUserDataMigration() {
+    px::test::TempDirectory temp("packaged-user-data");
+    const auto packageRoot = temp.path / "Package";
+    const auto oldSave = packageRoot / "Save";
+    const auto userRoot = temp.path / "UserData";
+    std::filesystem::create_directories(oldSave);
+    const auto key = px::progress::DeriveGameDataPersistenceKey("user-data-test");
+    px::progress::GameSettings legacySettings;
+    legacySettings.language = "ja-JP";
+    Check(legacySettings.Save(px::PathToUtf8(oldSave / "config.dat"), &key),
+          "portable settings fixture is written");
+    px::progress::GlobalProfile legacyProfile;
+    legacyProfile.MarkSeen("legacy-line");
+    Check(px::progress::SaveGlobalProfile(
+              legacyProfile, px::PathToUtf8(oldSave / "profile.dat"), &key),
+          "portable profile fixture is written");
+    {
+        std::ofstream slot(oldSave / "save_0.pxsav", std::ios::binary);
+        slot << "portable-slot";
+        std::ofstream backup(oldSave / "config.dat.legacy.bak", std::ios::binary);
+        backup << "portable-backup";
+        std::ofstream unknown(oldSave / "notes.txt", std::ios::binary);
+        unknown << "must-stay-behind";
+    }
+    const auto imported = px::progress::ImportLegacyPortableSaves(
+        packageRoot, userRoot);
+    Check(imported && imported.Value() == 4,
+          "only known portable save files and backups are imported");
+    Check(ReadBytes(userRoot / "Save/config.dat") == ReadBytes(oldSave / "config.dat") &&
+          ReadBytes(userRoot / "Save/profile.dat") == ReadBytes(oldSave / "profile.dat") &&
+          ReadBytes(userRoot / "Save/save_0.pxsav") == "portable-slot" &&
+          ReadBytes(userRoot / "Save/config.dat.legacy.bak") == "portable-backup" &&
+          !std::filesystem::exists(userRoot / "Save/notes.txt") &&
+          std::filesystem::exists(oldSave / "notes.txt"),
+          "migration copies exact bytes without deleting portable originals");
+    px::progress::GameSettings loaded;
+    Check(loaded.Load(px::PathToUtf8(userRoot / "Save/config.dat"), &key) &&
+          loaded.language == "ja-JP",
+          "migrated encrypted settings remain readable at their new path");
+    loaded.language = "zh-TW";
+    Check(loaded.Save(px::PathToUtf8(userRoot / "Save/config.dat"), &key),
+          "new user settings can be written independently of the package");
+    const auto repeated = px::progress::ImportLegacyPortableSaves(
+        packageRoot, userRoot);
+    px::progress::GameSettings reloaded;
+    Check(repeated && repeated.Value() == 0 &&
+          reloaded.Load(px::PathToUtf8(userRoot / "Save/config.dat"), &key) &&
+          reloaded.language == "zh-TW",
+          "one-time migration never restores stale portable settings");
+
+    const auto invalidPackage = temp.path / "InvalidPackage";
+    std::filesystem::create_directories(invalidPackage);
+    {
+        std::ofstream nonDirectory(invalidPackage / "Save", std::ios::binary);
+        nonDirectory << "not-a-directory";
+    }
+    Check(!px::progress::ImportLegacyPortableSaves(
+              invalidPackage, temp.path / "InvalidUserData"),
+          "a non-directory legacy Save path fails closed");
+
+    const auto unicodeSettings = temp.path / px::PathFromUtf8("存檔") / "config.dat";
+    Check(legacySettings.Save(px::PathToUtf8(unicodeSettings), &key),
+          "UTF-8 user-data path can be written");
+    px::progress::GameSettings unicodeLoaded;
+    Check(unicodeLoaded.Load(px::PathToUtf8(unicodeSettings), &key) &&
+          unicodeLoaded.language == "ja-JP",
+          "UTF-8 user-data path round-trips without Windows ACP loss");
+    const auto unicodeProfile = unicodeSettings.parent_path() / "profile.dat";
+    px::progress::GlobalProfile unicodeProfileValue;
+    unicodeProfileValue.MarkSeen("unicode-path-line");
+    Check(px::progress::SaveGlobalProfile(
+              unicodeProfileValue, px::PathToUtf8(unicodeProfile), &key),
+          "UTF-8 profile path can be written");
+    px::progress::GlobalProfile reloadedProfile;
+    Check(px::progress::LoadGlobalProfile(
+              reloadedProfile, px::PathToUtf8(unicodeProfile), &key) &&
+          reloadedProfile.HasSeen("unicode-path-line"),
+          "UTF-8 profile path round-trips");
+    px::progress::SaveSnapshot snapshot;
+    snapshot.gameId = "user-data-test";
+    snapshot.packageFingerprint = std::string(64, 'a');
+    snapshot.contentVersion = "1";
+    snapshot.saveVersion = 1;
+    snapshot.anchor = {"runtime-main", "line-1", "operation-1"};
+    snapshot.scriptPath = "Runtime/main.pxir";
+    snapshot.vm.scriptPath = snapshot.scriptPath;
+    px::progress::SaveSystem unicodeSlots;
+    unicodeSlots.Configure(px::PathToUtf8(unicodeSettings.parent_path()), &key);
+    Check(unicodeSlots.Save(0, snapshot) && unicodeSlots.Load(0).has_value(),
+          "UTF-8 save-slot path round-trips");
+    Check(unicodeSlots.Delete(0) && !unicodeSlots.Load(0).has_value(),
+          "UTF-8 save-slot path can be deleted without ACP conversion");
+}
+
 
 }  // namespace
 
@@ -954,6 +1050,8 @@ int main() {
     Run("Save_AwaitedWorkValidationIsShared", TestAwaitedWorkValidation);
     Run("Persistence_KeyUpgradeAndFailurePreservation",
         TestPersistenceKeyUpgradeAndFailurePreservation);
+    Run("Persistence_PackagedUserDataMigration",
+        TestPackagedUserDataMigration);
     if (g_failures == 0) std::cout << "PASS: runtime-save-load integration\n";
     return g_failures == 0 ? 0 : 1;
 }

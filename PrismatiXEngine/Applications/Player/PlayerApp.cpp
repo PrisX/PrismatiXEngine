@@ -4,6 +4,7 @@
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/Progression/AwaitedWork.h"
 #include "Engine/Progression/GlobalProfileStore.h"
+#include "Engine/Progression/UserDataLocation.h"
 #include "Engine/Resources/TypedDocument.h"
 #include "Engine/Script/ScriptFrameScheduler.h"
 #include "Engine/Script/VnModelSnapshots.h"
@@ -11,6 +12,7 @@
 #include "Engine/Package/PackageManifest.h"
 #include "Engine/SDK/SourceMap.h"
 #include "Engine/Support/Logger.h"
+#include "Engine/Support/Utf8Path.h"
 #include "Engine/UI/Layout.h"
 #include "Engine/UI/Widgets.h"
 #include "Engine/UI/Startup/SplashTypes.h"
@@ -624,6 +626,25 @@ void PlayerApp::RecordScriptVideoTerminal(const std::uint64_t handle,
 bool PlayerApp::Init(int argc, char* argv[]) {
     m_boot = LoadBootConfig();
     if (!m_boot.valid) return false;
+    if (m_boot.packaged) {
+        const auto userData = progress::ResolvePackagedUserDataDirectory(
+            m_boot.gameId);
+        if (!userData) {
+            for (const auto& diagnostic : userData.Diagnostics())
+                diag::Emit(diagnostic);
+            return false;
+        }
+        const auto imported = progress::ImportLegacyPortableSaves(
+            std::filesystem::current_path(), userData.Value());
+        if (!imported) {
+            for (const auto& diagnostic : imported.Diagnostics())
+                diag::Emit(diagnostic);
+            return false;
+        }
+        m_saveDirectory = userData.Value() / "Save";
+        PX_LOG_INFO("Player user data directory={} legacySavesImported={}",
+                    PathToUtf8(userData.Value()), imported.Value());
+    }
     if (!m_runtime.Init(m_boot.config)) {
         if (m_boot.graphicsTier == "gpu-effects")
             diag::Emit(diag::Diagnostic{
@@ -651,9 +672,11 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                                       : m_boot.saveSecret);
     }
     const auto profileLoad = progress::LoadGlobalProfileWithFallback(
-        m_profile, "Save/profile.dat", &m_saveKey, m_saveFallbackKeys);
+        m_profile, PathToUtf8(m_saveDirectory / "profile.dat"),
+        &m_saveKey, m_saveFallbackKeys);
     const auto settingsLoad = m_settings.LoadWithFallback(
-        "Save/config.dat", &m_saveKey, m_saveFallbackKeys);
+        PathToUtf8(m_saveDirectory / "config.dat"),
+        &m_saveKey, m_saveFallbackKeys);
     m_profileWritable = profileLoad != progress::PersistLoadStatus::Failed;
     m_settingsWritable = settingsLoad != progress::PersistLoadStatus::Failed;
     if (settingsLoad == progress::PersistLoadStatus::Loaded &&
@@ -663,7 +686,8 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         m_settingsWritable = false;
         PX_LOG_ERROR("Saved keyboard bindings are invalid; settings writes suppressed");
     }
-    m_saves.Configure("Save", &m_saveKey, m_saveFallbackKeys);
+    m_saves.Configure(PathToUtf8(m_saveDirectory), &m_saveKey,
+                      m_saveFallbackKeys);
     PX_LOG_DEBUG("Player boot: persistence configured");
     m_runtime.Audio().SetBGMVolume(m_settings.bgmVolume);
     m_runtime.Audio().SetSEVolume(m_settings.seVolume);
@@ -1659,7 +1683,8 @@ bool PlayerApp::SaveProfileIfWritable() {
         return false;
     }
     return progress::SaveGlobalProfilePreservingExisting(
-        m_profile, "Save/profile.dat", &m_saveKey, m_saveFallbackKeys);
+        m_profile, PathToUtf8(m_saveDirectory / "profile.dat"),
+        &m_saveKey, m_saveFallbackKeys);
 }
 
 bool PlayerApp::SaveSettingsIfWritable() {
@@ -1670,7 +1695,8 @@ bool PlayerApp::SaveSettingsIfWritable() {
     }
     m_settings.keyboardBindings = m_runtime.GetInput().CaptureKeyboardBindings();
     return m_settings.SavePreservingExisting(
-        "Save/config.dat", &m_saveKey, m_saveFallbackKeys);
+        PathToUtf8(m_saveDirectory / "config.dat"),
+        &m_saveKey, m_saveFallbackKeys);
 }
 
 void PlayerApp::BeginRuntimeIrPreload() {
