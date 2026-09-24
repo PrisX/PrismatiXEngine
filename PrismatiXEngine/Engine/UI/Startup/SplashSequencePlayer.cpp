@@ -191,6 +191,9 @@ void SplashSequencePlayer::PlayCurrentAudio() {
 void SplashSequencePlayer::BeginExit() {
     if (m_phase == Phase::Exiting || m_phase == Phase::Completed) return;
     if (m_nextDocument && m_nextReady && !m_nextReady()) return;
+    if (!m_nextDocument && m_nextIndex >= m_entries.size() &&
+        m_services.completionVisualsReady && !m_services.completionVisualsReady())
+        return;
     const auto& entry = m_entries[m_index];
     m_phase = Phase::Exiting;
     m_phaseElapsed = 0.0f;

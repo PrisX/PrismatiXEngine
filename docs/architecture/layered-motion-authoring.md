@@ -17,9 +17,11 @@ tests cover this slice. `compileProject` validates reachable descriptors
 and collects their image dependencies. Splash playback now resolves static UI
 image paths (including `.pxmotion` layers), queues a texture preload batch for
 the following page while the current page is visible, and waits before exit
-until that batch finishes. This avoids presenting a partially decoded next
-page, but is not a general UI/Story preload handshake: bound/dynamic paths,
-route-to-route transitions, texture residency under budget pressure, and
+until that batch finishes. The Player also queues the configured start route's
+static UI images during boot and holds the final splash until its batch is
+ready. This avoids presenting a partially decoded next splash/title page,
+but is not a general UI/Story preload handshake: bound/dynamic paths,
+arbitrary route-to-route transitions, texture residency under budget pressure, and
 motion-specific framebuffer conformance remain open. Story motion commands,
 sound markers, atlases, masks, blur, blend modes, save/load playback binding, and
 M2 conformance fixtures have not been added. The renderer adapter has compiled but

@@ -27,6 +27,7 @@ public:
         UiComponentLoader loadComponent;
         UiMotionLoader loadMotion;
         VisualPreloader preloadVisuals;
+        std::function<bool()> completionVisualsReady;
         AudioPlayer playAudio;
         DiagnosticSink diagnostics;
     };

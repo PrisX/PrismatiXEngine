@@ -215,6 +215,32 @@ int main() {
                      "motion descriptor expands to image layers before presentation");
     });
 
+    suite.Run("CompletionPreload_HoldsFinalSplashUntilTitleIsReady", [&] {
+        auto entry = Entry("final");
+        entry.minimumDuration = 0.1f;
+        bool titleReady = false;
+        int completed = 0;
+        auto document = Scene("final", false);
+        px::ui::startup::SplashSequencePlayer player({
+            .loadScene = [document](const px::ResourceRefValue&) {
+                return px::Result<px::sdk::UiDocument>::Success(document);
+            },
+            .completionVisualsReady = [&] { return titleReady; },
+        });
+        player.SetCompletionCallback([&] { ++completed; });
+        suite.Require(static_cast<bool>(player.Start({entry}, true)),
+                      "final splash starts with title preloader");
+        const auto* finalRoot = player.Context().Root();
+        player.Update(0.5f);
+        suite.Expect(player.CurrentPhase() == decltype(player)::Phase::Holding &&
+                         player.Context().Root() == finalRoot && completed == 0,
+                     "final splash remains visible instead of exposing an unready title");
+        titleReady = true;
+        player.Update(0.0f);
+        suite.Expect(player.Completed() && completed == 1,
+                     "title readiness releases final splash exactly once");
+    });
+
     suite.Run("DelayedAudio_FiresOnceAtConfiguredTime", [&] {
         Fixture fixture;
         auto entry = Entry("delayed");

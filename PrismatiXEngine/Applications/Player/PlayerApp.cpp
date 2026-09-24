@@ -1410,6 +1410,17 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     };
     for (const auto& [route, path] : m_boot.routeScenes)
         if (!registerTemplate(route, path)) return false;
+    m_titlePreloadBatch = 0;
+    auto titleImages = m_ui.RouteImageDependencies(m_boot.startRoute);
+    if (!titleImages) {
+        for (const auto& diagnostic : titleImages.Diagnostics()) diag::Emit(diagnostic);
+        return false;
+    }
+    std::vector<graphics::AssetPreloadRequest> titleRequests;
+    titleRequests.reserve(titleImages.Value().size());
+    for (const auto& path : titleImages.Value())
+        titleRequests.push_back({path, graphics::AssetPreloadPriority::High});
+    m_titlePreloadBatch = m_runtime.Assets().BeginTexturePreload(std::move(titleRequests));
     m_accessibilityAdapter = accessibility::CreatePlatformSemanticAdapter(
         m_runtime.GetWindow().Handle());
     if (!m_accessibilityAdapter) {
@@ -1527,6 +1538,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                     return !progress.valid||progress.Finished();
                 };
             },
+            .completionVisualsReady=[this]{return TitleVisualsReady();},
             .playAudio=[this](const ResourceRefValue& reference){
                 if(!m_runtime.VFS().Exists(reference.lastKnownPath)){diag::Diagnostic diagnostic{.severity=diag::Severity::Warning,.code="PXBOOT1202",.category="Player.Splash",.message="Splash audio is missing; visual playback will continue",.details=reference.lastKnownPath};diagnostic.source.path=reference.lastKnownPath;return Status::Fail(std::move(diagnostic));}
                 if (reference.lastKnownPath.starts_with("Assets/Audio/Voice/"))
@@ -1604,8 +1616,15 @@ void PlayerApp::BeginRuntimeIrPreload() {
     }
 }
 
+bool PlayerApp::TitleVisualsReady() {
+    if (!m_titlePreloadBatch) return true;
+    const auto progress = m_runtime.Assets().TexturePreloadProgress(m_titlePreloadBatch);
+    return !progress.valid || progress.Finished();
+}
+
 void PlayerApp::FinishBootPresentation() {
     if(m_appState!=AppState::BootSplash)return;
+    if(!TitleVisualsReady())return;
     BeginPresentationTransition(m_titleTransition);
     if(!m_session->Routes().Replace(m_boot.startRoute)){m_quitRequested=true;return;}
     const auto routeStatus = m_session->Routes().SetFallbackTransition(

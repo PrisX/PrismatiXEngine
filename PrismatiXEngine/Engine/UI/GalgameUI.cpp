@@ -353,6 +353,18 @@ bool GalgameUI::HasRouteTemplate(const std::string_view route) const {
     return m_templates.contains(std::string(route));
 }
 
+Result<std::vector<std::string>> GalgameUI::RouteImageDependencies(
+    const std::string_view route) const {
+    const auto found = m_templates.find(std::string(route));
+    if (found == m_templates.end() || !found->second.document)
+        return Result<std::vector<std::string>>::Failure(
+            GalgameFailure("PXUI2804", "Requested UI route template is not registered: " +
+                std::string(route)).Diagnostics());
+    return CollectUiImageDependencies(*found->second.document,
+        m_studioAssetResolver, m_studioComponentLoader, m_studioMotionLoader,
+        found->second.sourcePath);
+}
+
 bool GalgameUI::HasTemplate(Screen screen)const{
     return HasRouteTemplate(ScreenId(screen));
 }

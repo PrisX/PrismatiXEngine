@@ -1275,6 +1275,10 @@ int main() {
     px::ui::GalgameUI playerUi;
     playerUi.SetUiAssetResolver([](const std::string_view id) -> std::optional<std::string> { return id == "66666666-6666-4666-8666-666666666666" ? std::optional<std::string>{ "Content/logo.png" } : std::nullopt; });
     Check(playerUi.RegisterTemplate(px::ui::GalgameUI::Screen::Title, scene, "Content/UI/Title.pxui").IsOk(), "Player UI entry accepts a packaged UI document template");
+    const auto titleImages = playerUi.RouteImageDependencies("title");
+    Check(titleImages && titleImages.Value() ==
+              std::vector<std::string>{"Content/logo.png"},
+          "registered route exposes static image dependencies before presentation");
     Check(playerUi.ShowTitle().IsOk(), "Player title route installs through the shared UI document application");
     auto phoneScene = nlohmann::json::parse(scene);
     phoneScene["name"] = "Phone";

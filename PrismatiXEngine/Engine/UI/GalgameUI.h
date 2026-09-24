@@ -78,6 +78,8 @@ public:
                             const std::string& sourcePath={});
     Status RegisterRouteTemplate(std::string route, std::string_view scene,
                                  const std::string& sourcePath = {});
+    [[nodiscard]] Result<std::vector<std::string>> RouteImageDependencies(
+        std::string_view route) const;
     void SetUiAssetResolver(UiAssetResolver resolver) {
         m_studioAssetResolver = std::move(resolver);
     }

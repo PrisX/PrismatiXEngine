@@ -75,6 +75,7 @@ private:
     bool SaveSettingsIfWritable();
     void BeginRuntimeIrPreload();
     void FinishBootPresentation();
+    [[nodiscard]] bool TitleVisualsReady();
     void SplashFrame(float dt);
     void BeginPresentationTransition(const PresentationTransition& transition);
 
@@ -153,6 +154,7 @@ private:
 
     ui::GalgameUI m_ui;
     std::unique_ptr<ui::startup::SplashSequencePlayer> m_splash;
+    graphics::AssetPreloadBatchId m_titlePreloadBatch = 0;
     std::vector<std::string> m_choiceTexts;
     vn::GameCatalog m_catalog;
     std::map<std::string, std::string, std::less<>> m_screenTriggers;
