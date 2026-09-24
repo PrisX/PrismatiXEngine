@@ -49,6 +49,7 @@ struct MotionLayer {
     double x = 0, y = 0;
     double scaleX = 1, scaleY = 1;
     double rotation = 0, opacity = 1;
+    bool inheritRotation = true, inheritScale = true;
     MotionTint tint;
     double timeOffset = 0, timeScale = 1;
     bool visible = true;
@@ -138,6 +139,7 @@ private:
     double m_position = 0;
     std::vector<State> m_states;
     std::vector<double> m_localTimes;
+    std::vector<double> m_worldRotations;
     std::vector<MotionDrawLayer> m_world;
     std::vector<MotionDrawLayer> m_pose;
 };

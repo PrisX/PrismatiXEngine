@@ -23,6 +23,9 @@ interface MotionLayerBase {
   readonly timeOffset?: number;
   readonly timeScale?: number;
   readonly opacity?: number;
+  /** Disable the parent's rotation/scale independently. Revision 9. */
+  readonly inheritRotation?: boolean;
+  readonly inheritScale?: boolean;
   /** Inherited multiplicatively by child layers. Requires revision 8. */
   readonly tint?: MotionTint;
   readonly visible?: boolean;
@@ -139,7 +142,7 @@ export interface MotionInput {
 
 export interface MotionDocument extends MotionInput {
   readonly format: "PrismatiXMotion";
-  readonly schemaRevision: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+  readonly schemaRevision: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
   readonly loop: boolean;
   readonly tracks: readonly MotionTrack[];
   readonly markers?: readonly MotionAudioMarker[];
@@ -148,7 +151,8 @@ export interface MotionDocument extends MotionInput {
 /** Author a deterministic image-layer .pxmotion clip. Atlas frames use
  * revision 2, audio markers revision 3, blend modes revision 4, and cubic
  * timing curves revision 5, layer alpha masks revision 6, and local-time
- * transform groups revision 7, and inherited RGB tint revision 8.
+ * transform groups revision 7, inherited RGB tint revision 8, and selective
+ * parent rotation/scale inheritance revision 9.
  * Blur and nested motion remain unsupported. */
 export function defineMotion(input: MotionInput): Result<MotionDocument> {
   const atlas = input.layers.some((layer) => layer.frames !== undefined) ||
@@ -162,6 +166,8 @@ export function defineMotion(input: MotionInput): Result<MotionDocument> {
     layer.timeOffset !== undefined || layer.timeScale !== undefined);
   const hasTint = input.layers.some((layer) => layer.tint !== undefined) ||
     input.tracks?.some((track) => track.property === "tint") === true;
+  const hasSelectiveInheritance = input.layers.some((layer) =>
+    layer.inheritRotation !== undefined || layer.inheritScale !== undefined);
   const usedMarkerIds = new Set(input.markers?.flatMap((marker) =>
     marker.id === undefined ? [] : [marker.id]) ?? []);
   const markers = input.markers?.map((marker, index) => {
@@ -174,7 +180,7 @@ export function defineMotion(input: MotionInput): Result<MotionDocument> {
   });
   const document: MotionDocument = {
     format: "PrismatiXMotion",
-    schemaRevision: hasTint ? 8 : hasLocalTime ? 7 : hasMasks ? 6 : hasBezier ? 5 : hasBlendModes ? 4 :
+    schemaRevision: hasSelectiveInheritance ? 9 : hasTint ? 8 : hasLocalTime ? 7 : hasMasks ? 6 : hasBezier ? 5 : hasBlendModes ? 4 :
       hasMarkers ? 3 : atlas ? 2 : 1,
     id: input.id,
     canvas: input.canvas,
@@ -196,6 +202,10 @@ export function defineMotion(input: MotionInput): Result<MotionDocument> {
         ...(layer.timeOffset === undefined ? {} : {timeOffset: layer.timeOffset}),
         ...(layer.timeScale === undefined ? {} : {timeScale: layer.timeScale}),
         opacity: layer.opacity ?? 1,
+        ...(layer.inheritRotation === undefined ? {} :
+          {inheritRotation: layer.inheritRotation}),
+        ...(layer.inheritScale === undefined ? {} :
+          {inheritScale: layer.inheritScale}),
         ...(layer.tint === undefined ? {} : {tint: {...layer.tint}}),
         visible: layer.visible ?? true,
       };
@@ -254,6 +264,8 @@ export interface InlineMotionOptions {
   readonly scaleY?: number;
   readonly rotation?: number;
   readonly opacity?: number;
+  readonly inheritRotation?: boolean;
+  readonly inheritScale?: boolean;
   readonly tint?: MotionTint;
   /** false keeps the entire inserted clip hidden; otherwise appears at `at`. */
   readonly visible?: boolean;
@@ -332,6 +344,10 @@ export function inlineMotion(outer: MotionInput, child: MotionInput,
     ...(options.scaleY === undefined ? {} : {scaleY: options.scaleY}),
     ...(options.rotation === undefined ? {} : {rotation: options.rotation}),
     ...(options.opacity === undefined ? {} : {opacity: options.opacity}),
+    ...(options.inheritRotation === undefined ? {} :
+      {inheritRotation: options.inheritRotation}),
+    ...(options.inheritScale === undefined ? {} :
+      {inheritScale: options.inheritScale}),
     ...(options.tint === undefined ? {} : {tint: {...options.tint}}),
     visible: false,
   };

@@ -60,6 +60,19 @@ const tinted = serializeMotion({
 if (!tinted.valid || JSON.parse(tinted.value!).schemaRevision !== 8)
   throw new Error("Inherited RGB tint must validate as revision 8");
 
+const selective = serializeMotion({
+  id: "counter-rotating-logo", canvas: {width: 1280, height: 720},
+  duration: 1,
+  layers: [
+    {id: "parent", kind: "group", x: 480, y: 300,
+      rotation: 45, scaleX: 2, scaleY: 2},
+    {id: "logo", parent: "parent", image: "Assets/UI/logo.png",
+      width: 320, height: 120, inheritRotation: false},
+  ],
+});
+if (!selective.valid || JSON.parse(selective.value!).schemaRevision !== 9)
+  throw new Error("Selective inheritance must validate as revision 9");
+
 const inlined = inlineMotion({
   id: "full-title", canvas: {width: 1280, height: 720}, duration: 1,
   layers: [],

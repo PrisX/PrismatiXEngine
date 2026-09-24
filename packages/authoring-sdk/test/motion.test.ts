@@ -252,6 +252,24 @@ test("inherited RGB tint and color keys select revision 8 without changing opaci
   }]}).valid, false);
 });
 
+test("selective parent transform inheritance selects revision 9", () => {
+  const source = {...input, layers: [
+    {...input.layers[0]!, inheritRotation: false, inheritScale: true},
+    input.layers[1]!,
+  ]};
+  const result = defineMotion(source);
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  assert.equal(result.value?.schemaRevision, 9);
+  assert.equal(result.value?.layers[0]?.inheritRotation, false);
+  assert.equal(result.value?.layers[0]?.inheritScale, true);
+  assert.equal(parseDocument("motion", serializeMotion(source).value!).valid, true);
+  const older = {...result.value!, schemaRevision: 8};
+  assert.equal(validateDocument("motion", older).valid, false);
+  assert.equal(validateDocument("motion", {...result.value!, layers: [
+    {...result.value!.layers[0]!, inheritScale: 0}, result.value!.layers[1]!,
+  ]}).valid, false);
+});
+
 test("inlined motion rebases hierarchy, masks, tracks and audio time", () => {
   const outer = {
     id: "title", canvas: {width: 640, height: 360}, duration: 2,
@@ -292,6 +310,12 @@ test("inlined motion rebases hierarchy, masks, tracks and audio time", () => {
     ["start", 0.2], ["logo-marker-1", 0.3125],
   ]);
   assert.equal(parseDocument("motion", serializeMotion(motion).value!).valid, true);
+  const selective = inlineMotion(outer, child, {id: "selective", parent: "anchor",
+    at: 0.3, speed: 2, inheritRotation: false, inheritScale: false});
+  assert.equal(selective.valid, true, JSON.stringify(selective.diagnostics));
+  assert.equal(selective.value?.schemaRevision, 9);
+  assert.equal(selective.value?.layers[1]?.inheritRotation, false);
+  assert.equal(selective.value?.layers[1]?.inheritScale, false);
   assert.equal(inlineMotion(outer, {...child, loop: true}, {id: "logo"}).valid, false);
   assert.equal(inlineMotion(outer, child, {id: "logo", speed: 0}).valid, false);
   assert.equal(inlineMotion(outer, child, {id: "anchor"}).valid, false);

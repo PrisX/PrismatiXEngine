@@ -4,7 +4,7 @@ Status: image-layer, timing, blend, alpha-mask, and inline nested-transform slic
 and Story playback below remain a proposal. This is not an `.mtn` parser or a claim that the
 original M2/petal animations are reproduced.
 
-The versioned `PrismatiXMotion` revision-1/2/3/4/5/6/7/8 `.pxmotion` contract has an
+The versioned `PrismatiXMotion` revision-1/2/3/4/5/6/7/8/9 `.pxmotion` contract has an
 Authoring SDK `defineMotion`/`serializeMotion` helper, matching native parser,
 unique layer/track and hierarchy checks, path checks, deterministic keyed
 sampling, and a `Renderer2D` image-layer drawing adapter. A `MotionRect`
@@ -76,6 +76,11 @@ through transform groups. Its native sampler and framebuffer test verify that
 color changes reach the pixels without changing alpha. This maps the ordinary
 color modulation seen in M2's `m2logo` source, but not its source-specific
 mask flags, blur, embedded-motion extraction, or complete color equations.
+Revision 9 lets a child retain the parent's affine translation while opting
+out of inherited rotation and/or scale/stretch. Native sampling tests cover
+all four combinations and reflected parents. This fills an Engine capability
+gap revealed by nonuniform `inheritMask` values in the Senren M2 source; the
+bitfield-to-rule mapping and rendered-frame equivalence are still unproven.
 
 Revision-1 sampling uses a layer's authored property until its first key;
 thereafter each key's curve determines interpolation toward the next key.

@@ -128,6 +128,39 @@ MotionAffine Multiply(const MotionAffine& parent, const MotionAffine& child) {
     };
 }
 
+// The parent's authored rotation is tracked independently of its affine
+// matrix. Factoring a reflected matrix alone would mistake a negative scale
+// for 180 degrees of rotation. Legacy clips keep the exact affine matrix;
+// revision-9 opt-outs retain the parent's affine translation in every case.
+MotionAffine FilterParentTransform(const MotionAffine& parent,
+                                   double parentRotationDegrees,
+                                   bool inheritRotation, bool inheritScale) {
+    if (inheritRotation && inheritScale) return parent;
+    MotionAffine filtered = parent;
+    if (!inheritRotation && !inheritScale) {
+        filtered.a = filtered.d = 1;
+        filtered.b = filtered.c = 0;
+        return filtered;
+    }
+    if (!std::isfinite(parent.a) || !std::isfinite(parent.b) ||
+        !std::isfinite(parent.c) || !std::isfinite(parent.d))
+        return parent;
+    if (!std::isfinite(parentRotationDegrees)) return parent;
+    constexpr double radiansPerDegree = 3.14159265358979323846 / 180.0;
+    const double radians = parentRotationDegrees * radiansPerDegree;
+    const double cosine = std::cos(radians), sine = std::sin(radians);
+    if (inheritRotation) {
+        filtered.a = cosine; filtered.b = sine;
+        filtered.c = -sine; filtered.d = cosine;
+    } else {
+        filtered.a = cosine * parent.a + sine * parent.b;
+        filtered.b = -sine * parent.a + cosine * parent.b;
+        filtered.c = cosine * parent.c + sine * parent.d;
+        filtered.d = -sine * parent.c + cosine * parent.d;
+    }
+    return filtered;
+}
+
 double Ease(const MotionKey& key, double value) {
     switch (key.curve) {
         case MotionCurve::Step: return 0;
@@ -205,7 +238,8 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         (root["schemaRevision"] != 1 && root["schemaRevision"] != 2 &&
          root["schemaRevision"] != 3 && root["schemaRevision"] != 4 &&
          root["schemaRevision"] != 5 && root["schemaRevision"] != 6 &&
-         root["schemaRevision"] != 7 && root["schemaRevision"] != 8) ||
+         root["schemaRevision"] != 7 && root["schemaRevision"] != 8 &&
+         root["schemaRevision"] != 9) ||
         !root.contains("id") ||
         !root["id"].is_string() || !Identifier(root["id"].get_ref<const std::string&>()))
         return fail("PXMOTION1002", "Motion format, revision, or id is invalid");
@@ -244,7 +278,8 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
     for (const auto& entry : *layers) {
         if (!OnlyFields(entry, {"id", "kind", "parent", "mask", "image", "frames", "z", "blendMode", "width", "height",
             "anchorX", "anchorY", "x", "y", "scaleX", "scaleY", "rotation",
-            "timeOffset", "timeScale", "opacity", "tint", "visible"}) ||
+            "timeOffset", "timeScale", "opacity", "tint", "visible",
+            "inheritRotation", "inheritScale"}) ||
             !entry.contains("id") || !entry["id"].is_string())
             return fail("PXMOTION1006", "Motion layer has invalid or unknown fields");
         MotionLayer layer;
@@ -331,18 +366,25 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         const auto timeOffset = Number(entry, "timeOffset", 0, -86400, 86400);
         const auto timeScale = Number(entry, "timeScale", 1, -1000, 1000);
         const auto opacity = Number(entry, "opacity", 1, 0, 1);
+        const auto inheritRotation = Boolean(entry, "inheritRotation", true);
+        const auto inheritScale = Boolean(entry, "inheritScale", true);
         const auto visible = Boolean(entry, "visible", true);
         if (!z || std::floor(*z) != *z || !width || !height || !anchorX || !anchorY ||
             !x || !y || !scaleX || !scaleY || !rotation || !timeOffset ||
-            !timeScale || !opacity || !visible ||
+            !timeScale || !opacity || !inheritRotation || !inheritScale || !visible ||
             (clip.schemaRevision < 7 &&
                 (entry.contains("timeOffset") || entry.contains("timeScale"))))
             return fail("PXMOTION1009", "Motion layer geometry or visibility is invalid");
+        if (clip.schemaRevision < 9 &&
+            (entry.contains("inheritRotation") || entry.contains("inheritScale")))
+            return fail("PXMOTION1034", "Selective parent inheritance requires revision 9");
         layer.z = static_cast<int>(*z);
         layer.width = *width; layer.height = *height;
         layer.anchorX = *anchorX; layer.anchorY = *anchorY;
         layer.x = *x; layer.y = *y; layer.scaleX = *scaleX; layer.scaleY = *scaleY;
         layer.rotation = *rotation; layer.opacity = *opacity; layer.visible = *visible;
+        layer.inheritRotation = *inheritRotation;
+        layer.inheritScale = *inheritScale;
         layer.timeOffset = *timeOffset; layer.timeScale = *timeScale;
         if (const auto tint = entry.find("tint"); tint != entry.end()) {
             if (clip.schemaRevision < 8 || !OnlyFields(*tint, {"r", "g", "b"}) ||
@@ -542,6 +584,7 @@ std::vector<std::string> MotionAudioDependencies(const MotionClip& clip) {
 MotionSampler::MotionSampler(const MotionClip& clip) : m_clip(clip) {
     m_states.resize(clip.layers.size());
     m_localTimes.resize(clip.layers.size());
+    m_worldRotations.resize(clip.layers.size());
     m_world.resize(clip.layers.size());
     m_pose.resize(clip.layers.size());
     Seek(0);
@@ -614,7 +657,13 @@ void MotionSampler::Seek(double timeSeconds) {
             local.d * layer.anchorY * layer.height;
         auto& world = m_world[index];
         world.layer = index;
-        world.transform = layer.parent ? Multiply(m_world[*layer.parent].transform, local) : local;
+        const double parentRotation = layer.parent ? m_worldRotations[*layer.parent] : 0;
+        world.transform = layer.parent ? Multiply(FilterParentTransform(
+            m_world[*layer.parent].transform, parentRotation, layer.inheritRotation,
+            layer.inheritScale), local) : local;
+        m_worldRotations[index] = std::remainder(
+            state.rotation + (layer.parent && layer.inheritRotation ? parentRotation : 0),
+            360.0);
         world.sourcePixels = state.frame < layer.frames.size()
             ? std::optional<MotionAtlasFrame>(layer.frames[state.frame]) : std::nullopt;
         world.opacity = state.opacity * (layer.parent ? m_world[*layer.parent].opacity : 1);

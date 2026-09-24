@@ -328,6 +328,57 @@ int main() {
                      "RGB keys reject channels outside zero to one");
     });
 
+    suite.Run("MotionClip_SelectiveParentRotationAndScaleInheritance", [&] {
+        constexpr auto source = R"({
+          "format":"PrismatiXMotion","schemaRevision":9,"id":"inheritance",
+          "canvas":{"width":100,"height":100},"duration":1,"loop":false,
+          "layers":[
+            {"id":"parent","kind":"group","x":40,"y":50,
+             "rotation":90,"scaleX":2,"scaleY":3},
+            {"id":"full","parent":"parent","image":"Assets/mark.png",
+             "width":1,"height":1,"x":10},
+            {"id":"scale-only","parent":"parent","image":"Assets/mark.png",
+             "width":1,"height":1,"x":10,"inheritRotation":false},
+            {"id":"rotation-only","parent":"parent","image":"Assets/mark.png",
+             "width":1,"height":1,"x":10,"inheritScale":false},
+            {"id":"translation-only","parent":"parent","image":"Assets/mark.png",
+             "width":1,"height":1,"x":10,"inheritRotation":false,
+             "inheritScale":false}],
+          "tracks":[]})";
+        const auto parsed = px::sdk::ParseMotion(source);
+        suite.Require(parsed.Valid(), "revision-9 selective inheritance parses");
+        px::sdk::MotionSampler sampler(*parsed.clip);
+        sampler.Seek(0);
+        const auto at = [&](std::size_t index, double x, double y) {
+            const auto& transform = sampler.LayerPose(index).transform;
+            return std::abs(transform.tx - x) < 0.000001 &&
+                std::abs(transform.ty - y) < 0.000001;
+        };
+        suite.Expect(at(1, 40, 70), "legacy child inherits full rotation and scale");
+        suite.Expect(at(2, 60, 50), "child can inherit scale without rotation");
+        suite.Expect(at(3, 40, 60), "child can inherit rotation without scale");
+        suite.Expect(at(4, 50, 50), "child can keep parent translation alone");
+        auto older = nlohmann::json::parse(source);
+        older["schemaRevision"] = 8;
+        suite.Expect(!px::sdk::ParseMotion(older.dump()).Valid(),
+                     "revision-8 clips reject selective inheritance fields");
+        auto invalid = nlohmann::json::parse(source);
+        invalid["layers"][2]["inheritRotation"] = 0;
+        suite.Expect(!px::sdk::ParseMotion(invalid.dump()).Valid(),
+                     "inheritance switches require booleans");
+        auto reflected = nlohmann::json::parse(source);
+        reflected["layers"][0]["rotation"] = 0;
+        reflected["layers"][0]["scaleX"] = -2;
+        const auto reflectedParsed = px::sdk::ParseMotion(reflected.dump());
+        suite.Require(reflectedParsed.Valid(), "reflected parent parses");
+        px::sdk::MotionSampler reflectedSampler(*reflectedParsed.clip);
+        reflectedSampler.Seek(0);
+        suite.Expect(std::abs(reflectedSampler.LayerPose(3).transform.tx - 50) < 0.000001,
+                     "dropping parent scale also drops a reflection, not its fake 180-degree rotation");
+        suite.Expect(std::abs(reflectedSampler.LayerPose(2).transform.tx - 20) < 0.000001,
+                     "keeping parent scale preserves a negative zoom without inventing rotation");
+    });
+
     suite.Run("MotionClip_CubicBezierTimingMatchesAuthoredControlPoints", [&] {
         constexpr auto source = R"({
           "format":"PrismatiXMotion","schemaRevision":5,"id":"eased",

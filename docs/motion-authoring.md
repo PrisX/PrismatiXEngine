@@ -36,6 +36,12 @@ Revision 8 adds multiplicative RGB `tint` on image or group layers and a
 three-channel `tint` track. The helper selects revision 8 when either is
 authored; older files cannot silently contain tint fields. A group's tint is
 multiplied into its descendants, independently of `opacity`.
+Revision 9 adds per-layer `inheritRotation` and `inheritScale` switches, both
+defaulting to `true`. A child can keep the parent's affine translation while
+dropping its authored rotation, scale/stretch (including reflection and shear),
+or both. The sampler tracks authored rotation separately so a negative scale
+does not become a fake 180-degree angle. `inlineMotion` accepts the same
+switches for its inserted group. Older revisions reject these fields.
 
 In TypeScript, `MotionTrack` is property-discriminated: `visible` keys take
 booleans, `tint` keys take `{r, g, b}`, and position/scale/rotation/opacity/
@@ -215,6 +221,22 @@ tracks: [{layer: "logo", property: "tint", keys: [
 Each channel is in `[0, 1]`. Values interpolate with the numeric-track
 easing curves, with overshoot clamped to valid channels. This covers ordinary
 RGB modulation, not M2's entire color-transform or blur semantics.
+
+For a sublayer that should follow a rotating parent's position and zoom but
+not its angle, set `inheritRotation: false`:
+
+```ts
+layers: [
+  {id: "parent", kind: "group", x: 320, y: 180,
+    rotation: 90, scaleX: 2, scaleY: 2},
+  {id: "letter", parent: "parent", image: "Assets/Motion/letter.png",
+    width: 80, height: 80, x: 40, inheritRotation: false},
+],
+```
+
+This is an Engine-authored inheritance rule, not a proven mapping of every
+FreeMote `inheritMask` flag. Source angle, zoom, flip, stencil, and mesh
+semantics still require a per-frame comparison before importing M2 clips.
 
 This is not an `.mtn` importer or a full M2 Cheeseware reproduction. Blur,
 external nested motion references, spatial path curves, particles, more
