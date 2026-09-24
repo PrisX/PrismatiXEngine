@@ -33,12 +33,16 @@ export interface MotionFrame {
 
 export type MotionProperty = "x" | "y" | "scaleX" | "scaleY" |
   "rotation" | "opacity" | "visible" | "frame";
-export type MotionCurve = "step" | "linear" | "easeIn" | "easeOut" | "easeInOut";
+export type MotionCurve = "step" | "linear" | "easeIn" | "easeOut" |
+  "easeInOut" | "cubicBezier";
 
 export interface MotionKey {
   readonly time: number;
   readonly value: number | boolean;
   readonly curve?: MotionCurve;
+  /** Normalized timing cubic; required only for cubicBezier keys. */
+  readonly bezier?: {readonly x1: number; readonly y1: number;
+    readonly x2: number; readonly y2: number};
 }
 
 export interface MotionTrack {
@@ -73,20 +77,23 @@ export interface MotionInput {
 
 export interface MotionDocument extends MotionInput {
   readonly format: "PrismatiXMotion";
-  readonly schemaRevision: 1 | 2 | 3 | 4;
+  readonly schemaRevision: 1 | 2 | 3 | 4 | 5;
   readonly loop: boolean;
   readonly tracks: readonly MotionTrack[];
   readonly markers?: readonly MotionAudioMarker[];
 }
 
 /** Author a deterministic image-layer .pxmotion clip. Atlas frames use
- * revision 2, audio markers revision 3, and blend modes revision 4.
+ * revision 2, audio markers revision 3, blend modes revision 4, and cubic
+ * timing curves revision 5.
  * Alpha masks and blur remain unsupported. */
 export function defineMotion(input: MotionInput): Result<MotionDocument> {
   const atlas = input.layers.some((layer) => layer.frames !== undefined) ||
     input.tracks?.some((track) => track.property === "frame") === true;
   const hasMarkers = (input.markers?.length ?? 0) > 0;
   const hasBlendModes = input.layers.some((layer) => layer.blendMode !== undefined);
+  const hasBezier = input.tracks?.some((track) => track.keys.some((key) =>
+    key.curve === "cubicBezier" || key.bezier !== undefined)) === true;
   const usedMarkerIds = new Set(input.markers?.flatMap((marker) =>
     marker.id === undefined ? [] : [marker.id]) ?? []);
   const markers = input.markers?.map((marker, index) => {
@@ -99,7 +106,7 @@ export function defineMotion(input: MotionInput): Result<MotionDocument> {
   });
   const document: MotionDocument = {
     format: "PrismatiXMotion",
-    schemaRevision: hasBlendModes ? 4 : hasMarkers ? 3 : atlas ? 2 : 1,
+    schemaRevision: hasBezier ? 5 : hasBlendModes ? 4 : hasMarkers ? 3 : atlas ? 2 : 1,
     id: input.id,
     canvas: input.canvas,
     duration: input.duration,
@@ -132,6 +139,7 @@ export function defineMotion(input: MotionInput): Result<MotionDocument> {
         value: key.value,
         curve: key.curve ?? (track.property === "visible" || track.property === "frame"
           ? "step" : "linear"),
+        ...(key.bezier === undefined ? {} : {bezier: {...key.bezier}}),
       })),
     })),
     ...(hasMarkers ? {markers: markers!} : {}),

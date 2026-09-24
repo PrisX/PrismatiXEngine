@@ -14,7 +14,9 @@ when `markers` are present. Older revision-1/2 files remain supported.
 Revision 4 adds per-layer `blendMode`: `normal` (default), `additive`, or
 `multiply`. The helper selects revision 4 when a layer declares the property;
 older revisions reject it instead of silently drawing with the wrong blend.
-Revision-3 files remain supported as well.
+Revision 5 adds a `cubicBezier` timing curve for numeric tracks. Its control
+points specify normalized time/value coordinates; the helper selects revision
+5 when a key uses it. Earlier revisions and existing clips remain supported.
 
 ```ts
 import {writeFile} from "node:fs/promises";
@@ -82,7 +84,22 @@ Blend modes are scoped per draw, so two layers can share one atlas without
 leaking the previous layer's mode. `additive` adds source light to what is
 already drawn; `multiply` darkens the overlap. Neither mode is an alpha mask.
 
+For a non-linear key interval, put the timing curve on the first key:
+
+```ts
+{time: 0, value: 0, curve: "cubicBezier",
+  bezier: {x1: 0.1, y1: 0.8, x2: 0.4, y2: 0.9}}
+```
+
+The next key supplies the interval's destination value. `x1` and `x2` must
+be in `[0, 1]`; `y1` and `y2` may be in `[-8, 8]` to permit overshoot. Boolean
+visibility and atlas-frame tracks remain discrete `step` tracks. The sampler
+solves the timing cubic for each seek, so playback and preview scrubbing use
+the same pose. This supports a class of `.mtn` timing curves, but does not
+interpret `.mtn` files automatically.
+
 This is not an `.mtn` importer or a full M2 Cheeseware reproduction. Image
-masks, blur, more specialized blend equations, and Story playback are still missing;
+masks, blur, nested motion references, more specialized blend equations, and
+Story playback are still missing;
 the source work on those features is tracked in
 [layered motion architecture](architecture/layered-motion-authoring.md).

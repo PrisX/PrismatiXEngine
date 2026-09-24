@@ -5,6 +5,7 @@
 #include "Tests/TestSupport/TestHarness.h"
 
 #include <cmath>
+#include <nlohmann/json.hpp>
 
 int main() {
     px::test::Suite suite("AnimationContract");
@@ -188,6 +189,41 @@ int main() {
             std::string("\"additive\"").size(), "\"screen\"");
         suite.Expect(!px::sdk::ParseMotion(invalid).Valid(),
             "unsupported blend mode fails closed");
+    });
+
+    suite.Run("MotionClip_CubicBezierTimingMatchesAuthoredControlPoints", [&] {
+        constexpr auto source = R"({
+          "format":"PrismatiXMotion","schemaRevision":5,"id":"eased",
+          "canvas":{"width":320,"height":120},"duration":1,"loop":false,
+          "layers":[{"id":"mark","image":"Assets/mark.png",
+            "width":100,"height":100}],
+          "tracks":[{"layer":"mark","property":"opacity","keys":[
+            {"time":0,"value":0,"curve":"cubicBezier",
+             "bezier":{"x1":0.1,"y1":0.8,"x2":0.4,"y2":0.9}},
+            {"time":1,"value":1,"curve":"linear"}]}]})";
+        const auto parsed = px::sdk::ParseMotion(source);
+        suite.Require(parsed.Valid(), "revision-5 cubic timing parses");
+        px::sdk::MotionSampler sampler(*parsed.clip);
+        sampler.Seek(0.5);
+        const double halfway = sampler.Pose()[0].opacity;
+        suite.Expect(halfway > 0.75 && halfway < 1.0,
+                     "cubic timing changes the sampled pose, not only metadata");
+        sampler.Seek(0.5);
+        suite.Expect(std::abs(sampler.Pose()[0].opacity - halfway) < 0.0000001,
+                     "cubic timing seek is deterministic");
+        auto oldRevision = std::string(source);
+        oldRevision.replace(oldRevision.find("\"schemaRevision\":5"),
+            std::string("\"schemaRevision\":5").size(), "\"schemaRevision\":4");
+        suite.Expect(!px::sdk::ParseMotion(oldRevision).Valid(),
+                     "older motion revisions reject cubic timing");
+        auto missingControls = nlohmann::json::parse(source);
+        missingControls["tracks"][0]["keys"][0].erase("bezier");
+        suite.Expect(!px::sdk::ParseMotion(missingControls.dump()).Valid(),
+                     "cubic timing requires all control points");
+        auto invalidControls = nlohmann::json::parse(source);
+        invalidControls["tracks"][0]["keys"][0]["bezier"]["x1"] = 1.1;
+        suite.Expect(!px::sdk::ParseMotion(invalidControls.dump()).Valid(),
+                     "cubic timing rejects invalid time control points");
     });
 
     suite.Run("MotionClip_AtlasFrameTrackIsDiscreteAndVersioned", [&] {

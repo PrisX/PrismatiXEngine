@@ -97,6 +97,7 @@ std::optional<MotionCurve> Curve(std::string_view name) {
     if (name == "easeIn") return MotionCurve::EaseIn;
     if (name == "easeOut") return MotionCurve::EaseOut;
     if (name == "easeInOut") return MotionCurve::EaseInOut;
+    if (name == "cubicBezier") return MotionCurve::CubicBezier;
     return std::nullopt;
 }
 
@@ -125,14 +126,31 @@ MotionAffine Multiply(const MotionAffine& parent, const MotionAffine& child) {
     };
 }
 
-double Ease(MotionCurve curve, double value) {
-    switch (curve) {
+double Ease(const MotionKey& key, double value) {
+    switch (key.curve) {
         case MotionCurve::Step: return 0;
         case MotionCurve::Linear: return value;
         case MotionCurve::EaseIn: return value * value;
         case MotionCurve::EaseOut: return 1 - (1 - value) * (1 - value);
         case MotionCurve::EaseInOut:
             return value < 0.5 ? 2 * value * value : 1 - 2 * (1 - value) * (1 - value);
+        case MotionCurve::CubicBezier: {
+            if (value <= 0) return 0;
+            if (value >= 1) return 1;
+            const auto sample = [](double first, double second, double t) {
+                const double inverse = 1 - t;
+                return 3 * inverse * inverse * t * first +
+                    3 * inverse * t * t * second + t * t * t;
+            };
+            double low = 0, high = 1;
+            for (int iteration = 0; iteration < 24; ++iteration) {
+                const double middle = (low + high) * 0.5;
+                if (sample(key.bezierX1, key.bezierX2, middle) < value)
+                    low = middle;
+                else high = middle;
+            }
+            return sample(key.bezierY1, key.bezierY2, (low + high) * 0.5);
+        }
     }
     return value;
 }
@@ -145,7 +163,7 @@ std::optional<double> SampleNumber(const MotionTrack& track, double time) {
     const auto& left = *(right - 1);
     if (right == keys.end() || left.curve == MotionCurve::Step) return left.value;
     const double fraction = (time - left.time) / (right->time - left.time);
-    return left.value + (right->value - left.value) * Ease(left.curve, fraction);
+    return left.value + (right->value - left.value) * Ease(left, fraction);
 }
 }  // namespace
 
@@ -166,7 +184,8 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         root["format"].get_ref<const std::string&>() != "PrismatiXMotion" ||
         !root.contains("schemaRevision") || !root["schemaRevision"].is_number_integer() ||
         (root["schemaRevision"] != 1 && root["schemaRevision"] != 2 &&
-         root["schemaRevision"] != 3 && root["schemaRevision"] != 4) ||
+         root["schemaRevision"] != 3 && root["schemaRevision"] != 4 &&
+         root["schemaRevision"] != 5) ||
         !root.contains("id") ||
         !root["id"].is_string() || !Identifier(root["id"].get_ref<const std::string&>()))
         return fail("PXMOTION1002", "Motion format, revision, or id is invalid");
@@ -326,7 +345,7 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         track.keys.reserve(entry["keys"].size());
         double previous = -1;
         for (const auto& key : entry["keys"]) {
-            if (!OnlyFields(key, {"time", "value", "curve"}) ||
+            if (!OnlyFields(key, {"time", "value", "curve", "bezier"}) ||
                 !key.contains("curve") || !key["curve"].is_string())
                 return fail("PXMOTION1016", "Motion key shape is invalid");
             const auto time = Number(key, "time", 0, 0, clip.duration, true);
@@ -336,6 +355,22 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
             MotionKey parsed;
             parsed.time = *time;
             parsed.curve = *curve;
+            const auto bezier = key.find("bezier");
+            if (*curve == MotionCurve::CubicBezier) {
+                if (clip.schemaRevision < 5 || bezier == key.end() ||
+                    !OnlyFields(*bezier, {"x1", "y1", "x2", "y2"}) ||
+                    bezier->size() != 4)
+                    return fail("PXMOTION1027", "Cubic Bezier keys require revision 5 and four control coordinates");
+                const auto x1 = Number(*bezier, "x1", 0, 0, 1, true);
+                const auto y1 = Number(*bezier, "y1", 0, -8, 8, true);
+                const auto x2 = Number(*bezier, "x2", 0, 0, 1, true);
+                const auto y2 = Number(*bezier, "y2", 0, -8, 8, true);
+                if (!x1 || !y1 || !x2 || !y2)
+                    return fail("PXMOTION1027", "Cubic Bezier control coordinates are invalid");
+                parsed.bezierX1 = *x1; parsed.bezierY1 = *y1;
+                parsed.bezierX2 = *x2; parsed.bezierY2 = *y2;
+            } else if (bezier != key.end())
+                return fail("PXMOTION1027", "Bezier coordinates require a cubicBezier curve");
             if (*property == MotionProperty::Visible) {
                 if (!key["value"].is_boolean() || *curve != MotionCurve::Step)
                     return fail("PXMOTION1018", "Visible motion keys require boolean step values");

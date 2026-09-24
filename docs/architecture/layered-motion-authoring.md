@@ -4,7 +4,7 @@ Status: first image-layer slice and TSX UI mounting implemented; advanced compos
 and Story playback below remain a proposal. This is not an `.mtn` parser or a claim that the
 original M2/petal animations are reproduced.
 
-The versioned `PrismatiXMotion` revision-1/2/3/4 `.pxmotion` contract has an
+The versioned `PrismatiXMotion` revision-1/2/3/4/5 `.pxmotion` contract has an
 Authoring SDK `defineMotion`/`serializeMotion` helper, matching native parser,
 unique layer/track and hierarchy checks, path checks, deterministic keyed
 sampling, and a `Renderer2D` image-layer drawing adapter. A `MotionRect`
@@ -43,6 +43,11 @@ Revision 4 adds layer-local normal/additive/multiply blending. Authoring and
 native parsing reject the field in older revisions; a framebuffer test draws
 overlapping layers from one atlas and verifies both additive and multiply
 pixels. This is not an alpha-mask implementation or M2 conformance fixture.
+Revision 5 adds bounded cubic Bézier timing controls for numeric property
+tracks. The authoring helper chooses it automatically, older revisions reject
+the controls, and native `Seek` solves the timing cubic deterministically.
+The original `.mtn` custom timing curves still require semantic comparison
+before a converter may claim equivalence.
 
 Revision-1 sampling uses a layer's authored property until its first key;
 thereafter each key's curve determines interpolation toward the next key.

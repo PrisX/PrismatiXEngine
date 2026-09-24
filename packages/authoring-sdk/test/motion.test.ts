@@ -133,3 +133,27 @@ test("layer blend modes select revision 4 and reject older or unknown modes", ()
   assert.equal(withSound.value?.schemaRevision, 4);
   assert.equal(withSound.value?.markers?.length, 1);
 });
+
+test("cubic timing curves select revision 5 and require bounded control points", () => {
+  const key = {time: 0, value: 0, curve: "cubicBezier" as const,
+    bezier: {x1: 0.1, y1: 0.8, x2: 0.4, y2: 0.9}};
+  const result = defineMotion({...input, tracks: [{layer: "body", property: "opacity" as const,
+    keys: [key, {time: 1, value: 1}]}]});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  assert.equal(result.value?.schemaRevision, 5);
+  assert.deepEqual(result.value?.tracks[0]?.keys[0]?.bezier, key.bezier);
+  const document = result.value!;
+  assert.equal(parseDocument("motion", serializeMotion({...input,
+    tracks: [{layer: "body", property: "opacity", keys: [key, {time: 1, value: 1}]}],
+  }).value!).valid, true);
+  assert.equal(validateDocument("motion", {...document, schemaRevision: 4}).valid, false);
+  assert.equal(validateDocument("motion", {...document, tracks: [{...document.tracks[0]!,
+    keys: [{time: 0, value: 0, curve: "cubicBezier"}, {time: 1, value: 1, curve: "linear"}],
+  }]}).valid, false);
+  assert.equal(validateDocument("motion", {...document, tracks: [{...document.tracks[0]!,
+    keys: [{...key, curve: "linear"}, {time: 1, value: 1, curve: "linear"}],
+  }]}).valid, false);
+  assert.equal(validateDocument("motion", {...document, tracks: [{...document.tracks[0]!,
+    keys: [{...key, bezier: {...key.bezier, x1: 1.1}}, {time: 1, value: 1, curve: "linear"}],
+  }]}).valid, false);
+});

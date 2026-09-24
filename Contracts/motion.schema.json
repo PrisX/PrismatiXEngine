@@ -6,7 +6,7 @@
   "required": ["format", "schemaRevision", "id", "canvas", "duration", "loop", "layers", "tracks"],
   "properties": {
     "format": {"const": "PrismatiXMotion"},
-    "schemaRevision": {"enum": [1, 2, 3, 4]},
+    "schemaRevision": {"enum": [1, 2, 3, 4, 5]},
     "id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
     "canvas": {
       "type": "object", "additionalProperties": false,
@@ -73,8 +73,23 @@
               "properties": {
                 "time": {"type": "number", "minimum": 0},
                 "value": {"oneOf": [{"type": "number"}, {"type": "boolean"}]},
-                "curve": {"enum": ["step", "linear", "easeIn", "easeOut", "easeInOut"]}
-              }
+                "curve": {"enum": ["step", "linear", "easeIn", "easeOut", "easeInOut", "cubicBezier"]},
+                "bezier": {
+                  "type": "object", "additionalProperties": false,
+                  "required": ["x1", "y1", "x2", "y2"],
+                  "properties": {
+                    "x1": {"type": "number", "minimum": 0, "maximum": 1},
+                    "y1": {"type": "number", "minimum": -8, "maximum": 8},
+                    "x2": {"type": "number", "minimum": 0, "maximum": 1},
+                    "y2": {"type": "number", "minimum": -8, "maximum": 8}
+                  }
+                }
+              },
+              "allOf": [{
+                "if": {"properties": {"curve": {"const": "cubicBezier"}}},
+                "then": {"properties": {"bezier": true}, "required": ["bezier"]},
+                "else": {"properties": {"bezier": false}}
+              }]
             }
           }
         }
@@ -107,6 +122,15 @@
     "if": {"type": "object", "properties": {"schemaRevision": {"enum": [1, 2, 3]}}},
     "then": {"type": "object", "properties": {
       "layers": {"type": "array", "items": {"type": "object", "properties": {"blendMode": false}}}
+    }}
+  }, {
+    "if": {"type": "object", "properties": {"schemaRevision": {"enum": [1, 2, 3, 4]}}},
+    "then": {"type": "object", "properties": {
+      "tracks": {"type": "array", "items": {"type": "object", "properties": {
+        "keys": {"type": "array", "items": {"type": "object", "properties": {
+          "curve": {"not": {"const": "cubicBezier"}}, "bezier": false
+        }}}
+      }}}
     }}
   }]
 }

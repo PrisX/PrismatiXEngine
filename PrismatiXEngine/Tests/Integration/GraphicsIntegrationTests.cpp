@@ -224,6 +224,32 @@ int main() {
                         std::cerr << "FAIL: atlas motion frame regions did not change rendered pixels\n";
                         result = 1;
                     }
+                    const auto eased = px::sdk::ParseMotion(R"({
+                      "format":"PrismatiXMotion","schemaRevision":5,"id":"eased",
+                      "canvas":{"width":640,"height":360},"duration":1,"loop":false,
+                      "layers":[{"id":"mark","image":"Assets/atlas.bmp",
+                        "width":100,"height":100,"x":270,"y":130,
+                        "frames":[{"x":0,"y":0,"width":1,"height":1}]}],
+                      "tracks":[{"layer":"mark","property":"opacity","keys":[
+                        {"time":0,"value":0,"curve":"cubicBezier",
+                         "bezier":{"x1":0.1,"y1":0.8,"x2":0.4,"y2":0.9}},
+                        {"time":1,"value":1,"curve":"linear"}]}]})");
+                    if (!eased.Valid()) {
+                        std::cerr << "FAIL: cubic motion render fixture parse\n";
+                        result = 1;
+                    } else {
+                        px::sdk::MotionSampler easeSampler(*eased.clip);
+                        easeSampler.Seek(0.5);
+                        ClearFrame(device.Renderer());
+                        px::animation::DrawMotionPose(atlasRenderer, *eased.clip,
+                                                      easeSampler, {0, 0, 640, 360});
+                        const auto easedPixel = CaptureFrame(
+                            device.Renderer(), "motion-cubic-timing").center;
+                        if (easedPixel.r < 180 || easedPixel.b > 70) {
+                            std::cerr << "FAIL: cubic timing did not brighten the rendered midpoint\n";
+                            result = 1;
+                        }
+                    }
                     auto blended = px::sdk::ParseMotion(R"({
                       "format":"PrismatiXMotion","schemaRevision":4,"id":"blend",
                       "canvas":{"width":640,"height":360},"duration":1,"loop":false,

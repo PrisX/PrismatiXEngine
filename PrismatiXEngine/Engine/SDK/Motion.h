@@ -10,7 +10,7 @@ namespace px::sdk {
 
 enum class MotionScaleMode { Fit, Fill, Stretch };
 enum class MotionProperty { X, Y, ScaleX, ScaleY, Rotation, Opacity, Visible, Frame };
-enum class MotionCurve { Step, Linear, EaseIn, EaseOut, EaseInOut };
+enum class MotionCurve { Step, Linear, EaseIn, EaseOut, EaseInOut, CubicBezier };
 enum class MotionAudioBus { SE, Voice };
 enum class MotionBlendMode { Normal, Additive, Multiply };
 
@@ -20,6 +20,9 @@ struct MotionKey {
     bool visible = true;
     std::size_t frame = 0;
     MotionCurve curve = MotionCurve::Linear;
+    // Timing cubic: x is normalized time, y is normalized value. Overshoot
+    // is permitted so authored motion can express elastic source curves.
+    double bezierX1 = 0, bezierY1 = 0, bezierX2 = 1, bezierY2 = 1;
 };
 
 struct MotionAtlasFrame {
