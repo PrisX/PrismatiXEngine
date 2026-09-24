@@ -38,18 +38,17 @@ await writeFile("Content/Motion/logo-reveal.pxmotion", motion.value!, "utf8");
 ```
 
 ```tsx
-import {Group, Motion, Scene} from "@prismatix/authoring-sdk";
+import {Motion, Scene} from "@prismatix/authoring-sdk";
 
 export default <Scene name="Title" width={1280} height={720}>
-  <Group name="Root" fill>
-    <Motion name="Logo" path="Content/Motion/logo-reveal.pxmotion"
-      position={[0, 0]} size={[1280, 720]} autoplay />
-  </Group>
+  <Motion name="Logo" path="Content/Motion/logo-reveal.pxmotion"
+    position={[0, 0]} size={[1280, 720]} autoplay />
 </Scene>;
 ```
 
-The `<Scene>` root must contain a structural control such as `<Group>`; put
-`<Motion>` inside it.
+The Authoring SDK inserts an invisible, full-scene structural root when the
+scene contains a leaf or multiple top-level children. An explicit `<Group>`
+still works and is preserved as authored.
 
 `canvas` and layer `x`/`y`/`width`/`height` use logical UI coordinates;
 `frames` use pixels of the source image. A `frame` track is discrete, so

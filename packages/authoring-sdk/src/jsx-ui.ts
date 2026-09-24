@@ -326,6 +326,7 @@ interface DocumentDefinition {
 const nodeType = Symbol.for("prismatix.ui.authoring.node");
 const documentType = Symbol.for("prismatix.ui.authoring.document");
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const structuralNodeKinds = new Set<UiNodeKind>(["control", "stack", "hbox", "vbox", "grid", "group"]);
 
 function definitionElement(type: symbol, definition: NodeDefinition | DocumentDefinition): UiElement {
   return {[uiElementMarker]: true, type, props: {definition}};
@@ -672,7 +673,14 @@ function lowerDocument(element: UiElement, path?: string): PrismatiXUiDocument {
     : stableUuid("prismatix-ui-document",
       authoredSeed ?? (path === undefined ? props.name : `${path}\0${props.name}`));
   const roots = flattenChildren(props.children);
-  if (roots.length !== 1) throw new TypeError("Scene and Component require exactly one root node");
+  if (roots.length === 0) throw new TypeError("Scene and Component require at least one UI node");
+  // The wire contract has one structural root. Keep an authored structural
+  // root untouched, but let simple scenes and sibling elements omit boilerplate.
+  const rootSource = roots.length === 1 ? definition(roots[0]!) : undefined;
+  const authoredRoot = roots.length === 1 && rootSource?.category === "node" &&
+    structuralNodeKinds.has(rootSource.kind)
+    ? roots[0]!
+    : Group({name: "Root", stableId: "__prismatix_implicit_root__", fill: true, children: roots});
 
   const nodes: PrismatiXUiNode[] = [];
   const visit = (item: UiElement, parentId: string | null, order: number,
@@ -683,8 +691,7 @@ function lowerDocument(element: UiElement, path?: string): PrismatiXUiDocument {
       ? source.props.id.toLowerCase()
       : stableUuid(documentId, `${parentSeed}/${seed}`);
     const children = flattenChildren(source.props.children);
-    const structural = new Set<UiNodeKind>(["control", "stack", "hbox", "vbox", "grid", "group"]);
-    if (children.length > 0 && !structural.has(source.kind)) {
+    if (children.length > 0 && !structuralNodeKinds.has(source.kind)) {
       throw new TypeError(`${source.kind} nodes cannot contain child nodes`);
     }
     const root = parentId === null;
@@ -722,7 +729,7 @@ function lowerDocument(element: UiElement, path?: string): PrismatiXUiDocument {
       `${parentSeed}/${seed}`, seeds[index]!, ownsLayout));
     return id;
   };
-  const rootId = visit(roots[0]!, null, 0, "root", siblingSeeds(roots)[0]!, false);
+  const rootId = visit(authoredRoot, null, 0, "root", siblingSeeds([authoredRoot])[0]!, false);
   const common: PrismatiXUiDocumentBase = {
     schemaRevision: 2,
     id: documentId,

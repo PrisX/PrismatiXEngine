@@ -1,4 +1,4 @@
-import {Group, Motion, Scene, compileJsxUi, serializeMotion}
+import {Motion, Scene, compileJsxUi, serializeMotion}
   from "@prismatix/authoring-sdk";
 
 const authored = serializeMotion({
@@ -18,10 +18,8 @@ if (descriptor.schemaRevision !== 2)
 
 const ui = compileJsxUi(
   <Scene name="Title" width={1280} height={720}>
-    <Group name="Root" fill>
-      <Motion name="Logo" path="Content/Motion/logo-reveal.pxmotion"
-        position={[0, 0]} size={[1280, 720]} autoplay />
-    </Group>
+    <Motion name="Logo" path="Content/Motion/logo-reveal.pxmotion"
+      position={[0, 0]} size={[1280, 720]} autoplay />
   </Scene>, {path: "Content/UI/Title.tsx"});
 if (!ui.valid || !ui.value?.nodes.some(node => node.runtimeType === "MotionRect"))
   throw new Error(JSON.stringify(ui.diagnostics));

@@ -75,6 +75,37 @@ test("Motion lowers a layered clip reference without confusing playhead and layo
   assert.equal(logo?.runtimeProperties?.speed, 1.5);
 });
 
+test("leaf and sibling JSX roots get one stable transparent structural root", () => {
+  const logo = () => jsx(Motion, {name: "Logo", path: "Content/Motion/logo.pxmotion",
+    fill: true});
+  const single = compileJsxUi(jsx(Scene, {name: "Title", width: 320, height: 120,
+    children: logo()}), {path: "Content/UI/Title.tsx"});
+  const siblings = compileJsxUi(jsx(Scene, {name: "Title", width: 320, height: 120,
+    children: [logo(), jsx(Button, {name: "Start", action: "game.start", children: "Start"})]}),
+  {path: "Content/UI/Title.tsx"});
+  assert.equal(single.valid, true, JSON.stringify(single.diagnostics));
+  assert.equal(siblings.valid, true, JSON.stringify(siblings.diagnostics));
+  const root = single.value!.nodes[0]!;
+  assert.equal(root.kind, "group");
+  assert.equal(root.runtimeType, "Control");
+  assert.equal(root.parentId, null);
+  assert.equal(root.layout.sizeRule, "fill");
+  assert.equal(root.layout.anchorRight, 1);
+  assert.equal(single.value!.nodes[1]!.parentId, root.id);
+  assert.equal(siblings.value!.nodes[0]!.id, root.id);
+  assert.equal(siblings.value!.nodes[1]!.id, single.value!.nodes[1]!.id);
+  assert.equal(siblings.value!.nodes[2]!.parentId, root.id);
+  assert.equal(root.appearance, undefined);
+});
+
+test("reusable components also accept a leaf JSX root", () => {
+  const result = compileJsxUi(jsx(Component, {name: "Badge", width: 160, height: 48,
+    children: jsx(Text, {name: "Caption", children: "Badge"})}), {kind: "component"});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  assert.equal(result.value?.nodes[0]?.kind, "group");
+  assert.equal(result.value?.nodes[1]?.name, "Caption");
+});
+
 test("JSX supports reusable component documents through the canonical validator", () => {
   const component = jsx(Component, {
     name: "Panel", width: 400, height: 240,

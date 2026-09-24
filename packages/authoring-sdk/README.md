@@ -156,6 +156,11 @@ export default (
 );
 ```
 
+An explicit container is optional: a leaf such as `<Image>` or `<Motion>`, or
+several top-level children, automatically receive a transparent full-scene
+structural root. Existing scenes with an explicit structural root keep their
+canonical node identities.
+
 Use `jsx: "react-jsx"` and
 `jsxImportSource: "@prismatix/authoring-sdk"` in `tsconfig.json`. A project may
 point `uiEntryPoints` at `Content/UI/Title.tsx`; `prismatix validate/build/pack`
