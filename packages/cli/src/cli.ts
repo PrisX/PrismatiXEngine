@@ -28,6 +28,7 @@ import {applyDistributionPatch, createDistributionPatch,
   type DistributionPatchProgress} from "./distribution-patch.js";
 import {packageRetentionKey, retainPackageIfMatching, reusedArchiveInputs,
   writePackageProvenance} from "./package-retain.js";
+import {debugPackagerHint} from "./package-tool-hint.js";
 
 import {
   assertLocalBuildFresh,
@@ -1411,10 +1412,14 @@ async function packProject(options: Options): Promise<{output: string; player: s
         message: `Retained verified unchanged distribution: ${output}`});
       return {output, player: join(output, basename(player))};
     }
+    const inputBytes = inputs.reduce((sum, input) => sum + BigInt(input.size), 0n);
+    const performanceHint = debugPackagerHint(packager, inputBytes);
+    if (performanceHint !== undefined)
+      progress({severity: "warning", code: "PXCLI1216", phase: "package-performance",
+        message: performanceHint});
     if (!options.flags.has("ignore-disk-space")) {
       const available = await availableBytesForOutput(output);
       if (available !== undefined) {
-        const inputBytes = inputs.reduce((sum, input) => sum + BigInt(input.size), 0n);
         const assessment = assessPackageDiskSpace(inputBytes, available, compression);
         if (assessment !== "sufficient") {
           const message = `Output volume for ${output} has ${formatDiskBytes(available)} free; ` +

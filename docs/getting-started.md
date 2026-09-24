@@ -80,6 +80,16 @@ UI source are **not** included until you build or otherwise update the artifact.
 prismatix pack my-game --artifact my-game/.prismatix/artifact
 ```
 
+For multi-GiB developer builds, use an optimized Release or RelWithDebInfo
+Packager even when testing with a Debug Player. The native Packager performs
+large JSON validation and repeated cryptographic reads; a Debug binary can
+make those operations much slower. `--packager` and `--player` may point to
+different developer build configurations. The opt-in developer checkout
+fallback prefers Release when available. Explicit paths are honored, and the
+CLI warns when a Debug Packager is selected for an artifact of at least
+1 GiB. Build both configurations from the same Engine revision before
+mixing them.
+
 If a post-build tool must add or replace artifact files, use the supported
 [`augment` command](artifact-augmentation.md) before `pack --artifact`;
 ordinary media should instead be declared with `resourceIncludes`.
