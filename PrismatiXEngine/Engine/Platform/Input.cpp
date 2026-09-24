@@ -128,6 +128,7 @@ bool Input::UnregisterAction(const std::string_view action) {
     const std::string name(action);
     m_injectedNamedActions.erase(name);
     m_pendingKeyBindings.erase(name);
+    m_defaultKeyboardBindings.erase(name);
     return m_namedBindings.erase(name) != 0;
 }
 
@@ -212,7 +213,9 @@ bool Input::ActionActive(const std::string_view action) const {
 std::optional<int> Input::KeyCode(const std::string_view name) {
     if (name.empty() || name.find('\0') != std::string_view::npos)
         return std::nullopt;
-    const auto scancode = SDL_GetScancodeFromName(std::string(name).c_str());
+    // The legacy GameCatalog used "Enter" for SDL's "Return" scancode.
+    const auto normalized = name == "Enter" ? std::string_view{"Return"} : name;
+    const auto scancode = SDL_GetScancodeFromName(std::string(normalized).c_str());
     if (scancode == SDL_SCANCODE_UNKNOWN) return std::nullopt;
     return static_cast<int>(scancode);
 }
@@ -228,6 +231,18 @@ std::vector<int> Input::KeyBindings(const std::string_view action) const {
     const auto found = m_namedBindings.find(action);
     if (found == m_namedBindings.end()) return {};
     return {found->second.keys.begin(), found->second.keys.end()};
+}
+
+bool Input::SetDefaultKeyboardBindings(const std::string_view action,
+                                       const std::vector<int>& keys) {
+    if (!HasAction(action) || keys.size() > 32) return false;
+    std::set<int> unique;
+    for (const int scancode : keys)
+        if (scancode <= SDL_SCANCODE_UNKNOWN ||
+            scancode >= SDL_SCANCODE_COUNT || !unique.insert(scancode).second)
+            return false;
+    m_defaultKeyboardBindings[std::string(action)] = keys;
+    return true;
 }
 
 KeyRebindResult Input::RebindKey(const std::string_view action,
@@ -297,11 +312,22 @@ bool Input::RestoreKeyboardBindings(const KeyboardBindingMap& bindings) {
 void Input::ResetKeyboardBindings() {
     const Input defaults;
     for (auto& [action, bindings] : m_namedBindings) {
-        const auto found = defaults.m_namedBindings.find(action);
-        bindings.keys = found == defaults.m_namedBindings.end()
-                            ? std::set<int>{} : found->second.keys;
+        if (const auto authored = m_defaultKeyboardBindings.find(action);
+            authored != m_defaultKeyboardBindings.end()) {
+            bindings.keys = {authored->second.begin(), authored->second.end()};
+        } else {
+            const auto found = defaults.m_namedBindings.find(action);
+            bindings.keys = found == defaults.m_namedBindings.end()
+                                ? std::set<int>{} : found->second.keys;
+        }
     }
     m_keyBindings = defaults.m_keyBindings;
+    for (std::size_t index = 0; index < kActionCount; ++index) {
+        const auto action = static_cast<InputAction>(index);
+        if (const auto found = m_namedBindings.find(ActionName(action));
+            found != m_namedBindings.end())
+            m_keyBindings[index] = found->second.keys;
+    }
     m_pendingKeyBindings.clear();
 }
 

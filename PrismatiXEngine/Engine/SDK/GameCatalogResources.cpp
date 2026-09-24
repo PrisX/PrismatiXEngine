@@ -553,7 +553,7 @@ GameCatalogResourcesLoadResult LoadCanonicalGameCatalogResources(
     }
     static const std::unordered_set<std::string> allowed{
         "format", "schemaRevision", "variables", "progressionFlags", "gallery",
-        "unlockables", "inputBindings", "extensions"};
+        "unlockables", "inputBindings", "inputActions", "extensions"};
     for (auto item = root.begin(); item != root.end(); ++item) {
         if (!allowed.contains(item.key()))
             Add(result, "PXCAT1102", "Unknown canonical GameCatalog field: " + item.key(), path);
@@ -721,6 +721,66 @@ GameCatalogResourcesLoadResult LoadCanonicalGameCatalogResources(
                         continue;
                     }
                     result.document.inputBindings.push_back(std::move(binding));
+                }
+            }
+        }
+        if (const auto actions = root.find("inputActions"); actions != root.end()) {
+            if (!actions->is_array() || actions->size() > 1024) {
+                Add(result, "PXCAT1118", "inputActions must be an array of at most 1024 actions", path);
+            } else {
+                const auto identifier = [](const std::string_view value, const std::size_t limit) {
+                    if (value.empty() || value.size() > limit) return false;
+                    for (std::size_t index = 0; index < value.size(); ++index) {
+                        const char ch = value[index];
+                        const bool alphaNumeric = (ch >= 'A' && ch <= 'Z') ||
+                            (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9');
+                        if (!alphaNumeric && (index == 0 || (ch != '.' && ch != '_' && ch != '-')))
+                            return false;
+                    }
+                    return true;
+                };
+                std::unordered_set<std::string> ids;
+                for (const auto& binding : result.document.inputBindings)
+                    if (binding.command == "screen.open" && !binding.argument.empty())
+                        ids.insert("screen.open." + binding.argument);
+                for (const auto& source : *actions) {
+                    if (!source.is_object()) {
+                        Add(result, "PXCAT1118", "input action must be an object", path);
+                        continue;
+                    }
+                    GameCatalogInputAction action;
+                    action.id = source.value("id", std::string{});
+                    action.context = source.value("context", std::string{});
+                    action.route = source.value("route", std::string{});
+                    if (!identifier(action.id, 256) || !identifier(action.context, 128) ||
+                        (source.contains("route") && !identifier(action.route, 256)) ||
+                        (!action.route.empty() && action.context != "game") ||
+                        !ids.insert(action.id).second) {
+                        Add(result, "PXCAT1119", "input action has an invalid or duplicate id, context, or route", path, 0, action.id);
+                        continue;
+                    }
+                    if (const auto keys = source.find("keys"); keys != source.end()) {
+                        if (!keys->is_array() || keys->empty() || keys->size() > 32) {
+                            Add(result, "PXCAT1120", "input action keys must contain 1 to 32 names", path, 0, action.id);
+                            continue;
+                        }
+                        std::unordered_set<std::string> names;
+                        bool valid = true;
+                        for (const auto& key : *keys) {
+                            if (!key.is_string()) { valid = false; break; }
+                            auto name = key.get<std::string>();
+                            if (name.empty() || name.size() > 128 || !names.insert(name).second) {
+                                valid = false;
+                                break;
+                            }
+                            action.keys.push_back(std::move(name));
+                        }
+                        if (!valid) {
+                            Add(result, "PXCAT1120", "input action contains an invalid or duplicate key name", path, 0, action.id);
+                            continue;
+                        }
+                    }
+                    result.document.inputActions.push_back(std::move(action));
                 }
             }
         }

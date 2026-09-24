@@ -192,6 +192,16 @@ export interface GameDocument {
   readonly gallery?: readonly JsonValue[];
   readonly unlockables?: readonly JsonValue[];
   readonly inputBindings?: readonly JsonValue[];
+  readonly inputActions?: readonly GameInputAction[];
+}
+
+/** Portable named input actions; hosts may bind additional behavior to an id. */
+export interface GameInputAction {
+  readonly id: string;
+  readonly context: string;
+  readonly keys?: readonly string[];
+  /** Player route opened when this action is pressed in its context. */
+  readonly route?: string;
 }
 
 export interface StoryCompileContext {

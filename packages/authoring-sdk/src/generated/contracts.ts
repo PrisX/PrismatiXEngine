@@ -1107,6 +1107,43 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "maxItems": 100000,
         "type": "array"
       },
+      "inputActions": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "context": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+              "type": "string"
+            },
+            "id": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+            },
+            "keys": {
+              "items": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 32,
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "route": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+            }
+          },
+          "required": [
+            "id",
+            "context"
+          ],
+          "type": "object"
+        },
+        "maxItems": 1024,
+        "type": "array"
+      },
       "inputBindings": {
         "items": {
           "additionalProperties": false,
@@ -3954,7 +3991,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "common.schema.json": "1ba66770e3cf7f90b6ffe29f7fdccd263ad2eeec4cb2cff63bc0f7839a5d57f4",
   "effect.schema.json": "631dd0bce555dcbb3f849049978c9b635dd79848ac497adf292ca6e02468eee7",
   "extension.schema.json": "9438f403e51b8f69f52f05d5999afc37c433754a215094460e28c6d1710555a2",
-  "game.schema.json": "f0592fc75a4deb4aed7f192c076165012ef480196a07cd7d2136be390821dcba",
+  "game.schema.json": "33a83a81a353a93b6029b4ce3fa7bd39849733b9134102aa15fe2b2ee1593be5",
   "locale.schema.json": "b8f6009219c6cad7fa6130af6d710af11cabcf85bf2e0039f1fdd3c08e2bbf9f",
   "motion.schema.json": "f0533f460b9c65fdb08e23ed26c32bd105fa486889a374b970873ca68de48d17",
   "portrait.schema.json": "23235204cea30d1f9bf49f810f896364b910ce2f74e46f28bc7381dc5da0a6fe",

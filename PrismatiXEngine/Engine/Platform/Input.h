@@ -126,6 +126,10 @@ public:
     [[nodiscard]] static std::optional<int> KeyCode(std::string_view name);
     [[nodiscard]] static std::string KeyName(int scancode);
     [[nodiscard]] std::vector<int> KeyBindings(std::string_view action) const;
+    // Host-authored defaults survive user rebinds and are restored by Reset.
+    // This does not alter the current binding until the host applies it.
+    [[nodiscard]] bool SetDefaultKeyboardBindings(std::string_view action,
+                                                   const std::vector<int>& keys);
     // Atomically replaces keyboard bindings only; gamepad bindings are kept.
     // Existing shared defaults remain valid, but a new collision is reported
     // unless the caller explicitly allows it.
@@ -244,6 +248,7 @@ private:
     std::string m_baseContext = "global";
     std::vector<std::string> m_contextStack;
     KeyboardBindingMap m_pendingKeyBindings;
+    KeyboardBindingMap m_defaultKeyboardBindings;
     std::set<std::string,std::less<>> m_injectedNamedActions;
     std::vector<InputEvent> m_events;
     std::unordered_set<std::uint64_t> m_consumedEvents;

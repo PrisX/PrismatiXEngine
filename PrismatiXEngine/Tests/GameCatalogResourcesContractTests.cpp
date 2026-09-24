@@ -74,6 +74,10 @@ constexpr std::string_view kCanonicalCatalog = R"({
   ],
   "inputBindings":[
     {"key":"Escape","command":"screen.open","argument":"settings"}
+  ],
+  "inputActions":[
+    {"id":"quick-save","context":"game","keys":["F8"]},
+    {"id":"screen.open.gallery","context":"game","keys":["G"],"route":"gallery"}
   ]
 })";
 
@@ -125,6 +129,11 @@ int main() {
                     R"({"chapter":2,"route":"rin"})" &&
                 loaded.document.inputBindings.size() == 1,
             "progression, unlockable payloads, and input bindings survive canonical lowering");
+        suite.Expect(loaded.document.inputActions.size() == 2 &&
+                         loaded.document.inputActions[0].id == "quick-save" &&
+                         loaded.document.inputActions[0].keys == std::vector<std::string>{"F8"} &&
+                         loaded.document.inputActions[1].route == "gallery",
+                     "named actions, contexts, default keys, and routes survive canonical loading");
 
         px::vn::GameCatalog runtime;
         const auto status = runtime.LoadCanonical(
@@ -145,6 +154,10 @@ int main() {
                 runtime.Variables()[3].typedDefault.TryGet<std::string>() &&
                 *runtime.Variables()[3].typedDefault.TryGet<std::string>() == "rin",
             "runtime lowering exposes the canonical executable variable semantics");
+        suite.Expect(runtime.InputActions().size() == 2 &&
+                         runtime.InputActions()[1].context == "game" &&
+                         runtime.InputActions()[1].route == "gallery",
+                     "runtime adapter exposes declarative input actions to hosts");
         suite.Expect(loaded.document.unlockables.size() == 1,
                      "declarative unlock metadata remains available to SDK tooling");
     });
@@ -287,6 +300,22 @@ name = "affinity"
 name = "affinity"
 )");
         suite.Expect(HasCode(loaded, "PXCAT1016"), "ambiguous variable runtime identity is rejected");
+    });
+
+    suite.Run("InputActionsRejectDuplicatesAndMalformedKeys", [&] {
+        constexpr std::string_view prefix = R"({"format":"PrismatiXGame","schemaRevision":2,"variables":[],"gallery":[],"unlockables":[],)";
+        const auto duplicates = px::sdk::LoadCanonicalGameCatalogResources(
+            std::string(prefix) + R"("inputBindings":[{"key":"G","command":"screen.open","argument":"gallery"}],"inputActions":[{"id":"screen.open.gallery","context":"game","keys":["F8"]}]})");
+        suite.Expect(HasCode(duplicates, "PXCAT1119"),
+                     "new and legacy action spellings cannot silently override each other");
+        const auto malformed = px::sdk::LoadCanonicalGameCatalogResources(
+            std::string(prefix) + R"("inputActions":[{"id":"quick-save","context":"game","keys":["F8","F8"]}]})");
+        suite.Expect(HasCode(malformed, "PXCAT1120"),
+                     "duplicate default key names fail before Player startup");
+        const auto wrongContext = px::sdk::LoadCanonicalGameCatalogResources(
+            std::string(prefix) + R"("inputActions":[{"id":"screen.open.gallery","context":"ui","route":"gallery"}]})");
+        suite.Expect(HasCode(wrongContext, "PXCAT1119"),
+                     "route shortcuts cannot be declared in a context the Player never checks");
     });
 
     return suite.Finish();

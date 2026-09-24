@@ -587,6 +587,15 @@ export function validateSemantics(contractId: string, value: unknown, path?: str
       const variables = objects(root.variables);
       diagnostics.push(...uniqueIdentities(variables, "name", "Game variable", path));
       for (const variable of variables) if (!variableDefaultMatches(variable)) diagnostics.push(issue("PXSDKSEM1106", "Game variable default does not match its declared type", path, String(variable.name)));
+      const inputActions = objects(root.inputActions);
+      diagnostics.push(...uniqueIdentities(inputActions, "id", "Game input action", path));
+      const legacyActions = new Set(objects(root.inputBindings)
+        .filter((binding) => binding.command === "screen.open" && typeof binding.argument === "string")
+        .map((binding) => `screen.open.${String(binding.argument)}`));
+      for (const action of inputActions) if (legacyActions.has(action.id as string))
+        diagnostics.push(issue("PXSDKSEM1121", "Game input action duplicates a legacy screen.open binding", path, String(action.id)));
+      for (const action of inputActions) if (action.route !== undefined && action.context !== "game")
+        diagnostics.push(issue("PXSDKSEM1122", "Player route input actions require the game context", path, String(action.id)));
       break;
     }
     case "extension": {

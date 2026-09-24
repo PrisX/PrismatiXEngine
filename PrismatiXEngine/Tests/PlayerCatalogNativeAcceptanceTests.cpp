@@ -440,7 +440,8 @@ Engine.RegisterAction("acceptance.phase2-menu", async () => {
         {"name":"affinity","type":"integer","default":7,"scope":"profile"},
         {"name":"routeName","type":"string","default":"common","scope":"session"}
       ],
-      "inputBindings":[{"key":"G","command":"screen.open","argument":"gallery"}],
+      "inputBindings":[{"key":"Escape","command":"screen.open","argument":"settings"}],
+      "inputActions":[{"id":"screen.open.gallery","context":"game","keys":["G"],"route":"gallery"}],
       "gallery":[{
         "id":"ending-rin","title":"Rin Ending",
         "image":{"id":"33333333-3333-4333-8333-333333333333","path":"Assets/ending.png"},

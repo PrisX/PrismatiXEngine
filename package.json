@@ -14,7 +14,7 @@
     "cli:build": "npm run build --workspace @prismatix/cli",
     "cli:test": "npm run test --workspace @prismatix/cli",
     "docs:build": "tsc -p docs/tsconfig.json",
-    "docs:test": "npm run docs:build && node out/docs-examples/authoring-build.js && node out/docs-examples/jsx-ui-authoring.js && node out/docs-examples/portrait-authoring.js && node out/docs-examples/motion-authoring.js && node out/docs-examples/runtime-extension.js",
+    "docs:test": "npm run docs:build && node out/docs-examples/authoring-build.js && node out/docs-examples/jsx-ui-authoring.js && node out/docs-examples/portrait-authoring.js && node out/docs-examples/motion-authoring.js && node out/docs-examples/input-actions.js && node out/docs-examples/runtime-extension.js",
     "build": "npm run contracts:check && npm run build --workspace @prismatix/authoring-sdk && npm run runtime:build && npm run cli:build && npm run docs:build",
     "phase1:acceptance:mock": "node scripts/phase1-clean-install.mjs --mock",
     "phase1:acceptance": "node scripts/phase1-clean-install.mjs",

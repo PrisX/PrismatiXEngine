@@ -224,22 +224,6 @@ bool RelocalizeRuntimeState(
     return true;
 }
 
-int ScancodeFromName(const std::string& name) {
-    if (name == "Escape") return SDL_SCANCODE_ESCAPE;
-    if (name == "Tab") return SDL_SCANCODE_TAB;
-    if (name == "Space") return SDL_SCANCODE_SPACE;
-    if (name == "Enter" || name == "Return") return SDL_SCANCODE_RETURN;
-    if (name == "Backspace") return SDL_SCANCODE_BACKSPACE;
-    if (name.size() == 1 && name[0] >= 'A' && name[0] <= 'Z') {
-        return SDL_SCANCODE_A + (name[0] - 'A');
-    }
-    if (name.size() >= 2 && name[0] == 'F') {
-        const int n = std::atoi(name.c_str() + 1);
-        if (n >= 1 && n <= 12) return SDL_SCANCODE_F1 + (n - 1);
-    }
-    return SDL_SCANCODE_UNKNOWN;
-}
-
 std::optional<std::string> ReadBoundedTextFile(const std::filesystem::path& path,
                                                const std::uintmax_t limit) {
     std::error_code error;
@@ -1483,24 +1467,60 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                  characterResourcesDeclared ? "characterResources=2"
                                             : "canonical project without characters");
     PX_LOG_DEBUG(
-        "Player boot: GameCatalog resources variables={} bindings={} gallery={}",
+        "Player boot: GameCatalog resources variables={} bindings={} actions={} gallery={}",
         m_catalog.Variables().size(), m_catalog.InputBindings().size(),
+        m_catalog.InputActions().size(),
         m_catalog.Gallery().size());
     for (const auto& binding : m_catalog.InputBindings()) {
         if (binding.command == "screen.open" && !binding.argument.empty()) {
-            const int sc = ScancodeFromName(binding.key);
-            if (sc != SDL_SCANCODE_UNKNOWN) {
+            const auto sc = Input::KeyCode(binding.key);
+            if (sc) {
                 const std::string action = "screen.open." + binding.argument;
                 auto& input = m_runtime.GetInput();
                 if (!input.HasAction(action)) (void)input.RegisterAction(action);
                 (void)input.SetActionContext(action, "game");
+                (void)input.SetDefaultKeyboardBindings(action, {*sc});
                 if (!m_settings.keyboardBindings.contains(action))
-                    (void)input.BindKey(action, sc);
+                    (void)input.BindKey(action, *sc);
                 m_screenTriggers[action] = binding.argument;
                 PX_LOG_INFO("Player input binding registered key={} route={}",
                             binding.key, binding.argument);
             }
         }
+    }
+    for (const auto& action : m_catalog.InputActions()) {
+        auto& input = m_runtime.GetInput();
+        std::vector<int> keys;
+        keys.reserve(action.keys.size());
+        for (const auto& key : action.keys) {
+            const auto scancode = Input::KeyCode(key);
+            if (!scancode) {
+                diag::Emit(diag::Diagnostic{.severity = diag::Severity::Fatal,
+                                            .code = "PXPLAYER5022",
+                                            .category = "Player.Input",
+                                            .message = "Unknown input key name",
+                                            .details = action.id + ": " + key});
+                return false;
+            }
+            keys.push_back(*scancode);
+        }
+        if ((!input.HasAction(action.id) && !input.RegisterAction(action.id)) ||
+            !input.SetActionContext(action.id, action.context) ||
+            (!keys.empty() && !input.SetDefaultKeyboardBindings(action.id, keys))) {
+            diag::Emit(diag::Diagnostic{.severity = diag::Severity::Fatal,
+                                        .code = "PXPLAYER5021",
+                                        .category = "Player.Input",
+                                        .message = "Game input action could not be registered",
+                                        .details = action.id});
+            return false;
+        }
+        if (!m_settings.keyboardBindings.contains(action.id) && !keys.empty()) {
+            if (input.RebindKey(action.id, keys.front(), true).status !=
+                KeyRebindStatus::Applied) return false;
+            for (std::size_t index = 1; index < keys.size(); ++index)
+                if (!input.BindKey(action.id, keys[index])) return false;
+        }
+        if (!action.route.empty()) m_screenTriggers[action.id] = action.route;
     }
     m_session->VM().SetGameCatalog(m_catalog);
 

@@ -14,6 +14,11 @@ The public entrypoint provides:
 - a React-free JSX runtime and typed UI components that lower to the same canonical UI contracts;
 - explicit migration entrypoints and generated contract hashes.
 
+Named keyboard actions, contexts, and default bindings can be authored in
+`Content/game.pxgame` through the typed `GameInputAction` contract; see the
+[input action guide](../../docs/input-actions.md). The older `inputBindings`
+entries remain readable for migrated projects.
+
 ## Dynamic resource families
 
 Static Story/UI references and catalog assets are collected automatically. If

@@ -135,7 +135,7 @@ A registered `.pxtimeline` can be played using its resource reference:
 [timeline Animations/greeting.pxtimeline]
 ```
 
-Create the actual clip with typed authoring contracts or adapt the existing sample's Timeline. Story's `timeline` accepts the clip reference; it does not expose every runtime playback option. For image-layer animations in UI, see [`.pxmotion` authoring](motion-authoring.md). See also [the React-free TSX example](examples/jsx-ui-authoring.tsx), [custom effects](custom-effects.md), and [the runtime SDK](../runtime-sdk/README.md) for richer authored UI and presentation APIs.
+Create the actual clip with typed authoring contracts or adapt the existing sample's Timeline. Story's `timeline` accepts the clip reference; it does not expose every runtime playback option. For image-layer animations in UI, see [`.pxmotion` authoring](motion-authoring.md). For keyboard shortcuts, see [named input actions](input-actions.md). See also [the React-free TSX example](examples/jsx-ui-authoring.tsx), [custom effects](custom-effects.md), and [the runtime SDK](../runtime-sdk/README.md) for richer authored UI and presentation APIs.
 
 ## Localization, voice and release updates
 

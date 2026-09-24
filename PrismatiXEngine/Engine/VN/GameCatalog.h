@@ -45,6 +45,12 @@ struct CatalogGalleryItem {
     std::optional<ResourceRefValue> thumbnailReference{};
 };
 struct CatalogInputBinding { std::string key; std::string command; std::string argument; };
+struct CatalogInputAction {
+    std::string id;
+    std::string context;
+    std::vector<std::string> keys;
+    std::string route;
+};
 class GameCatalog {
 public:
     // One-way compatibility entry points for migration tooling. Normal runtime
@@ -80,6 +86,7 @@ public:
     [[nodiscard]] const std::vector<CatalogCharacter>& Characters() const { return m_characters; }
     [[nodiscard]] const std::vector<CatalogGalleryItem>& Gallery() const { return m_gallery; }
     [[nodiscard]] const std::vector<CatalogInputBinding>& InputBindings() const { return m_input; }
+    [[nodiscard]] const std::vector<CatalogInputAction>& InputActions() const { return m_inputActions; }
     [[nodiscard]] const CatalogCharacter* FindCharacter(std::string_view idOrName) const;
     [[nodiscard]] const CatalogCharacterExpression* FindExpression(
         const CatalogCharacter& character, std::string_view idOrName) const;
@@ -91,6 +98,7 @@ private:
     std::vector<CatalogCharacter> m_characters;
     std::vector<CatalogGalleryItem> m_gallery;
     std::vector<CatalogInputBinding> m_input;
+    std::vector<CatalogInputAction> m_inputActions;
 };
 
 }  // namespace px::vn

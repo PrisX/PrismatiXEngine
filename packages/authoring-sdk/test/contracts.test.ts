@@ -87,6 +87,26 @@ test("all canonical authored format schemas accept representative documents", ()
   }
 });
 
+test("game input actions declare contexts and default keys without legacy key commands", () => {
+  const game = {format: "PrismatiXGame", schemaRevision: 2,
+    variables: [], gallery: [], unlockables: [],
+    inputActions: [
+      {id: "quick-save", context: "game", keys: ["F8"]},
+      {id: "screen.open.gallery", context: "game", keys: ["G"], route: "gallery"},
+      {id: "camera.photo", context: "game"},
+    ]};
+  assert.equal(validateDocument("game", game).valid, true);
+  assert.equal(validateDocument("game", {...game, inputActions: [
+    {id: "quick-save", context: "game", keys: ["F8", "F8"]},
+  ]}).valid, false);
+  assert.equal(validateDocument("game", {...game, inputBindings: [
+    {key: "G", command: "screen.open", argument: "gallery"},
+  ]}).diagnostics.some((item) => item.code === "PXSDKSEM1121"), true);
+  assert.equal(validateDocument("game", {...game, inputActions: [
+    {id: "screen.open.gallery", context: "ui", keys: ["G"], route: "gallery"},
+  ]}).diagnostics.some((item) => item.code === "PXSDKSEM1122"), true);
+});
+
 test("legacy version-4 animation migration adds schemaRevision explicitly", () => {
   const legacy = {format:"PrismatiXAnimation",version:4,id:"11111111-1111-4111-8111-111111111111",name:"Fade",duration:1,loop:false,tracks:[],markers:[],nested:[]};
   const migrated = migrateDocument("animation", legacy);

@@ -220,7 +220,8 @@ int main() {
                          input.KeyBindings("photo-mode") ==
                              std::vector<int>{SDL_SCANCODE_F2} &&
                          px::Input::KeyName(SDL_SCANCODE_F2) == "F2" &&
-                         px::Input::KeyCode("F2") == SDL_SCANCODE_F2,
+                         px::Input::KeyCode("F2") == SDL_SCANCODE_F2 &&
+                         px::Input::KeyCode("Enter") == SDL_SCANCODE_RETURN,
                      "successful rebind replaces, rather than appends, the keyboard shortcut");
         input.NewFrame();
         input.InjectKeyPress(SDL_SCANCODE_X);
@@ -296,6 +297,29 @@ int main() {
                          !input.ActionPressed("screen.open.gallery") &&
                          !input.PopContext(),
                      "popping the overlay restores menu input without underflow");
+    });
+
+    suite.Run("ResetRestoresProjectAuthoredKeyboardDefaults", [&] {
+        px::Input input;
+        suite.Require(input.RegisterAction("screen.open.gallery") &&
+                          input.SetDefaultKeyboardBindings("screen.open.gallery", {SDL_SCANCODE_G}) &&
+                          input.BindKey("screen.open.gallery", SDL_SCANCODE_G) &&
+                          input.SetDefaultKeyboardBindings("quick-save", {SDL_SCANCODE_F8}),
+                      "game catalog defaults can be retained separately from current keys");
+        suite.Expect(!input.SetDefaultKeyboardBindings("screen.open.gallery", {SDL_SCANCODE_COUNT}) &&
+                         !input.SetDefaultKeyboardBindings("missing", {SDL_SCANCODE_G}),
+                     "invalid authored defaults cannot replace an existing default");
+        suite.Require(input.RebindKey("screen.open.gallery", SDL_SCANCODE_F7, true).status ==
+                          px::KeyRebindStatus::Applied &&
+                          input.RebindKey("quick-save", SDL_SCANCODE_F6, true).status ==
+                          px::KeyRebindStatus::Applied,
+                      "user may rebind project and engine actions");
+        input.ResetKeyboardBindings();
+        suite.Expect(input.KeyBindings("screen.open.gallery") ==
+                         std::vector<int>{SDL_SCANCODE_G} &&
+                         input.KeyBindings("quick-save") ==
+                         std::vector<int>{SDL_SCANCODE_F8},
+                     "reset restores both authored named-action and overridden built-in defaults");
     });
 
     suite.Run("AudioHandlesCompletionAndRestorePolicy", [&] {

@@ -410,6 +410,14 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
 
   const storyIndex = documentAt<StoryIndexDocument>("storyIndex", project.storyIndex, documents, diagnostics);
   const game = documentAt<GameDocument>("game", project.gameCatalog, documents, diagnostics);
+  if (game !== undefined) {
+    const routes = new Set(["title", "hud", "backlog", "save", "load",
+      "gallery", "settings", "video", ...Object.keys(project.uiEntryPoints)]);
+    for (const action of game.inputActions ?? []) if (action.route !== undefined &&
+        !routes.has(action.route))
+      diagnostics.push(issue("PXBUILD1061", "Input action route is not registered by this project",
+        project.gameCatalog, `${action.id}: ${action.route}`));
+  }
   const characters: CharacterDocument[] = [];
   const characterDocuments: Record<string, unknown> = {};
   for (const descriptor of project.characters ?? []) {

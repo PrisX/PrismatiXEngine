@@ -68,6 +68,24 @@ const {behaviorGraph: _behaviorGraph, behaviorTriggers: _behaviorTriggers,
 const component = {...componentContent, format: "PrismatiXUIComponent",
   componentInterface: {properties: [], signals: [], slots: []}};
 
+test("project compilation checks authored input action routes", () => {
+  const compile = (route: string) => compileProject({project,
+    documents: {"Story/story.pxindex": storyIndex,
+      "Content/game.pxgame": {...game, inputActions: [
+        {id: "screen.open.settings", context: "game", keys: ["F8"], route},
+      ]},
+      "Content/UI/Title.pxui": ui},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locale: "zh-TW", strings: {}}},
+  });
+  const valid = compile("settings");
+  assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
+  const missing = compile("not-a-route");
+  assert.equal(missing.valid, false);
+  assert.ok(missing.diagnostics.some((item) => item.code === "PXBUILD1061"));
+});
+
 test("compileProject validates extension UI Actions and packages typed resource arguments", () => {
   const extensionPath = "Content/Extensions/music.pxextension";
   const extension = {format: "PrismatiXExtension", schemaRevision: 2,

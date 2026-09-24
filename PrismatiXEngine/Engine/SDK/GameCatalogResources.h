@@ -65,6 +65,13 @@ struct GameCatalogInputBinding {
     std::string argument;
 };
 
+struct GameCatalogInputAction {
+    std::string id;
+    std::string context;
+    std::vector<std::string> keys;
+    std::string route;
+};
+
 struct GameCatalogUnlockable {
     std::string id;
     std::string kind;
@@ -77,6 +84,7 @@ struct GameCatalogResourcesDocument {
     std::vector<GameCatalogVariable> variables;
     std::vector<GameCatalogGalleryItem> gallery;
     std::vector<GameCatalogInputBinding> inputBindings;
+    std::vector<GameCatalogInputAction> inputActions;
     std::vector<std::string> progressionFlags;
     std::vector<GameCatalogUnlockable> unlockables;
 };

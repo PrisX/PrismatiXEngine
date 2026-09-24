@@ -71,6 +71,9 @@ Status GameCatalog::LoadCanonical(
     m_input.clear();
     for (const auto& source : loaded.document.inputBindings)
         m_input.push_back({source.key, source.command, source.argument});
+    m_inputActions.clear();
+    for (const auto& source : loaded.document.inputActions)
+        m_inputActions.push_back({source.id, source.context, source.keys, source.route});
     return Status::Ok();
 }
 
@@ -198,6 +201,9 @@ Status GameCatalog::LoadLegacyRuntimeResourcesForMigration(
     m_variables = std::move(variables);
     m_gallery = std::move(gallery);
     m_input = std::move(input);
+    m_inputActions.clear();
+    for (const auto& source : loaded.document.inputActions)
+        m_inputActions.push_back({source.id, source.context, source.keys, source.route});
     return Status::Ok();
 }
 
