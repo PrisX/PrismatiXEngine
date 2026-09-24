@@ -15,7 +15,7 @@
       "properties": {
         "mode": {"enum": ["free", "container"]},
         "x": {"type": "number"}, "y": {"type": "number"},
-        "width": {"type": "number", "minimum": 0}, "height": {"type": "number", "minimum": 0},
+        "width": {"type": "number", "exclusiveMinimum": 0}, "height": {"type": "number", "exclusiveMinimum": 0},
         "anchorX": {"type": "number"}, "anchorY": {"type": "number"},
         "anchorRight": {"type": "number"}, "anchorBottom": {"type": "number"},
         "pivotX": {"type": "number"}, "pivotY": {"type": "number"},

@@ -1825,6 +1825,8 @@ ValidationResult Validate(const PackageRequest& request,
         result.cancelled = true;
         return result;
     }
+    EmitProgress(request, eventSink, "validate-structure", 0, 1,
+                 "Validating project, Story, UI, and resource contracts");
     std::set<std::string> migrationIds;
     std::unordered_map<std::string, const PackageSaveMigration*>
         migrationBySource;
@@ -2446,6 +2448,8 @@ ValidationResult Validate(const PackageRequest& request,
     if (!request.startRoute.empty() && !routeIds.contains(request.startRoute)) {
         AddDiagnostic(diagnostics, "PXPKG1222", "startRoute must identify one of the packaged routes");
     }
+    EmitProgress(request, eventSink, "validate-structure", 1, 1,
+                 "Validated project, Story, UI, and resource contracts");
     return result;
 }
 

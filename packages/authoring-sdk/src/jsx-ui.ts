@@ -619,8 +619,8 @@ function nodeLayout(
   props: UiNodeProps,
   containerOwned: boolean,
   root: boolean,
-  width: number,
-  height: number,
+  parentWidth: number,
+  parentHeight: number,
 ): UiLayout {
   const point = (value: UiPoint | readonly [number, number] | undefined): UiPoint | undefined =>
     value === undefined ? undefined : Array.isArray(value)
@@ -662,8 +662,10 @@ function nodeLayout(
     mode: containerOwned ? "container" : input?.mode ?? "free",
     x: input?.x ?? 0,
     y: input?.y ?? 0,
-    width: input?.width ?? (root ? width : 0),
-    height: input?.height ?? (root ? height : 0),
+    width: input?.width ?? (root || input?.sizeRule === "fill" ||
+      (input?.anchorRight ?? 0) > (input?.anchorX ?? 0) ? parentWidth : 1),
+    height: input?.height ?? (root || input?.sizeRule === "fill" ||
+      (input?.anchorBottom ?? 0) > (input?.anchorY ?? 0) ? parentHeight : 1),
     anchorX: input?.anchorX ?? 0,
     anchorY: input?.anchorY ?? 0,
     anchorRight: input?.anchorRight ?? (root ? 1 : 0),
@@ -746,7 +748,8 @@ function lowerDocument(element: UiElement, path?: string): PrismatiXUiDocument {
 
   const nodes: PrismatiXUiNode[] = [];
   const visit = (item: UiElement, parentId: string | null, order: number,
-    parentSeed: string, seed: string, containerOwned: boolean): string => {
+    parentSeed: string, seed: string, containerOwned: boolean,
+    parentWidth: number, parentHeight: number): string => {
     const source = definition(item);
     if (source.category !== "node") throw new TypeError("Scene children must be UI nodes");
     const id = source.props.id !== undefined && uuidPattern.test(source.props.id)
@@ -760,13 +763,15 @@ function lowerDocument(element: UiElement, path?: string): PrismatiXUiDocument {
     const actionInput = source.props.onClick ?? source.props.action;
     const action = typeof actionInput === "string" ? {id: actionInput} : actionInput;
     const appearance = nodeAppearance(source.props);
+    const layout = nodeLayout(source.props, containerOwned, root,
+      parentWidth, parentHeight);
     nodes.push({
       id, parentId, order, kind: source.kind,
       ...(source.runtimeType === undefined ? {} : {runtimeType: source.runtimeType}),
       name: source.props.name ?? source.runtimeType ?? source.kind,
       visible: source.props.visible ?? true,
       locked: source.props.locked ?? false,
-      layout: nodeLayout(source.props, containerOwned, root, props.width, props.height),
+      layout,
       ...(source.props.text === undefined ? {} : {text: source.props.text}),
       ...(source.props.assetId === undefined ? {} : {assetId: source.props.assetId}),
       ...(appearance === undefined ? {} : {appearance}),
@@ -788,10 +793,12 @@ function lowerDocument(element: UiElement, path?: string): PrismatiXUiDocument {
       source.kind === "vbox" || source.kind === "grid";
     const seeds = siblingSeeds(children);
     children.forEach((child, index) => visit(child, id, index,
-      `${parentSeed}/${seed}`, seeds[index]!, ownsLayout));
+      `${parentSeed}/${seed}`, seeds[index]!, ownsLayout,
+      layout.width, layout.height));
     return id;
   };
-  const rootId = visit(authoredRoot, null, 0, "root", siblingSeeds([authoredRoot])[0]!, false);
+  const rootId = visit(authoredRoot, null, 0, "root",
+    siblingSeeds([authoredRoot])[0]!, false, props.width, props.height);
   const common: PrismatiXUiDocumentBase = {
     schemaRevision: 2,
     id: documentId,

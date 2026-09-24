@@ -380,6 +380,15 @@ int main() {
 #endif
         suite.Expect(!std::filesystem::exists(output / "previous-success.txt"), "successful promotion replaces the previous output");
         suite.Expect(!events.empty() && events.back().kind == px::sdk::PackageEventKind::Completed && events.back().inputCount == request.inputs.size(), "completion event reports the promoted artifact");
+        const auto hasStructureProgress = [&](const std::uint64_t current) {
+            return std::any_of(events.begin(), events.end(), [&](const auto& event) {
+                return event.kind == px::sdk::PackageEventKind::Progress &&
+                       event.phase == "validate-structure" &&
+                       event.current == current && event.total == 1;
+            });
+        };
+        suite.Expect(hasStructureProgress(0) && hasStructureProgress(1),
+                     "semantic validation reports a bounded phase after input verification");
 
         const auto manifest = px::sdk::detail::ParsePackageManifest(
             Read(output / "Package/manifest.json"));

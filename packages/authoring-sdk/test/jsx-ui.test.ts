@@ -16,6 +16,7 @@ import {
   TextureButton,
   VBox,
   compileJsxUi,
+  validateDocument,
 } from "../src/index.js";
 import {jsx, jsxs, type UiElement} from "../src/jsx-runtime.js";
 
@@ -78,12 +79,32 @@ test("Modal authors a native focus scope, backdrop action, and blocking panel", 
   assert.equal(modal?.runtimeProperties?.modalCapture, true);
   assert.equal(modal?.bindings?.visible?.path, "confirm.visible");
   assert.equal(backdrop?.parentId, modal?.id);
+  assert.equal(backdrop?.layout.width, 1280);
+  assert.equal(backdrop?.layout.height, 720);
   assert.equal(backdrop?.onClick?.id, "confirm.cancel");
   assert.equal(backdrop?.runtimeProperties?.normalPath, "Assets/UI/scrim.png");
   assert.equal(panel?.parentId, modal?.id);
   assert.equal(panel?.runtimeProperties?.mouseFilter, "Stop");
   assert.equal(accept?.parentId, panel?.id);
   assert.equal(accept?.layout.x, 20);
+
+  const malformed = JSON.parse(JSON.stringify(compiled.value)) as {
+    nodes: {name: string; layout: {width: number}}[]};
+  const malformedBackdrop = malformed.nodes.find((node) => node.name === "ModalBackdrop");
+  assert.ok(malformedBackdrop);
+  malformedBackdrop.layout.width = 0;
+  assert.equal(validateDocument("ui", malformed, "Content/UI/Modal.pxui").valid, false);
+});
+
+test("nested fill uses its parent dimensions instead of an invalid zero-sized layout", () => {
+  const scene = jsx(Scene, {name: "Nested fill", width: 1280, height: 720,
+    children: jsx(Control, {name: "Root", width: 500, height: 240,
+      children: jsx(Button, {name: "FillChild", fill: true, children: "Click"})})});
+  const compiled = compileJsxUi(scene, {path: "Content/UI/Nested.tsx", kind: "scene"});
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  const child = compiled.value?.nodes.find((node) => node.name === "FillChild");
+  assert.equal(child?.layout.width, 500);
+  assert.equal(child?.layout.height, 240);
 });
 
 test("Motion lowers a layered clip reference without confusing playhead and layout position", () => {
