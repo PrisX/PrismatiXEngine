@@ -125,6 +125,18 @@ is not a claim of constant-time or measured large-project speedup. This is
 split packaging, not automatic patch delivery: placing an extra `patch.pdx`
 beside the game does not mount or apply it.
 
+For `pack --artifact` to the same output, the CLI also records
+`Package/cli-package-provenance.json`. If the package request, artifact
+inventory, Packager/Player binaries, adjacent runtime libraries, and release
+notice files are unchanged, it verifies the existing distribution and hashes
+every artifact input under the publication lock before keeping the output
+without running Packager again. A changed option, source, tool, or output
+falls back to normal packaging or fails the relevant integrity check. Older
+distributions need one full pack to gain this record; script-based developer
+Packager overrides do not use this shortcut because their imported code is
+not bounded by the native runtime inventory. This path still reads the full
+artifact and output, so it is not constant-time.
+
 Each packaged distribution now includes `Package/content-index.json`, a
 per-resource URI, SHA-256, source-size, and owning-archive inventory. To
 compare two complete distributions, run:

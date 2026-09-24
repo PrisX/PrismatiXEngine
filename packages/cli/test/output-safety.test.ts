@@ -123,6 +123,13 @@ test("unchanged publication keeps its file identity only after full content veri
   assert.equal((await stat(markerPath, {bigint: true})).ino, before);
   assert.deepEqual(phases.filter(value => value.done).map(value => value.phase),
     ["verify-before-publish"]);
+  let checkedUnderLock = false;
+  assert.equal(await retainPublishedDirectoryIfMatching(f, expected, async () => {
+    checkedUnderLock = true;
+    return false;
+  }), false);
+  assert.equal(checkedUnderLock, true);
+  assert.equal((await stat(markerPath, {bigint: true})).ino, before);
   assert.equal(await retainPublishedDirectoryIfMatching(f,
     new Map([[input.uri, "0".repeat(64)]])), false);
   await writeFile(join(f.output, "game.bin"), "edited");

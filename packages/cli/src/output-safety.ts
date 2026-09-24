@@ -287,11 +287,13 @@ export async function verifiedPublishedInputs(output: string,
   return publishedInputs(output);
 }
 
-/** Keep an unchanged artifact without making a staging tree. The caller must
- * content-hash every authored input before supplying the desired file hashes.
- * We still take the publication lock and verify the existing output bytes. */
+/** Keep an unchanged owned output without making a staging tree. The caller
+ * must content-hash desired sources before this call, or use beforeRetain for
+ * a final source check under the lock. Existing output bytes are always
+ * checked against the complete ownership marker. */
 export async function retainPublishedDirectoryIfMatching(options: PublicationOptions,
-  expectedFiles: ReadonlyMap<string, string>): Promise<boolean> {
+  expectedFiles: ReadonlyMap<string, string>,
+  beforeRetain?: () => Promise<boolean>): Promise<boolean> {
   const output = await validatePaths(options);
   const expected: Record<string, string> = Object.create(null) as Record<string, string>;
   for (const [uri, fingerprint] of expectedFiles) {
@@ -333,6 +335,7 @@ export async function retainPublishedDirectoryIfMatching(options: PublicationOpt
         Object.entries(expected).some(([uri, fingerprint]) => current[uri] !== fingerprint))
       return false;
     await assertOwned(output, false, "verify-before-publish", options.onProgress);
+    if (beforeRetain !== undefined && !await beforeRetain()) return false;
     return true;
   } finally { await rm(lock, {recursive: true}); }
 }

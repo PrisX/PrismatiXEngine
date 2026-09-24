@@ -26,6 +26,8 @@ import {inspectSaveWithRuntime} from "./save-inspection.js";
 import {planPackagePatch} from "./package-diff.js";
 import {applyDistributionPatch, createDistributionPatch,
   type DistributionPatchProgress} from "./distribution-patch.js";
+import {packageRetentionKey, retainPackageIfMatching,
+  writePackageProvenance} from "./package-retain.js";
 
 import {
   assertLocalBuildFresh,
@@ -1370,6 +1372,45 @@ async function packProject(options: Options): Promise<{output: string; player: s
     }
     const output = resolve(options.values.get("output") ?? join(root, "dist", project.id));
     const compression = options.values.get("compression") ?? "balanced";
+    const requestPlan = {
+      format: "PrismatiXPackageRequest", schemaRevision: 2,
+      gameId: project.id, playerExecutable: player, title: project.name,
+      width: project.resolution.width, height: project.resolution.height,
+      startScript, sourceMap,
+      startRoute: project.entry.ui,
+      routes: Object.entries(project.uiEntryPoints).map(([id, scene]) => ({id, scene})),
+      contentVersion: project.contentVersion, saveVersion: project.saveVersion,
+      graphicsTier: project.graphicsTier ?? "basic",
+      saveMigrations: project.saveMigrations ?? [],
+      extensions: project.extensions,
+      encryption: options.flags.has("encrypt"),
+      compression,
+      archiveShards: Number(options.values.get("archive-shards") ?? "1"),
+      inputs,
+    };
+    const planKey = suppliedArtifact === undefined ? undefined :
+      await packageRetentionKey(packager, player, artifactRoot, requestPlan);
+    const publication = {output, projectRoot: root,
+      protectedPaths: [...protectedPaths, packager, player],
+      ...(planKey === undefined ? {} : {beforePromotion: async () => {
+        if (await packageRetentionKey(packager, player, artifactRoot, requestPlan) !== planKey)
+          throw new Error("Runtime tools changed while packaging; distribution was not published");
+      }}),
+      onProgress: (value: {phase: string; files: number; bytes: number; done: boolean}) => progress({
+        event: "progress", severity: "information", code: "PXCLI1211",
+        phase: value.phase, current: value.files,
+        bytes: value.bytes, done: value.done,
+        message: `Checking distribution ${value.phase}: ${value.files} files, ` +
+          `${(value.bytes / 1024 ** 2).toFixed(1)} MiB${value.done ? " (done)" : ""}`}),
+    };
+    if (planKey !== undefined && await retainPackageIfMatching(
+      publication, artifactRoot, inputs, planKey,
+      () => packageRetentionKey(packager, player, artifactRoot, requestPlan))) {
+      progress({event: "progress", severity: "information", code: "PXCLI1215",
+        phase: "retain-package", current: inputs.length, total: inputs.length,
+        message: `Retained verified unchanged distribution: ${output}`});
+      return {output, player: join(output, basename(player))};
+    }
     if (!options.flags.has("ignore-disk-space")) {
       const available = await availableBytesForOutput(output);
       if (available !== undefined) {
@@ -1388,31 +1429,13 @@ async function packProject(options: Options): Promise<{output: string; player: s
         }
       }
     }
-    await publishDirectory({output, projectRoot: root,
-      protectedPaths: [...protectedPaths, packager, player],
-      onProgress: (value) => progress({event: "progress", severity: "information",
-        code: "PXCLI1211", phase: value.phase, current: value.files,
-        bytes: value.bytes, done: value.done,
-        message: `Checking distribution ${value.phase}: ${value.files} files, ` +
-          `${(value.bytes / 1024 ** 2).toFixed(1)} MiB${value.done ? " (done)" : ""}`})}, async (staging) => {
+    await publishDirectory(publication, async (staging) => {
     const request = {
-      format: "PrismatiXPackageRequest", schemaRevision: 2,
-      requestId: `cli-${process.pid}`, gameId: project.id,
+      ...requestPlan,
+      requestId: `cli-${process.pid}`,
       projectRoot: artifactRoot, outputDir: staging, cacheSourceDir: output,
       retireCacheSourceAfterPromotion: true,
-      playerExecutable: player, title: project.name,
-      width: project.resolution.width, height: project.resolution.height,
-      startScript, sourceMap,
-      startRoute: project.entry.ui,
-      routes: Object.entries(project.uiEntryPoints).map(([id, scene]) => ({id, scene})),
-      contentVersion: project.contentVersion, saveVersion: project.saveVersion,
-      graphicsTier: project.graphicsTier ?? "basic",
-      saveMigrations: project.saveMigrations ?? [],
-      extensions: project.extensions,
-      encryption: options.flags.has("encrypt"),
-      compression,
-      archiveShards: Number(options.values.get("archive-shards") ?? "1"),
-      inputs, cancelFile: join(temp, ".cancel-package"),
+      cancelFile: join(temp, ".cancel-package"),
     };
     const requestPath = join(temp, "package-request.json");
     await writeFile(requestPath, `${JSON.stringify(request)}\n`, "utf8");
@@ -1440,6 +1463,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
         "Packager exited successfully without a completed event",
         options.positional[0])]);
     }
+    if (planKey !== undefined) await writePackageProvenance(staging, planKey);
     });
     return {output, player: join(output, basename(player))};
   } finally {
