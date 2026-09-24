@@ -69,6 +69,8 @@ non-looping clips, including mask references and audio-marker times. Revision-7
 track keys are bounded by the local clock's 86,400-second limit instead of the
 outer duration; audio markers remain on the outer clock. This is composition
 of known `.pxmotion` inputs, not an `.mtn` parser or conformance result.
+The helper also accepts an empty outer layer list as a composition starting
+point and rejects temporal overflow unless truncation is explicitly requested.
 
 Revision-1 sampling uses a layer's authored property until its first key;
 thereafter each key's curve determines interpolation toward the next key.

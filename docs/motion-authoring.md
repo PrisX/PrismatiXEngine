@@ -158,12 +158,18 @@ if (!combined.valid) throw new Error(JSON.stringify(combined.diagnostics));
 const json = serializeMotion(combined.value!);
 ```
 
-The child must be non-looping. It is hidden before `at`, begins at child-local
-time zero, and holds its final pose after its last key. `at` uses the named
-parent's local clock; audio markers are converted to the outer clock. The
-child canvas stays in its original logical units; explicitly scale it when
-embedding a different-sized canvas. This helper does not read or convert
-`.mtn`, resolve external motion references, or imply M2 visual equivalence.
+`outerMotion` may start with `layers: []`; the final combined resource is still
+validated as a normal motion document. The child must be non-looping. It is
+hidden before `at`, begins at child-local time zero, and holds its final pose
+after its last key. `at` uses the named parent's local clock; audio markers
+are converted to the outer clock. The helper rejects a clip that would start
+before or finish after the outer duration, since that would otherwise silently
+truncate animation. Set `allowTruncate: true` only when intentional; markers
+outside the outer interval are then discarded, and a clip wholly outside is
+still rejected. The child canvas stays in its original logical units;
+explicitly scale it when embedding a different-sized canvas. This helper does
+not read or convert `.mtn`, resolve external motion references, or imply M2
+visual equivalence.
 
 For a non-linear key interval, put the timing curve on the first key:
 

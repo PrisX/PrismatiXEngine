@@ -281,4 +281,31 @@ test("inlined motion rebases hierarchy, masks, tracks and audio time", () => {
     {id: "fast", speed: 4});
   assert.equal(compressed.valid, true, JSON.stringify(compressed.diagnostics));
   assert.equal(compressed.value?.tracks[1]?.keys[1]?.time, 2);
+  const blankCanvas = inlineMotion({id: "empty", canvas: {width: 160,
+    height: 90}, duration: 1, layers: []}, longChild,
+  {id: "first", speed: 4});
+  assert.equal(blankCanvas.valid, true, JSON.stringify(blankCanvas.diagnostics));
+  assert.deepEqual(blankCanvas.value?.layers.map((layer) => layer.id),
+    ["first", "first-image"]);
+  assert.equal(inlineMotion({id: "bad", canvas: {width: 160, height: 90},
+    duration: 0, layers: []}, longChild, {id: "first"}).valid, false);
+  const truncated = inlineMotion({id: "short", canvas: {width: 160,
+    height: 90}, duration: 1, layers: []}, {...longChild,
+    markers: [{time: 1.8, audio: "Assets/Audio/late.ogg", bus: "se" as const}]},
+  {id: "cut", speed: 2});
+  assert.equal(truncated.valid, true, JSON.stringify(truncated.diagnostics));
+  const offEnd = inlineMotion(shortOuter, longChild, {id: "late", at: 0.8,
+    speed: 2});
+  assert.equal(offEnd.valid, false);
+  assert.equal(offEnd.diagnostics[0]?.code, "PXMOTION2005");
+  assert.equal(inlineMotion({...outer, duration: 0.3}, child,
+    {id: "nested-late", parent: "anchor", at: 0.3, speed: 2})
+    .diagnostics[0]?.code, "PXMOTION2005");
+  const explicitlyCut = inlineMotion(shortOuter, {...longChild,
+    markers: [{time: 1.8, audio: "Assets/Audio/late.ogg", bus: "se" as const}]},
+  {id: "late", at: 0.8, speed: 2, allowTruncate: true});
+  assert.equal(explicitlyCut.valid, true, JSON.stringify(explicitlyCut.diagnostics));
+  assert.equal(explicitlyCut.value?.markers?.length ?? 0, 0);
+  assert.equal(inlineMotion(shortOuter, longChild,
+    {id: "unreachable", at: 2, allowTruncate: true}).valid, false);
 });

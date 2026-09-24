@@ -202,6 +202,8 @@ export interface InlineMotionOptions {
   readonly at?: number;
   /** Child playback speed relative to the parent's local clock. */
   readonly speed?: number;
+  /** Explicitly permit a child to start before or finish after the outer clip. */
+  readonly allowTruncate?: boolean;
   /** Offset applied to the child's draw-layer z values. */
   readonly z?: number;
   readonly x?: number;
@@ -218,14 +220,22 @@ export interface InlineMotionOptions {
  * Child IDs, mask references, tracks and audio markers are rebased together.
  * The child canvas remains in its authored logical units; use scaleX/scaleY
  * when placing it in a differently sized parent canvas. The group becomes
- * visible at its local time zero and holds its final pose after it ends. */
+ * visible at its local time zero and holds its final pose after it ends.
+ * An empty outer layer list is accepted as a composition starting point. */
 export function inlineMotion(outer: MotionInput, child: MotionInput,
   options: InlineMotionOptions): Result<MotionDocument> {
   const error = (code: string, message: string): Result<MotionDocument> => ({
     valid: false, diagnostics: [{severity: "error", code, message}],
   });
-  const base = defineMotion(outer);
+  // A standalone .pxmotion needs at least one layer, but a composition can
+  // naturally start with none. Validate its other fields through the normal
+  // contract using a temporary group, then omit that group from the result.
+  const emptyOuter = outer.layers.length === 0;
+  const base = defineMotion(emptyOuter ? {...outer, layers: [
+    {id: "inline-placeholder", kind: "group"},
+  ]} : outer);
   if (!base.valid || base.value === undefined) return base;
+  const outerDuration = base.value.duration;
   const nested = defineMotion(child);
   if (!nested.valid || nested.value === undefined) return nested;
   if (nested.value.loop) return error("PXMOTION2001",
@@ -234,6 +244,40 @@ export function inlineMotion(outer: MotionInput, child: MotionInput,
   const speed = options.speed ?? 1;
   if (!Number.isFinite(at) || at < 0 || !Number.isFinite(speed) || speed <= 0)
     return error("PXMOTION2002", "Inline motion requires at >= 0 and speed > 0");
+  const baseLayers = emptyOuter ? [] : base.value.layers;
+  const byId = new Map(baseLayers.map((layer) => [layer.id, layer]));
+  let parentScale = 1;
+  let parentOffset = 0;
+  if (options.parent !== undefined) {
+    const ancestry: MotionLayer[] = [];
+    let id: string | undefined = options.parent;
+    while (id !== undefined) {
+      const layer = byId.get(id);
+      if (layer === undefined) return error("PXMOTION2003",
+        `Inline motion parent does not exist: ${id}`);
+      ancestry.unshift(layer);
+      id = layer.parent;
+    }
+    for (const layer of ancestry) {
+      const layerScale = layer.timeScale ?? 1;
+      parentOffset = parentOffset * layerScale + (layer.timeOffset ?? 0);
+      parentScale *= layerScale;
+    }
+  }
+  const scale = parentScale * speed;
+  const offset = (parentOffset - at) * speed;
+  if (!Number.isFinite(scale) || scale <= 0 || !Number.isFinite(offset))
+    return error("PXMOTION2004",
+      "Inline motion requires a positive, finite parent-to-child time mapping");
+  const start = (at - parentOffset) / parentScale;
+  const end = (at + nested.value.duration / speed - parentOffset) / parentScale;
+  const epsilon = 0.000000001;
+  if (!Number.isFinite(start) || !Number.isFinite(end) ||
+      end <= 0 || start >= outerDuration ||
+      (!options.allowTruncate &&
+        (start < -epsilon || end > outerDuration + epsilon)))
+    return error("PXMOTION2005",
+      "Inlined clip falls outside the outer duration; adjust at/speed/duration or set allowTruncate");
   const layerId = (id: string) => `${options.id}-${id}`;
   const group: MotionGroupLayer = {
     id: options.id, kind: "group",
@@ -271,40 +315,17 @@ export function inlineMotion(outer: MotionInput, child: MotionInput,
   });
   let markers: MotionAudioMarker[] = [];
   if (nested.value.markers?.length) {
-    const byId = new Map(base.value.layers.map((layer) => [layer.id, layer]));
-    let parentScale = 1;
-    let parentOffset = 0;
-    if (options.parent !== undefined) {
-      const ancestry: MotionLayer[] = [];
-      let id: string | undefined = options.parent;
-      while (id !== undefined) {
-        const layer = byId.get(id);
-        if (layer === undefined) return error("PXMOTION2003",
-          `Inline motion parent does not exist: ${id}`);
-        ancestry.unshift(layer);
-        id = layer.parent;
-      }
-      for (const layer of ancestry) {
-        const layerScale = layer.timeScale ?? 1;
-        parentOffset = parentOffset * layerScale + (layer.timeOffset ?? 0);
-        parentScale *= layerScale;
-      }
-    }
-    const scale = parentScale * speed;
-    const offset = (parentOffset - at) * speed;
-    if (!Number.isFinite(scale) || scale <= 0 || !Number.isFinite(offset))
-      return error("PXMOTION2004",
-        "Nested audio markers require a positive, finite parent-to-child time mapping");
     markers = nested.value.markers.map((marker) => ({
       ...marker, id: layerId(marker.id), time: (marker.time - offset) / scale,
-    }));
+    })).filter((marker) => !options.allowTruncate ||
+      (marker.time >= 0 && marker.time <= outerDuration));
   }
   return defineMotion({
     id: base.value.id, canvas: base.value.canvas, duration: base.value.duration,
     loop: base.value.loop,
     ...(base.value.scaleMode === undefined ? {} :
       {scaleMode: base.value.scaleMode}),
-    layers: [...base.value.layers, group, ...layers],
+    layers: [...baseLayers, group, ...layers],
     tracks: [...base.value.tracks, ...tracks],
     markers: [...(base.value.markers ?? []), ...markers]
       .sort((left, right) => left.time - right.time),
