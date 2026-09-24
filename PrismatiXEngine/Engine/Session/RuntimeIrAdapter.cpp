@@ -571,6 +571,8 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             } else {
                 command.type = "animation";
                 Add(command, "clip", Argument(operation, "timeline"));
+                Add(command, "await", Argument(operation, "await"));
+                Add(command, "speed", Argument(operation, "speed"));
             }
         } else if (operation.kind == "effect") {
             command.type = "screen_effect";

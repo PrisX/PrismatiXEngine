@@ -20,6 +20,7 @@ import type {
 const maximumStoryBytes = 16 * 1024 * 1024;
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 const audioDurationPattern = /^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?(?:ms|s)?$/u;
+const positiveNumberPattern = /^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/u;
 
 function validAudioDuration(value: string): boolean {
   if (!audioDurationPattern.test(value)) return false;
@@ -714,7 +715,18 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         if (timeline === undefined) diagnostics.push(error("PXSTORY1125", "timeline requires a clip", node.span));
         else {
           const resolved = resolveResource(node, timeline);
-          if (resolved !== undefined) emit(node, "timeline", {timeline: resolved});
+          const awaitPlayback = named("await");
+          const speed = named("speed");
+          if (awaitPlayback !== undefined && awaitPlayback !== "true" && awaitPlayback !== "false")
+            diagnostics.push(error("PXSTORY1147", "timeline await must be true or false", node.span));
+          else if (speed !== undefined && (!positiveNumberPattern.test(speed) ||
+              !Number.isFinite(Math.fround(Number(speed))) || Math.fround(Number(speed)) <= 0))
+            diagnostics.push(error("PXSTORY1148", "timeline speed must be a positive finite playback rate", node.span));
+          else if (resolved !== undefined) emit(node, "timeline", {
+            timeline: resolved,
+            ...(awaitPlayback === undefined ? {} : {await: awaitPlayback}),
+            ...(speed === undefined ? {} : {speed}),
+          });
         }
         break;
       }
@@ -825,6 +837,8 @@ export function storyCommandCompletions(extensions: readonly ExtensionCommand[] 
     ambience: [{name:"asset", required:true}, {name:"fade", required:false}],
     "ambience.stop": [{name:"fade", required:false}],
     video: [{name:"asset", required:true}, {name:"skippable", required:false, values:[true, false]}],
+    timeline: [{name:"timeline", required:true},
+      {name:"await", required:false, values:[true, false]}, {name:"speed", required:false}],
     shake: [{name:"duration", required:true}, {name:"amplitude", required:false}],
     unlock: [{name:"kind", required:true}, {name:"id", required:true}],
   };

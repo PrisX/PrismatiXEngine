@@ -247,3 +247,11 @@ The decoded M2 source groups named `bure` and `bure2` are indexed images,
 not evidence of a shader blur command. Per-layer blur remains a general
 capability gap, but M2-specific necessity must be established by source
 semantics and rendered-frame comparison rather than those names.
+
+Story's existing `[timeline Content/Motion/intro.pxanim await=true speed=1.25]`
+command now exposes the Runtime's wait and playback-rate controls, so a scene
+can pause until a `.pxanim` finishes without a JavaScript workaround. This
+command plays `.pxanim`/`.pxtimeline` animation assets; it does **not** mount a
+`.pxmotion` visual composition into the Stage. Use TSX `<Motion>` for the latter
+until Story presentation, preloading and save/load state have a complete
+contract.

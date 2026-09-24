@@ -450,7 +450,8 @@ int main() {
         Operation("all-label", "label", {{"target", "end"}}),
         Operation("all-jump", "jump", {{"target", "end"}}),
         Operation("all-wait", "wait", {{"duration", "1ms"}}),
-        Operation("all-timeline-asset", "timeline", {{"timeline", "intro.pxanim"}}),
+        Operation("all-timeline-asset", "timeline", {{"timeline", "intro.pxanim"},
+                                                    {"await", "true"}, {"speed", "1.25"}}),
         Operation("all-timeline-inline", "timeline", {{"mode", "animate"}, {"target", "hero"}, {"x", "4"}, {"duration", "1ms"}}),
         Operation("all-effect", "effect", {{"value", "fade"}}),
         Operation("all-shake", "shake", {{"duration", "250ms"}, {"amplitude", "15"}}),
@@ -478,6 +479,10 @@ int main() {
     assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
         return command.type == "ambience" && command.Get("loop") == "false" &&
                command.Get("fade") == "50";
+    }));
+    assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
+        return command.type == "animation" && command.Get("clip") == "intro.pxanim" &&
+               command.Get("await") == "true" && command.Get("speed") == "1.25";
     }));
     assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
         return command.type == "char" && command.Get("transitionMode") == "auto" &&

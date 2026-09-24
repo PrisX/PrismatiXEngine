@@ -269,6 +269,29 @@ test("video lowers to a typed Runtime IR operation and resource dependency", () 
   assert.deepEqual(compiled.resourceDependencies, ["Assets/Video/op.mp4"]);
 });
 
+test("timeline authors waiting and playback speed without a script workaround", () => {
+  const compiled = compileStory(
+    parseStory("[timeline Content/Motion/intro.pxanim await=true speed=1.25]\n", "Story/intro.pxstory"),
+    {documentId: "intro"},
+  );
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  assert.deepEqual(compiled.runtimeIr?.operations.map((operation) => [operation.kind, operation.arguments]), [
+    ["timeline", {timeline:"Content/Motion/intro.pxanim", await:"true", speed:"1.25"}],
+  ]);
+  assert.deepEqual(compiled.resourceDependencies, ["Content/Motion/intro.pxanim"]);
+  for (const [options, code] of [
+    ["await=maybe", "PXSTORY1147"], ["speed=0", "PXSTORY1148"],
+    ["speed=1e100", "PXSTORY1148"], ["speed=1e-100", "PXSTORY1148"],
+  ] as const) {
+    const invalid = compileStory(
+      parseStory(`[timeline Content/Motion/intro.pxanim ${options}]\n`, "Story/invalid-timeline.pxstory"),
+      {documentId: "invalid-timeline"},
+    );
+    assert.equal(invalid.valid, false);
+    assert.ok(invalid.diagnostics.some((diagnostic) => diagnostic.code === code));
+  }
+});
+
 test("background transition rules lower with timing and both resources", () => {
   const compiled = compileStory(
     parseStory("[bg asset=Assets/Backgrounds/shrine.png rule=Content/Images/Rules/rule_7.png duration=1500ms vague=64]\n", "Story/background-rule.pxstory"),
