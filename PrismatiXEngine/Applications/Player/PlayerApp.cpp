@@ -2360,6 +2360,7 @@ void PlayerApp::BeginRouteVisualPreload(const std::string_view route) {
         m_routePreloadBatch = 0;
         m_routePreloadEffect = 0;
     }
+    m_routePreloadPaths.clear();
     const auto& transition = m_session->Routes().ActiveTransition();
     if (!transition || !m_boot.routeScenes.contains(std::string(route))) return;
     auto images = m_ui.RouteImageDependencies(route);
@@ -2367,11 +2368,30 @@ void PlayerApp::BeginRouteVisualPreload(const std::string_view route) {
         for (const auto& diagnostic : images.Diagnostics()) diag::Emit(diagnostic);
         return;
     }
-    if (images.Value().empty()) return;
+    m_routePreloadPaths = images.TakeValue();
+}
+
+void PlayerApp::FinishRouteVisualPreload(const std::string_view route) {
+    const auto& transition = m_session->Routes().ActiveTransition();
+    if (!transition) return;
+    int width = 0, height = 0;
+    m_runtime.Renderer().GetLogicalSize(width, height);
+    px::Input neutral;
+    neutral.InjectFrame(-1000.0f, -1000.0f, false);
+    (void)m_ui.Update(neutral, width, height, 0.0f);
+    auto mounted = m_ui.MountedImageDependencies();
+    m_routePreloadPaths.insert(m_routePreloadPaths.end(),
+                               mounted.begin(), mounted.end());
+    std::set<std::string> seen;
+    std::erase_if(m_routePreloadPaths, [&seen](const std::string& path) {
+        return path.empty() || !seen.insert(path).second;
+    });
+    if (m_routePreloadPaths.empty()) return;
     std::vector<graphics::AssetPreloadRequest> requests;
-    requests.reserve(images.Value().size());
-    for (const auto& path : images.Value())
+    requests.reserve(m_routePreloadPaths.size());
+    for (const auto& path : m_routePreloadPaths)
         requests.push_back({path, graphics::AssetPreloadPriority::Critical});
+    m_routePreloadPaths.clear();
     const auto batch = m_runtime.Assets().BeginTexturePreload(std::move(requests));
     const auto progress = m_runtime.Assets().TexturePreloadProgress(batch);
     if (progress.Finished() ||
@@ -2462,6 +2482,7 @@ void PlayerApp::PresentRoute(const std::string& route,
             }
         }
     }
+    if (!m_quitRequested) FinishRouteVisualPreload(target);
 }
 
 void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {

@@ -124,6 +124,9 @@ public:
     [[nodiscard]] virtual ChildLayoutPolicy ChildPolicy() const {
         return ChildLayoutPolicy::Free;
     }
+    // Reports image paths resolved on this mounted control. Custom controls
+    // can participate in route preloading without exposing render internals.
+    virtual void CollectImageDependencies(std::vector<std::string>&) const {}
 
     void SetAnchors(Rect anchors);
     [[nodiscard]] Rect Anchors() const { return m_anchors; }

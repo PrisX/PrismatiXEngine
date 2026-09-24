@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <unordered_set>
 
 namespace px::ui {
 namespace {
@@ -633,6 +634,23 @@ Status UIContext::RestoreAnimationState(const UIAnimationRuntimeState& state){re
 void UIContext::Render(graphics::Renderer2D& renderer) {
     if (m_root) m_root->Draw(renderer, m_theme);
     if (m_showDiagnostics) RenderDiagnosticOverlay(renderer);
+}
+
+std::vector<std::string> UIContext::MountedImageDependencies() const {
+    std::vector<std::string> paths;
+    if (!m_root) return paths;
+    const auto collect = [&paths](const auto& self, const Control& control) -> void {
+        control.CollectImageDependencies(paths);
+        for (const auto& child : control.Children())
+            if (const auto* mounted = dynamic_cast<const Control*>(child.get()))
+                self(self, *mounted);
+    };
+    collect(collect, *m_root);
+    std::unordered_set<std::string> seen;
+    std::erase_if(paths, [&seen](const std::string& path) {
+        return path.empty() || !seen.insert(path).second;
+    });
+    return paths;
 }
 
 void UIContext::RenderDiagnosticOverlay(graphics::Renderer2D& renderer) {

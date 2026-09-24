@@ -80,6 +80,9 @@ public:
                                  const std::string& sourcePath = {});
     [[nodiscard]] Result<std::vector<std::string>> RouteImageDependencies(
         std::string_view route) const;
+    [[nodiscard]] std::vector<std::string> MountedImageDependencies() const {
+        return m_context.MountedImageDependencies();
+    }
     void SetUiAssetResolver(UiAssetResolver resolver) {
         m_studioAssetResolver = std::move(resolver);
     }

@@ -103,6 +103,8 @@ public:
                                   const Variant& value);
     void ResetAnimationPropertyOverrides(std::string_view target = {});
     void Render(graphics::Renderer2D& renderer);
+    // Includes currently mounted/virtualized children and runtime-bound paths.
+    [[nodiscard]] std::vector<std::string> MountedImageDependencies() const;
     void SetDiagnosticOverlayEnabled(bool value) { m_showDiagnostics = value; }
     void SetAccessibilityAdapter(
         std::shared_ptr<accessibility::SemanticAdapter> adapter);

@@ -361,6 +361,7 @@ void TestAuthoredItemTemplate() {
     constexpr auto gridId = "a2a2a2a2-a2a2-42a2-82a2-a2a2a2a2a2a2";
     constexpr auto templateId = "a3a3a3a3-a3a3-43a3-83a3-a3a3a3a3a3a3";
     constexpr auto buttonId = "a4a4a4a4-a4a4-44a4-84a4-a4a4a4a4a4a4";
+    constexpr auto imageId = "a5a5a5a5-a5a5-45a5-85a5-a5a5a5a5a5a5";
     px::sdk::UiDocument document;
     document.id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     document.name = "Authored items";
@@ -389,11 +390,19 @@ void TestAuthoredItemTemplate() {
     button.bindings.emplace("enabled", px::sdk::UiPropertyBinding{"item.enabled", {}});
     button.onClick = px::sdk::UiAction{"item.select", {{"index", std::string{"$index"}},
                                                       {"key", std::string{"$key"}}}};
-    document.nodes = {root, grid, item, button};
+    px::sdk::UiNode image;
+    image.id = imageId; image.parentId = templateId;
+    image.name = "BoundImage"; image.kind = px::sdk::UiNodeKind::Image;
+    image.runtimeType = "TextureRect";
+    image.layout.width = 100; image.layout.height = 40;
+    image.bindings.emplace("path", px::sdk::UiPropertyBinding{"item.image", {}});
+    document.nodes = {root, grid, item, button, image};
 
     const auto makeItem = [](std::string key, std::string title) {
+        const std::string imagePath = "Assets/" + key + ".png";
         return px::Variant(px::VariantObject{{"key", px::Variant(std::move(key))},
                                              {"title", px::Variant(std::move(title))},
+                                             {"image", px::Variant(imagePath)},
                                              {"enabled", px::Variant(true)}});
     };
     px::ui::ObservableViewModel model;
@@ -433,7 +442,7 @@ void TestAuthoredItemTemplate() {
         {.sourcePath = "authored-items.pxui", .viewModel = &model});
     if (!applied) for (const auto& diagnostic : applied.Diagnostics())
         std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
-    Check(applied && applied.Value().nodeCount == 4,
+    Check(applied && applied.Value().nodeCount == 5,
           "one item template must install once as an authored definition");
     auto* view = dynamic_cast<px::ui::GridView*>(context.Root()->Find(*px::Uuid::Parse(gridId)));
     Check(view && view->HasSource() && view->Children().empty(),
@@ -442,6 +451,9 @@ void TestAuthoredItemTemplate() {
     context.Root()->Arrange({0, 0, 300, 200});
     Check(view->RealizedCount() == 2 && view->Children().size() == 2,
           "authored item source must realize one Control per visible data item");
+    Check(context.MountedImageDependencies() ==
+              std::vector<std::string>{"Assets/first.png", "Assets/second.png"},
+          "mounted image dependencies resolve item.image on realized repeater children");
     auto* first = dynamic_cast<px::ui::Control*>(view->Child(0));
     auto* firstButton = first ? dynamic_cast<px::ui::Button*>(first->Child(0)) : nullptr;
     Check(firstButton && firstButton->Text() == "First",
@@ -470,6 +482,9 @@ void TestAuthoredItemTemplate() {
     context.Root()->Arrange({0, 0, 300, 200});
     Check(view->RealizedCount() == 1 && view->Child(0)->Id() == firstId,
           "shrinking collection must recycle stale controls and retain surviving key");
+    Check(context.MountedImageDependencies() ==
+              std::vector<std::string>{"Assets/first.png"},
+          "mounted image dependencies exclude virtualized items after collection shrink");
     Check(static_cast<bool>(model.Write("slots", px::Variant(px::VariantArray{
         makeItem("first", "Ambiguous"), makeItem("first", "Duplicate")}))),
           "ViewModel can receive an invalid application-level item snapshot");
@@ -555,9 +570,30 @@ void TestGalgameAuthoredSlots() {
     Check(selected == "0", "authored Save item must dispatch the selected slot index");
 }
 
+void TestMountedImageDependencies() {
+    px::ui::UIContext context;
+    auto root = std::make_unique<px::ui::Control>("Root");
+    auto image = std::make_unique<px::ui::TextureRect>("Assets/initial.png");
+    auto* boundImage = image.get();
+    Check(root->AddChild(std::move(image)).IsOk(), "mounted image fixture attaches");
+    auto button = std::make_unique<px::ui::TextureButton>();
+    button->SetNormalPath("Assets/initial.png");
+    button->SetHoverPath("Assets/hover.png");
+    Check(root->AddChild(std::move(button)).IsOk(), "mounted button fixture attaches");
+    Check(context.SetRoot(std::move(root)).IsOk(), "mounted image fixture installs");
+    const auto initial = context.MountedImageDependencies();
+    Check(initial == std::vector<std::string>{"Assets/initial.png", "Assets/hover.png"},
+          "mounted image dependencies include interaction states without duplicate paths");
+    boundImage->SetPath("Assets/bound.png");
+    const auto rebound = context.MountedImageDependencies();
+    Check(rebound == std::vector<std::string>{"Assets/bound.png", "Assets/initial.png", "Assets/hover.png"},
+          "mounted image dependencies observe runtime-bound path changes");
+}
+
 int main() {
     TestAuthoredItemTemplate();
     TestGalgameAuthoredSlots();
+    TestMountedImageDependencies();
     Check(px::ui::RegisterBuiltinUITypes().IsOk(), "typed caption fixture requires builtin controls");
     for (const std::string type : {"Label", "RichTextLabel", "Button", "IconButton"}) {
         px::sdk::UiDocument captions;

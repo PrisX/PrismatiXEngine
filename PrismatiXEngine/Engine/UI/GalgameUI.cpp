@@ -32,6 +32,9 @@ public:
         SetAccessibilityLabel(m_title);
         SetAccessibilityDescription(m_subtitle);
     }
+    void CollectImageDependencies(std::vector<std::string>& paths) const override {
+        if (!m_image.empty()) paths.push_back(m_image);
+    }
 protected:
     void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) override {
         const auto& style = theme.Resolve(*this);

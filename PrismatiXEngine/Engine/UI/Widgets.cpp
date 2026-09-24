@@ -177,7 +177,16 @@ void TextureButton::DrawSelf(graphics::Renderer2D& renderer,
     Button::DrawSelf(renderer, theme);
 }
 
+void TextureButton::CollectImageDependencies(std::vector<std::string>& paths) const {
+    for (const auto* path : {&m_normalPath, &m_hoverPath, &m_pressedPath,
+                             &m_disabledPath})
+        if (!path->empty()) paths.push_back(*path);
+}
+
 void TextureRect::SetOpacity(float value) { m_opacity = std::clamp(value, 0.0f, 1.0f); }
+void TextureRect::CollectImageDependencies(std::vector<std::string>& paths) const {
+    if (!m_path.empty()) paths.push_back(m_path);
+}
 void TextureRect::DrawSelf(graphics::Renderer2D& renderer, const Theme&) {
     if (!m_path.empty()) renderer.DrawImageInRect(m_path,LayoutRect(),ToScaleMode(m_scaleMode),
         Horizontal(m_horizontalAlignment),Vertical(m_verticalAlignment),static_cast<std::uint8_t>(m_opacity*255.0f));
@@ -272,6 +281,12 @@ void MotionRect::DrawSelf(graphics::Renderer2D& renderer, const Theme&) {
         animation::DrawMotionPose(renderer, *m_clip, *m_sampler, LayoutRect());
 }
 
+void MotionRect::CollectImageDependencies(std::vector<std::string>& paths) const {
+    if (!m_clip) return;
+    for (const auto& layer : m_clip->layers)
+        if (!layer.image.empty()) paths.push_back(layer.image);
+}
+
 void ProgressBar::SetRange(double minimum, double maximum) {
     m_minimum = minimum; m_maximum = std::max(minimum, maximum); SetValue(m_value);
 }
@@ -315,6 +330,12 @@ bool Slider::PerformAccessibilityAction(const std::string_view action,
     return true;
 }
 Vec2 Slider::MeasureOverride(Vec2){return{180,26};}
+void Slider::CollectImageDependencies(std::vector<std::string>& paths) const {
+    for (const auto* path : {&m_railPath, &m_knobPath, &m_knobHoverPath,
+                             &m_knobPressedPath})
+        if (!path->empty()) paths.push_back(*path);
+}
+
 void Slider::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){
     const auto& style=theme.Resolve(*this);const Rect r=LayoutRect();
     const float ratio=m_max>m_min?static_cast<float>((m_value-m_min)/(m_max-m_min)):0;
@@ -628,6 +649,9 @@ void RichTextLabel::DrawSelf(graphics::Renderer2D& renderer,
     renderer.PopClip();
 }
 
+void NinePatchRect::CollectImageDependencies(std::vector<std::string>& paths) const {
+    if (!m_path.empty()) paths.push_back(m_path);
+}
 void NinePatchRect::DrawSelf(graphics::Renderer2D& renderer,const Theme&){if(!m_path.empty())renderer.DrawNinePatch(m_path,LayoutRect(),m_margins,m_drawCenter);}
 
 TextEdit::TextEdit(std::string text,std::string name)
@@ -826,6 +850,9 @@ Vec2 ScrollBar::MeasureOverride(Vec2){return m_vertical?Vec2{18,140}:Vec2{140,18
 void ScrollBar::DrawSelf(graphics::Renderer2D& renderer,const Theme& theme){const auto& style=theme.Resolve(*this);const Rect area=LayoutRect();renderer.DrawRoundedRect(area,std::min(area.w,area.h)*.5f,style.normal.background);const double range=Maximum()-Minimum();const float position=range>0?static_cast<float>((Value()-Minimum())/range):0;const float page=static_cast<float>(std::clamp(m_page,0.05,1.0));Rect thumb=area;if(m_vertical){thumb.h=std::max(area.w,area.h*page);thumb.y=area.y+(area.h-thumb.h)*position;}else{thumb.w=std::max(area.h,area.w*page);thumb.x=area.x+(area.w-thumb.w)*position;}renderer.DrawRoundedRect(thumb,std::min(thumb.w,thumb.h)*.5f,style.focused.border);}
 
 void VideoRect::SetPath(std::string value){if(m_path==value)return;const bool resume=m_playing||m_autoplay;if(m_playback.close)m_playback.close();m_playing=false;m_path=std::move(value);if(resume)SetPlaying(true);}
+void VideoRect::CollectImageDependencies(std::vector<std::string>& paths) const {
+    if (!m_poster.empty()) paths.push_back(m_poster);
+}
 void VideoRect::SetAutoplay(const bool value){m_autoplay=value;if(value&&!m_playing)SetPlaying(true);}
 void VideoRect::SetPlayback(Playback playback){if(m_playback.close)m_playback.close();m_playback=std::move(playback);const bool start=m_playing||m_autoplay;m_playing=false;if(start)SetPlaying(true);}
 void VideoRect::SetPlaying(const bool value){if(!value){if(!m_playing)return;if(m_playback.close)m_playback.close();m_playing=false;EmitSignal("playbackStopped");return;}if(m_playing&&(!m_playback.playing||m_playback.playing()))return;const bool opened=!m_path.empty()&&m_playback.open&&m_playback.open(m_path);m_playing=opened;if(opened)EmitSignal("playbackStarted");}

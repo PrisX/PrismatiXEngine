@@ -142,6 +142,7 @@ public:
     [[nodiscard]] const std::string& HoverPath() const { return m_hoverPath; }
     [[nodiscard]] const std::string& PressedPath() const { return m_pressedPath; }
     [[nodiscard]] const std::string& DisabledPath() const { return m_disabledPath; }
+    void CollectImageDependencies(std::vector<std::string>& paths) const override;
     void SetScaleMode(TextureScaleMode value) { m_scaleMode = value; }
     [[nodiscard]] TextureScaleMode ScaleMode() const { return m_scaleMode; }
 
@@ -163,6 +164,7 @@ public:
     [[nodiscard]] std::string_view TypeName() const override { return "TextureRect"; }
     void SetPath(std::string value) { m_path = std::move(value); }
     [[nodiscard]] const std::string& Path() const { return m_path; }
+    void CollectImageDependencies(std::vector<std::string>& paths) const override;
     void SetTexture(ResourceRefValue value) {
         m_texture = std::move(value);
         m_path = m_texture.lastKnownPath;
@@ -214,6 +216,7 @@ public:
     void Seek(double seconds);
     [[nodiscard]] double Position() const { return m_position; }
     [[nodiscard]] const sdk::MotionClip* Clip() const { return m_clip.get(); }
+    void CollectImageDependencies(std::vector<std::string>& paths) const override;
     void Update(float deltaSeconds) override;
 
 protected:
@@ -289,6 +292,7 @@ public:
     [[nodiscard]] const std::string& KnobPath() const{return m_knobPath;}
     [[nodiscard]] const std::string& KnobHoverPath() const{return m_knobHoverPath;}
     [[nodiscard]] const std::string& KnobPressedPath() const{return m_knobPressedPath;}
+    void CollectImageDependencies(std::vector<std::string>& paths) const override;
     void SetRailHeight(float value){m_railHeight=std::max(1.0f,value);}
     void SetKnobSize(float value){m_knobSize=std::max(1.0f,value);}
     [[nodiscard]] float RailHeight() const{return m_railHeight;}
@@ -363,6 +367,7 @@ public:
     [[nodiscard]] std::string_view TypeName() const override{return "NinePatchRect";}
     void SetPath(std::string value){m_path=std::move(value);}
     [[nodiscard]] const std::string& Path()const{return m_path;}
+    void CollectImageDependencies(std::vector<std::string>& paths) const override;
     void SetPatchMargins(Rect value){m_margins=value;}
     [[nodiscard]] Rect PatchMargins()const{return m_margins;}
     void SetDrawCenter(bool value){m_drawCenter=value;}
@@ -482,6 +487,7 @@ public:
     [[nodiscard]] const std::string& Path()const{return m_path;}
     void SetPoster(std::string value){m_poster=std::move(value);}
     [[nodiscard]] const std::string& Poster()const{return m_poster;}
+    void CollectImageDependencies(std::vector<std::string>& paths) const override;
     void SetAutoplay(bool value);
     [[nodiscard]] bool Autoplay()const{return m_autoplay;}
     void SetLoop(bool value){m_loop=value;}
