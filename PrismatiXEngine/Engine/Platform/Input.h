@@ -116,6 +116,8 @@ public:
     [[nodiscard]] bool HasAction(std::string_view action) const;
     [[nodiscard]] bool UnregisterAction(std::string_view action);
     [[nodiscard]] bool ClearBindings(std::string_view action);
+    // Clears keyboard keys only, retaining this action's context, wheel and gamepad.
+    [[nodiscard]] bool ClearKeyboardBindings(std::string_view action);
     [[nodiscard]] bool BindKey(std::string_view action, int scancode);
     [[nodiscard]] bool BindGamepadButton(std::string_view action, int button);
     // Wheel gestures are transient actions. Threshold is accumulated within
@@ -229,6 +231,7 @@ private:
     }
     struct NamedBindings {
         std::set<int> keys;
+        std::vector<int> keyOrder;
         std::set<int> gamepadButtons;
         std::string context = "global";
         WheelDirection wheelDirection = WheelDirection::None;

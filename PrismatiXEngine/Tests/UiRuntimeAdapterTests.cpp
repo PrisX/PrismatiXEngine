@@ -7,6 +7,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <SDL3/SDL_scancode.h>
 
 #include "Engine/SDK/Ui.h"
 #include "Engine/Platform/Input.h"
@@ -608,6 +609,43 @@ int main() {
     TestGalgameAuthoredSlots();
     TestMountedImageDependencies();
     Check(px::ui::RegisterBuiltinUITypes().IsOk(), "typed caption fixture requires builtin controls");
+    {
+        px::sdk::UiDocument bindingScene;
+        bindingScene.id = "12000000-0000-4000-8000-000000000001";
+        bindingScene.rootId = "12000000-0000-4000-8000-000000000002";
+        px::sdk::UiNode root;
+        root.id = bindingScene.rootId;
+        root.kind = px::sdk::UiNodeKind::Group;
+        root.runtimeType = "Control";
+        root.layout.width = 800;
+        root.layout.height = 600;
+        px::sdk::UiNode keyButton;
+        keyButton.id = "12000000-0000-4000-8000-000000000003";
+        keyButton.parentId = root.id;
+        keyButton.kind = px::sdk::UiNodeKind::Button;
+        keyButton.runtimeType = "TextureButton";
+        keyButton.text = "F2 / S";
+        keyButton.layout.width = 247;
+        keyButton.layout.height = 34;
+        keyButton.runtimeProperties.emplace("bindingAction", "original-save");
+        bindingScene.nodes = {root, keyButton};
+        auto tree = px::ui::BuildUiRuntimeTree(bindingScene);
+        Check(tree.Valid(), "authored TextureButton bindingAction adapts to Runtime");
+        px::Input keys;
+        Check(keys.RegisterAction("original-save") &&
+                  keys.BindKey("original-save", SDL_SCANCODE_F2) &&
+                  keys.BindKey("original-save", SDL_SCANCODE_S),
+              "authored binding fixture registers its original shortcut");
+        px::ui::UIContext context;
+        context.SetInputBindingService(&keys);
+        Check(context.SetRoot(std::move(tree.root)).IsOk(),
+              "authored binding button mounts with the input service");
+        const auto* mounted = dynamic_cast<const px::ui::TextureButton*>(
+            context.Root()->Find(*px::Uuid::Parse(keyButton.id)));
+        Check(mounted && mounted->BindingAction() == "original-save" &&
+                  mounted->Text() == "F2 / S",
+              "authored Runtime UI shows the current binding in source order");
+    }
     for (const std::string type : {"Label", "RichTextLabel", "Button", "IconButton"}) {
         px::sdk::UiDocument captions;
         captions.id = "11000000-0000-4000-8000-000000000001";

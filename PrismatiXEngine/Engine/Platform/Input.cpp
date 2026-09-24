@@ -118,6 +118,7 @@ bool Input::RegisterAction(std::string action) {
     if (const auto pending = m_pendingKeyBindings.find(found->first);
         pending != m_pendingKeyBindings.end()) {
         found->second.keys = {pending->second.begin(), pending->second.end()};
+        found->second.keyOrder = pending->second;
         if (const auto builtin = BuiltinAction(found->first))
             m_keyBindings[ActionIndex(*builtin)] = found->second.keys;
         m_pendingKeyBindings.erase(pending);
@@ -149,12 +150,23 @@ bool Input::ClearBindings(const std::string_view action) {
     return true;
 }
 
+bool Input::ClearKeyboardBindings(const std::string_view action) {
+    const auto found = m_namedBindings.find(action);
+    if (found == m_namedBindings.end()) return false;
+    found->second.keys.clear();
+    found->second.keyOrder.clear();
+    if (const auto builtin = BuiltinAction(action))
+        m_keyBindings[ActionIndex(*builtin)].clear();
+    return true;
+}
+
 bool Input::BindKey(const std::string_view action, const int scancode) {
     const auto found = m_namedBindings.find(action);
     if (found == m_namedBindings.end() ||
         scancode <= SDL_SCANCODE_UNKNOWN ||
         scancode >= SDL_SCANCODE_COUNT) return false;
-    found->second.keys.insert(scancode);
+    if (found->second.keys.insert(scancode).second)
+        found->second.keyOrder.push_back(scancode);
     if (const auto builtin = BuiltinAction(action))
         m_keyBindings[ActionIndex(*builtin)].insert(scancode);
     return true;
@@ -250,7 +262,7 @@ std::string Input::KeyName(const int scancode) {
 std::vector<int> Input::KeyBindings(const std::string_view action) const {
     const auto found = m_namedBindings.find(action);
     if (found == m_namedBindings.end()) return {};
-    return {found->second.keys.begin(), found->second.keys.end()};
+    return found->second.keyOrder;
 }
 
 bool Input::SetDefaultKeyboardBindings(const std::string_view action,
@@ -285,6 +297,7 @@ KeyRebindResult Input::RebindKey(const std::string_view action,
         return result;
     }
     found->second.keys = {scancode};
+    found->second.keyOrder = {scancode};
     if (const auto builtin = BuiltinAction(action))
         m_keyBindings[ActionIndex(*builtin)] = {scancode};
     return result;
@@ -310,7 +323,7 @@ void Input::CancelKeyCapture() {
 KeyboardBindingMap Input::CaptureKeyboardBindings() const {
     KeyboardBindingMap result = m_pendingKeyBindings;
     for (const auto& [action, bindings] : m_namedBindings)
-        result[action] = {bindings.keys.begin(), bindings.keys.end()};
+        result[action] = bindings.keyOrder;
     return result;
 }
 
@@ -337,6 +350,7 @@ bool Input::RestoreKeyboardBindings(const KeyboardBindingMap& bindings) {
             continue;
         }
         found->second.keys = {keys.begin(), keys.end()};
+        found->second.keyOrder = keys;
         if (const auto builtin = BuiltinAction(action))
             builtins[ActionIndex(*builtin)] = found->second.keys;
     }
@@ -352,10 +366,13 @@ void Input::ResetKeyboardBindings() {
         if (const auto authored = m_defaultKeyboardBindings.find(action);
             authored != m_defaultKeyboardBindings.end()) {
             bindings.keys = {authored->second.begin(), authored->second.end()};
+            bindings.keyOrder = authored->second;
         } else {
             const auto found = defaults.m_namedBindings.find(action);
             bindings.keys = found == defaults.m_namedBindings.end()
                                 ? std::set<int>{} : found->second.keys;
+            bindings.keyOrder = found == defaults.m_namedBindings.end()
+                                    ? std::vector<int>{} : found->second.keyOrder;
         }
     }
     m_keyBindings = defaults.m_keyBindings;

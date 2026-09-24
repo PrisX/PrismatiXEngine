@@ -45,8 +45,12 @@ registered screen while gameplay is active; it requires `context: "game"`.
 An action without a route or UI command can be read
 by an extension or host using the named-action input API. `keys` may be
 omitted: a new custom action starts unbound, while an engine built-in keeps
-its engine default. Saved user keyboard choices override authored defaults;
+its engine default. Set `keys: []` explicitly to remove a built-in's default
+keyboard keys without removing its gamepad or wheel binding. Saved user
+keyboard choices override authored defaults;
 Reset restores the authored defaults. Gamepad and wheel bindings are left intact.
+The order in `keys` is preserved for UI captions and saved settings (for
+example, `F2 / S` stays in that order rather than scancode order).
 Wheel `direction` is `up`, `down`, or `none`; `none` disables an engine default.
 The optional `threshold` is accumulated within one frame (0..100); omitting it
 fires on any movement. The UI still receives its independent raw Scroll event.

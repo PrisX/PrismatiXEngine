@@ -325,6 +325,24 @@ name = "affinity"
             std::string(prefix) + R"("inputActions":[{"id":"screen.open.gallery","context":"ui","route":"gallery"}]})");
         suite.Expect(HasCode(wrongContext, "PXCAT1119"),
                      "route shortcuts cannot be declared in a context the Player never checks");
+        const auto clearBuiltin = px::sdk::LoadCanonicalGameCatalogResources(
+            std::string(prefix) + R"("inputActions":[{"id":"toggle-skip","context":"game","keys":[]}]})");
+        const auto retainBuiltin = px::sdk::LoadCanonicalGameCatalogResources(
+            std::string(prefix) + R"("inputActions":[{"id":"toggle-skip","context":"game"}]})");
+        suite.Expect(clearBuiltin.Valid() && retainBuiltin.Valid() &&
+                         clearBuiltin.document.inputActions[0].keysSpecified &&
+                         clearBuiltin.document.inputActions[0].keys.empty() &&
+                         !retainBuiltin.document.inputActions[0].keysSpecified,
+                     "empty authored keys clear defaults while omission retains them");
+        px::vn::GameCatalog runtime;
+        suite.Require(runtime.LoadCanonical(
+            std::string(prefix) + R"("inputActions":[{"id":"toggle-skip","context":"game","keys":[]}]})",
+            R"({"format":"PrismatiXProject","schemaRevision":2,"assets":[]})",
+            [](std::string_view) { return false; }).IsOk(),
+            "runtime accepts an explicitly empty keyboard default");
+        suite.Expect(runtime.InputActions().size() == 1 &&
+                         runtime.InputActions()[0].keysSpecified,
+                     "empty-key intent survives catalog-to-Player transfer");
     });
 
     suite.Run("Revision3InputActionsPreserveUiCommands", [&] {

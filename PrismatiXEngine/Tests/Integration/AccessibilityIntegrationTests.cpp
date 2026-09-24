@@ -240,6 +240,41 @@ int main() {
     Check(remapped.ActionPressed(px::InputAction::Accept),
           "remappable UI operations use the authored replacement binding");
 
+    px::Input clearedKeyboard;
+    Check(clearedKeyboard.SetDefaultKeyboardBindings("toggle-skip", {}) &&
+              clearedKeyboard.ClearKeyboardBindings("toggle-skip") &&
+              clearedKeyboard.KeyBindings("toggle-skip").empty(),
+          "explicit empty authored keys remove only the built-in keyboard default");
+    SDL_Event retainedGamepad{};
+    retainedGamepad.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+    retainedGamepad.gbutton.button = SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER;
+    clearedKeyboard.Process(retainedGamepad);
+    Check(clearedKeyboard.ActionPressed(px::InputAction::ToggleSkip),
+          "keyboard clearing retains the built-in gamepad binding");
+    clearedKeyboard.ResetKeyboardBindings();
+    Check(clearedKeyboard.KeyBindings("toggle-skip").empty(),
+          "Reset restores an explicitly empty authored keyboard default");
+
+    px::Input orderedKeys;
+    Check(orderedKeys.RegisterAction("original-save") &&
+              orderedKeys.BindKey("original-save", SDL_SCANCODE_F2) &&
+              orderedKeys.BindKey("original-save", SDL_SCANCODE_S) &&
+              orderedKeys.KeyBindings("original-save") ==
+                  std::vector<int>{SDL_SCANCODE_F2, SDL_SCANCODE_S},
+          "named keyboard captions retain authored order instead of scancode order");
+    const auto savedOrder = orderedKeys.CaptureKeyboardBindings();
+    px::Input restoredOrder;
+    Check(restoredOrder.RestoreKeyboardBindings(savedOrder) &&
+              restoredOrder.RegisterAction("original-save") &&
+              restoredOrder.KeyBindings("original-save") ==
+                  std::vector<int>{SDL_SCANCODE_F2, SDL_SCANCODE_S},
+          "keyboard binding order survives saved settings and late action registration");
+    px::ui::Button orderedCaption;
+    orderedCaption.SetInputBindingService(&restoredOrder);
+    orderedCaption.SetBindingAction("original-save");
+    Check(orderedCaption.Text() == "F2 / S",
+          "authored shortcut caption retains the original primary-key order");
+
     px::Input capture;
     Check(capture.BeginKeyCapture() && capture.KeyCaptureActive() &&
               !capture.BeginKeyCapture(),

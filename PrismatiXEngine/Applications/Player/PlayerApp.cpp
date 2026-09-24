@@ -1341,7 +1341,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
             std::string(path), graphics::AssetPreloadPriority::Normal);
     });
     const std::vector<std::string> authoredUiCommands = {
-        "set.fullscreen.on", "set.fullscreen.off",
+        "set.fullscreen.on", "set.fullscreen.off", "set.fullscreen.toggle",
         "set.reducedmotion.on", "set.reducedmotion.off",
         "settings.reset", "settings.noop",
         "music.play", "music.previous", "music.stop", "music.resume",
@@ -1512,7 +1512,8 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         }
         if ((!input.HasAction(action.id) && !input.RegisterAction(action.id)) ||
             !input.SetActionContext(action.id, action.context) ||
-            (!keys.empty() && !input.SetDefaultKeyboardBindings(action.id, keys))) {
+            (action.keysSpecified &&
+             !input.SetDefaultKeyboardBindings(action.id, keys))) {
             diag::Emit(diag::Diagnostic{.severity = diag::Severity::Fatal,
                                         .code = "PXPLAYER5021",
                                         .category = "Player.Input",
@@ -1520,11 +1521,16 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                                         .details = action.id});
             return false;
         }
-        if (!m_settings.keyboardBindings.contains(action.id) && !keys.empty()) {
-            if (input.RebindKey(action.id, keys.front(), true).status !=
-                KeyRebindStatus::Applied) return false;
-            for (std::size_t index = 1; index < keys.size(); ++index)
-                if (!input.BindKey(action.id, keys[index])) return false;
+        if (!m_settings.keyboardBindings.contains(action.id) &&
+            action.keysSpecified) {
+            if (keys.empty()) {
+                if (!input.ClearKeyboardBindings(action.id)) return false;
+            } else {
+                if (input.RebindKey(action.id, keys.front(), true).status !=
+                    KeyRebindStatus::Applied) return false;
+                for (std::size_t index = 1; index < keys.size(); ++index)
+                    if (!input.BindKey(action.id, keys[index])) return false;
+            }
         }
         if (!action.wheelDirection.empty()) {
             const WheelDirection direction = action.wheelDirection == "up"
@@ -3647,7 +3653,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     if (input.ActionPressed(InputAction::Rollback)) {
         RollbackOneLine();
     }
-    if (input.RightClick()) {
+    if (input.RightClick() || input.ActionPressed(InputAction::ToggleUi)) {
         m_hudHidden = !m_hudHidden;
     }
 

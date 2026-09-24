@@ -69,6 +69,7 @@ struct GameCatalogInputAction {
     std::string id;
     std::string context;
     std::vector<std::string> keys;
+    bool keysSpecified = false;
     std::string route;
     std::string wheelDirection;
     float wheelThreshold = 0.0f;

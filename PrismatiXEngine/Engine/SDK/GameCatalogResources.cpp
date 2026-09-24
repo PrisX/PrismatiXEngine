@@ -793,10 +793,11 @@ GameCatalogResourcesLoadResult LoadCanonicalGameCatalogResources(
                             action.uiArgument = (*uiAction)["argument"].get<std::string>();
                     }
                     if (const auto keys = source.find("keys"); keys != source.end()) {
-                        if (!keys->is_array() || keys->empty() || keys->size() > 32) {
-                            Add(result, "PXCAT1120", "input action keys must contain 1 to 32 names", path, 0, action.id);
+                        if (!keys->is_array() || keys->size() > 32) {
+                            Add(result, "PXCAT1120", "input action keys must contain 0 to 32 names", path, 0, action.id);
                             continue;
                         }
+                        action.keysSpecified = true;
                         std::unordered_set<std::string> names;
                         bool valid = true;
                         for (const auto& key : *keys) {

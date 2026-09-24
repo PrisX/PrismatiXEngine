@@ -98,6 +98,9 @@ test("game input actions declare contexts and default keys without legacy key co
     ]};
   assert.equal(validateDocument("game", game).valid, true);
   assert.equal(validateDocument("game", {...game, inputActions: [
+    {id: "toggle-skip", context: "game", keys: []},
+  ]}).valid, true);
+  assert.equal(validateDocument("game", {...game, inputActions: [
     {id: "quick-save", context: "game", keys: ["F8", "F8"]},
   ]}).valid, false);
   assert.equal(validateDocument("game", {...game, inputActions: [
