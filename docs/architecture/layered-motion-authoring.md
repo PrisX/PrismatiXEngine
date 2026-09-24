@@ -4,7 +4,7 @@ Status: first image-layer slice and TSX UI mounting implemented; advanced compos
 and Story playback below remain a proposal. This is not an `.mtn` parser or a claim that the
 original M2/petal animations are reproduced.
 
-The versioned `PrismatiXMotion` revision-1/2 `.pxmotion` contract has an
+The versioned `PrismatiXMotion` revision-1/2/3 `.pxmotion` contract has an
 Authoring SDK `defineMotion`/`serializeMotion` helper, matching native parser,
 unique layer/track and hierarchy checks, path checks, deterministic keyed
 sampling, and a `Renderer2D` image-layer drawing adapter. A `MotionRect`
@@ -26,7 +26,7 @@ after each UI update; `TextureRect` retains its prior resident image until a
 replacement is ready. Arbitrary custom drawing, Story playback dependencies,
 texture residency under budget pressure, and M2-specific framebuffer
 conformance remain open. Story motion commands,
-sound markers, masks, blur, blend modes, save/load playback binding, and
+masks, blur, blend modes, save/load playback binding, and
 M2 conformance fixtures have not been added. The renderer adapter has not yet
 passed an M2-specific framebuffer comparison. Revision 2 adds
 per-layer atlas rectangles and discrete `frame` keys; the Authoring helper
@@ -34,6 +34,11 @@ selects it automatically when those fields are present. The native sampler
 selects a source rectangle without changing textures at each key, and a
 two-colour atlas framebuffer test checks the rendered output. Revision-1
 descriptors remain readable and cannot silently contain revision-2 fields.
+Revision 3 adds ordered `se`/`voice` audio markers: the Authoring SDK validates
+them and includes their audio paths in package dependencies, and `MotionRect`
+emits crossed events during normal playback to the Player audio service (also
+for splash scenes). Seeking does not replay skipped cues. Script markers,
+Story integration, and audio-predecode scheduling remain open.
 
 Revision-1 sampling uses a layer's authored property until its first key;
 thereafter each key's curve determines interpolation toward the next key.
@@ -89,9 +94,9 @@ example requires importing or emulating `.mtn` itself.
 
 ## Incremental implementation and acceptance
 
-The image-layer/transform sampling primitive, atlas frame track, descriptor dependency
-packaging and TSX UI mounting are in place; Story mounting and durable playback remain
-necessary before authors can use it end-to-end. Then add sound markers and
+The image-layer/transform sampling primitive, atlas frame track, audio markers,
+descriptor dependency packaging and TSX UI mounting are in place; Story mounting
+and durable playback remain necessary before authors can use it end-to-end. Then add
 GPU/CPU mask parity and blend modes. The Senren test fixtures should capture M2 and the HUD petal
 at fixed timestamps (0, 0.25, 0.5, 1.0 seconds), compare composition geometry,
 verify no blank transition frame, and exercise skip, reduced motion, save/load

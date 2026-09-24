@@ -160,12 +160,13 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         return fail("PXMOTION1000", "Motion document exceeds 4 MiB or has a UTF-8 BOM");
     const Json root = Json::parse(text, nullptr, false);
     if (root.is_discarded() || !OnlyFields(root, {"format", "schemaRevision", "id", "canvas",
-        "duration", "loop", "scaleMode", "layers", "tracks"}))
+        "duration", "loop", "scaleMode", "layers", "tracks", "markers"}))
         return fail("PXMOTION1001", "Motion document is invalid JSON or contains unknown fields");
     if (!root.contains("format") || !root["format"].is_string() ||
         root["format"].get_ref<const std::string&>() != "PrismatiXMotion" ||
         !root.contains("schemaRevision") || !root["schemaRevision"].is_number_integer() ||
-        (root["schemaRevision"] != 1 && root["schemaRevision"] != 2) ||
+        (root["schemaRevision"] != 1 && root["schemaRevision"] != 2 &&
+         root["schemaRevision"] != 3) ||
         !root.contains("id") ||
         !root["id"].is_string() || !Identifier(root["id"].get_ref<const std::string&>()))
         return fail("PXMOTION1002", "Motion format, revision, or id is invalid");
@@ -348,6 +349,36 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         }
         clip.tracks.push_back(std::move(track));
     }
+    if (const auto markers = root.find("markers"); markers != root.end()) {
+        if (clip.schemaRevision < 3 || !markers->is_array() || markers->size() > 4096)
+            return fail("PXMOTION1024", "Motion audio markers require revision 3 and at most 4096 entries");
+        std::unordered_set<std::string> markerIds;
+        double previousTime = -1;
+        clip.markers.reserve(markers->size());
+        for (const auto& entry : *markers) {
+            if (!OnlyFields(entry, {"id", "time", "audio", "bus"}) ||
+                entry.size() != 4 || !entry.contains("id") ||
+                !entry.contains("time") || !entry.contains("audio") ||
+                !entry.contains("bus") || !entry["id"].is_string() ||
+                !entry["audio"].is_string() || !entry["bus"].is_string())
+                return fail("PXMOTION1025", "Motion audio marker shape is invalid");
+            MotionAudioMarker marker;
+            marker.id = entry["id"].get<std::string>();
+            marker.audio = entry["audio"].get<std::string>();
+            const auto time = Number(entry, "time", 0, 0, clip.duration, true);
+            const auto bus = entry["bus"].get<std::string>();
+            if (!Identifier(marker.id) || !markerIds.insert(marker.id).second ||
+                !time || *time < previousTime || !SafePath(marker.audio) ||
+                EndsWithIgnoreCase(marker.audio, ".pxmotion") ||
+                EndsWithIgnoreCase(marker.audio, ".pxportrait") ||
+                (bus != "se" && bus != "voice"))
+                return fail("PXMOTION1026", "Motion audio marker id, time, path or bus is invalid");
+            marker.time = *time;
+            marker.bus = bus == "voice" ? MotionAudioBus::Voice : MotionAudioBus::SE;
+            previousTime = *time;
+            clip.markers.push_back(std::move(marker));
+        }
+    }
     result.clip = std::move(clip);
     return result;
 }
@@ -357,6 +388,14 @@ std::vector<std::string> MotionDependencies(const MotionClip& clip) {
     std::unordered_set<std::string> seen;
     for (const auto& layer : clip.layers)
         if (seen.insert(layer.image).second) dependencies.push_back(layer.image);
+    return dependencies;
+}
+
+std::vector<std::string> MotionAudioDependencies(const MotionClip& clip) {
+    std::vector<std::string> dependencies;
+    std::unordered_set<std::string> seen;
+    for (const auto& marker : clip.markers)
+        if (seen.insert(marker.audio).second) dependencies.push_back(marker.audio);
     return dependencies;
 }
 

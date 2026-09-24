@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/SDK/Ui.h"
+#include "Engine/SDK/Motion.h"
 #include "Engine/UI/Startup/SplashTypes.h"
 #include "Engine/UI/UIContext.h"
 #include "Engine/UI/UiApplication.h"
@@ -29,6 +30,7 @@ public:
         VisualPreloader preloadVisuals;
         std::function<bool()> completionVisualsReady;
         AudioPlayer playAudio;
+        std::function<void(const sdk::MotionAudioMarker&)> playMotionMarker;
         DiagnosticSink diagnostics;
     };
 

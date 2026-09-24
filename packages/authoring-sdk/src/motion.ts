@@ -45,6 +45,13 @@ export interface MotionTrack {
   readonly keys: readonly MotionKey[];
 }
 
+export interface MotionAudioMarker {
+  readonly id: string;
+  readonly time: number;
+  readonly audio: string;
+  readonly bus: "se" | "voice";
+}
+
 export interface MotionInput {
   readonly id: string;
   readonly canvas: {readonly width: number; readonly height: number};
@@ -53,24 +60,26 @@ export interface MotionInput {
   readonly scaleMode?: "fit" | "fill" | "stretch";
   readonly layers: readonly MotionLayer[];
   readonly tracks?: readonly MotionTrack[];
+  /** Sound fired when ordinary playback crosses this point, never by Seek. */
+  readonly markers?: readonly MotionAudioMarker[];
 }
 
 export interface MotionDocument extends MotionInput {
   readonly format: "PrismatiXMotion";
-  readonly schemaRevision: 1 | 2;
+  readonly schemaRevision: 1 | 2 | 3;
   readonly loop: boolean;
   readonly tracks: readonly MotionTrack[];
 }
 
-/** Author a deterministic, image-layer .pxmotion clip without format or
- * revision boilerplate. Atlas frames use revision 2; masks and blur remain
- * unsupported. */
+/** Author a deterministic image-layer .pxmotion clip. Atlas frames use
+ * revision 2 and audio markers use revision 3; masks and blur remain unsupported. */
 export function defineMotion(input: MotionInput): Result<MotionDocument> {
   const atlas = input.layers.some((layer) => layer.frames !== undefined) ||
     input.tracks?.some((track) => track.property === "frame") === true;
+  const hasMarkers = (input.markers?.length ?? 0) > 0;
   const document: MotionDocument = {
     format: "PrismatiXMotion",
-    schemaRevision: atlas ? 2 : 1,
+    schemaRevision: hasMarkers ? 3 : atlas ? 2 : 1,
     id: input.id,
     canvas: input.canvas,
     duration: input.duration,
@@ -104,6 +113,7 @@ export function defineMotion(input: MotionInput): Result<MotionDocument> {
           ? "step" : "linear"),
       })),
     })),
+    ...(hasMarkers ? {markers: input.markers!.map((marker) => ({...marker}))} : {}),
   };
   return validateDocument<MotionDocument>("motion", document);
 }

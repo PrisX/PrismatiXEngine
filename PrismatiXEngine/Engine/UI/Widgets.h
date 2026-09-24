@@ -197,6 +197,7 @@ class MotionRect final : public Control {
 public:
     using SourceLoader =
         std::function<std::optional<std::string>(std::string_view)>;
+    using MarkerSink = std::function<void(const sdk::MotionAudioMarker&)>;
 
     explicit MotionRect(std::string name = "MotionRect") : Control(std::move(name)) {
         SetMouseFilter(MouseFilter::Ignore);
@@ -205,6 +206,7 @@ public:
     Status SetPath(std::string value);
     [[nodiscard]] const std::string& Path() const { return m_path; }
     Status SetSourceLoader(SourceLoader loader);
+    void SetMarkerSink(MarkerSink sink) { m_markerSink = std::move(sink); }
     void SetAutoplay(bool value) {
         m_autoplay = value;
         if (!m_playingExplicit) m_playing = value;
@@ -224,12 +226,16 @@ protected:
     void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) override;
 
 private:
+    void EmitMarkers(double from, double to, bool includeStart);
     std::string m_path;
     SourceLoader m_loader;
+    MarkerSink m_markerSink;
     std::unique_ptr<sdk::MotionClip> m_clip;
     std::unique_ptr<sdk::MotionSampler> m_sampler;
     double m_position = 0;
+    double m_playbackTime = 0;
     double m_speed = 1;
+    bool m_startMarkersPending = true;
     bool m_autoplay = true;
     bool m_playing = true;
     bool m_playingExplicit = false;

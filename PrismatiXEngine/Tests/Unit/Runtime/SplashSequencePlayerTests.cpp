@@ -1,6 +1,7 @@
 #include "Engine/SDK/Ui.h"
 #include "Engine/UI/Startup/SplashSequencePlayer.h"
 #include "Engine/UI/UITypeRegistry.h"
+#include "Engine/UI/Widgets.h"
 #include "Tests/TestSupport/TestHarness.h"
 
 #include <unordered_map>
@@ -213,6 +214,40 @@ int main() {
         suite.Expect(dependencies && dependencies.Value() ==
                          std::vector<std::string>{"Assets/Motion/logo.png"},
                      "motion descriptor expands to image layers before presentation");
+    });
+
+    suite.Run("MotionMarkers_ReachSplashAudioService", [&] {
+        auto scene = Scene("motion-markers", false);
+        scene.nodes[1].runtimeType = "MotionRect";
+        scene.nodes[1].kind = px::sdk::UiNodeKind::Image;
+        scene.nodes[1].runtimeProperties.emplace("path", std::string{"Assets/Motion/logo.pxmotion"});
+        constexpr auto descriptor = R"({
+          "format":"PrismatiXMotion","schemaRevision":3,"id":"logo",
+          "canvas":{"width":320,"height":120},"duration":1,"loop":false,
+          "layers":[{"id":"logo","image":"Assets/Motion/logo.png",
+                     "width":320,"height":120}],"tracks":[],
+          "markers":[{"id":"pop","time":0.25,"audio":"Assets/Audio/pop.ogg","bus":"se"}]})";
+        std::vector<std::string> played;
+        px::ui::startup::SplashSequencePlayer player({
+            .loadScene = [scene](const px::ResourceRefValue&) {
+                return px::Result<px::sdk::UiDocument>::Success(scene);
+            },
+            .loadMotion = [](const std::string_view path) -> std::optional<std::string> {
+                return path == "Assets/Motion/logo.pxmotion"
+                    ? std::optional<std::string>{descriptor} : std::nullopt;
+            },
+            .playMotionMarker = [&](const px::sdk::MotionAudioMarker& marker) {
+                played.push_back(marker.audio);
+            },
+        });
+        suite.Require(static_cast<bool>(player.Start({Entry("motion-markers")})),
+                      "splash with authored motion starts");
+        auto* motion = dynamic_cast<px::ui::MotionRect*>(
+            player.Context().Root()->Find(*px::Uuid::Parse(scene.nodes[1].id)));
+        suite.Require(motion != nullptr, "splash installs a MotionRect");
+        motion->Update(0.5f);
+        suite.Expect(played == std::vector<std::string>{"Assets/Audio/pop.ogg"},
+                     "splash motion marker is delivered to the audio service");
     });
 
     suite.Run("CompletionPreload_HoldsFinalSplashUntilTitleIsReady", [&] {

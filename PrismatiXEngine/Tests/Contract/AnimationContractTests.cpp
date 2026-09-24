@@ -213,5 +213,36 @@ int main() {
                      "native accepts integral numeric JSON like authoring validation");
     });
 
+    suite.Run("MotionClip_AudioMarkersAreVersionedAndPackaged", [&] {
+        constexpr auto source = R"({
+          "format":"PrismatiXMotion","schemaRevision":3,"id":"logo",
+          "canvas":{"width":320,"height":120},"duration":1,"loop":false,
+          "layers":[{"id":"body","image":"Assets/body.png","width":100,"height":100}],
+          "tracks":[],"markers":[
+            {"id":"start","time":0,"audio":"Assets/Audio/start.ogg","bus":"se"},
+            {"id":"voice","time":0.5,"audio":"Assets/Audio/voice.ogg","bus":"voice"}]})";
+        const auto parsed = px::sdk::ParseMotion(source);
+        suite.Require(parsed.Valid(), "revision-3 motion audio markers parse");
+        suite.Expect(parsed.clip->markers.size() == 2 &&
+                         parsed.clip->markers[1].bus == px::sdk::MotionAudioBus::Voice,
+                     "marker audio bus is typed");
+        const auto sounds = px::sdk::MotionAudioDependencies(*parsed.clip);
+        suite.Expect(sounds == std::vector<std::string>{
+                         "Assets/Audio/start.ogg", "Assets/Audio/voice.ogg"},
+                     "marker audio dependencies are separate from preloaded images");
+        auto old = std::string(source);
+        old.replace(old.find("\"schemaRevision\":3"),
+                    std::string("\"schemaRevision\":3").size(),
+                    "\"schemaRevision\":2");
+        suite.Expect(!px::sdk::ParseMotion(old).Valid(),
+                     "older motion revisions reject markers");
+        auto duplicate = std::string(source);
+        duplicate.replace(duplicate.find("\"id\":\"voice\""),
+                          std::string("\"id\":\"voice\"").size(),
+                          "\"id\":\"start\"");
+        suite.Expect(!px::sdk::ParseMotion(duplicate).Valid(),
+                     "duplicate marker identities fail closed");
+    });
+
     return suite.Finish();
 }

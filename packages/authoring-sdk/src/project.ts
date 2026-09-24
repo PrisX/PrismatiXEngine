@@ -971,6 +971,8 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     }
     for (const [index, layer] of parsed.value.layers.entries())
       addResourceRef(layer.image, `${descriptorPath}:layers[${index}].image`);
+    for (const [index, marker] of (parsed.value.markers ?? []).entries())
+      addResourceRef(marker.audio, `${descriptorPath}:markers[${index}].audio`);
   }
   const dependencyCollection = collectProjectDependencies({
     assets: resourceAssets,

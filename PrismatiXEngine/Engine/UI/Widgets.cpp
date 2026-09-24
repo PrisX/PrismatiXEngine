@@ -206,6 +206,8 @@ Status MotionRect::SetPath(std::string value) {
         m_sampler.reset();
         m_clip.reset();
         m_position = 0;
+        m_playbackTime = 0;
+        m_startMarkersPending = true;
         return Status::Ok();
     }
     if (!m_loader) {
@@ -238,6 +240,8 @@ Status MotionRect::SetPath(std::string value) {
     m_sampler = std::move(sampler);
     m_clip = std::move(clip);
     m_position = m_sampler->Position();
+    m_playbackTime = m_position;
+    m_startMarkersPending = m_position == 0;
     return Status::Ok();
 }
 
@@ -264,19 +268,57 @@ Status MotionRect::SetSpeed(const double value) {
 }
 
 void MotionRect::Seek(const double seconds) {
-    m_position = std::isfinite(seconds) ? std::max(0.0, seconds) : 0.0;
+    const double finite = std::isfinite(seconds) ? std::max(0.0, seconds) : 0.0;
+    m_playbackTime = m_clip && m_clip->loop
+        ? std::fmod(finite, m_clip->duration) : finite;
+    m_position = m_playbackTime;
+    m_startMarkersPending = m_playbackTime == 0;
     if (m_sampler) {
         m_sampler->Seek(m_position);
         m_position = m_sampler->Position();
     }
 }
 
+void MotionRect::EmitMarkers(const double from, const double to,
+                             const bool includeStart) {
+    if (!m_clip || !m_markerSink || m_clip->markers.empty() || to < from) return;
+    const double duration = m_clip->duration;
+    const auto lastCycle = m_clip->loop
+        ? static_cast<std::uint64_t>(std::floor(to / duration)) : 0;
+    const auto startCycle = m_clip->loop
+        ? static_cast<std::uint64_t>(std::floor(from / duration)) : 0;
+    // A resumed window can skip many loop iterations. Bound audible events
+    // instead of unleashing minutes of stale effects in one frame.
+    const auto firstCycle = lastCycle > startCycle + 64 ? lastCycle - 64 : startCycle;
+    std::size_t emitted = 0;
+    for (auto cycle = firstCycle; cycle <= lastCycle; ++cycle) {
+        const double base = static_cast<double>(cycle) * duration;
+        for (const auto& marker : m_clip->markers) {
+            const double at = base + marker.time;
+            if ((at > from || (includeStart && at == from)) && at <= to) {
+                m_markerSink(marker);
+                if (++emitted >= 256) return;
+            }
+        }
+    }
+}
+
 void MotionRect::Update(const float deltaSeconds) {
     Control::Update(deltaSeconds);
     if (!m_playing || !m_clip || !std::isfinite(deltaSeconds) || deltaSeconds <= 0) return;
-    const double next = m_position + static_cast<double>(deltaSeconds) * m_speed;
+    const double from = m_playbackTime;
+    const double next = from + static_cast<double>(deltaSeconds) * m_speed;
+    if (!std::isfinite(next)) return;
+    if (m_clip->loop && next / m_clip->duration > 1'000'000) {
+        Seek(next);
+        m_startMarkersPending = false;
+        return;
+    }
     const bool complete = !m_clip->loop && next >= m_clip->duration;
-    Seek(next);
+    const double endpoint = complete ? m_clip->duration : next;
+    EmitMarkers(from, endpoint, m_startMarkersPending);
+    Seek(endpoint);
+    m_startMarkersPending = false;
     if (complete) {
         m_playing = false;
         EmitSignal("playbackFinished");

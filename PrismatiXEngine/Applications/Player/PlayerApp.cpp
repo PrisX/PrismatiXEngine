@@ -698,6 +698,10 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         [this](const std::string_view path){return m_session->PlayAnimationAsset(std::string(path));},
         [this](const std::uint64_t handle){return m_session->Timeline().Playing(handle);});
     m_ui.SetControlRuntimeConfigurator([this](ui::Control& control){
+        if(auto* motion=dynamic_cast<ui::MotionRect*>(&control))
+            motion->SetMarkerSink([this](const sdk::MotionAudioMarker& marker){
+                PlayMotionMarker(marker);
+            });
         if(auto* rectangle=dynamic_cast<ui::VideoRect*>(&control)){
             auto player=std::make_shared<video::VideoPlayer>(m_runtime.Renderer().Handle(),m_runtime.VFS());
             rectangle->SetPlayback({[player](const std::string_view path){return player->Open(std::string(path));},[player]{player->Close();},[player](const float delta){player->Update(delta);},[player]{return player->Playing();},[player]{return player->Texture();},[player]{return Vec2{static_cast<float>(player->Width()),static_cast<float>(player->Height())};}});
@@ -1581,6 +1585,9 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                             reference.lastKnownPath);
                 return Status::Ok();
             },
+            .playMotionMarker=[this](const sdk::MotionAudioMarker& marker){
+                PlayMotionMarker(marker);
+            },
             .diagnostics=[](const diag::Diagnostic& diagnostic){diag::Emit(diagnostic);}});
     m_splash->Context().SetTextRenderer(&m_runtime.Renderer());
     m_splash->Context().SetDiagnosticOverlayEnabled(false);
@@ -1590,6 +1597,21 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     if(!splashStarted)return false;
     ConfigureE2EJourney();
     return true;
+}
+
+void PlayerApp::PlayMotionMarker(const sdk::MotionAudioMarker& marker) {
+    if (!m_runtime.VFS().Exists(marker.audio)) {
+        diag::Diagnostic diagnostic{.severity=diag::Severity::Warning,
+            .code="PXPLAYERMOTION1001", .category="Player.Motion",
+            .message="Motion audio marker resource is missing: "+marker.audio};
+        diagnostic.source.path=marker.audio;
+        diag::Emit(diagnostic);
+        return;
+    }
+    if (marker.bus == sdk::MotionAudioBus::Voice)
+        m_runtime.Audio().PlayVoice(marker.audio);
+    else
+        m_runtime.Audio().PlaySE(marker.audio);
 }
 
 bool PlayerApp::SaveProfileIfWritable() {

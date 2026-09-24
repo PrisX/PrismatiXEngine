@@ -1128,13 +1128,22 @@ int main() {
     motionNode->assetId.reset();
     motionNode->runtimeProperties["path"] = std::string{"Content/Motion/logo.pxmotion"};
     constexpr auto motionSource = R"({
-      "format":"PrismatiXMotion","schemaRevision":1,"id":"logo",
+      "format":"PrismatiXMotion","schemaRevision":3,"id":"logo",
       "canvas":{"width":320,"height":120},"duration":1,"loop":false,
       "layers":[{"id":"body","image":"Assets/body.png","width":100,"height":100}],
+      "markers":[{"id":"first","time":0.25,"audio":"Assets/first.ogg","bus":"se"},
+                 {"id":"second","time":0.75,"audio":"Assets/second.ogg","bus":"voice"}],
       "tracks":[{"layer":"body","property":"opacity","keys":[
         {"time":0,"value":0,"curve":"linear"},
         {"time":1,"value":1,"curve":"linear"}]}]})";
     px::ui::UIContext motionContext;
+    std::vector<std::string> firedMotionMarkers;
+    motionContext.SetControlRuntimeConfigurator([&](px::ui::Control& control) {
+        if (auto* rect = dynamic_cast<px::ui::MotionRect*>(&control))
+            rect->SetMarkerSink([&](const px::sdk::MotionAudioMarker& marker) {
+                firedMotionMarkers.push_back(marker.id);
+            });
+    });
     Check(motionContext.Commands().Register("game.start",
         [](const px::Variant&) { return px::Status::Ok(); }).IsOk(),
         "motion test action route must register");
@@ -1152,6 +1161,36 @@ int main() {
     motion->Update(0.5f);
     Check(std::abs(motion->Position() - 0.5) < 0.0001,
           "MotionRect playback clock must advance deterministically");
+    Check(firedMotionMarkers == std::vector<std::string>{"first"},
+          "MotionRect emits only audio markers crossed by normal playback");
+    motion->Seek(0.9);
+    Check(firedMotionMarkers == std::vector<std::string>{"first"},
+          "explicit seeking never retroactively emits audio markers");
+    motion->Seek(0.0);
+    motion->Update(1.0f);
+    Check(firedMotionMarkers == std::vector<std::string>{"first", "first", "second"},
+          "restarted playback emits each crossed marker once in timeline order");
+    constexpr auto loopingSource = R"({
+      "format":"PrismatiXMotion","schemaRevision":3,"id":"looping",
+      "canvas":{"width":100,"height":100},"duration":1,"loop":true,
+      "layers":[{"id":"body","image":"Assets/body.png","width":100,"height":100}],
+      "tracks":[],"markers":[{"id":"beat","time":0,"audio":"Assets/beat.ogg","bus":"se"}]})";
+    px::ui::MotionRect loopingMotion;
+    std::vector<std::string> loopMarkers;
+    loopingMotion.SetMarkerSink([&](const px::sdk::MotionAudioMarker& marker) {
+        loopMarkers.push_back(marker.id);
+    });
+    Check(loopingMotion.SetSourceLoader([](std::string_view) {
+        return std::optional<std::string>{loopingSource};
+    }).IsOk() && loopingMotion.SetPath("Content/Motion/loop.pxmotion").IsOk(),
+        "looping MotionRect loads a revision-3 clip");
+    loopingMotion.Update(2.1f);
+    Check(loopMarkers == std::vector<std::string>{"beat", "beat", "beat"},
+          "looping motion emits a time-zero cue once per iteration");
+    loopingMotion.Seek(0.0);
+    Check(loopMarkers.size() == 3, "looping motion seek remains silent");
+    loopingMotion.Update(0.1f);
+    Check(loopMarkers.size() == 4, "playback after seek re-arms the start cue");
     const auto* installedMotionRoot = motionContext.Root();
     const auto missingMotion = motionApplication.ApplyDocument(motionDocument,
         {.sourcePath = "Content/UI/Title.pxui"});

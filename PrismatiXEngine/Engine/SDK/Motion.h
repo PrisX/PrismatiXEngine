@@ -11,6 +11,7 @@ namespace px::sdk {
 enum class MotionScaleMode { Fit, Fill, Stretch };
 enum class MotionProperty { X, Y, ScaleX, ScaleY, Rotation, Opacity, Visible, Frame };
 enum class MotionCurve { Step, Linear, EaseIn, EaseOut, EaseInOut };
+enum class MotionAudioBus { SE, Voice };
 
 struct MotionKey {
     double time = 0;
@@ -44,6 +45,13 @@ struct MotionTrack {
     std::vector<MotionKey> keys;
 };
 
+struct MotionAudioMarker {
+    std::string id;
+    double time = 0;
+    std::string audio;
+    MotionAudioBus bus = MotionAudioBus::SE;
+};
+
 struct MotionClip {
     std::string id;
     int schemaRevision = 1;
@@ -53,6 +61,7 @@ struct MotionClip {
     MotionScaleMode scaleMode = MotionScaleMode::Fit;
     std::vector<MotionLayer> layers;
     std::vector<MotionTrack> tracks;
+    std::vector<MotionAudioMarker> markers;
     // Precomputed once while parsing, not re-sorted or graph-walked each frame.
     std::vector<std::size_t> hierarchyOrder;
     std::vector<std::size_t> drawOrder;
@@ -73,6 +82,7 @@ struct MotionParseResult {
 [[nodiscard]] MotionParseResult ParseMotion(std::string_view json,
                                            std::string sourcePath = {});
 [[nodiscard]] std::vector<std::string> MotionDependencies(const MotionClip& clip);
+[[nodiscard]] std::vector<std::string> MotionAudioDependencies(const MotionClip& clip);
 
 struct MotionAffine {
     double a = 1, b = 0, c = 0, d = 1, tx = 0, ty = 0;

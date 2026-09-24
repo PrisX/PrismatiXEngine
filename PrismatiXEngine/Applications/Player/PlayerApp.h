@@ -3,6 +3,7 @@
 #include "Engine/Progression/GameSettings.h"
 #include "Engine/Progression/GlobalProfile.h"
 #include "Engine/Progression/SaveSystem.h"
+#include "Engine/SDK/Motion.h"
 #include "Engine/Script/ScriptHost.h"
 #include "Engine/Runtime.h"
 #include "Engine/Session/RuntimeSession.h"
@@ -77,6 +78,7 @@ private:
     void FinishBootPresentation();
     [[nodiscard]] bool TitleVisualsReady();
     void SplashFrame(float dt);
+    void PlayMotionMarker(const sdk::MotionAudioMarker& marker);
     void BeginPresentationTransition(const PresentationTransition& transition);
 
     void StartGame();

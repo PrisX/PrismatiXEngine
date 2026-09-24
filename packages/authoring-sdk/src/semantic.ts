@@ -201,6 +201,20 @@ function motionSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[
       previous = typeof key.time === "number" ? key.time : previous;
     }
   }
+  const markers = objects(root.markers);
+  diagnostics.push(...uniqueIdentities(markers, "id", "Motion marker", path));
+  let previousMarkerTime = -1;
+  for (const marker of markers) {
+    if (typeof marker.time !== "number" || marker.time < previousMarkerTime ||
+        marker.time > duration)
+      diagnostics.push(issue("PXSDKSEM1410",
+        "Motion markers must be ordered and inside duration", path, String(marker.id)));
+    if (typeof marker.audio === "string" &&
+        /\.(?:pxmotion|pxportrait)$/iu.test(marker.audio))
+      diagnostics.push(issue("PXSDKSEM1411",
+        "Motion marker audio must reference an audio resource", path, String(marker.id)));
+    if (typeof marker.time === "number") previousMarkerTime = marker.time;
+  }
   return diagnostics;
 }
 

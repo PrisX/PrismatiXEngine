@@ -447,6 +447,17 @@ test("compileProject validates motion descriptors and packages their image layer
   assert.equal(atlas.artifact?.dependencies.filter((dependency) =>
     dependency.source === "Assets/Motion/mark.png").length, 1,
   "all atlas frames share one packaged texture");
+  const sound = compile({...descriptor, schemaRevision: 3, markers: [
+    {id: "hit", time: 0.5, audio: "Assets/Audio/hit.ogg", bus: "se"},
+  ]});
+  assert.equal(sound.valid, true, JSON.stringify(sound.diagnostics));
+  assert.ok(sound.artifact?.dependencies.some((dependency) =>
+    dependency.source === "Assets/Audio/hit.ogg"));
+  const missingSound = compile({...descriptor, schemaRevision: 3, markers: [
+    {id: "hit", time: 0.5, audio: "Assets/Audio/hit.ogg", bus: "se"},
+  ]}, (path) => path !== "Assets/Audio/hit.ogg");
+  assert.equal(missingSound.valid, false);
+  assert.ok(missingSound.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1044"));
   const referencedFromUi = compileProject({
     project,
     documents: {"Story/story.pxindex": storyIndex,
