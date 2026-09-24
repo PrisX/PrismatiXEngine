@@ -7,6 +7,7 @@ export {assertLocalBuildFresh, localSourceFingerprint, writeLocalBuildStamp} fro
 export * from "./canonical-json.js";
 export * from "./contracts.js";
 export * from "./localization.js";
+export * from "./motion.js";
 export * from "./jsx-ui.js";
 export * from "./project-resources.js";
 export * from "./project-actions.js";

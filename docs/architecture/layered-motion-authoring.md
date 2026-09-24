@@ -1,7 +1,26 @@
 # Layered motion authoring proposal
 
-Status: design only. This is a native PrismatiX authoring capability, not an
-`.mtn` parser or a claim that the original M2/petal animations are reproduced.
+Status: first image-layer slice implemented; the composition/playback integration
+below remains a proposal. This is not an `.mtn` parser or a claim that the
+original M2/petal animations are reproduced.
+
+The versioned `PrismatiXMotion` revision-1 `.pxmotion` contract now has an
+Authoring SDK `defineMotion`/`serializeMotion` helper, matching native parser,
+unique layer/track and hierarchy checks, path checks, deterministic keyed
+sampling, and a `Renderer2D` image-layer drawing adapter. `MotionSampler::Seek`
+reuses its scratch storage and binary-searches ordered keys; its parent-world
+transform and inherited opacity are sampled at one time. `fit` is the default
+canvas scaling mode to avoid image squashing. Native and TypeScript contract
+tests cover this slice. It is a programmatic primitive, not yet a packaged
+UI/Story motion player: `compileProject` now validates reachable descriptors
+and collects their image dependencies, but there is no preload handshake,
+sound markers, atlas, masks, blur, blend modes, save/load playback binding, or
+M2 conformance fixture has been added. The renderer adapter has compiled but
+has not yet passed a motion-specific framebuffer comparison.
+
+Revision-1 sampling uses a layer's authored property until its first key;
+thereafter each key's curve determines interpolation toward the next key.
+Visibility keys are discrete. Layers with the same `z` paint in authored order.
 
 ## Existing foundation and the gap
 
@@ -12,7 +31,7 @@ that binds tracks to layers and expresses image sequence, masks, blend modes,
 and dependency preloading. The port currently reconstructs these effects with
 generated UI files and Player-specific presentation code.
 
-## Proposed `.pxmotion` document
+## Target `.pxmotion` document
 
 The file is a reusable composition, referenceable from a UI node, splash,
 transition or Story command. Time is in seconds; coordinates are in a declared
@@ -53,9 +72,10 @@ example requires importing or emulating `.mtn` itself.
 
 ## Incremental implementation and acceptance
 
-First add image layers with transform/opacity tracks and deterministic nested
-playback. Then add atlas frames and sound markers. Add GPU/CPU mask parity and
-blend modes last. The Senren test fixtures should capture M2 and the HUD petal
+The first image-layer/transform sampling primitive and descriptor dependency
+packaging are in place; UI/Story mounting and durable playback remain necessary before
+authors can use it end-to-end. Then add atlas frames and sound markers. Add
+GPU/CPU mask parity and blend modes last. The Senren test fixtures should capture M2 and the HUD petal
 at fixed timestamps (0, 0.25, 0.5, 1.0 seconds), compare composition geometry,
 verify no blank transition frame, and exercise skip, reduced motion, save/load
 and non-16:9 scaling. Until those tests pass, the port must label its M2 and

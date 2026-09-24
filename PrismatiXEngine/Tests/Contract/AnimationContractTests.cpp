@@ -1,4 +1,5 @@
 #include "Engine/UI/Animation.h"
+#include "Engine/SDK/Motion.h"
 #include "Engine/UI/Control.h"
 #include "Engine/UI/UITypeRegistry.h"
 #include "Tests/TestSupport/TestHarness.h"
@@ -103,6 +104,62 @@ int main() {
         suite.Expect(controller.Travel(idle) && controller.RestoreState(checkpoint) &&
                          controller.CaptureState().state == active,
                      "state machine checkpoint restores exact state and parameters");
+    });
+
+    suite.Run("MotionClip_ValidatesHierarchyAndSamplesLayeredPose", [&] {
+        constexpr auto source = R"({
+          "format":"PrismatiXMotion","schemaRevision":1,"id":"logo",
+          "canvas":{"width":1920,"height":1080},"duration":1,"loop":false,
+          "layers":[
+            {"id":"body","image":"Assets/body.png","width":100,"height":100,
+             "x":100,"z":1},
+            {"id":"mark","parent":"body","image":"Assets/mark.png",
+             "width":20,"height":20,"x":20,"z":2,"visible":false}
+          ],
+          "tracks":[
+            {"layer":"body","property":"opacity","keys":[
+              {"time":0,"value":0,"curve":"linear"},
+              {"time":1,"value":1,"curve":"linear"}]},
+            {"layer":"mark","property":"visible","keys":[
+              {"time":0.25,"value":true,"curve":"step"}]}
+          ]})";
+        auto parsed = px::sdk::ParseMotion(source, "logo.pxmotion");
+        suite.Expect(parsed.Valid(), "valid motion document parses");
+        if (!parsed.Valid()) return;
+        const auto dependencies = px::sdk::MotionDependencies(*parsed.clip);
+        suite.Expect(dependencies.size() == 2 &&
+                         dependencies[0] == "Assets/body.png" &&
+                         dependencies[1] == "Assets/mark.png",
+                     "motion image dependencies are collected once");
+        px::sdk::MotionSampler sampler(*parsed.clip);
+        sampler.Seek(0.1);
+        suite.Expect(!sampler.Pose()[1].visible,
+                     "visibility steps without interpolation");
+        sampler.Seek(0.5);
+        suite.Expect(std::abs(sampler.Pose()[0].opacity - 0.5) < 0.0001 &&
+                         std::abs(sampler.Pose()[1].opacity - 0.5) < 0.0001 &&
+                         std::abs(sampler.Pose()[1].transform.tx - 120) < 0.0001 &&
+                         sampler.Pose()[1].visible,
+                     "seek composes child transforms and inherited alpha");
+        sampler.Seek(0.5);
+        suite.Expect(std::abs(sampler.Pose()[1].transform.tx - 120) < 0.0001,
+                     "repeated seek is deterministic");
+        const auto* retainedPose = sampler.Pose().data();
+        for (int frame = 0; frame < 1000; ++frame)
+            sampler.Seek(static_cast<double>(frame) / 1000);
+        suite.Expect(sampler.Pose().data() == retainedPose,
+                     "repeated seek reuses pose storage");
+        auto cycle = std::string(source);
+        cycle.replace(cycle.find("\"x\":100,\"z\":1"),
+                      std::string("\"x\":100,\"z\":1").size(),
+                      "\"x\":100,\"z\":1,\"parent\":\"mark\"");
+        suite.Expect(!px::sdk::ParseMotion(cycle).Valid(),
+                     "motion parent cycles fail closed");
+        suite.Expect(!px::sdk::ParseMotion(
+            R"({"format":7,"schemaRevision":1,"id":"bad"})").Valid() &&
+                         !px::sdk::ParseMotion(
+            R"({"format":"PrismatiXMotion","schemaRevision":18446744073709551615,"id":"bad"})").Valid(),
+                     "malformed motion format and huge revisions report diagnostics");
     });
 
     return suite.Finish();

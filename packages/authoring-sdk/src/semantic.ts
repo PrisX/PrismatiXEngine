@@ -131,6 +131,64 @@ function timelineSemantics(root: ObjectValue, path?: string): AuthoringDiagnosti
   return diagnostics;
 }
 
+function motionSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[] {
+  const diagnostics: AuthoringDiagnostic[] = [];
+  const layers = objects(root.layers);
+  diagnostics.push(...uniqueIdentities(layers, "id", "Motion layer", path));
+  const byId = new Map(layers.map((layer) => [layer.id, layer]));
+  for (const layer of layers) {
+    if (typeof layer.image === "string" &&
+        (layer.image.includes(":") || /[\x00-\x1f]/u.test(layer.image) ||
+         /\.(?:pxmotion|pxportrait)$/iu.test(layer.image) ||
+         layer.image.split("/").some((part) => part === "" || part === "." || part === "..")))
+      diagnostics.push(issue("PXSDKSEM1407", "Motion image must use a safe project-relative texture path", path, String(layer.id)));
+    if (layer.parent === undefined) continue;
+    if (!byId.has(layer.parent)) {
+      diagnostics.push(issue("PXSDKSEM1401", "Motion layer parent does not exist", path, String(layer.id)));
+      continue;
+    }
+    const seen = new Set<unknown>([layer.id]);
+    let cursor: ObjectValue | undefined = layer;
+    while (cursor?.parent !== undefined) {
+      if (seen.has(cursor.parent)) {
+        diagnostics.push(issue("PXSDKSEM1402", "Motion layer hierarchy contains a cycle", path, String(layer.id)));
+        break;
+      }
+      seen.add(cursor.parent);
+      cursor = byId.get(cursor.parent);
+    }
+  }
+  const tracks = objects(root.tracks);
+  const targets = new Set<string>();
+  const duration = typeof root.duration === "number" ? root.duration : 0;
+  for (const track of tracks) {
+    const target = `${String(track.layer)}.${String(track.property)}`;
+    if (!byId.has(track.layer))
+      diagnostics.push(issue("PXSDKSEM1403", "Motion track references an unknown layer", path, target));
+    if (targets.has(target))
+      diagnostics.push(issue("PXSDKSEM1404", "Motion property has multiple tracks", path, target));
+    targets.add(target);
+    let previous = -1;
+    for (const key of objects(track.keys)) {
+      if (typeof key.time !== "number" || key.time <= previous || key.time > duration)
+        diagnostics.push(issue("PXSDKSEM1405", "Motion keys must have increasing times inside duration", path, target));
+      if (track.property === "visible"
+        ? typeof key.value !== "boolean" || key.curve !== "step"
+        : typeof key.value !== "number" || !Number.isFinite(key.value))
+        diagnostics.push(issue("PXSDKSEM1406", "Motion key value or curve does not match its property", path, target));
+      if (typeof key.value === "number") {
+        const limit = track.property === "opacity" ? 1 :
+          track.property === "scaleX" || track.property === "scaleY" ? 1000 : 1000000;
+        const minimum = track.property === "opacity" ? 0 : -limit;
+        if (key.value < minimum || key.value > limit)
+          diagnostics.push(issue("PXSDKSEM1408", "Motion key value exceeds its property range", path, target));
+      }
+      previous = typeof key.time === "number" ? key.time : previous;
+    }
+  }
+  return diagnostics;
+}
+
 const structuralUiKinds = new Set(["control", "group", "stack", "hbox", "vbox", "grid"]);
 const layoutOwningUiKinds = new Set(["stack", "hbox", "vbox", "grid"]);
 
@@ -563,6 +621,7 @@ export function validateSemantics(contractId: string, value: unknown, path?: str
     }
     case "timeline":
     case "animation": diagnostics.push(...timelineSemantics(root, path)); break;
+    case "motion": diagnostics.push(...motionSemantics(root, path)); break;
     case "ui": diagnostics.push(...uiSemantics(root, path)); break;
     case "uiComponent":
       diagnostics.push(...uiSemantics(root, path));

@@ -3,6 +3,7 @@ import {contractDocumentByteLimit, parseDocument, validateDocument} from "./cont
 import {normalizeProject} from "./project-normalization.js";
 import {validateUiActionUsage} from "./project-actions.js";
 import type {LayeredPortraitDocument} from "./portrait.js";
+import type {MotionDocument} from "./motion.js";
 import {validateProjectCharacterResources} from "./project-resources.js";
 import {validateUiPropertyUsage, type UiTypeRegistryMetadata} from "./semantic.js";
 import {
@@ -930,6 +931,38 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     }
     for (const [index, layer] of parsed.value.layers.entries())
       addResourceRef(layer.path, `${descriptorPath}:layers[${index}].path`);
+  }
+  // A motion descriptor is itself a package resource; every image referenced
+  // by it must join the dependency graph before ownership/fingerprint checks.
+  const motionPaths = new Set(resourceAssets.map((asset) => asset.source)
+    .filter((path) => path.endsWith(".pxmotion")));
+  for (const reference of dependencyReferences) {
+    const resolved = canonicalResourceReference(reference.value, resourceAssets);
+    if (resolved?.source.endsWith(".pxmotion")) motionPaths.add(resolved.source);
+  }
+  for (const descriptorPath of motionPaths) {
+    let authored: unknown = sourceFiles[descriptorPath];
+    try { authored ??= input.resourceText?.(descriptorPath); }
+    catch (error) {
+      diagnostics.push(issue("PXBUILD1060", "Could not read motion descriptor",
+        descriptorPath, String(error)));
+      continue;
+    }
+    if (authored === undefined) {
+      diagnostics.push(issue("PXBUILD1060", "Motion descriptor is missing", descriptorPath));
+      continue;
+    }
+    const parsed = typeof authored === "string"
+      ? parseDocument<MotionDocument>("motion", authored, descriptorPath)
+      : validateDocument<MotionDocument>("motion", authored, descriptorPath);
+    if (!parsed.valid || parsed.value === undefined) {
+      diagnostics.push(issue("PXBUILD1060", "Motion descriptor is invalid",
+        descriptorPath, parsed.diagnostics.slice(0, 3)
+          .map((diagnostic) => diagnostic.details ?? diagnostic.message).join("; ")));
+      continue;
+    }
+    for (const [index, layer] of parsed.value.layers.entries())
+      addResourceRef(layer.image, `${descriptorPath}:layers[${index}].image`);
   }
   const dependencyCollection = collectProjectDependencies({
     assets: resourceAssets,

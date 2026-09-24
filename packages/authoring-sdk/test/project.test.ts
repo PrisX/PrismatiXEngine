@@ -391,6 +391,41 @@ test("compileProject validates portraits referenced outside Story and collects e
     diagnostic.path === "Assets/Characters/Layers/face.png"));
 });
 
+test("compileProject validates motion descriptors and packages their image layers", () => {
+  const descriptorPath = "Assets/Motion/logo.pxmotion";
+  const descriptor = {format: "PrismatiXMotion", schemaRevision: 1,
+    id: "logo", canvas: {width: 1280, height: 720}, duration: 1, loop: false,
+    layers: [{id: "back", image: "Assets/Motion/back.png", width: 640, height: 360},
+      {id: "mark", parent: "back", image: "Assets/Motion/mark.png",
+        width: 128, height: 128}],
+    tracks: [{layer: "mark", property: "opacity", keys: [
+      {time: 0, value: 0, curve: "linear"},
+      {time: 1, value: 1, curve: "linear"}]}]};
+  const compile = (motion: unknown, resourceExists?: (path: string) => boolean) =>
+    compileProject({
+      project: {...project, assets: [{id: "33333333-3333-4333-8333-333333333333",
+        kind: "motion", source: descriptorPath}]},
+      documents: {"Story/story.pxindex": storyIndex,
+        "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
+      sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+      locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+        locale: "zh-TW", strings: {}}},
+      resourceText: (path) => path === descriptorPath ? JSON.stringify(motion) : undefined,
+      ...(resourceExists === undefined ? {} : {resourceExists}),
+    });
+  const valid = compile(descriptor);
+  assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
+  for (const path of [descriptorPath, "Assets/Motion/back.png", "Assets/Motion/mark.png"])
+    assert.ok(valid.artifact?.dependencies.some((dependency) => dependency.source === path));
+  const broken = compile({...descriptor, layers: [...descriptor.layers,
+    {...descriptor.layers[0], id: "back"}]});
+  assert.equal(broken.valid, false);
+  assert.ok(broken.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1060"));
+  const missingImage = compile(descriptor, (path) => path !== "Assets/Motion/mark.png");
+  assert.equal(missingImage.valid, false);
+  assert.ok(missingImage.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1044"));
+});
+
 test("compileProject checks every authored UI property against a supplied native registry", () => {
   const registry = {controls: [{runtimeType: "Control", properties: [
     {id: "modulate", valueType: "color", writable: true, bindable: true, animatable: true},

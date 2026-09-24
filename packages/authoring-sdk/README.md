@@ -277,6 +277,32 @@ Layered expression sprites have a typed, validated `.pxportrait` authoring
 contract. See [layered portrait authoring](../../docs/portrait-authoring.md)
 for the helper, coordinate semantics, and dependency rules.
 
+For reusable image-layer animations, `defineMotion` and `serializeMotion`
+create a validated revision-1 `.pxmotion` with parented layers and keyed
+position, scale, rotation, opacity, or step visibility tracks. The default
+canvas mode is `fit`. The native `MotionSampler` can seek deterministically
+without per-frame allocations, and `DrawMotionPose` draws its result through
+the ordinary image renderer. This is currently a programmatic primitive:
+projects collect the image dependencies of declared motion assets, but do not
+yet mount `.pxmotion` in TSX/Story; masks/blur/atlas frames/audio markers are
+not implemented.
+See [the motion status and remaining contract](../../docs/architecture/layered-motion-authoring.md).
+
+```ts
+import {serializeMotion} from "@prismatix/authoring-sdk";
+
+const logo = serializeMotion({
+  id: "logo-reveal", canvas: {width: 1920, height: 1080}, duration: 1.5,
+  layers: [{id: "logo", image: "Assets/Motion/logo.png",
+    width: 480, height: 160, x: 960, y: 540, anchorX: 0.5, anchorY: 0.5}],
+  tracks: [{layer: "logo", property: "opacity", keys: [
+    {time: 0, value: 0}, {time: 0.5, value: 1, curve: "easeOut"},
+  ]}],
+});
+if (!logo.valid) throw new Error(JSON.stringify(logo.diagnostics));
+// Write logo.value to Assets/Motion/logo.pxmotion and declare/reference it.
+```
+
 Standalone schema validation cannot prove that a `.pxproject` character descriptor and its `.pxcharacter` document agree, or that expression asset UUIDs exist with a Runtime-compatible kind. Use `validateProjectCharacterResources()` once the project provider has loaded those documents.
 
 ```ts

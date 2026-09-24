@@ -1,4 +1,5 @@
 #include <Engine/SDK/ContractVersions.h>
+#include <Engine/SDK/Motion.h>
 #include <Engine/SDK/PreviewSession.h>
 #include <Engine/SDK/RuntimeIr.h>
 #include <Engine/SDK/Ui.h>
@@ -31,5 +32,15 @@ int main() {
     if (!parsed.Valid() || parsed.document.documentId != "consumer") return 1;
 
     const auto invalidUi = px::sdk::ParseUi("{}");
-    return !invalidUi.Valid() && !invalidUi.diagnostics.empty() ? 0 : 2;
+    if (invalidUi.Valid() || invalidUi.diagnostics.empty()) return 2;
+
+    const auto motion = px::sdk::ParseMotion(R"({
+      "format":"PrismatiXMotion","schemaRevision":1,"id":"consumer",
+      "canvas":{"width":1280,"height":720},"duration":1,"loop":false,
+      "layers":[{"id":"logo","image":"Assets/logo.png","width":32,"height":32}],
+      "tracks":[]})");
+    if (!motion.Valid()) return 4;
+    px::sdk::MotionSampler sampler(*motion.clip);
+    sampler.Seek(0.5);
+    return sampler.Pose().size() == 1 ? 0 : 5;
 }

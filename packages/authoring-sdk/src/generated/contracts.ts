@@ -65,6 +65,13 @@ export const contractManifest: Readonly<Record<string, unknown>> = {
       "schemaRevision": 2
     },
     {
+      "extension": ".pxmotion",
+      "id": "motion",
+      "migration": "reject-legacy",
+      "schema": "motion.schema.json",
+      "schemaRevision": 1
+    },
+    {
       "extension": ".pxextension",
       "id": "extension",
       "migration": "reject-future",
@@ -1274,6 +1281,220 @@ export const contractSchemas: Readonly<Record<string, object>> = {
       "schemaRevision",
       "locale",
       "strings"
+    ],
+    "type": "object"
+  },
+  "motion.schema.json": {
+    "$id": "https://prismatix.dev/contracts/motion.schema.json",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "canvas": {
+        "additionalProperties": false,
+        "properties": {
+          "height": {
+            "exclusiveMinimum": 0,
+            "maximum": 16384,
+            "type": "number"
+          },
+          "width": {
+            "exclusiveMinimum": 0,
+            "maximum": 16384,
+            "type": "number"
+          }
+        },
+        "required": [
+          "width",
+          "height"
+        ],
+        "type": "object"
+      },
+      "duration": {
+        "exclusiveMinimum": 0,
+        "maximum": 86400,
+        "type": "number"
+      },
+      "format": {
+        "const": "PrismatiXMotion"
+      },
+      "id": {
+        "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+      },
+      "layers": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "anchorX": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "anchorY": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "height": {
+              "exclusiveMinimum": 0,
+              "maximum": 16384,
+              "type": "number"
+            },
+            "id": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+            },
+            "image": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+            },
+            "opacity": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "parent": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+            },
+            "rotation": {
+              "maximum": 1000000,
+              "minimum": -1000000,
+              "type": "number"
+            },
+            "scaleX": {
+              "maximum": 1000,
+              "minimum": -1000,
+              "type": "number"
+            },
+            "scaleY": {
+              "maximum": 1000,
+              "minimum": -1000,
+              "type": "number"
+            },
+            "visible": {
+              "type": "boolean"
+            },
+            "width": {
+              "exclusiveMinimum": 0,
+              "maximum": 16384,
+              "type": "number"
+            },
+            "x": {
+              "maximum": 1000000,
+              "minimum": -1000000,
+              "type": "number"
+            },
+            "y": {
+              "maximum": 1000000,
+              "minimum": -1000000,
+              "type": "number"
+            },
+            "z": {
+              "maximum": 100000,
+              "minimum": -100000,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "image",
+            "width",
+            "height"
+          ],
+          "type": "object"
+        },
+        "maxItems": 4096,
+        "minItems": 1,
+        "type": "array"
+      },
+      "loop": {
+        "type": "boolean"
+      },
+      "scaleMode": {
+        "enum": [
+          "fit",
+          "fill",
+          "stretch"
+        ]
+      },
+      "schemaRevision": {
+        "const": 1
+      },
+      "tracks": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "keys": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "curve": {
+                    "enum": [
+                      "step",
+                      "linear",
+                      "easeIn",
+                      "easeOut",
+                      "easeInOut"
+                    ]
+                  },
+                  "time": {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "value": {
+                    "oneOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "boolean"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "time",
+                  "value",
+                  "curve"
+                ],
+                "type": "object"
+              },
+              "maxItems": 65536,
+              "minItems": 1,
+              "type": "array"
+            },
+            "layer": {
+              "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+            },
+            "property": {
+              "enum": [
+                "x",
+                "y",
+                "scaleX",
+                "scaleY",
+                "rotation",
+                "opacity",
+                "visible"
+              ]
+            }
+          },
+          "required": [
+            "layer",
+            "property",
+            "keys"
+          ],
+          "type": "object"
+        },
+        "maxItems": 65536,
+        "type": "array"
+      }
+    },
+    "required": [
+      "format",
+      "schemaRevision",
+      "id",
+      "canvas",
+      "duration",
+      "loop",
+      "layers",
+      "tracks"
     ],
     "type": "object"
   },
@@ -3655,6 +3876,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "extension.schema.json": "9438f403e51b8f69f52f05d5999afc37c433754a215094460e28c6d1710555a2",
   "game.schema.json": "f0592fc75a4deb4aed7f192c076165012ef480196a07cd7d2136be390821dcba",
   "locale.schema.json": "b8f6009219c6cad7fa6130af6d710af11cabcf85bf2e0039f1fdd3c08e2bbf9f",
+  "motion.schema.json": "33521ae0170dca681638aa8ef26cf9b83914c0ca92952ad3705671fbc601567e",
   "portrait.schema.json": "23235204cea30d1f9bf49f810f896364b910ce2f74e46f28bc7381dc5da0a6fe",
   "project.schema.json": "937ef02098a0f720d5154b2300c7ddbdc60ef69fd2410337b483de7bc5a3390e",
   "runtime-ir.schema.json": "04c51fc94dc46b500d78877d29dba1dffe1f41619211af24e48cf48699bf0836",
