@@ -33,6 +33,7 @@ enum class InputAction : std::uint8_t {
     ToggleUi,
     QuickSave,
     QuickLoad,
+    OpenSave,
     Rollback,
     Pause,
     Count,

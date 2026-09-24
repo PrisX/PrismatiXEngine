@@ -1,5 +1,7 @@
 #include <string>
 
+#include <nlohmann/json.hpp>
+
 #include "Engine/SDK/GameCatalogResources.h"
 #include "Engine/VN/GameCatalog.h"
 #include "Tests/TestSupport/TestHarness.h"
@@ -323,6 +325,44 @@ name = "affinity"
             std::string(prefix) + R"("inputActions":[{"id":"screen.open.gallery","context":"ui","route":"gallery"}]})");
         suite.Expect(HasCode(wrongContext, "PXCAT1119"),
                      "route shortcuts cannot be declared in a context the Player never checks");
+    });
+
+    suite.Run("Revision3InputActionsPreserveUiCommands", [&] {
+        constexpr std::string_view source = R"({
+          "format":"PrismatiXGame","schemaRevision":3,
+          "variables":[],"gallery":[],"unlockables":[],
+          "inputActions":[{"id":"settings.keys","context":"ui","keys":["F2"],
+            "uiAction":{"command":"settings.page7","argument":"keys"}}]})";
+        const auto parsed = px::sdk::LoadCanonicalGameCatalogResources(source);
+        suite.Require(parsed.Valid(), "revision-3 UI shortcut catalog parses");
+        suite.Expect(parsed.document.inputActions.size() == 1 &&
+                         parsed.document.inputActions[0].uiCommand == "settings.page7" &&
+                         parsed.document.inputActions[0].uiArgument == "keys",
+                     "UI command and argument survive native loading");
+        px::vn::GameCatalog runtime;
+        suite.Require(runtime.LoadCanonical(source,
+            R"({"format":"PrismatiXProject","schemaRevision":2,"assets":[]})",
+            [](std::string_view) { return false; }).IsOk(),
+            "runtime loads revision-3 UI shortcuts");
+        suite.Expect(runtime.InputActions().size() == 1 &&
+                         runtime.InputActions()[0].uiCommand == "settings.page7",
+                     "runtime catalog retains UI shortcut command");
+        auto older = nlohmann::json::parse(source);
+        older["schemaRevision"] = 2;
+        suite.Expect(HasCode(px::sdk::LoadCanonicalGameCatalogResources(older.dump()),
+                             "PXCAT1123"),
+                     "revision 2 cannot silently accept the new UI command");
+        auto ambiguous = nlohmann::json::parse(source);
+        ambiguous["inputActions"][0]["context"] = "game";
+        ambiguous["inputActions"][0]["route"] = "settings";
+        suite.Expect(HasCode(px::sdk::LoadCanonicalGameCatalogResources(ambiguous.dump()),
+                             "PXCAT1123"),
+                     "one action cannot both open a route and dispatch a UI command");
+        auto misspelled = nlohmann::json::parse(source);
+        misspelled["inputActions"][0]["uiAction"]["commmand"] = "settings.page7";
+        suite.Expect(HasCode(px::sdk::LoadCanonicalGameCatalogResources(misspelled.dump()),
+                             "PXCAT1123"),
+                     "misspelled UI action fields fail at native loading");
     });
 
     return suite.Finish();

@@ -381,6 +381,28 @@ int main() {
                      "reset restores both authored named-action and overridden built-in defaults");
     });
 
+    suite.Run("OpenSaveShortcutIsContextScopedAndRebindable", [&] {
+        px::Input input;
+        suite.Expect(input.KeyBindings("save.open") ==
+                         std::vector<int>{SDL_SCANCODE_F6},
+                     "save menu has a named default instead of a Player-only raw key check");
+        suite.Require(input.SetBaseContext("ui"), "menu context is active");
+        input.NewFrame();
+        input.InjectKeyPress(SDL_SCANCODE_F6);
+        suite.Expect(!input.ActionPressed(px::InputAction::OpenSave),
+                     "game-only save action cannot leak through a menu shortcut");
+        suite.Require(input.SetBaseContext("game"), "game context is active");
+        suite.Expect(input.ActionPressed(px::InputAction::OpenSave),
+                     "game context sees the named save shortcut");
+        suite.Require(input.RebindKey("save.open", SDL_SCANCODE_F7, true).status ==
+                          px::KeyRebindStatus::Applied,
+                      "save menu shortcut accepts user rebinding");
+        input.ResetKeyboardBindings();
+        suite.Expect(input.KeyBindings("save.open") ==
+                         std::vector<int>{SDL_SCANCODE_F6},
+                     "reset restores the engine F6 default");
+    });
+
     suite.Run("AudioHandlesCompletionAndRestorePolicy", [&] {
         suite.Expect(
             px::audio::AudioEngine::RestorePolicyFor(

@@ -559,8 +559,9 @@ GameCatalogResourcesLoadResult LoadCanonicalGameCatalogResources(
             Add(result, "PXCAT1102", "Unknown canonical GameCatalog field: " + item.key(), path);
     }
     try {
+        const int revision = root.value("schemaRevision", 0);
         if (root.value("format", std::string{}) != "PrismatiXGame" ||
-            root.value("schemaRevision", 0) != 2) {
+            (revision != 2 && revision != 3)) {
             Add(result, "PXCAT1103", "Canonical GameCatalog format or revision is unsupported", path);
             return result;
         }
@@ -748,6 +749,18 @@ GameCatalogResourcesLoadResult LoadCanonicalGameCatalogResources(
                         Add(result, "PXCAT1118", "input action must be an object", path);
                         continue;
                     }
+                    static const std::unordered_set<std::string> actionFields{
+                        "id", "context", "keys", "wheel", "route", "uiAction"};
+                    std::string unknownField;
+                    for (auto field = source.begin(); field != source.end(); ++field)
+                        if (!actionFields.contains(field.key())) {
+                            unknownField = field.key();
+                            break;
+                        }
+                    if (!unknownField.empty()) {
+                        Add(result, "PXCAT1122", "Unknown input action field: " + unknownField, path);
+                        continue;
+                    }
                     GameCatalogInputAction action;
                     action.id = source.value("id", std::string{});
                     action.context = source.value("context", std::string{});
@@ -758,6 +771,26 @@ GameCatalogResourcesLoadResult LoadCanonicalGameCatalogResources(
                         !ids.insert(action.id).second) {
                         Add(result, "PXCAT1119", "input action has an invalid or duplicate id, context, or route", path, 0, action.id);
                         continue;
+                    }
+                    if (const auto uiAction = source.find("uiAction"); uiAction != source.end()) {
+                        if (revision < 3 || !uiAction->is_object() ||
+                            !uiAction->contains("command") ||
+                            !(*uiAction)["command"].is_string() ||
+                            (uiAction->size() != 1 && uiAction->size() != 2) ||
+                            (uiAction->size() == 2 && !uiAction->contains("argument"))) {
+                            Add(result, "PXCAT1123", "UI action requires revision 3 and a command", path, 0, action.id);
+                            continue;
+                        }
+                        action.uiCommand = (*uiAction)["command"].get<std::string>();
+                        if (!identifier(action.uiCommand, 256) || !action.route.empty() ||
+                            (uiAction->contains("argument") &&
+                             (!(*uiAction)["argument"].is_string() ||
+                              (*uiAction)["argument"].get_ref<const std::string&>().size() > 4096))) {
+                            Add(result, "PXCAT1123", "UI action command or argument is invalid or conflicts with route", path, 0, action.id);
+                            continue;
+                        }
+                        if (uiAction->contains("argument"))
+                            action.uiArgument = (*uiAction)["argument"].get<std::string>();
                     }
                     if (const auto keys = source.find("keys"); keys != source.end()) {
                         if (!keys->is_array() || keys->empty() || keys->size() > 32) {

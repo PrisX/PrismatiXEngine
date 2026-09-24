@@ -74,7 +74,8 @@ Status GameCatalog::LoadCanonical(
     m_inputActions.clear();
     for (const auto& source : loaded.document.inputActions)
         m_inputActions.push_back({source.id, source.context, source.keys, source.route,
-                                  source.wheelDirection, source.wheelThreshold});
+                                  source.wheelDirection, source.wheelThreshold,
+                                  source.uiCommand, source.uiArgument});
     return Status::Ok();
 }
 
@@ -205,7 +206,8 @@ Status GameCatalog::LoadLegacyRuntimeResourcesForMigration(
     m_inputActions.clear();
     for (const auto& source : loaded.document.inputActions)
         m_inputActions.push_back({source.id, source.context, source.keys, source.route,
-                                  source.wheelDirection, source.wheelThreshold});
+                                  source.wheelDirection, source.wheelThreshold,
+                                  source.uiCommand, source.uiArgument});
     return Status::Ok();
 }
 

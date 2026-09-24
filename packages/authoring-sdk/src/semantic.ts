@@ -666,6 +666,8 @@ export function validateSemantics(contractId: string, value: unknown, path?: str
         diagnostics.push(issue("PXSDKSEM1121", "Game input action duplicates a legacy screen.open binding", path, String(action.id)));
       for (const action of inputActions) if (action.route !== undefined && action.context !== "game")
         diagnostics.push(issue("PXSDKSEM1122", "Player route input actions require the game context", path, String(action.id)));
+      for (const action of inputActions) if (action.route !== undefined && action.uiAction !== undefined)
+        diagnostics.push(issue("PXSDKSEM1123", "Input action cannot open a route and dispatch a UI command together", path, String(action.id)));
       break;
     }
     case "extension": {

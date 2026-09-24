@@ -455,13 +455,17 @@ Engine.RegisterAction("acceptance.phase2-menu", async () => {
 )");
 
     Write(root / "Content/game.pxgame", R"({
-      "format":"PrismatiXGame","schemaRevision":2,
+      "format":"PrismatiXGame","schemaRevision":3,
       "variables":[
         {"name":"affinity","type":"integer","default":7,"scope":"profile"},
         {"name":"routeName","type":"string","default":"common","scope":"session"}
       ],
       "inputBindings":[{"key":"Escape","command":"screen.open","argument":"settings"}],
-      "inputActions":[{"id":"screen.open.gallery","context":"game","keys":["G"],"route":"gallery"}],
+      "inputActions":[
+        {"id":"screen.open.gallery","context":"game","keys":["G"],"route":"gallery"},
+        {"id":"acceptance.close-gallery","context":"ui","keys":["F6"],
+         "uiAction":{"command":"overlay.close"}}
+      ],
       "gallery":[{
         "id":"ending-rin","title":"Rin Ending",
         "image":{"id":"33333333-3333-4333-8333-333333333333","path":"Assets/ending.png"},
@@ -788,7 +792,10 @@ int main(int argc, char* argv[]) {
         suite.Require(WaitForLog(log, "Player E2E gallery frame width="),
                       "Gallery is read back from the real native framebuffer");
         suite.Require(WaitForLog(log, "Player overlay closed"),
-                      "automated native cancel input closes the Gallery overlay");
+                      "declared UI shortcut closes the Gallery overlay");
+        suite.Require(WaitForLog(log,
+                                 "Player UI shortcut dispatched action=acceptance.close-gallery command=overlay.close"),
+                      "packaged Player routes the named input action through the UI command sink");
         suite.Require(WaitForLog(log, "Player E2E journey complete name=catalog"),
                       "Player completes the deterministic packaged journey");
         std::optional<int> exitCode;

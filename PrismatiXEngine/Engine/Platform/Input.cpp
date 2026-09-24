@@ -37,6 +37,8 @@ Input::Input() {
     BindKey(InputAction::ToggleUi,SDL_SCANCODE_H);
     BindKey(InputAction::QuickSave,SDL_SCANCODE_F5);
     BindKey(InputAction::QuickLoad,SDL_SCANCODE_F9);
+    BindKey(InputAction::OpenSave,SDL_SCANCODE_F6);
+    (void)SetActionContext(ActionName(InputAction::OpenSave), "game");
     BindKey(InputAction::Rollback,SDL_SCANCODE_PAGEUP);
     BindKey(InputAction::Pause,SDL_SCANCODE_P);
     (void)SetWheelBinding(ActionName(InputAction::Backlog), WheelDirection::Up);
@@ -77,6 +79,7 @@ std::string_view Input::ActionName(const InputAction action) {
         case InputAction::ToggleUi: return "toggle-ui";
         case InputAction::QuickSave: return "quick-save";
         case InputAction::QuickLoad: return "quick-load";
+        case InputAction::OpenSave: return "save.open";
         case InputAction::Rollback: return "rollback";
         case InputAction::Pause: return "pause";
         case InputAction::Count: return {};

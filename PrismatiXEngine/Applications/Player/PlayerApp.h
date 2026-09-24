@@ -167,6 +167,7 @@ private:
     std::vector<std::string> m_choiceTexts;
     vn::GameCatalog m_catalog;
     std::map<std::string, std::string, std::less<>> m_screenTriggers;
+    std::map<std::string, ui::GalgameAction, std::less<>> m_uiActionTriggers;
 
     AppState m_appState = AppState::BootSplash;
     bool m_uiTransitionStartedThisFrame = false;

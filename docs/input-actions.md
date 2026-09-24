@@ -4,12 +4,12 @@ Put named actions in the project's `Content/game.pxgame` document. This is
 versioned JSON, but the `GameInputAction` TypeScript type can be used by
 generators. Unlike the older `inputBindings` command/key pairs, one entry
 declares the action identity, input context, default keyboard keys, wheel gesture, and an
-optional Player route together:
+optional Player route or UI command together:
 
 ```json
 {
   "format": "PrismatiXGame",
-  "schemaRevision": 2,
+  "schemaRevision": 3,
   "variables": [],
   "gallery": [],
   "unlockables": [],
@@ -19,15 +19,30 @@ optional Player route together:
      "route": "gallery"},
     {"id": "backlog", "context": "game", "wheel": {"direction": "up", "threshold": 1}},
     {"id": "advance", "context": "game", "wheel": {"direction": "down"}},
-    {"id": "photo-mode", "context": "game", "keys": ["P"]}
+    {"id": "photo-mode", "context": "game", "keys": ["P"]},
+    {"id": "settings.keys", "context": "ui", "keys": ["F2"],
+     "uiAction": {"command": "settings.page7"}}
   ]
 }
 ```
 
+`uiAction` requires `schemaRevision: 3`; revision 2 remains valid for projects
+without it. An authored UI shortcut calls the same Player UI command handler
+as a button, with an optional string `argument`. It is active only in the
+declared input context (`ui` while in menus, `game` during gameplay), and is
+suppressed during splash, preload, video, and full-screen CG presentation.
+One action may have a `route` or a `uiAction`, not both. A misspelled command
+cannot be checked against every host extension at build time; an unhandled
+Player command emits `PXPLAYER5023` when pressed. Authors should still
+exercise the resulting shortcut in a packaged Player test.
+
 The Player registers each action in the native input system. The built-in
 `quick-save` action is therefore remapped to F8 without a Player-specific
-configuration branch. A `route` opens a registered screen while gameplay is
-active; it requires `context: "game"`. An action without a route can be read
+configuration branch. The built-in `save.open` action opens the save screen
+from gameplay with F6 by default; unlike the former raw F6 check, it respects
+input contexts, can be rebound, and returns to F6 on Reset. A `route` opens a
+registered screen while gameplay is active; it requires `context: "game"`.
+An action without a route or UI command can be read
 by an extension or host using the named-action input API. `keys` may be
 omitted: a new custom action starts unbound, while an engine built-in keeps
 its engine default. Saved user keyboard choices override authored defaults;
@@ -59,7 +74,7 @@ closes. See the [Runtime SDK example](../runtime-sdk/README.md) for conflict
 handling. Escape is returned as an ordinary key so the author's UI decides
 whether it means cancel or a binding.
 
-This does not yet provide a ready-made UI widget, a general mapping from
-named actions to UI Actions, a player-facing wheel remapping widget, or portable
-persistence for non-Player hosts. Those are separate remaining input-contract
-tasks. Existing `inputBindings` documents remain readable for migration.
+This does not yet provide a ready-made rebinding UI widget, a player-facing
+wheel remapping widget, or portable persistence for non-Player hosts. Those
+are separate remaining input-contract tasks. Existing `inputBindings`
+documents remain readable for migration.

@@ -111,6 +111,21 @@ test("game input actions declare contexts and default keys without legacy key co
   ]}).diagnostics.some((item) => item.code === "PXSDKSEM1122"), true);
 });
 
+test("revision 3 input actions dispatch UI commands without route ambiguity", () => {
+  const game = {format: "PrismatiXGame", schemaRevision: 3,
+    variables: [], gallery: [], unlockables: [],
+    inputActions: [{id: "settings.keys", context: "ui", keys: ["F2"],
+      uiAction: {command: "settings.page7"}}]};
+  assert.equal(validateDocument("game", game).valid, true);
+  assert.equal(validateDocument("game", {...game, schemaRevision: 2}).valid, false);
+  assert.equal(validateDocument("game", {...game, inputActions: [
+    {...game.inputActions[0], route: "settings"},
+  ]}).valid, false);
+  assert.equal(validateDocument("game", {...game, inputActions: [
+    {...game.inputActions[0], uiAction: {command: "settings.page7", typo: true}},
+  ]}).valid, false);
+});
+
 test("legacy version-4 animation migration adds schemaRevision explicitly", () => {
   const legacy = {format:"PrismatiXAnimation",version:4,id:"11111111-1111-4111-8111-111111111111",name:"Fade",duration:1,loop:false,tracks:[],markers:[],nested:[]};
   const migrated = migrateDocument("animation", legacy);

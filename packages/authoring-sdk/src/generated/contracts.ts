@@ -1067,6 +1067,32 @@ export const contractSchemas: Readonly<Record<string, object>> = {
     "$id": "https://prismatix.dev/contracts/game.schema.json",
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "schemaRevision": {
+              "const": 2
+            }
+          },
+          "type": "object"
+        },
+        "then": {
+          "properties": {
+            "inputActions": {
+              "items": {
+                "properties": {
+                  "uiAction": false
+                },
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        }
+      }
+    ],
     "properties": {
       "extensions": {
         "additionalProperties": {
@@ -1110,6 +1136,17 @@ export const contractSchemas: Readonly<Record<string, object>> = {
       "inputActions": {
         "items": {
           "additionalProperties": false,
+          "not": {
+            "properties": {
+              "route": {},
+              "uiAction": {}
+            },
+            "required": [
+              "route",
+              "uiAction"
+            ],
+            "type": "object"
+          },
           "properties": {
             "context": {
               "maxLength": 128,
@@ -1133,6 +1170,22 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             },
             "route": {
               "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+            },
+            "uiAction": {
+              "additionalProperties": false,
+              "properties": {
+                "argument": {
+                  "maxLength": 4096,
+                  "type": "string"
+                },
+                "command": {
+                  "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"
+                }
+              },
+              "required": [
+                "command"
+              ],
+              "type": "object"
             },
             "wheel": {
               "additionalProperties": false,
@@ -1220,7 +1273,10 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "uniqueItems": true
       },
       "schemaRevision": {
-        "const": 2
+        "enum": [
+          2,
+          3
+        ]
       },
       "unlockables": {
         "items": {
@@ -4534,7 +4590,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "common.schema.json": "1ba66770e3cf7f90b6ffe29f7fdccd263ad2eeec4cb2cff63bc0f7839a5d57f4",
   "effect.schema.json": "631dd0bce555dcbb3f849049978c9b635dd79848ac497adf292ca6e02468eee7",
   "extension.schema.json": "9438f403e51b8f69f52f05d5999afc37c433754a215094460e28c6d1710555a2",
-  "game.schema.json": "d31e583ebdfa1503b8cb77e20d2773fb8e289c7677ad4f59dd66087f8967cc92",
+  "game.schema.json": "6cca643ebe0c28cfcd34181180e2664c2841f78339ee998503d716bf5074a1d3",
   "locale.schema.json": "b8f6009219c6cad7fa6130af6d710af11cabcf85bf2e0039f1fdd3c08e2bbf9f",
   "motion.schema.json": "70fc192d214ddedc4316bc399a90aedbe8c0805bc15c51aa98af8e917ecff241",
   "portrait.schema.json": "658421c74dacc9d8247b64c6a00389c069b7516f57f863f399160161a1207f16",

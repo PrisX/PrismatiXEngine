@@ -1532,6 +1532,8 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                 return false;
         }
         if (!action.route.empty()) m_screenTriggers[action.id] = action.route;
+        if (!action.uiCommand.empty())
+            m_uiActionTriggers[action.id] = {action.uiCommand, action.uiArgument};
     }
     m_session->VM().SetGameCatalog(m_catalog);
 
@@ -2846,15 +2848,24 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         }
         const bool restoreTitleMusic = m_musicTrackSelected &&
             (m_ui.CurrentRoute() == "music" || m_ui.CurrentRoute() == "extra");
-        (void)m_session->Routes().CloseModal();
+        if (!m_session->Routes().CloseModal()) return;
         if (restoreTitleMusic && !m_titleBgm.empty()) {
             audio.PlayBGM(m_titleBgm, true, 300);
             m_musicTrackSelected = false;
         }
         SaveSettingsIfWritable(); SaveProfileIfWritable();
-        PX_LOG_INFO("Player overlay closed");
+        PX_LOG_INFO("Player overlay closed modal={} route={}",
+                    m_session->Routes().CurrentModalRoute(),
+                    m_session->Routes().CurrentRoute());
     } else if (t == "app.quit") {
         m_quitRequested = true;
+    } else {
+        diag::Emit(diag::Diagnostic{.severity = diag::Severity::Error,
+                                    .code = "PXPLAYER5023",
+                                    .category = "Player.Input",
+                                    .message = "UI command is not handled by this Player",
+                                    .details = t});
+        return;
     }
     if (t.ends_with(".up") || t.ends_with(".down")) m_ui.ShowSettings(SettingsUI());
 }
@@ -3195,8 +3206,10 @@ void PlayerApp::DriveE2EJourney() {
     if(m_e2eStage==E2EStage::Disabled||m_e2eStage==E2EStage::Complete)
         return;
     if(SDL_GetTicks()-m_e2eStartedAt>30'000){
-        PX_LOG_ERROR("Player E2E journey timed out stage={}",
-                     static_cast<int>(m_e2eStage));
+        PX_LOG_ERROR("Player E2E journey timed out stage={} modal={} route={} ui={}",
+                     static_cast<int>(m_e2eStage),
+                     m_session->Routes().CurrentModalRoute(),
+                     m_session->Routes().CurrentRoute(), m_ui.CurrentRoute());
         m_e2eFailed=true;
         m_e2eStage=E2EStage::Complete;
         m_quitRequested=true;
@@ -3316,7 +3329,6 @@ void PlayerApp::DriveE2EJourney() {
                 m_quitRequested=true;break;
             }
             PX_LOG_INFO("Player save picker checkpoint restored gameplay HUD");
-            HandleUIAction({"overlay.close", {}});
             m_e2eStage=E2EStage::AwaitPostMenuGameReady;
             break;
         case E2EStage::AwaitPostMenuGameReady:
@@ -3391,8 +3403,12 @@ void PlayerApp::DriveE2EJourney() {
             break;
         case E2EStage::CloseGallery:
             if(m_routePreloadBatch)break;
-            input.InjectAction(InputAction::Cancel);
-            input.InjectKeyPress(SDL_SCANCODE_ESCAPE);
+            if (input.HasAction("acceptance.close-gallery"))
+                input.InjectKeyPress(SDL_SCANCODE_F6);
+            else {
+                input.InjectAction(InputAction::Cancel);
+                input.InjectKeyPress(SDL_SCANCODE_ESCAPE);
+            }
             m_e2eStage=E2EStage::AwaitOverlayClosed;
             break;
         case E2EStage::AwaitOverlayClosed:
@@ -3610,7 +3626,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
 
     if (input.ActionPressed(InputAction::QuickLoad)) LoadSlot(0);
     if (input.ActionPressed(InputAction::QuickSave)) m_saveRequested = true;
-    if (input.KeyPressed(SDL_SCANCODE_F6)) m_pendingSaveScreen = true;
+    if (input.ActionPressed(InputAction::OpenSave)) m_pendingSaveScreen = true;
 
     // Mode toggles (KAG conventions: A=auto, S=skip toggle, Ctrl=skip held).
     if (input.ActionPressed(InputAction::ToggleAuto)) {
@@ -3853,6 +3869,29 @@ void PlayerApp::MainLoop() {
             }
         }
 
+        // Declared UI shortcuts use the same command sink as authored buttons.
+        // Input contexts suppress game-only bindings while a modal is open.
+        bool handledUiShortcut = false;
+        if (m_ui.CurrentScreen() != ui::GalgameUI::Screen::Video) {
+            for (const auto& [action, command] : m_uiActionTriggers)
+                if (input.ActionPressed(action)) {
+                    for (const auto& event : input.FrameEvents())
+                        if (event.type == InputEventType::Action &&
+                            event.action == action)
+                            (void)input.SuppressDefault(event.id);
+                    HandleUIAction(command);
+                    PX_LOG_INFO("Player UI shortcut dispatched action={} command={}",
+                                action, command.command);
+                    handledUiShortcut = true;
+                    break;
+                }
+        }
+        if (m_gameStartTransitionActive) {
+            GameStartTransitionFrame(dt, now);
+            m_runtime.EndFrame();
+            continue;
+        }
+
         bool modalOpen =
             !m_session->Routes().CurrentModalRoute().empty();
         const std::string_view currentRoute =
@@ -3860,7 +3899,8 @@ void PlayerApp::MainLoop() {
         const bool gameplayRoute =
             currentRoute == "hud" || currentRoute == "game";
 
-        if (m_appState == AppState::Game && !modalOpen && gameplayRoute) {
+        if (!handledUiShortcut && m_appState == AppState::Game &&
+            !modalOpen && gameplayRoute) {
             for (const auto& [action, route] : m_screenTriggers)
                 if (input.ActionPressed(action)) {
                     OpenScreen(route);
@@ -3873,7 +3913,8 @@ void PlayerApp::MainLoop() {
 
         if (modalOpen &&
             m_ui.CurrentScreen() != ui::GalgameUI::Screen::Video) {
-            if (input.RightClick() || input.KeyPressed(SDL_SCANCODE_ESCAPE)) {
+            if (!handledUiShortcut &&
+                (input.RightClick() || input.KeyPressed(SDL_SCANCODE_ESCAPE))) {
                 HandleUIAction({"overlay.close", {}});
             }
             ScreensFrame(dt);
@@ -3899,6 +3940,14 @@ void PlayerApp::MainLoop() {
         }
 
         if (VideoFrame(dt)) {
+            m_runtime.EndFrame();
+            continue;
+        }
+
+        // One physical key can be bound to a UI command and a legacy game
+        // action. The UI command owns this frame; do not also advance or save.
+        if (handledUiShortcut) {
+            ScreensFrame(dt);
             m_runtime.EndFrame();
             continue;
         }

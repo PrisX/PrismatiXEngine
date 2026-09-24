@@ -52,6 +52,8 @@ struct CatalogInputAction {
     std::string route;
     std::string wheelDirection;
     float wheelThreshold = 0.0f;
+    std::string uiCommand;
+    std::string uiArgument;
 };
 class GameCatalog {
 public:

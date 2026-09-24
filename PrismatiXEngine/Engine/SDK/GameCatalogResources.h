@@ -72,6 +72,8 @@ struct GameCatalogInputAction {
     std::string route;
     std::string wheelDirection;
     float wheelThreshold = 0.0f;
+    std::string uiCommand;
+    std::string uiArgument;
 };
 
 struct GameCatalogUnlockable {

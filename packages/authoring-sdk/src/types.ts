@@ -185,15 +185,23 @@ export interface GameVariable {
   readonly scope: "session" | "profile";
 }
 
-export interface GameDocument {
+interface GameDocumentBase {
   readonly format: "PrismatiXGame";
-  readonly schemaRevision: 2;
   readonly variables: readonly GameVariable[];
   readonly gallery?: readonly JsonValue[];
   readonly unlockables?: readonly JsonValue[];
   readonly inputBindings?: readonly JsonValue[];
-  readonly inputActions?: readonly GameInputAction[];
 }
+
+/** Revision 2 remains authorable; UI command shortcuts require revision 3. */
+export type GameDocument =
+  | (GameDocumentBase & {readonly schemaRevision: 2;
+      readonly inputActions?: readonly GameInputActionV2[]})
+  | (GameDocumentBase & {readonly schemaRevision: 3;
+      readonly inputActions?: readonly GameInputAction[]});
+
+export type GameInputActionV2 = Omit<GameInputAction, "uiAction"> &
+  {readonly uiAction?: never};
 
 /** Portable named input actions; hosts may bind additional behavior to an id. */
 export interface GameInputAction {
@@ -205,6 +213,8 @@ export interface GameInputAction {
                    {readonly direction: "none"};
   /** Player route opened when this action is pressed in its context. */
   readonly route?: string;
+  /** Revision 3: dispatch this command through the Player UI action sink. */
+  readonly uiAction?: {readonly command: string; readonly argument?: string};
 }
 
 export interface StoryCompileContext {
