@@ -71,6 +71,15 @@ If a post-build tool must add or replace artifact files, use the supported
 [`augment` command](artifact-augmentation.md) before `pack --artifact`;
 ordinary media should instead be declared with `resourceIncludes`.
 
+Before starting native packaging, the CLI checks free space on the output
+volume against the artifact's indexed input sizes. With `--compression none`,
+it stops early if the inputs already exceed the available space. Compressed
+packages only get an advisory warning because the final archive size cannot
+be known in advance. The check includes a small allowance for the Player and
+archive metadata, but is an estimate, not a guarantee of a successful pack.
+Use `--output` to select a volume with more space; `--ignore-disk-space` skips
+this preflight if you have independently verified the package will fit.
+
 For an unencrypted compressed distribution, Packager writes an
 `Package/entry-cache.json` inventory. The CLI passes the prior published
 distribution as a read-only cache source even though it builds the replacement

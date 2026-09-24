@@ -18,6 +18,7 @@ import {
 import {fingerprintFile, publishDirectory, publishedInputs, retirePublishedDirectory,
   verifiedPublishedInputs, type PublishedInput} from "./output-safety.js";
 import {augmentArtifact} from "./artifact-augment.js";
+import {assessPackageDiskSpace, availableBytesForOutput, formatDiskBytes} from "./disk-space.js";
 import {createStarter} from "./starter.js";
 import {migrateCommand} from "./migration.js";
 import {inspectSaveWithRuntime} from "./save-inspection.js";
@@ -71,9 +72,9 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   create: {values: "name id locale width height", flags: ""},
   dev: {values: "runtime preview-host debounce ui-registry", flags: "once smoke"},
   validate: {values: "runtime ui-registry", flags: ""},
-  build: {values: "output artifact runtime packager player compression ui-registry", flags: "artifact-only distribution encrypt"},
-  pack: {values: "output artifact runtime packager player compression ui-registry", flags: "encrypt"},
-  run: {values: "output artifact runtime packager player compression ui-registry", flags: "encrypt"},
+  build: {values: "output artifact runtime packager player compression ui-registry", flags: "artifact-only distribution encrypt ignore-disk-space"},
+  pack: {values: "output artifact runtime packager player compression ui-registry", flags: "encrypt ignore-disk-space"},
+  run: {values: "output artifact runtime packager player compression ui-registry", flags: "encrypt ignore-disk-space"},
   augment: {values: "artifact manifest", flags: ""},
   ids: {values: "document-id prefix backup", flags: "write check external inline sync"},
   migrate: {values: "report backup entry-story entry-ui supported-locales save-version id name version content-version default-locale story-index game-catalog", flags: "write"},
@@ -1188,6 +1189,25 @@ async function packProject(options: Options): Promise<{output: string; player: s
         throw new Error(`Compiled artifact is missing ${required}: ${artifactRoot}`);
     }
     const output = resolve(options.values.get("output") ?? join(root, "dist", project.id));
+    const compression = options.values.get("compression") ?? "balanced";
+    if (!options.flags.has("ignore-disk-space")) {
+      const available = await availableBytesForOutput(output);
+      if (available !== undefined) {
+        const inputBytes = inputs.reduce((sum, input) => sum + BigInt(input.size), 0n);
+        const assessment = assessPackageDiskSpace(inputBytes, available, compression);
+        if (assessment !== "sufficient") {
+          const message = `Output volume for ${output} has ${formatDiskBytes(available)} free; ` +
+            `artifact inputs total ${formatDiskBytes(inputBytes)} ` +
+            `(compression: ${compression}).`;
+          if (assessment === "insufficient") {
+            throw new PackagerFailure([diagnostic("PXCLI1213", message, output,
+              "Choose --output on a larger volume, or use --ignore-disk-space if you have verified the package will fit.")]);
+          }
+          progress({severity: "warning", code: "PXCLI1214",
+            message: `Warning: ${message} The final archive may need more or less space; consider a larger output volume.`});
+        }
+      }
+    }
     await publishDirectory({output, projectRoot: root,
       protectedPaths: [...protectedPaths, packager, player],
       onProgress: (value) => progress({event: "progress", severity: "information",
@@ -1209,7 +1229,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
       saveMigrations: project.saveMigrations ?? [],
       extensions: project.extensions,
       encryption: options.flags.has("encrypt"),
-      compression: options.values.get("compression") ?? "balanced",
+      compression,
       inputs, cancelFile: join(temp, ".cancel-package"),
     };
     const requestPath = join(temp, "package-request.json");
