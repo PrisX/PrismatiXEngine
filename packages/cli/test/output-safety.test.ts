@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import {link, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile} from "node:fs/promises";
+import {link, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import test from "node:test";
-import {publishDirectory, publishedInputs, retirePublishedDirectory, outputOwnershipMarker,
+import {publishDirectory, publishedInputs, retainPublishedDirectoryIfMatching,
+  retirePublishedDirectory, outputOwnershipMarker,
   verifiedPublishedInputs,
   maxOutputMarkerBytes, type PublicationProgress} from "../src/output-safety.js";
 
@@ -107,6 +108,48 @@ test("resource reuse requires a content-verified published revision", async t =>
     ["game.bin"]);
   await writeFile(join(f.output, "game.bin"), "edited!");
   await assert.rejects(verifiedPublishedInputs(f.output), /unowned or modified/u);
+});
+
+test("unchanged publication keeps its file identity only after full content verification", async t => {
+  const f = await fixture(t);
+  await publishDirectory(f, build("stable"));
+  const input = (await publishedInputs(f.output))[0]!;
+  const expected = new Map([[input.uri, input.fingerprint]]);
+  const markerPath = join(f.output, outputOwnershipMarker);
+  const before = (await stat(markerPath, {bigint: true})).ino;
+  const phases: PublicationProgress[] = [];
+  assert.equal(await retainPublishedDirectoryIfMatching({...f,
+    onProgress: value => phases.push(value)}, expected), true);
+  assert.equal((await stat(markerPath, {bigint: true})).ino, before);
+  assert.deepEqual(phases.filter(value => value.done).map(value => value.phase),
+    ["verify-before-publish"]);
+  assert.equal(await retainPublishedDirectoryIfMatching(f,
+    new Map([[input.uri, "0".repeat(64)]])), false);
+  await writeFile(join(f.output, "game.bin"), "edited");
+  await assert.rejects(retainPublishedDirectoryIfMatching(f, expected),
+    /unowned or modified/u);
+  assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "edited");
+});
+
+test("unchanged publication cannot bypass an active output publisher", async t => {
+  const f = await fixture(t);
+  await publishDirectory(f, build("stable"));
+  const input = (await publishedInputs(f.output))[0]!;
+  let entered!: () => void;
+  let release!: () => void;
+  const ready = new Promise<void>(resolve => { entered = resolve; });
+  const proceed = new Promise<void>(resolve => { release = resolve; });
+  const active = publishDirectory(f, async stage => {
+    entered();
+    await proceed;
+    await writeFile(join(stage, "game.bin"), "next");
+  });
+  await ready;
+  await assert.rejects(retainPublishedDirectoryIfMatching(f,
+    new Map([[input.uri, input.fingerprint]])), /locked/u);
+  release();
+  await active;
+  assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "next");
 });
 
 test("linked reuse is rechecked before a new revision is promoted", async t => {

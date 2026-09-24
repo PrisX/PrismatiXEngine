@@ -56,16 +56,18 @@ prismatix build my-game --output "release/First Light"
 prismatix build my-game --artifact-only --output my-game/.prismatix/artifact
 ```
 
-Rebuilding the same CLI-owned artifact now checks each media source against
-the previous artifact's SHA-256 and hard-links unchanged media into the new
-staging revision when both directories are on the same volume. Changed media
-is copied; if the old artifact is damaged or unowned, publication still fails
-without replacing it. This saves a second multi-GiB media copy and peak disk
-space, but the CLI still hashes sources and both artifact revisions for safety;
-it is not a no-op or block-level incremental build.
-When the reuse source is the same output directory, the mandatory pre-publish
-integrity check also validates those hard links; the CLI does not hash the old
-artifact a second time just to prove the same fact.
+Rebuilding the same CLI-owned artifact compares the compiled files and media
+sources by SHA-256 with its existing ownership inventory. If every file is
+unchanged, the CLI verifies the existing artifact under its publication lock
+and keeps that directory without staging or replacing it. Otherwise, it
+hard-links unchanged media into the new staging revision when both directories
+are on the same volume and copies changed media. A damaged or unowned old
+artifact is never silently accepted or overwritten. This avoids a second
+multi-GiB media copy and reduces peak disk space, but still reads authored
+inputs and the existing artifact for integrity; it is not a block-level
+incremental build. When linked files come from that same output directory, the
+mandatory pre-publish integrity check also validates their content without
+hashing those staged hard links again.
 
 To distribute an artifact that has already been built, pass it to `pack`,
 `build`, or `run` with `--artifact`. This skips author-source compilation and

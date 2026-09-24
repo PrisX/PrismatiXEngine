@@ -287,6 +287,56 @@ export async function verifiedPublishedInputs(output: string,
   return publishedInputs(output);
 }
 
+/** Keep an unchanged artifact without making a staging tree. The caller must
+ * content-hash every authored input before supplying the desired file hashes.
+ * We still take the publication lock and verify the existing output bytes. */
+export async function retainPublishedDirectoryIfMatching(options: PublicationOptions,
+  expectedFiles: ReadonlyMap<string, string>): Promise<boolean> {
+  const output = await validatePaths(options);
+  const expected: Record<string, string> = Object.create(null) as Record<string, string>;
+  for (const [uri, fingerprint] of expectedFiles) {
+    const parts = uri.split("/");
+    if (!uri || uri === outputOwnershipMarker || uri.startsWith("/") ||
+        uri.includes("\\") || uri.includes(":") ||
+        uri.includes("\0") ||
+        parts.some(part => !part || part === "." || part === "..") ||
+        !/^[0-9a-f]{64}$/u.test(fingerprint))
+      throw new Error(`Invalid unchanged-artifact input: ${uri}`);
+    if (expected[uri] !== undefined)
+      throw new Error(`Unchanged-artifact path collision: ${uri}`);
+    expected[uri] = fingerprint;
+    for (let count = 1; count < parts.length; count += 1) {
+      const parent = parts.slice(0, count).join("/");
+      if (expected[parent] !== undefined && expected[parent] !== "directory")
+        throw new Error(`Unchanged-artifact path collision: ${parent}`);
+      expected[parent] = "directory";
+    }
+  }
+  const lock = await acquireOutputLock(output);
+  try {
+    if (key(await validatePaths(options)) !== key(output))
+      throw new Error("Output path changed during unchanged-artifact verification");
+    let markerText: string;
+    try { markerText = await readFile(join(output, outputOwnershipMarker), "utf8"); }
+    catch (error) { if (missing(error)) return false; throw error; }
+    if (Buffer.byteLength(markerText, "utf8") > maxOutputMarkerBytes)
+      throw new Error(`Artifact ownership marker exceeds ${maxOutputMarkerBytes} bytes`);
+    const marker: unknown = JSON.parse(markerText);
+    if (marker === null || typeof marker !== "object" || Array.isArray(marker) ||
+        (marker as {format?: unknown}).format !== "PrismatiXOutput/1" ||
+        (marker as {files?: unknown}).files === null ||
+        typeof (marker as {files?: unknown}).files !== "object" ||
+        Array.isArray((marker as {files?: unknown}).files))
+      throw new Error(`Artifact ownership marker is invalid: ${output}`);
+    const current = (marker as {files: Record<string, unknown>}).files;
+    if (Object.keys(current).length !== Object.keys(expected).length ||
+        Object.entries(expected).some(([uri, fingerprint]) => current[uri] !== fingerprint))
+      return false;
+    await assertOwned(output, false, "verify-before-publish", options.onProgress);
+    return true;
+  } finally { await rm(lock, {recursive: true}); }
+}
+
 async function acquireOutputLock(output: string): Promise<string> {
   const lock = join(dirname(output), `.prismatix-${createHash("sha256").update(key(output)).digest("hex").slice(0, 24)}.lock`);
   try { await mkdir(lock); } catch (error) {

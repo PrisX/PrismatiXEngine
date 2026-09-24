@@ -15,7 +15,8 @@ import {
   discoverRuntimeTool, discoverRuntimeBundle, RuntimeDiscoveryFailure, runtimeDiscoveryHint,
   type RuntimeDiscoveryOptions,
 } from "./runtime-discovery.js";
-import {fingerprintFile, publishDirectory, publishedInputs, retirePublishedDirectory,
+import {fingerprintFile, publishDirectory, publishedInputs, retainPublishedDirectoryIfMatching,
+  retirePublishedDirectory,
   verifiedPublishedInputs, type PublishedInput} from "./output-safety.js";
 import {augmentArtifact} from "./artifact-augment.js";
 import {assessPackageDiskSpace, availableBytesForOutput, formatDiskBytes} from "./disk-space.js";
@@ -182,6 +183,8 @@ function buildProgress(phase: string, current: number, total: number | undefined
     copy: "Copying artifact inputs", "verify-existing": "Checking existing output",
     "clone-existing": "Cloning owned artifact",
     "fingerprint-output": "Fingerprinting artifact output",
+    "compare-unchanged": "Comparing authored inputs with existing artifact",
+    "reuse-artifact": "Keeping unchanged artifact",
     "verify-before-publish": "Rechecking existing output",
     "verify-reuse-source": "Checking reused media revision", publish: "Publishing artifact",
   };
@@ -899,6 +902,62 @@ interface ReusableArtifactInputs {
   readonly byUri: ReadonlyMap<string, PublishedInput>;
 }
 
+/** Content comparison is only a no-op probe; a mismatch falls through to the
+ * normal safe publisher. Timestamps and file sizes alone never establish it. */
+async function matchingArtifactFiles(loaded: LoadedProject, artifact: BuildArtifact,
+  previousInputs: readonly PublishedInput[]): Promise<ReadonlyMap<string, string> | undefined> {
+  const generated = Object.entries(artifact.files);
+  const total = generated.length + artifact.dependencies.length;
+  if (previousInputs.length !== total) return undefined;
+  const previous = new Map(previousInputs.map(input => [input.uri, input]));
+  const matching = new Map<string, string>();
+  let current = 0;
+  let bytes = 0;
+  let lastReport = Date.now();
+  let lastCount = 0;
+  buildProgress("compare-unchanged", 0, total);
+  const report = (): void => {
+    const now = Date.now();
+    if (current !== total && current - lastCount < 512 && now - lastReport < 2000) return;
+    buildProgress("compare-unchanged", current, total, bytes, current === total);
+    lastReport = now;
+    lastCount = current;
+  };
+  for (const [uri, content] of generated) {
+    const old = previous.get(uri);
+    if (old === undefined || matching.has(uri)) return undefined;
+    const size = Buffer.byteLength(content, "utf8");
+    if (size !== old.size ||
+        createHash("sha256").update(content, "utf8").digest("hex") !== old.fingerprint)
+      return undefined;
+    matching.set(uri, old.fingerprint);
+    bytes += size;
+    current += 1;
+    report();
+  }
+  for (let start = 0; start < artifact.dependencies.length; start += 8) {
+    const batch = artifact.dependencies.slice(start, start + 8);
+    const compared = await Promise.all(batch.map(async dependency => {
+      const old = previous.get(dependency.logicalPath);
+      if (old === undefined || matching.has(dependency.logicalPath)) return undefined;
+      const source = projectFile(loaded.root, dependency.source);
+      const info = await stat(source);
+      if (!info.isFile() || info.size !== old.size) return undefined;
+      if (await fingerprintFile(source) !== old.fingerprint) return undefined;
+      return old;
+    }));
+    if (compared.some(value => value === undefined)) return undefined;
+    for (const [index, old] of compared.entries()) {
+      const uri = batch[index]!.logicalPath;
+      matching.set(uri, old!.fingerprint);
+      bytes += old!.size;
+      current += 1;
+      report();
+    }
+  }
+  return matching.size === total ? matching : undefined;
+}
+
 async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact, staging: string,
   reuse?: ReusableArtifactInputs,
   linkedOutputFiles?: Map<string, PublishedInput>): Promise<{readonly files: number; readonly bytes: number}> {
@@ -1018,6 +1077,26 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
   printDiagnostics(compiled.diagnostics);
   if (!compiled.valid || compiled.artifact === undefined) throw new Error("Project validation or compilation failed");
   buildProgress("compile", 1, 1, 0, true);
+  const protectedPaths = protectedInputs(loaded, compiled.artifact);
+  const dependencies = new Set(loaded.dependencies);
+  for (const dependency of compiled.artifact.dependencies) {
+    try { dependencies.add(projectFile(loaded.root, dependency.source)); }
+    catch { /* Compiler paths are advisory. */ }
+  }
+  if (preflightInputs !== undefined) {
+    const matching = await matchingArtifactFiles(loaded, compiled.artifact, preflightInputs);
+    if (matching !== undefined && await retainPublishedDirectoryIfMatching({
+      output, projectRoot: loaded.root, protectedPaths,
+      onProgress: value => buildProgress(value.phase, value.files, undefined,
+        value.bytes, value.done),
+    }, matching)) {
+      const retainedBytes = preflightInputs.reduce((sum, input) => sum + input.size, 0);
+      buildProgress("reuse-artifact", preflightInputs.length, preflightInputs.length,
+        retainedBytes, true, {files: preflightInputs.length, bytes: retainedBytes});
+      return {root: loaded.root, artifact: compiled.artifact, output, dependencies,
+        protectedPaths};
+    }
+  }
   let reuse: ReusableArtifactInputs | undefined;
   if (existsSync(reuseRoot) && !(resolve(reuseRoot) === output && destinationEmpty)) {
     try {
@@ -1045,7 +1124,6 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
   }
   let reused: {readonly files: number; readonly bytes: number} = {files: 0, bytes: 0};
   const linkedOutputFiles = new Map<string, PublishedInput>();
-  const protectedPaths = protectedInputs(loaded, compiled.artifact);
   buildProgress("publish", 0, 1);
   await publishDirectory({output, projectRoot: loaded.root,
     verifyExistingBeforeBuild: false,
@@ -1066,11 +1144,6 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
       reuse !== undefined && resolve(reuse.root) === output ? linkedOutputFiles : undefined);
   });
   buildProgress("publish", 1, 1, 0, true);
-  const dependencies = new Set(loaded.dependencies);
-  for (const dependency of compiled.artifact.dependencies) {
-    try { dependencies.add(projectFile(loaded.root, dependency.source)); }
-    catch { /* Compiler paths are advisory. */ }
-  }
   return {root: loaded.root, artifact: compiled.artifact, output, dependencies,
     protectedPaths};
 }

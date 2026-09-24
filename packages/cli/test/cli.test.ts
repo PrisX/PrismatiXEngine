@@ -649,6 +649,7 @@ test("bounded parallel resource copy preserves every file and rebuilds changed m
   const before = JSON.parse(await readFile(markerPath, "utf8")) as {
     files: Record<string, string>;
   };
+  const markerIdentity = (await stat(markerPath, {bigint: true})).ino;
   assert.equal(inputs.every((path) => /^[0-9a-f]{64}$/u.test(before.files[path] ?? "")),
     true);
   const copyEvent = (output: string) => output.split(/\r?\n/u).filter(Boolean)
@@ -657,8 +658,11 @@ test("bounded parallel resource copy preserves every file and rebuilds changed m
     .find((event) => event.phase === "copy" && event.done);
   const unchanged = run(["build", value.project, "--artifact-only", "--output", output]);
   assert.equal(unchanged.status, 0, unchanged.stderr);
-  assert.equal(copyEvent(unchanged.stderr)?.reusedFiles, inputs.length,
-    "ordinary artifact rebuild reuses unchanged media, not just dev preview");
+  assert.match(unchanged.stderr, /"phase":"reuse-artifact"/u,
+    "an unchanged ordinary build keeps the verified artifact without staging every media file");
+  assert.equal(copyEvent(unchanged.stderr), undefined);
+  assert.equal((await stat(markerPath, {bigint: true})).ino, markerIdentity,
+    "the unchanged build must retain the existing publication itself");
   const unownedPath = join(output, "Assets", "Unowned", "stray.bin");
   await write(unownedPath, "stray");
   const unowned = run(["build", value.project, "--artifact-only", "--output", output]);
@@ -757,6 +761,7 @@ test("artifact build reports load, compile, copy and fingerprint progress", asyn
   assert.doesNotMatch(rebuilt.stderr, /"phase":"verify-reuse-source"/u,
     "the destination integrity scan also validates linked reuse from that destination");
   assert.match(rebuilt.stderr, /"phase":"verify-before-publish"/u);
+  assert.match(rebuilt.stderr, /"phase":"reuse-artifact"/u);
 });
 
 test("augment publishes declared artifact additions for pack --artifact without hand-editing ownership", async () => {
