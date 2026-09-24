@@ -1,6 +1,7 @@
 import {canonicalJson} from "./canonical-json.js";
 import {contractDocumentByteLimit, parseDocument, validateDocument} from "./contracts.js";
 import {normalizeProject} from "./project-normalization.js";
+import {validateInputKeyUsage, type InputKeyRegistryMetadata} from "./input-keys.js";
 import {validateUiActionUsage} from "./project-actions.js";
 import type {LayeredPortraitDocument} from "./portrait.js";
 import type {MotionDocument} from "./motion.js";
@@ -125,6 +126,8 @@ export interface CompileProjectInput {
   readonly resolveResourceInclude?: (path: string) => readonly string[] | undefined;
   /** Native UI TypeRegistry metadata for validating authored runtime properties. */
   readonly uiTypeRegistry?: UiTypeRegistryMetadata;
+  /** Native Input key-name table for validating authored keyboard defaults. */
+  readonly inputKeyRegistry?: InputKeyRegistryMetadata;
   readonly committedRevision?: number;
   /** Reuse unchanged Story compilation across repeated project builds. */
   readonly storyCompilationCache?: StoryProjectCompilationCache;
@@ -411,6 +414,9 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   const storyIndex = documentAt<StoryIndexDocument>("storyIndex", project.storyIndex, documents, diagnostics);
   const game = documentAt<GameDocument>("game", project.gameCatalog, documents, diagnostics);
   if (game !== undefined) {
+    if (input.inputKeyRegistry !== undefined)
+      diagnostics.push(...validateInputKeyUsage(game, project.gameCatalog,
+        input.inputKeyRegistry));
     const routes = new Set(["title", "hud", "backlog", "save", "load",
       "gallery", "settings", "video", ...Object.keys(project.uiEntryPoints)]);
     for (const action of game.inputActions ?? []) if (action.route !== undefined &&

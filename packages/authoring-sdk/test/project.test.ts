@@ -86,6 +86,30 @@ test("project compilation checks authored input action routes", () => {
   assert.ok(missing.diagnostics.some((item) => item.code === "PXBUILD1061"));
 });
 
+test("project compilation checks keyboard defaults against a native key registry", () => {
+  const compile = (actionKey: string, legacyKey: string) => compileProject({project,
+    inputKeyRegistry: {format: "PrismatiXInputKeyRegistry", schemaRevision: 1,
+      keys: ["Enter", "Escape", "F8"]},
+    documents: {"Story/story.pxindex": storyIndex,
+      "Content/game.pxgame": {...game,
+        inputActions: [{id: "quick-save", context: "game", keys: [actionKey]}],
+        inputBindings: [{key: legacyKey, command: "screen.open", argument: "settings"}]},
+      "Content/UI/Title.pxui": ui},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locale: "zh-TW", strings: {}}},
+  });
+  assert.equal(compile("F8", "Enter").valid, true);
+  const invalid = compile("F88", "Escap");
+  assert.equal(invalid.valid, false);
+  assert.deepEqual(invalid.diagnostics.filter((item) => item.code === "PXBUILD1068")
+    .map((item) => item.details), ["inputActions.quick-save: F88", "inputBindings[0]: Escap"]);
+  assert.ok(invalid.diagnostics.every((item) => item.code !== "PXBUILD1068" ||
+    item.path === "Content/game.pxgame"));
+  assert.match(invalid.diagnostics.find((item) => item.details?.endsWith("F88"))?.hint ?? "", /F8/u);
+  assert.match(invalid.diagnostics.find((item) => item.details?.endsWith("Escap"))?.hint ?? "", /Escape/u);
+});
+
 test("compileProject validates extension UI Actions and packages typed resource arguments", () => {
   const extensionPath = "Content/Extensions/music.pxextension";
   const extension = {format: "PrismatiXExtension", schemaRevision: 2,

@@ -40,6 +40,7 @@ import {
   type AuthoringDiagnostic,
   type BuildArtifact,
   type CompileProjectInput,
+  type InputKeyRegistryMetadata,
   type ProjectDocument,
   type SourceSpan,
   type UiTypeRegistryMetadata,
@@ -768,11 +769,46 @@ async function loadUiRegistry(override?: string, runtimeHint?: string,
   return source as unknown as UiTypeRegistryMetadata;
 }
 
+async function loadInputKeyRegistry(runtimeHint?: string,
+  packagerPath?: string): Promise<InputKeyRegistryMetadata | undefined> {
+  const filename = "PrismatiXInputKeyRegistry.json";
+  const bundled = fileURLToPath(new URL(
+    `../../runtime/${process.platform}-${process.arch}/share/PrismatiX/${filename}`, import.meta.url));
+  let path: string | undefined;
+  let location: string | undefined;
+  if (runtimeHint !== undefined || packagerPath !== undefined) {
+    const hint = resolve(runtimeHint ?? packagerPath!);
+    location = runtimeHint === undefined ? dirname(hint)
+      : (await stat(hint)).isDirectory() ? hint : dirname(hint);
+    path = [join(location, filename),
+      join(location, "share", "PrismatiX", filename),
+      join(location, "..", "share", "PrismatiX", filename)]
+      .find((candidate) => existsSync(candidate));
+    const exporter = join(location, process.platform === "win32"
+      ? "PrismatiXInputKeyManifest.exe" : "PrismatiXInputKeyManifest");
+    if (path === undefined && existsSync(exporter))
+      throw new Error(`Input key manifest was not found beside the selected native Runtime: ${hint}; rebuild PrismatiXInputKeyRegistryManifest`);
+  } else if (existsSync(bundled)) path = bundled;
+  if (path === undefined) return undefined;
+  const emitter = join(location ?? dirname(path), process.platform === "win32"
+    ? "PrismatiXInputKeyManifest.exe" : "PrismatiXInputKeyManifest");
+  if (existsSync(emitter) && (await stat(emitter)).mtimeMs > (await stat(path)).mtimeMs + 1000)
+    throw new Error(`Input key manifest is older than its native exporter: ${path}; rebuild PrismatiXInputKeyRegistryManifest`);
+  const source = object(await readJson(path));
+  if (source?.format !== "PrismatiXInputKeyRegistry" || source.schemaRevision !== 1 ||
+      !Array.isArray(source.keys) || source.keys.length === 0 ||
+      !source.keys.every((key: unknown) => typeof key === "string" && key.length > 0) ||
+      new Set(source.keys).size !== source.keys.length)
+    throw new Error(`Input key manifest is invalid: ${path}`);
+  return source as unknown as InputKeyRegistryMetadata;
+}
+
 async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
   registryOverride?: string, runtimeHint?: string, packagerPath?: string,
   onStoryProgress?: NonNullable<CompileProjectInput["onStoryProgress"]>,
   storyCompilationCache?: StoryProjectCompilationCache) {
   const uiTypeRegistry = await loadUiRegistry(registryOverride, runtimeHint, packagerPath);
+  const inputKeyRegistry = await loadInputKeyRegistry(runtimeHint, packagerPath);
   const result = compileProject({project: loaded.project, documents: loaded.documents,
     sourceFiles: loaded.sourceFiles, locales: loaded.locales,
     projectPath: "project.pxproject",
@@ -788,11 +824,25 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
     ...(onStoryProgress === undefined ? {} : {onStoryProgress}),
     ...(storyCompilationCache === undefined ? {} : {storyCompilationCache}),
     ...(committedRevision === undefined ? {} : {committedRevision}),
-    ...(uiTypeRegistry === undefined ? {} : {uiTypeRegistry})});
-  if (uiTypeRegistry !== undefined ||
-      !Object.keys(loaded.documents).some((path) => /\.pxui(?:component)?$/u.test(path))) return result;
-  return {...result, diagnostics: [...result.diagnostics, {severity: "warning" as const,
-    code: "PXCLI1042", message: "Native UI property compatibility was not checked; select --runtime or --ui-registry"}]};
+    ...(uiTypeRegistry === undefined ? {} : {uiTypeRegistry}),
+    ...(inputKeyRegistry === undefined ? {} : {inputKeyRegistry})});
+  const warnings: AuthoringDiagnostic[] = [];
+  if (uiTypeRegistry === undefined &&
+      Object.keys(loaded.documents).some((path) => /\.pxui(?:component)?$/u.test(path)))
+    warnings.push({severity: "warning", code: "PXCLI1042",
+      message: "Native UI property compatibility was not checked; select --runtime or --ui-registry"});
+  if (inputKeyRegistry === undefined && Object.values(loaded.documents).some((document) => {
+    const game = object(document);
+    return game?.format === "PrismatiXGame" &&
+      ((Array.isArray(game.inputActions) && game.inputActions.some((entry: unknown) => {
+        const keys = object(entry)?.keys;
+        return Array.isArray(keys) && keys.length > 0;
+      })) ||
+      (Array.isArray(game.inputBindings) && game.inputBindings.length > 0));
+  })) warnings.push({severity: "warning", code: "PXCLI1043",
+    message: "Native input key names were not checked; select a Runtime with PrismatiXInputKeyRegistry.json"});
+  return warnings.length === 0 ? result
+    : {...result, diagnostics: [...result.diagnostics, ...warnings]};
 }
 
 async function validateCommand(options: Options): Promise<number> {

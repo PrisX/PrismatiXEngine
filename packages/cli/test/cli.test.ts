@@ -230,6 +230,74 @@ test("validate and artifact build use the selected local Runtime UI registry", a
   assert.match(stale.stderr, /older than its native exporter/u);
 });
 
+test("validate and build reject keyboard names absent from the selected native Runtime", async () => {
+  const value = await fixture();
+  const gamePath = join(value.root, "Content/game.pxgame");
+  const game = JSON.parse(await readFile(gamePath, "utf8")) as Record<string, unknown>;
+  game.inputActions = [{id: "quick-save", context: "game", keys: ["F88"]}];
+  game.inputBindings = [{key: "Escape", command: "screen.open", argument: "settings"}];
+  await write(gamePath, JSON.stringify(game));
+  const runtime = join(value.root, "native-build");
+  await write(join(runtime, "PrismatiXUiTypeRegistry.json"), JSON.stringify({
+    format: "PrismatiXUiTypeRegistry", schemaRevision: 2, controls: [],
+  }));
+  const keyManifest = join(runtime, "PrismatiXInputKeyRegistry.json");
+  await write(keyManifest, JSON.stringify({format: "PrismatiXInputKeyRegistry",
+    schemaRevision: 1, keys: ["Enter", "Escape", "F8"]}));
+  const invalid = run(["validate", value.project, "--runtime", runtime]);
+  assert.equal(invalid.status, 1);
+  assert.match(invalid.stderr, /PXBUILD1068/u);
+  assert.match(invalid.stderr, /F88/u);
+  const rejectedBuild = run(["build", value.project, "--artifact-only", "--output",
+    join(value.root, "invalid-build"), "--runtime", runtime]);
+  assert.equal(rejectedBuild.status, 1);
+  assert.match(rejectedBuild.stderr, /PXBUILD1068/u);
+
+  game.inputActions = [{id: "quick-save", context: "game", keys: ["F8"]}];
+  await write(gamePath, JSON.stringify(game));
+  const valid = run(["validate", value.project, "--runtime", runtime]);
+  assert.equal(valid.status, 0, valid.stderr);
+  assert.doesNotMatch(valid.stderr, /PXCLI1043/u);
+
+  await rm(keyManifest);
+  const oldRuntime = run(["validate", value.project, "--runtime", runtime]);
+  assert.equal(oldRuntime.status, 0, oldRuntime.stderr);
+  assert.match(oldRuntime.stderr, /PXCLI1043/u);
+  const exporter = join(runtime, process.platform === "win32"
+    ? "PrismatiXInputKeyManifest.exe" : "PrismatiXInputKeyManifest");
+  await write(exporter, "fixture");
+  const missing = run(["validate", value.project, "--runtime", runtime]);
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /Input key manifest was not found/u);
+  await write(keyManifest, JSON.stringify({format: "PrismatiXInputKeyRegistry",
+    schemaRevision: 1, keys: ["Enter", "Escape", "F8"]}));
+  await utimes(keyManifest, new Date(0), new Date(0));
+  const stale = run(["validate", value.project, "--runtime", runtime]);
+  assert.equal(stale.status, 1);
+  assert.match(stale.stderr, /Input key manifest is older than its native exporter/u);
+});
+
+test("pack checks keyboard defaults against its selected Packager's native key manifest", async () => {
+  const value = await fixture();
+  const gamePath = join(value.root, "Content/game.pxgame");
+  const game = JSON.parse(await readFile(gamePath, "utf8")) as Record<string, unknown>;
+  game.inputActions = [{id: "quick-save", context: "game", keys: ["F88"]}];
+  await write(gamePath, JSON.stringify(game));
+  const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-native-keys-"));
+  const packager = join(tools, "mock-packager.mjs");
+  const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
+  await write(packager, "process.exit(0);\n");
+  await write(player, "fixture");
+  await write(join(tools, "PrismatiXInputKeyRegistry.json"), JSON.stringify({
+    format: "PrismatiXInputKeyRegistry", schemaRevision: 1, keys: ["F8"],
+  }));
+  const packed = run(["pack", value.project, "--packager", packager, "--player", player,
+    "--output", join(value.root, "package")]);
+  assert.equal(packed.status, 1);
+  assert.match(packed.stderr, /PXBUILD1068/u);
+  assert.doesNotMatch(packed.stderr, /PXCLI1043/u);
+});
+
 test("dev --once streams PreviewHost protocol output and exits after a clean shutdown", async () => {
   const value = await fixture();
   const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-preview-"));

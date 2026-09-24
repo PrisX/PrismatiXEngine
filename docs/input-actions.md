@@ -39,11 +39,17 @@ The equivalent typed authoring example is
 [input-actions.ts](examples/input-actions.ts).
 
 The project compiler checks route names, duplicate action IDs, and collisions
-with legacy `screen.open` bindings. The native loader also rejects malformed
-entries; unknown SDL key names stop Player startup with a diagnostic instead
-of silently disabling the shortcut. `prismatix validate` currently validates
-key strings structurally, not against the selected platform's SDL key-name
-table, so a distribution smoke test is still needed for uncommon key names.
+with legacy `screen.open` bindings. Native builds export
+`PrismatiXInputKeyRegistry.json` from `Input::KeyCode` next to the Runtime tools.
+With `--runtime` (or a Packager selected for a fresh distribution build),
+`prismatix validate` and `build` check both `inputActions[].keys` and legacy
+`inputBindings[].key` against that table before Player starts. A misspelled key
+is `PXBUILD1068`; a runtime without the manifest emits `PXCLI1043`, so it is
+clear that only structural validation ran. Native builds that have the exporter
+but lack a current manifest fail rather than silently skipping this check.
+The manifest lists canonical SDL names and the historical `Enter` alias; use
+one of those spellings for portable authored defaults. A distribution smoke
+test is still needed to verify actual keyboard behavior and user remapping.
 
 Runtime extensions can now start a one-shot physical key capture with
 `ctx.input.beginKeyCapture()`, poll `takeCapturedKey()`, and pass the resulting

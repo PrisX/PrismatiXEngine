@@ -6,6 +6,7 @@ assertLocalBuildFresh(fileURLToPath(new URL("../..", import.meta.url)), "@prisma
 export {assertLocalBuildFresh, localSourceFingerprint, writeLocalBuildStamp} from "./build-freshness.js";
 export * from "./canonical-json.js";
 export * from "./contracts.js";
+export * from "./input-keys.js";
 export * from "./localization.js";
 export * from "./motion.js";
 export * from "./jsx-ui.js";

@@ -444,6 +444,32 @@ add_custom_target(PrismatiXUiTypeRegistryManifest ALL
 add_dependencies(PrismatiXPackager PrismatiXUiTypeRegistryManifest)
 add_dependencies(PrismatiXPlayer PrismatiXUiTypeRegistryManifest)
 add_dependencies(PrismatiXPreviewHost PrismatiXUiTypeRegistryManifest)
+add_executable(PrismatiXInputKeyManifest Applications/InputKeyManifestMain.cpp)
+target_link_libraries(PrismatiXInputKeyManifest PRIVATE PrismatiXRuntime)
+prismatix_configure_target(PrismatiXInputKeyManifest)
+set(PRISMATIX_INPUT_KEY_MANIFEST
+    "${CMAKE_CURRENT_BINARY_DIR}/PrismatiXInputKeyRegistry.json")
+add_custom_command(
+    OUTPUT "${PRISMATIX_INPUT_KEY_MANIFEST}"
+    COMMAND $<TARGET_FILE:PrismatiXInputKeyManifest>
+            "${PRISMATIX_INPUT_KEY_MANIFEST}"
+    DEPENDS PrismatiXInputKeyManifest
+    COMMENT "Exporting the native input key-name contract"
+    VERBATIM
+)
+add_custom_target(PrismatiXInputKeyRegistryManifest ALL
+                  DEPENDS "${PRISMATIX_INPUT_KEY_MANIFEST}")
+add_dependencies(PrismatiXPackager PrismatiXInputKeyRegistryManifest)
+add_dependencies(PrismatiXPlayer PrismatiXInputKeyRegistryManifest)
+add_dependencies(PrismatiXPreviewHost PrismatiXInputKeyRegistryManifest)
+install(FILES "${PRISMATIX_INPUT_KEY_MANIFEST}"
+    DESTINATION .
+    COMPONENT PrismatiXSDK
+)
+install(FILES "${PRISMATIX_INPUT_KEY_MANIFEST}"
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/PrismatiX
+    COMPONENT PrismatiXRuntime
+)
 install(FILES "${PRISMATIX_UI_TYPE_MANIFEST}"
     DESTINATION .
     COMPONENT PrismatiXSDK
@@ -1067,6 +1093,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     add_custom_target(PrismatiXSDKTests DEPENDS
         PrismatiXPackager
         PrismatiXUiTypeRegistryManifest
+        PrismatiXInputKeyRegistryManifest
         PrismatiXSDKReferenceDocument
         PrismatiXPackagerContractTests
         PrismatiXCharacterResourcesContractTests
