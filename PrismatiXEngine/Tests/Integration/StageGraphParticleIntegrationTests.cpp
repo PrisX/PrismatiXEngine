@@ -15,6 +15,7 @@
 #include <optional>
 #include <ranges>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -109,6 +110,60 @@ int main() {
         suite.Expect(fixture.stage.CaptureState().actors.empty() &&
                          fixture.stage.BackgroundPath() == "Assets/background.webp",
                      "instant clear removes actors without clearing the background");
+    });
+
+    suite.Run("LayeredPortraitPreloadTracksAssetSession", [&] {
+        px::test::TempDirectory fixture("layered-portrait-preload");
+        suite.Require(SaveSolidBmp(fixture.path / "body.bmp", 16, 16,
+                                   {240, 20, 30, 255}) &&
+                          SaveSolidBmp(fixture.path / "replacement.bmp", 16, 16,
+                                       {20, 40, 240, 255}),
+                      "portrait preload textures are available");
+        const auto writePortrait = [&](const char* layer) {
+            std::ofstream output(fixture.path / "hero.pxportrait",
+                                 std::ios::binary | std::ios::trunc);
+            output << "{\"format\":\"PrismatiXLayeredPortrait\","
+                   << "\"schemaRevision\":2,\"width\":16,\"height\":16,"
+                   << "\"layers\":[{\"path\":\"" << layer
+                   << "\",\"width\":16,\"height\":16,\"role\":\"base\"}]}";
+            return static_cast<bool>(output);
+        };
+        suite.Require(writePortrait("body.bmp"),
+                      "initial portrait descriptor is available");
+        SDL_Surface* surface = SDL_CreateSurface(64, 64, SDL_PIXELFORMAT_RGBA32);
+        suite.Require(surface != nullptr, "preload surface initializes");
+        SDL_Renderer* native = SDL_CreateSoftwareRenderer(surface);
+        suite.Require(native != nullptr, "preload renderer initializes");
+        {
+            px::io::VFS vfs;
+            vfs.MountDirectory(fixture.path.string());
+            px::graphics::AssetCache assets(native, vfs);
+            px::graphics::Renderer2D renderer(native, assets);
+            px::vn::Stage stage(renderer, assets);
+            const auto waitForTexture = [&](const char* path) {
+                const auto deadline = std::chrono::steady_clock::now() +
+                                      std::chrono::seconds(3);
+                while (std::chrono::steady_clock::now() < deadline) {
+                    assets.BeginFrame();
+                    if (assets.HasResidentTexture(path)) return true;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+                return false;
+            };
+            stage.PreloadCharacter("hero.pxportrait");
+            suite.Expect(waitForTexture("body.bmp") &&
+                             !assets.HasResidentTexture("hero.pxportrait"),
+                         "portrait preloads its image layer, not the descriptor as an image");
+            suite.Require(writePortrait("replacement.bmp"),
+                          "updated portrait descriptor is available");
+            assets.BeginAssetSession();
+            stage.PreloadCharacter("hero.pxportrait");
+            suite.Expect(waitForTexture("replacement.bmp") &&
+                             !assets.HasResidentTexture("body.bmp"),
+                         "a new asset session reloads changed portrait layers");
+        }
+        SDL_DestroyRenderer(native);
+        SDL_DestroySurface(surface);
     });
 
     suite.Run("LayeredExpressionCrossfadeKeepsSharedBodyOpaque", [&] {

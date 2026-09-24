@@ -66,6 +66,12 @@ Stage::~Stage() {
 const Stage::LayeredPortrait* Stage::ResolveLayeredPortrait(
     const std::string& path) {
     if(!path.ends_with(".pxportrait"))return nullptr;
+    const auto assetSession=m_assets.AssetSession();
+    if(m_portraitAssetSession!=assetSession){
+        m_layeredPortraits.clear();
+        m_invalidLayeredPortraits.clear();
+        m_portraitAssetSession=assetSession;
+    }
     if(const auto found=m_layeredPortraits.find(path);
        found!=m_layeredPortraits.end())return &found->second;
     if(m_invalidLayeredPortraits.contains(path))return nullptr;
@@ -128,6 +134,18 @@ const Stage::LayeredPortrait* Stage::ResolveLayeredPortrait(
         return nullptr;
     }
     return &m_layeredPortraits.emplace(path,std::move(portrait)).first->second;
+}
+
+void Stage::PreloadCharacter(const std::string& imagePath) {
+    if(imagePath.empty())return;
+    if(!imagePath.ends_with(".pxportrait")){
+        m_assets.PreloadTexture(imagePath,graphics::AssetPreloadPriority::High);
+        return;
+    }
+    if(const auto* portrait=ResolveLayeredPortrait(imagePath)){
+        for(const auto& layer:portrait->layers)
+            m_assets.PreloadTexture(layer.path,graphics::AssetPreloadPriority::High);
+    }
 }
 
 float Stage::SlotCenterX(int slot) const {

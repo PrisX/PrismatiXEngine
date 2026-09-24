@@ -564,7 +564,11 @@ void RuntimeSession::Update(const std::uint64_t nowMs, const float deltaSeconds)
             if(command.type!="bg"&&command.type!="char"&&command.type!="cg"&&command.type!="layer")continue;
             for(const char* field:{"file","image","rule"}){
                 const Variant* value=command.FindTyped(field);const auto* resource=value?value->TryGet<ResourceRefValue>():nullptr;
-                if(resource&&!resource->lastKnownPath.empty())m_services.assets.PreloadTexture(resource->lastKnownPath);
+                if(!resource||resource->lastKnownPath.empty())continue;
+                if(command.type=="char"&&std::string_view(field)=="file")
+                    m_stage.PreloadCharacter(resource->lastKnownPath);
+                else
+                    m_services.assets.PreloadTexture(resource->lastKnownPath);
             }
         }
     }
@@ -662,10 +666,18 @@ Result<RuntimeSession::PreparedRestore> RuntimeSession::PrepareRestore(
                              &state.stage.ruleMask})
         if (const Status asset = requireTexture(*path); !asset)
             return Result<PreparedRestore>::Failure(asset.Diagnostics());
+    const auto requireCharacter = [this, &candidateStage](
+                                      const std::string& path) -> Status {
+        if (path.empty()) return Status::Ok();
+        if (!m_services.vfs.Exists(path))
+            return RestoreFailure("Stage restore candidate references a missing asset", path);
+        candidateStage.PreloadCharacter(path);
+        return Status::Ok();
+    };
     for (const auto& actor : state.stage.actors) {
-        if (const Status asset = requireTexture(actor.imagePath); !asset)
+        if (const Status asset = requireCharacter(actor.imagePath); !asset)
             return Result<PreparedRestore>::Failure(asset.Diagnostics());
-        if (const Status asset = requireTexture(actor.previousImagePath); !asset)
+        if (const Status asset = requireCharacter(actor.previousImagePath); !asset)
             return Result<PreparedRestore>::Failure(asset.Diagnostics());
     }
     for (const auto& layer : state.stage.layers)

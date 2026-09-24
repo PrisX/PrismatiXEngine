@@ -118,6 +118,9 @@ public:
     void SetCharacterAuto(const std::string& name, const std::string& imagePath, int slot,
                           float offsetX = 0.0f, float offsetY = 0.0f,
                           float scale = 1.0f);
+    // Prefetches a plain sprite or the image layers referenced by a portrait
+    // descriptor. Descriptors themselves are not image textures.
+    void PreloadCharacter(const std::string& imagePath);
     void ClearCharacter(const std::string& name, bool transition = true);
     // Clears character actors without resetting the rest of the stage.
     void ClearCharacters(bool transition = true);
@@ -378,6 +381,7 @@ private:
     std::unordered_map<std::string, Actor> m_actors;
     std::unordered_map<std::string, LayeredPortrait> m_layeredPortraits;
     std::unordered_map<std::string, bool> m_invalidLayeredPortraits;
+    std::uint64_t m_portraitAssetSession = 0;
 };
 
 }
