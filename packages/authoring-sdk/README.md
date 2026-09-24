@@ -285,8 +285,10 @@ without per-frame allocations, and `DrawMotionPose` draws its result through
 the ordinary image renderer. `Motion` is a TSX UI component backed by the
 native `MotionRect`; Player, splash scenes and both previews can load its
 descriptor, and project compilation collects the clip's image dependencies.
-Story commands, a transition/preload handshake, masks, blur, atlas frames and
-audio markers are not implemented. The image-layer renderer has not yet been
+Splash pages now prefetch static UI image dependencies and wait before fading
+out the current page, but Story commands, a general route/transition preload
+handshake, masks, blur, atlas frames and audio markers are not implemented.
+The image-layer renderer has not yet been
 verified against a motion-specific framebuffer reference.
 See [the motion status and remaining contract](../../docs/architecture/layered-motion-authoring.md).
 

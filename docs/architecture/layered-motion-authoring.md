@@ -14,9 +14,15 @@ reuses its scratch storage and binary-searches ordered keys; its parent-world
 transform and inherited opacity are sampled at one time. `fit` is the default
 canvas scaling mode to avoid image squashing. Native and TypeScript contract
 tests cover this slice. `compileProject` validates reachable descriptors
-and collects their image dependencies, but there is no Story motion command or preload handshake,
-sound markers, atlas, masks, blur, blend modes, save/load playback binding, or
-M2 conformance fixture has been added. The renderer adapter has compiled but
+and collects their image dependencies. Splash playback now resolves static UI
+image paths (including `.pxmotion` layers), queues a texture preload batch for
+the following page while the current page is visible, and waits before exit
+until that batch finishes. This avoids presenting a partially decoded next
+page, but is not a general UI/Story preload handshake: bound/dynamic paths,
+route-to-route transitions, texture residency under budget pressure, and
+motion-specific framebuffer conformance remain open. Story motion commands,
+sound markers, atlases, masks, blur, blend modes, save/load playback binding, and
+M2 conformance fixtures have not been added. The renderer adapter has compiled but
 has not yet passed a motion-specific framebuffer comparison.
 
 Revision-1 sampling uses a layer's authored property until its first key;

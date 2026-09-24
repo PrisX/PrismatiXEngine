@@ -1516,6 +1516,17 @@ bool PlayerApp::Init(int argc, char* argv[]) {
             .loadMotion=[this](const std::string_view path){
                 return m_runtime.VFS().ReadText(std::string(path));
             },
+            .preloadVisuals=[this](const std::vector<std::string>& paths)->std::function<bool()>{
+                std::vector<graphics::AssetPreloadRequest> requests;
+                requests.reserve(paths.size());
+                for(const auto& path:paths)
+                    requests.push_back({path,graphics::AssetPreloadPriority::Critical});
+                const auto batch=m_runtime.Assets().BeginTexturePreload(std::move(requests));
+                return [this,batch]{
+                    const auto progress=m_runtime.Assets().TexturePreloadProgress(batch);
+                    return !progress.valid||progress.Finished();
+                };
+            },
             .playAudio=[this](const ResourceRefValue& reference){
                 if(!m_runtime.VFS().Exists(reference.lastKnownPath)){diag::Diagnostic diagnostic{.severity=diag::Severity::Warning,.code="PXBOOT1202",.category="Player.Splash",.message="Splash audio is missing; visual playback will continue",.details=reference.lastKnownPath};diagnostic.source.path=reference.lastKnownPath;return Status::Fail(std::move(diagnostic));}
                 if (reference.lastKnownPath.starts_with("Assets/Audio/Voice/"))
@@ -1643,22 +1654,24 @@ void PlayerApp::SplashFrame(const float dt) {
     const bool skip=input.LeftClick()||input.KeyPressed(SDL_SCANCODE_RETURN)||
         input.KeyPressed(SDL_SCANCODE_ESCAPE)||input.KeyPressed(SDL_SCANCODE_SPACE);
     (void)m_splash->Context().Update(input,width,height,dt);
-    const std::size_t previousIndex = m_splash->CurrentIndex();
+    const std::uint64_t previousPresentation = m_splash->PresentationGeneration();
     m_splash->Update(dt,skip);
     if(!m_splash->Completed()){
-        if (m_splash->CurrentIndex() != previousIndex) {
-            // The next scene is installed by Update(); capture the preceding
-            // presented frame before drawing the new one.
-            const std::size_t index = m_splash->CurrentIndex();
-            PresentationTransition transition = m_splashTransition;
-            if (index == 1 && !m_splashTransitionConfigured)
-                transition.duration = 0.5f;
-            if (index < m_splashTransitionOverrides.size()) {
-                const auto& authored = m_splashTransitionOverrides[index];
-                if (authored.preset) transition.preset = *authored.preset;
-                if (authored.duration) transition.duration = *authored.duration;
+        if (m_splash->PresentationGeneration() != previousPresentation) {
+            if (previousPresentation > 0) {
+                // The new scene installs only after its texture batch is ready;
+                // capture the preceding presented frame for the crossfade.
+                const std::size_t index = m_splash->CurrentIndex();
+                PresentationTransition transition = m_splashTransition;
+                if (index == 1 && !m_splashTransitionConfigured)
+                    transition.duration = 0.5f;
+                if (index < m_splashTransitionOverrides.size()) {
+                    const auto& authored = m_splashTransitionOverrides[index];
+                    if (authored.preset) transition.preset = *authored.preset;
+                    if (authored.duration) transition.duration = *authored.duration;
+                }
+                BeginPresentationTransition(transition);
             }
-            BeginPresentationTransition(transition);
             Input neutral;
             neutral.InjectFrame(-1000.0f,-1000.0f,false);
             (void)m_splash->Context().Update(neutral,width,height,0.0f);

@@ -6,6 +6,8 @@
 #include "Engine/UI/UiApplication.h"
 
 #include <functional>
+#include <optional>
+#include <vector>
 
 namespace px::ui::startup {
 
@@ -16,12 +18,15 @@ public:
         std::function<Result<sdk::UiDocument>(const ResourceRefValue&)>;
     using AudioPlayer = std::function<Status(const ResourceRefValue&)>;
     using DiagnosticSink = std::function<void(const diag::Diagnostic&)>;
+    using VisualPreloader = std::function<std::function<bool()>(
+        const std::vector<std::string>&)>;
 
     struct Services {
         SceneLoader loadScene;
         UiAssetResolver resolveAsset;
         UiComponentLoader loadComponent;
         UiMotionLoader loadMotion;
+        VisualPreloader preloadVisuals;
         AudioPlayer playAudio;
         DiagnosticSink diagnostics;
     };
@@ -39,12 +44,18 @@ public:
     [[nodiscard]] const UIContext& Context() const { return m_context; }
     [[nodiscard]] Phase CurrentPhase() const { return m_phase; }
     [[nodiscard]] std::size_t CurrentIndex() const { return m_index; }
+    [[nodiscard]] std::uint64_t PresentationGeneration() const {
+        return m_presentationGeneration;
+    }
     [[nodiscard]] bool Completed() const { return m_phase == Phase::Completed; }
     [[nodiscard]] float Elapsed() const { return m_elapsed; }
     [[nodiscard]] const std::vector<SplashScreenEntry>& Entries() const { return m_entries; }
 
 private:
-    bool LoadCurrent();
+    enum class LoadOutcome { Installed, Pending, Failed };
+    LoadOutcome LoadCurrent();
+    void LoadUntilReady();
+    void PrepareNext();
     void BeginExit();
     void Advance();
     void Finish();
@@ -65,6 +76,12 @@ private:
     bool m_skipRequested = false;
     bool m_audioPlayed = false;
     bool m_completionSent = false;
+    std::optional<sdk::UiDocument> m_pendingDocument;
+    std::function<bool()> m_visualReady;
+    std::optional<sdk::UiDocument> m_nextDocument;
+    std::function<bool()> m_nextReady;
+    std::size_t m_nextIndex = 0;
+    std::uint64_t m_presentationGeneration = 0;
 };
 
 }  // namespace px::ui::startup

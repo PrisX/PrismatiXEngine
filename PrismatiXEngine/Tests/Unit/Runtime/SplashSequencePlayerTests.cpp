@@ -79,6 +79,7 @@ struct Fixture {
     std::vector<std::string> loaded;
     std::vector<std::string> audio;
     std::vector<px::diag::Diagnostic> diagnostics;
+    px::ui::startup::SplashSequencePlayer::VisualPreloader visualPreloader;
 
     px::ui::startup::SplashSequencePlayer Player() {
         return px::ui::startup::SplashSequencePlayer({
@@ -93,6 +94,7 @@ struct Fixture {
                                              .message = "missing scene"});
                 return px::Result<px::sdk::UiDocument>::Success(found->second);
             },
+            .preloadVisuals = visualPreloader,
             .playAudio = [this](const px::ResourceRefValue& reference) {
                 audio.push_back(reference.lastKnownPath);
                 return px::Status::Ok();
@@ -148,6 +150,69 @@ int main() {
         suite.Expect(player.Completed() && completions == 1 && fixture.loaded.size() == 1 &&
                          fixture.audio.size() == 1,
                      "one splash completes without per-frame reload or repeated audio");
+    });
+
+    suite.Run("VisualPreload_KeepsPreviousSceneUntilImagesAreReady", [&] {
+        Fixture fixture;
+        const auto first = Entry("first");
+        const auto second = Entry("second");
+        fixture.scenes.emplace(first.scene.lastKnownPath, Scene("first", false));
+        auto next = Scene("second", false);
+        next.nodes[1].runtimeType = "TextureRect";
+        next.nodes[1].kind = px::sdk::UiNodeKind::Image;
+        next.nodes[1].runtimeProperties.emplace("path", std::string{"Assets/Splash/second.png"});
+        fixture.scenes.emplace(second.scene.lastKnownPath, std::move(next));
+        bool ready = false;
+        std::vector<std::string> requested;
+        fixture.visualPreloader = [&](const std::vector<std::string>& paths) {
+            requested.insert(requested.end(), paths.begin(), paths.end());
+            return [&ready, paths] { return paths.empty() || ready; };
+        };
+        auto player = fixture.Player();
+        auto shortFirst = first;
+        shortFirst.minimumDuration = 0.1f;
+        suite.Require(static_cast<bool>(player.Start({shortFirst, second}, true)),
+                      "visual preloading sequence starts");
+        const auto* previousRoot = player.Context().Root();
+        suite.Expect(previousRoot && player.PresentationGeneration() == 1,
+                     "first presentation is installed");
+        player.Update(0.1f);
+        suite.Expect(player.CurrentPhase() == decltype(player)::Phase::Holding &&
+                         player.Context().Root() == previousRoot &&
+                         player.PresentationGeneration() == 1 &&
+                         fixture.audio.size() == 1 &&
+                         requested == std::vector<std::string>{"Assets/Splash/second.png"},
+                     "pending texture keeps outgoing scene and delays next audio");
+        const float waitingElapsed = player.Elapsed();
+        player.Update(1.0f);
+        suite.Expect(player.Elapsed() > waitingElapsed && player.Context().Root() == previousRoot,
+                     "preload wait extends current scene instead of exposing an incomplete next scene");
+        ready = true;
+        player.Update(0.0f);
+        suite.Expect(player.PresentationGeneration() == 2 &&
+                         player.Context().Root() != previousRoot &&
+                         fixture.audio.size() == 2 && fixture.loaded.size() == 2,
+                     "new scene installs once only after texture batch completes");
+    });
+
+    suite.Run("MotionDependencies_ArePreloadedThroughAuthoredUi", [&] {
+        auto motion = Scene("motion", false);
+        motion.nodes[1].runtimeType = "MotionRect";
+        motion.nodes[1].kind = px::sdk::UiNodeKind::Image;
+        motion.nodes[1].runtimeProperties.emplace("path", std::string{"Assets/Motion/logo.pxmotion"});
+        constexpr auto descriptor = R"({
+          "format":"PrismatiXMotion","schemaRevision":1,"id":"logo",
+          "canvas":{"width":320,"height":120},"duration":1,"loop":false,
+          "layers":[{"id":"logo","image":"Assets/Motion/logo.png",
+                     "width":320,"height":120}],"tracks":[]})";
+        const auto dependencies = px::ui::CollectUiImageDependencies(
+            motion, {}, {}, [](const std::string_view path) -> std::optional<std::string> {
+                return path == "Assets/Motion/logo.pxmotion"
+                    ? std::optional<std::string>{descriptor} : std::nullopt;
+            });
+        suite.Expect(dependencies && dependencies.Value() ==
+                         std::vector<std::string>{"Assets/Motion/logo.png"},
+                     "motion descriptor expands to image layers before presentation");
     });
 
     suite.Run("DelayedAudio_FiresOnceAtConfiguredTime", [&] {

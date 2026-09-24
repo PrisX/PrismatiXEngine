@@ -782,6 +782,67 @@ private:
 
 }  // namespace
 
+Result<std::vector<std::string>> CollectUiImageDependencies(
+    const sdk::UiDocument& document, UiAssetResolver resolveAsset,
+    UiComponentLoader loadComponent, UiMotionLoader loadMotion,
+    std::string sourcePath) {
+    auto resolved = ResolveComponents(document, loadComponent, sourcePath);
+    if (!resolved) return Result<std::vector<std::string>>::Failure(resolved.Diagnostics());
+    std::vector<std::string> paths;
+    std::unordered_set<std::string> seen;
+    const auto add = [&](std::string path) {
+        if (!path.empty() && seen.insert(path).second) paths.push_back(std::move(path));
+    };
+    for (const auto& node : resolved.Value().nodes) {
+        if (node.assetId) {
+            const auto asset = resolveAsset ? resolveAsset(*node.assetId) : std::nullopt;
+            if (!asset) return Result<std::vector<std::string>>::Failure(
+                ApplicationError("PXUISTUDIO2004", "UI image asset could not be resolved: " + *node.assetId,
+                                 sourcePath, node.id, "assetId"));
+            add(*asset);
+        }
+        const auto path = [&](const std::string_view property) -> std::string {
+            const auto found = node.runtimeProperties.find(std::string(property));
+            if (found == node.runtimeProperties.end()) return {};
+            const auto* value = std::get_if<std::string>(&found->second);
+            return value ? *value : std::string{};
+        };
+        const std::string type = node.runtimeType.value_or(
+            node.kind == sdk::UiNodeKind::Image ? "TextureRect" : "");
+        if (type == "MotionRect") {
+            const std::string descriptor = path("path");
+            if (descriptor.empty()) continue;
+            if (!loadMotion) return Result<std::vector<std::string>>::Failure(
+                ApplicationError("PXUIMOTION1002", "MotionRect requires a motion source loader",
+                                 sourcePath, node.id, "runtimeProperties.path"));
+            const auto text = loadMotion(descriptor);
+            if (!text) return Result<std::vector<std::string>>::Failure(
+                ApplicationError("PXUIMOTION1001", "Motion descriptor is missing: " + descriptor,
+                                 sourcePath, node.id, "runtimeProperties.path"));
+            auto motion = sdk::ParseMotion(*text, descriptor);
+            if (!motion.Valid()) {
+                std::vector<diag::Diagnostic> diagnostics;
+                for (const auto& issue : motion.diagnostics)
+                    diagnostics.push_back(ApplicationError(issue.code, issue.message,
+                        descriptor, node.id, issue.path));
+                return Result<std::vector<std::string>>::Failure(std::move(diagnostics));
+            }
+            for (auto& image : sdk::MotionDependencies(*motion.clip)) add(std::move(image));
+        } else if (type == "TextureRect" || type == "NinePatchRect") {
+            add(path("path"));
+        } else if (type == "TextureButton") {
+            for (const auto property : {"normalPath", "hoverPath", "pressedPath", "disabledPath"})
+                add(path(property));
+        } else if (type == "Slider") {
+            for (const auto property : {"railPath", "knobPath", "knobHoverPath", "knobPressedPath"})
+                add(path(property));
+        } else if (type == "VideoRect") {
+            add(path("poster"));
+        }
+    }
+    return Result<std::vector<std::string>>::Success(std::move(paths));
+}
+
 Result<UiApplicationSummary> UiApplication::ApplyText(const std::string_view json, UiApplicationOptions options) {
     const auto parsed = sdk::ParseUi(json);
     if (!parsed.Valid()) {

@@ -37,13 +37,18 @@ Status SplashSequencePlayer::Start(std::vector<SplashScreenEntry> entries,
     m_reducedMotion = reducedMotion;
     m_skipRequested = false;
     m_completionSent = false;
+    m_pendingDocument.reset();
+    m_visualReady = {};
+    m_nextDocument.reset();
+    m_nextReady = {};
+    m_nextIndex = 0;
+    m_presentationGeneration = 0;
     if (m_entries.empty()) {
         Finish();
         return Status::Ok();
     }
     m_phase = Phase::Loading;
-    while (m_index < m_entries.size() && !LoadCurrent()) ++m_index;
-    if (m_index >= m_entries.size()) Finish();
+    LoadUntilReady();
     return Status::Ok();
 }
 
@@ -52,26 +57,81 @@ void SplashSequencePlayer::Emit(diag::Diagnostic diagnostic) const {
     else diag::Emit(std::move(diagnostic));
 }
 
-bool SplashSequencePlayer::LoadCurrent() {
+void SplashSequencePlayer::LoadUntilReady() {
+    while (m_index < m_entries.size()) {
+        if (LoadCurrent() != LoadOutcome::Failed) return;
+        m_pendingDocument.reset();
+        m_visualReady = {};
+        ++m_index;
+    }
+    Finish();
+}
+
+void SplashSequencePlayer::PrepareNext() {
+    m_nextDocument.reset();
+    m_nextReady = {};
+    m_nextIndex = m_entries.size();
+    for (std::size_t index = m_index + 1; index < m_entries.size(); ++index) {
+        const auto& entry = m_entries[index];
+        auto document = m_services.loadScene(entry.scene);
+        if (!document) {
+            for (const auto& diagnostic : document.Diagnostics()) Emit(diagnostic);
+            Emit(RuntimeDiagnostic(diag::Severity::Error, "PXBOOT1102",
+                "Splash scene could not be loaded; skipping entry", index,
+                entry.scene.lastKnownPath));
+            continue;
+        }
+        if (m_services.preloadVisuals) {
+            auto dependencies = CollectUiImageDependencies(document.Value(),
+                m_services.resolveAsset, m_services.loadComponent,
+                m_services.loadMotion, entry.scene.lastKnownPath);
+            if (!dependencies) {
+                for (const auto& diagnostic : dependencies.Diagnostics()) Emit(diagnostic);
+                continue;
+            }
+            m_nextReady = m_services.preloadVisuals(dependencies.Value());
+        }
+        m_nextIndex = index;
+        m_nextDocument = std::move(document.Value());
+        return;
+    }
+}
+
+SplashSequencePlayer::LoadOutcome SplashSequencePlayer::LoadCurrent() {
     m_phase = Phase::Loading;
     const auto& entry = m_entries[m_index];
     if (!m_services.loadScene) {
         Emit(RuntimeDiagnostic(diag::Severity::Error, "PXBOOT1101",
                                "Splash scene loader is unavailable", m_index,
                                entry.scene.lastKnownPath));
-        return false;
+        return LoadOutcome::Failed;
     }
-    auto document = m_services.loadScene(entry.scene);
-    if (!document) {
-        for (const auto& diagnostic : document.Diagnostics()) Emit(diagnostic);
-        Emit(RuntimeDiagnostic(diag::Severity::Error, "PXBOOT1102",
-                               "Splash scene could not be loaded; skipping entry", m_index,
-                               entry.scene.lastKnownPath));
-        return false;
+    if (!m_pendingDocument) {
+        auto document = m_services.loadScene(entry.scene);
+        if (!document) {
+            for (const auto& diagnostic : document.Diagnostics()) Emit(diagnostic);
+            Emit(RuntimeDiagnostic(diag::Severity::Error, "PXBOOT1102",
+                                   "Splash scene could not be loaded; skipping entry", m_index,
+                                   entry.scene.lastKnownPath));
+            return LoadOutcome::Failed;
+        }
+        m_pendingDocument = std::move(document.Value());
+        if (m_services.preloadVisuals) {
+            auto dependencies = CollectUiImageDependencies(*m_pendingDocument,
+                m_services.resolveAsset, m_services.loadComponent,
+                m_services.loadMotion, entry.scene.lastKnownPath);
+            if (!dependencies) {
+                for (const auto& diagnostic : dependencies.Diagnostics()) Emit(diagnostic);
+                return LoadOutcome::Failed;
+            }
+            m_visualReady = m_services.preloadVisuals(dependencies.Value());
+        }
     }
+    if (m_visualReady && !m_visualReady()) return LoadOutcome::Pending;
+    m_visualReady = {};
     UiApplication application(m_context);
     auto applied = application.ApplyDocument(
-        document.Value(),
+        *m_pendingDocument,
         {.sourcePath=entry.scene.lastKnownPath,
          .resolveAsset=m_services.resolveAsset,
          .loadComponent=m_services.loadComponent,
@@ -80,8 +140,10 @@ bool SplashSequencePlayer::LoadCurrent() {
          .diagnosticOverlay=false});
     if (!applied) {
         for (const auto& diagnostic : applied.Diagnostics()) Emit(diagnostic);
-        return false;
+        return LoadOutcome::Failed;
     }
+    m_pendingDocument.reset();
+    ++m_presentationGeneration;
     m_enterDuration = m_reducedMotion
                           ? 0.0f
                           : m_context.AnimationDuration(entry.enterAnimation);
@@ -109,7 +171,8 @@ bool SplashSequencePlayer::LoadCurrent() {
     m_skipRequested = false;
     m_phase = m_enterDuration > 0.0f ? Phase::Entering : Phase::Holding;
     if (entry.audioDelay <= 0.0f) PlayCurrentAudio();
-    return true;
+    PrepareNext();
+    return LoadOutcome::Installed;
 }
 
 void SplashSequencePlayer::PlayCurrentAudio() {
@@ -127,6 +190,7 @@ void SplashSequencePlayer::PlayCurrentAudio() {
 
 void SplashSequencePlayer::BeginExit() {
     if (m_phase == Phase::Exiting || m_phase == Phase::Completed) return;
+    if (m_nextDocument && m_nextReady && !m_nextReady()) return;
     const auto& entry = m_entries[m_index];
     m_phase = Phase::Exiting;
     m_phaseElapsed = 0.0f;
@@ -141,11 +205,17 @@ void SplashSequencePlayer::BeginExit() {
 }
 
 void SplashSequencePlayer::Advance() {
-    ++m_index;
+    if (m_nextDocument) {
+        m_index = m_nextIndex;
+        m_pendingDocument = std::move(m_nextDocument);
+        m_visualReady = std::move(m_nextReady);
+        m_nextReady = {};
+    } else {
+        m_index = m_nextIndex > m_index ? m_nextIndex : m_index + 1;
+    }
     m_phaseElapsed = 0.0f;
     m_skipRequested = false;
-    while (m_index < m_entries.size() && !LoadCurrent()) ++m_index;
-    if (m_index >= m_entries.size()) Finish();
+    LoadUntilReady();
 }
 
 void SplashSequencePlayer::Finish() {
@@ -156,8 +226,11 @@ void SplashSequencePlayer::Finish() {
 }
 
 void SplashSequencePlayer::Update(const float deltaSeconds, const bool skipRequested) {
-    if (m_phase == Phase::Idle || m_phase == Phase::Loading ||
-        m_phase == Phase::Completed)
+    if (m_phase == Phase::Loading) {
+        LoadUntilReady();
+        return;
+    }
+    if (m_phase == Phase::Idle || m_phase == Phase::Completed)
         return;
     const float delta = std::max(0.0f, std::isfinite(deltaSeconds) ? deltaSeconds : 0.0f);
     m_elapsed += delta;

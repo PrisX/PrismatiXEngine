@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "Engine/Core/Result.h"
 #include "Engine/SDK/Ui.h"
@@ -35,6 +36,14 @@ struct UiComponentSource {
 
 using UiComponentLoader = std::function<std::optional<UiComponentSource>(std::string_view)>;
 using UiMotionLoader = std::function<std::optional<std::string>(std::string_view)>;
+
+// Resolves authored components and layered-motion descriptors before a UI
+// scene is installed, so a host can preload its static image dependencies.
+// Runtime bindings may introduce additional paths later.
+[[nodiscard]] Result<std::vector<std::string>> CollectUiImageDependencies(
+    const sdk::UiDocument& document, UiAssetResolver resolveAsset = {},
+    UiComponentLoader loadComponent = {}, UiMotionLoader loadMotion = {},
+    std::string sourcePath = {});
 
 struct UiApplicationOptions {
     std::string sourcePath{};
