@@ -52,6 +52,7 @@ Status VirtualizedView::ValidateKeys(const IVirtualItemSource& source) {
 }
 
 Vec2 VirtualizedView::MeasureOverride(Vec2 available) {
+    if (m_placedItems) return available;
     return {std::min(available.x, m_itemExtent.x * static_cast<float>(m_columns) + m_gap.x * static_cast<float>(m_columns - 1)),
             std::min(available.y, m_itemExtent.y * 6.0f + m_gap.y * 5.0f)};
 }
@@ -83,16 +84,29 @@ Status VirtualizedView::Synchronize(Rect viewport) {
         m_seenRevision = m_source->Revision();
     }
     const std::size_t count = m_source->Count();
-    const std::size_t rows = (count + m_columns - 1) / m_columns;
-    const float rowExtent = m_itemExtent.y + m_gap.y;
-    const float content = rows ? static_cast<float>(rows) * rowExtent - m_gap.y : 0.0f;
-    m_scroll = std::clamp(m_scroll, 0.0f, std::max(0.0f, content - viewport.h));
-    const std::size_t firstRow = std::min(rows, static_cast<std::size_t>(m_scroll / rowExtent));
-    const std::size_t visibleRows = static_cast<std::size_t>(std::ceil(viewport.h / rowExtent)) + 1;
-    const std::size_t beginRow = firstRow > m_overscan ? firstRow - m_overscan : 0;
-    const std::size_t endRow = std::min(rows, firstRow + visibleRows + m_overscan);
-    const std::size_t begin = std::min(count, beginRow * m_columns);
-    const std::size_t end = std::min(count, endRow * m_columns);
+    if (m_placedItems) {
+        for (std::size_t index = 0; index < count; ++index) {
+            const auto rect = m_source->Placement(index);
+            if (!rect || !std::isfinite(rect->x) || !std::isfinite(rect->y) ||
+                !std::isfinite(rect->w) || !std::isfinite(rect->h) ||
+                rect->w <= 0.0f || rect->h <= 0.0f)
+                return VirtualFailure("PXUI2206", "Placed item is missing a valid rectangle");
+        }
+    }
+    std::size_t begin = 0, end = count;
+    float rowExtent = 0.0f;
+    if (!m_placedItems) {
+        const std::size_t rows = (count + m_columns - 1) / m_columns;
+        rowExtent = m_itemExtent.y + m_gap.y;
+        const float content = rows ? static_cast<float>(rows) * rowExtent - m_gap.y : 0.0f;
+        m_scroll = std::clamp(m_scroll, 0.0f, std::max(0.0f, content - viewport.h));
+        const std::size_t firstRow = std::min(rows, static_cast<std::size_t>(m_scroll / rowExtent));
+        const std::size_t visibleRows = static_cast<std::size_t>(std::ceil(viewport.h / rowExtent)) + 1;
+        const std::size_t beginRow = firstRow > m_overscan ? firstRow - m_overscan : 0;
+        const std::size_t endRow = std::min(rows, firstRow + visibleRows + m_overscan);
+        begin = std::min(count, beginRow * m_columns);
+        end = std::min(count, endRow * m_columns);
+    }
 
     std::vector<std::string> visibleKeys;
     visibleKeys.reserve(end - begin);
@@ -121,11 +135,18 @@ Status VirtualizedView::Synchronize(Rect viewport) {
             m_realized[key] = id;
         }
         const Status bind = m_source->Bind(index, *item); if (!bind) return bind;
-        const std::size_t row = index / m_columns, column = index % m_columns;
-        (void)item->Measure({cellWidth, m_itemExtent.y});
-        item->Arrange({viewport.x + static_cast<float>(column) * (cellWidth + m_gap.x),
-                       viewport.y + static_cast<float>(row) * rowExtent - m_scroll,
-                       cellWidth, m_itemExtent.y});
+        if (m_placedItems) {
+            const auto placement = m_source->Placement(index);
+            (void)item->Measure({placement->w, placement->h});
+            item->Arrange({viewport.x + placement->x, viewport.y + placement->y,
+                           placement->w, placement->h});
+        } else {
+            const std::size_t row = index / m_columns, column = index % m_columns;
+            (void)item->Measure({cellWidth, m_itemExtent.y});
+            item->Arrange({viewport.x + static_cast<float>(column) * (cellWidth + m_gap.x),
+                           viewport.y + static_cast<float>(row) * rowExtent - m_scroll,
+                           cellWidth, m_itemExtent.y});
+        }
     }
     // Input hit order and paint order must track the source after a reorder.
     // Moving in source order only moves items left, which Node::MoveChild
@@ -142,7 +163,9 @@ Status VirtualizedView::Synchronize(Rect viewport) {
 void VirtualizedView::ArrangeOverride(Rect finalRect) { const Status status=Synchronize(finalRect);if(!status)for(const auto& diagnostic:status.Diagnostics())diag::Emit(diagnostic); }
 
 void VirtualizedView::HandleEvent(UIEvent& event) {
-    if (event.type == UIEventType::Scroll) { ScrollTo(m_scroll - event.wheel * (m_itemExtent.y + m_gap.y)); event.handled = true; }
+    if (!m_placedItems && event.type == UIEventType::Scroll) {
+        ScrollTo(m_scroll - event.wheel * (m_itemExtent.y + m_gap.y)); event.handled = true;
+    }
 }
 
 void VirtualizedView::Draw(graphics::Renderer2D& renderer,const Theme& theme){if(GetVisibility()!=Visibility::Visible)return;renderer.PushClip(LayoutRect());Control::Draw(renderer,theme);renderer.PopClip();}

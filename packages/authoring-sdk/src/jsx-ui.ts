@@ -83,6 +83,8 @@ export interface UiItemSource {
   readonly path: string;
   /** Unique string or integer field within each item object. */
   readonly key: string;
+  /** Per-item rectangle field for ItemsPlaced: {x, y, width, height}. */
+  readonly placement?: string;
 }
 
 export interface UiComponentSignalBinding {
@@ -159,6 +161,10 @@ export interface ItemsViewProps extends UiNodeProps {
   readonly itemExtent?: readonly [width: number, height: number];
   readonly gap?: readonly [x: number, y: number];
   readonly overscan?: number;
+}
+
+export interface ItemsPlacedProps extends Omit<UiNodeProps, "itemSource"> {
+  readonly items: UiItemSource & {readonly placement: string};
 }
 
 export interface ControlProps extends UiNodeProps {
@@ -472,6 +478,12 @@ export function ItemsList(props: Omit<ItemsViewProps, "columns">): UiElement {
       ...(gap === undefined ? {} : {gap: {type: "vec2", x: gap[0], y: gap[1]}}),
       ...(overscan === undefined ? {} : {overscan}),
     }});
+}
+
+/** Runtime-keyed items at data-authored local rectangles; one item subtree. */
+export function ItemsPlaced(props: ItemsPlacedProps): UiElement {
+  const {items, ...rest} = props;
+  return node("control", "PlacedItemsView", {...rest, itemSource: items});
 }
 
 export function Text(props: TextProps): UiElement {

@@ -206,6 +206,8 @@ struct UiPropertyBinding {
 struct UiItemSource {
     std::string path;
     std::string key;
+    // Required by PlacedItemsView; a per-item object with x/y/width/height.
+    std::string placement;
 };
 
 struct UiNode {

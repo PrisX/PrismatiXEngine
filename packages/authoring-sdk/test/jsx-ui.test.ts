@@ -7,6 +7,7 @@ import {
   Control,
   Image,
   ItemsGrid,
+  ItemsPlaced,
   KeyBindingButton,
   Modal,
   Motion,
@@ -278,6 +279,35 @@ test("one authored item template lowers to a keyed Runtime grid with item bindin
   }), {kind: "scene"});
   assert.equal(unscoped.valid, false);
   assert.ok(unscoped.diagnostics.some((item) => item.code === "PXSDKUI1025"));
+});
+
+test("placed item template preserves per-item rectangle source", () => {
+  const authored = jsx(Scene, {name: "Placed settings", width: 800, height: 600,
+    children: jsx(Control, {name: "Root", children: jsx(ItemsPlaced, {
+      name: "Switches", x: 100, y: 80, width: 500, height: 400,
+      items: {path: "settings.switches", key: "key", placement: "rect"},
+      children: jsx(Control, {name: "SwitchTemplate", width: 388, height: 35,
+        children: jsx(Button, {name: "SwitchOn", text: "ON"}),
+      }),
+    })}),
+  });
+  const result = compileJsxUi(authored, {kind: "scene"});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  const placed = result.value!.nodes.find((node) => node.name === "Switches")!;
+  assert.equal(placed.runtimeType, "PlacedItemsView");
+  assert.deepEqual(placed.itemSource,
+    {path: "settings.switches", key: "key", placement: "rect"});
+  assert.equal(result.value!.nodes.find((node) => node.name === "SwitchTemplate")!.parentId,
+    placed.id);
+
+  const invalid = compileJsxUi(jsx(Scene, {name: "Bad", width: 800, height: 600,
+    children: jsx(Control, {name: "Root", children: jsx(ItemsGrid, {
+      name: "Grid", items: {path: "settings.switches", key: "key", placement: "rect"},
+      children: jsx(Control, {name: "Item"}),
+    })}),
+  }), {kind: "scene"});
+  assert.equal(invalid.valid, false);
+  assert.ok(invalid.diagnostics.some((item) => item.code === "PXSDKUI1190"));
 });
 
 test("texture buttons and rich labels lower typed convenience props to native controls", () => {

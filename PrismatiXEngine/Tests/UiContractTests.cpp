@@ -355,6 +355,21 @@ int main() {
     Check(repeaterParsed.Valid() && repeaterParsed.document.nodes[1].itemSource &&
               repeaterParsed.document.nodes[3].onClick,
           "native UI contract must accept a keyed item template and $index Action");
+    auto placedScene = repeaterScene;
+    placedScene["nodes"][1]["kind"] = "control";
+    placedScene["nodes"][1]["runtimeType"] = "PlacedItemsView";
+    placedScene["nodes"][1]["itemSource"]["placement"] = "rect";
+    const auto placedParsed = ParseSceneFixture(placedScene.dump());
+    Check(placedParsed.Valid() && placedParsed.document.nodes[1].itemSource &&
+              placedParsed.document.nodes[1].itemSource->placement == "rect",
+          "native UI contract must preserve a placed template's rectangle field");
+    placedScene["nodes"][1]["itemSource"].erase("placement");
+    Check(!ParseSceneFixture(placedScene.dump()).Valid(),
+          "placed item source must require a rectangle field");
+    placedScene["nodes"][1]["runtimeType"] = "GridView";
+    placedScene["nodes"][1]["itemSource"]["placement"] = "rect";
+    Check(!ParseSceneFixture(placedScene.dump()).Valid(),
+          "grid item source must reject a misplaced rectangle field");
     repeaterScene["nodes"][1].erase("itemSource");
     const auto unscopedAction = ParseSceneFixture(repeaterScene.dump());
     Check(!unscopedAction.Valid() && std::ranges::any_of(unscopedAction.diagnostics,

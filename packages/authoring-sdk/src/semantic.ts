@@ -498,8 +498,12 @@ function uiSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[] {
       diagnostics.push(issue("PXSDKUI1025", "UI node typed action is invalid", path,
         `${String(node.name ?? node.id)}: ${String(object(node.onClick)?.id)}`));
     if (object(node.itemSource) !== undefined) {
-      if (node.runtimeType !== "GridView" && node.runtimeType !== "ListView")
-        diagnostics.push(issue("PXSDKUI1190", "UI itemSource requires GridView or ListView", path, node.id));
+      if (node.runtimeType !== "GridView" && node.runtimeType !== "ListView" &&
+          node.runtimeType !== "PlacedItemsView")
+        diagnostics.push(issue("PXSDKUI1190", "UI itemSource requires GridView, ListView, or PlacedItemsView", path, node.id));
+      const placement = object(node.itemSource)?.placement;
+      if (node.runtimeType === "PlacedItemsView" ? typeof placement !== "string" : placement !== undefined)
+        diagnostics.push(issue("PXSDKUI1190", "UI placement is required only for PlacedItemsView", path, node.id));
       const children = nodes.filter((candidate) => candidate.parentId === node.id);
       if (children.length !== 1 || !structuralUiKinds.has(String(children[0]?.kind)))
         diagnostics.push(issue("PXSDKUI1191", "UI itemSource requires one structural child template", path, node.id));

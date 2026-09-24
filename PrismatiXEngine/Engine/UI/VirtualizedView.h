@@ -5,6 +5,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -18,6 +19,10 @@ public:
     // when the same key moves to another index; increment Revision on edits.
     [[nodiscard]] virtual std::string StableKey(std::size_t index) const = 0;
     virtual Status Bind(std::size_t index, Control& item) = 0;
+    /** Local rectangle for a PlacedItemsView item; absent for grid/list sources. */
+    [[nodiscard]] virtual std::optional<Rect> Placement(std::size_t index) const {
+        (void)index; return std::nullopt;
+    }
     // Release item-scoped subscriptions or actions before a Control enters
     // the reuse pool. The key remains valid even after indexes are reordered.
     virtual void Unbind(std::string_view key, Control& item) {
@@ -57,6 +62,7 @@ public:
 protected:
     Vec2 MeasureOverride(Vec2 available) override;
     void ArrangeOverride(Rect finalRect) override;
+    void EnablePlacedItems() { m_placedItems = true; }
 
 private:
     static Status ValidateKeys(const IVirtualItemSource& source);
@@ -76,6 +82,7 @@ private:
     Vec2 m_gap{8, 8};
     float m_scroll = 0.0f;
     std::uint64_t m_seenRevision = 0;
+    bool m_placedItems = false;
 };
 
 class ListView final : public VirtualizedView {
@@ -88,6 +95,14 @@ class GridView final : public VirtualizedView {
 public:
     explicit GridView(std::size_t columns = 4, std::string name = "GridView") : VirtualizedView(std::move(name)) { SetGridColumns(columns); }
     [[nodiscard]] std::string_view TypeName() const override { return "GridView"; }
+};
+
+/** Data-driven absolute item placement, retaining stable-key item identities. */
+class PlacedItemsView final : public VirtualizedView {
+public:
+    explicit PlacedItemsView(std::string name = "PlacedItemsView")
+        : VirtualizedView(std::move(name)) { EnablePlacedItems(); }
+    [[nodiscard]] std::string_view TypeName() const override { return "PlacedItemsView"; }
 };
 
 }  // namespace px::ui

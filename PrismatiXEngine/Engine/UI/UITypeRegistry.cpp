@@ -127,6 +127,8 @@ const DesignerTypeMetadata* BuiltinDesignerMetadata(std::string_view type) {
                                       "ui.data.list", {360, 280}, false)},
         {"GridView", DesignerMetadata("Grid View", "Virtualized data grid.", "Data",
                                       "ui.data.grid", {420, 320}, false)},
+        {"PlacedItemsView", DesignerMetadata("Placed Items", "Data-driven local item rectangles.", "Data",
+                                             "ui.data.placed", {420, 320}, false)},
         {"ColorRect", DesignerMetadata("Color Rectangle", "Solid color display rectangle.", "Display",
                                        "ui.color-rect", {240, 160}, false)},
         {"CheckBox", DesignerMetadata("Check Box", "Toggleable checked input.", "Input",
@@ -731,6 +733,7 @@ Status RegisterBuiltinUITypes() {
     virtualized.properties.push_back(NumberProperty("overscan","Data",[](const Object& o){return static_cast<double>(As<VirtualizedView>(o)->Overscan());},[](Object& o,double v){As<VirtualizedView>(o)->SetOverscan(static_cast<std::size_t>(std::max(0.0,v)));return Status::Ok();}));add(std::move(virtualized));
     add({"ListView", "VirtualizedView", "UI/Data", [] { return std::make_unique<ListView>(); }});
     add({"GridView", "VirtualizedView", "UI/Data", [] { return std::make_unique<GridView>(); }});
+    add({"PlacedItemsView", "VirtualizedView", "UI/Data", [] { return std::make_unique<PlacedItemsView>(); }});
     TypeInfo colorRect{"ColorRect","Control","UI/Display",[]{return std::make_unique<ColorRect>();}};
     colorRect.properties.push_back({"color","Display",VariantType::Color,PropertyFlags::Editable|PropertyFlags::Serializable|PropertyFlags::Bindable,Variant(Color{}),
         [](const Object& o){return Variant(As<ColorRect>(o)->GetColor());},[](Object& o,const Variant& v){if(auto* c=v.TryGet<Color>()){As<ColorRect>(o)->SetColor(*c);return Status::Ok();}return TypeError("color expects Color");}});add(std::move(colorRect));

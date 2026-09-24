@@ -1693,17 +1693,23 @@ UiParseResult ParseUi(const std::string_view text) {
         const auto itemSource = item.find("itemSource");
         if (itemSource != item.end()) {
             UiItemSource source;
+            const bool placed = node.runtimeType && *node.runtimeType == "PlacedItemsView";
+            const auto placement = itemSource->is_object() ? itemSource->find("placement") : itemSource->end();
+            const bool placementValid = placed
+                ? placement != itemSource->end() && ReadString(*itemSource, "placement", source.placement) &&
+                  source.placement.size() <= 256 && IsPropertyPath(source.placement)
+                : placement == itemSource->end();
             const bool sourceValid = itemSource->is_object() &&
-                itemSource->size() == 2 &&
+                itemSource->size() == (placed ? 3 : 2) && placementValid &&
                 ReadString(*itemSource, "path", source.path) &&
                 ParseIndexedPropertyPath(source.path).has_value() &&
                 ReadString(*itemSource, "key", source.key) &&
                 source.key.size() <= 256 && IsPropertyPath(source.key) &&
                 node.runtimeType &&
-                (*node.runtimeType == "GridView" || *node.runtimeType == "ListView");
+                (*node.runtimeType == "GridView" || *node.runtimeType == "ListView" || placed);
             if (!sourceValid) {
                 AddDiagnostic(result, "PXSDKUI1190",
-                              "UI itemSource requires a typed GridView/ListView, array path and key field", index);
+                              "UI itemSource requires GridView/ListView or PlacedItemsView with placement, array path and key field", index);
                 valid = false;
             } else node.itemSource = std::move(source);
         }

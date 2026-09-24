@@ -3883,6 +3883,11 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             "maxLength": 512,
             "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*|\\[(?:0|[1-9][0-9]*)\\])*$",
             "type": "string"
+          },
+          "placement": {
+            "maxLength": 256,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*$",
+            "type": "string"
           }
         },
         "required": [
@@ -4601,5 +4606,5 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "story-index.schema.json": "abc3cf730c81d25c45c5a11632268e16334d5a189ff419bdfb2da940e6292b82",
   "timeline.schema.json": "48f267a0d203fc813879304be8df079b965785d71258cbcf358b51db269265be",
   "ui-component.schema.json": "d91e1ee59871449dfb898409aadaf054adc2f39c3df0df911ce993122e3a281a",
-  "ui.schema.json": "1f7326a1ca39d5df8f34ab6ce67e49bc6d99f56b4a3a2ce08fdac689f988526a"
+  "ui.schema.json": "746bc2823a982625cbbb8fa7795057c1200b4aec1bc5dbd9e1c8ef5915c6984f"
 };

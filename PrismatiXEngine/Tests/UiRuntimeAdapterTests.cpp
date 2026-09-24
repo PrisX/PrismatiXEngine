@@ -498,6 +498,99 @@ void TestAuthoredItemTemplate() {
           "invalid duplicate keys must retain the previous visible item snapshot");
 }
 
+void TestAuthoredPlacedItemTemplate() {
+    constexpr auto rootId = "c1c1c1c1-c1c1-41c1-81c1-c1c1c1c1c1c1";
+    constexpr auto viewId = "c2c2c2c2-c2c2-42c2-82c2-c2c2c2c2c2c2";
+    constexpr auto templateId = "c3c3c3c3-c3c3-43c3-83c3-c3c3c3c3c3c3";
+    constexpr auto buttonId = "c4c4c4c4-c4c4-44c4-84c4-c4c4c4c4c4c4";
+    px::sdk::UiDocument document;
+    document.id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    document.name = "Placed settings";
+    document.width = 400; document.height = 300; document.rootId = rootId;
+    px::sdk::UiNode root;
+    root.id = rootId; root.name = "Root"; root.kind = px::sdk::UiNodeKind::Group;
+    root.layout.width = 400; root.layout.height = 300;
+    px::sdk::UiNode view;
+    view.id = viewId; view.parentId = rootId; view.name = "Switches";
+    view.kind = px::sdk::UiNodeKind::Control; view.runtimeType = "PlacedItemsView";
+    view.layout.x = 10; view.layout.y = 20;
+    view.layout.width = 300; view.layout.height = 200;
+    view.itemSource = px::sdk::UiItemSource{"rows", "key", "rect"};
+    px::sdk::UiNode item;
+    item.id = templateId; item.parentId = viewId; item.name = "SwitchTemplate";
+    item.kind = px::sdk::UiNodeKind::Group;
+    item.layout.width = 80; item.layout.height = 25;
+    px::sdk::UiNode button;
+    button.id = buttonId; button.parentId = templateId;
+    button.name = "SwitchButton"; button.kind = px::sdk::UiNodeKind::Button;
+    button.layout.width = 80; button.layout.height = 25;
+    button.bindings.emplace("text", px::sdk::UiPropertyBinding{"item.title", {}});
+    document.nodes = {root, view, item, button};
+
+    const auto makeRow = [](std::string key, std::string title, std::int64_t x,
+                            std::int64_t y, std::int64_t width = 80) {
+        return px::Variant(px::VariantObject{
+            {"key", px::Variant(std::move(key))},
+            {"title", px::Variant(std::move(title))},
+            {"rect", px::Variant(px::VariantObject{
+                {"x", px::Variant(x)}, {"y", px::Variant(y)},
+                {"width", px::Variant(width)}, {"height", px::Variant(std::int64_t{25})}})},
+        });
+    };
+    px::ui::ObservableViewModel model;
+    Check(static_cast<bool>(model.Define("rows", px::Variant(px::VariantArray{
+        makeRow("first", "First", 20, 30), makeRow("second", "Second", 150, 90)}))),
+        "placed template requires one typed collection");
+    px::ui::UIContext context;
+    px::ui::UiApplication application(context);
+    const auto applied = application.ApplyDocument(document,
+        {.sourcePath = "placed-items.pxui", .viewModel = &model});
+    if (!applied) for (const auto& diagnostic : applied.Diagnostics())
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    Check(applied && applied.Value().nodeCount == 4,
+          "placed template must install as one authored definition");
+    auto* placed = dynamic_cast<px::ui::PlacedItemsView*>(
+        context.Root()->Find(*px::Uuid::Parse(viewId)));
+    Check(placed && placed->HasSource() && placed->Children().empty(),
+          "placed item template must not become a static child");
+    (void)context.Root()->Measure({400, 300});
+    context.Root()->Arrange({0, 0, 400, 300});
+    Check(placed->RealizedCount() == 2, "placed source must realize both item controls");
+    auto* first = dynamic_cast<px::ui::Control*>(placed->Child(0));
+    auto* firstButton = first ? dynamic_cast<px::ui::Button*>(first->Child(0)) : nullptr;
+    Check(first && firstButton && firstButton->Text() == "First" &&
+          first->LayoutRect().x == placed->LayoutRect().x + 20 &&
+          first->LayoutRect().y == placed->LayoutRect().y + 30 &&
+          first->LayoutRect().w == 80 && first->LayoutRect().h == 25,
+          "placed item must use its data rectangle relative to the owner");
+    const auto firstId = first->Id();
+
+    Check(static_cast<bool>(model.Write("rows", px::Variant(px::VariantArray{
+        makeRow("second", "Second moved", 30, 40),
+        makeRow("first", "First moved", 170, 110, 90)}))),
+        "placed source must allow data-driven reposition and reorder");
+    (void)context.Root()->Measure({400, 300});
+    context.Root()->Arrange({0, 0, 400, 300});
+    auto* moved = dynamic_cast<px::ui::Control*>(placed->Child(1));
+    auto* movedButton = moved ? dynamic_cast<px::ui::Button*>(moved->Child(0)) : nullptr;
+    Check(moved && moved->Id() == firstId && movedButton &&
+          movedButton->Text() == "First moved" &&
+          moved->LayoutRect().x == placed->LayoutRect().x + 170 &&
+          moved->LayoutRect().w == 90,
+          "stable-key reorder must retain identity and update placement");
+
+    Check(static_cast<bool>(model.Write("rows", px::Variant(px::VariantArray{
+        makeRow("first", "Invalid", 20, 30, 0)}))),
+        "ViewModel may receive a malformed application-level placement");
+    (void)context.Root()->Measure({400, 300});
+    context.Root()->Arrange({0, 0, 400, 300});
+    auto* retained = dynamic_cast<px::ui::Control*>(placed->Child(1));
+    auto* retainedButton = retained ? dynamic_cast<px::ui::Button*>(retained->Child(0)) : nullptr;
+    Check(placed->RealizedCount() == 2 && retained && retained->Id() == firstId &&
+          retainedButton && retainedButton->Text() == "First moved",
+          "invalid placement must retain the previous visible snapshot");
+}
+
 void TestGalgameAuthoredSlots() {
     constexpr auto rootId = "b1b1b1b1-b1b1-41b1-81b1-b1b1b1b1b1b1";
     constexpr auto gridId = "b2b2b2b2-b2b2-42b2-82b2-b2b2b2b2b2b2";
@@ -606,6 +699,7 @@ void TestMountedImageDependencies() {
 
 int main() {
     TestAuthoredItemTemplate();
+    TestAuthoredPlacedItemTemplate();
     TestGalgameAuthoredSlots();
     TestMountedImageDependencies();
     Check(px::ui::RegisterBuiltinUITypes().IsOk(), "typed caption fixture requires builtin controls");

@@ -493,6 +493,29 @@ const Variant* ItemField(const Variant& item, std::string_view path) {
     return value;
 }
 
+std::optional<Rect> ItemPlacement(const Variant& item, std::string_view path) {
+    const auto* value = ItemField(item, path);
+    const auto* object = value ? value->AsObject() : nullptr;
+    if (!object || object->size() != 4) return std::nullopt;
+    const auto number = [&](const char* field) -> std::optional<float> {
+        const auto found = object->find(field);
+        if (found == object->end()) return std::nullopt;
+        double result = 0.0;
+        if (const auto* real = found->second.TryGet<double>()) result = *real;
+        else if (const auto* integer = found->second.TryGet<std::int64_t>())
+            result = static_cast<double>(*integer);
+        else return std::nullopt;
+        if (!std::isfinite(result) || std::abs(result) > 1'000'000.0)
+            return std::nullopt;
+        return static_cast<float>(result);
+    };
+    const auto x = number("x"), y = number("y"),
+               width = number("width"), height = number("height");
+    if (!x || !y || !width || !height || *width <= 0.0f || *height <= 0.0f)
+        return std::nullopt;
+    return Rect{*x, *y, *width, *height};
+}
+
 Status ConfigureMotionControls(scene::Node& node, const UiMotionLoader& loader) {
     if (auto* motion = dynamic_cast<MotionRect*>(&node)) {
         if (const auto status = motion->SetSourceLoader(loader); !status) return status;
@@ -585,6 +608,9 @@ public:
         return index < m_keys.size() ? m_keys[index] : std::string{};
     }
     std::uint64_t Revision() const override { return m_revision; }
+    std::optional<Rect> Placement(const std::size_t index) const override {
+        return index < m_placements.size() ? std::optional<Rect>(m_placements[index]) : std::nullopt;
+    }
 
     void Unbind(std::string_view, Control& item) override {
         if (const auto found = m_contexts.find(&item); found != m_contexts.end()) {
@@ -693,8 +719,10 @@ private:
         std::vector<Variant> items;
         std::vector<Variant> rawKeys;
         std::vector<std::string> keys;
+        std::vector<Rect> placements;
         std::unordered_set<std::string> unique;
         items.reserve(array->size()); rawKeys.reserve(array->size()); keys.reserve(array->size());
+        placements.reserve(array->size());
         for (const auto& item : *array) {
             const auto* raw = ItemField(item, m_descriptor.key);
             if (!raw) return Status::Fail(ApplicationError("PXUISTUDIO2149",
@@ -709,6 +737,14 @@ private:
             if (key.size() <= 2 || !unique.insert(key).second)
                 return Status::Fail(ApplicationError("PXUISTUDIO2151",
                     "UI item stable keys must be nonempty and unique", m_sourcePath));
+            if (!m_descriptor.placement.empty()) {
+                const auto placement = ItemPlacement(item, m_descriptor.placement);
+                if (!placement) return Status::Fail(ApplicationError("PXUISTUDIO2157",
+                    "UI item placement must contain finite x/y and positive width/height: " +
+                        m_descriptor.placement,
+                    m_sourcePath, {}, "itemSource.placement"));
+                placements.push_back(*placement);
+            }
             for (const auto& binding : m_bindings) {
                 const auto* field = ItemField(item, binding.itemField);
                 if (!field) return Status::Fail(ApplicationError("PXUISTUDIO2145",
@@ -736,6 +772,7 @@ private:
         m_items = std::move(items);
         m_rawKeys = std::move(rawKeys);
         m_keys = std::move(keys);
+        m_placements = std::move(placements);
         ++m_revision;
         return Status::Ok();
     }
@@ -775,6 +812,7 @@ private:
     std::vector<Variant> m_items;
     std::vector<Variant> m_rawKeys;
     std::vector<std::string> m_keys;
+    std::vector<Rect> m_placements;
     std::vector<TemplateBinding> m_bindings;
     std::unordered_map<std::string, std::vector<std::size_t>> m_nodePaths;
     std::unordered_map<Control*, std::shared_ptr<ItemContext>> m_contexts;
@@ -1048,8 +1086,13 @@ Result<UiApplicationSummary> UiApplication::ApplyDocument(const sdk::UiDocument&
         auto* view = ownerId ? dynamic_cast<VirtualizedView*>(runtimeTree.root->Find(*ownerId)) : nullptr;
         if (!view)
             return Result<UiApplicationSummary>::Failure(ApplicationError(
-                "PXUISTUDIO2156", "UI itemSource target is not a GridView or ListView",
+                "PXUISTUDIO2156", "UI itemSource target is not an item view",
                 sourcePath, repeater.ownerId, "itemSource"));
+        const bool placed = dynamic_cast<PlacedItemsView*>(view) != nullptr;
+        if (placed != !repeater.descriptor.placement.empty())
+            return Result<UiApplicationSummary>::Failure(ApplicationError(
+                "PXUISTUDIO2158", "PlacedItemsView requires a placement field, other item views reject it",
+                sourcePath, repeater.ownerId, "itemSource.placement"));
         auto source = std::make_shared<AuthoredItemSource>(
             std::move(repeater.document), std::move(repeater.descriptor),
             *options.viewModel, *view, m_context.Formatters(),
