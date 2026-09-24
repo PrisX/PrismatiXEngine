@@ -253,6 +253,36 @@ int main() {
         suite.Expect(std::abs(sampler.LayerPose(1).transform.tx - 150) < 0.001 &&
                      std::abs(sampler.LayerPose(1).opacity - 0.5) < 0.001,
                      "child uses its parent-local clock and inherited transform");
+        auto delayed = nlohmann::json::parse(source);
+        delayed["layers"][0]["visible"] = false;
+        delayed["tracks"].push_back({{"layer", "group"}, {"property", "visible"},
+            {"keys", {{{"time", 0}, {"value", true}, {"curve", "step"}}}}});
+        const auto delayedParsed = px::sdk::ParseMotion(delayed.dump());
+        suite.Require(delayedParsed.Valid(), "delayed group visibility parses");
+        px::sdk::MotionSampler delayedSampler(*delayedParsed.clip);
+        delayedSampler.Seek(0);
+        suite.Expect(!delayedSampler.LayerPose(1).visible,
+                     "inlined image is hidden before its local start");
+        delayedSampler.Seek(0.125);
+        suite.Expect(delayedSampler.LayerPose(1).visible,
+                     "inlined image appears when its local clock reaches zero");
+        auto longerLocalTrack = nlohmann::json::parse(source);
+        longerLocalTrack["layers"][0]["timeOffset"] = 0;
+        longerLocalTrack["tracks"][0]["keys"][1]["time"] = 2;
+        longerLocalTrack["tracks"][0]["keys"][1]["value"] = 200;
+        const auto longerParsed = px::sdk::ParseMotion(longerLocalTrack.dump());
+        suite.Require(longerParsed.Valid(),
+                      "revision-7 local keys may exceed root duration");
+        px::sdk::MotionSampler longerSampler(*longerParsed.clip);
+        longerSampler.Seek(1);
+        suite.Expect(std::abs(longerSampler.LayerPose(1).transform.tx - 300) < 0.001,
+                     "two-second child key is reached on one-second root clock");
+        auto oldLongerTrack = longerLocalTrack;
+        oldLongerTrack["schemaRevision"] = 6;
+        oldLongerTrack["layers"].erase(oldLongerTrack["layers"].begin());
+        oldLongerTrack["layers"][0].erase("parent");
+        suite.Expect(!px::sdk::ParseMotion(oldLongerTrack.dump()).Valid(),
+                     "revision-6 keys remain bounded by root duration");
         auto old = nlohmann::json::parse(source);
         old["schemaRevision"] = 6;
         suite.Expect(!px::sdk::ParseMotion(old.dump()).Valid(),

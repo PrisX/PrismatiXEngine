@@ -192,3 +192,121 @@ export function serializeMotion(input: MotionInput): Result<string> {
     return {diagnostics: defined.diagnostics, valid: false};
   return serializeDocument("motion", defined.value as unknown as JsonValue);
 }
+
+export interface InlineMotionOptions {
+  /** Group ID and prefix for every inlined layer and marker ID. */
+  readonly id: string;
+  /** Parent layer in the destination clip, if any. */
+  readonly parent?: string;
+  /** Start position in the parent's local seconds; hidden before this point. */
+  readonly at?: number;
+  /** Child playback speed relative to the parent's local clock. */
+  readonly speed?: number;
+  /** Offset applied to the child's draw-layer z values. */
+  readonly z?: number;
+  readonly x?: number;
+  readonly y?: number;
+  readonly scaleX?: number;
+  readonly scaleY?: number;
+  readonly rotation?: number;
+  readonly opacity?: number;
+  /** false keeps the entire inserted clip hidden; otherwise appears at `at`. */
+  readonly visible?: boolean;
+}
+
+/** Inline one non-looping motion under a revision-7 transform/time group.
+ * Child IDs, mask references, tracks and audio markers are rebased together.
+ * The child canvas remains in its authored logical units; use scaleX/scaleY
+ * when placing it in a differently sized parent canvas. The group becomes
+ * visible at its local time zero and holds its final pose after it ends. */
+export function inlineMotion(outer: MotionInput, child: MotionInput,
+  options: InlineMotionOptions): Result<MotionDocument> {
+  const error = (code: string, message: string): Result<MotionDocument> => ({
+    valid: false, diagnostics: [{severity: "error", code, message}],
+  });
+  const base = defineMotion(outer);
+  if (!base.valid || base.value === undefined) return base;
+  const nested = defineMotion(child);
+  if (!nested.valid || nested.value === undefined) return nested;
+  if (nested.value.loop) return error("PXMOTION2001",
+    "A looping child clip cannot be inlined because local group time does not repeat");
+  const at = options.at ?? 0;
+  const speed = options.speed ?? 1;
+  if (!Number.isFinite(at) || at < 0 || !Number.isFinite(speed) || speed <= 0)
+    return error("PXMOTION2002", "Inline motion requires at >= 0 and speed > 0");
+  const layerId = (id: string) => `${options.id}-${id}`;
+  const group: MotionGroupLayer = {
+    id: options.id, kind: "group",
+    ...(options.parent === undefined ? {} : {parent: options.parent}),
+    timeOffset: -at * speed, timeScale: speed,
+    ...(options.x === undefined ? {} : {x: options.x}),
+    ...(options.y === undefined ? {} : {y: options.y}),
+    ...(options.scaleX === undefined ? {} : {scaleX: options.scaleX}),
+    ...(options.scaleY === undefined ? {} : {scaleY: options.scaleY}),
+    ...(options.rotation === undefined ? {} : {rotation: options.rotation}),
+    ...(options.opacity === undefined ? {} : {opacity: options.opacity}),
+    visible: false,
+  };
+  const layers: MotionLayer[] = nested.value.layers.map((layer): MotionLayer => {
+    if (layer.kind === "group") return {
+      ...layer,
+      id: layerId(layer.id),
+      parent: layer.parent === undefined ? options.id : layerId(layer.parent),
+      z: (layer.z ?? 0) + (options.z ?? 0),
+    };
+    return {
+      ...layer,
+      id: layerId(layer.id),
+      parent: layer.parent === undefined ? options.id : layerId(layer.parent),
+      z: (layer.z ?? 0) + (options.z ?? 0),
+      ...(layer.mask === undefined ? {} : {mask: layerId(layer.mask)}),
+    };
+  });
+  const tracks: MotionTrack[] = nested.value.tracks.map((track) => ({
+    ...track, layer: layerId(track.layer),
+  }));
+  if (options.visible !== false) tracks.unshift({
+    layer: options.id, property: "visible",
+    keys: [{time: 0, value: true, curve: "step"}],
+  });
+  let markers: MotionAudioMarker[] = [];
+  if (nested.value.markers?.length) {
+    const byId = new Map(base.value.layers.map((layer) => [layer.id, layer]));
+    let parentScale = 1;
+    let parentOffset = 0;
+    if (options.parent !== undefined) {
+      const ancestry: MotionLayer[] = [];
+      let id: string | undefined = options.parent;
+      while (id !== undefined) {
+        const layer = byId.get(id);
+        if (layer === undefined) return error("PXMOTION2003",
+          `Inline motion parent does not exist: ${id}`);
+        ancestry.unshift(layer);
+        id = layer.parent;
+      }
+      for (const layer of ancestry) {
+        const layerScale = layer.timeScale ?? 1;
+        parentOffset = parentOffset * layerScale + (layer.timeOffset ?? 0);
+        parentScale *= layerScale;
+      }
+    }
+    const scale = parentScale * speed;
+    const offset = (parentOffset - at) * speed;
+    if (!Number.isFinite(scale) || scale <= 0 || !Number.isFinite(offset))
+      return error("PXMOTION2004",
+        "Nested audio markers require a positive, finite parent-to-child time mapping");
+    markers = nested.value.markers.map((marker) => ({
+      ...marker, id: layerId(marker.id), time: (marker.time - offset) / scale,
+    }));
+  }
+  return defineMotion({
+    id: base.value.id, canvas: base.value.canvas, duration: base.value.duration,
+    loop: base.value.loop,
+    ...(base.value.scaleMode === undefined ? {} :
+      {scaleMode: base.value.scaleMode}),
+    layers: [...base.value.layers, group, ...layers],
+    tracks: [...base.value.tracks, ...tracks],
+    markers: [...(base.value.markers ?? []), ...markers]
+      .sort((left, right) => left.time - right.time),
+  });
+}

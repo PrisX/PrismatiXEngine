@@ -64,6 +64,11 @@ time without painting its group, and the project compiler omits groups from
 image dependencies. This allows an offline `.mtn` importer to flatten some
 referenced submotions under groups, but does not interpret external references,
 spatial paths, particles, mesh deformations, or source-specific mask flags.
+`inlineMotion` now performs that offline rebasing for already-authored
+non-looping clips, including mask references and audio-marker times. Revision-7
+track keys are bounded by the local clock's 86,400-second limit instead of the
+outer duration; audio markers remain on the outer clock. This is composition
+of known `.pxmotion` inputs, not an `.mtn` parser or conformance result.
 
 Revision-1 sampling uses a layer's authored property until its first key;
 thereafter each key's curve determines interpolation toward the next key.

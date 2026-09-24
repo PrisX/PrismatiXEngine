@@ -28,7 +28,10 @@ Revision 7 adds non-drawing `kind: "group"` layers and per-layer `timeOffset` /
 timeOffset`; its transform and opacity still inherit from the parent. Group
 layers need no image or dimensions and create no packaged texture dependency.
 The helper selects revision 7 when these fields are used. Older files retain
-their original shared-clock behavior.
+their original shared-clock behavior. In revision 7, track key times use the
+target layer's local seconds and may exceed the outer clip's `duration` (up to
+86,400 seconds); earlier revisions still require keys within `duration`.
+Audio markers always use the outer clip clock and remain within its duration.
 
 ```ts
 import {writeFile} from "node:fs/promises";
@@ -140,6 +143,27 @@ At the clip's 0.5-second mark, `letter` is sampled at local time 0.75. A
 group can also have transform tracks. This represents an inline nested motion
 hierarchy, not a reference to another `.pxmotion` resource; an importer must
 flatten external `.mtn` subclips and diagnose unsupported source fields.
+
+For offline composition, `inlineMotion` performs the ID, parent, mask, track,
+and audio-marker rebasing and adds a revision-7 group for you:
+
+```ts
+import {inlineMotion, serializeMotion} from "@prismatix/authoring-sdk";
+
+const combined = inlineMotion(outerMotion, letterMotion, {
+  id: "letter-intro", parent: "logo-group", at: 0.25, speed: 2,
+  x: 120, y: 30,
+});
+if (!combined.valid) throw new Error(JSON.stringify(combined.diagnostics));
+const json = serializeMotion(combined.value!);
+```
+
+The child must be non-looping. It is hidden before `at`, begins at child-local
+time zero, and holds its final pose after its last key. `at` uses the named
+parent's local clock; audio markers are converted to the outer clock. The
+child canvas stays in its original logical units; explicitly scale it when
+embedding a different-sized canvas. This helper does not read or convert
+`.mtn`, resolve external motion references, or imply M2 visual equivalence.
 
 For a non-linear key interval, put the timing curve on the first key:
 

@@ -1,4 +1,4 @@
-import {Motion, Scene, compileJsxUi, serializeMotion}
+import {Motion, Scene, compileJsxUi, inlineMotion, serializeMotion}
   from "@prismatix/authoring-sdk";
 
 const authored = serializeMotion({
@@ -44,6 +44,22 @@ const nested = serializeMotion({
 });
 if (!nested.valid || JSON.parse(nested.value!).schemaRevision !== 7)
   throw new Error("Child-local motion must validate as revision 7");
+
+const inlined = inlineMotion({
+  id: "full-title", canvas: {width: 1280, height: 720}, duration: 1,
+  layers: [{id: "title-anchor", kind: "group"}],
+}, {
+  id: "letter", canvas: {width: 320, height: 120}, duration: 2,
+  layers: [{id: "glyph", image: "Assets/UI/logo.png", width: 320,
+    height: 120}],
+  tracks: [{layer: "glyph", property: "opacity", keys: [
+    {time: 0, value: 0}, {time: 2, value: 1},
+  ]}],
+}, {id: "intro", parent: "title-anchor", at: 0.25, speed: 4,
+  x: 480, y: 300});
+if (!inlined.valid || inlined.value?.schemaRevision !== 7 ||
+    inlined.value.tracks[1]?.keys[1]?.time !== 2)
+  throw new Error(`Inline motion failed: ${JSON.stringify(inlined.diagnostics)}`);
 
 const ui = compileJsxUi(
   <Scene name="Title" width={1280} height={720}>

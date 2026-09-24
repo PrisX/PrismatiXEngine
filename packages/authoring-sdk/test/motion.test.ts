@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {defineMotion, parseDocument, serializeMotion, validateDocument} from "../src/index.js";
+import {defineMotion, inlineMotion, parseDocument, serializeMotion,
+  validateDocument} from "../src/index.js";
 
 const input = {
   id: "m2-reveal",
@@ -212,4 +213,72 @@ test("transform groups and child-local time select revision 7", () => {
   assert.equal(validateDocument("motion", {...document, layers: [
     document.layers[0]!, {...document.layers[1]!, mask: "subclip"},
   ]}).valid, false);
+  const longerLocalTrack = {...document, tracks: [{...document.tracks[0]!, keys: [
+    document.tracks[0]!.keys[0]!, {time: 2, value: 100, curve: "linear" as const},
+  ]}]};
+  assert.equal(validateDocument("motion", longerLocalTrack).valid, true);
+  assert.equal(validateDocument("motion", {...longerLocalTrack,
+    tracks: longerLocalTrack.tracks.map((track) => ({...track, layer: "logo"})),
+    layers: [{id: "logo", image: "Assets/Motion/logo.png", width: 100,
+      height: 100}], schemaRevision: 6}).valid, false);
+});
+
+test("inlined motion rebases hierarchy, masks, tracks and audio time", () => {
+  const outer = {
+    id: "title", canvas: {width: 640, height: 360}, duration: 2,
+    layers: [{id: "anchor", kind: "group" as const,
+      timeOffset: -0.2, timeScale: 2}],
+    markers: [{id: "start", time: 0.2, audio: "Assets/Audio/start.ogg",
+      bus: "se" as const}],
+  };
+  const child = {
+    id: "letters", canvas: {width: 160, height: 90}, duration: 0.5,
+    layers: [
+      {id: "body", image: "Assets/Motion/body.png", width: 100,
+        height: 80, mask: "wipe"},
+      {id: "wipe", parent: "body", image: "Assets/Motion/wipe.png",
+        width: 100, height: 80},
+    ],
+    tracks: [{layer: "wipe", property: "x" as const, keys: [
+      {time: 0, value: -100}, {time: 0.5, value: 0},
+    ]}],
+    markers: [{time: 0.25, audio: "Assets/Audio/pop.ogg", bus: "se" as const}],
+  };
+  const result = inlineMotion(outer, child, {id: "logo", parent: "anchor",
+    at: 0.3, speed: 2, x: 120, z: 4});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  const motion = result.value!;
+  assert.equal(motion.schemaRevision, 7);
+  assert.equal(motion.layers[1]?.id, "logo");
+  assert.equal(motion.layers[1]?.timeOffset, -0.6);
+  assert.equal(motion.layers[2]?.parent, "logo");
+  assert.equal(motion.layers[2]?.mask, "logo-wipe");
+  assert.equal(motion.layers[2]?.z, 4);
+  assert.equal(motion.layers[3]?.parent, "logo-body");
+  assert.equal(motion.layers[1]?.visible, false);
+  assert.equal(motion.tracks[0]?.layer, "logo");
+  assert.equal(motion.tracks[0]?.property, "visible");
+  assert.equal(motion.tracks[1]?.layer, "logo-wipe");
+  assert.deepEqual(motion.markers?.map((marker) => [marker.id, marker.time]), [
+    ["start", 0.2], ["logo-marker-1", 0.3125],
+  ]);
+  assert.equal(parseDocument("motion", serializeMotion(motion).value!).valid, true);
+  assert.equal(inlineMotion(outer, {...child, loop: true}, {id: "logo"}).valid, false);
+  assert.equal(inlineMotion(outer, child, {id: "logo", speed: 0}).valid, false);
+  assert.equal(inlineMotion(outer, child, {id: "anchor"}).valid, false);
+  assert.equal(inlineMotion({...outer, layers: [{...outer.layers[0]!, timeScale: 0}]},
+    child, {id: "logo", parent: "anchor"}).valid, false);
+  const longChild = {
+    id: "long", canvas: {width: 160, height: 90}, duration: 2,
+    layers: [{id: "image", image: "Assets/Motion/long.png", width: 80,
+      height: 40}],
+    tracks: [{layer: "image", property: "opacity" as const, keys: [
+      {time: 0, value: 0}, {time: 2, value: 1},
+    ]}],
+  };
+  const shortOuter = {...outer, duration: 1, markers: []};
+  const compressed = inlineMotion(shortOuter, longChild,
+    {id: "fast", speed: 4});
+  assert.equal(compressed.valid, true, JSON.stringify(compressed.diagnostics));
+  assert.equal(compressed.value?.tracks[1]?.keys[1]?.time, 2);
 });

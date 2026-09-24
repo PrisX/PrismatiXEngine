@@ -398,7 +398,10 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
             if (!OnlyFields(key, {"time", "value", "curve", "bezier"}) ||
                 !key.contains("curve") || !key["curve"].is_string())
                 return fail("PXMOTION1016", "Motion key shape is invalid");
-            const auto time = Number(key, "time", 0, 0, clip.duration, true);
+            // Revision 7 keys use layer-local seconds. A faster nested clock
+            // can reach key times beyond the enclosing clip duration.
+            const auto time = Number(key, "time", 0, 0,
+                clip.schemaRevision >= 7 ? 86400.0 : clip.duration, true);
             const auto curve = Curve(key["curve"].get<std::string>());
             if (!time || *time <= previous || !curve || !key.contains("value"))
                 return fail("PXMOTION1017", "Motion key time or curve is invalid");

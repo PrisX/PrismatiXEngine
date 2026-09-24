@@ -83,7 +83,7 @@
               "type": "object", "additionalProperties": false,
               "required": ["time", "value", "curve"],
               "properties": {
-                "time": {"type": "number", "minimum": 0},
+                "time": {"type": "number", "minimum": 0, "maximum": 86400},
                 "value": {"oneOf": [{"type": "number"}, {"type": "boolean"}]},
                 "curve": {"enum": ["step", "linear", "easeIn", "easeOut", "easeInOut", "cubicBezier"]},
                 "bezier": {

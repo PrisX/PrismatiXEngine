@@ -1901,6 +1901,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
                     ]
                   },
                   "time": {
+                    "maximum": 86400,
                     "minimum": 0,
                     "type": "number"
                   },
@@ -4343,7 +4344,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "extension.schema.json": "9438f403e51b8f69f52f05d5999afc37c433754a215094460e28c6d1710555a2",
   "game.schema.json": "d31e583ebdfa1503b8cb77e20d2773fb8e289c7677ad4f59dd66087f8967cc92",
   "locale.schema.json": "b8f6009219c6cad7fa6130af6d710af11cabcf85bf2e0039f1fdd3c08e2bbf9f",
-  "motion.schema.json": "4be7b81a659bf5a62910e13ecb00541d985b36dc3acae2eeb50b5e58445c45dc",
+  "motion.schema.json": "2f1140cdcc6bae3a903ca413b02f481adc7a18e9ecf00241c2d39025fc3316e0",
   "portrait.schema.json": "23235204cea30d1f9bf49f810f896364b910ce2f74e46f28bc7381dc5da0a6fe",
   "project.schema.json": "937ef02098a0f720d5154b2300c7ddbdc60ef69fd2410337b483de7bc5a3390e",
   "runtime-ir.schema.json": "04c51fc94dc46b500d78877d29dba1dffe1f41619211af24e48cf48699bf0836",

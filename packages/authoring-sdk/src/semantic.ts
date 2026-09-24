@@ -184,6 +184,9 @@ function motionSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[
   const tracks = objects(root.tracks);
   const targets = new Set<string>();
   const duration = typeof root.duration === "number" ? root.duration : 0;
+  // Revision 7 keys live on a layer's local clock. A sped-up child may have
+  // keys beyond the enclosing clip's duration while still being visible.
+  const keyTimeLimit = Number(root.schemaRevision) >= 7 ? 86400 : duration;
   for (const track of tracks) {
     const target = `${String(track.layer)}.${String(track.property)}`;
     const targetLayer = byId.get(track.layer);
@@ -194,8 +197,9 @@ function motionSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[
     targets.add(target);
     let previous = -1;
     for (const key of objects(track.keys)) {
-      if (typeof key.time !== "number" || key.time <= previous || key.time > duration)
-        diagnostics.push(issue("PXSDKSEM1405", "Motion keys must have increasing times inside duration", path, target));
+      if (typeof key.time !== "number" || key.time <= previous || key.time > keyTimeLimit)
+        diagnostics.push(issue("PXSDKSEM1405",
+          "Motion keys must have increasing times inside the revision's time limit", path, target));
       if (track.property === "visible"
         ? typeof key.value !== "boolean" || key.curve !== "step"
         : track.property === "frame"
