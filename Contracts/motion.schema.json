@@ -6,7 +6,7 @@
   "required": ["format", "schemaRevision", "id", "canvas", "duration", "loop", "layers", "tracks"],
   "properties": {
     "format": {"const": "PrismatiXMotion"},
-    "schemaRevision": {"enum": [1, 2, 3, 4, 5, 6, 7]},
+    "schemaRevision": {"enum": [1, 2, 3, 4, 5, 6, 7, 8]},
     "id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
     "canvas": {
       "type": "object", "additionalProperties": false,
@@ -57,6 +57,13 @@
           "timeOffset": {"type": "number", "minimum": -86400, "maximum": 86400},
           "timeScale": {"type": "number", "minimum": -1000, "maximum": 1000},
           "opacity": {"type": "number", "minimum": 0, "maximum": 1},
+          "tint": {"type": "object", "additionalProperties": false,
+            "required": ["r", "g", "b"],
+            "properties": {
+              "r": {"type": "number", "minimum": 0, "maximum": 1},
+              "g": {"type": "number", "minimum": 0, "maximum": 1},
+              "b": {"type": "number", "minimum": 0, "maximum": 1}
+            }},
           "visible": {"type": "boolean"}
         },
         "allOf": [{
@@ -76,7 +83,7 @@
         "required": ["layer", "property", "keys"],
         "properties": {
           "layer": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
-          "property": {"enum": ["x", "y", "scaleX", "scaleY", "rotation", "opacity", "visible", "frame"]},
+          "property": {"enum": ["x", "y", "scaleX", "scaleY", "rotation", "opacity", "visible", "frame", "tint"]},
           "keys": {
             "type": "array", "minItems": 1, "maxItems": 65536,
             "items": {
@@ -84,7 +91,14 @@
               "required": ["time", "value", "curve"],
               "properties": {
                 "time": {"type": "number", "minimum": 0, "maximum": 86400},
-                "value": {"oneOf": [{"type": "number"}, {"type": "boolean"}]},
+                "value": {"oneOf": [{"type": "number"}, {"type": "boolean"},
+                  {"type": "object", "additionalProperties": false,
+                    "required": ["r", "g", "b"],
+                    "properties": {
+                      "r": {"type": "number", "minimum": 0, "maximum": 1},
+                      "g": {"type": "number", "minimum": 0, "maximum": 1},
+                      "b": {"type": "number", "minimum": 0, "maximum": 1}
+                    }}]},
                 "curve": {"enum": ["step", "linear", "easeIn", "easeOut", "easeInOut", "cubicBezier"]},
                 "bezier": {
                   "type": "object", "additionalProperties": false,
@@ -154,6 +168,14 @@
     "then": {"type": "object", "properties": {
       "layers": {"type": "array", "items": {"type": "object", "properties": {
         "kind": false, "timeOffset": false, "timeScale": false
+      }}}
+    }}
+  }, {
+    "if": {"type": "object", "properties": {"schemaRevision": {"enum": [1, 2, 3, 4, 5, 6, 7]}}},
+    "then": {"type": "object", "properties": {
+      "layers": {"type": "array", "items": {"type": "object", "properties": {"tint": false}}},
+      "tracks": {"type": "array", "items": {"type": "object", "properties": {
+        "property": {"not": {"const": "tint"}}
       }}}
     }}
   }]

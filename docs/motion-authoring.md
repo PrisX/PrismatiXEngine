@@ -32,6 +32,10 @@ their original shared-clock behavior. In revision 7, track key times use the
 target layer's local seconds and may exceed the outer clip's `duration` (up to
 86,400 seconds); earlier revisions still require keys within `duration`.
 Audio markers always use the outer clip clock and remain within its duration.
+Revision 8 adds multiplicative RGB `tint` on image or group layers and a
+three-channel `tint` track. The helper selects revision 8 when either is
+authored; older files cannot silently contain tint fields. A group's tint is
+multiplied into its descendants, independently of `opacity`.
 
 ```ts
 import {writeFile} from "node:fs/promises";
@@ -184,6 +188,25 @@ visibility and atlas-frame tracks remain discrete `step` tracks. The sampler
 solves the timing cubic for each seek, so playback and preview scrubbing use
 the same pose. This supports a class of `.mtn` timing curves, but does not
 interpret `.mtn` files automatically.
+
+An animated source color can be expressed without splitting it into three
+separate tracks:
+
+```ts
+layers: [
+  {id: "group", kind: "group", tint: {r: 1, g: 0.5, b: 1}},
+  {id: "logo", parent: "group", image: "Assets/Motion/logo.png",
+    width: 320, height: 120},
+],
+tracks: [{layer: "logo", property: "tint", keys: [
+  {time: 0, value: {r: 1, g: 1, b: 1}},
+  {time: 1, value: {r: 1, g: 0, b: 0}},
+]}],
+```
+
+Each channel is in `[0, 1]`. Values interpolate with the numeric-track
+easing curves, with overshoot clamped to valid channels. This covers ordinary
+RGB modulation, not M2's entire color-transform or blur semantics.
 
 This is not an `.mtn` importer or a full M2 Cheeseware reproduction. Blur,
 external nested motion references, spatial path curves, particles, more

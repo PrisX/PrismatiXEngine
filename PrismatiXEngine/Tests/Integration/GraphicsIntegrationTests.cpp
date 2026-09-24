@@ -328,6 +328,40 @@ int main() {
                             result = 1;
                         }
                     }
+                    const auto tinted = px::sdk::ParseMotion(R"({
+                      "format":"PrismatiXMotion","schemaRevision":8,"id":"tinted",
+                      "canvas":{"width":640,"height":360},"duration":1,"loop":false,
+                      "layers":[
+                        {"id":"group","kind":"group","tint":{"r":0.5,"g":1,"b":1}},
+                        {"id":"mark","parent":"group","image":"Assets/atlas.bmp",
+                         "width":100,"height":100,"x":270,"y":130,
+                         "frames":[{"x":0,"y":0,"width":1,"height":1}]}],
+                      "tracks":[{"layer":"mark","property":"tint","keys":[
+                        {"time":0,"value":{"r":1,"g":1,"b":1},"curve":"linear"},
+                        {"time":1,"value":{"r":0,"g":1,"b":1},"curve":"linear"}]}]})");
+                    if (!tinted.Valid()) {
+                        std::cerr << "FAIL: revision-8 tint motion fixture parse\n";
+                        result = 1;
+                    } else {
+                        px::sdk::MotionSampler tintSampler(*tinted.clip);
+                        ClearFrame(device.Renderer());
+                        tintSampler.Seek(0);
+                        px::animation::DrawMotionPose(atlasRenderer, *tinted.clip,
+                                                      tintSampler, {0, 0, 640, 360});
+                        const auto firstTint = CaptureFrame(
+                            device.Renderer(), "motion-tint-first").center;
+                        ClearFrame(device.Renderer());
+                        tintSampler.Seek(1);
+                        px::animation::DrawMotionPose(atlasRenderer, *tinted.clip,
+                                                      tintSampler, {0, 0, 640, 360});
+                        const auto finalTint = CaptureFrame(
+                            device.Renderer(), "motion-tint-final").center;
+                        if (firstTint.r < 100 || firstTint.r > 160 || finalTint.r > 30 ||
+                            firstTint.b < 10 || finalTint.b < 10) {
+                            std::cerr << "FAIL: inherited motion RGB tint did not modulate rendered pixels\n";
+                            result = 1;
+                        }
+                    }
                     SDL_Surface* maskSurface = SDL_CreateSurface(
                         2, 1, SDL_PIXELFORMAT_RGBA32);
                     const bool maskSaved = maskSurface &&

@@ -1,6 +1,13 @@
 import {serializeDocument, validateDocument} from "./contracts.js";
 import type {JsonValue, Result} from "./types.js";
 
+/** Multiplicative RGB modulation. Alpha remains the separate opacity track. */
+export interface MotionTint {
+  readonly r: number;
+  readonly g: number;
+  readonly b: number;
+}
+
 interface MotionLayerBase {
   readonly id: string;
   readonly parent?: string;
@@ -16,6 +23,8 @@ interface MotionLayerBase {
   readonly timeOffset?: number;
   readonly timeScale?: number;
   readonly opacity?: number;
+  /** Inherited multiplicatively by child layers. Requires revision 8. */
+  readonly tint?: MotionTint;
   readonly visible?: boolean;
 }
 
@@ -55,13 +64,13 @@ export interface MotionFrame {
 }
 
 export type MotionProperty = "x" | "y" | "scaleX" | "scaleY" |
-  "rotation" | "opacity" | "visible" | "frame";
+  "rotation" | "opacity" | "visible" | "frame" | "tint";
 export type MotionCurve = "step" | "linear" | "easeIn" | "easeOut" |
   "easeInOut" | "cubicBezier";
 
 export interface MotionKey {
   readonly time: number;
-  readonly value: number | boolean;
+  readonly value: number | boolean | MotionTint;
   readonly curve?: MotionCurve;
   /** Normalized timing cubic; required only for cubicBezier keys. */
   readonly bezier?: {readonly x1: number; readonly y1: number;
@@ -100,7 +109,7 @@ export interface MotionInput {
 
 export interface MotionDocument extends MotionInput {
   readonly format: "PrismatiXMotion";
-  readonly schemaRevision: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  readonly schemaRevision: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
   readonly loop: boolean;
   readonly tracks: readonly MotionTrack[];
   readonly markers?: readonly MotionAudioMarker[];
@@ -109,7 +118,7 @@ export interface MotionDocument extends MotionInput {
 /** Author a deterministic image-layer .pxmotion clip. Atlas frames use
  * revision 2, audio markers revision 3, blend modes revision 4, and cubic
  * timing curves revision 5, layer alpha masks revision 6, and local-time
- * transform groups revision 7.
+ * transform groups revision 7, and inherited RGB tint revision 8.
  * Blur and nested motion remain unsupported. */
 export function defineMotion(input: MotionInput): Result<MotionDocument> {
   const atlas = input.layers.some((layer) => layer.frames !== undefined) ||
@@ -121,6 +130,8 @@ export function defineMotion(input: MotionInput): Result<MotionDocument> {
   const hasMasks = input.layers.some((layer) => layer.mask !== undefined);
   const hasLocalTime = input.layers.some((layer) => layer.kind === "group" ||
     layer.timeOffset !== undefined || layer.timeScale !== undefined);
+  const hasTint = input.layers.some((layer) => layer.tint !== undefined) ||
+    input.tracks?.some((track) => track.property === "tint") === true;
   const usedMarkerIds = new Set(input.markers?.flatMap((marker) =>
     marker.id === undefined ? [] : [marker.id]) ?? []);
   const markers = input.markers?.map((marker, index) => {
@@ -133,7 +144,7 @@ export function defineMotion(input: MotionInput): Result<MotionDocument> {
   });
   const document: MotionDocument = {
     format: "PrismatiXMotion",
-    schemaRevision: hasLocalTime ? 7 : hasMasks ? 6 : hasBezier ? 5 : hasBlendModes ? 4 :
+    schemaRevision: hasTint ? 8 : hasLocalTime ? 7 : hasMasks ? 6 : hasBezier ? 5 : hasBlendModes ? 4 :
       hasMarkers ? 3 : atlas ? 2 : 1,
     id: input.id,
     canvas: input.canvas,
@@ -155,6 +166,7 @@ export function defineMotion(input: MotionInput): Result<MotionDocument> {
         ...(layer.timeOffset === undefined ? {} : {timeOffset: layer.timeOffset}),
         ...(layer.timeScale === undefined ? {} : {timeScale: layer.timeScale}),
         opacity: layer.opacity ?? 1,
+        ...(layer.tint === undefined ? {} : {tint: {...layer.tint}}),
         visible: layer.visible ?? true,
       };
       if (layer.kind === "group") return {
@@ -175,7 +187,7 @@ export function defineMotion(input: MotionInput): Result<MotionDocument> {
       property: track.property,
       keys: track.keys.map((key) => ({
         time: key.time,
-        value: key.value,
+        value: typeof key.value === "object" ? {...key.value} : key.value,
         curve: key.curve ?? (track.property === "visible" || track.property === "frame"
           ? "step" : "linear"),
         ...(key.bezier === undefined ? {} : {bezier: {...key.bezier}}),
@@ -212,6 +224,7 @@ export interface InlineMotionOptions {
   readonly scaleY?: number;
   readonly rotation?: number;
   readonly opacity?: number;
+  readonly tint?: MotionTint;
   /** false keeps the entire inserted clip hidden; otherwise appears at `at`. */
   readonly visible?: boolean;
 }
@@ -289,6 +302,7 @@ export function inlineMotion(outer: MotionInput, child: MotionInput,
     ...(options.scaleY === undefined ? {} : {scaleY: options.scaleY}),
     ...(options.rotation === undefined ? {} : {rotation: options.rotation}),
     ...(options.opacity === undefined ? {} : {opacity: options.opacity}),
+    ...(options.tint === undefined ? {} : {tint: {...options.tint}}),
     visible: false,
   };
   const layers: MotionLayer[] = nested.value.layers.map((layer): MotionLayer => {

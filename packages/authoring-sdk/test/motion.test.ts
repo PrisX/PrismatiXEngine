@@ -223,6 +223,35 @@ test("transform groups and child-local time select revision 7", () => {
       height: 100}], schemaRevision: 6}).valid, false);
 });
 
+test("inherited RGB tint and color keys select revision 8 without changing opacity", () => {
+  const tinted = defineMotion({
+    id: "color-reveal", canvas: {width: 320, height: 120}, duration: 1,
+    layers: [
+      {id: "group", kind: "group", tint: {r: 1, g: 0.5, b: 1}},
+      {id: "logo", parent: "group", image: "Assets/Motion/logo.png",
+        width: 100, height: 40, opacity: 0.75},
+    ],
+    tracks: [{layer: "logo", property: "tint", keys: [
+      {time: 0, value: {r: 1, g: 1, b: 1}},
+      {time: 1, value: {r: 1, g: 0, b: 0}},
+    ]}],
+  });
+  assert.equal(tinted.valid, true, JSON.stringify(tinted.diagnostics));
+  assert.equal(tinted.value?.schemaRevision, 8);
+  assert.deepEqual(tinted.value?.tracks[0]?.keys[0]?.value, {r: 1, g: 1, b: 1});
+  const document = tinted.value!;
+  assert.equal(validateDocument("motion", {...document, schemaRevision: 7}).valid, false);
+  assert.equal(validateDocument("motion", {...document, layers: [
+    {...document.layers[0]!, tint: {r: 1.2, g: 0.5, b: 1}}, document.layers[1]!,
+  ]}).valid, false);
+  assert.equal(validateDocument("motion", {...document, tracks: [{
+    ...document.tracks[0]!, keys: [{time: 0, value: 1, curve: "linear"}],
+  }]}).valid, false);
+  assert.equal(validateDocument("motion", {...document, tracks: [{
+    ...document.tracks[0]!, property: "opacity",
+  }]}).valid, false);
+});
+
 test("inlined motion rebases hierarchy, masks, tracks and audio time", () => {
   const outer = {
     id: "title", canvas: {width: 640, height: 360}, duration: 2,

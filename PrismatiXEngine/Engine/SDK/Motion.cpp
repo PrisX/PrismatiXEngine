@@ -88,6 +88,7 @@ std::optional<MotionProperty> Property(std::string_view name) {
     if (name == "opacity") return MotionProperty::Opacity;
     if (name == "visible") return MotionProperty::Visible;
     if (name == "frame") return MotionProperty::Frame;
+    if (name == "tint") return MotionProperty::Tint;
     return std::nullopt;
 }
 
@@ -111,6 +112,7 @@ std::pair<double, double> PropertyRange(MotionProperty property) {
         case MotionProperty::Opacity: return {0, 1};
         case MotionProperty::Visible: return {0, 1};
         case MotionProperty::Frame: return {0, 4095};
+        case MotionProperty::Tint: return {0, 1};
     }
     return {0, 0};
 }
@@ -165,6 +167,23 @@ std::optional<double> SampleNumber(const MotionTrack& track, double time) {
     const double fraction = (time - left.time) / (right->time - left.time);
     return left.value + (right->value - left.value) * Ease(left, fraction);
 }
+
+std::optional<MotionTint> SampleTint(const MotionTrack& track, double time) {
+    const auto& keys = track.keys;
+    const auto right = std::upper_bound(keys.begin(), keys.end(), time,
+        [](double at, const MotionKey& key) { return at < key.time; });
+    if (right == keys.begin()) return std::nullopt;
+    const auto& left = *(right - 1);
+    if (right == keys.end() || left.curve == MotionCurve::Step) return left.tint;
+    const double fraction = (time - left.time) / (right->time - left.time);
+    const double weight = Ease(left, fraction);
+    const auto channel = [weight](double from, double to) {
+        return std::clamp(from + (to - from) * weight, 0.0, 1.0);
+    };
+    return MotionTint{channel(left.tint.r, right->tint.r),
+        channel(left.tint.g, right->tint.g),
+        channel(left.tint.b, right->tint.b)};
+}
 }  // namespace
 
 MotionParseResult ParseMotion(const std::string_view text, std::string sourcePath) {
@@ -186,7 +205,7 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         (root["schemaRevision"] != 1 && root["schemaRevision"] != 2 &&
          root["schemaRevision"] != 3 && root["schemaRevision"] != 4 &&
          root["schemaRevision"] != 5 && root["schemaRevision"] != 6 &&
-         root["schemaRevision"] != 7) ||
+         root["schemaRevision"] != 7 && root["schemaRevision"] != 8) ||
         !root.contains("id") ||
         !root["id"].is_string() || !Identifier(root["id"].get_ref<const std::string&>()))
         return fail("PXMOTION1002", "Motion format, revision, or id is invalid");
@@ -225,7 +244,7 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
     for (const auto& entry : *layers) {
         if (!OnlyFields(entry, {"id", "kind", "parent", "mask", "image", "frames", "z", "blendMode", "width", "height",
             "anchorX", "anchorY", "x", "y", "scaleX", "scaleY", "rotation",
-            "timeOffset", "timeScale", "opacity", "visible"}) ||
+            "timeOffset", "timeScale", "opacity", "tint", "visible"}) ||
             !entry.contains("id") || !entry["id"].is_string())
             return fail("PXMOTION1006", "Motion layer has invalid or unknown fields");
         MotionLayer layer;
@@ -325,6 +344,17 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         layer.x = *x; layer.y = *y; layer.scaleX = *scaleX; layer.scaleY = *scaleY;
         layer.rotation = *rotation; layer.opacity = *opacity; layer.visible = *visible;
         layer.timeOffset = *timeOffset; layer.timeScale = *timeScale;
+        if (const auto tint = entry.find("tint"); tint != entry.end()) {
+            if (clip.schemaRevision < 8 || !OnlyFields(*tint, {"r", "g", "b"}) ||
+                tint->size() != 3)
+                return fail("PXMOTION1032", "Motion tint requires revision 8 and RGB channels");
+            const auto r = Number(*tint, "r", 1, 0, 1, true);
+            const auto g = Number(*tint, "g", 1, 0, 1, true);
+            const auto b = Number(*tint, "b", 1, 0, 1, true);
+            if (!r || !g || !b)
+                return fail("PXMOTION1032", "Motion tint channels must be between zero and one");
+            layer.tint = {*r, *g, *b};
+        }
         clip.layers.push_back(std::move(layer));
     }
     std::vector<std::vector<std::size_t>> children(clip.layers.size());
@@ -386,6 +416,8 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         if (*property == MotionProperty::Frame &&
             (clip.schemaRevision < 2 || clip.layers[layer->second].frames.empty()))
             return fail("PXMOTION1022", "Motion frame tracks require revision 2 atlas frames");
+        if (*property == MotionProperty::Tint && clip.schemaRevision < 8)
+            return fail("PXMOTION1033", "Motion tint tracks require revision 8");
         totalKeys += entry["keys"].size();
         if (totalKeys > 1'000'000)
             return fail("PXMOTION1015", "Motion clip exceeds the one-million-key limit");
@@ -435,6 +467,16 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
                     *frameIndex >= static_cast<double>(clip.layers[track.layer].frames.size()))
                     return fail("PXMOTION1023", "Motion frame keys require an in-range integer step index");
                 parsed.frame = static_cast<std::size_t>(*frameIndex);
+            } else if (*property == MotionProperty::Tint) {
+                const auto& value = key["value"];
+                if (!OnlyFields(value, {"r", "g", "b"}) || value.size() != 3)
+                    return fail("PXMOTION1033", "Motion tint keys require RGB values");
+                const auto r = Number(value, "r", 1, 0, 1, true);
+                const auto g = Number(value, "g", 1, 0, 1, true);
+                const auto b = Number(value, "b", 1, 0, 1, true);
+                if (!r || !g || !b)
+                    return fail("PXMOTION1033", "Motion tint key channels must be between zero and one");
+                parsed.tint = {*r, *g, *b};
             } else {
                 const auto [minimum, maximum] = PropertyRange(*property);
                 const auto value = Number(key, "value", 0, minimum, maximum, true);
@@ -517,7 +559,8 @@ void MotionSampler::Seek(double timeSeconds) {
     for (std::size_t i = 0; i < m_clip.layers.size(); ++i) {
         const auto& layer = m_clip.layers[i];
         m_states[i] = {layer.x, layer.y, layer.scaleX, layer.scaleY,
-                       layer.rotation, layer.opacity, layer.visible, 0};
+                       layer.rotation, layer.opacity, layer.tint,
+                       layer.visible, 0};
     }
     for (const auto& track : m_clip.tracks) {
         auto& state = m_states[track.layer];
@@ -534,6 +577,11 @@ void MotionSampler::Seek(double timeSeconds) {
             if (right != track.keys.begin()) state.frame = (right - 1)->frame;
             continue;
         }
+        if (track.property == MotionProperty::Tint) {
+            const auto sampled = SampleTint(track, localTime);
+            if (sampled) state.tint = *sampled;
+            continue;
+        }
         const auto sampled = SampleNumber(track, localTime);
         if (!sampled) continue;
         const double value = *sampled;
@@ -546,6 +594,7 @@ void MotionSampler::Seek(double timeSeconds) {
             case MotionProperty::Opacity: state.opacity = value; break;
             case MotionProperty::Visible: break;
             case MotionProperty::Frame: break;
+            case MotionProperty::Tint: break;
         }
     }
     constexpr double radiansPerDegree = 3.14159265358979323846 / 180.0;
@@ -569,6 +618,9 @@ void MotionSampler::Seek(double timeSeconds) {
         world.sourcePixels = state.frame < layer.frames.size()
             ? std::optional<MotionAtlasFrame>(layer.frames[state.frame]) : std::nullopt;
         world.opacity = state.opacity * (layer.parent ? m_world[*layer.parent].opacity : 1);
+        const auto parentTint = layer.parent ? m_world[*layer.parent].tint : MotionTint{};
+        world.tint = {state.tint.r * parentTint.r, state.tint.g * parentTint.g,
+            state.tint.b * parentTint.b};
         world.visible = state.visible && (!layer.parent || m_world[*layer.parent].visible);
     }
     for (std::size_t i = 0; i < m_pose.size(); ++i) m_pose[i] = m_world[m_clip.drawOrder[i]];

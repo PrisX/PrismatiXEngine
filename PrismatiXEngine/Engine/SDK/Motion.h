@@ -9,17 +9,22 @@
 namespace px::sdk {
 
 enum class MotionScaleMode { Fit, Fill, Stretch };
-enum class MotionProperty { X, Y, ScaleX, ScaleY, Rotation, Opacity, Visible, Frame };
+enum class MotionProperty { X, Y, ScaleX, ScaleY, Rotation, Opacity, Visible, Frame, Tint };
 enum class MotionCurve { Step, Linear, EaseIn, EaseOut, EaseInOut, CubicBezier };
 enum class MotionAudioBus { SE, Voice };
 enum class MotionBlendMode { Normal, Additive, Multiply };
 enum class MotionLayerKind { Image, Group };
+
+struct MotionTint {
+    double r = 1, g = 1, b = 1;
+};
 
 struct MotionKey {
     double time = 0;
     double value = 0;
     bool visible = true;
     std::size_t frame = 0;
+    MotionTint tint;
     MotionCurve curve = MotionCurve::Linear;
     // Timing cubic: x is normalized time, y is normalized value. Overshoot
     // is permitted so authored motion can express elastic source curves.
@@ -44,6 +49,7 @@ struct MotionLayer {
     double x = 0, y = 0;
     double scaleX = 1, scaleY = 1;
     double rotation = 0, opacity = 1;
+    MotionTint tint;
     double timeOffset = 0, timeScale = 1;
     bool visible = true;
 };
@@ -103,6 +109,7 @@ struct MotionDrawLayer {
     MotionAffine transform;
     std::optional<MotionAtlasFrame> sourcePixels;
     double opacity = 1;
+    MotionTint tint;
     bool visible = true;
 };
 
@@ -123,6 +130,7 @@ private:
     struct State {
         double x = 0, y = 0, scaleX = 1, scaleY = 1;
         double rotation = 0, opacity = 1;
+        MotionTint tint;
         bool visible = true;
         std::size_t frame = 0;
     };

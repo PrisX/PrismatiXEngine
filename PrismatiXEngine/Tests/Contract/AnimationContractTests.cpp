@@ -297,6 +297,37 @@ int main() {
                      "non-image groups cannot be mask sources");
     });
 
+    suite.Run("MotionClip_RgbTintInterpolatesAndInheritsIndependentlyOfAlpha", [&] {
+        constexpr auto source = R"({
+          "format":"PrismatiXMotion","schemaRevision":8,"id":"tinted",
+          "canvas":{"width":100,"height":100},"duration":1,"loop":false,
+          "layers":[
+            {"id":"parent","kind":"group","tint":{"r":0.8,"g":0.5,"b":1}},
+            {"id":"child","parent":"parent","image":"Assets/mark.png",
+             "width":20,"height":20,"opacity":0.75}],
+          "tracks":[{"layer":"child","property":"tint","keys":[
+            {"time":0,"value":{"r":1,"g":1,"b":1},"curve":"linear"},
+            {"time":1,"value":{"r":1,"g":0,"b":0},"curve":"linear"}]}]})";
+        const auto parsed = px::sdk::ParseMotion(source);
+        suite.Require(parsed.Valid(), "revision-8 RGB tint parses");
+        px::sdk::MotionSampler sampler(*parsed.clip);
+        sampler.Seek(0.5);
+        const auto& child = sampler.LayerPose(1);
+        suite.Expect(std::abs(child.tint.r - 0.8) < 0.000001 &&
+                     std::abs(child.tint.g - 0.25) < 0.000001 &&
+                     std::abs(child.tint.b - 0.5) < 0.000001 &&
+                     std::abs(child.opacity - 0.75) < 0.000001,
+                     "child RGB is interpolated then multiplied by parent tint without changing alpha");
+        auto older = nlohmann::json::parse(source);
+        older["schemaRevision"] = 7;
+        suite.Expect(!px::sdk::ParseMotion(older.dump()).Valid(),
+                     "revision-7 clips reject tint instead of silently ignoring it");
+        auto invalid = nlohmann::json::parse(source);
+        invalid["tracks"][0]["keys"][0]["value"]["g"] = 1.1;
+        suite.Expect(!px::sdk::ParseMotion(invalid.dump()).Valid(),
+                     "RGB keys reject channels outside zero to one");
+    });
+
     suite.Run("MotionClip_CubicBezierTimingMatchesAuthoredControlPoints", [&] {
         constexpr auto source = R"({
           "format":"PrismatiXMotion","schemaRevision":5,"id":"eased",

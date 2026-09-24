@@ -4,7 +4,7 @@ Status: image-layer, timing, blend, alpha-mask, and inline nested-transform slic
 and Story playback below remain a proposal. This is not an `.mtn` parser or a claim that the
 original M2/petal animations are reproduced.
 
-The versioned `PrismatiXMotion` revision-1/2/3/4/5/6/7 `.pxmotion` contract has an
+The versioned `PrismatiXMotion` revision-1/2/3/4/5/6/7/8 `.pxmotion` contract has an
 Authoring SDK `defineMotion`/`serializeMotion` helper, matching native parser,
 unique layer/track and hierarchy checks, path checks, deterministic keyed
 sampling, and a `Renderer2D` image-layer drawing adapter. A `MotionRect`
@@ -71,6 +71,11 @@ outer duration; audio markers remain on the outer clock. This is composition
 of known `.pxmotion` inputs, not an `.mtn` parser or conformance result.
 The helper also accepts an empty outer layer list as a composition starting
 point and rejects temporal overflow unless truncation is explicitly requested.
+Revision 8 adds a three-channel animated RGB tint and inherited modulation
+through transform groups. Its native sampler and framebuffer test verify that
+color changes reach the pixels without changing alpha. This maps the ordinary
+color modulation seen in M2's `m2logo` source, but not its source-specific
+mask flags, blur, embedded-motion extraction, or complete color equations.
 
 Revision-1 sampling uses a layer's authored property until its first key;
 thereafter each key's curve determines interpolation toward the next key.

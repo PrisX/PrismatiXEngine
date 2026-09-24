@@ -197,6 +197,9 @@ function motionSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[
     targets.add(target);
     let previous = -1;
     for (const key of objects(track.keys)) {
+      const tint = object(key.value);
+      const tintValid = tint !== undefined && [tint.r, tint.g, tint.b].every((channel) =>
+        typeof channel === "number" && Number.isFinite(channel) && channel >= 0 && channel <= 1);
       if (typeof key.time !== "number" || key.time <= previous || key.time > keyTimeLimit)
         diagnostics.push(issue("PXSDKSEM1405",
           "Motion keys must have increasing times inside the revision's time limit", path, target));
@@ -207,6 +210,8 @@ function motionSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[
             key.curve !== "step" ||
             !Array.isArray(targetLayer?.frames) ||
             Number(key.value) < 0 || Number(key.value) >= targetLayer.frames.length
+          : track.property === "tint"
+            ? !tintValid
           : typeof key.value !== "number" || !Number.isFinite(key.value))
         diagnostics.push(issue("PXSDKSEM1406", "Motion key value or curve does not match its property", path, target));
       if (typeof key.value === "number" && track.property !== "frame") {

@@ -45,6 +45,21 @@ const nested = serializeMotion({
 if (!nested.valid || JSON.parse(nested.value!).schemaRevision !== 7)
   throw new Error("Child-local motion must validate as revision 7");
 
+const tinted = serializeMotion({
+  id: "colored-logo", canvas: {width: 1280, height: 720}, duration: 1,
+  layers: [
+    {id: "group", kind: "group", tint: {r: 1, g: 0.5, b: 1}},
+    {id: "logo", parent: "group", image: "Assets/UI/logo.png",
+      width: 320, height: 120},
+  ],
+  tracks: [{layer: "logo", property: "tint", keys: [
+    {time: 0, value: {r: 1, g: 1, b: 1}},
+    {time: 1, value: {r: 1, g: 0, b: 0}},
+  ]}],
+});
+if (!tinted.valid || JSON.parse(tinted.value!).schemaRevision !== 8)
+  throw new Error("Inherited RGB tint must validate as revision 8");
+
 const inlined = inlineMotion({
   id: "full-title", canvas: {width: 1280, height: 720}, duration: 1,
   layers: [],

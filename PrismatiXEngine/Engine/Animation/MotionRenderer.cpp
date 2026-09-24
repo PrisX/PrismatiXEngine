@@ -37,15 +37,21 @@ void DrawMotionPose(graphics::Renderer2D& renderer, const sdk::MotionClip& clip,
         return representable(transform.a) && representable(transform.b) &&
             representable(transform.c) && representable(transform.d) &&
             representable(transform.tx) && representable(transform.ty) &&
-            std::isfinite(draw.opacity);
+            std::isfinite(draw.opacity) && std::isfinite(draw.tint.r) &&
+            std::isfinite(draw.tint.g) && std::isfinite(draw.tint.b);
     };
     const auto drawImage = [&](const sdk::MotionDrawLayer& draw) {
         const auto& layer = clip.layers[draw.layer];
         const auto& transform = draw.transform;
+        const auto tintByte = [](double channel) {
+            return static_cast<std::uint8_t>(std::clamp(
+                std::lround(channel * 255), 0l, 255l));
+        };
         renderer.PushAffineTransform({static_cast<float>(transform.a),
             static_cast<float>(transform.b), static_cast<float>(transform.c),
             static_cast<float>(transform.d), static_cast<float>(transform.tx),
-            static_cast<float>(transform.ty)});
+            static_cast<float>(transform.ty)},
+            {tintByte(draw.tint.r), tintByte(draw.tint.g), tintByte(draw.tint.b), 255});
         const auto alpha = static_cast<std::uint8_t>(std::clamp(
             std::lround(draw.opacity * 255), 0l, 255l));
         const Rect destination{0, 0, static_cast<float>(layer.width),
