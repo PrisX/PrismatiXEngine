@@ -697,11 +697,10 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_ui.SetExternalAnimationServices(
         [this](const std::string_view path){return m_session->PlayAnimationAsset(std::string(path));},
         [this](const std::uint64_t handle){return m_session->Timeline().Playing(handle);});
+    m_ui.SetMotionAudioSink([this](const sdk::MotionAudioMarker& marker){
+        PlayMotionMarker(marker);
+    });
     m_ui.SetControlRuntimeConfigurator([this](ui::Control& control){
-        if(auto* motion=dynamic_cast<ui::MotionRect*>(&control))
-            motion->SetMarkerSink([this](const sdk::MotionAudioMarker& marker){
-                PlayMotionMarker(marker);
-            });
         if(auto* rectangle=dynamic_cast<ui::VideoRect*>(&control)){
             auto player=std::make_shared<video::VideoPlayer>(m_runtime.Renderer().Handle(),m_runtime.VFS());
             rectangle->SetPlayback({[player](const std::string_view path){return player->Open(std::string(path));},[player]{player->Close();},[player](const float delta){player->Update(delta);},[player]{return player->Playing();},[player]{return player->Texture();},[player]{return Vec2{static_cast<float>(player->Width()),static_cast<float>(player->Height())};}});

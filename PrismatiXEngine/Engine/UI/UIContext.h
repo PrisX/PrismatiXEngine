@@ -20,6 +20,7 @@
 namespace px { class Input; }
 namespace px::graphics { class Renderer2D; }
 namespace px::animation { struct TrackBinding; }
+namespace px::sdk { struct MotionAudioMarker; }
 
 namespace px::ui {
 
@@ -59,6 +60,9 @@ public:
     }
     void SetExternalUIAnimationClipResolver(UIAnimationController::ExternalClipResolver resolver){m_animationResolver=std::move(resolver);if(m_animationController)m_animationController->SetExternalClipResolver(m_animationResolver);}
     void SetControlRuntimeConfigurator(std::function<void(Control&)> configure);
+    // Motion audio is a UI-context service, not a per-control host hook.
+    // Existing and subsequently installed MotionRect controls use this sink.
+    void SetMotionAudioSink(std::function<void(const sdk::MotionAudioMarker&)> sink);
     // Non-owning: the renderer outlives the UI context in Player and Preview.
     // Measurement and drawing then consume the same immutable TextLayout.
     void SetTextRenderer(graphics::Renderer2D* renderer);
@@ -149,6 +153,8 @@ private:
     std::function<Result<std::uint64_t>(std::string_view)> m_playExternalAnimation;
     std::function<bool(std::uint64_t)> m_externalAnimationPlaying;
     std::function<void(Control&)> m_configureControlRuntime;
+    std::function<void(const sdk::MotionAudioMarker&)> m_motionAudioSink;
+    bool m_motionAudioSinkConfigured = false;
     graphics::Renderer2D* m_textRenderer = nullptr;
     std::function<void(std::string_view)> m_imagePreloadSink;
     int m_width = 0;

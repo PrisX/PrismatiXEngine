@@ -33,7 +33,7 @@ const motion = serializeMotion({
     layer: "logo", property: "frame",
     keys: [{time: 0, value: 0}, {time: 0.5, value: 1}],
   }],
-  markers: [{id: "logo-pop", time: 0.5,
+  markers: [{time: 0.5,
     audio: "Assets/Audio/logo-pop.ogg", bus: "se"}],
 });
 if (!motion.valid) throw new Error(JSON.stringify(motion.diagnostics));
@@ -68,7 +68,10 @@ still requests only layer images. Normal playback emits each crossed marker in
 order, including on loops. An explicit `Seek` does not play skipped audio; an
 extremely large frame jump has a bounded event budget rather than replaying an
 unbounded backlog. A UI `<Motion>` and splash `MotionRect` dispatch these events
-through the Player audio service.
+through the Player audio service. The TypeScript helper generates marker IDs
+when omitted; specify an ID only when a tool or editor needs a stable name.
+Native hosts register one `UIContext::SetMotionAudioSink` callback, rather than
+walking every `MotionRect` to attach a callback.
 
 This is not an `.mtn` importer or a full M2 Cheeseware reproduction. Image
 masks, blur, blend modes, and Story playback are still missing;

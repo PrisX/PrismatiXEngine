@@ -2,7 +2,6 @@
 
 #include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/UI/UiApplication.h"
-#include "Engine/UI/Widgets.h"
 
 #include <algorithm>
 #include <cmath>
@@ -26,10 +25,7 @@ diag::Diagnostic RuntimeDiagnostic(diag::Severity severity, std::string code,
 
 SplashSequencePlayer::SplashSequencePlayer(Services services)
     : m_services(std::move(services)) {
-    m_context.SetControlRuntimeConfigurator([this](Control& control) {
-        if (auto* motion = dynamic_cast<MotionRect*>(&control))
-            motion->SetMarkerSink(m_services.playMotionMarker);
-    });
+    m_context.SetMotionAudioSink(m_services.playMotionMarker);
 }
 
 Status SplashSequencePlayer::Start(std::vector<SplashScreenEntry> entries,

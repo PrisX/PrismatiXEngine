@@ -1138,12 +1138,6 @@ int main() {
         {"time":1,"value":1,"curve":"linear"}]}]})";
     px::ui::UIContext motionContext;
     std::vector<std::string> firedMotionMarkers;
-    motionContext.SetControlRuntimeConfigurator([&](px::ui::Control& control) {
-        if (auto* rect = dynamic_cast<px::ui::MotionRect*>(&control))
-            rect->SetMarkerSink([&](const px::sdk::MotionAudioMarker& marker) {
-                firedMotionMarkers.push_back(marker.id);
-            });
-    });
     Check(motionContext.Commands().Register("game.start",
         [](const px::Variant&) { return px::Status::Ok(); }).IsOk(),
         "motion test action route must register");
@@ -1158,6 +1152,9 @@ int main() {
     auto* motion = dynamic_cast<px::ui::MotionRect*>(motionContext.Root()->Find(*imageId));
     Check(motion && motion->Clip() && motion->Playing(),
           "MotionRect must install a playable layered clip");
+    motionContext.SetMotionAudioSink([&](const px::sdk::MotionAudioMarker& marker) {
+        firedMotionMarkers.push_back(marker.id);
+    });
     motion->Update(0.5f);
     Check(std::abs(motion->Position() - 0.5) < 0.0001,
           "MotionRect playback clock must advance deterministically");
@@ -1170,6 +1167,12 @@ int main() {
     motion->Update(1.0f);
     Check(firedMotionMarkers == std::vector<std::string>{"first", "first", "second"},
           "restarted playback emits each crossed marker once in timeline order");
+    motionContext.SetMotionAudioSink({});
+    motion->Seek(0.0);
+    motion->SetPlaying(true);
+    motion->Update(0.5f);
+    Check(firedMotionMarkers.size() == 3,
+          "clearing the UI-context audio service detaches an existing MotionRect");
     constexpr auto loopingSource = R"({
       "format":"PrismatiXMotion","schemaRevision":3,"id":"looping",
       "canvas":{"width":100,"height":100},"duration":1,"loop":true,

@@ -84,11 +84,20 @@ test("atlas frame tracks use revision 2 and reject fractional, interpolated or m
 
 test("sound markers use revision 3 with ordered, named audio dependencies", () => {
   const marked = defineMotion({...input, markers: [
-    {id: "reveal", time: 0, audio: "Assets/Audio/reveal.ogg", bus: "se"},
+    {time: 0, audio: "Assets/Audio/reveal.ogg", bus: "se"},
     {id: "voice", time: 0.5, audio: "Assets/Audio/voice.ogg", bus: "voice"},
   ]});
   assert.equal(marked.valid, true, JSON.stringify(marked.diagnostics));
   assert.equal(marked.value?.schemaRevision, 3);
+  assert.deepEqual(marked.value?.markers?.map((marker) => marker.id),
+    ["marker-1", "voice"]);
+  const collision = defineMotion({...input, markers: [
+    {id: "marker-2", time: 0, audio: "Assets/Audio/reveal.ogg", bus: "se"},
+    {time: 0.5, audio: "Assets/Audio/voice.ogg", bus: "voice"},
+  ]});
+  assert.equal(collision.valid, true, JSON.stringify(collision.diagnostics));
+  assert.deepEqual(collision.value?.markers?.map((marker) => marker.id),
+    ["marker-2", "marker-2-2"]);
   assert.equal(parseDocument("motion", serializeMotion({...input,
     markers: marked.value!.markers!}).value!).valid, true);
   const document = marked.value!;
@@ -97,7 +106,7 @@ test("sound markers use revision 3 with ordered, named audio dependencies", () =
     document.markers![1], document.markers![0],
   ]}).valid, false);
   assert.equal(validateDocument("motion", {...document, markers: [
-    document.markers![0], {...document.markers![1], id: "reveal"},
+    document.markers![0], {...document.markers![1], id: "marker-1"},
   ]}).valid, false);
   assert.equal(validateDocument("motion", {...document, markers: [
     {...document.markers![0], audio: "../outside.ogg"},

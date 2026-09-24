@@ -210,6 +210,12 @@ Status UIContext::InstallDocument(UIDocumentInstallation installation) {
 }
 
 void UIContext::SetControlRuntimeConfigurator(std::function<void(Control&)> configure){m_configureControlRuntime=std::move(configure);ConfigureControlRuntime();}
+void UIContext::SetMotionAudioSink(
+    std::function<void(const sdk::MotionAudioMarker&)> sink) {
+    m_motionAudioSink = std::move(sink);
+    m_motionAudioSinkConfigured = true;
+    ConfigureControlRuntime();
+}
 void UIContext::SetTextRenderer(graphics::Renderer2D* renderer){m_textRenderer=renderer;ConfigureControlRuntime();if(m_root)m_root->InvalidateLayout();}
 
 Status UIContext::ApplyAnimationProperty(
@@ -422,7 +428,29 @@ void UIContext::ResetAnimationPropertyOverrides(const std::string_view target) {
     }
 }
 
-void UIContext::ConfigureControlRuntime(){if(!m_root)return;std::function<void(scene::Node&)> visit=[&](scene::Node& node){if(auto* control=dynamic_cast<Control*>(&node)){if(m_textRenderer)control->SetTextLayoutProvider([this](const Control& target,const std::string_view value,const int size,const int wrap,const text::TextOrientation orientation,const std::size_t rows){const auto& style=m_theme.Resolve(target);return m_textRenderer->LayoutText(std::string(value),style.font,size>0?size:style.fontSize,wrap,orientation,rows);});if(m_configureControlRuntime)m_configureControlRuntime(*control);}for(const auto& child:node.Children())visit(*child);};visit(*m_root);}
+void UIContext::ConfigureControlRuntime() {
+    if (!m_root) return;
+    std::function<void(scene::Node&)> visit = [&](scene::Node& node) {
+        if (auto* control = dynamic_cast<Control*>(&node)) {
+            if (m_textRenderer) {
+                control->SetTextLayoutProvider([this](const Control& target,
+                    const std::string_view value, const int size, const int wrap,
+                    const text::TextOrientation orientation, const std::size_t rows) {
+                    const auto& style = m_theme.Resolve(target);
+                    return m_textRenderer->LayoutText(std::string(value), style.font,
+                        size > 0 ? size : style.fontSize, wrap, orientation, rows);
+                });
+            }
+            if (m_motionAudioSinkConfigured) {
+                if (auto* motion = dynamic_cast<MotionRect*>(control))
+                    motion->SetMarkerSink(m_motionAudioSink);
+            }
+            if (m_configureControlRuntime) m_configureControlRuntime(*control);
+        }
+        for (const auto& child : node.Children()) visit(*child);
+    };
+    visit(*m_root);
+}
 
 BehaviorRuntimeServices UIContext::BehaviorServices(){
     constexpr std::uint64_t embeddedAnimation=std::numeric_limits<std::uint64_t>::max();
