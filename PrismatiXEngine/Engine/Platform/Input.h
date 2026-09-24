@@ -143,6 +143,14 @@ public:
     [[nodiscard]] KeyRebindResult RebindKey(std::string_view action,
                                             int scancode,
                                             bool allowConflict = false);
+    // One-shot physical keyboard capture for rebind UIs. The captured key is
+    // suppressed from normal actions and text input, then remains available
+    // until taken or cancelled. Escape is reported like any other key; the
+    // author decides whether it cancels or becomes a binding.
+    [[nodiscard]] bool BeginKeyCapture();
+    [[nodiscard]] bool KeyCaptureActive() const { return m_keyCaptureActive; }
+    [[nodiscard]] std::optional<int> TakeCapturedKey();
+    void CancelKeyCapture();
     [[nodiscard]] KeyboardBindingMap CaptureKeyboardBindings() const;
     // Validates the entire map before applying it. Actions registered later
     // receive their saved keys when RegisterAction is called.
@@ -249,6 +257,8 @@ private:
                                      std::uint64_t sourceId);
     void AppendWheelActions(std::uint64_t sourceId);
     std::set<int> m_keysPressed;
+    bool m_keyCaptureActive = false;
+    std::optional<int> m_capturedKey;
     std::set<int> m_keysDown;
     std::set<int> m_gamepadButtonsPressed;
     std::set<int> m_gamepadButtonsDown;

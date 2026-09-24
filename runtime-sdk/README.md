@@ -103,11 +103,24 @@ readable SDL key name to replace one action's keyboard shortcut atomically:
 
 ```ts
 const current = ctx.input.keyBindings("quick-save").map(ctx.input.keyName);
-const result = ctx.input.rebindKey("quick-save", "F11");
-if (result.status === "conflict") {
-  // Show result.conflicts and let the player choose another key or allow sharing.
+// Start this from a settings-screen action, then poll in its update callback.
+ctx.input.beginKeyCapture();
+const captured = ctx.input.takeCapturedKey();
+if (captured !== null) {
+  // Escape is returned as an ordinary key; this UI treats it as cancel.
+  if (ctx.input.keyName(captured) !== "Escape") {
+    const result = ctx.input.rebindKey("quick-save", captured);
+    if (result.status === "conflict") {
+      // Show result.conflicts and let the player choose another key or allow sharing.
+    }
+  }
 }
 ```
+
+Capture is one-shot. The physical key is withheld from normal actions and text
+input, and remains available across frame boundaries until `takeCapturedKey()`
+or `cancelKeyCapture()`; `keyCaptureActive()` reports whether it is still
+waiting. A settings screen should cancel capture when it closes.
 
 An authored game-catalog binding such as
 `{"key":"G","command":"screen.open","argument":"gallery"}` becomes the
@@ -131,7 +144,8 @@ script registers later. Other hosts must persist the native Input binding map
 themselves. The Player selects `game` or `ui` as its base context; extensions
 can assign custom actions to a context and push/pop temporary overlays.
 There is not yet a project-wide declarative action-context map or a ready-made
-remapping UI.
+remapping widget; authors still provide the settings-screen action, label, and
+conflict-resolution UI.
 
 Extension-owned state participates in save, seek, and rollback through a
 versioned, deterministic JSON provider. Capture, restore, and migration are

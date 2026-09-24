@@ -993,6 +993,27 @@ void TestPhaseThreePublicRuntimeSurfaces(px::test::Suite& suite) {
                  "JavaScript animation loading should use the canonical RuntimeSession seam");
     suite.Expect(!input.ActionPressed(px::InputAction::Advance),
                  "suppressed input events should prevent the product default in the same frame");
+    suite.Require(host.RunString(R"js(
+        if (!Engine.BeginInputKeyCapture() ||
+            !Engine.IsInputKeyCaptureActive() ||
+            Engine.TakeCapturedInputKey() !== null)
+            throw new Error("input key capture did not start");
+    )js", "phase-three-key-capture-start"),
+                  "JavaScript can start a one-shot physical key capture");
+    input.InjectKeyPress(*px::Input::KeyCode("F2"));
+    suite.Require(host.RunString(R"js(
+        const captured = Engine.TakeCapturedInputKey();
+        if (captured !== Engine.GetInputKeyCode("F2") ||
+            Engine.IsInputKeyCaptureActive() ||
+            Engine.TakeCapturedInputKey() !== null)
+            throw new Error("captured key did not cross the runtime boundary once");
+        if (!Engine.BeginInputKeyCapture())
+            throw new Error("key capture could not restart");
+        Engine.CancelInputKeyCapture();
+        if (Engine.IsInputKeyCaptureActive())
+            throw new Error("key capture did not cancel");
+    )js", "phase-three-key-capture-finish"),
+                  "JavaScript receives and cancels captured keys without exposing raw events");
 
     suite.Require(host.RunString(R"js(
         Engine.RegisterAction("phase3.invalid-audio-wait", async () => {

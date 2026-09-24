@@ -2927,6 +2927,18 @@ public:
                 return ToJavaScript(Variant(VariantObject{
                     {"status", status}, {"conflicts", std::move(conflicts)}}));
             }
+            if (operation == "input.beginKeyCapture")
+                return JS_NewBool(context, services.input->BeginKeyCapture());
+            if (operation == "input.keyCaptureActive")
+                return JS_NewBool(context, services.input->KeyCaptureActive());
+            if (operation == "input.takeCapturedKey") {
+                const auto key = services.input->TakeCapturedKey();
+                return key ? JS_NewInt32(context, *key) : JS_NULL;
+            }
+            if (operation == "input.cancelKeyCapture") {
+                services.input->CancelKeyCapture();
+                return JS_UNDEFINED;
+            }
             if (operation == "input.mouseX") return JS_NewFloat64(context, services.input->MouseX());
             if (operation == "input.mouseY") return JS_NewFloat64(context, services.input->MouseY());
             if (operation == "input.leftClick") return JS_NewBool(context, services.input->LeftClick());
@@ -3269,6 +3281,10 @@ public:
                 GetInputKeyCode: { value: bindRuntime("input.keyCode") },
                 GetInputKeyName: { value: bindRuntime("input.keyName") },
                 RebindInputKey: { value: bindRuntime("input.rebindKey") },
+                BeginInputKeyCapture: { value: bindRuntime("input.beginKeyCapture") },
+                IsInputKeyCaptureActive: { value: bindRuntime("input.keyCaptureActive") },
+                TakeCapturedInputKey: { value: bindRuntime("input.takeCapturedKey") },
+                CancelInputKeyCapture: { value: bindRuntime("input.cancelKeyCapture") },
                 IsNamedInputActionPressed: { value: bindRuntime("input.namedActionPressed") },
                 IsNamedInputActionDown: { value: bindRuntime("input.namedActionDown") },
                 GetLogicalSize: { value: bindRuntime("renderer.logicalSize") },

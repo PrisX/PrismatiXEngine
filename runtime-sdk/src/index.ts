@@ -607,6 +607,10 @@ export interface PrismatiXEngine {
   GetInputKeyCode(name: string): number | null;
   GetInputKeyName(scancode: number): string;
   RebindInputKey(action: string, key: string | number, allowConflict?: boolean): KeyRebindResult;
+  BeginInputKeyCapture(): boolean;
+  IsInputKeyCaptureActive(): boolean;
+  TakeCapturedInputKey(): number | null;
+  CancelInputKeyCapture(): void;
   IsNamedInputActionPressed(action: string): boolean;
   IsNamedInputActionDown(action: string): boolean;
   RegisterStateProvider<T extends JsonValue>(
@@ -763,6 +767,10 @@ export const ENGINE_HOST_BINDINGS = [
   "GetInputKeyCode",
   "GetInputKeyName",
   "RebindInputKey",
+  "BeginInputKeyCapture",
+  "IsInputKeyCaptureActive",
+  "TakeCapturedInputKey",
+  "CancelInputKeyCapture",
   "IsNamedInputActionPressed",
   "IsNamedInputActionDown",
   "RegisterStateProvider",
@@ -947,6 +955,10 @@ export interface PrismatiXContext {
     keyCode(name: string): number | null;
     keyName(scancode: number): string;
     rebindKey(action: string, key: string | number, allowConflict?: boolean): KeyRebindResult;
+    beginKeyCapture(): boolean;
+    keyCaptureActive(): boolean;
+    takeCapturedKey(): number | null;
+    cancelKeyCapture(): void;
     namedActionPressed(action: string): boolean;
     namedActionDown(action: string): boolean;
   };
@@ -1240,6 +1252,10 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
       keyName: (scancode) => engine.GetInputKeyName(scancode),
       rebindKey: (action, key, allowConflict) =>
         engine.RebindInputKey(action, key, allowConflict),
+      beginKeyCapture: () => engine.BeginInputKeyCapture(),
+      keyCaptureActive: () => engine.IsInputKeyCaptureActive(),
+      takeCapturedKey: () => engine.TakeCapturedInputKey(),
+      cancelKeyCapture: () => engine.CancelInputKeyCapture(),
       namedActionPressed: (action) => engine.IsNamedInputActionPressed(action),
       namedActionDown: (action) => engine.IsNamedInputActionDown(action),
     },

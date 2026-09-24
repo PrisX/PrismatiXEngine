@@ -45,7 +45,15 @@ of silently disabling the shortcut. `prismatix validate` currently validates
 key strings structurally, not against the selected platform's SDL key-name
 table, so a distribution smoke test is still needed for uncommon key names.
 
-This does not yet provide a UI widget for key capture, a general mapping from
+Runtime extensions can now start a one-shot physical key capture with
+`ctx.input.beginKeyCapture()`, poll `takeCapturedKey()`, and pass the resulting
+scancode to `rebindKey()`. The captured key is withheld from ordinary actions
+and text input; `cancelKeyCapture()` should be called when the settings page
+closes. See the [Runtime SDK example](../runtime-sdk/README.md) for conflict
+handling. Escape is returned as an ordinary key so the author's UI decides
+whether it means cancel or a binding.
+
+This does not yet provide a ready-made UI widget, a general mapping from
 named actions to UI Actions, a player-facing wheel remapping widget, or portable
 persistence for non-Player hosts. Those are separate remaining input-contract
 tasks. Existing `inputBindings` documents remain readable for migration.

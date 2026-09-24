@@ -287,6 +287,23 @@ KeyRebindResult Input::RebindKey(const std::string_view action,
     return result;
 }
 
+bool Input::BeginKeyCapture() {
+    if (m_keyCaptureActive || m_capturedKey) return false;
+    m_keyCaptureActive = true;
+    return true;
+}
+
+std::optional<int> Input::TakeCapturedKey() {
+    auto key = m_capturedKey;
+    m_capturedKey.reset();
+    return key;
+}
+
+void Input::CancelKeyCapture() {
+    m_keyCaptureActive = false;
+    m_capturedKey.reset();
+}
+
 KeyboardBindingMap Input::CaptureKeyboardBindings() const {
     KeyboardBindingMap result = m_pendingKeyBindings;
     for (const auto& [action, bindings] : m_namedBindings)
@@ -442,6 +459,13 @@ bool Input::InjectAction(const std::string_view action) {
 
 void Input::InjectKeyPress(const int scancode,const bool held) {
     if(scancode<0)return;
+    if (m_keyCaptureActive && scancode > SDL_SCANCODE_UNKNOWN &&
+        scancode < SDL_SCANCODE_COUNT) {
+        m_capturedKey = scancode;
+        m_keyCaptureActive = false;
+        m_suppressText = true;
+        return;
+    }
     m_keysPressed.insert(scancode);
     if(held)m_keysDown.insert(scancode);
     AppendActionEventsForKey(scancode);
@@ -842,6 +866,13 @@ void Input::Process(const SDL_Event& event) {
         case SDL_EVENT_KEY_DOWN:
             if (!event.key.repeat) {
                 const int scancode = static_cast<int>(event.key.scancode);
+                if (m_keyCaptureActive && scancode > SDL_SCANCODE_UNKNOWN &&
+                    scancode < SDL_SCANCODE_COUNT) {
+                    m_capturedKey = scancode;
+                    m_keyCaptureActive = false;
+                    m_suppressText = true;
+                    break;
+                }
                 m_keysPressed.insert(scancode);
                 AppendActionEventsForKey(scancode);
             }
@@ -853,6 +884,7 @@ void Input::Process(const SDL_Event& event) {
             break;
 
         case SDL_EVENT_TEXT_INPUT:
+            if (m_suppressText) break;
             m_textInput += event.text.text;
             {
             InputEvent inputEvent;

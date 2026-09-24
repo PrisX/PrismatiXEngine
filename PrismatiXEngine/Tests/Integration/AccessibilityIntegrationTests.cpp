@@ -240,6 +240,38 @@ int main() {
     Check(remapped.ActionPressed(px::InputAction::Accept),
           "remappable UI operations use the authored replacement binding");
 
+    px::Input capture;
+    Check(capture.BeginKeyCapture() && capture.KeyCaptureActive() &&
+              !capture.BeginKeyCapture(),
+          "keyboard capture starts once without replacing a pending request");
+    SDL_Event capturedKey{};
+    capturedKey.type = SDL_EVENT_KEY_DOWN;
+    capturedKey.key.scancode = SDL_SCANCODE_RETURN;
+    capturedKey.key.repeat = false;
+    capture.Process(capturedKey);
+    SDL_Event capturedText{};
+    capturedText.type = SDL_EVENT_TEXT_INPUT;
+    capturedText.text.text = "x";
+    capture.Process(capturedText);
+    Check(!capture.KeyCaptureActive() &&
+              !capture.ActionPressed(px::InputAction::Accept) &&
+              !capture.KeyPressed(SDL_SCANCODE_RETURN) &&
+              capture.TextInput().empty(),
+          "captured key cannot activate the old action or leak text input");
+    capture.NewFrame();
+    Check(capture.TakeCapturedKey() == SDL_SCANCODE_RETURN &&
+              !capture.TakeCapturedKey(),
+          "captured key survives the frame boundary and is taken once");
+    Check(capture.BeginKeyCapture(), "capture can restart after consumption");
+    capture.InjectKeyPress(SDL_SCANCODE_F1);
+    Check(capture.TakeCapturedKey() == SDL_SCANCODE_F1 &&
+              !capture.KeyPressed(SDL_SCANCODE_F1),
+          "deterministic key injection follows the same capture path");
+    Check(capture.BeginKeyCapture(), "capture can restart for cancellation");
+    capture.CancelKeyCapture();
+    Check(!capture.KeyCaptureActive() && !capture.TakeCapturedKey(),
+          "cancelled capture does not produce a stale shortcut");
+
     px::Input gamepad;
     SDL_Event gamepadButton{};
     gamepadButton.type=SDL_EVENT_GAMEPAD_BUTTON_DOWN;
