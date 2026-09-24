@@ -63,6 +63,9 @@ public:
     // Motion audio is a UI-context service, not a per-control host hook.
     // Existing and subsequently installed MotionRect controls use this sink.
     void SetMotionAudioSink(std::function<void(const sdk::MotionAudioMarker&)> sink);
+    // The host owns Input and persists successful rebinds in onChanged.
+    void SetInputBindingService(Input* input,
+                                std::function<void()> onChanged = {});
     // Non-owning: the renderer outlives the UI context in Player and Preview.
     // Measurement and drawing then consume the same immutable TextLayout.
     void SetTextRenderer(graphics::Renderer2D* renderer);
@@ -155,6 +158,8 @@ private:
     std::function<void(Control&)> m_configureControlRuntime;
     std::function<void(const sdk::MotionAudioMarker&)> m_motionAudioSink;
     bool m_motionAudioSinkConfigured = false;
+    Input* m_bindingInput = nullptr;
+    std::function<void()> m_bindingChanged;
     graphics::Renderer2D* m_textRenderer = nullptr;
     std::function<void(std::string_view)> m_imagePreloadSink;
     int m_width = 0;

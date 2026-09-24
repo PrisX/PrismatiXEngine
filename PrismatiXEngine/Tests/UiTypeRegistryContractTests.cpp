@@ -59,6 +59,12 @@ int main() {
     const auto* activateSound=button?FindProperty(*button,"activateSoundPath"):nullptr;
     Check(hoverSound&&hoverSound->writable&&activateSound&&activateSound->writable,
           "Controls must expose authored hover and activation sounds");
+    const auto* bindingAction = button ? FindProperty(*button, "bindingAction") : nullptr;
+    const auto* escapeCancels = button ? FindProperty(*button, "escapeCancelsBinding") : nullptr;
+    Check(bindingAction && bindingAction->writable &&
+              bindingAction->valueType == "string" && escapeCancels &&
+              escapeCancels->writable && escapeCancels->valueType == "boolean",
+          "button key-capture options must reach the SDK UI registry");
     const auto* textureButton = FindControl(parsed.manifest, "textureButton");
     const auto* normalPath = textureButton
                                  ? FindProperty(*textureButton, "normalPath")

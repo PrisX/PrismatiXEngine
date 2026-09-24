@@ -238,6 +238,17 @@ export interface TextureButtonProps extends ButtonProps {
   readonly scaleMode?: "Stretch" | "Fit" | "Fill" | "Original";
 }
 
+/** A skinnable button that displays and edits one registered keyboard action. */
+export interface KeyBindingButtonProps extends Omit<TextureButtonProps,
+  "onClick" | "action" | "text" | "children"> {
+  readonly bindingAction: string;
+  readonly bindingPrompt?: string;
+  readonly unboundText?: string;
+  readonly bindingConflictText?: string;
+  readonly escapeCancelsBinding?: boolean;
+  readonly allowSharedBinding?: boolean;
+}
+
 export interface RichTextLabelProps extends TextProps {
   /** Ruby/markup source; takes precedence over text children. */
   readonly markup?: string;
@@ -541,6 +552,21 @@ export function TextureButton(props: TextureButtonProps): UiElement {
       ...(scaleMode === undefined ? {} : {scaleMode}),
     },
   });
+}
+
+/** Click to capture a physical key; the host persists successful changes. */
+export function KeyBindingButton(props: KeyBindingButtonProps): UiElement {
+  const {bindingAction, bindingPrompt, unboundText, bindingConflictText,
+    escapeCancelsBinding, allowSharedBinding, ...rest} = props;
+  return TextureButton({...rest, runtimeProperties: {
+    ...props.runtimeProperties,
+    bindingAction,
+    ...(bindingPrompt === undefined ? {} : {bindingPrompt}),
+    ...(unboundText === undefined ? {} : {unboundText}),
+    ...(bindingConflictText === undefined ? {} : {bindingConflictText}),
+    ...(escapeCancelsBinding === undefined ? {} : {escapeCancelsBinding}),
+    ...(allowSharedBinding === undefined ? {} : {allowSharedBinding}),
+  }});
 }
 
 /** Rich text and ruby markup rendered by the native RichTextLabel control. */

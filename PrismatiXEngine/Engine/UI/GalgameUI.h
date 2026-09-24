@@ -115,6 +115,10 @@ public:
     void SetMotionAudioSink(std::function<void(const sdk::MotionAudioMarker&)> sink) {
         m_context.SetMotionAudioSink(std::move(sink));
     }
+    void SetInputBindingService(Input* input,
+                                std::function<void()> onChanged = {}) {
+        m_context.SetInputBindingService(input, std::move(onChanged));
+    }
     void SetTextRenderer(graphics::Renderer2D* renderer) {
         m_context.SetTextRenderer(renderer);
     }

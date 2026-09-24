@@ -7,6 +7,7 @@ import {
   Control,
   Image,
   ItemsGrid,
+  KeyBindingButton,
   Modal,
   Motion,
   RichTextLabel,
@@ -319,4 +320,25 @@ test("texture buttons and rich labels lower typed convenience props to native co
   assert.equal(image.runtimeType, "TextureRect");
   assert.deepEqual(image.runtimeProperties, {path: "Assets/UI/backdrop.png", scaleMode: "Stretch",
     lockAspectRatio: false, opacity: 0.8});
+});
+
+test("key binding button lowers native capture properties without a click action", () => {
+  const result = compileJsxUi(jsx(Scene, {name: "Keyboard Settings",
+    width: 800, height: 600,
+    children: jsx(KeyBindingButton, {name: "PhotoModeKey",
+      bindingAction: "photo-mode", bindingPrompt: "Press a key...",
+      unboundText: "Not set", bindingConflictText: "In use",
+      escapeCancelsBinding: true, allowSharedBinding: false,
+      normalPath: "Assets/UI/key.png", runtimeProperties: {fontSize: 18},
+    }),
+  }), {kind: "scene"});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  const button = result.value!.nodes.find((item) => item.name === "PhotoModeKey")!;
+  assert.equal(button.runtimeType, "TextureButton");
+  assert.equal(button.onClick, undefined);
+  assert.deepEqual(button.runtimeProperties, {fontSize: 18,
+    normalPath: "Assets/UI/key.png", bindingAction: "photo-mode",
+    bindingPrompt: "Press a key...", unboundText: "Not set",
+    bindingConflictText: "In use", escapeCancelsBinding: true,
+    allowSharedBinding: false});
 });

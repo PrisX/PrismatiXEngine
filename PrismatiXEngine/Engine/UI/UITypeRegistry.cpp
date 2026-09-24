@@ -493,6 +493,24 @@ Status RegisterBuiltinUITypes() {
     TypeInfo button{"Button", "Control", "UI/Input", [] { return std::make_unique<Button>(); }};
     button.properties.push_back(StringProperty("text", "Content", [](const Object& o) { return As<Button>(o)->Text(); },
         [](Object& o, std::string v) { As<Button>(o)->SetText(std::move(v)); return Status::Ok(); }));
+    button.properties.push_back(StringProperty("bindingAction", "Input",
+        [](const Object& o) { return As<Button>(o)->BindingAction(); },
+        [](Object& o, std::string v) { As<Button>(o)->SetBindingAction(std::move(v)); return Status::Ok(); }));
+    button.properties.push_back(StringProperty("bindingPrompt", "Input",
+        [](const Object& o) { return As<Button>(o)->BindingPrompt(); },
+        [](Object& o, std::string v) { As<Button>(o)->SetBindingPrompt(std::move(v)); return Status::Ok(); }));
+    button.properties.push_back(StringProperty("unboundText", "Input",
+        [](const Object& o) { return As<Button>(o)->UnboundText(); },
+        [](Object& o, std::string v) { As<Button>(o)->SetUnboundText(std::move(v)); return Status::Ok(); }));
+    button.properties.push_back(StringProperty("bindingConflictText", "Input",
+        [](const Object& o) { return As<Button>(o)->BindingConflictText(); },
+        [](Object& o, std::string v) { As<Button>(o)->SetBindingConflictText(std::move(v)); return Status::Ok(); }));
+    button.properties.push_back(BoolProperty("escapeCancelsBinding", "Input",
+        [](const Object& o) { return As<Button>(o)->EscapeCancelsBinding(); },
+        [](Object& o, bool v) { As<Button>(o)->SetEscapeCancelsBinding(v); return Status::Ok(); }));
+    button.properties.push_back(BoolProperty("allowSharedBinding", "Input",
+        [](const Object& o) { return As<Button>(o)->AllowSharedBinding(); },
+        [](Object& o, bool v) { As<Button>(o)->SetAllowSharedBinding(v); return Status::Ok(); }));
     auto buttonFontSize = NumberProperty("fontSize", "Theme", [](const Object& o) { return As<Button>(o)->FontSize(); },
         [](Object& o, double v) { As<Button>(o)->SetFontSize(static_cast<int>(v)); return Status::Ok(); });
     buttonFontSize.editor.displayName = "Font size";

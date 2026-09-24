@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+namespace px { class Input; }
+
 namespace px::ui {
 
 enum class HorizontalTextAlignment { Left, Center, Right };
@@ -73,6 +75,7 @@ class Button : public Control {
 public:
     using Activated = std::function<void()>;
     explicit Button(std::string text = {}, std::string name = "Button");
+    ~Button() override;
     [[nodiscard]] std::string_view TypeName() const override { return "Button"; }
     void SetText(std::string value) { m_text = std::move(value); InvalidateLayout(); }
     [[nodiscard]] const std::string& Text() const { return m_text; }
@@ -83,6 +86,21 @@ public:
     [[nodiscard]] Color GetTextColor() const { return m_textColor; }
     [[nodiscard]] bool HasTextColor() const { return m_hasTextColor; }
     void SetOnActivated(Activated value) { m_activated = std::move(value); }
+    void SetBindingAction(std::string action);
+    [[nodiscard]] const std::string& BindingAction() const { return m_bindingAction; }
+    void SetBindingPrompt(std::string value) { m_bindingPrompt = std::move(value); }
+    [[nodiscard]] const std::string& BindingPrompt() const { return m_bindingPrompt; }
+    void SetUnboundText(std::string value) { m_unboundText = std::move(value); }
+    [[nodiscard]] const std::string& UnboundText() const { return m_unboundText; }
+    void SetBindingConflictText(std::string value) { m_bindingConflictText = std::move(value); }
+    [[nodiscard]] const std::string& BindingConflictText() const { return m_bindingConflictText; }
+    void SetEscapeCancelsBinding(bool value) { m_escapeCancelsBinding = value; }
+    [[nodiscard]] bool EscapeCancelsBinding() const { return m_escapeCancelsBinding; }
+    void SetAllowSharedBinding(bool value) { m_allowSharedBinding = value; }
+    [[nodiscard]] bool AllowSharedBinding() const { return m_allowSharedBinding; }
+    // Non-owning input service; UIContext reapplies it after every root swap.
+    void SetInputBindingService(Input* input, std::function<void()> onChanged = {});
+    [[nodiscard]] bool CapturingBinding() const { return m_capturingBinding; }
     void SetActionInvocation(ActionInvocation value) { m_action = std::move(value); }
     [[nodiscard]] const ActionInvocation& BoundAction() const { return m_action; }
     void SetHorizontalAlignment(HorizontalTextAlignment value) { m_horizontalAlignment=value; }
@@ -91,6 +109,7 @@ public:
     [[nodiscard]] VerticalTextAlignment VerticalAlignment() const { return m_verticalAlignment; }
     void Activate();
     void HandleEvent(UIEvent& event) override;
+    void Update(float deltaSeconds) override;
 
 protected:
     Vec2 MeasureOverride(Vec2 available) override;
@@ -102,7 +121,18 @@ protected:
                          const Theme& theme) const;
 
 private:
+    void RefreshBindingText();
     std::string m_text;
+    std::string m_bindingAction;
+    std::string m_bindingPrompt = "Press a key";
+    std::string m_unboundText = "Unbound";
+    std::string m_bindingConflictText = "Already assigned";
+    Input* m_bindingInput = nullptr;
+    std::function<void()> m_bindingChanged;
+    float m_bindingFeedbackSeconds = 0.0f;
+    bool m_capturingBinding = false;
+    bool m_escapeCancelsBinding = true;
+    bool m_allowSharedBinding = false;
     int m_fontSize = 0;
     Color m_textColor{};
     bool m_hasTextColor = false;

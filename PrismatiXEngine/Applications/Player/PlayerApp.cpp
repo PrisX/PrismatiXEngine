@@ -700,6 +700,9 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_ui.SetMotionAudioSink([this](const sdk::MotionAudioMarker& marker){
         PlayMotionMarker(marker);
     });
+    m_ui.SetInputBindingService(&m_runtime.GetInput(), [this] {
+        (void)SaveSettingsIfWritable();
+    });
     m_ui.SetControlRuntimeConfigurator([this](ui::Control& control){
         if(auto* rectangle=dynamic_cast<ui::VideoRect*>(&control)){
             auto player=std::make_shared<video::VideoPlayer>(m_runtime.Renderer().Handle(),m_runtime.VFS());

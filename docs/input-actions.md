@@ -74,7 +74,27 @@ closes. See the [Runtime SDK example](../runtime-sdk/README.md) for conflict
 handling. Escape is returned as an ordinary key so the author's UI decides
 whether it means cancel or a binding.
 
-This does not yet provide a ready-made rebinding UI widget, a player-facing
-wheel remapping widget, or portable persistence for non-Player hosts. Those
-are separate remaining input-contract tasks. Existing `inputBindings`
-documents remain readable for migration.
+For keyboard settings, the Authoring SDK also provides `KeyBindingButton`.
+It uses the normal `TextureButton` skins and text styling, but displays the
+current key(s) for `bindingAction`, captures the next physical key on click,
+and reports a conflicting key in the caption without changing the binding.
+Escape cancels by default; the prompt, unbound caption, conflict caption,
+Escape behavior, and shared-binding policy are authorable props. For example:
+
+```tsx
+import {KeyBindingButton, Scene} from "@prismatix/authoring-sdk";
+
+export default <Scene name="Keys" width={800} height={600}>
+  <KeyBindingButton name="PhotoModeKey" bindingAction="photo-mode"
+    x={280} y={180} width={240} height={56}
+    normalPath="Assets/UI/key.png" bindingPrompt="Press a key..." />
+</Scene>;
+```
+
+`bindingAction` must name an action registered by the game or host. Player
+provides the input service and saves a successful rebind to `Save/config.dat`;
+other hosts must attach `UIContext::SetInputBindingService(input, onChanged)`
+and persist the updated keyboard bindings themselves. This is a single-key
+replacement control, not a multi-key editor or confirmation dialog.
+Wheel remapping and portable non-Player persistence are still separate tasks.
+Existing `inputBindings` documents remain readable for migration.

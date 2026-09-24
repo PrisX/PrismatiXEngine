@@ -272,6 +272,56 @@ int main() {
     Check(!capture.KeyCaptureActive() && !capture.TakeCapturedKey(),
           "cancelled capture does not produce a stale shortcut");
 
+    px::Input rebindInput;
+    Check(rebindInput.RegisterAction("photo-mode") &&
+              rebindInput.BindKey("photo-mode", SDL_SCANCODE_P) &&
+              rebindInput.RegisterAction("another-action") &&
+              rebindInput.BindKey("another-action", SDL_SCANCODE_F4),
+          "key binding button fixture registers named actions");
+    int bindingSaves = 0;
+    px::ui::UIContext bindingContext;
+    bindingContext.SetInputBindingService(&rebindInput,
+                                          [&bindingSaves] { ++bindingSaves; });
+    auto bindingButton = std::make_unique<px::ui::TextureButton>();
+    bindingButton->SetBindingAction("photo-mode");
+    auto* mountedBindingButton = bindingButton.get();
+    Check(bindingContext.SetRoot(std::move(bindingButton)).IsOk() &&
+              mountedBindingButton->Text() == "P",
+          "UI context injects input service and displays current key");
+    mountedBindingButton->Activate();
+    Check(mountedBindingButton->CapturingBinding() &&
+              mountedBindingButton->Text() == "Press a key",
+          "key binding button starts capture without an authored click action");
+    rebindInput.InjectKeyPress(SDL_SCANCODE_F3);
+    (void)bindingContext.Update(rebindInput, 800, 600, 0.016f);
+    Check(rebindInput.KeyBindings("photo-mode") ==
+              std::vector<int>{SDL_SCANCODE_F3} &&
+              mountedBindingButton->Text() == "F3" && bindingSaves == 1,
+          "captured key updates the action, caption, and persistence callback");
+    mountedBindingButton->Activate();
+    rebindInput.InjectKeyPress(SDL_SCANCODE_F4);
+    (void)bindingContext.Update(rebindInput, 800, 600, 0.016f);
+    Check(mountedBindingButton->Text() == "Already assigned" &&
+              rebindInput.KeyBindings("photo-mode") ==
+                  std::vector<int>{SDL_SCANCODE_F3} && bindingSaves == 1,
+          "conflicting key is rejected without persisting");
+    (void)bindingContext.Update(rebindInput, 800, 600, 2.0f);
+    Check(mountedBindingButton->Text() == "F3",
+          "conflict feedback returns to the current binding");
+    mountedBindingButton->Activate();
+    rebindInput.InjectKeyPress(SDL_SCANCODE_ESCAPE);
+    (void)bindingContext.Update(rebindInput, 800, 600, 0.016f);
+    Check(mountedBindingButton->Text() == "F3" && bindingSaves == 1,
+          "Escape cancels key capture without changing the binding");
+    mountedBindingButton->SetBindingAction("misspelled-action");
+    Check(mountedBindingButton->Text() == "Unknown action",
+          "unregistered binding actions are visible before a click");
+    mountedBindingButton->SetBindingAction("photo-mode");
+    mountedBindingButton->Activate();
+    Check(bindingContext.SetRoot(std::make_unique<px::ui::Control>()).IsOk() &&
+              !rebindInput.KeyCaptureActive(),
+          "unmounting a binding button cancels its pending physical capture");
+
     px::Input gamepad;
     SDL_Event gamepadButton{};
     gamepadButton.type=SDL_EVENT_GAMEPAD_BUTTON_DOWN;

@@ -3,6 +3,7 @@
 #include "Engine/Text/Typography.h"
 
 #include "Engine/Graphics/Renderer2D.h"
+#include "Engine/Platform/Input.h"
 #include "Engine/UI/Theme.h"
 
 #include <algorithm>
@@ -113,9 +114,70 @@ Button::Button(std::string text, std::string name) : Control(std::move(name)), m
     SetFocusMode(FocusMode::All);
 }
 
+Button::~Button() {
+    if (m_capturingBinding && m_bindingInput)
+        m_bindingInput->CancelKeyCapture();
+}
+
+void Button::SetBindingAction(std::string action) {
+    if (m_capturingBinding && m_bindingInput)
+        m_bindingInput->CancelKeyCapture();
+    m_capturingBinding = false;
+    m_bindingFeedbackSeconds = 0.0f;
+    m_bindingAction = std::move(action);
+    RefreshBindingText();
+}
+
+void Button::SetInputBindingService(Input* input,
+                                    std::function<void()> onChanged) {
+    if (m_capturingBinding && m_bindingInput != input)
+        m_bindingInput->CancelKeyCapture();
+    if (m_bindingInput != input) m_capturingBinding = false;
+    m_bindingInput = input;
+    m_bindingChanged = std::move(onChanged);
+    RefreshBindingText();
+}
+
+void Button::RefreshBindingText() {
+    if (m_bindingAction.empty() || !m_bindingInput || m_capturingBinding ||
+        m_bindingFeedbackSeconds > 0.0f)
+        return;
+    if (!m_bindingInput->HasAction(m_bindingAction)) {
+        if (m_text != "Unknown action") SetText("Unknown action");
+        return;
+    }
+    const auto keys = m_bindingInput->KeyBindings(m_bindingAction);
+    if (keys.empty()) {
+        if (m_text != m_unboundText) SetText(m_unboundText);
+        return;
+    }
+    std::string caption;
+    for (const auto key : keys) {
+        if (!caption.empty()) caption += " / ";
+        caption += Input::KeyName(key);
+    }
+    if (caption != m_text) SetText(std::move(caption));
+}
+
 void Button::Activate() {
     if (!Enabled()) return;
     EmitSignal("activated");
+    if (!m_bindingAction.empty()) {
+        if (!m_bindingInput || !m_bindingInput->HasAction(m_bindingAction)) {
+            SetText("Unknown action");
+            m_bindingFeedbackSeconds = 1.5f;
+        } else if (m_capturingBinding) {
+            m_bindingInput->CancelKeyCapture();
+            m_capturingBinding = false;
+            m_bindingFeedbackSeconds = 0.0f;
+            RefreshBindingText();
+        } else if (m_bindingInput->BeginKeyCapture()) {
+            m_capturingBinding = true;
+            m_bindingFeedbackSeconds = 0.0f;
+            SetText(m_bindingPrompt);
+        }
+        return;
+    }
     if (m_activated) m_activated();
 }
 
@@ -123,6 +185,40 @@ void Button::HandleEvent(UIEvent& event) {
     if (event.type == UIEventType::Click || event.type == UIEventType::Activate) {
         Activate(); event.handled = true;
     }
+}
+
+void Button::Update(float deltaSeconds) {
+    Control::Update(deltaSeconds);
+    if (m_bindingAction.empty() || !m_bindingInput) return;
+    if (m_capturingBinding) {
+        if (const auto key = m_bindingInput->TakeCapturedKey()) {
+            m_capturingBinding = false;
+            if (*key == SDL_SCANCODE_ESCAPE && m_escapeCancelsBinding) {
+                RefreshBindingText();
+            } else {
+                const auto result = m_bindingInput->RebindKey(
+                    m_bindingAction, *key, m_allowSharedBinding);
+                if (result.status == KeyRebindStatus::Applied) {
+                    if (m_bindingChanged) m_bindingChanged();
+                    RefreshBindingText();
+                } else {
+                    SetText(result.status == KeyRebindStatus::Conflict
+                                ? m_bindingConflictText : "Invalid key");
+                    m_bindingFeedbackSeconds = 1.5f;
+                }
+            }
+        } else if (!m_bindingInput->KeyCaptureActive()) {
+            // A host can cancel a pending capture when changing input modes.
+            m_capturingBinding = false;
+            RefreshBindingText();
+        }
+        return;
+    }
+    if (m_bindingFeedbackSeconds > 0.0f) {
+        m_bindingFeedbackSeconds = std::max(0.0f,
+            m_bindingFeedbackSeconds - std::max(0.0f, deltaSeconds));
+    }
+    RefreshBindingText();
 }
 
 Vec2 Button::MeasureOverride(Vec2) {

@@ -216,6 +216,12 @@ void UIContext::SetMotionAudioSink(
     m_motionAudioSinkConfigured = true;
     ConfigureControlRuntime();
 }
+void UIContext::SetInputBindingService(Input* input,
+                                        std::function<void()> onChanged) {
+    m_bindingInput = input;
+    m_bindingChanged = std::move(onChanged);
+    ConfigureControlRuntime();
+}
 void UIContext::SetTextRenderer(graphics::Renderer2D* renderer){m_textRenderer=renderer;ConfigureControlRuntime();if(m_root)m_root->InvalidateLayout();}
 
 Status UIContext::ApplyAnimationProperty(
@@ -445,6 +451,8 @@ void UIContext::ConfigureControlRuntime() {
                 if (auto* motion = dynamic_cast<MotionRect*>(control))
                     motion->SetMarkerSink(m_motionAudioSink);
             }
+            if (auto* button = dynamic_cast<Button*>(control))
+                button->SetInputBindingService(m_bindingInput, m_bindingChanged);
             if (m_configureControlRuntime) m_configureControlRuntime(*control);
         }
         for (const auto& child : node.Children()) visit(*child);
