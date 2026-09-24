@@ -45,11 +45,13 @@ test("allows new or empty output and replaces only intact owned output", async t
   assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "two");
   assert.ok((await readdir(f.output)).includes(outputOwnershipMarker));
   await writeFile(join(f.output, "author.txt"), "keep");
-  await assert.rejects(publishDirectory(f, build("three")), /unowned or modified/);
+  await assert.rejects(publishDirectory(f, build("three")),
+    /unowned or modified.*unowned entry was added: author\.txt/u);
   assert.equal(await readFile(join(f.output, "author.txt"), "utf8"), "keep");
   await rm(join(f.output, "author.txt"));
   await writeFile(join(f.output, "game.bin"), "user edits");
-  await assert.rejects(publishDirectory(f, build("three")), /unowned or modified/);
+  await assert.rejects(publishDirectory(f, build("three")),
+    /unowned or modified.*owned entry was modified: game\.bin/u);
   assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "user edits");
   const empty = join(f.root, "empty");
   await mkdir(empty);

@@ -117,9 +117,15 @@ async function inventory(root: string, phase?: PublicationProgress["phase"],
   report(true);
   return entries;
 }
-function sameInventory(a: Record<string, string>, b: Record<string, string>): boolean {
-  const names = Object.keys(a);
-  return names.length === Object.keys(b).length && names.every(name => a[name] === b[name]);
+function inventoryDifference(expected: Record<string, string>, actual: Record<string, string>): string | undefined {
+  for (const name of Object.keys(expected).sort()) {
+    if (!Object.hasOwn(actual, name)) return `owned entry is missing: ${name}`;
+    if (expected[name] !== actual[name]) return `owned entry was modified: ${name}`;
+  }
+  for (const name of Object.keys(actual).sort()) {
+    if (!Object.hasOwn(expected, name)) return `unowned entry was added: ${name}`;
+  }
+  return undefined;
 }
 async function assertOwned(output: string, allowEmpty = true,
   phase?: PublicationProgress["phase"], onProgress?: PublicationOptions["onProgress"]): Promise<void> {
@@ -133,10 +139,14 @@ async function assertOwned(output: string, allowEmpty = true,
         markerInfo.size > maxOutputMarkerBytes) throw new Error("invalid marker");
     const marker = JSON.parse(await readFile(markerPath, "utf8")) as {format?: string; files?: Record<string, string>};
     if (marker.format !== "PrismatiXOutput/1" || !marker.files ||
-        !sameInventory(marker.files, await inventory(output, phase, onProgress)))
-      throw new Error("output changed");
+        typeof marker.files !== "object" || Array.isArray(marker.files))
+      throw new Error("invalid ownership marker");
+    const difference = inventoryDifference(marker.files,
+      await inventory(output, phase, onProgress));
+    if (difference !== undefined) throw new Error(difference);
   } catch (error) {
-    throw new Error(`Refusing to replace unowned or modified output directory: ${output}`, {cause: error});
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Refusing to replace unowned or modified output directory: ${output} (${detail})`, {cause: error});
   }
 }
 
