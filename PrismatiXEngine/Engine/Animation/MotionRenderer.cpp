@@ -26,18 +26,22 @@ void DrawMotionPose(graphics::Renderer2D& renderer, const sdk::MotionClip& clip,
     renderer.PushClip(bounds);
     renderer.PushAffineTransform({static_cast<float>(scaleX), 0, 0,
         static_cast<float>(scaleY), static_cast<float>(offsetX), static_cast<float>(offsetY)});
-    for (const auto& draw : sampler.Pose()) {
-        if (!draw.visible || draw.opacity <= 0 || draw.layer >= clip.layers.size()) continue;
-        const auto& layer = clip.layers[draw.layer];
+    const auto renderable = [&](const sdk::MotionDrawLayer& draw) {
+        if (!draw.visible || draw.opacity <= 0 || draw.layer >= clip.layers.size())
+            return false;
         const auto& transform = draw.transform;
         const auto representable = [](double value) {
             return std::isfinite(value) &&
                 std::abs(value) <= static_cast<double>(std::numeric_limits<float>::max());
         };
-        if (!representable(transform.a) || !representable(transform.b) ||
-            !representable(transform.c) || !representable(transform.d) ||
-            !representable(transform.tx) || !representable(transform.ty) ||
-            !std::isfinite(draw.opacity)) continue;
+        return representable(transform.a) && representable(transform.b) &&
+            representable(transform.c) && representable(transform.d) &&
+            representable(transform.tx) && representable(transform.ty) &&
+            std::isfinite(draw.opacity);
+    };
+    const auto drawImage = [&](const sdk::MotionDrawLayer& draw) {
+        const auto& layer = clip.layers[draw.layer];
+        const auto& transform = draw.transform;
         renderer.PushAffineTransform({static_cast<float>(transform.a),
             static_cast<float>(transform.b), static_cast<float>(transform.c),
             static_cast<float>(transform.d), static_cast<float>(transform.tx),
@@ -59,6 +63,20 @@ void DrawMotionPose(graphics::Renderer2D& renderer, const sdk::MotionClip& clip,
                 destination, alpha, blendMode);
         } else renderer.DrawImageBlended(layer.image, destination, alpha, blendMode);
         renderer.PopTransform();
+    };
+    for (const auto& draw : sampler.Pose()) {
+        if (!renderable(draw) ||
+            (draw.layer < clip.maskSource.size() && clip.maskSource[draw.layer]))
+            continue;
+        const auto& layer = clip.layers[draw.layer];
+        if (layer.mask) {
+            const auto& mask = sampler.LayerPose(*layer.mask);
+            if (!renderable(mask) || !renderer.BeginAlphaMask()) continue;
+            drawImage(draw);
+            const bool coverage = renderer.BeginAlphaMaskCoverage();
+            if (coverage) drawImage(mask);
+            renderer.EndAlphaMask(coverage);
+        } else drawImage(draw);
     }
     renderer.PopTransform();
     renderer.PopClip();

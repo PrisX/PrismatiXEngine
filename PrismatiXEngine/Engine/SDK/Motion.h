@@ -34,6 +34,7 @@ struct MotionLayer {
     std::string image;
     std::vector<MotionAtlasFrame> frames;
     std::optional<std::size_t> parent;
+    std::optional<std::size_t> mask;
     int z = 0;
     MotionBlendMode blendMode = MotionBlendMode::Normal;
     double width = 0, height = 0;
@@ -70,6 +71,7 @@ struct MotionClip {
     // Precomputed once while parsing, not re-sorted or graph-walked each frame.
     std::vector<std::size_t> hierarchyOrder;
     std::vector<std::size_t> drawOrder;
+    std::vector<bool> maskSource;
 };
 
 struct MotionDiagnostic {
@@ -110,6 +112,9 @@ public:
     void Seek(double timeSeconds);
     [[nodiscard]] double Position() const { return m_position; }
     [[nodiscard]] const std::vector<MotionDrawLayer>& Pose() const { return m_pose; }
+    [[nodiscard]] const MotionDrawLayer& LayerPose(std::size_t index) const {
+        return m_world.at(index);
+    }
 
 private:
     struct State {

@@ -511,6 +511,18 @@ test("compileProject validates motion descriptors and packages their image layer
   assert.equal(atlas.artifact?.dependencies.filter((dependency) =>
     dependency.source === "Assets/Motion/mark.png").length, 1,
   "all atlas frames share one packaged texture");
+  const masked = compile({...descriptor, schemaRevision: 6,
+    layers: [{...descriptor.layers[0], mask: "mark"}, descriptor.layers[1]]});
+  assert.equal(masked.valid, true, JSON.stringify(masked.diagnostics));
+  assert.ok(masked.artifact?.dependencies.some((dependency) =>
+    dependency.source === "Assets/Motion/mark.png"),
+  "mask-only sources must still be packaged");
+  const missingMask = compile({...descriptor, schemaRevision: 6,
+    layers: [{...descriptor.layers[0], mask: "mark"}, descriptor.layers[1]]},
+  (path) => path !== "Assets/Motion/mark.png");
+  assert.equal(missingMask.valid, false);
+  assert.ok(missingMask.diagnostics.some((diagnostic) =>
+    diagnostic.code === "PXBUILD1044"));
   const sound = compile({...descriptor, schemaRevision: 3, markers: [
     {id: "hit", time: 0.5, audio: "Assets/Audio/hit.ogg", bus: "se"},
   ]});

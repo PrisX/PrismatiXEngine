@@ -16,6 +16,20 @@ const descriptor = JSON.parse(authored.value) as {schemaRevision: number};
 if (descriptor.schemaRevision !== 2)
   throw new Error("Atlas frame motion must use revision 2");
 
+const masked = serializeMotion({
+  id: "masked-reveal", canvas: {width: 1280, height: 720}, duration: 1,
+  layers: [
+    {id: "logo", image: "Assets/UI/logo.png", width: 320, height: 120,
+      mask: "wipe"},
+    {id: "wipe", image: "Assets/UI/logo-mask.png", width: 320, height: 120},
+  ],
+  tracks: [{layer: "wipe", property: "x", keys: [
+    {time: 0, value: -320}, {time: 1, value: 0},
+  ]}],
+});
+if (!masked.valid || JSON.parse(masked.value!).schemaRevision !== 6)
+  throw new Error("Alpha-mask motion must validate as revision 6");
+
 const ui = compileJsxUi(
   <Scene name="Title" width={1280} height={720}>
     <Motion name="Logo" path="Content/Motion/logo-reveal.pxmotion"

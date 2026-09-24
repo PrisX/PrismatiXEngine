@@ -288,6 +288,118 @@ int main() {
                             result = 1;
                         }
                     }
+                    SDL_Surface* maskSurface = SDL_CreateSurface(
+                        2, 1, SDL_PIXELFORMAT_RGBA32);
+                    const bool maskSaved = maskSurface &&
+                        SDL_WriteSurfacePixel(maskSurface, 0, 0, 255, 255, 255, 255) &&
+                        SDL_WriteSurfacePixel(maskSurface, 1, 0, 255, 255, 255, 0) &&
+                        SDL_SaveBMP(maskSurface,
+                            (atlasRoot / "Assets/mask.bmp").string().c_str());
+                    if (maskSurface) SDL_DestroySurface(maskSurface);
+                    auto masked = px::sdk::ParseMotion(R"({
+                      "format":"PrismatiXMotion","schemaRevision":6,"id":"masked",
+                      "canvas":{"width":640,"height":360},"duration":1,"loop":false,
+                      "layers":[
+                        {"id":"content","image":"Assets/atlas.bmp","width":100,
+                         "height":100,"x":270,"y":130,"mask":"coverage",
+                         "frames":[{"x":0,"y":0,"width":1,"height":1}]},
+                        {"id":"coverage","image":"Assets/mask.bmp","width":100,
+                         "height":100,"x":270,"y":130}],
+                      "tracks":[{"layer":"coverage","property":"x","keys":[
+                        {"time":0,"value":270,"curve":"linear"},
+                        {"time":1,"value":370,"curve":"linear"}]}]})");
+                    if (!maskSaved || !masked.Valid()) {
+                        std::cerr << "FAIL: revision-6 alpha mask fixture\n";
+                        result = 1;
+                    } else {
+                        px::sdk::MotionSampler maskSampler(*masked.clip);
+                        (void)atlasAssets.Texture("Assets/mask.bmp");
+                        ClearFrame(device.Renderer());
+                        px::animation::DrawMotionPose(atlasRenderer, *masked.clip,
+                                                      maskSampler, {0, 0, 640, 360});
+                        SDL_Surface* pixels = SDL_RenderReadPixels(device.Renderer(), nullptr);
+                        const auto inside = ReadLogicalPixel(pixels, 290, 180, 640, 360);
+                        const auto outside = ReadLogicalPixel(pixels, 350, 180, 640, 360);
+                        if (pixels) SDL_DestroySurface(pixels);
+                        if (inside.r < 180 || inside.b > 70 ||
+                            outside.r > 40 || outside.b < 12) {
+                            std::cerr << "FAIL: alpha mask did not clip content pixels\n";
+                            result = 1;
+                        }
+                        SDL_Surface* halfSurface = SDL_CreateSurface(
+                            2, 1, SDL_PIXELFORMAT_RGBA32);
+                        const bool halfSaved = halfSurface &&
+                            SDL_WriteSurfacePixel(halfSurface, 0, 0, 255, 255, 255, 128) &&
+                            SDL_WriteSurfacePixel(halfSurface, 1, 0, 255, 255, 255, 0) &&
+                            SDL_SaveBMP(halfSurface,
+                                (atlasRoot / "Assets/half-mask.bmp").string().c_str());
+                        if (halfSurface) SDL_DestroySurface(halfSurface);
+                        if (halfSaved) {
+                            masked.clip->layers[1].image = "Assets/half-mask.bmp";
+                            (void)atlasAssets.Texture("Assets/half-mask.bmp");
+                            ClearFrame(device.Renderer());
+                            px::animation::DrawMotionPose(atlasRenderer, *masked.clip,
+                                                          maskSampler, {0, 0, 640, 360});
+                            pixels = SDL_RenderReadPixels(device.Renderer(), nullptr);
+                            const auto half = ReadLogicalPixel(pixels, 290, 180, 640, 360);
+                            if (pixels) SDL_DestroySurface(pixels);
+                            if (half.r < 95 || half.r > 170) {
+                                std::cerr << "FAIL: mask half-alpha was multiplied twice\n";
+                                result = 1;
+                            }
+                            masked.clip->layers[1].image = "Assets/mask.bmp";
+                        } else {
+                            std::cerr << "FAIL: half-alpha mask fixture\n";
+                            result = 1;
+                        }
+                        maskSampler.Seek(1);
+                        ClearFrame(device.Renderer());
+                        px::animation::DrawMotionPose(atlasRenderer, *masked.clip,
+                                                      maskSampler, {0, 0, 640, 360});
+                        pixels = SDL_RenderReadPixels(device.Renderer(), nullptr);
+                        const auto movedContent = ReadLogicalPixel(
+                            pixels, 290, 180, 640, 360);
+                        const auto sourceOnly = ReadLogicalPixel(
+                            pixels, 390, 180, 640, 360);
+                        if (pixels) SDL_DestroySurface(pixels);
+                        if (movedContent.r > 40 || sourceOnly.r > 40) {
+                            std::cerr << "FAIL: animated mask or mask-only visibility\n";
+                            result = 1;
+                        }
+                        SDL_Window* basicWindow = SDL_CreateWindow(
+                            "PrismatiX basic mask", 640, 360, SDL_WINDOW_HIDDEN);
+                        px::graphics::GraphicsDevice basicDevice;
+                        if (!basicWindow || !basicDevice.Create(
+                                basicWindow, px::graphics::GraphicsTier::Basic)) {
+                            std::cerr << "FAIL: basic renderer mask fixture setup\n";
+                            result = 1;
+                        } else {
+                            px::graphics::AssetCache basicAssets(
+                                basicDevice.Renderer(), atlasVfs);
+                            px::graphics::Renderer2D basicRenderer(
+                                basicDevice.Renderer(), basicAssets, false);
+                            basicRenderer.SetLogicalSize(640, 360);
+                            (void)basicAssets.Texture("Assets/atlas.bmp");
+                            (void)basicAssets.Texture("Assets/mask.bmp");
+                            maskSampler.Seek(0);
+                            ClearFrame(basicDevice.Renderer());
+                            px::animation::DrawMotionPose(basicRenderer, *masked.clip,
+                                                          maskSampler, {0, 0, 640, 360});
+                            SDL_Surface* basicPixels = SDL_RenderReadPixels(
+                                basicDevice.Renderer(), nullptr);
+                            const auto basicInside = ReadLogicalPixel(
+                                basicPixels, 290, 180, 640, 360);
+                            const auto basicOutside = ReadLogicalPixel(
+                                basicPixels, 350, 180, 640, 360);
+                            if (basicPixels) SDL_DestroySurface(basicPixels);
+                            if (basicInside.r < 180 || basicOutside.r > 40) {
+                                std::cerr << "FAIL: basic renderer alpha mask parity\n";
+                                result = 1;
+                            }
+                        }
+                        basicDevice.Destroy();
+                        if (basicWindow) SDL_DestroyWindow(basicWindow);
+                    }
                 }
             }
             std::filesystem::remove_all(atlasRoot, atlasError);

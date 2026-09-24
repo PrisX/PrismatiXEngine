@@ -279,6 +279,14 @@ public:
         const std::array<std::array<float, 4>, 8>& parameters,
         const Rect& viewport);
 
+    // Reuses two logical-size render targets for image-layer alpha masks.
+    // The caller draws content, switches to coverage, draws the mask image,
+    // then ends. Failed setup leaves state unchanged; failed coverage must be
+    // ended with composite=false so an unmasked layer is never exposed.
+    [[nodiscard]] bool BeginAlphaMask();
+    [[nodiscard]] bool BeginAlphaMaskCoverage();
+    void EndAlphaMask(bool composite = true);
+
     [[nodiscard]] SDL_Renderer* Handle() const { return m_renderer; }
 
 private:
@@ -303,6 +311,8 @@ private:
     void BlitRegion(SDL_Texture* texture, const Rect& sourcePixels, const Rect& dst,
                     std::uint8_t alpha);
     void BlitUntransformed(SDL_Texture* texture);
+    [[nodiscard]] bool ClearMaskTarget(SDL_Texture* texture);
+    void DestroyMaskTargets();
     [[nodiscard]] bool EnsureFrameTargets();
     void DestroyFrameTargets();
     void PresentScreenFrame();
@@ -331,6 +341,11 @@ private:
         SDL_Texture* previousTarget = nullptr;
     };
     std::vector<CompositionState> m_compositionStack;
+    SDL_Texture* m_maskContentTarget = nullptr;
+    SDL_Texture* m_maskCoverageTarget = nullptr;
+    SDL_Texture* m_maskPreviousTarget = nullptr;
+    bool m_maskActive = false;
+    bool m_maskCoverageActive = false;
     SDL_Texture* m_frameTarget = nullptr;
     SDL_Texture* m_presentedTarget = nullptr;
     SDL_Texture* m_outgoingTarget = nullptr;

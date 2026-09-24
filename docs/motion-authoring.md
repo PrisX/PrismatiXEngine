@@ -17,6 +17,12 @@ older revisions reject it instead of silently drawing with the wrong blend.
 Revision 5 adds a `cubicBezier` timing curve for numeric tracks. Its control
 points specify normalized time/value coordinates; the helper selects revision
 5 when a key uses it. Earlier revisions and existing clips remain supported.
+Revision 6 adds `mask` on an image layer. It names another animated layer whose
+sampled alpha clips the content layer; the source layer is not painted by
+itself. The helper selects revision 6 when any layer declares a mask. Missing,
+self-referential and nested mask references are rejected. This first slice
+requires normal blending on both the content and mask source; combining a mask
+with additive/multiply is rejected instead of producing a misleading image.
 
 ```ts
 import {writeFile} from "node:fs/promises";
@@ -84,6 +90,31 @@ Blend modes are scoped per draw, so two layers can share one atlas without
 leaking the previous layer's mode. `additive` adds source light to what is
 already drawn; `multiply` darkens the overlap. Neither mode is an alpha mask.
 
+For an animated reveal, author a normal image layer and a separate mask image
+layer. Key the mask's transform or opacity on the same timeline:
+
+```ts
+layers: [
+  {id: "logo", image: "Assets/Motion/logo.png", width: 640, height: 220,
+    mask: "reveal"},
+  {id: "reveal", image: "Assets/Motion/reveal-alpha.png", width: 640,
+    height: 220},
+],
+tracks: [{layer: "reveal", property: "x", keys: [
+  {time: 0, value: -640}, {time: 1, value: 0},
+]}],
+```
+
+Mask images use their alpha channel, not brightness. Their transform, atlas
+frame, inherited visibility and opacity are sampled with the content at the
+same seek position. Both image files are validated as package dependencies.
+The renderer reuses two logical-size offscreen targets per Renderer2D; it does
+not allocate targets for every frame, but each masked draw adds offscreen
+passes. The SDL GPU (D3D12) and basic (D3D11) framebuffer tests cover opaque,
+transparent, half-alpha and moving masks. Software and WASM parity, mask
+performance in the full game, and M2-specific frame matching are not yet
+verified.
+
 For a non-linear key interval, put the timing curve on the first key:
 
 ```ts
@@ -98,8 +129,8 @@ solves the timing cubic for each seek, so playback and preview scrubbing use
 the same pose. This supports a class of `.mtn` timing curves, but does not
 interpret `.mtn` files automatically.
 
-This is not an `.mtn` importer or a full M2 Cheeseware reproduction. Image
-masks, blur, nested motion references, more specialized blend equations, and
-Story playback are still missing;
+This is not an `.mtn` importer or a full M2 Cheeseware reproduction. Blur,
+nested motion references, more specialized blend equations, and Story playback
+are still missing;
 the source work on those features is tracked in
 [layered motion architecture](architecture/layered-motion-authoring.md).

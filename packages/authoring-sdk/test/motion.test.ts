@@ -157,3 +157,25 @@ test("cubic timing curves select revision 5 and require bounded control points",
     keys: [{...key, bezier: {...key.bezier, x1: 1.1}}, {time: 1, value: 1, curve: "linear"}],
   }]}).valid, false);
 });
+
+test("alpha mask references select revision 6 and reject unsupported composition", () => {
+  const result = defineMotion({...input, layers: [
+    {...input.layers[0]!, mask: "mark"}, input.layers[1]!,
+  ]});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  assert.equal(result.value?.schemaRevision, 6);
+  const document = result.value!;
+  assert.equal(parseDocument("motion", serializeMotion({...input, layers: [
+    {...input.layers[0]!, mask: "mark"}, input.layers[1]!,
+  ]}).value!).valid, true);
+  assert.equal(validateDocument("motion", {...document, schemaRevision: 5}).valid, false);
+  assert.equal(validateDocument("motion", {...document, layers: [
+    {...document.layers[0]!, mask: "unknown"}, document.layers[1]!,
+  ]}).valid, false);
+  assert.equal(validateDocument("motion", {...document, layers: [
+    document.layers[0]!, {...document.layers[1]!, mask: "body"},
+  ]}).valid, false);
+  assert.equal(validateDocument("motion", {...document, layers: [
+    {...document.layers[0]!, blendMode: "multiply"}, document.layers[1]!,
+  ]}).valid, false);
+});

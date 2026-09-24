@@ -191,6 +191,45 @@ int main() {
             "unsupported blend mode fails closed");
     });
 
+    suite.Run("MotionClip_AlphaMasksAreVersionedAndValidated", [&] {
+        constexpr auto source = R"({
+          "format":"PrismatiXMotion","schemaRevision":6,"id":"masked",
+          "canvas":{"width":320,"height":120},"duration":1,"loop":false,
+          "layers":[
+            {"id":"content","image":"Assets/content.png","width":100,
+             "height":100,"mask":"coverage"},
+            {"id":"coverage","image":"Assets/mask.png","width":100,
+             "height":100,"x":10}],
+          "tracks":[{"layer":"coverage","property":"x","keys":[
+            {"time":0,"value":10,"curve":"linear"},
+            {"time":1,"value":30,"curve":"linear"}]}]})";
+        const auto parsed = px::sdk::ParseMotion(source);
+        suite.Require(parsed.Valid(), "revision-6 mask reference parses");
+        suite.Expect(parsed.clip->layers[0].mask == 1 &&
+                     parsed.clip->maskSource[1] && !parsed.clip->maskSource[0],
+                     "mask source is identified without adding a dependency kind");
+        px::sdk::MotionSampler sampler(*parsed.clip);
+        sampler.Seek(0.5);
+        suite.Expect(std::abs(sampler.LayerPose(1).transform.tx - 20) < 0.001,
+                     "mask layer follows the same deterministic clock");
+        auto old = nlohmann::json::parse(source);
+        old["schemaRevision"] = 5;
+        suite.Expect(!px::sdk::ParseMotion(old.dump()).Valid(),
+                     "older revisions reject mask instead of ignoring it");
+        auto unknown = nlohmann::json::parse(source);
+        unknown["layers"][0]["mask"] = "missing";
+        suite.Expect(!px::sdk::ParseMotion(unknown.dump()).Valid(),
+                     "unknown mask source fails closed");
+        auto nested = nlohmann::json::parse(source);
+        nested["layers"][1]["mask"] = "content";
+        suite.Expect(!px::sdk::ParseMotion(nested.dump()).Valid(),
+                     "nested mask cycle is rejected");
+        auto unsupportedBlend = nlohmann::json::parse(source);
+        unsupportedBlend["layers"][0]["blendMode"] = "multiply";
+        suite.Expect(!px::sdk::ParseMotion(unsupportedBlend.dump()).Valid(),
+                     "masked multiply blending is rejected until it is implemented");
+    });
+
     suite.Run("MotionClip_CubicBezierTimingMatchesAuthoredControlPoints", [&] {
         constexpr auto source = R"({
           "format":"PrismatiXMotion","schemaRevision":5,"id":"eased",

@@ -29,6 +29,21 @@ SDL_BlendMode NativeBlendMode(const ImageBlendMode mode) {
     }
 }
 
+SDL_BlendMode AlphaCoverageBlendMode() {
+    // The mask's alpha multiplies both existing premultiplied color and alpha.
+    return SDL_ComposeCustomBlendMode(
+        SDL_BLENDFACTOR_ZERO, SDL_BLENDFACTOR_SRC_ALPHA, SDL_BLENDOPERATION_ADD,
+        SDL_BLENDFACTOR_ZERO, SDL_BLENDFACTOR_SRC_ALPHA, SDL_BLENDOPERATION_ADD);
+}
+
+SDL_BlendMode PremultipliedBlendMode() {
+    // A render target drawn with normal alpha blending contains premultiplied
+    // color, so compositing it with SDL_BLENDMODE_BLEND would square alpha.
+    return SDL_ComposeCustomBlendMode(
+        SDL_BLENDFACTOR_ONE, SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, SDL_BLENDOPERATION_ADD,
+        SDL_BLENDFACTOR_ONE, SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, SDL_BLENDOPERATION_ADD);
+}
+
 SDL_FColor ToFColor(Color c, float alphaScale = 1.0f) { return SDL_FColor{ c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, (c.a / 255.0f) * alphaScale }; }
 
 void AppendArc(std::vector<SDL_Vertex>& out, float cx, float cy, float radius, float a0, float a1, SDL_FColor color, int segments) {
@@ -62,6 +77,7 @@ Renderer2D::Renderer2D(SDL_Renderer* renderer, AssetCache& assets,
 }
 
 Renderer2D::~Renderer2D() {
+    DestroyMaskTargets();
     while (!m_compositionStack.empty()) {
         const CompositionState composition = m_compositionStack.back();
         m_compositionStack.pop_back();
@@ -74,6 +90,7 @@ Renderer2D::~Renderer2D() {
 }
 
 void Renderer2D::SetLogicalSize(int width, int height, bool updateTextDensity) {
+    DestroyMaskTargets();
     m_logicalW = width;
     m_logicalH = height;
     SDL_SetRenderLogicalPresentation(m_renderer, width, height, SDL_LOGICAL_PRESENTATION_LETTERBOX);
@@ -777,6 +794,91 @@ void Renderer2D::EndComposition(
     BlitUntransformed(composition.texture);
     if (active) EndNodeEffect();
     SDL_DestroyTexture(composition.texture);
+}
+
+bool Renderer2D::ClearMaskTarget(SDL_Texture* texture) {
+    SDL_Texture* previous = SDL_GetRenderTarget(m_renderer);
+    if (!SDL_SetRenderTarget(m_renderer, texture)) return false;
+    std::uint8_t red = 0, green = 0, blue = 0, alpha = 0;
+    (void)SDL_GetRenderDrawColor(m_renderer, &red, &green, &blue, &alpha);
+    const bool clipEnabled = SDL_RenderClipEnabled(m_renderer);
+    SDL_Rect clip{};
+    if (clipEnabled) (void)SDL_GetRenderClipRect(m_renderer, &clip);
+    (void)SDL_SetRenderClipRect(m_renderer, nullptr);
+    (void)SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 0);
+    const bool cleared = SDL_RenderClear(m_renderer);
+    (void)SDL_SetRenderDrawColor(m_renderer, red, green, blue, alpha);
+    if (clipEnabled) (void)SDL_SetRenderClipRect(m_renderer, &clip);
+    if (!cleared) (void)SDL_SetRenderTarget(m_renderer, previous);
+    return cleared;
+}
+
+void Renderer2D::DestroyMaskTargets() {
+    if (m_maskActive && m_renderer)
+        (void)SDL_SetRenderTarget(m_renderer, m_maskPreviousTarget);
+    m_maskActive = false;
+    m_maskCoverageActive = false;
+    m_maskPreviousTarget = nullptr;
+    if (m_maskContentTarget) SDL_DestroyTexture(m_maskContentTarget);
+    if (m_maskCoverageTarget) SDL_DestroyTexture(m_maskCoverageTarget);
+    m_maskContentTarget = nullptr;
+    m_maskCoverageTarget = nullptr;
+}
+
+bool Renderer2D::BeginAlphaMask() {
+    if (!m_renderer || m_maskActive || m_logicalW <= 0 || m_logicalH <= 0)
+        return false;
+    if (!m_maskContentTarget || !m_maskCoverageTarget) {
+        DestroyMaskTargets();
+        m_maskContentTarget = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA8888,
+            SDL_TEXTUREACCESS_TARGET, m_logicalW, m_logicalH);
+        m_maskCoverageTarget = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA8888,
+            SDL_TEXTUREACCESS_TARGET, m_logicalW, m_logicalH);
+        if (!m_maskContentTarget || !m_maskCoverageTarget ||
+            !SDL_SetTextureBlendMode(m_maskContentTarget, PremultipliedBlendMode()) ||
+            !SDL_SetTextureBlendMode(m_maskCoverageTarget, AlphaCoverageBlendMode())) {
+            DestroyMaskTargets();
+            return false;
+        }
+        (void)SDL_SetTextureScaleMode(m_maskContentTarget, SDL_SCALEMODE_LINEAR);
+        (void)SDL_SetTextureScaleMode(m_maskCoverageTarget, SDL_SCALEMODE_LINEAR);
+    }
+    SDL_Texture* previous = SDL_GetRenderTarget(m_renderer);
+    if (!ClearMaskTarget(m_maskContentTarget)) return false;
+    m_maskPreviousTarget = previous;
+    m_maskActive = true;
+    m_maskCoverageActive = false;
+    return true;
+}
+
+bool Renderer2D::BeginAlphaMaskCoverage() {
+    if (!m_maskActive || m_maskCoverageActive || !m_maskCoverageTarget)
+        return false;
+    if (!ClearMaskTarget(m_maskCoverageTarget)) return false;
+    m_maskCoverageActive = true;
+    return true;
+}
+
+void Renderer2D::EndAlphaMask(const bool composite) {
+    if (!m_maskActive || !m_renderer) return;
+    bool ready = composite && m_maskCoverageActive &&
+        SDL_SetRenderTarget(m_renderer, m_maskContentTarget);
+    if (ready) {
+        const bool clipEnabled = SDL_RenderClipEnabled(m_renderer);
+        SDL_Rect clip{};
+        if (clipEnabled) (void)SDL_GetRenderClipRect(m_renderer, &clip);
+        (void)SDL_SetRenderClipRect(m_renderer, nullptr);
+        SDL_FRect destination{0, 0, static_cast<float>(m_logicalW),
+                              static_cast<float>(m_logicalH)};
+        ready = SDL_RenderTexture(m_renderer, m_maskCoverageTarget, nullptr,
+                                  &destination);
+        if (clipEnabled) (void)SDL_SetRenderClipRect(m_renderer, &clip);
+    }
+    const bool restored = SDL_SetRenderTarget(m_renderer, m_maskPreviousTarget);
+    if (ready && restored) BlitUntransformed(m_maskContentTarget);
+    m_maskPreviousTarget = nullptr;
+    m_maskCoverageActive = false;
+    m_maskActive = false;
 }
 
 void Renderer2D::DrawSpriteBatch(

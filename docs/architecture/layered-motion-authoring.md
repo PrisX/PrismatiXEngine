@@ -1,10 +1,10 @@
 # Layered motion authoring proposal
 
-Status: first image-layer slice and TSX UI mounting implemented; advanced composition
+Status: image-layer, timing, blend, and alpha-mask slices plus TSX UI mounting implemented; advanced composition
 and Story playback below remain a proposal. This is not an `.mtn` parser or a claim that the
 original M2/petal animations are reproduced.
 
-The versioned `PrismatiXMotion` revision-1/2/3/4/5 `.pxmotion` contract has an
+The versioned `PrismatiXMotion` revision-1/2/3/4/5/6 `.pxmotion` contract has an
 Authoring SDK `defineMotion`/`serializeMotion` helper, matching native parser,
 unique layer/track and hierarchy checks, path checks, deterministic keyed
 sampling, and a `Renderer2D` image-layer drawing adapter. A `MotionRect`
@@ -26,7 +26,7 @@ after each UI update; `TextureRect` retains its prior resident image until a
 replacement is ready. Arbitrary custom drawing, Story playback dependencies,
 texture residency under budget pressure, and M2-specific framebuffer
 conformance remain open. Story motion commands,
-masks, blur, specialized blend equations, save/load playback binding, and
+masks beyond one alpha-mask source per content layer, blur, specialized blend equations, save/load playback binding, and
 M2 conformance fixtures have not been added. The renderer adapter has not yet
 passed an M2-specific framebuffer comparison. Revision 2 adds
 per-layer atlas rectangles and discrete `frame` keys; the Authoring helper
@@ -48,6 +48,13 @@ tracks. The authoring helper chooses it automatically, older revisions reject
 the controls, and native `Seek` solves the timing cubic deterministically.
 The original `.mtn` custom timing curves still require semantic comparison
 before a converter may claim equivalence.
+Revision 6 adds a layer `mask` reference. The referenced layer is sampled on
+the same clock and rendered only into reusable alpha coverage targets; its
+alpha multiplies the content layer. SDK and native validation reject missing,
+self-referential, nested or non-normal-blend masks. GPU D3D12 and basic D3D11
+framebuffer tests check full, empty, half-alpha, and moving coverage. This is
+not an M2 conformance result: nested clip references, blur, particles, and
+source-specific blend behavior still block a faithful converter.
 
 Revision-1 sampling uses a layer's authored property until its first key;
 thereafter each key's curve determines interpolation toward the next key.
@@ -105,8 +112,10 @@ example requires importing or emulating `.mtn` itself.
 
 The image-layer/transform sampling primitive, atlas frame track, audio markers,
 descriptor dependency packaging and TSX UI mounting are in place; Story mounting
-and durable playback remain necessary before authors can use it end-to-end. Then add
-GPU/CPU mask parity and blend modes. The Senren test fixtures should capture M2 and the HUD petal
+and durable playback remain necessary before authors can use it end-to-end.
+Basic/GPU framebuffer coverage now exists for normal/additive/multiply blending
+and one alpha-mask source; software/WASM parity and M2 source-image conformance
+remain open. The Senren test fixtures should capture M2 and the HUD petal
 at fixed timestamps (0, 0.25, 0.5, 1.0 seconds), compare composition geometry,
 verify no blank transition frame, and exercise skip, reduced motion, save/load
 and non-16:9 scaling. Until those tests pass, the port must label its M2 and

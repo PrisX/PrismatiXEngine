@@ -138,6 +138,17 @@ function motionSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[
   diagnostics.push(...uniqueIdentities(layers, "id", "Motion layer", path));
   const byId = new Map(layers.map((layer) => [layer.id, layer]));
   for (const layer of layers) {
+    if (layer.mask !== undefined) {
+      const source = byId.get(layer.mask);
+      if (source === undefined)
+        diagnostics.push(issue("PXSDKSEM1412", "Motion mask layer does not exist", path, String(layer.id)));
+      else if (source === layer || source.mask !== undefined)
+        diagnostics.push(issue("PXSDKSEM1413", "Motion masks cannot reference themselves or another masked layer", path, String(layer.id)));
+      if (layer.blendMode !== undefined && layer.blendMode !== "normal")
+        diagnostics.push(issue("PXSDKSEM1414", "Masked motion layers currently require normal blending", path, String(layer.id)));
+      if (source !== undefined && source.blendMode !== undefined && source.blendMode !== "normal")
+        diagnostics.push(issue("PXSDKSEM1414", "Motion mask sources require normal blending", path, String(layer.id)));
+    }
     if (typeof layer.image === "string" &&
         (layer.image.includes(":") || /[\x00-\x1f]/u.test(layer.image) ||
          /\.(?:pxmotion|pxportrait)$/iu.test(layer.image) ||

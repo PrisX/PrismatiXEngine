@@ -185,7 +185,7 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         !root.contains("schemaRevision") || !root["schemaRevision"].is_number_integer() ||
         (root["schemaRevision"] != 1 && root["schemaRevision"] != 2 &&
          root["schemaRevision"] != 3 && root["schemaRevision"] != 4 &&
-         root["schemaRevision"] != 5) ||
+         root["schemaRevision"] != 5 && root["schemaRevision"] != 6) ||
         !root.contains("id") ||
         !root["id"].is_string() || !Identifier(root["id"].get_ref<const std::string&>()))
         return fail("PXMOTION1002", "Motion format, revision, or id is invalid");
@@ -218,9 +218,11 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         return fail("PXMOTION1005", "Motion layers must contain 1 to 4096 entries");
     std::unordered_map<std::string, std::size_t> layerIds;
     std::vector<std::string> parents;
+    std::vector<std::string> masks;
     clip.layers.reserve(layers->size()); parents.reserve(layers->size());
+    masks.reserve(layers->size());
     for (const auto& entry : *layers) {
-        if (!OnlyFields(entry, {"id", "parent", "image", "frames", "z", "blendMode", "width", "height",
+        if (!OnlyFields(entry, {"id", "parent", "mask", "image", "frames", "z", "blendMode", "width", "height",
             "anchorX", "anchorY", "x", "y", "scaleX", "scaleY", "rotation",
             "opacity", "visible"}) || !entry.contains("id") || !entry["id"].is_string() ||
             !entry.contains("image") || !entry["image"].is_string())
@@ -269,6 +271,12 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
                 return fail("PXMOTION1008", "Motion layer parent id is invalid");
             parents.push_back(parent->get<std::string>());
         } else parents.emplace_back();
+        if (const auto mask = entry.find("mask"); mask != entry.end()) {
+            if (clip.schemaRevision < 6 || !mask->is_string() ||
+                !Identifier(mask->get_ref<const std::string&>()))
+                return fail("PXMOTION1027", "Motion mask requires revision 6 and a valid layer id");
+            masks.push_back(mask->get<std::string>());
+        } else masks.emplace_back();
         const auto z = Number(entry, "z", 0, -100000, 100000);
         const auto width = Number(entry, "width", 0, 0.000001, 16384, true);
         const auto height = Number(entry, "height", 0, 0.000001, 16384, true);
@@ -308,6 +316,19 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
     }
     if (clip.hierarchyOrder.size() != clip.layers.size())
         return fail("PXMOTION1011", "Motion layer hierarchy contains a cycle");
+    clip.maskSource.resize(clip.layers.size(), false);
+    for (std::size_t i = 0; i < masks.size(); ++i) {
+        if (masks[i].empty()) continue;
+        const auto target = layerIds.find(masks[i]);
+        if (target == layerIds.end() || target->second == i ||
+            !masks[target->second].empty())
+            return fail("PXMOTION1028", "Motion mask must name an unmasked, distinct layer");
+        if (clip.layers[i].blendMode != MotionBlendMode::Normal ||
+            clip.layers[target->second].blendMode != MotionBlendMode::Normal)
+            return fail("PXMOTION1029", "Masked layers require normal blending");
+        clip.layers[i].mask = target->second;
+        clip.maskSource[target->second] = true;
+    }
     clip.drawOrder.resize(clip.layers.size());
     std::iota(clip.drawOrder.begin(), clip.drawOrder.end(), std::size_t{0});
     std::stable_sort(clip.drawOrder.begin(), clip.drawOrder.end(), [&](std::size_t left, std::size_t right) {
