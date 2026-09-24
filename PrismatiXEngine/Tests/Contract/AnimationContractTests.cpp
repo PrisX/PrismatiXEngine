@@ -364,6 +364,37 @@ int main() {
                      "normalized duration below one microsecond is rejected");
     });
 
+    suite.Run("MotionClip_ExternalAnchorWorksWithSecondsOrTicks", [&] {
+        constexpr auto source = R"({
+          "format":"PrismatiXMotion","schemaRevision":11,"id":"pivot",
+          "canvas":{"width":100,"height":100},"duration":1,"loop":false,
+          "layers":[{"id":"glyph","image":"Assets/glyph.png","width":16,
+             "height":3,"x":8,"anchorX":0.5,"anchorY":-0.3333333333333333}],
+          "tracks":[]})";
+        const auto parsed = px::sdk::ParseMotion(source);
+        suite.Require(parsed.Valid(), "revision-11 external anchor parses in seconds");
+        px::sdk::MotionSampler sampler(*parsed.clip);
+        sampler.Seek(0);
+        suite.Expect(std::abs(sampler.LayerPose(0).transform.tx) < 0.001 &&
+                     std::abs(sampler.LayerPose(0).transform.ty - 1) < 0.001,
+                     "pivot above an image shifts its drawn top edge below the layer origin");
+        auto older = nlohmann::json::parse(source);
+        older["schemaRevision"] = 9;
+        suite.Expect(!px::sdk::ParseMotion(older.dump()).Valid(),
+                     "older revisions keep anchors inside the image");
+        auto ticked = nlohmann::json::parse(source);
+        ticked["tickRate"] = 60;
+        ticked["duration"] = 60;
+        const auto tickParsed = px::sdk::ParseMotion(ticked.dump());
+        suite.Require(tickParsed.Valid(), "revision 11 can also use ticks");
+        suite.Expect(std::abs(tickParsed.clip->duration - 1) < 0.001,
+                     "revision-11 tick timing is normalized for playback");
+        auto extreme = nlohmann::json::parse(source);
+        extreme["layers"][0]["anchorY"] = -17;
+        suite.Expect(!px::sdk::ParseMotion(extreme.dump()).Valid(),
+                     "external pivot remains bounded");
+    });
+
     suite.Run("MotionClip_RgbTintInterpolatesAndInheritsIndependentlyOfAlpha", [&] {
         constexpr auto source = R"({
           "format":"PrismatiXMotion","schemaRevision":8,"id":"tinted",

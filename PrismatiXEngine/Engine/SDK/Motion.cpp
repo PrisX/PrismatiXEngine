@@ -239,7 +239,8 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
          root["schemaRevision"] != 3 && root["schemaRevision"] != 4 &&
          root["schemaRevision"] != 5 && root["schemaRevision"] != 6 &&
          root["schemaRevision"] != 7 && root["schemaRevision"] != 8 &&
-         root["schemaRevision"] != 9 && root["schemaRevision"] != 10) ||
+         root["schemaRevision"] != 9 && root["schemaRevision"] != 10 &&
+         root["schemaRevision"] != 11) ||
         !root.contains("id") ||
         !root["id"].is_string() || !Identifier(root["id"].get_ref<const std::string&>()))
         return fail("PXMOTION1002", "Motion format, revision, or id is invalid");
@@ -249,9 +250,9 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
     const auto canvasWidth = Number(*canvas, "width", 0, 0.000001, 16384, true);
     const auto canvasHeight = Number(*canvas, "height", 0, 0.000001, 16384, true);
     const int revision = root["schemaRevision"].get<int>();
-    const bool tickTime = revision >= 10;
-    if (tickTime != root.contains("tickRate"))
-        return fail("PXMOTION1003", "Motion tickRate requires revision 10 and is mandatory for that revision");
+    const bool tickTime = root.contains("tickRate");
+    if ((revision < 10 && tickTime) || (revision == 10 && !tickTime))
+        return fail("PXMOTION1003", "Motion tickRate requires revision 10 or newer and is mandatory for revision 10");
     const auto tickRate = Number(root, "tickRate", 1, 0.001, 1000, tickTime);
     if (!tickRate) return fail("PXMOTION1003", "Motion tickRate is invalid");
     // Tick values can be smaller than one millionth while still describing
@@ -366,8 +367,10 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
                                   16384, imageLayer);
         const auto height = Number(entry, "height", 0, imageLayer ? 0.000001 : 0,
                                    16384, imageLayer);
-        const auto anchorX = Number(entry, "anchorX", 0, 0, 1);
-        const auto anchorY = Number(entry, "anchorY", 0, 0, 1);
+        const double minimumAnchor = clip.schemaRevision >= 11 ? -16 : 0;
+        const double maximumAnchor = clip.schemaRevision >= 11 ? 16 : 1;
+        const auto anchorX = Number(entry, "anchorX", 0, minimumAnchor, maximumAnchor);
+        const auto anchorY = Number(entry, "anchorY", 0, minimumAnchor, maximumAnchor);
         const auto x = Number(entry, "x", 0, -1'000'000, 1'000'000);
         const auto y = Number(entry, "y", 0, -1'000'000, 1'000'000);
         const auto scaleX = Number(entry, "scaleX", 1, -1000, 1000);

@@ -12,6 +12,7 @@ interface MotionLayerBase {
   readonly id: string;
   readonly parent?: string;
   readonly z?: number;
+  /** Pivot in image-size units; revision 11 allows a pivot outside [0, 1]. */
   readonly anchorX?: number;
   readonly anchorY?: number;
   readonly x?: number;
@@ -144,7 +145,7 @@ export interface MotionInput {
 
 export interface MotionDocument extends MotionInput {
   readonly format: "PrismatiXMotion";
-  readonly schemaRevision: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+  readonly schemaRevision: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
   readonly loop: boolean;
   readonly tracks: readonly MotionTrack[];
   readonly markers?: readonly MotionAudioMarker[];
@@ -170,6 +171,9 @@ export function defineMotion(input: MotionInput): Result<MotionDocument> {
     input.tracks?.some((track) => track.property === "tint") === true;
   const hasSelectiveInheritance = input.layers.some((layer) =>
     layer.inheritRotation !== undefined || layer.inheritScale !== undefined);
+  const hasExternalAnchor = input.layers.some((layer) =>
+    (layer.anchorX !== undefined && (layer.anchorX < 0 || layer.anchorX > 1)) ||
+    (layer.anchorY !== undefined && (layer.anchorY < 0 || layer.anchorY > 1)));
   const usedMarkerIds = new Set(input.markers?.flatMap((marker) =>
     marker.id === undefined ? [] : [marker.id]) ?? []);
   const markers = input.markers?.map((marker, index) => {
@@ -182,7 +186,7 @@ export function defineMotion(input: MotionInput): Result<MotionDocument> {
   });
   const document: MotionDocument = {
     format: "PrismatiXMotion",
-    schemaRevision: input.tickRate !== undefined ? 10 : hasSelectiveInheritance ? 9 : hasTint ? 8 : hasLocalTime ? 7 : hasMasks ? 6 : hasBezier ? 5 : hasBlendModes ? 4 :
+    schemaRevision: hasExternalAnchor ? 11 : input.tickRate !== undefined ? 10 : hasSelectiveInheritance ? 9 : hasTint ? 8 : hasLocalTime ? 7 : hasMasks ? 6 : hasBezier ? 5 : hasBlendModes ? 4 :
       hasMarkers ? 3 : atlas ? 2 : 1,
     id: input.id,
     canvas: input.canvas,

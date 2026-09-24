@@ -6,7 +6,7 @@
   "required": ["format", "schemaRevision", "id", "canvas", "duration", "loop", "layers", "tracks"],
   "properties": {
     "format": {"const": "PrismatiXMotion"},
-    "schemaRevision": {"enum": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]},
+    "schemaRevision": {"enum": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]},
     "id": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/identifier"},
     "canvas": {
       "type": "object", "additionalProperties": false,
@@ -48,8 +48,8 @@
           "blendMode": {"enum": ["normal", "additive", "multiply"]},
           "width": {"type": "number", "minimum": 0, "maximum": 16384},
           "height": {"type": "number", "minimum": 0, "maximum": 16384},
-          "anchorX": {"type": "number", "minimum": 0, "maximum": 1},
-          "anchorY": {"type": "number", "minimum": 0, "maximum": 1},
+          "anchorX": {"type": "number", "minimum": -16, "maximum": 16},
+          "anchorY": {"type": "number", "minimum": -16, "maximum": 16},
           "x": {"type": "number", "minimum": -1000000, "maximum": 1000000},
           "y": {"type": "number", "minimum": -1000000, "maximum": 1000000},
           "scaleX": {"type": "number", "minimum": -1000, "maximum": 1000},
@@ -189,8 +189,16 @@
       }}}
     }}
   }, {
+    "if": {"type": "object", "properties": {"schemaRevision": {"enum": [1, 2, 3, 4, 5, 6, 7, 8, 9]}}},
+    "then": {"properties": {"tickRate": false}}
+  }, {
     "if": {"type": "object", "properties": {"schemaRevision": {"const": 10}}},
-    "then": {"properties": {"tickRate": true}, "required": ["tickRate"]},
-    "else": {"properties": {"tickRate": false}}
+    "then": {"properties": {"tickRate": true}, "required": ["tickRate"]}
+  }, {
+    "if": {"type": "object", "properties": {"schemaRevision": {"enum": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]}}},
+    "then": {"properties": {"layers": {"type": "array", "items": {"type": "object", "properties": {
+      "anchorX": {"type": "number", "minimum": 0, "maximum": 1},
+      "anchorY": {"type": "number", "minimum": 0, "maximum": 1}
+    }}}}}
   }]
 }

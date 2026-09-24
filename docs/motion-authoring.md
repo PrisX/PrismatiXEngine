@@ -51,6 +51,12 @@ Earlier revisions still use seconds and reject the field. The allowed
 remain one day. This avoids independent, error-prone division of every
 timestamp when importing a source timeline. It does **not** infer a source
 format's tick rate or validate that source animation semantics match.
+Revision 11 lets image-layer `anchorX` and `anchorY` extend from -16 to 16
+image-size units, including a pivot outside the image rectangle. `defineMotion`
+selects it when an anchor is outside [0, 1]; earlier revisions keep their
+original [0, 1] bounds. Revision 11 may use seconds or an explicit `tickRate`.
+An external source's origin coordinates still require a verified mapping to
+these normalized anchors before claiming a faithful import.
 
 In TypeScript, `MotionTrack` is property-discriminated: `visible` keys take
 booleans, `tint` keys take `{r, g, b}`, and position/scale/rotation/opacity/
@@ -113,6 +119,10 @@ the parent's local **seconds**; `atTicks` is an alternative in the outer
 clip's authored ticks and requires `tickRate`. Supplying both is an error.
 `speed` is unitless. The M2 `.mtn` tick rate has not yet been verified here,
 so the value 60 above is an example, not a claim about M2.
+
+For example, `anchorY: -1 / 3` places the pivot one pixel above a three-pixel-
+high image; the layer's `x` and `y` specify where that pivot is placed. This
+describes the `.pxmotion` transform only, not a conversion rule for `.mtn`.
 
 ```tsx
 import {Motion, Scene} from "@prismatix/authoring-sdk";

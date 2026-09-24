@@ -91,6 +91,33 @@ test("tick-based motion preserves the outer clock through repeated inline compos
     layers: [{id: "anchor", kind: "group"}]}).valid, true);
 });
 
+test("external image pivots select revision 11 without forcing tick timing", () => {
+  const input = {
+    id: "external-pivot", canvas: {width: 100, height: 100}, duration: 1,
+    layers: [{id: "glyph", image: "Assets/Motion/glyph.png", width: 16,
+      height: 3, anchorX: 0.5, anchorY: -1 / 3}],
+  };
+  const seconds = defineMotion(input);
+  assert.equal(seconds.valid, true, JSON.stringify(seconds.diagnostics));
+  assert.equal(seconds.value?.schemaRevision, 11);
+  assert.equal(seconds.value?.tickRate, undefined);
+  assert.equal(parseDocument("motion", serializeMotion(input).value!).valid, true);
+  assert.equal(validateDocument("motion", {...seconds.value, schemaRevision: 9}).valid, false);
+  assert.equal(defineMotion({...input, layers: [
+    {...input.layers[0]!, anchorY: -17},
+  ]}).valid, false);
+  const ticked = defineMotion({...input, duration: 60, tickRate: 60});
+  assert.equal(ticked.valid, true, JSON.stringify(ticked.diagnostics));
+  assert.equal(ticked.value?.schemaRevision, 11);
+  const composed = inlineMotion({id: "outer", canvas: input.canvas,
+    duration: 60, tickRate: 60, layers: [{id: "root", kind: "group"}]},
+  input, {id: "child", atTicks: 0});
+  assert.equal(composed.valid, true, JSON.stringify(composed.diagnostics));
+  assert.equal(composed.value?.schemaRevision, 11);
+  assert.equal(composed.value?.tickRate, 60);
+  assert.equal(composed.value?.layers[2]?.anchorY, -1 / 3);
+});
+
 test("motion validation rejects cycles, duplicate tracks, unsafe paths, and wrong key types", () => {
   const valid = defineMotion(input).value!;
   const layers = valid.layers.map((layer) => ({...layer}));

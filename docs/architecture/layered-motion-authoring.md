@@ -4,7 +4,7 @@ Status: image-layer, timing, blend, alpha-mask, and inline nested-transform slic
 and Story playback below remain a proposal. This is not an `.mtn` parser or a claim that the
 original M2/petal animations are reproduced.
 
-The versioned `PrismatiXMotion` revision-1 through revision-10 `.pxmotion` contract has an
+The versioned `PrismatiXMotion` revision-1 through revision-11 `.pxmotion` contract has an
 Authoring SDK `defineMotion`/`serializeMotion` helper, matching native parser,
 unique layer/track and hierarchy checks, path checks, deterministic keyed
 sampling, and a `Renderer2D` image-layer drawing adapter. A `MotionRect`
@@ -92,6 +92,11 @@ validating each source, while retaining the outer rate in the result. It also
 accepts `atTicks` for a nested start without manual division. The M2 source
 rate is still unverified, and this does not resolve source-specific paths or
 composition rules.
+Revision 11 allows normalized layer anchors outside the image rectangle,
+bounded to [-16, 16] on each axis. Older revisions remain bounded to [0, 1];
+revision 11 permits either seconds or an explicit tick clock. This gives an
+importer a way to represent external image pivots, but source-origin mapping
+and rendered-frame equivalence still require separate validation.
 
 Revision-1 sampling uses a layer's authored property until its first key;
 thereafter each key's curve determines interpolation toward the next key.
@@ -112,8 +117,8 @@ Story/Stage playback with preloading and save/load behavior.
 
 The file is a reusable composition, currently referenceable from a UI node
 or splash; transition and Story presentation remain targets. Revisions 1–9
-author time in seconds; revision 10 can author it in declared ticks per
-second. Native playback uses seconds. Coordinates are in a declared logical
+author time in seconds; revision 10 requires declared ticks per second;
+revision 11 allows either clock. Native playback uses seconds. Coordinates are in a declared logical
 canvas, independent of window scaling.
 
 - `canvas`: width, height, scale mode and transparent background.
