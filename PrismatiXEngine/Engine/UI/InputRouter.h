@@ -2,6 +2,7 @@
 
 #include "Engine/UI/Control.h"
 
+#include <optional>
 #include <vector>
 
 namespace px { class Input; }
@@ -34,6 +35,9 @@ private:
     void CollectFocusable(Control& root, std::vector<Control*>& output) const;
     [[nodiscard]] bool IsInside(const Control* control,
                                 const Control* ancestor) const;
+    [[nodiscard]] bool IsAttached(const Control* control) const;
+    [[nodiscard]] Control* TopmostModal(Control& root) const;
+    void RefreshAutoModal();
     void RefreshStates();
 
     struct FocusScope {
@@ -49,6 +53,8 @@ private:
     Vec2 m_lastPointer{-1000, -1000};
     bool m_lastFrameConsumed = false;
     std::vector<FocusScope> m_focusScopes;
+    Uuid m_autoModalId;
+    std::optional<Uuid> m_previousFocusId;
 };
 
 }  // namespace px::ui

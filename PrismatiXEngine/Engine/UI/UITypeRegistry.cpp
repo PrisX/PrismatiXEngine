@@ -346,6 +346,12 @@ Status RegisterBuiltinUITypes() {
     mouseFilter.editor.displayName = "滑鼠過濾"; mouseFilter.editor.enumChoices = {"Stop", "Pass", "Ignore"};
     mouseFilter.editor.description = "控制滑鼠事件是否停止、向父層傳遞，或完全忽略此元件。";
     control.properties.push_back(std::move(mouseFilter));
+    control.properties.push_back(BoolProperty("modalCapture", "Interaction",
+        [](const Object& o) { return As<Control>(o)->ModalCapture(); },
+        [](Object& o, bool value) {
+            As<Control>(o)->SetModalCapture(value);
+            return Status::Ok();
+        }));
     auto focusMode = StringProperty("focusMode", "Interaction", [](const Object& o) {
         switch (As<Control>(o)->GetFocusMode()) { case FocusMode::None: return std::string("None"); case FocusMode::Click: return std::string("Click"); default: return std::string("All"); }
     }, [](Object& o, std::string value) {

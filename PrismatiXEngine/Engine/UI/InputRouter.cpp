@@ -24,6 +24,20 @@ Control* InputRouter::HitTest(Control& root, Vec2 point) const {
 }
 
 Control* InputRouter::TargetAt(const Vec2 point) const {
+    if (auto* modal = TopmostModal(m_root)) {
+        // A host-managed focus scope nested inside an authored modal remains
+        // the tighter pointer boundary while it requests modal capture.
+        if (!m_focusScopes.empty() && m_focusScopes.back().modalCapture &&
+            IsInside(m_focusScopes.back().root, modal)) {
+            auto* scope = m_focusScopes.back().root;
+            if (auto* hit = HitTest(*scope, point)) return hit;
+            return scope;
+        }
+        if (auto* hit = HitTest(*modal, point)) return hit;
+        // The modal owns input outside its panel, even without a backdrop
+        // action. An underlying route must never receive the pointer event.
+        return modal;
+    }
     if(!m_focusScopes.empty()&&m_focusScopes.back().modalCapture){
         auto* scope=m_focusScopes.back().root;
         if(auto* hit=HitTest(*scope,point))return hit;
@@ -32,6 +46,54 @@ Control* InputRouter::TargetAt(const Vec2 point) const {
         return scope;
     }
     return HitTest(m_root, point);
+}
+
+Control* InputRouter::TopmostModal(Control& root) const {
+    if (!root.IsVisibleInTree() || !root.Enabled()) return nullptr;
+    Control* topmost = root.ModalCapture() ? &root : nullptr;
+    for (const auto& child : root.Children())
+        if (auto* control = dynamic_cast<Control*>(child.get()))
+            if (auto* found = TopmostModal(*control)) topmost = found;
+    return topmost;
+}
+
+bool InputRouter::IsAttached(const Control* control) const {
+    if (!control) return false;
+    const auto contains = [control](const auto& self, const Control& candidate) -> bool {
+        if (&candidate == control) return true;
+        for (const auto& child : candidate.Children())
+            if (const auto* nested = dynamic_cast<const Control*>(child.get()))
+                if (self(self, *nested)) return true;
+        return false;
+    };
+    return contains(contains, m_root);
+}
+
+void InputRouter::RefreshAutoModal() {
+    Control* modal = TopmostModal(m_root);
+    const Uuid current = modal ? modal->Id() : Uuid{};
+    if (current == m_autoModalId) return;
+    if (m_autoModalId.Empty() && modal && m_focused && IsAttached(m_focused))
+        m_previousFocusId = m_focused->Id();
+    m_autoModalId = current;
+    // A hidden or detached modal can own all three pointers. Clear them
+    // before restoring focus so no event dispatch dereferences a stale node.
+    m_hovered = nullptr;
+    m_captured = nullptr;
+    m_focused = nullptr;
+    if (modal) {
+        FocusNext();
+    } else {
+        Control* previous = m_previousFocusId
+            ? dynamic_cast<Control*>(m_root.Find(*m_previousFocusId)) : nullptr;
+        m_previousFocusId.reset();
+        if (previous && previous->Enabled() && previous->IsVisibleInTree() &&
+            previous->GetFocusMode() != FocusMode::None)
+            SetFocus(previous);
+        else
+            FocusNext();
+    }
+    RefreshStates();
 }
 
 void InputRouter::Dispatch(Control* target, UIEvent event) {
@@ -115,11 +177,16 @@ bool InputRouter::PopFocusScope() {
 }
 
 Control* InputRouter::ActiveFocusScope() const {
-    return m_focusScopes.empty()?nullptr:m_focusScopes.back().root;
+    Control* modal = TopmostModal(m_root);
+    if (!m_focusScopes.empty() &&
+        (!modal || IsInside(m_focusScopes.back().root, modal)))
+        return m_focusScopes.back().root;
+    return modal;
 }
 
 bool InputRouter::ModalCaptureActive() const {
-    return !m_focusScopes.empty()&&m_focusScopes.back().modalCapture;
+    return TopmostModal(m_root) ||
+           (!m_focusScopes.empty() && m_focusScopes.back().modalCapture);
 }
 
 void InputRouter::FocusDirection(const Vec2 direction) {
@@ -163,6 +230,7 @@ void InputRouter::RefreshStates() {
 }
 
 void InputRouter::Update(const Input& input) {
+    RefreshAutoModal();
     m_lastFrameConsumed = false;
     const Vec2 pointer{input.MouseX(), input.MouseY()};
     Control* hit = TargetAt(pointer);

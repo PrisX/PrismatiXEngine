@@ -166,6 +166,9 @@ several top-level children, automatically receive a transparent full-scene
 structural root. Existing scenes with an explicit structural root keep their
 canonical node identities.
 
+For a confirmation overlay, [`<Modal>`](../../docs/modal-authoring.md) authors
+the backdrop and panel while native input traps focus and backdrop clicks.
+
 Use `jsx: "react-jsx"` and
 `jsxImportSource: "@prismatix/authoring-sdk"` in `tsconfig.json`. A project may
 point `uiEntryPoints` at `Content/UI/Title.tsx`; `prismatix validate/build/pack`

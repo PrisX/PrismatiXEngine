@@ -204,6 +204,26 @@ int main() {
               router.Focused()==checkboxPointer,
           "directional focus cannot escape a modal and closing it restores prior focus");
 
+    modalPointer->SetModalCapture(true);
+    directionalInput.NewFrame();
+    router.Update(directionalInput);
+    Check(router.ModalCaptureActive() && router.Focused() == modalButtonPointer &&
+              router.TargetAt({20, 20}) == modalPointer,
+          "authored modal capture traps focus and pointer input without a host focus-scope call");
+    router.SetFocus(checkboxPointer);
+    Check(router.Focused() == modalButtonPointer,
+          "focus cannot move behind a visible authored modal");
+    Check(router.PushFocusScope(*modalButtonPointer, true) &&
+              router.TargetAt({20, 20}) == modalButtonPointer &&
+              router.PopFocusScope(),
+          "a nested host modal scope can tighten authored modal pointer capture");
+    modalPointer->SetVisibility(px::ui::Visibility::Hidden);
+    directionalInput.NewFrame();
+    router.Update(directionalInput);
+    Check(!router.ModalCaptureActive() && router.Focused() == checkboxPointer &&
+              router.TargetAt({20, 20}) != modalPointer,
+          "hiding an authored modal restores the previous focus and hit testing");
+
     px::Input remapped;
     remapped.ClearBindings(px::InputAction::Accept);
     remapped.BindKey(px::InputAction::Accept,SDL_SCANCODE_F2);

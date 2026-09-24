@@ -146,6 +146,8 @@ public:
     [[nodiscard]] bool Enabled() const { return m_enabled; }
     void SetMouseFilter(MouseFilter value) { m_mouseFilter = value; }
     [[nodiscard]] MouseFilter GetMouseFilter() const { return m_mouseFilter; }
+    void SetModalCapture(bool value) { m_modalCapture = value; }
+    [[nodiscard]] bool ModalCapture() const { return m_modalCapture; }
     void SetFocusMode(FocusMode value) { m_focusMode = value; }
     [[nodiscard]] FocusMode GetFocusMode() const { return m_focusMode; }
     void SetStyleBinding(ControlStyleBinding value) { m_styleBinding = std::move(value); }
@@ -245,6 +247,7 @@ private:
     float m_stretchRatio = 1.0f;
     Visibility m_visibility = Visibility::Visible;
     MouseFilter m_mouseFilter = MouseFilter::Stop;
+    bool m_modalCapture = false;
     FocusMode m_focusMode = FocusMode::None;
     bool m_enabled = true;
     bool m_layoutDirty = true;

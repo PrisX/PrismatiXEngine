@@ -7,6 +7,7 @@ import {
   Control,
   Image,
   ItemsGrid,
+  Modal,
   Motion,
   RichTextLabel,
   Scene,
@@ -57,6 +58,32 @@ test("React-free JSX lowering produces canonical UI with deterministic node ids"
   assert.equal(title?.layout.mode, "container");
   assert.deepEqual(title?.bindings, {text: {path: "locale.card.title"}});
   assert.deepEqual(button?.onClick, {id: "dialog.confirm", arguments: {source: "card"}});
+});
+
+test("Modal authors a native focus scope, backdrop action, and blocking panel", () => {
+  const scene = jsx(Scene, {name: "Modal demo", width: 1280, height: 720,
+    children: jsx(Modal, {name: "Confirm", fill: true, visible: false,
+      bind: {visible: "confirm.visible"},
+      panel: {x: 390, y: 240, width: 500, height: 240},
+      backdropPath: "Assets/UI/scrim.png", backdropAction: "confirm.cancel",
+      children: jsx(Button, {name: "Accept", x: 20, y: 30,
+        width: 120, height: 40, action: "confirm.accept", children: "OK"}),
+    })});
+  const compiled = compileJsxUi(scene, {path: "Content/UI/Modal.tsx", kind: "scene"});
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  const modal = compiled.value?.nodes.find((node) => node.name === "Confirm");
+  const backdrop = compiled.value?.nodes.find((node) => node.name === "ModalBackdrop");
+  const panel = compiled.value?.nodes.find((node) => node.name === "ModalPanel");
+  const accept = compiled.value?.nodes.find((node) => node.name === "Accept");
+  assert.equal(modal?.runtimeProperties?.modalCapture, true);
+  assert.equal(modal?.bindings?.visible?.path, "confirm.visible");
+  assert.equal(backdrop?.parentId, modal?.id);
+  assert.equal(backdrop?.onClick?.id, "confirm.cancel");
+  assert.equal(backdrop?.runtimeProperties?.normalPath, "Assets/UI/scrim.png");
+  assert.equal(panel?.parentId, modal?.id);
+  assert.equal(panel?.runtimeProperties?.mouseFilter, "Stop");
+  assert.equal(accept?.parentId, panel?.id);
+  assert.equal(accept?.layout.x, 20);
 });
 
 test("Motion lowers a layered clip reference without confusing playhead and layout position", () => {

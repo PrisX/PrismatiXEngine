@@ -134,6 +134,9 @@ export interface UiNodeProps {
   readonly runtimeProperties?: Readonly<Record<string, JsonValue>>;
   /** Common native Control interaction properties. */
   readonly focusMode?: "None" | "Click" | "All";
+  readonly mouseFilter?: "Stop" | "Pass" | "Ignore";
+  /** Capture pointer navigation and keyboard focus while visible. */
+  readonly modalCapture?: boolean;
   readonly hoverSoundPath?: string;
   readonly activateSoundPath?: string;
   readonly bindings?: UiBindings;
@@ -161,6 +164,17 @@ export interface ItemsViewProps extends UiNodeProps {
 export interface ControlProps extends UiNodeProps {
   readonly kind?: UiNodeKind;
   readonly runtimeType?: string;
+}
+
+export interface ModalProps extends Omit<UiNodeProps, "children"> {
+  /** The panel receives `children` in panel-local coordinates. */
+  readonly panel: Readonly<{x: number; y: number; width: number; height: number}>;
+  readonly children?: UiChild;
+  /** Optional authored scrim image. Without one, a translucent color is used. */
+  readonly backdropPath?: string;
+  readonly backdropColor?: string;
+  readonly backdropAction?: string | UiAction;
+  readonly backdropLabel?: string;
 }
 
 export interface TextProps extends Omit<UiNodeProps, "children"> {
@@ -362,13 +376,15 @@ function node(
   runtimeType: string | undefined,
   props: UiNodeProps & {readonly text?: string; readonly assetId?: string | null},
 ): UiElement {
-  const {focusMode, hoverSoundPath, activateSoundPath, ...rest} = props;
+  const {focusMode, mouseFilter, modalCapture, hoverSoundPath, activateSoundPath, ...rest} = props;
   return definitionElement(nodeType, {
     category: "node", kind,
     ...(runtimeType === undefined ? {} : {runtimeType}),
     props: {...rest, runtimeProperties: {
       ...props.runtimeProperties,
       ...(focusMode === undefined ? {} : {focusMode}),
+      ...(mouseFilter === undefined ? {} : {mouseFilter}),
+      ...(modalCapture === undefined ? {} : {modalCapture}),
       ...(hoverSoundPath === undefined ? {} : {hoverSoundPath}),
       ...(activateSoundPath === undefined ? {} : {activateSoundPath}),
     }},
@@ -386,6 +402,26 @@ export function Component(props: ComponentProps): UiElement {
 
 export function Control(props: ControlProps): UiElement {
   return node(props.kind ?? "control", props.runtimeType ?? "Control", props);
+}
+
+/** Backdrop, blocking panel, and native modal focus/capture as one authored node. */
+export function Modal(props: ModalProps): UiElement {
+  const {panel, children, backdropPath, backdropColor, backdropAction,
+    backdropLabel, ...rest} = props;
+  const backdrop = backdropPath === undefined
+    ? Button({name: "ModalBackdrop", fill: true, text: "", focusMode: "None",
+      style: {background: backdropColor ?? "#00000099"},
+      ...(backdropAction === undefined ? {} : {action: backdropAction}),
+      ...(backdropLabel === undefined ? {} : {accessibilityLabel: backdropLabel})})
+    : TextureButton({name: "ModalBackdrop", fill: true, focusMode: "None",
+      normalPath: backdropPath, hoverPath: backdropPath, pressedPath: backdropPath,
+      scaleMode: "Stretch",
+      ...(backdropAction === undefined ? {} : {action: backdropAction}),
+      ...(backdropLabel === undefined ? {} : {accessibilityLabel: backdropLabel})});
+  const content = Control({name: "ModalPanel", ...panel, mouseFilter: "Stop", children});
+  return node("control", "Control", {...rest, modalCapture: true,
+    accessibilityRole: props.accessibilityRole ?? "dialog",
+    children: [backdrop, content]});
 }
 
 export function Group(props: UiNodeProps): UiElement {
