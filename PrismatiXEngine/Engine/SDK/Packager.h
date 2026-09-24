@@ -17,6 +17,11 @@ enum class PackageCompression {
     Maximum,
 };
 
+enum class PackageValidationDepth {
+    Structural,
+    AllInputs,
+};
+
 struct PackageInput {
     std::string uri;
     std::string fingerprint;
@@ -127,6 +132,8 @@ struct PackageEvent {
     std::string code;
     bool retryable = false;
     std::vector<PackageDiagnostic> diagnostics;
+    // Validation-only result: media hashes intentionally left for packaging.
+    std::uint64_t deferredMediaCount = 0;
 };
 
 enum class PackageExitCode : int {
@@ -164,9 +171,11 @@ using PackageEventSink = std::function<void(const PackageEvent&)>;
 
 // Checks native package request and authored Story/UI/resource contracts
 // without creating or replacing a distribution. Media payload fingerprints
-// deferred by normal packaging are also deferred here: this is a preflight,
-// not a complete package-content verification.
+// deferred by normal packaging are also deferred here unless depth is
+// AllInputs. This checks the current input bytes, not output PDX contents or a
+// guarantee that sources cannot change afterward.
 [[nodiscard]] PackageRunResult ValidatePackageRequest(const PackageRequest& request,
-                                                      const PackageEventSink& eventSink = {});
+                                                      const PackageEventSink& eventSink = {},
+                                                      PackageValidationDepth depth = PackageValidationDepth::Structural);
 
 }  // namespace px::sdk

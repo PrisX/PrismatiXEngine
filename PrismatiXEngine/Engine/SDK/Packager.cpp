@@ -100,6 +100,7 @@ struct ArchiveCache {
 struct ValidationResult {
     std::vector<ValidatedInput> inputs;
     std::vector<PackageDiagnostic> diagnostics;
+    std::uint64_t deferredMediaCount = 0;
     bool cancelled = false;
 };
 
@@ -1707,10 +1708,11 @@ PackageRunResult Cancel(const PackageRequest& request, const PackageEventSink& s
 }
 
 ValidationResult Validate(const PackageRequest& request,
-                          const PackageEventSink& eventSink) {
+                          const PackageEventSink& eventSink,
+                          const PackageValidationDepth depth =
+                              PackageValidationDepth::Structural) {
     ValidationResult result;
     auto& diagnostics = result.diagnostics;
-    std::size_t deferredMediaFingerprints = 0;
     struct LocalizedOperationIdentity {
         std::string operationId;
         std::string sourceId;
@@ -1834,8 +1836,9 @@ ValidationResult Validate(const PackageRequest& request,
             AddDiagnostic(diagnostics, "PXPKG1215", "input size changed: " + input.uri, true);
             continue;
         }
-        if (CanDeferInputFingerprint(input.uri)) {
-            ++deferredMediaFingerprints;
+        if (depth == PackageValidationDepth::Structural &&
+            CanDeferInputFingerprint(input.uri)) {
+            ++result.deferredMediaCount;
         } else {
             const std::string actualFingerprint = ComputePackageFingerprint(source);
             if (actualFingerprint.empty() || actualFingerprint != Lower(input.fingerprint)) {
@@ -1848,7 +1851,7 @@ ValidationResult Validate(const PackageRequest& request,
     EmitProgress(request, eventSink, "validate", request.inputs.size(),
                  request.inputs.size(),
                  "Checked package inputs; " +
-                     std::to_string(deferredMediaFingerprints) +
+                     std::to_string(result.deferredMediaCount) +
                      " media fingerprint(s) will be verified during archive writing or reuse");
     if (Cancelled(request)) {
         result.cancelled = true;
@@ -2872,6 +2875,7 @@ std::string SerializePackageEvent(const PackageEvent& event) {
         case PackageEventKind::Validated:
             object["event"] = "validated";
             object["inputCount"] = event.inputCount;
+            object["deferredMediaCount"] = event.deferredMediaCount;
             break;
         case PackageEventKind::Cancelled:
             object["event"] = "cancelled";
@@ -2955,10 +2959,11 @@ std::string ComputePackageFingerprint(const std::filesystem::path& path) {
 }
 
 PackageRunResult ValidatePackageRequest(const PackageRequest& request,
-                                        const PackageEventSink& eventSink) {
+                                        const PackageEventSink& eventSink,
+                                        const PackageValidationDepth depth) {
     EmitProgress(request, eventSink, "validate", 0, request.inputs.size(),
                  "Validating package request");
-    auto validated = Validate(request, eventSink);
+    auto validated = Validate(request, eventSink, depth);
     if (validated.cancelled)
         return Cancel(request, eventSink,
                       "Package validation was cancelled while checking inputs");
@@ -2971,6 +2976,7 @@ PackageRunResult ValidatePackageRequest(const PackageRequest& request,
     completed.kind = PackageEventKind::Validated;
     completed.requestId = request.requestId;
     completed.inputCount = validated.inputs.size();
+    completed.deferredMediaCount = validated.deferredMediaCount;
     Emit(eventSink, std::move(completed));
     PackageRunResult result;
     result.exitCode = PackageExitCode::Completed;

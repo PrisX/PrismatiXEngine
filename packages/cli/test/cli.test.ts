@@ -1010,13 +1010,15 @@ test("pack --check runs native preflight on an artifact without writing a distri
   await write(player, "fixture");
   await write(mock, `
     import {readFile} from "node:fs/promises";
-    const [flag, path] = process.argv.slice(2);
-    if (flag !== "--validate-request") process.exit(41);
+    const [flag, path, mode] = process.argv.slice(2);
+    if (flag !== "--validate-request" ||
+        (mode !== undefined && mode !== "--verify-media")) process.exit(41);
     const request = JSON.parse(await readFile(path, "utf8"));
     if (request.projectRoot !== ${JSON.stringify(artifact)} ||
         request.inputs.length === 0) process.exit(42);
     process.stdout.write(JSON.stringify({event: "validated",
-      inputCount: request.inputs.length}) + "\\n");
+      inputCount: request.inputs.length,
+      deferredMediaCount: mode === "--verify-media" ? 0 : 2}) + "\\n");
   `);
   const output = join(value.root, "distribution");
   const args = ["pack", value.project, "--artifact", artifact,
@@ -1025,7 +1027,15 @@ test("pack --check runs native preflight on an artifact without writing a distri
   assert.equal(checked.status, 0, checked.stderr);
   assert.match(checked.stdout, /"validated":true/u);
   assert.match(checked.stdout, /"packed":false/u);
+  assert.match(checked.stdout, /"deferredMediaCount":2/u);
   await assert.rejects(stat(output), /ENOENT/u);
+  const allInputs = run([...args, "--verify-media"]);
+  assert.equal(allInputs.status, 0, allInputs.stderr);
+  assert.match(allInputs.stdout, /"deferredMediaCount":0/u);
+  await assert.rejects(stat(output), /ENOENT/u);
+  const invalidOptions = run(args.filter(argument => argument !== "--check").concat("--verify-media"));
+  assert.equal(invalidOptions.status, 2);
+  assert.match(invalidOptions.stderr, /--verify-media requires pack --check/u);
 
   await write(mock, `
     process.stdout.write(JSON.stringify({event: "failed", code: "PXPKG1020",

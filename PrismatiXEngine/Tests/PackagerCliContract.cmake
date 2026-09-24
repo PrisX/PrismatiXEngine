@@ -38,3 +38,14 @@ string(JSON VALIDATE_CODE GET "${VALIDATE_OUTPUT}" code)
 if(NOT VALIDATE_RESULT EQUAL 1 OR NOT VALIDATE_CODE STREQUAL "PXPKG1002")
     message(FATAL_ERROR "Validation-only CLI must parse its own request path: ${VALIDATE_OUTPUT}")
 endif()
+
+execute_process(
+    COMMAND "${PACKAGER}" --validate-request relative-request.json --verify-media
+    RESULT_VARIABLE FULL_RESULT
+    OUTPUT_VARIABLE FULL_OUTPUT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+string(JSON FULL_CODE GET "${FULL_OUTPUT}" code)
+if(NOT FULL_RESULT EQUAL 1 OR NOT FULL_CODE STREQUAL "PXPKG1002")
+    message(FATAL_ERROR "Full-input validation CLI must parse its request path: ${FULL_OUTPUT}")
+endif()

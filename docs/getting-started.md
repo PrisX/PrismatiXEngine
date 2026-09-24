@@ -137,6 +137,10 @@ first. The command reports a distinct `validated` result, never `packed`.
 Media fingerprints intentionally deferred by normal Packager are also
 deferred by `--check`; a successful preflight is not a verified PDX or a
 guarantee that all media bytes will remain unchanged during packaging.
+Add `--verify-media` to `pack --check` when you want SHA-256 verification of
+every current artifact input without producing PDX. The `validated` event
+reports `deferredMediaCount` (zero in this mode). Even full-input preflight
+does not replace `verify-package` for a completed distribution.
 
 For large games, `pack`, `run`, and distribution `build` accept
 `--archive-shards N` (1–64). The default `1` keeps `Content.pdx`; larger

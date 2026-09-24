@@ -375,7 +375,9 @@ int main() {
                              request.inputs.size(),
                      "preflight emits a distinct validated event");
         suite.Expect(nlohmann::json::parse(px::sdk::SerializePackageEvent(
-                         validationEvents.back()))["event"] == "validated",
+                         validationEvents.back()))["event"] == "validated" &&
+                         nlohmann::json::parse(px::sdk::SerializePackageEvent(
+                             validationEvents.back()))["deferredMediaCount"] >= 1,
                      "validated event has a machine-readable protocol name");
         suite.Expect(std::filesystem::exists(output / "previous-success.txt") &&
                          !std::filesystem::exists(output / "Content.pdx"),
@@ -399,6 +401,25 @@ int main() {
                          !std::filesystem::exists(output / "Content.pdx"),
                      "failed preflight also leaves output untouched");
         Write(source, original);
+
+        const auto media = root / "Assets/rin.png";
+        const auto originalMedia = Read(media);
+        Write(media, std::string(originalMedia.size(), 'x'));
+        const auto structural = px::sdk::ValidatePackageRequest(request);
+        const auto full = px::sdk::ValidatePackageRequest(
+            request, {}, px::sdk::PackageValidationDepth::AllInputs);
+        suite.Expect(structural.Completed(),
+                     "fast preflight deliberately defers media payload hashes");
+        suite.Expect(!full.Completed() && HasDiagnostic(full, "PXPKG1216"),
+                     "full preflight rejects changed media bytes of the same size");
+        Write(media, originalMedia);
+        std::vector<px::sdk::PackageEvent> fullEvents;
+        const auto intactFull = px::sdk::ValidatePackageRequest(
+            request, [&](const auto& event) { fullEvents.push_back(event); },
+            px::sdk::PackageValidationDepth::AllInputs);
+        suite.Expect(intactFull.Completed() && !fullEvents.empty() &&
+                         fullEvents.back().deferredMediaCount == 0,
+                     "full preflight checks all current input fingerprints");
     });
 
     suite.Run("Package_CreatesPlayerCompatibleAtomicDistribution", [&] {

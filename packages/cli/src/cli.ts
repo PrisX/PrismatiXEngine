@@ -82,7 +82,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   dev: {values: "runtime preview-host debounce ui-registry", flags: "once smoke"},
   validate: {values: "runtime ui-registry", flags: ""},
   build: {values: "output artifact runtime packager player compression archive-shards ui-registry", flags: "artifact-only distribution encrypt ignore-disk-space"},
-  pack: {values: "output artifact runtime packager player compression archive-shards ui-registry", flags: "encrypt ignore-disk-space check"},
+  pack: {values: "output artifact runtime packager player compression archive-shards ui-registry", flags: "encrypt ignore-disk-space check verify-media"},
   run: {values: "output artifact runtime packager player compression archive-shards ui-registry", flags: "encrypt ignore-disk-space"},
   augment: {values: "artifact manifest", flags: ""},
   ids: {values: "document-id prefix backup", flags: "write check external inline sync"},
@@ -125,6 +125,8 @@ function parseOptions(command: string, args: readonly string[]): Options {
   if (flags.has("artifact-only") && values.has("artifact")) throw new Error("--artifact-only and --artifact cannot be combined");
   if (flags.has("artifact-only") && values.has("archive-shards"))
     throw new Error("--archive-shards requires a distribution build");
+  if (flags.has("verify-media") && !flags.has("check"))
+    throw new Error("--verify-media requires pack --check");
   if (values.has("artifact") && values.has("ui-registry")) throw new Error("--ui-registry requires a fresh build; it cannot be combined with --artifact");
   if (values.has("compression") && !["none", "fast", "balanced", "maximum"].includes(values.get("compression")!))
     throw new Error("--compression must be none, fast, balanced, or maximum");
@@ -1312,7 +1314,8 @@ function packageOutputObserver(activity = "Packaging", streamMachineOutput = tru
   };
 }
 
-async function packProject(options: Options): Promise<{output: string; player: string; validatedOnly?: boolean}> {
+async function packProject(options: Options): Promise<{output: string; player: string;
+  validatedOnly?: boolean; deferredMediaCount?: number}> {
   let packager: string;
   let player: string;
   try {
@@ -1398,22 +1401,31 @@ async function packProject(options: Options): Promise<{output: string; player: s
         cancelFile: join(temp, ".cancel-validation")})}\n`, "utf8");
       const scriptTool = [".js", ".mjs", ".cjs"].includes(extname(packager).toLowerCase());
       const result = await runProcess(scriptTool ? process.execPath : packager,
-        [...(scriptTool ? [packager] : []), "--validate-request", requestPath],
+        [...(scriptTool ? [packager] : []), "--validate-request", requestPath,
+          ...(options.flags.has("verify-media") ? ["--verify-media"] : [])],
         undefined, root, false, packageOutputObserver());
       if (result.stderr.length > 0) process.stderr.write(result.stderr);
       const events = packageEvents(result.stdout);
       const failed = failedPackageDiagnostics(events);
       if (failed.length > 0) throw new PackagerFailure(failed);
-      if (result.code !== 0 || !events.some(event => event.event === "validated"))
+      const validated = events.find(event => event.event === "validated");
+      if (result.code !== 0 || validated === undefined ||
+          !Number.isSafeInteger(validated.deferredMediaCount) ||
+          Number(validated.deferredMediaCount) < 0 ||
+          Number(validated.deferredMediaCount) > inputs.length ||
+          (options.flags.has("verify-media") && validated.deferredMediaCount !== 0))
         throw new PackagerFailure([diagnostic("PXCLI1219",
           result.code === 0
             ? "Packager did not confirm native package validation"
             : `Packager validation exited with code ${result.code}`,
           options.positional[0])]);
+      const deferredMediaCount = Number(validated.deferredMediaCount);
       progress({event: "progress", severity: "information", code: "PXCLI1220",
         phase: "validate-package", current: inputs.length, total: inputs.length,
-        message: `Package preflight passed: ${inputs.length} inputs; no distribution written`});
-      return {output, player: join(output, basename(player)), validatedOnly: true};
+        message: `Package preflight passed: ${inputs.length} inputs, ` +
+          `${deferredMediaCount} media hashes deferred; no distribution written`});
+      return {output, player: join(output, basename(player)), validatedOnly: true,
+        deferredMediaCount};
     }
     const planKey = suppliedArtifact === undefined ? undefined :
       await packageRetentionKey(packager, player, artifactRoot, requestPlan);
@@ -1542,10 +1554,12 @@ async function packProject(options: Options): Promise<{output: string; player: s
 async function packCommand(options: Options): Promise<number> {
   try { const result = await packProject(options); process.stdout.write(machineOutput
     ? `${JSON.stringify(result.validatedOnly
-      ? {validated: true, packed: false}
+      ? {validated: true, packed: false,
+        deferredMediaCount: result.deferredMediaCount}
       : {packed: true, ...result})}\n`
     : result.validatedOnly
-      ? "Package preflight passed; no distribution was written (media payloads are verified during packaging).\n"
+      ? `Package preflight passed; no distribution was written ` +
+        `(${result.deferredMediaCount} media hashes deferred).\n`
       : `Packaged playable game: ${result.output}\n`); return 0; }
   catch (error) {
     printDiagnostics(error instanceof PackagerFailure || error instanceof JsxAuthoringFailure ? error.diagnostics :
@@ -2167,6 +2181,7 @@ async function inspectSaveCommand(options: Options): Promise<number> {
 }
 function usage(): void {
   process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|augment|ids|migrate|inspect-save|plan-patch|verify-package|create-patch|apply-patch> [project-or-save-or-distribution] [options]\n");
+  process.stderr.write("  prismatix pack <project> --artifact <dir> --check [--verify-media]  Validate without creating a distribution\n");
 }
 
 async function verifyPackagedContents(directory: string, options: Options): Promise<{
