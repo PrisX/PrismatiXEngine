@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <optional>
 #include <ranges>
@@ -107,6 +108,73 @@ int main() {
         suite.Expect(fixture.stage.CaptureState().actors.empty() &&
                          fixture.stage.BackgroundPath() == "Assets/background.webp",
                      "instant clear removes actors without clearing the background");
+    });
+
+    suite.Run("LayeredExpressionCrossfadeKeepsSharedBodyOpaque", [&] {
+        px::test::TempDirectory fixture("layered-expression-crossfade");
+        suite.Require(SaveSolidBmp(fixture.path / "body.bmp", 16, 16,
+                                   {240, 20, 30, 255}) &&
+                          SaveSolidBmp(fixture.path / "old-face.bmp", 8, 8,
+                                       {20, 40, 240, 255}) &&
+                          SaveSolidBmp(fixture.path / "new-face.bmp", 8, 8,
+                                       {20, 240, 40, 255}),
+                      "layered portrait images are available");
+        const auto writePortrait = [&](const char* name, const char* face) {
+            std::ofstream output(fixture.path / name, std::ios::binary);
+            output << "{\"format\":\"PrismatiXLayeredPortrait\","
+                   << "\"schemaRevision\":1,\"width\":16,\"height\":16,"
+                   << "\"layers\":["
+                   << "{\"path\":\"body.bmp\",\"width\":16,\"height\":16},"
+                   << "{\"path\":\"" << face
+                   << "\",\"width\":8,\"height\":8}]}";
+            return static_cast<bool>(output);
+        };
+        suite.Require(writePortrait("old.pxportrait", "old-face.bmp") &&
+                          writePortrait("new.pxportrait", "new-face.bmp"),
+                      "layered portrait descriptors are available");
+        SDL_Surface* surface = SDL_CreateSurface(64, 64, SDL_PIXELFORMAT_RGBA32);
+        suite.Require(surface != nullptr, "portrait surface initializes");
+        SDL_Renderer* native = SDL_CreateSoftwareRenderer(surface);
+        suite.Require(native != nullptr, "portrait renderer initializes");
+        {
+            px::io::VFS vfs;
+            vfs.MountDirectory(fixture.path.string());
+            px::graphics::AssetCache assets(native, vfs);
+            px::graphics::Renderer2D renderer(native, assets);
+            renderer.SetLogicalSize(64, 64);
+            // Portrait descriptor discovery queues asynchronous preloads. Prime
+            // this fixture's tiny textures so the first rendered frame tests
+            // blending rather than preload scheduling.
+            suite.Require(assets.Texture("body.bmp") &&
+                              assets.Texture("old-face.bmp") &&
+                              assets.Texture("new-face.bmp"),
+                          "portrait textures decode before the render assertion");
+            px::vn::Stage stage(renderer, assets);
+            stage.SetCharacter("hero", "old.pxportrait", 2, false);
+            stage.SetCharacter("hero", "new.pxportrait", 2, true);
+            stage.Update(0.1f);
+            SDL_SetRenderDrawColor(native, 0, 0, 0, 255);
+            SDL_RenderClear(native);
+            stage.Render();
+            SDL_RenderPresent(native);
+            const Pixel body = ReadPixel(surface, 32, 60);
+            const Pixel face = ReadPixel(surface, 28, 51);
+            suite.Expect(body.r > 220 && body.g < 60 && body.b < 60,
+                         "unchanged body stays opaque during facial crossfade",
+                         std::to_string(body.r) + "," + std::to_string(body.g) +
+                             "," + std::to_string(body.b));
+            suite.Expect(face.g > 70 && face.b > 20,
+                         "only changed facial layers blend during the transition",
+                         std::to_string(face.r) + "," + std::to_string(face.g) +
+                             "," + std::to_string(face.b));
+            stage.SetCharacter("hero", "old.pxportrait", 2, false);
+            const auto pose = stage.CaptureState().actors;
+            suite.Expect(pose.size() == 1 && pose.front().alpha == 255.0f &&
+                             pose.front().previousImagePath.empty(),
+                         "instant pose replacement cancels an in-progress expression fade");
+        }
+        SDL_DestroyRenderer(native);
+        SDL_DestroySurface(surface);
     });
 
     suite.Run("LegacyLayersAreGraphLeaves", [&] {

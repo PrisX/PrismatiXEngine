@@ -523,11 +523,14 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
           if (expressionAlias !== undefined && character !== undefined && expression === undefined) diagnostics.push(error("PXSTORY1114", `Unknown expression ${expressionAlias} for ${alias}`, node.span));
           const authoredPosition = named("position");
           const position = characterPosition(authoredPosition);
+          const transition = named("transition");
           if (authoredPosition !== undefined && position === undefined) diagnostics.push(error("PXSTORY1128", `Unknown character position: ${authoredPosition}; expected left, center, right, 1, 2, or 3`, node.span));
+          if (transition !== undefined && transition !== "true" && transition !== "false") diagnostics.push(error("PXSTORY1145", "show transition must be true or false", node.span));
           const sprite = authoredAsset === undefined
             ? (expression === undefined ? undefined : `asset:${expression.assetId}`)
             : resolveResource(node, authoredAsset);
-          if (authoredAsset === undefined || sprite !== undefined) {
+          if ((authoredAsset === undefined || sprite !== undefined) &&
+              (transition === undefined || transition === "true" || transition === "false")) {
             emit(node, "showCharacter", {
               character: character?.id ?? alias,
               ...(expression === undefined ? {} : {expression: expression.id}),
@@ -536,6 +539,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
               ...(named("x") === undefined ? {} : {x: named("x")!}),
               ...(named("y") === undefined ? {} : {y: named("y")!}),
               ...(named("scale") === undefined ? {} : {scale: named("scale")!}),
+              ...(transition === undefined ? {} : {transition}),
             });
             if (authoredAsset === undefined && expression !== undefined && context.resourceAssets !== undefined) {
               resolveResource(node, `asset:${expression.assetId}`);

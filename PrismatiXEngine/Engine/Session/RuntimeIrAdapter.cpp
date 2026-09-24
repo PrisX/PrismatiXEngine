@@ -440,6 +440,7 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             Add(command, "x", Argument(operation, "x"));
             Add(command, "y", Argument(operation, "y"));
             Add(command, "scale", Argument(operation, "scale"));
+            Add(command, "transition", Argument(operation, "transition"));
         } else if (operation.kind == "hideCharacter") {
             command.type = "char_clear";
             Add(command, "id", Argument(operation, "character"));

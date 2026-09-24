@@ -370,14 +370,17 @@ test("character placement names and authored moves lower to explicit Runtime com
 
 test("show accepts a path-first sprite without a character catalog", () => {
   const compiled = compileStory(
-    parseStory("[show character=yoshino asset=Assets/Characters/yoshino.png position=center y=24 scale=0.65]\n", "Story/direct-sprite.pxstory"),
+    parseStory("[show character=yoshino asset=Assets/Characters/yoshino.png position=center y=24 scale=0.65 transition=false]\n", "Story/direct-sprite.pxstory"),
     {documentId:"direct-sprite"},
   );
   assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
   assert.deepEqual(compiled.runtimeIr?.operations.map((operation) => operation.arguments), [{
-    character:"yoshino", sprite:"Assets/Characters/yoshino.png", position:"2", y:"24", scale:"0.65",
+    character:"yoshino", sprite:"Assets/Characters/yoshino.png", position:"2", y:"24", scale:"0.65", transition:"false",
   }]);
   assert.deepEqual(compiled.resourceDependencies, ["Assets/Characters/yoshino.png"]);
+  const invalid = compileStory(parseStory("[show character=yoshino transition=maybe]\n", "Story/invalid-show.pxstory"), {documentId:"invalid-show"});
+  assert.equal(invalid.valid, false);
+  assert.ok(invalid.diagnostics.some((diagnostic) => diagnostic.code === "PXSTORY1145"));
 });
 
 test("effect and camera commands require presets and lower to explicit RuntimeIR kinds", () => {

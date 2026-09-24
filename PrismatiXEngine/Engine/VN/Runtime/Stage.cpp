@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include <ranges>
 #include <unordered_set>
@@ -732,6 +733,7 @@ void Stage::SetCharacter(const std::string& name, const std::string& imagePath, 
         actor.x = transition ? actor.targetX + kSlideOffset : actor.targetX;
     }
     if (!transition) {
+        actor.alpha = actor.targetAlpha;
         actor.prevImagePath.clear();
         actor.prevAlpha = 0.0f;
     }
@@ -1176,8 +1178,11 @@ void Stage::Render() {
     };
 
     const auto drawActorImage = [&](const std::string& name,
-                                    const std::string& path,
-                                    const Actor& actor, const float alpha) {
+                                     const std::string& path,
+                                     const Actor& actor, const float alpha,
+                                     const std::size_t firstLayer = 0,
+                                     const std::size_t layerLimit =
+                                         (std::numeric_limits<std::size_t>::max)()) {
         const LayeredPortrait* portrait=ResolveLayeredPortrait(path);
         float sourceWidth=0.0f,sourceHeight=0.0f;
         if(portrait){
@@ -1210,7 +1215,9 @@ void Stage::Render() {
         const float combinedAlpha=std::clamp(
             alpha*actor.effectAlpha*world.opacity,0.0f,255.0f);
         if(portrait){
-            for(const auto& layer:portrait->layers){
+            for(std::size_t index=firstLayer;
+                index<portrait->layers.size() && index<layerLimit; ++index){
+                const auto& layer=portrait->layers[index];
                 m_renderer.DrawImage(
                     layer.path,
                     {local.x+layer.x*spriteScale,
@@ -1242,13 +1249,51 @@ void Stage::Render() {
             m_renderer.PopTransform();
         } else if (drawable.kind == DrawableKind::Actor) {
             if (!drawable.actor->prevImagePath.empty()) {
-                drawActorImage(drawable.name,
-                               drawable.actor->prevImagePath,
-                               *drawable.actor,
-                               drawable.actor->prevAlpha);
+                const auto* previous = ResolveLayeredPortrait(
+                    drawable.actor->prevImagePath);
+                const auto* current = ResolveLayeredPortrait(
+                    drawable.actor->imagePath);
+                std::size_t sharedLayers = 0;
+                if (previous && current &&
+                    previous->width == current->width &&
+                    previous->height == current->height) {
+                    const auto limit = std::min(previous->layers.size(),
+                                                current->layers.size());
+                    while (sharedLayers < limit) {
+                        const auto& left = previous->layers[sharedLayers];
+                        const auto& right = current->layers[sharedLayers];
+                        if (left.path != right.path || left.x != right.x ||
+                            left.y != right.y || left.width != right.width ||
+                            left.height != right.height ||
+                            left.opacity != right.opacity) break;
+                        ++sharedLayers;
+                    }
+                }
+                if (sharedLayers > 0) {
+                    // A facial expression change must not fade the unchanged
+                    // body underneath its old and new overlay layers.
+                    drawActorImage(drawable.name, drawable.actor->imagePath,
+                                   *drawable.actor, drawable.actor->targetAlpha,
+                                   0, sharedLayers);
+                    drawActorImage(drawable.name,
+                                   drawable.actor->prevImagePath,
+                                   *drawable.actor, drawable.actor->prevAlpha,
+                                   sharedLayers);
+                    drawActorImage(drawable.name, drawable.actor->imagePath,
+                                   *drawable.actor, drawable.actor->alpha,
+                                   sharedLayers);
+                } else {
+                    drawActorImage(drawable.name,
+                                   drawable.actor->prevImagePath,
+                                   *drawable.actor,
+                                   drawable.actor->prevAlpha);
+                    drawActorImage(drawable.name, drawable.actor->imagePath,
+                                   *drawable.actor, drawable.actor->alpha);
+                }
+            } else {
+                drawActorImage(drawable.name, drawable.actor->imagePath,
+                               *drawable.actor, drawable.actor->alpha);
             }
-            drawActorImage(drawable.name, drawable.actor->imagePath,
-                           *drawable.actor, drawable.actor->alpha);
         } else {
             const auto particles = m_particles.Samples(
                 drawable.name, logicalW, logicalH);

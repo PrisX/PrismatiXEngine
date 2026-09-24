@@ -325,7 +325,8 @@ int main() {
                    {"position", "1"},
                    {"x", "-24"},
                    {"y", "12"},
-                   {"scale", "1.25"}}),
+                    {"scale", "1.25"},
+                    {"transition", "false"}}),
         Operation("character-move", "timeline",
                   {{"mode", "move"},
                    {"target", "yuki"},
@@ -368,6 +369,7 @@ int main() {
         !check(parityProgram.code[0].Get("effect") == "shake", "dialogue effect") ||
         !check(parityProgram.code[1].type == "char", "character command") ||
         !check(parityProgram.code[1].Get("file") == "asset:sprite-id", "sprite override") ||
+         !check(parityProgram.code[1].Get("transition") == "false", "explicit instant character swap") ||
         !check(parityProgram.code[1].Get("pos") == "1", "position slot") ||
         !check(parityProgram.code[2].type == "char_move", "character move command") ||
         !check(parityProgram.code[2].Get("pos") == "3", "move position slot") ||
