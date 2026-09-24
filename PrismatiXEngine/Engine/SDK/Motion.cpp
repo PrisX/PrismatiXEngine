@@ -254,7 +254,10 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         return fail("PXMOTION1003", "Motion tickRate requires revision 10 and is mandatory for that revision");
     const auto tickRate = Number(root, "tickRate", 1, 0.001, 1000, tickTime);
     if (!tickRate) return fail("PXMOTION1003", "Motion tickRate is invalid");
-    const auto duration = Number(root, "duration", 0, 0.000001, 86400000, true);
+    // Tick values can be smaller than one millionth while still describing
+    // at least one millionth of a second at a low tick rate.
+    const auto duration = Number(root, "duration", 0,
+        tickTime ? 0.0 : 0.000001, 86400000, true);
     const auto loop = Boolean(root, "loop", false, true);
     if (!canvasWidth || !canvasHeight || !duration || !loop ||
         *duration / *tickRate < 0.000001 || *duration / *tickRate > 86400)

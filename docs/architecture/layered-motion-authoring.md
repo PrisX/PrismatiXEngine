@@ -4,7 +4,7 @@ Status: image-layer, timing, blend, alpha-mask, and inline nested-transform slic
 and Story playback below remain a proposal. This is not an `.mtn` parser or a claim that the
 original M2/petal animations are reproduced.
 
-The versioned `PrismatiXMotion` revision-1/2/3/4/5/6/7/8/9 `.pxmotion` contract has an
+The versioned `PrismatiXMotion` revision-1 through revision-10 `.pxmotion` contract has an
 Authoring SDK `defineMotion`/`serializeMotion` helper, matching native parser,
 unique layer/track and hierarchy checks, path checks, deterministic keyed
 sampling, and a `Renderer2D` image-layer drawing adapter. A `MotionRect`
@@ -88,8 +88,10 @@ bitfield-to-rule mapping and rendered-frame equivalence are still unproven.
 Revision 10 accepts an explicit ticks-per-second rate for authored duration,
 layer offsets, track keys, and audio markers. Native playback normalizes all
 four to seconds; `inlineMotion` can compose clips with different rates after
-validating each source. The M2 source rate is still unverified, and this does
-not resolve source-specific paths or composition rules.
+validating each source, while retaining the outer rate in the result. It also
+accepts `atTicks` for a nested start without manual division. The M2 source
+rate is still unverified, and this does not resolve source-specific paths or
+composition rules.
 
 Revision-1 sampling uses a layer's authored property until its first key;
 thereafter each key's curve determines interpolation toward the next key.

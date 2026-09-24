@@ -34,7 +34,7 @@ test("motion helper emits canonical, safe layered animation document", () => {
   assert.equal(parseDocument("motion", serialized.value!).valid, true);
 });
 
-test("tick-based motion uses revision 10 and inline composition normalizes clocks", () => {
+test("tick-based motion preserves the outer clock through repeated inline composition", () => {
   const outer = {
     id: "tick-outer", canvas: {width: 320, height: 180}, duration: 120,
     tickRate: 60, layers: [{id: "anchor", kind: "group" as const,
@@ -55,14 +55,26 @@ test("tick-based motion uses revision 10 and inline composition normalizes clock
   assert.equal(authored.value?.schemaRevision, 10);
   assert.equal(authored.value?.duration, 120);
   assert.equal(parseDocument("motion", serializeMotion(outer).value!).valid, true);
-  const composed = inlineMotion(outer, child, {id: "nested", at: 0.5});
+  const composed = inlineMotion(outer, child, {id: "nested", atTicks: 30});
   assert.equal(composed.valid, true, JSON.stringify(composed.diagnostics));
-  assert.equal(composed.value?.tickRate, undefined);
-  assert.equal(composed.value?.duration, 2);
-  assert.equal(composed.value?.layers[0]?.timeOffset, -0.25);
-  assert.equal(composed.value?.layers[1]?.timeOffset, -0.5);
-  assert.equal(composed.value?.tracks[1]?.keys[1]?.time, 0.5);
-  assert.deepEqual(composed.value?.markers?.map((marker) => marker.time), [0.5, 0.75]);
+  assert.equal(composed.value?.tickRate, 60);
+  assert.equal(composed.value?.schemaRevision, 10);
+  assert.equal(composed.value?.duration, 120);
+  assert.equal(composed.value?.layers[0]?.timeOffset, -15);
+  assert.equal(composed.value?.layers[1]?.timeOffset, -30);
+  assert.equal(composed.value?.tracks[1]?.keys[1]?.time, 30);
+  assert.deepEqual(composed.value?.markers?.map((marker) => marker.time), [30, 45]);
+  const repeated = inlineMotion(composed.value!, child, {id: "again", atTicks: 60});
+  assert.equal(repeated.valid, true, JSON.stringify(repeated.diagnostics));
+  assert.equal(repeated.value?.tickRate, 60);
+  assert.deepEqual(repeated.value?.markers?.map((marker) => marker.time), [30, 45, 75]);
+  const secondsOption = inlineMotion(outer, child, {id: "nested", at: 0.5});
+  assert.equal(secondsOption.valid, true, JSON.stringify(secondsOption.diagnostics));
+  assert.deepEqual(secondsOption.value, composed.value);
+  assert.equal(inlineMotion(outer, child, {id: "bad", at: 0.5, atTicks: 30}).valid, false);
+  const {tickRate: _rate, ...secondsOuter} = outer;
+  assert.equal(inlineMotion(secondsOuter, child, {id: "bad", atTicks: 30}).valid, false);
+  assert.equal(inlineMotion(outer, child, {id: "bad", atTicks: -1}).valid, false);
   assert.equal(defineMotion({...outer, tickRate: 2000}).valid, false);
   assert.equal(inlineMotion({...outer, tickRate: 2000}, child, {id: "bad"}).valid, false);
   assert.equal(defineMotion({...outer, duration: 86401 * 60}).valid, false);
@@ -74,6 +86,9 @@ test("tick-based motion uses revision 10 and inline composition normalizes clock
     schemaRevision: 9, tickRate: undefined, duration: 86401}).valid, false);
   assert.equal(validateDocument("motion", {...authored.value, schemaRevision: 9}).valid, false);
   assert.equal(validateDocument("motion", {...authored.value, tickRate: undefined}).valid, false);
+  assert.equal(defineMotion({id: "tiny", canvas: outer.canvas,
+    duration: 1e-9, tickRate: 0.001,
+    layers: [{id: "anchor", kind: "group"}]}).valid, true);
 });
 
 test("motion validation rejects cycles, duplicate tracks, unsafe paths, and wrong key types", () => {

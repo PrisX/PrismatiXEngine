@@ -350,6 +350,18 @@ int main() {
         legacyDuration["duration"] = 86401;
         suite.Expect(!px::sdk::ParseMotion(legacyDuration.dump()).Valid(),
                      "old revisions retain their seconds-based duration limit");
+        auto fractionalTick = nlohmann::json::parse(source);
+        fractionalTick["duration"] = 0.000000001;
+        fractionalTick["tickRate"] = 0.001;
+        fractionalTick["tracks"] = nlohmann::json::array();
+        fractionalTick.erase("markers");
+        const auto tiny = px::sdk::ParseMotion(fractionalTick.dump());
+        suite.Require(tiny.Valid(), "fractional ticks normalize before the minimum duration check");
+        suite.Expect(std::abs(tiny.clip->duration - 0.000001) < 0.000000000001,
+                     "fractional tick duration matches Authoring semantics");
+        fractionalTick["duration"] = 0.0000000005;
+        suite.Expect(!px::sdk::ParseMotion(fractionalTick.dump()).Valid(),
+                     "normalized duration below one microsecond is rejected");
     });
 
     suite.Run("MotionClip_RgbTintInterpolatesAndInheritsIndependentlyOfAlpha", [&] {

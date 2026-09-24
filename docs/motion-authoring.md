@@ -105,11 +105,14 @@ const tickMotion = serializeMotion({
 });
 ```
 
-`inlineMotion` accepts clips with different `tickRate` values, checks each
-original document first, then returns a seconds-based composed clip. Its
-`at` option is always in the parent's local **seconds**, not ticks; `speed`
-is unitless. The M2 `.mtn` tick rate has not yet been verified here, so the
-value 60 above is an example, not a claim about M2.
+`inlineMotion` accepts clips with different `tickRate` values and checks each
+original document first. It keeps the **outer** clip's tick rate in the
+composed result, so repeated nesting does not require a new unit conversion;
+seconds-based outer clips remain seconds-based. Its `at` option is always in
+the parent's local **seconds**; `atTicks` is an alternative in the outer
+clip's authored ticks and requires `tickRate`. Supplying both is an error.
+`speed` is unitless. The M2 `.mtn` tick rate has not yet been verified here,
+so the value 60 above is an example, not a claim about M2.
 
 ```tsx
 import {Motion, Scene} from "@prismatix/authoring-sdk";

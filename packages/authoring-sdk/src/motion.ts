@@ -255,6 +255,8 @@ export interface InlineMotionOptions {
   readonly parent?: string;
   /** Start position in the parent's local seconds, even for tick-based clips. */
   readonly at?: number;
+  /** Alternative start position in the outer clip's authored ticks. Requires tickRate. */
+  readonly atTicks?: number;
   /** Child playback speed relative to the parent's local clock. */
   readonly speed?: number;
   /** Explicitly permit a child to start before or finish after the outer clip. */
@@ -303,6 +305,17 @@ export function inlineMotion(outer: MotionInput, child: MotionInput,
       }))}),
     };
   };
+  const toTicks = (input: MotionInput, rate: number): MotionInput => ({
+    ...input, tickRate: rate, duration: input.duration * rate,
+    layers: input.layers.map((layer) => layer.timeOffset === undefined ? layer :
+      {...layer, timeOffset: layer.timeOffset * rate}),
+    ...(input.tracks === undefined ? {} : {tracks: input.tracks.map((track) => ({
+      ...track, keys: track.keys.map((key) => ({...key, time: key.time * rate})),
+    })) as MotionTrack[]}),
+    ...(input.markers === undefined ? {} : {markers: input.markers.map((marker) => ({
+      ...marker, time: marker.time * rate,
+    }))}),
+  });
   const emptyOuter = outer.layers.length === 0;
   const authoredBase = defineMotion(emptyOuter ? {...outer, layers: [
     {id: "inline-placeholder", kind: "group"},
@@ -317,7 +330,12 @@ export function inlineMotion(outer: MotionInput, child: MotionInput,
   if (!nested.valid || nested.value === undefined) return nested;
   if (nested.value.loop) return error("PXMOTION2001",
     "A looping child clip cannot be inlined because local group time does not repeat");
-  const at = options.at ?? 0;
+  if (options.at !== undefined && options.atTicks !== undefined)
+    return error("PXMOTION2006", "Inline motion accepts at or atTicks, not both");
+  if (options.atTicks !== undefined && outer.tickRate === undefined)
+    return error("PXMOTION2006", "Inline motion atTicks requires an outer tickRate");
+  const at = options.atTicks === undefined ? (options.at ?? 0) :
+    options.atTicks / outer.tickRate!;
   const speed = options.speed ?? 1;
   if (!Number.isFinite(at) || at < 0 || !Number.isFinite(speed) || speed <= 0)
     return error("PXMOTION2002", "Inline motion requires at >= 0 and speed > 0");
@@ -402,7 +420,7 @@ export function inlineMotion(outer: MotionInput, child: MotionInput,
     })).filter((marker) => !options.allowTruncate ||
       (marker.time >= 0 && marker.time <= outerDuration));
   }
-  return defineMotion({
+  const composed = defineMotion({
     id: base.value.id, canvas: base.value.canvas, duration: base.value.duration,
     loop: base.value.loop,
     ...(base.value.scaleMode === undefined ? {} :
@@ -412,4 +430,7 @@ export function inlineMotion(outer: MotionInput, child: MotionInput,
     markers: [...(base.value.markers ?? []), ...markers]
       .sort((left, right) => left.time - right.time),
   });
+  if (!composed.valid || composed.value === undefined || outer.tickRate === undefined)
+    return composed;
+  return defineMotion(toTicks(composed.value, outer.tickRate));
 }
