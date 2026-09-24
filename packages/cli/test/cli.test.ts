@@ -651,15 +651,33 @@ test("bounded parallel resource copy preserves every file and rebuilds changed m
   };
   assert.equal(inputs.every((path) => /^[0-9a-f]{64}$/u.test(before.files[path] ?? "")),
     true);
-  await write(join(value.root, ...inputs[9]!.split("/")), "changed-media");
+  const copyEvent = (output: string) => output.split(/\r?\n/u).filter(Boolean)
+    .map((line) => JSON.parse(line) as {phase?: string; done?: boolean;
+      reusedFiles?: number; reusedBytes?: number})
+    .find((event) => event.phase === "copy" && event.done);
+  const unchanged = run(["build", value.project, "--artifact-only", "--output", output]);
+  assert.equal(unchanged.status, 0, unchanged.stderr);
+  assert.equal(copyEvent(unchanged.stderr)?.reusedFiles, inputs.length,
+    "ordinary artifact rebuild reuses unchanged media, not just dev preview");
+  const retainedPath = join(output, ...inputs[0]!.split("/"));
+  await write(retainedPath, "tampered-0");
+  const refused = run(["build", value.project, "--artifact-only", "--output", output]);
+  assert.equal(refused.status, 1,
+    "a changed old artifact cannot be promoted merely because its marker matches the source");
+  assert.equal(await readFile(retainedPath, "utf8"), "tampered-0",
+    "failed publication preserves the existing directory");
+  await write(retainedPath, "original-0");
+  await write(join(value.root, ...inputs[9]!.split("/")), "modified-9");
   const rebuilt = run(["build", value.project, "--artifact-only", "--output", output]);
   assert.equal(rebuilt.status, 0, rebuilt.stderr);
+  assert.equal(copyEvent(rebuilt.stderr)?.reusedFiles, inputs.length - 1,
+    "equal-sized changed media must be recopied after a content-hash check");
   const after = JSON.parse(await readFile(markerPath, "utf8")) as {
     files: Record<string, string>;
   };
   assert.notEqual(after.files[inputs[9]!], before.files[inputs[9]!]);
   assert.equal(await readFile(join(output, ...inputs[9]!.split("/")), "utf8"),
-    "changed-media");
+    "modified-9");
 });
 
 test("validate reports catalog entries already covered by an included media directory", async () => {
@@ -724,6 +742,8 @@ test("artifact build reports load, compile, copy and fingerprint progress", asyn
   const rebuilt = run(["build", value.project, "--artifact-only", "--output", output]);
   assert.equal(rebuilt.status, 0, rebuilt.stderr);
   assert.doesNotMatch(rebuilt.stderr, /"phase":"verify-existing"/u);
+  assert.doesNotMatch(rebuilt.stderr, /"phase":"verify-reuse-source"/u,
+    "the destination integrity scan also validates linked reuse from that destination");
   assert.match(rebuilt.stderr, /"phase":"verify-before-publish"/u);
 });
 

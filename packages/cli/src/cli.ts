@@ -996,15 +996,16 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
   buildProgress("compile", 1, 1, 0, true);
   const output = resolve(outputArgument ?? join(loaded.root, ".prismatix", "build"));
   let reuse: ReusableArtifactInputs | undefined;
-  if (previousBuild !== undefined) {
+  const reuseRoot = previousBuild?.output ?? output;
+  if (existsSync(reuseRoot)) {
     try {
-      const inputs = await publishedInputs(previousBuild.output);
-      reuse = {root: previousBuild.output,
+      const inputs = await publishedInputs(reuseRoot);
+      reuse = {root: reuseRoot,
         byUri: new Map(inputs.map((input) => [input.uri, input]))};
     } catch (error) {
       printDiagnostics([{severity: "warning", code: "PXCLI1610",
-        message: "Previous preview artifact cannot be reused; copying source resources",
-        path: previousBuild.output, hint: String(error)}]);
+        message: "Previous artifact cannot be reused; copying source resources",
+        path: reuseRoot, hint: String(error)}]);
     }
   }
   let reused: {readonly files: number; readonly bytes: number} = {files: 0, bytes: 0};
@@ -1013,7 +1014,10 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
   await publishDirectory({output, projectRoot: loaded.root,
     verifyExistingBeforeBuild: false,
     beforePromotion: async () => {
-      if (reuse !== undefined && reused.files > 0)
+      // publishDirectory checks the destination immediately after this hook.
+      // When it is also the reuse source, another full hash here would read
+      // multi-GiB media twice without strengthening the publication boundary.
+      if (reuse !== undefined && reused.files > 0 && resolve(reuse.root) !== output)
         await verifiedPublishedInputs(reuse.root,
           (value) => buildProgress(value.phase, value.files, undefined,
             value.bytes, value.done));
