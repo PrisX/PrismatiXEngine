@@ -224,6 +224,33 @@ int main() {
                         std::cerr << "FAIL: atlas motion frame regions did not change rendered pixels\n";
                         result = 1;
                     }
+                    const auto externalPivot = px::sdk::ParseMotion(R"({
+                      "format":"PrismatiXMotion","schemaRevision":11,"id":"external-pivot",
+                      "canvas":{"width":640,"height":360},"duration":1,"loop":false,
+                      "layers":[{"id":"mark","image":"Assets/atlas.bmp",
+                        "width":60,"height":60,"x":300,"y":150,
+                        "anchorX":0.5,"anchorY":-0.5,"frames":[
+                          {"x":0,"y":0,"width":1,"height":1}]}],
+                      "tracks":[]})");
+                    if (!externalPivot.Valid()) {
+                        std::cerr << "FAIL: revision-11 external pivot render fixture parse\n";
+                        result = 1;
+                    } else {
+                        px::sdk::MotionSampler pivotSampler(*externalPivot.clip);
+                        pivotSampler.Seek(0);
+                        ClearFrame(device.Renderer());
+                        px::animation::DrawMotionPose(atlasRenderer, *externalPivot.clip,
+                                                      pivotSampler, {0, 0, 640, 360});
+                        SDL_Surface* pixels = SDL_RenderReadPixels(
+                            device.Renderer(), nullptr);
+                        const auto above = ReadLogicalPixel(pixels, 300, 140, 640, 360);
+                        const auto below = ReadLogicalPixel(pixels, 300, 200, 640, 360);
+                        if (pixels) SDL_DestroySurface(pixels);
+                        if (above.r > 40 || below.r < 180 || below.b > 70) {
+                            std::cerr << "FAIL: external pivot did not move drawn image below anchor\n";
+                            result = 1;
+                        }
+                    }
                     const auto nested = px::sdk::ParseMotion(R"({
                       "format":"PrismatiXMotion","schemaRevision":7,"id":"nested",
                       "canvas":{"width":640,"height":360},"duration":1,"loop":false,

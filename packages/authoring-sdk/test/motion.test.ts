@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {defineMotion, inlineMotion, parseDocument, serializeMotion,
-  validateDocument} from "../src/index.js";
+  validateDocument, withPixelPivot} from "../src/index.js";
 
 const input = {
   id: "m2-reveal",
@@ -116,6 +116,28 @@ test("external image pivots select revision 11 without forcing tick timing", () 
   assert.equal(composed.value?.schemaRevision, 11);
   assert.equal(composed.value?.tickRate, 60);
   assert.equal(composed.value?.layers[2]?.anchorY, -1 / 3);
+});
+
+test("pixel pivot authoring normalizes external image geometry without changing source semantics", () => {
+  const layer = withPixelPivot({id: "glyph", image: "Assets/Motion/glyph.png",
+    width: 16, height: 3, x: 50, y: 40}, 8, -1);
+  assert.equal(layer.anchorX, 0.5);
+  assert.equal(layer.anchorY, -1 / 3);
+  const authored = defineMotion({id: "pixel-pivot", canvas: {width: 100, height: 100},
+    duration: 1, layers: [layer]});
+  assert.equal(authored.valid, true, JSON.stringify(authored.diagnostics));
+  assert.equal(authored.value?.schemaRevision, 11);
+  assert.deepEqual(authored.value?.layers[0], {
+    id: "glyph", z: 0, anchorX: 0.5, anchorY: -1 / 3,
+    x: 50, y: 40, scaleX: 1, scaleY: 1, rotation: 0, opacity: 1,
+    visible: true, image: "Assets/Motion/glyph.png", width: 16, height: 3,
+  });
+  assert.throws(() => withPixelPivot({...layer, width: 0}, 8, -1),
+    /positive finite image dimensions/u);
+  assert.throws(() => withPixelPivot(layer, 8, -1),
+    /cannot be combined with normalized anchorX/u);
+  assert.throws(() => withPixelPivot({id: "bad", image: "Assets/Motion/glyph.png",
+    width: 16, height: 3}, Number.NaN, 0), /finite coordinates/u);
 });
 
 test("motion validation rejects cycles, duplicate tracks, unsafe paths, and wrong key types", () => {

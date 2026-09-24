@@ -60,6 +60,22 @@ export interface MotionGroupLayer extends MotionLayerBase {
 
 export type MotionLayer = MotionImageLayer | MotionGroupLayer;
 
+/** Place an image layer's pivot at a pixel coordinate, including a point
+ * outside the image. The returned canonical layer uses normalized anchors.
+ * This is geometry authoring only; it does not interpret any source format's
+ * origin convention. */
+export function withPixelPivot(layer: MotionImageLayer,
+  pixelX: number, pixelY: number): MotionImageLayer {
+  if (!Number.isFinite(layer.width) || layer.width <= 0 ||
+      !Number.isFinite(layer.height) || layer.height <= 0 ||
+      !Number.isFinite(pixelX) || !Number.isFinite(pixelY))
+    throw new RangeError("Pixel pivot requires positive finite image dimensions and finite coordinates");
+  if (layer.anchorX !== undefined || layer.anchorY !== undefined)
+    throw new TypeError("Pixel pivot cannot be combined with normalized anchorX or anchorY");
+  return {...layer, anchorX: pixelX / layer.width,
+    anchorY: pixelY / layer.height};
+}
+
 export interface MotionFrame {
   readonly x: number;
   readonly y: number;

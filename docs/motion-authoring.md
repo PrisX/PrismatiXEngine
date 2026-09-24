@@ -123,6 +123,23 @@ so the value 60 above is an example, not a claim about M2.
 For example, `anchorY: -1 / 3` places the pivot one pixel above a three-pixel-
 high image; the layer's `x` and `y` specify where that pivot is placed. This
 describes the `.pxmotion` transform only, not a conversion rule for `.mtn`.
+`withPixelPivot` performs that geometry conversion when an author knows the
+intended pivot in image pixels, and rejects invalid dimensions or conflicting
+normalized anchors:
+
+```ts
+import {withPixelPivot} from "@prismatix/authoring-sdk";
+
+const glyph = withPixelPivot({
+  id: "glyph", image: "Assets/Motion/glyph.png",
+  width: 16, height: 3, x: 500, y: 300,
+}, 8, -1);
+// glyph.anchorX === 0.5; glyph.anchorY === -1 / 3
+```
+
+The helper is authoring-only: saved `.pxmotion` retains canonical normalized
+anchors. It does not know whether another format's `origin` uses this pivot
+convention.
 
 ```tsx
 import {Motion, Scene} from "@prismatix/authoring-sdk";
