@@ -1970,6 +1970,49 @@ export const contractSchemas: Readonly<Record<string, object>> = {
     "$id": "https://prismatix.dev/contracts/portrait.schema.json",
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
+    "allOf": [
+      {
+        "else": {
+          "properties": {
+            "layers": {
+              "items": {
+                "properties": {
+                  "role": true
+                },
+                "required": [
+                  "role"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "if": {
+          "properties": {
+            "schemaRevision": {
+              "const": 1
+            }
+          },
+          "type": "object"
+        },
+        "then": {
+          "properties": {
+            "layers": {
+              "items": {
+                "properties": {
+                  "role": false
+                },
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        }
+      }
+    ],
     "properties": {
       "format": {
         "const": "PrismatiXLayeredPortrait"
@@ -1995,6 +2038,12 @@ export const contractSchemas: Readonly<Record<string, object>> = {
             },
             "path": {
               "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/safePath"
+            },
+            "role": {
+              "enum": [
+                "base",
+                "expression"
+              ]
             },
             "width": {
               "exclusiveMinimum": 0,
@@ -2024,7 +2073,10 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         "type": "array"
       },
       "schemaRevision": {
-        "const": 1
+        "enum": [
+          1,
+          2
+        ]
       },
       "width": {
         "exclusiveMinimum": 0,
@@ -4345,7 +4397,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "game.schema.json": "d31e583ebdfa1503b8cb77e20d2773fb8e289c7677ad4f59dd66087f8967cc92",
   "locale.schema.json": "b8f6009219c6cad7fa6130af6d710af11cabcf85bf2e0039f1fdd3c08e2bbf9f",
   "motion.schema.json": "2f1140cdcc6bae3a903ca413b02f481adc7a18e9ecf00241c2d39025fc3316e0",
-  "portrait.schema.json": "23235204cea30d1f9bf49f810f896364b910ce2f74e46f28bc7381dc5da0a6fe",
+  "portrait.schema.json": "658421c74dacc9d8247b64c6a00389c069b7516f57f863f399160161a1207f16",
   "project.schema.json": "937ef02098a0f720d5154b2300c7ddbdc60ef69fd2410337b483de7bc5a3390e",
   "runtime-ir.schema.json": "04c51fc94dc46b500d78877d29dba1dffe1f41619211af24e48cf48699bf0836",
   "save-migration.schema.json": "fd9f89119a4e8a70324f95bb6e0261e5d78b0ea173e2755422c36e5e2379b6cf",

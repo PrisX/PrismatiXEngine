@@ -663,8 +663,11 @@ void VM::ExecuteSimple(const Command& cmd) {
         const float ox = ParseFloat(cmd.Get("x"), 0.0f);
         const float oy = ParseFloat(cmd.Get("y"), 0.0f);
         const float scale = ParseFloat(cmd.Get("scale", cmd.Get("zoom")), 1.0f);
-        m_stage.SetCharacter(name, Resolve(m_config.charDir, file), slot, TruthyFlag(cmd), ox, oy,
-                             scale);
+        const auto imagePath=Resolve(m_config.charDir, file);
+        if(cmd.Get("transitionMode")=="auto")
+            m_stage.SetCharacterAuto(name,imagePath,slot,ox,oy,scale);
+        else
+            m_stage.SetCharacter(name,imagePath,slot,TruthyFlag(cmd),ox,oy,scale);
         return;
     }
     if (t == "char_clear") {

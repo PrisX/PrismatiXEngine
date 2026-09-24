@@ -425,6 +425,8 @@ int main() {
         Operation("all-choice", "choiceOption", {{"text", "Continue"}, {"target", "end"}}),
         Operation("all-background", "background", {{"asset", "bg.png"}}),
         Operation("all-show", "showCharacter", {{"character", "hero"}, {"sprite", "hero.png"}}),
+        Operation("all-show-auto", "showCharacter", {{"character", "hero"},
+            {"sprite", "hero-expression.pxportrait"}, {"transition", "auto"}}),
         Operation("all-hide", "hideCharacter", {{"character", "hero"}}),
         Operation("all-hide-characters", "hideCharacters", {{"transition", "false"}}),
         Operation("all-voice", "voice", {{"asset", "voice.ogg"}}),
@@ -476,6 +478,10 @@ int main() {
     assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
         return command.type == "ambience" && command.Get("loop") == "false" &&
                command.Get("fade") == "50";
+    }));
+    assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
+        return command.type == "char" && command.Get("transitionMode") == "auto" &&
+               !command.Has("transition");
     }));
     assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
         return command.type == "char_clear_all" && command.Get("transition") == "false";

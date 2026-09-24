@@ -6,6 +6,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -136,6 +137,33 @@ int main() {
         suite.Require(writePortrait("old.pxportrait", "old-face.bmp") &&
                           writePortrait("new.pxportrait", "new-face.bmp"),
                       "layered portrait descriptors are available");
+        suite.Require(SaveSolidBmp(fixture.path / "other-body.bmp", 16, 16,
+                                   {60, 40, 180, 255}),
+                      "alternate body is available");
+        const auto writeTaggedPortrait = [&](const char* name, const char* body,
+                                             const char* face, const char* faceRole) {
+            std::ofstream output(fixture.path / name, std::ios::binary);
+            output << "{\"format\":\"PrismatiXLayeredPortrait\","
+                   << "\"schemaRevision\":2,\"width\":16,\"height\":16,"
+                   << "\"layers\":["
+                   << "{\"path\":\"" << body
+                   << "\",\"width\":16,\"height\":16,\"role\":\"base\"},"
+                   << "{\"path\":\"" << face
+                   << "\",\"width\":8,\"height\":8,\"role\":\""
+                   << faceRole << "\"},"
+                   << "{\"path\":\"ornament.bmp\",\"x\":10,"
+                   << "\"width\":4,\"height\":4,\"role\":\"base\"}]}";
+            return static_cast<bool>(output);
+        };
+        suite.Require(writeTaggedPortrait("tag-old.pxportrait", "body.bmp",
+                                          "old-face.bmp", "expression") &&
+                          writeTaggedPortrait("tag-new.pxportrait", "body.bmp",
+                                              "new-face.bmp", "expression") &&
+                          writeTaggedPortrait("tag-pose.pxportrait", "other-body.bmp",
+                                              "new-face.bmp", "expression") &&
+                          writeTaggedPortrait("tag-base-face.pxportrait", "body.bmp",
+                                              "new-face.bmp", "base"),
+                      "revision-2 portrait roles are available");
         SDL_Surface* surface = SDL_CreateSurface(64, 64, SDL_PIXELFORMAT_RGBA32);
         suite.Require(surface != nullptr, "portrait surface initializes");
         SDL_Renderer* native = SDL_CreateSoftwareRenderer(surface);
@@ -184,6 +212,34 @@ int main() {
             suite.Expect(pose.size() == 1 && pose.front().alpha == 255.0f &&
                              pose.front().previousImagePath.empty(),
                          "instant pose replacement cancels an in-progress expression fade");
+            stage.SetCharacterAuto("hero", "tag-old.pxportrait", 2);
+            stage.SetCharacterAuto("hero", "tag-new.pxportrait", 2);
+            const auto autoFace = stage.CaptureState().actors;
+            suite.Expect(autoFace.size() == 1 &&
+                             autoFace.front().previousImagePath ==
+                                 "tag-old.pxportrait" &&
+                             autoFace.front().alpha == 0.0f,
+                         "auto mode crossfades only a changed expression layer");
+            stage.SetCharacterAuto("hero", "tag-pose.pxportrait", 2);
+            const auto autoPose = stage.CaptureState().actors;
+            suite.Expect(autoPose.size() == 1 &&
+                             autoPose.front().previousImagePath.empty() &&
+                             autoPose.front().alpha == 255.0f,
+                         "auto mode snaps a changed body instead of fading it");
+            stage.SetCharacterAuto("hero", "tag-old.pxportrait", 2);
+            stage.SetCharacterAuto("hero", "tag-base-face.pxportrait", 2);
+            const auto wrongRole = stage.CaptureState().actors;
+            suite.Expect(wrongRole.size() == 1 &&
+                             wrongRole.front().previousImagePath.empty(),
+                         "auto mode never fades changes to base-role layers");
+            stage.SetCharacterAuto("hero", "old.pxportrait", 2);
+            suite.Expect(stage.CaptureState().actors.front().previousImagePath.empty(),
+                         "legacy portraits remain usable and snap in auto mode");
+            stage.SetCharacterAuto("newcomer", "tag-old.pxportrait", 2);
+            const auto newcomer = stage.CaptureState().actors;
+            suite.Expect(std::ranges::any_of(newcomer, [](const auto& actor) {
+                return actor.name == "newcomer" && actor.alpha == 0.0f;
+            }), "new actors keep the ordinary entrance fade in auto mode");
         }
         SDL_DestroyRenderer(native);
         SDL_DestroySurface(surface);

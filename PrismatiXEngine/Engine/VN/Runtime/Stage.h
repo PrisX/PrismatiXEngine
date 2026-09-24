@@ -113,6 +113,11 @@ public:
     void SetCharacter(const std::string& name, const std::string& imagePath, int slot,
                       bool transition = true, float offsetX = 0.0f, float offsetY = 0.0f,
                       float scale = 1.0f);
+    // Revision-2 portrait roles limit automatic replacement fades to facial
+    // expression layers; new actors retain the ordinary entrance transition.
+    void SetCharacterAuto(const std::string& name, const std::string& imagePath, int slot,
+                          float offsetX = 0.0f, float offsetY = 0.0f,
+                          float scale = 1.0f);
     void ClearCharacter(const std::string& name, bool transition = true);
     // Clears character actors without resetting the rest of the stage.
     void ClearCharacters(bool transition = true);
@@ -221,14 +226,17 @@ public:
 
 private:
     struct PortraitLayer {
+        enum class Role : std::uint8_t { Legacy, Base, Expression };
         std::string path;
         float x = 0.0f;
         float y = 0.0f;
         float width = 0.0f;
         float height = 0.0f;
         std::uint8_t opacity = 255;
+        Role role = Role::Legacy;
     };
     struct LayeredPortrait {
+        int schemaRevision = 1;
         float width = 0.0f;
         float height = 0.0f;
         std::vector<PortraitLayer> layers;

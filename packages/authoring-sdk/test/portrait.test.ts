@@ -40,3 +40,22 @@ test("portrait contract rejects layers that Stage would skip or cannot load", ()
   assert.ok(nested.diagnostics.some((diagnostic) =>
     diagnostic.code === "PXSDKSEM1350"));
 });
+
+test("portrait expression roles select revision 2 without weakening legacy files", () => {
+  const input = {width: 320, height: 600, layers: [
+    {path: "Assets/Characters/body.png", width: 320, height: 600,
+      role: "base" as const},
+    {path: "Assets/Characters/face.png", width: 90, height: 60,
+      role: "expression" as const},
+  ]};
+  const defined = defineLayeredPortrait(input);
+  assert.equal(defined.valid, true, JSON.stringify(defined.diagnostics));
+  assert.equal(defined.value?.schemaRevision, 2);
+  assert.equal(validateDocument("portrait", {...defined.value,
+    schemaRevision: 1}).valid, false);
+  assert.equal(defineLayeredPortrait({...input, layers: [input.layers[0]!,
+    {path: "Assets/Characters/face.png", width: 90, height: 60}]}).valid, false);
+  assert.equal(validateDocument("portrait", {...defined.value,
+    layers: [{...defined.value!.layers[0]!, role: "outfit"},
+      defined.value!.layers[1]!]}).valid, false);
+});

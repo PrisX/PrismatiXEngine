@@ -75,19 +75,41 @@ const Stage::LayeredPortrait* Stage::ResolveLayeredPortrait(
         : nlohmann::json{};
     if(!text||document.is_discarded()||!document.is_object()||
        document.value("format",std::string{})!="PrismatiXLayeredPortrait"||
-       document.value("schemaRevision",0)!=1||
+       (document.value("schemaRevision",0)!=1 &&
+        document.value("schemaRevision",0)!=2)||
        !document.contains("layers")||!document["layers"].is_array()){
         m_invalidLayeredPortraits[path]=true;
         PX_LOG_WARN("Stage: invalid layered portrait descriptor '{}'",path);
         return nullptr;
     }
     LayeredPortrait portrait;
+    portrait.schemaRevision=document.value("schemaRevision",1);
     portrait.width=document.value("width",0.0f);
     portrait.height=document.value("height",0.0f);
     for(const auto& value:document["layers"]){
         if(!value.is_object()||!value.contains("path")||
            !value["path"].is_string())continue;
         PortraitLayer layer;
+        const auto role=value.find("role");
+        if(portrait.schemaRevision==2){
+            if(role==value.end()||!role->is_string()){
+                m_invalidLayeredPortraits[path]=true;
+                PX_LOG_WARN("Stage: revision-2 portrait layer lacks a role '{}'",path);
+                return nullptr;
+            }
+            const auto name=role->get<std::string>();
+            if(name=="base")layer.role=PortraitLayer::Role::Base;
+            else if(name=="expression")layer.role=PortraitLayer::Role::Expression;
+            else{
+                m_invalidLayeredPortraits[path]=true;
+                PX_LOG_WARN("Stage: revision-2 portrait layer has invalid role '{}'",path);
+                return nullptr;
+            }
+        }else if(role!=value.end()){
+            m_invalidLayeredPortraits[path]=true;
+            PX_LOG_WARN("Stage: revision-1 portrait cannot declare roles '{}'",path);
+            return nullptr;
+        }
         layer.path=value["path"].get<std::string>();
         layer.x=value.value("x",0.0f);
         layer.y=value.value("y",0.0f);
@@ -737,6 +759,40 @@ void Stage::SetCharacter(const std::string& name, const std::string& imagePath, 
         actor.prevImagePath.clear();
         actor.prevAlpha = 0.0f;
     }
+}
+
+void Stage::SetCharacterAuto(const std::string& name, const std::string& imagePath,
+                             const int slot, const float offsetX, const float offsetY,
+                             const float scale) {
+    if(name.empty())return;
+    const auto found=m_actors.find(name);
+    bool transition=found==m_actors.end()||found->second.imagePath.empty();
+    if(!transition && found->second.imagePath!=imagePath){
+        const auto* previous=ResolveLayeredPortrait(found->second.imagePath);
+        const auto* current=ResolveLayeredPortrait(imagePath);
+        if(previous && current && previous->schemaRevision==2 &&
+           current->schemaRevision==2 && previous->width==current->width &&
+           previous->height==current->height &&
+           previous->layers.size()==current->layers.size()){
+            bool hasBase=false;
+            bool changedExpression=false;
+            bool compatible=true;
+            for(std::size_t index=0;index<previous->layers.size();++index){
+                const auto& left=previous->layers[index];
+                const auto& right=current->layers[index];
+                if(left.role!=right.role){compatible=false;break;}
+                const bool unchanged=left.path==right.path && left.x==right.x &&
+                    left.y==right.y && left.width==right.width &&
+                    left.height==right.height && left.opacity==right.opacity;
+                if(left.role==PortraitLayer::Role::Base){
+                    hasBase=true;
+                    if(!unchanged){compatible=false;break;}
+                }else if(!unchanged)changedExpression=true;
+            }
+            transition=compatible && hasBase && changedExpression;
+        }
+    }
+    SetCharacter(name,imagePath,slot,transition,offsetX,offsetY,scale);
 }
 
 void Stage::ClearCharacter(const std::string& name, bool transition) {

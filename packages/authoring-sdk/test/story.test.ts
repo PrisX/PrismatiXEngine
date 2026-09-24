@@ -378,6 +378,11 @@ test("show accepts a path-first sprite without a character catalog", () => {
     character:"yoshino", sprite:"Assets/Characters/yoshino.png", position:"2", y:"24", scale:"0.65", transition:"false",
   }]);
   assert.deepEqual(compiled.resourceDependencies, ["Assets/Characters/yoshino.png"]);
+  const automatic = compileStory(parseStory(
+    "[show character=yoshino asset=Assets/Characters/yoshino.pxportrait transition=auto]\n",
+    "Story/auto-expression.pxstory"), {documentId:"auto-expression"});
+  assert.equal(automatic.valid, true, JSON.stringify(automatic.diagnostics));
+  assert.equal(automatic.runtimeIr?.operations[0]?.arguments.transition, "auto");
   const invalid = compileStory(parseStory("[show character=yoshino transition=maybe]\n", "Story/invalid-show.pxstory"), {documentId:"invalid-show"});
   assert.equal(invalid.valid, false);
   assert.ok(invalid.diagnostics.some((diagnostic) => diagnostic.code === "PXSTORY1145"));

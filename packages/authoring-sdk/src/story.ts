@@ -525,12 +525,12 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
           const position = characterPosition(authoredPosition);
           const transition = named("transition");
           if (authoredPosition !== undefined && position === undefined) diagnostics.push(error("PXSTORY1128", `Unknown character position: ${authoredPosition}; expected left, center, right, 1, 2, or 3`, node.span));
-          if (transition !== undefined && transition !== "true" && transition !== "false") diagnostics.push(error("PXSTORY1145", "show transition must be true or false", node.span));
+          if (transition !== undefined && transition !== "true" && transition !== "false" && transition !== "auto") diagnostics.push(error("PXSTORY1145", "show transition must be true, false, or auto", node.span));
           const sprite = authoredAsset === undefined
             ? (expression === undefined ? undefined : `asset:${expression.assetId}`)
             : resolveResource(node, authoredAsset);
           if ((authoredAsset === undefined || sprite !== undefined) &&
-              (transition === undefined || transition === "true" || transition === "false")) {
+              (transition === undefined || transition === "true" || transition === "false" || transition === "auto")) {
             emit(node, "showCharacter", {
               character: character?.id ?? alias,
               ...(expression === undefined ? {} : {expression: expression.id}),
@@ -809,6 +809,7 @@ export function storyCommandCompletions(extensions: readonly ExtensionCommand[] 
       {name:"character", required:true}, {name:"expression", required:false}, {name:"asset", required:false},
       {name:"position", required:false, values:["left", "center", "right"]},
       {name:"x", required:false}, {name:"y", required:false}, {name:"scale", required:false},
+      {name:"transition", required:false, values:[true, false, "auto"]},
     ],
     move: [
       {name:"character", required:true},
