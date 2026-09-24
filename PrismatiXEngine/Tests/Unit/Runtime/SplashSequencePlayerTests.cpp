@@ -1,6 +1,7 @@
 #include "Engine/SDK/Ui.h"
 #include "Engine/UI/Startup/SplashSequencePlayer.h"
 #include "Engine/UI/UITypeRegistry.h"
+#include "Engine/UI/UiApplication.h"
 #include "Engine/UI/Widgets.h"
 #include "Tests/TestSupport/TestHarness.h"
 
@@ -248,6 +249,38 @@ int main() {
         motion->Update(0.5f);
         suite.Expect(played == std::vector<std::string>{"Assets/Audio/pop.ogg"},
                      "splash motion marker is delivered to the audio service");
+    });
+
+    suite.Run("SpriteText_GlyphImagesArePreloadedAndValidated", [&] {
+        auto scene = Scene("sprite-text", false);
+        scene.nodes[1].runtimeType = "SpriteText";
+        scene.nodes[1].kind = px::sdk::UiNodeKind::Image;
+        scene.nodes[1].runtimeProperties.emplace("text", std::string{"1-"});
+        scene.nodes[1].runtimeProperties.emplace("advance", 24.0);
+        scene.nodes[1].runtimeProperties.emplace("glyphs", px::sdk::UiArrayValue{R"([
+          {"character":"1","path":"Assets/Glyph/one.png","x":0,"y":2,"width":18,"height":30},
+          {"character":"-","path":"Assets/Glyph/dash.png","x":1,"y":3,"width":19,"height":10}
+        ])"});
+        const auto dependencies = px::ui::CollectUiImageDependencies(scene);
+        suite.Expect(dependencies && dependencies.Value() ==
+                         std::vector<std::string>{"Assets/Glyph/one.png", "Assets/Glyph/dash.png"},
+                     "one SpriteText node preloads every possible glyph image");
+        px::ui::UIContext context;
+        px::ui::UiApplication application(context);
+        const auto applied = application.ApplyDocument(scene);
+        suite.Require(static_cast<bool>(applied), "SpriteText applies through the shared UI path");
+        auto* sprite = dynamic_cast<px::ui::SpriteText*>(
+            context.Root()->Find(*px::Uuid::Parse(scene.nodes[1].id)));
+        suite.Require(sprite != nullptr, "SpriteText creates a typed runtime control");
+        suite.Expect(sprite->Text() == "1-" && sprite->Glyphs().size() == 2 &&
+                         sprite->Advance() == 24,
+                     "SpriteText glyph data and spacing reach the runtime");
+        auto invalid = scene;
+        invalid.nodes[1].runtimeProperties["glyphs"] = px::sdk::UiArrayValue{R"([
+          {"character":"1","path":"../outside.png","x":0,"y":2,"width":18,"height":30}
+        ])"};
+        suite.Expect(!application.ApplyDocument(invalid),
+                     "unsafe SpriteText glyph paths fail before replacing the live UI");
     });
 
     suite.Run("CompletionPreload_HoldsFinalSplashUntilTitleIsReady", [&] {

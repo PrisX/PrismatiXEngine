@@ -71,6 +71,11 @@ bool UpdateChapterBanner(Control* root, std::string_view title) {
             return (value >= '0' && value <= '9') || value == '-';
         });
     banner->SetVisibility(visible ? Visibility::Visible : Visibility::Collapsed);
+    if (auto* sprite = FindNamed<SpriteText>(banner, "ChapterNumber")) {
+        sprite->SetText(visible ? std::string(number) : std::string{});
+        return visible;
+    }
+    // Older authored HUDs use one hidden TextureRect per character and slot.
     for (std::size_t slot = 0; slot < 4; ++slot) {
         for (const char glyph : std::string_view("0123456789-")) {
             const std::string name = "ChapterGlyph" + std::to_string(slot) + "-" +

@@ -266,6 +266,29 @@ test("compileProject collects UI runtime texture dependencies", () => {
     dependency.source === "Assets/Audio/activate.ogg"));
 });
 
+test("compileProject packages nested SpriteText glyph images", () => {
+  const spriteUi = {...ui, nodes: [ui.nodes[0]!, {
+    ...ui.nodes[0]!, id: "33333333-3333-4333-8333-333333333333",
+    parentId: rootId, kind: "image", runtimeType: "SpriteText",
+    name: "ChapterNumber", runtimeProperties: {text: "1-", advance: 24, glyphs: [
+      {character: "1", path: "Assets/Glyph/one.png", x: 0, y: 2, width: 18, height: 30},
+      {character: "-", path: "Assets/Glyph/dash.png", x: 1, y: 3, width: 19, height: 10},
+    ]},
+  }]};
+  const result = compileProject({project, documents: {
+    "Story/story.pxindex": storyIndex,
+    "Content/game.pxgame": game,
+    "Content/UI/Title.pxui": spriteUi,
+  }, sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+  locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locale: "zh-TW", strings: {}}}});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  assert.deepEqual(result.artifact?.dependencies
+    .filter((dependency) => dependency.source.startsWith("Assets/Glyph/"))
+    .map((dependency) => dependency.source).sort(),
+    ["Assets/Glyph/dash.png", "Assets/Glyph/one.png"]);
+});
+
 test("compileProject validates splash voice variants and packages every possible choice", () => {
   const settings = {
     "player.titleVoiceVariants": ["Assets/Voice/title-a.ogg", "Assets/Voice/title-b.ogg"],

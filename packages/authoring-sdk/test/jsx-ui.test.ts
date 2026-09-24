@@ -10,6 +10,7 @@ import {
   Motion,
   RichTextLabel,
   Scene,
+  SpriteText,
   Text,
   TextureButton,
   VBox,
@@ -73,6 +74,28 @@ test("Motion lowers a layered clip reference without confusing playhead and layo
   assert.equal(logo?.runtimeProperties?.path, "Content/Motion/logo.pxmotion");
   assert.equal(logo?.runtimeProperties?.position, 0.25);
   assert.equal(logo?.runtimeProperties?.speed, 1.5);
+});
+
+test("SpriteText authors one typed glyph map and rejects unsafe or repeated entries", () => {
+  const glyphs = [
+    {character: "1", path: "Assets/Glyph/one.png", x: 0, y: 2, width: 18, height: 30},
+    {character: "-", path: "Assets/Glyph/dash.png", x: 1, y: 3, width: 19, height: 10},
+  ];
+  const author = (entries: typeof glyphs) => compileJsxUi(jsx(Scene, {
+    name: "Sprite demo", width: 320, height: 120,
+    children: jsx(SpriteText, {name: "ChapterNumber", text: "1-", glyphs: entries,
+      advance: 24, position: [0, 0], size: [320, 120],
+      bind: {text: "chapter.number"}}),
+  }), {kind: "scene"});
+  const result = author(glyphs);
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  const sprite = result.value?.nodes.find((node) => node.name === "ChapterNumber");
+  assert.equal(sprite?.runtimeType, "SpriteText");
+  assert.equal(sprite?.runtimeProperties?.advance, 24);
+  assert.deepEqual(sprite?.runtimeProperties?.glyphs, glyphs);
+  assert.equal(sprite?.bindings.text?.path, "chapter.number");
+  assert.equal(author([glyphs[0]!, {...glyphs[1]!, character: "1"}]).valid, false);
+  assert.equal(author([{...glyphs[0]!, path: "../escape.png"}]).valid, false);
 });
 
 test("leaf and sibling JSX roots get one stable transparent structural root", () => {

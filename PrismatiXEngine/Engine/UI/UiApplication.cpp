@@ -828,6 +828,26 @@ Result<std::vector<std::string>> CollectUiImageDependencies(
                 return Result<std::vector<std::string>>::Failure(std::move(diagnostics));
             }
             for (auto& image : sdk::MotionDependencies(*motion.clip)) add(std::move(image));
+        } else if (type == "SpriteText") {
+            const auto found = node.runtimeProperties.find("glyphs");
+            const auto* array = found == node.runtimeProperties.end()
+                ? nullptr : std::get_if<sdk::UiArrayValue>(&found->second);
+            if (!array) return Result<std::vector<std::string>>::Failure(
+                ApplicationError("PXUISPRITE1001", "SpriteText requires a glyph array",
+                                 sourcePath, node.id, "runtimeProperties.glyphs"));
+            const Json glyphs = Json::parse(array->json, nullptr, false);
+            if (!glyphs.is_array() || glyphs.empty() || glyphs.size() > 128)
+                return Result<std::vector<std::string>>::Failure(
+                ApplicationError("PXUISPRITE1001", "SpriteText glyph array is invalid",
+                                 sourcePath, node.id, "runtimeProperties.glyphs"));
+            for (const auto& glyph : glyphs) {
+                if (!glyph.is_object() || !glyph.contains("path") ||
+                    !glyph["path"].is_string())
+                    return Result<std::vector<std::string>>::Failure(
+                        ApplicationError("PXUISPRITE1001", "SpriteText glyph path is invalid",
+                                         sourcePath, node.id, "runtimeProperties.glyphs"));
+                add(glyph["path"].get<std::string>());
+            }
         } else if (type == "TextureRect" || type == "NinePatchRect") {
             add(path("path"));
         } else if (type == "TextureButton") {

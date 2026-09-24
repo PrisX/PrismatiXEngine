@@ -241,6 +241,37 @@ private:
     bool m_playingExplicit = false;
 };
 
+struct SpriteGlyph {
+    std::string character;
+    std::string path;
+    float x = 0;
+    float y = 0;
+    float width = 0;
+    float height = 0;
+};
+
+// One data-driven sprite alphabet replaces a control per glyph/slot.
+class SpriteText final : public Control {
+public:
+    explicit SpriteText(std::string name = "SpriteText") : Control(std::move(name)) {
+        SetMouseFilter(MouseFilter::Ignore);
+    }
+    [[nodiscard]] std::string_view TypeName() const override { return "SpriteText"; }
+    void SetText(std::string value) { m_text = std::move(value); }
+    [[nodiscard]] const std::string& Text() const { return m_text; }
+    void SetGlyphs(std::vector<SpriteGlyph> value) { m_glyphs = std::move(value); }
+    [[nodiscard]] const std::vector<SpriteGlyph>& Glyphs() const { return m_glyphs; }
+    void SetAdvance(float value) { m_advance = value; }
+    [[nodiscard]] float Advance() const { return m_advance; }
+    void CollectImageDependencies(std::vector<std::string>& paths) const override;
+protected:
+    void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) override;
+private:
+    std::string m_text;
+    std::vector<SpriteGlyph> m_glyphs;
+    float m_advance = 0;
+};
+
 class ProgressBar : public Control {
 public:
     explicit ProgressBar(std::string name = "ProgressBar") : Control(std::move(name)) { SetMouseFilter(MouseFilter::Ignore); }

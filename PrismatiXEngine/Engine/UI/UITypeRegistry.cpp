@@ -5,17 +5,45 @@
 #include "Engine/UI/Layout.h"
 #include "Engine/UI/VirtualizedView.h"
 #include "Engine/UI/Widgets.h"
+#include "Engine/Text/Typography.h"
 
+#include <cmath>
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace px::ui {
 namespace {
 Status TypeError(std::string message) {
     return Status::Fail(diag::Diagnostic{.severity = diag::Severity::Error, .code = "PXUI2501",
         .category = "UI.TypeRegistry", .message = std::move(message)});
+}
+bool SafeSpritePath(const std::string_view path) {
+    if (path.empty() || path.size() > 4096 || path.front() == '/' ||
+        path.find('\\') != std::string_view::npos ||
+        path.find(':') != std::string_view::npos) return false;
+    std::size_t start = 0;
+    while (start < path.size()) {
+        const auto end = path.find('/', start);
+        const auto segment = path.substr(start, end == std::string_view::npos
+            ? path.size() - start : end - start);
+        if (segment == "..") return false;
+        if (end == std::string_view::npos) break;
+        start = end + 1;
+    }
+    return true;
+}
+std::optional<double> GlyphNumber(const VariantObject& object,
+                                  const std::string_view name) {
+    const auto found = object.find(std::string(name));
+    if (found == object.end()) return std::nullopt;
+    if (const auto* value = found->second.TryGet<double>()) return *value;
+    if (const auto* value = found->second.TryGet<std::int64_t>())
+        return static_cast<double>(*value);
+    return std::nullopt;
 }
 template <typename T> T* As(Object& object) { return dynamic_cast<T*>(&object); }
 template <typename T> const T* As(const Object& object) { return dynamic_cast<const T*>(&object); }
@@ -87,6 +115,8 @@ const DesignerTypeMetadata* BuiltinDesignerMetadata(std::string_view type) {
                                          {{"scaleMode", std::string("Fit")}, {"lockAspectRatio", true}}, {"image"})},
         {"MotionRect", DesignerMetadata("Layered Motion", "Displays a .pxmotion image-layer clip.", "Display",
                                         "ui.motion", {320, 180}, false, {}, {"motion", "image"})},
+        {"SpriteText", DesignerMetadata("Sprite Text", "Displays text from a reusable sprite glyph map.", "Display",
+                                        "ui.sprite-text", {320, 80}, false, {}, {"image", "text"})},
         {"NinePatchRect", DesignerMetadata("九宮格圖片", "以可伸縮九宮格邊界顯示圖片資源。", "Display", "ui.nine-patch",
                                             {320, 180}, false, {}, {"image"})},
         {"ProgressBar", DesignerMetadata("Progress Bar", "Displays a normalized progress value.", "Display",
@@ -595,6 +625,77 @@ Status RegisterBuiltinUITypes() {
     motion.signals.push_back({"playbackFinished", "Playback finished",
                               "Non-looping motion reached its final frame.", {}});
     add(std::move(motion));
+    TypeInfo spriteText{"SpriteText", "Control", "UI/Display",
+                        [] { return std::make_unique<SpriteText>(); }};
+    spriteText.properties.push_back(StringProperty("text", "Content",
+        [](const Object& o) { return As<SpriteText>(o)->Text(); },
+        [](Object& o, std::string value) {
+            if (value.size() > 1024) return TypeError("SpriteText text exceeds 1024 bytes");
+            As<SpriteText>(o)->SetText(std::move(value));
+            return Status::Ok();
+        }));
+    spriteText.properties.push_back(NumberProperty("advance", "Layout",
+        [](const Object& o) { return As<SpriteText>(o)->Advance(); },
+        [](Object& o, const double value) {
+            if (!std::isfinite(value) || value < 0 || value > 4096)
+                return TypeError("SpriteText advance must be between 0 and 4096");
+            As<SpriteText>(o)->SetAdvance(static_cast<float>(value));
+            return Status::Ok();
+        }));
+    spriteText.properties.push_back({"glyphs", "Content", VariantType::Array,
+        PropertyFlags::Editable | PropertyFlags::Serializable,
+        Variant(VariantArray{}),
+        [](const Object& o) {
+            VariantArray values;
+            for (const auto& glyph : As<SpriteText>(o)->Glyphs()) {
+                values.emplace_back(VariantObject{
+                    {"character", Variant(glyph.character)},
+                    {"path", Variant(glyph.path)},
+                    {"x", Variant(glyph.x)}, {"y", Variant(glyph.y)},
+                    {"width", Variant(glyph.width)},
+                    {"height", Variant(glyph.height)},
+                });
+            }
+            return Variant(std::move(values));
+        },
+        [](Object& o, const Variant& value) {
+            const auto* array = value.AsArray();
+            if (!array || array->empty() || array->size() > 128)
+                return TypeError("SpriteText glyphs must contain 1 to 128 entries");
+            std::vector<SpriteGlyph> glyphs;
+            std::unordered_set<std::string> seen;
+            glyphs.reserve(array->size());
+            for (const auto& item : *array) {
+                const auto* object = item.AsObject();
+                if (!object || object->size() != 6)
+                    return TypeError("SpriteText glyph entry requires character, path, x, y, width and height");
+                const auto characterIt = object->find("character");
+                const auto pathIt = object->find("path");
+                if (characterIt == object->end() || pathIt == object->end())
+                    return TypeError("SpriteText glyph character and path are required");
+                const auto* character = characterIt->second.TryGet<std::string>();
+                const auto* path = pathIt->second.TryGet<std::string>();
+                const auto x = GlyphNumber(*object, "x"), y = GlyphNumber(*object, "y");
+                const auto width = GlyphNumber(*object, "width");
+                const auto height = GlyphNumber(*object, "height");
+                if (!character || character->empty() ||
+                    text::GraphemeBoundaries(*character).size() != 2 ||
+                    !seen.insert(*character).second || !path || !SafeSpritePath(*path) ||
+                    !x || !y || !width || !height ||
+                    !std::isfinite(*x) || !std::isfinite(*y) ||
+                    !std::isfinite(*width) || !std::isfinite(*height) ||
+                    std::abs(*x) > 4096 || std::abs(*y) > 4096 ||
+                    *width <= 0 || *width > 4096 ||
+                    *height <= 0 || *height > 4096)
+                    return TypeError("SpriteText glyph entry is invalid or duplicated");
+                glyphs.push_back({*character, *path, static_cast<float>(*x),
+                                  static_cast<float>(*y), static_cast<float>(*width),
+                                  static_cast<float>(*height)});
+            }
+            As<SpriteText>(o)->SetGlyphs(std::move(glyphs));
+            return Status::Ok();
+        }});
+    add(std::move(spriteText));
     TypeInfo progress{"ProgressBar", "Control", "UI/Display", [] { return std::make_unique<ProgressBar>(); }};
     progress.properties.push_back(NumberProperty("value", "Value", [](const Object& o) { return As<ProgressBar>(o)->Value(); },
         [](Object& o, double v) { As<ProgressBar>(o)->SetValue(v); return Status::Ok(); }));

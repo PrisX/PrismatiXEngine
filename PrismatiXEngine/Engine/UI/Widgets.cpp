@@ -336,6 +336,36 @@ void MotionRect::CollectImageDependencies(std::vector<std::string>& paths) const
         if (!layer.image.empty()) paths.push_back(layer.image);
 }
 
+void SpriteText::CollectImageDependencies(std::vector<std::string>& paths) const {
+    for (const auto& glyph : m_glyphs) paths.push_back(glyph.path);
+}
+
+void SpriteText::DrawSelf(graphics::Renderer2D& renderer, const Theme&) {
+    if (m_text.empty() || m_glyphs.empty()) return;
+    const auto boundaries = text::GraphemeBoundaries(m_text);
+    const Rect bounds = LayoutRect();
+    float cursor = 0;
+    for (std::size_t index = 1; index < boundaries.size() && index <= 64; ++index) {
+        const std::string_view character(m_text.data() + boundaries[index - 1],
+                                         boundaries[index] - boundaries[index - 1]);
+        const auto found = std::ranges::find_if(m_glyphs, [&](const SpriteGlyph& glyph) {
+            return glyph.character == character;
+        });
+        if (found == m_glyphs.end()) {
+            cursor += m_advance;
+            continue;
+        }
+        renderer.PreloadImage(found->path);
+        if (renderer.ImageReady(found->path)) {
+            renderer.DrawImageInRect(found->path,
+                {bounds.x + cursor + found->x, bounds.y + found->y,
+                 found->width, found->height},
+                graphics::ContentScaleMode::Stretch);
+        }
+        cursor += m_advance > 0 ? m_advance : found->width;
+    }
+}
+
 void ProgressBar::SetRange(double minimum, double maximum) {
     m_minimum = minimum; m_maximum = std::max(minimum, maximum); SetValue(m_value);
 }

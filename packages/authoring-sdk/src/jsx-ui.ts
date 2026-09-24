@@ -192,6 +192,22 @@ export interface MotionProps extends UiNodeProps {
   readonly playhead?: number;
 }
 
+export interface SpriteGlyph {
+  readonly character: string;
+  readonly path: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** Data-driven sprite lettering without a hidden image node for every glyph. */
+export interface SpriteTextProps extends Omit<UiNodeProps, "children"> {
+  readonly text?: string;
+  readonly glyphs: readonly SpriteGlyph[];
+  readonly advance?: number;
+}
+
 export interface ButtonProps extends Omit<UiNodeProps, "children"> {
   readonly text?: string;
   readonly fontSize?: number;
@@ -445,6 +461,16 @@ export function Motion(props: MotionProps): UiElement {
     ...(playing === undefined ? {} : {playing}),
     ...(speed === undefined ? {} : {speed}),
     ...(playhead === undefined ? {} : {position: playhead}),
+  }});
+}
+
+export function SpriteText(props: SpriteTextProps): UiElement {
+  const {text, glyphs, advance, ...rest} = props;
+  return node("image", "SpriteText", {...rest, runtimeProperties: {
+    ...props.runtimeProperties,
+    glyphs: glyphs.map((glyph) => ({...glyph})),
+    ...(text === undefined ? {} : {text}),
+    ...(advance === undefined ? {} : {advance}),
   }});
 }
 

@@ -228,6 +228,55 @@ int main() {
             }
             std::filesystem::remove_all(atlasRoot, atlasError);
         }
+        // A bound sprite alphabet must draw the selected images at authored
+        // glyph offsets, rather than just exposing dependency metadata.
+        {
+            const auto spriteRoot = std::filesystem::temp_directory_path() /
+                ("prismatix-sprite-text-" + std::to_string(SDL_GetTicksNS()));
+            std::error_code spriteError;
+            std::filesystem::create_directories(spriteRoot / "Assets", spriteError);
+            const auto saveGlyph = [&](const char* name, const Pixel color) {
+                SDL_Surface* surface = SDL_CreateSurface(1, 1, SDL_PIXELFORMAT_RGBA32);
+                const bool saved = surface &&
+                    SDL_WriteSurfacePixel(surface, 0, 0,
+                        color.r, color.g, color.b, color.a) &&
+                    SDL_SaveBMP(surface, (spriteRoot / "Assets" / name).string().c_str());
+                if (surface) SDL_DestroySurface(surface);
+                return saved;
+            };
+            if (spriteError || !saveGlyph("one.bmp", {240, 25, 30, 255}) ||
+                !saveGlyph("dash.bmp", {25, 35, 240, 255})) {
+                std::cerr << "FAIL: SpriteText image fixture\n";
+                result = 1;
+            } else {
+                px::io::VFS spriteVfs;
+                spriteVfs.MountDirectory(spriteRoot.generic_string());
+                px::graphics::AssetCache spriteAssets(device.Renderer(), spriteVfs);
+                px::graphics::Renderer2D spriteRenderer(device.Renderer(), spriteAssets, true);
+                spriteRenderer.SetLogicalSize(640, 360);
+                (void)spriteAssets.Texture("Assets/one.bmp");
+                (void)spriteAssets.Texture("Assets/dash.bmp");
+                px::ui::SpriteText sprite;
+                sprite.SetGlyphs({{"1", "Assets/one.bmp", 280, 160, 20, 20},
+                                  {"-", "Assets/dash.bmp", 280, 160, 20, 20}});
+                sprite.SetAdvance(24);
+                sprite.SetText("1-");
+                sprite.Arrange({0, 0, 640, 360});
+                px::ui::Theme spriteTheme;
+                ClearFrame(device.Renderer());
+                sprite.Draw(spriteRenderer, spriteTheme);
+                SDL_Surface* frame = SDL_RenderReadPixels(device.Renderer(), nullptr);
+                const Pixel first = ReadLogicalPixel(frame, 290, 170, 640, 360);
+                const Pixel second = ReadLogicalPixel(frame, 314, 170, 640, 360);
+                if (frame) SDL_DestroySurface(frame);
+                if (first.r < 200 || first.b > 80 ||
+                    second.b < 200 || second.r > 80) {
+                    std::cerr << "FAIL: SpriteText did not paint distinct authored glyphs\n";
+                    result = 1;
+                }
+            }
+            std::filesystem::remove_all(spriteRoot, spriteError);
+        }
         // A typewriter prefix can sit exactly at the wrapping boundary. The
         // coloured edge must use the fill's line layout, not SDL_ttf's wider
         // outlined-font metrics (which used to put the edge on line two).

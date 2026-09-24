@@ -1,4 +1,5 @@
 import type {AuthoringDiagnostic} from "./types.js";
+import {isSafeResourcePath} from "./resources.js";
 import {nativeJsonValueValid, nativeUiValueType} from "./ui-value.js";
 
 type ObjectValue = Record<string, unknown>;
@@ -438,6 +439,39 @@ function uiSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[] {
   };
   for (const node of nodes) {
     if (typeof node.id !== "string") continue;
+    if (node.runtimeType === "SpriteText") {
+      const properties = object(node.runtimeProperties);
+      const glyphs = properties?.glyphs;
+      const seenGlyphs = new Set<string>();
+      const singleGrapheme = new Intl.Segmenter("und", {granularity: "grapheme"});
+      if (!Array.isArray(glyphs) || glyphs.length < 1 || glyphs.length > 128)
+        diagnostics.push(issue("PXSDKUISPRITE1001", "SpriteText requires 1 to 128 glyph entries", path, node.id));
+      else for (const [index, value] of glyphs.entries()) {
+        const glyph = object(value);
+        const character = glyph?.character;
+        const validCharacter = typeof character === "string" &&
+          [...singleGrapheme.segment(character)].length === 1;
+        if (glyph === undefined || Object.keys(glyph).length !== 6 ||
+            !validCharacter || seenGlyphs.has(character) ||
+            typeof glyph.path !== "string" || !isSafeResourcePath(glyph.path) ||
+            !["x", "y", "width", "height"].every((field) =>
+              typeof glyph[field] === "number" && Number.isFinite(glyph[field]) &&
+              Math.abs(glyph[field]) <= 4096) ||
+            typeof glyph.width !== "number" || glyph.width <= 0 ||
+            typeof glyph.height !== "number" || glyph.height <= 0)
+          diagnostics.push(issue("PXSDKUISPRITE1002", "SpriteText glyph entry is invalid or duplicated", path,
+            `${node.id}: glyphs[${index}]`));
+        if (validCharacter) seenGlyphs.add(character);
+      }
+      if (properties?.text !== undefined &&
+          (typeof properties.text !== "string" ||
+           new TextEncoder().encode(properties.text).length > 1024))
+        diagnostics.push(issue("PXSDKUISPRITE1003", "SpriteText text must be at most 1024 UTF-8 bytes", path, node.id));
+      if (properties?.advance !== undefined &&
+          (typeof properties.advance !== "number" || !Number.isFinite(properties.advance) ||
+           properties.advance < 0 || properties.advance > 4096))
+        diagnostics.push(issue("PXSDKUISPRITE1004", "SpriteText advance must be between 0 and 4096", path, node.id));
+    }
     if (!validBuiltinUiAction(node.onClick, inItemTemplate(node.id)))
       diagnostics.push(issue("PXSDKUI1025", "UI node typed action is invalid", path,
         `${String(node.name ?? node.id)}: ${String(object(node.onClick)?.id)}`));
