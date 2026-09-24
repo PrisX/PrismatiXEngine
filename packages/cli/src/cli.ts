@@ -900,7 +900,8 @@ interface ReusableArtifactInputs {
 }
 
 async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact, staging: string,
-  reuse?: ReusableArtifactInputs): Promise<{readonly files: number; readonly bytes: number}> {
+  reuse?: ReusableArtifactInputs,
+  linkedOutputFiles?: Map<string, PublishedInput>): Promise<{readonly files: number; readonly bytes: number}> {
   const total = Object.keys(artifact.files).length + artifact.dependencies.length;
   const readyDirectories = new Map<string, Promise<void>>();
   const ensureDirectory = (directory: string): Promise<void> => {
@@ -959,6 +960,9 @@ async function copyRuntimeInputs(loaded: LoadedProject, artifact: BuildArtifact,
         }
       }
       if (!reused) await copyFile(source, destination);
+      if (reused && linkedOutputFiles !== undefined) {
+        linkedOutputFiles.set(dependency.logicalPath, previous!);
+      }
       const size = reused ? previous!.size : (await stat(destination)).size;
       bytes += size;
       if (reused) { reusedFiles += 1; reusedBytes += size; }
@@ -1040,10 +1044,12 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
     }
   }
   let reused: {readonly files: number; readonly bytes: number} = {files: 0, bytes: 0};
+  const linkedOutputFiles = new Map<string, PublishedInput>();
   const protectedPaths = protectedInputs(loaded, compiled.artifact);
   buildProgress("publish", 0, 1);
   await publishDirectory({output, projectRoot: loaded.root,
     verifyExistingBeforeBuild: false,
+    linkedOutputFiles,
     beforePromotion: async () => {
       // publishDirectory checks the destination immediately after this hook.
       // When it is also the reuse source, another full hash here would read
@@ -1056,7 +1062,8 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
     protectedPaths,
     onProgress: (value) => buildProgress(value.phase, value.files, undefined,
       value.bytes, value.done)}, async (staging) => {
-    reused = await copyRuntimeInputs(loaded, compiled.artifact!, staging, reuse);
+    reused = await copyRuntimeInputs(loaded, compiled.artifact!, staging, reuse,
+      reuse !== undefined && resolve(reuse.root) === output ? linkedOutputFiles : undefined);
   });
   buildProgress("publish", 1, 1, 0, true);
   const dependencies = new Set(loaded.dependencies);

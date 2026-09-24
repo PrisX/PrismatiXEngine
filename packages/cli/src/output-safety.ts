@@ -34,6 +34,10 @@ export interface PublicationOptions {
   readonly verifyExistingBeforeBuild?: boolean;
   /** Recheck external published revisions linked into staging before promotion. */
   readonly beforePromotion?: () => Promise<void>;
+  /** Files hard-linked from this exact output by the current build. Their
+   * existing marker hashes may be reused only while both paths retain the
+   * same file identity; the old output is still content-verified at promotion. */
+  readonly linkedOutputFiles?: ReadonlyMap<string, PublishedInput>;
   readonly onProgress?: (value: PublicationProgress) => void;
 }
 
@@ -78,9 +82,33 @@ export async function fingerprintFile(path: string, onChunk?: (bytes: number) =>
   }
   return hash.digest("hex");
 }
+async function assertLinkedIdentity(output: string, staging: string,
+  uri: string, size: number): Promise<boolean> {
+  const oldPath = join(output, ...uri.split("/"));
+  const stagedPath = join(staging, ...uri.split("/"));
+  const [oldFile, stagedFile] = await Promise.all([
+    lstat(oldPath, {bigint: true}), lstat(stagedPath, {bigint: true}),
+  ]);
+  if (!oldFile.isFile() || oldFile.isSymbolicLink() ||
+      !stagedFile.isFile() || stagedFile.isSymbolicLink() ||
+      oldFile.dev !== stagedFile.dev || oldFile.size !== BigInt(size) ||
+      stagedFile.size !== BigInt(size)) {
+    throw new Error(`Reused artifact file is no longer linked to existing output: ${uri}`);
+  }
+  // Some filesystems expose no stable file ID or link count. On those, keep
+  // the ordinary staged-content hash instead of making rebuilds fail.
+  if (oldFile.ino === 0n || stagedFile.ino === 0n ||
+      oldFile.nlink < 2n || stagedFile.nlink < 2n) return false;
+  if (oldFile.ino !== stagedFile.ino)
+    throw new Error(`Reused artifact file is no longer linked to existing output: ${uri}`);
+  return true;
+}
+
 async function inventory(root: string, phase?: PublicationProgress["phase"],
-  onProgress?: PublicationOptions["onProgress"]): Promise<Record<string, string>> {
+  onProgress?: PublicationOptions["onProgress"],
+  linkedOutput?: {root: string; files: ReadonlyMap<string, PublishedInput>; verified: Set<string>}): Promise<Record<string, string>> {
   const entries: Record<string, string> = Object.create(null) as Record<string, string>;
+  const seenLinks = new Set<string>();
   let files = 0;
   let bytes = 0;
   let lastReport = Date.now();
@@ -103,10 +131,25 @@ async function inventory(root: string, phase?: PublicationProgress["phase"],
       if (entry.isSymbolicLink()) throw new Error(`Unsafe output contains a symbolic link: ${path}`);
       if (entry.isDirectory()) { entries[name] = "directory"; await visit(path); }
       else if (entry.isFile()) {
-        entries[name] = await fingerprintFile(path, onProgress === undefined ? undefined : (size) => {
-          bytes += size;
-          report();
-        });
+        const linked = linkedOutput?.files.get(name);
+        if (linked !== undefined) {
+          if (await assertLinkedIdentity(linkedOutput!.root, root, name, linked.size)) {
+            entries[name] = linked.fingerprint;
+            linkedOutput!.verified.add(name);
+            bytes += linked.size;
+          } else {
+            entries[name] = await fingerprintFile(path, onProgress === undefined ? undefined : (size) => {
+              bytes += size;
+              report();
+            });
+          }
+          seenLinks.add(name);
+        } else {
+          entries[name] = await fingerprintFile(path, onProgress === undefined ? undefined : (size) => {
+            bytes += size;
+            report();
+          });
+        }
         files += 1;
         report();
       }
@@ -114,6 +157,8 @@ async function inventory(root: string, phase?: PublicationProgress["phase"],
     }
   }
   await visit(root);
+  if (linkedOutput !== undefined && seenLinks.size !== linkedOutput.files.size)
+    throw new Error("A reused artifact file is missing from staged output");
   report(true);
   return entries;
 }
@@ -265,14 +310,45 @@ export async function publishDirectory<T>(options: PublicationOptions, build: (s
     // A callback must not impersonate the ownership marker or supply symbolic links.
     try { await lstat(join(staging, outputOwnershipMarker)); throw new Error("Build produced reserved output ownership marker"); }
     catch (error) { if (!missing(error)) throw error; }
+    let linkedOutput: {root: string; files: ReadonlyMap<string, PublishedInput>; verified: Set<string>} | undefined;
+    if (options.linkedOutputFiles !== undefined && options.linkedOutputFiles.size > 0) {
+      const linkedFiles = new Map(options.linkedOutputFiles);
+      const markerPath = join(output, outputOwnershipMarker);
+      const markerInfo = await lstat(markerPath);
+      if (!markerInfo.isFile() || markerInfo.isSymbolicLink() ||
+          markerInfo.size > maxOutputMarkerBytes)
+        throw new Error(`Existing output marker is invalid: ${markerPath}`);
+      const marker: unknown = JSON.parse(await readFile(markerPath, "utf8"));
+      if (marker === null || typeof marker !== "object" || Array.isArray(marker) ||
+          (marker as {format?: unknown}).format !== "PrismatiXOutput/1" ||
+          (marker as {files?: unknown}).files === null ||
+          typeof (marker as {files?: unknown}).files !== "object" ||
+          Array.isArray((marker as {files?: unknown}).files))
+        throw new Error(`Existing output marker is invalid: ${markerPath}`);
+      const oldFiles = (marker as {files: Record<string, unknown>}).files;
+      for (const [uri, input] of linkedFiles) {
+        if (uri !== input.uri || !uri || uri.startsWith("/") || uri.includes("\\") ||
+            uri.includes(":") || uri.split("/").some(part => !part || part === "." || part === "..") ||
+            !Number.isSafeInteger(input.size) || input.size < 0 ||
+            !/^[0-9a-f]{64}$/u.test(input.fingerprint) ||
+            !Object.hasOwn(oldFiles, uri) || oldFiles[uri] !== input.fingerprint)
+          throw new Error(`Reused artifact file is not owned by existing output: ${uri}`);
+      }
+      linkedOutput = {root: output, files: linkedFiles, verified: new Set()};
+    }
     const marker = JSON.stringify({format: "PrismatiXOutput/1",
-      files: await inventory(staging, "fingerprint-output", options.onProgress)});
+      files: await inventory(staging, "fingerprint-output", options.onProgress, linkedOutput)});
     if (Buffer.byteLength(marker, "utf8") > maxOutputMarkerBytes)
       throw new Error(`Artifact ownership marker exceeds ${maxOutputMarkerBytes} bytes`);
     await writeFile(join(staging, outputOwnershipMarker), marker, {flag: "wx"});
     await options.beforePromotion?.();
     if (key(await validatePaths(options)) !== key(output)) throw new Error("Output path changed during publication");
     await assertOwned(output, true, "verify-before-publish", options.onProgress);
+    if (linkedOutput !== undefined)
+      for (const uri of linkedOutput.verified)
+        if (!await assertLinkedIdentity(output, staging, uri,
+          linkedOutput.files.get(uri)!.size))
+          throw new Error(`Reused artifact file identity became unavailable: ${uri}`);
     const backup = join(dirname(output), `.prismatix-backup-${randomUUID()}`);
     let backedUp = false;
     try { await filesystem.rename(output, backup); backedUp = true; } catch (error) { if (!missing(error)) throw error; }

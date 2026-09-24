@@ -123,6 +123,42 @@ test("linked reuse is rechecked before a new revision is promoted", async t => {
   assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "tampered");
 });
 
+test("same-output hardlinks reuse their marker hash without skipping final content verification", async t => {
+  const f = await fixture(t);
+  await publishDirectory(f, build("stable"));
+  const previous = (await publishedInputs(f.output))[0]!;
+  const linkedOutputFiles = new Map([[previous.uri, previous]]);
+  const updates: PublicationProgress[] = [];
+  await publishDirectory({...f, verifyExistingBeforeBuild: false, linkedOutputFiles,
+    onProgress: value => updates.push(value)}, async stage => {
+    await link(join(f.output, "game.bin"), join(stage, "game.bin"));
+  });
+  assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "stable");
+  assert.equal((await publishedInputs(f.output))[0]?.fingerprint, previous.fingerprint);
+  assert.deepEqual(updates.filter(value => value.done).map(value =>
+    [value.phase, value.files, value.bytes]), [
+    ["fingerprint-output", 1, 6], ["verify-before-publish", 1, 6],
+  ]);
+});
+
+test("same-output nonlinks are rehashed and edited hardlinks are rejected", async t => {
+  const f = await fixture(t);
+  await publishDirectory(f, build("stable"));
+  const previous = (await publishedInputs(f.output))[0]!;
+  const linkedOutputFiles = new Map([[previous.uri, previous]]);
+  await publishDirectory({...f, verifyExistingBeforeBuild: false,
+    linkedOutputFiles}, build("newone"));
+  assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "newone");
+  assert.notEqual((await publishedInputs(f.output))[0]?.fingerprint, previous.fingerprint);
+  await publishDirectory(f, build("stable"));
+  await assert.rejects(publishDirectory({...f, verifyExistingBeforeBuild: false,
+    linkedOutputFiles,
+    beforePromotion: async () => { await writeFile(join(f.output, "game.bin"), "edited"); }},
+  async stage => { await link(join(f.output, "game.bin"), join(stage, "game.bin")); }),
+  /unowned or modified/u);
+  assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "edited");
+});
+
 test("published artifact input discovery rejects symlinks and invalid markers", async t => {
   const f = await fixture(t);
   await publishDirectory(f, build("stable"));
