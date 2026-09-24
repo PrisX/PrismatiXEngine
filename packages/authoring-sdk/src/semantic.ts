@@ -134,7 +134,7 @@ function timelineSemantics(root: ObjectValue, path?: string): AuthoringDiagnosti
 const structuralUiKinds = new Set(["control", "group", "stack", "hbox", "vbox", "grid"]);
 const layoutOwningUiKinds = new Set(["stack", "hbox", "vbox", "grid"]);
 
-function validBuiltinUiAction(value: unknown): boolean {
+function validBuiltinUiAction(value: unknown, inItemTemplate = false): boolean {
   const action = object(value);
   if (action === undefined || typeof action.id !== "string") return true;
   const args = object(action.arguments) ?? {};
@@ -147,7 +147,8 @@ function validBuiltinUiAction(value: unknown): boolean {
   if (["choice.select", "load.slot", "save.slot"].includes(action.id)) {
     const key = action.id === "choice.select" ? "index" : "slot";
     return Object.keys(args).length === 1 &&
-      typeof args[key] === "number" && Number.isSafeInteger(args[key]);
+      (typeof args[key] === "number" && Number.isSafeInteger(args[key]) ||
+        inItemTemplate && args[key] === "$index");
   }
   if (action.id === "cg.view")
     return Object.keys(args).length === 1 && typeof args.resource === "string";
@@ -334,13 +335,66 @@ function uiSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[] {
     if (typeof node.runtimeType === "string" && !/^[A-Za-z0-9_.-]*$/u.test(node.runtimeType)) {
       diagnostics.push(issue("PXSDKUI1018", "UI node runtimeType is invalid", path, node.id));
     }
-    if (!validBuiltinUiAction(node.onClick))
-      diagnostics.push(issue("PXSDKUI1025", "UI node typed action is invalid", path,
-        `${String(node.name ?? node.id)}: ${String(object(node.onClick)?.id)}`));
     const orderKey = `${parent ?? "<root>"}:${String(node.order)}`;
     if (siblingOrders.has(orderKey)) diagnostics.push(issue("PXSDKSEM1303", "Sibling UI order must be unique", path, orderKey));
     siblingOrders.add(orderKey);
   }
+  const inItemTemplate = (nodeId: string): boolean => {
+    const seen = new Set<string>();
+    let parent = parentById.get(nodeId);
+    while (parent !== null && parent !== undefined && !seen.has(parent)) {
+      seen.add(parent);
+      if (object(nodes.find((node) => node.id === parent)?.itemSource) !== undefined) return true;
+      parent = parentById.get(parent);
+    }
+    return false;
+  };
+  for (const node of nodes) {
+    if (typeof node.id !== "string") continue;
+    if (!validBuiltinUiAction(node.onClick, inItemTemplate(node.id)))
+      diagnostics.push(issue("PXSDKUI1025", "UI node typed action is invalid", path,
+        `${String(node.name ?? node.id)}: ${String(object(node.onClick)?.id)}`));
+    if (object(node.itemSource) !== undefined) {
+      if (node.runtimeType !== "GridView" && node.runtimeType !== "ListView")
+        diagnostics.push(issue("PXSDKUI1190", "UI itemSource requires GridView or ListView", path, node.id));
+      const children = nodes.filter((candidate) => candidate.parentId === node.id);
+      if (children.length !== 1 || !structuralUiKinds.has(String(children[0]?.kind)))
+        diagnostics.push(issue("PXSDKUI1191", "UI itemSource requires one structural child template", path, node.id));
+      if (inItemTemplate(node.id))
+        diagnostics.push(issue("PXSDKUI1191", "Nested UI itemSource templates are not supported", path, node.id));
+    }
+    if (inItemTemplate(node.id)) {
+      for (const binding of Object.values(object(node.bindings) ?? {})) {
+        const bindingPath = object(binding)?.path;
+        if (typeof bindingPath !== "string" || !bindingPath.startsWith("item."))
+          diagnostics.push(issue("PXSDKUI1193", "UI item template bindings must use item.<field>", path, node.id));
+      }
+    }
+  }
+  const templateNodeIds = new Set(nodes.filter((node) =>
+    typeof node.id === "string" && inItemTemplate(node.id)).map((node) => node.id));
+  const rejectTemplateTarget = (nodeId: unknown, section: string): void => {
+    if (templateNodeIds.has(nodeId))
+      diagnostics.push(issue("PXSDKUI1194",
+        "Behavior, Visual State, and Animation cannot target repeated UI items", path,
+        `${section}: ${String(nodeId)}`));
+  };
+  for (const trigger of objects(root.behaviorTriggers))
+    rejectTemplateTarget(trigger.nodeId, "behaviorTriggers");
+  for (const behavior of objects(object(root.behaviorGraph)?.nodes))
+    for (const value of [...Object.values(object(behavior.properties) ?? {}),
+      ...Object.values(object(behavior.arguments) ?? {})]) {
+      const reference = object(value);
+      if (reference?.type === "nodeReference")
+        rejectTemplateTarget(reference.nodeId, "behaviorGraph");
+    }
+  for (const group of objects(root.visualStateGroups))
+    for (const state of objects(group.states))
+      for (const override of objects(state.overrides))
+        rejectTemplateTarget(override.nodeId, "visualStateGroups");
+  for (const clip of objects(object(root.animations)?.clips))
+    for (const track of objects(clip.tracks))
+      rejectTemplateTarget(track.nodeId, "animations");
   for (const id of nodeIds) {
     const visited = new Set<string>();
     let cursor: string | null | undefined = id;

@@ -456,7 +456,9 @@ bool ValidAction(const UiAction& action) {
         const char* name = action.id == "choice.select" ? "index" : "slot";
         const auto found = action.arguments.find(name);
         return action.arguments.size() == 1 && found != action.arguments.end() &&
-               std::holds_alternative<std::int64_t>(found->second);
+               (std::holds_alternative<std::int64_t>(found->second) ||
+                (std::holds_alternative<std::string>(found->second) &&
+                 std::get<std::string>(found->second) == "$index"));
     }
     if (action.id == "cg.view") {
         const auto found = action.arguments.find("resource");
@@ -1402,7 +1404,7 @@ UiParseResult ParseUi(const std::string_view text) {
             "visible", "locked", "layout", "text", "assetId", "appearance",
             "onClick", "accessibilityLabel", "accessibilityRole",
             "accessibilityDescription", "accessibilityFocusOrder",
-            "runtimeProperties", "bindings", "componentInstance", "componentSlot"};
+            "runtimeProperties", "bindings", "itemSource", "componentInstance", "componentSlot"};
         for (auto field = item.begin(); field != item.end(); ++field) {
             if (!canonicalNodeFields.contains(field.key())) {
                 AddDiagnostic(result, "PXSDKUI1066",
@@ -1688,6 +1690,23 @@ UiParseResult ParseUi(const std::string_view text) {
             AddDiagnostic(result, "PXSDKUI1065", "Revision-2 UI property bindings are required", index);
             valid = false;
         }
+        const auto itemSource = item.find("itemSource");
+        if (itemSource != item.end()) {
+            UiItemSource source;
+            const bool sourceValid = itemSource->is_object() &&
+                itemSource->size() == 2 &&
+                ReadString(*itemSource, "path", source.path) &&
+                ParseIndexedPropertyPath(source.path).has_value() &&
+                ReadString(*itemSource, "key", source.key) &&
+                source.key.size() <= 256 && IsPropertyPath(source.key) &&
+                node.runtimeType &&
+                (*node.runtimeType == "GridView" || *node.runtimeType == "ListView");
+            if (!sourceValid) {
+                AddDiagnostic(result, "PXSDKUI1190",
+                              "UI itemSource requires a typed GridView/ListView, array path and key field", index);
+                valid = false;
+            } else node.itemSource = std::move(source);
+        }
         const auto componentInstance = item.find("componentInstance");
         if (componentInstance != item.end() && !componentInstance->is_null()) {
             UiComponentInstance instance;
@@ -1856,6 +1875,49 @@ UiParseResult ParseUi(const std::string_view text) {
 
     std::unordered_map<std::string, const UiNode*> byId;
     for (const auto& node : result.document.nodes) byId.emplace(node.id, &node);
+    for (const auto& node : result.document.nodes) {
+        if (!node.itemSource) continue;
+        std::size_t childCount = 0;
+        for (const auto& candidate : result.document.nodes)
+            if (candidate.parentId && *candidate.parentId == node.id) {
+                ++childCount;
+                if (!IsStructuralRoot(candidate.kind))
+                    AddDiagnostic(result, "PXSDKUI1191",
+                                  "UI item template root must be a structural control");
+            }
+        if (childCount != 1)
+            AddDiagnostic(result, "PXSDKUI1191",
+                          "UI itemSource requires exactly one authored child template");
+        const UiNode* parent = node.parentId && byId.contains(*node.parentId)
+            ? byId.at(*node.parentId) : nullptr;
+        while (parent) {
+            if (parent->itemSource) {
+                AddDiagnostic(result, "PXSDKUI1191",
+                              "Nested UI itemSource templates are not supported");
+                break;
+            }
+            parent = parent->parentId && byId.contains(*parent->parentId)
+                ? byId.at(*parent->parentId) : nullptr;
+        }
+    }
+    for (const auto& node : result.document.nodes) {
+        if (!node.onClick || (node.onClick->id != "choice.select" &&
+                              node.onClick->id != "load.slot" &&
+                              node.onClick->id != "save.slot")) continue;
+        const auto name = node.onClick->id == "choice.select" ? "index" : "slot";
+        const auto value = node.onClick->arguments.find(name);
+        if (value == node.onClick->arguments.end() ||
+            !std::holds_alternative<std::string>(value->second)) continue;
+        const UiNode* cursor = &node;
+        bool inTemplate = false;
+        while (cursor && cursor->parentId) {
+            const auto parent = byId.find(*cursor->parentId);
+            cursor = parent == byId.end() ? nullptr : parent->second;
+            if (cursor && cursor->itemSource) { inTemplate = true; break; }
+        }
+        if (!inTemplate) AddDiagnostic(result, "PXSDKUI1192",
+            "$index Action argument is only valid inside an itemSource template");
+    }
     std::unordered_set<std::string> componentSources;
     for (const auto& node : result.document.nodes) {
         if (!node.componentInstance) continue;

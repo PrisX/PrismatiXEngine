@@ -50,6 +50,7 @@ public:
     [[nodiscard]] float ScrollOffset() const { return m_scroll; }
     [[nodiscard]] std::size_t RealizedCount() const { return m_realized.size(); }
     [[nodiscard]] std::size_t PooledCount() const { return m_pool.size(); }
+    [[nodiscard]] bool HasSource() const { return static_cast<bool>(m_source); }
     void HandleEvent(UIEvent& event) override;
     void Draw(graphics::Renderer2D& renderer,const Theme& theme) override;
 

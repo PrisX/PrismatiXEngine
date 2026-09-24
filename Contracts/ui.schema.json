@@ -33,6 +33,14 @@
         "arguments": {"type": "object", "maxProperties": 1024, "additionalProperties": {"$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/jsonValue"}}
       }
     },
+    "itemSource": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "key"],
+      "properties": {
+        "path": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*|\\[(?:0|[1-9][0-9]*)\\])*$", "maxLength": 512},
+        "key": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*$", "maxLength": 256}
+      }
+    },
     "node": {
       "type": "object",
       "additionalProperties": false,
@@ -69,6 +77,7 @@
             }
           }
         },
+        "itemSource": {"$ref": "#/$defs/itemSource"},
         "componentInstance": {"$ref": "#/$defs/componentInstance"},
         "componentSlot": {"$ref": "#/$defs/componentSlot"}
       }

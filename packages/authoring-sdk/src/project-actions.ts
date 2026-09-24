@@ -32,9 +32,23 @@ export function validateUiActionUsage(document: unknown,
   const declarations = new Map<string, ExtensionAction>();
   for (const extension of extensions) for (const action of extension.actions)
     declarations.set(action.id, action);
+  const nodes = objects(root.nodes);
+  const nodeById = new Map(nodes.filter((node) => typeof node.id === "string")
+    .map((node) => [node.id as string, node]));
+  const inItemTemplate = (node: ObjectValue): boolean => {
+    const visited = new Set<string>();
+    let parent = typeof node.parentId === "string" ? node.parentId : undefined;
+    while (parent !== undefined && !visited.has(parent)) {
+      visited.add(parent);
+      const ancestor = nodeById.get(parent);
+      if (object(ancestor?.itemSource) !== undefined) return true;
+      parent = typeof ancestor?.parentId === "string" ? ancestor.parentId : undefined;
+    }
+    return false;
+  };
 
   const check = (id: unknown, authored: unknown, location: string,
-    dynamic = new Set<string>()): void => {
+    dynamic = new Set<string>(), itemTemplate = false): void => {
     if (typeof id !== "string") return;
     const action = declarations.get(id);
     if (action === undefined) return;
@@ -51,6 +65,15 @@ export function validateUiActionUsage(document: unknown,
         continue;
       }
       if (dynamic.has(name)) continue;
+      if (itemTemplate && (value === "$index" || value === "$key")) {
+        const accepted = value === "$index"
+          ? parameterAccepts(parameter, "integer")
+          : ["string", "integer", "number"].includes(parameter.type);
+        if (!accepted) diagnostics.push(issue("PXBUILD1062",
+          `Extension Action argument expects ${parameter.type} but received item ${value}`,
+          path, `${location}: ${id}.${name}`));
+        continue;
+      }
       const actual = nativeUiValueType(value, true);
       if (!parameterAccepts(parameter, actual)) {
         diagnostics.push(issue("PXBUILD1062",
@@ -75,17 +98,19 @@ export function validateUiActionUsage(document: unknown,
     }
   };
 
-  for (const [index, node] of objects(root.nodes).entries()) {
+  for (const [index, node] of nodes.entries()) {
     const onClick = object(node.onClick);
     if (onClick !== undefined)
-      check(onClick.id, onClick.arguments, `nodes[${index}].onClick`);
+      check(onClick.id, onClick.arguments, `nodes[${index}].onClick`,
+        new Set<string>(), inItemTemplate(node));
     const signals = object(object(node.componentInstance)?.publicSignals) ?? {};
     for (const [signal, value] of Object.entries(signals)) {
       const binding = object(value);
       if (binding === undefined) continue;
       check(binding.id, binding.arguments,
         `nodes[${index}].componentInstance.publicSignals.${signal}`,
-        new Set(Object.keys(object(binding.argumentBindings) ?? {})));
+        new Set(Object.keys(object(binding.argumentBindings) ?? {})),
+        inItemTemplate(node));
     }
   }
   const graph = object(root.behaviorGraph);

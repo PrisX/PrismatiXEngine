@@ -326,6 +326,43 @@ int main() {
               parsed.document.nodes[1].componentInstance->overrides.size() == 2,
           "component instance origin and overrides must round-trip");
 
+    auto repeaterScene = nlohmann::json::parse(ValidScene());
+    auto grid = repeaterScene["nodes"][1];
+    auto itemRoot = repeaterScene["nodes"][0];
+    auto itemButton = repeaterScene["nodes"][1];
+    grid.erase("componentInstance");
+    grid["kind"] = "grid";
+    grid["runtimeType"] = "GridView";
+    grid["itemSource"] = {{"path", "slots"}, {"key", "key"}};
+    grid["interaction"]["onClick"] = nullptr;
+    itemRoot["id"] = "44444444-4444-4444-8444-444444444444";
+    itemRoot["parentId"] = grid["id"];
+    itemRoot["kind"] = "group";
+    itemRoot["runtimeType"] = "Control";
+    itemRoot["layout"]["mode"] = "container";
+    itemButton.erase("componentInstance");
+    itemButton["id"] = "55555555-5555-4555-8555-555555555555";
+    itemButton["parentId"] = itemRoot["id"];
+    itemButton["interaction"]["onClick"] =
+        {{"id", "save.slot"}, {"arguments", {{"slot", "$index"}}}};
+    itemButton["bindings"] = {{"text", {{"path", "item.title"}}}};
+    repeaterScene["nodes"][1] = grid;
+    repeaterScene["nodes"].push_back(itemRoot);
+    repeaterScene["nodes"].push_back(itemButton);
+    const auto repeaterParsed = ParseSceneFixture(repeaterScene.dump());
+    if (!repeaterParsed.Valid()) for (const auto& diagnostic : repeaterParsed.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    Check(repeaterParsed.Valid() && repeaterParsed.document.nodes[1].itemSource &&
+              repeaterParsed.document.nodes[3].onClick,
+          "native UI contract must accept a keyed item template and $index Action");
+    repeaterScene["nodes"][1].erase("itemSource");
+    const auto unscopedAction = ParseSceneFixture(repeaterScene.dump());
+    Check(!unscopedAction.Valid() && std::ranges::any_of(unscopedAction.diagnostics,
+              [](const px::sdk::UiContractDiagnostic& diagnostic) {
+                  return diagnostic.code == "PXSDKUI1192";
+              }),
+          "native UI contract must reject $index outside an item template");
+
     auto dynamicSceneJson = nlohmann::json::parse(ValidScene());
     dynamicSceneJson["schemaRevision"] = 2;
     dynamicSceneJson["nodes"][1]["kind"] = "leaf";

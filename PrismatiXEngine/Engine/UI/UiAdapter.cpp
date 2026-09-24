@@ -233,6 +233,13 @@ std::optional<Variant> RuntimePropertyValue(
     const UiAssetResolver& assetResolver, UiRuntimeTree& result,
     const std::string_view nodeId) {
     Variant converted = RuntimeValue(value, result, nodeId, true);
+    // JSON authoring has no distinct literal syntax for a Runtime Number:
+    // `columns={4}` and `overscan={0}` arrive as integers. Reflected Number
+    // setters must receive a double, as they do for fractional literals.
+    if (property.type == VariantType::Number) {
+        if (const auto* integer = converted.TryGet<std::int64_t>())
+            converted = Variant(static_cast<double>(*integer));
+    }
     if (const auto* token = converted.TryGet<TokenRefValue>();
         token && property.type != VariantType::TokenRef) {
         const auto found = theme.find(token->name);

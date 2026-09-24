@@ -6,6 +6,7 @@ import {
   Component,
   Control,
   Image,
+  ItemsGrid,
   RichTextLabel,
   Scene,
   Text,
@@ -123,6 +124,39 @@ test("layout, style, binding, and action shorthands lower to canonical fields", 
   });
   assert.deepEqual(button.bindings, {visible: {path: "game.canSave"}});
   assert.deepEqual(button.onClick, {id: "save.open", arguments: {}});
+});
+
+test("one authored item template lowers to a keyed Runtime grid with item bindings", () => {
+  const authored = jsx(Scene, {name: "Slots", width: 800, height: 600,
+    children: jsx(Control, {name: "Root", children: jsx(ItemsGrid, {
+      name: "Slots", items: {path: "saveLoad.slots", key: "key"},
+      columns: 4, itemExtent: [252, 228], gap: [32, 18],
+      children: jsx(Control, {name: "SlotTemplate", width: 252, height: 228,
+        children: jsx(Button, {name: "SlotButton", bind: {text: "item.title"},
+          action: {id: "save.slot", arguments: {slot: "$index"}}}),
+      }),
+    })}),
+  });
+  const result = compileJsxUi(authored, {kind: "scene"});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  const grid = result.value!.nodes.find((node) => node.name === "Slots")!;
+  const template = result.value!.nodes.find((node) => node.name === "SlotTemplate")!;
+  const button = result.value!.nodes.find((node) => node.name === "SlotButton")!;
+  assert.deepEqual(grid.itemSource, {path: "saveLoad.slots", key: "key"});
+  assert.deepEqual(grid.runtimeProperties, {columns: 4,
+    itemExtent: {type: "vec2", x: 252, y: 228},
+    gap: {type: "vec2", x: 32, y: 18}});
+  assert.equal(template.parentId, grid.id);
+  assert.deepEqual(button.bindings, {text: {path: "item.title"}});
+  assert.deepEqual(button.onClick, {id: "save.slot", arguments: {slot: "$index"}});
+
+  const unscoped = compileJsxUi(jsx(Scene, {name: "Unscoped", width: 800, height: 600,
+    children: jsx(Control, {name: "Root", children: jsx(Button, {
+      name: "Invalid", action: {id: "save.slot", arguments: {slot: "$index"}},
+    })}),
+  }), {kind: "scene"});
+  assert.equal(unscoped.valid, false);
+  assert.ok(unscoped.diagnostics.some((item) => item.code === "PXSDKUI1025"));
 });
 
 test("texture buttons and rich labels lower typed convenience props to native controls", () => {

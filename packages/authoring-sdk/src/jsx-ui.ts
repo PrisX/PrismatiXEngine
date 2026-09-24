@@ -78,6 +78,13 @@ export interface UiAction {
   readonly arguments?: Readonly<Record<string, JsonValue>>;
 }
 
+export interface UiItemSource {
+  /** Typed ViewModel array. Template bindings use `item` as their root. */
+  readonly path: string;
+  /** Unique string or integer field within each item object. */
+  readonly key: string;
+}
+
 export interface UiComponentSignalBinding {
   readonly id: string;
   readonly arguments?: Readonly<Record<string, JsonValue>>;
@@ -139,7 +146,16 @@ export interface UiNodeProps {
   readonly accessibilityFocusOrder?: number;
   readonly componentInstance?: UiComponentInstance;
   readonly componentSlot?: UiComponentSlot;
+  readonly itemSource?: UiItemSource;
   readonly children?: UiChild;
+}
+
+export interface ItemsViewProps extends UiNodeProps {
+  readonly items: UiItemSource;
+  readonly columns?: number;
+  readonly itemExtent?: readonly [width: number, height: number];
+  readonly gap?: readonly [x: number, y: number];
+  readonly overscan?: number;
 }
 
 export interface ControlProps extends UiNodeProps {
@@ -254,6 +270,7 @@ export interface PrismatiXUiNode {
   readonly bindings: UiBindings;
   readonly componentInstance?: UiComponentInstance;
   readonly componentSlot?: UiComponentSlot;
+  readonly itemSource?: UiItemSource;
 }
 
 interface PrismatiXUiDocumentBase {
@@ -358,6 +375,29 @@ export function HBox(props: UiNodeProps): UiElement {
 
 export function Grid(props: UiNodeProps): UiElement {
   return node("grid", "GridView", props);
+}
+
+/** Runtime-keyed grid: author exactly one item subtree as `children`. */
+export function ItemsGrid(props: ItemsViewProps): UiElement {
+  const {items, columns, itemExtent, gap, overscan, ...rest} = props;
+  return node("grid", "GridView", {...rest, itemSource: items,
+    runtimeProperties: {...props.runtimeProperties,
+      ...(columns === undefined ? {} : {columns}),
+      ...(itemExtent === undefined ? {} : {itemExtent: {type: "vec2", x: itemExtent[0], y: itemExtent[1]}}),
+      ...(gap === undefined ? {} : {gap: {type: "vec2", x: gap[0], y: gap[1]}}),
+      ...(overscan === undefined ? {} : {overscan}),
+    }});
+}
+
+/** Runtime-keyed vertical list with one authored item subtree. */
+export function ItemsList(props: Omit<ItemsViewProps, "columns">): UiElement {
+  const {items, itemExtent, gap, overscan, ...rest} = props;
+  return node("control", "ListView", {...rest, itemSource: items,
+    runtimeProperties: {...props.runtimeProperties,
+      ...(itemExtent === undefined ? {} : {itemExtent: {type: "vec2", x: itemExtent[0], y: itemExtent[1]}}),
+      ...(gap === undefined ? {} : {gap: {type: "vec2", x: gap[0], y: gap[1]}}),
+      ...(overscan === undefined ? {} : {overscan}),
+    }});
 }
 
 export function Text(props: TextProps): UiElement {
@@ -651,6 +691,7 @@ function lowerDocument(element: UiElement, path?: string): PrismatiXUiDocument {
         overrides: source.props.componentInstance.overrides ?? [],
       }}),
       ...(source.props.componentSlot === undefined ? {} : {componentSlot: source.props.componentSlot}),
+      ...(source.props.itemSource === undefined ? {} : {itemSource: source.props.itemSource}),
     });
     const ownsLayout = source.kind === "stack" || source.kind === "hbox" ||
       source.kind === "vbox" || source.kind === "grid";

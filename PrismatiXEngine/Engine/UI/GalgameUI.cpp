@@ -157,6 +157,8 @@ GalgameUI::GalgameUI() {
     initialSlots.reserve(12);
     for (std::size_t slot = 0; slot < 12; ++slot) {
         initialSlots.emplace_back(VariantObject{
+            {"key", Variant(std::string("slot-") + std::to_string(slot))},
+            {"number", Variant(slot < 9 ? std::string("0") + std::to_string(slot + 1) : std::to_string(slot + 1))},
             {"image", Variant(std::string{})},
             {"title", Variant(std::string{})},
             {"subtitle", Variant(std::string{})},
@@ -669,6 +671,8 @@ Status GalgameUI::ShowSaveLoad(bool saveMode, std::vector<GalgameItem> slots) {
         });
         const GalgameItem* item = found == slots.end() ? nullptr : &*found;
         slotValues.emplace_back(VariantObject{
+            {"key", Variant(std::string("slot-") + std::to_string(index))},
+            {"number", Variant(index < 9 ? std::string("0") + std::to_string(index + 1) : std::to_string(index + 1))},
             {"image", Variant(item ? item->image : std::string{})},
             {"title", Variant(item ? item->title : std::string{})},
             {"subtitle", Variant(item ? item->subtitle : std::string{})},
@@ -693,6 +697,10 @@ Status GalgameUI::ShowSaveLoad(bool saveMode, std::vector<GalgameItem> slots) {
     }
     auto* grid = FindNamed<GridView>(m_context.Root(), "Slots");
     if (!grid) return GalgameFailure("PXUI2806", "SaveLoad template requires authored Slot0Button..Slot11Button or a GridView named Slots");
+    if (grid->HasSource()) {
+        m_items.reset();
+        return Status::Ok();
+    }
     for (auto& item : slots) {
         std::string prefix = item.argument == "-1" ? "AUTO" : std::string{};
         for (std::size_t index = 0; index < 12 && prefix.empty(); ++index)

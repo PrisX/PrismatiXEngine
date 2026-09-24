@@ -9,8 +9,10 @@
 
 #include "Engine/Core/TypeRegistry.h"
 #include "Engine/Core/Uuid.h"
+#include "Engine/UI/Binding.h"
 #include "Engine/UI/UIContext.h"
 #include "Engine/UI/UITypeRegistry.h"
+#include "Engine/UI/VirtualizedView.h"
 
 namespace px::ui {
 namespace {
@@ -475,6 +477,289 @@ Result<sdk::UiDocument> ResolveComponents(const sdk::UiDocument& source, const U
     return Result<sdk::UiDocument>::Success(std::move(document));
 }
 
+const Variant* ItemField(const Variant& item, std::string_view path) {
+    const Variant* value = &item;
+    while (!path.empty()) {
+        const auto dot = path.find('.');
+        const auto field = path.substr(0, dot);
+        const auto* object = value->AsObject();
+        if (!object) return nullptr;
+        const auto found = object->find(std::string(field));
+        if (found == object->end()) return nullptr;
+        value = &found->second;
+        path = dot == std::string_view::npos ? std::string_view{} : path.substr(dot + 1);
+    }
+    return value;
+}
+
+class AuthoredItemSource final : public IVirtualItemSource,
+                                 public std::enable_shared_from_this<AuthoredItemSource> {
+public:
+    AuthoredItemSource(sdk::UiDocument document, sdk::UiItemSource descriptor,
+                       IViewModel& model, VirtualizedView& view,
+                       const FormatterRegistry& formatters,
+                       UiAssetResolver assets, UiActionSink actions,
+                       std::string sourcePath)
+        : m_document(std::move(document)), m_descriptor(std::move(descriptor)),
+          m_model(model), m_view(view), m_formatters(formatters),
+          m_assets(std::move(assets)), m_actions(std::move(actions)),
+          m_sourcePath(std::move(sourcePath)) {}
+
+    ~AuthoredItemSource() override {
+        if (m_subscription) m_model.Unsubscribe(m_subscription);
+    }
+
+    Status Initialize() {
+        auto prototype = BuildUiRuntimeTree(m_document, m_assets);
+        if (!prototype.Valid() || !prototype.unresolvedAssetIds.empty()) {
+            std::vector<diag::Diagnostic> diagnostics;
+            for (const auto& issue : prototype.diagnostics)
+                diagnostics.push_back(ApplicationError(issue.code, issue.message,
+                                                        m_sourcePath, issue.nodeId));
+            for (const auto& asset : prototype.unresolvedAssetIds)
+                diagnostics.push_back(ApplicationError("PXUISTUDIO2004",
+                    "UI item template asset could not be resolved: " + asset,
+                    m_sourcePath));
+            if (diagnostics.empty()) diagnostics.push_back(ApplicationError(
+                "PXUISTUDIO2140", "UI item template has no Runtime root", m_sourcePath));
+            return Status::Fail(std::move(diagnostics));
+        }
+        CollectPaths(*prototype.root, {});
+        for (const auto& node : m_document.nodes) {
+            const auto path = m_nodePaths.find(node.id);
+            if (path == m_nodePaths.end()) return Status::Fail(ApplicationError(
+                "PXUISTUDIO2141", "UI item template control is missing", m_sourcePath, node.id));
+            auto* control = ControlAt(*prototype.root, path->second);
+            for (const auto& [propertyName, binding] : node.bindings) {
+                if (!binding.path.starts_with("item.") || binding.path.size() <= 5)
+                    return Status::Fail(ApplicationError("PXUISTUDIO2142",
+                        "UI item template binding must use item.<field>",
+                        m_sourcePath, node.id, "bindings." + propertyName));
+                const auto* property = control ? TypeRegistry::Global().FindProperty(
+                    std::string(control->TypeName()), propertyName) : nullptr;
+                if (!property || !property->set || !property->bindable)
+                    return Status::Fail(ApplicationError("PXUISTUDIO2108",
+                        "UI item template target is not bindable: " + propertyName,
+                        m_sourcePath, node.id, "bindings." + propertyName));
+                if (!binding.formatter.empty() && !m_formatters.Find(binding.formatter))
+                    return Status::Fail(ApplicationError("PXUISTUDIO2143",
+                        "Unknown UI item formatter: " + binding.formatter,
+                        m_sourcePath, node.id, "bindings." + propertyName));
+                m_bindings.push_back({path->second, propertyName,
+                                      binding.path.substr(5), binding.formatter,
+                                      property->type, node.id});
+            }
+        }
+        auto initial = m_model.Read(m_descriptor.path);
+        if (!initial) return Status::Fail(initial.Diagnostics());
+        if (const auto status = Refresh(initial.Value()); !status) return status;
+        m_subscription = m_model.Subscribe(m_descriptor.path,
+            [weak = weak_from_this()](const Variant& value) {
+                if (auto source = weak.lock()) {
+                    const auto status = source->Refresh(value);
+                    if (!status) {
+                        for (const auto& diagnostic : status.Diagnostics()) diag::Emit(diagnostic);
+                    } else source->m_view.InvalidateLayout();
+                }
+            });
+        return Status::Ok();
+    }
+
+    std::size_t Count() const override { return m_items.size(); }
+    std::string StableKey(const std::size_t index) const override {
+        return index < m_keys.size() ? m_keys[index] : std::string{};
+    }
+    std::uint64_t Revision() const override { return m_revision; }
+
+    void Unbind(std::string_view, Control& item) override {
+        if (const auto found = m_contexts.find(&item); found != m_contexts.end()) {
+            found->second->index = static_cast<std::size_t>(-1);
+            found->second->key.clear();
+        }
+    }
+
+    Status Bind(const std::size_t index, Control& item) override {
+        const auto context = m_contexts.find(&item);
+        if (context == m_contexts.end() || index >= m_items.size())
+            return Status::Fail(ApplicationError("PXUISTUDIO2144",
+                "UI item template bind index or control is invalid", m_sourcePath));
+        context->second->index = index;
+        context->second->key = m_keys[index];
+        for (const auto& binding : m_bindings) {
+            auto* target = ControlAt(item, binding.nodePath);
+            const auto* property = target ? TypeRegistry::Global().FindProperty(
+                std::string(target->TypeName()), binding.property) : nullptr;
+            const Variant* value = ItemField(m_items[index], binding.itemField);
+            if (!property || !property->set || !value)
+                return Status::Fail(ApplicationError("PXUISTUDIO2145",
+                    "UI item field or target is missing: " + binding.itemField,
+                    m_sourcePath, binding.nodeId, "bindings." + binding.property));
+            const Variant* output = value;
+            Variant formatted;
+            if (!binding.formatter.empty()) {
+                const auto* formatter = m_formatters.Find(binding.formatter);
+                if (!formatter || formatter->input != value->Type())
+                    return Status::Fail(ApplicationError("PXUISTUDIO2146",
+                        "UI item formatter input type does not match: " + binding.formatter,
+                        m_sourcePath, binding.nodeId, "bindings." + binding.property));
+                auto result = formatter->format(*value);
+                if (!result) return Status::Fail(result.Diagnostics());
+                formatted = result.TakeValue();
+                output = &formatted;
+            }
+            if (property->type != output->Type())
+                return Status::Fail(ApplicationError("PXUISTUDIO2147",
+                    "UI item binding output type does not match target: " + binding.property,
+                    m_sourcePath, binding.nodeId, "bindings." + binding.property));
+            if (const auto status = property->set(*target, *output); !status) return status;
+        }
+        return Status::Ok();
+    }
+
+    std::unique_ptr<Control> MakeItem() {
+        auto context = std::make_shared<ItemContext>();
+        auto tree = BuildUiRuntimeTree(m_document, m_assets,
+            [weak = weak_from_this(), context](const sdk::UiAction& action,
+                                                const std::string_view signal,
+                                                const std::string_view nodeId) {
+                if (auto source = weak.lock()) source->RunAction(*context, action, signal, nodeId);
+            });
+        if (!tree.Valid() || !tree.unresolvedAssetIds.empty()) {
+            for (const auto& issue : tree.diagnostics)
+                diag::Emit(ApplicationError(issue.code, issue.message,
+                                             m_sourcePath, issue.nodeId));
+            return nullptr;
+        }
+        context->root = tree.root.get();
+        m_contexts.emplace(context->root, std::move(context));
+        return std::move(tree.root);
+    }
+
+private:
+    struct ItemContext {
+        Control* root = nullptr;
+        std::size_t index = 0;
+        std::string key;
+    };
+    struct TemplateBinding {
+        std::vector<std::size_t> nodePath;
+        std::string property;
+        std::string itemField;
+        std::string formatter;
+        VariantType targetType = VariantType::Null;
+        std::string nodeId;
+    };
+
+    static Control* ControlAt(Control& root, const std::vector<std::size_t>& path) {
+        scene::Node* node = &root;
+        for (const auto step : path) {
+            node = node->Child(step);
+            if (!node) return nullptr;
+        }
+        return dynamic_cast<Control*>(node);
+    }
+    void CollectPaths(scene::Node& node, const std::vector<std::size_t>& path) {
+        m_nodePaths.emplace(node.Id().ToString(), path);
+        for (std::size_t index = 0; index < node.Children().size(); ++index) {
+            auto childPath = path;
+            childPath.push_back(index);
+            CollectPaths(*node.Child(index), childPath);
+        }
+    }
+    Status Refresh(const Variant& value) {
+        const auto* array = value.AsArray();
+        if (!array) return Status::Fail(ApplicationError("PXUISTUDIO2148",
+            "UI itemSource path must contain an array: " + m_descriptor.path,
+            m_sourcePath));
+        std::vector<Variant> items;
+        std::vector<Variant> rawKeys;
+        std::vector<std::string> keys;
+        std::unordered_set<std::string> unique;
+        items.reserve(array->size()); rawKeys.reserve(array->size()); keys.reserve(array->size());
+        for (const auto& item : *array) {
+            const auto* raw = ItemField(item, m_descriptor.key);
+            if (!raw) return Status::Fail(ApplicationError("PXUISTUDIO2149",
+                "UI item is missing stable key field: " + m_descriptor.key,
+                m_sourcePath));
+            std::string key;
+            if (const auto* text = raw->TryGet<std::string>()) key = "s:" + *text;
+            else if (const auto* integer = raw->TryGet<std::int64_t>())
+                key = "i:" + std::to_string(*integer);
+            else return Status::Fail(ApplicationError("PXUISTUDIO2150",
+                "UI item stable key must be a string or integer", m_sourcePath));
+            if (key.size() <= 2 || !unique.insert(key).second)
+                return Status::Fail(ApplicationError("PXUISTUDIO2151",
+                    "UI item stable keys must be nonempty and unique", m_sourcePath));
+            for (const auto& binding : m_bindings) {
+                const auto* field = ItemField(item, binding.itemField);
+                if (!field) return Status::Fail(ApplicationError("PXUISTUDIO2145",
+                    "UI item is missing a bound field: " + binding.itemField,
+                    m_sourcePath, binding.nodeId, "bindings." + binding.property));
+                VariantType outputType = field->Type();
+                if (!binding.formatter.empty()) {
+                    const auto* formatter = m_formatters.Find(binding.formatter);
+                    if (!formatter || formatter->input != outputType)
+                        return Status::Fail(ApplicationError("PXUISTUDIO2146",
+                            "UI item formatter input type does not match: " + binding.formatter,
+                            m_sourcePath, binding.nodeId, "bindings." + binding.property));
+                    auto formatted = formatter->format(*field);
+                    if (!formatted) return Status::Fail(formatted.Diagnostics());
+                    outputType = formatted.Value().Type();
+                }
+                if (outputType != binding.targetType)
+                    return Status::Fail(ApplicationError("PXUISTUDIO2147",
+                        "UI item binding type does not match target: " + binding.property,
+                        m_sourcePath, binding.nodeId, "bindings." + binding.property));
+            }
+            items.push_back(item.Clone()); rawKeys.push_back(raw->Clone());
+            keys.push_back(std::move(key));
+        }
+        m_items = std::move(items);
+        m_rawKeys = std::move(rawKeys);
+        m_keys = std::move(keys);
+        ++m_revision;
+        return Status::Ok();
+    }
+    void RunAction(const ItemContext& context, const sdk::UiAction& source,
+                   const std::string_view signal, const std::string_view nodeId) {
+        if (!context.root || context.index >= m_items.size() ||
+            m_keys[context.index] != context.key) return;
+        sdk::UiAction action = source;
+        for (auto& [name, value] : action.arguments) {
+            (void)name;
+            const auto* placeholder = std::get_if<std::string>(&value);
+            if (!placeholder) continue;
+            if (*placeholder == "$index") value = static_cast<std::int64_t>(context.index);
+            else if (*placeholder == "$key") {
+                if (const auto* text = m_rawKeys[context.index].TryGet<std::string>()) value = *text;
+                else if (const auto* integer = m_rawKeys[context.index].TryGet<std::int64_t>())
+                    value = *integer;
+            }
+        }
+        const auto path = m_nodePaths.find(std::string(nodeId));
+        auto* target = path == m_nodePaths.end() ? nullptr :
+            ControlAt(*context.root, path->second);
+        if (target && m_actions) m_actions(action, signal, target->Id().ToString());
+    }
+
+    sdk::UiDocument m_document;
+    sdk::UiItemSource m_descriptor;
+    IViewModel& m_model;
+    VirtualizedView& m_view;
+    const FormatterRegistry& m_formatters;
+    UiAssetResolver m_assets;
+    UiActionSink m_actions;
+    std::string m_sourcePath;
+    std::uint64_t m_subscription = 0;
+    std::uint64_t m_revision = 0;
+    std::vector<Variant> m_items;
+    std::vector<Variant> m_rawKeys;
+    std::vector<std::string> m_keys;
+    std::vector<TemplateBinding> m_bindings;
+    std::unordered_map<std::string, std::vector<std::size_t>> m_nodePaths;
+    std::unordered_map<Control*, std::shared_ptr<ItemContext>> m_contexts;
+};
+
 }  // namespace
 
 Result<UiApplicationSummary> UiApplication::ApplyText(const std::string_view json, UiApplicationOptions options) {
@@ -494,12 +779,103 @@ Result<UiApplicationSummary> UiApplication::ApplyDocument(const sdk::UiDocument&
     if (!resolved) return Result<UiApplicationSummary>::Failure(resolved.Diagnostics());
     sdk::UiDocument resolvedDocument = std::move(resolved.Value());
 
+    struct RepeaterTemplate {
+        std::string ownerId;
+        sdk::UiItemSource descriptor;
+        sdk::UiDocument document;
+    };
+    std::unordered_map<std::string, const sdk::UiNode*> nodesById;
+    for (const auto& node : resolvedDocument.nodes) nodesById.emplace(node.id, &node);
+    std::vector<RepeaterTemplate> repeaters;
+    std::unordered_set<std::string> templateNodeIds;
+    for (const auto& node : resolvedDocument.nodes) {
+        if (!node.itemSource) continue;
+        if (!options.viewModel)
+            return Result<UiApplicationSummary>::Failure(ApplicationError(
+                "PXUISTUDIO2152", "UI itemSource requires a ViewModel",
+                options.sourcePath, node.id, "itemSource"));
+        std::vector<const sdk::UiNode*> children;
+        for (const auto& candidate : resolvedDocument.nodes)
+            if (candidate.parentId && *candidate.parentId == node.id)
+                children.push_back(&candidate);
+        if (children.size() != 1)
+            return Result<UiApplicationSummary>::Failure(ApplicationError(
+                "PXUISTUDIO2153", "UI itemSource requires exactly one item template",
+                options.sourcePath, node.id, "itemSource"));
+        RepeaterTemplate repeater;
+        repeater.ownerId = node.id;
+        repeater.descriptor = *node.itemSource;
+        repeater.document = resolvedDocument;
+        repeater.document.rootId = children.front()->id;
+        repeater.document.behaviorGraph = {};
+        repeater.document.behaviorTriggers.clear();
+        repeater.document.visualStateGroups.clear();
+        repeater.document.animations.reset();
+        std::erase_if(repeater.document.nodes, [&](const sdk::UiNode& candidate) {
+            const sdk::UiNode* cursor = &candidate;
+            while (cursor && cursor->parentId) {
+                if (*cursor->parentId == node.id) return false;
+                const auto parent = nodesById.find(*cursor->parentId);
+                cursor = parent == nodesById.end() ? nullptr : parent->second;
+            }
+            return true;
+        });
+        for (const auto& member : repeater.document.nodes) {
+            if (member.itemSource)
+                return Result<UiApplicationSummary>::Failure(ApplicationError(
+                    "PXUISTUDIO2154", "Nested UI itemSource templates are not supported",
+                    options.sourcePath, member.id, "itemSource"));
+            if (!templateNodeIds.insert(member.id).second)
+                return Result<UiApplicationSummary>::Failure(ApplicationError(
+                    "PXUISTUDIO2155", "UI item templates overlap",
+                    options.sourcePath, member.id));
+        }
+        repeaters.push_back(std::move(repeater));
+    }
+    sdk::UiDocument staticDocument = resolvedDocument;
+    std::erase_if(staticDocument.nodes, [&](const sdk::UiNode& node) {
+        return templateNodeIds.contains(node.id);
+    });
+    const auto templateTarget = [&](const std::string& nodeId,
+                                    const std::string& property)
+        -> std::optional<diag::Diagnostic> {
+        if (!templateNodeIds.contains(nodeId)) return std::nullopt;
+        return ApplicationError("PXUISTUDIO2157",
+            "Behavior, Visual State, and Animation cannot target a repeated UI item; "
+            "use item bindings or item Actions", options.sourcePath, nodeId, property);
+    };
+    for (const auto& trigger : resolvedDocument.behaviorTriggers)
+        if (auto issue = templateTarget(trigger.nodeId, "behaviorTriggers"))
+            return Result<UiApplicationSummary>::Failure(std::move(*issue));
+    for (const auto& behavior : resolvedDocument.behaviorGraph.nodes)
+        for (const auto& [name, value] : behavior.properties)
+            if (const auto* reference = std::get_if<sdk::UiNodeReferenceValue>(&value))
+                if (auto issue = templateTarget(reference->nodeId,
+                                                "behaviorGraph." + name))
+                    return Result<UiApplicationSummary>::Failure(std::move(*issue));
+    for (const auto& behavior : resolvedDocument.behaviorGraph.nodes)
+        for (const auto& [name, value] : behavior.arguments)
+            if (const auto* reference = std::get_if<sdk::UiNodeReferenceValue>(&value))
+                if (auto issue = templateTarget(reference->nodeId,
+                                                "behaviorGraph.arguments." + name))
+                    return Result<UiApplicationSummary>::Failure(std::move(*issue));
+    for (const auto& group : resolvedDocument.visualStateGroups)
+        for (const auto& state : group.states)
+            for (const auto& overrideValue : state.overrides)
+                if (auto issue = templateTarget(overrideValue.nodeId,
+                                                "visualStateGroups"))
+                    return Result<UiApplicationSummary>::Failure(std::move(*issue));
+    if (resolvedDocument.animations)
+        for (const auto& clip : resolvedDocument.animations->clips)
+            for (const auto& track : clip.tracks)
+                if (auto issue = templateTarget(track.nodeId, "animations"))
+                    return Result<UiApplicationSummary>::Failure(std::move(*issue));
+
     UIContext* context = &m_context;
     const std::string sourcePath = options.sourcePath;
     const bool previewSafeMode = options.previewSafeMode;
     auto observer = std::move(options.observeAction);
-    auto runtimeTree =
-        BuildUiRuntimeTree(resolvedDocument, std::move(options.resolveAsset), [context, sourcePath, previewSafeMode, observer = std::move(observer)](const sdk::UiAction& action, const std::string_view signal, const std::string_view nodeId) {
+    UiActionSink actionSink = [context, sourcePath, previewSafeMode, observer = std::move(observer)](const sdk::UiAction& action, const std::string_view signal, const std::string_view nodeId) {
             ActionInvocation invocation;
             invocation.action = action.id;
             invocation.context.preview = previewSafeMode;
@@ -526,7 +902,8 @@ Result<UiApplicationSummary> UiApplication::ApplyDocument(const sdk::UiDocument&
             }
             const Status status = context->Actions().Dispatch(std::move(invocation), { .previewSafeMode = previewSafeMode });
             if (observer) observer(action, status);
-        });
+        };
+    auto runtimeTree = BuildUiRuntimeTree(staticDocument, options.resolveAsset, actionSink);
 
     std::vector<diag::Diagnostic> diagnostics;
     for (const auto& source : runtimeTree.diagnostics) {
@@ -541,7 +918,7 @@ Result<UiApplicationSummary> UiApplication::ApplyDocument(const sdk::UiDocument&
     if (!diagnostics.empty()) return Result<UiApplicationSummary>::Failure(std::move(diagnostics));
 
     std::vector<Binding> propertyBindings;
-    for (const auto& node : resolvedDocument.nodes) {
+    for (const auto& node : staticDocument.nodes) {
         if (node.bindings.empty()) continue;
         if (!options.viewModel) {
             return Result<UiApplicationSummary>::Failure(ApplicationError("PXUISTUDIO2106", "UI document contains property bindings but no ViewModel was provided", sourcePath, node.id, "bindings"));
@@ -561,6 +938,27 @@ Result<UiApplicationSummary> UiApplication::ApplyDocument(const sdk::UiDocument&
             if (!binding) return Result<UiApplicationSummary>::Failure(binding.Diagnostics());
             propertyBindings.push_back(std::move(binding.Value()));
         }
+    }
+
+    for (auto& repeater : repeaters) {
+        const auto ownerId = Uuid::Parse(repeater.ownerId);
+        auto* view = ownerId ? dynamic_cast<VirtualizedView*>(runtimeTree.root->Find(*ownerId)) : nullptr;
+        if (!view)
+            return Result<UiApplicationSummary>::Failure(ApplicationError(
+                "PXUISTUDIO2156", "UI itemSource target is not a GridView or ListView",
+                sourcePath, repeater.ownerId, "itemSource"));
+        auto source = std::make_shared<AuthoredItemSource>(
+            std::move(repeater.document), std::move(repeater.descriptor),
+            *options.viewModel, *view, m_context.Formatters(),
+            options.resolveAsset, actionSink, sourcePath);
+        if (const auto ready = source->Initialize(); !ready)
+            return Result<UiApplicationSummary>::Failure(ready.Diagnostics());
+        const auto installed = view->SetSource(source,
+            [weak = std::weak_ptr<AuthoredItemSource>(source)] {
+                if (auto live = weak.lock()) return live->MakeItem();
+                return std::unique_ptr<Control>{};
+            });
+        if (!installed) return Result<UiApplicationSummary>::Failure(installed.Diagnostics());
     }
 
     if (runtimeTree.animations) {
@@ -612,7 +1010,7 @@ Result<UiApplicationSummary> UiApplication::ApplyDocument(const sdk::UiDocument&
 
     UiApplicationSummary summary{ .documentId = resolvedDocument.id,
                                         .revision = resolvedDocument.revision,
-                                        .nodeCount = runtimeTree.nodeCount,
+                                        .nodeCount = runtimeTree.nodeCount + templateNodeIds.size(),
                                         .actionBindingCount = runtimeTree.actionBindingCount,
                                         .behaviorNodeCount = runtimeTree.behaviorNodeCount,
                                         .behaviorTriggerCount = runtimeTree.behaviorTriggerCount,

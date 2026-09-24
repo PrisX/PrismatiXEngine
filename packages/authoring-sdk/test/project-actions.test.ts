@@ -50,3 +50,28 @@ test("extension Action validation reports every invalid static argument before P
   assert.ok(diagnostics.every((diagnostic) => diagnostic.path === "Content/UI/Title.pxui"));
   assert.ok(diagnostics.some((diagnostic) => diagnostic.details?.includes("nodes[0].onClick")));
 });
+
+test("item-template Action placeholders are checked against extension parameter types", () => {
+  const itemExtension: ExtensionManifest = {...extension, actions: [{
+    id: "item.select", parameters: [
+      {name: "index", type: "integer", required: true},
+      {name: "key", type: "string", required: true},
+    ],
+  }]};
+  const document = {nodes: [
+    {id: "grid", itemSource: {path: "items", key: "key"}},
+    {id: "template", parentId: "grid"},
+    {id: "button", parentId: "template", onClick: {
+      id: "item.select", arguments: {index: "$index", key: "$key"},
+    }},
+  ]};
+  assert.deepEqual(validateUiActionUsage(document, [itemExtension], "Items.pxui"), []);
+  const invalidExtension: ExtensionManifest = {...itemExtension, actions: [{
+    id: "item.select", parameters: [
+      {name: "index", type: "boolean", required: true},
+      {name: "key", type: "string", required: true},
+    ],
+  }]};
+  assert.ok(validateUiActionUsage(document, [invalidExtension], "Items.pxui")
+    .some((diagnostic) => diagnostic.code === "PXBUILD1062"));
+});

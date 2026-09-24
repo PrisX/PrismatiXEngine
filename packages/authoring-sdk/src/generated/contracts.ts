@@ -2934,6 +2934,26 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         ],
         "type": "object"
       },
+      "itemSource": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "maxLength": 256,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*$",
+            "type": "string"
+          },
+          "path": {
+            "maxLength": 512,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*|\\[(?:0|[1-9][0-9]*)\\])*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "key"
+        ],
+        "type": "object"
+      },
       "layout": {
         "additionalProperties": false,
         "properties": {
@@ -3117,6 +3137,9 @@ export const contractSchemas: Readonly<Record<string, object>> = {
           },
           "id": {
             "$ref": "https://prismatix.dev/contracts/common.schema.json#/$defs/uuid"
+          },
+          "itemSource": {
+            "$ref": "#/$defs/itemSource"
           },
           "kind": {
             "enum": [
@@ -3640,5 +3663,5 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "story-index.schema.json": "abc3cf730c81d25c45c5a11632268e16334d5a189ff419bdfb2da940e6292b82",
   "timeline.schema.json": "48f267a0d203fc813879304be8df079b965785d71258cbcf358b51db269265be",
   "ui-component.schema.json": "d91e1ee59871449dfb898409aadaf054adc2f39c3df0df911ce993122e3a281a",
-  "ui.schema.json": "293d89ec61362dc452991fdab96fdec354f47bdc46f6cb26ddc122e2215c344e"
+  "ui.schema.json": "e9508f08b49979b7c82bbe0cf2c8c02d32645b06ee5008015b9479470e9ecdd5"
 };

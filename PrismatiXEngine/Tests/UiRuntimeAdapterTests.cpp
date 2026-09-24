@@ -16,6 +16,7 @@
 #include "Engine/UI/UiApplication.h"
 #include "Engine/UI/UIContext.h"
 #include "Engine/UI/UITypeRegistry.h"
+#include "Engine/UI/VirtualizedView.h"
 #include "Engine/UI/Widgets.h"
 
 namespace {
@@ -355,7 +356,208 @@ std::string DependencyComponent(const std::string& id, const std::optional<std::
 
 }  // namespace
 
+void TestAuthoredItemTemplate() {
+    constexpr auto rootId = "a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1";
+    constexpr auto gridId = "a2a2a2a2-a2a2-42a2-82a2-a2a2a2a2a2a2";
+    constexpr auto templateId = "a3a3a3a3-a3a3-43a3-83a3-a3a3a3a3a3a3";
+    constexpr auto buttonId = "a4a4a4a4-a4a4-44a4-84a4-a4a4a4a4a4a4";
+    px::sdk::UiDocument document;
+    document.id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    document.name = "Authored items";
+    document.width = 300; document.height = 200;
+    document.rootId = rootId;
+    px::sdk::UiNode root;
+    root.id = rootId; root.name = "Root"; root.kind = px::sdk::UiNodeKind::Group;
+    root.layout.width = 300; root.layout.height = 200;
+    px::sdk::UiNode grid;
+    grid.id = gridId; grid.parentId = rootId; grid.name = "Slots";
+    grid.kind = px::sdk::UiNodeKind::Grid; grid.runtimeType = "GridView";
+    grid.layout.width = 300; grid.layout.height = 200;
+    grid.runtimeProperties.emplace("columns", std::int64_t{2});
+    grid.runtimeProperties.emplace("itemExtent", px::sdk::UiVec2Value{120, 60});
+    grid.runtimeProperties.emplace("gap", px::sdk::UiVec2Value{10, 10});
+    grid.itemSource = px::sdk::UiItemSource{"slots", "key"};
+    px::sdk::UiNode item;
+    item.id = templateId; item.parentId = gridId;
+    item.name = "SlotTemplate"; item.kind = px::sdk::UiNodeKind::Group;
+    item.layout.width = 120; item.layout.height = 60;
+    px::sdk::UiNode button;
+    button.id = buttonId; button.parentId = templateId;
+    button.name = "SlotButton"; button.kind = px::sdk::UiNodeKind::Button;
+    button.layout.width = 100; button.layout.height = 40;
+    button.bindings.emplace("text", px::sdk::UiPropertyBinding{"item.title", {}});
+    button.bindings.emplace("enabled", px::sdk::UiPropertyBinding{"item.enabled", {}});
+    button.onClick = px::sdk::UiAction{"item.select", {{"index", std::string{"$index"}},
+                                                      {"key", std::string{"$key"}}}};
+    document.nodes = {root, grid, item, button};
+
+    const auto makeItem = [](std::string key, std::string title) {
+        return px::Variant(px::VariantObject{{"key", px::Variant(std::move(key))},
+                                             {"title", px::Variant(std::move(title))},
+                                             {"enabled", px::Variant(true)}});
+    };
+    px::ui::ObservableViewModel model;
+    Check(static_cast<bool>(model.Define("slots", px::Variant(px::VariantArray{
+        makeItem("first", "First"), makeItem("second", "Second")}))),
+        "item template test requires one typed collection");
+    px::ui::UIContext context;
+    std::int64_t selectedIndex = -1;
+    std::string selectedKey;
+    px::ui::ActionDescriptor selectDescriptor;
+    selectDescriptor.id = "item.select";
+    selectDescriptor.label = "Select item";
+    selectDescriptor.displayName = "Select item";
+    selectDescriptor.category = "Test";
+    selectDescriptor.origin = px::ui::ActionOrigin::BuiltIn;
+    selectDescriptor.sourceId = "AuthoredItemTest";
+    selectDescriptor.providerId = "builtin";
+    selectDescriptor.arguments = {
+        {.name = "index", .type = px::VariantType::Integer, .required = true},
+        {.name = "key", .type = px::VariantType::String, .required = true},
+    };
+    Check(context.Actions().Catalog().Register(std::move(selectDescriptor)).IsOk(),
+          "item template Action descriptor must register");
+    Check(static_cast<bool>(context.Commands().Register("item.select", [&](const px::Variant& arguments) {
+        const auto* object = arguments.AsObject();
+        if (!object) return px::Status::Fail(px::diag::Diagnostic{});
+        const auto index = object->find("index"), key = object->find("key");
+        if (index == object->end() || key == object->end() ||
+            !index->second.TryGet<std::int64_t>() || !key->second.TryGet<std::string>())
+            return px::Status::Fail(px::diag::Diagnostic{});
+        selectedIndex = *index->second.TryGet<std::int64_t>();
+        selectedKey = *key->second.TryGet<std::string>();
+        return px::Status::Ok();
+    })), "item template Action must register");
+    px::ui::UiApplication application(context);
+    const auto applied = application.ApplyDocument(document,
+        {.sourcePath = "authored-items.pxui", .viewModel = &model});
+    if (!applied) for (const auto& diagnostic : applied.Diagnostics())
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    Check(applied && applied.Value().nodeCount == 4,
+          "one item template must install once as an authored definition");
+    auto* view = dynamic_cast<px::ui::GridView*>(context.Root()->Find(*px::Uuid::Parse(gridId)));
+    Check(view && view->HasSource() && view->Children().empty(),
+          "item template must not become a static child of the GridView");
+    (void)context.Root()->Measure({300, 200});
+    context.Root()->Arrange({0, 0, 300, 200});
+    Check(view->RealizedCount() == 2 && view->Children().size() == 2,
+          "authored item source must realize one Control per visible data item");
+    auto* first = dynamic_cast<px::ui::Control*>(view->Child(0));
+    auto* firstButton = first ? dynamic_cast<px::ui::Button*>(first->Child(0)) : nullptr;
+    Check(firstButton && firstButton->Text() == "First",
+          "item.* binding must set the Runtime property on each clone");
+    const auto firstId = first->Id();
+    firstButton->Activate();
+    Check(selectedIndex == 0 && selectedKey == "first",
+          "item Action placeholders must resolve to the current index and key");
+
+    Check(static_cast<bool>(model.Write("slots", px::Variant(px::VariantArray{
+        makeItem("second", "Second changed"), makeItem("first", "First changed")}))),
+        "repeater collection must allow reorder without indexed subscriptions");
+    (void)context.Root()->Measure({300, 200});
+    context.Root()->Arrange({0, 0, 300, 200});
+    auto* moved = dynamic_cast<px::ui::Control*>(view->Child(1));
+    auto* movedButton = moved ? dynamic_cast<px::ui::Button*>(moved->Child(0)) : nullptr;
+    Check(moved && moved->Id() == firstId && movedButton &&
+              movedButton->Text() == "First changed",
+          "stable key reorder must retain Control identity and refresh item bindings");
+    movedButton->Activate();
+    Check(selectedIndex == 1 && selectedKey == "first",
+          "reordered item Actions must use the new index, not their original index");
+    Check(static_cast<bool>(model.Write("slots", px::Variant(px::VariantArray{makeItem("first", "Only")}))),
+          "repeater collection must allow shrinking");
+    (void)context.Root()->Measure({300, 200});
+    context.Root()->Arrange({0, 0, 300, 200});
+    Check(view->RealizedCount() == 1 && view->Child(0)->Id() == firstId,
+          "shrinking collection must recycle stale controls and retain surviving key");
+    Check(static_cast<bool>(model.Write("slots", px::Variant(px::VariantArray{
+        makeItem("first", "Ambiguous"), makeItem("first", "Duplicate")}))),
+          "ViewModel can receive an invalid application-level item snapshot");
+    (void)context.Root()->Measure({300, 200});
+    context.Root()->Arrange({0, 0, 300, 200});
+    auto* retained = dynamic_cast<px::ui::Control*>(view->Child(0));
+    auto* retainedButton = retained ? dynamic_cast<px::ui::Button*>(retained->Child(0)) : nullptr;
+    Check(view->RealizedCount() == 1 && retainedButton &&
+              retainedButton->Text() == "Only",
+          "invalid duplicate keys must retain the previous visible item snapshot");
+}
+
+void TestGalgameAuthoredSlots() {
+    constexpr auto rootId = "b1b1b1b1-b1b1-41b1-81b1-b1b1b1b1b1b1";
+    constexpr auto gridId = "b2b2b2b2-b2b2-42b2-82b2-b2b2b2b2b2b2";
+    constexpr auto itemId = "b3b3b3b3-b3b3-43b3-83b3-b3b3b3b3b3b3";
+    constexpr auto buttonId = "b4b4b4b4-b4b4-44b4-84b4-b4b4b4b4b4b4";
+    const auto layout = [](const int width, const int height, const char* mode = "free") {
+        return nlohmann::json{{"mode", mode}, {"x", 0}, {"y", 0},
+            {"width", width}, {"height", height}, {"anchorX", 0}, {"anchorY", 0},
+            {"anchorRight", 0}, {"anchorBottom", 0}, {"pivotX", 0}, {"pivotY", 0},
+            {"margin", 0}, {"alignment", "start"}, {"sizeRule", "fixed"}};
+    };
+    const auto node = [&](const char* id, const nlohmann::json& parent,
+                          const char* kind, const char* runtimeType,
+                          const char* name, const int width, const int height,
+                          const char* mode = "free") {
+        return nlohmann::json{{"id", id}, {"parentId", parent}, {"order", 0},
+            {"kind", kind}, {"runtimeType", runtimeType}, {"name", name},
+            {"visible", true}, {"locked", false},
+            {"layout", layout(width, height, mode)},
+            {"runtimeProperties", nlohmann::json::object()},
+            {"bindings", nlohmann::json::object()}};
+    };
+    auto root = node(rootId, nullptr, "group", "Control", "Root", 600, 400);
+    auto grid = node(gridId, rootId, "grid", "GridView", "Slots", 600, 400);
+    grid["itemSource"] = {{"path", "saveLoad.slots"}, {"key", "key"}};
+    grid["runtimeProperties"] = {
+        {"columns", 4}, {"itemExtent", {{"type", "vec2"}, {"x", 100}, {"y", 70}}},
+        {"gap", {{"type", "vec2"}, {"x", 10}, {"y", 10}}}};
+    auto item = node(itemId, gridId, "group", "Control", "SlotTemplate",
+                     100, 70, "container");
+    auto button = node(buttonId, itemId, "button", "Button", "SlotButton", 100, 70);
+    button["bindings"] = {{"text", {{"path", "item.title"}}},
+                          {"enabled", {{"path", "item.enabled"}}}};
+    button["onClick"] = {{"id", "save.slot"},
+                         {"arguments", {{"slot", "$index"}}}};
+    auto document = CanonicalUi(nlohmann::json{
+        {"format", "PrismatiXUIScene"}, {"schemaRevision", 2},
+        {"id", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}, {"revision", 1},
+        {"name", "Authored Save"}, {"width", 600}, {"height", 400},
+        {"rootId", rootId}, {"nodes", nlohmann::json::array({root, grid, item, button})},
+        {"theme", nlohmann::json::array()}});
+    px::ui::GalgameUI galgame;
+    const auto registered = galgame.RegisterTemplate(px::ui::GalgameUI::Screen::Save,
+        document.dump(), "authored-save.pxui");
+    if (!registered) for (const auto& diagnostic : registered.Diagnostics())
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    Check(registered.IsOk(), "GalgameUI must accept an authored item template route");
+    px::ui::GalgameItem slot;
+    slot.key = "slot-0"; slot.title = "Saved scene";
+    slot.command = "save.slot"; slot.argument = "0";
+    const auto shown = galgame.ShowSaveLoad(true, {slot});
+    if (!shown) for (const auto& diagnostic : shown.Diagnostics())
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    Check(shown.IsOk(), "ShowSaveLoad must retain an authored keyed GridView source");
+    auto* view = dynamic_cast<px::ui::GridView*>(galgame.Root()->Find(*px::Uuid::Parse(gridId)));
+    Check(view && view->HasSource(), "authored Save route must keep its ViewModel item source");
+    (void)galgame.Root()->Measure({600, 400});
+    galgame.Root()->Arrange({0, 0, 600, 400});
+    Check(view->RealizedCount() == 12, "authored Save route must realize all 12 supplied slots");
+    auto* first = dynamic_cast<px::ui::Control*>(view->Child(0));
+    auto* firstButton = first ? dynamic_cast<px::ui::Button*>(first->Child(0)) : nullptr;
+    Check(firstButton && firstButton->Text() == "Saved scene" && firstButton->Enabled(),
+          "GalgameUI ViewModel must populate authored item bindings");
+    std::string selected;
+    galgame.SetActionSink([&](const px::ui::GalgameAction& action) {
+        if (action.command == "save.slot") selected = action.argument;
+    });
+    firstButton->Activate();
+    px::Input input;
+    (void)galgame.Update(input, 600, 400);
+    Check(selected == "0", "authored Save item must dispatch the selected slot index");
+}
+
 int main() {
+    TestAuthoredItemTemplate();
+    TestGalgameAuthoredSlots();
     Check(px::ui::RegisterBuiltinUITypes().IsOk(), "typed caption fixture requires builtin controls");
     for (const std::string type : {"Label", "RichTextLabel", "Button", "IconButton"}) {
         px::sdk::UiDocument captions;

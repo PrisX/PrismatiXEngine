@@ -183,12 +183,33 @@ override an identically named entry in
 Bindings can address array items and object fields, for example
 `bind={{text: "saveLoad.slots[0].title"}}`. The native ViewModel must define
 `saveLoad.slots` as an array containing an object with a string `title` before
-the UI is installed; replacing that array refreshes subscribed item bindings.
-Indexes are zero-based and cannot have leading zeroes. TSX may generate a fixed
-set of controls with `Array.from`, but this is not yet a runtime keyed repeater:
-changing the array length does not create or remove controls. A replacement
-that removes an actively bound item or changes its bound value type is rejected
-instead of leaving stale UI visible.
+the UI is installed. Indexes are zero-based and cannot have leading zeroes.
+Fixed indexed bindings refresh on replacement, but reject a replacement that
+removes an actively bound item or changes its bound value type.
+
+For a collection whose length or order can change, author one item subtree:
+
+```tsx
+import {Button, Control, ItemsGrid} from "@prismatix/authoring-sdk";
+
+<ItemsGrid name="Slots" items={{path: "saveLoad.slots", key: "key"}}
+  columns={4} itemExtent={[252, 228]} gap={[32, 18]}>
+  <Control name="SlotTemplate" width={252} height={228}>
+    <Button name="SlotButton" bind={{text: "item.title"}}
+      action={{id: "save.slot", arguments: {slot: "$index"}}} />
+  </Control>
+</ItemsGrid>
+```
+
+`ItemsList` uses the same contract for a vertical list. The ViewModel path must
+hold an array of objects with a unique, nonempty string or integer `key` field.
+Template bindings use `item.<field>`; Actions inside a template can use
+`$index` (zero-based integer) or `$key` (the item's original string/integer
+key). Visible controls and their descendant Runtime IDs follow the stable key
+when items reorder. Empty, duplicate, or invalid keys retain the previous
+visible snapshot and emit a diagnostic. Nested item templates and template-local
+Behavior/Animation targets are not yet supported. The template is a Runtime
+data source, not a static first child of the GridView/ListView.
 
 When a native UI TypeRegistry manifest is available, use
 `validateUiDocument(ui, registry)` to check writable/bindable properties and

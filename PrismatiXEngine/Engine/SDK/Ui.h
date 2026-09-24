@@ -203,6 +203,11 @@ struct UiPropertyBinding {
     std::string formatter;
 };
 
+struct UiItemSource {
+    std::string path;
+    std::string key;
+};
+
 struct UiNode {
     std::string id;
     std::optional<std::string> parentId;
@@ -223,6 +228,7 @@ struct UiNode {
     std::int32_t accessibilityFocusOrder = 0;
     std::unordered_map<std::string, UiValue> runtimeProperties;
     std::unordered_map<std::string, UiPropertyBinding> bindings;
+    std::optional<UiItemSource> itemSource;
     std::optional<UiComponentInstance> componentInstance;
     std::optional<UiComponentSlot> componentSlot;
     // Populated only by the component resolver before Runtime adaptation.
