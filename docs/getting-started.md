@@ -86,11 +86,14 @@ distribution as a read-only cache source even though it builds the replacement
 in a separate staging directory. Repacking to the same intact output can
 reuse matching compressed entry bytes after checking the old bytes and the
 current source against SHA-256; a corrupt cache is ignored and rebuilt.
-Compression-mode changes and encrypted packages do not reuse this cache.
-With the default single archive, Packager still verifies every input and
-writes a complete new `Content.pdx`:
-this reduces redundant compression and one full input-read pass, but is not
-yet block-level incremental packaging.
+Compression-mode changes and encrypted packages do not reuse this
+entry-level cache. `Package/archive-shards.json` separately records each
+archive's source-content and output SHA-256 fingerprints. When an archive is
+unchanged, Packager checks the prior bytes and rechecks every current source
+before reusing the whole PDX in a staged publication. The CLI retires the old
+distribution after successful replacement; a caller that keeps an external
+cache source does not hard-link its archives by default. With one archive,
+any content change still rewrites `Content.pdx`.
 
 For large games, `pack`, `run`, and distribution `build` accept
 `--archive-shards N` (1–64). The default `1` keeps `Content.pdx`; larger
@@ -99,8 +102,13 @@ values assign each resource to a stable URI-hash shard and emit
 shards, and Player mounts all listed files. Each compressed shard has its own
 `Package/entry-cache-XX.json`. Keeping the same shard count preserves a
 resource's shard when other resources are added; changing the count
-repartitions the package and its cache. Packager still verifies
-every input and rewrites every shard on each distribution build. This is
+repartitions the package and its cache. In an unencrypted package, unchanged
+shards can be reused without rewriting their PDX. Encrypted packages also
+reuse shards when the entire content identity is unchanged, but changing any
+content rotates the current package-derived archive key and rebuilds all
+encrypted shards. Every source is still verified and the CLI still fingerprints
+the published output, so this
+is not a claim of constant-time or measured large-project speedup. This is
 split packaging, not automatic patch delivery: placing an extra `patch.pdx`
 beside the game does not mount or apply it.
 

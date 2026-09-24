@@ -1274,6 +1274,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
       format: "PrismatiXPackageRequest", schemaRevision: 2,
       requestId: `cli-${process.pid}`, gameId: project.id,
       projectRoot: artifactRoot, outputDir: staging, cacheSourceDir: output,
+      retireCacheSourceAfterPromotion: true,
       playerExecutable: player, title: project.name,
       width: project.resolution.width, height: project.resolution.height,
       startScript, sourceMap,

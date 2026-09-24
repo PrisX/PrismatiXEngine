@@ -1003,6 +1003,7 @@ test("pack reuses an owned artifact without recompiling edited author sources", 
     const request = JSON.parse(await readFile(process.argv.at(-1), "utf8"));
     if (request.projectRoot !== ${JSON.stringify(artifact)} ||
         request.cacheSourceDir !== ${JSON.stringify(output)} ||
+        request.retireCacheSourceAfterPromotion !== true ||
         request.outputDir === request.cacheSourceDir ||
         request.archiveShards !== 4 ||
         !request.inputs.some(value => value.uri === "Runtime/main.pxir") ||

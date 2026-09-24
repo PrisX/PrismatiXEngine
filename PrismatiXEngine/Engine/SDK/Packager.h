@@ -45,6 +45,10 @@ struct PackageRequest {
     // Optional read-only source for reusable compressed entries when a
     // frontend publishes through its own staging directory.
     std::filesystem::path cacheSourceDir;
+    // Only set when the frontend will atomically replace and retire the cache
+    // source after this staged output is promoted. Prevents persistent
+    // cross-distribution hard links to mutable archive files.
+    bool retireCacheSourceAfterPromotion = false;
     std::filesystem::path playerExecutable;
     std::string title;
     int width = 1280;

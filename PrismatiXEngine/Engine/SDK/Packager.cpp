@@ -558,6 +558,85 @@ std::uint32_t ArchiveShardForUri(const std::string_view uri,
     return static_cast<std::uint32_t>(hash % count);
 }
 
+struct ShardReuseRecord {
+    std::string contentFingerprint;
+    std::string archiveFingerprint;
+};
+
+using ShardReuseIndex = std::unordered_map<std::string, ShardReuseRecord>;
+
+std::optional<std::string> ShardContentFingerprint(
+    const std::string_view archiveName,
+    const std::vector<ArchiveEntry>& entries,
+    const PackageCompression compression,
+    const bool encryption,
+    const std::string_view encryptionKey) {
+    std::string material = "PrismatiXArchiveShard|1|PDX5|";
+    material += std::string(archiveName) + "|" +
+                std::to_string(CompressionLevel(compression)) + "|";
+    material += encryption ? std::string(encryptionKey) : "plaintext";
+    for (const auto& entry : entries) {
+        if (!IsFingerprint(entry.fingerprint)) return std::nullopt;
+        material += "|" + std::to_string(entry.uri.size()) + ":" + entry.uri +
+                    "|" + std::to_string(entry.size) + "|" + entry.fingerprint;
+    }
+    const auto digest = Sha256Text(material);
+    return digest ? std::optional<std::string>(Hex(*digest)) : std::nullopt;
+}
+
+std::optional<ShardReuseIndex> LoadShardReuseIndex(
+    const std::filesystem::path& previousOutput,
+    const std::uint32_t shardCount,
+    const PackageCompression compression,
+    const bool encryption) {
+    const auto indexPath = previousOutput / "Package/archive-shards.json";
+    std::error_code error;
+    const auto size = std::filesystem::file_size(indexPath, error);
+    if (error || size == 0 || size > 64ull * 1024ull) return std::nullopt;
+    std::ifstream input(indexPath, std::ios::binary);
+    if (!input) return std::nullopt;
+    std::string source(static_cast<std::size_t>(size), '\0');
+    input.read(source.data(), static_cast<std::streamsize>(source.size()));
+    if (!input) return std::nullopt;
+    const Json root = Json::parse(source, nullptr, false);
+    if (!root.is_object() || !root.contains("format") ||
+        !root["format"].is_string() ||
+        root["format"] != "PrismatiXArchiveShardIndex" ||
+        !root.contains("schemaRevision") ||
+        JsonInt(root["schemaRevision"]) != 1 ||
+        !root.contains("archiveShards") ||
+        JsonInt(root["archiveShards"]) != static_cast<int>(shardCount) ||
+        !root.contains("compressionLevel") ||
+        JsonInt(root["compressionLevel"]) != CompressionLevel(compression) ||
+        !root.contains("encrypted") || !root["encrypted"].is_boolean() ||
+        root["encrypted"].get<bool>() != encryption ||
+        !root.contains("archives") || !root["archives"].is_array() ||
+        root["archives"].size() > shardCount)
+        return std::nullopt;
+    ShardReuseIndex result;
+    for (const auto& item : root["archives"]) {
+        if (!item.is_object() || !item.contains("file") ||
+            !item["file"].is_string() ||
+            !item.contains("contentFingerprint") ||
+            !item["contentFingerprint"].is_string() ||
+            !item.contains("archiveFingerprint") ||
+            !item["archiveFingerprint"].is_string())
+            return std::nullopt;
+        const std::string file = item["file"].get<std::string>();
+        bool expectedName = false;
+        for (std::uint32_t index = 0; index < shardCount; ++index)
+            expectedName |= file == ShardArchiveName(index, shardCount);
+        ShardReuseRecord record{
+            item["contentFingerprint"].get<std::string>(),
+            item["archiveFingerprint"].get<std::string>()};
+        if (!expectedName || !IsFingerprint(record.contentFingerprint) ||
+            !IsFingerprint(record.archiveFingerprint) ||
+            !result.emplace(file, std::move(record)).second)
+            return std::nullopt;
+    }
+    return result;
+}
+
 std::optional<ArchiveCache> LoadArchiveCache(
     const std::filesystem::path& previousOutput, const int compressionLevel,
     const std::string_view archiveName, const std::string_view cacheName) {
@@ -2505,6 +2584,16 @@ PackageRequestParseResult ParsePackageRequest(const std::string_view text) {
             result.request.cacheSourceDir = JsonPath(root, "cacheSourceDir");
         }
     }
+    const auto retireCacheSource =
+        root.find("retireCacheSourceAfterPromotion");
+    if (retireCacheSource != root.end()) {
+        if (!retireCacheSource->is_boolean())
+            AddDiagnostic(result.diagnostics, "PXPKG1242",
+                          "retireCacheSourceAfterPromotion must be a boolean");
+        else
+            result.request.retireCacheSourceAfterPromotion =
+                retireCacheSource->get<bool>();
+    }
     result.request.playerExecutable = JsonPath(root, "playerExecutable");
     result.request.cancelFile = JsonPath(root, "cancelFile");
     RequiredString(root, "title", result.request.title, result.diagnostics);
@@ -2901,7 +2990,8 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
         if (!digest)
             return Fail(request, eventSink, "PXPKG1306",
                         "SHA-256 is unavailable");
-        identityMaterial += "|shader-artifact|" + artifact.uri + "|" + Hex(*digest);
+        artifact.fingerprint = Hex(*digest);
+        identityMaterial += "|shader-artifact|" + artifact.uri + "|" + artifact.fingerprint;
         entries.push_back(std::move(artifact));
     }
     std::ranges::sort(entries, {}, &ArchiveEntry::uri);
@@ -2914,52 +3004,125 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
     std::vector<std::vector<ArchiveEntry>> shards(request.archiveShards);
     for (const auto& entry : entries)
         shards[ArchiveShardForUri(entry.uri, request.archiveShards)].push_back(entry);
+    const auto cacheSource = request.cacheSourceDir.empty()
+                                 ? request.outputDir : request.cacheSourceDir;
+    const bool cacheSourceWillBeRetired =
+        cacheSource == request.outputDir ||
+        request.retireCacheSourceAfterPromotion;
+    const auto previousShardIndex = cacheSourceWillBeRetired
+        ? LoadShardReuseIndex(cacheSource, request.archiveShards,
+                              request.compression, request.encryption)
+        : std::optional<ShardReuseIndex>{};
     std::vector<detail::PackageArchiveMount> archiveMounts;
     std::vector<std::pair<std::string, std::vector<CachedArchiveEntry>>> cacheDocuments;
+    std::vector<std::pair<std::string, ShardReuseRecord>> shardRecords;
     std::size_t writtenEntries = 0;
     std::size_t reusedEntries = 0;
     std::size_t cacheEntryCount = 0;
+    std::size_t reusedShards = 0;
     for (std::uint32_t index = 0; index < request.archiveShards; ++index) {
         const auto& shard = shards[index];
         if (shard.empty()) continue;
         const std::string archiveName = ShardArchiveName(index, request.archiveShards);
         const std::string cacheName = ShardCacheName(index, request.archiveShards);
+        const auto contentFingerprint = ShardContentFingerprint(
+            archiveName, shard, request.compression, request.encryption,
+            encryptionKey);
+        if (!contentFingerprint)
+            return Fail(request, eventSink, "PXPKG1306",
+                        "Archive shard fingerprint could not be computed");
         EmitProgress(request, eventSink, "archive", writtenEntries,
                      entries.size(), "Writing " + archiveName);
         const auto previousCache = !request.encryption &&
                                            CompressionLevel(request.compression) != 0
-                                       ? LoadArchiveCache(request.cacheSourceDir.empty()
-                                                              ? request.outputDir
-                                                              : request.cacheSourceDir,
+                                       ? LoadArchiveCache(cacheSource,
                                                           CompressionLevel(request.compression),
                                                           archiveName, cacheName)
                                        : std::optional<ArchiveCache>{};
         std::vector<CachedArchiveEntry> cacheEntries;
         std::size_t shardReused = 0;
-        std::string archiveFailure;
-        const auto archiveResult =
-            WriteArchive(staging / archiveName, shard, request.compression,
-                         request.encryption, DeriveKey(encryptionKey),
-                         previousCache ? &*previousCache : nullptr,
-                         cacheEntries, shardReused, archiveFailure,
-                         [&](const std::size_t current, const std::size_t,
-                             const std::string& message) {
-                             EmitProgress(request, eventSink, "archive-write",
-                                          writtenEntries + current, entries.size(),
-                                          message);
-                         });
-        if (archiveResult == ArchiveWriteResult::InputChanged) {
-            return Fail(request, eventSink, "PXPKG1305",
-                        "An input changed while " + archiveName + " was being written",
-                        true);
+        std::string archiveFingerprint;
+        bool reusedWholeShard = false;
+        const auto prior = previousShardIndex
+                               ? previousShardIndex->find(archiveName)
+                               : ShardReuseIndex::const_iterator{};
+        if (previousShardIndex && prior != previousShardIndex->end() &&
+            prior->second.contentFingerprint == *contentFingerprint) {
+            const auto oldArchive = cacheSource / archiveName;
+            error.clear();
+            const auto status = std::filesystem::symlink_status(oldArchive, error);
+            if (!error && std::filesystem::is_regular_file(status) &&
+                ComputePackageFingerprint(oldArchive) ==
+                    prior->second.archiveFingerprint) {
+                // Validation happened earlier; a whole-shard reuse must still
+                // recheck every current source at the writer's TOCTOU boundary.
+                for (const auto& entry : shard) {
+                    if (Cancelled(request))
+                        return Cancel(request, eventSink,
+                                      "Packaging was cancelled while verifying a shard");
+                    if (entry.FileBacked() &&
+                        ComputePackageFingerprint(entry.source) != entry.fingerprint)
+                        return Fail(request, eventSink, "PXPKG1305",
+                                    "An input changed while " + archiveName +
+                                        " was being reused: " + entry.uri,
+                                    true);
+                }
+                error.clear();
+                std::filesystem::create_hard_link(
+                    oldArchive, staging / archiveName, error);
+                if (!error) {
+                    reusedWholeShard = true;
+                    archiveFingerprint = prior->second.archiveFingerprint;
+                    ++reusedShards;
+                    if (previousCache) {
+                        for (const auto& [uri, cached] : previousCache->entries)
+                            cacheEntries.push_back(cached);
+                        std::ranges::sort(cacheEntries, {},
+                                          &CachedArchiveEntry::uri);
+                        shardReused = cacheEntries.size();
+                    }
+                    EmitProgress(request, eventSink, "archive-write",
+                                 writtenEntries + shard.size(), entries.size(),
+                                 "Reused unchanged " + archiveName);
+                }
+            }
         }
-        if (archiveResult != ArchiveWriteResult::Completed) {
-            return Fail(request, eventSink, "PXPKG1307",
-                        archiveName + " could not be written" +
-                            (archiveFailure.empty() ? std::string{} : ": " + archiveFailure),
-                        true);
+        if (!reusedWholeShard) {
+            std::string archiveFailure;
+            const auto archiveResult =
+                WriteArchive(staging / archiveName, shard, request.compression,
+                             request.encryption, DeriveKey(encryptionKey),
+                             previousCache ? &*previousCache : nullptr,
+                             cacheEntries, shardReused, archiveFailure,
+                             [&](const std::size_t current, const std::size_t,
+                                 const std::string& message) {
+                                 EmitProgress(request, eventSink, "archive-write",
+                                              writtenEntries + current,
+                                              entries.size(), message);
+                             });
+            if (archiveResult == ArchiveWriteResult::InputChanged) {
+                return Fail(request, eventSink, "PXPKG1305",
+                            "An input changed while " + archiveName +
+                                " was being written",
+                            true);
+            }
+            if (archiveResult != ArchiveWriteResult::Completed) {
+                return Fail(request, eventSink, "PXPKG1307",
+                            archiveName + " could not be written" +
+                                (archiveFailure.empty() ? std::string{} :
+                                                          ": " + archiveFailure),
+                            true);
+            }
+            archiveFingerprint = ComputePackageFingerprint(
+                staging / archiveName);
+            if (archiveFingerprint.empty())
+                return Fail(request, eventSink, "PXPKG1307",
+                            archiveName + " could not be fingerprinted", true);
         }
         archiveMounts.push_back({archiveName, "base", false});
+        shardRecords.emplace_back(
+            archiveName,
+            ShardReuseRecord{*contentFingerprint, archiveFingerprint});
         writtenEntries += shard.size();
         reusedEntries += shardReused;
         cacheEntryCount += cacheEntries.size();
@@ -2967,6 +3130,8 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
     }
     EmitProgress(request, eventSink, "archive-cache", reusedEntries,
                  cacheEntryCount, "Reused verified compressed entries");
+    EmitProgress(request, eventSink, "archive-shard-reuse", reusedShards,
+                 archiveMounts.size(), "Reused verified unchanged PDX shards");
     if (Cancelled(request)) {
         return Cancel(request, eventSink, "Packaging was cancelled after archive creation");
     }
@@ -3108,6 +3273,28 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
                 }
             }
         }
+        Json shardIndex{{"format", "PrismatiXArchiveShardIndex"},
+                        {"schemaRevision", 1},
+                        {"archiveShards", request.archiveShards},
+                        {"compressionLevel", CompressionLevel(request.compression)},
+                        {"encrypted", request.encryption},
+                        {"archives", Json::array()}};
+        for (const auto& [file, record] : shardRecords)
+            shardIndex["archives"].push_back(
+                {{"file", file},
+                 {"contentFingerprint", record.contentFingerprint},
+                 {"archiveFingerprint", record.archiveFingerprint}});
+        const std::string shardIndexText = shardIndex.dump();
+        if (shardIndexText.size() > 64ull * 1024ull)
+            return Fail(request, eventSink, "PXPKG1311",
+                        "Package/archive-shards.json exceeds its size limit");
+        std::ofstream shardIndexOutput(
+            staging / "Package/archive-shards.json",
+            std::ios::binary | std::ios::trunc);
+        shardIndexOutput << shardIndexText;
+        if (!shardIndexOutput)
+            return Fail(request, eventSink, "PXPKG1311",
+                        "Package/archive-shards.json could not be written", true);
         std::ofstream output(staging / "Package/manifest.json", std::ios::binary | std::ios::trunc);
         output << manifest;
         if (!output) {

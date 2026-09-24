@@ -591,6 +591,13 @@ int main() {
         });
         suite.Expect(reuse != events.end() && reuse->current > 0,
                      "sharded repack reuses verified compressed entry bytes");
+        const auto wholeReuse = std::ranges::find_if(
+            events, [](const auto& event) {
+                return event.phase == "archive-shard-reuse";
+            });
+        suite.Expect(wholeReuse != events.end() &&
+                         wholeReuse->current == fingerprints.size(),
+                     "unchanged shards reuse whole archive files");
         for (const auto& [file, fingerprint] : fingerprints)
             suite.Expect(px::sdk::ComputePackageFingerprint(shardedOutput / file) ==
                              fingerprint,
@@ -607,10 +614,30 @@ int main() {
             events, [](const auto& event) { return event.phase == "archive-cache"; });
         suite.Expect(stagedReuse != events.end() && stagedReuse->current > 0,
                      "external sharded cache source reuses verified entries");
+        const auto stagedWholeReuse = std::ranges::find_if(
+            events, [](const auto& event) {
+                return event.phase == "archive-shard-reuse";
+            });
+        suite.Expect(stagedWholeReuse != events.end() &&
+                         stagedWholeReuse->current == 0 &&
+                         !std::filesystem::equivalent(
+                             shardedOutput / fingerprints.front().first,
+                             staged.outputDir / fingerprints.front().first),
+                     "unretired external cache source is never hard-linked");
         Write(root / "Assets/shard-added.bin", "one later resource");
         sharded.inputs.push_back(Input(root, "Assets/shard-added.bin"));
-        suite.Require(px::sdk::RunPackager(sharded).Completed(),
+        events.clear();
+        suite.Require(px::sdk::RunPackager(sharded, [&](const auto& event) {
+                          events.push_back(event);
+                      }).Completed(),
                       "adding a resource rebuilds a sharded distribution");
+        const auto partialReuse = std::ranges::find_if(
+            events, [](const auto& event) {
+                return event.phase == "archive-shard-reuse";
+            });
+        suite.Expect(partialReuse != events.end() &&
+                         partialReuse->current == fingerprints.size() - 1,
+                     "adding one resource rewrites only its shard");
         std::string changedShard;
         for (const auto& [file, fingerprint] : fingerprints) {
             px::io::Archive archive;
@@ -646,6 +673,20 @@ int main() {
                          std::string(encryptedBytes->begin(), encryptedBytes->end()) ==
                              "one later resource",
                      "encrypted shard data resolves through the production VFS");
+        encryptedVfs.Clear();
+        events.clear();
+        suite.Require(px::sdk::RunPackager(encrypted, [&](const auto& event) {
+                          events.push_back(event);
+                      }).Completed(),
+                      "unchanged encrypted shard set repackages");
+        const auto encryptedReuse = std::ranges::find_if(
+            events, [](const auto& event) {
+                return event.phase == "archive-shard-reuse";
+            });
+        suite.Expect(encryptedReuse != events.end() &&
+                         encryptedReuse->current ==
+                             encryptedManifest.manifest.archives.size(),
+                     "unchanged encrypted shards reuse their verified bytes");
         sharded.archiveShards = 65;
         suite.Expect(HasDiagnostic(px::sdk::RunPackager(sharded), "PXPKG1241"),
                      "invalid shard counts fail before modifying output");
@@ -1031,6 +1072,13 @@ int main() {
         suite.Expect(fallback != cacheEvents.end() &&
                          fallback->current < fallback->total,
                      "corrupt cached entry is not reused");
+        const auto corruptShardReuse = std::ranges::find_if(
+            cacheEvents, [](const auto& event) {
+                return event.phase == "archive-shard-reuse";
+            });
+        suite.Expect(corruptShardReuse != cacheEvents.end() &&
+                         corruptShardReuse->current == 0,
+                     "tampered whole archive is never hard-linked into new output");
         suite.Require(archive.Open((cachedOutput / "Content.pdx").string()),
                       "fallback archive mounts after cache corruption");
         suite.Expect(archive.Read("Assets/cache-fixture.bin").has_value(),
