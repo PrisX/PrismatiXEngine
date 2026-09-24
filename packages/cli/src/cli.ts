@@ -23,6 +23,8 @@ import {createStarter} from "./starter.js";
 import {migrateCommand} from "./migration.js";
 import {inspectSaveWithRuntime} from "./save-inspection.js";
 import {planPackagePatch} from "./package-diff.js";
+import {applyDistributionPatch, createDistributionPatch,
+  type DistributionPatchProgress} from "./distribution-patch.js";
 
 import {
   assertLocalBuildFresh,
@@ -83,6 +85,8 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   "inspect-save": {values: "package secret runtime player", flags: ""},
   "plan-patch": {values: "base target runtime packager", flags: "verify-contents"},
   "verify-package": {values: "runtime packager", flags: ""},
+  "create-patch": {values: "base target output runtime packager", flags: ""},
+  "apply-patch": {values: "base patch output runtime packager", flags: "in-place"},
 };
 function parseOptions(command: string, args: readonly string[]): Options {
   const schema = commandOptions[command];
@@ -109,8 +113,9 @@ function parseOptions(command: string, args: readonly string[]): Options {
     values.set(name, value);
   }
   if (positional.length > 1) throw new Error("Expected one project or save path; quote paths containing spaces");
-  if (command === "plan-patch" && positional.length !== 0)
-    throw new Error("plan-patch uses --base and --target, not a positional project path");
+  if (["plan-patch", "create-patch", "apply-patch"].includes(command) &&
+      positional.length !== 0)
+    throw new Error(`${command} uses named paths, not a positional project path`);
   if (flags.has("artifact-only") && flags.has("distribution")) throw new Error("--artifact-only and --distribution cannot be combined");
   if (flags.has("artifact-only") && values.has("artifact")) throw new Error("--artifact-only and --artifact cannot be combined");
   if (flags.has("artifact-only") && values.has("archive-shards"))
@@ -1948,7 +1953,7 @@ async function inspectSaveCommand(options: Options): Promise<number> {
   }
 }
 function usage(): void {
-  process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|augment|ids|migrate|inspect-save|plan-patch|verify-package> [project-or-save-or-distribution] [options]\n");
+  process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|augment|ids|migrate|inspect-save|plan-patch|verify-package|create-patch|apply-patch> [project-or-save-or-distribution] [options]\n");
 }
 
 async function verifyPackagedContents(directory: string, options: Options): Promise<{
@@ -2029,9 +2034,77 @@ async function planPatchCommand(options: Options): Promise<number> {
   }
 }
 
+async function createPatchCommand(options: Options): Promise<number> {
+  const base = options.values.get("base");
+  const target = options.values.get("target");
+  const output = options.values.get("output");
+  if (base === undefined || target === undefined || output === undefined) {
+    printDiagnostics([diagnostic("PXCLI1511",
+      "create-patch requires --base, --target, and --output")]);
+    return 2;
+  }
+  try {
+    const report = await createDistributionPatch(base, target, output,
+      (directory) => verifyPackagedContents(directory, options), patchProgress);
+    process.stdout.write(machineOutput
+      ? `${JSON.stringify({patchCreated: true, ...report})}\n`
+      : `Created distribution patch: ${report.output} ` +
+        `(${report.changedFiles} changed files, ${report.removedFiles} removed, ` +
+        `${report.payloadBytes} payload bytes).\n`);
+    return 0;
+  } catch (error) {
+    printDiagnostics(error instanceof PackagerFailure ? error.diagnostics :
+      error instanceof RuntimeDiscoveryFailure ? [discoveryDiagnostic("PXCLI1512",
+        "Packager required to verify patch inputs was not found", error)] :
+      [diagnostic("PXCLI1512", "Distribution patch creation failed", output, String(error))]);
+    return 1;
+  }
+}
+
+async function applyPatchCommand(options: Options): Promise<number> {
+  const base = options.values.get("base");
+  const patch = options.values.get("patch");
+  const inPlace = options.flags.has("in-place");
+  const output = options.values.get("output") ?? (inPlace ? base : undefined);
+  if (base === undefined || patch === undefined || output === undefined) {
+    printDiagnostics([diagnostic("PXCLI1513",
+      "apply-patch requires --base, --patch, and --output (or --in-place)")]);
+    return 2;
+  }
+  try {
+    const report = await applyDistributionPatch(base, patch, output, inPlace,
+      (directory) => verifyPackagedContents(directory, options), patchProgress);
+    process.stdout.write(machineOutput
+      ? `${JSON.stringify({patchApplied: true, ...report})}\n`
+      : `Applied distribution patch: ${report.output} ` +
+        `(${report.changedFiles} changed files, ${report.removedFiles} removed).\n`);
+    return 0;
+  } catch (error) {
+    printDiagnostics(error instanceof PackagerFailure ? error.diagnostics :
+      error instanceof RuntimeDiscoveryFailure ? [discoveryDiagnostic("PXCLI1514",
+        "Packager required to verify patched output was not found", error)] :
+      [diagnostic("PXCLI1514", "Distribution patch installation failed", output, String(error))]);
+    return 1;
+  }
+}
+
+function patchProgress(value: DistributionPatchProgress): void {
+  progress({event: "progress", severity: "information", code: "PXCLI1510",
+    phase: value.phase, current: value.files, bytes: value.bytes,
+    done: value.done,
+    ...(value.linkedFiles === undefined ? {} :
+      {linkedFiles: value.linkedFiles, linkedBytes: value.linkedBytes}),
+    message: `${value.phase}: ${value.files} files, ` +
+      `${(value.bytes / 1024 ** 2).toFixed(1)} MiB` +
+      (value.linkedFiles === undefined ? "" :
+        ` (${value.linkedFiles} linked, ${((value.linkedBytes ?? 0) / 1024 ** 2).toFixed(1)} MiB)`) +
+      `${value.done ? " (done)" : ""}`});
+}
+
 async function projectTool(command: string, options: Options, args: string[]): Promise<number | undefined> {
   if (launcherStopRequested) return 130;
-  if (["create", "inspect-save", "plan-patch", "verify-package"].includes(command)) return undefined;
+  if (["create", "inspect-save", "plan-patch", "verify-package",
+    "create-patch", "apply-patch"].includes(command)) return undefined;
   const location = await resolveProjectPath(options.positional[0]);
   const manifestPath = join(location.root, "package.json");
   if (!await regularFile(manifestPath)) return launcherStopRequested ? 130 : undefined;
@@ -2101,6 +2174,8 @@ async function main(): Promise<number> {
   if (command === "inspect-save") return inspectSaveCommand(options);
   if (command === "plan-patch") return planPatchCommand(options);
   if (command === "verify-package") return verifyPackageCommand(options);
+  if (command === "create-patch") return createPatchCommand(options);
+  if (command === "apply-patch") return applyPatchCommand(options);
   usage(); return 2;
 }
 

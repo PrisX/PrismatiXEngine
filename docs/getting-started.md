@@ -130,11 +130,47 @@ comparing them. Native Packager also accepts `--verify-package` with an
 absolute distribution path. These checks detect missing, corrupt, and
 misindexed resources but are not cryptographic signatures: someone who can
 replace the archives and their metadata together can forge a passing local
-verification. The base and target must
-be packages for the same game and both must include the new index. A safe
-patch format still needs authenticated base/target identity, overlay and
-deletion semantics, version and dependency checks, atomic installation, and
-rollback before an extra PDX can be automatically loaded.
+verification. The base and target must be packages for the same game and both
+must include the new index.
+
+For a small update between two complete, CLI-owned distributions, create a
+whole-file delta bundle and explicitly apply it:
+
+```sh
+prismatix create-patch --base path/to/v1 --target path/to/v2 --output path/to/update-v1-v2
+prismatix apply-patch --base path/to/v1 --patch path/to/update-v1-v2 --output path/to/updated-game
+```
+
+`create-patch` verifies both PDX contents and carries only changed files in
+`Payload/`, plus `Patch/manifest.json` with the exact base and target file
+inventories. `apply-patch` verifies the base and patch bundle, reconstructs a
+complete target in a staging directory, verifies its PDX contents, and
+publishes it after comparing every staged file against the target inventory.
+Removed files are omitted from the assembled target. It refuses a wrong base
+or modified/unowned output. For explicit replacement of the original game
+directory after exiting the game, use:
+
+```sh
+prismatix apply-patch --base path/to/v1 --patch path/to/update-v1-v2 --in-place
+```
+
+Unchanged files are hard-linked into the staging directory when supported,
+with copying as a fallback. A separate
+`--output` copies the complete reconstructed distribution, so it needs space
+for that full output. In-place replacement also needs room for changed files
+and any fallback copies. Do not bypass an ownership refusal by removing saves
+or other user files from the game directory.
+
+The bundle is **not** a standalone `patch.pdx`, is not automatically loaded
+at startup, and is not signed. It detects accidental corruption and wrong
+versions, not a malicious distributor who can replace the bundle and its
+metadata together. An automatic update channel still needs authenticated
+publisher identity, version/dependency policy, download/resume handling, and
+installation coordination. A drop-in PDX overlay additionally needs explicit
+override precedence and tombstone semantics; the current installer instead
+assembles a complete target distribution before launch. The selected native
+Packager must understand both package versions; cross-engine upgrades may
+require a full installer rather than this bundle format.
 
 Never choose Story, Assets, another source input or an unrelated existing folder as output. `pack` is an explicit distribution command; `run` packages and launches. Quote paths containing spaces.
 
