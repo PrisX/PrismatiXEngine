@@ -505,6 +505,40 @@ int main() {
         }
         const FrameEvidence outgoingFrame =
             CaptureFrame(device.Renderer(), "transition-outgoing");
+        if (!renderer.BeginPresentationHold() ||
+            !renderer.PresentationHoldActive() ||
+            !renderer.BeginFrame({30, 75, 220, 255})) {
+            std::cerr << "FAIL: transition-free route could not hold its outgoing frame\n";
+            result = 1;
+        } else {
+            renderer.DrawRect({0, 0, 640, 360}, {30, 75, 220, 255});
+            renderer.EndFrame();
+            const FrameEvidence heldWithoutTransition =
+                CaptureFrame(device.Renderer(), "route-none-preload-held");
+            if (heldWithoutTransition.hash != outgoingFrame.hash) {
+                std::cerr << "FAIL: route without a transition exposed its incoming frame before readiness\n";
+                result = 1;
+            }
+            renderer.EndPresentationHold();
+            if (renderer.PresentationHoldActive() ||
+                !renderer.BeginFrame({30, 75, 220, 255})) {
+                std::cerr << "FAIL: route presentation hold did not release\n";
+                result = 1;
+            } else {
+                renderer.DrawRect({0, 0, 640, 360}, {30, 75, 220, 255});
+                renderer.EndFrame();
+                const FrameEvidence released =
+                    CaptureFrame(device.Renderer(), "route-none-preload-ready");
+                if (released.hash == outgoingFrame.hash) {
+                    std::cerr << "FAIL: ready route did not appear without an animation\n";
+                    result = 1;
+                }
+            }
+            if (renderer.BeginFrame({220, 35, 45, 255})) {
+                renderer.DrawRect({0, 0, 640, 360}, {220, 35, 45, 255});
+                renderer.EndFrame();
+            }
+        }
         const auto tileHandle =
             renderer.PlayScreenEffect("test-tile-flip", 1.0f);
         renderer.UpdateScreenEffects(0.5f);

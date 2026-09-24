@@ -237,7 +237,10 @@ void Renderer2D::DestroyFrameTargets() {
     if (m_frameTarget) SDL_DestroyTexture(m_frameTarget);
     if (m_presentedTarget) SDL_DestroyTexture(m_presentedTarget);
     if (m_outgoingTarget) SDL_DestroyTexture(m_outgoingTarget);
+    if (m_presentationHoldTarget) SDL_DestroyTexture(m_presentationHoldTarget);
     m_frameTarget = m_presentedTarget = m_outgoingTarget = nullptr;
+    m_presentationHoldTarget = nullptr;
+    m_presentationHoldActive = false;
     m_framePreviousTarget = nullptr;
     m_frameRecording = false;
     FinishScreenEffect(ScreenEffectStatus::Cancelled);
@@ -268,6 +271,34 @@ void Renderer2D::EndFrame() {
                              static_cast<float>(m_logicalH)};
     SDL_RenderTexture(m_renderer, m_presentedTarget, nullptr, &viewport);
     m_framePreviousTarget = nullptr;
+}
+
+bool Renderer2D::BeginPresentationHold() {
+    if (!EnsureFrameTargets()) return false;
+    if (!m_presentationHoldTarget) {
+        m_presentationHoldTarget = SDL_CreateTexture(
+            m_renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET,
+            m_logicalW, m_logicalH);
+        if (!m_presentationHoldTarget) return false;
+        (void)SDL_SetTextureBlendMode(m_presentationHoldTarget,
+                                      SDL_BLENDMODE_BLEND);
+        (void)SDL_SetTextureScaleMode(m_presentationHoldTarget,
+                                      SDL_SCALEMODE_LINEAR);
+    }
+    SDL_Texture* previous = SDL_GetRenderTarget(m_renderer);
+    if (!SDL_SetRenderTarget(m_renderer, m_presentationHoldTarget)) return false;
+    std::uint8_t red = 0, green = 0, blue = 0, alpha = 0;
+    (void)SDL_GetRenderDrawColor(m_renderer, &red, &green, &blue, &alpha);
+    (void)SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 0);
+    (void)SDL_RenderClear(m_renderer);
+    const SDL_FRect viewport{0.0f, 0.0f, static_cast<float>(m_logicalW),
+                             static_cast<float>(m_logicalH)};
+    const bool copied = SDL_RenderTexture(m_renderer, m_presentedTarget,
+                                          nullptr, &viewport);
+    (void)SDL_SetRenderTarget(m_renderer, previous);
+    (void)SDL_SetRenderDrawColor(m_renderer, red, green, blue, alpha);
+    if (copied) m_presentationHoldActive = true;
+    return copied;
 }
 
 ScreenEffectHandle Renderer2D::PlayScreenEffect(const std::string_view id,
@@ -355,6 +386,7 @@ std::optional<ScreenEffectPlayback> Renderer2D::ActiveScreenEffect() const {
 
 void Renderer2D::UpdateScreenEffects(const float deltaSeconds) {
     if (!m_activeScreenEffect || m_activeScreenEffect->paused ||
+        m_presentationHoldActive ||
         !std::isfinite(deltaSeconds) ||
         deltaSeconds < 0.0f)
         return;
@@ -384,6 +416,13 @@ void Renderer2D::FinishScreenEffect(const ScreenEffectStatus status) {
 void Renderer2D::PresentScreenFrame() {
     SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 255);
     SDL_RenderClear(m_renderer);
+    if (m_presentationHoldActive) {
+        const SDL_FRect viewport{0.0f, 0.0f, static_cast<float>(m_logicalW),
+                                 static_cast<float>(m_logicalH)};
+        SDL_RenderTexture(m_renderer, m_presentationHoldTarget,
+                          nullptr, &viewport);
+        return;
+    }
     if (!m_activeScreenEffect) {
         const SDL_FRect viewport{0.0f, 0.0f, static_cast<float>(m_logicalW),
                                  static_cast<float>(m_logicalH)};

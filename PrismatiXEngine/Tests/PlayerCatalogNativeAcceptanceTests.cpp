@@ -311,6 +311,8 @@ void CreateProjectFixture(const std::filesystem::path& root,
     Copy(imageSource, root / "Assets/ending.png");
     Copy(imageSource, root / "Assets/Locales/zh-TW/opening.png");
     Copy(imageSource, root / "Assets/Locales/ja-JP/opening.png");
+    for (int index = 1; index <= 3; ++index)
+        Copy(imageSource, root / ("Assets/phone-" + std::to_string(index) + ".png"));
     Copy(audioSource, root / "Assets/Locales/zh-TW/opening.wav");
     Copy(audioSource, root / "Assets/Locales/ja-JP/opening.wav");
 
@@ -347,6 +349,24 @@ void CreateProjectFixture(const std::filesystem::path& root,
     for (auto& node : phoneUi["nodes"])
         if (node.at("id").get<std::string>() == titleRootId)
             node["name"] = "PhoneRoot";
+    for (int index = 1; index <= 3; ++index) {
+        phoneUi["nodes"].push_back({
+            {"id", "a2000000-0000-4000-8000-00000000000" + std::to_string(index + 1)},
+            {"parentId", titleRootId}, {"order", index + 10},
+            {"kind", "image"}, {"runtimeType", "TextureRect"},
+            {"name", "PhoneImage" + std::to_string(index)},
+            {"visible", true}, {"locked", false},
+            {"layout", {{"mode", "free"}, {"x", 550 + index * 110},
+                        {"y", 250}, {"width", 100}, {"height", 100},
+                        {"anchorX", 0}, {"anchorY", 0}, {"anchorRight", 0},
+                        {"anchorBottom", 0}, {"pivotX", 0}, {"pivotY", 0},
+                        {"margin", 0}, {"alignment", "start"},
+                        {"sizeRule", "fixed"}}},
+            {"runtimeProperties", {{"path", "Assets/phone-" +
+                                                std::to_string(index) + ".png"},
+                                   {"scaleMode", "Stretch"}}},
+            {"bindings", nlohmann::json::object()}});
+    }
     phoneUi.erase("animations");
     Write(root / "Content/UI/Phone.pxui", phoneUi.dump(2));
 
@@ -534,6 +554,9 @@ Engine.RegisterAction("acceptance.phase2-menu", async () => {
         "name":"Ending","kind":"cg","source":"Assets/ending.png",
         "sourceFileName":"ending.png","tags":[],"size":1,"fingerprint":"fixture"
       }],
+      "settings":{"player.presentationTransitions":{"routeOverrides":[
+        {"from":"title","to":"phone","preset":"none","duration":0}
+      ]}},
       "characters":[]
     })");
     Write(root / "Content/Localization/zh-TW.json", R"({
@@ -585,6 +608,9 @@ px::sdk::PackageRequest PackageRequest(const std::filesystem::path& root,
         "Assets/ending.png",
         "Assets/Locales/zh-TW/opening.png",
         "Assets/Locales/ja-JP/opening.png",
+        "Assets/phone-1.png",
+        "Assets/phone-2.png",
+        "Assets/phone-3.png",
         "Assets/Locales/zh-TW/opening.wav",
         "Assets/Locales/ja-JP/opening.wav",
         "Content/Fonts/NotoSansTC-Bold.ttf",
@@ -711,6 +737,9 @@ int main(int argc, char* argv[]) {
             WaitForLog(log,
                        "[javascript] phase2-title-async-complete"),
             "a public async Action advances while the animated title route owns presentation");
+        suite.Require(WaitForLog(log,
+                                 "Player route visuals preloading route=phone images=3"),
+                      "an explicit none transition still waits for its authored route images");
         suite.Require(
             WaitForLog(log,
                        "Player Phase 2 title async and custom phone route complete"),

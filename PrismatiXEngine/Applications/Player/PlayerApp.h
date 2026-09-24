@@ -162,6 +162,7 @@ private:
     graphics::AssetPreloadBatchId m_titlePreloadBatch = 0;
     graphics::AssetPreloadBatchId m_routePreloadBatch = 0;
     graphics::ScreenEffectHandle m_routePreloadEffect = 0;
+    bool m_routePreloadHold = false;
     std::vector<std::string> m_routePreloadPaths;
     std::vector<std::string> m_choiceTexts;
     vn::GameCatalog m_catalog;

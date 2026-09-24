@@ -2413,9 +2413,15 @@ void PlayerApp::BeginRouteVisualPreload(const std::string_view route) {
         m_routePreloadBatch = 0;
         m_routePreloadEffect = 0;
     }
+    if (m_routePreloadHold) {
+        m_runtime.Renderer().EndPresentationHold();
+        m_routePreloadHold = false;
+    }
     m_routePreloadPaths.clear();
     const auto& transition = m_session->Routes().ActiveTransition();
-    if (!transition || !m_boot.routeScenes.contains(std::string(route))) return;
+    if (!transition)
+        m_routePreloadHold = m_runtime.Renderer().BeginPresentationHold();
+    if (!m_boot.routeScenes.contains(std::string(route))) return;
     auto images = m_ui.RouteImageDependencies(route);
     if (!images) {
         for (const auto& diagnostic : images.Diagnostics()) diag::Emit(diagnostic);
@@ -2426,7 +2432,7 @@ void PlayerApp::BeginRouteVisualPreload(const std::string_view route) {
 
 void PlayerApp::FinishRouteVisualPreload(const std::string_view route) {
     const auto& transition = m_session->Routes().ActiveTransition();
-    if (!transition) return;
+    if (!transition && !m_routePreloadHold) return;
     int width = 0, height = 0;
     m_runtime.Renderer().GetLogicalSize(width, height);
     px::Input neutral;
@@ -2439,7 +2445,13 @@ void PlayerApp::FinishRouteVisualPreload(const std::string_view route) {
     std::erase_if(m_routePreloadPaths, [&seen](const std::string& path) {
         return path.empty() || !seen.insert(path).second;
     });
-    if (m_routePreloadPaths.empty()) return;
+    if (m_routePreloadPaths.empty()) {
+        if (m_routePreloadHold) {
+            m_runtime.Renderer().EndPresentationHold();
+            m_routePreloadHold = false;
+        }
+        return;
+    }
     std::vector<graphics::AssetPreloadRequest> requests;
     requests.reserve(m_routePreloadPaths.size());
     for (const auto& path : m_routePreloadPaths)
@@ -2447,30 +2459,44 @@ void PlayerApp::FinishRouteVisualPreload(const std::string_view route) {
     m_routePreloadPaths.clear();
     const auto batch = m_runtime.Assets().BeginTexturePreload(std::move(requests));
     const auto progress = m_runtime.Assets().TexturePreloadProgress(batch);
-    if (progress.Finished() ||
+    if (progress.Finished()) {
+        if (m_routePreloadHold) {
+            m_runtime.Renderer().EndPresentationHold();
+            m_routePreloadHold = false;
+        }
+        return;
+    }
+    if (transition &&
         !m_runtime.Renderer().PauseScreenEffect(transition->handle, true))
         return;
     m_routePreloadBatch = batch;
-    m_routePreloadEffect = transition->handle;
+    m_routePreloadEffect = transition ? transition->handle : 0;
     PX_LOG_INFO("Player route visuals preloading route={} images={}",
                 route, progress.total);
 }
 
 void PlayerApp::UpdateRouteVisualPreload() {
     if (!m_routePreloadBatch) return;
-    if (!m_runtime.Renderer().ScreenEffectPlaying(m_routePreloadEffect)) {
+    if ((m_routePreloadEffect &&
+         !m_runtime.Renderer().ScreenEffectPlaying(m_routePreloadEffect)) ||
+        (m_routePreloadHold &&
+         !m_runtime.Renderer().PresentationHoldActive())) {
         (void)m_runtime.Assets().CancelTexturePreload(m_routePreloadBatch);
         m_routePreloadBatch = 0;
         m_routePreloadEffect = 0;
+        m_routePreloadHold = false;
         return;
     }
     const auto progress = m_runtime.Assets().TexturePreloadProgress(m_routePreloadBatch);
     if (progress.valid && !progress.Finished()) return;
-    (void)m_runtime.Renderer().PauseScreenEffect(m_routePreloadEffect, false);
+    if (m_routePreloadEffect)
+        (void)m_runtime.Renderer().PauseScreenEffect(m_routePreloadEffect, false);
+    if (m_routePreloadHold) m_runtime.Renderer().EndPresentationHold();
     PX_LOG_INFO("Player route visuals ready loaded={} failed={}",
                 progress.succeeded, progress.failed);
     m_routePreloadBatch = 0;
     m_routePreloadEffect = 0;
+    m_routePreloadHold = false;
 }
 
 void PlayerApp::PresentRoute(const std::string& route,
@@ -3364,6 +3390,7 @@ void PlayerApp::DriveE2EJourney() {
                 m_e2eStage=E2EStage::CaptureGallery;
             break;
         case E2EStage::CloseGallery:
+            if(m_routePreloadBatch)break;
             input.InjectAction(InputAction::Cancel);
             input.InjectKeyPress(SDL_SCANCODE_ESCAPE);
             m_e2eStage=E2EStage::AwaitOverlayClosed;
@@ -3454,6 +3481,7 @@ void PlayerApp::CaptureUIRoutesE2EFrame() {
 
 void PlayerApp::CaptureE2EGalleryFrame() {
     if(m_e2eStage!=E2EStage::CaptureGallery)return;
+    if(m_routePreloadBatch)return;
     const auto capture=graphics::CaptureFrameSummary(
         m_runtime.Renderer().Handle());
     PX_LOG_INFO("Player E2E gallery frame width={} height={} colors={} hash={}",
@@ -3881,6 +3909,7 @@ void PlayerApp::MainLoop() {
 }
 
 void PlayerApp::Shutdown() {
+    if (m_routePreloadHold) m_runtime.Renderer().EndPresentationHold();
     if (m_scriptHost) m_scriptHost->Emit("engine.shutdown");
     if (!m_settings.fullscreen) {
         int w = 0, h = 0;

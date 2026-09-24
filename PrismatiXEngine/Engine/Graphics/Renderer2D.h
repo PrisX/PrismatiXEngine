@@ -117,6 +117,14 @@ public:
     // outgoing snapshot when a transition starts mid-frame.
     [[nodiscard]] bool BeginFrame(Color clearColor);
     void EndFrame();
+    // Snapshot the last presented frame while an incoming screen's images
+    // preload. Unlike a paused transition, this preserves an authored "none"
+    // transition: releasing the hold reveals the incoming frame immediately.
+    [[nodiscard]] bool BeginPresentationHold();
+    void EndPresentationHold() { m_presentationHoldActive = false; }
+    [[nodiscard]] bool PresentationHoldActive() const {
+        return m_presentationHoldActive;
+    }
 
     Status RegisterScreenEffect(ScreenEffectDefinition definition);
     [[nodiscard]] bool HasScreenEffect(std::string_view id) const;
@@ -326,12 +334,14 @@ private:
     SDL_Texture* m_frameTarget = nullptr;
     SDL_Texture* m_presentedTarget = nullptr;
     SDL_Texture* m_outgoingTarget = nullptr;
+    SDL_Texture* m_presentationHoldTarget = nullptr;
     SDL_Texture* m_framePreviousTarget = nullptr;
     std::unordered_map<std::string, ScreenEffectDefinition> m_screenEffectDefinitions;
     std::unordered_map<ScreenEffectHandle, ScreenEffectStatus> m_screenEffectStates;
     std::optional<ScreenEffectPlayback> m_activeScreenEffect;
     ScreenEffectHandle m_nextScreenEffectHandle = 1;
     bool m_frameRecording = false;
+    bool m_presentationHoldActive = false;
     std::uint64_t m_geometryBatchCount = 0;
     std::uint64_t m_geometryBatchItems = 0;
 };
