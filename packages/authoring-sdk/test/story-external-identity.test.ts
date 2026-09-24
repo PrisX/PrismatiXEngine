@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {compileProject, compileStoryProject, externalizeStoryIds,
-  synchronizeStoryIdentityMap,
+  synchronizeAlignedStoryIdentityMap, synchronizeStoryIdentityMap,
   type StoryIdentityMap, type StoryIndexDocument} from "../src/index.js";
 
 const sourcePath = "Story/en/main.pxstory";
@@ -110,6 +110,35 @@ test("sidecar sync rejects reordered, duplicated, or overlapping ambiguous edits
     assert.ok(result.diagnostics.some(diagnostic => diagnostic.code === code),
       JSON.stringify(result.diagnostics));
   }
+});
+
+test("aligned sidecar sync preserves repeated show commands after a proven argument edit", () => {
+  const original = "*start\n[show character=hero asset=Assets/hero.pxportrait]\n" +
+    "First.\n[show character=hero asset=Assets/hero.pxportrait]\nSecond.\n[end]\n";
+  const converted = externalizeStoryIds(original, {path: sourcePath});
+  assert.equal(converted.valid, true);
+  const changed = converted.source!.replace(
+    "[show character=hero asset=Assets/hero.pxportrait]",
+    "[show character=hero asset=Assets/hero.pxportrait transition=false]");
+  assert.equal(synchronizeStoryIdentityMap(changed, converted.map,
+    {path: sourcePath}).valid, false,
+  "fingerprint-only matching cannot prove which repeated show was edited");
+  const allowed = (before: string, after: string, _kind: string, command?: string) =>
+    command === "show" && after.replace(" transition=false]", "]") === before;
+  const synced = synchronizeAlignedStoryIdentityMap(converted.source!, changed,
+    converted.map, {path: sourcePath, isAllowedEdit: allowed});
+  assert.equal(synced.valid, true, JSON.stringify(synced.diagnostics));
+  assert.equal(synced.preserved, converted.map!.entries.length);
+  assert.deepEqual(synced.map!.entries.map((entry) => entry.sourceId ?? entry.id),
+    converted.map!.entries.map((entry) => entry.sourceId ?? entry.id));
+  const compiled = compile(changed, synced.map);
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  const reordered = changed.replace("First.\n", "Second.\n")
+    .replace("Second.\n[end]", "First.\n[end]");
+  const rejected = synchronizeAlignedStoryIdentityMap(converted.source!, reordered,
+    converted.map, {path: sourcePath, isAllowedEdit: allowed});
+  assert.equal(rejected.valid, false);
+  assert.ok(rejected.diagnostics.some((diagnostic) => diagnostic.code === "PXSTORY1417"));
 });
 
 test("declared external identities fail closed when the sidecar is missing", () => {

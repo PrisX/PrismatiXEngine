@@ -331,6 +331,63 @@ export function synchronizeStoryIdentityMap(source: string, value: unknown, opti
     removedOperations, diagnostics: [], valid: true};
 }
 
+/** Preserve sidecar identities when an importer can prove that every edited
+ * executable line is the same operation in the same position. The caller's
+ * predicate must be narrow: it is the proof for changed lines, not a general
+ * permission to ignore reordering. Insertions and deletions always fail. */
+export function synchronizeAlignedStoryIdentityMap(
+  previousSource: string, source: string, value: unknown, options: {
+    readonly path?: string;
+    readonly mapPath?: string;
+    readonly isAllowedEdit: (previousRaw: string, currentRaw: string,
+      kind: StoryNodeKind, command?: string) => boolean;
+  }): SynchronizeStoryIdsResult {
+  const path = options.path ?? "Story/main.pxstory";
+  const mapPath = options.mapPath ?? `${path}.pxids.json`;
+  const failed = (diagnostics: readonly AuthoringDiagnostic[]): SynchronizeStoryIdsResult =>
+    ({preserved: 0, added: 0, addedOperations: [], removed: [],
+      removedOperations: [], diagnostics, valid: false});
+  if (!storyRequiresIdentityMap(previousSource) || !storyRequiresIdentityMap(source))
+    return failed([issue("PXSTORY1412", "Both Story sources must declare an external identity map", path)]);
+  const previous = parseStory(previousSource, path);
+  const current = parseStory(source, path);
+  const parseErrors = [...previous.diagnostics, ...current.diagnostics]
+    .filter((diagnostic) => diagnostic.severity === "error");
+  if (parseErrors.length > 0) return failed(parseErrors);
+  if ([...previous.nodes, ...current.nodes].some((node) =>
+    node.kind === "command" && node.name === "id"))
+    return failed([issue("PXSTORY1404", "Story identity map cannot be combined with inline [id] directives", path)]);
+  const validated = validateStoryIdentityMap(value, mapPath);
+  if (!validated.valid || validated.value === undefined) return failed(validated.diagnostics);
+  const before = previous.nodes.filter(observable);
+  const after = current.nodes.filter(observable);
+  const old = validated.value.entries;
+  if (old.length !== before.length || before.length !== after.length)
+    return failed([issue("PXSTORY1414", "Aligned Story synchronization cannot add or remove executable operations", path)]);
+  const entries: StoryIdentityMapEntry[] = [];
+  for (let index = 0; index < after.length; index += 1) {
+    const original = before[index]!;
+    const edited = after[index]!;
+    const entry = old[index]!;
+    if (entry.fingerprint !== fingerprint(original) ||
+        entry.kind !== original.kind || entry.kind !== edited.kind ||
+        (entry.kind === "command" &&
+          (entry.command !== original.name || entry.command !== edited.name)))
+      return failed([issue("PXSTORY1415", "Existing Story identity map or operation shape is not aligned", path, edited)]);
+    if (original.raw.trim() !== edited.raw.trim() &&
+        !options.isAllowedEdit(original.raw.trim(), edited.raw.trim(),
+          edited.kind, edited.kind === "command" ? edited.name : undefined))
+      return failed([issue("PXSTORY1417", "Story operation edit was not approved for aligned synchronization", path, edited)]);
+    entries.push({...entry, fingerprint: fingerprint(edited)});
+  }
+  const map: StoryIdentityMap = {...validated.value, entries};
+  const applied = applyStoryIdentityMap(current, map, mapPath);
+  if (applied.diagnostics.some((diagnostic) => diagnostic.severity === "error"))
+    return failed(applied.diagnostics);
+  return {map, preserved: entries.length, added: 0, addedOperations: [],
+    removed: [], removedOperations: [], diagnostics: [], valid: true};
+}
+
 /** Materialize sidecar ids as non-executable synthetic directives so the
  * existing Story compiler produces byte-for-byte identical operation ids. */
 export function applyStoryIdentityMap(document: StoryDocument, value: unknown,

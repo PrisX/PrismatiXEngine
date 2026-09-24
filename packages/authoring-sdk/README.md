@@ -102,6 +102,15 @@ not prove save compatibility. `--external` remains an explicit spelling of the
 default. `--inline` is available only for legacy projects that deliberately
 want `[id ...]` in Story source; it cannot be mixed with external sidecars.
 
+Importers that retain the previous Story source can call
+`synchronizeAlignedStoryIdentityMap(previousSource, nextSource, previousMap,
+{isAllowedEdit})` when they can prove every executable operation remains in
+the same position. The callback must accept only the importer's known textual
+rewrite (for example, adding one `show transition=false` argument); the SDK
+rejects added/removed operations, shape changes, unrelated edits, and stale
+maps. This avoids hand-merging IDs while preserving save anchors across
+repeated Story commands. It is not a general reorder override.
+
 ## Player presentation crossfades
 
 Set Player presentation effects in the project `settings` (seconds, from 0 to
