@@ -26,8 +26,9 @@ import {inspectSaveWithRuntime} from "./save-inspection.js";
 import {planPackagePatch} from "./package-diff.js";
 import {applyDistributionPatch, createDistributionPatch,
   type DistributionPatchProgress} from "./distribution-patch.js";
-import {packageRetentionKey, retainPackageIfMatching, reusedArchiveInputs,
-  writePackageProvenance} from "./package-retain.js";
+import {packageContentKey, packageRetentionKey, refreshRuntimePackageIfMatching,
+  retainPackageIfMatching, reusedArchiveInputs, runtimeOutputsMatch,
+  runtimeReplacementFiles, writePackageProvenance} from "./package-retain.js";
 import {debugPackagerHint} from "./package-tool-hint.js";
 
 import {
@@ -1391,6 +1392,10 @@ async function packProject(options: Options): Promise<{output: string; player: s
     };
     const planKey = suppliedArtifact === undefined ? undefined :
       await packageRetentionKey(packager, player, artifactRoot, requestPlan);
+    const contentKey = planKey === undefined ? undefined :
+      await packageContentKey(packager, artifactRoot, requestPlan);
+    const runtimeSources = contentKey === undefined ? undefined :
+      await runtimeReplacementFiles(player);
     const publication = {output, projectRoot: root,
       protectedPaths: [...protectedPaths, packager, player],
       ...(planKey === undefined ? {} : {beforePromotion: async () => {
@@ -1410,6 +1415,17 @@ async function packProject(options: Options): Promise<{output: string; player: s
       progress({event: "progress", severity: "information", code: "PXCLI1215",
         phase: "retain-package", current: inputs.length, total: inputs.length,
         message: `Retained verified unchanged distribution: ${output}`});
+      return {output, player: join(output, basename(player))};
+    }
+    if (planKey !== undefined && contentKey !== undefined &&
+        runtimeSources !== undefined && await refreshRuntimePackageIfMatching(
+          publication, artifactRoot, inputs, planKey, contentKey,
+          runtimeSources,
+          () => packageRetentionKey(packager, player, artifactRoot, requestPlan),
+          () => packageContentKey(packager, artifactRoot, requestPlan))) {
+      progress({event: "progress", severity: "information", code: "PXCLI1217",
+        phase: "refresh-runtime", current: runtimeSources.size, total: runtimeSources.size,
+        message: `Updated Player runtime without rebuilding packaged content: ${output}`});
       return {output, player: join(output, basename(player))};
     }
     const inputBytes = inputs.reduce((sum, input) => sum + BigInt(input.size), 0n);
@@ -1484,7 +1500,13 @@ async function packProject(options: Options): Promise<{output: string; player: s
     if (!scriptTool)
       for (const [uri, input] of reusedArchiveInputs(events, previousOutputInputs))
         linkedOutputFiles.set(uri, input);
-    if (planKey !== undefined) await writePackageProvenance(staging, planKey);
+    if (planKey !== undefined) {
+      if (contentKey !== undefined && runtimeSources !== undefined &&
+          await runtimeOutputsMatch(staging, runtimeSources))
+        await writePackageProvenance(staging, planKey, contentKey,
+          [...runtimeSources.keys()].sort());
+      else await writePackageProvenance(staging, planKey);
+    }
     });
     return {output, player: join(output, basename(player))};
   } finally {

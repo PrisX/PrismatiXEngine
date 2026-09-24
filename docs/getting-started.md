@@ -159,6 +159,15 @@ Packager overrides do not use this shortcut because their imported code is
 not bounded by the native runtime inventory. This path still reads the full
 artifact and output, so it is not constant-time.
 
+If only the Player executable, its copied adjacent libraries, or installed
+release notices change, `pack --artifact` can instead refresh those runtime
+files without invoking Packager or rewriting PDX shards. This requires a
+previous package with version-2 CLI provenance, identical content options and
+Packager binaries, a fully owned output, and verified artifact bytes. The CLI
+reports `PXCLI1217` (`refresh-runtime`) when it uses this path. Changed Story,
+UI, media, Packager, or package options still use normal packaging. Older
+provenance needs one normal pack before runtime-only refresh is available.
+
 When an artifact does change, the CLI first checks the existing distribution's
 owned names under its publication lock, then lets native Packager validate the
 artifact and decide which PDX shards can be hard-linked from the old output.

@@ -4,7 +4,8 @@ import {mkdir, mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import test from "node:test";
-import {packageRetentionKey, retainPackageIfMatching, reusedArchiveInputs,
+import {packageContentKey, packageRetentionKey, refreshRuntimePackageIfMatching,
+  retainPackageIfMatching, reusedArchiveInputs, runtimeReplacementFiles,
   writePackageProvenance} from "../src/package-retain.js";
 import {outputOwnershipMarker, publishDirectory, publishedInputs,
   type PublicationOptions} from "../src/output-safety.js";
@@ -130,4 +131,138 @@ test("script tool overrides never qualify for package retention", async t => {
   await writeFile(packager, "process.exit(0)");
   await writeFile(player, "player");
   assert.equal(await packageRetentionKey(packager, player, root, {}), undefined);
+});
+
+test("runtime-only refresh replaces Player, libraries and notices without rebuilding owned content", async t => {
+  const root = await mkdtemp(join(tmpdir(), "prismatix-runtime-refresh-"));
+  t.after(() => rm(root, {recursive: true, force: true}));
+  const projectRoot = join(root, "author");
+  const artifact = join(root, "artifact");
+  const output = join(root, "dist");
+  const packagerRoot = join(root, "packager");
+  const playerRoot = join(root, "runtime", "bin");
+  const share = join(root, "runtime", "share", "PrismatiX");
+  await mkdir(projectRoot);
+  await mkdir(packagerRoot);
+  await mkdir(playerRoot, {recursive: true});
+  await mkdir(join(share, "licenses"), {recursive: true});
+  const packager = join(packagerRoot, process.platform === "win32" ? "Packager.exe" : "Packager");
+  const player = join(playerRoot, process.platform === "win32" ? "Player.exe" : "Player");
+  const libraryName = process.platform === "win32" ? "codec.dll" :
+    process.platform === "darwin" ? "codec.dylib" : "codec.so";
+  const library = join(playerRoot, libraryName);
+  await writeFile(packager, "packager-v1");
+  await writeFile(player, "player-v1");
+  await writeFile(library, "library-v1");
+  await writeFile(join(share, "LICENSE"), "license-v1");
+  await writeFile(join(share, "licenses", "component.txt"), "notice-v1");
+  await publishDirectory({output: artifact, projectRoot, protectedPaths: []}, async stage => {
+    await writeFile(join(stage, "asset.bin"), "asset-v1");
+  });
+  const inputs = await publishedInputs(artifact);
+  const request = {gameId: "sample", playerExecutable: player, inputs};
+  const oldPlan = (await packageRetentionKey(packager, player, artifact, request))!;
+  const content = (await packageContentKey(packager, artifact, request))!;
+  const oldSources = (await runtimeReplacementFiles(player))!;
+  const publication: PublicationOptions = {output, projectRoot,
+    protectedPaths: [artifact, packager, player]};
+  await publishDirectory(publication, async stage => {
+    await mkdir(join(stage, "Package"));
+    await mkdir(join(stage, "Notices", "licenses"), {recursive: true});
+    await writeFile(join(stage, "Content.pdx"), "unchanged-content");
+    await writeFile(join(stage, "Package", "manifest.json"), "unchanged-manifest");
+    for (const [uri, source] of oldSources) {
+      const target = join(stage, ...uri.split("/"));
+      await mkdir(join(target, ".."), {recursive: true});
+      await writeFile(target, await readFile(source));
+    }
+    await writePackageProvenance(stage, oldPlan, content, [...oldSources.keys()].sort());
+  });
+  await writeFile(player, "player-v2");
+  await writeFile(library, "library-v2");
+  await writeFile(join(share, "LICENSE"), "license-v2");
+  await rm(join(share, "licenses", "component.txt"));
+  await writeFile(join(share, "licenses", "new-component.txt"), "notice-v2");
+  const newSources = (await runtimeReplacementFiles(player))!;
+  const newPlan = (await packageRetentionKey(packager, player, artifact, request))!;
+  assert.notEqual(newPlan, oldPlan);
+  assert.equal(await packageContentKey(packager, artifact, request), content);
+  const refresh = () => refreshRuntimePackageIfMatching(publication, artifact, inputs,
+    newPlan, content, newSources,
+    () => packageRetentionKey(packager, player, artifact, request),
+    () => packageContentKey(packager, artifact, request));
+  assert.equal(await refresh(), true);
+  assert.equal(await readFile(join(output, "Content.pdx"), "utf8"), "unchanged-content");
+  assert.equal(await readFile(join(output, "Package", "manifest.json"), "utf8"), "unchanged-manifest");
+  assert.equal(await readFile(join(output, process.platform === "win32" ? "Player.exe" : "Player"), "utf8"), "player-v2");
+  assert.equal(await readFile(join(output, libraryName), "utf8"), "library-v2");
+  assert.equal(await readFile(join(output, "Notices", "LICENSE"), "utf8"), "license-v2");
+  assert.equal(await readFile(join(output, "Notices", "licenses", "new-component.txt"), "utf8"), "notice-v2");
+  await assert.rejects(readFile(join(output, "Notices", "licenses", "component.txt")), /ENOENT/u);
+  assert.equal(await retainPackageIfMatching(publication, artifact, inputs, newPlan,
+    () => packageRetentionKey(packager, player, artifact, request)), true);
+
+  // Same-size tampering of the artifact must be detected before promotion.
+  await writeFile(join(artifact, "asset.bin"), "asset-v2");
+  await writeFile(player, "player-v3");
+  const artifactTamperPlan = (await packageRetentionKey(packager, player, artifact, request))!;
+  const artifactTamperSources = (await runtimeReplacementFiles(player))!;
+  await assert.rejects(refreshRuntimePackageIfMatching(publication, artifact, inputs,
+    artifactTamperPlan, content, artifactTamperSources,
+    () => packageRetentionKey(packager, player, artifact, request),
+    () => packageContentKey(packager, artifact, request)), /modified|changed/u);
+  assert.equal(await readFile(join(output, "Content.pdx"), "utf8"), "unchanged-content");
+  assert.equal(await readFile(join(output, process.platform === "win32" ? "Player.exe" : "Player"), "utf8"), "player-v2");
+  await writeFile(join(artifact, "asset.bin"), "asset-v1");
+
+  // An edited distribution is never silently overwritten by this fast path.
+  await writeFile(join(output, "Content.pdx"), "tampered");
+  const nextPlan = (await packageRetentionKey(packager, player, artifact, request))!;
+  const nextSources = (await runtimeReplacementFiles(player))!;
+  await assert.rejects(refreshRuntimePackageIfMatching(publication, artifact, inputs,
+    nextPlan, content, nextSources,
+    () => packageRetentionKey(packager, player, artifact, request),
+    () => packageContentKey(packager, artifact, request)), /unowned or modified/u);
+  assert.equal(await readFile(join(output, "Content.pdx"), "utf8"), "tampered");
+});
+
+test("runtime refresh falls back for legacy provenance or changed content inputs", async t => {
+  const root = await mkdtemp(join(tmpdir(), "prismatix-runtime-refresh-fallback-"));
+  t.after(() => rm(root, {recursive: true, force: true}));
+  const projectRoot = join(root, "author");
+  const artifact = join(root, "artifact");
+  const output = join(root, "dist");
+  const packagerRoot = join(root, "tools");
+  await mkdir(projectRoot);
+  await mkdir(packagerRoot);
+  const packager = join(packagerRoot, "Packager");
+  const player = join(packagerRoot, "Player");
+  await writeFile(packager, "packager-v1");
+  await writeFile(player, "player-v1");
+  await publishDirectory({output: artifact, projectRoot, protectedPaths: []}, async stage => {
+    await writeFile(join(stage, "asset.bin"), "asset-v1");
+  });
+  const inputs = await publishedInputs(artifact);
+  const request = {gameId: "sample", playerExecutable: player, inputs};
+  const plan = (await packageRetentionKey(packager, player, artifact, request))!;
+  const content = (await packageContentKey(packager, artifact, request))!;
+  const sources = (await runtimeReplacementFiles(player))!;
+  const publication: PublicationOptions = {output, projectRoot,
+    protectedPaths: [artifact, packager, player]};
+  await publishDirectory(publication, async stage => {
+    await mkdir(join(stage, "Package"));
+    await writeFile(join(stage, "Content.pdx"), "package-payload");
+    await writeFile(join(stage, "Package", "manifest.json"), "manifest");
+    await writeFile(join(stage, "Player"), "player-v1");
+    await writePackageProvenance(stage, plan);
+  });
+  const refresh = (contentKey: string) => refreshRuntimePackageIfMatching(publication,
+    artifact, inputs, plan, contentKey, sources,
+    () => packageRetentionKey(packager, player, artifact, request),
+    () => packageContentKey(packager, artifact, request));
+  assert.equal(await refresh(content), false);
+  assert.equal(await readFile(join(output, "Content.pdx"), "utf8"), "package-payload");
+  await writeFile(packager, "packager-v2");
+  assert.notEqual(await packageContentKey(packager, artifact, request), content);
+  assert.equal(await refresh((await packageContentKey(packager, artifact, request))!), false);
 });
