@@ -235,6 +235,8 @@ public:
     [[nodiscard]] std::string_view TypeName() const override { return "MotionRect"; }
     Status SetPath(std::string value);
     [[nodiscard]] const std::string& Path() const { return m_path; }
+    // Replacing the loader reloads even an unchanged path. A failed reload
+    // retains the previously playable clip and loader for preview revisions.
     Status SetSourceLoader(SourceLoader loader);
     void SetMarkerSink(MarkerSink sink) { m_markerSink = std::move(sink); }
     void SetAutoplay(bool value) {
@@ -256,6 +258,7 @@ protected:
     void DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) override;
 
 private:
+    Status LoadPath(std::string value, bool forceReload);
     void EmitMarkers(double from, double to, bool includeStart);
     std::string m_path;
     SourceLoader m_loader;

@@ -296,7 +296,11 @@ void TextureRect::DrawSelf(graphics::Renderer2D& renderer, const Theme&) {
 }
 
 Status MotionRect::SetPath(std::string value) {
-    if (value == m_path && m_clip) return Status::Ok();
+    return LoadPath(std::move(value), false);
+}
+
+Status MotionRect::LoadPath(std::string value, const bool forceReload) {
+    if (!forceReload && value == m_path && m_clip) return Status::Ok();
     if (value.empty()) {
         m_path.clear();
         m_sampler.reset();
@@ -342,15 +346,18 @@ Status MotionRect::SetPath(std::string value) {
 }
 
 Status MotionRect::SetSourceLoader(SourceLoader loader) {
-    m_loader = std::move(loader);
-    if (!m_loader && !m_path.empty()) {
+    if (!loader && !m_path.empty()) {
         diag::Diagnostic diagnostic{.severity = diag::Severity::Error,
             .code = "PXUIMOTION1002", .category = "UI.Motion",
             .message = "MotionRect requires a motion source loader"};
         diagnostic.source.path = m_path;
         return Status::Fail(std::move(diagnostic));
     }
-    return SetPath(m_path);
+    auto previous = std::move(m_loader);
+    m_loader = std::move(loader);
+    const auto status = LoadPath(m_path, true);
+    if (!status) m_loader = std::move(previous);
+    return status;
 }
 
 Status MotionRect::SetSpeed(const double value) {

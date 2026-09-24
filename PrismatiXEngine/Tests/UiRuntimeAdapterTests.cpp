@@ -1368,6 +1368,24 @@ int main() {
     Check(loopMarkers.size() == 3, "looping motion seek remains silent");
     loopingMotion.Update(0.1f);
     Check(loopMarkers.size() == 4, "playback after seek re-arms the start cue");
+    loopingMotion.Seek(0.3);
+    Check(loopingMotion.SetSourceLoader([](std::string_view) {
+        return std::optional<std::string>{motionSource};
+    }).IsOk() && loopingMotion.Clip() && loopingMotion.Clip()->id == "logo" &&
+              std::abs(loopingMotion.Position() - 0.3) < 0.0001,
+          "replacing a motion loader reloads unchanged paths and retains playback position");
+    const auto failedReload = loopingMotion.SetSourceLoader([](std::string_view) {
+        return std::optional<std::string>{};
+    });
+    Check(!failedReload && std::ranges::any_of(failedReload.Diagnostics(),
+              [](const px::diag::Diagnostic& diagnostic) {
+                  return diagnostic.code == "PXUIMOTION1001";
+              }) &&
+              loopingMotion.Clip() && loopingMotion.Clip()->id == "logo",
+          "failed motion loader replacement keeps the last playable clip");
+    Check(loopingMotion.SetPath("Content/Motion/another.pxmotion").IsOk() &&
+              loopingMotion.Clip() && loopingMotion.Clip()->id == "logo",
+          "failed motion loader replacement also restores the prior loader");
     const auto* installedMotionRoot = motionContext.Root();
     const auto missingMotion = motionApplication.ApplyDocument(motionDocument,
         {.sourcePath = "Content/UI/Title.pxui"});
