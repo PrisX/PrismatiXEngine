@@ -19,6 +19,15 @@ import type {
 
 const maximumStoryBytes = 16 * 1024 * 1024;
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
+const audioDurationPattern = /^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?(?:ms|s)?$/u;
+
+function validAudioDuration(value: string): boolean {
+  if (!audioDurationPattern.test(value)) return false;
+  const seconds = value.endsWith("s") && !value.endsWith("ms");
+  const number = Number(value.replace(/(?:ms|s)$/u, ""));
+  const milliseconds = number * (seconds ? 1000 : 1);
+  return Number.isFinite(milliseconds) && milliseconds >= 0 && milliseconds <= 2_147_483_647;
+}
 
 interface SourceLine {
   readonly text: string;
@@ -642,14 +651,26 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       case "ambience":
       case "se": {
         const asset = named("asset") ?? positional(0);
+        const fade = named("fade");
+        const loop = named("loop");
+        const intro = named("intro");
+        const durable = node.name === "bgm" || node.name === "ambience";
         if (asset === undefined) diagnostics.push(error("PXSTORY1124", `${node.name} requires a resource`, node.span));
+        else if (fade !== undefined && (!durable || !validAudioDuration(fade)))
+          diagnostics.push(error("PXSTORY1146", `${node.name} fade must be a nonnegative duration of at most 2147483647ms; voice and se do not support fade`, node.span));
+        else if (loop !== undefined && (!durable || (loop !== "true" && loop !== "false")))
+          diagnostics.push(error("PXSTORY1147", `${node.name} loop must be true or false; voice and se do not support loop`, node.span));
+        else if (intro !== undefined && (node.name !== "bgm" || intro.length === 0 || loop === "false"))
+          diagnostics.push(error("PXSTORY1148", "intro requires bgm with a looping body", node.span));
         else {
           const resolved = resolveResource(node, asset);
-          if (resolved !== undefined) {
-            const fade = named("fade");
+          const resolvedIntro = intro === undefined ? undefined : resolveResource(node, intro);
+          if (resolved !== undefined && (intro === undefined || resolvedIntro !== undefined)) {
             emit(node, node.name === "se" ? "soundEffect" : node.name, {
               asset: resolved,
               ...(fade === undefined ? {} : {fade}),
+              ...(loop === undefined ? {} : {loop}),
+              ...(resolvedIntro === undefined ? {} : {intro: resolvedIntro}),
             });
           }
         }
@@ -658,7 +679,9 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       case "bgm.stop":
       case "ambience.stop": {
         const fade = named("fade") ?? positional(0);
-        emit(node, node.name === "bgm.stop" ? "stopBgm" : "stopAmbience", {
+        if (fade !== undefined && !validAudioDuration(fade))
+          diagnostics.push(error("PXSTORY1146", `${node.name} fade must be a nonnegative duration of at most 2147483647ms`, node.span));
+        else emit(node, node.name === "bgm.stop" ? "stopBgm" : "stopAmbience", {
           ...(fade === undefined ? {} : {fade}),
         });
         break;

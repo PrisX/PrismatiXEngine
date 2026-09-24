@@ -426,10 +426,15 @@ int main() {
         Operation("all-hide", "hideCharacter", {{"character", "hero"}}),
         Operation("all-hide-characters", "hideCharacters", {{"transition", "false"}}),
         Operation("all-voice", "voice", {{"asset", "voice.ogg"}}),
-        Operation("all-bgm", "bgm", {{"asset", "music.ogg"}}),
+        Operation("all-bgm", "bgm", {{"asset", "music.ogg"},
+                                      {"intro", "music-intro.ogg"},
+                                      {"fade", "150ms"}}),
+        Operation("all-bgm-once", "bgm", {{"asset", "sting.ogg"},
+                                           {"loop", "false"}}),
         Operation("all-stop-bgm", "stopBgm", {{"fade", "100ms"}}),
         Operation("all-se", "soundEffect", {{"asset", "click.wav"}}),
-        Operation("all-ambience", "ambience", {{"asset", "wind.ogg"}, {"fade", "50ms"}}),
+        Operation("all-ambience", "ambience", {{"asset", "wind.ogg"},
+                                                {"fade", "50ms"}, {"loop", "false"}}),
         Operation("all-stop-ambience", "stopAmbience", {{"fade", "25ms"}}),
         Operation("all-video", "video", {{"asset", "op.mp4"}, {"skippable", "true"}}),
         Operation("all-set", "setVariable", {{"name", "flag"}, {"value", "true"}}),
@@ -458,6 +463,18 @@ int main() {
         px::CompileRuntimeIr(allKindsDocument);
     for (const auto& error : allKindsProgram.errors) std::cerr << error << '\n';
     assert(allKindsProgram.errors.empty());
+    assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
+        return command.type == "bgm" && command.Get("intro") == "music-intro.ogg" &&
+               command.Get("fade") == "150";
+    }));
+    assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
+        return command.type == "bgm" && command.Get("file") == "sting.ogg" &&
+               command.Get("loop") == "false";
+    }));
+    assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
+        return command.type == "ambience" && command.Get("loop") == "false" &&
+               command.Get("fade") == "50";
+    }));
     assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
         return command.type == "char_clear_all" && command.Get("transition") == "false";
     }));

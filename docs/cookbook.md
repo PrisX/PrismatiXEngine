@@ -56,14 +56,23 @@ After registering suitable decodable media, the compiler accepts:
 
 ```pxstory
 [bg Assets/garden.png]
-[bgm Assets/evening.wav]
+[bgm Assets/evening-loop.wav intro=Assets/evening-intro.wav fade=250ms]
+[ambience Assets/rain.wav loop=false fade=100ms]
 [se Assets/bell.wav]
 [voice Assets/greeting.wav]
 @guide
 歡迎回來。
 ```
 
-These Story audio commands lower an asset reference only. Do not copy JavaScript volume/fade/bus options into them and assume those options take effect. Use the typed runtime API in an extension when you need its richer audio controls. A missing reference is a build diagnostic, while decode/device failures need native testing with real media.
+`bgm` and `ambience` accept `fade` (milliseconds by default, or a `ms`/`s`
+suffix) and `loop=true|false`. `bgm intro=...` plays the intro once, then
+loops its main asset; it cannot be combined with `loop=false`. Both BGM files
+are collected for packaging. `bgm.stop` and `ambience.stop` also accept `fade`.
+Unsupported options on `voice` and `se`, invalid timing, and unsafe paths are
+authoring errors instead of silently changing playback. Use the typed runtime
+API in an extension for volume and multi-track control. A missing reference is
+a build diagnostic, while decode/device failures need native testing with real
+media.
 
 For startup screens and title voices, declare all random candidates in the
 project's `settings` instead of duplicating them in `resourceIncludes`:

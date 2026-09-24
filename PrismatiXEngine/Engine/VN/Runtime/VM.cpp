@@ -683,7 +683,8 @@ void VM::ExecuteSimple(const Command& cmd) {
             m_audio.PlayBGMWithIntro(Resolve(m_config.bgmDir, cmd.Get("intro")), m_currentBgm,
                                      fade);
         } else {
-            m_audio.PlayBGM(m_currentBgm, true, fade);
+            const std::string loop = cmd.Get("loop", "true");
+            m_audio.PlayBGM(m_currentBgm, loop != "false" && loop != "0", fade);
         }
         return;
     }

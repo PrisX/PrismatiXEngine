@@ -11,6 +11,8 @@ constexpr std::string_view kBackgroundId = "11111111-1111-4111-8111-111111111111
 constexpr std::string_view kRuleId = "22222222-2222-4222-8222-222222222222";
 constexpr std::string_view kSpriteId = "33333333-3333-4333-8333-333333333333";
 constexpr std::string_view kVoiceId = "44444444-4444-4444-8444-444444444444";
+constexpr std::string_view kMusicIntroId = "55555555-5555-4555-8555-555555555555";
+constexpr std::string_view kMusicLoopId = "66666666-6666-4666-8666-666666666666";
 
 std::string Manifest() {
     return R"({
@@ -20,7 +22,9 @@ std::string Manifest() {
     {"id":"11111111-1111-4111-8111-111111111111","kind":"background","source":"Assets/bg.png"},
     {"id":"22222222-2222-4222-8222-222222222222","kind":"transition","source":"Assets/rule.png"},
     {"id":"33333333-3333-4333-8333-333333333333","kind":"character","source":"Assets/sprite.png"},
-    {"id":"44444444-4444-4444-8444-444444444444","kind":"voice","source":"Assets/voice.ogg"}
+    {"id":"44444444-4444-4444-8444-444444444444","kind":"voice","source":"Assets/voice.ogg"},
+    {"id":"55555555-5555-4555-8555-555555555555","kind":"music","source":"Assets/music-intro.ogg"},
+    {"id":"66666666-6666-4666-8666-666666666666","kind":"music","source":"Assets/music-loop.ogg"}
   ]
 })";
 }
@@ -44,7 +48,7 @@ const px::ResourceRefValue* Resource(const px::vn::Command& command, const std::
 
 int main() {
     Suite suite;
-    const std::set<std::string> existing{ "Assets/bg.png", "Assets/rule.png", "Assets/sprite.png", "Assets/voice.ogg" };
+    const std::set<std::string> existing{ "Assets/bg.png", "Assets/rule.png", "Assets/sprite.png", "Assets/voice.ogg", "Assets/music-intro.ogg", "Assets/music-loop.ogg" };
     const auto exists = [&existing](const std::string_view path) { return existing.contains(std::string(path)); };
 
     px::vn::Program program;
@@ -73,6 +77,13 @@ int main() {
     custom.typedArgs["payload"] = px::Variant(px::VariantObject{ { "thumbnail", px::Variant("asset:" + std::string(kSpriteId)) } });
     program.code.push_back(std::move(custom));
 
+    px::vn::Command music;
+    music.type = "bgm";
+    music.line = 14;
+    music.args.push_back({ "file", "asset:" + std::string(kMusicLoopId) });
+    music.args.push_back({ "intro", "asset:" + std::string(kMusicIntroId) });
+    program.code.push_back(std::move(music));
+
     suite.Expect(px::UsesRuntimeAssetReferences(program), "asset tokens are detected before VM execution");
     auto resolved = px::ResolveRuntimeAssetReferences(program, Manifest(), exists, "Content/Runtime/story.pxir");
     suite.Expect(static_cast<bool>(resolved), "known UUIDs with existing files resolve atomically");
@@ -90,6 +101,12 @@ int main() {
         const auto thumbnail = object ? object->find("thumbnail") : px::VariantObject::const_iterator{};
         const auto* nested = object && thumbnail != object->end() ? thumbnail->second.TryGet<px::ResourceRefValue>() : nullptr;
         suite.Expect(nested && nested->id.ToString() == kSpriteId && nested->lastKnownPath == "Assets/sprite.png", "nested typed action arguments use the same resolver");
+        suite.Expect(output.code[4].Get("file") == "Assets/music-loop.ogg" &&
+                     output.code[4].Get("intro") == "Assets/music-intro.ogg",
+                     "BGM body and intro resolve as independent cataloged resources");
+        const auto* intro = Resource(output.code[4], "intro");
+        suite.Expect(intro && intro->id.ToString() == kMusicIntroId,
+                     "resolved BGM intro retains its catalog identity");
     }
 
     px::vn::Program unknown;
@@ -117,10 +134,16 @@ int main() {
     px::vn::Program missingFile;
     px::vn::Command missingFileCommand;
     missingFileCommand.type = "bgm";
-    missingFileCommand.args.push_back({ "file", "asset:" + std::string(kVoiceId) });
+    missingFileCommand.args.push_back({ "file", "asset:" + std::string(kMusicLoopId) });
+    missingFileCommand.args.push_back({ "intro", "asset:" + std::string(kMusicIntroId) });
     missingFile.code.push_back(std::move(missingFileCommand));
-    const auto missingFileResult = px::ResolveRuntimeAssetReferences(std::move(missingFile), Manifest(), [](std::string_view) { return false; }, "Content/Runtime/story.pxir");
-    suite.Expect(!missingFileResult && !missingFileResult.Diagnostics().empty() && missingFileResult.Diagnostics().front().code == "PXRUNTIME7318", "known UUID with a missing runtime file is rejected");
+    const auto missingFileResult = px::ResolveRuntimeAssetReferences(std::move(missingFile), Manifest(),
+        [](std::string_view path) { return path == "Assets/music-loop.ogg"; },
+        "Content/Runtime/story.pxir");
+    suite.Expect(!missingFileResult && !missingFileResult.Diagnostics().empty() &&
+                 missingFileResult.Diagnostics().front().code == "PXRUNTIME7318" &&
+                 missingFileResult.Diagnostics().front().source.property == "intro",
+                 "missing BGM intro is rejected with its own property path");
 
     px::vn::Program pathOnly;
     px::vn::Command legacyPath;

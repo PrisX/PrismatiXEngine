@@ -452,6 +452,9 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             command.type = operation.kind == "soundEffect" ? "se" : operation.kind;
             Add(command, "file", Argument(operation, "asset"));
             Add(command, "fade", DurationMilliseconds(Argument(operation, "fade")));
+            if (operation.kind == "bgm") Add(command, "intro", Argument(operation, "intro"));
+            if (operation.kind == "bgm" || operation.kind == "ambience")
+                Add(command, "loop", Argument(operation, "loop"));
         } else if (operation.kind == "stopBgm" || operation.kind == "stopAmbience") {
             command.type = operation.kind == "stopBgm" ? "stopbgm" : "stopambience";
             Add(command, "fade", DurationMilliseconds(Argument(operation, "fade")));

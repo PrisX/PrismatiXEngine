@@ -173,7 +173,15 @@ CommandRegistry MakeBuiltins() {
     add(Descriptor("shake","Animation",{Param("ms",VariantType::Integer),Param("amp",VariantType::Number)}));
     add(Descriptor("quake","Animation",{Param("time",VariantType::Integer),Param("power",VariantType::Number)}));
     add(Descriptor("wait","Flow",{Param("ms",VariantType::Integer,true)},CommandWaitPolicy::Timer));
-    for(const char* id:{"bgm","se","voice","ambience"})add(Descriptor(id,"Audio",{Param("file",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource),Param("fade",VariantType::Integer)}));
+    add(Descriptor("bgm","Audio",{
+        Param("file",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource),
+        Param("intro",VariantType::ResourceRef,false,{},CommandEditorWidget::Resource),
+        Param("fade",VariantType::Integer),Param("loop",VariantType::Bool)}));
+    add(Descriptor("ambience","Audio",{
+        Param("file",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource),
+        Param("fade",VariantType::Integer),Param("loop",VariantType::Bool)}));
+    for(const char* id:{"se","voice"})add(Descriptor(id,"Audio",{
+        Param("file",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource)}));
     add(Descriptor("stopbgm","Audio",{Param("fade",VariantType::Integer)}));
     add(Descriptor("stopambience","Audio",{Param("fade",VariantType::Integer)}));
     add(Descriptor("video","Video",{Param("file",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource),Param("skippable",VariantType::Bool)},CommandWaitPolicy::Async,RollbackPolicy::Boundary));

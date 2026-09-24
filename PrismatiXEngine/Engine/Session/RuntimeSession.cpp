@@ -291,7 +291,7 @@ bool RuntimeSession::ExecuteCommand(const vn::Command& command) {
     if (command.type == "ambience") {
         const std::string path = ResourcePath(command, "file");
         if (!path.empty()) {
-            m_services.audio.PlayAmbience(path, true,
+            m_services.audio.PlayAmbience(path, CommandBool(command, "loop", true),
                 static_cast<int>(CommandNumber(command, "fade", 0.0)));
         }
         return true;

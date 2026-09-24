@@ -266,6 +266,23 @@ test("compileProject collects UI runtime texture dependencies", () => {
     dependency.source === "Assets/Audio/activate.ogg"));
 });
 
+test("compileProject packages both halves of an authored intro-loop BGM", () => {
+  const result = compileProject({project, documents: {
+    "Story/story.pxindex": storyIndex,
+    "Content/game.pxgame": game,
+    "Content/UI/Title.pxui": ui,
+  }, sourceFiles: {"Story/zh-TW/scene01.pxstory":
+    "[bgm Assets/Audio/theme-loop.ogg intro=Assets/Audio/theme-intro.ogg fade=0.5s]\n[end]\n"},
+  locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locale: "zh-TW", strings: {}}}});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  assert.deepEqual(result.artifact?.dependencies
+    .filter((dependency) => dependency.source.startsWith("Assets/Audio/theme-"))
+    .map((dependency) => dependency.source).sort(), [
+      "Assets/Audio/theme-intro.ogg", "Assets/Audio/theme-loop.ogg",
+    ]);
+});
+
 test("compileProject packages nested SpriteText glyph images", () => {
   const spriteUi = {...ui, nodes: [ui.nodes[0]!, {
     ...ui.nodes[0]!, id: "33333333-3333-4333-8333-333333333333",

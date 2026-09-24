@@ -208,8 +208,8 @@ test("Story compiler emits only executable semantic operations and source maps",
 test("durable audio Story commands lower to typed Runtime IR operations", () => {
   const compiled = compileStory(
     parseStory([
-      "[bgm Assets/Audio/theme.ogg fade=250ms]",
-      "[ambience Assets/Audio/rain.ogg fade=100ms]",
+      "[bgm Assets/Audio/theme.ogg intro=Assets/Audio/theme-intro.ogg fade=250ms]",
+      "[ambience Assets/Audio/rain.ogg loop=false fade=100ms]",
       "[ambience.stop fade=80ms]",
       "[bgm.stop fade=120ms]",
     ].join("\n"), "Story/audio.pxstory"),
@@ -217,12 +217,33 @@ test("durable audio Story commands lower to typed Runtime IR operations", () => 
   );
   assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
   assert.deepEqual(compiled.runtimeIr?.operations.map((operation) => [operation.kind, operation.arguments]), [
-    ["bgm", {asset:"Assets/Audio/theme.ogg",fade:"250ms"}],
-    ["ambience", {asset:"Assets/Audio/rain.ogg",fade:"100ms"}],
+    ["bgm", {asset:"Assets/Audio/theme.ogg",fade:"250ms",intro:"Assets/Audio/theme-intro.ogg"}],
+    ["ambience", {asset:"Assets/Audio/rain.ogg",fade:"100ms",loop:"false"}],
     ["stopAmbience", {fade:"80ms"}],
     ["stopBgm", {fade:"120ms"}],
   ]);
-  assert.deepEqual(compiled.resourceDependencies, ["Assets/Audio/rain.ogg", "Assets/Audio/theme.ogg"]);
+  assert.deepEqual(compiled.resourceDependencies, [
+    "Assets/Audio/rain.ogg", "Assets/Audio/theme-intro.ogg", "Assets/Audio/theme.ogg",
+  ]);
+});
+
+test("Story audio options reject unsupported or invalid playback requests", () => {
+  const invalid = [
+    ["[bgm Assets/Audio/theme.ogg intro=../escape.ogg]", "PXSTORY1111"],
+    ["[bgm Assets/Audio/theme.ogg intro=Assets/Audio/intro.ogg loop=false]", "PXSTORY1148"],
+    ["[ambience Assets/Audio/rain.ogg loop=maybe]", "PXSTORY1147"],
+    ["[voice Assets/Audio/line.ogg fade=250ms]", "PXSTORY1146"],
+    ["[se Assets/Audio/click.ogg loop=true]", "PXSTORY1147"],
+    ["[bgm.stop fade=999999999999999999ms]", "PXSTORY1146"],
+    ["[ambience.stop fade=soon]", "PXSTORY1146"],
+  ] as const;
+  for (const [source, code] of invalid) {
+    const compiled = compileStory(parseStory(source, "Story/audio-invalid.pxstory"),
+      {documentId: "audio-invalid"});
+    assert.equal(compiled.valid, false, source);
+    assert.ok(compiled.diagnostics.some((diagnostic) => diagnostic.code === code),
+      `${source}: ${JSON.stringify(compiled.diagnostics)}`);
+  }
 });
 
 test("unlock lowers to a typed Runtime IR operation", () => {
