@@ -68,25 +68,47 @@ export type MotionProperty = "x" | "y" | "scaleX" | "scaleY" |
 export type MotionCurve = "step" | "linear" | "easeIn" | "easeOut" |
   "easeInOut" | "cubicBezier";
 
-export interface MotionKey<Value = number | boolean | MotionTint> {
+export interface MotionBezier {
+  readonly x1: number;
+  readonly y1: number;
+  readonly x2: number;
+  readonly y2: number;
+}
+
+interface MotionKeyBase<Value> {
   readonly time: number;
   readonly value: Value;
-  readonly curve?: MotionCurve;
-  /** Normalized timing cubic; required only for cubicBezier keys. */
-  readonly bezier?: {readonly x1: number; readonly y1: number;
-    readonly x2: number; readonly y2: number};
 }
+
+/** A cubic key needs its normalized timing control points; other curves must
+ * not carry unused Bézier coordinates. */
+export type MotionKey<Value = number | boolean | MotionTint> =
+  | (MotionKeyBase<Value> & {
+    readonly curve?: Exclude<MotionCurve, "cubicBezier">;
+    readonly bezier?: never;
+  })
+  | (MotionKeyBase<Value> & {
+    readonly curve: "cubicBezier";
+    readonly bezier: MotionBezier;
+  });
+
+export type MotionDiscreteKey<Value> = MotionKeyBase<Value> & {
+  readonly curve?: "step";
+  readonly bezier?: never;
+};
 
 export type MotionTrackFor<Property extends MotionProperty> = {
   readonly layer: string;
   readonly property: Property;
-  readonly keys: readonly MotionKey<Property extends "visible" ? boolean :
-    Property extends "tint" ? MotionTint : number>[];
+  readonly keys: readonly (Property extends "visible" ? MotionDiscreteKey<boolean> :
+    Property extends "frame" ? MotionDiscreteKey<number> :
+    MotionKey<Property extends "tint" ? MotionTint : number>)[];
 };
 
 /** A track's key values follow its property: visibility is boolean, tint is
- * RGB, and all other properties are numeric. JSON validation still checks
- * ranges, integer frames, curves and layer references at runtime. */
+ * RGB, and all other properties are numeric. Visible/frame curves are step;
+ * cubic Bézier keys require control points. JSON validation still checks
+ * ranges, integer frames and layer references at runtime. */
 export type MotionTrack = {
   [Property in MotionProperty]: MotionTrackFor<Property>;
 }[MotionProperty];

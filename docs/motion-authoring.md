@@ -39,9 +39,11 @@ multiplied into its descendants, independently of `opacity`.
 
 In TypeScript, `MotionTrack` is property-discriminated: `visible` keys take
 booleans, `tint` keys take `{r, g, b}`, and position/scale/rotation/opacity/
-atlas-frame keys take numbers. The editor and `tsc` catch mismatched value
-types before building the game. Runtime schema and semantic checks still
-validate external JSON, frame indices, ranges, curves, and references.
+atlas-frame keys take numbers. `visible` and `frame` keys only allow `step`;
+`cubicBezier` keys require control points, which other curves reject. The
+editor and `tsc` catch these structural mistakes before building the game.
+Runtime schema and semantic checks still validate external JSON, numeric
+ranges, frame indices, key times, and layer references.
 
 ```ts
 import {writeFile} from "node:fs/promises";
