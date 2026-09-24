@@ -27,6 +27,7 @@
 #include <system_error>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 #include "Engine/SDK/RuntimeIr.h"
 #include "Engine/SDK/SourceMap.h"
@@ -1695,10 +1696,15 @@ ValidationResult Validate(const PackageRequest& request,
                           const PackageEventSink& eventSink) {
     ValidationResult result;
     auto& diagnostics = result.diagnostics;
+    struct LocalizedOperationIdentity {
+        std::string operationId;
+        std::string sourceId;
+        std::string kind;
+    };
     struct LocalizedProgram {
         std::string locale;
-        RuntimeIrDocument runtimeIr;
-        SourceMapDocument sourceMap;
+        std::string documentId;
+        std::vector<LocalizedOperationIdentity> operations;
     };
     std::vector<LocalizedProgram> localizedPrograms;
     if (!IsRequestId(request.requestId)) {
@@ -2091,8 +2097,13 @@ ValidationResult Validate(const PackageRequest& request,
                             ValidateLocaleFontCoverage(
                                 localeDocument, id, &runtime.document,
                                 packagedInputs, diagnostics);
-                            localizedPrograms.push_back(
-                                {id, runtime.document, map.document});
+                            LocalizedProgram topology{id, runtime.document.documentId, {}};
+                            topology.operations.reserve(runtime.document.operations.size());
+                            for (const auto& operation : runtime.document.operations) {
+                                topology.operations.push_back({operation.operationId,
+                                                             operation.sourceId, operation.kind});
+                            }
+                            localizedPrograms.push_back(std::move(topology));
                         }
                     }
                 }
@@ -2382,9 +2393,9 @@ ValidationResult Validate(const PackageRequest& request,
             }
         }
         for (const auto& localized : localizedPrograms) {
-            if (localized.runtimeIr.documentId !=
+            if (localized.documentId !=
                     packagedRuntimeIr->documentId ||
-                localized.runtimeIr.operations.size() !=
+                localized.operations.size() !=
                     packagedRuntimeIr->operations.size()) {
                 AddDiagnostic(diagnostics, "PXPKG1262",
                               "locale Story topology differs from package entry: " +
@@ -2394,7 +2405,7 @@ ValidationResult Validate(const PackageRequest& request,
             for (std::size_t index = 0;
                  index < packagedRuntimeIr->operations.size(); ++index) {
                 const auto& canonical = packagedRuntimeIr->operations[index];
-                const auto& translated = localized.runtimeIr.operations[index];
+                const auto& translated = localized.operations[index];
                 if (canonical.operationId != translated.operationId ||
                     canonical.sourceId != translated.sourceId ||
                     canonical.kind != translated.kind) {

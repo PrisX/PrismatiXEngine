@@ -1215,6 +1215,25 @@ int main() {
                      "JSON identity still ignores formatting and object-key order");
     });
 
+    suite.Run("LocaleTopology_StillChecksEachOperationKind", [&] {
+        const auto localeIrPath = root / "Runtime/Locales/ja-JP/main.pxir";
+        const auto original = Read(localeIrPath);
+        auto localized = nlohmann::json::parse(original);
+        localized["operations"][0]["kind"] = "narration";
+        Write(localeIrPath, localized.dump());
+        auto changed = FixtureRequest(root, fixture.path / "Build/LocaleTopologyMismatch");
+        for (auto& input : changed.inputs) {
+            if (input.uri == "Runtime/Locales/ja-JP/main.pxir") {
+                input = Input(root, input.uri);
+                break;
+            }
+        }
+        const auto result = px::sdk::RunPackager(changed);
+        suite.Expect(!result.Completed() && HasDiagnostic(result, "PXPKG1263"),
+                     "locale topology comparison retains kind identity without full parsed documents");
+        Write(localeIrPath, original);
+    });
+
     suite.Run("LocaleFontChain_IsPackagedAndPreflightChecksGlyphCoverage", [&] {
         const auto localePath = root / "Content/Localization/ja-JP.json";
         const auto originalLocale = Read(localePath);
