@@ -44,8 +44,15 @@ void DrawMotionPose(graphics::Renderer2D& renderer, const sdk::MotionClip& clip,
             static_cast<float>(transform.ty)});
         const auto alpha = static_cast<std::uint8_t>(std::clamp(
             std::lround(draw.opacity * 255), 0l, 255l));
-        renderer.DrawImage(layer.image, {0, 0, static_cast<float>(layer.width),
-                           static_cast<float>(layer.height)}, alpha);
+        const Rect destination{0, 0, static_cast<float>(layer.width),
+                               static_cast<float>(layer.height)};
+        if (draw.sourcePixels) {
+            const auto& source = *draw.sourcePixels;
+            renderer.DrawImageRegion(layer.image,
+                {static_cast<float>(source.x), static_cast<float>(source.y),
+                 static_cast<float>(source.width), static_cast<float>(source.height)},
+                destination, alpha);
+        } else renderer.DrawImage(layer.image, destination, alpha);
         renderer.PopTransform();
     }
     renderer.PopTransform();

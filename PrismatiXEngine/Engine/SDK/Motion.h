@@ -9,19 +9,25 @@
 namespace px::sdk {
 
 enum class MotionScaleMode { Fit, Fill, Stretch };
-enum class MotionProperty { X, Y, ScaleX, ScaleY, Rotation, Opacity, Visible };
+enum class MotionProperty { X, Y, ScaleX, ScaleY, Rotation, Opacity, Visible, Frame };
 enum class MotionCurve { Step, Linear, EaseIn, EaseOut, EaseInOut };
 
 struct MotionKey {
     double time = 0;
     double value = 0;
     bool visible = true;
+    std::size_t frame = 0;
     MotionCurve curve = MotionCurve::Linear;
+};
+
+struct MotionAtlasFrame {
+    int x = 0, y = 0, width = 0, height = 0;
 };
 
 struct MotionLayer {
     std::string id;
     std::string image;
+    std::vector<MotionAtlasFrame> frames;
     std::optional<std::size_t> parent;
     int z = 0;
     double width = 0, height = 0;
@@ -40,6 +46,7 @@ struct MotionTrack {
 
 struct MotionClip {
     std::string id;
+    int schemaRevision = 1;
     double canvasWidth = 0, canvasHeight = 0;
     double duration = 0;
     bool loop = false;
@@ -74,6 +81,7 @@ struct MotionAffine {
 struct MotionDrawLayer {
     std::size_t layer = 0;
     MotionAffine transform;
+    std::optional<MotionAtlasFrame> sourcePixels;
     double opacity = 1;
     bool visible = true;
 };
@@ -93,6 +101,7 @@ private:
         double x = 0, y = 0, scaleX = 1, scaleY = 1;
         double rotation = 0, opacity = 1;
         bool visible = true;
+        std::size_t frame = 0;
     };
     const MotionClip& m_clip;
     double m_position = 0;

@@ -1,9 +1,11 @@
+#include "Engine/Animation/MotionRenderer.h"
 #include "Engine/Graphics/AssetCache.h"
 #include "Engine/Graphics/GraphicsDevice.h"
 #include "Engine/Graphics/Renderer2D.h"
 #include "Engine/Graphics/Screenshot.h"
 #include "Engine/IO/VFS.h"
 #include "Engine/Platform/Input.h"
+#include "Engine/SDK/Motion.h"
 #include "Engine/Text/Typography.h"
 #include "Engine/UI/GalgameUI.h"
 #include "Engine/UI/UiAdapter.h"
@@ -171,6 +173,61 @@ int main() {
         px::graphics::AssetCache assets(device.Renderer(), vfs);
         px::graphics::Renderer2D renderer(device.Renderer(), assets, true);
         renderer.SetLogicalSize(640, 360);
+        // Revision-2 atlas motion must change the sampled texture region,
+        // not merely its pose metadata, at the authored step timestamp.
+        {
+            const auto atlasRoot = std::filesystem::temp_directory_path() /
+                ("prismatix-motion-atlas-" + std::to_string(SDL_GetTicksNS()));
+            std::error_code atlasError;
+            std::filesystem::create_directories(atlasRoot / "Assets", atlasError);
+            SDL_Surface* atlas = SDL_CreateSurface(2, 1, SDL_PIXELFORMAT_RGBA32);
+            const bool saved = atlas &&
+                SDL_WriteSurfacePixel(atlas, 0, 0, 245, 20, 25, 255) &&
+                SDL_WriteSurfacePixel(atlas, 1, 0, 20, 35, 240, 255) &&
+                SDL_SaveBMP(atlas, (atlasRoot / "Assets/atlas.bmp").string().c_str());
+            if (atlas) SDL_DestroySurface(atlas);
+            if (atlasError || !saved) {
+                std::cerr << "FAIL: atlas motion texture fixture\n";
+                result = 1;
+            } else {
+                px::io::VFS atlasVfs;
+                atlasVfs.MountDirectory(atlasRoot.generic_string());
+                px::graphics::AssetCache atlasAssets(device.Renderer(), atlasVfs);
+                px::graphics::Renderer2D atlasRenderer(device.Renderer(), atlasAssets, true);
+                atlasRenderer.SetLogicalSize(640, 360);
+                const auto parsed = px::sdk::ParseMotion(R"({
+                  "format":"PrismatiXMotion","schemaRevision":2,"id":"atlas",
+                  "canvas":{"width":640,"height":360},"duration":1,"loop":false,
+                  "layers":[{"id":"mark","image":"Assets/atlas.bmp",
+                    "width":100,"height":100,"x":270,"y":130,"frames":[
+                      {"x":0,"y":0,"width":1,"height":1},
+                      {"x":1,"y":0,"width":1,"height":1}]}],
+                  "tracks":[{"layer":"mark","property":"frame","keys":[
+                    {"time":0,"value":0,"curve":"step"},
+                    {"time":0.5,"value":1,"curve":"step"}]}]})");
+                if (!parsed.Valid()) {
+                    std::cerr << "FAIL: atlas motion renderer fixture parse\n";
+                    result = 1;
+                } else {
+                    px::sdk::MotionSampler sampler(*parsed.clip);
+                    ClearFrame(device.Renderer());
+                    sampler.Seek(0.25);
+                    px::animation::DrawMotionPose(atlasRenderer, *parsed.clip,
+                                                  sampler, {0, 0, 640, 360});
+                    const auto first = CaptureFrame(device.Renderer(), "motion-atlas-first").center;
+                    ClearFrame(device.Renderer());
+                    sampler.Seek(0.75);
+                    px::animation::DrawMotionPose(atlasRenderer, *parsed.clip,
+                                                  sampler, {0, 0, 640, 360});
+                    const auto second = CaptureFrame(device.Renderer(), "motion-atlas-second").center;
+                    if (first.r < 200 || first.b > 70 || second.b < 200 || second.r > 70) {
+                        std::cerr << "FAIL: atlas motion frame regions did not change rendered pixels\n";
+                        result = 1;
+                    }
+                }
+            }
+            std::filesystem::remove_all(atlasRoot, atlasError);
+        }
         // A typewriter prefix can sit exactly at the wrapping boundary. The
         // coloured edge must use the fill's line layout, not SDL_ttf's wider
         // outlined-font metrics (which used to put the edge on line two).

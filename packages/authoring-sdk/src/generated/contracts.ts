@@ -69,7 +69,7 @@ export const contractManifest: Readonly<Record<string, unknown>> = {
       "id": "motion",
       "migration": "reject-legacy",
       "schema": "motion.schema.json",
-      "schemaRevision": 1
+      "schemaRevision": 2
     },
     {
       "extension": ".pxextension",
@@ -1288,6 +1288,45 @@ export const contractSchemas: Readonly<Record<string, object>> = {
     "$id": "https://prismatix.dev/contracts/motion.schema.json",
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "schemaRevision": {
+              "const": 1
+            }
+          },
+          "type": "object"
+        },
+        "then": {
+          "properties": {
+            "layers": {
+              "items": {
+                "properties": {
+                  "frames": false
+                },
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "tracks": {
+              "items": {
+                "properties": {
+                  "property": {
+                    "not": {
+                      "const": "frame"
+                    }
+                  }
+                },
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        }
+      }
+    ],
     "properties": {
       "canvas": {
         "additionalProperties": false,
@@ -1333,6 +1372,43 @@ export const contractSchemas: Readonly<Record<string, object>> = {
               "maximum": 1,
               "minimum": 0,
               "type": "number"
+            },
+            "frames": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "height": {
+                    "maximum": 16384,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "width": {
+                    "maximum": 16384,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "x": {
+                    "maximum": 16384,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "y": {
+                    "maximum": 16384,
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "width",
+                  "height"
+                ],
+                "type": "object"
+              },
+              "maxItems": 4096,
+              "minItems": 1,
+              "type": "array"
             },
             "height": {
               "exclusiveMinimum": 0,
@@ -1415,7 +1491,10 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         ]
       },
       "schemaRevision": {
-        "const": 1
+        "enum": [
+          1,
+          2
+        ]
       },
       "tracks": {
         "items": {
@@ -1471,7 +1550,8 @@ export const contractSchemas: Readonly<Record<string, object>> = {
                 "scaleY",
                 "rotation",
                 "opacity",
-                "visible"
+                "visible",
+                "frame"
               ]
             }
           },
@@ -3876,7 +3956,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "extension.schema.json": "9438f403e51b8f69f52f05d5999afc37c433754a215094460e28c6d1710555a2",
   "game.schema.json": "f0592fc75a4deb4aed7f192c076165012ef480196a07cd7d2136be390821dcba",
   "locale.schema.json": "b8f6009219c6cad7fa6130af6d710af11cabcf85bf2e0039f1fdd3c08e2bbf9f",
-  "motion.schema.json": "33521ae0170dca681638aa8ef26cf9b83914c0ca92952ad3705671fbc601567e",
+  "motion.schema.json": "f0533f460b9c65fdb08e23ed26c32bd105fa486889a374b970873ca68de48d17",
   "portrait.schema.json": "23235204cea30d1f9bf49f810f896364b910ce2f74e46f28bc7381dc5da0a6fe",
   "project.schema.json": "937ef02098a0f720d5154b2300c7ddbdc60ef69fd2410337b483de7bc5a3390e",
   "runtime-ir.schema.json": "04c51fc94dc46b500d78877d29dba1dffe1f41619211af24e48cf48699bf0836",

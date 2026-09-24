@@ -52,3 +52,32 @@ test("motion validation rejects cycles, duplicate tracks, unsafe paths, and wron
     {...valid.tracks[0], keys: [{time: 0, value: 2, curve: "linear"}]}, valid.tracks[1],
   ]}).valid, false);
 });
+
+test("atlas frame tracks use revision 2 and reject fractional, interpolated or missing frames", () => {
+  const atlas = defineMotion({
+    id: "logo-frames", canvas: {width: 320, height: 120}, duration: 1,
+    layers: [{id: "logo", image: "Assets/Motion/logo-atlas.png", width: 120,
+      height: 40, frames: [
+        {x: 0, y: 0, width: 120, height: 40},
+        {x: 120, y: 0, width: 120, height: 40},
+      ]}],
+    tracks: [{layer: "logo", property: "frame", keys: [
+      {time: 0, value: 0}, {time: 0.5, value: 1},
+    ]}],
+  });
+  assert.equal(atlas.valid, true, JSON.stringify(atlas.diagnostics));
+  assert.equal(atlas.value?.schemaRevision, 2);
+  assert.equal(atlas.value?.tracks[0]?.keys[0]?.curve, "step");
+  const document = atlas.value!;
+  assert.equal(validateDocument("motion", {...document, schemaRevision: 1}).valid, false);
+  for (const value of [1.5, 2, -1])
+    assert.equal(validateDocument("motion", {...document, tracks: [{
+      ...document.tracks[0]!, keys: [{time: 0, value, curve: "step"}],
+    }]}).valid, false);
+  assert.equal(validateDocument("motion", {...document, tracks: [{
+    ...document.tracks[0]!, keys: [{time: 0, value: 1, curve: "linear"}],
+  }]}).valid, false);
+  assert.equal(validateDocument("motion", {...document, layers: [{
+    ...document.layers[0]!, frames: undefined,
+  }]}).valid, false);
+});

@@ -142,6 +142,15 @@ function motionSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[
          /\.(?:pxmotion|pxportrait)$/iu.test(layer.image) ||
          layer.image.split("/").some((part) => part === "" || part === "." || part === "..")))
       diagnostics.push(issue("PXSDKSEM1407", "Motion image must use a safe project-relative texture path", path, String(layer.id)));
+    if (Array.isArray(layer.frames))
+      for (const [index, frame] of layer.frames.entries()) {
+        const rectangle = object(frame);
+        if (rectangle !== undefined &&
+            (Number(rectangle.x) + Number(rectangle.width) > 16384 ||
+             Number(rectangle.y) + Number(rectangle.height) > 16384))
+          diagnostics.push(issue("PXSDKSEM1409", "Motion atlas frame exceeds the texture coordinate limit",
+            path, `${String(layer.id)}.frames[${index}]`));
+      }
     if (layer.parent === undefined) continue;
     if (!byId.has(layer.parent)) {
       diagnostics.push(issue("PXSDKSEM1401", "Motion layer parent does not exist", path, String(layer.id)));
@@ -163,7 +172,8 @@ function motionSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[
   const duration = typeof root.duration === "number" ? root.duration : 0;
   for (const track of tracks) {
     const target = `${String(track.layer)}.${String(track.property)}`;
-    if (!byId.has(track.layer))
+    const targetLayer = byId.get(track.layer);
+    if (targetLayer === undefined)
       diagnostics.push(issue("PXSDKSEM1403", "Motion track references an unknown layer", path, target));
     if (targets.has(target))
       diagnostics.push(issue("PXSDKSEM1404", "Motion property has multiple tracks", path, target));
@@ -174,9 +184,14 @@ function motionSemantics(root: ObjectValue, path?: string): AuthoringDiagnostic[
         diagnostics.push(issue("PXSDKSEM1405", "Motion keys must have increasing times inside duration", path, target));
       if (track.property === "visible"
         ? typeof key.value !== "boolean" || key.curve !== "step"
-        : typeof key.value !== "number" || !Number.isFinite(key.value))
+        : track.property === "frame"
+          ? typeof key.value !== "number" || !Number.isInteger(key.value) ||
+            key.curve !== "step" ||
+            !Array.isArray(targetLayer?.frames) ||
+            Number(key.value) < 0 || Number(key.value) >= targetLayer.frames.length
+          : typeof key.value !== "number" || !Number.isFinite(key.value))
         diagnostics.push(issue("PXSDKSEM1406", "Motion key value or curve does not match its property", path, target));
-      if (typeof key.value === "number") {
+      if (typeof key.value === "number" && track.property !== "frame") {
         const limit = track.property === "opacity" ? 1 :
           track.property === "scaleX" || track.property === "scaleY" ? 1000 : 1000000;
         const minimum = track.property === "opacity" ? 0 : -limit;

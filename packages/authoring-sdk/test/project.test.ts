@@ -417,6 +417,18 @@ test("compileProject validates motion descriptors and packages their image layer
   assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
   for (const path of [descriptorPath, "Assets/Motion/back.png", "Assets/Motion/mark.png"])
     assert.ok(valid.artifact?.dependencies.some((dependency) => dependency.source === path));
+  const atlas = compile({...descriptor, schemaRevision: 2,
+    layers: [descriptor.layers[0], {...descriptor.layers[1], frames: [
+      {x: 0, y: 0, width: 128, height: 128},
+      {x: 128, y: 0, width: 128, height: 128},
+    ]}], tracks: [{layer: "mark", property: "frame", keys: [
+      {time: 0, value: 0, curve: "step"},
+      {time: 0.5, value: 1, curve: "step"},
+    ]}]});
+  assert.equal(atlas.valid, true, JSON.stringify(atlas.diagnostics));
+  assert.equal(atlas.artifact?.dependencies.filter((dependency) =>
+    dependency.source === "Assets/Motion/mark.png").length, 1,
+  "all atlas frames share one packaged texture");
   const referencedFromUi = compileProject({
     project,
     documents: {"Story/story.pxindex": storyIndex,

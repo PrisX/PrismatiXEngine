@@ -162,5 +162,56 @@ int main() {
                      "malformed motion format and huge revisions report diagnostics");
     });
 
+    suite.Run("MotionClip_AtlasFrameTrackIsDiscreteAndVersioned", [&] {
+        constexpr auto source = R"({
+          "format":"PrismatiXMotion","schemaRevision":2,"id":"atlas",
+          "canvas":{"width":320,"height":120},"duration":1,"loop":false,
+          "layers":[{"id":"logo","image":"Assets/logo-atlas.png",
+            "width":120,"height":40,"frames":[
+              {"x":0,"y":0,"width":120,"height":40},
+              {"x":120,"y":0,"width":120,"height":40}]}],
+          "tracks":[{"layer":"logo","property":"frame","keys":[
+            {"time":0,"value":0,"curve":"step"},
+            {"time":0.5,"value":1,"curve":"step"}]}]})";
+        auto parsed = px::sdk::ParseMotion(source);
+        suite.Expect(parsed.Valid(), "revision-2 atlas motion parses");
+        if (!parsed.Valid()) return;
+        px::sdk::MotionSampler sampler(*parsed.clip);
+        sampler.Seek(0.25);
+        suite.Expect(sampler.Pose()[0].sourcePixels &&
+                         sampler.Pose()[0].sourcePixels->x == 0,
+                     "first atlas frame remains selected before the step");
+        sampler.Seek(0.75);
+        suite.Expect(sampler.Pose()[0].sourcePixels &&
+                         sampler.Pose()[0].sourcePixels->x == 120,
+                     "second atlas frame is selected after the step");
+        auto oldRevision = std::string(source);
+        oldRevision.replace(oldRevision.find("\"schemaRevision\":2"),
+            std::string("\"schemaRevision\":2").size(), "\"schemaRevision\":1");
+        suite.Expect(!px::sdk::ParseMotion(oldRevision).Valid(),
+                     "revision 1 does not silently reinterpret atlas fields");
+        auto invalidFrame = std::string(source);
+        invalidFrame.replace(invalidFrame.find("\"value\":1"),
+            std::string("\"value\":1").size(), "\"value\":2");
+        suite.Expect(!px::sdk::ParseMotion(invalidFrame).Valid(),
+                     "out-of-range atlas frame is rejected");
+        auto fractionalFrame = std::string(source);
+        fractionalFrame.replace(fractionalFrame.find("\"value\":1"),
+            std::string("\"value\":1").size(), "\"value\":0.5");
+        suite.Expect(!px::sdk::ParseMotion(fractionalFrame).Valid(),
+                     "fractional atlas frame is rejected");
+        auto interpolatedFrame = std::string(source);
+        interpolatedFrame.replace(interpolatedFrame.find("\"value\":1,\"curve\":\"step\""),
+            std::string("\"value\":1,\"curve\":\"step\"").size(),
+            "\"value\":1,\"curve\":\"linear\"");
+        suite.Expect(!px::sdk::ParseMotion(interpolatedFrame).Valid(),
+                     "atlas frames cannot interpolate between source rectangles");
+        auto integralDecimal = std::string(source);
+        integralDecimal.replace(integralDecimal.find("\"value\":1"),
+            std::string("\"value\":1").size(), "\"value\":1.0");
+        suite.Expect(px::sdk::ParseMotion(integralDecimal).Valid(),
+                     "native accepts integral numeric JSON like authoring validation");
+    });
+
     return suite.Finish();
 }

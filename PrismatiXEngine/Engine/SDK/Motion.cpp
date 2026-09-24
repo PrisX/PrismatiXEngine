@@ -87,6 +87,7 @@ std::optional<MotionProperty> Property(std::string_view name) {
     if (name == "rotation") return MotionProperty::Rotation;
     if (name == "opacity") return MotionProperty::Opacity;
     if (name == "visible") return MotionProperty::Visible;
+    if (name == "frame") return MotionProperty::Frame;
     return std::nullopt;
 }
 
@@ -108,6 +109,7 @@ std::pair<double, double> PropertyRange(MotionProperty property) {
         case MotionProperty::ScaleY: return {-1000, 1000};
         case MotionProperty::Opacity: return {0, 1};
         case MotionProperty::Visible: return {0, 1};
+        case MotionProperty::Frame: return {0, 4095};
     }
     return {0, 0};
 }
@@ -163,7 +165,8 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
     if (!root.contains("format") || !root["format"].is_string() ||
         root["format"].get_ref<const std::string&>() != "PrismatiXMotion" ||
         !root.contains("schemaRevision") || !root["schemaRevision"].is_number_integer() ||
-        root["schemaRevision"] != 1 || !root.contains("id") ||
+        (root["schemaRevision"] != 1 && root["schemaRevision"] != 2) ||
+        !root.contains("id") ||
         !root["id"].is_string() || !Identifier(root["id"].get_ref<const std::string&>()))
         return fail("PXMOTION1002", "Motion format, revision, or id is invalid");
     const auto canvas = root.find("canvas");
@@ -177,6 +180,7 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         return fail("PXMOTION1003", "Motion canvas, duration, or loop is invalid");
     MotionClip clip;
     clip.id = root["id"].get<std::string>();
+    clip.schemaRevision = root["schemaRevision"].get<int>();
     clip.canvasWidth = *canvasWidth;
     clip.canvasHeight = *canvasHeight;
     clip.duration = *duration;
@@ -196,7 +200,7 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
     std::vector<std::string> parents;
     clip.layers.reserve(layers->size()); parents.reserve(layers->size());
     for (const auto& entry : *layers) {
-        if (!OnlyFields(entry, {"id", "parent", "image", "z", "width", "height",
+        if (!OnlyFields(entry, {"id", "parent", "image", "frames", "z", "width", "height",
             "anchorX", "anchorY", "x", "y", "scaleX", "scaleY", "rotation",
             "opacity", "visible"}) || !entry.contains("id") || !entry["id"].is_string() ||
             !entry.contains("image") || !entry["image"].is_string())
@@ -209,6 +213,28 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
             EndsWithIgnoreCase(layer.image, ".pxportrait") ||
             !layerIds.emplace(layer.id, clip.layers.size()).second)
             return fail("PXMOTION1007", "Motion layer id or image path is invalid or duplicated");
+        if (const auto frames = entry.find("frames"); frames != entry.end()) {
+            if (clip.schemaRevision < 2 || !frames->is_array() ||
+                frames->empty() || frames->size() > 4096)
+                return fail("PXMOTION1020", "Motion atlas frames require revision 2 and 1 to 4096 rectangles");
+            layer.frames.reserve(frames->size());
+            for (const auto& frame : *frames) {
+                if (!OnlyFields(frame, {"x", "y", "width", "height"}) ||
+                    frame.size() != 4)
+                    return fail("PXMOTION1021", "Motion atlas frame rectangle is invalid");
+                const auto x = Number(frame, "x", 0, 0, 16384, true);
+                const auto y = Number(frame, "y", 0, 0, 16384, true);
+                const auto width = Number(frame, "width", 0, 1, 16384, true);
+                const auto height = Number(frame, "height", 0, 1, 16384, true);
+                if (!x || !y || !width || !height ||
+                    std::floor(*x) != *x || std::floor(*y) != *y ||
+                    std::floor(*width) != *width || std::floor(*height) != *height ||
+                    *x + *width > 16384 || *y + *height > 16384)
+                    return fail("PXMOTION1021", "Motion atlas frame rectangle is invalid");
+                layer.frames.push_back({static_cast<int>(*x), static_cast<int>(*y),
+                    static_cast<int>(*width), static_cast<int>(*height)});
+            }
+        }
         if (const auto parent = entry.find("parent"); parent != entry.end()) {
             if (!parent->is_string() || !Identifier(parent->get_ref<const std::string&>()))
                 return fail("PXMOTION1008", "Motion layer parent id is invalid");
@@ -278,6 +304,9 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
         if (layer == layerIds.end() || !property ||
             !targets.insert(layerName + "." + propertyName).second)
             return fail("PXMOTION1014", "Motion track target is unknown or duplicated");
+        if (*property == MotionProperty::Frame &&
+            (clip.schemaRevision < 2 || clip.layers[layer->second].frames.empty()))
+            return fail("PXMOTION1022", "Motion frame tracks require revision 2 atlas frames");
         totalKeys += entry["keys"].size();
         if (totalKeys > 1'000'000)
             return fail("PXMOTION1015", "Motion clip exceeds the one-million-key limit");
@@ -301,6 +330,13 @@ MotionParseResult ParseMotion(const std::string_view text, std::string sourcePat
                 if (!key["value"].is_boolean() || *curve != MotionCurve::Step)
                     return fail("PXMOTION1018", "Visible motion keys require boolean step values");
                 parsed.visible = key["value"].get<bool>();
+            } else if (*property == MotionProperty::Frame) {
+                const auto frameIndex = Number(key, "value", 0, 0, 4095, true);
+                if (*curve != MotionCurve::Step || !frameIndex ||
+                    std::floor(*frameIndex) != *frameIndex ||
+                    *frameIndex >= static_cast<double>(clip.layers[track.layer].frames.size()))
+                    return fail("PXMOTION1023", "Motion frame keys require an in-range integer step index");
+                parsed.frame = static_cast<std::size_t>(*frameIndex);
             } else {
                 const auto [minimum, maximum] = PropertyRange(*property);
                 const auto value = Number(key, "value", 0, minimum, maximum, true);
@@ -338,7 +374,7 @@ void MotionSampler::Seek(double timeSeconds) {
     for (std::size_t i = 0; i < m_clip.layers.size(); ++i) {
         const auto& layer = m_clip.layers[i];
         m_states[i] = {layer.x, layer.y, layer.scaleX, layer.scaleY,
-                       layer.rotation, layer.opacity, layer.visible};
+                       layer.rotation, layer.opacity, layer.visible, 0};
     }
     for (const auto& track : m_clip.tracks) {
         auto& state = m_states[track.layer];
@@ -346,6 +382,12 @@ void MotionSampler::Seek(double timeSeconds) {
             const auto right = std::upper_bound(track.keys.begin(), track.keys.end(), m_position,
                 [](double at, const MotionKey& key) { return at < key.time; });
             if (right != track.keys.begin()) state.visible = (right - 1)->visible;
+            continue;
+        }
+        if (track.property == MotionProperty::Frame) {
+            const auto right = std::upper_bound(track.keys.begin(), track.keys.end(), m_position,
+                [](double at, const MotionKey& key) { return at < key.time; });
+            if (right != track.keys.begin()) state.frame = (right - 1)->frame;
             continue;
         }
         const auto sampled = SampleNumber(track, m_position);
@@ -359,6 +401,7 @@ void MotionSampler::Seek(double timeSeconds) {
             case MotionProperty::Rotation: state.rotation = value; break;
             case MotionProperty::Opacity: state.opacity = value; break;
             case MotionProperty::Visible: break;
+            case MotionProperty::Frame: break;
         }
     }
     constexpr double radiansPerDegree = 3.14159265358979323846 / 180.0;
@@ -379,6 +422,8 @@ void MotionSampler::Seek(double timeSeconds) {
         auto& world = m_world[index];
         world.layer = index;
         world.transform = layer.parent ? Multiply(m_world[*layer.parent].transform, local) : local;
+        world.sourcePixels = state.frame < layer.frames.size()
+            ? std::optional<MotionAtlasFrame>(layer.frames[state.frame]) : std::nullopt;
         world.opacity = state.opacity * (layer.parent ? m_world[*layer.parent].opacity : 1);
         world.visible = state.visible && (!layer.parent || m_world[*layer.parent].visible);
     }

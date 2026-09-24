@@ -278,8 +278,9 @@ contract. See [layered portrait authoring](../../docs/portrait-authoring.md)
 for the helper, coordinate semantics, and dependency rules.
 
 For reusable image-layer animations, `defineMotion` and `serializeMotion`
-create a validated revision-1 `.pxmotion` with parented layers and keyed
-position, scale, rotation, opacity, or step visibility tracks. The default
+create a validated `.pxmotion` with parented layers and keyed position, scale,
+rotation, opacity, or step visibility tracks. Revision 2 also supports atlas
+frame rectangles and discrete `frame` keys. The default
 canvas mode is `fit`. The native `MotionSampler` can seek deterministically
 without per-frame allocations, and `DrawMotionPose` draws its result through
 the ordinary image renderer. `Motion` is a TSX UI component backed by the
@@ -288,10 +289,10 @@ descriptor, and project compilation collects the clip's image dependencies.
 Splash pages now prefetch static UI image dependencies and wait before fading
 out the current page; the configured start route is also prefetched during
 boot. Story commands, a general route/transition preload
-handshake, masks, blur, atlas frames and audio markers are not implemented.
-The image-layer renderer has not yet been
-verified against a motion-specific framebuffer reference.
-See [the motion status and remaining contract](../../docs/architecture/layered-motion-authoring.md).
+handshake, masks, blur, and audio markers are not implemented.
+The image-layer renderer and atlas selection have framebuffer integration tests.
+See [the motion guide](../../docs/motion-authoring.md) and
+[remaining contract](../../docs/architecture/layered-motion-authoring.md).
 
 ```ts
 import {serializeMotion} from "@prismatix/authoring-sdk";

@@ -11,7 +11,7 @@
     {"id":"uiComponent","extension":".pxuicomponent","schema":"ui-component.schema.json","schemaRevision":2,"migration":"cli-only"},
     {"id":"timeline","extension":".pxtimeline","schema":"timeline.schema.json","schemaRevision":2,"migration":"cli-only"},
     {"id":"animation","extension":".pxanim","schema":"animation.schema.json","schemaRevision":2,"migration":"cli-only"},
-    {"id":"motion","extension":".pxmotion","schema":"motion.schema.json","schemaRevision":1,"migration":"reject-legacy"},
+    {"id":"motion","extension":".pxmotion","schema":"motion.schema.json","schemaRevision":2,"migration":"reject-legacy"},
     {"id":"extension","extension":".pxextension","schema":"extension.schema.json","schemaRevision":2,"migration":"reject-future"},
     {"id":"storyIndex","extension":"story.pxindex","schema":"story-index.schema.json","schemaRevision":2,"migration":"cli-only"},
     {"id":"game","extension":"game.pxgame","schema":"game.schema.json","schemaRevision":2,"migration":"cli-only"},
