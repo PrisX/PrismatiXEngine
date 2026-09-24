@@ -243,3 +243,7 @@ external nested motion references, spatial path curves, particles, more
 specialized blend equations, and Story playback are still missing;
 the source work on those features is tracked in
 [layered motion architecture](architecture/layered-motion-authoring.md).
+The decoded M2 source groups named `bure` and `bure2` are indexed images,
+not evidence of a shader blur command. Per-layer blur remains a general
+capability gap, but M2-specific necessity must be established by source
+semantics and rendered-frame comparison rather than those names.

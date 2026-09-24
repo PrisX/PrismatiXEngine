@@ -76,6 +76,10 @@ through transform groups. Its native sampler and framebuffer test verify that
 color changes reach the pixels without changing alpha. This maps the ordinary
 color modulation seen in M2's `m2logo` source, but not its source-specific
 mask flags, blur, embedded-motion extraction, or complete color equations.
+In the decoded M2 source, `src/bure/icon1` and `src/bure2/icon1` resolve to
+280×112 indexed images. Their names alone do not imply a runtime blur effect;
+the need for per-layer blur in this particular clip is unproven until the
+source semantics and rendered frames are compared.
 Revision 9 lets a child retain the parent's affine translation while opting
 out of inherited rotation and/or scale/stretch. Native sampling tests cover
 all four combinations and reflected parents. This fills an Engine capability
