@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <optional>
+#include <shared_mutex>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -26,14 +27,19 @@ public:
     void Clear();
 
     [[nodiscard]] bool Exists(std::string_view path) const;
-    // Opens an independent seekable cursor. Directory files and uncompressed,
-    // unencrypted archive entries are streamed without retaining the full asset.
+    // Opens an independent seekable cursor. Concurrent reads are safe while
+    // mounts are changed; an already opened cursor remains usable after Clear.
+    // Directory files and uncompressed, unencrypted archive entries are
+    // streamed without retaining the full asset.
     [[nodiscard]] std::unique_ptr<SeekableReadStream> Open(
         std::string_view path) const;
     [[nodiscard]] std::optional<Bytes> Read(std::string_view path) const;
     [[nodiscard]] std::optional<std::string> ReadText(std::string_view path) const;
 
 private:
+    // Asset preloads may open independent streams on worker threads while a
+    // preview session changes mounts on the main thread.
+    mutable std::shared_mutex m_mountsMutex;
     std::vector<std::string> m_dirs;
     std::vector<std::unique_ptr<Archive>> m_archives;
 };

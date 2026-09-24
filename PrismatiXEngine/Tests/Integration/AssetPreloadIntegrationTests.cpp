@@ -364,6 +364,38 @@ int main() {
         SDL_DestroyWindow(window);
         SDL_Quit();
     });
+    suite.Run("MountSwapDiscardsInFlightRead", [&] {
+        suite.Require(SDL_Init(SDL_INIT_VIDEO), "mount swap test video initializes");
+        px::test::TempDirectory first("asset-preload-first-mount");
+        px::test::TempDirectory second("asset-preload-second-mount");
+        suite.Require(WriteBitmap(first.path / "shared.bmp", 48, 24, 0xff3366ffu) &&
+                          WriteBitmap(second.path / "shared.bmp", 72, 36, 0xffaa66ffu),
+                      "mount swap fixtures have distinct dimensions");
+        SDL_Window* window = SDL_CreateWindow("Asset mount swap", 160, 90, SDL_WINDOW_HIDDEN);
+        suite.Require(window != nullptr, "mount swap hidden window exists");
+        SDL_Renderer* renderer = SDL_CreateRenderer(window, nullptr);
+        suite.Require(renderer != nullptr, "mount swap renderer exists");
+        px::io::VFS vfs;
+        vfs.MountDirectory(first.path.string());
+        {
+            px::graphics::AssetCache assets(renderer, vfs);
+            const auto oldBatch = assets.BeginTexturePreload({{.path = "shared.bmp"}});
+            assets.BeginFrame();
+            assets.BeginAssetSession();
+            vfs.Clear();
+            vfs.MountDirectory(second.path.string());
+            const auto newBatch = assets.BeginTexturePreload({{.path = "shared.bmp"}});
+            const auto progress = WaitForProgress(assets, newBatch);
+            const auto texture = assets.Texture("shared.bmp");
+            suite.Expect(assets.TexturePreloadProgress(oldBatch).cancelled == 1 &&
+                             progress.Finished() && progress.succeeded == 1 &&
+                             texture.Width() == 72 && texture.Height() == 36,
+                         "cancelled worker cannot publish across a concurrent VFS mount change");
+        }
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+    });
     if (SDL_getenv("PRISMATIX_ASSET_BENCHMARK"))
         suite.Run("MeasuredConcurrentPng", [&] { MeasureConcurrentPng(suite); });
     return suite.Finish();

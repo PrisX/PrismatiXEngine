@@ -23,8 +23,8 @@ namespace {
 constexpr std::size_t kMaximumEncodedImageBytes = 128u * 1024u * 1024u;
 
 std::optional<io::Bytes> ReadImageInput(io::VFS& vfs, const std::string& path) {
-    // Keep VFS access on its owning thread. Size is checked before allocating
-    // encoded bytes; the eventual worker still owns an immutable byte vector.
+    // VFS protects mount changes while opening a stream. Each stream owns an
+    // independent cursor, so encoded I/O can run in the decode worker.
     auto stream = vfs.Open(path);
     if (!stream || stream->Size() > kMaximumEncodedImageBytes) {
         SDL_SetError("Image is missing or exceeds the 128 MiB encoded input limit");
@@ -302,23 +302,16 @@ void AssetCache::LaunchQueuedTextures() {
         }
 
         ++started;
-        auto bytes = ReadImageInput(m_vfs, task.path);
-        if (!bytes) {
-            for (const auto batchId : task.batches)
-                CompleteBatchRequest(batchId, task.path, false, 0,
-                                     "PXASSET7013",
-                                     "Texture preload asset is missing, unreadable, or exceeds the encoded input limit");
-            if (task.cacheRequest)
-                AssetDiagnostic("PXASSET7013", task.path,
-                                "Texture preload asset is missing, unreadable, or exceeds the encoded input limit");
-            continue;
-        }
-
         try {
             auto future = std::async(
                 std::launch::async,
-                [input = std::move(*bytes), limit = m_imageDecodeByteLimit]() mutable -> DecodeResult {
-                    SDL_Surface* surface = DecodeImage(input.data(), input.size(), limit);
+                [vfs = &m_vfs, path = task.path,
+                 limit = m_imageDecodeByteLimit]() -> DecodeResult {
+                    auto input = ReadImageInput(*vfs, path);
+                    if (!input)
+                        return {.code = "PXASSET7013",
+                                .error = "Image is missing, unreadable, or exceeds the encoded input limit"};
+                    SDL_Surface* surface = DecodeImage(input->data(), input->size(), limit);
                     if (!surface)
                         return {.surface = nullptr,
                                 .width = 0,
@@ -408,14 +401,15 @@ void AssetCache::HarvestPendingTextures() {
             const std::string message = decoded.error.empty()
                 ? "Texture preload could not create a renderer texture"
                 : "Texture preload decode failed: " + decoded.error;
+            const std::string code = decoded.code.empty()
+                ? "PXASSET7015" : decoded.code;
             for (const auto batchId : iterator->batches)
                 CompleteBatchRequest(batchId, iterator->path, succeeded,
                                      succeeded ? decoded.decodedBytes : 0,
-                                     succeeded ? std::string{}
-                                               : "PXASSET7015",
+                                     succeeded ? std::string{} : code,
                                      succeeded ? std::string{} : message);
             if (iterator->cacheRequest && !succeeded)
-                AssetDiagnostic("PXASSET7015", iterator->path,
+                AssetDiagnostic(code, iterator->path,
                                 "Texture preload failed", decoded.error);
         }
         iterator = m_pendingTextures.erase(iterator);

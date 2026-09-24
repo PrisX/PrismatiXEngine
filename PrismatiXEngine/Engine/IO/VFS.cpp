@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <mutex>
 
 namespace px::io {
 
@@ -176,6 +177,7 @@ void VFS::MountDirectory(const std::string& root) {
         PX_LOG_ERROR("VFS rejected invalid directory mount '{}'", root);
         return;
     }
+    std::unique_lock lock(m_mountsMutex);
     m_dirs.push_back(px::PathToUtf8(canonical));
     PX_LOG_INFO("VFS mounted directory '{}'", px::PathToUtf8(canonical));
 }
@@ -191,12 +193,14 @@ bool VFS::MountArchive(const std::string& archivePath, const crypto::Key* key) {
     if (!archive->Open(archivePath, key)) {
         return false;
     }
+    std::unique_lock lock(m_mountsMutex);
     m_archives.push_back(std::move(archive));
     return true;
 #endif
 }
 
 void VFS::Clear() {
+    std::unique_lock lock(m_mountsMutex);
     m_dirs.clear();
     m_archives.clear();
 }
@@ -204,6 +208,7 @@ void VFS::Clear() {
 bool VFS::Exists(std::string_view path) const {
     const auto normalized = NormalizeVirtualPath(path);
     if (!normalized) return false;
+    std::shared_lock lock(m_mountsMutex);
     for (const std::string& dir : m_dirs) {
         std::error_code error;
         const auto full = ResolveDirectoryPath(dir, *normalized);
@@ -224,6 +229,7 @@ bool VFS::Exists(std::string_view path) const {
 std::unique_ptr<SeekableReadStream> VFS::Open(const std::string_view path) const {
     const auto normalized = NormalizeVirtualPath(path);
     if (!normalized) return {};
+    std::shared_lock lock(m_mountsMutex);
     for (const std::string& dir : m_dirs) {
         std::error_code error;
         const auto full = ResolveDirectoryPath(dir, *normalized);
@@ -243,6 +249,7 @@ std::unique_ptr<SeekableReadStream> VFS::Open(const std::string_view path) const
 std::optional<Bytes> VFS::Read(std::string_view path) const {
     const auto normalized = NormalizeVirtualPath(path);
     if (!normalized) return std::nullopt;
+    std::shared_lock lock(m_mountsMutex);
     for (const std::string& dir : m_dirs) {
         const auto resolved = ResolveDirectoryPath(dir, *normalized);
         if (!resolved) continue;
