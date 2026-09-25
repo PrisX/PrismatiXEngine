@@ -89,6 +89,52 @@ void TestVfsUnicodePaths() {
 
 }
 
+void TestVfsArchiveOverlayPrecedence() {
+    px::test::TempDirectory fixture("vfs-archive-overlay");
+    const auto basePath = fixture.path / "base.pdx";
+    const auto overlayPath = fixture.path / "overlay.pdx";
+    const auto newestPath = fixture.path / "newest.pdx";
+    px::io::ArchiveWriter baseWriter;
+    baseWriter.Add("shared.txt", px::io::Bytes{'b', 'a', 's', 'e'});
+    baseWriter.Add("base-only.txt", px::io::Bytes{'o', 'l', 'd'});
+    Check(baseWriter.Write(basePath.string()), "Base archive must be writable");
+    px::io::ArchiveWriter overlayWriter;
+    overlayWriter.Add("shared.txt", px::io::Bytes{'n', 'e', 'w'});
+    overlayWriter.Add("added.txt", px::io::Bytes{'a', 'd', 'd', 'e', 'd'});
+    Check(overlayWriter.Write(overlayPath.string()), "Overlay archive must be writable");
+    px::io::ArchiveWriter newestWriter;
+    newestWriter.Add("shared.txt", px::io::Bytes{'l', 'a', 't', 'e', 's', 't'});
+    Check(newestWriter.Write(newestPath.string()), "Second overlay archive must be writable");
+
+    px::io::VFS vfs;
+    Check(vfs.MountArchive(basePath.string()), "Base archive must mount");
+    Check(vfs.MountArchive(overlayPath.string()), "Second base-priority archive must mount");
+    Check(vfs.ReadText("shared.txt") == "base",
+          "Default mounts must keep first-archive-wins compatibility");
+    Check(vfs.MountArchive(overlayPath.string(), nullptr,
+                           px::io::ArchiveMountPriority::Overlay),
+          "Explicit overlay archive must mount");
+    Check(vfs.ReadText("shared.txt") == "new" &&
+              vfs.ReadText("base-only.txt") == "old" &&
+              vfs.ReadText("added.txt") == "added",
+          "Overlay must override duplicates and retain additions and base fallbacks");
+    auto stream = vfs.Open("shared.txt");
+    std::uint8_t streamBytes[3]{};
+    Check(stream && stream->Read(streamBytes, sizeof(streamBytes)) == 3 &&
+              std::string(reinterpret_cast<const char*>(streamBytes), 3) == "new",
+          "Seekable stream lookup must use the same overlay precedence as Read");
+    Check(!vfs.MountArchive((fixture.path / "missing.pdx").string(), nullptr,
+                            px::io::ArchiveMountPriority::Overlay) &&
+              vfs.ReadText("shared.txt") == "new",
+          "Failed overlay mount must leave existing archive visibility unchanged");
+    Check(vfs.MountArchive(newestPath.string(), nullptr,
+                           px::io::ArchiveMountPriority::Overlay) &&
+              vfs.ReadText("shared.txt") == "latest",
+          "Most recently mounted overlay must take precedence");
+    Check(vfs.Exists("added.txt") && vfs.Exists("base-only.txt"),
+          "Exists must find resources across overlay and base mounts");
+}
+
 void TestVfsRejectsDirectoriesAndReadsRegularFiles() {
     px::test::TempDirectory fixture("vfs-directory-read");
     std::ofstream(fixture.path / "empty.bin", std::ios::binary);
@@ -611,6 +657,7 @@ void TestPublishedUiEffectsAreObservable() {
 
 int main() {
     Run("VFS_UnicodePaths", TestVfsUnicodePaths);
+    Run("VFS_ArchiveOverlayPrecedence", TestVfsArchiveOverlayPrecedence);
     Run("VFS_DirectoryAndRegularFileReads", TestVfsRejectsDirectoriesAndReadsRegularFiles);
     Run("Typography_CjkRubyVerticalText", TestCjkRubyAndVerticalText);
     Run("Typography_ImmutableTextLayoutRanges", TestImmutableTextLayoutRanges);

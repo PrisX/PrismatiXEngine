@@ -182,10 +182,12 @@ void VFS::MountDirectory(const std::string& root) {
     PX_LOG_INFO("VFS mounted directory '{}'", px::PathToUtf8(canonical));
 }
 
-bool VFS::MountArchive(const std::string& archivePath, const crypto::Key* key) {
+bool VFS::MountArchive(const std::string& archivePath, const crypto::Key* key,
+                       const ArchiveMountPriority priority) {
 #if defined(PRISMATIX_PREVIEW_WASM)
     (void)archivePath;
     (void)key;
+    (void)priority;
     PX_LOG_ERROR("Archive mounts are unavailable in the WASM preview VFS");
     return false;
 #else
@@ -194,7 +196,11 @@ bool VFS::MountArchive(const std::string& archivePath, const crypto::Key* key) {
         return false;
     }
     std::unique_lock lock(m_mountsMutex);
-    m_archives.push_back(std::move(archive));
+    if (priority == ArchiveMountPriority::Overlay) {
+        m_archives.insert(m_archives.begin(), std::move(archive));
+    } else {
+        m_archives.push_back(std::move(archive));
+    }
     return true;
 #endif
 }

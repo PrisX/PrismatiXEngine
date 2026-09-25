@@ -13,6 +13,14 @@
 
 namespace px::io {
 
+enum class ArchiveMountPriority {
+    // Preserve the existing first-mounted-archive-wins lookup order.
+    Base,
+    // A verified caller may override earlier archive entries. Directory
+    // mounts still take precedence over every archive.
+    Overlay,
+};
+
 class VFS {
 public:
     // PrismatiX virtual paths are portable, package-relative UTF-8 paths.  All
@@ -23,7 +31,9 @@ public:
         std::string_view path);
 
     void MountDirectory(const std::string& root);
-    bool MountArchive(const std::string& archivePath, const crypto::Key* key = nullptr);
+    bool MountArchive(const std::string& archivePath,
+                      const crypto::Key* key = nullptr,
+                      ArchiveMountPriority priority = ArchiveMountPriority::Base);
     void Clear();
 
     [[nodiscard]] bool Exists(std::string_view path) const;

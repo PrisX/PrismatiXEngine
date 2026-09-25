@@ -243,9 +243,13 @@ at startup, and is not signed. It detects accidental corruption and wrong
 versions, not a malicious distributor who can replace the bundle and its
 metadata together. An automatic update channel still needs authenticated
 publisher identity, version/dependency policy, download/resume handling, and
-installation coordination. A drop-in PDX overlay additionally needs explicit
-override precedence and tombstone semantics; the current installer instead
-assembles a complete target distribution before launch. The selected native
+installation coordination. Native `VFS::MountArchive` now accepts an explicit
+`ArchiveMountPriority::Overlay` for trusted callers: the newest overlay wins
+over earlier archives, while directory mounts still win over all archives.
+This is only a low-level lookup order. A drop-in PDX overlay still needs
+version validation, tombstones for removed resources, manifest/route changes,
+and Player discovery; the current installer instead assembles a complete target
+distribution before launch. The selected native
 Packager must understand both package versions; cross-engine upgrades may
 require a full installer rather than this bundle format.
 
