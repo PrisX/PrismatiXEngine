@@ -172,6 +172,45 @@ function issue(code: string, message: string, path?: string, details?: string): 
     ...(details === undefined ? {} : {details})};
 }
 
+// Input::ActionName registers these even when a game does not redeclare them.
+// Other hosts may register more actions at runtime, so an unknown name is a
+// warning rather than a build error.
+const builtInInputActions = new Set([
+  "navigate-up", "navigate-down", "navigate-left", "navigate-right",
+  "accept", "cancel", "focus-next", "focus-previous", "advance", "menu",
+  "backlog", "toggle-auto", "toggle-skip", "toggle-ui", "quick-save",
+  "quick-load", "save.open", "rollback", "pause",
+]);
+
+function validateUiInputBindings(document: JsonValue, game: GameDocument,
+  path: string): AuthoringDiagnostic[] {
+  if (document === null || typeof document !== "object" || Array.isArray(document)) return [];
+  const nodes = document.nodes;
+  if (!Array.isArray(nodes)) return [];
+  const declared = new Set((game.inputActions ?? []).map((action) => action.id));
+  const diagnostics: AuthoringDiagnostic[] = [];
+  for (const [index, node] of nodes.entries()) {
+    if (node === null || typeof node !== "object" || Array.isArray(node) ||
+        node.runtimeProperties === null ||
+        typeof node.runtimeProperties !== "object" ||
+        Array.isArray(node.runtimeProperties)) continue;
+    const action = node.runtimeProperties.bindingAction;
+    if (action === undefined) continue;
+    const location = `nodes[${index}].runtimeProperties.bindingAction`;
+    if (typeof action !== "string" || action.length === 0) {
+      diagnostics.push({severity: "error", code: "PXBUILD1071",
+        message: "UI input binding must name a non-empty action", path,
+        details: location});
+    } else if (!declared.has(action) && !builtInInputActions.has(action)) {
+      diagnostics.push({severity: "warning", code: "PXBUILD1072",
+        message: "UI input binding is not declared by the game or built-in Input",
+        path, details: `${location}: ${action}`,
+        hint: "Declare it in game.inputActions, or ensure this host registers the action before showing the UI."});
+    }
+  }
+  return diagnostics;
+}
+
 const builtInScreenEffects = new Set([
   "shake", "flash", "fade", "zoom", "pan", "blur", "vignette",
   "color-grade", "rule-dissolve",
@@ -509,6 +548,8 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       if (input.uiTypeRegistry !== undefined)
         diagnostics.push(...validateUiPropertyUsage(ui, input.uiTypeRegistry, path));
       diagnostics.push(...validateUiActionUsage(ui, extensions, path));
+      if (game !== undefined)
+        diagnostics.push(...validateUiInputBindings(ui, game, path));
       uiDocuments.set(path, ui);
     }
   }
@@ -589,6 +630,8 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     if (input.uiTypeRegistry !== undefined)
       diagnostics.push(...validateUiPropertyUsage(component, input.uiTypeRegistry, descriptor.source));
     diagnostics.push(...validateUiActionUsage(component, extensions, descriptor.source));
+    if (game !== undefined)
+      diagnostics.push(...validateUiInputBindings(component, game, descriptor.source));
     uiComponentDocuments.set(descriptor.source, component);
   }
   if (storyIndex !== undefined && storyIndex.entryScene !== project.entry.story) {

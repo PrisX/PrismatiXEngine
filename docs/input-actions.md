@@ -103,3 +103,10 @@ and persist the updated keyboard bindings themselves. This is a single-key
 replacement control, not a multi-key editor or confirmation dialog.
 Wheel remapping and portable non-Player persistence are still separate tasks.
 Existing `inputBindings` documents remain readable for migration.
+
+Project compilation checks `bindingAction` in UI scenes and components. An
+empty or non-string value is an error (`PXBUILD1071`). A name absent from both
+`game.inputActions` and the built-in Input actions produces `PXBUILD1072`
+with the UI node location; it is a warning because a custom host may register
+the action later. For Player projects, treat that warning as a likely typo and
+exercise the binding in a packaged Player before release.

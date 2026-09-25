@@ -86,6 +86,47 @@ test("project compilation checks authored input action routes", () => {
   assert.ok(missing.diagnostics.some((item) => item.code === "PXBUILD1061"));
 });
 
+test("project compilation reports unresolved key-binding buttons before Player starts", () => {
+  const compile = (action: unknown, asComponent = false) => {
+    const bound = {...ui.nodes[0], id: "33333333-3333-4333-8333-333333333333",
+      parentId: rootId, order: 1, kind: "button", runtimeType: "TextureButton",
+      name: "Shortcut", runtimeProperties: {bindingAction: action}};
+    const authored = {...ui, nodes: [...ui.nodes, bound]};
+    return compileProject({project: asComponent
+      ? {...project, uiComponents: [{id: uiId, source: "Content/UI/Keys.pxuicomponent"}]}
+      : project,
+    documents: {"Story/story.pxindex": storyIndex,
+      "Content/game.pxgame": {...game, inputActions: [
+        {id: "photo-mode", context: "game", keys: ["P"]},
+      ]},
+      "Content/UI/Title.pxui": asComponent ? ui : authored,
+      ...(asComponent ? {"Content/UI/Keys.pxuicomponent": {
+        ...componentContent, nodes: authored.nodes, format: "PrismatiXUIComponent",
+        componentInterface: {properties: [], signals: [], slots: []},
+      }} : {})},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locale: "zh-TW", strings: {}}}});
+  };
+  assert.equal(compile("photo-mode").valid, true);
+  assert.equal(compile("quick-save").valid, true);
+  const typo = compile("photo-mod");
+  assert.equal(typo.valid, true, "a host may register its own action later");
+  assert.deepEqual(typo.diagnostics.filter((item) => item.code === "PXBUILD1072")
+    .map((item) => [item.path, item.details]), [[
+      "Content/UI/Title.pxui", "nodes[1].runtimeProperties.bindingAction: photo-mod",
+    ]]);
+  const componentTypo = compile("photo-mod", true);
+  assert.equal(componentTypo.valid, true, JSON.stringify(componentTypo.diagnostics));
+  assert.equal(componentTypo.diagnostics.find((item) => item.code === "PXBUILD1072")?.path,
+    "Content/UI/Keys.pxuicomponent");
+  for (const invalid of ["", 12]) {
+    const result = compile(invalid);
+    assert.equal(result.valid, false);
+    assert.ok(result.diagnostics.some((item) => item.code === "PXBUILD1071"));
+  }
+});
+
 test("project compilation checks keyboard defaults against a native key registry", () => {
   const compile = (actionKey: string, legacyKey: string) => compileProject({project,
     inputKeyRegistry: {format: "PrismatiXInputKeyRegistry", schemaRevision: 1,

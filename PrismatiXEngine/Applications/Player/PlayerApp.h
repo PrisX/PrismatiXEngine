@@ -75,6 +75,7 @@ private:
     void Shutdown();
     bool SaveProfileIfWritable();
     bool SaveSettingsIfWritable();
+    bool ApplyFullscreenSetting(bool fullscreen);
     void BeginRuntimeIrPreload();
     void FinishBootPresentation();
     [[nodiscard]] bool TitleVisualsReady();

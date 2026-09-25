@@ -1208,8 +1208,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                 if (!v) return false;
                 if (name == "skipReadOnly") m_settings.skipReadOnly = *v;
                 else if (name == "fullscreen") {
-                    m_settings.fullscreen = *v;
-                    SDL_SetWindowFullscreen(m_runtime.GetWindow().Handle(), *v);
+                    return ApplyFullscreenSetting(*v);
                 } else if (name == "highContrast") m_settings.highContrast = *v;
                 else if (name == "reducedMotion") m_settings.reducedMotion = *v;
                 else if (name == "selfVoicing") {
@@ -1697,6 +1696,17 @@ bool PlayerApp::SaveSettingsIfWritable() {
     return m_settings.SavePreservingExisting(
         PathToUtf8(m_saveDirectory / "config.dat"),
         &m_saveKey, m_saveFallbackKeys);
+}
+
+bool PlayerApp::ApplyFullscreenSetting(const bool fullscreen) {
+    if (m_settings.fullscreen == fullscreen) return SaveSettingsIfWritable();
+    if (!SDL_SetWindowFullscreen(m_runtime.GetWindow().Handle(), fullscreen)) {
+        PX_LOG_WARN("Player fullscreen change rejected: {}", SDL_GetError());
+        return false;
+    }
+    m_settings.fullscreen = fullscreen;
+    (void)SaveSettingsIfWritable();
+    return true;
 }
 
 void PlayerApp::BeginRuntimeIrPreload() {
@@ -2703,11 +2713,11 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
     } else if (t == "set.skipread.value") {
         m_settings.skipReadOnly=action.argument=="true";
     } else if (t == "set.fullscreen.value") {
-        m_settings.fullscreen=action.argument=="true";SDL_SetWindowFullscreen(m_runtime.GetWindow().Handle(),m_settings.fullscreen);
+        (void)ApplyFullscreenSetting(action.argument == "true");
     } else if (t == "set.fullscreen.on" || t == "set.fullscreen.off") {
-        m_settings.fullscreen=t.ends_with(".on");
-        SDL_SetWindowFullscreen(m_runtime.GetWindow().Handle(),m_settings.fullscreen);
-        (void)m_ui.ShowSettings(SettingsUI());
+        (void)ApplyFullscreenSetting(t.ends_with(".on"));
+        if (m_ui.CurrentRoute() == "settings")
+            (void)m_ui.ShowSettings(SettingsUI());
     } else if(t=="set.textscale.value") { m_settings.textScale=std::clamp(std::atoi(action.argument.c_str())/100.0f,.75f,2.0f);
     } else if(t=="set.highcontrast.value") { m_settings.highContrast=action.argument=="true";
     } else if(t=="set.reducedmotion.value") { m_settings.reducedMotion=action.argument=="true";
@@ -2851,9 +2861,9 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         m_settings.skipReadOnly = !m_settings.skipReadOnly;
         m_ui.ShowSettings(SettingsUI());
     } else if (t == "set.fullscreen.toggle") {
-        m_settings.fullscreen = !m_settings.fullscreen;
-        SDL_SetWindowFullscreen(m_runtime.GetWindow().Handle(), m_settings.fullscreen);
-        m_ui.ShowSettings(SettingsUI());
+        (void)ApplyFullscreenSetting(!m_settings.fullscreen);
+        if (m_ui.CurrentRoute() == "settings")
+            (void)m_ui.ShowSettings(SettingsUI());
     } else if (t == "game.start") {
         StartGame();
     } else if (t == "game.continue") {
@@ -3892,8 +3902,7 @@ void PlayerApp::MainLoop() {
 
         if (input.KeyPressed(SDL_SCANCODE_RETURN) &&
             (input.KeyDown(SDL_SCANCODE_LALT) || input.KeyDown(SDL_SCANCODE_RALT))) {
-            m_settings.fullscreen = !m_settings.fullscreen;
-            SDL_SetWindowFullscreen(m_runtime.GetWindow().Handle(), m_settings.fullscreen);
+            (void)ApplyFullscreenSetting(!m_settings.fullscreen);
         }
 
         // Script jobs and accepted save/load requests have one application
