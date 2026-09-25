@@ -98,6 +98,8 @@ public:
     [[nodiscard]] bool EscapeCancelsBinding() const { return m_escapeCancelsBinding; }
     void SetAllowSharedBinding(bool value) { m_allowSharedBinding = value; }
     [[nodiscard]] bool AllowSharedBinding() const { return m_allowSharedBinding; }
+    void SetDeleteClearsBinding(bool value) { m_deleteClearsBinding = value; }
+    [[nodiscard]] bool DeleteClearsBinding() const { return m_deleteClearsBinding; }
     // Non-owning input service; UIContext reapplies it after every root swap.
     void SetInputBindingService(Input* input, std::function<void()> onChanged = {});
     [[nodiscard]] bool CapturingBinding() const { return m_capturingBinding; }
@@ -133,6 +135,7 @@ private:
     bool m_capturingBinding = false;
     bool m_escapeCancelsBinding = true;
     bool m_allowSharedBinding = false;
+    bool m_deleteClearsBinding = false;
     int m_fontSize = 0;
     Color m_textColor{};
     bool m_hasTextColor = false;

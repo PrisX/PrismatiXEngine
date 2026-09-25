@@ -253,6 +253,8 @@ export interface KeyBindingButtonProps extends Omit<TextureButtonProps,
   readonly bindingConflictText?: string;
   readonly escapeCancelsBinding?: boolean;
   readonly allowSharedBinding?: boolean;
+  /** Delete during capture clears only keyboard keys, preserving gamepad/wheel. */
+  readonly deleteClearsBinding?: boolean;
 }
 
 export interface RichTextLabelProps extends TextProps {
@@ -569,7 +571,7 @@ export function TextureButton(props: TextureButtonProps): UiElement {
 /** Click to capture a physical key; the host persists successful changes. */
 export function KeyBindingButton(props: KeyBindingButtonProps): UiElement {
   const {bindingAction, bindingPrompt, unboundText, bindingConflictText,
-    escapeCancelsBinding, allowSharedBinding, ...rest} = props;
+    escapeCancelsBinding, allowSharedBinding, deleteClearsBinding, ...rest} = props;
   return TextureButton({...rest, runtimeProperties: {
     ...props.runtimeProperties,
     bindingAction,
@@ -578,6 +580,7 @@ export function KeyBindingButton(props: KeyBindingButtonProps): UiElement {
     ...(bindingConflictText === undefined ? {} : {bindingConflictText}),
     ...(escapeCancelsBinding === undefined ? {} : {escapeCancelsBinding}),
     ...(allowSharedBinding === undefined ? {} : {allowSharedBinding}),
+    ...(deleteClearsBinding === undefined ? {} : {deleteClearsBinding}),
   }});
 }
 

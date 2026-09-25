@@ -310,6 +310,7 @@ int main() {
     px::Input rebindInput;
     Check(rebindInput.RegisterAction("photo-mode") &&
               rebindInput.BindKey("photo-mode", SDL_SCANCODE_P) &&
+              rebindInput.BindGamepadButton("photo-mode", SDL_GAMEPAD_BUTTON_NORTH) &&
               rebindInput.RegisterAction("another-action") &&
               rebindInput.BindKey("another-action", SDL_SCANCODE_F4),
           "key binding button fixture registers named actions");
@@ -348,6 +349,26 @@ int main() {
     (void)bindingContext.Update(rebindInput, 800, 600, 0.016f);
     Check(mountedBindingButton->Text() == "F3" && bindingSaves == 1,
           "Escape cancels key capture without changing the binding");
+    mountedBindingButton->Activate();
+    rebindInput.InjectKeyPress(SDL_SCANCODE_DELETE);
+    (void)bindingContext.Update(rebindInput, 800, 600, 0.016f);
+    Check(rebindInput.KeyBindings("photo-mode") ==
+              std::vector<int>{SDL_SCANCODE_DELETE} && bindingSaves == 2,
+          "Delete remains bindable unless clearing is explicitly enabled");
+    mountedBindingButton->SetDeleteClearsBinding(true);
+    mountedBindingButton->Activate();
+    rebindInput.InjectKeyPress(SDL_SCANCODE_DELETE);
+    (void)bindingContext.Update(rebindInput, 800, 600, 0.016f);
+    Check(rebindInput.KeyBindings("photo-mode").empty() &&
+              mountedBindingButton->Text() == "Unbound" && bindingSaves == 3,
+          "opt-in Delete clears keyboard keys and persists the unbound state");
+    rebindInput.NewFrame();
+    SDL_Event retainedBindingGamepad{};
+    retainedBindingGamepad.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+    retainedBindingGamepad.gbutton.button = SDL_GAMEPAD_BUTTON_NORTH;
+    rebindInput.Process(retainedBindingGamepad);
+    Check(rebindInput.ActionPressed("photo-mode"),
+          "clearing a button's keyboard keys preserves its gamepad binding");
     mountedBindingButton->SetBindingAction("misspelled-action");
     Check(mountedBindingButton->Text() == "Unknown action",
           "unregistered binding actions are visible before a click");

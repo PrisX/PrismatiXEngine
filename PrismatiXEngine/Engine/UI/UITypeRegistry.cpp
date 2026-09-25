@@ -513,6 +513,9 @@ Status RegisterBuiltinUITypes() {
     button.properties.push_back(BoolProperty("allowSharedBinding", "Input",
         [](const Object& o) { return As<Button>(o)->AllowSharedBinding(); },
         [](Object& o, bool v) { As<Button>(o)->SetAllowSharedBinding(v); return Status::Ok(); }));
+    button.properties.push_back(BoolProperty("deleteClearsBinding", "Input",
+        [](const Object& o) { return As<Button>(o)->DeleteClearsBinding(); },
+        [](Object& o, bool v) { As<Button>(o)->SetDeleteClearsBinding(v); return Status::Ok(); }));
     auto buttonFontSize = NumberProperty("fontSize", "Theme", [](const Object& o) { return As<Button>(o)->FontSize(); },
         [](Object& o, double v) { As<Button>(o)->SetFontSize(static_cast<int>(v)); return Status::Ok(); });
     buttonFontSize.editor.displayName = "Font size";

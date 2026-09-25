@@ -359,6 +359,7 @@ test("key binding button lowers native capture properties without a click action
       bindingAction: "photo-mode", bindingPrompt: "Press a key...",
       unboundText: "Not set", bindingConflictText: "In use",
       escapeCancelsBinding: true, allowSharedBinding: false,
+      deleteClearsBinding: true,
       normalPath: "Assets/UI/key.png", runtimeProperties: {fontSize: 18},
     }),
   }), {kind: "scene"});
@@ -370,5 +371,5 @@ test("key binding button lowers native capture properties without a click action
     normalPath: "Assets/UI/key.png", bindingAction: "photo-mode",
     bindingPrompt: "Press a key...", unboundText: "Not set",
     bindingConflictText: "In use", escapeCancelsBinding: true,
-    allowSharedBinding: false});
+    allowSharedBinding: false, deleteClearsBinding: true});
 });

@@ -195,6 +195,11 @@ void Button::Update(float deltaSeconds) {
             m_capturingBinding = false;
             if (*key == SDL_SCANCODE_ESCAPE && m_escapeCancelsBinding) {
                 RefreshBindingText();
+            } else if (*key == SDL_SCANCODE_DELETE && m_deleteClearsBinding) {
+                if (m_bindingInput->ClearKeyboardBindings(m_bindingAction)) {
+                    if (m_bindingChanged) m_bindingChanged();
+                    RefreshBindingText();
+                }
             } else {
                 const auto result = m_bindingInput->RebindKey(
                     m_bindingAction, *key, m_allowSharedBinding);

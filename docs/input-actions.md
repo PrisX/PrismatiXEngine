@@ -83,7 +83,10 @@ It uses the normal `TextureButton` skins and text styling, but displays the
 current key(s) for `bindingAction`, captures the next physical key on click,
 and reports a conflicting key in the caption without changing the binding.
 Escape cancels by default; the prompt, unbound caption, conflict caption,
-Escape behavior, and shared-binding policy are authorable props. For example:
+Escape behavior, and shared-binding policy are authorable props. Set
+`deleteClearsBinding` to let Delete during capture clear only that action's
+keyboard keys; gamepad and wheel bindings remain intact. It is opt-in so a
+game that uses Delete as a normal shortcut can still bind it. For example:
 
 ```tsx
 import {KeyBindingButton, Scene} from "@prismatix/authoring-sdk";
@@ -91,7 +94,8 @@ import {KeyBindingButton, Scene} from "@prismatix/authoring-sdk";
 export default <Scene name="Keys" width={800} height={600}>
   <KeyBindingButton name="PhotoModeKey" bindingAction="photo-mode"
     x={280} y={180} width={240} height={56}
-    normalPath="Assets/UI/key.png" bindingPrompt="Press a key..." />
+    normalPath="Assets/UI/key.png" bindingPrompt="Press a key (Del clears)"
+    deleteClearsBinding />
 </Scene>;
 ```
 
