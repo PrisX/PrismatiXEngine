@@ -168,6 +168,7 @@ const engine = {
   GetInputKeyCode: () => 58,
   GetInputKeyName: () => "F1",
   RebindInputKey: () => ({status: "applied" as const, conflicts: []}),
+  AddInputKeyBinding: () => ({status: "applied" as const, conflicts: []}),
   BeginInputKeyCapture: () => true,
   IsInputKeyCaptureActive: () => true,
   TakeCapturedInputKey: () => 58,
@@ -279,6 +280,7 @@ if (!event || event.action !== "sample.interact" || !ctx.input.consume(event.id)
     ctx.input.keyBindings("sample.interact")[0] !== 44 ||
     ctx.input.keyCode("F1") !== 58 || ctx.input.keyName(58) !== "F1" ||
     ctx.input.rebindKey("sample.interact", "F1").status !== "applied" ||
+    ctx.input.addKeyBinding("sample.interact", "F2").status !== "applied" ||
     !ctx.input.beginKeyCapture() || !ctx.input.keyCaptureActive() ||
     ctx.input.takeCapturedKey() !== 58)
   throw new Error("input event facade is not wired");

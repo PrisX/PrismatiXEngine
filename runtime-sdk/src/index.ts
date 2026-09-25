@@ -362,7 +362,7 @@ export type LogicalInputAction =
 
 export type InputActionId = LogicalInputAction | (string & {});
 export interface KeyRebindResult {
-  readonly status: "applied" | "unknown-action" | "invalid-scancode" | "conflict";
+  readonly status: "applied" | "unknown-action" | "invalid-scancode" | "conflict" | "limit-reached";
   readonly conflicts: readonly string[];
 }
 export type InputEventType =
@@ -607,6 +607,7 @@ export interface PrismatiXEngine {
   GetInputKeyCode(name: string): number | null;
   GetInputKeyName(scancode: number): string;
   RebindInputKey(action: string, key: string | number, allowConflict?: boolean): KeyRebindResult;
+  AddInputKeyBinding(action: string, key: string | number, allowConflict?: boolean): KeyRebindResult;
   BeginInputKeyCapture(): boolean;
   IsInputKeyCaptureActive(): boolean;
   TakeCapturedInputKey(): number | null;
@@ -767,6 +768,7 @@ export const ENGINE_HOST_BINDINGS = [
   "GetInputKeyCode",
   "GetInputKeyName",
   "RebindInputKey",
+  "AddInputKeyBinding",
   "BeginInputKeyCapture",
   "IsInputKeyCaptureActive",
   "TakeCapturedInputKey",
@@ -955,6 +957,7 @@ export interface PrismatiXContext {
     keyCode(name: string): number | null;
     keyName(scancode: number): string;
     rebindKey(action: string, key: string | number, allowConflict?: boolean): KeyRebindResult;
+    addKeyBinding(action: string, key: string | number, allowConflict?: boolean): KeyRebindResult;
     beginKeyCapture(): boolean;
     keyCaptureActive(): boolean;
     takeCapturedKey(): number | null;
@@ -1252,6 +1255,8 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
       keyName: (scancode) => engine.GetInputKeyName(scancode),
       rebindKey: (action, key, allowConflict) =>
         engine.RebindInputKey(action, key, allowConflict),
+      addKeyBinding: (action, key, allowConflict) =>
+        engine.AddInputKeyBinding(action, key, allowConflict),
       beginKeyCapture: () => engine.BeginInputKeyCapture(),
       keyCaptureActive: () => engine.IsInputKeyCaptureActive(),
       takeCapturedKey: () => engine.TakeCapturedInputKey(),

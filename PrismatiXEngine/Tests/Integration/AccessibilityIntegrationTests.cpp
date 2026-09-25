@@ -369,6 +369,17 @@ int main() {
     rebindInput.Process(retainedBindingGamepad);
     Check(rebindInput.ActionPressed("photo-mode"),
           "clearing a button's keyboard keys preserves its gamepad binding");
+    rebindInput.NewFrame();
+    Check(rebindInput.BindKey("photo-mode", SDL_SCANCODE_F3),
+          "additive button fixture restores one keyboard key");
+    mountedBindingButton->SetAddCapturedBinding(true);
+    mountedBindingButton->Activate();
+    rebindInput.InjectKeyPress(SDL_SCANCODE_F2);
+    (void)bindingContext.Update(rebindInput, 800, 600, 0.016f);
+    Check(rebindInput.KeyBindings("photo-mode") ==
+              (std::vector<int>{SDL_SCANCODE_F3, SDL_SCANCODE_F2}) &&
+              mountedBindingButton->Text() == "F3 / F2" && bindingSaves == 4,
+          "additive capture retains the existing key and updates the caption");
     mountedBindingButton->SetBindingAction("misspelled-action");
     Check(mountedBindingButton->Text() == "Unknown action",
           "unregistered binding actions are visible before a click");

@@ -84,6 +84,7 @@ enum class KeyRebindStatus : std::uint8_t {
     UnknownAction,
     InvalidScancode,
     Conflict,
+    LimitReached,
 };
 
 struct KeyRebindResult {
@@ -146,6 +147,11 @@ public:
     [[nodiscard]] KeyRebindResult RebindKey(std::string_view action,
                                             int scancode,
                                             bool allowConflict = false);
+    // Atomically adds one keyboard key while retaining the action's other
+    // keys and device bindings. The persisted map supports at most 32 keys.
+    [[nodiscard]] KeyRebindResult AddKeyBinding(std::string_view action,
+                                                int scancode,
+                                                bool allowConflict = false);
     // One-shot physical keyboard capture for rebind UIs. The captured key is
     // suppressed from normal actions and text input, then remains available
     // until taken or cancelled. Escape is reported like any other key; the

@@ -2889,10 +2889,11 @@ public:
                     return JS_ThrowTypeError(context, "scancode must be an integer");
                 return JS_NewString(context, Input::KeyName(static_cast<int>(integer)).c_str());
             }
-            if (operation == "input.rebindKey") {
+            if (operation == "input.rebindKey" ||
+                operation == "input.addKeyBinding") {
                 if (!StringArgument(count, values, 0, first) || first.empty())
                     return JS_ThrowTypeError(
-                        context, "RebindInputKey requires an action");
+                        context, "input binding edit requires an action");
                 int scancode = 0;
                 if (count >= 2 && JS_IsString(values[1])) {
                     if (!StringArgument(count, values, 1, second))
@@ -2904,15 +2905,16 @@ public:
                     scancode = static_cast<int>(integer);
                 } else {
                     return JS_ThrowTypeError(
-                        context, "RebindInputKey requires a key name or integer scancode");
+                        context, "input binding edit requires a key name or integer scancode");
                 }
                 boolean = false;
                 if (count >= 3 && !JS_IsUndefined(values[2]) &&
                     !BoolArgument(count, values, 2, boolean))
                     return JS_ThrowTypeError(
                         context, "allowConflict must be boolean");
-                const auto result = services.input->RebindKey(
-                    first, scancode, boolean);
+                const auto result = operation == "input.addKeyBinding"
+                    ? services.input->AddKeyBinding(first, scancode, boolean)
+                    : services.input->RebindKey(first, scancode, boolean);
                 const char* status = "unknown-action";
                 switch (result.status) {
                     case KeyRebindStatus::Applied: status = "applied"; break;
@@ -2920,6 +2922,8 @@ public:
                     case KeyRebindStatus::InvalidScancode:
                         status = "invalid-scancode"; break;
                     case KeyRebindStatus::Conflict: status = "conflict"; break;
+                    case KeyRebindStatus::LimitReached:
+                        status = "limit-reached"; break;
                 }
                 VariantArray conflicts;
                 for (const auto& action : result.conflicts)
@@ -3281,6 +3285,7 @@ public:
                 GetInputKeyCode: { value: bindRuntime("input.keyCode") },
                 GetInputKeyName: { value: bindRuntime("input.keyName") },
                 RebindInputKey: { value: bindRuntime("input.rebindKey") },
+                AddInputKeyBinding: { value: bindRuntime("input.addKeyBinding") },
                 BeginInputKeyCapture: { value: bindRuntime("input.beginKeyCapture") },
                 IsInputKeyCaptureActive: { value: bindRuntime("input.keyCaptureActive") },
                 TakeCapturedInputKey: { value: bindRuntime("input.takeCapturedKey") },

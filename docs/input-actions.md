@@ -86,7 +86,10 @@ Escape cancels by default; the prompt, unbound caption, conflict caption,
 Escape behavior, and shared-binding policy are authorable props. Set
 `deleteClearsBinding` to let Delete during capture clear only that action's
 keyboard keys; gamepad and wheel bindings remain intact. It is opt-in so a
-game that uses Delete as a normal shortcut can still bind it. For example:
+game that uses Delete as a normal shortcut can still bind it. Set
+`addCapturedBinding` to append a captured key while keeping the existing
+ordered keys instead of replacing them. Conflict checks apply to the new key;
+32 keys per action is the persisted-map limit. For example:
 
 ```tsx
 import {KeyBindingButton, Scene} from "@prismatix/authoring-sdk";
@@ -95,7 +98,7 @@ export default <Scene name="Keys" width={800} height={600}>
   <KeyBindingButton name="PhotoModeKey" bindingAction="photo-mode"
     x={280} y={180} width={240} height={56}
     normalPath="Assets/UI/key.png" bindingPrompt="Press a key (Del clears)"
-    deleteClearsBinding />
+    deleteClearsBinding addCapturedBinding />
 </Scene>;
 ```
 
@@ -103,8 +106,11 @@ export default <Scene name="Keys" width={800} height={600}>
 provides the input service and saves a successful rebind to `Save/config.dat`
 in its [per-game user-data directory](player-user-data.md);
 other hosts must attach `UIContext::SetInputBindingService(input, onChanged)`
-and persist the updated keyboard bindings themselves. This is a single-key
-replacement control, not a multi-key editor or confirmation dialog.
+and persist the updated keyboard bindings themselves. The Runtime SDK exposes
+`ctx.input.addKeyBinding(action, key)` as the same atomic append operation;
+it returns `limit-reached` if the save-compatible maximum is reached. This
+button can append or replace the whole keyboard set, but it cannot remove one
+specific key or display a conflict confirmation dialog.
 Wheel remapping and portable non-Player persistence are still separate tasks.
 Existing `inputBindings` documents remain readable for migration.
 

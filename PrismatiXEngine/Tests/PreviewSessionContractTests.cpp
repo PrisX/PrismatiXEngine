@@ -328,6 +328,51 @@ int main() {
                      "reset clears custom overrides and restores engine defaults");
     });
 
+    suite.Run("AddKeyBindingRetainsKeysAndRejectsConflictsAtomically", [&] {
+        px::Input input;
+        suite.Require(input.RegisterAction("photo-mode") &&
+                          input.BindKey("photo-mode", SDL_SCANCODE_P),
+                      "additive binding fixture starts with one key");
+        const auto conflict = input.AddKeyBinding("photo-mode", SDL_SCANCODE_F5);
+        suite.Expect(conflict.status == px::KeyRebindStatus::Conflict &&
+                         input.KeyBindings("photo-mode") ==
+                             std::vector<int>{SDL_SCANCODE_P},
+                     "adding a conflicting key leaves existing keys untouched");
+        const auto applied = input.AddKeyBinding("photo-mode", SDL_SCANCODE_F2);
+        suite.Expect(applied.status == px::KeyRebindStatus::Applied &&
+                         input.KeyBindings("photo-mode") ==
+                             (std::vector<int>{SDL_SCANCODE_P, SDL_SCANCODE_F2}),
+                     "adding a key preserves authored order and prior keys");
+        suite.Expect(input.AddKeyBinding("photo-mode", SDL_SCANCODE_F2).status ==
+                         px::KeyRebindStatus::Applied &&
+                         input.KeyBindings("photo-mode").size() == 2,
+                     "adding an existing key is idempotent");
+        suite.Expect(input.AddKeyBinding("photo-mode", SDL_SCANCODE_F5, true).status ==
+                         px::KeyRebindStatus::Applied &&
+                         input.KeyBindings("photo-mode").back() == SDL_SCANCODE_F5,
+                     "explicit shared binding appends without replacing keys");
+        px::Input restored;
+        suite.Require(restored.RestoreKeyboardBindings(input.CaptureKeyboardBindings()) &&
+                          restored.RegisterAction("photo-mode"),
+                      "an additive edit survives settings reload");
+        suite.Expect(restored.KeyBindings("photo-mode") ==
+                         (std::vector<int>{SDL_SCANCODE_P, SDL_SCANCODE_F2,
+                                           SDL_SCANCODE_F5}),
+                     "saved additive keys keep their authored order");
+
+        px::Input full;
+        suite.Require(full.RegisterAction("many-keys"),
+                      "limit fixture registers a custom action");
+        for (int key = 1; key <= 32; ++key)
+            suite.Require(full.BindKey("many-keys", key),
+                          "limit fixture fills the persisted key capacity");
+        suite.Expect(full.AddKeyBinding("many-keys", 33).status ==
+                         px::KeyRebindStatus::LimitReached &&
+                         !full.BindKey("many-keys", 34) &&
+                         full.KeyBindings("many-keys").size() == 32,
+                     "an additive edit cannot create a binding map that saves cannot reload");
+    });
+
     suite.Run("NamedActionContextsGateActivationWithoutDroppingBindings", [&] {
         px::Input input;
         suite.Require(input.RegisterAction("screen.open.gallery") &&

@@ -165,6 +165,8 @@ bool Input::BindKey(const std::string_view action, const int scancode) {
     if (found == m_namedBindings.end() ||
         scancode <= SDL_SCANCODE_UNKNOWN ||
         scancode >= SDL_SCANCODE_COUNT) return false;
+    if (!found->second.keys.contains(scancode) &&
+        found->second.keyOrder.size() >= 32) return false;
     if (found->second.keys.insert(scancode).second)
         found->second.keyOrder.push_back(scancode);
     if (const auto builtin = BuiltinAction(action))
@@ -300,6 +302,36 @@ KeyRebindResult Input::RebindKey(const std::string_view action,
     found->second.keyOrder = {scancode};
     if (const auto builtin = BuiltinAction(action))
         m_keyBindings[ActionIndex(*builtin)] = {scancode};
+    return result;
+}
+
+KeyRebindResult Input::AddKeyBinding(const std::string_view action,
+                                     const int scancode,
+                                     const bool allowConflict) {
+    const auto found = m_namedBindings.find(action);
+    if (found == m_namedBindings.end())
+        return {.status = KeyRebindStatus::UnknownAction};
+    if (scancode <= SDL_SCANCODE_UNKNOWN || scancode >= SDL_SCANCODE_COUNT)
+        return {.status = KeyRebindStatus::InvalidScancode};
+
+    KeyRebindResult result{.status = KeyRebindStatus::Applied};
+    for (const auto& [otherAction, bindings] : m_namedBindings) {
+        if (otherAction != action && bindings.keys.contains(scancode))
+            result.conflicts.push_back(otherAction);
+    }
+    if (found->second.keys.contains(scancode)) return result;
+    if (!allowConflict && !result.conflicts.empty()) {
+        result.status = KeyRebindStatus::Conflict;
+        return result;
+    }
+    if (found->second.keyOrder.size() >= 32) {
+        result.status = KeyRebindStatus::LimitReached;
+        return result;
+    }
+    found->second.keys.insert(scancode);
+    found->second.keyOrder.push_back(scancode);
+    if (const auto builtin = BuiltinAction(action))
+        m_keyBindings[ActionIndex(*builtin)].insert(scancode);
     return result;
 }
 

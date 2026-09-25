@@ -970,6 +970,11 @@ void TestPhaseThreePublicRuntimeSurfaces(px::test::Suite& suite) {
         if (rebound.status !== "applied" ||
             Engine.GetInputKeyBindings("portrait.interact")[0] !== 58)
             throw new Error("input shortcut was not replaced");
+        const added = Engine.AddInputKeyBinding("portrait.interact", "F2");
+        const addedKeys = Engine.GetInputKeyBindings("portrait.interact");
+        if (added.status !== "applied" || addedKeys.length !== 2 ||
+            addedKeys[0] !== 58 || addedKeys[1] !== 59)
+            throw new Error("additive input shortcut lost its previous key");
         if (Engine.RebindInputKey("portrait.interact", "not-a-key").status !==
                 "invalid-scancode" ||
             Engine.GetInputKeyBindings("portrait.interact")[0] !== 58)

@@ -201,14 +201,19 @@ void Button::Update(float deltaSeconds) {
                     RefreshBindingText();
                 }
             } else {
-                const auto result = m_bindingInput->RebindKey(
-                    m_bindingAction, *key, m_allowSharedBinding);
+                const auto result = m_addCapturedBinding
+                    ? m_bindingInput->AddKeyBinding(
+                        m_bindingAction, *key, m_allowSharedBinding)
+                    : m_bindingInput->RebindKey(
+                        m_bindingAction, *key, m_allowSharedBinding);
                 if (result.status == KeyRebindStatus::Applied) {
                     if (m_bindingChanged) m_bindingChanged();
                     RefreshBindingText();
                 } else {
                     SetText(result.status == KeyRebindStatus::Conflict
-                                ? m_bindingConflictText : "Invalid key");
+                                ? m_bindingConflictText
+                                : result.status == KeyRebindStatus::LimitReached
+                                    ? m_bindingLimitText : "Invalid key");
                     m_bindingFeedbackSeconds = 1.5f;
                 }
             }

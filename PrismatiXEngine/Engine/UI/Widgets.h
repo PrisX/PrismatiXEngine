@@ -94,12 +94,16 @@ public:
     [[nodiscard]] const std::string& UnboundText() const { return m_unboundText; }
     void SetBindingConflictText(std::string value) { m_bindingConflictText = std::move(value); }
     [[nodiscard]] const std::string& BindingConflictText() const { return m_bindingConflictText; }
+    void SetBindingLimitText(std::string value) { m_bindingLimitText = std::move(value); }
+    [[nodiscard]] const std::string& BindingLimitText() const { return m_bindingLimitText; }
     void SetEscapeCancelsBinding(bool value) { m_escapeCancelsBinding = value; }
     [[nodiscard]] bool EscapeCancelsBinding() const { return m_escapeCancelsBinding; }
     void SetAllowSharedBinding(bool value) { m_allowSharedBinding = value; }
     [[nodiscard]] bool AllowSharedBinding() const { return m_allowSharedBinding; }
     void SetDeleteClearsBinding(bool value) { m_deleteClearsBinding = value; }
     [[nodiscard]] bool DeleteClearsBinding() const { return m_deleteClearsBinding; }
+    void SetAddCapturedBinding(bool value) { m_addCapturedBinding = value; }
+    [[nodiscard]] bool AddCapturedBinding() const { return m_addCapturedBinding; }
     // Non-owning input service; UIContext reapplies it after every root swap.
     void SetInputBindingService(Input* input, std::function<void()> onChanged = {});
     [[nodiscard]] bool CapturingBinding() const { return m_capturingBinding; }
@@ -129,6 +133,7 @@ private:
     std::string m_bindingPrompt = "Press a key";
     std::string m_unboundText = "Unbound";
     std::string m_bindingConflictText = "Already assigned";
+    std::string m_bindingLimitText = "Too many keys";
     Input* m_bindingInput = nullptr;
     std::function<void()> m_bindingChanged;
     float m_bindingFeedbackSeconds = 0.0f;
@@ -136,6 +141,7 @@ private:
     bool m_escapeCancelsBinding = true;
     bool m_allowSharedBinding = false;
     bool m_deleteClearsBinding = false;
+    bool m_addCapturedBinding = false;
     int m_fontSize = 0;
     Color m_textColor{};
     bool m_hasTextColor = false;
