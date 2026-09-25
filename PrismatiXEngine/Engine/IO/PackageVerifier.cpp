@@ -29,6 +29,7 @@ struct IndexedResource {
     std::string uri;
     std::string fingerprint;
     std::uint64_t size = 0;
+    std::string archive;
 };
 
 PackageContentVerification Fail(std::string message) {
@@ -97,6 +98,84 @@ std::optional<std::string> FingerprintStream(SeekableReadStream& stream) {
         value.push_back(hex[byte & 15]);
     }
     return value;
+}
+
+std::optional<std::string> FingerprintText(const std::string_view value) {
+    if (psa_crypto_init() != PSA_SUCCESS) return std::nullopt;
+    std::array<std::uint8_t, 32> digest{};
+    std::size_t size = 0;
+    if (psa_hash_compute(PSA_ALG_SHA_256,
+                         reinterpret_cast<const std::uint8_t*>(value.data()),
+                         value.size(), digest.data(), digest.size(), &size) !=
+            PSA_SUCCESS || size != digest.size()) return std::nullopt;
+    constexpr char hex[] = "0123456789abcdef";
+    std::string fingerprint;
+    fingerprint.reserve(digest.size() * 2);
+    for (const auto byte : digest) {
+        fingerprint.push_back(hex[byte >> 4]);
+        fingerprint.push_back(hex[byte & 15]);
+    }
+    return fingerprint;
+}
+
+std::optional<std::string> ReadBoundedArchiveText(
+    const Archive& archive, const std::string_view name,
+    const std::uint64_t limit) {
+    const auto found = std::ranges::find_if(
+        archive.Entries(), [name](const Archive::Entry& entry) {
+            return entry.name == name;
+        });
+    if (found == archive.Entries().end() || found->rawSize == 0 ||
+        found->rawSize > limit) return std::nullopt;
+    const auto bytes = archive.Read(name);
+    if (!bytes || bytes->size() != found->rawSize) return std::nullopt;
+    return std::string(bytes->begin(), bytes->end());
+}
+
+std::optional<std::map<std::string, IndexedResource>> ParseIndexedResources(
+    const std::string_view text, const sdk::detail::PackageManifest& manifest) {
+    const Json index = Json::parse(text, nullptr, false);
+    if (!index.is_object() || !index.contains("format") ||
+        !index["format"].is_string() ||
+        index["format"] != "PrismatiXContentIndex" ||
+        !index.contains("schemaRevision") ||
+        !index["schemaRevision"].is_number_integer() ||
+        index["schemaRevision"] != 1 ||
+        !index.contains("gameId") || !index["gameId"].is_string() ||
+        index["gameId"] != manifest.gameId ||
+        !index.contains("packageFingerprint") ||
+        !index["packageFingerprint"].is_string() ||
+        index["packageFingerprint"] != manifest.packageFingerprint ||
+        !index.contains("entries") || !index["entries"].is_array() ||
+        index["entries"].empty() || index["entries"].size() > 1'000'000)
+        return std::nullopt;
+    std::set<std::string> archives;
+    for (const auto& mount : manifest.archives) archives.insert(mount.file);
+    std::map<std::string, IndexedResource> entries;
+    std::string previous;
+    for (const auto& value : index["entries"]) {
+        if (!value.is_object() || !value.contains("uri") ||
+            !value["uri"].is_string() || !value.contains("fingerprint") ||
+            !value["fingerprint"].is_string() || !value.contains("size") ||
+            !value["size"].is_number_unsigned() ||
+            !value.contains("archive") || !value["archive"].is_string())
+            return std::nullopt;
+        IndexedResource resource{value["uri"].get<std::string>(),
+                                 value["fingerprint"].get<std::string>(),
+                                 value["size"].get<std::uint64_t>(),
+                                 value["archive"].get<std::string>()};
+        const auto normalized = VFS::NormalizeVirtualPath(resource.uri);
+        if (!normalized || *normalized != resource.uri ||
+            resource.uri.size() > 4096 || resource.uri <= previous ||
+            resource.uri.starts_with(kPackageOverlayPrefix) ||
+            !LowerFingerprint(resource.fingerprint) ||
+            resource.size > 8ull * 1024ull * 1024ull * 1024ull ||
+            !archives.contains(resource.archive) ||
+            !entries.emplace(resource.uri, resource).second)
+            return std::nullopt;
+        previous = resource.uri;
+    }
+    return entries;
 }
 
 }  // namespace
@@ -195,6 +274,140 @@ PackageContentVerification VerifyPackageContents(
         }
         result.archives += 1;
     }
+    result.valid = true;
+    return result;
+}
+
+PackageOverlayVerification VerifyPackageOverlay(
+    const std::filesystem::path& distribution,
+    const std::filesystem::path& overlayPath) {
+    const auto fail = [](std::string message) {
+        return PackageOverlayVerification{.error = std::move(message)};
+    };
+    const auto baseManifestText = ReadBoundedRegularFile(
+        distribution / "Package/manifest.json", 4ull * 1024ull * 1024ull);
+    const auto baseIndexText = ReadBoundedRegularFile(
+        distribution / "Package/content-index.json",
+        128ull * 1024ull * 1024ull);
+    if (!baseManifestText || !baseIndexText)
+        return fail("Base package manifest or content index is unavailable");
+    const auto baseParsed =
+        sdk::detail::ParsePackageManifest(*baseManifestText);
+    if (!baseParsed.Valid()) return fail("Base package manifest is invalid");
+    const auto baseEntries =
+        ParseIndexedResources(*baseIndexText, baseParsed.manifest);
+    if (!baseEntries) return fail("Base content index is invalid");
+
+    std::error_code error;
+    const auto status = std::filesystem::symlink_status(overlayPath, error);
+    if (error || !std::filesystem::is_regular_file(status) ||
+        std::filesystem::is_symlink(status))
+        return fail("Overlay PDX is missing or is not a regular file");
+    Archive overlay;
+    if (!overlay.Open(px::PathToUtf8(overlayPath)))
+        return fail("Overlay PDX is unreadable or encrypted");
+    const auto metadataText = ReadBoundedArchiveText(
+        overlay, kPackageOverlayManifestUri, 16ull * 1024ull);
+    const auto targetManifestText = ReadBoundedArchiveText(
+        overlay, kPackageOverlayTargetManifestUri, 4ull * 1024ull * 1024ull);
+    const auto targetIndexText = ReadBoundedArchiveText(
+        overlay, kPackageOverlayTargetIndexUri, 128ull * 1024ull * 1024ull);
+    if (!metadataText || !targetManifestText || !targetIndexText)
+        return fail("Overlay metadata is missing, damaged, or oversized");
+
+    const Json metadata = Json::parse(*metadataText, nullptr, false);
+    static const std::set<std::string> requiredFields{
+        "format", "schemaRevision", "gameId", "basePackageFingerprint",
+        "targetPackageFingerprint", "baseManifestSha256",
+        "baseContentIndexSha256", "targetManifestSha256",
+        "targetContentIndexSha256"};
+    if (!metadata.is_object() || metadata.size() != requiredFields.size() ||
+        !metadata.contains("schemaRevision") ||
+        !metadata["schemaRevision"].is_number_integer() ||
+        metadata["schemaRevision"] != 1)
+        return fail("Overlay metadata schema is invalid");
+    for (const auto& field : requiredFields) {
+        if (!metadata.contains(field) ||
+            (field != "schemaRevision" && !metadata[field].is_string()))
+            return fail("Overlay metadata contains a missing or invalid field");
+    }
+    if (metadata["format"] != "PrismatiXPackageOverlay" ||
+        metadata["gameId"] != baseParsed.manifest.gameId ||
+        metadata["basePackageFingerprint"] !=
+            baseParsed.manifest.packageFingerprint)
+        return fail("Overlay targets a different game or base package");
+    const auto baseManifestSha = FingerprintText(*baseManifestText);
+    const auto baseIndexSha = FingerprintText(*baseIndexText);
+    const auto targetManifestSha = FingerprintText(*targetManifestText);
+    const auto targetIndexSha = FingerprintText(*targetIndexText);
+    if (!baseManifestSha || !baseIndexSha || !targetManifestSha ||
+        !targetIndexSha ||
+        metadata["baseManifestSha256"] != *baseManifestSha ||
+        metadata["baseContentIndexSha256"] != *baseIndexSha ||
+        metadata["targetManifestSha256"] != *targetManifestSha ||
+        metadata["targetContentIndexSha256"] != *targetIndexSha)
+        return fail("Overlay metadata does not match its exact base and target documents");
+
+    const auto targetParsed =
+        sdk::detail::ParsePackageManifest(*targetManifestText);
+    if (!targetParsed.Valid() ||
+        targetParsed.manifest.gameId != baseParsed.manifest.gameId ||
+        targetParsed.manifest.engineVersion != baseParsed.manifest.engineVersion ||
+        targetParsed.manifest.packageFingerprint ==
+            baseParsed.manifest.packageFingerprint ||
+        metadata["targetPackageFingerprint"] !=
+            targetParsed.manifest.packageFingerprint)
+        return fail("Overlay target manifest is incompatible or invalid");
+    const auto targetEntries =
+        ParseIndexedResources(*targetIndexText, targetParsed.manifest);
+    if (!targetEntries) return fail("Overlay target content index is invalid");
+    const auto indexed = [&targetEntries](const std::string& uri) {
+        return targetEntries->contains(uri);
+    };
+    if (!indexed(targetParsed.manifest.startRuntimeIr) ||
+        !indexed(targetParsed.manifest.sourceMap))
+        return fail("Overlay target index omits its Runtime IR or source map");
+    for (const auto& route : targetParsed.manifest.routes)
+        if (!indexed(route.scene))
+            return fail("Overlay target index omits a route scene: " + route.scene);
+    for (const auto& migration : targetParsed.manifest.saveMigrations)
+        if (!indexed(migration.asset))
+            return fail("Overlay target index omits a save migration: " + migration.asset);
+    for (const auto& effect : targetParsed.manifest.customEffects)
+        for (const auto& artifact : effect.artifacts)
+            if (!indexed(artifact.asset))
+                return fail("Overlay target index omits a shader artifact: " + artifact.asset);
+
+    std::set<std::string> expectedNames{
+        std::string(kPackageOverlayManifestUri),
+        std::string(kPackageOverlayTargetManifestUri),
+        std::string(kPackageOverlayTargetIndexUri)};
+    PackageOverlayVerification result;
+    for (const auto& [uri, target] : *targetEntries) {
+        const auto base = baseEntries->find(uri);
+        if (base != baseEntries->end() &&
+            base->second.fingerprint == target.fingerprint &&
+            base->second.size == target.size) continue;
+        expectedNames.insert(uri);
+        auto stream = overlay.OpenStream(uri);
+        if (!stream || stream->Size() != target.size)
+            return fail("Overlay changed resource is missing or has the wrong size: " + uri);
+        const auto fingerprint = FingerprintStream(*stream);
+        if (!fingerprint || *fingerprint != target.fingerprint)
+            return fail("Overlay changed resource differs from target index: " + uri);
+        ++result.changedResources;
+        result.changedRawBytes += target.size;
+    }
+    for (const auto& [uri, base] : *baseEntries) {
+        if (!targetEntries->contains(uri)) result.tombstones.push_back(uri);
+    }
+    if (overlay.Entries().size() != expectedNames.size())
+        return fail("Overlay PDX has missing or unexpected entries");
+    for (const auto& entry : overlay.Entries()) {
+        if (!expectedNames.contains(entry.name))
+            return fail("Overlay PDX has an unexpected entry: " + entry.name);
+    }
+    result.targetManifestJson = *targetManifestText;
     result.valid = true;
     return result;
 }

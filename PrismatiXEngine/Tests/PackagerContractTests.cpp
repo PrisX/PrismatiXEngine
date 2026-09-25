@@ -632,6 +632,148 @@ int main() {
                      "packaged UI document dispatches its authored Player Action");
     });
 
+    suite.Run("PackageOverlay_VerifiesExactBaseTargetAndChangedContent", [&] {
+        using Json = nlohmann::json;
+        const auto documents = fixture.path / "OverlayDocuments";
+        const auto hashText = [&](const std::string& name,
+                                  const std::string& value) {
+            const auto path = documents / name;
+            Write(path, value);
+            return px::sdk::ComputePackageFingerprint(path);
+        };
+        const std::string baseManifest = Read(output / "Package/manifest.json");
+        const std::string baseIndex = Read(output / "Package/content-index.json");
+        Json targetManifest = Json::parse(baseManifest);
+        targetManifest["packageFingerprint"] = std::string(64, 'a');
+        targetManifest["contentVersion"] = "overlay-fixture-v2";
+        const std::string targetManifestText = targetManifest.dump();
+        Json targetIndex = Json::parse(baseIndex);
+        targetIndex["packageFingerprint"] = std::string(64, 'a');
+        const std::string changedStory = "雪: updated through overlay\n[end]\n";
+        const std::string addedResource = "new resource";
+        const auto changedHash = hashText("changed-story.txt", changedStory);
+        const auto addedHash = hashText("added-resource.txt", addedResource);
+        Json entries = Json::array();
+        for (auto entry : targetIndex["entries"]) {
+            const auto uri = entry["uri"].get<std::string>();
+            if (uri == "Story/story.pxindex") continue;
+            if (uri == "Story/Entry.pxstory") {
+                entry["fingerprint"] = changedHash;
+                entry["size"] = changedStory.size();
+            }
+            entries.push_back(std::move(entry));
+        }
+        const std::string targetArchive =
+            targetIndex["entries"][0]["archive"].get<std::string>();
+        entries.push_back({{"uri", "Content/Overlay/extra.txt"},
+                           {"fingerprint", addedHash},
+                           {"size", addedResource.size()},
+                           {"archive", targetArchive}});
+        std::sort(entries.begin(), entries.end(), [](const Json& a,
+                                                     const Json& b) {
+            return a["uri"].get<std::string>() <
+                   b["uri"].get<std::string>();
+        });
+        targetIndex["entries"] = entries;
+        const std::string targetIndexText = targetIndex.dump();
+        Json metadata{{"format", "PrismatiXPackageOverlay"},
+                      {"schemaRevision", 1},
+                      {"gameId", targetManifest["gameId"]},
+                      {"basePackageFingerprint",
+                       Json::parse(baseManifest)["packageFingerprint"]},
+                      {"targetPackageFingerprint", std::string(64, 'a')},
+                      {"baseManifestSha256", hashText("base-manifest.txt", baseManifest)},
+                      {"baseContentIndexSha256", hashText("base-index.txt", baseIndex)},
+                      {"targetManifestSha256", hashText("target-manifest.txt", targetManifestText)},
+                      {"targetContentIndexSha256", hashText("target-index.txt", targetIndexText)}};
+        const auto writeOverlay = [&](const std::filesystem::path& path,
+                                      const Json& descriptor,
+                                      const std::string& story,
+                                      const bool extraEntry) {
+            px::io::ArchiveWriter writer;
+            const auto add = [&](const std::string& uri,
+                                 const std::string& data) {
+                writer.Add(uri, px::io::Bytes(data.begin(), data.end()));
+            };
+            add("__prismatix_overlay__/manifest.json", descriptor.dump());
+            add("__prismatix_overlay__/target-manifest.json", targetManifestText);
+            add("__prismatix_overlay__/target-content-index.json", targetIndexText);
+            add("Story/Entry.pxstory", story);
+            add("Content/Overlay/extra.txt", addedResource);
+            if (extraEntry) add("unexpected.txt", "unexpected");
+            return writer.Write(path.string());
+        };
+        const auto overlayPath = fixture.path / "overlay.pdx";
+        suite.Require(writeOverlay(overlayPath, metadata, changedStory, false),
+                      "valid overlay fixture is writable");
+        const auto verified = px::io::VerifyPackageOverlay(output, overlayPath);
+        suite.Require(verified.valid && verified.changedResources == 2 &&
+                          verified.tombstones ==
+                              std::vector<std::string>{"Story/story.pxindex"},
+                      "overlay verifier derives additions, modifications and removals");
+        const auto base = px::sdk::detail::ParsePackageManifest(baseManifest);
+        suite.Require(base.Valid(), "base manifest remains valid");
+        const auto key = px::crypto::DeriveKey(base.manifest.archiveKey);
+        px::io::VFS vfs;
+        suite.Require(vfs.MountArchive((output / "Content.pdx").string(), &key) &&
+                          vfs.MountArchive(overlayPath.string(), nullptr,
+                              px::io::ArchiveMountPriority::Overlay,
+                              verified.tombstones),
+                      "verified overlay mounts over the encrypted base archive");
+        suite.Expect(vfs.ReadText("Story/Entry.pxstory") == changedStory &&
+                         vfs.ReadText("Content/Overlay/extra.txt") == addedResource &&
+                         !vfs.Exists("Story/story.pxindex"),
+                     "verified overlay changes runtime lookup and hides deleted resources");
+
+        Json wrongBase = metadata;
+        wrongBase["basePackageFingerprint"] = std::string(64, 'b');
+        const auto wrongBasePath = fixture.path / "wrong-base-overlay.pdx";
+        suite.Require(writeOverlay(wrongBasePath, wrongBase, changedStory, false),
+                      "wrong-base overlay fixture is writable");
+        suite.Expect(!px::io::VerifyPackageOverlay(output, wrongBasePath).valid,
+                     "overlay verifier refuses a different base package");
+        const auto badPayloadPath = fixture.path / "bad-payload-overlay.pdx";
+        suite.Require(writeOverlay(badPayloadPath, metadata, "tampered", false),
+                      "tampered overlay fixture is writable");
+        suite.Expect(!px::io::VerifyPackageOverlay(output, badPayloadPath).valid,
+                     "overlay verifier refuses payload differing from target index");
+        const auto extraPath = fixture.path / "extra-entry-overlay.pdx";
+        suite.Require(writeOverlay(extraPath, metadata, changedStory, true),
+                      "extra-entry overlay fixture is writable");
+        suite.Expect(!px::io::VerifyPackageOverlay(output, extraPath).valid,
+                     "overlay verifier refuses unindexed payload");
+
+        Json missingRouteIndex = targetIndex;
+        Json missingRouteEntries = Json::array();
+        for (const auto& entry : missingRouteIndex["entries"])
+            if (entry["uri"] != "Content/UI/Title.pxui")
+                missingRouteEntries.push_back(entry);
+        missingRouteIndex["entries"] = std::move(missingRouteEntries);
+        const std::string missingRouteText = missingRouteIndex.dump();
+        Json missingRouteMetadata = metadata;
+        missingRouteMetadata["targetContentIndexSha256"] =
+            hashText("missing-route-index.txt", missingRouteText);
+        px::io::ArchiveWriter missingRouteWriter;
+        const auto addMissingRoute = [&](const std::string& uri,
+                                         const std::string& bytes) {
+            missingRouteWriter.Add(uri,
+                                   px::io::Bytes(bytes.begin(), bytes.end()));
+        };
+        addMissingRoute("__prismatix_overlay__/manifest.json",
+                        missingRouteMetadata.dump());
+        addMissingRoute("__prismatix_overlay__/target-manifest.json",
+                        targetManifestText);
+        addMissingRoute("__prismatix_overlay__/target-content-index.json",
+                        missingRouteText);
+        addMissingRoute("Story/Entry.pxstory", changedStory);
+        addMissingRoute("Content/Overlay/extra.txt", addedResource);
+        const auto missingRoutePath = fixture.path / "missing-route-overlay.pdx";
+        suite.Require(missingRouteWriter.Write(missingRoutePath.string()),
+                      "missing-route overlay fixture is writable");
+        suite.Expect(!px::io::VerifyPackageOverlay(output, missingRoutePath).valid,
+                     "overlay verifier refuses a target missing its route scene");
+    });
+
     suite.Run("StableArchiveShardsMountAndReuseTheirOwnCaches", [&] {
         WriteRepeated(root / "Assets/shard-compress.bin", 's', 256 * 1024);
         const auto shardedOutput = fixture.path / "Build/Sharded";

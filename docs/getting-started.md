@@ -256,6 +256,12 @@ complete target distribution before launch. The selected native
 Packager must understand both package versions; cross-engine upgrades may
 require a full installer rather than this bundle format.
 
+For SDK developers, the first [single-file overlay verification
+contract](package-overlay.md) is available in native code and through
+`PrismatiXPackager --verify-overlay`. It checks a candidate PDX against the
+exact base and target metadata and all changed payloads, but does not create
+that PDX or make Player load it.
+
 Never choose Story, Assets, another source input or an unrelated existing folder as output. `pack` is an explicit distribution command; `run` packages and launches. Quote paths containing spaces.
 
 Output replacement verifies the previous build's inventory. If you have played a distribution and it now contains saves/logs, or edited its files, use a new output directory; do not delete player data to bypass the guard. Test migration with a copy of the old saves before distributing an update.

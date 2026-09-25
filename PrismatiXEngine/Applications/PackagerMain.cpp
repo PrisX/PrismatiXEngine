@@ -45,6 +45,37 @@ px::sdk::PackageEvent FailedEvent(
 }  // namespace
 
 int RunMain(int argc, char** argv) {
+    if (argc == 4 && std::string_view(argv[1]) == "--verify-overlay") {
+        const std::filesystem::path distribution = Utf8Path(argv[2]);
+        const std::filesystem::path overlay = Utf8Path(argv[3]);
+        if (!distribution.is_absolute() || !overlay.is_absolute()) {
+            Emit(FailedEvent({}, "PXPKG1513",
+                             "Base distribution and overlay paths must be absolute"));
+            return static_cast<int>(px::sdk::PackageExitCode::Failed);
+        }
+        try {
+            const auto verified =
+                px::io::VerifyPackageOverlay(distribution, overlay);
+            if (!verified.valid) {
+                Emit(FailedEvent({}, "PXPKG1514", verified.error));
+                return static_cast<int>(px::sdk::PackageExitCode::Failed);
+            }
+            std::cout << "{\"event\":\"overlay-verified\",\"changedResources\":"
+                      << verified.changedResources << ",\"removedResources\":"
+                      << verified.tombstones.size() << ",\"changedRawBytes\":"
+                      << verified.changedRawBytes << "}\n";
+            return static_cast<int>(px::sdk::PackageExitCode::Completed);
+        } catch (const std::exception& error) {
+            Emit(FailedEvent({}, "PXPKG1515",
+                             std::string("Overlay verification failed unexpectedly: ") +
+                                 error.what()));
+            return static_cast<int>(px::sdk::PackageExitCode::Failed);
+        } catch (...) {
+            Emit(FailedEvent({}, "PXPKG1515",
+                             "Overlay verification failed unexpectedly"));
+            return static_cast<int>(px::sdk::PackageExitCode::Failed);
+        }
+    }
     if (argc == 3 && std::string_view(argv[1]) == "--verify-package") {
         const std::filesystem::path distribution = Utf8Path(argv[2]);
         if (!distribution.is_absolute()) {
@@ -88,7 +119,7 @@ int RunMain(int argc, char** argv) {
         std::string_view(argv[1]) == "--validate-request" &&
         (argc == 3 || std::string_view(argv[3]) == "--verify-media");
     if (!packageRequest && !validateOnly) {
-        Emit(FailedEvent({}, "PXPKG1001", "Usage: PrismatiXPackager --request <absolute-json-path> | --validate-request <absolute-json-path> [--verify-media] | --verify-package <absolute-distribution-path>"));
+        Emit(FailedEvent({}, "PXPKG1001", "Usage: PrismatiXPackager --request <absolute-json-path> | --validate-request <absolute-json-path> [--verify-media] | --verify-package <absolute-distribution-path> | --verify-overlay <absolute-base-distribution> <absolute-overlay-pdx>"));
         return static_cast<int>(px::sdk::PackageExitCode::Failed);
     }
 
