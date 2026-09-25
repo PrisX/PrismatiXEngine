@@ -246,10 +246,13 @@ publisher identity, version/dependency policy, download/resume handling, and
 installation coordination. Native `VFS::MountArchive` now accepts an explicit
 `ArchiveMountPriority::Overlay` for trusted callers: the newest overlay wins
 over earlier archives, while directory mounts still win over all archives.
-This is only a low-level lookup order. A drop-in PDX overlay still needs
-version validation, tombstones for removed resources, manifest/route changes,
-and Player discovery; the current installer instead assembles a complete target
-distribution before launch. The selected native
+An overlay may now supply a bounded list of tombstone URIs to hide resources
+from older PDX files. Invalid, duplicate, or conflicting tombstones reject the
+entire mount, and an unreadable overlay entry cannot silently fall back to an
+older copy. These are low-level VFS semantics, not an update protocol: a
+drop-in PDX still needs patch metadata, version validation, manifest/route
+changes, and Player discovery. The current installer instead assembles a
+complete target distribution before launch. The selected native
 Packager must understand both package versions; cross-engine upgrades may
 require a full installer rather than this bundle format.
 

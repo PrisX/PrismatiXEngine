@@ -128,11 +128,56 @@ void TestVfsArchiveOverlayPrecedence() {
               vfs.ReadText("shared.txt") == "new",
           "Failed overlay mount must leave existing archive visibility unchanged");
     Check(vfs.MountArchive(newestPath.string(), nullptr,
-                           px::io::ArchiveMountPriority::Overlay) &&
+                           px::io::ArchiveMountPriority::Overlay,
+                           {"base-only.txt", "added.txt"}) &&
               vfs.ReadText("shared.txt") == "latest",
           "Most recently mounted overlay must take precedence");
-    Check(vfs.Exists("added.txt") && vfs.Exists("base-only.txt"),
-          "Exists must find resources across overlay and base mounts");
+    Check(!vfs.Exists("added.txt") && !vfs.Exists("base-only.txt") &&
+              !vfs.Read("added.txt").has_value() &&
+              !vfs.ReadText("base-only.txt").has_value() &&
+              !vfs.Open("base-only.txt"),
+          "Overlay tombstones must hide resources from every older archive");
+    Check(!vfs.MountArchive(overlayPath.string(), nullptr,
+                            px::io::ArchiveMountPriority::Overlay,
+                            {"shared.txt"}) &&
+              !vfs.MountArchive(overlayPath.string(), nullptr,
+                                px::io::ArchiveMountPriority::Overlay,
+                                {"../unsafe"}) &&
+              !vfs.MountArchive(overlayPath.string(), nullptr,
+                                px::io::ArchiveMountPriority::Base,
+                                {"base-only.txt"}) &&
+              vfs.ReadText("shared.txt") == "latest" &&
+              !vfs.Exists("base-only.txt"),
+          "Conflicting, unsafe, or non-overlay tombstones must reject the entire mount");
+
+    const auto corruptPath = fixture.path / "corrupt-overlay.pdx";
+    px::io::ArchiveWriter corruptWriter;
+    corruptWriter.SetCompression(false);
+    corruptWriter.Add("shared.txt", px::io::Bytes{'b', 'a', 'd'});
+    Check(corruptWriter.Write(corruptPath.string()),
+          "Corrupt-overlay fixture must be writable");
+    px::io::Archive corruptIndex;
+    if (!corruptIndex.Open(corruptPath.string()) ||
+        corruptIndex.Entries().size() != 1) {
+        Check(false, "Corrupt-overlay fixture must have one indexed entry");
+        return;
+    }
+    {
+        std::fstream file(corruptPath, std::ios::binary | std::ios::in |
+                                           std::ios::out);
+        file.seekp(static_cast<std::streamoff>(
+                       corruptIndex.Entries().front().offset), std::ios::beg);
+        file.put('x');
+        Check(static_cast<bool>(file), "Corrupt-overlay payload must be modified");
+    }
+    px::io::VFS corruptVfs;
+    Check(corruptVfs.MountArchive(basePath.string()) &&
+              corruptVfs.MountArchive(corruptPath.string(), nullptr,
+                                      px::io::ArchiveMountPriority::Overlay),
+          "Structurally valid corrupt overlay must mount for read-time failure test");
+    Check(!corruptVfs.ReadText("shared.txt").has_value() &&
+              !corruptVfs.Open("shared.txt"),
+          "Unreadable overlay payload must not expose the older resource");
 }
 
 void TestVfsRejectsDirectoriesAndReadsRegularFiles() {

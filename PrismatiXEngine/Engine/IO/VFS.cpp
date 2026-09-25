@@ -183,11 +183,13 @@ void VFS::MountDirectory(const std::string& root) {
 }
 
 bool VFS::MountArchive(const std::string& archivePath, const crypto::Key* key,
-                       const ArchiveMountPriority priority) {
+                       const ArchiveMountPriority priority,
+                       const std::vector<std::string>& tombstones) {
 #if defined(PRISMATIX_PREVIEW_WASM)
     (void)archivePath;
     (void)key;
     (void)priority;
+    (void)tombstones;
     PX_LOG_ERROR("Archive mounts are unavailable in the WASM preview VFS");
     return false;
 #else
@@ -195,11 +197,27 @@ bool VFS::MountArchive(const std::string& archivePath, const crypto::Key* key,
     if (!archive->Open(archivePath, key)) {
         return false;
     }
+    if ((priority != ArchiveMountPriority::Overlay && !tombstones.empty()) ||
+        tombstones.size() > 1'000'000) {
+        PX_LOG_ERROR("VFS rejected tombstones on an invalid archive mount '{}'", archivePath);
+        return false;
+    }
+    std::unordered_set<std::string> deleted;
+    deleted.reserve(tombstones.size());
+    for (const auto& path : tombstones) {
+        const auto normalized = NormalizeVirtualPath(path);
+        if (!normalized || *normalized != path || path.size() > 4096 ||
+            archive->Contains(path) || !deleted.insert(path).second) {
+            PX_LOG_ERROR("VFS rejected invalid or conflicting tombstone '{}'", path);
+            return false;
+        }
+    }
     std::unique_lock lock(m_mountsMutex);
+    ArchiveMount mount{std::move(archive), std::move(deleted)};
     if (priority == ArchiveMountPriority::Overlay) {
-        m_archives.insert(m_archives.begin(), std::move(archive));
+        m_archives.insert(m_archives.begin(), std::move(mount));
     } else {
-        m_archives.push_back(std::move(archive));
+        m_archives.push_back(std::move(mount));
     }
     return true;
 #endif
@@ -223,10 +241,9 @@ bool VFS::Exists(std::string_view path) const {
         }
     }
 #if !defined(PRISMATIX_PREVIEW_WASM)
-    for (const auto& archive : m_archives) {
-        if (archive->Contains(*normalized)) {
-            return true;
-        }
+    for (const auto& mount : m_archives) {
+        if (mount.tombstones.contains(*normalized)) return false;
+        if (mount.archive->Contains(*normalized)) return true;
     }
 #endif
     return false;
@@ -245,8 +262,10 @@ std::unique_ptr<SeekableReadStream> VFS::Open(const std::string_view path) const
         if (!stream->Failed()) return stream;
     }
 #if !defined(PRISMATIX_PREVIEW_WASM)
-    for (const auto& archive : m_archives) {
-        if (auto stream = archive->OpenStream(*normalized)) return stream;
+    for (const auto& mount : m_archives) {
+        if (mount.tombstones.contains(*normalized)) return {};
+        if (mount.archive->Contains(*normalized))
+            return mount.archive->OpenStream(*normalized);
     }
 #endif
     return {};
@@ -285,10 +304,10 @@ std::optional<Bytes> VFS::Read(std::string_view path) const {
         }
     }
 #if !defined(PRISMATIX_PREVIEW_WASM)
-    for (const auto& archive : m_archives) {
-        if (auto data = archive->Read(*normalized)) {
-            return data;
-        }
+    for (const auto& mount : m_archives) {
+        if (mount.tombstones.contains(*normalized)) return std::nullopt;
+        if (mount.archive->Contains(*normalized))
+            return mount.archive->Read(*normalized);
     }
 #endif
     return std::nullopt;
