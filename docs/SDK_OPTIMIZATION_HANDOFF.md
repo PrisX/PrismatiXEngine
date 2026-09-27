@@ -1,10 +1,12 @@
 # SDK 優化交接（給下一位 agent）
 
-更新：2026-09-27。此文件以當前兩個本機 repo 和實際測試為準；不是「全部完成」聲明。較完整的逐項發現與歷史量測在 `C:\Users\owenl\C\Projects\SenrenBankaPSX\docs\SDK_FEEDBACK.md`。該檔按時間追加，早段的「尚未實作」有些已被後段取代，閱讀時以最新段落與程式碼為準。
+更新：2026-09-28。此文件以當前兩個本機 repo 和實際測試為準；不是「全部完成」聲明。較完整的逐項發現與歷史量測在 `C:\Users\owenl\C\Projects\SenrenBankaPSX\docs\SDK_FEEDBACK.md`。該檔按時間追加，早段的「尚未實作」有些已被後段取代，閱讀時以最新段落與程式碼為準。
 
-### 2026-09-27 後續進度
+### 2026-09-27—28 後續進度
 
-- **缺失資源診斷現在可回指主要 authoring 來源。** `PXBUILD1044` 對 JSON UI 的圖片屬性／Action 參數、專案設定與 asset、遊戲圖鑑、語系、extension 預設值、立繪及 motion descriptor 的資源欄位，會在原始文字與編譯輸入一致時附上精確行列；Story 指令的資源位置可跨同程序與匯出／匯入 scene cache 保留。缺檔訊息包含實際來源路徑，舊的 `diagnostic.path` 仍是缺失資源路徑；來源文字過期時不猜位置。Authoring SDK 全套 173/173、CLI scene-cache 針對性 1/1、Senren 368 scenes／31,339 resources 唯讀 validate 通過。TSX 執行後 canonical UI 的通用 JSX source map 與其他依賴圖錯誤位置仍待處理。
+- **TSX 編譯後診斷已有 JSX 節點位置。** CLI 的 TSX／JSX 執行路徑使用 TypeScript JSX dev 呼叫點，Authoring lowering 將來源位置對應到 canonical UI node index；JSON schema／語意、跨層 UI binding 與缺失資源的診斷可回指專案內原始 JSX 節點，包括匯入的元件檔。只有來源文字與該 JSX 呼叫點對得上才附位置；這是節點位置，還不是每個 JSX prop 的精確字串範圍，也沒有涵蓋不屬於 node 的文件頂層欄位。Canonical UI 輸出與既有穩定 ID 未變。SDK 173/173、CLI 114/114（另 1 項 native E2E 依環境跳過）全套通過，另加的 lowered layout 來源測試 4/4 通過；Senren 368 scenes／31,339 resources 唯讀 validate 通過。
+
+- **缺失資源診斷現在可回指主要 authoring 來源。** `PXBUILD1044` 對 JSON UI 的圖片屬性／Action 參數、專案設定與 asset、遊戲圖鑑、語系、extension 預設值、立繪及 motion descriptor 的資源欄位，會在原始文字與編譯輸入一致時附上精確行列；Story 指令的資源位置可跨同程序與匯出／匯入 scene cache 保留。缺檔訊息包含實際來源路徑，舊的 `diagnostic.path` 仍是缺失資源路徑；來源文字過期時不猜位置。Authoring SDK 全套 173/173、CLI scene-cache 針對性 1/1、Senren 368 scenes／31,339 resources 唯讀 validate 通過。TSX node 位置由上一項後續補上；精確 JSX prop 範圍與其他依賴圖錯誤位置仍待處理。
 
 - **直接 overlay 的兩道完整讀驗已在 Windows 安全重疊。** Native Packager 現在一面對 artifact 做 AllInputs 雜湊與語意規劃，一面完整驗證基底 PDX；進度回呼序列化。基底分片從驗證前到預檢結束或補丁發布持有拒絕寫入／替換的 Windows 讀取 handle，metadata 與分片尺寸／修改時間也在驗證前後及使用時核對；規劃失敗會取消尚在進行的基底驗證。非 Windows 平台維持原先的串行驗證順序。相同 D: NTFS、16 分片／31,756 資源 signed 基底與大型 artifact 的 Release `create-overlay --check`，改前 54.266 秒，並行後 40.782 秒，加入 Windows 讀取鎖後 40.250 秒；三者均回報 2 筆變更／0 刪除／268,435,588 changed raw bytes。最後一次取樣 Node＋Packager RSS 約 705 MB。Native Packager Contract／Runtime Resources 2/2、CLI overlay routing 2/2（另 1 項 native E2E 依環境跳過）通過；新契約測試包含來源同尺寸改動拒絕、Windows 驗證中基底寫入被拒、簽章成品獨立驗證。仍需每次完整讀驗，這是延遲改善，不是依賴級增量建置；取樣受快取／磁碟負載影響。詳見 [大型媒體 overlay 驗收](SDK_LARGE_MEDIA_OVERLAY_ACCEPTANCE.md)。
 
@@ -129,7 +131,7 @@ Engine `docs/package-overlay.md` 是格式規格和安全邊界。這一輪已�
 1. **繼續驗收已簽章的單檔更新。** `PlayerApp::LoadBootConfig` 現解析 `Package/updates` 內唯一的 signed exact-base 多版本鏈與 per-user 啟用的 revision 3 選裝包，`Runtime::Init` 以基底 archiveKey 掛原片，再依序掛 overlay/tombstones；失敗回基底。小型 Player E2E 已驗合成舊金鑰／舊 fingerprint slot、明示 migration、跨更新資源刪除及重啟；v29 真實同版存檔已在大型獨立包載入；大型 signed 主更新與 22 route 已驗；大媒體 entry patch 已驗；下一步須驗真實跨版 migration，並決定是否需要遊戲內選裝包開關和同時啟用多個選裝包。不得把 unsigned payload SHA-256 當發行者認證。
 2. **擴充大型 overlay 壓力證據**：兩個真實完整發行版的 signed `create-overlay`／`verify-overlay`、小變更 patch 大小與 Player 22 route 已驗。已在同級 8 GB 專案修改 256 MiB WAV，量到完整產製的記憶體與磁碟取樣峰值，並由 Player 載入壓縮簽章 patch；詳見 SDK_LARGE_MEDIA_OVERLAY_ACCEPTANCE.md。
 3. **真正的增量 authoring/build/packaging**：現已有 16 片重用、Release Packager、免目標發行版的 artifact→overlay，以及 AllInputs 來源雜湊的有界並行；但兩種發佈路徑仍須全量驗 artifact／基底，約 31,000 個檔與約 8.2 GiB 素材仍是成本。來源完整雜湊、基底 PDX 驗證和兩者合併的直接 overlay 唯讀預檢已量測；相符大型 artifact／base 的完整 patch、RSS／磁碟取樣峰值已量測；後續須設計有失效條件的依賴／驗證 cache，保留 TOCTOU 與 ownership 安全性。歷史量測：Release Packager 同版 16/16 分片重封約 96.30 秒、14/16 小變更約 110.58 秒；不同快取與磁碟條件，不能當 SLA。僅更新 Player 的 `refresh-runtime` 曾約 23.19 秒。詳見 `SDK_FEEDBACK.md` 當日段落。
-4. **跨層 Authoring 合約與大型 importer**：Story 指令／索引宣告、JSON UI binding／`itemSource`、extension Action 和原生 property 的主要 source-location diagnostics 已補；缺失資源的主要 JSON／Story 來源位置亦已補。仍須針對其他 UI 格式錯誤、未覆蓋的依賴圖診斷及 TSX 執行後錯誤的來源位置建 regression。現有 `build`／`dev` 逐 scene 解析／編譯快取已可跨行程，但 92 scene × 四語仍重讀來源且未量測快取效益，後續需判斷安全增量或串流 importer 的實際瓶頸。清楚區分 `compileStory` 與 `compileStoryProject`，先從真實移植 importer 的重複 workaround 提取通用 API，不要把專案特例硬塞 stock Player。
+4. **跨層 Authoring 合約與大型 importer**：Story 指令／索引宣告、JSON UI binding／`itemSource`、extension Action 和原生 property 的主要 source-location diagnostics 已補；缺失資源的主要 JSON／Story 來源位置亦已補。TSX 執行後錯誤已能回指 JSX node，仍須補精確 prop 範圍、非 node 的文件欄位及未覆蓋的依賴圖診斷。現有 `build`／`dev` 逐 scene 解析／編譯快取已可跨行程，但 92 scene × 四語仍重讀來源且未量測快取效益，後續需判斷安全增量或串流 importer 的實際瓶頸。清楚區分 `compileStory` 與 `compileStoryProject`，先從真實移植 importer 的重複 workaround 提取通用 API，不要把專案特例硬塞 stock Player。
 5. **輸入設定與 UI 作者體驗尾巴**：逐鍵選擇／可選衝突二次確認與 wheel 使用者改鍵已加至 stock button；仍需設定資料遷移、已接項目的封裝實按與非 Player host 的保存範例。原作其餘快捷鍵需先確認哪些是可攜 Engine 動作、哪些只是遊戲特有功能。文字效果長期應共用一次布局／遮罩，減少雙重排版與逐字 texture；`.pxmotion` 的一般可重用資源／演出契約可繼續，但依使用者要求暫不追 M2 原動畫。
 6. **回到移植案做接受測試**：先用最新 SDK 重新 `validate --runtime`、跑專案測試，再挑一個小的發行版 E2E 旅程驗證 UI、按鍵、存讀檔和音效；若要大容量重封，記錄實際版本、構建參數與磁碟空間。原作 1:1 差距應留在 `SDK_FEEDBACK.md`，不要把新 SDK API 存在誤寫成遊戲畫面已經實裝。
 

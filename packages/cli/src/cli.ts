@@ -59,7 +59,7 @@ import {
 assertLocalBuildFresh(fileURLToPath(new URL("../..", import.meta.url)), "@prismatix/cli");
 
 interface Options {readonly values: Map<string, string>; readonly flags: Set<string>; readonly positional: string[]}
-interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly documentTexts: Readonly<Record<string, string>>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>; readonly dependencies: ReadonlySet<string>; readonly includedResources: Readonly<Record<string, readonly string[]>>; readonly textSnapshots: ReadonlyMap<string, string>; readonly absentTextInputs: ReadonlySet<string>; readonly storyPath?: string; readonly storyIndexSource?: string}
+interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly documentTexts: Readonly<Record<string, string>>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>; readonly dependencies: ReadonlySet<string>; readonly includedResources: Readonly<Record<string, readonly string[]>>; readonly textSnapshots: ReadonlyMap<string, string>; readonly absentTextInputs: ReadonlySet<string>; readonly uiNodeSpans: ReadonlyMap<string, ReadonlyMap<number, SourceSpan>>; readonly storyPath?: string; readonly storyIndexSource?: string}
 interface BuildResult {readonly root: string; readonly artifact: BuildArtifact; readonly output: string; readonly dependencies: ReadonlySet<string>; readonly protectedPaths: readonly string[]}
 
 class PackagerFailure extends Error {
@@ -177,6 +177,54 @@ function firstLineSpan(text: string, path: string): SourceSpan {
   const newline = text.indexOf("\n", boundedStart);
   return sourceSpan(text, path, {start: boundedStart,
     end: newline < 0 ? text.length : newline});
+}
+
+interface JsxNodeSource {readonly fileName: string; readonly lineNumber: number;
+  readonly columnNumber: number}
+
+function jsxNodeSpan(root: string, texts: ReadonlyMap<string, string>,
+  source: JsxNodeSource): SourceSpan | undefined {
+  const path = projectSourcePath(root, source.fileName);
+  const text = texts.get(resolve(source.fileName));
+  if (path === undefined || text === undefined ||
+      !Number.isSafeInteger(source.lineNumber) || source.lineNumber < 1 ||
+      !Number.isSafeInteger(source.columnNumber) || source.columnNumber < 1) return undefined;
+  let offset = 0;
+  for (let line = 1; line < source.lineNumber; line += 1) {
+    const newline = text.indexOf("\n", offset);
+    if (newline < 0) return undefined;
+    offset = newline + 1;
+  }
+  const lineEnd = text.indexOf("\n", offset);
+  const end = lineEnd < 0 ? text.length : lineEnd;
+  const reported = offset + source.columnNumber - 1;
+  if (reported >= end) return undefined;
+  // TypeScript reports the preceding space for JSX returned directly after a
+  // `return` token. Restrict the adjustment to whitespace on the same line.
+  const prefix = /^\s{0,8}</u.exec(text.slice(reported, Math.min(end, reported + 9)));
+  if (prefix === null) return undefined;
+  const start = reported + prefix[0].length - 1;
+  return sourceSpan(text, path, {start, end: start + 1});
+}
+
+function withJsxNodeSpans(diagnostics: readonly AuthoringDiagnostic[],
+  sources: ReadonlyMap<string, ReadonlyMap<number, SourceSpan>>): AuthoringDiagnostic[] {
+  if (sources.size === 0) return [...diagnostics];
+  return diagnostics.map((item) => {
+    if (item.span !== undefined) return item;
+    const origin = [item.details, item.hint].find((value) =>
+      value !== undefined && /(?:nodes\[\d+\]|\/nodes\/\d+)/u.test(value));
+    const index = /nodes\[(\d+)\]|\/nodes\/(\d+)/u.exec(origin ?? "");
+    if (index === null) return item;
+    for (const [canonicalPath, nodes] of sources) {
+      if (item.path !== canonicalPath &&
+          !origin?.includes(`${canonicalPath}:`) &&
+          !origin?.includes(`${canonicalPath}/`)) continue;
+      const span = nodes.get(Number(index[1] ?? index[2]));
+      if (span !== undefined) return {...item, span};
+    }
+    return item;
+  });
 }
 
 function printDiagnostics(values: readonly AuthoringDiagnostic[]): void {
@@ -439,7 +487,7 @@ async function emitJsxProgram(root: string, sourcePath: string, value: JsxProgra
         target: ts.ScriptTarget.ES2023,
         module: ts.ModuleKind.ESNext,
         moduleResolution: ts.ModuleResolutionKind.Bundler,
-        jsx: ts.JsxEmit.ReactJSX,
+        jsx: ts.JsxEmit.ReactJSXDev,
         jsxImportSource: "@prismatix/authoring-sdk",
         isolatedModules: true,
         verbatimModuleSyntax: true,
@@ -471,7 +519,11 @@ async function emitJsxProgram(root: string, sourcePath: string, value: JsxProgra
 
 async function loadJsxUiDocument(root: string, virtualPath: string,
   kind: "scene" | "component", dependencies?: Set<string>,
-  rememberText?: (path: string, text: string) => void): Promise<unknown> {
+  rememberText?: (path: string, text: string) => void,
+  sourceTexts?: ReadonlyMap<string, string>): Promise<{
+    readonly value: unknown;
+    readonly nodeSpans: ReadonlyMap<number, SourceSpan>;
+  }> {
   const sourcePath = projectFile(root, virtualPath);
   const source = await readBoundedText(sourcePath);
   rememberText?.(sourcePath, source);
@@ -499,11 +551,20 @@ async function loadJsxUiDocument(root: string, virtualPath: string,
     if (authored === undefined) {
       throw new TypeError("JSX UI modules must provide a default Scene or Component export");
     }
+    const nodeSources = new Map<number, JsxNodeSource>();
     const compiled = compileJsxUi(authored as Parameters<typeof compileJsxUi>[0],
-      {path: virtualPath, kind});
+      {path: virtualPath, kind,
+        onNodeSource: (index, location) => nodeSources.set(index, location)});
+    const nodeSpans = new Map<number, SourceSpan>();
+    for (const [index, location] of nodeSources) {
+      const span = sourceTexts === undefined ? undefined :
+        jsxNodeSpan(root, sourceTexts, location);
+      if (span !== undefined) nodeSpans.set(index, span);
+    }
     if (!compiled.valid || compiled.value === undefined)
-      throw new JsxAuthoringFailure(compiled.diagnostics);
-    return compiled.value;
+      throw new JsxAuthoringFailure(withJsxNodeSpans(compiled.diagnostics,
+        new Map([[virtualPath, nodeSpans]])));
+    return {value: compiled.value, nodeSpans};
   } catch (error) {
     if (error instanceof JsxAuthoringFailure) throw error;
     throw new JsxAuthoringFailure([{
@@ -637,6 +698,7 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
   if (raw === undefined) throw new Error(`${basename(projectPath)} must be a JSON object`);
   const documents: Record<string, unknown> = {};
   const documentSources = new Map<string, string>();
+  const uiNodeSpans = new Map<string, ReadonlyMap<number, SourceSpan>>();
   const sourceFiles: Record<string, string> = {};
   const locales: Record<string, unknown> = {};
   const dependencies = new Set<string>([projectPath]);
@@ -656,8 +718,10 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
     const owner = documentSources.get(outputPath);
     if (owner === virtualPath) return outputPath;
     if (owner !== undefined) throw new Error(`${outputPath} is already produced by ${owner}`);
-    documents[outputPath] = await loadJsxUiDocument(root, virtualPath, kind,
-      dependencies, rememberText);
+    const compiled = await loadJsxUiDocument(root, virtualPath, kind,
+      dependencies, rememberText, textSnapshots);
+    documents[outputPath] = compiled.value;
+    uiNodeSpans.set(outputPath, compiled.nodeSpans);
     documentSources.set(outputPath, virtualPath);
     return outputPath;
   };
@@ -810,6 +874,7 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
     if (source !== undefined) documentTexts[virtualPath] = source;
   }
   return {root, projectPath, project, documents, documentTexts, sourceFiles, locales, dependencies, includedResources,
+    uiNodeSpans,
     textSnapshots, absentTextInputs,
     ...(storyIndexSource === undefined ? {} : {storyIndexSource}),
     ...(storyPath === undefined ? {} : {storyPath})};
@@ -936,7 +1001,7 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
     }
     return entries?.has(basename(absolute)) === true || existsSync(absolute);
   };
-  const result = compileProject({project: loaded.project, documents: loaded.documents,
+  const compiled = compileProject({project: loaded.project, documents: loaded.documents,
     documentSources: loaded.documentTexts,
     sourceFiles: loaded.sourceFiles, locales: loaded.locales,
     ...(loaded.storyIndexSource === undefined ? {} :
@@ -954,6 +1019,9 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
     ...(committedRevision === undefined ? {} : {committedRevision}),
     ...(uiTypeRegistry === undefined ? {} : {uiTypeRegistry}),
     ...(inputKeyRegistry === undefined ? {} : {inputKeyRegistry})});
+  const result = loaded.uiNodeSpans.size === 0 ? compiled :
+    {...compiled, diagnostics: withJsxNodeSpans(compiled.diagnostics,
+      loaded.uiNodeSpans)};
   const warnings: AuthoringDiagnostic[] = [];
   if (uiTypeRegistry === undefined &&
       Object.keys(loaded.documents).some((path) => /\.pxui(?:component)?$/u.test(path)))

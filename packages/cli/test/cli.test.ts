@@ -1136,6 +1136,141 @@ test("TSX UI authoring lowers to canonical JSON and never enters the Runtime art
     await readFile(canonicalPath, "utf8"));
 });
 
+test("validate locates a missing TSX image at its authored JSX node", async () => {
+  const value = await fixture();
+  try {
+    const project = JSON.parse(await readFile(value.project, "utf8")) as {
+      uiEntryPoints: Record<string, string>;
+    };
+    project.uiEntryPoints.title = "Content/UI/Title.tsx";
+    await write(value.project, JSON.stringify(project));
+    const source = `import {Image, Scene, VBox} from "@prismatix/authoring-sdk";
+export default <Scene name="Title" width={1280} height={720}>
+  <VBox name="Root"><Image name="Missing" path="Assets/UI/missing.png" /></VBox>
+</Scene>;
+`;
+    await write(join(value.root, "Content/UI/Title.tsx"), source);
+    const validated = run(["validate", value.project]);
+    assert.equal(validated.status, 1, validated.stderr);
+    const diagnostics = validated.stderr.split(/\r?\n/u).filter(Boolean).flatMap((line) => {
+      try { return [JSON.parse(line) as {code: string; span?: {path: string;
+        start: {line: number; column: number; offset: number}}}]; }
+      catch { return []; }
+    });
+    const issue = diagnostics.find((item) => item.code === "PXBUILD1044");
+    assert.equal(issue?.span?.path, "Content/UI/Title.tsx", validated.stderr);
+    assert.equal(issue.span.start.line, 3);
+    assert.equal(source.slice(issue.span.start.offset, issue.span.start.offset + 6), "<Image");
+  } finally {
+    await rm(value.root, {recursive: true, force: true});
+  }
+});
+
+test("validate locates TSX resource errors inside an imported component", async () => {
+  const value = await fixture();
+  try {
+    const project = JSON.parse(await readFile(value.project, "utf8")) as {
+      uiEntryPoints: Record<string, string>;
+    };
+    project.uiEntryPoints.title = "Content/UI/Title.tsx";
+    await write(value.project, JSON.stringify(project));
+    await write(join(value.root, "Content/UI/Title.tsx"),
+      `import {Scene, VBox} from "@prismatix/authoring-sdk";
+import {MissingImage} from "./components/MissingImage.tsx";
+export default <Scene name="Title" width={1280} height={720}>
+  <VBox name="Root"><MissingImage /></VBox>
+</Scene>;
+`);
+    const component = `import {Image} from "@prismatix/authoring-sdk";
+export function MissingImage() {
+  return <Image name="Missing" path="Assets/UI/component-missing.png" />;
+}
+`;
+    await write(join(value.root, "Content/UI/components/MissingImage.tsx"), component);
+    const validated = run(["validate", value.project]);
+    assert.equal(validated.status, 1, validated.stderr);
+    const diagnostics = validated.stderr.split(/\r?\n/u).filter(Boolean).flatMap((line) => {
+      try { return [JSON.parse(line) as {code: string; span?: {path: string;
+        start: {line: number; offset: number}}}]; }
+      catch { return []; }
+    });
+    const issue = diagnostics.find((item) => item.code === "PXBUILD1044");
+    assert.equal(issue?.span?.path, "Content/UI/components/MissingImage.tsx",
+      validated.stderr);
+    assert.equal(issue.span.start.line, 3);
+    assert.equal(component.slice(issue.span.start.offset, issue.span.start.offset + 6),
+      "<Image");
+  } finally {
+    await rm(value.root, {recursive: true, force: true});
+  }
+});
+
+test("validate locates a cross-layer TSX binding error at its JSX node", async () => {
+  const value = await fixture();
+  try {
+    const project = JSON.parse(await readFile(value.project, "utf8")) as {
+      uiEntryPoints: Record<string, string>;
+      settings?: Record<string, unknown>;
+    };
+    project.uiEntryPoints.title = "Content/UI/Title.tsx";
+    project.settings = {"player.uiData": {screen: {title: "Ready"}}};
+    await write(value.project, JSON.stringify(project));
+    const source = `import {Scene, Text, VBox} from "@prismatix/authoring-sdk";
+export default <Scene name="Title" width={1280} height={720}>
+  <VBox name="Root"><Text name="Bad" bind={{text: "screen.missing"}} /></VBox>
+</Scene>;
+`;
+    await write(join(value.root, "Content/UI/Title.tsx"), source);
+    const validated = run(["validate", value.project]);
+    assert.equal(validated.status, 1, validated.stderr);
+    const diagnostics = validated.stderr.split(/\r?\n/u).filter(Boolean).flatMap((line) => {
+      try { return [JSON.parse(line) as {code: string; span?: {path: string;
+        start: {line: number; offset: number}}}]; }
+      catch { return []; }
+    });
+    const issue = diagnostics.find((item) => item.span?.path ===
+      "Content/UI/Title.tsx");
+    assert.ok(issue?.span, validated.stderr);
+    assert.equal(issue.span.start.line, 3);
+    assert.equal(source.slice(issue.span.start.offset, issue.span.start.offset + 5),
+      "<Text");
+  } finally {
+    await rm(value.root, {recursive: true, force: true});
+  }
+});
+
+test("validate locates a lowered TSX layout error at its JSX node", async () => {
+  const value = await fixture();
+  try {
+    const project = JSON.parse(await readFile(value.project, "utf8")) as {
+      uiEntryPoints: Record<string, string>;
+    };
+    project.uiEntryPoints.title = "Content/UI/Title.tsx";
+    await write(value.project, JSON.stringify(project));
+    const source = `import {Image, Scene, VBox} from "@prismatix/authoring-sdk";
+export default <Scene name="Title" width={1280} height={720}>
+  <VBox name="Root"><Image name="BadSize" width={-1} /></VBox>
+</Scene>;
+`;
+    await write(join(value.root, "Content/UI/Title.tsx"), source);
+    const validated = run(["validate", value.project]);
+    assert.equal(validated.status, 1, validated.stderr);
+    const diagnostics = validated.stderr.split(/\r?\n/u).filter(Boolean).flatMap((line) => {
+      try { return [JSON.parse(line) as {code: string; span?: {path: string;
+        start: {line: number; offset: number}}}]; }
+      catch { return []; }
+    });
+    const issue = diagnostics.find((item) => item.span?.path ===
+      "Content/UI/Title.tsx");
+    assert.ok(issue?.span, validated.stderr);
+    assert.equal(issue.span.start.line, 3);
+    assert.equal(source.slice(issue.span.start.offset, issue.span.start.offset + 6),
+      "<Image");
+  } finally {
+    await rm(value.root, {recursive: true, force: true});
+  }
+});
+
 test("validate reports semantic TypeScript prop errors before JSX evaluation", async () => {
   const value = await fixture();
   const project = JSON.parse(await readFile(value.project, "utf8")) as {

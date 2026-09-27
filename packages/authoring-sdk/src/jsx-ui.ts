@@ -5,8 +5,10 @@ import {
   Fragment,
   isUiElement,
   uiElementMarker,
+  uiJsxSourceMarker,
   type UiChild,
   type UiElement,
+  type UiJsxSource,
 } from "./jsx-runtime.js";
 import type {AuthoringDiagnostic, JsonValue, Result} from "./types.js";
 
@@ -815,7 +817,8 @@ function nodeBindings(props: UiNodeProps): UiBindings {
   return {...props.bindings, ...shorthand};
 }
 
-function lowerDocument(element: UiElement, path?: string): PrismatiXUiDocument {
+function lowerDocument(element: UiElement, path?: string,
+  onNodeSource?: (index: number, source: UiJsxSource) => void): PrismatiXUiDocument {
   const rootDefinition = definition(element);
   if (rootDefinition.category !== "document") {
     throw new TypeError("PrismatiX JSX must export a Scene or Component root");
@@ -856,6 +859,8 @@ function lowerDocument(element: UiElement, path?: string): PrismatiXUiDocument {
     const appearance = nodeAppearance(source.props);
     const layout = nodeLayout(source.props, containerOwned, root,
       parentWidth, parentHeight);
+    const jsxSource = item[uiJsxSourceMarker];
+    if (jsxSource !== undefined) onNodeSource?.(nodes.length, jsxSource);
     nodes.push({
       id, parentId, order, kind: source.kind,
       ...(source.runtimeType === undefined ? {} : {runtimeType: source.runtimeType}),
@@ -919,6 +924,8 @@ function lowerDocument(element: UiElement, path?: string): PrismatiXUiDocument {
 export interface CompileJsxUiOptions {
   readonly path?: string;
   readonly kind?: "scene" | "component";
+  /** Reports authored JSX call sites for canonical node indices. */
+  readonly onNodeSource?: (index: number, source: UiJsxSource) => void;
 }
 
 /** Lowers a React-free JSX authoring tree into the existing canonical UI contract. */
@@ -928,7 +935,7 @@ export function compileJsxUi(
 ): Result<PrismatiXUiDocument> {
   let value: PrismatiXUiDocument;
   try {
-    value = lowerDocument(element, options.path);
+    value = lowerDocument(element, options.path, options.onNodeSource);
   } catch (error) {
     return {valid: false, diagnostics: [diagnostic(
       "PXSDKJSX1001", "JSX UI could not be lowered", options.path, String(error),

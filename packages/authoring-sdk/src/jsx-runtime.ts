@@ -4,9 +4,17 @@
  */
 
 export const uiElementMarker = Symbol.for("prismatix.ui.authoring.element");
+export const uiJsxSourceMarker = Symbol.for("prismatix.ui.authoring.jsx-source");
+
+export interface UiJsxSource {
+  readonly fileName: string;
+  readonly lineNumber: number;
+  readonly columnNumber: number;
+}
 
 export interface UiElement {
   readonly [uiElementMarker]: true;
+  readonly [uiJsxSourceMarker]?: UiJsxSource;
   readonly type: unknown;
   readonly props: Readonly<Record<string, unknown>>;
   readonly key?: string | number;
@@ -57,8 +65,14 @@ export function jsxDEV(
   type: unknown,
   props: Record<string, unknown> | null,
   key?: string | number,
+  _isStaticChildren?: boolean,
+  source?: UiJsxSource,
 ): UiElement {
-  return jsx(type, props, key);
+  const rendered = jsx(type, props, key);
+  // A component's own JSX location is more useful than its call site. Keep
+  // that location when the component returns an authored UI node.
+  return source === undefined || rendered[uiJsxSourceMarker] !== undefined
+    ? rendered : {...rendered, [uiJsxSourceMarker]: source};
 }
 
 export namespace JSX {
