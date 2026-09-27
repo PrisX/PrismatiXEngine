@@ -1606,6 +1606,7 @@ detail::PackageManifest BuildPackageManifest(const PackageRequest& request,
         std::move(legacyPersistenceReaders);
     manifest.encrypted = request.encryption;
     manifest.archiveKey = request.encryption ? encryptionKey : std::string{};
+    manifest.publisherPublicKey = request.publisherPublicKey;
     manifest.archives = std::move(archives);
     for (const auto& route : routesInOrder) {
         const auto archived = std::find_if(entries.begin(), entries.end(), [&](const auto& entry) { return entry.uri == route.scene; });
@@ -1771,6 +1772,16 @@ ValidationResult Validate(const PackageRequest& request,
         AddDiagnostic(diagnostics, "PXPKG1241",
                       "archiveShards must be an integer from 1 to 64");
     }
+    if (!request.publisherPublicKey.empty() &&
+        (request.publisherPublicKey.size() != 130 ||
+         !request.publisherPublicKey.starts_with("04") ||
+         !std::ranges::all_of(request.publisherPublicKey,
+                              [](const unsigned char character) {
+                                  return std::isdigit(character) ||
+                                         (character >= 'a' && character <= 'f');
+                              })))
+        AddDiagnostic(diagnostics, "PXPKG1243",
+                      "publisherPublicKey must be a lowercase SEC1 P-256 point");
 
     std::error_code error;
     const auto projectRoot = WeakCanonical(request.projectRoot, error);
@@ -2604,7 +2615,7 @@ std::string detail::SerializePackageManifest(
                               {"storageTextures", 0},
                               {"storageBuffers", 0}}}});
     }
-    const Json root{
+    Json root{
         {"format", "PrismatiXPackageManifest"},
         {"schemaRevision", 2},
         {"engineVersion", manifest.engineVersion},
@@ -2637,6 +2648,8 @@ std::string detail::SerializePackageManifest(
         {"encryption", {{"enabled", manifest.encrypted},
                         {"archiveKey", manifest.archiveKey}}},
         {"graphicsTier", manifest.graphicsTier}};
+    if (!manifest.publisherPublicKey.empty())
+        root["publisherPublicKey"] = manifest.publisherPublicKey;
     return root.dump(2) + "\n";
 }
 
@@ -2691,6 +2704,14 @@ PackageRequestParseResult ParsePackageRequest(const std::string_view text) {
     RequiredString(root, "contentVersion", result.request.contentVersion, result.diagnostics);
     RequiredString(root, "graphicsTier", result.request.graphicsTier,
                    result.diagnostics);
+    if (const auto publisherKey = root.find("publisherPublicKey");
+        publisherKey != root.end()) {
+        if (!publisherKey->is_string())
+            AddDiagnostic(result.diagnostics, "PXPKG1243",
+                          "publisherPublicKey must be a string");
+        else
+            result.request.publisherPublicKey = publisherKey->get<std::string>();
+    }
     if (result.request.graphicsTier != "basic" &&
         result.request.graphicsTier != "gpu-effects")
         AddDiagnostic(result.diagnostics, "PXPKG1120",
@@ -3041,6 +3062,8 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
         identityMaterial += "|route|" + route.id + "|" + route.scene;
     for (const auto& extension : request.extensions)
         identityMaterial += "|extension|" + extension;
+    if (!request.publisherPublicKey.empty())
+        identityMaterial += "|publisher-key|" + request.publisherPublicKey;
     auto identityMigrations = request.saveMigrations;
     std::sort(identityMigrations.begin(), identityMigrations.end(),
               [](const auto& left, const auto& right) {

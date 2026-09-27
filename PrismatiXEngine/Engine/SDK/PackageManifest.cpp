@@ -59,6 +59,14 @@ bool IsFingerprint(const std::string_view value) {
            });
 }
 
+bool IsPublisherPublicKey(const std::string_view value) {
+    return value.size() == 130 && value.starts_with("04") &&
+           std::ranges::all_of(value, [](const unsigned char character) {
+               return std::isdigit(character) ||
+                      (character >= 'a' && character <= 'f');
+           });
+}
+
 bool IsSafeUri(const std::string_view uri) {
     if (uri.empty() || uri.size() > 4096 || uri.front() == '/' ||
         uri.find('\\') != std::string_view::npos ||
@@ -126,7 +134,8 @@ PackageManifestParseResult ParsePackageManifest(const std::string_view text) {
         "format", "schemaRevision", "engineVersion", "gameId", "title",
         "resolution", "entry", "routes", "archives", "contentVersion",
         "saveVersion", "packageFingerprint", "encryption", "graphicsTier",
-        "saveMigrations", "extensions", "customEffects", "persistence"};
+        "saveMigrations", "extensions", "customEffects", "persistence",
+        "publisherPublicKey"};
     for (auto item = root.begin(); item != root.end(); ++item) {
         if (!allowed.contains(item.key()))
             AddDiagnostic(result.diagnostics, "PXPKG1402",
@@ -146,6 +155,12 @@ PackageManifestParseResult ParsePackageManifest(const std::string_view text) {
         manifest.contentVersion = root.value("contentVersion", std::string{});
         manifest.packageFingerprint =
             root.value("packageFingerprint", std::string{});
+        manifest.publisherPublicKey =
+            root.value("publisherPublicKey", std::string{});
+        if (!manifest.publisherPublicKey.empty() &&
+            !IsPublisherPublicKey(manifest.publisherPublicKey))
+            AddDiagnostic(result.diagnostics, "PXPKG1427",
+                          "publisherPublicKey must be a lowercase SEC1 P-256 point");
         manifest.graphicsTier = root.value("graphicsTier", std::string{});
         const auto saveVersion = root.contains("saveVersion")
                                      ? JsonInt(root["saveVersion"])

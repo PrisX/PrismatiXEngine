@@ -1110,6 +1110,10 @@ test("pack reuses an owned artifact without recompiling edited author sources", 
   const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-reused-artifact-"));
   const mock = join(tools, "mock-packager.mjs");
   const output = join(value.root, "packaged");
+  const publisherKey = join(tools, "publisher-key.txt");
+  const publicKey = "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296" +
+    "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
+  await write(publisherKey, `${publicKey}\n`);
   await write(mock, `
     import {readFile} from "node:fs/promises";
     const request = JSON.parse(await readFile(process.argv.at(-1), "utf8"));
@@ -1118,6 +1122,7 @@ test("pack reuses an owned artifact without recompiling edited author sources", 
         request.retireCacheSourceAfterPromotion !== true ||
         request.outputDir === request.cacheSourceDir ||
         request.archiveShards !== 4 ||
+        request.publisherPublicKey !== ${JSON.stringify(publicKey)} ||
         !request.inputs.some(value => value.uri === "Runtime/main.pxir") ||
         !request.inputs.some(value => value.uri === "project.pxproject")) process.exit(42);
     process.stdout.write(JSON.stringify({protocolVersion: 1, event: "completed",
@@ -1127,7 +1132,7 @@ test("pack reuses an owned artifact without recompiling edited author sources", 
   await write(player, "fixture");
   const packed = run(["pack", value.project, "--artifact", artifact,
     "--packager", mock, "--player", player, "--output", output,
-    "--archive-shards", "4"]);
+    "--archive-shards", "4", "--publisher-key", publisherKey]);
   assert.equal(packed.status, 0, packed.stderr);
   assert.match(packed.stdout, /"reusedArtifact":true/u);
   assert.match(packed.stdout, /"packed":true/u);
@@ -1150,6 +1155,10 @@ test("pack reuses an owned artifact without recompiling edited author sources", 
     "--archive-shards", "4"]);
   assert.equal(artifactOnlyShards.status, 2);
   assert.match(artifactOnlyShards.stderr, /--archive-shards requires a distribution build/u);
+  const artifactOnlyPublisher = run(["build", value.project, "--artifact-only",
+    "--publisher-key", publisherKey]);
+  assert.equal(artifactOnlyPublisher.status, 2);
+  assert.match(artifactOnlyPublisher.stderr, /--publisher-key requires a distribution build/u);
 });
 
 test("pack preserves structured native diagnostics instead of replacing them with a CLI error", async () => {

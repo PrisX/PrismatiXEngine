@@ -68,6 +68,9 @@ struct PackageRequest {
     std::uint32_t saveVersion = 1;
     std::string graphicsTier = "basic";
     bool encryption = false;
+    // SEC1 uncompressed P-256 public key, lowercase hex. Optional for
+    // distributions that do not enable signed content overlays.
+    std::string publisherPublicKey;
     PackageCompression compression = PackageCompression::Balanced;
     // Stable URI-hash partitions. One preserves the legacy Content.pdx layout.
     std::uint32_t archiveShards = 1;

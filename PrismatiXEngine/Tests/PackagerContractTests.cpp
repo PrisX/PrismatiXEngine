@@ -913,6 +913,42 @@ int main() {
                      "Overlay creation refuses metadata changed after content verification");
     });
 
+    suite.Run("PackagePublisherKey_IsPinnedInManifestAndPackageIdentity", [&] {
+        constexpr std::string_view publicKey =
+            "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296"
+            "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
+        const auto pinnedOutput = fixture.path / "Build/PublisherPinned";
+        auto pinned = FixtureRequest(root, pinnedOutput);
+        pinned.requestId = "publisher-pin-contract";
+        pinned.publisherPublicKey = std::string(publicKey);
+        const auto built = px::sdk::RunPackager(pinned);
+        suite.Require(built.Completed(),
+                      "Packager accepts a pinned P-256 publisher public key");
+        const auto baseManifest = px::sdk::detail::ParsePackageManifest(
+            Read(output / "Package/manifest.json"));
+        const auto pinnedManifest = px::sdk::detail::ParsePackageManifest(
+            Read(pinnedOutput / "Package/manifest.json"));
+        suite.Require(baseManifest.Valid() && pinnedManifest.Valid(),
+                      "both package manifests parse");
+        suite.Expect(pinnedManifest.manifest.publisherPublicKey == publicKey &&
+                         pinnedManifest.manifest.packageFingerprint !=
+                             baseManifest.manifest.packageFingerprint,
+                     "publisher key is pinned in the manifest and package identity");
+        const auto rotatedOverlay = fixture.path / "rotated-key-overlay.pdx";
+        const auto rotated = px::io::CreatePackageOverlay(
+            output, pinnedOutput, rotatedOverlay);
+        suite.Expect(!rotated.created &&
+                         !std::filesystem::exists(rotatedOverlay),
+                     "content overlay cannot introduce or rotate the publisher key");
+        pinned.publisherPublicKey = "04not-a-public-key";
+        pinned.outputDir = fixture.path / "Build/InvalidPublisherKey";
+        const auto invalid = px::sdk::RunPackager(pinned);
+        suite.Expect(!invalid.Completed() &&
+                         HasDiagnostic(invalid, "PXPKG1243") &&
+                         !std::filesystem::exists(pinned.outputDir),
+                     "invalid publisher key fails before a distribution is written");
+    });
+
     suite.Run("StableArchiveShardsMountAndReuseTheirOwnCaches", [&] {
         WriteRepeated(root / "Assets/shard-compress.bin", 's', 256 * 1024);
         const auto shardedOutput = fixture.path / "Build/Sharded";

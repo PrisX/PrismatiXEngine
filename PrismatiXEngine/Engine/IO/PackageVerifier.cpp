@@ -461,6 +461,8 @@ PackageOverlayVerification VerifyPackageOverlay(
     if (!targetParsed.Valid() ||
         targetParsed.manifest.gameId != baseParsed.manifest.gameId ||
         targetParsed.manifest.engineVersion != baseParsed.manifest.engineVersion ||
+        targetParsed.manifest.publisherPublicKey !=
+            baseParsed.manifest.publisherPublicKey ||
         targetParsed.manifest.packageFingerprint ==
             baseParsed.manifest.packageFingerprint ||
         metadata["targetPackageFingerprint"] !=
@@ -602,6 +604,8 @@ PackageOverlayBuildResult CreatePackageOverlay(
     if (!baseParsed.Valid() || !targetParsed.Valid() ||
         baseParsed.manifest.gameId != targetParsed.manifest.gameId ||
         baseParsed.manifest.engineVersion != targetParsed.manifest.engineVersion ||
+        baseParsed.manifest.publisherPublicKey !=
+            targetParsed.manifest.publisherPublicKey ||
         baseParsed.manifest.packageFingerprint ==
             targetParsed.manifest.packageFingerprint)
         return fail("Base and target are not distinct compatible package versions");

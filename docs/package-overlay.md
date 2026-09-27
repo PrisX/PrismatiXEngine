@@ -61,6 +61,13 @@ file beside a game applies it.
 For future Player auto-loading, the chosen policy is to pin a publisher public
 key in the trusted base distribution and require a valid signature plus the
 existing exact-base checks before mounting an overlay. The signing format,
-key provisioning, and Player integration are not implemented yet. Existing
+key provisioning, and Player integration are not implemented yet. A distribution
+can now pin an uncompressed SEC1 P-256 public key by passing
+`--publisher-key path/to/public-key.txt` to `prismatix pack` or a distribution
+`build`. The file contains one lowercase hex point (`04` followed by 128 hex
+characters). The key enters `Package/manifest.json` and the package
+fingerprint; overlay creation and verification reject a target that changes
+it. This only records the expected publisher key. It does not sign an overlay
+or make the current unsigned overlay safe to auto-load. Existing
 unsigned overlays remain explicit verification artifacts, not auto-loaded
 updates.

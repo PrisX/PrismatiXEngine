@@ -81,9 +81,9 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   create: {values: "name id locale width height", flags: ""},
   dev: {values: "runtime preview-host debounce ui-registry", flags: "once smoke"},
   validate: {values: "runtime ui-registry", flags: ""},
-  build: {values: "output artifact runtime packager player compression archive-shards ui-registry", flags: "artifact-only distribution encrypt ignore-disk-space"},
-  pack: {values: "output artifact runtime packager player compression archive-shards ui-registry", flags: "encrypt ignore-disk-space check verify-media"},
-  run: {values: "output artifact runtime packager player compression archive-shards ui-registry", flags: "encrypt ignore-disk-space"},
+  build: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key", flags: "artifact-only distribution encrypt ignore-disk-space"},
+  pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key", flags: "encrypt ignore-disk-space check verify-media"},
+  run: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key", flags: "encrypt ignore-disk-space"},
   augment: {values: "artifact manifest", flags: ""},
   ids: {values: "document-id prefix backup", flags: "write check external inline sync"},
   migrate: {values: "report backup entry-story entry-ui supported-locales save-version id name version content-version default-locale story-index game-catalog", flags: "write"},
@@ -128,6 +128,8 @@ function parseOptions(command: string, args: readonly string[]): Options {
   if (flags.has("artifact-only") && values.has("artifact")) throw new Error("--artifact-only and --artifact cannot be combined");
   if (flags.has("artifact-only") && values.has("archive-shards"))
     throw new Error("--archive-shards requires a distribution build");
+  if (flags.has("artifact-only") && values.has("publisher-key"))
+    throw new Error("--publisher-key requires a distribution build");
   if (flags.has("verify-media") && !flags.has("check"))
     throw new Error("--verify-media requires pack --check");
   if (values.has("artifact") && values.has("ui-registry")) throw new Error("--ui-registry requires a fresh build; it cannot be combined with --artifact");
@@ -1380,6 +1382,17 @@ async function packProject(options: Options): Promise<{output: string; player: s
     }
     const output = resolve(options.values.get("output") ?? join(root, "dist", project.id));
     const compression = options.values.get("compression") ?? "balanced";
+    const publisherKeyPath = options.values.get("publisher-key");
+    let publisherPublicKey: string | undefined;
+    if (publisherKeyPath !== undefined) {
+      const path = resolve(publisherKeyPath);
+      const info = await stat(path);
+      if (!info.isFile() || info.size > 256)
+        throw new Error(`Publisher key is not a bounded regular file: ${path}`);
+      publisherPublicKey = (await readFile(path, "utf8")).trim();
+      if (!/^04[0-9a-f]{128}$/u.test(publisherPublicKey))
+        throw new Error(`Publisher key must contain a lowercase SEC1 P-256 point: ${path}`);
+    }
     const requestPlan = {
       format: "PrismatiXPackageRequest", schemaRevision: 2,
       gameId: project.id, playerExecutable: player, title: project.name,
@@ -1392,6 +1405,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
       saveMigrations: project.saveMigrations ?? [],
       extensions: project.extensions,
       encryption: options.flags.has("encrypt"),
+      ...(publisherPublicKey === undefined ? {} : {publisherPublicKey}),
       compression,
       archiveShards: Number(options.values.get("archive-shards") ?? "1"),
       inputs,

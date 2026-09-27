@@ -80,6 +80,7 @@ struct PackageManifest {
     std::vector<PackagePersistenceReader> legacyPersistenceReaders;
     bool encrypted = false;
     std::string archiveKey;
+    std::string publisherPublicKey;
     std::string graphicsTier = "basic";
 };
 
