@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
@@ -1439,6 +1440,7 @@ int main() {
 
     suite.Run("StableArchiveShardsMountAndReuseTheirOwnCaches", [&] {
         WriteRepeated(root / "Assets/shard-compress.bin", 's', 256 * 1024);
+        WriteRepeated(root / "Assets/shard-video.mp4", 'v', 64 * 1024);
         const auto shardedOutput = fixture.path / "Build/Sharded";
         auto sharded = FixtureRequest(root, shardedOutput);
         sharded.requestId = "sharded-archive-contract";
@@ -1446,18 +1448,40 @@ int main() {
         sharded.compression = px::sdk::PackageCompression::Fast;
         sharded.archiveShards = 4;
         sharded.inputs.push_back(Input(root, "Assets/shard-compress.bin"));
+        sharded.inputs.push_back(Input(root, "Assets/shard-video.mp4"));
         suite.Require(px::sdk::RunPackager(sharded).Completed(),
                       "Packager creates a sharded distribution");
         const auto manifest = px::sdk::detail::ParsePackageManifest(
             Read(shardedOutput / "Package/manifest.json"));
         suite.Require(manifest.Valid() && manifest.manifest.archives.size() > 1,
                       "manifest lists multiple generated PDX archives");
-        const auto verified = px::io::VerifyPackageContents(shardedOutput);
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> verifyProgress;
+        bool verifyTotalMatched = true;
+        bool verifyCallbackOnCaller = true;
+        const auto callerThread = std::this_thread::get_id();
+        const auto verified = px::io::VerifyPackageContents(
+            shardedOutput,
+            [&](const std::uint64_t current, const std::uint64_t total,
+                const std::uint64_t rawBytes) {
+                verifyTotalMatched = verifyTotalMatched &&
+                    total == sharded.inputs.size();
+                verifyCallbackOnCaller = verifyCallbackOnCaller &&
+                    std::this_thread::get_id() == callerThread;
+                verifyProgress.emplace_back(current, rawBytes);
+            });
         suite.Expect(verified.valid && verified.archives ==
                          manifest.manifest.archives.size() &&
                          verified.resources == sharded.inputs.size(),
                      "native verifier reads and hashes every indexed PDX resource",
                      verified.error);
+        suite.Expect(verifyTotalMatched && verifyCallbackOnCaller &&
+                         !verifyProgress.empty() &&
+                         verifyProgress.back().first == verified.resources &&
+                         std::ranges::is_sorted(verifyProgress, {},
+                             &std::pair<std::uint64_t, std::uint64_t>::first) &&
+                         std::ranges::is_sorted(verifyProgress, {},
+                             &std::pair<std::uint64_t, std::uint64_t>::second),
+                     "parallel verification progress remains monotonic");
         const auto contentIndexPath = shardedOutput / "Package/content-index.json";
         const auto intactIndex = Read(contentIndexPath);
         auto alteredIndex = nlohmann::json::parse(intactIndex);
@@ -1475,6 +1499,48 @@ int main() {
         suite.Expect(!px::io::VerifyPackageContents(shardedOutput).valid,
                      "native verifier rejects a corrupted PDX payload");
         Write(corruptedArchivePath, intactArchive);
+        const auto videoIndex = nlohmann::json::parse(intactIndex);
+        const auto video = std::ranges::find_if(
+            videoIndex.at("entries"), [](const auto& entry) {
+                return entry.at("uri") == "Assets/shard-video.mp4";
+            });
+        suite.Require(video != videoIndex.at("entries").end(),
+                      "video fixture is present in the content index");
+        const auto videoArchivePath = shardedOutput /
+            video->at("archive").get<std::string>();
+        px::io::Archive videoArchive;
+        suite.Require(videoArchive.Open(videoArchivePath.string()),
+                      "video fixture archive mounts");
+        const auto videoEntry = std::ranges::find_if(
+            videoArchive.Entries(), [](const auto& entry) {
+                return entry.name == "Assets/shard-video.mp4";
+            });
+        suite.Require(videoEntry != videoArchive.Entries().end() &&
+                          videoEntry->flags == 0,
+                      "video fixture is an uncompressed PDX entry");
+        const auto intactVideoArchive = Read(videoArchivePath);
+        auto alteredCrc = intactVideoArchive;
+        const std::string videoName = "Assets/shard-video.mp4";
+        const auto nameAt = alteredCrc.find(videoName);
+        const auto crcAt = nameAt + videoName.size() + 3 * sizeof(std::uint64_t);
+        suite.Require(nameAt != std::string::npos &&
+                          crcAt < alteredCrc.size(),
+                      "video fixture CRC field is inside the PDX index");
+        alteredCrc[crcAt] ^= 1;
+        Write(videoArchivePath, alteredCrc);
+        suite.Expect(!px::io::VerifyPackageContents(shardedOutput).valid,
+                     "one-pass verifier still rejects an uncompressed entry with a false CRC");
+        Write(videoArchivePath, intactVideoArchive);
+        auto alteredStoredSize = intactVideoArchive;
+        const auto storedSizeAt =
+            nameAt + videoName.size() + 2 * sizeof(std::uint64_t);
+        suite.Require(storedSizeAt < alteredStoredSize.size(),
+                      "video fixture stored-size field is inside the PDX index");
+        alteredStoredSize[storedSizeAt] ^= 1;
+        Write(videoArchivePath, alteredStoredSize);
+        suite.Expect(!px::io::VerifyPackageContents(shardedOutput).valid,
+                     "plain entry stored size must equal its raw size");
+        Write(videoArchivePath, intactVideoArchive);
         const auto contentIndex = nlohmann::json::parse(
             Read(shardedOutput / "Package/content-index.json"));
         suite.Require(contentIndex.at("format") == "PrismatiXContentIndex" &&

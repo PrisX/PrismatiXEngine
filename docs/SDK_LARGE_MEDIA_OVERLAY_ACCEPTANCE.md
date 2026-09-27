@@ -18,3 +18,19 @@
 `ArchiveStreamWriter` 現可對檔案及 PDX stream 來源逐段壓縮，仍逐段核對來源大小、SHA-256 和 CRC。overlay 對至少 64 KiB 的檔案來源啟用壓縮，影片串流副檔名維持原樣；使用 zstd level 3、8 MiB window。Player 的未加密 zstd entry reader 仍限制最大 128 MiB window，並在讀到尾端核對長度與 CRC。沒有把整筆 256 MiB 內容載入 writer 記憶體。
 
 這是同機、暖快取的兩次產製，時間不能作為一般機器的 SLA 或壓縮後必然加速的證據。D: 可用空間是整個 volume 的取樣，會受其他程序影響；不能視為精確的程序暫存位元組。Player 的 RSS 包含完整遊戲與 22 route 演出，不能歸因於這個 patch。每次產製仍全量讀驗 artifact 與基底；本次驗收沒有解決依賴級或 block-level 增量建置，也沒有測真實跨版存檔 migration。
+
+## 基底 PDX 驗證優化
+
+同一份基底有 16 個 PDX 分片、31,756 筆資源；其中 28,330 筆、6,002,475,350 raw bytes 是未壓縮 entry。基底驗證現在於同一輪讀取中核對這些 entry 的 CRC 與內容索引 SHA-256，並以最多四個 worker 驗證彼此獨立的分片。進度回報仍在呼叫執行緒、保持單調；失敗仍按分片順序回報。`PRISMATIX_PACKAGE_VERIFY_WORKERS=1..8` 可供受限設備或比較使用，預設最多四工。公開的普通 `Archive::OpenStream` 仍會在交出未壓縮 stream 前核對 CRC；只有完整內容驗證使用合併讀取。
+
+| Release Packager，同機暖快取 | 耗時 | Packager 峰值 working set |
+| --- | ---: | ---: |
+| 修改前、串行 `verify-package` | 56.187 秒 | 60,854,272 bytes |
+| 新版單工，第 1／2 次 | 56.047／54.953 秒 | 約 61.6 MB |
+| 新版四工，第 1／2 次 | 17.203／17.250 秒 | 約 77.3 MB |
+| 後續重編後四工驗證 | 19.125／18.031 秒 | 約 75–78 MB |
+| 完整 `create-overlay --check`，修改前／後 | 92.672／54.266 秒 | 後者原生 Packager 約 591 MB |
+
+單工與四工依「單工→四工→四工→單工」順序比較，全部驗證成功；最後一次大型 `verify-package` 與 Release Packager Contract／Runtime Resources targeted 測試也通過。`--check` 前後都回報 2 筆變更、0 刪除、268,435,588 raw bytes。測試新增「原始內容 SHA 相同但 PDX 內 CRC 欄位被改動」及「未壓縮 entry 的 stored size 被改動」拒絕案例，避免合併讀取削弱完整性檢查。
+
+這些數字只適用於這台機器和這份暖快取資料；並行縮短時間但沒有略過任何資源。artifact 的全量雜湊、基底的全量驗證，以及實際 patch 寫入仍是 O(素材總量) 工作。

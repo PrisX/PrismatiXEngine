@@ -4,6 +4,8 @@
 
 ### 2026-09-27 後續進度
 
+- **大型基底驗證已安全並行化。** 16 分片／31,756 筆的同一 signed 基底，Release `verify-package` 單工兩次 56.0／55.0 秒，四工兩次 17.2／17.3 秒；反轉順序後仍有同級差異。CRC 與 SHA-256 在同一輪串流中核對，所有分片完整讀驗，改動 CRC 欄位但保持內容 SHA 的回歸案例會被拒絕。相同 artifact 的 `create-overlay --check` 從 92.7 秒降至 54.3 秒，變更數保持 2／0；最後重編後四工再驗 18.0 秒。Release Packager Contract／Runtime Resources targeted 測試通過。詳見 [大型媒體 overlay 驗收](SDK_LARGE_MEDIA_OVERLAY_ACCEPTANCE.md)。這仍是 O(全部素材) 驗證，依賴級增量建置尚未完成。
+
 - **大型媒體簽章 overlay 驗收已完成。** 以既有 31,756 筆／8,596,468,270 raw bytes artifact 封出隔離的簽章基底，正式 `augment` 僅替換一個 256 MiB PCM WAV（加上一份 augmentation 記錄）。`--check` 預測 2 筆變更、0 筆刪除；原 overlay writer 產出 273,818,866 bytes。改為有界 zstd 串流壓縮後，同一變更產出 67,162,678 bytes（約縮小 75.5%），約 95.8 秒；Node＋Packager 取樣 RSS 峰值約 707 MB，原生 Packager 的 Windows peak working set 約 593 MB，D: volume 取樣最低可用空間差額約 67.7 MB。獨立驗簽通過，安裝後 Player 記錄 `signed overlay=true count=1`，22 route／23 張擷取／0 error／exit 0。Release native targeted CTest 2/2 通過。詳細條件和限制見 [大型媒體 overlay 驗收](SDK_LARGE_MEDIA_OVERLAY_ACCEPTANCE.md)。本節以下較早寫的「8 GB 大媒體 entry／峰值尚未實測」已由這次結果取代；全量讀驗成本與真實跨版存檔 migration 仍未解決。
 
 - JSON UI 的 extension Action 參數、原生 TypeRegistry runtime property／binding／visual-state override／animation track，以及 `bindingAction`／`wheelThreshold` 診斷，現在在有相符原始文字時附精確宣告行列；缺必填 Action 參數會指到該 Action ID。CLI `validate` 的錯誤位置與建立 artifact 前的檢查使用相同來源快照。Authoring SDK 169/169、CLI 111/111（另 1 項 native E2E 依環境跳過）全套通過；其後只補測試程式並重跑 SDK project targeted 23/23。其他 UI 格式及 TSX 執行後位置仍未全面覆蓋。

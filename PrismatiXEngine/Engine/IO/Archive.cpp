@@ -748,10 +748,13 @@ bool Archive::Open(const std::string& path, const crypto::Key* key) {
                  static_cast<std::uint64_t>(e.chunkCount) * kAeadRecordOverhead);
         const bool validEncryption =
             (e.flags & kEntryEncrypted) == 0 || m_encrypted;
+        const bool validPlainSize =
+            (e.flags & (kEntryEncrypted | kEntryCompressed)) != 0 ||
+            e.storedSize == e.rawSize;
         if (!IsSafeLogicalPath(e.name) ||
             e.pathHash != crypto::HashPath(e.name) ||
             (e.flags & ~allowedFlags) != 0 || !validChunking ||
-            !validEncryption || e.rawSize > kMaxEntrySize ||
+            !validEncryption || !validPlainSize || e.rawSize > kMaxEntrySize ||
             e.storedSize > kMaxStoredEntrySize ||
             e.rawSize > static_cast<std::uint64_t>((std::numeric_limits<std::size_t>::max)()) ||
             e.storedSize > static_cast<std::uint64_t>((std::numeric_limits<std::size_t>::max)()) ||
@@ -795,6 +798,16 @@ bool Archive::Contains(std::string_view path) const {
 
 std::unique_ptr<SeekableReadStream> Archive::OpenStream(
     const std::string_view path) const {
+    return OpenStreamImpl(path, true);
+}
+
+std::unique_ptr<SeekableReadStream> Archive::OpenStreamForVerification(
+    const std::string_view path) const {
+    return OpenStreamImpl(path, false);
+}
+
+std::unique_ptr<SeekableReadStream> Archive::OpenStreamImpl(
+    const std::string_view path, const bool preverifyPlainCrc) const {
     if (!m_open || !IsSafeLogicalPath(path)) return {};
     const auto found = m_index.find(crypto::HashPath(path));
     if (found == m_index.end() || found->second >= m_entries.size()) return {};
@@ -810,12 +823,14 @@ std::unique_ptr<SeekableReadStream> Archive::OpenStream(
     }
 
     if ((entry.flags & (kEntryEncrypted | kEntryCompressed)) == 0) {
-        bool verified = false;
-        const std::uint32_t crc =
-            Crc32Range(m_path, entry.offset, entry.rawSize, verified);
-        if (!verified || crc != entry.crc) {
-            PX_LOG_ERROR("Archive::OpenStream crc mismatch for '{}'", entry.name);
-            return {};
+        if (preverifyPlainCrc) {
+            bool verified = false;
+            const std::uint32_t crc =
+                Crc32Range(m_path, entry.offset, entry.rawSize, verified);
+            if (!verified || crc != entry.crc) {
+                PX_LOG_ERROR("Archive::OpenStream crc mismatch for '{}'", entry.name);
+                return {};
+            }
         }
         auto stream = std::make_unique<ArchiveRangeReadStream>(
             m_path, entry.offset, entry.rawSize);

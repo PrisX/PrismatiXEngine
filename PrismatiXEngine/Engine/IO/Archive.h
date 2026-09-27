@@ -41,10 +41,17 @@ public:
     // Legacy whole-entry encrypted+compressed entries still buffer fully.
     [[nodiscard]] std::unique_ptr<SeekableReadStream> OpenStream(
         std::string_view path) const;
+    // Package verification checks SHA-256 and CRC in the same full read.
+    // Only that verifier should use this entry point: plain entries skip the
+    // eager CRC pass performed by OpenStream().
+    [[nodiscard]] std::unique_ptr<SeekableReadStream> OpenStreamForVerification(
+        std::string_view path) const;
     [[nodiscard]] std::optional<Bytes> Read(std::string_view path) const;
     [[nodiscard]] const std::vector<Entry>& Entries() const { return m_entries; }
 
 private:
+    [[nodiscard]] std::unique_ptr<SeekableReadStream> OpenStreamImpl(
+        std::string_view path, bool preverifyPlainCrc) const;
     std::string m_path;
     bool m_open = false;
     bool m_encrypted = false;

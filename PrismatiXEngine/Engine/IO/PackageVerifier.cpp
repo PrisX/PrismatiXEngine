@@ -12,14 +12,21 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cctype>
+#include <charconv>
+#include <chrono>
+#include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <limits>
 #include <map>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <set>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -78,13 +85,42 @@ bool ValidOptionalPackId(const std::string_view value) {
         });
 }
 
-std::optional<std::string> FingerprintStream(SeekableReadStream& stream) {
+unsigned VerificationWorkers(const std::size_t archives) {
+    unsigned workers = std::min<unsigned>(4, std::thread::hardware_concurrency());
+    if (workers == 0) workers = 1;
+#ifdef _WIN32
+    char* configuredStorage = nullptr;
+    std::size_t configuredSize = 0;
+    _dupenv_s(&configuredStorage, &configuredSize,
+              "PRISMATIX_PACKAGE_VERIFY_WORKERS");
+    const char* configured = configuredStorage;
+#else
+    const char* configured = std::getenv("PRISMATIX_PACKAGE_VERIFY_WORKERS");
+#endif
+    if (configured) {
+        unsigned requested = 0;
+        const auto end = configured + std::strlen(configured);
+        const auto parsed = std::from_chars(configured, end, requested);
+        if (parsed.ec == std::errc{} && parsed.ptr == end &&
+            requested >= 1 && requested <= 8)
+            workers = requested;
+    }
+#ifdef _WIN32
+    std::free(configuredStorage);
+#endif
+    return static_cast<unsigned>(std::min<std::size_t>(workers, archives));
+}
+
+std::optional<std::string> FingerprintStream(
+    SeekableReadStream& stream,
+    const std::optional<std::uint32_t> expectedCrc = std::nullopt) {
     if (psa_crypto_init() != PSA_SUCCESS) return std::nullopt;
     psa_hash_operation_t operation = PSA_HASH_OPERATION_INIT;
     if (psa_hash_setup(&operation, PSA_ALG_SHA_256) != PSA_SUCCESS)
         return std::nullopt;
     std::array<std::uint8_t, 64 * 1024> buffer{};
     std::uint64_t remaining = stream.Size();
+    std::uint32_t crc = 0xffffffffu;
     while (remaining > 0) {
         const auto requested = static_cast<std::size_t>(
             std::min<std::uint64_t>(remaining, buffer.size()));
@@ -94,9 +130,11 @@ std::optional<std::string> FingerprintStream(SeekableReadStream& stream) {
             psa_hash_abort(&operation);
             return std::nullopt;
         }
+        if (expectedCrc)
+            crc = crypto::UpdateCrc32(crc, buffer.data(), received);
         remaining -= received;
     }
-    if (stream.Failed()) {
+    if (stream.Failed() || (expectedCrc && ~crc != *expectedCrc)) {
         psa_hash_abort(&operation);
         return std::nullopt;
     }
@@ -409,49 +447,115 @@ PackageContentVerification VerifyPackageContents(
     const auto key = manifest.encrypted
         ? std::optional<crypto::Key>{crypto::DeriveKey(manifest.archiveKey)}
         : std::nullopt;
-    PackageContentVerification result;
     const auto resourceTotal =
         static_cast<std::uint64_t>(index["entries"].size());
     if (onProgress) onProgress(0, resourceTotal, 0);
+    std::mutex progressMutex;
+    std::uint64_t completedResources = 0;
+    std::uint64_t completedBytes = 0;
+    std::uint64_t lastReportedResources = 0;
     std::uint64_t lastReportedBytes = 0;
-    for (const auto& archiveMount : manifest.archives) {
+    const auto& expectedByArchive = expected;
+    const auto verifyArchive = [&](const std::size_t archiveIndex) -> std::string {
+        const auto& archiveMount = manifest.archives[archiveIndex];
         const auto path = distribution / px::PathFromUtf8(archiveMount.file);
         std::error_code error;
         const auto status = std::filesystem::symlink_status(path, error);
         if (error || !std::filesystem::is_regular_file(status) ||
             std::filesystem::is_symlink(status))
-            return Fail("Mounted PDX is missing or not a regular file: " + archiveMount.file);
+            return "Mounted PDX is missing or not a regular file: " + archiveMount.file;
         Archive archive;
         if (!archive.Open(px::PathToUtf8(path), key ? &*key : nullptr))
-            return Fail("Mounted PDX cannot be opened: " + archiveMount.file);
-        const auto& resources = expected.at(archiveMount.file);
+            return "Mounted PDX cannot be opened: " + archiveMount.file;
+        const auto& resources = expectedByArchive.at(archiveMount.file);
         if (archive.Entries().size() != resources.size())
-            return Fail("PDX entry count differs from content index: " + archiveMount.file);
-        std::set<std::string> actualNames;
+            return "PDX entry count differs from content index: " + archiveMount.file;
+        std::map<std::string, const Archive::Entry*> actualEntries;
         for (const auto& entry : archive.Entries())
-            if (!actualNames.insert(entry.name).second)
-                return Fail("PDX contains a duplicate resource: " + entry.name);
+            if (!actualEntries.emplace(entry.name, &entry).second)
+                return "PDX contains a duplicate resource: " + entry.name;
         for (const auto& resource : resources) {
-            if (!actualNames.contains(resource.uri))
-                return Fail("Indexed resource is missing from PDX: " + resource.uri);
-            auto stream = archive.OpenStream(resource.uri);
+            const auto found = actualEntries.find(resource.uri);
+            if (found == actualEntries.end())
+                return "Indexed resource is missing from PDX: " + resource.uri;
+            auto stream = archive.OpenStreamForVerification(resource.uri);
             if (!stream || stream->Size() != resource.size)
-                return Fail("Indexed resource size differs from PDX: " + resource.uri);
-            const auto fingerprint = FingerprintStream(*stream);
+                return "Indexed resource size differs from PDX: " + resource.uri;
+            const auto fingerprint = FingerprintStream(*stream, found->second->crc);
             if (!fingerprint || *fingerprint != resource.fingerprint)
-                return Fail("Indexed resource SHA-256 differs from PDX: " + resource.uri);
-            result.resources += 1;
-            result.rawBytes += resource.size;
-            if (onProgress &&
-                (result.resources == resourceTotal ||
-                 result.resources % 256 == 0 ||
-                 result.rawBytes - lastReportedBytes >= 64ull * 1024ull * 1024ull)) {
-                onProgress(result.resources, resourceTotal, result.rawBytes);
-                lastReportedBytes = result.rawBytes;
+                return "Indexed resource SHA-256 or CRC differs from PDX: " + resource.uri;
+            {
+                std::lock_guard lock(progressMutex);
+                ++completedResources;
+                completedBytes += resource.size;
             }
         }
-        result.archives += 1;
+        return {};
+    };
+    std::vector<std::string> archiveErrors(manifest.archives.size());
+    std::vector<std::uint8_t> archiveCompleted(manifest.archives.size(), 0);
+    std::atomic<std::size_t> nextArchive{0};
+    std::atomic<bool> failed{false};
+    std::atomic<unsigned> completedWorkers{0};
+    const auto work = [&] {
+        while (!failed.load(std::memory_order_relaxed)) {
+            const auto archiveIndex = nextArchive.fetch_add(1, std::memory_order_relaxed);
+            if (archiveIndex >= manifest.archives.size()) break;
+            try {
+                archiveErrors[archiveIndex] = verifyArchive(archiveIndex);
+            } catch (const std::exception& error) {
+                archiveErrors[archiveIndex] =
+                    "Package archive verification failed unexpectedly: " +
+                    std::string(error.what());
+            } catch (...) {
+                archiveErrors[archiveIndex] =
+                    "Package archive verification failed unexpectedly";
+            }
+            if (!archiveErrors[archiveIndex].empty())
+                failed.store(true, std::memory_order_relaxed);
+            else archiveCompleted[archiveIndex] = 1;
+        }
+        completedWorkers.fetch_add(1, std::memory_order_relaxed);
+    };
+    {
+        std::vector<std::jthread> threads;
+        const auto workers = VerificationWorkers(manifest.archives.size());
+        threads.reserve(workers);
+        for (unsigned worker = 0; worker < workers; ++worker)
+            threads.emplace_back(work);
+        if (onProgress) {
+            while (completedWorkers.load(std::memory_order_relaxed) < workers) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                std::uint64_t current = 0;
+                std::uint64_t rawBytes = 0;
+                {
+                    std::lock_guard lock(progressMutex);
+                    current = completedResources;
+                    rawBytes = completedBytes;
+                }
+                if (current == resourceTotal ||
+                    current - lastReportedResources >= 256 ||
+                    rawBytes - lastReportedBytes >=
+                        64ull * 1024ull * 1024ull) {
+                    onProgress(current, resourceTotal, rawBytes);
+                    lastReportedResources = current;
+                    lastReportedBytes = rawBytes;
+                }
+            }
+        }
     }
+    for (const auto& error : archiveErrors)
+        if (!error.empty()) return Fail(error);
+    PackageContentVerification result;
+    result.archives = static_cast<std::uint64_t>(
+        std::ranges::count(archiveCompleted, std::uint8_t{1}));
+    result.resources = completedResources;
+    result.rawBytes = completedBytes;
+    if (result.archives != manifest.archives.size() ||
+        result.resources != resourceTotal)
+        return Fail("Package archive verification ended without covering every resource");
+    if (onProgress && lastReportedResources != result.resources)
+        onProgress(result.resources, resourceTotal, result.rawBytes);
     result.valid = true;
     return result;
 }
