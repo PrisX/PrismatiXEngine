@@ -664,6 +664,38 @@ PackageOverlayChain ResolveSignedPackageOverlayChain(
     if (error) return fail("Updates directory cannot be listed");
     std::ranges::sort(candidates);
     if (candidates.empty()) return {.valid = true};
+    // This is only a routing hint. Never mount an optional candidate until the
+    // full signed verifier checks the same metadata and every changed entry.
+    std::vector<std::optional<std::string>> optionalHints;
+    optionalHints.reserve(candidates.size());
+    for (const auto& candidate : candidates) {
+        Archive archive;
+        if (!archive.Open(px::PathToUtf8(candidate))) {
+            optionalHints.emplace_back();
+            continue;
+        }
+        const auto text = ReadBoundedArchiveText(
+            archive, kPackageOverlayManifestUri, 16ull * 1024ull);
+        if (!text) {
+            optionalHints.emplace_back();
+            continue;
+        }
+        const Json metadata = Json::parse(*text, nullptr, false);
+        if (metadata.is_object() &&
+            metadata.contains("schemaRevision") &&
+            metadata["schemaRevision"].is_number_integer() &&
+            metadata["schemaRevision"] == 3 &&
+            metadata.contains("kind") &&
+            metadata["kind"].is_string() &&
+            metadata["kind"] == "optional" &&
+            metadata.contains("optionalId") &&
+            metadata["optionalId"].is_string() &&
+            ValidOptionalPackId(metadata["optionalId"].get<std::string>()))
+            optionalHints.emplace_back(
+                metadata["optionalId"].get<std::string>());
+        else
+            optionalHints.emplace_back();
+    }
 
     auto currentManifest = ReadBoundedRegularFile(
         baseDistribution / "Package/manifest.json", 4ull * 1024ull * 1024ull);
@@ -676,20 +708,15 @@ PackageOverlayChain ResolveSignedPackageOverlayChain(
     if (!base.Valid()) return fail("Base package manifest is invalid");
     std::set<std::string> visited{base.manifest.packageFingerprint};
     std::vector<bool> consumed(candidates.size());
-    std::vector<bool> applicableOptional(candidates.size());
     PackageOverlayChain result;
     for (std::size_t depth = 0; depth < candidates.size(); ++depth) {
-        std::fill(applicableOptional.begin(), applicableOptional.end(), false);
         std::optional<std::pair<std::size_t, PackageOverlayVerification>> next;
         for (std::size_t index = 0; index < candidates.size(); ++index) {
-            if (consumed[index]) continue;
+            if (consumed[index] || optionalHints[index]) continue;
             auto verified = VerifySignedPackageOverlayFromDocuments(
                 *currentManifest, *currentIndex, candidates[index]);
             if (!verified.valid) continue;
-            if (!verified.optionalPackId.empty()) {
-                applicableOptional[index] = true;
-                continue;
-            }
+            if (!verified.optionalPackId.empty()) continue;
             if (next)
                 return fail("More than one signed update applies to the same package version");
             next.emplace(index, std::move(verified));
@@ -714,7 +741,8 @@ PackageOverlayChain ResolveSignedPackageOverlayChain(
     if (!enabledOptionalPackId.empty()) {
         std::optional<std::pair<std::size_t, PackageOverlayVerification>> selected;
         for (std::size_t index = 0; index < candidates.size(); ++index) {
-            if (consumed[index]) continue;
+            if (consumed[index] || !optionalHints[index] ||
+                *optionalHints[index] != enabledOptionalPackId) continue;
             auto verified = VerifySignedPackageOverlayFromDocuments(
                 *currentManifest, *currentIndex, candidates[index]);
             if (!verified.valid ||
@@ -733,7 +761,9 @@ PackageOverlayChain ResolveSignedPackageOverlayChain(
         }
     }
     for (std::size_t index = 0; index < candidates.size(); ++index)
-        if (!consumed[index] && !applicableOptional[index])
+        if (!consumed[index] &&
+            (!optionalHints[index] ||
+             *optionalHints[index] == enabledOptionalPackId))
             result.ignoredFiles.push_back(px::PathToUtf8(
                 candidates[index].filename()));
     result.valid = true;

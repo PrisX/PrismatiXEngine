@@ -96,6 +96,8 @@ struct PackageOverlayChain {
 // Scans a dedicated updates directory for bounded regular PDX candidates,
 // then finds the unique signed exact-base chain. An absent directory means no
 // update. Ambiguous branches fail closed; stale/unrelated files are ignored.
+// An enabled revision-3 optional pack mounts last only when it verifies
+// against the final main update. Empty ID leaves optional packs disabled.
 [[nodiscard]] PackageOverlayChain ResolveSignedPackageOverlayChain(
     const std::filesystem::path& baseDistribution,
     const std::filesystem::path& updatesDirectory,

@@ -1100,6 +1100,32 @@ int main() {
             signedBase, updates, "other");
         suite.Expect(otherOptional.valid && otherOptional.mounts.size() == 2,
                      "an unrelated optional selection leaves the main chain intact");
+        px::io::Archive adultArchive;
+        suite.Require(adultArchive.Open(px::PathToUtf8(adultPatch)),
+                      "optional PDX opens for a damaged-signature check");
+        const auto adultSignature = adultArchive.Read(
+            px::io::kPackageOverlaySignatureUri);
+        suite.Require(adultSignature && adultSignature->size() == 64,
+                      "optional PDX has a publisher signature");
+        auto adultBytes = Read(adultPatch);
+        const auto adultSignatureOffset = adultBytes.find(std::string(
+            adultSignature->begin(), adultSignature->end()));
+        suite.Require(adultSignatureOffset != std::string::npos,
+                      "optional signature can be located in the PDX fixture");
+        adultBytes[adultSignatureOffset] ^= 1;
+        Write(updates / "adult.pdx", adultBytes);
+        const auto damagedDisabled = px::io::ResolveSignedPackageOverlayChain(
+            signedBase, updates);
+        suite.Expect(damagedDisabled.valid &&
+                         damagedDisabled.mounts.size() == 2 &&
+                         damagedDisabled.ignoredFiles.size() == 1,
+                     "disabled optional pack does not block main updates");
+        const auto damagedEnabled = px::io::ResolveSignedPackageOverlayChain(
+            signedBase, updates, "adult");
+        suite.Expect(damagedEnabled.valid &&
+                         damagedEnabled.mounts.size() == 2 &&
+                         damagedEnabled.ignoredFiles.size() == 2,
+                     "enabled optional pack with a bad signature is ignored");
         suite.Expect(!px::io::CreatePackageOverlay(
                           secondTarget, adultTarget,
                           fixture.path / "unsigned-adult.pdx", {}, {}, "adult")
