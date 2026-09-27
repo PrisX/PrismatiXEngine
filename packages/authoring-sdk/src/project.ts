@@ -2,7 +2,7 @@ import {canonicalJson} from "./canonical-json.js";
 import {contractDocumentByteLimit, parseDocument, validateDocument} from "./contracts.js";
 import {normalizeProject} from "./project-normalization.js";
 import {validateInputKeyUsage, type InputKeyRegistryMetadata} from "./input-keys.js";
-import {jsonPointerSpans} from "./json-source-spans.js";
+import {createJsonSourceLocator, jsonPointerSpans} from "./json-source-spans.js";
 import {validateUiActionUsage} from "./project-actions.js";
 import {validatePlayerUiBindings} from "./project-ui-bindings.js";
 import type {LayeredPortraitDocument} from "./portrait.js";
@@ -476,37 +476,12 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   const documents = normalized.value.documents;
   const sourceFiles = normalized.value.sourceFiles;
   const locales = normalized.value.locales;
-  const sourceLocations = new Map<string, {
-    readonly document: unknown;
-    readonly spans: ReadonlyMap<string, SourceSpan>;
-  } | null>();
-  const locate = (path: string, pointer: string, expected: unknown): SourceSpan | undefined => {
-    let source = sourceLocations.get(path);
-    if (source === undefined) {
-      const text = path === projectPath
-        ? input.projectSource?.text ?? input.documentSources?.[path]
-        : input.documentSources?.[path];
-      if (text === undefined) source = null;
-      else {
-        try {
-          const document = JSON.parse(text) as unknown;
-          source = {document, spans: jsonPointerSpans(text, document,
-            path === projectPath ? input.projectSource?.path ?? path : path)};
-        } catch { source = null; }
-      }
-      sourceLocations.set(path, source);
-    }
-    if (source === null) return undefined;
-    let value: unknown = source.document;
-    for (const encoded of pointer.split("/").slice(1)) {
-      const key = encoded.replaceAll("~1", "/").replaceAll("~0", "~");
-      if (value === null || typeof value !== "object" ||
-          !Object.hasOwn(value, key)) return undefined;
-      value = (value as Record<string, unknown>)[key];
-    }
-    return JSON.stringify(value) === JSON.stringify(expected)
-      ? source.spans.get(pointer) : undefined;
-  };
+  const locate = createJsonSourceLocator((path) => {
+    if (path === projectPath && input.projectSource !== undefined)
+      return input.projectSource;
+    const text = input.documentSources?.[path];
+    return text === undefined ? undefined : {path, text};
+  });
   const locatedIssue = (code: string, message: string, path: string,
     pointer: string, expected: unknown, details?: string,
     sourcePath = path): AuthoringDiagnostic => {
@@ -572,6 +547,8 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   }
   const characterGraph = validateProjectCharacterResources(project, characterDocuments, {
     projectPath,
+    ...(input.projectSource === undefined ? {} : {projectSource: input.projectSource}),
+    ...(input.documentSources === undefined ? {} : {characterSources: input.documentSources}),
     ...(input.resourceExists === undefined ? {} : {assetExists: input.resourceExists}),
   });
   diagnostics.push(...characterGraph.diagnostics);

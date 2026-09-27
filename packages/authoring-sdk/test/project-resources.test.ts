@@ -57,33 +57,47 @@ test("project-aware character validation accepts the Runtime-compatible graph", 
 
 test("project-aware character validation rejects descriptor/document drift", () => {
   const authored = {...character(), displayName: "Snow"};
-  const result = validateProjectCharacterResources(project(), {[source]: authored});
+  const result = validateProjectCharacterResources(project(), {[source]: authored}, {
+    characterSources: {[source]: JSON.stringify(authored)},
+  });
   assert.equal(result.valid, false);
-  assert.ok(result.diagnostics.some((item) => item.code === "PXSDKRES2004"));
+  const wrongName = result.diagnostics.find((item) => item.code === "PXSDKRES2004");
+  assert.equal(wrongName?.span?.path, source);
+  assert.equal(JSON.stringify(authored).slice(wrongName.span.start.offset,
+    wrongName.span.end.offset), '"Snow"');
 });
 
 test("project-aware character validation rejects missing or incompatible expression assets", () => {
   const missing = validateProjectCharacterResources(
     {...project(), assets: []},
     {[source]: character()},
+    {characterSources: {[source]: JSON.stringify(character())}},
   );
   assert.equal(missing.valid, false);
-  assert.ok(missing.diagnostics.some((item) => item.code === "PXSDKRES2006"));
+  assert.equal(missing.diagnostics.find((item) => item.code === "PXSDKRES2006")?.span?.path,
+    source);
 
+  const incompatibleProject = {...project(),
+    assets: [{id: spriteId, kind: "audio", source: "Assets/voice.ogg"}]};
   const incompatible = validateProjectCharacterResources(
-    {...project(), assets: [{id: spriteId, kind: "audio", source: "Assets/voice.ogg"}]},
+    incompatibleProject,
     {[source]: character()},
+    {projectSource: {path: "prismatix.json", text: JSON.stringify(incompatibleProject)}},
   );
   assert.equal(incompatible.valid, false);
-  assert.ok(incompatible.diagnostics.some((item) => item.code === "PXSDKRES2007"));
+  assert.equal(incompatible.diagnostics.find((item) => item.code === "PXSDKRES2007")?.span?.path,
+    "prismatix.json");
 });
 
 test("project-aware character validation can verify Runtime asset existence", () => {
-  const result = validateProjectCharacterResources(project(), {[source]: character()}, {
+  const authoredProject = project();
+  const result = validateProjectCharacterResources(authoredProject, {[source]: character()}, {
     assetExists: () => false,
+    projectSource: {path: "prismatix.json", text: JSON.stringify(authoredProject)},
   });
   assert.equal(result.valid, false);
-  assert.ok(result.diagnostics.some((item) => item.code === "PXSDKRES2008"));
+  assert.equal(result.diagnostics.find((item) => item.code === "PXSDKRES2008")?.span?.path,
+    "prismatix.json");
 });
 
 test("project-aware character validation rejects global identities and lookup collisions", () => {
@@ -105,8 +119,11 @@ test("project-aware character validation rejects global identities and lookup co
   const result = validateProjectCharacterResources(root, {
     [source]: character(),
     [secondSource]: second,
-  });
+  }, {characterSources: {[source]: JSON.stringify(character()),
+    [secondSource]: JSON.stringify(second)}});
   assert.equal(result.valid, false);
-  assert.ok(result.diagnostics.some((item) => item.code === "PXSDKRES2005"));
-  assert.ok(result.diagnostics.some((item) => item.code === "PXSDKRES2009"));
+  assert.equal(result.diagnostics.find((item) => item.code === "PXSDKRES2005")?.span?.path,
+    secondSource);
+  assert.equal(result.diagnostics.find((item) => item.code === "PXSDKRES2009")?.span?.path,
+    secondSource);
 });

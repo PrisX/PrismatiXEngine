@@ -4,7 +4,9 @@
 
 ### 2026-09-27—28 後續進度
 
-- **Migration／effect 宣告錯誤也可回指來源。** Save migration 文件與 project descriptor 不一致、鏈重複／成環／無法到目前版本時，診斷會指向對應的 JSON id／version；custom effect 的 graphics tier、id、shader、target layer 與 uniform 錯誤可指原 project 或 `.pxeffect` 欄位。只有原始文字中的該值與編譯輸入一致才附 span。Authoring SDK 178/178、四語 368 scene／31,339 資源唯讀 `validate --runtime` 通過。角色資源交叉檢查等其他非 node 診斷仍待覆蓋。
+- **角色資源的跨文件錯誤也回到作者欄位。** `validateProjectCharacterResources` 可選收原始 project／character 文字，對角色來源缺失、文件身分／名稱不一致、別名或表情 UUID 衝突、缺失或錯誤類型的 asset，以及資源檔缺失附來源 span；`compileProject` 自動傳入 CLI 已讀的文字。共用 JSON locator 只在有錯時解析來源、核對該欄位與當前編譯值，避免過期來源誤指；重複 JSON 鍵以最後生效值定位。Authoring SDK 179/179、CLI 116/116（另 1 項 native E2E 依環境跳過）、四語 368 scene／31,339 資源唯讀 `validate --runtime` 通過。此項不改資源驗證規則或 Runtime 輸出。
+
+- **Migration／effect 宣告錯誤也可回指來源。** Save migration 文件與 project descriptor 不一致、鏈重複／成環／無法到目前版本時，診斷會指向對應的 JSON id／version；custom effect 的 graphics tier、id、shader、target layer 與 uniform 錯誤可指原 project 或 `.pxeffect` 欄位。只有原始文字中的該值與編譯輸入一致才附 span。Authoring SDK 178/178、四語 368 scene／31,339 資源唯讀 `validate --runtime` 通過。角色資源檢查已由上一項補上；其他非 node 診斷仍待覆蓋。
 
 - **Story sidecar 刪除舊錨點時不再直接寫入。** `ids --sync` 仍提供新增／保留／移除的逐 operation 報告；`--sync --write` 只要有移除就拒絕並保持 sidecar 不變，作者檢查舊存檔與遷移後須明示 `--accept-removals`，仍會備份原 sidecar。重排／多義編輯既有的失敗關閉維持；明示接受只表示審閱完成，不自動遷移存檔。CLI 定向測試包含拒寫、明示接受、備份及 validate。另 `.pxgame` 中無效按鍵名稱現在附 `inputActions[].keys[]` 或 `inputBindings[].key` 的原始 JSON 位置，過期來源不附錯誤位置。Authoring SDK 178/178、CLI 116/116（另 1 項 native E2E 依環境跳過）、四語 368 scene／31,339 資源唯讀 `validate --runtime` 通過。
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {jsonPointerSpans} from "../src/json-source-spans.js";
+import {createJsonSourceLocator, jsonPointerSpans} from "../src/json-source-spans.js";
 
 test("JSON source spans keep UTF-16 columns and UTF-8 byte offsets", () => {
   const source = `{
@@ -23,4 +23,15 @@ test("JSON source spans keep UTF-16 columns and UTF-8 byte offsets", () => {
     span.end.offset).toString("utf8"), '"新值"');
   assert.equal(jsonPointerSpans(source, {settings: {name: "舊"}},
     "prismatix.json").size, 0);
+});
+
+test("JSON source locator uses the effective duplicate value and rejects stale inputs", () => {
+  const source = '{"name":"雪","name":"花","count":2}';
+  const locate = createJsonSourceLocator(() => ({path: "project.json", text: source}));
+  const span = locate("project", "/name", "花");
+  assert.ok(span);
+  assert.equal(Buffer.from(source).subarray(span.start.offset, span.end.offset)
+    .toString("utf8"), '"花"');
+  assert.equal(locate("project", "/name", "雪"), undefined);
+  assert.equal(locate("project", "/missing", undefined), undefined);
 });

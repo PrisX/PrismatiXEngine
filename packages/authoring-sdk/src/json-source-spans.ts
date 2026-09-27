@@ -84,3 +84,37 @@ export function jsonPointerSpans(source: string | undefined, expected: unknown,
   }
   return spans;
 }
+
+/** Resolve an authored JSON pointer only when its current value still matches
+ * the compiler input. Parsing and span extraction happen only for diagnostics. */
+export function createJsonSourceLocator(
+  sourceFor: (path: string) => {readonly path: string; readonly text: string} | undefined,
+): (path: string, pointer: string, expected: unknown) => SourceSpan | undefined {
+  const sources = new Map<string, {readonly document: unknown;
+    readonly spans: ReadonlyMap<string, SourceSpan>} | null>();
+  return (path, pointer, expected) => {
+    let source = sources.get(path);
+    if (source === undefined) {
+      const supplied = sourceFor(path);
+      if (supplied === undefined) source = null;
+      else {
+        try {
+          const document = JSON.parse(supplied.text) as unknown;
+          source = {document, spans: jsonPointerSpans(supplied.text,
+            document, supplied.path)};
+        } catch { source = null; }
+      }
+      sources.set(path, source);
+    }
+    if (source === null || (pointer !== "" && !pointer.startsWith("/"))) return undefined;
+    let value: unknown = source.document;
+    for (const encoded of pointer === "" ? [] : pointer.slice(1).split("/")) {
+      const key = encoded.replaceAll("~1", "/").replaceAll("~0", "~");
+      if (value === null || typeof value !== "object" || !Object.hasOwn(value, key))
+        return undefined;
+      value = (value as Record<string, unknown>)[key];
+    }
+    return JSON.stringify(value) === JSON.stringify(expected)
+      ? source.spans.get(pointer) : undefined;
+  };
+}
