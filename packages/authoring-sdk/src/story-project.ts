@@ -132,7 +132,7 @@ interface CachedSceneCompilation {
 }
 
 function validCachedResourceLocations(value: unknown, sourcePath: string,
-  sourceLength: number): boolean {
+  sourceByteLength: number): boolean {
   if (!Array.isArray(value) || value.length > 1_000_000) return false;
   return value.every((entry: unknown) => {
     const location = entry as {source?: unknown; span?: SourceSpan} | null;
@@ -143,7 +143,7 @@ function validCachedResourceLocations(value: unknown, sourcePath: string,
       if (!Number.isSafeInteger(position?.line) || position.line < 1 ||
           !Number.isSafeInteger(position?.column) || position.column < 1 ||
           !Number.isSafeInteger(position?.offset) || position.offset < 0 ||
-          position.offset > sourceLength) return false;
+          position.offset > sourceByteLength) return false;
     }
     return span.start.offset <= span.end.offset;
   });
@@ -162,7 +162,7 @@ class SceneCompilationCache {
   markPersisted(): void { this.persistedGeneration = this.generation; }
 
   exportSnapshot(): unknown {
-    return {format: "PrismatiXStorySceneCache/1", locales: [...this.entries].map(
+    return {format: "PrismatiXStorySceneCache/2", locales: [...this.entries].map(
       ([locale, scenes]) => {
         const latest = [...scenes.values()].at(-1)?.snapshot;
         return {locale, compileInputs: latest?.compileInputs ?? "",
@@ -179,7 +179,7 @@ class SceneCompilationCache {
 
   importSnapshot(value: unknown): void {
     const object = value as {format?: unknown; locales?: unknown};
-    if (object === null || object.format !== "PrismatiXStorySceneCache/1" ||
+    if (object === null || object.format !== "PrismatiXStorySceneCache/2" ||
         !Array.isArray(object.locales) || object.locales.length > 32)
       throw new Error("Invalid Story scene cache envelope");
     const entries = new Map<string, Map<string, CachedSceneCompilation>>();
@@ -207,7 +207,7 @@ class SceneCompilationCache {
             !Array.isArray(result.runtimeIr?.operations) ||
             !Array.isArray(result.sourceMap?.mappings) ||
             !validCachedResourceLocations(result.resourceLocations,
-              scene.sourcePath, scene.source.length))
+              scene.sourcePath, Buffer.byteLength(scene.source, "utf8")))
           throw new Error("Invalid Story scene cache entry");
         scenes.set(scene.id, {snapshot: {sourcePath: scene.sourcePath,
           source: scene.source, identityMap: scene.identityMap,
@@ -364,10 +364,11 @@ function mappedSpan(source: string, mapping: SourceMapEntry): SourceSpan {
     let offset = 0;
     for (let current = 1; current < line; current += 1) {
       const newline = source.indexOf("\n", offset);
-      if (newline < 0) return source.length;
+      if (newline < 0) return Buffer.byteLength(source, "utf8");
       offset = newline + 1;
     }
-    return Math.min(source.length, offset + column - 1);
+    return Buffer.byteLength(source.slice(0,
+      Math.min(source.length, offset + column - 1)), "utf8");
   };
   return {path: mapping.sourceUri,
     start: {line: mapping.startLine, column: mapping.startColumn,

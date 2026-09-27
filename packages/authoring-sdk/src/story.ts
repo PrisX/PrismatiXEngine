@@ -34,31 +34,38 @@ function validAudioDuration(value: string): boolean {
 interface SourceLine {
   readonly text: string;
   readonly line: number;
+  /** Legacy UTF-16 index remains part of generated operation identities. */
   readonly offset: number;
+  readonly byteOffset: number;
 }
 
 function sourceLines(text: string): SourceLine[] {
   const result: SourceLine[] = [];
   let offset = 0;
+  let byteOffset = 0;
   let line = 1;
   while (offset < text.length) {
     const newline = text.indexOf("\n", offset);
     const end = newline < 0 ? text.length : newline;
     const raw = text.slice(offset, end).replace(/\r$/u, "");
-    result.push({text: raw, line, offset});
+    result.push({text: raw, line, offset, byteOffset});
     if (newline < 0) break;
+    byteOffset += Buffer.byteLength(text.slice(offset, newline + 1), "utf8");
     offset = newline + 1;
     line += 1;
   }
-  if (text.length === 0 || text.endsWith("\n")) result.push({text: "", line, offset: text.length});
+  if (text.length === 0 || text.endsWith("\n"))
+    result.push({text: "", line, offset: text.length, byteOffset});
   return result;
 }
 
 function span(path: string, line: SourceLine, startColumn: number, endColumn: number): SourceSpan {
+  const byteAt = (column: number) => line.byteOffset +
+    Buffer.byteLength(line.text.slice(0, column - 1), "utf8");
   return {
     path,
-    start: {line: line.line, column: startColumn, offset: line.offset + startColumn - 1},
-    end: {line: line.line, column: endColumn, offset: line.offset + endColumn - 1},
+    start: {line: line.line, column: startColumn, offset: byteAt(startColumn)},
+    end: {line: line.line, column: endColumn, offset: byteAt(endColumn)},
   };
 }
 

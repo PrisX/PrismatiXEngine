@@ -4,6 +4,8 @@
 
 ### 2026-09-27—28 後續進度
 
+- **作者來源位置的 offset 已統一為 UTF-8 byte。** JSON pointer 與 Story 指令／跨 scene 重複 ID 診斷過去在中文字或 emoji 後仍用 UTF-16 索引，與 CLI 來源定位不一致。現 `SourcePosition.offset` 明定為 UTF-8 byte，`column` 仍為 UTF-16 code units；Story 產生 operation ID 的既有 UTF-16 seed 保持不變。持久化 scene cache 的內部格式升至 revision 2，舊位置不會混用。多位元組字元、重複 JSON 鍵及舊 Story ID 回歸通過；Authoring SDK 176/176、CLI 116/116（另 1 項 native E2E 依環境跳過）全套通過；以新版 CLI 對 Senren 四語 368 scenes／31,339 resources 唯讀 `validate --runtime` 通過。
+
 - **直接 overlay 的 Player／runtime 靜態檔免做第二次完整雜湊。** 正式 artifact→overlay 路徑先在 Windows 對基底靜態檔與所選 Player／相鄰 runtime library 持有只允許其他讀者的 handle，再完整雜湊並比對；寫入後、發布前重新列出兩側檔名集合並核對基底 metadata，不重讀這些已鎖住的 bytes。新增原生契約驗證寫入期間基底 Player／DLL、來源 Player／DLL 都無法修改，簽章成品獨立驗證通過；Release Packager Contract／Runtime Resources 2/2 通過。非 Windows 維持發布前再次完整比對。尚未在大型真實發行版量測此單獨改動的延遲收益；artifact 與基底 PDX 仍各做一次全量讀驗，這不等於依賴級增量構建。
 
 - **Host UI contract 錯誤可指出作者設定位置。** `authoring.uiContract` 的 envelope、`values`、缺型別的 `roots` 與 `formatters` 宣告出錯時，SDK 會在原始 project JSON 的有效欄位附上 span；CLI 對 `prismatix.json` 會回報實際作者路徑。只在該 contract 子樹與編譯輸入一致時定位，文字過期就保留無 span 的錯誤。Authoring SDK 174/174、CLI 116/116（另 1 項 native E2E 依環境跳過）全套通過；以新版 CLI 對 Senren 四語 368 scenes／31,339 resources 唯讀 `validate --runtime` 通過。

@@ -5,6 +5,7 @@ export type DiagnosticSeverity = "error" | "warning" | "information";
 export interface SourcePosition {
   readonly line: number;
   readonly column: number;
+  /** UTF-8 byte offset in the authored source; column counts UTF-16 code units. */
   readonly offset: number;
 }
 

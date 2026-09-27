@@ -1276,8 +1276,10 @@ test("validate locates invalid host UI contract values in the author manifest", 
   const value = await fixture();
   try {
     const project = JSON.parse(await readFile(value.project, "utf8")) as {
+      name?: string;
       settings?: Record<string, unknown>;
     };
+    project.name = "雪🌸";
     project.settings = {"authoring.uiContract": {
       format: "PrismatiXUiContract", schemaRevision: 1,
       roots: ["dialogue"], values: {dialogue: "object", "dialogue..bad": "string"},
@@ -1294,7 +1296,8 @@ test("validate locates invalid host UI contract values in the author manifest", 
     });
     const issue = diagnostics.find((item) => item.code === "PXBUILD1090");
     assert.equal(issue?.span?.path, "prismatix.json", validated.stderr);
-    assert.equal(source.slice(issue.span.start.offset, issue.span.end.offset), '"string"');
+    assert.equal(Buffer.from(source).subarray(issue.span.start.offset,
+      issue.span.end.offset).toString("utf8"), '"string"');
   } finally {
     await rm(value.root, {recursive: true, force: true});
   }

@@ -26,7 +26,15 @@ export function jsonPointerSpans(source: string | undefined, expected: unknown,
     const lineStarts = [0];
     for (let index = 0; index < source.length; index += 1)
       if (source[index] === "\n") lineStarts.push(index + 1);
+    let locatedUtf16 = 0;
+    let locatedBytes = 0;
     const position = (offset: number) => {
+      // JSON values are visited in source order: each parent start is located
+      // before its children, and its end after them. Count each UTF-8 byte
+      // once without allocating a source-sized offset table.
+      if (offset < locatedUtf16) throw new Error("JSON source offsets are not ordered");
+      locatedBytes += Buffer.byteLength(source.slice(locatedUtf16, offset), "utf8");
+      locatedUtf16 = offset;
       let low = 0;
       let high = lineStarts.length;
       while (low + 1 < high) {
@@ -34,11 +42,13 @@ export function jsonPointerSpans(source: string | undefined, expected: unknown,
         if (lineStarts[middle]! <= offset) low = middle;
         else high = middle;
       }
-      return {line: low + 1, column: offset - lineStarts[low]! + 1, offset};
+      return {line: low + 1, column: offset - lineStarts[low]! + 1,
+        offset: locatedBytes};
     };
     const value = (pointer: string): void => {
       whitespace();
       const start = cursor;
+      const startPosition = position(start);
       if (source[cursor] === "{") {
         cursor += 1; whitespace();
         while (source[cursor] !== "}") {
@@ -66,7 +76,7 @@ export function jsonPointerSpans(source: string | undefined, expected: unknown,
         while (cursor < source.length && !/[ \t\r\n,\]}]/u.test(source[cursor]!))
           cursor += 1;
       }
-      spans.set(pointer, {path, start: position(start), end: position(cursor)});
+      spans.set(pointer, {path, start: startPosition, end: position(cursor)});
     };
     value("");
   } catch {

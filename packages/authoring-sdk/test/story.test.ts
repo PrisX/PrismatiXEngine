@@ -397,6 +397,19 @@ test("if expressions preserve comparison operators and quoted equals through Sto
   assert.equal(assignment.nodes[0]?.arguments?.[0]?.span.start.offset, 11);
 });
 
+test("Story spans use UTF-8 offsets without changing generated operation ids", () => {
+  const source = "雪: 你好\n[end]\n";
+  const parsed = parseStory(source, "Story/example.pxstory");
+  const ending = parsed.nodes[1];
+  assert.equal(parsed.nodes[0]?.id, "story-9b9af225d160ec5e");
+  assert.equal(ending?.id, "story-0244633fd1dd8653");
+  assert.equal(ending?.span.start.column, 1);
+  assert.equal(ending?.span.start.offset,
+    Buffer.byteLength("雪: 你好\n", "utf8"));
+  assert.equal(Buffer.from(source).subarray(ending!.span.start.offset,
+    ending!.span.end.offset).toString("utf8"), "[end]");
+});
+
 test("character placement names and authored moves lower to explicit Runtime commands", () => {
   const compiled = compileStory(
     parseStory(`[show yuki position=left x=24 scale=0.8]\n[move yuki position=right x=-48 y=32 scale=1 duration=450ms ease=easeInOut wait=true]\n`, "Story/placement.pxstory"),

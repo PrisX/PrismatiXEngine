@@ -122,7 +122,10 @@ test("Story scene cache survives serialization and invalidates edited sources", 
     [["scene01", false], ["scene02", true]]);
   assert.deepEqual(edited.runtimeIr,
     compileStoryProject({storyIndex, locale: "zh-TW", sourceFiles: editedSources}).runtimeIr);
-  assert.throws(() => restored.importScenes({format: "PrismatiXStorySceneCache/1",
+  assert.throws(() => restored.importScenes({
+    ...(original.exportScenes() as object), format: "PrismatiXStorySceneCache/1",
+  }), "old UTF-16 source offsets cannot be reused as byte offsets");
+  assert.throws(() => restored.importScenes({format: "PrismatiXStorySceneCache/2",
     locales: [{locale: "zh-TW", compileInputs: "", labels: "", scenes: [{}]}]}));
 });
 
@@ -245,14 +248,18 @@ test("shared Story identityNamespace rejects duplicate authored ids", () => {
     ...storyIndex,
     scenes: storyIndex.scenes.map((scene) => ({...scene, identityNamespace: "legacy:main"})),
   };
+  const duplicateSource = "*start\n[id duplicate]\n雪: Second.\n*aside\n[end]\n";
   const compiled = compileStoryProject({storyIndex: index, locale: "zh-TW", sourceFiles: {
     "zh-TW/ch01/scene01.pxstory": "*start\n[id duplicate]\nFirst.\n[end]\n",
-    "zh-TW/ch01/scene02.pxstory": "*start\n[id duplicate]\nSecond.\n*aside\n[end]\n",
+    "zh-TW/ch01/scene02.pxstory": duplicateSource,
   }});
   assert.equal(compiled.valid, false);
   const duplicate = compiled.diagnostics.find((diagnostic) => diagnostic.code === "PXSTORY1308");
   assert.equal(duplicate?.path, "zh-TW/ch01/scene02.pxstory");
   assert.equal(duplicate?.span?.start.line, 3);
+  assert.ok(duplicate?.span);
+  assert.equal(Buffer.from(duplicateSource).subarray(duplicate.span.start.offset,
+    duplicate.span.end.offset).toString("utf8"), "雪: Second.");
   assert.ok(duplicate?.details?.includes("zh-TW/ch01/scene01.pxstory:3"));
 });
 
