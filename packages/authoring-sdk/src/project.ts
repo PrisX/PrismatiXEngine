@@ -296,32 +296,54 @@ function localeRuntimePath(locale: string, extension: "pxir" | "pxmap"): string 
   return `Runtime/Locales/${locale}/main.${extension}`;
 }
 
-function localizedArguments(
-  operation: RuntimeIrDocument["operations"][number],
+function localizedArgument(kind: string, key: string): boolean {
+  if (key === "text" && (kind === "dialogue" || kind === "narration" ||
+      kind === "choiceOption")) return true;
+  // The visible speaker is localized presentation; character is stable identity.
+  if (key === "speaker" && kind === "dialogue") return true;
+  return key === "asset" && (kind === "background" || kind === "voice" ||
+    kind === "bgm" || kind === "soundEffect" || kind === "ambience");
+}
+
+function comparableCustomValue(value: string | undefined,
+  parameters: ReadonlySet<string> | undefined): string | undefined {
+  if (value === undefined || parameters === undefined) return value;
+  const decoded = JSON.parse(value) as unknown;
+  if (decoded === null || typeof decoded !== "object" || Array.isArray(decoded)) return value;
+  const normalized = {...decoded as Record<string, JsonValue>};
+  for (const parameter of parameters) delete normalized[parameter];
+  return canonicalJson(normalized, false).trim();
+}
+
+function sameLocalizedArguments(
+  left: RuntimeIrDocument["operations"][number],
+  right: RuntimeIrDocument["operations"][number],
   customResourceParameters: ReadonlyMap<string, ReadonlySet<string>>,
-):
-Readonly<Record<string, string>> {
-  const result: Record<string, string> = {...operation.arguments};
-  if (["dialogue", "narration", "choiceOption"].includes(operation.kind))
-    delete result.text;
-  // The visible speaker is localized presentation, while character remains
-  // the stable actor identity and is still compared across locales.
-  if (operation.kind === "dialogue") delete result.speaker;
-  if (["background", "voice", "bgm", "soundEffect", "ambience"].includes(operation.kind))
-    delete result.asset;
-  if (operation.kind === "customNode") {
-    const parameters = customResourceParameters.get(result.type ?? "");
-    if (parameters !== undefined && result.value !== undefined) {
-      const decoded = JSON.parse(result.value) as unknown;
-      if (decoded !== null && typeof decoded === "object" &&
-          !Array.isArray(decoded)) {
-        const normalized = {...decoded as Record<string, JsonValue>};
-        for (const parameter of parameters) delete normalized[parameter];
-        result.value = canonicalJson(normalized, false).trim();
-      }
-    }
+): boolean {
+  // Runtime IR arguments are string-valued. Comparing their key sets and
+  // values avoids sorting and serializing every operation in every locale.
+  const leftArguments = left.arguments;
+  const rightArguments = right.arguments;
+  let comparableCount = 0;
+  for (const key of Object.keys(leftArguments)) {
+    if (localizedArgument(left.kind, key)) continue;
+    if (!Object.hasOwn(rightArguments, key)) return false;
+    const leftValue = key === "value" && left.kind === "customNode"
+      ? comparableCustomValue(leftArguments.value,
+          customResourceParameters.get(leftArguments.type ?? ""))
+      : leftArguments[key];
+    const rightValue = key === "value" && right.kind === "customNode"
+      ? comparableCustomValue(rightArguments.value,
+          customResourceParameters.get(rightArguments.type ?? ""))
+      : rightArguments[key];
+    if (typeof leftValue !== "string" || typeof rightValue !== "string" ||
+        leftValue !== rightValue) return false;
+    comparableCount++;
   }
-  return result;
+  let rightCount = 0;
+  for (const key of Object.keys(rightArguments))
+    if (!localizedArgument(right.kind, key)) rightCount++;
+  return comparableCount === rightCount;
 }
 
 function alignLocalizedProgram(
@@ -343,8 +365,7 @@ function alignLocalizedProgram(
   const operations = localized.runtimeIr.operations.map((operation, index) => {
     const canonical = base.runtimeIr.operations[index]!;
     if (operation.kind !== canonical.kind ||
-        canonicalJson(localizedArguments(operation, customResourceParameters), false) !==
-          canonicalJson(localizedArguments(canonical, customResourceParameters), false)) {
+        !sameLocalizedArguments(operation, canonical, customResourceParameters)) {
       invalid = true;
       diagnostics.push(issue("PXBUILD1031",
         `Story locale ${locale} changes control flow or a non-localizable command at operation ${index}`,

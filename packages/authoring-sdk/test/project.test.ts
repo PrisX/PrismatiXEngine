@@ -813,6 +813,11 @@ test("compileProject publishes aligned RuntimeIR and source maps for every Story
   assert.ok(wrongActor.diagnostics.some((diagnostic) =>
     diagnostic.code === "PXBUILD1031"));
 
+  const wrongCue = compile("*start\n[bg asset=opening.background]\n[voice asset=opening.voice]\n[localized.cue media=opening.voice cue=changed]\n@hero\nおはよう。\n[choice text=残る goto=end]\n*end\n[end]\n");
+  assert.equal(wrongCue.valid, false);
+  assert.ok(wrongCue.diagnostics.some((diagnostic) =>
+    diagnostic.code === "PXBUILD1031"));
+
   const structurallyDifferent = compile("*start\n[bg asset=opening.background]\n[voice asset=opening.voice]\n[localized.cue media=opening.voice cue=opening]\n@hero\nおはよう。\n[set route=branch]\n[choice text=残る goto=end]\n*end\n[end]\n");
   assert.equal(structurallyDifferent.valid, false);
   assert.ok(structurallyDifferent.diagnostics.some((diagnostic) =>
