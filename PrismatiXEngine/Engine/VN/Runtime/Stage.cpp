@@ -209,64 +209,16 @@ const Stage::LayeredPortrait* Stage::ResolveLayeredPortrait(
        found!=m_layeredPortraits.end())return &found->second;
     if(m_invalidLayeredPortraits.contains(path))return nullptr;
     const auto text=m_assets.ReadTextAsset(path);
-    const nlohmann::json document=text
-        ? nlohmann::json::parse(*text,nullptr,false)
-        : nlohmann::json{};
-    if(!text||document.is_discarded()||!document.is_object()||
-       document.value("format",std::string{})!="PrismatiXLayeredPortrait"||
-       (document.value("schemaRevision",0)!=1 &&
-        document.value("schemaRevision",0)!=2)||
-       !document.contains("layers")||!document["layers"].is_array()){
+    auto portrait=text ? sdk::ParseLayeredPortrait(*text) : std::nullopt;
+    if(!portrait){
         m_invalidLayeredPortraits[path]=true;
         PX_LOG_WARN("Stage: invalid layered portrait descriptor '{}'",path);
         return nullptr;
     }
-    LayeredPortrait portrait;
-    portrait.schemaRevision=document.value("schemaRevision",1);
-    portrait.width=document.value("width",0.0f);
-    portrait.height=document.value("height",0.0f);
-    for(const auto& value:document["layers"]){
-        if(!value.is_object()||!value.contains("path")||
-           !value["path"].is_string())continue;
-        PortraitLayer layer;
-        const auto role=value.find("role");
-        if(portrait.schemaRevision==2){
-            if(role==value.end()||!role->is_string()){
-                m_invalidLayeredPortraits[path]=true;
-                PX_LOG_WARN("Stage: revision-2 portrait layer lacks a role '{}'",path);
-                return nullptr;
-            }
-            const auto name=role->get<std::string>();
-            if(name=="base")layer.role=PortraitLayer::Role::Base;
-            else if(name=="expression")layer.role=PortraitLayer::Role::Expression;
-            else{
-                m_invalidLayeredPortraits[path]=true;
-                PX_LOG_WARN("Stage: revision-2 portrait layer has invalid role '{}'",path);
-                return nullptr;
-            }
-        }else if(role!=value.end()){
-            m_invalidLayeredPortraits[path]=true;
-            PX_LOG_WARN("Stage: revision-1 portrait cannot declare roles '{}'",path);
-            return nullptr;
-        }
-        layer.path=value["path"].get<std::string>();
-        layer.x=value.value("x",0.0f);
-        layer.y=value.value("y",0.0f);
-        layer.width=value.value("width",0.0f);
-        layer.height=value.value("height",0.0f);
-        layer.opacity=static_cast<std::uint8_t>(std::clamp(
-            value.value("opacity",255),0,255));
-        if(layer.path.empty()||layer.width<=0.0f||layer.height<=0.0f)continue;
+    for(const auto& layer:portrait->layers)
         m_assets.PreloadTexture(layer.path,
             graphics::AssetPreloadPriority::High);
-        portrait.layers.push_back(std::move(layer));
-    }
-    if(portrait.width<=0.0f||portrait.height<=0.0f||portrait.layers.empty()){
-        m_invalidLayeredPortraits[path]=true;
-        PX_LOG_WARN("Stage: empty layered portrait descriptor '{}'",path);
-        return nullptr;
-    }
-    return &m_layeredPortraits.emplace(path,std::move(portrait)).first->second;
+    return &m_layeredPortraits.emplace(path,std::move(*portrait)).first->second;
 }
 
 void Stage::PreloadCharacter(const std::string& imagePath) {

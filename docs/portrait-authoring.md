@@ -50,11 +50,17 @@ transition flags; it does not infer semantic roles from filenames.
 
 The Authoring project compiler validates reachable descriptors and includes
 their layer textures from Story, UI action arguments, locale resources,
-explicit includes, or asset-catalog references. A UI texture control does not
-render `.pxportrait` directly; the Stage does. Missing or malformed descriptors
-fail before packaging. Direct `compileProject` callers must provide the
-descriptor text in `sourceFiles` or
-through `resourceText`; the CLI reads it from the project directory. The
-Runtime Stage composes the layers; this format does not yet offer an Editor
-inspector, per-layer animation, or dynamic dress/pose/face selection within a
-single descriptor. Those remain separate authoring/runtime work.
+explicit includes, or asset-catalog references. A UI `TextureRect` can use a
+`.pxportrait` as its `path` (including JSX `<Image path="...pxportrait" />`).
+It fits the portrait canvas into the control and draws ordered layers with
+their authored opacity; `scaleMode` and alignment work as for ordinary images.
+The Player and preview hosts load the descriptor through their UI text asset
+loader and preload its layer textures before showing a new scene. Dynamic
+`path` changes also resolve the descriptor, retaining the previous image if
+the new layer textures are still loading. Missing or malformed descriptors
+fail before packaging or UI installation.
+
+Direct `compileProject` callers must provide the descriptor text in
+`sourceFiles` or through `resourceText`; the CLI reads it from the project
+directory. This format does not yet offer an Editor inspector, per-layer
+animation, or dynamic dress/pose/face selection within a single descriptor.

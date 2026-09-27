@@ -217,6 +217,40 @@ int main() {
                      "motion descriptor expands to image layers before presentation");
     });
 
+    suite.Run("PortraitDependencies_ArePreloadedThroughAuthoredUi", [&] {
+        auto portrait = Scene("portrait", false);
+        portrait.nodes[1].runtimeType = "TextureRect";
+        portrait.nodes[1].kind = px::sdk::UiNodeKind::Image;
+        portrait.nodes[1].runtimeProperties.emplace("path", std::string{"Assets/Hero.pxportrait"});
+        constexpr auto descriptor = R"({"format":"PrismatiXLayeredPortrait",
+          "schemaRevision":2,"width":320,"height":480,"layers":[
+          {"path":"Assets/Hero/base.png","width":320,"height":480,"role":"base"},
+          {"path":"Assets/Hero/face.png","x":40,"y":60,"width":80,"height":80,
+           "role":"expression"}]})";
+        const auto loader = [](std::string_view path) -> std::optional<std::string> {
+            return path == "Assets/Hero.pxportrait"
+                ? std::optional<std::string>{descriptor} : std::nullopt;
+        };
+        const auto dependencies = px::ui::CollectUiImageDependencies(
+            portrait, {}, {}, loader);
+        suite.Expect(dependencies && dependencies.Value() ==
+                         std::vector<std::string>{"Assets/Hero/base.png", "Assets/Hero/face.png"},
+                     "portrait descriptor expands to ordered layers before presentation");
+        auto catalogPortrait = portrait;
+        catalogPortrait.nodes[1].runtimeProperties.erase("path");
+        catalogPortrait.nodes[1].assetId = "11111111-1111-4111-8111-111111111111";
+        const auto catalogDependencies = px::ui::CollectUiImageDependencies(
+            catalogPortrait,
+            [](std::string_view) -> std::optional<std::string> {
+                return std::string{"Assets/Hero.pxportrait"};
+            }, {}, loader);
+        suite.Expect(catalogDependencies && catalogDependencies.Value() ==
+                         std::vector<std::string>{"Assets/Hero/base.png", "Assets/Hero/face.png"},
+                     "catalog-referenced portrait also expands to image layers");
+        const auto missing = px::ui::CollectUiImageDependencies(portrait);
+        suite.Expect(!missing, "portrait without text loader fails before scene installation");
+    });
+
     suite.Run("MotionMarkers_ReachSplashAudioService", [&] {
         auto scene = Scene("motion-markers", false);
         scene.nodes[1].runtimeType = "MotionRect";

@@ -64,6 +64,7 @@ add_library(PrismatiXRuntimeContracts STATIC
     Engine/SDK/CharacterResources.cpp
     Engine/SDK/GameCatalogResources.cpp
     Engine/SDK/Motion.cpp
+    Engine/SDK/Portrait.cpp
     Engine/SDK/PackageManifest.cpp
     Engine/SDK/RuntimeIr.cpp
     Engine/SDK/SourceMap.cpp

@@ -35,9 +35,10 @@ struct UiComponentSource {
 };
 
 using UiComponentLoader = std::function<std::optional<UiComponentSource>(std::string_view)>;
+// Historical name; also loads .pxportrait text for TextureRect.
 using UiMotionLoader = std::function<std::optional<std::string>(std::string_view)>;
 
-// Resolves authored components and layered-motion descriptors before a UI
+// Resolves authored components and layered motion/portrait descriptors before a UI
 // scene is installed, so a host can preload its static image dependencies.
 // Runtime bindings may introduce additional paths later.
 [[nodiscard]] Result<std::vector<std::string>> CollectUiImageDependencies(

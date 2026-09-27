@@ -5,6 +5,7 @@
 #include "Engine/Graphics/CustomEffect.h"
 #include "Engine/Graphics/Texture.h"
 #include "Engine/SDK/Motion.h"
+#include "Engine/SDK/Portrait.h"
 #include "Engine/VN/Runtime/ParticleSystem.h"
 
 #include <cstdint>
@@ -251,22 +252,8 @@ public:
     [[nodiscard]] const std::string& BackgroundPath() const { return m_bgPath; }
 
 private:
-    struct PortraitLayer {
-        enum class Role : std::uint8_t { Legacy, Base, Expression };
-        std::string path;
-        float x = 0.0f;
-        float y = 0.0f;
-        float width = 0.0f;
-        float height = 0.0f;
-        std::uint8_t opacity = 255;
-        Role role = Role::Legacy;
-    };
-    struct LayeredPortrait {
-        int schemaRevision = 1;
-        float width = 0.0f;
-        float height = 0.0f;
-        std::vector<PortraitLayer> layers;
-    };
+    using PortraitLayer = sdk::PortraitLayer;
+    using LayeredPortrait = sdk::LayeredPortrait;
     [[nodiscard]] const LayeredPortrait* ResolveLayeredPortrait(
         const std::string& path);
 

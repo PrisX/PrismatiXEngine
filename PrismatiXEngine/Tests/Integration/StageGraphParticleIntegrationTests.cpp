@@ -2,6 +2,8 @@
 #include "Engine/Graphics/Renderer2D.h"
 #include "Engine/IO/VFS.h"
 #include "Engine/VN/Runtime/Stage.h"
+#include "Engine/UI/Theme.h"
+#include "Engine/UI/Widgets.h"
 #include "Tests/TestSupport/TestHarness.h"
 
 #include <SDL3/SDL.h>
@@ -161,6 +163,51 @@ int main() {
             suite.Expect(waitForTexture("replacement.bmp") &&
                              !assets.HasResidentTexture("body.bmp"),
                          "a new asset session reloads changed portrait layers");
+        }
+        SDL_DestroyRenderer(native);
+        SDL_DestroySurface(surface);
+    });
+
+    suite.Run("TextureRectCompositesPortraitLayers", [&] {
+        px::test::TempDirectory fixture("ui-layered-portrait");
+        suite.Require(SaveSolidBmp(fixture.path / "body.bmp", 16, 16,
+                                   {240, 20, 30, 255}) &&
+                      SaveSolidBmp(fixture.path / "face.bmp", 8, 16,
+                                   {20, 40, 240, 255}),
+                      "UI portrait layer textures are available");
+        {
+            std::ofstream descriptor(fixture.path / "hero.pxportrait");
+            descriptor << R"({"format":"PrismatiXLayeredPortrait","schemaRevision":2,
+                "width":16,"height":16,"layers":[
+                {"path":"body.bmp","width":16,"height":16,"role":"base"},
+                {"path":"face.bmp","x":8,"width":8,"height":16,"role":"expression"}]})";
+        }
+        SDL_Surface* surface = SDL_CreateSurface(64, 64, SDL_PIXELFORMAT_RGBA32);
+        suite.Require(surface != nullptr, "UI portrait surface initializes");
+        SDL_Renderer* native = SDL_CreateSoftwareRenderer(surface);
+        suite.Require(native != nullptr, "UI portrait renderer initializes");
+        {
+            px::io::VFS vfs;
+            vfs.MountDirectory(fixture.path.string());
+            px::graphics::AssetCache assets(native, vfs);
+            px::graphics::Renderer2D renderer(native, assets);
+            renderer.SetLogicalSize(64, 64);
+            suite.Require(assets.Texture("body.bmp") && assets.Texture("face.bmp"),
+                          "UI portrait textures decode before rendering");
+            px::ui::TextureRect image("hero.pxportrait");
+            suite.Require(image.SetSourceLoader([&](std::string_view path) {
+                return vfs.ReadText(path);
+            }).IsOk(), "UI portrait descriptor loads through VFS");
+            image.Arrange({0, 0, 64, 64});
+            SDL_SetRenderDrawColor(native, 0, 0, 0, 255);
+            SDL_RenderClear(native);
+            image.Draw(renderer, px::ui::Theme{});
+            SDL_RenderPresent(native);
+            const Pixel body = ReadPixel(surface, 12, 32);
+            const Pixel face = ReadPixel(surface, 52, 32);
+            suite.Expect(body.r > 220 && body.b < 60 && face.b > 220 &&
+                             face.r < 60,
+                         "TextureRect draws ordered portrait layers at canvas scale");
         }
         SDL_DestroyRenderer(native);
         SDL_DestroySurface(surface);

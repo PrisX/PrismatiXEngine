@@ -479,19 +479,110 @@ void TextureButton::CollectImageDependencies(std::vector<std::string>& paths) co
 }
 
 void TextureRect::SetOpacity(float value) { m_opacity = std::clamp(value, 0.0f, 1.0f); }
-void TextureRect::CollectImageDependencies(std::vector<std::string>& paths) const {
-    if (!m_path.empty()) paths.push_back(m_path);
-}
-void TextureRect::DrawSelf(graphics::Renderer2D& renderer, const Theme&) {
+Status TextureRect::SetPath(std::string value) {
+    std::optional<sdk::LayeredPortrait> portrait;
+    if (value.ends_with(".pxportrait") && m_loader) {
+        const auto text = m_loader(value);
+        if (!text) {
+            diag::Diagnostic diagnostic{.severity = diag::Severity::Error,
+                .code = "PXUIPORTRAIT1001", .category = "UI.Portrait",
+                .message = "Portrait descriptor is missing: " + value};
+            diagnostic.source.path = value;
+            return Status::Fail(std::move(diagnostic));
+        }
+        portrait = sdk::ParseLayeredPortrait(*text);
+        if (!portrait) {
+            diag::Diagnostic diagnostic{.severity = diag::Severity::Error,
+                .code = "PXUIPORTRAIT1002", .category = "UI.Portrait",
+                .message = "Portrait descriptor is invalid: " + value};
+            diagnostic.source.path = value;
+            return Status::Fail(std::move(diagnostic));
+        }
+    }
+    m_path = std::move(value);
+    m_portrait = std::move(portrait);
+    if (m_portrait) m_displayPortraitPath.clear();
     if (m_path.empty()) {
         m_displayPath.clear();
-        return;
+        m_displayPortrait.reset();
+        m_displayPortraitPath.clear();
     }
-    renderer.PreloadImage(m_path);
-    if (renderer.ImageReady(m_path)) m_displayPath = m_path;
-    if (!m_displayPath.empty() && renderer.ImageReady(m_displayPath))
+    return Status::Ok();
+}
+Status TextureRect::SetTexture(ResourceRefValue value) {
+    if (const auto status = SetPath(value.lastKnownPath); !status) return status;
+    m_texture = std::move(value);
+    return Status::Ok();
+}
+Status TextureRect::SetSourceLoader(SourceLoader loader) {
+    if (!loader && m_path.ends_with(".pxportrait")) {
+        diag::Diagnostic diagnostic{.severity = diag::Severity::Error,
+            .code = "PXUIPORTRAIT1003", .category = "UI.Portrait",
+            .message = "TextureRect requires a portrait source loader"};
+        diagnostic.source.path = m_path;
+        return Status::Fail(std::move(diagnostic));
+    }
+    auto previous = std::move(m_loader);
+    m_loader = std::move(loader);
+    const auto status = SetPath(m_path);
+    if (!status) m_loader = std::move(previous);
+    return status;
+}
+void TextureRect::CollectImageDependencies(std::vector<std::string>& paths) const {
+    if (m_portrait) {
+        for (const auto& layer : m_portrait->layers) paths.push_back(layer.path);
+    } else if (!m_path.empty() && !m_path.ends_with(".pxportrait")) {
+        paths.push_back(m_path);
+    }
+}
+void TextureRect::DrawSelf(graphics::Renderer2D& renderer, const Theme&) {
+    if (m_portrait) {
+        bool ready = true;
+        for (const auto& layer : m_portrait->layers) {
+            renderer.PreloadImage(layer.path);
+            ready = renderer.ImageReady(layer.path) && ready;
+        }
+        if (ready && m_displayPortraitPath != m_path) {
+            m_displayPortrait = *m_portrait;
+            m_displayPortraitPath = m_path;
+            m_displayPath.clear();
+        }
+    } else if (!m_path.empty() && !m_path.ends_with(".pxportrait")) {
+        renderer.PreloadImage(m_path);
+        if (renderer.ImageReady(m_path)) {
+            m_displayPath = m_path;
+            m_displayPortrait.reset();
+            m_displayPortraitPath.clear();
+        }
+    }
+    if (m_displayPortrait) {
+        const auto& portrait = *m_displayPortrait;
+        const Rect bounds = LayoutRect();
+        if (bounds.w <= 0 || bounds.h <= 0) return;
+        float scaleX = bounds.w / portrait.width;
+        float scaleY = bounds.h / portrait.height;
+        if (m_scaleMode == TextureScaleMode::Fit) scaleX = scaleY = std::min(scaleX, scaleY);
+        else if (m_scaleMode == TextureScaleMode::Fill) scaleX = scaleY = std::max(scaleX, scaleY);
+        else if (m_scaleMode == TextureScaleMode::Original) scaleX = scaleY = 1.0f;
+        const float width = portrait.width * scaleX;
+        const float height = portrait.height * scaleY;
+        float x = bounds.x, y = bounds.y;
+        if (m_horizontalAlignment == HorizontalTextAlignment::Center) x += (bounds.w - width) * 0.5f;
+        else if (m_horizontalAlignment == HorizontalTextAlignment::Right) x += bounds.w - width;
+        if (m_verticalAlignment == VerticalTextAlignment::Center) y += (bounds.h - height) * 0.5f;
+        else if (m_verticalAlignment == VerticalTextAlignment::Bottom) y += bounds.h - height;
+        renderer.PushClip(bounds);
+        for (const auto& layer : portrait.layers) {
+            renderer.DrawImage(layer.path,
+                {x + layer.x * scaleX, y + layer.y * scaleY,
+                 layer.width * scaleX, layer.height * scaleY},
+                static_cast<std::uint8_t>(m_opacity * layer.opacity));
+        }
+        renderer.PopClip();
+    } else if (!m_displayPath.empty() && renderer.ImageReady(m_displayPath)) {
         renderer.DrawImageInRect(m_displayPath,LayoutRect(),ToScaleMode(m_scaleMode),
             Horizontal(m_horizontalAlignment),Vertical(m_verticalAlignment),static_cast<std::uint8_t>(m_opacity*255.0f));
+    }
 }
 
 Status MotionRect::SetPath(std::string value) {

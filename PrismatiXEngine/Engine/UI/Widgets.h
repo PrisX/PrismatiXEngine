@@ -4,6 +4,7 @@
 #include "Engine/UI/Control.h"
 #include "Engine/Graphics/Texture.h"
 #include "Engine/SDK/Motion.h"
+#include "Engine/SDK/Portrait.h"
 
 #include <algorithm>
 #include <functional>
@@ -241,16 +242,15 @@ private:
 
 class TextureRect : public Control {
 public:
+    using SourceLoader = std::function<std::optional<std::string>(std::string_view)>;
     explicit TextureRect(std::string path = {}, std::string name = "TextureRect")
         : Control(std::move(name)), m_path(std::move(path)) { SetMouseFilter(MouseFilter::Ignore); }
     [[nodiscard]] std::string_view TypeName() const override { return "TextureRect"; }
-    void SetPath(std::string value) { m_path = std::move(value); }
+    Status SetPath(std::string value);
+    Status SetSourceLoader(SourceLoader loader);
     [[nodiscard]] const std::string& Path() const { return m_path; }
     void CollectImageDependencies(std::vector<std::string>& paths) const override;
-    void SetTexture(ResourceRefValue value) {
-        m_texture = std::move(value);
-        m_path = m_texture.lastKnownPath;
-    }
+    Status SetTexture(ResourceRefValue value);
     [[nodiscard]] const ResourceRefValue& Texture() const { return m_texture; }
     void SetOpacity(float value);
     [[nodiscard]] float Opacity() const { return m_opacity; }
@@ -267,6 +267,10 @@ protected:
 private:
     std::string m_path;
     std::string m_displayPath;
+    SourceLoader m_loader;
+    std::optional<sdk::LayeredPortrait> m_portrait;
+    std::optional<sdk::LayeredPortrait> m_displayPortrait;
+    std::string m_displayPortraitPath;
     ResourceRefValue m_texture;
     float m_opacity = 1.0f;
     TextureScaleMode m_scaleMode = TextureScaleMode::Stretch;

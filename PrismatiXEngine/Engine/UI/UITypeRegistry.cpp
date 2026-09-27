@@ -645,9 +645,9 @@ Status RegisterBuiltinUITypes() {
 
     TypeInfo texture{"TextureRect", "Control", "UI/Display", [] { return std::make_unique<TextureRect>(); }};
     auto texturePath = StringProperty("path", "Content", [](const Object& o) { return As<TextureRect>(o)->Path(); },
-        [](Object& o, std::string v) { As<TextureRect>(o)->SetPath(std::move(v)); return Status::Ok(); });
+        [](Object& o, std::string v) { return As<TextureRect>(o)->SetPath(std::move(v)); });
     texturePath.flags = texturePath.flags | PropertyFlags::ResourcePath;
-    texturePath.editor.displayName="Texture";texturePath.editor.resourceFilter="image";texturePath.editor.description="Image asset used by this TextureRect.";
+    texturePath.editor.displayName="Texture";texturePath.editor.resourceFilter="image";texturePath.editor.description="Image or .pxportrait descriptor used by this TextureRect.";
     texture.properties.push_back(std::move(texturePath));
     PropertyInfo textureReference{
         "texture", "Content", VariantType::ResourceRef,
@@ -658,8 +658,7 @@ Status RegisterBuiltinUITypes() {
             const auto* reference = value.TryGet<ResourceRefValue>();
             if (!reference)
                 return TypeError("texture expects a ResourceRef");
-            As<TextureRect>(o)->SetTexture(*reference);
-            return Status::Ok();
+            return As<TextureRect>(o)->SetTexture(*reference);
         }};
     textureReference.editor.displayName = "Texture asset";
     textureReference.editor.description = "UUID-authoritative image resource.";

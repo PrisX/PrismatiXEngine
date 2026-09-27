@@ -4,6 +4,7 @@
 
 ### 2026-09-27 後續進度
 
+- UI `TextureRect` 現可直接以 `path` 使用 `.pxportrait`，與 Stage 共用有界 descriptor 解析；靜態 UI 依賴預載會展開成圖層圖片，Runtime 換圖在新圖層載妥前保留舊圖。Native UI adapter／Splash／Stage＋UI 像素整合 targeted 3/3 通過；正式 Player 封裝尚未實測。
 - Authoring／CLI 使用原生 UI TypeRegistry 驗證 `runtimeProperties` 與 Visual State Group override 時，除名稱／型別外，現在也會拒絕不在 `enumChoices` 的字串，例如無效的 `bindingDevice` 或 `visibility`；不把編輯器的 numeric `range` 一律當 Runtime 硬限制。原生明確要求 0–100 的 `wheelThreshold` 則另外在 UI scene／component 編譯時拒絕錯誤值。Authoring SDK 156/156、列舉值改動後 CLI 104/104，以及 wheel 門檻補驗後的 CLI targeted 1/1 通過。
 - Player 更新鏈尋找現在先讀各 PDX 的小型 manifest，以 `basePackageFingerprint` 過濾與目前版本無關的候選檔；只有匹配者才做完整簽章、exact-base 文件及 payload 驗證，避免多段更新反覆全量驗證舊 PDX。Native Packager contract 1/1 通過，含逆檔名順序的兩段更新、選裝包及相同 base hint 的壞簽章拒絕；Player Catalog Native Acceptance 1/1 通過。這是驗證路徑減少，尚無 8 GB Player 啟動量測。
 - `WheelBindingButton` 現可在 TSX 設定頁擷取實體滾輪方向、顯示目前綁定、設定動作門檻與方向文字；可選 Delete 清除，Escape／再次點擊取消，成功時觸發 Player 的設定保存。擷取中的滾輪事件不再觸發舊動作或穿透到下層捲動。Authoring SDK 156/156 與 Native UI/Accessibility targeted 3/3 通過；正式封裝實按、舊設定 E2E 仍未做。
@@ -57,7 +58,7 @@
 | --- | --- | --- |
 | Story API／大型匯入 | `compileStoryProject` 解析跨 scene；單檔誤用會報 `PXSTORY1215`；368 份劇本以 sidecar 保存 531,812 個執行錨點，`ids --sync` 可預覽差異。`dev` 可在同一行程重用未變 scene 的 label 摘要與編譯結果。 | 仍會重讀所有 scene；通用持久增量／串流 importer、精確 source-span 診斷與移除／重排錨點的安全遷移策略仍缺。PSB→Story 目前是 Senren 私有轉換器。 |
 | 多語姓名與存檔 | `.pxcharacter.displayNames`、`@alias`／`@"顯示姓名"` 已可產出對應 speaker。 | Senren 為保留舊 operation kind 仍以 narration/name-prefix 為主，未整批採用；native／JS `say` 的姓名亦未自動本地化。必須先做舊存檔 migration 實測，才可改劇本操作種類。 |
-| 立繪 | `.pxportrait` rev 2 有 base／expression 標記、`transition=auto`、逐層淡化與前瞻／還原圖層預載；Senren 已產生 2,941 descriptor／761 共用圖層並通過 validate。 | UI `TextureRect` 不能直接呈現 descriptor；descriptor 內動態 dress／pose／face 編輯、所有角色 placement profile、原圖逐句畫面／首次出現 frame-time、舊存檔恢復均未完成正式驗收。最新大型發行包未因 rev 2 重建。 |
+| 立繪 | `.pxportrait` rev 2 有 base／expression 標記、`transition=auto`、逐層淡化與前瞻／還原圖層預載；UI `TextureRect` 可直接顯示 descriptor 並預載其圖層；Senren 已產生 2,941 descriptor／761 共用圖層並通過 validate。 | descriptor 內動態 dress／pose／face 編輯、所有角色 placement profile、原圖逐句畫面／首次出現 frame-time、舊存檔恢復均未完成正式驗收。最新大型發行包未因 rev 2 重建。 |
 | UI contract／素材依賴 | typed props、原生 TypeRegistry、Action 參數、canonical UiValue、UI 動態圖片預載、`ItemsPlaced`／`Modal` 已補。 | 執行期 ViewModel 路徑與自訂 formatter 的語意無完整靜態驗證；任意自訂繪圖、Story 中途素材與音效的預載無通用保證。18 個設定開關雖已模板化，動作仍是 `settings.noop`。 |
 | 文字與路由演出 | 已修文字 outline 雙層換行差異、未變文字每幀重排，以及 route crossfade 暗谷／預載閃白。 | 正式單次 layout/mask 的文字效果管線、依事件 author 的白幕／shader／遮罩轉場與通用 route motion graph 缺；最新大型封裝與原版逐幀對照未做。 |
 | `.pxmotion`／Story 動畫 | 格式已演進至 rev 11，TSX UI／splash 可播；Story `[timeline]` 可控 `.pxanim`／`.pxtimeline` 的 await/speed；新增 `[motion]`／`[motion.stop]` 直接在 Stage 播放 `.pxmotion`，含預載、音效 marker、等待與存檔還原。 | 尚缺以正式大型發行版驗證圖層畫面及音效時序；M2 `.mtn` 轉換器／逐幀驗證暫停。 |

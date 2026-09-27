@@ -516,12 +516,15 @@ std::optional<Rect> ItemPlacement(const Variant& item, std::string_view path) {
     return Rect{*x, *y, *width, *height};
 }
 
-Status ConfigureMotionControls(scene::Node& node, const UiMotionLoader& loader) {
+Status ConfigureDescriptorControls(scene::Node& node, const UiMotionLoader& loader) {
     if (auto* motion = dynamic_cast<MotionRect*>(&node)) {
         if (const auto status = motion->SetSourceLoader(loader); !status) return status;
     }
+    if (auto* texture = dynamic_cast<TextureRect*>(&node)) {
+        if (const auto status = texture->SetSourceLoader(loader); !status) return status;
+    }
     for (const auto& child : node.Children()) {
-        if (const auto status = ConfigureMotionControls(*child, loader); !status) return status;
+        if (const auto status = ConfigureDescriptorControls(*child, loader); !status) return status;
     }
     return Status::Ok();
 }
@@ -560,7 +563,7 @@ public:
                 "PXUISTUDIO2140", "UI item template has no Runtime root", m_sourcePath));
             return Status::Fail(std::move(diagnostics));
         }
-        if (const auto status = ConfigureMotionControls(*prototype.root, m_motionLoader); !status)
+        if (const auto status = ConfigureDescriptorControls(*prototype.root, m_motionLoader); !status)
             return status;
         CollectPaths(*prototype.root, {});
         for (const auto& node : m_document.nodes) {
@@ -671,7 +674,7 @@ public:
                                              m_sourcePath, issue.nodeId));
             return nullptr;
         }
-        if (const auto status = ConfigureMotionControls(*tree.root, m_motionLoader); !status) {
+        if (const auto status = ConfigureDescriptorControls(*tree.root, m_motionLoader); !status) {
             for (const auto& diagnostic : status.Diagnostics()) diag::Emit(diagnostic);
             return nullptr;
         }
@@ -832,12 +835,13 @@ Result<std::vector<std::string>> CollectUiImageDependencies(
         if (!path.empty() && seen.insert(path).second) paths.push_back(std::move(path));
     };
     for (const auto& node : resolved.Value().nodes) {
+        std::string assetPath;
         if (node.assetId) {
             const auto asset = resolveAsset ? resolveAsset(*node.assetId) : std::nullopt;
             if (!asset) return Result<std::vector<std::string>>::Failure(
                 ApplicationError("PXUISTUDIO2004", "UI image asset could not be resolved: " + *node.assetId,
                                  sourcePath, node.id, "assetId"));
-            add(*asset);
+            assetPath = *asset;
         }
         const auto path = [&](const std::string_view property) -> std::string {
             const auto found = node.runtimeProperties.find(std::string(property));
@@ -847,6 +851,7 @@ Result<std::vector<std::string>> CollectUiImageDependencies(
         };
         const std::string type = node.runtimeType.value_or(
             node.kind == sdk::UiNodeKind::Image ? "TextureRect" : "");
+        if (type != "TextureRect") add(assetPath);
         if (type == "MotionRect") {
             const std::string descriptor = path("path");
             if (descriptor.empty()) continue;
@@ -887,7 +892,23 @@ Result<std::vector<std::string>> CollectUiImageDependencies(
                 add(glyph["path"].get<std::string>());
             }
         } else if (type == "TextureRect" || type == "NinePatchRect") {
-            add(path("path"));
+            const std::string image = path("path").empty() ? assetPath : path("path");
+            if (type == "TextureRect" && image.ends_with(".pxportrait")) {
+                if (!loadMotion) return Result<std::vector<std::string>>::Failure(
+                    ApplicationError("PXUIPORTRAIT1003", "TextureRect requires a portrait source loader",
+                                     sourcePath, node.id, "runtimeProperties.path"));
+                const auto text = loadMotion(image);
+                if (!text) return Result<std::vector<std::string>>::Failure(
+                    ApplicationError("PXUIPORTRAIT1001", "Portrait descriptor is missing: " + image,
+                                     sourcePath, node.id, "runtimeProperties.path"));
+                const auto portrait = sdk::ParseLayeredPortrait(*text);
+                if (!portrait) return Result<std::vector<std::string>>::Failure(
+                    ApplicationError("PXUIPORTRAIT1002", "Portrait descriptor is invalid: " + image,
+                                     sourcePath, node.id, "runtimeProperties.path"));
+                for (const auto& layer : portrait->layers) add(layer.path);
+            } else {
+                add(image);
+            }
         } else if (type == "TextureButton") {
             for (const auto property : {"normalPath", "hoverPath", "pressedPath", "disabledPath"})
                 add(path(property));
@@ -1055,7 +1076,7 @@ Result<UiApplicationSummary> UiApplication::ApplyDocument(const sdk::UiDocument&
         diagnostics.push_back(ApplicationError("PXUISTUDIO2101", "UI document did not produce a Runtime root", sourcePath));
     }
     if (!diagnostics.empty()) return Result<UiApplicationSummary>::Failure(std::move(diagnostics));
-    if (const auto status = ConfigureMotionControls(*runtimeTree.root, options.loadMotion); !status)
+    if (const auto status = ConfigureDescriptorControls(*runtimeTree.root, options.loadMotion); !status)
         return Result<UiApplicationSummary>::Failure(status.Diagnostics());
 
     std::vector<Binding> propertyBindings;
@@ -1207,6 +1228,8 @@ Result<UiApplicationSummary> UiApplication::PatchDocumentProperties(const sdk::U
         diagnostics.push_back(ApplicationError("PXUISTUDIO2131", "UI document property patch did not produce a candidate Runtime root", options.sourcePath));
     }
     if (!diagnostics.empty()) return Result<UiApplicationSummary>::Failure(std::move(diagnostics));
+    if (const auto status = ConfigureDescriptorControls(*candidate.root, options.loadMotion); !status)
+        return Result<UiApplicationSummary>::Failure(status.Diagnostics());
 
     struct MetadataPatch {
         Control* target = nullptr;

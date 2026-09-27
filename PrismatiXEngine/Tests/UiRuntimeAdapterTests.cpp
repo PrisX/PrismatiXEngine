@@ -1309,6 +1309,41 @@ int main() {
     Check(applicationActions == 1, "shared application dispatches authored Actions through UIContext");
     Check(applicationButton->Opacity() == 0.25f, "shared application installs Behavior using the same activation");
 
+    auto portraitDocument = parsed.document;
+    auto portraitNode = std::ranges::find_if(portraitDocument.nodes,
+        [](const px::sdk::UiNode& node) { return node.name == "Logo"; });
+    Check(portraitNode != portraitDocument.nodes.end(), "portrait test image node must exist");
+    portraitNode->assetId.reset();
+    portraitNode->runtimeProperties["path"] = std::string{"Content/Portrait/logo.pxportrait"};
+    constexpr auto portraitSource = R"({
+      "format":"PrismatiXLayeredPortrait","schemaRevision":2,
+      "width":320,"height":120,"layers":[
+        {"path":"Assets/base.png","width":320,"height":120,"role":"base"},
+        {"path":"Assets/face.png","x":24,"y":5,"width":80,"height":80,
+         "opacity":180,"role":"expression"}]})";
+    px::ui::UIContext portraitContext;
+    px::ui::UiApplication portraitApplication(portraitContext);
+    const auto portraitLoader = [](std::string_view path) -> std::optional<std::string> {
+        return path == "Content/Portrait/logo.pxportrait"
+            ? std::optional<std::string>{portraitSource} : std::nullopt;
+    };
+    auto portraitApplied = portraitApplication.ApplyDocument(portraitDocument,
+        {.sourcePath = "Content/UI/Title.pxui", .loadMotion = portraitLoader});
+    Check(static_cast<bool>(portraitApplied), "authored TextureRect loads layered portrait");
+    auto* portrait = dynamic_cast<px::ui::TextureRect*>(portraitContext.Root()->Find(*imageId));
+    std::vector<std::string> portraitImages;
+    portrait->CollectImageDependencies(portraitImages);
+    Check(portraitImages == std::vector<std::string>{"Assets/base.png", "Assets/face.png"},
+          "mounted portrait exposes its image layers to UI preloading");
+    const auto rejectedPortrait = portrait->SetPath("Content/Portrait/missing.pxportrait");
+    Check(!rejectedPortrait && portrait->Path() == "Content/Portrait/logo.pxportrait",
+          "invalid portrait replacement preserves the displayed source");
+    Check(!px::sdk::ParseLayeredPortrait(R"({"format":"PrismatiXLayeredPortrait",
+        "schemaRevision":2,"width":20,"height":20,"layers":[
+        {"path":"Assets/nested.pxportrait","width":20,"height":20,
+         "role":"base"}]})"),
+          "native portrait parser rejects descriptor nesting");
+
     auto motionDocument = parsed.document;
     auto motionNode = std::ranges::find_if(motionDocument.nodes,
         [](const px::sdk::UiNode& node) { return node.name == "Logo"; });
