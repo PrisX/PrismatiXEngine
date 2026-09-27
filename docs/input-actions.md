@@ -157,9 +157,28 @@ displays the bound direction and asks the host to persist successful changes.
 `false` for an unknown action or invalid threshold. Player saves these choices
 alongside keyboard bindings in per-user `config.dat` and restores them before
 game actions register. Older revision-2 settings without `wheelBindings`
-continue to use authored defaults. Non-Player hosts can use native
-`Input::CaptureWheelBindings()` and `RestoreWheelBindings()` with their own
-settings store; those hosts remain responsible for calling save after a change.
+continue to use authored defaults. A native host using `GameSettings` can wire
+both devices to its own settings path:
+
+```cpp
+px::Input input;
+px::progress::GameSettings settings;
+const auto load = settings.LoadWithInputBindings(configPath, input, &saveKey);
+const bool settingsWritable =
+    load != px::progress::PersistLoadStatus::Failed;
+uiContext.SetInputBindingService(&input, [&] {
+    if (settingsWritable)
+        (void)settings.SaveWithInputBindings(configPath, input, &saveKey);
+});
+```
+
+`configPath` is the host's per-user settings path, and `saveKey` is its
+persistence key. The callback runs after a successful UI rebind. Register
+authored actions and defaults before loading when possible; saved actions
+registered later still receive their overrides. A missing file leaves defaults
+active on a fresh Input. An invalid file changes neither settings nor input.
+Keep writes disabled so the host cannot overwrite the user's bytes. Hosts with a
+different store can use `CaptureInputBindings` and `ApplyInputBindings` directly.
 Existing `inputBindings` documents remain readable for migration.
 
 Project compilation checks `bindingAction` in UI scenes and components. An

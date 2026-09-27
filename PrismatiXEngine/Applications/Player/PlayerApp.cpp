@@ -787,25 +787,11 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     const auto profileLoad = progress::LoadGlobalProfileWithFallback(
         m_profile, PathToUtf8(m_saveDirectory / "profile.dat"),
         &m_saveKey, m_saveFallbackKeys);
-    const auto settingsLoad = m_settings.LoadWithFallback(
+    const auto settingsLoad = m_settings.LoadWithInputBindings(
         PathToUtf8(m_saveDirectory / "config.dat"),
-        &m_saveKey, m_saveFallbackKeys);
+        m_runtime.GetInput(), &m_saveKey, m_saveFallbackKeys);
     m_profileWritable = profileLoad != progress::PersistLoadStatus::Failed;
     m_settingsWritable = settingsLoad != progress::PersistLoadStatus::Failed;
-    if (settingsLoad == progress::PersistLoadStatus::Loaded &&
-        !m_settings.keyboardBindings.empty() &&
-        !m_runtime.GetInput().RestoreKeyboardBindings(
-            m_settings.keyboardBindings)) {
-        m_settingsWritable = false;
-        PX_LOG_ERROR("Saved keyboard bindings are invalid; settings writes suppressed");
-    }
-    if (settingsLoad == progress::PersistLoadStatus::Loaded &&
-        !m_settings.wheelBindings.empty() &&
-        !m_runtime.GetInput().RestoreWheelBindings(
-            m_settings.wheelBindings)) {
-        m_settingsWritable = false;
-        PX_LOG_ERROR("Saved wheel bindings are invalid; settings writes suppressed");
-    }
     m_saves.Configure(PathToUtf8(m_saveDirectory), &m_saveKey,
                       m_saveFallbackKeys);
     PX_LOG_DEBUG("Player boot: persistence configured");
@@ -1816,11 +1802,9 @@ bool PlayerApp::SaveSettingsIfWritable() {
             "Settings write suppressed because the existing file failed to load");
         return false;
     }
-    m_settings.keyboardBindings = m_runtime.GetInput().CaptureKeyboardBindings();
-    m_settings.wheelBindings = m_runtime.GetInput().CaptureWheelBindings();
-    return m_settings.SavePreservingExisting(
+    return m_settings.SaveWithInputBindings(
         PathToUtf8(m_saveDirectory / "config.dat"),
-        &m_saveKey, m_saveFallbackKeys);
+        m_runtime.GetInput(), &m_saveKey, m_saveFallbackKeys);
 }
 
 bool PlayerApp::ApplyFullscreenSetting(const bool fullscreen) {

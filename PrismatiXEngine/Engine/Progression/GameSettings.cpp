@@ -180,4 +180,44 @@ bool GameSettings::SavePreservingExisting(
     return Save(path, primaryKey);
 }
 
+void GameSettings::CaptureInputBindings(const Input& input) {
+    keyboardBindings = input.CaptureKeyboardBindings();
+    wheelBindings = input.CaptureWheelBindings();
+}
+
+bool GameSettings::ApplyInputBindings(Input& input) const {
+    return input.RestoreUserBindings(keyboardBindings, wheelBindings);
+}
+
+PersistLoadStatus GameSettings::LoadWithInputBindings(
+    const std::string& path, Input& input, const crypto::Key* primaryKey,
+    const std::span<const crypto::Key> fallbackKeys) {
+    GameSettings candidate = *this;
+    const auto status = candidate.LoadWithFallback(path, primaryKey,
+                                                    fallbackKeys);
+    if (status != PersistLoadStatus::Loaded) return status;
+    if (!candidate.ApplyInputBindings(input)) {
+        diag::Diagnostic diagnostic{
+            .severity = diag::Severity::Error,
+            .code = "PXSETTINGS6303",
+            .category = "Persistence.Settings",
+            .message = "Settings contain invalid input bindings: " + path,
+            .details = "The original settings and input bindings were left unchanged."};
+        diagnostic.source.path = path;
+        diag::Emit(diagnostic);
+        return PersistLoadStatus::Failed;
+    }
+    *this = std::move(candidate);
+    return PersistLoadStatus::Loaded;
+}
+
+bool GameSettings::SaveWithInputBindings(
+    const std::string& path, const Input& input,
+    const crypto::Key* primaryKey,
+    const std::span<const crypto::Key> fallbackKeys) const {
+    GameSettings candidate = *this;
+    candidate.CaptureInputBindings(input);
+    return candidate.SavePreservingExisting(path, primaryKey, fallbackKeys);
+}
+
 }

@@ -629,29 +629,69 @@ void TestProfileAndSettingsSchemas() {
               sourceInput.RebindKey("quick-save", f11).status ==
                   px::KeyRebindStatus::Applied,
           "input map can author a portable keyboard settings override");
-    settings.keyboardBindings = sourceInput.CaptureKeyboardBindings();
     Check(sourceInput.SetWheelBinding("advance", px::WheelDirection::None) &&
               sourceInput.SetWheelBinding("backlog", px::WheelDirection::Up, 1.5f),
           "input map can author wheel settings overrides");
-    settings.wheelBindings = sourceInput.CaptureWheelBindings();
-    Check(settings.Save(settingsPath, nullptr), "game settings should be written with the current schema");
+    const int f10 = px::Input::KeyCode("F10").value_or(0);
+    Check(f10 > 0 && sourceInput.RegisterAction("host.later") &&
+              sourceInput.BindKey("host.later", f10) &&
+              sourceInput.SetWheelBinding("host.later",
+                                          px::WheelDirection::Down, 2.0f),
+          "a host action can save keyboard and wheel bindings before registration on reload");
+    Check(settings.SaveWithInputBindings(settingsPath, sourceInput, nullptr),
+          "a host saves keyboard and wheel bindings with the current schema");
 
     px::progress::GameSettings loadedSettings;
-    Check(loadedSettings.Load(settingsPath, nullptr), "game settings should load with the current schema");
+    px::Input restoredInput;
+    Check(loadedSettings.LoadWithInputBindings(settingsPath, restoredInput,
+                                                nullptr) ==
+              px::progress::PersistLoadStatus::Loaded,
+          "a host loads settings and input bindings together");
     Check(
         loadedSettings.bgmVolume == 64 && loadedSettings.voiceVolume == 96 && loadedSettings.language == "ja-JP" && loadedSettings.textScale == 1.25f && loadedSettings.highContrast && loadedSettings.reducedMotion && loadedSettings.selfVoicing && loadedSettings.keyboardBindings.at("quick-save") == std::vector<int>{f11} && loadedSettings.wheelBindings.at("backlog").threshold == 1.5f,
         "game settings should preserve audio, locale, accessibility, keyboard, and wheel overrides"
     );
-    px::Input restoredInput;
-    Check(restoredInput.RestoreKeyboardBindings(loadedSettings.keyboardBindings) &&
-              restoredInput.KeyBindings("quick-save") ==
+    Check(restoredInput.KeyBindings("quick-save") ==
                   std::vector<int>{f11},
           "a saved shortcut is applied by a fresh runtime input map");
-    Check(restoredInput.RestoreWheelBindings(loadedSettings.wheelBindings) &&
-              restoredInput.GetWheelBinding("advance")->direction ==
+    Check(restoredInput.GetWheelBinding("advance")->direction ==
                   px::WheelDirection::None &&
               restoredInput.GetWheelBinding("backlog")->threshold == 1.5f,
           "saved wheel overrides apply to a fresh runtime input map");
+    Check(restoredInput.RegisterAction("host.later") &&
+              restoredInput.KeyBindings("host.later") ==
+                  std::vector<int>{f10} &&
+              restoredInput.GetWheelBinding("host.later")->direction ==
+                  px::WheelDirection::Down,
+          "actions registered after settings load receive both saved devices");
+
+    const auto beforeInvalidKeys = restoredInput.CaptureKeyboardBindings();
+    const auto beforeInvalidWheel = restoredInput.CaptureWheelBindings();
+    px::progress::Json invalidScancode{
+        {"format", "PrismatiXSettings"}, {"schemaRevision", 2},
+        {"keyboardBindings", {{"quick-save", std::vector<int>{-1}}}},
+        {"wheelBindings", {{"backlog", {{"direction", "down"},
+                                          {"threshold", 3.0}}}}}};
+    Check(px::progress::SaveJson(settingsPath, invalidScancode, nullptr) &&
+              loadedSettings.LoadWithInputBindings(settingsPath, restoredInput,
+                                                   nullptr) ==
+                  px::progress::PersistLoadStatus::Failed &&
+              restoredInput.CaptureKeyboardBindings() == beforeInvalidKeys &&
+              restoredInput.CaptureWheelBindings().at("backlog").threshold ==
+                  beforeInvalidWheel.at("backlog").threshold &&
+              restoredInput.CaptureWheelBindings().at("backlog").direction ==
+                  beforeInvalidWheel.at("backlog").direction &&
+              loadedSettings.keyboardBindings.at("quick-save") ==
+                  std::vector<int>{f11},
+          "invalid saved keys leave both input devices and settings unchanged");
+    auto invalidCombined = loadedSettings;
+    invalidCombined.keyboardBindings["quick-save"] = {f10};
+    invalidCombined.wheelBindings["backlog"] = {
+        px::WheelDirection::Up, -1.0f};
+    Check(!invalidCombined.ApplyInputBindings(restoredInput) &&
+              restoredInput.CaptureKeyboardBindings() == beforeInvalidKeys &&
+              restoredInput.GetWheelBinding("backlog")->threshold == 1.5f,
+          "a rejected wheel override cannot partially apply valid keyboard changes");
 
     px::progress::Json invalidBindings{
         {"format", "PrismatiXSettings"}, {"schemaRevision", 2},
@@ -687,8 +727,7 @@ void TestProfileAndSettingsSchemas() {
               loadedSettings.wheelBindings.empty(),
           "older keyboard settings without wheel bindings load safely");
     px::Input migratedInput;
-    Check(migratedInput.RestoreKeyboardBindings(
-              loadedSettings.keyboardBindings) &&
+    Check(loadedSettings.ApplyInputBindings(migratedInput) &&
               migratedInput.GetWheelBinding("advance")->direction ==
                   px::WheelDirection::Down &&
               migratedInput.GetWheelBinding("backlog")->direction ==
@@ -697,14 +736,14 @@ void TestProfileAndSettingsSchemas() {
     Check(migratedInput.SetWheelBinding("advance", px::WheelDirection::Up,
                                         2.0f),
           "an old settings user can rebind the wheel");
-    loadedSettings.wheelBindings = migratedInput.CaptureWheelBindings();
-    Check(loadedSettings.SavePreservingExisting(settingsPath, nullptr),
+    Check(loadedSettings.SaveWithInputBindings(settingsPath, migratedInput,
+                                               nullptr),
           "old settings can save a new wheel override");
     px::progress::GameSettings migratedSettings;
     px::Input reopenedInput;
-    Check(migratedSettings.Load(settingsPath, nullptr) &&
-              reopenedInput.RestoreWheelBindings(
-                  migratedSettings.wheelBindings) &&
+    Check(migratedSettings.LoadWithInputBindings(settingsPath, reopenedInput,
+                                                nullptr) ==
+              px::progress::PersistLoadStatus::Loaded &&
               reopenedInput.GetWheelBinding("advance")->direction ==
                   px::WheelDirection::Up &&
               reopenedInput.GetWheelBinding("advance")->threshold == 2.0f,

@@ -41,6 +41,15 @@ struct GameSettings {
     bool SavePreservingExisting(
         const std::string& path, const crypto::Key* primaryKey,
         std::span<const crypto::Key> fallbackKeys = {}) const;
+    void CaptureInputBindings(const Input& input);
+    [[nodiscard]] bool ApplyInputBindings(Input& input) const;
+    [[nodiscard]] PersistLoadStatus LoadWithInputBindings(
+        const std::string& path, Input& input, const crypto::Key* primaryKey,
+        std::span<const crypto::Key> fallbackKeys = {});
+    [[nodiscard]] bool SaveWithInputBindings(
+        const std::string& path, const Input& input,
+        const crypto::Key* primaryKey,
+        std::span<const crypto::Key> fallbackKeys = {}) const;
 };
 
 }

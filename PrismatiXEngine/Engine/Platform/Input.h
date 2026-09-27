@@ -195,6 +195,10 @@ public:
     // Validates the entire map before applying it. Actions registered later
     // receive their saved keys when RegisterAction is called.
     [[nodiscard]] bool RestoreKeyboardBindings(const KeyboardBindingMap& bindings);
+    // Replace both saved device maps as one transaction. Missing overrides
+    // restore the host-authored defaults; invalid data changes neither map.
+    [[nodiscard]] bool RestoreUserBindings(const KeyboardBindingMap& keyboard,
+                                           const WheelBindingMap& wheel);
     void ResetKeyboardBindings();
     [[nodiscard]] bool ActionPressed(std::string_view action) const;
     [[nodiscard]] bool ActionDown(std::string_view action) const;

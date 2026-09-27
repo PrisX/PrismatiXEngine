@@ -543,6 +543,20 @@ bool Input::RestoreKeyboardBindings(const KeyboardBindingMap& bindings) {
     return true;
 }
 
+bool Input::RestoreUserBindings(const KeyboardBindingMap& keyboard,
+                                const WheelBindingMap& wheel) {
+    Input candidate = *this;
+    candidate.ResetKeyboardBindings();
+    candidate.ResetWheelBindings();
+    if (!candidate.RestoreKeyboardBindings(keyboard) ||
+        !candidate.RestoreWheelBindings(wheel)) return false;
+    m_namedBindings.swap(candidate.m_namedBindings);
+    m_keyBindings.swap(candidate.m_keyBindings);
+    m_pendingKeyBindings.swap(candidate.m_pendingKeyBindings);
+    m_pendingWheelBindings.swap(candidate.m_pendingWheelBindings);
+    return true;
+}
+
 void Input::ResetKeyboardBindings() {
     const Input defaults;
     for (auto& [action, bindings] : m_namedBindings) {
