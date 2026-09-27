@@ -292,6 +292,31 @@ test("timeline authors waiting and playback speed without a script workaround", 
   }
 });
 
+test("Stage motion plays, stops, and records its resource dependency", () => {
+  const compiled = compileStory(
+    parseStory("[motion Content/Motion/intro.pxmotion await=true speed=1.5]\n[motion.stop]\n", "Story/motion.pxstory"),
+    {documentId: "stage-motion"},
+  );
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  assert.deepEqual(compiled.runtimeIr?.operations.map((operation) => [operation.kind, operation.arguments]), [
+    ["timeline", {mode:"stage-motion", timeline:"Content/Motion/intro.pxmotion", await:"true", speed:"1.5"}],
+    ["timeline", {mode:"stage-motion-stop"}],
+  ]);
+  assert.deepEqual(compiled.resourceDependencies, ["Content/Motion/intro.pxmotion"]);
+  for (const [argument, code] of [
+    ["Content/Motion/intro.pxanim", "PXSTORY1221"],
+    ["Content/Motion/intro.pxmotion await=maybe", "PXSTORY1222"],
+    ["Content/Motion/intro.pxmotion speed=17", "PXSTORY1223"],
+  ] as const) {
+    const invalid = compileStory(
+      parseStory(`[motion ${argument}]\n`, "Story/invalid-motion.pxstory"),
+      {documentId: "invalid-motion"},
+    );
+    assert.equal(invalid.valid, false);
+    assert.ok(invalid.diagnostics.some((diagnostic) => diagnostic.code === code));
+  }
+});
+
 test("background transition rules lower with timing and both resources", () => {
   const compiled = compileStory(
     parseStory("[bg asset=Assets/Backgrounds/shrine.png rule=Content/Images/Rules/rule_7.png duration=1500ms vague=64]\n", "Story/background-rule.pxstory"),

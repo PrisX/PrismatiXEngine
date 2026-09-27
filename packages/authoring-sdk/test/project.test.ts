@@ -530,7 +530,8 @@ test("compileProject validates motion descriptors and packages their image layer
         kind: "motion", source: descriptorPath}]},
       documents: {"Story/story.pxindex": storyIndex,
         "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
-      sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+      sourceFiles: {"Story/zh-TW/scene01.pxstory":
+        "[motion Assets/Motion/logo.pxmotion await=true]\n[end]\n"},
       locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
         locale: "zh-TW", strings: {}}},
       resourceText: (path) => path === descriptorPath ? JSON.stringify(motion) : undefined,

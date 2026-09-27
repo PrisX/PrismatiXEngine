@@ -452,6 +452,9 @@ int main() {
         Operation("all-wait", "wait", {{"duration", "1ms"}}),
         Operation("all-timeline-asset", "timeline", {{"timeline", "intro.pxanim"},
                                                     {"await", "true"}, {"speed", "1.25"}}),
+        Operation("all-stage-motion", "timeline", {{"mode", "stage-motion"},
+            {"timeline", "intro.pxmotion"}, {"await", "true"}, {"speed", "1.5"}}),
+        Operation("all-stage-motion-stop", "timeline", {{"mode", "stage-motion-stop"}}),
         Operation("all-timeline-inline", "timeline", {{"mode", "animate"}, {"target", "hero"}, {"x", "4"}, {"duration", "1ms"}}),
         Operation("all-effect", "effect", {{"value", "fade"}}),
         Operation("all-shake", "shake", {{"duration", "250ms"}, {"amplitude", "15"}}),
@@ -483,6 +486,14 @@ int main() {
     assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
         return command.type == "animation" && command.Get("clip") == "intro.pxanim" &&
                command.Get("await") == "true" && command.Get("speed") == "1.25";
+    }));
+    assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
+        return command.type == "stage_motion" &&
+               command.Get("path") == "intro.pxmotion" &&
+               command.Get("await") == "true" && command.Get("speed") == "1.5";
+    }));
+    assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
+        return command.type == "stage_motion_stop";
     }));
     assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
         return command.type == "char" && command.Get("transitionMode") == "auto" &&

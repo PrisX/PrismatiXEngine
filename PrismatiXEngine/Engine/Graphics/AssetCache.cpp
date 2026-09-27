@@ -105,6 +105,10 @@ std::optional<std::string> AssetCache::ReadTextAsset(
     return m_vfs.ReadText(path);
 }
 
+bool AssetCache::ResourceExists(const std::string& path) const {
+    return m_vfs.Exists(path);
+}
+
 void AssetCache::BeginFrame() {
     ++m_frame;
     HarvestPendingTextures();

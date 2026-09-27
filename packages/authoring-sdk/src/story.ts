@@ -730,6 +730,34 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         }
         break;
       }
+      case "motion": {
+        const asset = named("asset") ?? positional(0);
+        if (asset === undefined) diagnostics.push(error("PXSTORY1220", "motion requires a .pxmotion resource", node.span));
+        else {
+          const resolved = resolveResource(node, asset);
+          const awaitPlayback = named("await");
+          const speed = named("speed");
+          const source = canonicalResourceReference(
+            context.resources?.[asset] ?? asset, context.resourceAssets ?? [],
+          )?.source;
+          if (source !== undefined && !source.endsWith(".pxmotion"))
+            diagnostics.push(error("PXSTORY1221", "motion asset must be a .pxmotion resource", node.span));
+          else if (awaitPlayback !== undefined && awaitPlayback !== "true" && awaitPlayback !== "false")
+            diagnostics.push(error("PXSTORY1222", "motion await must be true or false", node.span));
+          else if (speed !== undefined && (!positiveNumberPattern.test(speed) ||
+              !Number.isFinite(Number(speed)) || Number(speed) <= 0 || Number(speed) > 16))
+            diagnostics.push(error("PXSTORY1223", "motion speed must be between 0 and 16", node.span));
+          else if (resolved !== undefined) emit(node, "timeline", {
+            mode: "stage-motion", timeline: resolved,
+            ...(awaitPlayback === undefined ? {} : {await: awaitPlayback}),
+            ...(speed === undefined ? {} : {speed}),
+          });
+        }
+        break;
+      }
+      case "motion.stop":
+        emit(node, "timeline", {mode: "stage-motion-stop"});
+        break;
       case "ui": emit(node, "ui", {route: named("route") ?? positional(0) ?? "", operation: named("operation") ?? "push"}); break;
       case "unlock": {
         const kind = named("kind") ?? positional(0);
@@ -811,7 +839,7 @@ export interface StoryCommandCompletion {
 }
 
 export function storyCommandCompletions(extensions: readonly ExtensionCommand[] = []): readonly StoryCommandCompletion[] {
-  const builtins = ["id", "bg", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "ui", "unlock", "effect", "shake", "camera"];
+  const builtins = ["id", "bg", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "unlock", "effect", "shake", "camera"];
   const builtinParameters: Readonly<Record<string, StoryCommandCompletion["parameters"]>> = {
     bg: [
       {name:"asset", required:true}, {name:"rule", required:false},
@@ -838,6 +866,8 @@ export function storyCommandCompletions(extensions: readonly ExtensionCommand[] 
     "ambience.stop": [{name:"fade", required:false}],
     video: [{name:"asset", required:true}, {name:"skippable", required:false, values:[true, false]}],
     timeline: [{name:"timeline", required:true},
+      {name:"await", required:false, values:[true, false]}, {name:"speed", required:false}],
+    motion: [{name:"asset", required:true},
       {name:"await", required:false, values:[true, false]}, {name:"speed", required:false}],
     shake: [{name:"duration", required:true}, {name:"amplitude", required:false}],
     unlock: [{name:"kind", required:true}, {name:"id", required:true}],

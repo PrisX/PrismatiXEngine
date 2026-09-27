@@ -72,6 +72,7 @@ public:
     // filesystem access.
     [[nodiscard]] std::optional<std::string> ReadTextAsset(
         const std::string& path) const;
+    [[nodiscard]] bool ResourceExists(const std::string& path) const;
     void PreloadTexture(
         const std::string& path,
         AssetPreloadPriority priority = AssetPreloadPriority::Normal);

@@ -1181,6 +1181,14 @@ Json StageToJson(const vn::Stage::RuntimeState& state) {
                           {"fromAlpha", tween.fromAlpha}, {"elapsed", tween.elapsed},
                           {"duration", tween.duration}});
     }
+    const Json motion = state.motion
+        ? Json{{"path", state.motion->path},
+               {"position", state.motion->position},
+               {"speed", state.motion->speed},
+               {"playing", state.motion->playing},
+               {"awaiting", state.motion->awaiting},
+               {"startMarkersPending", state.motion->startMarkersPending}}
+        : Json(nullptr);
     return {{"background", state.background},
             {"previousBackground", state.previousBackground},
             {"backgroundFade", state.backgroundFade},
@@ -1203,7 +1211,7 @@ Json StageToJson(const vn::Stage::RuntimeState& state) {
             {"layers", LayersToJson(state.layers)},
             {"nodes", NodesToJson(state.nodes)},
             {"particleEmitters", ParticleEmittersToJson(state.particleEmitters)},
-            {"tweens", std::move(tweens)}};
+            {"tweens", std::move(tweens)}, {"motion", motion}};
 }
 
 vn::Stage::RuntimeState StageFromJson(const Json& json) {
@@ -1212,6 +1220,19 @@ vn::Stage::RuntimeState StageFromJson(const Json& json) {
     state.background = json.value("background", std::string{});
     state.previousBackground = json.value("previousBackground", std::string{});
     state.backgroundFade = json.value("backgroundFade", 1.0f);
+    if (const auto motion = json.find("motion");
+        motion != json.end() && !motion->is_null()) {
+        if (!motion->is_object() || !motion->contains("path") ||
+            !motion->at("path").is_string())
+            throw std::invalid_argument("stage motion must have a path");
+        state.motion = vn::Stage::SavedMotion{
+            motion->at("path").get<std::string>(),
+            motion->at("position").get<double>(),
+            motion->at("speed").get<double>(),
+            motion->at("playing").get<bool>(),
+            motion->at("awaiting").get<bool>(),
+            motion->at("startMarkersPending").get<bool>()};
+    }
     const auto& rule = json.at("ruleTransition");
     const auto& camera = json.at("camera");
     const auto& shake = json.at("shake");

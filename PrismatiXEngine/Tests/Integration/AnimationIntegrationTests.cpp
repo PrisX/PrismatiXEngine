@@ -6,6 +6,8 @@
 #include <string>
 #include <string_view>
 
+#include <nlohmann/json.hpp>
+
 #include "Engine/Animation/Timeline.h"
 #include "Engine/Audio/AudioEngine.h"
 #include "Engine/Core/TypeRegistry.h"
@@ -251,6 +253,83 @@ void TestTimelinePlaybackContract() {
               player.GetStatus(newest) ==
                   px::animation::PlaybackStatus::Completed,
           "terminal handle history must remain bounded while retaining recent status");
+}
+
+void TestStageMotionStoryPlaybackAndRestore() {
+    px::test::TempDirectory temp("stage-motion-story");
+    constexpr auto motion = R"({
+      "format":"PrismatiXMotion","schemaRevision":7,"id":"stage-intro",
+      "canvas":{"width":320,"height":120},"duration":1,"loop":false,
+      "layers":[{"id":"root","kind":"group"}],"tracks":[],
+      "markers":[{"id":"chime","time":0.5,"audio":"chime.ogg","bus":"se"}]})";
+    Check(px::sdk::ParseMotion(motion).Valid(),
+          "minimal grouped Stage motion is a valid reusable composition");
+    {
+        std::ofstream out(temp.path / "intro.pxmotion", std::ios::binary);
+        out << motion;
+    }
+    {
+        std::ofstream out(temp.path / "chime.ogg", std::ios::binary);
+        out << "fixture";
+    }
+    px::io::VFS vfs;
+    vfs.MountDirectory(temp.path.string());
+    px::audio::AudioEngine audio(vfs);
+    px::graphics::AssetCache assets(nullptr, vfs);
+    px::graphics::Renderer2D renderer(nullptr, assets);
+    px::vn::Stage stage(renderer, assets);
+    int markers = 0;
+    int finishes = 0;
+    stage.SetMotionCallbacks([&](const px::sdk::MotionAudioMarker&) { ++markers; },
+                             [&] { ++finishes; });
+    Check(stage.PlayMotion("intro.pxmotion", 1.0, true),
+          "Stage accepts a valid awaited motion resource");
+    stage.Update(0.4f);
+    const auto checkpoint = stage.CaptureState();
+    Check(checkpoint.motion && checkpoint.motion->awaiting &&
+              checkpoint.motion->position > 0.39 && markers == 0,
+          "Stage captures the active motion position before its audio marker");
+    Check(stage.RestoreState(checkpoint),
+          "Stage restores the motion descriptor and sampled position");
+    stage.Update(0.2f);
+    Check(markers == 1 && stage.MotionPlaying(),
+          "restored motion emits the crossed marker once");
+    stage.Update(0.5f);
+    Check(finishes == 1 && !stage.MotionPlaying(),
+          "awaited motion completes and releases its waiter once");
+    Check(!stage.PlayMotion("missing.pxmotion") &&
+              !stage.PlayMotion("intro.pxmotion", 0.0),
+          "Stage rejects missing descriptors and invalid speed");
+
+    px::RuntimeSession runtime({vfs, audio, renderer, assets});
+    const nlohmann::json ir{
+        {"format", "PrismatiXRuntimeIR"}, {"schemaRevision", 2},
+        {"documentId", "motion-story"}, {"committedRevision", 0},
+        {"operations", nlohmann::json::array({
+            {{"operationId", "motion"}, {"sourceId", "motion"},
+             {"kind", "timeline"}, {"text", ""},
+             {"arguments", {{"mode", "stage-motion"},
+                            {"timeline", "intro.pxmotion"},
+                            {"await", "true"}}}},
+            {{"operationId", "end"}, {"sourceId", "end"},
+             {"kind", "endStory"}, {"text", ""},
+             {"arguments", nlohmann::json::object()}}
+        })}};
+    Check(runtime.StartRuntimeIrText(ir.dump(), "motion-story.pxir"),
+          "Runtime IR starts a Story motion command");
+    Check(runtime.CaptureState().vm.state == px::vn::VMState::WaitingExternal,
+          "Story await suspends VM until Stage motion completes");
+    runtime.Update(400, 0.4f);
+    const auto active = runtime.CaptureState();
+    Check(active.stage.motion && active.stage.motion->awaiting &&
+              active.stage.motion->position > 0.39,
+          "Runtime checkpoint keeps awaited Stage motion position");
+    Check(runtime.RestoreState(active, 400),
+          "Runtime restores an awaited Stage motion transactionally");
+    runtime.Update(1100, 0.7f);
+    Check(runtime.CaptureState().vm.state == px::vn::VMState::Finished &&
+              !runtime.Stage().MotionPlaying(),
+          "restored motion completion resumes and finishes Story");
 }
 
 void TestCanonicalTimelineRuntime() {
@@ -590,6 +669,7 @@ int main() {
     Run("Timeline_PresetsAndCheckpoint", TestUnifiedTimelineAndPresets);
     Run("Timeline_PlaybackContract", TestTimelinePlaybackContract);
     Run("Timeline_CanonicalNestedRealtimeScrub", TestCanonicalTimelineRuntime);
+    Run("StageMotion_StoryPlaybackAndRestore", TestStageMotionStoryPlaybackAndRestore);
     Run("Animation_EmbeddedPreviewRuntimeParity", TestEmbeddedUIAnimationParity);
     Run("Animation_StateMachineCheckpoint", TestUIAnimationStateMachine);
     if (g_failures == 0) std::cout << "PASS: animation integration\n";

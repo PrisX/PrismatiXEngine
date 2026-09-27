@@ -312,7 +312,19 @@ semantics and rendered-frame comparison rather than those names.
 Story's existing `[timeline Content/Motion/intro.pxanim await=true speed=1.25]`
 command now exposes the Runtime's wait and playback-rate controls, so a scene
 can pause until a `.pxanim` finishes without a JavaScript workaround. This
-command plays `.pxanim`/`.pxtimeline` animation assets; it does **not** mount a
-`.pxmotion` visual composition into the Stage. Use TSX `<Motion>` for the latter
-until Story presentation, preloading and save/load state have a complete
-contract.
+command plays `.pxanim`/`.pxtimeline` animation assets. For a full-canvas
+`.pxmotion` composition in the Stage, use:
+
+```text
+[motion Content/Motion/intro.pxmotion await=true speed=1.25]
+[motion.stop]
+```
+
+Stage motion appears above Stage actors and below dialogue/UI. The Runtime
+checks that the descriptor and referenced images/audio exist, preloads images
+before advancing, and plays audio markers on the SE or voice bus. `await=true`
+pauses Story until a non-looping motion completes; awaiting a looping motion is
+rejected. Starting another motion replaces the current composition, and
+`[motion.stop]` removes it. Save/load restores the descriptor, playback speed,
+sampled position and pending wait without replaying earlier markers. TSX
+`<Motion>` remains available for motion inside UI layouts.

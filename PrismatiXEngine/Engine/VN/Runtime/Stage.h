@@ -4,10 +4,14 @@
 #include "Engine/Core/Result.h"
 #include "Engine/Graphics/CustomEffect.h"
 #include "Engine/Graphics/Texture.h"
+#include "Engine/SDK/Motion.h"
 #include "Engine/VN/Runtime/ParticleSystem.h"
 
 #include <cstdint>
 #include <array>
+#include <functional>
+#include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -127,6 +131,15 @@ public:
     // Slides an existing actor to another slot without changing its image.
     void MoveCharacter(const std::string& name, int slot);
     void ClearAll();
+    // A single full-canvas motion is composited above Stage actors and below
+    // dialogue/UI. Replacing or stopping it retires its preload batch.
+    Status PlayMotion(std::string path, double speed = 1.0,
+                      bool awaiting = false);
+    void StopMotion();
+    void SetMotionCallbacks(
+        std::function<void(const sdk::MotionAudioMarker&)> marker,
+        std::function<void()> finished);
+    [[nodiscard]] bool MotionPlaying() const;
     // Camera shake (KAG [quake]-style): durationMs of decaying jitter.
     void Shake(int durationMs, float amplitude);
     bool SetCamera(float x, float y, float zoom);
@@ -190,6 +203,15 @@ public:
         float duration = 0.6f;
     };
 
+    struct SavedMotion {
+        std::string path;
+        double position = 0.0;
+        double speed = 1.0;
+        bool playing = false;
+        bool awaiting = false;
+        bool startMarkersPending = false;
+    };
+
     // Serializable state of every visual value that affects the next rendered
     // frame. GPU textures are reconstructed from resource ids during restore.
     struct RuntimeState {
@@ -221,6 +243,7 @@ public:
         std::vector<SavedTween> tweens;
         std::vector<SavedNode> nodes;
         std::vector<ParticleEmitterState> particleEmitters;
+        std::optional<SavedMotion> motion;
     };
     [[nodiscard]] RuntimeState CaptureState() const;
     Status RestoreState(const RuntimeState& state);
@@ -304,6 +327,21 @@ private:
         float duration = 0.6f;
     };
 
+    struct MotionPlayback {
+        std::string path;
+        sdk::MotionClip clip;
+        sdk::MotionSampler sampler;
+        std::uint64_t preloadBatch = 0;
+        double position = 0.0;
+        double speed = 1.0;
+        bool playing = true;
+        bool awaiting = false;
+        bool ready = false;
+        bool startMarkersPending = true;
+        MotionPlayback(std::string source, sdk::MotionClip value)
+            : path(std::move(source)), clip(std::move(value)), sampler(clip) {}
+    };
+
     struct Node {
         NodeKind kind = NodeKind::Group;
         std::string parent;
@@ -339,6 +377,8 @@ private:
     void RenderScreenEffects();
     void EndRuleTransition();
     void UpdateTweens(float dt);
+    void UpdateMotion(float dt);
+    void EmitMotionMarkers(double from, double to, bool includeStart);
     Node& EnsureNode(const std::string& name, NodeKind kind);
     [[nodiscard]] WorldNodeTransform ResolveNodeTransform(
         const std::string& name, Vec2 leafPivot = {}) const;
@@ -358,6 +398,9 @@ private:
     int m_nextNodeOrder = 1;
     ParticleSystem m_particles;
     std::vector<Tween> m_tweens;
+    std::unique_ptr<MotionPlayback> m_motion;
+    std::function<void(const sdk::MotionAudioMarker&)> m_motionMarker;
+    std::function<void()> m_motionFinished;
     RuleState m_ruleState;
 
     std::string m_bgPath;

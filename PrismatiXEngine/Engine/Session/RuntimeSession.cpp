@@ -108,6 +108,19 @@ RuntimeSession::RuntimeSession(Services services)
             m_externalResumePending = true;
         }
     });
+    m_stage.SetMotionCallbacks(
+        [this](const sdk::MotionAudioMarker& marker) {
+            if (marker.bus == sdk::MotionAudioBus::Voice)
+                m_services.audio.PlayVoice(marker.audio);
+            else
+                m_services.audio.PlaySE(marker.audio);
+        },
+        [this] {
+            if (m_awaitingStageMotion) {
+                m_awaitingStageMotion = false;
+                m_externalResumePending = true;
+            }
+        });
     m_vm.SetCommandHook([this](const vn::Command& command) { return ExecuteCommand(command); });
     m_vm.SetDiagnosticSourceResolver(
         [this](diag::Diagnostic& diagnostic, const vn::Command& command) {
@@ -288,6 +301,23 @@ Result<resource::ResourceId> RuntimeSession::LoadAnimationAssetRecursive(
 }
 
 bool RuntimeSession::ExecuteCommand(const vn::Command& command) {
+    if (command.type == "stage_motion") {
+        const bool await = CommandBool(command, "await");
+        const Status played = m_stage.PlayMotion(
+            ResourcePath(command, "path"), CommandNumber(command, "speed", 1.0),
+            await);
+        if (!played) {
+            for (const auto& diagnostic : played.Diagnostics()) diag::Emit(diagnostic);
+        } else if (await) {
+            m_awaitingStageMotion = true;
+            m_vm.WaitExternal();
+        }
+        return true;
+    }
+    if (command.type == "stage_motion_stop") {
+        m_stage.StopMotion();
+        return true;
+    }
     if (command.type == "ambience") {
         const std::string path = ResourcePath(command, "file");
         if (!path.empty()) {
@@ -346,6 +376,9 @@ bool RuntimeSession::ExecuteCommand(const vn::Command& command) {
 
 bool RuntimeSession::StartScenario(const std::string& scriptPath, const bool resetVariables) {
     m_runtimeProgramIdentity.reset();
+    m_awaitingStageMotion = false;
+    m_awaitingTimeline.reset();
+    m_externalResumePending = false;
     m_stage.ClearAll();
     m_dialogue.Clear();
     m_backlog.Clear();
@@ -357,6 +390,9 @@ bool RuntimeSession::StartScenarioText(const std::string_view text,
                                        const std::string& scriptPath,
                                        const bool resetVariables) {
     m_runtimeProgramIdentity.reset();
+    m_awaitingStageMotion = false;
+    m_awaitingTimeline.reset();
+    m_externalResumePending = false;
     m_stage.ClearAll();
     m_dialogue.Clear();
     m_backlog.Clear();
@@ -376,6 +412,9 @@ bool RuntimeSession::StartPreparedRuntimeIr(
     const std::string& sourcePath,
     const bool resetVariables) {
     if (!program) return false;
+    m_awaitingStageMotion = false;
+    m_awaitingTimeline.reset();
+    m_externalResumePending = false;
     m_stage.ClearAll();
     m_dialogue.Clear();
     m_backlog.Clear();
@@ -411,6 +450,9 @@ bool RuntimeSession::StartRuntimeIrText(const std::string_view text,
                                         const bool resetVariables) {
     auto program = CompileRuntimeIrText(text, sourcePath);
     if (!program) return false;
+    m_awaitingStageMotion = false;
+    m_awaitingTimeline.reset();
+    m_externalResumePending = false;
     const auto identity =
         std::make_shared<const vn::Program>(std::move(*program));
     m_stage.ClearAll();
@@ -810,6 +852,7 @@ Status RuntimeSession::ApplyState(const GameState& state,
     if (const Status stageStatus = m_stage.RestoreState(state.stage); !stageStatus) {
         return stageStatus;
     }
+    m_awaitingStageMotion = state.stage.motion && state.stage.motion->awaiting;
     if (!m_services.audio.RestoreState(state.audio)) {
         return RestoreFailure("Audio state could not be restored");
     }

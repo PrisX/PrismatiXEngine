@@ -191,6 +191,7 @@ private:
     std::function<Status(const ui::UIRuntimeState&)> m_restoreUIState;
     std::function<Status(const ui::UIRuntimeState&)> m_validateUIState;
     std::optional<animation::PlaybackHandle> m_awaitingTimeline;
+    bool m_awaitingStageMotion = false;
     bool m_externalResumePending = false;
     std::vector<diag::Diagnostic> m_lastStartDiagnostics;
     std::shared_ptr<const vn::Program> m_runtimeProgramIdentity;

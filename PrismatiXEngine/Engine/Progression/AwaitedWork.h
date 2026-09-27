@@ -10,8 +10,9 @@ struct AwaitedWork {
     bool command = false;
     bool action = false;
     bool timeline = false;
+    bool stageMotion = false;
 
-    [[nodiscard]] bool Any() const { return command || action || timeline; }
+    [[nodiscard]] bool Any() const { return command || action || timeline || stageMotion; }
 };
 
 // One definition of the external work that may legally suspend the VM. Hosts
@@ -27,6 +28,9 @@ struct AwaitedWork {
             [](const animation::PlaybackState& playback) {
                 return playback.playing && playback.awaiting;
             }),
+        .stageMotion = snapshot.stage.motion &&
+                       snapshot.stage.motion->playing &&
+                       snapshot.stage.motion->awaiting,
     };
 }
 

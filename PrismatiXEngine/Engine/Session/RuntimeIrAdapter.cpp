@@ -554,7 +554,14 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             command.type = "wait";
             Add(command, "ms", DurationMilliseconds(Argument(operation, "duration")));
         } else if (operation.kind == "timeline") {
-            if (Argument(operation, "mode") == "move") {
+            if (Argument(operation, "mode") == "stage-motion") {
+                command.type = "stage_motion";
+                Add(command, "path", Argument(operation, "timeline"));
+                Add(command, "await", Argument(operation, "await"));
+                Add(command, "speed", Argument(operation, "speed"));
+            } else if (Argument(operation, "mode") == "stage-motion-stop") {
+                command.type = "stage_motion_stop";
+            } else if (Argument(operation, "mode") == "move") {
                 command.type = "char_move";
                 Add(command, "id", Argument(operation, "target"));
                 Add(command, "pos", Argument(operation, "position"));

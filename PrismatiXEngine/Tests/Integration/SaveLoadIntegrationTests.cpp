@@ -389,9 +389,17 @@ void TestSaveValidation() {
         px::Variant(px::VariantObject{
             {"seed", px::Variant(std::int64_t{42})},
             {"enabled", px::Variant(true)}})});
+    snapshot.stage.motion = px::vn::Stage::SavedMotion{
+        "Content/Motion/intro.pxmotion", 0.4, 1.25, true, true, false};
     Check(saves.Save(0, snapshot), "valid save should be written");
     const auto loaded = saves.Load(0);
     Check(loaded && loaded->pc == 7 && loaded->variables.at("affection") == 3, "valid save should round-trip");
+    Check(loaded && loaded->stage.motion &&
+              loaded->stage.motion->path == "Content/Motion/intro.pxmotion" &&
+              loaded->stage.motion->position == 0.4 &&
+              loaded->stage.motion->speed == 1.25 &&
+              loaded->stage.motion->awaiting,
+          "Stage motion position and await survive save serialization");
     Check(
         loaded && loaded->vm.state == px::vn::VMState::WaitingChoice && loaded->vm.callStack.size() == 1 && loaded->vm.choices.size() == 1 && loaded->dialogue.state.displayText == "Hel" &&
             loaded->dialogue.speedMs == 42 && loaded->typedVariables.at("route").TryGet<std::string>() && loaded->typedVariables.at("flags").AsObject() && loaded->routes.stack.size() == 2 && loaded->routes.modals.size() == 1 &&
@@ -821,6 +829,15 @@ void TestAwaitedWorkValidation() {
     snapshot.vm.state = px::vn::VMState::WaitingExternal;
     Check(px::progress::HasConsistentAwaitState(snapshot),
           "awaited timeline and WaitingExternal agree");
+    snapshot.timelines.clear();
+    snapshot.stage.motion = px::vn::Stage::SavedMotion{
+        "Content/Motion/intro.pxmotion", 0.4, 1.25, true, true, false};
+    Check(px::progress::InspectAwaitedWork(snapshot).stageMotion &&
+              px::progress::HasConsistentAwaitState(snapshot),
+          "awaited Stage motion is restorable external work");
+    snapshot.vm.state = px::vn::VMState::WaitingClick;
+    Check(!px::progress::HasConsistentAwaitState(snapshot),
+          "awaited Stage motion requires WaitingExternal");
 }
 
 void TestPersistenceKeyUpgradeAndFailurePreservation() {

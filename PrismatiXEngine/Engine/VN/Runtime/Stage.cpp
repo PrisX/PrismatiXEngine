@@ -1,5 +1,7 @@
 #include "Engine/VN/Runtime/Stage.h"
 
+#include "Engine/Animation/MotionRenderer.h"
+#include "Engine/Diagnostics/Diagnostic.h"
 #include "Engine/Graphics/AssetCache.h"
 #include "Engine/Graphics/Renderer2D.h"
 #include "Engine/Support/Easing.h"
@@ -60,7 +62,138 @@ Stage::Stage(graphics::Renderer2D& renderer, graphics::AssetCache& assets)
     : m_renderer(renderer), m_assets(assets), m_particles(renderer) {}
 
 Stage::~Stage() {
+    if (m_motion && m_motion->preloadBatch)
+        (void)m_assets.CancelTexturePreload(m_motion->preloadBatch);
     EndRuleTransition();
+}
+
+Status Stage::PlayMotion(std::string path, const double speed,
+                         const bool awaiting) {
+    if (!path.ends_with(".pxmotion") || !std::isfinite(speed) ||
+        speed <= 0.0 || speed > 16.0) {
+        return Status::Fail(StageRestoreError(
+            "PXSTAGE7520", "Stage motion path or speed is invalid", path));
+    }
+    const auto text = m_assets.ReadTextAsset(path);
+    if (!text) return Status::Fail(StageRestoreError(
+        "PXSTAGE7521", "Stage motion descriptor is unavailable", path));
+    auto parsed = sdk::ParseMotion(*text, path);
+    if (!parsed.Valid()) return Status::Fail(StageRestoreError(
+        "PXSTAGE7522", "Stage motion descriptor is invalid", path));
+    if (awaiting && parsed.clip->loop) return Status::Fail(StageRestoreError(
+        "PXSTAGE7523", "Looping Stage motion cannot be awaited", path));
+    const auto images = sdk::MotionDependencies(*parsed.clip);
+    const auto audio = sdk::MotionAudioDependencies(*parsed.clip);
+    for (const auto& dependency : images)
+        if (!m_assets.ResourceExists(dependency))
+            return Status::Fail(StageRestoreError(
+                "PXSTAGE7524", "Stage motion image is missing", dependency));
+    for (const auto& dependency : audio)
+        if (!m_assets.ResourceExists(dependency))
+            return Status::Fail(StageRestoreError(
+                "PXSTAGE7525", "Stage motion audio is missing", dependency));
+    auto next = std::make_unique<MotionPlayback>(
+        std::move(path), std::move(*parsed.clip));
+    next->speed = speed;
+    next->awaiting = awaiting;
+    StopMotion();
+    if (!images.empty()) {
+        std::vector<graphics::AssetPreloadRequest> requests;
+        requests.reserve(images.size());
+        for (const auto& image : images)
+            requests.push_back({image, graphics::AssetPreloadPriority::Critical});
+        next->preloadBatch = m_assets.BeginTexturePreload(std::move(requests));
+    } else {
+        next->ready = true;
+    }
+    m_motion = std::move(next);
+    return Status::Ok();
+}
+
+void Stage::StopMotion() {
+    if (!m_motion) return;
+    const bool awaiting = m_motion->awaiting;
+    if (m_motion->preloadBatch)
+        (void)m_assets.CancelTexturePreload(m_motion->preloadBatch);
+    m_motion.reset();
+    if (awaiting && m_motionFinished) m_motionFinished();
+}
+
+void Stage::SetMotionCallbacks(
+    std::function<void(const sdk::MotionAudioMarker&)> marker,
+    std::function<void()> finished) {
+    m_motionMarker = std::move(marker);
+    m_motionFinished = std::move(finished);
+}
+
+bool Stage::MotionPlaying() const {
+    return m_motion && m_motion->playing;
+}
+
+void Stage::EmitMotionMarkers(const double from, const double to,
+                              const bool includeStart) {
+    if (!m_motion || !m_motionMarker || m_motion->clip.markers.empty() ||
+        to < from) return;
+    const auto& clip = m_motion->clip;
+    const auto lastCycle = clip.loop
+        ? static_cast<std::uint64_t>(std::floor(to / clip.duration)) : 0;
+    const auto startCycle = clip.loop
+        ? static_cast<std::uint64_t>(std::floor(from / clip.duration)) : 0;
+    const auto firstCycle = lastCycle > startCycle + 64
+        ? lastCycle - 64 : startCycle;
+    std::size_t emitted = 0;
+    for (auto cycle = firstCycle; cycle <= lastCycle; ++cycle) {
+        const auto base = static_cast<double>(cycle) * clip.duration;
+        for (const auto& marker : clip.markers) {
+            const auto at = base + marker.time;
+            if ((at > from || (includeStart && at == from)) && at <= to) {
+                m_motionMarker(marker);
+                if (++emitted >= 256) return;
+            }
+        }
+    }
+}
+
+void Stage::UpdateMotion(const float dt) {
+    if (!m_motion || !m_motion->playing || !std::isfinite(dt) || dt <= 0.0f)
+        return;
+    auto& motion = *m_motion;
+    if (!motion.ready) {
+        const auto progress =
+            m_assets.TexturePreloadProgress(motion.preloadBatch);
+        if (!progress.valid || progress.failed != 0 ||
+            progress.cancelled != 0) {
+            diag::Emit(StageRestoreError(
+                "PXSTAGE7526", "Stage motion image preload failed",
+                motion.path));
+            StopMotion();
+            return;
+        }
+        if (!progress.Finished()) return;
+        motion.ready = true;
+    }
+    const double from = motion.position;
+    const double next = from + static_cast<double>(dt) * motion.speed;
+    if (!std::isfinite(next)) return;
+    if (motion.clip.loop && next / motion.clip.duration > 1'000'000.0) {
+        motion.position = std::fmod(next, motion.clip.duration);
+        motion.sampler.Seek(motion.position);
+        motion.startMarkersPending = false;
+        return;
+    }
+    const bool complete = !motion.clip.loop && next >= motion.clip.duration;
+    const double endpoint = complete ? motion.clip.duration : next;
+    EmitMotionMarkers(from, endpoint, motion.startMarkersPending);
+    motion.position = motion.clip.loop
+        ? std::fmod(endpoint, motion.clip.duration) : endpoint;
+    motion.sampler.Seek(motion.position);
+    motion.startMarkersPending = false;
+    if (complete) {
+        motion.playing = false;
+        const bool awaiting = motion.awaiting;
+        motion.awaiting = false;
+        if (awaiting && m_motionFinished) m_motionFinished();
+    }
 }
 
 const Stage::LayeredPortrait* Stage::ResolveLayeredPortrait(
@@ -852,6 +985,9 @@ void Stage::MoveCharacter(const std::string& name, int slot) {
 }
 
 void Stage::ClearAll() {
+    if (m_motion && m_motion->preloadBatch)
+        (void)m_assets.CancelTexturePreload(m_motion->preloadBatch);
+    m_motion.reset();
     m_actors.clear();
     m_layers.clear();
     m_nodes.clear();
@@ -1001,6 +1137,7 @@ void Stage::Update(float dt) {
     // Tweens run last so an animated property wins over the slot Approach.
     UpdateTweens(dt);
     m_particles.Update(dt);
+    UpdateMotion(dt);
 }
 
 void Stage::RenderRuleOverlay() {
@@ -1413,6 +1550,12 @@ void Stage::Render() {
         }
     }
     while (!activeEffects.empty()) closeEffect();
+    if (m_motion && m_motion->ready) {
+        animation::DrawMotionPose(
+            m_renderer, m_motion->clip, m_motion->sampler,
+            {0.0f, 0.0f, static_cast<float>(logicalW),
+             static_cast<float>(logicalH)});
+    }
     m_renderer.PopTransform();
     // Camera and shake belong to the Stage layer. Dialogue/UI is rendered by
     // the host after this call and must remain stable.
@@ -1657,6 +1800,12 @@ Stage::RuntimeState Stage::CaptureState() const {
     state.layers = SnapshotLayers();
     state.nodes = SnapshotNodes();
     state.particleEmitters = m_particles.Capture();
+    if (m_motion) {
+        state.motion = SavedMotion{m_motion->path, m_motion->position,
+                                   m_motion->speed, m_motion->playing,
+                                   m_motion->awaiting,
+                                   m_motion->startMarkersPending};
+    }
     state.tweens.reserve(m_tweens.size());
     for (const Tween& tween : m_tweens) {
         state.tweens.push_back(SavedTween{tween.isLayer, tween.name, tween.spec,
@@ -1769,6 +1918,27 @@ Status Stage::RestoreState(const RuntimeState& state) {
                 state.ruleMask));
         }
         m_ruleState.progress = state.ruleProgress;
+    }
+    if (state.motion) {
+        const auto& saved = *state.motion;
+        if (!std::isfinite(saved.position) || saved.position < 0.0 ||
+            (saved.awaiting && !saved.playing) ||
+            (saved.startMarkersPending && saved.position != 0.0))
+            return Status::Fail(StageRestoreError(
+                "PXSTAGE7527", "Saved Stage motion state is invalid"));
+        if (Status status = PlayMotion(saved.path, saved.speed, saved.awaiting);
+            !status) return status;
+        if ((!m_motion->clip.loop && saved.position > m_motion->clip.duration) ||
+            (m_motion->clip.loop && saved.position >= m_motion->clip.duration) ||
+            (!saved.playing &&
+             (m_motion->clip.loop ||
+              saved.position != m_motion->clip.duration)))
+            return Status::Fail(StageRestoreError(
+                "PXSTAGE7527", "Saved Stage motion time is out of range"));
+        m_motion->position = saved.position;
+        m_motion->sampler.Seek(saved.position);
+        m_motion->playing = saved.playing;
+        m_motion->startMarkersPending = saved.startMarkersPending;
     }
     return Status::Ok();
 }
