@@ -4,6 +4,7 @@
 
 ### 2026-09-27 後續進度
 
+- 選裝包 `--optional-pack <id> on|off` 的 per-user `optional-pack.txt` 現使用 SDK 共用的同磁碟原子寫檔，避免直接截斷舊偏好；仍維持原有單 ID 格式。Native SaveLoad integration 1/1、Player Catalog Native Acceptance 1/1（含兩段主更新、成人選裝包開關與存檔）通過。多個選裝包同時掛載不能只改偏好格式：每個簽章 pack 都含完整目標 manifest/index，需先設計可驗證的組合與衝突合約，故本輪沒有冒然改變限制。
 - 針對 368 scene／四語的 `validate --runtime` 做 CPU profile：總耗時約 15.5 秒，全部 Story 與 sidecar 約 91 MB 的單獨讀取量測僅約 95 ms，因此暫不新增以 mtime 判斷的來源快取。熱點是穩定 ID 的逐 byte BigInt FNV-1a、資源 `existsSync` 與 canonical JSON。SDK 現用兩個 32-bit limb 計算**同一個** FNV-1a 64-bit，並讓 Story／sidecar／專案正規化共用；1,000 個決定性混合 Unicode 樣本及長字串逐值對照舊演算法，Authoring SDK 157/157、Senren 四語 `validate --runtime` 通過。改後單次同機量測約 12.9 秒；快取條件不同，不能宣稱固定加速百分比。資源存在檢查與全量 canonical 序列化仍是待優化熱點。
 - UI `TextureRect` 現可直接以 `path` 或資源 UUID 使用 `.pxportrait`，與 Stage 共用有界 descriptor 解析；靜態 UI 依賴預載會展開成圖層圖片，Runtime 換圖在新圖層載妥前保留舊圖。同時修正 `runtimeType=TextureRect` 原本忽略 `assetId` 的問題。Native UI adapter／Splash／Stage＋UI 像素整合 targeted 3/3 通過；正式 Player 封裝尚未實測。
 - Authoring／CLI 使用原生 UI TypeRegistry 驗證 `runtimeProperties` 與 Visual State Group override 時，除名稱／型別外，現在也會拒絕不在 `enumChoices` 的字串，例如無效的 `bindingDevice` 或 `visibility`；不把編輯器的 numeric `range` 一律當 Runtime 硬限制。原生明確要求 0–100 的 `wheelThreshold` 則另外在 UI scene／component 編譯時拒絕錯誤值。Authoring SDK 156/156、列舉值改動後 CLI 104/104，以及 wheel 門檻補驗後的 CLI targeted 1/1 通過。

@@ -62,7 +62,8 @@ Install `adult.pdx` beside the main updates in `Package/updates`. It remains
 off by default. From the installed distribution, run
 `PrismatiXPlayer --optional-pack adult on` or
 `PrismatiXPlayer --optional-pack adult off`, then restart Player. The choice
-is stored in that game's per-user data directory as `optional-pack.txt`, so
+is atomically stored in that game's per-user data directory as
+`optional-pack.txt`, so
 reinstalling the game does not reset it. Only one optional pack can be enabled
 at a time. The enabled pack must be signed for the final main update version;
 an older optional pack is ignored after a new main update until the publisher

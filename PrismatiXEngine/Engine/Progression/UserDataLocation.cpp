@@ -1,6 +1,7 @@
 #include "Engine/Progression/UserDataLocation.h"
 
 #include "Engine/IO/Crypto.h"
+#include "Engine/IO/AtomicFile.h"
 #include "Engine/Support/Utf8Path.h"
 
 #include <SDL3/SDL_filesystem.h>
@@ -146,15 +147,12 @@ Result<bool> WriteEnabledOptionalPackId(
          std::filesystem::is_symlink(status)))
         return Result<bool>::Failure(DataError(
             path, "Optional pack preference is not a regular file"));
-    std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    if (!output)
+    const std::string text = std::string(optionalPackId) + '\n';
+    if (const auto written = io::AtomicFile::WriteText(path, text); !written)
         return Result<bool>::Failure(DataError(
-            path, "Optional pack preference cannot be written"));
-    output << optionalPackId << '\n';
-    output.close();
-    if (!output)
-        return Result<bool>::Failure(DataError(
-            path, "Optional pack preference could not be saved"));
+            path, "Optional pack preference could not be saved",
+            written.Diagnostics().empty() ? std::string{} :
+                written.Diagnostics().front().message));
     return Result<bool>::Success(true);
 }
 

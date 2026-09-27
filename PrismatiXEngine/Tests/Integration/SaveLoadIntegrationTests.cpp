@@ -1073,6 +1073,29 @@ void TestPackagedUserDataMigration() {
           "UTF-8 save-slot path can be deleted without ACP conversion");
 }
 
+void TestOptionalPackPreferenceAtomicWrite() {
+    px::test::TempDirectory temp("optional-pack-preference");
+    const auto preference = temp.path / "optional-pack.txt";
+    const auto first = px::progress::WriteEnabledOptionalPackId(
+        temp.path, "adult");
+    Check(first && ReadBytes(preference) == "adult\n",
+          "optional pack preference is written as a complete file");
+    const auto replacement = px::progress::WriteEnabledOptionalPackId(
+        temp.path, "voice");
+    const auto selected = px::progress::ReadEnabledOptionalPackId(temp.path);
+    Check(replacement && selected && selected.Value() == "voice" &&
+              ReadBytes(preference) == "voice\n",
+          "replacing an optional pack preference publishes complete bytes");
+    Check(!px::progress::WriteEnabledOptionalPackId(temp.path, "INVALID") &&
+              ReadBytes(preference) == "voice\n",
+          "rejected optional pack IDs preserve the previous preference");
+    bool staged = false;
+    for (const auto& entry : std::filesystem::directory_iterator(temp.path))
+        staged |= entry.path().filename().string().starts_with(
+            "optional-pack.txt.tmp.");
+    Check(!staged, "successful preference replacement leaves no staging file");
+}
+
 
 }  // namespace
 
@@ -1087,6 +1110,8 @@ int main() {
         TestPersistenceKeyUpgradeAndFailurePreservation);
     Run("Persistence_PackagedUserDataMigration",
         TestPackagedUserDataMigration);
+    Run("Persistence_OptionalPackPreferenceAtomicWrite",
+        TestOptionalPackPreferenceAtomicWrite);
     if (g_failures == 0) std::cout << "PASS: runtime-save-load integration\n";
     return g_failures == 0 ? 0 : 1;
 }
