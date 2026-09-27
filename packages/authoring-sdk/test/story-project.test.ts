@@ -250,7 +250,10 @@ test("shared Story identityNamespace rejects duplicate authored ids", () => {
     "zh-TW/ch01/scene02.pxstory": "*start\n[id duplicate]\nSecond.\n*aside\n[end]\n",
   }});
   assert.equal(compiled.valid, false);
-  assert.ok(compiled.diagnostics.some((diagnostic) => diagnostic.code === "PXSTORY1308"));
+  const duplicate = compiled.diagnostics.find((diagnostic) => diagnostic.code === "PXSTORY1308");
+  assert.equal(duplicate?.path, "zh-TW/ch01/scene02.pxstory");
+  assert.equal(duplicate?.span?.start.line, 3);
+  assert.ok(duplicate?.details?.includes("zh-TW/ch01/scene01.pxstory:3"));
 });
 
 test("Story project compiler rejects duplicate scene ids even when the first descriptor cannot be loaded", () => {

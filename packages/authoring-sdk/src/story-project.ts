@@ -8,6 +8,7 @@ import type {
   ExtensionManifest,
   GameDocument,
   RuntimeIrOperation,
+  SourceMapEntry,
   RuntimeSourceMap,
   SourceSpan,
   StoryArgument,
@@ -334,6 +335,23 @@ function fallbackSpan(path: string): SourceSpan {
   };
 }
 
+function mappedSpan(source: string, mapping: SourceMapEntry): SourceSpan {
+  const offsetAt = (line: number, column: number): number => {
+    let offset = 0;
+    for (let current = 1; current < line; current += 1) {
+      const newline = source.indexOf("\n", offset);
+      if (newline < 0) return source.length;
+      offset = newline + 1;
+    }
+    return Math.min(source.length, offset + column - 1);
+  };
+  return {path: mapping.sourceUri,
+    start: {line: mapping.startLine, column: mapping.startColumn,
+      offset: offsetAt(mapping.startLine, mapping.startColumn)},
+    end: {line: mapping.endLine, column: mapping.endColumn,
+      offset: offsetAt(mapping.endLine, mapping.endColumn)}};
+}
+
 // Internal bundle labels intentionally do not embed author-controlled ids.
 // Hashing keeps them valid .pxstory identifiers while avoiding collisions
 // between ids such as `chapter.one` and author labels that contain dots.
@@ -569,7 +587,7 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
   const operations: RuntimeIrOperation[] = [];
   const mappings: RuntimeSourceMap["mappings"][number][] = [];
   const resourceDependencies = new Set<string>();
-  const operationOwners = new Map<string, string>();
+  const operationOwners = new Map<string, {sceneId: string; path: string; line: number}>();
   const sharedSnapshot = sceneCache === undefined ? undefined : {
     compileInputs: JSON.stringify([
       documentId, context.locale, context.characters, context.game,
@@ -671,10 +689,17 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
       for (const operation of compiled.runtimeIr.operations) {
         if (stubSourceIds.has(operation.sourceId)) continue;
         const owner = operationOwners.get(operation.operationId);
-        if (owner !== undefined) diagnostics.push(issue(
-          "PXSTORY1308", `Duplicate Story operation identity shared by ${owner} and ${descriptor.id}`,
-          scene.path, operation.operationId));
-        else operationOwners.set(operation.operationId, descriptor.id);
+        if (owner !== undefined) {
+          const mapping = compiled.sourceMap.mappings.find((candidate) =>
+            candidate.operationId === operation.operationId);
+          const location = mapping !== undefined && mapping.sourceUri === scene.path
+            ? mappedSpan(scene.source, mapping) : scene.path;
+          diagnostics.push(issue("PXSTORY1308",
+            `Duplicate Story operation identity shared by ${owner.sceneId} and ${descriptor.id}`,
+            location, `${operation.operationId}; first at ${owner.path}:${owner.line}`));
+        }
+        else operationOwners.set(operation.operationId, {sceneId: descriptor.id,
+          path: scene.path, line: operation.sourceLine});
         operations.push(operation);
       }
       for (const mapping of compiled.sourceMap.mappings) {
