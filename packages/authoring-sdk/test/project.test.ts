@@ -100,6 +100,22 @@ test("project compilation checks declared Player UI data binding paths", () => {
     item.path === "Content/UI/Title.pxui"));
 });
 
+test("project compilation rejects a missing host-declared UI path", () => {
+  const result = compileProject({project: {...project, settings: {
+    "authoring.uiContract": {format: "PrismatiXUiContract", schemaRevision: 1,
+      roots: ["dialogue"], values: {dialogue: "object", "dialogue.caption": "string"}},
+  }}, documents: {"Story/story.pxindex": storyIndex,
+    "Content/game.pxgame": game,
+    "Content/UI/Title.pxui": {...ui, nodes: [{...ui.nodes[0],
+      bindings: {text: {path: "dialogue.typo"}}}]}},
+  sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+  locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locale: "zh-TW", strings: {}}}});
+  assert.equal(result.valid, false);
+  assert.ok(result.diagnostics.some((item) => item.code === "PXBUILD1094" &&
+    item.path === "Content/UI/Title.pxui"));
+});
+
 test("project compilation reports unresolved key-binding buttons before Player starts", () => {
   const compile = (action: unknown, asComponent = false,
     extraProperties: Record<string, unknown> = {}) => {

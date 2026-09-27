@@ -1939,6 +1939,14 @@ async function devCommand(options: Options): Promise<number> {
     while (!stopped) {
       if (changes === attempted && client?.alive) { await waitFor(debounce); continue; }
       if (changes === attempted && built === undefined) { await waitFor(debounce); continue; }
+      // One atomic editor save can emit several watcher events. Let the burst
+      // settle before reserving a revision; otherwise a late duplicate event
+      // during packaging starts a second build from identical source bytes.
+      if (built !== undefined && changes !== attempted) {
+        const pending = changes;
+        await waitFor(debounce);
+        if (changes !== pending) continue;
+      }
       const observed = changes;
       let candidate: PreviewClient | undefined;
       let updated: BuildResult | undefined;

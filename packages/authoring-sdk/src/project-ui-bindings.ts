@@ -4,12 +4,21 @@ import type {ProjectDocument} from "./project.js";
 
 type JsonObject = Record<string, JsonValue>;
 type ResolvedValue = {readonly declared: boolean; readonly value: JsonValue | undefined};
+type UiValueType = "null" | "boolean" | "integer" | "number" | "string" | "object" | "array";
+interface UiContract {
+  readonly roots: readonly string[];
+  readonly values: ReadonlyMap<string, UiValueType>;
+  readonly formatters: ReadonlyMap<string, readonly [UiValueType, UiValueType]>;
+}
 
 const builtinFormatters: Readonly<Record<string, readonly [string, string]>> = {
   BoolToVisibility: ["boolean", "string"],
   Not: ["boolean", "boolean"],
   Percent: ["number", "string"],
 };
+const valueTypes = new Set<string>(["null", "boolean", "integer", "number", "string", "object", "array"]);
+const contractPathPattern = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[\])*$/u;
+const contractRootPattern = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/u;
 
 function object(value: unknown): JsonObject | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -79,21 +88,85 @@ function issue(code: string, message: string, path: string,
   return {severity: "error", code, message, path, details};
 }
 
-/** Validate the initial Player ViewModel values whose roots are explicitly
- * declared in project.settings["player.uiData"]. Runtime-defined roots remain
- * the host's responsibility; they are never guessed from UI path spelling. */
+function parseUiContract(value: JsonValue | undefined): {
+  readonly contract?: UiContract;
+  readonly diagnostics: readonly AuthoringDiagnostic[];
+} {
+  if (value === undefined) return {diagnostics: []};
+  const path = "project.pxproject";
+  const root = object(value);
+  const roots = root?.roots;
+  const values = object(root?.values);
+  const formatters = object(root?.formatters);
+  if (root === undefined || root.format !== "PrismatiXUiContract" ||
+    root.schemaRevision !== 1 || Object.keys(root).some((key) =>
+      key !== "format" && key !== "schemaRevision" &&
+      key !== "roots" && key !== "values" && key !== "formatters") ||
+    !Array.isArray(roots) || roots.length > 256 ||
+    !roots.every((name) => typeof name === "string" && name.length <= 512 &&
+      contractRootPattern.test(name)) || new Set(roots).size !== roots.length ||
+    (values === undefined && formatters === undefined) ||
+    (values !== undefined && Object.keys(values).length > 1024) ||
+    (formatters !== undefined && Object.keys(formatters).length > 128))
+    return {diagnostics: [issue("PXBUILD1090", "authoring.uiContract has an invalid envelope",
+      path, "settings.authoring.uiContract")]};
+  const declaredRoots = roots as string[];
+  const declaredValues = new Map<string, UiValueType>();
+  for (const [name, type] of Object.entries(values ?? {})) {
+    if (name.length > 512 || !contractPathPattern.test(name) ||
+        typeof type !== "string" || !valueTypes.has(type) ||
+        !declaredRoots.some((declaredRoot) => name === declaredRoot ||
+          name.startsWith(`${declaredRoot}.`) || name.startsWith(`${declaredRoot}[`)))
+      return {diagnostics: [issue("PXBUILD1090", "authoring.uiContract value declaration is invalid",
+        path, `settings.authoring.uiContract.values.${name}`)]};
+    declaredValues.set(name, type as UiValueType);
+  }
+  if (declaredRoots.some((name) => !declaredValues.has(name)))
+    return {diagnostics: [issue("PXBUILD1090", "authoring.uiContract root needs a value type",
+      path, "settings.authoring.uiContract.roots")]};
+  const declaredFormatters = new Map<string, readonly [UiValueType, UiValueType]>();
+  for (const [name, raw] of Object.entries(formatters ?? {})) {
+    const descriptor = object(raw);
+    if (!/^[A-Za-z_][A-Za-z0-9_.-]{0,127}$/u.test(name) ||
+        Object.hasOwn(builtinFormatters, name) || descriptor === undefined ||
+        Object.keys(descriptor).length !== 2 ||
+        typeof descriptor.input !== "string" || !valueTypes.has(descriptor.input) ||
+        typeof descriptor.output !== "string" || !valueTypes.has(descriptor.output))
+      return {diagnostics: [issue("PXBUILD1090", "authoring.uiContract formatter declaration is invalid",
+        path, `settings.authoring.uiContract.formatters.${name}`)]};
+    declaredFormatters.set(name, [descriptor.input as UiValueType,
+      descriptor.output as UiValueType]);
+  }
+  return {contract: {roots: declaredRoots, values: declaredValues,
+    formatters: declaredFormatters}, diagnostics: []};
+}
+
+function declaredContractType(contract: UiContract | undefined, path: string): UiValueType | undefined {
+  return contract?.values.get(path.replace(/\[(?:0|[1-9][0-9]*)\]/gu, "[]"));
+}
+
+function contractOwnsPath(contract: UiContract | undefined, path: string): boolean {
+  if (contract === undefined) return false;
+  return contract.roots.some((root) =>
+    path === root || path.startsWith(`${root}.`) || path.startsWith(`${root}[`));
+}
+
+/** Validate initial Player ViewModel data and explicitly declared host data.
+ * Undeclared runtime roots remain the host's responsibility. */
 export function validatePlayerUiBindings(project: ProjectDocument,
   uiDocuments: ReadonlyMap<string, JsonValue>,
   registry?: UiTypeRegistryMetadata): readonly AuthoringDiagnostic[] {
   const data = object(project.settings?.["player.uiData"]);
-  if (data === undefined) return [];
-  const diagnostics: AuthoringDiagnostic[] = [];
+  const parsedContract = parseUiContract(project.settings?.["authoring.uiContract"]);
+  const contract = parsedContract.contract;
+  const diagnostics: AuthoringDiagnostic[] = [...parsedContract.diagnostics];
+  if (diagnostics.length > 0 || data === undefined && contract === undefined) return diagnostics;
   const properties = new Map(registry?.controls.map((control) => [control.runtimeType,
     new Map(control.properties.map((property) => [property.id, property.valueType]))]) ?? []);
-  const checkType = (source: JsonValue, formatter: unknown, runtimeType: unknown,
+  const checkType = (sourceType: string, formatter: unknown, runtimeType: unknown,
     target: string, path: string, details: string): void => {
-    const sourceType = variantType(source);
-    const knownFormatter = typeof formatter === "string" ? builtinFormatters[formatter] : undefined;
+    const knownFormatter = typeof formatter === "string"
+      ? builtinFormatters[formatter] ?? contract?.formatters.get(formatter) : undefined;
     if (knownFormatter !== undefined && knownFormatter[0] !== sourceType) {
       diagnostics.push(issue("PXBUILD1083", `UI formatter ${formatter} expects ${knownFormatter[0]} but source is ${sourceType}`,
         path, details));
@@ -132,7 +205,8 @@ export function validatePlayerUiBindings(project: ProjectDocument,
       const location = `nodes[${index}]`;
       const ownSource = object(node.itemSource);
       if (ownSource !== undefined && typeof ownSource.path === "string") {
-        const resolved = resolveDeclared(data, ownSource.path);
+        const resolved = data === undefined ? {declared: false, value: undefined}
+          : resolveDeclared(data, ownSource.path);
         if (resolved.declared && !Array.isArray(resolved.value))
           diagnostics.push(issue("PXBUILD1080", "UI itemSource does not resolve to an array in player.uiData",
             path, `${location}.itemSource.path: ${ownSource.path}`));
@@ -153,6 +227,28 @@ export function validatePlayerUiBindings(project: ProjectDocument,
             if (diagnostics.length >= 64) return diagnostics;
           }
         }
+        if (contractOwnsPath(contract, ownSource.path)) {
+          const type = declaredContractType(contract, ownSource.path);
+          if (type !== "array")
+            diagnostics.push(issue("PXBUILD1091", "UI itemSource must be declared as an array",
+              path, `${location}.itemSource.path: ${ownSource.path}`));
+          else {
+            const itemPrefix = `${ownSource.path}[]`;
+            const keyType = typeof ownSource.key === "string"
+              ? declaredContractType(contract, `${itemPrefix}.${ownSource.key}`) : undefined;
+            if (keyType !== "string" && keyType !== "integer")
+              diagnostics.push(issue("PXBUILD1092", "UI item key contract must be string or integer",
+                path, `${location}.itemSource.key: ${String(ownSource.key)}`));
+            if (typeof ownSource.placement === "string") for (const field of
+              ["x", "y", "width", "height"]) {
+              const fieldType = declaredContractType(contract,
+                `${itemPrefix}.${ownSource.placement}.${field}`);
+              if (fieldType !== "number" && fieldType !== "integer")
+                diagnostics.push(issue("PXBUILD1092", "UI item placement contract needs numeric fields",
+                  path, `${location}.itemSource.placement.${field}`));
+            }
+          }
+        }
       }
       const bindings = object(node.bindings);
       if (bindings === undefined) continue;
@@ -161,27 +257,54 @@ export function validatePlayerUiBindings(project: ProjectDocument,
         const binding = object(rawBinding);
         if (binding === undefined || typeof binding.path !== "string") continue;
         const detail = `${location}.bindings.${target}: ${binding.path}`;
+        if (typeof binding.formatter === "string" &&
+            !Object.hasOwn(builtinFormatters, binding.formatter) &&
+            contract !== undefined && !contract.formatters.has(binding.formatter))
+          diagnostics.push(issue("PXBUILD1093", "UI custom formatter is not declared in authoring.uiContract",
+            path, detail));
         if (source !== undefined && binding.path.startsWith("item.") &&
             typeof source.path === "string") {
-          const resolved = resolveDeclared(data, source.path);
-          if (!Array.isArray(resolved.value)) continue;
-          for (const [itemIndex, item] of resolved.value.entries()) {
-            const field = itemField(item, binding.path.slice(5));
-            if (field === undefined)
-              diagnostics.push(issue("PXBUILD1085", "UI item binding field is missing in player.uiData",
-                path, `${detail}, item[${itemIndex}]`));
-            else checkType(field, binding.formatter, node.runtimeType, target,
-              path, `${detail}, item[${itemIndex}]`);
-            if (diagnostics.length >= 64) return diagnostics;
+          const resolved = data === undefined ? {declared: false, value: undefined}
+            : resolveDeclared(data, source.path);
+          if (Array.isArray(resolved.value)) {
+            for (const [itemIndex, item] of resolved.value.entries()) {
+              const field = itemField(item, binding.path.slice(5));
+              if (field === undefined)
+                diagnostics.push(issue("PXBUILD1085", "UI item binding field is missing in player.uiData",
+                  path, `${detail}, item[${itemIndex}]`));
+              else checkType(variantType(field), binding.formatter, node.runtimeType, target,
+                path, `${detail}, item[${itemIndex}]`);
+              if (diagnostics.length >= 64) return diagnostics;
+            }
+          }
+          if (declaredContractType(contract, source.path) === "array") {
+            const type = declaredContractType(contract,
+              `${source.path}[].${binding.path.slice(5)}`);
+            if (type === undefined)
+              diagnostics.push(issue("PXBUILD1094", "UI item binding field is missing in authoring.uiContract",
+                path, detail));
+            else checkType(type, binding.formatter, node.runtimeType, target, path, detail);
           }
         } else if (source === undefined) {
-          const resolved = resolveDeclared(data, binding.path);
-          if (!resolved.declared) continue;
-          if (resolved.value === undefined)
+          const resolved = data === undefined ? {declared: false, value: undefined}
+            : resolveDeclared(data, binding.path);
+          const declaredType = declaredContractType(contract, binding.path);
+          if (resolved.declared && resolved.value === undefined && declaredType === undefined)
             diagnostics.push(issue("PXBUILD1086", "UI ViewModel path is missing in player.uiData",
               path, detail));
-          else checkType(resolved.value, binding.formatter, node.runtimeType, target,
-            path, detail);
+          else if (resolved.value !== undefined) {
+            if (declaredType !== undefined && declaredType !== variantType(resolved.value))
+              diagnostics.push(issue("PXBUILD1095", "UI ViewModel value contradicts authoring.uiContract",
+                path, detail));
+            checkType(variantType(resolved.value), binding.formatter,
+              node.runtimeType, target, path, detail);
+          }
+          else if (contractOwnsPath(contract, binding.path)) {
+            if (declaredType === undefined)
+              diagnostics.push(issue("PXBUILD1094", "UI ViewModel path is missing in authoring.uiContract",
+                path, detail));
+            else checkType(declaredType, binding.formatter, node.runtimeType, target, path, detail);
+          }
         }
         if (diagnostics.length >= 64) return diagnostics;
       }

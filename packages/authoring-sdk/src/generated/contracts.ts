@@ -2613,6 +2613,87 @@ export const contractSchemas: Readonly<Record<string, object>> = {
         },
         "maxProperties": 1024,
         "properties": {
+          "authoring.uiContract": {
+            "additionalProperties": false,
+            "properties": {
+              "format": {
+                "const": "PrismatiXUiContract"
+              },
+              "formatters": {
+                "additionalProperties": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "input": {
+                      "enum": [
+                        "null",
+                        "boolean",
+                        "integer",
+                        "number",
+                        "string",
+                        "object",
+                        "array"
+                      ]
+                    },
+                    "output": {
+                      "enum": [
+                        "null",
+                        "boolean",
+                        "integer",
+                        "number",
+                        "string",
+                        "object",
+                        "array"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "input",
+                    "output"
+                  ],
+                  "type": "object"
+                },
+                "maxProperties": 128,
+                "type": "object"
+              },
+              "roots": {
+                "items": {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "maxItems": 256,
+                "type": "array",
+                "uniqueItems": true
+              },
+              "schemaRevision": {
+                "const": 1
+              },
+              "values": {
+                "additionalProperties": {
+                  "enum": [
+                    "null",
+                    "boolean",
+                    "integer",
+                    "number",
+                    "string",
+                    "object",
+                    "array"
+                  ]
+                },
+                "maxProperties": 1024,
+                "propertyNames": {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                "type": "object"
+              }
+            },
+            "required": [
+              "format",
+              "schemaRevision",
+              "roots"
+            ],
+            "type": "object"
+          },
           "player.presentationTransitions": {
             "additionalProperties": false,
             "properties": {
@@ -4704,7 +4785,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "locale.schema.json": "b8f6009219c6cad7fa6130af6d710af11cabcf85bf2e0039f1fdd3c08e2bbf9f",
   "motion.schema.json": "300c1bbdeb16abf4faa8014afa81800e8d72a1e7f1f6d06d309cf53ba2980f01",
   "portrait.schema.json": "658421c74dacc9d8247b64c6a00389c069b7516f57f863f399160161a1207f16",
-  "project.schema.json": "ed7c11420a9a3acf450ff4a9fe84ae04a3dabb2a9fc717f9428c9456350a4361",
+  "project.schema.json": "a49f8cc1eb55b2c98a36627b742ddeef88e15b23c380140beecd84e76f23036f",
   "runtime-ir.schema.json": "04c51fc94dc46b500d78877d29dba1dffe1f41619211af24e48cf48699bf0836",
   "save-migration.schema.json": "fd9f89119a4e8a70324f95bb6e0261e5d78b0ea173e2755422c36e5e2379b6cf",
   "source-map.schema.json": "1a0d20fbc5ed639fcb33bf7e8b81f78caf9af091a4d245cee2e5e66eb80d3e62",

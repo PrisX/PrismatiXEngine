@@ -52,7 +52,46 @@ When the item's source path resolves to an initial array declared in
 binding before packaging. With a selected native UI TypeRegistry it also
 checks binding output types, including the built-in `Not`, `Percent`, and
 `BoolToVisibility` formatters. Paths and custom formatters supplied only by a
-runtime host still require that host to validate its registrations.
+runtime host can be declared in `settings["authoring.uiContract"]` so the SDK
+can check them before packaging:
+
+```json
+{
+  "settings": {
+    "authoring.uiContract": {
+      "format": "PrismatiXUiContract",
+      "schemaRevision": 1,
+      "roots": ["settings.confirmations"],
+      "values": {
+        "settings.confirmations": "array",
+        "settings.confirmations[].key": "string",
+        "settings.confirmations[].rect.x": "number",
+        "settings.confirmations[].rect.y": "number",
+        "settings.confirmations[].rect.width": "number",
+        "settings.confirmations[].rect.height": "number",
+        "settings.confirmations[].caption": "string"
+      },
+      "formatters": {
+        "CaptionCase": {"input": "string", "output": "string"}
+      }
+    }
+  }
+}
+```
+
+`roots` lists the exact ViewModel paths the host registers, and each root
+must have a type in `values`. Other `values` entries declare fields beneath
+those roots. Use `[]`
+for an array item's type and the item's nested fields; the UI binding itself
+continues to use `item.caption`. Declared item sources must be arrays, stable
+keys must be strings or integers, and an `ItemsPlaced` rectangle needs numeric
+`x`, `y`, `width`, and `height` declarations. A declared ViewModel root with a
+missing binding path or undeclared custom formatter fails validation. The SDK
+checks formatter input and output against the selected native UI TypeRegistry.
+The contract is authoring metadata: the host must register matching runtime
+ViewModel values and formatter implementations. Paths outside declared roots
+remain the host's responsibility.
+
 Resource paths supplied only through dynamic item bindings still need explicit
 asset inclusion (for example `resourceIncludes`) until the compiler can infer
 those runtime dependencies.

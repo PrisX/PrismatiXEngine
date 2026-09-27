@@ -76,3 +76,68 @@ test("declared Player ViewModel binding paths are checked without guessing host 
   assert.deepEqual(validatePlayerUiBindings(overlapping,
     new Map([[path, fallback as JsonValue]]), registry), []);
 });
+
+test("declared host ViewModel and custom formatter contracts validate dynamic item bindings", () => {
+  const values = {
+    "settings.items": "array",
+    "settings.items[].key": "string",
+    "settings.items[].rect.x": "number",
+    "settings.items[].rect.y": "number",
+    "settings.items[].rect.width": "number",
+    "settings.items[].rect.height": "number",
+    "settings.items[].title": "string",
+  };
+  const contract = (overrides: Record<string, unknown> = {}) => ({
+    ...project([]), settings: {"authoring.uiContract": {
+      format: "PrismatiXUiContract", schemaRevision: 1,
+      roots: ["settings.items"], values,
+      formatters: {TitleCase: {input: "string", output: "string"}},
+      ...overrides,
+    } as JsonValue},
+  });
+  const bindings = {bindings: {text: {path: "item.title", formatter: "TitleCase"}}};
+  const check = (document: JsonValue, declared = contract()) =>
+    validatePlayerUiBindings(declared, new Map([[path, document]]), registry);
+  assert.deepEqual(check(scene(bindings)), []);
+  assert.ok(check(scene(bindings), contract({values: {...values,
+    "settings.items[].title": "number"}})).some((item) => item.code === "PXBUILD1083"));
+  const {"settings.items[].title": _title, ...withoutTitle} = values;
+  assert.ok(check(scene(bindings), contract({values: withoutTitle}))
+    .some((item) => item.code === "PXBUILD1094"));
+  const {"settings.items[].key": _key, ...withoutKey} = values;
+  assert.ok(check(scene(bindings), contract({values: withoutKey}))
+    .some((item) => item.code === "PXBUILD1092"));
+  assert.ok(check(scene(bindings), contract({formatters: {}}))
+    .some((item) => item.code === "PXBUILD1093"));
+  assert.ok(check(scene(bindings), contract({formatters: {
+    TitleCase: {input: "string", output: "boolean"},
+  }})).some((item) => item.code === "PXBUILD1084"));
+});
+
+test("host ViewModel contract checks direct paths without guessing unrelated roots", () => {
+  const declared = {...project([]), settings: {"authoring.uiContract": {
+    format: "PrismatiXUiContract", schemaRevision: 1,
+    roots: ["dialogue"], values: {dialogue: "object", "dialogue.text": "string"},
+  } as JsonValue}};
+  const direct = (source: string): JsonValue => ({nodes: [
+    {id: rootId, parentId: null, runtimeType: "Label",
+      bindings: {text: {path: source}}},
+  ]}) as JsonValue;
+  const check = (source: string) => validatePlayerUiBindings(declared,
+    new Map([[path, direct(source)]]), registry);
+  assert.deepEqual(check("dialogue.text"), []);
+  assert.ok(check("dialogue.missing").some((item) => item.code === "PXBUILD1094"));
+  assert.deepEqual(check("host.unknown"), []);
+  assert.deepEqual(check("settings.other"), []);
+  assert.ok(validatePlayerUiBindings({...declared, settings: {
+    "player.uiData": {"dialogue.text": "Ready"},
+    "authoring.uiContract": {format: "PrismatiXUiContract", schemaRevision: 1,
+      roots: ["dialogue"], values: {dialogue: "object", "dialogue.text": "number"}} as JsonValue,
+  }}, new Map([[path, direct("dialogue.text")]]), registry)
+    .some((item) => item.code === "PXBUILD1095"));
+  assert.ok(validatePlayerUiBindings({...declared, settings: {
+    "authoring.uiContract": {format: "PrismatiXUiContract", schemaRevision: 1,
+      roots: ["dialogue"], values: {dialogue: "object", "dialogue..text": "string"}} as JsonValue,
+  }}, new Map([[path, direct("dialogue.text")]]), registry)
+    .some((item) => item.code === "PXBUILD1090"));
+});
