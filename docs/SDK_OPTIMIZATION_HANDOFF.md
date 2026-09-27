@@ -4,6 +4,8 @@
 
 ### 2026-09-27—28 後續進度
 
+- **直接 overlay 的 Player／runtime 靜態檔免做第二次完整雜湊。** 正式 artifact→overlay 路徑先在 Windows 對基底靜態檔與所選 Player／相鄰 runtime library 持有只允許其他讀者的 handle，再完整雜湊並比對；寫入後、發布前重新列出兩側檔名集合並核對基底 metadata，不重讀這些已鎖住的 bytes。新增原生契約驗證寫入期間基底 Player／DLL、來源 Player／DLL 都無法修改，簽章成品獨立驗證通過；Release Packager Contract／Runtime Resources 2/2 通過。非 Windows 維持發布前再次完整比對。尚未在大型真實發行版量測此單獨改動的延遲收益；artifact 與基底 PDX 仍各做一次全量讀驗，這不等於依賴級增量構建。
+
 - **Host UI contract 錯誤可指出作者設定位置。** `authoring.uiContract` 的 envelope、`values`、缺型別的 `roots` 與 `formatters` 宣告出錯時，SDK 會在原始 project JSON 的有效欄位附上 span；CLI 對 `prismatix.json` 會回報實際作者路徑。只在該 contract 子樹與編譯輸入一致時定位，文字過期就保留無 span 的錯誤。Authoring SDK 174/174、CLI 116/116（另 1 項 native E2E 依環境跳過）全套通過；以新版 CLI 對 Senren 四語 368 scenes／31,339 resources 唯讀 `validate --runtime` 通過。
 
 - **TSX 執行後診斷可定位到靜態 JSX 屬性值。** CLI 在有 canonical node index 與原始文字快照時，將缺失資源、跨層 binding 與 layout 錯誤從 JSX 節點縮到對應 prop 值；匯入元件中的 JSX 也適用。遇到動態 spread、無法安全對應的 expression 或沒有欄位路徑時仍回退到節點位置，不猜測錯誤範圍。四個定向 CLI 測試與 CLI 全套 115/115 通過（另 1 項 native E2E 依環境跳過）；以新版 CLI 對 Senren 四語 368 scenes／31,339 resources 唯讀 `validate --runtime` 通過。文件頂層欄位與其他依賴圖診斷仍待補。

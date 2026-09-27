@@ -445,6 +445,89 @@ bool PackagedRuntimeLibrary(const std::filesystem::path& path) {
 #endif
 }
 
+#ifdef _WIN32
+struct LockedRuntimeInputs {
+    std::set<std::string> baseNames;
+    std::set<std::string> playerNames;
+    std::vector<BaseArchiveReadLock> readLocks;
+};
+
+std::optional<std::set<std::string>> StaticDistributionFileNames(
+    const std::filesystem::path& root,
+    const sdk::detail::PackageManifest& manifest) {
+    std::set<std::string> archives;
+    for (const auto& mount : manifest.archives) archives.insert(mount.file);
+    std::set<std::string> names;
+    std::error_code error;
+    std::filesystem::recursive_directory_iterator iterator(root, error);
+    if (error) return std::nullopt;
+    for (; iterator != std::filesystem::recursive_directory_iterator();
+         iterator.increment(error)) {
+        if (error) return std::nullopt;
+        const auto status = std::filesystem::symlink_status(iterator->path(), error);
+        if (error || std::filesystem::is_symlink(status)) return std::nullopt;
+        if (std::filesystem::is_directory(status)) continue;
+        if (!std::filesystem::is_regular_file(status)) return std::nullopt;
+        const auto name = px::PathToUtf8(iterator->path().lexically_relative(root));
+        if (archives.contains(name) || IsOverlayMetadataFile(name)) continue;
+        if (!names.insert(name).second) return std::nullopt;
+    }
+    return error ? std::nullopt : std::optional{std::move(names)};
+}
+
+std::optional<std::set<std::string>> PlayerRuntimeFileNames(
+    const std::filesystem::path& playerExecutable) {
+    std::set<std::string> names{px::PathToUtf8(playerExecutable.filename())};
+    std::error_code error;
+    for (std::filesystem::directory_iterator iterator(
+             playerExecutable.parent_path(), error);
+         !error && iterator != std::filesystem::directory_iterator();
+         iterator.increment(error)) {
+        if (PackagedRuntimeLibrary(iterator->path()))
+            names.insert(px::PathToUtf8(iterator->path().filename()));
+    }
+    return error ? std::nullopt : std::optional{std::move(names)};
+}
+
+std::optional<LockedRuntimeInputs> LockRuntimeInputs(
+    const std::filesystem::path& base,
+    const sdk::detail::PackageManifest& manifest,
+    const std::filesystem::path& playerExecutable) {
+    auto baseNames = StaticDistributionFileNames(base, manifest);
+    auto playerNames = PlayerRuntimeFileNames(playerExecutable);
+    if (!baseNames || !playerNames) return std::nullopt;
+    LockedRuntimeInputs held{.baseNames = std::move(*baseNames),
+                             .playerNames = std::move(*playerNames)};
+    held.readLocks.reserve(held.baseNames.size() + held.playerNames.size());
+    const auto lockFile = [&](const std::filesystem::path& path) {
+        const auto handle = CreateFileW(
+            path.c_str(), FILE_READ_DATA | FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        if (handle == INVALID_HANDLE_VALUE) return false;
+        held.readLocks.emplace_back(handle);
+        return true;
+    };
+    for (const auto& name : held.baseNames)
+        if (!lockFile(base / px::PathFromUtf8(name))) return std::nullopt;
+    for (const auto& name : held.playerNames)
+        if (!lockFile(playerExecutable.parent_path() / px::PathFromUtf8(name)))
+            return std::nullopt;
+    return held;
+}
+
+bool RuntimeInputNamesStillMatch(
+    const std::filesystem::path& base,
+    const sdk::detail::PackageManifest& manifest,
+    const std::filesystem::path& playerExecutable,
+    const LockedRuntimeInputs& held) {
+    const auto baseNames = StaticDistributionFileNames(base, manifest);
+    const auto playerNames = PlayerRuntimeFileNames(playerExecutable);
+    return baseNames && playerNames && *baseNames == held.baseNames &&
+           *playerNames == held.playerNames;
+}
+#endif
+
 bool RuntimeInputsMatchBase(
     const std::filesystem::path& base,
     const sdk::detail::PackageManifest& manifest,
@@ -1569,6 +1652,12 @@ static PackageOverlayBuildResult CreatePackageOverlayFromPlanImpl(
             return fail("Planned source differs from its content index: " +
                         source.uri);
     }
+#ifdef _WIN32
+    auto runtimeInputs = LockRuntimeInputs(
+        base, installedBaseParsed.manifest, playerExecutable);
+    if (!runtimeInputs)
+        return fail("Base runtime or Player inputs cannot be held read-only");
+#endif
     if (!RuntimeInputsMatchBase(base, installedBaseParsed.manifest,
                                 playerExecutable))
         return fail("Player or runtime libraries differ from the base distribution");
@@ -1739,8 +1828,14 @@ static PackageOverlayBuildResult CreatePackageOverlayFromPlanImpl(
                 }))
             return fail("Signed update chain changed during overlay creation");
     }
-    if (!RuntimeInputsMatchBase(base, installedBaseParsed.manifest,
-                                playerExecutable) ||
+#ifdef _WIN32
+    const bool runtimeUnchanged = RuntimeInputNamesStillMatch(
+        base, installedBaseParsed.manifest, playerExecutable, *runtimeInputs);
+#else
+    const bool runtimeUnchanged = RuntimeInputsMatchBase(
+        base, installedBaseParsed.manifest, playerExecutable);
+#endif
+    if (!runtimeUnchanged ||
         (preverifiedBase &&
          BaseArchiveStamps(base, *baseManifestBefore) !=
              std::optional{preverifiedBase->archives}) ||

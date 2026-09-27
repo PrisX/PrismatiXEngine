@@ -44,7 +44,12 @@ Parallel verification reduces elapsed time without making the check
 incremental or trusting unverified cached bytes.
 On Windows, direct artifact overlay planning also overlaps the full artifact
 hash with base verification while holding read-only handles on base PDX
-shards through publication. Other platforms keep the two stages sequential.
+shards through publication. It holds the base static files and selected
+Player/runtime inputs read-only before their complete hash comparison, then
+checks that their file names have not changed before publishing. This avoids
+a second full runtime-file hash without accepting in-place edits. Other
+platforms keep the two stages sequential and rehash runtime inputs at the
+publication boundary.
 
 This path fully checks the artifact inputs, verifies the complete base
 distribution, confirms the selected Player and runtime libraries match the

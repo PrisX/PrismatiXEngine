@@ -1115,6 +1115,65 @@ int main() {
                          px::io::VerifySignedPackageOverlay(
                              signedBase, concurrentPatch).valid,
                      "concurrently verified direct overlay is signed and independently valid");
+#ifdef _WIN32
+        bool runtimeLockObserved = false;
+        bool baseRuntimeWriteBlocked = false;
+        bool sourcePlayerWriteBlocked = false;
+        bool baseLibraryWriteBlocked = false;
+        bool sourceLibraryWriteBlocked = false;
+        const auto lockedRuntimePatch =
+            fixture.path / "signed-locked-runtime-overlay.pdx";
+        const auto basePlayer =
+            signedBase / targetRequest.playerExecutable.filename();
+        const auto lockedRuntime = px::io::CreatePackageOverlayFromRequest(
+            signedBase, targetRequest, lockedRuntimePatch, {},
+            [&](const std::string_view phase, const std::uint64_t current,
+                const std::uint64_t, const std::uint64_t) {
+                if (phase != "plan-changed" || current != 0 ||
+                    runtimeLockObserved) return;
+                runtimeLockObserved = true;
+                std::ofstream baseWrite(basePlayer,
+                                        std::ios::binary | std::ios::app);
+                baseRuntimeWriteBlocked = !baseWrite;
+                std::ofstream sourceWrite(targetRequest.playerExecutable,
+                                          std::ios::binary | std::ios::app);
+                sourcePlayerWriteBlocked = !sourceWrite;
+                std::ofstream baseLibraryWrite(signedBase / "runtime-fixture.dll",
+                                               std::ios::binary | std::ios::app);
+                baseLibraryWriteBlocked = !baseLibraryWrite;
+                std::ofstream sourceLibraryWrite(
+                    targetRequest.playerExecutable.parent_path() /
+                        "runtime-fixture.dll",
+                    std::ios::binary | std::ios::app);
+                sourceLibraryWriteBlocked = !sourceLibraryWrite;
+            }, keyFile);
+        suite.Expect(runtimeLockObserved && baseRuntimeWriteBlocked &&
+                         sourcePlayerWriteBlocked && baseLibraryWriteBlocked &&
+                         sourceLibraryWriteBlocked && lockedRuntime.created &&
+                         px::io::VerifySignedPackageOverlay(
+                             signedBase, lockedRuntimePatch).valid,
+                     "direct overlay holds both base runtime and source Player read-only through publication");
+        const auto addedLibrary =
+            targetRequest.playerExecutable.parent_path() / "late-runtime.dll";
+        const auto changedRuntimePatch =
+            fixture.path / "changed-runtime-overlay.pdx";
+        bool addedAfterVerification = false;
+        const auto changedRuntime = px::io::CreatePackageOverlayFromRequest(
+            signedBase, targetRequest, changedRuntimePatch, {},
+            [&](const std::string_view phase, const std::uint64_t current,
+                const std::uint64_t, const std::uint64_t) {
+                if (phase == "plan-changed" && current == 0 &&
+                    !addedAfterVerification) {
+                    Write(addedLibrary, "late runtime input");
+                    addedAfterVerification = true;
+                }
+            }, keyFile);
+        std::error_code ignored;
+        std::filesystem::remove(addedLibrary, ignored);
+        suite.Expect(addedAfterVerification && !changedRuntime.created &&
+                         !std::filesystem::exists(changedRuntimePatch),
+                     "direct overlay rejects a runtime library added after the first hash");
+#endif
         const auto baseArchive = signedBase / px::PathFromUtf8(
             px::sdk::detail::ParsePackageManifest(
                 Read(signedBase / "Package/manifest.json"))
