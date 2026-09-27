@@ -22,6 +22,33 @@ const maximumStoryBytes = 16 * 1024 * 1024;
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 const audioDurationPattern = /^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?(?:ms|s)?$/u;
 const positiveNumberPattern = /^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/u;
+// Built-in command parameters are closed. `set` accepts a variable name as a
+// key, `if` is an expression, and extension commands have their own contract.
+const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
+  id: ["value"],
+  "choice.wait": [],
+  chapter: ["title"],
+  bg: ["asset", "rule", "duration", "vague"],
+  show: ["character", "expression", "asset", "sprite", "position", "x", "y", "scale", "transition"],
+  move: ["character", "position", "x", "y", "scale", "duration", "ease", "wait"],
+  hide: ["character", "transition"],
+  choice: ["text", "goto", "target", "scene"],
+  jump: ["goto", "target", "scene"],
+  call: ["goto", "target", "scene"],
+  return: [], end: [], wait: ["duration"],
+  voice: ["asset", "fade", "loop", "intro"],
+  bgm: ["asset", "fade", "loop", "intro"],
+  ambience: ["asset", "fade", "loop", "intro"],
+  se: ["asset", "fade", "loop", "intro"],
+  "bgm.stop": ["fade"], "ambience.stop": ["fade"],
+  video: ["asset", "skippable"],
+  timeline: ["timeline", "await", "speed"],
+  motion: ["asset", "await", "speed"], "motion.stop": [],
+  ui: ["route", "operation"],
+  unlock: ["kind", "id"],
+  effect: ["value"], shake: ["duration", "amplitude"], camera: ["value"],
+  else: [], endif: [],
+};
 
 function validAudioDuration(value: string): boolean {
   if (!audioDurationPattern.test(value)) return false;
@@ -481,6 +508,17 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
     }
     if (node.kind !== "command" || node.name === undefined) continue;
     const args = argumentMap(node);
+    const allowed = builtinNamedArguments[node.name];
+    if (allowed !== undefined) {
+      let unknown = false;
+      for (const [name, argument] of args) {
+        if (name.startsWith("$") || allowed.includes(name)) continue;
+        diagnostics.push(error("PXSTORY1017",
+          `Unknown ${node.name} argument: ${name}`, argument.span));
+        unknown = true;
+      }
+      if (unknown) continue;
+    }
     const positional = (index: number): string | undefined => stringValue(args.get(`$${index}`));
     const named = (name: string): string | undefined => stringValue(args.get(name));
     const target = named("target") ?? named("goto") ?? positional(0);
@@ -860,8 +898,10 @@ export interface StoryCommandCompletion {
 }
 
 export function storyCommandCompletions(extensions: readonly ExtensionCommand[] = []): readonly StoryCommandCompletion[] {
-  const builtins = ["id", "bg", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "unlock", "effect", "shake", "camera"];
+  const builtins = ["id", "chapter", "bg", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "unlock", "effect", "shake", "camera"];
   const builtinParameters: Readonly<Record<string, StoryCommandCompletion["parameters"]>> = {
+    id: [{name:"value", required:true}],
+    chapter: [{name:"title", required:true}],
     bg: [
       {name:"asset", required:true}, {name:"rule", required:false},
       {name:"duration", required:false}, {name:"vague", required:false},
@@ -881,9 +921,16 @@ export function storyCommandCompletions(extensions: readonly ExtensionCommand[] 
     hide: [
       {name:"character", required:true}, {name:"transition", required:false, values:[true, false]},
     ],
-    bgm: [{name:"asset", required:true}, {name:"fade", required:false}],
+    choice: [{name:"text", required:true}, {name:"goto", required:false},
+      {name:"target", required:false}, {name:"scene", required:false}],
+    wait: [{name:"duration", required:true}],
+    voice: [{name:"asset", required:true}],
+    se: [{name:"asset", required:true}],
+    bgm: [{name:"asset", required:true}, {name:"fade", required:false},
+      {name:"loop", required:false, values:[true, false]}, {name:"intro", required:false}],
     "bgm.stop": [{name:"fade", required:false}],
-    ambience: [{name:"asset", required:true}, {name:"fade", required:false}],
+    ambience: [{name:"asset", required:true}, {name:"fade", required:false},
+      {name:"loop", required:false, values:[true, false]}],
     "ambience.stop": [{name:"fade", required:false}],
     video: [{name:"asset", required:true}, {name:"skippable", required:false, values:[true, false]}],
     timeline: [{name:"timeline", required:true},
@@ -892,9 +939,12 @@ export function storyCommandCompletions(extensions: readonly ExtensionCommand[] 
       {name:"await", required:false, values:[true, false]}, {name:"speed", required:false}],
     shake: [{name:"duration", required:true}, {name:"amplitude", required:false}],
     unlock: [{name:"kind", required:true}, {name:"id", required:true}],
+    effect: [{name:"value", required:true}],
+    camera: [{name:"value", required:true}],
   };
   return [
-    ...builtins.map((id) => ({id, parameters: builtinParameters[id] ?? []})),
+    ...builtins.map((id) => ({id, parameters: builtinParameters[id] ??
+      (builtinNamedArguments[id] ?? []).map((name) => ({name, required:false}))})),
     ...extensions.map((command) => ({id: command.id, parameters: command.parameters.map((parameter) => ({name: parameter.name, required: parameter.required === true, ...(parameter.enum === undefined ? {} : {values: parameter.enum})}))})),
   ];
 }

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import test from "node:test";
 
-import {canonicalJson, compileStory, parseStory, validateDocument} from "../src/index.js";
+import {canonicalJson, compileStory, parseStory, storyCommandCompletions,
+  validateDocument} from "../src/index.js";
 import type {CharacterDocument, ExtensionManifest, GameDocument} from "../src/index.js";
 
 const character: CharacterDocument = {
@@ -153,6 +154,27 @@ test("invalid Story resource points to its authored argument value", () => {
   assert.equal(issue?.span?.start.column, source.indexOf("../outside.png") + 1);
   assert.equal(issue?.span?.end.column,
     source.indexOf("../outside.png") + 1 + "../outside.png".length);
+});
+
+test("Story rejects misspelled built-in parameters before packaging", () => {
+  const source = "[show character=yuki transision=auto]\n";
+  const compiled = compileStory(parseStory(source, "Story/typo.pxstory"),
+    {documentId: "typo", characters: [character]});
+  const issue = compiled.diagnostics.find((item) => item.code === "PXSTORY1017");
+  assert.equal(compiled.valid, false);
+  assert.equal(issue?.span?.start.column, source.indexOf("auto") + 1);
+  assert.match(issue?.message ?? "", /transision/u);
+  const variable = compileStory(parseStory("[set affection=10]\n"),
+    {documentId: "variable", game});
+  assert.equal(variable.valid, true, JSON.stringify(variable.diagnostics));
+  assert.deepEqual(storyCommandCompletions().find((item) => item.id === "chapter")?.parameters,
+    [{name: "title", required: true}]);
+  assert.ok(storyCommandCompletions().find((item) => item.id === "choice")?.parameters
+    .some((item) => item.name === "scene"));
+  assert.ok(storyCommandCompletions().find((item) => item.id === "bgm")?.parameters
+    .some((item) => item.name === "intro"));
+  assert.deepEqual(storyCommandCompletions().find((item) => item.id === "voice")?.parameters,
+    [{name: "asset", required: true}]);
 });
 
 test("blank lines end speaker scope so the next text paragraph is narration", () => {

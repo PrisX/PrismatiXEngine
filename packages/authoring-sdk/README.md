@@ -76,7 +76,10 @@ read on each run; changed inputs invalidate the corresponding cached result.
 
 Story commands reject a repeated named argument with `PXSTORY1016`; the
 compiler never silently chooses the last value. Diagnostics for command
-arguments point to their values, including commands padded after `[`.
+arguments point to their values, including commands padded after `[`. Built-in
+commands also reject misspelled named parameters with `PXSTORY1017`; `[set
+affection=10]`, `[if ...]`, and extension commands keep their own parameter
+rules.
 
 ## Readable Story with durable save identities
 

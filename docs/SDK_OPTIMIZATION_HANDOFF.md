@@ -4,6 +4,8 @@
 
 ### 2026-09-27—28 後續進度
 
+- **Story 內建指令不再靜默忽略拼錯的具名參數。** `compileStory` 對已知指令的未知參數報 `PXSTORY1017` 並定位該值；`set` 的變數名寫法、`if` 表達式與 extension 自己的參數契約保留。指令補全補上 `chapter`、跨 scene 目標與音訊的可用參數，不再建議 voice／SE 不支援的 fade。SDK 182/182、千戀四語 368 scene／31,339 資源唯讀 validate 通過。
+
 - **Story 重複參數現在直接拒絕。** 同一指令重複宣告具名參數會報 `PXSTORY1016`，避免最後一個值悄悄覆蓋前值。含 `[  command ...]` 空白的參數、錯誤資源值也指向真正原文位置；`if` 表達式的 `=` 解析不受影響。原有 operation identity 與合法 Story 編譯輸出不變。
 
 - **靜態 JSX spread 的資源錯誤可定位到實際值。** `<Image {...{path: "missing.png"}} />` 現依 JSX prop 覆寫順序找出 `path` 原始字面量；無法靜態確定的 spread 仍回退到 JSX 節點，不猜來源。CLI 117/117 通過（另 1 項 native E2E 依環境跳過）。
