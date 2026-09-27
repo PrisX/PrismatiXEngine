@@ -1,4 +1,5 @@
 import {parseStory} from "./story.js";
+import {fnv1a64 as hash64} from "./fnv1a64.js";
 import type {AuthoringDiagnostic, StoryDocument, StoryNode} from "./types.js";
 
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
@@ -48,15 +49,6 @@ interface ScannedEntry {
   readonly authoredId?: string;
   readonly sourceId: string;
   readonly stable: boolean;
-}
-
-function hash64(input: string): string {
-  let hash = 0xcbf29ce484222325n;
-  for (const byte of new TextEncoder().encode(input)) {
-    hash ^= BigInt(byte);
-    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
-  }
-  return hash.toString(16).padStart(16, "0");
 }
 
 function diagnostic(code: string, message: string, node?: StoryNode, details?: string): AuthoringDiagnostic {

@@ -1,4 +1,5 @@
 import {compileStory, parseStory} from "./story.js";
+import {fnv1a64 as stableId} from "./fnv1a64.js";
 import {applyStoryIdentityMap, storyRequiresIdentityMap} from "./story-external-identity.js";
 import type {ProjectAssetDescriptor} from "./resources.js";
 import type {
@@ -231,15 +232,6 @@ function issue(code: string, message: string, path?: string, details?: string): 
     ...(path === undefined ? {} : {path}),
     ...(details === undefined ? {} : {details}),
   };
-}
-
-function stableId(input: string): string {
-  let hash = 0xcbf29ce484222325n;
-  for (const byte of new TextEncoder().encode(input)) {
-    hash ^= BigInt(byte);
-    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
-  }
-  return hash.toString(16).padStart(16, "0");
 }
 
 function fallbackSpan(path: string): SourceSpan {

@@ -1,4 +1,5 @@
 import {validateDocument} from "./contracts.js";
+import {fnv1a64 as hash64} from "./fnv1a64.js";
 import {isSafeResourcePath} from "./resources.js";
 import type {ProjectDocument} from "./project.js";
 import type {AuthoringDiagnostic, CharacterDocument, CharacterExpression,
@@ -83,15 +84,6 @@ function sourceManifest(value: unknown, path: string): Result<ObjectValue> {
   return record === undefined
     ? {diagnostics: [issue("PXBUILD1040", "Project source manifest must be an object", path)], valid: false}
     : {value: record, diagnostics: [], valid: true};
-}
-
-function hash64(input: string): string {
-  let hash = 0xcbf29ce484222325n;
-  for (const byte of new TextEncoder().encode(input)) {
-    hash ^= BigInt(byte);
-    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
-  }
-  return hash.toString(16).padStart(16, "0");
 }
 
 function stableUuid(seed: string): string {
