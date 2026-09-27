@@ -235,6 +235,9 @@ export interface StoryCompileResult {
   readonly sourceMap?: RuntimeSourceMap;
   /** Project-relative binary/text resources required by the emitted program. */
   readonly resourceDependencies?: readonly string[];
+  /** First authored command responsible for each resolved resource. */
+  readonly resourceLocations?: readonly {readonly source: string;
+    readonly span: SourceSpan}[];
   readonly diagnostics: readonly AuthoringDiagnostic[];
   readonly valid: boolean;
 }

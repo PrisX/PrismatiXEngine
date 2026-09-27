@@ -27,6 +27,7 @@ import type {
   JsonValue,
   RuntimeIrDocument,
   RuntimeSourceMap,
+  SourceSpan,
 } from "./types.js";
 
 export interface ProjectDocument {
@@ -176,6 +177,15 @@ function issue(code: string, message: string, path?: string, details?: string): 
   return {severity: "error", code, message,
     ...(path === undefined ? {} : {path}),
     ...(details === undefined ? {} : {details})};
+}
+
+interface LocatedResourceReference extends ProjectDependencyReference {
+  readonly sourcePath?: string;
+  readonly sourcePointer?: string;
+}
+
+function pointerSegment(value: string): string {
+  return value.replaceAll("~", "~0").replaceAll("/", "~1");
 }
 
 // Input::ActionName registers these even when a game does not redeclare them.
@@ -797,11 +807,16 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     ] as const)).flat(),
   );
   const storyResourcePaths = new Set(compiled.resourceDependencies ?? []);
+  const storyResourceLocations = new Map<string, SourceSpan>(
+    (compiled.resourceLocations ?? []).map((item) => [item.source, item.span]));
   for (const locale of project.supportedLocales) {
     const localized = locale === project.defaultLocale ? compiled : compileLocale(locale);
     if (localized !== compiled) diagnostics.push(...localized.diagnostics);
     for (const dependency of localized.resourceDependencies ?? [])
       storyResourcePaths.add(dependency);
+    for (const location of localized.resourceLocations ?? [])
+      if (!storyResourceLocations.has(location.source))
+        storyResourceLocations.set(location.source, location.span);
     if (!localized.valid || localized.runtimeIr === undefined ||
         localized.sourceMap === undefined) continue;
     const aligned = locale === project.defaultLocale
@@ -823,31 +838,67 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     return {diagnostics, valid: false};
   }
 
-  const dependencyReferences: ProjectDependencyReference[] = [
+  const dependencyReferences: LocatedResourceReference[] = [
     ...[...storyResourcePaths].map((value) => ({value, origin: "Story"})),
     ...includedResources,
   ];
-  const addResourceRef = (value: unknown, origin: string): void => {
+  for (const [index, value] of (project.assets ?? []).entries()) {
+    if (value === null || typeof value !== "object" || Array.isArray(value) ||
+        typeof value.source !== "string") continue;
+    dependencyReferences.push({value: value.source,
+      origin: `project.assets[${index}].source`, sourcePath: projectPath,
+      sourcePointer: `/assets/${index}/source`});
+  }
+  const resourceSourceDocuments = new Map<string,
+    {document: unknown; text: string | undefined}>();
+  for (const [path, document] of [...uiDocuments, ...uiComponentDocuments,
+    ...extensionDocuments])
+    resourceSourceDocuments.set(path, {document, text: input.documentSources?.[path]});
+  for (const [locale, document] of localeDocuments) {
+    const path = `Content/Localization/${locale}.json`;
+    resourceSourceDocuments.set(path,
+      {document, text: input.documentSources?.[path]});
+  }
+  if (input.project !== undefined) {
+    try {
+      const document = typeof input.project === "string"
+        ? JSON.parse(input.project) as unknown : input.project;
+      resourceSourceDocuments.set(projectPath,
+        {document, text: input.documentSources?.[projectPath]});
+    } catch { /* Project parsing diagnostics are reported by normalization. */ }
+  }
+  const addResourceRef = (value: unknown, origin: string,
+    sourcePath?: string, sourcePointer?: string): void => {
+    const location = sourcePath === undefined || sourcePointer === undefined
+      ? {} : {sourcePath, sourcePointer};
     if (typeof value === "string") {
-      dependencyReferences.push({value, origin});
+      dependencyReferences.push({value, origin, ...location});
       return;
     }
     if (value === null || typeof value !== "object" || Array.isArray(value)) return;
     const reference = value as Record<string, unknown>;
     if (typeof reference.path === "string")
-      dependencyReferences.push({value: reference.path, origin});
+      dependencyReferences.push({value: reference.path, origin,
+        ...(sourcePointer === undefined ? {} : {sourcePointer: `${sourcePointer}/path`}),
+        ...(sourcePath === undefined ? {} : {sourcePath})});
     else if (typeof reference.id === "string")
-      dependencyReferences.push({value: reference.id, origin});
+      dependencyReferences.push({value: reference.id, origin,
+        ...(sourcePointer === undefined ? {} : {sourcePointer: `${sourcePointer}/id`}),
+        ...(sourcePath === undefined ? {} : {sourcePath})});
   };
   for (const [manifestPath, extension] of extensionDocuments) {
-    for (const declaration of [...extension.commands, ...extension.actions]) {
-      for (const parameter of declaration.parameters) {
+    for (const [kind, declarations] of [
+      ["commands", extension.commands], ["actions", extension.actions],
+    ] as const) for (const [declarationIndex, declaration] of declarations.entries()) {
+      for (const [parameterIndex, parameter] of declaration.parameters.entries()) {
         if (parameter.type === "resource" && parameter.default != null &&
             !(parameter.default === "" ||
               (typeof parameter.default === "object" && !Array.isArray(parameter.default) &&
                 parameter.default.path === "")))
           addResourceRef(parameter.default,
-            `${manifestPath}:${declaration.id}.${parameter.name}.default`);
+            `${manifestPath}:${declaration.id}.${parameter.name}.default`,
+            manifestPath,
+            `/${kind}/${declarationIndex}/parameters/${parameterIndex}/default`);
       }
     }
   }
@@ -855,20 +906,24 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     if (document === null || typeof document !== "object" || Array.isArray(document)) return;
     const nodes = (document as Record<string, JsonValue>).nodes;
     if (!Array.isArray(nodes)) return;
-    const visitProperties = (value: JsonValue, path: string): void => {
+    const visitProperties = (value: JsonValue, path: string,
+      pointer: string): void => {
       if (value === null || typeof value !== "object") return;
       if (Array.isArray(value)) {
-        for (const [index, item] of value.entries()) visitProperties(item, `${path}[${index}]`);
+        for (const [index, item] of value.entries())
+          visitProperties(item, `${path}[${index}]`, `${pointer}/${index}`);
         return;
       }
       for (const [key, item] of Object.entries(value)) {
         const itemPath = `${path}.${key}`;
+        const itemPointer = `${pointer}/${pointerSegment(key)}`;
         if (typeof item === "string" && (key === "path" || key.endsWith("Path")))
-          addResourceRef(item, `${origin}:${itemPath}`);
-        else visitProperties(item, itemPath);
+          addResourceRef(item, `${origin}:${itemPath}`, origin, itemPointer);
+        else visitProperties(item, itemPath, itemPointer);
       }
     };
-    const visitActionArguments = (value: JsonValue, path: string): void => {
+    const visitActionArguments = (value: JsonValue, path: string,
+      pointer: string): void => {
       if (typeof value === "string") {
         // Project actions frequently pass media paths through a generic
         // `argument` field (music galleries, replay thumbnails, custom
@@ -878,34 +933,40 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
         if (value.includes("/") && !value.includes("://") &&
             /\.[A-Za-z0-9_-]{1,16}$/u.test(value) &&
             isSafeResourcePath(value))
-          addResourceRef(value, `${origin}:${path}`);
+          addResourceRef(value, `${origin}:${path}`, origin, pointer);
         return;
       }
       if (value === null || typeof value !== "object") return;
       if (Array.isArray(value)) {
         for (const [index, item] of value.entries())
-          visitActionArguments(item, `${path}[${index}]`);
+          visitActionArguments(item, `${path}[${index}]`,
+            `${pointer}/${index}`);
         return;
       }
       if (value.type === "resource" && typeof value.value === "string") {
-        if (value.value !== "") addResourceRef(value.value, `${origin}:${path}.value`);
+        if (value.value !== "") addResourceRef(value.value,
+          `${origin}:${path}.value`, origin, `${pointer}/value`);
         return;
       }
       for (const [key, item] of Object.entries(value))
-        visitActionArguments(item, `${path}.${key}`);
+        visitActionArguments(item, `${path}.${key}`,
+          `${pointer}/${pointerSegment(key)}`);
     };
     for (const [index, node] of nodes.entries()) {
       if (node === null || typeof node !== "object" || Array.isArray(node)) continue;
       const uiNode = node as Record<string, JsonValue>;
       const properties = uiNode.runtimeProperties;
       if (properties !== undefined)
-        visitProperties(properties, `nodes[${index}].runtimeProperties`);
+        visitProperties(properties, `nodes[${index}].runtimeProperties`,
+          `/nodes/${index}/runtimeProperties`);
       const onClick = uiNode.onClick;
       if (onClick !== null && typeof onClick === "object" &&
           !Array.isArray(onClick)) {
         const actionArguments = (onClick as Record<string, JsonValue>).arguments;
         if (actionArguments !== undefined)
-          visitActionArguments(actionArguments, `nodes[${index}].onClick.arguments`);
+          visitActionArguments(actionArguments,
+            `nodes[${index}].onClick.arguments`,
+            `/nodes/${index}/onClick/arguments`);
       }
       const instance = uiNode.componentInstance;
       if (instance !== null && typeof instance === "object" &&
@@ -917,7 +978,8 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
             const actionArguments = (value as Record<string, JsonValue>).arguments;
             if (actionArguments !== undefined)
               visitActionArguments(actionArguments,
-                `nodes[${index}].componentInstance.publicSignals.${signalId}.arguments`);
+                `nodes[${index}].componentInstance.publicSignals.${signalId}.arguments`,
+                `/nodes/${index}/componentInstance/publicSignals/${pointerSegment(signalId)}/arguments`);
           }
         }
       }
@@ -929,7 +991,9 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
         if (value === null || typeof value !== "object" || Array.isArray(value)) continue;
         const node = value as Record<string, JsonValue>;
         if (node.kind === "action" && node.arguments !== undefined)
-          visitActionArguments(node.arguments, `behaviorGraph.nodes[${index}].arguments`);
+          visitActionArguments(node.arguments,
+            `behaviorGraph.nodes[${index}].arguments`,
+            `/behaviorGraph/nodes/${index}/arguments`);
       }
     }
   };
@@ -962,12 +1026,14 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   }
   for (const key of ["player.titleBgm", "player.uiHoverSound", "player.uiActivateSound"]) {
     const value = settings[key];
-    if (typeof value === "string") addResourceRef(value, `settings.${key}`);
+    if (typeof value === "string") addResourceRef(value, `settings.${key}`,
+      projectPath, `/settings/${pointerSegment(key)}`);
   }
   const titleVoices = settings["player.titleVoiceVariants"];
   if (Array.isArray(titleVoices)) {
     for (const [index, voice] of titleVoices.entries())
-      addResourceRef(voice, `settings.player.titleVoiceVariants[${index}]`);
+      addResourceRef(voice, `settings.player.titleVoiceVariants[${index}]`,
+        projectPath, `/settings/player.titleVoiceVariants/${index}`);
   }
   const splashes = settings["player.splashes"];
   if (Array.isArray(splashes)) {
@@ -983,34 +1049,44 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       if (skipAllowedAfter > minimumDuration)
         diagnostics.push(issue("PXBUILD1056", "Splash skipAllowedAfter exceeds minimumDuration",
           projectPath, `settings.player.splashes[${index}]`));
-      addResourceRef(entry.audio, `settings.player.splashes[${index}].audio`);
+      addResourceRef(entry.audio, `settings.player.splashes[${index}].audio`,
+        projectPath, `/settings/player.splashes/${index}/audio`);
       if (Array.isArray(entry.audioVariants)) {
         for (const [variantIndex, voice] of entry.audioVariants.entries())
           addResourceRef(voice,
-            `settings.player.splashes[${index}].audioVariants[${variantIndex}]`);
+            `settings.player.splashes[${index}].audioVariants[${variantIndex}]`,
+            projectPath,
+            `/settings/player.splashes/${index}/audioVariants/${variantIndex}`);
       }
     }
   }
   for (const [index, item] of (game.gallery ?? []).entries()) {
     if (item === null || typeof item !== "object" || Array.isArray(item)) continue;
     const gallery = item as Record<string, JsonValue>;
-    addResourceRef(gallery.image, `${project.gameCatalog}:gallery[${index}].image`);
-    addResourceRef(gallery.thumbnail, `${project.gameCatalog}:gallery[${index}].thumbnail`);
+    addResourceRef(gallery.image, `${project.gameCatalog}:gallery[${index}].image`,
+      project.gameCatalog, `/gallery/${index}/image`);
+    addResourceRef(gallery.thumbnail, `${project.gameCatalog}:gallery[${index}].thumbnail`,
+      project.gameCatalog, `/gallery/${index}/thumbnail`);
   }
+  resourceSourceDocuments.set(project.gameCatalog,
+    {document: game, text: input.documentSources?.[project.gameCatalog]});
   for (const [locale, value] of localeDocuments) {
     if (value === null || typeof value !== "object" || Array.isArray(value)) continue;
     const localeValue = value as Record<string, JsonValue>;
     const fontChain = localeValue.fontChain;
     if (Array.isArray(fontChain)) {
-      for (const font of fontChain)
-        addResourceRef(font, `Content/Localization/${locale}.json:fontChain`);
+      for (const [index, font] of fontChain.entries())
+        addResourceRef(font, `Content/Localization/${locale}.json:fontChain`,
+          `Content/Localization/${locale}.json`, `/fontChain/${index}`);
     }
     const resources = localeValue.resources;
     if (resources !== null && typeof resources === "object" &&
         !Array.isArray(resources)) {
       for (const [id, resource] of Object.entries(resources))
         addResourceRef(resource,
-          `Content/Localization/${locale}.json:resources.${id}`);
+          `Content/Localization/${locale}.json:resources.${id}`,
+          `Content/Localization/${locale}.json`,
+          `/resources/${pointerSegment(id)}`);
     }
   }
   // A portrait can be referenced by Story, UI, a locale, a dynamic include, or
@@ -1044,8 +1120,12 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
           .map((diagnostic) => diagnostic.details ?? diagnostic.message).join("; ")));
       continue;
     }
+    resourceSourceDocuments.set(descriptorPath, {document: parsed.value,
+      text: typeof authored === "string" ? authored :
+        input.documentSources?.[descriptorPath]});
     for (const [index, layer] of parsed.value.layers.entries())
-      addResourceRef(layer.path, `${descriptorPath}:layers[${index}].path`);
+      addResourceRef(layer.path, `${descriptorPath}:layers[${index}].path`,
+        descriptorPath, `/layers/${index}/path`);
   }
   // A motion descriptor is itself a package resource; every image referenced
   // by it must join the dependency graph before ownership/fingerprint checks.
@@ -1076,11 +1156,16 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
           .map((diagnostic) => diagnostic.details ?? diagnostic.message).join("; ")));
       continue;
     }
+    resourceSourceDocuments.set(descriptorPath, {document: parsed.value,
+      text: typeof authored === "string" ? authored :
+        input.documentSources?.[descriptorPath]});
     for (const [index, layer] of parsed.value.layers.entries())
       if (layer.kind !== "group")
-        addResourceRef(layer.image, `${descriptorPath}:layers[${index}].image`);
+        addResourceRef(layer.image, `${descriptorPath}:layers[${index}].image`,
+          descriptorPath, `/layers/${index}/image`);
     for (const [index, marker] of (parsed.value.markers ?? []).entries())
-      addResourceRef(marker.audio, `${descriptorPath}:markers[${index}].audio`);
+      addResourceRef(marker.audio, `${descriptorPath}:markers[${index}].audio`,
+        descriptorPath, `/markers/${index}/audio`);
   }
   const dependencyCollection = collectProjectDependencies({
     assets: resourceAssets,
@@ -1093,11 +1178,50 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   });
   diagnostics.push(...dependencyCollection.diagnostics);
   if (input.resourceExists !== undefined) {
+    let locationsBySource: Map<string, LocatedResourceReference[]> | undefined;
+    const sourceSpans = new Map<string, ReturnType<typeof jsonPointerSpans>>();
+    const missingLocation = (source: string) => {
+      if (locationsBySource === undefined) {
+        locationsBySource = new Map();
+        // Most builds have no missing resource. Resolve author locations only
+        // after the first failure, so large successful graphs pay no extra scan.
+        for (const reference of dependencyReferences) {
+          if (reference.sourcePath === undefined ||
+              reference.sourcePointer === undefined) continue;
+          const resolved = canonicalResourceReference(reference.value, resourceAssets);
+          if (resolved === undefined) continue;
+          const locations = locationsBySource.get(resolved.source) ?? [];
+          locations.push(reference);
+          locationsBySource.set(resolved.source, locations);
+        }
+      }
+      const candidates = locationsBySource.get(source) ?? [];
+      for (const candidate of candidates) {
+        const sourcePath = candidate.sourcePath!;
+        const context = resourceSourceDocuments.get(sourcePath);
+        if (context?.text === undefined) continue;
+        let spans = sourceSpans.get(sourcePath);
+        if (spans === undefined) {
+          spans = jsonPointerSpans(context.text, context.document, sourcePath);
+          sourceSpans.set(sourcePath, spans);
+        }
+        const span = spans.get(candidate.sourcePointer!);
+        if (span !== undefined) return {span, origin: candidate.origin};
+      }
+      const storySpan = storyResourceLocations.get(source);
+      if (storySpan !== undefined) return {span: storySpan, origin: "Story"};
+      return {origin: candidates[0]?.origin};
+    };
     for (const dependency of dependencyCollection.dependencies) {
       if (!input.resourceExists(dependency.source)) {
-        diagnostics.push(issue("PXBUILD1044",
-          "Project dependency source is missing", dependency.source,
-          dependency.logicalPath));
+        const location = missingLocation(dependency.source);
+        diagnostics.push({...issue("PXBUILD1044",
+          `Project dependency source is missing: ${dependency.source}`,
+          dependency.source,
+          dependency.logicalPath),
+          ...(location.span === undefined ? {} : {span: location.span}),
+          ...(location.origin === undefined ? {} :
+            {hint: `Referenced from ${location.origin}`})});
       }
     }
   }

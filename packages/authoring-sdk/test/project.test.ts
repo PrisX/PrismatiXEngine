@@ -386,6 +386,126 @@ test("compileProject collects UI runtime texture dependencies", () => {
     dependency.source === "Assets/Audio/activate.ogg"));
 });
 
+test("missing UI dependencies point to their authored values only for matching source", () => {
+  const authored = {...ui, nodes: [{...ui.nodes[0],
+    runtimeType: "TextureButton",
+    runtimeProperties: {normalPath: "Assets/UI/missing.png"},
+    onClick: {id: "music.play", arguments: {
+      argument: "Assets/Audio/missing.ogg"}},
+  }]};
+  const source = JSON.stringify(authored, null, 2);
+  const compile = (text: string) => compileProject({project,
+    documents: {"Story/story.pxindex": storyIndex,
+      "Content/game.pxgame": game, "Content/UI/Title.pxui": authored},
+    documentSources: {"Content/UI/Title.pxui": text},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locale: "zh-TW", strings: {}}},
+    resourceExists: (path) => !path.includes("/missing."),
+  });
+  const result = compile(source);
+  assert.equal(result.valid, false);
+  const missing = result.diagnostics.filter((item) => item.code === "PXBUILD1044");
+  assert.equal(missing.length, 2, JSON.stringify(result.diagnostics));
+  for (const diagnostic of missing) {
+    assert.equal(diagnostic.span?.path, "Content/UI/Title.pxui");
+    assert.ok(diagnostic.span && diagnostic.span.start.line > 1);
+    assert.equal(source.slice(diagnostic.span.start.offset, diagnostic.span.end.offset),
+      JSON.stringify(diagnostic.path));
+  }
+  const stale = compile(source.replace("Assets/UI/missing.png", "Assets/UI/other.png"));
+  assert.equal(stale.valid, false);
+  assert.ok(stale.diagnostics.filter((item) => item.code === "PXBUILD1044")
+    .every((item) => item.span === undefined));
+});
+
+test("missing Player setting audio points to the source project field", () => {
+  const authoredProject = {...project, settings: {
+    "player.titleBgm": "Assets/Audio/missing-title.ogg"}};
+  const source = JSON.stringify(authoredProject, null, 2);
+  const result = compileProject({project: authoredProject,
+    documentSources: {"project.pxproject": source},
+    documents: {"Story/story.pxindex": storyIndex,
+      "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locale: "zh-TW", strings: {}}},
+    resourceExists: (path) => path !== "Assets/Audio/missing-title.ogg",
+  });
+  assert.equal(result.valid, false);
+  const missing = result.diagnostics.find((item) => item.code === "PXBUILD1044" &&
+    item.path === "Assets/Audio/missing-title.ogg");
+  assert.equal(missing?.span?.path, "project.pxproject");
+  assert.ok(missing?.span && missing.span.start.line > 1);
+  assert.equal(source.slice(missing.span.start.offset, missing.span.end.offset),
+    '"Assets/Audio/missing-title.ogg"');
+});
+
+test("missing catalog media points to its authored asset row", () => {
+  const authoredProject = {...project, assets: [{
+    id: "33333333-3333-4333-8333-333333333333", kind: "cg",
+    source: "Assets/CG/missing.png"}]};
+  const source = JSON.stringify(authoredProject, null, 2);
+  const result = compileProject({project: authoredProject,
+    documentSources: {"project.pxproject": source},
+    documents: {"Story/story.pxindex": storyIndex,
+      "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locale: "zh-TW", strings: {}}},
+    resourceExists: (path) => path !== "Assets/CG/missing.png",
+  });
+  assert.equal(result.valid, false);
+  const missing = result.diagnostics.find((item) => item.code === "PXBUILD1044" &&
+    item.path === "Assets/CG/missing.png");
+  assert.equal(missing?.span?.path, "project.pxproject");
+  assert.ok(missing?.span && missing.span.start.line > 1);
+  assert.equal(source.slice(missing.span.start.offset, missing.span.end.offset),
+    '"Assets/CG/missing.png"');
+});
+
+test("missing Story media keeps its authored command location through scene cache", () => {
+  const source = "Opening.\n[bgm Assets/Audio/missing-theme.ogg]\n[end]\n";
+  const cache = new StoryProjectCompilationCache();
+  const compile = (storyCompilationCache: StoryProjectCompilationCache) =>
+    compileProject({project,
+      documents: {"Story/story.pxindex": storyIndex,
+        "Content/game.pxgame": game, "Content/UI/Title.pxui": ui},
+      sourceFiles: {"Story/zh-TW/scene01.pxstory": source},
+      locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+        locale: "zh-TW", strings: {}}},
+      resourceExists: (path) => path !== "Assets/Audio/missing-theme.ogg",
+      storyCompilationCache,
+    });
+  const location = (result: ReturnType<typeof compileProject>) => {
+    assert.equal(result.valid, false);
+    const missing = result.diagnostics.find((item) => item.code === "PXBUILD1044" &&
+      item.path === "Assets/Audio/missing-theme.ogg");
+    assert.equal(missing?.span?.path, "Story/zh-TW/scene01.pxstory");
+    assert.equal(missing?.span?.start.line, 2);
+    assert.ok(missing?.span);
+    assert.equal(source.slice(missing.span.start.offset, missing.span.end.offset),
+      "Assets/Audio/missing-theme.ogg");
+    return missing.span;
+  };
+  const first = location(compile(cache));
+  assert.deepEqual(location(compile(cache)), first);
+  const restored = new StoryProjectCompilationCache();
+  restored.importScenes(cache.exportScenes());
+  assert.deepEqual(location(compile(restored)), first);
+  const damaged = structuredClone(cache.exportScenes()) as {
+    locales: Array<{
+      scenes: Array<{
+        result: {resourceLocations: Array<{span: {path: string}}>};
+      }>;
+    }>;
+  };
+  damaged.locales[0]!.scenes[0]!.result.resourceLocations[0]!.span.path =
+    "Story/another-scene.pxstory";
+  assert.throws(() => new StoryProjectCompilationCache().importScenes(damaged),
+    /Invalid Story scene cache entry/u);
+});
+
 test("compileProject packages both halves of an authored intro-loop BGM", () => {
   const result = compileProject({project, documents: {
     "Story/story.pxindex": storyIndex,
@@ -561,12 +681,18 @@ test("compileProject validates portraits referenced outside Story and collects e
   assert.equal(missing.valid, false);
   assert.ok(missing.diagnostics.some((diagnostic) =>
     diagnostic.code === "PXBUILD1045" && diagnostic.path === descriptorPath));
-  const missingLayer = compile(JSON.stringify(descriptor),
+  const portraitSource = JSON.stringify(descriptor, null, 2);
+  const missingLayer = compile(portraitSource,
     (path) => path !== "Assets/Characters/Layers/face.png");
   assert.equal(missingLayer.valid, false);
-  assert.ok(missingLayer.diagnostics.some((diagnostic) =>
+  const missingLayerDiagnostic = missingLayer.diagnostics.find((diagnostic) =>
     diagnostic.code === "PXBUILD1044" &&
-    diagnostic.path === "Assets/Characters/Layers/face.png"));
+    diagnostic.path === "Assets/Characters/Layers/face.png");
+  assert.equal(missingLayerDiagnostic?.span?.path, descriptorPath);
+  assert.ok(missingLayerDiagnostic?.span && missingLayerDiagnostic.span.start.line > 1);
+  assert.equal(portraitSource.slice(missingLayerDiagnostic.span.start.offset,
+    missingLayerDiagnostic.span.end.offset),
+  '"Assets/Characters/Layers/face.png"');
 });
 
 test("compileProject validates motion descriptors and packages their image layers", () => {
@@ -589,7 +715,8 @@ test("compileProject validates motion descriptors and packages their image layer
         "[motion Assets/Motion/logo.pxmotion await=true]\n[end]\n"},
       locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
         locale: "zh-TW", strings: {}}},
-      resourceText: (path) => path === descriptorPath ? JSON.stringify(motion) : undefined,
+      resourceText: (path) => path === descriptorPath
+        ? JSON.stringify(motion, null, 2) : undefined,
       ...(resourceExists === undefined ? {} : {resourceExists}),
     });
   const valid = compile(descriptor);
@@ -663,7 +790,13 @@ test("compileProject validates motion descriptors and packages their image layer
   assert.ok(broken.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1060"));
   const missingImage = compile(descriptor, (path) => path !== "Assets/Motion/mark.png");
   assert.equal(missingImage.valid, false);
-  assert.ok(missingImage.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1044"));
+  const missingImageDiagnostic = missingImage.diagnostics.find((diagnostic) =>
+    diagnostic.code === "PXBUILD1044" && diagnostic.path === "Assets/Motion/mark.png");
+  assert.equal(missingImageDiagnostic?.span?.path, descriptorPath);
+  assert.ok(missingImageDiagnostic?.span && missingImageDiagnostic.span.start.line > 1);
+  const motionSource = JSON.stringify(descriptor, null, 2);
+  assert.equal(motionSource.slice(missingImageDiagnostic.span.start.offset,
+    missingImageDiagnostic.span.end.offset), '"Assets/Motion/mark.png"');
 });
 
 test("compileProject checks every authored UI property against a supplied native registry", () => {

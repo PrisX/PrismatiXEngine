@@ -131,6 +131,24 @@ interface CachedSceneCompilation {
   readonly result: StoryCompileResult;
 }
 
+function validCachedResourceLocations(value: unknown, sourcePath: string,
+  sourceLength: number): boolean {
+  if (!Array.isArray(value) || value.length > 1_000_000) return false;
+  return value.every((entry: unknown) => {
+    const location = entry as {source?: unknown; span?: SourceSpan} | null;
+    const span = location?.span;
+    if (typeof location?.source !== "string" ||
+        span?.path !== sourcePath) return false;
+    for (const position of [span.start, span.end]) {
+      if (!Number.isSafeInteger(position?.line) || position.line < 1 ||
+          !Number.isSafeInteger(position?.column) || position.column < 1 ||
+          !Number.isSafeInteger(position?.offset) || position.offset < 0 ||
+          position.offset > sourceLength) return false;
+    }
+    return span.start.offset <= span.end.offset;
+  });
+}
+
 // Exact source strings are compared, so a short hash cannot reuse save
 // identities after a collision. Keep labels and compiled output, but never
 // retain parsed ASTs between builds: commercial projects can have hundreds of
@@ -187,7 +205,9 @@ class SceneCompilationCache {
             !scene.stubSourceIds.every((id: unknown) => typeof id === "string") ||
             result?.valid !== true || !Array.isArray(result.diagnostics) ||
             !Array.isArray(result.runtimeIr?.operations) ||
-            !Array.isArray(result.sourceMap?.mappings))
+            !Array.isArray(result.sourceMap?.mappings) ||
+            !validCachedResourceLocations(result.resourceLocations,
+              scene.sourcePath, scene.source.length))
           throw new Error("Invalid Story scene cache entry");
         scenes.set(scene.id, {snapshot: {sourcePath: scene.sourcePath,
           source: scene.source, identityMap: scene.identityMap,
@@ -607,6 +627,7 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
   const operations: RuntimeIrOperation[] = [];
   const mappings: RuntimeSourceMap["mappings"][number][] = [];
   const resourceDependencies = new Set<string>();
+  const resourceLocations = new Map<string, SourceSpan>();
   const operationOwners = new Map<string, {sceneId: string; path: string; line: number}>();
   const sharedSnapshot = sceneCache === undefined ? undefined : {
     compileInputs: JSON.stringify([
@@ -702,6 +723,9 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
       diagnostics.push(...compiled.diagnostics);
       for (const dependency of compiled.resourceDependencies ?? [])
         resourceDependencies.add(dependency);
+      for (const location of compiled.resourceLocations ?? [])
+        if (!resourceLocations.has(location.source))
+          resourceLocations.set(location.source, location.span);
       if (!compiled.valid || compiled.runtimeIr === undefined || compiled.sourceMap === undefined) continue;
 
       // Do not spread a commercial-size scene into Array.push: V8 treats the
@@ -736,7 +760,9 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
   }
 
   if (diagnostics.some((diagnostic) => diagnostic.severity === "error") || entryScene === undefined) {
-    return {resourceDependencies: [...resourceDependencies].sort(), diagnostics, valid: false};
+    return {resourceDependencies: [...resourceDependencies].sort(),
+      resourceLocations: [...resourceLocations].map(([source, span]) => ({source, span})),
+      diagnostics, valid: false};
   }
 
   const bootstrapSourceId = `story-project-${stableId(`${documentId}:bootstrap`)}`;
@@ -775,6 +801,7 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
       mappings: [bootstrapMapping, ...mappings],
     },
     resourceDependencies: [...resourceDependencies].sort(),
+    resourceLocations: [...resourceLocations].map(([source, span]) => ({source, span})),
     diagnostics,
     valid: true,
   };

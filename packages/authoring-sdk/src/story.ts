@@ -372,6 +372,12 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
   const operations: RuntimeIrOperation[] = [];
   const mappings: RuntimeSourceMap["mappings"][number][] = [];
   const resourceDependencies = new Set<string>();
+  const resourceLocations = new Map<string, StoryNode["span"]>();
+  const rememberResource = (source: string, node: StoryNode,
+    span = node.span): void => {
+    resourceDependencies.add(source);
+    if (!resourceLocations.has(source)) resourceLocations.set(source, span);
+  };
   const authoredSourceIds = new Set<string>();
   let pendingAuthoredSourceId: string | undefined;
 
@@ -386,7 +392,9 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       ));
       return undefined;
     }
-    resourceDependencies.add(resolved.source);
+    const argumentSpan = node.arguments?.find((argument) =>
+      argument.value === authored)?.span;
+    rememberResource(resolved.source, node, argumentSpan);
     return resolved.reference;
   };
 
@@ -399,7 +407,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
     if (identity !== undefined) {
       const resolved = canonicalResourceReference(identity, context.resourceAssets ?? []);
       if (resolved !== undefined) {
-        resourceDependencies.add(resolved.source);
+        rememberResource(resolved.source, node);
         return value;
       }
       if (fallbackPath === undefined) {
@@ -417,7 +425,7 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
           node.span));
         return undefined;
       }
-      resourceDependencies.add(resolved.source);
+      rememberResource(resolved.source, node);
     }
     return value;
   };
@@ -815,11 +823,14 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
   }
 
   const valid = !diagnostics.some((item) => item.severity === "error");
-  if (!valid) return {resourceDependencies: [...resourceDependencies].sort(), diagnostics, valid: false};
+  const locations = [...resourceLocations].map(([source, span]) => ({source, span}));
+  if (!valid) return {resourceDependencies: [...resourceDependencies].sort(),
+    resourceLocations: locations, diagnostics, valid: false};
   return {
     runtimeIr: {format: "PrismatiXRuntimeIR", schemaRevision: 2, documentId: context.documentId, committedRevision: context.committedRevision ?? 0, operations},
     sourceMap: {format: "PrismatiXSourceMap", schemaRevision: 2, documentId: context.documentId, mappings},
     resourceDependencies: [...resourceDependencies].sort(),
+    resourceLocations: locations,
     diagnostics,
     valid: true,
   };
