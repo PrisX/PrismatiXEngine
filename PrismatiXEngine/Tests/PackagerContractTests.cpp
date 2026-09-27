@@ -1492,6 +1492,41 @@ int main() {
         upgradedProject["contentVersion"] = "fixture-v2";
         Write(storyPath, originalStory + "\n; content upgrade\n");
         Write(projectPath, upgradedProject.dump());
+        const auto standaloneOutput =
+            fixture.path / "Build/PersistenceStandaloneUpgrade";
+        auto standaloneUpgrade = FixtureRequest(root, standaloneOutput);
+        standaloneUpgrade.requestId = "persistence-standalone-upgrade-v2";
+        standaloneUpgrade.contentVersion = "fixture-v2";
+        standaloneUpgrade.cacheSourceDir = upgradeOutput;
+        const auto legacyArchiveFingerprint =
+            px::sdk::ComputePackageFingerprint(upgradeOutput / "Content.pdx");
+        suite.Require(px::sdk::RunPackager(standaloneUpgrade).Completed(),
+                      "standalone content upgrade can read a separate old distribution");
+        const auto standaloneManifest = px::sdk::detail::ParsePackageManifest(
+            Read(standaloneOutput / "Package/manifest.json"));
+        suite.Require(standaloneManifest.Valid() &&
+                          standaloneManifest.manifest.legacyPersistenceReaders.size() == 1 &&
+                          standaloneManifest.manifest.legacyPersistenceReaders.front().secret ==
+                              legacySecret,
+                      "standalone distribution inherits the old persistence reader");
+        const auto standaloneKey = px::progress::DeriveGameDataPersistenceKey(
+            standaloneManifest.manifest.persistenceDataId);
+        std::vector<px::crypto::Key> standaloneFallbackKeys;
+        for (const auto& reader :
+             standaloneManifest.manifest.legacyPersistenceReaders) {
+            standaloneFallbackKeys.push_back(
+                px::progress::DeriveLegacyPersistenceKey(reader.secret));
+        }
+        px::progress::SaveSystem standaloneSaves;
+        standaloneSaves.Configure(saveDirectory.string(), &standaloneKey,
+                                  standaloneFallbackKeys);
+        const auto standaloneSlot = standaloneSaves.Load(2);
+        suite.Expect(standaloneSlot && standaloneSlot->chapter == "v1" &&
+                         Read(manifestPath) == legacyManifest.dump() &&
+                         px::sdk::ComputePackageFingerprint(
+                             upgradeOutput / "Content.pdx") ==
+                             legacyArchiveFingerprint,
+                     "standalone upgrade reads an old encrypted slot without changing the old package");
         auto versionTwo = FixtureRequest(root, upgradeOutput);
         versionTwo.requestId = "persistence-upgrade-v2";
         versionTwo.contentVersion = "fixture-v2";

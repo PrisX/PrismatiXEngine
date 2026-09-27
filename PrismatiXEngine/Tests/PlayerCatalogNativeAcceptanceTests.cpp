@@ -731,6 +731,7 @@ int main(int argc, char* argv[]) {
         const auto targetOutput = fixture.path / "Build/Target";
         auto targetRequest = PackageRequest(root, targetOutput, player);
         targetRequest.publisherPublicKey = keys->publicKeyHex;
+        targetRequest.cacheSourceDir = output;
         targetRequest.inputs.push_back(Input(root, "Content/Overlay/player-update.txt"));
         const auto targetPackage = px::sdk::RunPackager(targetRequest);
         suite.Require(targetPackage.Completed(),
@@ -744,6 +745,7 @@ int main(int argc, char* argv[]) {
         const auto secondTargetOutput = fixture.path / "Build/SecondTarget";
         auto secondTargetRequest = targetRequest;
         secondTargetRequest.outputDir = secondTargetOutput;
+        secondTargetRequest.cacheSourceDir = targetOutput;
         secondTargetRequest.inputs.push_back(
             Input(root, "Content/Overlay/player-second.txt"));
         suite.Require(px::sdk::RunPackager(secondTargetRequest).Completed(),
@@ -757,6 +759,7 @@ int main(int argc, char* argv[]) {
         const auto adultTargetOutput = fixture.path / "Build/AdultTarget";
         auto adultTargetRequest = secondTargetRequest;
         adultTargetRequest.outputDir = adultTargetOutput;
+        adultTargetRequest.cacheSourceDir = secondTargetOutput;
         adultTargetRequest.inputs.push_back(
             Input(root, "Content/Overlay/player-adult.txt"));
         suite.Require(px::sdk::RunPackager(adultTargetRequest).Completed(),
@@ -789,6 +792,7 @@ int main(int argc, char* argv[]) {
         const auto migrationTargetOutput = fixture.path / "Build/MigrationTarget";
         auto migrationTargetRequest = secondTargetRequest;
         migrationTargetRequest.outputDir = migrationTargetOutput;
+        migrationTargetRequest.cacheSourceDir = secondTargetOutput;
         migrationTargetRequest.contentVersion =
             "player-catalog-native-acceptance-v2";
         migrationTargetRequest.saveMigrations.push_back({
@@ -1022,6 +1026,31 @@ int main(int argc, char* argv[]) {
                       "historical slot uses the former fingerprint-derived key");
         const auto legacySlotPath = signedUserData / "Save/save_2.pxsav";
         const auto originalLegacySlot = Read(legacySlotPath);
+        const auto standaloneDataRoot = fixture.path / "StandaloneUserData";
+        const auto standaloneUserData = standaloneDataRoot /
+            ("Game " + px::crypto::Sha256Hex(startupManifest.manifest.gameId));
+        std::filesystem::create_directories(standaloneUserData / "Save");
+        Write(standaloneUserData / "Save/save_2.pxsav", originalLegacySlot);
+        std::filesystem::copy_file(
+            userData / "Save/config.dat",
+            standaloneUserData / "Save/config.dat");
+        const auto standaloneLog =
+            standaloneUserData / "logs/PrismatiXPlayer.log";
+        AutomatedChildProcess standaloneProcess;
+        suite.Require(standaloneProcess.Start(
+                          targetOutput / player.filename(), launchDirectory,
+                          standaloneDataRoot, {}, true),
+                      "standalone new distribution launches with an old encrypted slot");
+        suite.Require(WaitForLog(standaloneLog,
+                                 "Player E2E previous-version save loaded") &&
+                          WaitUntil(35s, [&] {
+                              return standaloneProcess.CompletedExitCode().has_value();
+                          }),
+                      "standalone distribution loads a predecessor slot without an overlay");
+        suite.Expect(standaloneProcess.CompletedExitCode() == 0,
+                     "standalone distribution exits cleanly after old-save recovery");
+        suite.Expect(Read(legacySlotPath) == originalLegacySlot,
+                     "standalone verification leaves the separate signed-chain slot intact");
         AutomatedChildProcess signedProcess;
         suite.Require(signedProcess.Start(packagedPlayer, launchDirectory,
                                           signedDataRoot, {}, true),

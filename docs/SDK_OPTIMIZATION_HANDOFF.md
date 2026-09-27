@@ -4,7 +4,7 @@
 
 ### 2026-09-27 後續進度
 
-- 跨目錄獨立發行版新增 CLI `build`／`pack`／`run --previous-package <舊發行目錄>`：驗證舊包及同遊戲／發行者後，將其作為原生 Packager 的讀取來源，繼承相容舊 fingerprint 與舊金鑰 reader；舊目錄不改動，新輸出須為新建或空目錄，打包期間舊 manifest 改動會阻止發布。CLI 105/105 通過，新增測試涵蓋驗證順序、來源傳遞、錯誤遊戲／公鑰、佔用輸出及來源改動。正式 native 跨目錄 E2E 及真實舊版玩家資料仍待驗。
+- 跨目錄獨立發行版新增 CLI `build`／`pack`／`run --previous-package <舊發行目錄>`：驗證舊包及同遊戲／發行者後，將其作為原生 Packager 的讀取來源，繼承相容舊 fingerprint 與舊金鑰 reader；舊目錄不改動，新輸出須為新建或空目錄，打包期間舊 manifest 改動會阻止發布。CLI 105/105 通過，新增測試涵蓋驗證順序、來源傳遞、錯誤遊戲／公鑰、佔用輸出及來源改動。隨後 Native Packager Contract 1/1 驗獨立新版讀取舊加密 slot 且舊包不變，Player Catalog Native Acceptance 1/1 驗另目錄完整新版 Player 載入舊 fingerprint／舊金鑰 slot，並完整走完 UI 旅程；皆為合成資料，真實舊版玩家資料仍待驗。
 - 舊加密 slot 在新版 Player 的兩段簽章更新鏈中已做原生 E2E：先以舊 fingerprint 金鑰及舊 package fingerprint 建檔，同內容版本的替換發行包在 `persistence.compatibleSaveFingerprints` 明確記錄舊身分；Player 合併基底／已驗簽主鏈的舊金鑰與相容 fingerprint，不讓選裝包單獨擴張保存身分。載入後再保存同一 slot 時，原始加密 bytes 留在 `.legacy.bak`，新 slot 使用穩定金鑰；選裝包啟用後重試舊 slot 亦通過，第三段 contentVersion 更新亦可對原始舊 slot 執行明示 migration。CLI 式 staging Packager 現從 `cacheSourceDir` 繼承舊金鑰與同版 lineage，而非只看空白 staging output。Native Packager Contract 1/1、Player Catalog Native Acceptance 1/1、當時 CLI 104/104 通過。測試使用合成舊版資料；真實玩家資料仍待驗。
 - `CreatePackageOverlay` 現直接從目標 PDX 的資源串流寫出 changed entries，寫入期間逐筆核對預期大小與 SHA-256，省去先解出全部變動資源的暫存檔及再次讀取。輸出仍先在同磁碟 staging 驗證、再不可覆寫發布；不能據此宣稱 8 GB 大包吞吐或峰值已驗。Native Packager Contract 1/1、Runtime Resources Integration 1/1 通過，含串流複製與錯誤 SHA 拒絕。
 - 舊 revision-2 `config.dat` 只有鍵盤改鍵、沒有 `wheelBindings` 的原生整合驗收已補：沿用 Input 預設滾輪、之後改滾輪可保存並於重開後還原。Player Catalog Native Acceptance 也以加密的無滾輪設定從封裝匯入，驗證旅程後再存檔帶有正確滾輪預設。設定檔 `format`／`schemaRevision` 型別損壞時，`GameSettings::LoadWithFallback` 現會安全回報失敗，`SavePreservingExisting` 保留原 bytes，不再讓未捕捉的 JSON 型別例外中斷啟動。Native SaveLoad integration 1/1、Player Catalog Native Acceptance 1/1 通過；人工實按與實際舊版玩家資料仍待驗。
@@ -69,7 +69,7 @@
 | 文字與路由演出 | 已修文字 outline 雙層換行差異、未變文字每幀重排，以及 route crossfade 暗谷／預載閃白。 | 正式單次 layout/mask 的文字效果管線、依事件 author 的白幕／shader／遮罩轉場與通用 route motion graph 缺；最新大型封裝與原版逐幀對照未做。 |
 | `.pxmotion`／Story 動畫 | 格式已演進至 rev 11，TSX UI／splash 可播；Story `[timeline]` 可控 `.pxanim`／`.pxtimeline` 的 await/speed；新增 `[motion]`／`[motion.stop]` 直接在 Stage 播放 `.pxmotion`，含預載、音效 marker、等待與存檔還原。 | 尚缺以正式大型發行版驗證圖層畫面及音效時序；M2 `.mtn` 轉換器／逐幀驗證暫停。 |
 | 輸入／設定 | `.pxgame.inputActions` 有 context、key、wheel、route／`uiAction`；鍵盤捕捉／追加／逐鍵移除／原位替換／整組清除、wheel 方向／門檻可保存；`KeyBindingButton` 可逐鍵選取與衝突二次確認，`WheelBindingButton` 可實體捕捉方向；原生 Player E2E 已驗加密舊設定缺滾輪欄位的匯入與保存。 | 非 Player host 須自行觸發持久化；實際舊版玩家資料與正式封裝人工實按仍待驗。原版衝突對話框屬遊戲 UI，仍未還原。原作剩餘 12 項與多數 settings.noop 須先判別可攜 SDK 能力，不能一律當作 SDK 缺陷。 |
-| 更新與持久化 | 可顯式安裝目錄補丁；簽章更新鏈可建／驗／由 Player 載入或回基底；同版舊存檔可沿已驗簽鏈或明確發行 lineage 的舊 fingerprint 載入並檢查 Runtime 文件／錨點；合成舊金鑰 slot 已通過 Player E2E，覆寫時保留原始備份；選裝包可獨立啟停且存檔身分保留主更新 fingerprint；Player 資料已移至 per-user 位置。跨目錄獨立發行版可用 `--previous-package` 驗證並傳遞前版 lineage，CLI 單元合約已驗。 | 不相容劇本仍需明示 content/save version 與 migration；真實舊版玩家資料、跨目錄獨立發行版 native E2E，以及正式大型發行版 migration 實測仍缺。 |
+| 更新與持久化 | 可顯式安裝目錄補丁；簽章更新鏈可建／驗／由 Player 載入或回基底；同版舊存檔可沿已驗簽鏈或明確發行 lineage 的舊 fingerprint 載入並檢查 Runtime 文件／錨點；合成舊金鑰 slot 已通過 Player E2E，覆寫時保留原始備份；選裝包可獨立啟停且存檔身分保留主更新 fingerprint；Player 資料已移至 per-user 位置。跨目錄獨立發行版可用 `--previous-package` 驗證並傳遞前版 lineage；Packager 與 Player 原生合成 E2E 已驗。 | 不相容劇本仍需明示 content/save version 與 migration；真實舊版玩家資料及正式大型發行版 migration 實測仍缺。 |
 | 發行效能 | 16 分片、Release Packager、未變片重用、preflight／media 驗證、runtime-only refresh 已有真實大型量測。 | 日常素材變更仍做 O(全量素材) 的多輪核驗；缺依賴級／block-level 安全增量、同條件長期吞吐與磁碟峰值量測、最新 overlay 的 8 GB 壓力測試。 |
 | 平台／原作特有功能 | rule/shake/影片、主要 UI 與基本 flowchart 可運行。 | 老闆鍵／置頂／語音分流／Steam 等是否抽成可攜 SDK API 尚需取捨；不要為了 Senren 外觀宣稱這些設定已生效。 |
 
