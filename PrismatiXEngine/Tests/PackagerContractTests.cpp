@@ -819,11 +819,11 @@ int main() {
                          phases.end() &&
                          std::find(phases.begin(), phases.end(), "verify-target") !=
                              phases.end() &&
-                         std::find(phases.begin(), phases.end(), "extract-changed") !=
+                         std::find(phases.begin(), phases.end(), "plan-changed") !=
                              phases.end() &&
                          std::find(phases.begin(), phases.end(), "write-overlay") !=
                              phases.end(),
-                     "Overlay creation reports verification, extraction and write phases");
+                     "Overlay creation reports verification, streaming plan and write phases");
         const auto verified = px::io::VerifyPackageOverlay(output, overlayPath);
         suite.Require(verified.valid &&
                           verified.changedResources == created.changedResources,

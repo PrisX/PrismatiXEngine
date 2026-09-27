@@ -4,6 +4,7 @@
 
 ### 2026-09-27 後續進度
 
+- `CreatePackageOverlay` 現直接從目標 PDX 的資源串流寫出 changed entries，寫入期間逐筆核對預期大小與 SHA-256，省去先解出全部變動資源的暫存檔及再次讀取。輸出仍先在同磁碟 staging 驗證、再不可覆寫發布；不能據此宣稱 8 GB 大包吞吐或峰值已驗。Native Packager Contract 1/1、Runtime Resources Integration 1/1 通過，含串流複製與錯誤 SHA 拒絕。
 - 舊 revision-2 `config.dat` 只有鍵盤改鍵、沒有 `wheelBindings` 的原生整合驗收已補：沿用 Input 預設滾輪、之後改滾輪可保存並於重開後還原。Player Catalog Native Acceptance 也以加密的無滾輪設定從封裝匯入，驗證旅程後再存檔帶有正確滾輪預設。設定檔 `format`／`schemaRevision` 型別損壞時，`GameSettings::LoadWithFallback` 現會安全回報失敗，`SavePreservingExisting` 保留原 bytes，不再讓未捕捉的 JSON 型別例外中斷啟動。Native SaveLoad integration 1/1、Player Catalog Native Acceptance 1/1 通過；人工實按與實際舊版玩家資料仍待驗。
 - 選裝包 `--optional-pack <id> on|off` 的 per-user `optional-pack.txt` 現使用 SDK 共用的同磁碟原子寫檔，避免直接截斷舊偏好；仍維持原有單 ID 格式。Native SaveLoad integration 1/1、Player Catalog Native Acceptance 1/1（含兩段主更新、成人選裝包開關與存檔）通過。多個選裝包同時掛載不能只改偏好格式：每個簽章 pack 都含完整目標 manifest/index，需先設計可驗證的組合與衝突合約，故本輪沒有冒然改變限制。
 - 針對 368 scene／四語的 `validate --runtime` 做 CPU profile：總耗時約 15.5 秒，全部 Story 與 sidecar 約 91 MB 的單獨讀取量測僅約 95 ms，因此暫不新增以 mtime 判斷的來源快取。熱點是穩定 ID 的逐 byte BigInt FNV-1a、資源 `existsSync` 與 canonical JSON。SDK 現用兩個 32-bit limb 計算**同一個** FNV-1a 64-bit，並讓 Story／sidecar／專案正規化共用；1,000 個決定性混合 Unicode 樣本及長字串逐值對照舊演算法，Authoring SDK 157/157、Senren 四語 `validate --runtime` 通過。改後單次同機量測約 12.9 秒；快取條件不同，不能宣稱固定加速百分比。資源存在檢查與全量 canonical 序列化仍是待優化熱點。
@@ -75,7 +76,7 @@
 Engine `docs/package-overlay.md` 是格式規格和安全邊界。這一輪已新增：
 
 - `PrismatiXEngine/Engine/IO/Archive.h/.cpp`：`ArchiveStreamWriter`，檔案來源逐段寫入未加密、未壓縮 PDX5；核對來源預期大小、CRC／SHA-256，支援 metadata、進度。後續 `Archive::OpenStream` 對未加密 zstd entry 改為有界視窗串流解壓（128 MiB 視窗上限、讀到末尾驗大小／CRC）；舊式整筆加密且壓縮 entry 仍會整筆 buffer，encrypted chunked entry 可串流。
-- `PrismatiXEngine/Engine/IO/PackageVerifier.h/.cpp`：`CreatePackageOverlay(base,target,output,progress)`。先完整驗證兩份發行版、確認同遊戲／Engine、不同 package fingerprint、拒絕 Player／非內容 runtime 檔案變更；只抽新增／修改資源，寫入 PDX metadata／target manifest／target index，產後再獨立 `VerifyPackageOverlay`。不覆寫現有輸出。暫存磁碟需約額外變更資源量；Windows 以不可覆寫的同磁碟原子移動發布，其他平台仍依賴 hard link。
+- `PrismatiXEngine/Engine/IO/PackageVerifier.h/.cpp`：`CreatePackageOverlay(base,target,output,progress)`。先完整驗證兩份發行版、確認同遊戲／Engine、不同 package fingerprint、拒絕 Player／非內容 runtime 檔案變更；只串流新增／修改資源，寫入 PDX metadata／target manifest／target index，產後再獨立 `VerifyPackageOverlay`。不覆寫現有輸出。暫存磁碟需容納 staged PDX，但不再額外存放解出的變動資源；Windows 以不可覆寫的同磁碟原子移動發布，其他平台仍依賴 hard link。
 - `PrismatiXEngine/Applications/PackagerMain.cpp`：`--create-overlay`／`--verify-overlay`。
 - `packages/cli/src/cli.ts`：`prismatix create-overlay --base ... --target ... --output ...` 和 `verify-overlay --base ... --patch ...`；`packages/cli/test/overlay-command.test.ts` 測 CLI→native 參數與輸出。
 - Native contract 以兩個真正打包版本（含加密舊包）測新增、覆蓋、刪除-only、進度、既有輸出保護、runtime 變更拒絕；VFS contract 測 streaming writer。文件已更新 `docs/package-overlay.md`、`docs/getting-started.md`、移植案 `docs/SDK_FEEDBACK.md`。

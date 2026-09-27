@@ -224,6 +224,23 @@ void TestStreamingArchiveWriter() {
     const auto stalePath = fixture.path / "stale-source.pdx";
     Check(!writer.Write(stalePath.string()),
           "Streaming writer must reject source bytes changed since planning");
+    px::io::ArchiveStreamWriter fromArchive;
+    fromArchive.AddStream("copied.bin",
+                          [&archive] { return archive.OpenStream("large.bin"); },
+                          size, fingerprint);
+    const auto copiedPath = fixture.path / "copied.pdx";
+    Check(fromArchive.Write(copiedPath.string()),
+          "Streaming writer must copy an archive resource without an extracted file");
+    px::io::Archive copied;
+    Check(copied.Open(copiedPath.string()) &&
+              copied.Read("copied.bin") == archive.Read("large.bin"),
+          "Directly streamed archive entry preserves verified bytes");
+    px::io::ArchiveStreamWriter wrongHash;
+    wrongHash.AddStream("copied.bin",
+                        [&archive] { return archive.OpenStream("large.bin"); },
+                        size, std::string(64, '0'));
+    Check(!wrongHash.Write((fixture.path / "wrong-hash.pdx").string()),
+          "Direct archive source must still match the planned SHA-256");
     px::io::ArchiveStreamWriter unsafe;
     unsafe.AddData("../escape", px::io::Bytes{'x'});
     const auto unsafePath = fixture.path / "unsafe.pdx";

@@ -994,10 +994,6 @@ PackageOverlayBuildResult CreatePackageOverlay(
     if (!std::filesystem::create_directory(stage.path, error) || error)
         return fail("A prior overlay staging directory exists or cannot be created");
     stage.created = true;
-    const auto extracted = stage.path / "resources";
-    error.clear();
-    std::filesystem::create_directory(extracted, error);
-    if (error) return fail("Overlay extraction directory cannot be created");
 
     ArchiveStreamWriter writer;
     const auto addText = [&writer](const std::string_view uri,
@@ -1015,9 +1011,8 @@ PackageOverlayBuildResult CreatePackageOverlay(
               crypto::DeriveKey(targetParsed.manifest.archiveKey)}
         : std::nullopt;
     std::unordered_map<std::string, std::unique_ptr<Archive>> archives;
-    std::array<std::uint8_t, 64 * 1024> buffer{};
-    std::uint64_t extractedBytes = 0;
-    if (onProgress) onProgress("extract-changed", 0, changed.size(), 0);
+    std::uint64_t plannedBytes = 0;
+    if (onProgress) onProgress("plan-changed", 0, changed.size(), 0);
     for (std::size_t index = 0; index < changed.size(); ++index) {
         const auto& resource = changed[index];
         auto found = archives.find(resource.archive);
@@ -1034,42 +1029,18 @@ PackageOverlayBuildResult CreatePackageOverlay(
                 return fail("Target PDX changed: " + resource.archive);
             found = archives.emplace(resource.archive, std::move(archive)).first;
         }
-        auto stream = found->second->OpenStream(resource.uri);
-        if (!stream || stream->Size() != resource.size)
-            return fail("Target resource is unavailable: " + resource.uri);
-        const auto source = extracted / (std::to_string(index) + ".bin");
-        std::ofstream output(source, std::ios::binary | std::ios::trunc);
-        if (!output)
-            return fail("Changed resource staging file cannot be opened");
-        std::uint64_t remaining = resource.size;
-        std::uint64_t lastReport = extractedBytes;
-        while (remaining > 0) {
-            const auto requested = static_cast<std::size_t>(
-                std::min<std::uint64_t>(remaining, buffer.size()));
-            const auto read = stream->Read(buffer.data(), requested);
-            if (read == 0 || read > requested || stream->Failed())
-                return fail("Target resource failed while streaming: " + resource.uri);
-            output.write(reinterpret_cast<const char*>(buffer.data()),
-                         static_cast<std::streamsize>(read));
-            if (!output)
-                return fail("Changed resource staging write failed: " + resource.uri);
-            remaining -= read;
-            extractedBytes += read;
-            if (onProgress && extractedBytes - lastReport >=
-                                  64ull * 1024ull * 1024ull) {
-                onProgress("extract-changed", index, changed.size(),
-                           extractedBytes);
-                lastReport = extractedBytes;
-            }
-        }
-        output.close();
-        if (!output || stream->Failed())
-            return fail("Changed resource staging is incomplete: " + resource.uri);
-        writer.AddFile(resource.uri, source, resource.size,
-                       resource.fingerprint);
+        Archive* source = found->second.get();
+        writer.AddStream(
+            resource.uri,
+            [source, uri = resource.uri] { return source->OpenStream(uri); },
+            resource.size, resource.fingerprint);
+        if (resource.size >
+            (std::numeric_limits<std::uint64_t>::max)() - plannedBytes)
+            return fail("Changed resource total exceeds the overlay limit");
+        plannedBytes += resource.size;
         if (onProgress)
-            onProgress("extract-changed", index + 1, changed.size(),
-                       extractedBytes);
+            onProgress("plan-changed", index + 1, changed.size(),
+                       plannedBytes);
     }
     const auto stagedPdx = stage.path / "patch.pdx";
     if (!writer.Write(px::PathToUtf8(stagedPdx),

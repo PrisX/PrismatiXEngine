@@ -1010,13 +1010,23 @@ void ArchiveStreamWriter::AddFile(std::string logicalPath,
                                   std::filesystem::path source,
                                   const std::uint64_t expectedSize,
                                   std::string expectedSha256) {
-    m_pending.push_back({std::move(logicalPath), std::move(source), {},
-                         expectedSize, std::move(expectedSha256), true});
+    m_pending.push_back({std::move(logicalPath), std::move(source), {}, {},
+                         expectedSize, std::move(expectedSha256),
+                         SourceKind::File});
+}
+
+void ArchiveStreamWriter::AddStream(std::string logicalPath,
+                                    StreamFactory source,
+                                    const std::uint64_t expectedSize,
+                                    std::string expectedSha256) {
+    m_pending.push_back({std::move(logicalPath), {}, {}, std::move(source),
+                         expectedSize, std::move(expectedSha256),
+                         SourceKind::Stream});
 }
 
 void ArchiveStreamWriter::AddData(std::string logicalPath, Bytes data) {
-    m_pending.push_back({std::move(logicalPath), {}, std::move(data), 0, {},
-                         false});
+    m_pending.push_back({std::move(logicalPath), {}, std::move(data), {}, 0,
+                         {}, SourceKind::Data});
 }
 
 bool ArchiveStreamWriter::Write(const std::string& outPath,
@@ -1031,15 +1041,15 @@ bool ArchiveStreamWriter::Write(const std::string& outPath,
     std::unordered_set<std::uint64_t> hashes;
     std::uint64_t totalBytes = 0;
     for (const Pending& pending : m_pending) {
-        const std::uint64_t size = pending.fileBacked
-                                       ? pending.expectedSize
-                                       : pending.data.size();
+        const std::uint64_t size = pending.kind == SourceKind::Data
+                                       ? pending.data.size()
+                                       : pending.expectedSize;
         if (!IsSafeLogicalPath(pending.name) || size > kMaxEntrySize ||
             !hashes.insert(crypto::HashPath(pending.name)).second ||
             size > (std::numeric_limits<std::uint64_t>::max)() - totalBytes)
             return fail("invalid or colliding logical path", pending.name);
         totalBytes += size;
-        if (!pending.fileBacked) continue;
+        if (pending.kind == SourceKind::Data) continue;
         const bool validFingerprint =
             pending.expectedSha256.size() == 64 &&
             std::ranges::all_of(
@@ -1047,14 +1057,17 @@ bool ArchiveStreamWriter::Write(const std::string& outPath,
                     return std::isdigit(byte) ||
                            (byte >= 'a' && byte <= 'f');
                 });
+        if (!validFingerprint) return fail("source fingerprint is invalid", pending.name);
+        if (pending.kind == SourceKind::Stream) {
+            if (!pending.stream) return fail("stream source is missing", pending.name);
+            continue;
+        }
         std::error_code error;
         const auto status =
             std::filesystem::symlink_status(pending.source, error);
-        if (!validFingerprint || error ||
-            !std::filesystem::is_regular_file(status) ||
+        if (error || !std::filesystem::is_regular_file(status) ||
             std::filesystem::is_symlink(status) ||
-            std::filesystem::file_size(pending.source, error) != size ||
-            error)
+            std::filesystem::file_size(pending.source, error) != size || error)
             return fail("source is unsafe or changed", pending.name);
     }
     std::ofstream output(px::PathFromUtf8(outPath),
@@ -1072,26 +1085,39 @@ bool ArchiveStreamWriter::Write(const std::string& outPath,
     std::uint64_t lastReportedBytes = 0;
     if (onProgress) onProgress(0, totalBytes);
     for (const Pending& pending : m_pending) {
-        const std::uint64_t size = pending.fileBacked
-                                       ? pending.expectedSize
-                                       : pending.data.size();
+        const std::uint64_t size = pending.kind == SourceKind::Data
+                                       ? pending.data.size()
+                                       : pending.expectedSize;
         const auto pathHash = crypto::HashPath(pending.name);
         const std::streampos position = output.tellp();
         if (position < 0) return fail("cannot determine entry offset", pending.name);
         const auto offset = static_cast<std::uint64_t>(position);
         std::uint32_t crc = 0xffffffffu;
-        if (pending.fileBacked) {
-            std::ifstream input(pending.source, std::ios::binary);
+        if (pending.kind != SourceKind::Data) {
+            std::ifstream input;
+            std::unique_ptr<SeekableReadStream> stream;
+            if (pending.kind == SourceKind::File)
+                input.open(pending.source, std::ios::binary);
+            else stream = pending.stream();
             psa_hash_operation_t digest = PSA_HASH_OPERATION_INIT;
-            if (!input || psa_hash_setup(&digest, PSA_ALG_SHA_256) != PSA_SUCCESS)
+            if ((pending.kind == SourceKind::File && !input) ||
+                (pending.kind == SourceKind::Stream &&
+                 (!stream || stream->Size() != size || stream->Failed())) ||
+                psa_hash_setup(&digest, PSA_ALG_SHA_256) != PSA_SUCCESS)
                 return fail("cannot initialize source hash", pending.name);
             std::uint64_t remaining = size;
             while (remaining > 0) {
                 const auto count = static_cast<std::size_t>(
                     std::min<std::uint64_t>(remaining, buffer.size()));
-                input.read(reinterpret_cast<char*>(buffer.data()),
-                           static_cast<std::streamsize>(count));
-                if (input.gcount() != static_cast<std::streamsize>(count) ||
+                std::size_t read = 0;
+                if (pending.kind == SourceKind::File) {
+                    input.read(reinterpret_cast<char*>(buffer.data()),
+                               static_cast<std::streamsize>(count));
+                    read = static_cast<std::size_t>(input.gcount());
+                } else {
+                    read = stream->Read(buffer.data(), count);
+                }
+                if (read != count || (stream && stream->Failed()) ||
                     psa_hash_update(&digest, buffer.data(), count) != PSA_SUCCESS) {
                     psa_hash_abort(&digest);
                     return fail("source read or hash failed", pending.name);
@@ -1113,8 +1139,10 @@ bool ArchiveStreamWriter::Write(const std::string& outPath,
                 crc = crypto::UpdateCrc32(crc, buffer.data(), count);
                 remaining -= count;
             }
-            if (input.peek() != std::ifstream::traits_type::eof() ||
-                input.bad()) {
+            const bool extraBytes = pending.kind == SourceKind::File
+                ? input.peek() != std::ifstream::traits_type::eof() || input.bad()
+                : stream->Read(buffer.data(), 1) != 0 || stream->Failed();
+            if (extraBytes) {
                 psa_hash_abort(&digest);
                 return fail("source grew while writing", pending.name);
             }

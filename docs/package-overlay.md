@@ -108,10 +108,13 @@ rejects revision 1. Unsigned overlays remain available for explicit
 inspection and are never loaded automatically.
 
 `create-overlay` fully verifies both input distributions, rejects changed
-Player/runtime files, streams changed content into an uncompressed PDX5,
+Player/runtime files, streams changed content directly from target archives
+into an uncompressed PDX5,
 re-verifies its output, and publishes without replacing an existing file.
-It rechecks manifest and index bytes before publication. Temporary disk space
-is needed for extracted changes. Unencrypted compressed PDX entries now decode
+It rechecks manifest and index bytes before publication. The staged PDX needs
+space for the final patch, but changed resources no longer need separate
+extracted files. Each streamed entry is checked against the target index size
+and SHA-256 while writing. Unencrypted compressed PDX entries decode
 with a capped zstd history window while streaming, and complete size/CRC
 verification at end of stream. Legacy whole-entry encrypted and compressed
 entries still buffer the decoded entry; encrypted chunked entries stream.
