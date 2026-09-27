@@ -43,6 +43,7 @@ struct PackageOverlayVerification {
     std::string error;
     std::string targetManifestJson;
     std::string targetContentIndexJson;
+    std::string optionalPackId;
     std::vector<std::string> tombstones;
     std::uint64_t changedResources = 0;
     std::uint64_t changedRawBytes = 0;
@@ -56,7 +57,7 @@ struct PackageOverlayVerification {
     const std::filesystem::path& distribution,
     const std::filesystem::path& overlayPath);
 
-// Requires a pinned public key and a valid revision-2 publisher signature.
+// Requires a pinned public key and a valid revision-2 or revision-3 publisher signature.
 // Player must use this entry point before an automatic overlay mount.
 [[nodiscard]] PackageOverlayVerification VerifySignedPackageOverlay(
     const std::filesystem::path& distribution,
@@ -87,6 +88,8 @@ struct PackageOverlayChain {
     std::string error;
     std::string targetManifestJson;
     std::vector<PackageOverlayChainMount> mounts;
+    std::string optionalPackId;
+    std::string mainPackageFingerprint;
     std::vector<std::string> ignoredFiles;
 };
 
@@ -95,7 +98,8 @@ struct PackageOverlayChain {
 // update. Ambiguous branches fail closed; stale/unrelated files are ignored.
 [[nodiscard]] PackageOverlayChain ResolveSignedPackageOverlayChain(
     const std::filesystem::path& baseDistribution,
-    const std::filesystem::path& updatesDirectory);
+    const std::filesystem::path& updatesDirectory,
+    std::string_view enabledOptionalPackId = {});
 
 using PackageOverlayBuildProgress = std::function<void(
     std::string_view phase, std::uint64_t current, std::uint64_t total,
@@ -109,6 +113,7 @@ using PackageOverlayBuildProgress = std::function<void(
     const std::filesystem::path& targetDistribution,
     const std::filesystem::path& outputPath,
     const PackageOverlayBuildProgress& onProgress = {},
-    const std::filesystem::path& signingKeyFile = {});
+    const std::filesystem::path& signingKeyFile = {},
+    std::string_view optionalPackId = {});
 
 }  // namespace px::io

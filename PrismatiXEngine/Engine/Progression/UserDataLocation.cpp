@@ -54,6 +54,14 @@ bool IsLegacySaveName(const std::string_view name) {
            });
 }
 
+bool ValidOptionalPackId(const std::string_view value) {
+    return !value.empty() && value.size() <= 64 &&
+           std::ranges::all_of(value, [](const unsigned char c) {
+               return (c >= 'a' && c <= 'z') ||
+                      (c >= '0' && c <= '9') || c == '-';
+           });
+}
+
 }  // namespace
 
 Result<std::filesystem::path> ResolvePackagedUserDataDirectory(
@@ -88,6 +96,66 @@ Result<std::filesystem::path> ResolvePackagedUserDataDirectory(
         SDL_free(prefPath);
     }
     return Result<std::filesystem::path>::Success(directory.lexically_normal());
+}
+
+Result<std::string> ReadEnabledOptionalPackId(
+    const std::filesystem::path& userDataDirectory) {
+    const auto path = userDataDirectory / "optional-pack.txt";
+    std::error_code error;
+    const auto status = std::filesystem::symlink_status(path, error);
+    if (error == std::errc::no_such_file_or_directory ||
+        (!error && status.type() == std::filesystem::file_type::not_found))
+        return Result<std::string>::Success({});
+    if (error || !std::filesystem::is_regular_file(status) ||
+        std::filesystem::is_symlink(status))
+        return Result<std::string>::Failure(DataError(
+            path, "Optional pack preference is not a regular file"));
+    const auto size = std::filesystem::file_size(path, error);
+    if (error || size > 65)
+        return Result<std::string>::Failure(DataError(
+            path, "Optional pack preference is oversized"));
+    std::ifstream input(path, std::ios::binary);
+    if (!input)
+        return Result<std::string>::Failure(DataError(
+            path, "Optional pack preference cannot be read"));
+    std::string value(static_cast<std::size_t>(size), '\0');
+    if (!input.read(value.data(), static_cast<std::streamsize>(size)))
+        return Result<std::string>::Failure(DataError(
+            path, "Optional pack preference cannot be read"));
+    if (!value.empty() && value.back() == '\n') value.pop_back();
+    if (!value.empty() && !ValidOptionalPackId(value))
+        return Result<std::string>::Failure(DataError(
+            path, "Optional pack preference contains an invalid ID"));
+    return Result<std::string>::Success(std::move(value));
+}
+
+Result<bool> WriteEnabledOptionalPackId(
+    const std::filesystem::path& userDataDirectory,
+    const std::string_view optionalPackId) {
+    const auto path = userDataDirectory / "optional-pack.txt";
+    if (!optionalPackId.empty() && !ValidOptionalPackId(optionalPackId))
+        return Result<bool>::Failure(DataError(
+            path, "Optional pack ID is invalid"));
+    std::error_code error;
+    const auto status = std::filesystem::symlink_status(path, error);
+    if (error && error != std::errc::no_such_file_or_directory)
+        return Result<bool>::Failure(DataError(
+            path, "Optional pack preference cannot be inspected"));
+    if (!error && status.type() != std::filesystem::file_type::not_found &&
+        (!std::filesystem::is_regular_file(status) ||
+         std::filesystem::is_symlink(status)))
+        return Result<bool>::Failure(DataError(
+            path, "Optional pack preference is not a regular file"));
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    if (!output)
+        return Result<bool>::Failure(DataError(
+            path, "Optional pack preference cannot be written"));
+    output << optionalPackId << '\n';
+    output.close();
+    if (!output)
+        return Result<bool>::Failure(DataError(
+            path, "Optional pack preference could not be saved"));
+    return Result<bool>::Success(true);
 }
 
 Result<std::size_t> ImportLegacyPortableSaves(

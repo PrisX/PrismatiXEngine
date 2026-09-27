@@ -92,7 +92,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   "verify-package": {values: "runtime packager", flags: ""},
   "create-patch": {values: "base target output runtime packager", flags: ""},
   "apply-patch": {values: "base patch output runtime packager", flags: "in-place"},
-  "create-overlay": {values: "base target output signing-key runtime packager", flags: ""},
+  "create-overlay": {values: "base target output signing-key optional-id runtime packager", flags: ""},
   "verify-overlay": {values: "base patch runtime packager", flags: "require-signature"},
   "overlay-keygen": {values: "private public runtime packager", flags: ""},
 };
@@ -2360,6 +2360,15 @@ async function overlayCommand(command: "create-overlay" | "verify-overlay",
       if (!info.isFile() || info.size === 0 || info.size > 256)
         throw new Error("Overlay signing key must be a bounded regular file");
       nativeArgs.push("--signing-key", keyPath);
+    }
+    const optionalId = options.values.get("optional-id");
+    if (command === "create-overlay" && optionalId !== undefined) {
+      if (!/^[a-z0-9-]{1,64}$/.test(optionalId) || signingKey === undefined) {
+        printDiagnostics([diagnostic("PXCLI1519",
+          "--optional-id requires a lowercase ID and --signing-key")]);
+        return 1;
+      }
+      nativeArgs.push("--optional-id", optionalId);
     }
     if (command === "verify-overlay" && options.flags.has("require-signature"))
       nativeArgs.push("--require-signature");

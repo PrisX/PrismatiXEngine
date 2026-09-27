@@ -122,16 +122,19 @@ int RunMain(int argc, char** argv) {
         return static_cast<int>(px::sdk::PackageExitCode::Completed);
     }
     if ((argc == 5 ||
-         (argc == 7 && std::string_view(argv[5]) == "--signing-key")) &&
+         (argc == 7 && std::string_view(argv[5]) == "--signing-key") ||
+         (argc == 9 && std::string_view(argv[5]) == "--signing-key" &&
+          std::string_view(argv[7]) == "--optional-id")) &&
         std::string_view(argv[1]) == "--create-overlay") {
         const auto base = Utf8Path(argv[2]);
         const auto target = Utf8Path(argv[3]);
         const auto output = Utf8Path(argv[4]);
-        const auto signingKey = argc == 7 ? Utf8Path(argv[6])
+        const auto signingKey = argc >= 7 ? Utf8Path(argv[6])
                                           : std::filesystem::path{};
+        const std::string_view optionalId = argc == 9 ? argv[8] : "";
         if (!base.is_absolute() || !target.is_absolute() ||
             !output.is_absolute() ||
-            (argc == 7 && !signingKey.is_absolute())) {
+            (argc >= 7 && !signingKey.is_absolute())) {
             Emit(FailedEvent({}, "PXPKG1516",
                              "Base, target, output, and optional signing key paths must be absolute"));
             return static_cast<int>(px::sdk::PackageExitCode::Failed);
@@ -149,7 +152,7 @@ int RunMain(int argc, char** argv) {
                     progress.message = std::to_string(rawBytes) +
                                        " raw bytes processed";
                     Emit(progress);
-                }, signingKey);
+                }, signingKey, optionalId);
             if (!created.created) {
                 Emit(FailedEvent({}, "PXPKG1517", created.error));
                 return static_cast<int>(px::sdk::PackageExitCode::Failed);
@@ -247,7 +250,7 @@ int RunMain(int argc, char** argv) {
         std::string_view(argv[1]) == "--validate-request" &&
         (argc == 3 || std::string_view(argv[3]) == "--verify-media");
     if (!packageRequest && !validateOnly) {
-        Emit(FailedEvent({}, "PXPKG1001", "Usage: PrismatiXPackager --request <absolute-json-path> | --validate-request <absolute-json-path> [--verify-media] | --verify-package <absolute-distribution-path> | --generate-overlay-key <absolute-private-key-file> <absolute-public-key-file> | --create-overlay <absolute-base-distribution> <absolute-target-distribution> <absolute-output-pdx> [--signing-key <absolute-private-key-file>] | --verify-overlay <absolute-base-distribution> <absolute-overlay-pdx> [--require-signature]"));
+        Emit(FailedEvent({}, "PXPKG1001", "Usage: PrismatiXPackager --request <absolute-json-path> | --validate-request <absolute-json-path> [--verify-media] | --verify-package <absolute-distribution-path> | --generate-overlay-key <absolute-private-key-file> <absolute-public-key-file> | --create-overlay <absolute-base-distribution> <absolute-target-distribution> <absolute-output-pdx> [--signing-key <absolute-private-key-file> [--optional-id <id>]] | --verify-overlay <absolute-base-distribution> <absolute-overlay-pdx> [--require-signature]"));
         return static_cast<int>(px::sdk::PackageExitCode::Failed);
     }
 

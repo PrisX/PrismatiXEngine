@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <string>
 #include <string_view>
 
 namespace px::progress {
@@ -13,6 +14,13 @@ namespace px::progress {
 // absolute parent directory for portable deployments and isolated tests.
 [[nodiscard]] Result<std::filesystem::path> ResolvePackagedUserDataDirectory(
     std::string_view gameId);
+
+// Empty means no optional pack is enabled. One pack may be enabled at a time.
+[[nodiscard]] Result<std::string> ReadEnabledOptionalPackId(
+    const std::filesystem::path& userDataDirectory);
+[[nodiscard]] Result<bool> WriteEnabledOptionalPackId(
+    const std::filesystem::path& userDataDirectory,
+    std::string_view optionalPackId);
 
 // One-time, non-destructive import of saves written beside older Player
 // executables. Existing destination files and all source files are preserved.

@@ -67,6 +67,22 @@ test("overlay CLI delegates creation and verification to native Packager", async
       ["--verify-overlay", join(root, "base"), signedOutput,
         "--require-signature"]);
 
+    const optionalOutput = join(root, "adult.pdx");
+    const optional = spawnSync(process.execPath, [cli, "create-overlay",
+      "--base", join(root, "base"), "--target", join(root, "target"),
+      "--output", optionalOutput, "--signing-key", signingKey,
+      "--optional-id", "adult", "--packager", packager, "--json"],
+    {encoding: "utf8"});
+    assert.equal(optional.status, 0, optional.stderr);
+    assert.deepEqual(JSON.parse(await readFile(argsFile, "utf8")),
+      ["--create-overlay", join(root, "base"), join(root, "target"),
+        optionalOutput, "--signing-key", signingKey, "--optional-id", "adult"]);
+    const unsignedOptional = spawnSync(process.execPath, [cli, "create-overlay",
+      "--base", join(root, "base"), "--target", join(root, "target"),
+      "--output", join(root, "invalid.pdx"), "--optional-id", "adult",
+      "--packager", packager, "--json"], {encoding: "utf8"});
+    assert.notEqual(unsignedOptional.status, 0);
+
     const generatedPrivate = join(root, "generated-private.txt");
     const generatedPublic = join(root, "generated-public.txt");
     const generated = spawnSync(process.execPath, [cli, "overlay-keygen",

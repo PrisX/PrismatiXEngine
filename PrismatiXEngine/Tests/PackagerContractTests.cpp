@@ -1062,6 +1062,50 @@ int main() {
                          withUnsigned.ignoredFiles.size() == 1,
                      "unsigned file is ignored without hiding a valid chain");
 
+        Write(root / "Content/Overlay/adult.txt", "optional adult content");
+        const auto adultTarget = fixture.path / "Build/SignedOverlayAdultTarget";
+        auto adultRequest = secondRequest;
+        adultRequest.outputDir = adultTarget;
+        adultRequest.inputs.push_back(Input(root, "Content/Overlay/adult.txt"));
+        suite.Require(px::sdk::RunPackager(adultRequest).Completed(),
+                      "optional target distribution is built");
+        const auto adultPatch = fixture.path / "adult.pdx";
+        suite.Require(px::io::CreatePackageOverlay(
+                          secondTarget, adultTarget, adultPatch, {}, keyFile,
+                          "adult").created,
+                      "adult pack is signed with an explicit optional ID");
+        std::filesystem::copy_file(adultPatch, updates / "adult.pdx");
+        const auto disabledAdult = px::io::ResolveSignedPackageOverlayChain(
+            signedBase, updates);
+        suite.Expect(disabledAdult.valid && disabledAdult.mounts.size() == 2 &&
+                         disabledAdult.optionalPackId.empty() &&
+                         disabledAdult.ignoredFiles.size() == 1,
+                     "installed optional pack stays off by default");
+        const auto enabledAdult = px::io::ResolveSignedPackageOverlayChain(
+            signedBase, updates, "adult");
+        const auto adultManifest = px::sdk::detail::ParsePackageManifest(
+            Read(adultTarget / "Package/manifest.json"));
+        suite.Expect(enabledAdult.valid && enabledAdult.mounts.size() == 3 &&
+                         enabledAdult.mounts.back().path.filename() == "adult.pdx" &&
+                         enabledAdult.optionalPackId == "adult" &&
+                         enabledAdult.mainPackageFingerprint ==
+                             finalManifest.manifest.packageFingerprint &&
+                         adultManifest.Valid() &&
+                         px::sdk::detail::ParsePackageManifest(
+                             enabledAdult.targetManifestJson)
+                                 .manifest.packageFingerprint ==
+                             adultManifest.manifest.packageFingerprint,
+                     "enabled optional pack mounts after updates without changing save identity");
+        const auto otherOptional = px::io::ResolveSignedPackageOverlayChain(
+            signedBase, updates, "other");
+        suite.Expect(otherOptional.valid && otherOptional.mounts.size() == 2,
+                     "an unrelated optional selection leaves the main chain intact");
+        suite.Expect(!px::io::CreatePackageOverlay(
+                          secondTarget, adultTarget,
+                          fixture.path / "unsigned-adult.pdx", {}, {}, "adult")
+                          .created,
+                     "optional pack cannot be published without a signature");
+
         Write(root / "Content/Overlay/branch.txt", "ambiguous branch");
         const auto branchTarget = fixture.path / "Build/SignedOverlayBranch";
         auto branchRequest = FixtureRequest(root, branchTarget);

@@ -268,7 +268,8 @@ std::optional<Variant> JsonVariant(const nlohmann::json& value, const int depth 
 }
 }
 
-PlayerApp::Boot PlayerApp::LoadBootConfig(const bool allowOverlay) {
+PlayerApp::Boot PlayerApp::LoadBootConfig(const bool allowOverlay,
+                                         const bool allowOptionalPack) {
     Boot boot;
     boot.config.title = "PrismatiX Player";
     boot.config.mountDirs.clear();
@@ -291,10 +292,24 @@ PlayerApp::Boot PlayerApp::LoadBootConfig(const bool allowOverlay) {
         return boot;
     }
     auto effectivePackage = parsed.manifest;
+    std::string savePackageFingerprint = parsed.manifest.packageFingerprint;
     if (allowOverlay) {
+        std::string enabledOptionalId;
+        const auto userData = progress::ResolvePackagedUserDataDirectory(
+            parsed.manifest.gameId);
+        if (userData && allowOptionalPack) {
+            const auto selected = progress::ReadEnabledOptionalPackId(
+                userData.Value());
+            if (selected) enabledOptionalId = selected.Value();
+            else
+                for (auto diagnostic : selected.Diagnostics()) {
+                    diagnostic.severity = diag::Severity::Warning;
+                    diag::Emit(std::move(diagnostic));
+                }
+        }
         const auto chain = io::ResolveSignedPackageOverlayChain(
             std::filesystem::current_path(),
-            std::filesystem::path("Package/updates"));
+            std::filesystem::path("Package/updates"), enabledOptionalId);
         if (!chain.valid) {
             diag::Emit(diag::Diagnostic{
                 .severity = diag::Severity::Warning,
@@ -308,10 +323,15 @@ PlayerApp::Boot PlayerApp::LoadBootConfig(const bool allowOverlay) {
                     chain.targetManifestJson);
                 if (target.Valid()) {
                     effectivePackage = target.manifest;
+                    savePackageFingerprint = chain.mainPackageFingerprint;
                     for (const auto& mount : chain.mounts)
                         boot.config.overlays.push_back(
                             {PathToUtf8(mount.path), mount.tombstones});
                     boot.overlayApplied = true;
+                    if (!chain.optionalPackId.empty())
+                        PX_LOG_INFO("Player optional pack enabled id={}",
+                                    chain.optionalPackId);
+                    boot.optionalPackApplied = !chain.optionalPackId.empty();
                 }
             }
             if (!chain.ignoredFiles.empty()) {
@@ -334,6 +354,8 @@ PlayerApp::Boot PlayerApp::LoadBootConfig(const bool allowOverlay) {
     boot.config.title = package.title;
     boot.gameId = package.gameId;
     boot.packageFingerprint = package.packageFingerprint;
+    if (!savePackageFingerprint.empty())
+        boot.packageFingerprint = savePackageFingerprint;
     boot.contentVersion = package.contentVersion;
     boot.saveVersion = package.saveVersion;
     for (const auto& migration : package.saveMigrations) {
@@ -687,6 +709,15 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                     PathToUtf8(userData.Value()), imported.Value());
     }
     bool runtimeReady = m_runtime.Init(m_boot.config);
+    if (!runtimeReady && m_boot.optionalPackApplied) {
+        diag::Emit(diag::Diagnostic{
+            .severity = diag::Severity::Warning,
+            .code = "PXPLAYER5015",
+            .category = "Player.Boot",
+            .message = "Optional pack could not start; retrying signed updates"});
+        m_boot = LoadBootConfig(true, false);
+        runtimeReady = m_boot.valid && m_runtime.Init(m_boot.config);
+    }
     if (!runtimeReady && m_boot.overlayApplied) {
         diag::Emit(diag::Diagnostic{
             .severity = diag::Severity::Warning,

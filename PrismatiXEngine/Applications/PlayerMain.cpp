@@ -9,6 +9,7 @@
 #include <SDL3/SDL_main.h>
 #include <SDL3/SDL_filesystem.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -95,10 +96,60 @@ int InspectSave(int argc, char* argv[]) {
         return 1;
     }
 }
+
+int SetOptionalPack(int argc, char* argv[]) {
+    if (argc != 4 ||
+        (std::string_view(argv[3]) != "on" &&
+         std::string_view(argv[3]) != "off")) {
+        std::cerr << "Usage: PrismatiXPlayer --optional-pack <id> on|off\n";
+        return 1;
+    }
+    const char* base = SDL_GetBasePath();
+    if (!base) return 1;
+    const auto packageRoot = px::PathFromUtf8(base);
+    const auto gameId = PackagedGameId(packageRoot);
+    if (!gameId) {
+        std::cerr << "Optional packs require an adjacent packaged game\n";
+        return 1;
+    }
+    const auto userData =
+        px::progress::ResolvePackagedUserDataDirectory(*gameId);
+    if (!userData) {
+        for (const auto& diagnostic : userData.Diagnostics())
+            std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+        return 1;
+    }
+    const auto id = std::string_view(argv[2]);
+    if (id.empty() || id.size() > 64 ||
+        !std::ranges::all_of(id, [](const unsigned char c) {
+            return (c >= 'a' && c <= 'z') ||
+                   (c >= '0' && c <= '9') || c == '-';
+        })) {
+        std::cerr << "Optional pack ID must be lowercase letters, digits, or hyphens\n";
+        return 1;
+    }
+    if (std::string_view(argv[3]) == "off") {
+        const auto current = px::progress::ReadEnabledOptionalPackId(
+            userData.Value());
+        if (current && current.Value() != id) return 0;
+    }
+    const auto written = px::progress::WriteEnabledOptionalPackId(
+        userData.Value(), std::string_view(argv[3]) == "on" ? id
+                                                              : std::string_view{});
+    if (!written) {
+        for (const auto& diagnostic : written.Diagnostics())
+            std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+        return 1;
+    }
+    std::cout << "Optional pack preference saved; restart Player to apply it\n";
+    return 0;
+}
 }
 
 int main(int argc, char* argv[]) {
     if (argc > 1 && std::string_view(argv[1]) == "--inspect-save") return InspectSave(argc, argv);
+    if (argc > 1 && std::string_view(argv[1]) == "--optional-pack")
+        return SetOptionalPack(argc, argv);
     // The package owns only immutable game content. A shortcut's working
     // directory never chooses persistence, which lives in per-user storage.
     // Keep the existing cwd-based developer launch when no adjacent package

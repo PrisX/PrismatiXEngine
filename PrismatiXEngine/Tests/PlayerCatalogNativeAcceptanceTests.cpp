@@ -6,6 +6,7 @@
 #include "Engine/Progression/GlobalProfile.h"
 #include "Engine/Progression/GlobalProfileStore.h"
 #include "Engine/Progression/Persist.h"
+#include "Engine/Progression/UserDataLocation.h"
 #include "Engine/SDK/Packager.h"
 #include "Engine/Package/PackageManifest.h"
 #include "Tests/TestSupport/TestHarness.h"
@@ -260,16 +261,19 @@ public:
 
     bool Start(const std::filesystem::path& executable,
                const std::filesystem::path& workingDirectory,
-               const std::filesystem::path& userDataRoot) {
+               const std::filesystem::path& userDataRoot,
+               const std::string_view arguments = {}) {
         if(m_result.valid())return false;
 #if defined(_WIN32)
         const std::string command="cd /d "+ShellQuote(workingDirectory)+
             " && set \"PRISMATIX_PLAYER_DATA_ROOT="+userDataRoot.string()+
-            "\"&& set PRISMATIX_E2E_JOURNEY=catalog&& "+ShellQuote(executable);
+            "\"&& set PRISMATIX_E2E_JOURNEY=catalog&& "+ShellQuote(executable)+
+            (arguments.empty() ? "" : " " + std::string(arguments));
 #else
         const std::string command="cd "+ShellQuote(workingDirectory)+
             " && PRISMATIX_PLAYER_DATA_ROOT="+ShellQuote(userDataRoot)+
-            " PRISMATIX_E2E_JOURNEY=catalog "+ShellQuote(executable);
+            " PRISMATIX_E2E_JOURNEY=catalog "+ShellQuote(executable)+
+            (arguments.empty() ? "" : " " + std::string(arguments));
 #endif
         m_result=std::async(std::launch::async,[command]{
             return std::system(command.c_str());
@@ -721,6 +725,19 @@ int main(int argc, char* argv[]) {
                           targetOutput, secondTargetOutput, secondPatch,
                           {}, privateKey).created,
                       "second Player update is signed against the first target");
+        Write(root / "Content/Overlay/player-adult.txt", "optional Player pack");
+        const auto adultTargetOutput = fixture.path / "Build/AdultTarget";
+        auto adultTargetRequest = secondTargetRequest;
+        adultTargetRequest.outputDir = adultTargetOutput;
+        adultTargetRequest.inputs.push_back(
+            Input(root, "Content/Overlay/player-adult.txt"));
+        suite.Require(px::sdk::RunPackager(adultTargetRequest).Completed(),
+                      "optional native Player pack is packaged");
+        const auto adultPatch = fixture.path / "adult-player-pack.pdx";
+        suite.Require(px::io::CreatePackageOverlay(
+                          secondTargetOutput, adultTargetOutput, adultPatch,
+                          {}, privateKey, "adult").created,
+                      "optional Player pack is signed against the latest update");
         const auto unsignedPatch = fixture.path / "unsigned-player-update.pdx";
         suite.Require(px::io::CreatePackageOverlay(
                           output, targetOutput, unsignedPatch).created,
@@ -895,6 +912,8 @@ int main(int argc, char* argv[]) {
         std::filesystem::copy_file(signedPatch, activePatch);
         const auto chainedPatch = output / "Package/updates/patch2.pdx";
         std::filesystem::copy_file(secondPatch, chainedPatch);
+        std::filesystem::copy_file(adultPatch,
+                                   output / "Package/updates/adult.pdx");
         const auto signedDataRoot = fixture.path / "SignedOverlayUserData";
         const auto signedLog = signedDataRoot /
             ("Game " + px::crypto::Sha256Hex(startupManifest.manifest.gameId)) /
@@ -912,6 +931,42 @@ int main(int argc, char* argv[]) {
                       }), "signed-overlay Player completes its native journey");
         suite.Expect(signedProcess.CompletedExitCode() == 0,
                      "signed-overlay Player exits cleanly");
+
+        const auto signedUserData = signedDataRoot /
+            ("Game " + px::crypto::Sha256Hex(startupManifest.manifest.gameId));
+        AutomatedChildProcess enableAdult;
+        suite.Require(enableAdult.Start(packagedPlayer, launchDirectory,
+                                        signedDataRoot,
+                                        "--optional-pack adult on") &&
+                          WaitUntil(10s, [&] {
+                              return enableAdult.CompletedExitCode().has_value();
+                          }) && enableAdult.CompletedExitCode() == 0 &&
+                          px::progress::ReadEnabledOptionalPackId(
+                              signedUserData).Value() == "adult",
+                      "Player command enables adult pack in per-user preferences");
+        AutomatedChildProcess adultProcess;
+        suite.Require(adultProcess.Start(packagedPlayer, launchDirectory,
+                                         signedDataRoot),
+                      "Player restarts with the optional pack enabled");
+        suite.Require(WaitForLog(signedLog, "signed overlay=true count=3") &&
+                          WaitForLog(signedLog,
+                                     "Player optional pack enabled id=adult"),
+                      "Player mounts adult content after both signed updates");
+        suite.Require(WaitUntil(35s, [&] {
+                          return adultProcess.CompletedExitCode().has_value();
+                      }), "optional-pack Player completes its native journey");
+        suite.Expect(adultProcess.CompletedExitCode() == 0,
+                     "optional-pack Player exits cleanly");
+        AutomatedChildProcess disableAdult;
+        suite.Require(disableAdult.Start(packagedPlayer, launchDirectory,
+                                         signedDataRoot,
+                                         "--optional-pack adult off") &&
+                          WaitUntil(10s, [&] {
+                              return disableAdult.CompletedExitCode().has_value();
+                          }) && disableAdult.CompletedExitCode() == 0 &&
+                          px::progress::ReadEnabledOptionalPackId(
+                              signedUserData).Value().empty(),
+                      "Player command disables adult pack without changing installed PDX files");
 
         std::filesystem::remove(chainedPatch);
         std::filesystem::copy_file(

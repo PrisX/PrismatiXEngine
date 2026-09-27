@@ -64,6 +64,14 @@ bool LowerFingerprint(const std::string_view value) {
         });
 }
 
+bool ValidOptionalPackId(const std::string_view value) {
+    return !value.empty() && value.size() <= 64 &&
+        std::ranges::all_of(value, [](const unsigned char byte) {
+            return (byte >= 'a' && byte <= 'z') ||
+                   (byte >= '0' && byte <= '9') || byte == '-';
+        });
+}
+
 std::optional<std::string> FingerprintStream(SeekableReadStream& stream) {
     if (psa_crypto_init() != PSA_SUCCESS) return std::nullopt;
     psa_hash_operation_t operation = PSA_HASH_OPERATION_INIT;
@@ -446,21 +454,32 @@ static PackageOverlayVerification VerifyOverlayImpl(
         return fail("Overlay metadata is missing, damaged, or oversized");
 
     const Json metadata = Json::parse(*metadataText, nullptr, false);
-    static const std::set<std::string> requiredFields{
+    static const std::set<std::string> baseFields{
         "format", "schemaRevision", "gameId", "basePackageFingerprint",
         "targetPackageFingerprint", "baseManifestSha256",
         "baseContentIndexSha256", "targetManifestSha256",
         "targetContentIndexSha256"};
-    if (!metadata.is_object() || metadata.size() != requiredFields.size() ||
+    if (!metadata.is_object() ||
         !metadata.contains("schemaRevision") ||
         !metadata["schemaRevision"].is_number_integer() ||
         (metadata["schemaRevision"] != 1 &&
-         metadata["schemaRevision"] != 2))
+         metadata["schemaRevision"] != 2 &&
+         metadata["schemaRevision"] != 3))
         return fail("Overlay metadata schema is invalid");
-    const bool signedOverlay = metadata["schemaRevision"] == 2;
+    const int revision = metadata["schemaRevision"].get<int>();
+    const bool optionalOverlay = revision == 3;
+    if (metadata.size() != baseFields.size() + (optionalOverlay ? 2 : 0))
+        return fail("Overlay metadata schema is invalid");
+    if (optionalOverlay &&
+        (!metadata.contains("kind") || metadata["kind"] != "optional" ||
+         !metadata.contains("optionalId") ||
+         !metadata["optionalId"].is_string() ||
+         !ValidOptionalPackId(metadata["optionalId"].get<std::string>())))
+        return fail("Optional overlay identity is invalid");
+    const bool signedOverlay = revision >= 2;
     if (requireSignature && !signedOverlay)
         return fail("Automatic overlay loading requires a publisher signature");
-    for (const auto& field : requiredFields) {
+    for (const auto& field : baseFields) {
         if (!metadata.contains(field) ||
             (field != "schemaRevision" && !metadata[field].is_string()))
             return fail("Overlay metadata contains a missing or invalid field");
@@ -486,7 +505,7 @@ static PackageOverlayVerification VerifyOverlayImpl(
         }
         if (!VerifyOverlayMetadataSignature(
                 *metadataText, signatureHex,
-                baseParsed.manifest.publisherPublicKey))
+                baseParsed.manifest.publisherPublicKey, revision))
             return fail("Overlay publisher signature is invalid");
     }
     const auto baseManifestSha = FingerprintText(*baseManifestText);
@@ -513,6 +532,15 @@ static PackageOverlayVerification VerifyOverlayImpl(
         metadata["targetPackageFingerprint"] !=
             targetParsed.manifest.packageFingerprint)
         return fail("Overlay target manifest is incompatible or invalid");
+    if (optionalOverlay &&
+        (targetParsed.manifest.contentVersion !=
+             baseParsed.manifest.contentVersion ||
+         targetParsed.manifest.saveVersion != baseParsed.manifest.saveVersion ||
+         targetParsed.manifest.persistenceDataId !=
+             baseParsed.manifest.persistenceDataId ||
+         targetParsed.manifest.persistenceKeyId !=
+             baseParsed.manifest.persistenceKeyId))
+        return fail("Optional overlay cannot change save or content version identity");
     const auto targetEntries =
         ParseIndexedResources(*targetIndexText, targetParsed.manifest);
     if (!targetEntries) return fail("Overlay target content index is invalid");
@@ -566,6 +594,8 @@ static PackageOverlayVerification VerifyOverlayImpl(
     }
     result.targetManifestJson = *targetManifestText;
     result.targetContentIndexJson = *targetIndexText;
+    if (optionalOverlay)
+        result.optionalPackId = metadata["optionalId"].get<std::string>();
     result.valid = true;
     return result;
 }
@@ -593,10 +623,14 @@ PackageOverlayVerification VerifySignedPackageOverlayFromDocuments(
 
 PackageOverlayChain ResolveSignedPackageOverlayChain(
     const std::filesystem::path& baseDistribution,
-    const std::filesystem::path& updatesDirectory) {
+    const std::filesystem::path& updatesDirectory,
+    const std::string_view enabledOptionalPackId) {
     const auto fail = [](std::string message) {
         return PackageOverlayChain{.error = std::move(message)};
     };
+    if (!enabledOptionalPackId.empty() &&
+        !ValidOptionalPackId(enabledOptionalPackId))
+        return fail("Enabled optional pack ID is invalid");
     std::error_code error;
     const auto directoryStatus = std::filesystem::symlink_status(
         updatesDirectory, error);
@@ -642,14 +676,20 @@ PackageOverlayChain ResolveSignedPackageOverlayChain(
     if (!base.Valid()) return fail("Base package manifest is invalid");
     std::set<std::string> visited{base.manifest.packageFingerprint};
     std::vector<bool> consumed(candidates.size());
+    std::vector<bool> applicableOptional(candidates.size());
     PackageOverlayChain result;
     for (std::size_t depth = 0; depth < candidates.size(); ++depth) {
+        std::fill(applicableOptional.begin(), applicableOptional.end(), false);
         std::optional<std::pair<std::size_t, PackageOverlayVerification>> next;
         for (std::size_t index = 0; index < candidates.size(); ++index) {
             if (consumed[index]) continue;
             auto verified = VerifySignedPackageOverlayFromDocuments(
                 *currentManifest, *currentIndex, candidates[index]);
             if (!verified.valid) continue;
+            if (!verified.optionalPackId.empty()) {
+                applicableOptional[index] = true;
+                continue;
+            }
             if (next)
                 return fail("More than one signed update applies to the same package version");
             next.emplace(index, std::move(verified));
@@ -667,9 +707,33 @@ PackageOverlayChain ResolveSignedPackageOverlayChain(
         *currentIndex = std::move(next->second.targetContentIndexJson);
     }
     if (!result.mounts.empty())
-        result.targetManifestJson = std::move(*currentManifest);
+        result.targetManifestJson = *currentManifest;
+    const auto main = sdk::detail::ParsePackageManifest(*currentManifest);
+    if (!main.Valid()) return fail("Signed update chain target is invalid");
+    result.mainPackageFingerprint = main.manifest.packageFingerprint;
+    if (!enabledOptionalPackId.empty()) {
+        std::optional<std::pair<std::size_t, PackageOverlayVerification>> selected;
+        for (std::size_t index = 0; index < candidates.size(); ++index) {
+            if (consumed[index]) continue;
+            auto verified = VerifySignedPackageOverlayFromDocuments(
+                *currentManifest, *currentIndex, candidates[index]);
+            if (!verified.valid ||
+                verified.optionalPackId != enabledOptionalPackId) continue;
+            if (selected)
+                return fail("More than one signed optional pack matches the enabled ID");
+            selected.emplace(index, std::move(verified));
+        }
+        if (selected) {
+            consumed[selected->first] = true;
+            result.mounts.push_back({candidates[selected->first],
+                                     std::move(selected->second.tombstones)});
+            result.targetManifestJson =
+                std::move(selected->second.targetManifestJson);
+            result.optionalPackId = std::string(enabledOptionalPackId);
+        }
+    }
     for (std::size_t index = 0; index < candidates.size(); ++index)
-        if (!consumed[index])
+        if (!consumed[index] && !applicableOptional[index])
             result.ignoredFiles.push_back(px::PathToUtf8(
                 candidates[index].filename()));
     result.valid = true;
@@ -681,7 +745,8 @@ PackageOverlayBuildResult CreatePackageOverlay(
     const std::filesystem::path& targetDistribution,
     const std::filesystem::path& outputPath,
     const PackageOverlayBuildProgress& onProgress,
-    const std::filesystem::path& signingKeyFile) {
+    const std::filesystem::path& signingKeyFile,
+    const std::string_view optionalPackId) {
     const auto fail = [](std::string message) {
         return PackageOverlayBuildResult{.error = std::move(message)};
     };
@@ -765,6 +830,18 @@ PackageOverlayBuildResult CreatePackageOverlay(
             targetParsed.manifest.packageFingerprint)
         return fail("Base and target are not distinct compatible package versions");
     const bool signedOverlay = !signingKeyFile.empty();
+    if (!optionalPackId.empty() &&
+        (!ValidOptionalPackId(optionalPackId) || !signedOverlay))
+        return fail("Optional overlays require a valid ID and publisher signature");
+    if (!optionalPackId.empty() &&
+        (baseParsed.manifest.contentVersion !=
+             targetParsed.manifest.contentVersion ||
+         baseParsed.manifest.saveVersion != targetParsed.manifest.saveVersion ||
+         baseParsed.manifest.persistenceDataId !=
+             targetParsed.manifest.persistenceDataId ||
+         baseParsed.manifest.persistenceKeyId !=
+             targetParsed.manifest.persistenceKeyId))
+        return fail("Optional overlays cannot change save or content version identity");
     if (signedOverlay && baseParsed.manifest.publisherPublicKey.empty())
         return fail("Signed overlay requires a pinned publisher public key");
     const auto baseEntries =
@@ -797,9 +874,9 @@ PackageOverlayBuildResult CreatePackageOverlay(
     if (!baseManifestHash || !baseIndexHash || !targetManifestHash ||
         !targetIndexHash)
         return fail("Overlay metadata hashing failed");
-    const Json metadata{
+    Json metadata{
         {"format", "PrismatiXPackageOverlay"},
-        {"schemaRevision", signedOverlay ? 2 : 1},
+        {"schemaRevision", optionalPackId.empty() ? (signedOverlay ? 2 : 1) : 3},
         {"gameId", baseParsed.manifest.gameId},
         {"basePackageFingerprint", baseParsed.manifest.packageFingerprint},
         {"targetPackageFingerprint", targetParsed.manifest.packageFingerprint},
@@ -807,6 +884,10 @@ PackageOverlayBuildResult CreatePackageOverlay(
         {"baseContentIndexSha256", *baseIndexHash},
         {"targetManifestSha256", *targetManifestHash},
         {"targetContentIndexSha256", *targetIndexHash}};
+    if (!optionalPackId.empty()) {
+        metadata["kind"] = "optional";
+        metadata["optionalId"] = optionalPackId;
+    }
     const std::string metadataText = metadata.dump();
     if (metadataText.size() > 16ull * 1024ull)
         return fail("Overlay metadata exceeds its format limit");
@@ -821,7 +902,8 @@ PackageOverlayBuildResult CreatePackageOverlay(
             return fail("Overlay signing key file is empty");
         auto keyHex = keyText->substr(first, last - first + 1);
         const auto signedHex = SignOverlayMetadata(
-            metadataText, keyHex, baseParsed.manifest.publisherPublicKey);
+            metadataText, keyHex, baseParsed.manifest.publisherPublicKey,
+            optionalPackId.empty() ? 2 : 3);
         std::fill(keyHex.begin(), keyHex.end(), '\0');
         std::fill(keyText->begin(), keyText->end(), '\0');
         if (!signedHex)

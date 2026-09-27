@@ -67,9 +67,11 @@ private:
         std::string graphicsTier = "basic";
         bool packaged = false;
         bool overlayApplied = false;
+        bool optionalPackApplied = false;
         bool valid = false;
     };
-    static Boot LoadBootConfig(bool allowOverlay = true);
+    static Boot LoadBootConfig(bool allowOverlay = true,
+                               bool allowOptionalPack = true);
 
     bool Init(int argc, char* argv[]);
     void MainLoop();

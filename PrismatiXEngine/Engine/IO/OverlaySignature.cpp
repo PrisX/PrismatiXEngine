@@ -10,9 +10,12 @@
 namespace px::io {
 namespace {
 
-constexpr std::string_view kSignatureDomain =
+constexpr std::string_view kSignatureDomainV2 =
     {"PrismatiXPackageOverlaySignatureV2",
      sizeof("PrismatiXPackageOverlaySignatureV2")};
+constexpr std::string_view kSignatureDomainV3 =
+    {"PrismatiXPackageOverlaySignatureV3",
+     sizeof("PrismatiXPackageOverlaySignatureV3")};
 
 int Nibble(const char value) {
     if (value >= '0' && value <= '9') return value - '0';
@@ -45,15 +48,18 @@ std::string Hex(const std::uint8_t* data, const std::size_t size) {
 }
 
 std::optional<std::array<std::uint8_t, 32>> MetadataDigest(
-    const std::string_view metadata) {
+    const std::string_view metadata, const int schemaRevision) {
+    if (schemaRevision != 2 && schemaRevision != 3) return std::nullopt;
+    const auto domain = schemaRevision == 2 ? kSignatureDomainV2
+                                             : kSignatureDomainV3;
     if (psa_crypto_init() != PSA_SUCCESS) return std::nullopt;
     psa_hash_operation_t operation = PSA_HASH_OPERATION_INIT;
     if (psa_hash_setup(&operation, PSA_ALG_SHA_256) != PSA_SUCCESS)
         return std::nullopt;
     if (psa_hash_update(&operation,
                         reinterpret_cast<const std::uint8_t*>(
-                            kSignatureDomain.data()),
-                        kSignatureDomain.size()) != PSA_SUCCESS ||
+                            domain.data()),
+                        domain.size()) != PSA_SUCCESS ||
         psa_hash_update(&operation,
                         reinterpret_cast<const std::uint8_t*>(metadata.data()),
                         metadata.size()) != PSA_SUCCESS) {
@@ -117,9 +123,9 @@ std::optional<OverlaySigningKeyPair> GenerateOverlaySigningKeyPair() {
 
 std::optional<std::string> SignOverlayMetadata(
     const std::string_view metadata, const std::string_view privateKeyHex,
-    const std::string_view pinnedPublicKeyHex) {
+    const std::string_view pinnedPublicKeyHex, const int schemaRevision) {
     auto privateKey = DecodeHex(privateKeyHex, 32);
-    const auto digest = MetadataDigest(metadata);
+    const auto digest = MetadataDigest(metadata, schemaRevision);
     if (!privateKey || !digest) return std::nullopt;
     auto attributes = KeyAttributes(true);
     mbedtls_svc_key_id_t keyId = MBEDTLS_SVC_KEY_ID_INIT;
@@ -150,10 +156,10 @@ std::optional<std::string> SignOverlayMetadata(
 
 bool VerifyOverlayMetadataSignature(
     const std::string_view metadata, const std::string_view signatureHex,
-    const std::string_view pinnedPublicKeyHex) {
+    const std::string_view pinnedPublicKeyHex, const int schemaRevision) {
     const auto signature = DecodeHex(signatureHex, 64);
     const auto publicKey = DecodeHex(pinnedPublicKeyHex, 65);
-    const auto digest = MetadataDigest(metadata);
+    const auto digest = MetadataDigest(metadata, schemaRevision);
     if (!signature || !publicKey || !digest || publicKey->front() != 0x04)
         return false;
     auto attributes = KeyAttributes(false);

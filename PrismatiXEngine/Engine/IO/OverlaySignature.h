@@ -17,14 +17,14 @@ struct OverlaySigningKeyPair {
 [[nodiscard]] std::optional<OverlaySigningKeyPair>
 GenerateOverlaySigningKeyPair();
 
-// Signs exact revision-2 overlay metadata with a domain-separated SHA-256
+// Signs exact revision-2 or revision-3 overlay metadata with a domain-separated SHA-256
 // digest. Refuses a private key that does not derive the pinned public key.
 [[nodiscard]] std::optional<std::string> SignOverlayMetadata(
     std::string_view metadata, std::string_view privateKeyHex,
-    std::string_view pinnedPublicKeyHex);
+    std::string_view pinnedPublicKeyHex, int schemaRevision = 2);
 
 [[nodiscard]] bool VerifyOverlayMetadataSignature(
     std::string_view metadata, std::string_view signatureHex,
-    std::string_view pinnedPublicKeyHex);
+    std::string_view pinnedPublicKeyHex, int schemaRevision = 2);
 
 }  // namespace px::io

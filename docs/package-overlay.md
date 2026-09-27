@@ -37,6 +37,30 @@ version, Player rejects the ambiguous chain and starts the base package.
 It also retries the base package if Runtime initialization of an accepted
 overlay fails. The installed update file is never modified by Player.
 
+## Publishing an optional pack
+
+Build a complete optional target distribution from the latest main version.
+Keep its game ID, Engine version, publisher key, content version, save version,
+and persistence identity the same. The optional target can add or replace
+resources and routes. For example, after v2 is the latest main version:
+
+```sh
+prismatix create-overlay --base path/to/v2 --target path/to/v2-with-adult --output path/to/adult.pdx --signing-key path/to/private-key.txt --optional-id adult
+```
+
+Install `adult.pdx` beside the main updates in `Package/updates`. It remains
+off by default. From the installed distribution, run
+`PrismatiXPlayer --optional-pack adult on` or
+`PrismatiXPlayer --optional-pack adult off`, then restart Player. The choice
+is stored in that game's per-user data directory as `optional-pack.txt`, so
+reinstalling the game does not reset it. Only one optional pack can be enabled
+at a time. The enabled pack must be signed for the final main update version;
+an older optional pack is ignored after a new main update until the publisher
+ships a compatible replacement. The Player uses the main update fingerprint
+for save identity while the optional pack is enabled. Saves inside content
+that is absent when the pack is off may still need a migration or the pack to
+be enabled again.
+
 ## Format and verification
 
 An overlay is an unencrypted PDX5 file whose virtual resources are exactly:
@@ -44,27 +68,30 @@ An overlay is an unencrypted PDX5 file whose virtual resources are exactly:
 - `__prismatix_overlay__/manifest.json` (at most 16 KiB)
 - `__prismatix_overlay__/target-manifest.json` (at most 4 MiB)
 - `__prismatix_overlay__/target-content-index.json` (at most 128 MiB)
-- `__prismatix_overlay__/signature.bin` (exactly 64 bytes, signed revision 2)
+- `__prismatix_overlay__/signature.bin` (exactly 64 bytes, signed revisions 2 and 3)
 - every added or changed target resource, by its original virtual URI
 
 The overlay manifest has `format: "PrismatiXPackageOverlay"`, a
-`schemaRevision` of 1 for unsigned overlays or 2 for signed overlays,
-`gameId`, `basePackageFingerprint`, `targetPackageFingerprint`, and SHA-256
+`schemaRevision` of 1 for unsigned updates, 2 for signed updates, or 3 for
+signed optional packs. Revision 3 adds `kind: "optional"` and a bounded
+lowercase `optionalId`. All revisions contain `gameId`,
+`basePackageFingerprint`, `targetPackageFingerprint`, and SHA-256
 fields named `baseManifestSha256`, `baseContentIndexSha256`,
 `targetManifestSha256`, and `targetContentIndexSha256`. The two target
 documents copy the Packager-produced `Package/manifest.json` and
 `Package/content-index.json`. The reserved overlay prefix cannot be an
 ordinary package resource.
 
-Revision 2 signs the SHA-256 digest of the exact overlay manifest bytes,
-prefixed with the ASCII bytes `PrismatiXPackageOverlaySignatureV2` and a NUL
-byte. `signature.bin` contains a raw P-256 ECDSA SHA-256 signature in
+Revisions 2 and 3 sign the SHA-256 digest of the exact overlay manifest bytes,
+prefixed with the ASCII bytes `PrismatiXPackageOverlaySignatureV2` or
+`PrismatiXPackageOverlaySignatureV3`, respectively, and a NUL byte.
+`signature.bin` contains a raw P-256 ECDSA SHA-256 signature in
 `r || s` form. The signed manifest hashes the exact base and target
 documents; the target index hashes every changed payload. Verification
 rejects missing, extra, mismatched, or damaged entries. Unchanged resources
 remain in the base PDX even if the target changes their shard assignment.
 
-`prismatix verify-overlay` checks either revision and verifies signatures
+`prismatix verify-overlay` checks every revision and verifies signatures
 whenever present. Add `--require-signature` for the Player trust policy; it
 rejects revision 1. Unsigned overlays remain available for explicit
 inspection and are never loaded automatically.
@@ -78,8 +105,9 @@ be buffered by the current Archive reader.
 
 ## Current limits
 
-Independently enabled optional packs such as `adult.pdx` are not implemented
-yet. A signed update chain may contain at most 64 regular PDX candidates in a
+Only one optional pack can be enabled at a time, and switching requires a
+Player restart. There is no in-game toggle UI yet. A signed update chain may
+contain at most 64 regular PDX candidates in a
 dedicated directory, and ambiguous branches fail closed. A later update must
 be authored from its preceding complete distribution; installed overlay files
 are not valid `create-overlay` input distributions.

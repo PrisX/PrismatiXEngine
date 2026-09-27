@@ -249,9 +249,10 @@ over earlier archives, while directory mounts still win over all archives.
 An overlay may now supply a bounded list of tombstone URIs to hide resources
 from older PDX files. Invalid, duplicate, or conflicting tombstones reject the
 entire mount, and an unreadable overlay entry cannot silently fall back to an
-older copy. These are low-level VFS semantics. Player now accepts one signed,
-exact-base content update at `Package/updates/active.pdx`; it rejects an
-unsigned or incompatible file and starts the base package. The complete
+older copy. These are low-level VFS semantics. Player accepts a signed,
+exact-base content update chain from `Package/updates`; it ignores unsigned
+or incompatible files and starts the base package if a valid chain is
+ambiguous. The complete
 distribution `create-patch` / `apply-patch` installer remains available. The selected native
 Packager must understand both package versions; cross-engine upgrades may
 require a full installer rather than this bundle format.
@@ -264,7 +265,9 @@ the candidate PDX against exact base and target metadata and all changed
 payloads. Generate a publisher key pair, pin its public key in both
 distributions, sign the overlay, and use `--require-signature` before
 installing it in `Package/updates` as a `.pdx` file. Multiple signed updates
-are applied in exact-base dependency order; optional packs are separate work.
+are applied in exact-base dependency order. An independently enabled optional
+pack can be produced with `create-overlay --optional-id <id>` and toggled with
+`PrismatiXPlayer --optional-pack <id> on|off` after installation.
 
 Never choose Story, Assets, another source input or an unrelated existing folder as output. `pack` is an explicit distribution command; `run` packages and launches. Quote paths containing spaces.
 
