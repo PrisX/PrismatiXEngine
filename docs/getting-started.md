@@ -170,6 +170,13 @@ every current artifact input without producing PDX. The `validated` event
 reports `deferredMediaCount` (zero in this mode). Even full-input preflight
 does not replace `verify-package` for a completed distribution.
 
+Full-input verification, including direct artifact-to-overlay planning, hashes
+independent files with up to four bounded workers and reports the
+`validate-hash` phase. `PRISMATIX_PACKAGE_HASH_WORKERS=1` forces sequential
+verification; values 1–8 are accepted for measuring a particular storage
+device. Every input still gets its current bytes checked against its declared
+SHA-256; this is not a persistent verification cache.
+
 For large games, `pack`, `run`, and distribution `build` accept
 `--archive-shards N` (1–64). The default `1` keeps `Content.pdx`; larger
 values assign each resource to a stable URI-hash shard and emit

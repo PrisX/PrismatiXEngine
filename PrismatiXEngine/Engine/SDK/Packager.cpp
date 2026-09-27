@@ -11,8 +11,11 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <charconv>
 #include <cctype>
 #include <chrono>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -25,6 +28,7 @@
 #include <set>
 #include <sstream>
 #include <system_error>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -1879,6 +1883,7 @@ ValidationResult Validate(const PackageRequest& request,
 
     std::set<std::string> uris;
     std::set<std::string> uriKeys;
+    std::vector<std::size_t> pendingFingerprints;
     result.inputs.reserve(request.inputs.size());
     for (std::size_t index = 0; index < request.inputs.size(); ++index) {
         if (index > 0 && index % 256 == 0) {
@@ -1931,13 +1936,100 @@ ValidationResult Validate(const PackageRequest& request,
         const bool deferForWrite = deferFingerprintsUntilArchive &&
             Lower(px::PathToUtf8(Utf8Path(input.uri).extension())) != ".ts";
         if (!deferredMedia && !deferForWrite) {
-            const std::string actualFingerprint = ComputePackageFingerprint(source);
-            if (actualFingerprint.empty() || actualFingerprint != Lower(input.fingerprint)) {
-                AddDiagnostic(diagnostics, "PXPKG1216", "input fingerprint changed: " + input.uri, true);
-                continue;
+            if (depth == PackageValidationDepth::AllInputs)
+                pendingFingerprints.push_back(result.inputs.size());
+            else {
+                const std::string actualFingerprint = ComputePackageFingerprint(source);
+                if (actualFingerprint.empty() || actualFingerprint != Lower(input.fingerprint)) {
+                    AddDiagnostic(diagnostics, "PXPKG1216", "input fingerprint changed: " + input.uri, true);
+                    continue;
+                }
             }
         }
         result.inputs.push_back({ input, source });
+    }
+    if (!pendingFingerprints.empty()) {
+        unsigned workers = std::min<unsigned>(4, std::thread::hardware_concurrency());
+        if (workers == 0) workers = 1;
+#ifdef _WIN32
+        char* configuredStorage = nullptr;
+        std::size_t configuredSize = 0;
+        _dupenv_s(&configuredStorage, &configuredSize,
+                  "PRISMATIX_PACKAGE_HASH_WORKERS");
+        const char* configured = configuredStorage;
+#else
+        const char* configured = std::getenv("PRISMATIX_PACKAGE_HASH_WORKERS");
+#endif
+        if (configured) {
+            unsigned requested = 0;
+            const auto end = configured + std::strlen(configured);
+            const auto parsed = std::from_chars(configured, end, requested);
+            if (parsed.ec == std::errc{} && parsed.ptr == end &&
+                requested >= 1 && requested <= 8)
+                workers = requested;
+        }
+#ifdef _WIN32
+        std::free(configuredStorage);
+#endif
+        workers = static_cast<unsigned>(
+            std::min<std::size_t>(workers, pendingFingerprints.size()));
+        std::vector<std::uint8_t> mismatched(result.inputs.size(), 0);
+        std::atomic<std::size_t> next{0};
+        std::atomic<std::size_t> completed{0};
+        std::atomic<bool> cancelled{false};
+        const auto work = [&] {
+            while (!cancelled.load(std::memory_order_relaxed)) {
+                if (Cancelled(request)) {
+                    cancelled.store(true, std::memory_order_relaxed);
+                    break;
+                }
+                const auto pending = next.fetch_add(1, std::memory_order_relaxed);
+                if (pending >= pendingFingerprints.size()) break;
+                const auto inputIndex = pendingFingerprints[pending];
+                const auto& candidate = result.inputs[inputIndex];
+                const auto actual = ComputePackageFingerprint(candidate.source);
+                if (actual.empty() || actual != Lower(candidate.input.fingerprint))
+                    mismatched[inputIndex] = 1;
+                completed.fetch_add(1, std::memory_order_relaxed);
+            }
+        };
+        EmitProgress(request, eventSink, "validate-hash", 0,
+                     pendingFingerprints.size(), "Hashing current package input bytes");
+        {
+            std::vector<std::jthread> threads;
+            threads.reserve(workers);
+            for (unsigned index = 0; index < workers; ++index)
+                threads.emplace_back(work);
+            std::size_t lastReport = 0;
+            auto lastTime = std::chrono::steady_clock::now();
+            while (!cancelled.load(std::memory_order_relaxed) &&
+                   completed.load(std::memory_order_relaxed) < pendingFingerprints.size()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                const auto count = completed.load(std::memory_order_relaxed);
+                const auto now = std::chrono::steady_clock::now();
+                if (count - lastReport >= 256 ||
+                    now - lastTime >= std::chrono::seconds(2)) {
+                    EmitProgress(request, eventSink, "validate-hash", count,
+                                 pendingFingerprints.size(),
+                                 "Hashing current package input bytes");
+                    lastReport = count;
+                    lastTime = now;
+                }
+            }
+        }
+        if (cancelled.load(std::memory_order_relaxed) || Cancelled(request)) {
+            result.cancelled = true;
+            return result;
+        }
+        EmitProgress(request, eventSink, "validate-hash",
+                     pendingFingerprints.size(), pendingFingerprints.size(),
+                     "Checked current package input bytes");
+        for (const auto inputIndex : pendingFingerprints) {
+            if (mismatched[inputIndex])
+                AddDiagnostic(diagnostics, "PXPKG1216",
+                              "input fingerprint changed: " + result.inputs[inputIndex].input.uri,
+                              true);
+        }
     }
     EmitProgress(request, eventSink, "validate", request.inputs.size(),
                  request.inputs.size(),

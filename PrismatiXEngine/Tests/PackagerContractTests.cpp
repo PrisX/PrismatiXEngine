@@ -424,6 +424,44 @@ int main() {
                      "full preflight checks all current input fingerprints");
     });
 
+    suite.Run("FullPreflightHashesAllFilesAndCancelsBeforeWork", [&] {
+        const auto output = fixture.path / "Build/ParallelFullPreflight";
+        auto checked = FixtureRequest(root, output);
+        const std::string first = "Assets/hash-a.mp4";
+        const std::string second = "Assets/hash-b.mp4";
+        Write(root / first, "alpha");
+        Write(root / second, "bravo");
+        checked.inputs.push_back(Input(root, first));
+        checked.inputs.push_back(Input(root, second));
+        Write(root / first, "ALPHA");
+        Write(root / second, "BRAVO");
+        const auto drifted = px::sdk::ValidatePackageRequest(
+            checked, {}, px::sdk::PackageValidationDepth::AllInputs);
+        std::vector<std::string> changed;
+        for (const auto& diagnostic : drifted.diagnostics)
+            if (diagnostic.code == "PXPKG1216")
+                changed.push_back(diagnostic.message);
+        suite.Expect(changed.size() == 2 &&
+                         changed[0].find(first) != std::string::npos &&
+                         changed[1].find(second) != std::string::npos,
+                     "parallel full verification reports every changed file in request order");
+
+        bool requested = false;
+        const auto cancelled = px::sdk::ValidatePackageRequest(
+            checked, [&](const auto& event) {
+                if (!requested && event.kind == px::sdk::PackageEventKind::Progress &&
+                    event.phase == "validate-hash") {
+                    Write(checked.cancelFile, "cancel");
+                    requested = true;
+                }
+            }, px::sdk::PackageValidationDepth::AllInputs);
+        std::error_code cleanupError;
+        std::filesystem::remove(checked.cancelFile, cleanupError);
+        suite.Expect(requested &&
+                         cancelled.exitCode == px::sdk::PackageExitCode::Cancelled,
+                     "full-input hashing observes cancellation before publishing");
+    });
+
     suite.Run("Package_RejectsChangedJsonDuringIdentityPreparation", [&] {
         const auto source = root / "Content/game.pxgame";
         const std::string original = Read(source);
