@@ -637,6 +637,14 @@ std::unique_ptr<Control> CreateControl(
             line->SetText(node.text);
         else if (auto* text = dynamic_cast<TextEdit*>(control.get()))
             text->SetText(node.text);
+        if (node.assetId) {
+            if (auto* image = dynamic_cast<TextureRect*>(control.get())) {
+                const auto asset = assetResolver
+                    ? assetResolver(*node.assetId) : std::nullopt;
+                if (asset) (void)image->SetPath(*asset);
+                else result.unresolvedAssetIds.push_back(*node.assetId);
+            }
+        }
     } else switch (node.kind) {
         case sdk::UiNodeKind::Control:
         case sdk::UiNodeKind::Group:

@@ -1343,6 +1343,23 @@ int main() {
         {"path":"Assets/nested.pxportrait","width":20,"height":20,
          "role":"base"}]})"),
           "native portrait parser rejects descriptor nesting");
+    auto portraitAssetDocument = portraitDocument;
+    auto assetImage = std::ranges::find_if(portraitAssetDocument.nodes,
+        [](const px::sdk::UiNode& node) { return node.name == "Logo"; });
+    assetImage->runtimeProperties.erase("path");
+    assetImage->assetId = "66666666-6666-4666-8666-666666666666";
+    px::ui::UIContext portraitAssetContext;
+    px::ui::UiApplication portraitAssetApplication(portraitAssetContext);
+    const auto assetApplied = portraitAssetApplication.ApplyDocument(portraitAssetDocument,
+        {.sourcePath = "Content/UI/Title.pxui",
+         .resolveAsset = [](std::string_view) -> std::optional<std::string> {
+             return std::string{"Content/Portrait/logo.pxportrait"};
+         }, .loadMotion = portraitLoader});
+    auto* assetPortrait = assetApplied
+        ? dynamic_cast<px::ui::TextureRect*>(portraitAssetContext.Root()->Find(*imageId))
+        : nullptr;
+    Check(assetPortrait && assetPortrait->Path() == "Content/Portrait/logo.pxportrait",
+          "runtimeType TextureRect honors its authored assetId");
 
     auto motionDocument = parsed.document;
     auto motionNode = std::ranges::find_if(motionDocument.nodes,

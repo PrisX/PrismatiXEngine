@@ -51,7 +51,8 @@ transition flags; it does not infer semantic roles from filenames.
 The Authoring project compiler validates reachable descriptors and includes
 their layer textures from Story, UI action arguments, locale resources,
 explicit includes, or asset-catalog references. A UI `TextureRect` can use a
-`.pxportrait` as its `path` (including JSX `<Image path="...pxportrait" />`).
+`.pxportrait` as its `path` (including JSX `<Image path="...pxportrait" />`)
+or use an `assetId` / `texture` resource reference to the descriptor.
 It fits the portrait canvas into the control and draws ordered layers with
 their authored opacity; `scaleMode` and alignment work as for ordinary images.
 The Player and preview hosts load the descriptor through their UI text asset

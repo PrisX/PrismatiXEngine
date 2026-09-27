@@ -237,6 +237,7 @@ int main() {
                          std::vector<std::string>{"Assets/Hero/base.png", "Assets/Hero/face.png"},
                      "portrait descriptor expands to ordered layers before presentation");
         auto catalogPortrait = portrait;
+        catalogPortrait.nodes[1].runtimeType.reset();
         catalogPortrait.nodes[1].runtimeProperties.erase("path");
         catalogPortrait.nodes[1].assetId = "11111111-1111-4111-8111-111111111111";
         const auto catalogDependencies = px::ui::CollectUiImageDependencies(
@@ -247,6 +248,18 @@ int main() {
         suite.Expect(catalogDependencies && catalogDependencies.Value() ==
                          std::vector<std::string>{"Assets/Hero/base.png", "Assets/Hero/face.png"},
                      "catalog-referenced portrait also expands to image layers");
+        auto referencedPortrait = portrait;
+        referencedPortrait.nodes[1].runtimeProperties.erase("path");
+        referencedPortrait.nodes[1].runtimeProperties["texture"] =
+            px::sdk::UiResourceValue{"11111111-1111-4111-8111-111111111111"};
+        const auto referencedDependencies = px::ui::CollectUiImageDependencies(
+            referencedPortrait,
+            [](std::string_view) -> std::optional<std::string> {
+                return std::string{"Assets/Hero.pxportrait"};
+            }, {}, loader);
+        suite.Expect(referencedDependencies && referencedDependencies.Value() ==
+                         std::vector<std::string>{"Assets/Hero/base.png", "Assets/Hero/face.png"},
+                     "TextureRect ResourceRef expands portrait layers");
         const auto missing = px::ui::CollectUiImageDependencies(portrait);
         suite.Expect(!missing, "portrait without text loader fails before scene installation");
     });

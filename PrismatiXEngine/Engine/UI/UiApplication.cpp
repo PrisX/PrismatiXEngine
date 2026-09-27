@@ -892,7 +892,25 @@ Result<std::vector<std::string>> CollectUiImageDependencies(
                 add(glyph["path"].get<std::string>());
             }
         } else if (type == "TextureRect" || type == "NinePatchRect") {
-            const std::string image = path("path").empty() ? assetPath : path("path");
+            std::string image = path("path");
+            if (type == "TextureRect" && image.empty()) {
+                const auto found = node.runtimeProperties.find("texture");
+                const auto* reference = found == node.runtimeProperties.end()
+                    ? nullptr : std::get_if<sdk::UiResourceValue>(&found->second);
+                if (reference && !reference->value.empty()) {
+                    if (const auto id = Uuid::Parse(reference->value)) {
+                        const auto resolvedAsset = resolveAsset
+                            ? resolveAsset(id->ToString()) : std::nullopt;
+                        if (!resolvedAsset) return Result<std::vector<std::string>>::Failure(
+                            ApplicationError("PXUISTUDIO2004", "UI image asset could not be resolved: " + reference->value,
+                                             sourcePath, node.id, "runtimeProperties.texture"));
+                        image = *resolvedAsset;
+                    } else {
+                        image = reference->value;
+                    }
+                }
+            }
+            if (image.empty()) image = assetPath;
             if (type == "TextureRect" && image.ends_with(".pxportrait")) {
                 if (!loadMotion) return Result<std::vector<std::string>>::Failure(
                     ApplicationError("PXUIPORTRAIT1003", "TextureRect requires a portrait source loader",
