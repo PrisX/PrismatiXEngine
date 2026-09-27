@@ -45,6 +45,50 @@ px::sdk::PackageEvent FailedEvent(
 }  // namespace
 
 int RunMain(int argc, char** argv) {
+    if (argc == 5 && std::string_view(argv[1]) == "--create-overlay") {
+        const auto base = Utf8Path(argv[2]);
+        const auto target = Utf8Path(argv[3]);
+        const auto output = Utf8Path(argv[4]);
+        if (!base.is_absolute() || !target.is_absolute() ||
+            !output.is_absolute()) {
+            Emit(FailedEvent({}, "PXPKG1516",
+                             "Base, target, and output paths must be absolute"));
+            return static_cast<int>(px::sdk::PackageExitCode::Failed);
+        }
+        try {
+            const auto created = px::io::CreatePackageOverlay(
+                base, target, output,
+                [](const std::string_view phase, const std::uint64_t current,
+                   const std::uint64_t total, const std::uint64_t rawBytes) {
+                    px::sdk::PackageEvent progress;
+                    progress.kind = px::sdk::PackageEventKind::Progress;
+                    progress.phase = std::string(phase);
+                    progress.current = current;
+                    progress.total = total;
+                    progress.message = std::to_string(rawBytes) +
+                                       " raw bytes processed";
+                    Emit(progress);
+                });
+            if (!created.created) {
+                Emit(FailedEvent({}, "PXPKG1517", created.error));
+                return static_cast<int>(px::sdk::PackageExitCode::Failed);
+            }
+            std::cout << "{\"event\":\"overlay-created\",\"changedResources\":"
+                      << created.changedResources << ",\"removedResources\":"
+                      << created.removedResources << ",\"changedRawBytes\":"
+                      << created.changedRawBytes << "}\n";
+            return static_cast<int>(px::sdk::PackageExitCode::Completed);
+        } catch (const std::exception& error) {
+            Emit(FailedEvent({}, "PXPKG1518",
+                             std::string("Overlay creation failed unexpectedly: ") +
+                                 error.what()));
+            return static_cast<int>(px::sdk::PackageExitCode::Failed);
+        } catch (...) {
+            Emit(FailedEvent({}, "PXPKG1518",
+                             "Overlay creation failed unexpectedly"));
+            return static_cast<int>(px::sdk::PackageExitCode::Failed);
+        }
+    }
     if (argc == 4 && std::string_view(argv[1]) == "--verify-overlay") {
         const std::filesystem::path distribution = Utf8Path(argv[2]);
         const std::filesystem::path overlay = Utf8Path(argv[3]);
@@ -119,7 +163,7 @@ int RunMain(int argc, char** argv) {
         std::string_view(argv[1]) == "--validate-request" &&
         (argc == 3 || std::string_view(argv[3]) == "--verify-media");
     if (!packageRequest && !validateOnly) {
-        Emit(FailedEvent({}, "PXPKG1001", "Usage: PrismatiXPackager --request <absolute-json-path> | --validate-request <absolute-json-path> [--verify-media] | --verify-package <absolute-distribution-path> | --verify-overlay <absolute-base-distribution> <absolute-overlay-pdx>"));
+        Emit(FailedEvent({}, "PXPKG1001", "Usage: PrismatiXPackager --request <absolute-json-path> | --validate-request <absolute-json-path> [--verify-media] | --verify-package <absolute-distribution-path> | --create-overlay <absolute-base-distribution> <absolute-target-distribution> <absolute-output-pdx> | --verify-overlay <absolute-base-distribution> <absolute-overlay-pdx>"));
         return static_cast<int>(px::sdk::PackageExitCode::Failed);
     }
 

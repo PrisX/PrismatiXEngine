@@ -5,6 +5,7 @@
 #include "Engine/Support/Logger.h"
 
 #include <zstd.h>
+#include <psa/crypto.h>
 
 #include <algorithm>
 #include <array>
@@ -811,6 +812,190 @@ bool ArchiveWriter::Write(const std::string& outPath) const {
     }
     PX_LOG_INFO("Wrote archive '{}' ({} entries, encrypted={})", outPath, m_pending.size(),
                 m_encrypt);
+    return true;
+}
+
+void ArchiveStreamWriter::AddFile(std::string logicalPath,
+                                  std::filesystem::path source,
+                                  const std::uint64_t expectedSize,
+                                  std::string expectedSha256) {
+    m_pending.push_back({std::move(logicalPath), std::move(source), {},
+                         expectedSize, std::move(expectedSha256), true});
+}
+
+void ArchiveStreamWriter::AddData(std::string logicalPath, Bytes data) {
+    m_pending.push_back({std::move(logicalPath), {}, std::move(data), 0, {},
+                         false});
+}
+
+bool ArchiveStreamWriter::Write(const std::string& outPath,
+                                const Progress& onProgress) const {
+    if (m_pending.size() > kMaxEntries || psa_crypto_init() != PSA_SUCCESS)
+        return false;
+    const auto fail = [&](const std::string_view reason,
+                          const std::string_view name) {
+        PX_LOG_ERROR("ArchiveStreamWriter::Write {}: '{}'", reason, name);
+        return false;
+    };
+    std::unordered_set<std::uint64_t> hashes;
+    std::uint64_t totalBytes = 0;
+    for (const Pending& pending : m_pending) {
+        const std::uint64_t size = pending.fileBacked
+                                       ? pending.expectedSize
+                                       : pending.data.size();
+        if (!IsSafeLogicalPath(pending.name) || size > kMaxEntrySize ||
+            !hashes.insert(crypto::HashPath(pending.name)).second ||
+            size > (std::numeric_limits<std::uint64_t>::max)() - totalBytes)
+            return fail("invalid or colliding logical path", pending.name);
+        totalBytes += size;
+        if (!pending.fileBacked) continue;
+        const bool validFingerprint =
+            pending.expectedSha256.size() == 64 &&
+            std::ranges::all_of(
+                pending.expectedSha256, [](const unsigned char byte) {
+                    return std::isdigit(byte) ||
+                           (byte >= 'a' && byte <= 'f');
+                });
+        std::error_code error;
+        const auto status =
+            std::filesystem::symlink_status(pending.source, error);
+        if (!validFingerprint || error ||
+            !std::filesystem::is_regular_file(status) ||
+            std::filesystem::is_symlink(status) ||
+            std::filesystem::file_size(pending.source, error) != size ||
+            error)
+            return fail("source is unsafe or changed", pending.name);
+    }
+    std::ofstream output(px::PathFromUtf8(outPath),
+                         std::ios::binary | std::ios::trunc);
+    if (!output) return fail("cannot open output", outPath);
+    std::array<std::uint8_t, kHeaderSize> placeholder{};
+    output.write(reinterpret_cast<const char*>(placeholder.data()),
+                 static_cast<std::streamsize>(placeholder.size()));
+    if (!output) return fail("cannot write header placeholder", outPath);
+
+    Bytes index;
+    PutU32(index, static_cast<std::uint32_t>(m_pending.size()));
+    std::array<std::uint8_t, 64 * 1024> buffer{};
+    std::uint64_t writtenBytes = 0;
+    std::uint64_t lastReportedBytes = 0;
+    if (onProgress) onProgress(0, totalBytes);
+    for (const Pending& pending : m_pending) {
+        const std::uint64_t size = pending.fileBacked
+                                       ? pending.expectedSize
+                                       : pending.data.size();
+        const auto pathHash = crypto::HashPath(pending.name);
+        const std::streampos position = output.tellp();
+        if (position < 0) return fail("cannot determine entry offset", pending.name);
+        const auto offset = static_cast<std::uint64_t>(position);
+        std::uint32_t crc = 0xffffffffu;
+        if (pending.fileBacked) {
+            std::ifstream input(pending.source, std::ios::binary);
+            psa_hash_operation_t digest = PSA_HASH_OPERATION_INIT;
+            if (!input || psa_hash_setup(&digest, PSA_ALG_SHA_256) != PSA_SUCCESS)
+                return fail("cannot initialize source hash", pending.name);
+            std::uint64_t remaining = size;
+            while (remaining > 0) {
+                const auto count = static_cast<std::size_t>(
+                    std::min<std::uint64_t>(remaining, buffer.size()));
+                input.read(reinterpret_cast<char*>(buffer.data()),
+                           static_cast<std::streamsize>(count));
+                if (input.gcount() != static_cast<std::streamsize>(count) ||
+                    psa_hash_update(&digest, buffer.data(), count) != PSA_SUCCESS) {
+                    psa_hash_abort(&digest);
+                    return fail("source read or hash failed", pending.name);
+                }
+                output.write(reinterpret_cast<const char*>(buffer.data()),
+                             static_cast<std::streamsize>(count));
+                if (!output) {
+                    psa_hash_abort(&digest);
+                    return fail("entry write failed", pending.name);
+                }
+                writtenBytes += count;
+                if (onProgress &&
+                    (writtenBytes - lastReportedBytes >=
+                         64ull * 1024ull * 1024ull ||
+                     writtenBytes == totalBytes)) {
+                    onProgress(writtenBytes, totalBytes);
+                    lastReportedBytes = writtenBytes;
+                }
+                for (std::size_t byteIndex = 0; byteIndex < count; ++byteIndex) {
+                    crc ^= buffer[byteIndex];
+                    for (int bit = 0; bit < 8; ++bit) {
+                        const std::uint32_t mask = 0u - (crc & 1u);
+                        crc = (crc >> 1u) ^ (0xedb88320u & mask);
+                    }
+                }
+                remaining -= count;
+            }
+            if (input.peek() != std::ifstream::traits_type::eof() ||
+                input.bad()) {
+                psa_hash_abort(&digest);
+                return fail("source grew while writing", pending.name);
+            }
+            std::array<std::uint8_t, 32> hash{};
+            std::size_t hashSize = 0;
+            if (psa_hash_finish(&digest, hash.data(), hash.size(), &hashSize) !=
+                    PSA_SUCCESS || hashSize != hash.size()) {
+                psa_hash_abort(&digest);
+                return fail("source hash failed", pending.name);
+            }
+            constexpr char hex[] = "0123456789abcdef";
+            std::string fingerprint;
+            fingerprint.reserve(64);
+            for (const auto byte : hash) {
+                fingerprint.push_back(hex[byte >> 4]);
+                fingerprint.push_back(hex[byte & 15]);
+            }
+            if (fingerprint != pending.expectedSha256)
+                return fail("source fingerprint changed", pending.name);
+        } else {
+            if (!pending.data.empty())
+                output.write(reinterpret_cast<const char*>(pending.data.data()),
+                             static_cast<std::streamsize>(pending.data.size()));
+            if (!output) return fail("entry write failed", pending.name);
+            writtenBytes += pending.data.size();
+            if (onProgress &&
+                (writtenBytes - lastReportedBytes >=
+                     64ull * 1024ull * 1024ull ||
+                 writtenBytes == totalBytes)) {
+                onProgress(writtenBytes, totalBytes);
+                lastReportedBytes = writtenBytes;
+            }
+            crc = ~crypto::Crc32(pending.data.data(), pending.data.size());
+        }
+        PutU64(index, pathHash);
+        PutU16(index, static_cast<std::uint16_t>(pending.name.size()));
+        index.insert(index.end(), pending.name.begin(), pending.name.end());
+        PutU64(index, offset);
+        PutU64(index, size);
+        PutU64(index, size);
+        PutU32(index, ~crc);
+        index.push_back(0);
+        if (index.size() > kMaxIndexSize)
+            return fail("archive index exceeds its size limit", outPath);
+    }
+    const std::streampos indexPosition = output.tellp();
+    if (indexPosition < 0) return fail("cannot determine index offset", outPath);
+    const auto indexOffset = static_cast<std::uint64_t>(indexPosition);
+    output.write(reinterpret_cast<const char*>(index.data()),
+                 static_cast<std::streamsize>(index.size()));
+    if (!output) return fail("cannot write archive index", outPath);
+    Bytes header;
+    header.insert(header.end(), kMagicV5, kMagicV5 + 4);
+    PutU32(header, kVersionV5);
+    PutU32(header, 0);
+    PutU64(header, indexOffset);
+    PutU64(header, index.size());
+    output.seekp(0);
+    output.write(reinterpret_cast<const char*>(header.data()),
+                 static_cast<std::streamsize>(header.size()));
+    output.close();
+    if (!output) return fail("cannot finish archive", outPath);
+    if (onProgress && lastReportedBytes != writtenBytes)
+        onProgress(writtenBytes, totalBytes);
+    PX_LOG_INFO("Wrote streaming archive '{}' ({} entries)", outPath,
+                m_pending.size());
     return true;
 }
 

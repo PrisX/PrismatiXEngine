@@ -774,6 +774,126 @@ int main() {
                      "overlay verifier refuses a target missing its route scene");
     });
 
+    suite.Run("PackageOverlay_CreatesVerifiedSingleFileFromDistributions", [&] {
+        const auto sourceImage = root / "Assets/rin.png";
+        const auto sourceProject = root / "project.pxproject";
+        const std::string originalImage = Read(sourceImage);
+        const std::string originalProject = Read(sourceProject);
+        Write(sourceImage, "updated-image");
+        auto changedProject = nlohmann::json::parse(originalProject);
+        changedProject["contentVersion"] = "fixture-v2";
+        Write(sourceProject, changedProject.dump());
+        Write(root / "Content/Overlay/extra.txt", "new content");
+        const auto targetOutput = fixture.path / "Build/OverlayTarget";
+        auto targetRequest = FixtureRequest(root, targetOutput);
+        targetRequest.requestId = "overlay-target-contract";
+        targetRequest.contentVersion = "fixture-v2";
+        targetRequest.inputs.push_back(
+            Input(root, "Content/Overlay/extra.txt"));
+        const auto targetBuild = px::sdk::RunPackager(targetRequest);
+        const auto deletionTarget = fixture.path / "Build/OverlayDeletionTarget";
+        auto deletionRequest = FixtureRequest(root, deletionTarget);
+        deletionRequest.requestId = "overlay-deletion-target-contract";
+        deletionRequest.contentVersion = "fixture-v2";
+        const auto deletionBuild = px::sdk::RunPackager(deletionRequest);
+        Write(sourceImage, originalImage);
+        Write(sourceProject, originalProject);
+        suite.Require(targetBuild.Completed() && deletionBuild.Completed(),
+                      "Target distributions with changed, added, and removed resources build");
+
+        const auto overlayPath = fixture.path / "created-overlay.pdx";
+        std::vector<std::string> phases;
+        const auto created = px::io::CreatePackageOverlay(
+            output, targetOutput, overlayPath,
+            [&](const std::string_view phase, std::uint64_t,
+                std::uint64_t, std::uint64_t) {
+                phases.emplace_back(phase);
+            });
+        suite.Require(created.created && created.changedResources >= 3 &&
+                          created.removedResources == 0 &&
+                          std::filesystem::is_regular_file(overlayPath),
+                      "Native creator publishes a single changed-resource PDX");
+        suite.Expect(std::find(phases.begin(), phases.end(), "verify-base") !=
+                         phases.end() &&
+                         std::find(phases.begin(), phases.end(), "verify-target") !=
+                             phases.end() &&
+                         std::find(phases.begin(), phases.end(), "extract-changed") !=
+                             phases.end() &&
+                         std::find(phases.begin(), phases.end(), "write-overlay") !=
+                             phases.end(),
+                     "Overlay creation reports verification, extraction and write phases");
+        const auto verified = px::io::VerifyPackageOverlay(output, overlayPath);
+        suite.Require(verified.valid &&
+                          verified.changedResources == created.changedResources,
+                      "Created PDX passes the independent overlay verifier");
+        const auto baseManifest = px::sdk::detail::ParsePackageManifest(
+            Read(output / "Package/manifest.json"));
+        suite.Require(baseManifest.Valid(), "Base package manifest is readable");
+        const auto baseKey =
+            px::crypto::DeriveKey(baseManifest.manifest.archiveKey);
+        px::io::VFS layered;
+        suite.Require(layered.MountArchive((output / "Content.pdx").string(),
+                                           &baseKey) &&
+                          layered.MountArchive(
+                              overlayPath.string(), nullptr,
+                              px::io::ArchiveMountPriority::Overlay,
+                              verified.tombstones),
+                      "Created overlay mounts over the encrypted base");
+        suite.Expect(layered.ReadText("Assets/rin.png") == "updated-image" &&
+                         layered.ReadText("Content/Overlay/extra.txt") ==
+                             "new content",
+                     "Created overlay exposes changed and added target resources");
+
+        const auto removalPath = fixture.path / "removal-only-overlay.pdx";
+        const auto removal = px::io::CreatePackageOverlay(
+            targetOutput, deletionTarget, removalPath);
+        suite.Require(removal.created && removal.changedResources == 0 &&
+                          removal.removedResources == 1,
+                      "Removal-only update creates a metadata-only PDX");
+        const auto checkedRemoval =
+            px::io::VerifyPackageOverlay(targetOutput, removalPath);
+        suite.Require(checkedRemoval.valid &&
+                          checkedRemoval.tombstones ==
+                              std::vector<std::string>{
+                                  "Content/Overlay/extra.txt"},
+                      "Removal-only overlay derives the deleted resource");
+        const auto newerManifest = px::sdk::detail::ParsePackageManifest(
+            Read(targetOutput / "Package/manifest.json"));
+        suite.Require(newerManifest.Valid(),
+                      "Removal-only base manifest is readable");
+        const auto newerKey =
+            px::crypto::DeriveKey(newerManifest.manifest.archiveKey);
+        px::io::VFS removed;
+        suite.Require(removed.MountArchive(
+                          (targetOutput / "Content.pdx").string(), &newerKey) &&
+                          removed.MountArchive(
+                              removalPath.string(), nullptr,
+                              px::io::ArchiveMountPriority::Overlay,
+                              checkedRemoval.tombstones),
+                      "Removal-only overlay mounts over its exact base");
+        suite.Expect(!removed.Exists("Content/Overlay/extra.txt") &&
+                         removed.ReadText("Assets/rin.png") == "updated-image",
+                     "Removal-only overlay hides the deleted asset without touching others");
+
+        const auto existing = fixture.path / "existing-overlay.pdx";
+        Write(existing, "keep");
+        const auto refused = px::io::CreatePackageOverlay(
+            output, targetOutput, existing);
+        suite.Expect(!refused.created && Read(existing) == "keep",
+                     "Overlay creation never replaces an existing output");
+        const auto targetPlayer =
+            targetOutput / targetRequest.playerExecutable.filename();
+        const std::string originalPlayer = Read(targetPlayer);
+        Write(targetPlayer, "changed-runtime");
+        const auto changedRuntimePath = fixture.path / "runtime-change.pdx";
+        const auto runtimeRefused = px::io::CreatePackageOverlay(
+            output, targetOutput, changedRuntimePath);
+        Write(targetPlayer, originalPlayer);
+        suite.Expect(!runtimeRefused.created &&
+                         !std::filesystem::exists(changedRuntimePath),
+                     "Content-only overlay refuses a changed Player binary");
+    });
+
     suite.Run("StableArchiveShardsMountAndReuseTheirOwnCaches", [&] {
         WriteRepeated(root / "Assets/shard-compress.bin", 's', 256 * 1024);
         const auto shardedOutput = fixture.path / "Build/Sharded";

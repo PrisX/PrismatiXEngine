@@ -53,4 +53,25 @@ struct PackageOverlayVerification {
     const std::filesystem::path& distribution,
     const std::filesystem::path& overlayPath);
 
+struct PackageOverlayBuildResult {
+    bool created = false;
+    std::string error;
+    std::uint64_t changedResources = 0;
+    std::uint64_t removedResources = 0;
+    std::uint64_t changedRawBytes = 0;
+};
+
+using PackageOverlayBuildProgress = std::function<void(
+    std::string_view phase, std::uint64_t current, std::uint64_t total,
+    std::uint64_t rawBytes)>;
+
+// Builds one content-only overlay from two complete distributions. Both are
+// fully verified first, and non-content runtime files must match exactly.
+// The output must be a new absolute .pdx path outside either distribution.
+[[nodiscard]] PackageOverlayBuildResult CreatePackageOverlay(
+    const std::filesystem::path& baseDistribution,
+    const std::filesystem::path& targetDistribution,
+    const std::filesystem::path& outputPath,
+    const PackageOverlayBuildProgress& onProgress = {});
+
 }  // namespace px::io

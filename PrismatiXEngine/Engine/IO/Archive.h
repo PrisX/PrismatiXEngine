@@ -4,6 +4,8 @@
 #include "Engine/IO/SeekableStream.h"
 
 #include <cstdint>
+#include <filesystem>
+#include <functional>
 #include <optional>
 #include <memory>
 #include <string>
@@ -66,6 +68,32 @@ private:
     bool m_encrypt = false;
     bool m_compress = true;
     crypto::Key m_key{};
+};
+
+// Writes unencrypted, uncompressed PDX5 entries without buffering file-backed
+// resources in memory. Intended for large patch overlays and tools that have
+// already planned their resource inventory. AddFile requires the expected
+// source size and SHA-256 so a changing input fails during the write.
+class ArchiveStreamWriter {
+public:
+    using Progress = std::function<void(std::uint64_t current,
+                                        std::uint64_t total)>;
+    void AddFile(std::string logicalPath, std::filesystem::path source,
+                 std::uint64_t expectedSize, std::string expectedSha256);
+    void AddData(std::string logicalPath, Bytes data);
+    [[nodiscard]] bool Write(const std::string& outPath,
+                             const Progress& onProgress = {}) const;
+
+private:
+    struct Pending {
+        std::string name;
+        std::filesystem::path source;
+        Bytes data;
+        std::uint64_t expectedSize = 0;
+        std::string expectedSha256;
+        bool fileBacked = false;
+    };
+    std::vector<Pending> m_pending;
 };
 
 }

@@ -180,6 +180,51 @@ void TestVfsArchiveOverlayPrecedence() {
           "Unreadable overlay payload must not expose the older resource");
 }
 
+void TestStreamingArchiveWriter() {
+    px::test::TempDirectory fixture("streaming-archive-writer");
+    const auto source = fixture.path / "large-source.bin";
+    {
+        std::ofstream output(source, std::ios::binary);
+        const std::string block(64 * 1024, 'x');
+        for (int index = 0; index < 32; ++index) output << block;
+    }
+    const auto size = std::filesystem::file_size(source);
+    const auto fingerprint = px::crypto::Sha256Hex(std::string(size, 'x'));
+    const auto archivePath = fixture.path / "streaming.pdx";
+    px::io::ArchiveStreamWriter writer;
+    writer.AddData("metadata.txt", px::io::Bytes{'m', 'e', 't', 'a'});
+    writer.AddFile("large.bin", source, size, fingerprint);
+    Check(writer.Write(archivePath.string()),
+          "Streaming writer must accept file-backed and in-memory entries");
+    px::io::Archive archive;
+    Check(archive.Open(archivePath.string()),
+          "Streaming output must be readable as a PDX5 archive");
+    const auto metadata = archive.Read("metadata.txt");
+    Check(metadata && std::string(metadata->begin(), metadata->end()) == "meta",
+          "Streaming writer must preserve metadata bytes");
+    auto stream = archive.OpenStream("large.bin");
+    std::uint8_t byte = 0;
+    Check(stream && stream->Size() == size && stream->BufferedBytes() == 0 &&
+              stream->Seek(-1, px::io::SeekOrigin::End) &&
+              stream->Read(&byte, 1) == 1 && byte == 'x',
+          "Large file-backed entry must remain seekable without a full memory copy");
+    {
+        std::fstream changed(source, std::ios::binary | std::ios::in |
+                                       std::ios::out);
+        changed.put('y');
+    }
+    const auto stalePath = fixture.path / "stale-source.pdx";
+    Check(!writer.Write(stalePath.string()),
+          "Streaming writer must reject source bytes changed since planning");
+    px::io::ArchiveStreamWriter unsafe;
+    unsafe.AddData("../escape", px::io::Bytes{'x'});
+    const auto unsafePath = fixture.path / "unsafe.pdx";
+    std::ofstream(unsafePath, std::ios::binary) << "keep";
+    Check(!unsafe.Write(unsafePath.string()) &&
+              std::filesystem::file_size(unsafePath) == 4,
+          "Invalid streaming input must fail before touching an existing output");
+}
+
 void TestVfsRejectsDirectoriesAndReadsRegularFiles() {
     px::test::TempDirectory fixture("vfs-directory-read");
     std::ofstream(fixture.path / "empty.bin", std::ios::binary);
@@ -703,6 +748,7 @@ void TestPublishedUiEffectsAreObservable() {
 int main() {
     Run("VFS_UnicodePaths", TestVfsUnicodePaths);
     Run("VFS_ArchiveOverlayPrecedence", TestVfsArchiveOverlayPrecedence);
+    Run("Archive_StreamingWriter", TestStreamingArchiveWriter);
     Run("VFS_DirectoryAndRegularFileReads", TestVfsRejectsDirectoriesAndReadsRegularFiles);
     Run("Typography_CjkRubyVerticalText", TestCjkRubyAndVerticalText);
     Run("Typography_ImmutableTextLayoutRanges", TestImmutableTextLayoutRanges);

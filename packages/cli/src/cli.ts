@@ -92,6 +92,8 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   "verify-package": {values: "runtime packager", flags: ""},
   "create-patch": {values: "base target output runtime packager", flags: ""},
   "apply-patch": {values: "base patch output runtime packager", flags: "in-place"},
+  "create-overlay": {values: "base target output runtime packager", flags: ""},
+  "verify-overlay": {values: "base patch runtime packager", flags: ""},
 };
 function parseOptions(command: string, args: readonly string[]): Options {
   const schema = commandOptions[command];
@@ -118,7 +120,8 @@ function parseOptions(command: string, args: readonly string[]): Options {
     values.set(name, value);
   }
   if (positional.length > 1) throw new Error("Expected one project or save path; quote paths containing spaces");
-  if (["plan-patch", "create-patch", "apply-patch"].includes(command) &&
+  if (["plan-patch", "create-patch", "apply-patch", "create-overlay",
+    "verify-overlay"].includes(command) &&
       positional.length !== 0)
     throw new Error(`${command} uses named paths, not a positional project path`);
   if (flags.has("artifact-only") && flags.has("distribution")) throw new Error("--artifact-only and --distribution cannot be combined");
@@ -2180,7 +2183,7 @@ async function inspectSaveCommand(options: Options): Promise<number> {
   }
 }
 function usage(): void {
-  process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|augment|ids|migrate|inspect-save|plan-patch|verify-package|create-patch|apply-patch> [project-or-save-or-distribution] [options]\n");
+  process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|augment|ids|migrate|inspect-save|plan-patch|verify-package|create-patch|apply-patch|create-overlay|verify-overlay> [project-or-save-or-distribution] [options]\n");
   process.stderr.write("  prismatix pack <project> --artifact <dir> --check [--verify-media]  Validate without creating a distribution\n");
 }
 
@@ -2316,6 +2319,63 @@ async function applyPatchCommand(options: Options): Promise<number> {
   }
 }
 
+async function overlayCommand(command: "create-overlay" | "verify-overlay",
+  options: Options): Promise<number> {
+  const base = options.values.get("base");
+  const target = options.values.get("target");
+  const patch = options.values.get("patch");
+  const output = options.values.get("output");
+  if (base === undefined ||
+      (command === "create-overlay" ? target === undefined || output === undefined :
+        patch === undefined)) {
+    printDiagnostics([diagnostic("PXCLI1515", command === "create-overlay"
+      ? "create-overlay requires --base, --target, and --output"
+      : "verify-overlay requires --base and --patch")]);
+    return 2;
+  }
+  try {
+    const packager = await discoverRuntimeTool("packager", runtimeOptions(options));
+    const nativeArgs = command === "create-overlay"
+      ? ["--create-overlay", resolve(base), resolve(target!), resolve(output!)]
+      : ["--verify-overlay", resolve(base), resolve(patch!)];
+    const result = await runProcess(packager.path, nativeArgs,
+      undefined, undefined, false, packageOutputObserver("Overlay", false));
+    const events = packageEvents(result.stdout);
+    const failed = failedPackageDiagnostics(events);
+    if (failed.length > 0) throw new PackagerFailure(failed);
+    const eventName = command === "create-overlay" ? "overlay-created" :
+      "overlay-verified";
+    const completed = events.find((event) => event.event === eventName);
+    if (result.code !== 0 || completed === undefined ||
+        !Number.isSafeInteger(completed.changedResources) ||
+        !Number.isSafeInteger(completed.removedResources) ||
+        !Number.isSafeInteger(completed.changedRawBytes) ||
+        Number(completed.changedResources) < 0 ||
+        Number(completed.removedResources) < 0 ||
+        Number(completed.changedRawBytes) < 0)
+      throw new Error(`Native ${command} failed or returned an invalid result: ` +
+        (result.stderr || result.stdout));
+    const report = {changedResources: Number(completed.changedResources),
+      removedResources: Number(completed.removedResources),
+      changedRawBytes: Number(completed.changedRawBytes)};
+    const path = resolve(command === "create-overlay" ? output! : patch!);
+    process.stdout.write(machineOutput
+      ? `${JSON.stringify({[command === "create-overlay" ? "overlayCreated" :
+        "overlayVerified"]: true, path, ...report})}\n`
+      : `${command === "create-overlay" ? "Created" : "Verified"} overlay ${path}: ` +
+        `${report.changedResources} changed, ${report.removedResources} removed, ` +
+        `${report.changedRawBytes} raw bytes.\n`);
+    return 0;
+  } catch (error) {
+    printDiagnostics(error instanceof PackagerFailure ? error.diagnostics :
+      error instanceof RuntimeDiscoveryFailure ? [discoveryDiagnostic("PXCLI1516",
+        "Packager required for PDX overlay work was not found", error)] :
+      [diagnostic("PXCLI1516", `PDX ${command} failed`, output ?? patch,
+        String(error))]);
+    return 1;
+  }
+}
+
 function patchProgress(value: DistributionPatchProgress): void {
   progress({event: "progress", severity: "information", code: "PXCLI1510",
     phase: value.phase, current: value.files, bytes: value.bytes,
@@ -2332,7 +2392,8 @@ function patchProgress(value: DistributionPatchProgress): void {
 async function projectTool(command: string, options: Options, args: string[]): Promise<number | undefined> {
   if (launcherStopRequested) return 130;
   if (["create", "inspect-save", "plan-patch", "verify-package",
-    "create-patch", "apply-patch"].includes(command)) return undefined;
+    "create-patch", "apply-patch", "create-overlay", "verify-overlay"]
+    .includes(command)) return undefined;
   const location = await resolveProjectPath(options.positional[0]);
   const manifestPath = join(location.root, "package.json");
   if (!await regularFile(manifestPath)) return launcherStopRequested ? 130 : undefined;
@@ -2404,6 +2465,8 @@ async function main(): Promise<number> {
   if (command === "verify-package") return verifyPackageCommand(options);
   if (command === "create-patch") return createPatchCommand(options);
   if (command === "apply-patch") return applyPatchCommand(options);
+  if (command === "create-overlay" || command === "verify-overlay")
+    return overlayCommand(command, options);
   usage(); return 2;
 }
 

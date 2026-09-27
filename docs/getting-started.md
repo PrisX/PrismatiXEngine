@@ -256,11 +256,12 @@ complete target distribution before launch. The selected native
 Packager must understand both package versions; cross-engine upgrades may
 require a full installer rather than this bundle format.
 
-For SDK developers, the first [single-file overlay verification
-contract](package-overlay.md) is available in native code and through
-`PrismatiXPackager --verify-overlay`. It checks a candidate PDX against the
-exact base and target metadata and all changed payloads, but does not create
-that PDX or make Player load it.
+For SDK developers, the [single-file content overlay
+contract](package-overlay.md) now has `prismatix create-overlay` and
+`prismatix verify-overlay`. The creator fully checks both complete input
+distributions and rejects changed Player/runtime files. The verifier checks
+the candidate PDX against exact base and target metadata and all changed
+payloads; it does not make Player load the file.
 
 Never choose Story, Assets, another source input or an unrelated existing folder as output. `pack` is an explicit distribution command; `run` packages and launches. Quote paths containing spaces.
 
