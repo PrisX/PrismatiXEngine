@@ -81,9 +81,9 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   create: {values: "name id locale width height", flags: ""},
   dev: {values: "runtime preview-host debounce ui-registry", flags: "once smoke"},
   validate: {values: "runtime ui-registry", flags: ""},
-  build: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key", flags: "artifact-only distribution encrypt ignore-disk-space"},
-  pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key", flags: "encrypt ignore-disk-space check verify-media"},
-  run: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key", flags: "encrypt ignore-disk-space"},
+  build: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "artifact-only distribution encrypt ignore-disk-space"},
+  pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space check verify-media"},
+  run: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space"},
   augment: {values: "artifact manifest", flags: ""},
   ids: {values: "document-id prefix backup", flags: "write check external inline sync"},
   migrate: {values: "report backup entry-story entry-ui supported-locales save-version id name version content-version default-locale story-index game-catalog", flags: "write"},
@@ -131,6 +131,10 @@ function parseOptions(command: string, args: readonly string[]): Options {
     throw new Error("--archive-shards requires a distribution build");
   if (flags.has("artifact-only") && values.has("publisher-key"))
     throw new Error("--publisher-key requires a distribution build");
+  if (flags.has("artifact-only") && values.has("previous-package"))
+    throw new Error("--previous-package requires a distribution build");
+  if (flags.has("check") && values.has("previous-package"))
+    throw new Error("--previous-package cannot be used with pack --check");
   if (flags.has("verify-media") && !flags.has("check"))
     throw new Error("--verify-media requires pack --check");
   if (values.has("artifact") && values.has("ui-registry")) throw new Error("--ui-registry requires a fresh build; it cannot be combined with --artifact");
@@ -1399,6 +1403,30 @@ async function packProject(options: Options): Promise<{output: string; player: s
       if (!/^04[0-9a-f]{128}$/u.test(publisherPublicKey))
         throw new Error(`Publisher key must contain a lowercase SEC1 P-256 point: ${path}`);
     }
+    const previousOption = options.values.get("previous-package");
+    const previousPackage = previousOption === undefined
+      ? undefined : await realpath(resolve(previousOption));
+    let previousManifestBytes: Buffer | undefined;
+    if (previousPackage !== undefined) {
+      if (previousPackage === output || !(await lstat(previousPackage)).isDirectory())
+        throw new Error("--previous-package must name a separate distribution directory");
+      const previousManifestPath = join(previousPackage, "Package", "manifest.json");
+      const previousManifestInfo = await lstat(previousManifestPath);
+      if (!previousManifestInfo.isFile() || previousManifestInfo.size > 4 * 1024 * 1024)
+        throw new Error("--previous-package manifest must be a bounded regular file");
+      previousManifestBytes = await readFile(previousManifestPath);
+      const previousManifest = object(JSON.parse(previousManifestBytes.toString("utf8")) as unknown);
+      if (previousManifest?.gameId !== project.id)
+        throw new Error("--previous-package belongs to a different game");
+      if (typeof previousManifest.publisherPublicKey === "string" &&
+          previousManifest.publisherPublicKey.length > 0 &&
+          previousManifest.publisherPublicKey !== publisherPublicKey)
+        throw new Error("--previous-package uses a different publisher key");
+      await verifyPackagedContents(previousPackage, options);
+      if (!(await readFile(previousManifestPath)).equals(previousManifestBytes))
+        throw new Error("--previous-package manifest changed during verification");
+      protectedPaths.push(previousPackage);
+    }
     const requestPlan = {
       format: "PrismatiXPackageRequest", schemaRevision: 2,
       gameId: project.id, playerExecutable: player, title: project.name,
@@ -1458,9 +1486,13 @@ async function packProject(options: Options): Promise<{output: string; player: s
       await runtimeReplacementFiles(player);
     const publication = {output, projectRoot: root,
       protectedPaths: [...protectedPaths, packager, player],
-      ...(planKey === undefined ? {} : {beforePromotion: async () => {
-        if (await packageRetentionKey(packager, player, artifactRoot, requestPlan) !== planKey)
+      ...(planKey === undefined && previousManifestBytes === undefined ? {} : {beforePromotion: async () => {
+        if (planKey !== undefined &&
+            await packageRetentionKey(packager, player, artifactRoot, requestPlan) !== planKey)
           throw new Error("Runtime tools changed while packaging; distribution was not published");
+        if (previousPackage !== undefined && previousManifestBytes !== undefined &&
+            !(await readFile(join(previousPackage, "Package", "manifest.json"))).equals(previousManifestBytes))
+          throw new Error("--previous-package manifest changed while packaging");
       }}),
       onProgress: (value: {phase: string; files: number; bytes: number; done: boolean}) => progress({
         event: "progress", severity: "information", code: "PXCLI1211",
@@ -1469,7 +1501,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
         message: `Checking distribution ${value.phase}: ${value.files} files, ` +
           `${(value.bytes / 1024 ** 2).toFixed(1)} MiB${value.done ? " (done)" : ""}`}),
     };
-    if (planKey !== undefined && await retainPackageIfMatching(
+    if (previousPackage === undefined && planKey !== undefined && await retainPackageIfMatching(
       publication, artifactRoot, inputs, planKey,
       () => packageRetentionKey(packager, player, artifactRoot, requestPlan))) {
       progress({event: "progress", severity: "information", code: "PXCLI1215",
@@ -1477,7 +1509,7 @@ async function packProject(options: Options): Promise<{output: string; player: s
         message: `Retained verified unchanged distribution: ${output}`});
       return {output, player: join(output, basename(player))};
     }
-    if (planKey !== undefined && contentKey !== undefined &&
+    if (previousPackage === undefined && planKey !== undefined && contentKey !== undefined &&
         runtimeSources !== undefined && await refreshRuntimePackageIfMatching(
           publication, artifactRoot, inputs, planKey, contentKey,
           runtimeSources,
@@ -1519,7 +1551,10 @@ async function packProject(options: Options): Promise<{output: string; player: s
     // Reject extra files or invalid ownership before running native Packager.
     // Complete content verification still runs before promotion below.
     try {
-      if ((await readdir(output)).length > 0)
+      const existingOutput = await readdir(output);
+      if (previousPackage !== undefined && existingOutput.length > 0)
+        throw new Error("--previous-package requires a new or empty output directory");
+      if (existingOutput.length > 0)
         previousOutputInputs = await publishedInputs(output, undefined, true);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -1527,8 +1562,9 @@ async function packProject(options: Options): Promise<{output: string; player: s
     const request = {
       ...requestPlan,
       requestId: `cli-${process.pid}`,
-      projectRoot: artifactRoot, outputDir: staging, cacheSourceDir: output,
-      retireCacheSourceAfterPromotion: true,
+      projectRoot: artifactRoot, outputDir: staging,
+      cacheSourceDir: previousPackage ?? output,
+      retireCacheSourceAfterPromotion: previousPackage === undefined,
       cancelFile: join(temp, ".cancel-package"),
     };
     const requestPath = join(temp, "package-request.json");

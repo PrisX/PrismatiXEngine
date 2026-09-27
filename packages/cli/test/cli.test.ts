@@ -1004,6 +1004,76 @@ test("pack invokes the native file-based request protocol", async () => {
     "author media");
 });
 
+test("pack carries a verified previous distribution into a separate output", async () => {
+  const value = await fixture();
+  const tools = await mkdtemp(join(tmpdir(), "prismatix-cli-previous-"));
+  const previous = join(value.root, "previous-distribution");
+  const manifestPath = join(previous, "Package", "manifest.json");
+  const verifiedMarker = join(tools, "verified.txt");
+  await write(manifestPath, JSON.stringify({gameId: "cli-sample"}));
+  const mock = join(tools, "mock-packager.mjs");
+  await write(mock, `
+    import {readFile, writeFile} from "node:fs/promises";
+    import {resolve} from "node:path";
+    const [flag, path] = process.argv.slice(2);
+    if (flag === "--verify-package") {
+      if (resolve(path) !== resolve(${JSON.stringify(previous)})) process.exit(41);
+      await writeFile(${JSON.stringify(verifiedMarker)}, "verified");
+      process.stdout.write(JSON.stringify({event: "verified", archives: 1,
+        resources: 1, rawBytes: 1}) + "\\n");
+    } else if (flag === "--request") {
+      const request = JSON.parse(await readFile(path, "utf8"));
+      if (request.cacheSourceDir !== ${JSON.stringify(previous)} ||
+          request.retireCacheSourceAfterPromotion !== false ||
+          await readFile(${JSON.stringify(verifiedMarker)}, "utf8") !== "verified") process.exit(42);
+      process.stdout.write(JSON.stringify({event: "completed", previousSource: true}) + "\\n");
+    } else process.exit(43);
+  `);
+  const player = join(tools, process.platform === "win32" ? "Player.exe" : "Player");
+  await write(player, "fixture");
+  const args = ["pack", value.project, "--packager", mock, "--player", player,
+    "--previous-package", previous];
+  const packed = run([...args, "--output", join(value.root, "new-distribution")]);
+  assert.equal(packed.status, 0, packed.stderr);
+  assert.match(packed.stdout, /"previousSource":true/u);
+  assert.equal(run([...args, "--check"]).status, 2);
+
+  const occupiedOutput = join(value.root, "occupied-distribution");
+  await write(join(occupiedOutput, "foreign.txt"), "keep");
+  const occupied = run([...args, "--output", occupiedOutput]);
+  assert.equal(occupied.status, 1);
+  assert.match(occupied.stderr, /new or empty output directory/u);
+  assert.equal(await readFile(join(occupiedOutput, "foreign.txt"), "utf8"), "keep");
+
+  await write(manifestPath, JSON.stringify({gameId: "cli-sample", publisherPublicKey: "other"}));
+  const wrongPublisher = run([...args, "--output", join(value.root, "wrong-publisher-output")]);
+  assert.equal(wrongPublisher.status, 1);
+  assert.match(wrongPublisher.stderr, /different publisher key/u);
+
+  await write(manifestPath, JSON.stringify({gameId: "different-game"}));
+  const wrongGame = run([...args, "--output", join(value.root, "wrong-game-output")]);
+  assert.equal(wrongGame.status, 1);
+  assert.match(wrongGame.stderr, /different game/u);
+  await write(manifestPath, JSON.stringify({gameId: "cli-sample"}));
+  await write(mock, `
+    import {readFile, writeFile} from "node:fs/promises";
+    const [flag, path] = process.argv.slice(2);
+    if (flag === "--verify-package") {
+      process.stdout.write(JSON.stringify({event: "verified", archives: 1,
+        resources: 1, rawBytes: 1}) + "\\n");
+    } else if (flag === "--request") {
+      await readFile(path, "utf8");
+      await writeFile(${JSON.stringify(manifestPath)}, "{\\"gameId\\":\\"changed\\"}");
+      process.stdout.write(JSON.stringify({event: "completed"}) + "\\n");
+    } else process.exit(43);
+  `);
+  const changedOutput = join(value.root, "changed-source-output");
+  const changed = run([...args, "--output", changedOutput]);
+  assert.equal(changed.status, 1);
+  assert.match(changed.stderr, /manifest changed while packaging/u);
+  await assert.rejects(stat(changedOutput), /ENOENT/u);
+});
+
 test("pack validates UI against the selected Packager's adjacent registry", async () => {
   const value = await fixture();
   const uiPath = join(value.root, "Content/UI/Title.pxui");

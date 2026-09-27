@@ -10,13 +10,18 @@ the unique signed, exact-base update chain. Filenames do not control order.
 ```sh
 prismatix overlay-keygen --private path/to/private-key.txt --public path/to/public-key.txt
 prismatix pack game --artifact path/to/artifact --publisher-key path/to/public-key.txt --output path/to/v1
-prismatix pack game --artifact path/to/updated-artifact --publisher-key path/to/public-key.txt --output path/to/v2
+prismatix pack game --artifact path/to/updated-artifact --publisher-key path/to/public-key.txt --previous-package path/to/v1 --output path/to/v2
 prismatix create-overlay --base path/to/v1 --target path/to/v2 --output path/to/patch.pdx --signing-key path/to/private-key.txt
 prismatix verify-overlay --base path/to/v1 --patch path/to/patch.pdx --require-signature
 ```
 
 The two distributions must have the same game ID, Engine version, publisher
 public key, and non-content runtime files, but distinct package fingerprints.
+`--previous-package` makes v2 a standalone distribution that carries compatible
+save identity and legacy key readers from v1. The CLI verifies v1 before
+using it and leaves it untouched. Subsequent standalone versions should name
+their immediate predecessor the same way. For incompatible Story state, advance
+the content/save version and provide an explicit migration.
 The public key is a lowercase, uncompressed SEC1 P-256 point in
 `Package/manifest.json`. It also affects the package fingerprint. Keep the
 private key outside the project and distribution, restrict access to it, and

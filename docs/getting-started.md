@@ -83,6 +83,21 @@ UI source are **not** included until you build or otherwise update the artifact.
 prismatix pack my-game --artifact my-game/.prismatix/artifact
 ```
 
+To publish a standalone new version in a different directory while retaining
+compatible saves from an earlier distribution, name that intact distribution:
+
+```bash
+prismatix pack my-game --artifact my-game/.prismatix/artifact --previous-package release/v1 --output release/v2
+```
+
+`--previous-package` also works with distribution `build` and `run`. The CLI
+verifies the old package, checks its game ID and publisher key, and passes its
+save identity and reusable archive data to Packager. The old directory stays
+untouched; the new output must be absent or empty. Repacking into the same
+output directory already carries this history without the option. Compatible
+save identity does not make changed Story state compatible: advance the
+content/save version and provide a migration when needed.
+
 For multi-GiB developer builds, use an optimized Release or RelWithDebInfo
 Packager even when testing with a Debug Player. The native Packager performs
 large JSON validation and repeated cryptographic reads; a Debug binary can
