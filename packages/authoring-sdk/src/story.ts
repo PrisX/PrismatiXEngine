@@ -159,15 +159,23 @@ function decodeValue(raw: string): DecodedValue {
   return {value: raw};
 }
 
-function parseArguments(path: string, line: SourceLine, tokens: readonly Token[], diagnostics: AuthoringDiagnostic[], namedArguments = true): StoryArgument[] {
+function parseArguments(path: string, line: SourceLine, tokens: readonly Token[],
+  diagnostics: AuthoringDiagnostic[], argumentBaseColumn: number,
+  namedArguments = true): StoryArgument[] {
+  const seenNames = new Set<string>();
   return tokens.map((token) => {
     // `if` is an expression, not a command's name=value argument list.
     // Preserve operators and quoted '=' characters for the expression parser.
     const equals = namedArguments ? token.raw.indexOf("=") : -1;
     const name = equals > 0 ? token.raw.slice(0, equals) : undefined;
     const raw = equals > 0 ? token.raw.slice(equals + 1) : token.raw;
-    const start = line.text.indexOf("[") + 2 + token.start + (equals > 0 ? equals + 1 : 0);
+    const start = argumentBaseColumn + token.start + (equals > 0 ? equals + 1 : 0);
     const argumentSpan = span(path, line, start, start + raw.length);
+    if (name !== undefined) {
+      if (seenNames.has(name)) diagnostics.push(error("PXSTORY1016",
+        `Duplicate command argument: ${name}`, argumentSpan));
+      seenNames.add(name);
+    }
     const decoded = decodeValue(raw);
     if (decoded.error !== undefined) diagnostics.push(error("PXSTORY1014", decoded.error, argumentSpan));
     return {
@@ -245,7 +253,9 @@ export function parseStory(text: string, path = "Story/untitled.pxstory"): Story
         diagnostics.push(error("PXSTORY1012", "Command is missing a closing bracket", lineSpan));
         continue;
       }
-      const commandText = trimmed.slice(1, -1).trim();
+      const inside = trimmed.slice(1, -1);
+      const leadingWhitespace = inside.length - inside.trimStart().length;
+      const commandText = inside.trim();
       const tokenized = tokenizeCommand(commandText);
       if (tokenized.error !== undefined || tokenized.tokens.length === 0) {
         diagnostics.push(error("PXSTORY1013", tokenized.error ?? "Command name is required", lineSpan));
@@ -258,7 +268,8 @@ export function parseStory(text: string, path = "Story/untitled.pxstory"): Story
         span: lineSpan,
         raw: line.text,
         name: command!.raw,
-        arguments: parseArguments(path, line, argumentTokens, diagnostics, command!.raw !== "if"),
+        arguments: parseArguments(path, line, argumentTokens, diagnostics,
+          startColumn + 1 + leadingWhitespace, command!.raw !== "if"),
       });
       continue;
     }
@@ -389,18 +400,18 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
   let pendingAuthoredSourceId: string | undefined;
 
   const resolveResource = (node: StoryNode, authored: string): string | undefined => {
+    const argumentSpan = node.arguments?.find((argument) =>
+      argument.value === authored)?.span;
     const aliased = context.resources?.[authored] ?? authored;
     const resolved = canonicalResourceReference(aliased, context.resourceAssets ?? []);
     if (resolved === undefined) {
       diagnostics.push(error(
         "PXSTORY1111",
         `Resource must be a safe project-relative path or a cataloged asset identity: ${authored}`,
-        node.span,
+        argumentSpan ?? node.span,
       ));
       return undefined;
     }
-    const argumentSpan = node.arguments?.find((argument) =>
-      argument.value === authored)?.span;
     rememberResource(resolved.source, node, argumentSpan);
     return resolved.reference;
   };

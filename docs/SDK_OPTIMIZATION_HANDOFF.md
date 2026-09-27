@@ -4,6 +4,8 @@
 
 ### 2026-09-27—28 後續進度
 
+- **Story 重複參數現在直接拒絕。** 同一指令重複宣告具名參數會報 `PXSTORY1016`，避免最後一個值悄悄覆蓋前值。含 `[  command ...]` 空白的參數、錯誤資源值也指向真正原文位置；`if` 表達式的 `=` 解析不受影響。原有 operation identity 與合法 Story 編譯輸出不變。
+
 - **靜態 JSX spread 的資源錯誤可定位到實際值。** `<Image {...{path: "missing.png"}} />` 現依 JSX prop 覆寫順序找出 `path` 原始字面量；無法靜態確定的 spread 仍回退到 JSX 節點，不猜來源。CLI 117/117 通過（另 1 項 native E2E 依環境跳過）。
 
 - **角色資源的跨文件錯誤也回到作者欄位。** `validateProjectCharacterResources` 可選收原始 project／character 文字，對角色來源缺失、文件身分／名稱不一致、別名或表情 UUID 衝突、缺失或錯誤類型的 asset，以及資源檔缺失附來源 span；`compileProject` 自動傳入 CLI 已讀的文字。共用 JSON locator 只在有錯時解析來源、核對該欄位與當前編譯值，避免過期來源誤指；重複 JSON 鍵以最後生效值定位。Authoring SDK 179/179、CLI 116/116（另 1 項 native E2E 依環境跳過）、四語 368 scene／31,339 資源唯讀 `validate --runtime` 通過。此項不改資源驗證規則或 Runtime 輸出。

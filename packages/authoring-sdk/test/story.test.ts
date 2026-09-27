@@ -130,6 +130,31 @@ test("line-oriented parser retains source spans without indentation semantics", 
   assert.equal(firstDialogue?.span.start.column, 1);
 });
 
+test("Story rejects duplicate named arguments and locates values after bracket padding", () => {
+  const source = "  [  show character=雪 character=other ]\n";
+  const parsed = parseStory(source, "Story/duplicate.pxstory");
+  const argument = parsed.nodes[0]?.arguments?.[0];
+  assert.equal(argument?.span.start.column, source.indexOf("雪") + 1);
+  assert.equal(argument?.span.start.offset, Buffer.byteLength(source.slice(0, source.indexOf("雪")), "utf8"));
+  const duplicate = parsed.diagnostics.find((item) => item.code === "PXSTORY1016");
+  assert.equal(duplicate?.span?.start.column, source.indexOf("other") + 1);
+  assert.equal(duplicate?.span?.start.offset,
+    Buffer.byteLength(source.slice(0, source.indexOf("other")), "utf8"));
+  assert.equal(compileStory(parsed, {documentId: "duplicate"}).valid, false);
+  assert.equal(parseStory("[if affection == 2]\n").diagnostics.length, 0);
+});
+
+test("invalid Story resource points to its authored argument value", () => {
+  const source = "  [  bg asset=../outside.png ]\n";
+  const compiled = compileStory(parseStory(source, "Story/unsafe.pxstory"),
+    {documentId: "unsafe"});
+  const issue = compiled.diagnostics.find((item) => item.code === "PXSTORY1111");
+  assert.equal(compiled.valid, false);
+  assert.equal(issue?.span?.start.column, source.indexOf("../outside.png") + 1);
+  assert.equal(issue?.span?.end.column,
+    source.indexOf("../outside.png") + 1 + "../outside.png".length);
+});
+
 test("blank lines end speaker scope so the next text paragraph is narration", () => {
   const parsed = parseStory(`@yuki\n第一句。\n第二句。\n\n這是旁白。\n@yuki\n又是對話。\n`, "Story/paragraphs.pxstory");
   assert.equal(parsed.diagnostics.length, 0);
