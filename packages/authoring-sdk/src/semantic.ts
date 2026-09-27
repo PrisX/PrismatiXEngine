@@ -1,6 +1,7 @@
 import type {AuthoringDiagnostic} from "./types.js";
 import {isSafeResourcePath} from "./resources.js";
 import {nativeJsonValueValid, nativeUiValueType} from "./ui-value.js";
+import {jsonPointerSpans} from "./json-source-spans.js";
 
 type ObjectValue = Record<string, unknown>;
 
@@ -10,6 +11,13 @@ function object(value: unknown): ObjectValue | undefined {
 
 function objects(value: unknown): ObjectValue[] {
   return Array.isArray(value) ? value.map(object).filter((item): item is ObjectValue => item !== undefined) : [];
+}
+
+function indexedObjects(value: unknown): Array<readonly [number, ObjectValue]> {
+  return Array.isArray(value) ? value.flatMap((item, index) => {
+    const entry = object(item);
+    return entry === undefined ? [] : [[index, entry] as const];
+  }) : [];
 }
 
 function issue(code: string, message: string, path?: string, details?: string): AuthoringDiagnostic {
@@ -766,32 +774,60 @@ function uiValueMatches(value: unknown, property: UiPropertyMetadata): boolean {
   return actual === property.valueType;
 }
 
-export function validateUiPropertyUsage(value: unknown, registry: UiTypeRegistryMetadata, path?: string): readonly AuthoringDiagnostic[] {
+export function validateUiPropertyUsage(value: unknown, registry: UiTypeRegistryMetadata,
+  path?: string, source?: string): readonly AuthoringDiagnostic[] {
   const root = object(value);
   if (root === undefined) return [];
   const diagnostics: AuthoringDiagnostic[] = [];
+  let sourceSpans: ReturnType<typeof jsonPointerSpans> | undefined;
+  const report = (code: string, message: string, details: string,
+    pointer: string): void => {
+    if (source !== undefined && path !== undefined)
+      sourceSpans ??= jsonPointerSpans(source, value, path);
+    const span = sourceSpans?.get(pointer);
+    diagnostics.push({...issue(code, message, path, details),
+      ...(span === undefined ? {} : {span})});
+  };
+  const escapePointer = (part: string) => part.replaceAll("~", "~0").replaceAll("/", "~1");
   const metadata = new Map(registry.controls.map((control) => [control.runtimeType, new Map(control.properties.map((property) => [property.id, property]))]));
   const nodes = objects(root.nodes);
   const runtimeTypeByNode = new Map(nodes.map((node) => [node.id, node.runtimeType]));
-  const check = (nodeId: unknown, propertyId: unknown, capability: keyof Pick<UiPropertyMetadata, "writable" | "bindable" | "animatable">, code: string, authoredValue?: unknown): void => {
+  const check = (nodeId: unknown, propertyId: unknown, capability: keyof Pick<UiPropertyMetadata, "writable" | "bindable" | "animatable">,
+    code: string, pointer: string, authoredValue?: unknown,
+    valuePointer = pointer): void => {
     const runtimeType = runtimeTypeByNode.get(nodeId);
     const property = typeof runtimeType === "string" && typeof propertyId === "string" ? metadata.get(runtimeType)?.get(propertyId) : undefined;
     const location = `${String(nodeId)}.${String(propertyId)}`;
-    if (property === undefined || !property[capability]) diagnostics.push(issue(code, `UI property is not ${capability}`, path, location));
+    if (property === undefined || !property[capability]) report(code,
+      `UI property is not ${capability}`, location, pointer);
     else if (capability === "writable") {
       if (!uiValueMatches(authoredValue, property))
-        diagnostics.push(issue("PXSDKSEM1324", `UI property expects ${property.valueType} but received ${nativeUiValueType(authoredValue)}`, path, location));
+        report("PXSDKSEM1324", `UI property expects ${property.valueType} but received ${nativeUiValueType(authoredValue)}`, location, valuePointer);
       else if (typeof authoredValue === "string" && property.enumChoices?.length &&
           !property.enumChoices.includes(authoredValue))
-        diagnostics.push(issue("PXSDKSEM1326", `UI property expects one of ${property.enumChoices.join(", ")}`, path, location));
+        report("PXSDKSEM1326", `UI property expects one of ${property.enumChoices.join(", ")}`, location, valuePointer);
     }
   };
-  for (const node of nodes) {
+  for (const [index, raw] of (Array.isArray(root.nodes) ? root.nodes : []).entries()) {
+    const node = object(raw);
+    if (node === undefined) continue;
     for (const [property, authoredValue] of Object.entries(object(node.runtimeProperties) ?? {}))
-      check(node.id, property, "writable", "PXSDKSEM1320", authoredValue);
-    for (const property of Object.keys(object(node.bindings) ?? {})) check(node.id, property, "bindable", "PXSDKSEM1321");
+      check(node.id, property, "writable", "PXSDKSEM1320",
+        `/nodes/${index}/runtimeProperties/${escapePointer(property)}`, authoredValue);
+    for (const property of Object.keys(object(node.bindings) ?? {}))
+      check(node.id, property, "bindable", "PXSDKSEM1321",
+        `/nodes/${index}/bindings/${escapePointer(property)}`);
   }
-  for (const group of objects(root.visualStateGroups)) for (const state of objects(group.states)) for (const override of objects(state.overrides)) check(override.nodeId, override.property, "writable", "PXSDKSEM1322", override.value);
-  for (const clip of objects(object(root.animations)?.clips)) for (const track of objects(clip.tracks)) check(track.nodeId, track.property, "animatable", "PXSDKSEM1323");
+  for (const [groupIndex, group] of indexedObjects(root.visualStateGroups))
+    for (const [stateIndex, state] of indexedObjects(group.states))
+      for (const [overrideIndex, override] of indexedObjects(state.overrides)) {
+        const pointer = `/visualStateGroups/${groupIndex}/states/${stateIndex}/overrides/${overrideIndex}`;
+        check(override.nodeId, override.property, "writable", "PXSDKSEM1322",
+          `${pointer}/property`, override.value, `${pointer}/value`);
+      }
+  for (const [clipIndex, clip] of indexedObjects(object(root.animations)?.clips))
+    for (const [trackIndex, track] of indexedObjects(clip.tracks))
+      check(track.nodeId, track.property, "animatable", "PXSDKSEM1323",
+        `/animations/clips/${clipIndex}/tracks/${trackIndex}/property`);
   return diagnostics;
 }

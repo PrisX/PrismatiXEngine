@@ -2,6 +2,7 @@ import {canonicalJson} from "./canonical-json.js";
 import {contractDocumentByteLimit, parseDocument, validateDocument} from "./contracts.js";
 import {normalizeProject} from "./project-normalization.js";
 import {validateInputKeyUsage, type InputKeyRegistryMetadata} from "./input-keys.js";
+import {jsonPointerSpans} from "./json-source-spans.js";
 import {validateUiActionUsage} from "./project-actions.js";
 import {validatePlayerUiBindings} from "./project-ui-bindings.js";
 import type {LayeredPortraitDocument} from "./portrait.js";
@@ -188,12 +189,18 @@ const builtInInputActions = new Set([
 ]);
 
 function validateUiInputBindings(document: JsonValue, game: GameDocument,
-  path: string): AuthoringDiagnostic[] {
+  path: string, source?: string): AuthoringDiagnostic[] {
   if (document === null || typeof document !== "object" || Array.isArray(document)) return [];
   const nodes = document.nodes;
   if (!Array.isArray(nodes)) return [];
   const declared = new Set((game.inputActions ?? []).map((action) => action.id));
   const diagnostics: AuthoringDiagnostic[] = [];
+  let sourceSpans: ReturnType<typeof jsonPointerSpans> | undefined;
+  const at = (pointer: string) => {
+    if (source !== undefined)
+      sourceSpans ??= jsonPointerSpans(source, document, path);
+    return sourceSpans?.get(pointer);
+  };
   for (const [index, node] of nodes.entries()) {
     if (node === null || typeof node !== "object" || Array.isArray(node) ||
         node.runtimeProperties === null ||
@@ -204,21 +211,27 @@ function validateUiInputBindings(document: JsonValue, game: GameDocument,
     if (wheelThreshold !== undefined &&
         (typeof wheelThreshold !== "number" ||
          !Number.isFinite(wheelThreshold) ||
-         wheelThreshold < 0 || wheelThreshold > 100))
-      diagnostics.push(issue("PXBUILD1073",
+         wheelThreshold < 0 || wheelThreshold > 100)) {
+      const span = at(`/nodes/${index}/runtimeProperties/wheelThreshold`);
+      diagnostics.push({...issue("PXBUILD1073",
         "UI wheelThreshold must be a finite number from 0 to 100", path,
-        `nodes[${index}].runtimeProperties.wheelThreshold`));
+        `nodes[${index}].runtimeProperties.wheelThreshold`),
+        ...(span === undefined ? {} : {span})});
+    }
     if (action === undefined) continue;
     const location = `nodes[${index}].runtimeProperties.bindingAction`;
     if (typeof action !== "string" || action.length === 0) {
+      const span = at(`/nodes/${index}/runtimeProperties/bindingAction`);
       diagnostics.push({severity: "error", code: "PXBUILD1071",
         message: "UI input binding must name a non-empty action", path,
-        details: location});
+        details: location, ...(span === undefined ? {} : {span})});
     } else if (!declared.has(action) && !builtInInputActions.has(action)) {
+      const span = at(`/nodes/${index}/runtimeProperties/bindingAction`);
       diagnostics.push({severity: "warning", code: "PXBUILD1072",
         message: "UI input binding is not declared by the game or built-in Input",
         path, details: `${location}: ${action}`,
-        hint: "Declare it in game.inputActions, or ensure this host registers the action before showing the UI."});
+        hint: "Declare it in game.inputActions, or ensure this host registers the action before showing the UI.",
+        ...(span === undefined ? {} : {span})});
     }
   }
   return diagnostics;
@@ -580,10 +593,13 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     if (ui === undefined) diagnostics.push(issue("PXBUILD1002", `UI entry point ${id} is unavailable`, path, id));
     else {
       if (input.uiTypeRegistry !== undefined)
-        diagnostics.push(...validateUiPropertyUsage(ui, input.uiTypeRegistry, path));
-      diagnostics.push(...validateUiActionUsage(ui, extensions, path));
+        diagnostics.push(...validateUiPropertyUsage(ui, input.uiTypeRegistry,
+          path, input.documentSources?.[path]));
+      diagnostics.push(...validateUiActionUsage(ui, extensions, path,
+        input.documentSources?.[path]));
       if (game !== undefined)
-        diagnostics.push(...validateUiInputBindings(ui, game, path));
+        diagnostics.push(...validateUiInputBindings(ui, game, path,
+          input.documentSources?.[path]));
       uiDocuments.set(path, ui);
     }
   }
@@ -662,10 +678,13 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       continue;
     }
     if (input.uiTypeRegistry !== undefined)
-      diagnostics.push(...validateUiPropertyUsage(component, input.uiTypeRegistry, descriptor.source));
-    diagnostics.push(...validateUiActionUsage(component, extensions, descriptor.source));
+      diagnostics.push(...validateUiPropertyUsage(component, input.uiTypeRegistry,
+        descriptor.source, input.documentSources?.[descriptor.source]));
+    diagnostics.push(...validateUiActionUsage(component, extensions,
+      descriptor.source, input.documentSources?.[descriptor.source]));
     if (game !== undefined)
-      diagnostics.push(...validateUiInputBindings(component, game, descriptor.source));
+      diagnostics.push(...validateUiInputBindings(component, game,
+        descriptor.source, input.documentSources?.[descriptor.source]));
     uiComponentDocuments.set(descriptor.source, component);
   }
   diagnostics.push(...validatePlayerUiBindings(project,

@@ -1,6 +1,7 @@
 import type {AuthoringDiagnostic, ExtensionAction, ExtensionManifest,
   ExtensionParameter} from "./types.js";
 import {nativeUiValueType} from "./ui-value.js";
+import {jsonPointerSpans} from "./json-source-spans.js";
 
 type ObjectValue = Record<string, unknown>;
 
@@ -11,6 +12,13 @@ function object(value: unknown): ObjectValue | undefined {
 
 function objects(value: unknown): ObjectValue[] {
   return Array.isArray(value) ? value.map(object).filter((item): item is ObjectValue => item !== undefined) : [];
+}
+
+function indexedObjects(value: unknown): Array<readonly [number, ObjectValue]> {
+  return Array.isArray(value) ? value.flatMap((item, index) => {
+    const entry = object(item);
+    return entry === undefined ? [] : [[index, entry] as const];
+  }) : [];
 }
 
 function issue(code: string, message: string, path: string, details: string): AuthoringDiagnostic {
@@ -25,10 +33,21 @@ function parameterAccepts(parameter: ExtensionParameter, actual: string): boolea
  * Player build. Unknown IDs remain legal because Player/host code can register
  * project-specific actions that are not extension declarations. */
 export function validateUiActionUsage(document: unknown,
-  extensions: readonly ExtensionManifest[], path: string): readonly AuthoringDiagnostic[] {
+  extensions: readonly ExtensionManifest[], path: string,
+  source?: string): readonly AuthoringDiagnostic[] {
   const root = object(document);
   if (root === undefined) return [];
   const diagnostics: AuthoringDiagnostic[] = [];
+  let sourceSpans: ReturnType<typeof jsonPointerSpans> | undefined;
+  const report = (code: string, message: string, details: string,
+    pointer: string, fallback: string): void => {
+    if (source !== undefined)
+      sourceSpans ??= jsonPointerSpans(source, document, path);
+    const span = sourceSpans?.get(pointer) ?? sourceSpans?.get(fallback);
+    diagnostics.push({...issue(code, message, path, details),
+      ...(span === undefined ? {} : {span})});
+  };
+  const escapePointer = (part: string) => part.replaceAll("~", "~0").replaceAll("/", "~1");
   const declarations = new Map<string, ExtensionAction>();
   for (const extension of extensions) for (const action of extension.actions)
     declarations.set(action.id, action);
@@ -48,6 +67,7 @@ export function validateUiActionUsage(document: unknown,
   };
 
   const check = (id: unknown, authored: unknown, location: string,
+    pointer: string, idPointer: string,
     dynamic = new Set<string>(), itemTemplate = false): void => {
     if (typeof id !== "string") return;
     const action = declarations.get(id);
@@ -55,13 +75,15 @@ export function validateUiActionUsage(document: unknown,
     const arguments_ = object(authored) ?? {};
     const parameters = new Map(action.parameters.map((parameter) => [parameter.name, parameter]));
     for (const name of dynamic) if (!parameters.has(name))
-      diagnostics.push(issue("PXBUILD1061", "Unknown extension Action argument binding",
-        path, `${location}: ${id}.${name}`));
+      report("PXBUILD1061", "Unknown extension Action argument binding",
+        `${location}: ${id}.${name}`,
+        `${pointer}/argumentBindings/${escapePointer(name)}`, idPointer);
     for (const [name, value] of Object.entries(arguments_)) {
       const parameter = parameters.get(name);
+      const argumentPointer = `${pointer}/arguments/${escapePointer(name)}`;
       if (parameter === undefined) {
-        diagnostics.push(issue("PXBUILD1061", "Unknown extension Action argument",
-          path, `${location}: ${id}.${name}`));
+        report("PXBUILD1061", "Unknown extension Action argument",
+          `${location}: ${id}.${name}`, argumentPointer, idPointer);
         continue;
       }
       if (dynamic.has(name)) continue;
@@ -69,39 +91,40 @@ export function validateUiActionUsage(document: unknown,
         const accepted = value === "$index"
           ? parameterAccepts(parameter, "integer")
           : ["string", "integer", "number"].includes(parameter.type);
-        if (!accepted) diagnostics.push(issue("PXBUILD1062",
+        if (!accepted) report("PXBUILD1062",
           `Extension Action argument expects ${parameter.type} but received item ${value}`,
-          path, `${location}: ${id}.${name}`));
+          `${location}: ${id}.${name}`, argumentPointer, idPointer);
         continue;
       }
       const actual = nativeUiValueType(value, true);
       if (!parameterAccepts(parameter, actual)) {
-        diagnostics.push(issue("PXBUILD1062",
+        report("PXBUILD1062",
           `Extension Action argument expects ${parameter.type} but received ${actual}`,
-          path, `${location}: ${id}.${name}`));
+          `${location}: ${id}.${name}`, argumentPointer, idPointer);
         continue;
       }
       if (parameter.enum !== undefined && !parameter.enum.includes(value as never))
-        diagnostics.push(issue("PXBUILD1063", "Extension Action argument is not an allowed enum value",
-          path, `${location}: ${id}.${name}`));
+        report("PXBUILD1063", "Extension Action argument is not an allowed enum value",
+          `${location}: ${id}.${name}`, argumentPointer, idPointer);
       if (typeof value === "number" &&
           (parameter.range?.minimum !== undefined && value < parameter.range.minimum ||
            parameter.range?.maximum !== undefined && value > parameter.range.maximum))
-        diagnostics.push(issue("PXBUILD1064", "Extension Action argument is outside its allowed range",
-          path, `${location}: ${id}.${name}`));
+        report("PXBUILD1064", "Extension Action argument is outside its allowed range",
+          `${location}: ${id}.${name}`, argumentPointer, idPointer);
     }
     for (const parameter of action.parameters) {
       if (parameter.required && parameter.default == null &&
           !Object.hasOwn(arguments_, parameter.name) && !dynamic.has(parameter.name))
-        diagnostics.push(issue("PXBUILD1060", "Missing required extension Action argument",
-          path, `${location}: ${id}.${parameter.name}`));
+        report("PXBUILD1060", "Missing required extension Action argument",
+          `${location}: ${id}.${parameter.name}`, idPointer, pointer);
     }
   };
 
-  for (const [index, node] of nodes.entries()) {
+  for (const [index, node] of indexedObjects(root.nodes)) {
     const onClick = object(node.onClick);
     if (onClick !== undefined)
       check(onClick.id, onClick.arguments, `nodes[${index}].onClick`,
+        `/nodes/${index}/onClick`, `/nodes/${index}/onClick/id`,
         new Set<string>(), inItemTemplate(node));
     const signals = object(object(node.componentInstance)?.publicSignals) ?? {};
     for (const [signal, value] of Object.entries(signals)) {
@@ -109,19 +132,23 @@ export function validateUiActionUsage(document: unknown,
       if (binding === undefined) continue;
       check(binding.id, binding.arguments,
         `nodes[${index}].componentInstance.publicSignals.${signal}`,
+        `/nodes/${index}/componentInstance/publicSignals/${escapePointer(signal)}`,
+        `/nodes/${index}/componentInstance/publicSignals/${escapePointer(signal)}/id`,
         new Set(Object.keys(object(binding.argumentBindings) ?? {})),
         inItemTemplate(node));
     }
   }
   const graph = object(root.behaviorGraph);
   const links = objects(graph?.links);
-  for (const [index, node] of objects(graph?.nodes).entries()) {
+  for (const [index, node] of indexedObjects(graph?.nodes)) {
     if (node.kind !== "action") continue;
     const dynamic = new Set(links.filter((link) => link.toNodeId === node.id &&
       typeof link.toPin === "string" && link.toPin.startsWith("arg:"))
       .map((link) => (link.toPin as string).slice(4)));
     check(object(node.properties)?.action, node.arguments,
-      `behaviorGraph.nodes[${index}]`, dynamic);
+      `behaviorGraph.nodes[${index}]`,
+      `/behaviorGraph/nodes/${index}`,
+      `/behaviorGraph/nodes/${index}/properties/action`, dynamic);
   }
   return diagnostics;
 }

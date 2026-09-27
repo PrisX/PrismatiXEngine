@@ -42,13 +42,27 @@ test("extension Action validation reports every invalid static argument before P
       ...action({}), argumentBindings: {unknown: "value"},
     }}}},
   ]};
-  const diagnostics = validateUiActionUsage(document, [extension], "Content/UI/Title.pxui");
+  const source = JSON.stringify(document, null, 2);
+  const diagnostics = validateUiActionUsage(document, [extension],
+    "Content/UI/Title.pxui", source);
   const codes = diagnostics.map((diagnostic) => diagnostic.code);
   for (const code of ["PXBUILD1060", "PXBUILD1061", "PXBUILD1062",
     "PXBUILD1063", "PXBUILD1064"])
     assert.ok(codes.includes(code), code);
   assert.ok(diagnostics.every((diagnostic) => diagnostic.path === "Content/UI/Title.pxui"));
   assert.ok(diagnostics.some((diagnostic) => diagnostic.details?.includes("nodes[0].onClick")));
+  const wrongVolume = diagnostics.find((diagnostic) => diagnostic.code === "PXBUILD1062" &&
+    diagnostic.details?.includes("nodes[0].onClick: music.play.volume"));
+  assert.ok(wrongVolume?.span);
+  assert.equal(source.slice(wrongVolume.span.start.offset, wrongVolume.span.end.offset), '"loud"');
+  const missingMedia = diagnostics.find((diagnostic) => diagnostic.code === "PXBUILD1060" &&
+    diagnostic.details?.includes("nodes[0].onClick: music.play.media"));
+  assert.ok(missingMedia?.span);
+  assert.equal(source.slice(missingMedia.span.start.offset, missingMedia.span.end.offset),
+    '"music.play"');
+  const stale = validateUiActionUsage(document, [extension],
+    "Content/UI/Title.pxui", source.replace('"loud"', '"quiet"'));
+  assert.ok(stale.every((diagnostic) => diagnostic.span === undefined));
 });
 
 test("item-template Action placeholders are checked against extension parameter types", () => {

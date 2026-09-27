@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {validatePlayerUiBindings} from "../src/project-ui-bindings.js";
+import {validateUiPropertyUsage} from "../src/semantic.js";
 import type {ProjectDocument} from "../src/project.js";
 import type {JsonValue} from "../src/types.js";
 
@@ -173,4 +174,23 @@ test("UI binding diagnostics point to the effective JSON value only for matching
   assert.ok(itemIssue?.span);
   assert.equal(itemSource.slice(itemIssue.span.start.offset, itemIssue.span.end.offset),
     '"settings.items"');
+});
+
+test("visual state and animation property errors locate their own JSON declarations", () => {
+  const document = {nodes: [{id: rootId, runtimeType: "Label"}],
+    visualStateGroups: [{states: [{overrides: [
+      {nodeId: rootId, property: "text", value: 42},
+    ]}]}],
+    animations: {clips: [{tracks: [
+      {nodeId: rootId, property: "text"},
+    ]}]}};
+  const source = JSON.stringify(document, null, 2);
+  const diagnostics = validateUiPropertyUsage(document, registry, path, source);
+  const wrongValue = diagnostics.find((item) => item.code === "PXSDKSEM1324");
+  assert.ok(wrongValue?.span);
+  assert.equal(source.slice(wrongValue.span.start.offset, wrongValue.span.end.offset), "42");
+  const nonAnimatable = diagnostics.find((item) => item.code === "PXSDKSEM1323");
+  assert.ok(nonAnimatable?.span);
+  assert.equal(source.slice(nonAnimatable.span.start.offset,
+    nonAnimatable.span.end.offset), '"text"');
 });

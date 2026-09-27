@@ -208,13 +208,17 @@ test("compileProject validates extension UI Actions and packages typed resource 
       {name: "volume", type: "number", range: {minimum: 0, maximum: 1}},
     ]}],
   };
+  const uiWithAction = (arguments_: Record<string, unknown>) =>
+    ({...ui, nodes: [{...ui.nodes[0],
+      onClick: {id: "music.play", arguments: arguments_}}]});
   const compile = (arguments_: Record<string, unknown>, manifest: unknown = extension) => compileProject({
     project: {...project, extensions: [extensionPath]},
     documents: {"Story/story.pxindex": storyIndex,
       "Content/game.pxgame": game,
-      "Content/UI/Title.pxui": {...ui, nodes: [{...ui.nodes[0],
-        onClick: {id: "music.play", arguments: arguments_}}]},
+      "Content/UI/Title.pxui": uiWithAction(arguments_),
       [extensionPath]: manifest},
+    documentSources: {"Content/UI/Title.pxui":
+      JSON.stringify(uiWithAction(arguments_), null, 2)},
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
     locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
       locale: "zh-TW", strings: {}}},
@@ -233,6 +237,13 @@ test("compileProject validates extension UI Actions and packages typed resource 
   assert.equal(invalid.valid, false);
   assert.ok(invalid.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1062"));
   assert.ok(invalid.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1064"));
+  const wrongMedia = invalid.diagnostics.find((diagnostic) =>
+    diagnostic.code === "PXBUILD1062" && diagnostic.details?.endsWith(".media"));
+  assert.ok(wrongMedia?.span);
+  const invalidSource = JSON.stringify(uiWithAction({media: "Assets/Audio/theme.ogg",
+    volume: 2}), null, 2);
+  assert.equal(invalidSource.slice(wrongMedia.span.start.offset, wrongMedia.span.end.offset),
+    '"Assets/Audio/theme.ogg"');
 
   const defaulted = compile({volume: 0.5}, {...extension, actions: [{
     id: "music.play", parameters: [

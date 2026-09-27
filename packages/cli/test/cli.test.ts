@@ -286,7 +286,8 @@ test("validate and build reject native UI property type mismatches before packag
     nodes: Array<{runtimeProperties: Record<string, unknown>}>
   };
   ui.nodes[0]!.runtimeProperties.modulate = "#2D171DFF";
-  await write(uiPath, JSON.stringify(ui));
+  const wrongColorSource = JSON.stringify(ui, null, 2);
+  await write(uiPath, wrongColorSource);
   const registryPath = join(value.root, "PrismatiXUiTypeRegistry.json");
   await write(registryPath, JSON.stringify({
     format: "PrismatiXUiTypeRegistry", schemaRevision: 2,
@@ -301,6 +302,13 @@ test("validate and build reject native UI property type mismatches before packag
   const invalid = run(["validate", value.project, "--ui-registry", registryPath]);
   assert.equal(invalid.status, 1);
   assert.match(invalid.stderr, /PXSDKSEM1324/u);
+  const wrongColor = invalid.stderr.split(/\r?\n/u).filter(Boolean).flatMap((line) => {
+    try { return [JSON.parse(line) as {code: string; span?: {start: {offset: number};
+      end: {offset: number}}}]; } catch { return []; }
+  }).find((entry) => entry.code === "PXSDKSEM1324");
+  assert.ok(wrongColor?.span, invalid.stderr);
+  assert.equal(wrongColorSource.slice(wrongColor.span.start.offset,
+    wrongColor.span.end.offset), '"#2D171DFF"');
   const rejectedBuild = run(["build", value.project, "--artifact-only", "--output",
     join(value.root, "invalid-build"), "--ui-registry", registryPath]);
   assert.equal(rejectedBuild.status, 1);
@@ -320,10 +328,18 @@ test("validate and build reject native UI property type mismatches before packag
   const validEnum = run(["validate", value.project, "--ui-registry", registryPath]);
   assert.equal(validEnum.status, 0, validEnum.stderr);
   ui.nodes[0]!.runtimeProperties.wheelThreshold = 101;
-  await write(uiPath, JSON.stringify(ui));
+  const wrongWheelSource = JSON.stringify(ui, null, 2);
+  await write(uiPath, wrongWheelSource);
   const invalidWheel = run(["validate", value.project]);
   assert.equal(invalidWheel.status, 1);
   assert.match(invalidWheel.stderr, /PXBUILD1073/u);
+  const wrongWheel = invalidWheel.stderr.split(/\r?\n/u).filter(Boolean).flatMap((line) => {
+    try { return [JSON.parse(line) as {code: string; span?: {start: {offset: number};
+      end: {offset: number}}}]; } catch { return []; }
+  }).find((entry) => entry.code === "PXBUILD1073");
+  assert.ok(wrongWheel?.span, invalidWheel.stderr);
+  assert.equal(wrongWheelSource.slice(wrongWheel.span.start.offset,
+    wrongWheel.span.end.offset), "101");
 });
 
 test("validate rejects native-invalid UI bindings and typed values before packaging", async () => {
