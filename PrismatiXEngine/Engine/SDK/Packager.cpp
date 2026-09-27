@@ -1024,6 +1024,20 @@ std::optional<std::string> ReadTextFile(const std::filesystem::path& path, const
     return std::string(bytes->begin(), bytes->end());
 }
 
+std::optional<std::string> ReadVerifiedTextFile(
+    const ValidatedInput& input,
+    std::vector<PackageDiagnostic>& diagnostics) {
+    const auto text = ReadTextFile(input.source, input.input.size);
+    if (!text) return std::nullopt;
+    const auto digest = Sha256Text(*text);
+    if (!digest || Hex(*digest) != Lower(input.input.fingerprint)) {
+        AddDiagnostic(diagnostics, "PXPKG1216",
+                      "input fingerprint changed: " + input.input.uri, true);
+        return std::nullopt;
+    }
+    return text;
+}
+
 struct PreviousPersistence {
     std::vector<detail::PackagePersistenceReader> readers;
     std::vector<std::string> compatibleSaveFingerprints;
@@ -1756,7 +1770,8 @@ PackageRunResult Cancel(const PackageRequest& request, const PackageEventSink& s
 ValidationResult Validate(const PackageRequest& request,
                           const PackageEventSink& eventSink,
                           const PackageValidationDepth depth =
-                              PackageValidationDepth::Structural) {
+                              PackageValidationDepth::Structural,
+                          const bool deferFingerprintsUntilArchive = false) {
     ValidationResult result;
     auto& diagnostics = result.diagnostics;
     struct LocalizedOperationIdentity {
@@ -1886,10 +1901,16 @@ ValidationResult Validate(const PackageRequest& request,
             AddDiagnostic(diagnostics, "PXPKG1215", "input size changed: " + input.uri, true);
             continue;
         }
-        if (depth == PackageValidationDepth::Structural &&
-            CanDeferInputFingerprint(input.uri)) {
-            ++result.deferredMediaCount;
-        } else {
+        const bool deferredMedia =
+            depth == PackageValidationDepth::Structural &&
+            CanDeferInputFingerprint(input.uri);
+        if (deferredMedia) ++result.deferredMediaCount;
+        // A publishing run checks parsed document bytes at each read and
+        // checks every file again while writing or reusing the archive.
+        // Keep .ts eager: it may be an authored module, not video media.
+        const bool deferForWrite = deferFingerprintsUntilArchive &&
+            Lower(px::PathToUtf8(Utf8Path(input.uri).extension())) != ".ts";
+        if (!deferredMedia && !deferForWrite) {
             const std::string actualFingerprint = ComputePackageFingerprint(source);
             if (actualFingerprint.empty() || actualFingerprint != Lower(input.fingerprint)) {
                 AddDiagnostic(diagnostics, "PXPKG1216", "input fingerprint changed: " + input.uri, true);
@@ -1900,9 +1921,11 @@ ValidationResult Validate(const PackageRequest& request,
     }
     EmitProgress(request, eventSink, "validate", request.inputs.size(),
                  request.inputs.size(),
-                 "Checked package inputs; " +
-                     std::to_string(result.deferredMediaCount) +
-                     " media fingerprint(s) will be verified during archive writing or reuse");
+                 deferFingerprintsUntilArchive
+                     ? "Checked package inputs; source bytes will be verified while reading or writing"
+                     : "Checked package inputs; " +
+                           std::to_string(result.deferredMediaCount) +
+                           " media fingerprint(s) will be verified during archive writing or reuse");
     if (Cancelled(request)) {
         result.cancelled = true;
         return result;
@@ -1951,8 +1974,8 @@ ValidationResult Validate(const PackageRequest& request,
                 return value.input.uri == migration.asset;
             });
         const auto text = input == result.inputs.end()
-                              ? std::optional<std::string>{}
-                              : ReadTextFile(input->source, input->input.size);
+                               ? std::optional<std::string>{}
+                               : ReadVerifiedTextFile(*input, diagnostics);
         const Json document = text
                                   ? Json::parse(*text, nullptr, false)
                                   : Json(Json::value_t::discarded);
@@ -2012,17 +2035,16 @@ ValidationResult Validate(const PackageRequest& request,
                       "project.pxproject must be present in inputs");
     } else {
         const auto projectText =
-            ReadTextFile(projectInput->source, projectInput->input.size);
+            ReadVerifiedTextFile(*projectInput, diagnostics);
         std::unordered_map<std::string, const ValidatedInput*> packagedInputs;
         for (const auto& input : result.inputs)
             packagedInputs.emplace(input.input.uri, &input);
         const auto readPackaged =
-            [&packagedInputs](const std::string_view uri)
+            [&packagedInputs, &diagnostics](const std::string_view uri)
                 -> std::optional<std::string> {
             const auto found = packagedInputs.find(std::string(uri));
             if (found == packagedInputs.end()) return std::nullopt;
-            return ReadTextFile(found->second->source,
-                                found->second->input.size);
+            return ReadVerifiedTextFile(*found->second, diagnostics);
         };
         const auto packagedExists =
             [&packagedInputs](const std::string_view uri) {
@@ -2361,8 +2383,8 @@ ValidationResult Validate(const PackageRequest& request,
                                               "UI component identity is duplicated or its source is missing");
                                 continue;
                             }
-                            const auto componentText = ReadTextFile(
-                                source->second->source, source->second->input.size);
+                            const auto componentText = ReadVerifiedTextFile(
+                                *source->second, diagnostics);
                             const auto component = componentText
                                 ? ParseUiComponent(*componentText)
                                 : UiComponentParseResult{};
@@ -2410,8 +2432,8 @@ ValidationResult Validate(const PackageRequest& request,
                         AddDiagnostic(diagnostics, "PXPKG1230",
                                       "canonical project gameCatalog must identify a packaged .pxgame document");
                     } else {
-                        const auto catalogText = ReadTextFile(
-                            catalog->second->source, catalog->second->input.size);
+                        const auto catalogText = ReadVerifiedTextFile(
+                            *catalog->second, diagnostics);
                         if (!catalogText) {
                             AddDiagnostic(diagnostics, "PXPKG1231",
                                           "canonical gameCatalog could not be read", true);
@@ -2444,7 +2466,7 @@ ValidationResult Validate(const PackageRequest& request,
     } else if (!equivalentPrimaryLocale) {
         const auto script = std::find_if(result.inputs.begin(), result.inputs.end(), [&](const auto& input) { return input.input.uri == request.startScript; });
         if (script != result.inputs.end()) {
-            const auto text = ReadTextFile(script->source, script->input.size);
+            const auto text = ReadVerifiedTextFile(*script, diagnostics);
             const auto parsed = text ? ParseRuntimeIr(*text)
                                      : RuntimeIrParseResult{};
             if (!text || !parsed.Valid()) {
@@ -2463,9 +2485,8 @@ ValidationResult Validate(const PackageRequest& request,
                 return input.input.uri == request.sourceMap;
             });
         const auto text = sourceMap == result.inputs.end()
-                              ? std::optional<std::string>{}
-                              : ReadTextFile(sourceMap->source,
-                                             sourceMap->input.size);
+                               ? std::optional<std::string>{}
+                               : ReadVerifiedTextFile(*sourceMap, diagnostics);
         const auto parsed = text ? ParseSourceMap(*text)
                                  : SourceMapParseResult{};
         if (!text || !parsed.Valid()) {
@@ -2563,7 +2584,7 @@ ValidationResult Validate(const PackageRequest& request,
         else {
             const auto scene = std::find_if(result.inputs.begin(), result.inputs.end(), [&](const auto& input) { return input.input.uri == route.scene; });
             if (scene != result.inputs.end()) {
-                const auto text = ReadTextFile(scene->source, scene->input.size);
+                const auto text = ReadVerifiedTextFile(*scene, diagnostics);
                 if (!text) {
                     AddDiagnostic(diagnostics, "PXPKG1224", "route scene is neither a typed UIScene nor UI document: " + route.scene);
                 } else if (route.scene.ends_with(".pxui")) {
@@ -3047,7 +3068,8 @@ PackageRunResult ValidatePackageRequest(const PackageRequest& request,
 
 PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSink& eventSink) {
     EmitProgress(request, eventSink, "validate", 0, request.inputs.size(), "Validating package request");
-    auto validated = Validate(request, eventSink);
+    auto validated = Validate(request, eventSink,
+                              PackageValidationDepth::Structural, true);
     if (validated.cancelled) {
         return Cancel(request, eventSink,
                       "Packaging was cancelled while validating inputs");
@@ -3130,10 +3152,9 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
         }
         const auto& input = validated.inputs[index];
         EmitProgress(request, eventSink, "archive", index, validated.inputs.size(), "Preparing " + input.input.uri);
-        // Non-media inputs were hashed during validation; media inputs are
-        // verified by the writer or whole-shard reuse. The JSON bytes read
-        // here also influence package identity, so they must match the input
-        // fingerprint rather than merely having the expected size.
+        // Publishing defers source hashing until a verified read, archive
+        // writing, or whole-shard reuse. JSON bytes also influence package
+        // identity, so this read must match the declared fingerprint.
         std::string contentFingerprint = Lower(input.input.fingerprint);
         if (input.input.size <= 16ull * 1024ull * 1024ull &&
             CouldBeJson(input.source)) {

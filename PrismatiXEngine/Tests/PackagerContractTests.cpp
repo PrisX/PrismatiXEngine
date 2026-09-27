@@ -1912,6 +1912,62 @@ int main() {
                      "ambiguous .ts inputs retain eager SHA validation");
     });
 
+    suite.Run("NonMediaFingerprintIsDeferredOnlyForPublishing", [&] {
+        Write(root / "Assets/extra.bin", "binary-payload");
+        const auto failedOutput = fixture.path / "Build/DeferredNonMedia";
+        Write(failedOutput / "previous-success.txt", "preserved");
+        auto request = FixtureRequest(root, failedOutput);
+        request.requestId = "deferred-nonmedia-contract";
+        request.inputs.push_back(Input(root, "Assets/extra.bin"));
+        request.inputs.back().fingerprint = std::string(64, '0');
+        const auto checked = px::sdk::ValidatePackageRequest(request);
+        bool reachedStructureValidation = false;
+        const auto published = px::sdk::RunPackager(
+            request, [&](const auto& event) {
+                reachedStructureValidation |=
+                    event.kind == px::sdk::PackageEventKind::Progress &&
+                    event.phase == "validate-structure";
+            });
+        suite.Expect(HasDiagnostic(checked, "PXPKG1216"),
+                     "standalone validation still checks non-media fingerprints eagerly");
+        suite.Expect(reachedStructureValidation &&
+                         HasDiagnostic(published, "PXPKG1305") &&
+                         Read(failedOutput / "previous-success.txt") ==
+                             "preserved" &&
+                         !std::filesystem::exists(failedOutput / "Content.pdx"),
+                     "publishing defers unparsed non-media hashing to the writer without replacing output");
+    });
+
+    suite.Run("StructuralDocumentReadRejectsChangedBytes", [&] {
+        const auto projectPath = root / "project.pxproject";
+        const auto original = Read(projectPath);
+        std::string changed = original;
+        const auto whitespace = changed.find("\n      ");
+        suite.Require(whitespace != std::string::npos,
+                      "fixture project has replaceable JSON whitespace");
+        changed[whitespace + 1] = '\t';
+        const auto failedOutput = fixture.path / "Build/ChangedStructure";
+        Write(failedOutput / "previous-success.txt", "preserved");
+        auto request = FixtureRequest(root, failedOutput);
+        request.requestId = "changed-structure-contract";
+        bool injected = false;
+        const auto result = px::sdk::RunPackager(
+            request, [&](const auto& event) {
+                if (!injected &&
+                    event.kind == px::sdk::PackageEventKind::Progress &&
+                    event.phase == "validate-structure") {
+                    Write(projectPath, changed);
+                    injected = true;
+                }
+            });
+        Write(projectPath, original);
+        suite.Expect(injected && HasDiagnostic(result, "PXPKG1216") &&
+                         Read(failedOutput / "previous-success.txt") ==
+                             "preserved" &&
+                         !std::filesystem::exists(failedOutput / "Content.pdx"),
+                     "a structural read rejects changed bytes before publishing");
+    });
+
     suite.Run("CompressedEntryCacheReusesOnlyVerifiedMatchingBytes", [&] {
         const auto source = root / "Assets/cache-fixture.bin";
         WriteRepeated(source, 'c', 256 * 1024);
@@ -2588,7 +2644,7 @@ int main() {
                 return input.uri == "project.pxproject";
             });
         suite.Require(projectInput != failed.inputs.end(),
-                      "fixture includes an eagerly validated project document");
+                      "fixture includes a verified project document");
         projectInput->fingerprint = std::string(64, '0');
         const auto result = px::sdk::RunPackager(failed);
         suite.Expect(result.exitCode == px::sdk::PackageExitCode::Failed && !result.diagnostics.empty() && result.diagnostics.front().code == "PXPKG1216", "fingerprint drift is a typed failure");

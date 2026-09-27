@@ -4,6 +4,7 @@
 
 ### 2026-09-27 後續進度
 
+- 正式 `RunPackager` 現在不再於 preflight 對每個非 `.ts` 輸入先做一輪全檔 SHA-256；會被結構驗證讀取的文件在該次讀取時核對宣告 fingerprint，小型 JSON identity／effect 來源在再次讀取時核對，其餘輸入由 archive writer 或整片重用驗證。獨立 `ValidatePackageRequest`／`pack --check` 仍保留原先 eager 非媒體核對；`.ts` 也維持 eager。新增合約測試涵蓋未解析非媒體來源延後至 writer 拒絕、結構文件在 preflight 後讀取前變動即拒絕，且都保留既有輸出。Native Packager Contract 1/1、Player Catalog Native Acceptance 1/1 通過；這只省下正式封裝一次重複來源讀取，仍無 8 GB 兩版 overlay 或整體封裝耗時的可比量測。
 - Packager 在驗證請求後再次讀取小型 JSON 來計算 package identity、或再次讀取自訂 effect manifest／HLSL 來編譯時，現立即核對該次讀到的 bytes 是否仍符合宣告的 SHA-256；否則拒絕發布並保留既有發行版。原生 contract 以進度回呼在兩個階段改動同大小來源，均驗證拒絕；Native Packager Contract 1/1 與 Player Catalog Native Acceptance 1/1 通過。這修的是讀檔一致性，不代表全量素材雜湊或舊 PDX 驗證可略過，也未解決大型封裝的多輪 I/O。
 - 多語 Story 對齊的每個 operation 現直接比較非本地化字串參數的鍵與值，避免反覆排序並序列化 canonical JSON；`customNode` 的資源參數仍先移除並正規化 JSON，再檢查其餘參數。新增非資源參數變更的拒絕測試；Authoring SDK 157/157、CLI 105/105、四語 368 scene／31,339 資源 `validate --runtime` 通過。同機單次驗證修改前約 10.57 秒、修改後兩次約 9.74／10.12 秒，快取／負載未固定，不能當穩定加速率；Story 編譯與最終 artifact 序列化仍待另行量測。
 - Player `settings.reset` 現會一併重設滾輪綁定；`.pxgame.inputActions` 的作者滾輪方向／門檻會獨立保留，不被使用者覆寫取代，並於重設時還原；未註冊動作的延後覆寫也會清除。Input 原生 contract 已驗作者預設、內建預設與延後動作；正式封裝實按仍待驗。
