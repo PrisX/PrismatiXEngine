@@ -2,6 +2,7 @@
 
 #include "Engine/IO/Archive.h"
 #include "Engine/IO/Crypto.h"
+#include "Engine/IO/OverlaySignature.h"
 #include "Engine/IO/VFS.h"
 #include "Engine/Package/PackageManifest.h"
 #include "Engine/Support/Utf8Path.h"
@@ -386,9 +387,10 @@ PackageContentVerification VerifyPackageContents(
     return result;
 }
 
-PackageOverlayVerification VerifyPackageOverlay(
+static PackageOverlayVerification VerifyOverlayImpl(
     const std::filesystem::path& distribution,
-    const std::filesystem::path& overlayPath) {
+    const std::filesystem::path& overlayPath,
+    const bool requireSignature) {
     const auto fail = [](std::string message) {
         return PackageOverlayVerification{.error = std::move(message)};
     };
@@ -432,8 +434,12 @@ PackageOverlayVerification VerifyPackageOverlay(
     if (!metadata.is_object() || metadata.size() != requiredFields.size() ||
         !metadata.contains("schemaRevision") ||
         !metadata["schemaRevision"].is_number_integer() ||
-        metadata["schemaRevision"] != 1)
+        (metadata["schemaRevision"] != 1 &&
+         metadata["schemaRevision"] != 2))
         return fail("Overlay metadata schema is invalid");
+    const bool signedOverlay = metadata["schemaRevision"] == 2;
+    if (requireSignature && !signedOverlay)
+        return fail("Automatic overlay loading requires a publisher signature");
     for (const auto& field : requiredFields) {
         if (!metadata.contains(field) ||
             (field != "schemaRevision" && !metadata[field].is_string()))
@@ -444,6 +450,25 @@ PackageOverlayVerification VerifyPackageOverlay(
         metadata["basePackageFingerprint"] !=
             baseParsed.manifest.packageFingerprint)
         return fail("Overlay targets a different game or base package");
+    if (signedOverlay) {
+        if (baseParsed.manifest.publisherPublicKey.empty())
+            return fail("Base package has no pinned publisher public key");
+        const auto signature = ReadBoundedArchiveText(
+            overlay, kPackageOverlaySignatureUri, 64);
+        if (!signature || signature->size() != 64)
+            return fail("Overlay publisher signature is missing or damaged");
+        constexpr char digits[] = "0123456789abcdef";
+        std::string signatureHex;
+        signatureHex.reserve(128);
+        for (const unsigned char byte : *signature) {
+            signatureHex.push_back(digits[byte >> 4]);
+            signatureHex.push_back(digits[byte & 15]);
+        }
+        if (!VerifyOverlayMetadataSignature(
+                *metadataText, signatureHex,
+                baseParsed.manifest.publisherPublicKey))
+            return fail("Overlay publisher signature is invalid");
+    }
     const auto baseManifestSha = FingerprintText(*baseManifestText);
     const auto baseIndexSha = FingerprintText(*baseIndexText);
     const auto targetManifestSha = FingerprintText(*targetManifestText);
@@ -492,6 +517,8 @@ PackageOverlayVerification VerifyPackageOverlay(
         std::string(kPackageOverlayManifestUri),
         std::string(kPackageOverlayTargetManifestUri),
         std::string(kPackageOverlayTargetIndexUri)};
+    if (signedOverlay)
+        expectedNames.insert(std::string(kPackageOverlaySignatureUri));
     PackageOverlayVerification result;
     for (const auto& [uri, target] : *targetEntries) {
         const auto base = baseEntries->find(uri);
@@ -522,11 +549,24 @@ PackageOverlayVerification VerifyPackageOverlay(
     return result;
 }
 
+PackageOverlayVerification VerifyPackageOverlay(
+    const std::filesystem::path& distribution,
+    const std::filesystem::path& overlayPath) {
+    return VerifyOverlayImpl(distribution, overlayPath, false);
+}
+
+PackageOverlayVerification VerifySignedPackageOverlay(
+    const std::filesystem::path& distribution,
+    const std::filesystem::path& overlayPath) {
+    return VerifyOverlayImpl(distribution, overlayPath, true);
+}
+
 PackageOverlayBuildResult CreatePackageOverlay(
     const std::filesystem::path& baseDistribution,
     const std::filesystem::path& targetDistribution,
     const std::filesystem::path& outputPath,
-    const PackageOverlayBuildProgress& onProgress) {
+    const PackageOverlayBuildProgress& onProgress,
+    const std::filesystem::path& signingKeyFile) {
     const auto fail = [](std::string message) {
         return PackageOverlayBuildResult{.error = std::move(message)};
     };
@@ -609,6 +649,9 @@ PackageOverlayBuildResult CreatePackageOverlay(
         baseParsed.manifest.packageFingerprint ==
             targetParsed.manifest.packageFingerprint)
         return fail("Base and target are not distinct compatible package versions");
+    const bool signedOverlay = !signingKeyFile.empty();
+    if (signedOverlay && baseParsed.manifest.publisherPublicKey.empty())
+        return fail("Signed overlay requires a pinned publisher public key");
     const auto baseEntries =
         ParseIndexedResources(*baseIndexText, baseParsed.manifest);
     const auto targetEntries =
@@ -641,7 +684,7 @@ PackageOverlayBuildResult CreatePackageOverlay(
         return fail("Overlay metadata hashing failed");
     const Json metadata{
         {"format", "PrismatiXPackageOverlay"},
-        {"schemaRevision", 1},
+        {"schemaRevision", signedOverlay ? 2 : 1},
         {"gameId", baseParsed.manifest.gameId},
         {"basePackageFingerprint", baseParsed.manifest.packageFingerprint},
         {"targetPackageFingerprint", targetParsed.manifest.packageFingerprint},
@@ -652,6 +695,33 @@ PackageOverlayBuildResult CreatePackageOverlay(
     const std::string metadataText = metadata.dump();
     if (metadataText.size() > 16ull * 1024ull)
         return fail("Overlay metadata exceeds its format limit");
+    std::optional<Bytes> signature;
+    if (signedOverlay) {
+        auto keyText = ReadBoundedRegularFile(signingKeyFile, 256);
+        if (!keyText)
+            return fail("Overlay signing key file is missing or unsafe");
+        const auto first = keyText->find_first_not_of(" \r\n\t");
+        const auto last = keyText->find_last_not_of(" \r\n\t");
+        if (first == std::string::npos)
+            return fail("Overlay signing key file is empty");
+        auto keyHex = keyText->substr(first, last - first + 1);
+        const auto signedHex = SignOverlayMetadata(
+            metadataText, keyHex, baseParsed.manifest.publisherPublicKey);
+        std::fill(keyHex.begin(), keyHex.end(), '\0');
+        std::fill(keyText->begin(), keyText->end(), '\0');
+        if (!signedHex)
+            return fail("Overlay signing key does not match the pinned publisher key");
+        signature.emplace();
+        signature->reserve(64);
+        for (std::size_t index = 0; index < signedHex->size(); index += 2) {
+            const auto nibble = [](const char value) -> std::uint8_t {
+                return value <= '9' ? value - '0' : value - 'a' + 10;
+            };
+            signature->push_back(static_cast<std::uint8_t>(
+                (nibble((*signedHex)[index]) << 4) |
+                nibble((*signedHex)[index + 1])));
+        }
+    }
 
     const auto stagedName =
         px::PathToUtf8(outputPath.filename()) + ".staging-" +
@@ -674,6 +744,9 @@ PackageOverlayBuildResult CreatePackageOverlay(
     addText(kPackageOverlayManifestUri, metadataText);
     addText(kPackageOverlayTargetManifestUri, *targetManifestText);
     addText(kPackageOverlayTargetIndexUri, *targetIndexText);
+    if (signature)
+        writer.AddData(std::string(kPackageOverlaySignatureUri),
+                       std::move(*signature));
     const auto targetKey = targetParsed.manifest.encrypted
         ? std::optional<crypto::Key>{
               crypto::DeriveKey(targetParsed.manifest.archiveKey)}
@@ -744,7 +817,9 @@ PackageOverlayBuildResult CreatePackageOverlay(
                                          current);
                       }))
         return fail("Overlay PDX could not be written from changed resources");
-    const auto verified = VerifyPackageOverlay(base, stagedPdx);
+    const auto verified = signedOverlay
+        ? VerifySignedPackageOverlay(base, stagedPdx)
+        : VerifyPackageOverlay(base, stagedPdx);
     if (!verified.valid || verified.changedResources != changed.size() ||
         verified.tombstones.size() != removed)
         return fail("Created overlay failed verification: " + verified.error);

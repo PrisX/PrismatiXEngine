@@ -25,6 +25,7 @@
 #include "Engine/Graphics/Renderer2D.h"
 #include "Engine/IO/Archive.h"
 #include "Engine/IO/Crypto.h"
+#include "Engine/IO/OverlaySignature.h"
 #include "Engine/IO/PackageVerifier.h"
 #include "Engine/Progression/GameSettings.h"
 #include "Engine/Progression/GlobalProfileStore.h"
@@ -38,6 +39,7 @@
 #include "Engine/SDK/GameCatalogResources.h"
 #include "Engine/SDK/RuntimeIr.h"
 #include "Engine/Session/RuntimeSession.h"
+#include "Engine/Support/Utf8Path.h"
 #include "Engine/UI/UiApplication.h"
 #include "Engine/UI/UIContext.h"
 #include "Engine/UI/Widgets.h"
@@ -954,6 +956,68 @@ int main() {
                          HasDiagnostic(offCurve, "PXPKG1243") &&
                          !std::filesystem::exists(pinned.outputDir),
                      "a correctly shaped off-curve point is rejected");
+    });
+
+    suite.Run("SignedPackageOverlay_RequiresMatchingPublisherKeyAndExactBase", [&] {
+        const auto keys = px::io::GenerateOverlaySigningKeyPair();
+        suite.Require(keys.has_value(), "P-256 overlay signing keys can be generated");
+        const auto keyFile = fixture.path / "publisher-private-key.txt";
+        Write(keyFile, keys->privateKeyHex + "\n");
+        const auto signedBase = fixture.path / "Build/SignedOverlayBase";
+        auto baseRequest = FixtureRequest(root, signedBase);
+        baseRequest.publisherPublicKey = keys->publicKeyHex;
+        suite.Require(px::sdk::RunPackager(baseRequest).Completed(),
+                      "signed overlay base package is built");
+        Write(root / "Content/Overlay/signed.txt", "signed update content");
+        const auto signedTarget = fixture.path / "Build/SignedOverlayTarget";
+        auto targetRequest = FixtureRequest(root, signedTarget);
+        targetRequest.publisherPublicKey = keys->publicKeyHex;
+        targetRequest.inputs.push_back(Input(root, "Content/Overlay/signed.txt"));
+        suite.Require(px::sdk::RunPackager(targetRequest).Completed(),
+                      "signed overlay target package is built");
+        const auto patch = fixture.path / "signed-overlay.pdx";
+        const auto created = px::io::CreatePackageOverlay(
+            signedBase, signedTarget, patch, {}, keyFile);
+        suite.Require(created.created, "signed overlay is created: " + created.error);
+        const auto verified = px::io::VerifySignedPackageOverlay(signedBase, patch);
+        suite.Expect(verified.valid && verified.changedResources == 1,
+                     "signed overlay validates its publisher and changed content");
+        suite.Expect(!px::io::VerifySignedPackageOverlay(output, patch).valid,
+                     "signed overlay rejects a different exact base");
+        px::io::Archive signedArchive;
+        suite.Require(signedArchive.Open(px::PathToUtf8(patch)),
+                      "signed PDX can be opened for tamper test");
+        const auto signature = signedArchive.Read(
+            px::io::kPackageOverlaySignatureUri);
+        suite.Require(signature && signature->size() == 64,
+                      "signed PDX contains a 64-byte signature");
+        auto tamperedBytes = Read(patch);
+        const std::string signatureBytes(signature->begin(), signature->end());
+        const auto signatureOffset = tamperedBytes.find(signatureBytes);
+        suite.Require(signatureOffset != std::string::npos,
+                      "signature bytes occur in the uncompressed PDX");
+        tamperedBytes[signatureOffset] ^= 1;
+        const auto tamperedPatch = fixture.path / "tampered-signed-overlay.pdx";
+        Write(tamperedPatch, tamperedBytes);
+        suite.Expect(!px::io::VerifySignedPackageOverlay(
+                          signedBase, tamperedPatch).valid,
+                     "signed verifier rejects a modified signature");
+        const auto wrongKeys = px::io::GenerateOverlaySigningKeyPair();
+        suite.Require(wrongKeys.has_value(), "second P-256 key pair is generated");
+        const auto wrongKeyFile = fixture.path / "wrong-private-key.txt";
+        Write(wrongKeyFile, wrongKeys->privateKeyHex);
+        const auto wrongPatch = fixture.path / "wrong-signed-overlay.pdx";
+        const auto rejected = px::io::CreatePackageOverlay(
+            signedBase, signedTarget, wrongPatch, {}, wrongKeyFile);
+        suite.Expect(!rejected.created && !std::filesystem::exists(wrongPatch),
+                     "signer cannot publish with a key other than the pinned key");
+        const auto unsignedPatch = fixture.path / "unsigned-pinned-overlay.pdx";
+        suite.Require(px::io::CreatePackageOverlay(
+                          signedBase, signedTarget, unsignedPatch).created,
+                      "explicit unsigned overlay can be created for inspection");
+        suite.Expect(!px::io::VerifySignedPackageOverlay(
+                          signedBase, unsignedPatch).valid,
+                     "Player signed verifier rejects an unsigned overlay");
     });
 
     suite.Run("StableArchiveShardsMountAndReuseTheirOwnCaches", [&] {

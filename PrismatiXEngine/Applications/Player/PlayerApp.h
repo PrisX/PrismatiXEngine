@@ -66,9 +66,10 @@ private:
         std::vector<std::string> extensions;
         std::string graphicsTier = "basic";
         bool packaged = false;
+        bool overlayApplied = false;
         bool valid = false;
     };
-    static Boot LoadBootConfig();
+    static Boot LoadBootConfig(bool allowOverlay = true);
 
     bool Init(int argc, char* argv[]);
     void MainLoop();

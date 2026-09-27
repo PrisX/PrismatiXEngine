@@ -249,10 +249,10 @@ over earlier archives, while directory mounts still win over all archives.
 An overlay may now supply a bounded list of tombstone URIs to hide resources
 from older PDX files. Invalid, duplicate, or conflicting tombstones reject the
 entire mount, and an unreadable overlay entry cannot silently fall back to an
-older copy. These are low-level VFS semantics, not an update protocol: a
-drop-in PDX still needs patch metadata, version validation, manifest/route
-changes, and Player discovery. The current installer instead assembles a
-complete target distribution before launch. The selected native
+older copy. These are low-level VFS semantics. Player now accepts one signed,
+exact-base content update at `Package/updates/active.pdx`; it rejects an
+unsigned or incompatible file and starts the base package. The complete
+distribution `create-patch` / `apply-patch` installer remains available. The selected native
 Packager must understand both package versions; cross-engine upgrades may
 require a full installer rather than this bundle format.
 
@@ -261,7 +261,10 @@ contract](package-overlay.md) now has `prismatix create-overlay` and
 `prismatix verify-overlay`. The creator fully checks both complete input
 distributions and rejects changed Player/runtime files. The verifier checks
 the candidate PDX against exact base and target metadata and all changed
-payloads; it does not make Player load the file.
+payloads. Generate a publisher key pair, pin its public key in both
+distributions, sign the overlay, and use `--require-signature` before
+installing it as `Package/updates/active.pdx`. Ordered multiple overlays and
+optional packs are still separate work.
 
 Never choose Story, Assets, another source input or an unrelated existing folder as output. `pack` is an explicit distribution command; `run` packages and launches. Quote paths containing spaces.
 

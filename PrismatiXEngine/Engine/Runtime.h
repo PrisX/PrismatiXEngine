@@ -33,6 +33,8 @@ struct RuntimeConfig {
     std::vector<std::string> mountDirs = { "." };
     std::vector<std::string> mountArchives;
     std::string archiveKey;
+    std::string overlayArchive;
+    std::vector<std::string> overlayTombstones;
 };
 
 class Runtime {

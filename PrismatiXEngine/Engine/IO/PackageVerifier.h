@@ -17,6 +17,8 @@ inline constexpr std::string_view kPackageOverlayTargetManifestUri =
     "__prismatix_overlay__/target-manifest.json";
 inline constexpr std::string_view kPackageOverlayTargetIndexUri =
     "__prismatix_overlay__/target-content-index.json";
+inline constexpr std::string_view kPackageOverlaySignatureUri =
+    "__prismatix_overlay__/signature.bin";
 
 struct PackageContentVerification {
     bool valid = false;
@@ -53,6 +55,12 @@ struct PackageOverlayVerification {
     const std::filesystem::path& distribution,
     const std::filesystem::path& overlayPath);
 
+// Requires a pinned public key and a valid revision-2 publisher signature.
+// Player must use this entry point before an automatic overlay mount.
+[[nodiscard]] PackageOverlayVerification VerifySignedPackageOverlay(
+    const std::filesystem::path& distribution,
+    const std::filesystem::path& overlayPath);
+
 struct PackageOverlayBuildResult {
     bool created = false;
     std::string error;
@@ -72,6 +80,7 @@ using PackageOverlayBuildProgress = std::function<void(
     const std::filesystem::path& baseDistribution,
     const std::filesystem::path& targetDistribution,
     const std::filesystem::path& outputPath,
-    const PackageOverlayBuildProgress& onProgress = {});
+    const PackageOverlayBuildProgress& onProgress = {},
+    const std::filesystem::path& signingKeyFile = {});
 
 }  // namespace px::io

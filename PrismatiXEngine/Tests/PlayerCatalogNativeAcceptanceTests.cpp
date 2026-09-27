@@ -1,4 +1,6 @@
 #include "Engine/IO/Crypto.h"
+#include "Engine/IO/OverlaySignature.h"
+#include "Engine/IO/PackageVerifier.h"
 #include "Engine/Platform/Input.h"
 #include "Engine/Progression/GameSettings.h"
 #include "Engine/Progression/GlobalProfile.h"
@@ -679,8 +681,13 @@ int main(int argc, char* argv[]) {
         const auto output = fixture.path / "Build/Game";
         CreateProjectFixture(root, contentRoot, fontSource, imageSource,
                              audioSource);
-        const auto packaged = px::sdk::RunPackager(
-            PackageRequest(root, output, player));
+        const auto keys = px::io::GenerateOverlaySigningKeyPair();
+        suite.Require(keys.has_value(), "publisher signing key can be generated");
+        const auto privateKey = fixture.path / "publisher-private-key.txt";
+        Write(privateKey, keys->privateKeyHex + "\n");
+        auto baseRequest = PackageRequest(root, output, player);
+        baseRequest.publisherPublicKey = keys->publicKeyHex;
+        const auto packaged = px::sdk::RunPackager(baseRequest);
         if (!packaged.Completed()) {
             for (const auto& diagnostic : packaged.diagnostics)
                 std::cerr << diagnostic.code << ": " << diagnostic.message
@@ -688,6 +695,23 @@ int main(int argc, char* argv[]) {
         }
         suite.Require(packaged.Completed(),
                       "Packager produces the native Player fixture");
+        Write(root / "Content/Overlay/player-update.txt", "signed update for Player");
+        const auto targetOutput = fixture.path / "Build/Target";
+        auto targetRequest = PackageRequest(root, targetOutput, player);
+        targetRequest.publisherPublicKey = keys->publicKeyHex;
+        targetRequest.inputs.push_back(Input(root, "Content/Overlay/player-update.txt"));
+        const auto targetPackage = px::sdk::RunPackager(targetRequest);
+        suite.Require(targetPackage.Completed(),
+                      "updated native Player fixture is packaged");
+        const auto signedPatch = fixture.path / "signed-player-update.pdx";
+        const auto signedBuild = px::io::CreatePackageOverlay(
+            output, targetOutput, signedPatch, {}, privateKey);
+        suite.Require(signedBuild.created,
+                      "signed Player update is built: " + signedBuild.error);
+        const auto unsignedPatch = fixture.path / "unsigned-player-update.pdx";
+        suite.Require(px::io::CreatePackageOverlay(
+                          output, targetOutput, unsignedPatch).created,
+                      "unsigned Player update fixture is built");
         suite.Require(std::filesystem::is_regular_file(
                           output / "Package/manifest.json"),
                       "packaged output contains its explicit package manifest");
@@ -852,6 +876,50 @@ int main(int argc, char* argv[]) {
                          !std::filesystem::exists(output / "Save/profile.dat") &&
                          !std::filesystem::exists(output / "logs"),
                      "packaged Player imports old saves without writing new data into the distribution");
+
+        const auto activePatch = output / "Package/updates/active.pdx";
+        std::filesystem::create_directories(activePatch.parent_path());
+        std::filesystem::copy_file(signedPatch, activePatch);
+        const auto signedDataRoot = fixture.path / "SignedOverlayUserData";
+        const auto signedLog = signedDataRoot /
+            ("Game " + px::crypto::Sha256Hex(startupManifest.manifest.gameId)) /
+            "logs/PrismatiXPlayer.log";
+        AutomatedChildProcess signedProcess;
+        suite.Require(signedProcess.Start(packagedPlayer, launchDirectory,
+                                          signedDataRoot),
+                      "Player launches with a signed active overlay");
+        suite.Require(WaitForLog(signedLog, "signed overlay=true") &&
+                          WaitForLog(signedLog,
+                                     "Player presentation ready route=title"),
+                      "Player mounts the signed overlay and reaches title");
+        suite.Require(WaitUntil(35s, [&] {
+                          return signedProcess.CompletedExitCode().has_value();
+                      }), "signed-overlay Player completes its native journey");
+        suite.Expect(signedProcess.CompletedExitCode() == 0,
+                     "signed-overlay Player exits cleanly");
+
+        std::filesystem::copy_file(
+            unsignedPatch, activePatch,
+            std::filesystem::copy_options::overwrite_existing);
+        const auto rejectedDataRoot = fixture.path / "RejectedOverlayUserData";
+        const auto rejectedLog = rejectedDataRoot /
+            ("Game " + px::crypto::Sha256Hex(startupManifest.manifest.gameId)) /
+            "logs/PrismatiXPlayer.log";
+        AutomatedChildProcess rejectedProcess;
+        suite.Require(rejectedProcess.Start(packagedPlayer, launchDirectory,
+                                            rejectedDataRoot),
+                      "Player launches with an unsigned active overlay");
+        suite.Require(WaitForLog(rejectedLog,
+                                 "Single-file update was rejected") &&
+                          WaitForLog(rejectedLog, "signed overlay=false") &&
+                          WaitForLog(rejectedLog,
+                                     "Player presentation ready route=title"),
+                      "Player rejects unsigned content and starts the base package");
+        suite.Require(WaitUntil(35s, [&] {
+                          return rejectedProcess.CompletedExitCode().has_value();
+                      }), "base Player completes after rejecting the overlay");
+        suite.Expect(rejectedProcess.CompletedExitCode() == 0,
+                     "base Player exits cleanly after overlay rejection");
     });
     return suite.Finish();
 }

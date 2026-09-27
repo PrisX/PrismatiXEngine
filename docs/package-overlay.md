@@ -1,73 +1,87 @@
-# PDX overlay verification contract (in progress)
+# Signed PDX content overlays
 
-The existing `create-patch` / `apply-patch` commands are the supported update
-workflow. They assemble and verify a complete new distribution. A separate
-**single-file content overlay** can now be built and checked:
+`create-patch` / `apply-patch` still reconstruct and verify a complete new
+distribution. The content-only PDX overlay is a smaller, exact-base update.
+The Player currently supports **one** automatic update at
+`Package/updates/active.pdx` inside a trusted base distribution.
+
+## Publishing a signed update
 
 ```sh
-prismatix create-overlay --base path/to/v1 --target path/to/v2 --output path/to/patch.pdx
-prismatix verify-overlay --base path/to/v1 --patch path/to/patch.pdx
+prismatix overlay-keygen --private path/to/private-key.txt --public path/to/public-key.txt
+prismatix pack game --artifact path/to/artifact --publisher-key path/to/public-key.txt --output path/to/v1
+prismatix pack game --artifact path/to/updated-artifact --publisher-key path/to/public-key.txt --output path/to/v2
+prismatix create-overlay --base path/to/v1 --target path/to/v2 --output path/to/patch.pdx --signing-key path/to/private-key.txt
+prismatix verify-overlay --base path/to/v1 --patch path/to/patch.pdx --require-signature
 ```
 
-The native Packager also accepts `--create-overlay` and `--verify-overlay`
-with absolute paths. Player does **not** discover or mount `patch.pdx` yet.
+The two distributions must have the same game ID, Engine version, publisher
+public key, and non-content runtime files, but distinct package fingerprints.
+The public key is a lowercase, uncompressed SEC1 P-256 point in
+`Package/manifest.json`. It also affects the package fingerprint. Keep the
+private key outside the project and distribution, restrict access to it, and
+back it up securely. `overlay-keygen` refuses to overwrite either output.
 
-An overlay is an unencrypted PDX file readable by the current Archive runtime
-(PDX4 or PDX5) whose virtual resources are exactly:
+After verification, install the PDX as `v1/Package/updates/active.pdx` and
+restart Player. The Player checks the pinned publisher key, signature, exact
+base manifest and index bytes, target metadata, and every changed resource
+before mounting it. It uses the base PDX archives and their original
+decryption key, then mounts the overlay at higher VFS priority and applies
+tombstones for removed resources. Route, Runtime IR, source map, content
+version, and save migration settings come from the signed target manifest.
+If verification fails, Player logs a warning and starts the base package.
+It also retries the base package if Runtime initialization of an accepted
+overlay fails. The installed update file is never modified by Player.
+
+## Format and verification
+
+An overlay is an unencrypted PDX5 file whose virtual resources are exactly:
 
 - `__prismatix_overlay__/manifest.json` (at most 16 KiB)
 - `__prismatix_overlay__/target-manifest.json` (at most 4 MiB)
 - `__prismatix_overlay__/target-content-index.json` (at most 128 MiB)
+- `__prismatix_overlay__/signature.bin` (exactly 64 bytes, signed revision 2)
 - every added or changed target resource, by its original virtual URI
 
-The first document has `format: "PrismatiXPackageOverlay"`,
-`schemaRevision: 1`, `gameId`, `basePackageFingerprint`,
-`targetPackageFingerprint`, and SHA-256 fields named `baseManifestSha256`,
-`baseContentIndexSha256`, `targetManifestSha256`, and
-`targetContentIndexSha256`. The two target documents are copies of the
-Packager-produced `Package/manifest.json` and `Package/content-index.json`.
-The three `__prismatix_overlay__/` names are reserved and cannot be ordinary
-package resources.
+The overlay manifest has `format: "PrismatiXPackageOverlay"`, a
+`schemaRevision` of 1 for unsigned overlays or 2 for signed overlays,
+`gameId`, `basePackageFingerprint`, `targetPackageFingerprint`, and SHA-256
+fields named `baseManifestSha256`, `baseContentIndexSha256`,
+`targetManifestSha256`, and `targetContentIndexSha256`. The two target
+documents copy the Packager-produced `Package/manifest.json` and
+`Package/content-index.json`. The reserved overlay prefix cannot be an
+ordinary package resource.
 
-`verify-overlay` checks the base's exact manifest and index bytes,
-the game's identity and engine version, target manifest/index consistency,
-all added or changed resource sizes and SHA-256 hashes, and that the PDX has
-no missing or unexpected entries. URIs present in the base index but absent
-from the target index become VFS tombstones. Unchanged resources stay in the
-base PDX even when the target's shard assignment differs. A target route,
-entry Runtime IR, source map, save migration, or shader artifact omitted from
-the target index is rejected.
+Revision 2 signs the SHA-256 digest of the exact overlay manifest bytes,
+prefixed with the ASCII bytes `PrismatiXPackageOverlaySignatureV2` and a NUL
+byte. `signature.bin` contains a raw P-256 ECDSA SHA-256 signature in
+`r || s` form. The signed manifest hashes the exact base and target
+documents; the target index hashes every changed payload. Verification
+rejects missing, extra, mismatched, or damaged entries. Unchanged resources
+remain in the base PDX even if the target changes their shard assignment.
 
-`create-overlay` first fully verifies both distributions' PDX contents. It
-rejects a changed Player or other non-content runtime file, extracts only
-new or changed target resources, writes an uncompressed PDX5 using streaming
-file input and a source SHA-256 check, verifies the result, and publishes a
-new output without replacing an existing path. It reports verification,
-extraction, and writing progress. Extraction temporarily uses disk space for
-the changed resources in addition to the output PDX; a large compressed
-source entry may still be buffered by the current Archive reader.
-The creator also rejects a distribution whose manifest or content index changes
-between preflight verification and publication. This narrows an update race;
-it does not make a concurrently writable distribution trustworthy or replace
-publisher authentication.
+`prismatix verify-overlay` checks either revision and verifies signatures
+whenever present. Add `--require-signature` for the Player trust policy; it
+rejects revision 1. Unsigned overlays remain available for explicit
+inspection and are never loaded automatically.
 
-`verify-overlay` does **not** rehash unchanged base PDX payloads, verify the
-target's full authored dependency graph, or authenticate a publisher. The
-creator's full base/target verification is not a substitute for a signed
-update channel. Player boot integration, safe drop-in discovery, rollback,
-and a publisher trust policy remain unfinished. Do not assume placing this
-file beside a game applies it.
+`create-overlay` fully verifies both input distributions, rejects changed
+Player/runtime files, streams changed content into an uncompressed PDX5,
+re-verifies its output, and publishes without replacing an existing file.
+It rechecks manifest and index bytes before publication. Temporary disk space
+is needed for extracted changes; a large compressed source entry may still
+be buffered by the current Archive reader.
 
-For future Player auto-loading, the chosen policy is to pin a publisher public
-key in the trusted base distribution and require a valid signature plus the
-existing exact-base checks before mounting an overlay. The signing format,
-key provisioning, and Player integration are not implemented yet. A distribution
-can now pin an uncompressed SEC1 P-256 public key by passing
-`--publisher-key path/to/public-key.txt` to `prismatix pack` or a distribution
-`build`. The file contains one lowercase hex point (`04` followed by 128 hex
-characters). The key enters `Package/manifest.json` and the package
-fingerprint; overlay creation and verification reject a target that changes
-it. This only records the expected publisher key. It does not sign an overlay
-or make the current unsigned overlay safe to auto-load. Existing
-unsigned overlays remain explicit verification artifacts, not auto-loaded
-updates.
+## Current limits
+
+The Player uses one fixed `active.pdx` path. Arbitrary filenames, ordered
+`patch.pdx` → `patch2.pdx` chains, and independently enabled optional packs
+such as `adult.pdx` are not implemented yet. Those need explicit dependency,
+priority, and activation contracts; Player does not scan all `.pdx` files.
+
+Verification does not rehash unchanged base PDX payloads or independently
+validate the target's entire authored dependency graph. A local process that
+can concurrently rewrite distribution files can still race verification and
+mounting; the base distribution and its Player must be protected by the
+normal installation boundary. Large two-version overlay benchmarks and
+existing-save update acceptance remain outstanding.

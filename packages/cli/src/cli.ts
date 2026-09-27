@@ -92,8 +92,9 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   "verify-package": {values: "runtime packager", flags: ""},
   "create-patch": {values: "base target output runtime packager", flags: ""},
   "apply-patch": {values: "base patch output runtime packager", flags: "in-place"},
-  "create-overlay": {values: "base target output runtime packager", flags: ""},
-  "verify-overlay": {values: "base patch runtime packager", flags: ""},
+  "create-overlay": {values: "base target output signing-key runtime packager", flags: ""},
+  "verify-overlay": {values: "base patch runtime packager", flags: "require-signature"},
+  "overlay-keygen": {values: "private public runtime packager", flags: ""},
 };
 function parseOptions(command: string, args: readonly string[]): Options {
   const schema = commandOptions[command];
@@ -121,7 +122,7 @@ function parseOptions(command: string, args: readonly string[]): Options {
   }
   if (positional.length > 1) throw new Error("Expected one project or save path; quote paths containing spaces");
   if (["plan-patch", "create-patch", "apply-patch", "create-overlay",
-    "verify-overlay"].includes(command) &&
+    "verify-overlay", "overlay-keygen"].includes(command) &&
       positional.length !== 0)
     throw new Error(`${command} uses named paths, not a positional project path`);
   if (flags.has("artifact-only") && flags.has("distribution")) throw new Error("--artifact-only and --distribution cannot be combined");
@@ -2197,7 +2198,7 @@ async function inspectSaveCommand(options: Options): Promise<number> {
   }
 }
 function usage(): void {
-  process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|augment|ids|migrate|inspect-save|plan-patch|verify-package|create-patch|apply-patch|create-overlay|verify-overlay> [project-or-save-or-distribution] [options]\n");
+  process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|augment|ids|migrate|inspect-save|plan-patch|verify-package|create-patch|apply-patch|create-overlay|verify-overlay|overlay-keygen> [project-or-save-or-distribution] [options]\n");
   process.stderr.write("  prismatix pack <project> --artifact <dir> --check [--verify-media]  Validate without creating a distribution\n");
 }
 
@@ -2352,6 +2353,16 @@ async function overlayCommand(command: "create-overlay" | "verify-overlay",
     const nativeArgs = command === "create-overlay"
       ? ["--create-overlay", resolve(base), resolve(target!), resolve(output!)]
       : ["--verify-overlay", resolve(base), resolve(patch!)];
+    const signingKey = options.values.get("signing-key");
+    if (command === "create-overlay" && signingKey !== undefined) {
+      const keyPath = resolve(signingKey);
+      const info = await lstat(keyPath);
+      if (!info.isFile() || info.size === 0 || info.size > 256)
+        throw new Error("Overlay signing key must be a bounded regular file");
+      nativeArgs.push("--signing-key", keyPath);
+    }
+    if (command === "verify-overlay" && options.flags.has("require-signature"))
+      nativeArgs.push("--require-signature");
     const result = await runProcess(packager.path, nativeArgs,
       undefined, undefined, false, packageOutputObserver("Overlay", false));
     const events = packageEvents(result.stdout);
@@ -2390,6 +2401,40 @@ async function overlayCommand(command: "create-overlay" | "verify-overlay",
   }
 }
 
+async function overlayKeygenCommand(options: Options): Promise<number> {
+  const privatePath = options.values.get("private");
+  const publicPath = options.values.get("public");
+  if (privatePath === undefined || publicPath === undefined) {
+    printDiagnostics([diagnostic("PXCLI1517",
+      "overlay-keygen requires --private and --public")]);
+    return 2;
+  }
+  try {
+    const packager = await discoverRuntimeTool("packager", runtimeOptions(options));
+    const result = await runProcess(packager.path,
+      ["--generate-overlay-key", resolve(privatePath), resolve(publicPath)]);
+    const events = packageEvents(result.stdout);
+    const failed = failedPackageDiagnostics(events);
+    if (failed.length > 0) throw new PackagerFailure(failed);
+    if (result.code !== 0 ||
+        !events.some((event) => event.event === "overlay-key-generated"))
+      throw new Error("Native overlay key generation failed or returned an invalid result");
+    process.stdout.write(machineOutput
+      ? `${JSON.stringify({overlayKeyGenerated: true,
+        privatePath: resolve(privatePath), publicPath: resolve(publicPath)})}\n`
+      : `Created overlay signing keys. Keep ${resolve(privatePath)} private; ` +
+        `use ${resolve(publicPath)} with pack --publisher-key.\n`);
+    return 0;
+  } catch (error) {
+    printDiagnostics(error instanceof PackagerFailure ? error.diagnostics :
+      error instanceof RuntimeDiscoveryFailure ? [discoveryDiagnostic("PXCLI1518",
+        "Packager required to generate overlay signing keys was not found", error)] :
+      [diagnostic("PXCLI1518", "Overlay key generation failed", undefined,
+        String(error))]);
+    return 1;
+  }
+}
+
 function patchProgress(value: DistributionPatchProgress): void {
   progress({event: "progress", severity: "information", code: "PXCLI1510",
     phase: value.phase, current: value.files, bytes: value.bytes,
@@ -2406,7 +2451,8 @@ function patchProgress(value: DistributionPatchProgress): void {
 async function projectTool(command: string, options: Options, args: string[]): Promise<number | undefined> {
   if (launcherStopRequested) return 130;
   if (["create", "inspect-save", "plan-patch", "verify-package",
-    "create-patch", "apply-patch", "create-overlay", "verify-overlay"]
+    "create-patch", "apply-patch", "create-overlay", "verify-overlay",
+    "overlay-keygen"]
     .includes(command)) return undefined;
   const location = await resolveProjectPath(options.positional[0]);
   const manifestPath = join(location.root, "package.json");
@@ -2481,6 +2527,7 @@ async function main(): Promise<number> {
   if (command === "apply-patch") return applyPatchCommand(options);
   if (command === "create-overlay" || command === "verify-overlay")
     return overlayCommand(command, options);
+  if (command === "overlay-keygen") return overlayKeygenCommand(options);
   usage(); return 2;
 }
 

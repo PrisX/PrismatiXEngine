@@ -9,8 +9,9 @@
 - `CreatePackageOverlay` 現在比較完整驗證前、後與發布前的兩份 manifest／content index 原始 bytes；驗證回呼期間改寫 target manifest 的測試確認拒絕發布。這降低 metadata TOCTOU 風險，但不能保證同時可寫的 PDX／素材不變，也不是發行者認證。
 - Native Debug 指定的 Packager、Runtime Resources、Player BootSplash CTest 3/3 通過；`npm run cli:build` 與 `npm run cli:test` 104/104 通過。Senren `npm test` 21/21 通過，`npm run validate` 四語 368 scene／31,339 resources 通過。本機 `dist` 目前僅 `senren-banka-psx-authoring-v29` 具有 `Package/content-index.json`；因此還沒有兩份可用於 8 GB `create-overlay` 對照的完整發行版，沒有大型 overlay 時間／記憶體／磁碟量測。
 - 新版 Release Packager 對 Senren `senren-banka-psx-authoring-v29` 執行 `--verify-package` 成功，檢查 1 個 PDX、31,756 筆、8,596,468,270 raw bytes。第二次暖快取（Windows、此機器 C:、Release、同一發行包）耗時 57.27 秒，程序峰值工作集約 63.4 MiB；首次冷一些的讀取依輸出檔時間約 111 秒，但量測腳本結尾格式錯誤，無可信峰值，不能作前後加速比較。這仍不是兩版本 overlay 建立或 Player 驗收。
-- 使用者已選擇 Player 自動載入更新採「基底發行包固定發行者公鑰、驗簽且 exact-base 才掛載」。簽章格式、私鑰交付、Packager／CLI 的簽署產製與 Player 掛載尚未實作；不得將目前 unsigned `patch.pdx` 自動套用。
-- 後續已加入 `pack`／發行版 `build --publisher-key <file>`：公鑰寫入 package manifest 與 package fingerprint，overlay 建立／驗證拒絕換鑰；Native Packager contract 與 CLI 104/104 通過。這是信任根的資料契約，**尚無私鑰簽署、overlay 驗簽或 Player 自動掛載**。
+- 使用者已選擇 Player 自動載入更新採「基底發行包固定發行者公鑰、驗簽且 exact-base 才掛載」。unsigned `patch.pdx` 仍不可自動套用。
+- 後續已加入 `pack`／發行版 `build --publisher-key <file>`：公鑰寫入 package manifest 與 package fingerprint，overlay 建立／驗證拒絕換鑰；Native Packager contract 與 CLI 104/104 通過。
+- 再後續加入 P-256 overlay keygen、revision 2 簽章與 `--signing-key`／`--require-signature`，Player 只檢查固定的 `Package/updates/active.pdx`，驗簽及 exact-base 通過才掛在基底 PDX 之上；失敗回基底，基底 archiveKey 不被目標 manifest 取代。Native Packager contract、CLI overlay 命令測試和 Player Catalog Native Acceptance（含 signed 載入、unsigned 拒絕）通過。這仍只支援**一個** active 更新；使用者希望未來多個依序更新檔與可獨立啟停的 `adult.pdx` 選裝包，尚未實作。
 - Senren `.prismatix` 的舊驗證 artifact 約 8.01 GiB、現有無 ownership marker 的 `artifact` 約 6.67 GiB，以及舊 v28 截圖約 0.05 GiB，均已確認可重建／無腳本引用（現有 `artifact` 為 `pack --artifact` 不可直接使用）。此環境的自動審核仍阻擋對精確路徑的遞迴刪除，**尚未清理任何目錄**。`system-ui-extract`、`motion-source`、ID backup 和舊玩家資料應保留。
 
 交接基準：Engine `1948fac`（`feat: create verified single-file PDX overlays`）；SenrenBankaPSX `61337a8`（`docs: record verified overlay creation status`）。本文件另外提交；若接手時 HEAD 已不同，先核對變更而不是假設這兩個 SHA 仍是最新。
@@ -37,7 +38,7 @@
 | 輸入與設定 | Native keyboard／wheel／具名 action、Player 設定持久化、按鍵捕捉、`KeyBindingButton`、追加鍵、逐鍵移除 API、Delete 清除鍵盤鍵、衝突拒絕、全螢幕動作。Senren 原作 25 項快捷鍵接通 13 項。 | 其餘 12 項仍是占位；`KeyBindingButton` 無逐鍵選擇 UI、原版衝突確認流程、F4 原版尺寸切換；尚未在最新 8 GB 封裝實按或驗舊設定遷移。 |
 | UI／轉場／呈現 | Route/splash/動態 UI 圖片預載、無動畫 route 的 presentation hold、文字描邊排版修補、`.pxmotion` rev 1–11 的圖層、keyframe、atlas frame、音效 marker、基本混合、alpha mask、局部時間、曲線、tint、tickRate 等及 TSX `<Motion>`。部分舊版 Player 做過 22 route 截圖 E2E。 | 無原版 M2 等效轉換；原 `.mtn` 特殊曲線／粒子／複合語意未完整對齊，沒有現在版以原資產做逐幀 frame-time 與視覺一致性驗收。不能再把「沒有 alpha mask」照抄為現況。 |
 | 大型封裝 | 正式 PDX 分片、未變分片重用、壓縮 entry cache、`pack --check`／`--verify-media`、`verify-package`、provenance 安全保留成品／僅替換 runtime、階段進度與 CLI 發布驗證平行化。Senren 曾完整封裝 16 PDX（約 7.50 GiB）並逐筆驗證 31,756 資源／8,594,731,766 原始 bytes。 | 仍沒有完整 dependency-aware／block-level 增量構建；改一個小檔仍可能讀驗大量舊輸入／PDX。以上大容量驗證不涵蓋後續每次改動。 |
-| 更新 | 已有明示執行的目錄補丁 `create-patch`／`apply-patch`；VFS 有 overlay 優先序與 tombstone；單檔 PDX overlay 有 exact-base 驗證，且本輪新增正式產製與 CLI 命令（見下節）。 | `patch.pdx` 丟進遊戲目錄後**不會**自動生效；無發行者認證、Player 掛載／boot 切換、回滾或 Senren 大型更新實測。 |
+| 更新 | 已有明示執行的目錄補丁；單檔 PDX overlay 可建／驗；revision 2 以固定發行者公鑰驗簽，Player 只載入 `Package/updates/active.pdx` 且失敗回基底。 | 任意檔名／多個依序更新及可獨立啟停選裝包尚無契約；舊存檔更新實測與大型雙版本量測未做。 |
 
 上表僅列主線。詳細的成因、SDK 改動、原版差距與每次測試條件，請查 `SenrenBankaPSX/docs/SDK_FEEDBACK.md`；尤其不要把其中舊段落的「未有分片／未有 overlay 產製」照抄成現況。
 
@@ -52,7 +53,7 @@
 | 文字與路由演出 | 已修文字 outline 雙層換行差異、未變文字每幀重排，以及 route crossfade 暗谷／預載閃白。 | 正式單次 layout/mask 的文字效果管線、依事件 author 的白幕／shader／遮罩轉場與通用 route motion graph 缺；最新大型封裝與原版逐幀對照未做。 |
 | `.pxmotion`／Story 動畫 | 格式已演進至 rev 11，TSX UI／splash 可播；Story `[timeline]` 已可控 `.pxanim`／`.pxtimeline` 的 await/speed。 | `.pxmotion` **仍不能直接由 Story／Stage 播放**，需設計呈現、預載、等待及存檔還原契約。M2 `.mtn` 轉換器／逐幀驗證暫停；不要重新把它列為優先工作。 |
 | 輸入／設定 | `.pxgame.inputActions` 有 context、key、wheel、route／`uiAction`；捕捉／追加／逐鍵移除／整組清除可保存。 | 逐鍵選擇 UI、使用者改 wheel、衝突確認 UI、非 Player host 保存責任尚未收尾；需 E2E 核對舊設定。原作剩餘 12 項與多數 settings.noop 須先判別可攜 SDK 能力，不能一律當作 SDK 缺陷。 |
-| 更新與持久化 | 可顯式安裝目錄補丁；新 overlay 可建／驗；Player 資料已移至 per-user 位置以免污染 distribution。 | Drop-in PDX 的 Player 自動套用、信任／回滾、舊版 save key／save migration 的新版 Player 實測均缺；不要把 read-only migration 錨點檢查當存讀檔相容驗證。 |
+| 更新與持久化 | 可顯式安裝目錄補丁；簽章 active overlay 可建／驗／由 Player 載入或回基底；Player 資料已移至 per-user 位置以免污染 distribution。 | 多檔更新鏈、選裝包、舊版 save key／save migration 的新版 Player 實測均缺；不要把 read-only migration 錨點檢查當存讀檔相容驗證。 |
 | 發行效能 | 16 分片、Release Packager、未變片重用、preflight／media 驗證、runtime-only refresh 已有真實大型量測。 | 日常素材變更仍做 O(全量素材) 的多輪核驗；缺依賴級／block-level 安全增量、同條件長期吞吐與磁碟峰值量測、最新 overlay 的 8 GB 壓力測試。 |
 | 平台／原作特有功能 | rule/shake/影片、主要 UI 與基本 flowchart 可運行。 | 老闆鍵／置頂／語音分流／Steam 等是否抽成可攜 SDK API 尚需取捨；不要為了 Senren 外觀宣稱這些設定已生效。 |
 
@@ -70,7 +71,7 @@ Engine `docs/package-overlay.md` 是格式規格和安全邊界。這一輪已�
 
 ## 未完成工作：下一位 agent 的建議順序
 
-1. **先做安全的 Player 單檔 overlay 整合，不要直接掃描所有 `.pdx` 並執行。** `PlayerApp::LoadBootConfig` 現只讀基本 `Package/manifest.json`，`Runtime::Init` 依 `RuntimeConfig.mountArchives` 和共用 `archiveKey` 掛基底 PDX。需定義 drop-in 路徑／檔名、exact-base 契約、資源 overlay/tombstone、target manifest/route/source-map/save migration 載入點、失敗回退與玩家可診斷錯誤。舊包加密金鑰不能被 target manifest 的金鑰意外替換。外來檔案若未簽章，不能把 payload SHA-256 一致性誤當發行者身分；在自動載入之前，先確認威脅模型／信任政策。用舊版存檔、錯版、竄改檔、刪除資源與重啟覆蓋做 Player E2E。若需要新增發行者簽章或改發布流程，先明確提案／取得使用者方向。
+1. **擴充並驗收已簽章的單檔更新。** `PlayerApp::LoadBootConfig` 現只從 `Package/updates/active.pdx` 驗簽且 exact-base 成功後讀 target manifest，`Runtime::Init` 以基底 archiveKey 掛原片，再掛 overlay/tombstones；失敗回基底。下一步須支援明確排序的多版本鏈（如 `patch.pdx` → `patch2.pdx`）、可獨立啟停的 `adult.pdx` 選裝包、舊版存檔與 migration、刪除資源及重啟覆蓋的 Player E2E。不得直接掃描所有 `.pdx` 執行，也不能把 unsigned payload SHA-256 當發行者認證。
 2. **把新 overlay producer 在實際 Senren 版上驗收**：用兩個實際完整發行版測 `create-overlay`／`verify-overlay`，量測總時間、暫存／最終磁碟、峰值記憶體、patch 大小、壓縮大 entry；小型 contract 不代表 8 GB 封裝可接受。若目前只有同一版成品，先用隔離副本與可重現小變更，勿改寫已交付 `dist`。
 3. **真正的增量 authoring/build/packaging**：現已有 16 片重用與 Release Packager 大幅改善，但小改仍要對約 31,000 個檔與約 8.2 GiB 素材做多輪安全核驗。後續應先 profile「source hash／四語結構驗證／舊 PDX 驗證／staging 發布」，設計有失效條件的依賴／驗證 cache，保留 TOCTOU 與 ownership 安全性。歷史量測：Release Packager 同版 16/16 分片重封約 96.30 秒、14/16 小變更約 110.58 秒；不同快取與磁碟條件，不能當 SLA。僅更新 Player 的 `refresh-runtime` 曾約 23.19 秒。詳見 `SDK_FEEDBACK.md` 當日段落。
 4. **跨層 Authoring 合約與大型 importer**：針對 UI/Action/runtime property、動態 ViewModel、依賴圖漏資源、source-location diagnostics 建 regression；讓 92 scene × 四語的匯入能增量／串流，清楚區分 `compileStory` 與 `compileStoryProject`。先從真實移植 importer 的重複 workaround 提取通用 API，不要把專案特例硬塞 stock Player。

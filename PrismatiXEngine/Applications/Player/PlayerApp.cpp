@@ -2,6 +2,7 @@
 
 #include "Engine/Graphics/Screenshot.h"
 #include "Engine/Diagnostics/Diagnostic.h"
+#include "Engine/IO/PackageVerifier.h"
 #include "Engine/Progression/AwaitedWork.h"
 #include "Engine/Progression/GlobalProfileStore.h"
 #include "Engine/Progression/UserDataLocation.h"
@@ -267,7 +268,7 @@ std::optional<Variant> JsonVariant(const nlohmann::json& value, const int depth 
 }
 }
 
-PlayerApp::Boot PlayerApp::LoadBootConfig() {
+PlayerApp::Boot PlayerApp::LoadBootConfig(const bool allowOverlay) {
     Boot boot;
     boot.config.title = "PrismatiX Player";
     boot.config.mountDirs.clear();
@@ -289,7 +290,44 @@ PlayerApp::Boot PlayerApp::LoadBootConfig() {
         }
         return boot;
     }
-    const auto& package = parsed.manifest;
+    auto effectivePackage = parsed.manifest;
+    constexpr std::string_view overlayPath = "Package/updates/active.pdx";
+    if (allowOverlay) {
+        std::error_code overlayError;
+        const auto status = std::filesystem::symlink_status(
+            std::filesystem::path(overlayPath), overlayError);
+        if (!overlayError && status.type() != std::filesystem::file_type::not_found) {
+            const auto verified = io::VerifySignedPackageOverlay(
+                std::filesystem::current_path(),
+                std::filesystem::path(overlayPath));
+            if (verified.valid) {
+                const auto target = sdk::detail::ParsePackageManifest(
+                    verified.targetManifestJson);
+                if (target.Valid()) {
+                    effectivePackage = target.manifest;
+                    boot.config.overlayArchive = std::string(overlayPath);
+                    boot.config.overlayTombstones = verified.tombstones;
+                    boot.overlayApplied = true;
+                }
+            }
+            if (!boot.overlayApplied)
+                diag::Emit(diag::Diagnostic{
+                    .severity = diag::Severity::Warning,
+                    .code = "PXPLAYER5014",
+                    .category = "Player.Boot",
+                    .message = "Single-file update was rejected; starting the base package",
+                    .details = verified.error});
+        } else if (overlayError &&
+                   overlayError != std::errc::no_such_file_or_directory) {
+            diag::Emit(diag::Diagnostic{
+                .severity = diag::Severity::Warning,
+                .code = "PXPLAYER5014",
+                .category = "Player.Boot",
+                .message = "Single-file update could not be inspected; starting the base package",
+                .details = overlayError.message()});
+        }
+    }
+    const auto& package = effectivePackage;
     boot.packaged = true;
     boot.config.title = package.title;
     boot.gameId = package.gameId;
@@ -321,9 +359,9 @@ PlayerApp::Boot PlayerApp::LoadBootConfig() {
                 {artifact.format, artifact.asset, artifact.fingerprint});
         boot.config.customEffects.push_back(std::move(descriptor));
     }
-    for (const auto& archive : package.archives)
+    for (const auto& archive : parsed.manifest.archives)
         boot.config.mountArchives.push_back(archive.file);
-    boot.config.archiveKey = package.archiveKey;
+    boot.config.archiveKey = parsed.manifest.archiveKey;
     boot.config.width = boot.config.logicalWidth = package.width;
     boot.config.height = boot.config.logicalHeight = package.height;
     boot.startScript = package.startRuntimeIr;
@@ -332,9 +370,9 @@ PlayerApp::Boot PlayerApp::LoadBootConfig() {
     for (const auto& route : package.routes)
         boot.routeScenes.emplace(route.id, route.scene);
     if (package.persistenceKeyId.empty()) {
-        boot.saveSecret = package.archiveKey.empty()
-                              ? package.packageFingerprint
-                              : package.archiveKey;
+        boot.saveSecret = parsed.manifest.archiveKey.empty()
+                              ? parsed.manifest.packageFingerprint
+                              : parsed.manifest.archiveKey;
     } else {
         boot.persistenceDataId = package.persistenceDataId;
         boot.persistenceKeyId = package.persistenceKeyId;
@@ -342,8 +380,8 @@ PlayerApp::Boot PlayerApp::LoadBootConfig() {
             boot.legacyPersistenceSecrets.push_back(reader.secret);
     }
     boot.valid = true;
-    PX_LOG_INFO("Packaged build: mounting {} content group(s)",
-                boot.config.mountArchives.size());
+    PX_LOG_INFO("Packaged build: mounting {} content group(s), signed overlay={}",
+                boot.config.mountArchives.size(), boot.overlayApplied);
     return boot;
 }
 
@@ -645,7 +683,17 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         PX_LOG_INFO("Player user data directory={} legacySavesImported={}",
                     PathToUtf8(userData.Value()), imported.Value());
     }
-    if (!m_runtime.Init(m_boot.config)) {
+    bool runtimeReady = m_runtime.Init(m_boot.config);
+    if (!runtimeReady && m_boot.overlayApplied) {
+        diag::Emit(diag::Diagnostic{
+            .severity = diag::Severity::Warning,
+            .code = "PXPLAYER5015",
+            .category = "Player.Boot",
+            .message = "Signed update could not start; retrying the base package"});
+        m_boot = LoadBootConfig(false);
+        runtimeReady = m_boot.valid && m_runtime.Init(m_boot.config);
+    }
+    if (!runtimeReady) {
         if (m_boot.graphicsTier == "gpu-effects")
             diag::Emit(diag::Diagnostic{
                 .severity = diag::Severity::Fatal,
