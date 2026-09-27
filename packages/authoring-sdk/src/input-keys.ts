@@ -1,4 +1,5 @@
-import type {AuthoringDiagnostic, GameDocument} from "./types.js";
+import {jsonPointerSpans} from "./json-source-spans.js";
+import type {AuthoringDiagnostic, GameDocument, SourceSpan} from "./types.js";
 
 /** Key names exported from the selected native Runtime's Input::KeyCode table. */
 export interface InputKeyRegistryMetadata {
@@ -29,27 +30,33 @@ function nearKeyName(name: string, keys: readonly string[]): string | undefined 
 }
 
 export function validateInputKeyUsage(game: GameDocument, path: string,
-  registry: InputKeyRegistryMetadata): AuthoringDiagnostic[] {
+  registry: InputKeyRegistryMetadata, source?: string): AuthoringDiagnostic[] {
   // The manifest contains spellings verified by Input::KeyCode, including the
   // case-sensitive historical "Enter" alias. Do not infer other spellings.
   const accepted = new Set(registry.keys);
   const diagnostics: AuthoringDiagnostic[] = [];
-  const check = (key: string, owner: string): void => {
+  let spans: ReadonlyMap<string, SourceSpan> | undefined;
+  const check = (key: string, owner: string, pointer: string): void => {
     if (accepted.has(key)) return;
     const suggestion = nearKeyName(key, registry.keys);
+    const span = (spans ??= jsonPointerSpans(source, game, path)).get(pointer);
     diagnostics.push({severity: "error", code: "PXBUILD1068",
       message: "Input key name is not recognized by the selected native Runtime",
       path, details: `${owner}: ${key}`,
+      ...(span === undefined ? {} : {span}),
       hint: suggestion === undefined
         ? "Use a key name from PrismatiXInputKeyRegistry.json beside the selected Runtime."
         : `Did you mean "${suggestion}"? Use a spelling from PrismatiXInputKeyRegistry.json.`});
   };
-  for (const action of game.inputActions ?? [])
-    for (const key of action.keys ?? []) check(key, `inputActions.${action.id}`);
+  for (const [actionIndex, action] of (game.inputActions ?? []).entries())
+    for (const [keyIndex, key] of (action.keys ?? []).entries())
+      check(key, `inputActions.${action.id}`,
+        `/inputActions/${actionIndex}/keys/${keyIndex}`);
   for (const [index, entry] of (game.inputBindings ?? []).entries()) {
     if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
     const key = entry.key;
-    if (typeof key === "string") check(key, `inputBindings[${index}]`);
+    if (typeof key === "string") check(key, `inputBindings[${index}]`,
+      `/inputBindings/${index}/key`);
   }
   return diagnostics;
 }

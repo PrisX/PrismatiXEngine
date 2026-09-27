@@ -87,7 +87,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   pack: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space check verify-media"},
   run: {values: "output artifact runtime packager player compression archive-shards ui-registry publisher-key previous-package", flags: "encrypt ignore-disk-space"},
   augment: {values: "artifact manifest", flags: ""},
-  ids: {values: "document-id prefix backup", flags: "write check external inline sync"},
+  ids: {values: "document-id prefix backup", flags: "write check external inline sync accept-removals"},
   migrate: {values: "report backup entry-story entry-ui supported-locales save-version id name version content-version default-locale story-index game-catalog", flags: "write"},
   "inspect-save": {values: "package secret runtime player", flags: ""},
   "plan-patch": {values: "base target runtime packager", flags: "verify-contents"},
@@ -2299,6 +2299,19 @@ async function syncExternalIdsCommand(collection: Awaited<ReturnType<typeof iden
   }
   const changes = plans.filter((plan) => plan.updatedText !== undefined);
   const write = options.flags.has("write");
+  const removedOperations = plans.flatMap((plan) => plan.removedOperations.map((operation) =>
+    ({path: plan.value.virtualPath, ...operation})));
+  if (write && removedOperations.length > 0 && !options.flags.has("accept-removals")) {
+    const refusal = diagnostic("PXSTORY1418",
+      "Story identity sync removed saved operation anchors; review old saves and migration before writing the sidecar",
+      removedOperations[0]!.path,
+      "Preview with ids --sync; after reviewing the listed removals, rerun with --sync --write --accept-removals.");
+    printDiagnostics([refusal]);
+    process.stdout.write(`${JSON.stringify({sync: true, dryRun: true,
+      changed: changes.length, removedOperations,
+      diagnostics: [refusal]}, null, 2)}\n`);
+    return 1;
+  }
   let backup: string | undefined;
   if (write && changes.length > 0) {
     // Preflight the entire batch before modifying any source. A second check
@@ -2333,8 +2346,7 @@ async function syncExternalIdsCommand(collection: Awaited<ReturnType<typeof iden
       ({path: plan.value.virtualPath, identity}))),
     addedOperations: plans.flatMap((plan) => plan.addedOperations.map((operation) =>
       ({path: plan.value.virtualPath, ...operation}))),
-    removedOperations: plans.flatMap((plan) => plan.removedOperations.map((operation) =>
-      ({path: plan.value.virtualPath, ...operation}))),
+    removedOperations,
     ...(backup === undefined ? {} : {backup}),
     reports: changes.map((plan) => ({path: plan.value.virtualPath,
       preserved: plan.preserved, added: plan.added, removed: plan.removed,
@@ -2442,6 +2454,9 @@ async function idsCommand(options: Options): Promise<number> {
       throw new Error("--inline and --external are mutually exclusive");
     if (options.flags.has("inline") && options.flags.has("sync"))
       throw new Error("--sync updates external identity maps; omit --inline");
+    if (options.flags.has("accept-removals") &&
+        (!options.flags.has("sync") || !options.flags.has("write")))
+      throw new Error("--accept-removals requires ids --sync --write");
     const collection = await identitySources(options.positional[0]);
     if (options.flags.has("sync")) return syncExternalIdsCommand(collection, options);
     const mapsExist = (await Promise.all(collection.sources.map((value) =>

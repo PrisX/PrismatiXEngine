@@ -690,7 +690,8 @@ test("ids --sync previews changes, backs up only sidecars, and preserves publish
   const value = await fixture();
   const sourcePath = join(value.root, "Story", "main.pxstory");
   const mapPath = `${sourcePath}.pxids.json`;
-  assert.equal(run(["ids", value.project, "--external", "--write"]).status, 0);
+  const externalized = run(["ids", value.project, "--external", "--write"]);
+  assert.equal(externalized.status, 0, externalized.stderr);
   const beforeArtifact = join(value.root, "sync-before-artifact");
   assert.equal(run(["build", value.project, "--artifact-only", "--output", beforeArtifact]).status, 0);
   const originalMap = await readFile(mapPath, "utf8");
@@ -755,6 +756,20 @@ test("ids --sync previews changes, backs up only sidecars, and preserves publish
   assert.equal(removalReport.removedOperations[0]!.kind, "narration");
   assert.match(removalReport.removedOperations[0]!.identity, /^source:story-[0-9a-f]{16}$/u);
   assert.equal(await readFile(mapPath, "utf8"), updatedMap);
+  assert.equal(run(["ids", value.project, "--sync", "--accept-removals"]).status, 1);
+  const refusedRemoval = run(["ids", value.project, "--sync", "--write"]);
+  assert.equal(refusedRemoval.status, 1);
+  assert.match(refusedRemoval.stderr, /PXSTORY1418/u);
+  assert.equal((JSON.parse(refusedRemoval.stdout) as {removedOperations: unknown[]})
+    .removedOperations.length, 1);
+  assert.equal(await readFile(mapPath, "utf8"), updatedMap);
+  const removalBackup = join(value.root, "removal-backup");
+  const acceptedRemoval = run(["ids", value.project, "--sync", "--write",
+    "--accept-removals", "--backup", removalBackup]);
+  assert.equal(acceptedRemoval.status, 0, acceptedRemoval.stderr);
+  assert.equal(await readFile(join(removalBackup, "Story", "main.pxstory.pxids.json"), "utf8"),
+    updatedMap);
+  assert.equal(run(["validate", value.project]).status, 0);
 });
 
 test("validate and build use the same canonical project compiler", async () => {

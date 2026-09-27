@@ -21,7 +21,7 @@ These examples use the public Story compiler in `packages/authoring-sdk/src/stor
 [end]
 ```
 
-An empty line ends speaker scope. Labels use `*name`; choices use `text` and `goto`, jumps use `target`. A generated project's adjacent `.pxids.json` keeps save identities without `[id ...]` in the prose. Prose rewrites retain their identities; for added or removed executable lines, review `prismatix ids <project> --sync` and then run `--sync --write`. Do not delete the Story's `; @prismatix-ids` marker or the sidecar. Changing routes, resources or variable schemas still requires a deliberate migration test against old saves. Identity stability does not by itself prove compatibility.
+An empty line ends speaker scope. Labels use `*name`; choices use `text` and `goto`, jumps use `target`. A generated project's adjacent `.pxids.json` keeps save identities without `[id ...]` in the prose. Prose rewrites retain their identities; for added or removed executable lines, review `prismatix ids <project> --sync` and then run `--sync --write`. Removing an old operation requires `--accept-removals` when writing the sidecar, after reviewing old saves and migration. Do not delete the Story's `; @prismatix-ids` marker or the sidecar. Changing routes, resources or variable schemas still requires a deliberate migration test against old saves. Identity stability does not by itself prove compatibility.
 
 ## Characters, backgrounds and sound
 

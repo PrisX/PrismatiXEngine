@@ -244,18 +244,23 @@ test("project compilation reports unresolved key-binding buttons before Player s
 });
 
 test("project compilation checks keyboard defaults against a native key registry", () => {
-  const compile = (actionKey: string, legacyKey: string) => compileProject({project,
-    inputKeyRegistry: {format: "PrismatiXInputKeyRegistry", schemaRevision: 1,
-      keys: ["Enter", "Escape", "F8"]},
-    documents: {"Story/story.pxindex": storyIndex,
-      "Content/game.pxgame": {...game,
+  const compile = (actionKey: string, legacyKey: string,
+    sourceOverride?: string) => {
+    const catalog = {...game,
         inputActions: [{id: "quick-save", context: "game", keys: [actionKey]}],
-        inputBindings: [{key: legacyKey, command: "screen.open", argument: "settings"}]},
-      "Content/UI/Title.pxui": ui},
-    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
-      locale: "zh-TW", strings: {}}},
-  });
+        inputBindings: [{key: legacyKey, command: "screen.open", argument: "settings"}]};
+    return compileProject({project,
+      inputKeyRegistry: {format: "PrismatiXInputKeyRegistry", schemaRevision: 1,
+        keys: ["Enter", "Escape", "F8"]},
+      documents: {"Story/story.pxindex": storyIndex,
+        "Content/game.pxgame": catalog, "Content/UI/Title.pxui": ui},
+      documentSources: {"Content/game.pxgame": sourceOverride ??
+        JSON.stringify(catalog, null, 2)},
+      sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+      locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+        locale: "zh-TW", strings: {}}},
+    });
+  };
   assert.equal(compile("F8", "Enter").valid, true);
   const invalid = compile("F88", "Escap");
   assert.equal(invalid.valid, false);
@@ -265,6 +270,15 @@ test("project compilation checks keyboard defaults against a native key registry
     item.path === "Content/game.pxgame"));
   assert.match(invalid.diagnostics.find((item) => item.details?.endsWith("F88"))?.hint ?? "", /F8/u);
   assert.match(invalid.diagnostics.find((item) => item.details?.endsWith("Escap"))?.hint ?? "", /Escape/u);
+  for (const [key, token] of [["F88", '"F88"'], ["Escap", '"Escap"']] as const) {
+    const item = invalid.diagnostics.find((diagnostic) => diagnostic.code === "PXBUILD1068" &&
+      diagnostic.details?.endsWith(key));
+    assert.equal(item?.span?.path, "Content/game.pxgame");
+    assert.equal(item.span.end.offset - item.span.start.offset, Buffer.byteLength(token));
+  }
+  const stale = compile("F88", "Escap", JSON.stringify({...game, inputActions: [], inputBindings: []}));
+  assert.ok(stale.diagnostics.filter((item) => item.code === "PXBUILD1068")
+    .every((item) => item.span === undefined));
 });
 
 test("compileProject validates extension UI Actions and packages typed resource arguments", () => {

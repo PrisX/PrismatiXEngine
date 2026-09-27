@@ -553,7 +553,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   if (game !== undefined) {
     if (input.inputKeyRegistry !== undefined)
       diagnostics.push(...validateInputKeyUsage(game, project.gameCatalog,
-        input.inputKeyRegistry));
+        input.inputKeyRegistry, input.documentSources?.[project.gameCatalog]));
     const routes = new Set(["title", "hud", "backlog", "save", "load",
       "gallery", "settings", "video", ...Object.keys(project.uiEntryPoints)]);
     for (const [index, action] of (game.inputActions ?? []).entries()) if (action.route !== undefined &&
