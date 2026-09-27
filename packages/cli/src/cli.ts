@@ -254,18 +254,19 @@ function jsxObjectProperty(value: ts.Expression, name: string,
 
 function jsxAttributeValue(opening: JsxOpening, path: readonly string[],
   ast: ts.SourceFile): ts.Node | undefined {
-  let found: ts.JsxAttribute | undefined;
+  let found: ts.Node | undefined;
   for (const attribute of opening.attributes.properties) {
     if (ts.isJsxSpreadAttribute(attribute)) {
-      found = undefined;
+      // An inline object literal has the same overwrite order as JSX props.
+      // Dynamic spreads remain unknown and clear any earlier candidate.
+      found = jsxObjectProperty(attribute.expression, path[0]!, ast);
       continue;
     }
-    if (attribute.name.getText(ast) === path[0]) found = attribute;
+    if (attribute.name.getText(ast) === path[0]) found = attribute.initializer;
   }
-  const initializer = found?.initializer;
-  if (initializer === undefined) return undefined;
-  let value: ts.Expression | undefined = ts.isJsxExpression(initializer)
-    ? initializer.expression : initializer;
+  if (found === undefined) return undefined;
+  let value: ts.Expression | undefined = ts.isJsxExpression(found)
+    ? found.expression : found as ts.Expression;
   for (const segment of path.slice(1)) {
     if (value === undefined) return undefined;
     value = jsxObjectProperty(value, segment, ast);

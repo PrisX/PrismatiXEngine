@@ -1222,6 +1222,36 @@ export function MissingImage() {
   }
 });
 
+test("validate locates resource errors inside a static JSX prop spread", async () => {
+  const value = await fixture();
+  try {
+    const project = JSON.parse(await readFile(value.project, "utf8")) as {
+      uiEntryPoints: Record<string, string>;
+    };
+    project.uiEntryPoints.title = "Content/UI/Title.tsx";
+    await write(value.project, JSON.stringify(project));
+    const source = `import {Image, Scene, VBox} from "@prismatix/authoring-sdk";
+export default <Scene name="Title" width={1280} height={720}>
+  <VBox name="Root"><Image {...{name: "Missing", path: "Assets/UI/spread-missing.png"}} /></VBox>
+</Scene>;
+`;
+    await write(join(value.root, "Content/UI/Title.tsx"), source);
+    const validated = run(["validate", value.project]);
+    assert.equal(validated.status, 1, validated.stderr);
+    const diagnostics = validated.stderr.split(/\r?\n/u).filter(Boolean).flatMap((line) => {
+      try { return [JSON.parse(line) as {code: string; span?: {path: string;
+        start: {offset: number}; end: {offset: number}}}]; }
+      catch { return []; }
+    });
+    const issue = diagnostics.find((item) => item.code === "PXBUILD1044");
+    assert.equal(issue?.span?.path, "Content/UI/Title.tsx", validated.stderr);
+    assert.equal(source.slice(issue.span.start.offset, issue.span.end.offset),
+      '"Assets/UI/spread-missing.png"');
+  } finally {
+    await rm(value.root, {recursive: true, force: true});
+  }
+});
+
 test("validate locates a cross-layer TSX binding error at its JSX value", async () => {
   const value = await fixture();
   try {
