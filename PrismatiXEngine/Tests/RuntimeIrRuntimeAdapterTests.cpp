@@ -536,6 +536,37 @@ int main() {
     assert(clearStage.CaptureState().actors.empty());
     assert(clearStage.BackgroundPath() == "Assets/background.webp");
 
+    px::vn::GameCatalog localizedCatalog;
+    bool charactersDeclared = false;
+    constexpr std::string_view localizedCharacterId =
+        "11111111-1111-4111-8111-111111111111";
+    const auto localizedCatalogStatus = localizedCatalog.LoadCharacterResources(
+        R"({"format":"PrismatiXProject","schemaRevision":2,"assets":[],"characters":[{"id":"11111111-1111-4111-8111-111111111111","displayName":"凛","source":"Characters/rin.pxcharacter"}]})",
+        [](std::string_view) -> std::optional<std::string> {
+            return R"({"format":"PrismatiXCharacter","schemaRevision":2,"id":"11111111-1111-4111-8111-111111111111","displayName":"凛","displayNames":{"ja-JP":"リン"},"expressions":[]})";
+        },
+        [](std::string_view) { return false; }, charactersDeclared);
+    assert(localizedCatalogStatus.IsOk());
+    assert(charactersDeclared);
+    clearVm.SetGameCatalog(localizedCatalog);
+    const auto playSay = [&](const std::string_view locale,
+                             const std::string_view explicitSpeaker = {}) {
+        clearVm.SetCharacterLocale(std::string(locale));
+        px::vn::Program lines;
+        px::vn::Command say;
+        say.type = "say";
+        say.args = {{"char", std::string(localizedCharacterId)},
+                    {"text", "Hello"}};
+        if (!explicitSpeaker.empty())
+            say.args.push_back({"speaker", std::string(explicitSpeaker)});
+        lines.code.push_back(std::move(say));
+        assert(clearVm.LoadCompiledProgram(std::move(lines), "memory://localized-say"));
+        return clearDialogue.State().speaker;
+    };
+    assert(playSay("ja-JP") == "リン");
+    assert(playSay("zh-TW") == "凛");
+    assert(playSay("ja-JP", "Authored speaker") == "Authored speaker");
+
     px::sdk::RuntimeIrDocument unknownDocument;
     unknownDocument.documentId = "unknown-operation";
     unknownDocument.committedRevision = 1;

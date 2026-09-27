@@ -644,6 +644,7 @@ bool PlayerApp::LoadLocale(std::string locale, const bool refreshPresentation) {
 
     m_langTable = std::move(candidate);
     m_settings.language = std::move(locale);
+    m_session->VM().SetCharacterLocale(m_settings.language);
     m_script = runtimePath;
     if (!replacingRunningProgram && m_appState == AppState::Title &&
         m_runtimePreloadPath != m_script)

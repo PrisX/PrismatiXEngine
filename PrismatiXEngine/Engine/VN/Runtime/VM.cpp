@@ -775,7 +775,7 @@ void VM::HandleSay(const Command& cmd, const bool recordPlayback) {
     const std::string character = cmd.Get("char", cmd.Get("character"));
     std::string speaker = cmd.Has("speaker") ? cmd.Get("speaker") : m_speaker;
     if (!cmd.Has("speaker") && !character.empty()) {
-        speaker = m_catalog.CharacterDisplayName(character);
+        speaker = m_catalog.CharacterDisplayName(character, m_characterLocale);
     }
     if (cmd.Has("speaker") || !character.empty()) m_speaker = speaker;
     if (cmd.Has("color")) m_textColor = ParseColor(cmd.Get("color"), m_textColor);

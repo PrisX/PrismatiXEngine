@@ -144,6 +144,9 @@ public:
     void SetTextFilter(std::function<std::string(const std::string&, const std::string&)> filter) {
         m_textFilter = std::move(filter);
     }
+    void SetCharacterLocale(std::string locale) {
+        m_characterLocale = std::move(locale);
+    }
     // Read-text tracking: called with "script:line" for every dialogue line;
     // returns whether that line was already seen (既讀). Drives skip-read-only.
     void SetSeenHook(std::function<bool(const std::string& key)> hook) {
@@ -332,6 +335,7 @@ private:
         m_diagnosticSourceResolver;
 
     std::string m_speaker;
+    std::string m_characterLocale;
     std::string m_pendingVoice;  // set by a [text voice=...] header, consumed by the next say
     GameCatalog m_catalog;
     std::unordered_map<std::string, std::string> m_voiceDirs;

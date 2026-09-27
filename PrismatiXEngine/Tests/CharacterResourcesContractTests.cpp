@@ -96,6 +96,7 @@ int main() {
         const auto& character = loaded.document.characters.front();
         suite.Expect(
             character.id == kCharacterId && character.displayName == "凛" &&
+                character.displayNames.at("ja-JP") == "リン" &&
                 character.aliases.size() == 1 &&
                 character.aliases.front() == "rin" &&
                 character.voiceDirectory == "Content/Audio/Voice/Rin" &&
@@ -164,12 +165,53 @@ int main() {
                       "legacy character alias resolves to stable UUID");
         suite.Expect(catalog.FindCharacter("RIN") == nullptr,
                      "legacy lookup remains exact-case like GameCatalog");
+        suite.Expect(catalog.CharacterDisplayName(kCharacterId, "ja-JP") == "リン" &&
+                         catalog.CharacterDisplayName("rin", "zh-TW") == "凛" &&
+                         catalog.FindCharacter("リン") == nullptr,
+                     "localized presentation falls back without changing stable lookup keys");
         const auto* expression =
             catalog.FindExpression(*character, "neutral");
         suite.Expect(expression != nullptr &&
                          expression->id == kExpressionId &&
                          expression->image.id.ToString() == kAssetId,
                      "legacy expression alias resolves to stable expression and resource UUID");
+    });
+
+    suite.Run("InvalidLocalizedNamesAreDiagnosed", [&] {
+        const auto check = [&](const std::string_view replacement) {
+            auto document = Character();
+            constexpr std::string_view original =
+                R"("displayNames":{"ja-JP":"リン"})";
+            const auto offset = document.find(original);
+            suite.Require(offset != std::string::npos,
+                          "test fixture has displayNames");
+            document.replace(offset, original.size(), replacement);
+            return Load(Manifest(),
+                        {{std::string(kCharacterPath), std::move(document)},
+                         {std::string(kAssetPath), "png"}});
+        };
+        suite.Expect(HasCode(check(R"("displayNames":[])"), "PXCHAR1031"),
+                     "displayNames rejects an array");
+        suite.Expect(HasCode(check(R"("displayNames":{"bad-":"Name"})"),
+                             "PXCHAR1031"),
+                     "displayNames rejects malformed locale tags");
+        suite.Expect(HasCode(check(R"("displayNames":{"ja-JP":""})"),
+                             "PXCHAR1031"),
+                     "displayNames rejects empty names");
+        suite.Expect(HasCode(check(R"("displayNames":{"ja-JP":42})"),
+                             "PXCHAR1031"),
+                     "displayNames rejects non-string names");
+        const auto oversized = std::string(R"("displayNames":{"ja-JP":")") +
+                               std::string(513, 'a') + R"("})";
+        suite.Expect(HasCode(check(oversized), "PXCHAR1031"),
+                     "displayNames rejects names over the schema character limit");
+        std::string unicodeName;
+        for (int index = 0; index < 512; ++index) unicodeName += "凛";
+        const auto unicodeBoundary =
+            std::string(R"("displayNames":{"ja-JP":")") +
+            unicodeName + R"("})";
+        suite.Expect(check(unicodeBoundary).Valid(),
+                     "displayNames accepts the schema character limit");
     });
 
     suite.Run("MissingAndMalformedCharacterAreDiagnosed", [&] {

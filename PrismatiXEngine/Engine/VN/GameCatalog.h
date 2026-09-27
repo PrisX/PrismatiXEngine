@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace px::vn {
@@ -29,6 +30,7 @@ struct CatalogCharacterExpression {
 struct CatalogCharacter {
     std::string id;
     std::string name;
+    std::unordered_map<std::string, std::string> displayNames;
     std::vector<std::string> aliases;
     std::string voiceDirectory;
     std::string defaultExpression;
@@ -97,7 +99,8 @@ public:
         const CatalogCharacter& character, std::string_view idOrName) const;
     [[nodiscard]] std::optional<ResourceRefValue> ResolveCharacterImage(
         std::string_view character, std::string_view expression = {}) const;
-    [[nodiscard]] std::string CharacterDisplayName(std::string_view character) const;
+    [[nodiscard]] std::string CharacterDisplayName(
+        std::string_view character, std::string_view locale = {}) const;
 private:
     std::vector<CatalogVariable> m_variables;
     std::vector<CatalogCharacter> m_characters;

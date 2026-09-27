@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace px::sdk {
@@ -31,6 +32,7 @@ struct CharacterResourceExpression {
 struct CharacterResource {
     std::string id;
     std::string displayName;
+    std::unordered_map<std::string, std::string> displayNames;
     // Compatibility lookup keys retained by the one-time Game.pxres
     // migration. The UUID remains authoritative.
     std::vector<std::string> aliases;

@@ -2202,6 +2202,7 @@ private:
             }
         }
         runtime->Renderer().SetTextLocale(locale, std::move(fonts));
+        session->VM().SetCharacterLocale(locale);
         session->VM().SetTextFilter([strings = std::move(strings)](const std::string& id, const std::string& fallback) {
             const auto found = strings.find(id);
             return found == strings.end() ? fallback : found->second;

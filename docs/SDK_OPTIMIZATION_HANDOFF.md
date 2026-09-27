@@ -4,6 +4,7 @@
 
 ### 2026-09-27 後續進度
 
+- 原生角色資源載入器現會驗證並保留 `.pxcharacter.displayNames`，GameCatalog 可依 exact locale 選擇姓名，缺少該語系時回退至 `displayName`；穩定 UUID／alias 查找不受翻譯姓名影響。VM 的 `[say char=...]` 在未明寫 `speaker` 時使用目前語系，Player 與原生／Wasm Preview 均同步該語系，明寫的 speaker 仍優先。CharacterResources Contract、Runtime IR Runtime Adapter、Preview Localization Contract、Player Catalog Native Acceptance 均通過。JavaScript runtime SDK 目前只有唯讀 dialogue model，沒有獨立的 JS `say` 作者 API；先前表格的「JS say」描述應以此為準。Senren 既有 narration/name-prefix 未變，改 Story operation kind 前仍須真實舊存檔 migration 驗收。
 - 非 Player 原生 host 現可用 `GameSettings::LoadWithInputBindings`／`SaveWithInputBindings` 同時處理鍵盤與滾輪設定，stock Player 也改用同一路徑。`Input::RestoreUserBindings` 在暫存副本上先重設作者預設並核對兩張保存表，任一表無效時不會只套用另一張；設定載入失敗亦保留原物件與原檔。`docs/input-actions.md` 補非 Player host 的 `UIContext::SetInputBindingService` 保存範例。Native SaveLoad integration 1/1 驗正常讀寫、晚註冊 action、舊檔缺滾輪及無效鍵碼／滾輪的原子拒絕；Player Catalog Native Acceptance 1/1 通過。此 API 不會自行挑選 host 的 per-user 路徑或加密金鑰。
 - Node Story 來源 loader 與 CLI authored text 載入改用共用 `readBoundedUtf8File`：從已開啟的檔案逐段讀取，檔案在初次 stat 後增長也不能越過 16 MiB 上限；錯誤 UTF-8 直接拒絕，不再被 Node 的字串解碼替換成 U+FFFD；BOM 仍保留供既有契約明確檢查。Authoring SDK targeted 4/4 與全套 159/159、CLI 原有 105/105 加新增壞 UTF-8 targeted 1/1 通過；四語 368 scene／31,339 資源 `validate --runtime` 通過。這是大型來源匯入的界限與資料正確性補強，未實作跨次啟動持久增量快取。
 - 正式 `RunPackager` 現在不再於 preflight 對每個非 `.ts` 輸入先做一輪全檔 SHA-256；會被結構驗證讀取的文件在該次讀取時核對宣告 fingerprint，小型 JSON identity／effect 來源在再次讀取時核對，其餘輸入由 archive writer 或整片重用驗證。獨立 `ValidatePackageRequest`／`pack --check` 仍保留原先 eager 非媒體核對；`.ts` 也維持 eager。新增合約測試涵蓋未解析非媒體來源延後至 writer 拒絕、結構文件在 preflight 後讀取前變動即拒絕，且都保留既有輸出。Native Packager Contract 1/1、Player Catalog Native Acceptance 1/1 通過；這只省下正式封裝一次重複來源讀取，仍無 8 GB 兩版 overlay 或整體封裝耗時的可比量測。
@@ -72,7 +73,7 @@
 | 項目 | 目前做到哪裡 | 仍缺什麼／驗收條件 |
 | --- | --- | --- |
 | Story API／大型匯入 | `compileStoryProject` 解析跨 scene；單檔誤用會報 `PXSTORY1215`；368 份劇本以 sidecar 保存 531,812 個執行錨點，`ids --sync` 可預覽差異。`dev` 可在同一行程重用未變 scene 的 label 摘要與編譯結果。 | 仍會重讀所有 scene；通用持久增量／串流 importer、精確 source-span 診斷與移除／重排錨點的安全遷移策略仍缺。PSB→Story 目前是 Senren 私有轉換器。 |
-| 多語姓名與存檔 | `.pxcharacter.displayNames`、`@alias`／`@"顯示姓名"` 已可產出對應 speaker。 | Senren 為保留舊 operation kind 仍以 narration/name-prefix 為主，未整批採用；native／JS `say` 的姓名亦未自動本地化。必須先做舊存檔 migration 實測，才可改劇本操作種類。 |
+| 多語姓名與存檔 | `.pxcharacter.displayNames`、`@alias`／`@"顯示姓名"` 可產出對應 speaker；原生 `say` 未明寫 speaker 時也可按 Player／Preview 當前語系顯示姓名，缺值回退預設。 | Senren 為保留舊 operation kind 仍以 narration/name-prefix 為主，未整批採用；改劇本操作種類前須做真實舊存檔 migration 實測。JavaScript runtime SDK 目前只有唯讀 dialogue model，尚無獨立的 JS `say` 作者 API。 |
 | 立繪 | `.pxportrait` rev 2 有 base／expression 標記、`transition=auto`、逐層淡化與前瞻／還原圖層預載；UI `TextureRect` 可直接顯示 descriptor 並預載其圖層；Senren 已產生 2,941 descriptor／761 共用圖層並通過 validate。 | descriptor 內動態 dress／pose／face 編輯、所有角色 placement profile、原圖逐句畫面／首次出現 frame-time、舊存檔恢復均未完成正式驗收。最新大型發行包未因 rev 2 重建。 |
 | UI contract／素材依賴 | typed props、原生 TypeRegistry、Action 參數、canonical UiValue、UI 動態圖片預載、`ItemsPlaced`／`Modal` 已補。 | 執行期 ViewModel 路徑與自訂 formatter 的語意無完整靜態驗證；任意自訂繪圖、Story 中途素材與音效的預載無通用保證。18 個設定開關雖已模板化，動作仍是 `settings.noop`。 |
 | 文字與路由演出 | 已修文字 outline 雙層換行差異、未變文字每幀重排，以及 route crossfade 暗谷／預載閃白。 | 正式單次 layout/mask 的文字效果管線、依事件 author 的白幕／shader／遮罩轉場與通用 route motion graph 缺；最新大型封裝與原版逐幀對照未做。 |

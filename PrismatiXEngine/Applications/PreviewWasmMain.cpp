@@ -591,6 +591,7 @@ public:
             m_previewSettings.language = localizationTable->locale;
             m_previewSettings.languages = {localizationTable->locale};
             m_runtime.Renderer().SetTextLocale(localizationTable->locale);
+            m_session->VM().SetCharacterLocale(localizationTable->locale);
             if (!localizationTable->diagnostics.empty()) {
                 Json diagnostics = Json::array();
                 for (const auto& diagnostic :
@@ -624,6 +625,7 @@ public:
             m_previewSettings.language.clear();
             m_previewSettings.languages.clear();
             m_runtime.Renderer().SetTextLocale("und");
+            m_session->VM().SetCharacterLocale({});
         }
         const bool uiPreviewRequested = !request.uiSceneJson.empty();
         std::optional<px::preview::PerformancePreviewSequence>
@@ -2205,6 +2207,7 @@ private:
                     "Select a locale in Studio to rebuild the canonical Preview artifact.");
             m_previewSettings.language = argument;
             m_runtime.Renderer().SetTextLocale(argument);
+            m_session->VM().SetCharacterLocale(argument);
             return complete(m_hud.ShowSettings(m_previewSettings));
         }
         if (action == "set.bgm.value" || action == "set.se.value" ||

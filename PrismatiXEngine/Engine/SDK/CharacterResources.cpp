@@ -120,6 +120,45 @@ std::string Lower(std::string value) {
     return value;
 }
 
+bool IsLocaleId(const std::string_view value) {
+    if (value.size() < 2 || value.size() > 35) return false;
+    const auto letter = [](const unsigned char ch) {
+        return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z');
+    };
+    const auto digit = [](const unsigned char ch) {
+        return ch >= '0' && ch <= '9';
+    };
+    const auto firstEnd = value.find('-');
+    const auto language = value.substr(0, firstEnd);
+    if (language.size() < 2 || language.size() > 3 ||
+        !std::all_of(language.begin(), language.end(), letter))
+        return false;
+    if (firstEnd == std::string_view::npos) return true;
+    std::size_t start = firstEnd + 1;
+    while (start < value.size()) {
+        const auto end = value.find('-', start);
+        const auto part = value.substr(start, end == std::string_view::npos
+                                               ? value.size() - start : end - start);
+        if (part.size() < 2 || part.size() > 8 ||
+            !std::all_of(part.begin(), part.end(), [&](const unsigned char ch) {
+                return letter(ch) || digit(ch);
+            }))
+            return false;
+        if (end == std::string_view::npos) return true;
+        start = end + 1;
+    }
+    return false;
+}
+
+bool IsBoundedDisplayName(const std::string_view value) {
+    // JSON parsing already validates UTF-8. JSON Schema counts Unicode code
+    // points rather than bytes for maxLength.
+    if (value.empty() || value.size() > 512 * 4) return false;
+    return std::count_if(value.begin(), value.end(), [](const unsigned char ch) {
+        return (ch & 0xC0) != 0x80;
+    }) <= 512;
+}
+
 }  // namespace
 
 CharacterResourcesLoadResult LoadCharacterResources(
@@ -249,6 +288,31 @@ CharacterResourcesLoadResult LoadCharacterResources(
         CharacterResource character;
         character.id = id;
         character.displayName = displayName;
+        const auto displayNames = document.find("displayNames");
+        if (displayNames != document.end()) {
+            if (!displayNames->is_object() || displayNames->size() > 128) {
+                Add(result, "PXCHAR1031",
+                    "displayNames must be an object with at most 128 locale entries",
+                    source, id);
+                continue;
+            }
+            bool namesValid = true;
+            for (auto entry = displayNames->begin(); entry != displayNames->end(); ++entry) {
+                if (!IsLocaleId(entry.key()) || !entry.value().is_string() ||
+                    !IsBoundedDisplayName(entry.value().get_ref<const std::string&>())) {
+                    namesValid = false;
+                    break;
+                }
+                character.displayNames.emplace(entry.key(),
+                                               entry.value().get<std::string>());
+            }
+            if (!namesValid) {
+                Add(result, "PXCHAR1031",
+                    "displayNames requires valid locale tags and nonempty names of at most 512 characters",
+                    source, id);
+                continue;
+            }
+        }
         const auto aliases = document.find("aliases");
         if (aliases != document.end()) {
             if (!aliases->is_array() || aliases->size() > 128) {

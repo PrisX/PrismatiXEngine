@@ -246,6 +246,7 @@ Status GameCatalog::LoadCharacterResources(
         CatalogCharacter character;
         character.id = source.id;
         character.name = source.displayName;
+        character.displayNames = source.displayNames;
         character.aliases = source.aliases;
         character.voiceDirectory = source.voiceDirectory;
         character.defaultExpression =
@@ -296,9 +297,15 @@ std::optional<ResourceRefValue> GameCatalog::ResolveCharacterImage(
     return expression->image;
 }
 
-std::string GameCatalog::CharacterDisplayName(const std::string_view characterId) const{
-    const auto* character=FindCharacter(characterId);if(!character)return std::string(characterId);
-    return character->name.empty()?character->id:character->name;
+std::string GameCatalog::CharacterDisplayName(const std::string_view characterId,
+                                              const std::string_view locale) const {
+    const auto* character = FindCharacter(characterId);
+    if (!character) return std::string(characterId);
+    if (!locale.empty()) {
+        const auto localized = character->displayNames.find(std::string(locale));
+        if (localized != character->displayNames.end()) return localized->second;
+    }
+    return character->name.empty() ? character->id : character->name;
 }
 
 }  // namespace px::vn
