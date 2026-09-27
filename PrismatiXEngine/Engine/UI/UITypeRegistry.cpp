@@ -498,6 +498,36 @@ Status RegisterBuiltinUITypes() {
     button.properties.push_back(StringProperty("bindingAction", "Input",
         [](const Object& o) { return As<Button>(o)->BindingAction(); },
         [](Object& o, std::string v) { As<Button>(o)->SetBindingAction(std::move(v)); return Status::Ok(); }));
+    auto bindingDevice = StringProperty("bindingDevice", "Input",
+        [](const Object& o) { return As<Button>(o)->GetBindingDevice() == BindingDevice::Wheel
+            ? std::string("wheel") : std::string("keyboard"); },
+        [](Object& o, std::string v) {
+            if (v == "keyboard") As<Button>(o)->SetBindingDevice(BindingDevice::Keyboard);
+            else if (v == "wheel") As<Button>(o)->SetBindingDevice(BindingDevice::Wheel);
+            else return TypeError("bindingDevice expects keyboard or wheel");
+            return Status::Ok();
+        });
+    bindingDevice.editor.enumChoices = {"keyboard", "wheel"};
+    button.properties.push_back(std::move(bindingDevice));
+    auto wheelThreshold = NumberProperty("wheelThreshold", "Input",
+        [](const Object& o) { return static_cast<double>(As<Button>(o)->WheelThreshold()); },
+        [](Object& o, double v) {
+            if (!std::isfinite(v) || v < 0.0 || v > 100.0 ||
+                !As<Button>(o)->SetWheelThreshold(static_cast<float>(v)))
+                return TypeError("wheelThreshold expects a finite number from 0 to 100");
+            return Status::Ok();
+        });
+    wheelThreshold.editor.hasRange = true;
+    wheelThreshold.editor.minimum = 0;
+    wheelThreshold.editor.maximum = 100;
+    wheelThreshold.editor.step = 0.1;
+    button.properties.push_back(std::move(wheelThreshold));
+    button.properties.push_back(StringProperty("wheelUpText", "Input",
+        [](const Object& o) { return As<Button>(o)->WheelUpText(); },
+        [](Object& o, std::string v) { As<Button>(o)->SetWheelUpText(std::move(v)); return Status::Ok(); }));
+    button.properties.push_back(StringProperty("wheelDownText", "Input",
+        [](const Object& o) { return As<Button>(o)->WheelDownText(); },
+        [](Object& o, std::string v) { As<Button>(o)->SetWheelDownText(std::move(v)); return Status::Ok(); }));
     button.properties.push_back(StringProperty("bindingPrompt", "Input",
         [](const Object& o) { return As<Button>(o)->BindingPrompt(); },
         [](Object& o, std::string v) { As<Button>(o)->SetBindingPrompt(std::move(v)); return Status::Ok(); }));

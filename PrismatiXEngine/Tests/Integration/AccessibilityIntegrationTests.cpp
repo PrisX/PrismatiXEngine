@@ -307,6 +307,30 @@ int main() {
     Check(!capture.KeyCaptureActive() && !capture.TakeCapturedKey(),
           "cancelled capture does not produce a stale shortcut");
 
+    px::Input wheelCapture;
+    Check(wheelCapture.BeginWheelCapture() &&
+              !wheelCapture.BeginKeyCapture() &&
+              !wheelCapture.BeginWheelCapture(),
+          "wheel capture is exclusive with key capture");
+    SDL_Event capturedWheel{};
+    capturedWheel.type = SDL_EVENT_MOUSE_WHEEL;
+    capturedWheel.wheel.y = 1.0f;
+    wheelCapture.Process(capturedWheel);
+    Check(!wheelCapture.WheelCaptureActive() &&
+              !wheelCapture.ActionPressed(px::InputAction::Backlog) &&
+              wheelCapture.WheelY() == 0.0f &&
+              wheelCapture.FrameEvents().empty(),
+          "captured wheel does not reach its prior action or UI scrolling");
+    wheelCapture.NewFrame();
+    Check(wheelCapture.TakeCapturedWheel() == px::WheelDirection::Up &&
+              !wheelCapture.TakeCapturedWheel(),
+          "captured wheel survives the frame boundary and is taken once");
+    Check(wheelCapture.BeginWheelCapture(), "wheel capture can restart");
+    wheelCapture.CancelWheelCapture();
+    Check(!wheelCapture.WheelCaptureActive() &&
+              !wheelCapture.TakeCapturedWheel(),
+          "cancelled wheel capture cannot produce a stale binding");
+
     px::Input rebindInput;
     Check(rebindInput.RegisterAction("photo-mode") &&
               rebindInput.BindKey("photo-mode", SDL_SCANCODE_P) &&
@@ -436,6 +460,50 @@ int main() {
     Check(bindingContext.SetRoot(std::make_unique<px::ui::Control>()).IsOk() &&
               !rebindInput.KeyCaptureActive(),
           "unmounting a binding button cancels its pending physical capture");
+
+    px::Input wheelRebindInput;
+    int wheelSaves = 0;
+    px::ui::UIContext wheelContext;
+    wheelContext.SetInputBindingService(&wheelRebindInput,
+        [&wheelSaves] { ++wheelSaves; });
+    auto wheelButton = std::make_unique<px::ui::TextureButton>();
+    wheelButton->SetBindingDevice(px::ui::BindingDevice::Wheel);
+    wheelButton->SetBindingAction("backlog");
+    wheelButton->SetBindingPrompt("Scroll now");
+    wheelButton->SetWheelUpText("Up caption");
+    wheelButton->SetWheelDownText("Down caption");
+    Check(wheelButton->SetWheelThreshold(1.5f),
+          "wheel settings control accepts an authored threshold");
+    auto* mountedWheelButton = wheelButton.get();
+    Check(wheelContext.SetRoot(std::move(wheelButton)).IsOk() &&
+              mountedWheelButton->Text() == "Up caption",
+          "wheel settings control displays the current direction");
+    mountedWheelButton->Activate();
+    Check(mountedWheelButton->CapturingWheelBinding() &&
+              mountedWheelButton->Text() == "Scroll now",
+          "wheel settings control starts physical direction capture");
+    capturedWheel.wheel.y = -1.0f;
+    wheelRebindInput.Process(capturedWheel);
+    (void)wheelContext.Update(wheelRebindInput, 800, 600, 0.016f);
+    const auto changedWheel = wheelRebindInput.GetWheelBinding("backlog");
+    Check(changedWheel && changedWheel->direction == px::WheelDirection::Down &&
+              changedWheel->threshold == 1.5f &&
+              mountedWheelButton->Text() == "Down caption" && wheelSaves == 1,
+          "wheel capture updates direction, threshold, caption and persistence");
+    mountedWheelButton->SetDeleteClearsBinding(true);
+    mountedWheelButton->Activate();
+    px::ui::UIEvent clearWheel{.type = px::ui::UIEventType::KeyDown,
+                              .key = SDL_SCANCODE_DELETE};
+    mountedWheelButton->HandleEvent(clearWheel);
+    const auto clearedWheel = wheelRebindInput.GetWheelBinding("backlog");
+    Check(clearWheel.handled && clearedWheel &&
+              clearedWheel->direction == px::WheelDirection::None &&
+              mountedWheelButton->Text() == "Unbound" && wheelSaves == 2,
+          "opt-in Delete clears the wheel binding and persists the change");
+    mountedWheelButton->Activate();
+    Check(wheelContext.SetRoot(std::make_unique<px::ui::Control>()).IsOk() &&
+              !wheelRebindInput.WheelCaptureActive(),
+          "unmounting a wheel control cancels its pending capture");
 
     px::Input gamepad;
     SDL_Event gamepadButton{};

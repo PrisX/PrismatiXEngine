@@ -4,6 +4,7 @@
 
 ### 2026-09-27 後續進度
 
+- `WheelBindingButton` 現可在 TSX 設定頁擷取實體滾輪方向、顯示目前綁定、設定動作門檻與方向文字；可選 Delete 清除，Escape／再次點擊取消，成功時觸發 Player 的設定保存。擷取中的滾輪事件不再觸發舊動作或穿透到下層捲動。Authoring SDK 156/156 與 Native UI/Accessibility targeted 3/3 通過；正式封裝實按、舊設定 E2E 仍未做。
 - Windows `CreatePackageOverlay` 的最後發布改為同磁碟不可覆寫原子移動，讓不支援 hard link 的磁碟也能發布已驗證 PDX；驗證後才出現的同名輸出仍須保留。Native Packager contract 1/1 通過，含競爭輸出測試。其他平台仍使用 hard link；正式大型 overlay 尚未實測。
 - `dev` 的 Story 編譯快取現在可在單一 scene 修改後重用其他未變 scene 的 label 摘要、編譯結果、source map 與資源依賴；普通文字修改不再解析其餘 scene，cross-scene label、sidecar 或共用編譯輸入變更時仍會安全重解析／重編。快取不保留 AST，且編譯使用進度回呼前擷取的來源快照。Authoring SDK 155/155、CLI 104/104（最後來源快照修正後另跑開發模式 targeted），及 Senren 四語 368 scene／31,339 resources 的 `validate --runtime` 通過。大型專案的 `dev` 單 scene 熱編譯耗時／記憶體尚未量測。此快取只在同一 CLI 行程內有效，仍會重新讀取所有 scene，並非持久增量或串流 importer。
 - Wheel 使用者設定已補 `Input::CaptureWheelBindings`／`RestoreWheelBindings`、Runtime SDK `ctx.input.wheelBinding`／`setWheelBinding` 與 Player per-user `config.dat` 保存／還原；舊 revision-2 設定缺少欄位時沿用作者預設。Native 輸入／設定／JS Host targeted 測試及 Runtime SDK 測試通過；非 Player host 仍須自行觸發持久化，正式封裝實按未驗。
@@ -41,7 +42,7 @@
 | 領域 | 已有能力／證據 | 不可宣稱的事 |
 | --- | --- | --- |
 | Authoring | Story 分檔／跨場景 `compileStoryProject`、外部穩定 ID sidecar、TSX UI、具名 UI 元件、`ItemsGrid`／`ItemsList`、`Modal`、分層立繪、`SpriteText`、typed props／Action／binding 驗證、resource includes 與正式 `augment`。Senren 92 scene × 四語的 `validate --runtime` 曾通過，約 31,339 個資源。 | 並非原 KAG/PSB 到 Authoring 的通用 importer；所有特殊 UI／動效也未完整 1:1。 |
-| 輸入與設定 | Native keyboard／wheel／具名 action、Player 設定持久化、按鍵捕捉、`KeyBindingButton`、追加／逐鍵移除／原位替換 API、逐鍵選取 UI、可選的共用鍵二次確認、Delete 清除鍵盤鍵、衝突拒絕、全螢幕動作。Senren 原作 25 項快捷鍵接通 13 項。 | 其餘 12 項仍是占位；原版衝突對話框外觀與 F4 原版尺寸切換未還原；尚未在最新 8 GB 封裝實按或驗舊設定遷移。 |
+| 輸入與設定 | Native keyboard／wheel／具名 action、Player 設定持久化、按鍵捕捉、`KeyBindingButton`／`WheelBindingButton`、追加／逐鍵移除／原位替換 API、逐鍵選取 UI、可選的共用鍵二次確認、Delete 清除綁定、衝突拒絕、全螢幕動作。Senren 原作 25 項快捷鍵接通 13 項。 | 其餘 12 項仍是占位；原版衝突對話框外觀與 F4 原版尺寸切換未還原；尚未在最新 8 GB 封裝實按或驗舊設定遷移。 |
 | UI／轉場／呈現 | Route/splash/動態 UI 圖片預載、無動畫 route 的 presentation hold、文字描邊排版修補、`.pxmotion` rev 1–11 的圖層、keyframe、atlas frame、音效 marker、基本混合、alpha mask、局部時間、曲線、tint、tickRate 等及 TSX `<Motion>`。部分舊版 Player 做過 22 route 截圖 E2E。 | 無原版 M2 等效轉換；原 `.mtn` 特殊曲線／粒子／複合語意未完整對齊，沒有現在版以原資產做逐幀 frame-time 與視覺一致性驗收。不能再把「沒有 alpha mask」照抄為現況。 |
 | 大型封裝 | 正式 PDX 分片、未變分片重用、壓縮 entry cache、`pack --check`／`--verify-media`、`verify-package`、provenance 安全保留成品／僅替換 runtime、階段進度與 CLI 發布驗證平行化。Senren 曾完整封裝 16 PDX（約 7.50 GiB）並逐筆驗證 31,756 資源／8,594,731,766 原始 bytes。 | 仍沒有完整 dependency-aware／block-level 增量構建；改一個小檔仍可能讀驗大量舊輸入／PDX。以上大容量驗證不涵蓋後續每次改動。 |
 | 更新 | 已有明示執行的目錄補丁；單檔 PDX overlay 可建／驗；revision 2 以固定發行者公鑰驗簽，Player 在 `Package/updates` 載入唯一 exact-base 更新鏈且失敗回基底；revision 3 選裝包可簽出並以 per-user 選擇啟停。小型 Player E2E 已測同版存檔、版本 migration 與跨更新 tombstone。 | 一次只支援一個選裝包且無遊戲內開關；真實大型發行版舊存檔與雙版本量測未做。 |
@@ -58,7 +59,7 @@
 | UI contract／素材依賴 | typed props、原生 TypeRegistry、Action 參數、canonical UiValue、UI 動態圖片預載、`ItemsPlaced`／`Modal` 已補。 | 執行期 ViewModel 路徑與自訂 formatter 的語意無完整靜態驗證；任意自訂繪圖、Story 中途素材與音效的預載無通用保證。18 個設定開關雖已模板化，動作仍是 `settings.noop`。 |
 | 文字與路由演出 | 已修文字 outline 雙層換行差異、未變文字每幀重排，以及 route crossfade 暗谷／預載閃白。 | 正式單次 layout/mask 的文字效果管線、依事件 author 的白幕／shader／遮罩轉場與通用 route motion graph 缺；最新大型封裝與原版逐幀對照未做。 |
 | `.pxmotion`／Story 動畫 | 格式已演進至 rev 11，TSX UI／splash 可播；Story `[timeline]` 可控 `.pxanim`／`.pxtimeline` 的 await/speed；新增 `[motion]`／`[motion.stop]` 直接在 Stage 播放 `.pxmotion`，含預載、音效 marker、等待與存檔還原。 | 尚缺以正式大型發行版驗證圖層畫面及音效時序；M2 `.mtn` 轉換器／逐幀驗證暫停。 |
-| 輸入／設定 | `.pxgame.inputActions` 有 context、key、wheel、route／`uiAction`；鍵盤捕捉／追加／逐鍵移除／原位替換／整組清除、wheel 方向／門檻可保存；`KeyBindingButton` 可逐鍵選取與衝突二次確認。 | wheel 尚無專用 stock 設定按鈕；非 Player host 須自行觸發持久化；需 E2E 核對舊設定。原版衝突對話框屬遊戲 UI，仍未還原。原作剩餘 12 項與多數 settings.noop 須先判別可攜 SDK 能力，不能一律當作 SDK 缺陷。 |
+| 輸入／設定 | `.pxgame.inputActions` 有 context、key、wheel、route／`uiAction`；鍵盤捕捉／追加／逐鍵移除／原位替換／整組清除、wheel 方向／門檻可保存；`KeyBindingButton` 可逐鍵選取與衝突二次確認，`WheelBindingButton` 可實體捕捉方向。 | 非 Player host 須自行觸發持久化；需 E2E 核對舊設定與正式封裝。原版衝突對話框屬遊戲 UI，仍未還原。原作剩餘 12 項與多數 settings.noop 須先判別可攜 SDK 能力，不能一律當作 SDK 缺陷。 |
 | 更新與持久化 | 可顯式安裝目錄補丁；簽章更新鏈可建／驗／由 Player 載入或回基底；同版舊存檔可沿已驗簽鏈的舊 fingerprint 載入並檢查 Runtime 文件／錨點；選裝包可獨立啟停且存檔身分保留主更新 fingerprint；Player 資料已移至 per-user 位置。 | 不相容劇本仍需明示 content/save version 與 migration；舊版 save key 與正式大型發行版 migration 實測仍缺。 |
 | 發行效能 | 16 分片、Release Packager、未變片重用、preflight／media 驗證、runtime-only refresh 已有真實大型量測。 | 日常素材變更仍做 O(全量素材) 的多輪核驗；缺依賴級／block-level 安全增量、同條件長期吞吐與磁碟峰值量測、最新 overlay 的 8 GB 壓力測試。 |
 | 平台／原作特有功能 | rule/shake/影片、主要 UI 與基本 flowchart 可運行。 | 老闆鍵／置頂／語音分流／Steam 等是否抽成可攜 SDK API 尚需取捨；不要為了 Senren 外觀宣稱這些設定已生效。 |
@@ -81,7 +82,7 @@ Engine `docs/package-overlay.md` 是格式規格和安全邊界。這一輪已�
 2. **把新 overlay producer 在實際 Senren 版上驗收**：用兩個實際完整發行版測 `create-overlay`／`verify-overlay`，量測總時間、暫存／最終磁碟、峰值記憶體、patch 大小、壓縮大 entry；小型 contract 不代表 8 GB 封裝可接受。若目前只有同一版成品，先用隔離副本與可重現小變更，勿改寫已交付 `dist`。
 3. **真正的增量 authoring/build/packaging**：現已有 16 片重用與 Release Packager 大幅改善，但小改仍要對約 31,000 個檔與約 8.2 GiB 素材做多輪安全核驗。後續應先 profile「source hash／四語結構驗證／舊 PDX 驗證／staging 發布」，設計有失效條件的依賴／驗證 cache，保留 TOCTOU 與 ownership 安全性。歷史量測：Release Packager 同版 16/16 分片重封約 96.30 秒、14/16 小變更約 110.58 秒；不同快取與磁碟條件，不能當 SLA。僅更新 Player 的 `refresh-runtime` 曾約 23.19 秒。詳見 `SDK_FEEDBACK.md` 當日段落。
 4. **跨層 Authoring 合約與大型 importer**：針對 UI/Action/runtime property、動態 ViewModel、依賴圖漏資源、source-location diagnostics 建 regression；在現有行程內逐 scene 解析／編譯快取之外，讓 92 scene × 四語的來源讀取與匯入能安全增量或串流，清楚區分 `compileStory` 與 `compileStoryProject`。先從真實移植 importer 的重複 workaround 提取通用 API，不要把專案特例硬塞 stock Player。
-5. **輸入設定與 UI 作者體驗尾巴**：逐鍵選擇／可選衝突二次確認已加至 stock button；仍需設定資料遷移、已接項目的封裝實按、wheel 使用者改鍵與非 Player host 的保存範例。原作其餘快捷鍵需先確認哪些是可攜 Engine 動作、哪些只是遊戲特有功能。文字效果長期應共用一次布局／遮罩，減少雙重排版與逐字 texture；`.pxmotion` 的一般可重用資源／演出契約可繼續，但依使用者要求暫不追 M2 原動畫。
+5. **輸入設定與 UI 作者體驗尾巴**：逐鍵選擇／可選衝突二次確認與 wheel 使用者改鍵已加至 stock button；仍需設定資料遷移、已接項目的封裝實按與非 Player host 的保存範例。原作其餘快捷鍵需先確認哪些是可攜 Engine 動作、哪些只是遊戲特有功能。文字效果長期應共用一次布局／遮罩，減少雙重排版與逐字 texture；`.pxmotion` 的一般可重用資源／演出契約可繼續，但依使用者要求暫不追 M2 原動畫。
 6. **回到移植案做接受測試**：先用最新 SDK 重新 `validate --runtime`、跑專案測試，再挑一個小的發行版 E2E 旅程驗證 UI、按鍵、存讀檔和音效；若要大容量重封，記錄實際版本、構建參數與磁碟空間。原作 1:1 差距應留在 `SDK_FEEDBACK.md`，不要把新 SDK API 存在誤寫成遊戲畫面已經實裝。
 
 ## 重現與交付門檻

@@ -17,6 +17,7 @@ import {
   Text,
   TextureButton,
   VBox,
+  WheelBindingButton,
   compileJsxUi,
   validateDocument,
 } from "../src/index.js";
@@ -380,4 +381,25 @@ test("key binding button lowers native capture properties without a click action
     confirmSharedBinding: true,
     deleteClearsBinding: true, addCapturedBinding: true,
     selectableBindingKeys: true});
+});
+
+test("wheel binding button lowers direction capture and threshold properties", () => {
+  const result = compileJsxUi(jsx(Scene, {name: "Wheel Settings",
+    width: 800, height: 600,
+    children: jsx(WheelBindingButton, {name: "BacklogWheel",
+      bindingAction: "backlog", wheelThreshold: 1.5,
+      wheelUpText: "Scroll up", wheelDownText: "Scroll down",
+      deleteClearsBinding: true, normalPath: "Assets/UI/wheel.png",
+    }),
+  }), {kind: "scene"});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  const button = result.value!.nodes.find((item) => item.name === "BacklogWheel")!;
+  assert.equal(button.runtimeType, "TextureButton");
+  assert.equal(button.onClick, undefined);
+  assert.deepEqual(button.runtimeProperties, {
+    normalPath: "Assets/UI/wheel.png", bindingAction: "backlog",
+    bindingDevice: "wheel", bindingPrompt: "Scroll up or down",
+    wheelUpText: "Scroll up", wheelDownText: "Scroll down",
+    wheelThreshold: 1.5, deleteClearsBinding: true,
+  });
 });

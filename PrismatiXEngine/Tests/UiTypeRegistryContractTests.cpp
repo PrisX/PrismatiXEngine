@@ -73,6 +73,18 @@ int main() {
               confirmShared->valueType == "boolean" && confirmText &&
               confirmText->writable && confirmText->valueType == "string",
           "button key-capture options must reach the SDK UI registry");
+    const auto* bindingDevice = button ? FindProperty(*button, "bindingDevice") : nullptr;
+    const auto* wheelThreshold = button ? FindProperty(*button, "wheelThreshold") : nullptr;
+    const auto* wheelUpText = button ? FindProperty(*button, "wheelUpText") : nullptr;
+    const auto* wheelDownText = button ? FindProperty(*button, "wheelDownText") : nullptr;
+    Check(bindingDevice && bindingDevice->writable &&
+              bindingDevice->enumChoices.size() == 2 && wheelThreshold &&
+              wheelThreshold->writable && wheelThreshold->hasRange &&
+              wheelThreshold->range.minimum == 0.0 &&
+              wheelThreshold->range.maximum == 100.0 &&
+              wheelUpText && wheelUpText->writable &&
+              wheelDownText && wheelDownText->writable,
+          "wheel capture settings must reach the SDK UI registry");
     const auto* textureButton = FindControl(parsed.manifest, "textureButton");
     const auto* normalPath = textureButton
                                  ? FindProperty(*textureButton, "normalPath")

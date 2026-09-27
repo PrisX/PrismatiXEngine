@@ -437,7 +437,8 @@ bool Input::RemoveKeyBinding(const std::string_view action,
 }
 
 bool Input::BeginKeyCapture() {
-    if (m_keyCaptureActive || m_capturedKey) return false;
+    if (m_keyCaptureActive || m_capturedKey ||
+        m_wheelCaptureActive || m_capturedWheel) return false;
     m_keyCaptureActive = true;
     return true;
 }
@@ -451,6 +452,24 @@ std::optional<int> Input::TakeCapturedKey() {
 void Input::CancelKeyCapture() {
     m_keyCaptureActive = false;
     m_capturedKey.reset();
+}
+
+bool Input::BeginWheelCapture() {
+    if (m_wheelCaptureActive || m_capturedWheel ||
+        m_keyCaptureActive || m_capturedKey) return false;
+    m_wheelCaptureActive = true;
+    return true;
+}
+
+std::optional<WheelDirection> Input::TakeCapturedWheel() {
+    auto direction = m_capturedWheel;
+    m_capturedWheel.reset();
+    return direction;
+}
+
+void Input::CancelWheelCapture() {
+    m_wheelCaptureActive = false;
+    m_capturedWheel.reset();
 }
 
 KeyboardBindingMap Input::CaptureKeyboardBindings() const {
@@ -921,6 +940,16 @@ void Input::Process(const SDL_Event& event) {
 
         case SDL_EVENT_MOUSE_WHEEL:
             {
+            if (m_wheelCaptureActive || m_capturedWheel) {
+                if (m_wheelCaptureActive && event.wheel.y != 0.0f) {
+                    m_capturedWheel = event.wheel.y > 0.0f
+                        ? WheelDirection::Up : WheelDirection::Down;
+                    m_wheelCaptureActive = false;
+                }
+                // Suppress the gesture until the settings control takes it.
+                // The old action and underlying UI scroll must not fire.
+                break;
+            }
             InputEvent inputEvent;
             inputEvent.type = InputEventType::PointerWheel;
             inputEvent.x = m_mouseX;

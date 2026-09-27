@@ -265,6 +265,21 @@ export interface KeyBindingButtonProps extends Omit<TextureButtonProps,
   readonly selectableBindingKeys?: boolean;
 }
 
+/** A skinnable button that captures a physical scroll direction for one action. */
+export interface WheelBindingButtonProps extends Omit<TextureButtonProps,
+  "onClick" | "action" | "text" | "children"> {
+  readonly bindingAction: string;
+  readonly bindingPrompt?: string;
+  readonly unboundText?: string;
+  readonly wheelUpText?: string;
+  readonly wheelDownText?: string;
+  /** Action activation threshold, from 0 to 100; zero accepts any movement. */
+  readonly wheelThreshold?: number;
+  readonly escapeCancelsBinding?: boolean;
+  /** Delete during capture clears only the wheel binding. */
+  readonly deleteClearsBinding?: boolean;
+}
+
 export interface RichTextLabelProps extends TextProps {
   /** Ruby/markup source; takes precedence over text children. */
   readonly markup?: string;
@@ -597,6 +612,25 @@ export function KeyBindingButton(props: KeyBindingButtonProps): UiElement {
     ...(deleteClearsBinding === undefined ? {} : {deleteClearsBinding}),
     ...(addCapturedBinding === undefined ? {} : {addCapturedBinding}),
     ...(selectableBindingKeys === undefined ? {} : {selectableBindingKeys}),
+  }});
+}
+
+/** Click to capture wheel up/down; the host persists successful changes. */
+export function WheelBindingButton(props: WheelBindingButtonProps): UiElement {
+  const {bindingAction, bindingPrompt, unboundText, wheelUpText,
+    wheelDownText, wheelThreshold, escapeCancelsBinding,
+    deleteClearsBinding, ...rest} = props;
+  return TextureButton({...rest, runtimeProperties: {
+    ...props.runtimeProperties,
+    bindingAction,
+    bindingDevice: "wheel",
+    bindingPrompt: bindingPrompt ?? "Scroll up or down",
+    ...(unboundText === undefined ? {} : {unboundText}),
+    ...(wheelUpText === undefined ? {} : {wheelUpText}),
+    ...(wheelDownText === undefined ? {} : {wheelDownText}),
+    ...(wheelThreshold === undefined ? {} : {wheelThreshold}),
+    ...(escapeCancelsBinding === undefined ? {} : {escapeCancelsBinding}),
+    ...(deleteClearsBinding === undefined ? {} : {deleteClearsBinding}),
   }});
 }
 

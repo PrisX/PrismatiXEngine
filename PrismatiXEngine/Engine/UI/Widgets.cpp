@@ -117,12 +117,17 @@ Button::Button(std::string text, std::string name) : Control(std::move(name)), m
 Button::~Button() {
     if (m_capturingBinding && m_bindingInput)
         m_bindingInput->CancelKeyCapture();
+    if (m_capturingWheelBinding && m_bindingInput)
+        m_bindingInput->CancelWheelCapture();
 }
 
 void Button::SetBindingAction(std::string action) {
     if (m_capturingBinding && m_bindingInput)
         m_bindingInput->CancelKeyCapture();
+    if (m_capturingWheelBinding && m_bindingInput)
+        m_bindingInput->CancelWheelCapture();
     m_capturingBinding = false;
+    m_capturingWheelBinding = false;
     m_replacingBindingKey.reset();
     m_pendingSharedBinding.reset();
     m_selectedBindingIndex = 0;
@@ -131,12 +136,37 @@ void Button::SetBindingAction(std::string action) {
     RefreshBindingText();
 }
 
+void Button::SetBindingDevice(const BindingDevice device) {
+    if (m_capturingBinding && m_bindingInput)
+        m_bindingInput->CancelKeyCapture();
+    if (m_capturingWheelBinding && m_bindingInput)
+        m_bindingInput->CancelWheelCapture();
+    m_capturingBinding = false;
+    m_capturingWheelBinding = false;
+    m_replacingBindingKey.reset();
+    m_pendingSharedBinding.reset();
+    m_selectedBindingIndex = 0;
+    m_bindingDevice = device;
+    m_bindingFeedbackSeconds = 0.0f;
+    RefreshBindingText();
+}
+
+bool Button::SetWheelThreshold(const float threshold) {
+    if (!std::isfinite(threshold) || threshold < 0.0f || threshold > 100.0f)
+        return false;
+    m_wheelThreshold = threshold;
+    return true;
+}
+
 void Button::SetInputBindingService(Input* input,
                                     std::function<void()> onChanged) {
     if (m_capturingBinding && m_bindingInput != input)
         m_bindingInput->CancelKeyCapture();
+    if (m_capturingWheelBinding && m_bindingInput != input)
+        m_bindingInput->CancelWheelCapture();
     if (m_bindingInput != input) {
         m_capturingBinding = false;
+        m_capturingWheelBinding = false;
         m_replacingBindingKey.reset();
         m_pendingSharedBinding.reset();
     }
@@ -147,10 +177,20 @@ void Button::SetInputBindingService(Input* input,
 
 void Button::RefreshBindingText() {
     if (m_bindingAction.empty() || !m_bindingInput || m_capturingBinding ||
+        m_capturingWheelBinding ||
         m_bindingFeedbackSeconds > 0.0f)
         return;
     if (!m_bindingInput->HasAction(m_bindingAction)) {
         if (m_text != "Unknown action") SetText("Unknown action");
+        return;
+    }
+    if (m_bindingDevice == BindingDevice::Wheel) {
+        const auto binding = m_bindingInput->GetWheelBinding(m_bindingAction);
+        const std::string& caption = !binding ||
+            binding->direction == WheelDirection::None ? m_unboundText :
+            binding->direction == WheelDirection::Up ? m_wheelUpText :
+            m_wheelDownText;
+        if (m_text != caption) SetText(caption);
         return;
     }
     const auto keys = m_bindingInput->KeyBindings(m_bindingAction);
@@ -177,6 +217,20 @@ void Button::Activate() {
     if (!Enabled()) return;
     EmitSignal("activated");
     if (!m_bindingAction.empty()) {
+        if (m_bindingDevice == BindingDevice::Wheel) {
+            if (!m_bindingInput || !m_bindingInput->HasAction(m_bindingAction)) {
+                SetText("Unknown action");
+                m_bindingFeedbackSeconds = 1.5f;
+            } else if (m_capturingWheelBinding) {
+                m_bindingInput->CancelWheelCapture();
+                m_capturingWheelBinding = false;
+                RefreshBindingText();
+            } else if (m_bindingInput->BeginWheelCapture()) {
+                m_capturingWheelBinding = true;
+                SetText(m_bindingPrompt);
+            }
+            return;
+        }
         if (!m_bindingInput || !m_bindingInput->HasAction(m_bindingAction)) {
             SetText("Unknown action");
             m_bindingFeedbackSeconds = 1.5f;
@@ -209,7 +263,22 @@ void Button::Activate() {
 }
 
 void Button::HandleEvent(UIEvent& event) {
-    if (m_selectableBindingKeys && !m_bindingAction.empty() &&
+    if (m_capturingWheelBinding && event.type == UIEventType::KeyDown &&
+        ((event.key == SDL_SCANCODE_ESCAPE && m_escapeCancelsBinding) ||
+         (event.key == SDL_SCANCODE_DELETE && m_deleteClearsBinding))) {
+        m_bindingInput->CancelWheelCapture();
+        m_capturingWheelBinding = false;
+        if (event.key == SDL_SCANCODE_DELETE &&
+            m_bindingInput->SetWheelBinding(m_bindingAction,
+                                             WheelDirection::None)) {
+            if (m_bindingChanged) m_bindingChanged();
+        }
+        RefreshBindingText();
+        event.handled = true;
+        return;
+    }
+    if (m_bindingDevice == BindingDevice::Keyboard &&
+        m_selectableBindingKeys && !m_bindingAction.empty() &&
         m_bindingInput && !m_capturingBinding &&
         (event.type == UIEventType::KeyDown ||
          event.type == UIEventType::Scroll)) {
@@ -254,6 +323,30 @@ void Button::HandleEvent(UIEvent& event) {
 void Button::Update(float deltaSeconds) {
     Control::Update(deltaSeconds);
     if (m_bindingAction.empty() || !m_bindingInput) return;
+    if (m_bindingDevice == BindingDevice::Wheel) {
+        if (m_capturingWheelBinding) {
+            if (const auto direction = m_bindingInput->TakeCapturedWheel()) {
+                m_capturingWheelBinding = false;
+                if (m_bindingInput->SetWheelBinding(m_bindingAction,
+                                                    *direction, m_wheelThreshold)) {
+                    if (m_bindingChanged) m_bindingChanged();
+                    RefreshBindingText();
+                } else {
+                    SetText("Invalid wheel binding");
+                    m_bindingFeedbackSeconds = 1.5f;
+                }
+            } else if (!m_bindingInput->WheelCaptureActive()) {
+                m_capturingWheelBinding = false;
+                RefreshBindingText();
+            }
+            return;
+        }
+        if (m_bindingFeedbackSeconds > 0.0f)
+            m_bindingFeedbackSeconds = std::max(0.0f,
+                m_bindingFeedbackSeconds - std::max(0.0f, deltaSeconds));
+        RefreshBindingText();
+        return;
+    }
     if (m_capturingBinding) {
         if (const auto key = m_bindingInput->TakeCapturedKey()) {
             m_capturingBinding = false;

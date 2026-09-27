@@ -179,6 +179,12 @@ public:
     [[nodiscard]] bool KeyCaptureActive() const { return m_keyCaptureActive; }
     [[nodiscard]] std::optional<int> TakeCapturedKey();
     void CancelKeyCapture();
+    // One-shot physical wheel capture for settings UIs. Captured motion does
+    // not emit a scroll/action event or reach the existing wheel binding.
+    [[nodiscard]] bool BeginWheelCapture();
+    [[nodiscard]] bool WheelCaptureActive() const { return m_wheelCaptureActive; }
+    [[nodiscard]] std::optional<WheelDirection> TakeCapturedWheel();
+    void CancelWheelCapture();
     [[nodiscard]] KeyboardBindingMap CaptureKeyboardBindings() const;
     // Validates the entire map before applying it. Actions registered later
     // receive their saved keys when RegisterAction is called.
@@ -288,6 +294,8 @@ private:
     std::set<int> m_keysPressed;
     bool m_keyCaptureActive = false;
     std::optional<int> m_capturedKey;
+    bool m_wheelCaptureActive = false;
+    std::optional<WheelDirection> m_capturedWheel;
     std::set<int> m_keysDown;
     std::set<int> m_gamepadButtonsPressed;
     std::set<int> m_gamepadButtonsDown;

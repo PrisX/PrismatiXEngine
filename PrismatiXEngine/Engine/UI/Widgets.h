@@ -19,6 +19,7 @@ namespace px::ui {
 enum class HorizontalTextAlignment { Left, Center, Right };
 enum class VerticalTextAlignment { Top, Center, Bottom };
 enum class TextureScaleMode { Stretch, Fit, Fill, Original };
+enum class BindingDevice { Keyboard, Wheel };
 
 class Panel : public Control {
 public:
@@ -88,6 +89,14 @@ public:
     void SetOnActivated(Activated value) { m_activated = std::move(value); }
     void SetBindingAction(std::string action);
     [[nodiscard]] const std::string& BindingAction() const { return m_bindingAction; }
+    void SetBindingDevice(BindingDevice device);
+    [[nodiscard]] BindingDevice GetBindingDevice() const { return m_bindingDevice; }
+    [[nodiscard]] bool SetWheelThreshold(float threshold);
+    [[nodiscard]] float WheelThreshold() const { return m_wheelThreshold; }
+    void SetWheelUpText(std::string value) { m_wheelUpText = std::move(value); RefreshBindingText(); }
+    [[nodiscard]] const std::string& WheelUpText() const { return m_wheelUpText; }
+    void SetWheelDownText(std::string value) { m_wheelDownText = std::move(value); RefreshBindingText(); }
+    [[nodiscard]] const std::string& WheelDownText() const { return m_wheelDownText; }
     void SetBindingPrompt(std::string value) { m_bindingPrompt = std::move(value); }
     [[nodiscard]] const std::string& BindingPrompt() const { return m_bindingPrompt; }
     void SetUnboundText(std::string value) { m_unboundText = std::move(value); }
@@ -122,6 +131,7 @@ public:
     // Non-owning input service; UIContext reapplies it after every root swap.
     void SetInputBindingService(Input* input, std::function<void()> onChanged = {});
     [[nodiscard]] bool CapturingBinding() const { return m_capturingBinding; }
+    [[nodiscard]] bool CapturingWheelBinding() const { return m_capturingWheelBinding; }
     void SetActionInvocation(ActionInvocation value) { m_action = std::move(value); }
     [[nodiscard]] const ActionInvocation& BoundAction() const { return m_action; }
     void SetHorizontalAlignment(HorizontalTextAlignment value) { m_horizontalAlignment=value; }
@@ -152,6 +162,10 @@ private:
     void RefreshBindingText();
     std::string m_text;
     std::string m_bindingAction;
+    BindingDevice m_bindingDevice = BindingDevice::Keyboard;
+    float m_wheelThreshold = 0.0f;
+    std::string m_wheelUpText = "Wheel Up";
+    std::string m_wheelDownText = "Wheel Down";
     std::string m_bindingPrompt = "Press a key";
     std::string m_unboundText = "Unbound";
     std::string m_bindingConflictText = "Already assigned";
@@ -161,6 +175,7 @@ private:
     std::function<void()> m_bindingChanged;
     float m_bindingFeedbackSeconds = 0.0f;
     bool m_capturingBinding = false;
+    bool m_capturingWheelBinding = false;
     bool m_escapeCancelsBinding = true;
     bool m_allowSharedBinding = false;
     bool m_confirmSharedBinding = false;

@@ -764,7 +764,14 @@ int main() {
         keyButton.layout.width = 247;
         keyButton.layout.height = 34;
         keyButton.runtimeProperties.emplace("bindingAction", "original-save");
-        bindingScene.nodes = {root, keyButton};
+        px::sdk::UiNode wheelButton = keyButton;
+        wheelButton.id = "12000000-0000-4000-8000-000000000004";
+        wheelButton.runtimeProperties.clear();
+        wheelButton.runtimeProperties.emplace("bindingAction", "backlog");
+        wheelButton.runtimeProperties.emplace("bindingDevice", "wheel");
+        wheelButton.runtimeProperties.emplace("wheelThreshold", 1.5);
+        wheelButton.runtimeProperties.emplace("wheelDownText", "Scroll down");
+        bindingScene.nodes = {root, keyButton, wheelButton};
         auto tree = px::ui::BuildUiRuntimeTree(bindingScene);
         Check(tree.Valid(), "authored TextureButton bindingAction adapts to Runtime");
         px::Input keys;
@@ -781,6 +788,14 @@ int main() {
         Check(mounted && mounted->BindingAction() == "original-save" &&
                   mounted->Text() == "F2 / S",
               "authored Runtime UI shows the current binding in source order");
+        const auto* mountedWheel = dynamic_cast<const px::ui::TextureButton*>(
+            context.Root()->Find(*px::Uuid::Parse(wheelButton.id)));
+        Check(mountedWheel &&
+                  mountedWheel->GetBindingDevice() == px::ui::BindingDevice::Wheel &&
+                  mountedWheel->WheelThreshold() == 1.5f &&
+                  mountedWheel->WheelDownText() == "Scroll down" &&
+                  mountedWheel->Text() == "Wheel Up",
+              "authored wheel settings properties adapt to the Runtime control");
     }
     for (const std::string type : {"Label", "RichTextLabel", "Button", "IconButton"}) {
         px::sdk::UiDocument captions;

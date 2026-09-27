@@ -115,7 +115,7 @@ export default <Scene name="Keys" width={800} height={600}>
 provides the input service and saves a successful rebind to `Save/config.dat`
 in its [per-game user-data directory](player-user-data.md);
 other hosts must attach `UIContext::SetInputBindingService(input, onChanged)`
-and persist the updated keyboard bindings themselves. The Runtime SDK exposes
+and persist the updated keyboard or wheel bindings themselves. The Runtime SDK exposes
 `ctx.input.addKeyBinding(action, key)` as the same atomic append operation;
 it returns `limit-reached` if the save-compatible maximum is reached. This
 button can append, replace one selected key, or replace the whole keyboard set.
@@ -131,6 +131,27 @@ ctx.input.setWheelBinding("backlog", "up", 1.5);
 ctx.input.setWheelBinding("advance", "none");
 const binding = ctx.input.wheelBinding("backlog");
 ```
+
+For a stock settings control, use `WheelBindingButton`:
+
+```tsx
+import {Scene, WheelBindingButton} from "@prismatix/authoring-sdk";
+
+export default <Scene name="Wheel Settings" width={800} height={600}>
+  <WheelBindingButton name="BacklogWheel" bindingAction="backlog"
+    x={280} y={180} width={240} height={56}
+    normalPath="Assets/UI/wheel.png" wheelThreshold={1.5}
+    wheelUpText="Scroll up" wheelDownText="Scroll down"
+    deleteClearsBinding />
+</Scene>;
+```
+
+Clicking the control captures the next physical scroll direction. That gesture
+does not activate the old action or scroll the underlying UI. Escape cancels
+capture by default; clicking again also cancels. With `deleteClearsBinding`,
+Delete during capture clears only the wheel binding. `wheelThreshold` accepts
+0–100 and defaults to zero, which triggers on any nonzero movement. The button
+displays the bound direction and asks the host to persist successful changes.
 
 `wheelBinding` returns `null` for an unknown action. `setWheelBinding` returns
 `false` for an unknown action or invalid threshold. Player saves these choices
