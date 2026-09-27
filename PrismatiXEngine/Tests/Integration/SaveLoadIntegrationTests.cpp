@@ -679,6 +679,54 @@ void TestProfileAndSettingsSchemas() {
               loadedSettings.wheelBindings.empty(),
           "settings without input overrides restore engine defaults");
 
+    px::progress::Json oldSettingsWithKeys{
+        {"format", "PrismatiXSettings"}, {"schemaRevision", 2},
+        {"keyboardBindings", {{"quick-save", std::vector<int>{f11}}}}};
+    Check(px::progress::SaveJson(settingsPath, oldSettingsWithKeys, nullptr) &&
+              loadedSettings.Load(settingsPath, nullptr) &&
+              loadedSettings.wheelBindings.empty(),
+          "older keyboard settings without wheel bindings load safely");
+    px::Input migratedInput;
+    Check(migratedInput.RestoreKeyboardBindings(
+              loadedSettings.keyboardBindings) &&
+              migratedInput.GetWheelBinding("advance")->direction ==
+                  px::WheelDirection::Down &&
+              migratedInput.GetWheelBinding("backlog")->direction ==
+                  px::WheelDirection::Up,
+          "missing wheel settings retain the runtime's authored defaults");
+    Check(migratedInput.SetWheelBinding("advance", px::WheelDirection::Up,
+                                        2.0f),
+          "an old settings user can rebind the wheel");
+    loadedSettings.wheelBindings = migratedInput.CaptureWheelBindings();
+    Check(loadedSettings.SavePreservingExisting(settingsPath, nullptr),
+          "old settings can save a new wheel override");
+    px::progress::GameSettings migratedSettings;
+    px::Input reopenedInput;
+    Check(migratedSettings.Load(settingsPath, nullptr) &&
+              reopenedInput.RestoreWheelBindings(
+                  migratedSettings.wheelBindings) &&
+              reopenedInput.GetWheelBinding("advance")->direction ==
+                  px::WheelDirection::Up &&
+              reopenedInput.GetWheelBinding("advance")->threshold == 2.0f,
+          "wheel override persists after reopening migrated settings");
+
+    for (const px::progress::Json& malformedHeader : {
+             px::progress::Json{{"format", 42}, {"schemaRevision", 2}},
+             px::progress::Json{{"format", "PrismatiXSettings"},
+                                {"schemaRevision", "2"}}}) {
+        Check(px::progress::SaveJson(settingsPath, malformedHeader, nullptr),
+              "malformed settings header fixture should be written");
+        const std::string originalBytes = ReadBytes(settingsPath);
+        Check(migratedSettings.LoadWithFallback(settingsPath, nullptr) ==
+                  px::progress::PersistLoadStatus::Failed &&
+                  !migratedSettings.SavePreservingExisting(settingsPath,
+                                                           nullptr) &&
+                  ReadBytes(settingsPath) == originalBytes &&
+                  migratedSettings.wheelBindings.at("advance").threshold ==
+                      2.0f,
+              "malformed settings headers fail without replacing user data");
+    }
+
     px::progress::Json legacySettings{ { "version", 4 }, { "language", "legacy" } };
     Check(px::progress::SaveJson(settingsPath, legacySettings, nullptr), "legacy settings fixture should be written");
     Check(!loadedSettings.Load(settingsPath, nullptr), "legacy numeric settings versions must be rejected");

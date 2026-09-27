@@ -21,8 +21,12 @@ PersistLoadStatus GameSettings::LoadWithFallback(
     if (loaded.status != PersistLoadStatus::Loaded || !loaded.value)
         return loaded.status;
     const Json& j = *loaded.value;
-    if (j.value("format", std::string{}) != "PrismatiXSettings" ||
-        j.value("schemaRevision", 0) != 2) {
+    if (!j.is_object() || !j.contains("format") ||
+        !j.at("format").is_string() ||
+        j.at("format") != "PrismatiXSettings" ||
+        !j.contains("schemaRevision") ||
+        !j.at("schemaRevision").is_number_integer() ||
+        j.at("schemaRevision") != 2) {
         diag::Diagnostic diagnostic{
             .severity = diag::Severity::Error,
             .code = "PXSETTINGS6301",
