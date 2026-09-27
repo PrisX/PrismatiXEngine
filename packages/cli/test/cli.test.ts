@@ -181,6 +181,11 @@ test("validate and build reject native UI property type mismatches before packag
   await write(uiPath, JSON.stringify(ui));
   const validEnum = run(["validate", value.project, "--ui-registry", registryPath]);
   assert.equal(validEnum.status, 0, validEnum.stderr);
+  ui.nodes[0]!.runtimeProperties.wheelThreshold = 101;
+  await write(uiPath, JSON.stringify(ui));
+  const invalidWheel = run(["validate", value.project]);
+  assert.equal(invalidWheel.status, 1);
+  assert.match(invalidWheel.stderr, /PXBUILD1073/u);
 });
 
 test("validate rejects native-invalid UI bindings and typed values before packaging", async () => {

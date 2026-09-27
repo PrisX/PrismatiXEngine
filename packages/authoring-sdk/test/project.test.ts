@@ -87,10 +87,12 @@ test("project compilation checks authored input action routes", () => {
 });
 
 test("project compilation reports unresolved key-binding buttons before Player starts", () => {
-  const compile = (action: unknown, asComponent = false) => {
+  const compile = (action: unknown, asComponent = false,
+    extraProperties: Record<string, unknown> = {}) => {
     const bound = {...ui.nodes[0], id: "33333333-3333-4333-8333-333333333333",
       parentId: rootId, order: 1, kind: "button", runtimeType: "TextureButton",
-      name: "Shortcut", runtimeProperties: {bindingAction: action}};
+      name: "Shortcut", runtimeProperties: {bindingAction: action,
+        ...extraProperties}};
     const authored = {...ui, nodes: [...ui.nodes, bound]};
     return compileProject({project: asComponent
       ? {...project, uiComponents: [{id: uiId, source: "Content/UI/Keys.pxuicomponent"}]}
@@ -125,6 +127,18 @@ test("project compilation reports unresolved key-binding buttons before Player s
     assert.equal(result.valid, false);
     assert.ok(result.diagnostics.some((item) => item.code === "PXBUILD1071"));
   }
+  assert.equal(compile("backlog", false, {bindingDevice: "wheel",
+    wheelThreshold: 1.5}).valid, true);
+  for (const invalid of [-1, 101, "fast"]) {
+    const result = compile("backlog", false, {wheelThreshold: invalid});
+    assert.equal(result.valid, false);
+    assert.ok(result.diagnostics.some((item) => item.code === "PXBUILD1073" &&
+      item.path === "Content/UI/Title.pxui" &&
+      item.details === "nodes[1].runtimeProperties.wheelThreshold"));
+  }
+  const invalidComponent = compile("backlog", true, {wheelThreshold: 101});
+  assert.ok(invalidComponent.diagnostics.some((item) => item.code === "PXBUILD1073" &&
+    item.path === "Content/UI/Keys.pxuicomponent"));
 });
 
 test("project compilation checks keyboard defaults against a native key registry", () => {

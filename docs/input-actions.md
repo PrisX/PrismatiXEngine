@@ -166,5 +166,7 @@ Project compilation checks `bindingAction` in UI scenes and components. An
 empty or non-string value is an error (`PXBUILD1071`). A name absent from both
 `game.inputActions` and the built-in Input actions produces `PXBUILD1072`
 with the UI node location; it is a warning because a custom host may register
-the action later. For Player projects, treat that warning as a likely typo and
+the action later. A `wheelThreshold` outside 0–100, or one that is not a finite
+number, is an error (`PXBUILD1073`) even when no native UI registry is selected.
+For Player projects, treat the unknown-action warning as a likely typo and
 exercise the binding in a packaged Player before release.

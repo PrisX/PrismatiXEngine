@@ -195,6 +195,14 @@ function validateUiInputBindings(document: JsonValue, game: GameDocument,
         typeof node.runtimeProperties !== "object" ||
         Array.isArray(node.runtimeProperties)) continue;
     const action = node.runtimeProperties.bindingAction;
+    const wheelThreshold = node.runtimeProperties.wheelThreshold;
+    if (wheelThreshold !== undefined &&
+        (typeof wheelThreshold !== "number" ||
+         !Number.isFinite(wheelThreshold) ||
+         wheelThreshold < 0 || wheelThreshold > 100))
+      diagnostics.push(issue("PXBUILD1073",
+        "UI wheelThreshold must be a finite number from 0 to 100", path,
+        `nodes[${index}].runtimeProperties.wheelThreshold`));
     if (action === undefined) continue;
     const location = `nodes[${index}].runtimeProperties.bindingAction`;
     if (typeof action !== "string" || action.length === 0) {

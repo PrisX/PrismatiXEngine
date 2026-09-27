@@ -4,7 +4,7 @@
 
 ### 2026-09-27 後續進度
 
-- Authoring／CLI 使用原生 UI TypeRegistry 驗證 `runtimeProperties` 與 Visual State Group override 時，除名稱／型別外，現在也會拒絕不在 `enumChoices` 的字串，例如無效的 `bindingDevice` 或 `visibility`；不把編輯器的 numeric `range` 一律當 Runtime 硬限制。Authoring SDK 156/156、CLI 104/104 通過，含 `validate`／`build` 拒絕案例。
+- Authoring／CLI 使用原生 UI TypeRegistry 驗證 `runtimeProperties` 與 Visual State Group override 時，除名稱／型別外，現在也會拒絕不在 `enumChoices` 的字串，例如無效的 `bindingDevice` 或 `visibility`；不把編輯器的 numeric `range` 一律當 Runtime 硬限制。原生明確要求 0–100 的 `wheelThreshold` 則另外在 UI scene／component 編譯時拒絕錯誤值。Authoring SDK 156/156、列舉值改動後 CLI 104/104，以及 wheel 門檻補驗後的 CLI targeted 1/1 通過。
 - Player 更新鏈尋找現在先讀各 PDX 的小型 manifest，以 `basePackageFingerprint` 過濾與目前版本無關的候選檔；只有匹配者才做完整簽章、exact-base 文件及 payload 驗證，避免多段更新反覆全量驗證舊 PDX。Native Packager contract 1/1 通過，含逆檔名順序的兩段更新、選裝包及相同 base hint 的壞簽章拒絕；Player Catalog Native Acceptance 1/1 通過。這是驗證路徑減少，尚無 8 GB Player 啟動量測。
 - `WheelBindingButton` 現可在 TSX 設定頁擷取實體滾輪方向、顯示目前綁定、設定動作門檻與方向文字；可選 Delete 清除，Escape／再次點擊取消，成功時觸發 Player 的設定保存。擷取中的滾輪事件不再觸發舊動作或穿透到下層捲動。Authoring SDK 156/156 與 Native UI/Accessibility targeted 3/3 通過；正式封裝實按、舊設定 E2E 仍未做。
 - Windows `CreatePackageOverlay` 的最後發布改為同磁碟不可覆寫原子移動，讓不支援 hard link 的磁碟也能發布已驗證 PDX；驗證後才出現的同名輸出仍須保留。Native Packager contract 1/1 通過，含競爭輸出測試。其他平台仍使用 hard link；正式大型 overlay 尚未實測。

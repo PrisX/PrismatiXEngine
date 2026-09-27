@@ -28,7 +28,8 @@ When the bundled Runtime includes `share/PrismatiX/PrismatiXUiTypeRegistry.json`
 `validate`, `dev`, `build`, `pack`, and `run` also verify UI runtime property
 names, types, and authored string enum choices before launching the Player.
 Numeric `range` metadata is an editor hint, so it is not treated as a universal
-runtime limit. A selected `--runtime` prefix or
+runtime limit. The native wheel binding threshold is an explicit 0–100
+contract and is checked independently. A selected `--runtime` prefix or
 native build directory supplies its own registry for these commands; `validate`
 accepts `--runtime` too. A fresh `pack`/distribution build also looks next to
 its selected Packager (or in that bundle's `share/PrismatiX` directory).
