@@ -2,6 +2,8 @@
 
 更新：2026-09-28。此文件以當前兩個本機 repo 和實際測試為準；不是「全部完成」聲明。較完整的逐項發現與歷史量測在 `C:\Users\owenl\C\Projects\SenrenBankaPSX\docs\SDK_FEEDBACK.md`。該檔按時間追加，早段的「尚未實作」有些已被後段取代，閱讀時以最新段落與程式碼為準。
 
+**目前優先順序（使用者 2026-09-28 指示）**：先完善可重用的 SDK Authoring 功能；封裝／大型 build 效能及《千戀＊萬花》1:1 移植暫不列為此階段完成條件。近期 Authoring 已補主要跨檔來源定位、Story 錨點刪除保護、重複與未知參數拒絕。仍須分別決定並驗收：(1) 舊 Story 錨點變動時真正的存檔遷移契約，現有 `--accept-removals` 只是人工確認；(2) 從 Senren 私有 PSB 轉換流程抽出的通用 importer／asset resolver 規格，不能直接搬私有格式；(3) JavaScript `say` 作者 API 與其存檔／已讀身分，現有 Story `@alias` 已可多語但 JS session 僅唯讀 dialogue；(4) 非 Player host 的 UI 值、formatter、Action 註冊範例和剩餘可重用合約。動態立繪 dress／pose／face 若要成為單一 descriptor 的正式 API，需另定存檔與依賴語意；不要把原作逐幀還原混在此項。
+
 ### 2026-09-27—28 後續進度
 
 - **Story 內建指令不再靜默忽略拼錯的具名參數。** `compileStory` 對已知指令的未知參數報 `PXSTORY1017` 並定位該值；`set` 的變數名寫法、`if` 表達式與 extension 自己的參數契約保留。指令補全補上 `chapter`、跨 scene 目標與音訊的可用參數，不再建議 voice／SE 不支援的 fade。SDK 182/182、千戀四語 368 scene／31,339 資源唯讀 validate 通過。
@@ -153,6 +155,8 @@ Engine `docs/package-overlay.md` 是格式規格和安全邊界。這一輪已�
 此段原始單檔產製階段的歷史驗證（2026-09-27）：native 三項 targeted CTest 3/3 通過；`npm run cli:test` 104/104 通過。當時尚無 Player 自動套用；現在已有上方所列的 signed Player E2E。目錄 `create-patch`／`apply-patch` 流程仍可使用。
 
 ## 未完成工作：下一位 agent 的建議順序
+
+此節保留先前 overlay／效能交接背景；依上方最新使用者指示，先處理第 4 項 Authoring 功能與明確可重用的第 5 項作者體驗。第 1–3 項的性能與大包驗收暫緩，不應拿它們當作 Authoring 完成度。
 
 1. **繼續驗收已簽章的單檔更新。** `PlayerApp::LoadBootConfig` 現解析 `Package/updates` 內唯一的 signed exact-base 多版本鏈與 per-user 啟用的 revision 3 選裝包，`Runtime::Init` 以基底 archiveKey 掛原片，再依序掛 overlay/tombstones；失敗回基底。小型 Player E2E 已驗合成舊金鑰／舊 fingerprint slot、明示 migration、跨更新資源刪除及重啟；v29 真實同版存檔已在大型獨立包載入；大型 signed 主更新與 22 route 已驗；大媒體 entry patch 已驗；下一步須驗真實跨版 migration，並決定是否需要遊戲內選裝包開關和同時啟用多個選裝包。不得把 unsigned payload SHA-256 當發行者認證。
 2. **擴充大型 overlay 壓力證據**：兩個真實完整發行版的 signed `create-overlay`／`verify-overlay`、小變更 patch 大小與 Player 22 route 已驗。已在同級 8 GB 專案修改 256 MiB WAV，量到完整產製的記憶體與磁碟取樣峰值，並由 Player 載入壓縮簽章 patch；詳見 SDK_LARGE_MEDIA_OVERLAY_ACCEPTANCE.md。
