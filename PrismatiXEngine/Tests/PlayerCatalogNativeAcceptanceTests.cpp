@@ -952,6 +952,12 @@ int main(int argc, char* argv[]) {
                          "screen.open.gallery") ==
                          std::vector<int>{galleryOverride},
                      "authored Gallery shortcut remains remapped after Player exit");
+        suite.Expect(
+            persistedSettings.wheelBindings.at("advance").direction ==
+                    px::WheelDirection::Down &&
+                persistedSettings.wheelBindings.at("backlog").direction ==
+                    px::WheelDirection::Up,
+            "Player preserves default wheel actions when importing older settings without wheel bindings");
         suite.Expect(Read(unrelatedSave) == "unrelated-player-data" &&
                          !std::filesystem::exists(launchDirectory / "logs"),
                      "package launch never reads or writes the caller's persistence or logs");
