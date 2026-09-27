@@ -551,6 +551,18 @@ PackageOverlayBuildResult CreatePackageOverlay(
     if (std::filesystem::exists(outputPath, error) || error)
         return fail("Overlay output already exists or cannot be inspected");
 
+    const auto baseManifestBefore = ReadBoundedRegularFile(
+        base / "Package/manifest.json", 4ull * 1024ull * 1024ull);
+    const auto baseIndexBefore = ReadBoundedRegularFile(
+        base / "Package/content-index.json", 128ull * 1024ull * 1024ull);
+    const auto targetManifestBefore = ReadBoundedRegularFile(
+        target / "Package/manifest.json", 4ull * 1024ull * 1024ull);
+    const auto targetIndexBefore = ReadBoundedRegularFile(
+        target / "Package/content-index.json", 128ull * 1024ull * 1024ull);
+    if (!baseManifestBefore || !baseIndexBefore || !targetManifestBefore ||
+        !targetIndexBefore)
+        return fail("A distribution manifest or content index is unavailable");
+
     const auto baseVerified = VerifyPackageContents(
         base, [&](const std::uint64_t current, const std::uint64_t total,
                   const std::uint64_t rawBytes) {
@@ -578,8 +590,10 @@ PackageOverlayBuildResult CreatePackageOverlay(
         target / "Package/manifest.json", 4ull * 1024ull * 1024ull);
     const auto targetIndexText = ReadBoundedRegularFile(
         target / "Package/content-index.json", 128ull * 1024ull * 1024ull);
-    if (!baseManifestText || !baseIndexText || !targetManifestText ||
-        !targetIndexText)
+    if (baseManifestText != baseManifestBefore ||
+        baseIndexText != baseIndexBefore ||
+        targetManifestText != targetManifestBefore ||
+        targetIndexText != targetIndexBefore)
         return fail("A distribution manifest or content index changed after verification");
     const auto baseParsed =
         sdk::detail::ParsePackageManifest(*baseManifestText);
@@ -733,6 +747,15 @@ PackageOverlayBuildResult CreatePackageOverlay(
     if (StaticDistributionFiles(base, baseParsed.manifest) != baseStatic ||
         StaticDistributionFiles(target, targetParsed.manifest) != targetStatic)
         return fail("Distribution runtime files changed during overlay creation");
+    if (ReadBoundedRegularFile(base / "Package/manifest.json",
+                               4ull * 1024ull * 1024ull) != baseManifestBefore ||
+        ReadBoundedRegularFile(base / "Package/content-index.json",
+                               128ull * 1024ull * 1024ull) != baseIndexBefore ||
+        ReadBoundedRegularFile(target / "Package/manifest.json",
+                               4ull * 1024ull * 1024ull) != targetManifestBefore ||
+        ReadBoundedRegularFile(target / "Package/content-index.json",
+                               128ull * 1024ull * 1024ull) != targetIndexBefore)
+        return fail("Distribution metadata changed during overlay creation");
     error.clear();
     std::filesystem::create_hard_link(stagedPdx, outputPath, error);
     if (error)

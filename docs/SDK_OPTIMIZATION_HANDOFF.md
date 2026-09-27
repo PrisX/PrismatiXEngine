@@ -2,6 +2,12 @@
 
 更新：2026-09-27。此文件以當前兩個本機 repo 和實際測試為準；不是「全部完成」聲明。較完整的逐項發現與歷史量測在 `C:\Users\owenl\C\Projects\SenrenBankaPSX\docs\SDK_FEEDBACK.md`。該檔按時間追加，早段的「尚未實作」有些已被後段取代，閱讀時以最新段落與程式碼為準。
 
+### 2026-09-27 後續進度
+
+- PDX 串流讀寫的 CRC-32 改為分段查表計算；Packager 的寫入／輸入驗證 CRC 亦改用查表。CRC 標準向量與原有封裝／VFS contract 通過。這是演算法路徑改善，尚未以同條件大型素材量測吞吐，不能聲稱某個百分比加速。
+- `CreatePackageOverlay` 現在比較完整驗證前、後與發布前的兩份 manifest／content index 原始 bytes；驗證回呼期間改寫 target manifest 的測試確認拒絕發布。這降低 metadata TOCTOU 風險，但不能保證同時可寫的 PDX／素材不變，也不是發行者認證。
+- Native Debug 指定的 Packager、Runtime Resources、Player BootSplash CTest 3/3 通過；`npm run cli:build` 與 `npm run cli:test` 104/104 通過。Senren `npm test` 21/21 通過，`npm run validate` 四語 368 scene／31,339 resources 通過。本機 `dist` 目前僅 `senren-banka-psx-authoring-v29` 具有 `Package/content-index.json`；因此還沒有兩份可用於 8 GB `create-overlay` 對照的完整發行版，沒有大型 overlay 時間／記憶體／磁碟量測。
+
 交接基準：Engine `1948fac`（`feat: create verified single-file PDX overlays`）；SenrenBankaPSX `61337a8`（`docs: record verified overlay creation status`）。本文件另外提交；若接手時 HEAD 已不同，先核對變更而不是假設這兩個 SHA 仍是最新。
 
 ## 使用者要求與範圍

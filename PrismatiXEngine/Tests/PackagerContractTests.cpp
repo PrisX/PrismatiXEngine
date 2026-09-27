@@ -892,6 +892,25 @@ int main() {
         suite.Expect(!runtimeRefused.created &&
                          !std::filesystem::exists(changedRuntimePath),
                      "Content-only overlay refuses a changed Player binary");
+
+        const auto targetManifestPath = targetOutput / "Package/manifest.json";
+        const std::string targetManifest = Read(targetManifestPath);
+        bool changedDuringVerification = false;
+        const auto changedMetadataPath = fixture.path / "changed-metadata.pdx";
+        const auto metadataRefused = px::io::CreatePackageOverlay(
+            output, targetOutput, changedMetadataPath,
+            [&](const std::string_view phase, const std::uint64_t current,
+                const std::uint64_t total, const std::uint64_t) {
+                if (!changedDuringVerification && phase == "verify-target" &&
+                    current == total) {
+                    Write(targetManifestPath, targetManifest + " ");
+                    changedDuringVerification = true;
+                }
+            });
+        Write(targetManifestPath, targetManifest);
+        suite.Expect(changedDuringVerification && !metadataRefused.created &&
+                         !std::filesystem::exists(changedMetadataPath),
+                     "Overlay creation refuses metadata changed after content verification");
     });
 
     suite.Run("StableArchiveShardsMountAndReuseTheirOwnCaches", [&] {

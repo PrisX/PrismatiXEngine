@@ -46,6 +46,10 @@ new output without replacing an existing path. It reports verification,
 extraction, and writing progress. Extraction temporarily uses disk space for
 the changed resources in addition to the output PDX; a large compressed
 source entry may still be buffered by the current Archive reader.
+The creator also rejects a distribution whose manifest or content index changes
+between preflight verification and publication. This narrows an update race;
+it does not make a concurrently writable distribution trustworthy or replace
+publisher authentication.
 
 `verify-overlay` does **not** rehash unchanged base PDX payloads, verify the
 target's full authored dependency graph, or authenticate a publisher. The
