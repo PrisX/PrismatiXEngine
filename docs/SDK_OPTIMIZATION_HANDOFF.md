@@ -92,6 +92,8 @@
 
 ## 最近完成的單檔 overlay：交接重點
 
+2026-09-27 的唯讀封裝 preflight 量測：以 `D:\PrismatiXBuilds\SenrenBankaPSX\artifact-v29` 的 31,756 筆、約 8.2 GiB 輸入，Release Packager 執行 `pack --artifact ... --check --archive-shards 16` 成功，28,330 筆媒體雜湊依設計延至正式寫入。首跑總計 66.74 秒；同機暖快取下，試驗性八工路徑探測為 23.13 秒、單工為 25.21 秒。首跑與後兩次不具相同快取條件，不能宣稱並行帶來約三倍加速；暖快取的差距僅約 2 秒，試驗碼已撤回。此量測只涵蓋 `--check`，未測正式封裝的 source copy、舊 PDX 驗證與最終發佈，不能作整體 build 加速證據。下一步應在同條件量測完整階段，再決定安全增量設計。
+
 Engine `docs/package-overlay.md` 是格式規格和安全邊界。這一輪已新增：
 
 - `PrismatiXEngine/Engine/IO/Archive.h/.cpp`：`ArchiveStreamWriter`，檔案來源逐段寫入未加密、未壓縮 PDX5；核對來源預期大小、CRC／SHA-256，支援 metadata、進度。後續 `Archive::OpenStream` 對未加密 zstd entry 改為有界視窗串流解壓（128 MiB 視窗上限、讀到末尾驗大小／CRC）；舊式整筆加密且壓縮 entry 仍會整筆 buffer，encrypted chunked entry 可串流。

@@ -146,5 +146,9 @@ Verification does not rehash unchanged base PDX payloads or independently
 validate the target's entire authored dependency graph. A local process that
 can concurrently rewrite distribution files can still race verification and
 mounting; the base distribution and its Player must be protected by the
-normal installation boundary. Large two-version overlay benchmarks and
-production-game existing-save acceptance remain outstanding.
+normal installation boundary. Two full approximately 7.488 GiB Senren
+distributions have produced a signed 5.41 MiB overlay that Player mounted
+through 22 UI routes. A real v29 same-version encrypted autosave was loaded
+by a separate v31 standalone package. These checks do not cover a large
+changed compressed media entry, disk-use peak, or a real cross-version save
+migration.
