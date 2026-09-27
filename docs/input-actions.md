@@ -47,8 +47,8 @@ by an extension or host using the named-action input API. `keys` may be
 omitted: a new custom action starts unbound, while an engine built-in keeps
 its engine default. Set `keys: []` explicitly to remove a built-in's default
 keyboard keys without removing its gamepad or wheel binding. Saved user
-keyboard choices override authored defaults;
-Reset restores the authored defaults. Gamepad and wheel bindings are left intact.
+keyboard and wheel choices override authored defaults. Reset restores the
+authored keyboard defaults. Gamepad bindings are left intact.
 The order in `keys` is preserved for UI captions and saved settings (for
 example, `F2 / S` stays in that order rather than scancode order).
 Wheel `direction` is `up`, `down`, or `none`; `none` disables an engine default.
@@ -124,7 +124,21 @@ the other keys and their order. Native `Input::RemoveKeyBinding`
 and Runtime SDK `ctx.input.removeKeyBinding(action, key)` remove one key while
 keeping the others in order and leaving wheel/gamepad bindings intact. They
 return `false` for an unknown action, invalid key, or key that is not bound.
-Wheel remapping and portable non-Player persistence are still separate tasks.
+Wheel bindings can also be edited at runtime:
+
+```ts
+ctx.input.setWheelBinding("backlog", "up", 1.5);
+ctx.input.setWheelBinding("advance", "none");
+const binding = ctx.input.wheelBinding("backlog");
+```
+
+`wheelBinding` returns `null` for an unknown action. `setWheelBinding` returns
+`false` for an unknown action or invalid threshold. Player saves these choices
+alongside keyboard bindings in per-user `config.dat` and restores them before
+game actions register. Older revision-2 settings without `wheelBindings`
+continue to use authored defaults. Non-Player hosts can use native
+`Input::CaptureWheelBindings()` and `RestoreWheelBindings()` with their own
+settings store; those hosts remain responsible for calling save after a change.
 Existing `inputBindings` documents remain readable for migration.
 
 Project compilation checks `bindingAction` in UI scenes and components. An

@@ -5,6 +5,7 @@
 #include "Engine/Support/Utf8Path.h"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 
 namespace px::progress {
@@ -66,6 +67,41 @@ PersistLoadStatus GameSettings::LoadWithFallback(
                     it.value().get<std::vector<int>>();
             }
         }
+        candidate.wheelBindings.clear();
+        if (j.contains("wheelBindings")) {
+            const auto& raw = j.at("wheelBindings");
+            if (!raw.is_object() || raw.size() > 1'024)
+                throw Json::type_error::create(
+                    302, "wheelBindings must be a bounded object", &raw);
+            for (auto it = raw.begin(); it != raw.end(); ++it) {
+                const auto& value = it.value();
+                if (it.key().empty() || it.key().size() > 512 ||
+                    it.key().find('\0') != std::string::npos ||
+                    !value.is_object() || value.size() != 2 ||
+                    !value.contains("direction") ||
+                    !value.at("direction").is_string() ||
+                    !value.contains("threshold") ||
+                    !value.at("threshold").is_number())
+                    throw Json::type_error::create(
+                        302, "wheel binding is invalid", &value);
+                const std::string direction =
+                    value.at("direction").get<std::string>();
+                const float threshold = value.at("threshold").get<float>();
+                if (!std::isfinite(threshold) || threshold < 0.0f ||
+                    threshold > 100.0f ||
+                    (direction != "none" && direction != "up" &&
+                     direction != "down") ||
+                    (direction == "none" && threshold != 0.0f))
+                    throw Json::type_error::create(
+                        302, "wheel binding direction or threshold is invalid",
+                        &value);
+                candidate.wheelBindings[it.key()] = {
+                    direction == "up" ? WheelDirection::Up
+                        : direction == "down" ? WheelDirection::Down
+                                               : WheelDirection::None,
+                    threshold};
+            }
+        }
         *this = std::move(candidate);
         return PersistLoadStatus::Loaded;
     } catch (const Json::exception& error) {
@@ -100,6 +136,26 @@ bool GameSettings::Save(const std::string& path, const crypto::Key* key) const {
     j["reducedMotion"] = reducedMotion;
     j["selfVoicing"] = selfVoicing;
     if (!keyboardBindings.empty()) j["keyboardBindings"] = keyboardBindings;
+    if (!wheelBindings.empty()) {
+        if (wheelBindings.size() > 1'024) return false;
+        Json wheel = Json::object();
+        for (const auto& [action, binding] : wheelBindings) {
+            if (action.empty() || action.size() > 512 ||
+                action.find('\0') != std::string::npos ||
+                !std::isfinite(binding.threshold) ||
+                binding.threshold < 0.0f || binding.threshold > 100.0f ||
+                (binding.direction == WheelDirection::None &&
+                 binding.threshold != 0.0f)) return false;
+            const char* direction = binding.direction == WheelDirection::Up
+                ? "up" : binding.direction == WheelDirection::Down
+                ? "down" : binding.direction == WheelDirection::None
+                ? "none" : nullptr;
+            if (!direction) return false;
+            wheel[action] = {{"direction", direction},
+                             {"threshold", binding.threshold}};
+        }
+        j["wheelBindings"] = std::move(wheel);
+    }
     return SaveJson(path, j, key);
 }
 

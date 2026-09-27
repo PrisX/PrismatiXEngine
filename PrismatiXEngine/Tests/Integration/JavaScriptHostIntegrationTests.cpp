@@ -958,6 +958,11 @@ void TestPhaseThreePublicRuntimeSurfaces(px::test::Suite& suite) {
         if (!Engine.BindInputKey("portrait.interact", 27) ||
             Engine.GetInputKeyBindings("portrait.interact")[0] !== 27)
             throw new Error("input key inspection failed");
+        if (!Engine.SetInputWheelBinding("portrait.interact", "up", 1.5) ||
+            Engine.GetInputWheelBinding("portrait.interact")?.direction !== "up" ||
+            Engine.GetInputWheelBinding("portrait.interact")?.threshold !== 1.5 ||
+            Engine.SetInputWheelBinding("portrait.interact", "none", 1))
+            throw new Error("wheel binding editing or inspection failed");
         const conflict = Engine.RebindInputKey("portrait.interact", 44);
         if (conflict.status !== "conflict" ||
             !conflict.conflicts.includes("accept") ||

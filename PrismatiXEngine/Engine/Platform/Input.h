@@ -61,6 +61,12 @@ enum class PointerButton : std::uint8_t {
 
 enum class WheelDirection : std::uint8_t { None, Up, Down };
 
+struct WheelBinding {
+    WheelDirection direction = WheelDirection::None;
+    float threshold = 0.0f;
+};
+using WheelBindingMap = std::map<std::string, WheelBinding, std::less<>>;
+
 struct InputEvent {
     std::uint64_t id = 0;
     std::uint64_t frame = 0;
@@ -127,6 +133,10 @@ public:
     [[nodiscard]] bool SetWheelBinding(std::string_view action,
                                        WheelDirection direction,
                                        float threshold = 0.0f);
+    [[nodiscard]] std::optional<WheelBinding> GetWheelBinding(
+        std::string_view action) const;
+    [[nodiscard]] WheelBindingMap CaptureWheelBindings() const;
+    [[nodiscard]] bool RestoreWheelBindings(const WheelBindingMap& bindings);
     // Named actions default to the global context. The host selects a base
     // context; scripts may push temporary overlays for nested screens.
     [[nodiscard]] bool SetActionContext(std::string_view action,
@@ -288,6 +298,7 @@ private:
     std::string m_baseContext = "global";
     std::vector<std::string> m_contextStack;
     KeyboardBindingMap m_pendingKeyBindings;
+    WheelBindingMap m_pendingWheelBindings;
     KeyboardBindingMap m_defaultKeyboardBindings;
     std::set<std::string,std::less<>> m_injectedNamedActions;
     std::vector<InputEvent> m_events;

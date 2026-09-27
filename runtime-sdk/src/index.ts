@@ -604,6 +604,8 @@ export interface PrismatiXEngine {
   GetInputContexts(): readonly string[];
   BindInputKey(action: string, scancode: number): boolean;
   GetInputKeyBindings(action: string): readonly number[];
+  GetInputWheelBinding(action: string): {direction: "up" | "down" | "none"; threshold: number} | null;
+  SetInputWheelBinding(action: string, direction: "up" | "down" | "none", threshold?: number): boolean;
   GetInputKeyCode(name: string): number | null;
   GetInputKeyName(scancode: number): string;
   RebindInputKey(action: string, key: string | number, allowConflict?: boolean): KeyRebindResult;
@@ -766,6 +768,8 @@ export const ENGINE_HOST_BINDINGS = [
   "GetInputContexts",
   "BindInputKey",
   "GetInputKeyBindings",
+  "GetInputWheelBinding",
+  "SetInputWheelBinding",
   "GetInputKeyCode",
   "GetInputKeyName",
   "RebindInputKey",
@@ -956,6 +960,8 @@ export interface PrismatiXContext {
     contexts(): readonly string[];
     bindKey(action: string, scancode: number): boolean;
     keyBindings(action: string): readonly number[];
+    wheelBinding(action: string): {readonly direction: "up" | "down" | "none"; readonly threshold: number} | null;
+    setWheelBinding(action: string, direction: "up" | "down" | "none", threshold?: number): boolean;
     keyCode(name: string): number | null;
     keyName(scancode: number): string;
     rebindKey(action: string, key: string | number, allowConflict?: boolean): KeyRebindResult;
@@ -1254,6 +1260,9 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
       contexts: () => engine.GetInputContexts(),
       bindKey: (action, scancode) => engine.BindInputKey(action, scancode),
       keyBindings: (action) => engine.GetInputKeyBindings(action),
+      wheelBinding: (action) => engine.GetInputWheelBinding(action),
+      setWheelBinding: (action, direction, threshold) =>
+        engine.SetInputWheelBinding(action, direction, threshold),
       keyCode: (name) => engine.GetInputKeyCode(name),
       keyName: (scancode) => engine.GetInputKeyName(scancode),
       rebindKey: (action, key, allowConflict) =>

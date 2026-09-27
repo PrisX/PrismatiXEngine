@@ -165,6 +165,8 @@ const engine = {
   GetInputContexts: () => ["global", "game"],
   BindInputKey: () => true,
   GetInputKeyBindings: () => [44],
+  GetInputWheelBinding: () => ({direction: "up" as const, threshold: 1.5}),
+  SetInputWheelBinding: () => true,
   GetInputKeyCode: () => 58,
   GetInputKeyName: () => "F1",
   RebindInputKey: () => ({status: "applied" as const, conflicts: []}),
@@ -279,6 +281,8 @@ if (!event || event.action !== "sample.interact" || !ctx.input.consume(event.id)
     ctx.input.contexts()[1] !== "game" || !ctx.input.popContext() ||
     !ctx.input.bindKey("sample.interact", 44) ||
     ctx.input.keyBindings("sample.interact")[0] !== 44 ||
+    ctx.input.wheelBinding("sample.interact")?.threshold !== 1.5 ||
+    !ctx.input.setWheelBinding("sample.interact", "down", 1) ||
     ctx.input.keyCode("F1") !== 58 || ctx.input.keyName(58) !== "F1" ||
     ctx.input.rebindKey("sample.interact", "F1").status !== "applied" ||
     ctx.input.addKeyBinding("sample.interact", "F2").status !== "applied" ||

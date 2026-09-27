@@ -2,6 +2,7 @@
 
 #include "Engine/IO/Crypto.h"
 #include "Engine/Progression/Persist.h"
+#include "Engine/Platform/Input.h"
 
 #include <map>
 #include <span>
@@ -30,6 +31,7 @@ struct GameSettings {
     // Optional keyboard overrides. Empty means engine defaults; unknown
     // action names remain available for scripts that register them later.
     std::map<std::string, std::vector<int>, std::less<>> keyboardBindings;
+    WheelBindingMap wheelBindings;
 
     bool Load(const std::string& path, const crypto::Key* key);
     [[nodiscard]] PersistLoadStatus LoadWithFallback(

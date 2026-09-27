@@ -255,6 +255,33 @@ int main() {
                      "wheel emits a one-frame action, never a held key state");
     });
 
+    suite.Run("WheelBindingsCaptureAndRestoreDeferredActions", [&] {
+        px::Input original;
+        suite.Require(original.RegisterAction("screen.open.history") &&
+                          original.SetWheelBinding("screen.open.history",
+                                                   px::WheelDirection::Up, 1.5f) &&
+                          original.SetWheelBinding("advance",
+                                                   px::WheelDirection::None),
+                      "user wheel overrides apply to named and built-in actions");
+        const auto saved = original.CaptureWheelBindings();
+        px::Input restored;
+        suite.Require(restored.RestoreWheelBindings(saved) &&
+                          restored.RegisterAction("screen.open.history"),
+                      "wheel overrides restore before game actions register");
+        const auto history = restored.GetWheelBinding("screen.open.history");
+        const auto advance = restored.GetWheelBinding("advance");
+        suite.Expect(history && history->direction == px::WheelDirection::Up &&
+                         history->threshold == 1.5f && advance &&
+                         advance->direction == px::WheelDirection::None &&
+                         advance->threshold == 0.0f,
+                     "restored wheel bindings preserve direction, threshold, and disabled gesture");
+        auto invalid = saved;
+        invalid["screen.open.history"] = {px::WheelDirection::None, 1.0f};
+        suite.Expect(!restored.RestoreWheelBindings(invalid) &&
+                         restored.GetWheelBinding("screen.open.history")->threshold == 1.5f,
+                     "invalid wheel maps fail without changing live bindings");
+    });
+
     suite.Run("KeyRebindReportsConflictsWithoutLosingBindings", [&] {
         px::Input input;
         suite.Require(input.RegisterAction("photo-mode") &&

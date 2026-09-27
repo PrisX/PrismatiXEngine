@@ -4,6 +4,7 @@
 
 ### 2026-09-27 後續進度
 
+- Wheel 使用者設定已補 `Input::CaptureWheelBindings`／`RestoreWheelBindings`、Runtime SDK `ctx.input.wheelBinding`／`setWheelBinding` 與 Player per-user `config.dat` 保存／還原；舊 revision-2 設定缺少欄位時沿用作者預設。Native 輸入／設定／JS Host targeted 測試及 Runtime SDK 測試通過；非 Player host 仍須自行觸發持久化，正式封裝實按未驗。
 - Story 現可用 `[motion asset=...pxmotion await=true speed=...]`／`[motion.stop]` 在 Stage 播放全畫面 `.pxmotion`；Stage 預檢 descriptor、圖片與音效資源，圖片預載完成後才推進時間，音效 marker 依 bus 發聲，等待非循環動畫結束後續行。進度、速度與等待狀態寫入存檔並於還原後接續；Authoring Story／Project、Runtime IR、原生動畫／存讀檔 targeted 測試通過。尚未在正式大型封裝實機驗證畫面。
 - `Input::RemoveKeyBinding` 和 Runtime SDK `ctx.input.removeKeyBinding` 現可只移除一個鍵，保留同動作其餘按鍵順序及 gamepad／wheel；原生與 JS 測試涵蓋移除後的保存／載入。後續 `Input::ReplaceKeyBinding` 可原位替換單鍵，`KeyBindingButton` 可選取、刪除／替換單鍵，並可啟用衝突二次確認；原生與 Authoring SDK targeted 測試通過。
 - PDX 串流讀寫的 CRC-32 改為分段查表計算；Packager 的寫入／輸入驗證 CRC 亦改用查表。CRC 標準向量與原有封裝／VFS contract 通過。這是演算法路徑改善，尚未以同條件大型素材量測吞吐，不能聲稱某個百分比加速。
@@ -55,7 +56,7 @@
 | UI contract／素材依賴 | typed props、原生 TypeRegistry、Action 參數、canonical UiValue、UI 動態圖片預載、`ItemsPlaced`／`Modal` 已補。 | 執行期 ViewModel 路徑與自訂 formatter 的語意無完整靜態驗證；任意自訂繪圖、Story 中途素材與音效的預載無通用保證。18 個設定開關雖已模板化，動作仍是 `settings.noop`。 |
 | 文字與路由演出 | 已修文字 outline 雙層換行差異、未變文字每幀重排，以及 route crossfade 暗谷／預載閃白。 | 正式單次 layout/mask 的文字效果管線、依事件 author 的白幕／shader／遮罩轉場與通用 route motion graph 缺；最新大型封裝與原版逐幀對照未做。 |
 | `.pxmotion`／Story 動畫 | 格式已演進至 rev 11，TSX UI／splash 可播；Story `[timeline]` 可控 `.pxanim`／`.pxtimeline` 的 await/speed；新增 `[motion]`／`[motion.stop]` 直接在 Stage 播放 `.pxmotion`，含預載、音效 marker、等待與存檔還原。 | 尚缺以正式大型發行版驗證圖層畫面及音效時序；M2 `.mtn` 轉換器／逐幀驗證暫停。 |
-| 輸入／設定 | `.pxgame.inputActions` 有 context、key、wheel、route／`uiAction`；捕捉／追加／逐鍵移除／原位替換／整組清除可保存；`KeyBindingButton` 可逐鍵選取與衝突二次確認。 | 使用者改 wheel、非 Player host 保存責任尚未收尾；需 E2E 核對舊設定。原版衝突對話框屬遊戲 UI，仍未還原。原作剩餘 12 項與多數 settings.noop 須先判別可攜 SDK 能力，不能一律當作 SDK 缺陷。 |
+| 輸入／設定 | `.pxgame.inputActions` 有 context、key、wheel、route／`uiAction`；鍵盤捕捉／追加／逐鍵移除／原位替換／整組清除、wheel 方向／門檻可保存；`KeyBindingButton` 可逐鍵選取與衝突二次確認。 | wheel 尚無專用 stock 設定按鈕；非 Player host 須自行觸發持久化；需 E2E 核對舊設定。原版衝突對話框屬遊戲 UI，仍未還原。原作剩餘 12 項與多數 settings.noop 須先判別可攜 SDK 能力，不能一律當作 SDK 缺陷。 |
 | 更新與持久化 | 可顯式安裝目錄補丁；簽章更新鏈可建／驗／由 Player 載入或回基底；同版舊存檔可沿已驗簽鏈的舊 fingerprint 載入並檢查 Runtime 文件／錨點；選裝包可獨立啟停且存檔身分保留主更新 fingerprint；Player 資料已移至 per-user 位置。 | 不相容劇本仍需明示 content/save version 與 migration；舊版 save key 與正式大型發行版 migration 實測仍缺。 |
 | 發行效能 | 16 分片、Release Packager、未變片重用、preflight／media 驗證、runtime-only refresh 已有真實大型量測。 | 日常素材變更仍做 O(全量素材) 的多輪核驗；缺依賴級／block-level 安全增量、同條件長期吞吐與磁碟峰值量測、最新 overlay 的 8 GB 壓力測試。 |
 | 平台／原作特有功能 | rule/shake/影片、主要 UI 與基本 flowchart 可運行。 | 老闆鍵／置頂／語音分流／Steam 等是否抽成可攜 SDK API 尚需取捨；不要為了 Senren 外觀宣稱這些設定已生效。 |

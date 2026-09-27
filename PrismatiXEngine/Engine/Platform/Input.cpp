@@ -123,6 +123,12 @@ bool Input::RegisterAction(std::string action) {
             m_keyBindings[ActionIndex(*builtin)] = found->second.keys;
         m_pendingKeyBindings.erase(pending);
     }
+    if (const auto pending = m_pendingWheelBindings.find(found->first);
+        pending != m_pendingWheelBindings.end()) {
+        found->second.wheelDirection = pending->second.direction;
+        found->second.wheelThreshold = pending->second.threshold;
+        m_pendingWheelBindings.erase(pending);
+    }
     return true;
 }
 
@@ -135,6 +141,7 @@ bool Input::UnregisterAction(const std::string_view action) {
     const std::string name(action);
     m_injectedNamedActions.erase(name);
     m_pendingKeyBindings.erase(name);
+    m_pendingWheelBindings.erase(name);
     m_defaultKeyboardBindings.erase(name);
     return m_namedBindings.erase(name) != 0;
 }
@@ -194,6 +201,49 @@ bool Input::SetWheelBinding(const std::string_view action,
         (direction == WheelDirection::None && threshold != 0.0f)) return false;
     found->second.wheelDirection = direction;
     found->second.wheelThreshold = threshold;
+    return true;
+}
+
+std::optional<WheelBinding> Input::GetWheelBinding(
+    const std::string_view action) const {
+    const auto found = m_namedBindings.find(action);
+    if (found == m_namedBindings.end()) return std::nullopt;
+    return WheelBinding{found->second.wheelDirection,
+                        found->second.wheelThreshold};
+}
+
+WheelBindingMap Input::CaptureWheelBindings() const {
+    WheelBindingMap result = m_pendingWheelBindings;
+    for (const auto& [action, binding] : m_namedBindings)
+        result[action] = {binding.wheelDirection, binding.wheelThreshold};
+    return result;
+}
+
+bool Input::RestoreWheelBindings(const WheelBindingMap& bindings) {
+    if (bindings.size() > 1'024) return false;
+    for (const auto& [action, binding] : bindings) {
+        if (action.empty() || action.size() > 512 ||
+            action.find('\0') != std::string::npos ||
+            !std::isfinite(binding.threshold) || binding.threshold < 0.0f ||
+            binding.threshold > 100.0f ||
+            (binding.direction != WheelDirection::None &&
+             binding.direction != WheelDirection::Up &&
+             binding.direction != WheelDirection::Down) ||
+            (binding.direction == WheelDirection::None &&
+             binding.threshold != 0.0f)) return false;
+    }
+    auto named = m_namedBindings;
+    WheelBindingMap pending;
+    for (const auto& [action, binding] : bindings) {
+        if (const auto found = named.find(action); found != named.end()) {
+            found->second.wheelDirection = binding.direction;
+            found->second.wheelThreshold = binding.threshold;
+        } else {
+            pending.emplace(action, binding);
+        }
+    }
+    m_namedBindings = std::move(named);
+    m_pendingWheelBindings = std::move(pending);
     return true;
 }
 

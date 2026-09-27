@@ -630,19 +630,28 @@ void TestProfileAndSettingsSchemas() {
                   px::KeyRebindStatus::Applied,
           "input map can author a portable keyboard settings override");
     settings.keyboardBindings = sourceInput.CaptureKeyboardBindings();
+    Check(sourceInput.SetWheelBinding("advance", px::WheelDirection::None) &&
+              sourceInput.SetWheelBinding("backlog", px::WheelDirection::Up, 1.5f),
+          "input map can author wheel settings overrides");
+    settings.wheelBindings = sourceInput.CaptureWheelBindings();
     Check(settings.Save(settingsPath, nullptr), "game settings should be written with the current schema");
 
     px::progress::GameSettings loadedSettings;
     Check(loadedSettings.Load(settingsPath, nullptr), "game settings should load with the current schema");
     Check(
-        loadedSettings.bgmVolume == 64 && loadedSettings.voiceVolume == 96 && loadedSettings.language == "ja-JP" && loadedSettings.textScale == 1.25f && loadedSettings.highContrast && loadedSettings.reducedMotion && loadedSettings.selfVoicing && loadedSettings.keyboardBindings.at("quick-save") == std::vector<int>{f11},
-        "game settings should preserve audio, locale, accessibility, and keyboard overrides"
+        loadedSettings.bgmVolume == 64 && loadedSettings.voiceVolume == 96 && loadedSettings.language == "ja-JP" && loadedSettings.textScale == 1.25f && loadedSettings.highContrast && loadedSettings.reducedMotion && loadedSettings.selfVoicing && loadedSettings.keyboardBindings.at("quick-save") == std::vector<int>{f11} && loadedSettings.wheelBindings.at("backlog").threshold == 1.5f,
+        "game settings should preserve audio, locale, accessibility, keyboard, and wheel overrides"
     );
     px::Input restoredInput;
     Check(restoredInput.RestoreKeyboardBindings(loadedSettings.keyboardBindings) &&
               restoredInput.KeyBindings("quick-save") ==
                   std::vector<int>{f11},
           "a saved shortcut is applied by a fresh runtime input map");
+    Check(restoredInput.RestoreWheelBindings(loadedSettings.wheelBindings) &&
+              restoredInput.GetWheelBinding("advance")->direction ==
+                  px::WheelDirection::None &&
+              restoredInput.GetWheelBinding("backlog")->threshold == 1.5f,
+          "saved wheel overrides apply to a fresh runtime input map");
 
     px::progress::Json invalidBindings{
         {"format", "PrismatiXSettings"}, {"schemaRevision", 2},
@@ -653,13 +662,22 @@ void TestProfileAndSettingsSchemas() {
               loadedSettings.keyboardBindings.at("quick-save") ==
                   std::vector<int>{f11},
           "invalid keyboard binding type must not partially replace settings");
+    px::progress::Json invalidWheel{
+        {"format", "PrismatiXSettings"}, {"schemaRevision", 2},
+        {"wheelBindings", {{"backlog", {{"direction", "none"},
+                                         {"threshold", 1.0}}}}}};
+    Check(px::progress::SaveJson(settingsPath, invalidWheel, nullptr) &&
+              !loadedSettings.Load(settingsPath, nullptr) &&
+              loadedSettings.wheelBindings.at("backlog").threshold == 1.5f,
+          "invalid wheel binding must not partially replace settings");
     px::progress::Json settingsWithoutBindings{
         {"format", "PrismatiXSettings"}, {"schemaRevision", 2}};
     Check(px::progress::SaveJson(settingsPath, settingsWithoutBindings, nullptr),
           "older settings without keyboard overrides should be written");
     Check(loadedSettings.Load(settingsPath, nullptr) &&
-              loadedSettings.keyboardBindings.empty(),
-          "settings without keyboard overrides restore engine defaults");
+              loadedSettings.keyboardBindings.empty() &&
+              loadedSettings.wheelBindings.empty(),
+          "settings without input overrides restore engine defaults");
 
     px::progress::Json legacySettings{ { "version", 4 }, { "language", "legacy" } };
     Check(px::progress::SaveJson(settingsPath, legacySettings, nullptr), "legacy settings fixture should be written");

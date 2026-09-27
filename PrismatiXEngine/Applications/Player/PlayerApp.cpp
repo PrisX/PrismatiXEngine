@@ -776,6 +776,13 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         m_settingsWritable = false;
         PX_LOG_ERROR("Saved keyboard bindings are invalid; settings writes suppressed");
     }
+    if (settingsLoad == progress::PersistLoadStatus::Loaded &&
+        !m_settings.wheelBindings.empty() &&
+        !m_runtime.GetInput().RestoreWheelBindings(
+            m_settings.wheelBindings)) {
+        m_settingsWritable = false;
+        PX_LOG_ERROR("Saved wheel bindings are invalid; settings writes suppressed");
+    }
     m_saves.Configure(PathToUtf8(m_saveDirectory), &m_saveKey,
                       m_saveFallbackKeys);
     PX_LOG_DEBUG("Player boot: persistence configured");
@@ -1673,7 +1680,8 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                     if (!input.BindKey(action.id, keys[index])) return false;
             }
         }
-        if (!action.wheelDirection.empty()) {
+        if (!m_settings.wheelBindings.contains(action.id) &&
+            !action.wheelDirection.empty()) {
             const WheelDirection direction = action.wheelDirection == "up"
                 ? WheelDirection::Up
                 : action.wheelDirection == "down" ? WheelDirection::Down
@@ -1783,6 +1791,7 @@ bool PlayerApp::SaveSettingsIfWritable() {
         return false;
     }
     m_settings.keyboardBindings = m_runtime.GetInput().CaptureKeyboardBindings();
+    m_settings.wheelBindings = m_runtime.GetInput().CaptureWheelBindings();
     return m_settings.SavePreservingExisting(
         PathToUtf8(m_saveDirectory / "config.dat"),
         &m_saveKey, m_saveFallbackKeys);

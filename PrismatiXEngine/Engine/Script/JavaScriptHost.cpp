@@ -2876,6 +2876,37 @@ public:
                     bindings.emplace_back(scancode);
                 return ToJavaScript(Variant(std::move(bindings)));
             }
+            if (operation == "input.wheelBinding") {
+                if (!StringArgument(count, values, 0, first) || first.empty())
+                    return JS_ThrowTypeError(
+                        context, "GetInputWheelBinding requires an action");
+                const auto binding = services.input->GetWheelBinding(first);
+                if (!binding) return JS_NULL;
+                const char* direction = binding->direction == WheelDirection::Up
+                    ? "up" : binding->direction == WheelDirection::Down
+                    ? "down" : "none";
+                return ToJavaScript(Variant(VariantObject{
+                    {"direction", Variant(std::string(direction))},
+                    {"threshold", Variant(static_cast<double>(binding->threshold))}}));
+            }
+            if (operation == "input.setWheelBinding") {
+                if (!StringArgument(count, values, 0, first) || first.empty() ||
+                    !StringArgument(count, values, 1, second))
+                    return JS_ThrowTypeError(
+                        context, "SetInputWheelBinding requires an action and direction");
+                const WheelDirection direction = second == "up"
+                    ? WheelDirection::Up : second == "down"
+                    ? WheelDirection::Down : WheelDirection::None;
+                if (second != "up" && second != "down" && second != "none")
+                    return JS_ThrowTypeError(
+                        context, "wheel direction must be up, down, or none");
+                double threshold = 0.0;
+                if (count >= 3 && !JS_IsUndefined(values[2]) &&
+                    !NumberArgument(count, values, 2, threshold))
+                    return JS_ThrowTypeError(context, "wheel threshold must be numeric");
+                return JS_NewBool(context, services.input->SetWheelBinding(
+                    first, direction, static_cast<float>(threshold)));
+            }
             if (operation == "input.keyCode") {
                 if (!StringArgument(count, values, 0, first))
                     return JS_ThrowTypeError(context, "key name must be a string");
@@ -3286,6 +3317,8 @@ public:
                 GetInputContexts: { value: bindRuntime("input.contexts") },
                 BindInputKey: { value: bindRuntime("input.bindKey") },
                 GetInputKeyBindings: { value: bindRuntime("input.keyBindings") },
+                GetInputWheelBinding: { value: bindRuntime("input.wheelBinding") },
+                SetInputWheelBinding: { value: bindRuntime("input.setWheelBinding") },
                 GetInputKeyCode: { value: bindRuntime("input.keyCode") },
                 GetInputKeyName: { value: bindRuntime("input.keyName") },
                 RebindInputKey: { value: bindRuntime("input.rebindKey") },
