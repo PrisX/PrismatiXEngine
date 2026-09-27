@@ -1048,32 +1048,22 @@ struct PreviousPersistence {
     std::string error;
 };
 
-PreviousPersistence DiscoverPreviousPersistence(
-    const std::filesystem::path& outputDir, const std::string_view gameId) {
+PreviousPersistence ParsePreviousPersistence(
+    const std::string_view text, const std::string_view gameId) {
     PreviousPersistence result;
-    const auto path = outputDir / "Package/manifest.json";
-    std::error_code error;
-    if (!std::filesystem::exists(path, error)) return result;
-    if (error || !std::filesystem::is_regular_file(path, error)) {
-        result.error = "The previous package manifest could not be inspected";
-        return result;
-    }
-    const auto size = std::filesystem::file_size(path, error);
-    if (error || size == 0 || size > 4 * 1024 * 1024) {
+    if (text.empty() || text.size() > 4 * 1024 * 1024) {
         result.error = "The previous package manifest has an invalid size";
         return result;
     }
-    const auto text = ReadTextFile(path, size);
-    const auto parsed = text ? detail::ParsePackageManifest(*text)
-                             : detail::PackageManifestParseResult{};
-    if (!text || !parsed.Valid()) {
+    const auto parsed = detail::ParsePackageManifest(text);
+    if (!parsed.Valid()) {
         result.error =
             "The previous package manifest is unreadable; refusing to discard its persistence reader";
         return result;
     }
     const auto& manifest = parsed.manifest;
     if (manifest.gameId != gameId) return result;
-    const auto digest = Sha256Text(*text);
+    const auto digest = Sha256Text(text);
     if (!digest) {
         result.error = "The previous package manifest could not be hashed";
         return result;
@@ -1096,6 +1086,29 @@ PreviousPersistence DiscoverPreviousPersistence(
             manifest.compatibleSaveFingerprints;
     }
     return result;
+}
+
+PreviousPersistence DiscoverPreviousPersistence(
+    const std::filesystem::path& outputDir, const std::string_view gameId) {
+    PreviousPersistence result;
+    const auto path = outputDir / "Package/manifest.json";
+    std::error_code error;
+    if (!std::filesystem::exists(path, error)) return result;
+    if (error || !std::filesystem::is_regular_file(path, error)) {
+        result.error = "The previous package manifest could not be inspected";
+        return result;
+    }
+    const auto size = std::filesystem::file_size(path, error);
+    if (error || size == 0 || size > 4 * 1024 * 1024) {
+        result.error = "The previous package manifest has an invalid size";
+        return result;
+    }
+    const auto text = ReadTextFile(path, size);
+    if (!text) {
+        result.error = "The previous package manifest could not be read";
+        return result;
+    }
+    return ParsePreviousPersistence(*text, gameId);
 }
 
 bool DecodeUtf8(const std::string_view text, std::set<std::uint32_t>& output) {
@@ -3256,7 +3269,8 @@ bool WriteContentIndex(std::ostream& output, const PackageRequest& request,
 
 PackagePlanResult PlanPackageRequest(const PackageRequest& request,
                                      const PackageEventSink& eventSink,
-                                     const PackageValidationDepth depth) {
+                                     const PackageValidationDepth depth,
+                                     const std::string_view previousManifestJson) {
     PackagePlanResult result;
     EmitProgress(request, eventSink, "validate", 0, request.inputs.size(),
                  "Validating package request for a content plan");
@@ -3272,8 +3286,13 @@ PackagePlanResult PlanPackageRequest(const PackageRequest& request,
     }
     const auto persistenceSource = request.cacheSourceDir.empty()
         ? request.outputDir : request.cacheSourceDir;
-    auto previousPersistence =
-        DiscoverPreviousPersistence(persistenceSource, request.gameId);
+    auto previousPersistence = previousManifestJson.empty()
+        ? DiscoverPreviousPersistence(persistenceSource, request.gameId)
+        : ParsePreviousPersistence(previousManifestJson, request.gameId);
+    if (!previousManifestJson.empty() &&
+        previousPersistence.packageFingerprint.empty() &&
+        previousPersistence.error.empty())
+        previousPersistence.error = "Previous package belongs to a different game";
     if (!previousPersistence.error.empty()) {
         result.diagnostics.push_back(
             {"PXPKG1317", std::move(previousPersistence.error), true});

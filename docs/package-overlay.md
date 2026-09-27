@@ -31,11 +31,28 @@ second multi-gigabyte distribution. The target manifest and content index
 are computed by the same Packager planner used for a complete package; a
 later v2 built from that exact artifact with `--previous-package v1`, the
 same Player, encryption setting, publisher key, and shard count has matching
-target documents. For a subsequent `patch2.pdx`, use that complete v2 as
-the next base until direct chaining from a previously signed overlay is
-supported. The artifact must be a CLI-published directory with intact
+target documents. The artifact must be a CLI-published directory with intact
 ownership metadata. Build it with `prismatix build --artifact-only`, or
 publish changes with `prismatix augment`.
+
+To publish `patch2.pdx` without a complete v2, put the signed `patch.pdx`
+in a directory of prior updates and use its verified target as the next
+base. The new output must be outside the installed base and artifact:
+
+```sh
+prismatix create-overlay --base path/to/v1 --updates-dir path/to/prior-updates --artifact path/to/artifact-v3 --output path/to/patch2.pdx --signing-key path/to/private-key.txt
+prismatix verify-overlay --base path/to/v1 --updates-dir path/to/prior-updates --patch path/to/patch2.pdx --require-signature
+```
+
+The same command works for later main updates: `--updates-dir` must contain
+the complete, unique signed chain preceding the new patch. It rejects
+damaged or unrelated main update candidates. Once verified, install the new
+patch alongside the prior updates. To publish `adult.pdx` against the latest
+main update, use the same `--updates-dir` and add `--optional-id adult`; it
+remains independently enabled by the player. Updating `adult.pdx` after a
+new main patch requires a new optional pack signed against that latest main
+version. `verify-overlay --updates-dir` also works after the patch is installed:
+it excludes the `--patch` file while resolving its preceding chain.
 
 The two distributions must have the same game ID, Engine version, publisher
 public key, and non-content runtime files, but distinct package fingerprints.
@@ -50,9 +67,8 @@ private key outside the project and distribution, restrict access to it, and
 back it up securely. `overlay-keygen` refuses to overwrite either output.
 
 After verification, install the PDX as `v1/Package/updates/patch.pdx` and
-restart Player. For a second update, build a complete v3 distribution and
-create `patch2.pdx` from v2 to v3 with the same publisher key. Place both
-files in the updates directory; Player discovers their dependency order from
+restart Player. Place later patches in the same updates directory; Player
+discovers their dependency order from
 the signed base and target documents. The Player checks the pinned publisher key, signature, exact
 base manifest and index bytes, target metadata, and every changed resource
 before mounting it. It uses the base PDX archives and their original
@@ -161,9 +177,10 @@ platforms currently publish with a no-replace hard link.
 Only one optional pack can be enabled at a time, and switching requires a
 Player restart. There is no in-game toggle UI yet. A signed update chain may
 contain at most 64 regular PDX candidates in a
-dedicated directory, and ambiguous branches fail closed. A later update must
-be authored from its preceding complete distribution; installed overlay files
-are not valid `create-overlay` input distributions.
+dedicated directory, and ambiguous branches fail closed. Publishing from a
+prior signed chain still rechecks all artifact inputs and verifies the complete
+installed base. It has not been measured on the 8 GB project and does not
+provide block-level incremental authoring or packaging.
 
 Verification does not rehash unchanged base PDX payloads or independently
 validate the target's entire authored dependency graph. A local process that

@@ -684,7 +684,8 @@ PackageOverlayVerification VerifySignedPackageOverlayFromDocuments(
 PackageOverlayChain ResolveSignedPackageOverlayChain(
     const std::filesystem::path& baseDistribution,
     const std::filesystem::path& updatesDirectory,
-    const std::string_view enabledOptionalPackId) {
+    const std::string_view enabledOptionalPackId,
+    const std::filesystem::path& excludedOverlayPath) {
     const auto fail = [](std::string message) {
         return PackageOverlayChain{.error = std::move(message)};
     };
@@ -711,6 +712,16 @@ PackageOverlayChain ResolveSignedPackageOverlayChain(
         if (error || ++inspected > 256)
             return fail("Updates directory has too many or unreadable entries");
         if (iterator->path().extension() != ".pdx") continue;
+        if (!excludedOverlayPath.empty()) {
+            std::error_code equivalentError;
+            if ((std::filesystem::equivalent(iterator->path(),
+                                             excludedOverlayPath,
+                                             equivalentError) &&
+                 !equivalentError) ||
+                iterator->path().lexically_normal() ==
+                    excludedOverlayPath.lexically_normal())
+                continue;
+        }
         const auto status = std::filesystem::symlink_status(iterator->path(), error);
         if (error || !std::filesystem::is_regular_file(status) ||
             std::filesystem::is_symlink(status))
@@ -816,8 +827,10 @@ PackageOverlayChain ResolveSignedPackageOverlayChain(
         *currentManifest = std::move(next->second.targetManifestJson);
         *currentIndex = std::move(next->second.targetContentIndexJson);
     }
-    if (!result.mounts.empty())
+    if (!result.mounts.empty()) {
         result.targetManifestJson = *currentManifest;
+        result.targetContentIndexJson = *currentIndex;
+    }
     const auto main = sdk::detail::ParsePackageManifest(*currentManifest);
     if (!main.Valid()) return fail("Signed update chain target is invalid");
     result.mainPackageFingerprint = main.manifest.packageFingerprint;
@@ -852,6 +865,8 @@ PackageOverlayChain ResolveSignedPackageOverlayChain(
                                      std::move(selected->second.tombstones)});
             result.targetManifestJson =
                 std::move(selected->second.targetManifestJson);
+            result.targetContentIndexJson =
+                std::move(selected->second.targetContentIndexJson);
             result.optionalPackId = std::string(enabledOptionalPackId);
         }
     }
@@ -1157,7 +1172,8 @@ PackageOverlayBuildResult CreatePackageOverlayFromPlan(
     const std::filesystem::path& outputPath,
     const PackageOverlayBuildProgress& onProgress,
     const std::filesystem::path& signingKeyFile,
-    const std::string_view optionalPackId) {
+    const std::string_view optionalPackId,
+    const std::filesystem::path& priorUpdatesDirectory) {
     const auto fail = [](std::string message) {
         return PackageOverlayBuildResult{.error = std::move(message)};
     };
@@ -1186,6 +1202,9 @@ PackageOverlayBuildResult CreatePackageOverlayFromPlan(
     if (std::filesystem::exists(outputPath, error) || error)
         return fail("Overlay output already exists or cannot be inspected");
     const bool signedOverlay = !signingKeyFile.empty();
+    if (!priorUpdatesDirectory.empty() &&
+        (!priorUpdatesDirectory.is_absolute() || !signedOverlay))
+        return fail("Chained overlays require an absolute updates directory and a publisher signature");
     if (!optionalPackId.empty() &&
         (!ValidOptionalPackId(optionalPackId) || !signedOverlay))
         return fail("Optional overlays require a valid ID and publisher signature");
@@ -1200,10 +1219,6 @@ PackageOverlayBuildResult CreatePackageOverlayFromPlan(
         plan.contentIndexJson.empty() ||
         plan.contentIndexJson.size() > 128ull * 1024ull * 1024ull)
         return fail("A base or planned package document is unavailable or oversized");
-    const auto plannedBaseManifestHash = FingerprintText(*baseManifestBefore);
-    if (!plannedBaseManifestHash ||
-        plan.previousManifestSha256 != *plannedBaseManifestHash)
-        return fail("Base manifest differs from the package planning source");
     const auto baseVerified = VerifyPackageContents(
         base, [&](const std::uint64_t current, const std::uint64_t total,
                   const std::uint64_t rawBytes) {
@@ -1217,7 +1232,34 @@ PackageOverlayBuildResult CreatePackageOverlayFromPlan(
         ReadBoundedRegularFile(base / "Package/content-index.json",
                                128ull * 1024ull * 1024ull) != baseIndexBefore)
         return fail("Base package documents changed during verification");
-    const auto baseParsed = sdk::detail::ParsePackageManifest(*baseManifestBefore);
+    const auto installedBaseParsed =
+        sdk::detail::ParsePackageManifest(*baseManifestBefore);
+    if (!installedBaseParsed.Valid())
+        return fail("Installed base manifest is invalid");
+    std::string effectiveBaseManifest = *baseManifestBefore;
+    std::string effectiveBaseIndex = *baseIndexBefore;
+    std::optional<PackageOverlayChain> priorChain;
+    if (!priorUpdatesDirectory.empty()) {
+        priorChain = ResolveSignedPackageOverlayChain(
+            base, priorUpdatesDirectory);
+        if (!priorChain->valid || priorChain->mounts.empty() ||
+            !priorChain->ignoredFiles.empty() ||
+            priorChain->targetManifestJson.empty() ||
+            priorChain->targetContentIndexJson.empty())
+            return fail("A verified main update chain is required: " +
+                        (priorChain->error.empty()
+                             ? "unverified or unrelated update files"
+                             : priorChain->error));
+        effectiveBaseManifest = priorChain->targetManifestJson;
+        effectiveBaseIndex = priorChain->targetContentIndexJson;
+    }
+    const auto plannedBaseManifestHash =
+        FingerprintText(effectiveBaseManifest);
+    if (!plannedBaseManifestHash ||
+        plan.previousManifestSha256 != *plannedBaseManifestHash)
+        return fail("Base manifest differs from the package planning source");
+    const auto baseParsed =
+        sdk::detail::ParsePackageManifest(effectiveBaseManifest);
     const auto targetParsed = sdk::detail::ParsePackageManifest(plan.manifestJson);
     if (!baseParsed.Valid() || !targetParsed.Valid() ||
         baseParsed.manifest.gameId != targetParsed.manifest.gameId ||
@@ -1239,7 +1281,7 @@ PackageOverlayBuildResult CreatePackageOverlayFromPlan(
              targetParsed.manifest.persistenceKeyId))
         return fail("Optional overlays cannot change save or content version identity");
     const auto baseEntries =
-        ParseIndexedResources(*baseIndexBefore, baseParsed.manifest);
+        ParseIndexedResources(effectiveBaseIndex, baseParsed.manifest);
     const auto targetEntries =
         ParseIndexedResources(plan.contentIndexJson, targetParsed.manifest);
     if (!baseEntries || !targetEntries ||
@@ -1264,7 +1306,8 @@ PackageOverlayBuildResult CreatePackageOverlayFromPlan(
                 return fail("Planned source escapes the artifact: " + source.uri);
         }
     }
-    if (!RuntimeInputsMatchBase(base, baseParsed.manifest, playerExecutable))
+    if (!RuntimeInputsMatchBase(base, installedBaseParsed.manifest,
+                                playerExecutable))
         return fail("Player or runtime libraries differ from the base distribution");
 
     std::vector<IndexedResource> changed;
@@ -1280,8 +1323,8 @@ PackageOverlayBuildResult CreatePackageOverlayFromPlan(
         (void)resource;
         if (!targetEntries->contains(uri)) ++removed;
     }
-    const auto baseManifestHash = FingerprintText(*baseManifestBefore);
-    const auto baseIndexHash = FingerprintText(*baseIndexBefore);
+    const auto baseManifestHash = FingerprintText(effectiveBaseManifest);
+    const auto baseIndexHash = FingerprintText(effectiveBaseIndex);
     const auto targetManifestHash = FingerprintText(plan.manifestJson);
     const auto targetIndexHash = FingerprintText(plan.contentIndexJson);
     if (!baseManifestHash || !baseIndexHash || !targetManifestHash ||
@@ -1378,13 +1421,30 @@ PackageOverlayBuildResult CreatePackageOverlayFromPlan(
                                          current);
                       }))
         return fail("Overlay PDX could not be written from planned resources");
-    const auto verified = signedOverlay
-        ? VerifySignedPackageOverlay(base, stagedPdx)
-        : VerifyPackageOverlay(base, stagedPdx);
+    const auto verified = priorChain
+        ? VerifySignedPackageOverlayFromDocuments(
+              effectiveBaseManifest, effectiveBaseIndex, stagedPdx)
+        : signedOverlay ? VerifySignedPackageOverlay(base, stagedPdx)
+                        : VerifyPackageOverlay(base, stagedPdx);
     if (!verified.valid || verified.changedResources != changed.size() ||
         verified.tombstones.size() != removed)
         return fail("Created overlay failed verification: " + verified.error);
-    if (!RuntimeInputsMatchBase(base, baseParsed.manifest, playerExecutable) ||
+    if (priorChain) {
+        const auto currentChain = ResolveSignedPackageOverlayChain(
+            base, priorUpdatesDirectory);
+        if (!currentChain.valid || !currentChain.ignoredFiles.empty() ||
+            currentChain.targetManifestJson != effectiveBaseManifest ||
+            currentChain.targetContentIndexJson != effectiveBaseIndex ||
+            currentChain.mounts.size() != priorChain->mounts.size() ||
+            !std::ranges::equal(
+                currentChain.mounts, priorChain->mounts,
+                [](const auto& left, const auto& right) {
+                    return left.path == right.path;
+                }))
+            return fail("Signed update chain changed during overlay creation");
+    }
+    if (!RuntimeInputsMatchBase(base, installedBaseParsed.manifest,
+                                playerExecutable) ||
         ReadBoundedRegularFile(base / "Package/manifest.json",
                                4ull * 1024ull * 1024ull) != baseManifestBefore ||
         ReadBoundedRegularFile(base / "Package/content-index.json",

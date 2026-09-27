@@ -89,6 +89,7 @@ struct PackageOverlayChain {
     bool valid = false;
     std::string error;
     std::string targetManifestJson;
+    std::string targetContentIndexJson;
     std::vector<PackageOverlayChainMount> mounts;
     std::string optionalPackId;
     std::string mainPackageFingerprint;
@@ -105,10 +106,13 @@ struct PackageOverlayChain {
 // update. Ambiguous branches fail closed; stale/unrelated files are ignored.
 // An enabled revision-3 optional pack mounts last only when it verifies
 // against the final main update. Empty ID leaves optional packs disabled.
+// A verifier can exclude the candidate it is checking when that file is
+// already present in the same updates directory.
 [[nodiscard]] PackageOverlayChain ResolveSignedPackageOverlayChain(
     const std::filesystem::path& baseDistribution,
     const std::filesystem::path& updatesDirectory,
-    std::string_view enabledOptionalPackId = {});
+    std::string_view enabledOptionalPackId = {},
+    const std::filesystem::path& excludedOverlayPath = {});
 
 using PackageOverlayBuildProgress = std::function<void(
     std::string_view phase, std::uint64_t current, std::uint64_t total,
@@ -129,6 +133,8 @@ using PackageOverlayBuildProgress = std::function<void(
 // plan. The caller must plan with AllInputs so unchanged artifact sources are
 // checked before publication; changed file bytes are checked again by the
 // streaming writer. The base runtime must match playerExecutable exactly.
+// priorUpdatesDirectory, when supplied, must contain the full unique signed
+// main update chain; its final target documents become the exact patch base.
 [[nodiscard]] PackageOverlayBuildResult CreatePackageOverlayFromPlan(
     const std::filesystem::path& baseDistribution,
     const std::filesystem::path& artifactRoot,
@@ -137,6 +143,7 @@ using PackageOverlayBuildProgress = std::function<void(
     const std::filesystem::path& outputPath,
     const PackageOverlayBuildProgress& onProgress = {},
     const std::filesystem::path& signingKeyFile = {},
-    std::string_view optionalPackId = {});
+    std::string_view optionalPackId = {},
+    const std::filesystem::path& priorUpdatesDirectory = {});
 
 }  // namespace px::io

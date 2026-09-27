@@ -94,8 +94,8 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   "verify-package": {values: "runtime packager", flags: ""},
   "create-patch": {values: "base target output runtime packager", flags: ""},
   "apply-patch": {values: "base patch output runtime packager", flags: "in-place"},
-  "create-overlay": {values: "base target artifact output signing-key optional-id runtime packager player", flags: ""},
-  "verify-overlay": {values: "base patch runtime packager", flags: "require-signature"},
+  "create-overlay": {values: "base target artifact updates-dir output signing-key optional-id runtime packager player", flags: ""},
+  "verify-overlay": {values: "base updates-dir patch runtime packager", flags: "require-signature"},
   "overlay-keygen": {values: "private public runtime packager", flags: ""},
 };
 function parseOptions(command: string, args: readonly string[]): Options {
@@ -2336,6 +2336,7 @@ function usage(): void {
   process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|augment|ids|migrate|inspect-save|plan-patch|verify-package|create-patch|apply-patch|create-overlay|verify-overlay|overlay-keygen> [project-or-save-or-distribution] [options]\n");
   process.stderr.write("  prismatix pack <project> --artifact <dir> --check [--verify-media]  Validate without creating a distribution\n");
   process.stderr.write("  prismatix create-overlay --base <distribution> --artifact <published-artifact> --output <patch.pdx> [--signing-key <private-key>]  Patch without a target distribution\n");
+  process.stderr.write("  prismatix create-overlay --base <distribution> --updates-dir <prior-signed-updates> --artifact <published-artifact> --output <patch2.pdx> --signing-key <private-key>\n");
 }
 
 async function verifyPackagedContents(directory: string, options: Options): Promise<{
@@ -2475,6 +2476,7 @@ async function overlayCommand(command: "create-overlay" | "verify-overlay",
   const base = options.values.get("base");
   const target = options.values.get("target");
   const artifact = options.values.get("artifact");
+  const updatesOption = options.values.get("updates-dir");
   const patch = options.values.get("patch");
   const output = options.values.get("output");
   if (base === undefined ||
@@ -2486,8 +2488,21 @@ async function overlayCommand(command: "create-overlay" | "verify-overlay",
       : "verify-overlay requires --base and --patch")]);
     return 2;
   }
+  if (updatesOption !== undefined && command === "create-overlay" &&
+      (artifact === undefined || options.values.get("signing-key") === undefined)) {
+    printDiagnostics([diagnostic("PXCLI1520",
+      "--updates-dir requires --artifact and --signing-key")]);
+    return 2;
+  }
   let temporaryRequest: string | undefined;
   try {
+    const updatesDirectory = updatesOption === undefined ? undefined :
+      resolve(updatesOption);
+    if (updatesDirectory !== undefined) {
+      const info = await lstat(updatesDirectory);
+      if (!info.isDirectory() || info.isSymbolicLink())
+        throw new Error("--updates-dir must be a real directory");
+    }
     const runtime = artifact === undefined ? undefined :
       await discoverRuntimeBundle(["packager", "player"] as const,
         runtimeOptions(options));
@@ -2497,7 +2512,10 @@ async function overlayCommand(command: "create-overlay" | "verify-overlay",
       ? target !== undefined
         ? ["--create-overlay", resolve(base), resolve(target), resolve(output!)]
         : []
-      : ["--verify-overlay", resolve(base), resolve(patch!)];
+      : updatesDirectory === undefined
+        ? ["--verify-overlay", resolve(base), resolve(patch!)]
+        : ["--verify-overlay-after-chain", resolve(base),
+          updatesDirectory, resolve(patch!)];
     if (artifact !== undefined && command === "create-overlay") {
       const artifactRoot = await realpath(resolve(artifact));
       const baseRoot = await realpath(resolve(base));
@@ -2563,8 +2581,12 @@ async function overlayCommand(command: "create-overlay" | "verify-overlay",
         archiveShards: shardIndex.archiveShards,
         inputs,
       })}\n`, "utf8");
-      nativeArgs.push("--create-overlay-from-request", requestPath,
-        baseRoot, resolve(output!));
+      if (updatesDirectory === undefined)
+        nativeArgs.push("--create-overlay-from-request", requestPath,
+          baseRoot, resolve(output!));
+      else
+        nativeArgs.push("--create-overlay-from-chain-request", requestPath,
+          baseRoot, updatesDirectory, resolve(output!));
     }
     const signingKey = options.values.get("signing-key");
     if (command === "create-overlay" && signingKey !== undefined) {
@@ -2583,7 +2605,8 @@ async function overlayCommand(command: "create-overlay" | "verify-overlay",
       }
       nativeArgs.push("--optional-id", optionalId);
     }
-    if (command === "verify-overlay" && options.flags.has("require-signature"))
+    if (command === "verify-overlay" && updatesDirectory === undefined &&
+        options.flags.has("require-signature"))
       nativeArgs.push("--require-signature");
     const result = await runProcess(packager.path, nativeArgs,
       undefined, undefined, false, packageOutputObserver("Overlay", false));

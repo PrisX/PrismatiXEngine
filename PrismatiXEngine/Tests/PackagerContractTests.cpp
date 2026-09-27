@@ -1099,6 +1099,89 @@ int main() {
                          Read(signedTarget / "Package/content-index.json") ==
                              directPlan.contentIndexJson,
                      "direct overlay documents match a later complete package from the same base");
+        const auto priorUpdates = fixture.path / "SignedDirectUpdates";
+        std::filesystem::create_directories(priorUpdates);
+        std::filesystem::copy_file(directPatch, priorUpdates / "patch.pdx");
+        Write(root / "Content/Overlay/second.txt", "second signed update");
+        auto directSecondRequest = targetRequest;
+        directSecondRequest.requestId = "second-direct-overlay";
+        directSecondRequest.outputDir = fixture.path / "Build/NoSecondTargetDistribution";
+        directSecondRequest.inputs.push_back(Input(root, "Content/Overlay/second.txt"));
+        const auto secondPlan = px::sdk::PlanPackageRequest(
+            directSecondRequest, {}, px::sdk::PackageValidationDepth::AllInputs,
+            directVerified.targetManifestJson);
+        suite.Require(secondPlan.valid,
+                      "second update is planned from the signed prior target");
+        const auto directSecondPatch = fixture.path / "signed-direct-patch2.pdx";
+        const auto secondCreated = px::io::CreatePackageOverlayFromPlan(
+            signedBase, root, secondPlan, directSecondRequest.playerExecutable,
+            directSecondPatch, {}, keyFile, {}, priorUpdates);
+        suite.Require(secondCreated.created && secondCreated.changedResources == 1 &&
+                          !std::filesystem::exists(directSecondRequest.outputDir),
+                      "patch2 is signed from patch1 without a complete v2 distribution: " +
+                          secondCreated.error);
+        const auto secondVerified =
+            px::io::VerifySignedPackageOverlayFromDocuments(
+                directVerified.targetManifestJson,
+                directVerified.targetContentIndexJson, directSecondPatch);
+        suite.Require(secondVerified.valid,
+                      "patch2 verifies against patch1 exact target documents");
+        std::filesystem::copy_file(directSecondPatch, priorUpdates / "patch2.pdx");
+        const auto mainChain = px::io::ResolveSignedPackageOverlayChain(
+            signedBase, priorUpdates);
+        suite.Expect(mainChain.valid && mainChain.mounts.size() == 2 &&
+                         mainChain.targetManifestJson == secondPlan.manifestJson &&
+                         mainChain.targetContentIndexJson == secondPlan.contentIndexJson,
+                     "Player resolver discovers the two direct signed patches in order");
+        Write(root / "Content/Overlay/adult.txt", "optional signed content");
+        auto directAdultRequest = directSecondRequest;
+        directAdultRequest.requestId = "adult-after-direct-chain";
+        directAdultRequest.inputs.push_back(Input(root, "Content/Overlay/adult.txt"));
+        const auto adultPlan = px::sdk::PlanPackageRequest(
+            directAdultRequest, {}, px::sdk::PackageValidationDepth::AllInputs,
+            secondVerified.targetManifestJson);
+        suite.Require(adultPlan.valid,
+                      "optional pack is planned from the latest signed main target");
+        const auto adultAfterChain = fixture.path / "signed-direct-adult-after-chain.pdx";
+        const auto adultCreated = px::io::CreatePackageOverlayFromPlan(
+            signedBase, root, adultPlan, directAdultRequest.playerExecutable,
+            adultAfterChain, {}, keyFile, "adult", priorUpdates);
+        const auto adultVerified = adultCreated.created
+            ? px::io::VerifySignedPackageOverlayFromDocuments(
+                  secondVerified.targetManifestJson,
+                  secondVerified.targetContentIndexJson, adultAfterChain)
+            : px::io::PackageOverlayVerification{};
+        suite.Expect(adultCreated.created && adultVerified.valid &&
+                         adultVerified.optionalPackId == "adult",
+                     "adult pack signs against patch2 and remains independently optional");
+        const auto brokenUpdates = fixture.path / "BrokenDirectUpdates";
+        std::filesystem::create_directories(brokenUpdates);
+        Write(brokenUpdates / "patch.pdx", "damaged prior patch");
+        const auto blockedPatch = fixture.path / "blocked-direct-patch2.pdx";
+        suite.Expect(!px::io::CreatePackageOverlayFromPlan(
+                          signedBase, root, secondPlan,
+                          directSecondRequest.playerExecutable, blockedPatch,
+                          {}, keyFile, {}, brokenUpdates).created &&
+                         !std::filesystem::exists(blockedPatch),
+                     "a damaged preceding patch cannot authorize patch2");
+        const auto racedUpdates = fixture.path / "RacedDirectUpdates";
+        std::filesystem::create_directories(racedUpdates);
+        std::filesystem::copy_file(directPatch, racedUpdates / "patch.pdx");
+        bool priorChanged = false;
+        const auto racedPatch = fixture.path / "raced-direct-patch2.pdx";
+        const auto raced = px::io::CreatePackageOverlayFromPlan(
+            signedBase, root, secondPlan,
+            directSecondRequest.playerExecutable, racedPatch,
+            [&](const std::string_view phase, const std::uint64_t,
+                const std::uint64_t, const std::uint64_t) {
+                if (phase == "plan-changed" && !priorChanged) {
+                    Write(racedUpdates / "patch.pdx", "changed during creation");
+                    priorChanged = true;
+                }
+            }, keyFile, {}, racedUpdates);
+        suite.Expect(priorChanged && !raced.created &&
+                         !std::filesystem::exists(racedPatch),
+                     "patch2 is not published if its signed predecessor changes during writing");
         const auto patch = fixture.path / "signed-overlay.pdx";
         const auto created = px::io::CreatePackageOverlay(
             signedBase, signedTarget, patch, {}, keyFile);

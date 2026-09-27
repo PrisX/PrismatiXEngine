@@ -194,9 +194,12 @@ using PackageEventSink = std::function<void(const PackageEvent&)>;
 // and resource inventory that a complete distribution would contain. It does
 // not write archives or attest media bytes deferred until a writer consumes
 // each planned source; callers must verify those fingerprints at that point.
+// previousManifestJson may come only from a verified signed predecessor;
+// the overlay writer pins its hash to that exact predecessor before publishing.
 [[nodiscard]] PackagePlanResult PlanPackageRequest(
     const PackageRequest& request, const PackageEventSink& eventSink = {},
-    PackageValidationDepth depth = PackageValidationDepth::Structural);
+    PackageValidationDepth depth = PackageValidationDepth::Structural,
+    std::string_view previousManifestJson = {});
 
 // Checks native package request and authored Story/UI/resource contracts
 // without creating or replacing a distribution. Media payload fingerprints
