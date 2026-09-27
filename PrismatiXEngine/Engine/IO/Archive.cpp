@@ -323,13 +323,7 @@ std::uint32_t Crc32Range(const std::string& path, const std::uint64_t offset,
         input.read(reinterpret_cast<char*>(buffer.data()),
                    static_cast<std::streamsize>(count));
         if (input.gcount() != static_cast<std::streamsize>(count)) return 0;
-        for (std::size_t index = 0; index < count; ++index) {
-            crc ^= buffer[index];
-            for (int bit = 0; bit < 8; ++bit) {
-                const std::uint32_t mask = 0u - (crc & 1u);
-                crc = (crc >> 1u) ^ (0xedb88320u & mask);
-            }
-        }
+        crc = crypto::UpdateCrc32(crc, buffer.data(), count);
         remaining -= count;
     }
     ok = true;
@@ -919,13 +913,7 @@ bool ArchiveStreamWriter::Write(const std::string& outPath,
                     onProgress(writtenBytes, totalBytes);
                     lastReportedBytes = writtenBytes;
                 }
-                for (std::size_t byteIndex = 0; byteIndex < count; ++byteIndex) {
-                    crc ^= buffer[byteIndex];
-                    for (int bit = 0; bit < 8; ++bit) {
-                        const std::uint32_t mask = 0u - (crc & 1u);
-                        crc = (crc >> 1u) ^ (0xedb88320u & mask);
-                    }
-                }
+                crc = crypto::UpdateCrc32(crc, buffer.data(), count);
                 remaining -= count;
             }
             if (input.peek() != std::ifstream::traits_type::eof() ||

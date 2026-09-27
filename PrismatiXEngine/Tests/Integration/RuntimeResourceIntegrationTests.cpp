@@ -181,6 +181,13 @@ void TestVfsArchiveOverlayPrecedence() {
 }
 
 void TestStreamingArchiveWriter() {
+    const std::string crcSample = "123456789";
+    const auto* crcBytes = reinterpret_cast<const std::uint8_t*>(
+        crcSample.data());
+    const auto first = px::crypto::UpdateCrc32(0xffffffffu, crcBytes, 4);
+    Check(~px::crypto::UpdateCrc32(first, crcBytes + 4, 5) == 0xcbf43926u &&
+              px::crypto::Crc32(crcBytes, crcSample.size()) == 0xcbf43926u,
+          "Incremental CRC-32 must match the standard vector across chunks");
     px::test::TempDirectory fixture("streaming-archive-writer");
     const auto source = fixture.path / "large-source.bin";
     {

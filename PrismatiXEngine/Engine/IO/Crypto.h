@@ -30,6 +30,11 @@ using Iv = std::array<std::uint8_t, 16>;
 
 [[nodiscard]] std::uint64_t HashPath(std::string_view path);
 
+// Incremental CRC-32 state. Start at 0xffffffff and complement the result
+// after the last chunk; this lets archive streams checksum bounded buffers.
+[[nodiscard]] std::uint32_t UpdateCrc32(std::uint32_t state,
+                                        const std::uint8_t* data,
+                                        std::size_t size);
 [[nodiscard]] std::uint32_t Crc32(const std::uint8_t* data, std::size_t size);
 
 [[nodiscard]] std::string Sha256Hex(std::string_view value);

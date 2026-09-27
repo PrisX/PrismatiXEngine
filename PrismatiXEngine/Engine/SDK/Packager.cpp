@@ -336,27 +336,26 @@ std::uint64_t HashPath(const std::string_view path) {
     return hash;
 }
 
-std::uint32_t Crc32(const Bytes& data) {
-    std::uint32_t crc = 0xFFFFFFFFu;
-    for (const auto byte : data) {
-        crc ^= byte;
-        for (int bit = 0; bit < 8; ++bit) {
-            const std::uint32_t mask = 0u - (crc & 1u);
-            crc = (crc >> 1) ^ (0xEDB88320u & mask);
-        }
-    }
-    return ~crc;
-}
-
 void UpdateCrc32(std::uint32_t& crc, const std::uint8_t* data,
                  const std::size_t size) {
-    for (std::size_t index = 0; index < size; ++index) {
-        crc ^= data[index];
-        for (int bit = 0; bit < 8; ++bit) {
-            const std::uint32_t mask = 0u - (crc & 1u);
-            crc = (crc >> 1) ^ (0xEDB88320u & mask);
+    static constexpr auto table = [] {
+        std::array<std::uint32_t, 256> values{};
+        for (std::uint32_t index = 0; index < values.size(); ++index) {
+            std::uint32_t value = index;
+            for (int bit = 0; bit < 8; ++bit)
+                value = (value >> 1u) ^ (0xedb88320u & (0u - (value & 1u)));
+            values[index] = value;
         }
-    }
+        return values;
+    }();
+    for (std::size_t index = 0; index < size; ++index)
+        crc = (crc >> 8u) ^ table[(crc ^ data[index]) & 0xffu];
+}
+
+std::uint32_t Crc32(const Bytes& data) {
+    std::uint32_t crc = 0xffffffffu;
+    UpdateCrc32(crc, data.data(), data.size());
+    return ~crc;
 }
 
 void PutU16(Bytes& bytes, const std::uint16_t value) {

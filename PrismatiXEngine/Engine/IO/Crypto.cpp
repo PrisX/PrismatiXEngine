@@ -102,15 +102,24 @@ std::uint64_t HashPath(std::string_view path) {
 }
 
 std::uint32_t Crc32(const std::uint8_t* data, std::size_t size) {
-    std::uint32_t crc = 0xFFFFFFFFu;
-    for (std::size_t i = 0; i < size; ++i) {
-        crc ^= data[i];
-        for (int bit = 0; bit < 8; ++bit) {
-            const std::uint32_t mask = 0u - (crc & 1u);
-            crc = (crc >> 1) ^ (0xEDB88320u & mask);
+    return ~UpdateCrc32(0xffffffffu, data, size);
+}
+
+std::uint32_t UpdateCrc32(std::uint32_t state, const std::uint8_t* data,
+                          std::size_t size) {
+    static constexpr auto table = [] {
+        std::array<std::uint32_t, 256> values{};
+        for (std::uint32_t index = 0; index < values.size(); ++index) {
+            std::uint32_t crc = index;
+            for (int bit = 0; bit < 8; ++bit)
+                crc = (crc >> 1u) ^ (0xedb88320u & (0u - (crc & 1u)));
+            values[index] = crc;
         }
-    }
-    return ~crc;
+        return values;
+    }();
+    for (std::size_t index = 0; index < size; ++index)
+        state = (state >> 8u) ^ table[(state ^ data[index]) & 0xffu];
+    return state;
 }
 
 std::string Sha256Hex(const std::string_view value) {
