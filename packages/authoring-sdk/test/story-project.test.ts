@@ -342,3 +342,58 @@ test("Story project compiler fails closed for missing locale sources, scenes, la
     diagnostic.span?.path === "zh-TW/ch01/scene01.pxstory" &&
     diagnostic.span.start.line === 2 && diagnostic.span.start.column === 1));
 });
+
+test("Story index diagnostics point to the exact authored JSON declaration", () => {
+  const index: StoryIndexDocument = {...storyIndex,
+    entryScene: "unavailable-entry",
+    scenes: [
+      {...storyIndex.scenes[0]!, sources: {"zh-TW": "missing-source.pxstory"}},
+      {...storyIndex.scenes[1]!, requiredLabels: ["start", "absent-label"]},
+    ]};
+  const storyIndexSource = JSON.stringify(index, null, 2);
+  const result = compileStoryProject({storyIndex: index, storyIndexSource,
+    storyIndexPath: "Story/story.pxindex", locale: "zh-TW", sourceFiles: {
+      "zh-TW/ch01/scene02.pxstory": "*start\n[end]\n",
+    }});
+  assert.equal(result.valid, false);
+  for (const [code, token] of [
+    ["PXSTORY1303", '"missing-source.pxstory"'],
+    ["PXSTORY1306", '"unavailable-entry"'],
+    ["PXSTORY1307", '"absent-label"'],
+  ] as const) {
+    const diagnostic = result.diagnostics.find((item) => item.code === code);
+    assert.equal(diagnostic?.path, "Story/story.pxindex", code);
+    assert.ok(diagnostic?.span, code);
+    assert.equal(storyIndexSource.slice(diagnostic.span.start.offset,
+      diagnostic.span.end.offset), token, code);
+    assert.ok(diagnostic.span.start.line > 1, code);
+  }
+
+  const stale = compileStoryProject({storyIndex: index,
+    storyIndexSource: JSON.stringify({...index, entryScene: "stale"}),
+    locale: "zh-TW", sourceFiles: {
+      "zh-TW/ch01/scene02.pxstory": "*start\n[end]\n",
+    }});
+  assert.equal(stale.diagnostics.find((item) => item.code === "PXSTORY1306")?.span,
+    undefined);
+
+  const duplicated: StoryIndexDocument = {...storyIndex,
+    scenes: [...storyIndex.scenes, {...storyIndex.scenes[0]!}]};
+  const duplicateSource = JSON.stringify(duplicated, null, 2);
+  const duplicateResult = compileStoryProject({storyIndex: duplicated,
+    storyIndexSource: duplicateSource, locale: "zh-TW", sourceFiles: {}});
+  const duplicate = duplicateResult.diagnostics.find((item) => item.code === "PXSTORY1301");
+  assert.ok(duplicate?.span);
+  assert.equal(duplicateSource.slice(duplicate.span.start.offset,
+    duplicate.span.end.offset), '"scene01"');
+
+  const withoutLocale: StoryIndexDocument = {...storyIndex,
+    scenes: [{...storyIndex.scenes[0]!, sources: {}}, storyIndex.scenes[1]!]};
+  const noLocaleSource = JSON.stringify(withoutLocale, null, 2);
+  const noLocaleResult = compileStoryProject({storyIndex: withoutLocale,
+    storyIndexSource: noLocaleSource, locale: "zh-TW", sourceFiles: {}});
+  const noLocale = noLocaleResult.diagnostics.find((item) => item.code === "PXSTORY1302");
+  assert.ok(noLocale?.span);
+  assert.equal(noLocaleSource.slice(noLocale.span.start.offset,
+    noLocale.span.end.offset), "{}");
+});

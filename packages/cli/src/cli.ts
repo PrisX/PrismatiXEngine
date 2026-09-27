@@ -59,7 +59,7 @@ import {
 assertLocalBuildFresh(fileURLToPath(new URL("../..", import.meta.url)), "@prismatix/cli");
 
 interface Options {readonly values: Map<string, string>; readonly flags: Set<string>; readonly positional: string[]}
-interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>; readonly dependencies: ReadonlySet<string>; readonly includedResources: Readonly<Record<string, readonly string[]>>; readonly textSnapshots: ReadonlyMap<string, string>; readonly absentTextInputs: ReadonlySet<string>; readonly storyPath?: string}
+interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>; readonly dependencies: ReadonlySet<string>; readonly includedResources: Readonly<Record<string, readonly string[]>>; readonly textSnapshots: ReadonlyMap<string, string>; readonly absentTextInputs: ReadonlySet<string>; readonly storyPath?: string; readonly storyIndexSource?: string}
 interface BuildResult {readonly root: string; readonly artifact: BuildArtifact; readonly output: string; readonly dependencies: ReadonlySet<string>; readonly protectedPaths: readonly string[]}
 
 class PackagerFailure extends Error {
@@ -802,8 +802,11 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
     includedResources[includeRoot] = files;
     for (const path of files) dependencies.add(projectFile(root, path));
   }
+  const storyIndexSource = typeof raw.storyIndex === "string"
+    ? textSnapshots.get(projectFile(root, raw.storyIndex)) : undefined;
   return {root, projectPath, project, documents, sourceFiles, locales, dependencies, includedResources,
     textSnapshots, absentTextInputs,
+    ...(storyIndexSource === undefined ? {} : {storyIndexSource}),
     ...(storyPath === undefined ? {} : {storyPath})};
 }
 
@@ -930,6 +933,8 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
   };
   const result = compileProject({project: loaded.project, documents: loaded.documents,
     sourceFiles: loaded.sourceFiles, locales: loaded.locales,
+    ...(loaded.storyIndexSource === undefined ? {} :
+      {storyIndexSource: loaded.storyIndexSource}),
     projectPath: "project.pxproject",
     ...(loaded.storyPath === undefined ? {} : {storyPath: loaded.storyPath}),
     resourceExists,

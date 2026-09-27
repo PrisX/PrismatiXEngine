@@ -112,6 +112,8 @@ export interface CompileProjectInput {
   readonly documents?: Readonly<Record<string, unknown>>;
   /** Story source text keyed by the exact paths used by story.pxindex. */
   readonly sourceFiles?: Readonly<Record<string, string>>;
+  /** Exact JSON source for storyIndex, when available from the loader. */
+  readonly storyIndexSource?: string;
   /** Locale documents keyed by canonical locale tag. */
   readonly locales?: Readonly<Record<string, unknown>>;
   readonly projectPath?: string;
@@ -729,6 +731,8 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       locale,
       sourceFiles,
       storyIndexPath: project.storyIndex,
+      ...(input.storyIndexSource === undefined ? {} :
+        {storyIndexSource: input.storyIndexSource}),
       documentId: project.id,
       ...(input.committedRevision === undefined ? {} : {committedRevision: input.committedRevision}),
       characters,

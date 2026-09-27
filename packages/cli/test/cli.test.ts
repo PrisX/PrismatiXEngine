@@ -76,6 +76,34 @@ async function fixture(legacy = false): Promise<{root: string; project: string}>
   return {root, project};
 }
 
+test("validate reports the authored Story index position for a missing required label", async () => {
+  const value = await fixture();
+  try {
+    const indexPath = join(value.root, "Story/story.pxindex");
+    const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+      scenes: Array<{requiredLabels?: string[]}>;
+    };
+    index.scenes[0]!.requiredLabels = ["missing-anchor"];
+    const source = JSON.stringify(index, null, 2);
+    await write(indexPath, source);
+    const validated = run(["validate", value.project]);
+    assert.equal(validated.status, 1, validated.stderr);
+    const diagnostics = validated.stderr.split(/\r?\n/u).filter(Boolean).flatMap((line) => {
+      try { return [JSON.parse(line) as {code: string; span?: {path: string;
+        start: {line: number; offset: number}; end: {offset: number}}}]; }
+      catch { return []; }
+    });
+    const issue = diagnostics.find((item) => item.code === "PXSTORY1307");
+    assert.ok(issue?.span, validated.stderr);
+    assert.equal(issue.span.path, "Story/story.pxindex");
+    assert.equal(source.slice(issue.span.start.offset, issue.span.end.offset),
+      '"missing-anchor"');
+    assert.ok(issue.span.start.line > 1);
+  } finally {
+    await rm(value.root, {recursive: true, force: true});
+  }
+});
+
 test("separate CLI builds reuse bounded Story scenes and rebuild a damaged cache", async () => {
   const value = await fixture();
   try {

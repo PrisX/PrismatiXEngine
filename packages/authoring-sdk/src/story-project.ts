@@ -63,6 +63,8 @@ export interface StoryProjectCompileContext {
   // browser Editor, tests, and future non-filesystem project providers.
   readonly sourceFiles: Readonly<Record<string, string>>;
   readonly storyIndexPath?: string;
+  /** Exact JSON text used to parse storyIndex, for index declaration spans. */
+  readonly storyIndexSource?: string;
   readonly documentId?: string;
   readonly committedRevision?: number;
   readonly characters?: readonly CharacterDocument[];
@@ -85,6 +87,7 @@ function storyCompilationSnapshot(context: StoryProjectCompileContext): StoryCom
   const inputs = JSON.stringify([
     context.storyIndex, context.locale,
     context.storyIndexPath ?? "Story/story.pxindex",
+    context.storyIndexSource,
     context.documentId ?? context.storyIndex.id,
     context.characters, context.game, context.extensions,
     context.resources, context.resourceAssets,
@@ -352,6 +355,80 @@ function mappedSpan(source: string, mapping: SourceMapEntry): SourceSpan {
       offset: offsetAt(mapping.endLine, mapping.endColumn)}};
 }
 
+/** Locate effective JSON values, including escaped keys and repeated keys.
+ * A mismatched or unavailable source never supplies a misleading position. */
+function storyIndexSpans(source: string | undefined, index: StoryIndexDocument,
+  path: string): ReadonlyMap<string, SourceSpan> {
+  const spans = new Map<string, SourceSpan>();
+  if (source === undefined) return spans;
+  try {
+    if (JSON.stringify(JSON.parse(source) as unknown) !== JSON.stringify(index))
+      return spans;
+    let cursor = 0;
+    const whitespace = (): void => {
+      while (/[ \t\r\n]/u.test(source[cursor] ?? "")) cursor += 1;
+    };
+    const stringToken = (): string => {
+      whitespace();
+      const start = cursor++;
+      while (cursor < source.length) {
+        if (source[cursor] === "\\") { cursor += 2; continue; }
+        if (source[cursor++] === '"') break;
+      }
+      return JSON.parse(source.slice(start, cursor)) as string;
+    };
+    const lineStarts = [0];
+    for (let index = 0; index < source.length; index += 1)
+      if (source[index] === "\n") lineStarts.push(index + 1);
+    const position = (offset: number) => {
+      let low = 0;
+      let high = lineStarts.length;
+      while (low + 1 < high) {
+        const middle = (low + high) >>> 1;
+        if (lineStarts[middle]! <= offset) low = middle;
+        else high = middle;
+      }
+      return {line: low + 1, column: offset - lineStarts[low]! + 1, offset};
+    };
+    const value = (pointer: string): void => {
+      whitespace();
+      const start = cursor;
+      if (source[cursor] === "{") {
+        cursor += 1; whitespace();
+        while (source[cursor] !== "}") {
+          const key = stringToken();
+          whitespace(); cursor += 1; // JSON.parse above established the colon.
+          value(`${pointer}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`);
+          whitespace();
+          if (source[cursor] !== ",") break;
+          cursor += 1; whitespace();
+        }
+        cursor += 1;
+      } else if (source[cursor] === "[") {
+        cursor += 1; whitespace();
+        let index = 0;
+        while (source[cursor] !== "]") {
+          value(`${pointer}/${index++}`);
+          whitespace();
+          if (source[cursor] !== ",") break;
+          cursor += 1; whitespace();
+        }
+        cursor += 1;
+      } else if (source[cursor] === '"') {
+        stringToken();
+      } else {
+        while (cursor < source.length && !/[ \t\r\n,\]}]/u.test(source[cursor]!))
+          cursor += 1;
+      }
+      spans.set(pointer, {path, start: position(start), end: position(cursor)});
+    };
+    value("");
+  } catch {
+    spans.clear();
+  }
+  return spans;
+}
+
 // Internal bundle labels intentionally do not embed author-controlled ids.
 // Hashing keeps them valid .pxstory identifiers while avoiding collisions
 // between ids such as `chapter.one` and author labels that contain dots.
@@ -532,6 +609,12 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
   sceneCache?: SceneCompilationCache): StoryCompileResult {
   const diagnostics: AuthoringDiagnostic[] = [];
   const indexPath = context.storyIndexPath ?? "Story/story.pxindex";
+  let indexSpans: ReadonlyMap<string, SourceSpan> | undefined;
+  const indexedSpan = (pointer: string): SourceSpan | undefined =>
+    (indexSpans ??= storyIndexSpans(context.storyIndexSource,
+      context.storyIndex, indexPath)).get(pointer);
+  const indexLocation = (pointer: string): string | SourceSpan =>
+    indexedSpan(pointer) ?? indexPath;
   const documentId = context.documentId ?? context.storyIndex.id;
   const scenesById = new Map<string, ParsedScene>();
   const seenSceneIds = new Set<string>();
@@ -542,19 +625,23 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
     let cached = false;
     try {
       if (seenSceneIds.has(descriptor.id)) {
-        diagnostics.push(issue("PXSTORY1301", `Duplicate Story scene id: ${descriptor.id}`, indexPath, descriptor.id));
+        diagnostics.push(issue("PXSTORY1301", `Duplicate Story scene id: ${descriptor.id}`,
+          indexLocation(`/scenes/${index}/id`), descriptor.id));
         continue;
       }
       seenSceneIds.add(descriptor.id);
 
       const sourcePath = descriptor.sources[context.locale];
       if (sourcePath === undefined) {
-        diagnostics.push(issue("PXSTORY1302", `Story scene ${descriptor.id} has no ${context.locale} source`, indexPath, descriptor.id));
+        diagnostics.push(issue("PXSTORY1302", `Story scene ${descriptor.id} has no ${context.locale} source`,
+          indexLocation(`/scenes/${index}/sources`), descriptor.id));
         continue;
       }
       const source = context.sourceFiles[sourcePath];
       if (source === undefined) {
-        diagnostics.push(issue("PXSTORY1303", `Story source is unavailable: ${sourcePath}`, sourcePath, descriptor.id));
+        diagnostics.push(issue("PXSTORY1303", `Story source is unavailable: ${sourcePath}`,
+          indexedSpan(`/scenes/${index}/sources/${context.locale.replaceAll("~", "~0").replaceAll("/", "~1")}`)
+            ?? sourcePath, descriptor.id));
         continue;
       }
       const mapSource = context.sourceFiles[`${sourcePath}.pxids.json`];
@@ -581,7 +668,8 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
 
   const entryScene = scenesById.get(context.storyIndex.entryScene);
   if (entryScene === undefined) {
-    diagnostics.push(issue("PXSTORY1306", `Story entryScene is unavailable: ${context.storyIndex.entryScene}`, indexPath));
+    diagnostics.push(issue("PXSTORY1306", `Story entryScene is unavailable: ${context.storyIndex.entryScene}`,
+      indexLocation("/entryScene")));
   }
 
   const operations: RuntimeIrOperation[] = [];
@@ -638,12 +726,13 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
       const scene = scenesById.get(descriptor.id);
       if (scene === undefined || scene.descriptor !== descriptor) continue;
       const sceneDiagnostics: AuthoringDiagnostic[] = [];
-      for (const requiredLabel of descriptor.requiredLabels ?? []) {
+      for (const [labelIndex, requiredLabel] of (descriptor.requiredLabels ?? []).entries()) {
         if (!scene.labels.has(requiredLabel)) {
           sceneDiagnostics.push(issue(
             "PXSTORY1307",
             `Story scene ${descriptor.id} is missing required label ${requiredLabel}`,
-            scene.path,
+            indexedSpan(`/scenes/${index}/requiredLabels/${labelIndex}`)
+              ?? scene.path,
             requiredLabel,
           ));
         }
