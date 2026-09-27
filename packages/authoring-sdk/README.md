@@ -91,7 +91,10 @@ Node callers of the lower-level `compileProject` API can use
 `await loadStorySourceFiles(projectRoot, storyIndex)` to read all indexed
 `.pxstory` sources and any adjacent `.pxids.json` maps into its `sourceFiles`
 input. Missing required Story files, oversized files, and paths escaping the
-project root fail at load time. Browser/Editor callers can continue supplying
+project root fail at load time. Reads have a hard 16 MiB byte cap and reject
+malformed UTF-8 before Story compilation. Other Node importers can use
+`readBoundedUtf8File(path, maximumBytes)` for the same byte and encoding checks.
+Browser/Editor callers can continue supplying
 their own `sourceFiles` map without Node filesystem access.
 
 The map preserves both authored ids and the exact pre-migration fallback

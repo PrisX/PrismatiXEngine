@@ -5,6 +5,7 @@ import {dirname, join} from "node:path";
 import test from "node:test";
 
 import {compileStoryProject, externalizeStoryIds, loadStorySourceFiles,
+  readBoundedUtf8File,
   type StoryIndexDocument} from "../src/index.js";
 
 const mainPath = "Story/zh-TW/main.pxstory";
@@ -56,6 +57,35 @@ test("Node Story source loader rejects unsafe or unavailable indexed paths", asy
     ]};
     await assert.rejects(loadStorySourceFiles(root, unsafe), /Unsafe Story source path/u);
     await assert.rejects(loadStorySourceFiles(root, storyIndex), /ENOENT/u);
+  } finally {
+    await rm(root, {recursive: true, force: true});
+  }
+});
+
+test("bounded UTF-8 source reading enforces the byte cap and rejects invalid encoding", async () => {
+  const root = await mkdtemp(join(tmpdir(), "prismatix-story-loader-"));
+  const path = join(root, "source.pxstory");
+  try {
+    await writeFile(path, "éé", "utf8");
+    assert.equal(await readBoundedUtf8File(path, 4), "éé");
+    await assert.rejects(readBoundedUtf8File(path, 3), /exceeds 3 bytes/u);
+    await writeFile(path, Buffer.from([0xef, 0xbb, 0xbf, 0x61]));
+    assert.equal(await readBoundedUtf8File(path, 4), "\uFEFFa");
+    await writeFile(path, Buffer.from([0xc3, 0x28]));
+    await assert.rejects(readBoundedUtf8File(path, 4), /encoded data|UTF-8/iu);
+  } finally {
+    await rm(root, {recursive: true, force: true});
+  }
+});
+
+test("Node Story loader rejects malformed UTF-8 before compilation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "prismatix-story-loader-"));
+  try {
+    for (const path of [mainPath, nextPath])
+      await mkdir(dirname(join(root, path)), {recursive: true});
+    await writeFile(join(root, mainPath), Buffer.from([0xc3, 0x28]));
+    await writeFile(join(root, nextPath), "*start\n[end]\n", "utf8");
+    await assert.rejects(loadStorySourceFiles(root, storyIndex), /encoded data|UTF-8/iu);
   } finally {
     await rm(root, {recursive: true, force: true});
   }

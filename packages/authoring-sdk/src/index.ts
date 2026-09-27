@@ -4,6 +4,7 @@ import {assertLocalBuildFresh} from "./build-freshness.js";
 assertLocalBuildFresh(fileURLToPath(new URL("../..", import.meta.url)), "@prismatix/authoring-sdk");
 
 export {assertLocalBuildFresh, localSourceFingerprint, writeLocalBuildStamp} from "./build-freshness.js";
+export * from "./bounded-utf8.js";
 export * from "./canonical-json.js";
 export * from "./contracts.js";
 export * from "./input-keys.js";

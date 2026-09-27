@@ -1,6 +1,7 @@
-import {readFile, realpath, stat} from "node:fs/promises";
+import {realpath} from "node:fs/promises";
 import {isAbsolute, relative, resolve, sep} from "node:path";
 
+import {readBoundedUtf8File} from "./bounded-utf8.js";
 import type {StoryIndexDocument} from "./story-project.js";
 
 const maxDocumentBytes = 16 * 1024 * 1024;
@@ -36,13 +37,7 @@ export async function loadStorySourceFiles(
     const back = relative(root, canonical);
     if (back === ".." || back.startsWith(`..${sep}`) || isAbsolute(back))
       throw new Error(`Story source escapes project root: ${path}`);
-    const info = await stat(canonical);
-    if (!info.isFile() || info.size > maxDocumentBytes)
-      throw new Error(`Story source is not a file or exceeds 16 MiB: ${path}`);
-    const text = await readFile(canonical, "utf8");
-    if (Buffer.byteLength(text, "utf8") > maxDocumentBytes)
-      throw new Error(`Story source exceeds 16 MiB: ${path}`);
-    return text;
+    return readBoundedUtf8File(canonical, maxDocumentBytes);
   };
 
   for (const path of sourcePaths) {

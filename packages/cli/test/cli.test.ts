@@ -74,6 +74,19 @@ async function fixture(legacy = false): Promise<{root: string; project: string}>
   return {root, project};
 }
 
+test("validate rejects malformed UTF-8 Story bytes before compilation", async () => {
+  const value = await fixture();
+  try {
+    const source = join(value.root, "Story/main.pxstory");
+    await writeFile(source, Buffer.from([0xc3, 0x28]));
+    const result = run(["validate", value.project]);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /encoded data|UTF-8/iu);
+  } finally {
+    await rm(value.root, {recursive: true, force: true});
+  }
+});
+
 test("create scaffolds a canonical playable starter without author-supplied UUIDs", async () => {
   const parent = await mkdtemp(join(tmpdir(), "prismatix-cli-create-"));
   const root = join(parent, "hello-game");

@@ -40,6 +40,7 @@ import {
   compileProject,
   externalizeStoryIds,
   parseStory,
+  readBoundedUtf8File,
   storyRequiresIdentityMap,
   StoryProjectCompilationCache,
   stableSourceIdReport,
@@ -283,9 +284,7 @@ async function createCommand(options: Options): Promise<number> {
 }
 
 async function readBoundedText(path: string): Promise<string> {
-  const info = await stat(path);
-  if (!info.isFile() || info.size > maxDocumentBytes) throw new Error(`Document is missing or exceeds 16 MiB: ${path}`);
-  return readFile(path, "utf8");
+  return readBoundedUtf8File(path, maxDocumentBytes);
 }
 
 async function readJson(path: string): Promise<unknown> {
