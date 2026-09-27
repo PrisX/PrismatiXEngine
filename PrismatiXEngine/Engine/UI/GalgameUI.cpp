@@ -13,6 +13,7 @@
 #include <cmath>
 #include <nlohmann/json.hpp>
 #include <optional>
+#include <set>
 #include <utility>
 
 namespace px::ui {
@@ -209,11 +210,55 @@ Status GalgameUI::DefineUiData(std::string path, Variant value) {
     return m_viewModel.Define(std::move(path), std::move(value), true);
 }
 
+Status GalgameUI::UpdateUiData(const std::string_view path,
+                               const Variant& value) {
+    if (m_uiContractDocument.empty()) return m_viewModel.Write(path, value);
+    const auto contract = nlohmann::json::parse(
+        m_uiContractDocument, nullptr, false);
+    bool declared = false;
+    for (const auto& root : contract["roots"]) {
+        const auto& name = root.get_ref<const std::string&>();
+        if (path == name ||
+            (path.size() > name.size() && path.substr(0, name.size()) == name &&
+             (path[name.size()] == '.' || path[name.size()] == '['))) {
+            declared = true;
+            break;
+        }
+    }
+    if (!declared) return m_viewModel.Write(path, value);
+
+    // A scratch model has no subscribers. Replacing a collection here can
+    // expose item fields that were absent when the contract was installed;
+    // only the validated value is then sent to the live bindings.
+    ObservableViewModel candidate;
+    for (const auto& root : contract["roots"]) {
+        const auto& name = root.get_ref<const std::string&>();
+        auto current = m_viewModel.Read(name);
+        if (!current) return Status::Fail(current.Diagnostics());
+        const Status defined = candidate.Define(
+            name, std::move(current.Value()), true);
+        if (!defined) return defined;
+    }
+    const Status written = candidate.Write(path, value);
+    if (!written) return written;
+    const Status checked = ValidateUiContractForModel(
+        m_uiContractDocument, candidate);
+    if (!checked) return checked;
+    return m_viewModel.Write(path, value);
+}
+
 Status GalgameUI::RegisterUiFormatter(Formatter formatter) {
     return m_context.Formatters().Register(std::move(formatter));
 }
 
-Status GalgameUI::ValidateUiContract(std::string_view document) const {
+Status GalgameUI::ValidateUiContract(const std::string_view document) {
+    const Status checked = ValidateUiContractForModel(document, m_viewModel);
+    if (checked) m_uiContractDocument = document;
+    return checked;
+}
+
+Status GalgameUI::ValidateUiContractForModel(
+    const std::string_view document, const ObservableViewModel& model) const {
     const auto fail = [](std::string message, std::string detail = {}) {
         diag::Diagnostic diagnostic{
             .severity = diag::Severity::Error,
@@ -236,6 +281,8 @@ Status GalgameUI::ValidateUiContract(std::string_view document) const {
     const auto declaredValues = contract.value("values", nlohmann::json::object());
     if (contract["roots"].size() > 256 || declaredValues.size() > 1024)
         return fail("UI host contract exceeds supported limits");
+    const auto registeredRoots = model.EnumerateProperties();
+    std::set<std::string> seenRoots;
     const auto expectedType = [](std::string_view name)
         -> std::optional<VariantType> {
         if (name == "null") return VariantType::Null;
@@ -251,9 +298,13 @@ Status GalgameUI::ValidateUiContract(std::string_view document) const {
         if (!root.is_string() || root.get_ref<const std::string&>().size() > 512)
             return fail("Invalid UI host contract root");
         const auto& path = root.get_ref<const std::string&>();
+        if (!seenRoots.insert(path).second)
+            return fail("Duplicate UI host contract root", path);
         if (!declaredValues.contains(path))
             return fail("UI host contract root has no type", path);
-        if (!m_viewModel.Describe(path))
+        if (!std::ranges::any_of(registeredRoots, [&](const PropertyPathInfo& entry) {
+                return entry.path == path;
+            }))
             return fail("UI host contract root is not registered", path);
     }
     std::size_t expandedPaths = 0;
@@ -263,13 +314,13 @@ Status GalgameUI::ValidateUiContract(std::string_view document) const {
         const auto wildcard = suffix.find("[]");
         if (wildcard == std::string::npos) {
             const std::string path = prefix + suffix;
-            const auto actual = m_viewModel.Describe(path);
+            const auto actual = model.Describe(path);
             if (!actual || actual->type != expected)
                 return fail("UI host value is missing or has the wrong type", path);
             return Status::Ok();
         }
         const std::string arrayPath = prefix + suffix.substr(0, wildcard);
-        const auto array = m_viewModel.Read(arrayPath);
+        const auto array = model.Read(arrayPath);
         if (!array || array.Value().Type() != VariantType::Array)
             return fail("UI host contract expects an array", arrayPath);
         const auto* items = array.Value().AsArray();

@@ -93,11 +93,14 @@ implementations. `GalgameUI::RegisterUiFormatter` exposes custom formatter
 registration, and `GalgameUI::ValidateUiContract` checks registered roots,
 current values (including populated array items), and formatter signatures.
 Stock Player runs this check when it loads `project.pxproject`, after defining
-`player.uiData` and before mounting an authored route. Empty arrays cannot
-prove their future item fields, and values changed after boot are checked by
-the normal binding path when used. Other hosts should run the check after
-registering their own data and formatters. Paths outside declared roots remain
-the host's responsibility.
+`player.uiData` and before mounting an authored route. The check retains a
+successful contract. A host can then call `GalgameUI::UpdateUiData(path, value)`
+for later changes, including an array that was empty at boot. It validates
+declared item fields in a candidate ViewModel before notifying mounted UI;
+a contract-invalid update keeps the previous value. A declared root must be registered
+as an exact ViewModel property. Other hosts should run the check after
+registering their own data and formatters, then use `UpdateUiData` for changes.
+Paths outside declared roots remain the host's responsibility.
 
 Resource paths supplied only through dynamic item bindings still need explicit
 asset inclusion (for example `resourceIncludes`) until the compiler can infer

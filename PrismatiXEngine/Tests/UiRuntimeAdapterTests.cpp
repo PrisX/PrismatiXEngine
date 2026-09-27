@@ -685,6 +685,20 @@ void TestGalgameAuthoredSlots() {
     Check(!authoredData.DefineUiData("custom.rows", px::Variant(px::VariantArray{})) &&
           !authoredData.DefineUiData("custom..invalid", px::Variant(1)),
           "GalgameUI must reject duplicate and invalid authored data paths");
+    nlohmann::json placedContract = {
+        {"format", "PrismatiXUiContract"}, {"schemaRevision", 1},
+        {"roots", {"custom.rows"}},
+        {"values", {{"custom.rows", "array"},
+                    {"custom.rows[].key", "string"},
+                    {"custom.rows[].title", "string"},
+                    {"custom.rows[].enabled", "boolean"},
+                    {"custom.rows[].rect.x", "integer"},
+                    {"custom.rows[].rect.y", "integer"},
+                    {"custom.rows[].rect.width", "integer"},
+                    {"custom.rows[].rect.height", "integer"}}},
+    };
+    Check(authoredData.ValidateUiContract(placedContract.dump()).IsOk(),
+          "placed item route stores its declared host collection contract");
     Check(authoredData.RegisterRouteTemplate("custom-placed", placedDocument.dump(),
           "custom-placed.pxui").IsOk(),
           "GalgameUI must accept a placed item route");
@@ -704,6 +718,18 @@ void TestGalgameAuthoredSlots() {
           placedButton && placedButton->Text() == "One" &&
           placedFirst->LayoutRect().x == placedView->LayoutRect().x + 20,
           "GalgameUI must bind and place items from the author-defined data source");
+    Check(authoredData.UpdateUiData("custom.rows", px::Variant(px::VariantArray{
+              placedRow("one", "Updated", 35), placedRow("two", "Two", 180)})).IsOk(),
+          "valid host collection update is accepted after route mount");
+    (void)authoredData.Root()->Measure({600, 400});
+    authoredData.Root()->Arrange({0, 0, 600, 400});
+    placedFirst = placedView && placedView->Children().size() == 2
+        ? dynamic_cast<px::ui::Control*>(placedView->Child(0)) : nullptr;
+    placedButton = placedFirst
+        ? dynamic_cast<px::ui::Button*>(placedFirst->Child(0)) : nullptr;
+    Check(placedFirst && placedButton && placedButton->Text() == "Updated" &&
+          placedFirst->LayoutRect().x == placedView->LayoutRect().x + 35,
+          "a validated late update refreshes the mounted binding and placement");
 }
 
 void TestMountedImageDependencies() {
@@ -759,6 +785,19 @@ void TestGalgameUiHostContract() {
     };
     Check(ui.ValidateUiContract(contract.dump()).IsOk(),
           "host contract accepts registered roots, nested values and formatter");
+    Check(ui.UpdateUiData("custom.rows", px::Variant(px::VariantArray{})).IsOk(),
+          "host can replace a declared collection with an empty array");
+    Check(!ui.UpdateUiData("custom.rows", px::Variant(px::VariantArray{
+              px::Variant(px::VariantObject{{"title", px::Variant(false)}})})) &&
+              ui.ValidateUiContract(contract.dump()).IsOk(),
+          "late item with a wrong declared field type is rejected atomically");
+    Check(!ui.UpdateUiData("custom.rows", px::Variant(px::VariantArray{
+              px::Variant(px::VariantObject{{"other", px::Variant("missing")}})})) &&
+              ui.ValidateUiContract(contract.dump()).IsOk(),
+          "late item missing a declared field leaves the previous data intact");
+    Check(ui.UpdateUiData("custom.rows", px::Variant(px::VariantArray{
+              px::Variant(px::VariantObject{{"title", px::Variant("Later")}})})).IsOk(),
+          "valid late item passes the retained host contract");
     auto formatterOnly = contract;
     formatterOnly["roots"] = nlohmann::json::array();
     formatterOnly.erase("values");
@@ -776,6 +815,14 @@ void TestGalgameUiHostContract() {
     contract["values"] = {{"missing.rows", "array"}};
     Check(!ui.ValidateUiContract(contract.dump()),
           "host contract rejects a declared root that Player did not register");
+    contract["roots"] = {"custom.rows"};
+    contract["values"] = { {"custom.rows", "array"} };
+    px::ui::GalgameUI nestedOnly;
+    Check(nestedOnly.DefineUiData("custom", px::Variant(px::VariantObject{
+              {"rows", px::Variant(px::VariantArray{})}})).IsOk(),
+          "nested-root fixture registers only its parent");
+    Check(!nestedOnly.ValidateUiContract(contract.dump()),
+          "a nested path cannot impersonate an explicitly registered contract root");
 }
 
 int main() {

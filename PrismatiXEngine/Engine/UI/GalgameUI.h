@@ -95,10 +95,12 @@ public:
     void SetActionSink(ActionSink sink) { m_sink = std::move(sink); }
     /** Define an authored UI ViewModel value before its route is mounted. */
     Status DefineUiData(std::string path, Variant value);
+    /** Update host data after boot; declared UI values are checked before commit. */
+    Status UpdateUiData(std::string_view path, const Variant& value);
     /** Register a host formatter before mounting routes that reference it. */
     Status RegisterUiFormatter(Formatter formatter);
-    /** Check the author's declared host data and formatter contract at boot. */
-    [[nodiscard]] Status ValidateUiContract(std::string_view document) const;
+    /** Check and retain the author's host contract for later data updates. */
+    [[nodiscard]] Status ValidateUiContract(std::string_view document);
     // Makes an authored command available to a game-specific UI route and
     // forwards its optional string argument to the normal Galgame action
     // sink.  Games no longer need engine-side hard-coded command whitelists
@@ -198,10 +200,13 @@ private:
     std::unique_ptr<Control> MakeMenuButton(std::string text, std::string command, std::string argument = {});
     Status Add(Control& parent, std::unique_ptr<Control> child);
     void RememberGameplayCheckpoint(Screen target);
+    [[nodiscard]] Status ValidateUiContractForModel(
+        std::string_view document, const ObservableViewModel& model) const;
 
     // Bindings owned by UIContext unsubscribe during context destruction, so
     // the ViewModel must be declared first and therefore outlive it.
     ObservableViewModel m_viewModel;
+    std::string m_uiContractDocument;
     UIContext m_context;
     ActionSink m_sink;
     Screen m_screen = Screen::Title;
