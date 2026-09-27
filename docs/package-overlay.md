@@ -15,6 +15,28 @@ prismatix create-overlay --base path/to/v1 --target path/to/v2 --output path/to/
 prismatix verify-overlay --base path/to/v1 --patch path/to/patch.pdx --require-signature
 ```
 
+For a content-only update, the complete v2 distribution is optional. A
+published artifact can supply the target inventory directly:
+
+```sh
+prismatix create-overlay --base path/to/v1 --artifact path/to/updated-artifact --output path/to/patch.pdx --signing-key path/to/private-key.txt
+prismatix verify-overlay --base path/to/v1 --patch path/to/patch.pdx --require-signature
+```
+
+This path fully checks the artifact inputs, verifies the complete base
+distribution, confirms the selected Player and runtime libraries match the
+base, pins the base manifest used while planning, and streams only changed
+resources into the patch. It does not write a
+second multi-gigabyte distribution. The target manifest and content index
+are computed by the same Packager planner used for a complete package; a
+later v2 built from that exact artifact with `--previous-package v1`, the
+same Player, encryption setting, publisher key, and shard count has matching
+target documents. For a subsequent `patch2.pdx`, use that complete v2 as
+the next base until direct chaining from a previously signed overlay is
+supported. The artifact must be a CLI-published directory with intact
+ownership metadata. Build it with `prismatix build --artifact-only`, or
+publish changes with `prismatix augment`.
+
 The two distributions must have the same game ID, Engine version, publisher
 public key, and non-content runtime files, but distinct package fingerprints.
 `--previous-package` makes v2 a standalone distribution that carries compatible
@@ -117,7 +139,8 @@ whenever present. Add `--require-signature` for the Player trust policy; it
 rejects revision 1. Unsigned overlays remain available for explicit
 inspection and are never loaded automatically.
 
-`create-overlay` fully verifies both input distributions, rejects changed
+The distribution-to-distribution form of `create-overlay` fully verifies both
+input distributions, rejects changed
 Player/runtime files, streams changed content directly from target archives
 into an uncompressed PDX5,
 re-verifies its output, and publishes without replacing an existing file.

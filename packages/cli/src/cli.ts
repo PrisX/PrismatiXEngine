@@ -94,7 +94,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   "verify-package": {values: "runtime packager", flags: ""},
   "create-patch": {values: "base target output runtime packager", flags: ""},
   "apply-patch": {values: "base patch output runtime packager", flags: "in-place"},
-  "create-overlay": {values: "base target output signing-key optional-id runtime packager", flags: ""},
+  "create-overlay": {values: "base target artifact output signing-key optional-id runtime packager player", flags: ""},
   "verify-overlay": {values: "base patch runtime packager", flags: "require-signature"},
   "overlay-keygen": {values: "private public runtime packager", flags: ""},
 };
@@ -2335,6 +2335,7 @@ async function inspectSaveCommand(options: Options): Promise<number> {
 function usage(): void {
   process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|augment|ids|migrate|inspect-save|plan-patch|verify-package|create-patch|apply-patch|create-overlay|verify-overlay|overlay-keygen> [project-or-save-or-distribution] [options]\n");
   process.stderr.write("  prismatix pack <project> --artifact <dir> --check [--verify-media]  Validate without creating a distribution\n");
+  process.stderr.write("  prismatix create-overlay --base <distribution> --artifact <published-artifact> --output <patch.pdx> [--signing-key <private-key>]  Patch without a target distribution\n");
 }
 
 async function verifyPackagedContents(directory: string, options: Options): Promise<{
@@ -2473,21 +2474,98 @@ async function overlayCommand(command: "create-overlay" | "verify-overlay",
   options: Options): Promise<number> {
   const base = options.values.get("base");
   const target = options.values.get("target");
+  const artifact = options.values.get("artifact");
   const patch = options.values.get("patch");
   const output = options.values.get("output");
   if (base === undefined ||
-      (command === "create-overlay" ? target === undefined || output === undefined :
+      (command === "create-overlay" ?
+        (target === undefined) === (artifact === undefined) || output === undefined :
         patch === undefined)) {
     printDiagnostics([diagnostic("PXCLI1515", command === "create-overlay"
-      ? "create-overlay requires --base, --target, and --output"
+      ? "create-overlay requires --base, --output, and exactly one of --target or --artifact"
       : "verify-overlay requires --base and --patch")]);
     return 2;
   }
+  let temporaryRequest: string | undefined;
   try {
-    const packager = await discoverRuntimeTool("packager", runtimeOptions(options));
+    const runtime = artifact === undefined ? undefined :
+      await discoverRuntimeBundle(["packager", "player"] as const,
+        runtimeOptions(options));
+    const packager = runtime?.packager ??
+      await discoverRuntimeTool("packager", runtimeOptions(options));
     const nativeArgs = command === "create-overlay"
-      ? ["--create-overlay", resolve(base), resolve(target!), resolve(output!)]
+      ? target !== undefined
+        ? ["--create-overlay", resolve(base), resolve(target), resolve(output!)]
+        : []
       : ["--verify-overlay", resolve(base), resolve(patch!)];
+    if (artifact !== undefined && command === "create-overlay") {
+      const artifactRoot = await realpath(resolve(artifact));
+      const baseRoot = await realpath(resolve(base));
+      const validated = validateDocument<ProjectDocument>("project",
+        await readJson(projectFile(artifactRoot, "project.pxproject")),
+        "project.pxproject");
+      if (!validated.valid || validated.value === undefined)
+        throw new PackagerFailure(validated.diagnostics);
+      const project = validated.value;
+      const baseManifestPath = join(baseRoot, "Package", "manifest.json");
+      const shardIndexPath = join(baseRoot, "Package", "archive-shards.json");
+      for (const [path, limit] of [[baseManifestPath, 4 * 1024 * 1024],
+        [shardIndexPath, 64 * 1024]] as const) {
+        const info = await lstat(path);
+        if (!info.isFile() || info.size === 0 || info.size > limit)
+          throw new Error(`Base package metadata is missing or oversized: ${path}`);
+      }
+      const baseManifest = object(await readJson(baseManifestPath));
+      const baseEncryption = object(baseManifest?.encryption);
+      const shardIndex = object(await readJson(shardIndexPath));
+      if (baseManifest?.gameId !== project.id ||
+          typeof baseManifest.publisherPublicKey !== "string" ||
+          baseEncryption === undefined ||
+          typeof baseEncryption.enabled !== "boolean" ||
+          typeof shardIndex?.archiveShards !== "number" ||
+          !Number.isInteger(shardIndex.archiveShards) ||
+          shardIndex.archiveShards < 1 || shardIndex.archiveShards > 64)
+        throw new Error("Base manifest or shard inventory is incompatible with the artifact");
+      const inputs = await publishedInputs(artifactRoot, (value) => progress({
+        event: "progress", severity: "information", code: "PXCLI1212",
+        phase: "scan-artifact", current: value.files, bytes: value.bytes, done: value.done,
+        message: `Scanning artifact: ${value.files} files, ` +
+          `${(value.bytes / 1024 ** 2).toFixed(1)} MiB indexed${value.done ? " (done)" : ""}`,
+      }));
+      for (const required of ["project.pxproject", "Runtime/main.pxir",
+        "Runtime/main.pxmap"]) {
+        if (!inputs.some((input) => input.uri === required))
+          throw new Error(`Compiled artifact is missing ${required}: ${artifactRoot}`);
+      }
+      temporaryRequest = await mkdtemp(join(tmpdir(), "prismatix-overlay-plan-"));
+      const requestPath = join(temporaryRequest, "package-request.json");
+      await writeFile(requestPath, `${JSON.stringify({
+        format: "PrismatiXPackageRequest", schemaRevision: 2,
+        requestId: `cli-overlay-${process.pid}`,
+        gameId: project.id,
+        projectRoot: artifactRoot,
+        outputDir: join(temporaryRequest, "planned-target"),
+        cacheSourceDir: baseRoot,
+        cancelFile: join(temporaryRequest, ".cancel-overlay"),
+        playerExecutable: runtime!.player.path,
+        title: project.name,
+        width: project.resolution.width, height: project.resolution.height,
+        startScript: "Runtime/main.pxir", sourceMap: "Runtime/main.pxmap",
+        startRoute: project.entry.ui,
+        routes: Object.entries(project.uiEntryPoints).map(([id, scene]) => ({id, scene})),
+        contentVersion: project.contentVersion, saveVersion: project.saveVersion,
+        graphicsTier: project.graphicsTier ?? "basic",
+        saveMigrations: project.saveMigrations ?? [],
+        extensions: project.extensions,
+        encryption: baseEncryption.enabled,
+        publisherPublicKey: baseManifest.publisherPublicKey,
+        compression: "balanced",
+        archiveShards: shardIndex.archiveShards,
+        inputs,
+      })}\n`, "utf8");
+      nativeArgs.push("--create-overlay-from-request", requestPath,
+        baseRoot, resolve(output!));
+    }
     const signingKey = options.values.get("signing-key");
     if (command === "create-overlay" && signingKey !== undefined) {
       const keyPath = resolve(signingKey);
@@ -2542,6 +2620,9 @@ async function overlayCommand(command: "create-overlay" | "verify-overlay",
       [diagnostic("PXCLI1516", `PDX ${command} failed`, output ?? patch,
         String(error))]);
     return 1;
+  } finally {
+    if (temporaryRequest !== undefined)
+      await rm(temporaryRequest, {recursive: true, force: true});
   }
 }
 

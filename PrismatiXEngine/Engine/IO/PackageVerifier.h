@@ -7,6 +7,8 @@
 #include <string_view>
 #include <vector>
 
+namespace px::sdk { struct PackagePlanResult; }
+
 namespace px::io {
 
 inline constexpr std::string_view kPackageOverlayPrefix =
@@ -118,6 +120,20 @@ using PackageOverlayBuildProgress = std::function<void(
 [[nodiscard]] PackageOverlayBuildResult CreatePackageOverlay(
     const std::filesystem::path& baseDistribution,
     const std::filesystem::path& targetDistribution,
+    const std::filesystem::path& outputPath,
+    const PackageOverlayBuildProgress& onProgress = {},
+    const std::filesystem::path& signingKeyFile = {},
+    std::string_view optionalPackId = {});
+
+// Creates a content-only overlay directly from a fully validated artifact
+// plan. The caller must plan with AllInputs so unchanged artifact sources are
+// checked before publication; changed file bytes are checked again by the
+// streaming writer. The base runtime must match playerExecutable exactly.
+[[nodiscard]] PackageOverlayBuildResult CreatePackageOverlayFromPlan(
+    const std::filesystem::path& baseDistribution,
+    const std::filesystem::path& artifactRoot,
+    const sdk::PackagePlanResult& plan,
+    const std::filesystem::path& playerExecutable,
     const std::filesystem::path& outputPath,
     const PackageOverlayBuildProgress& onProgress = {},
     const std::filesystem::path& signingKeyFile = {},

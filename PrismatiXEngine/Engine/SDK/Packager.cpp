@@ -1043,6 +1043,7 @@ struct PreviousPersistence {
     std::vector<std::string> compatibleSaveFingerprints;
     std::string packageFingerprint;
     std::string contentVersion;
+    std::string manifestSha256;
     std::uint32_t saveVersion = 0;
     std::string error;
 };
@@ -1072,6 +1073,12 @@ PreviousPersistence DiscoverPreviousPersistence(
     }
     const auto& manifest = parsed.manifest;
     if (manifest.gameId != gameId) return result;
+    const auto digest = Sha256Text(*text);
+    if (!digest) {
+        result.error = "The previous package manifest could not be hashed";
+        return result;
+    }
+    result.manifestSha256 = Hex(*digest);
     result.packageFingerprint = manifest.packageFingerprint;
     result.contentVersion = manifest.contentVersion;
     result.saveVersion = manifest.saveVersion;
@@ -3066,6 +3073,260 @@ PackageRunResult ValidatePackageRequest(const PackageRequest& request,
     return result;
 }
 
+// Keep the package identity and resource inventory independent of archive
+// writing. A content-only update can use this same plan without first writing
+// a second complete distribution.
+struct PackageContentPlan {
+    std::vector<ArchiveEntry> entries;
+    std::vector<detail::PackageCustomEffect> customEffects;
+    std::vector<detail::PackagePersistenceReader> legacyPersistenceReaders;
+    std::vector<std::string> compatibleSaveFingerprints;
+    std::string packageFingerprint;
+    std::string encryptionKey;
+};
+
+bool PreparePackageContent(const PackageRequest& request,
+                           const PackageEventSink& eventSink,
+                           std::vector<ValidatedInput> inputs,
+                           PreviousPersistence previousPersistence,
+                           PackageContentPlan& plan,
+                           PackageRunResult& failure) {
+    const auto reject = [&](std::string code, std::string message,
+                            const bool retryable = false) {
+        failure = Fail(request, eventSink, std::move(code),
+                       std::move(message), retryable);
+        return false;
+    };
+    std::sort(inputs.begin(), inputs.end(), [](const auto& left, const auto& right) {
+        return left.input.uri < right.input.uri;
+    });
+    auto& entries = plan.entries;
+    entries.reserve(inputs.size());
+    std::string identityMaterial =
+        "PrismatiXPackageManifest|2|0.2.0|" + request.gameId + "|" +
+        request.contentVersion + "|" + std::to_string(request.saveVersion) + "|" +
+        request.startScript + "|" + request.sourceMap + "|" + request.startRoute + "|" +
+        request.graphicsTier + "|" +
+        std::to_string(request.width) + "x" + std::to_string(request.height);
+    auto identityRoutes = request.routes;
+    std::sort(identityRoutes.begin(), identityRoutes.end(), [](const auto& left,
+                                                               const auto& right) {
+        return left.id < right.id;
+    });
+    for (const auto& route : identityRoutes)
+        identityMaterial += "|route|" + route.id + "|" + route.scene;
+    for (const auto& extension : request.extensions)
+        identityMaterial += "|extension|" + extension;
+    if (!request.publisherPublicKey.empty())
+        identityMaterial += "|publisher-key|" + request.publisherPublicKey;
+    auto identityMigrations = request.saveMigrations;
+    std::sort(identityMigrations.begin(), identityMigrations.end(),
+              [](const auto& left, const auto& right) {
+                  return left.id < right.id;
+              });
+    for (const auto& migration : identityMigrations) {
+        identityMaterial +=
+            "|save-migration|" + migration.id + "|" +
+            migration.fromContentVersion + "|" +
+            std::to_string(migration.fromSaveVersion) + "|" +
+            migration.toContentVersion + "|" +
+            std::to_string(migration.toSaveVersion) + "|" +
+            migration.asset;
+    }
+    for (std::size_t index = 0; index < inputs.size(); ++index) {
+        if (Cancelled(request)) {
+            failure = Cancel(request, eventSink,
+                             "Packaging was cancelled while reading inputs");
+            return false;
+        }
+        const auto& input = inputs[index];
+        EmitProgress(request, eventSink, "archive", index, inputs.size(),
+                     "Preparing " + input.input.uri);
+        // Publishing defers source hashing until a verified read, archive
+        // writing, or whole-shard reuse. JSON bytes also influence package
+        // identity, so this read must match the declared fingerprint.
+        std::string contentFingerprint = Lower(input.input.fingerprint);
+        if (input.input.size <= 16ull * 1024ull * 1024ull &&
+            CouldBeJson(input.source)) {
+            const auto bytes = ReadFile(input.source, input.input.size);
+            if (!bytes)
+                return reject("PXPKG1305",
+                              "An input changed while packaging: " + input.input.uri,
+                              true);
+            const auto sourceDigest = Sha256Bytes(bytes->data(), bytes->size());
+            if (!sourceDigest ||
+                Hex(*sourceDigest) != Lower(input.input.fingerprint))
+                return reject("PXPKG1305",
+                              "An input changed while packaging: " + input.input.uri,
+                              true);
+            const Json normalized = Json::parse(
+                std::string(bytes->begin(), bytes->end()), nullptr, false);
+            if (!normalized.is_discarded()) {
+                const std::string canonical = normalized.dump();
+                if (const auto digest = Sha256Text(canonical))
+                    contentFingerprint = Hex(*digest);
+            }
+        }
+        entries.push_back(ArchiveEntry{.uri = input.input.uri,
+                                       .source = input.source,
+                                       .size = input.input.size,
+                                       .fingerprint =
+                                           Lower(input.input.fingerprint)});
+        identityMaterial += "|" + input.input.uri + "|" + contentFingerprint;
+    }
+    auto customEffects = CompileCustomEffects(entries);
+    if (!customEffects.diagnostics.empty()) {
+        const auto& first = customEffects.diagnostics.front();
+        return reject(first.code, first.message, first.retryable);
+    }
+    entries.erase(
+        std::remove_if(entries.begin(), entries.end(), [&](const auto& entry) {
+            return customEffects.sourceAssets.contains(entry.uri);
+        }),
+        entries.end());
+    for (auto& artifact : customEffects.artifacts) {
+        if (FindArchiveEntry(entries, artifact.uri))
+            return reject("PXPKG1511",
+                          "Generated shader artifact collides with a project input: " +
+                              artifact.uri);
+        const auto digest = Sha256Bytes(artifact.data.data(), artifact.data.size());
+        if (!digest) return reject("PXPKG1306", "SHA-256 is unavailable");
+        artifact.fingerprint = Hex(*digest);
+        identityMaterial += "|shader-artifact|" + artifact.uri + "|" + artifact.fingerprint;
+        entries.push_back(std::move(artifact));
+    }
+    std::ranges::sort(entries, {}, &ArchiveEntry::uri);
+    const auto packageDigest = Sha256Text(identityMaterial);
+    if (!packageDigest) return reject("PXPKG1306", "SHA-256 is unavailable");
+    plan.packageFingerprint = Hex(*packageDigest);
+    auto& compatibleSaveFingerprints = plan.compatibleSaveFingerprints;
+    compatibleSaveFingerprints =
+        std::move(previousPersistence.compatibleSaveFingerprints);
+    if (previousPersistence.contentVersion != request.contentVersion ||
+        previousPersistence.saveVersion != request.saveVersion) {
+        compatibleSaveFingerprints.clear();
+    } else if (!previousPersistence.packageFingerprint.empty() &&
+               previousPersistence.packageFingerprint != plan.packageFingerprint) {
+        compatibleSaveFingerprints.push_back(
+            previousPersistence.packageFingerprint);
+    }
+    std::erase(compatibleSaveFingerprints, plan.packageFingerprint);
+    std::ranges::sort(compatibleSaveFingerprints);
+    compatibleSaveFingerprints.erase(
+        std::unique(compatibleSaveFingerprints.begin(),
+                    compatibleSaveFingerprints.end()),
+        compatibleSaveFingerprints.end());
+    if (compatibleSaveFingerprints.size() > 64)
+        return reject("PXPKG1428",
+                      "The same-version save fingerprint history exceeds 64 releases");
+    plan.legacyPersistenceReaders = std::move(previousPersistence.readers);
+    plan.customEffects = std::move(customEffects.manifests);
+    plan.encryptionKey = "pxpkg-" + Hex(DeriveKey(
+        "PrismatiXPackage|" + identityMaterial));
+    return true;
+}
+
+bool WriteContentIndex(std::ostream& output, const PackageRequest& request,
+                       const std::string_view packageFingerprint,
+                       const std::vector<ArchiveEntry>& entries) {
+    output << "{\"format\":\"PrismatiXContentIndex\",\"schemaRevision\":1,"
+           << "\"gameId\":" << Json(request.gameId).dump()
+           << ",\"packageFingerprint\":" << Json(packageFingerprint).dump()
+           << ",\"entries\":[";
+    bool firstEntry = true;
+    for (const auto& entry : entries) {
+        if (!firstEntry) output << ',';
+        firstEntry = false;
+        output << Json{
+            {"uri", entry.uri},
+            {"fingerprint", entry.fingerprint},
+            {"size", entry.size},
+            {"archive", ShardArchiveName(
+                ArchiveShardForUri(entry.uri, request.archiveShards),
+                request.archiveShards)}}.dump();
+        if (!output || output.tellp() >
+                static_cast<std::streamoff>(128ull * 1024ull * 1024ull))
+            return false;
+    }
+    output << "]}";
+    output.flush();
+    return output && output.tellp() <=
+        static_cast<std::streamoff>(128ull * 1024ull * 1024ull);
+}
+
+PackagePlanResult PlanPackageRequest(const PackageRequest& request,
+                                     const PackageEventSink& eventSink,
+                                     const PackageValidationDepth depth) {
+    PackagePlanResult result;
+    EmitProgress(request, eventSink, "validate", 0, request.inputs.size(),
+                 "Validating package request for a content plan");
+    auto validated = Validate(request, eventSink, depth,
+                              depth == PackageValidationDepth::Structural);
+    if (validated.cancelled) {
+        result.diagnostics.push_back({"PXPKG1300", "Package planning was cancelled"});
+        return result;
+    }
+    if (!validated.diagnostics.empty()) {
+        result.diagnostics = std::move(validated.diagnostics);
+        return result;
+    }
+    const auto persistenceSource = request.cacheSourceDir.empty()
+        ? request.outputDir : request.cacheSourceDir;
+    auto previousPersistence =
+        DiscoverPreviousPersistence(persistenceSource, request.gameId);
+    if (!previousPersistence.error.empty()) {
+        result.diagnostics.push_back(
+            {"PXPKG1317", std::move(previousPersistence.error), true});
+        return result;
+    }
+    result.previousManifestSha256 = previousPersistence.manifestSha256;
+    PackageContentPlan plan;
+    PackageRunResult failure;
+    if (!PreparePackageContent(request, eventSink, std::move(validated.inputs),
+                               std::move(previousPersistence), plan, failure)) {
+        result.diagnostics = std::move(failure.diagnostics);
+        if (result.diagnostics.empty())
+            result.diagnostics.push_back(
+                {"PXPKG1300", "Package planning was cancelled"});
+        return result;
+    }
+    std::vector<detail::PackageArchiveMount> mounts;
+    for (std::uint32_t shard = 0; shard < request.archiveShards; ++shard) {
+        if (std::ranges::any_of(plan.entries, [&](const ArchiveEntry& entry) {
+                return ArchiveShardForUri(entry.uri, request.archiveShards) == shard;
+            }))
+            mounts.push_back({ShardArchiveName(shard, request.archiveShards),
+                              "base", false});
+    }
+    result.manifestJson = detail::SerializePackageManifest(
+        BuildPackageManifest(request, plan.packageFingerprint,
+                             plan.encryptionKey, plan.entries,
+                             std::move(mounts), std::move(plan.customEffects),
+                             std::move(plan.legacyPersistenceReaders),
+                             std::move(plan.compatibleSaveFingerprints)));
+    if (const auto manifest = detail::ParsePackageManifest(result.manifestJson);
+        !manifest.Valid()) {
+        result.diagnostics = manifest.diagnostics;
+        return result;
+    }
+    std::ostringstream contentIndex;
+    if (!WriteContentIndex(contentIndex, request, plan.packageFingerprint,
+                           plan.entries)) {
+        result.diagnostics.push_back(
+            {"PXPKG1311", "Package/content-index.json exceeds its size limit"});
+        return result;
+    }
+    result.contentIndexJson = contentIndex.str();
+    result.resources.reserve(plan.entries.size());
+    for (auto& entry : plan.entries)
+        result.resources.push_back({std::move(entry.uri), std::move(entry.source),
+                                    std::move(entry.data), entry.size,
+                                    std::move(entry.fingerprint)});
+    result.allInputsVerified = depth == PackageValidationDepth::AllInputs;
+    result.valid = true;
+    return result;
+}
+
 PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSink& eventSink) {
     EmitProgress(request, eventSink, "validate", 0, request.inputs.size(), "Validating package request");
     auto validated = Validate(request, eventSink,
@@ -3112,132 +3373,15 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
         return Fail(request, eventSink, "PXPKG1304", "The staging directory could not be created", true);
     }
 
-    std::sort(validated.inputs.begin(), validated.inputs.end(), [](const auto& left, const auto& right) { return left.input.uri < right.input.uri; });
-    std::vector<ArchiveEntry> entries;
-    entries.reserve(validated.inputs.size());
-    std::string identityMaterial =
-        "PrismatiXPackageManifest|2|0.2.0|" + request.gameId + "|" +
-        request.contentVersion + "|" + std::to_string(request.saveVersion) + "|" +
-        request.startScript + "|" + request.sourceMap + "|" + request.startRoute + "|" +
-        request.graphicsTier + "|" +
-        std::to_string(request.width) + "x" + std::to_string(request.height);
-    auto identityRoutes = request.routes;
-    std::sort(identityRoutes.begin(), identityRoutes.end(), [](const auto& left,
-                                                               const auto& right) {
-        return left.id < right.id;
-    });
-    for (const auto& route : identityRoutes)
-        identityMaterial += "|route|" + route.id + "|" + route.scene;
-    for (const auto& extension : request.extensions)
-        identityMaterial += "|extension|" + extension;
-    if (!request.publisherPublicKey.empty())
-        identityMaterial += "|publisher-key|" + request.publisherPublicKey;
-    auto identityMigrations = request.saveMigrations;
-    std::sort(identityMigrations.begin(), identityMigrations.end(),
-              [](const auto& left, const auto& right) {
-                  return left.id < right.id;
-              });
-    for (const auto& migration : identityMigrations) {
-        identityMaterial +=
-            "|save-migration|" + migration.id + "|" +
-            migration.fromContentVersion + "|" +
-            std::to_string(migration.fromSaveVersion) + "|" +
-            migration.toContentVersion + "|" +
-            std::to_string(migration.toSaveVersion) + "|" +
-            migration.asset;
-    }
-    for (std::size_t index = 0; index < validated.inputs.size(); ++index) {
-        if (Cancelled(request)) {
-            return Cancel(request, eventSink, "Packaging was cancelled while reading inputs");
-        }
-        const auto& input = validated.inputs[index];
-        EmitProgress(request, eventSink, "archive", index, validated.inputs.size(), "Preparing " + input.input.uri);
-        // Publishing defers source hashing until a verified read, archive
-        // writing, or whole-shard reuse. JSON bytes also influence package
-        // identity, so this read must match the declared fingerprint.
-        std::string contentFingerprint = Lower(input.input.fingerprint);
-        if (input.input.size <= 16ull * 1024ull * 1024ull &&
-            CouldBeJson(input.source)) {
-            const auto bytes = ReadFile(input.source, input.input.size);
-            if (!bytes) {
-                return Fail(request, eventSink, "PXPKG1305",
-                            "An input changed while packaging: " +
-                                input.input.uri,
-                            true);
-            }
-            const auto sourceDigest = Sha256Bytes(bytes->data(), bytes->size());
-            if (!sourceDigest ||
-                Hex(*sourceDigest) != Lower(input.input.fingerprint)) {
-                return Fail(request, eventSink, "PXPKG1305",
-                            "An input changed while packaging: " +
-                                input.input.uri,
-                            true);
-            }
-            const Json normalized = Json::parse(
-                std::string(bytes->begin(), bytes->end()), nullptr, false);
-            if (!normalized.is_discarded()) {
-                const std::string canonical = normalized.dump();
-                if (const auto digest = Sha256Text(canonical))
-                    contentFingerprint = Hex(*digest);
-            }
-        }
-        entries.push_back(ArchiveEntry{.uri = input.input.uri,
-                                       .source = input.source,
-                                       .size = input.input.size,
-                                       .fingerprint =
-                                           Lower(input.input.fingerprint)});
-        identityMaterial += "|" + input.input.uri + "|" + contentFingerprint;
-    }
-    auto customEffects = CompileCustomEffects(entries);
-    if (!customEffects.diagnostics.empty()) {
-        const auto& first = customEffects.diagnostics.front();
-        return Fail(request, eventSink, first.code, first.message,
-                    first.retryable);
-    }
-    entries.erase(
-        std::remove_if(entries.begin(), entries.end(), [&](const auto& entry) {
-            return customEffects.sourceAssets.contains(entry.uri);
-        }),
-        entries.end());
-    for (auto& artifact : customEffects.artifacts) {
-        if (FindArchiveEntry(entries, artifact.uri))
-            return Fail(request, eventSink, "PXPKG1511",
-                        "Generated shader artifact collides with a project input: " +
-                            artifact.uri);
-        const auto digest = Sha256Bytes(artifact.data.data(), artifact.data.size());
-        if (!digest)
-            return Fail(request, eventSink, "PXPKG1306",
-                        "SHA-256 is unavailable");
-        artifact.fingerprint = Hex(*digest);
-        identityMaterial += "|shader-artifact|" + artifact.uri + "|" + artifact.fingerprint;
-        entries.push_back(std::move(artifact));
-    }
-    std::ranges::sort(entries, {}, &ArchiveEntry::uri);
-    const auto packageDigest = Sha256Text(identityMaterial);
-    if (!packageDigest) {
-        return Fail(request, eventSink, "PXPKG1306", "SHA-256 is unavailable");
-    }
-    const std::string packageFingerprint = Hex(*packageDigest);
-    auto compatibleSaveFingerprints =
-        std::move(previousPersistence.compatibleSaveFingerprints);
-    if (previousPersistence.contentVersion != request.contentVersion ||
-        previousPersistence.saveVersion != request.saveVersion) {
-        compatibleSaveFingerprints.clear();
-    } else if (!previousPersistence.packageFingerprint.empty() &&
-               previousPersistence.packageFingerprint != packageFingerprint) {
-        compatibleSaveFingerprints.push_back(
-            previousPersistence.packageFingerprint);
-    }
-    std::erase(compatibleSaveFingerprints, packageFingerprint);
-    std::ranges::sort(compatibleSaveFingerprints);
-    compatibleSaveFingerprints.erase(
-        std::unique(compatibleSaveFingerprints.begin(),
-                    compatibleSaveFingerprints.end()),
-        compatibleSaveFingerprints.end());
-    if (compatibleSaveFingerprints.size() > 64)
-        return Fail(request, eventSink, "PXPKG1428",
-                    "The same-version save fingerprint history exceeds 64 releases");
-    const std::string encryptionKey = "pxpkg-" + Hex(DeriveKey("PrismatiXPackage|" + identityMaterial));
+    PackageContentPlan contentPlan;
+    PackageRunResult planningFailure;
+    if (!PreparePackageContent(request, eventSink, std::move(validated.inputs),
+                               std::move(previousPersistence), contentPlan,
+                               planningFailure))
+        return planningFailure;
+    auto& entries = contentPlan.entries;
+    const auto& packageFingerprint = contentPlan.packageFingerprint;
+    const auto& encryptionKey = contentPlan.encryptionKey;
     std::vector<std::vector<ArchiveEntry>> shards(request.archiveShards);
     for (const auto& entry : entries)
         shards[ArchiveShardForUri(entry.uri, request.archiveShards)].push_back(entry);
@@ -3473,9 +3617,9 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
     const std::string manifest = detail::SerializePackageManifest(
         BuildPackageManifest(request, packageFingerprint, encryptionKey, entries,
                              std::move(archiveMounts),
-                             std::move(customEffects.manifests),
-                             std::move(previousPersistence.readers),
-                             std::move(compatibleSaveFingerprints)));
+                             std::move(contentPlan.customEffects),
+                             std::move(contentPlan.legacyPersistenceReaders),
+                             std::move(contentPlan.compatibleSaveFingerprints)));
     const auto manifestSelfCheck = detail::ParsePackageManifest(manifest);
     if (!manifestSelfCheck.Valid()) {
         const auto& diagnostic = manifestSelfCheck.diagnostics.front();
@@ -3536,34 +3680,8 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
         std::ofstream contentIndexOutput(
             staging / "Package/content-index.json",
             std::ios::binary | std::ios::trunc);
-        contentIndexOutput
-            << "{\"format\":\"PrismatiXContentIndex\",\"schemaRevision\":1,"
-            << "\"gameId\":" << Json(request.gameId).dump()
-            << ",\"packageFingerprint\":" << Json(packageFingerprint).dump()
-            << ",\"entries\":[";
-        bool firstEntry = true;
-        for (const auto& entry : entries) {
-            if (!firstEntry) contentIndexOutput << ',';
-            firstEntry = false;
-            contentIndexOutput << Json{
-                {"uri", entry.uri},
-                {"fingerprint", entry.fingerprint},
-                {"size", entry.size},
-                {"archive", ShardArchiveName(
-                    ArchiveShardForUri(entry.uri, request.archiveShards),
-                    request.archiveShards)}}.dump();
-            if (!contentIndexOutput ||
-                contentIndexOutput.tellp() >
-                    static_cast<std::streamoff>(128ull * 1024ull * 1024ull))
-                return Fail(request, eventSink, "PXPKG1311",
-                            "Package/content-index.json exceeds its size limit or could not be written",
-                            true);
-        }
-        contentIndexOutput << "]}";
-        contentIndexOutput.flush();
-        if (!contentIndexOutput ||
-            contentIndexOutput.tellp() >
-                static_cast<std::streamoff>(128ull * 1024ull * 1024ull))
+        if (!WriteContentIndex(contentIndexOutput, request,
+                               packageFingerprint, entries))
             return Fail(request, eventSink, "PXPKG1311",
                         "Package/content-index.json exceeds its size limit or could not be written",
                         true);

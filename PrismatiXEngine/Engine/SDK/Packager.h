@@ -152,6 +152,24 @@ struct PackageRunResult {
     [[nodiscard]] bool Completed() const { return exitCode == PackageExitCode::Completed; }
 };
 
+struct PackagePlannedResource {
+    std::string uri;
+    std::filesystem::path source;
+    std::vector<std::uint8_t> generatedData;
+    std::uint64_t size = 0;
+    std::string fingerprint;
+};
+
+struct PackagePlanResult {
+    bool valid = false;
+    bool allInputsVerified = false;
+    std::string previousManifestSha256;
+    std::vector<PackageDiagnostic> diagnostics;
+    std::string manifestJson;
+    std::string contentIndexJson;
+    std::vector<PackagePlannedResource> resources;
+};
+
 using PackageEventSink = std::function<void(const PackageEvent&)>;
 
 // Parses the strict frontend-to-Packager request contract. Paths remain native
@@ -171,6 +189,14 @@ using PackageEventSink = std::function<void(const PackageEvent&)>;
 // promotion. Cancellation is polled between work units and immediately before
 // promotion.
 [[nodiscard]] PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSink& eventSink = {});
+
+// Validates the same authoring inputs and computes the exact manifest, index,
+// and resource inventory that a complete distribution would contain. It does
+// not write archives or attest media bytes deferred until a writer consumes
+// each planned source; callers must verify those fingerprints at that point.
+[[nodiscard]] PackagePlanResult PlanPackageRequest(
+    const PackageRequest& request, const PackageEventSink& eventSink = {},
+    PackageValidationDepth depth = PackageValidationDepth::Structural);
 
 // Checks native package request and authored Story/UI/resource contracts
 // without creating or replacing a distribution. Media payload fingerprints

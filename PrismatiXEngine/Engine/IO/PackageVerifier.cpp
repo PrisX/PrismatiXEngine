@@ -5,6 +5,7 @@
 #include "Engine/IO/OverlaySignature.h"
 #include "Engine/IO/VFS.h"
 #include "Engine/Package/PackageManifest.h"
+#include "Engine/SDK/Packager.h"
 #include "Engine/Support/Utf8Path.h"
 
 #include <psa/crypto.h>
@@ -300,6 +301,60 @@ struct OwnedOverlayStage {
         std::filesystem::remove_all(path, ignored);
     }
 };
+
+bool PackagedRuntimeLibrary(const std::filesystem::path& path) {
+    std::string name = px::PathToUtf8(path.filename());
+    std::ranges::transform(name, name.begin(), [](const unsigned char byte) {
+        return static_cast<char>(std::tolower(byte));
+    });
+    if (name.find("shadercross") != std::string::npos ||
+        name.find("dxcompiler") != std::string::npos ||
+        name == "dxil.dll" || name.find("spirv-cross") != std::string::npos)
+        return false;
+#ifdef _WIN32
+    return name.ends_with(".dll");
+#elif defined(__APPLE__)
+    return name.ends_with(".dylib");
+#else
+    return name.ends_with(".so") || name.find(".so.") != std::string::npos;
+#endif
+}
+
+bool RuntimeInputsMatchBase(
+    const std::filesystem::path& base,
+    const sdk::detail::PackageManifest& manifest,
+    const std::filesystem::path& playerExecutable) {
+    const auto baseFiles = StaticDistributionFiles(base, manifest);
+    if (!baseFiles) return false;
+    const auto playerName = px::PathToUtf8(playerExecutable.filename());
+    const auto expectedPlayer = baseFiles->find(playerName);
+    if (expectedPlayer == baseFiles->end() ||
+        FingerprintRegularFile(playerExecutable) != expectedPlayer->second)
+        return false;
+    std::set<std::string> seenLibraries;
+    std::error_code error;
+    for (std::filesystem::directory_iterator iterator(
+             playerExecutable.parent_path(), error);
+         !error && iterator != std::filesystem::directory_iterator();
+         iterator.increment(error)) {
+        if (!PackagedRuntimeLibrary(iterator->path())) continue;
+        const auto name = px::PathToUtf8(iterator->path().filename());
+        const auto expected = baseFiles->find(name);
+        if (expected == baseFiles->end() ||
+            FingerprintRegularFile(iterator->path()) != expected->second)
+            return false;
+        seenLibraries.insert(name);
+    }
+    if (error) return false;
+    for (const auto& [name, fingerprint] : *baseFiles) {
+        (void)fingerprint;
+        if (name.find('/') == std::string::npos &&
+            PackagedRuntimeLibrary(px::PathFromUtf8(name)) &&
+            !seenLibraries.contains(name))
+            return false;
+    }
+    return true;
+}
 
 }  // namespace
 
@@ -1077,6 +1132,265 @@ PackageOverlayBuildResult CreatePackageOverlay(
     // The stage and output share a parent, so this move is on one volume.
     // Omitting MOVEFILE_REPLACE_EXISTING makes a late competing output fail
     // atomically, including on volumes that do not support hard links.
+    if (!MoveFileExW(stagedPdx.c_str(), outputPath.c_str(),
+                     MOVEFILE_WRITE_THROUGH))
+        return fail("Overlay could not be published without replacing existing data: "
+                    "Win32 error " + std::to_string(GetLastError()));
+#else
+    error.clear();
+    std::filesystem::create_hard_link(stagedPdx, outputPath, error);
+    if (error)
+        return fail("Overlay could not be published without replacing existing data: " +
+                    error.message());
+#endif
+    return {.created = true,
+            .changedResources = verified.changedResources,
+            .removedResources = removed,
+            .changedRawBytes = verified.changedRawBytes};
+}
+
+PackageOverlayBuildResult CreatePackageOverlayFromPlan(
+    const std::filesystem::path& baseDistribution,
+    const std::filesystem::path& artifactRoot,
+    const sdk::PackagePlanResult& plan,
+    const std::filesystem::path& playerExecutable,
+    const std::filesystem::path& outputPath,
+    const PackageOverlayBuildProgress& onProgress,
+    const std::filesystem::path& signingKeyFile,
+    const std::string_view optionalPackId) {
+    const auto fail = [](std::string message) {
+        return PackageOverlayBuildResult{.error = std::move(message)};
+    };
+    if (!plan.valid || !plan.allInputsVerified)
+        return fail("Direct overlay requires a complete AllInputs package plan");
+    if (!baseDistribution.is_absolute() || !artifactRoot.is_absolute() ||
+        !playerExecutable.is_absolute() || !outputPath.is_absolute() ||
+        outputPath.extension() != ".pdx" || outputPath.filename().empty())
+        return fail("Base, artifact, Player, and new .pdx output must be absolute paths");
+    std::error_code error;
+    const auto base = std::filesystem::canonical(baseDistribution, error);
+    if (error || !std::filesystem::is_directory(base))
+        return fail("Base distribution is not a readable directory");
+    error.clear();
+    const auto artifact = std::filesystem::canonical(artifactRoot, error);
+    if (error || !std::filesystem::is_directory(artifact) || artifact == base)
+        return fail("Artifact is missing or is the base distribution");
+    error.clear();
+    const auto outputParent =
+        std::filesystem::canonical(outputPath.parent_path(), error);
+    if (error || !std::filesystem::is_directory(outputParent) ||
+        ExistingDirectoryIsWithin(outputParent, base) ||
+        ExistingDirectoryIsWithin(outputParent, artifact))
+        return fail("Overlay output parent is missing or inside the base or artifact");
+    error.clear();
+    if (std::filesystem::exists(outputPath, error) || error)
+        return fail("Overlay output already exists or cannot be inspected");
+    const bool signedOverlay = !signingKeyFile.empty();
+    if (!optionalPackId.empty() &&
+        (!ValidOptionalPackId(optionalPackId) || !signedOverlay))
+        return fail("Optional overlays require a valid ID and publisher signature");
+
+    const auto baseManifestBefore = ReadBoundedRegularFile(
+        base / "Package/manifest.json", 4ull * 1024ull * 1024ull);
+    const auto baseIndexBefore = ReadBoundedRegularFile(
+        base / "Package/content-index.json", 128ull * 1024ull * 1024ull);
+    if (!baseManifestBefore || !baseIndexBefore ||
+        plan.manifestJson.empty() ||
+        plan.manifestJson.size() > 4ull * 1024ull * 1024ull ||
+        plan.contentIndexJson.empty() ||
+        plan.contentIndexJson.size() > 128ull * 1024ull * 1024ull)
+        return fail("A base or planned package document is unavailable or oversized");
+    const auto plannedBaseManifestHash = FingerprintText(*baseManifestBefore);
+    if (!plannedBaseManifestHash ||
+        plan.previousManifestSha256 != *plannedBaseManifestHash)
+        return fail("Base manifest differs from the package planning source");
+    const auto baseVerified = VerifyPackageContents(
+        base, [&](const std::uint64_t current, const std::uint64_t total,
+                  const std::uint64_t rawBytes) {
+            if (onProgress) onProgress("verify-base", current, total, rawBytes);
+        });
+    if (!baseVerified.valid)
+        return fail("Base distribution failed content verification: " +
+                    baseVerified.error);
+    if (ReadBoundedRegularFile(base / "Package/manifest.json",
+                               4ull * 1024ull * 1024ull) != baseManifestBefore ||
+        ReadBoundedRegularFile(base / "Package/content-index.json",
+                               128ull * 1024ull * 1024ull) != baseIndexBefore)
+        return fail("Base package documents changed during verification");
+    const auto baseParsed = sdk::detail::ParsePackageManifest(*baseManifestBefore);
+    const auto targetParsed = sdk::detail::ParsePackageManifest(plan.manifestJson);
+    if (!baseParsed.Valid() || !targetParsed.Valid() ||
+        baseParsed.manifest.gameId != targetParsed.manifest.gameId ||
+        baseParsed.manifest.engineVersion != targetParsed.manifest.engineVersion ||
+        baseParsed.manifest.publisherPublicKey !=
+            targetParsed.manifest.publisherPublicKey ||
+        baseParsed.manifest.packageFingerprint ==
+            targetParsed.manifest.packageFingerprint)
+        return fail("Base and plan are not distinct compatible package versions");
+    if (signedOverlay && baseParsed.manifest.publisherPublicKey.empty())
+        return fail("Signed overlay requires a pinned publisher public key");
+    if (!optionalPackId.empty() &&
+        (baseParsed.manifest.contentVersion !=
+             targetParsed.manifest.contentVersion ||
+         baseParsed.manifest.saveVersion != targetParsed.manifest.saveVersion ||
+         baseParsed.manifest.persistenceDataId !=
+             targetParsed.manifest.persistenceDataId ||
+         baseParsed.manifest.persistenceKeyId !=
+             targetParsed.manifest.persistenceKeyId))
+        return fail("Optional overlays cannot change save or content version identity");
+    const auto baseEntries =
+        ParseIndexedResources(*baseIndexBefore, baseParsed.manifest);
+    const auto targetEntries =
+        ParseIndexedResources(plan.contentIndexJson, targetParsed.manifest);
+    if (!baseEntries || !targetEntries ||
+        targetEntries->size() != plan.resources.size())
+        return fail("Base or planned content inventory is invalid");
+    std::unordered_map<std::string, const sdk::PackagePlannedResource*> sources;
+    sources.reserve(plan.resources.size());
+    for (const auto& source : plan.resources) {
+        const auto indexed = targetEntries->find(source.uri);
+        if (indexed == targetEntries->end() ||
+            indexed->second.fingerprint != source.fingerprint ||
+            indexed->second.size != source.size ||
+            !sources.emplace(source.uri, &source).second)
+            return fail("Planned source differs from its content index: " +
+                        source.uri);
+        if (!source.source.empty()) {
+            error.clear();
+            const auto canonicalSource =
+                std::filesystem::canonical(source.source, error);
+            if (error || !ExistingDirectoryIsWithin(
+                             canonicalSource.parent_path(), artifact))
+                return fail("Planned source escapes the artifact: " + source.uri);
+        }
+    }
+    if (!RuntimeInputsMatchBase(base, baseParsed.manifest, playerExecutable))
+        return fail("Player or runtime libraries differ from the base distribution");
+
+    std::vector<IndexedResource> changed;
+    for (const auto& [uri, resource] : *targetEntries) {
+        const auto old = baseEntries->find(uri);
+        if (old == baseEntries->end() ||
+            old->second.fingerprint != resource.fingerprint ||
+            old->second.size != resource.size)
+            changed.push_back(resource);
+    }
+    std::uint64_t removed = 0;
+    for (const auto& [uri, resource] : *baseEntries) {
+        (void)resource;
+        if (!targetEntries->contains(uri)) ++removed;
+    }
+    const auto baseManifestHash = FingerprintText(*baseManifestBefore);
+    const auto baseIndexHash = FingerprintText(*baseIndexBefore);
+    const auto targetManifestHash = FingerprintText(plan.manifestJson);
+    const auto targetIndexHash = FingerprintText(plan.contentIndexJson);
+    if (!baseManifestHash || !baseIndexHash || !targetManifestHash ||
+        !targetIndexHash)
+        return fail("Overlay metadata hashing failed");
+    Json metadata{
+        {"format", "PrismatiXPackageOverlay"},
+        {"schemaRevision", optionalPackId.empty() ? (signedOverlay ? 2 : 1) : 3},
+        {"gameId", baseParsed.manifest.gameId},
+        {"basePackageFingerprint", baseParsed.manifest.packageFingerprint},
+        {"targetPackageFingerprint", targetParsed.manifest.packageFingerprint},
+        {"baseManifestSha256", *baseManifestHash},
+        {"baseContentIndexSha256", *baseIndexHash},
+        {"targetManifestSha256", *targetManifestHash},
+        {"targetContentIndexSha256", *targetIndexHash}};
+    if (!optionalPackId.empty()) {
+        metadata["kind"] = "optional";
+        metadata["optionalId"] = optionalPackId;
+    }
+    const std::string metadataText = metadata.dump();
+    if (metadataText.size() > 16ull * 1024ull)
+        return fail("Overlay metadata exceeds its format limit");
+    std::optional<Bytes> signature;
+    if (signedOverlay) {
+        auto keyText = ReadBoundedRegularFile(signingKeyFile, 256);
+        if (!keyText)
+            return fail("Overlay signing key file is missing or unsafe");
+        const auto first = keyText->find_first_not_of(" \r\n\t");
+        const auto last = keyText->find_last_not_of(" \r\n\t");
+        if (first == std::string::npos)
+            return fail("Overlay signing key file is empty");
+        auto keyHex = keyText->substr(first, last - first + 1);
+        const auto signedHex = SignOverlayMetadata(
+            metadataText, keyHex, baseParsed.manifest.publisherPublicKey,
+            optionalPackId.empty() ? 2 : 3);
+        std::fill(keyHex.begin(), keyHex.end(), '\0');
+        std::fill(keyText->begin(), keyText->end(), '\0');
+        if (!signedHex)
+            return fail("Overlay signing key does not match the pinned publisher key");
+        signature.emplace();
+        signature->reserve(64);
+        for (std::size_t index = 0; index < signedHex->size(); index += 2) {
+            const auto nibble = [](const char value) -> std::uint8_t {
+                return value <= '9' ? value - '0' : value - 'a' + 10;
+            };
+            signature->push_back(static_cast<std::uint8_t>(
+                (nibble((*signedHex)[index]) << 4) |
+                nibble((*signedHex)[index + 1])));
+        }
+    }
+
+    const auto stagedName =
+        px::PathToUtf8(outputPath.filename()) + ".staging-" +
+        baseManifestHash->substr(0, 8) + targetManifestHash->substr(0, 8);
+    OwnedOverlayStage stage{outputParent / px::PathFromUtf8(stagedName)};
+    error.clear();
+    if (!std::filesystem::create_directory(stage.path, error) || error)
+        return fail("A prior overlay staging directory exists or cannot be created");
+    stage.created = true;
+    ArchiveStreamWriter writer;
+    const auto addText = [&writer](const std::string_view uri,
+                                   const std::string& value) {
+        writer.AddData(std::string(uri), Bytes(value.begin(), value.end()));
+    };
+    addText(kPackageOverlayManifestUri, metadataText);
+    addText(kPackageOverlayTargetManifestUri, plan.manifestJson);
+    addText(kPackageOverlayTargetIndexUri, plan.contentIndexJson);
+    if (signature)
+        writer.AddData(std::string(kPackageOverlaySignatureUri),
+                       std::move(*signature));
+    std::uint64_t plannedBytes = 0;
+    if (onProgress) onProgress("plan-changed", 0, changed.size(), 0);
+    for (std::size_t index = 0; index < changed.size(); ++index) {
+        const auto& resource = changed[index];
+        const auto* source = sources.at(resource.uri);
+        if (!source->source.empty())
+            writer.AddFile(resource.uri, source->source, resource.size,
+                           resource.fingerprint);
+        else
+            writer.AddData(resource.uri, source->generatedData);
+        if (resource.size >
+            (std::numeric_limits<std::uint64_t>::max)() - plannedBytes)
+            return fail("Changed resource total exceeds the overlay limit");
+        plannedBytes += resource.size;
+        if (onProgress)
+            onProgress("plan-changed", index + 1, changed.size(), plannedBytes);
+    }
+    const auto stagedPdx = stage.path / "patch.pdx";
+    if (!writer.Write(px::PathToUtf8(stagedPdx),
+                      [&](const std::uint64_t current,
+                          const std::uint64_t total) {
+                          if (onProgress)
+                              onProgress("write-overlay", current, total,
+                                         current);
+                      }))
+        return fail("Overlay PDX could not be written from planned resources");
+    const auto verified = signedOverlay
+        ? VerifySignedPackageOverlay(base, stagedPdx)
+        : VerifyPackageOverlay(base, stagedPdx);
+    if (!verified.valid || verified.changedResources != changed.size() ||
+        verified.tombstones.size() != removed)
+        return fail("Created overlay failed verification: " + verified.error);
+    if (!RuntimeInputsMatchBase(base, baseParsed.manifest, playerExecutable) ||
+        ReadBoundedRegularFile(base / "Package/manifest.json",
+                               4ull * 1024ull * 1024ull) != baseManifestBefore ||
+        ReadBoundedRegularFile(base / "Package/content-index.json",
+                               128ull * 1024ull * 1024ull) != baseIndexBefore)
+        return fail("Base runtime or metadata changed during overlay creation");
+#ifdef _WIN32
     if (!MoveFileExW(stagedPdx.c_str(), outputPath.c_str(),
                      MOVEFILE_WRITE_THROUGH))
         return fail("Overlay could not be published without replacing existing data: "

@@ -457,8 +457,14 @@ int main() {
     });
 
     suite.Run("Package_CreatesPlayerCompatibleAtomicDistribution", [&] {
+        const auto plan = px::sdk::PlanPackageRequest(request);
+        suite.Require(plan.valid && !plan.resources.empty(),
+                      "SDK can plan the complete package inventory without writing PDX");
         const auto result = px::sdk::RunPackager(request, [&](const auto& event) { events.push_back(event); });
         suite.Require(result.Completed(), "SDK Packager completes");
+        suite.Expect(plan.manifestJson == Read(output / "Package/manifest.json") &&
+                         plan.contentIndexJson == Read(output / "Package/content-index.json"),
+                     "planned manifest and content index exactly match a complete package");
         suite.Expect(std::filesystem::is_regular_file(output / "Content.pdx"), "Content.pdx is promoted");
         suite.Expect(std::filesystem::is_regular_file(output / "Package/manifest.json"), "explicit package manifest is promoted");
         suite.Expect(std::filesystem::is_regular_file(output / request.playerExecutable.filename()), "Player is copied");
@@ -1019,9 +1025,80 @@ int main() {
         const auto signedTarget = fixture.path / "Build/SignedOverlayTarget";
         auto targetRequest = FixtureRequest(root, signedTarget);
         targetRequest.publisherPublicKey = keys->publicKeyHex;
+        targetRequest.cacheSourceDir = signedBase;
         targetRequest.inputs.push_back(Input(root, "Content/Overlay/signed.txt"));
+        const auto directPlan = px::sdk::PlanPackageRequest(
+            targetRequest, {}, px::sdk::PackageValidationDepth::AllInputs);
+        suite.Require(directPlan.valid && directPlan.allInputsVerified,
+                      "signed target can be fully planned from artifact sources");
+        const auto directPatch = fixture.path / "signed-direct-overlay.pdx";
+        const auto direct = px::io::CreatePackageOverlayFromPlan(
+            signedBase, root, directPlan, targetRequest.playerExecutable,
+            directPatch, {}, keyFile);
+        suite.Require(direct.created && direct.changedResources == 1,
+                      "signed overlay is streamed from the plan without a target distribution: " +
+                          direct.error);
+        const auto directVerified =
+            px::io::VerifySignedPackageOverlay(signedBase, directPatch);
+        suite.Expect(directVerified.valid &&
+                         directVerified.targetManifestJson == directPlan.manifestJson &&
+                         directVerified.targetContentIndexJson ==
+                             directPlan.contentIndexJson,
+                     "direct signed overlay preserves the planned target documents");
+        const auto directOptional = fixture.path / "signed-direct-adult.pdx";
+        const auto optionalCreated = px::io::CreatePackageOverlayFromPlan(
+            signedBase, root, directPlan, targetRequest.playerExecutable,
+            directOptional, {}, keyFile, "adult");
+        const auto optionalVerified = optionalCreated.created
+            ? px::io::VerifySignedPackageOverlay(signedBase, directOptional)
+            : px::io::PackageOverlayVerification{};
+        suite.Expect(optionalCreated.created && optionalVerified.valid &&
+                         optionalVerified.optionalPackId == "adult",
+                     "direct artifact path can sign an independently enabled optional pack");
+        auto staleBasePlan = directPlan;
+        staleBasePlan.previousManifestSha256 = std::string(64, '0');
+        const auto staleBasePatch = fixture.path / "stale-base-direct-overlay.pdx";
+        suite.Expect(!px::io::CreatePackageOverlayFromPlan(
+                          signedBase, root, staleBasePlan,
+                          targetRequest.playerExecutable, staleBasePatch,
+                          {}, keyFile).created &&
+                         !std::filesystem::exists(staleBasePatch),
+                     "direct overlay requires the exact base manifest used for planning");
+        const auto changedSource = root / "Content/Overlay/signed.txt";
+        const auto originalSource = Read(changedSource);
+        Write(changedSource, std::string(originalSource.size(), 'x'));
+        const auto stalePatch = fixture.path / "stale-direct-overlay.pdx";
+        suite.Expect(!px::io::CreatePackageOverlayFromPlan(
+                          signedBase, root, directPlan,
+                          targetRequest.playerExecutable, stalePatch,
+                          {}, keyFile).created &&
+                         !std::filesystem::exists(stalePatch),
+                     "direct overlay rejects changed source bytes during streaming");
+        Write(changedSource, originalSource);
+        const auto differentPlayer = fixture.path / "different-player.exe";
+        Write(differentPlayer, "different runtime");
+        const auto incompatiblePatch =
+            fixture.path / "incompatible-runtime-overlay.pdx";
+        suite.Expect(!px::io::CreatePackageOverlayFromPlan(
+                          signedBase, root, directPlan, differentPlayer,
+                          incompatiblePatch, {}, keyFile).created &&
+                         !std::filesystem::exists(incompatiblePatch),
+                     "direct overlay rejects Player bytes different from the base");
+        const auto uncheckedPlan = px::sdk::PlanPackageRequest(targetRequest);
+        const auto uncheckedPatch = fixture.path / "unchecked-direct-overlay.pdx";
+        suite.Expect(!px::io::CreatePackageOverlayFromPlan(
+                          signedBase, root, uncheckedPlan,
+                          targetRequest.playerExecutable, uncheckedPatch,
+                          {}, keyFile).created &&
+                         !std::filesystem::exists(uncheckedPatch),
+                     "direct overlay rejects a plan that skipped full source verification");
         suite.Require(px::sdk::RunPackager(targetRequest).Completed(),
                       "signed overlay target package is built");
+        suite.Expect(Read(signedTarget / "Package/manifest.json") ==
+                         directPlan.manifestJson &&
+                         Read(signedTarget / "Package/content-index.json") ==
+                             directPlan.contentIndexJson,
+                     "direct overlay documents match a later complete package from the same base");
         const auto patch = fixture.path / "signed-overlay.pdx";
         const auto created = px::io::CreatePackageOverlay(
             signedBase, signedTarget, patch, {}, keyFile);
