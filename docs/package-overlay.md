@@ -42,6 +42,9 @@ encrypted-and-compressed entries can require a whole-entry buffer. Each entry
 still has its CRC and indexed SHA-256 checked.
 Parallel verification reduces elapsed time without making the check
 incremental or trusting unverified cached bytes.
+On Windows, direct artifact overlay planning also overlaps the full artifact
+hash with base verification while holding read-only handles on base PDX
+shards through publication. Other platforms keep the two stages sequential.
 
 This path fully checks the artifact inputs, verifies the complete base
 distribution, confirms the selected Player and runtime libraries match the

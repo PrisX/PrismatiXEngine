@@ -377,17 +377,8 @@ int RunMain(int argc, char** argv) {
                 }
                 previousManifest = chain.targetManifestJson;
             }
-            auto plan = px::sdk::PlanPackageRequest(
-                parsed.request, Emit, px::sdk::PackageValidationDepth::AllInputs,
-                previousManifest);
-            if (!plan.valid) {
-                Emit(FailedEvent(parsed.request.requestId,
-                                 std::move(plan.diagnostics)));
-                return static_cast<int>(px::sdk::PackageExitCode::Failed);
-            }
-            const auto created = px::io::CreatePackageOverlayFromPlan(
-                base, parsed.request.projectRoot, plan,
-                parsed.request.playerExecutable, output,
+            auto created = px::io::CreatePackageOverlayFromRequest(
+                base, parsed.request, output, Emit,
                 [](const std::string_view phase, const std::uint64_t current,
                    const std::uint64_t total, const std::uint64_t rawBytes) {
                     px::sdk::PackageEvent progress;
@@ -398,9 +389,15 @@ int RunMain(int argc, char** argv) {
                     progress.message = std::to_string(rawBytes) +
                                        " raw bytes processed";
                     Emit(progress);
-                }, signingKey, optionalId, updates, planOverlay);
+                }, signingKey, optionalId, updates, previousManifest,
+                planOverlay);
             if (planOverlay ? !created.planned : !created.created) {
-                Emit(FailedEvent(parsed.request.requestId, "PXPKG1517", created.error));
+                if (!created.diagnostics.empty())
+                    Emit(FailedEvent(parsed.request.requestId,
+                                     std::move(created.diagnostics)));
+                else
+                    Emit(FailedEvent(parsed.request.requestId, "PXPKG1517",
+                                     created.error));
                 return static_cast<int>(px::sdk::PackageExitCode::Failed);
             }
             std::cout << "{\"event\":\""

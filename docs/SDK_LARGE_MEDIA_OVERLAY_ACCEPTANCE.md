@@ -34,3 +34,17 @@
 單工與四工依「單工→四工→四工→單工」順序比較，全部驗證成功；最後一次大型 `verify-package` 與 Release Packager Contract／Runtime Resources targeted 測試也通過。`--check` 前後都回報 2 筆變更、0 刪除、268,435,588 raw bytes。測試新增「原始內容 SHA 相同但 PDX 內 CRC 欄位被改動」及「未壓縮 entry 的 stored size 被改動」拒絕案例，避免合併讀取削弱完整性檢查。
 
 這些數字只適用於這台機器和這份暖快取資料；並行縮短時間但沒有略過任何資源。artifact 的全量雜湊、基底的全量驗證，以及實際 patch 寫入仍是 O(素材總量) 工作。
+
+## Artifact 與基底驗證重疊
+
+在同一份 D: NTFS 隔離資料上，先以兩個唯讀行程同時量測完整 artifact 預檢與完整基底驗證：前者 27.650 秒、後者 20.176 秒，整輪由較慢的前者決定，約 28.3 秒。這確認兩個獨立讀驗階段有可重疊的工作；它們仍各自讀取並核對完整內容。
+
+正式 `create-overlay --artifact` 路徑現於 Windows 同時執行 AllInputs 來源雜湊／規劃與基底 PDX 驗證。Packager 在驗證前對所有基底分片取得只允許其他讀者的 Windows handle，直到預檢結束或補丁發布才釋放；中途寫入與替換會被拒。基底 manifest／index 及分片大小／修改時間也在驗證前後、使用時核對。規劃失敗會請求取消尚未完成的基底驗證。非 Windows 平台維持串行順序，仍核對分片狀態，避免擴大寫入競態視窗。
+
+| Release `create-overlay --check`，相同輸入 | 耗時 | 變更／刪除 | Node＋Packager 取樣 RSS |
+| --- | ---: | ---: | ---: |
+| 基底驗證並行化後、兩個階段仍串行 | 54.266 秒 | 2／0 | 698,748,928 bytes |
+| Artifact 與基底驗證重疊 | 40.782 秒 | 2／0 | 715,341,824 bytes |
+| 同上，另持有 Windows 基底唯讀 handle | 40.250 秒 | 2／0 | 705,150,976 bytes |
+
+三次均回報 268,435,588 changed raw bytes，沒有產生 PDX；最後兩次使用同一份 artifact 和基底，僅 Native Packager 版本不同。原生契約另外驗證並行預檢與既有規劃計數相同、正式簽章 PDX 可獨立驗證、artifact 來源改動被拒，且 Windows 分片在驗證回呼中無法被寫入。Release Packager Contract／Runtime Resources targeted CTest 2/2 通過。不同時間的單次暖快取量測不構成一般機器 SLA；此改動沒有建立可跳過完整讀驗的 cache。

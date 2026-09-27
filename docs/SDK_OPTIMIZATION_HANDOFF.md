@@ -4,6 +4,8 @@
 
 ### 2026-09-27 後續進度
 
+- **直接 overlay 的兩道完整讀驗已在 Windows 安全重疊。** Native Packager 現在一面對 artifact 做 AllInputs 雜湊與語意規劃，一面完整驗證基底 PDX；進度回呼序列化。基底分片從驗證前到預檢結束或補丁發布持有拒絕寫入／替換的 Windows 讀取 handle，metadata 與分片尺寸／修改時間也在驗證前後及使用時核對；規劃失敗會取消尚在進行的基底驗證。非 Windows 平台維持原先的串行驗證順序。相同 D: NTFS、16 分片／31,756 資源 signed 基底與大型 artifact 的 Release `create-overlay --check`，改前 54.266 秒，並行後 40.782 秒，加入 Windows 讀取鎖後 40.250 秒；三者均回報 2 筆變更／0 刪除／268,435,588 changed raw bytes。最後一次取樣 Node＋Packager RSS 約 705 MB。Native Packager Contract／Runtime Resources 2/2、CLI overlay routing 2/2（另 1 項 native E2E 依環境跳過）通過；新契約測試包含來源同尺寸改動拒絕、Windows 驗證中基底寫入被拒、簽章成品獨立驗證。仍需每次完整讀驗，這是延遲改善，不是依賴級增量建置；取樣受快取／磁碟負載影響。詳見 [大型媒體 overlay 驗收](SDK_LARGE_MEDIA_OVERLAY_ACCEPTANCE.md)。
+
 - **大型基底驗證已安全並行化。** 16 分片／31,756 筆的同一 signed 基底，Release `verify-package` 單工兩次 56.0／55.0 秒，四工兩次 17.2／17.3 秒；反轉順序後仍有同級差異。CRC 與 SHA-256 在同一輪串流中核對，所有分片完整讀驗，改動 CRC 欄位但保持內容 SHA 的回歸案例會被拒絕。相同 artifact 的 `create-overlay --check` 從 92.7 秒降至 54.3 秒，變更數保持 2／0；最後重編後四工再驗 18.0 秒。Release Packager Contract／Runtime Resources targeted 測試通過。詳見 [大型媒體 overlay 驗收](SDK_LARGE_MEDIA_OVERLAY_ACCEPTANCE.md)。這仍是 O(全部素材) 驗證，依賴級增量建置尚未完成。
 
 - **大型媒體簽章 overlay 驗收已完成。** 以既有 31,756 筆／8,596,468,270 raw bytes artifact 封出隔離的簽章基底，正式 `augment` 僅替換一個 256 MiB PCM WAV（加上一份 augmentation 記錄）。`--check` 預測 2 筆變更、0 筆刪除；原 overlay writer 產出 273,818,866 bytes。改為有界 zstd 串流壓縮後，同一變更產出 67,162,678 bytes（約縮小 75.5%），約 95.8 秒；Node＋Packager 取樣 RSS 峰值約 707 MB，原生 Packager 的 Windows peak working set 約 593 MB，D: volume 取樣最低可用空間差額約 67.7 MB。獨立驗簽通過，安裝後 Player 記錄 `signed overlay=true count=1`，22 route／23 張擷取／0 error／exit 0。Release native targeted CTest 2/2 通過。詳細條件和限制見 [大型媒體 overlay 驗收](SDK_LARGE_MEDIA_OVERLAY_ACCEPTANCE.md)。本節以下較早寫的「8 GB 大媒體 entry／峰值尚未實測」已由這次結果取代；全量讀驗成本與真實跨版存檔 migration 仍未解決。

@@ -1,13 +1,14 @@
 #pragma once
 
+#include "Engine/SDK/Packager.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <vector>
-
-namespace px::sdk { struct PackagePlanResult; }
 
 namespace px::io {
 
@@ -38,7 +39,8 @@ using PackageVerificationProgress =
 // This is an integrity check, not signature/authenticity verification.
 [[nodiscard]] PackageContentVerification VerifyPackageContents(
     const std::filesystem::path& distribution,
-    const PackageVerificationProgress& onProgress = {});
+    const PackageVerificationProgress& onProgress = {},
+    std::stop_token stop = {});
 
 struct PackageOverlayVerification {
     bool valid = false;
@@ -79,6 +81,7 @@ struct PackageOverlayBuildResult {
     std::uint64_t changedResources = 0;
     std::uint64_t removedResources = 0;
     std::uint64_t changedRawBytes = 0;
+    std::vector<sdk::PackageDiagnostic> diagnostics;
 };
 
 struct PackageOverlayChainMount {
@@ -148,6 +151,21 @@ using PackageOverlayBuildProgress = std::function<void(
     const std::filesystem::path& signingKeyFile = {},
     std::string_view optionalPackId = {},
     const std::filesystem::path& priorUpdatesDirectory = {},
+    bool planOnly = false);
+
+// Plans a fully verified artifact and verifies the independent base PDX shards
+// at the same time. Both checks must finish before an overlay can be written;
+// the base metadata and archive file stamps are pinned through publication.
+[[nodiscard]] PackageOverlayBuildResult CreatePackageOverlayFromRequest(
+    const std::filesystem::path& baseDistribution,
+    const sdk::PackageRequest& request,
+    const std::filesystem::path& outputPath,
+    const sdk::PackageEventSink& onPackageEvent = {},
+    const PackageOverlayBuildProgress& onProgress = {},
+    const std::filesystem::path& signingKeyFile = {},
+    std::string_view optionalPackId = {},
+    const std::filesystem::path& priorUpdatesDirectory = {},
+    std::string_view previousManifestJson = {},
     bool planOnly = false);
 
 }  // namespace px::io

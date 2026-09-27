@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <future>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -48,6 +49,46 @@ struct IndexedResource {
     std::string archive;
 };
 
+struct BaseArchiveStamp {
+    std::string name;
+    std::uintmax_t size = 0;
+    std::filesystem::file_time_type modified;
+    bool operator==(const BaseArchiveStamp&) const = default;
+};
+
+#ifdef _WIN32
+struct BaseArchiveReadLock {
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    explicit BaseArchiveReadLock(HANDLE value) : handle(value) {}
+    BaseArchiveReadLock(const BaseArchiveReadLock&) = delete;
+    BaseArchiveReadLock& operator=(const BaseArchiveReadLock&) = delete;
+    BaseArchiveReadLock(BaseArchiveReadLock&& other) noexcept
+        : handle(std::exchange(other.handle, INVALID_HANDLE_VALUE)) {}
+    BaseArchiveReadLock& operator=(BaseArchiveReadLock&& other) noexcept {
+        if (this != &other) {
+            if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+            handle = std::exchange(other.handle, INVALID_HANDLE_VALUE);
+        }
+        return *this;
+    }
+    ~BaseArchiveReadLock() {
+        if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+    }
+};
+#endif
+
+struct PreverifiedOverlayBase {
+    std::filesystem::path directory;
+    std::string manifest;
+    std::string index;
+    std::vector<BaseArchiveStamp> archives;
+    PackageContentVerification contents;
+    std::string error;
+#ifdef _WIN32
+    std::vector<BaseArchiveReadLock> readLocks;
+#endif
+};
+
 PackageContentVerification Fail(std::string message) {
     return {.error = std::move(message)};
 }
@@ -69,6 +110,49 @@ std::optional<std::string> ReadBoundedRegularFile(
         return std::nullopt;
     return value;
 }
+
+std::optional<std::vector<BaseArchiveStamp>> BaseArchiveStamps(
+    const std::filesystem::path& directory,
+    const std::string_view manifestText) {
+    const auto parsed = sdk::detail::ParsePackageManifest(manifestText);
+    if (!parsed.Valid()) return std::nullopt;
+    std::vector<BaseArchiveStamp> result;
+    result.reserve(parsed.manifest.archives.size());
+    for (const auto& mount : parsed.manifest.archives) {
+        const auto path = directory / px::PathFromUtf8(mount.file);
+        std::error_code error;
+        const auto status = std::filesystem::symlink_status(path, error);
+        if (error || !std::filesystem::is_regular_file(status) ||
+            std::filesystem::is_symlink(status)) return std::nullopt;
+        const auto size = std::filesystem::file_size(path, error);
+        if (error) return std::nullopt;
+        const auto modified = std::filesystem::last_write_time(path, error);
+        if (error) return std::nullopt;
+        result.push_back({mount.file, size, modified});
+    }
+    return result;
+}
+
+#ifdef _WIN32
+std::optional<std::vector<BaseArchiveReadLock>> LockBaseArchives(
+    const std::filesystem::path& directory,
+    const std::string_view manifestText) {
+    const auto parsed = sdk::detail::ParsePackageManifest(manifestText);
+    if (!parsed.Valid()) return std::nullopt;
+    std::vector<BaseArchiveReadLock> locks;
+    locks.reserve(parsed.manifest.archives.size());
+    for (const auto& mount : parsed.manifest.archives) {
+        const auto path = directory / px::PathFromUtf8(mount.file);
+        const auto handle = CreateFileW(
+            path.c_str(), FILE_READ_DATA | FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        if (handle == INVALID_HANDLE_VALUE) return std::nullopt;
+        locks.emplace_back(handle);
+    }
+    return locks;
+}
+#endif
 
 bool LowerFingerprint(const std::string_view value) {
     return value.size() == 64 &&
@@ -401,7 +485,8 @@ bool RuntimeInputsMatchBase(
 
 PackageContentVerification VerifyPackageContents(
     const std::filesystem::path& distribution,
-    const PackageVerificationProgress& onProgress) {
+    const PackageVerificationProgress& onProgress,
+    const std::stop_token stop) {
     const auto manifestText = ReadBoundedRegularFile(
         distribution / "Package/manifest.json", 4ull * 1024ull * 1024ull);
     const auto indexText = ReadBoundedRegularFile(
@@ -478,6 +563,7 @@ PackageContentVerification VerifyPackageContents(
             if (!actualEntries.emplace(entry.name, &entry).second)
                 return "PDX contains a duplicate resource: " + entry.name;
         for (const auto& resource : resources) {
+            if (stop.stop_requested()) return "Package verification was cancelled";
             const auto found = actualEntries.find(resource.uri);
             if (found == actualEntries.end())
                 return "Indexed resource is missing from PDX: " + resource.uri;
@@ -501,7 +587,8 @@ PackageContentVerification VerifyPackageContents(
     std::atomic<bool> failed{false};
     std::atomic<unsigned> completedWorkers{0};
     const auto work = [&] {
-        while (!failed.load(std::memory_order_relaxed)) {
+        while (!failed.load(std::memory_order_relaxed) &&
+               !stop.stop_requested()) {
             const auto archiveIndex = nextArchive.fetch_add(1, std::memory_order_relaxed);
             if (archiveIndex >= manifest.archives.size()) break;
             try {
@@ -550,6 +637,7 @@ PackageContentVerification VerifyPackageContents(
     }
     for (const auto& error : archiveErrors)
         if (!error.empty()) return Fail(error);
+    if (stop.stop_requested()) return Fail("Package verification was cancelled");
     PackageContentVerification result;
     result.archives = static_cast<std::uint64_t>(
         std::ranges::count(archiveCompleted, std::uint8_t{1}));
@@ -561,6 +649,64 @@ PackageContentVerification VerifyPackageContents(
     if (onProgress && lastReportedResources != result.resources)
         onProgress(result.resources, resourceTotal, result.rawBytes);
     result.valid = true;
+    return result;
+}
+
+static PreverifiedOverlayBase VerifyBaseForOverlay(
+    const std::filesystem::path& distribution,
+    const PackageOverlayBuildProgress& onProgress,
+    const std::stop_token stop = {}) {
+    PreverifiedOverlayBase result;
+    std::error_code error;
+    result.directory = std::filesystem::canonical(distribution, error);
+    if (error || !std::filesystem::is_directory(result.directory)) {
+        result.error = "Base distribution is not a readable directory";
+        return result;
+    }
+    const auto manifest = ReadBoundedRegularFile(
+        result.directory / "Package/manifest.json", 4ull * 1024ull * 1024ull);
+    const auto index = ReadBoundedRegularFile(
+        result.directory / "Package/content-index.json", 128ull * 1024ull * 1024ull);
+    if (!manifest || !index) {
+        result.error = "Base package documents are unavailable or oversized";
+        return result;
+    }
+#ifdef _WIN32
+    auto locks = LockBaseArchives(result.directory, *manifest);
+    if (!locks) {
+        result.error = "Base package archives cannot be held read-only for verification";
+        return result;
+    }
+    result.readLocks = std::move(*locks);
+#endif
+    const auto before = BaseArchiveStamps(result.directory, *manifest);
+    if (!before) {
+        result.error = "Base package archives are missing or unsafe";
+        return result;
+    }
+    result.manifest = *manifest;
+    result.index = *index;
+    result.contents = VerifyPackageContents(
+        result.directory, [&](const std::uint64_t current,
+                              const std::uint64_t total,
+                              const std::uint64_t rawBytes) {
+            if (onProgress) onProgress("verify-base", current, total, rawBytes);
+        }, stop);
+    if (!result.contents.valid) {
+        result.error = "Base distribution failed content verification: " +
+                       result.contents.error;
+        return result;
+    }
+    const auto after = BaseArchiveStamps(result.directory, result.manifest);
+    if (!after || *after != *before ||
+        ReadBoundedRegularFile(result.directory / "Package/manifest.json",
+                               4ull * 1024ull * 1024ull) != manifest ||
+        ReadBoundedRegularFile(result.directory / "Package/content-index.json",
+                               128ull * 1024ull * 1024ull) != index) {
+        result.error = "Base package changed during content verification";
+        return result;
+    }
+    result.archives = std::move(*after);
     return result;
 }
 
@@ -1273,7 +1419,7 @@ PackageOverlayBuildResult CreatePackageOverlay(
             .changedRawBytes = verified.changedRawBytes};
 }
 
-PackageOverlayBuildResult CreatePackageOverlayFromPlan(
+static PackageOverlayBuildResult CreatePackageOverlayFromPlanImpl(
     const std::filesystem::path& baseDistribution,
     const std::filesystem::path& artifactRoot,
     const sdk::PackagePlanResult& plan,
@@ -1283,7 +1429,8 @@ PackageOverlayBuildResult CreatePackageOverlayFromPlan(
     const std::filesystem::path& signingKeyFile,
     const std::string_view optionalPackId,
     const std::filesystem::path& priorUpdatesDirectory,
-    const bool planOnly) {
+    const bool planOnly,
+    const PreverifiedOverlayBase* preverifiedBase) {
     const auto fail = [](std::string message) {
         return PackageOverlayBuildResult{.error = std::move(message)};
     };
@@ -1329,11 +1476,25 @@ PackageOverlayBuildResult CreatePackageOverlayFromPlan(
         plan.contentIndexJson.empty() ||
         plan.contentIndexJson.size() > 128ull * 1024ull * 1024ull)
         return fail("A base or planned package document is unavailable or oversized");
-    const auto baseVerified = VerifyPackageContents(
-        base, [&](const std::uint64_t current, const std::uint64_t total,
-                  const std::uint64_t rawBytes) {
-            if (onProgress) onProgress("verify-base", current, total, rawBytes);
-        });
+    if (preverifiedBase &&
+        (!preverifiedBase->error.empty() ||
+         preverifiedBase->directory != base ||
+         preverifiedBase->manifest != *baseManifestBefore ||
+         preverifiedBase->index != *baseIndexBefore ||
+         BaseArchiveStamps(base, *baseManifestBefore) !=
+             std::optional{preverifiedBase->archives}))
+        return fail(preverifiedBase->error.empty()
+                        ? "Base package changed after content verification"
+                        : preverifiedBase->error);
+    const auto baseVerified = preverifiedBase
+        ? preverifiedBase->contents
+        : VerifyPackageContents(
+              base, [&](const std::uint64_t current,
+                        const std::uint64_t total,
+                        const std::uint64_t rawBytes) {
+                  if (onProgress)
+                      onProgress("verify-base", current, total, rawBytes);
+              });
     if (!baseVerified.valid)
         return fail("Base distribution failed content verification: " +
                     baseVerified.error);
@@ -1493,6 +1654,10 @@ PackageOverlayBuildResult CreatePackageOverlayFromPlan(
         }
     }
 
+    if (planOnly && preverifiedBase &&
+        BaseArchiveStamps(base, *baseManifestBefore) !=
+            std::optional{preverifiedBase->archives})
+        return fail("Base package changed after content verification");
     if (planOnly)
         return {.planned = true,
                 .changedResources = changed.size(),
@@ -1569,6 +1734,9 @@ PackageOverlayBuildResult CreatePackageOverlayFromPlan(
     }
     if (!RuntimeInputsMatchBase(base, installedBaseParsed.manifest,
                                 playerExecutable) ||
+        (preverifiedBase &&
+         BaseArchiveStamps(base, *baseManifestBefore) !=
+             std::optional{preverifiedBase->archives}) ||
         ReadBoundedRegularFile(base / "Package/manifest.json",
                                4ull * 1024ull * 1024ull) != baseManifestBefore ||
         ReadBoundedRegularFile(base / "Package/content-index.json",
@@ -1590,6 +1758,83 @@ PackageOverlayBuildResult CreatePackageOverlayFromPlan(
             .changedResources = verified.changedResources,
             .removedResources = removed,
             .changedRawBytes = verified.changedRawBytes};
+}
+
+PackageOverlayBuildResult CreatePackageOverlayFromPlan(
+    const std::filesystem::path& baseDistribution,
+    const std::filesystem::path& artifactRoot,
+    const sdk::PackagePlanResult& plan,
+    const std::filesystem::path& playerExecutable,
+    const std::filesystem::path& outputPath,
+    const PackageOverlayBuildProgress& onProgress,
+    const std::filesystem::path& signingKeyFile,
+    const std::string_view optionalPackId,
+    const std::filesystem::path& priorUpdatesDirectory,
+    const bool planOnly) {
+    return CreatePackageOverlayFromPlanImpl(
+        baseDistribution, artifactRoot, plan, playerExecutable, outputPath,
+        onProgress, signingKeyFile, optionalPackId, priorUpdatesDirectory,
+        planOnly, nullptr);
+}
+
+PackageOverlayBuildResult CreatePackageOverlayFromRequest(
+    const std::filesystem::path& baseDistribution,
+    const sdk::PackageRequest& request,
+    const std::filesystem::path& outputPath,
+    const sdk::PackageEventSink& onPackageEvent,
+    const PackageOverlayBuildProgress& onProgress,
+    const std::filesystem::path& signingKeyFile,
+    const std::string_view optionalPackId,
+    const std::filesystem::path& priorUpdatesDirectory,
+    const std::string_view previousManifestJson,
+    const bool planOnly) {
+    std::mutex callbackMutex;
+    const auto serializedProgress = [&](const std::string_view phase,
+                                        const std::uint64_t current,
+                                        const std::uint64_t total,
+                                        const std::uint64_t rawBytes) {
+        if (!onProgress) return;
+        std::lock_guard lock(callbackMutex);
+        onProgress(phase, current, total, rawBytes);
+    };
+    const auto serializedEvent = [&](const sdk::PackageEvent& event) {
+        if (!onPackageEvent) return;
+        std::lock_guard lock(callbackMutex);
+        onPackageEvent(event);
+    };
+#ifdef _WIN32
+    // Holding the base archives with FILE_SHARE_READ keeps their bytes fixed
+    // while the independent artifact sources are hashed on the main thread.
+    std::stop_source stopBase;
+    auto baseFuture = std::async(std::launch::async, [&] {
+        return VerifyBaseForOverlay(baseDistribution, serializedProgress,
+                                    stopBase.get_token());
+    });
+#endif
+    auto plan = sdk::PlanPackageRequest(
+        request, serializedEvent, sdk::PackageValidationDepth::AllInputs,
+        previousManifestJson);
+#ifdef _WIN32
+    if (!plan.valid) stopBase.request_stop();
+    auto base = baseFuture.get();
+#else
+    // POSIX advisory locks cannot prevent another writer from replacing the
+    // archive. Keep the original verification order on those platforms.
+    auto base = VerifyBaseForOverlay(baseDistribution, serializedProgress);
+#endif
+    if (!plan.valid) {
+        PackageOverlayBuildResult result;
+        result.error = plan.diagnostics.empty()
+            ? "Package planning failed"
+            : plan.diagnostics.front().message;
+        result.diagnostics = std::move(plan.diagnostics);
+        return result;
+    }
+    if (!base.error.empty()) return {.error = std::move(base.error)};
+    return CreatePackageOverlayFromPlanImpl(
+        baseDistribution, request.projectRoot, plan, request.playerExecutable,
+        outputPath, serializedProgress, signingKeyFile, optionalPackId,
+        priorUpdatesDirectory, planOnly, &base);
 }
 
 }  // namespace px::io

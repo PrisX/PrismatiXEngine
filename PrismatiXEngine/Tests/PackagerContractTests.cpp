@@ -1081,6 +1081,61 @@ int main() {
                              Read(root / "Content/Overlay/signed.txt").size() &&
                          !std::filesystem::exists(previewPath),
                      "fully verified direct overlay preview reports exact raw changes without writing");
+        const auto concurrentPreviewPath =
+            fixture.path / "planned-concurrent-overlay.pdx";
+        const auto concurrentPreview = px::io::CreatePackageOverlayFromRequest(
+            signedBase, targetRequest, concurrentPreviewPath, {}, {}, keyFile,
+            {}, {}, {}, true);
+        suite.Expect(concurrentPreview.planned && !concurrentPreview.created &&
+                         concurrentPreview.changedResources == preview.changedResources &&
+                         concurrentPreview.removedResources == preview.removedResources &&
+                         concurrentPreview.changedRawBytes == preview.changedRawBytes &&
+                         !std::filesystem::exists(concurrentPreviewPath),
+                     "concurrent complete source and base verification preserves overlay planning");
+        const auto concurrentPatch = fixture.path / "signed-concurrent-overlay.pdx";
+        const auto concurrentCreated = px::io::CreatePackageOverlayFromRequest(
+            signedBase, targetRequest, concurrentPatch, {}, {}, keyFile);
+        suite.Expect(concurrentCreated.created &&
+                         px::io::VerifySignedPackageOverlay(
+                             signedBase, concurrentPatch).valid,
+                     "concurrently verified direct overlay is signed and independently valid");
+        const auto baseArchive = signedBase / px::PathFromUtf8(
+            px::sdk::detail::ParsePackageManifest(
+                Read(signedBase / "Package/manifest.json"))
+                .manifest.archives.front().file);
+        const auto originalBaseArchive = Read(baseArchive);
+        bool changedBaseDuringVerification = false;
+        bool baseWriteBlocked = false;
+        const auto changedBasePath =
+            fixture.path / "changed-base-concurrent-overlay.pdx";
+        const auto changedBase = px::io::CreatePackageOverlayFromRequest(
+            signedBase, targetRequest, changedBasePath, {},
+            [&](const std::string_view phase, const std::uint64_t current,
+                const std::uint64_t total, const std::uint64_t) {
+                if (phase == "verify-base" && current == total &&
+                    !changedBaseDuringVerification) {
+                    changedBaseDuringVerification = true;
+#ifdef _WIN32
+                    std::ofstream attemptedWrite(baseArchive,
+                                                 std::ios::binary | std::ios::app);
+                    baseWriteBlocked = !attemptedWrite;
+#else
+                    Write(baseArchive, originalBaseArchive + "x");
+#endif
+                }
+            }, keyFile, {}, {}, {}, true);
+#ifdef _WIN32
+        suite.Expect(changedBaseDuringVerification && baseWriteBlocked &&
+                         changedBase.planned &&
+                         !std::filesystem::exists(changedBasePath),
+                     "concurrent verification holds base PDX read-only until planning finishes");
+#else
+        Write(baseArchive, originalBaseArchive);
+        suite.Expect(changedBaseDuringVerification && !changedBase.planned &&
+                         changedBase.error.find("changed") != std::string::npos &&
+                         !std::filesystem::exists(changedBasePath),
+                     "concurrent verification rejects a base PDX changed before planning completes");
+#endif
         const auto directPatch = fixture.path / "signed-direct-overlay.pdx";
         const auto direct = px::io::CreatePackageOverlayFromPlan(
             signedBase, root, directPlan, targetRequest.playerExecutable,
@@ -1117,6 +1172,15 @@ int main() {
         const auto changedSource = root / "Content/Overlay/signed.txt";
         const auto originalSource = Read(changedSource);
         Write(changedSource, std::string(originalSource.size(), 'x'));
+        const auto changedRequestPath =
+            fixture.path / "changed-source-concurrent-overlay.pdx";
+        const auto changedRequest = px::io::CreatePackageOverlayFromRequest(
+            signedBase, targetRequest, changedRequestPath, {}, {}, keyFile,
+            {}, {}, {}, true);
+        suite.Expect(!changedRequest.planned &&
+                         !changedRequest.diagnostics.empty() &&
+                         !std::filesystem::exists(changedRequestPath),
+                     "concurrent planning still rejects changed artifact input bytes");
         const auto stalePatch = fixture.path / "stale-direct-overlay.pdx";
         suite.Expect(!px::io::CreatePackageOverlayFromPlan(
                           signedBase, root, directPlan,
