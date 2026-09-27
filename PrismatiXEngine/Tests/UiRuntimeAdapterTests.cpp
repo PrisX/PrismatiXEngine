@@ -739,7 +739,47 @@ void TestMountedImageDependencies() {
           "UI update requests images changed after the route was mounted");
 }
 
+void TestGalgameUiHostContract() {
+    px::ui::GalgameUI ui;
+    Check(static_cast<bool>(ui.DefineUiData("custom.rows", px::Variant(px::VariantArray{
+        px::Variant(px::VariantObject{{"title", px::Variant("First")}})}))),
+          "host defines authored row data");
+    Check(static_cast<bool>(ui.RegisterUiFormatter({
+        "Upper", px::VariantType::String, px::VariantType::String,
+        [](const px::Variant& value) -> px::Result<px::Variant> {
+            return px::Result<px::Variant>::Success(value.Clone());
+        }})), "host registers authored formatter");
+    nlohmann::json contract = {
+        {"format", "PrismatiXUiContract"}, {"schemaRevision", 1},
+        {"roots", {"custom.rows"}},
+        {"values", {{"custom.rows", "array"},
+                    {"custom.rows[].title", "string"}}},
+        {"formatters", {{"Upper", {{"input", "string"},
+                                   {"output", "string"}}}}},
+    };
+    Check(ui.ValidateUiContract(contract.dump()).IsOk(),
+          "host contract accepts registered roots, nested values and formatter");
+    auto formatterOnly = contract;
+    formatterOnly["roots"] = nlohmann::json::array();
+    formatterOnly.erase("values");
+    Check(ui.ValidateUiContract(formatterOnly.dump()).IsOk(),
+          "formatter-only contract follows the authoring envelope");
+    contract["values"]["custom.rows[].title"] = "boolean";
+    Check(!ui.ValidateUiContract(contract.dump()),
+          "host contract rejects a real item field with the wrong type");
+    contract["values"]["custom.rows[].title"] = "string";
+    contract["formatters"]["Upper"]["output"] = "boolean";
+    Check(!ui.ValidateUiContract(contract.dump()),
+          "host contract rejects a formatter signature mismatch");
+    contract["formatters"]["Upper"]["output"] = "string";
+    contract["roots"] = {"missing.rows"};
+    contract["values"] = {{"missing.rows", "array"}};
+    Check(!ui.ValidateUiContract(contract.dump()),
+          "host contract rejects a declared root that Player did not register");
+}
+
 int main() {
+    TestGalgameUiHostContract();
     TestAuthoredItemTemplate();
     TestAuthoredPlacedItemTemplate();
     TestGalgameAuthoredSlots();

@@ -88,9 +88,16 @@ keys must be strings or integers, and an `ItemsPlaced` rectangle needs numeric
 `x`, `y`, `width`, and `height` declarations. A declared ViewModel root with a
 missing binding path or undeclared custom formatter fails validation. The SDK
 checks formatter input and output against the selected native UI TypeRegistry.
-The contract is authoring metadata: the host must register matching runtime
-ViewModel values and formatter implementations. Paths outside declared roots
-remain the host's responsibility.
+The host must register matching runtime ViewModel values and formatter
+implementations. `GalgameUI::RegisterUiFormatter` exposes custom formatter
+registration, and `GalgameUI::ValidateUiContract` checks registered roots,
+current values (including populated array items), and formatter signatures.
+Stock Player runs this check when it loads `project.pxproject`, after defining
+`player.uiData` and before mounting an authored route. Empty arrays cannot
+prove their future item fields, and values changed after boot are checked by
+the normal binding path when used. Other hosts should run the check after
+registering their own data and formatters. Paths outside declared roots remain
+the host's responsibility.
 
 Resource paths supplied only through dynamic item bindings still need explicit
 asset inclusion (for example `resourceIncludes`) until the compiler can infer

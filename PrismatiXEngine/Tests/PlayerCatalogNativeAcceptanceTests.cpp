@@ -582,7 +582,10 @@ Engine.RegisterAction("acceptance.phase2-menu", async () => {
       }],
       "settings":{"player.presentationTransitions":{"routeOverrides":[
         {"from":"title","to":"phone","preset":"none","duration":0}
-      ]}},
+      ]},"player.uiData":{"custom.notice":"Ready"},
+      "authoring.uiContract":{"format":"PrismatiXUiContract",
+        "schemaRevision":1,"roots":["custom.notice"],
+        "values":{"custom.notice":"string"}}},
       "characters":[]
     })");
     Write(root / "Content/Localization/zh-TW.json", R"({

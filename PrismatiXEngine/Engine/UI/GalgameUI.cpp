@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <utility>
 
@@ -206,6 +207,113 @@ GalgameUI::GalgameUI() {
 
 Status GalgameUI::DefineUiData(std::string path, Variant value) {
     return m_viewModel.Define(std::move(path), std::move(value), true);
+}
+
+Status GalgameUI::RegisterUiFormatter(Formatter formatter) {
+    return m_context.Formatters().Register(std::move(formatter));
+}
+
+Status GalgameUI::ValidateUiContract(std::string_view document) const {
+    const auto fail = [](std::string message, std::string detail = {}) {
+        diag::Diagnostic diagnostic{
+            .severity = diag::Severity::Error,
+            .code = "PXUI2823",
+            .category = "UI.Galgame",
+            .message = std::move(message),
+            .details = std::move(detail)};
+        return Status::Fail(std::move(diagnostic));
+    };
+    const auto contract = nlohmann::json::parse(document.begin(), document.end(),
+                                                nullptr, false);
+    if (!contract.is_object() || !contract.contains("format") ||
+        contract["format"] != "PrismatiXUiContract" ||
+        !contract.contains("schemaRevision") ||
+        contract["schemaRevision"] != 1 ||
+        !contract.contains("roots") || !contract["roots"].is_array() ||
+        (contract.contains("values") && !contract["values"].is_object()) ||
+        (!contract.contains("values") && !contract.contains("formatters")))
+        return fail("Invalid UI host contract envelope");
+    const auto declaredValues = contract.value("values", nlohmann::json::object());
+    if (contract["roots"].size() > 256 || declaredValues.size() > 1024)
+        return fail("UI host contract exceeds supported limits");
+    const auto expectedType = [](std::string_view name)
+        -> std::optional<VariantType> {
+        if (name == "null") return VariantType::Null;
+        if (name == "boolean") return VariantType::Bool;
+        if (name == "integer") return VariantType::Integer;
+        if (name == "number") return VariantType::Number;
+        if (name == "string") return VariantType::String;
+        if (name == "array") return VariantType::Array;
+        if (name == "object") return VariantType::Object;
+        return std::nullopt;
+    };
+    for (const auto& root : contract["roots"]) {
+        if (!root.is_string() || root.get_ref<const std::string&>().size() > 512)
+            return fail("Invalid UI host contract root");
+        const auto& path = root.get_ref<const std::string&>();
+        if (!declaredValues.contains(path))
+            return fail("UI host contract root has no type", path);
+        if (!m_viewModel.Describe(path))
+            return fail("UI host contract root is not registered", path);
+    }
+    std::size_t expandedPaths = 0;
+    std::function<Status(const std::string&, const std::string&, VariantType)>
+        checkValue = [&](const std::string& prefix, const std::string& suffix,
+                         VariantType expected) -> Status {
+        const auto wildcard = suffix.find("[]");
+        if (wildcard == std::string::npos) {
+            const std::string path = prefix + suffix;
+            const auto actual = m_viewModel.Describe(path);
+            if (!actual || actual->type != expected)
+                return fail("UI host value is missing or has the wrong type", path);
+            return Status::Ok();
+        }
+        const std::string arrayPath = prefix + suffix.substr(0, wildcard);
+        const auto array = m_viewModel.Read(arrayPath);
+        if (!array || array.Value().Type() != VariantType::Array)
+            return fail("UI host contract expects an array", arrayPath);
+        const auto* items = array.Value().AsArray();
+        if (!items) return fail("UI host contract expects an array", arrayPath);
+        for (std::size_t index = 0; index < items->size(); ++index) {
+            if (++expandedPaths > 65536)
+                return fail("UI host contract expands to too many values", arrayPath);
+            const Status checked = checkValue(arrayPath + "[" +
+                std::to_string(index) + "]", suffix.substr(wildcard + 2), expected);
+            if (!checked) return checked;
+        }
+        return Status::Ok();
+    };
+    for (auto entry = declaredValues.begin(); entry != declaredValues.end(); ++entry) {
+        if (!entry.value().is_string() || entry.key().size() > 512)
+            return fail("Invalid UI host value declaration", entry.key());
+        const auto type = expectedType(entry.value().get_ref<const std::string&>());
+        if (!type) return fail("Unknown UI host value type", entry.key());
+        const Status checked = checkValue({}, entry.key(), *type);
+        if (!checked) return checked;
+    }
+    if (const auto formatters = contract.find("formatters");
+        formatters != contract.end()) {
+        if (!formatters->is_object() || formatters->size() > 128)
+            return fail("Invalid UI host formatter declarations");
+        for (auto entry = formatters->begin(); entry != formatters->end(); ++entry) {
+            if (!entry.value().is_object() ||
+                !entry.value().contains("input") ||
+                !entry.value().contains("output") ||
+                !entry.value()["input"].is_string() ||
+                !entry.value()["output"].is_string())
+                return fail("Invalid UI host formatter declaration", entry.key());
+            const auto input = expectedType(
+                entry.value()["input"].get_ref<const std::string&>());
+            const auto output = expectedType(
+                entry.value()["output"].get_ref<const std::string&>());
+            const auto* registered = m_context.Formatters().Find(entry.key());
+            if (!input || !output || !registered || registered->input != *input ||
+                registered->output != *output)
+                return fail("UI host formatter is missing or has the wrong signature",
+                            entry.key());
+        }
+    }
+    return Status::Ok();
 }
 
 Status GalgameUI::RegisterActionCommand(std::string command,

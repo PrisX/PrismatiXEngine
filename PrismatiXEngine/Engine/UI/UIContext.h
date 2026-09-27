@@ -81,6 +81,7 @@ public:
     [[nodiscard]] CommandRegistry& Commands() { return m_commands; }
     [[nodiscard]] ActionDispatcher& Actions() { return m_actions; }
     [[nodiscard]] FormatterRegistry& Formatters() { return m_formatters; }
+    [[nodiscard]] const FormatterRegistry& Formatters() const { return m_formatters; }
     [[nodiscard]] BehaviorGraphRunner& Behaviors() { return m_behaviors; }
     [[nodiscard]] const BehaviorGraphRunner& Behaviors() const { return m_behaviors; }
     [[nodiscard]] BehaviorRuntimeState CaptureBehaviorState() const;

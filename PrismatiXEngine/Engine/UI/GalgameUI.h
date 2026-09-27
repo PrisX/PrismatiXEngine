@@ -95,6 +95,10 @@ public:
     void SetActionSink(ActionSink sink) { m_sink = std::move(sink); }
     /** Define an authored UI ViewModel value before its route is mounted. */
     Status DefineUiData(std::string path, Variant value);
+    /** Register a host formatter before mounting routes that reference it. */
+    Status RegisterUiFormatter(Formatter formatter);
+    /** Check the author's declared host data and formatter contract at boot. */
+    [[nodiscard]] Status ValidateUiContract(std::string_view document) const;
     // Makes an authored command available to a game-specific UI route and
     // forwards its optional string argument to the normal Galgame action
     // sink.  Games no longer need engine-side hard-coded command whitelists

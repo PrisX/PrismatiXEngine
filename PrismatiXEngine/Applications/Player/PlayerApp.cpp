@@ -912,6 +912,15 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                         }
                     }
                 }
+                if (const auto contract = settings->find("authoring.uiContract");
+                    contract != settings->end()) {
+                    const Status verified = m_ui.ValidateUiContract(contract->dump());
+                    if (!verified) {
+                        for (const auto& diagnostic : verified.Diagnostics())
+                            diag::Emit(diagnostic);
+                        return false;
+                    }
+                }
                 if (const auto titleBgm = settings->find("player.titleBgm");
                     titleBgm != settings->end() && titleBgm->is_string()) {
                     const auto safe = SafeVfsRelativePath(titleBgm->get<std::string>());
