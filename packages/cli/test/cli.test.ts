@@ -329,6 +329,15 @@ test("dev --once streams PreviewHost protocol output and exits after a clean shu
 
 test("dev reuses verified media and Story inputs without hiding changes", {timeout: 50_000}, async (t) => {
   const value = await fixture();
+  const indexPath = join(value.root, "Story/story.pxindex");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    chapters: Array<{scenes: string[]}>;
+    scenes: Array<{id: string; sources: Record<string, string>}>;
+  };
+  index.chapters[0]!.scenes.push("bonus");
+  index.scenes.push({id: "bonus", sources: {en: "Story/bonus.pxstory"}});
+  await write(indexPath, JSON.stringify(index));
+  await write(join(value.root, "Story/bonus.pxstory"), "Bonus scene.\n[end]\n");
   const project = JSON.parse(await readFile(value.project, "utf8")) as Record<string, unknown>;
   project.resourceIncludes = ["Assets/Batch"];
   await write(value.project, JSON.stringify(project));
@@ -404,8 +413,9 @@ test("dev reuses verified media and Story inputs without hiding changes", {timeo
   assert.equal(await readFile(join(String(second.output), "Assets/Batch/media.bin"), "utf8"),
     "media-alpha");
   const storyEvents = events().filter((event) => event.code === "PXCLI1103");
-  assert.equal(storyEvents.length, 4);
-  assert.deepEqual(storyEvents.slice(2).map((event) => event.cached), [true, true]);
+  assert.equal(storyEvents.length, 8);
+  assert.deepEqual(storyEvents.slice(4).map((event) => event.cached),
+    [true, true, true, true]);
 
   await write(join(value.root, "Story/main.pxstory"), "Edited dialogue.\n[end]\n");
   const third = await waitForRevision(3);
@@ -415,7 +425,8 @@ test("dev reuses verified media and Story inputs without hiding changes", {timeo
   assert.ok(thirdIr.operations.some((operation) => operation.text === "Edited dialogue."));
   assert.equal(thirdIr.committedRevision, 3);
   assert.deepEqual(events().filter((event) => event.code === "PXCLI1103")
-    .slice(4).map((event) => event.cached), [undefined, undefined]);
+    .slice(8).map((event) => event.cached),
+    [undefined, undefined, undefined, true]);
 
   await write(mediaPath, "media-bravo"); // same size; reuse must compare content
   const fourth = await waitForRevision(4);

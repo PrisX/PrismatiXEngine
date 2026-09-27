@@ -103,10 +103,54 @@ function sameStorySnapshot(left: StoryCompilationSnapshot, right: StoryCompilati
     });
 }
 
-/** Optional, in-process cache for repeated project builds (for example UI-only
- * edits in `dev`). Invalid Story is never cached, and a new revision only
- * replaces the Runtime IR envelope; operations and save identities are kept. */
+interface SceneCompileSnapshot {
+  readonly sourcePath: string;
+  readonly source: string | undefined;
+  readonly identityMap: string | undefined;
+  readonly descriptor: string;
+  readonly compileInputs: string;
+  readonly labels: string;
+}
+
+function sameSceneCompileSnapshot(left: SceneCompileSnapshot, right: SceneCompileSnapshot): boolean {
+  return left.sourcePath === right.sourcePath && left.source === right.source &&
+    left.identityMap === right.identityMap && left.descriptor === right.descriptor &&
+    left.compileInputs === right.compileInputs && left.labels === right.labels;
+}
+
+// One changed scene keeps the other scenes' compiled operations and source
+// mappings. Exact source strings are compared, so a short hash cannot reuse
+// save identities after a collision. Parsed ASTs are not retained between
+// builds; commercial projects can have hundreds of thousands of nodes.
+class SceneCompilationCache {
+  private readonly entries = new Map<string, Map<string, {
+    readonly snapshot: SceneCompileSnapshot;
+    readonly result: StoryCompileResult;
+  }>>();
+
+  compile(locale: string, sceneId: string, snapshot: SceneCompileSnapshot,
+    build: () => StoryCompileResult): {result: StoryCompileResult; cached: boolean} {
+    let localeEntries = this.entries.get(locale);
+    if (localeEntries === undefined) {
+      localeEntries = new Map();
+      this.entries.set(locale, localeEntries);
+    }
+    const previous = localeEntries.get(sceneId);
+    if (previous !== undefined && sameSceneCompileSnapshot(previous.snapshot, snapshot))
+      return {result: previous.result, cached: true};
+    const result = build();
+    if (result.valid && result.runtimeIr !== undefined && result.sourceMap !== undefined)
+      localeEntries.set(sceneId, {snapshot, result});
+    return {result, cached: false};
+  }
+}
+
+/** Optional, in-process cache for repeated project builds. Unchanged projects
+ * reuse the full result; a Story edit can reuse unaffected compiled scenes.
+ * Invalid Story is never cached, and a new revision only replaces the Runtime
+ * IR envelope; operations and save identities are kept. */
 export class StoryProjectCompilationCache {
+  private readonly scenes = new SceneCompilationCache();
   private readonly entries = new Map<string, {
     readonly snapshot: StoryCompilationSnapshot;
     readonly result: StoryCompileResult;
@@ -131,7 +175,7 @@ export class StoryProjectCompilationCache {
       };
     }
 
-    const result = compileStoryProject(context);
+    const result = compileStoryProjectInternal(context, this.scenes);
     if (result.valid && result.runtimeIr !== undefined && result.sourceMap !== undefined)
       this.entries.set(context.locale, {snapshot, result});
     return result;
@@ -332,7 +376,8 @@ function rewriteScene(
   };
 }
 
-export function compileStoryProject(context: StoryProjectCompileContext): StoryCompileResult {
+function compileStoryProjectInternal(context: StoryProjectCompileContext,
+  sceneCache?: SceneCompilationCache): StoryCompileResult {
   const diagnostics: AuthoringDiagnostic[] = [];
   const indexPath = context.storyIndexPath ?? "Story/story.pxindex";
   const documentId = context.documentId ?? context.storyIndex.id;
@@ -393,8 +438,17 @@ export function compileStoryProject(context: StoryProjectCompileContext): StoryC
   const mappings: RuntimeSourceMap["mappings"][number][] = [];
   const resourceDependencies = new Set<string>();
   const operationOwners = new Map<string, string>();
+  const sharedSnapshot = sceneCache === undefined ? undefined : {
+    compileInputs: JSON.stringify([
+      documentId, context.locale, context.characters, context.game,
+      context.extensions, context.resources, context.resourceAssets,
+    ]),
+    labels: JSON.stringify([...scenesById].map(([id, scene]) =>
+      [id, [...scene.labels].sort()])),
+  };
 
   for (const [index, descriptor] of context.storyIndex.scenes.entries()) {
+    let cached = false;
     try {
       const scene = scenesById.get(descriptor.id);
       if (scene === undefined || scene.descriptor !== descriptor) continue;
@@ -411,7 +465,7 @@ export function compileStoryProject(context: StoryProjectCompileContext): StoryC
       }
 
       const rewritten = rewriteScene(scene, scenesById, sceneDiagnostics);
-      const compiled = compileStory(rewritten.document, {
+      const compile = () => compileStory(rewritten.document, {
         documentId: descriptor.identityNamespace ?? `${documentId}:${descriptor.id}`,
         locale: context.locale,
         ...(context.committedRevision === undefined ? {} : {committedRevision: context.committedRevision}),
@@ -421,6 +475,17 @@ export function compileStoryProject(context: StoryProjectCompileContext): StoryC
         ...(context.resources === undefined ? {} : {resources: context.resources}),
         ...(context.resourceAssets === undefined ? {} : {resourceAssets: context.resourceAssets}),
       });
+      const selected = sceneCache === undefined || sharedSnapshot === undefined ? undefined
+        : sceneCache.compile(context.locale, descriptor.id, {
+          sourcePath: scene.path,
+          source: context.sourceFiles[scene.path],
+          identityMap: context.sourceFiles[`${scene.path}.pxids.json`],
+          descriptor: JSON.stringify([descriptor.id, descriptor.identityNamespace,
+            descriptor.requiredLabels]),
+          ...sharedSnapshot,
+        }, compile);
+      const compiled = selected?.result ?? compile();
+      cached = selected?.cached ?? false;
       diagnostics.push(...compiled.diagnostics);
       for (const dependency of compiled.resourceDependencies ?? [])
         resourceDependencies.add(dependency);
@@ -445,7 +510,8 @@ export function compileStoryProject(context: StoryProjectCompileContext): StoryC
       context.onProgress?.({phase: "compile", locale: context.locale,
         sceneId: descriptor.id, ...(descriptor.sources[context.locale] === undefined ? {}
           : {sourcePath: descriptor.sources[context.locale]}),
-        current: index + 1, total: context.storyIndex.scenes.length});
+        current: index + 1, total: context.storyIndex.scenes.length,
+        ...(cached ? {cached: true} : {})});
     }
   }
 
@@ -492,4 +558,8 @@ export function compileStoryProject(context: StoryProjectCompileContext): StoryC
     diagnostics,
     valid: true,
   };
+}
+
+export function compileStoryProject(context: StoryProjectCompileContext): StoryCompileResult {
+  return compileStoryProjectInternal(context);
 }

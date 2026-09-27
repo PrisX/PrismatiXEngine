@@ -24,7 +24,7 @@ test("Story compilation cache reuses only identical inputs and refreshes the rev
   };
   const first = cache.compile({storyIndex, locale: "zh-TW", sourceFiles, committedRevision: 1});
   assert.equal(first.valid, true, JSON.stringify(first.diagnostics));
-  const progress: Array<{cached?: boolean}> = [];
+  const progress: Array<{phase: string; sceneId: string; cached?: boolean}> = [];
   const second = cache.compile({storyIndex: {...storyIndex}, locale: "zh-TW",
     sourceFiles: {...sourceFiles, "unrelated.pxstory": "changed"}, committedRevision: 2,
     onProgress: (event) => progress.push(event)});
@@ -42,7 +42,18 @@ test("Story compilation cache reuses only identical inputs and refreshes the rev
     onProgress: (event) => progress.push(event)});
   assert.equal(edited.valid, true, JSON.stringify(edited.diagnostics));
   assert.ok(edited.runtimeIr?.operations.some((operation) => operation.text === "Edited line."));
-  assert.ok(progress.every((event) => event.cached === undefined));
+  assert.deepEqual(progress.filter((event) => event.phase === "compile")
+    .map((event) => [event.sceneId, event.cached === true]),
+    [["scene01", false], ["scene02", true]]);
+  assert.ok(progress.filter((event) => event.phase === "parse")
+    .every((event) => event.cached === undefined));
+  const uncachedEdited = compileStoryProject({storyIndex, locale: "zh-TW",
+    committedRevision: 3, sourceFiles: {...sourceFiles,
+      "zh-TW/ch01/scene01.pxstory":
+        "*start\nEdited line.\n[jump scene=scene02 target=start]\n"}});
+  assert.deepEqual(edited.runtimeIr, uncachedEdited.runtimeIr);
+  assert.deepEqual(edited.sourceMap, uncachedEdited.sourceMap);
+  assert.deepEqual(edited.resourceDependencies, uncachedEdited.resourceDependencies);
 
   progress.length = 0;
   const badSidecar = cache.compile({storyIndex, locale: "zh-TW", committedRevision: 4,
@@ -51,7 +62,29 @@ test("Story compilation cache reuses only identical inputs and refreshes the rev
     onProgress: (event) => progress.push(event)});
   assert.equal(badSidecar.valid, false);
   assert.ok(badSidecar.diagnostics.some((diagnostic) => diagnostic.code === "PXSTORY1403"));
-  assert.ok(progress.every((event) => event.cached === undefined));
+  assert.deepEqual(progress.filter((event) => event.phase === "compile")
+    .map((event) => [event.sceneId, event.cached === true]),
+    [["scene01", false], ["scene02", true]]);
+
+  progress.length = 0;
+  const changedLabels = cache.compile({storyIndex, locale: "zh-TW",
+    sourceFiles: {...sourceFiles, "zh-TW/ch01/scene02.pxstory":
+      "*other\nSecond line.\n[end]\n*aside\n[end]\n"},
+    onProgress: (event) => progress.push(event)});
+  assert.equal(changedLabels.valid, false);
+  assert.ok(changedLabels.diagnostics.some((diagnostic) =>
+    diagnostic.code === "PXSTORY1305" || diagnostic.code === "PXSTORY1307"));
+  assert.ok(progress.filter((event) => event.phase === "compile")
+    .every((event) => event.cached !== true),
+  "a changed cross-scene label set invalidates every dependent compile result");
+
+  progress.length = 0;
+  const changedInputs = cache.compile({storyIndex, locale: "zh-TW", sourceFiles,
+    characters: [], onProgress: (event) => progress.push(event)});
+  assert.equal(changedInputs.valid, true, JSON.stringify(changedInputs.diagnostics));
+  assert.ok(progress.filter((event) => event.phase === "compile")
+    .every((event) => event.cached !== true),
+  "changed shared compiler inputs invalidate all scene results");
 });
 
 test("Story project compiler resolves cross-scene jump/call targets into one Runtime IR program", () => {
