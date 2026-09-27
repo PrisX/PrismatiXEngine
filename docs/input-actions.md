@@ -109,8 +109,12 @@ other hosts must attach `UIContext::SetInputBindingService(input, onChanged)`
 and persist the updated keyboard bindings themselves. The Runtime SDK exposes
 `ctx.input.addKeyBinding(action, key)` as the same atomic append operation;
 it returns `limit-reached` if the save-compatible maximum is reached. This
-button can append or replace the whole keyboard set, but it cannot remove one
-specific key or display a conflict confirmation dialog.
+button can append or replace the whole keyboard set. Native `Input::RemoveKeyBinding`
+and Runtime SDK `ctx.input.removeKeyBinding(action, key)` remove one key while
+keeping the others in order and leaving wheel/gamepad bindings intact. They
+return `false` for an unknown action, invalid key, or key that is not bound.
+The stock `KeyBindingButton` still has no per-key selection UI or conflict
+confirmation dialog; a custom settings screen can use the new API.
 Wheel remapping and portable non-Player persistence are still separate tasks.
 Existing `inputBindings` documents remain readable for migration.
 

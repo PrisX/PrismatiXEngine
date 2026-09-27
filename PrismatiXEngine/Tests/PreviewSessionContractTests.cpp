@@ -359,6 +359,20 @@ int main() {
                          (std::vector<int>{SDL_SCANCODE_P, SDL_SCANCODE_F2,
                                            SDL_SCANCODE_F5}),
                      "saved additive keys keep their authored order");
+        suite.Expect(restored.RemoveKeyBinding("photo-mode", SDL_SCANCODE_F2) &&
+                         restored.KeyBindings("photo-mode") ==
+                             (std::vector<int>{SDL_SCANCODE_P, SDL_SCANCODE_F5}) &&
+                         !restored.RemoveKeyBinding("photo-mode", SDL_SCANCODE_F2) &&
+                         !restored.RemoveKeyBinding("missing-action", SDL_SCANCODE_P),
+                     "removing one key preserves the remaining ordered bindings");
+        px::Input removedReload;
+        suite.Require(removedReload.RestoreKeyboardBindings(
+                          restored.CaptureKeyboardBindings()) &&
+                          removedReload.RegisterAction("photo-mode"),
+                      "a per-key removal survives settings reload");
+        suite.Expect(removedReload.KeyBindings("photo-mode") ==
+                         (std::vector<int>{SDL_SCANCODE_P, SDL_SCANCODE_F5}),
+                     "reloaded action does not restore the removed key");
 
         px::Input full;
         suite.Require(full.RegisterAction("many-keys"),

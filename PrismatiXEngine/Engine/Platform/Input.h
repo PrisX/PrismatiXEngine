@@ -152,6 +152,9 @@ public:
     [[nodiscard]] KeyRebindResult AddKeyBinding(std::string_view action,
                                                 int scancode,
                                                 bool allowConflict = false);
+    // Removes only one keyboard key, retaining this action's other keys and
+    // its gamepad and wheel bindings. Returns false when the key is absent.
+    [[nodiscard]] bool RemoveKeyBinding(std::string_view action, int scancode);
     // One-shot physical keyboard capture for rebind UIs. The captured key is
     // suppressed from normal actions and text input, then remains available
     // until taken or cancelled. Escape is reported like any other key; the

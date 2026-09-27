@@ -335,6 +335,19 @@ KeyRebindResult Input::AddKeyBinding(const std::string_view action,
     return result;
 }
 
+bool Input::RemoveKeyBinding(const std::string_view action,
+                             const int scancode) {
+    const auto found = m_namedBindings.find(action);
+    if (found == m_namedBindings.end() ||
+        scancode <= SDL_SCANCODE_UNKNOWN || scancode >= SDL_SCANCODE_COUNT ||
+        found->second.keys.erase(scancode) == 0)
+        return false;
+    std::erase(found->second.keyOrder, scancode);
+    if (const auto builtin = BuiltinAction(action))
+        m_keyBindings[ActionIndex(*builtin)].erase(scancode);
+    return true;
+}
+
 bool Input::BeginKeyCapture() {
     if (m_keyCaptureActive || m_capturedKey) return false;
     m_keyCaptureActive = true;

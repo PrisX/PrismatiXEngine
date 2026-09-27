@@ -2890,7 +2890,8 @@ public:
                 return JS_NewString(context, Input::KeyName(static_cast<int>(integer)).c_str());
             }
             if (operation == "input.rebindKey" ||
-                operation == "input.addKeyBinding") {
+                operation == "input.addKeyBinding" ||
+                operation == "input.removeKeyBinding") {
                 if (!StringArgument(count, values, 0, first) || first.empty())
                     return JS_ThrowTypeError(
                         context, "input binding edit requires an action");
@@ -2907,6 +2908,9 @@ public:
                     return JS_ThrowTypeError(
                         context, "input binding edit requires a key name or integer scancode");
                 }
+                if (operation == "input.removeKeyBinding")
+                    return JS_NewBool(
+                        context, services.input->RemoveKeyBinding(first, scancode));
                 boolean = false;
                 if (count >= 3 && !JS_IsUndefined(values[2]) &&
                     !BoolArgument(count, values, 2, boolean))
@@ -3286,6 +3290,7 @@ public:
                 GetInputKeyName: { value: bindRuntime("input.keyName") },
                 RebindInputKey: { value: bindRuntime("input.rebindKey") },
                 AddInputKeyBinding: { value: bindRuntime("input.addKeyBinding") },
+                RemoveInputKeyBinding: { value: bindRuntime("input.removeKeyBinding") },
                 BeginInputKeyCapture: { value: bindRuntime("input.beginKeyCapture") },
                 IsInputKeyCaptureActive: { value: bindRuntime("input.keyCaptureActive") },
                 TakeCapturedInputKey: { value: bindRuntime("input.takeCapturedKey") },

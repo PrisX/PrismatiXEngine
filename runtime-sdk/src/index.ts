@@ -608,6 +608,7 @@ export interface PrismatiXEngine {
   GetInputKeyName(scancode: number): string;
   RebindInputKey(action: string, key: string | number, allowConflict?: boolean): KeyRebindResult;
   AddInputKeyBinding(action: string, key: string | number, allowConflict?: boolean): KeyRebindResult;
+  RemoveInputKeyBinding(action: string, key: string | number): boolean;
   BeginInputKeyCapture(): boolean;
   IsInputKeyCaptureActive(): boolean;
   TakeCapturedInputKey(): number | null;
@@ -769,6 +770,7 @@ export const ENGINE_HOST_BINDINGS = [
   "GetInputKeyName",
   "RebindInputKey",
   "AddInputKeyBinding",
+  "RemoveInputKeyBinding",
   "BeginInputKeyCapture",
   "IsInputKeyCaptureActive",
   "TakeCapturedInputKey",
@@ -958,6 +960,7 @@ export interface PrismatiXContext {
     keyName(scancode: number): string;
     rebindKey(action: string, key: string | number, allowConflict?: boolean): KeyRebindResult;
     addKeyBinding(action: string, key: string | number, allowConflict?: boolean): KeyRebindResult;
+    removeKeyBinding(action: string, key: string | number): boolean;
     beginKeyCapture(): boolean;
     keyCaptureActive(): boolean;
     takeCapturedKey(): number | null;
@@ -1257,6 +1260,7 @@ export function createPrismatiXContext(engine: PrismatiXEngine = globalThis.Engi
         engine.RebindInputKey(action, key, allowConflict),
       addKeyBinding: (action, key, allowConflict) =>
         engine.AddInputKeyBinding(action, key, allowConflict),
+      removeKeyBinding: (action, key) => engine.RemoveInputKeyBinding(action, key),
       beginKeyCapture: () => engine.BeginInputKeyCapture(),
       keyCaptureActive: () => engine.IsInputKeyCaptureActive(),
       takeCapturedKey: () => engine.TakeCapturedInputKey(),

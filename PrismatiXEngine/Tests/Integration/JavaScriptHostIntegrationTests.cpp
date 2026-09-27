@@ -975,9 +975,13 @@ void TestPhaseThreePublicRuntimeSurfaces(px::test::Suite& suite) {
         if (added.status !== "applied" || addedKeys.length !== 2 ||
             addedKeys[0] !== 58 || addedKeys[1] !== 59)
             throw new Error("additive input shortcut lost its previous key");
+        if (!Engine.RemoveInputKeyBinding("portrait.interact", "F1") ||
+            Engine.RemoveInputKeyBinding("portrait.interact", "F1") ||
+            Engine.GetInputKeyBindings("portrait.interact").join(",") !== "59")
+            throw new Error("per-key removal did not keep the other shortcut");
         if (Engine.RebindInputKey("portrait.interact", "not-a-key").status !==
                 "invalid-scancode" ||
-            Engine.GetInputKeyBindings("portrait.interact")[0] !== 58)
+            Engine.GetInputKeyBindings("portrait.interact")[0] !== 59)
             throw new Error("invalid key name changed the shortcut");
         if (!Engine.UpsertRenderNode("portrait.mouth", {
               kind: "image", phase: "after-stage", order: 4,
