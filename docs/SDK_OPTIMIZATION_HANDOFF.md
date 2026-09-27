@@ -4,6 +4,7 @@
 
 ### 2026-09-27 後續進度
 
+- 新一輪四語 368 scene／31,339 資源的唯讀 `validate --runtime` 通過，未開 CPU profile 的單次耗時約 8.96 秒；帶 profile 的前一次約 9.97 秒，兩者條件不同，不能據此宣稱加速比例。Profile 顯示 `canonicalJson`、穩定 ID FNV、Story 編譯仍是主要 CPU 熱點。曾試驗不複製物件的串流 canonical JSON 原型，10 萬個合成 operation 約 579 ms，慢於原實作約 121 ms，故未採用。穩定 ID 改為對 ASCII 前綴直接處理同一批 UTF-8 byte，Unicode 後綴維持 `TextEncoder`；舊 BigInt 演算法對照、Authoring SDK 159/159、CLI 106/106、四語 `validate --runtime` 均通過，10 萬筆合成 ASCII ID 暖機後約 45 ms → 40 ms，單次量測不代表大型專案固定收益。Story 跨場景不存在 scene／label 的診斷現帶作者原始命令的 source span，CLI 可顯示行列；缺少來源位置的 index/required-label 診斷仍待擴充。未新增持久增量快取，亦未減少發行版的全量安全核驗。
 - 原生角色資源載入器現會驗證並保留 `.pxcharacter.displayNames`，GameCatalog 可依 exact locale 選擇姓名，缺少該語系時回退至 `displayName`；穩定 UUID／alias 查找不受翻譯姓名影響。VM 的 `[say char=...]` 在未明寫 `speaker` 時使用目前語系，Player 與原生／Wasm Preview 均同步該語系，明寫的 speaker 仍優先。CharacterResources Contract、Runtime IR Runtime Adapter、Preview Localization Contract、Player Catalog Native Acceptance 均通過。JavaScript runtime SDK 目前只有唯讀 dialogue model，沒有獨立的 JS `say` 作者 API；先前表格的「JS say」描述應以此為準。Senren 既有 narration/name-prefix 未變，改 Story operation kind 前仍須真實舊存檔 migration 驗收。
 - 非 Player 原生 host 現可用 `GameSettings::LoadWithInputBindings`／`SaveWithInputBindings` 同時處理鍵盤與滾輪設定，stock Player 也改用同一路徑。`Input::RestoreUserBindings` 在暫存副本上先重設作者預設並核對兩張保存表，任一表無效時不會只套用另一張；設定載入失敗亦保留原物件與原檔。`docs/input-actions.md` 補非 Player host 的 `UIContext::SetInputBindingService` 保存範例。Native SaveLoad integration 1/1 驗正常讀寫、晚註冊 action、舊檔缺滾輪及無效鍵碼／滾輪的原子拒絕；Player Catalog Native Acceptance 1/1 通過。此 API 不會自行挑選 host 的 per-user 路徑或加密金鑰。
 - Node Story 來源 loader 與 CLI authored text 載入改用共用 `readBoundedUtf8File`：從已開啟的檔案逐段讀取，檔案在初次 stat 後增長也不能越過 16 MiB 上限；錯誤 UTF-8 直接拒絕，不再被 Node 的字串解碼替換成 U+FFFD；BOM 仍保留供既有契約明確檢查。Authoring SDK targeted 4/4 與全套 159/159、CLI 原有 105/105 加新增壞 UTF-8 targeted 1/1 通過；四語 368 scene／31,339 資源 `validate --runtime` 通過。這是大型來源匯入的界限與資料正確性補強，未實作跨次啟動持久增量快取。
@@ -72,7 +73,7 @@
 
 | 項目 | 目前做到哪裡 | 仍缺什麼／驗收條件 |
 | --- | --- | --- |
-| Story API／大型匯入 | `compileStoryProject` 解析跨 scene；單檔誤用會報 `PXSTORY1215`；368 份劇本以 sidecar 保存 531,812 個執行錨點，`ids --sync` 可預覽差異。`dev` 可在同一行程重用未變 scene 的 label 摘要與編譯結果。 | 仍會重讀所有 scene；通用持久增量／串流 importer、精確 source-span 診斷與移除／重排錨點的安全遷移策略仍缺。PSB→Story 目前是 Senren 私有轉換器。 |
+| Story API／大型匯入 | `compileStoryProject` 解析跨 scene；單檔誤用會報 `PXSTORY1215`；368 份劇本以 sidecar 保存 531,812 個執行錨點，`ids --sync` 可預覽差異。`dev` 可在同一行程重用未變 scene 的 label 摘要與編譯結果；跨場景不存在 scene／label 的診斷已有原命令 source span。 | 仍會重讀所有 scene；通用持久增量／串流 importer、其餘跨檔錯誤的精確位置與移除／重排錨點的安全遷移策略仍缺。PSB→Story 目前是 Senren 私有轉換器。 |
 | 多語姓名與存檔 | `.pxcharacter.displayNames`、`@alias`／`@"顯示姓名"` 可產出對應 speaker；原生 `say` 未明寫 speaker 時也可按 Player／Preview 當前語系顯示姓名，缺值回退預設。 | Senren 為保留舊 operation kind 仍以 narration/name-prefix 為主，未整批採用；改劇本操作種類前須做真實舊存檔 migration 實測。JavaScript runtime SDK 目前只有唯讀 dialogue model，尚無獨立的 JS `say` 作者 API。 |
 | 立繪 | `.pxportrait` rev 2 有 base／expression 標記、`transition=auto`、逐層淡化與前瞻／還原圖層預載；UI `TextureRect` 可直接顯示 descriptor 並預載其圖層；Senren 已產生 2,941 descriptor／761 共用圖層並通過 validate。 | descriptor 內動態 dress／pose／face 編輯、所有角色 placement profile、原圖逐句畫面／首次出現 frame-time、舊存檔恢復均未完成正式驗收。最新大型發行包未因 rev 2 重建。 |
 | UI contract／素材依賴 | typed props、原生 TypeRegistry、Action 參數、canonical UiValue、UI 動態圖片預載、`ItemsPlaced`／`Modal` 已補。 | 執行期 ViewModel 路徑與自訂 formatter 的語意無完整靜態驗證；任意自訂繪圖、Story 中途素材與音效的預載無通用保證。18 個設定開關雖已模板化，動作仍是 `settings.noop`。 |

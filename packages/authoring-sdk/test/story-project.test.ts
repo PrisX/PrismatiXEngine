@@ -295,6 +295,18 @@ test("Story project compiler fails closed for missing locale sources, scenes, la
     },
   });
   assert.equal(unresolved.valid, false);
-  assert.ok(unresolved.diagnostics.some((diagnostic) => diagnostic.code === "PXSTORY1305"));
+  assert.ok(unresolved.diagnostics.some((diagnostic) =>
+    diagnostic.code === "PXSTORY1305" &&
+    diagnostic.span?.path === "zh-TW/ch01/scene01.pxstory" &&
+    diagnostic.span.start.line === 2 && diagnostic.span.start.column === 1));
   assert.ok(unresolved.diagnostics.some((diagnostic) => diagnostic.code === "PXSTORY1307" && diagnostic.details === "aside"));
+
+  const missingScene = compileStoryProject({storyIndex, locale: "zh-TW", sourceFiles: {
+    "zh-TW/ch01/scene01.pxstory": "*start\n[jump scene=absent]\n",
+    "zh-TW/ch01/scene02.pxstory": "*start\n[end]\n*aside\n[end]\n",
+  }});
+  assert.ok(missingScene.diagnostics.some((diagnostic) =>
+    diagnostic.code === "PXSTORY1304" &&
+    diagnostic.span?.path === "zh-TW/ch01/scene01.pxstory" &&
+    diagnostic.span.start.line === 2 && diagnostic.span.start.column === 1));
 });

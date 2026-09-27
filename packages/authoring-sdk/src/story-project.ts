@@ -224,12 +224,15 @@ interface RewrittenScene {
   readonly stubSourceIds: ReadonlySet<string>;
 }
 
-function issue(code: string, message: string, path?: string, details?: string): AuthoringDiagnostic {
+function issue(code: string, message: string, location?: string | SourceSpan,
+  details?: string): AuthoringDiagnostic {
   return {
     severity: "error",
     code,
     message,
-    ...(path === undefined ? {} : {path}),
+    ...(location === undefined ? {} :
+      {path: typeof location === "string" ? location : location.path}),
+    ...(typeof location === "object" ? {span: location} : {}),
     ...(details === undefined ? {} : {details}),
   };
 }
@@ -348,7 +351,7 @@ function rewriteScene(
     const targetSceneId = argumentText(flow.scene) ?? scene.descriptor.id;
     const targetScene = scenesById.get(targetSceneId);
     if (targetScene === undefined) {
-      diagnostics.push(issue("PXSTORY1304", `Unknown Story scene: ${targetSceneId}`, node.span.path, targetSceneId));
+      diagnostics.push(issue("PXSTORY1304", `Unknown Story scene: ${targetSceneId}`, node.span, targetSceneId));
       nodes.push(node);
       continue;
     }
@@ -369,7 +372,7 @@ function rewriteScene(
         diagnostics.push(issue(
           "PXSTORY1305",
           `Story scene ${targetSceneId} does not define label ${authoredTarget}`,
-          node.span.path,
+          node.span,
           `${targetSceneId}:${authoredTarget}`,
         ));
       }

@@ -10,10 +10,22 @@ const limb = 0x1_0000_0000;
 export function fnv1a64(input: string): string {
   let high = 0xcbf29ce4;
   let low = 0x84222325;
-  if (typeof encoder.encodeInto === "function") {
+  // Most generated operation identities are ASCII paths and UUIDs. Their UTF-8
+  // bytes equal the UTF-16 code units, so avoid an encoder call per identity.
+  let offset = 0;
+  for (; offset < input.length; offset += 1) {
+    const code = input.charCodeAt(offset);
+    if (code > 0x7f) break;
+    low = (low ^ code) >>> 0;
+    const lowProduct = low * lowPrime;
+    high = (high * lowPrime + low * highPrime +
+      Math.floor(lowProduct / limb)) >>> 0;
+    low = lowProduct >>> 0;
+  }
+  if (offset < input.length && typeof encoder.encodeInto === "function") {
     // Avoid allocating one Uint8Array per ID. encodeInto consumes whole Unicode
     // scalars, so a surrogate pair at a chunk boundary keeps its old UTF-8 bytes.
-    for (let offset = 0; offset < input.length;) {
+    for (; offset < input.length;) {
       const {read, written} = encoder.encodeInto(input.slice(offset), utf8Chunk);
       if (read === 0) throw new Error("UTF-8 encoder made no progress");
       offset += read;
@@ -25,9 +37,9 @@ export function fnv1a64(input: string): string {
         low = lowProduct >>> 0;
       }
     }
-  } else {
+  } else if (offset < input.length) {
     // Editors with an older TextEncoder retain the historical encoding path.
-    for (const byte of encoder.encode(input)) {
+    for (const byte of encoder.encode(input.slice(offset))) {
       low = (low ^ byte) >>> 0;
       const lowProduct = low * lowPrime;
       high = (high * lowPrime + low * highPrime +
