@@ -4,6 +4,8 @@
 
 ### 2026-09-27—28 後續進度
 
+- **Authoring 跨檔錯誤現在指向作者的 JSON 值與 Story 參數。** `compileProject` 對 resource include root、game input action route、extension 版本、缺失 UI entry／component、語系身分、project entry 與預設語系、route transition 與 splash 設定等錯誤，會在作者文字中附精確 source span；來源文字過期或該值已被正規化改寫時退回原診斷，不猜位置。跨 scene 不存在的 Story `scene=`／`target=` 改指參數值。未改 Runtime IR 或診斷代碼。Authoring SDK 178/178、CLI 116/116（另 1 項 native E2E 依環境跳過）、四語 368 scene／31,339 資源唯讀 `validate --runtime` 通過。動態 JSX expression 與其他未列的非 node 診斷仍待補。
+
 - **Canonical JSON 的已排序鍵不再重複排序。** Authoring SDK 對 Runtime IR／source map 中已按字典序排列的物件直接遞迴，遇到作者物件鍵順序不同才排序；序列化格式及位元組不變。以 v29 真實 48,026,735-byte `main.pxir` 解析後做四輪含 pretty-print 的單程序微基準，原路徑約 156–173 ms，新路徑約 133–135 ms，兩者輸出逐 byte 相同。這只代表該序列化步驟；四語 368 scene／31,339 資源的完整 `validate --runtime` 單次約 10.85 秒，不能從不同快取條件推算整體加速。Authoring SDK 176/176、CLI 116/116（另 1 項 native E2E 依環境跳過）通過。
 
 - **作者來源位置的 offset 已統一為 UTF-8 byte。** JSON pointer 與 Story 指令／跨 scene 重複 ID 診斷過去在中文字或 emoji 後仍用 UTF-16 索引，與 CLI 來源定位不一致。現 `SourcePosition.offset` 明定為 UTF-8 byte，`column` 仍為 UTF-16 code units；Story 產生 operation ID 的既有 UTF-16 seed 保持不變。持久化 scene cache 的內部格式升至 revision 2，舊位置不會混用。多位元組字元、重複 JSON 鍵及舊 Story ID 回歸通過；Authoring SDK 176/176、CLI 116/116（另 1 項 native E2E 依環境跳過）全套通過；以新版 CLI 對 Senren 四語 368 scenes／31,339 resources 唯讀 `validate --runtime` 通過。

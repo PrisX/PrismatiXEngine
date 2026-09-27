@@ -476,18 +476,57 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   const documents = normalized.value.documents;
   const sourceFiles = normalized.value.sourceFiles;
   const locales = normalized.value.locales;
+  const sourceLocations = new Map<string, {
+    readonly document: unknown;
+    readonly spans: ReadonlyMap<string, SourceSpan>;
+  } | null>();
+  const locate = (path: string, pointer: string, expected: unknown): SourceSpan | undefined => {
+    let source = sourceLocations.get(path);
+    if (source === undefined) {
+      const text = path === projectPath
+        ? input.projectSource?.text ?? input.documentSources?.[path]
+        : input.documentSources?.[path];
+      if (text === undefined) source = null;
+      else {
+        try {
+          const document = JSON.parse(text) as unknown;
+          source = {document, spans: jsonPointerSpans(text, document,
+            path === projectPath ? input.projectSource?.path ?? path : path)};
+        } catch { source = null; }
+      }
+      sourceLocations.set(path, source);
+    }
+    if (source === null) return undefined;
+    let value: unknown = source.document;
+    for (const encoded of pointer.split("/").slice(1)) {
+      const key = encoded.replaceAll("~1", "/").replaceAll("~0", "~");
+      if (value === null || typeof value !== "object" ||
+          !Object.hasOwn(value, key)) return undefined;
+      value = (value as Record<string, unknown>)[key];
+    }
+    return JSON.stringify(value) === JSON.stringify(expected)
+      ? source.spans.get(pointer) : undefined;
+  };
+  const locatedIssue = (code: string, message: string, path: string,
+    pointer: string, expected: unknown, details?: string,
+    sourcePath = path): AuthoringDiagnostic => {
+    const span = locate(sourcePath, pointer, expected);
+    return {...issue(code, message, path, details),
+      ...(span === undefined ? {} : {span})};
+  };
   const includedResources: ProjectDependencyReference[] = [];
-  for (const root of normalized.value.resourceIncludes) {
+  for (const [index, root] of normalized.value.resourceIncludes.entries()) {
     let paths: readonly string[] | undefined;
     try { paths = input.resolveResourceInclude?.(root); }
     catch (error) {
-      diagnostics.push(issue("PXBUILD1052", "Could not expand resourceIncludes root", projectPath,
-        `${root}: ${String(error)}`));
+      diagnostics.push(locatedIssue("PXBUILD1052", "Could not expand resourceIncludes root", projectPath,
+        `/resourceIncludes/${index}`, root, `${root}: ${String(error)}`));
       continue;
     }
     if (!Array.isArray(paths) || paths.length === 0) {
-      diagnostics.push(issue("PXBUILD1052",
-        "resourceIncludes root has no files or no resource resolver", projectPath, root));
+      diagnostics.push(locatedIssue("PXBUILD1052",
+        "resourceIncludes root has no files or no resource resolver", projectPath,
+        `/resourceIncludes/${index}`, root, root));
       continue;
     }
     for (const path of paths) {
@@ -495,14 +534,14 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
           path.includes(":") || path.includes("\0") ||
           path.split("/").some((part) => part.length === 0 || part === ".") ||
           (path !== root && !path.startsWith(`${root}/`))) {
-        diagnostics.push(issue("PXBUILD1053",
+        diagnostics.push(locatedIssue("PXBUILD1053",
           "resourceIncludes resolver returned a path outside its root or an unsafe path",
-          projectPath, `${root}: ${String(path)}`));
+          projectPath, `/resourceIncludes/${index}`, root, `${root}: ${String(path)}`));
       } else if (/\.(?:[jt]sx?|mjs|cjs|pxstory|pxui|pxuicomponent|pxproject|pxgame|pxindex)$/iu.test(path) ||
           path.endsWith(".pxstory.pxids.json")) {
-        diagnostics.push(issue("PXBUILD1055",
+        diagnostics.push(locatedIssue("PXBUILD1055",
           "resourceIncludes is for runtime media, not authored source or canonical documents",
-          projectPath, path));
+          projectPath, `/resourceIncludes/${index}`, root, path));
       } else includedResources.push({value: path, origin: `resourceIncludes:${root}`});
     }
   }
@@ -517,10 +556,11 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
         input.inputKeyRegistry));
     const routes = new Set(["title", "hud", "backlog", "save", "load",
       "gallery", "settings", "video", ...Object.keys(project.uiEntryPoints)]);
-    for (const action of game.inputActions ?? []) if (action.route !== undefined &&
+    for (const [index, action] of (game.inputActions ?? []).entries()) if (action.route !== undefined &&
         !routes.has(action.route))
-      diagnostics.push(issue("PXBUILD1061", "Input action route is not registered by this project",
-        project.gameCatalog, `${action.id}: ${action.route}`));
+      diagnostics.push(locatedIssue("PXBUILD1061", "Input action route is not registered by this project",
+        project.gameCatalog, `/inputActions/${index}/route`, action.route,
+        `${action.id}: ${action.route}`));
   }
   const characters: CharacterDocument[] = [];
   const characterDocuments: Record<string, unknown> = {};
@@ -543,11 +583,16 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       extensionDocuments.set(path, extension);
       const compatible = satisfiesVersionRange(extension.requiredEngineVersion);
       if (parseVersion(extension.version) === undefined)
-        diagnostics.push(issue("PXBUILD1011", "Extension version is not SemVer", path, extension.version));
+        diagnostics.push(locatedIssue("PXBUILD1011", "Extension version is not SemVer",
+          path, "/version", extension.version, extension.version));
       else if (compatible === undefined)
-        diagnostics.push(issue("PXBUILD1012", "Extension requiredEngineVersion is not a supported SemVer range", path, extension.requiredEngineVersion));
+        diagnostics.push(locatedIssue("PXBUILD1012", "Extension requiredEngineVersion is not a supported SemVer range",
+          path, "/requiredEngineVersion", extension.requiredEngineVersion,
+          extension.requiredEngineVersion));
       else if (!compatible)
-        diagnostics.push(issue("PXBUILD1013", "Extension is incompatible with engine 0.2.0", path, extension.requiredEngineVersion));
+        diagnostics.push(locatedIssue("PXBUILD1013", "Extension is incompatible with engine 0.2.0",
+          path, "/requiredEngineVersion", extension.requiredEngineVersion,
+          extension.requiredEngineVersion));
       else extensions.push(extension);
     }
   }
@@ -602,7 +647,9 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   const uiDocuments = new Map<string, JsonValue>();
   for (const [id, path] of Object.entries(project.uiEntryPoints)) {
     const ui = documentAt<JsonValue>("ui", path, documents, diagnostics);
-    if (ui === undefined) diagnostics.push(issue("PXBUILD1002", `UI entry point ${id} is unavailable`, path, id));
+    if (ui === undefined) diagnostics.push(locatedIssue("PXBUILD1002",
+      `UI entry point ${id} is unavailable`, path,
+      `/uiEntryPoints/${pointerSegment(id)}`, path, id, projectPath));
     else {
       if (input.uiTypeRegistry !== undefined)
         diagnostics.push(...validateUiPropertyUsage(ui, input.uiTypeRegistry,
@@ -670,23 +717,25 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   }
   const uiComponentDocuments = new Map<string, JsonValue>();
   const uiComponentIds = new Set<string>();
-  for (const descriptor of project.uiComponents ?? []) {
+  for (const [index, descriptor] of (project.uiComponents ?? []).entries()) {
     const component = documentAt<JsonValue>("uiComponent", descriptor.source,
       documents, diagnostics);
     if (component === undefined) {
-      diagnostics.push(issue("PXBUILD1014", "UI component document is missing or invalid",
-        descriptor.source, descriptor.id));
+      diagnostics.push(locatedIssue("PXBUILD1014", "UI component document is missing or invalid",
+        descriptor.source, `/uiComponents/${index}/source`, descriptor.source,
+        descriptor.id, projectPath));
       continue;
     }
     if ((component as Record<string, JsonValue>).id !== descriptor.id) {
-      diagnostics.push(issue("PXBUILD1017",
+      diagnostics.push(locatedIssue("PXBUILD1017",
         "UI component identity disagrees with its project descriptor",
-        descriptor.source, descriptor.id));
+        descriptor.source, "/id", (component as Record<string, JsonValue>).id,
+        descriptor.id));
       continue;
     }
     if (!uiComponentIds.add(descriptor.id)) {
-      diagnostics.push(issue("PXBUILD1018", "UI component id is duplicated",
-        projectPath, descriptor.id));
+      diagnostics.push(locatedIssue("PXBUILD1018", "UI component id is duplicated",
+        projectPath, `/uiComponents/${index}/id`, descriptor.id, descriptor.id));
       continue;
     }
     if (input.uiTypeRegistry !== undefined)
@@ -703,26 +752,32 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     new Map([...uiDocuments, ...uiComponentDocuments]), input.uiTypeRegistry,
     input.documentSources, input.projectSource));
   if (storyIndex !== undefined && storyIndex.entryScene !== project.entry.story) {
-    diagnostics.push(issue("PXBUILD1005", "Project entry.story must match storyIndex.entryScene", project.storyIndex, project.entry.story));
+    diagnostics.push(locatedIssue("PXBUILD1005", "Project entry.story must match storyIndex.entryScene",
+      project.storyIndex, "/entry/story", project.entry.story, project.entry.story,
+      projectPath));
   }
   const localeDocuments = new Map<string, JsonValue>();
-  for (const locale of project.supportedLocales) {
+  for (const [index, locale] of project.supportedLocales.entries()) {
     const source = locales[locale];
     const path = `Content/Localization/${locale}.json`;
     if (source === undefined) {
-      diagnostics.push(issue("PXBUILD1003", `Locale document ${locale} is missing`, path, locale));
+      diagnostics.push(locatedIssue("PXBUILD1003", `Locale document ${locale} is missing`,
+        path, `/supportedLocales/${index}`, locale, locale, projectPath));
       continue;
     }
     const parsed = parseValue<JsonValue>("locale", source, path);
     diagnostics.push(...parsed.diagnostics);
     if (parsed.valid && parsed.value !== undefined) {
       const localeValue = parsed.value as {locale?: JsonValue};
-      if (localeValue.locale !== locale) diagnostics.push(issue("PXBUILD1006", "Locale document identity does not match its project key", path, locale));
+      if (localeValue.locale !== locale) diagnostics.push(locatedIssue("PXBUILD1006",
+        "Locale document identity does not match its project key", path,
+        "/locale", localeValue.locale, locale));
       else localeDocuments.set(locale, parsed.value);
     }
   }
   if (!localeDocuments.has(project.defaultLocale)) {
-    diagnostics.push(issue("PXBUILD1004", "The default locale document is unavailable", projectPath, project.defaultLocale));
+    diagnostics.push(locatedIssue("PXBUILD1004", "The default locale document is unavailable",
+      projectPath, "/defaultLocale", project.defaultLocale, project.defaultLocale));
   }
   if (diagnostics.some((diagnostic) => diagnostic.severity === "error") || storyIndex === undefined || game === undefined) {
     return {diagnostics, valid: false};
@@ -1014,14 +1069,20 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
         if (value === null || typeof value !== "object" || Array.isArray(value)) continue;
         const {from, to} = value as Record<string, JsonValue>;
         if (typeof from !== "string" || typeof to !== "string") continue;
-        if (!availableRoutes.has(from) || !availableRoutes.has(to) || from === to)
-          diagnostics.push(issue("PXBUILD1057",
+        if (!availableRoutes.has(from) || !availableRoutes.has(to) || from === to) {
+          const field = !availableRoutes.has(from) ? "from" : "to";
+          diagnostics.push(locatedIssue("PXBUILD1057",
             "Route transition must name two distinct registered Player routes",
-            projectPath, `settings.player.presentationTransitions.routeOverrides[${index}]: ${from} -> ${to}`));
+            projectPath,
+            `/settings/player.presentationTransitions/routeOverrides/${index}/${field}`,
+            field === "from" ? from : to,
+            `settings.player.presentationTransitions.routeOverrides[${index}]: ${from} -> ${to}`));
+        }
         const pair = `${from}\n${to}`;
         if (seenPairs.has(pair))
-          diagnostics.push(issue("PXBUILD1058", "Duplicate Player route transition pair",
-            projectPath, `settings.player.presentationTransitions.routeOverrides[${index}]: ${from} -> ${to}`));
+          diagnostics.push(locatedIssue("PXBUILD1058", "Duplicate Player route transition pair",
+            projectPath, `/settings/player.presentationTransitions/routeOverrides/${index}`,
+            value, `settings.player.presentationTransitions.routeOverrides[${index}]: ${from} -> ${to}`));
         seenPairs.add(pair);
       }
     }
@@ -1044,13 +1105,15 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       if (splash === null || typeof splash !== "object" || Array.isArray(splash)) continue;
       const entry = splash as Record<string, JsonValue>;
       if (typeof entry.scene === "string" && !authoredUiScenes.has(entry.scene))
-        diagnostics.push(issue("PXBUILD1055", "Splash scene must be an authored UI entry point",
-          projectPath, `settings.player.splashes[${index}].scene: ${entry.scene}`));
+        diagnostics.push(locatedIssue("PXBUILD1055", "Splash scene must be an authored UI entry point",
+          projectPath, `/settings/player.splashes/${index}/scene`, entry.scene,
+          `settings.player.splashes[${index}].scene: ${entry.scene}`));
       const minimumDuration = typeof entry.minimumDuration === "number" ? entry.minimumDuration : 2;
       const skipAllowedAfter = typeof entry.skipAllowedAfter === "number" ? entry.skipAllowedAfter : 0.5;
       if (skipAllowedAfter > minimumDuration)
-        diagnostics.push(issue("PXBUILD1056", "Splash skipAllowedAfter exceeds minimumDuration",
-          projectPath, `settings.player.splashes[${index}]`));
+        diagnostics.push(locatedIssue("PXBUILD1056", "Splash skipAllowedAfter exceeds minimumDuration",
+          projectPath, `/settings/player.splashes/${index}`,
+          entry, `settings.player.splashes[${index}]`));
       addResourceRef(entry.audio, `settings.player.splashes[${index}].audio`,
         projectPath, `/settings/player.splashes/${index}/audio`);
       if (Array.isArray(entry.audioVariants)) {

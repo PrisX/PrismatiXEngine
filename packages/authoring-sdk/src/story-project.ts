@@ -488,7 +488,8 @@ function rewriteScene(
     const targetSceneId = argumentText(flow.scene) ?? scene.descriptor.id;
     const targetScene = scenesById.get(targetSceneId);
     if (targetScene === undefined) {
-      diagnostics.push(issue("PXSTORY1304", `Unknown Story scene: ${targetSceneId}`, node.span, targetSceneId));
+      diagnostics.push(issue("PXSTORY1304", `Unknown Story scene: ${targetSceneId}`,
+        flow.scene?.span ?? node.span, targetSceneId));
       nodes.push(node);
       continue;
     }
@@ -509,7 +510,7 @@ function rewriteScene(
         diagnostics.push(issue(
           "PXSTORY1305",
           `Story scene ${targetSceneId} does not define label ${authoredTarget}`,
-          node.span,
+          flow.target?.span ?? node.span,
           `${targetSceneId}:${authoredTarget}`,
         ));
       }

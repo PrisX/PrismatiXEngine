@@ -86,6 +86,78 @@ test("project compilation checks authored input action routes", () => {
   assert.ok(missing.diagnostics.some((item) => item.code === "PXBUILD1061"));
 });
 
+test("cross-document diagnostics locate the exact authored JSON values", () => {
+  const authoredProject = {...project, name: "測試專案", settings: {
+    "player.presentationTransitions": {routePreset: "crossfade", routeDuration: 0.3,
+      splashPreset: "fade", splashDuration: 0.3,
+      titlePreset: "fade", titleDuration: 0.3, routeOverrides: [
+      {from: "title", to: "missing-route", preset: "fade", duration: 0.3},
+    ]},
+    "player.splashes": [{scene: "Content/UI/Missing.pxui",
+      minimumDuration: 0, skipAllowedAfter: 0.5}],
+  }};
+  const authoredGame = {...game, inputActions: [
+    {id: "screen.open.extra", context: "game", keys: ["F8"], route: "missing-action-route"},
+  ]};
+  const projectText = JSON.stringify(authoredProject, null, 2);
+  const gameText = JSON.stringify(authoredGame, null, 2);
+  const compile = (manifestText: string, catalogText: string,
+    catalog: unknown = authoredGame) => compileProject({
+    project: authoredProject,
+    projectSource: {path: "prismatix.json", text: manifestText},
+    documentSources: {"Content/game.pxgame": catalogText},
+    documents: {"Story/story.pxindex": storyIndex,
+      "Content/game.pxgame": catalog, "Content/UI/Title.pxui": ui},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locale: "zh-TW", strings: {}}},
+  });
+  const gameResult = compile(projectText, gameText);
+  const projectResult = compile(projectText, JSON.stringify(game), game);
+  assert.equal(gameResult.valid, false);
+  assert.equal(projectResult.valid, false);
+  const at = (result: ReturnType<typeof compile>, code: string,
+    path: string, text: string, token: string) => {
+    const item = result.diagnostics.find((diagnostic) => diagnostic.code === code);
+    assert.equal(item?.span?.path, path, code);
+    const offset = text.indexOf(`"${token}"`);
+    assert.ok(offset >= 0);
+    assert.equal(item.span!.start.offset,
+      Buffer.byteLength(text.slice(0, offset), "utf8"), code);
+  };
+  at(gameResult, "PXBUILD1061", "Content/game.pxgame", gameText, "missing-action-route");
+  at(projectResult, "PXBUILD1057", "prismatix.json", projectText, "missing-route");
+  at(projectResult, "PXBUILD1055", "prismatix.json", projectText, "Content/UI/Missing.pxui");
+  const staleProject = compile(projectText.replace("missing-route", "settings"),
+    JSON.stringify(game), game);
+  const staleGame = compile(projectText,
+    gameText.replace("missing-action-route", "settings"));
+  assert.equal(staleProject.diagnostics.find((item) => item.code === "PXBUILD1057")?.span,
+    undefined);
+  assert.equal(staleGame.diagnostics.find((item) => item.code === "PXBUILD1061")?.span,
+    undefined);
+});
+
+test("missing authored includes and UI entries point back to their declarations", () => {
+  const included = {...project, resourceIncludes: ["Assets/Missing"]};
+  const includeResult = compileProject({project: included,
+    projectSource: {path: "prismatix.json", text: JSON.stringify(included)},
+    resolveResourceInclude: () => [],
+  });
+  assert.equal(includeResult.diagnostics.find((item) => item.code === "PXBUILD1052")?.span?.path,
+    "prismatix.json");
+  const missingUi = {...project, uiEntryPoints: {title: "Content/UI/Missing.pxui"}};
+  const uiResult = compileProject({project: missingUi,
+    projectSource: {path: "prismatix.json", text: JSON.stringify(missingUi)},
+    documents: {"Story/story.pxindex": storyIndex, "Content/game.pxgame": game},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locale: "zh-TW", strings: {}}},
+  });
+  assert.equal(uiResult.diagnostics.find((item) => item.code === "PXBUILD1002")?.span?.path,
+    "prismatix.json");
+});
+
 test("project compilation checks declared Player UI data binding paths", () => {
   const result = compileProject({project: {...project,
     settings: {"player.uiData": {screen: {caption: "Ready"}}}},
@@ -218,7 +290,8 @@ test("compileProject validates extension UI Actions and packages typed resource 
       "Content/UI/Title.pxui": uiWithAction(arguments_),
       [extensionPath]: manifest},
     documentSources: {"Content/UI/Title.pxui":
-      JSON.stringify(uiWithAction(arguments_), null, 2)},
+      JSON.stringify(uiWithAction(arguments_), null, 2),
+      [extensionPath]: JSON.stringify(manifest, null, 2)},
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
     locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
       locale: "zh-TW", strings: {}}},
@@ -228,6 +301,10 @@ test("compileProject validates extension UI Actions and packages typed resource 
   assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
   assert.ok(valid.artifact?.dependencies.some((dependency) =>
     dependency.source === "Assets/Audio/theme.ogg"));
+  const unsupportedEngine = compile({media: "Assets/Audio/theme.ogg"},
+    {...extension, requiredEngineVersion: ">=9.0.0"});
+  assert.equal(unsupportedEngine.diagnostics.find((item) => item.code === "PXBUILD1013")?.span?.path,
+    extensionPath);
   const extensionless = compile({media: {type: "resource", value: "Assets/Audio/theme"}});
   assert.equal(extensionless.valid, true, JSON.stringify(extensionless.diagnostics));
   assert.ok(extensionless.artifact?.dependencies.some((dependency) =>
@@ -1030,20 +1107,26 @@ test("localized literal Story speakers keep dialogue identity and presentation s
 });
 
 test("compileProject fails closed when cross-document identity is inconsistent", () => {
+  const authoredProject = {...project, entry: {story: "missing", ui: "title"}};
+  const authoredLocale = {format: "PrismatiXLocale", schemaRevision: 2, locale: "ja-JP", strings: {}};
   const result = compileProject({
-    project: {...project, entry: {story: "missing", ui: "title"}},
+    project: authoredProject,
+    projectSource: {path: "prismatix.json", text: JSON.stringify(authoredProject)},
+    documentSources: {"Content/Localization/zh-TW.json": JSON.stringify(authoredLocale)},
     documents: {
       "Story/story.pxindex": storyIndex,
       "Content/game.pxgame": game,
       "Content/UI/Title.pxui": ui,
     },
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
-    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2, locale: "ja-JP", strings: {}}},
+    locales: {"zh-TW": authoredLocale},
   });
   assert.equal(result.valid, false);
   assert.equal(result.artifact, undefined);
-  assert.ok(result.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1005"));
-  assert.ok(result.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1006"));
+  assert.equal(result.diagnostics.find((diagnostic) => diagnostic.code === "PXBUILD1005")?.span?.path,
+    "prismatix.json");
+  assert.equal(result.diagnostics.find((diagnostic) => diagnostic.code === "PXBUILD1006")?.span?.path,
+    "Content/Localization/zh-TW.json");
 });
 
 test("compileProject validates and publishes an explicit save migration chain", () => {
