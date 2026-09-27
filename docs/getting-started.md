@@ -263,8 +263,8 @@ distributions and rejects changed Player/runtime files. The verifier checks
 the candidate PDX against exact base and target metadata and all changed
 payloads. Generate a publisher key pair, pin its public key in both
 distributions, sign the overlay, and use `--require-signature` before
-installing it as `Package/updates/active.pdx`. Ordered multiple overlays and
-optional packs are still separate work.
+installing it in `Package/updates` as a `.pdx` file. Multiple signed updates
+are applied in exact-base dependency order; optional packs are separate work.
 
 Never choose Story, Assets, another source input or an unrelated existing folder as output. `pack` is an explicit distribution command; `run` packages and launches. Quote paths containing spaces.
 

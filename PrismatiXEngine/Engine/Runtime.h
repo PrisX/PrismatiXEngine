@@ -16,6 +16,11 @@
 
 namespace px {
 
+struct RuntimeOverlayMount {
+    std::string archive;
+    std::vector<std::string> tombstones;
+};
+
 struct RuntimeConfig {
     std::string title = "PrismatiX";
     int width = 1280;
@@ -33,8 +38,7 @@ struct RuntimeConfig {
     std::vector<std::string> mountDirs = { "." };
     std::vector<std::string> mountArchives;
     std::string archiveKey;
-    std::string overlayArchive;
-    std::vector<std::string> overlayTombstones;
+    std::vector<RuntimeOverlayMount> overlays;
 };
 
 class Runtime {

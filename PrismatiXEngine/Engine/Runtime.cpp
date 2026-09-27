@@ -62,17 +62,18 @@ bool Runtime::Init(const RuntimeConfig& config) {
 #endif
     }
 #if !defined(PRISMATIX_PREVIEW_WASM)
-    if (!m_config.overlayArchive.empty() &&
-        !m_vfs.MountArchive(m_config.overlayArchive, nullptr,
-                            io::ArchiveMountPriority::Overlay,
-                            m_config.overlayTombstones)) {
-        PX_LOG_ERROR("Runtime initialization failed: verified overlay '{}' could not be mounted",
-                     m_config.overlayArchive);
-        Shutdown();
-        return false;
+    for (const auto& overlay : m_config.overlays) {
+        if (!m_vfs.MountArchive(overlay.archive, nullptr,
+                                io::ArchiveMountPriority::Overlay,
+                                overlay.tombstones)) {
+            PX_LOG_ERROR("Runtime initialization failed: verified overlay '{}' could not be mounted",
+                         overlay.archive);
+            Shutdown();
+            return false;
+        }
     }
 #else
-    if (!m_config.overlayArchive.empty()) {
+    if (!m_config.overlays.empty()) {
         PX_LOG_ERROR("Runtime initialization rejected an overlay in WASM preview");
         Shutdown();
         return false;

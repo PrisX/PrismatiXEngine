@@ -20,6 +20,7 @@
 #include <set>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace px::io {
@@ -390,17 +391,36 @@ PackageContentVerification VerifyPackageContents(
 static PackageOverlayVerification VerifyOverlayImpl(
     const std::filesystem::path& distribution,
     const std::filesystem::path& overlayPath,
-    const bool requireSignature) {
+    const bool requireSignature,
+    const std::optional<std::pair<std::string_view, std::string_view>>
+        baseDocuments = std::nullopt) {
     const auto fail = [](std::string message) {
         return PackageOverlayVerification{.error = std::move(message)};
     };
-    const auto baseManifestText = ReadBoundedRegularFile(
-        distribution / "Package/manifest.json", 4ull * 1024ull * 1024ull);
-    const auto baseIndexText = ReadBoundedRegularFile(
-        distribution / "Package/content-index.json",
-        128ull * 1024ull * 1024ull);
+    std::optional<std::string> baseManifestFile;
+    std::optional<std::string> baseIndexFile;
+    if (!baseDocuments) {
+        baseManifestFile = ReadBoundedRegularFile(
+            distribution / "Package/manifest.json", 4ull * 1024ull * 1024ull);
+        baseIndexFile = ReadBoundedRegularFile(
+            distribution / "Package/content-index.json",
+            128ull * 1024ull * 1024ull);
+    }
+    const std::optional<std::string_view> baseManifestText = baseDocuments
+        ? std::optional<std::string_view>{baseDocuments->first}
+        : (baseManifestFile
+               ? std::optional<std::string_view>{*baseManifestFile}
+               : std::nullopt);
+    const std::optional<std::string_view> baseIndexText = baseDocuments
+        ? std::optional<std::string_view>{baseDocuments->second}
+        : (baseIndexFile
+               ? std::optional<std::string_view>{*baseIndexFile}
+               : std::nullopt);
     if (!baseManifestText || !baseIndexText)
         return fail("Base package manifest or content index is unavailable");
+    if (baseManifestText->empty() || baseManifestText->size() > 4ull * 1024ull * 1024ull ||
+        baseIndexText->empty() || baseIndexText->size() > 128ull * 1024ull * 1024ull)
+        return fail("Base package manifest or content index is oversized");
     const auto baseParsed =
         sdk::detail::ParsePackageManifest(*baseManifestText);
     if (!baseParsed.Valid()) return fail("Base package manifest is invalid");
@@ -545,6 +565,7 @@ static PackageOverlayVerification VerifyOverlayImpl(
             return fail("Overlay PDX has an unexpected entry: " + entry.name);
     }
     result.targetManifestJson = *targetManifestText;
+    result.targetContentIndexJson = *targetIndexText;
     result.valid = true;
     return result;
 }
@@ -559,6 +580,100 @@ PackageOverlayVerification VerifySignedPackageOverlay(
     const std::filesystem::path& distribution,
     const std::filesystem::path& overlayPath) {
     return VerifyOverlayImpl(distribution, overlayPath, true);
+}
+
+PackageOverlayVerification VerifySignedPackageOverlayFromDocuments(
+    const std::string_view baseManifestJson,
+    const std::string_view baseContentIndexJson,
+    const std::filesystem::path& overlayPath) {
+    return VerifyOverlayImpl({}, overlayPath, true,
+                             std::pair{baseManifestJson,
+                                       baseContentIndexJson});
+}
+
+PackageOverlayChain ResolveSignedPackageOverlayChain(
+    const std::filesystem::path& baseDistribution,
+    const std::filesystem::path& updatesDirectory) {
+    const auto fail = [](std::string message) {
+        return PackageOverlayChain{.error = std::move(message)};
+    };
+    std::error_code error;
+    const auto directoryStatus = std::filesystem::symlink_status(
+        updatesDirectory, error);
+    if (error == std::errc::no_such_file_or_directory ||
+        (!error && directoryStatus.type() ==
+                       std::filesystem::file_type::not_found))
+        return {.valid = true};
+    if (error || !std::filesystem::is_directory(directoryStatus) ||
+        std::filesystem::is_symlink(directoryStatus))
+        return fail("Updates path is not a regular directory");
+
+    std::vector<std::filesystem::path> candidates;
+    std::filesystem::directory_iterator iterator(updatesDirectory, error);
+    if (error) return fail("Updates directory cannot be listed");
+    const std::filesystem::directory_iterator end;
+    std::size_t inspected = 0;
+    for (; iterator != end; iterator.increment(error)) {
+        if (error || ++inspected > 256)
+            return fail("Updates directory has too many or unreadable entries");
+        if (iterator->path().extension() != ".pdx") continue;
+        const auto status = std::filesystem::symlink_status(iterator->path(), error);
+        if (error || !std::filesystem::is_regular_file(status) ||
+            std::filesystem::is_symlink(status))
+            return fail("Update PDX is not a regular file");
+        const auto size = std::filesystem::file_size(iterator->path(), error);
+        if (error || size == 0 || size > 64ull * 1024ull * 1024ull * 1024ull ||
+            candidates.size() >= 64)
+            return fail("Update PDX is oversized or there are too many updates");
+        candidates.push_back(iterator->path());
+    }
+    if (error) return fail("Updates directory cannot be listed");
+    std::ranges::sort(candidates);
+    if (candidates.empty()) return {.valid = true};
+
+    auto currentManifest = ReadBoundedRegularFile(
+        baseDistribution / "Package/manifest.json", 4ull * 1024ull * 1024ull);
+    auto currentIndex = ReadBoundedRegularFile(
+        baseDistribution / "Package/content-index.json",
+        128ull * 1024ull * 1024ull);
+    if (!currentManifest || !currentIndex)
+        return fail("Base package manifest or content index is unavailable");
+    const auto base = sdk::detail::ParsePackageManifest(*currentManifest);
+    if (!base.Valid()) return fail("Base package manifest is invalid");
+    std::set<std::string> visited{base.manifest.packageFingerprint};
+    std::vector<bool> consumed(candidates.size());
+    PackageOverlayChain result;
+    for (std::size_t depth = 0; depth < candidates.size(); ++depth) {
+        std::optional<std::pair<std::size_t, PackageOverlayVerification>> next;
+        for (std::size_t index = 0; index < candidates.size(); ++index) {
+            if (consumed[index]) continue;
+            auto verified = VerifySignedPackageOverlayFromDocuments(
+                *currentManifest, *currentIndex, candidates[index]);
+            if (!verified.valid) continue;
+            if (next)
+                return fail("More than one signed update applies to the same package version");
+            next.emplace(index, std::move(verified));
+        }
+        if (!next) break;
+        const auto target = sdk::detail::ParsePackageManifest(
+            next->second.targetManifestJson);
+        if (!target.Valid() ||
+            !visited.insert(target.manifest.packageFingerprint).second)
+            return fail("Signed update chain repeats a package version");
+        consumed[next->first] = true;
+        result.mounts.push_back({candidates[next->first],
+                                 std::move(next->second.tombstones)});
+        *currentManifest = std::move(next->second.targetManifestJson);
+        *currentIndex = std::move(next->second.targetContentIndexJson);
+    }
+    if (!result.mounts.empty())
+        result.targetManifestJson = std::move(*currentManifest);
+    for (std::size_t index = 0; index < candidates.size(); ++index)
+        if (!consumed[index])
+            result.ignoredFiles.push_back(px::PathToUtf8(
+                candidates[index].filename()));
+    result.valid = true;
+    return result;
 }
 
 PackageOverlayBuildResult CreatePackageOverlay(

@@ -1018,6 +1018,66 @@ int main() {
         suite.Expect(!px::io::VerifySignedPackageOverlay(
                           signedBase, unsignedPatch).valid,
                      "Player signed verifier rejects an unsigned overlay");
+
+        Write(root / "Content/Overlay/signed-second.txt", "second update");
+        const auto secondTarget = fixture.path / "Build/SignedOverlaySecondTarget";
+        auto secondRequest = targetRequest;
+        secondRequest.outputDir = secondTarget;
+        secondRequest.inputs.push_back(Input(root, "Content/Overlay/signed-second.txt"));
+        suite.Require(px::sdk::RunPackager(secondRequest).Completed(),
+                      "second target distribution is built");
+        const auto secondPatch = fixture.path / "second-signed-overlay.pdx";
+        suite.Require(px::io::CreatePackageOverlay(
+                          signedTarget, secondTarget, secondPatch, {}, keyFile)
+                          .created,
+                      "second exact-base update is signed");
+        const auto fromDocuments =
+            px::io::VerifySignedPackageOverlayFromDocuments(
+                verified.targetManifestJson, verified.targetContentIndexJson,
+                secondPatch);
+        suite.Expect(fromDocuments.valid &&
+                         fromDocuments.changedResources == 1,
+                     "second update verifies against the first signed target documents");
+        const auto updates = fixture.path / "SignedUpdates";
+        std::filesystem::create_directories(updates);
+        std::filesystem::copy_file(patch, updates / "z-patch.pdx");
+        std::filesystem::copy_file(secondPatch, updates / "a-patch2.pdx");
+        const auto chain = px::io::ResolveSignedPackageOverlayChain(
+            signedBase, updates);
+        const auto finalManifest = px::sdk::detail::ParsePackageManifest(
+            Read(secondTarget / "Package/manifest.json"));
+        suite.Expect(chain.valid && chain.mounts.size() == 2 &&
+                         chain.mounts[0].path.filename() == "z-patch.pdx" &&
+                         chain.mounts[1].path.filename() == "a-patch2.pdx" &&
+                         finalManifest.Valid() &&
+                         px::sdk::detail::ParsePackageManifest(
+                             chain.targetManifestJson)
+                                 .manifest.packageFingerprint ==
+                             finalManifest.manifest.packageFingerprint,
+                     "update chain follows signed exact-base dependencies, not filenames");
+        std::filesystem::copy_file(unsignedPatch, updates / "unsigned.pdx");
+        const auto withUnsigned = px::io::ResolveSignedPackageOverlayChain(
+            signedBase, updates);
+        suite.Expect(withUnsigned.valid && withUnsigned.mounts.size() == 2 &&
+                         withUnsigned.ignoredFiles.size() == 1,
+                     "unsigned file is ignored without hiding a valid chain");
+
+        Write(root / "Content/Overlay/branch.txt", "ambiguous branch");
+        const auto branchTarget = fixture.path / "Build/SignedOverlayBranch";
+        auto branchRequest = FixtureRequest(root, branchTarget);
+        branchRequest.publisherPublicKey = keys->publicKeyHex;
+        branchRequest.inputs.push_back(Input(root, "Content/Overlay/branch.txt"));
+        suite.Require(px::sdk::RunPackager(branchRequest).Completed(),
+                      "alternative signed target distribution is built");
+        const auto branchPatch = fixture.path / "branch-signed-overlay.pdx";
+        suite.Require(px::io::CreatePackageOverlay(
+                          signedBase, branchTarget, branchPatch, {}, keyFile)
+                          .created,
+                      "alternative signed update is built");
+        std::filesystem::copy_file(branchPatch, updates / "branch.pdx");
+        suite.Expect(!px::io::ResolveSignedPackageOverlayChain(
+                          signedBase, updates).valid,
+                     "two valid updates from the same base are rejected as ambiguous");
     });
 
     suite.Run("StableArchiveShardsMountAndReuseTheirOwnCaches", [&] {

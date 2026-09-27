@@ -2,8 +2,8 @@
 
 `create-patch` / `apply-patch` still reconstruct and verify a complete new
 distribution. The content-only PDX overlay is a smaller, exact-base update.
-The Player currently supports **one** automatic update at
-`Package/updates/active.pdx` inside a trusted base distribution.
+The Player scans bounded `.pdx` candidates in `Package/updates` and applies
+the unique signed, exact-base update chain. Filenames do not control order.
 
 ## Publishing a signed update
 
@@ -22,14 +22,18 @@ The public key is a lowercase, uncompressed SEC1 P-256 point in
 private key outside the project and distribution, restrict access to it, and
 back it up securely. `overlay-keygen` refuses to overwrite either output.
 
-After verification, install the PDX as `v1/Package/updates/active.pdx` and
-restart Player. The Player checks the pinned publisher key, signature, exact
+After verification, install the PDX as `v1/Package/updates/patch.pdx` and
+restart Player. For a second update, build a complete v3 distribution and
+create `patch2.pdx` from v2 to v3 with the same publisher key. Place both
+files in the updates directory; Player discovers their dependency order from
+the signed base and target documents. The Player checks the pinned publisher key, signature, exact
 base manifest and index bytes, target metadata, and every changed resource
 before mounting it. It uses the base PDX archives and their original
 decryption key, then mounts the overlay at higher VFS priority and applies
 tombstones for removed resources. Route, Runtime IR, source map, content
 version, and save migration settings come from the signed target manifest.
-If verification fails, Player logs a warning and starts the base package.
+Invalid or stale candidates are ignored. If two valid updates target the same
+version, Player rejects the ambiguous chain and starts the base package.
 It also retries the base package if Runtime initialization of an accepted
 overlay fails. The installed update file is never modified by Player.
 
@@ -74,10 +78,11 @@ be buffered by the current Archive reader.
 
 ## Current limits
 
-The Player uses one fixed `active.pdx` path. Arbitrary filenames, ordered
-`patch.pdx` → `patch2.pdx` chains, and independently enabled optional packs
-such as `adult.pdx` are not implemented yet. Those need explicit dependency,
-priority, and activation contracts; Player does not scan all `.pdx` files.
+Independently enabled optional packs such as `adult.pdx` are not implemented
+yet. A signed update chain may contain at most 64 regular PDX candidates in a
+dedicated directory, and ambiguous branches fail closed. A later update must
+be authored from its preceding complete distribution; installed overlay files
+are not valid `create-overlay` input distributions.
 
 Verification does not rehash unchanged base PDX payloads or independently
 validate the target's entire authored dependency graph. A local process that

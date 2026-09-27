@@ -42,6 +42,7 @@ struct PackageOverlayVerification {
     bool valid = false;
     std::string error;
     std::string targetManifestJson;
+    std::string targetContentIndexJson;
     std::vector<std::string> tombstones;
     std::uint64_t changedResources = 0;
     std::uint64_t changedRawBytes = 0;
@@ -61,6 +62,13 @@ struct PackageOverlayVerification {
     const std::filesystem::path& distribution,
     const std::filesystem::path& overlayPath);
 
+// After a prior signed overlay has been verified, its target documents may be
+// used as the exact base for the next signed overlay in an ordered chain.
+[[nodiscard]] PackageOverlayVerification VerifySignedPackageOverlayFromDocuments(
+    std::string_view baseManifestJson,
+    std::string_view baseContentIndexJson,
+    const std::filesystem::path& overlayPath);
+
 struct PackageOverlayBuildResult {
     bool created = false;
     std::string error;
@@ -68,6 +76,26 @@ struct PackageOverlayBuildResult {
     std::uint64_t removedResources = 0;
     std::uint64_t changedRawBytes = 0;
 };
+
+struct PackageOverlayChainMount {
+    std::filesystem::path path;
+    std::vector<std::string> tombstones;
+};
+
+struct PackageOverlayChain {
+    bool valid = false;
+    std::string error;
+    std::string targetManifestJson;
+    std::vector<PackageOverlayChainMount> mounts;
+    std::vector<std::string> ignoredFiles;
+};
+
+// Scans a dedicated updates directory for bounded regular PDX candidates,
+// then finds the unique signed exact-base chain. An absent directory means no
+// update. Ambiguous branches fail closed; stale/unrelated files are ignored.
+[[nodiscard]] PackageOverlayChain ResolveSignedPackageOverlayChain(
+    const std::filesystem::path& baseDistribution,
+    const std::filesystem::path& updatesDirectory);
 
 using PackageOverlayBuildProgress = std::function<void(
     std::string_view phase, std::uint64_t current, std::uint64_t total,

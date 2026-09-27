@@ -708,6 +708,19 @@ int main(int argc, char* argv[]) {
             output, targetOutput, signedPatch, {}, privateKey);
         suite.Require(signedBuild.created,
                       "signed Player update is built: " + signedBuild.error);
+        Write(root / "Content/Overlay/player-second.txt", "second Player update");
+        const auto secondTargetOutput = fixture.path / "Build/SecondTarget";
+        auto secondTargetRequest = targetRequest;
+        secondTargetRequest.outputDir = secondTargetOutput;
+        secondTargetRequest.inputs.push_back(
+            Input(root, "Content/Overlay/player-second.txt"));
+        suite.Require(px::sdk::RunPackager(secondTargetRequest).Completed(),
+                      "second native Player update is packaged");
+        const auto secondPatch = fixture.path / "second-signed-player-update.pdx";
+        suite.Require(px::io::CreatePackageOverlay(
+                          targetOutput, secondTargetOutput, secondPatch,
+                          {}, privateKey).created,
+                      "second Player update is signed against the first target");
         const auto unsignedPatch = fixture.path / "unsigned-player-update.pdx";
         suite.Require(px::io::CreatePackageOverlay(
                           output, targetOutput, unsignedPatch).created,
@@ -880,6 +893,8 @@ int main(int argc, char* argv[]) {
         const auto activePatch = output / "Package/updates/active.pdx";
         std::filesystem::create_directories(activePatch.parent_path());
         std::filesystem::copy_file(signedPatch, activePatch);
+        const auto chainedPatch = output / "Package/updates/patch2.pdx";
+        std::filesystem::copy_file(secondPatch, chainedPatch);
         const auto signedDataRoot = fixture.path / "SignedOverlayUserData";
         const auto signedLog = signedDataRoot /
             ("Game " + px::crypto::Sha256Hex(startupManifest.manifest.gameId)) /
@@ -888,7 +903,7 @@ int main(int argc, char* argv[]) {
         suite.Require(signedProcess.Start(packagedPlayer, launchDirectory,
                                           signedDataRoot),
                       "Player launches with a signed active overlay");
-        suite.Require(WaitForLog(signedLog, "signed overlay=true") &&
+        suite.Require(WaitForLog(signedLog, "signed overlay=true count=2") &&
                           WaitForLog(signedLog,
                                      "Player presentation ready route=title"),
                       "Player mounts the signed overlay and reaches title");
@@ -898,6 +913,7 @@ int main(int argc, char* argv[]) {
         suite.Expect(signedProcess.CompletedExitCode() == 0,
                      "signed-overlay Player exits cleanly");
 
+        std::filesystem::remove(chainedPatch);
         std::filesystem::copy_file(
             unsignedPatch, activePatch,
             std::filesystem::copy_options::overwrite_existing);

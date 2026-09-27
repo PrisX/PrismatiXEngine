@@ -291,40 +291,42 @@ PlayerApp::Boot PlayerApp::LoadBootConfig(const bool allowOverlay) {
         return boot;
     }
     auto effectivePackage = parsed.manifest;
-    constexpr std::string_view overlayPath = "Package/updates/active.pdx";
     if (allowOverlay) {
-        std::error_code overlayError;
-        const auto status = std::filesystem::symlink_status(
-            std::filesystem::path(overlayPath), overlayError);
-        if (!overlayError && status.type() != std::filesystem::file_type::not_found) {
-            const auto verified = io::VerifySignedPackageOverlay(
-                std::filesystem::current_path(),
-                std::filesystem::path(overlayPath));
-            if (verified.valid) {
-                const auto target = sdk::detail::ParsePackageManifest(
-                    verified.targetManifestJson);
-                if (target.Valid()) {
-                    effectivePackage = target.manifest;
-                    boot.config.overlayArchive = std::string(overlayPath);
-                    boot.config.overlayTombstones = verified.tombstones;
-                    boot.overlayApplied = true;
-                }
-            }
-            if (!boot.overlayApplied)
-                diag::Emit(diag::Diagnostic{
-                    .severity = diag::Severity::Warning,
-                    .code = "PXPLAYER5014",
-                    .category = "Player.Boot",
-                    .message = "Single-file update was rejected; starting the base package",
-                    .details = verified.error});
-        } else if (overlayError &&
-                   overlayError != std::errc::no_such_file_or_directory) {
+        const auto chain = io::ResolveSignedPackageOverlayChain(
+            std::filesystem::current_path(),
+            std::filesystem::path("Package/updates"));
+        if (!chain.valid) {
             diag::Emit(diag::Diagnostic{
                 .severity = diag::Severity::Warning,
                 .code = "PXPLAYER5014",
                 .category = "Player.Boot",
-                .message = "Single-file update could not be inspected; starting the base package",
-                .details = overlayError.message()});
+                .message = "Single-file update was rejected; starting the base package",
+                .details = chain.error});
+        } else {
+            if (!chain.mounts.empty()) {
+                const auto target = sdk::detail::ParsePackageManifest(
+                    chain.targetManifestJson);
+                if (target.Valid()) {
+                    effectivePackage = target.manifest;
+                    for (const auto& mount : chain.mounts)
+                        boot.config.overlays.push_back(
+                            {PathToUtf8(mount.path), mount.tombstones});
+                    boot.overlayApplied = true;
+                }
+            }
+            if (!chain.ignoredFiles.empty()) {
+                std::string ignored;
+                for (const auto& name : chain.ignoredFiles) {
+                    if (!ignored.empty()) ignored += ", ";
+                    ignored += name;
+                }
+                diag::Emit(diag::Diagnostic{
+                    .severity = diag::Severity::Warning,
+                    .code = "PXPLAYER5014",
+                    .category = "Player.Boot",
+                    .message = "Single-file update was rejected or did not apply",
+                    .details = ignored});
+            }
         }
     }
     const auto& package = effectivePackage;
@@ -380,8 +382,9 @@ PlayerApp::Boot PlayerApp::LoadBootConfig(const bool allowOverlay) {
             boot.legacyPersistenceSecrets.push_back(reader.secret);
     }
     boot.valid = true;
-    PX_LOG_INFO("Packaged build: mounting {} content group(s), signed overlay={}",
-                boot.config.mountArchives.size(), boot.overlayApplied);
+    PX_LOG_INFO("Packaged build: mounting {} content group(s), signed overlay={} count={}",
+                boot.config.mountArchives.size(), boot.overlayApplied,
+                boot.config.overlays.size());
     return boot;
 }
 
