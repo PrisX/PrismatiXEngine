@@ -66,11 +66,12 @@ advances the count, while diagnostics remain in the compile result. The CLI
 uses this API for `validate`, `dev` and builds: human output is throttled, and
 `--json` streams every scene as a `PXCLI1103` progress record on stderr.
 In `dev`, `StoryProjectCompilationCache` reuses the compiled operations and
-source mappings for unchanged scenes after a Story edit. It reparses the index's
-scenes to check cross-scene labels and invalidates compiled scenes when those
-labels or shared compile inputs change. A `compile` progress event has
-`cached: true` when that scene was reused. This in-process cache does not persist
-between CLI runs and does not skip reading or parsing source files.
+source mappings for unchanged scenes after a Story edit. It also reuses their
+verified label sets, so a prose edit in one scene does not reparse every other
+scene. Changes to cross-scene labels or shared compile inputs reparse and
+recompile affected scenes. `parse` and `compile` progress events have
+`cached: true` when those phases were reused. The cache retains no parsed ASTs,
+does not persist between CLI runs, and does not skip reading source files.
 
 ## Readable Story with durable save identities
 

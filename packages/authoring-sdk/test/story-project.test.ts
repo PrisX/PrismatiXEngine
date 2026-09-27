@@ -45,8 +45,9 @@ test("Story compilation cache reuses only identical inputs and refreshes the rev
   assert.deepEqual(progress.filter((event) => event.phase === "compile")
     .map((event) => [event.sceneId, event.cached === true]),
     [["scene01", false], ["scene02", true]]);
-  assert.ok(progress.filter((event) => event.phase === "parse")
-    .every((event) => event.cached === undefined));
+  assert.deepEqual(progress.filter((event) => event.phase === "parse")
+    .map((event) => [event.sceneId, event.cached === true]),
+    [["scene01", false], ["scene02", true]]);
   const uncachedEdited = compileStoryProject({storyIndex, locale: "zh-TW",
     committedRevision: 3, sourceFiles: {...sourceFiles,
       "zh-TW/ch01/scene01.pxstory":
@@ -65,6 +66,9 @@ test("Story compilation cache reuses only identical inputs and refreshes the rev
   assert.deepEqual(progress.filter((event) => event.phase === "compile")
     .map((event) => [event.sceneId, event.cached === true]),
     [["scene01", false], ["scene02", true]]);
+  assert.deepEqual(progress.filter((event) => event.phase === "parse")
+    .map((event) => [event.sceneId, event.cached === true]),
+    [["scene01", false], ["scene02", true]]);
 
   progress.length = 0;
   const changedLabels = cache.compile({storyIndex, locale: "zh-TW",
@@ -77,6 +81,9 @@ test("Story compilation cache reuses only identical inputs and refreshes the rev
   assert.ok(progress.filter((event) => event.phase === "compile")
     .every((event) => event.cached !== true),
   "a changed cross-scene label set invalidates every dependent compile result");
+  assert.ok(progress.filter((event) => event.phase === "parse")
+    .every((event) => event.cached !== true),
+  "scenes are reparsed when changed labels require recompilation");
 
   progress.length = 0;
   const changedInputs = cache.compile({storyIndex, locale: "zh-TW", sourceFiles,
@@ -85,6 +92,32 @@ test("Story compilation cache reuses only identical inputs and refreshes the rev
   assert.ok(progress.filter((event) => event.phase === "compile")
     .every((event) => event.cached !== true),
   "changed shared compiler inputs invalidate all scene results");
+  assert.ok(progress.filter((event) => event.phase === "parse")
+    .every((event) => event.cached !== true),
+  "scenes are reparsed when changed inputs require recompilation");
+});
+
+test("Story cache compiles the source snapshot captured before progress callbacks", () => {
+  const sourceFiles = {
+    "zh-TW/ch01/scene01.pxstory": "*start\nFirst line.\n[end]\n",
+    "zh-TW/ch01/scene02.pxstory": "*start\nSecond line.\n[end]\n*aside\n[end]\n",
+  };
+  const cache = new StoryProjectCompilationCache();
+  const first = cache.compile({storyIndex, locale: "zh-TW", sourceFiles,
+    onProgress: (event) => {
+      if (event.phase === "parse" && event.sceneId === "scene01")
+        sourceFiles["zh-TW/ch01/scene02.pxstory"] =
+          "*start\nChanged during progress.\n[end]\n*aside\n[end]\n";
+    }});
+  assert.equal(first.valid, true, JSON.stringify(first.diagnostics));
+  assert.ok(first.runtimeIr?.operations.some((operation) =>
+    operation.text === "Second line."));
+  assert.ok(!first.runtimeIr?.operations.some((operation) =>
+    operation.text === "Changed during progress."));
+  const second = cache.compile({storyIndex, locale: "zh-TW", sourceFiles});
+  assert.equal(second.valid, true, JSON.stringify(second.diagnostics));
+  assert.ok(second.runtimeIr?.operations.some((operation) =>
+    operation.text === "Changed during progress."));
 });
 
 test("Story project compiler resolves cross-scene jump/call targets into one Runtime IR program", () => {

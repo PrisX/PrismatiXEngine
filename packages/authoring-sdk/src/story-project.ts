@@ -49,7 +49,7 @@ export interface StoryProjectProgress {
   readonly sourcePath?: string;
   readonly current: number;
   readonly total: number;
-  /** The phase was satisfied by a previously compiled, identical Story input. */
+  /** The phase reused a previously verified parse or compile result. */
   readonly cached?: boolean;
 }
 
@@ -118,30 +118,49 @@ function sameSceneCompileSnapshot(left: SceneCompileSnapshot, right: SceneCompil
     left.compileInputs === right.compileInputs && left.labels === right.labels;
 }
 
-// One changed scene keeps the other scenes' compiled operations and source
-// mappings. Exact source strings are compared, so a short hash cannot reuse
-// save identities after a collision. Parsed ASTs are not retained between
-// builds; commercial projects can have hundreds of thousands of nodes.
-class SceneCompilationCache {
-  private readonly entries = new Map<string, Map<string, {
-    readonly snapshot: SceneCompileSnapshot;
-    readonly result: StoryCompileResult;
-  }>>();
+interface CachedSceneCompilation {
+  readonly snapshot: SceneCompileSnapshot;
+  readonly labels: ReadonlySet<string>;
+  readonly stubSourceIds: ReadonlySet<string>;
+  readonly result: StoryCompileResult;
+}
 
-  compile(locale: string, sceneId: string, snapshot: SceneCompileSnapshot,
-    build: () => StoryCompileResult): {result: StoryCompileResult; cached: boolean} {
+// Exact source strings are compared, so a short hash cannot reuse save
+// identities after a collision. Keep labels and compiled output, but never
+// retain parsed ASTs between builds: commercial projects can have hundreds of
+// thousands of nodes.
+class SceneCompilationCache {
+  private readonly entries = new Map<string, Map<string, CachedSceneCompilation>>();
+
+  hasEntries(locale: string): boolean {
+    return (this.entries.get(locale)?.size ?? 0) > 0;
+  }
+
+  labels(locale: string, sceneId: string, path: string, source: string,
+    identityMap: string | undefined): ReadonlySet<string> | undefined {
+    const previous = this.entries.get(locale)?.get(sceneId);
+    return previous !== undefined && previous.snapshot.sourcePath === path &&
+      previous.snapshot.source === source &&
+      previous.snapshot.identityMap === identityMap ? previous.labels : undefined;
+  }
+
+  compiled(locale: string, sceneId: string,
+    snapshot: SceneCompileSnapshot): CachedSceneCompilation | undefined {
+    const previous = this.entries.get(locale)?.get(sceneId);
+    return previous !== undefined && sameSceneCompileSnapshot(previous.snapshot, snapshot)
+      ? previous : undefined;
+  }
+
+  remember(locale: string, sceneId: string, snapshot: SceneCompileSnapshot,
+    labels: ReadonlySet<string>, stubSourceIds: ReadonlySet<string>,
+    result: StoryCompileResult): void {
+    if (!result.valid || result.runtimeIr === undefined || result.sourceMap === undefined) return;
     let localeEntries = this.entries.get(locale);
     if (localeEntries === undefined) {
       localeEntries = new Map();
       this.entries.set(locale, localeEntries);
     }
-    const previous = localeEntries.get(sceneId);
-    if (previous !== undefined && sameSceneCompileSnapshot(previous.snapshot, snapshot))
-      return {result: previous.result, cached: true};
-    const result = build();
-    if (result.valid && result.runtimeIr !== undefined && result.sourceMap !== undefined)
-      localeEntries.set(sceneId, {snapshot, result});
-    return {result, cached: false};
+    localeEntries.set(sceneId, {snapshot, labels, stubSourceIds, result});
   }
 }
 
@@ -175,7 +194,15 @@ export class StoryProjectCompilationCache {
       };
     }
 
-    const result = compileStoryProjectInternal(context, this.scenes);
+    // The progress callback is user code. Compile the exact source values
+    // captured in the cache key even if that callback edits its input map.
+    const sourceFiles: Record<string, string> = Object.create(null) as Record<string, string>;
+    for (const [path, source, identityMap] of snapshot.sources) {
+      if (path === "") continue;
+      if (source !== undefined) sourceFiles[path] = source;
+      if (identityMap !== undefined) sourceFiles[`${path}.pxids.json`] = identityMap;
+    }
+    const result = compileStoryProjectInternal({...context, sourceFiles}, this.scenes);
     if (result.valid && result.runtimeIr !== undefined && result.sourceMap !== undefined)
       this.entries.set(context.locale, {snapshot, result});
     return result;
@@ -185,7 +212,9 @@ export class StoryProjectCompilationCache {
 interface ParsedScene {
   readonly descriptor: StoryIndexScene;
   readonly path: string;
-  readonly document: StoryDocument;
+  readonly source: string;
+  readonly identityMap: string | undefined;
+  readonly document?: StoryDocument;
   readonly labels: ReadonlySet<string>;
 }
 
@@ -301,18 +330,19 @@ function syntheticEnd(sceneId: string, sourceSpan: SourceSpan): StoryNode {
 
 function rewriteScene(
   scene: ParsedScene,
+  document: StoryDocument,
   scenesById: ReadonlyMap<string, ParsedScene>,
   extraDiagnostics: readonly AuthoringDiagnostic[],
 ): RewrittenScene {
-  const diagnostics: AuthoringDiagnostic[] = [...scene.document.diagnostics, ...extraDiagnostics];
+  const diagnostics: AuthoringDiagnostic[] = [...document.diagnostics, ...extraDiagnostics];
   const externalTargets = new Set<string>();
-  const firstSpan = scene.document.nodes[0]?.span ?? fallbackSpan(scene.path);
-  const lastSpan = scene.document.nodes.at(-1)?.span ?? firstSpan;
+  const firstSpan = document.nodes[0]?.span ?? fallbackSpan(scene.path);
+  const lastSpan = document.nodes.at(-1)?.span ?? firstSpan;
   const nodes: StoryNode[] = [
     syntheticLabel(scene.descriptor.id, sceneEntryTarget(scene.descriptor.id), "entry", firstSpan),
   ];
 
-  for (const node of scene.document.nodes) {
+  for (const node of document.nodes) {
     if (node.kind === "label" && node.name !== undefined) {
       nodes.push({...node, name: sceneLabelTarget(scene.descriptor.id, node.name)});
       continue;
@@ -376,6 +406,26 @@ function rewriteScene(
   };
 }
 
+function parseIndexedScene(source: string, sourcePath: string,
+  mapSource: string | undefined): {document: StoryDocument; labels: ReadonlySet<string>} {
+  let document = parseStory(source, sourcePath);
+  const mapPath = `${sourcePath}.pxids.json`;
+  if (mapSource === undefined && storyRequiresIdentityMap(source)) {
+    document = {...document, diagnostics: [...document.diagnostics,
+      issue("PXSTORY1411", "Story requires its external identity map", mapPath)]};
+  } else if (mapSource !== undefined) {
+    try { document = applyStoryIdentityMap(document, JSON.parse(mapSource) as unknown, mapPath); }
+    catch (error) {
+      document = {...document, diagnostics: [...document.diagnostics,
+        issue("PXSTORY1410", "Story identity map is not valid JSON", mapPath, String(error))]};
+    }
+  }
+  const labels = new Set(document.nodes
+    .filter((node) => node.kind === "label" && node.name !== undefined)
+    .map((node) => node.name as string));
+  return {document, labels};
+}
+
 function compileStoryProjectInternal(context: StoryProjectCompileContext,
   sceneCache?: SceneCompilationCache): StoryCompileResult {
   const diagnostics: AuthoringDiagnostic[] = [];
@@ -383,8 +433,11 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
   const documentId = context.documentId ?? context.storyIndex.id;
   const scenesById = new Map<string, ParsedScene>();
   const seenSceneIds = new Set<string>();
+  const reportParseOnDiscovery = sceneCache === undefined ||
+    !sceneCache.hasEntries(context.locale);
 
   for (const [index, descriptor] of context.storyIndex.scenes.entries()) {
+    let cached = false;
     try {
       if (seenSceneIds.has(descriptor.id)) {
         diagnostics.push(issue("PXSTORY1301", `Duplicate Story scene id: ${descriptor.id}`, indexPath, descriptor.id));
@@ -402,30 +455,25 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
         diagnostics.push(issue("PXSTORY1303", `Story source is unavailable: ${sourcePath}`, sourcePath, descriptor.id));
         continue;
       }
-      let document = parseStory(source, sourcePath);
-      const mapPath = `${sourcePath}.pxids.json`;
-      const mapSource = context.sourceFiles[mapPath];
-      if (mapSource === undefined && storyRequiresIdentityMap(source)) {
-        document = {...document, diagnostics: [...document.diagnostics,
-          issue("PXSTORY1411", "Story requires its external identity map", mapPath)]};
-      } else if (mapSource !== undefined) {
-        try { document = applyStoryIdentityMap(document, JSON.parse(mapSource) as unknown, mapPath); }
-        catch (error) {
-          document = {...document, diagnostics: [...document.diagnostics,
-            issue("PXSTORY1410", "Story identity map is not valid JSON", mapPath, String(error))]};
-        }
+      const mapSource = context.sourceFiles[`${sourcePath}.pxids.json`];
+      const labels = sceneCache?.labels(context.locale, descriptor.id,
+        sourcePath, source, mapSource);
+      if (labels !== undefined) {
+        scenesById.set(descriptor.id, {descriptor, path: sourcePath,
+          source, identityMap: mapSource, labels});
+        cached = true;
+      } else {
+        scenesById.set(descriptor.id, {descriptor, path: sourcePath,
+          source, identityMap: mapSource,
+          ...parseIndexedScene(source, sourcePath, mapSource)});
       }
-      const labels = new Set(
-        document.nodes
-          .filter((node) => node.kind === "label" && node.name !== undefined)
-          .map((node) => node.name as string),
-      );
-      scenesById.set(descriptor.id, {descriptor, path: sourcePath, document, labels});
     } finally {
-      context.onProgress?.({phase: "parse", locale: context.locale,
-        sceneId: descriptor.id, ...(descriptor.sources[context.locale] === undefined ? {}
-          : {sourcePath: descriptor.sources[context.locale]}),
-        current: index + 1, total: context.storyIndex.scenes.length});
+      if (reportParseOnDiscovery)
+        context.onProgress?.({phase: "parse", locale: context.locale,
+          sceneId: descriptor.id, ...(descriptor.sources[context.locale] === undefined ? {}
+            : {sourcePath: descriptor.sources[context.locale]}),
+          current: index + 1, total: context.storyIndex.scenes.length,
+          ...(cached ? {cached: true} : {})});
     }
   }
 
@@ -446,6 +494,41 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
     labels: JSON.stringify([...scenesById].map(([id, scene]) =>
       [id, [...scene.labels].sort()])),
   };
+  const sceneSnapshot = (scene: ParsedScene): SceneCompileSnapshot => ({
+    sourcePath: scene.path,
+    source: scene.source,
+    identityMap: scene.identityMap,
+    descriptor: JSON.stringify([scene.descriptor.id,
+      scene.descriptor.identityNamespace, scene.descriptor.requiredLabels]),
+    ...sharedSnapshot!,
+  });
+
+  if (!reportParseOnDiscovery) {
+    // Cached labels let us resolve all cross-scene targets first. If any
+    // shared input or target label changed, materialize only the documents
+    // that need recompilation before reporting the parse phase.
+    for (const [index, descriptor] of context.storyIndex.scenes.entries()) {
+      let cached = false;
+      try {
+        const scene = scenesById.get(descriptor.id);
+        if (scene === undefined || scene.descriptor !== descriptor) continue;
+        if (scene.document === undefined &&
+            sceneCache?.compiled(context.locale, descriptor.id,
+              sceneSnapshot(scene)) === undefined) {
+          scenesById.set(descriptor.id, {...scene,
+            ...parseIndexedScene(scene.source, scene.path, scene.identityMap)});
+        } else {
+          cached = scene.document === undefined;
+        }
+      } finally {
+        context.onProgress?.({phase: "parse", locale: context.locale,
+          sceneId: descriptor.id, ...(descriptor.sources[context.locale] === undefined ? {}
+            : {sourcePath: descriptor.sources[context.locale]}),
+          current: index + 1, total: context.storyIndex.scenes.length,
+          ...(cached ? {cached: true} : {})});
+      }
+    }
+  }
 
   for (const [index, descriptor] of context.storyIndex.scenes.entries()) {
     let cached = false;
@@ -464,28 +547,35 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
         }
       }
 
-      const rewritten = rewriteScene(scene, scenesById, sceneDiagnostics);
-      const compile = () => compileStory(rewritten.document, {
-        documentId: descriptor.identityNamespace ?? `${documentId}:${descriptor.id}`,
-        locale: context.locale,
-        ...(context.committedRevision === undefined ? {} : {committedRevision: context.committedRevision}),
-        ...(context.characters === undefined ? {} : {characters: context.characters}),
-        ...(context.game === undefined ? {} : {game: context.game}),
-        ...(context.extensions === undefined ? {} : {extensions: context.extensions}),
-        ...(context.resources === undefined ? {} : {resources: context.resources}),
-        ...(context.resourceAssets === undefined ? {} : {resourceAssets: context.resourceAssets}),
-      });
-      const selected = sceneCache === undefined || sharedSnapshot === undefined ? undefined
-        : sceneCache.compile(context.locale, descriptor.id, {
-          sourcePath: scene.path,
-          source: context.sourceFiles[scene.path],
-          identityMap: context.sourceFiles[`${scene.path}.pxids.json`],
-          descriptor: JSON.stringify([descriptor.id, descriptor.identityNamespace,
-            descriptor.requiredLabels]),
-          ...sharedSnapshot,
-        }, compile);
-      const compiled = selected?.result ?? compile();
-      cached = selected?.cached ?? false;
+      const snapshot = sceneCache === undefined ? undefined : sceneSnapshot(scene);
+      const selected = snapshot === undefined ? undefined :
+        sceneCache?.compiled(context.locale, descriptor.id, snapshot);
+      let compiled: StoryCompileResult;
+      let stubSourceIds: ReadonlySet<string>;
+      if (selected !== undefined) {
+        compiled = selected.result;
+        stubSourceIds = selected.stubSourceIds;
+        cached = true;
+      } else {
+        // The second parse pass materializes documents with cache misses.
+        // An uncached direct compile has already parsed every scene.
+        const document = scene.document;
+        if (document === undefined) throw new Error(`Story scene was not parsed: ${descriptor.id}`);
+        const rewritten = rewriteScene(scene, document, scenesById, sceneDiagnostics);
+        compiled = compileStory(rewritten.document, {
+          documentId: descriptor.identityNamespace ?? `${documentId}:${descriptor.id}`,
+          locale: context.locale,
+          ...(context.committedRevision === undefined ? {} : {committedRevision: context.committedRevision}),
+          ...(context.characters === undefined ? {} : {characters: context.characters}),
+          ...(context.game === undefined ? {} : {game: context.game}),
+          ...(context.extensions === undefined ? {} : {extensions: context.extensions}),
+          ...(context.resources === undefined ? {} : {resources: context.resources}),
+          ...(context.resourceAssets === undefined ? {} : {resourceAssets: context.resourceAssets}),
+        });
+        stubSourceIds = rewritten.stubSourceIds;
+        if (snapshot !== undefined) sceneCache?.remember(context.locale, descriptor.id,
+          snapshot, scene.labels, stubSourceIds, compiled);
+      }
       diagnostics.push(...compiled.diagnostics);
       for (const dependency of compiled.resourceDependencies ?? [])
         resourceDependencies.add(dependency);
@@ -495,7 +585,7 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
       // elements as call arguments and overflows its argument stack around the
       // same scale that our Runtime IR contract explicitly supports.
       for (const operation of compiled.runtimeIr.operations) {
-        if (rewritten.stubSourceIds.has(operation.sourceId)) continue;
+        if (stubSourceIds.has(operation.sourceId)) continue;
         const owner = operationOwners.get(operation.operationId);
         if (owner !== undefined) diagnostics.push(issue(
           "PXSTORY1308", `Duplicate Story operation identity shared by ${owner} and ${descriptor.id}`,
@@ -504,7 +594,7 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
         operations.push(operation);
       }
       for (const mapping of compiled.sourceMap.mappings) {
-        if (!rewritten.stubSourceIds.has(mapping.sourceId)) mappings.push(mapping);
+        if (!stubSourceIds.has(mapping.sourceId)) mappings.push(mapping);
       }
     } finally {
       context.onProgress?.({phase: "compile", locale: context.locale,

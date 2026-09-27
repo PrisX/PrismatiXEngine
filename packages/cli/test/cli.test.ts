@@ -426,7 +426,7 @@ test("dev reuses verified media and Story inputs without hiding changes", {timeo
   assert.equal(thirdIr.committedRevision, 3);
   assert.deepEqual(events().filter((event) => event.code === "PXCLI1103")
     .slice(8).map((event) => event.cached),
-    [undefined, undefined, undefined, true]);
+    [undefined, true, undefined, true]);
 
   await write(mediaPath, "media-bravo"); // same size; reuse must compare content
   const fourth = await waitForRevision(4);
