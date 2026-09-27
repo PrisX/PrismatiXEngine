@@ -16,7 +16,8 @@ function legacyHash(input: string): string {
 
 test("stable 64-bit IDs remain byte-for-byte compatible with legacy hashes", () => {
   const examples = ["", "a", "Story/scene-001.pxstory:日本語", "雪🌸台詞",
-    "operation\0dialogue\0line", "a".repeat(100_000), "\uD800"];
+    "operation\0dialogue\0line", "a".repeat(100_000), "\uD800",
+    `${"a".repeat(4095)}🌸`, `${"中".repeat(1365)}🌸`];
   for (const example of examples)
     assert.equal(fnv1a64(example), legacyHash(example));
 

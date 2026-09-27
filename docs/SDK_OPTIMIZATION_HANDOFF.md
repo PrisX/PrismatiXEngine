@@ -4,6 +4,7 @@
 
 ### 2026-09-27 後續進度
 
+- 穩定 ID 的 FNV-1a 64-bit 仍保留原字節與兩個 32-bit limb 運算；新版用固定 4 KiB `TextEncoder.encodeInto` 緩衝區避免每個 ID 配置一份 UTF-8 陣列，舊環境仍退回 `encode`。舊 BigInt 演算法 1,000 個混合 Unicode 樣本、10 萬字長輸入、緩衝邊界後的 surrogate pair 逐值相等；Authoring SDK 157/157、四語 31,339 資源 `validate --runtime` 通過。接在目錄式存在檢查改善後，同機單次驗證約 9.78 秒（前一次約 10.73 秒），快取／負載條件未固定，不能當固定加速率。
 - 大型四語專案的 `validate --runtime` 重新量測：原版 31,339 資源約 13.00 秒，CPU profile 有約 1,282 個 `existsSync` self samples／8,647 總 samples。CLI 現在每次同步編譯對資源檢查按父目錄建立檔名集合，大小寫不一致、符號連結與讀目錄失敗仍回退逐檔 `existsSync`；每次編譯重建集合，實際 artifact 發布仍重驗檔案 bytes。修改後同機一次約 10.73 秒；再跑 profile 有 1 個 `existsSync` self sample／7,377 總 samples，`npm run cli:test` 105/105 與四語 `validate --runtime` 通過。快取及系統負載可能不同，不能把兩個單次耗時宣稱為穩定加速率；canonical JSON 和 Story 編譯仍是下一層熱點。
 - 單一大型變更資源的 overlay 路徑新增可調整大小的原生壓力測試：先產生 32 MiB 的 MP4 型資源，僅改中央 1 byte，再封兩個完整小型發行包、產單檔 PDX、獨立驗證與 seek 讀回改動位元；以 `PRISMATIX_PACKAGER_RSS_BYTES=268435456` 改跑 256 MiB 也通過 Native Packager Contract 1/1（73.29 秒），既有測試的程序峰值工作集增量 64 MiB 上限亦通過。暫存測試資料由 fixture 清理；這是合成單資源，不等於 8 GB／31,000 資源的實際發行版時間、磁碟峰值或壓縮大 entry 驗收。
 - 跨目錄獨立發行版新增 CLI `build`／`pack`／`run --previous-package <舊發行目錄>`：驗證舊包及同遊戲／發行者後，將其作為原生 Packager 的讀取來源，繼承相容舊 fingerprint 與舊金鑰 reader；舊目錄不改動，新輸出須為新建或空目錄，打包期間舊 manifest 改動會阻止發布。CLI 105/105 通過，新增測試涵蓋驗證順序、來源傳遞、錯誤遊戲／公鑰、佔用輸出及來源改動。隨後 Native Packager Contract 1/1 驗獨立新版讀取舊加密 slot 且舊包不變，Player Catalog Native Acceptance 1/1 驗另目錄完整新版 Player 載入舊 fingerprint／舊金鑰 slot，並完整走完 UI 旅程；皆為合成資料，真實舊版玩家資料仍待驗。
