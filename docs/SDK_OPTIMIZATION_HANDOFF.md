@@ -12,6 +12,7 @@
 - 使用者已選擇 Player 自動載入更新採「基底發行包固定發行者公鑰、驗簽且 exact-base 才掛載」。unsigned `patch.pdx` 仍不可自動套用。
 - 後續已加入 `pack`／發行版 `build --publisher-key <file>`：公鑰寫入 package manifest 與 package fingerprint，overlay 建立／驗證拒絕換鑰；Native Packager contract 與 CLI 104/104 通過。
 - 再後續加入 P-256 overlay keygen、revision 2 簽章與 `--signing-key`／`--require-signature`；Player 在 `Package/updates` 尋找唯一 signed exact-base 更新鏈，依依賴順序掛載 `patch.pdx`、`patch2.pdx` 等，檔名不決定順序；失敗回基底，基底 archiveKey 不被目標 manifest 取代。再加入 revision 3 `--optional-id adult` 簽章選裝包：預設關閉，使用者以 `PrismatiXPlayer --optional-pack adult on|off` 寫入 per-user 設定並重啟生效，且只對目前主更新版本適用。暫時一次只支援一個啟用中的選裝包、尚無遊戲內開關。
+- 最新針對性驗收：Native `PrismatiX.SDK.PackagerContract` 與 `PrismatiX.Player.CatalogNativeAcceptance` 2/2 通過，後者包含兩段主更新、選裝包預設關閉／指令啟用／停用、unsigned 拒絕；`npm run cli:build` 和 `npm run cli:test` 104/104 通過。停用的選裝包現在只讀小型中繼資料，不驗全量 payload；損壞簽章的啟用選裝包會被略過，主更新繼續運作。這些測試仍不是實際 8 GB 封裝量測或舊存檔遷移驗收。
 - Senren `.prismatix` 的舊驗證 artifact 約 8.01 GiB、現有無 ownership marker 的 `artifact` 約 6.67 GiB，以及舊 v28 截圖約 0.05 GiB，均已確認可重建／無腳本引用（現有 `artifact` 為 `pack --artifact` 不可直接使用）。此環境的自動審核仍阻擋對精確路徑的遞迴刪除，**尚未清理任何目錄**。`system-ui-extract`、`motion-source`、ID backup 和舊玩家資料應保留。
 
 交接基準：Engine `1948fac`（`feat: create verified single-file PDX overlays`）；SenrenBankaPSX `61337a8`（`docs: record verified overlay creation status`）。本文件另外提交；若接手時 HEAD 已不同，先核對變更而不是假設這兩個 SHA 仍是最新。
@@ -67,7 +68,7 @@ Engine `docs/package-overlay.md` 是格式規格和安全邊界。這一輪已�
 - `packages/cli/src/cli.ts`：`prismatix create-overlay --base ... --target ... --output ...` 和 `verify-overlay --base ... --patch ...`；`packages/cli/test/overlay-command.test.ts` 測 CLI→native 參數與輸出。
 - Native contract 以兩個真正打包版本（含加密舊包）測新增、覆蓋、刪除-only、進度、既有輸出保護、runtime 變更拒絕；VFS contract 測 streaming writer。文件已更新 `docs/package-overlay.md`、`docs/getting-started.md`、移植案 `docs/SDK_FEEDBACK.md`。
 
-最近一次驗證（2026-09-27，同一工作樹）：native 三項 targeted CTest 3/3 通過；`npm run cli:test` 104/104 通過。之前同一組改動曾 `npm run cli:build` 通過。**這不是 Player 自動套用的測試**。目前公開且可直接更新發行版的仍是目錄 `create-patch`／`apply-patch` 流程。
+此段原始單檔產製階段的歷史驗證（2026-09-27）：native 三項 targeted CTest 3/3 通過；`npm run cli:test` 104/104 通過。當時尚無 Player 自動套用；現在已有上方所列的 signed Player E2E。目錄 `create-patch`／`apply-patch` 流程仍可使用。
 
 ## 未完成工作：下一位 agent 的建議順序
 
