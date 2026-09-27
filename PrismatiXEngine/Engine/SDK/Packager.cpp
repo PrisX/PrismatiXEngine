@@ -268,6 +268,35 @@ bool CryptoReady() {
     return ready;
 }
 
+bool ValidPublisherPublicKey(const std::string_view hex) {
+    if (hex.size() != 130 || !hex.starts_with("04") || !CryptoReady())
+        return false;
+    std::array<std::uint8_t, 65> encoded{};
+    const auto nibble = [](const char value) -> int {
+        if (value >= '0' && value <= '9') return value - '0';
+        if (value >= 'a' && value <= 'f') return value - 'a' + 10;
+        return -1;
+    };
+    for (std::size_t index = 0; index < encoded.size(); ++index) {
+        const auto high = nibble(hex[index * 2]);
+        const auto low = nibble(hex[index * 2 + 1]);
+        if (high < 0 || low < 0) return false;
+        encoded[index] = static_cast<std::uint8_t>((high << 4) | low);
+    }
+    psa_key_attributes_t attributes = psa_key_attributes_init();
+    psa_set_key_type(&attributes, PSA_KEY_TYPE_ECC_PUBLIC_KEY(
+                                      PSA_ECC_FAMILY_SECP_R1));
+    psa_set_key_bits(&attributes, 256);
+    psa_set_key_usage_flags(&attributes, PSA_KEY_USAGE_VERIFY_HASH);
+    psa_set_key_algorithm(&attributes, PSA_ALG_ECDSA(PSA_ALG_SHA_256));
+    mbedtls_svc_key_id_t keyId = MBEDTLS_SVC_KEY_ID_INIT;
+    const auto imported = psa_import_key(&attributes, encoded.data(),
+                                         encoded.size(), &keyId);
+    psa_reset_key_attributes(&attributes);
+    if (imported != PSA_SUCCESS) return false;
+    return psa_destroy_key(keyId) == PSA_SUCCESS;
+}
+
 std::optional<Key> Sha256Bytes(const std::uint8_t* data, const std::size_t size) {
     if (!CryptoReady()) return std::nullopt;
     Key digest{};
@@ -1773,15 +1802,9 @@ ValidationResult Validate(const PackageRequest& request,
                       "archiveShards must be an integer from 1 to 64");
     }
     if (!request.publisherPublicKey.empty() &&
-        (request.publisherPublicKey.size() != 130 ||
-         !request.publisherPublicKey.starts_with("04") ||
-         !std::ranges::all_of(request.publisherPublicKey,
-                              [](const unsigned char character) {
-                                  return std::isdigit(character) ||
-                                         (character >= 'a' && character <= 'f');
-                              })))
+        !ValidPublisherPublicKey(request.publisherPublicKey))
         AddDiagnostic(diagnostics, "PXPKG1243",
-                      "publisherPublicKey must be a lowercase SEC1 P-256 point");
+                      "publisherPublicKey must be a valid lowercase SEC1 P-256 point");
 
     std::error_code error;
     const auto projectRoot = WeakCanonical(request.projectRoot, error);

@@ -947,6 +947,13 @@ int main() {
                          HasDiagnostic(invalid, "PXPKG1243") &&
                          !std::filesystem::exists(pinned.outputDir),
                      "invalid publisher key fails before a distribution is written");
+        pinned.publisherPublicKey = "04" + std::string(128, '0');
+        pinned.outputDir = fixture.path / "Build/OffCurvePublisherKey";
+        const auto offCurve = px::sdk::RunPackager(pinned);
+        suite.Expect(!offCurve.Completed() &&
+                         HasDiagnostic(offCurve, "PXPKG1243") &&
+                         !std::filesystem::exists(pinned.outputDir),
+                     "a correctly shaped off-curve point is rejected");
     });
 
     suite.Run("StableArchiveShardsMountAndReuseTheirOwnCaches", [&] {
