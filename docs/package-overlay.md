@@ -42,6 +42,10 @@ Invalid or stale candidates are ignored. If two valid updates target the same
 version, Player rejects the ambiguous chain and starts the base package.
 It also retries the base package if Runtime initialization of an accepted
 overlay fails. The installed update file is never modified by Player.
+During chain discovery, Player reads each PDX's small manifest once and uses
+its claimed base fingerprint to select candidates for the current version.
+That claim is only a routing hint: selected candidates still undergo full
+signature, exact-document, and changed-resource verification before mounting.
 
 ## Publishing an optional pack
 

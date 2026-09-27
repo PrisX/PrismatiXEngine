@@ -1086,6 +1086,27 @@ int main() {
         suite.Expect(withUnsigned.valid && withUnsigned.mounts.size() == 2 &&
                          withUnsigned.ignoredFiles.size() == 1,
                      "unsigned file is ignored without hiding a valid chain");
+        px::io::Archive mainArchive;
+        suite.Require(mainArchive.Open(px::PathToUtf8(patch)),
+                      "signed PDX opens for an exact-base signature check");
+        const auto signedSignature = mainArchive.Read(
+            px::io::kPackageOverlaySignatureUri);
+        suite.Require(signedSignature && signedSignature->size() == 64,
+                      "signed PDX has a publisher signature");
+        auto damagedMainBytes = Read(patch);
+        const auto signedSignatureOffset = damagedMainBytes.find(std::string(
+            signedSignature->begin(), signedSignature->end()));
+        suite.Require(signedSignatureOffset != std::string::npos,
+                      "main signature can be located in the PDX fixture");
+        damagedMainBytes[signedSignatureOffset] ^= 1;
+        Write(updates / "bad-signature.pdx", damagedMainBytes);
+        const auto withDamagedMain = px::io::ResolveSignedPackageOverlayChain(
+            signedBase, updates);
+        suite.Expect(withDamagedMain.valid &&
+                         withDamagedMain.mounts.size() == 2 &&
+                         withDamagedMain.ignoredFiles.size() == 2,
+                     "matching base hint cannot bypass the main update signature");
+        std::filesystem::remove(updates / "bad-signature.pdx");
 
         Write(root / "Content/Overlay/adult.txt", "optional adult content");
         const auto adultTarget = fixture.path / "Build/SignedOverlayAdultTarget";

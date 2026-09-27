@@ -669,23 +669,35 @@ PackageOverlayChain ResolveSignedPackageOverlayChain(
     if (error) return fail("Updates directory cannot be listed");
     std::ranges::sort(candidates);
     if (candidates.empty()) return {.valid = true};
-    // This is only a routing hint. Never mount an optional candidate until the
-    // full signed verifier checks the same metadata and every changed entry.
-    std::vector<std::optional<std::string>> optionalHints;
-    optionalHints.reserve(candidates.size());
+    // These are untrusted routing hints. An exact-base candidate still needs
+    // the full signature, document, and changed-resource verification below.
+    // Skipping a different base avoids re-reading every stale PDX at each
+    // depth of a large update chain.
+    struct CandidateHint {
+        std::string baseFingerprint;
+        std::optional<std::string> optionalId;
+    };
+    std::vector<CandidateHint> hints;
+    hints.reserve(candidates.size());
     for (const auto& candidate : candidates) {
         Archive archive;
         if (!archive.Open(px::PathToUtf8(candidate))) {
-            optionalHints.emplace_back();
+            hints.emplace_back();
             continue;
         }
         const auto text = ReadBoundedArchiveText(
             archive, kPackageOverlayManifestUri, 16ull * 1024ull);
         if (!text) {
-            optionalHints.emplace_back();
+            hints.emplace_back();
             continue;
         }
         const Json metadata = Json::parse(*text, nullptr, false);
+        CandidateHint hint;
+        if (metadata.is_object() &&
+            metadata.contains("basePackageFingerprint") &&
+            metadata["basePackageFingerprint"].is_string())
+            hint.baseFingerprint =
+                metadata["basePackageFingerprint"].get<std::string>();
         if (metadata.is_object() &&
             metadata.contains("schemaRevision") &&
             metadata["schemaRevision"].is_number_integer() &&
@@ -696,10 +708,8 @@ PackageOverlayChain ResolveSignedPackageOverlayChain(
             metadata.contains("optionalId") &&
             metadata["optionalId"].is_string() &&
             ValidOptionalPackId(metadata["optionalId"].get<std::string>()))
-            optionalHints.emplace_back(
-                metadata["optionalId"].get<std::string>());
-        else
-            optionalHints.emplace_back();
+            hint.optionalId = metadata["optionalId"].get<std::string>();
+        hints.push_back(std::move(hint));
     }
 
     auto currentManifest = ReadBoundedRegularFile(
@@ -725,7 +735,9 @@ PackageOverlayChain ResolveSignedPackageOverlayChain(
     for (std::size_t depth = 0; depth < candidates.size(); ++depth) {
         std::optional<std::pair<std::size_t, PackageOverlayVerification>> next;
         for (std::size_t index = 0; index < candidates.size(); ++index) {
-            if (consumed[index] || optionalHints[index]) continue;
+            if (consumed[index] || hints[index].optionalId ||
+                hints[index].baseFingerprint !=
+                    ancestors.back().fingerprint) continue;
             auto verified = VerifySignedPackageOverlayFromDocuments(
                 *currentManifest, *currentIndex, candidates[index]);
             if (!verified.valid) continue;
@@ -763,8 +775,10 @@ PackageOverlayChain ResolveSignedPackageOverlayChain(
     if (!enabledOptionalPackId.empty()) {
         std::optional<std::pair<std::size_t, PackageOverlayVerification>> selected;
         for (std::size_t index = 0; index < candidates.size(); ++index) {
-            if (consumed[index] || !optionalHints[index] ||
-                *optionalHints[index] != enabledOptionalPackId) continue;
+            if (consumed[index] || !hints[index].optionalId ||
+                *hints[index].optionalId != enabledOptionalPackId ||
+                hints[index].baseFingerprint !=
+                    result.mainPackageFingerprint) continue;
             auto verified = VerifySignedPackageOverlayFromDocuments(
                 *currentManifest, *currentIndex, candidates[index]);
             if (!verified.valid ||
@@ -784,8 +798,8 @@ PackageOverlayChain ResolveSignedPackageOverlayChain(
     }
     for (std::size_t index = 0; index < candidates.size(); ++index)
         if (!consumed[index] &&
-            (!optionalHints[index] ||
-             *optionalHints[index] == enabledOptionalPackId))
+            (!hints[index].optionalId ||
+             *hints[index].optionalId == enabledOptionalPackId))
             result.ignoredFiles.push_back(px::PathToUtf8(
                 candidates[index].filename()));
     result.valid = true;
