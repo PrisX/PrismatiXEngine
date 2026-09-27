@@ -1568,14 +1568,6 @@ static PackageOverlayBuildResult CreatePackageOverlayFromPlanImpl(
             !sources.emplace(source.uri, &source).second)
             return fail("Planned source differs from its content index: " +
                         source.uri);
-        if (!source.source.empty()) {
-            error.clear();
-            const auto canonicalSource =
-                std::filesystem::canonical(source.source, error);
-            if (error || !ExistingDirectoryIsWithin(
-                             canonicalSource.parent_path(), artifact))
-                return fail("Planned source escapes the artifact: " + source.uri);
-        }
     }
     if (!RuntimeInputsMatchBase(base, installedBaseParsed.manifest,
                                 playerExecutable))
@@ -1588,6 +1580,21 @@ static PackageOverlayBuildResult CreatePackageOverlayFromPlanImpl(
             old->second.fingerprint != resource.fingerprint ||
             old->second.size != resource.size)
             changed.push_back(resource);
+    }
+    // AllInputs planning checked every artifact byte. The overlay writer only
+    // opens changed sources; unchanged entries are supplied by the verified
+    // base. Re-resolve the sources that can actually enter the new PDX so an
+    // artifact with tens of thousands of unchanged files avoids another full
+    // filesystem canonicalization pass.
+    for (const auto& resource : changed) {
+        const auto* source = sources.at(resource.uri);
+        if (source->source.empty()) continue;
+        error.clear();
+        const auto canonicalSource =
+            std::filesystem::canonical(source->source, error);
+        if (error || !ExistingDirectoryIsWithin(
+                         canonicalSource.parent_path(), artifact))
+            return fail("Planned source escapes the artifact: " + resource.uri);
     }
     std::uint64_t removed = 0;
     for (const auto& [uri, resource] : *baseEntries) {

@@ -49,7 +49,9 @@ shards through publication. Other platforms keep the two stages sequential.
 This path fully checks the artifact inputs, verifies the complete base
 distribution, confirms the selected Player and runtime libraries match the
 base, pins the base manifest used while planning, and streams only changed
-resources into the patch. It does not write a
+resources into the patch. After the full input check, it re-resolves artifact
+paths only for resources whose bytes will enter the new PDX; unchanged entries
+are supplied by the verified base. It does not write a
 second multi-gigabyte distribution. The target manifest and content index
 are computed by the same Packager planner used for a complete package; a
 later v2 built from that exact artifact with `--previous-package v1`, the

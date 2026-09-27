@@ -48,3 +48,5 @@
 | 同上，另持有 Windows 基底唯讀 handle | 40.250 秒 | 2／0 | 705,150,976 bytes |
 
 三次均回報 268,435,588 changed raw bytes，沒有產生 PDX；最後兩次使用同一份 artifact 和基底，僅 Native Packager 版本不同。原生契約另外驗證並行預檢與既有規劃計數相同、正式簽章 PDX 可獨立驗證、artifact 來源改動被拒，且 Windows 分片在驗證回呼中無法被寫入。Release Packager Contract／Runtime Resources targeted CTest 2/2 通過。不同時間的單次暖快取量測不構成一般機器 SLA；此改動沒有建立可跳過完整讀驗的 cache。
+
+2026-09-28 續測同一份 D: NTFS artifact／base：先以更新前 Release Packager 重跑 `create-overlay --check`，總耗時 38.890 秒；後段最後一筆 `archive` 進度事件在 32.312 秒。發現 AllInputs 規劃已對每個 artifact 來源做 canonicalization，overlay 寫入只會打開變更項，卻在規劃後對 31,756 筆來源再做一輪 canonicalization。將這道後段檢查限於變更來源後，重編 Release Packager，同一命令耗時 33.140 秒，最後一筆 `archive` 事件在 32.125 秒。兩次的 `scan-artifact` 起迄約 0.36–2.3／2.5 秒、`validate-hash` 結束約 19.5／19.3 秒、`verify-base` 結束約 22.2／22.0 秒，改善集中在規劃後段；新跑的 CLI exit 0。Release Packager Contract 1/1 通過，新增測試確保變更來源改指 artifact 外的同內容檔時仍拒絕。這是兩次相鄰的暖快取樣本，未量新跑的 RSS，不能外推一般 SLA；每次仍完整雜湊 artifact 並驗證基底所有 PDX。

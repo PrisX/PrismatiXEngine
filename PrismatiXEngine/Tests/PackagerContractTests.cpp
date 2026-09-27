@@ -1081,6 +1081,22 @@ int main() {
                              Read(root / "Content/Overlay/signed.txt").size() &&
                          !std::filesystem::exists(previewPath),
                      "fully verified direct overlay preview reports exact raw changes without writing");
+        auto escapedChangedPlan = directPlan;
+        const auto outsideArtifact = fixture.path / "outside-direct-overlay.txt";
+        Write(outsideArtifact, Read(root / "Content/Overlay/signed.txt"));
+        for (auto& resource : escapedChangedPlan.resources)
+            if (resource.uri == "Content/Overlay/signed.txt")
+                resource.source = outsideArtifact;
+        const auto escapedPreviewPath = fixture.path / "escaped-direct-overlay.pdx";
+        const auto escapedPreview = px::io::CreatePackageOverlayFromPlan(
+            signedBase, root, escapedChangedPlan,
+            targetRequest.playerExecutable, escapedPreviewPath,
+            {}, keyFile, {}, {}, true);
+        suite.Expect(!escapedPreview.planned &&
+                         escapedPreview.error.find("escapes the artifact") !=
+                             std::string::npos &&
+                         !std::filesystem::exists(escapedPreviewPath),
+                     "direct overlay still rejects changed sources outside the artifact");
         const auto concurrentPreviewPath =
             fixture.path / "planned-concurrent-overlay.pdx";
         const auto concurrentPreview = px::io::CreatePackageOverlayFromRequest(

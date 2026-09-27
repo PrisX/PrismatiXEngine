@@ -4,6 +4,8 @@
 
 ### 2026-09-27—28 後續進度
 
+- **直接 overlay 的規劃後路徑複查改只處理變更來源。** AllInputs 仍完整雜湊 artifact，基底 PDX 仍逐項完整驗證；後段不再對 31,756 筆未變來源重做 filesystem canonicalization，寫入 PDX 前會複查真正變更的來源，越出 artifact 者拒絕。相同 D: NTFS 暖快取唯讀 `create-overlay --check` 兩次相鄰量測 38.890→33.140 秒；前段 `validate-hash`／`verify-base` 結束時間相近，主要差異在規劃後段。Release Packager Contract 1/1 通過。這尚非依賴級增量建置，詳見 [大型媒體 overlay 驗收](SDK_LARGE_MEDIA_OVERLAY_ACCEPTANCE.md)。
+
 - **TSX 編譯後診斷已有 JSX 節點位置。** CLI 的 TSX／JSX 執行路徑使用 TypeScript JSX dev 呼叫點，Authoring lowering 將來源位置對應到 canonical UI node index；JSON schema／語意、跨層 UI binding 與缺失資源的診斷可回指專案內原始 JSX 節點，包括匯入的元件檔。只有來源文字與該 JSX 呼叫點對得上才附位置；這是節點位置，還不是每個 JSX prop 的精確字串範圍，也沒有涵蓋不屬於 node 的文件頂層欄位。Canonical UI 輸出與既有穩定 ID 未變。SDK 173/173、CLI 114/114（另 1 項 native E2E 依環境跳過）全套通過，另加的 lowered layout 來源測試 4/4 通過；Senren 368 scenes／31,339 resources 唯讀 validate 通過。
 
 - **缺失資源診斷現在可回指主要 authoring 來源。** `PXBUILD1044` 對 JSON UI 的圖片屬性／Action 參數、專案設定與 asset、遊戲圖鑑、語系、extension 預設值、立繪及 motion descriptor 的資源欄位，會在原始文字與編譯輸入一致時附上精確行列；Story 指令的資源位置可跨同程序與匯出／匯入 scene cache 保留。缺檔訊息包含實際來源路徑，舊的 `diagnostic.path` 仍是缺失資源路徑；來源文字過期時不猜位置。Authoring SDK 全套 173/173、CLI scene-cache 針對性 1/1、Senren 368 scenes／31,339 resources 唯讀 validate 通過。TSX node 位置由上一項後續補上；精確 JSX prop 範圍與其他依賴圖錯誤位置仍待處理。
