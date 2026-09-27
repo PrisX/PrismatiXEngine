@@ -380,6 +380,54 @@ int main() {
               (std::vector<int>{SDL_SCANCODE_F3, SDL_SCANCODE_F2}) &&
               mountedBindingButton->Text() == "F3 / F2" && bindingSaves == 4,
           "additive capture retains the existing key and updates the caption");
+    mountedBindingButton->SetAddCapturedBinding(false);
+    mountedBindingButton->SetSelectableBindingKeys(true);
+    Check(mountedBindingButton->Text() == "[F3] / F2" &&
+              mountedBindingButton->SelectedBindingIndex() == 0,
+          "opt-in binding selection identifies the key that will be edited");
+    px::ui::UIEvent selectNext{.type = px::ui::UIEventType::KeyDown,
+                               .key = SDL_SCANCODE_PAGEDOWN};
+    mountedBindingButton->HandleEvent(selectNext);
+    Check(selectNext.handled && mountedBindingButton->Text() == "F3 / [F2]" &&
+              mountedBindingButton->SelectedBindingIndex() == 1,
+          "Page Down selects the next key without editing bindings");
+    mountedBindingButton->Activate();
+    rebindInput.InjectKeyPress(SDL_SCANCODE_F7);
+    (void)bindingContext.Update(rebindInput, 800, 600, 0.016f);
+    Check(rebindInput.KeyBindings("photo-mode") ==
+              (std::vector<int>{SDL_SCANCODE_F3, SDL_SCANCODE_F7}) &&
+              mountedBindingButton->Text() == "F3 / [F7]" && bindingSaves == 5,
+          "capturing a selected key replaces only that key in place");
+    px::ui::UIEvent removeSelected{.type = px::ui::UIEventType::KeyDown,
+                                   .key = SDL_SCANCODE_DELETE};
+    mountedBindingButton->HandleEvent(removeSelected);
+    Check(removeSelected.handled &&
+              rebindInput.KeyBindings("photo-mode") ==
+                  std::vector<int>{SDL_SCANCODE_F3} &&
+              mountedBindingButton->Text() == "[F3]" && bindingSaves == 6,
+          "Delete removes only the selected key and persists the change");
+    mountedBindingButton->SetConfirmSharedBinding(true);
+    mountedBindingButton->SetBindingConfirmText("Press again to share");
+    mountedBindingButton->Activate();
+    rebindInput.InjectKeyPress(SDL_SCANCODE_F4);
+    (void)bindingContext.Update(rebindInput, 800, 600, 0.016f);
+    Check(mountedBindingButton->Text() == "Press again to share" &&
+              rebindInput.KeyBindings("photo-mode") ==
+                  std::vector<int>{SDL_SCANCODE_F3} && bindingSaves == 6,
+          "a conflicting key waits for explicit confirmation without persisting");
+    mountedBindingButton->Activate();
+    Check(rebindInput.KeyBindings("photo-mode") ==
+              std::vector<int>{SDL_SCANCODE_F4} &&
+              mountedBindingButton->Text() == "[F4]" && bindingSaves == 7,
+          "second activation explicitly shares the captured key");
+    mountedBindingButton->Activate();
+    rebindInput.InjectKeyPress(SDL_SCANCODE_F6);
+    (void)bindingContext.Update(rebindInput, 800, 600, 0.016f);
+    (void)bindingContext.Update(rebindInput, 800, 600, 4.1f);
+    Check(rebindInput.KeyBindings("photo-mode") ==
+              std::vector<int>{SDL_SCANCODE_F4} &&
+              mountedBindingButton->Text() == "[F4]" && bindingSaves == 7,
+          "unconfirmed shared binding expires without changing settings");
     mountedBindingButton->SetBindingAction("misspelled-action");
     Check(mountedBindingButton->Text() == "Unknown action",
           "unregistered binding actions are visible before a click");

@@ -123,6 +123,9 @@ void Button::SetBindingAction(std::string action) {
     if (m_capturingBinding && m_bindingInput)
         m_bindingInput->CancelKeyCapture();
     m_capturingBinding = false;
+    m_replacingBindingKey.reset();
+    m_pendingSharedBinding.reset();
+    m_selectedBindingIndex = 0;
     m_bindingFeedbackSeconds = 0.0f;
     m_bindingAction = std::move(action);
     RefreshBindingText();
@@ -132,7 +135,11 @@ void Button::SetInputBindingService(Input* input,
                                     std::function<void()> onChanged) {
     if (m_capturingBinding && m_bindingInput != input)
         m_bindingInput->CancelKeyCapture();
-    if (m_bindingInput != input) m_capturingBinding = false;
+    if (m_bindingInput != input) {
+        m_capturingBinding = false;
+        m_replacingBindingKey.reset();
+        m_pendingSharedBinding.reset();
+    }
     m_bindingInput = input;
     m_bindingChanged = std::move(onChanged);
     RefreshBindingText();
@@ -148,13 +155,20 @@ void Button::RefreshBindingText() {
     }
     const auto keys = m_bindingInput->KeyBindings(m_bindingAction);
     if (keys.empty()) {
+        m_selectedBindingIndex = 0;
         if (m_text != m_unboundText) SetText(m_unboundText);
         return;
     }
+    m_selectedBindingIndex = std::min(m_selectedBindingIndex,
+                                      keys.size() - 1);
     std::string caption;
-    for (const auto key : keys) {
+    for (std::size_t index = 0; index < keys.size(); ++index) {
         if (!caption.empty()) caption += " / ";
-        caption += Input::KeyName(key);
+        if (m_selectableBindingKeys && index == m_selectedBindingIndex)
+            caption += '[';
+        caption += Input::KeyName(keys[index]);
+        if (m_selectableBindingKeys && index == m_selectedBindingIndex)
+            caption += ']';
     }
     if (caption != m_text) SetText(std::move(caption));
 }
@@ -166,13 +180,26 @@ void Button::Activate() {
         if (!m_bindingInput || !m_bindingInput->HasAction(m_bindingAction)) {
             SetText("Unknown action");
             m_bindingFeedbackSeconds = 1.5f;
+        } else if (m_pendingSharedBinding) {
+            const auto pending = *m_pendingSharedBinding;
+            m_pendingSharedBinding.reset();
+            m_bindingFeedbackSeconds = 0.0f;
+            ApplyBindingKey(pending.key, pending.replacingKey, pending.add,
+                            true);
         } else if (m_capturingBinding) {
             m_bindingInput->CancelKeyCapture();
             m_capturingBinding = false;
+            m_replacingBindingKey.reset();
             m_bindingFeedbackSeconds = 0.0f;
             RefreshBindingText();
         } else if (m_bindingInput->BeginKeyCapture()) {
             m_capturingBinding = true;
+            m_replacingBindingKey.reset();
+            if (m_selectableBindingKeys && !m_addCapturedBinding) {
+                const auto keys = m_bindingInput->KeyBindings(m_bindingAction);
+                if (m_selectedBindingIndex < keys.size())
+                    m_replacingBindingKey = keys[m_selectedBindingIndex];
+            }
             m_bindingFeedbackSeconds = 0.0f;
             SetText(m_bindingPrompt);
         }
@@ -182,6 +209,43 @@ void Button::Activate() {
 }
 
 void Button::HandleEvent(UIEvent& event) {
+    if (m_selectableBindingKeys && !m_bindingAction.empty() &&
+        m_bindingInput && !m_capturingBinding &&
+        (event.type == UIEventType::KeyDown ||
+         event.type == UIEventType::Scroll)) {
+        const auto keys = m_bindingInput->KeyBindings(m_bindingAction);
+        if (event.type == UIEventType::KeyDown &&
+            event.key == SDL_SCANCODE_DELETE) {
+            m_pendingSharedBinding.reset();
+            m_bindingFeedbackSeconds = 0.0f;
+            if (m_selectedBindingIndex < keys.size() &&
+                m_bindingInput->RemoveKeyBinding(
+                    m_bindingAction, keys[m_selectedBindingIndex])) {
+                if (m_bindingChanged) m_bindingChanged();
+                RefreshBindingText();
+            }
+            event.handled = true;
+            return;
+        }
+        const bool previous =
+            (event.type == UIEventType::KeyDown &&
+             event.key == SDL_SCANCODE_PAGEUP) ||
+            (event.type == UIEventType::Scroll && event.wheel > 0.0f);
+        const bool next =
+            (event.type == UIEventType::KeyDown &&
+             event.key == SDL_SCANCODE_PAGEDOWN) ||
+            (event.type == UIEventType::Scroll && event.wheel < 0.0f);
+        if ((previous || next) && !keys.empty()) {
+            m_pendingSharedBinding.reset();
+            m_bindingFeedbackSeconds = 0.0f;
+            m_selectedBindingIndex = previous
+                ? (m_selectedBindingIndex + keys.size() - 1) % keys.size()
+                : (m_selectedBindingIndex + 1) % keys.size();
+            RefreshBindingText();
+            event.handled = true;
+            return;
+        }
+    }
     if (event.type == UIEventType::Click || event.type == UIEventType::Activate) {
         Activate(); event.handled = true;
     }
@@ -193,33 +257,27 @@ void Button::Update(float deltaSeconds) {
     if (m_capturingBinding) {
         if (const auto key = m_bindingInput->TakeCapturedKey()) {
             m_capturingBinding = false;
+            const auto replacingKey = m_replacingBindingKey;
+            m_replacingBindingKey.reset();
             if (*key == SDL_SCANCODE_ESCAPE && m_escapeCancelsBinding) {
                 RefreshBindingText();
             } else if (*key == SDL_SCANCODE_DELETE && m_deleteClearsBinding) {
-                if (m_bindingInput->ClearKeyboardBindings(m_bindingAction)) {
+                const bool removed = replacingKey
+                    ? m_bindingInput->RemoveKeyBinding(m_bindingAction,
+                                                       *replacingKey)
+                    : m_bindingInput->ClearKeyboardBindings(m_bindingAction);
+                if (removed) {
                     if (m_bindingChanged) m_bindingChanged();
                     RefreshBindingText();
                 }
             } else {
-                const auto result = m_addCapturedBinding
-                    ? m_bindingInput->AddKeyBinding(
-                        m_bindingAction, *key, m_allowSharedBinding)
-                    : m_bindingInput->RebindKey(
-                        m_bindingAction, *key, m_allowSharedBinding);
-                if (result.status == KeyRebindStatus::Applied) {
-                    if (m_bindingChanged) m_bindingChanged();
-                    RefreshBindingText();
-                } else {
-                    SetText(result.status == KeyRebindStatus::Conflict
-                                ? m_bindingConflictText
-                                : result.status == KeyRebindStatus::LimitReached
-                                    ? m_bindingLimitText : "Invalid key");
-                    m_bindingFeedbackSeconds = 1.5f;
-                }
+                ApplyBindingKey(*key, replacingKey, m_addCapturedBinding,
+                                m_allowSharedBinding);
             }
         } else if (!m_bindingInput->KeyCaptureActive()) {
             // A host can cancel a pending capture when changing input modes.
             m_capturingBinding = false;
+            m_replacingBindingKey.reset();
             RefreshBindingText();
         }
         return;
@@ -227,8 +285,46 @@ void Button::Update(float deltaSeconds) {
     if (m_bindingFeedbackSeconds > 0.0f) {
         m_bindingFeedbackSeconds = std::max(0.0f,
             m_bindingFeedbackSeconds - std::max(0.0f, deltaSeconds));
+        if (m_bindingFeedbackSeconds == 0.0f)
+            m_pendingSharedBinding.reset();
     }
     RefreshBindingText();
+}
+
+void Button::ApplyBindingKey(const int key,
+                             const std::optional<int> replacingKey,
+                             const bool add, const bool allowConflict) {
+    const auto result = add
+        ? m_bindingInput->AddKeyBinding(m_bindingAction, key, allowConflict)
+        : replacingKey
+        ? m_bindingInput->ReplaceKeyBinding(m_bindingAction, *replacingKey,
+                                            key, allowConflict)
+        : m_bindingInput->RebindKey(m_bindingAction, key, allowConflict);
+    if (result.status == KeyRebindStatus::Applied) {
+        if (m_selectableBindingKeys && add) {
+            const auto keys = m_bindingInput->KeyBindings(m_bindingAction);
+            const auto selected = std::ranges::find(keys, key);
+            if (selected != keys.end())
+                m_selectedBindingIndex = static_cast<std::size_t>(
+                    std::distance(keys.begin(), selected));
+        }
+        if (m_bindingChanged) m_bindingChanged();
+        RefreshBindingText();
+        return;
+    }
+    if (result.status == KeyRebindStatus::Conflict &&
+        !result.conflicts.empty() && m_confirmSharedBinding &&
+        !allowConflict) {
+        m_pendingSharedBinding = PendingSharedBinding{key, replacingKey, add};
+        SetText(m_bindingConfirmText);
+        m_bindingFeedbackSeconds = 4.0f;
+        return;
+    }
+    SetText(result.status == KeyRebindStatus::Conflict
+                ? m_bindingConflictText
+                : result.status == KeyRebindStatus::LimitReached
+                    ? m_bindingLimitText : "Invalid key");
+    m_bindingFeedbackSeconds = 1.5f;
 }
 
 Vec2 Button::MeasureOverride(Vec2) {

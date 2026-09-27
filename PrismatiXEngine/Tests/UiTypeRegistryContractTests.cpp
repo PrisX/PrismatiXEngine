@@ -61,9 +61,17 @@ int main() {
           "Controls must expose authored hover and activation sounds");
     const auto* bindingAction = button ? FindProperty(*button, "bindingAction") : nullptr;
     const auto* escapeCancels = button ? FindProperty(*button, "escapeCancelsBinding") : nullptr;
+    const auto* selectableKeys = button ? FindProperty(*button, "selectableBindingKeys") : nullptr;
+    const auto* confirmShared = button ? FindProperty(*button, "confirmSharedBinding") : nullptr;
+    const auto* confirmText = button ? FindProperty(*button, "bindingConfirmText") : nullptr;
     Check(bindingAction && bindingAction->writable &&
               bindingAction->valueType == "string" && escapeCancels &&
-              escapeCancels->writable && escapeCancels->valueType == "boolean",
+              escapeCancels->writable && escapeCancels->valueType == "boolean" &&
+              selectableKeys && selectableKeys->writable &&
+              selectableKeys->valueType == "boolean" &&
+              confirmShared && confirmShared->writable &&
+              confirmShared->valueType == "boolean" && confirmText &&
+              confirmText->writable && confirmText->valueType == "string",
           "button key-capture options must reach the SDK UI registry");
     const auto* textureButton = FindControl(parsed.manifest, "textureButton");
     const auto* normalPath = textureButton

@@ -507,6 +507,9 @@ Status RegisterBuiltinUITypes() {
     button.properties.push_back(StringProperty("bindingConflictText", "Input",
         [](const Object& o) { return As<Button>(o)->BindingConflictText(); },
         [](Object& o, std::string v) { As<Button>(o)->SetBindingConflictText(std::move(v)); return Status::Ok(); }));
+    button.properties.push_back(StringProperty("bindingConfirmText", "Input",
+        [](const Object& o) { return As<Button>(o)->BindingConfirmText(); },
+        [](Object& o, std::string v) { As<Button>(o)->SetBindingConfirmText(std::move(v)); return Status::Ok(); }));
     button.properties.push_back(StringProperty("bindingLimitText", "Input",
         [](const Object& o) { return As<Button>(o)->BindingLimitText(); },
         [](Object& o, std::string v) { As<Button>(o)->SetBindingLimitText(std::move(v)); return Status::Ok(); }));
@@ -516,12 +519,18 @@ Status RegisterBuiltinUITypes() {
     button.properties.push_back(BoolProperty("allowSharedBinding", "Input",
         [](const Object& o) { return As<Button>(o)->AllowSharedBinding(); },
         [](Object& o, bool v) { As<Button>(o)->SetAllowSharedBinding(v); return Status::Ok(); }));
+    button.properties.push_back(BoolProperty("confirmSharedBinding", "Input",
+        [](const Object& o) { return As<Button>(o)->ConfirmSharedBinding(); },
+        [](Object& o, bool v) { As<Button>(o)->SetConfirmSharedBinding(v); return Status::Ok(); }));
     button.properties.push_back(BoolProperty("deleteClearsBinding", "Input",
         [](const Object& o) { return As<Button>(o)->DeleteClearsBinding(); },
         [](Object& o, bool v) { As<Button>(o)->SetDeleteClearsBinding(v); return Status::Ok(); }));
     button.properties.push_back(BoolProperty("addCapturedBinding", "Input",
         [](const Object& o) { return As<Button>(o)->AddCapturedBinding(); },
         [](Object& o, bool v) { As<Button>(o)->SetAddCapturedBinding(v); return Status::Ok(); }));
+    button.properties.push_back(BoolProperty("selectableBindingKeys", "Input",
+        [](const Object& o) { return As<Button>(o)->SelectableBindingKeys(); },
+        [](Object& o, bool v) { As<Button>(o)->SetSelectableBindingKeys(v); return Status::Ok(); }));
     auto buttonFontSize = NumberProperty("fontSize", "Theme", [](const Object& o) { return As<Button>(o)->FontSize(); },
         [](Object& o, double v) { As<Button>(o)->SetFontSize(static_cast<int>(v)); return Status::Ok(); });
     buttonFontSize.editor.displayName = "Font size";

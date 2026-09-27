@@ -94,16 +94,31 @@ public:
     [[nodiscard]] const std::string& UnboundText() const { return m_unboundText; }
     void SetBindingConflictText(std::string value) { m_bindingConflictText = std::move(value); }
     [[nodiscard]] const std::string& BindingConflictText() const { return m_bindingConflictText; }
+    void SetBindingConfirmText(std::string value) { m_bindingConfirmText = std::move(value); }
+    [[nodiscard]] const std::string& BindingConfirmText() const { return m_bindingConfirmText; }
     void SetBindingLimitText(std::string value) { m_bindingLimitText = std::move(value); }
     [[nodiscard]] const std::string& BindingLimitText() const { return m_bindingLimitText; }
     void SetEscapeCancelsBinding(bool value) { m_escapeCancelsBinding = value; }
     [[nodiscard]] bool EscapeCancelsBinding() const { return m_escapeCancelsBinding; }
     void SetAllowSharedBinding(bool value) { m_allowSharedBinding = value; }
     [[nodiscard]] bool AllowSharedBinding() const { return m_allowSharedBinding; }
+    void SetConfirmSharedBinding(bool value) { m_confirmSharedBinding = value; }
+    [[nodiscard]] bool ConfirmSharedBinding() const { return m_confirmSharedBinding; }
     void SetDeleteClearsBinding(bool value) { m_deleteClearsBinding = value; }
     [[nodiscard]] bool DeleteClearsBinding() const { return m_deleteClearsBinding; }
     void SetAddCapturedBinding(bool value) { m_addCapturedBinding = value; }
     [[nodiscard]] bool AddCapturedBinding() const { return m_addCapturedBinding; }
+    void SetSelectableBindingKeys(bool value) {
+        m_selectableBindingKeys = value;
+        m_selectedBindingIndex = 0;
+        RefreshBindingText();
+    }
+    [[nodiscard]] bool SelectableBindingKeys() const {
+        return m_selectableBindingKeys;
+    }
+    [[nodiscard]] std::size_t SelectedBindingIndex() const {
+        return m_selectedBindingIndex;
+    }
     // Non-owning input service; UIContext reapplies it after every root swap.
     void SetInputBindingService(Input* input, std::function<void()> onChanged = {});
     [[nodiscard]] bool CapturingBinding() const { return m_capturingBinding; }
@@ -127,12 +142,20 @@ protected:
                          const Theme& theme) const;
 
 private:
+    struct PendingSharedBinding {
+        int key = 0;
+        std::optional<int> replacingKey;
+        bool add = false;
+    };
+    void ApplyBindingKey(int key, std::optional<int> replacingKey, bool add,
+                         bool allowConflict);
     void RefreshBindingText();
     std::string m_text;
     std::string m_bindingAction;
     std::string m_bindingPrompt = "Press a key";
     std::string m_unboundText = "Unbound";
     std::string m_bindingConflictText = "Already assigned";
+    std::string m_bindingConfirmText = "Already assigned - activate again to share";
     std::string m_bindingLimitText = "Too many keys";
     Input* m_bindingInput = nullptr;
     std::function<void()> m_bindingChanged;
@@ -140,8 +163,13 @@ private:
     bool m_capturingBinding = false;
     bool m_escapeCancelsBinding = true;
     bool m_allowSharedBinding = false;
+    bool m_confirmSharedBinding = false;
     bool m_deleteClearsBinding = false;
     bool m_addCapturedBinding = false;
+    bool m_selectableBindingKeys = false;
+    std::size_t m_selectedBindingIndex = 0;
+    std::optional<int> m_replacingBindingKey;
+    std::optional<PendingSharedBinding> m_pendingSharedBinding;
     int m_fontSize = 0;
     Color m_textColor{};
     bool m_hasTextColor = false;

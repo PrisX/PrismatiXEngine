@@ -358,9 +358,12 @@ test("key binding button lowers native capture properties without a click action
     children: jsx(KeyBindingButton, {name: "PhotoModeKey",
       bindingAction: "photo-mode", bindingPrompt: "Press a key...",
       unboundText: "Not set", bindingConflictText: "In use",
+      bindingConfirmText: "Click again to share",
       bindingLimitText: "Maximum keys reached",
       escapeCancelsBinding: true, allowSharedBinding: false,
+      confirmSharedBinding: true,
       deleteClearsBinding: true, addCapturedBinding: true,
+      selectableBindingKeys: true,
       normalPath: "Assets/UI/key.png", runtimeProperties: {fontSize: 18},
     }),
   }), {kind: "scene"});
@@ -372,6 +375,9 @@ test("key binding button lowers native capture properties without a click action
     normalPath: "Assets/UI/key.png", bindingAction: "photo-mode",
     bindingPrompt: "Press a key...", unboundText: "Not set",
     bindingConflictText: "In use", bindingLimitText: "Maximum keys reached",
+    bindingConfirmText: "Click again to share",
     escapeCancelsBinding: true, allowSharedBinding: false,
-    deleteClearsBinding: true, addCapturedBinding: true});
+    confirmSharedBinding: true,
+    deleteClearsBinding: true, addCapturedBinding: true,
+    selectableBindingKeys: true});
 });

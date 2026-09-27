@@ -373,6 +373,23 @@ int main() {
         suite.Expect(removedReload.KeyBindings("photo-mode") ==
                          (std::vector<int>{SDL_SCANCODE_P, SDL_SCANCODE_F5}),
                      "reloaded action does not restore the removed key");
+        suite.Expect(input.ReplaceKeyBinding("photo-mode", SDL_SCANCODE_F2,
+                                             SDL_SCANCODE_F4).status ==
+                         px::KeyRebindStatus::Applied &&
+                         input.KeyBindings("photo-mode") ==
+                             (std::vector<int>{SDL_SCANCODE_P, SDL_SCANCODE_F4,
+                                               SDL_SCANCODE_F5}),
+                     "replacing one key keeps its position and sibling keys");
+        suite.Expect(input.ReplaceKeyBinding("photo-mode", SDL_SCANCODE_F4,
+                                             SDL_SCANCODE_F5).status ==
+                         px::KeyRebindStatus::Conflict &&
+                         input.KeyBindings("photo-mode")[1] == SDL_SCANCODE_F4,
+                     "replacement cannot duplicate another key in the action");
+        suite.Expect(input.ReplaceKeyBinding("photo-mode", SDL_SCANCODE_F2,
+                                             SDL_SCANCODE_F6).status ==
+                         px::KeyRebindStatus::MissingBinding &&
+                         input.KeyBindings("photo-mode")[1] == SDL_SCANCODE_F4,
+                     "replacement rejects a key removed since selection");
 
         px::Input full;
         suite.Require(full.RegisterAction("many-keys"),

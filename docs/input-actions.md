@@ -89,7 +89,15 @@ keyboard keys; gamepad and wheel bindings remain intact. It is opt-in so a
 game that uses Delete as a normal shortcut can still bind it. Set
 `addCapturedBinding` to append a captured key while keeping the existing
 ordered keys instead of replacing them. Conflict checks apply to the new key;
-32 keys per action is the persisted-map limit. For example:
+32 keys per action is the persisted-map limit. With `selectableBindingKeys`,
+the selected key appears in brackets. Page Up/Down changes the selection while
+the button is focused; the pointer wheel does so while hovered. Delete removes
+just the selected key while focused.
+Capturing a new key replaces the selected key in place unless
+`addCapturedBinding` is set. `confirmSharedBinding` holds a conflicting key for
+four seconds and requires another activation before sharing it with a second
+action. The confirmation caption is configurable with `bindingConfirmText`.
+For example:
 
 ```tsx
 import {KeyBindingButton, Scene} from "@prismatix/authoring-sdk";
@@ -97,8 +105,9 @@ import {KeyBindingButton, Scene} from "@prismatix/authoring-sdk";
 export default <Scene name="Keys" width={800} height={600}>
   <KeyBindingButton name="PhotoModeKey" bindingAction="photo-mode"
     x={280} y={180} width={240} height={56}
-    normalPath="Assets/UI/key.png" bindingPrompt="Press a key (Del clears)"
-    deleteClearsBinding addCapturedBinding />
+    normalPath="Assets/UI/key.png" bindingPrompt="Press a key"
+    selectableBindingKeys confirmSharedBinding
+    bindingConfirmText="Key in use; press again to share" />
 </Scene>;
 ```
 
@@ -109,12 +118,12 @@ other hosts must attach `UIContext::SetInputBindingService(input, onChanged)`
 and persist the updated keyboard bindings themselves. The Runtime SDK exposes
 `ctx.input.addKeyBinding(action, key)` as the same atomic append operation;
 it returns `limit-reached` if the save-compatible maximum is reached. This
-button can append or replace the whole keyboard set. Native `Input::RemoveKeyBinding`
+button can append, replace one selected key, or replace the whole keyboard set.
+Native `Input::ReplaceKeyBinding` replaces one key atomically while preserving
+the other keys and their order. Native `Input::RemoveKeyBinding`
 and Runtime SDK `ctx.input.removeKeyBinding(action, key)` remove one key while
 keeping the others in order and leaving wheel/gamepad bindings intact. They
 return `false` for an unknown action, invalid key, or key that is not bound.
-The stock `KeyBindingButton` still has no per-key selection UI or conflict
-confirmation dialog; a custom settings screen can use the new API.
 Wheel remapping and portable non-Player persistence are still separate tasks.
 Existing `inputBindings` documents remain readable for migration.
 

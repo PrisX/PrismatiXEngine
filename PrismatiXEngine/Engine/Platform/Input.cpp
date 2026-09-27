@@ -335,6 +335,44 @@ KeyRebindResult Input::AddKeyBinding(const std::string_view action,
     return result;
 }
 
+KeyRebindResult Input::ReplaceKeyBinding(const std::string_view action,
+                                         const int oldScancode,
+                                         const int newScancode,
+                                         const bool allowConflict) {
+    const auto found = m_namedBindings.find(action);
+    if (found == m_namedBindings.end())
+        return {.status = KeyRebindStatus::UnknownAction};
+    if (oldScancode <= SDL_SCANCODE_UNKNOWN ||
+        oldScancode >= SDL_SCANCODE_COUNT ||
+        newScancode <= SDL_SCANCODE_UNKNOWN ||
+        newScancode >= SDL_SCANCODE_COUNT)
+        return {.status = KeyRebindStatus::InvalidScancode};
+    auto position = std::ranges::find(found->second.keyOrder, oldScancode);
+    if (position == found->second.keyOrder.end())
+        return {.status = KeyRebindStatus::MissingBinding};
+    if (oldScancode == newScancode)
+        return {.status = KeyRebindStatus::Applied};
+    if (found->second.keys.contains(newScancode))
+        return {.status = KeyRebindStatus::Conflict};
+    KeyRebindResult result{.status = KeyRebindStatus::Applied};
+    for (const auto& [otherAction, bindings] : m_namedBindings)
+        if (otherAction != action && bindings.keys.contains(newScancode))
+            result.conflicts.push_back(otherAction);
+    if (!allowConflict && !result.conflicts.empty()) {
+        result.status = KeyRebindStatus::Conflict;
+        return result;
+    }
+    found->second.keys.erase(oldScancode);
+    found->second.keys.insert(newScancode);
+    *position = newScancode;
+    if (const auto builtin = BuiltinAction(action)) {
+        auto& keys = m_keyBindings[ActionIndex(*builtin)];
+        keys.erase(oldScancode);
+        keys.insert(newScancode);
+    }
+    return result;
+}
+
 bool Input::RemoveKeyBinding(const std::string_view action,
                              const int scancode) {
     const auto found = m_namedBindings.find(action);

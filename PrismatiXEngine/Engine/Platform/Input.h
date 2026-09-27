@@ -83,6 +83,7 @@ enum class KeyRebindStatus : std::uint8_t {
     Applied,
     UnknownAction,
     InvalidScancode,
+    MissingBinding,
     Conflict,
     LimitReached,
 };
@@ -152,6 +153,11 @@ public:
     [[nodiscard]] KeyRebindResult AddKeyBinding(std::string_view action,
                                                 int scancode,
                                                 bool allowConflict = false);
+    // Atomically replaces one existing keyboard key at its current position.
+    // Other keys, gamepad and wheel bindings are preserved.
+    [[nodiscard]] KeyRebindResult ReplaceKeyBinding(
+        std::string_view action, int oldScancode, int newScancode,
+        bool allowConflict = false);
     // Removes only one keyboard key, retaining this action's other keys and
     // its gamepad and wheel bindings. Returns false when the key is absent.
     [[nodiscard]] bool RemoveKeyBinding(std::string_view action, int scancode);
