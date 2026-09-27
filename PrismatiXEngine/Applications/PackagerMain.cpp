@@ -291,17 +291,22 @@ int RunMain(int argc, char** argv) {
             return static_cast<int>(px::sdk::PackageExitCode::Failed);
         }
     }
+    const std::string_view mode = argv[1];
+    const bool planOverlay = mode == "--plan-overlay-from-request" ||
+                             mode == "--plan-overlay-from-chain-request";
     const bool overlayFromRequest =
         (argc == 5 ||
          (argc == 7 && std::string_view(argv[5]) == "--signing-key") ||
          (argc == 9 && std::string_view(argv[5]) == "--signing-key" &&
           std::string_view(argv[7]) == "--optional-id")) &&
-        std::string_view(argv[1]) == "--create-overlay-from-request";
+        (mode == "--create-overlay-from-request" ||
+         mode == "--plan-overlay-from-request");
     const bool overlayFromChainRequest =
         ((argc == 8 && std::string_view(argv[6]) == "--signing-key") ||
          (argc == 10 && std::string_view(argv[6]) == "--signing-key" &&
           std::string_view(argv[8]) == "--optional-id")) &&
-        std::string_view(argv[1]) == "--create-overlay-from-chain-request";
+        (mode == "--create-overlay-from-chain-request" ||
+         mode == "--plan-overlay-from-chain-request");
     const bool packageRequest = argc == 3 &&
         std::string_view(argv[1]) == "--request";
     const bool validateOnly = (argc == 3 || argc == 4) &&
@@ -310,7 +315,7 @@ int RunMain(int argc, char** argv) {
     if (!packageRequest && !validateOnly && !overlayFromRequest &&
         !overlayFromChainRequest) {
         Emit(FailedEvent({}, "PXPKG1001",
-                         "Usage: PrismatiXPackager --request <absolute-json-path> | --validate-request <absolute-json-path> [--verify-media] | --verify-package <absolute-distribution-path> | --generate-overlay-key <absolute-private-key-file> <absolute-public-key-file> | --create-overlay <absolute-base-distribution> <absolute-target-distribution> <absolute-output-pdx> [--signing-key <absolute-private-key-file> [--optional-id <id>]] | --create-overlay-from-request <absolute-json-path> <absolute-base-distribution> <absolute-output-pdx> [--signing-key <absolute-private-key-file> [--optional-id <id>]] | --create-overlay-from-chain-request <absolute-json-path> <absolute-base-distribution> <absolute-updates-directory> <absolute-output-pdx> --signing-key <absolute-private-key-file> [--optional-id <id>] | --verify-overlay <absolute-base-distribution> <absolute-overlay-pdx> [--require-signature] | --verify-overlay-after-chain <absolute-base-distribution> <absolute-updates-directory> <absolute-overlay-pdx>"));
+                         "Usage: PrismatiXPackager --request <absolute-json-path> | --validate-request <absolute-json-path> [--verify-media] | --verify-package <absolute-distribution-path> | --generate-overlay-key <absolute-private-key-file> <absolute-public-key-file> | --create-overlay <absolute-base-distribution> <absolute-target-distribution> <absolute-output-pdx> [--signing-key <absolute-private-key-file> [--optional-id <id>]] | --create-overlay-from-request <absolute-json-path> <absolute-base-distribution> <absolute-output-pdx> [--signing-key <absolute-private-key-file> [--optional-id <id>]] | --plan-overlay-from-request <absolute-json-path> <absolute-base-distribution> <absolute-unused-output-pdx> [--signing-key <absolute-private-key-file> [--optional-id <id>]] | --create-overlay-from-chain-request <absolute-json-path> <absolute-base-distribution> <absolute-updates-directory> <absolute-output-pdx> --signing-key <absolute-private-key-file> [--optional-id <id>] | --plan-overlay-from-chain-request <absolute-json-path> <absolute-base-distribution> <absolute-updates-directory> <absolute-unused-output-pdx> --signing-key <absolute-private-key-file> [--optional-id <id>] | --verify-overlay <absolute-base-distribution> <absolute-overlay-pdx> [--require-signature] | --verify-overlay-after-chain <absolute-base-distribution> <absolute-updates-directory> <absolute-overlay-pdx>"));
         return static_cast<int>(px::sdk::PackageExitCode::Failed);
     }
 
@@ -393,12 +398,14 @@ int RunMain(int argc, char** argv) {
                     progress.message = std::to_string(rawBytes) +
                                        " raw bytes processed";
                     Emit(progress);
-                }, signingKey, optionalId, updates);
-            if (!created.created) {
+                }, signingKey, optionalId, updates, planOverlay);
+            if (planOverlay ? !created.planned : !created.created) {
                 Emit(FailedEvent(parsed.request.requestId, "PXPKG1517", created.error));
                 return static_cast<int>(px::sdk::PackageExitCode::Failed);
             }
-            std::cout << "{\"event\":\"overlay-created\",\"changedResources\":"
+            std::cout << "{\"event\":\""
+                      << (planOverlay ? "overlay-planned" : "overlay-created")
+                      << "\",\"changedResources\":"
                       << created.changedResources << ",\"removedResources\":"
                       << created.removedResources << ",\"changedRawBytes\":"
                       << created.changedRawBytes << "}\n";

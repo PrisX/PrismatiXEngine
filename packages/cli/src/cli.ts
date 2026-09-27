@@ -94,7 +94,7 @@ const commandOptions: Readonly<Record<string, {values: string; flags: string}>> 
   "verify-package": {values: "runtime packager", flags: ""},
   "create-patch": {values: "base target output runtime packager", flags: ""},
   "apply-patch": {values: "base patch output runtime packager", flags: "in-place"},
-  "create-overlay": {values: "base target artifact updates-dir output signing-key optional-id runtime packager player", flags: ""},
+  "create-overlay": {values: "base target artifact updates-dir output signing-key optional-id runtime packager player", flags: "check"},
   "verify-overlay": {values: "base updates-dir patch runtime packager", flags: "require-signature"},
   "overlay-keygen": {values: "private public runtime packager", flags: ""},
 };
@@ -2341,6 +2341,7 @@ function usage(): void {
   process.stderr.write("Usage: prismatix <create|dev|validate|build|pack|run|augment|ids|migrate|inspect-save|plan-patch|verify-package|create-patch|apply-patch|create-overlay|verify-overlay|overlay-keygen> [project-or-save-or-distribution] [options]\n");
   process.stderr.write("  prismatix pack <project> --artifact <dir> --check [--verify-media]  Validate without creating a distribution\n");
   process.stderr.write("  prismatix create-overlay --base <distribution> --artifact <published-artifact> --output <patch.pdx> [--signing-key <private-key>]  Patch without a target distribution\n");
+  process.stderr.write("  prismatix create-overlay --base <distribution> --artifact <published-artifact> --check  Verify and count changes without writing a PDX\n");
   process.stderr.write("  prismatix create-overlay --base <distribution> --updates-dir <prior-signed-updates> --artifact <published-artifact> --output <patch2.pdx> --signing-key <private-key>\n");
 }
 
@@ -2484,12 +2485,14 @@ async function overlayCommand(command: "create-overlay" | "verify-overlay",
   const updatesOption = options.values.get("updates-dir");
   const patch = options.values.get("patch");
   const output = options.values.get("output");
+  const check = command === "create-overlay" && options.flags.has("check");
   if (base === undefined ||
       (command === "create-overlay" ?
-        (target === undefined) === (artifact === undefined) || output === undefined :
+        (target === undefined) === (artifact === undefined) ||
+        (!check && output === undefined) || (check && artifact === undefined) :
         patch === undefined)) {
     printDiagnostics([diagnostic("PXCLI1515", command === "create-overlay"
-      ? "create-overlay requires --base, --output, and exactly one of --target or --artifact"
+      ? "create-overlay requires --base, --output, and exactly one of --target or --artifact (omit --output only with --artifact --check)"
       : "verify-overlay requires --base and --patch")]);
     return 2;
   }
@@ -2587,11 +2590,14 @@ async function overlayCommand(command: "create-overlay" | "verify-overlay",
         inputs,
       })}\n`, "utf8");
       if (updatesDirectory === undefined)
-        nativeArgs.push("--create-overlay-from-request", requestPath,
-          baseRoot, resolve(output!));
+        nativeArgs.push(check ? "--plan-overlay-from-request" :
+          "--create-overlay-from-request", requestPath,
+          baseRoot, check ? join(temporaryRequest, "planned.pdx") : resolve(output!));
       else
-        nativeArgs.push("--create-overlay-from-chain-request", requestPath,
-          baseRoot, updatesDirectory, resolve(output!));
+        nativeArgs.push(check ? "--plan-overlay-from-chain-request" :
+          "--create-overlay-from-chain-request", requestPath,
+          baseRoot, updatesDirectory,
+          check ? join(temporaryRequest, "planned.pdx") : resolve(output!));
     }
     const signingKey = options.values.get("signing-key");
     if (command === "create-overlay" && signingKey !== undefined) {
@@ -2618,7 +2624,8 @@ async function overlayCommand(command: "create-overlay" | "verify-overlay",
     const events = packageEvents(result.stdout);
     const failed = failedPackageDiagnostics(events);
     if (failed.length > 0) throw new PackagerFailure(failed);
-    const eventName = command === "create-overlay" ? "overlay-created" :
+    const eventName = check ? "overlay-planned" :
+      command === "create-overlay" ? "overlay-created" :
       "overlay-verified";
     const completed = events.find((event) => event.event === eventName);
     if (result.code !== 0 || completed === undefined ||
@@ -2633,13 +2640,20 @@ async function overlayCommand(command: "create-overlay" | "verify-overlay",
     const report = {changedResources: Number(completed.changedResources),
       removedResources: Number(completed.removedResources),
       changedRawBytes: Number(completed.changedRawBytes)};
-    const path = resolve(command === "create-overlay" ? output! : patch!);
-    process.stdout.write(machineOutput
-      ? `${JSON.stringify({[command === "create-overlay" ? "overlayCreated" :
-        "overlayVerified"]: true, path, ...report})}\n`
-      : `${command === "create-overlay" ? "Created" : "Verified"} overlay ${path}: ` +
-        `${report.changedResources} changed, ${report.removedResources} removed, ` +
-        `${report.changedRawBytes} raw bytes.\n`);
+    if (check) {
+      process.stdout.write(machineOutput
+        ? `${JSON.stringify({overlayPlanned: true, ...report})}\n`
+        : `Planned overlay: ${report.changedResources} changed, ` +
+          `${report.removedResources} removed, ${report.changedRawBytes} raw bytes.\n`);
+    } else {
+      const path = resolve(command === "create-overlay" ? output! : patch!);
+      process.stdout.write(machineOutput
+        ? `${JSON.stringify({[command === "create-overlay" ? "overlayCreated" :
+          "overlayVerified"]: true, path, ...report})}\n`
+        : `${command === "create-overlay" ? "Created" : "Verified"} overlay ${path}: ` +
+          `${report.changedResources} changed, ${report.removedResources} removed, ` +
+          `${report.changedRawBytes} raw bytes.\n`);
+    }
     return 0;
   } catch (error) {
     printDiagnostics(error instanceof PackagerFailure ? error.diagnostics :

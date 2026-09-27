@@ -1069,6 +1069,17 @@ int main() {
             targetRequest, {}, px::sdk::PackageValidationDepth::AllInputs);
         suite.Require(directPlan.valid && directPlan.allInputsVerified,
                       "signed target can be fully planned from artifact sources");
+        const auto previewPath = fixture.path / "planned-direct-overlay.pdx";
+        const auto preview = px::io::CreatePackageOverlayFromPlan(
+            signedBase, root, directPlan, targetRequest.playerExecutable,
+            previewPath, {}, keyFile, {}, {}, true);
+        suite.Expect(preview.planned && !preview.created &&
+                         preview.changedResources == 1 &&
+                         preview.removedResources == 0 &&
+                         preview.changedRawBytes ==
+                             Read(root / "Content/Overlay/signed.txt").size() &&
+                         !std::filesystem::exists(previewPath),
+                     "fully verified direct overlay preview reports exact raw changes without writing");
         const auto directPatch = fixture.path / "signed-direct-overlay.pdx";
         const auto direct = px::io::CreatePackageOverlayFromPlan(
             signedBase, root, directPlan, targetRequest.playerExecutable,

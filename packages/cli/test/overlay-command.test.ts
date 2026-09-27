@@ -137,12 +137,13 @@ test("overlay CLI plans a signed patch from a published artifact", async () => {
       "const fs=require('node:fs');\n" +
       `fs.writeFileSync(${JSON.stringify(argsFile)},JSON.stringify(process.argv.slice(2)));\n` +
       "const args=process.argv.slice(2);\n" +
-      "if(!['--create-overlay-from-request','--create-overlay-from-chain-request','--verify-overlay-after-chain'].includes(args[0]))process.exit(40);\n" +
+      "if(!['--create-overlay-from-request','--create-overlay-from-chain-request','--plan-overlay-from-request','--plan-overlay-from-chain-request','--verify-overlay-after-chain'].includes(args[0]))process.exit(40);\n" +
       "if(args[0]==='--verify-overlay-after-chain'){process.stdout.write(JSON.stringify({event:'overlay-verified',changedResources:1,removedResources:0,changedRawBytes:7})+'\\n');process.exit(0);}\n" +
       "const request=JSON.parse(fs.readFileSync(args[1],'utf8'));\n" +
       `if(request.projectRoot!==${JSON.stringify(artifact)}||` +
       `request.cacheSourceDir!==${JSON.stringify(base)}||` +
       "request.archiveShards!==4||request.inputs.length===0)process.exit(41);\n" +
+      "if(args[0].startsWith('--plan-overlay-')){process.stdout.write(JSON.stringify({event:'overlay-planned',changedResources:1,removedResources:0,changedRawBytes:7})+'\\n');process.exit(0);}\n" +
       "fs.writeFileSync(args[0]==='--create-overlay-from-request'?args[3]:args[4],'overlay');\n" +
       "process.stdout.write(JSON.stringify({event:'overlay-created'," +
       "changedResources:1,removedResources:0,changedRawBytes:7})+'\\n');\n");
@@ -160,6 +161,17 @@ test("overlay CLI plans a signed patch from a published artifact", async () => {
     assert.equal(argumentsUsed[2], base);
     assert.equal(argumentsUsed[3], output);
     assert.deepEqual(argumentsUsed.slice(4), ["--signing-key", signingKey]);
+    const planned = spawnSync(process.execPath, [cli, "create-overlay",
+      "--base", base, "--artifact", artifact, "--check",
+      "--signing-key", signingKey, "--packager", packager,
+      "--player", player, "--json"], {encoding: "utf8"});
+    assert.equal(planned.status, 0, planned.stderr);
+    assert.deepEqual(JSON.parse(planned.stdout), {overlayPlanned: true,
+      changedResources: 1, removedResources: 0, changedRawBytes: 7});
+    const plannedArgs = JSON.parse(await readFile(argsFile, "utf8")) as string[];
+    assert.equal(plannedArgs[0], "--plan-overlay-from-request");
+    assert.deepEqual(plannedArgs.slice(4), ["--signing-key", signingKey]);
+    await assert.rejects(readFile(plannedArgs[3]!, "utf8"));
     const updates = join(root, "updates");
     await mkdir(updates);
     const chainedOutput = join(root, "patch2.pdx");
@@ -173,6 +185,15 @@ test("overlay CLI plans a signed patch from a published artifact", async () => {
     assert.equal(chainedArgs[0], "--create-overlay-from-chain-request");
     assert.deepEqual(chainedArgs.slice(2),
       [base, updates, chainedOutput, "--signing-key", signingKey]);
+    const plannedChain = spawnSync(process.execPath, [cli, "create-overlay",
+      "--base", base, "--updates-dir", updates, "--artifact", artifact,
+      "--check", "--signing-key", signingKey, "--packager", packager,
+      "--player", player, "--json"], {encoding: "utf8"});
+    assert.equal(plannedChain.status, 0, plannedChain.stderr);
+    const plannedChainArgs = JSON.parse(await readFile(argsFile, "utf8")) as string[];
+    assert.equal(plannedChainArgs[0], "--plan-overlay-from-chain-request");
+    assert.deepEqual(plannedChainArgs.slice(2, 4), [base, updates]);
+    await assert.rejects(readFile(plannedChainArgs[4]!, "utf8"));
     const optionalAfterChain = join(root, "adult-after-chain.pdx");
     const chainedOptional = spawnSync(process.execPath, [cli, "create-overlay",
       "--base", base, "--updates-dir", updates, "--artifact", artifact,
@@ -195,6 +216,10 @@ test("overlay CLI plans a signed patch from a published artifact", async () => {
       "--output", join(root, "invalid.pdx"), "--packager", packager,
       "--player", player], {encoding: "utf8"});
     assert.equal(ambiguous.status, 2);
+    const unsupportedCheck = spawnSync(process.execPath, [cli, "create-overlay",
+      "--base", base, "--target", root, "--check", "--packager", packager],
+    {encoding: "utf8"});
+    assert.equal(unsupportedCheck.status, 2);
     const unsignedChain = spawnSync(process.execPath, [cli, "create-overlay",
       "--base", base, "--updates-dir", updates, "--artifact", artifact,
       "--output", join(root, "unsigned-chain.pdx"),
@@ -248,6 +273,11 @@ test("native CLI builds and verifies a signed overlay directly from an artifact"
     }));
     run(["augment", starter.project, "--artifact", nextArtifact,
       "--manifest", augmentation]);
+    const planned = run(["create-overlay", "--base", base, "--artifact", nextArtifact,
+      "--check", "--signing-key", privateKey,
+      "--packager", packager, "--player", player]);
+    assert.equal(planned.overlayPlanned, true);
+    await assert.rejects(readFile(patch));
     const created = run(["create-overlay", "--base", base, "--artifact", nextArtifact,
       "--output", patch, "--signing-key", privateKey,
       "--packager", packager, "--player", player]);
@@ -255,6 +285,8 @@ test("native CLI builds and verifies a signed overlay directly from an artifact"
       "--require-signature", "--packager", packager]);
     assert.equal(created.overlayCreated, true);
     assert.equal(verified.overlayVerified, true);
+    assert.equal(planned.changedResources, created.changedResources);
+    assert.equal(planned.changedRawBytes, created.changedRawBytes);
     assert.ok(Number(created.changedResources) > 0);
     const updates = join(root, "updates");
     await mkdir(updates);
@@ -273,6 +305,12 @@ test("native CLI builds and verifies a signed overlay directly from an artifact"
     run(["augment", starter.project, "--artifact", thirdArtifact,
       "--manifest", secondAugmentation]);
     const patch2 = join(root, "patch2.pdx");
+    const secondPlanned = run(["create-overlay", "--base", base,
+      "--updates-dir", updates, "--artifact", thirdArtifact,
+      "--check", "--signing-key", privateKey,
+      "--packager", packager, "--player", player]);
+    assert.equal(secondPlanned.overlayPlanned, true);
+    await assert.rejects(readFile(patch2));
     const secondCreated = run(["create-overlay", "--base", base,
       "--updates-dir", updates, "--artifact", thirdArtifact,
       "--output", patch2, "--signing-key", privateKey,
@@ -282,6 +320,8 @@ test("native CLI builds and verifies a signed overlay directly from an artifact"
       "--require-signature", "--packager", packager]);
     assert.equal(secondCreated.overlayCreated, true);
     assert.equal(secondChecked.overlayVerified, true);
+    assert.equal(secondPlanned.changedResources, secondCreated.changedResources);
+    assert.equal(secondPlanned.changedRawBytes, secondCreated.changedRawBytes);
     assert.ok(Number(secondCreated.changedResources) > 0);
     const installedPatch2 = join(updates, "patch2.pdx");
     await copyFile(patch2, installedPatch2);

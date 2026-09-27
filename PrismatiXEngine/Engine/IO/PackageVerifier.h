@@ -74,6 +74,7 @@ struct PackageOverlayVerification {
 
 struct PackageOverlayBuildResult {
     bool created = false;
+    bool planned = false;
     std::string error;
     std::uint64_t changedResources = 0;
     std::uint64_t removedResources = 0;
@@ -135,6 +136,8 @@ using PackageOverlayBuildProgress = std::function<void(
 // streaming writer. The base runtime must match playerExecutable exactly.
 // priorUpdatesDirectory, when supplied, must contain the full unique signed
 // main update chain; its final target documents become the exact patch base.
+// planOnly performs full input/base preflight and returns a changed resource
+// inventory without creating a staging directory or output PDX.
 [[nodiscard]] PackageOverlayBuildResult CreatePackageOverlayFromPlan(
     const std::filesystem::path& baseDistribution,
     const std::filesystem::path& artifactRoot,
@@ -144,6 +147,7 @@ using PackageOverlayBuildProgress = std::function<void(
     const PackageOverlayBuildProgress& onProgress = {},
     const std::filesystem::path& signingKeyFile = {},
     std::string_view optionalPackId = {},
-    const std::filesystem::path& priorUpdatesDirectory = {});
+    const std::filesystem::path& priorUpdatesDirectory = {},
+    bool planOnly = false);
 
 }  // namespace px::io

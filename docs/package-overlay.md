@@ -23,6 +23,19 @@ prismatix create-overlay --base path/to/v1 --artifact path/to/updated-artifact -
 prismatix verify-overlay --base path/to/v1 --patch path/to/patch.pdx --require-signature
 ```
 
+To see the exact number of changed/removed resources and changed raw bytes
+before allocating patch disk space, use the same artifact with `--check`:
+
+```sh
+prismatix create-overlay --base path/to/v1 --artifact path/to/updated-artifact --check --signing-key path/to/private-key.txt
+```
+
+`--check` fully hashes the current artifact inputs, verifies the base PDX and
+publisher key, and writes no overlay or staging PDX. It accepts `--updates-dir`
+and `--optional-id` for a chained or optional patch. The reported raw bytes
+are not the final PDX size; the source can also change after the check, so
+the publishing command repeats verification and streaming checks.
+
 This path fully checks the artifact inputs, verifies the complete base
 distribution, confirms the selected Player and runtime libraries match the
 base, pins the base manifest used while planning, and streams only changed

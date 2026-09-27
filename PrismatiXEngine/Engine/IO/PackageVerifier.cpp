@@ -1173,7 +1173,8 @@ PackageOverlayBuildResult CreatePackageOverlayFromPlan(
     const PackageOverlayBuildProgress& onProgress,
     const std::filesystem::path& signingKeyFile,
     const std::string_view optionalPackId,
-    const std::filesystem::path& priorUpdatesDirectory) {
+    const std::filesystem::path& priorUpdatesDirectory,
+    const bool planOnly) {
     const auto fail = [](std::string message) {
         return PackageOverlayBuildResult{.error = std::move(message)};
     };
@@ -1323,6 +1324,13 @@ PackageOverlayBuildResult CreatePackageOverlayFromPlan(
         (void)resource;
         if (!targetEntries->contains(uri)) ++removed;
     }
+    std::uint64_t changedRawBytes = 0;
+    for (const auto& resource : changed) {
+        if (resource.size >
+            (std::numeric_limits<std::uint64_t>::max)() - changedRawBytes)
+            return fail("Changed resource total exceeds the overlay limit");
+        changedRawBytes += resource.size;
+    }
     const auto baseManifestHash = FingerprintText(effectiveBaseManifest);
     const auto baseIndexHash = FingerprintText(effectiveBaseIndex);
     const auto targetManifestHash = FingerprintText(plan.manifestJson);
@@ -1375,6 +1383,12 @@ PackageOverlayBuildResult CreatePackageOverlayFromPlan(
                 nibble((*signedHex)[index + 1])));
         }
     }
+
+    if (planOnly)
+        return {.planned = true,
+                .changedResources = changed.size(),
+                .removedResources = removed,
+                .changedRawBytes = changedRawBytes};
 
     const auto stagedName =
         px::PathToUtf8(outputPath.filename()) + ".staging-" +
