@@ -326,6 +326,14 @@ PlayerApp::Boot PlayerApp::LoadBootConfig(const bool allowOverlay,
                     savePackageFingerprint = chain.mainPackageFingerprint;
                     boot.compatibleSaveFingerprints =
                         chain.compatibleSaveFingerprints;
+                    boot.compatibleSaveFingerprints.insert(
+                        boot.compatibleSaveFingerprints.end(),
+                        chain.mainCompatibleSaveFingerprints.begin(),
+                        chain.mainCompatibleSaveFingerprints.end());
+                    boot.legacyPersistenceSecrets.insert(
+                        boot.legacyPersistenceSecrets.end(),
+                        chain.mainLegacyPersistenceSecrets.begin(),
+                        chain.mainLegacyPersistenceSecrets.end());
                     for (const auto& mount : chain.mounts)
                         boot.config.overlays.push_back(
                             {PathToUtf8(mount.path), mount.tombstones});
@@ -358,6 +366,16 @@ PlayerApp::Boot PlayerApp::LoadBootConfig(const bool allowOverlay,
     boot.packageFingerprint = package.packageFingerprint;
     if (!savePackageFingerprint.empty())
         boot.packageFingerprint = savePackageFingerprint;
+    boot.compatibleSaveFingerprints.insert(
+        boot.compatibleSaveFingerprints.end(),
+        parsed.manifest.compatibleSaveFingerprints.begin(),
+        parsed.manifest.compatibleSaveFingerprints.end());
+    std::ranges::sort(boot.compatibleSaveFingerprints);
+    boot.compatibleSaveFingerprints.erase(
+        std::unique(boot.compatibleSaveFingerprints.begin(),
+                    boot.compatibleSaveFingerprints.end()),
+        boot.compatibleSaveFingerprints.end());
+    std::erase(boot.compatibleSaveFingerprints, boot.packageFingerprint);
     boot.contentVersion = package.contentVersion;
     boot.saveVersion = package.saveVersion;
     for (const auto& migration : package.saveMigrations) {
@@ -402,8 +420,13 @@ PlayerApp::Boot PlayerApp::LoadBootConfig(const bool allowOverlay,
     } else {
         boot.persistenceDataId = package.persistenceDataId;
         boot.persistenceKeyId = package.persistenceKeyId;
-        for (const auto& reader : package.legacyPersistenceReaders)
+        for (const auto& reader : parsed.manifest.legacyPersistenceReaders)
             boot.legacyPersistenceSecrets.push_back(reader.secret);
+        std::ranges::sort(boot.legacyPersistenceSecrets);
+        boot.legacyPersistenceSecrets.erase(
+            std::unique(boot.legacyPersistenceSecrets.begin(),
+                        boot.legacyPersistenceSecrets.end()),
+            boot.legacyPersistenceSecrets.end());
     }
     boot.valid = true;
     PX_LOG_INFO("Packaged build: mounting {} content group(s), signed overlay={} count={}",

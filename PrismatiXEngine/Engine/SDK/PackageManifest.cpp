@@ -222,6 +222,30 @@ PackageManifestParseResult ParsePackageManifest(const std::string_view text) {
                             std::move(reader));
                     }
                 }
+                const auto compatible =
+                    persistence->find("compatibleSaveFingerprints");
+                if (compatible != persistence->end()) {
+                    if (!compatible->is_array() || compatible->size() > 64) {
+                        AddDiagnostic(result.diagnostics, "PXPKG1428",
+                                      "compatible save fingerprint set is invalid");
+                    } else {
+                        std::set<std::string> uniqueFingerprints;
+                        for (const auto& value : *compatible) {
+                            if (!value.is_string() ||
+                                !IsFingerprint(value.get<std::string>()) ||
+                                !uniqueFingerprints.insert(
+                                    value.get<std::string>()).second ||
+                                value.get<std::string>() ==
+                                    manifest.packageFingerprint) {
+                                AddDiagnostic(result.diagnostics, "PXPKG1428",
+                                              "compatible save fingerprint is invalid or duplicated");
+                                continue;
+                            }
+                            manifest.compatibleSaveFingerprints.push_back(
+                                value.get<std::string>());
+                        }
+                    }
+                }
             }
         }
 

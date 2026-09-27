@@ -1026,6 +1026,10 @@ std::optional<std::string> ReadTextFile(const std::filesystem::path& path, const
 
 struct PreviousPersistence {
     std::vector<detail::PackagePersistenceReader> readers;
+    std::vector<std::string> compatibleSaveFingerprints;
+    std::string packageFingerprint;
+    std::string contentVersion;
+    std::uint32_t saveVersion = 0;
     std::string error;
 };
 
@@ -1054,6 +1058,9 @@ PreviousPersistence DiscoverPreviousPersistence(
     }
     const auto& manifest = parsed.manifest;
     if (manifest.gameId != gameId) return result;
+    result.packageFingerprint = manifest.packageFingerprint;
+    result.contentVersion = manifest.contentVersion;
+    result.saveVersion = manifest.saveVersion;
     if (manifest.persistenceKeyId.empty()) {
         if (manifest.encrypted && !manifest.archiveKey.empty()) {
             result.readers.push_back(
@@ -1064,6 +1071,8 @@ PreviousPersistence DiscoverPreviousPersistence(
         }
     } else {
         result.readers = manifest.legacyPersistenceReaders;
+        result.compatibleSaveFingerprints =
+            manifest.compatibleSaveFingerprints;
     }
     return result;
 }
@@ -1610,7 +1619,9 @@ detail::PackageManifest BuildPackageManifest(const PackageRequest& request,
                                      std::vector<detail::PackageArchiveMount> archives,
                                      std::vector<detail::PackageCustomEffect> customEffects,
                                      std::vector<detail::PackagePersistenceReader>
-                                         legacyPersistenceReaders) {
+                                         legacyPersistenceReaders,
+                                     std::vector<std::string>
+                                         compatibleSaveFingerprints) {
     auto routesInOrder = request.routes;
     std::sort(routesInOrder.begin(), routesInOrder.end(), [](const auto& left, const auto& right) { return left.id < right.id; });
     detail::PackageManifest manifest;
@@ -1633,6 +1644,8 @@ detail::PackageManifest BuildPackageManifest(const PackageRequest& request,
     manifest.persistenceKeyId = "game-data-v1";
     manifest.legacyPersistenceReaders =
         std::move(legacyPersistenceReaders);
+    manifest.compatibleSaveFingerprints =
+        std::move(compatibleSaveFingerprints);
     manifest.encrypted = request.encryption;
     manifest.archiveKey = request.encryption ? encryptionKey : std::string{};
     manifest.publisherPublicKey = request.publisherPublicKey;
@@ -2667,7 +2680,9 @@ std::string detail::SerializePackageManifest(
                                       {"secret", reader.secret}});
                }
                return readers;
-           }()}}},
+           }()},
+          {"compatibleSaveFingerprints",
+           manifest.compatibleSaveFingerprints}}},
         {"encryption", {{"enabled", manifest.encrypted},
                         {"archiveKey", manifest.archiveKey}}},
         {"graphicsTier", manifest.graphicsTier}};
@@ -3040,8 +3055,12 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
         return Cancel(request, eventSink, "Packaging was cancelled before staging");
     }
 
+    // CLI packages into a fresh staging directory while the previous
+    // distribution is supplied as its shard cache source.
+    const auto persistenceSource = request.cacheSourceDir.empty()
+        ? request.outputDir : request.cacheSourceDir;
     auto previousPersistence =
-        DiscoverPreviousPersistence(request.outputDir, request.gameId);
+        DiscoverPreviousPersistence(persistenceSource, request.gameId);
     if (!previousPersistence.error.empty()) {
         return Fail(request, eventSink, "PXPKG1317",
                     previousPersistence.error, true);
@@ -3165,6 +3184,25 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
         return Fail(request, eventSink, "PXPKG1306", "SHA-256 is unavailable");
     }
     const std::string packageFingerprint = Hex(*packageDigest);
+    auto compatibleSaveFingerprints =
+        std::move(previousPersistence.compatibleSaveFingerprints);
+    if (previousPersistence.contentVersion != request.contentVersion ||
+        previousPersistence.saveVersion != request.saveVersion) {
+        compatibleSaveFingerprints.clear();
+    } else if (!previousPersistence.packageFingerprint.empty() &&
+               previousPersistence.packageFingerprint != packageFingerprint) {
+        compatibleSaveFingerprints.push_back(
+            previousPersistence.packageFingerprint);
+    }
+    std::erase(compatibleSaveFingerprints, packageFingerprint);
+    std::ranges::sort(compatibleSaveFingerprints);
+    compatibleSaveFingerprints.erase(
+        std::unique(compatibleSaveFingerprints.begin(),
+                    compatibleSaveFingerprints.end()),
+        compatibleSaveFingerprints.end());
+    if (compatibleSaveFingerprints.size() > 64)
+        return Fail(request, eventSink, "PXPKG1428",
+                    "The same-version save fingerprint history exceeds 64 releases");
     const std::string encryptionKey = "pxpkg-" + Hex(DeriveKey("PrismatiXPackage|" + identityMaterial));
     std::vector<std::vector<ArchiveEntry>> shards(request.archiveShards);
     for (const auto& entry : entries)
@@ -3402,7 +3440,8 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
         BuildPackageManifest(request, packageFingerprint, encryptionKey, entries,
                              std::move(archiveMounts),
                              std::move(customEffects.manifests),
-                             std::move(previousPersistence.readers)));
+                             std::move(previousPersistence.readers),
+                             std::move(compatibleSaveFingerprints)));
     const auto manifestSelfCheck = detail::ParsePackageManifest(manifest);
     if (!manifestSelfCheck.Valid()) {
         const auto& diagnostic = manifestSelfCheck.diagnostics.front();

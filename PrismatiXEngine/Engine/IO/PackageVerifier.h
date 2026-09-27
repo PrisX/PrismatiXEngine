@@ -91,6 +91,10 @@ struct PackageOverlayChain {
     std::string optionalPackId;
     std::string mainPackageFingerprint;
     std::vector<std::string> compatibleSaveFingerprints;
+    // Taken before an optional pack is mounted; optional content cannot
+    // change which old saves or persistence keys the main release accepts.
+    std::vector<std::string> mainCompatibleSaveFingerprints;
+    std::vector<std::string> mainLegacyPersistenceSecrets;
     std::vector<std::string> ignoredFiles;
 };
 

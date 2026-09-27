@@ -275,6 +275,7 @@ pack can be produced with `create-overlay --optional-id <id>` and toggled with
 Never choose Story, Assets, another source input or an unrelated existing folder as output. `pack` is an explicit distribution command; `run` packages and launches. Quote paths containing spaces.
 
 Output replacement verifies the previous build's inventory. If you have played a distribution and it now contains saves/logs, or edited its files, use a new output directory; do not delete player data to bypass the guard. Test migration with a copy of the old saves before distributing an update.
+When replacing an owned output at the same content/save version, Packager carries its former save fingerprint and any legacy key readers through CLI staging. A fresh, unrelated output directory has no previous release to inherit from; distribute it through a signed exact-base overlay or use an explicit versioned save migration when old saves must be accepted.
 
 Long builds report loading, per-scene Story parse/compile counts across locales,
 copy counts and bytes, fingerprinting, and publication on stderr. Packaging also forwards throttled native phase/count

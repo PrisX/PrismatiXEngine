@@ -766,6 +766,10 @@ PackageOverlayChain ResolveSignedPackageOverlayChain(
     const auto main = sdk::detail::ParsePackageManifest(*currentManifest);
     if (!main.Valid()) return fail("Signed update chain target is invalid");
     result.mainPackageFingerprint = main.manifest.packageFingerprint;
+    result.mainCompatibleSaveFingerprints =
+        main.manifest.compatibleSaveFingerprints;
+    for (const auto& reader : main.manifest.legacyPersistenceReaders)
+        result.mainLegacyPersistenceSecrets.push_back(reader.secret);
     for (const auto& ancestor : ancestors) {
         if (ancestor.fingerprint != result.mainPackageFingerprint &&
             ancestor.contentVersion == main.manifest.contentVersion &&

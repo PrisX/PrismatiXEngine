@@ -6,6 +6,7 @@
 #include "Engine/Progression/GlobalProfile.h"
 #include "Engine/Progression/GlobalProfileStore.h"
 #include "Engine/Progression/Persist.h"
+#include "Engine/Progression/SaveSystem.h"
 #include "Engine/Progression/UserDataLocation.h"
 #include "Engine/SDK/Packager.h"
 #include "Engine/Package/PackageManifest.h"
@@ -701,6 +702,21 @@ int main(int argc, char* argv[]) {
         suite.Require(keys.has_value(), "publisher signing key can be generated");
         const auto privateKey = fixture.path / "publisher-private-key.txt";
         Write(privateKey, keys->privateKeyHex + "\n");
+        const auto originalStory = Read(root / "Story/Entry.pxstory");
+        Write(root / "Story/Entry.pxstory",
+              originalStory + "\n; legacy package content\n");
+        auto preliminaryRequest = PackageRequest(root, output, player);
+        preliminaryRequest.publisherPublicKey = keys->publicKeyHex;
+        suite.Require(px::sdk::RunPackager(preliminaryRequest).Completed(),
+                      "pre-stable-key package fixture is produced");
+        const auto preliminaryManifestPath = output / "Package/manifest.json";
+        auto preliminaryManifest = nlohmann::json::parse(
+            Read(preliminaryManifestPath));
+        const std::string legacyPackageFingerprint =
+            preliminaryManifest.at("packageFingerprint").get<std::string>();
+        preliminaryManifest.erase("persistence");
+        Write(preliminaryManifestPath, preliminaryManifest.dump());
+        Write(root / "Story/Entry.pxstory", originalStory);
         auto baseRequest = PackageRequest(root, output, player);
         baseRequest.publisherPublicKey = keys->publicKeyHex;
         const auto packaged = px::sdk::RunPackager(baseRequest);
@@ -805,6 +821,14 @@ int main(int argc, char* argv[]) {
             Read(output / "Package/manifest.json"));
         suite.Require(startupManifest.Valid(),
                       "packaged manifest supplies the stable settings key");
+        suite.Require(startupManifest.manifest.packageFingerprint !=
+                          legacyPackageFingerprint &&
+                          startupManifest.manifest.legacyPersistenceReaders.size() == 1 &&
+                          startupManifest.manifest.legacyPersistenceReaders.front().secret ==
+                              legacyPackageFingerprint &&
+                          startupManifest.manifest.compatibleSaveFingerprints ==
+                              std::vector<std::string>{legacyPackageFingerprint},
+                      "same-version package upgrade retains the former key and save fingerprint");
         suite.Require(startupManifest.manifest.archives.size() > 1,
                       "Packager writes multiple stable content shards");
         for (const auto& archive : startupManifest.manifest.archives)
@@ -983,9 +1007,21 @@ int main(int argc, char* argv[]) {
         const auto oldSave = userData / "Save/save_2.pxsav";
         suite.Require(std::filesystem::is_regular_file(oldSave),
                       "base Player leaves a real encrypted slot for update testing");
+        px::progress::SaveSystem baseSaves;
+        baseSaves.Configure((userData / "Save").string(), &startupKey);
+        auto legacySnapshot = baseSaves.Load(2);
+        suite.Require(legacySnapshot.has_value(),
+                      "base Player slot can be replayed with a historical package identity");
+        legacySnapshot->packageFingerprint = legacyPackageFingerprint;
+        const auto legacyKey = px::progress::DeriveLegacyPersistenceKey(
+            legacyPackageFingerprint);
         std::filesystem::create_directories(signedUserData / "Save");
-        std::filesystem::copy_file(
-            oldSave, signedUserData / "Save/save_2.pxsav");
+        px::progress::SaveSystem legacySaves;
+        legacySaves.Configure((signedUserData / "Save").string(), &legacyKey);
+        suite.Require(legacySaves.Save(2, *legacySnapshot),
+                      "historical slot uses the former fingerprint-derived key");
+        const auto legacySlotPath = signedUserData / "Save/save_2.pxsav";
+        const auto originalLegacySlot = Read(legacySlotPath);
         AutomatedChildProcess signedProcess;
         suite.Require(signedProcess.Start(packagedPlayer, launchDirectory,
                                           signedDataRoot, {}, true),
@@ -1001,6 +1037,15 @@ int main(int argc, char* argv[]) {
                       }), "signed-overlay Player completes its native journey");
         suite.Expect(signedProcess.CompletedExitCode() == 0,
                      "signed-overlay Player exits cleanly");
+        px::progress::SaveSystem promotedSaves;
+        promotedSaves.Configure((signedUserData / "Save").string(),
+                                &startupKey);
+        suite.Expect(Read(legacySlotPath.string() + ".legacy.bak") ==
+                         originalLegacySlot &&
+                         Read(legacySlotPath) != originalLegacySlot &&
+                         promotedSaves.Load(2).has_value(),
+                     "saving over the historical slot keeps its encrypted backup and promotes the current key");
+        Write(legacySlotPath, originalLegacySlot);
 
         AutomatedChildProcess enableAdult;
         suite.Require(enableAdult.Start(packagedPlayer, launchDirectory,
@@ -1025,6 +1070,9 @@ int main(int argc, char* argv[]) {
                       }), "optional-pack Player completes its native journey");
         suite.Expect(adultProcess.CompletedExitCode() == 0,
                      "optional-pack Player exits cleanly");
+        suite.Expect(Read(legacySlotPath.string() + ".legacy.1.bak") ==
+                         originalLegacySlot,
+                     "optional pack also preserves a historical-key slot while promoting it");
         const auto adultLog = Read(signedLog);
         const std::string previousSaveMarker =
             "Player E2E previous-version save loaded";
@@ -1051,8 +1099,8 @@ int main(int argc, char* argv[]) {
         const auto migratedUserData = migratedDataRoot /
             ("Game " + px::crypto::Sha256Hex(startupManifest.manifest.gameId));
         std::filesystem::create_directories(migratedUserData / "Save");
-        std::filesystem::copy_file(
-            oldSave, migratedUserData / "Save/save_2.pxsav");
+        Write(migratedUserData / "Save/save_2.pxsav",
+              originalLegacySlot);
         const auto migratedLog = migratedUserData / "logs/PrismatiXPlayer.log";
         AutomatedChildProcess migratedProcess;
         suite.Require(migratedProcess.Start(packagedPlayer, launchDirectory,

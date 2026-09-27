@@ -1546,6 +1546,56 @@ int main() {
                 upgradedSettings.language == "ja-JP" && upgradedSlot &&
                 upgradedSlot->chapter == "v1",
             "upgraded package readers recover all version-one user data before migration");
+
+        const std::string priorFingerprint =
+            currentManifest.manifest.packageFingerprint;
+        Write(storyPath, originalStory + "\n; same-version release\n");
+        Write(projectPath, upgradedProject.dump());
+        auto sameVersion = FixtureRequest(root, upgradeOutput);
+        sameVersion.requestId = "persistence-same-version-v2";
+        sameVersion.contentVersion = "fixture-v2";
+        suite.Require(px::sdk::RunPackager(sameVersion).Completed(),
+                      "same-version replacement package completes");
+        const auto replacementManifest = px::sdk::detail::ParsePackageManifest(
+            Read(manifestPath));
+        suite.Require(replacementManifest.Valid() &&
+                          replacementManifest.manifest.packageFingerprint !=
+                              priorFingerprint &&
+                          replacementManifest.manifest.compatibleSaveFingerprints ==
+                              std::vector<std::string>{priorFingerprint},
+                      "same-version replacement records the former save identity");
+        suite.Require(px::sdk::RunPackager(sameVersion).Completed(),
+                      "repeating an unchanged package completes");
+        const auto repeatedManifest = px::sdk::detail::ParsePackageManifest(
+            Read(manifestPath));
+        suite.Expect(repeatedManifest.Valid() &&
+                         repeatedManifest.manifest.compatibleSaveFingerprints ==
+                             std::vector<std::string>{priorFingerprint},
+                     "repeating an unchanged package does not grow save ancestry");
+        auto stagedSameVersion = sameVersion;
+        stagedSameVersion.requestId = "persistence-cli-staging-v2";
+        stagedSameVersion.outputDir = fixture.path / "Build/PersistenceStaged";
+        stagedSameVersion.cacheSourceDir = upgradeOutput;
+        suite.Require(px::sdk::RunPackager(stagedSameVersion).Completed(),
+                      "CLI-style staging retains its previous distribution source");
+        const auto stagedManifest = px::sdk::detail::ParsePackageManifest(
+            Read(stagedSameVersion.outputDir / "Package/manifest.json"));
+        suite.Expect(stagedManifest.Valid() &&
+                         stagedManifest.manifest.compatibleSaveFingerprints ==
+                             std::vector<std::string>{priorFingerprint} &&
+                         stagedManifest.manifest.legacyPersistenceReaders.size() == 1 &&
+                         stagedManifest.manifest.legacyPersistenceReaders.front().secret ==
+                             legacySecret,
+                     "CLI-style staging carries both save ancestry and legacy keys");
+        auto malformedManifest = nlohmann::json::parse(Read(manifestPath));
+        malformedManifest["persistence"]["compatibleSaveFingerprints"] =
+            nlohmann::json::array({
+                repeatedManifest.manifest.packageFingerprint});
+        suite.Expect(!px::sdk::detail::ParsePackageManifest(
+                         malformedManifest.dump()).Valid(),
+                     "a package cannot list its current fingerprint as retired save ancestry");
+        Write(storyPath, originalStory);
+        Write(projectPath, originalProject);
     });
 
     suite.Run("VideoContainersRemainSeekableInCompressedPackages", [&] {

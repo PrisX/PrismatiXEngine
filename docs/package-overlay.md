@@ -34,7 +34,12 @@ tombstones for removed resources. Route, Runtime IR, source map, content
 version, and save migration settings come from the signed target manifest.
 When content and save versions stay the same, Player also accepts a save from
 an earlier fingerprint in the verified update chain, then checks its Runtime
-document and exact execution anchor before restoring it. An unrelated
+document and exact execution anchor before restoring it. An in-place package
+replacement also carries a bounded list of earlier same-version fingerprints
+in `persistence.compatibleSaveFingerprints`; Player combines that list with
+the signed main update chain. Legacy key readers from the installed base and
+signed main target remain available across the chain, including when an
+optional pack is enabled. An unrelated
 same-version fingerprint is still rejected. If an update changes save or
 Story state incompatibly, advance the content/save version and ship an
 explicit save migration in the signed target.

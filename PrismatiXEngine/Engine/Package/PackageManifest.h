@@ -73,11 +73,13 @@ struct PackageManifest {
     std::uint32_t saveVersion = 1;
     std::string packageFingerprint;
     // Content fingerprints and archive keys identify one build. Persistence
-    // uses a stable game-data identity and carries bounded legacy readers only
-    // for already shipped build-derived keys.
+    // uses a stable game-data identity, bounded readers for already shipped
+    // build-derived keys, and explicit same-version save ancestry.
     std::string persistenceDataId;
     std::string persistenceKeyId;
     std::vector<PackagePersistenceReader> legacyPersistenceReaders;
+    // Explicit same-version save ancestry carried across in-place releases.
+    std::vector<std::string> compatibleSaveFingerprints;
     bool encrypted = false;
     std::string archiveKey;
     std::string publisherPublicKey;

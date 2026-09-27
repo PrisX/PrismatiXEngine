@@ -4,6 +4,7 @@
 
 ### 2026-09-27 後續進度
 
+- 舊加密 slot 在新版 Player 的兩段簽章更新鏈中已做原生 E2E：先以舊 fingerprint 金鑰及舊 package fingerprint 建檔，同內容版本的替換發行包在 `persistence.compatibleSaveFingerprints` 明確記錄舊身分；Player 合併基底／已驗簽主鏈的舊金鑰與相容 fingerprint，不讓選裝包單獨擴張保存身分。載入後再保存同一 slot 時，原始加密 bytes 留在 `.legacy.bak`，新 slot 使用穩定金鑰；選裝包啟用後重試舊 slot 亦通過，第三段 contentVersion 更新亦可對原始舊 slot 執行明示 migration。CLI 式 staging Packager 現從 `cacheSourceDir` 繼承舊金鑰與同版 lineage，而非只看空白 staging output。Native Packager Contract 1/1、Player Catalog Native Acceptance 1/1、CLI 104/104 通過。測試使用合成舊版資料；真實玩家資料及新目錄獨立發行版的前版來源傳遞仍待驗。
 - `CreatePackageOverlay` 現直接從目標 PDX 的資源串流寫出 changed entries，寫入期間逐筆核對預期大小與 SHA-256，省去先解出全部變動資源的暫存檔及再次讀取。輸出仍先在同磁碟 staging 驗證、再不可覆寫發布；不能據此宣稱 8 GB 大包吞吐或峰值已驗。Native Packager Contract 1/1、Runtime Resources Integration 1/1 通過，含串流複製與錯誤 SHA 拒絕。
 - 舊 revision-2 `config.dat` 只有鍵盤改鍵、沒有 `wheelBindings` 的原生整合驗收已補：沿用 Input 預設滾輪、之後改滾輪可保存並於重開後還原。Player Catalog Native Acceptance 也以加密的無滾輪設定從封裝匯入，驗證旅程後再存檔帶有正確滾輪預設。設定檔 `format`／`schemaRevision` 型別損壞時，`GameSettings::LoadWithFallback` 現會安全回報失敗，`SavePreservingExisting` 保留原 bytes，不再讓未捕捉的 JSON 型別例外中斷啟動。Native SaveLoad integration 1/1、Player Catalog Native Acceptance 1/1 通過；人工實按與實際舊版玩家資料仍待驗。
 - 選裝包 `--optional-pack <id> on|off` 的 per-user `optional-pack.txt` 現使用 SDK 共用的同磁碟原子寫檔，避免直接截斷舊偏好；仍維持原有單 ID 格式。Native SaveLoad integration 1/1、Player Catalog Native Acceptance 1/1（含兩段主更新、成人選裝包開關與存檔）通過。多個選裝包同時掛載不能只改偏好格式：每個簽章 pack 都含完整目標 manifest/index，需先設計可驗證的組合與衝突合約，故本輪沒有冒然改變限制。
@@ -67,7 +68,7 @@
 | 文字與路由演出 | 已修文字 outline 雙層換行差異、未變文字每幀重排，以及 route crossfade 暗谷／預載閃白。 | 正式單次 layout/mask 的文字效果管線、依事件 author 的白幕／shader／遮罩轉場與通用 route motion graph 缺；最新大型封裝與原版逐幀對照未做。 |
 | `.pxmotion`／Story 動畫 | 格式已演進至 rev 11，TSX UI／splash 可播；Story `[timeline]` 可控 `.pxanim`／`.pxtimeline` 的 await/speed；新增 `[motion]`／`[motion.stop]` 直接在 Stage 播放 `.pxmotion`，含預載、音效 marker、等待與存檔還原。 | 尚缺以正式大型發行版驗證圖層畫面及音效時序；M2 `.mtn` 轉換器／逐幀驗證暫停。 |
 | 輸入／設定 | `.pxgame.inputActions` 有 context、key、wheel、route／`uiAction`；鍵盤捕捉／追加／逐鍵移除／原位替換／整組清除、wheel 方向／門檻可保存；`KeyBindingButton` 可逐鍵選取與衝突二次確認，`WheelBindingButton` 可實體捕捉方向；原生 Player E2E 已驗加密舊設定缺滾輪欄位的匯入與保存。 | 非 Player host 須自行觸發持久化；實際舊版玩家資料與正式封裝人工實按仍待驗。原版衝突對話框屬遊戲 UI，仍未還原。原作剩餘 12 項與多數 settings.noop 須先判別可攜 SDK 能力，不能一律當作 SDK 缺陷。 |
-| 更新與持久化 | 可顯式安裝目錄補丁；簽章更新鏈可建／驗／由 Player 載入或回基底；同版舊存檔可沿已驗簽鏈的舊 fingerprint 載入並檢查 Runtime 文件／錨點；選裝包可獨立啟停且存檔身分保留主更新 fingerprint；Player 資料已移至 per-user 位置。 | 不相容劇本仍需明示 content/save version 與 migration；舊版 save key 與正式大型發行版 migration 實測仍缺。 |
+| 更新與持久化 | 可顯式安裝目錄補丁；簽章更新鏈可建／驗／由 Player 載入或回基底；同版舊存檔可沿已驗簽鏈或明確發行 lineage 的舊 fingerprint 載入並檢查 Runtime 文件／錨點；合成舊金鑰 slot 已通過 Player E2E，覆寫時保留原始備份；選裝包可獨立啟停且存檔身分保留主更新 fingerprint；Player 資料已移至 per-user 位置。 | 不相容劇本仍需明示 content/save version 與 migration；真實舊版玩家資料、新目錄獨立發行版的前版來源傳遞，以及正式大型發行版 migration 實測仍缺。 |
 | 發行效能 | 16 分片、Release Packager、未變片重用、preflight／media 驗證、runtime-only refresh 已有真實大型量測。 | 日常素材變更仍做 O(全量素材) 的多輪核驗；缺依賴級／block-level 安全增量、同條件長期吞吐與磁碟峰值量測、最新 overlay 的 8 GB 壓力測試。 |
 | 平台／原作特有功能 | rule/shake/影片、主要 UI 與基本 flowchart 可運行。 | 老闆鍵／置頂／語音分流／Steam 等是否抽成可攜 SDK API 尚需取捨；不要為了 Senren 外觀宣稱這些設定已生效。 |
 
@@ -85,7 +86,7 @@ Engine `docs/package-overlay.md` 是格式規格和安全邊界。這一輪已�
 
 ## 未完成工作：下一位 agent 的建議順序
 
-1. **繼續驗收已簽章的單檔更新。** `PlayerApp::LoadBootConfig` 現解析 `Package/updates` 內唯一的 signed exact-base 多版本鏈與 per-user 啟用的 revision 3 選裝包，`Runtime::Init` 以基底 archiveKey 掛原片，再依序掛 overlay/tombstones；失敗回基底。小型 Player E2E 已驗同版舊存檔、明示 migration、跨更新資源刪除及重啟；下一步須驗真實舊版 save key／大發行包，並決定是否需要遊戲內選裝包開關和同時啟用多個選裝包。不得把 unsigned payload SHA-256 當發行者認證。
+1. **繼續驗收已簽章的單檔更新。** `PlayerApp::LoadBootConfig` 現解析 `Package/updates` 內唯一的 signed exact-base 多版本鏈與 per-user 啟用的 revision 3 選裝包，`Runtime::Init` 以基底 archiveKey 掛原片，再依序掛 overlay/tombstones；失敗回基底。小型 Player E2E 已驗合成舊金鑰／舊 fingerprint slot、明示 migration、跨更新資源刪除及重啟；下一步須驗真實舊版玩家資料／大發行包，並決定是否需要遊戲內選裝包開關和同時啟用多個選裝包。不得把 unsigned payload SHA-256 當發行者認證。
 2. **把新 overlay producer 在實際 Senren 版上驗收**：用兩個實際完整發行版測 `create-overlay`／`verify-overlay`，量測總時間、暫存／最終磁碟、峰值記憶體、patch 大小、壓縮大 entry；小型 contract 不代表 8 GB 封裝可接受。若目前只有同一版成品，先用隔離副本與可重現小變更，勿改寫已交付 `dist`。
 3. **真正的增量 authoring/build/packaging**：現已有 16 片重用與 Release Packager 大幅改善，但小改仍要對約 31,000 個檔與約 8.2 GiB 素材做多輪安全核驗。後續應先 profile「source hash／四語結構驗證／舊 PDX 驗證／staging 發布」，設計有失效條件的依賴／驗證 cache，保留 TOCTOU 與 ownership 安全性。歷史量測：Release Packager 同版 16/16 分片重封約 96.30 秒、14/16 小變更約 110.58 秒；不同快取與磁碟條件，不能當 SLA。僅更新 Player 的 `refresh-runtime` 曾約 23.19 秒。詳見 `SDK_FEEDBACK.md` 當日段落。
 4. **跨層 Authoring 合約與大型 importer**：針對 UI/Action/runtime property、動態 ViewModel、依賴圖漏資源、source-location diagnostics 建 regression；在現有行程內逐 scene 解析／編譯快取之外，讓 92 scene × 四語的來源讀取與匯入能安全增量或串流，清楚區分 `compileStory` 與 `compileStoryProject`。先從真實移植 importer 的重複 workaround 提取通用 API，不要把專案特例硬塞 stock Player。
