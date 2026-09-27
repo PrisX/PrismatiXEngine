@@ -2,7 +2,7 @@
 
 import {createHash, randomUUID} from "node:crypto";
 import {spawn, type ChildProcessWithoutNullStreams} from "node:child_process";
-import {constants, existsSync, readFileSync, watch} from "node:fs";
+import {constants, existsSync, readFileSync, readdirSync, watch} from "node:fs";
 import {
   copyFile, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile,
 } from "node:fs/promises";
@@ -848,13 +848,31 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
   storyCompilationCache?: StoryProjectCompilationCache) {
   const uiTypeRegistry = await loadUiRegistry(registryOverride, runtimeHint, packagerPath);
   const inputKeyRegistry = await loadInputKeyRegistry(runtimeHint, packagerPath);
+  // A compile checks tens of thousands of media paths, often grouped in a few
+  // directories. Keep this inventory local to one synchronous compile call;
+  // publication still fingerprints the actual files before accepting output.
+  const directoryEntries = new Map<string, ReadonlySet<string> | null>();
+  const resourceExists = (path: string): boolean => {
+    let absolute: string;
+    try { absolute = projectFile(loaded.root, path); }
+    catch { return false; }
+    const directory = dirname(absolute);
+    let entries = directoryEntries.get(directory);
+    if (entries === undefined) {
+      try {
+        entries = new Set(readdirSync(directory, {withFileTypes: true})
+          .filter((entry) => !entry.isSymbolicLink())
+          .map((entry) => entry.name));
+      } catch { entries = null; }
+      directoryEntries.set(directory, entries);
+    }
+    return entries?.has(basename(absolute)) === true || existsSync(absolute);
+  };
   const result = compileProject({project: loaded.project, documents: loaded.documents,
     sourceFiles: loaded.sourceFiles, locales: loaded.locales,
     projectPath: "project.pxproject",
     ...(loaded.storyPath === undefined ? {} : {storyPath: loaded.storyPath}),
-    resourceExists: (path) => {
-      try { return existsSync(projectFile(loaded.root, path)); } catch { return false; }
-    },
+    resourceExists,
     resourceText: (path) => {
       try { return readFileSync(projectFile(loaded.root, path), "utf8"); }
       catch { return undefined; }
