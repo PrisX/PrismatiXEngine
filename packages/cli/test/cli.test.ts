@@ -5,6 +5,7 @@ import {mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, utimes, writeFile}
 import {tmpdir} from "node:os";
 import {dirname, join, resolve} from "node:path";
 import {spawn, spawnSync} from "node:child_process";
+import {gunzipSync, gzipSync} from "node:zlib";
 import test from "node:test";
 
 import {createStarter} from "../src/starter.js";
@@ -74,6 +75,69 @@ async function fixture(legacy = false): Promise<{root: string; project: string}>
   }));
   return {root, project};
 }
+
+test("separate CLI builds reuse bounded Story scenes and rebuild a damaged cache", async () => {
+  const value = await fixture();
+  try {
+    const indexPath = join(value.root, "Story/story.pxindex");
+    const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+      chapters: Array<{scenes: string[]}>;
+      scenes: Array<{id: string; sources: Record<string, string>}>;
+    };
+    index.chapters[0]!.scenes.push("bonus");
+    index.scenes.push({id: "bonus", sources: {en: "Story/bonus.pxstory"}});
+    await write(indexPath, JSON.stringify(index));
+    await write(join(value.root, "Story/bonus.pxstory"), "Bonus.\n[end]\n");
+    const output = join(value.root, ".prismatix", "artifact");
+    const events = (stderr: string) => stderr.split(/\r?\n/u).filter(Boolean).flatMap((line) => {
+      try { return [JSON.parse(line) as Record<string, unknown>]; }
+      catch { return []; }
+    }).filter((event) => event.code === "PXCLI1103" && event.phase === "story-compile");
+    const build = () => run(["build", value.project, "--artifact-only", "--output", output]);
+    const first = build();
+    assert.equal(first.status, 0, first.stderr);
+    assert.deepEqual(events(first.stderr).map((event) => event.cached),
+      [undefined, undefined]);
+    const cachePath = join(value.root, ".prismatix", "cache", "story-scenes-v1.json.gz");
+    const firstCache = await stat(cachePath);
+    assert.ok(firstCache.size > 0);
+
+    const second = build();
+    assert.equal(second.status, 0, second.stderr);
+    assert.deepEqual(events(second.stderr).map((event) => event.cached), [true, true]);
+    assert.equal((await stat(cachePath)).mtimeMs, firstCache.mtimeMs,
+      "a full cache hit does not recompress or rewrite the cache");
+
+    await write(join(value.root, "Story/main.pxstory"), "Edited dialogue.\n[end]\n");
+    const third = build();
+    assert.equal(third.status, 0, third.stderr);
+    assert.deepEqual(events(third.stderr).map((event) => event.cached),
+      [undefined, true]);
+    const ir = JSON.parse(await readFile(join(output, "Runtime/main.pxir"), "utf8")) as {
+      operations: Array<{text: string}>;
+    };
+    assert.ok(ir.operations.some((operation) => operation.text === "Edited dialogue."));
+
+    const stale = JSON.parse(gunzipSync(await readFile(cachePath)).toString("utf8")) as {
+      compiler: string;
+    };
+    stale.compiler = "older compiler";
+    await writeFile(cachePath, gzipSync(JSON.stringify(stale)));
+    const staleBuild = build();
+    assert.equal(staleBuild.status, 0, staleBuild.stderr);
+    assert.deepEqual(events(staleBuild.stderr).map((event) => event.cached),
+      [undefined, undefined]);
+
+    await writeFile(cachePath, "damaged cache");
+    const fourth = build();
+    assert.equal(fourth.status, 0, fourth.stderr);
+    assert.deepEqual(events(fourth.stderr).map((event) => event.cached),
+      [undefined, undefined]);
+    assert.ok((await stat(cachePath)).size > "damaged cache".length);
+  } finally {
+    await rm(value.root, {recursive: true, force: true});
+  }
+});
 
 test("validate rejects malformed UTF-8 Story bytes before compilation", async () => {
   const value = await fixture();

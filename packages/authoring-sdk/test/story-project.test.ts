@@ -97,6 +97,35 @@ test("Story compilation cache reuses only identical inputs and refreshes the rev
   "scenes are reparsed when changed inputs require recompilation");
 });
 
+test("Story scene cache survives serialization and invalidates edited sources", () => {
+  const sourceFiles = {
+    "zh-TW/ch01/scene01.pxstory": "*start\nFirst line.\n[jump scene=scene02 target=start]\n",
+    "zh-TW/ch01/scene02.pxstory": "*start\nSecond line.\n[end]\n*aside\n[end]\n",
+  };
+  const original = new StoryProjectCompilationCache();
+  assert.equal(original.compile({storyIndex, locale: "zh-TW", sourceFiles}).valid, true);
+  const restored = new StoryProjectCompilationCache();
+  restored.importScenes(JSON.parse(JSON.stringify(original.exportScenes())));
+  const events: Array<{phase: string; sceneId: string; cached?: boolean}> = [];
+  const reused = restored.compile({storyIndex, locale: "zh-TW", sourceFiles,
+    onProgress: (event) => events.push(event)});
+  assert.equal(reused.valid, true);
+  assert.ok(events.every((event) => event.cached === true));
+  events.length = 0;
+  const editedSources = {...sourceFiles,
+    "zh-TW/ch01/scene01.pxstory": "*start\nEdited line.\n[jump scene=scene02 target=start]\n"};
+  const edited = restored.compile({storyIndex, locale: "zh-TW", sourceFiles: editedSources,
+    onProgress: (event) => events.push(event)});
+  assert.equal(edited.valid, true);
+  assert.deepEqual(events.filter((event) => event.phase === "compile")
+    .map((event) => [event.sceneId, event.cached === true]),
+    [["scene01", false], ["scene02", true]]);
+  assert.deepEqual(edited.runtimeIr,
+    compileStoryProject({storyIndex, locale: "zh-TW", sourceFiles: editedSources}).runtimeIr);
+  assert.throws(() => restored.importScenes({format: "PrismatiXStorySceneCache/1",
+    locales: [{locale: "zh-TW", compileInputs: "", labels: "", scenes: [{}]}]}));
+});
+
 test("Story cache compiles the source snapshot captured before progress callbacks", () => {
   const sourceFiles = {
     "zh-TW/ch01/scene01.pxstory": "*start\nFirst line.\n[end]\n",

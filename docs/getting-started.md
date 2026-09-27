@@ -72,6 +72,16 @@ incremental build. When linked files come from that same output directory, the
 mandatory pre-publish integrity check also validates their content without
 hashing those staged hard links again.
 
+`build` and `dev` keep one compressed Story scene compilation cache at
+`my-game/.prismatix/cache/story-scenes-v1.json.gz`. A new CLI process can reuse
+unchanged scenes; editing one scene recompiles it while retaining independent
+scenes. Exact Story and sidecar text, shared compiler inputs, and a fingerprint
+of the installed compiler determine reuse. A damaged or stale cache is ignored.
+The file is rewritten only when successful compilation changes cached scenes,
+and is limited to 128 MiB compressed (512 MiB before compression). Deleting it
+only makes the next build compile Story again. This does not skip authored text
+reads, artifact integrity checks, or the Packager's content verification.
+
 To distribute an artifact that has already been built, pass it to `pack`,
 `build`, or `run` with `--artifact`. This skips author-source compilation and
 the intermediate artifact copy; the native Packager still checks every input's

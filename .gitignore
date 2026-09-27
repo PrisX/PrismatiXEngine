@@ -29,7 +29,7 @@ vcpkg_installed/
 /node_modules/
 /packages/*/dist/
 /runtime-sdk/dist/
-/.prismatix/
+**/.prismatix/
 
 
 # OS

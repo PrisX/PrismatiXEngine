@@ -30,6 +30,7 @@ import {packageContentKey, packageRetentionKey, refreshRuntimePackageIfMatching,
   retainPackageIfMatching, reusedArchiveInputs, runtimeOutputsMatch,
   runtimeReplacementFiles, writePackageProvenance} from "./package-retain.js";
 import {debugPackagerHint} from "./package-tool-hint.js";
+import {loadStoryCompilationCache, saveStoryCompilationCache} from "./story-disk-cache.js";
 
 import {
   assertLocalBuildFresh,
@@ -1170,8 +1171,10 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
     }
   }
   buildProgress("compile", 0, 1);
+  const effectiveStoryCompilationCache = storyCompilationCache ??
+    await loadStoryCompilationCache(loaded.root);
   const compiled = await compileLoaded(loaded, committedRevision, registryOverride,
-    runtimeHint, packagerPath, storyProgressReporter(), storyCompilationCache);
+    runtimeHint, packagerPath, storyProgressReporter(), effectiveStoryCompilationCache);
   printDiagnostics(compiled.diagnostics);
   if (!compiled.valid || compiled.artifact === undefined) throw new Error("Project validation or compilation failed");
   buildProgress("compile", 1, 1, 0, true);
@@ -1194,6 +1197,7 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
       const retainedBytes = preflightInputs.reduce((sum, input) => sum + input.size, 0);
       buildProgress("reuse-artifact", preflightInputs.length, preflightInputs.length,
         retainedBytes, true, {files: preflightInputs.length, bytes: retainedBytes});
+      await saveStoryCompilationCache(loaded.root, effectiveStoryCompilationCache);
       return {root: loaded.root, artifact: compiled.artifact, output, dependencies,
         protectedPaths};
     }
@@ -1246,6 +1250,7 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
       reuse !== undefined && resolve(reuse.root) === output ? linkedOutputFiles : undefined);
   });
   buildProgress("publish", 1, 1, 0, true);
+  await saveStoryCompilationCache(loaded.root, effectiveStoryCompilationCache);
   return {root: loaded.root, artifact: compiled.artifact, output, dependencies,
     protectedPaths};
 }
@@ -1917,7 +1922,7 @@ async function devCommand(options: Options): Promise<number> {
       stopped = true;
     });
     const revisionRoot = join(location.root, ".prismatix", "dev", randomUUID());
-    const storyCompilationCache = new StoryProjectCompilationCache();
+    const storyCompilationCache = await loadStoryCompilationCache(location.root);
     let revision = 0;
     let attempted = 0;
     let built: BuildResult | undefined;

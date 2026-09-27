@@ -132,6 +132,80 @@ interface CachedSceneCompilation {
 // thousands of nodes.
 class SceneCompilationCache {
   private readonly entries = new Map<string, Map<string, CachedSceneCompilation>>();
+  private generation = 0;
+  private persistedGeneration = 0;
+
+  needsPersistence(): boolean { return this.generation !== this.persistedGeneration; }
+  markPersisted(): void { this.persistedGeneration = this.generation; }
+
+  exportSnapshot(): unknown {
+    return {format: "PrismatiXStorySceneCache/1", locales: [...this.entries].map(
+      ([locale, scenes]) => {
+        const latest = [...scenes.values()].at(-1)?.snapshot;
+        return {locale, compileInputs: latest?.compileInputs ?? "",
+          labels: latest?.labels ?? "", scenes: [...scenes].filter(([, entry]) =>
+            entry.snapshot.compileInputs === latest?.compileInputs &&
+            entry.snapshot.labels === latest?.labels).map(([id, entry]) => ({
+            id, sourcePath: entry.snapshot.sourcePath, source: entry.snapshot.source,
+            identityMap: entry.snapshot.identityMap, descriptor: entry.snapshot.descriptor,
+            labels: [...entry.labels], stubSourceIds: [...entry.stubSourceIds],
+            result: entry.result,
+          }))};
+      })};
+  }
+
+  importSnapshot(value: unknown): void {
+    const object = value as {format?: unknown; locales?: unknown};
+    if (object === null || object.format !== "PrismatiXStorySceneCache/1" ||
+        !Array.isArray(object.locales) || object.locales.length > 32)
+      throw new Error("Invalid Story scene cache envelope");
+    const entries = new Map<string, Map<string, CachedSceneCompilation>>();
+    for (const rawLocale of object.locales) {
+      const group = rawLocale as {locale?: unknown; compileInputs?: unknown;
+        labels?: unknown; scenes?: unknown};
+      if (group === null || typeof group.locale !== "string" ||
+          typeof group.compileInputs !== "string" || typeof group.labels !== "string" ||
+          !Array.isArray(group.scenes) || group.scenes.length > 4096 ||
+          entries.has(group.locale)) throw new Error("Invalid Story scene cache locale");
+      const scenes = new Map<string, CachedSceneCompilation>();
+      for (const rawScene of group.scenes) {
+        const scene = rawScene as {id?: unknown; sourcePath?: unknown; source?: unknown;
+          identityMap?: unknown; descriptor?: unknown; labels?: unknown;
+          stubSourceIds?: unknown; result?: unknown};
+        const result = scene?.result as StoryCompileResult | undefined;
+        if (scene === null || typeof scene.id !== "string" || scenes.has(scene.id) ||
+            typeof scene.sourcePath !== "string" || typeof scene.source !== "string" ||
+            (scene.identityMap !== undefined && typeof scene.identityMap !== "string") ||
+            typeof scene.descriptor !== "string" || !Array.isArray(scene.labels) ||
+            !scene.labels.every((label: unknown) => typeof label === "string") ||
+            !Array.isArray(scene.stubSourceIds) ||
+            !scene.stubSourceIds.every((id: unknown) => typeof id === "string") ||
+            result?.valid !== true || !Array.isArray(result.diagnostics) ||
+            !Array.isArray(result.runtimeIr?.operations) ||
+            !Array.isArray(result.sourceMap?.mappings))
+          throw new Error("Invalid Story scene cache entry");
+        scenes.set(scene.id, {snapshot: {sourcePath: scene.sourcePath,
+          source: scene.source, identityMap: scene.identityMap,
+          descriptor: scene.descriptor, compileInputs: group.compileInputs,
+          labels: group.labels}, labels: new Set(scene.labels),
+          stubSourceIds: new Set(scene.stubSourceIds), result});
+      }
+      entries.set(group.locale, scenes);
+    }
+    this.entries.clear();
+    for (const [locale, scenes] of entries) this.entries.set(locale, scenes);
+    this.generation = 0;
+    this.persistedGeneration = 0;
+  }
+
+  prune(locale: string, sceneIds: ReadonlySet<string>): void {
+    const scenes = this.entries.get(locale);
+    if (scenes === undefined) return;
+    for (const id of scenes.keys()) if (!sceneIds.has(id)) {
+      scenes.delete(id);
+      this.generation += 1;
+    }
+  }
 
   hasEntries(locale: string): boolean {
     return (this.entries.get(locale)?.size ?? 0) > 0;
@@ -162,6 +236,7 @@ class SceneCompilationCache {
       this.entries.set(locale, localeEntries);
     }
     localeEntries.set(sceneId, {snapshot, labels, stubSourceIds, result});
+    this.generation += 1;
   }
 }
 
@@ -175,6 +250,17 @@ export class StoryProjectCompilationCache {
     readonly snapshot: StoryCompilationSnapshot;
     readonly result: StoryCompileResult;
   }>();
+
+  /** Persist only successful per-scene results. The caller must version and
+   * bound the storage envelope; every reuse still checks exact source text and
+   * all shared compilation inputs. */
+  exportScenes(): unknown { return this.scenes.exportSnapshot(); }
+
+  /** Import an advisory cache. A damaged snapshot is rejected atomically. */
+  importScenes(value: unknown): void { this.scenes.importSnapshot(value); }
+
+  needsPersistence(): boolean { return this.scenes.needsPersistence(); }
+  markPersisted(): void { this.scenes.markPersisted(); }
 
   compile(context: StoryProjectCompileContext): StoryCompileResult {
     const snapshot = storyCompilationSnapshot(context);
@@ -204,8 +290,11 @@ export class StoryProjectCompilationCache {
       if (identityMap !== undefined) sourceFiles[`${path}.pxids.json`] = identityMap;
     }
     const result = compileStoryProjectInternal({...context, sourceFiles}, this.scenes);
-    if (result.valid && result.runtimeIr !== undefined && result.sourceMap !== undefined)
+    if (result.valid && result.runtimeIr !== undefined && result.sourceMap !== undefined) {
+      this.scenes.prune(context.locale,
+        new Set(context.storyIndex.scenes.map((scene) => scene.id)));
       this.entries.set(context.locale, {snapshot, result});
+    }
     return result;
   }
 }
