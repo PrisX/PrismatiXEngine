@@ -4,7 +4,7 @@
 
 ### 2026-09-27 後續進度
 
-- `dev` 的 Story 編譯快取現在可在單一 scene 修改後重用其他未變 scene 的編譯結果、source map 與資源依賴；cross-scene label、sidecar 或共用編譯輸入變更會使相關快取失效。Authoring SDK 154/154 與 CLI 104/104 通過，包含開發模式雙 scene 驗收。此快取只在同一 CLI 行程內有效，仍會重新讀取／解析所有 scene，並非完整增量或串流 importer。
+- `dev` 的 Story 編譯快取現在可在單一 scene 修改後重用其他未變 scene 的編譯結果、source map 與資源依賴；cross-scene label、sidecar 或共用編譯輸入變更會使相關快取失效。Authoring SDK 154/154 與 CLI 104/104 通過，包含開發模式雙 scene 驗收；Senren 四語 368 scene／31,339 resources 的 `validate --runtime` 再次通過。此快取只在同一 CLI 行程內有效，仍會重新讀取／解析所有 scene，並非完整增量或串流 importer。
 - Wheel 使用者設定已補 `Input::CaptureWheelBindings`／`RestoreWheelBindings`、Runtime SDK `ctx.input.wheelBinding`／`setWheelBinding` 與 Player per-user `config.dat` 保存／還原；舊 revision-2 設定缺少欄位時沿用作者預設。Native 輸入／設定／JS Host targeted 測試及 Runtime SDK 測試通過；非 Player host 仍須自行觸發持久化，正式封裝實按未驗。
 - Story 現可用 `[motion asset=...pxmotion await=true speed=...]`／`[motion.stop]` 在 Stage 播放全畫面 `.pxmotion`；Stage 預檢 descriptor、圖片與音效資源，圖片預載完成後才推進時間，音效 marker 依 bus 發聲，等待非循環動畫結束後續行。進度、速度與等待狀態寫入存檔並於還原後接續；Authoring Story／Project、Runtime IR、原生動畫／存讀檔 targeted 測試通過。尚未在正式大型封裝實機驗證畫面。
 - `Input::RemoveKeyBinding` 和 Runtime SDK `ctx.input.removeKeyBinding` 現可只移除一個鍵，保留同動作其餘按鍵順序及 gamepad／wheel；原生與 JS 測試涵蓋移除後的保存／載入。後續 `Input::ReplaceKeyBinding` 可原位替換單鍵，`KeyBindingButton` 可選取、刪除／替換單鍵，並可啟用衝突二次確認；原生與 Authoring SDK targeted 測試通過。
