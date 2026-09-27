@@ -508,7 +508,8 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
     }
     if (node.kind !== "command" || node.name === undefined) continue;
     const args = argumentMap(node);
-    const allowed = builtinNamedArguments[node.name];
+    const allowed = Object.hasOwn(builtinNamedArguments, node.name)
+      ? builtinNamedArguments[node.name] : undefined;
     if (allowed !== undefined) {
       let unknown = false;
       for (const [name, argument] of args) {

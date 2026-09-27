@@ -175,6 +175,12 @@ test("Story rejects misspelled built-in parameters before packaging", () => {
     .some((item) => item.name === "intro"));
   assert.deepEqual(storyCommandCompletions().find((item) => item.id === "voice")?.parameters,
     [{name: "asset", required: true}]);
+  for (const name of ["constructor", "toString", "__proto__"]) {
+    const unknown = compileStory(parseStory(`[${name} value=1]\n`),
+      {documentId: `unknown-${name}`});
+    assert.equal(unknown.valid, false);
+    assert.ok(unknown.diagnostics.some((item) => item.code === "PXSTORY1199"));
+  }
 });
 
 test("blank lines end speaker scope so the next text paragraph is narration", () => {
