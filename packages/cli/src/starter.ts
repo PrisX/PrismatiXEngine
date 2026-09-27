@@ -132,7 +132,13 @@ export async function createStarter(targetArgument: string, options: StarterOpti
     if (removedEmptyTarget) await mkdir(target).catch(() => {});
     throw error;
   } finally {
-    await rm(staging, {recursive: true, force: true});
-    await rmdir(lock);
+    try {
+      // Windows may report ENOTEMPTY while another process briefly holds a
+      // freshly written template entry. Retry cleanup before releasing ownership.
+      await rm(staging, {recursive: true, force: true,
+        maxRetries: 5, retryDelay: 50});
+    } finally {
+      await rmdir(lock);
+    }
   }
 }
