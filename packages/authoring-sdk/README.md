@@ -71,7 +71,12 @@ verified label sets, so a prose edit in one scene does not reparse every other
 scene. Changes to cross-scene labels or shared compile inputs reparse and
 recompile affected scenes. `parse` and `compile` progress events have
 `cached: true` when those phases were reused. The cache retains no parsed ASTs,
-does not persist between CLI runs, and does not skip reading source files.
+and the CLI persists verified scene results across runs. Source files are still
+read on each run; changed inputs invalidate the corresponding cached result.
+
+Story commands reject a repeated named argument with `PXSTORY1016`; the
+compiler never silently chooses the last value. Diagnostics for command
+arguments point to their values, including commands padded after `[`.
 
 ## Readable Story with durable save identities
 
@@ -102,9 +107,12 @@ The map preserves both authored ids and the exact pre-migration fallback
 and blank lines retain those identities. For added or removed executable
 operations, run `prismatix ids my-game --sync` to preview the proposed map,
 then `prismatix ids my-game --sync --write` to back up and update only the
-sidecars. `--sync --check` exits nonzero when an update is pending. Existing
-operation ids survive unambiguous edits; deleted identities are listed so you
-can review save-migration implications. The synchronizer refuses reordered,
+sidecars. If old operation anchors would be removed, writing is refused until
+you review save compatibility and explicitly add `--accept-removals`. This flag
+acknowledges the removal; it does not migrate existing saves. `--sync --check`
+exits nonzero when an update is pending. Existing operation ids survive
+unambiguous edits; deleted identities are listed for migration review. The
+synchronizer refuses reordered,
 duplicated, or otherwise ambiguous edits rather than guessing a save anchor.
 Changing an operation's kind/command also needs manual review. Validate the
 project and test old saves before distributing an update; stable ids alone do
