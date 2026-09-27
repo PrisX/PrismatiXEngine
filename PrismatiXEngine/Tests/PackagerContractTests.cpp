@@ -1694,6 +1694,52 @@ int main() {
                          wmvStream->Tell() == 4096,
                      "WMV remains directly seekable in compressed packages");
 
+        {
+            std::fstream changed(videoPath,
+                                 std::ios::binary | std::ios::in | std::ios::out);
+            suite.Require(changed.is_open(),
+                          "large overlay source can be opened for a bounded edit");
+            changed.seekp(static_cast<std::streamoff>(videoBytes / 2));
+            changed.put('x');
+            suite.Require(changed.good(),
+                          "large overlay source edit is written");
+        }
+        const auto changedVideoOutput = fixture.path / "Build/ChangedStreamingVideo";
+        auto changedVideoRequest = videoRequest;
+        changedVideoRequest.requestId = "changed-streaming-video-contract";
+        changedVideoRequest.outputDir = changedVideoOutput;
+        changedVideoRequest.cacheSourceDir = videoOutput;
+        for (auto& input : changedVideoRequest.inputs)
+            if (input.uri == "Video/stream.mp4")
+                input = Input(root, "Video/stream.mp4");
+        suite.Require(px::sdk::RunPackager(changedVideoRequest).Completed(),
+                      "large changed resource packages into a separate target");
+        const auto videoOverlayPath = fixture.path / "large-video-overlay.pdx";
+        const auto videoOverlay = px::io::CreatePackageOverlay(
+            videoOutput, changedVideoOutput, videoOverlayPath);
+        suite.Require(videoOverlay.created && videoOverlay.changedResources == 1,
+                      "large changed resource produces one streamed overlay entry");
+        const auto verifiedVideoOverlay =
+            px::io::VerifyPackageOverlay(videoOutput, videoOverlayPath);
+        suite.Require(verifiedVideoOverlay.valid &&
+                          verifiedVideoOverlay.changedResources == 1,
+                      "large streamed overlay passes independent verification");
+        px::io::Archive videoOverlayArchive;
+        suite.Require(videoOverlayArchive.Open(videoOverlayPath.string()),
+                      "large overlay mounts as a PDX archive");
+        auto changedVideoStream =
+            videoOverlayArchive.OpenStream("Video/stream.mp4");
+        std::uint8_t changedByte = 0;
+        suite.Expect(changedVideoStream &&
+                         changedVideoStream->Seek(
+                             static_cast<std::int64_t>(videoBytes / 2),
+                             px::io::SeekOrigin::Begin) &&
+                         changedVideoStream->Read(&changedByte, 1) == 1 &&
+                         changedByte == static_cast<std::uint8_t>('x') &&
+                         changedVideoStream->PeakBufferedBytes() * 4u <
+                             videoBytes,
+                     "large overlay exposes the edited byte with bounded read buffering");
+
         const auto encryptedOutput = fixture.path / "Build/EncryptedStreamingVideo";
         auto encryptedRequest = FixtureRequest(root, encryptedOutput);
         encryptedRequest.requestId = "encrypted-streaming-video-contract";
