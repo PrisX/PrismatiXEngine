@@ -58,7 +58,7 @@ import {
 assertLocalBuildFresh(fileURLToPath(new URL("../..", import.meta.url)), "@prismatix/cli");
 
 interface Options {readonly values: Map<string, string>; readonly flags: Set<string>; readonly positional: string[]}
-interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>; readonly dependencies: ReadonlySet<string>; readonly includedResources: Readonly<Record<string, readonly string[]>>; readonly storyPath?: string}
+interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>; readonly dependencies: ReadonlySet<string>; readonly includedResources: Readonly<Record<string, readonly string[]>>; readonly textSnapshots: ReadonlyMap<string, string>; readonly absentTextInputs: ReadonlySet<string>; readonly storyPath?: string}
 interface BuildResult {readonly root: string; readonly artifact: BuildArtifact; readonly output: string; readonly dependencies: ReadonlySet<string>; readonly protectedPaths: readonly string[]}
 
 class PackagerFailure extends Error {
@@ -469,11 +469,20 @@ async function emitJsxProgram(root: string, sourcePath: string, value: JsxProgra
 }
 
 async function loadJsxUiDocument(root: string, virtualPath: string,
-  kind: "scene" | "component", dependencies?: Set<string>): Promise<unknown> {
+  kind: "scene" | "component", dependencies?: Set<string>,
+  rememberText?: (path: string, text: string) => void): Promise<unknown> {
   const sourcePath = projectFile(root, virtualPath);
   const source = await readBoundedText(sourcePath);
+  rememberText?.(sourcePath, source);
   const program = createJsxProgram(root, sourcePath);
-  for (const dependency of program.sourceFiles) dependencies?.add(resolve(dependency.fileName));
+  for (const dependency of program.sourceFiles) {
+    const absolute = resolve(dependency.fileName);
+    dependencies?.add(absolute);
+    const authoredPath = projectSourcePath(root, absolute);
+    if (authoredPath !== undefined &&
+        !["node_modules", ".prismatix"].includes(authoredPath.split("/")[0]!))
+      rememberText?.(absolute, dependency.text);
+  }
   const checked = typescriptDiagnostics(ts.getPreEmitDiagnostics(program.program),
     root, virtualPath, source);
   if (checked.length > 0) throw new JsxAuthoringFailure(checked);
@@ -601,7 +610,25 @@ async function conventionalStory(root: string): Promise<string | undefined> {
 async function loadProject(projectArgument?: string): Promise<LoadedProject> {
   const resolvedProject = await resolveProjectPath(projectArgument);
   const {root, projectPath} = resolvedProject;
-  const authoredProject = resolvedProject.manifestExists ? await readJson(projectPath) : {};
+  const textSnapshots = new Map<string, string>();
+  const absentTextInputs = new Set<string>();
+  // Keep the bytes that actually supplied compiler inputs. A filesystem hash
+  // taken later could describe a newer source than the compiled artifact.
+  const rememberText = (path: string, text: string): void => {
+    const absolute = resolve(path);
+    const previous = textSnapshots.get(absolute);
+    if (previous !== undefined && previous !== text)
+      throw new Error(`Authored text changed while loading the project: ${absolute}`);
+    textSnapshots.set(absolute, text);
+  };
+  const readSnapshotJson = async (path: string): Promise<unknown> => {
+    const text = await readBoundedText(path);
+    if (text.startsWith("\uFEFF")) throw new Error(`Canonical JSON contains a BOM: ${path}`);
+    rememberText(path, text);
+    return JSON.parse(text) as unknown;
+  };
+  const authoredProject = resolvedProject.manifestExists ? await readSnapshotJson(projectPath) : {};
+  if (!resolvedProject.manifestExists) absentTextInputs.add(resolve(projectPath));
   const authoredRaw = object(authoredProject);
   if (authoredRaw === undefined) throw new Error(`${basename(projectPath)} must be a JSON object`);
   const project = structuredClone(authoredProject);
@@ -618,7 +645,7 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
     if (owner === virtualPath) return;
     if (owner !== undefined) throw new Error(`${virtualPath} is already produced by ${owner}`);
     const path = projectFile(root, virtualPath);
-    documents[virtualPath] = await readJson(path);
+    documents[virtualPath] = await readSnapshotJson(path);
     dependencies.add(path);
     documentSources.set(virtualPath, virtualPath);
   };
@@ -628,7 +655,8 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
     const owner = documentSources.get(outputPath);
     if (owner === virtualPath) return outputPath;
     if (owner !== undefined) throw new Error(`${outputPath} is already produced by ${owner}`);
-    documents[outputPath] = await loadJsxUiDocument(root, virtualPath, kind, dependencies);
+    documents[outputPath] = await loadJsxUiDocument(root, virtualPath, kind,
+      dependencies, rememberText);
     documentSources.set(outputPath, virtualPath);
     return outputPath;
   };
@@ -672,32 +700,44 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
   const index = typeof raw.storyIndex === "string" ? object(documents[raw.storyIndex]) : undefined;
   for (const scene of Array.isArray(index?.scenes) ? index.scenes : []) {
     for (const source of Object.values(object(object(scene)?.sources) ?? {})) {
-      if (typeof source === "string" && sourceFiles[source] === undefined)
-        sourceFiles[source] = await readBoundedText(projectFile(root, source));
+      if (typeof source === "string" && sourceFiles[source] === undefined) {
+        const path = projectFile(root, source);
+        sourceFiles[source] = await readBoundedText(path);
+        rememberText(path, sourceFiles[source]!);
+      }
     }
   }
   let storyPath: string | undefined;
   if (index === undefined) {
     storyPath = await conventionalStory(root);
-    if (storyPath !== undefined)
-      sourceFiles[storyPath] = await readBoundedText(projectFile(root, storyPath));
+    if (storyPath !== undefined) {
+      const path = projectFile(root, storyPath);
+      sourceFiles[storyPath] = await readBoundedText(path);
+      rememberText(path, sourceFiles[storyPath]!);
+    }
   }
   for (const path of Object.keys(sourceFiles).filter((value) => value.endsWith(".pxstory"))) {
     const mapPath = `${path}.pxids.json`;
     const absolute = projectFile(root, mapPath);
-    if (await regularFile(absolute)) sourceFiles[mapPath] = await readBoundedText(absolute);
+    if (await regularFile(absolute)) {
+      sourceFiles[mapPath] = await readBoundedText(absolute);
+      rememberText(absolute, sourceFiles[mapPath]!);
+    } else absentTextInputs.add(resolve(absolute));
   }
   for (const value of Array.isArray(raw.effects) ? raw.effects : []) {
     const descriptor = object(value);
     const manifest = typeof descriptor?.source === "string"
       ? object(documents[descriptor.source]) : undefined;
-    if (typeof manifest?.shader === "string" && sourceFiles[manifest.shader] === undefined)
-      sourceFiles[manifest.shader] = await readBoundedText(projectFile(root, manifest.shader));
+    if (typeof manifest?.shader === "string" && sourceFiles[manifest.shader] === undefined) {
+      const path = projectFile(root, manifest.shader);
+      sourceFiles[manifest.shader] = await readBoundedText(path);
+      rememberText(path, sourceFiles[manifest.shader]!);
+    }
   }
   for (const locale of Array.isArray(raw.supportedLocales) ? raw.supportedLocales : []) {
     if (typeof locale !== "string") continue;
     const localePath = projectFile(root, `Content/Localization/${locale}.json`);
-    locales[locale] = await readJson(localePath);
+    locales[locale] = await readSnapshotJson(localePath);
     dependencies.add(localePath);
   }
   for (const path of Object.keys(sourceFiles)) dependencies.add(projectFile(root, path));
@@ -762,7 +802,27 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
     for (const path of files) dependencies.add(projectFile(root, path));
   }
   return {root, projectPath, project, documents, sourceFiles, locales, dependencies, includedResources,
+    textSnapshots, absentTextInputs,
     ...(storyPath === undefined ? {} : {storyPath})};
+}
+
+async function assertLoadedTextSourcesUnchanged(loaded: LoadedProject): Promise<void> {
+  // Called under the publication lock for both replacement and retention.
+  // Media bytes are checked separately by the artifact publisher/Packager.
+  for (const [path, snapshot] of loaded.textSnapshots) {
+    let current: string;
+    try { current = await readBoundedText(path); }
+    catch (error) {
+      throw new Error(`Authored text became unreadable during build: ${path}`,
+        {cause: error});
+    }
+    if (current !== snapshot)
+      throw new Error(`Authored text changed during build: ${path}`);
+  }
+  for (const path of loaded.absentTextInputs) {
+    if (await regularFile(path))
+      throw new Error(`Authored text appeared during build: ${path}`);
+  }
 }
 
 async function loadUiRegistry(override?: string, runtimeHint?: string,
@@ -1127,7 +1187,10 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
       output, projectRoot: loaded.root, protectedPaths,
       onProgress: value => buildProgress(value.phase, value.files, undefined,
         value.bytes, value.done),
-    }, matching)) {
+    }, matching, async () => {
+      await assertLoadedTextSourcesUnchanged(loaded);
+      return true;
+    })) {
       const retainedBytes = preflightInputs.reduce((sum, input) => sum + input.size, 0);
       buildProgress("reuse-artifact", preflightInputs.length, preflightInputs.length,
         retainedBytes, true, {files: preflightInputs.length, bytes: retainedBytes});
@@ -1167,6 +1230,7 @@ async function buildProject(projectArgument: string | undefined, outputArgument:
     verifyExistingBeforeBuild: false,
     linkedOutputFiles,
     beforePromotion: async () => {
+      await assertLoadedTextSourcesUnchanged(loaded);
       // publishDirectory checks the destination immediately after this hook.
       // When it is also the reuse source, another full hash here would read
       // multi-GiB media twice without strengthening the publication boundary.

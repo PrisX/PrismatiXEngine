@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
+import {writeFileSync} from "node:fs";
 import {mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, utimes, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {dirname, join, resolve} from "node:path";
@@ -737,6 +738,82 @@ test("bounded parallel resource copy preserves every file and rebuilds changed m
   assert.notEqual(after.files[inputs[9]!], before.files[inputs[9]!]);
   assert.equal(await readFile(join(output, ...inputs[9]!.split("/")), "utf8"),
     "modified-9");
+});
+
+test("artifact publication rejects authored text changed after compilation", async () => {
+  const value = await fixture();
+  try {
+    const manifest = JSON.parse(await readFile(value.project, "utf8")) as Record<string, unknown>;
+    manifest.resourceIncludes = ["Assets/Batch"];
+    await write(value.project, JSON.stringify(manifest));
+    for (let index = 0; index < 200; index += 1)
+      await write(join(value.root, "Assets/Batch", `media-${index}.bin`), `media-${index}`);
+    const output = join(value.root, "artifact");
+    const source = join(value.root, "Story/main.pxstory");
+    const initial = run(["build", value.project, "--artifact-only", "--output", output]);
+    assert.equal(initial.status, 0, initial.stderr);
+    const markerPath = join(output, ".prismatix-output.json");
+    const oldMarker = await readFile(markerPath, "utf8");
+    const oldIr = await readFile(join(output, "Runtime/main.pxir"), "utf8");
+    await write(source, "Compiled line.\n[end]\n");
+
+    const runWithPublicationMutation = async (mutate: () => void,
+      phase = "publish") => {
+      const child = spawn(process.execPath, [resolve("dist/src/cli.js"), "build",
+        value.project, "--artifact-only", "--output", output, "--json"]);
+      let stderr = "";
+      let pending = "";
+      let changed = false;
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (chunk: string) => {
+        stderr += chunk;
+        pending += chunk;
+        for (let end = pending.indexOf("\n"); end >= 0; end = pending.indexOf("\n")) {
+          const line = pending.slice(0, end);
+          pending = pending.slice(end + 1);
+          let event: {phase?: string; current?: number} | undefined;
+          try { event = JSON.parse(line) as {phase?: string; current?: number}; }
+          catch { continue; }
+          if (!changed && event.phase === phase && event.current === 0) {
+            mutate();
+            changed = true;
+          }
+        }
+      });
+      const status = await new Promise<number | null>((resolveClose, reject) => {
+        child.once("error", reject);
+        child.once("close", resolveClose);
+      });
+      assert.equal(changed, true, stderr);
+      assert.equal(status, 1, stderr);
+      return stderr;
+    };
+    const changedSource = await runWithPublicationMutation(() =>
+      writeFileSync(source, "Edited during publication.\n[end]\n", "utf8"));
+    assert.match(changedSource, /Authored text changed during build/u);
+    assert.equal(await readFile(markerPath, "utf8"), oldMarker);
+    assert.equal(await readFile(join(output, "Runtime/main.pxir"), "utf8"), oldIr);
+
+    const appearedSidecar = await runWithPublicationMutation(() =>
+      writeFileSync(`${source}.pxids.json`, "{}", "utf8"));
+    assert.match(appearedSidecar, /Authored text appeared during build/u);
+    assert.equal(await readFile(markerPath, "utf8"), oldMarker);
+    assert.equal(await readFile(join(output, "Runtime/main.pxir"), "utf8"), oldIr);
+
+    await rm(`${source}.pxids.json`);
+    const settled = run(["build", value.project, "--artifact-only", "--output", output]);
+    assert.equal(settled.status, 0, settled.stderr);
+    const retainedMarker = await readFile(markerPath, "utf8");
+    const retainedIr = await readFile(join(output, "Runtime/main.pxir"), "utf8");
+    const rejectedRetain = await runWithPublicationMutation(() =>
+      writeFileSync(source, "Changed while retaining output.\n[end]\n", "utf8"),
+    "verify-before-publish");
+    assert.match(rejectedRetain, /Authored text changed during build/u);
+    assert.equal(await readFile(markerPath, "utf8"), retainedMarker);
+    assert.equal(await readFile(join(output, "Runtime/main.pxir"), "utf8"), retainedIr);
+  } finally {
+    await rm(value.root, {recursive: true, force: true});
+  }
 });
 
 test("validate reports catalog entries already covered by an included media directory", async () => {
