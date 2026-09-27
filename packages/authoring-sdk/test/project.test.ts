@@ -1173,8 +1173,24 @@ test("compileProject validates and publishes an explicit save migration chain", 
   assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
   assert.ok(result.artifact?.files[descriptor.asset]?.includes("PrismatiXSaveMigration"));
 
+  const mismatched = {...migration, id: "wrong-migration-id"};
+  const mismatch = compileProject({
+    project: {...project, saveMigrations: [descriptor]},
+    documents: {"Story/story.pxindex": storyIndex, "Content/game.pxgame": game,
+      "Content/UI/Title.pxui": ui, [descriptor.asset]: mismatched},
+    documentSources: {[descriptor.asset]: JSON.stringify(mismatched)},
+    sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+    locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+      locale: "zh-TW", strings: {}}},
+  });
+  assert.equal(mismatch.diagnostics.find((diagnostic) =>
+    diagnostic.code === "PXBUILD1007")?.span?.path, descriptor.asset);
+
+  const brokenProject = {...project, saveMigrations: [
+    {...descriptor, to: {contentVersion: "orphan", saveVersion: 1}}]};
   const broken = compileProject({
-    project: {...project, saveMigrations: [{...descriptor, to: {contentVersion: "orphan", saveVersion: 1}}]},
+    project: brokenProject,
+    projectSource: {path: "prismatix.json", text: JSON.stringify(brokenProject)},
     documents: {
       "Story/story.pxindex": storyIndex,
       "Content/game.pxgame": game,
@@ -1185,7 +1201,8 @@ test("compileProject validates and publishes an explicit save migration chain", 
     locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2, locale: "zh-TW", strings: {}}},
   });
   assert.equal(broken.valid, false);
-  assert.ok(broken.diagnostics.some((diagnostic) => diagnostic.code === "PXBUILD1010"));
+  assert.equal(broken.diagnostics.find((diagnostic) => diagnostic.code === "PXBUILD1010")?.span?.path,
+    "prismatix.json");
 });
 
 test("compileProject publishes only validated custom-effect source inputs", () => {
@@ -1204,19 +1221,25 @@ test("compileProject publishes only validated custom-effect source inputs", () =
     sourceFiles: Readonly<Record<string, string>> = {
       "Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n",
       [effect.shader]: shader,
-    }) => compileProject({
-      project: {...project, graphicsTier: "gpu-effects", effects: [descriptor],
-        ...projectOverrides},
+    }) => {
+    const authoredProject = {...project, graphicsTier: "gpu-effects", effects: [descriptor],
+      ...projectOverrides};
+    const authoredEffect = {...effect, ...effectOverrides};
+    return compileProject({
+      project: authoredProject,
+      projectSource: {path: "prismatix.json", text: JSON.stringify(authoredProject)},
       documents: {
         "Story/story.pxindex": storyIndex,
         "Content/game.pxgame": game,
         "Content/UI/Title.pxui": ui,
-        [descriptor.source]: {...effect, ...effectOverrides},
+        [descriptor.source]: authoredEffect,
       },
+      documentSources: {[descriptor.source]: JSON.stringify(authoredEffect)},
       sourceFiles,
       locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
         locale: "zh-TW", strings: {}}},
     });
+  };
 
   const valid = compile();
   assert.equal(valid.valid, true, JSON.stringify(valid.diagnostics));
@@ -1236,22 +1259,22 @@ test("compileProject publishes only validated custom-effect source inputs", () =
 
   const basicTier = compile({graphicsTier: "basic"});
   assert.equal(basicTier.valid, false);
-  assert.ok(basicTier.diagnostics.some((diagnostic) =>
-    diagnostic.code === "PXBUILD1020"));
+  assert.equal(basicTier.diagnostics.find((diagnostic) =>
+    diagnostic.code === "PXBUILD1020")?.span?.path, "prismatix.json");
 
   const missingShader = compile({}, {}, {
     "Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n",
   });
   assert.equal(missingShader.valid, false);
-  assert.ok(missingShader.diagnostics.some((diagnostic) =>
-    diagnostic.code === "PXBUILD1022"));
+  assert.equal(missingShader.diagnostics.find((diagnostic) =>
+    diagnostic.code === "PXBUILD1022")?.span?.path, descriptor.source);
 
   const invalidDefault = compile({}, {uniforms: [
     {name: "tint", type: "color", slot: 0, default: [1, 0, 2, 1]},
   ]});
   assert.equal(invalidDefault.valid, false);
-  assert.ok(invalidDefault.diagnostics.some((diagnostic) =>
-    diagnostic.code === "PXBUILD1023"));
+  assert.equal(invalidDefault.diagnostics.find((diagnostic) =>
+    diagnostic.code === "PXBUILD1023")?.span?.path, descriptor.source);
 
   const defaultOutsideRange = compile({}, {uniforms: [
     {name: "amount", type: "number", slot: 0, default: 2,

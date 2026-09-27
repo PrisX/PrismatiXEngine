@@ -607,7 +607,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   const migrationSources = new Map<string, SaveMigrationDescriptor>();
   const versionKey = (version: SaveMigrationVersion) =>
     `${version.contentVersion}\n${version.saveVersion}`;
-  for (const descriptor of project.saveMigrations ?? []) {
+  for (const [index, descriptor] of (project.saveMigrations ?? []).entries()) {
     const migration = documentAt<SaveMigrationDocument>(
       "saveMigration", descriptor.asset, documents, diagnostics,
     );
@@ -615,30 +615,41 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     if (migration.id !== descriptor.id ||
         versionKey(migration.from) !== versionKey(descriptor.from) ||
         versionKey(migration.to) !== versionKey(descriptor.to)) {
-      diagnostics.push(issue("PXBUILD1007", "Save migration document does not match its project descriptor", descriptor.asset, descriptor.id));
+      const field = migration.id !== descriptor.id ? "id" :
+        versionKey(migration.from) !== versionKey(descriptor.from) ? "from" : "to";
+      diagnostics.push(locatedIssue("PXBUILD1007",
+        "Save migration document does not match its project descriptor",
+        descriptor.asset, `/${field}`, migration[field], descriptor.id));
       continue;
     }
     const source = versionKey(descriptor.from);
     if (migrationSources.has(source)) {
-      diagnostics.push(issue("PXBUILD1008", "Save migration chain is ambiguous", projectPath, source));
+      diagnostics.push(locatedIssue("PXBUILD1008", "Save migration chain is ambiguous",
+        projectPath, `/saveMigrations/${index}/from`, descriptor.from, source));
       continue;
     }
     migrationSources.set(source, descriptor);
     saveMigrationDocuments.set(descriptor.asset, migration);
   }
   const migrationTarget = versionKey({contentVersion: project.contentVersion, saveVersion: project.saveVersion});
-  for (const descriptor of project.saveMigrations ?? []) {
+  for (const [index, descriptor] of (project.saveMigrations ?? []).entries()) {
     const visited = new Set<string>();
     let current = versionKey(descriptor.from);
     for (let step = 0; current !== migrationTarget; step += 1) {
       if (step >= 64 || visited.has(current)) {
-        diagnostics.push(issue("PXBUILD1009", "Save migration chain contains a cycle or exceeds 64 steps", descriptor.asset));
+        diagnostics.push(locatedIssue("PXBUILD1009",
+          "Save migration chain contains a cycle or exceeds 64 steps",
+          descriptor.asset, `/saveMigrations/${index}/from`, descriptor.from,
+          undefined, projectPath));
         break;
       }
       visited.add(current);
       const next = migrationSources.get(current);
       if (next === undefined) {
-        diagnostics.push(issue("PXBUILD1010", "Save migration chain does not reach the current content/save version", descriptor.asset, current));
+        diagnostics.push(locatedIssue("PXBUILD1010",
+          "Save migration chain does not reach the current content/save version",
+          descriptor.asset, `/saveMigrations/${index}/from`, descriptor.from,
+          current, projectPath));
         break;
       }
       current = versionKey(next.to);
@@ -664,30 +675,39 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
   }
   const effectDocuments = new Map<string, CustomEffectDocument>();
   const effectIds = new Set<string>();
-  for (const descriptor of project.effects ?? []) {
+  for (const [index, descriptor] of (project.effects ?? []).entries()) {
     const effect = documentAt<CustomEffectDocument>(
       "effect", descriptor.source, documents, diagnostics,
     );
     if (effect === undefined) continue;
     if (project.graphicsTier !== "gpu-effects") {
-      diagnostics.push(issue("PXBUILD1020", "Custom effects require graphicsTier gpu-effects", descriptor.source));
+      diagnostics.push(locatedIssue("PXBUILD1020", "Custom effects require graphicsTier gpu-effects",
+        descriptor.source, project.graphicsTier === undefined
+          ? `/effects/${index}/source` : "/graphicsTier",
+        project.graphicsTier ?? descriptor.source, undefined, projectPath));
       continue;
     }
     if (effect.id !== descriptor.id || !effectIds.add(effect.id)) {
-      diagnostics.push(issue("PXBUILD1021", "Custom effect identity is duplicated or disagrees with its project descriptor", descriptor.source, descriptor.id));
+      diagnostics.push(locatedIssue("PXBUILD1021",
+        "Custom effect identity is duplicated or disagrees with its project descriptor",
+        descriptor.source, "/id", effect.id, descriptor.id));
       continue;
     }
     if (!effect.shader.endsWith(".hlsl") || sourceFiles[effect.shader] === undefined) {
-      diagnostics.push(issue("PXBUILD1022", "Custom effect HLSL source is missing or has the wrong extension", effect.shader));
+      diagnostics.push(locatedIssue("PXBUILD1022",
+        "Custom effect HLSL source is missing or has the wrong extension",
+        effect.shader, "/shader", effect.shader, undefined, descriptor.source));
       continue;
     }
     if (effect.schemaRevision === 2 && effect.targetLayer !== "stage") {
-      diagnostics.push(issue("PXBUILD1024", "Effect schema revision 2 only supports the Stage post-processing target", descriptor.source, effect.id));
+      diagnostics.push(locatedIssue("PXBUILD1024",
+        "Effect schema revision 2 only supports the Stage post-processing target",
+        descriptor.source, "/targetLayer", effect.targetLayer, effect.id));
       continue;
     }
     const uniformNames = new Set<string>();
     const uniformSlots = new Set<number>();
-    for (const uniform of effect.uniforms) {
+    for (const [uniformIndex, uniform] of effect.uniforms.entries()) {
       const minimum = uniform.minimum ?? 0;
       const maximum = uniform.maximum ?? 1;
       const finiteNumber = (value: unknown): value is number =>
@@ -710,7 +730,9 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
           (component as number) <= maximum);
       if (!uniformNames.add(uniform.name) || !uniformSlots.add(uniform.slot) ||
           !validRange || !defaultInRange) {
-        diagnostics.push(issue("PXBUILD1023", "Custom effect uniforms must have unique names/slots and valid ranges", descriptor.source, uniform.name));
+        diagnostics.push(locatedIssue("PXBUILD1023",
+          "Custom effect uniforms must have unique names/slots and valid ranges",
+          descriptor.source, `/uniforms/${uniformIndex}`, uniform, uniform.name));
       }
     }
     effectDocuments.set(descriptor.source, effect);

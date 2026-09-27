@@ -4,6 +4,8 @@
 
 ### 2026-09-27—28 後續進度
 
+- **Migration／effect 宣告錯誤也可回指來源。** Save migration 文件與 project descriptor 不一致、鏈重複／成環／無法到目前版本時，診斷會指向對應的 JSON id／version；custom effect 的 graphics tier、id、shader、target layer 與 uniform 錯誤可指原 project 或 `.pxeffect` 欄位。只有原始文字中的該值與編譯輸入一致才附 span。Authoring SDK 178/178、四語 368 scene／31,339 資源唯讀 `validate --runtime` 通過。角色資源交叉檢查等其他非 node 診斷仍待覆蓋。
+
 - **Story sidecar 刪除舊錨點時不再直接寫入。** `ids --sync` 仍提供新增／保留／移除的逐 operation 報告；`--sync --write` 只要有移除就拒絕並保持 sidecar 不變，作者檢查舊存檔與遷移後須明示 `--accept-removals`，仍會備份原 sidecar。重排／多義編輯既有的失敗關閉維持；明示接受只表示審閱完成，不自動遷移存檔。CLI 定向測試包含拒寫、明示接受、備份及 validate。另 `.pxgame` 中無效按鍵名稱現在附 `inputActions[].keys[]` 或 `inputBindings[].key` 的原始 JSON 位置，過期來源不附錯誤位置。Authoring SDK 178/178、CLI 116/116（另 1 項 native E2E 依環境跳過）、四語 368 scene／31,339 資源唯讀 `validate --runtime` 通過。
 
 - **Authoring 跨檔錯誤現在指向作者的 JSON 值與 Story 參數。** `compileProject` 對 resource include root、game input action route、extension 版本、缺失 UI entry／component、語系身分、project entry 與預設語系、route transition 與 splash 設定等錯誤，會在作者文字中附精確 source span；來源文字過期或該值已被正規化改寫時退回原診斷，不猜位置。跨 scene 不存在的 Story `scene=`／`target=` 改指參數值。未改 Runtime IR 或診斷代碼。Authoring SDK 178/178、CLI 116/116（另 1 項 native E2E 依環境跳過）、四語 368 scene／31,339 資源唯讀 `validate --runtime` 通過。動態 JSX expression 與其他未列的非 node 診斷仍待補。
