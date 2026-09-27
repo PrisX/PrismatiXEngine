@@ -1136,7 +1136,7 @@ test("TSX UI authoring lowers to canonical JSON and never enters the Runtime art
     await readFile(canonicalPath, "utf8"));
 });
 
-test("validate locates a missing TSX image at its authored JSX node", async () => {
+test("validate locates a missing TSX image at its authored JSX value", async () => {
   const value = await fixture();
   try {
     const project = JSON.parse(await readFile(value.project, "utf8")) as {
@@ -1154,19 +1154,21 @@ export default <Scene name="Title" width={1280} height={720}>
     assert.equal(validated.status, 1, validated.stderr);
     const diagnostics = validated.stderr.split(/\r?\n/u).filter(Boolean).flatMap((line) => {
       try { return [JSON.parse(line) as {code: string; span?: {path: string;
-        start: {line: number; column: number; offset: number}}}]; }
+        start: {line: number; column: number; offset: number};
+        end: {offset: number}}}]; }
       catch { return []; }
     });
     const issue = diagnostics.find((item) => item.code === "PXBUILD1044");
     assert.equal(issue?.span?.path, "Content/UI/Title.tsx", validated.stderr);
     assert.equal(issue.span.start.line, 3);
-    assert.equal(source.slice(issue.span.start.offset, issue.span.start.offset + 6), "<Image");
+    assert.equal(source.slice(issue.span.start.offset, issue.span.end.offset),
+      '"Assets/UI/missing.png"');
   } finally {
     await rm(value.root, {recursive: true, force: true});
   }
 });
 
-test("validate locates TSX resource errors inside an imported component", async () => {
+test("validate locates TSX resource errors at imported component JSX values", async () => {
   const value = await fixture();
   try {
     const project = JSON.parse(await readFile(value.project, "utf8")) as {
@@ -1191,21 +1193,21 @@ export function MissingImage() {
     assert.equal(validated.status, 1, validated.stderr);
     const diagnostics = validated.stderr.split(/\r?\n/u).filter(Boolean).flatMap((line) => {
       try { return [JSON.parse(line) as {code: string; span?: {path: string;
-        start: {line: number; offset: number}}}]; }
+        start: {line: number; offset: number}; end: {offset: number}}}]; }
       catch { return []; }
     });
     const issue = diagnostics.find((item) => item.code === "PXBUILD1044");
     assert.equal(issue?.span?.path, "Content/UI/components/MissingImage.tsx",
       validated.stderr);
     assert.equal(issue.span.start.line, 3);
-    assert.equal(component.slice(issue.span.start.offset, issue.span.start.offset + 6),
-      "<Image");
+    assert.equal(component.slice(issue.span.start.offset, issue.span.end.offset),
+      '"Assets/UI/component-missing.png"');
   } finally {
     await rm(value.root, {recursive: true, force: true});
   }
 });
 
-test("validate locates a cross-layer TSX binding error at its JSX node", async () => {
+test("validate locates a cross-layer TSX binding error at its JSX value", async () => {
   const value = await fixture();
   try {
     const project = JSON.parse(await readFile(value.project, "utf8")) as {
@@ -1225,21 +1227,21 @@ export default <Scene name="Title" width={1280} height={720}>
     assert.equal(validated.status, 1, validated.stderr);
     const diagnostics = validated.stderr.split(/\r?\n/u).filter(Boolean).flatMap((line) => {
       try { return [JSON.parse(line) as {code: string; span?: {path: string;
-        start: {line: number; offset: number}}}]; }
+        start: {line: number; offset: number}; end: {offset: number}}}]; }
       catch { return []; }
     });
     const issue = diagnostics.find((item) => item.span?.path ===
       "Content/UI/Title.tsx");
     assert.ok(issue?.span, validated.stderr);
     assert.equal(issue.span.start.line, 3);
-    assert.equal(source.slice(issue.span.start.offset, issue.span.start.offset + 5),
-      "<Text");
+    assert.equal(source.slice(issue.span.start.offset, issue.span.end.offset),
+      '"screen.missing"');
   } finally {
     await rm(value.root, {recursive: true, force: true});
   }
 });
 
-test("validate locates a lowered TSX layout error at its JSX node", async () => {
+test("validate locates a lowered TSX layout error at its JSX value", async () => {
   const value = await fixture();
   try {
     const project = JSON.parse(await readFile(value.project, "utf8")) as {
@@ -1257,15 +1259,14 @@ export default <Scene name="Title" width={1280} height={720}>
     assert.equal(validated.status, 1, validated.stderr);
     const diagnostics = validated.stderr.split(/\r?\n/u).filter(Boolean).flatMap((line) => {
       try { return [JSON.parse(line) as {code: string; span?: {path: string;
-        start: {line: number; offset: number}}}]; }
+        start: {line: number; offset: number}; end: {offset: number}}}]; }
       catch { return []; }
     });
     const issue = diagnostics.find((item) => item.span?.path ===
       "Content/UI/Title.tsx");
     assert.ok(issue?.span, validated.stderr);
     assert.equal(issue.span.start.line, 3);
-    assert.equal(source.slice(issue.span.start.offset, issue.span.start.offset + 6),
-      "<Image");
+    assert.equal(source.slice(issue.span.start.offset, issue.span.end.offset), "-1");
   } finally {
     await rm(value.root, {recursive: true, force: true});
   }

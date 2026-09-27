@@ -207,9 +207,114 @@ function jsxNodeSpan(root: string, texts: ReadonlyMap<string, string>,
   return sourceSpan(text, path, {start, end: start + 1});
 }
 
+type JsxOpening = ts.JsxOpeningElement | ts.JsxSelfClosingElement;
+interface ParsedJsxSource {
+  readonly text: string;
+  readonly ast: ts.SourceFile;
+  readonly openings: ReadonlyMap<number, JsxOpening>;
+}
+
+function jsxFieldPaths(field: readonly string[]): readonly (readonly string[])[] {
+  const [group, ...rest] = field;
+  if (rest.length === 0) return [field];
+  if (group === "runtimeProperties")
+    return [[rest[rest.length - 1]!], field];
+  if (group === "bindings")
+    return [["bind", ...rest], ["bind", rest[0]!],
+      ["bindings", ...rest], ["bindings", rest[0]!]];
+  if (group === "itemSource")
+    return [["items", ...rest], ["items"], field];
+  if (group === "layout")
+    return [[rest[rest.length - 1]!], field];
+  if (group === "onClick")
+    return [field, ["action", ...rest]];
+  return [field];
+}
+
+function jsxPropertyName(value: ts.PropertyName, ast: ts.SourceFile): string {
+  return ts.isIdentifier(value) || ts.isStringLiteral(value) ||
+    ts.isNumericLiteral(value) ? value.text : value.getText(ast);
+}
+
+function jsxObjectProperty(value: ts.Expression, name: string,
+  ast: ts.SourceFile): ts.Expression | undefined {
+  if (!ts.isObjectLiteralExpression(value)) return undefined;
+  let found: ts.Expression | undefined;
+  for (const property of value.properties) {
+    if (ts.isSpreadAssignment(property)) {
+      found = undefined;
+      continue;
+    }
+    if (ts.isPropertyAssignment(property) &&
+        jsxPropertyName(property.name, ast) === name)
+      found = property.initializer;
+  }
+  return found;
+}
+
+function jsxAttributeValue(opening: JsxOpening, path: readonly string[],
+  ast: ts.SourceFile): ts.Node | undefined {
+  let found: ts.JsxAttribute | undefined;
+  for (const attribute of opening.attributes.properties) {
+    if (ts.isJsxSpreadAttribute(attribute)) {
+      found = undefined;
+      continue;
+    }
+    if (attribute.name.getText(ast) === path[0]) found = attribute;
+  }
+  const initializer = found?.initializer;
+  if (initializer === undefined) return undefined;
+  let value: ts.Expression | undefined = ts.isJsxExpression(initializer)
+    ? initializer.expression : initializer;
+  for (const segment of path.slice(1)) {
+    if (value === undefined) return undefined;
+    value = jsxObjectProperty(value, segment, ast);
+  }
+  return value;
+}
+
+function jsxPropertySpan(root: string, texts: ReadonlyMap<string, string>,
+  node: SourceSpan, field: readonly string[],
+  parsed: Map<string, ParsedJsxSource>): SourceSpan | undefined {
+  const absolute = projectFile(root, node.path);
+  let source = parsed.get(absolute);
+  if (source === undefined) {
+    const text = texts.get(absolute);
+    if (text === undefined) return undefined;
+    const ast = ts.createSourceFile(absolute, text, ts.ScriptTarget.ES2023, true,
+      /\.tsx$/iu.test(absolute) ? ts.ScriptKind.TSX : ts.ScriptKind.JSX);
+    const openings = new Map<number, JsxOpening>();
+    const visit = (value: ts.Node): void => {
+      if (ts.isJsxOpeningElement(value) || ts.isJsxSelfClosingElement(value))
+        openings.set(value.getStart(ast), value);
+      ts.forEachChild(value, visit);
+    };
+    visit(ast);
+    source = {text, ast, openings};
+    parsed.set(absolute, source);
+  }
+  let lineStart = 0;
+  for (let line = 1; line < node.start.line; line += 1) {
+    const newline = source.text.indexOf("\n", lineStart);
+    if (newline < 0) return undefined;
+    lineStart = newline + 1;
+  }
+  const opening = source.openings.get(lineStart + node.start.column - 1);
+  if (opening === undefined) return undefined;
+  for (const path of jsxFieldPaths(field)) {
+    const value = jsxAttributeValue(opening, path, source.ast);
+    if (value !== undefined)
+      return sourceSpan(source.text, node.path,
+        {start: value.getStart(source.ast), end: value.getEnd()});
+  }
+  return undefined;
+}
+
 function withJsxNodeSpans(diagnostics: readonly AuthoringDiagnostic[],
-  sources: ReadonlyMap<string, ReadonlyMap<number, SourceSpan>>): AuthoringDiagnostic[] {
+  sources: ReadonlyMap<string, ReadonlyMap<number, SourceSpan>>,
+  root?: string, texts?: ReadonlyMap<string, string>): AuthoringDiagnostic[] {
   if (sources.size === 0) return [...diagnostics];
+  const parsed = new Map<string, ParsedJsxSource>();
   return diagnostics.map((item) => {
     if (item.span !== undefined) return item;
     const origin = [item.details, item.hint].find((value) =>
@@ -221,7 +326,13 @@ function withJsxNodeSpans(diagnostics: readonly AuthoringDiagnostic[],
           !origin?.includes(`${canonicalPath}:`) &&
           !origin?.includes(`${canonicalPath}/`)) continue;
       const span = nodes.get(Number(index[1] ?? index[2]));
-      if (span !== undefined) return {...item, span};
+      if (span === undefined) continue;
+      const after = (origin ?? "").slice(index.index + index[0].length);
+      const field = /^[./]([A-Za-z_][A-Za-z0-9_]*(?:[./][A-Za-z_][A-Za-z0-9_]*)*)/u
+        .exec(after)?.[1]?.split(/[./]/u);
+      const property = root === undefined || texts === undefined || field === undefined
+        ? undefined : jsxPropertySpan(root, texts, span, field, parsed);
+      return {...item, span: property ?? span};
     }
     return item;
   });
@@ -563,7 +674,7 @@ async function loadJsxUiDocument(root: string, virtualPath: string,
     }
     if (!compiled.valid || compiled.value === undefined)
       throw new JsxAuthoringFailure(withJsxNodeSpans(compiled.diagnostics,
-        new Map([[virtualPath, nodeSpans]])));
+        new Map([[virtualPath, nodeSpans]]), root, sourceTexts));
     return {value: compiled.value, nodeSpans};
   } catch (error) {
     if (error instanceof JsxAuthoringFailure) throw error;
@@ -1021,7 +1132,7 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
     ...(inputKeyRegistry === undefined ? {} : {inputKeyRegistry})});
   const result = loaded.uiNodeSpans.size === 0 ? compiled :
     {...compiled, diagnostics: withJsxNodeSpans(compiled.diagnostics,
-      loaded.uiNodeSpans)};
+      loaded.uiNodeSpans, loaded.root, loaded.textSnapshots)};
   const warnings: AuthoringDiagnostic[] = [];
   if (uiTypeRegistry === undefined &&
       Object.keys(loaded.documents).some((path) => /\.pxui(?:component)?$/u.test(path)))
