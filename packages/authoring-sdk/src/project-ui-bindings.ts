@@ -1,6 +1,7 @@
 import type {UiTypeRegistryMetadata} from "./semantic.js";
 import type {AuthoringDiagnostic, JsonValue} from "./types.js";
 import type {ProjectDocument} from "./project.js";
+import {jsonPointerSpans} from "./json-source-spans.js";
 
 type JsonObject = Record<string, JsonValue>;
 type ResolvedValue = {readonly declared: boolean; readonly value: JsonValue | undefined};
@@ -155,12 +156,41 @@ function contractOwnsPath(contract: UiContract | undefined, path: string): boole
  * Undeclared runtime roots remain the host's responsibility. */
 export function validatePlayerUiBindings(project: ProjectDocument,
   uiDocuments: ReadonlyMap<string, JsonValue>,
-  registry?: UiTypeRegistryMetadata): readonly AuthoringDiagnostic[] {
+  registry?: UiTypeRegistryMetadata,
+  documentSources?: Readonly<Record<string, string>>): readonly AuthoringDiagnostic[] {
   const data = object(project.settings?.["player.uiData"]);
   const parsedContract = parseUiContract(project.settings?.["authoring.uiContract"]);
   const contract = parsedContract.contract;
   const diagnostics: AuthoringDiagnostic[] = [...parsedContract.diagnostics];
-  if (diagnostics.length > 0 || data === undefined && contract === undefined) return diagnostics;
+  const finish = (): readonly AuthoringDiagnostic[] => {
+    if (documentSources === undefined) return diagnostics;
+    const indexed = new Map<string, ReturnType<typeof jsonPointerSpans>>();
+    return diagnostics.map((diagnostic) => {
+      if (diagnostic.path === undefined || diagnostic.details === undefined ||
+          !uiDocuments.has(diagnostic.path)) return diagnostic;
+      const field = /^nodes\[(\d+)\]\.(itemSource|bindings)\.([^:]+):/u.exec(diagnostic.details);
+      if (field === null) return diagnostic;
+      const path = diagnostic.path;
+      let spans = indexed.get(path);
+      if (spans === undefined) {
+        spans = jsonPointerSpans(documentSources[path], uiDocuments.get(path), path);
+        indexed.set(path, spans);
+      }
+      const escape = (value: string) => value.replaceAll("~", "~0").replaceAll("/", "~1");
+      const prefix = `/nodes/${field[1]}/${field[2]}`;
+      const property = field[2] === "itemSource"
+        ? field[3]!.split(".")[0]! : field[3]!;
+      const target = `${prefix}/${escape(property)}`;
+      const leaf = field[2] === "bindings"
+        ? diagnostic.code === "PXBUILD1083" || diagnostic.code === "PXBUILD1093"
+          ? "formatter" : "path"
+        : undefined;
+      const span = leaf === undefined ? spans.get(target) :
+        spans.get(`${target}/${leaf}`) ?? spans.get(target);
+      return span === undefined ? diagnostic : {...diagnostic, span};
+    });
+  };
+  if (diagnostics.length > 0 || data === undefined && contract === undefined) return finish();
   const properties = new Map(registry?.controls.map((control) => [control.runtimeType,
     new Map(control.properties.map((property) => [property.id, property.valueType]))]) ?? []);
   const checkType = (sourceType: string, formatter: unknown, runtimeType: unknown,
@@ -224,7 +254,7 @@ export function validatePlayerUiBindings(project: ProjectDocument,
                 !validPlacement(item, ownSource.placement))
               diagnostics.push(issue("PXBUILD1082", "UI item placement is invalid",
                 path, `${location}.itemSource.placement: item[${itemIndex}]`));
-            if (diagnostics.length >= 64) return diagnostics;
+            if (diagnostics.length >= 64) return finish();
           }
         }
         if (contractOwnsPath(contract, ownSource.path)) {
@@ -274,7 +304,7 @@ export function validatePlayerUiBindings(project: ProjectDocument,
                   path, `${detail}, item[${itemIndex}]`));
               else checkType(variantType(field), binding.formatter, node.runtimeType, target,
                 path, `${detail}, item[${itemIndex}]`);
-              if (diagnostics.length >= 64) return diagnostics;
+              if (diagnostics.length >= 64) return finish();
             }
           }
           if (declaredContractType(contract, source.path) === "array") {
@@ -306,9 +336,9 @@ export function validatePlayerUiBindings(project: ProjectDocument,
             else checkType(declaredType, binding.formatter, node.runtimeType, target, path, detail);
           }
         }
-        if (diagnostics.length >= 64) return diagnostics;
+        if (diagnostics.length >= 64) return finish();
       }
     }
   }
-  return diagnostics;
+  return finish();
 }

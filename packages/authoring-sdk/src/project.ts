@@ -110,6 +110,8 @@ export interface CompileProjectInput {
   readonly project?: unknown;
   /** Canonical JSON documents keyed by project-relative path. */
   readonly documents?: Readonly<Record<string, unknown>>;
+  /** Exact source text for JSON documents, used only for matching diagnostics. */
+  readonly documentSources?: Readonly<Record<string, string>>;
   /** Story source text keyed by the exact paths used by story.pxindex. */
   readonly sourceFiles?: Readonly<Record<string, string>>;
   /** Exact JSON source for storyIndex, when available from the loader. */
@@ -667,7 +669,8 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
     uiComponentDocuments.set(descriptor.source, component);
   }
   diagnostics.push(...validatePlayerUiBindings(project,
-    new Map([...uiDocuments, ...uiComponentDocuments]), input.uiTypeRegistry));
+    new Map([...uiDocuments, ...uiComponentDocuments]), input.uiTypeRegistry,
+    input.documentSources));
   if (storyIndex !== undefined && storyIndex.entryScene !== project.entry.story) {
     diagnostics.push(issue("PXBUILD1005", "Project entry.story must match storyIndex.entryScene", project.storyIndex, project.entry.story));
   }

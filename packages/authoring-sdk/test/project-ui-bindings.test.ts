@@ -141,3 +141,36 @@ test("host ViewModel contract checks direct paths without guessing unrelated roo
   }}, new Map([[path, direct("dialogue.text")]]), registry)
     .some((item) => item.code === "PXBUILD1090"));
 });
+
+test("UI binding diagnostics point to the effective JSON value only for matching source", () => {
+  const source = `{
+  "nodes": [{
+    "id": "${rootId}", "parentId": null, "runtimeType": "Label",
+    "bindings": {
+      "text": {"path": "settings.items[0].title"},
+      "text": {"path": "settings.items[0].missing"}
+    }
+  }]
+}`;
+  const document = JSON.parse(source) as JsonValue;
+  const diagnostics = validatePlayerUiBindings(project([{title: "Ready"}]),
+    new Map([[path, document]]), registry, {[path]: source});
+  const missing = diagnostics.find((item) => item.code === "PXBUILD1086");
+  assert.ok(missing?.span);
+  assert.equal(source.slice(missing.span.start.offset, missing.span.end.offset),
+    '"settings.items[0].missing"');
+  assert.equal(missing.span.start.line, 6);
+  const stale = validatePlayerUiBindings(project([{title: "Ready"}]),
+    new Map([[path, document]]), registry,
+    {[path]: source.replace("settings.items[0].missing", "settings.items[0].title")});
+  assert.equal(stale.find((item) => item.code === "PXBUILD1086")?.span, undefined);
+
+  const itemDocument = scene();
+  const itemSource = JSON.stringify(itemDocument, null, 2);
+  const nonArray = validatePlayerUiBindings(project({bad: true}),
+    new Map([[path, itemDocument]]), registry, {[path]: itemSource});
+  const itemIssue = nonArray.find((item) => item.code === "PXBUILD1080");
+  assert.ok(itemIssue?.span);
+  assert.equal(itemSource.slice(itemIssue.span.start.offset, itemIssue.span.end.offset),
+    '"settings.items"');
+});

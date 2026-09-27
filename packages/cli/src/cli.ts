@@ -59,7 +59,7 @@ import {
 assertLocalBuildFresh(fileURLToPath(new URL("../..", import.meta.url)), "@prismatix/cli");
 
 interface Options {readonly values: Map<string, string>; readonly flags: Set<string>; readonly positional: string[]}
-interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>; readonly dependencies: ReadonlySet<string>; readonly includedResources: Readonly<Record<string, readonly string[]>>; readonly textSnapshots: ReadonlyMap<string, string>; readonly absentTextInputs: ReadonlySet<string>; readonly storyPath?: string; readonly storyIndexSource?: string}
+interface LoadedProject {readonly root: string; readonly projectPath: string; readonly project: unknown; readonly documents: Record<string, unknown>; readonly documentTexts: Readonly<Record<string, string>>; readonly sourceFiles: Record<string, string>; readonly locales: Record<string, unknown>; readonly dependencies: ReadonlySet<string>; readonly includedResources: Readonly<Record<string, readonly string[]>>; readonly textSnapshots: ReadonlyMap<string, string>; readonly absentTextInputs: ReadonlySet<string>; readonly storyPath?: string; readonly storyIndexSource?: string}
 interface BuildResult {readonly root: string; readonly artifact: BuildArtifact; readonly output: string; readonly dependencies: ReadonlySet<string>; readonly protectedPaths: readonly string[]}
 
 class PackagerFailure extends Error {
@@ -804,7 +804,12 @@ async function loadProject(projectArgument?: string): Promise<LoadedProject> {
   }
   const storyIndexSource = typeof raw.storyIndex === "string"
     ? textSnapshots.get(projectFile(root, raw.storyIndex)) : undefined;
-  return {root, projectPath, project, documents, sourceFiles, locales, dependencies, includedResources,
+  const documentTexts = Object.create(null) as Record<string, string>;
+  for (const [virtualPath, owner] of documentSources) if (virtualPath === owner) {
+    const source = textSnapshots.get(projectFile(root, virtualPath));
+    if (source !== undefined) documentTexts[virtualPath] = source;
+  }
+  return {root, projectPath, project, documents, documentTexts, sourceFiles, locales, dependencies, includedResources,
     textSnapshots, absentTextInputs,
     ...(storyIndexSource === undefined ? {} : {storyIndexSource}),
     ...(storyPath === undefined ? {} : {storyPath})};
@@ -932,6 +937,7 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
     return entries?.has(basename(absolute)) === true || existsSync(absolute);
   };
   const result = compileProject({project: loaded.project, documents: loaded.documents,
+    documentSources: loaded.documentTexts,
     sourceFiles: loaded.sourceFiles, locales: loaded.locales,
     ...(loaded.storyIndexSource === undefined ? {} :
       {storyIndexSource: loaded.storyIndexSource}),

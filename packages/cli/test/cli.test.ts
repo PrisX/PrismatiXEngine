@@ -104,6 +104,38 @@ test("validate reports the authored Story index position for a missing required 
   }
 });
 
+test("validate reports the authored UI binding position for missing Player data", async () => {
+  const value = await fixture();
+  try {
+    const project = JSON.parse(await readFile(value.project, "utf8")) as
+      Record<string, unknown>;
+    project.settings = {"player.uiData": {screen: {title: "Ready"}}};
+    await write(value.project, JSON.stringify(project));
+    const uiPath = join(value.root, "Content/UI/Title.pxui");
+    const ui = JSON.parse(await readFile(uiPath, "utf8")) as {
+      nodes: Array<{bindings: Record<string, unknown>}>;
+    };
+    ui.nodes[0]!.bindings.visible = {path: "screen.missing"};
+    const source = JSON.stringify(ui, null, 2);
+    await write(uiPath, source);
+    const validated = run(["validate", value.project]);
+    assert.equal(validated.status, 1, validated.stderr);
+    const diagnostics = validated.stderr.split(/\r?\n/u).filter(Boolean).flatMap((line) => {
+      try { return [JSON.parse(line) as {code: string; span?: {path: string;
+        start: {line: number; offset: number}; end: {offset: number}}}]; }
+      catch { return []; }
+    });
+    const issue = diagnostics.find((item) => item.code === "PXBUILD1086");
+    assert.ok(issue?.span, validated.stderr);
+    assert.equal(issue.span.path, "Content/UI/Title.pxui");
+    assert.equal(source.slice(issue.span.start.offset, issue.span.end.offset),
+      '"screen.missing"');
+    assert.ok(issue.span.start.line > 1);
+  } finally {
+    await rm(value.root, {recursive: true, force: true});
+  }
+});
+
 test("separate CLI builds reuse bounded Story scenes and rebuild a damaged cache", async () => {
   const value = await fixture();
   try {
