@@ -152,8 +152,13 @@ test("validate and build reject native UI property type mismatches before packag
   const registryPath = join(value.root, "PrismatiXUiTypeRegistry.json");
   await write(registryPath, JSON.stringify({
     format: "PrismatiXUiTypeRegistry", schemaRevision: 2,
-    controls: [{runtimeType: "Control", properties: [{id: "modulate", valueType: "color",
-      writable: true, bindable: true, animatable: true}]}],
+    controls: [{runtimeType: "Control", properties: [
+      {id: "modulate", valueType: "color",
+        writable: true, bindable: true, animatable: true},
+      {id: "visibility", valueType: "string", writable: true,
+        bindable: true, animatable: false,
+        enumChoices: ["Visible", "Hidden", "Collapsed"]},
+    ]}],
   }));
   const invalid = run(["validate", value.project, "--ui-registry", registryPath]);
   assert.equal(invalid.status, 1);
@@ -167,6 +172,15 @@ test("validate and build reject native UI property type mismatches before packag
   await write(uiPath, JSON.stringify(ui));
   const valid = run(["validate", value.project, "--ui-registry", registryPath]);
   assert.equal(valid.status, 0, valid.stderr);
+  ui.nodes[0]!.runtimeProperties.visibility = "Invisible";
+  await write(uiPath, JSON.stringify(ui));
+  const invalidEnum = run(["validate", value.project, "--ui-registry", registryPath]);
+  assert.equal(invalidEnum.status, 1);
+  assert.match(invalidEnum.stderr, /PXSDKSEM1326/u);
+  ui.nodes[0]!.runtimeProperties.visibility = "Hidden";
+  await write(uiPath, JSON.stringify(ui));
+  const validEnum = run(["validate", value.project, "--ui-registry", registryPath]);
+  assert.equal(validEnum.status, 0, validEnum.stderr);
 });
 
 test("validate rejects native-invalid UI bindings and typed values before packaging", async () => {

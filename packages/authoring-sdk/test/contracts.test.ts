@@ -159,6 +159,8 @@ test("UI contract models simultaneous Visual State Groups through shared propert
       {id:"opacity",writable:true,bindable:true,animatable:true,valueType:"number"},
       {id:"outlineColor",writable:true,bindable:false,animatable:false,valueType:"color"},
       {id:"text",writable:true,bindable:true,animatable:false},
+      {id:"bindingDevice",writable:true,bindable:true,animatable:false,
+        valueType:"string",enumChoices:["keyboard","wheel"]},
     ]},
   ]};
   assert.equal(validateUiDocument(ui, registry).valid, true);
@@ -174,6 +176,12 @@ test("UI contract models simultaneous Visual State Groups through shared propert
   (malformedColor.nodes[1]!.runtimeProperties as {outlineColor: unknown}).outlineColor = {type:"color",value:"pink"};
   assert.ok(validateUiDocument(malformedColor, registry).diagnostics.some((item) =>
     item.code === "PXSDKSEM1325" && item.details === "nodes[1].runtimeProperties.outlineColor"));
+  const wrongEnum = structuredClone(ui) as typeof ui;
+  (wrongEnum.nodes[1]!.runtimeProperties as Record<string, unknown>).bindingDevice = "mouse";
+  const rejectedEnum = validateUiDocument(wrongEnum, registry);
+  assert.equal(rejectedEnum.valid, false);
+  assert.ok(rejectedEnum.diagnostics.some((item) => item.code === "PXSDKSEM1326" &&
+    item.details === `${button}.bindingDevice` && item.message.includes("keyboard, wheel")));
 });
 
 test("UI revision-1 migration normalizes legacy presentation fields", () => {

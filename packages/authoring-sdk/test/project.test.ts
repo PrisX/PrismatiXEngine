@@ -614,14 +614,17 @@ test("compileProject validates motion descriptors and packages their image layer
 test("compileProject checks every authored UI property against a supplied native registry", () => {
   const registry = {controls: [{runtimeType: "Control", properties: [
     {id: "modulate", valueType: "color", writable: true, bindable: true, animatable: true},
+    {id: "bindingDevice", valueType: "string", writable: true, bindable: true,
+      animatable: false, enumChoices: ["keyboard", "wheel"]},
   ]}]};
-  const compile = (authoredColor: unknown) => compileProject({
+  const compile = (authoredColor: unknown, bindingDevice?: string) => compileProject({
     project,
     documents: {
       "Story/story.pxindex": storyIndex,
       "Content/game.pxgame": game,
       "Content/UI/Title.pxui": {...ui, nodes: [{...ui.nodes[0],
-        runtimeProperties: {modulate: authoredColor}}]},
+        runtimeProperties: {modulate: authoredColor,
+          ...(bindingDevice === undefined ? {} : {bindingDevice})}}]},
     },
     sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
     locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
@@ -633,6 +636,10 @@ test("compileProject checks every authored UI property against a supplied native
   assert.equal(invalid.valid, false);
   assert.ok(invalid.diagnostics.some((item) => item.code === "PXSDKSEM1324" &&
     item.path === "Content/UI/Title.pxui"));
+  const invalidEnum = compile({type: "color", value: "#2D171DFF"}, "mouse");
+  assert.equal(invalidEnum.valid, false);
+  assert.ok(invalidEnum.diagnostics.some((item) => item.code === "PXSDKSEM1326" &&
+    item.path === "Content/UI/Title.pxui" && item.details === `${rootId}.bindingDevice`));
 });
 
 test("compileProject rejects UI component interfaces that the native Runtime cannot instantiate", () => {

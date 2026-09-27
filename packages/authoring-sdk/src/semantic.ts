@@ -745,6 +745,8 @@ export interface UiPropertyMetadata {
   /** Native TypeRegistry valueType, when available in the exported manifest. */
   readonly valueType?: string;
   readonly tokenBindable?: boolean;
+  /** Native TypeRegistry's accepted choices for a string enum property. */
+  readonly enumChoices?: readonly string[];
 }
 
 export interface UiControlMetadata {
@@ -776,8 +778,13 @@ export function validateUiPropertyUsage(value: unknown, registry: UiTypeRegistry
     const property = typeof runtimeType === "string" && typeof propertyId === "string" ? metadata.get(runtimeType)?.get(propertyId) : undefined;
     const location = `${String(nodeId)}.${String(propertyId)}`;
     if (property === undefined || !property[capability]) diagnostics.push(issue(code, `UI property is not ${capability}`, path, location));
-    else if (capability === "writable" && !uiValueMatches(authoredValue, property))
-      diagnostics.push(issue("PXSDKSEM1324", `UI property expects ${property.valueType} but received ${nativeUiValueType(authoredValue)}`, path, location));
+    else if (capability === "writable") {
+      if (!uiValueMatches(authoredValue, property))
+        diagnostics.push(issue("PXSDKSEM1324", `UI property expects ${property.valueType} but received ${nativeUiValueType(authoredValue)}`, path, location));
+      else if (typeof authoredValue === "string" && property.enumChoices?.length &&
+          !property.enumChoices.includes(authoredValue))
+        diagnostics.push(issue("PXSDKSEM1326", `UI property expects one of ${property.enumChoices.join(", ")}`, path, location));
+    }
   };
   for (const node of nodes) {
     for (const [property, authoredValue] of Object.entries(object(node.runtimeProperties) ?? {}))

@@ -26,7 +26,9 @@ Edit `my-game/Story/main.pxstory` and save. The generated Story has no inline `[
 
 When the bundled Runtime includes `share/PrismatiX/PrismatiXUiTypeRegistry.json`,
 `validate`, `dev`, `build`, `pack`, and `run` also verify UI runtime property
-names and types before launching the Player. A selected `--runtime` prefix or
+names, types, and authored string enum choices before launching the Player.
+Numeric `range` metadata is an editor hint, so it is not treated as a universal
+runtime limit. A selected `--runtime` prefix or
 native build directory supplies its own registry for these commands; `validate`
 accepts `--runtime` too. A fresh `pack`/distribution build also looks next to
 its selected Packager (or in that bundle's `share/PrismatiX` directory).

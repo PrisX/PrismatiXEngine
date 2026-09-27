@@ -793,7 +793,12 @@ async function loadUiRegistry(override?: string, runtimeHint?: string,
             const property = object(value);
             return typeof property?.id === "string" && typeof property.valueType === "string" &&
               typeof property.writable === "boolean" && typeof property.bindable === "boolean" &&
-              typeof property.animatable === "boolean";
+              typeof property.animatable === "boolean" &&
+              (property.enumChoices === undefined ||
+                Array.isArray(property.enumChoices) &&
+                property.enumChoices.length <= 256 &&
+                property.enumChoices.every((choice: unknown) =>
+                  typeof choice === "string"));
           });
       })) throw new Error(`UI TypeRegistry manifest is invalid: ${path}`);
   return source as unknown as UiTypeRegistryMetadata;
