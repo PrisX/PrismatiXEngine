@@ -1114,6 +1114,9 @@ async function compileLoaded(loaded: LoadedProject, committedRevision?: number,
   };
   const compiled = compileProject({project: loaded.project, documents: loaded.documents,
     documentSources: loaded.documentTexts,
+    ...(loaded.textSnapshots.get(resolve(loaded.projectPath)) === undefined ? {} :
+      {projectSource: {path: relative(loaded.root, loaded.projectPath).split(sep).join("/"),
+        text: loaded.textSnapshots.get(resolve(loaded.projectPath))!}}),
     sourceFiles: loaded.sourceFiles, locales: loaded.locales,
     ...(loaded.storyIndexSource === undefined ? {} :
       {storyIndexSource: loaded.storyIndexSource}),

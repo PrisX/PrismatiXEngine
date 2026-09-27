@@ -1,5 +1,5 @@
 import type {UiTypeRegistryMetadata} from "./semantic.js";
-import type {AuthoringDiagnostic, JsonValue} from "./types.js";
+import type {AuthoringDiagnostic, JsonValue, SourceSpan} from "./types.js";
 import type {ProjectDocument} from "./project.js";
 import {jsonPointerSpans} from "./json-source-spans.js";
 
@@ -89,12 +89,20 @@ function issue(code: string, message: string, path: string,
   return {severity: "error", code, message, path, details};
 }
 
-function parseUiContract(value: JsonValue | undefined): {
+function parseUiContract(value: JsonValue | undefined,
+  locate?: (pointer: string) => SourceSpan | undefined): {
   readonly contract?: UiContract;
   readonly diagnostics: readonly AuthoringDiagnostic[];
 } {
   if (value === undefined) return {diagnostics: []};
   const path = "project.pxproject";
+  const at = (message: string, details: string, pointer: string): AuthoringDiagnostic => {
+    const span = locate?.(pointer);
+    return {...issue("PXBUILD1090", message, path, details),
+      ...(span === undefined ? {} : {span})};
+  };
+  const escape = (name: string) => name.replaceAll("~", "~0").replaceAll("/", "~1");
+  const prefix = "/settings/authoring.uiContract";
   const root = object(value);
   const roots = root?.roots;
   const values = object(root?.values);
@@ -109,8 +117,8 @@ function parseUiContract(value: JsonValue | undefined): {
     (values === undefined && formatters === undefined) ||
     (values !== undefined && Object.keys(values).length > 1024) ||
     (formatters !== undefined && Object.keys(formatters).length > 128))
-    return {diagnostics: [issue("PXBUILD1090", "authoring.uiContract has an invalid envelope",
-      path, "settings.authoring.uiContract")]};
+    return {diagnostics: [at("authoring.uiContract has an invalid envelope",
+      "settings.authoring.uiContract", prefix)]};
   const declaredRoots = roots as string[];
   const declaredValues = new Map<string, UiValueType>();
   for (const [name, type] of Object.entries(values ?? {})) {
@@ -118,13 +126,15 @@ function parseUiContract(value: JsonValue | undefined): {
         typeof type !== "string" || !valueTypes.has(type) ||
         !declaredRoots.some((declaredRoot) => name === declaredRoot ||
           name.startsWith(`${declaredRoot}.`) || name.startsWith(`${declaredRoot}[`)))
-      return {diagnostics: [issue("PXBUILD1090", "authoring.uiContract value declaration is invalid",
-        path, `settings.authoring.uiContract.values.${name}`)]};
+      return {diagnostics: [at("authoring.uiContract value declaration is invalid",
+        `settings.authoring.uiContract.values.${name}`,
+        `${prefix}/values/${escape(name)}`)]};
     declaredValues.set(name, type as UiValueType);
   }
-  if (declaredRoots.some((name) => !declaredValues.has(name)))
-    return {diagnostics: [issue("PXBUILD1090", "authoring.uiContract root needs a value type",
-      path, "settings.authoring.uiContract.roots")]};
+  const missingRoot = declaredRoots.findIndex((name) => !declaredValues.has(name));
+  if (missingRoot >= 0)
+    return {diagnostics: [at("authoring.uiContract root needs a value type",
+      "settings.authoring.uiContract.roots", `${prefix}/roots/${missingRoot}`)]};
   const declaredFormatters = new Map<string, readonly [UiValueType, UiValueType]>();
   for (const [name, raw] of Object.entries(formatters ?? {})) {
     const descriptor = object(raw);
@@ -133,8 +143,9 @@ function parseUiContract(value: JsonValue | undefined): {
         Object.keys(descriptor).length !== 2 ||
         typeof descriptor.input !== "string" || !valueTypes.has(descriptor.input) ||
         typeof descriptor.output !== "string" || !valueTypes.has(descriptor.output))
-      return {diagnostics: [issue("PXBUILD1090", "authoring.uiContract formatter declaration is invalid",
-        path, `settings.authoring.uiContract.formatters.${name}`)]};
+      return {diagnostics: [at("authoring.uiContract formatter declaration is invalid",
+        `settings.authoring.uiContract.formatters.${name}`,
+        `${prefix}/formatters/${escape(name)}`)]};
     declaredFormatters.set(name, [descriptor.input as UiValueType,
       descriptor.output as UiValueType]);
   }
@@ -157,9 +168,26 @@ function contractOwnsPath(contract: UiContract | undefined, path: string): boole
 export function validatePlayerUiBindings(project: ProjectDocument,
   uiDocuments: ReadonlyMap<string, JsonValue>,
   registry?: UiTypeRegistryMetadata,
-  documentSources?: Readonly<Record<string, string>>): readonly AuthoringDiagnostic[] {
+  documentSources?: Readonly<Record<string, string>>,
+  projectSource?: {readonly path: string; readonly text: string}): readonly AuthoringDiagnostic[] {
   const data = object(project.settings?.["player.uiData"]);
-  const parsedContract = parseUiContract(project.settings?.["authoring.uiContract"]);
+  const contractValue = project.settings?.["authoring.uiContract"];
+  const source = projectSource ?? (documentSources?.["project.pxproject"] === undefined
+    ? undefined : {path: "project.pxproject", text: documentSources["project.pxproject"]});
+  let contractSpans: ReadonlyMap<string, SourceSpan> | undefined;
+  const contractSpan = (pointer: string): SourceSpan | undefined => {
+    if (source === undefined) return undefined;
+    if (contractSpans === undefined) {
+      let authored: unknown;
+      try { authored = JSON.parse(source.text) as unknown; }
+      catch { return undefined; }
+      const authoredContract = object(object(authored)?.settings)?.["authoring.uiContract"];
+      if (JSON.stringify(authoredContract) !== JSON.stringify(contractValue)) return undefined;
+      contractSpans = jsonPointerSpans(source.text, authored, source.path);
+    }
+    return contractSpans.get(pointer);
+  };
+  const parsedContract = parseUiContract(contractValue, contractSpan);
   const contract = parsedContract.contract;
   const diagnostics: AuthoringDiagnostic[] = [...parsedContract.diagnostics];
   const finish = (): readonly AuthoringDiagnostic[] => {

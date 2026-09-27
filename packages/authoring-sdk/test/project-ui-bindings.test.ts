@@ -143,6 +143,36 @@ test("host ViewModel contract checks direct paths without guessing unrelated roo
     .some((item) => item.code === "PXBUILD1090"));
 });
 
+test("host contract errors locate matching project declarations and reject stale source", () => {
+  const check = (contract: unknown, sourceContract: unknown = contract) => {
+    const declared = {...project([]), settings: {"authoring.uiContract": contract as JsonValue}};
+    const source = JSON.stringify({settings: {"authoring.uiContract": sourceContract}}, null, 2);
+    const diagnostics = validatePlayerUiBindings(declared, new Map(), undefined,
+      undefined, {path: "prismatix.json", text: source});
+    return {source, issue: diagnostics.find((item) => item.code === "PXBUILD1090")};
+  };
+  const base = {format: "PrismatiXUiContract", schemaRevision: 1,
+    roots: ["dialogue"], values: {dialogue: "object"}};
+  const invalidValue = check({...base, values: {dialogue: "object",
+    "dialogue./bad": "string"}});
+  assert.ok(invalidValue.issue?.span);
+  assert.equal(invalidValue.issue.span.path, "prismatix.json");
+  assert.equal(invalidValue.source.slice(invalidValue.issue.span.start.offset,
+    invalidValue.issue.span.end.offset), '"string"');
+  const missingRoot = check({...base, values: {}});
+  assert.ok(missingRoot.issue?.span);
+  assert.equal(missingRoot.source.slice(missingRoot.issue.span.start.offset,
+    missingRoot.issue.span.end.offset), '"dialogue"');
+  const invalidFormatter = check({...base,
+    formatters: {TitleCase: {input: "invalid", output: "string"}}});
+  assert.ok(invalidFormatter.issue?.span);
+  assert.match(invalidFormatter.source.slice(invalidFormatter.issue.span.start.offset,
+    invalidFormatter.issue.span.end.offset),
+  /^\{\s*"input": "invalid",\s*"output": "string"\s*\}$/u);
+  const stale = check({...base, values: {}}, base);
+  assert.equal(stale.issue?.span, undefined);
+});
+
 test("UI binding diagnostics point to the effective JSON value only for matching source", () => {
   const source = `{
   "nodes": [{

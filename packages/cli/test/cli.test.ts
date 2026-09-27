@@ -1272,6 +1272,34 @@ export default <Scene name="Title" width={1280} height={720}>
   }
 });
 
+test("validate locates invalid host UI contract values in the author manifest", async () => {
+  const value = await fixture();
+  try {
+    const project = JSON.parse(await readFile(value.project, "utf8")) as {
+      settings?: Record<string, unknown>;
+    };
+    project.settings = {"authoring.uiContract": {
+      format: "PrismatiXUiContract", schemaRevision: 1,
+      roots: ["dialogue"], values: {dialogue: "object", "dialogue..bad": "string"},
+    }};
+    const source = JSON.stringify(project, null, 2);
+    const authorPath = join(value.root, "prismatix.json");
+    await write(authorPath, source);
+    const validated = run(["validate", authorPath]);
+    assert.equal(validated.status, 1, validated.stderr);
+    const diagnostics = validated.stderr.split(/\r?\n/u).filter(Boolean).flatMap((line) => {
+      try { return [JSON.parse(line) as {code: string; span?: {path: string;
+        start: {offset: number}; end: {offset: number}}}]; }
+      catch { return []; }
+    });
+    const issue = diagnostics.find((item) => item.code === "PXBUILD1090");
+    assert.equal(issue?.span?.path, "prismatix.json", validated.stderr);
+    assert.equal(source.slice(issue.span.start.offset, issue.span.end.offset), '"string"');
+  } finally {
+    await rm(value.root, {recursive: true, force: true});
+  }
+});
+
 test("validate reports semantic TypeScript prop errors before JSX evaluation", async () => {
   const value = await fixture();
   const project = JSON.parse(await readFile(value.project, "utf8")) as {
