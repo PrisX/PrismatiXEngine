@@ -1304,7 +1304,11 @@ std::optional<Bytes> ReadArchiveEntry(const ArchiveEntry& entry,
                    : std::nullopt;
     }
     if (entry.size > maximumSize) return std::nullopt;
-    return ReadFile(entry.source, entry.size);
+    auto bytes = ReadFile(entry.source, entry.size);
+    if (!bytes) return std::nullopt;
+    const auto digest = Sha256Bytes(bytes->data(), bytes->size());
+    if (!digest || Hex(*digest) != Lower(entry.fingerprint)) return std::nullopt;
+    return bytes;
 }
 
 bool ShaderCrossReady() {
@@ -3127,13 +3131,22 @@ PackageRunResult RunPackager(const PackageRequest& request, const PackageEventSi
         const auto& input = validated.inputs[index];
         EmitProgress(request, eventSink, "archive", index, validated.inputs.size(), "Preparing " + input.input.uri);
         // Non-media inputs were hashed during validation; media inputs are
-        // verified by the writer or whole-shard reuse. Another full pass here
-        // would duplicate I/O for large media-heavy projects.
+        // verified by the writer or whole-shard reuse. The JSON bytes read
+        // here also influence package identity, so they must match the input
+        // fingerprint rather than merely having the expected size.
         std::string contentFingerprint = Lower(input.input.fingerprint);
         if (input.input.size <= 16ull * 1024ull * 1024ull &&
             CouldBeJson(input.source)) {
             const auto bytes = ReadFile(input.source, input.input.size);
             if (!bytes) {
+                return Fail(request, eventSink, "PXPKG1305",
+                            "An input changed while packaging: " +
+                                input.input.uri,
+                            true);
+            }
+            const auto sourceDigest = Sha256Bytes(bytes->data(), bytes->size());
+            if (!sourceDigest ||
+                Hex(*sourceDigest) != Lower(input.input.fingerprint)) {
                 return Fail(request, eventSink, "PXPKG1305",
                             "An input changed while packaging: " +
                                 input.input.uri,

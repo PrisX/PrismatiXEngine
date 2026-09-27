@@ -424,6 +424,38 @@ int main() {
                      "full preflight checks all current input fingerprints");
     });
 
+    suite.Run("Package_RejectsChangedJsonDuringIdentityPreparation", [&] {
+        const auto source = root / "Content/game.pxgame";
+        const std::string original = Read(source);
+        std::string changed = original;
+        const auto format = changed.find("PrismatiXGame");
+        suite.Require(format != std::string::npos,
+                      "catalog fixture has a same-size JSON mutation point");
+        changed.replace(format, std::string("PrismatiXGame").size(),
+                        "PrismatiXGamE");
+        bool mutated = false;
+        bool restored = false;
+        const auto result = px::sdk::RunPackager(request, [&](const auto& event) {
+            if (event.kind != px::sdk::PackageEventKind::Progress) return;
+            if (!mutated && event.phase == "archive" &&
+                event.message == "Preparing Content/game.pxgame") {
+                Write(source, changed);
+                mutated = true;
+            } else if (mutated && !restored &&
+                       event.phase == "archive-write") {
+                Write(source, original);
+                restored = true;
+            }
+        });
+        Write(source, original);
+        suite.Expect(mutated && !result.Completed() &&
+                         HasDiagnostic(result, "PXPKG1305"),
+                     "package identity rejects JSON bytes changed after preflight");
+        suite.Expect(std::filesystem::exists(output / "previous-success.txt") &&
+                         !std::filesystem::exists(output / "Content.pdx"),
+                     "a mid-build metadata change does not replace the previous output");
+    });
+
     suite.Run("Package_CreatesPlayerCompatibleAtomicDistribution", [&] {
         const auto result = px::sdk::RunPackager(request, [&](const auto& event) { events.push_back(event); });
         suite.Require(result.Completed(), "SDK Packager completes");
@@ -2243,6 +2275,33 @@ int main() {
         const auto result = px::sdk::RunPackager(effectRequest);
         suite.Require(result.Completed(),
                       "valid custom HLSL compiles during packaging");
+        const auto shaderPath = effectRoot / "Effects/dream-tone.frag.hlsl";
+        const std::string originalShader = Read(shaderPath);
+        std::string changedShader = originalShader;
+        const auto whitespace = changedShader.find(' ');
+        suite.Require(whitespace != std::string::npos,
+                      "shader fixture has a same-size whitespace mutation point");
+        changedShader[whitespace] = '\t';
+        const std::string publishedManifest =
+            Read(effectOutput / "Package/manifest.json");
+        bool shaderMutated = false;
+        const auto changedDuringCompile = px::sdk::RunPackager(
+            effectRequest, [&](const auto& event) {
+                if (!shaderMutated &&
+                    event.kind == px::sdk::PackageEventKind::Progress &&
+                    event.phase == "archive" &&
+                    event.message ==
+                        "Preparing Effects/dream-tone.frag.hlsl") {
+                    Write(shaderPath, changedShader);
+                    shaderMutated = true;
+                }
+            });
+        Write(shaderPath, originalShader);
+        suite.Expect(shaderMutated && !changedDuringCompile.Completed() &&
+                         HasDiagnostic(changedDuringCompile, "PXPKG1505") &&
+                         Read(effectOutput / "Package/manifest.json") ==
+                             publishedManifest,
+                     "shader compilation rejects source bytes changed after preflight");
         const auto manifest = px::sdk::detail::ParsePackageManifest(
             Read(effectOutput / "Package/manifest.json"));
         suite.Require(manifest.Valid() &&
