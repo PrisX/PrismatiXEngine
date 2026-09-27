@@ -84,8 +84,8 @@
 | Authoring | Story 分檔／跨場景 `compileStoryProject`、外部穩定 ID sidecar、TSX UI、具名 UI 元件、`ItemsGrid`／`ItemsList`、`Modal`、分層立繪、`SpriteText`、typed props／Action／binding 驗證、resource includes 與正式 `augment`。Senren 92 scene × 四語的 `validate --runtime` 曾通過，約 31,339 個資源。 | 並非原 KAG/PSB 到 Authoring 的通用 importer；所有特殊 UI／動效也未完整 1:1。 |
 | 輸入與設定 | Native keyboard／wheel／具名 action、Player 設定持久化、按鍵捕捉、`KeyBindingButton`／`WheelBindingButton`、追加／逐鍵移除／原位替換 API、逐鍵選取 UI、可選的共用鍵二次確認、Delete 清除綁定、衝突拒絕、全螢幕動作。Senren 原作 25 項快捷鍵接通 13 項。 | 其餘 12 項仍是占位；原版衝突對話框外觀與 F4 原版尺寸切換未還原；尚未在最新 8 GB 封裝實按或驗舊設定遷移。 |
 | UI／轉場／呈現 | Route/splash/動態 UI 圖片預載、無動畫 route 的 presentation hold、文字描邊排版修補、`.pxmotion` rev 1–11 的圖層、keyframe、atlas frame、音效 marker、基本混合、alpha mask、局部時間、曲線、tint、tickRate 等及 TSX `<Motion>`。新版 signed overlay Player 也完成 22 route／23 張截圖 E2E。 | 無原版 M2 等效轉換；原 `.mtn` 特殊曲線／粒子／複合語意未完整對齊，沒有現在版以原資產做逐幀 frame-time 與視覺一致性驗收。不能再把「沒有 alpha mask」照抄為現況。 |
-| 大型封裝 | 正式 PDX 分片、未變分片重用、壓縮 entry cache、`pack --check`／`--verify-media`、`verify-package`、provenance 安全保留成品／僅替換 runtime、階段進度與 CLI 發布驗證平行化。可從 published artifact 直接規劃 signed overlay，並沿已驗簽主鏈續產 patch2／選裝包，不需逐版完整目標發行版；目前僅小型真實 CLI E2E。Senren 曾完整封裝 16 PDX（約 7.50 GiB）並逐筆驗證 31,756 資源／8,594,731,766 原始 bytes。 | 仍沒有完整 dependency-aware／block-level 增量構建；直接 overlay 仍全量讀驗 artifact 與基底，8 GB 同規模速度／峰值尚未實測。 |
-| 更新 | 已有明示執行的目錄補丁；單檔 PDX overlay 可建／驗；revision 2 以固定發行者公鑰驗簽，Player 在 `Package/updates` 載入唯一 exact-base 更新鏈且失敗回基底；revision 3 選裝包可簽出並以 per-user 選擇啟停。小型 Player E2E 已測同版存檔、版本 migration 與跨更新 tombstone。 | 一次只支援一個選裝包且無遊戲內開關；v29 同版存檔恢復及 8 GB signed 雙版本主更新已驗；真實跨版 migration／大媒體 patch 未驗。 |
+| 大型封裝 | 正式 PDX 分片、未變分片重用、壓縮 entry cache、`pack --check`／`--verify-media`、`verify-package`、provenance 安全保留成品／僅替換 runtime、階段進度與 CLI 發布驗證平行化。可從 published artifact 直接規劃 signed overlay，並沿已驗簽主鏈續產 patch2／選裝包，不需逐版完整目標發行版；已完成大型簽章 overlay 的 Player 實機 E2E。Senren 曾完整封裝 16 PDX（約 7.50 GiB）並逐筆驗證 31,756 資源／8,594,731,766 原始 bytes。 | 仍沒有完整 dependency-aware／block-level 增量構建；直接 overlay 仍全量讀驗 artifact 與基底；8 GB 大型媒體 overlay 已量測速度與取樣峰值。 |
+| 更新 | 已有明示執行的目錄補丁；單檔 PDX overlay 可建／驗；revision 2 以固定發行者公鑰驗簽，Player 在 `Package/updates` 載入唯一 exact-base 更新鏈且失敗回基底；revision 3 選裝包可簽出並以 per-user 選擇啟停。小型 Player E2E 已測同版存檔、版本 migration 與跨更新 tombstone。 | 一次只支援一個選裝包且無遊戲內開關；v29 同版存檔恢復及 8 GB signed 雙版本主更新已驗；真實跨版 migration 未驗；大媒體 patch 已驗。 |
 
 上表僅列主線。詳細的成因、SDK 改動、原版差距與每次測試條件，請查 `SenrenBankaPSX/docs/SDK_FEEDBACK.md`；尤其不要把其中舊段落的「未有分片／未有 overlay 產製」照抄成現況。
 
@@ -101,7 +101,7 @@
 | `.pxmotion`／Story 動畫 | 格式已演進至 rev 11，TSX UI／splash 可播；Story `[timeline]` 可控 `.pxanim`／`.pxtimeline` 的 await/speed；新增 `[motion]`／`[motion.stop]` 直接在 Stage 播放 `.pxmotion`，含預載、音效 marker、等待與存檔還原。 | 尚缺以正式大型發行版驗證圖層畫面及音效時序；M2 `.mtn` 轉換器／逐幀驗證暫停。 |
 | 輸入／設定 | `.pxgame.inputActions` 有 context、key、wheel、route／`uiAction`；鍵盤捕捉／追加／逐鍵移除／原位替換／整組清除、wheel 方向／門檻可保存；`KeyBindingButton` 可逐鍵選取與衝突二次確認，`WheelBindingButton` 可實體捕捉方向；原生 Player E2E 已驗加密舊設定缺滾輪欄位的匯入與保存。 | 非 Player host 須自行觸發持久化；實際舊版玩家資料與正式封裝人工實按仍待驗。原版衝突對話框屬遊戲 UI，仍未還原。原作剩餘 12 項與多數 settings.noop 須先判別可攜 SDK 能力，不能一律當作 SDK 缺陷。 |
 | 更新與持久化 | 可顯式安裝目錄補丁；簽章更新鏈可建／驗／由 Player 載入或回基底；同版舊存檔可沿已驗簽鏈或明確發行 lineage 的舊 fingerprint 載入並檢查 Runtime 文件／錨點；合成舊金鑰 slot 已通過 Player E2E，覆寫時保留原始備份；選裝包可獨立啟停且存檔身分保留主更新 fingerprint；Player 資料已移至 per-user 位置。跨目錄獨立發行版可用 `--previous-package` 驗證並傳遞前版 lineage；Packager 與 Player 原生合成 E2E 已驗。 | 不相容劇本仍需明示 content/save version 與 migration；v29 同版存檔已在 v31 實際載入；v28 lineage 與真實跨版 migration 仍缺。 |
-| 發行效能 | 16 分片、Release Packager、未變片重用、preflight／media 驗證、runtime-only refresh 已有真實大型量測；直接 artifact→overlay 與沿已驗簽鏈接續產出不需完整目標發行版。 | 一般完整封裝與直接 overlay 都仍做 O(全量素材) 的讀驗；缺依賴級／block-level 安全增量、同條件長期吞吐與磁碟峰值量測、最新 overlay 的 8 GB 壓力測試。 |
+| 發行效能 | 16 分片、Release Packager、未變片重用、preflight／media 驗證、runtime-only refresh 已有真實大型量測；直接 artifact→overlay 與沿已驗簽鏈接續產出不需完整目標發行版。 | 一般完整封裝與直接 overlay 都仍做 O(全量素材) 的讀驗；缺依賴級／block-level 安全增量、同條件長期吞吐與磁碟峰值量測；大型媒體 overlay 的 8 GB 壓力測試已完成。 |
 | 平台／原作特有功能 | rule/shake/影片、主要 UI 與基本 flowchart 可運行。 | 老闆鍵／置頂／語音分流／Steam 等是否抽成可攜 SDK API 尚需取捨；不要為了 Senren 外觀宣稱這些設定已生效。 |
 
 ## 最近完成的單檔 overlay：交接重點
@@ -110,7 +110,7 @@
 
 Engine `docs/package-overlay.md` 是格式規格和安全邊界。這一輪已新增：
 
-- `PrismatiXEngine/Engine/IO/Archive.h/.cpp`：`ArchiveStreamWriter`，檔案來源逐段寫入未加密、未壓縮 PDX5；核對來源預期大小、CRC／SHA-256，支援 metadata、進度。後續 `Archive::OpenStream` 對未加密 zstd entry 改為有界視窗串流解壓（128 MiB 視窗上限、讀到末尾驗大小／CRC）；舊式整筆加密且壓縮 entry 仍會整筆 buffer，encrypted chunked entry 可串流。
+- `PrismatiXEngine/Engine/IO/Archive.h/.cpp`：`ArchiveStreamWriter`，檔案來源逐段寫入未加密 PDX5，現可選有界 zstd 壓縮；核對來源預期大小、CRC／SHA-256，支援 metadata、進度。後續 `Archive::OpenStream` 對未加密 zstd entry 改為有界視窗串流解壓（128 MiB 視窗上限、讀到末尾驗大小／CRC）；舊式整筆加密且壓縮 entry 仍會整筆 buffer，encrypted chunked entry 可串流。
 - `PrismatiXEngine/Engine/IO/PackageVerifier.h/.cpp`：`CreatePackageOverlay(base,target,output,progress)`。先完整驗證兩份發行版、確認同遊戲／Engine、不同 package fingerprint、拒絕 Player／非內容 runtime 檔案變更；只串流新增／修改資源，寫入 PDX metadata／target manifest／target index，產後再獨立 `VerifyPackageOverlay`。不覆寫現有輸出。暫存磁碟需容納 staged PDX，但不再額外存放解出的變動資源；Windows 以不可覆寫的同磁碟原子移動發布，其他平台仍依賴 hard link。
 - `PrismatiXEngine/Applications/PackagerMain.cpp`：`--create-overlay`／`--verify-overlay`。
 - `packages/cli/src/cli.ts`：`prismatix create-overlay --base ... --target ... --output ...` 和 `verify-overlay --base ... --patch ...`；`packages/cli/test/overlay-command.test.ts` 測 CLI→native 參數與輸出。
@@ -120,9 +120,9 @@ Engine `docs/package-overlay.md` 是格式規格和安全邊界。這一輪已�
 
 ## 未完成工作：下一位 agent 的建議順序
 
-1. **繼續驗收已簽章的單檔更新。** `PlayerApp::LoadBootConfig` 現解析 `Package/updates` 內唯一的 signed exact-base 多版本鏈與 per-user 啟用的 revision 3 選裝包，`Runtime::Init` 以基底 archiveKey 掛原片，再依序掛 overlay/tombstones；失敗回基底。小型 Player E2E 已驗合成舊金鑰／舊 fingerprint slot、明示 migration、跨更新資源刪除及重啟；v29 真實同版存檔已在大型獨立包載入；大型 signed 主更新與 22 route 已驗；下一步須驗真實跨版 migration 與大媒體 entry patch，並決定是否需要遊戲內選裝包開關和同時啟用多個選裝包。不得把 unsigned payload SHA-256 當發行者認證。
-2. **擴充大型 overlay 壓力證據**：兩個真實完整發行版的 signed `create-overlay`／`verify-overlay`、小變更 patch 大小與 Player 22 route 已驗。仍需在同級 8 GB 專案修改大型壓縮媒體 entry，記錄程序最終峰值記憶體與暫存／最終磁碟峰值；小型 256 MiB fixture 不能取代此項。
-3. **真正的增量 authoring/build/packaging**：現已有 16 片重用、Release Packager、免目標發行版的 artifact→overlay，以及 AllInputs 來源雜湊的有界並行；但兩種發佈路徑仍須全量驗 artifact／基底，約 31,000 個檔與約 8.2 GiB 素材仍是成本。來源完整雜湊、基底 PDX 驗證和兩者合併的直接 overlay 唯讀預檢已量測；後續仍須在相符的大型 artifact／base 上量測包含 patch 寫入的完整流程、RSS／磁碟峰值，再決定有失效條件的依賴／驗證 cache，保留 TOCTOU 與 ownership 安全性。歷史量測：Release Packager 同版 16/16 分片重封約 96.30 秒、14/16 小變更約 110.58 秒；不同快取與磁碟條件，不能當 SLA。僅更新 Player 的 `refresh-runtime` 曾約 23.19 秒。詳見 `SDK_FEEDBACK.md` 當日段落。
+1. **繼續驗收已簽章的單檔更新。** `PlayerApp::LoadBootConfig` 現解析 `Package/updates` 內唯一的 signed exact-base 多版本鏈與 per-user 啟用的 revision 3 選裝包，`Runtime::Init` 以基底 archiveKey 掛原片，再依序掛 overlay/tombstones；失敗回基底。小型 Player E2E 已驗合成舊金鑰／舊 fingerprint slot、明示 migration、跨更新資源刪除及重啟；v29 真實同版存檔已在大型獨立包載入；大型 signed 主更新與 22 route 已驗；大媒體 entry patch 已驗；下一步須驗真實跨版 migration，並決定是否需要遊戲內選裝包開關和同時啟用多個選裝包。不得把 unsigned payload SHA-256 當發行者認證。
+2. **擴充大型 overlay 壓力證據**：兩個真實完整發行版的 signed `create-overlay`／`verify-overlay`、小變更 patch 大小與 Player 22 route 已驗。已在同級 8 GB 專案修改 256 MiB WAV，量到完整產製的記憶體與磁碟取樣峰值，並由 Player 載入壓縮簽章 patch；詳見 SDK_LARGE_MEDIA_OVERLAY_ACCEPTANCE.md。
+3. **真正的增量 authoring/build/packaging**：現已有 16 片重用、Release Packager、免目標發行版的 artifact→overlay，以及 AllInputs 來源雜湊的有界並行；但兩種發佈路徑仍須全量驗 artifact／基底，約 31,000 個檔與約 8.2 GiB 素材仍是成本。來源完整雜湊、基底 PDX 驗證和兩者合併的直接 overlay 唯讀預檢已量測；相符大型 artifact／base 的完整 patch、RSS／磁碟取樣峰值已量測；後續須設計有失效條件的依賴／驗證 cache，保留 TOCTOU 與 ownership 安全性。歷史量測：Release Packager 同版 16/16 分片重封約 96.30 秒、14/16 小變更約 110.58 秒；不同快取與磁碟條件，不能當 SLA。僅更新 Player 的 `refresh-runtime` 曾約 23.19 秒。詳見 `SDK_FEEDBACK.md` 當日段落。
 4. **跨層 Authoring 合約與大型 importer**：Story 指令／索引宣告、JSON UI binding／`itemSource`、extension Action 和原生 property 的主要 source-location diagnostics 已補；仍須針對其他 UI 格式錯誤、動態素材、依賴圖漏資源及 TSX 執行後錯誤的來源位置建 regression。現有 `build`／`dev` 逐 scene 解析／編譯快取已可跨行程，但 92 scene × 四語仍重讀來源且未量測快取效益，後續需判斷安全增量或串流 importer 的實際瓶頸。清楚區分 `compileStory` 與 `compileStoryProject`，先從真實移植 importer 的重複 workaround 提取通用 API，不要把專案特例硬塞 stock Player。
 5. **輸入設定與 UI 作者體驗尾巴**：逐鍵選擇／可選衝突二次確認與 wheel 使用者改鍵已加至 stock button；仍需設定資料遷移、已接項目的封裝實按與非 Player host 的保存範例。原作其餘快捷鍵需先確認哪些是可攜 Engine 動作、哪些只是遊戲特有功能。文字效果長期應共用一次布局／遮罩，減少雙重排版與逐字 texture；`.pxmotion` 的一般可重用資源／演出契約可繼續，但依使用者要求暫不追 M2 原動畫。
 6. **回到移植案做接受測試**：先用最新 SDK 重新 `validate --runtime`、跑專案測試，再挑一個小的發行版 E2E 旅程驗證 UI、按鍵、存讀檔和音效；若要大容量重封，記錄實際版本、構建參數與磁碟空間。原作 1:1 差距應留在 `SDK_FEEDBACK.md`，不要把新 SDK API 存在誤寫成遊戲畫面已經實裝。
