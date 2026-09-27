@@ -85,7 +85,10 @@ bool ValidOptionalPackId(const std::string_view value) {
         });
 }
 
-unsigned VerificationWorkers(const std::size_t archives) {
+unsigned VerificationWorkers(const std::size_t archives, const bool encrypted) {
+    // Legacy encrypted+compressed entries still use a whole-entry buffer.
+    // Never multiply that allocation across archive workers.
+    if (encrypted) return archives == 0 ? 0 : 1;
     unsigned workers = std::min<unsigned>(4, std::thread::hardware_concurrency());
     if (workers == 0) workers = 1;
 #ifdef _WIN32
@@ -519,7 +522,8 @@ PackageContentVerification VerifyPackageContents(
     };
     {
         std::vector<std::jthread> threads;
-        const auto workers = VerificationWorkers(manifest.archives.size());
+        const auto workers = VerificationWorkers(manifest.archives.size(),
+                                                 manifest.encrypted);
         threads.reserve(workers);
         for (unsigned worker = 0; worker < workers; ++worker)
             threads.emplace_back(work);

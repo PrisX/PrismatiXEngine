@@ -21,7 +21,7 @@
 
 ## 基底 PDX 驗證優化
 
-同一份基底有 16 個 PDX 分片、31,756 筆資源；其中 28,330 筆、6,002,475,350 raw bytes 是未壓縮 entry。基底驗證現在於同一輪讀取中核對這些 entry 的 CRC 與內容索引 SHA-256，並以最多四個 worker 驗證彼此獨立的分片。進度回報仍在呼叫執行緒、保持單調；失敗仍按分片順序回報。`PRISMATIX_PACKAGE_VERIFY_WORKERS=1..8` 可供受限設備或比較使用，預設最多四工。公開的普通 `Archive::OpenStream` 仍會在交出未壓縮 stream 前核對 CRC；只有完整內容驗證使用合併讀取。
+同一份未加密基底有 16 個 PDX 分片、31,756 筆資源；其中 28,330 筆、6,002,475,350 raw bytes 是未壓縮 entry。基底驗證現在於同一輪讀取中核對這些 entry 的 CRC 與內容索引 SHA-256，並以最多四個 worker 驗證彼此獨立的分片。進度回報仍在呼叫執行緒、保持單調；失敗仍按分片順序回報。`PRISMATIX_PACKAGE_VERIFY_WORKERS=1..8` 可供受限設備或比較使用，未加密基底預設最多四工；加密基底固定單工，避免舊式整筆加密壓縮 entry 的記憶體用量相乘。公開的普通 `Archive::OpenStream` 仍會在交出未壓縮 stream 前核對 CRC；只有完整內容驗證使用合併讀取。
 
 | Release Packager，同機暖快取 | 耗時 | Packager 峰值 working set |
 | --- | ---: | ---: |

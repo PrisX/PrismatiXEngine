@@ -37,7 +37,9 @@ are not the final PDX size; the source can also change after the check, so
 the publishing command repeats verification and streaming checks.
 Base PDX shards are verified concurrently, up to four by default; set
 `PRISMATIX_PACKAGE_VERIFY_WORKERS` to an integer from 1 to 8 to tune this for
-the storage device. Each entry still has its CRC and indexed SHA-256 checked.
+the storage device. Encrypted bases stay single-worker because older
+encrypted-and-compressed entries can require a whole-entry buffer. Each entry
+still has its CRC and indexed SHA-256 checked.
 Parallel verification reduces elapsed time without making the check
 incremental or trusting unverified cached bytes.
 
