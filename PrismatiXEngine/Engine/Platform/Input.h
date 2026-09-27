@@ -137,6 +137,12 @@ public:
         std::string_view action) const;
     [[nodiscard]] WheelBindingMap CaptureWheelBindings() const;
     [[nodiscard]] bool RestoreWheelBindings(const WheelBindingMap& bindings);
+    // Host-authored wheel defaults survive user rebinds and are restored by Reset.
+    // This does not alter the current binding until the host applies it.
+    [[nodiscard]] bool SetDefaultWheelBinding(std::string_view action,
+                                              WheelDirection direction,
+                                              float threshold = 0.0f);
+    void ResetWheelBindings();
     // Named actions default to the global context. The host selects a base
     // context; scripts may push temporary overlays for nested screens.
     [[nodiscard]] bool SetActionContext(std::string_view action,
@@ -308,6 +314,7 @@ private:
     KeyboardBindingMap m_pendingKeyBindings;
     WheelBindingMap m_pendingWheelBindings;
     KeyboardBindingMap m_defaultKeyboardBindings;
+    WheelBindingMap m_defaultWheelBindings;
     std::set<std::string,std::less<>> m_injectedNamedActions;
     std::vector<InputEvent> m_events;
     std::unordered_set<std::uint64_t> m_consumedEvents;

@@ -143,6 +143,7 @@ bool Input::UnregisterAction(const std::string_view action) {
     m_pendingKeyBindings.erase(name);
     m_pendingWheelBindings.erase(name);
     m_defaultKeyboardBindings.erase(name);
+    m_defaultWheelBindings.erase(name);
     return m_namedBindings.erase(name) != 0;
 }
 
@@ -245,6 +246,36 @@ bool Input::RestoreWheelBindings(const WheelBindingMap& bindings) {
     m_namedBindings = std::move(named);
     m_pendingWheelBindings = std::move(pending);
     return true;
+}
+
+bool Input::SetDefaultWheelBinding(const std::string_view action,
+                                   const WheelDirection direction,
+                                   const float threshold) {
+    if (!HasAction(action) || !std::isfinite(threshold) ||
+        threshold < 0.0f || threshold > 100.0f ||
+        (direction != WheelDirection::None && direction != WheelDirection::Up &&
+         direction != WheelDirection::Down) ||
+        (direction == WheelDirection::None && threshold != 0.0f)) return false;
+    m_defaultWheelBindings[std::string(action)] = {direction, threshold};
+    return true;
+}
+
+void Input::ResetWheelBindings() {
+    const Input defaults;
+    for (auto& [action, bindings] : m_namedBindings) {
+        WheelBinding fallback;
+        if (const auto authored = m_defaultWheelBindings.find(action);
+            authored != m_defaultWheelBindings.end()) {
+            fallback = authored->second;
+        } else if (const auto builtin = defaults.m_namedBindings.find(action);
+                   builtin != defaults.m_namedBindings.end()) {
+            fallback = {builtin->second.wheelDirection,
+                        builtin->second.wheelThreshold};
+        }
+        bindings.wheelDirection = fallback.direction;
+        bindings.wheelThreshold = fallback.threshold;
+    }
+    m_pendingWheelBindings.clear();
 }
 
 bool Input::SetActionContext(const std::string_view action,

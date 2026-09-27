@@ -282,6 +282,48 @@ int main() {
                      "invalid wheel maps fail without changing live bindings");
     });
 
+    suite.Run("ResetRestoresProjectAuthoredWheelDefaults", [&] {
+        px::Input input;
+        suite.Require(input.RegisterAction("screen.open.history") &&
+                          input.SetDefaultWheelBinding("screen.open.history",
+                                                       px::WheelDirection::Up, 1.5f) &&
+                          input.SetDefaultWheelBinding("advance",
+                                                       px::WheelDirection::None) &&
+                          input.SetWheelBinding("screen.open.history",
+                                                px::WheelDirection::Up, 1.5f),
+                      "catalog wheel defaults are stored separately from user bindings");
+        suite.Expect(!input.SetDefaultWheelBinding("screen.open.history",
+                                                   px::WheelDirection::None, 1.0f) &&
+                         !input.SetDefaultWheelBinding("missing",
+                                                       px::WheelDirection::Up),
+                     "invalid authored wheel defaults leave existing defaults intact");
+        auto overrides = input.CaptureWheelBindings();
+        overrides["screen.open.history"] = {px::WheelDirection::Down, 2.0f};
+        overrides["advance"] = {px::WheelDirection::Up, 1.0f};
+        overrides["backlog"] = {px::WheelDirection::Down, 0.5f};
+        overrides["later.action"] = {px::WheelDirection::Down, 3.0f};
+        suite.Require(input.RestoreWheelBindings(overrides),
+                      "user wheel bindings can override authored and engine defaults");
+        input.ResetWheelBindings();
+        const auto history = input.GetWheelBinding("screen.open.history");
+        const auto advance = input.GetWheelBinding("advance");
+        const auto backlog = input.GetWheelBinding("backlog");
+        suite.Expect(history && history->direction == px::WheelDirection::Up &&
+                         history->threshold == 1.5f && advance &&
+                         advance->direction == px::WheelDirection::None &&
+                         advance->threshold == 0.0f && backlog &&
+                         backlog->direction == px::WheelDirection::Up &&
+                         backlog->threshold == 0.0f &&
+                         !input.CaptureWheelBindings().contains("later.action"),
+                     "reset restores project and engine wheel defaults and drops deferred overrides");
+        suite.Require(input.RegisterAction("later.action"),
+                      "deferred action can register after reset");
+        const auto later = input.GetWheelBinding("later.action");
+        suite.Expect(later && later->direction == px::WheelDirection::None &&
+                         later->threshold == 0.0f,
+                     "deferred user wheel binding does not return after reset");
+    });
+
     suite.Run("KeyRebindReportsConflictsWithoutLosingBindings", [&] {
         px::Input input;
         suite.Require(input.RegisterAction("photo-mode") &&

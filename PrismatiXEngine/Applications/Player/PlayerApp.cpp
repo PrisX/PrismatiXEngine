@@ -1703,13 +1703,16 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                     if (!input.BindKey(action.id, keys[index])) return false;
             }
         }
-        if (!m_settings.wheelBindings.contains(action.id) &&
-            !action.wheelDirection.empty()) {
+        if (!action.wheelDirection.empty()) {
             const WheelDirection direction = action.wheelDirection == "up"
                 ? WheelDirection::Up
                 : action.wheelDirection == "down" ? WheelDirection::Down
                                                    : WheelDirection::None;
-            if (!input.SetWheelBinding(action.id, direction, action.wheelThreshold))
+            if (!input.SetDefaultWheelBinding(action.id, direction,
+                                              action.wheelThreshold) ||
+                (!m_settings.wheelBindings.contains(action.id) &&
+                 !input.SetWheelBinding(action.id, direction,
+                                        action.wheelThreshold)))
                 return false;
         }
         if (!action.route.empty()) m_screenTriggers[action.id] = action.route;
@@ -2890,6 +2893,7 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         const bool fullscreen=m_settings.fullscreen;
         m_settings=progress::GameSettings{};
         m_runtime.GetInput().ResetKeyboardBindings();
+        m_runtime.GetInput().ResetWheelBindings();
         m_settings.language=locale;
         m_settings.fullscreen=fullscreen;
         audio.SetBGMVolume(m_settings.bgmVolume);
