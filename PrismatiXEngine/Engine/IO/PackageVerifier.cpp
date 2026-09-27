@@ -1107,7 +1107,8 @@ PackageOverlayBuildResult CreatePackageOverlay(
         writer.AddStream(
             resource.uri,
             [source, uri = resource.uri] { return source->OpenStream(uri); },
-            resource.size, resource.fingerprint);
+            resource.size, resource.fingerprint,
+            resource.size >= 64ull * 1024ull);
         if (resource.size >
             (std::numeric_limits<std::uint64_t>::max)() - plannedBytes)
             return fail("Changed resource total exceeds the overlay limit");
@@ -1416,7 +1417,8 @@ PackageOverlayBuildResult CreatePackageOverlayFromPlan(
         const auto* source = sources.at(resource.uri);
         if (!source->source.empty())
             writer.AddFile(resource.uri, source->source, resource.size,
-                           resource.fingerprint);
+                           resource.fingerprint,
+                           resource.size >= 64ull * 1024ull);
         else
             writer.AddData(resource.uri, source->generatedData);
         if (resource.size >

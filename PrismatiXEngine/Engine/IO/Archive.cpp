@@ -1009,24 +1009,30 @@ bool ArchiveWriter::Write(const std::string& outPath) const {
 void ArchiveStreamWriter::AddFile(std::string logicalPath,
                                   std::filesystem::path source,
                                   const std::uint64_t expectedSize,
-                                  std::string expectedSha256) {
+                                  std::string expectedSha256,
+                                  const bool compress) {
+    const bool useCompression =
+        compress && expectedSize != 0 && !IsStreamingMediaPath(logicalPath);
     m_pending.push_back({std::move(logicalPath), std::move(source), {}, {},
                          expectedSize, std::move(expectedSha256),
-                         SourceKind::File});
+                         SourceKind::File, useCompression});
 }
 
 void ArchiveStreamWriter::AddStream(std::string logicalPath,
                                     StreamFactory source,
                                     const std::uint64_t expectedSize,
-                                    std::string expectedSha256) {
+                                    std::string expectedSha256,
+                                    const bool compress) {
+    const bool useCompression =
+        compress && expectedSize != 0 && !IsStreamingMediaPath(logicalPath);
     m_pending.push_back({std::move(logicalPath), {}, {}, std::move(source),
                          expectedSize, std::move(expectedSha256),
-                         SourceKind::Stream});
+                         SourceKind::Stream, useCompression});
 }
 
 void ArchiveStreamWriter::AddData(std::string logicalPath, Bytes data) {
     m_pending.push_back({std::move(logicalPath), {}, std::move(data), {}, 0,
-                         {}, SourceKind::Data});
+                         {}, SourceKind::Data, false});
 }
 
 bool ArchiveStreamWriter::Write(const std::string& outPath,
@@ -1081,6 +1087,7 @@ bool ArchiveStreamWriter::Write(const std::string& outPath,
     Bytes index;
     PutU32(index, static_cast<std::uint32_t>(m_pending.size()));
     std::array<std::uint8_t, 64 * 1024> buffer{};
+    std::array<std::uint8_t, 64 * 1024> compressed{};
     std::uint64_t writtenBytes = 0;
     std::uint64_t lastReportedBytes = 0;
     if (onProgress) onProgress(0, totalBytes);
@@ -1096,6 +1103,18 @@ bool ArchiveStreamWriter::Write(const std::string& outPath,
         if (pending.kind != SourceKind::Data) {
             std::ifstream input;
             std::unique_ptr<SeekableReadStream> stream;
+            std::unique_ptr<ZSTD_CCtx, decltype(&ZSTD_freeCCtx)> compressor(
+                nullptr, &ZSTD_freeCCtx);
+            if (pending.compress) {
+                compressor.reset(ZSTD_createCCtx());
+                if (!compressor ||
+                    ZSTD_isError(ZSTD_CCtx_setParameter(
+                        compressor.get(), ZSTD_c_compressionLevel, 3)) ||
+                    ZSTD_isError(ZSTD_CCtx_setParameter(
+                        compressor.get(), ZSTD_c_windowLog, 23)))
+                    return fail("cannot initialize bounded compression",
+                                pending.name);
+            }
             if (pending.kind == SourceKind::File)
                 input.open(pending.source, std::ios::binary);
             else stream = pending.stream();
@@ -1122,11 +1141,36 @@ bool ArchiveStreamWriter::Write(const std::string& outPath,
                     psa_hash_abort(&digest);
                     return fail("source read or hash failed", pending.name);
                 }
-                output.write(reinterpret_cast<const char*>(buffer.data()),
-                             static_cast<std::streamsize>(count));
-                if (!output) {
-                    psa_hash_abort(&digest);
-                    return fail("entry write failed", pending.name);
+                if (compressor) {
+                    ZSTD_inBuffer source{buffer.data(), count, 0};
+                    while (source.pos < source.size) {
+                        ZSTD_outBuffer encoded{compressed.data(),
+                                               compressed.size(), 0};
+                        const auto before = source.pos;
+                        const auto state = ZSTD_compressStream2(
+                            compressor.get(), &encoded, &source,
+                            ZSTD_e_continue);
+                        if (ZSTD_isError(state) ||
+                            (source.pos == before && encoded.pos == 0)) {
+                            psa_hash_abort(&digest);
+                            return fail("entry compression failed",
+                                        pending.name);
+                        }
+                        output.write(
+                            reinterpret_cast<const char*>(compressed.data()),
+                            static_cast<std::streamsize>(encoded.pos));
+                        if (!output) {
+                            psa_hash_abort(&digest);
+                            return fail("entry write failed", pending.name);
+                        }
+                    }
+                } else {
+                    output.write(reinterpret_cast<const char*>(buffer.data()),
+                                 static_cast<std::streamsize>(count));
+                    if (!output) {
+                        psa_hash_abort(&digest);
+                        return fail("entry write failed", pending.name);
+                    }
                 }
                 writtenBytes += count;
                 if (onProgress &&
@@ -1162,6 +1206,24 @@ bool ArchiveStreamWriter::Write(const std::string& outPath,
             }
             if (fingerprint != pending.expectedSha256)
                 return fail("source fingerprint changed", pending.name);
+            if (compressor) {
+                std::size_t pendingOutput = 0;
+                do {
+                    ZSTD_inBuffer source{nullptr, 0, 0};
+                    ZSTD_outBuffer encoded{compressed.data(),
+                                           compressed.size(), 0};
+                    pendingOutput = ZSTD_compressStream2(
+                        compressor.get(), &encoded, &source, ZSTD_e_end);
+                    if (ZSTD_isError(pendingOutput) ||
+                        (pendingOutput != 0 && encoded.pos == 0))
+                        return fail("entry compression finish failed",
+                                    pending.name);
+                    output.write(
+                        reinterpret_cast<const char*>(compressed.data()),
+                        static_cast<std::streamsize>(encoded.pos));
+                    if (!output) return fail("entry write failed", pending.name);
+                } while (pendingOutput != 0);
+            }
         } else {
             if (!pending.data.empty())
                 output.write(reinterpret_cast<const char*>(pending.data.data()),
@@ -1177,14 +1239,21 @@ bool ArchiveStreamWriter::Write(const std::string& outPath,
             }
             crc = ~crypto::Crc32(pending.data.data(), pending.data.size());
         }
+        const std::streampos endPosition = output.tellp();
+        if (endPosition < position ||
+            static_cast<std::uint64_t>(endPosition - position) >
+                kMaxStoredEntrySize)
+            return fail("entry stored size exceeds its limit", pending.name);
+        const auto storedSize =
+            static_cast<std::uint64_t>(endPosition - position);
         PutU64(index, pathHash);
         PutU16(index, static_cast<std::uint16_t>(pending.name.size()));
         index.insert(index.end(), pending.name.begin(), pending.name.end());
         PutU64(index, offset);
         PutU64(index, size);
-        PutU64(index, size);
+        PutU64(index, storedSize);
         PutU32(index, ~crc);
-        index.push_back(0);
+        index.push_back(pending.compress ? kEntryCompressed : 0);
         if (index.size() > kMaxIndexSize)
             return fail("archive index exceeds its size limit", outPath);
     }

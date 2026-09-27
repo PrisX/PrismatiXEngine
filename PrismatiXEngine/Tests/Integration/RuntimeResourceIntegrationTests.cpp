@@ -216,6 +216,22 @@ void TestStreamingArchiveWriter() {
               stream->Seek(-1, px::io::SeekOrigin::End) &&
               stream->Read(&byte, 1) == 1 && byte == 'x',
           "Large file-backed entry must remain seekable without a full memory copy");
+    px::io::ArchiveStreamWriter compressedWriter;
+    compressedWriter.AddFile("large-compressed.bin", source, size,
+                             fingerprint, true);
+    const auto compressedPath = fixture.path / "streaming-compressed.pdx";
+    Check(compressedWriter.Write(compressedPath.string()) &&
+              std::filesystem::file_size(compressedPath) < size / 10,
+          "Streaming compression must shrink a compressible file entry");
+    px::io::Archive compressedArchive;
+    Check(compressedArchive.Open(compressedPath.string()),
+          "Streaming-compressed PDX5 must be readable");
+    auto compressedStream = compressedArchive.OpenStream("large-compressed.bin");
+    Check(compressedStream && compressedStream->Size() == size &&
+              compressedStream->BufferedBytes() < 32 * 1024 * 1024 &&
+              compressedStream->Seek(-1, px::io::SeekOrigin::End) &&
+              compressedStream->Read(&byte, 1) == 1 && byte == 'x',
+          "Compressed entry must remain bounded and seekable");
     {
         std::fstream changed(source, std::ios::binary | std::ios::in |
                                        std::ios::out);
@@ -235,6 +251,20 @@ void TestStreamingArchiveWriter() {
     Check(copied.Open(copiedPath.string()) &&
               copied.Read("copied.bin") == archive.Read("large.bin"),
           "Directly streamed archive entry preserves verified bytes");
+    px::io::ArchiveStreamWriter compressedFromArchive;
+    compressedFromArchive.AddStream(
+        "copied-compressed.bin",
+        [&archive] { return archive.OpenStream("large.bin"); },
+        size, fingerprint, true);
+    const auto compressedCopyPath = fixture.path / "copied-compressed.pdx";
+    Check(compressedFromArchive.Write(compressedCopyPath.string()) &&
+              std::filesystem::file_size(compressedCopyPath) < size / 10,
+          "Streaming compression must accept archive-backed resources");
+    px::io::Archive compressedCopy;
+    Check(compressedCopy.Open(compressedCopyPath.string()) &&
+              compressedCopy.Read("copied-compressed.bin") ==
+                  archive.Read("large.bin"),
+          "Compressed archive-backed entry must preserve exact source bytes");
     px::io::ArchiveStreamWriter wrongHash;
     wrongHash.AddStream("copied.bin",
                         [&archive] { return archive.OpenStream("large.bin"); },

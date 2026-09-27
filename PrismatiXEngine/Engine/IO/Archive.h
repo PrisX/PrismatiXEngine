@@ -73,10 +73,9 @@ private:
     crypto::Key m_key{};
 };
 
-// Writes unencrypted, uncompressed PDX5 entries without buffering file-backed
-// resources in memory. Intended for large patch overlays and tools that have
-// already planned their resource inventory. File and stream sources require
-// the expected size and SHA-256 so a changing input fails during the write.
+// Writes unencrypted PDX5 entries without buffering file-backed resources in
+// memory. File and stream sources may use bounded streaming zstd compression.
+// Their expected size and SHA-256 make a changing input fail during the write.
 class ArchiveStreamWriter {
 public:
     using Progress = std::function<void(std::uint64_t current,
@@ -84,9 +83,11 @@ public:
     using StreamFactory =
         std::function<std::unique_ptr<SeekableReadStream>()>;
     void AddFile(std::string logicalPath, std::filesystem::path source,
-                 std::uint64_t expectedSize, std::string expectedSha256);
+                 std::uint64_t expectedSize, std::string expectedSha256,
+                 bool compress = false);
     void AddStream(std::string logicalPath, StreamFactory source,
-                   std::uint64_t expectedSize, std::string expectedSha256);
+                   std::uint64_t expectedSize, std::string expectedSha256,
+                   bool compress = false);
     void AddData(std::string logicalPath, Bytes data);
     [[nodiscard]] bool Write(const std::string& outPath,
                              const Progress& onProgress = {}) const;
@@ -101,6 +102,7 @@ private:
         std::uint64_t expectedSize = 0;
         std::string expectedSha256;
         SourceKind kind = SourceKind::Data;
+        bool compress = false;
     };
     std::vector<Pending> m_pending;
 };

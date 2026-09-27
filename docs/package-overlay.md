@@ -48,6 +48,16 @@ target documents. The artifact must be a CLI-published directory with intact
 ownership metadata. Build it with `prismatix build --artifact-only`, or
 publish changes with `prismatix augment`.
 
+The overlay writer streams changed file and PDX-stream resources without
+buffering an entire entry. Resources of at least 64 KiB use bounded zstd
+compression, except streaming video formats. It still checks the planned
+source size and SHA-256 while writing, then independently verifies the
+published PDX. The compression choice can affect the final patch size, so
+`--check` reports raw changed bytes rather than a promised download size.
+The 2026-09-27 [large-media acceptance](SDK_LARGE_MEDIA_OVERLAY_ACCEPTANCE.md)
+records an 8 GB corpus run, process memory, sampled disk use, signature
+verification, and Player loading.
+
 To publish `patch2.pdx` without a complete v2, put the signed `patch.pdx`
 in a directory of prior updates and use its verified target as the next
 base. The new output must be outside the installed base and artifact:
