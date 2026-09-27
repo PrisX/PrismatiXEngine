@@ -324,6 +324,8 @@ PlayerApp::Boot PlayerApp::LoadBootConfig(const bool allowOverlay,
                 if (target.Valid()) {
                     effectivePackage = target.manifest;
                     savePackageFingerprint = chain.mainPackageFingerprint;
+                    boot.compatibleSaveFingerprints =
+                        chain.compatibleSaveFingerprints;
                     for (const auto& mount : chain.mounts)
                         boot.config.overlays.push_back(
                             {PathToUtf8(mount.path), mount.tombstones});
@@ -737,6 +739,12 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                 .details = "The device must support D3D12, Metal, or Vulkan and a packaged shader format"});
         PX_LOG_CRITICAL("Failed to initialize runtime.");
         return false;
+    }
+    if (SDL_getenv("PRISMATIX_E2E_EXPECT_REMOVED_RESOURCE")) {
+        const bool hidden = !m_runtime.VFS().Exists(
+            "Content/Overlay/player-second.txt");
+        PX_LOG_INFO("Player E2E removed update resource hidden={}", hidden);
+        if (!hidden) return false;
     }
 
     // Current packages use stable game-data identity. Manifests produced before
@@ -2097,7 +2105,10 @@ bool PlayerApp::LoadSlot(int slot) {
     const bool sameContent = snap->contentVersion == m_boot.contentVersion &&
                              snap->saveVersion == m_boot.saveVersion;
     if (sameContent &&
-        snap->packageFingerprint != m_boot.packageFingerprint) {
+        snap->packageFingerprint != m_boot.packageFingerprint &&
+        std::ranges::find(m_boot.compatibleSaveFingerprints,
+                          snap->packageFingerprint) ==
+            m_boot.compatibleSaveFingerprints.end()) {
         diag::Emit(diag::Diagnostic{
             .severity = diag::Severity::Error,
             .code = "PXSAVE6111",
@@ -3447,6 +3458,16 @@ void PlayerApp::DriveE2EJourney() {
             if(m_e2eCustomMenuRouteSeen&&m_scriptHost&&
                !m_scriptHost->HasPendingAction()&&
                m_session->Routes().CurrentModalRoute().empty()){
+                if (SDL_getenv("PRISMATIX_E2E_LOAD_PREVIOUS_SAVE")) {
+                    if (!LoadSlot(2)) {
+                        PX_LOG_ERROR("Player E2E previous-version save could not load");
+                        m_e2eFailed = true;
+                        m_e2eStage = E2EStage::Complete;
+                        m_quitRequested = true;
+                        break;
+                    }
+                    PX_LOG_INFO("Player E2E previous-version save loaded");
+                }
                 bool consistent =
                     m_session->Routes().ShowModal("replay").IsOk()&&
                     SaveSlot(1,{})&&

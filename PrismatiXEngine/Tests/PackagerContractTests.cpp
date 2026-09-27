@@ -1046,6 +1046,10 @@ int main() {
             signedBase, updates);
         const auto finalManifest = px::sdk::detail::ParsePackageManifest(
             Read(secondTarget / "Package/manifest.json"));
+        const auto baseManifest = px::sdk::detail::ParsePackageManifest(
+            Read(signedBase / "Package/manifest.json"));
+        const auto firstManifest = px::sdk::detail::ParsePackageManifest(
+            Read(signedTarget / "Package/manifest.json"));
         suite.Expect(chain.valid && chain.mounts.size() == 2 &&
                          chain.mounts[0].path.filename() == "z-patch.pdx" &&
                          chain.mounts[1].path.filename() == "a-patch2.pdx" &&
@@ -1055,6 +1059,12 @@ int main() {
                                  .manifest.packageFingerprint ==
                              finalManifest.manifest.packageFingerprint,
                      "update chain follows signed exact-base dependencies, not filenames");
+        suite.Expect(baseManifest.Valid() && firstManifest.Valid() &&
+                         chain.compatibleSaveFingerprints ==
+                             std::vector<std::string>{
+                                 baseManifest.manifest.packageFingerprint,
+                                 firstManifest.manifest.packageFingerprint},
+                     "signed same-version ancestors remain eligible for save loading");
         std::filesystem::copy_file(unsignedPatch, updates / "unsigned.pdx");
         const auto withUnsigned = px::io::ResolveSignedPackageOverlayChain(
             signedBase, updates);

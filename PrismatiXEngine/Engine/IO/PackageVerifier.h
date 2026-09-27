@@ -90,6 +90,7 @@ struct PackageOverlayChain {
     std::vector<PackageOverlayChainMount> mounts;
     std::string optionalPackId;
     std::string mainPackageFingerprint;
+    std::vector<std::string> compatibleSaveFingerprints;
     std::vector<std::string> ignoredFiles;
 };
 

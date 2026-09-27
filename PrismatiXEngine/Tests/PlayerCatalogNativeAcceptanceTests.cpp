@@ -262,17 +262,29 @@ public:
     bool Start(const std::filesystem::path& executable,
                const std::filesystem::path& workingDirectory,
                const std::filesystem::path& userDataRoot,
-               const std::string_view arguments = {}) {
+               const std::string_view arguments = {},
+               const bool loadPreviousSave = false,
+               const bool expectRemovedResource = false) {
         if(m_result.valid())return false;
 #if defined(_WIN32)
         const std::string command="cd /d "+ShellQuote(workingDirectory)+
             " && set \"PRISMATIX_PLAYER_DATA_ROOT="+userDataRoot.string()+
-            "\"&& set PRISMATIX_E2E_JOURNEY=catalog&& "+ShellQuote(executable)+
+            "\"&& set PRISMATIX_E2E_JOURNEY=catalog"+
+            (loadPreviousSave ?
+                "&& set PRISMATIX_E2E_LOAD_PREVIOUS_SAVE=1" : "")+
+            (expectRemovedResource ?
+                "&& set PRISMATIX_E2E_EXPECT_REMOVED_RESOURCE=1" : "")+
+            "&& "+ShellQuote(executable)+
             (arguments.empty() ? "" : " " + std::string(arguments));
 #else
         const std::string command="cd "+ShellQuote(workingDirectory)+
             " && PRISMATIX_PLAYER_DATA_ROOT="+ShellQuote(userDataRoot)+
-            " PRISMATIX_E2E_JOURNEY=catalog "+ShellQuote(executable)+
+            " PRISMATIX_E2E_JOURNEY=catalog "+
+            (loadPreviousSave ?
+                "PRISMATIX_E2E_LOAD_PREVIOUS_SAVE=1 " : "")+
+            (expectRemovedResource ?
+                "PRISMATIX_E2E_EXPECT_REMOVED_RESOURCE=1 " : "")+
+            ShellQuote(executable)+
             (arguments.empty() ? "" : " " + std::string(arguments));
 #endif
         m_result=std::async(std::launch::async,[command]{
@@ -738,6 +750,50 @@ int main(int argc, char* argv[]) {
                           secondTargetOutput, adultTargetOutput, adultPatch,
                           {}, privateKey, "adult").created,
                       "optional Player pack is signed against the latest update");
+        const std::string migrationAsset =
+            "Content/Migrations/catalog-v1-to-v2.pxsave-migration";
+        Write(root / migrationAsset,
+              R"({"format":"PrismatiXSaveMigration","schemaRevision":2,
+              "id":"catalog-v1-to-v2",
+              "from":{"contentVersion":"player-catalog-native-acceptance-v1","saveVersion":1},
+              "to":{"contentVersion":"player-catalog-native-acceptance-v2","saveVersion":1},
+              "anchor":{"policy":"preserve"},"operations":[]})");
+        auto migrationProject = nlohmann::json::parse(
+            Read(root / "project.pxproject"));
+        migrationProject["contentVersion"] =
+            "player-catalog-native-acceptance-v2";
+        migrationProject["saveMigrations"] = nlohmann::json::array({{
+            {"id", "catalog-v1-to-v2"},
+            {"from", {{"contentVersion", "player-catalog-native-acceptance-v1"},
+                      {"saveVersion", 1}}},
+            {"to", {{"contentVersion", "player-catalog-native-acceptance-v2"},
+                    {"saveVersion", 1}}},
+            {"asset", migrationAsset}}});
+        Write(root / "project.pxproject", migrationProject.dump());
+        const auto migrationTargetOutput = fixture.path / "Build/MigrationTarget";
+        auto migrationTargetRequest = secondTargetRequest;
+        migrationTargetRequest.outputDir = migrationTargetOutput;
+        migrationTargetRequest.contentVersion =
+            "player-catalog-native-acceptance-v2";
+        migrationTargetRequest.saveMigrations.push_back({
+            "catalog-v1-to-v2", "player-catalog-native-acceptance-v1", 1,
+            "player-catalog-native-acceptance-v2", 1, migrationAsset});
+        std::erase_if(migrationTargetRequest.inputs,
+                      [](const px::sdk::PackageInput& input) {
+                          return input.uri ==
+                              "Content/Overlay/player-second.txt";
+                      });
+        migrationTargetRequest.inputs.push_back(Input(root, migrationAsset));
+        for (auto& input : migrationTargetRequest.inputs)
+            if (input.uri == "project.pxproject")
+                input = Input(root, "project.pxproject");
+        suite.Require(px::sdk::RunPackager(migrationTargetRequest).Completed(),
+                      "save migration target distribution is packaged");
+        const auto migrationPatch = fixture.path / "migration-player-update.pdx";
+        suite.Require(px::io::CreatePackageOverlay(
+                          secondTargetOutput, migrationTargetOutput,
+                          migrationPatch, {}, privateKey).created,
+                      "signed update carries a declared save migration");
         const auto unsignedPatch = fixture.path / "unsigned-player-update.pdx";
         suite.Require(px::io::CreatePackageOverlay(
                           output, targetOutput, unsignedPatch).created,
@@ -915,25 +971,31 @@ int main(int argc, char* argv[]) {
         std::filesystem::copy_file(adultPatch,
                                    output / "Package/updates/adult.pdx");
         const auto signedDataRoot = fixture.path / "SignedOverlayUserData";
-        const auto signedLog = signedDataRoot /
-            ("Game " + px::crypto::Sha256Hex(startupManifest.manifest.gameId)) /
-            "logs/PrismatiXPlayer.log";
+        const auto signedUserData = signedDataRoot /
+            ("Game " + px::crypto::Sha256Hex(startupManifest.manifest.gameId));
+        const auto signedLog = signedUserData / "logs/PrismatiXPlayer.log";
+        const auto oldSave = userData / "Save/save_2.pxsav";
+        suite.Require(std::filesystem::is_regular_file(oldSave),
+                      "base Player leaves a real encrypted slot for update testing");
+        std::filesystem::create_directories(signedUserData / "Save");
+        std::filesystem::copy_file(
+            oldSave, signedUserData / "Save/save_2.pxsav");
         AutomatedChildProcess signedProcess;
         suite.Require(signedProcess.Start(packagedPlayer, launchDirectory,
-                                          signedDataRoot),
+                                          signedDataRoot, {}, true),
                       "Player launches with a signed active overlay");
         suite.Require(WaitForLog(signedLog, "signed overlay=true count=2") &&
                           WaitForLog(signedLog,
+                                     "Player E2E previous-version save loaded") &&
+                          WaitForLog(signedLog,
                                      "Player presentation ready route=title"),
-                      "Player mounts the signed overlay and reaches title");
+                      "Player mounts signed updates and loads the base-version save");
         suite.Require(WaitUntil(35s, [&] {
                           return signedProcess.CompletedExitCode().has_value();
                       }), "signed-overlay Player completes its native journey");
         suite.Expect(signedProcess.CompletedExitCode() == 0,
                      "signed-overlay Player exits cleanly");
 
-        const auto signedUserData = signedDataRoot /
-            ("Game " + px::crypto::Sha256Hex(startupManifest.manifest.gameId));
         AutomatedChildProcess enableAdult;
         suite.Require(enableAdult.Start(packagedPlayer, launchDirectory,
                                         signedDataRoot,
@@ -946,7 +1008,7 @@ int main(int argc, char* argv[]) {
                       "Player command enables adult pack in per-user preferences");
         AutomatedChildProcess adultProcess;
         suite.Require(adultProcess.Start(packagedPlayer, launchDirectory,
-                                         signedDataRoot),
+                                         signedDataRoot, {}, true),
                       "Player restarts with the optional pack enabled");
         suite.Require(WaitForLog(signedLog, "signed overlay=true count=3") &&
                           WaitForLog(signedLog,
@@ -957,6 +1019,15 @@ int main(int argc, char* argv[]) {
                       }), "optional-pack Player completes its native journey");
         suite.Expect(adultProcess.CompletedExitCode() == 0,
                      "optional-pack Player exits cleanly");
+        const auto adultLog = Read(signedLog);
+        const std::string previousSaveMarker =
+            "Player E2E previous-version save loaded";
+        const auto firstSaveLoad = adultLog.find(previousSaveMarker);
+        suite.Expect(firstSaveLoad != std::string::npos &&
+                         adultLog.find(previousSaveMarker,
+                                       firstSaveLoad + previousSaveMarker.size()) !=
+                             std::string::npos,
+                     "optional pack also loads the main-update save after restart");
         AutomatedChildProcess disableAdult;
         suite.Require(disableAdult.Start(packagedPlayer, launchDirectory,
                                          signedDataRoot,
@@ -968,6 +1039,32 @@ int main(int argc, char* argv[]) {
                               signedUserData).Value().empty(),
                       "Player command disables adult pack without changing installed PDX files");
 
+        const auto thirdPatch = output / "Package/updates/patch3.pdx";
+        std::filesystem::copy_file(migrationPatch, thirdPatch);
+        const auto migratedDataRoot = fixture.path / "MigratedOverlayUserData";
+        const auto migratedUserData = migratedDataRoot /
+            ("Game " + px::crypto::Sha256Hex(startupManifest.manifest.gameId));
+        std::filesystem::create_directories(migratedUserData / "Save");
+        std::filesystem::copy_file(
+            oldSave, migratedUserData / "Save/save_2.pxsav");
+        const auto migratedLog = migratedUserData / "logs/PrismatiXPlayer.log";
+        AutomatedChildProcess migratedProcess;
+        suite.Require(migratedProcess.Start(packagedPlayer, launchDirectory,
+                                            migratedDataRoot, {}, true, true),
+                      "Player launches with a signed content-version update");
+        suite.Require(WaitForLog(migratedLog, "signed overlay=true count=3") &&
+                          WaitForLog(migratedLog,
+                                     "Player E2E removed update resource hidden=true") &&
+                          WaitForLog(migratedLog,
+                                     "Player E2E previous-version save loaded"),
+                      "Player migrates and restores a real save from the base release");
+        suite.Require(WaitUntil(35s, [&] {
+                          return migratedProcess.CompletedExitCode().has_value();
+                      }), "migrated-save Player completes its native journey");
+        suite.Expect(migratedProcess.CompletedExitCode() == 0,
+                     "migrated-save Player exits cleanly");
+
+        std::filesystem::remove(thirdPatch);
         std::filesystem::remove(chainedPatch);
         std::filesystem::copy_file(
             unsignedPatch, activePatch,

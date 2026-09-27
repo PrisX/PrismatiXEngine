@@ -707,6 +707,14 @@ PackageOverlayChain ResolveSignedPackageOverlayChain(
     const auto base = sdk::detail::ParsePackageManifest(*currentManifest);
     if (!base.Valid()) return fail("Base package manifest is invalid");
     std::set<std::string> visited{base.manifest.packageFingerprint};
+    struct SaveIdentity {
+        std::string fingerprint;
+        std::string contentVersion;
+        std::uint32_t saveVersion = 0;
+    };
+    std::vector<SaveIdentity> ancestors{{base.manifest.packageFingerprint,
+                                         base.manifest.contentVersion,
+                                         base.manifest.saveVersion}};
     std::vector<bool> consumed(candidates.size());
     PackageOverlayChain result;
     for (std::size_t depth = 0; depth < candidates.size(); ++depth) {
@@ -727,6 +735,9 @@ PackageOverlayChain ResolveSignedPackageOverlayChain(
         if (!target.Valid() ||
             !visited.insert(target.manifest.packageFingerprint).second)
             return fail("Signed update chain repeats a package version");
+        ancestors.push_back({target.manifest.packageFingerprint,
+                             target.manifest.contentVersion,
+                             target.manifest.saveVersion});
         consumed[next->first] = true;
         result.mounts.push_back({candidates[next->first],
                                  std::move(next->second.tombstones)});
@@ -738,6 +749,12 @@ PackageOverlayChain ResolveSignedPackageOverlayChain(
     const auto main = sdk::detail::ParsePackageManifest(*currentManifest);
     if (!main.Valid()) return fail("Signed update chain target is invalid");
     result.mainPackageFingerprint = main.manifest.packageFingerprint;
+    for (const auto& ancestor : ancestors) {
+        if (ancestor.fingerprint != result.mainPackageFingerprint &&
+            ancestor.contentVersion == main.manifest.contentVersion &&
+            ancestor.saveVersion == main.manifest.saveVersion)
+            result.compatibleSaveFingerprints.push_back(ancestor.fingerprint);
+    }
     if (!enabledOptionalPackId.empty()) {
         std::optional<std::pair<std::size_t, PackageOverlayVerification>> selected;
         for (std::size_t index = 0; index < candidates.size(); ++index) {

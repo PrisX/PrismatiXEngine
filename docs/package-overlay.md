@@ -32,6 +32,12 @@ before mounting it. It uses the base PDX archives and their original
 decryption key, then mounts the overlay at higher VFS priority and applies
 tombstones for removed resources. Route, Runtime IR, source map, content
 version, and save migration settings come from the signed target manifest.
+When content and save versions stay the same, Player also accepts a save from
+an earlier fingerprint in the verified update chain, then checks its Runtime
+document and exact execution anchor before restoring it. An unrelated
+same-version fingerprint is still rejected. If an update changes save or
+Story state incompatibly, advance the content/save version and ship an
+explicit save migration in the signed target.
 Invalid or stale candidates are ignored. If two valid updates target the same
 version, Player rejects the ambiguous chain and starts the base package.
 It also retries the base package if Runtime initialization of an accepted
@@ -117,4 +123,4 @@ validate the target's entire authored dependency graph. A local process that
 can concurrently rewrite distribution files can still race verification and
 mounting; the base distribution and its Player must be protected by the
 normal installation boundary. Large two-version overlay benchmarks and
-existing-save update acceptance remain outstanding.
+production-game existing-save acceptance remain outstanding.

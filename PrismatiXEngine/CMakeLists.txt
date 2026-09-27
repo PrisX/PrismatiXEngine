@@ -774,7 +774,7 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
         PROPERTIES
             LABELS "native;e2e;player;characters"
             RUN_SERIAL TRUE
-            TIMEOUT 60)
+            TIMEOUT 120)
 
     add_test(NAME PrismatiX.SDK.PackagerCliContract
         COMMAND ${CMAKE_COMMAND}
@@ -1078,6 +1078,8 @@ if(BUILD_TESTING AND NOT EMSCRIPTEN)
     # has an explicit upper bound; long stress coverage gets its own budget.
     get_property(PRISMATIX_REGISTERED_TESTS DIRECTORY PROPERTY TESTS)
     set_tests_properties(${PRISMATIX_REGISTERED_TESTS} PROPERTIES TIMEOUT 60)
+    set_tests_properties(PrismatiX.Player.CatalogNativeAcceptance
+                         PROPERTIES TIMEOUT 120)
     # The weekly RSS gate streams a real multi-GiB media entry. Regular runs
     # use 32 MiB through the identical path; only input size changes.
     set_tests_properties(PrismatiX.SDK.PackagerContract PROPERTIES TIMEOUT 600)

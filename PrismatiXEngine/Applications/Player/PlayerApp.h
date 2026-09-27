@@ -60,6 +60,7 @@ private:
         std::vector<std::string> legacyPersistenceSecrets;
         std::string gameId;
         std::string packageFingerprint;
+        std::vector<std::string> compatibleSaveFingerprints;
         std::string contentVersion;
         std::uint32_t saveVersion = 1;
         std::vector<progress::SaveMigrationDescriptor> saveMigrations;
