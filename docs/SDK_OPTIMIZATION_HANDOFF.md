@@ -4,6 +4,8 @@
 
 ### 2026-09-27—28 後續進度
 
+- **Canonical JSON 的已排序鍵不再重複排序。** Authoring SDK 對 Runtime IR／source map 中已按字典序排列的物件直接遞迴，遇到作者物件鍵順序不同才排序；序列化格式及位元組不變。以 v29 真實 48,026,735-byte `main.pxir` 解析後做四輪含 pretty-print 的單程序微基準，原路徑約 156–173 ms，新路徑約 133–135 ms，兩者輸出逐 byte 相同。這只代表該序列化步驟；四語 368 scene／31,339 資源的完整 `validate --runtime` 單次約 10.85 秒，不能從不同快取條件推算整體加速。Authoring SDK 176/176、CLI 116/116（另 1 項 native E2E 依環境跳過）通過。
+
 - **作者來源位置的 offset 已統一為 UTF-8 byte。** JSON pointer 與 Story 指令／跨 scene 重複 ID 診斷過去在中文字或 emoji 後仍用 UTF-16 索引，與 CLI 來源定位不一致。現 `SourcePosition.offset` 明定為 UTF-8 byte，`column` 仍為 UTF-16 code units；Story 產生 operation ID 的既有 UTF-16 seed 保持不變。持久化 scene cache 的內部格式升至 revision 2，舊位置不會混用。多位元組字元、重複 JSON 鍵及舊 Story ID 回歸通過；Authoring SDK 176/176、CLI 116/116（另 1 項 native E2E 依環境跳過）全套通過；以新版 CLI 對 Senren 四語 368 scenes／31,339 resources 唯讀 `validate --runtime` 通過。
 
 - **直接 overlay 的 Player／runtime 靜態檔免做第二次完整雜湊。** 正式 artifact→overlay 路徑先在 Windows 對基底靜態檔與所選 Player／相鄰 runtime library 持有只允許其他讀者的 handle，再完整雜湊並比對；寫入後、發布前重新列出兩側檔名集合並核對基底 metadata，不重讀這些已鎖住的 bytes。新增原生契約驗證寫入期間基底 Player／DLL、來源 Player／DLL 都無法修改，簽章成品獨立驗證通過；Release Packager Contract／Runtime Resources 2/2 通過。非 Windows 維持發布前再次完整比對。尚未在大型真實發行版量測此單獨改動的延遲收益；artifact 與基底 PDX 仍各做一次全量讀驗，這不等於依賴級增量構建。

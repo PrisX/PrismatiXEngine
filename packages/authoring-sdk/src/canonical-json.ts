@@ -9,7 +9,17 @@ export function sortJson(value: unknown): JsonValue {
   if (value !== null && typeof value === "object") {
     const result: {[key: string]: JsonValue} = {};
     const source = value as Record<string, unknown>;
-    for (const key of Object.keys(source).sort(compareKeys)) result[key] = sortJson(source[key]);
+    const keys = Object.keys(source);
+    // Runtime IR and source maps contain many objects whose keys are already
+    // canonical. Avoid sorting those objects while preserving the exact output
+    // for authored objects with arbitrary key order.
+    for (let index = 1; index < keys.length; index += 1) {
+      if (compareKeys(keys[index - 1]!, keys[index]!) > 0) {
+        keys.sort(compareKeys);
+        break;
+      }
+    }
+    for (const key of keys) result[key] = sortJson(source[key]);
     return result;
   }
   if (typeof value === "number" && !Number.isFinite(value)) {

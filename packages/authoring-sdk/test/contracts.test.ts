@@ -21,7 +21,9 @@ test("contract schemas have deterministic SHA-256 identities", () => {
 
 test("canonical JSON sorts every object level deterministically", () => {
   const value = {z: 1, a: {z: false, a: [3, {b: 2, a: 1}]}} satisfies JsonValue;
+  const ordered = {a: {a: [3, {a: 1, b: 2}], z: false}, z: 1} satisfies JsonValue;
   assert.equal(canonicalJson(value), '{\n  "a": {\n    "a": [\n      3,\n      {\n        "a": 1,\n        "b": 2\n      }\n    ],\n    "z": false\n  },\n  "z": 1\n}\n');
+  assert.equal(canonicalJson(ordered), canonicalJson(value));
   assert.equal(canonicalJson(value), canonicalJson(value));
 });
 
