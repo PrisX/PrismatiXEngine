@@ -249,6 +249,8 @@ private:
     bool m_e2eLocaleSwitched = false;
     bool m_e2eCustomTitleRouteSeen = false;
     bool m_e2eCustomMenuRouteSeen = false;
+    bool m_saveLoadE2E = false;
+    std::uint64_t m_saveLoadE2EStartedAt = 0;
     bool m_presentationE2E = false;
     int m_presentationE2EStage = 0;
     std::uint64_t m_presentationE2EStartedAt = 0;

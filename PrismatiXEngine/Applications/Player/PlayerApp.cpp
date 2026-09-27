@@ -3092,6 +3092,12 @@ void PlayerApp::ScreensFrame(float dt) {
 void PlayerApp::ConfigureE2EJourney() {
     const char* journey=SDL_getenv("PRISMATIX_E2E_JOURNEY");
     if(!journey)return;
+    if(std::string_view(journey)=="save-load"){
+        m_saveLoadE2E=true;
+        m_saveLoadE2EStartedAt=SDL_GetTicks();
+        PX_LOG_INFO("Player save-load E2E armed slot=2");
+        return;
+    }
     if(std::string_view(journey)=="presentation"){
         m_presentationE2E=true;
         m_presentationE2EStage=1;
@@ -3149,6 +3155,25 @@ bool PlayerApp::CapturePresentationE2EFrame(const std::string_view name){
 }
 
 void PlayerApp::DriveE2EJourney() {
+    if(m_saveLoadE2E){
+        if(SDL_GetTicks()-m_saveLoadE2EStartedAt>120'000){
+            PX_LOG_ERROR("Player save-load E2E timed out before title");
+            m_e2eFailed=true;
+            m_saveLoadE2E=false;
+            m_quitRequested=true;
+            return;
+        }
+        if(m_appState!=AppState::Title)return;
+        const bool loaded=LoadSlot(2);
+        m_e2eFailed=!loaded||m_appState!=AppState::Game;
+        if(m_e2eFailed)
+            PX_LOG_ERROR("Player save-load E2E failed slot=2");
+        else
+            PX_LOG_INFO("Player save-load E2E passed slot=2");
+        m_saveLoadE2E=false;
+        m_quitRequested=true;
+        return;
+    }
     if(m_presentationE2E){
         if(SDL_GetTicks()-m_presentationE2EStartedAt>90'000){
             PX_LOG_ERROR("Player presentation E2E timed out stage={}",
