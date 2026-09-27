@@ -47,6 +47,12 @@ equivalent values with `GalgameUI::DefineUiData`.
 Each item needs a unique nonempty string or integer `key`
 and a `rect` object with finite numeric `x`, `y`, `width`, and `height`.
 Coordinates are local to `ItemsPlaced`; width and height must be positive.
+When the item's source path resolves to an initial array declared in
+`player.uiData`, the SDK checks every stable key and placement, and every `item.<field>`
+binding before packaging. With a selected native UI TypeRegistry it also
+checks binding output types, including the built-in `Not`, `Percent`, and
+`BoolToVisibility` formatters. Paths and custom formatters supplied only by a
+runtime host still require that host to validate its registrations.
 Resource paths supplied only through dynamic item bindings still need explicit
 asset inclusion (for example `resourceIncludes`) until the compiler can infer
 those runtime dependencies.

@@ -3,6 +3,7 @@ import {contractDocumentByteLimit, parseDocument, validateDocument} from "./cont
 import {normalizeProject} from "./project-normalization.js";
 import {validateInputKeyUsage, type InputKeyRegistryMetadata} from "./input-keys.js";
 import {validateUiActionUsage} from "./project-actions.js";
+import {validatePlayerUiBindings} from "./project-ui-bindings.js";
 import type {LayeredPortraitDocument} from "./portrait.js";
 import type {MotionDocument} from "./motion.js";
 import {validateProjectCharacterResources} from "./project-resources.js";
@@ -663,6 +664,8 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       diagnostics.push(...validateUiInputBindings(component, game, descriptor.source));
     uiComponentDocuments.set(descriptor.source, component);
   }
+  diagnostics.push(...validatePlayerUiBindings(project,
+    new Map([...uiDocuments, ...uiComponentDocuments]), input.uiTypeRegistry));
   if (storyIndex !== undefined && storyIndex.entryScene !== project.entry.story) {
     diagnostics.push(issue("PXBUILD1005", "Project entry.story must match storyIndex.entryScene", project.storyIndex, project.entry.story));
   }

@@ -86,6 +86,20 @@ test("project compilation checks authored input action routes", () => {
   assert.ok(missing.diagnostics.some((item) => item.code === "PXBUILD1061"));
 });
 
+test("project compilation checks declared Player UI data binding paths", () => {
+  const result = compileProject({project: {...project,
+    settings: {"player.uiData": {screen: {caption: "Ready"}}}},
+  documents: {"Story/story.pxindex": storyIndex, "Content/game.pxgame": game,
+    "Content/UI/Title.pxui": {...ui, nodes: [{...ui.nodes[0],
+      bindings: {text: {path: "screen.missing"}}}]}},
+  sourceFiles: {"Story/zh-TW/scene01.pxstory": "Opening.\n[end]\n"},
+  locales: {"zh-TW": {format: "PrismatiXLocale", schemaRevision: 2,
+    locale: "zh-TW", strings: {}}}});
+  assert.equal(result.valid, false);
+  assert.ok(result.diagnostics.some((item) => item.code === "PXBUILD1086" &&
+    item.path === "Content/UI/Title.pxui"));
+});
+
 test("project compilation reports unresolved key-binding buttons before Player starts", () => {
   const compile = (action: unknown, asComponent = false,
     extraProperties: Record<string, unknown> = {}) => {
