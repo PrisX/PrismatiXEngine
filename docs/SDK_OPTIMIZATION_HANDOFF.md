@@ -4,6 +4,7 @@
 
 ### 2026-09-27 後續進度
 
+- Windows `CreatePackageOverlay` 的最後發布改為同磁碟不可覆寫原子移動，讓不支援 hard link 的磁碟也能發布已驗證 PDX；驗證後才出現的同名輸出仍須保留。Native Packager contract 1/1 通過，含競爭輸出測試。其他平台仍使用 hard link；正式大型 overlay 尚未實測。
 - `dev` 的 Story 編譯快取現在可在單一 scene 修改後重用其他未變 scene 的編譯結果、source map 與資源依賴；cross-scene label、sidecar 或共用編譯輸入變更會使相關快取失效。Authoring SDK 154/154 與 CLI 104/104 通過，包含開發模式雙 scene 驗收；Senren 四語 368 scene／31,339 resources 的 `validate --runtime` 再次通過。此快取只在同一 CLI 行程內有效，仍會重新讀取／解析所有 scene，並非完整增量或串流 importer。
 - Wheel 使用者設定已補 `Input::CaptureWheelBindings`／`RestoreWheelBindings`、Runtime SDK `ctx.input.wheelBinding`／`setWheelBinding` 與 Player per-user `config.dat` 保存／還原；舊 revision-2 設定缺少欄位時沿用作者預設。Native 輸入／設定／JS Host targeted 測試及 Runtime SDK 測試通過；非 Player host 仍須自行觸發持久化，正式封裝實按未驗。
 - Story 現可用 `[motion asset=...pxmotion await=true speed=...]`／`[motion.stop]` 在 Stage 播放全畫面 `.pxmotion`；Stage 預檢 descriptor、圖片與音效資源，圖片預載完成後才推進時間，音效 marker 依 bus 發聲，等待非循環動畫結束後續行。進度、速度與等待狀態寫入存檔並於還原後接續；Authoring Story／Project、Runtime IR、原生動畫／存讀檔 targeted 測試通過。尚未在正式大型封裝實機驗證畫面。
@@ -67,7 +68,7 @@
 Engine `docs/package-overlay.md` 是格式規格和安全邊界。這一輪已新增：
 
 - `PrismatiXEngine/Engine/IO/Archive.h/.cpp`：`ArchiveStreamWriter`，檔案來源逐段寫入未加密、未壓縮 PDX5；核對來源預期大小、CRC／SHA-256，支援 metadata、進度。後續 `Archive::OpenStream` 對未加密 zstd entry 改為有界視窗串流解壓（128 MiB 視窗上限、讀到末尾驗大小／CRC）；舊式整筆加密且壓縮 entry 仍會整筆 buffer，encrypted chunked entry 可串流。
-- `PrismatiXEngine/Engine/IO/PackageVerifier.h/.cpp`：`CreatePackageOverlay(base,target,output,progress)`。先完整驗證兩份發行版、確認同遊戲／Engine、不同 package fingerprint、拒絕 Player／非內容 runtime 檔案變更；只抽新增／修改資源，寫入 PDX metadata／target manifest／target index，產後再獨立 `VerifyPackageOverlay`。不覆寫現有輸出。暫存磁碟需約額外變更資源量；輸出發布目前依賴 hard link（非支援檔案系統的 fallback 尚未做）。
+- `PrismatiXEngine/Engine/IO/PackageVerifier.h/.cpp`：`CreatePackageOverlay(base,target,output,progress)`。先完整驗證兩份發行版、確認同遊戲／Engine、不同 package fingerprint、拒絕 Player／非內容 runtime 檔案變更；只抽新增／修改資源，寫入 PDX metadata／target manifest／target index，產後再獨立 `VerifyPackageOverlay`。不覆寫現有輸出。暫存磁碟需約額外變更資源量；Windows 以不可覆寫的同磁碟原子移動發布，其他平台仍依賴 hard link。
 - `PrismatiXEngine/Applications/PackagerMain.cpp`：`--create-overlay`／`--verify-overlay`。
 - `packages/cli/src/cli.ts`：`prismatix create-overlay --base ... --target ... --output ...` 和 `verify-overlay --base ... --patch ...`；`packages/cli/test/overlay-command.test.ts` 測 CLI→native 參數與輸出。
 - Native contract 以兩個真正打包版本（含加密舊包）測新增、覆蓋、刪除-only、進度、既有輸出保護、runtime 變更拒絕；VFS contract 測 streaming writer。文件已更新 `docs/package-overlay.md`、`docs/getting-started.md`、移植案 `docs/SDK_FEEDBACK.md`。

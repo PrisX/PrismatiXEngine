@@ -883,6 +883,21 @@ int main() {
             output, targetOutput, existing);
         suite.Expect(!refused.created && Read(existing) == "keep",
                      "Overlay creation never replaces an existing output");
+        const auto lateOutput = fixture.path / "late-overlay.pdx";
+        bool createdDuringBuild = false;
+        const auto lateRefused = px::io::CreatePackageOverlay(
+            output, targetOutput, lateOutput,
+            [&](const std::string_view phase, const std::uint64_t current,
+                const std::uint64_t total, const std::uint64_t) {
+                if (!createdDuringBuild && phase == "write-overlay" &&
+                    total > 0 && current == total) {
+                    Write(lateOutput, "competing-output");
+                    createdDuringBuild = true;
+                }
+            });
+        suite.Expect(createdDuringBuild && !lateRefused.created &&
+                         Read(lateOutput) == "competing-output",
+                     "Overlay publication does not replace a late competing output");
         const auto targetPlayer =
             targetOutput / targetRequest.playerExecutable.filename();
         const std::string originalPlayer = Read(targetPlayer);

@@ -110,6 +110,10 @@ is needed for extracted changes. Unencrypted compressed PDX entries now decode
 with a capped zstd history window while streaming, and complete size/CRC
 verification at end of stream. Legacy whole-entry encrypted and compressed
 entries still buffer the decoded entry; encrypted chunked entries stream.
+On Windows, publication moves the verified PDX within the output volume without
+the replace-existing flag, so it also works on volumes without hard-link
+support. A competing output created during the build is preserved. Other
+platforms currently publish with a no-replace hard link.
 
 ## Current limits
 

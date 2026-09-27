@@ -23,6 +23,11 @@
 #include <utility>
 #include <vector>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+#endif
+
 namespace px::io {
 namespace {
 
@@ -1079,11 +1084,21 @@ PackageOverlayBuildResult CreatePackageOverlay(
         ReadBoundedRegularFile(target / "Package/content-index.json",
                                128ull * 1024ull * 1024ull) != targetIndexBefore)
         return fail("Distribution metadata changed during overlay creation");
+#ifdef _WIN32
+    // The stage and output share a parent, so this move is on one volume.
+    // Omitting MOVEFILE_REPLACE_EXISTING makes a late competing output fail
+    // atomically, including on volumes that do not support hard links.
+    if (!MoveFileExW(stagedPdx.c_str(), outputPath.c_str(),
+                     MOVEFILE_WRITE_THROUGH))
+        return fail("Overlay could not be published without replacing existing data: "
+                    "Win32 error " + std::to_string(GetLastError()));
+#else
     error.clear();
     std::filesystem::create_hard_link(stagedPdx, outputPath, error);
     if (error)
         return fail("Overlay could not be published without replacing existing data: " +
                     error.message());
+#endif
     return {.created = true,
             .changedResources = verified.changedResources,
             .removedResources = removed,
