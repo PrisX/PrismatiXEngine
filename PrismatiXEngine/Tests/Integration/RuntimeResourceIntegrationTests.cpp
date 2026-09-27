@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -230,6 +231,95 @@ void TestStreamingArchiveWriter() {
     Check(!unsafe.Write(unsafePath.string()) &&
               std::filesystem::file_size(unsafePath) == 4,
           "Invalid streaming input must fail before touching an existing output");
+}
+
+void TestCompressedArchiveStream() {
+    px::test::TempDirectory fixture("compressed-archive-stream");
+    const auto archivePath = fixture.path / "compressed.pdx";
+    px::io::Bytes expected(8 * 1024 * 1024 + 37);
+    std::array<std::uint8_t, 256 * 1024> pattern{};
+    std::uint32_t state = 0x6a09e667u;
+    for (auto& byte : pattern) {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        byte = static_cast<std::uint8_t>(state);
+    }
+    for (std::size_t index = 0; index < expected.size(); ++index)
+        expected[index] = pattern[index % pattern.size()];
+    px::io::ArchiveWriter writer;
+    writer.SetCompression(true);
+    writer.Add("Assets/large.bin", expected);
+    Check(writer.Write(archivePath.string()),
+          "large compressible resource must package successfully");
+    px::io::Archive archive;
+    Check(archive.Open(archivePath.string()),
+          "compressed resource must mount");
+    const auto& entries = archive.Entries();
+    if (entries.size() != 1 || (entries[0].flags & 0x02u) == 0 ||
+        entries[0].storedSize < 128 * 1024) {
+        Check(false, "test resource must span several zstd input buffers");
+        return;
+    }
+    auto stream = archive.OpenStream("Assets/large.bin");
+    if (!stream) {
+        Check(false, "compressed resource must expose a stream");
+        return;
+    }
+    Check(stream->BufferedBytes() < 2 * 1024 * 1024 &&
+              stream->BufferedBytes() * 4 < expected.size(),
+          "compressed stream must avoid eager whole-entry allocation");
+    std::array<std::uint8_t, 64 * 1024> buffer{};
+    std::size_t position = 0;
+    while (position < expected.size()) {
+        const auto count = stream->Read(buffer.data(), buffer.size());
+        if (count == 0) break;
+        Check(std::equal(buffer.begin(), buffer.begin() + count,
+                         expected.begin() + position),
+              "compressed stream must decode exact resource bytes");
+        position += count;
+    }
+    const auto complete = position == expected.size() && !stream->Failed();
+    Check(complete,
+          "full compressed read must verify size and CRC");
+    const auto memory = stream->PeakBufferedBytes();
+    const auto memoryMessage = "compressed decoder working set is " +
+        std::to_string(memory) + " bytes for " +
+        std::to_string(expected.size()) + " raw bytes";
+    Check(memory < 16 * 1024 * 1024, memoryMessage.c_str());
+    std::array<std::uint8_t, 37> tail{};
+    Check(stream->Seek(-37, px::io::SeekOrigin::End) &&
+              stream->Read(tail.data(), tail.size()) == tail.size() &&
+              std::equal(tail.begin(), tail.end(), expected.end() - 37) &&
+              stream->Seek(0, px::io::SeekOrigin::Begin) &&
+              stream->Read(buffer.data(), 64) == 64 &&
+              std::equal(buffer.begin(), buffer.begin() + 64,
+                         expected.begin()),
+          "compressed stream must support backward and end-relative seeks");
+
+    const auto damagedPath = fixture.path / "damaged.pdx";
+    std::filesystem::copy_file(archivePath, damagedPath);
+    {
+        std::fstream damaged(damagedPath,
+                             std::ios::binary | std::ios::in | std::ios::out);
+        damaged.seekg(static_cast<std::streamoff>(
+            entries[0].offset + entries[0].storedSize / 2));
+        const auto original = damaged.get();
+        damaged.seekp(static_cast<std::streamoff>(
+            entries[0].offset + entries[0].storedSize / 2));
+        damaged.put(static_cast<char>(original ^ 1));
+    }
+    px::io::Archive damaged;
+    Check(damaged.Open(damagedPath.string()),
+          "damaged compressed resource retains a readable index");
+    auto damagedStream = damaged.OpenStream("Assets/large.bin");
+    Check(static_cast<bool>(damagedStream),
+          "payload corruption must be detected during streaming");
+    if (damagedStream) {
+        while (damagedStream->Read(buffer.data(), buffer.size()) != 0) {}
+        Check(damagedStream->Failed(),
+              "corrupted zstd payload must fail the stream integrity check");
+    }
 }
 
 void TestVfsRejectsDirectoriesAndReadsRegularFiles() {
@@ -756,6 +846,7 @@ int main() {
     Run("VFS_UnicodePaths", TestVfsUnicodePaths);
     Run("VFS_ArchiveOverlayPrecedence", TestVfsArchiveOverlayPrecedence);
     Run("Archive_StreamingWriter", TestStreamingArchiveWriter);
+    Run("Archive_CompressedStreaming", TestCompressedArchiveStream);
     Run("VFS_DirectoryAndRegularFileReads", TestVfsRejectsDirectoriesAndReadsRegularFiles);
     Run("Typography_CjkRubyVerticalText", TestCjkRubyAndVerticalText);
     Run("Typography_ImmutableTextLayoutRanges", TestImmutableTextLayoutRanges);

@@ -63,7 +63,7 @@
 
 Engine `docs/package-overlay.md` 是格式規格和安全邊界。這一輪已新增：
 
-- `PrismatiXEngine/Engine/IO/Archive.h/.cpp`：`ArchiveStreamWriter`，檔案來源逐段寫入未加密、未壓縮 PDX5；核對來源預期大小、CRC／SHA-256，支援 metadata、進度。它不把整個新 PDX 放進記憶體，但來源壓縮 entry 的讀取仍可能 buffer 大筆資料。
+- `PrismatiXEngine/Engine/IO/Archive.h/.cpp`：`ArchiveStreamWriter`，檔案來源逐段寫入未加密、未壓縮 PDX5；核對來源預期大小、CRC／SHA-256，支援 metadata、進度。後續 `Archive::OpenStream` 對未加密 zstd entry 改為有界視窗串流解壓（128 MiB 視窗上限、讀到末尾驗大小／CRC）；舊式整筆加密且壓縮 entry 仍會整筆 buffer，encrypted chunked entry 可串流。
 - `PrismatiXEngine/Engine/IO/PackageVerifier.h/.cpp`：`CreatePackageOverlay(base,target,output,progress)`。先完整驗證兩份發行版、確認同遊戲／Engine、不同 package fingerprint、拒絕 Player／非內容 runtime 檔案變更；只抽新增／修改資源，寫入 PDX metadata／target manifest／target index，產後再獨立 `VerifyPackageOverlay`。不覆寫現有輸出。暫存磁碟需約額外變更資源量；輸出發布目前依賴 hard link（非支援檔案系統的 fallback 尚未做）。
 - `PrismatiXEngine/Applications/PackagerMain.cpp`：`--create-overlay`／`--verify-overlay`。
 - `packages/cli/src/cli.ts`：`prismatix create-overlay --base ... --target ... --output ...` 和 `verify-overlay --base ... --patch ...`；`packages/cli/test/overlay-command.test.ts` 測 CLI→native 參數與輸出。

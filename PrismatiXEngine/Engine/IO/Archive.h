@@ -36,6 +36,9 @@ public:
 
     [[nodiscard]] bool IsOpen() const { return m_open; }
     [[nodiscard]] bool Contains(std::string_view path) const;
+    // Unencrypted compressed entries decode with a bounded zstd window;
+    // size/CRC validation completes when the stream is read to the end.
+    // Legacy whole-entry encrypted+compressed entries still buffer fully.
     [[nodiscard]] std::unique_ptr<SeekableReadStream> OpenStream(
         std::string_view path) const;
     [[nodiscard]] std::optional<Bytes> Read(std::string_view path) const;

@@ -159,6 +159,197 @@ private:
     bool m_failed = false;
 };
 
+// Unencrypted zstd entries can be decoded in bounded memory. Backward seeks
+// restart the frame and decode forward, which preserves the seekable contract
+// without retaining the whole decompressed resource.
+class ZstdReadStream final : public SeekableReadStream {
+public:
+    ZstdReadStream(const std::string& path, const std::uint64_t offset,
+                   const std::uint64_t storedSize,
+                   const std::uint64_t rawSize, const std::uint32_t crc)
+        : m_input(px::PathFromUtf8(path), std::ios::binary),
+          m_offset(offset), m_storedSize(storedSize), m_rawSize(rawSize),
+          m_expectedCrc(crc), m_decoder(ZSTD_createDStream()) {
+        m_failed = !m_input || !m_decoder ||
+                   offset > static_cast<std::uint64_t>(
+                       (std::numeric_limits<std::streamoff>::max)());
+        if (!m_failed && !Reset()) m_failed = true;
+    }
+
+    ~ZstdReadStream() override {
+        if (m_decoder) ZSTD_freeDStream(m_decoder);
+    }
+
+    [[nodiscard]] std::size_t Read(std::uint8_t* destination,
+                                   const std::size_t bytes) override {
+        if (m_failed || !destination || bytes == 0) return 0;
+        std::size_t written = 0;
+        while (written < bytes && m_position < m_rawSize) {
+            if (m_used == m_ready && !Fill()) break;
+            const auto count = std::min(bytes - written, m_ready - m_used);
+            std::memcpy(destination + written, m_plain.data() + m_used, count);
+            m_used += count;
+            m_position += count;
+            written += count;
+        }
+        return written;
+    }
+
+    [[nodiscard]] bool Seek(const std::int64_t offset,
+                            const SeekOrigin origin) override {
+        if (m_failed) return false;
+        const std::uint64_t base = origin == SeekOrigin::Current
+            ? m_position : origin == SeekOrigin::End ? m_rawSize : 0;
+        if (base > static_cast<std::uint64_t>(
+                       (std::numeric_limits<std::int64_t>::max)()))
+            return false;
+        const auto signedBase = static_cast<std::int64_t>(base);
+        if ((offset > 0 && signedBase >
+             (std::numeric_limits<std::int64_t>::max)() - offset) ||
+            (offset < 0 && signedBase <
+             (std::numeric_limits<std::int64_t>::min)() - offset))
+            return false;
+        const auto requested = signedBase + offset;
+        if (requested < 0 ||
+            static_cast<std::uint64_t>(requested) > m_rawSize) return false;
+        const auto target = static_cast<std::uint64_t>(requested);
+        if (target < m_position && !Reset()) return false;
+        std::array<std::uint8_t, 64 * 1024> discard{};
+        while (m_position < target) {
+            const auto count = static_cast<std::size_t>(
+                std::min<std::uint64_t>(target - m_position, discard.size()));
+            if (Read(discard.data(), count) != count) return false;
+        }
+        return !m_failed;
+    }
+
+    [[nodiscard]] std::uint64_t Tell() const override { return m_position; }
+    [[nodiscard]] std::uint64_t Size() const override { return m_rawSize; }
+    [[nodiscard]] bool Failed() const override { return m_failed; }
+    [[nodiscard]] std::size_t BufferedBytes() const override {
+        return m_compressed.size() + m_plain.size() +
+               (m_decoder ? ZSTD_sizeof_DStream(m_decoder) : 0);
+    }
+    [[nodiscard]] std::size_t PeakBufferedBytes() const override {
+        return BufferedBytes();
+    }
+
+private:
+    [[nodiscard]] bool Reset() {
+        m_input.clear();
+        m_input.seekg(static_cast<std::streamoff>(m_offset), std::ios::beg);
+        // Level-19 PDX frames need at most a 128 MiB history window. Reject
+        // hostile larger windows before zstd can allocate entry-sized memory.
+        if (!m_input || ZSTD_isError(ZSTD_initDStream(m_decoder)) ||
+            ZSTD_isError(ZSTD_DCtx_setParameter(
+                m_decoder, ZSTD_d_windowLogMax, 27))) {
+            m_failed = true;
+            return false;
+        }
+        m_remainingStored = m_storedSize;
+        m_in = {m_compressed.data(), 0, 0};
+        m_position = m_generated = 0;
+        m_used = m_ready = 0;
+        m_crc = 0xffffffffu;
+        m_done = false;
+        return m_rawSize != 0 || VerifyTail();
+    }
+
+    [[nodiscard]] bool LoadInput() {
+        if (m_in.pos < m_in.size) return true;
+        if (m_remainingStored == 0) {
+            // zstd can finish a frame using bytes already held by its decoder.
+            m_in = {m_compressed.data(), 0, 0};
+            return true;
+        }
+        const auto count = static_cast<std::size_t>(
+            std::min<std::uint64_t>(m_remainingStored, m_compressed.size()));
+        m_input.read(reinterpret_cast<char*>(m_compressed.data()),
+                     static_cast<std::streamsize>(count));
+        if (m_input.gcount() != static_cast<std::streamsize>(count)) {
+            m_failed = true;
+            return false;
+        }
+        m_remainingStored -= count;
+        m_in = {m_compressed.data(), count, 0};
+        return true;
+    }
+
+    [[nodiscard]] bool Complete() {
+        m_done = m_generated == m_rawSize && m_remainingStored == 0 &&
+                 m_in.pos == m_in.size && ~m_crc == m_expectedCrc;
+        m_failed = !m_done;
+        return m_done;
+    }
+
+    [[nodiscard]] bool VerifyTail() {
+        std::uint8_t extra = 0;
+        while (!m_done && !m_failed) {
+            if (!LoadInput()) { m_failed = true; return false; }
+            ZSTD_outBuffer out{&extra, 1, 0};
+            const auto prior = m_in.pos;
+            const auto state = ZSTD_decompressStream(m_decoder, &out, &m_in);
+            if (ZSTD_isError(state) || out.pos != 0) {
+                m_failed = true;
+                return false;
+            }
+            if (state == 0) return Complete();
+            if (m_in.pos == prior &&
+                (m_in.pos < m_in.size || m_remainingStored == 0)) {
+                m_failed = true;
+                return false;
+            }
+        }
+        return m_done;
+    }
+
+    [[nodiscard]] bool Fill() {
+        m_used = m_ready = 0;
+        while (!m_done && !m_failed) {
+            if (!LoadInput()) { m_failed = true; return false; }
+            ZSTD_outBuffer out{m_plain.data(), m_plain.size(), 0};
+            const auto prior = m_in.pos;
+            const auto state = ZSTD_decompressStream(m_decoder, &out, &m_in);
+            if (ZSTD_isError(state) ||
+                out.pos > m_rawSize - m_generated) {
+                m_failed = true;
+                return false;
+            }
+            m_crc = crypto::UpdateCrc32(m_crc, m_plain.data(), out.pos);
+            m_generated += out.pos;
+            if (state == 0) (void)Complete();
+            else if (m_generated == m_rawSize) (void)VerifyTail();
+            m_ready = out.pos;
+            if (m_failed) return false;
+            if (m_ready != 0) return true;
+            if (!m_done && m_in.pos == prior &&
+                (m_in.pos < m_in.size || m_remainingStored == 0)) {
+                m_failed = true;
+                return false;
+            }
+        }
+        return false;
+    }
+
+    std::ifstream m_input;
+    std::uint64_t m_offset = 0;
+    std::uint64_t m_storedSize = 0;
+    std::uint64_t m_rawSize = 0;
+    std::uint32_t m_expectedCrc = 0;
+    ZSTD_DStream* m_decoder = nullptr;
+    std::array<std::uint8_t, 64 * 1024> m_compressed{};
+    std::array<std::uint8_t, 64 * 1024> m_plain{};
+    ZSTD_inBuffer m_in{};
+    std::uint64_t m_remainingStored = 0;
+    std::uint64_t m_position = 0;
+    std::uint64_t m_generated = 0;
+    std::size_t m_used = 0;
+    std::size_t m_ready = 0;
+    std::uint32_t m_crc = 0xffffffffu;
+    bool m_done = false;
+    bool m_failed = false;
+};
+
 std::string ChunkContext(const std::string_view name,
                          const std::uint32_t index,
                          const std::uint32_t rawBytes) {
@@ -632,9 +823,15 @@ std::unique_ptr<SeekableReadStream> Archive::OpenStream(
         return {};
     }
 
-    // AES-GCM authentication and zstd frame decompression are whole-entry
-    // transforms in the PDX4 format. Preserve their existing validation and
-    // expose a seekable cursor over the verified result.
+    if ((entry.flags & kEntryCompressed) != 0 &&
+        (entry.flags & kEntryEncrypted) == 0) {
+        auto stream = std::make_unique<ZstdReadStream>(
+            m_path, entry.offset, entry.storedSize, entry.rawSize, entry.crc);
+        if (!stream->Failed()) return stream;
+        return {};
+    }
+
+    // Legacy whole-entry AES-GCM still needs a whole-entry transform.
     auto bytes = Read(path);
     if (!bytes) return {};
     return std::make_unique<MemoryReadStream>(std::move(*bytes));

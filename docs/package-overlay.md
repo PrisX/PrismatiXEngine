@@ -106,8 +106,10 @@ inspection and are never loaded automatically.
 Player/runtime files, streams changed content into an uncompressed PDX5,
 re-verifies its output, and publishes without replacing an existing file.
 It rechecks manifest and index bytes before publication. Temporary disk space
-is needed for extracted changes; a large compressed source entry may still
-be buffered by the current Archive reader.
+is needed for extracted changes. Unencrypted compressed PDX entries now decode
+with a capped zstd history window while streaming, and complete size/CRC
+verification at end of stream. Legacy whole-entry encrypted and compressed
+entries still buffer the decoded entry; encrypted chunked entries stream.
 
 ## Current limits
 
