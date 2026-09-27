@@ -7,6 +7,9 @@
 - PDX 串流讀寫的 CRC-32 改為分段查表計算；Packager 的寫入／輸入驗證 CRC 亦改用查表。CRC 標準向量與原有封裝／VFS contract 通過。這是演算法路徑改善，尚未以同條件大型素材量測吞吐，不能聲稱某個百分比加速。
 - `CreatePackageOverlay` 現在比較完整驗證前、後與發布前的兩份 manifest／content index 原始 bytes；驗證回呼期間改寫 target manifest 的測試確認拒絕發布。這降低 metadata TOCTOU 風險，但不能保證同時可寫的 PDX／素材不變，也不是發行者認證。
 - Native Debug 指定的 Packager、Runtime Resources、Player BootSplash CTest 3/3 通過；`npm run cli:build` 與 `npm run cli:test` 104/104 通過。Senren `npm test` 21/21 通過，`npm run validate` 四語 368 scene／31,339 resources 通過。本機 `dist` 目前僅 `senren-banka-psx-authoring-v29` 具有 `Package/content-index.json`；因此還沒有兩份可用於 8 GB `create-overlay` 對照的完整發行版，沒有大型 overlay 時間／記憶體／磁碟量測。
+- 新版 Release Packager 對 Senren `senren-banka-psx-authoring-v29` 執行 `--verify-package` 成功，檢查 1 個 PDX、31,756 筆、8,596,468,270 raw bytes。第二次暖快取（Windows、此機器 C:、Release、同一發行包）耗時 57.27 秒，程序峰值工作集約 63.4 MiB；首次冷一些的讀取依輸出檔時間約 111 秒，但量測腳本結尾格式錯誤，無可信峰值，不能作前後加速比較。這仍不是兩版本 overlay 建立或 Player 驗收。
+- 使用者已選擇 Player 自動載入更新採「基底發行包固定發行者公鑰、驗簽且 exact-base 才掛載」。簽章格式、私鑰交付、Packager／CLI 產製與 Player 掛載尚未實作；不得將目前 unsigned `patch.pdx` 自動套用。
+- Senren `.prismatix` 的舊驗證 artifact 約 8.01 GiB、現有無 ownership marker 的 `artifact` 約 6.67 GiB，以及舊 v28 截圖約 0.05 GiB，均已確認可重建／無腳本引用（現有 `artifact` 為 `pack --artifact` 不可直接使用）。此環境的自動審核仍阻擋對精確路徑的遞迴刪除，**尚未清理任何目錄**。`system-ui-extract`、`motion-source`、ID backup 和舊玩家資料應保留。
 
 交接基準：Engine `1948fac`（`feat: create verified single-file PDX overlays`）；SenrenBankaPSX `61337a8`（`docs: record verified overlay creation status`）。本文件另外提交；若接手時 HEAD 已不同，先核對變更而不是假設這兩個 SHA 仍是最新。
 

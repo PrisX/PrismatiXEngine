@@ -57,3 +57,10 @@ creator's full base/target verification is not a substitute for a signed
 update channel. Player boot integration, safe drop-in discovery, rollback,
 and a publisher trust policy remain unfinished. Do not assume placing this
 file beside a game applies it.
+
+For future Player auto-loading, the chosen policy is to pin a publisher public
+key in the trusted base distribution and require a valid signature plus the
+existing exact-base checks before mounting an overlay. The signing format,
+key provisioning, and Player integration are not implemented yet. Existing
+unsigned overlays remain explicit verification artifacts, not auto-loaded
+updates.
