@@ -242,6 +242,62 @@ function normalizeCharacterAuthoring(runtimeSource: ObjectValue,
   return diagnostics;
 }
 
+/** Canonical Gallery references carry their own stable asset identity and
+ * source path. Promote them to project assets so native catalog validation and
+ * runtime lookup see the same identity without duplicating author metadata. */
+function normalizeGalleryAssets(runtimeSource: ObjectValue,
+  documents: Record<string, unknown>, catalogPath: string): readonly AuthoringDiagnostic[] {
+  let catalog = object(documents[catalogPath]);
+  if (catalog === undefined && typeof documents[catalogPath] === "string") {
+    try { catalog = object(JSON.parse(documents[catalogPath] as string) as unknown); }
+    catch { /* The document validator reports invalid JSON below. */ }
+  }
+  if (!Array.isArray(catalog?.gallery)) return [];
+  if (runtimeSource.assets !== undefined && !Array.isArray(runtimeSource.assets))
+    return []; // Project schema validation reports the malformed asset list.
+  const assets = Array.isArray(runtimeSource.assets) ? [...runtimeSource.assets] : [];
+  const byId = new Map<string, ObjectValue>();
+  const bySource = new Map<string, ObjectValue>();
+  for (const value of assets) {
+    const asset = object(value);
+    if (asset === undefined) continue;
+    if (typeof asset.id === "string") byId.set(asset.id.toLowerCase(), asset);
+    if (typeof asset.source === "string") bySource.set(asset.source, asset);
+  }
+  const diagnostics: AuthoringDiagnostic[] = [];
+  for (const [index, value] of catalog.gallery.entries()) {
+    const item = object(value);
+    if (item === undefined) continue;
+    for (const property of ["image", "thumbnail"] as const) {
+      const reference = object(item[property]);
+      const id = reference?.id;
+      const source = reference?.path;
+      const kind = reference?.kind;
+      if (typeof id !== "string" || typeof source !== "string" ||
+          typeof kind !== "string") continue;
+      const existingId = byId.get(id.toLowerCase());
+      const existingSource = bySource.get(source);
+      if (existingId !== undefined || existingSource !== undefined) {
+        if (existingId?.source !== source ||
+            existingSource !== undefined &&
+            (typeof existingSource.id !== "string" ||
+             existingSource.id.toLowerCase() !== id.toLowerCase())) {
+          diagnostics.push(issue("PXBUILD1071",
+            "Gallery asset identity conflicts with an existing project asset",
+            catalogPath, `gallery[${index}].${property}: ${id} / ${source}`));
+        }
+        continue;
+      }
+      const descriptor = {id, source, kind};
+      assets.push(descriptor);
+      byId.set(id.toLowerCase(), descriptor);
+      bySource.set(source, descriptor);
+    }
+  }
+  if (diagnostics.length === 0) runtimeSource.assets = assets;
+  return diagnostics;
+}
+
 function defaultUi(projectId: string, name: string, width: number, height: number): unknown {
   const sceneId = stableUuid(`${projectId}:default-ui:scene`);
   const rootId = stableUuid(`${projectId}:default-ui:root`);
@@ -355,6 +411,10 @@ export function normalizeProject(input: NormalizeProjectInput = {}): Result<Norm
     ? raw.storyIndex : "Story/story.pxindex";
   const gameCatalogPath = typeof raw.gameCatalog === "string"
     ? raw.gameCatalog : "Content/game.pxgame";
+  const galleryDiagnostics = normalizeGalleryAssets(runtimeSource,
+    documents, gameCatalogPath);
+  if (galleryDiagnostics.length > 0)
+    return {diagnostics: galleryDiagnostics, valid: false};
   const uiEntryPoints = object(raw.uiEntryPoints);
   const defaultUiPath = "Content/UI/Title.pxui";
   const defaultUiRoute = uiEntryPoints === undefined
@@ -378,6 +438,7 @@ export function normalizeProject(input: NormalizeProjectInput = {}): Result<Norm
     storyIndex: storyIndexPath,
     gameCatalog: gameCatalogPath,
     extensions: [],
+    assets: [],
     uiEntryPoints: uiEntryPoints ?? {[defaultUiRoute]: defaultUiPath},
     ...runtimeSource,
     resolution: {...{width, height}, ...resolution},

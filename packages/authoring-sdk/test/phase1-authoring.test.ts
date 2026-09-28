@@ -37,9 +37,37 @@ test("single-locale normalization compiles Story/main.pxstory without support do
   const compiled = compileProject(input);
   assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
   assert.equal(compiled.artifact?.project.defaultLocale, "zh-TW");
+  assert.deepEqual(JSON.parse(compiled.artifact!.files["project.pxproject"]!).assets, []);
   assert.ok(compiled.artifact?.files["Story/story.pxindex"]?.includes(
     "Story/main.pxstory"));
   assert.ok(compiled.artifact?.files["Runtime/main.pxir"]);
+});
+
+test("Gallery references become native project asset descriptors", () => {
+  const image = {id: "44444444-4444-4444-8444-444444444444",
+    path: "Assets/CG/scene.png", kind: "cg"};
+  const thumbnail = {id: "55555555-5555-4555-8555-555555555555",
+    path: "Assets/CG/scene-thumb.png", kind: "cg"};
+  const game = {format: "PrismatiXGame", schemaRevision: 2,
+    variables: [], gallery: [{id: "scene", title: "Scene", image, thumbnail,
+      unlockFlag: "scene"}], unlockables: []};
+  const input = {project: {id: "gallery-game"},
+    documents: {"Content/game.pxgame": game},
+    sourceFiles: {"Story/main.pxstory": "[unlock kind=cg id=scene]\n[end]\n"},
+    resourceExists: () => true};
+  const compiled = compileProject(input);
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  const runtimeProject = JSON.parse(compiled.artifact!.files["project.pxproject"]!);
+  assert.deepEqual(runtimeProject.assets, [
+    {id: image.id, source: image.path, kind: "cg"},
+    {id: thumbnail.id, source: thumbnail.path, kind: "cg"},
+  ]);
+  assert.ok(compiled.artifact?.dependencies.some((item) =>
+    item.source === image.path));
+
+  const conflict = normalizeProject({...input, project: {id: "gallery-game",
+    assets: [{id: image.id, source: "Assets/CG/other.png", kind: "cg"}]}});
+  assert.ok(conflict.diagnostics.some((item) => item.code === "PXBUILD1071"));
 });
 
 test("Player UI data is validated and preserved in the canonical project", () => {
