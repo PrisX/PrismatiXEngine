@@ -10,6 +10,7 @@
 #include "Engine/Platform/Input.h"
 #include "Engine/Platform/Window.h"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -54,6 +55,11 @@ public:
 
     bool BeginFrame();
     void EndFrame();
+    // Runs once, after the frame (including screen transitions) is composited
+    // and before it is presented; used to capture exactly what players see.
+    void OnNextComposedFrame(std::function<void()> callback) {
+        m_composedFrame = std::move(callback);
+    }
 
     [[nodiscard]] Window& GetWindow() { return m_window; }
     [[nodiscard]] Input& GetInput() { return m_input; }
@@ -73,6 +79,7 @@ private:
     std::unique_ptr<graphics::AssetCache> m_assets;
     std::unique_ptr<graphics::Renderer2D> m_renderer;
     std::unique_ptr<audio::AudioEngine> m_audio;
+    std::function<void()> m_composedFrame;
     bool m_initialized = false;
     bool m_running = false;
 };

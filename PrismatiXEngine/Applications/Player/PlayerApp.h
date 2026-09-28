@@ -145,6 +145,7 @@ private:
     void ConfigureE2EJourney();
     void DriveE2EJourney();
     void DriveBenchJourney();
+    void BenchCapture(std::string name);
     void CaptureE2EGalleryFrame();
     void CaptureUIRoutesE2EFrame();
     bool CapturePresentationE2EFrame(std::string_view name);
@@ -329,6 +330,8 @@ private:
     std::uint64_t m_benchSequence = 0;
     std::size_t m_benchRouteIndex = 0;
     int m_benchSettledFrames = 0;
+    std::uint64_t m_benchReadingShot = 0;
+    std::uint64_t m_benchCapturedEffect = 0;
     int m_e2eClearCountBeforeF2 = 0;
     std::optional<Variant> m_e2eSessionValueBeforeF2;
     accessibility::SpeechService m_speech;

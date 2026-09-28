@@ -3974,6 +3974,14 @@ bool PlayerApp::CapturePresentationE2EFrame(const std::string_view name){
     return saved;
 }
 
+void PlayerApp::BenchCapture(std::string name) {
+    if (!SDL_getenv("PRISMATIX_E2E_CAPTURE_DIR")) return;
+    m_presentationE2ECaptureDir = SDL_getenv("PRISMATIX_E2E_CAPTURE_DIR");
+    m_runtime.OnNextComposedFrame([this, name = std::move(name)] {
+        (void)CapturePresentationE2EFrame(name);
+    });
+}
+
 void PlayerApp::DriveBenchJourney() {
     // Reading (auto), skipping, then opening each menu route. Timings come
     // from the frame profiler (PRISMATIX_PERF) plus the summaries logged here.
@@ -4018,6 +4026,17 @@ void PlayerApp::DriveBenchJourney() {
             if (m_session->VM().State() == vn::VMState::WaitingChoice)
                 m_session->SelectChoice(0);
             m_autoMode = true;
+            // Screenshots of ordinary reading and of any screen transition.
+            if (const auto effect = m_runtime.Renderer().ActiveScreenEffect();
+                effect && effect->elapsedSeconds >= effect->durationSeconds * 0.5f &&
+                m_benchCapturedEffect != effect->handle) {
+                m_benchCapturedEffect = effect->handle;
+                BenchCapture("transition-" + effect->effect + "-" + std::to_string(effect->handle));
+            }
+            if ((now - m_benchStageAt) / 4000 != m_benchReadingShot) {
+                m_benchReadingShot = (now - m_benchStageAt) / 4000;
+                BenchCapture("reading-" + std::to_string(m_benchReadingShot));
+            }
             if (now - m_benchStageAt >= 20'000) {
                 PX_LOG_INFO("Player bench reading lines={} seconds=20", lines());
                 m_autoMode = false;
@@ -4042,6 +4061,9 @@ void PlayerApp::DriveBenchJourney() {
             if (++m_benchSettledFrames == 1)
                 PX_LOG_INFO("Player bench route={} readyMs={}",
                             kRoutes[m_benchRouteIndex], now - m_benchStageAt);
+            if (m_benchSettledFrames == 30 || m_benchSettledFrames == 85)
+                BenchCapture("route-" + std::string(kRoutes[m_benchRouteIndex]) + "-" +
+                             std::to_string(m_benchSettledFrames));
             if (m_benchSettledFrames >= 90) {
                 HandleUIAction({"overlay.close", {}});
                 ++m_benchRouteIndex;

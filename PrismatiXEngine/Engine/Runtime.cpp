@@ -3,6 +3,8 @@
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
 
+#include <utility>
+
 #if !defined(PRISMATIX_PREVIEW_WASM)
 #include "Engine/IO/Crypto.h"
 #endif
@@ -162,6 +164,7 @@ void Runtime::EndFrame() {
     {
         const diag::ScopedFramePhase profiled(diag::FramePhase::Present);
         if (m_renderer) m_renderer->EndFrame();
+        if (m_composedFrame) std::exchange(m_composedFrame, nullptr)();
         m_window.Present();
     }
     diag::FrameProfiler::Instance().EndFrame();
