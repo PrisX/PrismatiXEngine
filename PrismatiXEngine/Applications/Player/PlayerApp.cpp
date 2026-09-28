@@ -70,6 +70,13 @@ std::optional<std::string> SafeVfsRelativePath(const std::string& value) {
     return io::VFS::NormalizeVirtualPath(value);
 }
 
+bool ProfileFlagEnabled(const Variant* value) {
+    if (!value) return false;
+    if (const auto* integer = value->TryGet<std::int64_t>()) return *integer == 1;
+    if (const auto* boolean = value->TryGet<bool>()) return *boolean;
+    return false;
+}
+
 std::string LocaleRuntimeIrPath(const std::string_view locale) {
     return "Runtime/Locales/" + std::string(locale) + "/main.pxir";
 }
@@ -712,6 +719,13 @@ void PlayerApp::RecordScriptVideoTerminal(const std::uint64_t handle,
     }
 }
 
+const std::string& PlayerApp::TitleBgmPath() const {
+    if (!m_titleBgmAfterPath.empty() &&
+        ProfileFlagEnabled(m_profile.Variable(m_titleBgmAfterFlag)))
+        return m_titleBgmAfterPath;
+    return m_titleBgm;
+}
+
 bool PlayerApp::Init(int argc, char* argv[]) {
     m_boot = LoadBootConfig();
     if (!m_boot.valid) return false;
@@ -814,6 +828,11 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_session->Variables().SetProfileWriteHandler(
         [this](const std::string_view name, const vn::Value& value) {
             m_profile.SetVariable(std::string(name), value.Clone());
+            if (const Status updated = m_ui.UpdateUiData(
+                    "profileFlags." + std::string(name),
+                    Variant(ProfileFlagEnabled(&value))); !updated)
+                for (const auto& diagnostic : updated.Diagnostics())
+                    diag::Emit(diagnostic);
         });
     m_ui.SetBehaviorVariableAccess(
         [this](const std::string_view name)->std::optional<Variant>{
@@ -926,6 +945,19 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                     const auto safe = SafeVfsRelativePath(titleBgm->get<std::string>());
                     if (safe && m_runtime.VFS().Exists(*safe)) m_titleBgm = *safe;
                 }
+                if (const auto alternate = settings->find("player.titleBgmAfter");
+                    alternate != settings->end() && alternate->is_object()) {
+                    const auto flag = alternate->find("flag");
+                    const auto path = alternate->find("path");
+                    if (flag != alternate->end() && flag->is_string() &&
+                        path != alternate->end() && path->is_string()) {
+                        const auto safe = SafeVfsRelativePath(path->get<std::string>());
+                        if (safe && m_runtime.VFS().Exists(*safe)) {
+                            m_titleBgmAfterFlag = flag->get<std::string>();
+                            m_titleBgmAfterPath = *safe;
+                        }
+                    }
+                }
                 const auto readUiSound=[this,settings](const char* key,std::string& output){
                     const auto value=settings->find(key);
                     if(value==settings->end()||!value->is_string())return;
@@ -934,6 +966,17 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                 };
                 readUiSound("player.uiHoverSound",m_defaultUiHoverSound);
                 readUiSound("player.uiActivateSound",m_defaultUiActivateSound);
+                if (const auto uiFont = settings->find("player.uiFont");
+                    uiFont != settings->end() && uiFont->is_string()) {
+                    const auto safe = SafeVfsRelativePath(uiFont->get<std::string>());
+                    if (safe && m_runtime.VFS().Exists(*safe)) {
+                        if (const Status applied = m_ui.SetDefaultFont(*safe); !applied) {
+                            for (const auto& diagnostic : applied.Diagnostics())
+                                diag::Emit(diagnostic);
+                            return false;
+                        }
+                    }
+                }
                 const auto transitionDuration = [](const nlohmann::json& owner,
                                                     const char* key)
                     -> std::optional<float> {
@@ -1406,6 +1449,10 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_session->SetExtensionCommandHandler([this](const vn::Command& cmd) {
         // NVL/ADV mode switches are app-level state, handled before extensions.
         const std::string& t = cmd.type;
+        if (t == "hud_visibility") {
+            m_storyHudVisible = cmd.Get("visible") == "true";
+            return true;
+        }
         if (t == "nvl") {
             m_nvlMode = true;
             if (cmd.Has("clear")) m_nvlLines.clear();
@@ -1650,6 +1697,18 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         m_catalog.Variables().size(), m_catalog.InputBindings().size(),
         m_catalog.InputActions().size(),
         m_catalog.Gallery().size());
+    for (const auto& variable : m_catalog.Variables()) {
+        if (variable.scope != vn::CatalogVariable::Scope::Profile) continue;
+        const Variant* stored = m_profile.Variable(variable.name);
+        const Status defined = m_ui.DefineUiData(
+            "profileFlags." + variable.name,
+            Variant(ProfileFlagEnabled(stored ? stored : &variable.typedDefault)));
+        if (!defined) {
+            for (const auto& diagnostic : defined.Diagnostics())
+                diag::Emit(diagnostic);
+            return false;
+        }
+    }
     for (const auto& binding : m_catalog.InputBindings()) {
         if (binding.command == "screen.open" && !binding.argument.empty()) {
             const auto sc = Input::KeyCode(binding.key);
@@ -1901,12 +1960,12 @@ void PlayerApp::FinishBootPresentation() {
         }
     }
     m_appState=AppState::Title;
-    if (!m_titleBgm.empty()) {
-        const auto handle=m_runtime.Audio().PlayBGM(m_titleBgm,true,500);
+    if (!TitleBgmPath().empty()) {
+        const auto handle=m_runtime.Audio().PlayBGM(TitleBgmPath(),true,500);
         if(m_runtime.Audio().Status(handle)==audio::PlaybackStatus::Failed)
-            PX_LOG_ERROR("Player title BGM failed path={}",m_titleBgm);
+            PX_LOG_ERROR("Player title BGM failed path={}",TitleBgmPath());
         else
-            PX_LOG_INFO("Player title BGM started path={} handle={}",m_titleBgm,handle.value);
+            PX_LOG_INFO("Player title BGM started path={} handle={}",TitleBgmPath(),handle.value);
     }
     PX_LOG_INFO("Player presentation ready route={}", m_boot.startRoute);
 }
@@ -1975,7 +2034,7 @@ void PlayerApp::StartGame() {
     m_gameStartTransitionActive=true;
     m_gameStartTransitionCommitted=false;
     m_gameStartTransitionElapsed=0.0f;
-    if(!m_titleBgm.empty())m_runtime.Audio().StopBGM(1000);
+    if(!TitleBgmPath().empty())m_runtime.Audio().StopBGM(1000);
 }
 
 bool PlayerApp::CommitStartGame() {
@@ -1997,6 +2056,7 @@ bool PlayerApp::CommitStartGame() {
     }
     m_session->Backlog().Clear();
     m_autoMode = m_skipMode = m_hudHidden = false;
+    m_storyHudVisible = false;
     m_nvlMode = false;
     m_nvlLines.clear();
     m_rollback.clear();
@@ -2096,8 +2156,8 @@ void PlayerApp::GameStartTransitionFrame(const float dt,
                 m_gameStartTransitionCommitted=false;
                 m_gameStartTransitionElapsed=0.0f;
                 alpha=0.0f;
-                if (!m_quitRequested && !m_titleBgm.empty()) {
-                    (void)m_runtime.Audio().PlayBGM(m_titleBgm,true,300);
+                if (!m_quitRequested && !TitleBgmPath().empty()) {
+                    (void)m_runtime.Audio().PlayBGM(TitleBgmPath(),true,300);
                 }
             }
         }
@@ -2298,6 +2358,7 @@ bool PlayerApp::LoadSlot(int slot) {
     m_script = candidateScript;
     m_appState = AppState::Game;
     m_autoMode = m_skipMode = m_hudHidden = false;
+    m_storyHudVisible = true;
     if (m_ui.CurrentRoute() == "hud" || m_ui.CurrentRoute() == "game")
         (void)m_ui.RefreshHUD(DialogueUI());
     if (m_scriptHost) m_scriptHost->Emit("save.loaded", {{"slot", std::to_string(slot)}});
@@ -2985,7 +3046,15 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
             OpenScreen(action.argument);
         }
     } else if (t == "cg.view") {
-        m_viewingCG = action.argument;
+        const auto& entries = m_catalog.Gallery();
+        const auto found = std::ranges::find_if(entries, [&](const auto& entry) {
+            return entry.id == action.argument;
+        });
+        if (found != entries.end()) {
+            if (m_profile.CGUnlocked(found->id)) m_viewingCG = found->image;
+        } else {
+            m_viewingCG = action.argument;
+        }
     } else if (t == "set.skipread.toggle") {
         m_settings.skipReadOnly = !m_settings.skipReadOnly;
         m_ui.ShowSettings(SettingsUI());
@@ -3051,8 +3120,8 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         const bool restoreTitleMusic = m_musicTrackSelected &&
             (m_ui.CurrentRoute() == "music" || m_ui.CurrentRoute() == "extra");
         if (!m_session->Routes().CloseModal()) return;
-        if (restoreTitleMusic && !m_titleBgm.empty()) {
-            audio.PlayBGM(m_titleBgm, true, 300);
+        if (restoreTitleMusic && !TitleBgmPath().empty()) {
+            audio.PlayBGM(TitleBgmPath(), true, 300);
             m_musicTrackSelected = false;
         }
         SaveSettingsIfWritable(); SaveProfileIfWritable();
@@ -3884,7 +3953,8 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     if (input.ActionPressed(InputAction::Rollback)) {
         RollbackOneLine();
     }
-    if (input.RightClick() || input.ActionPressed(InputAction::ToggleUi)) {
+    if (m_storyHudVisible &&
+        (input.RightClick() || input.ActionPressed(InputAction::ToggleUi))) {
         m_hudHidden = !m_hudHidden;
     }
 
@@ -3908,7 +3978,15 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         input.ActionPressedWithoutKeyboard(InputAction::Advance);
 
     bool advancedByClick = false;
-    if (m_hudHidden) {
+    if (!m_storyHudVisible && m_session->Routes().CurrentModalRoute().empty()) {
+        if ((input.LeftClick() || advanceKey || nonKeyboardAdvance) &&
+            m_session->VM().State() != vn::VMState::WaitingChoice) {
+            m_session->Advance();
+            advancedByClick = true;
+            m_autoMode = false;
+            m_skipMode = false;
+        }
+    } else if (m_hudHidden) {
         if (input.LeftClick() || advanceKey || nonKeyboardAdvance) m_hudHidden = false;
     } else {
         // A modal may have replaced the HUD since the previous frame. Keep
@@ -3967,6 +4045,7 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     // New dialogue lines feed the NVL page and the rollback ring.
     const std::uint64_t backlogSequence = m_session->Backlog().LastSequence();
     if (backlogSequence > m_lastBacklogSequence) {
+        m_storyHudVisible = true;
         const vn::BacklogEntry* latestEntry = nullptr;
         for (const vn::BacklogEntry& e :
              m_session->Backlog().EntriesAfter(m_lastBacklogSequence)) {
@@ -4008,7 +4087,8 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
         m_pendingSaveScreen = false;
     }
 
-    if (!m_hudHidden) {
+    if ((m_storyHudVisible && !m_hudHidden) ||
+        !m_session->Routes().CurrentModalRoute().empty()) {
         // Opening Save above changes the active surface during this frame.
         // RefreshHUD installs HUD when another screen is active, so doing it
         // unconditionally immediately erased the menu the player just opened.

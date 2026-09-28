@@ -592,6 +592,9 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
             command.type = "route";
             Add(command, "route", Argument(operation, "route"));
             Add(command, "operation", Argument(operation, "operation"));
+        } else if (operation.kind == "hudVisibility") {
+            command.type = "hud_visibility";
+            Add(command, "visible", Argument(operation, "visible"));
         } else if (operation.kind == "unlock") {
             command.type = "unlock";
             Add(command, "kind", Argument(operation, "kind"));

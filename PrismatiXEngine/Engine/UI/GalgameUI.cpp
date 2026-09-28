@@ -182,6 +182,7 @@ GalgameUI::GalgameUI() {
         (void)m_viewModel.Define(prefix + "enabled", Variant(false), true);
     }
     (void)m_viewModel.Define("saveLoad.slots", Variant(std::move(initialSlots)), true);
+    (void)m_viewModel.Define("gallery.items", Variant(VariantArray{}), true);
     for (const char* property : {"visible", "save", "load", "overwrite"})
         (void)m_viewModel.Define(
             std::string("saveLoad.confirm.") + property, Variant(false), true);
@@ -194,6 +195,7 @@ GalgameUI::GalgameUI() {
     for(const auto& command:commands)(void)RegisterActionCommand(command);
     (void)RegisterActionCommand("save.slot", "slot");
     (void)RegisterActionCommand("load.slot", "slot");
+    (void)RegisterActionCommand("cg.view", "resource");
     (void)RegisterActionCommand("saveLoad.confirm.accept");
     (void)RegisterActionCommand("saveLoad.confirm.cancel");
     (void)m_context.Commands().Register("hud.toolbar.pin",[this](const Variant&){return ToggleHudToolbarPinned();});
@@ -211,6 +213,13 @@ GalgameUI::~GalgameUI() {
     for (const auto& sourceId : m_hostActionSourceIds)
         (void)m_context.Actions().Catalog().RemoveSource(
             ActionOrigin::BuiltIn, sourceId);
+}
+
+Status GalgameUI::SetDefaultFont(std::string path) {
+    auto style = m_context.ActiveTheme().StyleData();
+    style.globalDefaults.properties["typography.font"] =
+        StyleValue::Literal(Variant(std::move(path)));
+    return m_context.ActiveTheme().SetStyleData(std::move(style));
 }
 
 Status GalgameUI::DefineUiData(std::string path, Variant value) {
@@ -1024,7 +1033,32 @@ Status GalgameUI::SetSaveLoadConfirmation(const SaveLoadPrompt prompt) {
 }
 
 Status GalgameUI::ShowGallery(std::vector<GalgameItem> entries) {
-    const Status installed=InstallTemplate(Screen::Gallery);if(!installed)return installed;auto* grid=FindNamed<GridView>(m_context.Root(),"Items");if(!grid)return GalgameFailure("PXUI2807","Gallery template requires a GridView named Items");m_items=std::make_shared<ItemSource>(std::move(entries),*this);return grid->SetSource(m_items,[]{return std::make_unique<CardButton>();});
+    VariantArray authoredItems;
+    authoredItems.reserve(entries.size());
+    for (const auto& entry : entries) {
+        authoredItems.emplace_back(VariantObject{
+            {"key", Variant(entry.key)},
+            {"title", Variant(entry.title)},
+            {"image", Variant(entry.image)},
+            {"enabled", Variant(!entry.disabled)},
+            {"locked", Variant(entry.disabled)},
+        });
+    }
+    if (const Status populated = m_viewModel.Write("gallery.items", Variant(std::move(authoredItems)));
+        !populated) return populated;
+    const Status installed = InstallTemplate(Screen::Gallery);
+    if (!installed) return installed;
+    auto* grid = FindNamed<GridView>(m_context.Root(), "Items");
+    if (!grid) return GalgameFailure("PXUI2807", "Gallery template requires a GridView named Items");
+    // ApplyDocument installs authored itemSource grids before returning. A
+    // pre-existing source is authoritative here; replacing it with the
+    // compatibility CardButton source discards the authored CG cell subtree.
+    if (grid->HasSource()) {
+        m_items.reset();
+        return Status::Ok();
+    }
+    m_items = std::make_shared<ItemSource>(std::move(entries), *this);
+    return grid->SetSource(m_items, [] { return std::make_unique<CardButton>(); });
 }
 
 Status GalgameUI::ShowSettings(const SettingsPresentation& s) {

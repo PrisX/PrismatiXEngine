@@ -187,6 +187,7 @@ CommandRegistry MakeBuiltins() {
     add(Descriptor("video","Video",{Param("file",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource),Param("skippable",VariantType::Bool)},CommandWaitPolicy::Async,RollbackPolicy::Boundary));
     add(Descriptor("movie","Video",registry.Find("video")->parameters,CommandWaitPolicy::Async,RollbackPolicy::Boundary));
     add(Descriptor("route","UI",{Param("route",VariantType::String,true),Param("operation",VariantType::String,false,Variant("replace"),CommandEditorWidget::Default, {"push","replace","modal","back"})},CommandWaitPolicy::Immediate,RollbackPolicy::Reversible,false));
+    add(Descriptor("hud_visibility","UI",{Param("visible",VariantType::Bool,true)}));
     add(Descriptor("animation","Animation",{Param("clip",VariantType::ResourceRef,true,{},CommandEditorWidget::Preset),Param("await",VariantType::Bool),Param("speed",VariantType::Number)},CommandWaitPolicy::Async));
     add(Descriptor("screen_effect","Animation",{Param("preset",VariantType::String,true,{},CommandEditorWidget::Preset),Param("duration",VariantType::Integer),Param("await",VariantType::Bool)},CommandWaitPolicy::Async));
     add(Descriptor("cg","Stage",{Param("id",VariantType::String),Param("image",VariantType::ResourceRef,true,{},CommandEditorWidget::Resource)}));

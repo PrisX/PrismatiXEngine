@@ -82,6 +82,7 @@ private:
     bool ApplyFullscreenSetting(bool fullscreen);
     void BeginRuntimeIrPreload();
     void FinishBootPresentation();
+    [[nodiscard]] const std::string& TitleBgmPath() const;
     [[nodiscard]] bool TitleVisualsReady();
     void SplashFrame(float dt);
     void PlayMotionMarker(const sdk::MotionAudioMarker& marker);
@@ -154,6 +155,8 @@ private:
     std::unordered_map<std::string, std::string> m_uiAssets;
     std::unordered_map<std::string, std::string> m_uiComponents;
     std::string m_titleBgm;
+    std::string m_titleBgmAfterFlag;
+    std::string m_titleBgmAfterPath;
     std::vector<std::string> m_titleVoices;
     std::string m_defaultUiHoverSound;
     std::string m_defaultUiActivateSound;
@@ -193,6 +196,7 @@ private:
     bool m_autoMode = false;
     bool m_skipMode = false;
     bool m_hudHidden = false;
+    bool m_storyHudVisible = true;
     std::uint64_t m_autoTimerStart = 0;
     std::uint64_t m_playtimeBaseMs = 0;
     std::uint64_t m_playtimeStartedAtMs = 0;

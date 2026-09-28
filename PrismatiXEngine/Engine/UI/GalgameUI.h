@@ -136,6 +136,7 @@ public:
     void SetTextRenderer(graphics::Renderer2D* renderer) {
         m_context.SetTextRenderer(renderer);
     }
+    Status SetDefaultFont(std::string path);
     void SetImagePreloadSink(std::function<void(std::string_view)> sink) {
         m_context.SetImagePreloadSink(std::move(sink));
     }

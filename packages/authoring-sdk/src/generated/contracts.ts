@@ -3110,6 +3110,7 @@ export const contractSchemas: Readonly<Record<string, object>> = {
                 "effect",
                 "shake",
                 "ui",
+                "hudVisibility",
                 "unlock",
                 "customNode",
                 "camera"
@@ -4856,7 +4857,7 @@ export const contractHashes: Readonly<Record<string, string>> = {
   "motion.schema.json": "300c1bbdeb16abf4faa8014afa81800e8d72a1e7f1f6d06d309cf53ba2980f01",
   "portrait.schema.json": "658421c74dacc9d8247b64c6a00389c069b7516f57f863f399160161a1207f16",
   "project.schema.json": "3df44e931b9fb047a49ee08c1adfd2dd03a7c9c26b99c894580ac31ce03624fc",
-  "runtime-ir.schema.json": "04c51fc94dc46b500d78877d29dba1dffe1f41619211af24e48cf48699bf0836",
+  "runtime-ir.schema.json": "976fdf308c2d2f2c34b3361d4b9b31a74c43f640ec1c90c854d010aaf9bc3351",
   "save-migration.schema.json": "b66062b76495dfec0ec9dc1a9c7f0bfc1c49967a5748b2a48f7e186c9cf8533e",
   "source-map.schema.json": "1a0d20fbc5ed639fcb33bf7e8b81f78caf9af091a4d245cee2e5e66eb80d3e62",
   "story-index.schema.json": "abc3cf730c81d25c45c5a11632268e16334d5a189ff419bdfb2da940e6292b82",

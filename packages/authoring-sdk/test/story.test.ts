@@ -76,6 +76,20 @@ test("add authors a checked integer increment with catalog scope", () => {
   }
 });
 
+test("hud visibility is an explicit Story operation", () => {
+  const result = compileStory(parseStory("[hud visible=false]\n[hud visible=true]\n"),
+    {documentId:"hud-visibility"});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  assert.deepEqual(result.runtimeIr?.operations.map(({kind, arguments: args}) => [kind, args]), [
+    ["hudVisibility", {visible:"false"}],
+    ["hudVisibility", {visible:"true"}],
+  ]);
+  const invalid = compileStory(parseStory("[hud visible=maybe]\n"),
+    {documentId:"invalid-hud-visibility"});
+  assert.equal(invalid.valid, false);
+  assert.ok(invalid.diagnostics.some(({code}) => code === "PXSTORY1152"));
+});
+
 test("hide all clears actors with one readable operation and optional instant transition", () => {
   const result = compileStory(parseStory(
     "[hide all]\n[hide all transition=false]\n[hide yuki transition=false]\n",
