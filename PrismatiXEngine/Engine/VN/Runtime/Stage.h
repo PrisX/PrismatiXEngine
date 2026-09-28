@@ -478,6 +478,9 @@ private:
     // Resident now, decoding synchronously only when no async decode is in
     // flight (rule images are small and usually prefetched by lookahead).
     bool TextureResidentOrLoad(const std::string& path);
+    // Never decodes on the frame thread: an image that is not ready yet is
+    // queued at high priority and skipped for this frame.
+    [[nodiscard]] graphics::TextureHandle ReadyTexture(const std::string& path);
     void UpdateTweens(float dt);
     void UpdateMotion(float dt);
     void EmitMotionMarkers(double from, double to, bool includeStart);

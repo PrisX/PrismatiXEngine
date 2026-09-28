@@ -316,7 +316,7 @@ void Stage::DrawBackgroundImage(const std::string& path,
         m_renderer.DrawImageAuto(path, graphics::DisplayMode::Fill, alpha);
         return;
     }
-    const graphics::TextureHandle texture = m_assets.Texture(path);
+    const graphics::TextureHandle texture = ReadyTexture(path);
     int width = 0;
     int height = 0;
     graphics::AssetCache::TextureSize(texture, width, height);
@@ -504,6 +504,12 @@ void Stage::SetBackgroundRule(const std::string& newBgPath, const std::string& r
     m_bgInstant = false;
     m_bgWait = 0.0f;
     (void)BackgroundSettled(newBgPath);
+}
+
+graphics::TextureHandle Stage::ReadyTexture(const std::string& path) {
+    if (m_assets.TextureSettled(path)) return m_assets.Texture(path);
+    m_assets.PreloadTexture(path, graphics::AssetPreloadPriority::High);
+    return {};
 }
 
 bool Stage::TextureResidentOrLoad(const std::string& path) {
@@ -1626,7 +1632,7 @@ void Stage::Render() {
     std::vector<Drawable> drawables;
     drawables.reserve(m_layers.size() + m_actors.size() + emitters.size());
     for (const auto& [name, layer] : m_layers) {
-        const graphics::TextureHandle texture = m_assets.Texture(layer.imagePath);
+        const graphics::TextureHandle texture = ReadyTexture(layer.imagePath);
         int textureWidth = 0;
         int textureHeight = 0;
         graphics::AssetCache::TextureSize(texture, textureWidth, textureHeight);
