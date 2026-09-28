@@ -170,7 +170,9 @@ GalgameUI::GalgameUI() {
         initialSlots.emplace_back(VariantObject{
             {"key", Variant(std::string("slot-") + std::to_string(slot))},
             {"number", Variant(slot < 9 ? std::string("0") + std::to_string(slot + 1) : std::to_string(slot + 1))},
+            {"argument", Variant(std::to_string(slot))},
             {"image", Variant(std::string{})},
+            {"occupied", Variant(false)},
             {"title", Variant(std::string{})},
             {"subtitle", Variant(std::string{})},
             {"enabled", Variant(false)},
