@@ -22,6 +22,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <set>
 #include <string>
 #include <string_view>
@@ -953,6 +954,68 @@ int main() {
         vfs.MountDirectory(
             std::filesystem::path(PRISMATIX_RESOURCE_ROOT).parent_path().string());
         renderer.SetLogicalSize(1280, 720);
+        // Optional project-level visual check. Render the compiled TSX scene
+        // with the same native controls and textures used by Player.
+        if (const char* configPath = SDL_getenv("PRISMATIX_TEST_CONFIG_UI");
+            configPath && *configPath) {
+            const char* projectRoot = SDL_getenv("PRISMATIX_TEST_PROJECT_ROOT");
+            std::ifstream configSource(configPath, std::ios::binary);
+            if (!projectRoot || !*projectRoot || !configSource) {
+                std::cerr << "FAIL: external Config visual fixture paths\n";
+                result = 1;
+            } else {
+                vfs.MountDirectory(projectRoot);
+                const std::string document(
+                    (std::istreambuf_iterator<char>(configSource)), {});
+                renderer.SetLogicalSize(1920, 1080);
+                for (const int page : {1, 3}) {
+                    px::ui::GalgameUI configUi;
+                    configUi.SetTextRenderer(&renderer);
+                    bool ready = true;
+                    for (int index = 1; index <= 4; ++index)
+                        ready &= configUi.DefineUiData(
+                            "settings.page" + std::to_string(index),
+                            px::Variant(index == page)).IsOk();
+                    ready &= configUi.RegisterTemplate(
+                        px::ui::GalgameUI::Screen::Settings,
+                        document, configPath).IsOk();
+                    px::ui::SettingsPresentation settings;
+                    settings.master = 55;
+                    if (ready) ready = configUi.ShowSettings(settings).IsOk();
+                    px::Input configInput;
+                    if (ready) {
+                        const std::string configBackground =
+                            "Assets/Original/pc/ja/conf/bg0" +
+                            std::to_string(page) + ".png";
+                        renderer.PreloadImage(configBackground);
+                        for (int attempt = 0; attempt < 100 &&
+                             !renderer.ImageReady(configBackground); ++attempt) {
+                            assets.BeginFrame();
+                            SDL_Delay(10);
+                        }
+                        ready = renderer.ImageReady(configBackground);
+                    }
+                    if (ready) {
+                        configInput.InjectFrame(page == 1 ? 930.0f : 1080.0f,
+                                                page == 1 ? 220.0f : 222.0f,
+                                                page == 3);
+                        (void)configUi.Update(configInput, 1920, 1080);
+                        ClearFrame(device.Renderer());
+                        configUi.Render(renderer);
+                        const auto name = page == 1
+                            ? "sakura-config-radio" : "sakura-config-slider";
+                        if (CaptureFrame(device.Renderer(), name).hash == 0)
+                            ready = false;
+                    }
+                    if (!ready) {
+                        std::cerr << "FAIL: external Config visual frame page="
+                                  << page << '\n';
+                        result = 1;
+                    }
+                }
+                renderer.SetLogicalSize(1280, 720);
+            }
+        }
         {
             px::ui::GalgameUI slotsUi;
             slotsUi.SetTextRenderer(&renderer);
