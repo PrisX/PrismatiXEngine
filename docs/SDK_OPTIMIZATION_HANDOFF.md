@@ -8,6 +8,8 @@
 
 - **SDK 匯入輸出介面。** `buildImportedStorySource` 接受專用 decoder 翻譯後的逐行 Story 與穩定 ID，驗證每個可執行行都有 ID，產生 `.pxstory`／`.pxids.json`。`assembleImportedStoryProject` 將多場景、多語來源組成 index 和純資料檔案集合，拒絕缺語系、不同語系的 ID／操作種類不一致、同 namespace 重複 ID、路徑大小寫碰撞與不安全路徑；輸出還須由 `compileStoryProject`／`compileProject` 做語意檢查。SDK 195/195 測試通過。Senren 的 SCN／PSB 解碼器尚未接入此介面，SDK 也沒有通用 KAG 輸入解碼。詳見 `docs/importing-stories.md`。
 
+- **JavaScript `say` 的實作邊界。** `runtime-sdk` 現僅有 `session.dialogue()`／`observeDialogue()` 唯讀模型與 `advance()`；原生 `VM::HandleSay` 才會同時處理 seen key（document／source／operation）、speaker、文字、語音、backlog。若要作者端 JS `say` 正式可存讀，需在 `ScriptHostServices`、Player 與兩種 Preview host 接同一套持久錨點與等待／回復語意；只加 TypeScript facade 會讓文字能顯示卻破壞已讀或存檔，故尚未宣稱完成。
+
 - **大型 Story 的稀疏存檔錨點遷移。** `.pxsave-migration` rev 2 新增 `anchor.policy: "map-or-preserve"`：只改明列的舊錨點，其他保持原 ID；舊 `map` 未命中即拒絕的規則不變。Native 改成先找完所有 mapping 再套用，避免 A→B、B→C 在同一份文件內意外連鎖；重複命中拒絕。Authoring schema、TS 型別、文件及 native 4 MiB 長度限制已對齊。SDK 188/188、SaveLoad native integration 1/1、contract generation check 通過。Player 載入時會驗目標 Runtime 文件與 source／operation pair；仍需用真實舊存檔驗改過的劇情位置及狀態語意，這一輪未重封 Player。舊版 Player 不認新 policy；單純 patch.pdx 無法替換 Player，已發行舊版需要新版基底發行包。詳見 `docs/save-migrations.md`。
 
 - **舊／新 Runtime IR 錨點差異可在 Authoring 階段審核。** `planSaveAnchorPolicy(previousRuntimeIr, nextRuntimeIr, replacements)` 用完整 document／source／operation 身分比對，缺掉的舊錨點必須由作者指定 replacement；會拒絕不存在的目標、重複替換與過大 mapping，成功後輸出可直接放進 migration 文件的 `preserve` 或 `map-or-preserve` anchor policy。這是純資料 API，不會猜劇情對應；每個支援語系和真實舊存檔仍須逐一驗收。SDK 190/190 通過。
