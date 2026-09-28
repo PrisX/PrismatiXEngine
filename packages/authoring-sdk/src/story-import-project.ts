@@ -1,7 +1,8 @@
 import {canonicalJson} from "./canonical-json.js";
 import {contractDocumentByteLimit, validateDocument} from "./contracts.js";
 import {isSafeResourcePath} from "./resources.js";
-import {buildImportedStorySource, type ImportedStoryLine} from "./story-import.js";
+import {buildImportedStorySource, type ImportedStoryLine,
+  type ImportedStorySourceOptions} from "./story-import.js";
 import type {StoryIdentityMap} from "./story-external-identity.js";
 import type {StoryIndexDocument} from "./story-project.js";
 import type {AuthoringDiagnostic, Result} from "./types.js";
@@ -15,6 +16,7 @@ export interface ImportedStoryScene {
   readonly sources: Readonly<Record<string, {
     readonly path: string;
     readonly lines: readonly ImportedStoryLine[];
+    readonly options?: ImportedStorySourceOptions;
   }>>;
 }
 
@@ -106,7 +108,8 @@ export function assembleImportedStoryProject(
           indexPath, `${scene.id}: ${locale}`));
         continue;
       }
-      const built = buildImportedStorySource(source.path, source.lines);
+      const built = buildImportedStorySource(source.path, source.lines,
+        source.options);
       if (!built.valid || built.value === undefined) {
         diagnostics.push(...built.diagnostics);
         continue;

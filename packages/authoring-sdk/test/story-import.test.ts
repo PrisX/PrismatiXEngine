@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {buildImportedStorySource, compileStoryProject, parseStory,
+import {buildImportedStorySource, compileStoryProject, externalizeStoryIds, parseStory,
   serializeStoryCommand} from "../src/index.js";
 
 test("imported Story command round-trips quoted and structured values", () => {
@@ -99,4 +99,34 @@ test("imported speaker and choice-wait lines do not need execution IDs", () => {
   assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
   assert.deepEqual(result.value?.identityMap.entries.map((entry) => entry.id),
     ["start", "greeting", "end"]);
+});
+
+test("legacy imported labels retain their preexisting generated source IDs", () => {
+  const path = "Story/zh-TW/legacy.pxstory";
+  const documentId = "legacy-game:main";
+  const lines = [
+    {source: "; original section"},
+    {source: "*start"},
+    {source: "Opening.", id: "original.line"},
+    {source: "[end]", id: "original.end"},
+  ];
+  const previous = externalizeStoryIds(
+    "; original section\n*start\n[id original.line]\nOpening.\n[id original.end]\n[end]\n",
+    {path, documentId});
+  const imported = buildImportedStorySource(path, lines,
+    {legacyLabelSourceIds: {documentId}});
+  assert.equal(imported.valid, true, JSON.stringify(imported.diagnostics));
+  assert.equal(imported.value?.source, previous.source);
+  assert.deepEqual(imported.value?.identityMap, previous.map);
+  assert.match(imported.value!.identityMap.entries[0]!.sourceId!,
+    /^story-[0-9a-f]{16}$/u);
+  assert.equal(buildImportedStorySource(path, lines).diagnostics[0]?.code,
+    "PXIMPORT1009");
+  assert.equal(buildImportedStorySource(path, lines,
+    {legacyLabelSourceIds: {documentId: ""}}).diagnostics[0]?.code,
+    "PXIMPORT1021");
+  assert.equal(buildImportedStorySource(path, [
+    {source: "*start"}, {source: "Opening."},
+  ], {legacyLabelSourceIds: {documentId}}).diagnostics[0]?.code,
+  "PXIMPORT1009");
 });

@@ -48,6 +48,18 @@ resources, labels, and cross-scene jumps. The assembler does not infer how
 two versions of a story should map old saves; use the [save migration
 tools](save-migrations.md) for that review.
 
+For an existing importer whose labels previously received generated
+`sourceId` values, `buildImportedStorySource(path, lines,
+{legacyLabelSourceIds: {documentId}})` can recreate that ID seed while still
+requiring explicit IDs on dialogue and commands. Use the exact `documentId`
+from the old import. When a sidecar already exists, reconcile the new source
+against it with `synchronizeAlignedStoryIdentityMap` or
+`synchronizeStoryIdentityMap` before publishing: prior edits may have preserved
+label IDs that a fresh generation would change. New importers should assign
+explicit IDs to labels too.
+
 The Senren port's SCN/PSB decoder and original-command translation remain
-project-specific. They can adopt this output interface without making the
-SDK claim general KAG or PSB input support.
+project-specific. Its SCN adapter now uses `buildImportedStorySource` per
+scene and keeps the existing sidecar reconciliation. Its project index and
+media resolution still use port-specific code. This does not make the SDK a
+general KAG or PSB input decoder.

@@ -2,9 +2,11 @@
 
 更新：2026-09-28。此文件以當前兩個本機 repo 和實際測試為準；不是「全部完成」聲明。較完整的逐項發現與歷史量測在 `C:\Users\owenl\C\Projects\SenrenBankaPSX\docs\SDK_FEEDBACK.md`。該檔按時間追加，早段的「尚未實作」有些已被後段取代，閱讀時以最新段落與程式碼為準。
 
-**目前優先順序（使用者 2026-09-28 指示）**：先完善可重用的 SDK Authoring 功能；封裝／大型 build 效能及《千戀＊萬花》1:1 移植暫不列為此階段完成條件。近期 Authoring 已補主要跨檔來源定位、Story 錨點刪除保護、重複與未知參數拒絕、匯入時不猜測同名素材的純資料 resolver、指令序列化／多場景輸出組裝介面、大型 Story 可用的稀疏存檔錨點映射規則，以及非 Player host 的 typed Action 宣告與 native handler 驗證。仍須分別決定並驗收：(1) 真實舊存檔與新版劇本的逐位置遷移；`--accept-removals` 仍只是人工確認；(2) 讓 Senren 私有 SCN／PSB adapter 接上 SDK 匯入輸出介面，原作格式解碼仍留專案；(3) JavaScript `say` 作者 API 與其存檔／已讀身分，現有 Story `@alias` 已可多語但 JS session 僅唯讀 dialogue。非 Player host 的 UI 值、formatter、晚更新接線範例已補在 `docs/placed-item-authoring.md`。動態立繪 dress／pose／face 若要成為單一 descriptor 的正式 API，需另定存檔與依賴語意；不要把原作逐幀還原混在此項。
+**目前優先順序（使用者 2026-09-28 指示）**：先完善可重用的 SDK Authoring 功能；封裝／大型 build 效能及《千戀＊萬花》1:1 移植暫不列為此階段完成條件。近期 Authoring 已補主要跨檔來源定位、Story 錨點刪除保護、重複與未知參數拒絕、匯入時不猜測同名素材的純資料 resolver、指令序列化／多場景輸出組裝介面、大型 Story 可用的稀疏存檔錨點映射規則，以及非 Player host 的 typed Action 宣告與 native handler 驗證。仍須分別決定並驗收：(1) 真實舊存檔與新版劇本的逐位置遷移；`--accept-removals` 仍只是人工確認；(2) JavaScript `say` 作者 API 與其存檔／已讀身分，現有 Story `@alias` 已可多語但 JS session 僅唯讀 dialogue；(3) 私有匯入器的索引／素材路徑邏輯是否採用通用 SDK 介面。SCN adapter 已接 SDK 單場景 Story 輸出，但原作格式解碼仍留專案。非 Player host 的 UI 值、formatter、晚更新接線範例已補在 `docs/placed-item-authoring.md`。動態立繪 dress／pose／face 若要成為單一 descriptor 的正式 API，需另定存檔與依賴語意；不要把原作逐幀還原混在此項。
 
 ### 2026-09-27—28 後續進度
+
+- **真實 SCN adapter 接上 SDK Story 輸出。** `buildImportedStorySource` 新增明示的 `legacyLabelSourceIds.documentId` 相容模式，僅允許舊 label 沿用生成 `sourceId`，其他可執行行仍須有穩定 ID。Senren `Scripts/import-senren.mjs` 以此 API 產生單場景 `.pxstory`／sidecar，繼續以既有 map 同步器保留已經編輯過的錨點；四語第一個已提交場景做唯讀相容驗證，Story 與既有 sidecar 均吻合。SDK 198/198、Senren 25 項專案測試加 CI8 像素回歸、四語 368 scene／31,339 resource `validate --runtime` 通過；尚未重跑完整私有解碼器。SDK 不解 SCN／PSB，也未接管此案的媒體歧義處理或 index 輸出。
 
 - **非 Player host 的 typed Action contract。** `settings["authoring.actionContract"]` 宣告 id、參數型別／必填及四項 safety；project schema 與 SDK 在發佈前檢查 JSON UI／component Action 引數、extension ID 衝突。`GalgameUI::RegisterHostAction` 註冊原生精確 handler，`ValidateActionContract` 在掛 UI 前核對簽名與安全屬性，銷毀時清理 global catalog 的 host descriptor。Stock Player 不會替此宣告生成 handler。SDK 197/197、native UiRuntimeAdapter 1/1、contract check、docs build 通過。使用範例見 `docs/host-action-authoring.md`。
 

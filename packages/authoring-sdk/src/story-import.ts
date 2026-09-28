@@ -46,6 +46,13 @@ export interface ImportedStoryLine {
   readonly id?: string;
 }
 
+export interface ImportedStorySourceOptions {
+  /** Recreate the legacy generated-ID seed for labels without explicit IDs.
+   * Keep synchronizing against an existing sidecar to retain IDs changed by
+   * earlier edits. Dialogue and commands still need explicit IDs. */
+  readonly legacyLabelSourceIds?: {readonly documentId: string};
+}
+
 export interface ImportedStorySource {
   readonly source: string;
   readonly identityMap: StoryIdentityMap;
@@ -61,7 +68,8 @@ function executable(node: StoryNode): boolean {
  * bundled here; callers can stream/decode their own files one scene at a time.
  * The output should be written to `path` and `${path}.pxids.json` together. */
 export function buildImportedStorySource(path: string,
-  lines: readonly ImportedStoryLine[]): Result<ImportedStorySource> {
+  lines: readonly ImportedStoryLine[],
+  options: ImportedStorySourceOptions = {}): Result<ImportedStorySource> {
   if (typeof path !== "string" || !isSafeResourcePath(path) || !path.endsWith(".pxstory") ||
       path.includes(":") || /[\u0000-\u001f\u007f]/u.test(path) ||
       path.split("/").some((part) => part.length === 0 || part === "."))
@@ -70,6 +78,12 @@ export function buildImportedStorySource(path: string,
   if (!Array.isArray(lines)) return {valid: false, diagnostics: [{
     severity: "error", code: "PXIMPORT1006",
     message: "Imported Story lines must be an array", path}]};
+  const legacyDocumentId = options.legacyLabelSourceIds?.documentId;
+  if (options.legacyLabelSourceIds !== undefined &&
+      (typeof legacyDocumentId !== "string" || legacyDocumentId.length === 0 ||
+       legacyDocumentId.length > 256))
+    return {valid: false, diagnostics: [{severity: "error", code: "PXIMPORT1021",
+      message: "Legacy label source IDs require a stable document ID", path}]};
   for (const [index, line] of lines.entries()) {
     if (typeof line?.source !== "string" || /[\r\n\u0000]/u.test(line.source) ||
         line.source.trim() === storyIdentityMapMarker ||
@@ -97,7 +111,9 @@ export function buildImportedStorySource(path: string,
   }
   for (const [index, line] of lines.entries()) {
     const nodes = byLine.get(index + 1) ?? [];
-    if (nodes.length !== (line.id === undefined ? 0 : 1)) return {valid: false,
+    if (nodes.length !== (line.id === undefined ? 0 : 1) &&
+        !(legacyDocumentId !== undefined && line.id === undefined &&
+          nodes.length === 1 && nodes[0]?.kind === "label")) return {valid: false,
       diagnostics: [{severity: "error", code: "PXIMPORT1009",
         message: "Each executable imported Story line needs exactly one stable ID", path,
         details: `line ${index + 1}`,
@@ -105,7 +121,8 @@ export function buildImportedStorySource(path: string,
   }
   const inline = `${lines.flatMap((line) => line.id === undefined
     ? [line.source] : [`[id ${line.id}]`, line.source]).join("\n")}\n`;
-  const converted = externalizeStoryIds(inline, {path});
+  const converted = externalizeStoryIds(inline, {path,
+    ...(legacyDocumentId === undefined ? {} : {documentId: legacyDocumentId})});
   if (!converted.valid || converted.source === undefined || converted.map === undefined)
     return {valid: false, diagnostics: converted.diagnostics};
   if (Buffer.byteLength(converted.source, "utf8") > 16 * 1024 * 1024)
