@@ -682,16 +682,16 @@ void VM::ExecuteSimple(const Command& cmd) {
                 file = name + "_" + fallbackExpression + ".png";
             }
         }
-        // Omitted placement keeps a visible actor where it stands, so an
-        // expression change does not snap the character back to center.
-        const auto current = m_stage.FindCharacterPlacement(name);
+        // A show without a position keeps a visible actor where it stands,
+        // so an expression change does not snap it back to center. An
+        // explicit position is a fresh placement with default offsets.
+        const bool placed = cmd.Has("slot") || cmd.Has("pos");
+        const auto current = placed ? std::nullopt : m_stage.FindCharacterPlacement(name);
         const Stage::CharacterPlacement keep = current.value_or(Stage::CharacterPlacement{});
-        const int slot = cmd.Has("slot") || cmd.Has("pos")
-            ? ParseInt(cmd.Get("slot", cmd.Get("pos", "2")), 2) : keep.slot;
-        const float ox = ParseFloat(cmd.Get("x"), current ? keep.offsetX : 0.0f);
-        const float oy = ParseFloat(cmd.Get("y"), current ? keep.offsetY : 0.0f);
-        const float scale = ParseFloat(cmd.Get("scale", cmd.Get("zoom")),
-                                       current ? keep.scale : 1.0f);
+        const int slot = placed ? ParseInt(cmd.Get("slot", cmd.Get("pos", "2")), 2) : keep.slot;
+        const float ox = ParseFloat(cmd.Get("x"), keep.offsetX);
+        const float oy = ParseFloat(cmd.Get("y"), keep.offsetY);
+        const float scale = ParseFloat(cmd.Get("scale", cmd.Get("zoom")), keep.scale);
         const auto imagePath=Resolve(m_config.charDir, file);
         if(cmd.Get("transitionMode")=="auto")
             m_stage.SetCharacterAuto(name,imagePath,slot,ox,oy,scale);

@@ -558,7 +558,7 @@ int main() {
     assert(clearStage.BackgroundPath() == "Assets/background.webp");
 
     // An expression-only show keeps a visible actor's placement; an explicit
-    // position still moves it.
+    // position is a fresh placement with default offsets and scale.
     clearStage.SetCharacter("hero", "Assets/hero.webp", 1, false, 12.0f, -4.0f, 0.8f);
     px::sdk::RuntimeIrDocument placementDocument;
     placementDocument.documentId = "placement-runtime";
@@ -576,7 +576,7 @@ int main() {
     assert(clearVm.LoadCompiledProgram(px::CompileRuntimeIr(placementDocument),
                                        "memory://placement-runtime-moved"));
     const auto moved = clearStage.FindCharacterPlacement("hero");
-    assert(moved && moved->slot == 3 && moved->scale == 0.8f);
+    assert(moved && moved->slot == 3 && moved->offsetX == 0.0f && moved->scale == 1.0f);
     clearStage.ClearCharacters(false);
 
     // Relative actions return to rest, loop until stopped, and survive saves.
