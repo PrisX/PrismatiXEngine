@@ -38,6 +38,19 @@ sdk::UiNode Node(std::string id, std::optional<std::string> parent,
     node.accessibilityRole = std::move(role);
     node.accessibilityLabel = std::move(label);
     node.accessibilityFocusOrder = static_cast<std::int32_t>(order);
+    if (node.runtimeType == "Panel") {
+        node.appearance.backgroundColor = node.name == "ADVPanel" ||
+            node.name == "NVLPanel" ? "#17263AD9" : "#101A2BFA";
+    } else if (node.runtimeType == "Button") {
+        node.appearance.backgroundColor = "#284665FF";
+        node.appearance.hoverBackgroundColor = "#3B668AFF";
+        node.appearance.textColor = "#FFF8EBFF";
+        node.appearance.focusColor = "#E7C88CFF";
+    } else if (node.runtimeType == "Label" ||
+               node.runtimeType == "RichTextLabel") {
+        node.appearance.textColor = node.name == "GameTitle"
+            ? "#EBD8ABFF" : "#F0F4F9FF";
+    }
     return node;
 }
 
@@ -175,6 +188,11 @@ sdk::UiDocument Collection(const std::string& documentId,
     nodes.push_back(Node(listId, rootId, 0, kind, std::move(runtimeType),
                          std::move(listName), collectionLayout,
                          "list", name + " entries"));
+    auto heading = Label(rootId.substr(0, rootId.size() - 1) + "4", rootId, 2,
+                         "Label", "CollectionHeading", Layout(54, 18, 870, 45),
+                         name, "heading");
+    heading.runtimeProperties.emplace("fontSize", std::int64_t{31});
+    nodes.push_back(std::move(heading));
     nodes.push_back(Button(rootId.substr(0, rootId.size() - 1) + "3", rootId,
                            1, "Close", Layout(1040, 642, 180, 52), "返回",
                            "overlay.close"));
@@ -188,6 +206,11 @@ sdk::UiDocument Settings() {
     nodes.push_back(Node(root, std::nullopt, 0, sdk::UiNodeKind::Group,
                          "Panel", "SettingsRoot", Layout(0, 0, 1280, 720, true),
                          "dialog", "Settings"));
+    auto heading = Label("76000000-0000-4000-8000-000000000032", root, 0,
+                         "Label", "SettingsHeading", Layout(80, 25, 600, 48),
+                         "設定 / Settings", "heading");
+    heading.runtimeProperties.emplace("fontSize", std::int64_t{32});
+    nodes.push_back(std::move(heading));
     const std::pair<const char*, const char*> sliders[]{
         {"BGM", "BGM volume"}, {"SE", "Sound effect volume"},
         {"Voice", "Voice volume"}, {"TextSpeed", "Text speed"},
@@ -200,21 +223,32 @@ sdk::UiDocument Settings() {
             sliders[index].first, Layout(250, 90.0f + index * 76.0f, 760, 40),
             "slider", sliders[index].second);
         nodes.push_back(std::move(node));
+        auto caption = Label(
+            "76000000-0000-4000-8000-0000000000" +
+                std::to_string(40 + index), root, 40 + index,
+            "Label", std::string(sliders[index].first) + "Label",
+            Layout(76, 90.0f + index * 76.0f, 165, 40),
+            sliders[index].second);
+        caption.runtimeProperties.emplace("fontSize", std::int64_t{19});
+        nodes.push_back(std::move(caption));
     }
     const std::pair<const char*, const char*> checks[]{
         {"SkipRead", "Skip read text only"}, {"Fullscreen", "Fullscreen"},
         {"HighContrast", "High contrast"},
         {"ReducedMotion", "Reduced motion"},
         {"SelfVoicing", "Self voicing"}};
-    for (std::uint32_t index = 0; index < std::size(checks); ++index)
-        nodes.push_back(Node(
+    for (std::uint32_t index = 0; index < std::size(checks); ++index) {
+        auto check = Node(
             "76000000-0000-4000-8000-0000000000" +
                 std::to_string(20 + index),
             root, 10 + index, sdk::UiNodeKind::Button, "CheckBox",
             checks[index].first,
             Layout(220.0f + (index % 2) * 430.0f,
                    480.0f + (index / 2) * 58.0f, 390, 48),
-            "checkbox", checks[index].second));
+            "checkbox", checks[index].second);
+        check.text = checks[index].second;
+        nodes.push_back(std::move(check));
+    }
     nodes.push_back(Node("76000000-0000-4000-8000-000000000030", root, 30,
                          sdk::UiNodeKind::Control, "OptionButton", "Language",
                          Layout(850, 480, 260, 48), "combobox", "Language"));
