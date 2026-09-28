@@ -170,6 +170,7 @@ CommandRegistry MakeBuiltins() {
     add(Descriptor("move","Stage",registry.Find("char_move")->parameters,CommandWaitPolicy::Async));
     add(Descriptor("anim","Animation",{Param("target",VariantType::String,true),Param("x",VariantType::Number),Param("y",VariantType::Number),Param("scale",VariantType::Number),Param("alpha",VariantType::Number),Param("duration",VariantType::Integer),Param("ease",VariantType::String),Param("wait",VariantType::Bool)},CommandWaitPolicy::Async));
     add(Descriptor("tween","Animation",registry.Find("anim")->parameters,CommandWaitPolicy::Async));
+    add(Descriptor("camera","Animation",{Param("x",VariantType::Number),Param("y",VariantType::Number),Param("zoom",VariantType::Number),Param("duration",VariantType::Integer),Param("ease",VariantType::String),Param("wait",VariantType::Bool)},CommandWaitPolicy::Async));
     add(Descriptor("shake","Animation",{Param("ms",VariantType::Integer),Param("amp",VariantType::Number)}));
     add(Descriptor("quake","Animation",{Param("time",VariantType::Integer),Param("power",VariantType::Number)}));
     add(Descriptor("wait","Flow",{Param("ms",VariantType::Integer,true)},CommandWaitPolicy::Timer));

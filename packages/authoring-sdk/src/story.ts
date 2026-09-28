@@ -50,7 +50,8 @@ const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
   ui: ["route", "operation"],
   hud: ["visible"],
   unlock: ["kind", "id"],
-  effect: ["value"], shake: ["duration", "amplitude"], camera: ["value"],
+  effect: ["value"], shake: ["duration", "amplitude"],
+  camera: ["value", "x", "y", "zoom", "duration", "ease", "wait"],
   else: [], endif: [],
 };
 
@@ -904,9 +905,33 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
       }
       case "camera": {
         const value = named("value") ?? positional(0);
-        if (value === undefined || value.length === 0)
-          diagnostics.push(error("PXSTORY1127", "camera requires a preset", node.span));
-        else emit(node, "camera", {value});
+        const x = named("x");
+        const y = named("y");
+        const zoom = named("zoom");
+        const duration = named("duration");
+        const ease = named("ease");
+        const wait = named("wait");
+        const hasCoordinates = x !== undefined || y !== undefined || zoom !== undefined;
+        if (value !== undefined && hasCoordinates)
+          diagnostics.push(error("PXSTORY1220", "camera preset cannot be combined with x, y, or zoom", node.span));
+        else if (value !== undefined && value.length > 0) emit(node, "camera", {value});
+        else if (!hasCoordinates)
+          diagnostics.push(error("PXSTORY1127", "camera requires a preset or x, y, or zoom", node.span));
+        else if ([x, y].some((coordinate) => coordinate !== undefined &&
+          (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/u.test(coordinate) || !Number.isFinite(Number(coordinate)))) ||
+          (zoom !== undefined && (!positiveNumberPattern.test(zoom) || Number(zoom) <= 0 || !Number.isFinite(Number(zoom)))))
+          diagnostics.push(error("PXSTORY1221", "camera x and y must be finite numbers; zoom must be positive", node.span));
+        else if (duration !== undefined && !validAudioDuration(duration))
+          diagnostics.push(error("PXSTORY1222", "camera duration must be a non-negative number of ms or s", node.span));
+        else if (wait !== undefined && wait !== "true" && wait !== "false")
+          diagnostics.push(error("PXSTORY1223", "camera wait must be true or false", node.span));
+        else emit(node, "camera", {
+          ...(x === undefined ? {} : {x}), ...(y === undefined ? {} : {y}),
+          ...(zoom === undefined ? {} : {zoom}),
+          ...(duration === undefined ? {} : {duration}),
+          ...(ease === undefined ? {} : {ease}),
+          ...(wait === undefined ? {} : {wait}),
+        });
         break;
       }
       default: {
@@ -1002,7 +1027,10 @@ export function storyCommandCompletions(extensions: readonly ExtensionCommand[] 
     shake: [{name:"duration", required:true}, {name:"amplitude", required:false}],
     unlock: [{name:"kind", required:true}, {name:"id", required:true}],
     effect: [{name:"value", required:true}],
-    camera: [{name:"value", required:true}],
+    camera: [{name:"value", required:false}, {name:"x", required:false},
+      {name:"y", required:false}, {name:"zoom", required:false},
+      {name:"duration", required:false}, {name:"ease", required:false},
+      {name:"wait", required:false, values:[true, false]}],
   };
   return [
     ...builtins.map((id) => ({id, parameters: builtinParameters[id] ??

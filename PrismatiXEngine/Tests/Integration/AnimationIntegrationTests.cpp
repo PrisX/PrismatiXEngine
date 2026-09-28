@@ -330,6 +330,34 @@ void TestStageMotionStoryPlaybackAndRestore() {
     Check(runtime.CaptureState().vm.state == px::vn::VMState::Finished &&
               !runtime.Stage().MotionPlaying(),
           "restored motion completion resumes and finishes Story");
+
+    px::RuntimeSession cameraRuntime({vfs, audio, renderer, assets});
+    const nlohmann::json cameraIr{
+        {"format", "PrismatiXRuntimeIR"}, {"schemaRevision", 2},
+        {"documentId", "camera-story"}, {"committedRevision", 0},
+        {"operations", nlohmann::json::array({
+            {{"operationId", "pan"}, {"sourceId", "pan"},
+             {"kind", "camera"}, {"text", ""},
+             {"arguments", {{"x", "120"}, {"y", "-30"}, {"zoom", "1.2"},
+                            {"duration", "1s"}, {"ease", "linear"}}}},
+            {{"operationId", "end"}, {"sourceId", "end"},
+             {"kind", "endStory"}, {"text", ""},
+             {"arguments", nlohmann::json::object()}}
+        })}};
+    Check(cameraRuntime.StartRuntimeIrText(cameraIr.dump(), "camera-story.pxir"),
+          "Runtime IR starts an inline Story camera command");
+    cameraRuntime.Update(500, 0.5f);
+    const auto halfway = cameraRuntime.CaptureState();
+    Check(std::abs(halfway.stage.cameraX - 60.0f) < .01f &&
+              halfway.vm.state == px::vn::VMState::WaitingTimer,
+          "inline camera pans while Story waits by default");
+    cameraRuntime.Update(1000, 0.5f);
+    const auto completed = cameraRuntime.CaptureState();
+    Check(std::abs(completed.stage.cameraX - 120.0f) < .01f &&
+              std::abs(completed.stage.cameraY + 30.0f) < .01f &&
+              std::abs(completed.stage.cameraZoom - 1.2f) < .01f &&
+              completed.vm.state == px::vn::VMState::Finished,
+          "inline camera reaches its target and releases Story");
 }
 
 void TestCanonicalTimelineRuntime() {
@@ -438,6 +466,39 @@ void TestCanonicalTimelineRuntime() {
     }
     Check(actorPresetCount == 11,
           "actor conformance must cover the complete published preset catalog");
+    runtime.Stage().ClearAll();
+
+    px::vn::Stage::TweenSpec cameraPan;
+    cameraPan.hasX = true;
+    cameraPan.x = 120.0f;
+    cameraPan.hasY = true;
+    cameraPan.y = -30.0f;
+    cameraPan.hasScale = true;
+    cameraPan.scale = 1.2f;
+    cameraPan.durationMs = 1000;
+    cameraPan.ease = "linear";
+    Check(runtime.Stage().Animate("$camera", cameraPan),
+          "camera pan and zoom should start without a motion resource");
+    runtime.Stage().Update(0.5f);
+    const auto cameraMidpoint = runtime.Stage().CaptureState();
+    Check(std::abs(cameraMidpoint.cameraX - 60.0f) < .01f &&
+              std::abs(cameraMidpoint.cameraY + 15.0f) < .01f &&
+              std::abs(cameraMidpoint.cameraZoom - 1.1f) < .01f &&
+              cameraMidpoint.tweens.size() == 1,
+          "camera tween should interpolate all authored channels");
+    runtime.Stage().ClearAll();
+    Check(runtime.Stage().RestoreState(cameraMidpoint),
+          "mid-pan camera and tween should restore together");
+    runtime.Stage().Update(0.5f);
+    const auto cameraEndpoint = runtime.Stage().CaptureState();
+    Check(std::abs(cameraEndpoint.cameraX - 120.0f) < .01f &&
+              std::abs(cameraEndpoint.cameraY + 30.0f) < .01f &&
+              std::abs(cameraEndpoint.cameraZoom - 1.2f) < .01f &&
+              cameraEndpoint.tweens.empty(),
+          "restored camera pan should reach its original target");
+    Check(!runtime.Stage().Animate("$camera", px::vn::Stage::TweenSpec{
+              .hasScale = true, .scale = 0.0f}),
+          "camera zoom must stay positive");
     runtime.Stage().ClearAll();
 
     double applied = -1.0;

@@ -1,5 +1,18 @@
 # Authoring layered motion
 
+For a simple camera pan or zoom, write it directly in Story:
+
+```text
+[camera x=120 y=-30 zoom=1.2 duration=800ms ease=outCubic]
+[camera x=0 y=0 zoom=1 duration=600ms]
+```
+
+Coordinates and zoom are absolute; omitted values retain their current value.
+The default duration is 600 ms, and `wait=true` is the default so the next
+Story operation starts after the move. Use `duration=0` to snap immediately or
+`wait=false` to let the next operation run while the camera moves. A `.pxmotion`
+resource is useful for composed, multi-track motion.
+
 `.pxmotion` is a UTF-8 JSON resource, not a TypeScript program. It contains a
 logical canvas, image layers, and keyed tracks. TypeScript authors can use
 `defineMotion` or `serializeMotion` from `@prismatix/authoring-sdk` to create and

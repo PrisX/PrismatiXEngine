@@ -649,12 +649,31 @@ bool Stage::Animate(const std::string& target, const TweenSpec& spec) {
     if (target.empty()) {
         return false;
     }
+    if (target == "$camera" && ((spec.hasScale &&
+        (!std::isfinite(spec.scale) || spec.scale <= 0.0f)) ||
+        (spec.hasX && !std::isfinite(spec.x)) ||
+        (spec.hasY && !std::isfinite(spec.y))))
+        return false;
     Tween tween;
     tween.name = target;
     tween.spec = spec;
     tween.duration = std::max(0.001f, static_cast<float>(spec.durationMs) / 1000.0f);
 
-    if (auto it = m_actors.find(target); it != m_actors.end()) {
+    if (target == "$camera") {
+        tween.isLayer = false;
+        tween.fromX = m_cameraX;
+        tween.fromY = m_cameraY;
+        tween.fromScale = m_cameraZoom;
+        if (spec.durationMs <= 0) {
+            if (spec.hasX) m_cameraX = spec.x;
+            if (spec.hasY) m_cameraY = spec.y;
+            if (spec.hasScale) m_cameraZoom = spec.scale;
+            std::erase_if(m_tweens, [](const Tween& active) {
+                return active.name == "$camera";
+            });
+            return true;
+        }
+    } else if (auto it = m_actors.find(target); it != m_actors.end()) {
         Actor& actor = it->second;
         tween.isLayer = false;
         tween.fromX = actor.offsetX;
@@ -788,7 +807,11 @@ void Stage::UpdateTweens(float dt) {
         const TweenSpec& spec = tween.spec;
 
         bool alive = true;
-        if (!tween.isLayer) {
+        if (tween.name == "$camera") {
+            if (spec.hasX) m_cameraX = support::Lerp(tween.fromX, spec.x, t);
+            if (spec.hasY) m_cameraY = support::Lerp(tween.fromY, spec.y, t);
+            if (spec.hasScale) m_cameraZoom = support::Lerp(tween.fromScale, spec.scale, t);
+        } else if (!tween.isLayer) {
             auto ait = m_actors.find(tween.name);
             if (ait == m_actors.end()) {
                 alive = false;  // actor was cleared mid-tween
@@ -975,6 +998,9 @@ bool Stage::SetCamera(const float x, const float y, const float zoom) {
     m_cameraX = x;
     m_cameraY = y;
     m_cameraZoom = zoom;
+    std::erase_if(m_tweens, [](const Tween& active) {
+        return active.name == "$camera";
+    });
     return true;
 }
 

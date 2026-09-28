@@ -569,6 +569,26 @@ test("effect and camera commands require presets and lower to explicit RuntimeIR
   assert.ok(missing.diagnostics.some((item) => item.code === "PXSTORY1127"));
 });
 
+test("camera pans and zooms inline without a motion resource", () => {
+  const compiled = compileStory(parseStory(
+    "[camera x=120 y=-30 zoom=1.2 duration=800ms ease=inOutQuad wait=false]\n" +
+    "[camera x=0 duration=1.5s]\n" +
+    "[camera zoom=1 duration=0]\n",
+    "Story/camera-pan.pxstory"), {documentId:"camera-pan"});
+  assert.equal(compiled.valid, true, JSON.stringify(compiled.diagnostics));
+  assert.deepEqual(compiled.runtimeIr?.operations.map((operation) => operation.arguments), [
+    {x:"120", y:"-30", zoom:"1.2", duration:"800ms", ease:"inOutQuad", wait:"false"},
+    {x:"0", duration:"1.5s"},
+    {zoom:"1", duration:"0"},
+  ]);
+  const invalid = compileStory(parseStory(
+    "[camera x=bad]\n[camera zoom=0]\n[camera x=10 duration=-1]\n[camera x=10 wait=maybe]\n",
+    "Story/invalid-camera.pxstory"), {documentId:"invalid-camera"});
+  assert.equal(invalid.valid, false);
+  for (const code of ["PXSTORY1221", "PXSTORY1222", "PXSTORY1223"])
+    assert.ok(invalid.diagnostics.some((diagnostic) => diagnostic.code === code));
+});
+
 test("Story extension commands accept structured JSON literals and preserve typed payloads", () => {
   const parsed = parseStory(
     `[stage.compose offset=[100, 200] bounds=[0,0,1280,720] tint=[255,128,64,255] tags=["night", "rain"] metadata={"weather":"rain", "strength":0.8} asset={"path":"Assets/CG/rain.webp"}]\n`,

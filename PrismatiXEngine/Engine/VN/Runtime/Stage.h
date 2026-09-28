@@ -94,9 +94,9 @@ public:
     [[nodiscard]] std::vector<ParticleSample> SampleParticles(
         std::string_view name, int width, int height) const;
 
-    // Tweened pose animation for an actor or a layer (matched by name; actors
-    // take precedence). Only the properties with has* set are animated.
-    // For actors x/y animate the slot-relative offset.
+    // Tweened pose animation for an actor, a layer, or $camera. Only the
+    // properties with has* set are animated. For actors x/y animate the
+    // slot-relative offset; for $camera scale means zoom.
     struct TweenSpec {
         bool hasX = false;
         float x = 0.0f;

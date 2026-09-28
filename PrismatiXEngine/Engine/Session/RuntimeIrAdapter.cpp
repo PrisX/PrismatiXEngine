@@ -628,11 +628,15 @@ vn::Program CompileRuntimeIr(const sdk::RuntimeIrDocument& document) {
                 }
             }
         } else if (operation.kind == "camera") {
-            // Camera presets are implemented by the same ordered Stage effect
-            // timeline as [effect].  Keeping a second VM command here used to
-            // compile successfully and then fall through as an unhandled no-op.
-            command.type = "screen_effect";
-            Add(command, "preset", Argument(operation, "value"));
+            if (!Argument(operation, "value").empty()) {
+                command.type = "screen_effect";
+                Add(command, "preset", Argument(operation, "value"));
+            } else {
+                command.type = "camera";
+                for (const char* name : {"x", "y", "zoom", "ease", "wait"})
+                    Add(command, name, Argument(operation, name));
+                Add(command, "duration", DurationMilliseconds(Argument(operation, "duration")));
+            }
         } else {
             adapterErrors.push_back(
                 "unknown or structural Runtime operation kind '" +

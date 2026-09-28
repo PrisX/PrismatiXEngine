@@ -467,6 +467,29 @@ VMRunResult VM::RunSlice(const std::size_t maxInstructions) {
             m_state = VMState::WaitingTimer;
             return finishSlice(VMRunStatus::AwaitingInput, true);
         }
+        if (t == "camera") {
+            Stage::TweenSpec spec;
+            if (cmd.Has("x")) { spec.hasX = true; spec.x = ParseFloat(cmd.Get("x")); }
+            if (cmd.Has("y")) { spec.hasY = true; spec.y = ParseFloat(cmd.Get("y")); }
+            if (cmd.Has("zoom")) {
+                spec.hasScale = true;
+                spec.scale = ParseFloat(cmd.Get("zoom"), 1.0f);
+            }
+            spec.durationMs = ParseInt(cmd.Get("duration"), 600);
+            spec.ease = cmd.Get("ease", "outCubic");
+            if (!m_stage.Animate("$camera", spec))
+                PX_LOG_WARN("VM: [camera] invalid camera target (line {})", cmd.line);
+            ++m_pc;
+            const std::string wait = cmd.Get("wait", "true");
+            if (!wait.empty() && wait != "false" && wait != "0" && wait != "no" &&
+                spec.durationMs > 0) {
+                m_timerMs = static_cast<std::uint64_t>(spec.durationMs);
+                m_timerStart = m_nowMs;
+                m_state = VMState::WaitingTimer;
+                return finishSlice(VMRunStatus::AwaitingInput, true);
+            }
+            continue;
+        }
         if (t == "char_move" || t == "move") {
             const std::string target = cmd.Get("name", cmd.Get("id"));
             if (cmd.Has("slot") || cmd.Has("pos")) {
