@@ -411,7 +411,7 @@ int main() {
         "stopAmbience",   "video",          "setVariable",    "condition",
         "else",           "endCondition",   "label",        "jump",
         "wait",           "timeline",       "effect",       "shake",        "ui",
-        "unlock",         "customNode",     "camera",
+        "hudVisibility",  "unlock",         "customNode",   "camera",
     };
     assert(schemaKinds == exercisedKinds);
 
@@ -459,6 +459,7 @@ int main() {
         Operation("all-effect", "effect", {{"value", "fade"}}),
         Operation("all-shake", "shake", {{"duration", "250ms"}, {"amplitude", "15"}}),
         Operation("all-ui", "ui", {{"route", "title"}, {"operation", "replace"}}),
+        Operation("all-hud", "hudVisibility", {{"visible", "false"}}),
         Operation("all-unlock", "unlock", {{"kind", "cg"}, {"id", "ev101a"}}),
         Operation("all-custom", "customNode", {{"type", "nvl"}, {"value", "{}"}}),
         Operation("all-camera", "camera", {{"value", "pan"}}),
@@ -494,6 +495,9 @@ int main() {
     }));
     assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
         return command.type == "stage_motion_stop";
+    }));
+    assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
+        return command.type == "hud_visibility" && command.Get("visible") == "false";
     }));
     assert(std::ranges::any_of(allKindsProgram.code, [](const auto& command) {
         return command.type == "char" && command.Get("transitionMode") == "auto" &&
