@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <nlohmann/json.hpp>
@@ -8,6 +9,8 @@
 #include <sstream>
 #include <string>
 #include <SDL3/SDL_scancode.h>
+#include <SDL3/SDL_stdinc.h>
+#include <SDL3/SDL_events.h>
 
 #include "Engine/SDK/Ui.h"
 #include "Engine/Platform/Input.h"
@@ -625,7 +628,7 @@ void TestGalgameAuthoredSlots() {
     button["bindings"] = {{"text", {{"path", "item.title"}}},
                           {"enabled", {{"path", "item.enabled"}}}};
     button["onClick"] = {{"id", "save.slot"},
-                         {"arguments", {{"slot", "$index"}}}};
+                         {"arguments", {{"slot", "$key"}}}};
     auto document = CanonicalUi(nlohmann::json{
         {"format", "PrismatiXUIScene"}, {"schemaRevision", 2},
         {"id", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}, {"revision", 1},
@@ -649,7 +652,7 @@ void TestGalgameAuthoredSlots() {
     Check(view && view->HasSource(), "authored Save route must keep its ViewModel item source");
     (void)galgame.Root()->Measure({600, 400});
     galgame.Root()->Arrange({0, 0, 600, 400});
-    Check(view->RealizedCount() == 12, "authored Save route must realize all 12 supplied slots");
+    Check(view->RealizedCount() == 1, "authored Save route must realize the supplied slot");
     auto* first = dynamic_cast<px::ui::Control*>(view->Child(0));
     auto* firstButton = first ? dynamic_cast<px::ui::Button*>(first->Child(0)) : nullptr;
     Check(firstButton && firstButton->Text() == "Saved scene" && firstButton->Enabled(),
@@ -662,6 +665,12 @@ void TestGalgameAuthoredSlots() {
     px::Input input;
     (void)galgame.Update(input, 600, 400);
     Check(selected == "0", "authored Save item must dispatch the selected slot index");
+    selected.clear();
+    input.InjectFrame(50.0f, 35.0f, true);
+    (void)galgame.Update(input, 600, 400);
+    input.InjectFrame(50.0f, 35.0f, false);
+    (void)galgame.Update(input, 600, 400);
+    Check(selected == "0", "authored Save item must dispatch a pointer click");
 
     auto placedDocument = document;
     placedDocument["nodes"][1]["kind"] = "control";
@@ -825,7 +834,132 @@ void TestGalgameUiHostContract() {
           "a nested path cannot impersonate an explicitly registered contract root");
 }
 
+void TestExternalSaveTemplate() {
+    const char* path = SDL_getenv("PRISMATIX_TEST_SAVE_UI");
+    if (!path || !*path) return;
+    std::ifstream file(path, std::ios::binary);
+    Check(static_cast<bool>(file), "external Save UI fixture must be readable");
+    const std::string document((std::istreambuf_iterator<char>(file)), {});
+    px::ui::GalgameUI galgame;
+    for (int page = 1; page <= 20; ++page)
+        Check(galgame.DefineUiData("saveLoad.page" + std::to_string(page),
+                                   px::Variant(page == 1)).IsOk(),
+              "external Save UI page state must register");
+    const auto registered = galgame.RegisterTemplate(
+        px::ui::GalgameUI::Screen::Save, document, path);
+    if (!registered) for (const auto& diagnostic : registered.Diagnostics())
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    Check(registered.IsOk(), "external Save UI fixture must register");
+    std::vector<px::ui::GalgameItem> slots;
+    for (int index = 0; index < 8; ++index) {
+        px::ui::GalgameItem slot;
+        slot.key = "slot-" + std::to_string(index);
+        slot.argument = std::to_string(index);
+        slot.command = "save.slot";
+        slots.push_back(std::move(slot));
+    }
+    const auto shown = galgame.ShowSaveLoad(true, std::move(slots));
+    if (!shown) for (const auto& diagnostic : shown.Diagnostics())
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    Check(shown.IsOk(), "external Save UI fixture must mount slots");
+    std::string selected;
+    galgame.SetActionSink([&](const px::ui::GalgameAction& action) {
+        if (action.command == "save.slot") selected = action.argument;
+        if (action.command == "saveLoad.confirm.accept") selected = "confirmed";
+    });
+    px::Input input;
+    input.InjectFrame(200.0f, 180.0f, true);
+    (void)galgame.Update(input, 1920, 1080);
+    input.InjectFrame(200.0f, 180.0f, false);
+    (void)galgame.Update(input, 1920, 1080);
+    Check(selected == "0", "external Save UI slot must dispatch a pointer click");
+    Check(galgame.SupportsSaveLoadConfirmation(),
+          "external Save UI must expose the authored confirmation dialog");
+    Check(galgame.SetSaveLoadConfirmation(px::ui::GalgameUI::SaveLoadPrompt::Save).IsOk(),
+          "external Save UI must show the save confirmation dialog");
+    input.InjectFrame(800.0f, 610.0f, true);
+    (void)galgame.Update(input, 1920, 1080);
+    input.InjectFrame(800.0f, 610.0f, false);
+    (void)galgame.Update(input, 1920, 1080);
+    Check(selected == "confirmed", "external Save confirmation must accept a pointer click");
+    Check(galgame.UpdateUiData("saveLoad.page1", px::Variant(false)).IsOk(),
+          "external Save UI must clear the previous page state");
+    Check(galgame.UpdateUiData("saveLoad.page2", px::Variant(true)).IsOk(),
+          "external Save UI must select page two");
+    std::vector<px::ui::GalgameItem> secondPage;
+    for (int index = 8; index < 16; ++index) {
+        px::ui::GalgameItem slot;
+        slot.key = "slot-" + std::to_string(index);
+        slot.argument = std::to_string(index);
+        slot.command = "save.slot";
+        secondPage.push_back(std::move(slot));
+    }
+    Check(galgame.ShowSaveLoad(true, std::move(secondPage)).IsOk(),
+          "external Save UI must mount the next page of slots");
+    selected.clear();
+    input.InjectFrame(200.0f, 180.0f, true);
+    (void)galgame.Update(input, 1920, 1080);
+    input.InjectFrame(200.0f, 180.0f, false);
+    (void)galgame.Update(input, 1920, 1080);
+    Check(selected == "8", "external Save page two must dispatch its absolute slot number");
+}
+
+void TestExternalConfigTemplate() {
+    const char* path = SDL_getenv("PRISMATIX_TEST_CONFIG_UI");
+    if (!path || !*path) return;
+    std::ifstream file(path, std::ios::binary);
+    Check(static_cast<bool>(file), "external Config UI fixture must be readable");
+    const std::string document((std::istreambuf_iterator<char>(file)), {});
+    px::ui::GalgameUI galgame;
+    for (int page = 1; page <= 4; ++page)
+        Check(galgame.DefineUiData("settings.page" + std::to_string(page),
+                                   px::Variant(page == 3)).IsOk(),
+              "external Config page state must register");
+    const auto registered = galgame.RegisterTemplate(
+        px::ui::GalgameUI::Screen::Settings, document, path);
+    Check(registered.IsOk(), "external Config UI fixture must register");
+    Check(galgame.ShowSettings({}).IsOk(),
+          "external Config UI fixture must mount sliders");
+    int latest = -1;
+    galgame.SetActionSink([&](const px::ui::GalgameAction& action) {
+        if (action.command == "set.master.value")
+            latest = std::stoi(action.argument);
+    });
+    px::Input input;
+    SDL_Event event{};
+    input.NewFrame();
+    event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+    event.button.button = SDL_BUTTON_LEFT;
+    event.button.x = 940.0f;
+    event.button.y = 222.0f;
+    input.Process(event);
+    (void)galgame.Update(input, 1920, 1080);
+    Check(latest >= 0 && latest < 20,
+          "Config slider must accept pointer down at its left edge");
+    input.NewFrame();
+    event = {};
+    event.type = SDL_EVENT_MOUSE_MOTION;
+    event.motion.x = 1300.0f;
+    event.motion.y = 450.0f;
+    event.motion.xrel = 360.0f;
+    event.motion.yrel = 228.0f;
+    input.Process(event);
+    (void)galgame.Update(input, 1920, 1080);
+    Check(latest > 115,
+          "Config slider must keep pointer capture during an off-rail drag");
+    input.NewFrame();
+    event = {};
+    event.type = SDL_EVENT_MOUSE_BUTTON_UP;
+    event.button.button = SDL_BUTTON_LEFT;
+    event.button.x = 1300.0f;
+    event.button.y = 450.0f;
+    input.Process(event);
+    (void)galgame.Update(input, 1920, 1080);
+}
+
 int main() {
+    TestExternalSaveTemplate();
+    TestExternalConfigTemplate();
     TestGalgameUiHostContract();
     TestAuthoredItemTemplate();
     TestAuthoredPlacedItemTemplate();

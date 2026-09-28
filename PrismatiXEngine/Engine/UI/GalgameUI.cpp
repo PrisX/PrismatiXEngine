@@ -11,6 +11,7 @@
 #include "Engine/UI/Widgets.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <nlohmann/json.hpp>
 #include <optional>
@@ -989,8 +990,14 @@ Status GalgameUI::ShowSaveLoad(bool saveMode, std::vector<GalgameItem> slots) {
     slotValues.reserve(slots.size());
     for (std::size_t index = 0; index < slots.size(); ++index) {
         const GalgameItem* item = &slots[index];
+        std::int64_t slotNumber = 0;
+        const auto* begin = item->argument.data();
+        const auto* end = begin + item->argument.size();
+        const auto [parsedEnd, error] = std::from_chars(begin, end, slotNumber);
+        Variant key = error == std::errc{} && parsedEnd == end
+            ? Variant(slotNumber) : Variant(item->argument);
         slotValues.emplace_back(VariantObject{
-            {"key", Variant(item->argument)},
+            {"key", std::move(key)},
             {"number", Variant(item->argument)},
             {"argument", Variant(item->argument)},
             {"image", Variant(item ? item->image : std::string{})},
@@ -1118,7 +1125,22 @@ Status GalgameUI::ShowSettings(const SettingsPresentation& s) {
     (void)m_viewModel.Write("settings.voiceValue", Variant(percent(s.voice,128)));
     (void)m_viewModel.Write("settings.textSpeedValue", Variant(percent(s.textSpeedMs,120)));
     const Status installed=InstallTemplate(Screen::Settings);if(!installed)return installed;
-    auto slider=[this,percent](const char* name,double value,double maximum,const char* command,const char* label=nullptr){if(auto* control=FindNamed<Slider>(m_context.Root(),name)){control->SetRange(0,maximum,maximum<=128?4:1);control->SetValue(value);control->SetOnChanged([this,command,label,maximum,percent](double changed){if(label)(void)m_viewModel.Write(label,Variant(percent(changed,maximum)));Emit(command,std::to_string(static_cast<int>(changed)));});}};
+    // The authored track represents the percentage printed beside it. Keep
+    // pointer movement at one-percent steps and convert only at the host edge.
+    auto slider = [this](const char* name, double value, double maximum,
+                         const char* command, const char* label = nullptr) {
+        if (auto* control = FindNamed<Slider>(m_context.Root(), name)) {
+            control->SetRange(0, 100, 1);
+            control->SetValue(std::round(value * 100.0 / maximum));
+            control->SetOnChanged([this, command, label, maximum](double changed) {
+                if (label)
+                    (void)m_viewModel.Write(label, Variant(std::to_string(
+                        static_cast<int>(std::round(changed)))));
+                Emit(command, std::to_string(static_cast<int>(std::round(
+                    changed * maximum / 100.0))));
+            });
+        }
+    };
     slider("Master",s.master,128,"set.master.value","settings.masterValue");slider("BGM",s.bgm,128,"set.bgm.value","settings.bgmValue");slider("SE",s.se,128,"set.se.value","settings.seValue");slider("Voice",s.voice,128,"set.voice.value","settings.voiceValue");slider("TextSpeed",s.textSpeedMs,120,"set.speed.value","settings.textSpeedValue");
     if(auto* skip=FindNamed<CheckBox>(m_context.Root(),"SkipRead")){skip->SetChecked(s.skipReadOnly);skip->SetOnToggled([this](bool value){Emit("set.skipread.value",value?"true":"false");});}
     if(auto* full=FindNamed<CheckBox>(m_context.Root(),"Fullscreen")){full->SetChecked(s.fullscreen);full->SetOnToggled([this](bool value){Emit("set.fullscreen.value",value?"true":"false");});}
