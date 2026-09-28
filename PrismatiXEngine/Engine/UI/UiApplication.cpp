@@ -931,7 +931,8 @@ Result<std::vector<std::string>> CollectUiImageDependencies(
             for (const auto property : {"normalPath", "hoverPath", "pressedPath", "disabledPath"})
                 add(path(property));
         } else if (type == "Slider") {
-            for (const auto property : {"railPath", "knobPath", "knobHoverPath", "knobPressedPath"})
+            for (const auto property : {"railPath", "railHoverPath", "railPressedPath",
+                                        "knobPath", "knobHoverPath", "knobPressedPath"})
                 add(path(property));
         } else if (type == "VideoRect") {
             add(path("poster"));

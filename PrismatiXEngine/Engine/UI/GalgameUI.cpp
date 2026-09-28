@@ -188,6 +188,10 @@ GalgameUI::GalgameUI() {
     for (const char* property : {"fullscreen", "windowed", "skipReadOnly", "skipAll"})
         (void)m_viewModel.Define(std::string("settings.") + property,
                                  Variant(false), true);
+    for (const char* property : {"masterValue", "bgmValue", "seValue",
+                                 "voiceValue", "textSpeedValue"})
+        (void)m_viewModel.Define(std::string("settings.") + property,
+                                 Variant(std::string{}), true);
     for (const char* property : {"visible", "save", "load", "overwrite"})
         (void)m_viewModel.Define(
             std::string("saveLoad.confirm.") + property, Variant(false), true);
@@ -1084,9 +1088,17 @@ Status GalgameUI::ShowSettings(const SettingsPresentation& s) {
     (void)m_viewModel.Write("settings.windowed", Variant(!s.fullscreen));
     (void)m_viewModel.Write("settings.skipReadOnly", Variant(s.skipReadOnly));
     (void)m_viewModel.Write("settings.skipAll", Variant(!s.skipReadOnly));
+    const auto percent=[](double value,double maximum){
+        return std::to_string(static_cast<int>(value*100.0/maximum+0.5));
+    };
+    (void)m_viewModel.Write("settings.masterValue", Variant(percent(s.master,128)));
+    (void)m_viewModel.Write("settings.bgmValue", Variant(percent(s.bgm,128)));
+    (void)m_viewModel.Write("settings.seValue", Variant(percent(s.se,128)));
+    (void)m_viewModel.Write("settings.voiceValue", Variant(percent(s.voice,128)));
+    (void)m_viewModel.Write("settings.textSpeedValue", Variant(percent(s.textSpeedMs,120)));
     const Status installed=InstallTemplate(Screen::Settings);if(!installed)return installed;
-    auto slider=[this](const char* name,double value,double maximum,const char* command){if(auto* control=FindNamed<Slider>(m_context.Root(),name)){control->SetRange(0,maximum,maximum<=128?4:1);control->SetValue(value);control->SetOnChanged([this,command](double changed){Emit(command,std::to_string(static_cast<int>(changed)));});}};
-    slider("Master",s.master,128,"set.master.value");slider("BGM",s.bgm,128,"set.bgm.value");slider("SE",s.se,128,"set.se.value");slider("Voice",s.voice,128,"set.voice.value");slider("TextSpeed",s.textSpeedMs,120,"set.speed.value");
+    auto slider=[this,percent](const char* name,double value,double maximum,const char* command,const char* label=nullptr){if(auto* control=FindNamed<Slider>(m_context.Root(),name)){control->SetRange(0,maximum,maximum<=128?4:1);control->SetValue(value);control->SetOnChanged([this,command,label,maximum,percent](double changed){if(label)(void)m_viewModel.Write(label,Variant(percent(changed,maximum)));Emit(command,std::to_string(static_cast<int>(changed)));});}};
+    slider("Master",s.master,128,"set.master.value","settings.masterValue");slider("BGM",s.bgm,128,"set.bgm.value","settings.bgmValue");slider("SE",s.se,128,"set.se.value","settings.seValue");slider("Voice",s.voice,128,"set.voice.value","settings.voiceValue");slider("TextSpeed",s.textSpeedMs,120,"set.speed.value","settings.textSpeedValue");
     if(auto* skip=FindNamed<CheckBox>(m_context.Root(),"SkipRead")){skip->SetChecked(s.skipReadOnly);skip->SetOnToggled([this](bool value){Emit("set.skipread.value",value?"true":"false");});}
     if(auto* full=FindNamed<CheckBox>(m_context.Root(),"Fullscreen")){full->SetChecked(s.fullscreen);full->SetOnToggled([this](bool value){Emit("set.fullscreen.value",value?"true":"false");});}
     slider("TextScale",s.textScale*100.0,200,"set.textscale.value");

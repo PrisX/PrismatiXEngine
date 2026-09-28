@@ -414,10 +414,14 @@ public:
     [[nodiscard]] double Maximum() const{return m_max;}
     [[nodiscard]] double Step() const{return m_step;}
     void SetRailPath(std::string value){m_railPath=std::move(value);}
+    void SetRailHoverPath(std::string value){m_railHoverPath=std::move(value);}
+    void SetRailPressedPath(std::string value){m_railPressedPath=std::move(value);}
     void SetKnobPath(std::string value){m_knobPath=std::move(value);}
     void SetKnobHoverPath(std::string value){m_knobHoverPath=std::move(value);}
     void SetKnobPressedPath(std::string value){m_knobPressedPath=std::move(value);}
     [[nodiscard]] const std::string& RailPath() const{return m_railPath;}
+    [[nodiscard]] const std::string& RailHoverPath() const{return m_railHoverPath;}
+    [[nodiscard]] const std::string& RailPressedPath() const{return m_railPressedPath;}
     [[nodiscard]] const std::string& KnobPath() const{return m_knobPath;}
     [[nodiscard]] const std::string& KnobHoverPath() const{return m_knobHoverPath;}
     [[nodiscard]] const std::string& KnobPressedPath() const{return m_knobPressedPath;}
@@ -432,7 +436,8 @@ public:
                                     std::string_view value = {}) override;
 protected:Vec2 MeasureOverride(Vec2 available) override;void DrawSelf(graphics::Renderer2D& renderer,const Theme& theme) override;
 private:void SetFromPosition(float x);double m_min=0,m_max=1,m_step=0,m_value=0;Changed m_changed;
-    std::string m_railPath,m_knobPath,m_knobHoverPath,m_knobPressedPath;
+    std::string m_railPath,m_railHoverPath,m_railPressedPath;
+    std::string m_knobPath,m_knobHoverPath,m_knobPressedPath;
     float m_railHeight=6.0f,m_knobSize=14.0f;
 };
 

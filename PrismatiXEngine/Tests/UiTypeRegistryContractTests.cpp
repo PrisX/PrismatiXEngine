@@ -93,6 +93,13 @@ int main() {
               normalPath && normalPath->writable &&
               normalPath->resourceFilter == "image",
           "TextureButton must be in the exported SDK registry for authored UI validation");
+    const auto* slider = FindControl(parsed.manifest, "slider");
+    const auto* railHover = slider ? FindProperty(*slider, "railHoverPath") : nullptr;
+    const auto* railPressed = slider ? FindProperty(*slider, "railPressedPath") : nullptr;
+    Check(slider && railHover && railHover->writable &&
+              railHover->resourceFilter == "image" && railPressed &&
+              railPressed->writable && railPressed->resourceFilter == "image",
+          "Slider rail interaction skins must be authorable through the SDK registry");
     const auto* visible = button ? FindProperty(*button, "visible") : nullptr;
     Check(visible && visible->writable && visible->valueType == "boolean",
           "JSX visible must reach Runtime as a writable boolean property");
