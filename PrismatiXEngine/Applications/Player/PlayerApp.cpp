@@ -4159,7 +4159,10 @@ void PlayerApp::TitleFrame(float dt) {
     RenderUIWithScripts();
     if(m_presentationE2E&&m_presentationE2EStage==1){
         const auto state=m_ui.CaptureRuntimeState();
-        if(state.animation&&state.animation->position>=2.15f){
+        // Titles without an entrance animation start after a short settle.
+        if(m_presentationE2ETitleSeenAt==0)m_presentationE2ETitleSeenAt=SDL_GetTicks();
+        if(state.animation?state.animation->position>=2.15f
+                          :SDL_GetTicks()-m_presentationE2ETitleSeenAt>=1500){
             (void)CapturePresentationE2EFrame("title");
             StartGame();
             m_presentationE2EStage=2;

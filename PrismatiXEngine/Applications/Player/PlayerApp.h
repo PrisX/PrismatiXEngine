@@ -276,6 +276,7 @@ private:
     std::uint64_t m_presentationE2EStartedAt = 0;
     std::string m_presentationE2ECaptureDir;
     std::string m_presentationE2ETargetOperationId;
+    std::uint64_t m_presentationE2ETitleSeenAt=0;
     std::vector<bool> m_presentationE2ESplashCaptured;
     bool m_uiRoutesE2E = false;
     bool m_uiRoutesE2EReadinessLogged = false;
