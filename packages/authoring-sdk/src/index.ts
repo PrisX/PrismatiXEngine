@@ -8,6 +8,7 @@ export * from "./bounded-utf8.js";
 export * from "./canonical-json.js";
 export * from "./contracts.js";
 export * from "./input-keys.js";
+export * from "./import-resources.js";
 export * from "./localization.js";
 export * from "./motion.js";
 export * from "./jsx-ui.js";

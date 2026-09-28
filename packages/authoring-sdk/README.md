@@ -105,6 +105,11 @@ malformed UTF-8 before Story compilation. Other Node importers can use
 Browser/Editor callers can continue supplying
 their own `sourceFiles` map without Node filesystem access.
 
+Importers matching external asset names to media can use
+`createImportedResourceResolver(paths)`. It accepts enumerated project-relative
+paths and reports ambiguous basenames instead of silently picking one; see
+[imported resource resolution](../../docs/imported-resource-resolution.md).
+
 The map preserves both authored ids and the exact pre-migration fallback
 `sourceId` of operations that had no `[id]`. In-place prose edits, comments,
 and blank lines retain those identities. For added or removed executable

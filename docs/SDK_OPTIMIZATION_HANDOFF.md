@@ -2,9 +2,11 @@
 
 更新：2026-09-28。此文件以當前兩個本機 repo 和實際測試為準；不是「全部完成」聲明。較完整的逐項發現與歷史量測在 `C:\Users\owenl\C\Projects\SenrenBankaPSX\docs\SDK_FEEDBACK.md`。該檔按時間追加，早段的「尚未實作」有些已被後段取代，閱讀時以最新段落與程式碼為準。
 
-**目前優先順序（使用者 2026-09-28 指示）**：先完善可重用的 SDK Authoring 功能；封裝／大型 build 效能及《千戀＊萬花》1:1 移植暫不列為此階段完成條件。近期 Authoring 已補主要跨檔來源定位、Story 錨點刪除保護、重複與未知參數拒絕。仍須分別決定並驗收：(1) 舊 Story 錨點變動時真正的存檔遷移契約，現有 `--accept-removals` 只是人工確認；(2) 從 Senren 私有 PSB 轉換流程抽出的通用 importer／asset resolver 規格，不能直接搬私有格式；(3) JavaScript `say` 作者 API 與其存檔／已讀身分，現有 Story `@alias` 已可多語但 JS session 僅唯讀 dialogue；(4) 非 Player host 的 UI 值、formatter、Action 註冊範例和剩餘可重用合約。動態立繪 dress／pose／face 若要成為單一 descriptor 的正式 API，需另定存檔與依賴語意；不要把原作逐幀還原混在此項。
+**目前優先順序（使用者 2026-09-28 指示）**：先完善可重用的 SDK Authoring 功能；封裝／大型 build 效能及《千戀＊萬花》1:1 移植暫不列為此階段完成條件。近期 Authoring 已補主要跨檔來源定位、Story 錨點刪除保護、重複與未知參數拒絕，以及匯入時不猜測同名素材的純資料 resolver。仍須分別決定並驗收：(1) 舊 Story 錨點變動時真正的存檔遷移契約，現有 `--accept-removals` 只是人工確認；(2) 從 Senren 私有 PSB 轉換流程抽出的通用 source decoder／importer 規格，不能直接搬私有格式；(3) JavaScript `say` 作者 API 與其存檔／已讀身分，現有 Story `@alias` 已可多語但 JS session 僅唯讀 dialogue；(4) 非 Player host 的 UI 值、formatter、Action 註冊範例和剩餘可重用合約。動態立繪 dress／pose／face 若要成為單一 descriptor 的正式 API，需另定存檔與依賴語意；不要把原作逐幀還原混在此項。
 
 ### 2026-09-27—28 後續進度
+
+- **可重用的 importer 素材索引。** `createImportedResourceResolver(paths)` 收取已列舉的專案相對路徑，精確路徑優先；裸檔名只有唯一候選才解析，有副檔名時先過濾副檔名，同名／跨平台大小寫衝突回報所有候選，絕不靠檔案大小或列舉順序猜。它不讀檔、不解 PSB、不代替 build dependency graph。Senren `Assets` 唯讀盤點有 35 組重複 stem，故不能直接把私有匯入器目前「挑較大檔」的路徑換掉而不審核。SDK 184/184、千戀四語 368 scene／31,339 資源唯讀 validate 通過；私有匯入器尚未採用新 resolver。
 
 - **Story 內建指令不再靜默忽略拼錯的具名參數。** `compileStory` 對已知指令的未知參數報 `PXSTORY1017` 並定位該值；`set` 的變數名寫法、`if` 表達式與 extension 自己的參數契約保留。指令補全補上 `chapter`、跨 scene 目標與音訊的可用參數，不再建議 voice／SE 不支援的 fade。SDK 182/182、千戀四語 368 scene／31,339 資源唯讀 validate 通過。
 
