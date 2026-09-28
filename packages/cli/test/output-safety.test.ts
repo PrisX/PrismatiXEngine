@@ -450,3 +450,18 @@ test("failed retirement reports retained location without overwriting a replacem
   assert.equal(await readFile(join(retained, "game.bin"), "utf8"), "stable");
   assert.equal(await readFile(join(f.output, "author.txt"), "utf8"), "new data");
 });
+
+test("remembered fingerprints never hide an edited output file", async t => {
+  const f = await fixture(t);
+  await publishDirectory(f, build("first"));
+  // The second publication verifies the old output from remembered hashes.
+  await publishDirectory(f, build("again"));
+  const cache = JSON.parse(await readFile(join(f.projectRoot, ".prismatix-fingerprints.json"), "utf8")) as
+    Record<string, string>;
+  assert.ok(Object.keys(cache).length > 0);
+  // Same size, new content: the modification time changes the identity.
+  await new Promise(resolve => setTimeout(resolve, 20));
+  await writeFile(join(f.output, "game.bin"), "AGAIN");
+  await assert.rejects(publishDirectory(f, build("third")), /unowned or modified/);
+  assert.equal(await readFile(join(f.output, "game.bin"), "utf8"), "AGAIN");
+});

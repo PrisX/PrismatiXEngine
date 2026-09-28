@@ -74,6 +74,59 @@ async function validatePaths(options: PublicationOptions): Promise<string> {
   } catch (error) { if (!missing(error)) throw error; }
   return output;
 }
+/**
+ * SHA-256 fingerprints remembered by file identity (volume, file id, size and
+ * modification time), like git's index. Publication re-verifies multi-GiB
+ * outputs several times per build; an unchanged file is read once. Any edit
+ * changes the modification time and is hashed again. The cache sits beside
+ * the output directory and only ever holds identities seen in its last run.
+ */
+const fingerprintCacheFile = ".prismatix-fingerprints.json";
+const fingerprintCaches = new Map<string, {path: string; known: Map<string, string>; seen: Map<string, string>}>();
+
+async function fingerprintCache(directory: string) {
+  const path = join(directory, fingerprintCacheFile);
+  let cache = fingerprintCaches.get(key(path));
+  if (cache === undefined) {
+    const known = new Map<string, string>();
+    try {
+      const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
+      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed))
+        for (const [identity, fingerprint] of Object.entries(parsed as Record<string, unknown>))
+          if (typeof fingerprint === "string" && /^[0-9a-f]{64}$/u.test(fingerprint))
+            known.set(identity, fingerprint);
+    } catch { /* A missing or damaged cache only costs a full hash. */ }
+    cache = {path, known, seen: new Map()};
+    fingerprintCaches.set(key(path), cache);
+  }
+  return cache;
+}
+
+async function cachedFingerprint(path: string, cacheDirectory: string | undefined,
+  onChunk?: (bytes: number) => void): Promise<string> {
+  if (cacheDirectory === undefined) return fingerprintFile(path, onChunk);
+  const info = await lstat(path, {bigint: true});
+  // Without a stable file id the identity would not survive renames.
+  if (info.ino === 0n) return fingerprintFile(path, onChunk);
+  const identity = `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}`;
+  const cache = await fingerprintCache(cacheDirectory);
+  let fingerprint = cache.known.get(identity) ?? cache.seen.get(identity);
+  if (fingerprint === undefined) fingerprint = await fingerprintFile(path, onChunk);
+  else onChunk?.(Number(info.size));
+  cache.seen.set(identity, fingerprint);
+  return fingerprint;
+}
+
+async function saveFingerprintCache(directory: string): Promise<void> {
+  const cache = fingerprintCaches.get(key(join(directory, fingerprintCacheFile)));
+  if (cache === undefined || cache.seen.size === 0) return;
+  try {
+    await writeFile(cache.path, JSON.stringify(Object.fromEntries(cache.seen)));
+    cache.known = cache.seen;
+    cache.seen = new Map();
+  } catch { /* The cache is an optimization; publication already succeeded. */ }
+}
+
 export async function fingerprintFile(path: string, onChunk?: (bytes: number) => void): Promise<string> {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(path)) {
@@ -106,7 +159,8 @@ async function assertLinkedIdentity(output: string, staging: string,
 
 async function inventory(root: string, phase?: PublicationProgress["phase"],
   onProgress?: PublicationOptions["onProgress"],
-  linkedOutput?: {root: string; files: ReadonlyMap<string, PublishedInput>; verified: Set<string>}): Promise<Record<string, string>> {
+  linkedOutput?: {root: string; files: ReadonlyMap<string, PublishedInput>; verified: Set<string>},
+  cacheDirectory: string | undefined = dirname(resolve(root))): Promise<Record<string, string>> {
   const entries: Record<string, string> = Object.create(null) as Record<string, string>;
   const fileEntries: {readonly name: string; readonly path: string}[] = [];
   const seenLinks = new Set<string>();
@@ -155,17 +209,19 @@ async function inventory(root: string, phase?: PublicationProgress["phase"],
             linkedOutput!.verified.add(name);
             bytes += linked.size;
           } else {
-            entries[name] = await fingerprintFile(path, onProgress === undefined ? undefined : (size) => {
-              bytes += size;
-              report();
-            });
+            entries[name] = await cachedFingerprint(path, cacheDirectory,
+              onProgress === undefined ? undefined : (size) => {
+                bytes += size;
+                report();
+              });
           }
           seenLinks.add(name);
         } else {
-          entries[name] = await fingerprintFile(path, onProgress === undefined ? undefined : (size) => {
-            bytes += size;
-            report();
-          });
+          entries[name] = await cachedFingerprint(path, cacheDirectory,
+            onProgress === undefined ? undefined : (size) => {
+              bytes += size;
+              report();
+            });
         }
         files += 1;
         report();
@@ -450,6 +506,7 @@ export async function publishDirectory<T>(options: PublicationOptions, build: (s
       throw error;
     }
     if (backedUp) await rm(backup, {recursive: true});
+    await saveFingerprintCache(dirname(output));
     return value;
   } finally {
     try { if (staging) await rm(staging, {recursive: true, force: true}); }
