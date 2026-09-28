@@ -484,6 +484,8 @@ private:
     [[nodiscard]] graphics::TextureHandle ReadyTexture(const std::string& path);
     void UpdateTweens(float dt);
     void UpdateMotion(float dt);
+    // Parses descriptors that finished reading and preloads their layers.
+    void HarvestPortraitReads();
     void EmitMotionMarkers(double from, double to, bool includeStart);
     Node& EnsureNode(const std::string& name, NodeKind kind);
     [[nodiscard]] WorldNodeTransform ResolveNodeTransform(
@@ -541,6 +543,8 @@ private:
     std::unordered_map<std::string, Actor> m_actors;
     std::unordered_map<std::string, LayeredPortrait> m_layeredPortraits;
     std::unordered_map<std::string, bool> m_invalidLayeredPortraits;
+    // Descriptors lookahead is reading on a worker thread.
+    std::unordered_map<std::string, std::shared_future<std::optional<std::string>>> m_portraitReads;
     std::uint64_t m_portraitAssetSession = 0;
 };
 

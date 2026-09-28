@@ -146,6 +146,7 @@ int main() {
                 const auto deadline = std::chrono::steady_clock::now() +
                                       std::chrono::seconds(3);
                 while (std::chrono::steady_clock::now() < deadline) {
+                    stage.Update(0.0f);
                     assets.BeginFrame();
                     if (assets.HasResidentTexture(path)) return true;
                     std::this_thread::sleep_for(std::chrono::milliseconds(5));

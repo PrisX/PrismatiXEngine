@@ -206,12 +206,17 @@ const Stage::LayeredPortrait* Stage::ResolveLayeredPortrait(
     if(m_portraitAssetSession!=assetSession){
         m_layeredPortraits.clear();
         m_invalidLayeredPortraits.clear();
+        m_portraitReads.clear();
         m_portraitAssetSession=assetSession;
     }
     if(const auto found=m_layeredPortraits.find(path);
        found!=m_layeredPortraits.end())return &found->second;
     if(m_invalidLayeredPortraits.contains(path))return nullptr;
-    const auto text=m_assets.ReadTextAsset(path);
+    std::optional<std::string> text;
+    if(const auto read=m_portraitReads.find(path);read!=m_portraitReads.end()){
+        text=read->second.get();
+        m_portraitReads.erase(read);
+    }else text=m_assets.ReadTextAsset(path);
     auto portrait=text ? sdk::ParseLayeredPortrait(*text) : std::nullopt;
     if(!portrait){
         m_invalidLayeredPortraits[path]=true;
@@ -229,6 +234,18 @@ void Stage::PreloadCharacter(const std::string& imagePath) {
     if(!imagePath.ends_with(".pxportrait")){
         m_assets.PreloadTexture(imagePath,graphics::AssetPreloadPriority::High);
         return;
+    }
+    // Lookahead must not wait for the disk: an unseen descriptor is read on
+    // a worker, and Update preloads its layers once it has arrived.
+    if(!m_layeredPortraits.contains(imagePath)&&
+       !m_invalidLayeredPortraits.contains(imagePath)){
+        const auto read=m_portraitReads.find(imagePath);
+        if(read==m_portraitReads.end()){
+            m_portraitReads.emplace(imagePath,std::async(std::launch::async,
+                [assets=&m_assets,imagePath]{return assets->ReadTextAsset(imagePath);}).share());
+            return;
+        }
+        if(read->second.wait_for(std::chrono::seconds(0))!=std::future_status::ready)return;
     }
     if(const auto* portrait=ResolveLayeredPortrait(imagePath)){
         for(const auto& layer:portrait->layers)
@@ -1406,7 +1423,17 @@ void Stage::ClearCustomEffect() {
     m_customEffectParameters = {};
 }
 
+void Stage::HarvestPortraitReads() {
+    if(m_portraitReads.empty())return;
+    std::vector<std::string> ready;
+    for(const auto& [path,read]:m_portraitReads)
+        if(read.wait_for(std::chrono::seconds(0))==std::future_status::ready)
+            ready.push_back(path);
+    for(const auto& path:ready)(void)ResolveLayeredPortrait(path);
+}
+
 void Stage::Update(float dt) {
+    HarvestPortraitReads();
     if (m_fastForward) {
         // Large enough to finish any authored tween, fade, or shake.
         dt = std::max(dt, 60.0f);
