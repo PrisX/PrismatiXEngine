@@ -11,7 +11,3 @@
 *.sln
 *.vcxproj
 *.user
-
-SecretKey.h
-Core/Interfaces/IScene.h.bak
-UI/SceneManager.h.bak

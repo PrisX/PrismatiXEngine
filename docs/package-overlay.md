@@ -71,9 +71,11 @@ compression, except streaming video formats. It still checks the planned
 source size and SHA-256 while writing, then independently verifies the
 published PDX. The compression choice can affect the final patch size, so
 `--check` reports raw changed bytes rather than a promised download size.
-The 2026-09-27 [large-media acceptance](SDK_LARGE_MEDIA_OVERLAY_ACCEPTANCE.md)
-records an 8 GB corpus run, process memory, sampled disk use, signature
-verification, and Player loading.
+On an 8 GB, 31,756-resource corpus, replacing one 256 MiB WAV produced a
+67 MB signed overlay (about 75% smaller than the uncompressed writer) with a
+sampled Packager peak working set near 600 MB; the Player loaded the signed
+patch without route errors. Treat this as a single warm-cache measurement,
+not a size or time guarantee.
 
 To publish `patch2.pdx` without a complete v2, put the signed `patch.pdx`
 in a directory of prior updates and use its verified target as the next
