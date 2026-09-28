@@ -28,6 +28,8 @@ const builtinNamedArguments: Readonly<Record<string, readonly string[]>> = {
   id: ["value"],
   "choice.wait": [],
   chapter: ["title"],
+  say: ["speaker", "text", "character"],
+  narrate: ["text"],
   bg: ["asset", "rule", "duration", "vague"],
   show: ["character", "expression", "asset", "sprite", "position", "x", "y", "scale", "transition"],
   move: ["character", "position", "x", "y", "scale", "duration", "ease", "wait"],
@@ -547,6 +549,34 @@ export function compileStory(document: StoryDocument, context: StoryCompileConte
         break;
       }
       case "choice.wait": break;
+      case "say":
+      case "narrate": {
+        const authoredText = args.get("text")?.value;
+        const authoredSpeaker = args.get("speaker")?.value;
+        const authoredCharacter = args.get("character")?.value;
+        if (typeof authoredText !== "string" || authoredText.length === 0 ||
+            (node.name === "say" &&
+             (typeof authoredSpeaker !== "string" || authoredSpeaker.trim().length === 0)) ||
+            (authoredCharacter !== undefined && typeof authoredCharacter !== "string")) {
+          diagnostics.push(error("PXSTORY1149",
+            `${node.name} requires nonempty string text${node.name === "say" ? " and speaker" : ""}`,
+            node.span));
+          break;
+        }
+        if (node.name === "say") {
+          const character = typeof authoredCharacter === "string" && authoredCharacter.length > 0
+            ? characters.get(authoredCharacter) : undefined;
+          if (authoredCharacter !== undefined && authoredCharacter !== "" &&
+              (context.characters?.length ?? 0) > 0 && character === undefined) {
+            diagnostics.push(error("PXSTORY1102", `Unknown character alias: ${authoredCharacter}`, node.span));
+            break;
+          }
+          emit(node, "dialogue", {speaker: authoredSpeaker as string,
+            character: character?.id ?? (authoredCharacter as string | undefined) ?? "",
+            text: authoredText}, authoredText);
+        } else emit(node, "narration", {text: authoredText}, authoredText);
+        break;
+      }
       case "chapter": {
         const title = named("title") ?? positional(0);
         if (!title) diagnostics.push(error("PXSTORY1144", "chapter requires a title", node.span));
@@ -899,10 +929,13 @@ export interface StoryCommandCompletion {
 }
 
 export function storyCommandCompletions(extensions: readonly ExtensionCommand[] = []): readonly StoryCommandCompletion[] {
-  const builtins = ["id", "chapter", "bg", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "unlock", "effect", "shake", "camera"];
+  const builtins = ["id", "chapter", "say", "narrate", "bg", "show", "move", "hide", "choice", "choice.wait", "jump", "call", "return", "end", "wait", "set", "if", "else", "endif", "voice", "bgm", "bgm.stop", "se", "ambience", "ambience.stop", "video", "timeline", "motion", "motion.stop", "ui", "unlock", "effect", "shake", "camera"];
   const builtinParameters: Readonly<Record<string, StoryCommandCompletion["parameters"]>> = {
     id: [{name:"value", required:true}],
     chapter: [{name:"title", required:true}],
+    say: [{name:"speaker", required:true}, {name:"text", required:true},
+      {name:"character", required:false}],
+    narrate: [{name:"text", required:true}],
     bg: [
       {name:"asset", required:true}, {name:"rule", required:false},
       {name:"duration", required:false}, {name:"vague", required:false},

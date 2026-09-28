@@ -87,6 +87,13 @@ rules.
 
 ## Readable Story with durable save identities
 
+Use `[say speaker="稟" text="一行目\\n二行目"]` for one dialogue
+operation with an in-box line break, or `[narrate text="一行目\\n二行目"]`
+for narration. The quoted `text` is a JSON string, so `\\n` becomes a newline
+in the Runtime operation. `say` may also include `character=alias` when the
+speaker should carry a registered actor identity. This is useful when
+importing scripts whose line breaks belong to a single advance step.
+
 An ordinary `.pxstory` needs no manually authored id. New projects from
 `prismatix create` start with an external identity map already prepared.
 When save/seen identity

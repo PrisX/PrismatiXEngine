@@ -44,6 +44,22 @@ test("quoted Story speaker keeps visible name separate without inventing a chara
   assert.ok(malformed.diagnostics.some((item) => item.code === "PXSTORY1015"));
 });
 
+test("say and narrate preserve source line breaks inside one dialogue operation", () => {
+  const document = parseStory(
+    '[say speaker="稟" text="一行目\\n二行目"]\n[narrate text="空\\n白"]\n');
+  const result = compileStory(document, {documentId: "multiline"});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  assert.deepEqual(result.runtimeIr?.operations.map(({kind, arguments: args}) =>
+    [kind, args.text, args.speaker ?? ""]), [
+    ["dialogue", "一行目\n二行目", "稟"],
+    ["narration", "空\n白", ""],
+  ]);
+  const invalid = compileStory(parseStory('[say speaker="" text="hello"]\n'),
+    {documentId: "invalid-multiline"});
+  assert.equal(invalid.valid, false);
+  assert.ok(invalid.diagnostics.some(({code}) => code === "PXSTORY1149"));
+});
+
 test("hide all clears actors with one readable operation and optional instant transition", () => {
   const result = compileStory(parseStory(
     "[hide all]\n[hide all transition=false]\n[hide yuki transition=false]\n",
