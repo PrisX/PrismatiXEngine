@@ -47,6 +47,10 @@ struct PersistLoadResult {
     std::string_view legacySecret);
 
 bool SaveJson(const std::string& path, const Json& json, const crypto::Key* key);
+// Writes an already serialized JSON document. Thread-safe for distinct paths,
+// so callers can serialize on the main thread and write from a worker.
+bool SaveJsonText(const std::string& path, std::string_view jsonText,
+                  const crypto::Key* key);
 // Shared bounded JSON grammar for persistence readers and envelope inspection.
 [[nodiscard]] std::optional<Json> ParsePersistenceJson(std::string_view text);
 [[nodiscard]] std::optional<Json> LoadJson(const std::string& path, const crypto::Key* key);

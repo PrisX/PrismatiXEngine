@@ -13,7 +13,8 @@ namespace px::progress {
 class GlobalProfile {
 public:
     // 既讀
-    void MarkSeen(const std::string& key);
+    // Returns true when the key was not already recorded.
+    bool MarkSeen(const std::string& key);
     [[nodiscard]] bool HasSeen(const std::string& key) const;
 
     void MarkChoiceSeen(const std::string& key);
@@ -29,11 +30,12 @@ public:
     [[nodiscard]] const std::unordered_map<std::string, Variant>& Variables() const { return m_vars; }
 
     // 劇情鎖
-    void UnlockScene(const std::string& id);
+    // Unlock calls return true only when the id is newly unlocked.
+    bool UnlockScene(const std::string& id);
     [[nodiscard]] bool SceneUnlocked(const std::string& id) const;
-    void UnlockCG(const std::string& id);
+    bool UnlockCG(const std::string& id);
     [[nodiscard]] bool CGUnlocked(const std::string& id) const;
-    void UnlockMusic(const std::string& id);
+    bool UnlockMusic(const std::string& id);
     [[nodiscard]] bool MusicUnlocked(const std::string& id) const;
 
     [[nodiscard]] const std::set<std::string>& UnlockedScenes() const { return m_scenes; }

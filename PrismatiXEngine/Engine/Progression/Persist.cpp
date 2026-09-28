@@ -119,10 +119,18 @@ std::vector<std::uint8_t> Base64Decode(const std::string& text) {
 }
 
 bool SaveJson(const std::string& path, const Json& json, const crypto::Key* key) {
+    return SaveJsonText(path, json.dump(), key);
+}
+
+bool SaveJsonText(const std::string& path, const std::string_view jsonText,
+                  const crypto::Key* key) {
     std::error_code ec;
     std::filesystem::create_directories(AsPath(path).parent_path(), ec);
 
-    const std::string text = std::string(kPersistMagic) + json.dump();
+    std::string text;
+    text.reserve(kPersistMagic.size() + jsonText.size());
+    text.append(kPersistMagic);
+    text.append(jsonText);
     crypto::Bytes bytes(text.begin(), text.end());
     if (key) {
         bytes = crypto::Encrypt(bytes, *key, crypto::DeriveIv(AsPath(path).filename().string()));

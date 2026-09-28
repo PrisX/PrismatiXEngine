@@ -122,8 +122,8 @@ bool RevisionTwo(const nlohmann::json& value) {
 
 }  // namespace
 
-void GlobalProfile::MarkSeen(const std::string& key) {
-    m_seen.insert(key);
+bool GlobalProfile::MarkSeen(const std::string& key) {
+    return m_seen.insert(key).second;
 }
 bool GlobalProfile::HasSeen(const std::string& key) const {
     return m_seen.count(key) != 0;
@@ -153,20 +153,20 @@ const Variant* GlobalProfile::Variable(const std::string& name) const {
     return found == m_vars.end() ? nullptr : &found->second;
 }
 
-void GlobalProfile::UnlockScene(const std::string& id) {
-    m_scenes.insert(id);
+bool GlobalProfile::UnlockScene(const std::string& id) {
+    return m_scenes.insert(id).second;
 }
 bool GlobalProfile::SceneUnlocked(const std::string& id) const {
     return m_scenes.count(id) != 0;
 }
-void GlobalProfile::UnlockCG(const std::string& id) {
-    m_cgs.insert(id);
+bool GlobalProfile::UnlockCG(const std::string& id) {
+    return m_cgs.insert(id).second;
 }
 bool GlobalProfile::CGUnlocked(const std::string& id) const {
     return m_cgs.count(id) != 0;
 }
-void GlobalProfile::UnlockMusic(const std::string& id) {
-    m_music.insert(id);
+bool GlobalProfile::UnlockMusic(const std::string& id) {
+    return m_music.insert(id).second;
 }
 bool GlobalProfile::MusicUnlocked(const std::string& id) const {
     return m_music.count(id) != 0;

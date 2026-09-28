@@ -12,11 +12,18 @@
 namespace px::graphics {
 
 std::vector<std::uint8_t> CaptureThumbnailPng(SDL_Renderer* renderer, int w, int h) {
+    return EncodeThumbnailPng(CaptureFrameSurface(renderer), w, h);
+}
+
+SDL_Surface* CaptureFrameSurface(SDL_Renderer* renderer) {
     SDL_Surface* full = SDL_RenderReadPixels(renderer, nullptr);
-    if (!full) {
+    if (!full)
         PX_LOG_WARN("CaptureThumbnail: RenderReadPixels failed: {}", SDL_GetError());
-        return {};
-    }
+    return full;
+}
+
+std::vector<std::uint8_t> EncodeThumbnailPng(SDL_Surface* full, int w, int h) {
+    if (!full) return {};
     SDL_Surface* small = SDL_ScaleSurface(full, w, h, SDL_SCALEMODE_LINEAR);
     SDL_DestroySurface(full);
     if (!small) {
