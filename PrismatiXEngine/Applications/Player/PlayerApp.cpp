@@ -1555,6 +1555,18 @@ bool PlayerApp::Init(int argc, char* argv[]) {
             m_storyHudVisible = cmd.Get("visible") == "true";
             return true;
         }
+        if (t == "actor_action" && cmd.Get("id") == "$window") {
+            vn::ActorActionRequest request;
+            request.preset = cmd.Get("preset");
+            request.size = static_cast<float>(std::atof(cmd.Get("size", "0").c_str()));
+            request.timeMs = std::atoi(cmd.Get("time", "0").c_str());
+            request.loop = std::atoi(cmd.Get("loop", "1").c_str());
+            request.ease = cmd.Get("ease");
+            m_windowAction = request.preset == "stop" ? std::nullopt
+                                                      : vn::ExpandActorAction(request);
+            m_windowActionStart = std::chrono::steady_clock::now();
+            return true;
+        }
         if (t == "shake" && cmd.Get("target") == "window") {
             // Mirrors the Stage shake curve on the HUD layer only.
             m_windowShakeDuration = std::max(0, std::atoi(cmd.Get("ms", "400").c_str())) / 1000.0f;
@@ -3743,9 +3755,36 @@ void PlayerApp::RenderUIWithScripts() {
             shakeY = std::cos(phase * 1.3f) * amplitude * 0.6f;
         }
     }
-    const bool shaking = shakeX != 0.0f || shakeY != 0.0f;
-    if (shaking)
-        m_runtime.Renderer().PushAffineTransform({1.0f, 0.0f, 0.0f, 1.0f, shakeX, shakeY});
+    vn::ActorPose pose;
+    if (m_windowAction &&
+        (m_ui.CurrentRoute() == "hud" || m_ui.CurrentRoute() == "game")) {
+        bool finished = false;
+        pose = vn::SampleActorAction(
+            *m_windowAction,
+            std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                          m_windowActionStart).count(),
+            finished);
+        if (finished) {
+            m_windowAction.reset();
+            pose = {};
+        }
+    }
+    const bool shaking = shakeX != 0.0f || shakeY != 0.0f || pose.x != 0.0f ||
+                         pose.y != 0.0f || pose.scale != 1.0f || pose.rotation != 0.0f;
+    if (shaking) {
+        // Actions scale and rotate about the bottom centre, where the message
+        // window sits.
+        int width = 0, height = 0;
+        m_runtime.Renderer().GetLogicalSize(width, height);
+        const float pivotX = static_cast<float>(width) * 0.5f;
+        const float pivotY = static_cast<float>(height);
+        const float radians = pose.rotation * 0.017453292519943295f;
+        const float a = std::cos(radians) * pose.scale;
+        const float b = std::sin(radians) * pose.scale;
+        m_runtime.Renderer().PushAffineTransform(
+            {a, b, -b, a, pivotX - (a * pivotX - b * pivotY) + pose.x + shakeX,
+             pivotY - (b * pivotX + a * pivotY) + pose.y + shakeY});
+    }
     m_ui.Render(m_runtime.Renderer());
     if (shaking) m_runtime.Renderer().PopTransform();
     if (m_scriptHost)

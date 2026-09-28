@@ -887,6 +887,11 @@ void VM::ExecuteSimple(const Command& cmd) {
         request.loop = ParseInt(cmd.Get("loop"), 1);
         request.ease = cmd.Get("ease");
         const std::string name = cmd.Get("id", cmd.Get("name"));
+        // The message window belongs to the host UI, like a window shake.
+        if (name == "$window") {
+            if (m_commandHook) (void)m_commandHook(cmd);
+            return;
+        }
         if (!m_stage.PlayActorAction(name, request)) {
             diag::Diagnostic diagnostic{.severity=diag::Severity::Warning,
                 .code="PXVN6110",.category="VN.Character",
