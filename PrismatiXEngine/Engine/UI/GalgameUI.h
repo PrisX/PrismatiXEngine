@@ -51,6 +51,7 @@ struct DialoguePresentation {
     bool reducedMotion = false;
 };
 struct SettingsPresentation {
+    int master = 128;
     int bgm = 128;
     int se = 128;
     int voice = 128;
@@ -166,6 +167,8 @@ public:
     enum class SaveLoadPrompt { None, Save, Load, Overwrite };
     [[nodiscard]] bool SupportsSaveLoadConfirmation() const;
     Status SetSaveLoadConfirmation(SaveLoadPrompt prompt);
+    [[nodiscard]] bool SupportsTitleConfirmation() const;
+    Status SetTitleConfirmation(bool visible);
     Status ShowGallery(std::vector<GalgameItem> entries);
     Status ShowSettings(const SettingsPresentation& settings);
     Status ShowVideoOverlay(bool skippable);

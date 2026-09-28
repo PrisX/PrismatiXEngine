@@ -12,6 +12,7 @@
 namespace px::progress {
 
 struct GameSettings {
+    int masterVolume = 128;
     int bgmVolume = 96;
     int seVolume = 110;
     int voiceVolume = 128;

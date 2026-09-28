@@ -102,7 +102,7 @@ std::vector<ActionDescriptor> BuiltInActionDescriptors() {
     add(Descriptor("animation.travel", "Travel Animation State", "Animation",
                    {Argument("state", "State", VariantType::String),
                     Argument("duration", "Transition Duration", VariantType::Number)}));
-    for (const char* bus : {"bgm", "se", "voice", "speed"}) {
+    for (const char* bus : {"master", "bgm", "se", "voice", "speed"}) {
         const std::string name(bus);
         add(Descriptor("set." + name + ".up", "Increase " + name, "Settings"));
         add(Descriptor("set." + name + ".down", "Decrease " + name, "Settings"));

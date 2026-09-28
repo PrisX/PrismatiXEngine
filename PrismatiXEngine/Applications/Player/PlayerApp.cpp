@@ -844,6 +844,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     m_saves.Configure(PathToUtf8(m_saveDirectory), &m_saveKey,
                       m_saveFallbackKeys);
     PX_LOG_DEBUG("Player boot: persistence configured");
+    m_runtime.Audio().SetMainVolume(m_settings.masterVolume);
     m_runtime.Audio().SetBGMVolume(m_settings.bgmVolume);
     m_runtime.Audio().SetSEVolume(m_settings.seVolume);
     m_runtime.Audio().SetVoiceVolume(m_settings.voiceVolume);
@@ -1653,6 +1654,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         "set.fullscreen.on", "set.fullscreen.off", "set.fullscreen.toggle",
         "set.reducedmotion.on", "set.reducedmotion.off",
         "settings.reset", "settings.noop",
+        "title.confirm.accept", "title.confirm.cancel",
         "music.play", "music.previous", "music.stop", "music.resume",
         "music.next", "music.about", "music.random",
         "music.scroll.home", "music.scroll.up", "music.scroll.down",
@@ -2804,7 +2806,7 @@ ui::DialoguePresentation PlayerApp::DialogueUI() const {
 }
 
 ui::SettingsPresentation PlayerApp::SettingsUI() const {
-    return {m_settings.bgmVolume, m_settings.seVolume, m_settings.voiceVolume,
+    return {m_settings.masterVolume, m_settings.bgmVolume, m_settings.seVolume, m_settings.voiceVolume,
             m_settings.textSpeedMs, m_settings.skipReadOnly, m_settings.fullscreen,
             m_settings.textScale,m_settings.highContrast,m_settings.reducedMotion,m_settings.selfVoicing,
             m_settings.language,m_supportedLocales};
@@ -2946,6 +2948,7 @@ void PlayerApp::PresentRoute(const std::string& route,
                              const std::string& /*operation*/) {
     std::string target=route;if(target=="saveload")target="load";
     BeginRouteVisualPreload(target);
+    (void)m_ui.SetTitleConfirmation(false);
     m_pendingSaveLoadSlot.reset();
     const auto present = [this](const Status& status) {
         if (status) return true;
@@ -2972,8 +2975,18 @@ void PlayerApp::PresentRoute(const std::string& route,
     else if (target == "settings") (void)present(m_ui.ShowSettings(SettingsUI()));
     else if (target == "backlog") (void)present(m_ui.ShowBacklog(BacklogItems()));
     else if (target == "title") {
+        const bool fromBootSplash = m_appState == AppState::BootSplash;
         m_appState = AppState::Title;
         if (!present(m_ui.ShowTitle())) return;
+        // Initial boot starts the title music after its visual preload. Every
+        // later return must restore it, including returns from a game menu or
+        // from a Music screen that selected a different track.
+        if (!fromBootSplash && !TitleBgmPath().empty()) {
+            const auto music = m_runtime.Audio().CaptureState().music;
+            if (!music.playing || music.path != TitleBgmPath())
+                (void)m_runtime.Audio().PlayBGM(TitleBgmPath(), true, 300);
+            m_musicTrackSelected = false;
+        }
         if (!m_titleVoices.empty()) {
             const auto tick = std::chrono::steady_clock::now()
                 .time_since_epoch().count();
@@ -3089,6 +3102,9 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
     } else if (t == "saveLoad.confirm.cancel") {
         m_pendingSaveLoadSlot.reset();
         (void)m_ui.SetSaveLoadConfirmation(ui::GalgameUI::SaveLoadPrompt::None);
+    } else if (t == "set.master.value") {
+        m_settings.masterVolume = std::clamp(std::atoi(action.argument.c_str()), 0, 128);
+        audio.SetMainVolume(m_settings.masterVolume);
     } else if (t == "set.bgm.value") {
         m_settings.bgmVolume=std::clamp(std::atoi(action.argument.c_str()),0,128);audio.SetBGMVolume(m_settings.bgmVolume);
     } else if (t == "set.se.value") {
@@ -3113,6 +3129,12 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         (void)m_ui.ShowSettings(SettingsUI());
     } else if(t=="set.selfvoicing.value") { m_settings.selfVoicing=action.argument=="true";if(!m_settings.selfVoicing)m_speech.Stop();
     } else if(t=="set.language.value") { if(LoadLocale(action.argument,true))(void)SaveSettingsIfWritable();
+    } else if (t == "set.master.up") {
+        m_settings.masterVolume = std::min(128, m_settings.masterVolume + 8);
+        audio.SetMainVolume(m_settings.masterVolume);
+    } else if (t == "set.master.down") {
+        m_settings.masterVolume = std::max(0, m_settings.masterVolume - 8);
+        audio.SetMainVolume(m_settings.masterVolume);
     } else if (t == "set.bgm.up") {
         m_settings.bgmVolume = std::min(128, m_settings.bgmVolume + 8);
         audio.SetBGMVolume(m_settings.bgmVolume);
@@ -3159,6 +3181,7 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         m_runtime.GetInput().ResetWheelBindings();
         m_settings.language=locale;
         m_settings.fullscreen=fullscreen;
+        audio.SetMainVolume(m_settings.masterVolume);
         audio.SetBGMVolume(m_settings.bgmVolume);
         audio.SetSEVolume(m_settings.seVolume);
         audio.SetVoiceVolume(m_settings.voiceVolume);
@@ -3325,7 +3348,13 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         OpenScreen("replay");
     } else if (t == "music.open") {
         OpenScreen("music");
-    } else if (t == "title.open") {
+    } else if (t == "title.confirm.cancel") {
+        (void)m_ui.SetTitleConfirmation(false);
+    } else if (t == "title.open" && m_appState == AppState::Game &&
+               m_ui.SupportsTitleConfirmation()) {
+        (void)m_ui.SetTitleConfirmation(true);
+    } else if (t == "title.open" || t == "title.confirm.accept") {
+        (void)m_ui.SetTitleConfirmation(false);
         while (!m_session->Routes().CurrentModalRoute().empty())
             (void)m_session->Routes().CloseModal();
         (void)m_session->Routes().Replace("title");

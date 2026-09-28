@@ -616,6 +616,7 @@ void TestProfileAndSettingsSchemas() {
           "revision-1 profiles with unstable seen identities must be rejected");
 
     px::progress::GameSettings settings;
+    settings.masterVolume = 73;
     settings.bgmVolume = 64;
     settings.voiceVolume = 96;
     settings.language = "ja-JP";
@@ -648,7 +649,7 @@ void TestProfileAndSettingsSchemas() {
               px::progress::PersistLoadStatus::Loaded,
           "a host loads settings and input bindings together");
     Check(
-        loadedSettings.bgmVolume == 64 && loadedSettings.voiceVolume == 96 && loadedSettings.language == "ja-JP" && loadedSettings.textScale == 1.25f && loadedSettings.highContrast && loadedSettings.reducedMotion && loadedSettings.selfVoicing && loadedSettings.keyboardBindings.at("quick-save") == std::vector<int>{f11} && loadedSettings.wheelBindings.at("backlog").threshold == 1.5f,
+        loadedSettings.masterVolume == 73 && loadedSettings.bgmVolume == 64 && loadedSettings.voiceVolume == 96 && loadedSettings.language == "ja-JP" && loadedSettings.textScale == 1.25f && loadedSettings.highContrast && loadedSettings.reducedMotion && loadedSettings.selfVoicing && loadedSettings.keyboardBindings.at("quick-save") == std::vector<int>{f11} && loadedSettings.wheelBindings.at("backlog").threshold == 1.5f,
         "game settings should preserve audio, locale, accessibility, keyboard, and wheel overrides"
     );
     Check(restoredInput.KeyBindings("quick-save") ==

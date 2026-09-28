@@ -191,6 +191,7 @@ GalgameUI::GalgameUI() {
     for (const char* property : {"visible", "save", "load", "overwrite"})
         (void)m_viewModel.Define(
             std::string("saveLoad.confirm.") + property, Variant(false), true);
+    (void)m_viewModel.Define("title.confirm.visible", Variant(false), true);
     const std::vector<std::string> commands={
         "game.start", "game.continue", "load.open", "save.open",
         "gallery.open", "settings.open", "extra.open", "flowchart.open",
@@ -1041,6 +1042,14 @@ Status GalgameUI::SetSaveLoadConfirmation(const SaveLoadPrompt prompt) {
     return Status::Ok();
 }
 
+bool GalgameUI::SupportsTitleConfirmation() const {
+    return FindNamed<Control>(m_context.Root(), "TitleConfirm") != nullptr;
+}
+
+Status GalgameUI::SetTitleConfirmation(const bool visible) {
+    return m_viewModel.Write("title.confirm.visible", Variant(visible));
+}
+
 Status GalgameUI::ShowGallery(std::vector<GalgameItem> entries) {
     VariantArray authoredItems;
     authoredItems.reserve(entries.size());
@@ -1077,7 +1086,7 @@ Status GalgameUI::ShowSettings(const SettingsPresentation& s) {
     (void)m_viewModel.Write("settings.skipAll", Variant(!s.skipReadOnly));
     const Status installed=InstallTemplate(Screen::Settings);if(!installed)return installed;
     auto slider=[this](const char* name,double value,double maximum,const char* command){if(auto* control=FindNamed<Slider>(m_context.Root(),name)){control->SetRange(0,maximum,maximum<=128?4:1);control->SetValue(value);control->SetOnChanged([this,command](double changed){Emit(command,std::to_string(static_cast<int>(changed)));});}};
-    slider("BGM",s.bgm,128,"set.bgm.value");slider("SE",s.se,128,"set.se.value");slider("Voice",s.voice,128,"set.voice.value");slider("TextSpeed",s.textSpeedMs,120,"set.speed.value");
+    slider("Master",s.master,128,"set.master.value");slider("BGM",s.bgm,128,"set.bgm.value");slider("SE",s.se,128,"set.se.value");slider("Voice",s.voice,128,"set.voice.value");slider("TextSpeed",s.textSpeedMs,120,"set.speed.value");
     if(auto* skip=FindNamed<CheckBox>(m_context.Root(),"SkipRead")){skip->SetChecked(s.skipReadOnly);skip->SetOnToggled([this](bool value){Emit("set.skipread.value",value?"true":"false");});}
     if(auto* full=FindNamed<CheckBox>(m_context.Root(),"Fullscreen")){full->SetChecked(s.fullscreen);full->SetOnToggled([this](bool value){Emit("set.fullscreen.value",value?"true":"false");});}
     slider("TextScale",s.textScale*100.0,200,"set.textscale.value");

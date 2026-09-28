@@ -39,6 +39,7 @@ PersistLoadStatus GameSettings::LoadWithFallback(
     }
     try {
         GameSettings candidate = *this;
+        candidate.masterVolume = j.value("masterVolume", candidate.masterVolume);
         candidate.bgmVolume = j.value("bgmVolume", candidate.bgmVolume);
         candidate.seVolume = j.value("seVolume", candidate.seVolume);
         candidate.voiceVolume = j.value("voiceVolume", candidate.voiceVolume);
@@ -125,6 +126,7 @@ bool GameSettings::Save(const std::string& path, const crypto::Key* key) const {
     Json j;
     j["format"] = "PrismatiXSettings";
     j["schemaRevision"] = 2;
+    j["masterVolume"] = masterVolume;
     j["bgmVolume"] = bgmVolume;
     j["seVolume"] = seVolume;
     j["voiceVolume"] = voiceVolume;
