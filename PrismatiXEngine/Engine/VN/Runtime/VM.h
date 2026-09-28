@@ -275,6 +275,10 @@ public:
     [[nodiscard]] bool SafetyRejected() const { return m_safetyRejected; }
     void ClearSafetyRejection() { m_safetyRejected = false; }
     [[nodiscard]] bool Seeking() const { return m_seeking; }
+    // Skip mode: voices and sound effects are not started and Stage
+    // transitions complete immediately. Backlog entries keep their voice.
+    void SetFastForward(bool enabled);
+    [[nodiscard]] bool FastForward() const { return m_fastForward; }
     [[nodiscard]] VMRunResult LastRunResult() const { return m_lastRunResult; }
 
 private:
@@ -333,6 +337,7 @@ private:
     std::optional<VMState> m_debugResumeState;
     std::optional<int> m_seekTargetPc;
     bool m_seeking = false;
+    bool m_fastForward = false;
     bool m_safetyRejected = false;
     std::uint64_t m_instructionsWithoutObservableYield = 0;
     VMRunResult m_lastRunResult{};

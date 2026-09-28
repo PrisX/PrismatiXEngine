@@ -675,7 +675,8 @@ void RuntimeSession::SelectChoice(const int index) {
     m_vm.SelectChoice(index);
 }
 
-RuntimeSession::GameState RuntimeSession::CaptureState(const std::uint64_t playtimeMs) const {
+RuntimeSession::GameState RuntimeSession::CaptureState(const std::uint64_t playtimeMs,
+                                                      const bool includeBacklog) const {
     GameState state;
     state.vm = m_vm.CaptureState();
     state.runtimeProgram = m_runtimeProgramIdentity;
@@ -693,7 +694,7 @@ RuntimeSession::GameState RuntimeSession::CaptureState(const std::uint64_t playt
     }
     state.stage = m_stage.CaptureState();
     state.audio = m_services.audio.CaptureState();
-    state.backlog = m_backlog.Entries();
+    if (includeBacklog) state.backlog = m_backlog.Entries();
     state.routes = m_routes.CaptureState();
     state.timelines = m_timeline.CaptureState();
     for (const auto& [_, clip] : m_timeline.RegisteredClips()) state.animationClips.push_back(clip);

@@ -726,7 +726,8 @@ void VM::ExecuteSimple(const Command& cmd) {
         return;
     }
     if (t == "se") {
-        m_audio.PlaySE(Resolve(m_config.seDir, cmd.Get("file", cmd.Get("value"))));
+        if (!m_fastForward)
+            m_audio.PlaySE(Resolve(m_config.seDir, cmd.Get("file", cmd.Get("value"))));
         return;
     }
     if (t == "stopse") {
@@ -738,7 +739,8 @@ void VM::ExecuteSimple(const Command& cmd) {
         return;
     }
     if (t == "voice") {
-        m_audio.PlayVoice(Resolve(m_config.voiceDir, cmd.Get("file", cmd.Get("value"))));
+        if (!m_fastForward)
+            m_audio.PlayVoice(Resolve(m_config.voiceDir, cmd.Get("file", cmd.Get("value"))));
         return;
     }
     if (t == "var") {
@@ -881,7 +883,8 @@ void VM::HandleSay(const Command& cmd, const bool recordPlayback) {
     }
     m_skipBacklogOnce = false;
     if (recordPlayback && !voice.empty()) {
-        m_audio.PlayVoice(Resolve(m_config.voiceDir, voice));
+        if (m_fastForward) m_audio.StopVoice();
+        else m_audio.PlayVoice(Resolve(m_config.voiceDir, voice));
     }
 }
 
@@ -1079,6 +1082,11 @@ void VM::DebugStep() {
         m_stepping = false;
         m_stepBudget = 0;
     }
+}
+
+void VM::SetFastForward(const bool enabled) {
+    m_fastForward = enabled;
+    m_stage.SetFastForward(enabled);
 }
 
 void VM::OnAdvance() {

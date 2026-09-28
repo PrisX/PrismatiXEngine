@@ -113,7 +113,9 @@ public:
     }
     void SelectChoice(int index);
 
-    [[nodiscard]] GameState CaptureState(std::uint64_t playtimeMs = 0) const;
+    // Rollback checkpoints are taken per line and do not need the backlog.
+    [[nodiscard]] GameState CaptureState(std::uint64_t playtimeMs = 0,
+                                         bool includeBacklog = true) const;
     [[nodiscard]] Result<PreparedRestore> PrepareRestore(
         const GameState& state, std::uint64_t nowMs = 0);
     Status CommitRestore(PreparedRestore prepared);

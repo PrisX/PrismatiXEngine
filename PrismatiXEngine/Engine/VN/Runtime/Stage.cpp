@@ -359,6 +359,10 @@ void Stage::SetBackgroundRule(const std::string& newBgPath, const std::string& r
     if (newBgPath == m_bgPath) {
         return;
     }
+    if (m_fastForward) {
+        SetBackground(newBgPath, false);
+        return;
+    }
     const std::string oldBackgroundPath = m_bgPath;
     int w = 0, h = 0;
     m_renderer.GetLogicalSize(w, h);
@@ -1274,6 +1278,11 @@ void Stage::ClearCustomEffect() {
 }
 
 void Stage::Update(float dt) {
+    if (m_fastForward) {
+        // Large enough to finish any authored tween, fade, or shake.
+        dt = std::max(dt, 60.0f);
+        if (m_ruleState.active) EndRuleTransition();
+    }
     float shakeX = 0.0f;
     float shakeY = 0.0f;
     if (m_shakeRemaining > 0.0f) {

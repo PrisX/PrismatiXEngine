@@ -172,6 +172,10 @@ public:
     void ClearCustomEffect();
 
     void Update(float dt);
+    // While skipping, transitions complete at once and rule dissolves are not
+    // prepared at all; nothing the player cannot see is decoded or animated.
+    void SetFastForward(bool enabled) { m_fastForward = enabled; }
+    [[nodiscard]] bool FastForward() const { return m_fastForward; }
     void Render();
 
     struct SavedActor {
@@ -457,6 +461,7 @@ private:
     float m_bgWait = 0.0f;
     // A non-transition change waiting behind the old image for its decode.
     bool m_bgInstant = false;
+    bool m_fastForward = false;
 
     std::string m_bgPath;
     std::string m_prevBgPath;
