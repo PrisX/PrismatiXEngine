@@ -69,7 +69,7 @@ Renderer2D::Renderer2D(SDL_Renderer* renderer, AssetCache& assets,
     : m_renderer(renderer), m_assets(assets), m_textLayout(assets),
       m_compositor(renderer, gpuEffects) {
     for (const char* operation : {"none", "fade", "crossfade", "slide-left",
-                                  "slide-right"}) {
+                                  "slide-right", "rule"}) {
         ScreenEffectDefinition definition;
         definition.id = operation;
         definition.operation = operation;
@@ -274,6 +274,7 @@ void Renderer2D::DestroyFrameTargets() {
     if (m_presentationHoldTarget) SDL_DestroyTexture(m_presentationHoldTarget);
     m_frameTarget = m_presentedTarget = m_outgoingTarget = nullptr;
     m_presentationHoldTarget = nullptr;
+    DestroyRuleScreenTargets();
     m_presentationHoldActive = false;
     m_framePreviousTarget = nullptr;
     m_frameRecording = false;
@@ -380,6 +381,138 @@ ScreenEffectHandle Renderer2D::PlayScreenEffect(const std::string_view id,
     m_activeScreenEffect = std::move(playback);
     m_screenEffectStates[handle] = ScreenEffectStatus::Playing;
     return handle;
+}
+
+ScreenEffectHandle Renderer2D::PlayRuleScreenTransition(
+    const std::string& rulePath, const float durationSeconds, const int vague) {
+    if (!std::isfinite(durationSeconds) || durationSeconds <= 0.0f ||
+        m_logicalW <= 0 || m_logicalH <= 0)
+        return PlayScreenEffect("crossfade", durationSeconds);
+    const int width = m_logicalW;
+    const int height = m_logicalH;
+    if (!m_ruleScreen || m_ruleScreen->path != rulePath ||
+        m_ruleScreen->width != width || m_ruleScreen->height != height) {
+        SDL_Surface* rule = m_assets.LoadSurface(rulePath);
+        if (!rule) return PlayScreenEffect("crossfade", durationSeconds);
+        SDL_Surface* scaled = rule->w == width && rule->h == height
+            ? rule : SDL_ScaleSurface(rule, width, height, SDL_SCALEMODE_LINEAR);
+        if (scaled != rule) SDL_DestroySurface(rule);
+        if (!scaled) return PlayScreenEffect("crossfade", durationSeconds);
+        RuleScreenTransition built;
+        built.path = rulePath;
+        built.width = width;
+        built.height = height;
+        built.values.resize(static_cast<std::size_t>(width) * height);
+        built.rowMin.assign(static_cast<std::size_t>(height), 255);
+        built.rowMax.assign(static_cast<std::size_t>(height), 0);
+        built.maskPixels.assign(static_cast<std::size_t>(width) * height * 4u, 255);
+        const auto* pixels = static_cast<const std::uint8_t*>(scaled->pixels);
+        for (int row = 0; row < height; ++row) {
+            const std::uint8_t* line = pixels + static_cast<std::size_t>(row) * scaled->pitch;
+            std::uint8_t* out = built.values.data() + static_cast<std::size_t>(row) * width;
+            std::uint8_t low = 255, high = 0;
+            for (int col = 0; col < width; ++col) {
+                const std::uint8_t value = line[col * 4];  // R of RGBA32
+                out[col] = value;
+                low = std::min(low, value);
+                high = std::max(high, value);
+            }
+            built.rowMin[static_cast<std::size_t>(row)] = low;
+            built.rowMax[static_cast<std::size_t>(row)] = high;
+        }
+        SDL_DestroySurface(scaled);
+        m_ruleScreen = std::move(built);
+    }
+    m_ruleScreen->vague = std::clamp(vague, 1, 255);
+    m_ruleScreen->uploaded = false;
+    if (!m_ruleScreenMask) {
+        m_ruleScreenMask = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_ABGR8888,
+                                             SDL_TEXTUREACCESS_STREAMING, width, height);
+        m_ruleScreenMasked = SDL_CreateTexture(m_renderer, SDL_PIXELFORMAT_RGBA8888,
+                                               SDL_TEXTUREACCESS_TARGET, width, height);
+        // Keeps the outgoing colour and multiplies its alpha by the mask.
+        const SDL_BlendMode maskAlpha = SDL_ComposeCustomBlendMode(
+            SDL_BLENDFACTOR_ZERO, SDL_BLENDFACTOR_ONE, SDL_BLENDOPERATION_ADD,
+            SDL_BLENDFACTOR_DST_ALPHA, SDL_BLENDFACTOR_ZERO, SDL_BLENDOPERATION_ADD);
+        if (!m_ruleScreenMask || !m_ruleScreenMasked ||
+            !SDL_SetTextureBlendMode(m_ruleScreenMask, maskAlpha)) {
+            DestroyRuleScreenTargets();
+            return PlayScreenEffect("crossfade", durationSeconds);
+        }
+        (void)SDL_SetTextureBlendMode(m_ruleScreenMasked, SDL_BLENDMODE_BLEND);
+    }
+    return PlayScreenEffect("rule", durationSeconds);
+}
+
+void Renderer2D::RenderRuleScreenTransition(const float progress) {
+    const SDL_FRect viewport{0.0f, 0.0f, static_cast<float>(m_logicalW),
+                             static_cast<float>(m_logicalH)};
+    if (!m_ruleScreen || !m_ruleScreenMask || !m_ruleScreenMasked) {
+        SDL_RenderTexture(m_renderer, m_frameTarget, nullptr, &viewport);
+        return;
+    }
+    auto& rule = *m_ruleScreen;
+    // Rule values below the sweeping threshold have dissolved; `vague` rule
+    // levels form the soft edge. Only rows holding a changed level are
+    // rewritten, so a sweeping band costs a band, not the whole mask.
+    const float vagueLevels = static_cast<float>(rule.vague);
+    const float threshold = progress * (255.0f + vagueLevels);
+    std::array<std::uint8_t, 256> alpha{};
+    int changedLow = 256;
+    int changedHigh = -1;
+    for (int value = 0; value < 256; ++value) {
+        const float a = (static_cast<float>(value) + vagueLevels - threshold) *
+                        (255.0f / vagueLevels);
+        alpha[static_cast<std::size_t>(value)] =
+            static_cast<std::uint8_t>(std::clamp(a, 0.0f, 255.0f));
+        if (!rule.uploaded || alpha[static_cast<std::size_t>(value)] !=
+                                  rule.alphaByRule[static_cast<std::size_t>(value)]) {
+            changedLow = std::min(changedLow, value);
+            changedHigh = std::max(changedHigh, value);
+        }
+    }
+    if (changedHigh >= 0) {
+        const auto width = static_cast<std::size_t>(rule.width);
+        int firstRow = -1;
+        int lastRow = -1;
+        for (int row = 0; row < rule.height; ++row) {
+            const auto index = static_cast<std::size_t>(row);
+            if (rule.uploaded && (rule.rowMax[index] < changedLow ||
+                                  rule.rowMin[index] > changedHigh))
+                continue;
+            const std::uint8_t* values = rule.values.data() + index * width;
+            std::uint8_t* pixels = rule.maskPixels.data() + index * width * 4u;
+            for (std::size_t col = 0; col < width; ++col)
+                pixels[col * 4u + 3u] = alpha[values[col]];
+            if (firstRow < 0) firstRow = row;
+            lastRow = row;
+        }
+        if (firstRow >= 0) {
+            const SDL_Rect rows{0, firstRow, rule.width, lastRow - firstRow + 1};
+            (void)SDL_UpdateTexture(
+                m_ruleScreenMask, &rows,
+                rule.maskPixels.data() + static_cast<std::size_t>(firstRow) * width * 4u,
+                static_cast<int>(width * 4u));
+        }
+        rule.alphaByRule = alpha;
+        rule.uploaded = true;
+    }
+    SDL_Texture* previous = SDL_GetRenderTarget(m_renderer);
+    SDL_SetRenderTarget(m_renderer, m_ruleScreenMasked);
+    (void)SDL_SetTextureBlendMode(m_outgoingTarget, SDL_BLENDMODE_NONE);
+    SDL_RenderTexture(m_renderer, m_outgoingTarget, nullptr, &viewport);
+    (void)SDL_SetTextureBlendMode(m_outgoingTarget, SDL_BLENDMODE_BLEND);
+    SDL_RenderTexture(m_renderer, m_ruleScreenMask, nullptr, &viewport);
+    SDL_SetRenderTarget(m_renderer, previous);
+    SDL_RenderTexture(m_renderer, m_frameTarget, nullptr, &viewport);
+    SDL_RenderTexture(m_renderer, m_ruleScreenMasked, nullptr, &viewport);
+}
+
+void Renderer2D::DestroyRuleScreenTargets() {
+    if (m_ruleScreenMask) SDL_DestroyTexture(m_ruleScreenMask);
+    if (m_ruleScreenMasked) SDL_DestroyTexture(m_ruleScreenMasked);
+    m_ruleScreenMask = m_ruleScreenMasked = nullptr;
+    m_ruleScreen.reset();
 }
 
 bool Renderer2D::StopScreenEffect(const ScreenEffectHandle handle) {
@@ -513,6 +646,10 @@ void Renderer2D::RenderScreenEffect(const ScreenEffectDefinition& definition,
     if (definition.operation == "crossfade") {
         drawAlpha(m_outgoingTarget, 1.0f, viewport);
         drawAlpha(m_frameTarget, progress, viewport);
+        return;
+    }
+    if (definition.operation == "rule") {
+        RenderRuleScreenTransition(progress);
         return;
     }
     if (definition.operation == "slide-left" ||

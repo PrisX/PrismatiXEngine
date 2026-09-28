@@ -134,6 +134,12 @@ public:
     [[nodiscard]] ScreenEffectHandle PlayScreenEffect(
         std::string_view id, float durationSeconds,
         const CustomEffectNamedParameters* parameters = nullptr);
+    // Dissolves the last presented frame into the frames that follow through
+    // a grayscale rule image, the KiriKiri/Artemis whole-screen "trans".
+    // `vague` is the soft edge width in rule levels (0-255). Works on every
+    // graphics tier: the mask is applied with a blend mode, not a shader.
+    [[nodiscard]] ScreenEffectHandle PlayRuleScreenTransition(
+        const std::string& rulePath, float durationSeconds, int vague);
     [[nodiscard]] bool StopScreenEffect(ScreenEffectHandle handle);
     [[nodiscard]] bool CancelScreenEffect(ScreenEffectHandle handle);
     // Holds the outgoing snapshot while the incoming screen prepares assets;
@@ -328,6 +334,8 @@ private:
     void RenderScreenEffect(const ScreenEffectDefinition& definition,
                             float progress);
     void FinishScreenEffect(ScreenEffectStatus status);
+    void RenderRuleScreenTransition(float progress);
+    void DestroyRuleScreenTargets();
 
     SDL_Renderer* m_renderer;
     AssetCache& m_assets;
@@ -364,6 +372,21 @@ private:
     std::unordered_map<ScreenEffectHandle, ScreenEffectStatus> m_screenEffectStates;
     std::optional<ScreenEffectPlayback> m_activeScreenEffect;
     ScreenEffectHandle m_nextScreenEffectHandle = 1;
+    struct RuleScreenTransition {
+        std::string path;
+        int vague = 64;
+        int width = 0;
+        int height = 0;
+        std::vector<std::uint8_t> values;
+        std::vector<std::uint8_t> rowMin;
+        std::vector<std::uint8_t> rowMax;
+        std::vector<std::uint8_t> maskPixels;
+        std::array<std::uint8_t, 256> alphaByRule{};
+        bool uploaded = false;
+    };
+    std::optional<RuleScreenTransition> m_ruleScreen;
+    SDL_Texture* m_ruleScreenMask = nullptr;
+    SDL_Texture* m_ruleScreenMasked = nullptr;
     bool m_frameRecording = false;
     bool m_presentationHoldActive = false;
     std::uint64_t m_geometryBatchCount = 0;
