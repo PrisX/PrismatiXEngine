@@ -1857,7 +1857,7 @@ private:
                     "PXWASM-UI-BACKLOG-001",
                     "The Preview backlog is empty.", {},
                     "Advance dialogue before opening the backlog.");
-            return m_hud.ShowBacklog(std::move(items));
+            return m_hud.ShowBacklog({}, std::move(items));
         }
         if (route == "gallery") {
             auto items = PreviewGalleryItems();

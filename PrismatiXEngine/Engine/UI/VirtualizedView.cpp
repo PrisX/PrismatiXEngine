@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <unordered_set>
 
 namespace px::ui {
@@ -38,7 +39,22 @@ Status VirtualizedView::SetSource(std::shared_ptr<IVirtualItemSource> source, Fa
 void VirtualizedView::SetGridColumns(std::size_t columns) { m_columns = std::max<std::size_t>(1, columns); InvalidateLayout(); }
 void VirtualizedView::SetItemExtent(Vec2 extent) { m_itemExtent = {std::max(1.0f, extent.x), std::max(1.0f, extent.y)}; InvalidateLayout(); }
 void VirtualizedView::SetGap(Vec2 gap) { m_gap = {std::max(0.0f, gap.x), std::max(0.0f, gap.y)}; InvalidateLayout(); }
-void VirtualizedView::ScrollTo(float offset) { m_scroll = std::max(0.0f, offset); InvalidateLayout(); }
+void VirtualizedView::ScrollTo(float offset) {
+    // Clamp to the content once the viewport is known, so wheel and buttons
+    // cannot scroll past the last row into empty space.
+    const float pitch = m_itemExtent.y + m_gap.y;
+    if (m_source && !m_placedItems && LayoutRect().h > 0.0f && pitch > 0.0f) {
+        const std::size_t rows = (m_source->Count() + m_columns - 1) / std::max<std::size_t>(1, m_columns);
+        const float content = static_cast<float>(rows) * pitch - m_gap.y;
+        offset = std::min(offset, std::max(0.0f, content - LayoutRect().h));
+    }
+    m_scroll = std::max(0.0f, offset);
+    InvalidateLayout();
+}
+void VirtualizedView::ScrollByRows(const int rows) {
+    ScrollTo(m_scroll + static_cast<float>(rows) * (m_itemExtent.y + m_gap.y));
+}
+void VirtualizedView::ScrollToEnd() { ScrollTo(std::numeric_limits<float>::max()); }
 void VirtualizedView::ScrollToIndex(std::size_t index) { ScrollTo(static_cast<float>(index / m_columns) * (m_itemExtent.y + m_gap.y)); }
 
 Status VirtualizedView::ValidateKeys(const IVirtualItemSource& source) {

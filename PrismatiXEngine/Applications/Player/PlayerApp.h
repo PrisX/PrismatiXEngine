@@ -126,6 +126,7 @@ private:
     [[nodiscard]] std::vector<ui::GalgameItem> GalleryItems();
     [[nodiscard]] std::vector<ui::GalgameItem> SaveItems(bool saveMode);
     [[nodiscard]] std::vector<ui::GalgameItem> BacklogItems();
+    [[nodiscard]] std::vector<ui::BacklogEntryPresentation> BacklogEntries();
     [[nodiscard]] ui::DialoguePresentation DialogueUI() const;
     [[nodiscard]] ui::SettingsPresentation SettingsUI() const;
     void HandleUIAction(const ui::GalgameAction& action);

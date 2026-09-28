@@ -91,6 +91,9 @@ public:
     Status RestoreRuntimeState(const UIRuntimeState& state);
 
     [[nodiscard]] bool Update(const Input& input, int viewportWidth, int viewportHeight,float deltaSeconds=0.0f);
+    // Viewport of the last Update; zero before the first frame.
+    [[nodiscard]] int Width() const { return m_width; }
+    [[nodiscard]] int Height() const { return m_height; }
     Status SetAnimations(UIAnimationLibrary library,bool autoplay=true);
     Status SetVisualStateGroups(std::vector<VisualStateGroup> groups);
     Status SetVisualState(std::string_view group, std::string_view state);

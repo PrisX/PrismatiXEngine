@@ -681,7 +681,7 @@ bool PlayerApp::LoadLocale(std::string locale, const bool refreshPresentation) {
             (void)m_ui.ShowHUD(DialogueUI());
             break;
         case ui::GalgameUI::Screen::Backlog:
-            (void)m_ui.ShowBacklog(BacklogItems());
+            (void)m_ui.ShowBacklog(BacklogEntries(), BacklogItems());
             break;
         case ui::GalgameUI::Screen::Save:
             (void)m_ui.ShowSaveLoad(true, SaveItems(true));
@@ -2952,6 +2952,19 @@ std::vector<ui::GalgameItem> PlayerApp::BacklogItems() {
     return items;
 }
 
+std::vector<ui::BacklogEntryPresentation> PlayerApp::BacklogEntries() {
+    std::vector<ui::BacklogEntryPresentation> entries;
+    const auto& lines = m_session->Backlog().Entries();
+    entries.reserve(lines.size());
+    for (const auto& entry : lines)
+        entries.push_back({entry.sequence,
+                           entry.isChoice ? ProductText(m_langTable, "player.backlog.choice",
+                                                        "▶ 選擇")
+                                          : entry.speaker,
+                           entry.text, !entry.voice.empty(), entry.isChoice});
+    return entries;
+}
+
 ui::DialoguePresentation PlayerApp::DialogueUI() const {
     ui::DialoguePresentation view;
     const auto& dialogue = m_session->Dialogue().State();
@@ -3188,7 +3201,8 @@ void PlayerApp::PresentRoute(const std::string& route,
     else if (target == "save") (void)present(m_ui.ShowSaveLoad(true, SaveItems(true)));
     else if (target == "load") (void)present(m_ui.ShowSaveLoad(false, SaveItems(false)));
     else if (target == "settings") (void)present(m_ui.ShowSettings(SettingsUI()));
-    else if (target == "backlog") (void)present(m_ui.ShowBacklog(BacklogItems()));
+    else if (target == "backlog")
+        (void)present(m_ui.ShowBacklog(BacklogEntries(), BacklogItems()));
     else if (target == "title") {
         const bool fromBootSplash = m_appState == AppState::BootSplash;
         m_appState = AppState::Title;
@@ -3662,6 +3676,27 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         m_skipMode = !m_skipMode; if (m_skipMode) m_autoMode = false;
     } else if (t == "backlog.open") {
         OpenScreen("backlog");
+    } else if (t == "save.quick") {
+        // Written after the Stage renders, so the thumbnail has no HUD.
+        m_saveRequested = true;
+    } else if (t == "load.quick") {
+        if (m_saves.Peek(0).exists) (void)LoadSlot(0);
+    } else if (t == "voice.replay") {
+        const auto& lines = m_session->Backlog().Entries();
+        const auto voiced = std::find_if(lines.rbegin(), lines.rend(), [](const auto& entry) {
+            return !entry.voice.empty();
+        });
+        if (voiced != lines.rend() && voiced == lines.rbegin())
+            m_runtime.Audio().PlayVoice(voiced->voice.find('/') != std::string::npos
+                ? voiced->voice : m_session->VM().Config().voiceDir + voiced->voice);
+    } else if (t == "choice.previous") {
+        // The choice autosave is the state at the most recent choice prompt.
+        if (m_saves.Peek(kAutoSaveSlot).exists) (void)LoadSlot(kAutoSaveSlot);
+    } else if (t == "choice.next") {
+        // Skip stops at the next choice, and at unread text unless the
+        // player allowed skipping it.
+        m_skipMode = true;
+        m_autoMode = false;
     } else if (t == "backlog.voice" || t == "backlog.rollback") {
         std::uint64_t sequence = 0;
         try {

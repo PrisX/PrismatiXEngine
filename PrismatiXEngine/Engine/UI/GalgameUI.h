@@ -35,6 +35,14 @@ struct GalgameItem {
     std::string command;
     std::string argument;
 };
+// One line of the backlog as authored UI sees it (backlog.entries).
+struct BacklogEntryPresentation {
+    std::uint64_t sequence = 0;
+    std::string speaker;
+    std::string text;
+    bool voice = false;
+    bool choice = false;
+};
 struct DialoguePresentation {
     std::string speaker;
     std::string text;
@@ -171,7 +179,11 @@ public:
     Status ShowRoute(std::string_view route);
     Status ShowTitle();
     Status ShowHUD(const DialoguePresentation& presentation);
-    Status ShowBacklog(std::vector<GalgameItem> entries);
+    // Authored backlogs bind `backlog.entries`; the built-in template shows
+    // the preformatted `legacyItems` in its ListView named Entries.
+    Status ShowBacklog(std::vector<BacklogEntryPresentation> entries,
+                       std::vector<GalgameItem> legacyItems);
+    Status ScrollBacklog(int rows);
     Status ShowSaveLoad(bool saveMode, std::vector<GalgameItem> slots);
     enum class SaveLoadPrompt { None, Save, Load, Overwrite };
     [[nodiscard]] bool SupportsSaveLoadConfirmation() const;

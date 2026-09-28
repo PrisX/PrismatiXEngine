@@ -32,9 +32,10 @@ const namedNodes: Readonly<Record<string, Readonly<Record<string, readonly strin
 const itemFields: Readonly<Record<string, readonly string[]>> = {
   "saveLoad.slots": ["key", "number", "argument", "image", "occupied", "title", "subtitle", "enabled"],
   "gallery.items": ["key", "title", "image", "enabled", "locked"],
+  "backlog.entries": ["key", "speaker", "text", "voice", "choice"],
 };
 
-const reservedRoots = new Set(["dialogue", "chapter", "music", "saveLoad", "gallery",
+const reservedRoots = new Set(["dialogue", "chapter", "music", "saveLoad", "gallery", "backlog",
   "settings", "title", "system", "replay", "profileFlags", "musicUnlocked", "sceneUnlocked"]);
 
 export interface PlayerUiContractInput {
@@ -63,7 +64,7 @@ export function playerUiDataPaths(input: PlayerUiContractInput): ReadonlySet<str
     .map((track) => track.slice(track.lastIndexOf("/") + 1).replace(/\.[^.]+$/u, ""));
   return new Set([
     "dialogue.speaker", "dialogue.text", "chapter.title", "music.title",
-    "saveLoad.slots", "gallery.items", "title.confirm.visible",
+    "saveLoad.slots", "gallery.items", "backlog.entries", "title.confirm.visible",
     ...Array.from({length: 12}, (_, slot) => ["image", "title", "subtitle", "enabled"]
       .map((field) => `saveLoad.slot${slot}.${field}`)).flat(),
     ...["fullscreen", "windowed", "skipReadOnly", "skipAll", "masterValue", "bgmValue",

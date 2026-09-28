@@ -187,6 +187,7 @@ GalgameUI::GalgameUI() {
     }
     (void)m_viewModel.Define("saveLoad.slots", Variant(std::move(initialSlots)), true);
     (void)m_viewModel.Define("gallery.items", Variant(VariantArray{}), true);
+    (void)m_viewModel.Define("backlog.entries", Variant(VariantArray{}), true);
     for (const char* property : {"fullscreen", "windowed", "skipReadOnly", "skipAll"})
         (void)m_viewModel.Define(std::string("settings.") + property,
                                  Variant(false), true);
@@ -211,18 +212,34 @@ GalgameUI::GalgameUI() {
         "gallery.open", "settings.open", "extra.open", "flowchart.open",
         "replay.open", "music.open", "title.open", "app.quit",
         "mode.auto", "mode.skip", "backlog.open", "hud.hide",
-        "overlay.close"};
+        "overlay.close", "save.quick", "load.quick", "voice.replay",
+        "choice.previous", "choice.next"};
     for(const auto& command:commands)(void)RegisterActionCommand(command);
     (void)RegisterActionCommand("save.slot", "slot");
     (void)RegisterActionCommand("load.slot", "slot");
     (void)RegisterActionCommand("saveLoad.page", "argument");
     (void)RegisterActionCommand("cg.view", "resource");
+    // Authored backlog entries pass their key as the index argument.
+    (void)RegisterActionCommand("backlog.voice", "index");
+    (void)RegisterActionCommand("backlog.rollback", "index");
     (void)RegisterActionCommand("saveLoad.confirm.accept");
     (void)RegisterActionCommand("saveLoad.confirm.cancel");
     (void)RegisterActionCommand("saveLoad.error.dismiss");
     (void)RegisterActionCommand("system.confirm.accept");
     (void)RegisterActionCommand("system.confirm.cancel");
     (void)m_context.Commands().Register("hud.toolbar.pin",[this](const Variant&){return ToggleHudToolbarPinned();});
+    (void)m_context.Commands().Register("backlog.scroll", [this](const Variant& parameter) {
+        int rows = 0;
+        if (const auto* values = parameter.AsObject()) {
+            if (const auto found = values->find("argument"); found != values->end()) {
+                if (const auto* integer = found->second.TryGet<std::int64_t>())
+                    rows = static_cast<int>(*integer);
+                else if (const auto* text = found->second.TryGet<std::string>())
+                    (void)std::from_chars(text->data(), text->data() + text->size(), rows);
+            }
+        }
+        return ScrollBacklog(rows);
+    });
     for (auto& entry : CreateBuiltinUiPackage()) {
         const auto screen = ScreenFromId(entry.route);
         if (!screen) continue;
@@ -726,7 +743,7 @@ Status GalgameUI::InstallCheckpointSurface(const Screen screen) {
     switch (screen) {
         case Screen::Title: return ShowTitle();
         case Screen::HUD: return ShowHUD({});
-        case Screen::Backlog: return ShowBacklog({});
+        case Screen::Backlog: return ShowBacklog({}, {});
         case Screen::Save: return ShowSaveLoad(true, {});
         case Screen::Load: return ShowSaveLoad(false, {});
         case Screen::Gallery: return ShowGallery({});
@@ -992,8 +1009,46 @@ Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
     return Status::Ok();
 }
 
-Status GalgameUI::ShowBacklog(std::vector<GalgameItem> entries) {
-    const Status installed=InstallTemplate(Screen::Backlog);if(!installed)return installed;auto* list=FindNamed<ListView>(m_context.Root(),"Entries");if(!list)return GalgameFailure("PXUI2805","Backlog template requires a ListView named Entries");m_items=std::make_shared<ItemSource>(std::move(entries),*this);return list->SetSource(m_items,[]{return std::make_unique<Button>();});
+Status GalgameUI::ShowBacklog(std::vector<BacklogEntryPresentation> entries,
+                              std::vector<GalgameItem> legacyItems) {
+    VariantArray values;
+    values.reserve(entries.size());
+    for (const auto& entry : entries)
+        values.emplace_back(VariantObject{
+            {"key", Variant(static_cast<std::int64_t>(entry.sequence))},
+            {"speaker", Variant(entry.speaker)},
+            {"text", Variant(entry.text)},
+            {"voice", Variant(entry.voice)},
+            {"choice", Variant(entry.choice)},
+        });
+    if (const Status published = m_viewModel.Write("backlog.entries", Variant(std::move(values)));
+        !published)
+        return published;
+    const Status installed = InstallTemplate(Screen::Backlog);
+    if (!installed) return installed;
+    auto* list = FindNamed<ListView>(m_context.Root(), "Entries");
+    if (!list) return GalgameFailure("PXUI2805", "Backlog template requires a ListView named Entries");
+    if (!list->HasSource()) {
+        m_items = std::make_shared<ItemSource>(std::move(legacyItems), *this);
+        if (const Status bound = list->SetSource(m_items, [] { return std::make_unique<Button>(); });
+            !bound)
+            return bound;
+    } else {
+        m_items.reset();
+    }
+    // A log opens on its newest line. Layout runs first so the clamp knows
+    // the viewport height.
+    (void)m_context.Update(Input{}, m_context.Width(), m_context.Height(), 0.0f);
+    list->ScrollToEnd();
+    return Status::Ok();
+}
+
+Status GalgameUI::ScrollBacklog(const int rows) {
+    auto* list = m_screen == Screen::Backlog
+        ? FindNamed<ListView>(m_context.Root(), "Entries") : nullptr;
+    if (!list) return GalgameFailure("PXUI2805", "backlog.scroll needs the backlog's ListView named Entries");
+    list->ScrollByRows(rows);
+    return Status::Ok();
 }
 
 Status GalgameUI::ShowSaveLoad(bool saveMode, std::vector<GalgameItem> slots) {

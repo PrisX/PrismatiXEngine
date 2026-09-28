@@ -86,6 +86,13 @@ std::vector<ActionDescriptor> BuiltInActionDescriptors() {
                    {Argument("index", "Backlog Index", VariantType::Integer)}));
     add(Descriptor("backlog.rollback", "Rollback", "Backlog",
                    {Argument("index", "Backlog Index", VariantType::Integer)}));
+    add(Descriptor("backlog.scroll", "Scroll Backlog", "Backlog",
+                   {Argument("argument", "Rows", VariantType::String)}));
+    add(Descriptor("save.quick", "Quick Save", "Save"));
+    add(Descriptor("load.quick", "Quick Load", "Save"));
+    add(Descriptor("voice.replay", "Replay Current Voice", "Game"));
+    add(Descriptor("choice.previous", "Return to Previous Choice", "Game"));
+    add(Descriptor("choice.next", "Skip to Next Choice", "Game"));
     add(Descriptor("mode.auto", "Toggle Auto", "Game"));
     add(Descriptor("mode.skip", "Toggle Skip", "Game"));
     add(Descriptor("set.skipread.toggle", "Toggle Skip Read", "Settings"));

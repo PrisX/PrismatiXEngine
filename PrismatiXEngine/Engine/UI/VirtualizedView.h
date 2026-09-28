@@ -56,6 +56,10 @@ public:
     [[nodiscard]] std::size_t Overscan() const { return m_overscan; }
     void ScrollTo(float offset);
     void ScrollToIndex(std::size_t index);
+    // Scrolls by whole rows; negative values move towards the first item.
+    void ScrollByRows(int rows);
+    // Shows the last row at the bottom edge, as a log view opens.
+    void ScrollToEnd();
     [[nodiscard]] float ScrollOffset() const { return m_scroll; }
     [[nodiscard]] std::size_t RealizedCount() const { return m_realized.size(); }
     [[nodiscard]] std::size_t PooledCount() const { return m_pool.size(); }

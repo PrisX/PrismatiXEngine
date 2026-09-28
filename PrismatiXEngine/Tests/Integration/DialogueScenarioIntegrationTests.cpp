@@ -213,7 +213,7 @@ void TestDialogueEffects() {
               findByName(findByName, hud.Root(), "Language") != nullptr,
           "built-in settings route must instantiate its slider, toggle, and locale controls");
 
-    Check(hud.ShowBacklog({}) &&
+    Check(hud.ShowBacklog({}, {}) &&
               dynamic_cast<px::ui::ListView*>(
                   findByName(findByName, hud.Root(), "Entries")) != nullptr,
           "built-in backlog route must instantiate the production ListView contract");
