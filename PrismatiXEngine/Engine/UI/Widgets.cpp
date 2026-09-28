@@ -101,6 +101,18 @@ Vec2 Label::MeasureOverride(Vec2 available) {
     return {std::min(estimatedWidth, available.x), lines * static_cast<float>(size) * 1.35f};
 }
 
+int Label::FontSizeToFit(std::string_view content, int requested,
+                         float width, float height) const {
+    if (width <= 0.0f || height <= 0.0f || content.empty()) return requested;
+    const std::string plain = text::ParseRubyMarkup(content).plain;
+    const int wrap = std::max(1, static_cast<int>(std::floor(width)));
+    for (int size = requested; size >= 12; --size) {
+        const auto layout = MeasureTextLayout(plain, size, wrap);
+        if (!layout || layout->Size().y <= height - 8.0f) return size;
+    }
+    return 12;
+}
+
 void Label::DrawSelf(graphics::Renderer2D& renderer, const Theme& theme) {
     const auto& style = theme.Resolve(*this);
     const int size = m_fontSize > 0 ? m_fontSize : style.fontSize;

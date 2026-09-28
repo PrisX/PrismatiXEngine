@@ -183,6 +183,9 @@ GalgameUI::GalgameUI() {
     }
     (void)m_viewModel.Define("saveLoad.slots", Variant(std::move(initialSlots)), true);
     (void)m_viewModel.Define("gallery.items", Variant(VariantArray{}), true);
+    for (const char* property : {"fullscreen", "windowed", "skipReadOnly", "skipAll"})
+        (void)m_viewModel.Define(std::string("settings.") + property,
+                                 Variant(false), true);
     for (const char* property : {"visible", "save", "load", "overwrite"})
         (void)m_viewModel.Define(
             std::string("saveLoad.confirm.") + property, Variant(false), true);
@@ -195,6 +198,7 @@ GalgameUI::GalgameUI() {
     for(const auto& command:commands)(void)RegisterActionCommand(command);
     (void)RegisterActionCommand("save.slot", "slot");
     (void)RegisterActionCommand("load.slot", "slot");
+    (void)RegisterActionCommand("saveLoad.page", "argument");
     (void)RegisterActionCommand("cg.view", "resource");
     (void)RegisterActionCommand("saveLoad.confirm.accept");
     (void)RegisterActionCommand("saveLoad.confirm.cancel");
@@ -876,8 +880,12 @@ Status GalgameUI::RefreshHUD(const DialoguePresentation& p) {
     if (m_speaker) m_speaker->SetText(p.speaker);
     if (m_dialogue) {
         SetPresentationText(m_dialogue, p.text);
-        m_dialogue->SetFontSize(static_cast<int>(std::lround(
-            m_dialogueBaseFontSize * std::clamp(p.textScale, .75f, 2.0f))));
+        const int requested = static_cast<int>(std::lround(
+            m_dialogueBaseFontSize * std::clamp(p.textScale, .75f, 2.0f)));
+        const Rect bounds = m_dialogue->LayoutRect();
+        m_dialogue->SetFontSize(m_dialogue->FontSizeToFit(
+            p.fullText.empty() ? p.text : p.fullText, requested,
+            bounds.w, bounds.h));
         const std::string desiredEffect = p.reducedMotion ? std::string{} : p.effect;
         if (desiredEffect != m_activeDialogueEffect) {
             if (!m_activeDialogueEffect.empty())
@@ -966,16 +974,15 @@ Status GalgameUI::ShowSaveLoad(bool saveMode, std::vector<GalgameItem> slots) {
     const Screen target=saveMode?Screen::Save:Screen::Load;
     (void)SetSaveLoadConfirmation(SaveLoadPrompt::None);
     VariantArray slotValues;
-    slotValues.reserve(12);
-    for (std::size_t index = 0; index < 12; ++index) {
-        const auto found = std::ranges::find_if(slots, [index](const GalgameItem& item) {
-            return item.argument == std::to_string(index);
-        });
-        const GalgameItem* item = found == slots.end() ? nullptr : &*found;
+    slotValues.reserve(slots.size());
+    for (std::size_t index = 0; index < slots.size(); ++index) {
+        const GalgameItem* item = &slots[index];
         slotValues.emplace_back(VariantObject{
-            {"key", Variant(std::string("slot-") + std::to_string(index))},
-            {"number", Variant(index < 9 ? std::string("0") + std::to_string(index + 1) : std::to_string(index + 1))},
+            {"key", Variant(item->argument)},
+            {"number", Variant(item->argument)},
+            {"argument", Variant(item->argument)},
             {"image", Variant(item ? item->image : std::string{})},
+            {"occupied", Variant(item && !item->title.empty())},
             {"title", Variant(item ? item->title : std::string{})},
             {"subtitle", Variant(item ? item->subtitle : std::string{})},
             {"enabled", Variant(item && !item->disabled)},
@@ -1062,6 +1069,10 @@ Status GalgameUI::ShowGallery(std::vector<GalgameItem> entries) {
 }
 
 Status GalgameUI::ShowSettings(const SettingsPresentation& s) {
+    (void)m_viewModel.Write("settings.fullscreen", Variant(s.fullscreen));
+    (void)m_viewModel.Write("settings.windowed", Variant(!s.fullscreen));
+    (void)m_viewModel.Write("settings.skipReadOnly", Variant(s.skipReadOnly));
+    (void)m_viewModel.Write("settings.skipAll", Variant(!s.skipReadOnly));
     const Status installed=InstallTemplate(Screen::Settings);if(!installed)return installed;
     auto slider=[this](const char* name,double value,double maximum,const char* command){if(auto* control=FindNamed<Slider>(m_context.Root(),name)){control->SetRange(0,maximum,maximum<=128?4:1);control->SetValue(value);control->SetOnChanged([this,command](double changed){Emit(command,std::to_string(static_cast<int>(changed)));});}};
     slider("BGM",s.bgm,128,"set.bgm.value");slider("SE",s.se,128,"set.se.value");slider("Voice",s.voice,128,"set.voice.value");slider("TextSpeed",s.textSpeedMs,120,"set.speed.value");

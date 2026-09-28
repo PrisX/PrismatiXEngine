@@ -22,12 +22,14 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
 #include <filesystem>
+#include <format>
 #include <iterator>
 #include <limits>
 #include <optional>
@@ -726,6 +728,38 @@ const std::string& PlayerApp::TitleBgmPath() const {
     return m_titleBgm;
 }
 
+void PlayerApp::RefreshTitleProgressUi() {
+    const auto flag = [this](const char* name) {
+        return ProfileFlagEnabled(m_profile.Variable(name));
+    };
+    // titleflag.lua chooses the most advanced chapter milestone first.
+    const int tier = flag("g_clear_5") ? 7 : flag("g_clear_4") ? 6 :
+        flag("g_clear_ani") ? 5 : flag("g_clear_2") ? 4 :
+        flag("g_clear_1") ? 3 : flag("g_clearop") ? 2 : 0;
+    const std::array chapterKeys = {"op", "i", "ii", "iii", "iv", "v", "vi"};
+    const std::array thresholds = {2, 2, 3, 4, 5, 6, 7};
+    for (std::size_t index = 0; index < chapterKeys.size(); ++index)
+        (void)m_ui.UpdateUiData(
+            std::string("title.chapter.") + chapterKeys[index],
+            Variant(tier >= thresholds[index]));
+
+    const int variant = flag("g_clear_mar") && flag("g_clear_6") && flag("g_append") ? 9 :
+        (flag("g_clear_mar") && flag("g_start_ani")) ||
+        (flag("g_clear_ani") && flag("g_start_mar")) ? 8 :
+        !flag("g_clear_mar") && flag("g_start_ani") ? 7 :
+        (flag("g_clear_zyp") && flag("g_start_mar")) ||
+        (flag("g_clear_mar") && flag("g_start_zyp")) ? 6 :
+        !flag("g_clear_zyp") && flag("g_start_mar") ? 5 :
+        !flag("g_clear_mar") && flag("g_start_zyp") ? 4 :
+        (flag("g_clear_oly") && flag("g_start_pic")) ||
+        (flag("g_clear_pic") && flag("g_start_oly")) ? 3 :
+        !flag("g_clear_oly") && flag("g_start_pic") ? 2 :
+        !flag("g_clear_pic") && flag("g_start_oly") ? 1 : 0;
+    for (int index = 1; index <= 9; ++index)
+        (void)m_ui.UpdateUiData("title.chapter3Case" + std::to_string(index),
+                                Variant(index == variant));
+}
+
 bool PlayerApp::Init(int argc, char* argv[]) {
     m_boot = LoadBootConfig();
     if (!m_boot.valid) return false;
@@ -833,6 +867,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                     Variant(ProfileFlagEnabled(&value))); !updated)
                 for (const auto& diagnostic : updated.Diagnostics())
                     diag::Emit(diagnostic);
+            RefreshTitleProgressUi();
         });
     m_ui.SetBehaviorVariableAccess(
         [this](const std::string_view name)->std::optional<Variant>{
@@ -957,6 +992,48 @@ bool PlayerApp::Init(int argc, char* argv[]) {
                             m_titleBgmAfterPath = *safe;
                         }
                     }
+                }
+                if (const auto tracks = settings->find("player.musicTracks");
+                    tracks != settings->end()) {
+                    if (!tracks->is_array() || tracks->size() > 256) {
+                        diag::Emit(diag::Diagnostic{
+                            .severity = diag::Severity::Fatal,
+                            .code = "PXPLAYER5025",
+                            .category = "Player.Audio",
+                            .message = "player.musicTracks must be an array of at most 256 paths"});
+                        return false;
+                    }
+                    for (const auto& track : *tracks) {
+                        const auto safe = track.is_string()
+                            ? SafeVfsRelativePath(track.get<std::string>())
+                            : std::nullopt;
+                        if (!safe || !m_runtime.VFS().Exists(*safe)) {
+                            diag::Emit(diag::Diagnostic{
+                                .severity = diag::Severity::Fatal,
+                                .code = "PXPLAYER5025",
+                                .category = "Player.Audio",
+                                .message = "player.musicTracks contains a missing or unsafe path"});
+                            return false;
+                        }
+                        m_musicTracks.push_back(*safe);
+                    }
+                }
+                if (const auto layout = settings->find("player.saveLayout");
+                    layout != settings->end()) {
+                    if (!layout->is_object()) return false;
+                    for (const char* key : {"pages", "slotsPerPage", "firstSlot"}) {
+                        if (const auto field = layout->find(key);
+                            field != layout->end() && !field->is_number_integer())
+                            return false;
+                    }
+                    const auto pages = layout->value("pages", 1);
+                    const auto perPage = layout->value("slotsPerPage", 12);
+                    const auto first = layout->value("firstSlot", 0);
+                    if (pages < 1 || pages > 100 || perPage < 1 || perPage > 32 ||
+                        first < 0 || first + pages * perPage > 1000) return false;
+                    m_savePages = pages;
+                    m_saveSlotsPerPage = perPage;
+                    m_saveFirstSlot = first;
                 }
                 const auto readUiSound=[this,settings](const char* key,std::string& output){
                     const auto value=settings->find(key);
@@ -1537,7 +1614,19 @@ bool PlayerApp::Init(int argc, char* argv[]) {
     PX_LOG_DEBUG("Player boot: engine.ready emitted");
     m_session->VM().SetUnlockHook([this](const std::string& kind, const std::string& id) {
         if (kind == "cg") m_profile.UnlockCG(id);
-        else m_profile.UnlockScene(id);
+        else if (kind == "scene") {
+            m_profile.UnlockScene(id);
+            if (const Status updated = m_ui.UpdateUiData(
+                    "sceneUnlocked." + id, Variant(true)); !updated)
+                for (const auto& diagnostic : updated.Diagnostics())
+                    diag::Emit(diagnostic);
+        } else if (kind == "music") {
+            m_profile.UnlockMusic(id);
+            if (const Status updated = m_ui.UpdateUiData(
+                    "musicUnlocked." + id, Variant(true)); !updated)
+                for (const auto& diagnostic : updated.Diagnostics())
+                    diag::Emit(diagnostic);
+        } else return;
         SaveProfileIfWritable();
         PX_LOG_INFO("Player progression unlocked kind={} id={}", kind, id);
     });
@@ -1567,7 +1656,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         "music.play", "music.previous", "music.stop", "music.resume",
         "music.next", "music.about", "music.random",
         "music.scroll.home", "music.scroll.up", "music.scroll.down",
-        "music.scroll.end", "replay.launch", "flowchart.select", "flowchart.jump",
+        "music.scroll.end", "replay.launch", "replay.page", "title.chapter3", "flowchart.select", "flowchart.jump",
         "flowchart.filter", "flowchart.scroll.home", "flowchart.scroll.up",
         "flowchart.scroll.down", "flowchart.scroll.end",
     };
@@ -1600,7 +1689,7 @@ bool PlayerApp::Init(int argc, char* argv[]) {
         "SongED1", "SongED2", "SongED3", "SongED4", "SongED5",
         "SongED6", "BGM61",
     };
-    for (const auto name : musicNames) {
+    if (m_musicTracks.empty()) for (const auto name : musicNames) {
         const std::string path = "Assets/Audio/BGM/" + std::string(name) + ".wav";
         if (m_runtime.VFS().Exists(path)) m_musicTracks.push_back(path);
     }
@@ -1709,6 +1798,44 @@ bool PlayerApp::Init(int argc, char* argv[]) {
             return false;
         }
     }
+    for (const auto& path : m_musicTracks) {
+        const std::string id = std::filesystem::path(path).stem().string();
+        if (const Status defined = m_ui.DefineUiData(
+                "musicUnlocked." + id, Variant(m_profile.MusicUnlocked(id))); !defined) {
+            for (const auto& diagnostic : defined.Diagnostics()) diag::Emit(diagnostic);
+            return false;
+        }
+    }
+    for (int number = 1; number <= 24; ++number) {
+        const std::string id = std::format("scene{:02}", number);
+        if (const Status defined = m_ui.DefineUiData(
+                "sceneUnlocked." + id, Variant(m_profile.SceneUnlocked(id))); !defined) {
+            for (const auto& diagnostic : defined.Diagnostics()) diag::Emit(diagnostic);
+            return false;
+        }
+    }
+    for (int page = 1; page <= 4; ++page) {
+        if (const Status defined = m_ui.DefineUiData(
+                "replay.page" + std::to_string(page), Variant(page == 1)); !defined) {
+            for (const auto& diagnostic : defined.Diagnostics()) diag::Emit(diagnostic);
+            return false;
+        }
+    }
+    for (const char* chapter : {"op", "i", "ii", "iii", "iv", "v", "vi"}) {
+        if (const Status defined = m_ui.DefineUiData(
+                std::string("title.chapter.") + chapter, Variant(false)); !defined) {
+            for (const auto& diagnostic : defined.Diagnostics()) diag::Emit(diagnostic);
+            return false;
+        }
+    }
+    for (int variant = 1; variant <= 9; ++variant) {
+        if (const Status defined = m_ui.DefineUiData(
+                "title.chapter3Case" + std::to_string(variant), Variant(false)); !defined) {
+            for (const auto& diagnostic : defined.Diagnostics()) diag::Emit(diagnostic);
+            return false;
+        }
+    }
+    RefreshTitleProgressUi();
     for (const auto& binding : m_catalog.InputBindings()) {
         if (binding.command == "screen.open" && !binding.argument.empty()) {
             const auto sc = Input::KeyCode(binding.key);
@@ -2582,11 +2709,15 @@ std::vector<ui::GalgameItem> PlayerApp::SaveItems(bool saveMode) {
                          !saveMode && !info.exists, action, std::to_string(slot)});
     };
 
-    if (!saveMode) {
+    if (!saveMode && m_savePages == 1 && m_saveFirstSlot == 0) {
         slotItem(kAutoSaveSlot, "load.slot");
     }
-    for (int i = 0; i < 12; ++i) {
-        slotItem(i, saveMode ? "save.slot" : "load.slot");
+    for (int row = 0; row < m_saveSlotsPerPage; ++row) {
+        const int ordinal = m_saveSlotsPerPage == 8
+            ? (row % 2) * 4 + row / 2 : row;
+        const int slot = m_saveFirstSlot +
+            (m_saveLoadPage - 1) * m_saveSlotsPerPage + ordinal;
+        slotItem(slot, saveMode ? "save.slot" : "load.slot");
     }
     return items;
 }
@@ -2619,6 +2750,7 @@ ui::DialoguePresentation PlayerApp::DialogueUI() const {
     const auto& dialogue = m_session->Dialogue().State();
     view.speaker = dialogue.speaker;
     view.text = dialogue.displayText;
+    view.fullText = dialogue.fullText;
     // Imported KAG prose retains its literal speaker prefix so existing
     // authored operation identities and saves remain stable. Present that
     // prefix through the SDK HUD's distinct name field, including while the
@@ -2632,6 +2764,7 @@ ui::DialoguePresentation PlayerApp::DialogueUI() const {
             view.speaker = dialogue.fullText.substr(0, prefixLength);
             view.text = dialogue.displayText.size() > prefixLength
                 ? dialogue.displayText.substr(prefixLength) : "";
+            view.fullText = dialogue.fullText.substr(prefixLength);
         }
     }
     view.chapterTitle = m_session->VM().Chapter();
@@ -2665,6 +2798,38 @@ ui::SettingsPresentation PlayerApp::SettingsUI() const {
 
 void PlayerApp::OpenScreen(const std::string& route) {
     std::string target=route;if(target=="saveload")target="load";
+    const auto current = m_session->Routes().CurrentModalRoute();
+    const auto extraMode = [](const std::string_view value) {
+        return value == "gallery" || value == "replay" || value == "music";
+    };
+    if (extraMode(target) && extraMode(current)) {
+        if (current == target) return;
+        if (current == "music" && m_musicTrackSelected && !TitleBgmPath().empty()) {
+            m_runtime.Audio().PlayBGM(TitleBgmPath(), true, 300);
+            m_musicTrackSelected = false;
+        }
+        if (!m_session->Routes().CloseModal()) return;
+    }
+    if ((target == "save" || target == "load") &&
+        (current == "save" || current == "load") && current != target) {
+        if (!m_session->Routes().CloseModal()) return;
+    }
+    if (target == "replay") {
+        m_replayPage = 1;
+        for (int page = 1; page <= 4; ++page)
+            (void)m_ui.UpdateUiData("replay.page" + std::to_string(page),
+                                    Variant(page == 1));
+    }
+    if (target == "save" || target == "load") {
+        for (int page = 1; page <= m_savePages; ++page)
+            (void)m_ui.UpdateUiData("saveLoad.page" + std::to_string(page),
+                                    Variant(page == m_saveLoadPage));
+    }
+    if (target == "settings" && m_boot.routeScenes.contains("settings")) {
+        for (int page = 1; page <= 4; ++page)
+            (void)m_ui.UpdateUiData("settings.page" + std::to_string(page),
+                                    Variant(page == m_settingsPage));
+    }
     if (target == "save" && m_ui.CurrentScreen() != ui::GalgameUI::Screen::Save)
         m_beforeSavePresentation = SavePresentationState{
             m_ui.CaptureRuntimeState(), m_session->Routes().CaptureState()};
@@ -2831,9 +2996,16 @@ void PlayerApp::PresentRoute(const std::string& route,
 void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
     const std::string& t = action.command;
     auto& audio = m_runtime.Audio();
+    const auto musicUnlocked = [this](const std::size_t index) {
+        return index < m_musicTracks.size() && m_profile.MusicUnlocked(
+            std::filesystem::path(m_musicTracks[index]).stem().string());
+    };
     const auto playMusicAt = [this, &audio](const std::size_t index) {
         if (m_musicTracks.empty()) return;
-        m_musicTrackIndex = index % m_musicTracks.size();
+        const std::size_t selected = index % m_musicTracks.size();
+        if (!m_profile.MusicUnlocked(
+                std::filesystem::path(m_musicTracks[selected]).stem().string())) return;
+        m_musicTrackIndex = selected;
         const auto handle = audio.PlayBGM(m_musicTracks[m_musicTrackIndex], true, 250);
         if (audio.Status(handle) == px::audio::PlaybackStatus::Failed) {
             PX_LOG_ERROR("Player music gallery failed path={}",
@@ -2854,13 +3026,25 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         else if (command.ends_with(".down")) offset.y += 360.0f;
         scroll->SetScrollOffset(offset);
     };
-    if (t == "load.slot" || t == "save.slot") {
+    if (t == "saveLoad.page") {
+        char* end = nullptr;
+        const long page = std::strtol(action.argument.c_str(), &end, 10);
+        if (end == action.argument.c_str() || *end != '\0' ||
+            page < 1 || page > m_savePages) return;
+        m_saveLoadPage = static_cast<int>(page);
+        for (int index = 1; index <= m_savePages; ++index)
+            (void)m_ui.UpdateUiData("saveLoad.page" + std::to_string(index),
+                                    Variant(index == m_saveLoadPage));
+        const bool saveMode = m_ui.CurrentScreen() == ui::GalgameUI::Screen::Save;
+        (void)m_ui.ShowSaveLoad(saveMode, SaveItems(saveMode));
+    } else if (t == "load.slot" || t == "save.slot") {
         const bool saveMode = t == "save.slot";
         if (m_ui.SupportsSaveLoadConfirmation()) {
             char* end = nullptr;
             const long slot = std::strtol(action.argument.c_str(), &end, 10);
             if (end == action.argument.c_str() || *end != '\0' ||
-                slot < 0 || slot >= 12 ||
+                slot < m_saveFirstSlot ||
+                slot >= m_saveFirstSlot + m_savePages * m_saveSlotsPerPage ||
                 (!saveMode && !m_saves.Peek(static_cast<int>(slot)).exists))
                 return;
             m_pendingSaveLoadSlot = static_cast<int>(slot);
@@ -2964,6 +3148,15 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         (void)m_ui.ShowSettings(SettingsUI());
     } else if (t.starts_with("settings.page")) {
         const std::string page = t.substr(std::string("settings.page").size());
+        if (m_boot.routeScenes.contains("settings") && page.size() == 1 &&
+            page[0] >= '1' && page[0] <= '4') {
+            m_settingsPage = page[0] - '0';
+            for (int index = 1; index <= 4; ++index)
+                (void)m_ui.UpdateUiData("settings.page" + std::to_string(index),
+                                        Variant(index == m_settingsPage));
+            (void)m_ui.ShowSettings(SettingsUI());
+            return;
+        }
         while (!m_session->Routes().CurrentModalRoute().empty())
             (void)m_session->Routes().CloseModal();
         OpenScreen(page == "0" ? "settings" : "settings-page" + page);
@@ -2983,20 +3176,34 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
         }
     } else if (t == "music.previous") {
         if (!m_musicTracks.empty())
-            playMusicAt((m_musicTrackIndex + m_musicTracks.size() - 1) %
-                        m_musicTracks.size());
+            for (std::size_t step = 1; step <= m_musicTracks.size(); ++step) {
+                const auto index = (m_musicTrackIndex + m_musicTracks.size() -
+                                    step % m_musicTracks.size()) % m_musicTracks.size();
+                if (musicUnlocked(index)) { playMusicAt(index); break; }
+            }
     } else if (t == "music.next") {
-        if (!m_musicTracks.empty()) playMusicAt(m_musicTrackIndex + 1);
-    } else if (t == "music.random") {
         if (!m_musicTracks.empty())
-            playMusicAt(static_cast<std::size_t>(SDL_GetTicks()) %
-                        m_musicTracks.size());
+            for (std::size_t step = 1; step <= m_musicTracks.size(); ++step) {
+                const auto index = (m_musicTrackIndex + step) % m_musicTracks.size();
+                if (musicUnlocked(index)) { playMusicAt(index); break; }
+            }
+    } else if (t == "music.random") {
+        std::vector<std::size_t> available;
+        for (std::size_t index = 0; index < m_musicTracks.size(); ++index)
+            if (musicUnlocked(index)) available.push_back(index);
+        if (!available.empty())
+            playMusicAt(available[static_cast<std::size_t>(SDL_GetTicks()) %
+                                  available.size()]);
     } else if (t == "music.stop") {
         audio.StopBGM(200);
         m_musicTrackSelected = false;
     } else if (t == "music.resume") {
         if (m_musicTrackSelected) audio.SetMusicPaused(false);
-        else playMusicAt(m_musicTrackIndex);
+        else if (musicUnlocked(m_musicTrackIndex)) playMusicAt(m_musicTrackIndex);
+        else {
+            for (std::size_t index = 0; index < m_musicTracks.size(); ++index)
+                if (musicUnlocked(index)) { playMusicAt(index); break; }
+        }
     } else if (t == "music.about") {
         audio.SetMusicPaused(true);
     } else if (t.starts_with("music.scroll.")) {
@@ -3031,9 +3238,24 @@ void PlayerApp::HandleUIAction(const ui::GalgameAction& action) {
     } else if (t == "replay.launch") {
         if (!action.argument.empty()) {
             m_pendingStoryEntry = action.argument;
-            (void)m_session->Routes().CloseModal();
+            while (!m_session->Routes().CurrentModalRoute().empty())
+                (void)m_session->Routes().CloseModal();
             StartGame();
         }
+    } else if (t == "replay.page") {
+        const int page = std::atoi(action.argument.c_str());
+        if (page >= 1 && page <= 4) {
+            m_replayPage = page;
+            for (int index = 1; index <= 4; ++index) {
+                if (const Status updated = m_ui.UpdateUiData(
+                        "replay.page" + std::to_string(index),
+                        Variant(index == page)); !updated)
+                    for (const auto& diagnostic : updated.Diagnostics())
+                        diag::Emit(diagnostic);
+            }
+        }
+    } else if (t == "title.chapter3") {
+        OpenScreen("chapter3");
     } else if (t.starts_with("flowchart.scroll.")) {
         scrollRoute("FlowGraphScroll", t);
     } else if (t == "flowchart.filter") {
@@ -4040,6 +4262,19 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
     }
 
     m_session->Update(now, dt);
+    const std::string& storyBgm = m_session->VM().CurrentBgm();
+    if (storyBgm != m_lastStoryBgm) {
+        m_lastStoryBgm = storyBgm;
+        if (!storyBgm.empty() &&
+            std::ranges::find(m_musicTracks, storyBgm) != m_musicTracks.end()) {
+            const std::string id = std::filesystem::path(storyBgm).stem().string();
+            if (!m_profile.MusicUnlocked(id)) {
+                m_profile.UnlockMusic(id);
+                (void)m_ui.UpdateUiData("musicUnlocked." + id, Variant(true));
+                SaveProfileIfWritable();
+            }
+        }
+    }
     syncChoiceTexts();
 
     // New dialogue lines feed the NVL page and the rollback ring.

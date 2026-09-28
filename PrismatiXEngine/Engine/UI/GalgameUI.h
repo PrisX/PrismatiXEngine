@@ -37,6 +37,7 @@ struct GalgameItem {
 struct DialoguePresentation {
     std::string speaker;
     std::string text;
+    std::string fullText;
     std::string chapterTitle;
     std::string musicTitle;
     std::string effect;

@@ -83,6 +83,7 @@ private:
     void BeginRuntimeIrPreload();
     void FinishBootPresentation();
     [[nodiscard]] const std::string& TitleBgmPath() const;
+    void RefreshTitleProgressUi();
     [[nodiscard]] bool TitleVisualsReady();
     void SplashFrame(float dt);
     void PlayMotionMarker(const sdk::MotionAudioMarker& marker);
@@ -192,6 +193,13 @@ private:
     std::vector<std::string> m_musicTracks;
     std::size_t m_musicTrackIndex = 0;
     bool m_musicTrackSelected = false;
+    std::string m_lastStoryBgm;
+    int m_replayPage = 1;
+    int m_saveLoadPage = 1;
+    int m_savePages = 1;
+    int m_saveSlotsPerPage = 12;
+    int m_saveFirstSlot = 0;
+    int m_settingsPage = 1;
 
     bool m_autoMode = false;
     bool m_skipMode = false;

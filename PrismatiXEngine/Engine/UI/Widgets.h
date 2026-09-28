@@ -46,6 +46,8 @@ public:
     [[nodiscard]] bool Wrap() const { return m_wrap; }
     void SetFontSize(int value) { m_fontSize = value; InvalidateLayout(); }
     [[nodiscard]] int FontSize() const { return m_fontSize; }
+    [[nodiscard]] int FontSizeToFit(std::string_view content, int requested,
+                                    float width, float height) const;
     void SetColor(Color value) { m_color = value; m_hasColor = true; }
     [[nodiscard]] Color GetColor() const { return m_color; }
     void SetOutlineSize(int value) { m_outlineSize = std::clamp(value, 0, 8); }
