@@ -246,6 +246,9 @@ node's `name`, `stableId`, or JSX `key` provide stable, deterministic UUID seeds
 Duplicate sibling names are deterministically disambiguated. Direct layout props
 such as `position`, `size`, `anchor`, `align`, and `fill`, plus CSS-like `style`,
 `bind`, and `action` aliases, lower to the unchanged canonical fields.
+In free layout, supplying both width and height (including `size={[w, h]}`)
+makes an exact rectangle. Set `layout={{sizeRule: "content"}}` explicitly when
+the control should grow beyond those dimensions to fit its content.
 
 `TextureButton` accepts `normalPath`, `hoverPath`, `pressedPath`,
 `disabledPath`, and `scaleMode` directly. `RichTextLabel` accepts ruby/markup

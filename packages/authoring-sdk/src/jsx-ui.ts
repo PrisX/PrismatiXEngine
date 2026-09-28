@@ -767,7 +767,12 @@ function nodeLayout(
     pivotY: input?.pivotY ?? 0,
     margin: input?.margin ?? 0,
     alignment: input?.alignment ?? (root ? "fill" : "start"),
-    sizeRule: input?.sizeRule ?? (root ? "fill" : "content"),
+    // An explicit rectangle in free layout is exact. Leaving it as content
+    // lets the native control's intrinsic measure silently enlarge it (for
+    // example a 34px texture button becomes 88px wide).
+    sizeRule: input?.sizeRule ?? (root ? "fill" :
+      !containerOwned && input.width !== undefined && input.height !== undefined
+        ? "fixed" : "content"),
   };
 }
 

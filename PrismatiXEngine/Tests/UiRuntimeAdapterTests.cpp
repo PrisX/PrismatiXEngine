@@ -920,12 +920,28 @@ void TestExternalConfigTemplate() {
     Check(registered.IsOk(), "external Config UI fixture must register");
     Check(galgame.ShowSettings({}).IsOk(),
           "external Config UI fixture must mount sliders");
+    px::Input input;
+    (void)galgame.Update(input, 1920, 1080);
+    const auto nodes = nlohmann::json::parse(document)["nodes"];
+    const auto checkRect = [&](const std::string_view name, const px::Rect expected) {
+        const auto found = std::ranges::find_if(nodes,
+            [&](const nlohmann::json& node) { return node.value("name", "") == name; });
+        Check(found != nodes.end(), "external Config control must exist");
+        const auto id = px::Uuid::Parse((*found)["id"].get<std::string>());
+        Check(id.has_value(), "external Config control must have a valid id");
+        const auto* control = dynamic_cast<const px::ui::Control*>(galgame.Root()->Find(*id));
+        Check(control && control->LayoutRect() == expected,
+              "external Config control must keep its exact authored rectangle");
+    };
+    checkRect("Window", {913, 204, 34, 34});
+    checkRect("WindowSelected", {913, 204, 34, 34});
+    checkRect("ReadOnlySkip", {913, 404, 48, 48});
+    checkRect("Master", {919, 213, 400, 18});
     int latest = -1;
     galgame.SetActionSink([&](const px::ui::GalgameAction& action) {
         if (action.command == "set.master.value")
             latest = std::stoi(action.argument);
     });
-    px::Input input;
     SDL_Event event{};
     input.NewFrame();
     event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;

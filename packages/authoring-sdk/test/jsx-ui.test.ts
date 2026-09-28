@@ -239,7 +239,7 @@ test("layout, style, binding, and action shorthands lower to canonical fields", 
   assert.deepEqual(button.layout, {
     mode: "free", x: 24, y: 32, width: 180, height: 48,
     anchorX: 1, anchorY: 1, anchorRight: 1, anchorBottom: 1,
-    pivotX: 1, pivotY: 1, margin: 8, alignment: "center", sizeRule: "content",
+    pivotX: 1, pivotY: 1, margin: 8, alignment: "center", sizeRule: "fixed",
   });
   assert.deepEqual(button.appearance, {
     backgroundColor: "#112233", textColor: "#ffffff", opacity: 0.9,
@@ -247,6 +247,25 @@ test("layout, style, binding, and action shorthands lower to canonical fields", 
   });
   assert.deepEqual(button.bindings, {visible: {path: "game.canSave"}});
   assert.deepEqual(button.onClick, {id: "save.open", arguments: {}});
+});
+
+test("explicit free-layout sizes remain exact unless content sizing is requested", () => {
+  const result = compileJsxUi(jsx(Scene, {
+    name: "Exact controls", width: 1920, height: 1080,
+    children: jsxs(Control, {name: "Root", fill: true, children: [
+      jsx(TextureButton, {name: "Radio", position: [913, 204], size: [34, 34],
+        normalPath: "radio.png"}),
+      jsx(Control, {name: "Slider", runtimeType: "Slider",
+        position: [919, 213], size: [400, 18]}),
+      jsx(Button, {name: "Growing", position: [10, 10], size: [34, 34],
+        layout: {sizeRule: "content"}, children: "Long label"}),
+    ]}),
+  }), {kind: "scene"});
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  const nodes = result.value!.nodes;
+  assert.equal(nodes.find((node) => node.name === "Radio")?.layout.sizeRule, "fixed");
+  assert.equal(nodes.find((node) => node.name === "Slider")?.layout.sizeRule, "fixed");
+  assert.equal(nodes.find((node) => node.name === "Growing")?.layout.sizeRule, "content");
 });
 
 test("one authored item template lowers to a keyed Runtime grid with item bindings", () => {
