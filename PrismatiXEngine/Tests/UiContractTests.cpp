@@ -355,6 +355,10 @@ int main() {
     Check(repeaterParsed.Valid() && repeaterParsed.document.nodes[1].itemSource &&
               repeaterParsed.document.nodes[3].onClick,
           "native UI contract must accept a keyed item template and $index Action");
+    repeaterScene["nodes"][3]["interaction"]["onClick"]["arguments"]["slot"] = "$key";
+    const auto keyedParsed = ParseSceneFixture(repeaterScene.dump());
+    Check(keyedParsed.Valid() && keyedParsed.document.nodes[3].onClick,
+          "native UI contract must accept absolute keyed save slots");
     auto placedScene = repeaterScene;
     placedScene["nodes"][1]["kind"] = "control";
     placedScene["nodes"][1]["runtimeType"] = "PlacedItemsView";

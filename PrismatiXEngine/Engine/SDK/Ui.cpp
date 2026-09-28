@@ -458,7 +458,8 @@ bool ValidAction(const UiAction& action) {
         return action.arguments.size() == 1 && found != action.arguments.end() &&
                (std::holds_alternative<std::int64_t>(found->second) ||
                 (std::holds_alternative<std::string>(found->second) &&
-                 std::get<std::string>(found->second) == "$index"));
+                 (std::get<std::string>(found->second) == "$index" ||
+                  std::get<std::string>(found->second) == "$key")));
     }
     if (action.id == "cg.view") {
         const auto found = action.arguments.find("resource");
@@ -1922,7 +1923,7 @@ UiParseResult ParseUi(const std::string_view text) {
             if (cursor && cursor->itemSource) { inTemplate = true; break; }
         }
         if (!inTemplate) AddDiagnostic(result, "PXSDKUI1192",
-            "$index Action argument is only valid inside an itemSource template");
+            "$index or $key Action argument is only valid inside an itemSource template");
     }
     std::unordered_set<std::string> componentSources;
     for (const auto& node : result.document.nodes) {
