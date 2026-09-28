@@ -77,6 +77,10 @@ public:
     }
 
     bool Update(const void* pixels, std::size_t pitchBytes);
+    // Replaces rows [firstRow, firstRow + rowCount); `pixels` points at the
+    // first of those rows.
+    bool UpdateRows(const void* pixels, std::size_t pitchBytes, int firstRow,
+                    int rowCount);
     bool SetLinearSampling(bool linear = true);
     bool SetAlphaBlend(bool enabled = true);
     void Reset();

@@ -70,6 +70,19 @@ bool TextureResource::Update(const void* pixels,
                              pixels, static_cast<int>(pitchBytes));
 }
 
+bool TextureResource::UpdateRows(const void* pixels,
+                                 const std::size_t pitchBytes,
+                                 const int firstRow, const int rowCount) {
+    if (!pixels || pitchBytes == 0 || firstRow < 0 || rowCount <= 0 ||
+        firstRow > m_height - rowCount ||
+        pitchBytes > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+        m_backend != TextureBackend::SdlRenderer || !m_native)
+        return false;
+    const SDL_Rect rows{0, firstRow, m_width, rowCount};
+    return SDL_UpdateTexture(static_cast<SDL_Texture*>(m_native), &rows,
+                             pixels, static_cast<int>(pitchBytes));
+}
+
 bool TextureResource::SetLinearSampling(const bool linear) {
     if (m_backend != TextureBackend::SdlRenderer || !m_native) return false;
     return SDL_SetTextureScaleMode(

@@ -549,6 +549,19 @@ SDL_Surface* AssetCache::LoadSurface(const std::string& path) {
     return rgba;
 }
 
+std::function<SDL_Surface*(const std::string&)> AssetCache::SurfaceDecoder() const {
+    return [vfs = &m_vfs, limit = m_imageDecodeByteLimit](
+               const std::string& path) -> SDL_Surface* {
+        auto bytes = ReadImageInput(*vfs, path);
+        if (!bytes) return nullptr;
+        SDL_Surface* surface = DecodeImage(bytes->data(), bytes->size(), limit);
+        if (!surface) return nullptr;
+        SDL_Surface* rgba = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_RGBA32);
+        SDL_DestroySurface(surface);
+        return rgba;
+    };
+}
+
 TextureHandle AssetCache::RegisterMemoryTexture(const std::string& key,
                                                 const void* data,
                                                 const std::size_t size) {

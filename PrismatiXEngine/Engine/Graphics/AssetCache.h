@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <future>
 #include <memory>
 #include <optional>
@@ -100,6 +101,11 @@ public:
     void SetTextureBudget(std::size_t bytes) { m_textureBudgetBytes=bytes; }
     [[nodiscard]] std::size_t ResidentTextureBytes() const { return m_residentTextureBytes; }
     [[nodiscard]] bool HasResidentTexture(const std::string& path) const;
+    // True once a texture request has an outcome, resident or failed, so a
+    // presentation can wait for a decode without waiting on a broken asset.
+    [[nodiscard]] bool TextureSettled(const std::string& path) const {
+        return m_textures.contains(path);
+    }
 
     // Call once per frame before any drawing: advances the LRU clock and evicts
     // textures that were not used recently (deferred so nothing in-flight on the
@@ -109,6 +115,9 @@ public:
     // Decodes an image into an uncached RGBA32 surface (rule transitions need
     // CPU pixel access). Caller destroys the surface.
     [[nodiscard]] SDL_Surface* LoadSurface(const std::string& path);
+    // Worker-thread form of LoadSurface: it neither touches the cache nor
+    // emits diagnostics. It must not outlive this cache.
+    [[nodiscard]] std::function<SDL_Surface*(const std::string&)> SurfaceDecoder() const;
 
     // Decodes an in-memory image (e.g. a save thumbnail) and caches it under a
     // virtual key (convention: "mem://..."). Replaces any previous registration.

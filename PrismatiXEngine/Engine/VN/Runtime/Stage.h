@@ -12,6 +12,7 @@
 #include <array>
 #include <functional>
 #include <memory>
+#include <future>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -19,6 +20,8 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+struct SDL_Surface;
 
 namespace px::graphics {
 class Renderer2D;
@@ -287,8 +290,29 @@ private:
         int z = 0;
     };
 
+    // Grayscale rule image resampled to the stage size. Row extrema let a
+    // frame skip rows whose pixels cannot change at the current threshold.
+    struct RuleMask {
+        int w = 0;
+        int h = 0;
+        std::vector<std::uint8_t> values;
+        std::vector<std::uint8_t> rowMin;
+        std::vector<std::uint8_t> rowMax;
+    };
+
+    struct RulePreparation {
+        std::vector<std::uint8_t> oldPixels;  // RGBA of the outgoing background
+        std::shared_ptr<const RuleMask> mask;
+        std::string error;
+        std::string errorPath;
+    };
+
     struct RuleState {
         bool active = false;
+        // Decoding runs off the frame thread; progress holds at zero until
+        // the outgoing pixels and the streaming texture exist.
+        bool ready = false;
+        std::future<RulePreparation> preparing;
         std::string oldBackgroundPath;
         std::string newBackgroundPath;
         std::string rulePath;
@@ -298,7 +322,9 @@ private:
         int w = 0;
         int h = 0;
         std::vector<std::uint8_t> oldPixels;  // RGBA of the outgoing background
-        std::vector<std::uint8_t> rule;       // grayscale rule per pixel
+        std::shared_ptr<const RuleMask> mask;
+        std::array<std::uint8_t, 256> alphaByRule{};
+        bool uploaded = false;
         graphics::TextureResource texture;
     };
 
@@ -363,6 +389,13 @@ private:
     void RenderRuleOverlay();
     void RenderScreenEffects();
     void EndRuleTransition();
+    void FinishRulePreparation(bool wait = false);
+    [[nodiscard]] static RulePreparation PrepareRuleTransition(
+        const std::function<SDL_Surface*(const std::string&)>& decode,
+        const std::string& oldPath, const std::string& rulePath, int width,
+        int height, std::shared_ptr<const RuleMask> mask);
+    // True once the texture has a decode outcome; requests it otherwise.
+    bool BackgroundSettled(const std::string& path);
     void UpdateTweens(float dt);
     void UpdateMotion(float dt);
     void EmitMotionMarkers(double from, double to, bool includeStart);
@@ -389,6 +422,13 @@ private:
     std::function<void(const sdk::MotionAudioMarker&)> m_motionMarker;
     std::function<void()> m_motionFinished;
     RuleState m_ruleState;
+    // Recently used rule masks by "path@WxH"; transitions reuse a few rules.
+    std::vector<std::pair<std::string, std::shared_ptr<const RuleMask>>> m_ruleMasks;
+    std::vector<std::future<RulePreparation>> m_retiredRulePreparations;
+    // Seconds a background change has waited for its texture decode.
+    float m_bgWait = 0.0f;
+    // A non-transition change waiting behind the old image for its decode.
+    bool m_bgInstant = false;
 
     std::string m_bgPath;
     std::string m_prevBgPath;

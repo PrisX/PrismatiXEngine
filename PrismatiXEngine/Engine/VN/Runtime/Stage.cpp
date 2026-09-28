@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -22,6 +23,8 @@ namespace px::vn {
 
 namespace {
 constexpr float kBgFadeSpeed = 2.5f;
+// Longest a background change waits for its texture before fading anyway.
+constexpr float kMaxBackgroundWait = 1.5f;
 constexpr float kAlphaSpeed = 6.0f;
 constexpr float kSlideSpeed = 9.0f;
 constexpr float kSlideOffset = 40.0f;
@@ -243,6 +246,12 @@ float Stage::SlotCenterX(int slot) const {
     }
 }
 
+bool Stage::BackgroundSettled(const std::string& path) {
+    if (path.empty() || m_assets.TextureSettled(path)) return true;
+    m_assets.PreloadTexture(path, graphics::AssetPreloadPriority::Critical);
+    return m_assets.TextureSettled(path);
+}
+
 void Stage::SetBackground(const std::string& path, bool transition) {
     if (path == m_bgPath) {
         return;
@@ -250,7 +259,98 @@ void Stage::SetBackground(const std::string& path, bool transition) {
     EndRuleTransition();
     m_prevBgPath = m_bgPath;
     m_bgPath = path;
-    m_bgFade = (transition && !m_prevBgPath.empty()) ? 0.0f : 1.0f;
+    m_bgWait = 0.0f;
+    // An instant change still waits for the decode behind the old image
+    // rather than flashing an empty frame; Update completes it at once.
+    m_bgInstant = !transition || m_prevBgPath.empty();
+    m_bgFade = m_prevBgPath.empty() ? 1.0f : 0.0f;
+    if (!m_prevBgPath.empty() && !BackgroundSettled(path) && m_bgInstant) return;
+    if (m_bgInstant) {
+        m_bgFade = 1.0f;
+        m_prevBgPath.clear();
+        m_bgInstant = false;
+    }
+}
+
+namespace {
+
+// Resamples like DisplayMode::Fill: cover the stage and crop the overflow
+// equally, so the dissolving image matches the background it replaces.
+SDL_Surface* CoverStage(SDL_Surface* source, const int width, const int height) {
+    if (source->w == width && source->h == height) return source;
+    const float scale = std::max(static_cast<float>(width) / static_cast<float>(source->w),
+                                 static_cast<float>(height) / static_cast<float>(source->h));
+    const int cropW = std::clamp(static_cast<int>(std::lround(width / scale)), 1, source->w);
+    const int cropH = std::clamp(static_cast<int>(std::lround(height / scale)), 1, source->h);
+    const SDL_Rect crop{(source->w - cropW) / 2, (source->h - cropH) / 2, cropW, cropH};
+    SDL_Surface* result = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA32);
+    if (!result) return nullptr;
+    (void)SDL_SetSurfaceBlendMode(source, SDL_BLENDMODE_NONE);
+    if (!SDL_BlitSurfaceScaled(source, &crop, result, nullptr, SDL_SCALEMODE_LINEAR)) {
+        SDL_DestroySurface(result);
+        return nullptr;
+    }
+    return result;
+}
+
+}  // namespace
+
+Stage::RulePreparation Stage::PrepareRuleTransition(
+    const std::function<SDL_Surface*(const std::string&)>& decode,
+    const std::string& oldPath, const std::string& rulePath, const int width,
+    const int height, std::shared_ptr<const RuleMask> mask) {
+    RulePreparation result;
+    const auto fail = [&result](std::string message, const std::string& path) {
+        result.error = std::move(message);
+        result.errorPath = path;
+        return std::move(result);
+    };
+    if (!mask) {
+        SDL_Surface* rule = decode(rulePath);
+        if (!rule) return fail("Rule transition mask could not be decoded", rulePath);
+        SDL_Surface* scaled = rule->w == width && rule->h == height
+            ? rule : SDL_ScaleSurface(rule, width, height, SDL_SCALEMODE_LINEAR);
+        if (scaled != rule) SDL_DestroySurface(rule);
+        if (!scaled) return fail("Rule transition mask could not be resampled", rulePath);
+        auto built = std::make_shared<RuleMask>();
+        built->w = width;
+        built->h = height;
+        built->values.resize(static_cast<std::size_t>(width) * height);
+        built->rowMin.assign(static_cast<std::size_t>(height), 255);
+        built->rowMax.assign(static_cast<std::size_t>(height), 0);
+        const auto* pixels = static_cast<const std::uint8_t*>(scaled->pixels);
+        for (int row = 0; row < height; ++row) {
+            const std::uint8_t* line = pixels + static_cast<std::size_t>(row) * scaled->pitch;
+            std::uint8_t* out = built->values.data() + static_cast<std::size_t>(row) * width;
+            std::uint8_t low = 255, high = 0;
+            for (int col = 0; col < width; ++col) {
+                const std::uint8_t value = line[col * 4];  // R channel
+                out[col] = value;
+                low = std::min(low, value);
+                high = std::max(high, value);
+            }
+            built->rowMin[static_cast<std::size_t>(row)] = low;
+            built->rowMax[static_cast<std::size_t>(row)] = high;
+        }
+        SDL_DestroySurface(scaled);
+        mask = std::move(built);
+    }
+    result.mask = std::move(mask);
+
+    SDL_Surface* old = decode(oldPath);
+    if (!old) return fail("Outgoing background could not be decoded", oldPath);
+    SDL_Surface* covered = CoverStage(old, width, height);
+    if (covered != old) SDL_DestroySurface(old);
+    if (!covered) return fail("Outgoing background could not be resampled", oldPath);
+    result.oldPixels.resize(static_cast<std::size_t>(width) * height * 4u);
+    const auto* oldPx = static_cast<const std::uint8_t*>(covered->pixels);
+    for (int row = 0; row < height; ++row) {
+        std::memcpy(result.oldPixels.data() + static_cast<std::size_t>(row) * width * 4,
+                    oldPx + static_cast<std::size_t>(row) * covered->pitch,
+                    static_cast<std::size_t>(width) * 4);
+    }
+    SDL_DestroySurface(covered);
+    return result;
 }
 
 void Stage::SetBackgroundRule(const std::string& newBgPath, const std::string& rulePath,
@@ -262,57 +362,41 @@ void Stage::SetBackgroundRule(const std::string& newBgPath, const std::string& r
     const std::string oldBackgroundPath = m_bgPath;
     int w = 0, h = 0;
     m_renderer.GetLogicalSize(w, h);
-    SDL_Surface* oldSurf = m_bgPath.empty() ? nullptr : m_assets.LoadSurface(m_bgPath);
-    SDL_Surface* ruleSurf = m_assets.LoadSurface(rulePath);
-    if (!oldSurf || !ruleSurf || w <= 0 || h <= 0) {
-        if (oldSurf) SDL_DestroySurface(oldSurf);
-        if (ruleSurf) SDL_DestroySurface(ruleSurf);
-        SetBackground(newBgPath, true);
-        return;
-    }
-    SDL_Surface* oldScaled = SDL_ScaleSurface(oldSurf, w, h, SDL_SCALEMODE_LINEAR);
-    SDL_Surface* ruleScaled = SDL_ScaleSurface(ruleSurf, w, h, SDL_SCALEMODE_LINEAR);
-    SDL_DestroySurface(oldSurf);
-    SDL_DestroySurface(ruleSurf);
-    if (!oldScaled || !ruleScaled) {
-        if (oldScaled) SDL_DestroySurface(oldScaled);
-        if (ruleScaled) SDL_DestroySurface(ruleScaled);
+    if (oldBackgroundPath.empty() || w <= 0 || h <= 0 ||
+        !m_assets.ResourceExists(oldBackgroundPath) || !m_assets.ResourceExists(rulePath)) {
         SetBackground(newBgPath, true);
         return;
     }
 
+    // Decoding two full-screen images used to stall the frame that started
+    // the transition. Prepare them on a worker and keep drawing the old
+    // background until the dissolve can begin.
+    const std::string maskKey = rulePath + "@" + std::to_string(w) + "x" + std::to_string(h);
+    std::shared_ptr<const RuleMask> cachedMask;
+    for (auto it = m_ruleMasks.begin(); it != m_ruleMasks.end(); ++it) {
+        if (it->first != maskKey) continue;
+        cachedMask = it->second;
+        std::rotate(m_ruleMasks.begin(), it, it + 1);
+        break;
+    }
     RuleState& rs = m_ruleState;
-    rs.w = w;
-    rs.h = h;
-    rs.oldPixels.resize(static_cast<std::size_t>(w) * h * 4);
-    const auto* oldPx = static_cast<const std::uint8_t*>(oldScaled->pixels);
-    for (int row = 0; row < h; ++row) {
-        std::memcpy(rs.oldPixels.data() + static_cast<std::size_t>(row) * w * 4,
-                    oldPx + static_cast<std::size_t>(row) * oldScaled->pitch,
-                    static_cast<std::size_t>(w) * 4);
-    }
-    rs.rule.resize(static_cast<std::size_t>(w) * h);
-    const auto* rulePx = static_cast<const std::uint8_t*>(ruleScaled->pixels);
-    for (int row = 0; row < h; ++row) {
-        const std::uint8_t* line = rulePx + static_cast<std::size_t>(row) * ruleScaled->pitch;
-        for (int col = 0; col < w; ++col) {
-            rs.rule[static_cast<std::size_t>(row) * w + col] = line[col * 4];  // R channel
-        }
-    }
-    SDL_DestroySurface(oldScaled);
-    SDL_DestroySurface(ruleScaled);
-
-    rs.texture = graphics::TextureResource::CreateStreaming(
-        graphics::TextureBackend::SdlRenderer, m_renderer.Handle(),
-        graphics::StreamingTextureFormat::Rgba32, w, h);
-    if (!rs.texture) {
+    try {
+        rs.preparing = std::async(
+            std::launch::async,
+            [decode = m_assets.SurfaceDecoder(), oldBackgroundPath, rulePath, w, h,
+             cachedMask]() {
+                return PrepareRuleTransition(decode, oldBackgroundPath, rulePath, w, h,
+                                             cachedMask);
+            });
+    } catch (const std::exception&) {
         rs = RuleState{};
         SetBackground(newBgPath, true);
         return;
     }
-    (void)rs.texture.SetAlphaBlend();
-    (void)rs.texture.SetLinearSampling();
     rs.active = true;
+    rs.ready = false;
+    rs.w = w;
+    rs.h = h;
     rs.oldBackgroundPath = oldBackgroundPath;
     rs.newBackgroundPath = newBgPath;
     rs.rulePath = rulePath;
@@ -320,16 +404,64 @@ void Stage::SetBackgroundRule(const std::string& newBgPath, const std::string& r
     rs.duration = std::max(0.05f, static_cast<float>(durationMs) / 1000.0f);
     rs.vague = std::max(1, vague);
 
+    // Until preparation finishes, the old background stays fully drawn above
+    // the (not yet visible) new one.
+    m_prevBgPath = oldBackgroundPath;
+    m_bgPath = newBgPath;
+    m_bgFade = 0.0f;
+    m_bgInstant = false;
+    m_bgWait = 0.0f;
+    (void)BackgroundSettled(newBgPath);
+}
+
+void Stage::FinishRulePreparation(const bool wait) {
+    RuleState& rs = m_ruleState;
+    if (!rs.active || rs.ready || !rs.preparing.valid() ||
+        (!wait && rs.preparing.wait_for(std::chrono::seconds(0)) != std::future_status::ready))
+        return;
+    RulePreparation prepared = rs.preparing.get();
+    if (prepared.mask) {
+        const std::string key = rs.rulePath + "@" + std::to_string(rs.w) + "x" +
+                                std::to_string(rs.h);
+        std::erase_if(m_ruleMasks, [&key](const auto& entry) { return entry.first == key; });
+        m_ruleMasks.insert(m_ruleMasks.begin(), {key, prepared.mask});
+        constexpr std::size_t kRuleMaskCacheEntries = 6;
+        if (m_ruleMasks.size() > kRuleMaskCacheEntries) m_ruleMasks.resize(kRuleMaskCacheEntries);
+    }
+    if (prepared.error.empty()) {
+        rs.texture = graphics::TextureResource::CreateStreaming(
+            graphics::TextureBackend::SdlRenderer, m_renderer.Handle(),
+            graphics::StreamingTextureFormat::Rgba32, rs.w, rs.h);
+        if (!rs.texture) prepared.error = "Rule transition texture could not be created";
+    }
+    if (!prepared.error.empty()) {
+        PX_LOG_WARN("Stage: {} '{}'; using a crossfade", prepared.error,
+                    prepared.errorPath.empty() ? rs.rulePath : prepared.errorPath);
+        const float progress = rs.progress;
+        rs = RuleState{};
+        // m_prevBgPath/m_bgPath already describe a crossfade from the old
+        // background; continue from the equivalent point.
+        m_bgFade = std::clamp(progress, 0.0f, 1.0f);
+        return;
+    }
+    (void)rs.texture.SetAlphaBlend();
+    (void)rs.texture.SetLinearSampling();
+    rs.oldPixels = std::move(prepared.oldPixels);
+    rs.mask = std::move(prepared.mask);
+    rs.uploaded = false;
+    rs.ready = true;
     // The new background draws underneath; the old one dissolves out on top.
     m_prevBgPath.clear();
     m_bgFade = 1.0f;
-    m_bgPath = newBgPath;
 }
 
 void Stage::EndRuleTransition() {
+    // A worker still decoding cannot be cancelled; retire it instead of
+    // blocking this frame in the future's destructor.
+    if (m_ruleState.preparing.valid())
+        m_retiredRulePreparations.push_back(std::move(m_ruleState.preparing));
     m_ruleState = RuleState{};
 }
-
 void Stage::SetLayer(const std::string& name, const std::string& imagePath, float x, float y,
                      float scale, std::uint8_t alpha, int z) {
     SetLayerTransform(name, imagePath, x, y, scale, scale, 0.0f, alpha, z);
@@ -973,6 +1105,8 @@ void Stage::ClearAll() {
     m_bgPath.clear();
     m_prevBgPath.clear();
     m_bgFade = 1.0f;
+    m_bgInstant = false;
+    m_bgWait = 0.0f;
     m_shakeRemaining = 0.0f;
     m_cameraX = m_cameraY = 0.0f;
     m_cameraZoom = 1.0f;
@@ -1077,14 +1211,28 @@ void Stage::Update(float dt) {
     m_renderer.SetCameraOffset(static_cast<int>(std::lround(m_cameraX + shakeX)),
                                static_cast<int>(std::lround(m_cameraY + shakeY)));
 
-    if (m_bgFade < 1.0f) {
-        m_bgFade = std::min(1.0f, m_bgFade + kBgFadeSpeed * dt);
+    std::erase_if(m_retiredRulePreparations, [](const std::future<RulePreparation>& work) {
+        return work.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+    });
+    if (m_ruleState.active && !m_ruleState.ready) FinishRulePreparation();
+    // Fades hold while the incoming texture decodes (bounded, so a missing
+    // decode result can never freeze the Stage) instead of popping in
+    // partway through.
+    const bool preparingRule = m_ruleState.active && !m_ruleState.ready;
+    const bool incomingSettled = (m_bgFade >= 1.0f && !m_ruleState.active) ||
+                                 BackgroundSettled(m_bgPath);
+    const bool waiting = !incomingSettled && m_bgWait < kMaxBackgroundWait;
+    if (waiting && (m_bgFade < 1.0f || m_ruleState.active)) m_bgWait += dt;
+
+    if (m_bgFade < 1.0f && !preparingRule && !waiting) {
+        m_bgFade = m_bgInstant ? 1.0f : std::min(1.0f, m_bgFade + kBgFadeSpeed * dt);
         if (m_bgFade >= 1.0f) {
             m_prevBgPath.clear();
+            m_bgInstant = false;
         }
     }
 
-    if (m_ruleState.active) {
+    if (m_ruleState.active && m_ruleState.ready && !waiting) {
         m_ruleState.progress += dt / m_ruleState.duration;
         if (m_ruleState.progress >= 1.0f) {
             EndRuleTransition();
@@ -1120,22 +1268,53 @@ void Stage::Update(float dt) {
 
 void Stage::RenderRuleOverlay() {
     RuleState& rs = m_ruleState;
-    if (!rs.active || !rs.texture) {
+    if (!rs.active || !rs.ready || !rs.texture || !rs.mask) {
         return;
     }
     // Per-pixel alpha for the outgoing background: pixels whose rule value is
-    // below the sweeping threshold fade out over a band `vague` wide.
+    // below the sweeping threshold fade out over a band `vague` wide. Alpha
+    // depends only on the 8-bit rule value, so build it once per frame and
+    // rewrite and upload only rows holding a value whose alpha changed.
     const float p = rs.progress * (255.0f + static_cast<float>(rs.vague));
     const float invVague = 255.0f / static_cast<float>(rs.vague);
-    std::uint8_t* px = rs.oldPixels.data();
-    const std::size_t count = rs.rule.size();
-    for (std::size_t i = 0; i < count; ++i) {
-        const float a = (static_cast<float>(rs.rule[i]) + static_cast<float>(rs.vague) - p) *
+    std::array<std::uint8_t, 256> alpha{};
+    int changedLow = 256;
+    int changedHigh = -1;
+    for (int value = 0; value < 256; ++value) {
+        const float a = (static_cast<float>(value) + static_cast<float>(rs.vague) - p) *
                         invVague;
-        px[i * 4 + 3] = static_cast<std::uint8_t>(std::clamp(a, 0.0f, 255.0f));
+        alpha[static_cast<std::size_t>(value)] =
+            static_cast<std::uint8_t>(std::clamp(a, 0.0f, 255.0f));
+        if (!rs.uploaded ||
+            alpha[static_cast<std::size_t>(value)] != rs.alphaByRule[static_cast<std::size_t>(value)]) {
+            changedLow = std::min(changedLow, value);
+            changedHigh = std::max(changedHigh, value);
+        }
     }
-    (void)rs.texture.Update(rs.oldPixels.data(),
-                            static_cast<std::size_t>(rs.w) * 4u);
+    if (changedHigh >= 0) {
+        const RuleMask& mask = *rs.mask;
+        const std::size_t width = static_cast<std::size_t>(rs.w);
+        int firstRow = -1;
+        int lastRow = -1;
+        for (int row = 0; row < rs.h; ++row) {
+            const auto index = static_cast<std::size_t>(row);
+            if (rs.uploaded && (mask.rowMax[index] < changedLow || mask.rowMin[index] > changedHigh))
+                continue;
+            const std::uint8_t* values = mask.values.data() + index * width;
+            std::uint8_t* pixels = rs.oldPixels.data() + index * width * 4u;
+            for (std::size_t col = 0; col < width; ++col)
+                pixels[col * 4u + 3u] = alpha[values[col]];
+            if (firstRow < 0) firstRow = row;
+            lastRow = row;
+        }
+        if (firstRow >= 0) {
+            (void)rs.texture.UpdateRows(
+                rs.oldPixels.data() + static_cast<std::size_t>(firstRow) * width * 4u,
+                width * 4u, firstRow, lastRow - firstRow + 1);
+        }
+        rs.alphaByRule = alpha;
+        rs.uploaded = true;
+    }
     m_renderer.DrawTexture(rs.texture.Handle(),
                            Rect{0.0f, 0.0f, static_cast<float>(rs.w),
                                 static_cast<float>(rs.h)});
@@ -1149,6 +1328,10 @@ void Stage::Render() {
         {static_cast<float>(logicalW) * 0.5f,
          static_cast<float>(logicalH) * 0.5f},
         {m_cameraZoom, m_cameraZoom});
+    // Progress only moves past zero once prepared, unless a restore or a
+    // timeline set it directly; that frame must show the exact dissolve.
+    if (m_ruleState.active && !m_ruleState.ready && m_ruleState.progress > 0.0f)
+        FinishRulePreparation(true);
     if (!m_prevBgPath.empty() && m_bgFade < 1.0f) {
         m_renderer.DrawImageAuto(m_prevBgPath, graphics::DisplayMode::Fill, 255);
     }
@@ -1817,6 +2000,8 @@ Status Stage::RestoreState(const RuntimeState& state) {
     m_bgPath = state.background;
     m_prevBgPath = state.previousBackground;
     m_bgFade = std::clamp(state.backgroundFade, 0.0f, 1.0f);
+    m_bgInstant = false;
+    m_bgWait = 0.0f;
     m_cameraX = state.cameraX;
     m_cameraY = state.cameraY;
     m_cameraZoom = state.cameraZoom;
