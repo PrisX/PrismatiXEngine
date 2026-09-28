@@ -197,6 +197,11 @@ export interface TextProps extends Omit<UiNodeProps, "children"> {
   readonly children?: string | number | readonly (string | number)[];
 }
 
+export interface ColorRectProps extends UiNodeProps {
+  /** #RRGGBB or #RRGGBBAA. */
+  readonly color: string;
+}
+
 export interface ImageProps extends UiNodeProps {
   readonly assetId?: string | null;
   readonly path?: string;
@@ -559,6 +564,13 @@ export function Text(props: TextProps): UiElement {
       ...(outlineColor === undefined ? {} : {outlineColor: {type: "color", value: outlineColor}}),
       ...(horizontalAlignment === undefined ? {} : {horizontalAlignment}),
       ...(verticalAlignment === undefined ? {} : {verticalAlignment})}});
+}
+
+/** A solid rectangle: backgrounds, scrims, separators. Ignores the mouse by default. */
+export function ColorRect(props: ColorRectProps): UiElement {
+  const {color, ...rest} = props;
+  return node("control", "ColorRect", {...rest, mouseFilter: rest.mouseFilter ?? "Ignore",
+    runtimeProperties: {...props.runtimeProperties, color: {type: "color", value: color}}});
 }
 
 export function Image(props: ImageProps): UiElement {
