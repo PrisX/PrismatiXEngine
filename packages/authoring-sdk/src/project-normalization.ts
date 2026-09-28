@@ -1,3 +1,4 @@
+import {storyAssetRootsError, type StoryAssetRoots} from "./story-assets.js";
 import {validateDocument} from "./contracts.js";
 import {fnv1a64 as hash64} from "./fnv1a64.js";
 import {isSafeResourcePath} from "./resources.js";
@@ -50,6 +51,8 @@ export interface NormalizedProjectInput {
   readonly storyPath: string;
   /** Author-only file or directory roots; never serialized into project.pxproject. */
   readonly resourceIncludes: readonly string[];
+  /** Author-only Story short-name roots; never serialized into project.pxproject. */
+  readonly storyAssets?: StoryAssetRoots;
 }
 
 function issue(code: string, message: string, path: string, details?: string): AuthoringDiagnostic {
@@ -391,8 +394,14 @@ export function normalizeProject(input: NormalizeProjectInput = {}): Result<Norm
       "resourceIncludes must be an array of safe project-relative file or directory paths", projectPath)],
     valid: false};
   const resourceIncludes = includeValue as readonly string[] | undefined;
+  const storyAssetsError = raw.storyAssets === undefined ? undefined
+    : storyAssetRootsError(raw.storyAssets);
+  if (storyAssetsError !== undefined)
+    return {diagnostics: [issue("PXBUILD1056", storyAssetsError, projectPath)], valid: false};
+  const storyAssets = raw.storyAssets as StoryAssetRoots | undefined;
   const runtimeSource = {...raw};
   delete runtimeSource.resourceIncludes;
+  delete runtimeSource.storyAssets;
   const name = typeof raw.name === "string" ? raw.name : "PrismatiX Game";
   const projectId = typeof raw.id === "string" ? raw.id : identifier(name);
   const documents = Object.assign(Object.create(null) as Record<string, unknown>,
@@ -507,6 +516,7 @@ export function normalizeProject(input: NormalizeProjectInput = {}): Result<Norm
       projectPath,
       storyPath,
       resourceIncludes: resourceIncludes ?? [],
+      ...(storyAssets === undefined ? {} : {storyAssets}),
     },
     diagnostics: validated.diagnostics,
     valid: true,

@@ -126,6 +126,16 @@ public:
     void SetCharacterAuto(const std::string& name, const std::string& imagePath, int slot,
                           float offsetX = 0.0f, float offsetY = 0.0f,
                           float scale = 1.0f);
+    // Current slot and authored placement of a visible (non-exiting) actor,
+    // so an expression-only [show] can keep the character where it stands.
+    struct CharacterPlacement {
+        int slot = 2;
+        float offsetX = 0.0f;
+        float offsetY = 0.0f;
+        float scale = 1.0f;
+    };
+    [[nodiscard]] std::optional<CharacterPlacement> FindCharacterPlacement(
+        const std::string& name) const;
     // Prefetches a plain sprite or the image layers referenced by a portrait
     // descriptor. Descriptors themselves are not image textures.
     void PreloadCharacter(const std::string& imagePath);

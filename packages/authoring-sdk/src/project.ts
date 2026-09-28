@@ -1,3 +1,4 @@
+import {createStoryAssetIndex} from "./story-assets.js";
 import {canonicalJson} from "./canonical-json.js";
 import {contractDocumentByteLimit, parseDocument, validateDocument} from "./contracts.js";
 import {normalizeProject} from "./project-normalization.js";
@@ -829,6 +830,13 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       }
     }
   }
+  // Short Story names (`[bg forest]`) resolve only to files the build
+  // already packages: resourceIncludes and cataloged asset sources.
+  const storyAssets = normalized.value.storyAssets === undefined ? undefined
+    : createStoryAssetIndex(normalized.value.storyAssets, [
+      ...includedResources.map((reference) => reference.value),
+      ...resourceAssets.map((asset) => asset.source),
+    ]);
   const storyProgressCounts = {parse: 0, compile: 0};
   const globalStoryTotal = storyIndex.scenes.length *
     (1 + project.supportedLocales.filter((locale) => locale !== project.defaultLocale).length);
@@ -858,6 +866,7 @@ export function compileProject(input: CompileProjectInput): ProjectCompileResult
       extensions,
       resources: {...resourcePaths, ...localizedResources},
       resourceAssets,
+      ...(storyAssets === undefined ? {} : {storyAssets}),
       ...(input.onStoryProgress === undefined ? {} : {onProgress: (event: StoryProjectProgress) => {
         storyProgressCounts[event.phase] += 1;
         input.onStoryProgress?.({...event,

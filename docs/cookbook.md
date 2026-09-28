@@ -23,6 +23,66 @@ These examples use the public Story compiler in `packages/authoring-sdk/src/stor
 
 An empty line ends speaker scope. Labels use `*name`; choices use `text` and `goto`, jumps use `target`. A generated project's adjacent `.pxids.json` keeps save identities without `[id ...]` in the prose. Prose rewrites retain their identities; for added or removed executable lines, review `prismatix ids <project> --sync` and then run `--sync --write`. Removing an old operation requires `--accept-removals` when writing the sidecar, after reviewing old saves and migration. Do not delete the Story's `; @prismatix-ids` marker or the sidecar. Changing routes, resources or variable schemas still requires a deliberate migration test against old saves. Identity stability does not by itself prove compatibility.
 
+## Short forms for long scripts
+
+Every short form below compiles to the same operations as its long form, so
+save identities and the Runtime IR do not depend on which spelling you use.
+
+```pxstory
+@直哉「うっぷ……少し食い過ぎたか……」
+@guide 今天想去哪裡呢？
+@guide[smile left voice=g0042] 一起去吧！
+あれめんどくさいんだよなぁ。\
+他で返せたら、そっちでチャラにしたいものだ。
+[show guide smile right]
+[bg street rule=083r duration=1000ms vague=40]
+[bgm bgm004]
+```
+
+- `@name text` speaks one line and returns to narration; `@name` on its own
+  line still starts a block that ends at the next empty line. Text may follow
+  the name directly when it opens with `「`, `『`, `（`, `(` or `“`.
+- A name that is not an identifier (`@直哉`) is a display name, like
+  `@"直哉"`; only identifier names are checked against character aliases.
+- `@alias[...]` options apply to that line only: a bare word is an expression
+  alias or a position (`left`/`center`/`right`), and `voice=` plays with the
+  line. Expression and position require a registered character alias.
+- A prose line ending in `\` continues on the next line; both lines are shown
+  in one advance with a line break. Write `\\` for a literal trailing
+  backslash.
+- In `[show alias ...]`, words after the alias are the expression or the
+  position in either order. Showing a visible character again without a
+  position keeps its slot, offset and scale, so expression changes no longer
+  snap it back to the center.
+
+Short resource names come from author-only search roots in `prismatix.json`:
+
+```json
+"storyAssets": {
+  "bg": ["Assets/bg", "Assets/cg"],
+  "rule": ["Assets/rule"],
+  "sprite": ["Assets/Portraits"],
+  "voice": ["Assets/voice"],
+  "bgm": ["Assets/bgm"],
+  "se": ["Assets/se"]
+}
+```
+
+Kinds are `bg`, `rule`, `sprite`, `voice`, `bgm`, `se`, `ambience` and `video`.
+A name is looked up only among files the build already packages
+(`resourceIncludes` and cataloged `assets`). Roots are tried in order; inside
+one root an exact relative path wins over a path without its extension, then a
+file name, then a file name without its extension (`kei/k001` or `k001` for
+`Assets/voice/kei/k001.ogg`). Several matches at the same level are an error
+(`PXSTORY1161`) listing every candidate rather than a guess, and a bare name
+with no match is `PXSTORY1160` instead of a missing project-root file. Values
+containing `/` or an extension that match no root still work as ordinary
+project paths.
+
+On the imported 352-scene *Sakura no Uta* port, rewriting `[say]`/`[narrate]`,
+separate `[voice]` lines and full media paths into these forms removes about
+35% of the script's characters without changing any operation.
+
 ## Characters, backgrounds and sound
 
 The starter registers `guide`, its `smile` expression and an original background. Reuse these without hand-writing another UUID:

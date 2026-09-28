@@ -1019,6 +1019,16 @@ void Stage::SetCharacter(const std::string& name, const std::string& imagePath, 
     }
 }
 
+std::optional<Stage::CharacterPlacement> Stage::FindCharacterPlacement(
+    const std::string& name) const {
+    const auto found = m_actors.find(name);
+    if (found == m_actors.end() || found->second.exiting ||
+        found->second.imagePath.empty())
+        return std::nullopt;
+    const Actor& actor = found->second;
+    return CharacterPlacement{actor.slot, actor.offsetX, actor.offsetY, actor.scale};
+}
+
 void Stage::SetCharacterAuto(const std::string& name, const std::string& imagePath,
                              const int slot, const float offsetX, const float offsetY,
                              const float scale) {

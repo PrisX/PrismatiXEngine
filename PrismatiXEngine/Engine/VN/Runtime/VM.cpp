@@ -682,10 +682,16 @@ void VM::ExecuteSimple(const Command& cmd) {
                 file = name + "_" + fallbackExpression + ".png";
             }
         }
-        const int slot = ParseInt(cmd.Get("slot", cmd.Get("pos", "2")), 2);
-        const float ox = ParseFloat(cmd.Get("x"), 0.0f);
-        const float oy = ParseFloat(cmd.Get("y"), 0.0f);
-        const float scale = ParseFloat(cmd.Get("scale", cmd.Get("zoom")), 1.0f);
+        // Omitted placement keeps a visible actor where it stands, so an
+        // expression change does not snap the character back to center.
+        const auto current = m_stage.FindCharacterPlacement(name);
+        const Stage::CharacterPlacement keep = current.value_or(Stage::CharacterPlacement{});
+        const int slot = cmd.Has("slot") || cmd.Has("pos")
+            ? ParseInt(cmd.Get("slot", cmd.Get("pos", "2")), 2) : keep.slot;
+        const float ox = ParseFloat(cmd.Get("x"), current ? keep.offsetX : 0.0f);
+        const float oy = ParseFloat(cmd.Get("y"), current ? keep.offsetY : 0.0f);
+        const float scale = ParseFloat(cmd.Get("scale", cmd.Get("zoom")),
+                                       current ? keep.scale : 1.0f);
         const auto imagePath=Resolve(m_config.charDir, file);
         if(cmd.Get("transitionMode")=="auto")
             m_stage.SetCharacterAuto(name,imagePath,slot,ox,oy,scale);

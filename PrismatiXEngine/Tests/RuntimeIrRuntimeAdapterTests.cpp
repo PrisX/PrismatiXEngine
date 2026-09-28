@@ -540,6 +540,28 @@ int main() {
     assert(clearStage.CaptureState().actors.empty());
     assert(clearStage.BackgroundPath() == "Assets/background.webp");
 
+    // An expression-only show keeps a visible actor's placement; an explicit
+    // position still moves it.
+    clearStage.SetCharacter("hero", "Assets/hero.webp", 1, false, 12.0f, -4.0f, 0.8f);
+    px::sdk::RuntimeIrDocument placementDocument;
+    placementDocument.documentId = "placement-runtime";
+    placementDocument.operations = {
+        Operation("keep", "showCharacter", {{"character", "hero"},
+            {"sprite", "Assets/hero-smile.webp"}, {"transition", "false"}}),
+        Operation("placement-end", "endStory"),
+    };
+    assert(clearVm.LoadCompiledProgram(px::CompileRuntimeIr(placementDocument),
+                                       "memory://placement-runtime"));
+    const auto kept = clearStage.FindCharacterPlacement("hero");
+    assert(kept && kept->slot == 1 && kept->offsetX == 12.0f &&
+           kept->offsetY == -4.0f && kept->scale == 0.8f);
+    placementDocument.operations.front().arguments["position"] = "3";
+    assert(clearVm.LoadCompiledProgram(px::CompileRuntimeIr(placementDocument),
+                                       "memory://placement-runtime-moved"));
+    const auto moved = clearStage.FindCharacterPlacement("hero");
+    assert(moved && moved->slot == 3 && moved->scale == 0.8f);
+    clearStage.ClearCharacters(false);
+
     px::vn::GameCatalog localizedCatalog;
     bool charactersDeclared = false;
     constexpr std::string_view localizedCharacterId =

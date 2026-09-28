@@ -87,7 +87,9 @@ rules.
 
 ## Readable Story with durable save identities
 
-Use `[say speaker="稟" text="一行目\\n二行目"]` for one dialogue
+End a prose line with `\` to continue the same advance on the next source
+line. Imported text can instead use
+`[say speaker="稟" text="一行目\\n二行目"]` for one dialogue
 operation with an in-box line break, or `[narrate text="一行目\\n二行目"]`
 for narration. The quoted `text` is a JSON string, so `\\n` becomes a newline
 in the Runtime operation. `say` may also include `character=alias` when the
@@ -340,12 +342,21 @@ compiler allows translated speaker text but still rejects changes to actor
 identity or control flow across locales. This affects authored Story dialogue;
 it does not localize arbitrary native/JavaScript calls that bypass Story.
 
-For a displayed speaker with no character resource, quote the name after `@`:
+For a displayed speaker with no character resource, quote the name after `@`,
+or write any non-identifier name directly:
 
 ```pxstory
 @"村雨"
 早安，主人。
+
+@村雨「早安，主人。」
 ```
+
+`@name text` speaks one line and returns to narration. `@alias[smile left
+voice=v001] text` changes the expression or position and plays a voice for
+that line only. See the [cookbook](../../docs/cookbook.md#short-forms-for-long-scripts)
+for these forms and the `storyAssets` short-name roots used by
+`compileProject` and `createStoryAssetIndex`.
 
 This emits a `dialogue` operation with separate `speaker` and `text` fields and
 an empty character identity. Each locale may translate the quoted speaker.

@@ -1,4 +1,5 @@
 import type {ProjectAssetDescriptor} from "./resources.js";
+import type {StoryAssetIndex} from "./story-assets.js";
 
 export type DiagnosticSeverity = "error" | "warning" | "information";
 
@@ -92,6 +93,8 @@ export interface StoryNode {
   readonly literalSpeaker?: boolean;
   readonly text?: string;
   readonly arguments?: readonly StoryArgument[];
+  /** Inline `@speaker[...]` options that apply to one dialogue line. */
+  readonly options?: readonly StoryArgument[];
 }
 
 export interface StoryDocument {
@@ -229,6 +232,8 @@ export interface StoryCompileContext {
   readonly resources?: Readonly<Record<string, string>>;
   /** Stable-identity catalog used to normalize bare UUIDs and asset tokens. */
   readonly resourceAssets?: readonly ProjectAssetDescriptor[];
+  /** Short-name lookup for resources under the project's `storyAssets` roots. */
+  readonly storyAssets?: StoryAssetIndex;
 }
 
 export interface StoryCompileResult {

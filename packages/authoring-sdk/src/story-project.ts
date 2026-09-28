@@ -3,6 +3,7 @@ import {fnv1a64 as stableId} from "./fnv1a64.js";
 import {applyStoryIdentityMap, storyRequiresIdentityMap} from "./story-external-identity.js";
 import {jsonPointerSpans} from "./json-source-spans.js";
 import type {ProjectAssetDescriptor} from "./resources.js";
+import type {StoryAssetIndex} from "./story-assets.js";
 import type {
   AuthoringDiagnostic,
   CharacterDocument,
@@ -73,6 +74,7 @@ export interface StoryProjectCompileContext {
   readonly extensions?: readonly ExtensionManifest[];
   readonly resources?: Readonly<Record<string, string>>;
   readonly resourceAssets?: readonly ProjectAssetDescriptor[];
+  readonly storyAssets?: StoryAssetIndex;
   readonly onProgress?: (event: StoryProjectProgress) => void;
 }
 
@@ -91,7 +93,7 @@ function storyCompilationSnapshot(context: StoryProjectCompileContext): StoryCom
     context.storyIndexSource,
     context.documentId ?? context.storyIndex.id,
     context.characters, context.game, context.extensions,
-    context.resources, context.resourceAssets,
+    context.resources, context.resourceAssets, context.storyAssets?.fingerprint,
   ]);
   const sources = context.storyIndex.scenes.map((scene) => {
     const path = scene.sources[context.locale] ?? "";
@@ -647,6 +649,7 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
     compileInputs: JSON.stringify([
       documentId, context.locale, context.characters, context.game,
       context.extensions, context.resources, context.resourceAssets,
+      context.storyAssets?.fingerprint,
     ]),
     labels: JSON.stringify([...scenesById].map(([id, scene]) =>
       [id, [...scene.labels].sort()])),
@@ -730,6 +733,7 @@ function compileStoryProjectInternal(context: StoryProjectCompileContext,
           ...(context.extensions === undefined ? {} : {extensions: context.extensions}),
           ...(context.resources === undefined ? {} : {resources: context.resources}),
           ...(context.resourceAssets === undefined ? {} : {resourceAssets: context.resourceAssets}),
+          ...(context.storyAssets === undefined ? {} : {storyAssets: context.storyAssets}),
         });
         stubSourceIds = rewritten.stubSourceIds;
         if (snapshot !== undefined) sceneCache?.remember(context.locale, descriptor.id,
