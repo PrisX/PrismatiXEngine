@@ -237,6 +237,13 @@ public:
         return m_compositor.Enabled();
     }
     [[nodiscard]] bool Ready() const { return m_compositor.Ready(); }
+    // GPU rule transition: draws until EndRuleMask fade against the rule
+    // image at `rulePath`. False when unsupported or the rule is not resident.
+    [[nodiscard]] bool SupportsRuleMask() const { return m_compositor.RuleMaskSupported(); }
+    [[nodiscard]] bool BeginRuleMask(const std::string& rulePath, float threshold,
+                                     float vague);
+    void EndRuleMask() { m_compositor.EndRuleMask(); }
+    void ReleaseRuleMask() { m_compositor.ReleaseRuleMask(); }
     bool LoadCustomEffects(const std::vector<CustomEffectDescriptor>& effects,
                            const io::VFS& vfs);
     [[nodiscard]] bool HasCustomEffect(

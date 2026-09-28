@@ -18,6 +18,7 @@
 #include <SDL3_ttf/SDL_ttf.h>
 
 #include <cstddef>
+#include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -946,6 +947,48 @@ int main() {
             if (screenHashes.size() != 10) {
                 std::cerr << "FAIL: public screen effects are not visually distinct\n";
                 result = 1;
+            }
+
+            // Halfway through a left-to-right rule, the left edge shows the
+            // incoming image and the right edge still shows the outgoing one,
+            // whichever of the GPU or CPU rule paths the device uses.
+            {
+                if (!renderer.SupportsRuleMask()) {
+                    std::cerr << "FAIL: gpu-effects renderer did not load the rule shader\n";
+                    result = 1;
+                }
+                px::vn::Stage stage(renderer, assets);
+                stage.SetBackground("background.bmp", false);
+                stage.SetBackgroundRule("alternate.bmp", "rule.bmp", 1000, 48);
+                for (int frame = 0; frame < 500 &&
+                     !assets.HasResidentTexture("alternate.bmp"); ++frame) {
+                    assets.BeginFrame();
+                    SDL_Delay(2);
+                }
+                (void)stage.ApplyAnimationProperty("$camera", "rule-dissolve",
+                                                   px::Variant(0.5));
+                stage.Update(0.0f);
+                ClearFrame(device.Renderer());
+                stage.Render();
+                SaveVisualArtifact(device.Renderer(), "screen-rule-dissolve-split");
+                SDL_Surface* frame = SDL_RenderReadPixels(device.Renderer(), nullptr);
+                const Pixel incoming = ReadLogicalPixel(frame, 64, 180, 640, 360);
+                const Pixel outgoing = ReadLogicalPixel(frame, 576, 180, 640, 360);
+                if (frame) SDL_DestroySurface(frame);
+                const auto near = [](const Pixel& actual, const Pixel& expected) {
+                    return std::abs(actual.r - expected.r) <= 12 &&
+                           std::abs(actual.g - expected.g) <= 12 &&
+                           std::abs(actual.b - expected.b) <= 12;
+                };
+                if (!near(incoming, {100, 99, 205, 255}) ||
+                    !near(outgoing, {230, 246, 202, 255})) {
+                    std::cerr << "FAIL: rule dissolve split is wrong: incoming "
+                              << int(incoming.r) << ',' << int(incoming.g) << ','
+                              << int(incoming.b) << " outgoing " << int(outgoing.r)
+                              << ',' << int(outgoing.g) << ',' << int(outgoing.b)
+                              << " gpu=" << renderer.SupportsRuleMask() << '\n';
+                    result = 1;
+                }
             }
         }
 

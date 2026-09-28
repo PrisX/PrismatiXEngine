@@ -64,6 +64,14 @@ public:
         float progress, float randomSeed,
         const std::array<std::array<float, 4>, 8>& parameters);
     void InvalidateCustomTransitionTargets();
+    // Draws between Begin/EndRuleMask fade per pixel against `rule`, sampled
+    // in Stage-target space: alpha = saturate((rule + vague - threshold) /
+    // vague) with normalized values. Only inside an active Stage layer.
+    [[nodiscard]] bool RuleMaskSupported() const;
+    [[nodiscard]] bool BeginRuleMask(SDL_Texture* rule, float threshold, float vague);
+    void EndRuleMask();
+    // Drops the render state that references the current rule texture.
+    void ReleaseRuleMask();
     [[nodiscard]] bool Enabled() const { return m_enabled; }
     [[nodiscard]] bool Ready() const { return !m_required || m_enabled; }
 
@@ -82,6 +90,10 @@ private:
     SDL_Texture* m_previousTarget = nullptr;
 #if !defined(__EMSCRIPTEN__)
     SDL_GPUShader* m_shader = nullptr;
+    SDL_GPUShader* m_ruleShader = nullptr;
+    SDL_GPUSampler* m_ruleSampler = nullptr;
+    SDL_GPURenderState* m_ruleState = nullptr;
+    SDL_GPUTexture* m_ruleStateTexture = nullptr;
 #endif
     SDL_GPURenderState* m_renderState = nullptr;
     struct CustomEffectState {

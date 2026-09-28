@@ -192,97 +192,65 @@ if(NOT EMSCRIPTEN)
         NAMES shadercross
         REQUIRED
     )
-    set(PRISMATIX_BUILTIN_SHADER_SOURCE
-        "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/Builtin/compositor.frag.hlsl")
     set(PRISMATIX_BUILTIN_SHADER_DIR
         "${CMAKE_CURRENT_BINARY_DIR}/generated/shaders")
-    set(PRISMATIX_BUILTIN_SHADER_SPIRV
-        "${PRISMATIX_BUILTIN_SHADER_DIR}/compositor.frag.spv")
-    set(PRISMATIX_BUILTIN_SHADER_DXIL
-        "${PRISMATIX_BUILTIN_SHADER_DIR}/compositor.frag.dxil")
-    set(PRISMATIX_BUILTIN_SHADER_MSL
-        "${PRISMATIX_BUILTIN_SHADER_DIR}/compositor.frag.msl")
-    set(PRISMATIX_BUILTIN_SHADER_CPP
-        "${PRISMATIX_BUILTIN_SHADER_DIR}/BuiltInCompositorShaders.generated.cpp")
-
-    if(APPLE)
+    # Offline-compiles one built-in fragment shader and embeds every
+    # artifact as SelectBuiltIn<name>Shader().
+    function(prismatix_builtin_shader name stem)
+        set(source "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/Builtin/${stem}.frag.hlsl")
+        set(spirv "${PRISMATIX_BUILTIN_SHADER_DIR}/${stem}.frag.spv")
+        set(dxil "${PRISMATIX_BUILTIN_SHADER_DIR}/${stem}.frag.dxil")
+        set(msl "${PRISMATIX_BUILTIN_SHADER_DIR}/${stem}.frag.msl")
+        set(generated "${PRISMATIX_BUILTIN_SHADER_DIR}/BuiltIn${name}Shaders.generated.cpp")
+        if(APPLE)
+            add_custom_command(
+                OUTPUT "${spirv}" "${msl}"
+                COMMAND "${CMAKE_COMMAND}" -E make_directory "${PRISMATIX_BUILTIN_SHADER_DIR}"
+                COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}" "${source}"
+                        --source HLSL --dest SPIRV --stage fragment
+                        --entrypoint main --output "${spirv}"
+                COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}" "${spirv}"
+                        --source SPIRV --dest MSL --stage fragment
+                        --entrypoint main --output "${msl}"
+                DEPENDS "${source}"
+                COMMENT "Offline-compiling PrismatiX built-in ${stem} shader"
+                VERBATIM)
+            set(inputs -DINPUT_SPIRV=${spirv} -DINPUT_MSL=${msl})
+            set(artifacts "${spirv}" "${msl}")
+        else()
+            add_custom_command(
+                OUTPUT "${spirv}" "${dxil}" "${msl}"
+                COMMAND "${CMAKE_COMMAND}" -E make_directory "${PRISMATIX_BUILTIN_SHADER_DIR}"
+                COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}" "${source}"
+                        --source HLSL --dest SPIRV --stage fragment
+                        --entrypoint main --output "${spirv}"
+                COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}" "${source}"
+                        --source HLSL --dest DXIL --stage fragment
+                        --entrypoint main --output "${dxil}"
+                COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}" "${source}"
+                        --source HLSL --dest MSL --stage fragment
+                        --entrypoint main --output "${msl}"
+                DEPENDS "${source}"
+                COMMENT "Offline-compiling PrismatiX built-in ${stem} shader"
+                VERBATIM)
+            set(inputs -DINPUT_SPIRV=${spirv} -DINPUT_DXIL=${dxil} -DINPUT_MSL=${msl})
+            set(artifacts "${spirv}" "${dxil}" "${msl}")
+        endif()
         add_custom_command(
-            OUTPUT
-                "${PRISMATIX_BUILTIN_SHADER_SPIRV}"
-                "${PRISMATIX_BUILTIN_SHADER_MSL}"
-            COMMAND "${CMAKE_COMMAND}" -E make_directory
-                    "${PRISMATIX_BUILTIN_SHADER_DIR}"
-            COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}"
-                    "${PRISMATIX_BUILTIN_SHADER_SOURCE}"
-                    --source HLSL --dest SPIRV --stage fragment
-                    --entrypoint main --output "${PRISMATIX_BUILTIN_SHADER_SPIRV}"
-            COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}"
-                    "${PRISMATIX_BUILTIN_SHADER_SPIRV}"
-                    --source SPIRV --dest MSL --stage fragment
-                    --entrypoint main --output "${PRISMATIX_BUILTIN_SHADER_MSL}"
-            DEPENDS "${PRISMATIX_BUILTIN_SHADER_SOURCE}"
-            COMMENT "Offline-compiling PrismatiX built-in compositor shader"
-            VERBATIM
-        )
-        add_custom_command(
-            OUTPUT "${PRISMATIX_BUILTIN_SHADER_CPP}"
-            COMMAND "${CMAKE_COMMAND}"
-                    -DINPUT_SPIRV=${PRISMATIX_BUILTIN_SHADER_SPIRV}
-                    -DINPUT_MSL=${PRISMATIX_BUILTIN_SHADER_MSL}
-                    -DOUTPUT=${PRISMATIX_BUILTIN_SHADER_CPP}
+            OUTPUT "${generated}"
+            COMMAND "${CMAKE_COMMAND}" -DNAME=${name} ${inputs}
+                    -DOUTPUT=${generated}
                     -P "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/GenerateBuiltInShaders.cmake"
-            DEPENDS
-                "${PRISMATIX_BUILTIN_SHADER_SPIRV}"
-                "${PRISMATIX_BUILTIN_SHADER_MSL}"
+            DEPENDS ${artifacts}
                 "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/GenerateBuiltInShaders.cmake"
-            COMMENT "Embedding offline-compiled PrismatiX compositor shaders"
-            VERBATIM
-        )
-    else()
-        add_custom_command(
-            OUTPUT
-                "${PRISMATIX_BUILTIN_SHADER_SPIRV}"
-                "${PRISMATIX_BUILTIN_SHADER_DXIL}"
-                "${PRISMATIX_BUILTIN_SHADER_MSL}"
-            COMMAND "${CMAKE_COMMAND}" -E make_directory
-                    "${PRISMATIX_BUILTIN_SHADER_DIR}"
-            COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}"
-                    "${PRISMATIX_BUILTIN_SHADER_SOURCE}"
-                    --source HLSL --dest SPIRV --stage fragment
-                    --entrypoint main --output "${PRISMATIX_BUILTIN_SHADER_SPIRV}"
-            COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}"
-                    "${PRISMATIX_BUILTIN_SHADER_SOURCE}"
-                    --source HLSL --dest DXIL --stage fragment
-                    --entrypoint main --output "${PRISMATIX_BUILTIN_SHADER_DXIL}"
-            COMMAND "${PRISMATIX_SHADERCROSS_EXECUTABLE}"
-                    "${PRISMATIX_BUILTIN_SHADER_SOURCE}"
-                    --source HLSL --dest MSL --stage fragment
-                    --entrypoint main --output "${PRISMATIX_BUILTIN_SHADER_MSL}"
-            DEPENDS "${PRISMATIX_BUILTIN_SHADER_SOURCE}"
-            COMMENT "Offline-compiling PrismatiX built-in compositor shader"
-            VERBATIM
-        )
-        add_custom_command(
-            OUTPUT "${PRISMATIX_BUILTIN_SHADER_CPP}"
-            COMMAND "${CMAKE_COMMAND}"
-                    -DINPUT_SPIRV=${PRISMATIX_BUILTIN_SHADER_SPIRV}
-                    -DINPUT_DXIL=${PRISMATIX_BUILTIN_SHADER_DXIL}
-                    -DINPUT_MSL=${PRISMATIX_BUILTIN_SHADER_MSL}
-                    -DOUTPUT=${PRISMATIX_BUILTIN_SHADER_CPP}
-                    -P "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/GenerateBuiltInShaders.cmake"
-            DEPENDS
-                "${PRISMATIX_BUILTIN_SHADER_SPIRV}"
-                "${PRISMATIX_BUILTIN_SHADER_DXIL}"
-                "${PRISMATIX_BUILTIN_SHADER_MSL}"
-                "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/GenerateBuiltInShaders.cmake"
-            COMMENT "Embedding offline-compiled PrismatiX compositor shaders"
-            VERBATIM
-        )
-    endif()
-    set_source_files_properties("${PRISMATIX_BUILTIN_SHADER_CPP}"
-        PROPERTIES GENERATED TRUE)
-    list(APPEND PRISMATIX_RUNTIME_CORE_SOURCES
-        "${PRISMATIX_BUILTIN_SHADER_CPP}")
+            COMMENT "Embedding offline-compiled PrismatiX ${stem} shaders"
+            VERBATIM)
+        set_source_files_properties("${generated}" PROPERTIES GENERATED TRUE)
+        set(PRISMATIX_RUNTIME_CORE_SOURCES ${PRISMATIX_RUNTIME_CORE_SOURCES}
+            "${generated}" PARENT_SCOPE)
+    endfunction()
+    prismatix_builtin_shader(Compositor compositor)
+    prismatix_builtin_shader(Rule rule)
 endif()
 list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/SDK/")
 list(FILTER PRISMATIX_RUNTIME_CORE_SOURCES EXCLUDE REGEX "/Engine/Core/SemanticVersion\.cpp$")

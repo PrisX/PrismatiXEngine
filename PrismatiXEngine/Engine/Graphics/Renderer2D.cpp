@@ -548,6 +548,15 @@ Color Renderer2D::TransformColor(const Color color) const {const auto tint=m_tra
 Rect Renderer2D::TransformBounds(const Rect rect) const {const std::array<Vec2,4> points{TransformPoint({rect.x,rect.y}),TransformPoint({rect.x+rect.w,rect.y}),TransformPoint({rect.x+rect.w,rect.y+rect.h}),TransformPoint({rect.x,rect.y+rect.h})};float left=points[0].x,right=left,top=points[0].y,bottom=top;for(const auto point:points){left=std::min(left,point.x);right=std::max(right,point.x);top=std::min(top,point.y);bottom=std::max(bottom,point.y);}return {left,top,right-left,bottom-top};}
 void Renderer2D::PushTransform(const Vec2 pivot,const Vec2 scale,const float rotationDegrees,const Color modulate){const float radians=rotationDegrees*3.14159265358979323846f/180.0f,cs=std::cos(radians),sn=std::sin(radians);TransformState local{cs*scale.x,sn*scale.x,-sn*scale.y,cs*scale.y,0,0,modulate};local.tx=pivot.x-(local.a*pivot.x+local.c*pivot.y);local.ty=pivot.y-(local.b*pivot.x+local.d*pivot.y);const auto& parent=m_transformStack.back();TransformState combined;combined.a=parent.a*local.a+parent.c*local.b;combined.b=parent.b*local.a+parent.d*local.b;combined.c=parent.a*local.c+parent.c*local.d;combined.d=parent.b*local.c+parent.d*local.d;combined.tx=parent.a*local.tx+parent.c*local.ty+parent.tx;combined.ty=parent.b*local.tx+parent.d*local.ty+parent.ty;combined.modulate={static_cast<std::uint8_t>((static_cast<unsigned>(parent.modulate.r)*modulate.r)/255),static_cast<std::uint8_t>((static_cast<unsigned>(parent.modulate.g)*modulate.g)/255),static_cast<std::uint8_t>((static_cast<unsigned>(parent.modulate.b)*modulate.b)/255),static_cast<std::uint8_t>((static_cast<unsigned>(parent.modulate.a)*modulate.a)/255)};m_transformStack.push_back(combined);}
 
+bool Renderer2D::BeginRuleMask(const std::string& rulePath,
+                               const float threshold, const float vague) {
+    if (!m_compositor.RuleMaskSupported() || !m_assets.HasResidentTexture(rulePath))
+        return false;
+    const TextureHandle rule = m_assets.Texture(rulePath);
+    auto* native = static_cast<SDL_Texture*>(rule.Native(TextureBackend::SdlRenderer));
+    return native && m_compositor.BeginRuleMask(native, threshold, vague);
+}
+
 void Renderer2D::PushAffineTransform(const AffineTransform2D& transform,
                                      const Color modulate) {
     const auto finite = [](const float value) { return std::isfinite(value); };

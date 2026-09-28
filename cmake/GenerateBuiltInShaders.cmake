@@ -3,6 +3,10 @@ foreach(required IN ITEMS INPUT_SPIRV INPUT_MSL OUTPUT)
         message(FATAL_ERROR "GenerateBuiltInShaders.cmake requires ${required}")
     endif()
 endforeach()
+# NAME selects the generated symbols: SelectBuiltIn<NAME>Shader.
+if(NOT DEFINED NAME OR "${NAME}" STREQUAL "")
+    set(NAME Compositor)
+endif()
 
 function(prismatix_binary_array input name output_variable)
     file(READ "${input}" bytes HEX)
@@ -16,16 +20,16 @@ function(prismatix_binary_array input name output_variable)
         PARENT_SCOPE)
 endfunction()
 
-prismatix_binary_array("${INPUT_SPIRV}" kCompositorSpirv spirv_array)
-prismatix_binary_array("${INPUT_MSL}" kCompositorMsl msl_array)
+prismatix_binary_array("${INPUT_SPIRV}" k${NAME}Spirv spirv_array)
+prismatix_binary_array("${INPUT_MSL}" k${NAME}Msl msl_array)
 
 set(dxil_array "")
 set(dxil_selector "")
 if(DEFINED INPUT_DXIL AND NOT "${INPUT_DXIL}" STREQUAL "")
-    prismatix_binary_array("${INPUT_DXIL}" kCompositorDxil dxil_array)
+    prismatix_binary_array("${INPUT_DXIL}" k${NAME}Dxil dxil_array)
     string(CONCAT dxil_selector
 "    if ((supportedFormats & SDL_GPU_SHADERFORMAT_DXIL) != 0)\n"
-"        return ShaderBytecodeView{kCompositorDxil, sizeof(kCompositorDxil),\n"
+"        return ShaderBytecodeView{k${NAME}Dxil, sizeof(k${NAME}Dxil),\n"
 "                                  SDL_GPU_SHADERFORMAT_DXIL, \"main\"};\n")
 endif()
 
@@ -35,13 +39,13 @@ file(WRITE "${OUTPUT}"
 "namespace px::graphics {\nnamespace {\n"
 "${spirv_array}${dxil_array}${msl_array}"
 "}  // namespace\n\n"
-"std::optional<ShaderBytecodeView> SelectBuiltInCompositorShader(\n"
+"std::optional<ShaderBytecodeView> SelectBuiltIn${NAME}Shader(\n"
 "    const std::uint32_t supportedFormats) {\n"
 "    if ((supportedFormats & SDL_GPU_SHADERFORMAT_SPIRV) != 0)\n"
-"        return ShaderBytecodeView{kCompositorSpirv, sizeof(kCompositorSpirv),\n"
+"        return ShaderBytecodeView{k${NAME}Spirv, sizeof(k${NAME}Spirv),\n"
 "                                  SDL_GPU_SHADERFORMAT_SPIRV, \"main\"};\n"
 "${dxil_selector}"
 "    if ((supportedFormats & SDL_GPU_SHADERFORMAT_MSL) != 0)\n"
-"        return ShaderBytecodeView{kCompositorMsl, sizeof(kCompositorMsl),\n"
+"        return ShaderBytecodeView{k${NAME}Msl, sizeof(k${NAME}Msl),\n"
 "                                  SDL_GPU_SHADERFORMAT_MSL, \"main0\"};\n"
 "    return std::nullopt;\n}\n\n}  // namespace px::graphics\n")

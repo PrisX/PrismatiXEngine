@@ -106,6 +106,8 @@ public:
     [[nodiscard]] bool TextureSettled(const std::string& path) const {
         return m_textures.contains(path);
     }
+    // True while an asynchronous decode for `path` is queued or running.
+    [[nodiscard]] bool TexturePending(const std::string& path) const;
 
     // Call once per frame before any drawing: advances the LRU clock and evicts
     // textures that were not used recently (deferred so nothing in-flight on the

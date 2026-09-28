@@ -17,5 +17,8 @@ struct ShaderBytecodeView {
 // by the active device. No source compiler is linked into the Player.
 [[nodiscard]] std::optional<ShaderBytecodeView>
 SelectBuiltInCompositorShader(std::uint32_t supportedFormats);
+// Rule (image-mask) background transition; see Shaders/Builtin/rule.frag.hlsl.
+[[nodiscard]] std::optional<ShaderBytecodeView>
+SelectBuiltInRuleShader(std::uint32_t supportedFormats);
 
 }  // namespace px::graphics

@@ -334,6 +334,9 @@ private:
         // Decoding runs off the frame thread; progress holds at zero until
         // the outgoing pixels and the streaming texture exist.
         bool ready = false;
+        // GPU path: the rule shader masks the resident outgoing texture, so
+        // nothing is decoded on the CPU or uploaded per frame.
+        bool gpu = false;
         std::future<RulePreparation> preparing;
         std::string oldBackgroundPath;
         std::string newBackgroundPath;
@@ -408,7 +411,7 @@ private:
     };
 
     [[nodiscard]] float SlotCenterX(int slot) const;
-    void RenderRuleOverlay();
+    void RenderRuleOverlay(bool compositing);
     void RenderScreenEffects();
     void EndRuleTransition();
     void FinishRulePreparation(bool wait = false);
@@ -418,6 +421,9 @@ private:
         int height, std::shared_ptr<const RuleMask> mask);
     // True once the texture has a decode outcome; requests it otherwise.
     bool BackgroundSettled(const std::string& path);
+    // Resident now, decoding synchronously only when no async decode is in
+    // flight (rule images are small and usually prefetched by lookahead).
+    bool TextureResidentOrLoad(const std::string& path);
     void UpdateTweens(float dt);
     void UpdateMotion(float dt);
     void EmitMotionMarkers(double from, double to, bool includeStart);

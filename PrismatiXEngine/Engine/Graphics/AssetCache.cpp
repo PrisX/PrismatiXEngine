@@ -159,6 +159,14 @@ bool AssetCache::HasResidentTexture(const std::string& path) const {
            static_cast<bool>(found->second.texture);
 }
 
+bool AssetCache::TexturePending(const std::string& path) const {
+    if (m_queuedTextures.contains(path)) return true;
+    return std::any_of(m_pendingTextures.begin(), m_pendingTextures.end(),
+                       [this, &path](const PendingTexture& pending) {
+                           return pending.session == m_assetSession && pending.path == path;
+                       });
+}
+
 AssetPreloadBatchId AssetCache::BeginTexturePreload(
     std::vector<AssetPreloadRequest> requests) {
     const AssetPreloadBatchId batchId = m_nextPreloadBatch++;

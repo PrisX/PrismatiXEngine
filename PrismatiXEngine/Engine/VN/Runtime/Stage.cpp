@@ -368,6 +368,30 @@ void Stage::SetBackgroundRule(const std::string& newBgPath, const std::string& r
         return;
     }
 
+    if (m_renderer.SupportsRuleMask()) {
+        RuleState& gpu = m_ruleState;
+        gpu.active = true;
+        gpu.gpu = true;
+        gpu.ready = false;
+        gpu.w = w;
+        gpu.h = h;
+        gpu.oldBackgroundPath = oldBackgroundPath;
+        gpu.newBackgroundPath = newBgPath;
+        gpu.rulePath = rulePath;
+        gpu.progress = 0.0f;
+        gpu.duration = std::max(0.05f, static_cast<float>(durationMs) / 1000.0f);
+        gpu.vague = std::max(1, vague);
+        m_prevBgPath = oldBackgroundPath;
+        m_bgPath = newBgPath;
+        m_bgFade = 0.0f;
+        m_bgInstant = false;
+        m_bgWait = 0.0f;
+        (void)BackgroundSettled(newBgPath);
+        // Rule images are small and normally prefetched by lookahead; load a
+        // missing one now so the dissolve can start with the next frame.
+        (void)TextureResidentOrLoad(rulePath);
+        return;
+    }
     // Decoding two full-screen images used to stall the frame that started
     // the transition. Prepare them on a worker and keep drawing the old
     // background until the dissolve can begin.
@@ -414,8 +438,31 @@ void Stage::SetBackgroundRule(const std::string& newBgPath, const std::string& r
     (void)BackgroundSettled(newBgPath);
 }
 
+bool Stage::TextureResidentOrLoad(const std::string& path) {
+    if (m_assets.HasResidentTexture(path)) return true;
+    if (m_assets.TexturePending(path)) return false;
+    return static_cast<bool>(m_assets.Texture(path)) || m_assets.TextureSettled(path);
+}
+
 void Stage::FinishRulePreparation(const bool wait) {
     RuleState& rs = m_ruleState;
+    if (rs.active && rs.gpu && !rs.ready) {
+        if (!TextureResidentOrLoad(rs.oldBackgroundPath) || !TextureResidentOrLoad(rs.rulePath))
+            return;
+        if (!m_assets.HasResidentTexture(rs.oldBackgroundPath) ||
+            !m_assets.HasResidentTexture(rs.rulePath)) {
+            PX_LOG_WARN("Stage: rule transition image unavailable '{}'; using a crossfade",
+                        rs.rulePath);
+            const float progress = rs.progress;
+            rs = RuleState{};
+            m_bgFade = std::clamp(progress, 0.0f, 1.0f);
+            return;
+        }
+        rs.ready = true;
+        m_prevBgPath.clear();
+        m_bgFade = 1.0f;
+        return;
+    }
     if (!rs.active || rs.ready || !rs.preparing.valid() ||
         (!wait && rs.preparing.wait_for(std::chrono::seconds(0)) != std::future_status::ready))
         return;
@@ -456,6 +503,7 @@ void Stage::FinishRulePreparation(const bool wait) {
 }
 
 void Stage::EndRuleTransition() {
+    if (m_ruleState.gpu) m_renderer.ReleaseRuleMask();
     // A worker still decoding cannot be cancelled; retire it instead of
     // blocking this frame in the future's destructor.
     if (m_ruleState.preparing.valid())
@@ -1308,8 +1356,20 @@ void Stage::Update(float dt) {
     UpdateMotion(dt);
 }
 
-void Stage::RenderRuleOverlay() {
+void Stage::RenderRuleOverlay(const bool compositing) {
     RuleState& rs = m_ruleState;
+    if (rs.active && rs.ready && rs.gpu) {
+        const float vague = static_cast<float>(rs.vague) / 255.0f;
+        if (compositing &&
+            m_renderer.BeginRuleMask(rs.rulePath, rs.progress * (1.0f + vague), vague)) {
+            m_renderer.DrawImageAuto(rs.oldBackgroundPath, graphics::DisplayMode::Fill, 255);
+            m_renderer.EndRuleMask();
+        } else {
+            m_renderer.DrawImageAuto(rs.oldBackgroundPath, graphics::DisplayMode::Fill,
+                static_cast<std::uint8_t>(std::clamp(1.0f - rs.progress, 0.0f, 1.0f) * 255.0f));
+        }
+        return;
+    }
     if (!rs.active || !rs.ready || !rs.texture || !rs.mask) {
         return;
     }
@@ -1381,7 +1441,7 @@ void Stage::Render() {
         const auto alpha = static_cast<std::uint8_t>(std::clamp(m_bgFade, 0.0f, 1.0f) * 255.0f);
         m_renderer.DrawImageAuto(m_bgPath, graphics::DisplayMode::Fill, alpha);
     }
-    RenderRuleOverlay();
+    RenderRuleOverlay(compositing);
 
     enum class DrawableKind : std::uint8_t { Layer, Actor, Particle };
     struct Drawable {

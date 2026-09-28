@@ -99,6 +99,35 @@ bool Compositor2D::CreateGpuState() {
         m_shader = nullptr;
         return false;
     }
+
+    // Rule transitions fall back to the CPU path when this is unavailable,
+    // so a failure here never disables the compositor itself.
+    if (const auto rule = SelectBuiltInRuleShader(SDL_GetGPUShaderFormats(device));
+        rule && rule->data && rule->size > 0) {
+        SDL_GPUShaderCreateInfo ruleInfo{};
+        ruleInfo.code = rule->data;
+        ruleInfo.code_size = rule->size;
+        ruleInfo.entrypoint = rule->entrypoint;
+        ruleInfo.format = rule->format;
+        ruleInfo.stage = SDL_GPU_SHADERSTAGE_FRAGMENT;
+        ruleInfo.num_samplers = 2;
+        ruleInfo.num_uniform_buffers = 1;
+        m_ruleShader = SDL_CreateGPUShader(device, &ruleInfo);
+        SDL_GPUSamplerCreateInfo samplerInfo{};
+        samplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
+        samplerInfo.mag_filter = SDL_GPU_FILTER_LINEAR;
+        samplerInfo.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
+        samplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+        samplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+        samplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+        m_ruleSampler = m_ruleShader ? SDL_CreateGPUSampler(device, &samplerInfo) : nullptr;
+        if (!m_ruleShader || !m_ruleSampler) {
+            PX_LOG_WARN("GPU rule transition shader unavailable; using the CPU path: {}",
+                        SDL_GetError());
+            if (m_ruleShader) SDL_ReleaseGPUShader(device, m_ruleShader);
+            m_ruleShader = nullptr;
+        }
+    }
     return true;
 #endif
 }
@@ -121,6 +150,11 @@ void Compositor2D::DestroyGpuState() {
         if (device) SDL_ReleaseGPUShader(device, m_shader);
     }
     m_shader = nullptr;
+    ReleaseRuleMask();
+    if (m_ruleSampler && device) SDL_ReleaseGPUSampler(device, m_ruleSampler);
+    m_ruleSampler = nullptr;
+    if (m_ruleShader && device) SDL_ReleaseGPUShader(device, m_ruleShader);
+    m_ruleShader = nullptr;
 #endif
 }
 
@@ -505,6 +539,63 @@ bool Compositor2D::ApplyCustomTransition(
         SDL_RenderTexture(m_renderer, outgoing, nullptr, &destination);
     (void)SDL_SetGPURenderState(m_renderer, nullptr);
     return rendered;
+#endif
+}
+
+bool Compositor2D::RuleMaskSupported() const {
+#if defined(__EMSCRIPTEN__)
+    return false;
+#else
+    return m_enabled && m_ruleShader && m_ruleSampler;
+#endif
+}
+
+bool Compositor2D::BeginRuleMask(SDL_Texture* rule, const float threshold,
+                                 const float vague) {
+#if defined(__EMSCRIPTEN__)
+    (void)rule; (void)threshold; (void)vague;
+    return false;
+#else
+    if (!RuleMaskSupported() || !m_recording || !rule || m_width <= 0 ||
+        m_height <= 0 || !(vague > 0.0f))
+        return false;
+    auto* ruleGpu = static_cast<SDL_GPUTexture*>(SDL_GetPointerProperty(
+        SDL_GetTextureProperties(rule), SDL_PROP_TEXTURE_GPU_TEXTURE_POINTER, nullptr));
+    if (!ruleGpu) return false;
+    if (ruleGpu != m_ruleStateTexture) {
+        ReleaseRuleMask();
+        const SDL_GPUTextureSamplerBinding binding{ruleGpu, m_ruleSampler};
+        SDL_GPURenderStateCreateInfo stateInfo{};
+        stateInfo.fragment_shader = m_ruleShader;
+        stateInfo.num_sampler_bindings = 1;
+        stateInfo.sampler_bindings = &binding;
+        m_ruleState = SDL_CreateGPURenderState(m_renderer, &stateInfo);
+        if (!m_ruleState) return false;
+        m_ruleStateTexture = ruleGpu;
+    }
+    const struct {
+        float targetSize[2];
+        float threshold;
+        float vague;
+    } uniforms{{static_cast<float>(m_width), static_cast<float>(m_height)},
+               threshold, vague};
+    return SDL_SetGPURenderStateFragmentUniforms(m_ruleState, 0, &uniforms,
+                                                 sizeof(uniforms)) &&
+           SDL_SetGPURenderState(m_renderer, m_ruleState);
+#endif
+}
+
+void Compositor2D::EndRuleMask() {
+#if !defined(__EMSCRIPTEN__)
+    (void)SDL_SetGPURenderState(m_renderer, nullptr);
+#endif
+}
+
+void Compositor2D::ReleaseRuleMask() {
+#if !defined(__EMSCRIPTEN__)
+    if (m_ruleState) SDL_DestroyGPURenderState(m_ruleState);
+    m_ruleState = nullptr;
+    m_ruleStateTexture = nullptr;
 #endif
 }
 
