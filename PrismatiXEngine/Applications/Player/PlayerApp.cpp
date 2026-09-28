@@ -4022,11 +4022,12 @@ void PlayerApp::DriveBenchJourney() {
                 }
                 m_session->SelectChoice(0);
             }
-            if (m_benchSettledFrames == 0 && lines() >= 1 && !m_benchDialogueCaptured) {
+            if (!m_benchDialogueCaptured &&
+                m_session->VM().State() == vn::VMState::WaitingClick) {
                 m_benchDialogueCaptured = true;
                 BenchCapture("dialogue");
             }
-            m_skipMode = !m_benchChoiceCaptured ? lines() >= 1 : true;
+            m_skipMode = true;
             if (now - m_benchStageAt >= 15'000) {
                 PX_LOG_INFO("Player bench skip lines={} seconds=15 linesPerSecond={:.1f}",
                             lines(), static_cast<double>(lines()) / 15.0);
@@ -5020,7 +5021,11 @@ void PlayerApp::GameFrame(float dt, std::uint64_t now) {
             m_session->VM().State() == vn::VMState::WaitingClick &&
             m_session->Dialogue().Finished())
             m_runtime.Audio().StopVoice();
+        const std::uint64_t started = SDL_GetTicksNS();
         m_session->Advance();
+        if (const std::uint64_t ms = (SDL_GetTicksNS() - started) / 1'000'000;
+            ms >= 4 && diag::FrameProfiler::Instance().Enabled())
+            diag::FrameProfiler::Instance().Note("advance:" + std::to_string(ms) + "ms");
     };
 
     bool advancedByClick = false;
