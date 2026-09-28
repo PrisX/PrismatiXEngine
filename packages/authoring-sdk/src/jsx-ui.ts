@@ -144,6 +144,7 @@ export interface UiNodeProps {
   readonly hoverSoundPath?: string;
   readonly activateSoundPath?: string;
   readonly bindings?: UiBindings;
+  /** Shorthand bindings; a `"!path"` string applies the `Not` formatter. */
   readonly bind?: Readonly<Record<string, string | UiBinding>>;
   readonly onClick?: UiAction;
   readonly action?: string | UiAction;
@@ -238,12 +239,43 @@ export interface ButtonProps extends Omit<UiNodeProps, "children"> {
   readonly children?: string | number | readonly (string | number)[];
 }
 
+/** Image states named `${base}-normal.png`, `${base}-hover.png`, ... */
+export interface TextureButtonSkin {
+  readonly base: string;
+  /** States with their own image; pressed falls back to hover. Default: hover. */
+  readonly states?: readonly ("hover" | "pressed" | "disabled")[];
+  /** File extension including the dot. Default: `.png`. */
+  readonly extension?: string;
+}
+
 export interface TextureButtonProps extends ButtonProps {
+  /**
+   * Derives state images from one path stem, for example
+   * `skin="Assets/UI/save"` uses `save-normal.png` and `save-hover.png`
+   * (also for pressed). Explicit `*Path` props win.
+   */
+  readonly skin?: string | TextureButtonSkin;
   readonly normalPath?: string;
   readonly hoverPath?: string;
   readonly pressedPath?: string;
   readonly disabledPath?: string;
   readonly scaleMode?: "Stretch" | "Fit" | "Fill" | "Original";
+}
+
+/** Native numeric range input with optional image rail and knob. */
+export interface SliderProps extends Omit<UiNodeProps, "children"> {
+  readonly minimum?: number;
+  readonly maximum?: number;
+  readonly step?: number;
+  readonly value?: number;
+  readonly railPath?: string;
+  readonly railHoverPath?: string;
+  readonly railPressedPath?: string;
+  readonly knobPath?: string;
+  readonly knobHoverPath?: string;
+  readonly knobPressedPath?: string;
+  readonly railHeight?: number;
+  readonly knobSize?: number;
 }
 
 /** A skinnable button that displays and edits one registered keyboard action. */
@@ -574,11 +606,36 @@ export function Button(props: ButtonProps): UiElement {
   return buttonNode("Button", props);
 }
 
+function skinPaths(skin: TextureButtonProps["skin"]): {
+  normalPath?: string; hoverPath?: string; pressedPath?: string; disabledPath?: string;
+} {
+  if (skin === undefined) return {};
+  const {base, states = ["hover"], extension = ".png"} =
+    typeof skin === "string" ? {base: skin} : skin;
+  const state = (name: string) => `${base}-${name}${extension}`;
+  const hover = states.includes("hover") ? state("hover") : undefined;
+  const pressed = states.includes("pressed") ? state("pressed") : hover;
+  return {
+    normalPath: state("normal"),
+    ...(hover === undefined ? {} : {hoverPath: hover}),
+    ...(pressed === undefined ? {} : {pressedPath: pressed}),
+    ...(states.includes("disabled") ? {disabledPath: state("disabled")} : {}),
+  };
+}
+
 /** Image-state button without the generic Control runtimeType escape hatch. */
 export function TextureButton(props: TextureButtonProps): UiElement {
   const text = props.text ?? textualChildren(props.children);
-  const {children: _children, normalPath, hoverPath, pressedPath, disabledPath,
-    scaleMode, ...rest} = props;
+  const {children: _children, skin, scaleMode, ...rest} = props;
+  const derived = skinPaths(skin);
+  const normalPath = props.normalPath ?? derived.normalPath;
+  const hoverPath = props.hoverPath ?? derived.hoverPath;
+  const pressedPath = props.pressedPath ?? derived.pressedPath;
+  const disabledPath = props.disabledPath ?? derived.disabledPath;
+  delete (rest as {normalPath?: string}).normalPath;
+  delete (rest as {hoverPath?: string}).hoverPath;
+  delete (rest as {pressedPath?: string}).pressedPath;
+  delete (rest as {disabledPath?: string}).disabledPath;
   return buttonNode("TextureButton", {
     ...rest,
     ...(text === undefined ? {} : {text}),
@@ -589,6 +646,25 @@ export function TextureButton(props: TextureButtonProps): UiElement {
       ...(pressedPath === undefined ? {} : {pressedPath}),
       ...(disabledPath === undefined ? {} : {disabledPath}),
       ...(scaleMode === undefined ? {} : {scaleMode}),
+    },
+  });
+}
+
+/** Typed native Slider; replaces `<Control runtimeType="Slider">`. */
+export function Slider(props: SliderProps): UiElement {
+  const {minimum, maximum, step, value, railPath, railHoverPath,
+    railPressedPath, knobPath, knobHoverPath, knobPressedPath, railHeight,
+    knobSize, ...rest} = props;
+  const optional = {minimum, maximum, step, value, railPath, railHoverPath,
+    railPressedPath, knobPath, knobHoverPath, knobPressedPath, railHeight,
+    knobSize};
+  return node("control", "Slider", {
+    ...rest,
+    accessibilityRole: props.accessibilityRole ?? "slider",
+    runtimeProperties: {
+      ...props.runtimeProperties,
+      ...Object.fromEntries(Object.entries(optional)
+        .filter((entry): entry is [string, string | number] => entry[1] !== undefined)),
     },
   });
 }
@@ -817,8 +893,10 @@ function nodeAppearance(props: UiNodeProps): UiAppearance | undefined {
 }
 
 function nodeBindings(props: UiNodeProps): UiBindings {
+  // `bind={{enabled: "!saveLoad.page1"}}` is the Not-formatted binding.
   const shorthand = Object.fromEntries(Object.entries(props.bind ?? {}).map(([key, value]) =>
-    [key, typeof value === "string" ? {path: value} : value]));
+    [key, typeof value !== "string" ? value
+      : value.startsWith("!") ? {path: value.slice(1), formatter: "Not"} : {path: value}]));
   return {...props.bindings, ...shorthand};
 }
 

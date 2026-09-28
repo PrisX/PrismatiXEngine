@@ -264,6 +264,34 @@ such as `"#2D171DFF"` is lowered to the native Color value. These typed props
 override an identically named entry in
 `runtimeProperties`, which remains available for less common native properties.
 
+Common UI shorthands:
+
+```tsx
+<TextureButton name="Save" skin="Assets/UI/save/bt_save" position={[780, 776]}
+  size={[96, 47]} action="save.open" />
+<TextureButton name="Auto" skin={{base: "Assets/UI/mw/bt_auto",
+  states: ["hover", "pressed", "disabled"]}} position={[1172, 777]}
+  size={[96, 46]} action="mode.auto" bind={{enabled: "!mode.locked"}} />
+<Slider name="Master" position={[919, 213]} size={[400, 18]}
+  railPath="Assets/UI/rail.png" knobPath="Assets/UI/knob.png"
+  railHeight={18} knobSize={20} accessibilityLabel="Master volume" />
+```
+
+- `skin="stem"` sets `stem-normal.png` and `stem-hover.png` (also used for
+  pressed). The object form lists which of `hover`, `pressed` and `disabled`
+  have their own image and may change the extension. Explicit `*Path` props
+  still win.
+- A binding string starting with `!` is the `Not` formatter:
+  `bind={{enabled: "!saveLoad.page1"}}`.
+- `Slider` is the typed form of `<Control runtimeType="Slider">`: `minimum`,
+  `maximum`, `step`, `value`, rail/knob textures with hover and pressed
+  variants, `railHeight` and `knobSize`. Its accessibility role defaults to
+  `slider`.
+- Button sounds rarely need per-control props: the Player plays the project's
+  `player.uiActivateSound` for every button, and `player.uiCancelSound` for
+  buttons whose action is `overlay.close`, `route.back`, or ends in `.cancel`.
+  `activateSoundPath` on a control overrides both.
+
 Bindings can address array items and object fields, for example
 `bind={{text: "saveLoad.slots[0].title"}}`. The native ViewModel must define
 `saveLoad.slots` as an array containing an object with a string `title` before
