@@ -600,18 +600,68 @@ void RuntimeSession::Update(const std::uint64_t nowMs, const float deltaSeconds)
         m_vm.NotifyExternalDone();
     }
     if(m_preloadScript!=m_vm.CurrentScript()||m_preloadPc!=m_vm.ProgramCounter()){
-        m_preloadScript=m_vm.CurrentScript();m_preloadPc=m_vm.ProgramCounter();const auto& program=m_vm.CurrentProgram();const int end=std::min(static_cast<int>(program.code.size()),m_preloadPc+16);
-        for(int index=std::max(0,m_preloadPc);index<end;++index){
-            const auto& command=program.code[static_cast<std::size_t>(index)];
-            if(command.type!="bg"&&command.type!="char"&&command.type!="cg"&&command.type!="layer")continue;
-            for(const char* field:{"file","image","rule"}){
-                const Variant* value=command.FindTyped(field);const auto* resource=value?value->TryGet<ResourceRefValue>():nullptr;
-                if(!resource||resource->lastKnownPath.empty())continue;
-                if(command.type=="char"&&std::string_view(field)=="file")
-                    m_stage.PreloadCharacter(resource->lastKnownPath);
-                else
-                    m_services.assets.PreloadTexture(resource->lastKnownPath);
+        m_preloadScript=m_vm.CurrentScript();m_preloadPc=m_vm.ProgramCounter();
+        PreloadUpcomingVisuals();
+    }
+}
+
+void RuntimeSession::PreloadUpcomingVisuals() {
+    // Walk the control flow the player can actually reach next: follow
+    // jumps and calls, and every choice and condition target, so the
+    // background after a branch is decoded before it is shown. Budgets
+    // bound the per-advance cost and the number of textures requested.
+    constexpr int kInstructionBudget = 160;
+    constexpr int kImageBudget = 24;
+    const auto& program = m_vm.CurrentProgram();
+    const int size = static_cast<int>(program.code.size());
+    std::vector<int> pending{m_preloadPc};
+    std::vector<bool> visited(static_cast<std::size_t>(std::max(size, 0)), false);
+    int instructions = 0;
+    int images = 0;
+    const auto enqueue = [&](const std::string& target) {
+        const int index = program.LabelIndex(target);
+        if (index >= 0) pending.push_back(index);
+    };
+    while (!pending.empty() && instructions < kInstructionBudget && images < kImageBudget) {
+        int index = pending.front();
+        pending.erase(pending.begin());
+        while (index >= 0 && index < size && !visited[static_cast<std::size_t>(index)] &&
+               instructions < kInstructionBudget && images < kImageBudget) {
+            visited[static_cast<std::size_t>(index)] = true;
+            ++instructions;
+            const auto& command = program.code[static_cast<std::size_t>(index)];
+            const std::string& type = command.type;
+            if (type == "bg" || type == "char" || type == "cg" || type == "layer") {
+                for (const char* field : {"file", "image", "rule"}) {
+                    const Variant* value = command.FindTyped(field);
+                    const auto* resource = value ? value->TryGet<ResourceRefValue>() : nullptr;
+                    if (!resource || resource->lastKnownPath.empty()) continue;
+                    ++images;
+                    if (type == "char" && std::string_view(field) == "file")
+                        m_stage.PreloadCharacter(resource->lastKnownPath);
+                    else
+                        m_services.assets.PreloadTexture(resource->lastKnownPath);
+                }
             }
+            const int resolved = index < static_cast<int>(program.branch.size())
+                ? program.branch[static_cast<std::size_t>(index)] : -1;
+            if (type == "jump") {
+                index = resolved >= 0 ? resolved : program.LabelIndex(command.Get("target"));
+                continue;
+            }
+            if (type == "call") {
+                enqueue(command.Get("target"));
+                if (resolved >= 0) pending.push_back(resolved);
+            } else if (type == "choice") {
+                enqueue(command.Get("target"));
+            } else if (type == "branch") {
+                enqueue(command.Get("trueTarget"));
+                enqueue(command.Get("falseTarget"));
+                break;
+            } else if (type == "return") {
+                break;
+            }
+            ++index;
         }
     }
 }
