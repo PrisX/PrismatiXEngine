@@ -1,4 +1,5 @@
 #include "Engine/Audio/AudioEngine.h"
+#include "Engine/Diagnostics/FrameProfiler.h"
 
 #include "Engine/Support/Logger.h"
 
@@ -6,6 +7,7 @@
 #include <SDL3_mixer/SDL_mixer.h>
 
 #include <algorithm>
+#include <chrono>
 #include <limits>
 
 namespace px::audio {
@@ -72,6 +74,10 @@ void AudioEngine::Shutdown() {
     }
     for (const AudioHandle handle : active) Finish(handle, PlaybackStatus::Stopped);
     m_trackPlaybacks.clear();
+    // Waits for reads still in flight; they reference the VFS.
+    m_prefetched.clear();
+    m_prefetchOrder.clear();
+    m_retiredPrefetches.clear();
     for (MIX_Track*& track : m_bgmTracks) {
         if (track) MIX_DestroyTrack(track), track = nullptr;
     }
@@ -102,13 +108,50 @@ void AudioEngine::Shutdown() {
     m_initialized = false;
 }
 
+void AudioEngine::Prefetch(const std::string& path) {
+    if (!m_initialized || path.empty() || path == m_voicePath ||
+        m_prefetched.contains(path) || m_audio.contains(path))
+        return;
+    std::erase_if(m_retiredPrefetches, [](const auto& read) {
+        return read.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+    });
+    constexpr std::size_t kMaxPrefetched = 16;
+    while (m_prefetchOrder.size() >= kMaxPrefetched) {
+        const auto evicted = m_prefetched.find(m_prefetchOrder.front());
+        m_retiredPrefetches.push_back(std::move(evicted->second));
+        m_prefetched.erase(evicted);
+        m_prefetchOrder.pop_front();
+    }
+    m_prefetched.emplace(path, std::async(std::launch::async, [this, path] {
+        return m_vfs.Read(path);
+    }).share());
+    m_prefetchOrder.push_back(path);
+}
+
+std::optional<io::Bytes> AudioEngine::ReadAudioFile(const std::string& path) {
+    const auto found = m_prefetched.find(path);
+    if (found == m_prefetched.end()) {
+        if (diag::FrameProfiler::Instance().Enabled())
+            diag::FrameProfiler::Instance().Note("audio-read-sync:" + path);
+        return m_vfs.Read(path);
+    }
+    const std::uint64_t started = SDL_GetTicksNS();
+    auto bytes = found->second.get();
+    if (const std::uint64_t ms = (SDL_GetTicksNS() - started) / 1'000'000;
+        ms >= 2 && diag::FrameProfiler::Instance().Enabled())
+        diag::FrameProfiler::Instance().Note("audio-read-wait:" + std::to_string(ms) + "ms");
+    m_prefetched.erase(found);
+    std::erase(m_prefetchOrder, path);
+    return bytes;
+}
+
 MIX_Audio* AudioEngine::AcquireAudio(const std::string& path, bool predecode) {
     ++m_useCounter;
     if (auto it = m_audio.find(path); it != m_audio.end()) {
         it->second.lastUse = m_useCounter;
         return it->second.audio;
     }
-    auto bytes = m_vfs.Read(path);
+    auto bytes = ReadAudioFile(path);
     if (!bytes) {
         PX_LOG_WARN("AudioEngine: audio not found '{}'", path);
         m_audio[path] = AudioEntry{ nullptr, nullptr, m_useCounter };
@@ -316,9 +359,10 @@ MIX_Track* AudioEngine::StartSoundEffect(const std::string& path) {
 
 bool AudioEngine::StartVoice(const std::string& path) {
     if (!m_initialized || !m_voiceTrack) return false;
+    const std::uint64_t started = SDL_GetTicksNS();
     // Voice lines are unique per dialogue line. Caching every line would grow
     // without bound, so each voice owns only the bytes used by the live track.
-    auto bytes = m_vfs.Read(path);
+    auto bytes = ReadAudioFile(path);
     if (!bytes) {
         PX_LOG_WARN("AudioEngine: audio not found '{}'", path);
         return false;
@@ -329,10 +373,12 @@ bool AudioEngine::StartVoice(const std::string& path) {
         MIX_DestroyAudio(m_voiceAudio.audio);
         m_voiceAudio = {};
     }
+    // Decode while playing on the mixer thread. Predecoding a voice line
+    // stalled the frame that advanced to it by 30-150 ms.
     auto held = std::make_shared<io::Bytes>(std::move(*bytes));
     SDL_IOStream* io = SDL_IOFromConstMem(held->data(), held->size());
     MIX_Audio* audio = io ? MIX_LoadAudio_IO(
-                                m_mixer, io, /*predecode=*/true,
+                                m_mixer, io, /*predecode=*/false,
                                 /*closeio=*/true)
                           : nullptr;
     if (!audio) {
@@ -341,6 +387,9 @@ bool AudioEngine::StartVoice(const std::string& path) {
         return false;
     }
     m_voiceAudio = AudioEntry{audio, held, 0};
+    if (diag::FrameProfiler::Instance().Enabled())
+        diag::FrameProfiler::Instance().Note(
+            "voice-load:" + std::to_string((SDL_GetTicksNS() - started) / 1'000'000) + "ms");
     if (!MIX_SetTrackAudio(m_voiceTrack, audio)) return false;
     m_voicePath = path;
     ApplyMixGains();

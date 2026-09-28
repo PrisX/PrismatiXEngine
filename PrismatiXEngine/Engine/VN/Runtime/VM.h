@@ -236,6 +236,8 @@ public:
     [[nodiscard]] VMState State() const { return m_state; }
     [[nodiscard]] bool Blocking() const;
     [[nodiscard]] const VMConfig& Config() const { return m_config; }
+    // A bare file name resolves under `dir`; a path is used as written.
+    [[nodiscard]] std::string Resolve(const std::string& dir, const std::string& file) const;
     [[nodiscard]] const std::vector<Choice>& Choices() const { return m_choices; }
     [[nodiscard]] const std::string& Chapter() const { return m_chapter; }
     [[nodiscard]] const std::string& CurrentBgm() const { return m_currentBgm; }
@@ -305,8 +307,6 @@ private:
     // Returns false (leaving the pc untouched) when the target is empty or
     // cannot be resolved; callers decide how to advance.
     bool JumpToTarget(const std::string& target);
-
-    [[nodiscard]] std::string Resolve(const std::string& dir, const std::string& file) const;
 
     io::VFS& m_vfs;
     audio::AudioEngine& m_audio;

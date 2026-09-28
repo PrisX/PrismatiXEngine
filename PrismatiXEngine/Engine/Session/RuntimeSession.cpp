@@ -4,6 +4,8 @@
 #include "Engine/SDK/RuntimeIr.h"
 
 #include "Engine/Diagnostics/Diagnostic.h"
+#include "Engine/Diagnostics/FrameProfiler.h"
+#include <SDL3/SDL_timer.h>
 
 #include <algorithm>
 #include <cmath>
@@ -620,9 +622,17 @@ void RuntimeSession::Update(const std::uint64_t nowMs, const float deltaSeconds)
         m_externalResumePending = false;
         m_vm.NotifyExternalDone();
     }
-    if(m_preloadScript!=m_vm.CurrentScript()||m_preloadPc!=m_vm.ProgramCounter()){
+    // Leaving fast-forward re-runs lookahead: audio is not read ahead while
+    // skipping, and the next line's voice is needed now.
+    if(m_preloadScript!=m_vm.CurrentScript()||m_preloadPc!=m_vm.ProgramCounter()||
+       m_preloadFastForward!=m_vm.FastForward()){
         m_preloadScript=m_vm.CurrentScript();m_preloadPc=m_vm.ProgramCounter();
+        m_preloadFastForward=m_vm.FastForward();
+        const std::uint64_t started=SDL_GetTicksNS();
         PreloadUpcomingVisuals();
+        if(const std::uint64_t ms=(SDL_GetTicksNS()-started)/1'000'000;
+           ms>=4&&diag::FrameProfiler::Instance().Enabled())
+            diag::FrameProfiler::Instance().Note("lookahead:"+std::to_string(ms)+"ms");
     }
 }
 
@@ -633,12 +643,16 @@ void RuntimeSession::PreloadUpcomingVisuals() {
     // bound the per-advance cost and the number of textures requested.
     constexpr int kInstructionBudget = 160;
     constexpr int kImageBudget = 24;
+    // Voices, sound effects and music are read ahead too; a cold voice file stalled
+    // the frame that played it by up to 150 ms.
+    constexpr int kAudioBudget = 6;
     const auto& program = m_vm.CurrentProgram();
     const int size = static_cast<int>(program.code.size());
     std::vector<int> pending{m_preloadPc};
     std::vector<bool> visited(static_cast<std::size_t>(std::max(size, 0)), false);
     int instructions = 0;
     int images = 0;
+    int audio = 0;
     const auto enqueue = [&](const std::string& target) {
         const int index = program.LabelIndex(target);
         if (index >= 0) pending.push_back(index);
@@ -662,6 +676,19 @@ void RuntimeSession::PreloadUpcomingVisuals() {
                         m_stage.PreloadCharacter(resource->lastKnownPath);
                     else
                         m_services.assets.PreloadTexture(resource->lastKnownPath);
+                }
+            } else if (!m_vm.FastForward() && audio < kAudioBudget &&
+                       (type == "voice" || type == "se" || type == "bgm" || type == "say")) {
+                // The same arguments the VM plays from.
+                const std::string file = type == "say"
+                    ? command.Get("voice") : command.Get("file", command.Get("value"));
+                if (!file.empty()) {
+                    ++audio;
+                    const auto& config = m_vm.Config();
+                    m_services.audio.Prefetch(m_vm.Resolve(
+                        type == "se" ? config.seDir : type == "bgm" ? config.bgmDir
+                                                                    : config.voiceDir,
+                        file));
                 }
             }
             const int resolved = index < static_cast<int>(program.branch.size())

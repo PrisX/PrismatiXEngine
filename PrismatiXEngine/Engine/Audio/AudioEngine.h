@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <future>
 #include <memory>
 #include <optional>
 #include <string>
@@ -169,6 +170,9 @@ public:
     void StopSE(int fadeMs = 0);
     void PlayVoice(const std::string& path);
     void StopVoice();
+    // Reads a voice or sound effect on a worker thread so the line that
+    // plays it does not wait for the disk. Holds the last few requests.
+    void Prefetch(const std::string& path);
     void PlayAmbience(const std::string& path,bool loop=true,int fadeMs=0);
     void StopAmbience(int fadeMs=0);
 
@@ -214,6 +218,8 @@ private:
     };
 
     MIX_Audio* AcquireAudio(const std::string& path, bool predecode);
+    // Takes prefetched bytes when present, otherwise reads synchronously.
+    std::optional<io::Bytes> ReadAudioFile(const std::string& path);
     // Returns the track and records the audio about to play on it.
     MIX_Track* AcquireSeTrack(MIX_Audio* audio);
     // Caps decoded-audio memory; long sessions otherwise grow without bound.
@@ -259,6 +265,10 @@ private:
     std::string m_ambiencePath;
     bool m_ambienceLoop = false;
     std::uint64_t m_useCounter = 0;
+    std::unordered_map<std::string, std::shared_future<std::optional<io::Bytes>>> m_prefetched;
+    std::deque<std::string> m_prefetchOrder;
+    // Evicted reads still in flight; dropping one would block until it ends.
+    std::vector<std::shared_future<std::optional<io::Bytes>>> m_retiredPrefetches;
     AudioEntry m_voiceAudio;  // current voice line only (not cached)
 
     int m_bgmVolume = 96;

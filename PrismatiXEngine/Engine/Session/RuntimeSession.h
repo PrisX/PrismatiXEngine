@@ -189,6 +189,7 @@ private:
     animation::TimelinePlayer m_timeline;
     std::string m_preloadScript;
     int m_preloadPc=-1;
+    bool m_preloadFastForward=false;
     void PreloadUpcomingVisuals();
     std::unordered_map<animation::TargetKind,animation::TimelinePlayer::Apply> m_animationHandlers;
     std::unordered_map<animation::TargetKind,AnimationTargetValidator> m_animationValidators;
